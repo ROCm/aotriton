@@ -1,0 +1,3 @@
+[submodule "third_party/triton"]
+	path = third_party/triton
+	url = https://github.com/ROCmSoftwarePlatform/triton.git
