@@ -204,7 +204,7 @@ def attn_fwd(
 
 
 @triton.jit
-def _bwd_preprocess(
+def bwd_preprocess(
     Out, DO,
     NewDO, Delta,
     BLOCK_M: tl.constexpr, D_HEAD: tl.constexpr,
@@ -222,11 +222,11 @@ def _bwd_preprocess(
 
 
 @triton.jit
-def _bwd_kernel(
-    Q, K, V, sm_scale, Out, DO,
+def bwd_kernel(
+    Q, K, V, sm_scale,
+    Out, DO,
     DQ, DK, DV,
-    L,
-    D,
+    L, D,
     stride_qz, stride_qh, stride_qm, stride_qk,
     stride_kz, stride_kh, stride_kn, stride_kk,
     stride_vz, stride_vh, stride_vk, stride_vn,
@@ -314,7 +314,7 @@ def _bwd_kernel(
         tl.store(dv_ptrs, dv)
 
 @triton.jit
-def _bwd_kernel_dk_dv(
+def bwd_kernel_dk_dv(
     Q, K, V, sm_scale, Out, DO,
     DK, DV,
     L,
@@ -429,7 +429,7 @@ def _bwd_kernel_dk_dv(
     tl.store(DV_block_ptr, dv.to(tl.float16))
 
 @triton.jit
-def _bwd_kernel_dq(
+def bwd_kernel_dq(
     Q, K, V, sm_scale, Out, DO,
     DQ,
     L,
@@ -525,7 +525,6 @@ def _bwd_kernel_dq(
     )
     tl.store(DQ_block_ptr, (dq * sm_scale).to(tl.float16))
 
-'''
 class _attention(torch.autograd.Function):
 
     @staticmethod
@@ -596,13 +595,13 @@ class _attention(torch.autograd.Function):
         # Alternatively we could compute a new grid but this keeps it consistent
         # with fwd and easier to reason about.
         block_scale = (q.shape[2] // ctx.grid[0]) // BLOCK
-        _bwd_preprocess[(ctx.grid[0] * ctx.grid[1], )](
+        bwd_preprocess[(ctx.grid[0] * ctx.grid[1], )](
             o, do,
             do_scaled, delta,
             BLOCK_M=block_scale * BLOCK, D_HEAD=ctx.BLOCK_DMODEL,
         )
         if not ctx.split_kernel:
-            _bwd_kernel[(ctx.grid[1],)](
+            bwd_kernel[(ctx.grid[1],)](
                 q, k, v, ctx.sm_scale,
                 o, do_scaled,
                 dq, dk, dv,
@@ -610,8 +609,7 @@ class _attention(torch.autograd.Function):
                 q.stride(0), q.stride(1), q.stride(2), q.stride(3),
                 k.stride(0), k.stride(1), k.stride(2), k.stride(3),
                 v.stride(0), v.stride(1), v.stride(2), v.stride(3),
-                q.shape[0], q.shape[1], q.shape[2],
-                block_scale * ctx.grid[0],
+                q.shape[0], q.shape[1], q.shape[2], block_scale * ctx.grid[0],
                 BLOCK_M=BLOCK, BLOCK_N=BLOCK,
                 BLOCK_DMODEL=ctx.BLOCK_DMODEL, num_warps=4,
                 CAUSAL=ctx.causal,
@@ -619,7 +617,7 @@ class _attention(torch.autograd.Function):
             )
         else :
             dq = torch.zeros_like(q)
-            _bwd_kernel_dk_dv[(block_scale * ctx.grid[0], ctx.grid[1])](
+            bwd_kernel_dk_dv[(block_scale * ctx.grid[0], ctx.grid[1])](
                 q, k, v, ctx.sm_scale,
                 o, do_scaled,
                 dk, dv,
@@ -632,7 +630,7 @@ class _attention(torch.autograd.Function):
                 BLOCK_DMODEL=ctx.BLOCK_DMODEL, num_warps=4,
                 num_stages=1,
             )
-            _bwd_kernel_dq[ctx.grid](
+            bwd_kernel_dq[ctx.grid](
                 q, k, v, ctx.sm_scale,
                 o, do_scaled,
                 dq,
@@ -647,5 +645,3 @@ class _attention(torch.autograd.Function):
             )
         # print(h.asm["ttgir"])
         return dq, dk, dv, None, None, None
-
-'''

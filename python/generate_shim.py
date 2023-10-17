@@ -53,13 +53,22 @@ def gen_from_kernel(k, build_dir, makefile):
     print('\n\n', file=makefile)
     object_rules.seek(0)
     shutil.copyfileobj(object_rules, makefile)
-    print('.PHONY: all', file=makefile)
+    return output_so
 
 def main():
     build_dir = Path('build/')
     with open(build_dir / 'Makefile.shim', 'w') as f:
+        makefile_content = io.StringIO()
+        per_kernel_targets = []
         for k in rules.kernels:
-            gen_from_kernel(k, build_dir, f)
+            per_kernel_targets.append(gen_from_kernel(k, build_dir, makefile_content))
+        print('all: ', end='', file=f)
+        for t in per_kernel_targets:
+            print(t, end=' ', file=f)
+        print('\n', file=f)
+        makefile_content.seek(0)
+        shutil.copyfileobj(makefile_content, f)
+        print('.PHONY: all', file=f)
 
 if __name__ == '__main__':
     main()

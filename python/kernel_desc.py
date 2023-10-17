@@ -11,6 +11,13 @@ def _get_template(name='kernel_shim.cc'):
     with open(SOURCE_PATH.parent.parent / 'csrc' / 'template' / name, 'r') as f:
         return f.read()
 
+def get_possible_types(klass, arg_name : str) -> list[str]:
+    for k, v in klass.ARGUMENT_CHOICES.items():
+        if arg_name in k:
+            return v
+    assert False, f"cannot find {arg_name}"
+
+
 class KernelDescription(ABC):
     ARGUMENTS = []
     ARGUMENT_CHOICES = {}
@@ -75,6 +82,7 @@ class KernelDescription(ABC):
         # : -> @: A(@)lign
         mangle_sig = [ str(t).replace('*', '^').replace(':', '@') for t in sig ]
         return ','.join(mangle_sig)
+
 
 class ObjectFileDescription(object):
     SIGNATURE_TO_C = {
@@ -170,7 +178,7 @@ class ObjectFileDescription(object):
 
     def generate_shim_header_extern_template(self) -> str:
         TEMPLATE = 'template struct {shim_kernel_name}<{shim_kernel_specialization}>;'
-        template_specialization = self.compute_struct_template_specialization(align1=len(self.SHIM_KERNEL_NAME)+24)
+        template_specialization = self.compute_struct_template_specialization(align1=len(self.SHIM_KERNEL_NAME)+17)
         fmt = {
             'shim_kernel_name': self.SHIM_KERNEL_NAME,
             'shim_kernel_specialization': template_specialization,
@@ -180,7 +188,7 @@ class ObjectFileDescription(object):
     def generate_shim_header_trailing(self) -> str:
         return self.CXX_HEADER_TEMPLATE_FOOTER
 
-    def compute_c_argument(self, align1=23, align2=33):
+    def compute_c_argument(self, align1=23, align2=30):
         arguments = self.get_c_arguments()
         typed_arguments = [f'{self.get_ctype(a)[1]} {a}' for a in arguments]
         casted_arguments = [f'static_cast<void*>(&{a})' for a in arguments]
@@ -240,7 +248,7 @@ class ObjectFileDescription(object):
     #                 int BLOCK_M,
     #                 ...
     #                >
-    def compute_struct_template_typenames(self, align1=17):
+    def compute_struct_template_typenames(self, align1=9):
         constants = self._filter_arguments(request_constants=True)
         typed_constants = []
         for a in constants:

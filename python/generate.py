@@ -16,23 +16,33 @@ def gen_from_object(o : 'ObjectFileDescription', makefile):
     return target
 
 def gen_from_kernel(k, p, makefile):
+    target_all = f'compile_{k.SHIM_KERNEL_NAME}'
     all_targets = []
     object_rules = io.StringIO()
     for o in k.get_object_files(p, prefix=k.SHIM_KERNEL_NAME):
         all_targets.append(gen_from_object(o, object_rules))
-    print('all: ', end='', file=makefile)
+    print(target_all, ': ', end='', file=makefile)
     for t in all_targets:
         print(t, end=' ', file=makefile)
     print('\n\n', file=makefile)
     object_rules.seek(0)
     shutil.copyfileobj(object_rules, makefile)
-    print('.PHONY: all', file=makefile)
+    return target_all
 
 def main():
     build_dir = Path('build/')
     with open(build_dir / 'Makefile.compile', 'w') as f:
+        makefile_content = io.StringIO()
+        per_kernel_targets = []
         for k in rules.kernels:
-            gen_from_kernel(k, build_dir, f)
+            per_kernel_targets.append(gen_from_kernel(k, build_dir, makefile_content))
+        print('all: ', end='', file=f)
+        for t in per_kernel_targets:
+            print(t, end=' ', file=f)
+        print('\n', file=f)
+        makefile_content.seek(0)
+        shutil.copyfileobj(makefile_content, f)
+        print('.PHONY: all ', ' '.join(per_kernel_targets), file=f)
 
 if __name__ == '__main__':
     main()
