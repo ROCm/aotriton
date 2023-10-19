@@ -66,7 +66,7 @@ class KernelDescription(ABC):
         ret = []
         for choice in self.gen_all_possible_choices():
             sig_list = self.make_argument_choice(choice)
-            sig = self.mangle(sig_list)
+            sig = self.compact_mangle(choice)
             fn = prefix + '-' + sig + '.hsaco'
             ret.append(ObjectFileDescription(self, choice, sig_list, outpath / fn))
         return ret
@@ -77,3 +77,16 @@ class KernelDescription(ABC):
         mangle_sig = [ str(t).replace('*', '^').replace(':', '@') for t in sig ]
         return ','.join(mangle_sig)
 
+    def compact_mangle(self, choice : dict[frozenset[list], str]):
+        compact_sig = []
+        assigned_args = set()
+        for aname in self.ARGUMENTS:
+            if aname in assigned_args:
+                continue
+            for k, v in choice.items():
+                if aname in k:
+                    compact_sig.append(v)
+                    for other_arg in k:
+                        assigned_args.add(other_arg)
+                    break
+        return self.mangle(compact_sig)
