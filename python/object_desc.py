@@ -14,8 +14,8 @@ class ObjectFileDescription(object):
     SIGNATURE_TO_C = {
         'fp32'  : 'float',
         '*fp32' : 'const float*',
-        '*fp16' : 'const void*',
-        '*bf16' : 'const void*',
+        '*fp16' : 'const __fp16*',
+        '*bf16' : 'const __bf16*',
         'i32'   : 'int32_t',
         'i64'   : 'int64_t',
         'u32'   : 'uint32_t',
