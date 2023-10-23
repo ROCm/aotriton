@@ -20,7 +20,7 @@ def gen_cc_from_object(o : 'ObjectFileDescription', makefile):
     print('\t', cmd, '\n', file=makefile)
     return target.name
 
-def gen_from_kernel(k, build_dir, makefile):
+def gen_from_kernel(k, build_dir, makefile, generate_separate_so=False):
     all_targets = []
     object_rules = io.StringIO()
     shim_common_header = io.StringIO()
@@ -42,6 +42,11 @@ def gen_from_kernel(k, build_dir, makefile):
         shim_common_header.seek(0)
         shutil.copyfileobj(shim_common_header, hdrf)
 
+    if not generate_separate_so:
+        object_rules.seek(0)
+        shutil.copyfileobj(object_rules, makefile)
+        return k.SHIM_KERNEL_NAME, all_targets
+
     output_so = k.SHIM_KERNEL_NAME + '.so'
     def print_all_o():
         for t in all_targets:
@@ -53,22 +58,38 @@ def gen_from_kernel(k, build_dir, makefile):
     print('\n\n', file=makefile)
     object_rules.seek(0)
     shutil.copyfileobj(object_rules, makefile)
-    return output_so
+    return output_so, []
 
-def main():
+def main(generate_separate_so=False):
     build_dir = Path('build/')
     with open(build_dir / 'Makefile.shim', 'w') as f:
         makefile_content = io.StringIO()
         per_kernel_targets = []
+        all_o_files = []
         for k in rules.kernels:
-            per_kernel_targets.append(gen_from_kernel(k, build_dir, makefile_content))
-        print('all: ', end='', file=f)
-        for t in per_kernel_targets:
-            print(t, end=' ', file=f)
-        print('\n', file=f)
+            this_kernel_target, this_kernel_o_files = gen_from_kernel(k, build_dir, makefile_content, generate_separate_so=generate_separate_so)
+            per_kernel_targets.append(this_kernel_target)
+            all_o_files += this_kernel_o_files
+        print('liboort: ', end='', file=f)
+        if generate_separate_so:
+            for t in per_kernel_targets:
+                print(t, end=' ', file=f)
+            print('\n', file=f)
+        else:
+            output_so = 'liboort.so'
+            def print_all_o():
+                for t in all_o_files:
+                    print(t, end=' ', file=f)
+            print_all_o()
+            print('\n\t', COMPILER, ' -shared -fPIC -o ', output_so, end=' ', file=f)
+            print_all_o()
+            print('\n\n', file=f)
         makefile_content.seek(0)
         shutil.copyfileobj(makefile_content, f)
-        print('.PHONY: all', file=f)
+        if generate_separate_so:
+            print('.PHONY: liboort', file=f)
+        else:
+            print('.PHONY: liboort ', ' '.join(per_kernel_targets), file=f)
 
 if __name__ == '__main__':
     main()
