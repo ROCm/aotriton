@@ -29,7 +29,7 @@ class FlashAttention_attn_fwd(KernelDescription):
             frozenset(['M']) : ['*fp32:16'],
             frozenset(_pattern(ARGUMENTS, 'stride_')) : ['u64'],
             frozenset(['Z', 'H', 'N_CTX']) : ['u64'],
-            frozenset(['STAGE']) : [3, 1],
+            frozenset(['STAGE']) : [1],
             frozenset(['BLOCK_M']) : [128],
             frozenset(['BLOCK_DMODEL']) : [16, 32, 64, 128],
             frozenset(['BLOCK_N']) : [64],
