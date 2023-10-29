@@ -12,7 +12,7 @@ Extra Credits:
 """
 
 import pytest
-import torch
+# import torch
 
 import triton
 import triton.language as tl
@@ -67,7 +67,7 @@ def attn_fwd_inner(
         acc = acc * alpha[:, None]
         if not pre_load_v:
             v = tl.load(V_block_ptr)
-        acc += tl.dot(p.to(tl.float16), v)
+        acc += tl.dot(p.to(V_block_ptr.type.element_ty), v)
         # -- update m_i and l_i
         l_ij = tl.sum(p, 1)
         l_i = l_i * alpha + l_ij
@@ -162,7 +162,7 @@ def attn_fwd(
     qk_scale = sm_scale * 1.44269504
     # load q: it will stay in SRAM throughout on NV GPUs but in VGPRs on AMD GPUs
     q = tl.load(Q_block_ptr)
-    q = (q * qk_scale).to(tl.float16)
+    q = (q * qk_scale).to(Q_block_ptr.type.element_ty)
     # stage 1: off-band
     # For causal = True, STAGE = 3 and attn_fwd_inner gets 1 as its STAGE
     # For causal = False, STAGE = 1, and attn_fwd_inner gets 3 as its STAGE
@@ -375,7 +375,7 @@ def bwd_kernel_dk_dv(
     qk_scale = sm_scale * 1.44269504
     # load k and v: they will stay in SRAM throughout
     k = tl.load(K_block_ptr)
-    k = (k * qk_scale).to(tl.float16)
+    k = (k * qk_scale).to(K_block_ptr.type.element_ty)
     v = tl.load(V_block_ptr)
     dv = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)
     dk = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)
@@ -425,8 +425,8 @@ def bwd_kernel_dk_dv(
         block_shape=(BLOCK_M, BLOCK_DMODEL),
         order=(1, 0)
     )
-    tl.store(DK_block_ptr, (dk * sm_scale).to(tl.float16))
-    tl.store(DV_block_ptr, dv.to(tl.float16))
+    tl.store(DK_block_ptr, (dk * sm_scale).to(DK.type.element_ty))
+    tl.store(DV_block_ptr, dv.to(DK.type.element_ty))
 
 @triton.jit
 def bwd_kernel_dq(
@@ -487,7 +487,7 @@ def bwd_kernel_dq(
     qk_scale = sm_scale * 1.44269504
     # load q and do: they will stay in SRAM throughout
     q = tl.load(Q_block_ptr)
-    q = (q * qk_scale).to(tl.float16)
+    q = (q * qk_scale).to(Q_block_ptr.type.element_ty)
     do = tl.load(DO_block_ptr)
     Di = tl.load(D_ptrs + offs_m)
     l_i = tl.load(l_ptrs + offs_m)
@@ -510,7 +510,7 @@ def bwd_kernel_dq(
         ds = p * dp
         # compute dq. Unfortunately we cannot avoid transpose here as this loop
         # uses k both normal and transpose.
-        dq += tl.dot(ds.to(Q.dtype.element_ty), tl.trans(k))
+        dq += tl.dot(ds.to(Q.type.element_ty), tl.trans(k))
         # update pointers
         K_block_ptr = tl.advance(K_block_ptr, (0, BLOCK_N))
         V_block_ptr = tl.advance(V_block_ptr, (0, BLOCK_N))
@@ -523,8 +523,9 @@ def bwd_kernel_dq(
         block_shape=(BLOCK_M, BLOCK_DMODEL),
         order=(1, 0)
     )
-    tl.store(DQ_block_ptr, (dq * sm_scale).to(tl.float16))
+    tl.store(DQ_block_ptr, (dq * sm_scale).to(DQ_block_ptr.type.element_ty))
 
+'''
 class _attention(torch.autograd.Function):
 
     @staticmethod
@@ -645,3 +646,4 @@ class _attention(torch.autograd.Function):
             )
         # print(h.asm["ttgir"])
         return dq, dk, dv, None, None, None
+'''

@@ -24,12 +24,12 @@ class FlashAttention_attn_fwd(KernelDescription):
     ]
     ARGUMENT_CHOICES = {
             # frozenset(['Q', 'K', 'V', 'Out']) : ['*fp16:16', '*bf16:16'],
-            frozenset(['Q', 'K', 'V', 'Out']) : ['*fp16:16'], # TODO: The kernel provided in Triton doesn't support bf16
+            frozenset(['Q', 'K', 'V', 'Out']) : ['*fp16:16', '*bf16:16'],
             frozenset(['sm_scale']) : ['fp32:16'],
             frozenset(['M']) : ['*fp32:16'],
             frozenset(_pattern(ARGUMENTS, 'stride_')) : ['u64'],
             frozenset(['Z', 'H', 'N_CTX']) : ['u64'],
-            frozenset(['STAGE']) : [1],
+            frozenset(['STAGE']) : [1, 3],
             frozenset(['BLOCK_M']) : [128],
             frozenset(['BLOCK_DMODEL']) : [16, 32, 64, 128],
             frozenset(['BLOCK_N']) : [64],
@@ -45,7 +45,7 @@ class FlashAttention_bwd_preprocess(KernelDescription):
         'D_HEAD',
     ]
     ARGUMENT_CHOICES = {
-        frozenset(['Out', 'DO', 'NewDO']) : ['*fp16:16'], # TODO: The kernel provided in Triton doesn't support bf16
+        frozenset(['Out', 'DO', 'NewDO']) : ['*fp16:16'],
         frozenset(['Delta']) : ['*fp32:16'],
         frozenset(['BLOCK_M']) : [64, 128], # TODO: All possible values?
         frozenset(['D_HEAD']) : get_possible_types(FlashAttention_attn_fwd, 'BLOCK_DMODEL'),
