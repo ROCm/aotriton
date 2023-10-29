@@ -25,6 +25,7 @@ def gen_from_kernel(k, build_dir, makefile, generate_separate_so=False):
     object_rules = io.StringIO()
     shim_common_header = io.StringIO()
     shim_member_function_decls = set()
+    shim_extern_template_decls = set()
 
     all_object_files = k.get_object_files(build_dir, prefix=k.SHIM_KERNEL_NAME)
     for o in all_object_files:
@@ -32,11 +33,16 @@ def gen_from_kernel(k, build_dir, makefile, generate_separate_so=False):
             print(o.generate_shim_header_leading(), file=shim_common_header)
         all_targets.append(gen_cc_from_object(o, object_rules))
         shim_member_function_decls.add(o.generate_shim_header_member_function())
+
     for member_function_decl in shim_member_function_decls:
         print(member_function_decl, file=shim_common_header)
     print(o.generate_shim_header_closing_struct_define(), file=shim_common_header)
+
     for o in all_object_files:
-        print(o.generate_shim_header_extern_template(), file=shim_common_header)
+        shim_extern_template_decls.add(o.generate_shim_header_extern_template())
+    for template_decl in shim_extern_template_decls:
+        print(template_decl, file=shim_common_header)
+
     print(o.generate_shim_header_trailing(), file=shim_common_header)
     with (build_dir / o.SHIM_KERNEL_NAME).with_suffix('.h').open('w') as hdrf:
         shim_common_header.seek(0)
