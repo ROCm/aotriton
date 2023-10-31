@@ -15,7 +15,7 @@ class FlashAttention_attn_fwd(KernelDescription):
         'stride_vz', 'stride_vh', 'stride_vk', 'stride_vn',
         'stride_oz', 'stride_oh', 'stride_om', 'stride_on',
         'Z', 'H',
-        'N_CTX',
+        'seqlen_q', 'seqlen_k',
         'STAGE', # tl.constexpr starts here
         'BLOCK_M',
         'BLOCK_DMODEL',
@@ -28,7 +28,7 @@ class FlashAttention_attn_fwd(KernelDescription):
             frozenset(['sm_scale']) : ['fp32:16'],
             frozenset(['M']) : ['*fp32:16'],
             frozenset(_pattern(ARGUMENTS, 'stride_')) : ['u64'],
-            frozenset(['Z', 'H', 'N_CTX']) : ['u64'],
+            frozenset(['Z', 'H', 'seqlen_q', 'seqlen_k']) : ['u64'],
             frozenset(['STAGE']) : [1, 3],
             frozenset(['BLOCK_M']) : [128],
             frozenset(['BLOCK_DMODEL']) : [16, 32, 64, 128],

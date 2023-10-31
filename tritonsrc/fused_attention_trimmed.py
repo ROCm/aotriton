@@ -27,29 +27,30 @@ def attn_fwd_inner(
     acc, l_i, m_i, q,
     K_block_ptr, V_block_ptr,
     start_m,
+    seqlen_q,
+    seqlen_k,
     BLOCK_M: tl.constexpr,
     BLOCK_DMODEL: tl.constexpr,
     BLOCK_N: tl.constexpr,
     STAGE: tl.constexpr,
     offs_m: tl.constexpr,
     offs_n: tl.constexpr,
-    N_CTX,
     pre_load_v: tl.constexpr,
 ):
     # range of values handled by this stage
-    if STAGE == 1:
-        lo, hi = 0, start_m * BLOCK_M
-    elif STAGE == 2:
-        lo, hi = start_m * BLOCK_M, (start_m + 1) * BLOCK_M
+    if STAGE == 1: # "Solid" blocks of Causal masks
+        lo, hi = 0, min(seqlen_k, start_m * BLOCK_M)
+    elif STAGE == 2: # "Semi-solid", or "Transition" block of Causal mask
+        lo, hi = start_m * BLOCK_M, min(seqlen_k, start_m * BLOCK_M + BLOCK_M)
         lo = tl.multiple_of(lo, BLOCK_M)
         K_block_ptr = tl.advance(K_block_ptr, (0, lo))
         V_block_ptr = tl.advance(V_block_ptr, (lo, 0))
-    # causal = False
-    else:
-        lo, hi = 0, N_CTX
+    else: # causal = False
+        lo, hi = 0, seqlen_k
     # loop over k, v and update accumulator
     for start_n in range(lo, hi, BLOCK_N):
-        start_n = tl.multiple_of(start_n, BLOCK_N)
+        if STAGE == 1 or STAGE == 3:
+            start_n = tl.multiple_of(start_n, BLOCK_N)
         # -- compute qk ----
         k = tl.load(K_block_ptr)
         if pre_load_v:
@@ -115,7 +116,8 @@ def attn_fwd(
     stride_vz, stride_vh, stride_vk, stride_vn,
     stride_oz, stride_oh, stride_om, stride_on,
     Z, H,
-    N_CTX,
+    seqlen_q,
+    seqlen_k,
     STAGE: tl.constexpr,
     BLOCK_M: tl.constexpr,
     BLOCK_DMODEL: tl.constexpr,
@@ -124,26 +126,28 @@ def attn_fwd(
 ):
     start_m = tl.program_id(0)
     off_hz = tl.program_id(1)
-    qkv_offset = off_hz * stride_qh
+    q_offset = off_hz * stride_qh
     Q_block_ptr = tl.make_block_ptr(
-        base=Q + qkv_offset,
-        shape=(N_CTX, BLOCK_DMODEL),
+        base=Q + q_offset,
+        shape=(seqlen_q, BLOCK_DMODEL),
         strides=(stride_qm, stride_qk),
         offsets=(start_m * BLOCK_M, 0),
         block_shape=(BLOCK_M, BLOCK_DMODEL),
         order=(1, 0)
     )
+    k_offset = off_hz * stride_kh
     K_block_ptr = tl.make_block_ptr(
-        base=K + qkv_offset,
-        shape=(BLOCK_DMODEL, N_CTX),
+        base=K + k_offset,
+        shape=(BLOCK_DMODEL, seqlen_k),
         strides=(stride_kk, stride_kn),
         offsets=(0, 0),
         block_shape=(BLOCK_DMODEL, BLOCK_N),
         order=(0, 1)
     )
+    v_offset = off_hz * stride_vh
     V_block_ptr = tl.make_block_ptr(
-        base=V + qkv_offset,
-        shape=(N_CTX, BLOCK_DMODEL),
+        base=V + v_offset,
+        shape=(seqlen_k, BLOCK_DMODEL),
         strides=(stride_vk, stride_vn),
         offsets=(0, 0),
         block_shape=(BLOCK_N, BLOCK_DMODEL),
@@ -169,10 +173,10 @@ def attn_fwd(
     if STAGE & 1:
         acc, l_i, m_i = attn_fwd_inner(
             acc, l_i, m_i, q, K_block_ptr, V_block_ptr,
-            start_m,
+            start_m, seqlen_q, seqlen_k,
             BLOCK_M, BLOCK_DMODEL, BLOCK_N,
             4 - STAGE, offs_m, offs_n,
-            N_CTX, pre_load_v,
+            pre_load_v,
         )
     # stage 2: on-band
     if STAGE & 2:
@@ -181,20 +185,21 @@ def attn_fwd(
         tl.debug_barrier()
         acc, l_i, m_i = attn_fwd_inner(
             acc, l_i, m_i, q, K_block_ptr, V_block_ptr,
-            start_m,
+            start_m, seqlen_q, seqlen_k,
             BLOCK_M, BLOCK_DMODEL, BLOCK_N,
             2, offs_m, offs_n,
-            N_CTX, pre_load_v,
+            pre_load_v,
         )
     # epilogue
     # write back m
     acc = acc / l_i[:, None]
-    m_ptrs = M + off_hz * N_CTX + offs_m
+    m_ptrs = M + off_hz * seqlen_q + offs_m
     tl.store(m_ptrs, m_i + tl.math.log2(l_i))
     # write back O
+    o_offset = off_hz * stride_oh
     O_block_ptr = tl.make_block_ptr(
-        base=Out + qkv_offset,
-        shape=(N_CTX, BLOCK_DMODEL),
+        base=Out + o_offset,
+        shape=(seqlen_q, BLOCK_DMODEL),
         strides=(stride_om, stride_on),
         offsets=(start_m * BLOCK_M, 0),
         block_shape=(BLOCK_M, BLOCK_DMODEL),
@@ -556,7 +561,8 @@ class _attention(torch.autograd.Function):
             v.stride(0), v.stride(1), v.stride(2), v.stride(3),
             o.stride(0), o.stride(1), o.stride(2), o.stride(3),
             q.shape[0], q.shape[1],
-            N_CTX=q.shape[2],
+            seqlen_q=q.shape[2],
+            seqlen_k=k.shape[2],
             BLOCK_DMODEL=Lk,
             STAGE=stage,
         )
