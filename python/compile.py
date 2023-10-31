@@ -22,6 +22,7 @@ def main():
     # command-line arguments
     parser = ArgumentParser(description=desc)
     parser.add_argument("path", help="Path to Python source containing desired kernel in its scope. File will be executed.")
+    parser.add_argument("--target", type=str, default=None, help="Ahead of Time (AOT) Compile Architecture. PyTorch is required for autodetection if --target is missing.")
     parser.add_argument("--kernel_name", "-n", type=str, default="", help="Name of the kernel to compile", required=True)
     parser.add_argument("--num_warps", "-w", type=int, default=1, help="Number of warps to launch the kernel")
     parser.add_argument("--num_stages", "-ns", type=int, default=3, help="Number of stages (meta-parameter of the kernel)")
@@ -109,7 +110,7 @@ def main():
     for i in equal_to_1:
         constexprs.update({i: 1})
     print(f'{kernel=}')
-    ccinfo = triton.compile(kernel, signature=signature, constants=constexprs, configs=[config], num_warps=args.num_warps, num_stages=args.num_stages, is_aot=True)
+    ccinfo = triton.compile(kernel, signature=signature, constants=constexprs, configs=[config], num_warps=args.num_warps, num_stages=args.num_stages, aot_arch=args.target)
     hsaco_path = ccinfo.asm.get('hsaco_path', None)
     if args.verbose:
         print(dir(ccinfo))
