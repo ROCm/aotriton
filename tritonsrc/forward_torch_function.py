@@ -57,7 +57,7 @@ class _attention(torch.autograd.Function):
             seqlen_k=k.shape[2],
             BLOCK_DMODEL=Lk,
             STAGE=stage,
-            BLOCK_M=min(128, q.shape[2], k.shape[2]), BLOCK_N=64, pre_load_v=False
+            BLOCK_M=min(128, q.shape[2], k.shape[2]), BLOCK_N=32, pre_load_v=False
         )
 
         '''
