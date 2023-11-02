@@ -3,7 +3,7 @@
 import pytest
 import torch
 
-from forward_torch_function import attention
+from attn_torch_function import attention
 
 '''
 Flash Attention is batch operator that evaluates sm(QK')V

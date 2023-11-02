@@ -4,7 +4,7 @@ import pytest
 import torch
 
 import triton
-from forward_torch_function import attention
+from attn_torch_function import attention
 
 try:
     from flash_attn.flash_attn_interface import \
