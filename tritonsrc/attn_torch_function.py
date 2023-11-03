@@ -167,6 +167,8 @@ class _attention(torch.autograd.Function):
         dv = torch.empty_like(v)
         delta = torch.empty_like(L)
         do_scaled = torch.empty_like(do)
+        seqlen_q = q.shape[2]
+        seqlen_k = k.shape[2]
 
         # block size is (BLOCK_M, D_HEAD)
         bwd_preprocess[(do.shape[0] * do.shape[1] * triton.cdiv(do.shape[2], BLOCK), )](
@@ -195,10 +197,9 @@ class _attention(torch.autograd.Function):
                 q.stride(0), q.stride(1), q.stride(2), q.stride(3),
                 k.stride(0), k.stride(1), k.stride(2), k.stride(3),
                 v.stride(0), v.stride(1), v.stride(2), v.stride(3),
-                q.shape[0], q.shape[1], q.shape[2],
-                ctx.grid[0], # P_SEQ, unused
-                seqlen_q=q.shape[2],
-                seqlen_k=k.shape[2],
+                q.shape[0], q.shape[1],
+                seqlen_q=seqlen_q,
+                seqlen_k=seqlen_k,
                 BLOCK_M=BLOCK, BLOCK_N=BLOCK,
                 BLOCK_DMODEL=ctx.BLOCK_DMODEL, num_warps=4,
                 CAUSAL=ctx.causal,
@@ -214,7 +215,9 @@ class _attention(torch.autograd.Function):
                 q.stride(0), q.stride(1), q.stride(2), q.stride(3),
                 k.stride(0), k.stride(1), k.stride(2), k.stride(3),
                 v.stride(0), v.stride(1), v.stride(2), v.stride(3),
-                q.shape[0], q.shape[1], q.shape[2],
+                q.shape[0], q.shape[1],
+                seqlen_q=seqlen_q,
+                seqlen_k=seqlen_k,
                 BLOCK_M=BLOCK, BLOCK_N=BLOCK,
                 BLOCK_DMODEL=ctx.BLOCK_DMODEL, num_warps=4,
                 num_stages=1,
@@ -227,7 +230,9 @@ class _attention(torch.autograd.Function):
                 q.stride(0), q.stride(1), q.stride(2), q.stride(3),
                 k.stride(0), k.stride(1), k.stride(2), k.stride(3),
                 v.stride(0), v.stride(1), v.stride(2), v.stride(3),
-                q.shape[0], q.shape[1], q.shape[2],
+                q.shape[0], q.shape[1],
+                seqlen_q=seqlen_q,
+                seqlen_k=seqlen_k,
                 BLOCK_M=2*BLOCK, BLOCK_N=BLOCK,
                 BLOCK_DMODEL=ctx.BLOCK_DMODEL, num_warps=4, waves_per_eu=1,
                 num_stages=1,

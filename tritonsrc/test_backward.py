@@ -38,14 +38,14 @@ but in PyTorch API it does not present at all
                           #(4, 48, 16384, 64)
                           ])
 @pytest.mark.parametrize('causal', [False, True])
-# @pytest.mark.parametrize('causal', [False])
 @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
 @pytest.mark.parametrize('sm_scale', [1.0, 0.5, 0.0])
-@pytest.mark.parametrize('qseqlen_override', [None])
+@pytest.mark.parametrize('qseqlen_override', [None, 16])
 def test_op_bwd(Z, H, N_CTX, D_HEAD, causal, sm_scale, dtype, qseqlen_override):
     torch.manual_seed(20)
     qseqlen = N_CTX if qseqlen_override is None else qseqlen_override
     kseqlen = N_CTX
+    '''
     q = torch.empty((Z, H, qseqlen, D_HEAD), dtype=dtype, device="cuda").normal_(mean=0., std=0.5).requires_grad_()
     k = torch.empty((Z, H, kseqlen, D_HEAD), dtype=dtype, device="cuda").normal_(mean=0., std=0.5).requires_grad_()
     v = torch.empty((Z, H, kseqlen, D_HEAD), dtype=dtype, device="cuda").normal_(mean=0., std=0.5).requires_grad_()
@@ -56,15 +56,14 @@ def test_op_bwd(Z, H, N_CTX, D_HEAD, causal, sm_scale, dtype, qseqlen_override):
     q.requires_grad_()
     k.requires_grad_()
     v.requires_grad_()
-    '''
     if causal == False:
         split_kernel = False
     else: # split kernel only handles for causal=True
         split_kernel = True
+    '''
     dout = torch.randn_like(q)
     '''
     dout = torch.ones_like(q) * 0.5
-    '''
     # reference implementation
     M = torch.tril(torch.ones((qseqlen, kseqlen), device="cuda"))
     p = torch.matmul(q, k.transpose(2, 3)) * sm_scale
@@ -96,31 +95,6 @@ def test_op_bwd(Z, H, N_CTX, D_HEAD, causal, sm_scale, dtype, qseqlen_override):
         print(f'{tri_out[err_idx]=}')
         print(f'{ref_out[err_idx]=}')
     assert is_allclose
-    # dq_allclose = torch.allclose(ref_dq, tri_dq, atol=5e-2, rtol=0)
-    # FIXME: Need to raise tolerance
-    dq_allclose = torch.allclose(ref_dq, tri_dq, atol=0.1, rtol=RTOL)
-    # print(f'{tri_dv[0][0]=}')
-    # print(f'{ref_dv[0][0]=}')
-    # print(f'{tri_dv[0][0][:4, :4]=}')
-    # print(f'{ref_dv[0][0][:4, :4]=}')
-    # print(f'{tri_dk[0][0][:4, :4]=}')
-    # print(f'{ref_dk[0][0][:4, :4]=}')
-    if not dq_allclose:
-        import numpy as np
-        err_idx = np.unravel_index(torch.argmax(torch.abs(ref_dq - tri_dq)).cpu().numpy(), ref_dq.shape)
-        print(f'{err_idx=}')
-        # print(f'{tri_dq[err_idx]=}')
-        # print(f'{ref_dq[err_idx]=}')
-        print(f'{tri_dq[err_idx]=} {ref_dq[err_idx]=} error = {torch.abs(tri_dq[err_idx] - ref_dq[err_idx])}')
-        print(f'{tri_dq[0][0][:4, :4]=}')
-        print(f'{ref_dq[0][0][:4, :4]=}')
-        print(f'{tri_dq[0][0][31, :4]=}')
-        print(f'{ref_dq[0][0][31, :4]=}')
-        print(f'{tri_dq[0][0][32, :4]=}')
-        print(f'{ref_dq[0][0][32, :4]=}')
-        print(f'{tri_dq[0][0][49, :4]=}')
-        print(f'{ref_dq[0][0][49, :4]=}')
-    assert dq_allclose
     if False:
         qk_scale = sm_scale * 1.44269504
         qk = q[0,0] @ k[0,0].transpose(-1, -2)
@@ -154,7 +128,35 @@ def test_op_bwd(Z, H, N_CTX, D_HEAD, causal, sm_scale, dtype, qseqlen_override):
     if not dv_allclose:
         import numpy as np
         err_idx = np.unravel_index(torch.argmax(torch.abs(ref_dv - tri_dv)).cpu().numpy(), ref_dv.shape)
+        print(f'{q.shape=} {q.stride()=}')
+        print(f'{k.shape=} {k.stride()=}')
+        print(f'{v.shape=} {v.stride()=}')
         print(f'{err_idx=}')
         print(f'{tri_dv[err_idx]=}')
         print(f'{ref_dv[err_idx]=}')
     assert dv_allclose
+    # dq_allclose = torch.allclose(ref_dq, tri_dq, atol=5e-2, rtol=0)
+    # FIXME: Need to raise tolerance
+    dq_allclose = torch.allclose(ref_dq, tri_dq, atol=0.1, rtol=RTOL)
+    # print(f'{tri_dv[0][0]=}')
+    # print(f'{ref_dv[0][0]=}')
+    # print(f'{tri_dv[0][0][:4, :4]=}')
+    # print(f'{ref_dv[0][0][:4, :4]=}')
+    # print(f'{tri_dk[0][0][:4, :4]=}')
+    # print(f'{ref_dk[0][0][:4, :4]=}')
+    if not dq_allclose:
+        import numpy as np
+        err_idx = np.unravel_index(torch.argmax(torch.abs(ref_dq - tri_dq)).cpu().numpy(), ref_dq.shape)
+        print(f'{err_idx=}')
+        # print(f'{tri_dq[err_idx]=}')
+        # print(f'{ref_dq[err_idx]=}')
+        print(f'{tri_dq[err_idx]=} {ref_dq[err_idx]=} error = {torch.abs(tri_dq[err_idx] - ref_dq[err_idx])}')
+        print(f'{tri_dq[0][0][:4, :4]=}')
+        print(f'{ref_dq[0][0][:4, :4]=}')
+        print(f'{tri_dq[0][0][31, :4]=}')
+        print(f'{ref_dq[0][0][31, :4]=}')
+        print(f'{tri_dq[0][0][32, :4]=}')
+        print(f'{ref_dq[0][0][32, :4]=}')
+        print(f'{tri_dq[0][0][49, :4]=}')
+        print(f'{ref_dq[0][0][49, :4]=}')
+    assert dq_allclose

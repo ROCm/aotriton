@@ -25,7 +25,7 @@ class FlashAttention_attn_fwd(KernelDescription):
     ARGUMENT_CHOICES = {
             # frozenset(['Q', 'K', 'V', 'Out']) : ['*fp16:16', '*bf16:16'],
             frozenset(['Q', 'K', 'V', 'Out']) : ['*fp16:16', '*bf16:16'],
-            frozenset(['sm_scale']) : ['fp32:16'],
+            frozenset(['sm_scale']) : ['fp32'],
             frozenset(['M']) : ['*fp32:16'],
             frozenset(_pattern(ARGUMENTS, 'stride_')) : ['u64'],
             frozenset(['Z', 'H', 'seqlen_q', 'seqlen_k']) : ['u64'],
@@ -45,7 +45,7 @@ class FlashAttention_bwd_preprocess(KernelDescription):
         'D_HEAD',
     ]
     ARGUMENT_CHOICES = {
-        frozenset(['Out', 'DO', 'NewDO']) : ['*fp16:16'],
+        frozenset(['Out', 'DO', 'NewDO']) : ['*fp16:16', '*bf16:16'],
         frozenset(['Delta']) : ['*fp32:16'],
         frozenset(['BLOCK_M']) : [64, 128], # TODO: All possible values?
         frozenset(['D_HEAD']) : get_possible_types(FlashAttention_attn_fwd, 'BLOCK_DMODEL'),
@@ -54,30 +54,30 @@ class FlashAttention_bwd_preprocess(KernelDescription):
 
 # CAVEAT: Not well tested in trition
 # Backward must use split kernel
-class FlashAttention_bwd(KernelDescription):
+class FlashAttention_bwd_kernel(KernelDescription):
     ARGUMENTS = [
         'Q', 'K', 'V', 'sm_scale',
-        'Out', 'DO',
-        'DQ', 'DK', 'DV',
+        'Out', 'dO',
+        'dQ', 'dK', 'dV',
         'L', 'D',
         'stride_qz', 'stride_qh', 'stride_qm', 'stride_qk',
         'stride_kz', 'stride_kh', 'stride_kn', 'stride_kk',
         'stride_vz', 'stride_vh', 'stride_vk', 'stride_vn',
-        'Z', 'H', 'N_CTX', 'P_SEQ',
-        'num_block_q', 'num_block_kv',
-        'BLOCK_M'  # tl.constexpr starts here
+        'Z', 'H',
+        'seqlen_q', 'seqlen_k',
+        'BLOCK_M',  # tl.constexpr starts here
         'BLOCK_DMODEL',
         'BLOCK_N',
         'CAUSAL',
     ]
     ARGUMENT_CHOICES = {
             # frozenset(['Q', 'K', 'V', 'Out']) : ['*fp16:16', '*bf16:16'],
-            frozenset(['Q', 'K', 'V', 'Out', 'DQ', 'DK', 'DV']) : get_possible_types(FlashAttention_attn_fwd, 'Q'),
+            frozenset(['Q', 'K', 'V', 'Out', 'dO', 'dK', 'dV']) : get_possible_types(FlashAttention_attn_fwd, 'Q'),
             frozenset(['sm_scale']) : get_possible_types(FlashAttention_attn_fwd, 'sm_scale'),
-            frozenset(['L', 'D']) : ['*fp32:16'],
+            frozenset(['dQ', 'L', 'D']) : ['*fp32:16'],
             frozenset(_pattern(ARGUMENTS, 'stride_')) : ['u64'],
             # FIXME: type of num_block_q and num_block_kv
-            frozenset(['Z', 'H', 'N_CTX', 'P_SEQ', 'num_block_q', 'num_block_kv']) : ['u64'],
+            frozenset(['Z', 'H', 'seqlen_q', 'seqlen_k']) : ['u64'],
             frozenset(['BLOCK_M']) : [128],
             frozenset(['BLOCK_DMODEL']) : [16, 32, 64, 128],
             frozenset(['BLOCK_N']) : [64],
@@ -93,7 +93,8 @@ class FlashAttention_bwd_kernel_dk_dv(KernelDescription):
         'stride_qz', 'stride_qh', 'stride_qm', 'stride_qk',
         'stride_kz', 'stride_kh', 'stride_kn', 'stride_kk',
         'stride_vz', 'stride_vh', 'stride_vk', 'stride_vn',
-        'Z', 'H', 'N_CTX',
+        'Z', 'H',
+        'seqlen_q', 'seqlen_k',
         'BLOCK_M', # tl.constexpr starts here
         'BLOCK_DMODEL',
         'BLOCK_N',
@@ -105,38 +106,39 @@ class FlashAttention_bwd_kernel_dk_dv(KernelDescription):
         frozenset(['L', 'D']) : ['*fp32:16'],
         frozenset(_pattern(ARGUMENTS, 'stride_')) : ['u64'],
         # FIXME: type of num_block_q and num_block_kv
-        frozenset(['Z', 'H', 'N_CTX']) : ['u64'],
-        frozenset(['BLOCK_M']) : [64],
+        frozenset(['Z', 'H', 'seqlen_q', 'seqlen_k']) : ['u64'],
+        frozenset(['BLOCK_M']) : [16],
         frozenset(['BLOCK_DMODEL']) : [16, 32, 64, 128],
-        frozenset(['BLOCK_N']) : [64],
+        frozenset(['BLOCK_N']) : [16],
     }
     # TODO: num_warps=4, num_stages=1
     SHIM_KERNEL_NAME = 'bwd_kernel_dk_dv'
 
 class FlashAttention_bwd_kernel_dq(KernelDescription):
     ARGUMENTS = [
-        'Q', 'K', 'V', 'sm_scale', 'Out', 'DO',
-        'DQ',
+        'Q', 'K', 'V', 'sm_scale', 'Out', 'dO',
+        'dQ',
         'L', 'D',
         'stride_qz', 'stride_qh', 'stride_qm', 'stride_qk',
         'stride_kz', 'stride_kh', 'stride_kn', 'stride_kk',
         'stride_vz', 'stride_vh', 'stride_vk', 'stride_vn',
-        'Z', 'H', 'N_CTX',
+        'Z', 'H',
+        'seqlen_q', 'seqlen_k',
         'BLOCK_M', # tl.constexpr starts here
         'BLOCK_DMODEL',
         'BLOCK_N',
     ]
     match_fwd = lambda aname : get_possible_types(FlashAttention_attn_fwd, aname)
     ARGUMENT_CHOICES = {
-        frozenset(['Q', 'K', 'V', 'Out', 'DO', 'DQ']) : match_fwd('Q'),
+        frozenset(['Q', 'K', 'V', 'Out', 'dO', 'dQ']) : match_fwd('Q'),
         frozenset(['sm_scale']) : match_fwd( 'sm_scale'),
         frozenset(['L', 'D']) : ['*fp32:16'],
         frozenset(_pattern(ARGUMENTS, 'stride_')) : ['u64'],
         # FIXME: type of num_block_q and num_block_kv
-        frozenset(['Z', 'H', 'N_CTX']) : ['u64'],
-        frozenset(['BLOCK_M']) : [128],
-        frozenset(['BLOCK_DMODEL']) : [16, 32, 64, 128],
-        frozenset(['BLOCK_N']) : [64],
+        frozenset(['Z', 'H', 'seqlen_q', 'seqlen_k']) : ['u64'],
+        frozenset(['BLOCK_M']) : [32],
+        frozenset(['BLOCK_DMODEL']) : [16],
+        frozenset(['BLOCK_N']) : [16],
     }
     # TODO: num_warps=4, num_stages=1, waves_per_eu=1
     SHIM_KERNEL_NAME = 'bwd_kernel_dq'
@@ -144,6 +146,7 @@ class FlashAttention_bwd_kernel_dq(KernelDescription):
 kernels = [
     FlashAttention_attn_fwd('attn_fwd', 'tritonsrc/fused_attention_trimmed.py'),
     FlashAttention_bwd_preprocess('bwd_preprocess', 'tritonsrc/fused_attention_trimmed.py'),
+    FlashAttention_bwd_kernel('bwd_kernel', 'tritonsrc/fused_attention_trimmed.py'),
     FlashAttention_bwd_kernel_dk_dv('bwd_kernel_dk_dv', 'tritonsrc/fused_attention_trimmed.py'),
     FlashAttention_bwd_kernel_dq('bwd_kernel_dq', 'tritonsrc/fused_attention_trimmed.py'),
 ]
