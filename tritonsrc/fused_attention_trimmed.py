@@ -473,7 +473,7 @@ def bwd_kernel(
         vT_block_ptr = tl.advance(vT_block_ptr, (0, BLOCK_N))
         dKT_block_ptr = tl.advance(dKT_block_ptr, (0, BLOCK_N))
         dVT_block_ptr = tl.advance(dVT_block_ptr, (0, BLOCK_N))
-        dV_block_ptr = tl.advance(dV_block_ptr, (BLOCK_N, BLOCK_DMODEL))
+        dV_block_ptr = tl.advance(dV_block_ptr, (BLOCK_N, 0))
 
 @triton.jit
 def bwd_kernel_dk_dv(

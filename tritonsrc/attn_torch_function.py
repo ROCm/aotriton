@@ -167,17 +167,12 @@ class _attention(torch.autograd.Function):
         dv = torch.empty_like(v)
         delta = torch.empty_like(L)
         do_scaled = torch.empty_like(do)
-        # Figure out what BLOCK size fwd used and adjust num_blocks accordingly.
-        # If the two are the same, we don't need this but the bwd pass block size
-        # is smaller than the fwd so we need this scaling to ensure we loop over all
-        # values and don't skip some blocks. 
-        # Alternatively we could compute a new grid but this keeps it consistent
-        # with fwd and easier to reason about.
-        block_scale = (q.shape[2] // ctx.grid[0]) // BLOCK
-        bwd_preprocess[(ctx.grid[0] * ctx.grid[1], )](
+
+        # block size is (BLOCK_M, D_HEAD)
+        bwd_preprocess[(do.shape[0] * do.shape[1] * triton.cdiv(do.shape[2], BLOCK), )](
             o, do,
             do_scaled, delta,
-            BLOCK_M=block_scale * BLOCK, D_HEAD=ctx.BLOCK_DMODEL,
+            BLOCK_M=BLOCK, D_HEAD=ctx.BLOCK_DMODEL,
         )
         if not ctx.split_kernel:
             if True or VERBOSE:
@@ -200,7 +195,8 @@ class _attention(torch.autograd.Function):
                 q.stride(0), q.stride(1), q.stride(2), q.stride(3),
                 k.stride(0), k.stride(1), k.stride(2), k.stride(3),
                 v.stride(0), v.stride(1), v.stride(2), v.stride(3),
-                q.shape[0], q.shape[1], q.shape[2], block_scale * ctx.grid[0],
+                q.shape[0], q.shape[1], q.shape[2],
+                ctx.grid[0], # P_SEQ, unused
                 seqlen_q=q.shape[2],
                 seqlen_k=k.shape[2],
                 BLOCK_M=BLOCK, BLOCK_N=BLOCK,
@@ -210,7 +206,7 @@ class _attention(torch.autograd.Function):
             )
         else :
             dq = torch.zeros_like(q)
-            bwd_kernel_dk_dv[(block_scale * ctx.grid[0], ctx.grid[1])](
+            bwd_kernel_dk_dv[(triton.cdiv(q.shape[2], BLOCK), ctx.grid[1])](
                 q, k, v, ctx.sm_scale,
                 o, do_scaled,
                 dk, dv,
@@ -223,7 +219,7 @@ class _attention(torch.autograd.Function):
                 BLOCK_DMODEL=ctx.BLOCK_DMODEL, num_warps=4,
                 num_stages=1,
             )
-            bwd_kernel_dq[ctx.grid](
+            bwd_kernel_dq[(triton.cdiv(q.shape[2], 2 * BLOCK), q.shape[0] * q.shape[1])](
                 q, k, v, ctx.sm_scale,
                 o, do_scaled,
                 dq,
