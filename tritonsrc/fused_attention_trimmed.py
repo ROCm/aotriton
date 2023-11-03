@@ -198,7 +198,7 @@ def bwd_preprocess(
 
 
 @triton.jit
-def bwd_kernel(
+def bwd_kernel_old(
     Q, K, V, sm_scale,
     Out, DO,
     DQ, DK, DV,
@@ -207,7 +207,7 @@ def bwd_kernel(
     stride_kz, stride_kh, stride_kn, stride_kk,
     stride_vz, stride_vh, stride_vk, stride_vn,
     Z, H, N_CTX, P_SEQ,
-    num_block_q, num_block_kv,
+    seqlen_q, seqlen_k,
     BLOCK_M: tl.constexpr, BLOCK_DMODEL: tl.constexpr,
     BLOCK_N: tl.constexpr,
     CAUSAL: tl.constexpr,
@@ -215,7 +215,6 @@ def bwd_kernel(
     off_hz = tl.program_id(0)
     off_z = off_hz // H
     off_h = off_hz % H
-    qk_scale = sm_scale * 1.44269504
     # offset pointers for batch/head
     Q += off_z * stride_qz + off_h * stride_qh
     K += off_z * stride_kz + off_h * stride_kh
@@ -226,20 +225,20 @@ def bwd_kernel(
     DV += off_z * stride_vz + off_h * stride_vh
     # See fwd pass above for explanation.
     qk_scale = sm_scale * 1.44269504
-    for start_n in range(0, num_block_kv):
+    for start_n in range(0, seqlen_q, BLOCK_M):
         if CAUSAL:
-            lo = tl.math.max(start_n * BLOCK_M - P_SEQ, 0)
+            lo = tl.math.max(start_n - P_SEQ, 0)
         else:
             lo = 0
         # initialize row/col offsets
         offs_qm = lo + tl.arange(0, BLOCK_M)
-        offs_n = start_n * BLOCK_M + tl.arange(0, BLOCK_M)
+        offs_n = start_n + tl.arange(0, BLOCK_M)
         offs_m = tl.arange(0, BLOCK_N)
         offs_k = tl.arange(0, BLOCK_DMODEL)
         # initialize pointers to value-like data
         q_ptrs = Q + (offs_qm[:, None] * stride_qm + offs_k[None, :] * stride_qk)
         k_ptrs = K + (offs_n[:, None] * stride_kn + offs_k[None, :] * stride_kk)
-        v_ptrs = V + (offs_n[None, :] * stride_qm + offs_k[:, None] * stride_qk)
+        v_ptrs = V + (offs_n[None, :] * stride_vk + offs_k[:, None] * stride_vn)
         do_ptrs = DO + (offs_qm[:, None] * stride_qm + offs_k[None, :] * stride_qk)
         dq_ptrs = DQ + (offs_qm[:, None] * stride_qm + offs_k[None, :] * stride_qk)
         # pointer to row-wise quantities in value-like data
@@ -252,7 +251,7 @@ def bwd_kernel(
         k = tl.load(k_ptrs)
         v = tl.load(v_ptrs)
         # loop over rows
-        for start_m in range(lo, num_block_q * BLOCK_M, BLOCK_M):
+        for start_m in range(lo, seqlen_k, BLOCK_N):
             offs_m_curr = start_m + offs_m
             # load q, k, v, do on-chip
             q = tl.load(q_ptrs)
@@ -262,6 +261,10 @@ def bwd_kernel(
             else:
                 qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
             qk += tl.dot(q, tl.trans(k))
+            # qk += tl.dot(q, k)
+            # qk += (offs_qm[:, None] * stride_qm + offs_k[None, :] * stride_qk).to(tl.float16)
+            # qk += k
+            # tl.store(dq_ptrs, qk.to(DQ.dtype.element_ty))
             l_i = tl.load(l_ptrs + offs_m_curr)
             p = tl.math.exp2(qk * qk_scale - l_i[:, None])
             # compute dv
@@ -272,7 +275,7 @@ def bwd_kernel(
             dp = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32) - Di[:, None]
             dp += tl.dot(do, v)
             # compute ds = p * (dp - delta[:, None])
-            ds = p * dp * sm_scale
+            ds = p * dp * sm_scale # FIXME?
             # compute dk = dot(ds.T, q)
             dk += tl.dot(tl.trans(ds.to(Q.dtype.element_ty)), q)
             # compute dq
@@ -288,6 +291,189 @@ def bwd_kernel(
         dv_ptrs = DV + (offs_n[:, None] * stride_qm + offs_k[None, :] * stride_qk)
         tl.store(dk_ptrs, dk)
         tl.store(dv_ptrs, dv)
+        '''
+        '''
+
+@triton.jit
+def bwd_kernel(
+    Q, K, V, sm_scale,
+    Out, dO,
+    dQ, dK, dV,
+    L, D,
+    stride_qz, stride_qh, stride_qm, stride_qk,
+    stride_kz, stride_kh, stride_kn, stride_kk,
+    stride_vz, stride_vh, stride_vk, stride_vn,
+    Z, H, N_CTX, P_SEQ,
+    seqlen_q, seqlen_k,
+    BLOCK_M: tl.constexpr,
+    BLOCK_DMODEL: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    CAUSAL: tl.constexpr, # No support for Causal = True in fused kernel for now
+):
+    batch_index = tl.program_id(0)
+    qk_scale = sm_scale * 1.44269504
+    q_offset = batch_index * stride_qh
+    k_offset = batch_index * stride_kh
+    k_block_ptr = tl.make_block_ptr(
+        base=K + k_offset,
+        shape=(seqlen_k, BLOCK_DMODEL),
+        strides=(stride_kn, stride_kk),
+        offsets=(0, 0),
+        block_shape=(BLOCK_N, BLOCK_DMODEL),
+        order=(1, 0)
+    )
+    '''
+    kT_block_ptr = tl.make_block_ptr(
+        base=K + k_offset,
+        shape=(BLOCK_DMODEL, seqlen_k),
+        strides=(stride_kk, stride_kn),
+        offsets=(0, 0),
+        block_shape=(BLOCK_DMODEL, BLOCK_N),
+        order=(0, 1)
+    )
+    '''
+    v_offset = batch_index * stride_vh
+    vT_block_ptr = tl.make_block_ptr(
+        base=V + v_offset,
+        shape=(BLOCK_DMODEL, seqlen_k),
+        strides=(stride_vn, stride_vk),
+        offsets=(0, 0),
+        block_shape=(BLOCK_DMODEL, BLOCK_N),
+        order=(0, 1)
+    )
+    dKT_block_ptr = tl.make_block_ptr(
+        base=dK + k_offset,
+        shape=(BLOCK_DMODEL, seqlen_k),
+        strides=(stride_kk, stride_kn),
+        offsets=(0, 0),
+        block_shape=(BLOCK_DMODEL, BLOCK_N),
+        order=(0, 1)
+    )
+    dVT_block_ptr = tl.make_block_ptr(
+        base=dV + v_offset,
+        shape=(BLOCK_DMODEL, seqlen_k),
+        strides=(stride_vn, stride_vk),
+        offsets=(0, 0),
+        block_shape=(BLOCK_DMODEL, BLOCK_N),
+        order=(0, 1)
+    )
+    dV_block_ptr = tl.make_block_ptr(
+        base=dV + v_offset,
+        shape=(seqlen_k, BLOCK_DMODEL),
+        strides=(stride_vk, stride_vn),
+        offsets=(0, 0),
+        block_shape=(BLOCK_N, BLOCK_DMODEL),
+        order=(1, 0)
+    )
+    # L.shape = (q.shape[0] * q.shape[1], q.shape[2])
+    L_ptr = L + batch_index * seqlen_q
+    D_ptr = D + batch_index * seqlen_q
+    range_m = tl.arange(0, BLOCK_M)
+    # Note the backward partition tasks vertically
+    # For consistency with fwd kernel, this kernel keeps using BLOCK_M to partition Q and BLOCK_N for KV
+    for start_n in range(0, seqlen_k, BLOCK_N):
+        lo = 0 # Keeps this for future support of Causal
+        # dk = tl.zeros([BLOCK_N, BLOCK_DMODEL], dtype=tl.float32)
+        dkT = tl.zeros([BLOCK_DMODEL, BLOCK_N], dtype=tl.float32)
+        # dvT = tl.zeros([BLOCK_DMODEL, BLOCK_N], dtype=tl.float32)
+        dv = tl.zeros([BLOCK_N, BLOCK_DMODEL], dtype=tl.float32)
+        k = tl.load(k_block_ptr) # (BLOCK_N, BLOCK_DMODEL)
+        # kT = tl.load(kT_block_ptr) # (BLOCK_DMODEL, BLOCK_N)
+        vT = tl.load(vT_block_ptr) # (BLOCK_DMODEL, BLOCK_N)
+        Q_block_ptr = tl.make_block_ptr(
+            base=Q + q_offset,
+            shape=(seqlen_q, BLOCK_DMODEL),
+            strides=(stride_qm, stride_qk),
+            offsets=(0, 0),
+            block_shape=(BLOCK_M, BLOCK_DMODEL),
+            order=(1, 0)
+        )
+        QT_block_ptr = tl.make_block_ptr(
+            base=Q + q_offset,
+            shape=(BLOCK_DMODEL, seqlen_q),
+            strides=(stride_qk, stride_qm),
+            offsets=(0, 0),
+            block_shape=(BLOCK_DMODEL, BLOCK_M),
+            order=(0, 1),
+        )
+        dO_block_ptr = tl.make_block_ptr(
+            base=dO + q_offset,
+            shape=(seqlen_q, BLOCK_DMODEL),
+            strides=(stride_qm, stride_qk),
+            offsets=(0, 0),
+            block_shape=(BLOCK_M, BLOCK_DMODEL),
+            order=(1, 0)
+        )
+        # dO^T
+        # dOT_block_ptr = tl.make_block_ptr(
+        #     base=DO + q_offset,
+        #     shape=(BLOCK_DMODEL, seqlen_q),
+        #     strides=(stride_qk, stride_qm),
+        #     offsets=(0, 0),
+        #     block_shape=(BLOCK_DMODEL, BLOCK_M),
+        #     order=(0, 1)
+        # )
+        dQ_block_ptr = tl.make_block_ptr(
+            base=dQ + q_offset,
+            shape=(seqlen_q, BLOCK_DMODEL),
+            strides=(stride_qm, stride_qk),
+            offsets=(0, 0),
+            block_shape=(BLOCK_M, BLOCK_DMODEL),
+            order=(1, 0)
+        )
+        Q_block_ptr = tl.advance(Q_block_ptr, (lo, 0))
+        for start_m in range(lo, seqlen_q, BLOCK_M):
+            # ''' qk '''
+            # q = tl.load(Q_block_ptr) # (BLOCK_M, BLOCK_DMODEL)
+            # qkT = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
+            # qkT += tl.dot(q, kT) # (BLOCK_M, BLOCK_N)
+            ''' kq '''
+            qT = tl.load(QT_block_ptr) # (BLOCK_DMODEL, BLOCK_M)
+            kqT = tl.zeros([BLOCK_N, BLOCK_M], dtype=tl.float32)
+            kqT += tl.dot(k, qT) # (BLOCK_N, BLOCK_M)
+            # tl.store(dQ_block_ptr, kqT.to(dQ.dtype.element_ty)) # DEBUG
+
+            l_i = tl.load(L_ptr + start_m + range_m) # (BLOCK_M), l_i[:, None].shape = (BLOCK_M, 1)
+            # ''' dv^T '''
+            # p = tl.math.exp2(qkT * qk_scale - l_i[:, None]) # (BLOCK_M, BLOCK_N)
+            # doT = tl.load(DOT_block_ptr) # (BLOCK_DMODEL, BLOCK_M)
+            # dvT += tl.dot(doT, p) # dV += P^T dO => dV^T += dO^T P, (BLOCK_DMODEL, BLOCK_N)
+            ''' dV '''
+            pT = tl.math.exp2(kqT * qk_scale - l_i[None, :]) # (BLOCK_N, BLOCK_M)
+            do = tl.load(dO_block_ptr) # (BLOCK_M, BLOCK_DMODEL)
+            dv += tl.dot(pT.to(do.type.element_ty), do) # (BLOCK_N, BLOCK_DMODEL)
+            # dv += 1.0 # DEBUG
+            # tl.store(dVT_block_ptr, dv.to(dV.type.element_ty)) # DEBUG
+            # dp^T
+            # Di = tl.load(D_ptr + range_m) # (BLOCK_M), Di[None, :].shape = (1, BLOCK_M)
+            # dpT = tl.zeros([BLOCK_N, BLOCK_M], dtype=tl.float32) - Di[None, :]
+            # dpT += tl.dot(v, doT) # (BLOCK_N, BLOCK_M)
+            ''' dp and p '''
+            Di = tl.load(D_ptr + start_m + range_m) # (BLOCK_M), Di[:, None].shape = (BLOCK_M, 1)
+            dp = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32) - Di[:, None]
+            dp += tl.dot(do, vT) # (BLOCK_M, BLOCK_N)
+            p = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
+            p += tl.trans(pT)
+            # ds^T
+            ds = p * dp * sm_scale
+            # ''' dk = dot(ds.T, q) '''
+            # dk += tl.dot(tl.trans(ds.to(Q.dtype.element_ty)), q)
+            ''' dkT = qT . ds '''
+            dkT += tl.dot(qT.to(ds.type.element_ty), ds)
+            dq = tl.load(dQ_block_ptr)
+            dq += tl.dot(ds.to(Q.dtype.element_ty), k)
+            tl.store(dQ_block_ptr, dq)
+            # Q_block_ptr = tl.advance(Q_block_ptr, (BLOCK_M, 0))
+            QT_block_ptr = tl.advance(QT_block_ptr, (0, BLOCK_M))
+            dQ_block_ptr = tl.advance(dQ_block_ptr, (BLOCK_M, 0))
+            dO_block_ptr = tl.advance(dO_block_ptr, (BLOCK_M, 0))
+        tl.store(dKT_block_ptr, dkT.to(K.type.element_ty))
+        tl.store(dV_block_ptr, dv.to(dV.type.element_ty))
+        k_block_ptr = tl.advance(k_block_ptr, (BLOCK_N, 0))
+        vT_block_ptr = tl.advance(vT_block_ptr, (0, BLOCK_N))
+        dKT_block_ptr = tl.advance(dKT_block_ptr, (0, BLOCK_N))
+        dVT_block_ptr = tl.advance(dVT_block_ptr, (0, BLOCK_N))
+        dV_block_ptr = tl.advance(dV_block_ptr, (BLOCK_N, BLOCK_DMODEL))
 
 @triton.jit
 def bwd_kernel_dk_dv(

@@ -4,7 +4,7 @@ import torch
 import triton
 import triton.language as tl
 from fused_attention_trimmed import attn_fwd as bare_attn_fwd
-from fused_attention_trimmed import bwd_preprocess, bwd_kernel_dk_dv, bwd_kernel_dq
+from fused_attention_trimmed import bwd_preprocess, bwd_kernel, bwd_kernel_dk_dv, bwd_kernel_dq
 
 VERBOSE=False
 
@@ -129,7 +129,9 @@ class _attention(torch.autograd.Function):
                 seqlen_k=k.shape[2],
                 BLOCK_DMODEL=Lk,
                 STAGE=stage,
-                BLOCK_M=min(128, q.shape[2], k.shape[2]), BLOCK_N=32, pre_load_v=False
+                BLOCK_M=min(128, q.shape[2], k.shape[2]),
+                BLOCK_N=min(32, q.shape[3], k.shape[3]),
+                pre_load_v=False
             )
 
         ctx.autotune = autotune
@@ -157,6 +159,8 @@ class _attention(torch.autograd.Function):
         else:
             BLOCK = 128
         q, k, v, o, L = ctx.saved_tensors
+        if q.shape[-1] < 32:
+            BLOCK = 16
         do = do.contiguous()
         dq = torch.zeros_like(q, dtype=torch.float32)
         dk = torch.empty_like(k)
@@ -176,6 +180,18 @@ class _attention(torch.autograd.Function):
             BLOCK_M=block_scale * BLOCK, D_HEAD=ctx.BLOCK_DMODEL,
         )
         if not ctx.split_kernel:
+            if True or VERBOSE:
+                print(f'{q.shape=} {q.stride()=}')
+                print(f'{k.shape=} {k.stride()=}')
+                print(f'{v.shape=} {v.stride()=}')
+                print(f'{o.shape=} {o.stride()=}')
+                print(f'{dq.shape=} {dq.stride()=}')
+                print(f'{dk.shape=} {dk.stride()=}')
+                print(f'{dv.shape=} {dv.stride()=}')
+                print(f'{do.shape=} {do.stride()=}')
+                print(f'{L=}')
+                print(f'{delta=}')
+            print(f'{ctx.grid[1]=}')
             bwd_kernel[(ctx.grid[1],)](
                 q, k, v, ctx.sm_scale,
                 o, do_scaled,
@@ -185,6 +201,8 @@ class _attention(torch.autograd.Function):
                 k.stride(0), k.stride(1), k.stride(2), k.stride(3),
                 v.stride(0), v.stride(1), v.stride(2), v.stride(3),
                 q.shape[0], q.shape[1], q.shape[2], block_scale * ctx.grid[0],
+                seqlen_q=q.shape[2],
+                seqlen_k=k.shape[2],
                 BLOCK_M=BLOCK, BLOCK_N=BLOCK,
                 BLOCK_DMODEL=ctx.BLOCK_DMODEL, num_warps=4,
                 CAUSAL=ctx.causal,
