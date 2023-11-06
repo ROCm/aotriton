@@ -130,7 +130,7 @@ class _attention(torch.autograd.Function):
                 BLOCK_DMODEL=Lk,
                 STAGE=stage,
                 BLOCK_M=min(128, q.shape[2], k.shape[2]),
-                BLOCK_N=min(32, q.shape[3], k.shape[3]),
+                BLOCK_N=min(32, q.shape[2], k.shape[2]),
                 pre_load_v=False
             )
 
@@ -161,8 +161,7 @@ class _attention(torch.autograd.Function):
         else:
             BLOCK = 128
         q, k, v, o, L = ctx.saved_tensors
-        if q.shape[-1] < 32:
-            BLOCK = 16
+        # if q.shape[-1] <= 32:
         do = do.contiguous()
         dq = torch.zeros_like(q, dtype=torch.float32)
         dk = torch.empty_like(k)
@@ -171,6 +170,7 @@ class _attention(torch.autograd.Function):
         do_scaled = torch.empty_like(do)
         seqlen_q = q.shape[2]
         seqlen_k = k.shape[2]
+        BLOCK = min(seqlen_q, seqlen_k, q.shape[-1])
 
         # block size is (BLOCK_M, D_HEAD)
         bwd_preprocess[(do.shape[0] * do.shape[1] * triton.cdiv(do.shape[2], BLOCK), )](
@@ -178,18 +178,19 @@ class _attention(torch.autograd.Function):
             do_scaled, delta,
             BLOCK_M=BLOCK, D_HEAD=ctx.BLOCK_DMODEL,
         )
+        if True or VERBOSE:
+            print(f'{q.shape=} {q.stride()=}')
+            print(f'{k.shape=} {k.stride()=}')
+            print(f'{v.shape=} {v.stride()=}')
+            print(f'{o.shape=} {o.stride()=}')
+            print(f'{dq.shape=} {dq.stride()=}')
+            print(f'{dk.shape=} {dk.stride()=}')
+            print(f'{dv.shape=} {dv.stride()=}')
+            print(f'{do.shape=} {do.stride()=}')
+            print(f'{L=}')
+            print(f'{delta=}')
+            print(f'{BLOCK=}')
         if not ctx.split_kernel:
-            if True or VERBOSE:
-                print(f'{q.shape=} {q.stride()=}')
-                print(f'{k.shape=} {k.stride()=}')
-                print(f'{v.shape=} {v.stride()=}')
-                print(f'{o.shape=} {o.stride()=}')
-                print(f'{dq.shape=} {dq.stride()=}')
-                print(f'{dk.shape=} {dk.stride()=}')
-                print(f'{dv.shape=} {dv.stride()=}')
-                print(f'{do.shape=} {do.stride()=}')
-                print(f'{L=}')
-                print(f'{delta=}')
             print(f'{ctx.grid[1]=}')
             bwd_kernel[(ctx.grid[1],)](
                 q, k, v, ctx.sm_scale,
@@ -208,6 +209,7 @@ class _attention(torch.autograd.Function):
                 num_stages=1,
             )
         else :
+            print(f'{BLOCK=}')
             dq = torch.zeros_like(q)
             bwd_kernel_dk_dv[(triton.cdiv(q.shape[2], BLOCK), ctx.grid[1])](
                 q, k, v, ctx.sm_scale,
@@ -235,7 +237,7 @@ class _attention(torch.autograd.Function):
                 q.shape[0], q.shape[1],
                 seqlen_q=seqlen_q,
                 seqlen_k=seqlen_k,
-                BLOCK_M=2*BLOCK, BLOCK_N=BLOCK,
+                BLOCK_M=min(seqlen_q, 2*BLOCK), BLOCK_N=BLOCK,
                 BLOCK_DMODEL=ctx.BLOCK_DMODEL, num_warps=4, waves_per_eu=1,
                 num_stages=1,
             )

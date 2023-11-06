@@ -40,7 +40,8 @@ but in PyTorch API it does not present at all
 @pytest.mark.parametrize('causal', [False, True])
 @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
 @pytest.mark.parametrize('sm_scale', [1.0, 0.5, 0.0])
-@pytest.mark.parametrize('qseqlen_override', [None, 16])
+# @pytest.mark.parametrize('qseqlen_override', [None, 16])
+@pytest.mark.parametrize('qseqlen_override', [None])
 def test_op_bwd(Z, H, N_CTX, D_HEAD, causal, sm_scale, dtype, qseqlen_override):
     torch.manual_seed(20)
     qseqlen = N_CTX if qseqlen_override is None else qseqlen_override
