@@ -137,8 +137,10 @@ class _attention(torch.autograd.Function):
         ctx.autotune = autotune
         if autotune:
             ## restore the grid for bwd kernel
-            best_config = attn_fwd.get_best_config(N_CTX = q.shape[2], STAGE = stage)
-            block_m = int(ctx.best_config.__str__().split(",")[0].split("BLOCK_M:")[1])
+            best_config = tuned_attn_fwd.get_best_config(seqlen_q = q.shape[2],
+                                                         seqlen_k = k.shape[2],
+                                                         STAGE = stage)
+            block_m = int(best_config.__str__().split(",")[0].split("BLOCK_M:")[1])
         else:
             block_m = min(128, q.shape[2], k.shape[2])
         grid = (triton.cdiv(q.shape[2], block_m), q.shape[0] * q.shape[1], 1)
@@ -238,6 +240,6 @@ class _attention(torch.autograd.Function):
                 num_stages=1,
             )
         # print(h.asm["ttgir"])
-        return dq, dk, dv, None, None, None
+        return dq, dk, dv, None, None, None, None
 
 attention = _attention.apply

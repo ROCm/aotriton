@@ -23,8 +23,6 @@ BATCH, N_HEADS, N_CTX, D_HEAD = 4, 48, 4096, 64
 configs = []
 for mode in ['fwd']:
     for causal in [False, True]:
-        if mode == 'bwd' and causal == False:
-            continue
         configs.append(triton.testing.Benchmark(
             x_names=['N_CTX'],
             x_vals=[2**i for i in range(10, 15)],
@@ -54,8 +52,7 @@ def bench_flash_attention(BATCH, H, N_CTX, D_HEAD, causal, mode, provider, dtype
     split_kernel = False
     # Bwd pass only supports causal=True right now
     if mode == 'bwd':
-        causal = True
-        split_kernel = True
+        split_kernel = True if causal else split_kernel
     if provider == "triton":
         q = torch.randn((BATCH, H, N_CTX, D_HEAD), dtype=dtype, device="cuda", requires_grad=True)
         k = torch.randn((BATCH, H, N_CTX, D_HEAD), dtype=dtype, device="cuda", requires_grad=True)
