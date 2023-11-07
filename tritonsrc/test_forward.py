@@ -35,7 +35,8 @@ but in PyTorch API it does not present at all
 @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
 @pytest.mark.parametrize('sm_scale', [0.5, 0.0])
 @pytest.mark.parametrize('qseqlen_override', [None, 512])
-def test_op_fwd(Z, H, N_CTX, D_HEAD, causal, sm_scale, dtype, qseqlen_override):
+@pytest.mark.parametrize('dropout_p', [0.0, 0.3])
+def test_op_fwd(Z, H, N_CTX, D_HEAD, causal, sm_scale, dropout_p, dtype, qseqlen_override):
     torch.manual_seed(20)
     qseqlen = N_CTX if qseqlen_override is None else qseqlen_override
     kseqlen = N_CTX
@@ -66,12 +67,23 @@ def test_op_fwd(Z, H, N_CTX, D_HEAD, causal, sm_scale, dtype, qseqlen_override):
     ref_out = torch.matmul(p, v)
     '''
     # triton implementation
-    out_ref = torch.ops.aten._scaled_dot_product_attention_math(q, k, v, dropout_p=0.0, is_causal=causal, scale=sm_scale)[0]
-    tri_out = attention(q, k, v, causal, sm_scale)
+    unmasked_out_ref = torch.ops.aten._scaled_dot_product_attention_math(q, k, v,
+                                                                         dropout_p=0.0,
+                                                                         is_causal=causal,
+                                                                         scale=sm_scale)[0]
+    tri_out, dropout_mask = attention(q, k, v, causal, sm_scale, dropout_p, True)
+    if dropout_p > 0:
+        out_ref = (unmasked_out_ref * dropout_mask) / (1 - dropout_p)
+    else:
+        out_ref = unmasked_out_ref
     print(f'{q.shape=} {q.stride()=}')
     print(f'{k.shape=} {k.stride()=}')
     print(f'{v.shape=} {v.stride()=}')
-    is_allclose = torch.allclose(out_ref, tri_out, atol=1e-2, rtol=0)
+    if dropout_p > 0 and dtype==torch.bfloat16:
+        ATOL = 1e-1
+    else:
+        ATOL = 1e-2
+    is_allclose = torch.allclose(out_ref, tri_out, atol=ATOL, rtol=0)
     if not is_allclose:
         import numpy as np
         err_idx = np.unravel_index(torch.argmax(torch.abs(out_ref - tri_out)).cpu().numpy(), out_ref.shape)
@@ -82,6 +94,10 @@ def test_op_fwd(Z, H, N_CTX, D_HEAD, causal, sm_scale, dtype, qseqlen_override):
         print(f'{err_idx=}')
         print(f'{tri_out[err_idx]=}')
         print(f'{out_ref[err_idx]=}')
+        if dropout_p > 0:
+            print(f'{unmasked_out_ref[0][0][0][:]=}')
+            print(f'{dropout_mask[0][0][0][:]=}')
+            print(f'{dropout_mask[err_idx]=}')
         # tri_cpu = tri_out[0, 0].cpu().detach().numpy()
         # print(f'{tri_cpu.shape=}')
     # compare

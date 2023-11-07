@@ -68,7 +68,8 @@ def tuned_attn_fwd(
 class _attention(torch.autograd.Function):
 
     @staticmethod
-    def forward(ctx, q, k, v, causal, sm_scale, split_kernel=False, autotune=False):
+    def forward(ctx, q, k, v, causal, sm_scale, dropout_p, return_dropout_mask,
+                split_kernel=False, autotune=False):
         # shape constraints
         Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
         assert Lq == Lk and Lk == Lv
@@ -87,7 +88,8 @@ class _attention(torch.autograd.Function):
             1
         )
         M = torch.empty((q.shape[0] * q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)
-        if VERBOSE:
+        dropout_mask = torch.empty_like(o) if dropout_p > 0.0 and return_dropout_mask else torch.empty((0), device=q.device, dtype=q.dtype)
+        if True or VERBOSE:
             print(f'{q.shape=}')
             print(f'{k.shape=}')
             print(f'{v.shape=}')
@@ -103,6 +105,10 @@ class _attention(torch.autograd.Function):
             print(f'{v.data_ptr()=:x}')
             print(f'{v.stride(1)=:x}')
             print(f'{v.data_ptr() + q.shape[0] * q.shape[1] * v.stride(1)=:x}')
+            print(f'{dropout_mask.shape=} {dropout_mask.dtype=}')
+
+        philox_seed = 114514
+        philox_offset = 1919810
 
         if autotune:
             tuned_attn_fwd[grid](
@@ -114,6 +120,13 @@ class _attention(torch.autograd.Function):
                 q.shape[0], q.shape[1],
                 seqlen_q=q.shape[2],
                 seqlen_k=k.shape[2],
+                dropout_p=dropout_p,
+                philox_seed=philox_seed,
+                philox_offset=philox_offset,
+                size_qz=q.size(0), size_qh=q.size(1), size_qm=q.size(2), size_qk=q.size(3),
+                debug_dropout_mask=dropout_mask,
+                ENABLE_DROPOUT=dropout_p > 0.0,
+                RETURN_DEBUG_MASK=return_dropout_mask,
                 BLOCK_DMODEL=Lk,
                 STAGE=stage,
             )
@@ -127,6 +140,14 @@ class _attention(torch.autograd.Function):
                 q.shape[0], q.shape[1],
                 seqlen_q=q.shape[2],
                 seqlen_k=k.shape[2],
+                dropout_p=dropout_p,
+                philox_seed=philox_seed,
+                philox_offset=philox_offset,
+                size_qz=q.size(0), size_qh=q.size(1), size_qm=q.size(2), size_qk=q.size(3),
+                debug_dropout_mask=dropout_mask,
+                ENABLE_DROPOUT=dropout_p > 0.0,
+                DROPOUT_TRAINING=True,
+                RETURN_DEBUG_MASK=return_dropout_mask,
                 BLOCK_DMODEL=Lk,
                 STAGE=stage,
                 BLOCK_M=min(128, q.shape[2], k.shape[2]),
@@ -150,7 +171,12 @@ class _attention(torch.autograd.Function):
         ctx.BLOCK_DMODEL = Lk
         ctx.causal = causal
         ctx.split_kernel = split_kernel
-        return o
+        ctx.philox_seed = philox_seed
+        ctx.philox_offset = philox_offset
+        if dropout_p > 0.0 and return_dropout_mask:
+            return o, dropout_mask
+        else:
+            return o, None
 
     @staticmethod
     def backward(ctx, do):
@@ -242,6 +268,6 @@ class _attention(torch.autograd.Function):
                 num_stages=1,
             )
         # print(h.asm["ttgir"])
-        return dq, dk, dv, None, None, None, None
+        return dq, dk, dv, None, None, None, None, None, None
 
 attention = _attention.apply

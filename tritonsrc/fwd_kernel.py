@@ -87,6 +87,14 @@ def attn_fwd(
     Z, H,
     seqlen_q,
     seqlen_k,
+    dropout_p,
+    philox_seed,
+    philox_offset,
+    size_qz, size_qh, size_qm, size_qk,
+    debug_dropout_mask,
+    ENABLE_DROPOUT: tl.constexpr,
+    DROPOUT_TRAINING: tl.constexpr,
+    RETURN_DEBUG_MASK: tl.constexpr,
     STAGE: tl.constexpr,
     BLOCK_M: tl.constexpr,
     BLOCK_DMODEL: tl.constexpr,
@@ -174,6 +182,30 @@ def attn_fwd(
         block_shape=(BLOCK_M, BLOCK_DMODEL),
         order=(1, 0)
     )
-    tl.store(O_block_ptr, acc.to(Out.type.element_ty))
+    if ENABLE_DROPOUT:
+        ms = tl.arange(0, BLOCK_M) + start_m * BLOCK_M
+        ns = tl.arange(0, BLOCK_DMODEL)
+        # start_m = tl.program_id(0)
+        # off_hz = tl.program_id(1)
+        rng_offsets = off_hz * size_qm + ms[:, None] * size_qk + ns[None, :]
+        rng_output = tl.rand(philox_seed, philox_offset + rng_offsets)
+        rng_keep = rng_output > dropout_p
+        if DROPOUT_TRAINING:
+            output = tl.where(rng_keep, acc / (1 - dropout_p), 0.0)
+        else:
+            output = tl.where(rng_keep, acc, 0.0)
+        tl.store(O_block_ptr, output.to(Out.type.element_ty))
+        if RETURN_DEBUG_MASK:
+            mask_block_ptr = tl.make_block_ptr(
+                base=debug_dropout_mask + o_offset,
+                shape=(seqlen_q, BLOCK_DMODEL),
+                strides=(stride_om, stride_on),
+                offsets=(start_m * BLOCK_M, 0),
+                block_shape=(BLOCK_M, BLOCK_DMODEL),
+                order=(1, 0)
+            )
+            tl.store(mask_block_ptr, rng_keep.to(tl.float16).to(debug_dropout_mask.type.element_ty))
+    else:
+        tl.store(O_block_ptr, acc.to(Out.type.element_ty))
 
 
