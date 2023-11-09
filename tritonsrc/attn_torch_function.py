@@ -68,7 +68,7 @@ def tuned_attn_fwd(
 class _attention(torch.autograd.Function):
 
     @staticmethod
-    def forward(ctx, q, k, v, causal, sm_scale, dropout_p, return_dropout_mask,
+    def forward(ctx, q, k, v, causal, sm_scale, dropout_p, return_encoded_softmax,
                 split_kernel=False, autotune=False):
         # shape constraints
         Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
@@ -88,7 +88,10 @@ class _attention(torch.autograd.Function):
             1
         )
         M = torch.empty((q.shape[0] * q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)
-        dropout_mask = torch.empty_like(o) if dropout_p > 0.0 and return_dropout_mask else torch.empty((0), device=q.device, dtype=q.dtype)
+        if return_encoded_softmax:
+            encoded_softmax = torch.empty((q.shape[0], q.shape[1], q.shape[2], k.shape[2]), device=q.device, dtype=torch.float32)
+        else:
+            encoded_softmax = None
         if True or VERBOSE:
             print(f'{q.shape=}')
             print(f'{k.shape=}')
@@ -105,7 +108,7 @@ class _attention(torch.autograd.Function):
             print(f'{v.data_ptr()=:x}')
             print(f'{v.stride(1)=:x}')
             print(f'{v.data_ptr() + q.shape[0] * q.shape[1] * v.stride(1)=:x}')
-            print(f'{dropout_mask.shape=} {dropout_mask.dtype=}')
+            print(f'{encoded_softmax.shape=} {encoded_softmax.dtype=}')
 
         philox_seed = 114514
         philox_offset = 1919810
@@ -122,11 +125,10 @@ class _attention(torch.autograd.Function):
                 seqlen_k=k.shape[2],
                 dropout_p=dropout_p,
                 philox_seed=philox_seed,
-                philox_offset=philox_offset,
-                size_qz=q.size(0), size_qh=q.size(1), size_qm=q.size(2), size_qk=q.size(3),
-                debug_dropout_mask=dropout_mask,
+                philox_offset_base=philox_offset,
+                encoded_softmax=encoded_softmax,
                 ENABLE_DROPOUT=dropout_p > 0.0,
-                RETURN_DEBUG_MASK=return_dropout_mask,
+                RETURN_ENCODED_SOFTMAX=encoded_softmax is not None,
                 BLOCK_DMODEL=Lk,
                 STAGE=stage,
             )
@@ -142,17 +144,15 @@ class _attention(torch.autograd.Function):
                 seqlen_k=k.shape[2],
                 dropout_p=dropout_p,
                 philox_seed=philox_seed,
-                philox_offset=philox_offset,
-                size_qz=q.size(0), size_qh=q.size(1), size_qm=q.size(2), size_qk=q.size(3),
-                debug_dropout_mask=dropout_mask,
-                ENABLE_DROPOUT=dropout_p > 0.0,
-                DROPOUT_TRAINING=True,
-                RETURN_DEBUG_MASK=return_dropout_mask,
-                BLOCK_DMODEL=Lk,
+                philox_offset_base=philox_offset,
+                encoded_softmax=encoded_softmax,
                 STAGE=stage,
                 BLOCK_M=min(128, q.shape[2], k.shape[2]),
+                BLOCK_DMODEL=Lk,
                 BLOCK_N=min(32, q.shape[2], k.shape[2]),
-                pre_load_v=False
+                pre_load_v=False,
+                ENABLE_DROPOUT=dropout_p > 0.0,
+                RETURN_ENCODED_SOFTMAX=encoded_softmax is not None,
             )
 
         ctx.autotune = autotune
@@ -173,13 +173,10 @@ class _attention(torch.autograd.Function):
         ctx.split_kernel = split_kernel
         ctx.philox_seed = philox_seed
         ctx.philox_offset = philox_offset
-        if dropout_p > 0.0 and return_dropout_mask:
-            return o, dropout_mask
-        else:
-            return o, None
+        return o, encoded_softmax
 
     @staticmethod
-    def backward(ctx, do):
+    def backward(ctx, do, _):
         if ctx.split_kernel and not ctx.causal:
             assert False
         if torch.version.hip is not None:
