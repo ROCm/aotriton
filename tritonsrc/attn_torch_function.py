@@ -112,6 +112,8 @@ class _attention(torch.autograd.Function):
 
         philox_seed = 114514
         philox_offset = 1919810
+        MAX_BLOCK_M = 128 if dropout_p == 0 else 64
+        MAX_BLOCK_N = 32 if dropout_p == 0 else 32
 
         if autotune:
             tuned_attn_fwd[grid](
@@ -147,9 +149,9 @@ class _attention(torch.autograd.Function):
                 philox_offset_base=philox_offset,
                 encoded_softmax=encoded_softmax,
                 STAGE=stage,
-                BLOCK_M=min(128, q.shape[2], k.shape[2]),
+                BLOCK_M=min(MAX_BLOCK_M, q.shape[2], k.shape[2]),
                 BLOCK_DMODEL=Lk,
-                BLOCK_N=min(32, q.shape[2], k.shape[2]),
+                BLOCK_N=min(MAX_BLOCK_N, q.shape[2], k.shape[2]),
                 pre_load_v=False,
                 ENABLE_DROPOUT=dropout_p > 0.0,
                 RETURN_ENCODED_SOFTMAX=encoded_softmax is not None,

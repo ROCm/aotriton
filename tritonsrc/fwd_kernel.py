@@ -27,9 +27,9 @@ def dropout_mask(philox_seed, philox_offset, dropout_p, m, n, stride):
     rng_offsets = philox_offset + ms[:, None] * stride + ns[None, :]
     # TODO: use tl.randint for better performance
     rng_output = tl.rand(philox_seed, philox_offset + rng_offsets)
-    # rng_keep = rng_output > dropout_p
+    rng_keep = rng_output > dropout_p
     # rng_keep = rng_output > -1 # DEBUG
-    rng_keep = ms[:, None] * stride + ns[None, :] > 0 # DEBUG2
+    # rng_keep = ms[:, None] * stride + ns[None, :] > 0 # DEBUG2
     return rng_keep
     # return tl.where(rng_keep, x / (1 - dropout_p), 0.0)
 
@@ -100,8 +100,6 @@ def attn_fwd_inner(
             p = tl.where(keep, p, 0.0)
         elif RETURN_ENCODED_SOFTMAX:
             tl.store(encoded_softmax_block_ptr, p)
-        else:
-            p = p
         # -- update output accumulator --
         alpha = tl.math.exp2(m_i - m_ij)
         acc = acc * alpha[:, None]
@@ -191,20 +189,22 @@ def attn_fwd(
     # stage 1: off-band
     # For causal = True, STAGE = 3 and attn_fwd_inner gets 1 as its STAGE
     # For causal = False, STAGE = 1, and attn_fwd_inner gets 3 as its STAGE
+    if ENABLE_DROPOUT:
+        batch_philox_offset = philox_offset_base + off_hz * seqlen_q * seqlen_k
+    else:
+        batch_philox_offset = 0
+    if RETURN_ENCODED_SOFTMAX:
+        encoded_softmax_block_ptr = tl.make_block_ptr(
+                base=encoded_softmax + off_hz * seqlen_q * seqlen_k,
+                shape=(seqlen_q, seqlen_k),
+                strides=(seqlen_k, 1),
+                offsets=(start_m * BLOCK_M, 0),
+                block_shape=(BLOCK_M, BLOCK_N),
+                order=(1, 0)
+                )
+    else:
+        encoded_softmax_block_ptr = 0
     if STAGE & 1:
-        if ENABLE_DROPOUT:
-            batch_philox_offset = philox_offset_base + off_hz * seqlen_q * seqlen_k
-            encoded_softmax_block_ptr = tl.make_block_ptr(
-                    base=encoded_softmax + off_hz * seqlen_q * seqlen_k,
-                    shape=(seqlen_q, seqlen_k),
-                    strides=(seqlen_k, 1),
-                    offsets=(start_m * BLOCK_M, 0),
-                    block_shape=(BLOCK_M, BLOCK_N),
-                    order=(1, 0)
-                    )
-        else:
-            batch_philox_offset = 0
-            encoded_softmax_block_ptr = 0
         acc, l_i, m_i = attn_fwd_inner(
             acc, l_i, m_i, q, K_block_ptr, V_block_ptr,
             start_m, seqlen_q, seqlen_k,
@@ -216,19 +216,6 @@ def attn_fwd(
             RETURN_ENCODED_SOFTMAX)
     # stage 2: on-band
     if STAGE & 2:
-        if ENABLE_DROPOUT:
-            batch_philox_offset = philox_offset_base + off_hz * seqlen_q * seqlen_k
-            encoded_softmax_block_ptr = tl.make_block_ptr(
-                    base=encoded_softmax + off_hz * seqlen_q * seqlen_k,
-                    shape=(seqlen_q, seqlen_k),
-                    strides=(seqlen_k, 1),
-                    offsets=(start_m * BLOCK_M, 0),
-                    block_shape=(BLOCK_M, BLOCK_N),
-                    order=(1, 0)
-                    )
-        else:
-            batch_philox_offset = 0
-            encoded_softmax_block_ptr = 0
         # barrier makes it easier for compielr to schedule the
         # two loops independently
         tl.debug_barrier()
