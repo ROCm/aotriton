@@ -173,8 +173,10 @@ class _attention(torch.autograd.Function):
         ctx.BLOCK_DMODEL = Lk
         ctx.causal = causal
         ctx.split_kernel = split_kernel
+        ctx.dropout_p = dropout_p
         ctx.philox_seed = philox_seed
         ctx.philox_offset = philox_offset
+        ctx.encoded_softmax = encoded_softmax # FIXME: for debugging only
         return o, encoded_softmax
 
     @staticmethod
@@ -195,7 +197,8 @@ class _attention(torch.autograd.Function):
         do_scaled = torch.empty_like(do)
         seqlen_q = q.shape[2]
         seqlen_k = k.shape[2]
-        BLOCK = min(seqlen_q, seqlen_k, q.shape[-1])
+        MAX_BLOCK = 64 if ctx.dropout_p == 0 else 16
+        BLOCK = min(seqlen_q, seqlen_k, q.shape[-1], MAX_BLOCK)
 
         # block size is (BLOCK_M, D_HEAD)
         bwd_preprocess[(do.shape[0] * do.shape[1] * triton.cdiv(do.shape[2], BLOCK), )](
@@ -216,8 +219,9 @@ class _attention(torch.autograd.Function):
             print(f'{delta=}')
             print(f'{BLOCK=}')
         if not ctx.split_kernel:
-            print(f'{ctx.grid[1]=}')
-            bwd_kernel[(ctx.grid[1],)](
+            # debug_mask = torch.empty((q.shape[0], q.shape[1], seqlen_q, seqlen_k), device=q.device, dtype=torch.float32)
+            # print(f'{ctx.grid[1]=}')
+            bwd_kernel[(q.shape[0] * q.shape[1],)](
                 q, k, v, ctx.sm_scale,
                 o, do_scaled,
                 dq, dk, dv,
@@ -228,11 +232,24 @@ class _attention(torch.autograd.Function):
                 q.shape[0], q.shape[1],
                 seqlen_q=seqlen_q,
                 seqlen_k=seqlen_k,
+                dropout_p=ctx.dropout_p,
+                philox_seed=ctx.philox_seed,
+                philox_offset_base=ctx.philox_offset,
+                # debug_mask=debug_mask,
                 BLOCK_M=BLOCK, BLOCK_N=BLOCK,
                 BLOCK_DMODEL=ctx.BLOCK_DMODEL, num_warps=4,
                 CAUSAL=ctx.causal,
                 num_stages=1,
+                ENABLE_DROPOUT=ctx.dropout_p > 0.0,
             )
+            '''
+            mask_allclose = torch.allclose(torch.abs(debug_mask), torch.abs(ctx.encoded_softmax))
+            if not mask_allclose:
+                torch.set_printoptions(linewidth=200, threshold=2000)
+                print(f'bwd mask: {torch.abs(debug_mask[:,:,:2,16:])}')
+                print(f'fwd mask: {torch.abs(ctx.encoded_softmax[:,:,:2,16:])}')
+            assert mask_allclose
+            '''
         else :
             print(f'{BLOCK=}')
             dq = torch.zeros_like(q)
@@ -247,11 +264,16 @@ class _attention(torch.autograd.Function):
                 q.shape[0], q.shape[1],
                 seqlen_q=seqlen_q,
                 seqlen_k=seqlen_k,
+                dropout_p=ctx.dropout_p,
+                philox_seed=ctx.philox_seed,
+                philox_offset_base=ctx.philox_offset,
                 BLOCK_M=BLOCK, BLOCK_N=BLOCK,
                 BLOCK_DMODEL=ctx.BLOCK_DMODEL, num_warps=4,
                 num_stages=1,
+                ENABLE_DROPOUT=ctx.dropout_p > 0.0,
             )
-            bwd_kernel_dq[(triton.cdiv(q.shape[2], 2 * BLOCK), q.shape[0] * q.shape[1])](
+            DQ_BLOCK_M = min(seqlen_q, BLOCK)
+            bwd_kernel_dq[(triton.cdiv(q.shape[2], DQ_BLOCK_M), q.shape[0] * q.shape[1])](
                 q, k, v, ctx.sm_scale,
                 o, do_scaled,
                 dq,
@@ -262,9 +284,13 @@ class _attention(torch.autograd.Function):
                 q.shape[0], q.shape[1],
                 seqlen_q=seqlen_q,
                 seqlen_k=seqlen_k,
-                BLOCK_M=min(seqlen_q, 2*BLOCK), BLOCK_N=BLOCK,
+                dropout_p=ctx.dropout_p,
+                philox_seed=ctx.philox_seed,
+                philox_offset_base=ctx.philox_offset,
+                BLOCK_M=DQ_BLOCK_M, BLOCK_N=BLOCK,
                 BLOCK_DMODEL=ctx.BLOCK_DMODEL, num_warps=4, waves_per_eu=1,
                 num_stages=1,
+                ENABLE_DROPOUT=ctx.dropout_p > 0.0,
             )
         # print(h.asm["ttgir"])
         return dq, dk, dv, None, None, None, None, None, None

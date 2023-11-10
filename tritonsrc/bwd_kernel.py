@@ -14,7 +14,7 @@ Extra Credits:
 """
 import triton
 import triton.language as tl
-
+from fwd_kernel import dropout_mask, dropout_rng
 
 @triton.jit
 def bwd_kernel(
@@ -27,10 +27,15 @@ def bwd_kernel(
     stride_vz, stride_vh, stride_vk, stride_vn,
     Z, H,
     seqlen_q, seqlen_k,
+    dropout_p,
+    philox_seed,
+    philox_offset_base,
+    # debug_mask,
     BLOCK_M: tl.constexpr,
     BLOCK_DMODEL: tl.constexpr,
     BLOCK_N: tl.constexpr,
     CAUSAL: tl.constexpr, # No support for Causal = True in fused kernel for now
+    ENABLE_DROPOUT: tl.constexpr,
 ):
     batch_index = tl.program_id(0)
     qk_scale = sm_scale * 1.44269504
@@ -87,10 +92,22 @@ def bwd_kernel(
         block_shape=(BLOCK_N, BLOCK_DMODEL),
         order=(1, 0)
     )
+    '''
+    debug_mask_ptr = tl.make_block_ptr(
+        base=debug_mask + batch_index * seqlen_q * seqlen_k,
+        shape=(seqlen_q, seqlen_k),
+        strides=(seqlen_k, 1),
+        offsets=(0, 0),
+        block_shape=(BLOCK_M, BLOCK_N),
+        order=(1, 0)
+    )
+    '''
+
     # L.shape = (q.shape[0] * q.shape[1], q.shape[2])
     L_ptr = L + batch_index * seqlen_q
     D_ptr = D + batch_index * seqlen_q
     range_m = tl.arange(0, BLOCK_M)
+    batch_philox_offset = philox_offset_base + batch_index * seqlen_q * seqlen_k
     # Note the backward partition tasks vertically
     # For consistency with fwd kernel, this kernel keeps using BLOCK_M to partition Q and BLOCK_N for KV
     for start_n in range(0, seqlen_k, BLOCK_N):
@@ -163,7 +180,20 @@ def bwd_kernel(
             ''' dV '''
             pT = tl.math.exp2(kqT * qk_scale - l_i[None, :]) # (BLOCK_N, BLOCK_M)
             do = tl.load(dO_block_ptr) # (BLOCK_M, BLOCK_DMODEL)
-            dv += tl.dot(pT.to(do.type.element_ty), do) # (BLOCK_N, BLOCK_DMODEL)
+            if ENABLE_DROPOUT:
+                philox_offset = batch_philox_offset + start_m * seqlen_k + start_n
+                '''
+                keep = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.int8)
+                keep += dropout_mask(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, seqlen_k)
+                tl.store(debug_mask_ptr, dropout_rng(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, seqlen_k))
+                keept = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.int8)
+                keept += tl.trans(keep)
+                '''
+                keep = dropout_mask(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, seqlen_k)
+                # CAVEAT: do NOT update pT, ds needs the original p
+                dv += tl.dot(tl.where(tl.trans(keep), pT / (1 - dropout_p), 0).to(do.type.element_ty), do) # (BLOCK_N, BLOCK_DMODEL)
+            else:
+                dv += tl.dot(pT.to(do.type.element_ty), do) # (BLOCK_N, BLOCK_DMODEL)
             # dv += 1.0 # DEBUG
             # tl.store(dVT_block_ptr, dv.to(dV.type.element_ty)) # DEBUG
             # dp^T
@@ -172,12 +202,15 @@ def bwd_kernel(
             # dpT += tl.dot(v, doT) # (BLOCK_N, BLOCK_M)
             ''' dp and p '''
             Di = tl.load(D_ptr + start_m + range_m) # (BLOCK_M), Di[:, None].shape = (BLOCK_M, 1)
-            dp = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32) - Di[:, None]
+            dp = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
             dp += tl.dot(do, vT) # (BLOCK_M, BLOCK_N)
+            if ENABLE_DROPOUT:
+                dp = tl.where(keep, dp / (1 - dropout_p), 0)
             p = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
             p += tl.trans(pT)
             # ds^T
-            ds = p * dp * sm_scale
+            # CAVEAT, ds requires p BEFORE dropout
+            ds = p * (dp - Di[:, None]) * sm_scale
             # ''' dk = dot(ds.T, q) '''
             # dk += tl.dot(tl.trans(ds.to(Q.dtype.element_ty)), q)
             ''' dkT = qT . ds '''
@@ -189,6 +222,7 @@ def bwd_kernel(
             QT_block_ptr = tl.advance(QT_block_ptr, (0, BLOCK_M))
             dQ_block_ptr = tl.advance(dQ_block_ptr, (BLOCK_M, 0))
             dO_block_ptr = tl.advance(dO_block_ptr, (BLOCK_M, 0))
+            # debug_mask_ptr = tl.advance(debug_mask_ptr, (BLOCK_M, 0))
         tl.store(dKT_block_ptr, dkT.to(K.type.element_ty))
         tl.store(dV_block_ptr, dv.to(dV.type.element_ty))
         k_block_ptr = tl.advance(k_block_ptr, (BLOCK_N, 0))
@@ -196,4 +230,6 @@ def bwd_kernel(
         dKT_block_ptr = tl.advance(dKT_block_ptr, (0, BLOCK_N))
         dVT_block_ptr = tl.advance(dVT_block_ptr, (0, BLOCK_N))
         dV_block_ptr = tl.advance(dV_block_ptr, (BLOCK_N, 0))
+        # debug_mask_ptr = tl.advance(debug_mask_ptr, (-seqlen_q, 0))
+        # debug_mask_ptr = tl.advance(debug_mask_ptr, (0, BLOCK_N))
 

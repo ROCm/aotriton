@@ -21,17 +21,20 @@ def max_fn(x, y):
     return tl.math.max(x, y)
 
 @triton.jit
-def dropout_mask(philox_seed, philox_offset, dropout_p, m, n, stride):
+def dropout_rng(philox_seed, philox_offset, dropout_p, m, n, stride):
     ms = tl.arange(0, m)
     ns = tl.arange(0, n)
     rng_offsets = philox_offset + ms[:, None] * stride + ns[None, :]
     # TODO: use tl.randint for better performance
-    rng_output = tl.rand(philox_seed, philox_offset + rng_offsets)
+    return tl.rand(philox_seed, rng_offsets)
+
+@triton.jit
+def dropout_mask(philox_seed, philox_offset, dropout_p, m, n, stride):
+    rng_output = dropout_rng(philox_seed, philox_offset, dropout_p, m, n, stride)
     rng_keep = rng_output > dropout_p
     # rng_keep = rng_output > -1 # DEBUG
-    # rng_keep = ms[:, None] * stride + ns[None, :] > 0 # DEBUG2
+    # rng_keep = ms[:, None] * stride + ns[None, :] < 1 # DEBUG2, CAVEAT: may not work for multiple blocks
     return rng_keep
-    # return tl.where(rng_keep, x / (1 - dropout_p), 0.0)
 
 @triton.jit
 def attn_fwd_inner(
@@ -93,6 +96,8 @@ def attn_fwd_inner(
             philox_offset = batch_philox_offset + start_m * seqlen_k + start_n
             keep = dropout_mask(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, seqlen_k)
             if RETURN_ENCODED_SOFTMAX:
+                # rng = dropout_rng(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, seqlen_k) # Debug
+                # tl.store(encoded_softmax_block_ptr, tl.where(keep, rng, -rng)) # Debug
                 tl.store(encoded_softmax_block_ptr, tl.where(keep, p, -p))
                 # v = tl.load(V_block_ptr) # FIXME: debug
                 # p = tl.where(keep, p, 0.0)
