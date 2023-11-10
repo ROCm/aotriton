@@ -14,6 +14,7 @@ Extra Credits:
 """
 import triton
 import triton.language as tl
+from fwd_kernel import dropout_mask
 
 
 @triton.jit
@@ -26,8 +27,12 @@ def bwd_kernel_dk_dv(
     stride_kz, stride_kh, stride_kn, stride_kk,
     stride_vz, stride_vh, stride_vk, stride_vn,
     Z, H, seqlen_q, seqlen_k,
+    dropout_p,
+    philox_seed,
+    philox_offset_base,
     BLOCK_M: tl.constexpr, BLOCK_DMODEL: tl.constexpr,
     BLOCK_N: tl.constexpr,
+    ENABLE_DROPOUT: tl.constexpr,
 ):
     start_m = tl.program_id(0)
     off_hz = tl.program_id(1)
@@ -92,6 +97,7 @@ def bwd_kernel_dk_dv(
     hi = seqlen_q
     Q_block_ptr = tl.advance(Q_block_ptr, (lo, 0))
     DO_block_ptr = tl.advance(DO_block_ptr, (lo, 0))
+    batch_philox_offset = philox_offset_base + off_hz * seqlen_q * seqlen_k
     # loop over q, do
     for start_n in range(lo, hi, BLOCK_N):
         offs_m_curr = offs_n[:, None] + start_n
@@ -104,13 +110,21 @@ def bwd_kernel_dk_dv(
         l_i = tl.load(l_ptrs + offs_m_curr)
         p = tl.math.exp2(qk - l_i)
         # -- compute dv ----
-        dv += tl.dot(tl.trans(p.to(Q.dtype.element_ty)), do)
+        if ENABLE_DROPOUT:
+            philox_offset = batch_philox_offset + start_m * seqlen_k + start_n
+            keep = dropout_mask(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, seqlen_k)
+            # CAVEAT: do NOT update p, ds needs the original p
+            dv += tl.dot(tl.trans(tl.where(keep, p / (1 - dropout_p), 0).to(do.type.element_ty)), do) # (BLOCK_N, BLOCK_DMODEL)
+        else:
+            dv += tl.dot(tl.trans(p.to(Q.dtype.element_ty)), do)
         # compute dp = dot(v, do)
         Di = tl.load(D_ptrs + offs_m_curr)
-        dp = tl.zeros([BLOCK_M, BLOCK_M], dtype=tl.float32) - Di
+        dp = tl.zeros([BLOCK_M, BLOCK_M], dtype=tl.float32)
         dp += tl.dot(do, v)
+        if ENABLE_DROPOUT:
+            dp = tl.where(keep, dp / (1 - dropout_p), 0)
         # compute ds = p * (dp - delta[:, None])
-        ds = p * dp
+        ds = p * (dp - Di)
         # compute dk
         dk += tl.dot(tl.trans(ds.to(Q.dtype.element_ty)), q)
         # update pointers
@@ -146,8 +160,12 @@ def bwd_kernel_dq(
     stride_kz, stride_kh, stride_kn, stride_kk,
     stride_vz, stride_vh, stride_vk, stride_vn,
     Z, H, seqlen_q, seqlen_k,
+    dropout_p,
+    philox_seed,
+    philox_offset_base,
     BLOCK_M: tl.constexpr, BLOCK_DMODEL: tl.constexpr,
     BLOCK_N: tl.constexpr,
+    ENABLE_DROPOUT: tl.constexpr,
 ):
     start_m = tl.program_id(0)
     off_hz = tl.program_id(1)
@@ -206,6 +224,7 @@ def bwd_kernel_dq(
     # loop over k, v
     lo = 0
     hi = (start_m + 1) * BLOCK_M
+    batch_philox_offset = philox_offset_base + off_hz * seqlen_q * seqlen_k
     for start_n in range(lo, hi, BLOCK_N):
         # -- load k, v --
         k = tl.load(K_block_ptr)
@@ -215,10 +234,14 @@ def bwd_kernel_dq(
         qk = tl.where(offs_m[:, None] >= (offs_n[None, :] + start_n), qk, float("-inf"))
         p = tl.math.exp2(qk - l_i[:, None])
         # compute dp = dot(v, do)
-        dp = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32) - Di[:, None]
+        dp = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
         dp += tl.dot(do, v)
+        if ENABLE_DROPOUT:
+            philox_offset = batch_philox_offset + start_m * seqlen_k + start_n
+            keep = dropout_mask(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, seqlen_k)
+            dp = tl.where(keep, dp / (1 - dropout_p), 0)
         # compute ds = p * (dp - delta[:, None])
-        ds = p * dp
+        ds = p * (dp - Di[:, None])
         # compute dq. Unfortunately we cannot avoid transpose here as this loop
         # uses k both normal and transpose.
         dq += tl.dot(ds.to(Q.type.element_ty), tl.trans(k))
