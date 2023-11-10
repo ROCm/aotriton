@@ -198,7 +198,8 @@ class _attention(torch.autograd.Function):
         seqlen_q = q.shape[2]
         seqlen_k = k.shape[2]
         MAX_BLOCK = 64 if ctx.dropout_p == 0 else 16
-        BLOCK = min(seqlen_q, seqlen_k, q.shape[-1], MAX_BLOCK)
+        # BLOCK = min(seqlen_q, seqlen_k, q.shape[-1], MAX_BLOCK)
+        BLOCK = 16 # DEBUG: FIX BLOCK SIZE
 
         # block size is (BLOCK_M, D_HEAD)
         bwd_preprocess[(do.shape[0] * do.shape[1] * triton.cdiv(do.shape[2], BLOCK), )](

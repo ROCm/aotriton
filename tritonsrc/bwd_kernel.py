@@ -182,16 +182,17 @@ def bwd_kernel(
             do = tl.load(dO_block_ptr) # (BLOCK_M, BLOCK_DMODEL)
             if ENABLE_DROPOUT:
                 philox_offset = batch_philox_offset + start_m * seqlen_k + start_n
-                '''
                 keep = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.int8)
                 keep += dropout_mask(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, seqlen_k)
-                tl.store(debug_mask_ptr, dropout_rng(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, seqlen_k))
+                # tl.store(debug_mask_ptr, dropout_rng(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, seqlen_k))
                 keept = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.int8)
                 keept += tl.trans(keep)
+                dv += tl.dot(tl.where(keept, pT / (1 - dropout_p), 0).to(do.type.element_ty), do) # (BLOCK_N, BLOCK_DMODEL)
                 '''
                 keep = dropout_mask(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, seqlen_k)
                 # CAVEAT: do NOT update pT, ds needs the original p
                 dv += tl.dot(tl.where(tl.trans(keep), pT / (1 - dropout_p), 0).to(do.type.element_ty), do) # (BLOCK_N, BLOCK_DMODEL)
+                '''
             else:
                 dv += tl.dot(pT.to(do.type.element_ty), do) # (BLOCK_N, BLOCK_DMODEL)
             # dv += 1.0 # DEBUG

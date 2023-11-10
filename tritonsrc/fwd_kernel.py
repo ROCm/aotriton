@@ -30,10 +30,15 @@ def dropout_rng(philox_seed, philox_offset, dropout_p, m, n, stride):
 
 @triton.jit
 def dropout_mask(philox_seed, philox_offset, dropout_p, m, n, stride):
-    rng_output = dropout_rng(philox_seed, philox_offset, dropout_p, m, n, stride)
-    rng_keep = rng_output > dropout_p
+    '''
+    ms = tl.arange(0, m)
+    ns = tl.arange(0, n)
+    return ((ms[:, None] * stride + ns[None, :]) & 1).to(tl.int1)
+    '''
     # rng_keep = rng_output > -1 # DEBUG
     # rng_keep = ms[:, None] * stride + ns[None, :] < 1 # DEBUG2, CAVEAT: may not work for multiple blocks
+    rng_output = dropout_rng(philox_seed, philox_offset, dropout_p, m, n, stride)
+    rng_keep = rng_output > dropout_p
     return rng_keep
 
 @triton.jit

@@ -78,7 +78,6 @@ but in PyTorch API it does not present at all
                           #(4, 48, 16384, 64)
                           ])
 @pytest.mark.parametrize('causal', [False, True])
-# @pytest.mark.parametrize('causal', [False])
 @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
 @pytest.mark.parametrize('sm_scale', [0.5, 0.0])
 @pytest.mark.parametrize('qseqlen_override', [None, 512])
