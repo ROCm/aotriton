@@ -5,6 +5,49 @@ import torch
 
 from attn_torch_function import attention
 
+def scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_mask=None, dropout_p=0.0, is_causal=False, scale=None) -> torch.Tensor:
+    # Efficient implementation equivalent to the following:
+    L, S = query.size(-2), key.size(-2)
+    scale_factor = 1 / math.sqrt(query.size(-1)) if scale is None else scale
+    attn_bias = torch.zeros(L, S, dtype=query.dtype)
+    if is_causal:
+        assert attn_mask is None
+        temp_mask = torch.ones(L, S, dtype=torch.bool).tril(diagonal=0)
+        attn_bias.masked_fill_(temp_mask.logical_not(), float("-inf"))
+        attn_bias.to(query.dtype)
+
+    """
+    if attn_mask is not None:
+        if attn_mask.dtype == torch.bool:
+            attn_mask.masked_fill_(attn_mask.logical_not(), float("-inf"))
+        else:
+            attn_bias += attn_mask
+    """
+    attn_weight = query @ key.transpose(-2, -1) * scale_factor
+    SPARSE_HEAD_SINCE = 5
+    SPARSE_SEQ_SINCE = 5
+    # attn_weight += attn_bias
+    attn_weight = torch.softmax(attn_weight, dim=-1)
+    if dropout_p > 0.0:
+        if dropout_mask is not None:
+            attn_weight.masked_fill_(dropout_mask.logical_not(), float("0.0"))
+            value = value / (1 - dropout_p)
+        else:
+            # assert False, "TESTING dropout_mask code path"
+            attn_weight = torch.dropout(attn_weight, dropout_p, train=True)
+    else:
+        # assert False, "TESTING dropout_mask code path"
+        pass
+    av = attn_weight @ value
+    return av, attn_weight
+
+def _make_block_eyes(q):
+    dhead = q.shape[-1]
+    seqlen = q.shape[2]
+    assert seqlen % dhead == 0
+    for i in range(0, seqlen, dhead):
+        q[:, :, i:i+dhead, :] = torch.eye(dhead, device=q.device, dtype=q.dtype)
+
 '''
 Flash Attention is batch operator that evaluates sm(QK')V
 Q = batch_size x ... x seqlen_q x head_size
@@ -48,8 +91,8 @@ but in PyTorch API it does not present at all
 @pytest.mark.parametrize('causal', [False, True])
 @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16, torch.float32])
 @pytest.mark.parametrize('sm_scale', [1.0, 0.5, 0.0])
-# @pytest.mark.parametrize('qseqlen_override', [None, 16])
-@pytest.mark.parametrize('qseqlen_override', [None])
+@pytest.mark.parametrize('qseqlen_override', [None, 16, 64, 128]) # For debugging
+# @pytest.mark.parametrize('qseqlen_override', [None]) # Real UT
 @pytest.mark.parametrize('dropout_p', [0.0, 0.3, 0.5])
 def test_op_bwd(Z, H, N_CTX, D_HEAD, causal, sm_scale, dropout_p, dtype, qseqlen_override):
     torch.manual_seed(20)
@@ -83,9 +126,9 @@ def test_op_bwd(Z, H, N_CTX, D_HEAD, causal, sm_scale, dropout_p, dtype, qseqlen
     k = torch.ones((Z, H, kseqlen, D_HEAD), dtype=dtype, device="cuda") * 2.0
     v = torch.ones((Z, H, kseqlen, D_HEAD), dtype=dtype, device="cuda") * 3.0
     '''
-    q.requires_grad_()
-    k.requires_grad_()
-    v.requires_grad_()
+    DEBUG_IDENTITY_DO = True
+    DEBUG_IDENTITY_Q = False
+    DEBUG_IDENTITY_K = False
     if causal == False:
         split_kernel = False
     else: # split kernel only handles for causal=True
@@ -94,6 +137,21 @@ def test_op_bwd(Z, H, N_CTX, D_HEAD, causal, sm_scale, dropout_p, dtype, qseqlen
         dout = torch.randn_like(q)
     if False: # Debugging
         dout = torch.ones_like(q) * 1.0
+    if DEBUG_IDENTITY_DO: # Debugging
+        # assert q.shape[3] == 16, 'This debugging input only handles D_HEAD == 16'
+        # for i in range(0, q.shape[2], 16):
+        #     dout[:, :, i:i+16, ] = torch.eye(16, device=q.device, dtype=q.dtype)
+        _make_block_eyes(dout)
+        print(dout)
+    if DEBUG_IDENTITY_Q: # Debugging
+        _make_block_eyes(q)
+        print(q)
+    if DEBUG_IDENTITY_K: # Debugging
+        _make_block_eyes(k)
+        print(k)
+    q.requires_grad_()
+    k.requires_grad_()
+    v.requires_grad_()
     if False:
         # OLD reference implementation
         M = torch.tril(torch.ones((qseqlen, kseqlen), device="cuda"))
@@ -105,6 +163,7 @@ def test_op_bwd(Z, H, N_CTX, D_HEAD, causal, sm_scale, dropout_p, dtype, qseqlen
     # # triton implementation
     tri_out, encoded_softmax = attention(q, k, v, causal, sm_scale, dropout_p, True, split_kernel)
     dropout_mask = encoded_softmax >= 0
+    torch.autograd.set_detect_anomaly(True)
     ref_out, ref_softmax = torch.ops.aten._scaled_dot_product_attention_math(q, k, v,
                                                                 dropout_p=dropout_p,
                                                                 is_causal=causal,
@@ -155,27 +214,16 @@ def test_op_bwd(Z, H, N_CTX, D_HEAD, causal, sm_scale, dropout_p, dtype, qseqlen
         ATOL = 1e-1 * ((qseqlen + D_HEAD) / 32.0)
     print(f"{ATOL=} {RTOL=}")
 
-    dk_allclose = torch.allclose(ref_dk, tri_dk, atol=ATOL, rtol=RTOL)
-    if not dk_allclose or True:
-        print(f'{tri_out[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
-        print(f'{ref_out[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
-        print(f'{tri_dk[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
-        print(f'{ref_dk[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
-        import numpy as np
-        err_idx = np.unravel_index(torch.argmax(torch.abs(ref_dk - tri_dk)).cpu().numpy(), ref_dk.shape)
-        print(f'{err_idx=}')
-        print(f'{tri_dk[err_idx]=} {ref_dk[err_idx]=} error = {torch.abs(tri_dk[err_idx] - ref_dk[err_idx])}')
-        print(f'{tri_dk[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]/ref_dk[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
-        print(f'{dropout_mask[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
-    assert dk_allclose
-
     dv_allclose = torch.allclose(ref_dv, tri_dv, atol=ATOL, rtol=RTOL)
-    if not dv_allclose:
+    if qseqlen >= 16:
+        print(f'tri_dv {tri_dv}')
+        print(f'ref_dv {ref_dv}')
+    if not dv_allclose or True:
         import numpy as np
         err_idx = np.unravel_index(torch.argmax(torch.abs(ref_dv - tri_dv)).cpu().numpy(), ref_dv.shape)
-        print(f'{q.shape=} {q.stride()=}')
-        print(f'{k.shape=} {k.stride()=}')
-        print(f'{v.shape=} {v.stride()=}')
+        print(f'{q.shape=} {q.stride()=} {q.dtype=}')
+        print(f'{k.shape=} {k.stride()=} {k.dtype=}')
+        print(f'{v.shape=} {v.stride()=} {v.dtype=}')
         print(f'{q[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
         print(f'{k[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
         print(f'{v[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
@@ -192,7 +240,7 @@ def test_op_bwd(Z, H, N_CTX, D_HEAD, causal, sm_scale, dropout_p, dtype, qseqlen
         print(f'{tri_dv[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
         print(f'{ref_dv[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
         print(f'{tri_dv[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]/ref_dv[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
-        if qseqlen >= 128:
+        if kseqlen >= 128:
             print(f'{tri_dv[:,:, 107]=}')
             print(f'{ref_dv[:,:, 107]=}')
             print(f'{tri_dv[:,:, 96]=}')
@@ -209,7 +257,44 @@ def test_op_bwd(Z, H, N_CTX, D_HEAD, causal, sm_scale, dropout_p, dtype, qseqlen
             for i, c in enumerate(dv_maxerr_rowwise):
                 print(f'{i}: {c}', end=' ')
             print()
-    assert dv_allclose
+        if not causal and DEBUG_IDENTITY_DO:
+            torch.set_printoptions(linewidth=200, threshold=20000)
+            print(f'{torch.nonzero(dropout_mask.to(torch.int8))=}')
+            print(f'{encoded_softmax=}')
+            print(f'{tri_dv=}')
+            print(f'{ref_dv=}')
+            mref_out, mref_softmax = scaled_dot_product_attention(q, k, v,
+                                         dropout_p=dropout_p,
+                                         is_causal=causal,
+                                         scale=sm_scale,
+                                         dropout_mask=dropout_mask)
+            mref_correctness = torch.allclose(mref_out, ref_out, atol=ATOL, rtol=RTOL)
+            print(f'mm_out vs ref_out {mref_correctness=}')
+            print(f'{mref_softmax.shape=} {dout.shape=}')
+            mm_ref_dv = torch.transpose(mref_softmax, -1, -2) @ dout / (1 - dropout_p)
+            # print(f'{mm_ref_dv=}')
+            print(f'{ref_dv.shape=} {mm_ref_dv.shape=}')
+            mm_ref_dv_allclose = torch.allclose(mm_ref_dv, ref_dv, atol=ATOL, rtol=RTOL)
+            print(f'mm_ref_dv vs ref_dv {mm_ref_dv_allclose=}')
+            err_idx = np.unravel_index(torch.argmax(torch.abs(ref_dv - mm_ref_dv)).cpu().numpy(), ref_dv.shape)
+            print(f'{err_idx=}')
+            print(f'{mm_ref_dv[err_idx]=}')
+            print(f'{ref_dv[err_idx]=}')
+            print(f'mm_ref_dv vs tri_dv = {torch.allclose(mm_ref_dv, tri_dv, atol=ATOL, rtol=RTOL)}')
+
+    dk_allclose = torch.allclose(ref_dk, tri_dk, atol=ATOL, rtol=RTOL)
+    if dv_allclose and not dk_allclose:
+        print(f'{tri_out[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
+        print(f'{ref_out[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
+        print(f'{tri_dk[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
+        print(f'{ref_dk[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
+        import numpy as np
+        err_idx = np.unravel_index(torch.argmax(torch.abs(ref_dk - tri_dk)).cpu().numpy(), ref_dk.shape)
+        print(f'{err_idx=}')
+        print(f'{tri_dk[err_idx]=} {ref_dk[err_idx]=} error = {torch.abs(tri_dk[err_idx] - ref_dk[err_idx])}')
+        print(f'{tri_dk[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]/ref_dk[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
+        print(f'{dropout_mask[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
+
     # dq_allclose = torch.allclose(ref_dq, tri_dq, atol=5e-2, rtol=0)
     # FIXME: Need to raise tolerance
     # print(f'{tri_dv[0][0]=}')
@@ -219,7 +304,7 @@ def test_op_bwd(Z, H, N_CTX, D_HEAD, causal, sm_scale, dropout_p, dtype, qseqlen
     # print(f'{tri_dk[0][0][:4, :4]=}')
     # print(f'{ref_dk[0][0][:4, :4]=}')
     dq_allclose = torch.allclose(ref_dq, tri_dq, atol=ATOL, rtol=RTOL)
-    if not dq_allclose:
+    if dk_allclose and dv_allclose and not dq_allclose:
         import numpy as np
         err_idx = np.unravel_index(torch.argmax(torch.abs(ref_dq - tri_dq)).cpu().numpy(), ref_dq.shape)
         print(f'{err_idx=}')
@@ -238,4 +323,4 @@ def test_op_bwd(Z, H, N_CTX, D_HEAD, causal, sm_scale, dropout_p, dtype, qseqlen
         # print(f'{ref_dq[0][0][32, :4]=}')
         # print(f'{tri_dq[0][0][49, :4]=}')
         # print(f'{ref_dq[0][0][49, :4]=}')
-    assert dq_allclose
+    assert dk_allclose and dv_allclose and dq_allclose, f'{dk_allclose=} {dv_allclose=} {dq_allclose=}'

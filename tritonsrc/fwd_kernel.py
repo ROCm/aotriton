@@ -30,15 +30,12 @@ def dropout_rng(philox_seed, philox_offset, dropout_p, m, n, stride):
 
 @triton.jit
 def dropout_mask(philox_seed, philox_offset, dropout_p, m, n, stride):
-    '''
-    ms = tl.arange(0, m)
-    ns = tl.arange(0, n)
-    return ((ms[:, None] * stride + ns[None, :]) & 1).to(tl.int1)
-    '''
+    # return ((ms[:, None] * stride + ns[None, :]) & 1).to(tl.int1)
     # rng_keep = rng_output > -1 # DEBUG
     # rng_keep = ms[:, None] * stride + ns[None, :] < 1 # DEBUG2, CAVEAT: may not work for multiple blocks
     rng_output = dropout_rng(philox_seed, philox_offset, dropout_p, m, n, stride)
     rng_keep = rng_output > dropout_p
+    # rng_keep = rng_output > -1 # DEBUG
     return rng_keep
 
 @triton.jit
@@ -101,15 +98,17 @@ def attn_fwd_inner(
             philox_offset = batch_philox_offset + start_m * seqlen_k + start_n
             keep = dropout_mask(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, seqlen_k)
             if RETURN_ENCODED_SOFTMAX:
-                # rng = dropout_rng(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, seqlen_k) # Debug
-                # tl.store(encoded_softmax_block_ptr, tl.where(keep, rng, -rng)) # Debug
-                tl.store(encoded_softmax_block_ptr, tl.where(keep, p, -p))
+                # FIXME: DEBUG
+                rng = dropout_rng(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, seqlen_k) # Debug
+                tl.store(encoded_softmax_block_ptr, tl.where(keep, rng, -rng)) # Debug
+                # tl.store(encoded_softmax_block_ptr, tl.where(keep, p, -p)) # FIXME: This is correct code
                 # v = tl.load(V_block_ptr) # FIXME: debug
                 # p = tl.where(keep, p, 0.0)
                 # tl.store(encoded_softmax_block_ptr, tl.dot(p.to(V_block_ptr.type.element_ty), v))
             p = tl.where(keep, p, 0.0)
         elif RETURN_ENCODED_SOFTMAX:
-            tl.store(encoded_softmax_block_ptr, p)
+            tl.store(encoded_softmax_block_ptr, p) # FIXME: This is correct code
+            # tl.store(encoded_softmax_block_ptr, k.to(encoded_softmax_block_ptr.type.element_ty)) # FIXME: DEBUG
         # -- update output accumulator --
         alpha = tl.math.exp2(m_i - m_ij)
         acc = acc * alpha[:, None]

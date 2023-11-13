@@ -89,7 +89,7 @@ class _attention(torch.autograd.Function):
         )
         M = torch.empty((q.shape[0] * q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)
         if return_encoded_softmax:
-            encoded_softmax = torch.empty((q.shape[0], q.shape[1], q.shape[2], k.shape[2]), device=q.device, dtype=torch.float32)
+            encoded_softmax = torch.zeros((q.shape[0], q.shape[1], q.shape[2], k.shape[2]), device=q.device, dtype=torch.float32)
         else:
             encoded_softmax = None
         if True or VERBOSE:
@@ -216,7 +216,7 @@ class _attention(torch.autograd.Function):
             print(f'{dk.shape=} {dk.stride()=}')
             print(f'{dv.shape=} {dv.stride()=}')
             print(f'{do.shape=} {do.stride()=}')
-            print(f'{L=}')
+            print(f'{L=} {L.shape=}')
             print(f'{delta=}')
             print(f'{BLOCK=}')
         if not ctx.split_kernel:
@@ -254,6 +254,7 @@ class _attention(torch.autograd.Function):
         else :
             print(f'{BLOCK=}')
             dq = torch.zeros_like(q)
+            debug_mask = torch.zeros((q.shape[0], q.shape[1], seqlen_q, seqlen_k), device=q.device, dtype=torch.float32)
             bwd_kernel_dk_dv[(triton.cdiv(q.shape[2], BLOCK), ctx.grid[1])](
                 q, k, v, ctx.sm_scale,
                 o, do_scaled,
@@ -268,11 +269,25 @@ class _attention(torch.autograd.Function):
                 dropout_p=ctx.dropout_p,
                 philox_seed=ctx.philox_seed,
                 philox_offset_base=ctx.philox_offset,
+                debug_mask=debug_mask,
                 BLOCK_M=BLOCK, BLOCK_N=BLOCK,
                 BLOCK_DMODEL=ctx.BLOCK_DMODEL, num_warps=4,
                 num_stages=1,
                 ENABLE_DROPOUT=ctx.dropout_p > 0.0,
             )
+            # mask_allclose = torch.allclose(debug_mask < 0, ctx.encoded_softmax < 0)
+            mask_allclose = torch.allclose(torch.abs(debug_mask), torch.abs(ctx.encoded_softmax)) # Stores QK
+            if not mask_allclose:
+                torch.set_printoptions(linewidth=200, threshold=2000)
+                import sys
+                print(f'bwd mask: {torch.abs(debug_mask[:,:,:2,16:])}')
+                print(f'fwd mask: {torch.abs(ctx.encoded_softmax[:,:,:2,16:])}')
+                print(f'Full bwd mask: {debug_mask[0,0]}')
+                print(f'Full fwd mask: {ctx.encoded_softmax[0,0]}')
+                print(f'Full mask div: {debug_mask[0,0] / ctx.encoded_softmax[0,0]}')
+                print(f'Full dv: {dv}')
+                # print(f'Full q: {q}', file=sys.stderr)
+            # assert mask_allclose
             DQ_BLOCK_M = min(seqlen_q, BLOCK)
             bwd_kernel_dq[(triton.cdiv(q.shape[2], DQ_BLOCK_M), q.shape[0] * q.shape[1])](
                 q, k, v, ctx.sm_scale,

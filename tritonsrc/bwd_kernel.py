@@ -185,9 +185,10 @@ def bwd_kernel(
                 keep = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.int8)
                 keep += dropout_mask(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, seqlen_k)
                 # tl.store(debug_mask_ptr, dropout_rng(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, seqlen_k))
-                keept = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.int8)
+                keept = tl.zeros([BLOCK_N, BLOCK_M], dtype=tl.int8)
                 keept += tl.trans(keep)
-                dv += tl.dot(tl.where(keept, pT / (1 - dropout_p), 0).to(do.type.element_ty), do) # (BLOCK_N, BLOCK_DMODEL)
+                # dv += tl.dot(tl.where(keept, pT / (1 - dropout_p), 0).to(do.type.element_ty), do) # (BLOCK_N, BLOCK_DMODEL)
+                dv += tl.where(keept, pT / (1 - dropout_p), 0) # FIXME: DEBUG: Use Identity dO and BLOCK_M==BLOCK_N
                 '''
                 keep = dropout_mask(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, seqlen_k)
                 # CAVEAT: do NOT update pT, ds needs the original p
