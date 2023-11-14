@@ -28,7 +28,7 @@ def dropout_offsets(philox_seed, philox_offset, dropout_p, m, n, stride):
 
 @triton.jit
 def dropout_rng(philox_seed, philox_offset, dropout_p, m, n, stride):
-    rng_offsets = dropout_offsets(philox_seed, philox_offset, dropout_p, m, n, stride)
+    rng_offsets = dropout_offsets(philox_seed, philox_offset, dropout_p, m, n, stride).to(tl.uint32)
     # TODO: use tl.randint for better performance
     return tl.rand(philox_seed, rng_offsets)
 
@@ -98,7 +98,7 @@ def attn_fwd_inner(
             philox_offset = batch_philox_offset + start_m * BLOCK_M * seqlen_k + start_n
             keep = dropout_mask(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, seqlen_k)
             if RETURN_ENCODED_SOFTMAX:
-                tl.store(encoded_softmax_block_ptr, tl.where(keep, p, -p)) # FIXME: This is correct code
+                tl.store(encoded_softmax_block_ptr, tl.where(keep, p, -p).to(encoded_softmax_block_ptr.type.element_ty)) # FIXME: This is correct code
             p = tl.where(keep, p, 0.0)
         elif RETURN_ENCODED_SOFTMAX:
             tl.store(encoded_softmax_block_ptr, p.to(encoded_softmax_block_ptr.type.element_ty)) # FIXME: This is correct code
