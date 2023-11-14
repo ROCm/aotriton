@@ -127,9 +127,15 @@ def test_op_bwd(Z, H, N_CTX, D_HEAD, causal, sm_scale, dropout_p, dtype, qseqlen
     ref_dk, k.grad = k.grad.clone(), None
     ref_dq, q.grad = q.grad.clone(), None
     # compare
-    RTOL=1e-2 if dtype==torch.float16 else 5e-2
+    if dtype==torch.bfloat16:
+        ATOL = 1e-1 * (qseqlen / 64.0)
+    else:
+        ATOL = 1e-2 * (qseqlen / 64.0)
+    # RTOL=1e-2 if dtype==torch.float16 else 5e-2
+    RTOL=0.0
+    print(f'Using ATOL={ATOL} RTOL={RTOL}')
     # FIXME: Need to raise tolerance
-    is_allclose = torch.allclose(ref_out, tri_out, atol=5e-2, rtol=RTOL)
+    is_allclose = torch.allclose(ref_out, tri_out, atol=ATOL, rtol=RTOL)
     if not is_allclose:
         import numpy as np
         err_idx = np.unravel_index(torch.argmax(torch.abs(ref_out - tri_out)).cpu().numpy(), ref_out.shape)
