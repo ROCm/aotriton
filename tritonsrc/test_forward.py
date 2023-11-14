@@ -144,19 +144,7 @@ def test_op_fwd(Z, H, N_CTX, D_HEAD, causal, sm_scale, dropout_p, dtype, qseqlen
     '''
     tri_out, encoded_softmax = attention(q, k, v, causal, sm_scale, dropout_p, True)
 
-    if False:
-        query_padding_mask = torch.ones(
-            1, qseqlen, device=q.device, dtype=torch.bool)
-        key_padding_mask = torch.ones(
-            1, kseqlen, device=q.device, dtype=torch.bool)
-        softmax_mask = convert_flash_attn_S_to_softmax(encoded_softmax, query_padding_mask, key_padding_mask, head_dim=D_HEAD, causal=causal)
-        dropout_mask = softmax_mask >= 0
-        print(f'{torch.argwhere(dropout_mask == False)=}')
-        # dropout_mask = encoded_softmax >= 0
-        dropout_mask_naive = encoded_softmax >= 0
-        print(f'{torch.argwhere(dropout_mask_naive == False)=}')
-    else:
-        dropout_mask = encoded_softmax >= 0
+    dropout_mask = encoded_softmax >= 0
     # assert torch.allclose(dropout_mask, dropout_mask_naive)
     ref_out, ref_softmax = torch.ops.aten._scaled_dot_product_attention_math(q, k, v,
                                                                 dropout_p=dropout_p,
