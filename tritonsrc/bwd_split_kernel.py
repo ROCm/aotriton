@@ -43,7 +43,6 @@ def bwd_kernel_dk_dv(
     # initialize offsets
     offs_m = start_m + tl.arange(0, BLOCK_M)
     offs_n = tl.arange(0, BLOCK_N)
-    offs_d = tl.arange(0, BLOCK_DMODEL)
     # Initialize pointers to Q, K, V
     q_offset = off_hz * stride_qh
     Q_block_ptr = tl.make_block_ptr(
@@ -228,20 +227,19 @@ def bwd_kernel_dq(
     BLOCK_N: tl.constexpr,
     ENABLE_DROPOUT: tl.constexpr,
 ):
-    start_m = tl.program_id(0)
+    start_m = tl.program_id(0) * BLOCK_N
     off_hz = tl.program_id(1)
     qvk_offset = off_hz * stride_qh
     # initialize offsets
-    offs_m = start_m * BLOCK_M + tl.arange(0, BLOCK_M)
+    offs_m = start_m + tl.arange(0, BLOCK_M)
     offs_n = tl.arange(0, BLOCK_N)
-    offs_d = tl.arange(0, BLOCK_DMODEL)
     # Initialize pointers to Q, K, V
     q_offset = off_hz * stride_qh
     Q_block_ptr = tl.make_block_ptr(
         base=Q + q_offset,
         shape=(seqlen_q, BLOCK_DMODEL),
         strides=(stride_qm, stride_qk),
-        offsets=(start_m * BLOCK_M, 0),
+        offsets=(start_m, 0),
         block_shape=(BLOCK_M, BLOCK_DMODEL),
         order=(1, 0)
     )
@@ -267,7 +265,7 @@ def bwd_kernel_dq(
         base=DO + q_offset,
         shape=(seqlen_q, BLOCK_DMODEL),
         strides=(stride_qm, stride_qk),
-        offsets=(start_m * BLOCK_M, 0),
+        offsets=(start_m, 0),
         block_shape=(BLOCK_M, BLOCK_DMODEL),
         order=(1, 0)
     )
@@ -284,28 +282,37 @@ def bwd_kernel_dq(
     dq = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)
     # loop over k, v
     lo = 0
-    hi = (start_m + 1) * BLOCK_M
+    hi = start_m + BLOCK_M
     batch_philox_offset = philox_offset_base + off_hz * seqlen_q * seqlen_k
+    '''
+           K1   K2      (d)V      dO
+    Q1    qk11 qk12     (d)v1     dO1
+    Q2    qk21 qk22     (d)v2     dO2
+
+    QK: (seqlen_q, seqlen_k)
+    dO: (seqlen_q, hdim)
+    dV: (seqlen_k, hdim)
+    '''
     for start_n in range(lo, hi, BLOCK_N):
         # -- load k, v --
-        k = tl.load(K_block_ptr)
-        v = tl.load(V_block_ptr)
+        kt = tl.load(K_block_ptr)
+        vt = tl.load(V_block_ptr)
         # -- compute qk ----
-        qk = tl.dot(q, k)
+        qk = tl.dot(q, kt)
         qk = tl.where(offs_m[:, None] >= (offs_n[None, :] + start_n), qk, float("-inf"))
         p = tl.math.exp2(qk - l_i[:, None])
         # compute dp = dot(v, do)
         dp = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
-        dp += tl.dot(do, v)
+        dp += tl.dot(do, vt)
         if ENABLE_DROPOUT:
-            philox_offset = batch_philox_offset + start_n * seqlen_k + start_m
+            philox_offset = batch_philox_offset + start_m * seqlen_k + start_n
             keep = dropout_mask(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, seqlen_k)
             dp = tl.where(keep, dp / (1 - dropout_p), 0)
         # compute ds = p * (dp - delta[:, None])
         ds = p * (dp - Di[:, None])
         # compute dq. Unfortunately we cannot avoid transpose here as this loop
         # uses k both normal and transpose.
-        dq += tl.dot(ds.to(Q.type.element_ty), tl.trans(k))
+        dq += tl.dot(ds.to(Q.type.element_ty), tl.trans(kt))
         # update pointers
         K_block_ptr = tl.advance(K_block_ptr, (0, BLOCK_N))
         V_block_ptr = tl.advance(V_block_ptr, (0, BLOCK_N))
@@ -314,7 +321,7 @@ def bwd_kernel_dq(
         base=DQ + q_offset,
         shape=(seqlen_q, BLOCK_DMODEL),
         strides=(stride_qm, stride_qk),
-        offsets=(start_m * BLOCK_M, 0),
+        offsets=(start_m, 0),
         block_shape=(BLOCK_M, BLOCK_DMODEL),
         order=(1, 0)
     )
