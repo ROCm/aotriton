@@ -21,12 +21,34 @@ def max_fn(x, y):
     return tl.math.max(x, y)
 
 @triton.jit
+def dropout_offsets(philox_seed, philox_offset, dropout_p, m, n, stride):
+    ms = tl.arange(0, m)
+    ns = tl.arange(0, n)
+    return philox_offset + ms[:, None] * stride + ns[None, :]
+
+@triton.jit
+def dropout_rng(philox_seed, philox_offset, dropout_p, m, n, stride):
+    rng_offsets = dropout_offsets(philox_seed, philox_offset, dropout_p, m, n, stride).to(tl.uint32)
+    # TODO: use tl.randint for better performance
+    return tl.rand(philox_seed, rng_offsets)
+
+@triton.jit
+def dropout_mask(philox_seed, philox_offset, dropout_p, m, n, stride):
+    rng_output = dropout_rng(philox_seed, philox_offset, dropout_p, m, n, stride)
+    rng_keep = rng_output > dropout_p
+    return rng_keep
+
+@triton.jit
 def attn_fwd_inner(
     acc, l_i, m_i, q,
     K_block_ptr, V_block_ptr,
     start_m,
     seqlen_q,
     seqlen_k,
+    dropout_p,
+    philox_seed,
+    batch_philox_offset,
+    encoded_softmax_block_ptr,
     BLOCK_M: tl.constexpr,
     BLOCK_DMODEL: tl.constexpr,
     BLOCK_N: tl.constexpr,
@@ -34,15 +56,21 @@ def attn_fwd_inner(
     offs_m: tl.constexpr,
     offs_n: tl.constexpr,
     pre_load_v: tl.constexpr,
+    ENABLE_DROPOUT: tl.constexpr,
+    RETURN_ENCODED_SOFTMAX: tl.constexpr,
 ):
     # range of values handled by this stage
     if STAGE == 1: # "Solid" blocks of Causal masks
         lo, hi = 0, min(seqlen_k, start_m * BLOCK_M)
     elif STAGE == 2: # "Semi-solid", or "Transition" block of Causal mask
+        # Must use BLOCK_M, because the starting position of semi-solid block
+        # is determined by start_m * BLOCK_M
         lo, hi = start_m * BLOCK_M, min(seqlen_k, start_m * BLOCK_M + BLOCK_M)
         lo = tl.multiple_of(lo, BLOCK_M)
         K_block_ptr = tl.advance(K_block_ptr, (0, lo))
         V_block_ptr = tl.advance(V_block_ptr, (lo, 0))
+        if RETURN_ENCODED_SOFTMAX:
+            encoded_softmax_block_ptr = tl.advance(encoded_softmax_block_ptr, (0, lo))
     else: # causal = False
         lo, hi = 0, seqlen_k
     # loop over k, v and update accumulator
@@ -61,19 +89,37 @@ def attn_fwd_inner(
         m_ij = tl.maximum(m_i, tl.max(qk, 1))
         qk = qk - m_ij[:, None]
         p = tl.math.exp2(qk)
+        # CAVEAT: Must update l_ij before applying dropout
+        l_ij = tl.sum(p, 1)
+        # Note about the conflicts of Flash attention algorithm and PyTorch's CUDA implementation
+        # PyTorch needs to return softmax(qk) (dropout mask encoded in sign bits)
+        # While Flash attention paper computer the dropout AFTER exp2(qk- m_ij)
+        if ENABLE_DROPOUT:
+            philox_offset = batch_philox_offset + start_m * BLOCK_M * seqlen_k + start_n
+            keep = dropout_mask(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, seqlen_k)
+            if RETURN_ENCODED_SOFTMAX:
+                tl.store(encoded_softmax_block_ptr, tl.where(keep, p, -p).to(encoded_softmax_block_ptr.type.element_ty)) # FIXME: This is correct code
+            p = tl.where(keep, p, 0.0)
+        elif RETURN_ENCODED_SOFTMAX:
+            tl.store(encoded_softmax_block_ptr, p.to(encoded_softmax_block_ptr.type.element_ty)) # FIXME: This is correct code
         # -- update output accumulator --
         alpha = tl.math.exp2(m_i - m_ij)
         acc = acc * alpha[:, None]
         if not pre_load_v:
             v = tl.load(V_block_ptr)
-        acc += tl.dot(p.to(V_block_ptr.type.element_ty), v)
+        '''
+        if ENABLE_DROPOUT:
+            v = (v / (1.0 - dropout_p)).to(V_block_ptr.type.element_ty)
+        '''
         # -- update m_i and l_i
-        l_ij = tl.sum(p, 1)
         l_i = l_i * alpha + l_ij
         # update m_i and l_i
         m_i = m_ij
+        acc += tl.dot(p.to(V_block_ptr.type.element_ty), v)
         V_block_ptr = tl.advance(V_block_ptr, (BLOCK_N, 0))
         K_block_ptr = tl.advance(K_block_ptr, (0, BLOCK_N))
+        if RETURN_ENCODED_SOFTMAX:
+            encoded_softmax_block_ptr = tl.advance(encoded_softmax_block_ptr, (0, BLOCK_N))
     return acc, l_i, m_i
 
 
@@ -87,11 +133,17 @@ def attn_fwd(
     Z, H,
     seqlen_q,
     seqlen_k,
+    dropout_p,
+    philox_seed,
+    philox_offset_base,
+    encoded_softmax,
     STAGE: tl.constexpr,
     BLOCK_M: tl.constexpr,
     BLOCK_DMODEL: tl.constexpr,
     BLOCK_N: tl.constexpr,
     pre_load_v: tl.constexpr,
+    ENABLE_DROPOUT: tl.constexpr,
+    RETURN_ENCODED_SOFTMAX: tl.constexpr,
 ):
     start_m = tl.program_id(0)
     off_hz = tl.program_id(1)
@@ -139,14 +191,31 @@ def attn_fwd(
     # stage 1: off-band
     # For causal = True, STAGE = 3 and attn_fwd_inner gets 1 as its STAGE
     # For causal = False, STAGE = 1, and attn_fwd_inner gets 3 as its STAGE
+    if ENABLE_DROPOUT:
+        batch_philox_offset = philox_offset_base + off_hz * seqlen_q * seqlen_k
+    else:
+        batch_philox_offset = 0
+    if RETURN_ENCODED_SOFTMAX:
+        encoded_softmax_block_ptr = tl.make_block_ptr(
+                base=encoded_softmax + off_hz * seqlen_q * seqlen_k,
+                shape=(seqlen_q, seqlen_k),
+                strides=(seqlen_k, 1),
+                offsets=(start_m * BLOCK_M, 0),
+                block_shape=(BLOCK_M, BLOCK_N),
+                order=(1, 0)
+                )
+    else:
+        encoded_softmax_block_ptr = 0
     if STAGE & 1:
         acc, l_i, m_i = attn_fwd_inner(
             acc, l_i, m_i, q, K_block_ptr, V_block_ptr,
             start_m, seqlen_q, seqlen_k,
+            dropout_p, philox_seed, batch_philox_offset, encoded_softmax_block_ptr,
             BLOCK_M, BLOCK_DMODEL, BLOCK_N,
             4 - STAGE, offs_m, offs_n,
             pre_load_v,
-        )
+            ENABLE_DROPOUT,
+            RETURN_ENCODED_SOFTMAX)
     # stage 2: on-band
     if STAGE & 2:
         # barrier makes it easier for compielr to schedule the
@@ -155,13 +224,18 @@ def attn_fwd(
         acc, l_i, m_i = attn_fwd_inner(
             acc, l_i, m_i, q, K_block_ptr, V_block_ptr,
             start_m, seqlen_q, seqlen_k,
+            dropout_p, philox_seed, batch_philox_offset, encoded_softmax_block_ptr,
             BLOCK_M, BLOCK_DMODEL, BLOCK_N,
             2, offs_m, offs_n,
             pre_load_v,
+            ENABLE_DROPOUT,
+            RETURN_ENCODED_SOFTMAX,
         )
     # epilogue
     # write back m
     acc = acc / l_i[:, None]
+    if ENABLE_DROPOUT:
+        acc = acc / (1 - dropout_p)
     m_ptrs = M + off_hz * seqlen_q + offs_m
     tl.store(m_ptrs, m_i + tl.math.log2(l_i))
     # write back O
