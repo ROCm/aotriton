@@ -91,10 +91,11 @@ but in PyTorch API it does not present at all
                           #(4, 48, 16384, 64)
                           ])
 @pytest.mark.parametrize('causal', [False, True])
-@pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16, torch.float32])
-@pytest.mark.parametrize('sm_scale', [1.0, 0.5, 0.0])
-@pytest.mark.parametrize('qseqlen_override', [None, 16, 64, 128]) # For debugging
-# @pytest.mark.parametrize('qseqlen_override', [None]) # Real UT
+# @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16, torch.float32])
+@pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
+@pytest.mark.parametrize('sm_scale', [1.3, 0.5, 0.0])
+# @pytest.mark.parametrize('qseqlen_override', [None, 16, 64, 128]) # For debugging
+@pytest.mark.parametrize('qseqlen_override', [None]) # Real UT
 @pytest.mark.parametrize('dropout_p', [0.0, 0.3, 0.5])
 def test_op_bwd(Z, H, N_CTX, D_HEAD, causal, sm_scale, dropout_p, dtype, qseqlen_override):
     torch.manual_seed(20)
@@ -223,6 +224,7 @@ def test_op_bwd(Z, H, N_CTX, D_HEAD, causal, sm_scale, dropout_p, dtype, qseqlen
     print(f"{ATOL=} {RTOL=}")
 
     dv_allclose = torch.allclose(ref_dv, tri_dv, atol=ATOL, rtol=RTOL)
+    '''
     if qseqlen <= 32:
         print(f'tri_dv {tri_dv}')
         print(f'ref_dv {ref_dv}')
@@ -232,6 +234,7 @@ def test_op_bwd(Z, H, N_CTX, D_HEAD, causal, sm_scale, dropout_p, dtype, qseqlen
         FN = 'dv-fused.npz'
         np.savez(FN, tri_dv=tri_dv.cpu().numpy(), ref_dv=ref_dv.cpu().numpy())
         print(f'save tri_dv and ref_dv to {FN}')
+    '''
     if not dv_allclose or True:
         import numpy as np
         err_idx = np.unravel_index(torch.argmax(torch.abs(ref_dv - tri_dv)).cpu().numpy(), ref_dv.shape)

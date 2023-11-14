@@ -222,7 +222,7 @@ class _attention(torch.autograd.Function):
             print(f'{L=} {L.shape=}')
             print(f'{delta=}')
             print(f'{BLOCK=}')
-        if not ctx.split_kernel:
+        if False: # Fused kernel does not work for seqlen_q >= 128
             # debug_mask = torch.empty((q.shape[0], q.shape[1], seqlen_q, seqlen_k), device=q.device, dtype=torch.float32)
             # print(f'{ctx.grid[1]=}')
             bwd_kernel[(q.shape[0] * q.shape[1],)](
@@ -274,7 +274,9 @@ class _attention(torch.autograd.Function):
                 philox_offset_base=ctx.philox_offset,
                 debug_mask=debug_mask,
                 BLOCK_M=BLOCK, BLOCK_N=BLOCK,
-                BLOCK_DMODEL=ctx.BLOCK_DMODEL, num_warps=4,
+                BLOCK_DMODEL=ctx.BLOCK_DMODEL,
+                CAUSAL=ctx.causal,
+                num_warps=4,
                 num_stages=1,
                 ENABLE_DROPOUT=ctx.dropout_p > 0.0,
             )
@@ -310,7 +312,9 @@ class _attention(torch.autograd.Function):
                 philox_seed=ctx.philox_seed,
                 philox_offset_base=ctx.philox_offset,
                 BLOCK_M=DQ_BLOCK_M, BLOCK_N=BLOCK,
-                BLOCK_DMODEL=ctx.BLOCK_DMODEL, num_warps=4, waves_per_eu=1,
+                BLOCK_DMODEL=ctx.BLOCK_DMODEL,
+                CAUSAL=ctx.causal,
+                num_warps=4, waves_per_eu=1,
                 num_stages=1,
                 ENABLE_DROPOUT=ctx.dropout_p > 0.0,
             )

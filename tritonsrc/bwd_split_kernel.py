@@ -33,6 +33,7 @@ def bwd_kernel_dk_dv(
     debug_mask,
     BLOCK_M: tl.constexpr, BLOCK_DMODEL: tl.constexpr,
     BLOCK_N: tl.constexpr,
+    CAUSAL: tl.constexpr,
     ENABLE_DROPOUT: tl.constexpr,
 ):
     start_m = tl.program_id(0) * BLOCK_N
@@ -93,7 +94,7 @@ def bwd_kernel_dk_dv(
     # This lower loop bound is because of the causal mask. We create a lower triangular
     # result. The upper triangular is -inf (becomes 0 when we do e^x). As such, it can
     # be ignored in the GEMM.
-    lo = start_m
+    lo = start_m if CAUSAL else 0
     hi = seqlen_q
     Q_block_ptr = tl.advance(Q_block_ptr, (lo, 0))
     DO_block_ptr = tl.advance(DO_block_ptr, (lo, 0))
@@ -136,7 +137,8 @@ def bwd_kernel_dk_dv(
         do = tl.load(DO_block_ptr)
         # -- compute qk ----
         qk = tl.dot(q, k)
-        qk = tl.where(offs_m_curr >= offs_m[None, :], qk, float("-inf"))
+        if CAUSAL:
+            qk = tl.where(offs_m_curr >= offs_m[None, :], qk, float("-inf"))
         l_i = tl.load(l_ptrs + offs_m_curr)
         p = tl.math.exp2(qk - l_i)
         # tl.store(debug_mask_ptr, p.to(debug_mask_ptr.type.element_ty)) # FIXME: Debug
@@ -225,6 +227,7 @@ def bwd_kernel_dq(
     philox_offset_base,
     BLOCK_M: tl.constexpr, BLOCK_DMODEL: tl.constexpr,
     BLOCK_N: tl.constexpr,
+    CAUSAL: tl.constexpr,
     ENABLE_DROPOUT: tl.constexpr,
 ):
     start_m = tl.program_id(0) * BLOCK_N
@@ -282,7 +285,7 @@ def bwd_kernel_dq(
     dq = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)
     # loop over k, v
     lo = 0
-    hi = start_m + BLOCK_M
+    hi = start_m + BLOCK_M if CAUSAL else seqlen_k
     batch_philox_offset = philox_offset_base + off_hz * seqlen_q * seqlen_k
     '''
            K1   K2      (d)V      dO
@@ -299,7 +302,8 @@ def bwd_kernel_dq(
         vt = tl.load(V_block_ptr)
         # -- compute qk ----
         qk = tl.dot(q, kt)
-        qk = tl.where(offs_m[:, None] >= (offs_n[None, :] + start_n), qk, float("-inf"))
+        if CAUSAL:
+            qk = tl.where(offs_m[:, None] >= (offs_n[None, :] + start_n), qk, float("-inf"))
         p = tl.math.exp2(qk - l_i[:, None])
         # compute dp = dot(v, do)
         dp = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
