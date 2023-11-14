@@ -41,12 +41,14 @@ def scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_mask
     av = attn_weight @ value
     return av, attn_weight
 
-def _make_block_eyes(q):
+def _make_block_eyes(q, base=1.0, inc=0.0):
     dhead = q.shape[-1]
     seqlen = q.shape[2]
     assert seqlen % dhead == 0
+    scale = base
     for i in range(0, seqlen, dhead):
-        q[:, :, i:i+dhead, :] = torch.eye(dhead, device=q.device, dtype=q.dtype)
+        q[:, :, i:i+dhead, :] = torch.eye(dhead, device=q.device, dtype=q.dtype) * scale
+        scale += inc
 
 '''
 Flash Attention is batch operator that evaluates sm(QK')V
@@ -126,7 +128,8 @@ def test_op_bwd(Z, H, N_CTX, D_HEAD, causal, sm_scale, dropout_p, dtype, qseqlen
     k = torch.ones((Z, H, kseqlen, D_HEAD), dtype=dtype, device="cuda") * 2.0
     v = torch.ones((Z, H, kseqlen, D_HEAD), dtype=dtype, device="cuda") * 3.0
     '''
-    DEBUG_IDENTITY_DO = True
+    DEBUG_IDENTITY_DO = False
+    DEBUG_SEMI_IDENTITY_DO = False
     DEBUG_IDENTITY_Q = False
     DEBUG_IDENTITY_K = False
     if causal == False:
@@ -142,6 +145,11 @@ def test_op_bwd(Z, H, N_CTX, D_HEAD, causal, sm_scale, dropout_p, dtype, qseqlen
         # for i in range(0, q.shape[2], 16):
         #     dout[:, :, i:i+16, ] = torch.eye(16, device=q.device, dtype=q.dtype)
         _make_block_eyes(dout)
+        print(dout)
+    if DEBUG_SEMI_IDENTITY_DO: # Debugging
+        _make_block_eyes(dout, base=1.0, inc=1.0)         # [ 1 2 ]^T
+        # _make_block_eyes(dout, base=1.0, inc=-1.0)        # [ 1 0 ]^T
+        # _make_block_eyes(dout, base=0.0, inc=1.0)        # [ 0 1 ]^T
         print(dout)
     if DEBUG_IDENTITY_Q: # Debugging
         _make_block_eyes(q)
@@ -215,9 +223,15 @@ def test_op_bwd(Z, H, N_CTX, D_HEAD, causal, sm_scale, dropout_p, dtype, qseqlen
     print(f"{ATOL=} {RTOL=}")
 
     dv_allclose = torch.allclose(ref_dv, tri_dv, atol=ATOL, rtol=RTOL)
-    if qseqlen >= 16:
+    if qseqlen <= 32:
         print(f'tri_dv {tri_dv}')
         print(f'ref_dv {ref_dv}')
+        import numpy as np
+        # FN = 'dv-sel1.npz'
+        # FN = 'dv-sel2.npz'
+        FN = 'dv-fused.npz'
+        np.savez(FN, tri_dv=tri_dv.cpu().numpy(), ref_dv=ref_dv.cpu().numpy())
+        print(f'save tri_dv and ref_dv to {FN}')
     if not dv_allclose or True:
         import numpy as np
         err_idx = np.unravel_index(torch.argmax(torch.abs(ref_dv - tri_dv)).cpu().numpy(), ref_dv.shape)

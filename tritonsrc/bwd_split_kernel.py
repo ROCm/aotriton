@@ -14,7 +14,7 @@ Extra Credits:
 """
 import triton
 import triton.language as tl
-from fwd_kernel import dropout_mask, dropout_rng
+from fwd_kernel import dropout_mask, dropout_rng, dropout_offsets
 
 
 @triton.jit
@@ -35,13 +35,13 @@ def bwd_kernel_dk_dv(
     BLOCK_N: tl.constexpr,
     ENABLE_DROPOUT: tl.constexpr,
 ):
-    start_m = tl.program_id(0)
+    start_m = tl.program_id(0) * BLOCK_N
     off_hz = tl.program_id(1)
     # Q is consumed depending on block ID. Every block uses
     # previous block offset by BLOCK_M x D_HEAD.
     qvk_offset = off_hz * stride_qh
     # initialize offsets
-    offs_m = start_m * BLOCK_M + tl.arange(0, BLOCK_M)
+    offs_m = start_m + tl.arange(0, BLOCK_M)
     offs_n = tl.arange(0, BLOCK_N)
     offs_d = tl.arange(0, BLOCK_DMODEL)
     # Initialize pointers to Q, K, V
@@ -59,16 +59,16 @@ def bwd_kernel_dk_dv(
         base=K + k_offset,
         shape=(BLOCK_DMODEL, seqlen_k),
         strides=(stride_kk, stride_kn),
-        offsets=(0, start_m * BLOCK_M),
+        offsets=(0, start_m),
         block_shape=(BLOCK_DMODEL, BLOCK_N),
         order=(0, 1)
     )
     v_offset = off_hz * stride_vh
-    V_block_ptr = tl.make_block_ptr(
+    VT_block_ptr = tl.make_block_ptr(
         base=V + v_offset,
         shape=(BLOCK_DMODEL, seqlen_k),
         strides=(stride_vn, stride_vk),
-        offsets=(0, start_m * BLOCK_M),
+        offsets=(0, start_m),
         block_shape=(BLOCK_DMODEL, BLOCK_N),
         order=(0, 1)
     )
@@ -88,32 +88,49 @@ def bwd_kernel_dk_dv(
     # load k and v: they will stay in SRAM throughout
     k = tl.load(K_block_ptr)
     k = (k * qk_scale).to(K_block_ptr.type.element_ty)
-    v = tl.load(V_block_ptr)
+    vt = tl.load(VT_block_ptr)
     dv = tl.zeros([BLOCK_N, BLOCK_DMODEL], dtype=tl.float32)
     dk = tl.zeros([BLOCK_N, BLOCK_DMODEL], dtype=tl.float32)
     # This lower loop bound is because of the causal mask. We create a lower triangular
     # result. The upper triangular is -inf (becomes 0 when we do e^x). As such, it can
     # be ignored in the GEMM.
-    lo = start_m * BLOCK_M
+    lo = start_m
     hi = seqlen_q
     Q_block_ptr = tl.advance(Q_block_ptr, (lo, 0))
     DO_block_ptr = tl.advance(DO_block_ptr, (lo, 0))
     batch_philox_offset = philox_offset_base + off_hz * seqlen_q * seqlen_k
+    """
     debug_mask_ptr = tl.make_block_ptr(
         base=debug_mask + off_hz * seqlen_q * seqlen_k,
         shape=(seqlen_q, seqlen_k),
         strides=(seqlen_k, 1),
-        offsets=(0, 0),
+        offsets=(0, start_m * BLOCK_M),
         block_shape=(BLOCK_M, BLOCK_N),
         order=(1, 0)
     )
     debug_mask_ptr = tl.advance(debug_mask_ptr, (lo, 0))
-    '''
     q = tl.load(Q_block_ptr)
     tl.store(debug_mask_ptr, q.to(debug_mask_ptr.type.element_ty))
+    """
     '''
-    # loop over q, do
-    for start_n in range(lo, hi, BLOCK_N):
+           K1   K2      (d)V      dO
+    Q1    qk11 qk12     (d)v1     dO1
+    Q2    qk21 qk22     (d)v2     dO2
+
+    QK: (seqlen_q, seqlen_k)
+    dO: (seqlen_q, hdim)
+    dV: (seqlen_k, hdim)
+
+    dV = (QK)^T dO
+
+    dV1 = qk11 dO1 + qk21 dO2 = q1 k1 dO1 + q2 k1 dO2
+    dV2 = qk12 dO1 + qk22 dO2 = q1 k2 dO1 + q2 k2 dO2
+                                ~~~~~ = 0
+    start_m: select k and dV
+    start_n: select q and dO
+    '''
+    # loop over q (seqlen_q, dhead), do (seqlen_q, d_head)
+    for start_n in range(lo, hi, BLOCK_M):
         offs_m_curr = offs_n[:, None] + start_n
         # -- load q, do --
         q = tl.load(Q_block_ptr)
@@ -127,12 +144,32 @@ def bwd_kernel_dk_dv(
         # tl.store(debug_mask_ptr, k.to(debug_mask_ptr.type.element_ty)) # FIXME: Debug
         # -- compute dv ----
         if ENABLE_DROPOUT:
+            '''
+            For Q,K,V = (32, 16)
+            start_m = [0, 1]
+            start_n = [0, 16, 32)
+                      [16, 32)
+            start_n = i * BLOCK_N + start_m * BLOCK_M
+            q_block.offset = (start_m * BLOCK_M + i * BLOCK_M, 0) # ???
+            '''
+            debug_mask_ptr = tl.make_block_ptr(
+                base=debug_mask + off_hz * seqlen_q * seqlen_k,
+                shape=(seqlen_q, seqlen_k),
+                strides=(seqlen_k, 1),
+                offsets=(start_n, start_m),
+                block_shape=(BLOCK_M, BLOCK_N),
+                order=(1, 0)
+            )
             # Note start_n indexing row of QK, while start_m indexing the column of QK
             philox_offset = batch_philox_offset + start_n * seqlen_k + start_m
             keep = dropout_mask(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, seqlen_k)
-            # tl.store(debug_mask_ptr, dropout_rng(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, seqlen_k))
+            # tl.store(debug_mask_ptr, dropout_rng(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, seqlen_k).to(debug_mask_ptr.type.element_ty))
+            offsets = dropout_offsets(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, seqlen_k)
+            # offsets = tl.where(keep, offsets, -offsets)
+            tl.store(debug_mask_ptr, offsets.to(debug_mask_ptr.type.element_ty))
             keept = tl.zeros([BLOCK_N, BLOCK_M], dtype=tl.int8)
             keept += tl.trans(keep)
+            # tl.store(debug_mask_ptr, tl.where(keept, tl.trans(p) / (1 - dropout_p), 0.0).to(debug_mask_ptr.type.element_ty))
             # CAVEAT: do NOT update p, ds needs the original p
             # dv += tl.dot(tl.trans(tl.where(keep, p / (1 - dropout_p), 0).to(do.type.element_ty)), do) # (BLOCK_N, BLOCK_DMODEL)
             dv += tl.dot(tl.where(keept, tl.trans(p) / (1 - dropout_p), 0.0).to(Q.dtype.element_ty), do)
@@ -141,7 +178,7 @@ def bwd_kernel_dk_dv(
         # compute dp = dot(v, do)
         Di = tl.load(D_ptrs + offs_m_curr)
         dp = tl.zeros([BLOCK_M, BLOCK_M], dtype=tl.float32)
-        dp += tl.dot(do, v)
+        dp += tl.dot(do, vt)
         if ENABLE_DROPOUT:
             dp = tl.where(keep, dp / (1 - dropout_p), 0)
         # compute ds = p * (dp - delta[:, None])
@@ -151,21 +188,23 @@ def bwd_kernel_dk_dv(
         # update pointers
         Q_block_ptr = tl.advance(Q_block_ptr, (BLOCK_M, 0))
         DO_block_ptr = tl.advance(DO_block_ptr, (BLOCK_M, 0))
+        """
         debug_mask_ptr = tl.advance(debug_mask_ptr, (BLOCK_M, 0))
+        """
     # initialize pointers to output
     DK_block_ptr = tl.make_block_ptr(
-        base=DK + qvk_offset,
+        base=DK + k_offset,
         shape=(seqlen_k, BLOCK_DMODEL),
         strides=(stride_kn, stride_kk),
-        offsets=(start_m * BLOCK_N, 0),
+        offsets=(start_m, 0),
         block_shape=(BLOCK_N, BLOCK_DMODEL),
         order=(1, 0)
     )
     DV_block_ptr = tl.make_block_ptr(
-        base=DV + qvk_offset,
+        base=DV + v_offset,
         shape=(seqlen_k, BLOCK_DMODEL),
         strides=(stride_vk, stride_vn),
-        offsets=(start_m * BLOCK_N, 0),
+        offsets=(start_m, 0),
         block_shape=(BLOCK_N, BLOCK_DMODEL),
         order=(1, 0)
     )
@@ -259,7 +298,7 @@ def bwd_kernel_dq(
         dp = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
         dp += tl.dot(do, v)
         if ENABLE_DROPOUT:
-            philox_offset = batch_philox_offset + start_m * seqlen_k + start_n
+            philox_offset = batch_philox_offset + start_n * seqlen_k + start_m
             keep = dropout_mask(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, seqlen_k)
             dp = tl.where(keep, dp / (1 - dropout_p), 0)
         # compute ds = p * (dp - delta[:, None])

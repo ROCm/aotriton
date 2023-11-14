@@ -67,6 +67,9 @@ def tuned_attn_fwd(
 
 class _attention(torch.autograd.Function):
 
+    # DEBUG_MASK_DTYPE = torch.int32
+    DEBUG_MASK_DTYPE = torch.float32
+
     @staticmethod
     def forward(ctx, q, k, v, causal, sm_scale, dropout_p, return_encoded_softmax,
                 split_kernel=False, autotune=False):
@@ -89,7 +92,7 @@ class _attention(torch.autograd.Function):
         )
         M = torch.empty((q.shape[0] * q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)
         if return_encoded_softmax:
-            encoded_softmax = torch.zeros((q.shape[0], q.shape[1], q.shape[2], k.shape[2]), device=q.device, dtype=torch.float32)
+            encoded_softmax = torch.zeros((q.shape[0], q.shape[1], q.shape[2], k.shape[2]), device=q.device, dtype=_attention.DEBUG_MASK_DTYPE)
         else:
             encoded_softmax = None
         if True or VERBOSE:
@@ -111,7 +114,7 @@ class _attention(torch.autograd.Function):
             print(f'{encoded_softmax.shape=} {encoded_softmax.dtype=}')
 
         philox_seed = 114514
-        philox_offset = 1919810
+        philox_offset = 0
         MAX_BLOCK_M = 128 if dropout_p == 0 else 64
         MAX_BLOCK_N = 32 if dropout_p == 0 else 32
 
@@ -254,7 +257,7 @@ class _attention(torch.autograd.Function):
         else :
             print(f'{BLOCK=}')
             dq = torch.zeros_like(q)
-            debug_mask = torch.zeros((q.shape[0], q.shape[1], seqlen_q, seqlen_k), device=q.device, dtype=torch.float32)
+            debug_mask = torch.zeros((q.shape[0], q.shape[1], seqlen_q, seqlen_k), device=q.device, dtype=ctx.encoded_softmax.dtype)
             bwd_kernel_dk_dv[(triton.cdiv(q.shape[2], BLOCK), ctx.grid[1])](
                 q, k, v, ctx.sm_scale,
                 o, do_scaled,
@@ -286,6 +289,9 @@ class _attention(torch.autograd.Function):
                 print(f'Full fwd mask: {ctx.encoded_softmax[0,0]}')
                 print(f'Full mask div: {debug_mask[0,0] / ctx.encoded_softmax[0,0]}')
                 print(f'Full dv: {dv}')
+                if seqlen_q == 32:
+                    print(f'2nd block bwd mask: {debug_mask[0,0, 16:]}')
+                    print(f'2nd block fwd mask: {ctx.encoded_softmax[0,0, 16:]}')
                 # print(f'Full q: {q}', file=sys.stderr)
             # assert mask_allclose
             DQ_BLOCK_M = min(seqlen_q, BLOCK)

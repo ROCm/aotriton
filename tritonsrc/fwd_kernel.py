@@ -21,10 +21,14 @@ def max_fn(x, y):
     return tl.math.max(x, y)
 
 @triton.jit
-def dropout_rng(philox_seed, philox_offset, dropout_p, m, n, stride):
+def dropout_offsets(philox_seed, philox_offset, dropout_p, m, n, stride):
     ms = tl.arange(0, m)
     ns = tl.arange(0, n)
-    rng_offsets = philox_offset + ms[:, None] * stride + ns[None, :]
+    return philox_offset + ms[:, None] * stride + ns[None, :]
+
+@triton.jit
+def dropout_rng(philox_seed, philox_offset, dropout_p, m, n, stride):
+    rng_offsets = dropout_offsets(philox_seed, philox_offset, dropout_p, m, n, stride)
     # TODO: use tl.randint for better performance
     return tl.rand(philox_seed, rng_offsets)
 
@@ -95,19 +99,22 @@ def attn_fwd_inner(
         # PyTorch needs to return softmax(qk) (dropout mask encoded in sign bits)
         # While Flash attention paper computer the dropout AFTER exp2(qk- m_ij)
         if ENABLE_DROPOUT:
-            philox_offset = batch_philox_offset + start_m * seqlen_k + start_n
+            philox_offset = batch_philox_offset + start_m * BLOCK_M * seqlen_k + start_n
             keep = dropout_mask(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, seqlen_k)
             if RETURN_ENCODED_SOFTMAX:
                 # FIXME: DEBUG
-                rng = dropout_rng(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, seqlen_k) # Debug
-                tl.store(encoded_softmax_block_ptr, tl.where(keep, rng, -rng)) # Debug
-                # tl.store(encoded_softmax_block_ptr, tl.where(keep, p, -p)) # FIXME: This is correct code
+                # offsets = dropout_offsets(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, seqlen_k) # Debug
+                # tl.store(encoded_softmax_block_ptr, tl.where(keep, offsets, -offsets).to(encoded_softmax_block_ptr.type.element_ty)) # Debug
+                # rng = dropout_rng(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, seqlen_k) # Debug
+                # tl.store(encoded_softmax_block_ptr, tl.where(keep, rng, -rng)) # Debug
                 # v = tl.load(V_block_ptr) # FIXME: debug
                 # p = tl.where(keep, p, 0.0)
                 # tl.store(encoded_softmax_block_ptr, tl.dot(p.to(V_block_ptr.type.element_ty), v))
+
+                tl.store(encoded_softmax_block_ptr, tl.where(keep, p, -p)) # FIXME: This is correct code
             p = tl.where(keep, p, 0.0)
         elif RETURN_ENCODED_SOFTMAX:
-            tl.store(encoded_softmax_block_ptr, p) # FIXME: This is correct code
+            tl.store(encoded_softmax_block_ptr, p.to(encoded_softmax_block_ptr.type.element_ty)) # FIXME: This is correct code
             # tl.store(encoded_softmax_block_ptr, k.to(encoded_softmax_block_ptr.type.element_ty)) # FIXME: DEBUG
         # -- update output accumulator --
         alpha = tl.math.exp2(m_i - m_ij)
