@@ -85,7 +85,10 @@ def attn_fwd_inner(
         if STAGE == 2:
             mask = offs_m[:, None] >= (start_n + offs_n[None, :])
             qk = tl.where(mask, qk, float("-inf"))
-        qk += tl.dot(q, k)
+        if BLOCK_M == 1:
+            qk += tl.sum(tl.view(q, [BLOCK_DMODEL]) * tl.view(k, [BLOCK_DMODEL]))
+        else:
+            qk += tl.dot(q, k)
         m_ij = tl.maximum(m_i, tl.max(qk, 1))
         qk = qk - m_ij[:, None]
         p = tl.math.exp2(qk)
@@ -115,7 +118,10 @@ def attn_fwd_inner(
         l_i = l_i * alpha + l_ij
         # update m_i and l_i
         m_i = m_ij
-        acc += tl.dot(p.to(V_block_ptr.type.element_ty), v)
+        if BLOCK_M == 1:
+            acc += tl.view(p.to(V_block_ptr.type.element_ty), [1]) * tl.view(v, [BLOCK_DMODEL])
+        else:
+            acc += tl.dot(p.to(V_block_ptr.type.element_ty), v)
         V_block_ptr = tl.advance(V_block_ptr, (BLOCK_N, 0))
         K_block_ptr = tl.advance(K_block_ptr, (0, BLOCK_N))
         if RETURN_ENCODED_SOFTMAX:

@@ -39,9 +39,9 @@ class FlashAttention_attn_fwd(KernelDescription):
             frozenset(['philox_seed']) : ['u64'],
             frozenset(['philox_offset_base']) : ['u32'],
             frozenset(['STAGE']) : [1, 3],
-            frozenset(['BLOCK_M']) : [32],
+            frozenset(['BLOCK_M', 'BLOCK_N']) : [1, 16, 32],
             frozenset(['BLOCK_DMODEL']) : [16, 32, 64, 128],
-            frozenset(['BLOCK_N']) : [32],
+            # frozenset(['BLOCK_N']) : [32], # BLOCK_M and BLOCK_N can be differnt but that creates N^2 kenels
             frozenset(['pre_load_v']) : [True],
             frozenset(['ENABLE_DROPOUT']) : [True, False],
             frozenset(['RETURN_ENCODED_SOFTMAX']) : [True, False],
@@ -93,9 +93,8 @@ class FlashAttention_bwd_kernel_dk_dv(KernelDescription):
         frozenset(['dropout_p']) : match_fwd('dropout_p'),
         frozenset(['philox_seed']) : match_fwd('philox_seed'),
         frozenset(['philox_offset_base']) : match_fwd('philox_offset_base'),
-        frozenset(['BLOCK_M']) : [16],
+        frozenset(['BLOCK_M', 'BLOCK_N']) : match_fwd('BLOCK_M'),
         frozenset(['BLOCK_DMODEL']) : [16, 32, 64, 128],
-        frozenset(['BLOCK_N']) : [16],
         frozenset(['CAUSAL']) : [True, False],
         frozenset(['ENABLE_DROPOUT']) : match_fwd('ENABLE_DROPOUT'),
     }
@@ -133,9 +132,8 @@ class FlashAttention_bwd_kernel_dq(KernelDescription):
         frozenset(['dropout_p']) : match_fwd('dropout_p'),
         frozenset(['philox_seed']) : match_fwd('philox_seed'),
         frozenset(['philox_offset_base']) : match_fwd('philox_offset_base'),
-        frozenset(['BLOCK_M']) : [16],
+        frozenset(['BLOCK_M', 'BLOCK_N']) : match_fwd('BLOCK_M'),
         frozenset(['BLOCK_DMODEL']) : [16],
-        frozenset(['BLOCK_N']) : [16],
         frozenset(['CAUSAL']) : match_kv('CAUSAL'),
         frozenset(['ENABLE_DROPOUT']) : match_fwd('ENABLE_DROPOUT'),
     }

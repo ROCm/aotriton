@@ -8,6 +8,11 @@ from fused_attention_trimmed import bwd_preprocess, bwd_kernel, bwd_kernel_dk_dv
 
 VERBOSE=False
 
+def is_power_of_two(n: int) -> bool:
+    return (n & (n - 1) == 0) and n != 0
+
+def is_supported_by_tl_dot(n: int) -> bool:
+    return is_power_of_two(n) and n >= 16
 
 @triton.autotune(
    configs=[
@@ -77,6 +82,8 @@ class _attention(torch.autograd.Function):
         Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
         assert Lq == Lk and Lk == Lv
         assert Lk in {16, 32, 64, 128}
+        seqlen_q = q.shape[2]
+        seqlen_k = k.shape[2]
         o = torch.empty_like(q)
         if torch.version.hip is None:
             BLOCK_M = 128
@@ -117,6 +124,8 @@ class _attention(torch.autograd.Function):
         philox_offset = 1919810
         MAX_BLOCK_M = 128 if dropout_p == 0 else 64
         MAX_BLOCK_N = 32 if dropout_p == 0 else 32
+        MAX_BLOCK_M = MAX_BLOCK_M if is_supported_by_tl_dot(seqlen_q) else 1
+        MAX_BLOCK_N = MAX_BLOCK_N if is_supported_by_tl_dot(seqlen_k) else 1
 
         if autotune:
             tuned_attn_fwd[grid](
@@ -200,6 +209,7 @@ class _attention(torch.autograd.Function):
         MAX_BLOCK = 64 if ctx.dropout_p == 0 else 16
         # BLOCK = min(seqlen_q, seqlen_k, q.shape[-1], MAX_BLOCK)
         BLOCK = 16 # FIXME: Variable block size
+        BLOCK = BLOCK if is_supported_by_tl_dot(seqlen_q) and is_supported_by_tl_dot(seqlen_k) else 1
 
         # block size is (BLOCK_M, D_HEAD)
         bwd_preprocess[(do.shape[0] * do.shape[1] * triton.cdiv(do.shape[2], BLOCK), )](

@@ -74,6 +74,12 @@ but in PyTorch API it does not present at all
                           (1, 1, 64, 64),
                           (1, 1, 16, 32),
                           (1, 1, 16, 16),
+                          (1, 1, 1, 16),
+                          (1, 1, 7, 16),
+                          (8, 4, 1, 16),
+                          (8, 4, 7, 16),
+                          (4, 48, 1, 16),
+                          (4, 48, 7, 16),
                           #(4, 48, 8192, 64),
                           #(4, 48, 16384, 64)
                           ])
@@ -86,6 +92,8 @@ def test_op_fwd(Z, H, N_CTX, D_HEAD, causal, sm_scale, dropout_p, dtype, qseqlen
     torch.manual_seed(20)
     qseqlen = N_CTX if qseqlen_override is None else qseqlen_override
     kseqlen = N_CTX
+    if qseqlen_override is not None and N_CTX < 16:
+        pytest.skip("Do not qseqlen_override + odd seqlen")
     print(f"test_op_fwd {Z=}, {H=}, {qseqlen=}, {kseqlen=}, {D_HEAD=}, {causal=}")
     SPARSE_HEAD_SINCE = 3
     SPARSE_SEQ_SINCE = 3
@@ -169,9 +177,9 @@ def test_op_fwd(Z, H, N_CTX, D_HEAD, causal, sm_scale, dropout_p, dtype, qseqlen
         print(f'{dropout_mask.shape=} {dropout_mask.stride()=}')
         print(f'{dropout_mask[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
     if dtype==torch.bfloat16:
-        ATOL = 1e-1 * (qseqlen / 128.0)
+        ATOL = 1e-1 * (qseqlen / 128.0) if qseqlen >= 16 else 1e-1
     else:
-        ATOL = 1e-2 * (qseqlen / 128.0)
+        ATOL = 1e-2 * (qseqlen / 128.0) if qseqlen >= 16 else 1e-2
     print(f'Using ATOL={ATOL}')
     is_allclose = torch.allclose(ref_out, tri_out, atol=ATOL, rtol=0)
     if not is_allclose:

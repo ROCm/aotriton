@@ -87,6 +87,12 @@ but in PyTorch API it does not present at all
                           (1, 1, 256, 32),
                           (1, 1, 256, 64),
                           (1, 8, 256, 64),
+                          (1, 1, 1, 16),
+                          (1, 1, 1, 32),
+                          (1, 1, 1, 64),
+                          (1, 1, 7, 16),
+                          (1, 1, 7, 32),
+                          (1, 1, 7, 64),
                           #(4, 48, 8192, 64),
                           #(4, 48, 16384, 64)
                           ])
@@ -101,6 +107,8 @@ def test_op_bwd(Z, H, N_CTX, D_HEAD, causal, sm_scale, dropout_p, dtype, qseqlen
     torch.manual_seed(20)
     qseqlen = N_CTX if qseqlen_override is None else qseqlen_override
     kseqlen = N_CTX
+    if qseqlen_override is not None and N_CTX < 16:
+        pytest.skip("Do not qseqlen_override + odd seqlen")
     SPARSE_HEAD_SINCE = 1
     SPARSE_SEQ_SINCE = 1
     q = torch.empty((Z, H, qseqlen, D_HEAD), dtype=dtype, device="cuda").normal_(mean=0., std=0.5)
@@ -128,12 +136,12 @@ def test_op_bwd(Z, H, N_CTX, D_HEAD, causal, sm_scale, dropout_p, dtype, qseqlen
     ref_dq, q.grad = q.grad.clone(), None
     # compare
     if dtype==torch.bfloat16:
-        ATOL = 1e-1 * (qseqlen / 64.0)
+        ATOL = 1e-1 * (qseqlen / 64.0) if qseqlen >= 16 else 1e-1
     else:
-        ATOL = 1e-2 * (qseqlen / 64.0)
+        ATOL = 1e-2 * (qseqlen / 64.0) if qseqlen >= 16 else 1e-2
     # RTOL=1e-2 if dtype==torch.float16 else 5e-2
     RTOL=0.0
-    print(f'Using ATOL={ATOL} RTOL={RTOL}')
+    print(f'Forward Using ATOL={ATOL} RTOL={RTOL}')
     # FIXME: Need to raise tolerance
     is_allclose = torch.allclose(ref_out, tri_out, atol=ATOL, rtol=RTOL)
     if not is_allclose:
@@ -149,7 +157,7 @@ def test_op_bwd(Z, H, N_CTX, D_HEAD, causal, sm_scale, dropout_p, dtype, qseqlen
         ATOL = 1e-3 * ((qseqlen + D_HEAD) / 32.0)
     else:
         ATOL = 1e-1 * ((qseqlen + D_HEAD) / 32.0)
-    print(f"{ATOL=} {RTOL=}")
+    print(f"Backward Using {ATOL=} {RTOL=}")
 
     dv_allclose = torch.allclose(ref_dv, tri_dv, atol=ATOL, rtol=RTOL)
     if not dv_allclose:
@@ -166,6 +174,13 @@ def test_op_bwd(Z, H, N_CTX, D_HEAD, causal, sm_scale, dropout_p, dtype, qseqlen
         print(f'{err_idx=}')
         print(f'{tri_dv[err_idx]=}')
         print(f'{ref_dv[err_idx]=}')
+        if qseqlen < 16:
+            print(f'{tri_dk[0,0]=}')
+            print(f'{ref_dk[0,0]=}')
+            print(f'{tri_dv[0,0]=}')
+            print(f'{ref_dv[0,0]=}')
+            # print(f'{tri_dq[0,0]=}')
+            # print(f'{ref_dq[0,0]=}')
 
     dk_allclose = torch.allclose(ref_dk, tri_dk, atol=ATOL, rtol=RTOL)
     if dv_allclose and not dk_allclose:

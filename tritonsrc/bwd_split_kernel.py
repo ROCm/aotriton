@@ -16,6 +16,13 @@ import triton
 import triton.language as tl
 from fwd_kernel import dropout_mask, dropout_rng, dropout_offsets
 
+# Helper function, but not always usable due to compiler bugs (esp. used with tl.trans)
+@triton.jit
+def dot(BLOCK_M : tl.constexpr, QDIM : tl.constexpr, KDIM : tl.constexpr, q, k):
+    if BLOCK_M == 1:
+        return tl.sum(tl.view(q, [QDIM]) * tl.view(k, [KDIM]))
+    else:
+        return tl.dot(q, k)
 
 @triton.jit
 def bwd_kernel_dk_dv(
@@ -122,7 +129,7 @@ def bwd_kernel_dk_dv(
         q = tl.load(Q_block_ptr)
         do = tl.load(DO_block_ptr)
         # -- compute qk ----
-        qk = tl.dot(q, k)
+        qk = dot(BLOCK_M, BLOCK_DMODEL, BLOCK_DMODEL, q, k) # BLOCK_M x BLOCK_N
         if CAUSAL:
             qk = tl.where(offs_m_curr >= offs_m[None, :], qk, float("-inf"))
         l_i = tl.load(l_ptrs + offs_m_curr)
@@ -132,19 +139,28 @@ def bwd_kernel_dk_dv(
             philox_offset = batch_philox_offset + start_n * seqlen_k + start_m
             keep = dropout_mask(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, seqlen_k)
             # CAVEAT: do NOT update p, ds needs the original p
-            dv += tl.dot(tl.where(tl.trans(keep), tl.trans(p) / (1 - dropout_p), 0.0).to(Q.dtype.element_ty), do)
+            if BLOCK_M == 1:
+                dv += tl.where(keep, p / (1 - dropout_p), 0.0).to(Q.dtype.element_ty) * do
+            else:
+                dv += tl.dot(tl.where(tl.trans(keep), tl.trans(p) / (1 - dropout_p), 0.0).to(Q.dtype.element_ty), do)
         else:
-            dv += tl.dot(tl.trans(p.to(Q.dtype.element_ty)), do)
+            if BLOCK_M == 1:
+                dv += p.to(Q.dtype.element_ty) * do
+            else:
+                dv += dot(BLOCK_M, BLOCK_M, BLOCK_DMODEL, tl.trans(p.to(Q.dtype.element_ty)), do)
         # compute dp = dot(v, do)
         Di = tl.load(D_ptrs + offs_m_curr)
         dp = tl.zeros([BLOCK_M, BLOCK_M], dtype=tl.float32)
-        dp += tl.dot(do, vt)
+        dp += dot(BLOCK_M, BLOCK_DMODEL, BLOCK_DMODEL, do, vt)
         if ENABLE_DROPOUT:
             dp = tl.where(keep, dp / (1 - dropout_p), 0)
         # compute ds = p * (dp - delta[:, None])
         ds = p * (dp - Di)
         # compute dk
-        dk += tl.dot(tl.trans(ds.to(Q.dtype.element_ty)), q)
+        if BLOCK_M == 1:
+            dk += ds.to(Q.dtype.element_ty) * q
+        else:
+            dk += tl.dot(tl.trans(ds.to(Q.dtype.element_ty)), q)
         # update pointers
         Q_block_ptr = tl.advance(Q_block_ptr, (BLOCK_M, 0))
         DO_block_ptr = tl.advance(DO_block_ptr, (BLOCK_M, 0))
@@ -257,13 +273,13 @@ def bwd_kernel_dq(
         kt = tl.load(K_block_ptr)
         vt = tl.load(V_block_ptr)
         # -- compute qk ----
-        qk = tl.dot(q, kt)
+        qk = dot(BLOCK_M, BLOCK_DMODEL, BLOCK_DMODEL, q, kt)
         if CAUSAL:
             qk = tl.where(offs_m[:, None] >= (offs_n[None, :] + start_n), qk, float("-inf"))
         p = tl.math.exp2(qk - l_i[:, None])
         # compute dp = dot(v, do)
         dp = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
-        dp += tl.dot(do, vt)
+        dp += dot(BLOCK_M, BLOCK_DMODEL, BLOCK_DMODEL, do, vt)
         if ENABLE_DROPOUT:
             philox_offset = batch_philox_offset + start_m * seqlen_k + start_n
             keep = dropout_mask(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, seqlen_k)
@@ -272,7 +288,10 @@ def bwd_kernel_dq(
         ds = p * (dp - Di[:, None])
         # compute dq. Unfortunately we cannot avoid transpose here as this loop
         # uses k both normal and transpose.
-        dq += tl.dot(ds.to(Q.type.element_ty), tl.trans(kt))
+        if BLOCK_M == 1:
+            dq += tl.view(kt, [BLOCK_DMODEL]) * ds.to(Q.type.element_ty)
+        else:
+            dq += tl.dot(ds.to(Q.type.element_ty), tl.trans(kt))
         # update pointers
         K_block_ptr = tl.advance(K_block_ptr, (0, BLOCK_N))
         V_block_ptr = tl.advance(V_block_ptr, (0, BLOCK_N))
