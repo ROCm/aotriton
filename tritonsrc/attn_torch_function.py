@@ -49,11 +49,17 @@ def tuned_attn_fwd(
     Z, H,
     seqlen_q,
     seqlen_k,
+    dropout_p,
+    philox_seed,
+    philox_offset_base,
+    encoded_softmax,
     STAGE: tl.constexpr,
     BLOCK_M: tl.constexpr,
     BLOCK_DMODEL: tl.constexpr,
     BLOCK_N: tl.constexpr,
     pre_load_v: tl.constexpr,
+    ENABLE_DROPOUT: tl.constexpr,
+    RETURN_ENCODED_SOFTMAX: tl.constexpr,
 ):
     bare_attn_fwd(
             Q, K, V, sm_scale, M, Out,
@@ -64,11 +70,18 @@ def tuned_attn_fwd(
             Z, H,
             seqlen_q,
             seqlen_k,
+            dropout_p,
+            philox_seed,
+            philox_offset_base,
+            encoded_softmax,
             STAGE,
             BLOCK_M,
             BLOCK_DMODEL,
             BLOCK_N,
-            pre_load_v)
+            pre_load_v,
+            ENABLE_DROPOUT,
+            RETURN_ENCODED_SOFTMAX,
+            )
 
 class _attention(torch.autograd.Function):
 
@@ -118,7 +131,8 @@ class _attention(torch.autograd.Function):
             print(f'{v.data_ptr()=:x}')
             print(f'{v.stride(1)=:x}')
             print(f'{v.data_ptr() + q.shape[0] * q.shape[1] * v.stride(1)=:x}')
-            print(f'{encoded_softmax.shape=} {encoded_softmax.dtype=}')
+            if encoded_softmax is not None:
+                print(f'{encoded_softmax.shape=} {encoded_softmax.dtype=}')
 
         philox_seed = 114514
         philox_offset = 1919810
@@ -141,10 +155,10 @@ class _attention(torch.autograd.Function):
                 philox_seed=philox_seed,
                 philox_offset_base=philox_offset,
                 encoded_softmax=encoded_softmax,
-                ENABLE_DROPOUT=dropout_p > 0.0,
-                RETURN_ENCODED_SOFTMAX=encoded_softmax is not None,
                 BLOCK_DMODEL=Lk,
                 STAGE=stage,
+                ENABLE_DROPOUT=dropout_p > 0.0,
+                RETURN_ENCODED_SOFTMAX=encoded_softmax is not None,
             )
         else:
             bare_attn_fwd[grid](
