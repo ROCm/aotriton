@@ -10,6 +10,8 @@ COMPILER = SOURCE_PATH.parent / 'compile.py'
 def parse():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument("--target", type=str, default=None, help="Ahead of Time (AOT) Compile Architecture. PyTorch is required for autodetection if --target is missing.")
+    p.add_argument("--build_dir", type=str, default='build/', help="build directory")
+    p.add_argument("--python", type=str, default=None, help="python binary to run compile.py")
     args = p.parse_args()
     # print(args)
     return args
@@ -41,7 +43,7 @@ def gen_from_kernel(args, k, p, makefile):
 
 def main():
     args = parse()
-    build_dir = Path('build/')
+    build_dir = Path(args.build_dir)
     with open(build_dir / 'Makefile.compile', 'w') as f:
         makefile_content = io.StringIO()
         per_kernel_targets = []
