@@ -133,7 +133,7 @@ class FlashAttention_bwd_kernel_dq(KernelDescription):
         frozenset(['philox_seed']) : match_fwd('philox_seed'),
         frozenset(['philox_offset_base']) : match_fwd('philox_offset_base'),
         frozenset(['BLOCK_M', 'BLOCK_N']) : match_fwd('BLOCK_M'),
-        frozenset(['BLOCK_DMODEL']) : [16],
+        frozenset(['BLOCK_DMODEL']) : [16, 32, 64, 128],
         frozenset(['CAUSAL']) : match_kv('CAUSAL'),
         frozenset(['ENABLE_DROPOUT']) : match_fwd('ENABLE_DROPOUT'),
     }
