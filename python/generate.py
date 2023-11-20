@@ -19,7 +19,7 @@ def parse():
 def gen_from_object(args, o : 'ObjectFileDescription', makefile):
     target = o._hsaco_kernel_path.name
     print(target, ':', file=makefile)
-    cmd  = f'{COMPILER} {o.src.absolute()} --kernel_name {o.entrance} -o {o.obj.absolute()}'
+    cmd  = f'LD_PRELOAD=/opt/rocm/lib/libamdocl64.so {COMPILER} {o.src.absolute()} --kernel_name {o.entrance} -o {o.obj.absolute()}'
     cmd += f' -g 1,1,1 --num_warps {o.num_warps} --num_stages {o.num_stages}'
     if args.target is not None:
         cmd += f" --target '{args.target}'"
