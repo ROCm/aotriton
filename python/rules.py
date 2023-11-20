@@ -58,7 +58,7 @@ class FlashAttention_bwd_preprocess(KernelDescription):
     ARGUMENT_CHOICES = {
         frozenset(['Out', 'DO', 'NewDO']) : ['*fp16:16', '*bf16:16'],
         frozenset(['Delta']) : ['*fp32:16'],
-        frozenset(['BLOCK_M']) : [64, 128], # TODO: All possible values?
+        frozenset(['BLOCK_M']) : [16, 64, 128], # TODO: All possible values?
         frozenset(['D_HEAD']) : get_possible_types(FlashAttention_attn_fwd, 'BLOCK_DMODEL'),
     }
     SHIM_KERNEL_NAME = 'bwd_preprocess'
