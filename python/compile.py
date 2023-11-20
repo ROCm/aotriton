@@ -8,8 +8,6 @@ from pathlib import Path
 from typing import List
 
 import triton
-from triton.compiler.code_generator import kernel_suffix
-from triton.compiler.make_launcher import ty_to_cpp
 
 import shutil
 import json
