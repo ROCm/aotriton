@@ -19,7 +19,7 @@ def parse():
 def gen_from_object(args, o : 'ObjectFileDescription', makefile):
     target = o._hsaco_kernel_path.name
     print(target, ':', file=makefile)
-    cmd  = f'LD_PRELOAD=/opt/rocm/lib/libamdocl64.so {COMPILER} {o.src.absolute()} --kernel_name {o.entrance} -o {o.obj.absolute()}'
+    cmd  = f'LD_PRELOAD=$(LIBHSA_RUNTIME64) {COMPILER} {o.src.absolute()} --kernel_name {o.entrance} -o {o.obj.absolute()}'
     cmd += f' -g 1,1,1 --num_warps {o.num_warps} --num_stages {o.num_stages}'
     if args.target is not None:
         cmd += f" --target '{args.target}'"
@@ -45,6 +45,7 @@ def main():
     args = parse()
     build_dir = Path(args.build_dir)
     with open(build_dir / 'Makefile.compile', 'w') as f:
+        print('LIBHSA_RUNTIME64=/opt/rocm/lib/libhsa-runtime64.so\n', file=f)
         makefile_content = io.StringIO()
         per_kernel_targets = []
         for k in rules.kernels:

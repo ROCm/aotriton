@@ -7,7 +7,7 @@ find_package(Python3 COMPONENTS Interpreter REQUIRED)
 set(VENV_DIR "${CMAKE_CURRENT_BINARY_DIR}/venv" CACHE STRING "Virtual Environment Directory")
 set(OORT_HIPCC_PATH "hipcc" CACHE STRING "Set HIPCC Path")
 set(TARGET_ARCH "MI200" CACHE STRING "Target Architecture")
-set(AMDOCL_LD_PRELOAD "/opt/rocm/lib/libamdocl64.so" CACHE STRING "Workaround of libamdhip64.so.5: undefined symbol: hsa_amd_memory_async_copy_on_engine")
+set(AMDHSA_LD_PRELOAD "/opt/rocm/lib/libhsa-runtime64.so" CACHE STRING "Workaround of libamdhip64.so.5: undefined symbol: hsa_amd_memory_async_copy_on_engine")
 
 # Not a target, we need to override Python3_EXECUTABLE later
 execute_process(COMMAND "${Python3_EXECUTABLE}" -m venv "${VENV_DIR}")
@@ -51,7 +51,7 @@ ProcessorCount(NPROC)
 add_custom_target(oort_compile
   # (CAVEAT) KNOWN PROBLEM: Will not work if LD_PRELOAD is not empty
   # FIXME: Change this into `-E env --modify LD_PRELOAD=path_list_prepend:${AMDOCL_LD_PRELOAD}` when minimal cmake >= 3.25
-  COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} LD_PRELOAD=${AMDOCL_LD_PRELOAD} PATH="${VENV_DIR}/bin:$ENV{PATH}" make -j ${NPROC} -f Makefile.compile
+  COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} PATH="${VENV_DIR}/bin:$ENV{PATH}" make -j ${NPROC} -f Makefile.compile LIBHSA_RUNTIME64=${AMDHSA_LD_PRELOAD}
   WORKING_DIRECTORY "${AOTRITON_DIR}"
   BYPRODUCTS "${AOTRITON_DIR}/attn_fwd.h"
   "${AOTRITON_DIR}/bwd_kernel_dk_dv.h"
