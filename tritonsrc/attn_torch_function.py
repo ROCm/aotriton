@@ -245,7 +245,7 @@ class _attention(torch.autograd.Function):
             print(f'{BLOCK=}')
         dq = torch.zeros_like(q)
         # debug_mask = torch.zeros((q.shape[0], q.shape[1], seqlen_q, seqlen_k), device=q.device, dtype=ctx.encoded_softmax.dtype)
-        bwd_kernel_dk_dv[(triton.cdiv(q.shape[2], BLOCK), ctx.grid[1])](
+        bwd_kernel_dk_dv[(triton.cdiv(seqlen_k, BLOCK), ctx.grid[1])](
             q, k, v, ctx.sm_scale,
             o, do_scaled,
             dk, dv,
