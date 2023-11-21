@@ -98,7 +98,8 @@ class FlashAttention_bwd_kernel_dk_dv(KernelDescription):
         frozenset(['CAUSAL']) : [True, False],
         frozenset(['ENABLE_DROPOUT']) : match_fwd('ENABLE_DROPOUT'),
     }
-    # TODO: num_warps=4, num_stages=1
+    num_warps=4
+    num_stages=1
     SHIM_KERNEL_NAME = 'bwd_kernel_dk_dv'
 
 class FlashAttention_bwd_kernel_dq(KernelDescription):
@@ -137,7 +138,9 @@ class FlashAttention_bwd_kernel_dq(KernelDescription):
         frozenset(['CAUSAL']) : match_kv('CAUSAL'),
         frozenset(['ENABLE_DROPOUT']) : match_fwd('ENABLE_DROPOUT'),
     }
-    # TODO: num_warps=4, num_stages=1, waves_per_eu=1
+    num_warps=4
+    num_stages=1
+    # TODO: waves_per_eu=1
     SHIM_KERNEL_NAME = 'bwd_kernel_dq'
 
 kernels = [
