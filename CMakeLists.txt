@@ -61,7 +61,7 @@ add_custom_target(oort_compile
 add_dependencies(oort_compile oort_gen_compile)
 
 add_custom_target(oort_gen_shim
-  COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} PATH="${VENV_DIR}/bin:$ENV{PATH}" python python/generate_shim.py --build_dir "${AOTRITON_DIR}"
+  COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} PATH="${VENV_DIR}/bin:$ENV{PATH}" python python/generate_shim.py --build_dir "${AOTRITON_DIR}" --archive
   WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}"
   BYPRODUCTS "${AOTRITON_DIR}/Makefile.shim"
 )
@@ -69,9 +69,9 @@ add_dependencies(oort_gen_shim oort_compile) # Shim source files need json metad
 
 add_custom_target(oort
   ALL
-  COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} PATH="${VENV_DIR}/bin:$ENV{PATH}" make -j ${NPROC} -f Makefile.shim HIPCC=${OORT_HIPCC_PATH}
+  COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} PATH="${VENV_DIR}/bin:$ENV{PATH}" make -j ${NPROC} -f Makefile.shim HIPCC=${OORT_HIPCC_PATH} AR=${CMAKE_AR}
   WORKING_DIRECTORY "${AOTRITON_DIR}"
-  BYPRODUCTS "${AOTRITON_DIR}/liboort.so"
+  BYPRODUCTS "${AOTRITON_DIR}/liboort.a"
 )
 add_dependencies(oort oort_gen_shim)
 
@@ -82,4 +82,4 @@ install(FILES "${AOTRITON_DIR}/attn_fwd.h"
   "${AOTRITON_DIR}/bwd_kernel_dq.h"
   "${AOTRITON_DIR}/bwd_preprocess.h"
     DESTINATION ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_INCLUDEDIR}/oort)
-install(FILES "${AOTRITON_DIR}/liboort.so" TYPE LIB)
+install(FILES "${AOTRITON_DIR}/liboort.a" TYPE LIB)

@@ -9,11 +9,12 @@ CSRC = (SOURCE_PATH.parent.parent / 'csrc').absolute()
 INCBIN = (SOURCE_PATH.parent.parent / 'third_party/incbin/').absolute()
 # COMPILER = SOURCE_PATH.parent / 'compile.py'
 COMPILER = 'hipcc'
+LINKER = 'ar'
 
 def parse():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument("--build_dir", type=str, default='build/', help="build directory")
-    p.add_argument("--static", action='store_true', help='Generate static library')
+    p.add_argument("--archive", action='store_true', help='generate archive library instead of shared library. No linking with dependencies.')
     args = p.parse_args()
     # print(args)
     return args
@@ -63,14 +64,14 @@ def gen_from_kernel(args, k, build_dir, makefile, generate_separate_so=False):
         return k.SHIM_KERNEL_NAME, all_targets
 
     output_so = k.SHIM_KERNEL_NAME
-    output_so += '.a'  if args.static else '.so'
+    output_so += '.a'  if args.archive else '.so'
     def print_all_o():
         for t in all_targets:
             print(t, end=' ', file=makefile)
     print(output_so, ': ', end='', file=makefile)
     print_all_o()
-    if args.static:
-        print('\n\t', COMPILER, ' -static -fPIC -o ', output_so, end=' ', file=makefile)
+    if args.archive:
+        print('\n\t', '${AR} -r ', output_so, end=' ', file=makefile)
     else:
         print('\n\t', COMPILER, ' -shared -fPIC -o ', output_so, end=' ', file=makefile)
     print_all_o()
@@ -84,7 +85,9 @@ def main(generate_separate_so=False):
     build_dir = Path(args.build_dir)
     with open(build_dir / 'Makefile.shim', 'w') as f:
         makefile_content = io.StringIO()
-        print(f"HIPCC={COMPILER}\n", file=makefile_content)
+        print(f"HIPCC={COMPILER}", file=makefile_content)
+        print(f"AR={LINKER}", file=makefile_content)
+        print(f"", file=makefile_content)
         per_kernel_targets = []
         all_o_files = []
         for k in rules.kernels:
@@ -97,13 +100,13 @@ def main(generate_separate_so=False):
                 print(t, end=' ', file=f)
             print('\n', file=f)
         else:
-            output_so = 'liboort.a' if args.static else 'liboort.so'
+            output_so = 'liboort.a' if args.archive else 'liboort.so'
             def print_all_o():
                 for t in all_o_files:
                     print(t, end=' ', file=f)
             print_all_o()
-            if args.static:
-                print('\n\t', COMPILER, ' -static -fPIC -o ', output_so, end=' ', file=f)
+            if args.archive:
+                print('\n\t', '${AR} -r ', output_so, end=' ', file=f)
             else:
                 print('\n\t', COMPILER, ' -shared -fPIC -o ', output_so, end=' ', file=f)
             print_all_o()
