@@ -1,11 +1,11 @@
 cmake_minimum_required(VERSION 3.18 FATAL_ERROR)
 
-project(Oort CXX C)
+project(AOTriton CXX C)
 
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
 set(VENV_DIR "${CMAKE_CURRENT_BINARY_DIR}/venv" CACHE STRING "Virtual Environment Directory")
-set(OORT_HIPCC_PATH "hipcc" CACHE STRING "Set HIPCC Path")
+set(AOTRITON_HIPCC_PATH "hipcc" CACHE STRING "Set HIPCC Path")
 set(TARGET_ARCH "MI200" CACHE STRING "Target Architecture")
 set(AMDHSA_LD_PRELOAD "/opt/rocm/lib/libhsa-runtime64.so" CACHE STRING "Workaround of libamdhip64.so.5: undefined symbol: hsa_amd_memory_async_copy_on_engine")
 
@@ -20,35 +20,35 @@ set(ENV{VIRTUAL_ENV} "${VENV_DIR}")
 execute_process(COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} PATH="${VENV_DIR}/bin:$ENV{PATH}" python -m site --user-site OUTPUT_VARIABLE VENV_SITE)
 message("VENV_SITE ${VENV_SITE}")
 
-add_custom_target(oort_venv_req
+add_custom_target(aotriton_venv_req
   COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} PATH="${VENV_DIR}/bin:$ENV{PATH}" python -m pip install -r "${CMAKE_CURRENT_LIST_DIR}/requirements.txt"
   BYPRODUCTS "${VENV_DIR}/bin/pytest"
 )
 
 set(TRITON_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/triton_build")
 execute_process(COMMAND ${CMAKE_COMMAND} -E make_directory "${TRITON_BUILD_DIR}")
-add_custom_target(oort_venv_triton
+add_custom_target(aotriton_venv_triton
   COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} PATH="${VENV_DIR}/bin:$ENV{PATH}" TRITON_BUILD_DIR=${TRITON_BUILD_DIR} python setup.py develop
   # COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} python -m pip show triton
   WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/third_party/triton/python/"
   BYPRODUCTS "${VENV_SITE}/triton/_C/libtriton.so"
   )
-add_dependencies(oort_venv_triton oort_venv_req)
+add_dependencies(aotriton_venv_triton aotriton_venv_req)
 
 message("CMAKE_CURRENT_LIST_DIR ${CMAKE_CURRENT_LIST_DIR}")
 set(AOTRITON_DIR "${CMAKE_CURRENT_BINARY_DIR}/aotriton")
 execute_process(COMMAND ${CMAKE_COMMAND} -E make_directory "${AOTRITON_DIR}")
 
-add_custom_target(oort_gen_compile
+add_custom_target(aotriton_gen_compile
   COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} PATH="${VENV_DIR}/bin:$ENV{PATH}" python python/generate.py --target ${TARGET_ARCH} --build_dir "${AOTRITON_DIR}"
   WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}"
   BYPRODUCTS "${AOTRITON_DIR}/Makefile.compile"
 )
-add_dependencies(oort_gen_compile oort_venv_triton)
+add_dependencies(aotriton_gen_compile aotriton_venv_triton)
 
 include(ProcessorCount)
 ProcessorCount(NPROC)
-add_custom_target(oort_compile
+add_custom_target(aotriton_compile
   # (CAVEAT) KNOWN PROBLEM: Will not work if LD_PRELOAD is not empty
   # FIXME: Change this into `-E env --modify LD_PRELOAD=path_list_prepend:${AMDOCL_LD_PRELOAD}` when minimal cmake >= 3.25
   COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} PATH="${VENV_DIR}/bin:$ENV{PATH}" make -j ${NPROC} -f Makefile.compile LIBHSA_RUNTIME64=${AMDHSA_LD_PRELOAD}
@@ -58,22 +58,22 @@ add_custom_target(oort_compile
   "${AOTRITON_DIR}/bwd_kernel_dq.h"
   "${AOTRITON_DIR}/bwd_preprocess.h"
 )
-add_dependencies(oort_compile oort_gen_compile)
+add_dependencies(aotriton_compile aotriton_gen_compile)
 
-add_custom_target(oort_gen_shim
+add_custom_target(aotriton_gen_shim
   COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} PATH="${VENV_DIR}/bin:$ENV{PATH}" python python/generate_shim.py --build_dir "${AOTRITON_DIR}" --archive
   WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}"
   BYPRODUCTS "${AOTRITON_DIR}/Makefile.shim"
 )
-add_dependencies(oort_gen_shim oort_compile) # Shim source files need json metadata
+add_dependencies(aotriton_gen_shim aotriton_compile) # Shim source files need json metadata
 
-add_custom_target(oort
+add_custom_target(aotriton
   ALL
-  COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} PATH="${VENV_DIR}/bin:$ENV{PATH}" make -j ${NPROC} -f Makefile.shim HIPCC=${OORT_HIPCC_PATH} AR=${CMAKE_AR}
+  COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} PATH="${VENV_DIR}/bin:$ENV{PATH}" make -j ${NPROC} -f Makefile.shim HIPCC=${AOTRITON_HIPCC_PATH} AR=${CMAKE_AR}
   WORKING_DIRECTORY "${AOTRITON_DIR}"
-  BYPRODUCTS "${AOTRITON_DIR}/liboort.a"
+  BYPRODUCTS "${AOTRITON_DIR}/libaotriton.a"
 )
-add_dependencies(oort oort_gen_shim)
+add_dependencies(aotriton aotriton_gen_shim)
 
 include(GNUInstallDirs)
 message("CMAKE_INSTALL_INCLUDEDIR ${CMAKE_INSTALL_INCLUDEDIR}")
@@ -81,5 +81,5 @@ install(FILES "${AOTRITON_DIR}/attn_fwd.h"
   "${AOTRITON_DIR}/bwd_kernel_dk_dv.h"
   "${AOTRITON_DIR}/bwd_kernel_dq.h"
   "${AOTRITON_DIR}/bwd_preprocess.h"
-    DESTINATION ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_INCLUDEDIR}/oort)
-install(FILES "${AOTRITON_DIR}/liboort.a" DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)
+    DESTINATION ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_INCLUDEDIR}/aotriton)
+install(FILES "${AOTRITON_DIR}/libaotriton.a" DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)

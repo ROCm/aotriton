@@ -94,13 +94,13 @@ def main(generate_separate_so=False):
             this_kernel_target, this_kernel_o_files = gen_from_kernel(args, k, build_dir, makefile_content, generate_separate_so=generate_separate_so)
             per_kernel_targets.append(this_kernel_target)
             all_o_files += this_kernel_o_files
-        print('liboort: ', end='', file=f)
+        print('libaotriton: ', end='', file=f)
         if generate_separate_so:
             for t in per_kernel_targets:
                 print(t, end=' ', file=f)
             print('\n', file=f)
         else:
-            output_so = 'liboort.a' if args.archive else 'liboort.so'
+            output_so = 'libaotriton.a' if args.archive else 'libaotriton.so'
             def print_all_o():
                 for t in all_o_files:
                     print(t, end=' ', file=f)
@@ -114,9 +114,9 @@ def main(generate_separate_so=False):
         makefile_content.seek(0)
         shutil.copyfileobj(makefile_content, f)
         if generate_separate_so:
-            print('.PHONY: liboort', file=f)
+            print('.PHONY: libaotriton', file=f)
         else:
-            print('.PHONY: liboort ', ' '.join(per_kernel_targets), file=f)
+            print('.PHONY: libaotriton ', ' '.join(per_kernel_targets), file=f)
 
 if __name__ == '__main__':
     main()

@@ -8,7 +8,7 @@ all:
 	(. build/venv/bin/activate; cd build; make -j $(NPROC) -f Makefile.shim)
 
 test_compile:
-	hipcc -o build/test_compile test/test_compile.cc -L build -loort -Wl,-rpath=. -I/opt/rocm/include -Ibuild/
+	hipcc -o build/test_compile test/test_compile.cc -L build -laotriton -Wl,-rpath=. -I/opt/rocm/include -Ibuild/
 
 clean:
 	(cd build/; rm -f *.h *.so *.cc *.o *.json *.hsaco)

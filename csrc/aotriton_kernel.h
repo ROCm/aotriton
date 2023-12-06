@@ -1,23 +1,23 @@
-#ifndef OORT_KERNEL_H
-#define OORT_KERNEL_H
+#ifndef AOTRITON_KERNEL_H
+#define AOTRITON_KERNEL_H
 
 #include <stdint.h>
 #include <vector>
 #include <hip/hip_runtime.h>
 #include <incbin.h>
 
-#define OORT_HIP_CHECK_RETURN(expr)                                     \
+#define AOTRITON_HIP_CHECK_RETURN(expr)                                     \
     do {                                                                \
         auto r = (expr);                                                \
         if (r != hipSuccess)                                            \
             throw std::runtime_error("FAILURE at Line " INCBIN_STRINGIZE(__LINE__) );   \
     } while(0)
 
-namespace oort {
+namespace aotriton {
 
-class OortKernel {
+class AOTritonKernel {
 public:
-  OortKernel(const char* kernel_name,
+  AOTritonKernel(const char* kernel_name,
              const void* image,
              int shared_memory_size)
     : shared_memory_size_(shared_memory_size)
@@ -33,8 +33,8 @@ public:
     void *optval[] = {(void *)(uintptr_t)err.size(), err.data(),
                       (void *)(uintptr_t)log.size(), log.data(), (void *)(uintptr_t)1};
 
-    OORT_HIP_CHECK_RETURN(hipModuleLoadDataEx(&mod_, image, 5, opt, optval));
-    OORT_HIP_CHECK_RETURN(hipModuleGetFunction(&fun_, mod_, kernel_name));
+    AOTRITON_HIP_CHECK_RETURN(hipModuleLoadDataEx(&mod_, image, 5, opt, optval));
+    AOTRITON_HIP_CHECK_RETURN(hipModuleGetFunction(&fun_, mod_, kernel_name));
   }
 
   hipError_t invoke(dim3 grid, dim3 block,
@@ -52,6 +52,6 @@ private:
   int shared_memory_size_;
 };
 
-} // namespace oort
+} // namespace aotriton
 
 #endif
