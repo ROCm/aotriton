@@ -18,9 +18,10 @@ namespace aotriton::v1 {
 class AOTritonKernel {
 public:
   AOTritonKernel(const char* kernel_name,
-             const void* image,
-             int shared_memory_size)
-    : shared_memory_size_(shared_memory_size)
+                 const void* image,
+                 dim3 block,
+                 int shared_memory_size)
+    : block_(block), shared_memory_size_(shared_memory_size)
   {
     hipJitOption opt[] = {hipJitOptionErrorLogBufferSizeBytes,
                           hipJitOptionErrorLogBuffer,
@@ -37,18 +38,19 @@ public:
     AOTRITON_HIP_CHECK_RETURN(hipModuleGetFunction(&fun_, mod_, kernel_name));
   }
 
-  hipError_t invoke(dim3 grid, dim3 block,
+  hipError_t invoke(dim3 grid,
                     std::vector<void*>& args,
                     hipStream_t stream)
   {
     return hipModuleLaunchKernel(fun_,
                                  grid.x, grid.y, grid.z,
-                                 block.x, block.y, block.z,
+                                 block_.x, block_.y, block_.z,
                                  shared_memory_size_, stream, args.data(), 0);
   }
 private:
   hipModule_t mod_;
   hipFunction_t fun_;
+  dim3 block_;
   int shared_memory_size_;
 };
 

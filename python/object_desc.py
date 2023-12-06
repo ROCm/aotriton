@@ -78,6 +78,8 @@ class ObjectFileDescription(object):
                 'hsaco_kernel_path' : self._hsaco_kernel_path.absolute(),
                 'shim_kernel_name' : self.SHIM_KERNEL_NAME,
                 'shim_kernel_specialization' : template_specialization,
+                'num_warps' : self._metadata['num_warps'],
+                'warp_size' : self._metadata['warp_size'],
                 'shared_memory_size' : self._metadata['shared'],
                 'shim_arguments' : shim_arguments,
                 'casted_shim_parameters' : casted_shim_parameters,
@@ -92,7 +94,7 @@ class ObjectFileDescription(object):
         return ObjectFileDescription.CXX_HEADER_TEMPLATE_HEADER.format_map(fmt)
 
     def generate_shim_header_member_function(self) -> str:
-        TEMPLATE = ' hipError_t operator()(dim3 grid, dim3 block, {shim_arguments}, hipStream_t stream);\n'
+        TEMPLATE = ' hipError_t operator()(dim3 grid, {shim_arguments}, hipStream_t stream);\n'
         shim_arguments, _ = self.compute_c_argument()
         fmt = {
                 'shim_arguments': shim_arguments,
