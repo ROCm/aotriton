@@ -26,7 +26,7 @@ def gen_cc_from_object(args, o : 'ObjectFileDescription', makefile):
         print(o.generate_shim_source(), file=f)
     target = o._hsaco_kernel_path.with_suffix('.o')
     print(target.name, ': ', src.name, ' ', hdr.name, file=makefile)
-    cmd  = '$(HIPCC) ' + f'{src.absolute()} -I{CSRC} -I{INCBIN} -c -fPIC'
+    cmd  = '$(HIPCC) ' + f'{src.absolute()} -I{CSRC} -I{INCBIN} -c -fPIC -std=c++17'
     print('\t', cmd, '\n', file=makefile)
     return target.name
 

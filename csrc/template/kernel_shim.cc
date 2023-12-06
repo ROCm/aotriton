@@ -6,14 +6,14 @@
 
 INCBIN({incbin_symbol_name}, "{hsaco_kernel_path}");
 
-namespace aotriton {{
+namespace aotriton::v1 {{
 
 template<> hipError_t
 {shim_kernel_name}<{shim_kernel_specialization}
                   >::operator()(dim3 grid, dim3 block, {shim_arguments}, hipStream_t stream) {{
-  static aotriton::AOTritonKernel kernel("{hsaco_kernel_name}",
-                                 g_aotriton_kernel_for_shim_{incbin_symbol_name}_data,
-                                 {shared_memory_size});
+  static aotriton::v1::AOTritonKernel kernel("{hsaco_kernel_name}",
+                                      g_aotriton_kernel_for_shim_{incbin_symbol_name}_data,
+                                      {shared_memory_size});
   std::vector<void*> args = {{ {casted_shim_parameters} }};
   return kernel.invoke(grid, block, args, stream);
 }}

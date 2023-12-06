@@ -13,7 +13,7 @@
             throw std::runtime_error("FAILURE at Line " INCBIN_STRINGIZE(__LINE__) );   \
     } while(0)
 
-namespace aotriton {
+namespace aotriton::v1 {
 
 class AOTritonKernel {
 public:
