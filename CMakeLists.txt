@@ -82,4 +82,4 @@ install(FILES "${AOTRITON_DIR}/attn_fwd.h"
   "${AOTRITON_DIR}/bwd_kernel_dq.h"
   "${AOTRITON_DIR}/bwd_preprocess.h"
     DESTINATION ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_INCLUDEDIR}/oort)
-install(FILES "${AOTRITON_DIR}/liboort.a" TYPE LIB)
+install(FILES "${AOTRITON_DIR}/liboort.a" DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)
