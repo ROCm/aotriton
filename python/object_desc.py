@@ -29,8 +29,8 @@ class ObjectFileDescription(object):
 
     def __init__(self,
                  triton_kernel_desc : 'KernelDescription',
-                 choice: list[frozenset[str], list[str]],
-                 signature_in_list : list[str],
+                 choice: 'list[frozenset[str], list[str]]',
+                 signature_in_list : 'list[str]',
                  hsaco_kernel_path : Path):
         self._triton_kernel_desc = triton_kernel_desc
         self.SHIM_KERNEL_NAME = self._triton_kernel_desc.SHIM_KERNEL_NAME
