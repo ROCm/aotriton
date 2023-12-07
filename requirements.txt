@@ -3,3 +3,4 @@ iniconfig
 packaging
 pluggy
 numpy
+setuptools
