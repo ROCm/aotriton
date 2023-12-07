@@ -136,7 +136,6 @@ def attn_fwd(
     stride_kz, stride_kh, stride_kn, stride_kk,
     stride_vz, stride_vh, stride_vk, stride_vn,
     stride_oz, stride_oh, stride_om, stride_on,
-    Z, H,
     seqlen_q,
     seqlen_k,
     dropout_p,
