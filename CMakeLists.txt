@@ -67,13 +67,13 @@ add_custom_target(aotriton_gen_shim
 )
 add_dependencies(aotriton_gen_shim aotriton_compile) # Shim source files need json metadata
 
-add_custom_target(aotriton
+add_custom_target(aotriton_v1
   ALL
   COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} PATH="${VENV_DIR}/bin:$ENV{PATH}" make -j ${NPROC} -f Makefile.shim HIPCC=${AOTRITON_HIPCC_PATH} AR=${CMAKE_AR}
   WORKING_DIRECTORY "${AOTRITON_DIR}"
-  BYPRODUCTS "${AOTRITON_DIR}/libaotriton.a"
+  BYPRODUCTS "${AOTRITON_DIR}/libaotriton_v1.a"
 )
-add_dependencies(aotriton aotriton_gen_shim)
+add_dependencies(aotriton_v1 aotriton_gen_shim)
 
 include(GNUInstallDirs)
 message("CMAKE_INSTALL_INCLUDEDIR ${CMAKE_INSTALL_INCLUDEDIR}")
@@ -82,4 +82,6 @@ install(FILES "${AOTRITON_DIR}/attn_fwd.h"
   "${AOTRITON_DIR}/bwd_kernel_dq.h"
   "${AOTRITON_DIR}/bwd_preprocess.h"
     DESTINATION ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_INCLUDEDIR}/aotriton)
-install(FILES "${AOTRITON_DIR}/libaotriton.a" DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)
+install(FILES "${AOTRITON_DIR}/libaotriton_v1.a" DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)
+
+add_subdirectory(v2src)
