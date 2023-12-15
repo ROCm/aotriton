@@ -1,5 +1,10 @@
 NPROC=$(shell nproc)
 
+v2all:
+	mkdir -p build
+	python -m v2python.generate_compile --target MI200
+	(. build/venv/bin/activate; cd build; LD_PRELOAD=/opt/rocm/lib/libamdocl64.so make -j $(NPROC) -f Makefile.compile)
+
 all:
 	mkdir -p build
 	python python/generate.py --target MI200
@@ -17,6 +22,6 @@ create_venv:
 	python -m venv build/venv
 
 triton_install:
-	(. build/venv/bin/activate; cd third_party/triton/python/; pip install -e .)
+	(. build/venv/bin/activate; pip install -r requirements.txt; cd third_party/triton/python/; pip install -e .)
 
 .PHONY: all clean test_compile create_venv triton_install
