@@ -3,8 +3,8 @@
 import torch
 import triton
 import triton.language as tl
-from fused_attention_trimmed import attn_fwd as bare_attn_fwd
-from fused_attention_trimmed import bwd_preprocess, bwd_kernel, bwd_kernel_dk_dv, bwd_kernel_dq
+from flash import attn_fwd as bare_attn_fwd
+from flash import bwd_preprocess, bwd_kernel, bwd_kernel_dk_dv, bwd_kernel_dq
 
 VERBOSE=False
 
