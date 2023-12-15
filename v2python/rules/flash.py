@@ -52,7 +52,7 @@ class attn_fwd(FlashKernel):
     }
     # Optional, can be derived from 
     TENSOR_RANKS_OVERRIDE = {
-        '_all' : 4,
+        '_default' : 4,
         'M': 1,
     }
     EXPECTED_IDENTICAL_TENSOR_STRIDES = {
@@ -191,7 +191,7 @@ class bwd_kernel_dq(FlashKernel):
 SOURCE_FILE = 'tritonsrc/flash.py'
 kernels = [
     attn_fwd('attn_fwd', SOURCE_FILE),
-    bwd_preprocess('bwd_preprocess', SOURCE_FILE),
-    bwd_kernel_dk_dv('bwd_kernel_dk_dv', SOURCE_FILE),
-    bwd_kernel_dq('bwd_kernel_dq', SOURCE_FILE),
+    # bwd_preprocess('bwd_preprocess', SOURCE_FILE),
+    # bwd_kernel_dk_dv('bwd_kernel_dk_dv', SOURCE_FILE),
+    # bwd_kernel_dq('bwd_kernel_dq', SOURCE_FILE),
 ]

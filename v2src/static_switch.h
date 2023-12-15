@@ -60,4 +60,23 @@
         }                                                               \
     }
 
+#define DHEAD_SWITCH(head_size, KNAME, ...)                             \
+  [&] {                                                                 \
+    if (HEADDIM <= 16) {                                                \
+      constexpr int KNAME = 16;                                         \
+      return __VA_ARGS__();                                             \
+    } else if (HEADDIM <= 32) {                                         \
+      constexpr int KNAME = 32;                                         \
+      return __VA_ARGS__();                                             \
+    } else if (HEADDIM <= 64) {                                         \
+      constexpr int KNAME = 64;                                         \
+      return __VA_ARGS__();                                             \
+    } else if (HEADDIM <= 128) {                                        \
+      constexpr int KNAME = 128;                                        \
+      return __VA_ARGS__();                                             \
+    } else {                                                            \
+      err = hipErrorInsufficientDriver;                                 \
+    }                                                                   \
+  }()
+
 #endif

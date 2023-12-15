@@ -21,6 +21,12 @@ class KernelSignature(object):
         return 'F__' + sf + '__P__' + sp
 
     @property
+    def functional_signature(self):
+        lf = [s.compact_signature for s in self._func_selections]
+        sf = ','.join([x for x in lf if x is not None])
+        return 'FONLY__' + sf + '__'
+
+    @property
     def arguments(self):
         return self._kdesc.ARGUMENTS
 

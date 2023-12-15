@@ -9,7 +9,6 @@ def _get_template(name='kernel_shim.cc'):
     with open(SOURCE_PATH.parent.parent / 'csrc' / 'template' / name, 'r') as f:
         return f.read()
 
-
 class ObjectFileDescription(object):
     SIGNATURE_TO_C = {
         'fp32'  : 'float',
@@ -47,8 +46,20 @@ class ObjectFileDescription(object):
             self._metadata = None
 
     @property
+    def compiled_files_exist(self):
+        return self._hsaco_kernel_path.exists() and self._hsaco_metatdata_path.exists()
+
+    @property
+    def godel_number(self):
+        return self._signature.godel_number
+
+    @property
     def compact_signature(self):
         return self._signature.compact_signature
+
+    @property
+    def functional_signature(self):
+        return self._signature.functional_signature
 
     @property
     def src(self):
