@@ -118,7 +118,7 @@ def test_op_bwd(Z, H, N_CTX, D_HEAD, causal, sm_scale, dropout_p, dtype, qseqlen
     k.requires_grad_()
     v.requires_grad_()
     # # triton implementation
-    tri_out, encoded_softmax = attention(q, k, v, causal, sm_scale, dropout_p, True)
+    tri_out, encoded_softmax, _ = attention(q, k, v, causal, sm_scale, dropout_p, True)
     dropout_mask = encoded_softmax >= 0
     ref_out, ref_softmax = torch.ops.aten._scaled_dot_product_attention_math(q, k, v,
                                                                 dropout_p=dropout_p,

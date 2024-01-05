@@ -24,7 +24,7 @@ class attn_fwd(FlashKernel):
         'RETURN_ENCODED_SOFTMAX',
     ]
     TYPE_CHOICES = {
-        frozenset(['Q', 'K', 'V', 'Out', 'encoded_softmax']) : ['*fp16:16', '*bf16:16'],
+        frozenset(['Q', 'K', 'V', 'Out', 'encoded_softmax']) : ['*fp16:16', '*bf16:16', '*fp32:16'],
         frozenset(['sm_scale']) : ['fp32'],
         frozenset(['M']) : ['*fp32:16'],
         frozenset(select_pattern(ARGUMENTS, 'stride_')) : ['u64'],
@@ -35,13 +35,14 @@ class attn_fwd(FlashKernel):
     }
     FEAT_CHOICES = {
         frozenset(['STAGE']) : [1, 3],
-        frozenset(['BLOCK_DMODEL']) : [16, 32, 64, 128],
+        frozenset(['BLOCK_DMODEL']) : [16, 32, 64, 96, 128, 192, 256],
         frozenset(['ENABLE_DROPOUT']) : [True, False],
         frozenset(['RETURN_ENCODED_SOFTMAX']) : [True, False],
     }
     PERF_CHOICES = {
-        frozenset(['BLOCK_M', 'BLOCK_N']) : [1, 16, 32],
-        frozenset(['pre_load_v']) : [True],
+        frozenset(['BLOCK_M']) : [16],
+        frozenset(['BLOCK_N']) : [16],
+        frozenset(['pre_load_v']) : [True, False],
     }
 
     TENSOR_STRIDE_INPUTS = {
@@ -130,8 +131,8 @@ class bwd_kernel_dk_dv(FlashKernel):
         'DK': 'K',
         'DV': 'V',
     }
-    num_warps=4
-    num_stages=1
+    DEFAULT_NUM_WARPS=4
+    DEFAULT_NUM_STAGES=1
     SHIM_KERNEL_NAME = 'bwd_kernel_dk_dv'
 
 class bwd_kernel_dq(FlashKernel):
@@ -183,8 +184,8 @@ class bwd_kernel_dq(FlashKernel):
         'DK': 'K',
         'DV': 'V',
     }
-    num_warps=4
-    num_stages=1
+    DEFAULT_NUM_WARPS=4
+    DEFAULT_NUM_STAGES=1
     # TODO: waves_per_eu=1
     SHIM_KERNEL_NAME = 'bwd_kernel_dq'
 

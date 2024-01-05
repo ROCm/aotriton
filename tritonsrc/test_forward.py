@@ -150,7 +150,7 @@ def test_op_fwd(Z, H, N_CTX, D_HEAD, causal, sm_scale, dropout_p, dtype, qseqlen
     p = torch.softmax(p.float(), dim=-1).half()
     ref_out = torch.matmul(p, v)
     '''
-    tri_out, encoded_softmax = attention(q, k, v, causal, sm_scale, dropout_p, True)
+    tri_out, encoded_softmax, _ = attention(q, k, v, causal, sm_scale, dropout_p, True)
 
     dropout_mask = encoded_softmax >= 0
     # assert torch.allclose(dropout_mask, dropout_mask_naive)

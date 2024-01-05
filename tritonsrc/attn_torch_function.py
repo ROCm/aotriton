@@ -4,7 +4,7 @@ import torch
 import triton
 import triton.language as tl
 from flash import attn_fwd as bare_attn_fwd
-from flash import bwd_preprocess, bwd_kernel, bwd_kernel_dk_dv, bwd_kernel_dq
+from flash import bwd_preprocess, bwd_kernel_dk_dv, bwd_kernel_dq
 
 VERBOSE=False
 
@@ -88,7 +88,7 @@ class _attention(torch.autograd.Function):
 
     @staticmethod
     def forward(ctx, q, k, v, causal, sm_scale, dropout_p, return_encoded_softmax,
-                autotune=False):
+                autotune=False, return_autotune=False):
         # shape constraints
         Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
         assert Lq == Lk and Lk == Lv
@@ -113,7 +113,7 @@ class _attention(torch.autograd.Function):
             encoded_softmax = torch.zeros((q.shape[0], q.shape[1], q.shape[2], k.shape[2]), device=q.device, dtype=_attention.DEBUG_MASK_DTYPE)
         else:
             encoded_softmax = None
-        if True or VERBOSE:
+        if False or VERBOSE:
             print(f'{q.shape=}')
             print(f'{k.shape=}')
             print(f'{v.shape=}')
@@ -146,7 +146,6 @@ class _attention(torch.autograd.Function):
                 k.stride(0), k.stride(1), k.stride(2), k.stride(3),
                 v.stride(0), v.stride(1), v.stride(2), v.stride(3),
                 o.stride(0), o.stride(1), o.stride(2), o.stride(3),
-                q.shape[0], q.shape[1],
                 seqlen_q=q.shape[2],
                 seqlen_k=k.shape[2],
                 dropout_p=dropout_p,
@@ -165,7 +164,6 @@ class _attention(torch.autograd.Function):
                 k.stride(0), k.stride(1), k.stride(2), k.stride(3),
                 v.stride(0), v.stride(1), v.stride(2), v.stride(3),
                 o.stride(0), o.stride(1), o.stride(2), o.stride(3),
-                q.shape[0], q.shape[1],
                 seqlen_q=q.shape[2],
                 seqlen_k=k.shape[2],
                 dropout_p=dropout_p,
@@ -184,11 +182,44 @@ class _attention(torch.autograd.Function):
         ctx.autotune = autotune
         if autotune:
             ## restore the grid for bwd kernel
-            best_config = tuned_attn_fwd.get_best_config(seqlen_q = q.shape[2],
-                                                         seqlen_k = k.shape[2],
-                                                         STAGE = stage)
-            block_m = int(best_config.__str__().split(",")[0].split("BLOCK_M:")[1])
+            best_config = tuned_attn_fwd.get_best_config()
+            # print(f'{best_config=}')
+            # print(f'{dir(best_config)=}')
+            # print(f'{str(best_config)=}')
+            print("Best config")
+            for key, value in best_config.kwargs.items():
+                print('\t', key, '=', value)
+            print(f'{str(best_config)=}')
+            # block_m = int(best_config.__str__().split(",")[0].split("BLOCK_M:")[1])
+            block_m = int(best_config.kwargs['BLOCK_M'])
+            print(f'{block_m=}')
+            BATCH = q.shape[0]
+            N_HEADS = q.shape[1]
+            D_HEAD = q.shape[3]
+            inputs = {
+                'Q.shape' : list(q.shape),
+                'Q.dtype' : str(q.dtype),
+                'N_HEADS' : N_HEADS,
+                'D_HEAD' : D_HEAD,
+                'seqlen_q' : seqlen_q,
+                'seqlen_k' : seqlen_k,
+                'STAGE' : stage,
+                'RETURN_ENCODED_SOFTMAX': encoded_softmax is not None,
+                'BLOCK_DMODEL' : Lk,
+                'ENABLE_DROPOUT' : dropout_p > 0.0,
+            }
+            tuned_kernel = dict(best_config.kwargs)
+            compiler_options = {
+                'num_warps' : best_config.num_warps,
+                'num_stages': best_config.num_stages,
+            }
+            tuning_result = {
+                'inputs' : inputs,
+                'tuned_kernel' : tuned_kernel,
+                'compiler_options' : compiler_options,
+            }
         else:
+            tuning_result = None
             block_m = min(128, q.shape[2], k.shape[2])
         grid = (triton.cdiv(q.shape[2], block_m), q.shape[0] * q.shape[1], 1)
         ctx.save_for_backward(q, k, v, o, M)
@@ -200,10 +231,10 @@ class _attention(torch.autograd.Function):
         ctx.philox_seed = philox_seed
         ctx.philox_offset = philox_offset
         ctx.encoded_softmax = encoded_softmax # FIXME: for debugging only
-        return o, encoded_softmax
+        return o, encoded_softmax, tuning_result
 
     @staticmethod
-    def backward(ctx, do, _):
+    def backward(ctx, do, _, __):
         if torch.version.hip is not None:
             BLOCK = 64
         else:
@@ -251,7 +282,6 @@ class _attention(torch.autograd.Function):
             q.stride(0), q.stride(1), q.stride(2), q.stride(3),
             k.stride(0), k.stride(1), k.stride(2), k.stride(3),
             v.stride(0), v.stride(1), v.stride(2), v.stride(3),
-            q.shape[0], q.shape[1],
             seqlen_q=seqlen_q,
             seqlen_k=seqlen_k,
             dropout_p=ctx.dropout_p,
@@ -291,7 +321,6 @@ class _attention(torch.autograd.Function):
             q.stride(0), q.stride(1), q.stride(2), q.stride(3),
             k.stride(0), k.stride(1), k.stride(2), k.stride(3),
             v.stride(0), v.stride(1), v.stride(2), v.stride(3),
-            q.shape[0], q.shape[1],
             seqlen_q=seqlen_q,
             seqlen_k=seqlen_k,
             dropout_p=ctx.dropout_p,

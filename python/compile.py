@@ -24,6 +24,7 @@ def main():
     parser.add_argument("--kernel_name", "-n", type=str, default="", help="Name of the kernel to compile", required=True)
     parser.add_argument("--num_warps", "-w", type=int, default=1, help="Number of warps to launch the kernel")
     parser.add_argument("--num_stages", "-ns", type=int, default=3, help="Number of stages (meta-parameter of the kernel)")
+    parser.add_argument("--waves_per_eu", type=int, default=0)
     parser.add_argument("--out_path", "-o", type=Path, default=None, help="Out filename", required=True)
     parser.add_argument("--signature", "-s", type=str, help="Signature of the kernel", required=True)
     parser.add_argument("--grid", "-g", type=str, help="Launch grid of the kernel", required=True)
@@ -50,11 +51,11 @@ def main():
         # kernel = globals()[f"{arg_path.stem}.{args.kernel_name}"]
         mod = globals()[arg_path.stem]
         kernel = getattr(mod, args.kernel_name)
-        print(fused_attention_trimmed.attn_fwd)
+        # print(fused_attention_trimmed.attn_fwd)
     if False:
         mod = importlib.import_module(arg_path.stem)
         print(mod.attn_fwd)
-        print(fused_attention_trimmed.attn_fwd)
+        # print(fused_attention_trimmed.attn_fwd)
         kernel = globals()[f"{arg_path.stem}.{args.kernel_name}"]
         print(f"{kernel=}")
 
@@ -108,7 +109,7 @@ def main():
     for i in equal_to_1:
         constexprs.update({i: 1})
     print(f'{kernel=}')
-    ccinfo = triton.compile(kernel, signature=signature, constants=constexprs, configs=[config], num_warps=args.num_warps, num_stages=args.num_stages, aot_arch=args.target)
+    ccinfo = triton.compile(kernel, signature=signature, constants=constexprs, configs=[config], num_warps=args.num_warps, num_stages=args.num_stages, waves_per_eu=args.waves_per_eu, aot_arch=args.target)
     hsaco_path = ccinfo.asm.get('hsaco_path', None)
     if args.verbose:
         print(dir(ccinfo))

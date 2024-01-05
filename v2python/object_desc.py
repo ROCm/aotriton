@@ -23,17 +23,19 @@ class ObjectFileDescription(object):
     def is_tensor_type(t):
         return t.startswith('*')
 
-    num_warps = 4
-    num_stages = 4
+    DEFAULT_NUM_WARPS = 4
+    DEFAULT_NUM_STAGES = 4
+    DEFAULT_WAVES_PER_EU = 0
     CXX_TEMPLATE = _get_template()
     CXX_HEADER_TEMPLATE_HEADER = _get_template('kernel_shim.header.h')
     CXX_HEADER_TEMPLATE_FOOTER = _get_template('kernel_shim.footer.h')
 
     def __init__(self,
                  triton_kernel_desc : 'KernelDescription',
-                 signature: 'tuple[ArgumentSelection]',
+                 signature: 'KernelSignature',
                  hsaco_kernel_path : Path):
         self._triton_kernel_desc = triton_kernel_desc
+        self.KERNEL_FAMILY = self._triton_kernel_desc.KERNEL_FAMILY
         self.SHIM_KERNEL_NAME = self._triton_kernel_desc.SHIM_KERNEL_NAME
         self._signature = signature
         self._hsaco_kernel_path = Path(hsaco_kernel_path)
@@ -43,7 +45,7 @@ class ObjectFileDescription(object):
             with self._hsaco_metatdata_path.open('r') as f:
                 self._metadata = json.load(f)
         else:
-            self._metadata = None
+            self._metadata = {}
 
     @property
     def compiled_files_exist(self):
@@ -58,8 +60,25 @@ class ObjectFileDescription(object):
         return self._signature.compact_signature
 
     @property
+    def human_readable_signature(self):
+        return self._signature.human_readable_signature
+
+    @property
+    def c_identifier_signature(self):
+        return self._signature.compact_signature.replace('^', 'Ptr').replace('@', 'Align')
+
+    @property
     def functional_signature(self):
         return self._signature.functional_signature
+
+    @property
+    def designated_perf_initializer_list(self):
+        lets = []
+        for sel in self._signature._perf_selections:
+            v = sel.argument_value
+            for a in sel.argument_names:
+                lets.append(f'.{a} = {v}')
+        return lets
 
     @property
     def src(self):
@@ -77,6 +96,28 @@ class ObjectFileDescription(object):
     def signature(self):
         return ', '.join(self._signature.triton_api_signature_list)
 
+    @property
+    def num_warps(self):
+        num_warps = self._metadata.get('num_warps', self.DEFAULT_NUM_WARPS)
+        return self._signature._compiler_options.get('num_warps', num_warps)
+
+    @property
+    def num_stages(self):
+        num_stages = self._metadata.get('num_stages', self.DEFAULT_NUM_STAGES)
+        return self._signature._compiler_options.get('num_stages', num_stages)
+
+    @property
+    def waves_per_eu(self):
+        return self._signature._compiler_options.get('waves_per_eu', self.DEFAULT_WAVES_PER_EU)
+
+    @property
+    def warp_size(self):
+        return self._metadata['warp_size']
+
+    @property
+    def target_gpu(self):
+        return self._signature.target_gpu
+
     def generate_shim_source(self) -> str:
         shim_arguments, casted_shim_parameters = self.compute_c_argument()
         # template_arguments, template_constants = self.compute_template_arguments()
@@ -87,8 +128,9 @@ class ObjectFileDescription(object):
                 'hsaco_kernel_path' : self._hsaco_kernel_path.absolute(),
                 'shim_kernel_name' : self.SHIM_KERNEL_NAME,
                 'shim_kernel_specialization' : template_specialization,
-                'num_warps' : self._metadata['num_warps'],
-                'warp_size' : self._metadata['warp_size'],
+                'num_warps' : self.num_warps,
+                'num_stages' : self.num_stages,
+                'warp_size' : self.warp_size,
                 'shared_memory_size' : self._metadata['shared'],
                 'shim_arguments' : shim_arguments,
                 'casted_shim_parameters' : casted_shim_parameters,

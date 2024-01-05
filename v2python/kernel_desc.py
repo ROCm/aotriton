@@ -1,11 +1,15 @@
-import numpy as np
 import itertools
 from collections import defaultdict
 import io
-from enum import Enum
 from pathlib import Path
+from .kernel_argument import (
+    ArgumentCategory,
+    ArgumentMetadata,
+    ArgumentSelection
+)
 from .kernel_signature import KernelSignature
 from .object_desc import ObjectFileDescription
+from .gpu_targets import AOTRITON_SUPPORTED_GPUS
 
 SOURCE_PATH = Path(__file__).resolve()
 
@@ -30,154 +34,6 @@ def select_pattern(arguments, prefix):
         if s.startswith(prefix):
             ret.append(s)
     return ret
-
-'''
-Note: we category the Triton kernel arguments into three types.
-'''
-class ArgumentCategory(Enum):
-    CAT_TYPE = 1  # This argument may have differnet types
-    CAT_FEAT = 2  # This argument enable/disable a specific feature
-    CAT_PERF = 3  # This argument is for performance tuning
-
-class ArgumentMetadata(object):
-    DTYPE_NUMBER = {
-        'fp16' : 'DType::kFloat16',
-        'bf16' : 'DType::kBFloat16',
-        'fp32' : 'DType::kFloat32',
-    }
-    def __init__(self, grouped_arguments_as_set, possible_values, cat : ArgumentCategory, kdesc):
-        self._grouped_arguments_as_set = grouped_arguments_as_set
-        self._possible_values = possible_values
-        self._npossible = len(possible_values)
-        self._cat = cat
-        self._godel_number = None
-        self._kdesc = kdesc
-
-    def sort_arguments(self, ALL_ARGUMENTS):
-        arguments_tuple = [(a, ALL_ARGUMENTS.index(a)) for a in self._grouped_arguments_as_set]
-        self._ordered_arguments = sorted(arguments_tuple, key=lambda at: at[1])
-        self._first_apperance = self._ordered_arguments[0][1]
-
-    @property
-    def first_apperance(self):
-        assert hasattr(self, '_first_apperance'), 'ArgumentMetadata: must call sort_arguments before first_apperance'
-        return self._first_apperance
-
-    @property
-    def ordered_argument_places(self):
-        assert hasattr(self, '_ordered_arguments'), 'ArgumentMetadata: must call sort_arguments before ordered_argument_places'
-        return [a[1] for a in self._ordered_arguments]
-
-    @property
-    def godel_number(self):
-        assert hasattr(self, '_godel_number'), 'ArgumentMetadata: must call assign_godel_number on all ArgumentMetadata objects before using godel_number property'
-        return self._godel_number
-
-    @staticmethod
-    def assign_godel_number(all_metadata: 'list[ArgumentMetadata]'):
-        sorted_metadata = sorted(all_metadata, key=lambda m: m.first_apperance)
-        for i, m in enumerate(sorted_metadata):
-            m._order_among_all_choices = i
-        # No need to trim m.nchoices == 1 because they have no impact on the assignment
-        # (Analog: size 1 dimensions in Tensor)
-        # However we need to append 1 as the last "stride"
-        nchoices = np.array([m.nchoices for m in sorted_metadata] + [1])
-        # Big Endian, because types are usually put at first and they should be
-        # considered as more important
-        # The first stride is trimmed off to ensure last stride is 1
-        cumprod = np.flip(np.cumprod(np.flip(nchoices)))[1:]
-        for m, c in zip(sorted_metadata, cumprod):
-            m._godel_number = c
-
-    @property
-    def nchoices(self):
-        return self._npossible
-
-    def select(self, index):
-        return self._possible_values[index]
-
-    def spawn_all_selections(self):
-        return [ArgumentSelection(self, i) for i in range(self.nchoices)]
-
-    @property
-    def is_tensor(self):
-        triton_type = self._possible_values[0]
-        return isinstance(triton_type, str) and triton_type.startswith('*')
-
-    @property
-    def cc_type(self):
-        triton_arg = self._ordered_arguments[0][0]
-        triton_type = self._possible_values[0]
-        if self.is_tensor:
-            rank = self._kdesc.get_tensor_rank(triton_arg)
-            return f'T{rank}'
-        if isinstance(triton_type, str):
-            return ObjectFileDescription.SIGNATURE_TO_C[triton_type]
-        elif isinstance(triton_type, bool):
-            return 'bool'
-        elif isinstance(triton_type, int):
-            return 'int32_t'
-        elif isinstance(triton_type, float):
-            return 'float'
-        assert False, f'{triton_arg} {triton_type}'
-
-    @property
-    def param_cc_fields(self):
-        triton_arg = self._ordered_arguments[0][0]
-        if triton_arg.startswith('stride_'):
-            return []
-        cc_type = self.cc_type
-        return [ cc_type + ' ' + a[0] for a in self._ordered_arguments ]
-        # ret = [ cc_type + ' ' + a[0] for a in self._ordered_arguments ]
-        # print(f'{ret=}')
-
-    def write_godel_number_calculation(self, fout):
-        if self.nchoices <= 1:
-            return
-        triton_arg = self._ordered_arguments[0][0]
-        triton_type = self._possible_values[0]
-        INDENT = 4 * ' '
-        print(INDENT + '{', file=fout)
-        print(2 * INDENT + 'int64_t number = 0;', file=fout)
-        if self.is_tensor:
-            for number, possible_type in enumerate(self._possible_values):
-                elem_type = possible_type[1:].split(':')[0]
-                print(2 * INDENT + f'if ({triton_arg}.dtype() == {self.DTYPE_NUMBER[elem_type]}) number = {number} ;', file=fout)
-        else:
-            for number, possible_type in enumerate(self._possible_values):
-                value = str(possible_type).lower()
-                print(2 * INDENT + f'if ({triton_arg} == {value}) number = {number} ;', file=fout)
-        print(2 * INDENT + f'sum += number * {self.godel_number};', file=fout)
-        print(1 * INDENT + '}', file=fout)
-
-class ArgumentSelection(object):
-    def __init__(self, meta : ArgumentMetadata, selection_index : int):
-        self._meta = meta
-        self._selection_index = selection_index
-        self._selection_value = self._meta.select(selection_index)
-
-    @property
-    def godel_number(self):
-        return self._meta.godel_number * self._selection_index
-
-    @property
-    def triton_signature(self):
-        return str(self._selection_value)
-
-    @property
-    def c_symbol_signature(self):
-        return self.triton_signature.replace('*', '^').replace(':', '@')
-
-    # compact_signature implies its usage: in file name and/or as C symbol
-    @property
-    def compact_signature(self):
-        if self._meta.nchoices <= 1:
-            return None
-        return self.c_symbol_signature
-
-    def update_triton_api_signature(self, sig: dict):
-        for place in self._meta.ordered_argument_places:
-            sig[place] = self.triton_signature
 
 class KernelDescription(object):
     ARGUMENTS = []
@@ -239,6 +95,7 @@ class KernelDescription(object):
         # ArgumentMetadata.assign_godel_number(self._perf_meta)
         self._func_selections = [m.spawn_all_selections() for m in self._func_meta]
         self._perf_selections = [m.spawn_all_selections() for m in self._perf_meta]
+        self._target_gpus = None
 
     def gen_func_selections(self) -> 'tuple[ArgumentSelection]':
         return itertools.product(*self._func_selections)
@@ -246,22 +103,67 @@ class KernelDescription(object):
     def gen_perf_selections(self) -> 'tuple[ArgumentSelection]':
         return itertools.product(*self._perf_selections)
 
-    def gen_all_object_files(self, outpath : Path, file_name_prefix='') -> 'list[ObjectFileDescription]':
-        for fsels in self.gen_func_selections():
-            for psels in self.gen_perf_selections():
-                sig = KernelSignature(self, fsels, psels)
-                fn = file_name_prefix + '-' + sig.compact_signature + '.hsaco'
-                yield ObjectFileDescription(self, sig, outpath / fn)
+    def gen_tuned_perf_selections(self,
+                                  tuned_db : 'KernelTuningDatabase',
+                                  gpu : str,
+                                  fsels : 'list[ArgumentSelection]'):
+        dba = tuned_db.select_gpu(gpu)
+        for psels, compiler_options in dba.select(fsels, self._perf_meta):
+            yield gpu, fsels, psels, compiler_options
+
+    def set_target_gpus(self, gpus):
+        self._target_gpus = ['native'] if gpus is None else list(gpus)
+
+    def gen_all_object_files(self,
+                             outpath : Path,
+                             kernel_name : str = None,
+                             file_name_prefix : str = None,
+                             tuned_db : 'KernelTuningDatabase' = None) -> 'list[ObjectFileDescription]':
+        kernel_name = self.SHIM_KERNEL_NAME if kernel_name is None else kernel_name
+        def gen():
+            if tuned_db is None or tuned_db.empty:
+                yield from itertools.product(self._target_gpus,
+                                             self.gen_func_selections(),
+                                             self.gen_perf_selections(),
+                                             [None])
+            else:
+                for gpu, fsels in itertools.product(self._target_gpus,
+                                                    self.gen_func_selections()):
+                    yield from self.gen_tuned_perf_selections(tuned_db, gpu, fsels)
+        debug_counter = 0
+        for gpu, fsels, psels, compiler_options in gen():
+            # print(f"{gpu=} {fsels=} {psels=} {compiler_options=}")
+            sig = KernelSignature(self, fsels, psels, compiler_options, gpu)
+            fn = file_name_prefix + '-Kernel-' if file_name_prefix else ''
+            fn += kernel_name
+            # print(f'{sig.compact_signature=}')
+            fn += '-Sig-' + sig.compact_signature
+            fn += '-Gpu-' + gpu
+            fn += '.hsaco'
+            yield ObjectFileDescription(self, sig, outpath / fn)
+            if False: # Debugging
+                debug_counter += 1
+                if debug_counter > 10:
+                    break
 
     @property
     def param_class_name(self):
-        return "".join(x.capitalize() for x in self.SHIM_KERNEL_NAME.lower().split("_"))
+        return "".join(x.capitalize() for x in self.SHIM_KERNEL_NAME.lower().split("_")) + 'Params'
+
+    @property
+    def func_fields(self):
+        return sum([m.param_cc_fields for m in self._func_meta], [])
+
+    @property
+    def perf_fields(self):
+        return sum([m.param_cc_fields for m in self._perf_meta], [])
 
     def write_launcher_header(self, fout):
         d = { 'kernel_family_name'  : self.KERNEL_FAMILY,
               'param_class_name'    : self.param_class_name,
-              'func_fields'         : ';\n    '.join(sum([m.param_cc_fields for m in self._func_meta], [])),
-              'perf_fields'         : ';\n    '.join(sum([m.param_cc_fields for m in self._perf_meta], [])),
+              'func_fields'         : ';\n    '.join(self.func_fields),
+              'perf_fields'         : ';\n    '.join(self.perf_fields),
+              'number_of_functionals': self._godel_number,
             }
         print(self.HEADER_TEMPLATE.format_map(d), file=fout)
 
@@ -272,7 +174,9 @@ class KernelDescription(object):
               'godel_number_body'   : self.godel_number_body,
               'let_tensor_stride_arguments' : self.let_tensor_stride_arguments,
               'let_kernel_arguments' : self.let_kernel_arguments,
-              'arch_godel_number'    : self._godel_number,
+              'get_arch_number_body' : self.arch_number_body,
+              'number_of_functionals': self._godel_number,
+              'copy_perf_fields_body': self.copy_perf_fields_body,
               'kernel_table_entries' : self.get_kernel_table_entries(object_files),
             }
         print(self.SOURCE_TEMPLATE.format_map(d), file=fout)
@@ -307,14 +211,53 @@ class KernelDescription(object):
             m.write_godel_number_calculation(body)
         return body.getvalue()
 
+    @property
+    def arch_number_body(self):
+        lets = []
+        for i, gpu in enumerate(self._target_gpus):
+            arch = AOTRITON_SUPPORTED_GPUS[gpu]
+            lets.append(f'if (arch == {arch}) return {i}')
+        ALIGN = ';\n' + ' ' * 4
+        return ALIGN.join(lets)
+
+    @property
+    def copy_perf_fields_body(self):
+        lets = []
+        for field in self.perf_fields:
+            lets.append(f'param.{field} = {field}')
+        ALIGN = ';\n' + ' ' * 4
+        return ALIGN.join(lets)
+
+    def incbin_mangle(self, arch, o):
+        return f'INCBIN_{arch}_{self.KERNEL_FAMILY}_{self.SHIM_KERNEL_NAME}_{o.c_identifier_signature}'
+
     def get_kernel_table_entries(self, object_files):
+        lets = []
+        for gpu_index, gpu in enumerate(self._target_gpus):
+            arch = AOTRITON_SUPPORTED_GPUS[gpu]
+            lets.append(f'[{gpu_index}] = ' + self.get_kernel_table_entries_per_arch(arch, object_files))
+        ALIGN = ',\n' + 12 * ' '
+        return ALIGN.join(lets)
+
+    def get_kernel_table_entries_per_arch(self, arch, object_files):
+        ALIGN0 = '\n' + 4 * ' '
+        ALIGN1 = '\n' + 8 * ' '
+        ALIGN2 = '\n' + 12 * ' '
         d = defaultdict(list)
-        lets = ['{']
+        lets = []
         for o in object_files:
             godel_number = o.godel_number
-            d[godel_number].append(f'INCBIN_{self.KERNEL_FAMILY}_{self.SHIM_KERNEL_NAME}_{o.compact_signature}')
+            image_symbol = self.incbin_mangle(arch, o)
+            initializer_list = [f'.kernel_image = {image_symbol}']
+            initializer_list += o.designated_perf_initializer_list
+            d[godel_number].append('{ ' + ', '.join(initializer_list) + ' }')
+            # d[godel_number].append(self.get_single_kernel_table_entry(arch, o))
         for k, v in d.items():
-            lets.append(f'[{k}] =' + '{' + ', '.join(v) + '}')
-        lets.append('}')
-        ALIGN = ',\n' + 20 * ' '
-        return ALIGN.join(lets)
+            lets.append(f'[{k}] = {{' +
+                        ALIGN2 +
+                        (','+ALIGN2).join(v) +
+                        ALIGN1 + '},')
+        return '{ ' + ALIGN1 + ALIGN1.join(lets) + ALIGN0 + '}'
+
+    def get_single_kernel_table_entry(self, arch : 'str', o : 'ObjectFileDescription'):
+        image_symbol = self.incbin_mangle(arch, o)
