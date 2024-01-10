@@ -1,4 +1,5 @@
 from ..kernel_desc import KernelDescription, get_possible_types, select_pattern
+from ..autotune_binning import BinningLessOrEqual, BinningExact
 
 class FlashKernel(KernelDescription):
     KERNEL_FAMILY = 'flash'
@@ -24,7 +25,7 @@ class attn_fwd(FlashKernel):
         'RETURN_ENCODED_SOFTMAX',
     ]
     TYPE_CHOICES = {
-        frozenset(['Q', 'K', 'V', 'Out', 'encoded_softmax']) : ['*fp16:16', '*bf16:16', '*fp32:16'],
+        frozenset(['Q', 'K', 'V', 'Out', 'encoded_softmax']) : ['*fp16:16', '*bf16:16'],
         frozenset(['sm_scale']) : ['fp32'],
         frozenset(['M']) : ['*fp32:16'],
         frozenset(select_pattern(ARGUMENTS, 'stride_')) : ['u64'],
@@ -35,7 +36,7 @@ class attn_fwd(FlashKernel):
     }
     FEAT_CHOICES = {
         frozenset(['STAGE']) : [1, 3],
-        frozenset(['BLOCK_DMODEL']) : [16, 32, 64, 96, 128, 192, 256],
+        frozenset(['BLOCK_DMODEL']) : [16, 32, 64, 128],
         frozenset(['ENABLE_DROPOUT']) : [True, False],
         frozenset(['RETURN_ENCODED_SOFTMAX']) : [True, False],
     }
@@ -64,6 +65,15 @@ class attn_fwd(FlashKernel):
         'is_causal',  # Causal
     ]
     SHIM_KERNEL_NAME = 'attn_fwd'
+
+    # AUTOTUNE_KEYS can have Functional choices, which will be discarded later
+    AUTOTUNE_KEYS = {
+        'seqlen_q' : BinningLessOrEqual,
+        'seqlen_k' : BinningLessOrEqual,
+        'STAGE' : BinningExact,
+    }
+    # List of functionals that only has fixed values in the tuning database
+    UNTUNED_FUNCTIONALS = ['RETURN_ENCODED_SOFTMAX']
 
 class bwd_preprocess(FlashKernel):
     ARGUMENTS = [

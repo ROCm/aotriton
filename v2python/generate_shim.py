@@ -1,4 +1,5 @@
 from .rules import kernels as triton_kernels
+from .kernel_tuning_database import KernelTuningDatabase
 import io
 import shutil
 import argparse
@@ -57,7 +58,8 @@ class Generator(object):
         return self._out
 
     def gen_children(self, out):
-        pass
+        return
+        yield
 
     def write_prelude(self):
         pass
@@ -140,13 +142,17 @@ class KernelShimGenerator(Generator):
 
     def __init__(self, args, out, k : 'KernelDescription'):
         super().__init__(args, out)
+        # Shim code and functional dispatcher
         self._kdesc = k
         self._kdesc.set_target_gpus(args.target_gpus)
         self._shim_path = Path(args.build_dir) / k.KERNEL_FAMILY
-        self._table_path = Path(args.build_dir) / k.KERNEL_FAMILY
         self._shim_path.mkdir(parents=True, exist_ok=True)
         self._fhdr = open(self._shim_path / Path(k.SHIM_KERNEL_NAME + '.h'), 'w')
         self._fsrc = open(self._shim_path / Path(k.SHIM_KERNEL_NAME + '.cc'), 'w')
+        # Autotune dispatcher
+        self._autotune_path = Path(args.build_dir) / k.KERNEL_FAMILY / f'autotune.{k.SHIM_KERNEL_NAME}'
+        self._autotune_path.mkdir(parents=True, exist_ok=True)
+        self._ktd = KernelTuningDatabase(SOURCE_PATH.parent / 'rules', k.SHIM_KERNEL_NAME)
 
     def __del__(self):
         self._fhdr.close()
@@ -159,11 +165,27 @@ class KernelShimGenerator(Generator):
         k = self._kdesc
         p = self._shim_path
         args = self._args
-        for o in k.gen_all_object_files(p, kernel_name=k.SHIM_KERNEL_NAME):
+        for gpu, fsels, lut in k.gen_tuned_kernel_lut(self._ktd):
+            yield AutotuneCodeGenerator(args, self._autotune_path, k, gpu, fsels, lut)
+
+        ktd = KernelTuningDatabase(SOURCE_PATH.parent / 'rules', k.SHIM_KERNEL_NAME)
+        for o in k.gen_all_object_files(p, tuned_db=ktd):
             yield ObjectShimCodeGenerator(self._args, k, o)
 
     def write_conclude(self):
-        self._kdesc.write_launcher_source(self._fsrc, [c._odesc for c in self._children])
+        self._kdesc.write_launcher_source(self._fsrc, [c._odesc for c in self._children if isinstance(c, ObjectShimCodeGenerator)])
+
+class AutotuneCodeGenerator(Generator):
+    def __init__(self, args, outdir, k, gpu, fsels, lut):
+        super().__init__(args, None)
+        self._outdir = outdir
+        self._kdesc = k
+        self._gpu = gpu
+        self._fsels = fsels
+        self._lut = lut
+
+    def write_body(self):
+        self._lut.write_lut_source(self._outdir)
 
 class ObjectShimCodeGenerator(Generator):
     def __init__(self, args, k, o):

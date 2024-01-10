@@ -21,7 +21,7 @@ def parse():
     return args
 
 def gen_from_object(args, o : 'ObjectFileDescription', makefile):
-    target_fn = f'{o.KERNEL_FAMILY}/{o._hsaco_kernel_path.name}'
+    target_fn = f'{o.KERNEL_FAMILY}/gpu_kernel_image.{o.SHIM_KERNEL_NAME}/{o._hsaco_kernel_path.name}'
     print('#', o.human_readable_signature, file=makefile)
     print(target_fn, ':', file=makefile)
     cmd  = f'LD_PRELOAD=$(LIBHSA_RUNTIME64) {COMPILER} {o.src.absolute()} --kernel_name {o.entrance} -o {o.obj.absolute()}'
@@ -36,7 +36,7 @@ def gen_from_object(args, o : 'ObjectFileDescription', makefile):
     return target_fn
 
 def gen_from_kernel(args, k, build_dir, makefile):
-    outpath = build_dir / k.KERNEL_FAMILY
+    outpath = build_dir / k.KERNEL_FAMILY / f'gpu_kernel_image.{k.SHIM_KERNEL_NAME}'
     outpath.mkdir(parents=True, exist_ok=True)
     target_all = f'compile_{k.SHIM_KERNEL_NAME}'
     all_targets = []

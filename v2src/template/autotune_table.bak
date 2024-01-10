@@ -1,0 +1,48 @@
+#include "[[shim_kernel_name]].h"
+#include <limits>
+
+namespace aotriton::v2::[[kernel_family_name]]::autotune {
+
+// Store the real kernel, with a set of parameters
+template<int GodelNumber>
+struct Autotune_[[param_class_name]] {
+    // Performance related arguments
+    [[perf_fields]];
+
+    // AutoTune results
+    struct TuningResult {
+        [[autotune_keys]];
+        void match(const [[param_class_name]]& params,
+                   int64_t current_optimal_distance) const {
+        }
+    };
+    static TuningFor optimal_for[];
+
+    bool match([[param_class_name]]& params) const {
+        int64_t current_optimal_distance = std::numeric_limits<int64_t>::max();
+        for (const auto& tune : optimal_for) {
+            tune.match(params, current_optimal_distance);
+            if (current_optimal_distance == 0)
+                return true;
+        }
+        if (current_optimal_distance != std::numeric_limits<int64_t>::max())
+            return true;
+        return false;
+    }
+
+    void operator()([[param_class_name]]& params) {
+    }
+};
+
+[[param_class_name]]_TunableKernel::TuningResult optimal_for = {
+    [[autotune_optimals]]
+};
+
+[[param_class_name]]::AutoTuneTableEntry
+[[param_class_name]]::autotune_table[][ [[number_of_functionals]] ] = {
+    [[autotune_table_entries]]
+};
+
+[[autotune_table_entry_instances]];
+
+}

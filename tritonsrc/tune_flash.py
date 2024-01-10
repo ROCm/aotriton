@@ -38,12 +38,13 @@ def teardown(scope="module"):
 # @pytest.mark.parametrize('dropout_p', [0.5])
 # @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
 @pytest.mark.parametrize('sm_scale', [1.2])
-def test_tune_fwd(teardown, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype):
+# @pytest.mark.parametrize('return_encoded_softmax', [False, True])  # Runtime Error with True
+@pytest.mark.parametrize('return_encoded_softmax', [False])
+def test_tune_fwd(teardown, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype):
     q = torch.randn((BATCH, N_HEADS, seqlen_q, D_HEAD), dtype=dtype, device="cuda", requires_grad=True)
     k = torch.randn((BATCH, N_HEADS, seqlen_k, D_HEAD), dtype=dtype, device="cuda", requires_grad=True)
     v = torch.randn((BATCH, N_HEADS, seqlen_k, D_HEAD), dtype=dtype, device="cuda", requires_grad=True)
     autotune = True
-    return_encoded_softmax = False
     return_autotune = True
     tri_out, encoded_softmax, best_config = attention(q, k, v, causal, sm_scale, dropout_p, return_encoded_softmax, autotune, return_autotune)
     BestConfigRecord.best_config_record.append(best_config)

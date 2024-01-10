@@ -3,6 +3,7 @@ import pathlib
 from collections import defaultdict
 from .kernel_argument import TunedArgument
 from .gpu_targets import AOTRITON_GPU_ARCH_TUNING_STRING
+from .kernel_tuning_lut import KernelTuningEntryForFunctionalOnGPU
 
 '''
 Note: unlike KernelDescription, whose constants will be specialized for EVERY kernel.
@@ -16,12 +17,19 @@ class KernelTuningDatabaseForArch(object):
     def __init__(self, f):
         self._j = json.load(f)
         self._arch = self._j['arch']
+        self._gpu = None
         self._index = None
         self._index_matching_keys = None
+        self._lut = {}
 
     @property
     def arch(self):
         return self._arch
+
+    def set_gpu(self, gpu, index):
+        self._gpu = gpu
+        self._arch_number = index
+        return self
 
     def select(self, fsels : 'list[ArgumentSelection]', perf_meta : 'list[ArgumentMetadata]'):
         if self._index is None:
@@ -43,7 +51,7 @@ class KernelTuningDatabaseForArch(object):
                     if tensor_key in tinput:
                         key_detected = tensor_key
                         break
-            elif mfsel.is_type:
+            elif mfsel.is_type or mfsel.tuning_disabled:
                 key_detected = None # TODO
             elif mfsel.is_feature:
                 for aname in fsel.argument_names:
@@ -54,6 +62,7 @@ class KernelTuningDatabaseForArch(object):
             if key_detected is not None:
                 self._index_matching_keys.append(key_detected)
                 self._fsel_positions.append(fsel.meta.first_apperance)
+        # print(f'{self._index_matching_keys=}')
 
     def extract_keys_from_json(self, ti):
         keys = [ti['inputs'][k] for k in self._index_matching_keys]
@@ -66,18 +75,23 @@ class KernelTuningDatabaseForArch(object):
                 else:
                     assert False, f'Unknown datatype {value}'
             return value
-        return frozenset(map(convert, keys))
+        return tuple(map(convert, keys))
 
     def extract_keys_from_fsels(self, fsels):
         keys = {}
+        # print(f'{len(self._fsel_positions)=}')
         for fsel in fsels:
             try:
+                # print(f'extract_keys_from_fsels {fsel.argument_names} {fsel.meta.first_apperance}')
                 offset = self._fsel_positions.index(fsel.meta.first_apperance)
                 value = fsel.argument_value
                 keys[offset] = value
+                # print(f'keys[{offset}] = {value}')
             except ValueError:
                 pass
-        return frozenset([keys[offset] for offset in range(len(self._fsel_positions))])
+        l = [keys[offset] for offset in range(len(self._fsel_positions))]
+        # print(f'{l=}')
+        return tuple(l)
 
     def _build_db_index(self, fsels):
         self._init_matching_keys(fsels)
@@ -85,6 +99,7 @@ class KernelTuningDatabaseForArch(object):
         self._index_dedup = defaultdict(list)
         for ti in self._j['tune_info']:
             tup = self.extract_keys_from_json(ti)
+            # print(f'_build_db_index {tup}')
             self._index[tup].append(ti)
             is_dup = False
             for eti in self._index_dedup[tup]:
@@ -94,6 +109,9 @@ class KernelTuningDatabaseForArch(object):
                     break
             if not is_dup:
                 self._index_dedup[tup].append(ti)
+        if False:  # debug
+            tup=('*fp16:16', 1, 16, True, True)
+            print(f'_build_db_index {self._index[tup]=} {self._index_dedup[tup]=}')
 
     def _select_from_index(self,
                            fsels : 'list[ArgumentSelection]',
@@ -105,16 +123,32 @@ class KernelTuningDatabaseForArch(object):
         else:
             indexed = self._index[tup]
         for tinfo in indexed:
-            ps = dict(tinfo['tuned_kernel'])
-            co = dict(tinfo['compiler_options'])
-            if 'waves_per_eu' in ps:
-                co['waves_per_eu'] = ps['waves_per_eu']
-                del ps['waves_per_eu']
-                # co['_debug'] = dict(tinfo)
-            yield self._craft_perf_selection(ps, perf_meta), co
+            yield self._craft_perf_selection(tinfo, perf_meta)
 
-    def _craft_perf_selection(self, ps : dict, perf_meta: 'list[ArgumentSelection]'):
-        return [TunedArgument(meta, ps[meta.argument_names[0]]) for meta in perf_meta]
+    def _craft_perf_selection(self, tinfo : dict, perf_meta: 'list[ArgumentSelection]'):
+        ps = dict(tinfo['tuned_kernel'])
+        co = dict(tinfo['compiler_options'])
+        if 'waves_per_eu' in ps:
+            co['waves_per_eu'] = ps['waves_per_eu']
+            # co['_debug'] = dict(tinfo)
+            del ps['waves_per_eu']
+        return [TunedArgument(meta, ps[meta.argument_names[0]]) for meta in perf_meta], co
+
+    def get_lut(self,
+                kdesc : 'KernelDescription',
+                autotune_keys : 'list[tuple[str, Binning]]',
+                fsels : 'list[ArgumentSelection]',
+                perf_meta : 'list[ArgumentMetadata]'):
+        if self._index is None:
+            self._build_db_index(fsels)
+        tup = self.extract_keys_from_fsels(fsels)
+        if tup not in self._lut:
+            indexed = self._index[tup]
+            # print(f'{tup=}')
+            assert indexed
+            self._lut[tup] = KernelTuningEntryForFunctionalOnGPU(kdesc, self, fsels, indexed,
+                                                                 autotune_keys, perf_meta)
+        return self._lut[tup]
 
 class KernelTuningDatabase(object):
     def __init__(self, tune_info_dir : pathlib.Path, kernel_name : str):
@@ -126,9 +160,9 @@ class KernelTuningDatabase(object):
                 dba = KernelTuningDatabaseForArch(f)
             self.arch_dict[dba.arch] = dba
 
-    def select_gpu(self, gpu):
+    def select_gpu(self, gpu, index):
         arch = AOTRITON_GPU_ARCH_TUNING_STRING[gpu]
-        return self.arch_dict[arch]
+        return self.arch_dict[arch].set_gpu(gpu, index)
 
     @property
     def empty(self):

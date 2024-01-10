@@ -49,6 +49,59 @@ hipError_t attn_fwd(T4 q,
             });
         });
     });
+    if (arch == "gfx90a") {
+        constexpr Arch = Gfx90a;
+        TENSOR_DTYPE_SWITCH(q, Type, [&] {
+            BOOL_SWITCH(is_causal, kUseCausal, [&] {
+                BOOL_SWITCH(dropout_p != 0.0, kUseDropout, [&] {
+                    BOOL_SWITCH(encoded_softmax, kReturnSoftmax, [&] {
+                        DHEAD_SWITCH(head_size, kHeadSize, [&] {
+                            auto kernel = attn_fwd_trait<Arch, Type, kHeadSize, kUseCausal, kUseDropout, kReturnSoftmax>::select_optimal_kernel();
+                            err = attn_fwd_launcher(kernel,
+                                                    q,
+                                                    k,
+                                                    v,
+                                                    sm_scale,
+                                                    M,
+                                                    Out,
+                                                    dropout_p,
+                                                    philox_seed,
+                                                    philox_offset,
+                                                    encoded_softmax,
+                                                    is_causal,
+                                                    stream);
+                        });
+                    });
+                });
+            });
+        });
+    } else if (arch = "gfx1101") {
+        constexpr Arch = Gfx1101;
+        TENSOR_DTYPE_SWITCH(q, Type, [&] {
+            BOOL_SWITCH(is_causal, kUseCausal, [&] {
+                BOOL_SWITCH(dropout_p != 0.0, kUseDropout, [&] {
+                    BOOL_SWITCH(encoded_softmax, kReturnSoftmax, [&] {
+                        DHEAD_SWITCH(head_size, kHeadSize, [&] {
+                            auto kernel = attn_fwd_trait<Arch, Type, kHeadSize, kUseCausal, kUseDropout, kReturnSoftmax>::select_optimal_kernel();
+                            err = attn_fwd_launcher(kernel,
+                                                    q,
+                                                    k,
+                                                    v,
+                                                    sm_scale,
+                                                    M,
+                                                    Out,
+                                                    dropout_p,
+                                                    philox_seed,
+                                                    philox_offset,
+                                                    encoded_softmax,
+                                                    is_causal,
+                                                    stream);
+                        });
+                    });
+                });
+            });
+        });
+    }
 #endif
     constexpr int kUseCausalBits = 3;
     constexpr int kNoCausalBits = 1;

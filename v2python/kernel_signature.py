@@ -70,3 +70,13 @@ class KernelSignature(object):
         for k, v in sig.items():
             l[k] = v
         return l
+
+    def codegen_perf_object(self) -> str:
+        perf_key_value = []
+        for ps in self._perf_selections:
+            value = ps.argument_value
+            if isinstance(value, bool):
+                value = 'true' if value else 'false'
+            for aname in ps.argument_names:
+                perf_key_value.append(f'.{aname} = {value}')
+        return ', '.join(perf_key_value)

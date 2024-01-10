@@ -5,15 +5,21 @@
 #include <functional>
 #include <string_view>
 #include "dtypes.h"
+#include "runtime.h"
 
 namespace aotriton {
 
-inline constexpr uint64_t CAT(constexpr uint32_t high, 
-                              constexpr uint32_t low)
+constexpr uint64_t CAT(uint32_t high, uint32_t low)
 {
-    constexpr uint64_t high64 = high;
-    constexpr uint64_t low64 = low;
+    uint64_t high64 = high;
+    uint64_t low64 = low;
     return (high64 << 32) | low64;
+}
+
+template<typename T>
+void cdiv(T numerator, T denominator)
+{
+    return (numerator + (denominator - 1)) / denominator;
 }
 
 // Use PCI IDs to avoid allocating numbers by ourselves
@@ -21,11 +27,13 @@ enum GpuVendor : uint32_t {
     kAMD = 0x1002,
     kNVIDIA = 0x10de,
     kINTEL = 0x8086,
-}
+};
 
 // More bits for potential non-PCI architectures
 enum GpuArch : uint64_t {
-    kGcnGfx90a = CAT(GpuVendor::kAMD, 0x90a),
+    GPU_ARCH_UNKNOWN = 0,
+    GPU_ARCH_AMD_GFX90A = CAT(GpuVendor::kAMD, 0x90a),
+    GPU_ARCH_AMD_GFX942 = CAT(GpuVendor::kAMD, 0x942),
 };
 
 template<int Rank>
@@ -47,7 +55,7 @@ public:
         dtype_ = dtype_extractor(tensor);
     }
 
-    opeartor bool() const {
+    operator bool() const {
         return base_ != nullptr;
     }
 
@@ -73,7 +81,7 @@ private:
     DType dtype_ = kUnknown;
 };
 
-std::string_view getArchFromStream(hipStream_t);
+GpuArch getArchFromStream(hipStream_t);
 
 } // namespace aotriton
 

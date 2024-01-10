@@ -83,6 +83,9 @@ class KernelDescription(object):
         self._perf_meta = [ArgumentMetadata(k, v, ArgumentCategory.CAT_PERF, self) for k, v in self.PERF_CHOICES.items()]
         for m in self._func_meta:
             m.sort_arguments(self.ARGUMENTS)
+            for u in self.UNTUNED_FUNCTIONALS:
+                if m.has_argument(u):
+                    m.disable_tuning()
         self._func_meta = sorted(self._func_meta, key=lambda m: m.first_apperance)
         # print(f'{self._func_meta}')
         ArgumentMetadata.assign_godel_number(self._func_meta)
@@ -96,6 +99,17 @@ class KernelDescription(object):
         self._func_selections = [m.spawn_all_selections() for m in self._func_meta]
         self._perf_selections = [m.spawn_all_selections() for m in self._perf_meta]
         self._target_gpus = None
+        self.AUTOTUNE_KEYS_VALIDATED = []
+        for key in self.ARGUMENTS:
+            if key not in self.AUTOTUNE_KEYS:
+                continue
+            is_type = False
+            for type_keys in self.TYPE_CHOICES.keys():
+                if key in type_keys:
+                    is_type = True
+                    break
+            if is_type:
+                self.AUTOTUNE_KEYS_VALIDATED.append((key, self.AUTOTUNE_KEYS[key]))
 
     def gen_func_selections(self) -> 'tuple[ArgumentSelection]':
         return itertools.product(*self._func_selections)
@@ -107,7 +121,7 @@ class KernelDescription(object):
                                   tuned_db : 'KernelTuningDatabase',
                                   gpu : str,
                                   fsels : 'list[ArgumentSelection]'):
-        dba = tuned_db.select_gpu(gpu)
+        dba = tuned_db.select_gpu(gpu, self._target_gpus.index(gpu))
         for psels, compiler_options in dba.select(fsels, self._perf_meta):
             yield gpu, fsels, psels, compiler_options
 
@@ -116,10 +130,9 @@ class KernelDescription(object):
 
     def gen_all_object_files(self,
                              outpath : Path,
-                             kernel_name : str = None,
-                             file_name_prefix : str = None,
-                             tuned_db : 'KernelTuningDatabase' = None) -> 'list[ObjectFileDescription]':
-        kernel_name = self.SHIM_KERNEL_NAME if kernel_name is None else kernel_name
+                             # kernel_name : str = None,
+                             # file_name_prefix : str = None,
+                             tuned_db : 'KernelTuningDatabase' = None) -> 'Iterator[ObjectFileDescription]':
         def gen():
             if tuned_db is None or tuned_db.empty:
                 yield from itertools.product(self._target_gpus,
@@ -132,19 +145,30 @@ class KernelDescription(object):
                     yield from self.gen_tuned_perf_selections(tuned_db, gpu, fsels)
         debug_counter = 0
         for gpu, fsels, psels, compiler_options in gen():
-            # print(f"{gpu=} {fsels=} {psels=} {compiler_options=}")
             sig = KernelSignature(self, fsels, psels, compiler_options, gpu)
-            fn = file_name_prefix + '-Kernel-' if file_name_prefix else ''
-            fn += kernel_name
-            # print(f'{sig.compact_signature=}')
-            fn += '-Sig-' + sig.compact_signature
-            fn += '-Gpu-' + gpu
-            fn += '.hsaco'
-            yield ObjectFileDescription(self, sig, outpath / fn)
+            yield self.build_object_file_description(outpath, sig)
             if False: # Debugging
                 debug_counter += 1
                 if debug_counter > 10:
                     break
+
+    def build_object_file_description(self, outpath, sig):
+        # print(f"{gpu=} {fsels=} {psels=} {compiler_options=}")
+        # sig = KernelSignature(self, fsels, psels, compiler_options, gpu)
+        # fn = file_name_prefix + '-Kernel-' if file_name_prefix else ''
+        # kernel_name =  if kernel_name is None else kernel_name
+        fn = self.SHIM_KERNEL_NAME
+        # print(f'{sig.compact_signature=}')
+        fn += '-Sig-' + sig.compact_signature
+        fn += '-Gpu-' + sig.target_gpu
+        fn += '.hsaco'
+        return ObjectFileDescription(self, sig, outpath / fn)
+
+    def gen_tuned_kernel_lut(self, tuned_db : 'KernelTuningDatabase') -> 'Iterator[KernelTuningLutForGPU]':
+        for gpu, fsels in itertools.product(self._target_gpus,
+                                            self.gen_func_selections()):
+            dba = tuned_db.select_gpu(gpu, self._target_gpus.index(gpu))
+            yield gpu, fsels, dba.get_lut(self, self.AUTOTUNE_KEYS_VALIDATED, fsels, self._perf_meta)
 
     @property
     def param_class_name(self):
@@ -160,6 +184,7 @@ class KernelDescription(object):
 
     def write_launcher_header(self, fout):
         d = { 'kernel_family_name'  : self.KERNEL_FAMILY,
+              'shim_kernel_name'    : self.SHIM_KERNEL_NAME,
               'param_class_name'    : self.param_class_name,
               'func_fields'         : ';\n    '.join(self.func_fields),
               'perf_fields'         : ';\n    '.join(self.perf_fields),
@@ -169,6 +194,7 @@ class KernelDescription(object):
 
     def write_launcher_source(self, fout, object_files):
         d = { 'kernel_family_name'  : self.KERNEL_FAMILY,
+              'triton_kernel_name'  : self._triton_kernel_name,
               'shim_kernel_name'    : self.SHIM_KERNEL_NAME,
               'param_class_name'    : self.param_class_name,
               'godel_number_body'   : self.godel_number_body,
@@ -176,8 +202,9 @@ class KernelDescription(object):
               'let_kernel_arguments' : self.let_kernel_arguments,
               'get_arch_number_body' : self.arch_number_body,
               'number_of_functionals': self._godel_number,
-              'copy_perf_fields_body': self.copy_perf_fields_body,
-              'kernel_table_entries' : self.get_kernel_table_entries(object_files),
+              # 'copy_perf_fields_body': self.copy_perf_fields_body,
+              'kernel_table_entry_declares' : self.codegen_kernel_table_entry_declares(object_files),
+              'kernel_table_entries' : self.codegen_kernel_table_entries(object_files),
             }
         print(self.SOURCE_TEMPLATE.format_map(d), file=fout)
 
@@ -220,6 +247,7 @@ class KernelDescription(object):
         ALIGN = ';\n' + ' ' * 4
         return ALIGN.join(lets)
 
+    '''
     @property
     def copy_perf_fields_body(self):
         lets = []
@@ -227,19 +255,12 @@ class KernelDescription(object):
             lets.append(f'param.{field} = {field}')
         ALIGN = ';\n' + ' ' * 4
         return ALIGN.join(lets)
+    '''
 
     def incbin_mangle(self, arch, o):
         return f'INCBIN_{arch}_{self.KERNEL_FAMILY}_{self.SHIM_KERNEL_NAME}_{o.c_identifier_signature}'
 
-    def get_kernel_table_entries(self, object_files):
-        lets = []
-        for gpu_index, gpu in enumerate(self._target_gpus):
-            arch = AOTRITON_SUPPORTED_GPUS[gpu]
-            lets.append(f'[{gpu_index}] = ' + self.get_kernel_table_entries_per_arch(arch, object_files))
-        ALIGN = ',\n' + 12 * ' '
-        return ALIGN.join(lets)
-
-    def get_kernel_table_entries_per_arch(self, arch, object_files):
+    def codegen_kernel_table_entries_per_arch(self, arch, object_files):
         ALIGN0 = '\n' + 4 * ' '
         ALIGN1 = '\n' + 8 * ' '
         ALIGN2 = '\n' + 12 * ' '
@@ -261,3 +282,25 @@ class KernelDescription(object):
 
     def get_single_kernel_table_entry(self, arch : 'str', o : 'ObjectFileDescription'):
         image_symbol = self.incbin_mangle(arch, o)
+
+    def codegen_kernel_table_entry_declares(self, object_files):
+        decls = []
+        for arch_number, target_gpu in enumerate(self._target_gpus):
+            godel_numbers = sorted(list(set([o.godel_number for o in object_files if o.target_gpu == target_gpu])))
+            for godel_number in godel_numbers:
+                decls.append(f'template struct Autotune_{self.SHIM_KERNEL_NAME} <{arch_number}, {godel_number}>')
+        return ';\n'.join(decls)
+
+    def codegen_kernel_table_entries(self, object_files):
+        lets = []
+        for arch_number, target_gpu in enumerate(self._target_gpus):
+            lets.append(4 * ' ' + '{')
+            godel_numbers = sorted(list(set([o.godel_number for o in object_files])))
+            for godel_number in range(self._godel_number):
+                if godel_number in godel_numbers:
+                    lets.append(8 * ' ' + f'autotune::Autotune_{self.SHIM_KERNEL_NAME} <{arch_number}, {godel_number}>(),')
+                else:
+                    lets.append(8 * ' ' + f'[]({self.param_class_name}&) {{}},')
+            lets.append(4 * ' ' + '},')
+        return '\n'.join(lets)
+

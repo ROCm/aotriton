@@ -1,5 +1,6 @@
 import numpy as np
 from enum import Enum
+from .object_desc import ObjectFileDescription
 
 '''
 Note: we category the Triton kernel arguments into three types.
@@ -22,6 +23,7 @@ class ArgumentMetadata(object):
         self._cat = cat
         self._godel_number = None
         self._kdesc = kdesc
+        self._tuning_disabled = False
 
     def sort_arguments(self, ALL_ARGUMENTS):
         arguments_tuple = [(a, ALL_ARGUMENTS.index(a)) for a in self._grouped_arguments_as_set]
@@ -66,6 +68,9 @@ class ArgumentMetadata(object):
     @property
     def argument_names(self):
         return [a[0] for a in self._ordered_arguments]
+
+    def has_argument(self, aname):
+        return aname in self.argument_names
 
     def select(self, index):
         return self._possible_values[index]
@@ -139,6 +144,13 @@ class ArgumentMetadata(object):
                 print(2 * INDENT + f'if ({triton_arg} == {value}) number = {number} ;', file=fout)
         print(2 * INDENT + f'sum += number * {self.godel_number};', file=fout)
         print(1 * INDENT + '}', file=fout)
+
+    @property
+    def tuning_disabled(self):
+        return self._tuning_disabled
+
+    def disable_tuning(self):
+        self._tuning_disabled = True
 
 class ArgumentSelection(object):
     def __init__(self, meta : ArgumentMetadata, selection_index : int):
