@@ -20,7 +20,7 @@ def parse():
     p.add_argument("--target_gpus", type=str, default=None, nargs='*',
                    help="Ahead of Time (AOT) Compile Architecture. PyTorch is required for autodetection if --targets is missing.")
     p.add_argument("--build_dir", type=str, default='build/', help="build directory")
-    p.add_argument("--archive", action='store_true', help='generate archive library instead of shared library. No linking with dependencies.')
+    p.add_argument("--archive_only", action='store_true', help='Only generate archive library instead of shared library. No linking with dependencies.')
     args = p.parse_args()
     # print(args)
     return args
@@ -114,7 +114,7 @@ class ShimMakefileGenerator(MakefileGenerator):
         self._build_dir = Path(args.build_dir)
         f = open(self._build_dir / 'Makefile.shim', 'w')
         super().__init__(args=args, grand_target=grand_target, out=f)
-        self._concrete_grand_target = LIBRARY_NAME + '.a' if args.archive else '.so'
+        self._library_suffixes = ['.a']  if args.archive_only else ['.a', '.so']
 
     def __del__(self):
         self._out.close()
@@ -130,17 +130,19 @@ class ShimMakefileGenerator(MakefileGenerator):
         print(f"AR={LINKER}", file=f)
         print(f"", file=f)
         print('', file=self._out)
-        print(self._grand_target, ':', self._concrete_grand_target, '\n\n', file=self._out)
+        print(self._grand_target, ':', ' '.join([f'{LIBRARY_NAME}{s}' for s in self._library_suffixes]), '\n\n', file=self._out)
 
     def write_conclude(self):
         f = self._out
         all_object_files = ' '.join([str(p) for p in self.list_of_output_object_files])
-        print(self._concrete_grand_target, ': ', all_object_files, file=self._out)
-        if self._args.archive:
-            print('\t', '${AR} -r ', self._concrete_grand_target, all_object_files, file=f)
-        else:
-            print('\t', COMPILER, ' -shared -fPIC -o ', self._concrete_grand_target, all_object_files, file=f)
-        print('\n\n', file=f)
+        for s in self._library_suffixes:
+            fn = f'{LIBRARY_NAME}{s}'
+            print(fn, ': ', all_object_files, file=self._out)
+            if s == '.a':
+                print('\t', '${AR} -r ', fn, all_object_files, file=f)
+            if s == '.so':
+                print('\t', COMPILER, ' -shared -fPIC -o ', fn, all_object_files, file=f)
+            print('\n\n', file=f)
 
     '''
     @property
