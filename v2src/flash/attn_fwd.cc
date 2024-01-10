@@ -1,7 +1,6 @@
-#include <aotriton/flash_attn.h>
-#include <aotriton/v2/_internal_gen/flash/attn_fwd_params.h>
-#include <aotriton/v2/_internal_gen/flash/attn_fwd_launcher.h>
-#include "../static_switch.h"
+#include <aotriton/flash.h>
+#include <aotriton/util.h>
+#include <flash/attn_fwd.h>
 
 namespace aotriton::v2::flash {
 
@@ -9,7 +8,7 @@ hipError_t attn_fwd(T4 q,
                     T4 k,
                     T4 v,
                     float sm_scale,
-                    T4 softmax_lse,
+                    T1 softmax_lse,
                     T4 Out,
                     float dropout_p,
                     uint64_t philox_seed,
@@ -106,36 +105,39 @@ hipError_t attn_fwd(T4 q,
     constexpr int kUseCausalBits = 3;
     constexpr int kNoCausalBits = 1;
     auto grid_calculator = [](const AttnFwdParams& params) -> dim3 {
-        return dim3 { cdiv(seqlen_q, params.BLOCK_N),
-                      params.Q.size(0) * params.Q.size(1),
+        return dim3 { aotriton::cdiv<uint32_t>(params.seqlen_q, params.BLOCK_N),
+                      uint32_t(params.Q->size(0) * params.Q->size(1)),
                       1
         };
     };
+    int head_size = q.size(3);
     // Requires C++ 20
-    AttnFwdParams params {
-        .Q = q,
-        .K = k
-        .V = v,
+    AttnFwdParams params = {
+        .Q = &q,
+        .K = &k,
+        .V = &v,
+        .Out = &Out,
+        .encoded_softmax = &encoded_softmax,
         .sm_scale = sm_scale,
-        .M = softmax_lse,
-        .Out = Out,
+        .M = &softmax_lse,
         .seqlen_q = q.size(2),
         .seqlen_k = k.size(2),
         .dropout_p = dropout_p,
         .philox_seed = philox_seed,
-        .philox_offset = philox_offset,
-        .encoded_softmax = encoded_softmax,
+        .philox_offset_base = static_cast<uint32_t>(philox_offset),
         .STAGE = is_causal ? kUseCausalBits : kNoCausalBits,
         .BLOCK_DMODEL = head_size,
         .ENABLE_DROPOUT = dropout_p > 0.0,
         .RETURN_ENCODED_SOFTMAX = bool(encoded_softmax),
-        .grid_calculator = grid_calculator
     };
-    err = params.lookup_optimal(arch);
+    AttnFwdContext context;
+    context.grid_calculator = grid_calculator;
+    // .grid_calculator = grid_calculator
+    err = context.lookup_optimal(params, arch);
     if (err != hipSuccess) {
         return err;
     }
-    err = params.launch(stream);
+    err = context.launch(params, stream);
     return err;
 }
 

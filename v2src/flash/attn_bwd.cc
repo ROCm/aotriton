@@ -1,3 +1,5 @@
+#if 0
+
 #include <aotriton/flash_attn.h>
 
 namespace aotriton::v2::flash {
@@ -21,3 +23,5 @@ hipError_t attn_bwd(T4 q,
 }
 
 }
+
+#endif

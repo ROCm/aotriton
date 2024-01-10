@@ -17,7 +17,7 @@ constexpr uint64_t CAT(uint32_t high, uint32_t low)
 }
 
 template<typename T>
-void cdiv(T numerator, T denominator)
+T cdiv(T numerator, T denominator)
 {
     return (numerator + (denominator - 1)) / denominator;
 }

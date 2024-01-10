@@ -23,18 +23,23 @@ struct [[param_class_name]] {
     // Performance related arguments for current selection
     [[perf_fields]];
 
-    int64_t godel_number() const;
+    TritonKernel* selected_kernel = nullptr;
+
+    int64_t godel_number([[param_class_name]]& params) const;
+};
+
+class [[context_class_name]] {
+public:
     std::function<dim3(const [[param_class_name]]&)> grid_calculator;
 
-    hipError_t lookup_optimal(GpuArch arch);
-    hipError_t launch(hipStream_t stream);
-    int64_t get_arch_number(GpuArch arch);
+    hipError_t lookup_optimal([[param_class_name]]& params, GpuArch arch);
+    hipError_t launch([[param_class_name]]& params, hipStream_t stream);
+    int64_t get_arch_number([[param_class_name]]& params, GpuArch arch);
 
-    TritonKernel* selected_kernel = nullptr;
 private:
     GpuArch kernel_arch = GPU_ARCH_UNKNOWN;
 
-    using AutoTuneTableEntry = std::function<void([[param_class_name]]& param)>;
+    using AutoTuneTableEntry = std::function<void([[param_class_name]]& params)>;
     static AutoTuneTableEntry autotune_table[][ [[number_of_functionals]] ];
 };
 

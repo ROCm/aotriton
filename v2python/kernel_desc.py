@@ -176,6 +176,10 @@ class KernelDescription(object):
         return "".join(x.capitalize() for x in self.SHIM_KERNEL_NAME.lower().split("_")) + 'Params'
 
     @property
+    def context_class_name(self):
+        return "".join(x.capitalize() for x in self.SHIM_KERNEL_NAME.lower().split("_")) + 'Context'
+
+    @property
     def func_fields(self):
         return sum([m.param_cc_fields for m in self._func_meta], [])
 
@@ -187,6 +191,7 @@ class KernelDescription(object):
         d = { 'kernel_family_name'  : self.KERNEL_FAMILY,
               'shim_kernel_name'    : self.SHIM_KERNEL_NAME,
               'param_class_name'    : self.param_class_name,
+              'context_class_name'  : self.context_class_name,
               'func_fields'         : ';\n    '.join(self.func_fields),
               'perf_fields'         : ';\n    '.join(self.perf_fields),
               'number_of_functionals': self._godel_number,
@@ -198,6 +203,7 @@ class KernelDescription(object):
               'triton_kernel_name'  : self._triton_kernel_name,
               'shim_kernel_name'    : self.SHIM_KERNEL_NAME,
               'param_class_name'    : self.param_class_name,
+              'context_class_name'  : self.context_class_name,
               'godel_number_body'   : self.godel_number_body,
               'let_tensor_stride_arguments' : self.let_tensor_stride_arguments,
               'let_kernel_arguments' : self.let_kernel_arguments,
@@ -218,18 +224,18 @@ class KernelDescription(object):
         for k, v in self.TENSOR_STRIDE_INPUTS.items():
             tensor_rank = self.get_tensor_rank(k)
             for i in range(tensor_rank):
-                lets.append(f'uint64_t {v[i]} = {k}.stride({i})')
+                lets.append(f'uint64_t {v[i]} = params.{k}->stride({i})')
         for m in self._func_meta:
             if not m.is_tensor:
                 continue
             for a in m._ordered_arguments:
-                lets.append(f'const void* {a[0]}_ptr = {a[0]}.data_ptr()')
+                lets.append(f'const void* {a[0]}_ptr = params.{a[0]}->data_ptr()')
         return ';\n    '.join(lets)
 
     @property
     def let_kernel_arguments(self):
         ALIGN = ',\n' + ' ' * 32
-        lets = [f'static_cast<void*>(&{a})' for a in self.KERNEL_DATA_ARGUMENTS]
+        lets = [f'static_cast<void*>(&params.{a})' for a in self.KERNEL_DATA_ARGUMENTS]
         return ALIGN.join(lets)
 
     @property

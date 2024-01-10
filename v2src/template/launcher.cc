@@ -10,23 +10,24 @@ int64_t [[param_class_name]]::godel_number() const
     return sum;
 }
 
-hipError_t [[param_class_name]]::lookup_optimal(GpuArch arch)
+hipError_t [[context_class_name]]::lookup_optimal([[param_class_name]]& params, GpuArch arch)
 {
     int64_t arch_number = get_arch_number(arch);
     if (arch_number < 0) {
         return hipErrorNoBinaryForGpu;
     }
-    selected_kernel = nullptr;
-    auto tune_func = autotune_table[arch_number][godel_number()];
-    tune_func(*this);
-    if (!selected_kernel)
+    params.selected_kernel = nullptr;
+    auto tune_func = autotune_table[arch_number][params.godel_number()];
+    tune_func(params);
+    if (!params.selected_kernel)
         return hipErrorSharedObjectSymbolNotFound;
     return hipSuccess;
 }
 
-hipError_t [[param_class_name]]::launch(hipStream_t stream)
+hipError_t [[context_class_name]]::launch(const [[param_class_name]]& params, hipStream_t stream)
 {
     auto arch = getArchFromStream(stream);
+#if 0
     // if (!selected_kernel || kernel_arch != arch) {
     if (true) { // TODO: cache kernel lookup
         auto err = lookup_optimal(arch);
@@ -35,13 +36,14 @@ hipError_t [[param_class_name]]::launch(hipStream_t stream)
         }
         kernel_arch = arch;
     }
+#endif
     [[let_tensor_stride_arguments]];
     std::vector<void*> args = { [[let_kernel_arguments]] };
-    dim3 grid = grid_calculator(*this);
+    dim3 grid = grid_calculator(params);
     return selected_kernel->invoke("[[triton_kernel_name]]", grid, args, stream);
 }
 
-int64_t [[param_class_name]]::get_arch_number(GpuArch arch)
+int64_t [[context_class_name]]::get_arch_number(GpuArch arch)
 {
     [[get_arch_number_body]];
     return -1;
@@ -51,8 +53,8 @@ namespace autotune {
 [[kernel_table_entry_declares]];
 }
 
-[[param_class_name]]::AutoTuneTableEntry
-[[param_class_name]]::autotune_table[][ [[number_of_functionals]] ] = {
+[[context_class_name]]::AutoTuneTableEntry
+[[context_class_name]]::autotune_table[][ [[number_of_functionals]] ] = {
 [[kernel_table_entries]]
 };
 

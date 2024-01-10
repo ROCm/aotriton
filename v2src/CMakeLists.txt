@@ -1,6 +1,6 @@
 aux_source_directory(v2src .)
 add_library(aotriton STATIC ${V2SOURCE})
 target_include_directories(aotriton ${CMAKE_SOURCE_DIR}/include)
-target_link_libraries(aotriton ${AOTRITON_DIR}/libaotriton_v1.a)
+target_link_libraries(aotriton ${AOTRITON_DIR}/libaotriton_v2.a)
 set_target_properties(aotriton PROPERTIES PUBLIC_HEADER "${CMAKE_SOURCE_DIR}/include/aotriton/flash_attn.h")
 install(TARGETS aotriton)

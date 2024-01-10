@@ -101,12 +101,12 @@ class ArgumentMetadata(object):
         return isinstance(triton_type, str) and triton_type.startswith('*')
 
     @property
-    def cc_type(self):
+    def param_cc_type(self):
         triton_arg = self._ordered_arguments[0][0]
         triton_type = self._possible_values[0]
         if self.is_tensor:
             rank = self._kdesc.get_tensor_rank(triton_arg)
-            return f'T{rank}'
+            return f'const T{rank}*'
         if isinstance(triton_type, str):
             return ObjectFileDescription.SIGNATURE_TO_C[triton_type]
         elif isinstance(triton_type, bool):
@@ -122,7 +122,7 @@ class ArgumentMetadata(object):
         triton_arg = self._ordered_arguments[0][0]
         if triton_arg.startswith('stride_'):
             return []
-        cc_type = self.cc_type
+        cc_type = self.param_cc_type
         return [ cc_type + ' ' + a[0] for a in self._ordered_arguments ]
         # ret = [ cc_type + ' ' + a[0] for a in self._ordered_arguments ]
         # print(f'{ret=}')

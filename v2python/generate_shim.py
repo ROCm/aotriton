@@ -6,7 +6,7 @@ import argparse
 from pathlib import Path
 
 SOURCE_PATH = Path(__file__).resolve()
-CSRC = (SOURCE_PATH.parent.parent / 'csrc').absolute()
+CSRC = (SOURCE_PATH.parent.parent / 'v2src').absolute()
 INCBIN = (SOURCE_PATH.parent.parent / 'third_party/incbin/').absolute()
 COMMON_INCLUDE = (SOURCE_PATH.parent.parent / 'include/').absolute()
 # COMPILER = SOURCE_PATH.parent / 'compile.py'
@@ -122,6 +122,7 @@ class ShimMakefileGenerator(MakefileGenerator):
     def gen_children(self, out):
         for k in triton_kernels:
             yield KernelShimGenerator(self._args, self.children_out, k)
+        yield SourceBuilder(self._args, self.children_out)
 
     def write_prelude(self):
         f = self._out
@@ -149,6 +150,35 @@ class ShimMakefileGenerator(MakefileGenerator):
     def _object_relative_paths(self):
         return [str(op.relative_to(self._build_dir)) for op in self.list_of_output_object_files]
     '''
+
+class SourceBuilder(MakefileSegmentGenerator):
+    DIR = 'v2src'
+
+    def __init__(self, args, out):
+        super().__init__(args, out)
+        self._build_dir = Path(args.build_dir)
+        self._srcdir = Path(CSRC)
+        self._outdir = self._build_dir / self.DIR
+        self._outdir.mkdir(parents=True, exist_ok=True)
+        self._objpaths = []
+
+    def write_body(self):
+        for cfn in self._srcdir.rglob("*.cc"):
+            rpath = cfn.relative_to(self._srcdir)
+            if 'template/' in str(rpath):
+                print(f'Skip {rpath=}')
+                continue
+            ofn = (self._outdir / rpath).with_suffix('.o')
+            ofn.parent.mkdir(parents=True, exist_ok=True)
+            makefile_target = ofn.relative_to(self._build_dir)
+            self._objpaths.append(makefile_target)
+            print(makefile_target, ':', str(cfn.absolute()), file=self._out)
+            cmd  = '$(HIPCC) ' + f'{cfn.absolute()} -I{self._build_dir.absolute()} -I{INCBIN} -I{COMMON_INCLUDE} -o {ofn.absolute()} -c -fPIC -std=c++20'
+            print('\t', cmd, '\n', file=self._out)
+
+    @property
+    def list_of_output_object_files(self) -> 'list[Path]':
+        return self._objpaths
 
 class KernelShimGenerator(MakefileSegmentGenerator):
     AUTOTUNE_TABLE_PATH = 'autotune_table'
@@ -213,7 +243,7 @@ class AutotuneCodeGenerator(MakefileSegmentGenerator):
         # Write the Makefile segment
         print('#', self._fsels, file=self._out)
         print(self._makefile_target, ':', self._ofn.relative_to(self._build_dir), file=self._out)
-        cmd  = '$(HIPCC) ' + f'{self._ofn.absolute()} -I{CSRC} -I{INCBIN} -I{COMMON_INCLUDE} -o {self._obj_fn.absolute()} -c -fPIC -std=c++20'
+        cmd  = '$(HIPCC) ' + f'{self._ofn.absolute()} -I{INCBIN} -I{COMMON_INCLUDE} -o {self._obj_fn.absolute()} -c -fPIC -std=c++20'
         print('\t', cmd, '\n', file=self._out)
 
     @property
