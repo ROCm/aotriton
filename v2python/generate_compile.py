@@ -1,5 +1,5 @@
 from .rules import kernels as triton_kernels
-from .kernel_tuning_database import KernelTuningDatabase
+from .tuning_database import KernelTuningDatabase
 import io
 import shutil
 import argparse

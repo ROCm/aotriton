@@ -83,9 +83,9 @@ class KernelDescription(object):
         self._perf_meta = [ArgumentMetadata(k, v, ArgumentCategory.CAT_PERF, self) for k, v in self.PERF_CHOICES.items()]
         for m in self._func_meta:
             m.sort_arguments(self.ARGUMENTS)
-            for u in self.UNTUNED_FUNCTIONALS:
+            for u, fallback in self.PARTIALLY_TUNED_FUNCTIONALS:
                 if m.has_argument(u):
-                    m.disable_tuning()
+                    m.set_incomplete_tuning(fallback)
         self._func_meta = sorted(self._func_meta, key=lambda m: m.first_apperance)
         # print(f'{self._func_meta}')
         ArgumentMetadata.assign_godel_number(self._func_meta)
@@ -168,6 +168,7 @@ class KernelDescription(object):
         for gpu, fsels in itertools.product(self._target_gpus,
                                             self.gen_func_selections()):
             dba = tuned_db.select_gpu(gpu, self._target_gpus.index(gpu))
+            # print(f'gen_tuned_kernel_lut {fsels=}')
             yield gpu, fsels, dba.get_lut(self, self.AUTOTUNE_KEYS_VALIDATED, fsels, self._perf_meta)
 
     @property

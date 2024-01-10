@@ -4,8 +4,10 @@ v2all:
 	mkdir -p build
 	python -m v2python.generate_compile --target_gpus MI200
 	(. build/venv/bin/activate; cd build; LD_PRELOAD=/opt/rocm/lib/libamdocl64.so make -j $(NPROC) -f Makefile.compile)
-	# python -m v2python.generate_shim --target_gpus MI200 --archive --build_dir build
-	# (. build/venv/bin/activate; cd build; make -j $(NPROC) -f Makefile.shim)
+	python -m v2python.generate_shim --target_gpus MI200 --archive --build_dir build
+	# (. build/venv/bin/activate; cd build/flash/; hipcc -std=c++20 -c -I../../include -I../../third_party/incbin/ attn_fwd.cc)
+	# (. build/venv/bin/activate; cd build/flash/autotune.attn_fwd; hipcc -std=c++20 -c -I../../../include -I../../../third_party/incbin/ 'FONLY__^bf16@16,1,128,False,True___MI200.cc')
+	(. build/venv/bin/activate; cd build; make -j $(NPROC) -f Makefile.shim)
 
 all:
 	mkdir -p build

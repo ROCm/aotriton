@@ -23,7 +23,8 @@ class ArgumentMetadata(object):
         self._cat = cat
         self._godel_number = None
         self._kdesc = kdesc
-        self._tuning_disabled = False
+        self._incomplete_tuning = False
+        self._fallback_tuning_value = None
 
     def sort_arguments(self, ALL_ARGUMENTS):
         arguments_tuple = [(a, ALL_ARGUMENTS.index(a)) for a in self._grouped_arguments_as_set]
@@ -146,11 +147,16 @@ class ArgumentMetadata(object):
         print(1 * INDENT + '}', file=fout)
 
     @property
-    def tuning_disabled(self):
-        return self._tuning_disabled
+    def incomplete_tuning(self):
+        return self._incomplete_tuning
 
-    def disable_tuning(self):
-        self._tuning_disabled = True
+    @property
+    def fallback_tuning_value(self):
+        return self._fallback_tuning_value
+
+    def set_incomplete_tuning(self, fallback_value):
+        self._incomplete_tuning = True
+        self._fallback_tuning_value = fallback_value
 
 class ArgumentSelection(object):
     def __init__(self, meta : ArgumentMetadata, selection_index : int):

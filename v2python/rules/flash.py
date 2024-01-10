@@ -72,8 +72,9 @@ class attn_fwd(FlashKernel):
         'seqlen_k' : BinningLessOrEqual,
         'STAGE' : BinningExact,
     }
-    # List of functionals that only has fixed values in the tuning database
-    UNTUNED_FUNCTIONALS = ['RETURN_ENCODED_SOFTMAX']
+    # List of functionals that are not fully tuned in the tuning database
+    # First element of the tuple is name. Second is the value to use instead
+    PARTIALLY_TUNED_FUNCTIONALS = [('RETURN_ENCODED_SOFTMAX', False)]
 
 class bwd_preprocess(FlashKernel):
     ARGUMENTS = [

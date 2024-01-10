@@ -3,7 +3,7 @@ import pathlib
 from collections import defaultdict
 from .kernel_argument import TunedArgument
 from .gpu_targets import AOTRITON_GPU_ARCH_TUNING_STRING
-from .kernel_tuning_lut import KernelTuningEntryForFunctionalOnGPU
+from .tuning_lut import KernelTuningEntryForFunctionalOnGPU
 
 '''
 Note: unlike KernelDescription, whose constants will be specialized for EVERY kernel.
@@ -51,7 +51,7 @@ class KernelTuningDatabaseForArch(object):
                     if tensor_key in tinput:
                         key_detected = tensor_key
                         break
-            elif mfsel.is_type or mfsel.tuning_disabled:
+            elif mfsel.is_type:
                 key_detected = None # TODO
             elif mfsel.is_feature:
                 for aname in fsel.argument_names:
@@ -77,14 +77,17 @@ class KernelTuningDatabaseForArch(object):
             return value
         return tuple(map(convert, keys))
 
-    def extract_keys_from_fsels(self, fsels):
+    def extract_keys_from_fsels(self, fsels, use_fallback_for_partially_tuned=False):
         keys = {}
         # print(f'{len(self._fsel_positions)=}')
         for fsel in fsels:
             try:
                 # print(f'extract_keys_from_fsels {fsel.argument_names} {fsel.meta.first_apperance}')
                 offset = self._fsel_positions.index(fsel.meta.first_apperance)
-                value = fsel.argument_value
+                if use_fallback_for_partially_tuned and fsel.meta.incomplete_tuning:
+                    value = fsel.meta.fallback_tuning_value
+                else:
+                    value = fsel.argument_value
                 keys[offset] = value
                 # print(f'keys[{offset}] = {value}')
             except ValueError:
@@ -117,11 +120,8 @@ class KernelTuningDatabaseForArch(object):
                            fsels : 'list[ArgumentSelection]',
                            perf_meta : 'list[ArgumentMetadata]',
                            no_duplicate=True):
-        tup = self.extract_keys_from_fsels(fsels)
-        if no_duplicate:
-            indexed = self._index_dedup[tup]
-        else:
-            indexed = self._index[tup]
+        indexed = self.lookup_tuning_info(fsels, with_duplicates=not no_duplicate)
+        assert indexed
         for tinfo in indexed:
             yield self._craft_perf_selection(tinfo, perf_meta)
 
@@ -143,12 +143,21 @@ class KernelTuningDatabaseForArch(object):
             self._build_db_index(fsels)
         tup = self.extract_keys_from_fsels(fsels)
         if tup not in self._lut:
-            indexed = self._index[tup]
+            indexed = self.lookup_tuning_info(fsels)
             # print(f'{tup=}')
             assert indexed
             self._lut[tup] = KernelTuningEntryForFunctionalOnGPU(kdesc, self, fsels, indexed,
                                                                  autotune_keys, perf_meta)
         return self._lut[tup]
+
+    def lookup_tuning_info(self, fsels, with_duplicates=True):
+        tup = self.extract_keys_from_fsels(fsels)
+        if tup in self._index:
+            return self._index[tup] if with_duplicates else self._index_dedup[tup]
+        fallback_tup = self.extract_keys_from_fsels(fsels, use_fallback_for_partially_tuned=True)
+        print(f'Functionals {tup} cannot be found in tuning db, use {fallback_tup} instead')
+        assert fallback_tup in self._index
+        return self._index[fallback_tup] if with_duplicates else self._index_dedup[fallback_tup]
 
 class KernelTuningDatabase(object):
     def __init__(self, tune_info_dir : pathlib.Path, kernel_name : str):

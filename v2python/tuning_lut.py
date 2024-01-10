@@ -19,6 +19,7 @@ class KernelTuningEntryForFunctionalOnGPU(object):
         self._kdesc = kdesc
         self._dba = dba
         self._fsels = fsels
+        # print(f'{self._fsels=}')
         self._lut_dic = {}
         self._autotune_keys = autotune_keys
         self._autotune_key_values = { key : set() for key, _ in autotune_keys }
@@ -83,7 +84,8 @@ class KernelTuningEntryForFunctionalOnGPU(object):
         # INCBIN({incbin_symbol_name}, "{hsaco_kernel_path}");
         incbin_lines = []
         for incbin_symbol_name, hsaco_kernel_path, _ in self.gen_kernel_symbols(kernel_image_dir):
-            incbin_lines.append(f'INCBIN({incbin_symbol_name}, "../gpu_kernel_image.{self._kdesc.SHIM_KERNEL_NAME}/{hsaco_kernel_path.name}")')
+            # incbin_lines.append(f'INCBIN({incbin_symbol_name}, "../gpu_kernel_image.{self._kdesc.SHIM_KERNEL_NAME}/{hsaco_kernel_path.name}")')
+            incbin_lines.append(f'INCBIN({incbin_symbol_name}, "{hsaco_kernel_path.absolute()}")')
         return ";\n".join(incbin_lines)
 
     def codegen_kernel_image_objects(self, kernel_image_dir):
@@ -111,7 +113,8 @@ class KernelTuningEntryForFunctionalOnGPU(object):
             print(f'[DEBUG] {self._fsels=}')
             raise e
         godel_number = first_sig.godel_number
-        with open(outdir / f'{first_sig.functional_signature}_{first_sig.target_gpu}.cc', 'w') as f:
+        ofn = outdir / f'{first_sig.functional_signature}_{first_sig.target_gpu}.cc'
+        with open(ofn, 'w') as f:
             d = {
                 'incbin_kernel_images'  : self.codegen_incbin_code(gpu_kernel_image_dir),
                 'kernel_family_name'    : self._kdesc.KERNEL_FAMILY,
@@ -132,6 +135,7 @@ class KernelTuningEntryForFunctionalOnGPU(object):
                 'human_readable_signature' : first_sig.human_readable_signature
             }
             print(self.LUT_TEMPLATE.format_map(d), file=f)
+        return ofn
 
     @property
     def lut_cdata(self):
