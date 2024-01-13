@@ -1,4 +1,4 @@
-#include "[[shim_kernel_name]].h"
+#include "shim.[[shim_kernel_name]].h"
 #include <aotriton/util.h>
 
 namespace aotriton::v2::[[kernel_family_name]] {
@@ -37,20 +37,16 @@ hipError_t [[context_class_name]]::launch(const [[param_class_name]]& params, hi
         kernel_arch = arch;
     }
 #endif
-    [[let_tensor_stride_arguments]];
+    [[put_kernel_arguments_on_stack]];
     std::vector<void*> args = { [[let_kernel_arguments]] };
     dim3 grid = grid_calculator(params);
-    return selected_kernel->invoke("[[triton_kernel_name]]", grid, args, stream);
+    return params.selected_kernel->invoke("[[triton_kernel_name]]", grid, args, stream);
 }
 
 int64_t [[context_class_name]]::get_arch_number(GpuArch arch)
 {
     [[get_arch_number_body]];
     return -1;
-}
-
-namespace autotune {
-[[kernel_table_entry_declares]];
 }
 
 [[context_class_name]]::AutoTuneTableEntry

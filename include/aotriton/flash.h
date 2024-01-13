@@ -6,21 +6,23 @@
 
 namespace aotriton::v2::flash {
 
-using T4 = TensorView<4>;
-using T1 = TensorView<1>;
+using T4 = aotriton::TensorView<4>;
+using T1 = aotriton::TensorView<1>;
 
 hipError_t attn_fwd(T4 q,                   // batch_size x num_heads x seqlen_q x head_size
                     T4 k,                   // batch_size x num_heads x seqlen_k x head_size
                     T4 v,                   // batch_size x num_heads x seqlen_k x head_size
                     float sm_scale,
-                    T1 M,
+                    T1 softmax_lse,
                     T4 Out,                 // batch_size x num_heads x seqlen_q x head_size
                     float dropout_p,
                     uint64_t philox_seed,
                     uint64_t philox_offset,
                     T4 encoded_softmax,
-                    hipStream_t stream);
+                    bool is_causal,
+                    aotriton::Stream stream);
 
+#if 0
 hipError_t attn_bwd(T4 q,
                     T4 k,
                     T4 v,
@@ -35,7 +37,8 @@ hipError_t attn_bwd(T4 q,
                     float dropout_p,
                     uint64_t philox_seed,
                     uint64_t philox_offset,
-                    hipStream_t stream);
+                    aotriton::Stream stream);
+#endif
 
 } // aotriton::v2::flash 
 

@@ -8,15 +8,6 @@
 
 namespace aotriton::v2::[[kernel_family_name]] {
 
-struct [[param_class_name]];
-
-namespace autotune {
-    template<int ArchNumber, int GodelNumber>
-    struct Autotune_[[shim_kernel_name]] {
-        void operator()([[param_class_name]]& params);
-    };
-}
-
 struct [[param_class_name]] {
     // Function related arguments
     [[func_fields]];
@@ -25,7 +16,7 @@ struct [[param_class_name]] {
 
     TritonKernel* selected_kernel = nullptr;
 
-    int64_t godel_number([[param_class_name]]& params) const;
+    int64_t godel_number() const;
 };
 
 class [[context_class_name]] {
@@ -33,8 +24,8 @@ public:
     std::function<dim3(const [[param_class_name]]&)> grid_calculator;
 
     hipError_t lookup_optimal([[param_class_name]]& params, GpuArch arch);
-    hipError_t launch([[param_class_name]]& params, hipStream_t stream);
-    int64_t get_arch_number([[param_class_name]]& params, GpuArch arch);
+    hipError_t launch(const [[param_class_name]]& params, hipStream_t stream);
+    int64_t get_arch_number(GpuArch arch);
 
 private:
     GpuArch kernel_arch = GPU_ARCH_UNKNOWN;
@@ -42,5 +33,14 @@ private:
     using AutoTuneTableEntry = std::function<void([[param_class_name]]& params)>;
     static AutoTuneTableEntry autotune_table[][ [[number_of_functionals]] ];
 };
+
+namespace autotune {
+
+using aotriton::v2::[[kernel_family_name]]::[[param_class_name]];
+
+[[kernel_table_entry_declares]]
+
+}
+
 
 }

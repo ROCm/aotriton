@@ -1,0 +1,6 @@
+aux_source_directory(. PYAOTRITON_SRC)
+# find_package(hip REQUIRED)
+pybind11_add_module(pyaotriton ${PYAOTRITON_SRC})
+# target_link_libraries(pyaotriton PRIVATE hip::device)
+target_compile_features(pyaotriton PRIVATE cxx_std_20)
+target_link_libraries(pyaotriton PUBLIC aotriton)

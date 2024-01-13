@@ -141,8 +141,8 @@ class FlashAttention_bwd_kernel_dq(KernelDescription):
     SHIM_KERNEL_NAME = 'bwd_kernel_dq'
 
 kernels = [
-    FlashAttention_attn_fwd('attn_fwd', 'tritonsrc/fused_attention_trimmed.py'),
-    FlashAttention_bwd_preprocess('bwd_preprocess', 'tritonsrc/fused_attention_trimmed.py'),
-    FlashAttention_bwd_kernel_dk_dv('bwd_kernel_dk_dv', 'tritonsrc/fused_attention_trimmed.py'),
-    FlashAttention_bwd_kernel_dq('bwd_kernel_dq', 'tritonsrc/fused_attention_trimmed.py'),
+    FlashAttention_attn_fwd('attn_fwd', 'tritonsrc/v1/fused_attention_trimmed.py'),
+    FlashAttention_bwd_preprocess('bwd_preprocess', 'tritonsrc/v1/fused_attention_trimmed.py'),
+    FlashAttention_bwd_kernel_dk_dv('bwd_kernel_dk_dv', 'tritonsrc/v1/fused_attention_trimmed.py'),
+    FlashAttention_bwd_kernel_dq('bwd_kernel_dq', 'tritonsrc/v1/fused_attention_trimmed.py'),
 ]

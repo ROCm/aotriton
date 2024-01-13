@@ -5,40 +5,42 @@
 
 #include <incbin.h>
 #include <aotriton/_internal/triton_kernel.h>
-#include "../[[shim_kernel_name]].h"
+#include "../shim.[[shim_kernel_name]].h"
+
+// [[human_readable_signature]]
+#define CURRENT_ENTRY_PUBLIC Autotune_[[shim_kernel_name]]__A[[arch_number]]__F[[godel_number]]
 
 [[incbin_kernel_images]];
 
+namespace { // Anonymous namespace
+
+struct PerfFields {
+    [[perf_fields]];
+};
+
+PerfFields image_perf_list [] = {
+    [[kernel_image_perfs]]
+};
+
+aotriton::TritonKernel image_list [] = {
+    [[kernel_image_objects]]
+};
+
+[[lut_dtype]] lut[[lut_shape]] = [[lut_data]];
+
+}; // End of anonymous namespace
+
 namespace aotriton::v2::[[kernel_family_name]]::autotune {
 
-// [[human_readable_signature]]
-template<>
-struct Autotune_[[shim_kernel_name]] <[[arch_number]], [[godel_number]]> {
-    struct PerfFields {
-        [[perf_fields]];
-    };
-    static TritonKernel image_list [];
-    static PerfFields image_perf_list [];
-    static [[lut_dtype]] lut[[lut_shape]];
+// using aotriton::v2::[[kernel_family_name]]::[[param_class_name]];
 
-    void operator()([[param_class_name]]& params) {
-        [[binning_autotune_keys]]
-        auto kernel_index = lut[[binned_indices]];
-        params.selected_kernel = &image_list[kernel_index];
-        const auto& perf = image_perf_list[kernel_index];
-        [[perf_field_assignment]];
-    }
-};
+void CURRENT_ENTRY_PUBLIC::operator()([[param_class_name]]& params) {
+    [[binning_autotune_keys]]
+    auto kernel_index = lut[[binned_indices]];
+    params.selected_kernel = &image_list[kernel_index];
+    const auto& perf = image_perf_list[kernel_index];
+    [[perf_field_assignment]];
+}
 
-TritonKernel Autotune_[[shim_kernel_name]] <[[arch_number]], [[godel_number]]>::image_list [] = {
-        [[kernel_image_objects]]
-};
-
-Autotune_[[shim_kernel_name]] <[[arch_number]], [[godel_number]]>::PerfFields
-Autotune_[[shim_kernel_name]] <[[arch_number]], [[godel_number]]>::image_perf_list [] = {
-        [[kernel_image_perfs]]
-    };
-
-[[lut_dtype]] Autotune_[[shim_kernel_name]] <[[arch_number]], [[godel_number]]>::lut[[lut_shape]] = [[lut_data]];
-
+#undef CURRENT_ENTRY_PUBLIC
 }

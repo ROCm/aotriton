@@ -38,4 +38,9 @@ GpuArch getArchFromStream(hipStream_t stream)
     return device_to_arch[dev];
 }
 
+template class TensorView<1>;
+template class TensorView<2>;
+template class TensorView<3>;
+template class TensorView<4>;
+
 } // namespace aotriton

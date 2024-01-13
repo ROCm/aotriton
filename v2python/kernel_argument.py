@@ -25,9 +25,10 @@ class ArgumentMetadata(object):
         self._kdesc = kdesc
         self._incomplete_tuning = False
         self._fallback_tuning_value = None
+        self._ordered_arguments = None  # list[tuple[aname : str, aindex : int]]
 
     def sort_arguments(self, ALL_ARGUMENTS):
-        arguments_tuple = [(a, ALL_ARGUMENTS.index(a)) for a in self._grouped_arguments_as_set]
+        arguments_tuple = [(aname, ALL_ARGUMENTS.index(aname)) for aname in self._grouped_arguments_as_set]
         self._ordered_arguments = sorted(arguments_tuple, key=lambda at: at[1])
         self._first_apperance = self._ordered_arguments[0][1]
 
@@ -127,7 +128,7 @@ class ArgumentMetadata(object):
         # ret = [ cc_type + ' ' + a[0] for a in self._ordered_arguments ]
         # print(f'{ret=}')
 
-    def write_godel_number_calculation(self, fout):
+    def codegen_godel_number_calculation(self, fout):
         if self.nchoices <= 1:
             return
         triton_arg = self._ordered_arguments[0][0]
@@ -138,7 +139,7 @@ class ArgumentMetadata(object):
         if self.is_tensor:
             for number, possible_type in enumerate(self._possible_values):
                 elem_type = possible_type[1:].split(':')[0]
-                print(2 * INDENT + f'if ({triton_arg}.dtype() == {self.DTYPE_NUMBER[elem_type]}) number = {number} ;', file=fout)
+                print(2 * INDENT + f'if ({triton_arg}->dtype() == {self.DTYPE_NUMBER[elem_type]}) number = {number} ;', file=fout)
         else:
             for number, possible_type in enumerate(self._possible_values):
                 value = str(possible_type).lower()

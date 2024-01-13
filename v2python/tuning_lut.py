@@ -94,14 +94,14 @@ class KernelTuningEntryForFunctionalOnGPU(object):
             assert o.compiled_files_exist, f'Compiled file {o._hsaco_kernel_path} not exists'
             shared_memory_size = o._metadata['shared']
             kernel_image_symbols.append(f'{{ mangle({incbin_symbol_name}), {{ {o.num_warps * o.warp_size} , 1, 1 }}, {shared_memory_size} }},')
-        ALIGN = '\n' + 8 * ' '
+        ALIGN = '\n' + 4 * ' '
         return ALIGN.join(kernel_image_symbols)
 
     def codegen_kernel_image_perfs(self, kernel_image_dir):
         kernel_image_perfs = []
         for sig in self._sigs:
             kernel_image_perfs.append('{ ' + sig.codegen_perf_object() + ' }')
-        ALIGN = ',\n' + 8 * ' '
+        ALIGN = ',\n' + 4 * ' '
         return ALIGN.join(kernel_image_perfs)
 
     def write_lut_source(self, outdir : 'pathlib.Path'):
@@ -120,7 +120,7 @@ class KernelTuningEntryForFunctionalOnGPU(object):
                 'kernel_family_name'    : self._kdesc.KERNEL_FAMILY,
                 'shim_kernel_name'      : self._kdesc.SHIM_KERNEL_NAME,
                 'godel_number'          : godel_number,
-                'perf_fields'           : ';\n        '.join(self._kdesc.perf_fields),
+                'perf_fields'           : ';\n    '.join(self._kdesc.perf_fields),
                 'kernel_image_objects'  : self.codegen_kernel_image_objects(gpu_kernel_image_dir),
                 'kernel_image_perfs'    : self.codegen_kernel_image_perfs(gpu_kernel_image_dir),
                 'lut_dtype'             : self._lut_cdtype,
@@ -147,7 +147,7 @@ class KernelTuningEntryForFunctionalOnGPU(object):
         # return cdata.getvalue().replace('[', '{').replace(']', '}')
 
     def codegen_binning_code(self):
-        ALIGN = '\n' + 8 * ' '  # Note codegen_binning_lambda already contains ';'
+        ALIGN = '\n' + 4 * ' '  # Note codegen_binning_lambda already contains ';'
         stmt = []
         for (key, _), bucket in zip(self._autotune_keys, self._autotune_key_buckets):
             stmt += bucket.codegen_binning_lambda(key, out_suffix=self.BIN_INDEX_SUFFIX)
@@ -157,7 +157,7 @@ class KernelTuningEntryForFunctionalOnGPU(object):
         return ''.join([f'[{key}{self.BIN_INDEX_SUFFIX}]' for key, _ in self._autotune_keys])
 
     def codegen_perf_assignment(self):
-        ALIGN = ';\n' + 8 * ' '
+        ALIGN = ';\n' + 4 * ' '
         stmt = []
         for meta in self._kdesc._perf_meta:
             for aname in meta.argument_names:

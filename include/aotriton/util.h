@@ -43,6 +43,17 @@ public:
     {
     }
 
+    TensorView(void* base,
+               std::array<uint64_t, Rank> sizes,
+               std::array<uint64_t, Rank> strides,
+               DType dtype)
+        : base_(base),
+          sizes_(sizes),
+          strides_(strides),
+          dtype_(dtype)
+    {
+    }
+
     // Use to enclose aten::Tensor
     template<typename Tensor>
     TensorView(const Tensor& tensor,
@@ -67,6 +78,9 @@ public:
         return strides_[i];
     }
 
+    std::array<uint64_t, Rank> sizes() const { return sizes_; }
+    std::array<uint64_t, Rank> strides() const { return strides_; }
+
     const void* data_ptr() const {
         return base_;
     }
@@ -76,10 +90,15 @@ public:
     }
 private:
     const void* base_ = nullptr;
-    uint64_t sizes_[Rank];
-    uint64_t strides_[Rank];
+    std::array<uint64_t, Rank> sizes_;
+    std::array<uint64_t, Rank> strides_;
     DType dtype_ = kUnknown;
 };
+
+extern template class TensorView<1>;
+extern template class TensorView<2>;
+extern template class TensorView<3>;
+extern template class TensorView<4>;
 
 GpuArch getArchFromStream(hipStream_t);
 

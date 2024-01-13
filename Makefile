@@ -3,11 +3,14 @@ NPROC=$(shell nproc)
 v2all:
 	mkdir -p build
 	python -m v2python.generate_compile --target_gpus MI200
-	(. build/venv/bin/activate; cd build; LD_PRELOAD=/opt/rocm/lib/libamdocl64.so make -j $(NPROC) -f Makefile.compile)
+	# (. build/venv/bin/activate; cd build; LD_PRELOAD=/opt/rocm/lib/libamdocl64.so make -j $(NPROC) -f Makefile.compile)
 	python -m v2python.generate_shim --target_gpus MI200 --build_dir build
 	# (. build/venv/bin/activate; cd build/flash/; hipcc -std=c++20 -c -I../../include -I../../third_party/incbin/ attn_fwd.cc)
 	# (. build/venv/bin/activate; cd build/flash/autotune.attn_fwd; hipcc -std=c++20 -c -I../../../include -I../../../third_party/incbin/ 'FONLY__^bf16@16,1,128,False,True___MI200.cc')
 	(. build/venv/bin/activate; cd build; make -j $(NPROC) -f Makefile.shim)
+
+check:
+	nm -DC build/libaotriton_v2.so |grep aotriton|grep 'U '
 
 all:
 	mkdir -p build
@@ -31,4 +34,4 @@ triton_install_develop:
 triton_install:
 	(. build/venv/bin/activate; pip install -r requirements.txt; cd third_party/triton/python/; pip install .)
 
-.PHONY: all clean test_compile create_venv triton_install triton_install_develop
+.PHONY: all clean test_compile create_venv triton_install triton_install_develop check

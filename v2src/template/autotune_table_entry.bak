@@ -1,0 +1,52 @@
+#define INCBIN_PREFIX g_aotriton_FAMILY_[[kernel_family_name]]_KERNEL_[[shim_kernel_name]]_GPU_[[gpu]]_
+#define INCBIN_STYLE INCBIN_STYLE_SNAKE
+
+#define mangle(x) g_aotriton_FAMILY_[[kernel_family_name]]_KERNEL_[[shim_kernel_name]]_GPU_[[gpu]]_ ## x ## _data
+
+#include <incbin.h>
+#include <aotriton/_internal/triton_kernel.h>
+#include "../shim.[[shim_kernel_name]].h"
+
+[[incbin_kernel_images]];
+
+namespace aotriton::v2::[[kernel_family_name]]::autotune {
+
+using aotriton::v2::[[kernel_family_name]]::[[param_class_name]];
+
+#define CURRENT_ENTRY_PUBLIC Autotune_[[shim_kernel_name]]__A[[arch_number]]__F[[godel_number]]
+#define CURRENT_ENTRY_PRIVATE Autotune_[[shim_kernel_name]]__A[[arch_number]]__F[[godel_number]]_private
+
+// [[human_readable_signature]]
+struct CURRENT_ENTRY_PRIVATE {
+    struct PerfFields {
+        [[perf_fields]];
+    };
+    static TritonKernel image_list [];
+    static PerfFields image_perf_list [];
+    static [[lut_dtype]] lut[[lut_shape]];
+};
+
+struct CURRENT_ENTRY_PUBLIC {
+    void operator()([[param_class_name]]& params) {
+        [[binning_autotune_keys]]
+        auto kernel_index = CURRENT_ENTRY_PRIVATE::lut[[binned_indices]];
+        params.selected_kernel = &CURRENT_ENTRY_PRIVATE::image_list[kernel_index];
+        const auto& perf = CURRENT_ENTRY_PRIVATE::image_perf_list[kernel_index];
+        [[perf_field_assignment]];
+    }
+};
+
+TritonKernel CURRENT_ENTRY_PRIVATE::image_list [] = {
+        [[kernel_image_objects]]
+};
+
+CURRENT_ENTRY_PRIVATE::PerfFields
+CURRENT_ENTRY_PRIVATE::image_perf_list [] = {
+        [[kernel_image_perfs]]
+    };
+
+[[lut_dtype]] CURRENT_ENTRY_PRIVATE::lut[[lut_shape]] = [[lut_data]];
+
+#undef CURRENT_ENTRY_PUBLIC
+#undef CURRENT_ENTRY_PRIVATE
+}

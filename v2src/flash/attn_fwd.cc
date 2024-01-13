@@ -1,6 +1,6 @@
 #include <aotriton/flash.h>
 #include <aotriton/util.h>
-#include <flash/attn_fwd.h>
+#include <flash/shim.attn_fwd.h>
 
 namespace aotriton::v2::flash {
 
@@ -9,15 +9,16 @@ hipError_t attn_fwd(T4 q,
                     T4 v,
                     float sm_scale,
                     T1 softmax_lse,
-                    T4 Out,
+                    T4 out,
                     float dropout_p,
                     uint64_t philox_seed,
                     uint64_t philox_offset,
                     T4 encoded_softmax,
                     bool is_causal,
-                    hipStream_t stream)
+                    aotriton::Stream stream_wrap)
 {
     hipError_t err;
+    auto stream = stream_wrap.native();
     auto arch = getArchFromStream(stream);
     // TODO: An alternative way of doing this is to use a lookup table
     //       We will reconsider this approach later
@@ -116,7 +117,7 @@ hipError_t attn_fwd(T4 q,
         .Q = &q,
         .K = &k,
         .V = &v,
-        .Out = &Out,
+        .Out = &out,
         .encoded_softmax = &encoded_softmax,
         .sm_scale = sm_scale,
         .M = &softmax_lse,

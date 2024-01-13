@@ -2,12 +2,19 @@ cmake_minimum_required(VERSION 3.18 FATAL_ERROR)
 
 project(AOTriton CXX C)
 
+add_subdirectory(third_party/pybind11)
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
+
+set(CMAKE_CXX_COMPILER hipcc)
 
 set(VENV_DIR "${CMAKE_CURRENT_BINARY_DIR}/venv" CACHE STRING "Virtual Environment Directory")
 set(AOTRITON_HIPCC_PATH "hipcc" CACHE STRING "Set HIPCC Path")
-set(TARGET_ARCH "MI200" CACHE STRING "Target Architecture")
+option(AOTRITON_BUILD_V1 "Build AOTriton API V1" OFF) # Compiler aborted when compiling hsaco files
+option(AOTRITON_BUILD_V2 "Build AOTriton API V2" ON)
+set(TARGET_GPUS "MI200" CACHE STRING "Target Architecture (Note here uses Trade names)")
 set(AMDHSA_LD_PRELOAD "/opt/rocm/lib/libhsa-runtime64.so" CACHE STRING "Workaround of libamdhip64.so.5: undefined symbol: hsa_amd_memory_async_copy_on_engine")
+
+set(Python_ARTIFACTS_INTERACTIVE TRUE)
 
 # Not a target, we need to override Python3_EXECUTABLE later
 execute_process(COMMAND "${Python3_EXECUTABLE}" -m venv "${VENV_DIR}")
@@ -35,53 +42,12 @@ add_custom_target(aotriton_venv_triton
   )
 add_dependencies(aotriton_venv_triton aotriton_venv_req)
 
-message("CMAKE_CURRENT_LIST_DIR ${CMAKE_CURRENT_LIST_DIR}")
-set(AOTRITON_DIR "${CMAKE_CURRENT_BINARY_DIR}/aotriton")
-execute_process(COMMAND ${CMAKE_COMMAND} -E make_directory "${AOTRITON_DIR}")
+if(AOTRITON_BUILD_V1)
+    add_subdirectory(csrc)
+endif(AOTRITON_BUILD_V1)
 
-add_custom_target(aotriton_gen_compile
-  COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} PATH="${VENV_DIR}/bin:$ENV{PATH}" python python/generate.py --target ${TARGET_ARCH} --build_dir "${AOTRITON_DIR}"
-  WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}"
-  BYPRODUCTS "${AOTRITON_DIR}/Makefile.compile"
-)
-add_dependencies(aotriton_gen_compile aotriton_venv_triton)
+if(AOTRITON_BUILD_V2)
+    add_subdirectory(v2src)
 
-include(ProcessorCount)
-ProcessorCount(NPROC)
-add_custom_target(aotriton_compile
-  # (CAVEAT) KNOWN PROBLEM: Will not work if LD_PRELOAD is not empty
-  # FIXME: Change this into `-E env --modify LD_PRELOAD=path_list_prepend:${AMDOCL_LD_PRELOAD}` when minimal cmake >= 3.25
-  COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} PATH="${VENV_DIR}/bin:$ENV{PATH}" make -j ${NPROC} -f Makefile.compile LIBHSA_RUNTIME64=${AMDHSA_LD_PRELOAD}
-  WORKING_DIRECTORY "${AOTRITON_DIR}"
-  BYPRODUCTS "${AOTRITON_DIR}/attn_fwd.h"
-  "${AOTRITON_DIR}/bwd_kernel_dk_dv.h"
-  "${AOTRITON_DIR}/bwd_kernel_dq.h"
-  "${AOTRITON_DIR}/bwd_preprocess.h"
-)
-add_dependencies(aotriton_compile aotriton_gen_compile)
-
-add_custom_target(aotriton_gen_shim
-  COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} PATH="${VENV_DIR}/bin:$ENV{PATH}" python python/generate_shim.py --build_dir "${AOTRITON_DIR}" --archive
-  WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}"
-  BYPRODUCTS "${AOTRITON_DIR}/Makefile.shim"
-)
-add_dependencies(aotriton_gen_shim aotriton_compile) # Shim source files need json metadata
-
-add_custom_target(aotriton_v1
-  ALL
-  COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} PATH="${VENV_DIR}/bin:$ENV{PATH}" make -j ${NPROC} -f Makefile.shim HIPCC=${AOTRITON_HIPCC_PATH} AR=${CMAKE_AR}
-  WORKING_DIRECTORY "${AOTRITON_DIR}"
-  BYPRODUCTS "${AOTRITON_DIR}/libaotriton_v1.a"
-)
-add_dependencies(aotriton_v1 aotriton_gen_shim)
-
-include(GNUInstallDirs)
-message("CMAKE_INSTALL_INCLUDEDIR ${CMAKE_INSTALL_INCLUDEDIR}")
-install(FILES "${AOTRITON_DIR}/attn_fwd.h"
-  "${AOTRITON_DIR}/bwd_kernel_dk_dv.h"
-  "${AOTRITON_DIR}/bwd_kernel_dq.h"
-  "${AOTRITON_DIR}/bwd_preprocess.h"
-    DESTINATION ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_INCLUDEDIR}/aotriton)
-install(FILES "${AOTRITON_DIR}/libaotriton_v1.a" DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)
-
-add_subdirectory(v2src)
+    add_subdirectory(bindings) # FIXME: compile python binding
+endif(AOTRITON_BUILD_V2)

@@ -13,7 +13,7 @@ COMMON_INCLUDE = (SOURCE_PATH.parent.parent / 'include/').absolute()
 COMPILER = 'hipcc'
 LINKER = 'ar'
 
-LIBRARY_NAME = 'libaotriton'
+LIBRARY_NAME = 'libaotriton_v2'
 
 def parse():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -22,6 +22,7 @@ def parse():
     p.add_argument("--build_dir", type=str, default='build/', help="build directory")
     p.add_argument("--archive_only", action='store_true', help='Only generate archive library instead of shared library. No linking with dependencies.')
     args = p.parse_args()
+    args._build_root = Path(args.build_dir)
     # print(args)
     return args
 
@@ -29,9 +30,13 @@ def parse():
 ShimMakefileGenerator
  +- generate libaotriton.a
  +- KernelShimGenerator
-     +- generate kernel launcher header
-     +- collect objects
-     +- generate kernel launcher source
+     +- generate param and context classes
+     +- AutotuneCodeGenerator for each functional variant of the kernel
+         +- generate lut entries under autotune.<KERNEL_NAME>/<functional_signature>.cc
+         +- generate corresponding makefile rule
+     +- collect objects (ObjectShimCodeGenerator) for linking
+     +- write Makefile rules for param and context classes
+     +- generate param and context class implementations
 '''
 
 class Generator(object):
@@ -44,6 +49,10 @@ class Generator(object):
     @property
     def is_file(self):
         return False
+
+    @property
+    def build_root(self):
+        return self._args._build_root
 
     def generate(self):
         self.write_prelude()
@@ -77,9 +86,18 @@ class Generator(object):
         pass
 
 class MakefileSegmentGenerator(Generator):
+
+    @property
+    def list_of_self_object_files(self) -> 'list[Path]':
+        return []
+
+    @property
+    def list_of_child_object_files(self) -> 'list[Path]':
+        return sum([c.list_of_output_object_files for c in self._children], [])
+
     @property
     def list_of_output_object_files(self) -> 'list[Path]':
-        return sum([c.list_of_output_object_files for c in self._children], [])
+        return self.list_of_self_object_files + self.list_of_child_object_files
 
 class MakefileGenerator(MakefileSegmentGenerator):
     def __init__(self, args, grand_target, out):
@@ -177,7 +195,7 @@ class SourceBuilder(MakefileSegmentGenerator):
             print('\t', cmd, '\n', file=self._out)
 
     @property
-    def list_of_output_object_files(self) -> 'list[Path]':
+    def list_of_self_object_files(self) -> 'list[Path]':
         return self._objpaths
 
 class KernelShimGenerator(MakefileSegmentGenerator):
@@ -190,19 +208,31 @@ class KernelShimGenerator(MakefileSegmentGenerator):
         self._kdesc.set_target_gpus(args.target_gpus)
         self._shim_path = Path(args.build_dir) / k.KERNEL_FAMILY
         self._shim_path.mkdir(parents=True, exist_ok=True)
-        self._fhdr = open(self._shim_path / Path(k.SHIM_KERNEL_NAME + '.h'), 'w')
-        self._fsrc = open(self._shim_path / Path(k.SHIM_KERNEL_NAME + '.cc'), 'w')
+        self._shim_hdr = self._shim_path / Path(self.SHIM_FILE_STEM + '.h')
+        self._shim_src = self._shim_hdr.with_suffix('.cc')
+        self._fhdr = open(self._shim_hdr, 'w')
+        self._fsrc = open(self._shim_src, 'w')
         # Autotune dispatcher
         self._autotune_path = Path(args.build_dir) / k.KERNEL_FAMILY / f'autotune.{k.SHIM_KERNEL_NAME}'
         self._autotune_path.mkdir(parents=True, exist_ok=True)
         self._ktd = KernelTuningDatabase(SOURCE_PATH.parent / 'rules', k.SHIM_KERNEL_NAME)
+        self._objpaths = []
+
+    @property
+    def SHIM_FILE_STEM(self):
+        return 'shim.' + self._kdesc.SHIM_KERNEL_NAME
 
     def __del__(self):
         self._fhdr.close()
         self._fsrc.close()
 
-    def write_prelude(self):
-        self._kdesc.write_launcher_header(self._fhdr)
+    def write_body(self):
+        ofn = self._shim_src.with_suffix('.o')
+        makefile_target = ofn.relative_to(self.build_root)
+        print(makefile_target, ':', str(self._shim_hdr.absolute()), str(self._shim_src.absolute()), file=self._out)
+        cmd  = '$(HIPCC) ' + f'{self._shim_src.absolute()} -I{INCBIN} -I{COMMON_INCLUDE} -o {ofn.absolute()} -c -fPIC -std=c++20'
+        print('\t', cmd, '\n', file=self._out)
+        self._objpaths.append(makefile_target)
 
     def gen_children(self, out):
         k = self._kdesc
@@ -223,7 +253,13 @@ class KernelShimGenerator(MakefileSegmentGenerator):
             yield ObjectShimCodeGenerator(self._args, k, o)
 
     def write_conclude(self):
-        self._kdesc.write_launcher_source(self._fsrc, [c._odesc for c in self._children if isinstance(c, ObjectShimCodeGenerator)])
+        objs = [c._odesc for c in self._children if isinstance(c, ObjectShimCodeGenerator)]
+        self._kdesc.write_launcher_header(self._fhdr, objs)
+        self._kdesc.write_launcher_source(self._fsrc, objs)
+
+    @property
+    def list_of_self_object_files(self) -> 'list[Path]':
+        return self._objpaths
 
 class AutotuneCodeGenerator(MakefileSegmentGenerator):
     def __init__(self, args, fileout, outdir, k, gpu, fsels, lut):
@@ -247,7 +283,7 @@ class AutotuneCodeGenerator(MakefileSegmentGenerator):
         print('\t', cmd, '\n', file=self._out)
 
     @property
-    def list_of_output_object_files(self) -> 'list[Path]':
+    def list_of_self_object_files(self) -> 'list[Path]':
         return [self._makefile_target]
 
 # FIXME: a better name.
@@ -260,8 +296,10 @@ class ObjectShimCodeGenerator(Generator):
         self._kdesc = k
         self._odesc = o
 
+    '''
     def get_all_object_files(self):
         return [self._odesc._hsaco_kernel_path.with_suffix('.o')] if self._odesc.compiled_files_exist else []
+    '''
 
     def loop_children(self):
         pass

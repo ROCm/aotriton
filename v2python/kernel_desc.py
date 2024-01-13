@@ -39,7 +39,6 @@ class KernelDescription(object):
     ARGUMENTS = []
     SHIM_KERNEL_NAME = None
     _ARGUMENT_CHOICES = None
-    _DATA_ARGUMENTS = None
     HEADER_TEMPLATE = get_template('launcher.h')
     SOURCE_TEMPLATE = get_template('launcher.cc')
 
@@ -65,16 +64,19 @@ class KernelDescription(object):
                         return True
                 return False
             self._DATA_ARGUMENTS = [ a for a in self.ARGUMENTS if is_data_argument(a) ]
-            # Patch tensor
-            for m in self._func_meta:
-                if not m.is_tensor:
-                    continue
-                for a in m._ordered_arguments:
-                    i = self._DATA_ARGUMENTS.index(a[0])
-                    self._DATA_ARGUMENTS[i] += '_ptr'
+            print(f'{self._DATA_ARGUMENTS=}')
+            if False:  # Don't, their names are translated inside codegen_kernel_arguments
+                # Patch tensor
+                for m in self._func_meta:
+                    if not m.is_tensor:
+                        continue
+                    for a in m._ordered_arguments:
+                        i = self._DATA_ARGUMENTS.index(a[0])
+                        self._DATA_ARGUMENTS[i] += '_ptr'
         return self._DATA_ARGUMENTS
 
     def __init__(self, triton_kernel_name, triton_file_path):
+        self._DATA_ARGUMENTS = None
         self._triton_file_path = Path(triton_file_path)
         self._triton_kernel_name = triton_kernel_name
         self._func_meta = []
@@ -187,30 +189,32 @@ class KernelDescription(object):
     def perf_fields(self):
         return sum([m.param_cc_fields for m in self._perf_meta], [])
 
-    def write_launcher_header(self, fout):
+    def write_launcher_header(self, fout, object_files):
         d = { 'kernel_family_name'  : self.KERNEL_FAMILY,
               'shim_kernel_name'    : self.SHIM_KERNEL_NAME,
               'param_class_name'    : self.param_class_name,
               'context_class_name'  : self.context_class_name,
               'func_fields'         : ';\n    '.join(self.func_fields),
               'perf_fields'         : ';\n    '.join(self.perf_fields),
+              'kernel_table_entry_declares' : self.codegen_kernel_table_entry_declares(object_files),
               'number_of_functionals': self._godel_number,
             }
         print(self.HEADER_TEMPLATE.format_map(d), file=fout)
 
     def write_launcher_source(self, fout, object_files):
+        put_kernel_arguments_on_stack, let_kernel_arguments = self.codegen_kernel_arguments()
         d = { 'kernel_family_name'  : self.KERNEL_FAMILY,
               'triton_kernel_name'  : self._triton_kernel_name,
               'shim_kernel_name'    : self.SHIM_KERNEL_NAME,
               'param_class_name'    : self.param_class_name,
               'context_class_name'  : self.context_class_name,
               'godel_number_body'   : self.godel_number_body,
-              'let_tensor_stride_arguments' : self.let_tensor_stride_arguments,
-              'let_kernel_arguments' : self.let_kernel_arguments,
+              'put_kernel_arguments_on_stack' : put_kernel_arguments_on_stack,
+              'let_kernel_arguments' : let_kernel_arguments,
               'get_arch_number_body' : self.arch_number_body,
               'number_of_functionals': self._godel_number,
               # 'copy_perf_fields_body': self.copy_perf_fields_body,
-              'kernel_table_entry_declares' : self.codegen_kernel_table_entry_declares(object_files),
+              # 'kernel_table_entry_declares' : self.codegen_kernel_table_entry_declares(object_files),
               'kernel_table_entries' : self.codegen_kernel_table_entries(object_files),
             }
         print(self.SOURCE_TEMPLATE.format_map(d), file=fout)
@@ -218,31 +222,36 @@ class KernelDescription(object):
     def get_tensor_rank(self, tensor_arg):
         return self.TENSOR_RANKS_OVERRIDE.get(tensor_arg, self.TENSOR_RANKS_OVERRIDE['_default'])
 
-    @property
-    def let_tensor_stride_arguments(self):
-        lets = []
-        for k, v in self.TENSOR_STRIDE_INPUTS.items():
-            tensor_rank = self.get_tensor_rank(k)
+    def codegen_kernel_arguments(self):
+        stack_lets = []
+        stack_variables = {}
+        for tensor_aname, stride_anames in self.TENSOR_STRIDE_INPUTS.items():
+            tensor_rank = self.get_tensor_rank(tensor_aname)
             for i in range(tensor_rank):
-                lets.append(f'uint64_t {v[i]} = params.{k}->stride({i})')
+                aname = stride_anames[i]
+                stack_lets.append(f'uint64_t {aname} = params.{tensor_aname}->stride({i})')
+                stack_variables[aname] = aname
         for m in self._func_meta:
             if not m.is_tensor:
                 continue
-            for a in m._ordered_arguments:
-                lets.append(f'const void* {a[0]}_ptr = params.{a[0]}->data_ptr()')
-        return ';\n    '.join(lets)
-
-    @property
-    def let_kernel_arguments(self):
+            for aname in m.argument_names:
+                stack_lets.append(f'const void* {aname}_ptr = params.{aname}->data_ptr()')
+                stack_variables[aname] = f'{aname}_ptr';
         ALIGN = ',\n' + ' ' * 32
-        lets = [f'static_cast<void*>(&params.{a})' for a in self.KERNEL_DATA_ARGUMENTS]
-        return ALIGN.join(lets)
+        def plet(aname):
+            if aname in stack_variables.keys():
+                sname = stack_variables[aname]
+            else:
+                sname = f'params.{aname}'
+            return f'const_cast<void*>(static_cast<const void*>(&{sname}))'
+        lets = [plet(aname) for aname in self.KERNEL_DATA_ARGUMENTS]
+        return ';\n    '.join(stack_lets), ALIGN.join(lets)
 
     @property
     def godel_number_body(self):
         body = io.StringIO()
         for m in self._func_meta:
-            m.write_godel_number_calculation(body)
+            m.codegen_godel_number_calculation(body)
         return body.getvalue()
 
     @property
@@ -290,13 +299,19 @@ class KernelDescription(object):
     def get_single_kernel_table_entry(self, arch : 'str', o : 'ObjectFileDescription'):
         image_symbol = self.incbin_mangle(arch, o)
 
+    def get_autotune_struct_name(self, arch_number, godel_number):
+        return f'Autotune_{self.SHIM_KERNEL_NAME}__A{arch_number}__F{godel_number}'
+
     def codegen_kernel_table_entry_declares(self, object_files):
         decls = []
         for arch_number, target_gpu in enumerate(self._target_gpus):
             godel_numbers = sorted(list(set([o.godel_number for o in object_files if o.target_gpu == target_gpu])))
             for godel_number in godel_numbers:
-                decls.append(f'template struct Autotune_{self.SHIM_KERNEL_NAME} <{arch_number}, {godel_number}>')
-        return ';\n'.join(decls)
+                struct_name = self.get_autotune_struct_name(arch_number, godel_number)
+                decls.append(f'struct {struct_name} {{')
+                decls.append(f'    void operator()({self.param_class_name}& params);')
+                decls.append(f'}};')
+        return '\n'.join(decls)
 
     def codegen_kernel_table_entries(self, object_files):
         lets = []
@@ -304,8 +319,9 @@ class KernelDescription(object):
             lets.append(4 * ' ' + '{')
             godel_numbers = sorted(list(set([o.godel_number for o in object_files])))
             for godel_number in range(self._godel_number):
+                struct_name = self.get_autotune_struct_name(arch_number, godel_number)
                 if godel_number in godel_numbers:
-                    lets.append(8 * ' ' + f'autotune::Autotune_{self.SHIM_KERNEL_NAME} <{arch_number}, {godel_number}>(),')
+                    lets.append(8 * ' ' + f'autotune::{struct_name}(),')
                 else:
                     lets.append(8 * ' ' + f'[]({self.param_class_name}&) {{}},')
             lets.append(4 * ' ' + '},')

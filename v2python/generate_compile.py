@@ -23,7 +23,7 @@ def parse():
 def gen_from_object(args, o : 'ObjectFileDescription', makefile):
     target_fn = f'{o.KERNEL_FAMILY}/gpu_kernel_image.{o.SHIM_KERNEL_NAME}/{o._hsaco_kernel_path.name}'
     print('#', o.human_readable_signature, file=makefile)
-    print(target_fn, ':', file=makefile)
+    print(target_fn, ':', o.src.absolute(), COMPILER.absolute(), file=makefile)
     cmd  = f'LD_PRELOAD=$(LIBHSA_RUNTIME64) {COMPILER} {o.src.absolute()} --kernel_name {o.entrance} -o {o.obj.absolute()}'
     cmd += f' -g 1,1,1 --num_warps {o.num_warps} --num_stages {o.num_stages} --waves_per_eu {o.waves_per_eu}'
     if o.target_gpu is not None:
