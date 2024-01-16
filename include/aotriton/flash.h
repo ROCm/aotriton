@@ -7,13 +7,14 @@
 namespace aotriton::v2::flash {
 
 using T4 = aotriton::TensorView<4>;
+using T2 = aotriton::TensorView<2>;
 using T1 = aotriton::TensorView<1>;
 
 hipError_t attn_fwd(T4 q,                   // batch_size x num_heads x seqlen_q x head_size
                     T4 k,                   // batch_size x num_heads x seqlen_k x head_size
                     T4 v,                   // batch_size x num_heads x seqlen_k x head_size
                     float sm_scale,
-                    T1 softmax_lse,
+                    T2 softmax_lse,
                     T4 Out,                 // batch_size x num_heads x seqlen_q x head_size
                     float dropout_p,
                     uint64_t philox_seed,

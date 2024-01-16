@@ -55,7 +55,7 @@ class attn_fwd(FlashKernel):
     # Optional, can be derived from 
     TENSOR_RANKS_OVERRIDE = {
         '_default' : 4,
-        'M': 1,
+        'M': 2,
     }
     EXPECTED_IDENTICAL_TENSOR_STRIDES = {
     }

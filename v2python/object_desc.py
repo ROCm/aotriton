@@ -33,7 +33,8 @@ class ObjectFileDescription(object):
     def __init__(self,
                  triton_kernel_desc : 'KernelDescription',
                  signature: 'KernelSignature',
-                 hsaco_kernel_path : Path):
+                 hsaco_kernel_path : Path,
+                 sancheck_fileexists = False):
         self._triton_kernel_desc = triton_kernel_desc
         self.KERNEL_FAMILY = self._triton_kernel_desc.KERNEL_FAMILY
         self.SHIM_KERNEL_NAME = self._triton_kernel_desc.SHIM_KERNEL_NAME
@@ -45,6 +46,8 @@ class ObjectFileDescription(object):
             with self._hsaco_metatdata_path.open('r') as f:
                 self._metadata = json.load(f)
         else:
+            if sancheck_fileexists:
+                assert False, f'Metadata file {self._hsaco_metatdata_path} does not exists'
             self._metadata = {}
 
     @property
@@ -89,11 +92,17 @@ class ObjectFileDescription(object):
         return self._triton_kernel_desc._triton_kernel_name
 
     @property
+    def binary_entrance(self):
+        assert self._metadata, f'Did not load the metadata from {self._hsaco_metatdata_path}'
+        return self._metadata['name']
+
+    @property
     def obj(self):
         return self._hsaco_kernel_path
 
     @property
     def signature(self):
+        # print(f'{self._signature.triton_api_signature_list=}')
         return ', '.join(self._signature.triton_api_signature_list)
 
     @property
@@ -123,7 +132,7 @@ class ObjectFileDescription(object):
         # template_arguments, template_constants = self.compute_template_arguments()
         template_specialization = self.compute_struct_template_specialization(align1=len(self.SHIM_KERNEL_NAME)+1)
         fmt = {
-                'hsaco_kernel_name' : self._metadata['name'],
+                'hsaco_kernel_name' : self.binary_entrance,
                 'incbin_symbol_name' : self.SHIM_KERNEL_NAME + '__' + self.compact_signature,
                 'hsaco_kernel_path' : self._hsaco_kernel_path.absolute(),
                 'shim_kernel_name' : self.SHIM_KERNEL_NAME,

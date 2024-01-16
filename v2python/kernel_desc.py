@@ -134,7 +134,8 @@ class KernelDescription(object):
                              outpath : Path,
                              # kernel_name : str = None,
                              # file_name_prefix : str = None,
-                             tuned_db : 'KernelTuningDatabase' = None) -> 'Iterator[ObjectFileDescription]':
+                             tuned_db : 'KernelTuningDatabase' = None,
+                             sancheck_fileexists = False) -> 'Iterator[ObjectFileDescription]':
         def gen():
             if tuned_db is None or tuned_db.empty:
                 yield from itertools.product(self._target_gpus,
@@ -148,13 +149,13 @@ class KernelDescription(object):
         debug_counter = 0
         for gpu, fsels, psels, compiler_options in gen():
             sig = KernelSignature(self, fsels, psels, compiler_options, gpu)
-            yield self.build_object_file_description(outpath, sig)
+            yield self.build_object_file_description(outpath, sig, sancheck_fileexists=sancheck_fileexists)
             if False: # Debugging
                 debug_counter += 1
                 if debug_counter > 10:
                     break
 
-    def build_object_file_description(self, outpath, sig):
+    def build_object_file_description(self, outpath, sig, sancheck_fileexists=False):
         # print(f"{gpu=} {fsels=} {psels=} {compiler_options=}")
         # sig = KernelSignature(self, fsels, psels, compiler_options, gpu)
         # fn = file_name_prefix + '-Kernel-' if file_name_prefix else ''
@@ -164,7 +165,7 @@ class KernelDescription(object):
         fn += '-Sig-' + sig.compact_signature
         fn += '-Gpu-' + sig.target_gpu
         fn += '.hsaco'
-        return ObjectFileDescription(self, sig, outpath / fn)
+        return ObjectFileDescription(self, sig, outpath / fn, sancheck_fileexists=sancheck_fileexists)
 
     def gen_tuned_kernel_lut(self, tuned_db : 'KernelTuningDatabase') -> 'Iterator[KernelTuningLutForGPU]':
         for gpu, fsels in itertools.product(self._target_gpus,
@@ -204,7 +205,7 @@ class KernelDescription(object):
     def write_launcher_source(self, fout, object_files):
         put_kernel_arguments_on_stack, let_kernel_arguments = self.codegen_kernel_arguments()
         d = { 'kernel_family_name'  : self.KERNEL_FAMILY,
-              'triton_kernel_name'  : self._triton_kernel_name,
+              'triton_kernel_name'  : object_files[0].binary_entrance,
               'shim_kernel_name'    : self.SHIM_KERNEL_NAME,
               'param_class_name'    : self.param_class_name,
               'context_class_name'  : self.context_class_name,

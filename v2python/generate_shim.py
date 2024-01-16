@@ -236,7 +236,7 @@ class KernelShimGenerator(MakefileSegmentGenerator):
 
     def gen_children(self, out):
         k = self._kdesc
-        p = self._shim_path
+        p = self._shim_path / f'gpu_kernel_image.{k.SHIM_KERNEL_NAME}'
         args = self._args
         ktd = KernelTuningDatabase(SOURCE_PATH.parent / 'rules', k.SHIM_KERNEL_NAME)
         debug_counter = 0
@@ -249,7 +249,7 @@ class KernelShimGenerator(MakefileSegmentGenerator):
                 break
             '''
 
-        for o in k.gen_all_object_files(p, tuned_db=ktd):
+        for o in k.gen_all_object_files(p, tuned_db=ktd, sancheck_fileexists=True):
             yield ObjectShimCodeGenerator(self._args, k, o)
 
     def write_conclude(self):

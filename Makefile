@@ -12,6 +12,9 @@ v2all:
 check:
 	nm -DC build/libaotriton_v2.so |grep aotriton|grep 'U '
 
+test:
+	PYTHONPATH=39build/bindings/ pytest -s test/test_forward.py
+
 all:
 	mkdir -p build
 	python python/generate.py --target MI200
@@ -34,4 +37,4 @@ triton_install_develop:
 triton_install:
 	(. build/venv/bin/activate; pip install -r requirements.txt; cd third_party/triton/python/; pip install .)
 
-.PHONY: all clean test_compile create_venv triton_install triton_install_develop check
+.PHONY: all clean test_compile create_venv triton_install triton_install_develop check test

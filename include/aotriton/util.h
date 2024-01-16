@@ -43,11 +43,11 @@ public:
     {
     }
 
-    TensorView(void* base,
+    TensorView(intptr_t base,
                std::array<uint64_t, Rank> sizes,
                std::array<uint64_t, Rank> strides,
                DType dtype)
-        : base_(base),
+        : base_(reinterpret_cast<void*>(base)),
           sizes_(sizes),
           strides_(strides),
           dtype_(dtype)

@@ -1,6 +1,7 @@
 #include <aotriton/flash.h>
 #include <aotriton/util.h>
 #include <flash/shim.attn_fwd.h>
+#include <iostream>
 
 namespace aotriton::v2::flash {
 
@@ -8,7 +9,7 @@ hipError_t attn_fwd(T4 q,
                     T4 k,
                     T4 v,
                     float sm_scale,
-                    T1 softmax_lse,
+                    T2 softmax_lse,
                     T4 out,
                     float dropout_p,
                     uint64_t philox_seed,
@@ -106,10 +107,17 @@ hipError_t attn_fwd(T4 q,
     constexpr int kUseCausalBits = 3;
     constexpr int kNoCausalBits = 1;
     auto grid_calculator = [](const AttnFwdParams& params) -> dim3 {
-        return dim3 { aotriton::cdiv<uint32_t>(params.seqlen_q, params.BLOCK_N),
+        std::cerr << "Selected Kernel "
+                  << " BLOCK_M = " << params.BLOCK_M
+                  << " BLOCK_N = " << params.BLOCK_N
+                  << " pre_load_v = " << params.pre_load_v
+                  << std::endl;
+        dim3 grid { aotriton::cdiv<uint32_t>(params.seqlen_q, params.BLOCK_M),
                       uint32_t(params.Q->size(0) * params.Q->size(1)),
                       1
         };
+        std::cerr << "Grid conf " << grid.x << " " << grid.y << " " << grid.z << std::endl;
+        return grid;
     };
     int head_size = q.size(3);
     // Requires C++ 20

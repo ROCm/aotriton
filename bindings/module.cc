@@ -61,10 +61,12 @@ namespace pyaotriton {
 #undef EV
     }
 
+    void def_hipruntime(py::module_& m);
+
     template<int Rank>
     void def_tensorview(py::module_& m, const std::string& name) {
         py::class_<aotriton::TensorView<Rank>>(m, name.c_str())
-            .def(py::init<void*,
+            .def(py::init<intptr_t,
                           std::array<uint64_t, Rank>,
                           std::array<uint64_t, Rank>,
                           aotriton::DType>())
@@ -81,7 +83,9 @@ namespace pyaotriton {
         m.doc() = "AOTriton Python binding";
         def_stream(m);
         def_dtype(m);
+        def_hipruntime(m);
         def_tensorview<4>(m, "T4");
+        def_tensorview<2>(m, "T2");
         def_tensorview<1>(m, "T1");
         py::module_ mod_v2api = m.def_submodule("v2", "v2 API namespace");
         v2::setup_module(mod_v2api);
