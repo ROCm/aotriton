@@ -1,9 +1,56 @@
 import json
 import pathlib
+from copy import deepcopy
 from collections import defaultdict
 from .kernel_argument import TunedArgument
 from .gpu_targets import AOTRITON_GPU_ARCH_TUNING_STRING
 from .tuning_lut import KernelTuningEntryForFunctionalOnGPU
+
+'''
+Used in conjunction with PARTIALLY_TUNED_FUNCTIONALS
+
+Commonly enabling functionals will cost extra resources,
+and thus make the fallback turing information unusable
+'''
+class TuningDowngrader(object):
+    def __init__(self, matching_list):
+        self._matching_list = matching_list
+
+    @staticmethod
+    def create_from_kdesc(k : 'KernelDescription'):
+        if not hasattr(k, 'DOWNGRADER'):
+            return False
+        return TuningDowngrader(k.DOWNGRADER)
+
+    def match(self, matching, fallback_applied_fsels):
+        iterator = iter(matching)
+        while True:
+            key = next(iterator, None)
+            value = next(iterator, None)
+            if key is None or value is None:
+                break
+            all_matched = True
+            for fsel in fallback_applied_fsels:
+                if not fsel.meta.has_argument(key):
+                    all_matched = False
+                    break
+                if fsel.argument_value != value:
+                    all_matched = False
+                    break
+            if all_matched:
+                return True
+        return False
+
+    def lookup_patcher(self, fallback_applied_fsels):
+        for matching, tuned_kernel_patcher in self._matching_list:
+            if self.match(matching, fallback_applied_fsels):
+                def patcher(tinfo):
+                    print(f"Downgrade kernel from {tinfo['tuned_kernel']} {tinfo['compiler_options']}", end=' ')
+                    tuned_kernel_patcher(tinfo['tuned_kernel'], tinfo['compiler_options'])
+                    print(f"into {tinfo['tuned_kernel']} {tinfo['compiler_options']}")
+                    return tinfo
+                return patcher
+        return None
 
 '''
 Note: unlike KernelDescription, whose constants will be specialized for EVERY kernel.
@@ -14,13 +61,14 @@ Note: unlike KernelDescription, whose constants will be specialized for EVERY ke
       has zero information about the triton kernel.
 '''
 class KernelTuningDatabaseForArch(object):
-    def __init__(self, f):
+    def __init__(self, f, downgrader=None):
         self._j = json.load(f)
         self._arch = self._j['arch']
         self._gpu = None
         self._index = None
         self._index_matching_keys = None
         self._lut = {}
+        self._downgrader = downgrader
 
     @property
     def arch(self):
@@ -79,6 +127,7 @@ class KernelTuningDatabaseForArch(object):
 
     def extract_keys_from_fsels(self, fsels, use_fallback_for_partially_tuned=False):
         keys = {}
+        fallback_applied = []
         # print(f'{len(self._fsel_positions)=}')
         for fsel in fsels:
             try:
@@ -86,6 +135,7 @@ class KernelTuningDatabaseForArch(object):
                 offset = self._fsel_positions.index(fsel.meta.first_apperance)
                 if use_fallback_for_partially_tuned and fsel.meta.incomplete_tuning:
                     value = fsel.meta.fallback_tuning_value
+                    fallback_applied.append(fsel)
                 else:
                     value = fsel.argument_value
                 keys[offset] = value
@@ -94,7 +144,7 @@ class KernelTuningDatabaseForArch(object):
                 pass
         l = [keys[offset] for offset in range(len(self._fsel_positions))]
         # print(f'{l=}')
-        return tuple(l)
+        return tuple(l), fallback_applied
 
     def _build_db_index(self, fsels):
         self._init_matching_keys(fsels)
@@ -141,7 +191,7 @@ class KernelTuningDatabaseForArch(object):
                 perf_meta : 'list[ArgumentMetadata]'):
         if self._index is None:
             self._build_db_index(fsels)
-        tup = self.extract_keys_from_fsels(fsels)
+        tup, _  = self.extract_keys_from_fsels(fsels)
         if tup not in self._lut:
             indexed = self.lookup_tuning_info(fsels)
             # print(f'{tup=}')
@@ -151,22 +201,32 @@ class KernelTuningDatabaseForArch(object):
         return self._lut[tup]
 
     def lookup_tuning_info(self, fsels, with_duplicates=True):
-        tup = self.extract_keys_from_fsels(fsels)
+        tup, _ = self.extract_keys_from_fsels(fsels)
         if tup in self._index:
             return self._index[tup] if with_duplicates else self._index_dedup[tup]
-        fallback_tup = self.extract_keys_from_fsels(fsels, use_fallback_for_partially_tuned=True)
+        fallback_tup, fallback_applied_fsels = self.extract_keys_from_fsels(fsels, use_fallback_for_partially_tuned=True)
         print(f'Functionals {tup} cannot be found in tuning db, use {fallback_tup} instead')
         assert fallback_tup in self._index
-        return self._index[fallback_tup] if with_duplicates else self._index_dedup[fallback_tup]
+        tuning_info = self._index[fallback_tup] if with_duplicates else self._index_dedup[fallback_tup]
+        return self.downgrade(fallback_applied_fsels, tuning_info)
+
+    def downgrade(self, fallback_applied_fsels, tuning_info):
+        if self._downgrader is None:
+            return tuning_info
+        patcher = self._downgrader.lookup_patcher(fallback_applied_fsels)
+        if patcher is None:
+            return tuning_info
+        return [patcher(deepcopy(tune)) for tune in tuning_info]
 
 class KernelTuningDatabase(object):
-    def __init__(self, tune_info_dir : pathlib.Path, kernel_name : str):
+    def __init__(self, tune_info_dir : pathlib.Path, k : 'KernelDescription'):
         self.arch_dict = {}
         td = pathlib.Path(tune_info_dir) # in case tune_info_dir is str
         # print(f"Tryint to probe KernelTuningDatabase inside {td}")
-        for fn in td.glob(f'tune-{kernel_name}-*.json'):
+        downgrader = TuningDowngrader.create_from_kdesc(k)
+        for fn in td.glob(f'tune-{k.SHIM_KERNEL_NAME}-*.json'):
             with open(fn) as f:
-                dba = KernelTuningDatabaseForArch(f)
+                dba = KernelTuningDatabaseForArch(f, downgrader)
             self.arch_dict[dba.arch] = dba
 
     def select_gpu(self, gpu, index):

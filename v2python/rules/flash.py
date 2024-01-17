@@ -76,6 +76,23 @@ class attn_fwd(FlashKernel):
     # First element of the tuple is name. Second is the value to use instead
     PARTIALLY_TUNED_FUNCTIONALS = [('RETURN_ENCODED_SOFTMAX', False)]
 
+    # Python Trick: do not use @staticmethod, and also do not add 'self', and
+    #               then there is no need to prefix the classname in DOWNGRADER list
+    def DOWNGRADE_RETURN_ENCODED_SOFTMAX(tuned_kernel, compiler_options):
+        return
+        '''
+        # tuned_kernel['BLOCK_M'] //= 2
+        # tuned_kernel['BLOCK_N'] //= 2
+        square = min(tuned_kernel['BLOCK_M'], tuned_kernel['BLOCK_N'])
+        tuned_kernel['BLOCK_M'] = square // 2
+        tuned_kernel['BLOCK_N'] = square // 2
+        tuned_kernel['pre_load_v'] = False
+        tuned_kernel['waves_per_eu'] = 0
+        compiler_options['num_stages'] = 2
+        '''
+
+    DOWNGRADER = [(('RETURN_ENCODED_SOFTMAX', True), DOWNGRADE_RETURN_ENCODED_SOFTMAX)]
+
 class bwd_preprocess(FlashKernel):
     ARGUMENTS = [
         'Out', 'DO',

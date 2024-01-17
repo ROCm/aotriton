@@ -215,7 +215,7 @@ class KernelShimGenerator(MakefileSegmentGenerator):
         # Autotune dispatcher
         self._autotune_path = Path(args.build_dir) / k.KERNEL_FAMILY / f'autotune.{k.SHIM_KERNEL_NAME}'
         self._autotune_path.mkdir(parents=True, exist_ok=True)
-        self._ktd = KernelTuningDatabase(SOURCE_PATH.parent / 'rules', k.SHIM_KERNEL_NAME)
+        self._ktd = KernelTuningDatabase(SOURCE_PATH.parent / 'rules', k)
         self._objpaths = []
 
     @property
@@ -238,7 +238,7 @@ class KernelShimGenerator(MakefileSegmentGenerator):
         k = self._kdesc
         p = self._shim_path / f'gpu_kernel_image.{k.SHIM_KERNEL_NAME}'
         args = self._args
-        ktd = KernelTuningDatabase(SOURCE_PATH.parent / 'rules', k.SHIM_KERNEL_NAME)
+        ktd = KernelTuningDatabase(SOURCE_PATH.parent / 'rules', k)
         debug_counter = 0
         for gpu, fsels, lut in k.gen_tuned_kernel_lut(self._ktd):
             # print(f'KernelShimGenerator.gen_children {fsels=}')
