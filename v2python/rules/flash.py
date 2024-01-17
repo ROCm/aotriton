@@ -24,11 +24,18 @@ class attn_fwd(FlashKernel):
         'ENABLE_DROPOUT',
         'RETURN_ENCODED_SOFTMAX',
     ]
+    TENSOR_STRIDE_INPUTS = {
+        'Q' : select_pattern(ARGUMENTS, 'stride_q'),
+        'K' : select_pattern(ARGUMENTS, 'stride_k'),
+        'V' : select_pattern(ARGUMENTS, 'stride_v'),
+        'Out' : select_pattern(ARGUMENTS, 'stride_o'),
+    }
     TYPE_CHOICES = {
         frozenset(['Q', 'K', 'V', 'Out', 'encoded_softmax']) : ['*fp16:16', '*bf16:16'],
         frozenset(['sm_scale']) : ['fp32'],
         frozenset(['M']) : ['*fp32:16'],
-        frozenset(select_pattern(ARGUMENTS, 'stride_')) : ['u64'],
+        # frozenset(select_pattern(ARGUMENTS, 'stride_', trim=1)) : ['u64'],
+        # frozenset(select_pattern(ARGUMENTS, 'stride_', trim=1)) : ['u64'],
         frozenset(['seqlen_q', 'seqlen_k']) : ['u64'],
         frozenset(['dropout_p']) : ['fp32'],
         frozenset(['philox_seed']) : ['u64'],
@@ -44,13 +51,6 @@ class attn_fwd(FlashKernel):
         frozenset(['BLOCK_M']) : [16],
         frozenset(['BLOCK_N']) : [16],
         frozenset(['pre_load_v']) : [True, False],
-    }
-
-    TENSOR_STRIDE_INPUTS = {
-        'Q' : select_pattern(ARGUMENTS, 'stride_q'),
-        'K' : select_pattern(ARGUMENTS, 'stride_k'),
-        'V' : select_pattern(ARGUMENTS, 'stride_v'),
-        'Out' : select_pattern(ARGUMENTS, 'stride_o'),
     }
     # Optional, can be derived from 
     TENSOR_RANKS_OVERRIDE = {

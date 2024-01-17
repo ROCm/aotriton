@@ -28,12 +28,12 @@ def get_possible_types(klass, arg_name : str) -> 'list[str]':
                 return v
     assert False, f"cannot find {arg_name}"
 
-def select_pattern(arguments, prefix):
+def select_pattern(arguments, prefix, trim_left=None, trim_right=None):
     ret = []
     for s in arguments:
         if s.startswith(prefix):
             ret.append(s)
-    return ret
+    return ret[trim_left:trim_right]
 
 class KernelDescription(object):
     ARGUMENTS = []
@@ -75,7 +75,18 @@ class KernelDescription(object):
                         self._DATA_ARGUMENTS[i] += '_ptr'
         return self._DATA_ARGUMENTS
 
+    def insert_tensor_strides_to_choices(self, last_is_continuous=False):
+        for tensor, strides in self.TENSOR_STRIDE_INPUTS.items():
+            typed_strides = strides[:-1] if last_is_continuous else strides
+            self.TYPE_CHOICES[frozenset(typed_strides)] = ['u64:16']
+            constant_strides = [] if not last_is_continuous else strides[-1:]
+            if constant_strides:
+                self.FEAT_CHOICES[frozenset(constant_strides)] = [1]
+        print(f"{self.TYPE_CHOICES=}")
+        print(f"{self.FEAT_CHOICES=}")
+
     def __init__(self, triton_kernel_name, triton_file_path):
+        self.insert_tensor_strides_to_choices(last_is_continuous=True)
         self._DATA_ARGUMENTS = None
         self._triton_file_path = Path(triton_file_path)
         self._triton_kernel_name = triton_kernel_name
@@ -228,7 +239,7 @@ class KernelDescription(object):
         stack_variables = {}
         for tensor_aname, stride_anames in self.TENSOR_STRIDE_INPUTS.items():
             tensor_rank = self.get_tensor_rank(tensor_aname)
-            for i in range(tensor_rank):
+            for i in range(tensor_rank - 1):
                 aname = stride_anames[i]
                 stack_lets.append(f'uint64_t {aname} = params.{tensor_aname}->stride({i})')
                 stack_variables[aname] = aname
