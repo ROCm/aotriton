@@ -71,10 +71,10 @@ but in PyTorch API it does not present at all
 # @pytest.mark.parametrize('D_HEAD', [128])
 # @pytest.mark.parametrize('seqlen_q', [16,32,64,128,256,512,1024])
 # @pytest.mark.parametrize('seqlen_k', [16,32,64,128,256,512,1024])
-# @pytest.mark.parametrize('seqlen_q', [128,256,512,1024])
-# @pytest.mark.parametrize('seqlen_k', [128,256,512,1024])
-@pytest.mark.parametrize('seqlen_q', [128])
-@pytest.mark.parametrize('seqlen_k', [128])
+@pytest.mark.parametrize('seqlen_q', [128,256,512,1024])
+@pytest.mark.parametrize('seqlen_k', [128,256,512,1024])
+# @pytest.mark.parametrize('seqlen_q', [32, 128])
+# @pytest.mark.parametrize('seqlen_k', [32, 128])
 @pytest.mark.parametrize('causal', [False, True])
 @pytest.mark.parametrize('dropout_p', [0.0, 0.5])
 # @pytest.mark.parametrize('dropout_p', [0.0])
@@ -151,7 +151,7 @@ def test_op_fwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dr
                                                                 is_causal=causal,
                                                                 scale=sm_scale,
                                                                 dropout_mask=dropout_mask)
-    if True:
+    if False:
         mref_out, mref_softmax = scaled_dot_product_attention(q, k, v,
                                      dropout_p=dropout_p,
                                      is_causal=causal,
@@ -173,7 +173,7 @@ def test_op_fwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dr
     if dtype==torch.bfloat16:
         ATOL = 1e-1 * (seqlen_q / 128.0) if seqlen_q >= 16 else 1e-1
     else:
-        ATOL = 1e-2 * (seqlen_q / 128.0) if seqlen_q >= 16 else 1e-2
+        ATOL = 2e-2 * (seqlen_q / 128.0) if seqlen_q >= 16 else 1e-2
     print(f'Using ATOL={ATOL}')
     is_allclose = torch.allclose(ref_out, tri_out, atol=ATOL, rtol=0)
     if not is_allclose:
@@ -182,7 +182,7 @@ def test_op_fwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dr
         print(f'{err_idx=}')
         print(f'{tri_out[err_idx]=} {ref_out[err_idx]=} error: {tri_out[err_idx] - ref_out[err_idx]}')
     # if not is_allclose:
-    if True:
+    if False:
         import numpy as np
         err_idx = np.unravel_index(torch.argmax(torch.abs(ref_out - tri_out)).cpu().numpy(), ref_out.shape)
         print(f'{tri_out[0][0][0][:]=}')

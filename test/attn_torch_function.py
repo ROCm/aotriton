@@ -14,7 +14,7 @@ def is_supported_by_tl_dot(n: int) -> bool:
 class _attention(torch.autograd.Function):
 
     # DEBUG_MASK_DTYPE = torch.int32
-    DEBUG_MASK_DTYPE = torch.float32
+    # DEBUG_MASK_DTYPE = torch.float32
 
     @staticmethod
     def forward(ctx, q, k, v, causal, sm_scale, dropout_p, return_encoded_softmax,
@@ -29,7 +29,7 @@ class _attention(torch.autograd.Function):
 
         M = torch.empty((q.shape[0] * q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)
         if return_encoded_softmax:
-            encoded_softmax = torch.zeros((q.shape[0], q.shape[1], q.shape[2], k.shape[2]), device=q.device, dtype=_attention.DEBUG_MASK_DTYPE)
+            encoded_softmax = torch.zeros((q.shape[0], q.shape[1], q.shape[2], k.shape[2]), device=q.device, dtype=q.dtype)
         else:
             encoded_softmax = None
         if False or VERBOSE:
