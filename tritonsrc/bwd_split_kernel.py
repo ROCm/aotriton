@@ -258,7 +258,7 @@ def bwd_kernel_dq(
     dq = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)
     # loop over k, v
     lo = 0
-    hi = start_m + BLOCK_M if CAUSAL else seqlen_k
+    hi = min(start_m + BLOCK_M, seqlen_k) if CAUSAL else seqlen_k
     batch_philox_offset = philox_offset_base + off_hz * seqlen_q * seqlen_k
     '''
            K1   K2      (d)V      dO
