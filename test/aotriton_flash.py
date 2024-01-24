@@ -1,4 +1,4 @@
-from pyaotriton.v2.flash import attn_fwd as fa_forward
+from pyaotriton.v2.flash import attn_fwd as fa_forward, attn_bwd as fa_backward
 from pyaotriton import T1, T2, T4, DType, Stream
 
 def cast_dtype(dtype):
@@ -40,4 +40,23 @@ def attn_fwd(q, k, v, sm_scale, M, o,
                      is_causal,
                      Stream())
     print(f'{err=}')
+
+def attn_bwd(q, k, v, sm_scale, o, dout, dq, dk, dv, L, delta,
+             dropout_p, philox_seed, philox_offset, is_causal):
+    err = fa_backward(mk_aotensor(q),
+                      mk_aotensor(k),
+                      mk_aotensor(v),
+                      float(sm_scale),
+                      mk_aotensor(o),
+                      mk_aotensor(dout),
+                      mk_aotensor(dq),
+                      mk_aotensor(dk),
+                      mk_aotensor(dv),
+                      mk_aotensor(L),
+                      mk_aotensor(delta),
+                      float(dropout_p),
+                      int(philox_seed),
+                      int(philox_offset),
+                      is_causal,
+                      Stream())
     print(f'{err=}')

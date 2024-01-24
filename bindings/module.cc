@@ -26,6 +26,24 @@ namespace pyaotriton {
                       py::arg("is_causal"),
                       py::arg("stream") = nullptr
                 );
+                m.def("attn_bwd", &aotriton::v2::flash::attn_bwd, "Flash Attention Backward Pass",
+                      py::arg("q"),
+                      py::arg("k"),
+                      py::arg("v"),
+                      py::arg("sm_scale"),
+                      py::arg("out"),
+                      py::arg("dout"),
+                      py::arg("dq"),
+                      py::arg("dk"),
+                      py::arg("dv"),
+                      py::arg("softmax_lse"),
+                      py::arg("delta"),
+                      py::arg("dropout_p"),
+                      py::arg("philox_seed"),
+                      py::arg("philox_offset"),
+                      py::arg("is_causal"),
+                      py::arg("stream") = nullptr
+                );
             }
         }
 

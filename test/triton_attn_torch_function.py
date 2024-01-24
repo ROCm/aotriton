@@ -219,7 +219,7 @@ class _attention(torch.autograd.Function):
         # debug_mask = torch.zeros((q.shape[0], q.shape[1], seqlen_q, seqlen_k), device=q.device, dtype=ctx.encoded_softmax.dtype)
         bwd_kernel_dk_dv[(triton.cdiv(seqlen_k, BLOCK), ctx.grid[1])](
             q, k, v, ctx.sm_scale,
-            o, do_scaled,
+            o, do,
             dk, dv,
             L, delta,
             q.stride(0), q.stride(1), q.stride(2), q.stride(3),
@@ -260,7 +260,7 @@ class _attention(torch.autograd.Function):
             DQ_BLOCK_M = min(seqlen_q, BLOCK)
             bwd_kernel_dq[(triton.cdiv(q.shape[2], DQ_BLOCK_M), q.shape[0] * q.shape[1])](
                 q, k, v, ctx.sm_scale,
-                o, do_scaled,
+                o, do,
                 dq,
                 L, delta,
                 q.stride(0), q.stride(1), q.stride(2), q.stride(3),

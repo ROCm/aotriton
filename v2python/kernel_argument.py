@@ -74,6 +74,10 @@ class ArgumentMetadata(object):
     def has_argument(self, aname):
         return aname in self.argument_names
 
+    @property
+    def default_value(self):
+        return self.select(0)
+
     def select(self, index):
         return self._possible_values[index]
 
@@ -101,9 +105,7 @@ class ArgumentMetadata(object):
         triton_type = self._possible_values[0]
         return isinstance(triton_type, str) and triton_type.startswith('*')
 
-    @property
-    def param_cc_type(self):
-        triton_arg = self._ordered_arguments[0][0]
+    def get_param_cc_type(self, triton_arg):
         triton_type = self._possible_values[0]
         if self.is_tensor:
             rank = self._kdesc.get_tensor_rank(triton_arg)
@@ -123,8 +125,7 @@ class ArgumentMetadata(object):
         triton_arg = self._ordered_arguments[0][0]
         if triton_arg.startswith('stride_'):
             return []
-        cc_type = self.param_cc_type
-        return [ cc_type + ' ' + a[0] for a in self._ordered_arguments ]
+        return [ self.get_param_cc_type(a[0]) + ' ' + a[0] for a in self._ordered_arguments ]
         # ret = [ cc_type + ' ' + a[0] for a in self._ordered_arguments ]
         # print(f'{ret=}')
 

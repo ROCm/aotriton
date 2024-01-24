@@ -21,11 +21,21 @@ class KernelTuningEntryForFunctionalOnGPU(object):
         self._fsels = fsels
         # print(f'{self._fsels=}')
         self._lut_dic = {}
-        self._autotune_keys = autotune_keys
-        self._autotune_key_values = { key : set() for key, _ in autotune_keys }
-        self._autotune_key_class = { key : klass for key, klass in autotune_keys }
+        self._autotune_keys = autotune_keys if autotune_keys is not None else None
+        self._autotune_key_values = { key : set() for key, _ in autotune_keys } if autotune_keys is not None else None
+        self._autotune_key_class = { key : klass for key, klass in autotune_keys } if autotune_keys is not None else None
         self._sigs = []
         self._sig_dict = {}
+        if indexed is None and autotune_keys is None:
+            self._lut_dtype = np.uint8
+            self._lut_cdtype = f'uint8_t'
+            self._lut_tensor = np.array([0], dtype=np.uint8)
+            self._lut_cshape = ''.join([f'[{s}]' for s in self._lut_tensor.shape])
+            self._untuned = True
+            default_psels, default_co = dba._craft_perf_selection(None, perf_meta)
+            self._lut_dic[0] = self._allocate_sig(default_psels, default_co)[0]
+            return
+        self._untuned = False
         # print(f'KernelTuningEntryForFunctionalOnGPU {fsels=}')
         # print(f'{indexed=}')
         for tinfo in indexed:
@@ -37,6 +47,7 @@ class KernelTuningEntryForFunctionalOnGPU(object):
         self._lut_tensor = None
 
     def extract_autotune_key_values(self, tinfo):
+        assert not self._untuned
         return tuple([self.track_autotune_key_values(tinfo, tup) for tup in self._autotune_keys])
 
     def track_autotune_key_values(self, tinfo, tup):
@@ -147,6 +158,8 @@ class KernelTuningEntryForFunctionalOnGPU(object):
         # return cdata.getvalue().replace('[', '{').replace(']', '}')
 
     def codegen_binning_code(self):
+        if self._untuned:
+            return ''
         ALIGN = '\n' + 4 * ' '  # Note codegen_binning_lambda already contains ';'
         stmt = []
         for (key, _), bucket in zip(self._autotune_keys, self._autotune_key_buckets):
@@ -154,6 +167,8 @@ class KernelTuningEntryForFunctionalOnGPU(object):
         return ALIGN.join(stmt)
 
     def codegen_binned_indices(self):
+        if self._untuned:
+            return '[0]'
         return ''.join([f'[{key}{self.BIN_INDEX_SUFFIX}]' for key, _ in self._autotune_keys])
 
     def codegen_perf_assignment(self):

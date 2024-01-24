@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 import torch
-from aotriton_flash import attn_fwd
+from aotriton_flash import attn_fwd, attn_bwd
 
 VERBOSE=False
 
@@ -69,6 +69,22 @@ class _attention(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, do, _, __):
-        pass
+        q, k, v, o, L = ctx.saved_tensors
+        sm_scale = ctx.sm_scale
+        dropout_p = ctx.dropout_p
+        philox_seed = ctx.philox_seed
+        philox_offset = ctx.philox_offset
+        causal = ctx.causal
+        # if q.shape[-1] <= 32:
+        do = do.contiguous()
+        dq = torch.zeros_like(q, dtype=torch.float32)
+        dk = torch.empty_like(k)
+        dv = torch.empty_like(v)
+        delta = torch.empty_like(L)
+        seqlen_q = q.shape[2]
+        seqlen_k = k.shape[2]
+        attn_bwd(q, k, v, sm_scale, o, do, dq, dk, dv, L, delta,
+                 dropout_p, philox_seed, philox_offset, causal);
+        return dq, dk, dv, None, None, None, None, None, None
 
 attention = _attention.apply

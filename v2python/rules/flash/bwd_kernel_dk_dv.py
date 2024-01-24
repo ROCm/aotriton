@@ -20,11 +20,20 @@ class bwd_kernel_dk_dv(FlashKernel):
         'ENABLE_DROPOUT',
     ]
     match_fwd = lambda aname : get_possible_types(attn_fwd, aname)
+    TENSOR_STRIDE_INPUTS = {
+        'Q' : select_pattern(ARGUMENTS, 'stride_q'),
+        'K' : select_pattern(ARGUMENTS, 'stride_k'),
+        'V' : select_pattern(ARGUMENTS, 'stride_v'),
+    }
+    TENSOR_RANKS = {
+        '_default' : 4,
+        'L': 2,
+        'D': 2,
+    }
     TYPE_CHOICES = {
         frozenset(['Q', 'K', 'V', 'Out', 'DO', 'DK', 'DV']) : match_fwd('Q'),
         frozenset(['sm_scale']) : match_fwd( 'sm_scale'),
         frozenset(['L', 'D']) : ['*fp32:16'],
-        frozenset(select_pattern(ARGUMENTS, 'stride_')) : ['u64'],
         frozenset(['seqlen_q', 'seqlen_k']) : ['u64'],
         frozenset(['dropout_p']) : match_fwd('dropout_p'),
         frozenset(['philox_seed']) : match_fwd('philox_seed'),
@@ -36,19 +45,21 @@ class bwd_kernel_dk_dv(FlashKernel):
         frozenset(['ENABLE_DROPOUT']) : match_fwd('ENABLE_DROPOUT'),
     }
     PERF_CHOICES = {
-        frozenset(['BLOCK_M', 'BLOCK_N']) : match_fwd('BLOCK_M'),
+        frozenset(['BLOCK_M']) : match_fwd('BLOCK_M'),
+        frozenset(['BLOCK_N']) : match_fwd('BLOCK_N'),
     }
-    TENSOR_STRIDE_INPUTS = {
-        'Q' : select_pattern(ARGUMENTS, 'stride_q'),
-        'K' : select_pattern(ARGUMENTS, 'stride_k'),
-        'V' : select_pattern(ARGUMENTS, 'stride_v'),
-    }
-    EXPECTED_IDENTICAL_TENSOR_STRIDES = {
-        'DO': 'Q',
-        'DK': 'K',
-        'DV': 'V',
-    }
+    EXPECTED_IDENTICAL_TENSOR_STRIDES = [
+        {'Q', 'DQ', 'DO'}, # TODO: DO = DQ?
+        {'K', 'DK'},
+        {'V', 'DV'},
+    ]
     DEFAULT_NUM_WARPS=4
     DEFAULT_NUM_STAGES=1
     SHIM_KERNEL_NAME = 'bwd_kernel_dk_dv'
 
+    AUTOTUNE_KEYS = {
+        'seqlen_q' : BinningLessOrEqual,
+        'seqlen_k' : BinningLessOrEqual,
+    }
+    PARTIALLY_TUNED_FUNCTIONALS = []
+    DOWNGRADER = []

@@ -61,8 +61,9 @@ Note: unlike KernelDescription, whose constants will be specialized for EVERY ke
       has zero information about the triton kernel.
 '''
 class KernelTuningDatabaseForArch(object):
-    def __init__(self, f, downgrader=None):
-        self._j = json.load(f)
+    def __init__(self, k : 'KernelDescription', f, downgrader=None):
+        self._kdesc = k
+        self._j = self._load_json_with_filter(f)
         self._arch = self._j['arch']
         self._gpu = None
         self._index = None
@@ -70,16 +71,28 @@ class KernelTuningDatabaseForArch(object):
         self._lut = {}
         self._downgrader = downgrader
 
+    def _load_json_with_filter(self, f):
+        j = json.load(f)
+        tune_info = [ ti for ti in j['tune_info'] if ti['kernel_name'] == self._kdesc.SHIM_KERNEL_NAME]
+        j['tune_info'] = tune_info
+        return j
+
     @property
     def arch(self):
         return self._arch
+
+    @property
+    def empty(self):
+        return len(self._j['tune_info']) == 0
 
     def set_gpu(self, gpu, index):
         self._gpu = gpu
         self._arch_number = index
         return self
 
-    def select(self, fsels : 'list[ArgumentSelection]', perf_meta : 'list[ArgumentMetadata]'):
+    def select(self, fsels : 'list[ArgumentSelection]', perf_meta : 'list[ArgumentMetadata]') -> 'list[ArgumentSelection], dict[str,str]':
+        if self.empty:
+            yield [], None
         if self._index is None:
             self._build_db_index(fsels)
         yield from self._select_from_index(fsels, perf_meta)
@@ -176,6 +189,8 @@ class KernelTuningDatabaseForArch(object):
             yield self._craft_perf_selection(tinfo, perf_meta)
 
     def _craft_perf_selection(self, tinfo : dict, perf_meta: 'list[ArgumentSelection]'):
+        if tinfo is None:  # default value when tuning db does not contain the kernel
+            return [TunedArgument(meta, meta.default_value) for meta in perf_meta], None
         ps = dict(tinfo['tuned_kernel'])
         co = dict(tinfo['compiler_options'])
         if 'waves_per_eu' in ps:
@@ -189,6 +204,11 @@ class KernelTuningDatabaseForArch(object):
                 autotune_keys : 'list[tuple[str, Binning]]',
                 fsels : 'list[ArgumentSelection]',
                 perf_meta : 'list[ArgumentMetadata]'):
+        if self.empty:
+            # Null Lut
+            return KernelTuningEntryForFunctionalOnGPU(kdesc, self, fsels,
+                                                       indexed=None, autotune_keys=None,
+                                                       perf_meta=perf_meta)
         if self._index is None:
             self._build_db_index(fsels)
         tup, _  = self.extract_keys_from_fsels(fsels)
@@ -221,12 +241,12 @@ class KernelTuningDatabaseForArch(object):
 class KernelTuningDatabase(object):
     def __init__(self, tune_info_dir : pathlib.Path, k : 'KernelDescription'):
         self.arch_dict = {}
-        td = pathlib.Path(tune_info_dir) # in case tune_info_dir is str
+        td = pathlib.Path(tune_info_dir) / k.KERNEL_FAMILY # in case tune_info_dir is str
         # print(f"Tryint to probe KernelTuningDatabase inside {td}")
         downgrader = TuningDowngrader.create_from_kdesc(k)
-        for fn in td.glob(f'tune-{k.SHIM_KERNEL_NAME}-*.json'):
+        for fn in td.glob(f'tune-*.json'):
             with open(fn) as f:
-                dba = KernelTuningDatabaseForArch(f, downgrader)
+                dba = KernelTuningDatabaseForArch(k, f, downgrader)
             self.arch_dict[dba.arch] = dba
 
     def select_gpu(self, gpu, index):

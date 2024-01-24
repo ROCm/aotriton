@@ -48,13 +48,12 @@ class attn_fwd(FlashKernel):
         frozenset(['BLOCK_N']) : [16],
         frozenset(['pre_load_v']) : [True, False],
     }
-    # Optional, can be derived from 
-    TENSOR_RANKS_OVERRIDE = {
+    TENSOR_RANKS = {
         '_default' : 4,
         'M': 2,
     }
-    EXPECTED_IDENTICAL_TENSOR_STRIDES = {
-    }
+    EXPECTED_IDENTICAL_TENSOR_STRIDES = [
+    ]
     LAUNCHER_PARAMETERS = [
         'Q', 'K', 'V', 'sm_scale', 'M', 'Out',  # Basic functions
         'dropout_p', 'philox_seed', 'philox_offset', 'encoded_softmax',  # dropout

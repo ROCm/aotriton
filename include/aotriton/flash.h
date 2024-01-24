@@ -23,23 +23,22 @@ hipError_t attn_fwd(T4 q,                   // batch_size x num_heads x seqlen_q
                     bool is_causal,
                     aotriton::Stream stream);
 
-#if 0
-hipError_t attn_bwd(T4 q,
-                    T4 k,
-                    T4 v,
+hipError_t attn_bwd(T4 q,                   // batch_size x num_heads x seqlen_q x head_size
+                    T4 k,                   // batch_size x num_heads x seqlen_k x head_size
+                    T4 v,                   // batch_size x num_heads x seqlen_k x head_size
                     float sm_scale,
-                    T4 Out,
-                    T4 dOut,
-                    T4 dq,
-                    T4 dk,
-                    T4 dv,
-                    T1 L,
-                    T1 delta,
+                    T4 out,                 // batch_size x num_heads x seqlen_q x head_size
+                    T4 dout,                // batch_size x num_heads x seqlen_q x head_size
+                    T4 dq,                  // batch_size x num_heads x seqlen_q x head_size
+                    T4 dk,                  // batch_size x num_heads x seqlen_q x head_size
+                    T4 dv,                  // batch_size x num_heads x seqlen_q x head_size
+                    T2 softmax_lse,
+                    T2 delta,              // buffer, empty_like(softmax_lse)
                     float dropout_p,
                     uint64_t philox_seed,
                     uint64_t philox_offset,
+                    bool is_causal,
                     aotriton::Stream stream);
-#endif
 
 } // aotriton::v2::flash 
 

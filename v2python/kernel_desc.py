@@ -135,6 +135,12 @@ class KernelDescription(object):
                                   gpu : str,
                                   fsels : 'list[ArgumentSelection]'):
         dba = tuned_db.select_gpu(gpu, self._target_gpus.index(gpu))
+
+        if dba.empty:  # Fallback to selection defined by KernelDescription
+            for psels in self.gen_perf_selections():
+                yield gpu, fsels, psels, None
+            return
+
         for psels, compiler_options in dba.select(fsels, self._perf_meta):
             yield gpu, fsels, psels, compiler_options
 
@@ -232,7 +238,7 @@ class KernelDescription(object):
         print(self.SOURCE_TEMPLATE.format_map(d), file=fout)
 
     def get_tensor_rank(self, tensor_arg):
-        return self.TENSOR_RANKS_OVERRIDE.get(tensor_arg, self.TENSOR_RANKS_OVERRIDE['_default'])
+        return self.TENSOR_RANKS.get(tensor_arg, self.TENSOR_RANKS['_default'])
 
     def codegen_kernel_arguments(self):
         stack_lets = []
