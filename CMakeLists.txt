@@ -11,7 +11,7 @@ set(VENV_DIR "${CMAKE_CURRENT_BINARY_DIR}/venv" CACHE STRING "Virtual Environmen
 set(AOTRITON_HIPCC_PATH "hipcc" CACHE STRING "Set HIPCC Path")
 option(AOTRITON_BUILD_V1 "Build AOTriton API V1" OFF) # Compiler aborted when compiling hsaco files
 option(AOTRITON_BUILD_V2 "Build AOTriton API V2" ON)
-set(TARGET_GPUS "MI200" CACHE STRING "Target Architecture (Note here uses Trade names)")
+set(TARGET_GPUS "MI200;MI300X" CACHE STRING "Target Architecture (Note here uses Trade names)")
 set(AMDHSA_LD_PRELOAD "/opt/rocm/lib/libhsa-runtime64.so" CACHE STRING "Workaround of libamdhip64.so.5: undefined symbol: hsa_amd_memory_async_copy_on_engine")
 
 set(Python_ARTIFACTS_INTERACTIVE TRUE)
