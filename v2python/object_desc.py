@@ -102,7 +102,7 @@ class ObjectFileDescription(object):
 
     @property
     def signature(self):
-        # print(f'{self._signature.triton_api_signature_list=}')
+        print(f'{self._signature.triton_api_signature_list=}')
         return ', '.join(self._signature.triton_api_signature_list)
 
     @property

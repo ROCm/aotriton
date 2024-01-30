@@ -91,12 +91,15 @@ class KernelTuningEntryForFunctionalOnGPU(object):
             o = self._kdesc.build_object_file_description(kernel_image_dir, sig)
             yield o.c_identifier_signature, o._hsaco_kernel_path, o
 
-    def codegen_incbin_code(self, kernel_image_dir):
+    def codegen_incbin_code(self, kernel_image_dir, compressed=False):
         # INCBIN({incbin_symbol_name}, "{hsaco_kernel_path}");
         incbin_lines = []
         for incbin_symbol_name, hsaco_kernel_path, _ in self.gen_kernel_symbols(kernel_image_dir):
+            fn = hsaco_kernel_path.absolute()
+            if compressed:
+                fn = fn.parent / (fn.name + '.zst')
             # incbin_lines.append(f'INCBIN({incbin_symbol_name}, "../gpu_kernel_image.{self._kdesc.SHIM_KERNEL_NAME}/{hsaco_kernel_path.name}")')
-            incbin_lines.append(f'INCBIN({incbin_symbol_name}, "{hsaco_kernel_path.absolute()}")')
+            incbin_lines.append(f'INCBIN({incbin_symbol_name}, "{fn}")')
         return ";\n".join(incbin_lines)
 
     def codegen_kernel_image_objects(self, kernel_image_dir):
@@ -104,7 +107,7 @@ class KernelTuningEntryForFunctionalOnGPU(object):
         for incbin_symbol_name, _, o in self.gen_kernel_symbols(kernel_image_dir):
             assert o.compiled_files_exist, f'Compiled file {o._hsaco_kernel_path} not exists'
             shared_memory_size = o._metadata['shared']
-            kernel_image_symbols.append(f'{{ mangle({incbin_symbol_name}), {{ {o.num_warps * o.warp_size} , 1, 1 }}, {shared_memory_size} }},')
+            kernel_image_symbols.append(f'{{ mangle({incbin_symbol_name}), smangle({incbin_symbol_name}), {{ {o.num_warps * o.warp_size} , 1, 1 }}, {shared_memory_size} }},')
         ALIGN = '\n' + 4 * ' '
         return ALIGN.join(kernel_image_symbols)
 
@@ -115,7 +118,7 @@ class KernelTuningEntryForFunctionalOnGPU(object):
         ALIGN = ',\n' + 4 * ' '
         return ALIGN.join(kernel_image_perfs)
 
-    def write_lut_source(self, outdir : 'pathlib.Path'):
+    def write_lut_source(self, outdir : 'pathlib.Path', compressed):
         gpu_kernel_image_dir = outdir.parent / f'gpu_kernel_image.{self._kdesc.SHIM_KERNEL_NAME}'
         lut_tensor, sigs = self.get_lut()
         try:
@@ -127,7 +130,7 @@ class KernelTuningEntryForFunctionalOnGPU(object):
         ofn = outdir / f'{first_sig.functional_signature}_{first_sig.target_gpu}.cc'
         with open(ofn, 'w') as f:
             d = {
-                'incbin_kernel_images'  : self.codegen_incbin_code(gpu_kernel_image_dir),
+                'incbin_kernel_images'  : self.codegen_incbin_code(gpu_kernel_image_dir, compressed=compressed),
                 'kernel_family_name'    : self._kdesc.KERNEL_FAMILY,
                 'shim_kernel_name'      : self._kdesc.SHIM_KERNEL_NAME,
                 'godel_number'          : godel_number,

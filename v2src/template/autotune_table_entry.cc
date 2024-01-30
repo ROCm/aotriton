@@ -2,6 +2,7 @@
 #define INCBIN_STYLE INCBIN_STYLE_SNAKE
 
 #define mangle(x) g_aotriton_FAMILY_[[kernel_family_name]]_KERNEL_[[shim_kernel_name]]_GPU_[[gpu]]_ ## x ## _data
+#define smangle(x) g_aotriton_FAMILY_[[kernel_family_name]]_KERNEL_[[shim_kernel_name]]_GPU_[[gpu]]_ ## x ## _size
 
 #include <incbin.h>
 #include <aotriton/_internal/triton_kernel.h>
@@ -45,4 +46,6 @@ void CURRENT_ENTRY_PUBLIC::operator()([[param_class_name]]& params) {
 }
 
 #undef CURRENT_ENTRY_PUBLIC
+#undef mangle
+#undef smangle
 }

@@ -21,6 +21,7 @@ def parse():
                    help="Ahead of Time (AOT) Compile Architecture. PyTorch is required for autodetection if --targets is missing.")
     p.add_argument("--build_dir", type=str, default='build/', help="build directory")
     p.add_argument("--archive_only", action='store_true', help='Only generate archive library instead of shared library. No linking with dependencies.')
+    p.add_argument("--enable_zstd", type=str, default=None, help="Use zstd to compress the compiled kernel")
     args = p.parse_args()
     args._build_root = Path(args.build_dir)
     # print(args)
@@ -87,6 +88,15 @@ class Generator(object):
 
 class MakefileSegmentGenerator(Generator):
 
+    def __init__(self, args, out):
+        super().__init__(args, out);
+        self._cc_cmd = '$(HIPCC) $(EXTRA_COMPILER_OPTIONS) '
+        if self._args.enable_zstd is not None:
+            self._cc_cmd += f' "-I{self._args.enable_zstd}" -DAOTRITON_USE_ZSTD=1'
+        else:
+            self._cc_cmd += ' -DAOTRITON_USE_ZSTD=0'
+        self._cc_cmd += f' -I{INCBIN} -I{COMMON_INCLUDE} -fPIC -std=c++20'
+
     @property
     def list_of_self_object_files(self) -> 'list[Path]':
         return []
@@ -147,6 +157,8 @@ class ShimMakefileGenerator(MakefileGenerator):
         super().write_prelude()
         print(f"HIPCC={COMPILER}", file=f)
         print(f"AR={LINKER}", file=f)
+        print(f"EXTRA_COMPILER_OPTIONS=-O0 -g -ggdb3", file=f)
+        # print(f"EXTRA_COMPILER_OPTIONS=", file=f)
         print(f"", file=f)
         print('', file=self._out)
         print(self._grand_target, ':', ' '.join([f'{LIBRARY_NAME}{s}' for s in self._library_suffixes]), '\n\n', file=self._out)
@@ -160,7 +172,7 @@ class ShimMakefileGenerator(MakefileGenerator):
             if s == '.a':
                 print('\t', '${AR} -r ', fn, all_object_files, file=f)
             if s == '.so':
-                print('\t', COMPILER, ' -shared -fPIC -o ', fn, all_object_files, file=f)
+                print('\t', COMPILER, ' -g -shared -fPIC -o ', fn, all_object_files, file=f)
             print('\n\n', file=f)
 
     '''
@@ -191,7 +203,7 @@ class SourceBuilder(MakefileSegmentGenerator):
             makefile_target = ofn.relative_to(self._build_dir)
             self._objpaths.append(makefile_target)
             print(makefile_target, ':', str(cfn.absolute()), file=self._out)
-            cmd  = '$(HIPCC) ' + f'{cfn.absolute()} -I{self._build_dir.absolute()} -I{INCBIN} -I{COMMON_INCLUDE} -o {ofn.absolute()} -c -fPIC -std=c++20'
+            cmd = self._cc_cmd + f' {cfn.absolute()} -I{self._build_dir.absolute()} -o {ofn.absolute()} -c'
             print('\t', cmd, '\n', file=self._out)
 
     @property
@@ -230,7 +242,7 @@ class KernelShimGenerator(MakefileSegmentGenerator):
         ofn = self._shim_src.with_suffix('.o')
         makefile_target = ofn.relative_to(self.build_root)
         print(makefile_target, ':', str(self._shim_hdr.absolute()), str(self._shim_src.absolute()), file=self._out)
-        cmd  = '$(HIPCC) ' + f'{self._shim_src.absolute()} -I{INCBIN} -I{COMMON_INCLUDE} -o {ofn.absolute()} -c -fPIC -std=c++20'
+        cmd  = self._cc_cmd + f' {self._shim_src.absolute()} -o {ofn.absolute()} -c -fPIC -std=c++20'
         print('\t', cmd, '\n', file=self._out)
         self._objpaths.append(makefile_target)
 
@@ -273,13 +285,14 @@ class AutotuneCodeGenerator(MakefileSegmentGenerator):
 
     def write_body(self):
         # Write the code to file
-        self._ofn = self._lut.write_lut_source(self._outdir)
+        self._ofn = self._lut.write_lut_source(self._outdir,
+                                               compressed=self._args.enable_zstd is not None)
         self._obj_fn = self._ofn.with_suffix('.o')
         self._makefile_target = self._obj_fn.relative_to(self._build_dir)
         # Write the Makefile segment
         print('#', self._fsels, file=self._out)
         print(self._makefile_target, ':', self._ofn.relative_to(self._build_dir), file=self._out)
-        cmd  = '$(HIPCC) ' + f'{self._ofn.absolute()} -I{INCBIN} -I{COMMON_INCLUDE} -o {self._obj_fn.absolute()} -c -fPIC -std=c++20'
+        cmd  = self._cc_cmd + f' {self._ofn.absolute()} -o {self._obj_fn.absolute()} -c'
         print('\t', cmd, '\n', file=self._out)
 
     @property

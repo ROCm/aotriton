@@ -238,6 +238,9 @@ class KernelDescription(object):
         print(self.SOURCE_TEMPLATE.format_map(d), file=fout)
 
     def get_tensor_rank(self, tensor_arg):
+        if self.SHIM_KERNEL_NAME == 'bwd_kernel_dq':
+            ret = self.TENSOR_RANKS.get(tensor_arg, self.TENSOR_RANKS['_default'])
+            print(f"{tensor_arg=} {ret}")
         return self.TENSOR_RANKS.get(tensor_arg, self.TENSOR_RANKS['_default'])
 
     def codegen_kernel_arguments(self):

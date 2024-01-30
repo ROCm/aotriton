@@ -53,6 +53,7 @@ class attn_fwd(FlashKernel):
         'M': 2,
     }
     EXPECTED_IDENTICAL_TENSOR_STRIDES = [
+        # Not needed stride_o* exist
     ]
     LAUNCHER_PARAMETERS = [
         'Q', 'K', 'V', 'sm_scale', 'M', 'Out',  # Basic functions

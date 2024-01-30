@@ -11,8 +11,56 @@ set(VENV_DIR "${CMAKE_CURRENT_BINARY_DIR}/venv" CACHE STRING "Virtual Environmen
 set(AOTRITON_HIPCC_PATH "hipcc" CACHE STRING "Set HIPCC Path")
 option(AOTRITON_BUILD_V1 "Build AOTriton API V1" OFF) # Compiler aborted when compiling hsaco files
 option(AOTRITON_BUILD_V2 "Build AOTriton API V2" ON)
+option(AOTRITON_NO_SHARED "Disable shared object build. Incompatible with AOTRITON_COMPRESS_KERNEL." ON)
+option(AOTRITON_NO_PYTHON "Disable python binding build" OFF)
+option(AOTRITON_ENABLE_ASAN "Enable Address Sanitizer. Implies -g" OFF)
 set(TARGET_GPUS "MI200;MI300X" CACHE STRING "Target Architecture (Note here uses Trade names)")
 set(AMDHSA_LD_PRELOAD "/opt/rocm/lib/libhsa-runtime64.so" CACHE STRING "Workaround of libamdhip64.so.5: undefined symbol: hsa_amd_memory_async_copy_on_engine")
+
+# GPU kernel compression related options
+option(AOTRITON_COMPRESS_KERNEL "Enable GPU kernel compression with zstd. Fail when zstd is unavailable. Only effective for AOTriton API V2" ON)
+option(AOTRITON_COMPRESS_KERNEL_STATIC_ZSTD "Use static zstd library to avoid potential zstd version conflict (e.g. pytorch)" ON)
+# Note for archive library user:
+# get this property with:
+#   get_property(ZSTD_INCLUDE_DIR TARGET zstd::libzstd_shared PROPERTY INTERFACE_INCLUDE_DIRECTORIES)
+# "zstd::libzstd_shared" can be replaced with zstd::libzstd_static
+set(AOTRITON_OVERRIDE_ZSTD_INCLUDE "" CACHE STRING "(For archive library users) override zstd header directory.\
+Caveat: should consider set AOTRITON_NO_SHARED because objects are compiled with this header file,\
+but shared objects will be linked to libzstd found by find_package later.")
+set(AOTRITON_OVERRIDE_ZSTD_LIB "" CACHE STRING "(For archive library users) override zstd header library")
+if(AOTRITON_COMPRESS_KERNEL)
+    find_program(ZSTD_EXEC zstd REQUIRED)
+    find_package(zstd REQUIRED)
+    if (AOTRITON_COMPRESS_KERNEL_STATIC_ZSTD)
+        set(ZSTD_TARGET zstd::libzstd_static)
+    else()
+        if(TARGET zstd::libzstd_shared)
+            set(ZSTD_TARGET zstd::libzstd_shared)
+        else()
+            set(ZSTD_TARGET zstd::libzstd_static)
+        endif()
+    endif()
+    get_property(AOTRITON_ZSTD_INCLUDE TARGET ${ZSTD_TARGET} PROPERTY INTERFACE_INCLUDE_DIRECTORIES)
+    message(STATUS "ZSTD_TARGET ${ZSTD_TARGET}")
+    message(STATUS "get_property AOTRITON_ZSTD_INCLUDE ${AOTRITON_ZSTD_INCLUDE}")
+    if(AOTRITON_OVERRIDE_ZSTD_INCLUDE)
+        set(AOTRITON_ZSTD_INCLUDE ${AOTRITON_OVERRIDE_ZSTD_INCLUDE})
+    endif()
+endif()
+
+set(AOTRITON_EXTRA_COMPILER_OPTIONS "-I/opt/rocm/include/ ")
+if(AOTRITON_ENABLE_ASAN)
+    set(AOTRITON_EXTRA_COMPILER_OPTIONS "${AOTRITON_EXTRA_COMPILER_OPTIONS} -g -fsanitize=address -fno-omit-frame-pointer")
+    set(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} ${AOTRITON_EXTRA_COMPILER_OPTIONS}")
+endif()
+
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(AOTRITON_EXTRA_COMPILER_OPTIONS "${AOTRITON_EXTRA_COMPILER_OPTIONS} -O0 ${CMAKE_CXX_FLAGS_DEBUG}")
+elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
+    set(AOTRITON_EXTRA_COMPILER_OPTIONS "${AOTRITON_EXTRA_COMPILER_OPTIONS} ${CMAKE_CXX_FLAGS_RELEASE}")
+elseif(CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
+    set(AOTRITON_EXTRA_COMPILER_OPTIONS "${AOTRITON_EXTRA_COMPILER_OPTIONS} ${CMAKE_CXX_FLAGS_RELWITHDEBINFO}")
+endif()
 
 set(Python_ARTIFACTS_INTERACTIVE TRUE)
 
@@ -49,5 +97,7 @@ endif(AOTRITON_BUILD_V1)
 if(AOTRITON_BUILD_V2)
     add_subdirectory(v2src)
 
-    add_subdirectory(bindings) # FIXME: compile python binding
+    if(NOT AOTRITON_NO_PYTHON)
+        add_subdirectory(bindings) # FIXME: compile python binding
+    endif()
 endif(AOTRITON_BUILD_V2)
