@@ -1,6 +1,11 @@
 #ifndef AOTRITON_V2_API_TRITON_KERNEL_H
 #define AOTRITON_V2_API_TRITON_KERNEL_H
 
+#ifndef AOTRITON_USE_ZSTD
+#error "Must define AOTRITON_USE_ZSTD explicitly. "\
+       "Inconsistent definition of this macro causes ABI incompatibility."
+#endif
+
 #include "../runtime.h"
 #if AOTRITON_USE_ZSTD
 #include <vector>

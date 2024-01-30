@@ -39,8 +39,8 @@ class KernelDescription(object):
     ARGUMENTS = []
     SHIM_KERNEL_NAME = None
     _ARGUMENT_CHOICES = None
-    HEADER_TEMPLATE = get_template('launcher.h')
-    SOURCE_TEMPLATE = get_template('launcher.cc')
+    HEADER_TEMPLATE = get_template('shim.h')
+    SOURCE_TEMPLATE = get_template('shim.cc')
 
     TYPE_CHOICES = {
     }
@@ -207,7 +207,7 @@ class KernelDescription(object):
     def perf_fields(self):
         return sum([m.param_cc_fields for m in self._perf_meta], [])
 
-    def write_launcher_header(self, fout, object_files):
+    def write_shim_header(self, fout, object_files):
         d = { 'kernel_family_name'  : self.KERNEL_FAMILY,
               'shim_kernel_name'    : self.SHIM_KERNEL_NAME,
               'param_class_name'    : self.param_class_name,
@@ -219,7 +219,7 @@ class KernelDescription(object):
             }
         print(self.HEADER_TEMPLATE.format_map(d), file=fout)
 
-    def write_launcher_source(self, fout, object_files):
+    def write_shim_source(self, fout, object_files):
         put_kernel_arguments_on_stack, let_kernel_arguments = self.codegen_kernel_arguments()
         d = { 'kernel_family_name'  : self.KERNEL_FAMILY,
               'triton_kernel_name'  : object_files[0].binary_entrance,

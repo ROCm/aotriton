@@ -266,8 +266,8 @@ class KernelShimGenerator(MakefileSegmentGenerator):
 
     def write_conclude(self):
         objs = [c._odesc for c in self._children if isinstance(c, ObjectShimCodeGenerator)]
-        self._kdesc.write_launcher_header(self._fhdr, objs)
-        self._kdesc.write_launcher_source(self._fsrc, objs)
+        self._kdesc.write_shim_header(self._fhdr, objs)
+        self._kdesc.write_shim_source(self._fsrc, objs)
 
     @property
     def list_of_self_object_files(self) -> 'list[Path]':

@@ -39,7 +39,9 @@ namespace aotriton::v2::[[kernel_family_name]]::autotune {
 void CURRENT_ENTRY_PUBLIC::operator()([[param_class_name]]& params) {
     [[binning_autotune_keys]]
     auto kernel_index = lut[[binned_indices]];
+#ifndef NDEBUG
     std::cerr << __FILE__ << " kernel_index = " << int(kernel_index) << std::endl;
+#endif
     params.selected_kernel = &image_list[kernel_index];
     const auto& perf = image_perf_list[kernel_index];
     [[perf_field_assignment]];

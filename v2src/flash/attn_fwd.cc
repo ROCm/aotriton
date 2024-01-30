@@ -3,6 +3,12 @@
 #include <flash/shim.attn_fwd.h>
 #include <iostream>
 
+#ifdef NDEBUG
+#define AOTRITON_VERBOSE 0
+#else
+#define AOTRITON_VERBOSE 1
+#endif
+
 namespace aotriton::v2::flash {
 
 hipError_t attn_fwd(T4 q,
@@ -21,102 +27,23 @@ hipError_t attn_fwd(T4 q,
     hipError_t err;
     auto stream = stream_wrap.native();
     auto arch = getArchFromStream(stream);
-    // TODO: An alternative way of doing this is to use a lookup table
-    //       We will reconsider this approach later
-#if 0
-    ARCH_SWITCH(arch, Arch, [&] {
-        TENSOR_DTYPE_SWITCH(q, Type, [&] {
-            BOOL_SWITCH(is_causal, kUseCausal, [&] {
-                BOOL_SWITCH(dropout_p != 0.0, kUseDropout, [&] {
-                    BOOL_SWITCH(encoded_softmax, kReturnSoftmax, [&] {
-                        DHEAD_SWITCH(head_size, kHeadSize, [&] {
-                            auto kernel = attn_fwd_trait<Arch, Type, kHeadSize, kUseCausal, kUseDropout, kReturnSoftmax>::select_optimal_kernel();
-                            err = attn_fwd_launcher(kernel,
-                                                    q,
-                                                    k,
-                                                    v,
-                                                    sm_scale,
-                                                    M,
-                                                    Out,
-                                                    dropout_p,
-                                                    philox_seed,
-                                                    philox_offset,
-                                                    encoded_softmax,
-                                                    is_causal,
-                                                    stream);
-                        });
-                    });
-                });
-            });
-        });
-    });
-    if (arch == "gfx90a") {
-        constexpr Arch = Gfx90a;
-        TENSOR_DTYPE_SWITCH(q, Type, [&] {
-            BOOL_SWITCH(is_causal, kUseCausal, [&] {
-                BOOL_SWITCH(dropout_p != 0.0, kUseDropout, [&] {
-                    BOOL_SWITCH(encoded_softmax, kReturnSoftmax, [&] {
-                        DHEAD_SWITCH(head_size, kHeadSize, [&] {
-                            auto kernel = attn_fwd_trait<Arch, Type, kHeadSize, kUseCausal, kUseDropout, kReturnSoftmax>::select_optimal_kernel();
-                            err = attn_fwd_launcher(kernel,
-                                                    q,
-                                                    k,
-                                                    v,
-                                                    sm_scale,
-                                                    M,
-                                                    Out,
-                                                    dropout_p,
-                                                    philox_seed,
-                                                    philox_offset,
-                                                    encoded_softmax,
-                                                    is_causal,
-                                                    stream);
-                        });
-                    });
-                });
-            });
-        });
-    } else if (arch = "gfx1101") {
-        constexpr Arch = Gfx1101;
-        TENSOR_DTYPE_SWITCH(q, Type, [&] {
-            BOOL_SWITCH(is_causal, kUseCausal, [&] {
-                BOOL_SWITCH(dropout_p != 0.0, kUseDropout, [&] {
-                    BOOL_SWITCH(encoded_softmax, kReturnSoftmax, [&] {
-                        DHEAD_SWITCH(head_size, kHeadSize, [&] {
-                            auto kernel = attn_fwd_trait<Arch, Type, kHeadSize, kUseCausal, kUseDropout, kReturnSoftmax>::select_optimal_kernel();
-                            err = attn_fwd_launcher(kernel,
-                                                    q,
-                                                    k,
-                                                    v,
-                                                    sm_scale,
-                                                    M,
-                                                    Out,
-                                                    dropout_p,
-                                                    philox_seed,
-                                                    philox_offset,
-                                                    encoded_softmax,
-                                                    is_causal,
-                                                    stream);
-                        });
-                    });
-                });
-            });
-        });
-    }
-#endif
     constexpr int kUseCausalBits = 3;
     constexpr int kNoCausalBits = 1;
     auto grid_calculator = [](const AttnFwdParams& params) -> dim3 {
+#if AOTRITON_VERBOSE
         std::cerr << "Selected Kernel "
                   << " BLOCK_M = " << params.BLOCK_M
                   << " BLOCK_N = " << params.BLOCK_N
                   << " pre_load_v = " << params.pre_load_v
                   << std::endl;
+#endif
         dim3 grid { aotriton::cdiv<uint32_t>(params.seqlen_q, params.BLOCK_M),
                       uint32_t(params.Q->size(0) * params.Q->size(1)),
                       1
         };
+#if AOTRITON_VERBOSE
         std::cerr << "Grid conf " << grid.x << " " << grid.y << " " << grid.z << std::endl;
+#endif
         return grid;
     };
     int head_size = q.size(3);
