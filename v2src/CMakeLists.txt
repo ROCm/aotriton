@@ -15,13 +15,19 @@ add_custom_target(aotriton_v2_gen_compile
 )
 add_dependencies(aotriton_v2_gen_compile aotriton_venv_triton)
 
-include(ProcessorCount)
-ProcessorCount(NPROC)
+if(DEFINED ENV{MAX_JOBS})
+  set(MAX_JOBS "$ENV{MAX_JOBS}")
+else()
+  cmake_host_system_information(RESULT MAX_JOBS QUERY NUMBER_OF_PHYSICAL_CORES)
+  if(MAX_JOBS LESS 2) # In case of failures.
+    set(MAX_JOBS 2)
+  endif()
+endif()
 
 add_custom_target(aotriton_v2_compile
   # (CAVEAT) KNOWN PROBLEM: Will not work if LD_PRELOAD is not empty
   # FIXME: Change this into `-E env --modify LD_PRELOAD=path_list_prepend:${AMDOCL_LD_PRELOAD}` when minimal cmake >= 3.25
-  COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} PATH="${VENV_DIR}/bin:$ENV{PATH}" make -j ${NPROC} -f Makefile.compile LIBHSA_RUNTIME64=${AMDHSA_LD_PRELOAD}
+  COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} PATH="${VENV_DIR}/bin:$ENV{PATH}" make -j ${MAX_JOBS} -f Makefile.compile LIBHSA_RUNTIME64=${AMDHSA_LD_PRELOAD}
   WORKING_DIRECTORY "${AOTRITON_V2_BUILD_DIR}"
   COMMAND_EXPAND_LISTS
   BYPRODUCTS "${AOTRITON_V2_BUILD_DIR}/flash/attn_fwd.h"
@@ -51,7 +57,7 @@ add_dependencies(aotriton_v2_gen_shim aotriton_v2_compile) # Shim source files n
 message(STATUS "AOTRITON_EXTRA_COMPILER_OPTIONS ${AOTRITON_EXTRA_COMPILER_OPTIONS}")
 add_custom_target(aotriton_v2
   ALL
-  COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} PATH="${VENV_DIR}/bin:$ENV{PATH}" make -j ${NPROC} -f Makefile.shim HIPCC=${AOTRITON_HIPCC_PATH} AR=${CMAKE_AR} EXTRA_COMPILER_OPTIONS=${AOTRITON_EXTRA_COMPILER_OPTIONS}
+  COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} PATH="${VENV_DIR}/bin:$ENV{PATH}" make -j ${MAX_JOBS} -f Makefile.shim HIPCC=${AOTRITON_HIPCC_PATH} AR=${CMAKE_AR} EXTRA_COMPILER_OPTIONS=${AOTRITON_EXTRA_COMPILER_OPTIONS}
   WORKING_DIRECTORY "${AOTRITON_V2_BUILD_DIR}"
   BYPRODUCTS "${AOTRITON_V2_BUILD_DIR}/libaotriton_v2.a"
 )
