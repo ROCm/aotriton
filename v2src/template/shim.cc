@@ -27,16 +27,6 @@ hipError_t [[context_class_name]]::lookup_optimal([[param_class_name]]& params, 
 hipError_t [[context_class_name]]::launch(const [[param_class_name]]& params, hipStream_t stream)
 {
     auto arch = getArchFromStream(stream);
-#if 0
-    // if (!selected_kernel || kernel_arch != arch) {
-    if (true) { // TODO: cache kernel lookup
-        auto err = lookup_optimal(arch);
-        if (err != hipSuccess) {
-            return err;
-        }
-        kernel_arch = arch;
-    }
-#endif
     [[put_kernel_arguments_on_stack]];
     std::vector<void*> args = { [[let_kernel_arguments]] };
     dim3 grid = grid_calculator(params);

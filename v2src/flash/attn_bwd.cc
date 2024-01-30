@@ -18,7 +18,7 @@ hipError_t bwd_preprocess(T4 out,
     auto grid_calculator = [&dout](const BwdPreprocessParams& params) -> dim3 {
         uint32_t batch_size = static_cast<uint32_t>(dout.size(0));
         uint32_t number_of_heads = static_cast<uint32_t>(dout.size(1));
-#if 0
+#ifndef NDEBUG
         std::cerr << "Selected Kernel "
                   << " BLOCK_M = " << params.BLOCK_M
                   << " BLOCK_N = " << params.BLOCK_N
