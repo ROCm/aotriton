@@ -38,8 +38,8 @@ hipError_t attn_fwd(T4 q,
                   << std::endl;
 #endif
         dim3 grid { aotriton::cdiv<uint32_t>(params.seqlen_q, params.BLOCK_M),
-                      uint32_t(params.Q->size(0) * params.Q->size(1)),
-                      1
+                    uint32_t(params.Q->size(1)),
+                    uint32_t(params.Q->size(0)),
         };
 #if AOTRITON_VERBOSE
         std::cerr << "Grid conf " << grid.x << " " << grid.y << " " << grid.z << std::endl;

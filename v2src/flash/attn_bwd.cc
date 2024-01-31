@@ -15,9 +15,7 @@ hipError_t bwd_preprocess(T4 out,
     hipError_t err;
     auto stream = stream_wrap.native();
     auto arch = getArchFromStream(stream);
-    auto grid_calculator = [&dout](const BwdPreprocessParams& params) -> dim3 {
-        uint32_t batch_size = static_cast<uint32_t>(dout.size(0));
-        uint32_t number_of_heads = static_cast<uint32_t>(dout.size(1));
+    auto grid_calculator = [](const BwdPreprocessParams& params) -> dim3 {
 #ifndef NDEBUG
         std::cerr << "Selected Kernel "
                   << " BLOCK_M = " << params.BLOCK_M
@@ -26,9 +24,9 @@ hipError_t bwd_preprocess(T4 out,
                   << std::endl;
 #endif
         dim3 grid {
-            batch_size * number_of_heads * aotriton::cdiv<uint32_t>(dout.size(2), params.BLOCK_M),
-            1,
-            1
+            aotriton::cdiv<uint32_t>(params.Out->size(2), params.BLOCK_M),
+            uint32_t(params.Out->size(1)),
+            uint32_t(params.Out->size(0)),
         };
         // std::cerr << "Grid conf " << grid.x << " " << grid.y << " " << grid.z << std::endl;
         return grid;
@@ -39,6 +37,7 @@ hipError_t bwd_preprocess(T4 out,
         .Out = &out,
         .DO = &dout,
         .Delta = &delta,
+        .seqlen_q = out.size(2),
         .D_HEAD = head_size,
     };
     BwdPreprocessContext context;
@@ -70,14 +69,13 @@ hipError_t bwd_kernel_dk_dv(T4 q,
     hipError_t err;
     auto stream = stream_wrap.native();
     auto arch = getArchFromStream(stream);
-    uint32_t total_batch_size = static_cast<uint32_t>(q.size(0) * q.size(1));
     uint32_t seqlen_q = q.size(2);
     uint32_t seqlen_k = k.size(2);
-    auto grid_calculator = [total_batch_size, seqlen_k](const BwdKernelDkDvParams& params) -> dim3 {
+    auto grid_calculator = [seqlen_k](const BwdKernelDkDvParams& params) -> dim3 {
         dim3 grid {
             aotriton::cdiv<uint32_t>(seqlen_k, params.BLOCK_N),
-            total_batch_size,
-            1
+            uint32_t(params.Q->size(1)),
+            uint32_t(params.Q->size(0)),
         };
         return grid;
     };
@@ -130,14 +128,13 @@ hipError_t bwd_kernel_dq(T4 q,
     hipError_t err;
     auto stream = stream_wrap.native();
     auto arch = getArchFromStream(stream);
-    uint32_t total_batch_size = static_cast<uint32_t>(q.size(0) * q.size(1));
     uint32_t seqlen_q = q.size(2);
     uint32_t seqlen_k = k.size(2);
-    auto grid_calculator = [total_batch_size, seqlen_q](const BwdKernelDqParams& params) -> dim3 {
+    auto grid_calculator = [seqlen_q](const BwdKernelDqParams& params) -> dim3 {
         dim3 grid {
             aotriton::cdiv<uint32_t>(seqlen_q, params.BLOCK_M),
-            total_batch_size,
-            1
+            uint32_t(params.Q->size(1)),
+            uint32_t(params.Q->size(0)),
         };
         return grid;
     };

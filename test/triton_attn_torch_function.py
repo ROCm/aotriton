@@ -22,21 +22,11 @@ def is_supported_by_tl_dot(n: int) -> bool:
        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 2, 'pre_load_v': True}, num_stages=1, num_warps=4),
        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'pre_load_v': True}, num_stages=1, num_warps=4),
        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 4, 'pre_load_v': True}, num_stages=1, num_warps=4),
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 0, 'pre_load_v': True}, num_stages=0, num_warps=4),
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 1, 'pre_load_v': True}, num_stages=0, num_warps=4),
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 2, 'pre_load_v': True}, num_stages=0, num_warps=4),
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'pre_load_v': True}, num_stages=0, num_warps=4),
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 4, 'pre_load_v': True}, num_stages=0, num_warps=4),
        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 0, 'pre_load_v': False}, num_stages=1, num_warps=4),
        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 1, 'pre_load_v': False}, num_stages=1, num_warps=4),
        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 2, 'pre_load_v': False}, num_stages=1, num_warps=4),
        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'pre_load_v': False}, num_stages=1, num_warps=4),
        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 4, 'pre_load_v': False}, num_stages=1, num_warps=4),
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 0, 'pre_load_v': False}, num_stages=0, num_warps=4),
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 1, 'pre_load_v': False}, num_stages=0, num_warps=4),
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 2, 'pre_load_v': False}, num_stages=0, num_warps=4),
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'pre_load_v': False}, num_stages=0, num_warps=4),
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 4, 'pre_load_v': False}, num_stages=0, num_warps=4),
    ],
    key=['seqlen_q', 'seqlen_k', 'STAGE'],
 )
@@ -106,8 +96,8 @@ class _attention(torch.autograd.Function):
         stage = 3 if causal else 1
         grid = lambda META: (
             triton.cdiv(q.shape[2], META['BLOCK_M']),
-            q.shape[0] * q.shape[1],
-            1
+            q.shape[1],
+            q.shape[0],
         )
         M = torch.empty((q.shape[0] * q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)
         if return_encoded_softmax:
@@ -159,6 +149,8 @@ class _attention(torch.autograd.Function):
             BLOCK_DMODEL=Lk,
             BLOCK_N=BLOCK_N,
             pre_load_v=False,
+            num_stages=1,
+            num_warps=4,
             ENABLE_DROPOUT=dropout_p > 0.0,
             RETURN_ENCODED_SOFTMAX=encoded_softmax is not None,
         )
@@ -166,7 +158,7 @@ class _attention(torch.autograd.Function):
 
         tuning_result = None
         block_m = min(128, q.shape[2], k.shape[2])
-        grid = (triton.cdiv(q.shape[2], block_m), q.shape[0] * q.shape[1], 1)
+        grid = (triton.cdiv(q.shape[2], block_m), q.shape[1], q.shape[0])
         ctx.save_for_backward(q, k, v, o, M)
         ctx.grid = grid
         ctx.sm_scale = sm_scale
@@ -186,11 +178,14 @@ class _attention(torch.autograd.Function):
             BLOCK = 128
         q, k, v, o, L = ctx.saved_tensors
         # if q.shape[-1] <= 32:
-        do = do.contiguous()
+        # do = do.contiguous()  # Not needed for newer bwd_preprocess
+        # assert o.stride() == do.stride()
+        assert q.stride() == do.stride() # Hard requirement, hard-coded in the triton kernel
+        print(f'{o.stride()=}')
+        print(f'{do.stride()=}')
         dk = torch.empty_like(k)
         dv = torch.empty_like(v)
         delta = torch.empty_like(L)
-        do_scaled = torch.empty_like(do)
         seqlen_q = q.shape[2]
         seqlen_k = k.shape[2]
         MAX_BLOCK = 64 if ctx.dropout_p == 0 else 16
@@ -198,11 +193,19 @@ class _attention(torch.autograd.Function):
         BLOCK = 16 # FIXME: Variable block size
         BLOCK = BLOCK if is_supported_by_tl_dot(seqlen_q) and is_supported_by_tl_dot(seqlen_k) else 1
 
+        # grid configuration is (batch, head, seqlen_block)
         # block size is (BLOCK_M, D_HEAD)
-        bwd_preprocess[(do.shape[0] * do.shape[1] * triton.cdiv(do.shape[2], BLOCK), )](
-            o, do,
-            do_scaled, delta,
-            BLOCK_M=BLOCK, D_HEAD=ctx.BLOCK_DMODEL,
+        # bwd_preprocess[(do.shape[0] * do.shape[1] * triton.cdiv(do.shape[2], BLOCK), )](
+        grid_prep = (triton.cdiv(do.shape[2], BLOCK), do.shape[1], do.shape[0])
+        bwd_preprocess[grid_prep](
+            o, do, delta,
+            o.stride(0), o.stride(1), o.stride(2), o.stride(3),
+            do.stride(0), do.stride(1), do.stride(2), do.stride(3),
+            seqlen_q,
+            BLOCK_M=BLOCK,
+            D_HEAD=ctx.BLOCK_DMODEL,
+            num_stages=1,
+            num_warps=4,
         )
         if False or VERBOSE:
             print(f'{q.shape=} {q.stride()=}')
@@ -217,7 +220,7 @@ class _attention(torch.autograd.Function):
             print(f'{delta=}')
             print(f'{BLOCK=}')
         # debug_mask = torch.zeros((q.shape[0], q.shape[1], seqlen_q, seqlen_k), device=q.device, dtype=ctx.encoded_softmax.dtype)
-        bwd_kernel_dk_dv[(triton.cdiv(seqlen_k, BLOCK), ctx.grid[1])](
+        bwd_kernel_dk_dv[(triton.cdiv(seqlen_k, BLOCK), q.shape[1], q.shape[0])](
             q, k, v, ctx.sm_scale,
             o, do,
             dk, dv,
@@ -258,7 +261,7 @@ class _attention(torch.autograd.Function):
         if q.requires_grad:
             dq = torch.zeros_like(q, dtype=torch.float32)
             DQ_BLOCK_M = min(seqlen_q, BLOCK)
-            bwd_kernel_dq[(triton.cdiv(q.shape[2], DQ_BLOCK_M), q.shape[0] * q.shape[1])](
+            bwd_kernel_dq[(triton.cdiv(q.shape[2], DQ_BLOCK_M), q.shape[1], q.shape[0])](
                 q, k, v, ctx.sm_scale,
                 o, do,
                 dq,

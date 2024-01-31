@@ -31,6 +31,7 @@ def get_possible_types(klass, arg_name : str) -> 'list[str]':
 def select_pattern(arguments, prefix, trim_left=None, trim_right=None):
     ret = []
     for s in arguments:
+        assert s.strip() == s, f'Input argument {s} within {arguments=} contains spaces at either end'
         if s.startswith(prefix):
             ret.append(s)
     return ret[trim_left:trim_right]

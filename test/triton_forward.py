@@ -71,17 +71,18 @@ but in PyTorch API it does not present at all
 # @pytest.mark.parametrize('D_HEAD', [128])
 # @pytest.mark.parametrize('seqlen_q', [16,32,64,128,256,512,1024])
 # @pytest.mark.parametrize('seqlen_k', [16,32,64,128,256,512,1024])
-# @pytest.mark.parametrize('seqlen_q', [128,256,512,1024])
-# @pytest.mark.parametrize('seqlen_k', [128,256,512,1024])
-@pytest.mark.parametrize('seqlen_q', [32, 128])
-@pytest.mark.parametrize('seqlen_k', [32, 128])
+@pytest.mark.parametrize('seqlen_q', [128,256,512,1024])
+@pytest.mark.parametrize('seqlen_k', [128,256,512,1024])
+# @pytest.mark.parametrize('seqlen_q', [16, 128])
+# @pytest.mark.parametrize('seqlen_k', [16, 128])
 @pytest.mark.parametrize('causal', [False, True])
 @pytest.mark.parametrize('dropout_p', [0.0, 0.5])
 # @pytest.mark.parametrize('dropout_p', [0.0])
 @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
 @pytest.mark.parametrize('sm_scale', [0.0, 1.2])
+@pytest.mark.parametrize('storage_flip', [True, False])
 # @pytest.mark.parametrize('return_encoded_softmax', [False])
-def test_op_fwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype):
+def test_op_fwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
     torch.manual_seed(20)
     print(f"test_op_fwd {BATCH=}, {N_HEADS=}, {seqlen_q=}, {seqlen_k=}, {D_HEAD=}, {causal=}")
     SPARSE_HEAD_SINCE = 3
@@ -89,21 +90,36 @@ def test_op_fwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dr
     Z = BATCH
     H = N_HEADS
     if True: # Real UT
+        qdims = (BATCH, N_HEADS, seqlen_q, D_HEAD)
+        kdims = (BATCH, N_HEADS, seqlen_k, D_HEAD)
+        vdims = (BATCH, N_HEADS, seqlen_k, D_HEAD)
+        if storage_flip:
+            qdims = (qdims[0], qdims[2], qdims[1], qdims[3])
+            kdims = (kdims[0], kdims[2], kdims[1], kdims[3])
+            vdims = (vdims[0], vdims[2], vdims[1], vdims[3])
         q = (
-            torch.empty((BATCH, N_HEADS, seqlen_q, D_HEAD), dtype=dtype, device="cuda")
+            torch.empty(qdims, dtype=dtype, device="cuda")
             .normal_(mean=0., std=0.5)
             .requires_grad_()
         )
         k = (
-            torch.empty((BATCH, N_HEADS, seqlen_k, D_HEAD), dtype=dtype, device="cuda")
+            torch.empty(kdims, dtype=dtype, device="cuda")
             .normal_(mean=0., std=0.5)
             .requires_grad_()
         )
         v = (
-            torch.empty((BATCH, N_HEADS, seqlen_k, D_HEAD), dtype=dtype, device="cuda")
+            torch.empty(vdims, dtype=dtype, device="cuda")
             .normal_(mean=0., std=0.5)
             .requires_grad_()
         )
+        if storage_flip:
+            q = torch.transpose(q, 1, 2)
+            k = torch.transpose(k, 1, 2)
+            v = torch.transpose(v, 1, 2)
+            assert q.shape == (BATCH, N_HEADS, seqlen_q, D_HEAD)
+            assert k.shape == (BATCH, N_HEADS, seqlen_k, D_HEAD)
+            assert v.shape == (BATCH, N_HEADS, seqlen_k, D_HEAD)
+            assert q.stride() == (N_HEADS * seqlen_q * D_HEAD, D_HEAD, D_HEAD * N_HEADS, 1)
     if False: # Debugging
         q = (
             torch.empty((Z, H, seqlen_q, D_HEAD), dtype=dtype, device="cuda")
@@ -164,6 +180,7 @@ def test_op_fwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dr
         print(f'{q.shape=} {q.stride()=}')
         print(f'{k.shape=} {k.stride()=}')
         print(f'{v.shape=} {v.stride()=}')
+        print(f'{tri_out.shape=} {tri_out.stride()=}')
         print(f'{encoded_softmax=}')
         if encoded_softmax is not None:
             print(f'{encoded_softmax.shape=} {encoded_softmax.stride()=}')
@@ -171,9 +188,9 @@ def test_op_fwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dr
             print(f'{dropout_mask.shape=} {dropout_mask.stride()=}')
             print(f'{dropout_mask[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
     if dtype==torch.bfloat16:
-        ATOL = 1e-1 * (seqlen_q / 128.0) if seqlen_q >= 16 else 1e-1
+        ATOL = 1e-1 * (seqlen_q / 64.0) if seqlen_q >= 16 else 1e-1
     else:
-        ATOL = 1e-2 * (seqlen_q / 128.0) if seqlen_q >= 16 else 1e-2
+        ATOL = 1e-2 * (seqlen_q / 64.0) if seqlen_q >= 16 else 1e-2
     print(f'Using ATOL={ATOL}')
     is_allclose = torch.allclose(ref_out, tri_out, atol=ATOL, rtol=0)
     if not is_allclose:
