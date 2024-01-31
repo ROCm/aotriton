@@ -11,7 +11,7 @@ int main()
   constexpr int BLOCK_M = 128;
   constexpr int BLOCK_DMODEL = 16;
   constexpr int BLOCK_N = 64;
-  oort::attn_fwd<1, BLOCK_M, BLOCK_DMODEL, BLOCK_N, true> op;
+  aotriton::attn_fwd<1, BLOCK_M, BLOCK_DMODEL, BLOCK_N, true> op;
   dim3 grid { 1024 / BLOCK_M, 4 * 16, 1};
   dim3 block{ 256, 1, 1};
   op(grid, block,

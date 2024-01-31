@@ -1,7 +1,7 @@
-#ifndef OORT_{shim_kernel_name}_H
-#define OORT_{shim_kernel_name}_H
+#ifndef AOTRITON_{shim_kernel_name}_H
+#define AOTRITON_{shim_kernel_name}_H
 
-namespace oort {{
+namespace aotriton::v1 {{
 
 template<{template_constants}>
 struct {shim_kernel_name} {{

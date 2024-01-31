@@ -5,7 +5,7 @@ from pathlib import Path
 
 from object_desc import ObjectFileDescription
 
-def get_possible_types(klass, arg_name : str) -> list[str]:
+def get_possible_types(klass, arg_name : str) -> 'list[str]':
     for k, v in klass.ARGUMENT_CHOICES.items():
         if arg_name in k:
             return v
@@ -44,7 +44,7 @@ class KernelDescription(ABC):
         return ret
 
     @property
-    def all_possible_signatures(self) -> list[list[str]]:
+    def all_possible_signatures(self) -> 'list[list[str]]':
         # cartesian = [self.argument_choices[aname] for aname in self.arguments]
         # return itertools.product(cartesian)
         all_sigs = []
@@ -54,12 +54,12 @@ class KernelDescription(ABC):
 
     # Use list to maintain the order
     @property
-    def arguments(self) -> list[str]:
+    def arguments(self) -> 'list[str]':
         return self.ARGUMENTS
 
     # Use dict to make lookup easier
     @property
-    def argument_choices(self) -> list[frozenset[str], list[str]]:
+    def argument_choices(self) -> 'list[frozenset[str], list[str]]':
         return self.ARGUMENT_CHOICES
 
     def get_object_files(self, outpath : Path, prefix='') -> 'ObjectFileDescription':
@@ -71,13 +71,13 @@ class KernelDescription(ABC):
             ret.append(ObjectFileDescription(self, choice, sig_list, outpath / fn))
         return ret
 
-    def mangle(self, sig : list[str]):
+    def mangle(self, sig : 'list[str]'):
         # * -> ^: Pascal Pointer
         # : -> @: A(@)lign
         mangle_sig = [ str(t).replace('*', '^').replace(':', '@') for t in sig ]
         return ','.join(mangle_sig)
 
-    def compact_mangle(self, choice : dict[frozenset[list], str]):
+    def compact_mangle(self, choice : 'dict[frozenset[list], str]'):
         compact_sig = []
         assigned_args = set()
         for aname in self.ARGUMENTS:

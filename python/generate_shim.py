@@ -9,11 +9,12 @@ CSRC = (SOURCE_PATH.parent.parent / 'csrc').absolute()
 INCBIN = (SOURCE_PATH.parent.parent / 'third_party/incbin/').absolute()
 # COMPILER = SOURCE_PATH.parent / 'compile.py'
 COMPILER = 'hipcc'
+LINKER = 'ar'
 
 def parse():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument("--build_dir", type=str, default='build/', help="build directory")
-    p.add_argument("--static", action='store_true', help='Generate static library')
+    p.add_argument("--archive", action='store_true', help='generate archive library instead of shared library. No linking with dependencies.')
     args = p.parse_args()
     # print(args)
     return args
@@ -25,7 +26,7 @@ def gen_cc_from_object(args, o : 'ObjectFileDescription', makefile):
         print(o.generate_shim_source(), file=f)
     target = o._hsaco_kernel_path.with_suffix('.o')
     print(target.name, ': ', src.name, ' ', hdr.name, file=makefile)
-    cmd  = '$(HIPCC) ' + f'{src.absolute()} -I{CSRC} -I{INCBIN} -c -fPIC'
+    cmd  = '$(HIPCC) ' + f'{src.absolute()} -I{CSRC} -I{INCBIN} -c -fPIC -std=c++17'
     print('\t', cmd, '\n', file=makefile)
     return target.name
 
@@ -63,14 +64,14 @@ def gen_from_kernel(args, k, build_dir, makefile, generate_separate_so=False):
         return k.SHIM_KERNEL_NAME, all_targets
 
     output_so = k.SHIM_KERNEL_NAME
-    output_so += '.a'  if args.static else '.so'
+    output_so += '.a'  if args.archive else '.so'
     def print_all_o():
         for t in all_targets:
             print(t, end=' ', file=makefile)
     print(output_so, ': ', end='', file=makefile)
     print_all_o()
-    if args.static:
-        print('\n\t', COMPILER, ' -static -fPIC -o ', output_so, end=' ', file=makefile)
+    if args.archive:
+        print('\n\t', '${AR} -r ', output_so, end=' ', file=makefile)
     else:
         print('\n\t', COMPILER, ' -shared -fPIC -o ', output_so, end=' ', file=makefile)
     print_all_o()
@@ -84,26 +85,28 @@ def main(generate_separate_so=False):
     build_dir = Path(args.build_dir)
     with open(build_dir / 'Makefile.shim', 'w') as f:
         makefile_content = io.StringIO()
-        print(f"HIPCC={COMPILER}\n", file=makefile_content)
+        print(f"HIPCC={COMPILER}", file=makefile_content)
+        print(f"AR={LINKER}", file=makefile_content)
+        print(f"", file=makefile_content)
         per_kernel_targets = []
         all_o_files = []
         for k in rules.kernels:
             this_kernel_target, this_kernel_o_files = gen_from_kernel(args, k, build_dir, makefile_content, generate_separate_so=generate_separate_so)
             per_kernel_targets.append(this_kernel_target)
             all_o_files += this_kernel_o_files
-        print('liboort: ', end='', file=f)
+        print('libaotriton: ', end='', file=f)
         if generate_separate_so:
             for t in per_kernel_targets:
                 print(t, end=' ', file=f)
             print('\n', file=f)
         else:
-            output_so = 'liboort.a' if args.static else 'liboort.so'
+            output_so = 'libaotriton.a' if args.archive else 'libaotriton.so'
             def print_all_o():
                 for t in all_o_files:
                     print(t, end=' ', file=f)
             print_all_o()
-            if args.static:
-                print('\n\t', COMPILER, ' -static -fPIC -o ', output_so, end=' ', file=f)
+            if args.archive:
+                print('\n\t', '${AR} -r ', output_so, end=' ', file=f)
             else:
                 print('\n\t', COMPILER, ' -shared -fPIC -o ', output_so, end=' ', file=f)
             print_all_o()
@@ -111,9 +114,9 @@ def main(generate_separate_so=False):
         makefile_content.seek(0)
         shutil.copyfileobj(makefile_content, f)
         if generate_separate_so:
-            print('.PHONY: liboort', file=f)
+            print('.PHONY: libaotriton', file=f)
         else:
-            print('.PHONY: liboort ', ' '.join(per_kernel_targets), file=f)
+            print('.PHONY: libaotriton ', ' '.join(per_kernel_targets), file=f)
 
 if __name__ == '__main__':
     main()

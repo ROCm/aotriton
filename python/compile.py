@@ -10,6 +10,7 @@ from typing import List
 import triton
 
 import shutil
+import subprocess
 import json
 
 desc = """
@@ -24,10 +25,12 @@ def main():
     parser.add_argument("--kernel_name", "-n", type=str, default="", help="Name of the kernel to compile", required=True)
     parser.add_argument("--num_warps", "-w", type=int, default=1, help="Number of warps to launch the kernel")
     parser.add_argument("--num_stages", "-ns", type=int, default=3, help="Number of stages (meta-parameter of the kernel)")
+    parser.add_argument("--waves_per_eu", type=int, default=0)
     parser.add_argument("--out_path", "-o", type=Path, default=None, help="Out filename", required=True)
     parser.add_argument("--signature", "-s", type=str, help="Signature of the kernel", required=True)
     parser.add_argument("--grid", "-g", type=str, help="Launch grid of the kernel", required=True)
     parser.add_argument("--verbose", "-v", help="Enable vebose output", action='store_true')
+    parser.add_argument("--nostrip", help="Keep debugging symbols", action='store_true')
     args = parser.parse_args()
 
     out_path = args.out_path
@@ -44,17 +47,17 @@ def main():
     '''
     if True:
         exec_string = f'import {arg_path.stem}'
-        print(exec_string)
+        # print(exec_string)
         exec(exec_string, globals()) # importlib code path miss things
-        print(globals())
+        # print(globals())
         # kernel = globals()[f"{arg_path.stem}.{args.kernel_name}"]
         mod = globals()[arg_path.stem]
         kernel = getattr(mod, args.kernel_name)
-        print(fused_attention_trimmed.attn_fwd)
+        # print(fused_attention_trimmed.attn_fwd)
     if False:
         mod = importlib.import_module(arg_path.stem)
         print(mod.attn_fwd)
-        print(fused_attention_trimmed.attn_fwd)
+        # print(fused_attention_trimmed.attn_fwd)
         kernel = globals()[f"{arg_path.stem}.{args.kernel_name}"]
         print(f"{kernel=}")
 
@@ -93,7 +96,7 @@ def main():
     hints = {k: v for k, v in hints.items() if v is not None}
     constexprs = {i: constexpr(s) for i, s in enumerate(signature)}
     constexprs = {k: v for k, v in constexprs.items() if v is not None}
-    print(f"{constexprs=}")
+    # print(f"{constexprs=}")
     signature = {i: s.split(":")[0] for i, s in enumerate(signature) if i not in constexprs}
     const_sig = 'x'.join([str(v) for v in constexprs.values()])
     doc_string = [f"{kernel.arg_names[i]}={constexprs[i]}" for i in constexprs.keys()]
@@ -107,8 +110,8 @@ def main():
     config = triton.compiler.instance_descriptor(divisible_by_16=divisible_by_16, equal_to_1=equal_to_1)
     for i in equal_to_1:
         constexprs.update({i: 1})
-    print(f'{kernel=}')
-    ccinfo = triton.compile(kernel, signature=signature, constants=constexprs, configs=[config], num_warps=args.num_warps, num_stages=args.num_stages, aot_arch=args.target)
+    # print(f'{kernel=}')
+    ccinfo = triton.compile(kernel, signature=signature, constants=constexprs, configs=[config], num_warps=args.num_warps, num_stages=args.num_stages, waves_per_eu=args.waves_per_eu, aot_arch=args.target)
     hsaco_path = ccinfo.asm.get('hsaco_path', None)
     if args.verbose:
         print(dir(ccinfo))
@@ -117,7 +120,10 @@ def main():
         print(f'{hsaco_path=}')
 
     if hsaco_path is not None:
-        shutil.copy(hsaco_path, out_path.with_suffix('.hsaco'))
+        if args.nostrip:
+            shutil.copy(hsaco_path, out_path.with_suffix('.hsaco'))
+        else:
+            subprocess.run(['/opt/rocm/llvm/bin/llvm-objcopy', '--remove-section', '.debug_*', str(hsaco_path), str(out_path.with_suffix('.hsaco'))])
 
     with out_path.with_suffix('.json').open("w") as fp:
         json.dump(ccinfo.metadata, fp, indent=2)

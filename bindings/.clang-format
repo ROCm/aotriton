@@ -1,0 +1,2 @@
+# Need to have different indents for namespace pyaotriton and pyaotriton::v2
+NamespaceIndentation: All

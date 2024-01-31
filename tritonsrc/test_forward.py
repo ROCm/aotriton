@@ -71,7 +71,9 @@ but in PyTorch API it does not present at all
                           (8, 4, 64, 16),
                           (8, 4, 256, 64),
                           (1, 1, 128, 64),
-                          (1, 1, 64, 64),
+                          (1, 1, 128, 128),
+                          # (1, 1, 64, 64),
+                          (1, 1, 96, 64),
                           (1, 1, 16, 32),
                           (1, 1, 16, 16),
                           (1, 1, 1, 16),
@@ -150,7 +152,7 @@ def test_op_fwd(Z, H, N_CTX, D_HEAD, causal, sm_scale, dropout_p, dtype, qseqlen
     p = torch.softmax(p.float(), dim=-1).half()
     ref_out = torch.matmul(p, v)
     '''
-    tri_out, encoded_softmax = attention(q, k, v, causal, sm_scale, dropout_p, True)
+    tri_out, encoded_softmax, _ = attention(q, k, v, causal, sm_scale, dropout_p, True)
 
     dropout_mask = encoded_softmax >= 0
     # assert torch.allclose(dropout_mask, dropout_mask_naive)
