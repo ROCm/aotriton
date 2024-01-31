@@ -273,9 +273,9 @@ class _attention(torch.autograd.Function):
 
         stage = 3 if causal else 1
         grid = lambda META: (
-            triton.cdiv(seqlen_q, META['BLOCK_M']),
-            q.shape[0] * q.shape[1],
-            1
+            triton.cdiv(q.shape[2], META['BLOCK_M']),
+            q.shape[1],
+            q.shape[0],
         )
         M = torch.empty((q.shape[0] * q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)
         if return_encoded_softmax:
@@ -392,7 +392,7 @@ class _attention(torch.autograd.Function):
         else:
             tuning_result = None
             block_m = min(128, q.shape[2], k.shape[2])
-        grid = (triton.cdiv(q.shape[2], block_m), q.shape[0] * q.shape[1], 1)
+        grid = (triton.cdiv(q.shape[2], block_m), q.shape[1], q.shape[0])
         ctx.save_for_backward(q, k, v, o, M)
         ctx.grid = grid
         ctx.sm_scale = sm_scale

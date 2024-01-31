@@ -151,8 +151,11 @@ def attn_fwd(
     RETURN_ENCODED_SOFTMAX: tl.constexpr,
 ):
     start_m = tl.program_id(0)
-    off_hz = tl.program_id(1)
-    q_offset = off_hz * stride_qh
+    off_h = tl.program_id(1) # head index
+    off_z = tl.program_id(2) # batch index
+    num_h = tl.num_programs(1)
+    num_z = tl.num_programs(2)
+    q_offset = off_h * stride_qh + off_z * stride_qz
     Q_block_ptr = tl.make_block_ptr(
         base=Q + q_offset,
         shape=(seqlen_q, BLOCK_DMODEL),
@@ -161,7 +164,7 @@ def attn_fwd(
         block_shape=(BLOCK_M, BLOCK_DMODEL),
         order=(1, 0)
     )
-    k_offset = off_hz * stride_kh
+    k_offset = off_h * stride_kh + off_z * stride_kz
     K_block_ptr = tl.make_block_ptr(
         base=K + k_offset,
         shape=(BLOCK_DMODEL, seqlen_k),
@@ -170,7 +173,7 @@ def attn_fwd(
         block_shape=(BLOCK_DMODEL, BLOCK_N),
         order=(0, 1)
     )
-    v_offset = off_hz * stride_vh
+    v_offset = off_h * stride_vh + off_z * stride_vz
     V_block_ptr = tl.make_block_ptr(
         base=V + v_offset,
         shape=(seqlen_k, BLOCK_DMODEL),
@@ -196,13 +199,14 @@ def attn_fwd(
     # stage 1: off-band
     # For causal = True, STAGE = 3 and attn_fwd_inner gets 1 as its STAGE
     # For causal = False, STAGE = 1, and attn_fwd_inner gets 3 as its STAGE
+    off_zh = off_z * num_h + off_h * 1
     if ENABLE_DROPOUT:
-        batch_philox_offset = philox_offset_base + off_hz * seqlen_q * seqlen_k
+        batch_philox_offset = philox_offset_base + off_zh * seqlen_q * seqlen_k
     else:
         batch_philox_offset = 0
     if RETURN_ENCODED_SOFTMAX:
         encoded_softmax_block_ptr = tl.make_block_ptr(
-                base=encoded_softmax + off_hz * seqlen_q * seqlen_k,
+                base=encoded_softmax + off_zh * seqlen_q * seqlen_k,
                 shape=(seqlen_q, seqlen_k),
                 strides=(seqlen_k, 1),
                 offsets=(start_m * BLOCK_M, 0),
@@ -241,10 +245,10 @@ def attn_fwd(
     acc = acc / l_i[:, None]
     if ENABLE_DROPOUT:
         acc = acc / (1 - dropout_p)
-    m_ptrs = M + off_hz * seqlen_q + offs_m
+    m_ptrs = M + off_zh * seqlen_q + offs_m
     tl.store(m_ptrs, m_i + tl.math.log2(l_i))
     # write back O
-    o_offset = off_hz * stride_oh
+    o_offset = off_h * stride_oh + off_z * stride_oz
     O_block_ptr = tl.make_block_ptr(
         base=Out + o_offset,
         shape=(seqlen_q, BLOCK_DMODEL),

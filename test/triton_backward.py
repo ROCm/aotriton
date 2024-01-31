@@ -81,17 +81,29 @@ but in PyTorch API it does not present at all
 # @pytest.mark.parametrize('dropout_p', [0.0])
 @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
 @pytest.mark.parametrize('sm_scale', [0.0, 1.2])
+@pytest.mark.parametrize('storage_flip', [True, False])
 # @pytest.mark.parametrize('return_encoded_softmax', [False])
 # FIXME: GPU Segfault on 0.0-dtype0-0.0-True-128-256-16-4-1
 #        Also all causal=False UTs passed
-def test_op_fwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype):
+def test_op_fwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
     SKIP_DQ = False
     torch.manual_seed(20)
     SPARSE_HEAD_SINCE = 1
     SPARSE_SEQ_SINCE = 1
-    q = torch.empty((BATCH, N_HEADS, seqlen_q, D_HEAD), dtype=dtype, device="cuda").normal_(mean=0., std=0.5)
-    k = torch.empty((BATCH, N_HEADS, seqlen_k, D_HEAD), dtype=dtype, device="cuda").normal_(mean=0., std=0.5)
-    v = torch.empty((BATCH, N_HEADS, seqlen_k, D_HEAD), dtype=dtype, device="cuda").normal_(mean=0., std=0.5)
+    qdims = (BATCH, N_HEADS, seqlen_q, D_HEAD)
+    kdims = (BATCH, N_HEADS, seqlen_k, D_HEAD)
+    vdims = (BATCH, N_HEADS, seqlen_k, D_HEAD)
+    if storage_flip:
+        qdims = (qdims[0], qdims[2], qdims[1], qdims[3])
+        kdims = (kdims[0], kdims[2], kdims[1], kdims[3])
+        vdims = (vdims[0], vdims[2], vdims[1], vdims[3])
+    q = torch.empty(qdims, dtype=dtype, device="cuda").normal_(mean=0., std=0.5)
+    k = torch.empty(kdims, dtype=dtype, device="cuda").normal_(mean=0., std=0.5)
+    v = torch.empty(vdims, dtype=dtype, device="cuda").normal_(mean=0., std=0.5)
+    if storage_flip:
+        q = torch.transpose(q, 1, 2)
+        k = torch.transpose(k, 1, 2)
+        v = torch.transpose(v, 1, 2)
     if not SKIP_DQ:
         q.requires_grad_()
     k.requires_grad_()
@@ -154,6 +166,8 @@ def test_op_fwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dr
         print(f'{err_idx=}')
         print(f'{tri_dv[err_idx]=}')
         print(f'{ref_dv[err_idx]=}')
+        print(f'{tri_dv[err_idx[:2]]=}')
+        print(f'{ref_dv[err_idx[:2]]=}')
         if seqlen_q < 16:
             print(f'{tri_dk[0,0]=}')
             print(f'{ref_dk[0,0]=}')

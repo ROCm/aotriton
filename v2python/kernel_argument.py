@@ -17,6 +17,7 @@ class ArgumentMetadata(object):
         'fp32' : 'DType::kFloat32',
     }
     def __init__(self, grouped_arguments_as_set, possible_values, cat : ArgumentCategory, kdesc):
+        assert grouped_arguments_as_set
         self._grouped_arguments_as_set = grouped_arguments_as_set
         self._possible_values = possible_values
         self._npossible = len(possible_values)

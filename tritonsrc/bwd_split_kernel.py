@@ -45,14 +45,17 @@ def bwd_kernel_dk_dv(
     ENABLE_DROPOUT: tl.constexpr,
 ):
     start_m = tl.program_id(0) * BLOCK_N
-    off_hz = tl.program_id(1)
-    # Q is consumed depending on block ID. Every block uses
-    # previous block offset by BLOCK_M x D_HEAD.
+    off_h = tl.program_id(1) # head index
+    off_z = tl.program_id(2) # batch index
+    num_h = tl.num_programs(1)
+    num_z = tl.num_programs(2)
     # initialize offsets
     offs_m = start_m + tl.arange(0, BLOCK_N)
     offs_n = tl.arange(0, BLOCK_M)
     # Initialize pointers to Q, K, V
-    q_offset = off_hz * stride_qh
+    # Q is consumed depending on block ID. Every block uses
+    # previous block offset by BLOCK_M x D_HEAD.
+    q_offset = off_h * stride_qh + off_z * stride_qz
     Q_block_ptr = tl.make_block_ptr(
         base=Q + q_offset,
         shape=(seqlen_q, BLOCK_DMODEL),
@@ -61,7 +64,7 @@ def bwd_kernel_dk_dv(
         block_shape=(BLOCK_M, BLOCK_DMODEL),
         order=(1, 0)
     )
-    k_offset = off_hz * stride_kh
+    k_offset = off_h * stride_kh + off_z * stride_kz
     K_block_ptr = tl.make_block_ptr(
         base=K + k_offset,
         shape=(BLOCK_DMODEL, seqlen_k),
@@ -70,7 +73,7 @@ def bwd_kernel_dk_dv(
         block_shape=(BLOCK_DMODEL, BLOCK_N),
         order=(0, 1)
     )
-    v_offset = off_hz * stride_vh
+    v_offset = off_h * stride_vh + off_z * stride_vz
     VT_block_ptr = tl.make_block_ptr(
         base=V + v_offset,
         shape=(BLOCK_DMODEL, seqlen_k),
@@ -88,9 +91,10 @@ def bwd_kernel_dk_dv(
         block_shape=(BLOCK_M, BLOCK_DMODEL),
         order=(1, 0)
     )
+    off_zh = off_z * num_h + off_h * 1
     # pointer to row-wise quantities in value-like data
-    D_ptrs = D + off_hz * seqlen_q
-    l_ptrs = L + off_hz * seqlen_q
+    D_ptrs = D + off_zh * seqlen_q
+    l_ptrs = L + off_zh * seqlen_q
     qk_scale = sm_scale * 1.44269504
     # load k and v: they will stay in SRAM throughout
     k = tl.load(K_block_ptr) # (BLOCK_DMODEL, BLOCK_N)
@@ -105,7 +109,7 @@ def bwd_kernel_dk_dv(
     hi = seqlen_q
     Q_block_ptr = tl.advance(Q_block_ptr, (lo, 0))
     DO_block_ptr = tl.advance(DO_block_ptr, (lo, 0))
-    batch_philox_offset = philox_offset_base + off_hz * seqlen_q * seqlen_k
+    batch_philox_offset = philox_offset_base + off_zh * seqlen_q * seqlen_k
     '''
            K1   K2      (d)V      dO
     Q1    qk11 qk12     (d)v1     dO1
@@ -180,9 +184,8 @@ def bwd_kernel_dk_dv(
         block_shape=(BLOCK_N, BLOCK_DMODEL),
         order=(1, 0)
     )
-    dv_offset = off_hz * stride_vh
     DV_block_ptr = tl.make_block_ptr(
-        base=DV + dv_offset,
+        base=DV + v_offset,
         shape=(seqlen_k, BLOCK_DMODEL),
         strides=(stride_vk, stride_vn),
         offsets=(start_m, 0),
@@ -211,12 +214,15 @@ def bwd_kernel_dq(
     ENABLE_DROPOUT: tl.constexpr,
 ):
     start_m = tl.program_id(0) * BLOCK_M
-    off_hz = tl.program_id(1)
+    off_h = tl.program_id(1) # head index
+    off_z = tl.program_id(2) # batch index
+    num_h = tl.num_programs(1)
+    num_z = tl.num_programs(2)
     # initialize offsets
     offs_m = start_m + tl.arange(0, BLOCK_M)
     offs_n = tl.arange(0, BLOCK_N)
     # Initialize pointers to Q, K, V
-    q_offset = off_hz * stride_qh
+    q_offset = off_h * stride_qh + off_z * stride_qz
     Q_block_ptr = tl.make_block_ptr(
         base=Q + q_offset,
         shape=(seqlen_q, BLOCK_DMODEL),
@@ -225,7 +231,7 @@ def bwd_kernel_dq(
         block_shape=(BLOCK_M, BLOCK_DMODEL),
         order=(1, 0)
     )
-    k_offset = off_hz * stride_kh
+    k_offset = off_h * stride_kh + off_z * stride_kz
     K_block_ptr = tl.make_block_ptr(
         base=K + k_offset,
         shape=(BLOCK_DMODEL, seqlen_k),
@@ -234,7 +240,7 @@ def bwd_kernel_dq(
         block_shape=(BLOCK_DMODEL, BLOCK_N),
         order=(0, 1)
     )
-    v_offset = off_hz * stride_vh
+    v_offset = off_h * stride_vh + off_z * stride_vz
     V_block_ptr = tl.make_block_ptr(
         base=V + v_offset,
         shape=(BLOCK_DMODEL, seqlen_k),
@@ -251,9 +257,10 @@ def bwd_kernel_dq(
         block_shape=(BLOCK_M, BLOCK_DMODEL),
         order=(1, 0)
     )
+    off_zh = off_z * num_h + off_h * 1
     # pointer to row-wise quantities in value-like data
-    D_ptrs = D + off_hz * seqlen_q
-    l_ptrs = L + off_hz * seqlen_q
+    D_ptrs = D + off_zh * seqlen_q
+    l_ptrs = L + off_zh * seqlen_q
     qk_scale = sm_scale * 1.44269504
     # load q and do: they will stay in SRAM throughout
     q = tl.load(Q_block_ptr)
@@ -265,7 +272,7 @@ def bwd_kernel_dq(
     # loop over k, v
     lo = 0
     hi = min(start_m + BLOCK_M, seqlen_k) if CAUSAL else seqlen_k
-    batch_philox_offset = philox_offset_base + off_hz * seqlen_q * seqlen_k
+    batch_philox_offset = philox_offset_base + off_zh * seqlen_q * seqlen_k
     '''
            K1   K2      (d)V      dO
     Q1    qk11 qk12     (d)v1     dO1
