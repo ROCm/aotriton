@@ -1,3 +1,4 @@
+// clang-format off
 #include "shim.[[shim_kernel_name]].h"
 #include <aotriton/util.h>
 
@@ -10,8 +11,8 @@ int64_t [[param_class_name]]::godel_number() const
     return sum;
 }
 
-hipError_t [[context_class_name]]::lookup_optimal([[param_class_name]]& params, GpuArch arch)
-{
+hipError_t
+[[context_class_name]]::lookup_optimal([[param_class_name]]& params, GpuArch arch) {
     int64_t arch_number = get_arch_number(arch);
     if (arch_number < 0) {
         return hipErrorNoBinaryForGpu;
@@ -24,8 +25,8 @@ hipError_t [[context_class_name]]::lookup_optimal([[param_class_name]]& params, 
     return hipSuccess;
 }
 
-hipError_t [[context_class_name]]::launch(const [[param_class_name]]& params, hipStream_t stream)
-{
+hipError_t
+[[context_class_name]]::launch(const [[param_class_name]]& params, hipStream_t stream) {
     auto arch = getArchFromStream(stream);
     [[put_kernel_arguments_on_stack]];
     std::vector<void*> args = { [[let_kernel_arguments]] };
@@ -33,8 +34,8 @@ hipError_t [[context_class_name]]::launch(const [[param_class_name]]& params, hi
     return params.selected_kernel->invoke("[[triton_kernel_name]]", grid, args, stream);
 }
 
-int64_t [[context_class_name]]::get_arch_number(GpuArch arch)
-{
+int64_t
+[[context_class_name]]::get_arch_number(GpuArch arch) {
     [[get_arch_number_body]];
     return -1;
 }

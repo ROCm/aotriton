@@ -1,12 +1,13 @@
+// clang-format off
 #define INCBIN_PREFIX g_aotriton_FAMILY_[[kernel_family_name]]_KERNEL_[[shim_kernel_name]]_GPU_[[gpu]]_
 #define INCBIN_STYLE INCBIN_STYLE_SNAKE
 
 #define mangle(x) g_aotriton_FAMILY_[[kernel_family_name]]_KERNEL_[[shim_kernel_name]]_GPU_[[gpu]]_ ## x ## _data
 #define smangle(x) g_aotriton_FAMILY_[[kernel_family_name]]_KERNEL_[[shim_kernel_name]]_GPU_[[gpu]]_ ## x ## _size
 
-#include <incbin.h>
-#include <aotriton/_internal/triton_kernel.h>
 #include "../shim.[[shim_kernel_name]].h"
+#include <aotriton/_internal/triton_kernel.h>
+#include <incbin.h>
 #include <iostream>
 
 // [[human_readable_signature]]
@@ -17,7 +18,7 @@
 namespace { // Anonymous namespace
 
 struct PerfFields {
-    [[perf_fields]];
+  [[perf_fields]];
 };
 
 PerfFields image_perf_list [] = {

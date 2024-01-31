@@ -10,11 +10,18 @@ namespace aotriton {
 template<typename DeviceStreamType>
 class StreamTemplate {
 public:
-    StreamTemplate() : stream_(nullptr) {}
-    StreamTemplate(DeviceStreamType stream) : stream_(stream) {}
-    DeviceStreamType native() const { return stream_; }
+  StreamTemplate()
+    : stream_(nullptr) {
+  }
+  StreamTemplate(DeviceStreamType stream)
+    : stream_(stream) {
+  }
+  DeviceStreamType native() const {
+    return stream_;
+  }
+
 private:
-    DeviceStreamType stream_;
+  DeviceStreamType stream_;
 };
 
 using Stream = StreamTemplate<hipStream_t>;

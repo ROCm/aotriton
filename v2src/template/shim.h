@@ -1,10 +1,11 @@
+// clang-format off
 #pragma once
-#include <string>
-#include <functional>
+#include <aotriton/_internal/triton_kernel.h>
 #include <aotriton/dtypes.h>
 #include <aotriton/flash.h>
 #include <aotriton/runtime.h>
-#include <aotriton/_internal/triton_kernel.h>
+#include <functional>
+#include <string>
 
 namespace aotriton::v2::[[kernel_family_name]] {
 

@@ -22,6 +22,9 @@ all:
 	python python/generate_shim.py
 	(. build/venv/bin/activate; cd build; make -j $(NPROC) -f Makefile.shim)
 
+format:
+	find bindings/ include/ v2src/ \( -name '*.h' -or -name '*.cc' \) -not -path '*template/*' -exec clang-format -i {} \;
+
 test_compile:
 	hipcc -o build/test_compile test/test_compile.cc -L build -laotriton -Wl,-rpath=. -I/opt/rocm/include -Ibuild/
 

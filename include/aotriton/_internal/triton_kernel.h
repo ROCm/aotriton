@@ -15,15 +15,9 @@ namespace aotriton {
 
 class TritonKernel {
 public:
-  TritonKernel(const void* image,
-               size_t image_size,
-               dim3 block,
-               int shared_memory_size);
+  TritonKernel(const void* image, size_t image_size, dim3 block, int shared_memory_size);
 
-  hipError_t invoke(const char* kernel_name,
-                    dim3 grid,
-                    std::vector<void*>& args,
-                    hipStream_t stream);
+  hipError_t invoke(const char* kernel_name, dim3 grid, std::vector<void*>& args, hipStream_t stream);
 
 #if AOTRITON_USE_ZSTD
   void clear_decompressed_image();
