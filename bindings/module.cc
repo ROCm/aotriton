@@ -12,6 +12,7 @@ namespace pyaotriton {
   namespace v2 {
     namespace flash {
       void setup_module(py::module_ &m) {
+        m.def("check_gpu", &aotriton::v2::flash::check_gpu, py::arg("stream"));
         m.def("attn_fwd", &aotriton::v2::flash::attn_fwd,
               "Flash Attention Forward Pass", py::arg("q"), py::arg("k"),
               py::arg("v"), py::arg("sm_scale"), py::arg("softmax_lse"),

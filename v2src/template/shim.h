@@ -26,7 +26,7 @@ public:
 
     hipError_t lookup_optimal([[param_class_name]]& params, GpuArch arch);
     hipError_t launch(const [[param_class_name]]& params, hipStream_t stream);
-    int64_t get_arch_number(GpuArch arch);
+    static int64_t get_arch_number(GpuArch arch);
 
 private:
     GpuArch kernel_arch = GPU_ARCH_UNKNOWN;

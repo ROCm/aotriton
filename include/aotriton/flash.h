@@ -6,6 +6,9 @@
 
 namespace aotriton::v2::flash {
 
+hipError_t
+check_gpu(aotriton::Stream stream);
+
 using T4 = aotriton::TensorView<4>;
 using T2 = aotriton::TensorView<2>;
 using T1 = aotriton::TensorView<1>;
