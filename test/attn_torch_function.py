@@ -78,7 +78,7 @@ class _attention(torch.autograd.Function):
         # if q.shape[-1] <= 32:
         # do = do.contiguous()
         assert q.stride() == do.stride() # Hard requirement, hard-coded in the triton kernel
-        dq = torch.zeros_like(q, dtype=torch.float32)
+        dq = torch.zeros_like(q)
         dk = torch.empty_like(k)
         dv = torch.empty_like(v)
         delta = torch.empty_like(L)

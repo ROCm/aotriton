@@ -33,9 +33,9 @@ class bwd_kernel_dq(FlashKernel):
         'D': 2,
     }
     TYPE_CHOICES = {
-        frozenset(['Q', 'K', 'V', 'Out', 'dO']) : match_fwd('Q'),
+        frozenset(['Q', 'K', 'V', 'Out', 'dO', 'dQ']) : match_fwd('Q'),
         frozenset(['sm_scale']) : match_fwd( 'sm_scale'),
-        frozenset(['dQ', 'L', 'D']) : ['*fp32:16'],
+        frozenset(['L', 'D']) : ['*fp32:16'],
         frozenset(['seqlen_q', 'seqlen_k']) : ['u64'],
         frozenset(['dropout_p']) : match_fwd('dropout_p'),
         frozenset(['philox_seed']) : match_fwd('philox_seed'),

@@ -259,7 +259,7 @@ class _attention(torch.autograd.Function):
             # print(f'Full q: {q}', file=sys.stderr)
             # assert mask_allclose
         if q.requires_grad:
-            dq = torch.zeros_like(q, dtype=torch.float32)
+            dq = torch.zeros_like(q)
             DQ_BLOCK_M = min(seqlen_q, BLOCK)
             bwd_kernel_dq[(triton.cdiv(q.shape[2], DQ_BLOCK_M), q.shape[1], q.shape[0])](
                 q, k, v, ctx.sm_scale,
