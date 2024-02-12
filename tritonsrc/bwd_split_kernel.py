@@ -34,6 +34,7 @@ def bwd_kernel_dk_dv(
     stride_qz, stride_qh, stride_qm, stride_qk,
     stride_kz, stride_kh, stride_kn, stride_kk,
     stride_vz, stride_vh, stride_vk, stride_vn,
+    stride_oz, stride_oh, stride_om, stride_ok,
     seqlen_q, seqlen_k,
     dropout_p,
     philox_seed,
@@ -82,11 +83,11 @@ def bwd_kernel_dk_dv(
         block_shape=(BLOCK_DMODEL, BLOCK_N),
         order=(0, 1)
     )
-    do_offset = q_offset
+    do_offset = off_h * stride_oh + off_z * stride_oz
     DO_block_ptr = tl.make_block_ptr(
         base=DO + do_offset,
         shape=(seqlen_q, BLOCK_DMODEL),
-        strides=(stride_qm, stride_qk),
+        strides=(stride_om, stride_ok),
         offsets=(0, 0),
         block_shape=(BLOCK_M, BLOCK_DMODEL),
         order=(1, 0)
@@ -95,7 +96,7 @@ def bwd_kernel_dk_dv(
     # pointer to row-wise quantities in value-like data
     D_ptrs = D + off_zh * seqlen_q
     l_ptrs = L + off_zh * seqlen_q
-    qk_scale = sm_scale * 1.44269504
+    qk_scale = sm_scale * 1.44269504089
     # load k and v: they will stay in SRAM throughout
     k = tl.load(K_block_ptr) # (BLOCK_DMODEL, BLOCK_N)
     k = (k * qk_scale).to(K_block_ptr.type.element_ty)
@@ -204,6 +205,7 @@ def bwd_kernel_dq(
     stride_qz, stride_qh, stride_qm, stride_qk,
     stride_kz, stride_kh, stride_kn, stride_kk,
     stride_vz, stride_vh, stride_vk, stride_vn,
+    stride_oz, stride_oh, stride_om, stride_ok,
     seqlen_q, seqlen_k,
     dropout_p,
     philox_seed,
@@ -249,10 +251,11 @@ def bwd_kernel_dq(
         block_shape=(BLOCK_DMODEL, BLOCK_N),
         order=(0, 1)
     )
+    do_offset = off_h * stride_oh + off_z * stride_oz
     DO_block_ptr = tl.make_block_ptr(
-        base=DO + q_offset,
+        base=DO + do_offset,
         shape=(seqlen_q, BLOCK_DMODEL),
-        strides=(stride_qm, stride_qk),
+        strides=(stride_om, stride_ok),
         offsets=(start_m, 0),
         block_shape=(BLOCK_M, BLOCK_DMODEL),
         order=(1, 0)
@@ -261,7 +264,7 @@ def bwd_kernel_dq(
     # pointer to row-wise quantities in value-like data
     D_ptrs = D + off_zh * seqlen_q
     l_ptrs = L + off_zh * seqlen_q
-    qk_scale = sm_scale * 1.44269504
+    qk_scale = sm_scale * 1.44269504089
     # load q and do: they will stay in SRAM throughout
     q = tl.load(Q_block_ptr)
     q = (q * qk_scale).to(Q_block_ptr.type.element_ty)

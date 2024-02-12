@@ -9,6 +9,7 @@ class bwd_kernel_dk_dv(FlashKernel):
         'stride_qz', 'stride_qh', 'stride_qm', 'stride_qk',
         'stride_kz', 'stride_kh', 'stride_kn', 'stride_kk',
         'stride_vz', 'stride_vh', 'stride_vk', 'stride_vn',
+        'stride_oz', 'stride_oh', 'stride_om', 'stride_ok',
         'seqlen_q', 'seqlen_k',
         'dropout_p',
         'philox_seed',
@@ -24,6 +25,7 @@ class bwd_kernel_dk_dv(FlashKernel):
         'Q' : select_pattern(ARGUMENTS, 'stride_q'),
         'K' : select_pattern(ARGUMENTS, 'stride_k'),
         'V' : select_pattern(ARGUMENTS, 'stride_v'),
+        'DO' : select_pattern(ARGUMENTS, 'stride_o'),
     }
     TENSOR_RANKS = {
         '_default' : 4,
@@ -49,7 +51,8 @@ class bwd_kernel_dk_dv(FlashKernel):
         frozenset(['BLOCK_N']) : match_fwd('BLOCK_N'),
     }
     EXPECTED_IDENTICAL_TENSOR_STRIDES = [
-        {'Q', 'DQ', 'DO'}, # TODO: DO = DQ?
+        {'Q', 'DQ'},
+        # {'O', 'DO'}, # TODO: Confirm O is not used and remove it from the ARGUMENTS
         {'K', 'DK'},
         {'V', 'DV'},
     ]
