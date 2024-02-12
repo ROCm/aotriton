@@ -67,7 +67,7 @@ but in PyTorch API it does not present at all
 # @pytest.mark.parametrize('N_HEADS', [1, 4])
 @pytest.mark.parametrize('BATCH', [1, 2, 4])
 @pytest.mark.parametrize('N_HEADS', [1, 2, 4])
-@pytest.mark.parametrize('D_HEAD', [16,32,64,128])
+@pytest.mark.parametrize('D_HEAD', [16,32,64,128,256])
 # @pytest.mark.parametrize('D_HEAD', [128])
 # @pytest.mark.parametrize('seqlen_q', [16,32,64,128,256,512,1024])
 # @pytest.mark.parametrize('seqlen_k', [16,32,64,128,256,512,1024])
