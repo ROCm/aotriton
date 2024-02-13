@@ -1,3 +1,6 @@
+# Copyright © 2023-2024 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
 message("CMAKE_SOURCE_DIR ${CMAKE_SOURCE_DIR}")
 message("CMAKE_CURRENT_LIST_DIR ${CMAKE_CURRENT_LIST_DIR}")
 message("CMAKE_CURRENT_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}")

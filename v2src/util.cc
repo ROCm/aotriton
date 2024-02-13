@@ -1,3 +1,6 @@
+// Copyright © 2023-2024 Advanced Micro Devices, Inc.
+// SPDX-License-Identifier: MIT
+
 #include <aotriton/util.h>
 #include <string>
 #include <unordered_map>

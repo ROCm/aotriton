@@ -1,3 +1,6 @@
+# Copyright © 2023-2024 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
 import numpy as np
 from enum import Enum
 from .object_desc import ObjectFileDescription

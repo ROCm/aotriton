@@ -1,3 +1,6 @@
+// Copyright © 2023-2024 Advanced Micro Devices, Inc.
+// SPDX-License-Identifier: MIT
+
 // clang-format off
 #define INCBIN_PREFIX g_aotriton_FAMILY_[[kernel_family_name]]_KERNEL_[[shim_kernel_name]]_GPU_[[gpu]]_
 #define INCBIN_STYLE INCBIN_STYLE_SNAKE

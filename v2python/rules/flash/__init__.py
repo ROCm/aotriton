@@ -1,3 +1,6 @@
+# Copyright © 2023-2024 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
 from .attn_fwd import attn_fwd
 from .bwd_preprocess import bwd_preprocess
 from .bwd_kernel_dk_dv import bwd_kernel_dk_dv

@@ -1,3 +1,6 @@
+// Copyright © 2023-2024 Advanced Micro Devices, Inc.
+// SPDX-License-Identifier: MIT
+
 #ifndef AOTRITON_V2_API_RUNTIME_H
 #define AOTRITON_V2_API_RUNTIME_H
 

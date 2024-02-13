@@ -1,3 +1,6 @@
+# Copyright © 2023-2024 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
 from .rules import kernels as triton_kernels
 from .tuning_database import KernelTuningDatabase
 import io

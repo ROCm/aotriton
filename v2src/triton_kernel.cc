@@ -1,3 +1,6 @@
+// Copyright © 2023-2024 Advanced Micro Devices, Inc.
+// SPDX-License-Identifier: MIT
+
 #include <aotriton/_internal/triton_kernel.h>
 #include <aotriton/runtime.h>
 #include <incbin.h>
