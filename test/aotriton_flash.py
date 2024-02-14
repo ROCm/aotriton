@@ -1,3 +1,6 @@
+# Copyright © 2023-2024 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
 from pyaotriton.v2.flash import attn_fwd as fa_forward, attn_bwd as fa_backward
 from pyaotriton import T1, T2, T4, DType, Stream
 

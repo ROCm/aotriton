@@ -1,3 +1,6 @@
+// Copyright © 2023-2024 Advanced Micro Devices, Inc.
+// SPDX-License-Identifier: MIT
+
 #define INCBIN_PREFIX g_aotriton_kernel_for_shim_
 #define INCBIN_STYLE INCBIN_STYLE_SNAKE
 #include <incbin.h>

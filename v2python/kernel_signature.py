@@ -1,3 +1,6 @@
+# Copyright © 2023-2024 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
 from .gpu_targets import AOTRITON_GPU_ARCH_TUNING_STRING
 
 class KernelSignature(object):

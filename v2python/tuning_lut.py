@@ -1,3 +1,6 @@
+# Copyright © 2023-2024 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
 from .kernel_signature import KernelSignature
 from .kernel_desc import get_template
 import numpy as np

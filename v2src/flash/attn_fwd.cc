@@ -1,3 +1,6 @@
+// Copyright © 2023-2024 Advanced Micro Devices, Inc.
+// SPDX-License-Identifier: MIT
+
 #include <aotriton/flash.h>
 #include <aotriton/util.h>
 #include <flash/shim.attn_fwd.h>

@@ -1,3 +1,6 @@
+# Copyright © 2023-2024 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
 from ._common import FlashKernel, select_pattern, BinningLessOrEqual, BinningExact
 
 class attn_fwd(FlashKernel):

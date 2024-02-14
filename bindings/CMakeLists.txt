@@ -1,3 +1,6 @@
+# Copyright © 2023-2024 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
 aux_source_directory(. PYAOTRITON_SRC)
 # find_package(hip REQUIRED)
 pybind11_add_module(pyaotriton ${PYAOTRITON_SRC})

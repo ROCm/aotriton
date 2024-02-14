@@ -1,4 +1,6 @@
 #!/usr/bin/env python
+# Copyright © 2023-2024 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
 
 import torch
 from aotriton_flash import attn_fwd, attn_bwd
