@@ -41,7 +41,7 @@ def dropout_mask(philox_seed, philox_offset, dropout_p, m, n, stride):
     return rng_keep
 
 @triton.jit
-def _attn_fwd_inner_bad(
+def _attn_fwd_inner(
     acc, l_i, m_i, q,
     K_block_ptr, V_block_ptr,
     bias_ptr,
@@ -106,13 +106,11 @@ def _attn_fwd_inner_bad(
             else:
                 v = tl.load(V_block_ptr, boundary_check=(1,), padding_option="zero")
         # -- compute qk ----
-        """
         qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
         if STAGE == 2:
             mask = OFFS_M[:, None] >= (start_n + OFFS_N[None, :])
             qk = tl.where(mask, qk, float("-inf"))
         qk += tl.dot(q, k)
-        '''
         if bias_ptr is not None:
             if PADDED_BLOCK:
                 if bias_ptr.type.element_ty.is_block():
@@ -128,19 +126,12 @@ def _attn_fwd_inner_bad(
             # our optimization to use 2^x instead of e^x results in an additional
             # scale factor of log2(e) which we must also multiply the bias with.
             qk += (bias * 1.44269504089)
-        '''
         if PADDED_BLOCK:
             boundary_m = tl.full([BLOCK_M], total_tokens, dtype=tl.float32)
             size_n = start_n + OFFS_N[None,:]
             mask = size_n < boundary_m[:,None]
             qk = tl.where(mask, qk, float("-inf"))
             qk += tl.dot(q, k)
-        """
-        qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
-        if STAGE == 2:
-            mask = OFFS_M[:, None] >= (start_n + OFFS_N[None, :])
-            qk = tl.where(mask, qk, float("-inf"))
-        qk += tl.dot(q, k)
 
         m_ij = tl.maximum(m_i, tl.max(qk, 1))
         qk = qk - m_ij[:, None]
@@ -178,98 +169,6 @@ def _attn_fwd_inner_bad(
                 bias_ptr = tl.advance(bias_ptr, (0, BLOCK_N))
             else:
                 bias_ptr += BLOCK_N
-        if RETURN_ENCODED_SOFTMAX:
-            encoded_softmax_block_ptr = tl.advance(encoded_softmax_block_ptr, (0, BLOCK_N))
-    return acc, l_i, m_i
-
-@triton.jit
-def _attn_fwd_inner(
-    acc, l_i, m_i, q,
-    K_block_ptr, V_block_ptr,
-    bias_ptr,
-    start_m,
-    seqlen_k,
-    dropout_p,
-    philox_seed,
-    batch_philox_offset,
-    encoded_softmax_block_ptr,
-    total_tokens,
-    BLOCK_M: tl.constexpr,
-    BLOCK_DMODEL: tl.constexpr,
-    BLOCK_N: tl.constexpr,
-    STAGE: tl.constexpr,
-    OFFS_M: tl.constexpr,
-    OFFS_N: tl.constexpr,
-    PRE_LOAD_V: tl.constexpr,
-    ENABLE_DROPOUT: tl.constexpr,
-    RETURN_ENCODED_SOFTMAX: tl.constexpr,
-    PADDED_BLOCK: tl.constexpr,
-):
-    # range of values handled by this stage
-    if STAGE == 1: # "Solid" blocks of Causal masks
-        lo, hi = 0, min(seqlen_k, start_m * BLOCK_M)
-    elif STAGE == 2: # "Semi-solid", or "Transition" block of Causal mask
-        # Must use BLOCK_M, because the starting position of semi-solid block
-        # is determined by start_m * BLOCK_M
-        lo, hi = start_m * BLOCK_M, min(seqlen_k, start_m * BLOCK_M + BLOCK_M)
-        lo = tl.multiple_of(lo, BLOCK_M)
-        K_block_ptr = tl.advance(K_block_ptr, (0, lo))
-        V_block_ptr = tl.advance(V_block_ptr, (lo, 0))
-        if RETURN_ENCODED_SOFTMAX:
-            encoded_softmax_block_ptr = tl.advance(encoded_softmax_block_ptr, (0, lo))
-    else: # causal = False
-        lo, hi = 0, seqlen_k
-    # loop over k, v and update accumulator
-    for start_n in range(lo, hi, BLOCK_N):
-        if STAGE == 1 or STAGE == 3:
-            start_n = tl.multiple_of(start_n, BLOCK_N)
-        # -- compute qk ----
-        k = tl.load(K_block_ptr)
-        if PRE_LOAD_V:
-            v = tl.load(V_block_ptr)
-        qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
-        if STAGE == 2:
-            mask = OFFS_M[:, None] >= (start_n + OFFS_N[None, :])
-            qk = tl.where(mask, qk, float("-inf"))
-        if BLOCK_M == 1:
-            qk += tl.sum(tl.view(q, [BLOCK_DMODEL]) * tl.view(k, [BLOCK_DMODEL]))
-        else:
-            qk += tl.dot(q, k)
-        m_ij = tl.maximum(m_i, tl.max(qk, 1))
-        qk = qk - m_ij[:, None]
-        p = tl.math.exp2(qk)
-        # CAVEAT: Must update l_ij before applying dropout
-        l_ij = tl.sum(p, 1)
-        # Note about the conflicts of Flash attention algorithm and PyTorch's CUDA implementation
-        # PyTorch needs to return softmax(qk) (dropout mask encoded in sign bits)
-        # While Flash attention paper computer the dropout AFTER exp2(qk- m_ij)
-        if ENABLE_DROPOUT:
-            philox_offset = batch_philox_offset + start_m * BLOCK_M * seqlen_k + start_n
-            keep = dropout_mask(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, seqlen_k)
-            if RETURN_ENCODED_SOFTMAX:
-                tl.store(encoded_softmax_block_ptr, tl.where(keep, p, -p).to(encoded_softmax_block_ptr.type.element_ty)) # FIXME: This is correct code
-            p = tl.where(keep, p, 0.0)
-        elif RETURN_ENCODED_SOFTMAX:
-            tl.store(encoded_softmax_block_ptr, p.to(encoded_softmax_block_ptr.type.element_ty)) # FIXME: This is correct code
-        # -- update output accumulator --
-        alpha = tl.math.exp2(m_i - m_ij)
-        acc = acc * alpha[:, None]
-        if not PRE_LOAD_V:
-            v = tl.load(V_block_ptr)
-        '''
-        if ENABLE_DROPOUT:
-            v = (v / (1.0 - dropout_p)).to(V_block_ptr.type.element_ty)
-        '''
-        # -- update m_i and l_i
-        l_i = l_i * alpha + l_ij
-        # update m_i and l_i
-        m_i = m_ij
-        if BLOCK_M == 1:
-            acc += tl.view(p.to(V_block_ptr.type.element_ty), [1]) * tl.view(v, [BLOCK_DMODEL])
-        else:
-            acc += tl.dot(p.to(V_block_ptr.type.element_ty), v)
-        V_block_ptr = tl.advance(V_block_ptr, (BLOCK_N, 0))
-        K_block_ptr = tl.advance(K_block_ptr, (0, BLOCK_N))
         if RETURN_ENCODED_SOFTMAX:
             encoded_softmax_block_ptr = tl.advance(encoded_softmax_block_ptr, (0, BLOCK_N))
     return acc, l_i, m_i
