@@ -314,14 +314,15 @@ class _attention(torch.autograd.Function):
 
         philox_seed = 114514
         philox_offset = 1919810
-        MAX_BLOCK_M = 128 if dropout_p == 0 else 64
-        MAX_BLOCK_N = 32 if dropout_p == 0 else 32
+        MAX_BLOCK_M = 128 if dropout_p == 0 and not causal else 64
+        MAX_BLOCK_N = 32 if dropout_p == 0 and not causal else 32
+        '''
         MAX_BLOCK_M = MAX_BLOCK_M if is_supported_by_tl_dot(max_seqlens_q) else 1
         MAX_BLOCK_N = MAX_BLOCK_N if is_supported_by_tl_dot(max_seqlens_k) else 1
-
         if dtype == torch.float32:
             MAX_BLOCK_M = max(16, MAX_BLOCK_M // 2)
             MAX_BLOCK_N = max(16, MAX_BLOCK_N // 2)
+        '''
 
         b = None
         if autotune:
@@ -351,9 +352,13 @@ class _attention(torch.autograd.Function):
                 BLAS_TYPE=0,
             )
         else:
-            BLOCK_M = min(MAX_BLOCK_M, q.shape[2], k.shape[2])
-            BLOCK_N = min(MAX_BLOCK_N, q.shape[2], k.shape[2])
-            print(f'{BLOCK_M=} {BLOCK_N=}')
+            # BLOCK_M = min(MAX_BLOCK_M, q.shape[2], k.shape[2])
+            # BLOCK_N = min(MAX_BLOCK_N, q.shape[2], k.shape[2])
+            BLOCK_M = MAX_BLOCK_M
+            BLOCK_N = MAX_BLOCK_N
+            RETURN_ENCODED_SOFTMAX=encoded_softmax is not None
+            print(f'{BLOCK_M=} {BLOCK_N=} {RETURN_ENCODED_SOFTMAX=} seqlen_q={q.shape[2]} seqlen_k={k.shape[2]}',
+                    flush=True)
             bare_attn_fwd[grid](
                 q, k, v, b, sm_scale, M, o,
                 q.stride(0), q.stride(1), q.stride(2), q.stride(3),
@@ -378,7 +383,7 @@ class _attention(torch.autograd.Function):
                 BLOCK_N=BLOCK_N,
                 PRE_LOAD_V=False,
                 ENABLE_DROPOUT=dropout_p > 0.0,
-                RETURN_ENCODED_SOFTMAX=encoded_softmax is not None,
+                RETURN_ENCODED_SOFTMAX=RETURN_ENCODED_SOFTMAX,
                 BIAS_TYPE=0,
             )
 

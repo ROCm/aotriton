@@ -70,7 +70,7 @@ def _attn_fwd_inner(
         # Must use BLOCK_M, because the starting position of semi-solid block
         # is determined by start_m * BLOCK_M
         lo, hi = start_m * BLOCK_M, min(seqlen_k, start_m * BLOCK_M + BLOCK_M)
-        lo = tl.multiple_of(lo, BLOCK_M)
+        # lo = tl.multiple_of(lo, BLOCK_M)
         K_block_ptr = tl.advance(K_block_ptr, (0, lo))
         V_block_ptr = tl.advance(V_block_ptr, (lo, 0))
         if RETURN_ENCODED_SOFTMAX:
@@ -79,7 +79,7 @@ def _attn_fwd_inner(
     # In the loop,  we will mask the elements of BLOCK_N that do not exist.
     elif PADDED_BLOCK:
         lo, hi = seqlen_k, seqlen_k + BLOCK_N
-        lo = tl.multiple_of(lo, BLOCK_N)
+        # lo = tl.multiple_of(lo, BLOCK_N)
         K_block_ptr = tl.advance(K_block_ptr, (0, lo))
         V_block_ptr = tl.advance(V_block_ptr, (lo, 0))
         if bias_ptr is not None:
@@ -92,8 +92,10 @@ def _attn_fwd_inner(
         lo, hi = 0, seqlen_k
     # loop over k, v and update accumulator
     for start_n in range(lo, hi, BLOCK_N):
+        '''
         if STAGE == 1 or STAGE == 3:
             start_n = tl.multiple_of(start_n, BLOCK_N)
+        '''
         # For padded blocks, we will overrun the tensor size if
         # we load all BLOCK_N. For others, the blocks are all within range.
         if PADDED_BLOCK:
@@ -109,6 +111,11 @@ def _attn_fwd_inner(
         qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
         if STAGE == 2:
             mask = OFFS_M[:, None] >= (start_n + OFFS_N[None, :])
+            qk = tl.where(mask, qk, float("-inf"))
+        if PADDED_BLOCK:
+            boundary_m = tl.full([BLOCK_M], total_tokens, dtype=tl.float32)
+            size_n = start_n + OFFS_N[None,:]
+            mask = size_n < boundary_m[:,None]
             qk = tl.where(mask, qk, float("-inf"))
         qk += tl.dot(q, k)
         if bias_ptr is not None:
@@ -126,12 +133,6 @@ def _attn_fwd_inner(
             # our optimization to use 2^x instead of e^x results in an additional
             # scale factor of log2(e) which we must also multiply the bias with.
             qk += (bias * 1.44269504089)
-        if PADDED_BLOCK:
-            boundary_m = tl.full([BLOCK_M], total_tokens, dtype=tl.float32)
-            size_n = start_n + OFFS_N[None,:]
-            mask = size_n < boundary_m[:,None]
-            qk = tl.where(mask, qk, float("-inf"))
-            qk += tl.dot(q, k)
 
         m_ij = tl.maximum(m_i, tl.max(qk, 1))
         qk = qk - m_ij[:, None]
@@ -361,7 +362,7 @@ def attn_fwd(
             PRE_LOAD_V,
             ENABLE_DROPOUT,
             RETURN_ENCODED_SOFTMAX,
-            PADDED_BLOCK=False,
+            PADDED_BLOCK=True,
         )
     # epilogue
     # write back m
