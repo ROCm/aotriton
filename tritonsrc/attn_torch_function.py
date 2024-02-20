@@ -351,6 +351,9 @@ class _attention(torch.autograd.Function):
                 BLAS_TYPE=0,
             )
         else:
+            BLOCK_M = min(MAX_BLOCK_M, q.shape[2], k.shape[2])
+            BLOCK_N = min(MAX_BLOCK_N, q.shape[2], k.shape[2])
+            print(f'{BLOCK_M=} {BLOCK_N=}')
             bare_attn_fwd[grid](
                 q, k, v, b, sm_scale, M, o,
                 q.stride(0), q.stride(1), q.stride(2), q.stride(3),
@@ -370,9 +373,9 @@ class _attention(torch.autograd.Function):
                 encoded_softmax=encoded_softmax,
                 VARLEN=False,
                 STAGE=stage,
-                BLOCK_M=min(MAX_BLOCK_M, q.shape[2], k.shape[2]),
+                BLOCK_M=BLOCK_M,
                 BLOCK_DMODEL=Lk,
-                BLOCK_N=min(MAX_BLOCK_N, q.shape[2], k.shape[2]),
+                BLOCK_N=BLOCK_N,
                 PRE_LOAD_V=False,
                 ENABLE_DROPOUT=dropout_p > 0.0,
                 RETURN_ENCODED_SOFTMAX=encoded_softmax is not None,

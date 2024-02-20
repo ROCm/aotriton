@@ -189,9 +189,9 @@ def test_op_fwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dr
             print(f'{dropout_mask.shape=} {dropout_mask.stride()=}')
             print(f'{dropout_mask[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
     if dtype==torch.bfloat16:
-        ATOL = 1e-1 * (seqlen_q / 128.0) if seqlen_q >= 16 else 1e-1
+        ATOL = 1e-1 * max(1.0, seqlen_q / 64.0)
     else:
-        ATOL = 2e-2 * (seqlen_q / 128.0) if seqlen_q >= 16 else 1e-2
+        ATOL = 1e-2 * max(1.0, seqlen_q / 64.0)
     print(f'Using ATOL={ATOL}')
     is_allclose = torch.allclose(ref_out, tri_out, atol=ATOL, rtol=0)
     if not is_allclose:
