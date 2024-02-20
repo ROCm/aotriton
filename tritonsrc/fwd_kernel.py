@@ -225,11 +225,11 @@ def _attn_fwd_inner(
             start_n = tl.multiple_of(start_n, BLOCK_N)
         # -- compute qk ----
         k = tl.load(K_block_ptr)
-        if pre_load_v:
+        if PRE_LOAD_V:
             v = tl.load(V_block_ptr)
         qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
         if STAGE == 2:
-            mask = offs_m[:, None] >= (start_n + offs_n[None, :])
+            mask = OFFS_M[:, None] >= (start_n + OFFS_N[None, :])
             qk = tl.where(mask, qk, float("-inf"))
         if BLOCK_M == 1:
             qk += tl.sum(tl.view(q, [BLOCK_DMODEL]) * tl.view(k, [BLOCK_DMODEL]))
@@ -254,7 +254,7 @@ def _attn_fwd_inner(
         # -- update output accumulator --
         alpha = tl.math.exp2(m_i - m_ij)
         acc = acc * alpha[:, None]
-        if not pre_load_v:
+        if not PRE_LOAD_V:
             v = tl.load(V_block_ptr)
         '''
         if ENABLE_DROPOUT:
@@ -273,6 +273,7 @@ def _attn_fwd_inner(
         if RETURN_ENCODED_SOFTMAX:
             encoded_softmax_block_ptr = tl.advance(encoded_softmax_block_ptr, (0, BLOCK_N))
     return acc, l_i, m_i
+
 @triton.jit
 def attn_fwd(
     Q, K, V, B, sm_scale, M, Out,
