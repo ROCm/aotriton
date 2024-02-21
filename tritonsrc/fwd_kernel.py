@@ -62,6 +62,7 @@ def _attn_fwd_inner(
     ENABLE_DROPOUT: tl.constexpr,
     RETURN_ENCODED_SOFTMAX: tl.constexpr,
     PADDED_BLOCK: tl.constexpr,
+    PADDED_HEAD: tl.constexpr,
 ):
     # range of values handled by this stage
     if STAGE == 1: # "Solid" blocks of Causal masks
@@ -100,12 +101,12 @@ def _attn_fwd_inner(
         '''
         # For padded blocks, we will overrun the tensor size if
         # we load all BLOCK_N. For others, the blocks are all within range.
-        if PADDED_BLOCK or STAGE == 2:
+        if (PADDED_BLOCK or STAGE == 2) or PADDED_HEAD:
             k = tl.load(K_block_ptr, boundary_check=(1,0), padding_option="zero")
         else:
             k = tl.load(K_block_ptr, boundary_check=(0,), padding_option="zero")
         if PRE_LOAD_V:
-            if PADDED_BLOCK or STAGE == 2:
+            if (PADDED_BLOCK or STAGE == 2) or PADDED_HEAD:
                 v = tl.load(V_block_ptr, boundary_check=(0,1), padding_option="zero")
             else:
                 v = tl.load(V_block_ptr, boundary_check=(1,), padding_option="zero")
@@ -156,7 +157,7 @@ def _attn_fwd_inner(
         alpha = tl.math.exp2(m_i - m_ij)
         acc = acc * alpha[:, None]
         if not PRE_LOAD_V:
-            if PADDED_BLOCK or STAGE == 2:
+            if (PADDED_BLOCK or STAGE == 2) or PADDED_HEAD:
                 v = tl.load(V_block_ptr, boundary_check=(0,1), padding_option="zero")
             else:
                 v = tl.load(V_block_ptr)
@@ -200,6 +201,7 @@ def attn_fwd(
     ENABLE_DROPOUT: tl.constexpr,
     RETURN_ENCODED_SOFTMAX: tl.constexpr,
     BIAS_TYPE: tl.constexpr,
+    PADDED_HEAD: tl.constexpr,  # Cannot be inferred by AOT Compiler
 ):
     is_mqa = head_dim_q != head_dim_k
     start_m = tl.program_id(0)
@@ -228,7 +230,6 @@ def attn_fwd(
     else:
         off_h_k = off_h_q
     need_padding = False
-    extra_tokens_n = 0
     if seqlen_k < BLOCK_N:
         need_padding = True
         extra_tokens_n = BLOCK_N - seqlen_k
@@ -332,6 +333,7 @@ def attn_fwd(
                 ENABLE_DROPOUT,
                 RETURN_ENCODED_SOFTMAX,
                 PADDED_BLOCK=False,
+                PADDED_HEAD=PADDED_HEAD,
             )
         tl.debug_barrier()
         if need_padding:
@@ -346,6 +348,7 @@ def attn_fwd(
                 ENABLE_DROPOUT,
                 RETURN_ENCODED_SOFTMAX,
                 PADDED_BLOCK=True,
+                PADDED_HEAD=PADDED_HEAD,
             )
     # stage 2: on-band
     if STAGE & 2:
@@ -363,6 +366,7 @@ def attn_fwd(
             ENABLE_DROPOUT,
             RETURN_ENCODED_SOFTMAX,
             PADDED_BLOCK=False,
+            PADDED_HEAD=PADDED_HEAD,
         )
     # epilogue
     # write back m

@@ -68,6 +68,7 @@ def tuned_attn_fwd(
     ENABLE_DROPOUT: tl.constexpr,
     RETURN_ENCODED_SOFTMAX: tl.constexpr,
     BIAS_TYPE: tl.constexpr,
+    PADDED_HEAD: tl.constexpr,
 ):
     bare_attn_fwd(
             Q, K, V, B, sm_scale, M, Out,
@@ -92,6 +93,7 @@ def tuned_attn_fwd(
             ENABLE_DROPOUT,
             RETURN_ENCODED_SOFTMAX,
             BIAS_TYPE,
+            PADDED_HEAD=PADDED_HEAD,
             )
 
 TRITON_CONFIG_LIST_BWD_LARGE_BLOCK = [
@@ -275,6 +277,7 @@ class _attention(torch.autograd.Function):
         assert Lq == Lk and Lk == Lv
         head_dim_rounded = 2 ** (Lk - 1).bit_length()
         head_dim_rounded = max(16, head_dim_rounded)
+        padded_head = head_dim_rounded != Lk
         max_seqlens_q = q.shape[2]
         max_seqlens_k = k.shape[2]
         o = torch.zeros_like(q)
@@ -352,6 +355,7 @@ class _attention(torch.autograd.Function):
                 ENABLE_DROPOUT=dropout_p > 0.0,
                 RETURN_ENCODED_SOFTMAX=encoded_softmax is not None,
                 BLAS_TYPE=0,
+                PADDED_HEAD=padded_head,
             )
         else:
             # BLOCK_M = min(MAX_BLOCK_M, q.shape[2], k.shape[2])
@@ -387,6 +391,7 @@ class _attention(torch.autograd.Function):
                 ENABLE_DROPOUT=dropout_p > 0.0,
                 RETURN_ENCODED_SOFTMAX=RETURN_ENCODED_SOFTMAX,
                 BIAS_TYPE=0,
+                PADDED_HEAD=padded_head,
             )
 
         ctx.autotune = autotune
