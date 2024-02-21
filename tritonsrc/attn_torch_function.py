@@ -273,6 +273,8 @@ class _attention(torch.autograd.Function):
         # shape constraints
         Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
         assert Lq == Lk and Lk == Lv
+        head_dim_rounded = 2 ** (Lk - 1).bit_length()
+        head_dim_rounded = max(16, head_dim_rounded)
         max_seqlens_q = q.shape[2]
         max_seqlens_k = k.shape[2]
         o = torch.zeros_like(q)
@@ -346,7 +348,7 @@ class _attention(torch.autograd.Function):
                 encoded_softmax=encoded_softmax,
                 VARLEN=False,
                 STAGE=stage,
-                BLOCK_DMODEL=Lk,
+                BLOCK_DMODEL=head_dim_rounded,
                 ENABLE_DROPOUT=dropout_p > 0.0,
                 RETURN_ENCODED_SOFTMAX=encoded_softmax is not None,
                 BLAS_TYPE=0,
@@ -379,7 +381,7 @@ class _attention(torch.autograd.Function):
                 VARLEN=False,
                 STAGE=stage,
                 BLOCK_M=BLOCK_M,
-                BLOCK_DMODEL=Lk,
+                BLOCK_DMODEL=head_dim_rounded,
                 BLOCK_N=BLOCK_N,
                 PRE_LOAD_V=False,
                 ENABLE_DROPOUT=dropout_p > 0.0,
