@@ -47,11 +47,11 @@ def _attn_fwd_inner(
     bias_ptr,
     start_m,
     seqlen_k,
+    seqlen_k_faligned,
     dropout_p,
     philox_seed,
     batch_philox_offset,
     encoded_softmax_block_ptr,
-    total_tokens,
     BLOCK_M: tl.constexpr,
     BLOCK_DMODEL: tl.constexpr,
     BLOCK_N: tl.constexpr,
@@ -100,12 +100,12 @@ def _attn_fwd_inner(
         '''
         # For padded blocks, we will overrun the tensor size if
         # we load all BLOCK_N. For others, the blocks are all within range.
-        if PADDED_BLOCK:
+        if PADDED_BLOCK or STAGE == 2:
             k = tl.load(K_block_ptr, boundary_check=(1,0), padding_option="zero")
         else:
             k = tl.load(K_block_ptr, boundary_check=(0,), padding_option="zero")
         if PRE_LOAD_V:
-            if PADDED_BLOCK:
+            if PADDED_BLOCK or STAGE == 2:
                 v = tl.load(V_block_ptr, boundary_check=(0,1), padding_option="zero")
             else:
                 v = tl.load(V_block_ptr, boundary_check=(1,), padding_option="zero")
@@ -115,7 +115,7 @@ def _attn_fwd_inner(
             mask = OFFS_M[:, None] >= (start_n + OFFS_N[None, :])
             qk = tl.where(mask, qk, float("-inf"))
         if PADDED_BLOCK:
-            boundary_m = tl.full([BLOCK_M], total_tokens, dtype=tl.float32)
+            boundary_m = tl.full([BLOCK_M], seqlen_k_faligned, dtype=tl.float32)
             size_n = start_n + OFFS_N[None,:]
             mask = size_n < boundary_m[:,None]
             qk = tl.where(mask, qk, float("-inf"))
@@ -126,7 +126,7 @@ def _attn_fwd_inner(
                     bias = tl.load(bias_ptr,boundary_check=(1,), padding_option="zero")
                 else:
                     size_n = start_n + OFFS_N
-                    boundary_n = tl.full([BLOCK_N], total_tokens, dtype=tl.float32)
+                    boundary_n = tl.full([BLOCK_N], seqlen_k_faligned, dtype=tl.float32)
                     bias_padding = tl.full([BLOCK_N], 0, dtype=tl.float32)
                     bias = tl.load(bias_ptr, mask=size_n < boundary_n, other=bias_padding)
             else:
@@ -156,7 +156,7 @@ def _attn_fwd_inner(
         alpha = tl.math.exp2(m_i - m_ij)
         acc = acc * alpha[:, None]
         if not PRE_LOAD_V:
-            if PADDED_BLOCK:
+            if PADDED_BLOCK or STAGE == 2:
                 v = tl.load(V_block_ptr, boundary_check=(0,1), padding_option="zero")
             else:
                 v = tl.load(V_block_ptr)
@@ -232,9 +232,13 @@ def attn_fwd(
     if seqlen_k < BLOCK_N:
         need_padding = True
         extra_tokens_n = BLOCK_N - seqlen_k
+        seqlen_k_faligned = 0 # floor aligned
     elif seqlen_k % BLOCK_N:
         need_padding = True
         extra_tokens_n = seqlen_k % BLOCK_N
+        seqlen_k_faligned = seqlen_k - extra_tokens_n
+    else:
+        seqlen_k_faligned = seqlen_k
 
     q_offset = off_z * stride_qz +  off_h_q * stride_qh + cu_seqlens_q_start * stride_qm
     Q_block_ptr = tl.make_block_ptr(
@@ -316,14 +320,12 @@ def attn_fwd(
         encoded_softmax_block_ptr = 0
     if STAGE & 1:
         # equal to N_CTX if N_CTX is already a multiple of block_M
-        seqlen_aligned = seqlen_k - extra_tokens_n
         if seqlen_k >= BLOCK_N:
             acc, l_i, m_i = _attn_fwd_inner(
                 acc, l_i, m_i, q, K_block_ptr, V_block_ptr,
                 bias_ptr,
-                start_m, seqlen_aligned,
+                start_m, seqlen_k_faligned, seqlen_k_faligned,
                 dropout_p, philox_seed, batch_philox_offset, encoded_softmax_block_ptr,
-                seqlen_aligned,
                 BLOCK_M, BLOCK_DMODEL, BLOCK_N,
                 4 - STAGE, offs_m, offs_n,
                 PRE_LOAD_V,
@@ -333,14 +335,11 @@ def attn_fwd(
             )
         tl.debug_barrier()
         if need_padding:
-            if seqlen_k < BLOCK_N:
-                seqlen_aligned = 0
             acc, l_i, m_i = _attn_fwd_inner(
                 acc, l_i, m_i, q, K_block_ptr, V_block_ptr,
                 bias_ptr,
-                start_m, seqlen_aligned,
+                start_m, seqlen_k_faligned, seqlen_k,
                 dropout_p, philox_seed, batch_philox_offset, encoded_softmax_block_ptr,
-                seqlen_k,
                 BLOCK_M, BLOCK_DMODEL, BLOCK_N,
                 4 - STAGE, offs_m, offs_n,
                 PRE_LOAD_V,
@@ -356,15 +355,14 @@ def attn_fwd(
         acc, l_i, m_i = _attn_fwd_inner(
             acc, l_i, m_i, q, K_block_ptr, V_block_ptr,
             bias_ptr,
-            start_m, seqlen_k,
+            start_m, seqlen_k, seqlen_k_faligned,
             dropout_p, philox_seed, batch_philox_offset, encoded_softmax_block_ptr,
-            seqlen_aligned,
             BLOCK_M, BLOCK_DMODEL, BLOCK_N,
             2, offs_m, offs_n,
             PRE_LOAD_V,
             ENABLE_DROPOUT,
             RETURN_ENCODED_SOFTMAX,
-            PADDED_BLOCK=True,
+            PADDED_BLOCK=False,
         )
     # epilogue
     # write back m
