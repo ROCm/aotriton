@@ -373,9 +373,9 @@ def attn_fwd(
         acc = acc / (1 - dropout_p)
     m_ptrs = M + off_zh * max_seqlens_q + offs_m
     # Check for last block_M
-    overflow_size = (start_m * BLOCK_M) - seqlen_q
+    overflow_size = (start_m * BLOCK_M + BLOCK_M) - seqlen_q
     if overflow_size > 0:
-        boundary = tl.full((BLOCK_M,), overflow_size, dtype=tl.float32)
+        boundary = tl.full((BLOCK_M,), BLOCK_M - overflow_size, dtype=tl.int32)
         # This is a > check because mask being 0 blocks the store.
         m_ptrs_mask = boundary > tl.arange(0, BLOCK_M)
         tl.store(m_ptrs, m_i + tl.math.log2(l_i), mask=m_ptrs_mask)
