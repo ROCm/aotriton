@@ -71,8 +71,12 @@ but in PyTorch API it does not present at all
 @pytest.mark.parametrize('N_HEADS', [1, 2, 4])
 @pytest.mark.parametrize('D_HEAD', [16,32,64,128,256])
 # @pytest.mark.parametrize('D_HEAD', [128])
-@pytest.mark.parametrize('seqlen_q', [16,32,64,128,256,512,1024])
-@pytest.mark.parametrize('seqlen_k', [16,32,64,128,256,512,1024])
+# Complete set
+# @pytest.mark.parametrize('seqlen_q', [4,8,16,17,32,64,128,143,256,512,1024,2048])
+# @pytest.mark.parametrize('seqlen_k', [4,8,16,23,32,64,128,256,512,587,1024,2048])
+# PyTorch set
+@pytest.mark.parametrize('seqlen_q', [4, 8, 64, 143, 256, 512, 1024, 2048])
+@pytest.mark.parametrize('seqlen_k', [4, 8, 64, 128, 256, 587, 1024, 2048])
 # @pytest.mark.parametrize('seqlen_q', [128,256,512,1024])
 # @pytest.mark.parametrize('seqlen_k', [128,256,512,1024])
 # @pytest.mark.parametrize('seqlen_q', [32, 128])
@@ -80,12 +84,14 @@ but in PyTorch API it does not present at all
 @pytest.mark.parametrize('causal', [False, True])
 @pytest.mark.parametrize('dropout_p', [0.0, 0.5])
 # @pytest.mark.parametrize('dropout_p', [0.0])
-# @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
-@pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16, torch.float32])
+@pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
+# @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16, torch.float32])
 @pytest.mark.parametrize('sm_scale', [0.0, 1.2])
 @pytest.mark.parametrize('storage_flip', [False, True])
 # @pytest.mark.parametrize('return_encoded_softmax', [False])
 def test_op_fwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
+    if causal and seqlen_q != seqlen_k:
+        pytest.skip("PyTorch's Flash V2 does not accept casual=True when seqlen_q != seqlen_k. Skipping")
     torch.manual_seed(20)
     print(f"test_op_fwd {BATCH=}, {N_HEADS=}, {seqlen_q=}, {seqlen_k=}, {D_HEAD=}, {causal=}")
     SPARSE_HEAD_SINCE = 3
