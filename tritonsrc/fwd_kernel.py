@@ -82,6 +82,8 @@ def _attn_fwd_inner(
         # lo = tl.multiple_of(lo, BLOCK_N)
         K_block_ptr = tl.advance(K_block_ptr, (0, lo))
         V_block_ptr = tl.advance(V_block_ptr, (lo, 0))
+        if RETURN_ENCODED_SOFTMAX:
+            encoded_softmax_block_ptr = tl.advance(encoded_softmax_block_ptr, (0, lo))
         if bias_ptr is not None:
             if bias_ptr.type.element_ty.is_block():
                 bias_ptr = tl.advance(bias_ptr, (0, lo))
@@ -146,10 +148,10 @@ def _attn_fwd_inner(
             philox_offset = batch_philox_offset + start_m * BLOCK_M * seqlen_k + start_n
             keep = dropout_mask(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, seqlen_k)
             if RETURN_ENCODED_SOFTMAX:
-                tl.store(encoded_softmax_block_ptr, tl.where(keep, p, -p).to(encoded_softmax_block_ptr.type.element_ty))
+                tl.store(encoded_softmax_block_ptr, tl.where(keep, p, -p).to(encoded_softmax_block_ptr.type.element_ty), boundary_check=(0,1))
             p = tl.where(keep, p, 0.0)
         elif RETURN_ENCODED_SOFTMAX:
-            tl.store(encoded_softmax_block_ptr, p.to(encoded_softmax_block_ptr.type.element_ty))
+            tl.store(encoded_softmax_block_ptr, p.to(encoded_softmax_block_ptr.type.element_ty), boundary_check=(0,1))
         # -- update output accumulator --
         alpha = tl.math.exp2(m_i - m_ij)
         acc = acc * alpha[:, None]
