@@ -76,6 +76,7 @@ def _attn_fwd_inner(
         V_block_ptr = tl.advance(V_block_ptr, (lo, 0))
         if RETURN_ENCODED_SOFTMAX:
             encoded_softmax_block_ptr = tl.advance(encoded_softmax_block_ptr, (0, lo))
+        tl.static_assert(PADDED_BLOCK == False, 'STAGE=2 should not be used with PADDED_BLOCK=True')
     # So here, we are computing the elements for that last irregular block.
     # In the loop,  we will mask the elements of BLOCK_N that do not exist.
     elif PADDED_BLOCK:
@@ -160,7 +161,7 @@ def _attn_fwd_inner(
             if (PADDED_BLOCK or STAGE == 2) or PADDED_HEAD:
                 v = tl.load(V_block_ptr, boundary_check=(0,1), padding_option="zero")
             else:
-                v = tl.load(V_block_ptr)
+                v = tl.load(V_block_ptr, boundary_check=(1,), padding_option="zero")
         # -- update m_i and l_i
         l_i = l_i * alpha + l_ij
         # update m_i and l_i
