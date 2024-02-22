@@ -3,8 +3,10 @@
 
 #include <aotriton/flash.h>
 #include <aotriton/util.h>
+#include <aotriton/_internal/util.h>
 #include <flash/shim.attn_fwd.h>
 #include <iostream>
+#include <bit>
 
 #ifdef NDEBUG
 #define AOTRITON_VERBOSE 0
@@ -48,25 +50,40 @@ attn_fwd(T4 q,
 #endif
     return grid;
   };
-  int head_size = q.size(3);
+  T1 empty_tensor_1(0, {0}, {0}, aotriton::kUInt32);
+  T4 empty_tensor_4(0, {0,0,0,0}, {0,0,0,0}, q.dtype());
+  int seqlen_q = q.size(2);
+  int seqlen_k = k.size(2);
+  int head_dim_q = q.size(3);
+  int head_dim_k = k.size(3);
   // Requires C++ 20
+  int head_dim_rounded = aotriton::bit_ceil(head_dim_q);
+  // Also requires C++ 20
   AttnFwdParams params = {
     .Q = &q,
     .K = &k,
     .V = &v,
+    .B = &empty_tensor_4,
     .Out = &out,
     .encoded_softmax = &encoded_softmax,
     .sm_scale = sm_scale,
     .M = &softmax_lse,
-    .seqlen_q = q.size(2),
-    .seqlen_k = k.size(2),
+    .cu_seqlens_q = &empty_tensor_1,
+    .cu_seqlens_k = &empty_tensor_1,
+    .seqlen_q = seqlen_q,
+    .seqlen_k = seqlen_k,
+    .head_dim_q = head_dim_q,
+    .head_dim_k = head_dim_k,
     .dropout_p = dropout_p,
     .philox_seed = philox_seed,
     .philox_offset_base = static_cast<uint32_t>(philox_offset),
+    .VARLEN = false,
     .STAGE = is_causal ? kUseCausalBits : kNoCausalBits,
-    .BLOCK_DMODEL = head_size,
+    .BLOCK_DMODEL = head_dim_rounded,
     .ENABLE_DROPOUT = dropout_p > 0.0,
     .RETURN_ENCODED_SOFTMAX = bool(encoded_softmax),
+    .BIAS_TYPE = 0,
+    .PADDED_HEAD = head_dim_rounded != head_dim_q,
   };
   AttnFwdContext context;
   context.grid_calculator = grid_calculator;
