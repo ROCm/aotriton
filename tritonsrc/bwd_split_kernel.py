@@ -37,7 +37,8 @@ def bwd_kernel_dk_dv(
     stride_kz, stride_kh, stride_kn, stride_kk,
     stride_vz, stride_vh, stride_vk, stride_vn,
     stride_oz, stride_oh, stride_om, stride_ok,
-    seqlen_q, seqlen_k,
+    max_seqlens_q, max_seqlens_k,
+    head_dim,
     dropout_p,
     philox_seed,
     philox_offset_base,
@@ -46,12 +47,16 @@ def bwd_kernel_dk_dv(
     BLOCK_N: tl.constexpr,
     CAUSAL: tl.constexpr,
     ENABLE_DROPOUT: tl.constexpr,
+    PADDED_HEAD: tl.constexpr,
 ):
     start_m = tl.program_id(0) * BLOCK_N
     off_h = tl.program_id(1) # head index
     off_z = tl.program_id(2) # batch index
     num_h = tl.num_programs(1)
     num_z = tl.num_programs(2)
+    # TODO: Support varlen here
+    seqlen_q = max_seqlens_q
+    seqlen_k = max_seqlens_k
     # initialize offsets
     offs_m = start_m + tl.arange(0, BLOCK_N)
     offs_n = tl.arange(0, BLOCK_M)
@@ -61,7 +66,7 @@ def bwd_kernel_dk_dv(
     q_offset = off_h * stride_qh + off_z * stride_qz
     Q_block_ptr = tl.make_block_ptr(
         base=Q + q_offset,
-        shape=(seqlen_q, BLOCK_DMODEL),
+        shape=(seqlen_q, head_dim),
         strides=(stride_qm, stride_qk),
         offsets=(0, 0),
         block_shape=(BLOCK_M, BLOCK_DMODEL),
@@ -70,7 +75,7 @@ def bwd_kernel_dk_dv(
     k_offset = off_h * stride_kh + off_z * stride_kz
     K_block_ptr = tl.make_block_ptr(
         base=K + k_offset,
-        shape=(BLOCK_DMODEL, seqlen_k),
+        shape=(head_dim, seqlen_k),
         strides=(stride_kk, stride_kn),
         offsets=(0, start_m),
         block_shape=(BLOCK_DMODEL, BLOCK_N),
@@ -79,7 +84,7 @@ def bwd_kernel_dk_dv(
     v_offset = off_h * stride_vh + off_z * stride_vz
     VT_block_ptr = tl.make_block_ptr(
         base=V + v_offset,
-        shape=(BLOCK_DMODEL, seqlen_k),
+        shape=(head_dim, seqlen_k),
         strides=(stride_vn, stride_vk),
         offsets=(0, start_m),
         block_shape=(BLOCK_DMODEL, BLOCK_N),
@@ -88,7 +93,7 @@ def bwd_kernel_dk_dv(
     do_offset = off_h * stride_oh + off_z * stride_oz
     DO_block_ptr = tl.make_block_ptr(
         base=DO + do_offset,
-        shape=(seqlen_q, BLOCK_DMODEL),
+        shape=(seqlen_q, head_dim),
         strides=(stride_om, stride_ok),
         offsets=(0, 0),
         block_shape=(BLOCK_M, BLOCK_DMODEL),
@@ -208,7 +213,8 @@ def bwd_kernel_dq(
     stride_kz, stride_kh, stride_kn, stride_kk,
     stride_vz, stride_vh, stride_vk, stride_vn,
     stride_oz, stride_oh, stride_om, stride_ok,
-    seqlen_q, seqlen_k,
+    max_seqlens_q, max_seqlens_k,
+    head_dim,
     dropout_p,
     philox_seed,
     philox_offset_base,
@@ -216,12 +222,16 @@ def bwd_kernel_dq(
     BLOCK_N: tl.constexpr,
     CAUSAL: tl.constexpr,
     ENABLE_DROPOUT: tl.constexpr,
+    PADDED_HEAD: tl.constexpr,
 ):
     start_m = tl.program_id(0) * BLOCK_M
     off_h = tl.program_id(1) # head index
     off_z = tl.program_id(2) # batch index
     num_h = tl.num_programs(1)
     num_z = tl.num_programs(2)
+    # TODO: Support varlen here
+    seqlen_q = max_seqlens_q
+    seqlen_k = max_seqlens_k
     # initialize offsets
     offs_m = start_m + tl.arange(0, BLOCK_M)
     offs_n = tl.arange(0, BLOCK_N)
@@ -229,7 +239,7 @@ def bwd_kernel_dq(
     q_offset = off_h * stride_qh + off_z * stride_qz
     Q_block_ptr = tl.make_block_ptr(
         base=Q + q_offset,
-        shape=(seqlen_q, BLOCK_DMODEL),
+        shape=(seqlen_q, head_dim),
         strides=(stride_qm, stride_qk),
         offsets=(start_m, 0),
         block_shape=(BLOCK_M, BLOCK_DMODEL),
@@ -238,7 +248,7 @@ def bwd_kernel_dq(
     k_offset = off_h * stride_kh + off_z * stride_kz
     K_block_ptr = tl.make_block_ptr(
         base=K + k_offset,
-        shape=(BLOCK_DMODEL, seqlen_k),
+        shape=(head_dim, seqlen_k),
         strides=(stride_kk, stride_kn),
         offsets=(0, 0),
         block_shape=(BLOCK_DMODEL, BLOCK_N),
@@ -247,7 +257,7 @@ def bwd_kernel_dq(
     v_offset = off_h * stride_vh + off_z * stride_vz
     V_block_ptr = tl.make_block_ptr(
         base=V + v_offset,
-        shape=(BLOCK_DMODEL, seqlen_k),
+        shape=(head_dim, seqlen_k),
         strides=(stride_vn, stride_vk),
         offsets=(0, 0),
         block_shape=(BLOCK_DMODEL, BLOCK_N),
@@ -256,7 +266,7 @@ def bwd_kernel_dq(
     do_offset = off_h * stride_oh + off_z * stride_oz
     DO_block_ptr = tl.make_block_ptr(
         base=DO + do_offset,
-        shape=(seqlen_q, BLOCK_DMODEL),
+        shape=(seqlen_q, head_dim),
         strides=(stride_om, stride_ok),
         offsets=(start_m, 0),
         block_shape=(BLOCK_M, BLOCK_DMODEL),

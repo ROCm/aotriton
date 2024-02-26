@@ -25,8 +25,10 @@ def bwd_preprocess(
     stride_oz, stride_oh, stride_om, stride_on,
     stride_doz, stride_doh, stride_dom, stride_don,
     seqlen_q,
+    head_dim,
     BLOCK_M: tl.constexpr,
     D_HEAD: tl.constexpr,
+    PADDED_HEAD: tl.constexpr,
 ):
     # off_m = tl.program_id(0) * BLOCK_M + tl.arange(0, BLOCK_M)
     # off_n = tl.arange(0, D_HEAD)
@@ -37,7 +39,7 @@ def bwd_preprocess(
     o_offset = off_h * stride_oh + off_z * stride_oz
     O_block_ptr = tl.make_block_ptr(
         base=Out + o_offset,
-        shape=(seqlen_q, D_HEAD),
+        shape=(seqlen_q, head_dim),
         strides=(stride_om, stride_on),
         offsets=(off_m, 0),
         block_shape=(BLOCK_M, D_HEAD),
@@ -46,7 +48,7 @@ def bwd_preprocess(
     do_offset = off_h * stride_doh + off_z * stride_doz
     DO_block_ptr = tl.make_block_ptr(
         base=DO + do_offset,
-        shape=(seqlen_q, D_HEAD),
+        shape=(seqlen_q, head_dim),
         strides=(stride_dom, stride_don),
         offsets=(off_m, 0),
         block_shape=(BLOCK_M, D_HEAD),
@@ -55,8 +57,8 @@ def bwd_preprocess(
     # load
     # o = tl.load(Out + off_m[:, None] * D_HEAD + off_n[None, :]).to(tl.float32)
     # do = tl.load(DO + off_m[:, None] * D_HEAD + off_n[None, :]).to(tl.float32)
-    o = tl.load(O_block_ptr).to(tl.float32)
-    do = tl.load(DO_block_ptr).to(tl.float32)
+    o = tl.load(O_block_ptr, boundary_check=(1,), padding_option="zero").to(tl.float32)
+    do = tl.load(DO_block_ptr, boundary_check=(1,), padding_option="zero").to(tl.float32)
     # compute
     delta = tl.sum(o * do, axis=1)
     # write-back, shape (q.shape[0] * q.shape[1], q.shape[2])

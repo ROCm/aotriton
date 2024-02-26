@@ -71,11 +71,16 @@ but in PyTorch API it does not present at all
 @pytest.mark.parametrize('BATCH', [1, 2, 4])
 @pytest.mark.parametrize('N_HEADS', [1, 2, 4])
 @pytest.mark.parametrize('D_HEAD', [16,32,64,128])
-# @pytest.mark.parametrize('D_HEAD', [128])
-# @pytest.mark.parametrize('seqlen_q', [16,32,64,128,256,512,1024])
-# @pytest.mark.parametrize('seqlen_k', [16,32,64,128,256,512,1024])
-@pytest.mark.parametrize('seqlen_q', [128,256,512,1024])
-@pytest.mark.parametrize('seqlen_k', [128,256,512,1024])
+# PyTorch set
+# @pytest.mark.parametrize('D_HEAD', [8, 16, 21, 32, 64, 72, 96, 128, 160, 192, 203, 256])
+# Irregular-only PyTorch set
+# @pytest.mark.parametrize('D_HEAD', [8, 21, 72, 96, 160, 192, 203])
+@pytest.mark.parametrize('seqlen_q', [128, 256, 512, 1024])
+@pytest.mark.parametrize('seqlen_k', [128, 256, 512, 1024])
+# PyTorch set
+# @pytest.mark.parametrize('seqlen_q', [4, 8, 64, 143, 256, 512, 1024, 2048])
+# @pytest.mark.parametrize('seqlen_k', [4, 8, 64, 128, 256, 587, 1024, 2048])
+# Minimal set
 # @pytest.mark.parametrize('seqlen_q', [32, 128])
 # @pytest.mark.parametrize('seqlen_k', [32, 128])
 @pytest.mark.parametrize('causal', [False, True])
@@ -84,17 +89,29 @@ but in PyTorch API it does not present at all
 # @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16, torch.float32])
 @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
 @pytest.mark.parametrize('sm_scale', [0.0, 1.2])
+@pytest.mark.parametrize('storage_flip', [True, False])
 # @pytest.mark.parametrize('return_encoded_softmax', [False])
-def test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype):
+def test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
     SKIP_DK_DV = False
     SKIP_DQ = False
     USE_AUTOTUNE = True
     torch.manual_seed(20)
     SPARSE_HEAD_SINCE = 1
     SPARSE_SEQ_SINCE = 1
-    q = torch.empty((BATCH, N_HEADS, seqlen_q, D_HEAD), dtype=dtype, device="cuda").normal_(mean=0., std=0.5)
-    k = torch.empty((BATCH, N_HEADS, seqlen_k, D_HEAD), dtype=dtype, device="cuda").normal_(mean=0., std=0.5)
-    v = torch.empty((BATCH, N_HEADS, seqlen_k, D_HEAD), dtype=dtype, device="cuda").normal_(mean=0., std=0.5)
+    qdims = (BATCH, N_HEADS, seqlen_q, D_HEAD)
+    kdims = (BATCH, N_HEADS, seqlen_k, D_HEAD)
+    vdims = (BATCH, N_HEADS, seqlen_k, D_HEAD)
+    if storage_flip:
+        qdims = (qdims[0], qdims[2], qdims[1], qdims[3])
+        kdims = (kdims[0], kdims[2], kdims[1], kdims[3])
+        vdims = (vdims[0], vdims[2], vdims[1], vdims[3])
+    q = torch.empty(qdims, dtype=dtype, device="cuda").normal_(mean=0., std=0.5)
+    k = torch.empty(kdims, dtype=dtype, device="cuda").normal_(mean=0., std=0.5)
+    v = torch.empty(vdims, dtype=dtype, device="cuda").normal_(mean=0., std=0.5)
+    if storage_flip:
+        q = torch.transpose(q, 1, 2)
+        k = torch.transpose(k, 1, 2)
+        v = torch.transpose(v, 1, 2)
     if not SKIP_DQ:
         q.requires_grad_()
     if not SKIP_DK_DV:
@@ -121,9 +138,9 @@ def test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dr
     ref_dq, q.grad = None if SKIP_DQ else q.grad.clone(), None
     # compare
     if dtype==torch.bfloat16:
-        ATOL = 1e-1 * max(1.0, seqlen_q / 64.0)
+        ATOL = 1e-1 * max(1.0, (seqlen_q + seqlen_k) / 128.0)
     else:
-        ATOL = 1e-2 * max(1.0, seqlen_q / 64.0)
+        ATOL = 1e-2 * max(1.0, (seqlen_q + seqlen_k) / 128.0)
     # RTOL=1e-2 if dtype==torch.float16 else 5e-2
     RTOL=0.0
     print(f'Forward Using ATOL={ATOL} RTOL={RTOL}')
