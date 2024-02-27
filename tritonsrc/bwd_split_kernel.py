@@ -73,7 +73,7 @@ def bwd_kernel_dk_dv(
         order=(1, 0)
     )
     k_offset = off_h * stride_kh + off_z * stride_kz
-    K_block_ptr = tl.make_block_ptr(
+    KT_block_ptr = tl.make_block_ptr(
         base=K + k_offset,
         shape=(head_dim, seqlen_k),
         strides=(stride_kk, stride_kn),
@@ -105,8 +105,8 @@ def bwd_kernel_dk_dv(
     l_ptrs = L + off_zh * seqlen_q
     qk_scale = sm_scale * 1.44269504089
     # load k and v: they will stay in SRAM throughout
-    k = tl.load(K_block_ptr) # (BLOCK_DMODEL, BLOCK_N)
-    k = (k * qk_scale).to(K_block_ptr.type.element_ty)
+    kt = tl.load(KT_block_ptr) # (BLOCK_DMODEL, BLOCK_N)
+    kt = (kt * qk_scale).to(KT_block_ptr.type.element_ty)
     vt = tl.load(VT_block_ptr) # (BLOCK_DMODEL, BLOCK_N)
     dv = tl.zeros([BLOCK_N, BLOCK_DMODEL], dtype=tl.float32)
     dk = tl.zeros([BLOCK_N, BLOCK_DMODEL], dtype=tl.float32)
@@ -139,15 +139,33 @@ def bwd_kernel_dk_dv(
     for start_n in range(lo, hi, BLOCK_M):
         offs_m_curr = offs_n[:, None] + start_n # (BLOCK_M, 1)
         # -- load q, do --
-        q = tl.load(Q_block_ptr) # (BLOCK_M, BLOCK_DMODEL), offs = (BLOCK_M * iter, 0) = (start_n, 0)
-        do = tl.load(DO_block_ptr) # (BLOCK_M, BLOCK_DMODEL)
+        # TODO: It is more optimal to do OOB check only in the last iter.
+        # (BLOCK_M, BLOCK_DMODEL), offs = (BLOCK_M * iter, 0) = (start_n, 0)
+        q = tl.load(Q_block_ptr, boundary_check=(0,), padding_option="zero")
+        # (BLOCK_M, BLOCK_DMODEL)
+        do = tl.load(DO_block_ptr, boundary_check=(0,), padding_option="zero")
         # -- compute qk ----
         qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
-        # q.offs = (start_n, 0), k.offs = (0, start_m)
-        qk += dot(BLOCK_M, BLOCK_DMODEL, BLOCK_DMODEL, q, k) # (BLOCK_M, BLOCK_N)
+        # TODO: These two checks can be optimized to occur on the last iter.
+        overflow_size = start_n + BLOCK_M - seqlen_q
+        if overflow_size > 0:
+            boundary_n = tl.full((BLOCK_N, ), seqlen_q, dtype=tl.int32)
+            mask = offs_m_curr < boundary_n[None, :]
+            qk = tl.where(mask, qk, float("-inf"))
         if CAUSAL:
             qk = tl.where(offs_m_curr >= offs_m[None, :], qk, float("-inf"))
-        l_i = tl.load(l_ptrs + offs_m_curr) # (BLOCK_M, 1)
+        # q.offs = (start_n, 0), k.offs = (0, start_m)
+        qk += dot(BLOCK_M, BLOCK_DMODEL, BLOCK_DMODEL, q, kt) # (BLOCK_M, BLOCK_N)
+        # Check for OOB accesses on D and LSE
+        boundary = tl.full((BLOCK_M, ), BLOCK_M - overflow_size, dtype=tl.int32)
+        d_lse_ptrs_mask = boundary > tl.arange(0, BLOCK_M)
+        d_lse_padding = tl.full((BLOCK_M, ), 0, dtype=tl.float32)
+        Di = tl.load(D_ptrs + offs_m_curr,
+                     mask=d_lse_ptrs_mask[:, None],
+                     other=d_lse_padding[:, None])
+        l_i = tl.load(l_ptrs + offs_m_curr,
+                      mask=d_lse_ptrs_mask[:,None],
+                      other=d_lse_padding[:, None])
         p = tl.math.exp2(qk - l_i) # (BLOCK_M, BLOCK_N)
         # -- compute dv ----
         if ENABLE_DROPOUT:
@@ -164,9 +182,8 @@ def bwd_kernel_dk_dv(
             else:
                 # dv += tl.dot(tl.trans(p.to(do.dtype)), do)
                 dv += tl.dot(tl.trans(p).to(do.dtype), do)
-        # compute dp = dot(v, do)
-        Di = tl.load(D_ptrs + offs_m_curr) # (BLOCK_M, 1)
         dp = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
+        # compute dp = dot(do, vt)
         # dp += dot(BLOCK_M, BLOCK_DMODEL, BLOCK_DMODEL, do, vt)
         # do.shape = (BLOCK_M, BLOCK_DMODEL) vt.shape = (BLOCK_DMODEL, BLOCK_N)
         dp += tl.dot(do, vt)
@@ -200,8 +217,8 @@ def bwd_kernel_dk_dv(
         block_shape=(BLOCK_N, BLOCK_DMODEL),
         order=(1, 0)
     )
-    tl.store(DK_block_ptr, (dk * sm_scale).to(DK.type.element_ty))
-    tl.store(DV_block_ptr, dv.to(DV.type.element_ty))
+    tl.store(DK_block_ptr, (dk * sm_scale).to(DK.type.element_ty), boundary_check=(0,1))
+    tl.store(DV_block_ptr, dv.to(DV.type.element_ty), boundary_check=(0,1))
 
 @triton.jit
 def bwd_kernel_dq(
