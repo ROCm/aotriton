@@ -278,11 +278,20 @@ def bwd_kernel_dq(
     l_ptrs = L + off_zh * seqlen_q
     qk_scale = sm_scale * 1.44269504089
     # load q and do: they will stay in SRAM throughout
-    q = tl.load(Q_block_ptr)
+    q = tl.load(Q_block_ptr, boundary_check=(0,), padding_option="zero")
     q = (q * qk_scale).to(Q_block_ptr.type.element_ty)
-    do = tl.load(DO_block_ptr)
-    Di = tl.load(D_ptrs + offs_m)
-    l_i = tl.load(l_ptrs + offs_m)
+    do = tl.load(DO_block_ptr, boundary_check=(0,), padding_option="zero")
+    # Check for OOB accesses on D and LSE
+    overflow_size = start_m + BLOCK_M - seqlen_q
+    if overflow_size > 0:
+        boundary = tl.full((BLOCK_M, ), BLOCK_M - overflow_size, dtype=tl.int32)
+        d_lse_ptrs_mask = boundary > tl.arange(0, BLOCK_M)
+        d_lse_padding = tl.full((BLOCK_M, ), 0, dtype=tl.float32)
+        Di = tl.load(D_ptrs + offs_m, mask=d_lse_ptrs_mask, other=d_lse_padding)
+        l_i = tl.load(l_ptrs + offs_m, mask=d_lse_ptrs_mask, other=d_lse_padding)
+    else:
+        Di = tl.load(D_ptrs + offs_m)
+        l_i = tl.load(l_ptrs + offs_m)
     dq = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)
     # loop over k, v
     lo = 0
@@ -335,5 +344,5 @@ def bwd_kernel_dq(
         block_shape=(BLOCK_M, BLOCK_DMODEL),
         order=(1, 0)
     )
-    tl.store(DQ_block_ptr, (dq * sm_scale).to(DQ_block_ptr.type.element_ty))
+    tl.store(DQ_block_ptr, (dq * sm_scale).to(DQ_block_ptr.type.element_ty), boundary_check=(0,))
 
