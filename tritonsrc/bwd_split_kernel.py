@@ -177,7 +177,7 @@ def bwd_kernel_dk_dv(
             if BLOCK_M == 1:
                 dv += tl.where(keep, p / (1 - dropout_p), 0.0).to(Q.dtype.element_ty) * do
             else:
-                dv += tl.dot(tl.where(tl.trans(keep), tl.trans(p) / (1 - dropout_p), 0.0).to(Q.dtype.element_ty), do)
+                dv += tl.dot(tl.trans(tl.where(keep, p / (1 - dropout_p), 0.0)).to(Q.dtype.element_ty), do)
         else:
             if BLOCK_M == 1:
                 dv += p.to(Q.dtype.element_ty) * do
