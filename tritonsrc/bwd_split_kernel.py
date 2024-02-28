@@ -388,4 +388,3 @@ def bwd_kernel_dq(
         order=(1, 0)
     )
     tl.store(DQ_block_ptr, (dq * sm_scale).to(DQ_block_ptr.type.element_ty), boundary_check=(0,1))
-
