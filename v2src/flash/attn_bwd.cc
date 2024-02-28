@@ -3,6 +3,7 @@
 
 #include <aotriton/flash.h>
 #include <aotriton/util.h>
+#include <aotriton/_internal/util.h>
 #include <flash/shim.bwd_kernel_dk_dv.h>
 #include <flash/shim.bwd_kernel_dq.h>
 #include <flash/shim.bwd_preprocess.h>
@@ -36,7 +37,9 @@ bwd_preprocess(T4 out, T4 dout, T2 delta, aotriton::Stream stream_wrap) {
     .DO = &dout,
     .Delta = &delta,
     .seqlen_q = out.size(2),
-    .D_HEAD = head_size,
+    .head_dim = head_size,
+    .D_HEAD = bit_ceil(head_size),
+    .PADDED_HEAD = !is_power_of_2(head_size),
   };
   BwdPreprocessContext context;
   context.grid_calculator = grid_calculator;
@@ -91,12 +94,14 @@ bwd_kernel_dk_dv(T4 q,
     .D = &delta,
     .seqlen_q = seqlen_q,
     .seqlen_k = seqlen_k,
+    .head_dim = head_size,
     .dropout_p = dropout_p,
     .philox_seed = philox_seed,
     .philox_offset_base = static_cast<uint32_t>(philox_offset),
-    .BLOCK_DMODEL = head_size,
+    .BLOCK_DMODEL = bit_ceil(head_size),
     .CAUSAL = is_causal,
     .ENABLE_DROPOUT = dropout_p > 0.0,
+    .PADDED_HEAD = !is_power_of_2(head_size),
   };
   BwdKernelDkDvContext context;
   context.grid_calculator = grid_calculator;
@@ -149,12 +154,14 @@ bwd_kernel_dq(T4 q,
     .D = &delta,
     .seqlen_q = seqlen_q,
     .seqlen_k = seqlen_k,
+    .head_dim = head_size,
     .dropout_p = dropout_p,
     .philox_seed = philox_seed,
     .philox_offset_base = static_cast<uint32_t>(philox_offset),
-    .BLOCK_DMODEL = head_size,
+    .BLOCK_DMODEL = bit_ceil(head_size),
     .CAUSAL = is_causal,
     .ENABLE_DROPOUT = dropout_p > 0.0,
+    .PADDED_HEAD = !is_power_of_2(head_size),
   };
   BwdKernelDqContext context;
   context.grid_calculator = grid_calculator;

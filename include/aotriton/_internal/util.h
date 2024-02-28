@@ -9,14 +9,22 @@
 
 namespace aotriton {
 
-uint32_t bit_width(uint32_t x) {
+inline uint32_t bit_width(uint32_t x) {
   if (x == 0)
     return 0;
   return (int)(CHAR_BIT * sizeof(x)) - __builtin_clz(x);
 }
 
-uint32_t bit_ceil(uint32_t x) {
+inline uint32_t bit_ceil(uint32_t x) {
   return 1 << bit_width(x - 1);
+}
+
+inline int32_t bit_ceil(int32_t x) {
+  return 1 << bit_width(x - 1);
+}
+
+inline bool is_power_of_2(uint32_t x) {
+  return (x != 0) && ((x & (x - 1)) == 0);
 }
 
 }

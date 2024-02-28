@@ -11,8 +11,10 @@ class bwd_preprocess(FlashKernel):
         'stride_oz', 'stride_oh', 'stride_om', 'stride_on',
         'stride_doz', 'stride_doh', 'stride_dom', 'stride_don',
         'seqlen_q',
+        'head_dim',
         'BLOCK_M', # tl.constexpr starts here
         'D_HEAD',
+        'PADDED_HEAD',
     ]
     TENSOR_STRIDE_INPUTS = {
         'Out' : select_pattern(ARGUMENTS, 'stride_o'),
@@ -26,9 +28,11 @@ class bwd_preprocess(FlashKernel):
         frozenset(['Out', 'DO']) : ['*fp16:16', '*bf16:16'],
         frozenset(['Delta']) : ['*fp32:16'],
         frozenset(['seqlen_q']) : ['u64'],
+        frozenset(['head_dim']) : ['i32'],
     }
     FEAT_CHOICES = {
         frozenset(['D_HEAD']) : get_possible_types(attn_fwd, 'BLOCK_DMODEL'),
+        frozenset(['PADDED_HEAD']) : [False, True],
     }
     PERF_CHOICES = {
         frozenset(['BLOCK_M']) : [128], # TODO: All possible values?
@@ -38,5 +42,5 @@ class bwd_preprocess(FlashKernel):
     SHIM_KERNEL_NAME = 'bwd_preprocess'
 
     AUTOTUNE_KEYS = { }
-    PARTIALLY_TUNED_FUNCTIONALS = []
+    PARTIALLY_TUNED_FUNCTIONALS = [('PADDED_HEAD', None)]
     DOWNGRADER = []
