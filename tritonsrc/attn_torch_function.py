@@ -480,6 +480,7 @@ class _attention(torch.autograd.Function):
         ctx.philox_offset = philox_offset
         ctx.encoded_softmax = encoded_softmax # FIXME: for debugging only
         ctx.tuning_result = [tuning_result] if tuning_result is not None else None
+        ctx.D = None
         return o, encoded_softmax, ctx.tuning_result
 
     @staticmethod
@@ -619,7 +620,7 @@ class _attention(torch.autograd.Function):
                     BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N,
                     BLOCK_DMODEL=ctx.BLOCK_DMODEL,
                     CAUSAL=ctx.causal,
-                    num_warps=4,
+                    num_warps=1,
                     num_stages=1,
                     ENABLE_DROPOUT=ctx.dropout_p > 0.0,
                     PADDED_HEAD=False, # FIXME: irregular head dimension
@@ -717,6 +718,19 @@ class _attention(torch.autograd.Function):
                     PADDED_HEAD=False, # FIXME: irregular head dimension
                 )
         # print(h.asm["ttgir"])
+        reshape_d = torch.reshape(delta, (q.shape[0], q.shape[1], -1))
+        dropout_mask = ctx.encoded_softmax >= 0
+        qk = torch.einsum('bhqd,bhkd->bhqk', q, k).float()
+        p = torch.softmax(qk,dim=-1)
+        dp = torch.einsum('bhqd,bhkd->bhqk', do, v)
+        dp = torch.where(dropout_mask, dp / (1 - ctx.dropout_p), 0)
+        dpt = torch.transpose(dp, 2, 3)
+        reshape_d = reshape_d[:, :, None, :]
+        reshape_d = reshape_d.repeat(1, 1, 511, 1)
+        diff = dpt - reshape_d
+        ds = p * torch.transpose(diff, 2, 3)
+        dq = torch.einsum('bhqk,bhkd->bhqd', ds.half(), k)
+        print(f"naive impl dq = {dq[0][0][10][46]}")
         return dq, dk, dv, None, None, None, None, None, None
 
 attention = _attention.apply
