@@ -68,15 +68,16 @@ but in PyTorch API it does not present at all
 
 # @pytest.mark.parametrize('BATCH', [1, 4])
 # @pytest.mark.parametrize('N_HEADS', [1, 4])
-@pytest.mark.parametrize('BATCH', [2])
-@pytest.mark.parametrize('N_HEADS', [4])
-@pytest.mark.parametrize('D_HEAD', [64])
+@pytest.mark.parametrize('BATCH', [1, 2, 4])
+@pytest.mark.parametrize('N_HEADS', [1, 2, 4])
+# TODO: Enable D_HEAD 16 after HEAD_PADDING supported.
+@pytest.mark.parametrize('D_HEAD', [32, 64, 128])
 # PyTorch set
 # @pytest.mark.parametrize('D_HEAD', [8, 16, 21, 32, 64, 72, 96, 128, 160, 192, 203, 256])
 # Irregular-only PyTorch set
 # @pytest.mark.parametrize('D_HEAD', [8, 21, 72, 96, 160, 192, 203])
-@pytest.mark.parametrize('seqlen_q', [512])
-@pytest.mark.parametrize('seqlen_k', [511])
+@pytest.mark.parametrize('seqlen_q', [128, 256, 512, 1024, 394, 250, 399, 511, 1019])
+@pytest.mark.parametrize('seqlen_k', [128, 256, 512, 1024, 217, 339, 313, 491, 988])
 # PyTorch set
 # @pytest.mark.parametrize('seqlen_q', [4, 8, 64, 143, 256, 512, 1024, 2048])
 # @pytest.mark.parametrize('seqlen_k', [4, 8, 64, 128, 256, 587, 1024, 2048])
@@ -84,10 +85,9 @@ but in PyTorch API it does not present at all
 # @pytest.mark.parametrize('seqlen_q', [32, 128])
 # @pytest.mark.parametrize('seqlen_k', [32, 128])
 @pytest.mark.parametrize('causal', [False])
-@pytest.mark.parametrize('dropout_p', [0.2])
-# @pytest.mark.parametrize('dropout_p', [0.0])
+@pytest.mark.parametrize('dropout_p', [0.0, 0.5])
 # @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16, torch.float32])
-@pytest.mark.parametrize('dtype', [torch.float16])
+@pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
 @pytest.mark.parametrize('sm_scale', [1.2])
 @pytest.mark.parametrize('storage_flip', [False])
 # @pytest.mark.parametrize('return_encoded_softmax', [False])
@@ -160,72 +160,60 @@ def test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dr
     else:
         ATOL = 1e-1 * max(1.0, (seqlen_q + D_HEAD) / 32.0)
     print(f"Backward Using {ATOL=} {RTOL=}")
-    # print(f"ref out = {ref_out[0][0][0][0]}")
-    # print(f"tri out = {tri_out[0][0][0][0]}")
-    # print(f"ref out dv = {ref_dv[0][0][0][0]}")
-    # print(f"tri out dv = {tri_dv[0][0][0][0]}")
-    # print(f"ref out dk = {ref_dk[0][0][0][0]}")
-    # print(f"tri out dk = {tri_dk[0][0][0][0]}")
-    print(f"sdpa out dq = {ref_dq[0][0][10][46]}")
-    print(f"tri out dq = {tri_dq[0][0][10][46]}")
-    # print(f"err out = {torch.max(torch.abs(ref_out) - torch.abs(tri_out))}")
-    # print(f"err out dv = {torch.max(torch.abs(ref_dv) - torch.abs(tri_dv))}")
-    # print(f"err out dk = {torch.max(torch.abs(ref_dk) - torch.abs(tri_dk))}")
-    # print(f"err out dq = {torch.max(torch.abs(ref_dq) - torch.abs(tri_dq))}")
 
-    # dv_allclose = SKIP_DK_DV or torch.allclose(ref_dv, tri_dv, atol=ATOL, rtol=RTOL)
-    # if not dv_allclose:
-    #     import numpy as np
-    #     err_idx = np.unravel_index(torch.argmax(torch.abs(ref_dv - tri_dv)).cpu().numpy(), ref_dv.shape)
-    #     print(f'{q.shape=} {q.stride()=} {q.dtype=}')
-    #     print(f'{k.shape=} {k.stride()=} {k.dtype=}')
-    #     print(f'{v.shape=} {v.stride()=} {v.dtype=}')
-    #     print(f'{q[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
-    #     print(f'{k[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
-    #     print(f'{v[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
-    #     # print(f'{dropout_mask[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
-    #     print(f'{dropout_mask.shape=}')
-    #     print(f'{err_idx=}')
-    #     print(f'{tri_dv[err_idx]=}')
-    #     print(f'{ref_dv[err_idx]=}')
-    #     print(f'{torch.isnan(ref_dv).any()=}')
-    #     '''
-    #     any_nan = torch.isnan(ref_dv).any()
-    #     if any_nan:
-    #         torch.set_printoptions(linewidth=200)
-    #         print(f'{q=}')
-    #         print(f'{k=}')
-    #         print(f'{v=}')
-    #         print(f'{dropout_p=}')
-    #         print(f'{causal=}')
-    #         print(f'{sm_scale=}')
-    #     '''
-    #     if seqlen_q <= 16:
-    #         torch.set_printoptions(linewidth=200, threshold=4096)
-    #         print(f'{tri_dk[0,0]=}')
-    #         print(f'{ref_dk[0,0]=}')
-    #         print(f'{tri_dv[0,0]=}')
-    #         print(f'{ref_dv[0,0]=}')
-    #         # print(f'{tri_dq[0,0]=}')
-    #         # print(f'{ref_dq[0,0]=}')
+    dv_allclose = SKIP_DK_DV or torch.allclose(ref_dv, tri_dv, atol=ATOL, rtol=RTOL)
+    if not dv_allclose:
+        import numpy as np
+        err_idx = np.unravel_index(torch.argmax(torch.abs(ref_dv - tri_dv)).cpu().numpy(), ref_dv.shape)
+        print(f'{q.shape=} {q.stride()=} {q.dtype=}')
+        print(f'{k.shape=} {k.stride()=} {k.dtype=}')
+        print(f'{v.shape=} {v.stride()=} {v.dtype=}')
+        print(f'{q[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
+        print(f'{k[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
+        print(f'{v[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
+        # print(f'{dropout_mask[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
+        print(f'{dropout_mask.shape=}')
+        print(f'{err_idx=}')
+        print(f'{tri_dv[err_idx]=}')
+        print(f'{ref_dv[err_idx]=}')
+        print(f'{torch.isnan(ref_dv).any()=}')
+        '''
+        any_nan = torch.isnan(ref_dv).any()
+        if any_nan:
+            torch.set_printoptions(linewidth=200)
+            print(f'{q=}')
+            print(f'{k=}')
+            print(f'{v=}')
+            print(f'{dropout_p=}')
+            print(f'{causal=}')
+            print(f'{sm_scale=}')
+        '''
+        if seqlen_q <= 16:
+            torch.set_printoptions(linewidth=200, threshold=4096)
+            print(f'{tri_dk[0,0]=}')
+            print(f'{ref_dk[0,0]=}')
+            print(f'{tri_dv[0,0]=}')
+            print(f'{ref_dv[0,0]=}')
+            # print(f'{tri_dq[0,0]=}')
+            # print(f'{ref_dq[0,0]=}')
 
-    # dk_allclose = SKIP_DK_DV or torch.allclose(ref_dk, tri_dk, atol=ATOL, rtol=RTOL)
-    # if dv_allclose and not dk_allclose:
-    #     print(f'{tri_out[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
-    #     print(f'{ref_out[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
-    #     print(f'{tri_dk[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
-    #     print(f'{ref_dk[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
-    #     import numpy as np
-    #     err_idx = np.unravel_index(torch.argmax(torch.abs(ref_dk - tri_dk)).cpu().numpy(), ref_dk.shape)
-    #     print(f'{err_idx=}')
-    #     print(f'{tri_dk[err_idx]=} {ref_dk[err_idx]=} error = {torch.abs(tri_dk[err_idx] - ref_dk[err_idx])}')
-    #     print(f'{tri_dk[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]/ref_dk[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
-    #     print(f'{dropout_mask[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
+    dk_allclose = SKIP_DK_DV or torch.allclose(ref_dk, tri_dk, atol=ATOL, rtol=RTOL)
+    if dv_allclose and not dk_allclose:
+        print(f'{tri_out[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
+        print(f'{ref_out[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
+        print(f'{tri_dk[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
+        print(f'{ref_dk[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
+        import numpy as np
+        err_idx = np.unravel_index(torch.argmax(torch.abs(ref_dk - tri_dk)).cpu().numpy(), ref_dk.shape)
+        print(f'{err_idx=}')
+        print(f'{tri_dk[err_idx]=} {ref_dk[err_idx]=} error = {torch.abs(tri_dk[err_idx] - ref_dk[err_idx])}')
+        print(f'{tri_dk[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]/ref_dk[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
+        print(f'{dropout_mask[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
 
-    # dq_allclose = SKIP_DQ or torch.allclose(ref_dq, tri_dq, atol=ATOL, rtol=RTOL)
-    # if dk_allclose and dv_allclose and not dq_allclose:
-    #     import numpy as np
-    #     err_idx = np.unravel_index(torch.argmax(torch.abs(ref_dq - tri_dq)).cpu().numpy(), ref_dq.shape)
-    #     print(f'{err_idx=}')
-    #     print(f'{tri_dq[err_idx]=} {ref_dq[err_idx]=} error = {torch.abs(tri_dq[err_idx] - ref_dq[err_idx])}')
-    # assert dk_allclose and dv_allclose and dq_allclose, f'{dk_allclose=} {dv_allclose=} {dq_allclose=}'
+    dq_allclose = SKIP_DQ or torch.allclose(ref_dq, tri_dq, atol=ATOL, rtol=RTOL)
+    if dk_allclose and dv_allclose and not dq_allclose:
+        import numpy as np
+        err_idx = np.unravel_index(torch.argmax(torch.abs(ref_dq - tri_dq)).cpu().numpy(), ref_dq.shape)
+        print(f'{err_idx=}')
+        print(f'{tri_dq[err_idx]=} {ref_dq[err_idx]=} error = {torch.abs(tri_dq[err_idx] - ref_dq[err_idx])}')
+    assert dk_allclose and dv_allclose and dq_allclose, f'{dk_allclose=} {dv_allclose=} {dq_allclose=}'
