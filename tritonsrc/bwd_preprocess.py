@@ -57,10 +57,18 @@ def bwd_preprocess(
     # load
     # o = tl.load(Out + off_m[:, None] * D_HEAD + off_n[None, :]).to(tl.float32)
     # do = tl.load(DO + off_m[:, None] * D_HEAD + off_n[None, :]).to(tl.float32)
-    o = tl.load(O_block_ptr, boundary_check=(1,), padding_option="zero").to(tl.float32)
-    do = tl.load(DO_block_ptr, boundary_check=(1,), padding_option="zero").to(tl.float32)
+    o = tl.load(O_block_ptr, boundary_check=(0,1), padding_option="zero").to(tl.float32)
+    do = tl.load(DO_block_ptr, boundary_check=(0,1), padding_option="zero").to(tl.float32)
     # compute
     delta = tl.sum(o * do, axis=1)
     # write-back, shape (q.shape[0] * q.shape[1], q.shape[2])
     off_zh = off_z * num_h + off_h * 1
-    tl.store(Delta + off_zh * seqlen_q + off_m + tl.arange(0, BLOCK_M), delta)
+    # Check for OOB accesses
+    delta_ptrs = Delta + off_zh * seqlen_q + off_m + tl.arange(0, BLOCK_M)
+    overflow = off_m + BLOCK_M - seqlen_q
+    if overflow > 0:
+        boundary = tl.full((BLOCK_M, ), BLOCK_M - overflow, dtype=tl.int32)
+        mask = boundary > tl.arange(0, BLOCK_M)
+        tl.store(delta_ptrs, delta, mask=mask)
+    else:
+        tl.store(delta_ptrs, delta)

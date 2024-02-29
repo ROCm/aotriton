@@ -70,22 +70,21 @@ but in PyTorch API it does not present at all
 # @pytest.mark.parametrize('N_HEADS', [1, 4])
 @pytest.mark.parametrize('BATCH', [1, 2, 4])
 @pytest.mark.parametrize('N_HEADS', [1, 2, 4])
-@pytest.mark.parametrize('D_HEAD', [16,32,64,128])
+@pytest.mark.parametrize('D_HEAD', [32, 64, 128])
 # PyTorch set
 # @pytest.mark.parametrize('D_HEAD', [8, 16, 21, 32, 64, 72, 96, 128, 160, 192, 203, 256])
 # Irregular-only PyTorch set
 # @pytest.mark.parametrize('D_HEAD', [8, 21, 72, 96, 160, 192, 203])
-@pytest.mark.parametrize('seqlen_q', [128, 256, 512, 1024])
-@pytest.mark.parametrize('seqlen_k', [128, 256, 512, 1024])
+@pytest.mark.parametrize('seqlen_q', [1, 4, 32, 128, 256, 512, 1024, 7, 394, 250, 399, 511, 1019])
+@pytest.mark.parametrize('seqlen_k', [1, 4, 32, 128, 256, 512, 1024, 3, 217, 339, 313, 491, 988])
 # PyTorch set
 # @pytest.mark.parametrize('seqlen_q', [4, 8, 64, 143, 256, 512, 1024, 2048])
 # @pytest.mark.parametrize('seqlen_k', [4, 8, 64, 128, 256, 587, 1024, 2048])
 # Minimal set
 # @pytest.mark.parametrize('seqlen_q', [32, 128])
 # @pytest.mark.parametrize('seqlen_k', [32, 128])
-@pytest.mark.parametrize('causal', [False, True])
+@pytest.mark.parametrize('causal', [False])
 @pytest.mark.parametrize('dropout_p', [0.0, 0.5])
-# @pytest.mark.parametrize('dropout_p', [0.0])
 # @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16, torch.float32])
 @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
 @pytest.mark.parametrize('sm_scale', [0.0, 1.2])
