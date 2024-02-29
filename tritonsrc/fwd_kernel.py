@@ -66,11 +66,11 @@ def _attn_fwd_inner(
 ):
     # range of values handled by this stage
     if STAGE == 1: # "Solid" blocks of Causal masks
-        lo, hi = 0, min(seqlen_k_faligned, start_m * BLOCK_M)
+        lo, hi = 0, min(seqlen_k, start_m * BLOCK_M)
     elif STAGE == 2: # "Semi-solid", or "Transition" block of Causal mask
         # Must use BLOCK_M, because the starting position of semi-solid block
         # is determined by start_m * BLOCK_M
-        lo, hi = start_m * BLOCK_M, min(seqlen_k_faligned, start_m * BLOCK_M + BLOCK_M)
+        lo, hi = start_m * BLOCK_M, min(seqlen_k, start_m * BLOCK_M + BLOCK_M)
         # lo = tl.multiple_of(lo, BLOCK_M)
         K_block_ptr = tl.advance(K_block_ptr, (0, lo))
         V_block_ptr = tl.advance(V_block_ptr, (lo, 0))
@@ -80,7 +80,7 @@ def _attn_fwd_inner(
     # So here, we are computing the elements for that last irregular block.
     # In the loop,  we will mask the elements of BLOCK_N that do not exist.
     elif PADDED_BLOCK:
-        lo, hi = seqlen_k_faligned, seqlen_k_faligned + BLOCK_N
+        lo, hi = seqlen_k, seqlen_k + BLOCK_N
         # lo = tl.multiple_of(lo, BLOCK_N)
         K_block_ptr = tl.advance(K_block_ptr, (0, lo))
         V_block_ptr = tl.advance(V_block_ptr, (lo, 0))
@@ -93,7 +93,7 @@ def _attn_fwd_inner(
                 bias_ptr += lo
     # causal = False
     else:
-        lo, hi = 0, seqlen_k_faligned
+        lo, hi = 0, seqlen_k
     # loop over k, v and update accumulator
     for start_n in range(lo, hi, BLOCK_N):
         '''
@@ -117,7 +117,7 @@ def _attn_fwd_inner(
             mask = OFFS_M[:, None] >= (start_n + OFFS_N[None, :])
             qk = tl.where(mask, qk, float("-inf"))
         if PADDED_BLOCK:
-            boundary_m = tl.full([BLOCK_M], seqlen_k, dtype=tl.float32)
+            boundary_m = tl.full([BLOCK_M], seqlen_k_faligned, dtype=tl.float32)
             size_n = start_n + OFFS_N[None,:]
             mask = size_n < boundary_m[:,None]
             qk = tl.where(mask, qk, float("-inf"))
@@ -128,7 +128,7 @@ def _attn_fwd_inner(
                     bias = tl.load(bias_ptr,boundary_check=(1,), padding_option="zero")
                 else:
                     size_n = start_n + OFFS_N
-                    boundary_n = tl.full([BLOCK_N], seqlen_k, dtype=tl.float32)
+                    boundary_n = tl.full([BLOCK_N], seqlen_k_faligned, dtype=tl.float32)
                     bias_padding = tl.full([BLOCK_N], 0, dtype=tl.float32)
                     bias = tl.load(bias_ptr, mask=size_n < boundary_n, other=bias_padding)
             else:
@@ -326,7 +326,7 @@ def attn_fwd(
             acc, l_i, m_i = _attn_fwd_inner(
                 acc, l_i, m_i, q, K_block_ptr, V_block_ptr,
                 bias_ptr,
-                start_m, seqlen_k, seqlen_k_faligned,
+                start_m, seqlen_k_faligned, seqlen_k_faligned,
                 dropout_p, philox_seed, batch_philox_offset, encoded_softmax_block_ptr,
                 BLOCK_M, BLOCK_DMODEL, BLOCK_N,
                 4 - STAGE, offs_m, offs_n,
@@ -341,7 +341,7 @@ def attn_fwd(
             acc, l_i, m_i = _attn_fwd_inner(
                 acc, l_i, m_i, q, K_block_ptr, V_block_ptr,
                 bias_ptr,
-                start_m, seqlen_k, seqlen_k_faligned,
+                start_m, seqlen_k_faligned, seqlen_k,
                 dropout_p, philox_seed, batch_philox_offset, encoded_softmax_block_ptr,
                 BLOCK_M, BLOCK_DMODEL, BLOCK_N,
                 4 - STAGE, offs_m, offs_n,
