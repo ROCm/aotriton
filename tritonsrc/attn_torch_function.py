@@ -357,6 +357,8 @@ class _attention(torch.autograd.Function):
             MAX_BLOCK_M = max(16, MAX_BLOCK_M // 2)
             MAX_BLOCK_N = max(16, MAX_BLOCK_N // 2)
         '''
+        # MAX_BLOCK_M = 32  # Debugging, matching bwd tile size
+        # MAX_BLOCK_N = 16  # Debugging,, matching bwd tile size
 
         b = None
         if autotune:
@@ -541,8 +543,6 @@ class _attention(torch.autograd.Function):
         else:
             BLOCK_M = 32
             BLOCK_N = 16
-            assert BLOCK_M < max_seqlens_q, f'{BLOCK_M=} < {max_seqlens_q=}'
-            assert BLOCK_N < max_seqlens_k, f'{BLOCK_N=} < {max_seqlens_k=}'
         # debug_mask = torch.zeros((q.shape[0], q.shape[1], max_seqlens_q, max_seqlens_k), device=q.device, dtype=ctx.encoded_softmax.dtype)
         grid_dk_dv = lambda META: (
             triton.cdiv(max_seqlens_k, META['BLOCK_N']),
