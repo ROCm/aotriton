@@ -475,7 +475,7 @@ class _attention(torch.autograd.Function):
         ctx.save_for_backward(q, k, v, o, M)
         ctx.grid = grid
         ctx.sm_scale = sm_scale
-        ctx.BLOCK_DMODEL = Lk
+        ctx.head_dim = Lk
         ctx.causal = causal
         ctx.dropout_p = dropout_p
         ctx.philox_seed = philox_seed
@@ -489,6 +489,11 @@ class _attention(torch.autograd.Function):
         q, k, v, o, L = ctx.saved_tensors
         # if q.shape[-1] <= 32:
         Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
+        assert Lq == Lk and Lk == Lv and Lk == ctx.head_dim
+        head_dim_rounded = 2 ** (ctx.head_dim - 1).bit_length()
+        head_dim_rounded = max(16, head_dim_rounded)
+        padded_head = head_dim_rounded != ctx.head_dim
+
         dq = torch.zeros_like(q, dtype=torch.float32)
         dk = torch.empty_like(k)
         dv = torch.empty_like(v)
@@ -511,8 +516,8 @@ class _attention(torch.autograd.Function):
             do.stride(0), do.stride(1), do.stride(2), do.stride(3),
             max_seqlens_q,
             Lk,
-            BLOCK_M=BLOCK, D_HEAD=ctx.BLOCK_DMODEL,
-            PADDED_HEAD=False, # FIXME: irregular head dimension
+            BLOCK_M=BLOCK, D_HEAD=head_dim_rounded,
+            PADDED_HEAD=padded_head, # FIXME: irregular head dimension
         )
         if False or VERBOSE:
             print(f'{q.shape=} {q.stride()=}')
@@ -569,10 +574,10 @@ class _attention(torch.autograd.Function):
                     philox_seed=ctx.philox_seed,
                     philox_offset_base=ctx.philox_offset,
                     # debug_mask=debug_mask,
-                    BLOCK_DMODEL=ctx.BLOCK_DMODEL,
+                    BLOCK_DMODEL=head_dim_rounded,
                     CAUSAL=ctx.causal,
                     ENABLE_DROPOUT=ctx.dropout_p > 0.0,
-                    PADDED_HEAD=False, # FIXME: irregular head dimension
+                    PADDED_HEAD=padded_head,
                 )
                 if return_autotune:
                     dkdv_best_config = tuned_bwd_kernel_dk_dv.get_best_config()
@@ -582,7 +587,8 @@ class _attention(torch.autograd.Function):
                         'N_HEADS' : q.shape[1],
                         'max_seqlens_q': max_seqlens_q,
                         'max_seqlens_k': max_seqlens_k,
-                        'BLOCK_DMODEL' : ctx.BLOCK_DMODEL,
+                        'head_dim' : ctx.BLOCK_DMODEL,
+                        'BLOCK_DMODEL' : head_dim_rounded,
                         'CAUSAL'  : ctx.causal,
                         'ENABLE_DROPOUT' : ctx.dropout_p > 0.0,
                     }
@@ -617,12 +623,12 @@ class _attention(torch.autograd.Function):
                     philox_offset_base=ctx.philox_offset,
                     # debug_mask=debug_mask,
                     BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N,
-                    BLOCK_DMODEL=ctx.BLOCK_DMODEL,
+                    BLOCK_DMODEL=head_dim_rounded,
                     CAUSAL=ctx.causal,
                     num_warps=4,
                     num_stages=1,
                     ENABLE_DROPOUT=ctx.dropout_p > 0.0,
-                    PADDED_HEAD=False, # FIXME: irregular head dimension
+                    PADDED_HEAD=padded_head,
                 )
         # mask_allclose = torch.allclose(debug_mask < 0, ctx.encoded_softmax < 0)
         if False:
@@ -663,10 +669,10 @@ class _attention(torch.autograd.Function):
                     dropout_p=ctx.dropout_p,
                     philox_seed=ctx.philox_seed,
                     philox_offset_base=ctx.philox_offset,
-                    BLOCK_DMODEL=ctx.BLOCK_DMODEL,
+                    BLOCK_DMODEL=head_dim_rounded,
                     CAUSAL=ctx.causal,
                     ENABLE_DROPOUT=ctx.dropout_p > 0.0,
-                    PADDED_HEAD=False, # FIXME: irregular head dimension
+                    PADDED_HEAD=padded_head,
                 )
                 if return_autotune:
                     dq_best_config = tuned_bwd_kernel_dq.get_best_config()
@@ -676,7 +682,8 @@ class _attention(torch.autograd.Function):
                         'N_HEADS' : q.shape[1],
                         'max_seqlens_q': max_seqlens_q,
                         'max_seqlens_k': max_seqlens_k,
-                        'BLOCK_DMODEL' : ctx.BLOCK_DMODEL,
+                        'head_dim' : ctx.BLOCK_DMODEL,
+                        'BLOCK_DMODEL' : head_dim_rounded,
                         'CAUSAL'  : ctx.causal,
                         'ENABLE_DROPOUT' : ctx.dropout_p > 0.0,
                     }
@@ -709,12 +716,12 @@ class _attention(torch.autograd.Function):
                     philox_seed=ctx.philox_seed,
                     philox_offset_base=ctx.philox_offset,
                     BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N,
-                    BLOCK_DMODEL=ctx.BLOCK_DMODEL,
+                    BLOCK_DMODEL=head_dim_rounded,
                     CAUSAL=ctx.causal,
                     num_warps=4, waves_per_eu=1,
                     num_stages=1,
                     ENABLE_DROPOUT=ctx.dropout_p > 0.0,
-                    PADDED_HEAD=False, # FIXME: irregular head dimension
+                    PADDED_HEAD=padded_head,
                 )
         # print(h.asm["ttgir"])
         return dq, dk, dv, None, None, None, None, None, None
