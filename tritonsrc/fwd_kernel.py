@@ -48,6 +48,10 @@ def _attn_fwd_inner(
     start_m,
     seqlen_k,
     seqlen_k_faligned,
+    # FIXME: The usage of seqlen_k and seqlen_k_faligned was compromised, and
+    #        the fix is not straightforward.
+    #        dropout_seqlen_k was added as a quick fix.
+    dropout_seqlen_k,
     dropout_p,
     philox_seed,
     batch_philox_offset,
@@ -117,7 +121,7 @@ def _attn_fwd_inner(
             mask = OFFS_M[:, None] >= (start_n + OFFS_N[None, :])
             qk = tl.where(mask, qk, float("-inf"))
         if PADDED_BLOCK:
-            boundary_m = tl.full([BLOCK_M], seqlen_k_faligned, dtype=tl.float32)
+            boundary_m = tl.full([BLOCK_M], seqlen_k_faligned, dtype=tl.int32)
             size_n = start_n + OFFS_N[None,:]
             mask = size_n < boundary_m[:,None]
             qk = tl.where(mask, qk, float("-inf"))
@@ -147,8 +151,8 @@ def _attn_fwd_inner(
         # PyTorch needs to return softmax(qk) (dropout mask encoded in sign bits)
         # While Flash attention paper compute the dropout AFTER exp2(qk- m_ij)
         if ENABLE_DROPOUT:
-            philox_offset = batch_philox_offset + start_m * BLOCK_M * seqlen_k + start_n
-            keep = dropout_mask(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, seqlen_k)
+            philox_offset = batch_philox_offset + start_m * BLOCK_M * dropout_seqlen_k + start_n
+            keep = dropout_mask(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, dropout_seqlen_k)
             if RETURN_ENCODED_SOFTMAX:
                 tl.store(encoded_softmax_block_ptr, tl.where(keep, p, -p).to(encoded_softmax_block_ptr.type.element_ty), boundary_check=(0,1))
             p = tl.where(keep, p, 0.0)
@@ -326,7 +330,7 @@ def attn_fwd(
             acc, l_i, m_i = _attn_fwd_inner(
                 acc, l_i, m_i, q, K_block_ptr, V_block_ptr,
                 bias_ptr,
-                start_m, seqlen_k_faligned, seqlen_k_faligned,
+                start_m, seqlen_k_faligned, seqlen_k_faligned, seqlen_k,
                 dropout_p, philox_seed, batch_philox_offset, encoded_softmax_block_ptr,
                 BLOCK_M, BLOCK_DMODEL, BLOCK_N,
                 4 - STAGE, offs_m, offs_n,
@@ -341,7 +345,7 @@ def attn_fwd(
             acc, l_i, m_i = _attn_fwd_inner(
                 acc, l_i, m_i, q, K_block_ptr, V_block_ptr,
                 bias_ptr,
-                start_m, seqlen_k_faligned, seqlen_k,
+                start_m, seqlen_k_faligned, seqlen_k, seqlen_k,
                 dropout_p, philox_seed, batch_philox_offset, encoded_softmax_block_ptr,
                 BLOCK_M, BLOCK_DMODEL, BLOCK_N,
                 4 - STAGE, offs_m, offs_n,
@@ -359,7 +363,7 @@ def attn_fwd(
         acc, l_i, m_i = _attn_fwd_inner(
             acc, l_i, m_i, q, K_block_ptr, V_block_ptr,
             bias_ptr,
-            start_m, seqlen_k, seqlen_k_faligned,
+            start_m, seqlen_k, seqlen_k_faligned, seqlen_k,
             dropout_p, philox_seed, batch_philox_offset, encoded_softmax_block_ptr,
             BLOCK_M, BLOCK_DMODEL, BLOCK_N,
             2, offs_m, offs_n,
