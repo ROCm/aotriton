@@ -17,11 +17,6 @@ bwd_preprocess(T4 out, T4 dout, T2 delta, aotriton::Stream stream_wrap) {
   auto stream = stream_wrap.native();
   auto arch = getArchFromStream(stream);
   auto grid_calculator = [](const BwdPreprocessParams& params) -> dim3 {
-#ifndef NDEBUG
-    std::cerr << "Selected Kernel "
-              << " BLOCK_M = " << params.BLOCK_M << " BLOCK_N = " << params.BLOCK_N
-              << " pre_load_v = " << params.pre_load_v << std::endl;
-#endif
     dim3 grid {
       aotriton::cdiv<uint32_t>(params.Out->size(2), params.BLOCK_M),
       uint32_t(params.Out->size(1)),
@@ -30,7 +25,11 @@ bwd_preprocess(T4 out, T4 dout, T2 delta, aotriton::Stream stream_wrap) {
     // std::cerr << "Grid conf " << grid.x << " " << grid.y << " " << grid.z << std::endl;
     return grid;
   };
-  int head_size = dout.size(3);
+  // Note: do not unify this constexpr.
+  //       Different kernels may have different rules.
+  constexpr int kMinHeadDimCompiled = 16;
+  int head_size = out.size(3);
+  int head_size_rounded = std::max(kMinHeadDimCompiled, bit_ceil(head_size));
   // Requires C++ 20
   BwdPreprocessParams params = {
     .Out = &out,
@@ -39,7 +38,7 @@ bwd_preprocess(T4 out, T4 dout, T2 delta, aotriton::Stream stream_wrap) {
     .seqlen_q = out.size(2),
     .head_dim = head_size,
     .D_HEAD = bit_ceil(head_size),
-    .PADDED_HEAD = !is_power_of_2(head_size),
+    .PADDED_HEAD = head_size_rounded != head_size,
   };
   BwdPreprocessContext context;
   context.grid_calculator = grid_calculator;
@@ -80,7 +79,9 @@ bwd_kernel_dk_dv(T4 q,
     };
     return grid;
   };
+  constexpr int kMinHeadDimCompiled = 16;
   int head_size = q.size(3);
+  int head_size_rounded = std::max(kMinHeadDimCompiled, bit_ceil(head_size));
   BwdKernelDkDvParams params = {
     .Q = &q,
     .K = &k,
@@ -98,10 +99,10 @@ bwd_kernel_dk_dv(T4 q,
     .dropout_p = dropout_p,
     .philox_seed = philox_seed,
     .philox_offset_base = static_cast<uint32_t>(philox_offset),
-    .BLOCK_DMODEL = bit_ceil(head_size),
+    .BLOCK_DMODEL = head_size_rounded,
     .CAUSAL = is_causal,
     .ENABLE_DROPOUT = dropout_p > 0.0,
-    .PADDED_HEAD = !is_power_of_2(head_size),
+    .PADDED_HEAD = head_size_rounded != head_size,
   };
   BwdKernelDkDvContext context;
   context.grid_calculator = grid_calculator;
@@ -141,7 +142,9 @@ bwd_kernel_dq(T4 q,
     };
     return grid;
   };
+  constexpr int kMinHeadDimCompiled = 16;
   int head_size = q.size(3);
+  int head_size_rounded = std::max(kMinHeadDimCompiled, bit_ceil(head_size));
   BwdKernelDqParams params = {
     .Q = &q,
     .K = &k,
@@ -161,7 +164,7 @@ bwd_kernel_dq(T4 q,
     .BLOCK_DMODEL = bit_ceil(head_size),
     .CAUSAL = is_causal,
     .ENABLE_DROPOUT = dropout_p > 0.0,
-    .PADDED_HEAD = !is_power_of_2(head_size),
+    .PADDED_HEAD = head_size_rounded != head_size,
   };
   BwdKernelDqContext context;
   context.grid_calculator = grid_calculator;
