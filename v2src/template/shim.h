@@ -19,6 +19,7 @@ struct [[param_class_name]] {
     [[perf_fields]];
 
     TritonKernel* selected_kernel = nullptr;
+    const char* _debug_kernel_name = nullptr;
 
     int64_t godel_number() const;
 };

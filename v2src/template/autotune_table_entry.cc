@@ -18,6 +18,10 @@
 
 [[incbin_kernel_images]];
 
+#ifndef NDEBUG
+[[incbin_kernel_names]];
+#endif
+
 namespace { // Anonymous namespace
 
 struct PerfFields {
@@ -43,10 +47,11 @@ namespace aotriton::v2::[[kernel_family_name]]::autotune {
 void CURRENT_ENTRY_PUBLIC::operator()([[param_class_name]]& params) {
     [[binning_autotune_keys]]
     auto kernel_index = lut[[binned_indices]];
+    params.selected_kernel = &image_list[kernel_index];
 #ifndef NDEBUG
     std::cerr << __FILE__ << " kernel_index = " << int(kernel_index) << std::endl;
+    params._debug_kernel_name = incbin_kernel_names[kernel_index];
 #endif
-    params.selected_kernel = &image_list[kernel_index];
     const auto& perf = image_perf_list[kernel_index];
     [[perf_field_assignment]];
 }
