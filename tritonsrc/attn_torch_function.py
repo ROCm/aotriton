@@ -475,7 +475,7 @@ class _attention(torch.autograd.Function):
         ctx.save_for_backward(q, k, v, o, M)
         ctx.grid = grid
         ctx.sm_scale = sm_scale
-        ctx.head_dim = Lk
+        ctx.BLOCK_DMODEL = Lk
         ctx.causal = causal
         ctx.dropout_p = dropout_p
         ctx.philox_seed = philox_seed
@@ -489,11 +489,10 @@ class _attention(torch.autograd.Function):
         q, k, v, o, L = ctx.saved_tensors
         # if q.shape[-1] <= 32:
         Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
-        assert Lq == Lk and Lk == Lv and Lk == ctx.head_dim
-        head_dim_rounded = 2 ** (ctx.head_dim - 1).bit_length()
+        assert Lq == Lk and Lk == Lv
+        head_dim_rounded = 2 ** (Lk - 1).bit_length()
         head_dim_rounded = max(16, head_dim_rounded)
-        padded_head = head_dim_rounded != ctx.head_dim
-
+        padded_head = (Lk != head_dim_rounded)
         dq = torch.zeros_like(q, dtype=torch.float32)
         dk = torch.empty_like(k)
         dv = torch.empty_like(v)
@@ -517,7 +516,7 @@ class _attention(torch.autograd.Function):
             max_seqlens_q,
             Lk,
             BLOCK_M=BLOCK, D_HEAD=head_dim_rounded,
-            PADDED_HEAD=padded_head, # FIXME: irregular head dimension
+            PADDED_HEAD=padded_head,
         )
         if False or VERBOSE:
             print(f'{q.shape=} {q.stride()=}')
@@ -548,6 +547,8 @@ class _attention(torch.autograd.Function):
         else:
             BLOCK_M = 32
             BLOCK_N = 16
+            assert BLOCK_M < max_seqlens_q, f'{BLOCK_M=} < {max_seqlens_q=}'
+            assert BLOCK_N < max_seqlens_k, f'{BLOCK_N=} < {max_seqlens_k=}'
         # debug_mask = torch.zeros((q.shape[0], q.shape[1], max_seqlens_q, max_seqlens_k), device=q.device, dtype=ctx.encoded_softmax.dtype)
         grid_dk_dv = lambda META: (
             triton.cdiv(max_seqlens_k, META['BLOCK_N']),

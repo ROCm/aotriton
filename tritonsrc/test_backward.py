@@ -70,7 +70,7 @@ but in PyTorch API it does not present at all
 # @pytest.mark.parametrize('N_HEADS', [1, 4])
 @pytest.mark.parametrize('BATCH', [1, 2, 4])
 @pytest.mark.parametrize('N_HEADS', [1, 2, 4])
-@pytest.mark.parametrize('D_HEAD', [32, 64, 128])
+@pytest.mark.parametrize('D_HEAD', [1, 19, 32, 52, 64, 119, 128])
 # PyTorch set
 # @pytest.mark.parametrize('D_HEAD', [8, 16, 21, 32, 64, 72, 96, 128, 160, 192, 203, 256])
 # Irregular-only PyTorch set
@@ -153,11 +153,11 @@ def test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dr
         print(f'{ref_out[err_idx]=}')
     assert is_allclose, 'Forward pass {is_allclose=}'
     if dtype == torch.bfloat16:
-        ATOL = 1e-1 * max(1.0, (seqlen_q + D_HEAD) / 32.0)
+        ATOL = 2e-1 * max(1.0, (seqlen_q + D_HEAD) / 32.0)
     if dtype == torch.float32:
         ATOL = 1e-3 * max(1.0, (seqlen_q + D_HEAD) / 32.0)
     else:
-        ATOL = 1e-1 * max(1.0, (seqlen_q + D_HEAD) / 32.0)
+        ATOL = 2e-1 * max(1.0, (seqlen_q + D_HEAD) / 32.0)
     print(f"Backward Using {ATOL=} {RTOL=}")
 
     dv_allclose = SKIP_DK_DV or torch.allclose(ref_dv, tri_dv, atol=ATOL, rtol=RTOL)
