@@ -60,7 +60,9 @@ namespace pyaotriton {
   } // namespace v2
 
   void def_stream(py::module_& m) {
-    py::class_<aotriton::Stream>(m, "Stream").def(py::init<>());
+    py::class_<aotriton::Stream>(m, "Stream")
+      .def(py::init<>())
+      .def(py::init<intptr_t>());
   }
 
   void def_dtype(py::module_& m) {

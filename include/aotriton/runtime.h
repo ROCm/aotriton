@@ -27,6 +27,28 @@ private:
   DeviceStreamType stream_;
 };
 
+
+//specialization
+template<>
+class StreamTemplate<hipStream_t> {
+public:
+  StreamTemplate()
+    : stream_(nullptr) {
+  }
+  StreamTemplate(intptr_t valptr): stream_(reinterpret_cast<hipStream_t>(valptr)){}
+  StreamTemplate(hipStream_t stream)
+    : stream_(stream) {
+  }
+  hipStream_t native() const {
+    return stream_;
+  }
+
+private:
+  hipStream_t stream_;
+};
+
+
+
 using Stream = StreamTemplate<hipStream_t>;
 
 }

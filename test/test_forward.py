@@ -237,3 +237,119 @@ def test_op_fwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dr
         # print(f'{tri_cpu.shape=}')
     # compare
     assert is_allclose
+
+@pytest.mark.parametrize('BATCH', [1, 2, 4])
+@pytest.mark.parametrize('N_HEADS', [1, 2, 4])
+@pytest.mark.parametrize('D_HEAD', [16,32,64,128,256])
+@pytest.mark.parametrize('seqlen_qkv', [128,256,512,1024])
+@pytest.mark.parametrize('causal', [False, True])
+@pytest.mark.parametrize('dropout_p', [0.0, 0.5])
+@pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
+@pytest.mark.parametrize('sm_scale', [0.0, 1.2])
+@pytest.mark.parametrize('storage_flip', [True, False])
+def test_op_fwd_qkvpacked(BATCH, N_HEADS, D_HEAD, seqlen_qkv, causal, sm_scale, dropout_p, dtype, storage_flip):
+    torch.manual_seed(20)
+    print(f"test_op_fwd {BATCH=}, {N_HEADS=}, {seqlen_qkv=}, {D_HEAD=}, {causal=}")
+    SPARSE_HEAD_SINCE = 3
+    SPARSE_SEQ_SINCE = 3
+    Z = BATCH
+    H = N_HEADS
+    qkvdims = (BATCH, N_HEADS, seqlen_qkv, 3, D_HEAD)
+    if storage_flip:
+        qkvdims = (qkvdims[0], qkvdims[2], qkvdims[1], qkvdims[3], qkvdims[4])
+    qkv = (
+        torch.empty(qkvdims, dtype=dtype, device="cuda")
+        .normal_(mean=0., std=0.5)
+        .requires_grad_()
+    )
+    if storage_flip:
+        qkv = torch.transpose(qkv, 1, 2)
+        assert qkv.shape == (BATCH, N_HEADS, seqlen_qkv, 3, D_HEAD)
+    q = qkv[:, :, :, 0, :]
+    k = qkv[:, :, :, 1, :]
+    v = qkv[:, :, :, 2, :]
+    return_encoded_softmax = dropout_p > 0.0
+    tri_out, encoded_softmax, _ = attention(q, k, v, causal, sm_scale, dropout_p, return_encoded_softmax)
+
+    dropout_mask = encoded_softmax > 0 if encoded_softmax is not None else None
+    # assert torch.allclose(dropout_mask, dropout_mask_naive)
+    ref_out, ref_softmax = torch.ops.aten._scaled_dot_product_attention_math(q, k, v,
+                                                                dropout_p=dropout_p,
+                                                                is_causal=causal,
+                                                                scale=sm_scale,
+                                                                dropout_mask=dropout_mask)
+    if dtype==torch.bfloat16:
+        ATOL = 1e-1 * (seqlen_qkv / 128.0) if seqlen_qkv >= 16 else 1e-1
+    else:
+        ATOL = 2e-2 * (seqlen_qkv / 128.0) if seqlen_qkv >= 16 else 1e-2
+    print(f'Using ATOL={ATOL}')
+    is_allclose = torch.allclose(ref_out, tri_out, atol=ATOL, rtol=0)
+    if not is_allclose:
+        import numpy as np
+        err_idx = np.unravel_index(torch.argmax(torch.abs(ref_out - tri_out)).cpu().numpy(), ref_out.shape)
+        print(f'{err_idx=}')
+        print(f'{tri_out[err_idx]=} {ref_out[err_idx]=} error: {tri_out[err_idx] - ref_out[err_idx]}')
+    assert is_allclose
+
+@pytest.mark.parametrize('BATCH', [1, 2, 4])
+@pytest.mark.parametrize('N_HEADS', [1, 2, 4])
+@pytest.mark.parametrize('D_HEAD', [16,32,64,128,256])
+@pytest.mark.parametrize('seqlen_q', [128,256,512,1024])
+@pytest.mark.parametrize('seqlen_kv', [128,256,512,1024])
+@pytest.mark.parametrize('causal', [False, True])
+@pytest.mark.parametrize('dropout_p', [0.0, 0.5])
+@pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
+@pytest.mark.parametrize('sm_scale', [0.0, 1.2])
+@pytest.mark.parametrize('storage_flip', [True, False])
+def test_op_fwd_kvpacked(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_kv, causal, sm_scale, dropout_p, dtype, storage_flip):
+    torch.manual_seed(20)
+    print(f"test_op_fwd {BATCH=}, {N_HEADS=}, {seqlen_q=}, {seqlen_kv=}, {D_HEAD=}, {causal=}")
+    SPARSE_HEAD_SINCE = 3
+    SPARSE_SEQ_SINCE = 3
+    Z = BATCH
+    H = N_HEADS
+    qdims = (BATCH, N_HEADS, seqlen_q, D_HEAD)
+    kvdims = (BATCH, N_HEADS, seqlen_kv, 2, D_HEAD)
+    if storage_flip:
+        qdims = (qdims[0], qdims[2], qdims[1], qdims[3])
+        kvdims = (kvdims[0], kvdims[2], kvdims[1], kvdims[3], kvdims[4])
+    q = (
+        torch.empty(qdims, dtype=dtype, device="cuda")
+        .normal_(mean=0., std=0.5)
+        .requires_grad_()
+    )
+    kv = (
+        torch.empty(kvdims, dtype=dtype, device="cuda")
+        .normal_(mean=0., std=0.5)
+        .requires_grad_()
+    )
+    if storage_flip:
+        q = torch.transpose(q, 1, 2)
+        kv = torch.transpose(kv, 1, 2)
+        assert q.shape == (BATCH, N_HEADS, seqlen_q, D_HEAD)
+        assert kv.shape == (BATCH, N_HEADS, seqlen_kv, 2, D_HEAD)
+    k = kv[:, :, :, 0, :]
+    v = kv[:, :, :, 1, :]
+    return_encoded_softmax = dropout_p > 0.0
+    tri_out, encoded_softmax, _ = attention(q, k, v, causal, sm_scale, dropout_p, return_encoded_softmax)
+
+    dropout_mask = encoded_softmax > 0 if encoded_softmax is not None else None
+    # assert torch.allclose(dropout_mask, dropout_mask_naive)
+    ref_out, ref_softmax = torch.ops.aten._scaled_dot_product_attention_math(q, k, v,
+                                                                dropout_p=dropout_p,
+                                                                is_causal=causal,
+                                                                scale=sm_scale,
+                                                                dropout_mask=dropout_mask)
+    if dtype==torch.bfloat16:
+        ATOL = 1e-1 * (seqlen_q / 128.0) if seqlen_q >= 16 else 1e-1
+    else:
+        ATOL = 2e-2 * (seqlen_q / 128.0) if seqlen_q >= 16 else 1e-2
+    print(f'Using ATOL={ATOL}')
+    is_allclose = torch.allclose(ref_out, tri_out, atol=ATOL, rtol=0)
+    if not is_allclose:
+        import numpy as np
+        err_idx = np.unravel_index(torch.argmax(torch.abs(ref_out - tri_out)).cpu().numpy(), ref_out.shape)
+        print(f'{err_idx=}')
+        print(f'{tri_out[err_idx]=} {ref_out[err_idx]=} error: {tri_out[err_idx] - ref_out[err_idx]}')
+    assert is_allclose
+
