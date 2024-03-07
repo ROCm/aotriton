@@ -208,6 +208,7 @@ def attn_fwd(
     BIAS_TYPE: tl.constexpr,
     PADDED_HEAD: tl.constexpr,  # Cannot be inferred by AOT Compiler
 ):
+    # FIXME: MQA should be num_heads_q != num_heads_k.
     is_mqa = head_dim_q != head_dim_k
     start_m = tl.program_id(0)
     off_h_q = tl.program_id(1)
