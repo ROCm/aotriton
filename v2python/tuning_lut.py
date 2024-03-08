@@ -105,6 +105,12 @@ class KernelTuningEntryForFunctionalOnGPU(object):
             incbin_lines.append(f'INCBIN({incbin_symbol_name}, "{fn}")')
         return ";\n".join(incbin_lines)
 
+    def codegen_incbin_names(self, kernel_image_dir, compressed=False):
+        incbin_lines = []
+        for incbin_symbol_name, _, _ in self.gen_kernel_symbols(kernel_image_dir):
+            incbin_lines.append(f'"{incbin_symbol_name}"')
+        return 'static const char* incbin_kernel_names[] = {\n  ' + ",\n  ".join(incbin_lines) + "\n};"
+
     def codegen_kernel_image_objects(self, kernel_image_dir):
         kernel_image_symbols = []
         for incbin_symbol_name, _, o in self.gen_kernel_symbols(kernel_image_dir):
@@ -134,6 +140,7 @@ class KernelTuningEntryForFunctionalOnGPU(object):
         with open(ofn, 'w') as f:
             d = {
                 'incbin_kernel_images'  : self.codegen_incbin_code(gpu_kernel_image_dir, compressed=compressed),
+                'incbin_kernel_names'   : self.codegen_incbin_names(gpu_kernel_image_dir, compressed=compressed),
                 'kernel_family_name'    : self._kdesc.KERNEL_FAMILY,
                 'shim_kernel_name'      : self._kdesc.SHIM_KERNEL_NAME,
                 'godel_number'          : godel_number,

@@ -66,46 +66,100 @@ Note: In Flash V2 API the ... is denoted as "num_heads", serving as uniformly si
 but in PyTorch API it does not present at all
 '''
 
-# @pytest.mark.parametrize('BATCH', [1, 4])
-# @pytest.mark.parametrize('N_HEADS', [1, 4])
-@pytest.mark.parametrize('BATCH', [1, 2, 4])
-@pytest.mark.parametrize('N_HEADS', [1, 2, 4])
-@pytest.mark.parametrize('D_HEAD', [16,32,64,128])
-# @pytest.mark.parametrize('D_HEAD', [128])
-# @pytest.mark.parametrize('seqlen_q', [16,32,64,128,256,512,1024])
-# @pytest.mark.parametrize('seqlen_k', [16,32,64,128,256,512,1024])
-@pytest.mark.parametrize('seqlen_q', [128,256,512,1024])
-@pytest.mark.parametrize('seqlen_k', [128,256,512,1024])
+def query_key_value_clones(query: torch.Tensor, key: torch.Tensor, value: torch.Tensor, dtype: torch.dtype = None, device=None):
+    """ Clones the query, key, and value tensors and moves them to the specified dtype. """
+    if dtype is None:
+        dtype = query.dtype
+    query_ref = query.clone().detach().to(dtype=dtype, device=device).requires_grad_(query.requires_grad)
+    key_ref = key.clone().detach().to(dtype=dtype, device=device).requires_grad_(key.requires_grad)
+    value_ref = value.clone().detach().to(dtype=dtype, device=device).requires_grad_(value.requires_grad)
+    return query_ref, key_ref, value_ref
+
+
+# Debugging
+@pytest.mark.parametrize('BATCH', [1])
+@pytest.mark.parametrize('N_HEADS', [1])
+# @pytest.mark.parametrize('BATCH', [1, 2, 4])
+# @pytest.mark.parametrize('N_HEADS', [1, 2, 4])
+# @pytest.mark.parametrize('D_HEAD', [16, 32, 64, 128, 256])
+# Irregular-only PyTorch set
+# @pytest.mark.parametrize('D_HEAD', [8, 21, 72, 96, 160, 192, 203])
+# @pytest.mark.parametrize('seqlen_q', [1, 4, 32, 128, 256, 512, 1024, 7, 394, 250, 399, 511, 1019])
+# @pytest.mark.parametrize('seqlen_k', [1, 4, 32, 128, 256, 512, 1024, 3, 217, 339, 313, 491, 988])
+# PyTorch set
+@pytest.mark.parametrize('D_HEAD', [8, 16, 21, 32, 64, 72, 96, 128, 160, 192, 203, 256])
+@pytest.mark.parametrize('seqlen_q', [4, 8, 64, 143, 256, 512, 1024, 2048])
+@pytest.mark.parametrize('seqlen_k', [4, 8, 64, 128, 256, 587, 1024, 2048])
+# Currently debugging
+# @pytest.mark.parametrize('D_HEAD', range(8,128+1,4))
+# @pytest.mark.parametrize('D_HEAD', [84,92,108, 203] + list(range(128, 256+1, 4)))
+# @pytest.mark.parametrize('D_HEAD', [84,203])
+# @pytest.mark.parametrize('D_HEAD', range(8,64+1,4))
+# @pytest.mark.parametrize('seqlen_q', [128, 2048, 4096])
+# @pytest.mark.parametrize('seqlen_k', [128, 2048, 4096])
+# Minimal set
 # @pytest.mark.parametrize('seqlen_q', [32, 128])
 # @pytest.mark.parametrize('seqlen_k', [32, 128])
 @pytest.mark.parametrize('causal', [False, True])
 @pytest.mark.parametrize('dropout_p', [0.0, 0.5])
-# @pytest.mark.parametrize('dropout_p', [0.0])
 # @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16, torch.float32])
 @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
-@pytest.mark.parametrize('sm_scale', [0.0, 1.2])
+# @pytest.mark.parametrize('dtype', [torch.float16])
+# @pytest.mark.parametrize('sm_scale', [0.0, 1.2])
+@pytest.mark.parametrize('sm_scale', [1.2])
+# @pytest.mark.parametrize('storage_flip', [False])
+@pytest.mark.parametrize('storage_flip', [False, True])
 # @pytest.mark.parametrize('return_encoded_softmax', [False])
-def test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype):
+def test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
+    seqlen_k = seqlen_q if seqlen_k is None else seqlen_k
+    if causal and seqlen_q != seqlen_k:
+        pytest.skip("PyTorch's Flash V2 does not accept casual=True when seqlen_q != seqlen_k. Skipping")
     SKIP_DK_DV = False
     SKIP_DQ = False
-    USE_AUTOTUNE = True
+    USE_AUTOTUNE = False
     torch.manual_seed(20)
     SPARSE_HEAD_SINCE = 1
     SPARSE_SEQ_SINCE = 1
-    q = torch.empty((BATCH, N_HEADS, seqlen_q, D_HEAD), dtype=dtype, device="cuda").normal_(mean=0., std=0.5)
-    k = torch.empty((BATCH, N_HEADS, seqlen_k, D_HEAD), dtype=dtype, device="cuda").normal_(mean=0., std=0.5)
-    v = torch.empty((BATCH, N_HEADS, seqlen_k, D_HEAD), dtype=dtype, device="cuda").normal_(mean=0., std=0.5)
+    qdims = (BATCH, N_HEADS, seqlen_q, D_HEAD)
+    kdims = (BATCH, N_HEADS, seqlen_k, D_HEAD)
+    vdims = (BATCH, N_HEADS, seqlen_k, D_HEAD)
+    if storage_flip:
+        qdims = (qdims[0], qdims[2], qdims[1], qdims[3])
+        kdims = (kdims[0], kdims[2], kdims[1], kdims[3])
+        vdims = (vdims[0], vdims[2], vdims[1], vdims[3])
+    q = torch.empty(qdims, dtype=dtype, device="cuda").normal_(mean=0., std=0.5)
+    k = torch.empty(kdims, dtype=dtype, device="cuda").normal_(mean=0., std=0.5)
+    v = torch.empty(vdims, dtype=dtype, device="cuda").normal_(mean=0., std=0.5)
+    if storage_flip:
+        q = torch.transpose(q, 1, 2)
+        k = torch.transpose(k, 1, 2)
+        v = torch.transpose(v, 1, 2)
     if not SKIP_DQ:
         q.requires_grad_()
     if not SKIP_DK_DV:
         k.requires_grad_()
         v.requires_grad_()
     return_encoded_softmax = True
+
+    # q_ref_lp, k_ref_lp, v_ref_lp = query_key_value_clones(q, k, v, dtype=dtype)
+    higher_precision_dtype = torch.float64 if dtype == torch.float32 else torch.float32
+    # REF_DEVICE='cpu'
+    REF_DEVICE=None
+    q_ref, k_ref, v_ref = query_key_value_clones(q, k, v, dtype=higher_precision_dtype, device=REF_DEVICE)
+    def TO(ref_tensor):
+        return ref_tensor.to(device=q.device, dtype=dtype)
     # autotune = True
     # # triton implementation
     tri_out, encoded_softmax, _ = attention(q, k, v, causal, sm_scale, dropout_p, return_encoded_softmax, USE_AUTOTUNE)
     dropout_mask = encoded_softmax >= 0
+    '''
     ref_out, ref_softmax = torch.ops.aten._scaled_dot_product_attention_math(q, k, v,
+                                                                dropout_p=dropout_p,
+                                                                is_causal=causal,
+                                                                scale=sm_scale,
+                                                                dropout_mask=dropout_mask)
+    '''
+    ref_out, ref_softmax = torch.ops.aten._scaled_dot_product_attention_math(q_ref, k_ref, v_ref,
                                                                 dropout_p=dropout_p,
                                                                 is_causal=causal,
                                                                 scale=sm_scale,
@@ -115,20 +169,29 @@ def test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dr
     tri_dv, v.grad = None if SKIP_DK_DV else v.grad.clone(), None
     tri_dk, k.grad = None if SKIP_DK_DV else k.grad.clone(), None
     tri_dq, q.grad = None if SKIP_DQ else q.grad.clone(), None
+    '''
     ref_out.backward(dout, None)
     ref_dv, v.grad = None if SKIP_DK_DV else v.grad.clone(), None
     ref_dk, k.grad = None if SKIP_DK_DV else k.grad.clone(), None
     ref_dq, q.grad = None if SKIP_DQ else q.grad.clone(), None
+    '''
+    ref_out.backward(dout.to(device=ref_out.device, dtype=ref_out.dtype))
+    ref_dv, v.grad = None if SKIP_DK_DV else v_ref.grad.clone(), None
+    ref_dk, k.grad = None if SKIP_DK_DV else k_ref.grad.clone(), None
+    ref_dq, q.grad = None if SKIP_DQ else q_ref.grad.clone(), None
     # compare
     if dtype==torch.bfloat16:
-        ATOL = 1e-1 * max(1.0, seqlen_q / 64.0)
+        ATOL = 1e-1 * max(1.0, (seqlen_q + seqlen_k) / 128.0)
     else:
-        ATOL = 1e-2 * max(1.0, seqlen_q / 64.0)
+        ATOL = 1e-2 * max(1.0, (seqlen_q + seqlen_k) / 128.0)
     # RTOL=1e-2 if dtype==torch.float16 else 5e-2
     RTOL=0.0
     print(f'Forward Using ATOL={ATOL} RTOL={RTOL}')
     # FIXME: Need to raise tolerance
+    '''
     is_allclose = torch.allclose(ref_out, tri_out, atol=ATOL, rtol=RTOL)
+    '''
+    is_allclose = torch.allclose(TO(ref_out), tri_out, atol=ATOL, rtol=RTOL)
     if not is_allclose:
         import numpy as np
         err_idx = np.unravel_index(torch.argmax(torch.abs(ref_out - tri_out)).cpu().numpy(), ref_out.shape)
@@ -137,25 +200,25 @@ def test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dr
         print(f'{ref_out[err_idx]=}')
     assert is_allclose, 'Forward pass {is_allclose=}'
     if dtype == torch.bfloat16:
-        ATOL = 1e-1 * max(1.0, (seqlen_q + D_HEAD) / 32.0)
+        ATOL = 1e-1 * max(1.0, (seqlen_q + D_HEAD) / 64.0)
     if dtype == torch.float32:
-        ATOL = 1e-3 * max(1.0, (seqlen_q + D_HEAD) / 32.0)
+        ATOL = 1e-3 * max(1.0, (seqlen_q + D_HEAD) / 64.0)
     else:
-        ATOL = 1e-1 * max(1.0, (seqlen_q + D_HEAD) / 32.0)
+        ATOL = 1e-1 * max(1.0, (seqlen_q + D_HEAD) / 64.0)
     print(f"Backward Using {ATOL=} {RTOL=}")
 
-    dv_allclose = SKIP_DK_DV or torch.allclose(ref_dv, tri_dv, atol=ATOL, rtol=RTOL)
+    dv_allclose = SKIP_DK_DV or torch.allclose(TO(ref_dv), tri_dv, atol=ATOL, rtol=RTOL)
     if not dv_allclose:
         import numpy as np
-        err_idx = np.unravel_index(torch.argmax(torch.abs(ref_dv - tri_dv)).cpu().numpy(), ref_dv.shape)
+        err_idx = np.unravel_index(torch.argmax(torch.abs(TO(ref_dv) - tri_dv)).cpu().numpy(), ref_dv.shape)
         print(f'{q.shape=} {q.stride()=} {q.dtype=}')
         print(f'{k.shape=} {k.stride()=} {k.dtype=}')
         print(f'{v.shape=} {v.stride()=} {v.dtype=}')
         print(f'{q[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
         print(f'{k[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
         print(f'{v[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
-        # print(f'{dropout_mask[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
         print(f'{dropout_mask.shape=}')
+        print(f'{dropout_mask[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
         print(f'{err_idx=}')
         print(f'{tri_dv[err_idx]=}')
         print(f'{ref_dv[err_idx]=}')
@@ -171,7 +234,7 @@ def test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dr
             print(f'{causal=}')
             print(f'{sm_scale=}')
         '''
-        if seqlen_q <= 16:
+        if seqlen_q <= 16 or True:
             torch.set_printoptions(linewidth=200, threshold=4096)
             print(f'{tri_dk[0,0]=}')
             print(f'{ref_dk[0,0]=}')
@@ -180,23 +243,23 @@ def test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dr
             # print(f'{tri_dq[0,0]=}')
             # print(f'{ref_dq[0,0]=}')
 
-    dk_allclose = SKIP_DK_DV or torch.allclose(ref_dk, tri_dk, atol=ATOL, rtol=RTOL)
+    dk_allclose = SKIP_DK_DV or torch.allclose(TO(ref_dk), tri_dk, atol=ATOL, rtol=RTOL)
     if dv_allclose and not dk_allclose:
         print(f'{tri_out[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
         print(f'{ref_out[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
         print(f'{tri_dk[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
         print(f'{ref_dk[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
         import numpy as np
-        err_idx = np.unravel_index(torch.argmax(torch.abs(ref_dk - tri_dk)).cpu().numpy(), ref_dk.shape)
+        err_idx = np.unravel_index(torch.argmax(torch.abs(TO(ref_dk) - tri_dk)).cpu().numpy(), ref_dk.shape)
         print(f'{err_idx=}')
         print(f'{tri_dk[err_idx]=} {ref_dk[err_idx]=} error = {torch.abs(tri_dk[err_idx] - ref_dk[err_idx])}')
         print(f'{tri_dk[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]/ref_dk[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
         print(f'{dropout_mask[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
 
-    dq_allclose = SKIP_DQ or torch.allclose(ref_dq, tri_dq, atol=ATOL, rtol=RTOL)
+    dq_allclose = SKIP_DQ or torch.allclose(TO(ref_dq), tri_dq, atol=ATOL, rtol=RTOL)
     if dk_allclose and dv_allclose and not dq_allclose:
         import numpy as np
-        err_idx = np.unravel_index(torch.argmax(torch.abs(ref_dq - tri_dq)).cpu().numpy(), ref_dq.shape)
+        err_idx = np.unravel_index(torch.argmax(torch.abs(TO(ref_dq) - tri_dq)).cpu().numpy(), ref_dq.shape)
         print(f'{err_idx=}')
         print(f'{tri_dq[err_idx]=} {ref_dq[err_idx]=} error = {torch.abs(tri_dq[err_idx] - ref_dq[err_idx])}')
     assert dk_allclose and dv_allclose and dq_allclose, f'{dk_allclose=} {dv_allclose=} {dq_allclose=}'

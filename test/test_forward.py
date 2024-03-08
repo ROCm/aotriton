@@ -69,12 +69,11 @@ but in PyTorch API it does not present at all
 # @pytest.mark.parametrize('N_HEADS', [1, 4])
 @pytest.mark.parametrize('BATCH', [1, 2, 4])
 @pytest.mark.parametrize('N_HEADS', [1, 2, 4])
-@pytest.mark.parametrize('D_HEAD', [16,32,64,128,256])
-# @pytest.mark.parametrize('D_HEAD', [128])
+@pytest.mark.parametrize('D_HEAD', [8, 16, 21, 32, 64, 72, 96, 128, 160, 192, 203, 256])
 # @pytest.mark.parametrize('seqlen_q', [16,32,64,128,256,512,1024])
 # @pytest.mark.parametrize('seqlen_k', [16,32,64,128,256,512,1024])
-@pytest.mark.parametrize('seqlen_q', [128,256,512,1024])
-@pytest.mark.parametrize('seqlen_k', [128,256,512,1024])
+@pytest.mark.parametrize('seqlen_q', [4,8,16,17,32,64,128,143,256,512,1024,2048])
+@pytest.mark.parametrize('seqlen_k', [4,8,16,23,32,64,128,256,512,587,1024,2048])
 # @pytest.mark.parametrize('seqlen_q', [32, 128])
 # @pytest.mark.parametrize('seqlen_k', [32, 128])
 @pytest.mark.parametrize('causal', [False, True])
@@ -85,6 +84,8 @@ but in PyTorch API it does not present at all
 @pytest.mark.parametrize('storage_flip', [True, False])
 # @pytest.mark.parametrize('return_encoded_softmax', [False])
 def test_op_fwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
+    if causal and seqlen_q != seqlen_k:
+        pytest.skip("PyTorch's Flash V2 does not accept casual=True when seqlen_q != seqlen_k. Skipping")
     torch.manual_seed(20)
     print(f"test_op_fwd {BATCH=}, {N_HEADS=}, {seqlen_q=}, {seqlen_k=}, {D_HEAD=}, {causal=}")
     SPARSE_HEAD_SINCE = 3
@@ -188,9 +189,9 @@ def test_op_fwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dr
             print(f'{dropout_mask.shape=} {dropout_mask.stride()=}')
             print(f'{dropout_mask[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
     if dtype==torch.bfloat16:
-        ATOL = 1e-1 * (seqlen_q / 128.0) if seqlen_q >= 16 else 1e-1
+        ATOL = 1e-1 * max(1.0, (seqlen_q + seqlen_k + D_HEAD) / 128.0)
     else:
-        ATOL = 2e-2 * (seqlen_q / 128.0) if seqlen_q >= 16 else 1e-2
+        ATOL = 1e-2 * max(1.0, (seqlen_q + seqlen_k + D_HEAD) / 128.0)
     print(f'Using ATOL={ATOL}')
     is_allclose = torch.allclose(ref_out, tri_out, atol=ATOL, rtol=0)
     if not is_allclose:

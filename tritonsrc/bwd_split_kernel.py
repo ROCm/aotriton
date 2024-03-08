@@ -37,7 +37,8 @@ def bwd_kernel_dk_dv(
     stride_kz, stride_kh, stride_kn, stride_kk,
     stride_vz, stride_vh, stride_vk, stride_vn,
     stride_oz, stride_oh, stride_om, stride_ok,
-    seqlen_q, seqlen_k,
+    max_seqlens_q, max_seqlens_k,
+    head_dim,
     dropout_p,
     philox_seed,
     philox_offset_base,
@@ -46,12 +47,16 @@ def bwd_kernel_dk_dv(
     BLOCK_N: tl.constexpr,
     CAUSAL: tl.constexpr,
     ENABLE_DROPOUT: tl.constexpr,
+    PADDED_HEAD: tl.constexpr,
 ):
     start_m = tl.program_id(0) * BLOCK_N
     off_h = tl.program_id(1) # head index
     off_z = tl.program_id(2) # batch index
     num_h = tl.num_programs(1)
     num_z = tl.num_programs(2)
+    # TODO: Support varlen here
+    seqlen_q = max_seqlens_q
+    seqlen_k = max_seqlens_k
     # initialize offsets
     offs_m = start_m + tl.arange(0, BLOCK_N)
     offs_n = tl.arange(0, BLOCK_M)
@@ -61,16 +66,16 @@ def bwd_kernel_dk_dv(
     q_offset = off_h * stride_qh + off_z * stride_qz
     Q_block_ptr = tl.make_block_ptr(
         base=Q + q_offset,
-        shape=(seqlen_q, BLOCK_DMODEL),
+        shape=(seqlen_q, head_dim),
         strides=(stride_qm, stride_qk),
         offsets=(0, 0),
         block_shape=(BLOCK_M, BLOCK_DMODEL),
         order=(1, 0)
     )
     k_offset = off_h * stride_kh + off_z * stride_kz
-    K_block_ptr = tl.make_block_ptr(
+    KT_block_ptr = tl.make_block_ptr(
         base=K + k_offset,
-        shape=(BLOCK_DMODEL, seqlen_k),
+        shape=(head_dim, seqlen_k),
         strides=(stride_kk, stride_kn),
         offsets=(0, start_m),
         block_shape=(BLOCK_DMODEL, BLOCK_N),
@@ -79,7 +84,7 @@ def bwd_kernel_dk_dv(
     v_offset = off_h * stride_vh + off_z * stride_vz
     VT_block_ptr = tl.make_block_ptr(
         base=V + v_offset,
-        shape=(BLOCK_DMODEL, seqlen_k),
+        shape=(head_dim, seqlen_k),
         strides=(stride_vn, stride_vk),
         offsets=(0, start_m),
         block_shape=(BLOCK_DMODEL, BLOCK_N),
@@ -88,7 +93,7 @@ def bwd_kernel_dk_dv(
     do_offset = off_h * stride_oh + off_z * stride_oz
     DO_block_ptr = tl.make_block_ptr(
         base=DO + do_offset,
-        shape=(seqlen_q, BLOCK_DMODEL),
+        shape=(seqlen_q, head_dim),
         strides=(stride_om, stride_ok),
         offsets=(0, 0),
         block_shape=(BLOCK_M, BLOCK_DMODEL),
@@ -100,9 +105,17 @@ def bwd_kernel_dk_dv(
     l_ptrs = L + off_zh * seqlen_q
     qk_scale = sm_scale * 1.44269504089
     # load k and v: they will stay in SRAM throughout
-    k = tl.load(K_block_ptr) # (BLOCK_DMODEL, BLOCK_N)
-    k = (k * qk_scale).to(K_block_ptr.type.element_ty)
-    vt = tl.load(VT_block_ptr) # (BLOCK_DMODEL, BLOCK_N)
+    # (BLOCK_DMODEL, BLOCK_N)
+    if PADDED_HEAD:
+        kt = tl.load(KT_block_ptr, boundary_check=(1,0), padding_option="zero")
+    else:
+        kt = tl.load(KT_block_ptr, boundary_check=(1,), padding_option="zero")
+    kt = (kt * qk_scale).to(KT_block_ptr.type.element_ty)
+    # (BLOCK_DMODEL, BLOCK_N)
+    if PADDED_HEAD:
+        vt = tl.load(VT_block_ptr, boundary_check=(1,0), padding_option="zero")
+    else:
+        vt = tl.load(VT_block_ptr, boundary_check=(1,), padding_option="zero")
     dv = tl.zeros([BLOCK_N, BLOCK_DMODEL], dtype=tl.float32)
     dk = tl.zeros([BLOCK_N, BLOCK_DMODEL], dtype=tl.float32)
     # This lower loop bound is because of the causal mask. We create a lower triangular
@@ -134,15 +147,39 @@ def bwd_kernel_dk_dv(
     for start_n in range(lo, hi, BLOCK_M):
         offs_m_curr = offs_n[:, None] + start_n # (BLOCK_M, 1)
         # -- load q, do --
-        q = tl.load(Q_block_ptr) # (BLOCK_M, BLOCK_DMODEL), offs = (BLOCK_M * iter, 0) = (start_n, 0)
-        do = tl.load(DO_block_ptr) # (BLOCK_M, BLOCK_DMODEL)
+        # TODO: It is more optimal to do OOB check only in the last iter.
+        # (BLOCK_M, BLOCK_DMODEL), offs = (BLOCK_M * iter, 0) = (start_n, 0)
+        if PADDED_HEAD:
+            q = tl.load(Q_block_ptr, boundary_check=(0,1), padding_option="zero")
+        else:
+            q = tl.load(Q_block_ptr, boundary_check=(0,), padding_option="zero")
+        # do: (BLOCK_M, BLOCK_DMODEL)
+        if PADDED_HEAD:
+            do = tl.load(DO_block_ptr, boundary_check=(0,1), padding_option="zero")
+        else:
+            do = tl.load(DO_block_ptr, boundary_check=(0,), padding_option="zero")
         # -- compute qk ----
         qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
-        # q.offs = (start_n, 0), k.offs = (0, start_m)
-        qk += dot(BLOCK_M, BLOCK_DMODEL, BLOCK_DMODEL, q, k) # (BLOCK_M, BLOCK_N)
+        # TODO: These two checks can be optimized to occur on the last iter.
+        overflow_size = start_n + BLOCK_M - seqlen_q
+        if overflow_size > 0:
+            boundary_n = tl.full((BLOCK_N, ), seqlen_q, dtype=tl.int32)
+            mask = offs_m_curr < boundary_n[None, :]
+            qk = tl.where(mask, qk, float("-inf"))
         if CAUSAL:
             qk = tl.where(offs_m_curr >= offs_m[None, :], qk, float("-inf"))
-        l_i = tl.load(l_ptrs + offs_m_curr) # (BLOCK_M, 1)
+        # q.offs = (start_n, 0), k.offs = (0, start_m)
+        qk += dot(BLOCK_M, BLOCK_DMODEL, BLOCK_DMODEL, q, kt) # (BLOCK_M, BLOCK_N)
+        # Check for OOB accesses on D and LSE
+        boundary = tl.full((BLOCK_M, ), BLOCK_M - overflow_size, dtype=tl.int32)
+        d_lse_ptrs_mask = boundary > tl.arange(0, BLOCK_M)
+        d_lse_padding = tl.full((BLOCK_M, ), 0, dtype=tl.float32)
+        Di = tl.load(D_ptrs + offs_m_curr,
+                     mask=d_lse_ptrs_mask[:, None],
+                     other=d_lse_padding[:, None])
+        l_i = tl.load(l_ptrs + offs_m_curr,
+                      mask=d_lse_ptrs_mask[:,None],
+                      other=d_lse_padding[:, None])
         p = tl.math.exp2(qk - l_i) # (BLOCK_M, BLOCK_N)
         # -- compute dv ----
         if ENABLE_DROPOUT:
@@ -152,16 +189,15 @@ def bwd_kernel_dk_dv(
             if BLOCK_M == 1:
                 dv += tl.where(keep, p / (1 - dropout_p), 0.0).to(Q.dtype.element_ty) * do
             else:
-                dv += tl.dot(tl.where(tl.trans(keep), tl.trans(p) / (1 - dropout_p), 0.0).to(Q.dtype.element_ty), do)
+                dv += tl.dot(tl.trans(tl.where(keep, p / (1 - dropout_p), 0.0)).to(Q.dtype.element_ty), do)
         else:
             if BLOCK_M == 1:
                 dv += p.to(Q.dtype.element_ty) * do
             else:
                 # dv += tl.dot(tl.trans(p.to(do.dtype)), do)
                 dv += tl.dot(tl.trans(p).to(do.dtype), do)
-        # compute dp = dot(v, do)
-        Di = tl.load(D_ptrs + offs_m_curr) # (BLOCK_M, 1)
         dp = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
+        # compute dp = dot(do, vt)
         # dp += dot(BLOCK_M, BLOCK_DMODEL, BLOCK_DMODEL, do, vt)
         # do.shape = (BLOCK_M, BLOCK_DMODEL) vt.shape = (BLOCK_DMODEL, BLOCK_N)
         dp += tl.dot(do, vt)
@@ -181,7 +217,7 @@ def bwd_kernel_dk_dv(
     # initialize pointers to output
     DK_block_ptr = tl.make_block_ptr(
         base=DK + k_offset,
-        shape=(seqlen_k, BLOCK_DMODEL),
+        shape=(seqlen_k, head_dim),
         strides=(stride_kn, stride_kk),
         offsets=(start_m, 0),
         block_shape=(BLOCK_N, BLOCK_DMODEL),
@@ -189,14 +225,14 @@ def bwd_kernel_dk_dv(
     )
     DV_block_ptr = tl.make_block_ptr(
         base=DV + v_offset,
-        shape=(seqlen_k, BLOCK_DMODEL),
+        shape=(seqlen_k, head_dim),
         strides=(stride_vk, stride_vn),
         offsets=(start_m, 0),
         block_shape=(BLOCK_N, BLOCK_DMODEL),
         order=(1, 0)
     )
-    tl.store(DK_block_ptr, (dk * sm_scale).to(DK.type.element_ty))
-    tl.store(DV_block_ptr, dv.to(DV.type.element_ty))
+    tl.store(DK_block_ptr, (dk * sm_scale).to(DK.type.element_ty), boundary_check=(0,1))
+    tl.store(DV_block_ptr, dv.to(DV.type.element_ty), boundary_check=(0,1))
 
 @triton.jit
 def bwd_kernel_dq(
@@ -208,7 +244,8 @@ def bwd_kernel_dq(
     stride_kz, stride_kh, stride_kn, stride_kk,
     stride_vz, stride_vh, stride_vk, stride_vn,
     stride_oz, stride_oh, stride_om, stride_ok,
-    seqlen_q, seqlen_k,
+    max_seqlens_q, max_seqlens_k,
+    head_dim,
     dropout_p,
     philox_seed,
     philox_offset_base,
@@ -216,12 +253,16 @@ def bwd_kernel_dq(
     BLOCK_N: tl.constexpr,
     CAUSAL: tl.constexpr,
     ENABLE_DROPOUT: tl.constexpr,
+    PADDED_HEAD: tl.constexpr,
 ):
     start_m = tl.program_id(0) * BLOCK_M
     off_h = tl.program_id(1) # head index
     off_z = tl.program_id(2) # batch index
     num_h = tl.num_programs(1)
     num_z = tl.num_programs(2)
+    # TODO: Support varlen here
+    seqlen_q = max_seqlens_q
+    seqlen_k = max_seqlens_k
     # initialize offsets
     offs_m = start_m + tl.arange(0, BLOCK_M)
     offs_n = tl.arange(0, BLOCK_N)
@@ -229,7 +270,7 @@ def bwd_kernel_dq(
     q_offset = off_h * stride_qh + off_z * stride_qz
     Q_block_ptr = tl.make_block_ptr(
         base=Q + q_offset,
-        shape=(seqlen_q, BLOCK_DMODEL),
+        shape=(seqlen_q, head_dim),
         strides=(stride_qm, stride_qk),
         offsets=(start_m, 0),
         block_shape=(BLOCK_M, BLOCK_DMODEL),
@@ -238,7 +279,7 @@ def bwd_kernel_dq(
     k_offset = off_h * stride_kh + off_z * stride_kz
     K_block_ptr = tl.make_block_ptr(
         base=K + k_offset,
-        shape=(BLOCK_DMODEL, seqlen_k),
+        shape=(head_dim, seqlen_k),
         strides=(stride_kk, stride_kn),
         offsets=(0, 0),
         block_shape=(BLOCK_DMODEL, BLOCK_N),
@@ -247,7 +288,7 @@ def bwd_kernel_dq(
     v_offset = off_h * stride_vh + off_z * stride_vz
     V_block_ptr = tl.make_block_ptr(
         base=V + v_offset,
-        shape=(BLOCK_DMODEL, seqlen_k),
+        shape=(head_dim, seqlen_k),
         strides=(stride_vn, stride_vk),
         offsets=(0, 0),
         block_shape=(BLOCK_DMODEL, BLOCK_N),
@@ -256,7 +297,7 @@ def bwd_kernel_dq(
     do_offset = off_h * stride_oh + off_z * stride_oz
     DO_block_ptr = tl.make_block_ptr(
         base=DO + do_offset,
-        shape=(seqlen_q, BLOCK_DMODEL),
+        shape=(seqlen_q, head_dim),
         strides=(stride_om, stride_ok),
         offsets=(start_m, 0),
         block_shape=(BLOCK_M, BLOCK_DMODEL),
@@ -268,11 +309,22 @@ def bwd_kernel_dq(
     l_ptrs = L + off_zh * seqlen_q
     qk_scale = sm_scale * 1.44269504089
     # load q and do: they will stay in SRAM throughout
-    q = tl.load(Q_block_ptr)
+    if PADDED_HEAD:
+        q = tl.load(Q_block_ptr, boundary_check=(0,1), padding_option="zero")
+    else:
+        q = tl.load(Q_block_ptr, boundary_check=(0,), padding_option="zero")
     q = (q * qk_scale).to(Q_block_ptr.type.element_ty)
-    do = tl.load(DO_block_ptr)
-    Di = tl.load(D_ptrs + offs_m)
-    l_i = tl.load(l_ptrs + offs_m)
+    if PADDED_HEAD:
+        do = tl.load(DO_block_ptr, boundary_check=(0,1), padding_option="zero")
+    else:
+        do = tl.load(DO_block_ptr, boundary_check=(0,), padding_option="zero")
+    # Check for OOB accesses on D and LSE
+    overflow_size_q = start_m + BLOCK_M - seqlen_q
+    boundary = tl.full((BLOCK_M, ), BLOCK_M - overflow_size_q, dtype=tl.int32)
+    d_lse_ptrs_mask = boundary > tl.arange(0, BLOCK_M)
+    d_lse_padding = tl.full((BLOCK_M, ), 0, dtype=tl.float32)
+    Di = tl.load(D_ptrs + offs_m, mask=d_lse_ptrs_mask, other=d_lse_padding)
+    l_i = tl.load(l_ptrs + offs_m, mask=d_lse_ptrs_mask, other=d_lse_padding)
     dq = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)
     # loop over k, v
     lo = 0
@@ -289,13 +341,23 @@ def bwd_kernel_dq(
     '''
     for start_n in range(lo, hi, BLOCK_N):
         # -- load k, v --
-        kt = tl.load(K_block_ptr) # shape = (BLOCK_DMODEL, BLOCK_N), offs = (0, BLOCK_N * iter) = (0, start_n)
-        vt = tl.load(V_block_ptr)
+        # shape = (BLOCK_DMODEL, BLOCK_N), offs = (0, BLOCK_N * iter) = (0, start_n)
+        if PADDED_HEAD:
+            kt = tl.load(K_block_ptr, boundary_check=(1,0), padding_option="zero")
+            vt = tl.load(V_block_ptr, boundary_check=(1,0), padding_option="zero")
+        else:
+            kt = tl.load(K_block_ptr, boundary_check=(1,), padding_option="zero")
+            vt = tl.load(V_block_ptr, boundary_check=(1,), padding_option="zero")
         # -- compute qk ----
         # q.offs = (start_m, 0), k.offs = (0, start_n)
         qk = dot(BLOCK_M, BLOCK_DMODEL, BLOCK_DMODEL, q, kt)
         if CAUSAL:
             qk = tl.where(offs_m[:, None] >= (offs_n[None, :] + start_n), qk, float("-inf"))
+        overflow_size_k = start_n + BLOCK_N - seqlen_k
+        boundary_n = tl.full((BLOCK_M, ), seqlen_k, dtype=tl.int32)
+        size_n = start_n + tl.arange(0, BLOCK_N)
+        mask = size_n[None, :] < boundary_n[:, None]
+        qk = tl.where(mask, qk, float("-inf"))
         p = tl.math.exp2(qk - l_i[:, None])
         # compute dp = dot(v, do)
         dp = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
@@ -319,11 +381,11 @@ def bwd_kernel_dq(
     # initialize pointers to output
     DQ_block_ptr = tl.make_block_ptr(
         base=DQ + q_offset,
-        shape=(seqlen_q, BLOCK_DMODEL),
+        shape=(seqlen_q, head_dim),
         strides=(stride_qm, stride_qk),
         offsets=(start_m, 0),
         block_shape=(BLOCK_M, BLOCK_DMODEL),
         order=(1, 0)
     )
-    tl.store(DQ_block_ptr, (dq * sm_scale).to(DQ_block_ptr.type.element_ty))
+    tl.store(DQ_block_ptr, (dq * sm_scale).to(DQ_block_ptr.type.element_ty), boundary_check=(0,1))
 
