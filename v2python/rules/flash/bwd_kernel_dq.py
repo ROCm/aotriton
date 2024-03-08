@@ -14,6 +14,7 @@ class bwd_kernel_dq(FlashKernel):
         'stride_kz', 'stride_kh', 'stride_kn', 'stride_kk',
         'stride_vz', 'stride_vh', 'stride_vk', 'stride_vn',
         'stride_oz', 'stride_oh', 'stride_om', 'stride_ok',
+        'stride_dqz', 'stride_dqh', 'stride_dqm', 'stride_dqk',
         'seqlen_q', 'seqlen_k',
         'head_dim',
         'dropout_p',
@@ -33,6 +34,7 @@ class bwd_kernel_dq(FlashKernel):
         'K' : select_pattern(ARGUMENTS, 'stride_k'),
         'V' : select_pattern(ARGUMENTS, 'stride_v'),
         'dO' : select_pattern(ARGUMENTS, 'stride_o'),
+        'dQ' : select_pattern(ARGUMENTS, 'stride_dq'),
     }
     TENSOR_RANKS = {
         '_default' : 4,
@@ -60,10 +62,6 @@ class bwd_kernel_dq(FlashKernel):
         frozenset(['BLOCK_N']) : match_fwd('BLOCK_N'),
     }
     EXPECTED_IDENTICAL_TENSOR_STRIDES = [
-        {'Q', 'dQ'},
-        # {'Out', 'dO'},  # TODO: Confirm Out is not used and remove it from the ARGUMENTS
-        {'K', 'DK'},
-        {'V', 'DV'},
     ]
     DEFAULT_NUM_WARPS=4
     DEFAULT_NUM_STAGES=1

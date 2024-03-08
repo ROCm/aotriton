@@ -37,6 +37,8 @@ def bwd_kernel_dk_dv(
     stride_kz, stride_kh, stride_kn, stride_kk,
     stride_vz, stride_vh, stride_vk, stride_vn,
     stride_oz, stride_oh, stride_om, stride_ok,
+    stride_dkz, stride_dkh, stride_dkn, stride_dkk,
+    stride_dvz, stride_dvh, stride_dvk, stride_dvn,
     max_seqlens_q, max_seqlens_k,
     head_dim,
     dropout_p,
@@ -215,18 +217,20 @@ def bwd_kernel_dk_dv(
         Q_block_ptr = tl.advance(Q_block_ptr, (BLOCK_M, 0))
         DO_block_ptr = tl.advance(DO_block_ptr, (BLOCK_M, 0)) # Debug DO accessing problems
     # initialize pointers to output
+    dk_offset = off_h * stride_dkh + off_z * stride_dkz
     DK_block_ptr = tl.make_block_ptr(
-        base=DK + k_offset,
+        base=DK + dk_offset,
         shape=(seqlen_k, head_dim),
-        strides=(stride_kn, stride_kk),
+        strides=(stride_dkn, stride_dkk),
         offsets=(start_m, 0),
         block_shape=(BLOCK_N, BLOCK_DMODEL),
         order=(1, 0)
     )
+    dv_offset = off_h * stride_dvh + off_z * stride_dvz
     DV_block_ptr = tl.make_block_ptr(
-        base=DV + v_offset,
+        base=DV + dv_offset,
         shape=(seqlen_k, head_dim),
-        strides=(stride_vk, stride_vn),
+        strides=(stride_dvk, stride_dvn),
         offsets=(start_m, 0),
         block_shape=(BLOCK_N, BLOCK_DMODEL),
         order=(1, 0)
@@ -244,6 +248,7 @@ def bwd_kernel_dq(
     stride_kz, stride_kh, stride_kn, stride_kk,
     stride_vz, stride_vh, stride_vk, stride_vn,
     stride_oz, stride_oh, stride_om, stride_ok,
+    stride_dqz, stride_dqh, stride_dqm, stride_dqk,
     max_seqlens_q, max_seqlens_k,
     head_dim,
     dropout_p,
@@ -379,10 +384,11 @@ def bwd_kernel_dq(
         K_block_ptr = tl.advance(K_block_ptr, (0, BLOCK_N))
         V_block_ptr = tl.advance(V_block_ptr, (0, BLOCK_N))
     # initialize pointers to output
+    dq_offset = off_h * stride_dqh + off_z * stride_dqz
     DQ_block_ptr = tl.make_block_ptr(
-        base=DQ + q_offset,
+        base=DQ + dq_offset,
         shape=(seqlen_q, head_dim),
-        strides=(stride_qm, stride_qk),
+        strides=(stride_dqm, stride_dqk),
         offsets=(start_m, 0),
         block_shape=(BLOCK_M, BLOCK_DMODEL),
         order=(1, 0)
