@@ -562,8 +562,6 @@ class _attention(torch.autograd.Function):
             q.shape[1],
             q.shape[0],
         )
-        assert v.stride() == dv.stride(), f'V and DV should have the same strides, but {v.stride()=} {dv.stride()=}'
-        assert o.stride() == do.stride(), f'O and DO should have the same strides, but {q.stride()=} {do.stride()=}'
         if k.requires_grad and v.requires_grad:
             if ctx.autotune:
                 tuned_bwd_kernel_dk_dv[grid_dk_dv](
