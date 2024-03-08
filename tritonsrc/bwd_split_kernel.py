@@ -37,6 +37,8 @@ def bwd_kernel_dk_dv(
     stride_kz, stride_kh, stride_kn, stride_kk,
     stride_vz, stride_vh, stride_vk, stride_vn,
     stride_oz, stride_oh, stride_om, stride_ok,
+    stride_dkz, stride_dkh, stride_dkn, stride_dkk,
+    stride_dvz, stride_dvh, stride_dvk, stride_dvn,
     max_seqlens_q, max_seqlens_k,
     head_dim,
     dropout_p,
@@ -218,7 +220,7 @@ def bwd_kernel_dk_dv(
     DK_block_ptr = tl.make_block_ptr(
         base=DK + k_offset,
         shape=(seqlen_k, head_dim),
-        strides=(stride_kn, stride_kk),
+        strides=(stride_dkn, stride_dkk),
         offsets=(start_m, 0),
         block_shape=(BLOCK_N, BLOCK_DMODEL),
         order=(1, 0)
@@ -226,7 +228,7 @@ def bwd_kernel_dk_dv(
     DV_block_ptr = tl.make_block_ptr(
         base=DV + v_offset,
         shape=(seqlen_k, head_dim),
-        strides=(stride_vk, stride_vn),
+        strides=(stride_dvk, stride_dvn),
         offsets=(start_m, 0),
         block_shape=(BLOCK_N, BLOCK_DMODEL),
         order=(1, 0)
@@ -244,6 +246,7 @@ def bwd_kernel_dq(
     stride_kz, stride_kh, stride_kn, stride_kk,
     stride_vz, stride_vh, stride_vk, stride_vn,
     stride_oz, stride_oh, stride_om, stride_ok,
+    stride_dqz, stride_dqh, stride_dqm, stride_dqk,
     max_seqlens_q, max_seqlens_k,
     head_dim,
     dropout_p,
@@ -382,7 +385,7 @@ def bwd_kernel_dq(
     DQ_block_ptr = tl.make_block_ptr(
         base=DQ + q_offset,
         shape=(seqlen_q, head_dim),
-        strides=(stride_qm, stride_qk),
+        strides=(stride_dqm, stride_dqk),
         offsets=(start_m, 0),
         block_shape=(BLOCK_M, BLOCK_DMODEL),
         order=(1, 0)
