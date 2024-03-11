@@ -158,15 +158,15 @@ class KernelDescription(object):
                              tuned_db : 'KernelTuningDatabase' = None,
                              sancheck_fileexists = False) -> 'Iterator[ObjectFileDescription]':
         def gen():
-            if tuned_db is None or tuned_db.empty:
-                yield from itertools.product(self._target_gpus,
-                                             self.gen_func_selections(),
-                                             self.gen_perf_selections(),
-                                             [None])
-            else:
-                for gpu, fsels in itertools.product(self._target_gpus,
-                                                    self.gen_func_selections()):
-                    yield from self.gen_tuned_perf_selections(tuned_db, gpu, fsels)
+            for gpu in self._target_gpus:
+                if tuned_db is None or tuned_db.is_empty_for_gpu(gpu):
+                    yield from itertools.product([gpu],
+                                                 self.gen_func_selections(),
+                                                 self.gen_perf_selections(),
+                                                 [None])
+                else:
+                    for fsels in self.gen_func_selections():
+                        yield from self.gen_tuned_perf_selections(tuned_db, gpu, fsels)
         debug_counter = 0
         for gpu, fsels, psels, compiler_options in gen():
             sig = KernelSignature(self, fsels, psels, compiler_options, gpu)

@@ -50,7 +50,7 @@ def gen_from_kernel(args, k, build_dir, makefile):
     object_rules = io.StringIO()
     arches = [None] if args.target_gpus is None else args.target_gpus
     ktd = KernelTuningDatabase(SOURCE_PATH.parent / 'rules', k)
-    if True: # Debugging
+    if False: # Debugging
         if k.SHIM_KERNEL_NAME == 'attn_fwd':
             assert not ktd.empty
     k.set_target_gpus(arches)

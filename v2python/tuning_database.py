@@ -66,8 +66,12 @@ Note: unlike KernelDescription, whose constants will be specialized for EVERY ke
 class KernelTuningDatabaseForArch(object):
     def __init__(self, k : 'KernelDescription', f, downgrader=None):
         self._kdesc = k
-        self._j = self._load_json_with_filter(f)
-        self._arch = self._j['arch']
+        if f is None:
+            self._j = None
+            self._arch = None
+        else:
+            self._j = self._load_json_with_filter(f)
+            self._arch = self._j['arch']
         self._gpu = None
         self._index = None
         self._index_matching_keys = None
@@ -86,7 +90,7 @@ class KernelTuningDatabaseForArch(object):
 
     @property
     def empty(self):
-        return len(self._j['tune_info']) == 0
+        return self._j is None or len(self._j['tune_info']) == 0
 
     def set_gpu(self, gpu, index):
         self._gpu = gpu
@@ -276,11 +280,18 @@ class KernelTuningDatabase(object):
             with open(fn) as f:
                 dba = KernelTuningDatabaseForArch(k, f, downgrader)
             self.arch_dict[dba.arch] = dba
+        self._kdesc = k
 
     def select_gpu(self, gpu, index):
         arch = AOTRITON_GPU_ARCH_TUNING_STRING[gpu]
-        return self.arch_dict[arch].set_gpu(gpu, index)
+        if arch in self.arch_dict:
+            return self.arch_dict[arch].set_gpu(gpu, index)
+        return KernelTuningDatabaseForArch(self._kdesc, None).set_gpu(gpu, index)
 
     @property
     def empty(self):
         return not self.arch_dict
+
+    def is_empty_for_gpu(self, gpu):
+        arch = AOTRITON_GPU_ARCH_TUNING_STRING[gpu]
+        return self.empty or arch not in self.arch_dict
