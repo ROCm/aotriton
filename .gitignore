@@ -2,3 +2,7 @@ __pycache__/
 build/
 *.swp
 tritonsrc/tune-*.json
+
+*.csv
+*.html
+*.png
