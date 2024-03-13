@@ -140,6 +140,7 @@ def attn_fwd(
     stride_oz, stride_oh, stride_om, stride_on,
     seqlen_q,
     seqlen_k,
+    head_dim,
     dropout_p,
     philox_seed,
     philox_offset_base,
@@ -160,7 +161,7 @@ def attn_fwd(
     q_offset = off_h * stride_qh + off_z * stride_qz
     Q_block_ptr = tl.make_block_ptr(
         base=Q + q_offset,
-        shape=(seqlen_q, BLOCK_DMODEL),
+        shape=(seqlen_q, head_dim),
         strides=(stride_qm, stride_qk),
         offsets=(start_m * BLOCK_M, 0),
         block_shape=(BLOCK_M, BLOCK_DMODEL),
@@ -169,7 +170,7 @@ def attn_fwd(
     k_offset = off_h * stride_kh + off_z * stride_kz
     K_block_ptr = tl.make_block_ptr(
         base=K + k_offset,
-        shape=(BLOCK_DMODEL, seqlen_k),
+        shape=(head_dim, seqlen_k),
         strides=(stride_kk, stride_kn),
         offsets=(0, 0),
         block_shape=(BLOCK_DMODEL, BLOCK_N),
@@ -178,7 +179,7 @@ def attn_fwd(
     v_offset = off_h * stride_vh + off_z * stride_vz
     V_block_ptr = tl.make_block_ptr(
         base=V + v_offset,
-        shape=(seqlen_k, BLOCK_DMODEL),
+        shape=(seqlen_k, head_dim),
         strides=(stride_vk, stride_vn),
         offsets=(0, 0),
         block_shape=(BLOCK_N, BLOCK_DMODEL),
@@ -253,7 +254,7 @@ def attn_fwd(
     o_offset = off_h * stride_oh + off_z * stride_oz
     O_block_ptr = tl.make_block_ptr(
         base=Out + o_offset,
-        shape=(seqlen_q, BLOCK_DMODEL),
+        shape=(seqlen_q, head_dim),
         strides=(stride_om, stride_on),
         offsets=(start_m * BLOCK_M, 0),
         block_shape=(BLOCK_M, BLOCK_DMODEL),

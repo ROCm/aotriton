@@ -48,6 +48,8 @@ attn_fwd(T4 q,
 #endif
     return grid;
   };
+  int seqlen_q = q.size(2);
+  int seqlen_k = k.size(2);
   int head_size = q.size(3);
   // Requires C++ 20
   AttnFwdParams params = {
@@ -60,6 +62,7 @@ attn_fwd(T4 q,
     .M = &softmax_lse,
     .seqlen_q = q.size(2),
     .seqlen_k = k.size(2),
+    .head_dim = static_cast<uint64_t>(head_size),
     .dropout_p = dropout_p,
     .philox_seed = philox_seed,
     .philox_offset_base = static_cast<uint32_t>(philox_offset),
