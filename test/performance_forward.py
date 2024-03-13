@@ -24,7 +24,8 @@ BATCH, N_HEADS, N_CTX, D_HEAD = 4, 48, 4096, 64
 # vary seq length for fixed head and batch=4
 configs = []
 for mode in ['fwd']:
-    for causal in [False, True]:
+    # for causal in [False, True]:
+    for causal in [False]:
         configs.append(triton.testing.Benchmark(
             x_names=['N_CTX'],
             # x_vals=[2**i for i in range(10, 15)],

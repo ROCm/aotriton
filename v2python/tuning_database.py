@@ -101,6 +101,24 @@ class KernelTuningDatabaseForArch(object):
         yield from self._select_from_index(fsels, perf_meta)
 
     def _init_matching_keys(self, fsels):
+        '''
+        Translate functional selections (fsels) to keys for further extraction in database
+
+        Result cached in self._index_matching_keys, reverse mapping cached in
+        self._fsel_positions
+
+        Note:
+        fsel does not always have corresponding information in the database.
+        Possible causation is the database is old, or the user simply did not
+        store the key when running the benchmark. In either case, a "None"
+        record must present in KernelDescription.PARTIALLY_TUNED_FUNCTIONALS.
+
+        On the other hand, the reverse mapping must always present because
+        extract_keys_from_fsels requires this information to select
+        functionals, and it always has a valid value because all fsels come
+        from the KernelDescription class, and must have a position in the
+        arugment list.
+        '''
         self._index_matching_keys = []
         self._fsel_positions = []
         tinput = self._j['tune_info'][0]['inputs']
@@ -122,14 +140,16 @@ class KernelTuningDatabaseForArch(object):
                     if aname in tinput:
                         key_detected = aname
                         break
-                assert key_detected is not None
-            if key_detected is not None:
-                self._index_matching_keys.append(key_detected)
-                self._fsel_positions.append(fsel.meta.first_apperance)
+                if key_detected is None:
+                    key_detected = '__UNDETECTED_{mfsel.argument_names[0]}'
+                # Disable the assertion to allow old tuning database being used on newer kernels
+                # assert key_detected is not None, f'Functional(s) {mfsel.argument_names} are not found in the database'
+            self._index_matching_keys.append(key_detected)
+            self._fsel_positions.append(fsel.meta.first_apperance)
         # print(f'{self._index_matching_keys=}')
 
     def extract_keys_from_json(self, ti):
-        keys = [ti['inputs'][k] for k in self._index_matching_keys]
+        keys = [ti['inputs'].get(k, None) for k in self._index_matching_keys]
         def convert(value):
             if isinstance(value, str) and value.startswith('torch.'):
                 if value == 'torch.float16':
@@ -147,6 +167,7 @@ class KernelTuningDatabaseForArch(object):
         # print(f'{len(self._fsel_positions)=}')
         for fsel in fsels:
             try:
+                # print(f'{fsel=}')
                 # print(f'extract_keys_from_fsels {fsel.argument_names} {fsel.meta.first_apperance}')
                 offset = self._fsel_positions.index(fsel.meta.first_apperance)
                 if use_fallback_for_partially_tuned and fsel.meta.incomplete_tuning:
@@ -154,8 +175,12 @@ class KernelTuningDatabaseForArch(object):
                     fallback_applied.append(fsel)
                 else:
                     value = fsel.argument_value
+
                 keys[offset] = value
-                # print(f'keys[{offset}] = {value}')
+                if value is None:
+                    assert use_fallback_for_partially_tuned
+                    assert fsel.meta.incomplete_tuning
+                # print(f'keys[{offset}] = {value} {fsel=}')
             except ValueError:
                 pass
         l = [keys[offset] for offset in range(len(self._fsel_positions))]

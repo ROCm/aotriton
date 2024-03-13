@@ -3,6 +3,7 @@
 
 #include <aotriton/flash.h>
 #include <aotriton/util.h>
+#include <aotriton/_internal/util.h>
 #include <flash/shim.attn_fwd.h>
 #include <iostream>
 
@@ -51,6 +52,7 @@ attn_fwd(T4 q,
   int seqlen_q = q.size(2);
   int seqlen_k = k.size(2);
   int head_size = q.size(3);
+  int head_dim_rounded = std::max<int>(16, aotriton::bit_ceil(head_size));
   // Requires C++ 20
   AttnFwdParams params = {
     .Q = &q,
@@ -67,9 +69,10 @@ attn_fwd(T4 q,
     .philox_seed = philox_seed,
     .philox_offset_base = static_cast<uint32_t>(philox_offset),
     .STAGE = is_causal ? kUseCausalBits : kNoCausalBits,
-    .BLOCK_DMODEL = head_size,
+    .BLOCK_DMODEL = head_dim_rounded,
     .ENABLE_DROPOUT = dropout_p > 0.0,
     .RETURN_ENCODED_SOFTMAX = bool(encoded_softmax),
+    .PADDED_HEAD = head_dim_rounded != head_size,
   };
   AttnFwdContext context;
   context.grid_calculator = grid_calculator;

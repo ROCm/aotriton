@@ -60,6 +60,7 @@ def attn_fwd_inner(
     pre_load_v: tl.constexpr,
     ENABLE_DROPOUT: tl.constexpr,
     RETURN_ENCODED_SOFTMAX: tl.constexpr,
+    PADDED_HEAD: tl.constexpr,
 ):
     # range of values handled by this stage
     if STAGE == 1: # "Solid" blocks of Causal masks
@@ -80,9 +81,15 @@ def attn_fwd_inner(
         if STAGE == 1 or STAGE == 3:
             start_n = tl.multiple_of(start_n, BLOCK_N)
         # -- compute qk ----
-        k = tl.load(K_block_ptr)
+        if PADDED_HEAD:
+            k = tl.load(K_block_ptr, boundary_check=(0,), padding_option="zero")
+        else:
+            k = tl.load(K_block_ptr)
         if pre_load_v:
-            v = tl.load(V_block_ptr)
+            if PADDED_HEAD:
+                v = tl.load(V_block_ptr, boundary_check=(1,), padding_option="zero")
+            else:
+                v = tl.load(V_block_ptr)
         qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
         if STAGE == 2:
             mask = offs_m[:, None] >= (start_n + offs_n[None, :])
@@ -111,7 +118,10 @@ def attn_fwd_inner(
         alpha = tl.math.exp2(m_i - m_ij)
         acc = acc * alpha[:, None]
         if not pre_load_v:
-            v = tl.load(V_block_ptr)
+            if PADDED_HEAD:
+                v = tl.load(V_block_ptr, boundary_check=(1,), padding_option="zero")
+            else:
+                v = tl.load(V_block_ptr)
         '''
         if ENABLE_DROPOUT:
             v = (v / (1.0 - dropout_p)).to(V_block_ptr.type.element_ty)
@@ -152,6 +162,7 @@ def attn_fwd(
     pre_load_v: tl.constexpr,
     ENABLE_DROPOUT: tl.constexpr,
     RETURN_ENCODED_SOFTMAX: tl.constexpr,
+    PADDED_HEAD: tl.constexpr,
 ):
     start_m = tl.program_id(0)
     off_h = tl.program_id(1) # head index
@@ -197,7 +208,10 @@ def attn_fwd(
     # don't work as expected with `exp` in the loop
     qk_scale = sm_scale * 1.44269504
     # load q: it will stay in SRAM throughout on NV GPUs but in VGPRs on AMD GPUs
-    q = tl.load(Q_block_ptr)
+    if PADDED_HEAD:
+        q = tl.load(Q_block_ptr, boundary_check=(1,), padding_option="zero")
+    else:
+        q = tl.load(Q_block_ptr)
     q = (q * qk_scale).to(Q_block_ptr.type.element_ty)
     # stage 1: off-band
     # For causal = True, STAGE = 3 and attn_fwd_inner gets 1 as its STAGE
@@ -227,7 +241,9 @@ def attn_fwd(
             4 - STAGE, offs_m, offs_n,
             pre_load_v,
             ENABLE_DROPOUT,
-            RETURN_ENCODED_SOFTMAX)
+            RETURN_ENCODED_SOFTMAX,
+            PADDED_HEAD,
+        )
     # stage 2: on-band
     if STAGE & 2:
         # barrier makes it easier for compielr to schedule the
@@ -242,6 +258,7 @@ def attn_fwd(
             pre_load_v,
             ENABLE_DROPOUT,
             RETURN_ENCODED_SOFTMAX,
+            PADDED_HEAD,
         )
     # epilogue
     # write back m

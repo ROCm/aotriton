@@ -23,6 +23,7 @@ class attn_fwd(FlashKernel):
         'pre_load_v',
         'ENABLE_DROPOUT',
         'RETURN_ENCODED_SOFTMAX',
+        'PADDED_HEAD',
     ]
     TENSOR_STRIDE_INPUTS = {
         'Q' : select_pattern(ARGUMENTS, 'stride_q'),
@@ -46,6 +47,7 @@ class attn_fwd(FlashKernel):
         frozenset(['BLOCK_DMODEL']) : [16, 32, 64, 128, 256],
         frozenset(['ENABLE_DROPOUT']) : [True, False],
         frozenset(['RETURN_ENCODED_SOFTMAX']) : [True, False],
+        frozenset(['PADDED_HEAD']) : [True, False],
     }
     PERF_CHOICES = {
         frozenset(['BLOCK_M']) : [16],
@@ -74,7 +76,7 @@ class attn_fwd(FlashKernel):
     }
     # List of functionals that are not fully tuned in the tuning database
     # First element of the tuple is name. Second is the value to use instead
-    PARTIALLY_TUNED_FUNCTIONALS = [('RETURN_ENCODED_SOFTMAX', False)]
+    PARTIALLY_TUNED_FUNCTIONALS = [('RETURN_ENCODED_SOFTMAX', False), ('PADDED_HEAD', None)]
 
     # Python Trick: do not use @staticmethod, and also do not add 'self', and
     #               then there is no need to prefix the classname in DOWNGRADER list
