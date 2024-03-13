@@ -3,6 +3,7 @@ build/
 *.swp
 tritonsrc/tune-*.json
 
+scripts
 *.csv
 *.html
 *.png
