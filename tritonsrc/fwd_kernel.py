@@ -169,6 +169,7 @@ def attn_fwd(
     off_z = tl.program_id(2) # batch index
     num_h = tl.num_programs(1)
     num_z = tl.num_programs(2)
+
     q_offset = off_h * stride_qh + off_z * stride_qz
     Q_block_ptr = tl.make_block_ptr(
         base=Q + q_offset,
@@ -206,12 +207,18 @@ def attn_fwd(
     # scale sm_scale by log_2(e) and use
     # 2^x instead of exp in the loop because CSE and LICM
     # don't work as expected with `exp` in the loop
-    qk_scale = sm_scale * 1.44269504
+    qk_scale = sm_scale * 1.44269504089
     # load q: it will stay in SRAM throughout on NV GPUs but in VGPRs on AMD GPUs
-    if PADDED_HEAD:
-        q = tl.load(Q_block_ptr, boundary_check=(1,), padding_option="zero")
+    if start_m * BLOCK_M + BLOCK_M > seqlen_q:
+        if PADDED_HEAD:
+            q = tl.load(Q_block_ptr, boundary_check=(0,1), padding_option="zero")
+        else:
+            q = tl.load(Q_block_ptr, boundary_check=(0,), padding_option="zero")
     else:
-        q = tl.load(Q_block_ptr)
+        if PADDED_HEAD:
+            q = tl.load(Q_block_ptr, boundary_check=(1,), padding_option="zero")
+        else:
+            q = tl.load(Q_block_ptr)
     q = (q * qk_scale).to(Q_block_ptr.type.element_ty)
     # stage 1: off-band
     # For causal = True, STAGE = 3 and attn_fwd_inner gets 1 as its STAGE
