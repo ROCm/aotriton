@@ -169,6 +169,10 @@ def attn_fwd(
     off_z = tl.program_id(2) # batch index
     num_h = tl.num_programs(1)
     num_z = tl.num_programs(2)
+    if start_m * BLOCK_M + BLOCK_M > seqlen_q:
+        q_padded = True
+    else:
+        q_padded = False
 
     q_offset = off_h * stride_qh + off_z * stride_qz
     Q_block_ptr = tl.make_block_ptr(
@@ -209,7 +213,7 @@ def attn_fwd(
     # don't work as expected with `exp` in the loop
     qk_scale = sm_scale * 1.44269504089
     # load q: it will stay in SRAM throughout on NV GPUs but in VGPRs on AMD GPUs
-    if start_m * BLOCK_M + BLOCK_M > seqlen_q:
+    if q_padded:
         if PADDED_HEAD:
             q = tl.load(Q_block_ptr, boundary_check=(0,1), padding_option="zero")
         else:
@@ -273,7 +277,15 @@ def attn_fwd(
     if ENABLE_DROPOUT:
         acc = acc / (1 - dropout_p)
     m_ptrs = M + off_zh * seqlen_q + offs_m
-    tl.store(m_ptrs, m_i + tl.math.log2(l_i))
+    # Check for last block_M
+    if q_padded:
+        overflow_size = (start_m * BLOCK_M + BLOCK_M) - seqlen_q
+        boundary = tl.full((BLOCK_M,), BLOCK_M - overflow_size, dtype=tl.int32)
+        # This is a > check because mask being 0 blocks the store.
+        m_ptrs_mask = boundary > tl.arange(0, BLOCK_M)
+        tl.store(m_ptrs, m_i + tl.math.log2(l_i), mask=m_ptrs_mask)
+    else:
+        tl.store(m_ptrs, m_i + tl.math.log2(l_i))
     # write back O
     o_offset = off_h * stride_oh + off_z * stride_oz
     O_block_ptr = tl.make_block_ptr(
@@ -284,9 +296,13 @@ def attn_fwd(
         block_shape=(BLOCK_M, BLOCK_DMODEL),
         order=(1, 0)
     )
-    if PADDED_HEAD:
-        tl.store(O_block_ptr, acc.to(Out.type.element_ty), boundary_check=(1,))
+    if q_padded:
+        if PADDED_HEAD:
+            tl.store(O_block_ptr, acc.to(Out.type.element_ty), boundary_check=(0,1))
+        else:
+            tl.store(O_block_ptr, acc.to(Out.type.element_ty), boundary_check=(0,))
     else:
-        tl.store(O_block_ptr, acc.to(Out.type.element_ty))
-
-
+        if PADDED_HEAD:
+            tl.store(O_block_ptr, acc.to(Out.type.element_ty), boundary_check=(1,))
+        else:
+            tl.store(O_block_ptr, acc.to(Out.type.element_ty))

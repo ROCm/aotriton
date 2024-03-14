@@ -315,8 +315,6 @@ class _attention(torch.autograd.Function):
         philox_offset = 1919810
         MAX_BLOCK_M = 128 if dropout_p == 0 else 64
         MAX_BLOCK_N = 32 if dropout_p == 0 else 32
-        MAX_BLOCK_M = MAX_BLOCK_M if is_supported_by_tl_dot(seqlen_q) else 1
-        MAX_BLOCK_N = MAX_BLOCK_N if is_supported_by_tl_dot(seqlen_k) else 1
 
         if autotune:
             tuned_attn_fwd[grid](
@@ -339,6 +337,9 @@ class _attention(torch.autograd.Function):
                 PADDED_HEAD=padded_head,
             )
         else:
+            BLOCK_M = MAX_BLOCK_M
+            BLOCK_N = MAX_BLOCK_N
+            RETURN_ENCODED_SOFTMAX=encoded_softmax is not None
             bare_attn_fwd[grid](
                 q, k, v, sm_scale, M, o,
                 q.stride(0), q.stride(1), q.stride(2), q.stride(3),
@@ -353,12 +354,12 @@ class _attention(torch.autograd.Function):
                 philox_offset_base=philox_offset,
                 encoded_softmax=encoded_softmax,
                 STAGE=stage,
-                BLOCK_M=min(MAX_BLOCK_M, q.shape[2], k.shape[2]),
+                BLOCK_M=BLOCK_M,
                 BLOCK_DMODEL=head_dim_rounded,
-                BLOCK_N=min(MAX_BLOCK_N, q.shape[2], k.shape[2]),
+                BLOCK_N=BLOCK_N,
                 pre_load_v=False,
                 ENABLE_DROPOUT=dropout_p > 0.0,
-                RETURN_ENCODED_SOFTMAX=encoded_softmax is not None,
+                RETURN_ENCODED_SOFTMAX=RETURN_ENCODED_SOFTMAX,
                 PADDED_HEAD=padded_head,
             )
 
