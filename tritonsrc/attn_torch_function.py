@@ -53,6 +53,7 @@ def tuned_attn_fwd(
     stride_oz, stride_oh, stride_om, stride_on,
     seqlen_q,
     seqlen_k,
+    head_dim,
     dropout_p,
     philox_seed,
     philox_offset_base,
@@ -64,6 +65,7 @@ def tuned_attn_fwd(
     pre_load_v: tl.constexpr,
     ENABLE_DROPOUT: tl.constexpr,
     RETURN_ENCODED_SOFTMAX: tl.constexpr,
+    PADDED_HEAD: tl.constexpr,
 ):
     bare_attn_fwd(
             Q, K, V, sm_scale, M, Out,
@@ -73,6 +75,7 @@ def tuned_attn_fwd(
             stride_oz, stride_oh, stride_om, stride_on,
             seqlen_q,
             seqlen_k,
+            head_dim,
             dropout_p,
             philox_seed,
             philox_offset_base,
@@ -84,6 +87,7 @@ def tuned_attn_fwd(
             pre_load_v,
             ENABLE_DROPOUT,
             RETURN_ENCODED_SOFTMAX,
+            PADDED_HEAD=PADDED_HEAD,
             )
 
 TRITON_CONFIG_LIST_BWD_LARGE_BLOCK = [
@@ -264,6 +268,10 @@ class _attention(torch.autograd.Function):
         # shape constraints
         Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
         assert Lq == Lk and Lk == Lv
+        head_dim_rounded = 2 ** (Lk - 1).bit_length()
+        head_dim_rounded = max(16, head_dim_rounded)
+        padded_head = head_dim_rounded != Lk
+        print(f'{padded_head=}')
         seqlen_q = q.shape[2]
         seqlen_k = k.shape[2]
         o = torch.empty_like(q)
@@ -319,14 +327,16 @@ class _attention(torch.autograd.Function):
                 o.stride(0), o.stride(1), o.stride(2), o.stride(3),
                 seqlen_q=q.shape[2],
                 seqlen_k=k.shape[2],
+                head_dim=Lk,
                 dropout_p=dropout_p,
                 philox_seed=philox_seed,
                 philox_offset_base=philox_offset,
                 encoded_softmax=encoded_softmax,
-                BLOCK_DMODEL=Lk,
+                BLOCK_DMODEL=head_dim_rounded,
                 STAGE=stage,
                 ENABLE_DROPOUT=dropout_p > 0.0,
                 RETURN_ENCODED_SOFTMAX=encoded_softmax is not None,
+                PADDED_HEAD=padded_head,
             )
         else:
             bare_attn_fwd[grid](
@@ -337,17 +347,19 @@ class _attention(torch.autograd.Function):
                 o.stride(0), o.stride(1), o.stride(2), o.stride(3),
                 seqlen_q=q.shape[2],
                 seqlen_k=k.shape[2],
+                head_dim=Lk,
                 dropout_p=dropout_p,
                 philox_seed=philox_seed,
                 philox_offset_base=philox_offset,
                 encoded_softmax=encoded_softmax,
                 STAGE=stage,
                 BLOCK_M=min(MAX_BLOCK_M, q.shape[2], k.shape[2]),
-                BLOCK_DMODEL=Lk,
+                BLOCK_DMODEL=head_dim_rounded,
                 BLOCK_N=min(MAX_BLOCK_N, q.shape[2], k.shape[2]),
                 pre_load_v=False,
                 ENABLE_DROPOUT=dropout_p > 0.0,
                 RETURN_ENCODED_SOFTMAX=encoded_softmax is not None,
+                PADDED_HEAD=padded_head,
             )
 
         ctx.autotune = autotune
@@ -375,6 +387,7 @@ class _attention(torch.autograd.Function):
                 'D_HEAD' : D_HEAD,
                 'seqlen_q' : seqlen_q,
                 'seqlen_k' : seqlen_k,
+                'head_dim' : Lk,
                 'STAGE' : stage,
                 'RETURN_ENCODED_SOFTMAX': encoded_softmax is not None,
                 'BLOCK_DMODEL' : Lk,
