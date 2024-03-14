@@ -42,7 +42,8 @@ def attn_fwd(q, k, v, sm_scale, M, o,
                      mk_aotensor(encoded_softmax, if_empty_then_like=q),
                      is_causal,
                      Stream())
-    print(f'{err=}')
+    if err != 0:
+        print(f'{err=}')
 
 def attn_bwd(q, k, v, sm_scale, o, dout, dq, dk, dv, L, delta,
              dropout_p, philox_seed, philox_offset, is_causal):

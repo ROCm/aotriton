@@ -4,21 +4,19 @@
 from ._common import FlashKernel, select_pattern, BinningLessOrEqual, BinningExact
 
 class attn_fwd(FlashKernel):
+    DEFAULT_NUM_STAGES = 1
+    DEFAULT_WAVES_PER_EU = 2
     ARGUMENTS = [
-        'Q', 'K', 'V', 'B', 'sm_scale', 'M', 'Out',
+        'Q', 'K', 'V', 'sm_scale', 'M', 'Out',
         'stride_qz', 'stride_qh', 'stride_qm', 'stride_qk',
         'stride_kz', 'stride_kh', 'stride_kn', 'stride_kk',
         'stride_vz', 'stride_vh', 'stride_vk', 'stride_vn',
         'stride_oz', 'stride_oh', 'stride_om', 'stride_on',
-        'stride_bz', 'stride_bh', 'stride_bm', 'stride_bn',
-        'cu_seqlens_q', 'cu_seqlens_k',
         'seqlen_q', 'seqlen_k',  # Note: they were renamed to max_seqlens_q/k respectively, we kept it untouched for backward compatibility with tuning database
-        'head_dim_q', 'head_dim_k',
         'dropout_p',
         'philox_seed',
         'philox_offset_base',
         'encoded_softmax',
-        'VARLEN', # tl.constexpr starts here
         'STAGE',
         'BLOCK_M',
         'BLOCK_DMODEL',
@@ -33,32 +31,31 @@ class attn_fwd(FlashKernel):
         'Q' : select_pattern(ARGUMENTS, 'stride_q'),
         'K' : select_pattern(ARGUMENTS, 'stride_k'),
         'V' : select_pattern(ARGUMENTS, 'stride_v'),
-        'B' : select_pattern(ARGUMENTS, 'stride_b'),
         'Out' : select_pattern(ARGUMENTS, 'stride_o'),
     }
     TYPE_CHOICES = {
-        frozenset(['Q', 'K', 'V', 'B', 'Out', 'encoded_softmax']) : ['*fp16:16', '*bf16:16'],
+        # frozenset(['Q', 'K', 'V', 'B', 'Out', 'encoded_softmax']) : ['*fp16:16', '*bf16:16'],
+        frozenset(['Q', 'K', 'V', 'Out', 'encoded_softmax']) : ['*fp16:16'],
         frozenset(['sm_scale']) : ['fp32'],
         frozenset(['M']) : ['*fp32:16'],
-        frozenset(['cu_seqlens_q', 'cu_seqlens_k']) : ['*u32:16'],
-        frozenset(['seqlen_q', 'seqlen_k', 'head_dim_q', 'head_dim_k']) : ['i32'],
+        frozenset(['seqlen_q', 'seqlen_k']) : ['i32'],
         frozenset(['dropout_p']) : ['fp32'],
         frozenset(['philox_seed']) : ['u64'],
         frozenset(['philox_offset_base']) : ['u32'],
     }
     FEAT_CHOICES = {
-        frozenset(['VARLEN']) : [False],  # TODO: support varlen
         frozenset(['STAGE']) : [1, 3],
-        frozenset(['BLOCK_DMODEL']) : [16, 32, 64, 128, 256],
+        # frozenset(['BLOCK_DMODEL']) : [16, 32, 64, 128, 256],
+        frozenset(['BLOCK_DMODEL']) : [64],
         frozenset(['ENABLE_DROPOUT']) : [True, False],
         frozenset(['RETURN_ENCODED_SOFTMAX']) : [True, False],
         frozenset(['BIAS_TYPE']) : [0],  # TODO: support bias
         frozenset(['PADDED_HEAD']) : [True, False],
     }
     PERF_CHOICES = {
-        frozenset(['BLOCK_M']) : [16],
-        frozenset(['BLOCK_N']) : [16],
-        frozenset(['pre_load_v']) : [True, False],
+        frozenset(['BLOCK_M']) : [128],
+        frozenset(['BLOCK_N']) : [64],
+        frozenset(['pre_load_v']) : [False],
     }
     TENSOR_RANKS = {
         '_default' : 4,

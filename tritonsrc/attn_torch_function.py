@@ -432,11 +432,13 @@ class _attention(torch.autograd.Function):
                 BLOCK_M=BLOCK_M,
                 BLOCK_DMODEL=head_dim_rounded,
                 BLOCK_N=BLOCK_N,
-                PRE_LOAD_V=False,
                 ENABLE_DROPOUT=dropout_p > 0.0,
                 RETURN_ENCODED_SOFTMAX=RETURN_ENCODED_SOFTMAX,
                 BIAS_TYPE=0,
                 PADDED_HEAD=padded_head,
+                waves_per_eu=3,
+                PRE_LOAD_V=True,
+                num_stages=1,
             )
 
         ctx.autotune = autotune

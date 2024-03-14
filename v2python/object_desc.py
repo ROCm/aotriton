@@ -26,7 +26,7 @@ class ObjectFileDescription(object):
         return t.startswith('*')
 
     DEFAULT_NUM_WARPS = 4
-    DEFAULT_NUM_STAGES = 4
+    DEFAULT_NUM_STAGES = 1
     DEFAULT_WAVES_PER_EU = 0
     CXX_TEMPLATE = _get_template()
     CXX_HEADER_TEMPLATE_HEADER = _get_template('kernel_shim.header.h')

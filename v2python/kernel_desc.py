@@ -82,7 +82,7 @@ class KernelDescription(object):
     def insert_tensor_strides_to_choices(self, last_is_continuous=False):
         for tensor, strides in self.TENSOR_STRIDE_INPUTS.items():
             typed_strides = strides[:-1] if last_is_continuous else strides
-            self.TYPE_CHOICES[frozenset(typed_strides)] = ['u64:16']
+            self.TYPE_CHOICES[frozenset(typed_strides)] = ['u32']
             constant_strides = [] if not last_is_continuous else strides[-1:]
             if constant_strides:
                 self.FEAT_CHOICES[frozenset(constant_strides)] = [1]

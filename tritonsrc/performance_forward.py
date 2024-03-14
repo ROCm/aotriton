@@ -24,10 +24,12 @@ BATCH, N_HEADS, N_CTX, D_HEAD = 4, 48, 4096, 64
 # vary seq length for fixed head and batch=4
 configs = []
 for mode in ['fwd']:
-    for causal in [False, True]:
+    # for causal in [False, True]:
+    for causal in [False]:
         configs.append(triton.testing.Benchmark(
             x_names=['N_CTX'],
-            x_vals=[2**i for i in range(10, 15)],
+            # x_vals=[2**i for i in range(10, 15)],
+            x_vals=[2**13],
             line_arg='provider',
             line_vals=['triton'] + (['flash'] if HAS_FLASH else []),
             line_names=['Triton'] + ([f'Flash-{FLASH_VER}'] if HAS_FLASH else []),
@@ -61,8 +63,12 @@ def bench_flash_attention(BATCH, H, N_CTX, D_HEAD, causal, mode, provider, dtype
         v = torch.randn((BATCH, H, N_CTX, D_HEAD), dtype=dtype, device="cuda", requires_grad=True)
         sm_scale = 1.3
         autotune = True
+        return_autotune = True
         return_encoded_softmax = False
-        fn = lambda: attention(q, k, v, causal, sm_scale, split_kernel, return_encoded_softmax, autotune)
+        # fn = lambda: attention(q, k, v, causal, sm_scale, split_kernel, return_encoded_softmax, autotune, return_autotune)
+        def fn():
+            _, _, tuning_result = attention(q, k, v, causal, sm_scale, split_kernel, return_encoded_softmax, autotune, return_autotune)
+            print(f'{tuning_result=}')
         if mode == 'bwd':
             o = fn()
             do = torch.randn_like(o)
