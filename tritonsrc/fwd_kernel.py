@@ -277,6 +277,9 @@ def attn_fwd(
         block_shape=(BLOCK_M, BLOCK_DMODEL),
         order=(1, 0)
     )
-    tl.store(O_block_ptr, acc.to(Out.type.element_ty), boundary_check=(0,1))
+    if PADDED_HEAD:
+        tl.store(O_block_ptr, acc.to(Out.type.element_ty), boundary_check=(1,))
+    else:
+        tl.store(O_block_ptr, acc.to(Out.type.element_ty))
 
 
