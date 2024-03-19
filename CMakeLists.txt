@@ -5,6 +5,12 @@ cmake_minimum_required(VERSION 3.18 FATAL_ERROR)
 
 project(AOTriton CXX C)
 
+set(AOTRITON_PYTHON_BINDING_FROM_PREBUILT_TARBALL "" CACHE STRING "Build Python Binding with compiled archive library and header.")
+if(AOTRITON_PYTHON_BINDING_FROM_PREBUILT_TARBALL)
+  include(cmake/use_precompiled_aotriton.cmake)
+  return()
+endif()
+
 add_subdirectory(third_party/pybind11)
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
