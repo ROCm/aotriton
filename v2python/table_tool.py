@@ -63,9 +63,9 @@ class TuningDatabase(object):
     def ensure_table(self, tune_info : dict) -> str:
         kn = tune_info['kernel_name']
         if kn in self._table_existance_checked:
-            return
+            return self.get_table_name(tune_info)
         table_name = self._create_table(tune_info)
-        self._table_existance_checked.add(tune_info['kernel_name'])
+        self._table_existance_checked.add(kn)
         return table_name
 
     def _create_table(self, tune_info):
@@ -86,7 +86,12 @@ class TuningDatabase(object):
         return table_name
 
     def upsert(self, line_text):
+        if not line_text:
+            return
         tune_info = json.loads(line_text)
+        if self.verbose:
+            print(f'{line_text=}')
+            print(f'{tune_info=}')
         sql_table = self.ensure_table(tune_info)
         inputs_columns = self.collect_columns(tune_info['inputs'], prefix='inputs$')
         tuned_kernel_columns = self.collect_columns(tune_info['tuned_kernel'], prefix='tuned_kernel$')
@@ -114,6 +119,7 @@ class TuningDatabase(object):
 def main():
     args = parse()
     db = TuningDatabase(args)
+    # FIXME: support pipes and streaming file with json_stream
     for line in sys.stdin:
         db.upsert(line)
     db.close()
