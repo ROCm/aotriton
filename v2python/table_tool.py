@@ -98,11 +98,11 @@ class TuningDatabase(object):
         inputs_columns = self.collect_columns(tune_info['inputs'], prefix='inputs$')
         tuned_kernel_columns = self.collect_columns(tune_info['tuned_kernel'], prefix='tuned_kernel$')
         compiler_options_columns = self.collect_columns(tune_info['compiler_options'], prefix='compiler_options$')
-        all_colnames = [colname for colname, _, _ in itertools.chain(inputs_columns, tuned_kernel_columns, compiler_options_columns)]
+        all_colnames = ['arch'] + [colname for colname, _, _ in itertools.chain(inputs_columns, tuned_kernel_columns, compiler_options_columns)]
         stmt_colnames = ', '.join(all_colnames)
         stmt_placeholders = ', '.join(['?'] * len(all_colnames))
         stmt = f'INSERT INTO {sql_table}({stmt_colnames}) VALUES({stmt_placeholders})'
-        values = [v for _, v, _ in itertools.chain(inputs_columns, tuned_kernel_columns, compiler_options_columns)]
+        values = [tune_info['arch']] + [v for _, v, _ in itertools.chain(inputs_columns, tuned_kernel_columns, compiler_options_columns)]
         if self.verbose:
             print("values 1: ", values)
         stmt += ' ON CONFLICT DO UPDATE SET '
