@@ -10,6 +10,7 @@ import subprocess
 import argparse
 import itertools
 import os
+import time
 
 from rocm_arch import rocm_get_gpuarch
 from attn_torch_function import attention
@@ -123,14 +124,24 @@ class Tuner(object):
 
     def splice_pipes(self):
         for i in range(10):
-            line = self._dbp.stdout.readline()
-            if line:
-                print(line, end='')
+            while True:
+                line = self._dbp.stdout.readline()
+                if line:
+                    print(line, end='')
+                else:
+                    time.sleep(0.1)
+                    break
 
         for i in range(10):
-            line = self._dbp.stderr.readline()
-            if line:
-                print(line, end='', file=sys.stderr)
+            while True:
+                line = self._dbp.stderr.readline()
+                if line:
+                    print(line, end='', file=sys.stderr)
+                else:
+                    time.sleep(0.1)
+                    break
+        sys.stdout.flush()
+        sys.stderr.flush()
 
     def translate_config(self, inputs, kernel_name, best):
         tuned_kernel = dict(best.kwargs)

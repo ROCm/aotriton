@@ -70,19 +70,21 @@ class TuningDatabase(object):
 
     def _create_table(self, tune_info):
         columns = self.collect_columns(tune_info['inputs'], prefix='inputs$')
-        UNIQUE = 'UNIQUE'
-        col_def = ['id INTEGER PRIMARY KEY', f'arch TEXT {UNIQUE}']
-        col_def += [f'{colname} {self.sqltype(pytype)} {UNIQUE}' for colname, _, pytype in columns]
+        # UNIQUE = 'UNIQUE'
+        col_def = ['id INTEGER PRIMARY KEY', f'arch TEXT']
+        col_def += [f'{colname} {self.sqltype(pytype)}' for colname, _, pytype in columns]
+        unique = ', '.join(['arch'] + [colname for colname, _, _ in columns])
         columns = self.collect_columns(tune_info['tuned_kernel'], prefix='tuned_kernel$')
         col_def += [f'{colname} {self.sqltype(pytype)}' for colname, _, pytype in columns]
         columns = self.collect_columns(tune_info['compiler_options'], prefix='compiler_options$')
         col_def += [f'{colname} {self.sqltype(pytype)}' for colname, _, pytype in columns]
         col_def_stmt = ', '.join(col_def)
         table_name = self.get_table_name(tune_info)
-        stmt = f"CREATE TABLE IF NOT EXISTS {table_name} ({col_def_stmt})"
+        stmt = f"CREATE TABLE IF NOT EXISTS {table_name} ({col_def_stmt}, UNIQUE({unique}));"
         if self.verbose:
             print("Executing", stmt)
         self._cur.execute(stmt)
+        self._conn.commit()
         return table_name
 
     def upsert(self, line_text):
@@ -111,6 +113,7 @@ class TuningDatabase(object):
         if self.verbose:
             print("Executing", stmt, "with", values)
         self._cur.execute(stmt, values)
+        self._conn.commit()
 
     def close(self):
         self._cur.close()
@@ -122,6 +125,7 @@ def main():
     # FIXME: support pipes and streaming file with json_stream
     for line in sys.stdin:
         db.upsert(line)
+    print("[table_tool] Input closed, exiting", file=sys.stderr)
     db.close()
 
 if __name__ == '__main__':
