@@ -3,6 +3,7 @@
 
 import json
 import pathlib
+import sqlite3
 from copy import deepcopy
 from collections import defaultdict
 from .kernel_argument import TunedArgument
@@ -22,7 +23,7 @@ class TuningDowngrader(object):
     @staticmethod
     def create_from_kdesc(k : 'KernelDescription'):
         if not hasattr(k, 'DOWNGRADER'):
-            return False
+            return None
         return TuningDowngrader(k.DOWNGRADER)
 
     def match(self, matching, fallback_applied_fsels):
@@ -266,19 +267,42 @@ class KernelTuningDatabaseForArch(object):
             return tuning_info
         return [patcher(deepcopy(tune)) for tune in tuning_info]
 
+class EmptyKernelTuningDatabaseForArch(KernelTuningDatabaseForArch):
+    def __init__(self, k, arch):
+        super().__init__(None, arch, None, None)
+
+    @property
+    def empty(self):
+        return True
+
+class KernelSQLiteTuningDatabaseForArch(KernelTuningDatabaseForArch):
+    def __init__(self, conn, k, arch, table_name, downgrader):
+        self._conn = conn
+        self._kdesc = k
+        self._arch = arch
+        self._table_name = table_name
+
 class KernelTuningDatabase(object):
+    MONOLITHIC_TUNING_DATABASE_FILE = 'tuning_database.sqlite3'
+
     def __init__(self, tune_info_dir : pathlib.Path, k : 'KernelDescription'):
+        self._kdesc = k
         self.arch_dict = {}
-        td = pathlib.Path(tune_info_dir) / k.KERNEL_FAMILY # in case tune_info_dir is str
+        td = pathlib.Path(tune_info_dir) / self.MONOLITHIC_TUNING_DATABASE_FILE # in case tune_info_dir is str
         # print(f"Tryint to probe KernelTuningDatabase inside {td}")
         downgrader = TuningDowngrader.create_from_kdesc(k)
-        for fn in td.glob(f'tune-*.json'):
-            with open(fn) as f:
-                dba = KernelTuningDatabaseForArch(k, f, downgrader)
-            self.arch_dict[dba.arch] = dba
+        self._conn = sqlite3.connect(td)
+        table_name = k.KERNEL_FAMILY.upper() + '$' + k._triton_kernel_name
+        res = self._conn.execute("SELECT DISTINCT arch FROM {table_name};")
+        for arch, in res.fetchall():
+            dba = KernelSQLiteTuningDatabaseForArch(self._conn, k, arch, table_name, downgrader)
+            self.arch_dict[arch] = dba
 
     def select_gpu(self, gpu, index):
         arch = AOTRITON_GPU_ARCH_TUNING_STRING[gpu]
+        if arch not in self.arch_dict:
+            print('For kernel {self._kdesc.KERNEL_FAMILY}.{self._kdesc.name}, Architecture {arch} was not found in tuning database, using dummy one instead')
+            self.arch_dict[arch] = EmptyKernelTuningDatabaseForArch(self._kdesc, arch)
         return self.arch_dict[arch].set_gpu(gpu, index)
 
     @property
