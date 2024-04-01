@@ -35,7 +35,7 @@ class KernelTuningEntryForFunctionalOnGPU(object):
             self._lut_tensor = np.array([0], dtype=np.uint8)
             self._lut_cshape = ''.join([f'[{s}]' for s in self._lut_tensor.shape])
             self._untuned = True
-            default_psels, default_co = dba._craft_perf_selection(None, perf_meta)
+            default_psels, default_co = dba.craft_perf_selection(None, perf_meta)
             self._lut_dic[0] = self._allocate_sig(default_psels, default_co)[0]
             return
         self._untuned = False
@@ -44,7 +44,7 @@ class KernelTuningEntryForFunctionalOnGPU(object):
         for tinfo in indexed:
             fs_atk_values = self.extract_autotune_key_values(tinfo)
             # print(f'{fs_atk_values=}')
-            psels, compiler_options = dba._craft_perf_selection(tinfo, perf_meta)
+            psels, compiler_options = dba.craft_perf_selection(tinfo, perf_meta)
             self._lut_dic[fs_atk_values] = self._allocate_sig(psels, compiler_options)[0]
         assert self._sigs
         self._lut_tensor = None
@@ -60,7 +60,7 @@ class KernelTuningEntryForFunctionalOnGPU(object):
         return value
 
     def _allocate_sig(self, psels, compiler_options):
-        sig = KernelSignature(self._kdesc, self._fsels, psels, compiler_options, self._dba._gpu)
+        sig = KernelSignature(self._kdesc, self._fsels, psels, compiler_options, self._dba.gpu)
         compact = sig.compact_signature
         if compact not in self._sig_dict:
             self._sig_dict[compact] = (len(self._sigs), sig)
@@ -154,8 +154,8 @@ class KernelTuningEntryForFunctionalOnGPU(object):
                 'binning_autotune_keys' : self.codegen_binning_code(),
                 'binned_indices'        : self.codegen_binned_indices(),
                 'perf_field_assignment' : self.codegen_perf_assignment(),
-                'gpu'                   : self._dba._gpu,
-                'arch_number'           : self._dba._arch_number,
+                'gpu'                   : self._dba.gpu,
+                'arch_number'           : self._dba.arch_number,
                 'human_readable_signature' : first_sig.human_readable_signature
             }
             print(self.LUT_TEMPLATE.format_map(d), file=f)
