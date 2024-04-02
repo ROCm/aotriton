@@ -111,6 +111,7 @@ class Tuner(object):
             'RETURN_ENCODED_SOFTMAX': return_encoded_softmax,
             'BLOCK_DMODEL': head_dim_rounded,
             'ENABLE_DROPOUT' : dropout_p > 0.0,
+            'PADDED_HEAD' : head_dim_rounded != D_HEAD,
         }
         self.pipe_configs(inputs, best_configs)
 
