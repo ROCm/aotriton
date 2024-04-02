@@ -166,7 +166,7 @@ def attn_fwd(
     philox_seed,
     philox_offset_base,
     encoded_softmax,
-    STAGE: tl.constexpr,
+    CAUSAL: tl.constexpr,
     BLOCK_M: tl.constexpr,
     BLOCK_DMODEL: tl.constexpr,
     BLOCK_N: tl.constexpr,
@@ -264,10 +264,6 @@ def attn_fwd(
     else:
         encoded_softmax_block_ptr = 0
 
-    if STAGE == 3:
-        CAUSAL = True
-    else:
-        CAUSAL = False
     # Stage 1: off-band (for causal) or non-boundary (for irregular seqlen_k) blocks
     if CAUSAL:
         # Causal = True
