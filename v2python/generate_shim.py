@@ -287,9 +287,12 @@ class AutotuneCodeGenerator(MakefileSegmentGenerator):
         self._lut = lut
 
     def write_body(self):
+        print('AutotuneCodeGenerator')
         # Write the code to file
         self._ofn = self._lut.write_lut_source(self._outdir,
                                                compressed=self._args.enable_zstd is not None)
+        print(f'\t lut = {self._fsels}')
+        print(f'\t ofn = {self._ofn}')
         self._obj_fn = self._ofn.with_suffix('.o')
         self._makefile_target = self._obj_fn.relative_to(self._build_dir)
         # Write the Makefile segment

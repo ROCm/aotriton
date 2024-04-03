@@ -166,7 +166,8 @@ def test_op_fwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dr
     ref_out = torch.matmul(p, v)
     '''
     return_encoded_softmax = dropout_p > 0.0
-    tri_out, encoded_softmax, _ = attention(q, k, v, causal, sm_scale, dropout_p, return_encoded_softmax)
+    autotune = True
+    tri_out, encoded_softmax, _ = attention(q, k, v, causal, sm_scale, dropout_p, return_encoded_softmax, autotune)
 
     dropout_mask = encoded_softmax > 0 if encoded_softmax is not None else None
     # assert torch.allclose(dropout_mask, dropout_mask_naive)
