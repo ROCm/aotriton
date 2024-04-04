@@ -2,6 +2,7 @@
 # Copyright © 2023-2024 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
+import copy
 import torch
 import triton
 import triton.language as tl
@@ -430,7 +431,7 @@ class _attention(torch.autograd.Function):
         if autotune and return_autotune:
             ## restore the grid for bwd kernel
             best_config = tuned_attn_fwd.get_best_config()
-            tuning_result = best_config
+            tuning_result = copy.deepcopy(best_config)
             block_m = int(best_config.kwargs['BLOCK_M'])
             """
             # print(f'{best_config=}')
@@ -484,6 +485,8 @@ class _attention(torch.autograd.Function):
         ctx.philox_offset = philox_offset
         ctx.encoded_softmax = encoded_softmax # FIXME: for debugging only
         ctx.tuning_result = [('attn_fwd', tuning_result)] if tuning_result is not None else None
+        for kernel_name, best in ctx.tuning_result:
+            print(f'{kernel_name=} {best.kwargs=} {best.num_warps=} {best.num_stages=}')
         return o, encoded_softmax, ctx.tuning_result
 
     @staticmethod
@@ -583,7 +586,7 @@ class _attention(torch.autograd.Function):
                 )
                 if return_autotune:
                     dkdv_best_config = tuned_bwd_kernel_dk_dv.get_best_config()
-                    tuning_result = dkdv_best_config
+                    tuning_result = copy.deepcopy(dkdv_best_config)
                     """
                     inputs = {
                         'Q.shape' : list(q.shape),
@@ -684,7 +687,7 @@ class _attention(torch.autograd.Function):
                 )
                 if return_autotune:
                     dq_best_config = tuned_bwd_kernel_dq.get_best_config()
-                    tuning_result = dq_best_config
+                    tuning_result = copy.deepcopy(dq_best_config)
                     """
                     inputs = {
                         'Q.shape' : list(q.shape),

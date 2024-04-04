@@ -75,6 +75,10 @@ class Tuner(object):
         os.set_blocking(self._dbp.stdout.fileno(), False)
         os.set_blocking(self._dbp.stderr.fileno(), False)
 
+    @property
+    def verbose(self):
+        return self._args.verbose
+
     def gen(self):
         a = self._args
         yield from itertools.product(a.batch, a.n_heads, a.d_head, a.seqlen_q, a.seqlen_k, a.causal, a.sm_scale, a.dropout_p, a.return_encoded_softmax, a.dtype)
@@ -96,9 +100,16 @@ class Tuner(object):
         autotune = True
         return_autotune = True
         tri_out, encoded_softmax, best_configs = attention(q, k, v, causal, sm_scale, dropout_p, return_encoded_softmax, autotune, return_autotune)
-        # print(f'{id(best_configs)=}')
+        if self.verbose:
+            print('Returned best configs')
+            for kernel_name, best in best_configs:
+                print(f'{kernel_name=} {best.kwargs=} {best.num_warps=} {best.num_stages=}')
         dout = torch.randn_like(q)
         tri_out.backward(dout)
+        if self.verbose:
+            print('Returned best configs after backward')
+            for kernel_name, best in best_configs:
+                print(f'{kernel_name=} {best.kwargs=} {best.num_warps=} {best.num_stages=}')
         head_dim_rounded = 2 ** (D_HEAD - 1).bit_length()
         head_dim_rounded = max(16, head_dim_rounded)
         inputs = {
@@ -167,15 +178,15 @@ class Tuner(object):
 
 def parse():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    p.add_argument('--batch', type=int, nargs=1, default=[4], help='(Not a functional) Batch size.')
-    p.add_argument('--n_heads', type=int, nargs=1, default=[4], help='(Not a functional) Number of heads')
+    p.add_argument('--batch', type=int, nargs=1, default=[8], help='(Not a functional) Batch size.')
+    p.add_argument('--n_heads', type=int, nargs=1, default=[64], help='(Not a functional) Number of heads')
     p.add_argument('--sm_scale', type=float, nargs=1, default=[1.2], help='(Not a functional) Softmax Scale')
     p.add_argument('--return_encoded_softmax', type=bool, default=[False],
                    help="(A functional for debugging) kernel that returns softmax(dropout(QK')) to validate the correctness of dropout")
     p.add_argument('--d_head', type=int, nargs='+', default=[16,32,64,128,256], help='Head dimensions.')
     p.add_argument('--seqlen_q', type=int, nargs='+', default=[64,128,256,512,1024,2048], help='Sequence length of Q.')
     p.add_argument('--seqlen_k', type=int, nargs='+', default=[64,128,256,512,1024,2048], help='Sequence length of K/V.')
-    p.add_argument('--causal', type=bool, nargs='+', default=[True,False], help='Head dimensions.')
+    p.add_argument('--causal', type=int, nargs='+', default=[True,False], choices=[0, 1], help='Causal mask. (Use 0/1 for False/True')
     p.add_argument('--dropout_p', type=float, nargs='+', default=[0.5, 0.0], help='Probablity to dropout (0 to disable).')
     p.add_argument('--dtype', type=str, nargs='+',
                    default=['float16', 'bfloat16'],
@@ -189,6 +200,8 @@ def parse():
     p.add_argument('--db_file', type=str, required=True, help="Sqlite Database file")
     args = p.parse_args()
     args.dtype = [ getattr(torch, t) for t in args.dtype ]
+    args.causal = [ bool(c) for c in args.causal ]
+    # assert args.causal == [False], f'{args.causal=} {args.return_encoded_softmax=}'
     return args
 
 def main():
