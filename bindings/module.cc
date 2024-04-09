@@ -22,6 +22,7 @@ namespace pyaotriton {
               py::arg("q"),
               py::arg("k"),
               py::arg("v"),
+              py::arg("b"),
               py::arg("sm_scale"),
               py::arg("softmax_lse"),
               py::arg("out"),

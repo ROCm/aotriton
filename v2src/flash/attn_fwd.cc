@@ -19,6 +19,7 @@ hipError_t
 attn_fwd(T4 q,
          T4 k,
          T4 v,
+         T4 b,
          float sm_scale,
          T2 softmax_lse,
          T4 out,
@@ -51,11 +52,16 @@ attn_fwd(T4 q,
   int seqlen_k = k.size(2);
   int head_size = q.size(3);
   int head_dim_rounded = std::max<int>(16, aotriton::bit_ceil(head_size));
+  int bias_type = 0;
+  if (b) {
+    bias_type = 1;
+  }
   // Requires C++ 20
   AttnFwdParams params = {
     .Q = &q,
     .K = &k,
     .V = &v,
+    .B = &b,
     .Out = &out,
     .encoded_softmax = &encoded_softmax,
     .sm_scale = sm_scale,
@@ -71,6 +77,7 @@ attn_fwd(T4 q,
     .ENABLE_DROPOUT = dropout_p > 0.0,
     .RETURN_ENCODED_SOFTMAX = bool(encoded_softmax),
     .PADDED_HEAD = head_dim_rounded != head_size,
+    .BIAS_TYPE = bias_type,
   };
   AttnFwdContext context;
   context.grid_calculator = grid_calculator;

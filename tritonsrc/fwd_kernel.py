@@ -43,9 +43,10 @@ def dropout_mask(philox_seed, philox_offset, dropout_p, m, n, stride):
 @triton.jit
 def attn_fwd_inner(
     acc, l_i, m_i, q,
-    K_block_ptr, V_block_ptr,
+    K_block_ptr, V_block_ptr, B_block_ptr,
     start_m,
     seqlen_q,
+    q_padded,
     seqlen_k_low,
     seqlen_k_high,
     k_padded,
@@ -65,6 +66,7 @@ def attn_fwd_inner(
     RETURN_ENCODED_SOFTMAX: tl.constexpr,
     MARGINAL_BLOCK: tl.constexpr,  # MARGINAL_BLOCK = CAUSAL or k_padded
     PADDED_HEAD: tl.constexpr,
+    BIAS_TYPE: tl.constexpr,
 ):
     lo, hi = seqlen_k_low, seqlen_k_high
     if MARGINAL_BLOCK:
@@ -72,6 +74,8 @@ def attn_fwd_inner(
         V_block_ptr = tl.advance(V_block_ptr, (lo, 0))
         if RETURN_ENCODED_SOFTMAX:
             encoded_softmax_block_ptr = tl.advance(encoded_softmax_block_ptr, (0, lo))
+        if BIAS_TYPE == 1:
+            B_block_ptr = tl.advance(B_block_ptr, (0, lo))
     # loop over k, v and update accumulator
     for start_n in range(lo, hi, BLOCK_N):
         # -- compute qk ----
@@ -107,6 +111,20 @@ def attn_fwd_inner(
                 size_n = start_n + offs_n[None,:]
                 mask = size_n < boundary_m[:,None]
                 qk = tl.where(mask, qk, float("-inf"))
+        if BIAS_TYPE == 0:
+            pass
+        elif BIAS_TYPE == 1:
+            if q_padded and k_padded:  # CAVEAT: using "or" disables the partial boundary_check branches
+                bias = tl.load(B_block_ptr, boundary_check=(0,1), padding_option="zero")
+            elif q_padded:
+                bias = tl.load(B_block_ptr, boundary_check=(0,), padding_option="zero")
+            elif k_padded:
+                bias = tl.load(B_block_ptr, boundary_check=(1,), padding_option="zero")
+            else:
+                bias = tl.load(B_block_ptr)
+            qk += bias * 1.44269504089
+        else:
+            tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
         qk += tl.dot(q, k)
         m_ij = tl.maximum(m_i, tl.max(qk, 1))
         qk = qk - m_ij[:, None]
@@ -149,15 +167,18 @@ def attn_fwd_inner(
         K_block_ptr = tl.advance(K_block_ptr, (0, BLOCK_N))
         if RETURN_ENCODED_SOFTMAX:
             encoded_softmax_block_ptr = tl.advance(encoded_softmax_block_ptr, (0, BLOCK_N))
+        if BIAS_TYPE == 1:
+            B_block_ptr = tl.advance(B_block_ptr, (0, BLOCK_N))
     return acc, l_i, m_i
 
 
 @triton.jit
 def attn_fwd(
-    Q, K, V, sm_scale, M, Out,
+    Q, K, V, B, sm_scale, M, Out,
     stride_qz, stride_qh, stride_qm, stride_qk,
     stride_kz, stride_kh, stride_kn, stride_kk,
     stride_vz, stride_vh, stride_vk, stride_vn,
+    stride_bz, stride_bh, stride_bm, stride_bn,
     stride_oz, stride_oh, stride_om, stride_on,
     seqlen_q,
     seqlen_k,
@@ -174,6 +195,7 @@ def attn_fwd(
     ENABLE_DROPOUT: tl.constexpr,
     RETURN_ENCODED_SOFTMAX: tl.constexpr,
     PADDED_HEAD: tl.constexpr,
+    BIAS_TYPE: tl.constexpr,
 ):
     start_m = tl.program_id(0)
     off_h = tl.program_id(1) # head index
@@ -252,6 +274,20 @@ def attn_fwd(
         batch_philox_offset = philox_offset_base + off_zh * seqlen_q * seqlen_k
     else:
         batch_philox_offset = 0
+    if BIAS_TYPE == 0:
+        B_block_ptr = 0
+    elif BIAS_TYPE == 1:
+        B_block_ptr = tl.make_block_ptr(
+                base=B + off_h * stride_bh + off_z * stride_bz,
+                shape=(seqlen_q, seqlen_k),
+                strides=(stride_bm, stride_bn),
+                offsets=(start_m * BLOCK_M, 0),
+                block_shape=(BLOCK_M, BLOCK_N),
+                order=(1, 0)
+                )
+    else:
+        tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
+
     if RETURN_ENCODED_SOFTMAX:
         encoded_softmax_block_ptr = tl.make_block_ptr(
                 base=encoded_softmax + off_zh * seqlen_q * seqlen_k,
@@ -274,8 +310,8 @@ def attn_fwd(
         seqlen_k_low = 0
         seqlen_k_high = seqlen_k_faligned
     acc, l_i, m_i = attn_fwd_inner(
-        acc, l_i, m_i, q, K_block_ptr, V_block_ptr,
-        start_m, seqlen_q, seqlen_k_low, seqlen_k_high, False,
+        acc, l_i, m_i, q, K_block_ptr, V_block_ptr, B_block_ptr,
+        start_m, seqlen_q, q_padded, seqlen_k_low, seqlen_k_high, False,
         dropout_p, seqlen_k, philox_seed, batch_philox_offset, encoded_softmax_block_ptr,
         BLOCK_M, BLOCK_DMODEL, BLOCK_N,
         False, offs_m, offs_n,
@@ -284,6 +320,7 @@ def attn_fwd(
         RETURN_ENCODED_SOFTMAX,
         MARGINAL_BLOCK=False,
         PADDED_HEAD=PADDED_HEAD,
+        BIAS_TYPE=BIAS_TYPE,
     )
     # Stage 2: on-band or boundary blocks
     if CAUSAL or k_padded:
@@ -296,8 +333,8 @@ def attn_fwd(
         # two loops independently
         tl.debug_barrier()
         acc, l_i, m_i = attn_fwd_inner(
-            acc, l_i, m_i, q, K_block_ptr, V_block_ptr,
-            start_m, seqlen_q, seqlen_k_low, seqlen_k_high, k_padded,
+            acc, l_i, m_i, q, K_block_ptr, V_block_ptr, B_block_ptr,
+            start_m, seqlen_q, q_padded, seqlen_k_low, seqlen_k_high, k_padded,
             dropout_p, seqlen_k, philox_seed, batch_philox_offset, encoded_softmax_block_ptr,
             BLOCK_M, BLOCK_DMODEL, BLOCK_N,
             CAUSAL, offs_m, offs_n,
@@ -306,6 +343,7 @@ def attn_fwd(
             RETURN_ENCODED_SOFTMAX,
             MARGINAL_BLOCK=True,
             PADDED_HEAD=PADDED_HEAD,
+            BIAS_TYPE=BIAS_TYPE,
         )
     # epilogue
     # write back m

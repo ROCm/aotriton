@@ -19,7 +19,7 @@ class _attention(torch.autograd.Function):
     # DEBUG_MASK_DTYPE = torch.float32
 
     @staticmethod
-    def forward(ctx, q, k, v, causal, sm_scale, dropout_p, return_encoded_softmax,
+    def forward(ctx, q, k, v, b, causal, sm_scale, dropout_p, return_encoded_softmax,
                 autotune=False, return_autotune=False):
         # shape constraints
         Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
@@ -56,7 +56,7 @@ class _attention(torch.autograd.Function):
         philox_seed = 114514
         philox_offset = 1919810
 
-        attn_fwd(q, k, v, sm_scale, M, o,
+        attn_fwd(q, k, v, b, sm_scale, M, o,
                  dropout_p, philox_seed, philox_offset, encoded_softmax, causal);
 
         ctx.save_for_backward(q, k, v, o, M)

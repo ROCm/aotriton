@@ -28,11 +28,12 @@ def mk_aotensor(q, if_empty_then_like=None):
         return klass(0, [0] * rank, [1] * rank, cast_dtype(if_empty_then_like.dtype))
     return klass(q.data_ptr(), tuple(q.size()), q.stride(), cast_dtype(q.dtype))
 
-def attn_fwd(q, k, v, sm_scale, M, o,
+def attn_fwd(q, k, v, b, sm_scale, M, o,
              dropout_p, philox_seed, philox_offset, encoded_softmax, is_causal):
     err = fa_forward(mk_aotensor(q),
                      mk_aotensor(k),
                      mk_aotensor(v),
+                     mk_aotensor(b, if_empty_then_like=q),
                      float(sm_scale),
                      mk_aotensor(M),
                      mk_aotensor(o),

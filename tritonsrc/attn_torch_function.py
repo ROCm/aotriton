@@ -51,6 +51,7 @@ def tuned_attn_fwd(
     stride_qz, stride_qh, stride_qm, stride_qk,
     stride_kz, stride_kh, stride_kn, stride_kk,
     stride_vz, stride_vh, stride_vk, stride_vn,
+    stride_bz, stride_bh, stride_bm, stride_bn,
     stride_oz, stride_oh, stride_om, stride_on,
     seqlen_q,
     seqlen_k,
@@ -67,12 +68,14 @@ def tuned_attn_fwd(
     ENABLE_DROPOUT: tl.constexpr,
     RETURN_ENCODED_SOFTMAX: tl.constexpr,
     PADDED_HEAD: tl.constexpr,
+    BIAS_TYPE: tl.constexpr,
 ):
     bare_attn_fwd(
-            Q, K, V, sm_scale, M, Out,
+            Q, K, V, B, sm_scale, M, Out,
             stride_qz, stride_qh, stride_qm, stride_qk,
             stride_kz, stride_kh, stride_kn, stride_kk,
             stride_vz, stride_vh, stride_vk, stride_vn,
+            stride_bz, stride_bh, stride_bm, stride_bn,
             stride_oz, stride_oh, stride_om, stride_on,
             seqlen_q,
             seqlen_k,
@@ -89,6 +92,7 @@ def tuned_attn_fwd(
             ENABLE_DROPOUT,
             RETURN_ENCODED_SOFTMAX,
             PADDED_HEAD,
+            BIAS_TYPE=BIAS_TYPE,
             )
 
 TRITON_CONFIG_LIST_BWD_LARGE_BLOCK = [
@@ -309,7 +313,7 @@ class _attention(torch.autograd.Function):
     DEBUG_MASK_DTYPE = torch.float32
 
     @staticmethod
-    def forward(ctx, q, k, v, causal, sm_scale, dropout_p, return_encoded_softmax,
+    def forward(ctx, q, k, v, b, causal, sm_scale, dropout_p, return_encoded_softmax,
                 autotune=False, return_autotune=False):
         dtype = q.dtype
         # shape constraints
@@ -371,7 +375,11 @@ class _attention(torch.autograd.Function):
         # MAX_BLOCK_M = 32  # Debugging, matching bwd tile size
         # MAX_BLOCK_N = 16  # Debugging,, matching bwd tile size
 
-        b = None
+        if b is None:
+            b = torch.empty((0,0,0,0), device=q.device, dtype=q.dtype)
+            BIAS_TYPE = 0
+        else:
+            BIAS_TYPE = 1
         if autotune:
             # assert False, "No time to test autotune for now"
             tuned_attn_fwd[grid](
@@ -379,6 +387,7 @@ class _attention(torch.autograd.Function):
                 q.stride(0), q.stride(1), q.stride(2), q.stride(3),
                 k.stride(0), k.stride(1), k.stride(2), k.stride(3),
                 v.stride(0), v.stride(1), v.stride(2), v.stride(3),
+                b.stride(0), b.stride(1), b.stride(2), b.stride(3),
                 o.stride(0), o.stride(1), o.stride(2), o.stride(3),
                 seqlen_q=q.shape[2],
                 seqlen_k=k.shape[2],
@@ -392,6 +401,7 @@ class _attention(torch.autograd.Function):
                 ENABLE_DROPOUT=dropout_p > 0.0,
                 RETURN_ENCODED_SOFTMAX=encoded_softmax is not None,
                 PADDED_HEAD=padded_head,
+                BIAS_TYPE=BIAS_TYPE,
             )
         else:
             # BLOCK_M = min(MAX_BLOCK_M, q.shape[2], k.shape[2])
@@ -404,10 +414,11 @@ class _attention(torch.autograd.Function):
             print(f'{BLOCK_M=} {BLOCK_N=} {RETURN_ENCODED_SOFTMAX=} seqlen_q={q.shape[2]} seqlen_k={k.shape[2]}',
                     flush=True)
             bare_attn_fwd[grid](
-                q, k, v, sm_scale, M, o,
+                q, k, v, b, sm_scale, M, o,
                 q.stride(0), q.stride(1), q.stride(2), q.stride(3),
                 k.stride(0), k.stride(1), k.stride(2), k.stride(3),
                 v.stride(0), v.stride(1), v.stride(2), v.stride(3),
+                b.stride(0), b.stride(1), b.stride(2), b.stride(3),
                 o.stride(0), o.stride(1), o.stride(2), o.stride(3),
                 seqlen_q=q.shape[2],
                 seqlen_k=k.shape[2],
@@ -424,6 +435,7 @@ class _attention(torch.autograd.Function):
                 ENABLE_DROPOUT=dropout_p > 0.0,
                 RETURN_ENCODED_SOFTMAX=encoded_softmax is not None,
                 PADDED_HEAD=padded_head,
+                BIAS_TYPE=BIAS_TYPE,
             )
 
         ctx.autotune = autotune
@@ -485,8 +497,9 @@ class _attention(torch.autograd.Function):
         ctx.philox_offset = philox_offset
         ctx.encoded_softmax = encoded_softmax # FIXME: for debugging only
         ctx.tuning_result = [('attn_fwd', tuning_result)] if tuning_result is not None else None
-        for kernel_name, best in ctx.tuning_result:
-            print(f'{kernel_name=} {best.kwargs=} {best.num_warps=} {best.num_stages=}')
+        if ctx.tuning_result is not None:
+            for kernel_name, best in ctx.tuning_result:
+                print(f'{kernel_name=} {best.kwargs=} {best.num_warps=} {best.num_stages=}')
         return o, encoded_softmax, ctx.tuning_result
 
     @staticmethod

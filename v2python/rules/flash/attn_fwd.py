@@ -5,10 +5,11 @@ from ._common import FlashKernel, select_pattern, BinningLessOrEqual, BinningExa
 
 class attn_fwd(FlashKernel):
     ARGUMENTS = [
-        'Q', 'K', 'V', 'sm_scale', 'M', 'Out',
+        'Q', 'K', 'V', 'B', 'sm_scale', 'M', 'Out',
         'stride_qz', 'stride_qh', 'stride_qm', 'stride_qk',
         'stride_kz', 'stride_kh', 'stride_kn', 'stride_kk',
         'stride_vz', 'stride_vh', 'stride_vk', 'stride_vn',
+        'stride_bz', 'stride_bh', 'stride_bm', 'stride_bn',
         'stride_oz', 'stride_oh', 'stride_om', 'stride_on',
         'seqlen_q', 'seqlen_k',
         'head_dim',
@@ -24,15 +25,17 @@ class attn_fwd(FlashKernel):
         'ENABLE_DROPOUT',
         'RETURN_ENCODED_SOFTMAX',
         'PADDED_HEAD',
+        'BIAS_TYPE',
     ]
     TENSOR_STRIDE_INPUTS = {
         'Q' : select_pattern(ARGUMENTS, 'stride_q'),
         'K' : select_pattern(ARGUMENTS, 'stride_k'),
         'V' : select_pattern(ARGUMENTS, 'stride_v'),
+        'B' : select_pattern(ARGUMENTS, 'stride_b'),
         'Out' : select_pattern(ARGUMENTS, 'stride_o'),
     }
     TYPE_CHOICES = {
-        frozenset(['Q', 'K', 'V', 'Out', 'encoded_softmax']) : ['*fp16:16', '*bf16:16'],
+        frozenset(['Q', 'K', 'V', 'B', 'Out', 'encoded_softmax']) : ['*fp16:16', '*bf16:16'],
         frozenset(['sm_scale']) : ['fp32'],
         frozenset(['M']) : ['*fp32:16'],
         # frozenset(select_pattern(ARGUMENTS, 'stride_', trim=1)) : ['u64'],
@@ -49,6 +52,7 @@ class attn_fwd(FlashKernel):
         frozenset(['ENABLE_DROPOUT']) : [False, True],
         frozenset(['RETURN_ENCODED_SOFTMAX']) : [False, True],
         frozenset(['PADDED_HEAD']) : [False, True],
+        frozenset(['BIAS_TYPE']) : [0, 1],
     }
     PERF_CHOICES = {
         frozenset(['BLOCK_M']) : [16],
@@ -77,7 +81,11 @@ class attn_fwd(FlashKernel):
     }
     # List of functionals that are not fully tuned in the tuning database
     # First element of the tuple is name. Second is the value to use instead
-    PARTIALLY_TUNED_FUNCTIONALS = [('RETURN_ENCODED_SOFTMAX', False), ('PADDED_HEAD', None)]
+    PARTIALLY_TUNED_FUNCTIONALS = [
+        ('RETURN_ENCODED_SOFTMAX', False),
+        ('PADDED_HEAD', None),
+        ('BIAS_TYPE', None)
+    ]
 
     # Python Trick: do not use @staticmethod, and also do not add 'self', and
     #               then there is no need to prefix the classname in DOWNGRADER list
