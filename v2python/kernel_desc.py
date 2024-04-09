@@ -128,6 +128,10 @@ class KernelDescription(object):
             if is_type:
                 self.AUTOTUNE_KEYS_VALIDATED.append((key, self.AUTOTUNE_KEYS[key]))
 
+    @property
+    def name(self):
+        return self._triton_kernel_name
+
     def gen_func_selections(self) -> 'tuple[ArgumentSelection]':
         return itertools.product(*self._func_selections)
 

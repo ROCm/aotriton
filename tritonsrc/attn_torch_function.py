@@ -2,6 +2,7 @@
 # Copyright © 2023-2024 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
+import copy
 import torch
 import triton
 import triton.language as tl
@@ -21,28 +22,28 @@ def is_supported_by_tl_dot(n: int) -> bool:
     return is_power_of_two(n) and n >= 16
 
 TRITON_CONFIG_LIST_FWD = [
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 0, 'PRE_LOAD_V': True}, num_stages=1, num_warps=4),
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 1, 'PRE_LOAD_V': True}, num_stages=1, num_warps=4),
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 2, 'PRE_LOAD_V': True}, num_stages=1, num_warps=4),
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'PRE_LOAD_V': True}, num_stages=1, num_warps=4),
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 4, 'PRE_LOAD_V': True}, num_stages=1, num_warps=4),
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 0, 'PRE_LOAD_V': False}, num_stages=1, num_warps=4),
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 1, 'PRE_LOAD_V': False}, num_stages=1, num_warps=4),
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 2, 'PRE_LOAD_V': False}, num_stages=1, num_warps=4),
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'PRE_LOAD_V': False}, num_stages=1, num_warps=4),
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 4, 'PRE_LOAD_V': False}, num_stages=1, num_warps=4),
+       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 0, 'pre_load_v': True}, num_stages=1, num_warps=4),
+       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 1, 'pre_load_v': True}, num_stages=1, num_warps=4),
+       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 2, 'pre_load_v': True}, num_stages=1, num_warps=4),
+       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'pre_load_v': True}, num_stages=1, num_warps=4),
+       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 4, 'pre_load_v': True}, num_stages=1, num_warps=4),
+       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 0, 'pre_load_v': False}, num_stages=1, num_warps=4),
+       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 1, 'pre_load_v': False}, num_stages=1, num_warps=4),
+       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 2, 'pre_load_v': False}, num_stages=1, num_warps=4),
+       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'pre_load_v': False}, num_stages=1, num_warps=4),
+       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 4, 'pre_load_v': False}, num_stages=1, num_warps=4),
    ]
 
 '''
 # For faster debugging of backward autotune
 TRITON_CONFIG_LIST_FWD = [
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 2, 'PRE_LOAD_V': True}, num_stages=1, num_warps=4),
+       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 2, 'pre_load_v': True}, num_stages=1, num_warps=4),
    ]
 '''
 
 @triton.autotune(
    configs=TRITON_CONFIG_LIST_FWD,
-   key=['max_seqlens_q', 'max_seqlens_k', 'STAGE'],
+   key=['seqlen_q', 'seqlen_k', 'CAUSAL'],
 )
 @triton.jit
 def tuned_attn_fwd(
@@ -51,49 +52,43 @@ def tuned_attn_fwd(
     stride_kz, stride_kh, stride_kn, stride_kk,
     stride_vz, stride_vh, stride_vk, stride_vn,
     stride_oz, stride_oh, stride_om, stride_on,
-    stride_bz, stride_bh, stride_bm, stride_bn,
-    cu_seqlens_q, cu_seqlens_k,
-    max_seqlens_q, max_seqlens_k,
-    head_dim_q, head_dim_k,
+    seqlen_q,
+    seqlen_k,
+    head_dim,
     dropout_p,
     philox_seed,
     philox_offset_base,
     encoded_softmax,
-    VARLEN: tl.constexpr,
-    STAGE: tl.constexpr,
+    CAUSAL: tl.constexpr,
     BLOCK_M: tl.constexpr,
     BLOCK_DMODEL: tl.constexpr,
     BLOCK_N: tl.constexpr,
-    PRE_LOAD_V: tl.constexpr,
+    pre_load_v: tl.constexpr,
     ENABLE_DROPOUT: tl.constexpr,
     RETURN_ENCODED_SOFTMAX: tl.constexpr,
-    BIAS_TYPE: tl.constexpr,
     PADDED_HEAD: tl.constexpr,
 ):
     bare_attn_fwd(
-            Q, K, V, B, sm_scale, M, Out,
+            Q, K, V, sm_scale, M, Out,
             stride_qz, stride_qh, stride_qm, stride_qk,
             stride_kz, stride_kh, stride_kn, stride_kk,
             stride_vz, stride_vh, stride_vk, stride_vn,
             stride_oz, stride_oh, stride_om, stride_on,
-            stride_bz, stride_bh, stride_bm, stride_bn,
-            cu_seqlens_q, cu_seqlens_k,
-            max_seqlens_q, max_seqlens_k,
-            head_dim_q, head_dim_k,
+            seqlen_q,
+            seqlen_k,
+            head_dim,
             dropout_p,
             philox_seed,
             philox_offset_base,
             encoded_softmax,
-            VARLEN,
-            STAGE,
+            CAUSAL,
             BLOCK_M,
             BLOCK_DMODEL,
             BLOCK_N,
-            PRE_LOAD_V=PRE_LOAD_V,
-            ENABLE_DROPOUT=ENABLE_DROPOUT,
-            RETURN_ENCODED_SOFTMAX=RETURN_ENCODED_SOFTMAX,
-            BIAS_TYPE=BIAS_TYPE,
-            PADDED_HEAD=PADDED_HEAD,
+            pre_load_v,
+            ENABLE_DROPOUT,
+            RETURN_ENCODED_SOFTMAX,
+            PADDED_HEAD,
             )
 
 TRITON_CONFIG_LIST_BWD_LARGE_BLOCK = [
@@ -133,6 +128,58 @@ def large_tuned_bwd_kernel_dk_dv(
     dropout_p,
     philox_seed,
     philox_offset_base,
+    BLOCK_M: tl.constexpr,
+    BLOCK_DMODEL: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    CAUSAL: tl.constexpr,
+    ENABLE_DROPOUT: tl.constexpr,
+    PADDED_HEAD: tl.constexpr,
+):
+    bare_bwd_kernel_dk_dv(
+            Q, K, V, sm_scale, Out, DO,
+            DK, DV,
+            L,
+            D,
+            stride_qz, stride_qh, stride_qm, stride_qk,
+            stride_kz, stride_kh, stride_kn, stride_kk,
+            stride_vz, stride_vh, stride_vk, stride_vn,
+            stride_oz, stride_oh, stride_om, stride_ok,
+            stride_dkz, stride_dkh, stride_dkn, stride_dkk,
+            stride_dvz, stride_dvh, stride_dvk, stride_dvn,
+            max_seqlens_q, max_seqlens_k,
+            head_dim,
+            dropout_p,
+            philox_seed,
+            philox_offset_base,
+            BLOCK_M,
+            BLOCK_DMODEL,
+            BLOCK_N,
+            CAUSAL,
+            ENABLE_DROPOUT,
+            PADDED_HEAD=PADDED_HEAD,
+            )
+
+@triton.autotune(
+   configs=TRITON_CONFIG_LIST_BWD_SMALL_BLOCK,
+   key=['max_seqlens_q', 'max_seqlens_k'],
+)
+@triton.jit
+def small_tuned_bwd_kernel_dk_dv(
+    Q, K, V, sm_scale, Out, DO,
+    DK, DV,
+    L,
+    D,
+    stride_qz, stride_qh, stride_qm, stride_qk,
+    stride_kz, stride_kh, stride_kn, stride_kk,
+    stride_vz, stride_vh, stride_vk, stride_vn,
+    stride_oz, stride_oh, stride_om, stride_ok,
+    stride_dkz, stride_dkh, stride_dkn, stride_dkk,
+    stride_dvz, stride_dvh, stride_dvk, stride_dvn,
+    max_seqlens_q, max_seqlens_k,
+    head_dim,
+    dropout_p,
+    philox_seed,
+    philox_offset_base,
     BLOCK_M: tl.constexpr, BLOCK_DMODEL: tl.constexpr,
     BLOCK_N: tl.constexpr,
     CAUSAL: tl.constexpr,
@@ -154,52 +201,8 @@ def large_tuned_bwd_kernel_dk_dv(
             dropout_p,
             philox_seed,
             philox_offset_base,
-            BLOCK_M, BLOCK_DMODEL,
-            BLOCK_N,
-            CAUSAL,
-            ENABLE_DROPOUT,
-            PADDED_HEAD=PADDED_HEAD,
-            )
-
-@triton.autotune(
-   configs=TRITON_CONFIG_LIST_BWD_SMALL_BLOCK,
-   key=['max_seqlens_q', 'max_seqlens_k'],
-)
-@triton.jit
-def small_tuned_bwd_kernel_dk_dv(
-    Q, K, V, sm_scale, Out, DO,
-    DK, DV,
-    L,
-    D,
-    stride_qz, stride_qh, stride_qm, stride_qk,
-    stride_kz, stride_kh, stride_kn, stride_kk,
-    stride_vz, stride_vh, stride_vk, stride_vn,
-    stride_oz, stride_oh, stride_om, stride_ok,
-    max_seqlens_q, max_seqlens_k,
-    head_dim,
-    dropout_p,
-    philox_seed,
-    philox_offset_base,
-    BLOCK_M: tl.constexpr, BLOCK_DMODEL: tl.constexpr,
-    BLOCK_N: tl.constexpr,
-    CAUSAL: tl.constexpr,
-    ENABLE_DROPOUT: tl.constexpr,
-    PADDED_HEAD: tl.constexpr,
-):
-    bare_bwd_kernel_dk_dv(Q, K, V, sm_scale, Out, DO,
-            DK, DV,
-            L,
-            D,
-            stride_qz, stride_qh, stride_qm, stride_qk,
-            stride_kz, stride_kh, stride_kn, stride_kk,
-            stride_vz, stride_vh, stride_vk, stride_vn,
-            stride_oz, stride_oh, stride_om, stride_ok,
-            max_seqlens_q, max_seqlens_k,
-            head_dim,
-            dropout_p,
-            philox_seed,
-            philox_offset_base,
-            BLOCK_M, BLOCK_DMODEL,
+            BLOCK_M,
+            BLOCK_DMODEL,
             BLOCK_N,
             CAUSAL,
             ENABLE_DROPOUT,
@@ -377,23 +380,17 @@ class _attention(torch.autograd.Function):
                 k.stride(0), k.stride(1), k.stride(2), k.stride(3),
                 v.stride(0), v.stride(1), v.stride(2), v.stride(3),
                 o.stride(0), o.stride(1), o.stride(2), o.stride(3),
-                0, 0, 0, 0,
-                cu_seqlens_q=None,
-                cu_seqlens_k=None,
-                max_seqlens_q=q.shape[2],
-                max_seqlens_k=k.shape[2],
-                head_dim_q=Lq,
-                head_dim_k=Lk,
+                seqlen_q=q.shape[2],
+                seqlen_k=k.shape[2],
+                head_dim=Lk,
                 dropout_p=dropout_p,
                 philox_seed=philox_seed,
                 philox_offset_base=philox_offset,
                 encoded_softmax=encoded_softmax,
-                VARLEN=False,
-                STAGE=stage,
+                CAUSAL=causal,
                 BLOCK_DMODEL=head_dim_rounded,
                 ENABLE_DROPOUT=dropout_p > 0.0,
                 RETURN_ENCODED_SOFTMAX=encoded_softmax is not None,
-                BIAS_TYPE=0,
                 PADDED_HEAD=padded_head,
             )
         else:
@@ -407,31 +404,25 @@ class _attention(torch.autograd.Function):
             print(f'{BLOCK_M=} {BLOCK_N=} {RETURN_ENCODED_SOFTMAX=} seqlen_q={q.shape[2]} seqlen_k={k.shape[2]}',
                     flush=True)
             bare_attn_fwd[grid](
-                q, k, v, b, sm_scale, M, o,
+                q, k, v, sm_scale, M, o,
                 q.stride(0), q.stride(1), q.stride(2), q.stride(3),
                 k.stride(0), k.stride(1), k.stride(2), k.stride(3),
                 v.stride(0), v.stride(1), v.stride(2), v.stride(3),
                 o.stride(0), o.stride(1), o.stride(2), o.stride(3),
-                0, 0, 0, 0,
-                cu_seqlens_q=None,
-                cu_seqlens_k=None,
-                max_seqlens_q=q.shape[2],
-                max_seqlens_k=k.shape[2],
-                head_dim_q=Lq,
-                head_dim_k=Lk,
+                seqlen_q=q.shape[2],
+                seqlen_k=k.shape[2],
+                head_dim=Lk,
                 dropout_p=dropout_p,
                 philox_seed=philox_seed,
                 philox_offset_base=philox_offset,
                 encoded_softmax=encoded_softmax,
-                VARLEN=False,
-                STAGE=stage,
+                CAUSAL=causal,
                 BLOCK_M=BLOCK_M,
                 BLOCK_DMODEL=head_dim_rounded,
                 BLOCK_N=BLOCK_N,
-                PRE_LOAD_V=False,
+                pre_load_v=False,
                 ENABLE_DROPOUT=dropout_p > 0.0,
-                RETURN_ENCODED_SOFTMAX=RETURN_ENCODED_SOFTMAX,
-                BIAS_TYPE=0,
+                RETURN_ENCODED_SOFTMAX=encoded_softmax is not None,
                 PADDED_HEAD=padded_head,
             )
 
@@ -440,6 +431,9 @@ class _attention(torch.autograd.Function):
         if autotune and return_autotune:
             ## restore the grid for bwd kernel
             best_config = tuned_attn_fwd.get_best_config()
+            tuning_result = copy.deepcopy(best_config)
+            block_m = int(best_config.kwargs['BLOCK_M'])
+            """
             # print(f'{best_config=}')
             # print(f'{dir(best_config)=}')
             # print(f'{str(best_config)=}')
@@ -460,7 +454,7 @@ class _attention(torch.autograd.Function):
                 'D_HEAD' : D_HEAD,
                 'max_seqlens_q' : max_seqlens_q,
                 'max_seqlens_k' : max_seqlens_k,
-                'STAGE' : stage,
+                'CAUSAL' : causal,
                 'RETURN_ENCODED_SOFTMAX': encoded_softmax is not None,
                 'BLOCK_DMODEL' : Lk,
                 'ENABLE_DROPOUT' : dropout_p > 0.0,
@@ -476,6 +470,7 @@ class _attention(torch.autograd.Function):
                 'tuned_kernel' : tuned_kernel,
                 'compiler_options' : compiler_options,
             }
+            """
         else:
             tuning_result = None
             block_m = min(128, q.shape[2], k.shape[2])
@@ -489,7 +484,9 @@ class _attention(torch.autograd.Function):
         ctx.philox_seed = philox_seed
         ctx.philox_offset = philox_offset
         ctx.encoded_softmax = encoded_softmax # FIXME: for debugging only
-        ctx.tuning_result = [tuning_result] if tuning_result is not None else None
+        ctx.tuning_result = [('attn_fwd', tuning_result)] if tuning_result is not None else None
+        for kernel_name, best in ctx.tuning_result:
+            print(f'{kernel_name=} {best.kwargs=} {best.num_warps=} {best.num_stages=}')
         return o, encoded_softmax, ctx.tuning_result
 
     @staticmethod
@@ -589,6 +586,8 @@ class _attention(torch.autograd.Function):
                 )
                 if return_autotune:
                     dkdv_best_config = tuned_bwd_kernel_dk_dv.get_best_config()
+                    tuning_result = copy.deepcopy(dkdv_best_config)
+                    """
                     inputs = {
                         'Q.shape' : list(q.shape),
                         'Q.dtype' : str(q.dtype),
@@ -611,7 +610,8 @@ class _attention(torch.autograd.Function):
                         'tuned_kernel' : tuned_kernel,
                         'compiler_options' : compiler_options,
                     }
-                    ctx.tuning_result.append(tuning_result)
+                    """
+                    ctx.tuning_result.append(('bwd_kernel_dk_dv', tuning_result))
                     print(f'{id(ctx.tuning_result)=}')
             else:
                 bare_bwd_kernel_dk_dv[grid_dk_dv](
@@ -687,6 +687,8 @@ class _attention(torch.autograd.Function):
                 )
                 if return_autotune:
                     dq_best_config = tuned_bwd_kernel_dq.get_best_config()
+                    tuning_result = copy.deepcopy(dq_best_config)
+                    """
                     inputs = {
                         'Q.shape' : list(q.shape),
                         'Q.dtype' : str(q.dtype),
@@ -709,7 +711,8 @@ class _attention(torch.autograd.Function):
                         'tuned_kernel' : tuned_kernel,
                         'compiler_options' : compiler_options,
                     }
-                    ctx.tuning_result.append(tuning_result)
+                    """
+                    ctx.tuning_result.append(('bwd_kernel_dq', tuning_result))
             else:
                 bare_bwd_kernel_dq[grid_dq](
                     q, k, v, ctx.sm_scale,

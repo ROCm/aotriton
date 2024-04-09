@@ -16,7 +16,7 @@ class attn_fwd(FlashKernel):
         'philox_seed',
         'philox_offset_base',
         'encoded_softmax',
-        'STAGE', # tl.constexpr starts here
+        'CAUSAL', # tl.constexpr starts here
         'BLOCK_M',
         'BLOCK_DMODEL',
         'BLOCK_N',
@@ -44,11 +44,11 @@ class attn_fwd(FlashKernel):
         frozenset(['philox_offset_base']) : ['u32'],
     }
     FEAT_CHOICES = {
-        frozenset(['STAGE']) : [1, 3],
+        frozenset(['CAUSAL']) : [False, True],
         frozenset(['BLOCK_DMODEL']) : [16, 32, 64, 128, 256],
-        frozenset(['ENABLE_DROPOUT']) : [True, False],
-        frozenset(['RETURN_ENCODED_SOFTMAX']) : [True, False],
-        frozenset(['PADDED_HEAD']) : [True, False],
+        frozenset(['ENABLE_DROPOUT']) : [False, True],
+        frozenset(['RETURN_ENCODED_SOFTMAX']) : [False, True],
+        frozenset(['PADDED_HEAD']) : [False, True],
     }
     PERF_CHOICES = {
         frozenset(['BLOCK_M']) : [16],
@@ -73,7 +73,7 @@ class attn_fwd(FlashKernel):
     AUTOTUNE_KEYS = {
         'seqlen_q' : BinningLessOrEqual,
         'seqlen_k' : BinningLessOrEqual,
-        'STAGE' : BinningExact,
+        'CAUSAL' : BinningExact,
     }
     # List of functionals that are not fully tuned in the tuning database
     # First element of the tuple is name. Second is the value to use instead

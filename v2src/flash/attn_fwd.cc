@@ -31,8 +31,6 @@ attn_fwd(T4 q,
   hipError_t err;
   auto stream = stream_wrap.native();
   auto arch = getArchFromStream(stream);
-  constexpr int kUseCausalBits = 3;
-  constexpr int kNoCausalBits = 1;
   auto grid_calculator = [](const AttnFwdParams& params) -> dim3 {
 #if AOTRITON_VERBOSE
     std::cerr << "Selected Kernel "
@@ -68,7 +66,7 @@ attn_fwd(T4 q,
     .dropout_p = dropout_p,
     .philox_seed = philox_seed,
     .philox_offset_base = static_cast<uint32_t>(philox_offset),
-    .STAGE = is_causal ? kUseCausalBits : kNoCausalBits,
+    .CAUSAL = is_causal,
     .BLOCK_DMODEL = head_dim_rounded,
     .ENABLE_DROPOUT = dropout_p > 0.0,
     .RETURN_ENCODED_SOFTMAX = bool(encoded_softmax),

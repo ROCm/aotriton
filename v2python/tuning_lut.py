@@ -16,7 +16,8 @@ class KernelTuningEntryForFunctionalOnGPU(object):
                  kdesc : 'KernelDescription',
                  dba : 'KernelTuningDatabaseForArch',
                  fsels : 'list[ArgumentSelection]',
-                 indexed : 'dict', # Provided to avoid re-computation
+                 columns : 'list[str]', # Column names, None when using Json/Schemaless DB
+                 rows : 'list[dict] or list[tuple]', # Rows, list of dicts when using Json/Schemaless DB
                  autotune_keys: 'list[tuple[str, Binning]]',
                  perf_meta : 'list[ArgumentSelection]'):
         self._kdesc = kdesc
@@ -29,38 +30,40 @@ class KernelTuningEntryForFunctionalOnGPU(object):
         self._autotune_key_class = { key : klass for key, klass in autotune_keys } if autotune_keys is not None else None
         self._sigs = []
         self._sig_dict = {}
-        if indexed is None and autotune_keys is None:
+        if rows is None and autotune_keys is None:
             self._lut_dtype = np.uint8
             self._lut_cdtype = f'uint8_t'
             self._lut_tensor = np.array([0], dtype=np.uint8)
             self._lut_cshape = ''.join([f'[{s}]' for s in self._lut_tensor.shape])
             self._untuned = True
-            default_psels, default_co = dba._craft_perf_selection(None, perf_meta)
+            default_psels, default_co = dba.craft_perf_selection(None, perf_meta)
             self._lut_dic[0] = self._allocate_sig(default_psels, default_co)[0]
             return
         self._untuned = False
         # print(f'KernelTuningEntryForFunctionalOnGPU {fsels=}')
-        # print(f'{indexed=}')
-        for tinfo in indexed:
-            fs_atk_values = self.extract_autotune_key_values(tinfo)
+        # print(f'{rows=}')
+        for row in rows:
+            # fs_atk_values = self.extract_autotune_key_values(tinfo)
+            fs_atk_values = self.extract_autotune_key_values(columns, row)
             # print(f'{fs_atk_values=}')
-            psels, compiler_options = dba._craft_perf_selection(tinfo, perf_meta)
+            psels, compiler_options = dba.craft_perf_selection(columns, row, perf_meta)
             self._lut_dic[fs_atk_values] = self._allocate_sig(psels, compiler_options)[0]
         assert self._sigs
         self._lut_tensor = None
 
-    def extract_autotune_key_values(self, tinfo):
+    def extract_autotune_key_values(self, columns, row):
         assert not self._untuned
-        return tuple([self.track_autotune_key_values(tinfo, tup) for tup in self._autotune_keys])
+        return tuple([self.track_autotune_key_values(columns, row, tup) for tup in self._autotune_keys])
 
-    def track_autotune_key_values(self, tinfo, tup):
+    def track_autotune_key_values(self, columns, row, tup):
+        tinputs = self._dba.extract_inputs(columns, row)
         key = tup[0]
-        value = tinfo['inputs'][key]
+        value = tinputs[key]
         self._autotune_key_values[key].add(value)
         return value
 
     def _allocate_sig(self, psels, compiler_options):
-        sig = KernelSignature(self._kdesc, self._fsels, psels, compiler_options, self._dba._gpu)
+        sig = KernelSignature(self._kdesc, self._fsels, psels, compiler_options, self._dba.gpu)
         compact = sig.compact_signature
         if compact not in self._sig_dict:
             self._sig_dict[compact] = (len(self._sigs), sig)
@@ -81,6 +84,7 @@ class KernelTuningEntryForFunctionalOnGPU(object):
         self._lut_dtype = dtype
         self._lut_cdtype = f'uint{np.iinfo(dtype).bits}_t'
         self._lut_tensor = np.empty([bucket.nvalues for bucket in self._autotune_key_buckets], dtype=dtype)
+        assert self._lut_tensor.size > 0, 'LUT tensor must be non-empty. Empty LUT is not constructed by _build_lut_tensor'
         self._lut_cshape = ''.join([f'[{s}]' for s in self._lut_tensor.shape])
         self._list_of_atk_representatives = [bucket.representatives for bucket in self._autotune_key_buckets]
         list_of_atk_indices = [range(bucket.nvalues) for bucket in self._autotune_key_buckets]
@@ -88,6 +92,11 @@ class KernelTuningEntryForFunctionalOnGPU(object):
                                        itertools.product(*self._list_of_atk_representatives)):
             fs_atk_values = tuple(atk_values)
             self._lut_tensor[indices] = self._lut_dic[fs_atk_values]
+        # FIXME: Debugging
+        if self._kdesc.SHIM_KERNEL_NAME == 'attn_fwd':
+            print(f'_build_lut_tensor {self._autotune_key_values=}')
+            print(f'_build_lut_tensor {self._autotune_key_buckets=}')
+            print(f'_build_lut_tensor {self._lut_tensor=}', flush=True)
 
     def gen_kernel_symbols(self, kernel_image_dir):
         for sig in self._sigs:
@@ -154,8 +163,8 @@ class KernelTuningEntryForFunctionalOnGPU(object):
                 'binning_autotune_keys' : self.codegen_binning_code(),
                 'binned_indices'        : self.codegen_binned_indices(),
                 'perf_field_assignment' : self.codegen_perf_assignment(),
-                'gpu'                   : self._dba._gpu,
-                'arch_number'           : self._dba._arch_number,
+                'gpu'                   : self._dba.gpu,
+                'arch_number'           : self._dba.arch_number,
                 'human_readable_signature' : first_sig.human_readable_signature
             }
             print(self.LUT_TEMPLATE.format_map(d), file=f)
