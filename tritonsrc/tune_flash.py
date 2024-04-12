@@ -22,6 +22,8 @@ class Tuner(object):
         self._args = args
         self._arch = rocm_get_gpuarch()
         dbargs = ['python3', '-m', 'v2python.table_tool', '-v', '-f', self._args.db_file, '-k', self.KERNEL_FAMILY]
+        if args.create_table_only:
+            dbargs += ['--action', 'createtableonly']
         self._dbp = subprocess.Popen(dbargs,
                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                      text=True)
@@ -34,7 +36,7 @@ class Tuner(object):
 
     def gen(self):
         a = self._args
-        yield from itertools.product(a.batch, a.n_heads, a.d_head, a.seqlen_q, a.seqlen_k, a.causal, a.sm_scale, a.dropout_p, a.return_encoded_softmax, a.dtype)
+        yield from itertools.product(a.batch, a.n_heads, a.d_head, a.seqlen_q, a.seqlen_k, a.causal, a.sm_scale, a.dropout_p, a.return_encoded_softmax, a.dtype, a.bias_type)
 
     def profile_all(self):
         a = self._args
@@ -46,13 +48,19 @@ class Tuner(object):
                 break
             self.profile(*tup)
 
-    def profile(self, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype):
+    def profile(self, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type):
         q = torch.randn((BATCH, N_HEADS, seqlen_q, D_HEAD), dtype=dtype, device="cuda", requires_grad=True)
         k = torch.randn((BATCH, N_HEADS, seqlen_k, D_HEAD), dtype=dtype, device="cuda", requires_grad=True)
         v = torch.randn((BATCH, N_HEADS, seqlen_k, D_HEAD), dtype=dtype, device="cuda", requires_grad=True)
+        if bias_type == 0:
+            b = None
+        elif bias_type == 1:
+            b = torch.randn((BATCH, N_HEADS, seqlen_q, seqlen_k), dtype=dtype, device="cuda", requires_grad=False)
+        else:
+            assert False, f'Unsupported bias_type {bias_type}'
         autotune = True
         return_autotune = True
-        tri_out, encoded_softmax, best_configs = attention(q, k, v, causal, sm_scale, dropout_p, return_encoded_softmax, autotune, return_autotune)
+        tri_out, encoded_softmax, best_configs = attention(q, k, v, b, causal, sm_scale, dropout_p, return_encoded_softmax, autotune, return_autotune)
         if self.verbose:
             print('Returned best configs')
             for kernel_name, best in best_configs:
@@ -76,6 +84,7 @@ class Tuner(object):
             'BLOCK_DMODEL': head_dim_rounded,
             'ENABLE_DROPOUT' : dropout_p > 0.0,
             'PADDED_HEAD' : head_dim_rounded != D_HEAD,
+            'BIAS_TYPE' : bias_type,
         }
         self.pipe_configs(inputs, best_configs)
 
@@ -145,12 +154,14 @@ def parse():
                    default=['float16', 'bfloat16'],
                    choices=['float16', 'bfloat16'],
                    help='Datatype to profile.')
+    p.add_argument('--bias_type', type=int, nargs='+', default=[0, 1], choices=[0, 1], help='Bias types to profile, 0: None, 1: Matrix.')
     p.add_argument('--verbose', action='store_true', help='Verbose')
     p.add_argument('--validate',
                    action='store_true', help='Validate the correctness of the output to avoid faulty autotune configs')
     p.add_argument('--continue_from', type=int, default=None, help="Continue from n-th functional set")
     p.add_argument('--stop_at', type=int, default=None, help="Stop at n-th functional set")
     p.add_argument('--db_file', type=str, required=True, help="Sqlite Database file")
+    p.add_argument('--create_table_only', action='store_true', help="Do not insert data, only create tables. Used for schema updates.")
     args = p.parse_args()
     args.dtype = [ getattr(torch, t) for t in args.dtype ]
     args.causal = [ bool(c) for c in args.causal ]

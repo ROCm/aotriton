@@ -95,28 +95,20 @@ def tuned_attn_fwd(
             BIAS_TYPE=BIAS_TYPE,
             )
 
-TRITON_CONFIG_LIST_BWD_LARGE_BLOCK = [
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 0}, num_stages=1, num_warps=4),
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 1}, num_stages=1, num_warps=4),
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 2}, num_stages=1, num_warps=4),
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3}, num_stages=1, num_warps=4),
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 4}, num_stages=1, num_warps=4),
-]
-
-TRITON_CONFIG_LIST_BWD_SMALL_BLOCK = [
-       triton.Config({'BLOCK_M': 32, 'BLOCK_N': 16, 'waves_per_eu': 0}, num_stages=1, num_warps=4),
-       triton.Config({'BLOCK_M': 32, 'BLOCK_N': 16, 'waves_per_eu': 1}, num_stages=1, num_warps=4),
-       triton.Config({'BLOCK_M': 32, 'BLOCK_N': 16, 'waves_per_eu': 2}, num_stages=1, num_warps=4),
-       triton.Config({'BLOCK_M': 32, 'BLOCK_N': 16, 'waves_per_eu': 3}, num_stages=1, num_warps=4),
-       triton.Config({'BLOCK_M': 32, 'BLOCK_N': 16, 'waves_per_eu': 4}, num_stages=1, num_warps=4),
+TRITON_CONFIG_LIST_BWD_SIZED = [
+       triton.Config({'waves_per_eu': 0}, num_stages=1, num_warps=4),
+       triton.Config({'waves_per_eu': 1}, num_stages=1, num_warps=4),
+       triton.Config({'waves_per_eu': 2}, num_stages=1, num_warps=4),
+       triton.Config({'waves_per_eu': 3}, num_stages=1, num_warps=4),
+       triton.Config({'waves_per_eu': 4}, num_stages=1, num_warps=4),
 ]
 
 @triton.autotune(
-   configs=TRITON_CONFIG_LIST_BWD_LARGE_BLOCK,
+   configs=TRITON_CONFIG_LIST_BWD_SIZED,
    key=['max_seqlens_q', 'max_seqlens_k'],
 )
 @triton.jit
-def large_tuned_bwd_kernel_dk_dv(
+def sized_tuned_bwd_kernel_dk_dv(
     Q, K, V, B, sm_scale, Out, DO,
     DK, DV,
     L,
@@ -168,116 +160,11 @@ def large_tuned_bwd_kernel_dk_dv(
             )
 
 @triton.autotune(
-   configs=TRITON_CONFIG_LIST_BWD_SMALL_BLOCK,
+   configs=TRITON_CONFIG_LIST_BWD_SIZED,
    key=['max_seqlens_q', 'max_seqlens_k'],
 )
 @triton.jit
-def small_tuned_bwd_kernel_dk_dv(
-    Q, K, V, B, sm_scale, Out, DO,
-    DK, DV,
-    L,
-    D,
-    stride_qz, stride_qh, stride_qm, stride_qk,
-    stride_kz, stride_kh, stride_kn, stride_kk,
-    stride_vz, stride_vh, stride_vk, stride_vn,
-    stride_bz, stride_bh, stride_bm, stride_bn,
-    stride_oz, stride_oh, stride_om, stride_ok,
-    stride_dkz, stride_dkh, stride_dkn, stride_dkk,
-    stride_dvz, stride_dvh, stride_dvk, stride_dvn,
-    max_seqlens_q, max_seqlens_k,
-    head_dim,
-    dropout_p,
-    philox_seed,
-    philox_offset_base,
-    BLOCK_M: tl.constexpr, BLOCK_DMODEL: tl.constexpr,
-    BLOCK_N: tl.constexpr,
-    CAUSAL: tl.constexpr,
-    ENABLE_DROPOUT: tl.constexpr,
-    PADDED_HEAD: tl.constexpr,
-    BIAS_TYPE: tl.constexpr,
-):
-    bare_bwd_kernel_dk_dv(Q, K, V, B, sm_scale, Out, DO,
-            DK, DV,
-            L,
-            D,
-            stride_qz, stride_qh, stride_qm, stride_qk,
-            stride_kz, stride_kh, stride_kn, stride_kk,
-            stride_vz, stride_vh, stride_vk, stride_vn,
-            stride_bz, stride_bh, stride_bm, stride_bn,
-            stride_oz, stride_oh, stride_om, stride_ok,
-            stride_dkz, stride_dkh, stride_dkn, stride_dkk,
-            stride_dvz, stride_dvh, stride_dvk, stride_dvn,
-            max_seqlens_q, max_seqlens_k,
-            head_dim,
-            dropout_p,
-            philox_seed,
-            philox_offset_base,
-            BLOCK_M,
-            BLOCK_DMODEL,
-            BLOCK_N,
-            CAUSAL,
-            ENABLE_DROPOUT,
-            PADDED_HEAD=PADDED_HEAD,
-            BIAS_TYPE=BIAS_TYPE,
-            )
-
-@triton.autotune(
-   configs=TRITON_CONFIG_LIST_BWD_LARGE_BLOCK,
-   key=['max_seqlens_q', 'max_seqlens_k'],
-)
-@triton.jit
-def large_tuned_bwd_kernel_dq(
-    Q, K, V, B, sm_scale, Out, DO,
-    DQ,
-    L,
-    D,
-    stride_qz, stride_qh, stride_qm, stride_qk,
-    stride_kz, stride_kh, stride_kn, stride_kk,
-    stride_vz, stride_vh, stride_vk, stride_vn,
-    stride_bz, stride_bh, stride_bm, stride_bn,
-    stride_oz, stride_oh, stride_om, stride_ok,
-    stride_dqz, stride_dqh, stride_dqm, stride_dqk,
-    max_seqlens_q, max_seqlens_k,
-    head_dim,
-    dropout_p,
-    philox_seed,
-    philox_offset_base,
-    BLOCK_M: tl.constexpr, BLOCK_DMODEL: tl.constexpr,
-    BLOCK_N: tl.constexpr,
-    CAUSAL: tl.constexpr,
-    ENABLE_DROPOUT: tl.constexpr,
-    PADDED_HEAD: tl.constexpr,
-    BIAS_TYPE: tl.constexpr,
-):
-    bare_bwd_kernel_dq(Q, K, V, B, sm_scale, Out, DO,
-        DQ,
-        L,
-        D,
-        stride_qz, stride_qh, stride_qm, stride_qk,
-        stride_kz, stride_kh, stride_kn, stride_kk,
-        stride_vz, stride_vh, stride_vk, stride_vn,
-        stride_bz, stride_bh, stride_bm, stride_bn,
-        stride_oz, stride_oh, stride_om, stride_ok,
-        stride_dqz, stride_dqh, stride_dqm, stride_dqk,
-        max_seqlens_q, max_seqlens_k,
-        head_dim,
-        dropout_p,
-        philox_seed,
-        philox_offset_base,
-        BLOCK_M, BLOCK_DMODEL,
-        BLOCK_N,
-        CAUSAL,
-        ENABLE_DROPOUT,
-        PADDED_HEAD=PADDED_HEAD,
-        BIAS_TYPE=BIAS_TYPE,
-        )
-
-@triton.autotune(
-   configs=TRITON_CONFIG_LIST_BWD_SMALL_BLOCK,
-   key=['max_seqlens_q', 'max_seqlens_k'],
-)
-@triton.jit
-def small_tuned_bwd_kernel_dq(
+def sized_tuned_bwd_kernel_dq(
     Q, K, V, B, sm_scale, Out, DO,
     DQ,
     L,
@@ -569,20 +456,24 @@ class _attention(torch.autograd.Function):
         dq = torch.zeros_like(q)
         if ctx.autotune:
             use_small_block = ctx.dropout_p > 0.0
+            use_medium_block = ctx.bias_type != 0
             if use_small_block:
                 # DQ_BLOCK_M = min(max_seqlens_q, BLOCK)
                 BLOCK_M = 32
                 BLOCK_N = 16
-                tuned_bwd_kernel_dk_dv = small_tuned_bwd_kernel_dk_dv
-                tuned_bwd_kernel_dq = small_tuned_bwd_kernel_dq
+            elif use_medium_block:
+                BLOCK_M = 64
+                BLOCK_N = 64
             else:
                 BLOCK_M = 128
                 BLOCK_N = 64
-                tuned_bwd_kernel_dk_dv = large_tuned_bwd_kernel_dk_dv
-                tuned_bwd_kernel_dq = large_tuned_bwd_kernel_dq
         else:
-            BLOCK_M = 32
-            BLOCK_N = 16
+            if ctx.dropout_p > 0.0:
+                BLOCK_M = 32
+                BLOCK_N = 16
+            else:
+                BLOCK_M = 64
+                BLOCK_N = 64
         # debug_mask = torch.zeros((q.shape[0], q.shape[1], max_seqlens_q, max_seqlens_k), device=q.device, dtype=ctx.encoded_softmax.dtype)
         grid_dk_dv = lambda META: (
             triton.cdiv(max_seqlens_k, META['BLOCK_N']),
@@ -591,7 +482,7 @@ class _attention(torch.autograd.Function):
         )
         if k.requires_grad and v.requires_grad:
             if ctx.autotune:
-                tuned_bwd_kernel_dk_dv[grid_dk_dv](
+                sized_tuned_bwd_kernel_dk_dv[grid_dk_dv](
                     q, k, v, b, ctx.sm_scale,
                     o, do,
                     dk, dv,
@@ -609,7 +500,7 @@ class _attention(torch.autograd.Function):
                     dropout_p=ctx.dropout_p,
                     philox_seed=ctx.philox_seed,
                     philox_offset_base=ctx.philox_offset,
-                    # debug_mask=debug_mask,
+                    BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N,
                     BLOCK_DMODEL=head_dim_rounded,
                     CAUSAL=ctx.causal,
                     ENABLE_DROPOUT=ctx.dropout_p > 0.0,
@@ -617,7 +508,10 @@ class _attention(torch.autograd.Function):
                     BIAS_TYPE=ctx.bias_type,
                 )
                 if return_autotune:
-                    dkdv_best_config = tuned_bwd_kernel_dk_dv.get_best_config()
+                    dkdv_best_config = copy.deepcopy(sized_tuned_bwd_kernel_dk_dv.get_best_config())
+                    # BLOCK_M/N are missing with sized_tuned_bwd_kernel_*
+                    dkdv_best_config.kwargs['BLOCK_M'] = BLOCK_M
+                    dkdv_best_config.kwargs['BLOCK_N'] = BLOCK_N
                     tuning_result = copy.deepcopy(dkdv_best_config)
                     """
                     inputs = {
@@ -698,7 +592,7 @@ class _attention(torch.autograd.Function):
         )
         if q.requires_grad:
             if ctx.autotune:
-                tuned_bwd_kernel_dq[grid_dq](
+                sized_tuned_bwd_kernel_dq[grid_dq](
                     q, k, v, b, ctx.sm_scale,
                     o, do,
                     dq,
@@ -715,6 +609,7 @@ class _attention(torch.autograd.Function):
                     dropout_p=ctx.dropout_p,
                     philox_seed=ctx.philox_seed,
                     philox_offset_base=ctx.philox_offset,
+                    BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N,
                     BLOCK_DMODEL=head_dim_rounded,
                     CAUSAL=ctx.causal,
                     ENABLE_DROPOUT=ctx.dropout_p > 0.0,
@@ -722,8 +617,11 @@ class _attention(torch.autograd.Function):
                     BIAS_TYPE=ctx.bias_type,
                 )
                 if return_autotune:
-                    dq_best_config = tuned_bwd_kernel_dq.get_best_config()
-                    tuning_result = copy.deepcopy(dq_best_config)
+                    dq_best_config = copy.deepcopy(sized_tuned_bwd_kernel_dq.get_best_config())
+                    # BLOCK_M/N are missing with sized_tuned_bwd_kernel_*
+                    dq_best_config.kwargs['BLOCK_M'] = BLOCK_M
+                    dq_best_config.kwargs['BLOCK_N'] = BLOCK_N
+                    tuning_result = dq_best_config
                     """
                     inputs = {
                         'Q.shape' : list(q.shape),
@@ -777,6 +675,6 @@ class _attention(torch.autograd.Function):
                     BIAS_TYPE=ctx.bias_type,
                 )
         # print(h.asm["ttgir"])
-        return dq, dk, dv, None, None, None, None, None, None
+        return dq, dk, dv, None, None, None, None, None, None, None
 
 attention = _attention.apply
