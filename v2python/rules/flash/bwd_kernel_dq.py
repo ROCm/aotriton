@@ -7,12 +7,13 @@ from .bwd_kernel_dk_dv import bwd_kernel_dk_dv
 
 class bwd_kernel_dq(FlashKernel):
     ARGUMENTS = [
-        'Q', 'K', 'V', 'sm_scale', 'Out', 'dO',
+        'Q', 'K', 'V', 'B', 'sm_scale', 'Out', 'dO',
         'dQ',
         'L', 'D',
         'stride_qz', 'stride_qh', 'stride_qm', 'stride_qk',
         'stride_kz', 'stride_kh', 'stride_kn', 'stride_kk',
         'stride_vz', 'stride_vh', 'stride_vk', 'stride_vn',
+        'stride_bz', 'stride_bh', 'stride_bk', 'stride_bn',
         'stride_oz', 'stride_oh', 'stride_om', 'stride_ok',
         'stride_dqz', 'stride_dqh', 'stride_dqm', 'stride_dqk',
         'seqlen_q', 'seqlen_k',
@@ -26,6 +27,7 @@ class bwd_kernel_dq(FlashKernel):
         'CAUSAL',
         'ENABLE_DROPOUT',
         'PADDED_HEAD',
+        'BIAS_TYPE',
     ]
     match_fwd = lambda aname : get_possible_types(attn_fwd, aname)
     match_kv = lambda aname : get_possible_types(bwd_kernel_dk_dv, aname)
@@ -33,6 +35,7 @@ class bwd_kernel_dq(FlashKernel):
         'Q' : select_pattern(ARGUMENTS, 'stride_q'),
         'K' : select_pattern(ARGUMENTS, 'stride_k'),
         'V' : select_pattern(ARGUMENTS, 'stride_v'),
+        'B' : select_pattern(ARGUMENTS, 'stride_b'),
         'dO' : select_pattern(ARGUMENTS, 'stride_o'),
         'dQ' : select_pattern(ARGUMENTS, 'stride_dq'),
     }
@@ -42,7 +45,7 @@ class bwd_kernel_dq(FlashKernel):
         'D': 2,
     }
     TYPE_CHOICES = {
-        frozenset(['Q', 'K', 'V', 'Out', 'dO', 'dQ']) : match_fwd('Q'),
+        frozenset(['Q', 'K', 'V', 'B', 'Out', 'dO', 'dQ']) : match_fwd('Q'),
         frozenset(['sm_scale']) : match_fwd( 'sm_scale'),
         frozenset(['L', 'D']) : ['*fp32:16'],
         frozenset(['seqlen_q', 'seqlen_k']) : ['u64'],
@@ -56,6 +59,7 @@ class bwd_kernel_dq(FlashKernel):
         frozenset(['CAUSAL']) : match_kv('CAUSAL'),
         frozenset(['ENABLE_DROPOUT']) : match_fwd('ENABLE_DROPOUT'),
         frozenset(['PADDED_HEAD']) : [False, True],
+        frozenset(['BIAS_TYPE']) : [0, 1],
     }
     PERF_CHOICES = {
         frozenset(['BLOCK_M']) : match_fwd('BLOCK_M'),
@@ -72,5 +76,5 @@ class bwd_kernel_dq(FlashKernel):
         'seqlen_q' : BinningLessOrEqual,
         'seqlen_k' : BinningLessOrEqual,
     }
-    PARTIALLY_TUNED_FUNCTIONALS = [('PADDED_HEAD', None)]
+    PARTIALLY_TUNED_FUNCTIONALS = [('PADDED_HEAD', None), ('BIAS_TYPE', None)]
     DOWNGRADER = []

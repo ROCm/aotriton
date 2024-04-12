@@ -38,6 +38,7 @@ namespace pyaotriton {
               py::arg("q"),
               py::arg("k"),
               py::arg("v"),
+              py::arg("b"),
               py::arg("sm_scale"),
               py::arg("out"),
               py::arg("dout"),

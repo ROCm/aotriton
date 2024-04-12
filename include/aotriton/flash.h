@@ -35,6 +35,7 @@ hipError_t
 attn_bwd(T4 q, // batch_size x num_heads x seqlen_q x head_size
          T4 k, // batch_size x num_heads x seqlen_k x head_size
          T4 v, // batch_size x num_heads x seqlen_k x head_size
+         T4 b, // batch_size x num_heads x seqlen_k x head_size
          float sm_scale,
          T4 out,  // batch_size x num_heads x seqlen_q x head_size
          T4 dout, // batch_size x num_heads x seqlen_q x head_size

@@ -59,7 +59,7 @@ class _attention(torch.autograd.Function):
         attn_fwd(q, k, v, b, sm_scale, M, o,
                  dropout_p, philox_seed, philox_offset, encoded_softmax, causal);
 
-        ctx.save_for_backward(q, k, v, o, M)
+        ctx.save_for_backward(q, k, v, b, o, M)
         ctx.sm_scale = sm_scale
         ctx.BLOCK_DMODEL = Lk
         ctx.causal = causal
@@ -71,7 +71,8 @@ class _attention(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, do, _, __):
-        q, k, v, o, L = ctx.saved_tensors
+        q, k, v, b, o, L = ctx.saved_tensors
+        print(f'{b=}')
         sm_scale = ctx.sm_scale
         dropout_p = ctx.dropout_p
         philox_seed = ctx.philox_seed
@@ -85,7 +86,7 @@ class _attention(torch.autograd.Function):
         delta = torch.empty_like(L)
         seqlen_q = q.shape[2]
         seqlen_k = k.shape[2]
-        attn_bwd(q, k, v, sm_scale, o, do, dq, dk, dv, L, delta,
+        attn_bwd(q, k, v, b, sm_scale, o, do, dq, dk, dv, L, delta,
                  dropout_p, philox_seed, philox_offset, causal);
         return dq, dk, dv, None, None, None, None, None, None
 

@@ -77,7 +77,7 @@ def query_key_value_clones(query: torch.Tensor, key: torch.Tensor, value: torch.
     query_ref = query.clone().detach().to(dtype=dtype, device=device).requires_grad_(query.requires_grad)
     key_ref = key.clone().detach().to(dtype=dtype, device=device).requires_grad_(key.requires_grad)
     value_ref = value.clone().detach().to(dtype=dtype, device=device).requires_grad_(value.requires_grad)
-    bias_ref = bias.clone().detach().to(dtype=dtype, device=device).requires_grad_(bias.requires_grad)
+    bias_ref = bias.clone().detach().to(dtype=dtype, device=device).requires_grad_(bias.requires_grad) if bias is not None else None
     return query_ref, key_ref, value_ref, bias_ref
 
 def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type):
@@ -99,6 +99,7 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
         qdims = (qdims[0], qdims[2], qdims[1], qdims[3])
         kdims = (kdims[0], kdims[2], kdims[1], kdims[3])
         vdims = (vdims[0], vdims[2], vdims[1], vdims[3])
+        bdims = (bdims[0], bdims[2], bdims[1], bdims[3])
     q = torch.empty(qdims, dtype=dtype, device="cuda").normal_(mean=0., std=0.5)
     k = torch.empty(kdims, dtype=dtype, device="cuda").normal_(mean=0., std=0.5)
     v = torch.empty(vdims, dtype=dtype, device="cuda").normal_(mean=0., std=0.5)
@@ -189,12 +190,7 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
     if bias_type is None:
         DK_ATOL = ATOL
     else:
-        if dtype == torch.bfloat16:
-            DK_ATOL = 1e-1 * max(1.0, 2.*(RP(seqlen_q) + RP(seqlen_k) + RP(D_HEAD)) / 64.0)
-        elif dtype == torch.float32:
-            DK_ATOL = 1e-3 * max(1.0, 2.*(RP(seqlen_q) + RP(seqlen_k) + RP(D_HEAD)) / 64.0)
-        else:
-            DK_ATOL = 1e-2 * max(1.0, 2.*(RP(seqlen_q) + RP(seqlen_k) + RP(D_HEAD)) / 64.0)
+        DK_ATOL = 2. * ATOL
     print(f"Backward Using {ATOL=} {RTOL=} {DK_ATOL=}")
 
     dv_allclose = SKIP_DK_DV or torch.allclose(TO(ref_dv), tri_dv, atol=ATOL, rtol=RTOL)
@@ -254,11 +250,10 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
         print(f'{tri_dq[err_idx]=} {ref_dq[err_idx]=} error = {torch.abs(tri_dq[err_idx] - ref_dq[err_idx])}')
     assert dk_allclose and dv_allclose and dq_allclose, f'{dk_allclose=} {dv_allclose=} {dq_allclose=}'
 
-# Debugging
-@pytest.mark.parametrize('BATCH', [1])
-@pytest.mark.parametrize('N_HEADS', [1])
-# @pytest.mark.parametrize('BATCH', [1, 2, 4])
-# @pytest.mark.parametrize('N_HEADS', [1, 2, 4])
+# @pytest.mark.parametrize('BATCH', [1])
+# @pytest.mark.parametrize('N_HEADS', [1])
+@pytest.mark.parametrize('BATCH', [1, 4])
+@pytest.mark.parametrize('N_HEADS', [1, 4])
 # @pytest.mark.parametrize('D_HEAD', [16, 32, 64, 128, 256])
 # Irregular-only PyTorch set
 # @pytest.mark.parametrize('D_HEAD', [8, 21, 72, 96, 160, 192, 203])
