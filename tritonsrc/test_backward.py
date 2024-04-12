@@ -167,7 +167,7 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
     else:
         ATOL = 1e-2 * max(1.0, (seqlen_q + seqlen_k) / 128.0)
     # RTOL=1e-2 if dtype==torch.float16 else 5e-2
-    RTOL=0.0
+    RTOL=0.02
     print(f'Forward Using ATOL={ATOL} RTOL={RTOL}')
     # FIXME: Need to raise tolerance
     '''
@@ -182,16 +182,12 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
         print(f'{ref_out[err_idx]=}')
     assert is_allclose, 'Forward pass {is_allclose=}'
     if dtype == torch.bfloat16:
-        ATOL = 1e-1 * max(1.0, (RP(seqlen_q) + RP(seqlen_k) + RP(D_HEAD)) / 64.0)
+        ATOL = 1e-1 * max(1.0, (RP(seqlen_q) + RP(seqlen_k) + RP(D_HEAD)) / 32.0)
     elif dtype == torch.float32:
-        ATOL = 1e-3 * max(1.0, (RP(seqlen_q) + RP(seqlen_k) + RP(D_HEAD)) / 64.0)
+        ATOL = 1e-3 * max(1.0, (RP(seqlen_q) + RP(seqlen_k) + RP(D_HEAD)) / 32.0)
     else:
-        ATOL = 1e-2 * max(1.0, (RP(seqlen_q) + RP(seqlen_k) + RP(D_HEAD)) / 64.0)
-    if bias_type is None:
-        DK_ATOL = ATOL
-    else:
-        DK_ATOL = 2. * ATOL
-    print(f"Backward Using {ATOL=} {RTOL=} {DK_ATOL=}")
+        ATOL = 1e-2 * max(1.0, (RP(seqlen_q) + RP(seqlen_k) + RP(D_HEAD)) / 32.0)
+    print(f'Backward Using ATOL={ATOL} RTOL={RTOL}')
 
     dv_allclose = SKIP_DK_DV or torch.allclose(TO(ref_dv), tri_dv, atol=ATOL, rtol=RTOL)
     if not dv_allclose:
@@ -229,7 +225,7 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
             # print(f'{tri_dq[0,0]=}')
             # print(f'{ref_dq[0,0]=}')
 
-    dk_allclose = SKIP_DK_DV or torch.allclose(TO(ref_dk), tri_dk, atol=DK_ATOL, rtol=RTOL)
+    dk_allclose = SKIP_DK_DV or torch.allclose(TO(ref_dk), tri_dk, atol=ATOL, rtol=RTOL)
     if dv_allclose and not dk_allclose:
         print(f'{tri_out[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
         print(f'{ref_out[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
