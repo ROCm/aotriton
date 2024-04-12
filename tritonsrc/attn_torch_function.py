@@ -117,13 +117,14 @@ TRITON_CONFIG_LIST_BWD_SMALL_BLOCK = [
 )
 @triton.jit
 def large_tuned_bwd_kernel_dk_dv(
-    Q, K, V, sm_scale, Out, DO,
+    Q, K, V, B, sm_scale, Out, DO,
     DK, DV,
     L,
     D,
     stride_qz, stride_qh, stride_qm, stride_qk,
     stride_kz, stride_kh, stride_kn, stride_kk,
     stride_vz, stride_vh, stride_vk, stride_vn,
+    stride_bz, stride_bh, stride_bm, stride_bn,
     stride_oz, stride_oh, stride_om, stride_ok,
     stride_dkz, stride_dkh, stride_dkn, stride_dkk,
     stride_dvz, stride_dvh, stride_dvk, stride_dvn,
@@ -138,15 +139,17 @@ def large_tuned_bwd_kernel_dk_dv(
     CAUSAL: tl.constexpr,
     ENABLE_DROPOUT: tl.constexpr,
     PADDED_HEAD: tl.constexpr,
+    BIAS_TYPE: tl.constexpr,
 ):
     bare_bwd_kernel_dk_dv(
-            Q, K, V, sm_scale, Out, DO,
+            Q, K, V, B, sm_scale, Out, DO,
             DK, DV,
             L,
             D,
             stride_qz, stride_qh, stride_qm, stride_qk,
             stride_kz, stride_kh, stride_kn, stride_kk,
             stride_vz, stride_vh, stride_vk, stride_vn,
+            stride_bz, stride_bh, stride_bm, stride_bn,
             stride_oz, stride_oh, stride_om, stride_ok,
             stride_dkz, stride_dkh, stride_dkn, stride_dkk,
             stride_dvz, stride_dvh, stride_dvk, stride_dvn,
@@ -161,6 +164,7 @@ def large_tuned_bwd_kernel_dk_dv(
             CAUSAL,
             ENABLE_DROPOUT,
             PADDED_HEAD=PADDED_HEAD,
+            BIAS_TYPE=BIAS_TYPE,
             )
 
 @triton.autotune(
@@ -169,13 +173,14 @@ def large_tuned_bwd_kernel_dk_dv(
 )
 @triton.jit
 def small_tuned_bwd_kernel_dk_dv(
-    Q, K, V, sm_scale, Out, DO,
+    Q, K, V, B, sm_scale, Out, DO,
     DK, DV,
     L,
     D,
     stride_qz, stride_qh, stride_qm, stride_qk,
     stride_kz, stride_kh, stride_kn, stride_kk,
     stride_vz, stride_vh, stride_vk, stride_vn,
+    stride_bz, stride_bh, stride_bm, stride_bn,
     stride_oz, stride_oh, stride_om, stride_ok,
     stride_dkz, stride_dkh, stride_dkn, stride_dkk,
     stride_dvz, stride_dvh, stride_dvk, stride_dvn,
@@ -189,14 +194,16 @@ def small_tuned_bwd_kernel_dk_dv(
     CAUSAL: tl.constexpr,
     ENABLE_DROPOUT: tl.constexpr,
     PADDED_HEAD: tl.constexpr,
+    BIAS_TYPE: tl.constexpr,
 ):
-    bare_bwd_kernel_dk_dv(Q, K, V, sm_scale, Out, DO,
+    bare_bwd_kernel_dk_dv(Q, K, V, B, sm_scale, Out, DO,
             DK, DV,
             L,
             D,
             stride_qz, stride_qh, stride_qm, stride_qk,
             stride_kz, stride_kh, stride_kn, stride_kk,
             stride_vz, stride_vh, stride_vk, stride_vn,
+            stride_bz, stride_bh, stride_bm, stride_bn,
             stride_oz, stride_oh, stride_om, stride_ok,
             stride_dkz, stride_dkh, stride_dkn, stride_dkk,
             stride_dvz, stride_dvh, stride_dvk, stride_dvn,
@@ -211,6 +218,7 @@ def small_tuned_bwd_kernel_dk_dv(
             CAUSAL,
             ENABLE_DROPOUT,
             PADDED_HEAD=PADDED_HEAD,
+            BIAS_TYPE=BIAS_TYPE,
             )
 
 @triton.autotune(
@@ -219,13 +227,14 @@ def small_tuned_bwd_kernel_dk_dv(
 )
 @triton.jit
 def large_tuned_bwd_kernel_dq(
-    Q, K, V, sm_scale, Out, DO,
+    Q, K, V, B, sm_scale, Out, DO,
     DQ,
     L,
     D,
     stride_qz, stride_qh, stride_qm, stride_qk,
     stride_kz, stride_kh, stride_kn, stride_kk,
     stride_vz, stride_vh, stride_vk, stride_vn,
+    stride_bz, stride_bh, stride_bm, stride_bn,
     stride_oz, stride_oh, stride_om, stride_ok,
     stride_dqz, stride_dqh, stride_dqm, stride_dqk,
     max_seqlens_q, max_seqlens_k,
@@ -238,14 +247,16 @@ def large_tuned_bwd_kernel_dq(
     CAUSAL: tl.constexpr,
     ENABLE_DROPOUT: tl.constexpr,
     PADDED_HEAD: tl.constexpr,
+    BIAS_TYPE: tl.constexpr,
 ):
-    bare_bwd_kernel_dq(Q, K, V, sm_scale, Out, DO,
+    bare_bwd_kernel_dq(Q, K, V, B, sm_scale, Out, DO,
         DQ,
         L,
         D,
         stride_qz, stride_qh, stride_qm, stride_qk,
         stride_kz, stride_kh, stride_kn, stride_kk,
         stride_vz, stride_vh, stride_vk, stride_vn,
+        stride_bz, stride_bh, stride_bm, stride_bn,
         stride_oz, stride_oh, stride_om, stride_ok,
         stride_dqz, stride_dqh, stride_dqm, stride_dqk,
         max_seqlens_q, max_seqlens_k,
@@ -258,6 +269,7 @@ def large_tuned_bwd_kernel_dq(
         CAUSAL,
         ENABLE_DROPOUT,
         PADDED_HEAD=PADDED_HEAD,
+        BIAS_TYPE=BIAS_TYPE,
         )
 
 @triton.autotune(
@@ -266,13 +278,14 @@ def large_tuned_bwd_kernel_dq(
 )
 @triton.jit
 def small_tuned_bwd_kernel_dq(
-    Q, K, V, sm_scale, Out, DO,
+    Q, K, V, B, sm_scale, Out, DO,
     DQ,
     L,
     D,
     stride_qz, stride_qh, stride_qm, stride_qk,
     stride_kz, stride_kh, stride_kn, stride_kk,
     stride_vz, stride_vh, stride_vk, stride_vn,
+    stride_bz, stride_bh, stride_bm, stride_bn,
     stride_oz, stride_oh, stride_om, stride_ok,
     stride_dqz, stride_dqh, stride_dqm, stride_dqk,
     max_seqlens_q, max_seqlens_k,
@@ -285,14 +298,16 @@ def small_tuned_bwd_kernel_dq(
     CAUSAL: tl.constexpr,
     ENABLE_DROPOUT: tl.constexpr,
     PADDED_HEAD: tl.constexpr,
+    BIAS_TYPE: tl.constexpr,
 ):
-    bare_bwd_kernel_dq(Q, K, V, sm_scale, Out, DO,
+    bare_bwd_kernel_dq(Q, K, V, B, sm_scale, Out, DO,
         DQ,
         L,
         D,
         stride_qz, stride_qh, stride_qm, stride_qk,
         stride_kz, stride_kh, stride_kn, stride_kk,
         stride_vz, stride_vh, stride_vk, stride_vn,
+        stride_bz, stride_bh, stride_bm, stride_bn,
         stride_oz, stride_oh, stride_om, stride_ok,
         stride_dqz, stride_dqh, stride_dqm, stride_dqk,
         max_seqlens_q, max_seqlens_k,
@@ -305,6 +320,7 @@ def small_tuned_bwd_kernel_dq(
         CAUSAL,
         ENABLE_DROPOUT,
         PADDED_HEAD=PADDED_HEAD,
+        BIAS_TYPE=BIAS_TYPE,
         )
 
 class _attention(torch.autograd.Function):
@@ -487,7 +503,7 @@ class _attention(torch.autograd.Function):
             tuning_result = None
             block_m = min(128, q.shape[2], k.shape[2])
         grid = (triton.cdiv(q.shape[2], block_m), q.shape[1], q.shape[0])
-        ctx.save_for_backward(q, k, v, o, M)
+        ctx.save_for_backward(q, k, v, b, o, M)
         ctx.grid = grid
         ctx.sm_scale = sm_scale
         ctx.head_dim = Lk
@@ -496,6 +512,7 @@ class _attention(torch.autograd.Function):
         ctx.philox_seed = philox_seed
         ctx.philox_offset = philox_offset
         ctx.encoded_softmax = encoded_softmax # FIXME: for debugging only
+        ctx.bias_type = BIAS_TYPE
         ctx.tuning_result = [('attn_fwd', tuning_result)] if tuning_result is not None else None
         if ctx.tuning_result is not None:
             for kernel_name, best in ctx.tuning_result:
@@ -504,7 +521,7 @@ class _attention(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, do, _, fwd_tuning_result):
-        q, k, v, o, L = ctx.saved_tensors
+        q, k, v, b, o, L = ctx.saved_tensors
         # if q.shape[-1] <= 32:
         Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
         assert Lq == Lk and Lk == Lv and Lk == ctx.head_dim
@@ -575,13 +592,14 @@ class _attention(torch.autograd.Function):
         if k.requires_grad and v.requires_grad:
             if ctx.autotune:
                 tuned_bwd_kernel_dk_dv[grid_dk_dv](
-                    q, k, v, ctx.sm_scale,
+                    q, k, v, b, ctx.sm_scale,
                     o, do,
                     dk, dv,
                     L, delta,
                     q.stride(0), q.stride(1), q.stride(2), q.stride(3),
                     k.stride(0), k.stride(1), k.stride(2), k.stride(3),
                     v.stride(0), v.stride(1), v.stride(2), v.stride(3),
+                    b.stride(0), b.stride(1), b.stride(2), b.stride(3),
                     do.stride(0), do.stride(1), do.stride(2), do.stride(3),
                     dk.stride(0), dk.stride(1), dk.stride(2), dk.stride(3),
                     dv.stride(0), dv.stride(1), dv.stride(2), dv.stride(3),
@@ -596,6 +614,7 @@ class _attention(torch.autograd.Function):
                     CAUSAL=ctx.causal,
                     ENABLE_DROPOUT=ctx.dropout_p > 0.0,
                     PADDED_HEAD=padded_head,
+                    BIAS_TYPE=ctx.bias_type,
                 )
                 if return_autotune:
                     dkdv_best_config = tuned_bwd_kernel_dk_dv.get_best_config()
@@ -628,13 +647,14 @@ class _attention(torch.autograd.Function):
                     print(f'{id(ctx.tuning_result)=}')
             else:
                 bare_bwd_kernel_dk_dv[grid_dk_dv](
-                    q, k, v, ctx.sm_scale,
+                    q, k, v, b, ctx.sm_scale,
                     o, do,
                     dk, dv,
                     L, delta,
                     q.stride(0), q.stride(1), q.stride(2), q.stride(3),
                     k.stride(0), k.stride(1), k.stride(2), k.stride(3),
                     v.stride(0), v.stride(1), v.stride(2), v.stride(3),
+                    b.stride(0), b.stride(1), b.stride(2), b.stride(3),
                     do.stride(0), do.stride(1), do.stride(2), do.stride(3),
                     dk.stride(0), dk.stride(1), dk.stride(2), dk.stride(3),
                     dv.stride(0), dv.stride(1), dv.stride(2), dv.stride(3),
@@ -652,6 +672,7 @@ class _attention(torch.autograd.Function):
                     num_stages=1,
                     ENABLE_DROPOUT=ctx.dropout_p > 0.0,
                     PADDED_HEAD=padded_head,
+                    BIAS_TYPE=ctx.bias_type,
                 )
         # mask_allclose = torch.allclose(debug_mask < 0, ctx.encoded_softmax < 0)
         if False:
@@ -678,13 +699,14 @@ class _attention(torch.autograd.Function):
         if q.requires_grad:
             if ctx.autotune:
                 tuned_bwd_kernel_dq[grid_dq](
-                    q, k, v, ctx.sm_scale,
+                    q, k, v, b, ctx.sm_scale,
                     o, do,
                     dq,
                     L, delta,
                     q.stride(0), q.stride(1), q.stride(2), q.stride(3),
                     k.stride(0), k.stride(1), k.stride(2), k.stride(3),
                     v.stride(0), v.stride(1), v.stride(2), v.stride(3),
+                    b.stride(0), b.stride(1), b.stride(2), b.stride(3),
                     do.stride(0), do.stride(1), do.stride(2), do.stride(3),
                     dq.stride(0), dq.stride(1), dq.stride(2), dq.stride(3),
                     max_seqlens_q=max_seqlens_q,
@@ -697,6 +719,7 @@ class _attention(torch.autograd.Function):
                     CAUSAL=ctx.causal,
                     ENABLE_DROPOUT=ctx.dropout_p > 0.0,
                     PADDED_HEAD=padded_head,
+                    BIAS_TYPE=ctx.bias_type,
                 )
                 if return_autotune:
                     dq_best_config = tuned_bwd_kernel_dq.get_best_config()
@@ -728,13 +751,14 @@ class _attention(torch.autograd.Function):
                     ctx.tuning_result.append(('bwd_kernel_dq', tuning_result))
             else:
                 bare_bwd_kernel_dq[grid_dq](
-                    q, k, v, ctx.sm_scale,
+                    q, k, v, b, ctx.sm_scale,
                     o, do,
                     dq,
                     L, delta,
                     q.stride(0), q.stride(1), q.stride(2), q.stride(3),
                     k.stride(0), k.stride(1), k.stride(2), k.stride(3),
                     v.stride(0), v.stride(1), v.stride(2), v.stride(3),
+                    b.stride(0), b.stride(1), b.stride(2), b.stride(3),
                     do.stride(0), do.stride(1), do.stride(2), do.stride(3),
                     dq.stride(0), dq.stride(1), dq.stride(2), dq.stride(3),
                     max_seqlens_q=max_seqlens_q,
@@ -750,6 +774,7 @@ class _attention(torch.autograd.Function):
                     num_stages=1,
                     ENABLE_DROPOUT=ctx.dropout_p > 0.0,
                     PADDED_HEAD=padded_head,
+                    BIAS_TYPE=ctx.bias_type,
                 )
         # print(h.asm["ttgir"])
         return dq, dk, dv, None, None, None, None, None, None

@@ -85,6 +85,7 @@ def _do_test_op_fwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
             qdims = (qdims[0], qdims[2], qdims[1], qdims[3])
             kdims = (kdims[0], kdims[2], kdims[1], kdims[3])
             vdims = (vdims[0], vdims[2], vdims[1], vdims[3])
+            bdims = (bdims[0], bdims[2], bdims[1], bdims[3])
         q = (
             torch.empty(qdims, dtype=dtype, device="cuda")
             .normal_(mean=0., std=0.5)
