@@ -75,5 +75,5 @@ class bwd_kernel_dk_dv(FlashKernel):
         'seqlen_q' : BinningLessOrEqual,
         'seqlen_k' : BinningLessOrEqual,
     }
-    PARTIALLY_TUNED_FUNCTIONALS = [('PADDED_HEAD', None), ('BIAS_TYPE', None)]
+    PARTIALLY_TUNED_FUNCTIONALS = [('PADDED_HEAD', None)]
     DOWNGRADER = []

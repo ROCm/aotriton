@@ -88,6 +88,6 @@ class _attention(torch.autograd.Function):
         seqlen_k = k.shape[2]
         attn_bwd(q, k, v, b, sm_scale, o, do, dq, dk, dv, L, delta,
                  dropout_p, philox_seed, philox_offset, causal);
-        return dq, dk, dv, None, None, None, None, None, None
+        return dq, dk, dv, None, None, None, None, None, None, None
 
 attention = _attention.apply
