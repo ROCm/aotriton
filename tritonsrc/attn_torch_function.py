@@ -454,26 +454,19 @@ class _attention(torch.autograd.Function):
             print(f'{delta=}')
             print(f'{BLOCK=}')
         dq = torch.zeros_like(q)
-        if ctx.autotune:
-            use_small_block = ctx.dropout_p > 0.0
-            use_medium_block = ctx.bias_type != 0
-            if use_small_block:
-                # DQ_BLOCK_M = min(max_seqlens_q, BLOCK)
-                BLOCK_M = 32
-                BLOCK_N = 16
-            elif use_medium_block:
-                BLOCK_M = 64
-                BLOCK_N = 64
-            else:
-                BLOCK_M = 128
-                BLOCK_N = 64
+
+        use_small_block = ctx.dropout_p > 0.0
+        use_medium_block = ctx.bias_type != 0
+        if use_small_block:
+            # DQ_BLOCK_M = min(max_seqlens_q, BLOCK)
+            BLOCK_M = 32
+            BLOCK_N = 16
+        elif use_medium_block:
+            BLOCK_M = 64
+            BLOCK_N = 64
         else:
-            if ctx.dropout_p > 0.0:
-                BLOCK_M = 32
-                BLOCK_N = 16
-            else:
-                BLOCK_M = 64
-                BLOCK_N = 64
+            BLOCK_M = 128
+            BLOCK_N = 64
         # debug_mask = torch.zeros((q.shape[0], q.shape[1], max_seqlens_q, max_seqlens_k), device=q.device, dtype=ctx.encoded_softmax.dtype)
         grid_dk_dv = lambda META: (
             triton.cdiv(max_seqlens_k, META['BLOCK_N']),

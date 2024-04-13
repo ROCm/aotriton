@@ -46,6 +46,8 @@ class Tuner(object):
                 continue
             if a.stop_at is not None and i > a.stop_at:
                 break
+            if a.dry_run:
+                continue
             self.profile(*tup)
 
     def profile(self, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type):
@@ -158,6 +160,7 @@ def parse():
     p.add_argument('--verbose', action='store_true', help='Verbose')
     p.add_argument('--validate',
                    action='store_true', help='Validate the correctness of the output to avoid faulty autotune configs')
+    p.add_argument('--dry_run', action='store_true', help="Print parameter combinations without running tests")
     p.add_argument('--continue_from', type=int, default=None, help="Continue from n-th functional set")
     p.add_argument('--stop_at', type=int, default=None, help="Stop at n-th functional set")
     p.add_argument('--db_file', type=str, required=True, help="Sqlite Database file")
