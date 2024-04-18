@@ -110,7 +110,7 @@ TRITON_CONFIG_LIST_BWD_SIZED = [
 @triton.jit
 def sized_tuned_bwd_kernel_dk_dv(
     Q, K, V, B, sm_scale, Out, DO,
-    DK, DV,
+    DK, DV, DB,
     L,
     D,
     stride_qz, stride_qh, stride_qm, stride_qk,
@@ -120,6 +120,7 @@ def sized_tuned_bwd_kernel_dk_dv(
     stride_oz, stride_oh, stride_om, stride_ok,
     stride_dkz, stride_dkh, stride_dkn, stride_dkk,
     stride_dvz, stride_dvh, stride_dvk, stride_dvn,
+    stride_dbz, stride_dbh, stride_dbm, stride_dbn,
     max_seqlens_q, max_seqlens_k,
     head_dim,
     dropout_p,
@@ -135,7 +136,7 @@ def sized_tuned_bwd_kernel_dk_dv(
 ):
     bare_bwd_kernel_dk_dv(
             Q, K, V, B, sm_scale, Out, DO,
-            DK, DV,
+            DK, DV, DB,
             L,
             D,
             stride_qz, stride_qh, stride_qm, stride_qk,
@@ -145,6 +146,7 @@ def sized_tuned_bwd_kernel_dk_dv(
             stride_oz, stride_oh, stride_om, stride_ok,
             stride_dkz, stride_dkh, stride_dkn, stride_dkk,
             stride_dvz, stride_dvh, stride_dvk, stride_dvn,
+            stride_dbz, stride_dbh, stride_dbm, stride_dbn,
             max_seqlens_q, max_seqlens_k,
             head_dim,
             dropout_p,
@@ -266,23 +268,28 @@ class _attention(torch.autograd.Function):
 
         philox_seed = 114514
         philox_offset = 1919810
-        MAX_BLOCK_M = 128 if dropout_p == 0 and not causal else 64
-        MAX_BLOCK_N = 32 if dropout_p == 0 and not causal else 32
-        '''
-        MAX_BLOCK_M = MAX_BLOCK_M if is_supported_by_tl_dot(max_seqlens_q) else 1
-        MAX_BLOCK_N = MAX_BLOCK_N if is_supported_by_tl_dot(max_seqlens_k) else 1
-        if dtype == torch.float32:
-            MAX_BLOCK_M = max(16, MAX_BLOCK_M // 2)
-            MAX_BLOCK_N = max(16, MAX_BLOCK_N // 2)
-        '''
-        # MAX_BLOCK_M = 32  # Debugging, matching bwd tile size
-        # MAX_BLOCK_N = 16  # Debugging,, matching bwd tile size
-
         if b is None:
             b = torch.empty((0,0,0,0), device=q.device, dtype=q.dtype)
             BIAS_TYPE = 0
         else:
             BIAS_TYPE = 1
+
+        if is_meff:
+            BLOCK_M = 1
+            BLOCK_N = 1
+        else:
+            use_small_block = dropout_p > 0.0 or BIAS_TYPE != 0
+            use_medium_block = False # reserved
+            if use_small_block:
+                BLOCK_M = 64
+                BLOCK_N = 32
+            elif use_medium_block:
+                BLOCK_M = 64
+                BLOCK_N = 64
+            else:
+                BLOCK_M = 128
+                BLOCK_N = 64
+
         if autotune:
             # assert False, "No time to test autotune for now"
             tuned_attn_fwd[grid](
@@ -416,9 +423,10 @@ class _attention(torch.autograd.Function):
         head_dim_rounded = max(16, head_dim_rounded)
         padded_head = head_dim_rounded != ctx.head_dim
 
-        dq = torch.zeros_like(q, dtype=torch.float32)
+        dq = torch.empty_like(q)
         dk = torch.empty_like(k)
         dv = torch.empty_like(v)
+        db = torch.empty_like(b)
         delta = torch.empty_like(L)
         max_seqlens_q = q.shape[2]
         max_seqlens_k = k.shape[2]
@@ -453,7 +461,6 @@ class _attention(torch.autograd.Function):
             print(f'{L=} {L.shape=}')
             print(f'{delta=}')
             print(f'{BLOCK=}')
-        dq = torch.zeros_like(q)
 
         use_small_block = ctx.dropout_p > 0.0
         use_medium_block = ctx.bias_type != 0
@@ -463,7 +470,7 @@ class _attention(torch.autograd.Function):
             BLOCK_N = 16
         elif use_medium_block:
             BLOCK_M = 64
-            BLOCK_N = 64
+            BLOCK_N = 32
         else:
             BLOCK_M = 128
             BLOCK_N = 64
@@ -473,12 +480,19 @@ class _attention(torch.autograd.Function):
             q.shape[1],
             q.shape[0],
         )
+        stride_dbz, stride_dbh, stride_dbm, stride_dbn = db.stride()
+        if db.numel() == 0 or not b.requires_grad:
+            # Passing all zeros to indicate no elements
+            stride_dbz, stride_dbh, stride_dbm, stride_dbn = 0,0,0,0
+        else:
+            db.fill_(float('nan'))
+        print(f'{ctx.bias_type=} {BLOCK_M=} {BLOCK_N=}')
         if k.requires_grad and v.requires_grad:
             if ctx.autotune:
                 sized_tuned_bwd_kernel_dk_dv[grid_dk_dv](
                     q, k, v, b, ctx.sm_scale,
                     o, do,
-                    dk, dv,
+                    dk, dv, db,
                     L, delta,
                     q.stride(0), q.stride(1), q.stride(2), q.stride(3),
                     k.stride(0), k.stride(1), k.stride(2), k.stride(3),
@@ -487,6 +501,7 @@ class _attention(torch.autograd.Function):
                     do.stride(0), do.stride(1), do.stride(2), do.stride(3),
                     dk.stride(0), dk.stride(1), dk.stride(2), dk.stride(3),
                     dv.stride(0), dv.stride(1), dv.stride(2), dv.stride(3),
+                    stride_dbz, stride_dbh, stride_dbm, stride_dbn,
                     max_seqlens_q=max_seqlens_q,
                     max_seqlens_k=max_seqlens_k,
                     head_dim=Lk,
@@ -536,7 +551,7 @@ class _attention(torch.autograd.Function):
                 bare_bwd_kernel_dk_dv[grid_dk_dv](
                     q, k, v, b, ctx.sm_scale,
                     o, do,
-                    dk, dv,
+                    dk, dv, db,
                     L, delta,
                     q.stride(0), q.stride(1), q.stride(2), q.stride(3),
                     k.stride(0), k.stride(1), k.stride(2), k.stride(3),
@@ -545,6 +560,7 @@ class _attention(torch.autograd.Function):
                     do.stride(0), do.stride(1), do.stride(2), do.stride(3),
                     dk.stride(0), dk.stride(1), dk.stride(2), dk.stride(3),
                     dv.stride(0), dv.stride(1), dv.stride(2), dv.stride(3),
+                    stride_dbz, stride_dbh, stride_dbm, stride_dbn,
                     max_seqlens_q=max_seqlens_q,
                     max_seqlens_k=max_seqlens_k,
                     head_dim=Lk,
@@ -668,6 +684,6 @@ class _attention(torch.autograd.Function):
                     BIAS_TYPE=ctx.bias_type,
                 )
         # print(h.asm["ttgir"])
-        return dq, dk, dv, None, None, None, None, None, None, None
+        return dq, dk, dv, None if db.numel() == 0 else db, None, None, None, None, None, None, None
 
 attention = _attention.apply

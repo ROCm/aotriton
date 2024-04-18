@@ -30,7 +30,7 @@ def dot(BLOCK_M : tl.constexpr, QDIM : tl.constexpr, KDIM : tl.constexpr, q, k):
 @triton.jit
 def bwd_kernel_dk_dv(
     Q, K, V, B, sm_scale, Out, DO,
-    DK, DV,
+    DK, DV, DB,
     L,
     D,
     stride_qz, stride_qh, stride_qm, stride_qk,
@@ -40,6 +40,7 @@ def bwd_kernel_dk_dv(
     stride_oz, stride_oh, stride_om, stride_ok,
     stride_dkz, stride_dkh, stride_dkn, stride_dkk,
     stride_dvz, stride_dvh, stride_dvk, stride_dvn,
+    stride_dbz, stride_dbh, stride_dbm, stride_dbn,
     max_seqlens_q, max_seqlens_k,
     head_dim,
     dropout_p,
@@ -110,11 +111,26 @@ def bwd_kernel_dk_dv(
     off_zh = off_z * num_h + off_h * 1
     if BIAS_TYPE == 0:
         B_block_ptr = 0
+        DB_block_ptr = 0
     elif BIAS_TYPE == 1:
         B_block_ptr = tl.make_block_ptr(
                 base=B + off_h * stride_bh + off_z * stride_bz,
                 shape=(seqlen_q, seqlen_k),
                 strides=(stride_bm, stride_bn),
+                offsets=(0, start_m),
+                block_shape=(BLOCK_M, BLOCK_N),
+                order=(1, 0)
+                )
+        if stride_dbz * stride_dbh * stride_dbm * stride_dbn == 0:
+            store_db = False
+        else:
+            store_db = True
+        # Still have to make one even if no_db = False
+        # due to a limit of Triton: runtime branches must have identical data types.
+        DB_block_ptr = tl.make_block_ptr(
+                base=DB + off_h * stride_dbh + off_z * stride_dbz,
+                shape=(seqlen_q, seqlen_k),
+                strides=(stride_dbm, stride_dbn),
                 offsets=(0, start_m),
                 block_shape=(BLOCK_M, BLOCK_N),
                 order=(1, 0)
@@ -149,6 +165,7 @@ def bwd_kernel_dk_dv(
     batch_philox_offset = philox_offset_base + off_zh * seqlen_q * seqlen_k
     if BIAS_TYPE == 1:
         B_block_ptr = tl.advance(B_block_ptr, (lo, 0))
+        DB_block_ptr = tl.advance(DB_block_ptr, (lo, 0))
     '''
            K1   K2      (d)V      dO
     Q1    qk11 qk12     (d)v1     dO1
@@ -250,6 +267,9 @@ def bwd_kernel_dk_dv(
             dp = tl.where(keep, dp / (1 - dropout_p), 0)
         # compute ds = p * (dp - delta[:, None])
         ds = p * (dp - Di) # (BLOCK_M, BLOCK_N)
+        if BIAS_TYPE == 1:
+            if store_db:
+                tl.store(DB_block_ptr, ds.to(DB.type.element_ty), boundary_check=(0,1))
         # compute dk
         if BLOCK_M == 1:
             dk += ds.to(Q.dtype.element_ty) * q
@@ -261,6 +281,7 @@ def bwd_kernel_dk_dv(
         DO_block_ptr = tl.advance(DO_block_ptr, (BLOCK_M, 0)) # Debug DO accessing problems
         if BIAS_TYPE == 1:
             B_block_ptr = tl.advance(B_block_ptr, (BLOCK_M, 0))
+            DB_block_ptr = tl.advance(DB_block_ptr, (BLOCK_M, 0))
     # initialize pointers to output
     dk_offset = off_h * stride_dkh + off_z * stride_dkz
     DK_block_ptr = tl.make_block_ptr(

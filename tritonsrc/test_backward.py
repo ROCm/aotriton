@@ -87,6 +87,7 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
         pytest.skip("_scaled_dot_product_attention: Explicit attn_mask should not be set when is_causal=True")
     SKIP_DK_DV = False
     SKIP_DQ = False
+    SKIP_DB = True if bias_type is None else False
     USE_AUTOTUNE = False
     torch.manual_seed(20)
     SPARSE_HEAD_SINCE = 1
@@ -120,6 +121,9 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
     if not SKIP_DK_DV:
         k.requires_grad_()
         v.requires_grad_()
+    if not SKIP_DB:
+        assert b is not None
+        b.requires_grad_()
     return_encoded_softmax = True
 
     # q_ref_lp, k_ref_lp, v_ref_lp = query_key_value_clones(q, k, v, dtype=dtype)
@@ -151,6 +155,11 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
     tri_dv, v.grad = None if SKIP_DK_DV else v.grad.clone(), None
     tri_dk, k.grad = None if SKIP_DK_DV else k.grad.clone(), None
     tri_dq, q.grad = None if SKIP_DQ else q.grad.clone(), None
+    if not SKIP_DB:
+        tri_db = b.grad.clone()
+    else:
+        tri_db = None
+
     '''
     ref_out.backward(dout, None)
     ref_dv, v.grad = None if SKIP_DK_DV else v.grad.clone(), None
@@ -158,9 +167,13 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
     ref_dq, q.grad = None if SKIP_DQ else q.grad.clone(), None
     '''
     ref_out.backward(dout.to(device=ref_out.device, dtype=ref_out.dtype))
-    ref_dv, v.grad = None if SKIP_DK_DV else v_ref.grad.clone(), None
-    ref_dk, k.grad = None if SKIP_DK_DV else k_ref.grad.clone(), None
-    ref_dq, q.grad = None if SKIP_DQ else q_ref.grad.clone(), None
+    ref_dv, v_ref.grad = None if SKIP_DK_DV else v_ref.grad.clone(), None
+    ref_dk, k_ref.grad = None if SKIP_DK_DV else k_ref.grad.clone(), None
+    ref_dq, q_ref.grad = None if SKIP_DQ else q_ref.grad.clone(), None
+    if SKIP_DB:
+        ref_db = None
+    else:
+        ref_db, b_ref.grad = b_ref.grad.clone(), None
     # compare
     if dtype==torch.bfloat16:
         ATOL = 1e-1 * max(1.0, (seqlen_q + seqlen_k) / 128.0)
@@ -244,7 +257,14 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
         err_idx = np.unravel_index(torch.argmax(torch.abs(TO(ref_dq) - tri_dq)).cpu().numpy(), ref_dq.shape)
         print(f'{err_idx=}')
         print(f'{tri_dq[err_idx]=} {ref_dq[err_idx]=} error = {torch.abs(tri_dq[err_idx] - ref_dq[err_idx])}')
-    assert dk_allclose and dv_allclose and dq_allclose, f'{dk_allclose=} {dv_allclose=} {dq_allclose=}'
+
+    db_allclose = SKIP_DB or torch.allclose(TO(ref_db), tri_db, atol=ATOL, rtol=RTOL)
+    if dk_allclose and dv_allclose and dq_allclose and not db_allclose:
+        import numpy as np
+        err_idx = np.unravel_index(torch.argmax(torch.abs(TO(ref_db) - tri_db)).cpu().numpy(), ref_db.shape)
+        print(f'{err_idx=}')
+        print(f'{tri_db[err_idx]=} {ref_db[err_idx]=} error = {torch.abs(tri_db[err_idx] - ref_db[err_idx])}')
+    assert dk_allclose and dv_allclose and dq_allclose and db_allclose, f'{dk_allclose=} {dv_allclose=} {dq_allclose=} {db_allclose=}'
 
 # @pytest.mark.parametrize('BATCH', [1])
 # @pytest.mark.parametrize('N_HEADS', [1])
