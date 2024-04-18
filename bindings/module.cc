@@ -45,6 +45,7 @@ namespace pyaotriton {
               py::arg("dq"),
               py::arg("dk"),
               py::arg("dv"),
+              py::arg("db"),
               py::arg("softmax_lse"),
               py::arg("delta"),
               py::arg("dropout_p"),

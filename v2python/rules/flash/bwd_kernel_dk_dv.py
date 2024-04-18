@@ -7,7 +7,7 @@ from .attn_fwd import attn_fwd
 class bwd_kernel_dk_dv(FlashKernel):
     ARGUMENTS = [
         'Q', 'K', 'V', 'B', 'sm_scale', 'Out', 'DO',
-        'DK', 'DV',
+        'DK', 'DV', 'DB',
         'L', 'D',
         'stride_qz', 'stride_qh', 'stride_qm', 'stride_qk',
         'stride_kz', 'stride_kh', 'stride_kn', 'stride_kk',
@@ -16,6 +16,7 @@ class bwd_kernel_dk_dv(FlashKernel):
         'stride_oz', 'stride_oh', 'stride_om', 'stride_ok',
         'stride_dkz', 'stride_dkh', 'stride_dkn', 'stride_dkk',
         'stride_dvz', 'stride_dvh', 'stride_dvk', 'stride_dvn',
+        'stride_dbz', 'stride_dbh', 'stride_dbm', 'stride_dbn',
         'seqlen_q', 'seqlen_k',
         'head_dim',
         'dropout_p',
@@ -38,6 +39,7 @@ class bwd_kernel_dk_dv(FlashKernel):
         'DO' : select_pattern(ARGUMENTS, 'stride_o'),
         'DK' : select_pattern(ARGUMENTS, 'stride_dk'),
         'DV' : select_pattern(ARGUMENTS, 'stride_dv'),
+        'DB' : select_pattern(ARGUMENTS, 'stride_db'),
     }
     TENSOR_RANKS = {
         '_default' : 4,
@@ -45,7 +47,7 @@ class bwd_kernel_dk_dv(FlashKernel):
         'D': 2,
     }
     TYPE_CHOICES = {
-        frozenset(['Q', 'K', 'V', 'B', 'Out', 'DO', 'DK', 'DV']) : match_fwd('Q'),
+        frozenset(['Q', 'K', 'V', 'B', 'Out', 'DO', 'DK', 'DV', 'DB']) : match_fwd('Q'),
         frozenset(['sm_scale']) : match_fwd( 'sm_scale'),
         frozenset(['L', 'D']) : ['*fp32:16'],
         frozenset(['seqlen_q', 'seqlen_k']) : ['u64'],

@@ -25,7 +25,7 @@ def mk_aotensor(q, if_empty_then_like=None):
     else:
         assert False, f'Unsupported tensor rank {rank}, shape {q.shape}'
     if q is None:
-        return klass(0, [0] * rank, [1] * rank, cast_dtype(if_empty_then_like.dtype))
+        return klass(0, [0] * rank, [0] * rank, cast_dtype(if_empty_then_like.dtype))
     return klass(q.data_ptr(), tuple(q.size()), q.stride(), cast_dtype(q.dtype))
 
 def attn_fwd(q, k, v, b, sm_scale, M, o,
@@ -45,7 +45,7 @@ def attn_fwd(q, k, v, b, sm_scale, M, o,
                      Stream())
     print(f'{err=}')
 
-def attn_bwd(q, k, v, b, sm_scale, o, dout, dq, dk, dv, L, delta,
+def attn_bwd(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
              dropout_p, philox_seed, philox_offset, is_causal):
     b = mk_aotensor(b, if_empty_then_like=q)
     print(f'{b=}')
@@ -59,6 +59,7 @@ def attn_bwd(q, k, v, b, sm_scale, o, dout, dq, dk, dv, L, delta,
                       mk_aotensor(dq),
                       mk_aotensor(dk),
                       mk_aotensor(dv),
+                      mk_aotensor(db, if_empty_then_like=q),
                       mk_aotensor(L),
                       mk_aotensor(delta),
                       float(dropout_p),

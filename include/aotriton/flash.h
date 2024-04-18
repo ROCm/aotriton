@@ -35,13 +35,14 @@ hipError_t
 attn_bwd(T4 q, // batch_size x num_heads x seqlen_q x head_size
          T4 k, // batch_size x num_heads x seqlen_k x head_size
          T4 v, // batch_size x num_heads x seqlen_k x head_size
-         T4 b, // batch_size x num_heads x seqlen_k x head_size
+         T4 b, // batch_size x num_heads x seqlen_q x seqlen_k
          float sm_scale,
          T4 out,  // batch_size x num_heads x seqlen_q x head_size
          T4 dout, // batch_size x num_heads x seqlen_q x head_size
          T4 dq,   // batch_size x num_heads x seqlen_q x head_size
-         T4 dk,   // batch_size x num_heads x seqlen_q x head_size
-         T4 dv,   // batch_size x num_heads x seqlen_q x head_size
+         T4 dk,   // batch_size x num_heads x seqlen_k x head_size
+         T4 dv,   // batch_size x num_heads x seqlen_k x head_size
+         T4 db,   // batch_size x num_heads x seqlen_q x seqlen_k
          T2 softmax_lse,
          T2 delta, // buffer, empty_like(softmax_lse)
          float dropout_p,

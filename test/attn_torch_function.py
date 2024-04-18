@@ -83,11 +83,12 @@ class _attention(torch.autograd.Function):
         dq = torch.zeros_like(q)
         dk = torch.empty_like(k)
         dv = torch.empty_like(v)
+        db = torch.empty_like(b) if b is not None else None
         delta = torch.empty_like(L)
         seqlen_q = q.shape[2]
         seqlen_k = k.shape[2]
-        attn_bwd(q, k, v, b, sm_scale, o, do, dq, dk, dv, L, delta,
+        attn_bwd(q, k, v, b, sm_scale, o, do, dq, dk, dv, db, L, delta,
                  dropout_p, philox_seed, philox_offset, causal);
-        return dq, dk, dv, None, None, None, None, None, None, None
+        return dq, dk, dv, db, None, None, None, None, None, None, None
 
 attention = _attention.apply
