@@ -486,7 +486,7 @@ class _attention(torch.autograd.Function):
             stride_dbz, stride_dbh, stride_dbm, stride_dbn = 0,0,0,0
         else:
             db.fill_(float('nan'))
-        print(f'{ctx.bias_type=} {BLOCK_M=} {BLOCK_N=}')
+        print(f'{ctx.bias_type=} {BLOCK_M=} {BLOCK_N=} {stride_dbz=} {stride_dbh=} {stride_dbm=} {stride_dbn=}')
         if k.requires_grad and v.requires_grad:
             if ctx.autotune:
                 sized_tuned_bwd_kernel_dk_dv[grid_dk_dv](

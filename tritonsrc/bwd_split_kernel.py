@@ -121,7 +121,7 @@ def bwd_kernel_dk_dv(
                 block_shape=(BLOCK_M, BLOCK_N),
                 order=(1, 0)
                 )
-        if stride_dbz * stride_dbh * stride_dbm * stride_dbn == 0:
+        if (stride_dbz == 0 or stride_dbh == 0) or stride_dbm == 0:
             store_db = False
         else:
             store_db = True
