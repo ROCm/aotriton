@@ -338,6 +338,7 @@ class _attention(torch.autograd.Function):
                 RETURN_ENCODED_SOFTMAX=encoded_softmax is not None,
                 PADDED_HEAD=padded_head,
                 BIAS_TYPE=BIAS_TYPE,
+                num_stages=1,
             )
 
         ctx.autotune = autotune
@@ -468,6 +469,7 @@ class _attention(torch.autograd.Function):
             BLOCK_N = 64
         if q.dtype == torch.float32:
             BLOCK_M //= 2
+            BLOCK_N //= 2
         # debug_mask = torch.zeros((q.shape[0], q.shape[1], max_seqlens_q, max_seqlens_k), device=q.device, dtype=ctx.encoded_softmax.dtype)
         grid_dk_dv = lambda META: (
             triton.cdiv(max_seqlens_k, META['BLOCK_N']),
