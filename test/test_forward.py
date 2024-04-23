@@ -167,7 +167,7 @@ class FwdTester(object):
         p = torch.softmax(p.float(), dim=-1).half()
         ref_out = torch.matmul(p, v)
         '''
-        return_encoded_softmax = dropout_p > 0.0 and self.use_fill_rng_for_dropout
+        return_encoded_softmax = dropout_p > 0.0 and not self.use_fill_rng_for_dropout
         # return_encoded_softmax = dropout_p > 0.0  # Reserved for debugging use_fill_rng_for_dropout
         higher_precision_dtype = torch.float64 if dtype == torch.float32 else torch.float32
         REF_DEVICE=None

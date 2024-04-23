@@ -158,7 +158,7 @@ class FwdTester(object):
         p = torch.softmax(p.float(), dim=-1).half()
         ref_out = torch.matmul(p, v)
         '''
-        return_encoded_softmax = dropout_p > 0.0 and self.use_fill_rng_for_dropout
+        return_encoded_softmax = dropout_p > 0.0 and not self.use_fill_rng_for_dropout
         # return_encoded_softmax = dropout_p > 0.0  # Reserved for debugging use_fill_rng_for_dropout
         autotune = False
         tri_out, encoded_softmax, _ = attention(q, k, v, b, causal, sm_scale, dropout_p, return_encoded_softmax, autotune)
