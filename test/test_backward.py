@@ -69,44 +69,24 @@ batch_size x ... x seqlen_q x head_size
 Note: In Flash V2 API the ... is denoted as "num_heads", serving as uniformly sized sequences
 but in PyTorch API it does not present at all
 '''
-def query_key_value_clones(query: torch.Tensor, key: torch.Tensor, value: torch.Tensor, dtype: torch.dtype = None, device=None):
+def query_key_value_clones(query: torch.Tensor, key: torch.Tensor, value: torch.Tensor, bias: torch.Tensor, dtype: torch.dtype = None, device=None):
     """ Clones the query, key, and value tensors and moves them to the specified dtype. """
     if dtype is None:
         dtype = query.dtype
     query_ref = query.clone().detach().to(dtype=dtype, device=device).requires_grad_(query.requires_grad)
     key_ref = key.clone().detach().to(dtype=dtype, device=device).requires_grad_(key.requires_grad)
     value_ref = value.clone().detach().to(dtype=dtype, device=device).requires_grad_(value.requires_grad)
-    return query_ref, key_ref, value_ref
+    bias_ref = bias.clone().detach().to(dtype=dtype, device=device).requires_grad_(bias.requires_grad) if bias is not None else None
+    return query_ref, key_ref, value_ref, bias_ref
 
-# @pytest.mark.parametrize('BATCH', [1, 4])
-# @pytest.mark.parametrize('N_HEADS', [1, 4])
-@pytest.mark.parametrize('BATCH', [1, 2, 4])
-@pytest.mark.parametrize('N_HEADS', [1, 2, 4])
-# @pytest.mark.parametrize('D_HEAD', [16, 32, 64, 128, 256])
-# Irregular-only PyTorch set
-# @pytest.mark.parametrize('D_HEAD', [8, 21, 72, 96, 160, 192, 203])
-# @pytest.mark.parametrize('seqlen_q', [1, 4, 32, 128, 256, 512, 1024, 7, 394, 250, 399, 511, 1019])
-# @pytest.mark.parametrize('seqlen_k', [1, 4, 32, 128, 256, 512, 1024, 3, 217, 339, 313, 491, 988])
-# PyTorch set
-@pytest.mark.parametrize('D_HEAD', [8, 16, 21, 32, 64, 72, 96, 128, 160, 192, 203, 256])
-@pytest.mark.parametrize('seqlen_q', [4, 8, 64, 143, 256, 512, 1024, 2048])
-@pytest.mark.parametrize('seqlen_k', [4, 8, 64, 128, 256, 587, 1024, 2048])
-# Minimal set
-# @pytest.mark.parametrize('seqlen_q', [32, 128])
-# @pytest.mark.parametrize('seqlen_k', [32, 128])
-@pytest.mark.parametrize('causal', [False, True])
-@pytest.mark.parametrize('dropout_p', [0.0, 0.5])
-# @pytest.mark.parametrize('dropout_p', [0.0])
-@pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
-@pytest.mark.parametrize('sm_scale', [0.0, 1.2])
-@pytest.mark.parametrize('storage_flip', [False, True])
-# @pytest.mark.parametrize('return_encoded_softmax', [False])
-def test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
-    seqlen_k = seqlen_q if seqlen_k is None else seqlen_k
+def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type):
     if causal and seqlen_q != seqlen_k:
         pytest.skip("PyTorch's Flash V2 does not accept casual=True when seqlen_q != seqlen_k. Skipping")
+    if causal and bias_type is not None:
+        pytest.skip("_scaled_dot_product_attention: Explicit attn_mask should not be set when is_causal=True")
     SKIP_DK_DV = False
     SKIP_DQ = False
+    SKIP_DB = True if bias_type is None else False
     USE_AUTOTUNE = True
     torch.manual_seed(20)
     SPARSE_HEAD_SINCE = 1
@@ -114,33 +94,46 @@ def test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dr
     qdims = (BATCH, N_HEADS, seqlen_q, D_HEAD)
     kdims = (BATCH, N_HEADS, seqlen_k, D_HEAD)
     vdims = (BATCH, N_HEADS, seqlen_k, D_HEAD)
+    bdims = (BATCH, N_HEADS, seqlen_q, seqlen_k)
     if storage_flip:
         qdims = (qdims[0], qdims[2], qdims[1], qdims[3])
         kdims = (kdims[0], kdims[2], kdims[1], kdims[3])
         vdims = (vdims[0], vdims[2], vdims[1], vdims[3])
+        bdims = (bdims[0], bdims[2], bdims[1], bdims[3])
     q = torch.empty(qdims, dtype=dtype, device="cuda").normal_(mean=0., std=0.5)
     k = torch.empty(kdims, dtype=dtype, device="cuda").normal_(mean=0., std=0.5)
     v = torch.empty(vdims, dtype=dtype, device="cuda").normal_(mean=0., std=0.5)
+    if bias_type is None:
+        b = None
+    elif bias_type == 'matrix':
+        b = torch.empty(bdims, dtype=dtype, device="cuda").normal_(mean=0., std=0.5)
+    else:
+        assert False, f'Unsupported bias_type {bias_type}'
     if storage_flip:
         q = torch.transpose(q, 1, 2)
         k = torch.transpose(k, 1, 2)
         v = torch.transpose(v, 1, 2)
+        if b is not None:
+            b = torch.transpose(b, 1, 2)
     if not SKIP_DQ:
         q.requires_grad_()
     if not SKIP_DK_DV:
         k.requires_grad_()
         v.requires_grad_()
+    if not SKIP_DB:
+        assert b is not None
+        b.requires_grad_()
     return_encoded_softmax = True
     # q_ref_lp, k_ref_lp, v_ref_lp = query_key_value_clones(q, k, v, dtype=dtype)
     higher_precision_dtype = torch.float64 if dtype == torch.float32 else torch.float32
     # REF_DEVICE='cpu'
     REF_DEVICE=None
-    q_ref, k_ref, v_ref = query_key_value_clones(q, k, v, dtype=higher_precision_dtype, device=REF_DEVICE)
+    q_ref, k_ref, v_ref, b_ref = query_key_value_clones(q, k, v, b, dtype=higher_precision_dtype, device=REF_DEVICE)
     def TO(ref_tensor):
         return ref_tensor.to(device=q.device, dtype=dtype)
     # autotune = True
     # # triton implementation
-    tri_out, encoded_softmax, _ = attention(q, k, v, causal, sm_scale, dropout_p, return_encoded_softmax, USE_AUTOTUNE)
+    tri_out, encoded_softmax, _ = attention(q, k, v, b, causal, sm_scale, dropout_p, return_encoded_softmax, USE_AUTOTUNE)
     dropout_mask = encoded_softmax >= 0
     '''
     ref_out, ref_softmax = torch.ops.aten._scaled_dot_product_attention_math(q, k, v,
@@ -152,6 +145,7 @@ def test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dr
     ref_out, ref_softmax = torch.ops.aten._scaled_dot_product_attention_math(q_ref, k_ref, v_ref,
                                                                 dropout_p=dropout_p,
                                                                 is_causal=causal,
+                                                                attn_mask=b_ref,
                                                                 scale=sm_scale,
                                                                 dropout_mask=dropout_mask)
     dout = torch.randn_like(q)
@@ -159,6 +153,11 @@ def test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dr
     tri_dv, v.grad = None if SKIP_DK_DV else v.grad.clone(), None
     tri_dk, k.grad = None if SKIP_DK_DV else k.grad.clone(), None
     tri_dq, q.grad = None if SKIP_DQ else q.grad.clone(), None
+    if not SKIP_DB:
+        tri_db = b.grad.clone()
+    else:
+        tri_db = None
+
     '''
     ref_out.backward(dout, None)
     ref_dv, v.grad = None if SKIP_DK_DV else v.grad.clone(), None
@@ -166,9 +165,13 @@ def test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dr
     ref_dq, q.grad = None if SKIP_DQ else q.grad.clone(), None
     '''
     ref_out.backward(dout.to(device=ref_out.device, dtype=ref_out.dtype))
-    ref_dv, v.grad = None if SKIP_DK_DV else v_ref.grad.clone(), None
-    ref_dk, k.grad = None if SKIP_DK_DV else k_ref.grad.clone(), None
-    ref_dq, q.grad = None if SKIP_DQ else q_ref.grad.clone(), None
+    ref_dv, v_ref.grad = None if SKIP_DK_DV else v_ref.grad.clone(), None
+    ref_dk, k_ref.grad = None if SKIP_DK_DV else k_ref.grad.clone(), None
+    ref_dq, q_ref.grad = None if SKIP_DQ else q_ref.grad.clone(), None
+    if SKIP_DB:
+        ref_db = None
+    else:
+        ref_db, b_ref.grad = b_ref.grad.clone(), None
     # compare
     if dtype == torch.bfloat16:
         ATOL = 1e-1 * max(1.0, (RP(seqlen_q) + RP(seqlen_k) + RP(D_HEAD)) / 128.0)
@@ -252,4 +255,69 @@ def test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dr
         err_idx = np.unravel_index(torch.argmax(torch.abs(TO(ref_dq) - tri_dq)).cpu().numpy(), ref_dq.shape)
         print(f'{err_idx=}')
         print(f'{tri_dq[err_idx]=} {ref_dq[err_idx]=} error = {torch.abs(tri_dq[err_idx] - ref_dq[err_idx])}')
-    assert dk_allclose and dv_allclose and dq_allclose, f'{dk_allclose=} {dv_allclose=} {dq_allclose=}'
+
+    db_allclose = SKIP_DB or torch.allclose(TO(ref_db), tri_db, atol=ATOL, rtol=RTOL)
+    if dk_allclose and dv_allclose and dq_allclose and not db_allclose:
+        import numpy as np
+        err_idx = np.unravel_index(torch.argmax(torch.abs(TO(ref_db) - tri_db)).cpu().numpy(), ref_db.shape)
+        print(f'{err_idx=}')
+        print(f'{tri_db[err_idx]=} {ref_db[err_idx]=} error = {torch.abs(tri_db[err_idx] - ref_db[err_idx])}')
+    assert dk_allclose and dv_allclose and dq_allclose and db_allclose, f'{dk_allclose=} {dv_allclose=} {dq_allclose=} {db_allclose=}'
+
+# @pytest.mark.parametrize('BATCH', [1])
+# @pytest.mark.parametrize('N_HEADS', [1])
+@pytest.mark.parametrize('BATCH', [1, 4])
+@pytest.mark.parametrize('N_HEADS', [1, 4])
+# @pytest.mark.parametrize('D_HEAD', [16, 32, 64, 128, 256])
+# Irregular-only PyTorch set
+# @pytest.mark.parametrize('D_HEAD', [8, 21, 72, 96, 160, 192, 203])
+# @pytest.mark.parametrize('seqlen_q', [1, 4, 32, 128, 256, 512, 1024, 7, 394, 250, 399, 511, 1019])
+# @pytest.mark.parametrize('seqlen_k', [1, 4, 32, 128, 256, 512, 1024, 3, 217, 339, 313, 491, 988])
+# PyTorch set
+@pytest.mark.parametrize('D_HEAD', [8, 16, 21, 32, 64, 72, 96, 128, 160, 192, 203, 256])
+@pytest.mark.parametrize('seqlen_q', [4, 8, 64, 143, 256, 512, 1024, 2048])
+@pytest.mark.parametrize('seqlen_k', [4, 8, 64, 128, 256, 587, 1024, 2048])
+# Minimal set
+# @pytest.mark.parametrize('seqlen_q', [32, 128])
+# @pytest.mark.parametrize('seqlen_k', [32, 128])
+@pytest.mark.parametrize('causal', [False, True])
+@pytest.mark.parametrize('dropout_p', [0.0, 0.5])
+# @pytest.mark.parametrize('dropout_p', [0.0])
+@pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
+@pytest.mark.parametrize('sm_scale', [0.0, 1.2])
+@pytest.mark.parametrize('storage_flip', [False, True])
+# @pytest.mark.parametrize('return_encoded_softmax', [False])
+def test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
+    bias_type = None
+    _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
+
+# @pytest.mark.parametrize('BATCH', [1, 4])
+# @pytest.mark.parametrize('N_HEADS', [1, 4])
+@pytest.mark.parametrize('BATCH', [1, 4])
+@pytest.mark.parametrize('N_HEADS', [1, 4])
+@pytest.mark.parametrize('D_HEAD', [16,32,64,128,256])
+# @pytest.mark.parametrize('D_HEAD', [128])
+# Complete set
+# @pytest.mark.parametrize('seqlen_q', [4,8,16,17,32,64,128,143,256,512,1024,2048])
+# @pytest.mark.parametrize('seqlen_k', [4,8,16,23,32,64,128,256,512,587,1024,2048])
+# PyTorch set
+@pytest.mark.parametrize('seqlen_q', [4, 8, 64, 143, 256, 512, 1024, 2048])
+@pytest.mark.parametrize('seqlen_k', [4, 8, 64, 128, 256, 587, 1024, 2048])
+# @pytest.mark.parametrize('seqlen_q', [128,256,512,1024])
+# @pytest.mark.parametrize('seqlen_k', [128,256,512,1024])
+# @pytest.mark.parametrize('seqlen_q', [128, 113])
+# @pytest.mark.parametrize('seqlen_k', [128, 79])
+@pytest.mark.parametrize('dropout_p', [0.0, 0.5])
+# @pytest.mark.parametrize('dropout_p', [0.0])
+@pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
+# @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16, torch.float32])
+@pytest.mark.parametrize('sm_scale', [0.0, 1.2])
+@pytest.mark.parametrize('storage_flip', [False, True])
+# @pytest.mark.parametrize('return_encoded_softmax', [False])
+def test_op_bwd_with_matrix_bias(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, sm_scale, dropout_p, dtype, storage_flip):
+    causal = False
+    bias_type = 'matrix'
+    '''
+    _scaled_dot_product_attention: Explicit attn_mask should not be set when is_causal=True
+    '''
+    _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)

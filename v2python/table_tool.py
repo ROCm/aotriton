@@ -5,12 +5,18 @@ import itertools
 import json
 import argparse
 import sys
+import csv
 
 def parse():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument('-f', '--file', type=str, required=True, help='Database file')
     p.add_argument('-k', '--kernel_family', type=str, required=True, help='Kernel family')
     p.add_argument('-v', '--verbose', action='store_true', help='Verbose')
+    p.add_argument('--action', type=str, required=False, default='pipejson',
+                   choices=['pipejson', 'createtableonly', 'dumpcsv', 'loadcsv'],
+                   help='Action to perform')
+    p.add_argument('--table_name', type=str, help='Table to dump/load')
+    p.add_argument('--table_file', type=str, help='CSV file of dump/load')
     args = p.parse_args()
     return args
 
@@ -87,7 +93,7 @@ class TuningDatabase(object):
         self._conn.commit()
         return table_name
 
-    def upsert(self, line_text):
+    def upsert(self, line_text, *, create_table_only):
         if not line_text:
             return
         tune_info = json.loads(line_text)
@@ -95,6 +101,8 @@ class TuningDatabase(object):
             print(f'{line_text=}')
             print(f'{tune_info=}')
         sql_table = self.ensure_table(tune_info)
+        if create_table_only:
+            return
         inputs_columns = self.collect_columns(tune_info['inputs'], prefix='inputs$')
         tuned_kernel_columns = self.collect_columns(tune_info['tuned_kernel'], prefix='tuned_kernel$')
         compiler_options_columns = self.collect_columns(tune_info['compiler_options'], prefix='compiler_options$')
@@ -119,13 +127,45 @@ class TuningDatabase(object):
         self._cur.close()
         self._conn.close()
 
+    def dumpcsv(self, table_name, table_file):
+        with open(table_file, mode='w', newline='') as file:
+            self._cur.execute(f"SELECT * FROM {table_name};")
+            writer = csv.writer(file)
+            colunm_names = [tup[0] for tup in self._cur.description]
+            writer.writerow(colunm_names)
+            while True:
+                tup = self._cur.fetchone()
+                if tup is None:
+                    break
+                writer.writerow(tup)
+
+    def loadcsv(self, table_file, table_name):
+        with open(table_file, mode='r', newline='') as file:
+            reader = csv.reader(file)
+            csv_headers = next(reader)
+            colunm_names = ', '.join(csv_headers)
+            placeholders = ', '.join(['?'] * len(csv_headers))
+            stmt = f'INSERT INTO {table_name} ({colunm_names}) VALUES({placeholders});'
+            for row in reader:
+                self._cur.execute(stmt, row)
+            self._conn.commit()
+
 def main():
     args = parse()
     db = TuningDatabase(args)
-    # FIXME: support pipes and streaming file with json_stream
-    for line in sys.stdin:
-        db.upsert(line)
-    print("[table_tool] Input closed, exiting", file=sys.stderr)
+    if args.action == 'pipejson' or args.action == 'createtableonly':
+        # FIXME: support pipes and streaming file with json_stream
+        if args.action == 'createtableonly':
+            create_table_only = True
+        else:
+            create_table_only = False
+        for line in sys.stdin:
+            db.upsert(line, create_table_only=create_table_only)
+        print("[table_tool] Input closed, exiting", file=sys.stderr)
+    elif args.action == 'dumpcsv':
+        db.dumpcsv(args.table_name, args.table_file)
+    elif args.action == 'loadcsv':
+        db.loadcsv(args.table_file, args.table_name)
     db.close()
 
 if __name__ == '__main__':

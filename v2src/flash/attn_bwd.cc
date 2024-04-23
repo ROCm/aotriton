@@ -54,11 +54,13 @@ hipError_t
 bwd_kernel_dk_dv(T4 q,
                  T4 k,
                  T4 v,
+                 T4 b,
                  float sm_scale,
                  T4 out,
                  T4 dout,
                  T4 dk,
                  T4 dv,
+                 T4 db,
                  T2 softmax_lse,
                  T2 delta,
                  float dropout_p,
@@ -82,14 +84,20 @@ bwd_kernel_dk_dv(T4 q,
   constexpr int kMinHeadDimCompiled = 16;
   int head_size = q.size(3);
   int head_size_rounded = std::max(kMinHeadDimCompiled, bit_ceil(head_size));
+  int bias_type = 0;
+  if (b) {
+    bias_type = 1;
+  }
   BwdKernelDkDvParams params = {
     .Q = &q,
     .K = &k,
     .V = &v,
+    .B = &b,
     .Out = &out,
     .DO = &dout,
     .DK = &dk,
     .DV = &dv,
+    .DB = &db,
     .sm_scale = sm_scale,
     .L = &softmax_lse,
     .D = &delta,
@@ -103,6 +111,7 @@ bwd_kernel_dk_dv(T4 q,
     .CAUSAL = is_causal,
     .ENABLE_DROPOUT = dropout_p > 0.0,
     .PADDED_HEAD = head_size_rounded != head_size,
+    .BIAS_TYPE = bias_type,
   };
   BwdKernelDkDvContext context;
   context.grid_calculator = grid_calculator;
@@ -118,6 +127,7 @@ hipError_t
 bwd_kernel_dq(T4 q,
               T4 k,
               T4 v,
+              T4 b,
               float sm_scale,
               T4 out,
               T4 dout,
@@ -145,10 +155,15 @@ bwd_kernel_dq(T4 q,
   constexpr int kMinHeadDimCompiled = 16;
   int head_size = q.size(3);
   int head_size_rounded = std::max(kMinHeadDimCompiled, bit_ceil(head_size));
+  int bias_type = 0;
+  if (b) {
+    bias_type = 1;
+  }
   BwdKernelDqParams params = {
     .Q = &q,
     .K = &k,
     .V = &v,
+    .B = &b,
     .Out = &out,
     .dO = &dout,
     .dQ = &dq,
@@ -165,6 +180,7 @@ bwd_kernel_dq(T4 q,
     .CAUSAL = is_causal,
     .ENABLE_DROPOUT = dropout_p > 0.0,
     .PADDED_HEAD = head_size_rounded != head_size,
+    .BIAS_TYPE = bias_type,
   };
   BwdKernelDqContext context;
   context.grid_calculator = grid_calculator;
@@ -180,12 +196,14 @@ hipError_t
 attn_bwd(T4 q,
          T4 k,
          T4 v,
+         T4 b,
          float sm_scale,
          T4 out,
          T4 dout,
          T4 dq,
          T4 dk,
          T4 dv,
+         T4 db,
          T2 softmax_lse,
          T2 delta,
          float dropout_p,
@@ -200,11 +218,13 @@ attn_bwd(T4 q,
   ret = bwd_kernel_dk_dv(q,
                          k,
                          v,
+                         b,
                          sm_scale,
                          out,
                          dout,
                          dk,
                          dv,
+                         db,
                          softmax_lse,
                          delta,
                          dropout_p,
@@ -218,6 +238,7 @@ attn_bwd(T4 q,
   ret = bwd_kernel_dq(q,
                       k,
                       v,
+                      b,
                       sm_scale,
                       out,
                       dout,

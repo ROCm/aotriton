@@ -29,16 +29,18 @@ def dot(BLOCK_M : tl.constexpr, QDIM : tl.constexpr, KDIM : tl.constexpr, q, k):
 # TODO: Remove Unused 'Out' Argument from kernels below
 @triton.jit
 def bwd_kernel_dk_dv(
-    Q, K, V, sm_scale, Out, DO,
-    DK, DV,
+    Q, K, V, B, sm_scale, Out, DO,
+    DK, DV, DB,
     L,
     D,
     stride_qz, stride_qh, stride_qm, stride_qk,
     stride_kz, stride_kh, stride_kn, stride_kk,
     stride_vz, stride_vh, stride_vk, stride_vn,
+    stride_bz, stride_bh, stride_bm, stride_bn,
     stride_oz, stride_oh, stride_om, stride_ok,
     stride_dkz, stride_dkh, stride_dkn, stride_dkk,
     stride_dvz, stride_dvh, stride_dvk, stride_dvn,
+    stride_dbz, stride_dbh, stride_dbm, stride_dbn,
     max_seqlens_q, max_seqlens_k,
     head_dim,
     dropout_p,
@@ -50,6 +52,7 @@ def bwd_kernel_dk_dv(
     CAUSAL: tl.constexpr,
     ENABLE_DROPOUT: tl.constexpr,
     PADDED_HEAD: tl.constexpr,
+    BIAS_TYPE: tl.constexpr,
 ):
     start_m = tl.program_id(0) * BLOCK_N
     off_h = tl.program_id(1) # head index
@@ -83,6 +86,10 @@ def bwd_kernel_dk_dv(
         block_shape=(BLOCK_DMODEL, BLOCK_N),
         order=(0, 1)
     )
+    if start_m + BLOCK_N > seqlen_k:
+        k_padded = True
+    else:
+        k_padded = False
     v_offset = off_h * stride_vh + off_z * stride_vz
     VT_block_ptr = tl.make_block_ptr(
         base=V + v_offset,
@@ -102,6 +109,34 @@ def bwd_kernel_dk_dv(
         order=(1, 0)
     )
     off_zh = off_z * num_h + off_h * 1
+    if BIAS_TYPE == 0:
+        B_block_ptr = 0
+        DB_block_ptr = 0
+    elif BIAS_TYPE == 1:
+        B_block_ptr = tl.make_block_ptr(
+                base=B + off_h * stride_bh + off_z * stride_bz,
+                shape=(seqlen_q, seqlen_k),
+                strides=(stride_bm, stride_bn),
+                offsets=(0, start_m),
+                block_shape=(BLOCK_M, BLOCK_N),
+                order=(1, 0)
+                )
+        if (stride_dbz == 0 or stride_dbh == 0) or stride_dbm == 0:
+            store_db = False
+        else:
+            store_db = True
+        # Still have to make one even if no_db = False
+        # due to a limit of Triton: runtime branches must have identical data types.
+        DB_block_ptr = tl.make_block_ptr(
+                base=DB + off_h * stride_dbh + off_z * stride_dbz,
+                shape=(seqlen_q, seqlen_k),
+                strides=(stride_dbm, stride_dbn),
+                offsets=(0, start_m),
+                block_shape=(BLOCK_M, BLOCK_N),
+                order=(1, 0)
+                )
+    else:
+        tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
     # pointer to row-wise quantities in value-like data
     D_ptrs = D + off_zh * seqlen_q
     l_ptrs = L + off_zh * seqlen_q
@@ -128,6 +163,9 @@ def bwd_kernel_dk_dv(
     Q_block_ptr = tl.advance(Q_block_ptr, (lo, 0))
     DO_block_ptr = tl.advance(DO_block_ptr, (lo, 0))
     batch_philox_offset = philox_offset_base + off_zh * seqlen_q * seqlen_k
+    if BIAS_TYPE == 1:
+        B_block_ptr = tl.advance(B_block_ptr, (lo, 0))
+        DB_block_ptr = tl.advance(DB_block_ptr, (lo, 0))
     '''
            K1   K2      (d)V      dO
     Q1    qk11 qk12     (d)v1     dO1
@@ -147,6 +185,10 @@ def bwd_kernel_dk_dv(
     '''
     # loop over q (seqlen_q, dhead), do (seqlen_q, d_head)
     for start_n in range(lo, hi, BLOCK_M):
+        if lo + BLOCK_M > seqlen_q:
+            q_padded = True
+        else:
+            q_padded = False
         offs_m_curr = offs_n[:, None] + start_n # (BLOCK_M, 1)
         # -- load q, do --
         # TODO: It is more optimal to do OOB check only in the last iter.
@@ -170,6 +212,24 @@ def bwd_kernel_dk_dv(
             qk = tl.where(mask, qk, float("-inf"))
         if CAUSAL:
             qk = tl.where(offs_m_curr >= offs_m[None, :], qk, float("-inf"))
+        if BIAS_TYPE == 0:
+            pass
+        elif BIAS_TYPE == 1:
+            # FIXME: do boundary_check correctly
+            """
+            if q_padded and k_padded:  # CAVEAT: using "or" disables the partial boundary_check branches
+                bias = tl.load(B_block_ptr, boundary_check=(0,1), padding_option="zero")
+            elif q_padded:
+                bias = tl.load(B_block_ptr, boundary_check=(0,), padding_option="zero")
+            elif k_padded:
+                bias = tl.load(B_block_ptr, boundary_check=(1,), padding_option="zero")
+            else:
+                bias = tl.load(B_block_ptr)
+            """
+            bias = tl.load(B_block_ptr, boundary_check=(0,1), padding_option="zero")
+            qk += bias * 1.44269504089
+        else:
+            tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
         # q.offs = (start_n, 0), k.offs = (0, start_m)
         qk += dot(BLOCK_M, BLOCK_DMODEL, BLOCK_DMODEL, q, kt) # (BLOCK_M, BLOCK_N)
         # Check for OOB accesses on D and LSE
@@ -207,6 +267,9 @@ def bwd_kernel_dk_dv(
             dp = tl.where(keep, dp / (1 - dropout_p), 0)
         # compute ds = p * (dp - delta[:, None])
         ds = p * (dp - Di) # (BLOCK_M, BLOCK_N)
+        if BIAS_TYPE == 1:
+            if store_db:
+                tl.store(DB_block_ptr, ds.to(DB.type.element_ty), boundary_check=(0,1))
         # compute dk
         if BLOCK_M == 1:
             dk += ds.to(Q.dtype.element_ty) * q
@@ -216,6 +279,9 @@ def bwd_kernel_dk_dv(
         # update pointers
         Q_block_ptr = tl.advance(Q_block_ptr, (BLOCK_M, 0))
         DO_block_ptr = tl.advance(DO_block_ptr, (BLOCK_M, 0)) # Debug DO accessing problems
+        if BIAS_TYPE == 1:
+            B_block_ptr = tl.advance(B_block_ptr, (BLOCK_M, 0))
+            DB_block_ptr = tl.advance(DB_block_ptr, (BLOCK_M, 0))
     # initialize pointers to output
     dk_offset = off_h * stride_dkh + off_z * stride_dkz
     DK_block_ptr = tl.make_block_ptr(
@@ -240,13 +306,14 @@ def bwd_kernel_dk_dv(
 
 @triton.jit
 def bwd_kernel_dq(
-    Q, K, V, sm_scale, Out, DO,
+    Q, K, V, B, sm_scale, Out, DO,
     DQ,
     L,
     D,
     stride_qz, stride_qh, stride_qm, stride_qk,
     stride_kz, stride_kh, stride_kn, stride_kk,
     stride_vz, stride_vh, stride_vk, stride_vn,
+    stride_bz, stride_bh, stride_bm, stride_bn,
     stride_oz, stride_oh, stride_om, stride_ok,
     stride_dqz, stride_dqh, stride_dqm, stride_dqk,
     max_seqlens_q, max_seqlens_k,
@@ -259,6 +326,7 @@ def bwd_kernel_dq(
     CAUSAL: tl.constexpr,
     ENABLE_DROPOUT: tl.constexpr,
     PADDED_HEAD: tl.constexpr,
+    BIAS_TYPE: tl.constexpr,
 ):
     start_m = tl.program_id(0) * BLOCK_M
     off_h = tl.program_id(1) # head index
@@ -281,6 +349,10 @@ def bwd_kernel_dq(
         block_shape=(BLOCK_M, BLOCK_DMODEL),
         order=(1, 0)
     )
+    if start_m + BLOCK_M > seqlen_q:
+        q_padded = True
+    else:
+        q_padded = False
     k_offset = off_h * stride_kh + off_z * stride_kz
     K_block_ptr = tl.make_block_ptr(
         base=K + k_offset,
@@ -309,6 +381,19 @@ def bwd_kernel_dq(
         order=(1, 0)
     )
     off_zh = off_z * num_h + off_h * 1
+    if BIAS_TYPE == 0:
+        B_block_ptr = 0
+    elif BIAS_TYPE == 1:
+        B_block_ptr = tl.make_block_ptr(
+                base=B + off_h * stride_bh + off_z * stride_bz,
+                shape=(seqlen_q, seqlen_k),
+                strides=(stride_bm, stride_bn),
+                offsets=(start_m, 0),
+                block_shape=(BLOCK_M, BLOCK_N),
+                order=(1, 0)
+                )
+    else:
+        tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
     # pointer to row-wise quantities in value-like data
     D_ptrs = D + off_zh * seqlen_q
     l_ptrs = L + off_zh * seqlen_q
@@ -345,6 +430,10 @@ def bwd_kernel_dq(
     dV: (seqlen_k, hdim)
     '''
     for start_n in range(lo, hi, BLOCK_N):
+        if start_n + BLOCK_N > hi:
+            k_padded = True
+        else:
+            k_padded = False
         # -- load k, v --
         # shape = (BLOCK_DMODEL, BLOCK_N), offs = (0, BLOCK_N * iter) = (0, start_n)
         if PADDED_HEAD:
@@ -363,6 +452,25 @@ def bwd_kernel_dq(
         size_n = start_n + tl.arange(0, BLOCK_N)
         mask = size_n[None, :] < boundary_n[:, None]
         qk = tl.where(mask, qk, float("-inf"))
+        if BIAS_TYPE == 0:
+            pass
+        elif BIAS_TYPE == 1:
+            '''
+            if q_padded and k_padded:  # CAVEAT: using "or" disables the partial boundary_check branches
+                bias = tl.load(B_block_ptr, boundary_check=(0,1), padding_option="zero")
+            elif q_padded:
+                bias = tl.load(B_block_ptr, boundary_check=(0,), padding_option="zero")
+            elif k_padded:
+                bias = tl.load(B_block_ptr, boundary_check=(1,), padding_option="zero")
+            else:
+                bias = tl.load(B_block_ptr)
+            '''
+            # FIXME: Must use boundary_check uncondtionally.
+            # The optimized tl.load above causes nan for some reason
+            bias = tl.load(B_block_ptr, boundary_check=(0,1), padding_option="zero")
+            qk += bias * 1.44269504089
+        else:
+            tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
         p = tl.math.exp2(qk - l_i[:, None])
         # compute dp = dot(v, do)
         dp = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
@@ -383,6 +491,8 @@ def bwd_kernel_dq(
         # update pointers
         K_block_ptr = tl.advance(K_block_ptr, (0, BLOCK_N))
         V_block_ptr = tl.advance(V_block_ptr, (0, BLOCK_N))
+        if BIAS_TYPE == 1:
+            B_block_ptr = tl.advance(B_block_ptr, (0, BLOCK_N))
     # initialize pointers to output
     dq_offset = off_h * stride_dqh + off_z * stride_dqz
     DQ_block_ptr = tl.make_block_ptr(

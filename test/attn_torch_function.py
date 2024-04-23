@@ -19,7 +19,7 @@ class _attention(torch.autograd.Function):
     # DEBUG_MASK_DTYPE = torch.float32
 
     @staticmethod
-    def forward(ctx, q, k, v, causal, sm_scale, dropout_p, return_encoded_softmax,
+    def forward(ctx, q, k, v, b, causal, sm_scale, dropout_p, return_encoded_softmax,
                 autotune=False, return_autotune=False):
         # shape constraints
         Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
@@ -56,10 +56,10 @@ class _attention(torch.autograd.Function):
         philox_seed = 114514
         philox_offset = 1919810
 
-        attn_fwd(q, k, v, sm_scale, M, o,
+        attn_fwd(q, k, v, b, sm_scale, M, o,
                  dropout_p, philox_seed, philox_offset, encoded_softmax, causal);
 
-        ctx.save_for_backward(q, k, v, o, M)
+        ctx.save_for_backward(q, k, v, b, o, M)
         ctx.sm_scale = sm_scale
         ctx.BLOCK_DMODEL = Lk
         ctx.causal = causal
@@ -71,7 +71,8 @@ class _attention(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, do, _, __):
-        q, k, v, o, L = ctx.saved_tensors
+        q, k, v, b, o, L = ctx.saved_tensors
+        print(f'{b=}')
         sm_scale = ctx.sm_scale
         dropout_p = ctx.dropout_p
         philox_seed = ctx.philox_seed
@@ -82,11 +83,12 @@ class _attention(torch.autograd.Function):
         dq = torch.zeros_like(q)
         dk = torch.empty_like(k)
         dv = torch.empty_like(v)
+        db = torch.empty_like(b) if b is not None else None
         delta = torch.empty_like(L)
         seqlen_q = q.shape[2]
         seqlen_k = k.shape[2]
-        attn_bwd(q, k, v, sm_scale, o, do, dq, dk, dv, L, delta,
+        attn_bwd(q, k, v, b, sm_scale, o, do, dq, dk, dv, db, L, delta,
                  dropout_p, philox_seed, philox_offset, causal);
-        return dq, dk, dv, None, None, None, None, None, None
+        return dq, dk, dv, db, None, None, None, None, None, None, None
 
 attention = _attention.apply
