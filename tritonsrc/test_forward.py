@@ -5,7 +5,7 @@
 import pytest
 import torch
 
-from attn_torch_function import attention
+from attn_torch_function import attention, debug_fill_dropout_rng, DEFAULT_PHILOX_SEED, DEFAULT_PHILOX_OFFSET
 
 def scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_mask=None, dropout_p=0.0, is_causal=False, scale=None) -> torch.Tensor:
     # Efficient implementation equivalent to the following:
@@ -65,159 +65,181 @@ Note: In Flash V2 API the ... is denoted as "num_heads", serving as uniformly si
 but in PyTorch API it does not present at all
 '''
 
-def _do_test_op_fwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type):
-    if causal and seqlen_q != seqlen_k:
-        pytest.skip("PyTorch's Flash V2 does not accept casual=True when seqlen_q != seqlen_k. Skipping")
-    if causal and bias_type is not None:
-        pytest.skip("_scaled_dot_product_attention: Explicit attn_mask should not be set when is_causal=True")
-    torch.manual_seed(20)
-    print(f"test_op_fwd {BATCH=}, {N_HEADS=}, {seqlen_q=}, {seqlen_k=}, {D_HEAD=}, {causal=}")
-    SPARSE_HEAD_SINCE = 3
-    SPARSE_SEQ_SINCE = 3
-    Z = BATCH
-    H = N_HEADS
-    if True: # Real UT
-        qdims = (BATCH, N_HEADS, seqlen_q, D_HEAD)
-        kdims = (BATCH, N_HEADS, seqlen_k, D_HEAD)
-        vdims = (BATCH, N_HEADS, seqlen_k, D_HEAD)
-        bdims = (BATCH, N_HEADS, seqlen_q, seqlen_k)
-        if storage_flip:
-            qdims = (qdims[0], qdims[2], qdims[1], qdims[3])
-            kdims = (kdims[0], kdims[2], kdims[1], kdims[3])
-            vdims = (vdims[0], vdims[2], vdims[1], vdims[3])
-            bdims = (bdims[0], bdims[2], bdims[1], bdims[3])
-        q = (
-            torch.empty(qdims, dtype=dtype, device="cuda")
-            .normal_(mean=0., std=0.5)
-            .requires_grad_()
-        )
-        k = (
-            torch.empty(kdims, dtype=dtype, device="cuda")
-            .normal_(mean=0., std=0.5)
-            .requires_grad_()
-        )
-        v = (
-            torch.empty(vdims, dtype=dtype, device="cuda")
-            .normal_(mean=0., std=0.5)
-            .requires_grad_()
-        )
-        if bias_type is None:
-            b = None
-        elif bias_type == 'matrix':
-            b = torch.empty(bdims, dtype=dtype, device="cuda").normal_(mean=0., std=0.5)
+class FwdTester(object):
+
+    def __init__(self):
+        self.use_fill_rng_for_dropout = False
+
+    def do_test_op_fwd(self, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type):
+        if causal and seqlen_q != seqlen_k:
+            pytest.skip("PyTorch's Flash V2 does not accept casual=True when seqlen_q != seqlen_k. Skipping")
+        if causal and bias_type is not None:
+            pytest.skip("_scaled_dot_product_attention: Explicit attn_mask should not be set when is_causal=True")
+        torch.manual_seed(20)
+        print(f"test_op_fwd {BATCH=}, {N_HEADS=}, {seqlen_q=}, {seqlen_k=}, {D_HEAD=}, {causal=}")
+        SPARSE_HEAD_SINCE = 3
+        SPARSE_SEQ_SINCE = 3
+        Z = BATCH
+        H = N_HEADS
+        if True: # Real UT
+            qdims = (BATCH, N_HEADS, seqlen_q, D_HEAD)
+            kdims = (BATCH, N_HEADS, seqlen_k, D_HEAD)
+            vdims = (BATCH, N_HEADS, seqlen_k, D_HEAD)
+            bdims = (BATCH, N_HEADS, seqlen_q, seqlen_k)
+            if storage_flip:
+                qdims = (qdims[0], qdims[2], qdims[1], qdims[3])
+                kdims = (kdims[0], kdims[2], kdims[1], kdims[3])
+                vdims = (vdims[0], vdims[2], vdims[1], vdims[3])
+                bdims = (bdims[0], bdims[2], bdims[1], bdims[3])
+            q = (
+                torch.empty(qdims, dtype=dtype, device="cuda")
+                .normal_(mean=0., std=0.5)
+                .requires_grad_()
+            )
+            k = (
+                torch.empty(kdims, dtype=dtype, device="cuda")
+                .normal_(mean=0., std=0.5)
+                .requires_grad_()
+            )
+            v = (
+                torch.empty(vdims, dtype=dtype, device="cuda")
+                .normal_(mean=0., std=0.5)
+                .requires_grad_()
+            )
+            if bias_type is None:
+                b = None
+            elif bias_type == 'matrix':
+                b = torch.empty(bdims, dtype=dtype, device="cuda").normal_(mean=0., std=0.5)
+            else:
+                assert False, f'Unsupported bias_type {bias_type}'
+            if storage_flip:
+                q = torch.transpose(q, 1, 2)
+                k = torch.transpose(k, 1, 2)
+                v = torch.transpose(v, 1, 2)
+                if b is not None:
+                    b = torch.transpose(b, 1, 2)
+                assert q.shape == (BATCH, N_HEADS, seqlen_q, D_HEAD)
+                assert k.shape == (BATCH, N_HEADS, seqlen_k, D_HEAD)
+                assert v.shape == (BATCH, N_HEADS, seqlen_k, D_HEAD)
+        if False: # Debugging
+            q = (
+                torch.empty((Z, H, seqlen_q, D_HEAD), dtype=dtype, device="cuda")
+                .normal_(mean=0., std=0.5)
+                .requires_grad_()
+            )
+            k = torch.ones((Z, H, seqlen_k, D_HEAD), dtype=dtype, device="cuda") * 1.0
+            v = torch.ones((Z, H, seqlen_k, D_HEAD), dtype=dtype, device="cuda") * 1.0
+        if False:
+            q = torch.ones((Z, H, seqlen_q, D_HEAD), dtype=dtype, device="cuda") * 1.0
+            k = torch.ones((Z, H, seqlen_k, D_HEAD), dtype=dtype, device="cuda") * 2.0
+            v = torch.ones((Z, H, seqlen_k, D_HEAD), dtype=dtype, device="cuda") * 3.0
+        if False:
+            import numpy as np
+            q = torch.arange(np.prod([Z, H, seqlen_q, D_HEAD]), dtype=dtype, device="cuda").reshape((Z, H, seqlen_q, D_HEAD))
+            k = torch.arange(np.prod([Z, H, seqlen_k, D_HEAD]), dtype=dtype, device="cuda").reshape((Z, H, seqlen_q, D_HEAD))
+            v = torch.arange(np.prod([Z, H, seqlen_k, D_HEAD]), dtype=dtype, device="cuda").reshape((Z, H, seqlen_q, D_HEAD))
+            q = (q - 128.0) * 0.01
+            k = (k - 128.0) * 0.01
+            v = (v - 128.0) * 0.01
+            q[:, :, :, SPARSE_HEAD_SINCE: ] = 0.0
+            k[:, :, :, SPARSE_HEAD_SINCE: ] = 0.0
+            v[:, :, :, SPARSE_HEAD_SINCE: ] = 0.0
+            q[:, :, SPARSE_SEQ_SINCE:, : ] = 0.0
+            k[:, :, SPARSE_SEQ_SINCE:, : ] = 0.0
+            v[:, :, SPARSE_SEQ_SINCE:, : ] = 0.0
+
+        '''
+        dout = torch.randn_like(q)
+        # reference implementation
+        M = torch.tril(torch.ones((N_CTX, N_CTX), device="cuda"))
+        p = torch.matmul(q, k.transpose(2, 3)) * sm_scale
+        if causal:
+            p[:, :, M == 0] = float("-inf")
+        p = torch.softmax(p.float(), dim=-1).half()
+        ref_out = torch.matmul(p, v)
+        '''
+        return_encoded_softmax = dropout_p > 0.0 and self.use_fill_rng_for_dropout
+        # return_encoded_softmax = dropout_p > 0.0  # Reserved for debugging use_fill_rng_for_dropout
+        autotune = False
+        tri_out, encoded_softmax, _ = attention(q, k, v, b, causal, sm_scale, dropout_p, return_encoded_softmax, autotune)
+
+        if self.use_fill_rng_for_dropout:
+            rdims = (BATCH, N_HEADS, seqlen_q, seqlen_k)
+            if storage_flip:
+                rdims = (rdims[0], rdims[2], rdims[1], rdims[3])
+            r = torch.empty(rdims, device=q.device, dtype=torch.float32)
+            if storage_flip:
+                r = torch.transpose(r, 1, 2)
+            philox_seed = DEFAULT_PHILOX_SEED
+            philox_offset = DEFAULT_PHILOX_OFFSET
+            debug_fill_dropout_rng(r, philox_seed, philox_offset)
+            # Reserved for debugging use_fill_rng_for_dropout
+            # print(f'{r[0,0,:16, :16]}=')
+            # print(f'{r[0,0,:16, :16] > dropout_p}=')
+            # print(f'{encoded_softmax[0,0,:16, :16] > 0}=')
+            dropout_mask = r > dropout_p
         else:
-            assert False, f'Unsupported bias_type {bias_type}'
-        if storage_flip:
-            q = torch.transpose(q, 1, 2)
-            k = torch.transpose(k, 1, 2)
-            v = torch.transpose(v, 1, 2)
-            if b is not None:
-                b = torch.transpose(b, 1, 2)
-            assert q.shape == (BATCH, N_HEADS, seqlen_q, D_HEAD)
-            assert k.shape == (BATCH, N_HEADS, seqlen_k, D_HEAD)
-            assert v.shape == (BATCH, N_HEADS, seqlen_k, D_HEAD)
-    if False: # Debugging
-        q = (
-            torch.empty((Z, H, seqlen_q, D_HEAD), dtype=dtype, device="cuda")
-            .normal_(mean=0., std=0.5)
-            .requires_grad_()
-        )
-        k = torch.ones((Z, H, seqlen_k, D_HEAD), dtype=dtype, device="cuda") * 1.0
-        v = torch.ones((Z, H, seqlen_k, D_HEAD), dtype=dtype, device="cuda") * 1.0
-    if False:
-        q = torch.ones((Z, H, seqlen_q, D_HEAD), dtype=dtype, device="cuda") * 1.0
-        k = torch.ones((Z, H, seqlen_k, D_HEAD), dtype=dtype, device="cuda") * 2.0
-        v = torch.ones((Z, H, seqlen_k, D_HEAD), dtype=dtype, device="cuda") * 3.0
-    if False:
-        import numpy as np
-        q = torch.arange(np.prod([Z, H, seqlen_q, D_HEAD]), dtype=dtype, device="cuda").reshape((Z, H, seqlen_q, D_HEAD))
-        k = torch.arange(np.prod([Z, H, seqlen_k, D_HEAD]), dtype=dtype, device="cuda").reshape((Z, H, seqlen_q, D_HEAD))
-        v = torch.arange(np.prod([Z, H, seqlen_k, D_HEAD]), dtype=dtype, device="cuda").reshape((Z, H, seqlen_q, D_HEAD))
-        q = (q - 128.0) * 0.01
-        k = (k - 128.0) * 0.01
-        v = (v - 128.0) * 0.01
-        q[:, :, :, SPARSE_HEAD_SINCE: ] = 0.0
-        k[:, :, :, SPARSE_HEAD_SINCE: ] = 0.0
-        v[:, :, :, SPARSE_HEAD_SINCE: ] = 0.0
-        q[:, :, SPARSE_SEQ_SINCE:, : ] = 0.0
-        k[:, :, SPARSE_SEQ_SINCE:, : ] = 0.0
-        v[:, :, SPARSE_SEQ_SINCE:, : ] = 0.0
-
-    '''
-    dout = torch.randn_like(q)
-    # reference implementation
-    M = torch.tril(torch.ones((N_CTX, N_CTX), device="cuda"))
-    p = torch.matmul(q, k.transpose(2, 3)) * sm_scale
-    if causal:
-        p[:, :, M == 0] = float("-inf")
-    p = torch.softmax(p.float(), dim=-1).half()
-    ref_out = torch.matmul(p, v)
-    '''
-    return_encoded_softmax = dropout_p > 0.0
-    autotune = False
-    tri_out, encoded_softmax, _ = attention(q, k, v, b, causal, sm_scale, dropout_p, return_encoded_softmax, autotune)
-
-    dropout_mask = encoded_softmax > 0 if encoded_softmax is not None else None
-    # assert torch.allclose(dropout_mask, dropout_mask_naive)
-    ref_out, ref_softmax = torch.ops.aten._scaled_dot_product_attention_math(q, k, v,
-                                                                dropout_p=dropout_p,
-                                                                is_causal=causal,
-                                                                attn_mask=b,
-                                                                scale=sm_scale,
-                                                                dropout_mask=dropout_mask)
-    if False:
-        mref_out, mref_softmax = scaled_dot_product_attention(q, k, v,
-                                     dropout_p=dropout_p,
-                                     is_causal=causal,
-                                     scale=sm_scale,
-                                     dropout_mask=dropout_mask)
-        print(f'{tri_out[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
-        print(f'{ref_out[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
-        print(f'{mref_out[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
-        print(f'{tri_out[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]/ref_out[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
-        print(f'{q.shape=} {q.stride()=}')
-        print(f'{k.shape=} {k.stride()=}')
-        print(f'{v.shape=} {v.stride()=}')
-        print(f'{encoded_softmax=}')
-        if encoded_softmax is not None:
-            print(f'{encoded_softmax.shape=} {encoded_softmax.stride()=}')
-            print(f'{encoded_softmax[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_SEQ_SINCE]=}')
-            print(f'{dropout_mask.shape=} {dropout_mask.stride()=}')
-            print(f'{dropout_mask[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
-    if dtype==torch.bfloat16:
-        ATOL = 1e-1 * max(1.0, (seqlen_q + seqlen_k + D_HEAD) / 128.0)
-    else:
-        ATOL = 1e-2 * max(1.0, (seqlen_q + seqlen_k + D_HEAD) / 128.0)
-    print(f'Using ATOL={ATOL}')
-    is_allclose = torch.allclose(ref_out, tri_out, atol=ATOL, rtol=0)
-    if not is_allclose:
-        import numpy as np
-        err_idx = np.unravel_index(torch.argmax(torch.abs(ref_out - tri_out)).cpu().numpy(), ref_out.shape)
-        print(f'{err_idx=}')
-        print(f'{tri_out[err_idx]=} {ref_out[err_idx]=} error: {tri_out[err_idx] - ref_out[err_idx]}')
-    # if not is_allclose:
-    if False:
-        import numpy as np
-        err_idx = np.unravel_index(torch.argmax(torch.abs(ref_out - tri_out)).cpu().numpy(), ref_out.shape)
-        print(f'{tri_out[0][0][0][:]=}')
-        print(f'{ref_out[0][0][0][:]=}')
-        print(f'{mref_out[0][0][0][:]=}')
-        if encoded_softmax is not None:
-            print(f'{encoded_softmax[0][0][0][:]=}')
-        print(f'{ref_softmax[0][0][0][:]=}')
-        print(f'{tri_out[-1][0][0][:]=}')
-        print(f'{ref_out[-1][0][0][:]=}')
-        print(f'{err_idx=}')
-        print(f'{tri_out[err_idx]=}')
-        print(f'{ref_out[err_idx]=}')
-        if dropout_p > 0:
-            # print(f'{unmasked_ref_out[0][0][0][:]=}')
-            print(f'{dropout_mask[0][0][0][:]=}')
-            print(f'{dropout_mask[err_idx]=}')
-        # tri_cpu = tri_out[0, 0].cpu().detach().numpy()
-        # print(f'{tri_cpu.shape=}')
-    # compare
-    assert is_allclose
+            dropout_mask = encoded_softmax > 0 if encoded_softmax is not None else None
+        # assert torch.allclose(dropout_mask, dropout_mask_naive)
+        ref_out, ref_softmax = torch.ops.aten._scaled_dot_product_attention_math(q, k, v,
+                                                                    dropout_p=dropout_p,
+                                                                    is_causal=causal,
+                                                                    attn_mask=b,
+                                                                    scale=sm_scale,
+                                                                    dropout_mask=dropout_mask)
+        if False:
+            mref_out, mref_softmax = scaled_dot_product_attention(q, k, v,
+                                         dropout_p=dropout_p,
+                                         is_causal=causal,
+                                         scale=sm_scale,
+                                         dropout_mask=dropout_mask)
+            print(f'{tri_out[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
+            print(f'{ref_out[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
+            print(f'{mref_out[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
+            print(f'{tri_out[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]/ref_out[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
+            print(f'{q.shape=} {q.stride()=}')
+            print(f'{k.shape=} {k.stride()=}')
+            print(f'{v.shape=} {v.stride()=}')
+            print(f'{encoded_softmax=}')
+            if encoded_softmax is not None:
+                print(f'{encoded_softmax.shape=} {encoded_softmax.stride()=}')
+                print(f'{encoded_softmax[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_SEQ_SINCE]=}')
+                print(f'{dropout_mask.shape=} {dropout_mask.stride()=}')
+                print(f'{dropout_mask[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
+        if dtype==torch.bfloat16:
+            ATOL = 1e-1 * max(1.0, (seqlen_q + seqlen_k + D_HEAD) / 128.0)
+        else:
+            ATOL = 1e-2 * max(1.0, (seqlen_q + seqlen_k + D_HEAD) / 128.0)
+        print(f'Using ATOL={ATOL}')
+        is_allclose = torch.allclose(ref_out, tri_out, atol=ATOL, rtol=0)
+        if not is_allclose:
+            import numpy as np
+            err_idx = np.unravel_index(torch.argmax(torch.abs(ref_out - tri_out)).cpu().numpy(), ref_out.shape)
+            print(f'{err_idx=}')
+            print(f'{tri_out[err_idx]=} {ref_out[err_idx]=} error: {tri_out[err_idx] - ref_out[err_idx]}')
+        # if not is_allclose:
+        if False:
+            import numpy as np
+            err_idx = np.unravel_index(torch.argmax(torch.abs(ref_out - tri_out)).cpu().numpy(), ref_out.shape)
+            print(f'{tri_out[0][0][0][:]=}')
+            print(f'{ref_out[0][0][0][:]=}')
+            print(f'{mref_out[0][0][0][:]=}')
+            if encoded_softmax is not None:
+                print(f'{encoded_softmax[0][0][0][:]=}')
+            print(f'{ref_softmax[0][0][0][:]=}')
+            print(f'{tri_out[-1][0][0][:]=}')
+            print(f'{ref_out[-1][0][0][:]=}')
+            print(f'{err_idx=}')
+            print(f'{tri_out[err_idx]=}')
+            print(f'{ref_out[err_idx]=}')
+            if dropout_p > 0:
+                # print(f'{unmasked_ref_out[0][0][0][:]=}')
+                print(f'{dropout_mask[0][0][0][:]=}')
+                print(f'{dropout_mask[err_idx]=}')
+            # tri_cpu = tri_out[0, 0].cpu().detach().numpy()
+            # print(f'{tri_cpu.shape=}')
+        # compare
+        assert is_allclose
 
 # @pytest.mark.parametrize('BATCH', [1, 4])
 # @pytest.mark.parametrize('N_HEADS', [1, 4])
@@ -245,7 +267,8 @@ def _do_test_op_fwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
 # @pytest.mark.parametrize('return_encoded_softmax', [False])
 def test_op_fwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
     bias_type = None
-    _do_test_op_fwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
+    tester = FwdTester()
+    tester.do_test_op_fwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
 
 # @pytest.mark.parametrize('BATCH', [1, 4])
 # @pytest.mark.parametrize('N_HEADS', [1, 4])
@@ -273,7 +296,24 @@ def test_op_fwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dr
 def test_op_fwd_with_matrix_bias(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, sm_scale, dropout_p, dtype, storage_flip):
     causal = False
     bias_type = 'matrix'
+    tester = FwdTester()
     '''
     _scaled_dot_product_attention: Explicit attn_mask should not be set when is_causal=True
     '''
-    _do_test_op_fwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
+    tester.do_test_op_fwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
+
+@pytest.mark.parametrize('BATCH', [1, 4])
+@pytest.mark.parametrize('N_HEADS', [1, 4])
+@pytest.mark.parametrize('seqlen_q', [4, 8, 64, 143, 256, 512, 1024, 2048])
+@pytest.mark.parametrize('seqlen_k', [4, 8, 64, 128, 256, 587, 1024, 2048])
+@pytest.mark.parametrize('causal', [False, True])
+@pytest.mark.parametrize('storage_flip', [False, True])
+def test_fill_dropout_rng(BATCH, N_HEADS, seqlen_q, seqlen_k, causal, storage_flip):
+    D_HEAD = 128
+    dropout_p = 0.5
+    dtype = torch.float16
+    sm_scale = 1.2
+    bias_type = None
+    tester = FwdTester()
+    tester.use_fill_rng_for_dropout = True
+    tester.do_test_op_fwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
