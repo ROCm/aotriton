@@ -51,6 +51,12 @@ attn_bwd(T4 q, // batch_size x num_heads x seqlen_q x head_size
          bool is_causal,
          aotriton::Stream stream);
 
+hipError_t
+debug_fill_dropout_rng(T4 r,
+                       uint64_t philox_seed,
+                       uint64_t philox_offset,
+                       aotriton::Stream stream);
+
 } // aotriton::v2::flash
 
 #endif

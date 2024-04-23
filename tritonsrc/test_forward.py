@@ -243,9 +243,9 @@ class FwdTester(object):
 
 # @pytest.mark.parametrize('BATCH', [1, 4])
 # @pytest.mark.parametrize('N_HEADS', [1, 4])
-@pytest.mark.parametrize('BATCH', [1, 2, 4])
-@pytest.mark.parametrize('N_HEADS', [1, 2, 4])
-@pytest.mark.parametrize('D_HEAD', [16,32,64,128,256])
+@pytest.mark.parametrize('BATCH', [1, 4])
+@pytest.mark.parametrize('N_HEADS', [1, 4])
+@pytest.mark.parametrize('D_HEAD', [8, 16, 21, 32, 64, 72, 96, 128, 160, 192, 203, 256])
 # @pytest.mark.parametrize('D_HEAD', [128])
 # Complete set
 # @pytest.mark.parametrize('seqlen_q', [4,8,16,17,32,64,128,143,256,512,1024,2048])

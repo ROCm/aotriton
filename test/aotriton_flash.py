@@ -1,7 +1,11 @@
 # Copyright © 2023-2024 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-from pyaotriton.v2.flash import attn_fwd as fa_forward, attn_bwd as fa_backward
+from pyaotriton.v2.flash import (
+    attn_fwd as fa_forward,
+    attn_bwd as fa_backward,
+    debug_fill_dropout_rng as fa_debug_fill_dropout_rng,
+)
 from pyaotriton import T1, T2, T4, DType, Stream
 
 def cast_dtype(dtype):
@@ -67,4 +71,11 @@ def attn_bwd(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
                       int(philox_offset),
                       is_causal,
                       Stream())
+    print(f'{err=}')
+
+def debug_fill_dropout_rng(R, philox_seed, philox_offset):
+    err = fa_debug_fill_dropout_rng(mk_aotensor(R),
+                                    philox_seed,
+                                    philox_offset,
+                                    Stream())
     print(f'{err=}')
