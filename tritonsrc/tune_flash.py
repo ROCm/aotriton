@@ -153,8 +153,8 @@ def parse():
     p.add_argument('--causal', type=int, nargs='+', default=[True,False], choices=[0, 1], help='Causal mask. (Use 0/1 for False/True')
     p.add_argument('--dropout_p', type=float, nargs='+', default=[0.5, 0.0], help='Probablity to dropout (0 to disable).')
     p.add_argument('--dtype', type=str, nargs='+',
-                   default=['float16', 'bfloat16'],
-                   choices=['float16', 'bfloat16'],
+                   default=['float16', 'bfloat16', 'float32'],
+                   choices=['float16', 'bfloat16', 'float32'],
                    help='Datatype to profile.')
     p.add_argument('--bias_type', type=int, nargs='+', default=[0, 1], choices=[0, 1], help='Bias types to profile, 0: None, 1: Matrix.')
     p.add_argument('--verbose', action='store_true', help='Verbose')
