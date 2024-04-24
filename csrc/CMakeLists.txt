@@ -16,11 +16,10 @@ add_dependencies(aotriton_v1_gen_compile aotriton_venv_triton)
 
 include(ProcessorCount)
 ProcessorCount(PROCS)
-math(EXPR NPROC "PROCS / 2" OUTPUT_FORMAT DECIMAL)
 add_custom_target(aotriton_v1_compile
   # (CAVEAT) KNOWN PROBLEM: Will not work if LD_PRELOAD is not empty
   # FIXME: Change this into `-E env --modify LD_PRELOAD=path_list_prepend:${AMDOCL_LD_PRELOAD}` when minimal cmake >= 3.25
-  COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} PATH="${VENV_DIR}/bin:$ENV{PATH}" make -j ${NPROC} -f Makefile.compile LIBHSA_RUNTIME64=${AMDHSA_LD_PRELOAD}
+  COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} PATH="${VENV_DIR}/bin:$ENV{PATH}" make -f Makefile.compile LIBHSA_RUNTIME64=${AMDHSA_LD_PRELOAD}
   WORKING_DIRECTORY "${AOTRITON_BUILD_DIR}"
   BYPRODUCTS "${AOTRITON_BUILD_DIR}/attn_fwd.h"
   "${AOTRITON_BUILD_DIR}/bwd_kernel_dk_dv.h"
@@ -38,7 +37,7 @@ add_dependencies(aotriton_v1_gen_shim aotriton_v1_compile) # Shim source files n
 
 add_custom_target(aotriton_v1
   ALL
-  COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} PATH="${VENV_DIR}/bin:$ENV{PATH}" make -j ${NPROC} -f Makefile.shim HIPCC=${AOTRITON_HIPCC_PATH} AR=${CMAKE_AR}
+  COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} PATH="${VENV_DIR}/bin:$ENV{PATH}" make -f Makefile.shim HIPCC=${AOTRITON_HIPCC_PATH} AR=${CMAKE_AR}
   WORKING_DIRECTORY "${AOTRITON_BUILD_DIR}"
   BYPRODUCTS "${AOTRITON_BUILD_DIR}/libaotriton_v1.a"
 )
