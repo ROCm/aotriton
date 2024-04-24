@@ -15,7 +15,8 @@ add_custom_target(aotriton_v1_gen_compile
 add_dependencies(aotriton_v1_gen_compile aotriton_venv_triton)
 
 include(ProcessorCount)
-ProcessorCount(NPROC)
+ProcessorCount(PROCS)
+math(EXPR NPROC "PROCS / 2" OUTPUT_FORMAT DECIMAL)
 add_custom_target(aotriton_v1_compile
   # (CAVEAT) KNOWN PROBLEM: Will not work if LD_PRELOAD is not empty
   # FIXME: Change this into `-E env --modify LD_PRELOAD=path_list_prepend:${AMDOCL_LD_PRELOAD}` when minimal cmake >= 3.25

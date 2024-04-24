@@ -14,12 +14,15 @@
 #include <vector>
 #endif
 
+#include <vector> // XXX: std::vector used in invoke()
+
 namespace aotriton {
 
 class TritonKernel {
 public:
   TritonKernel(const void* image, size_t image_size, dim3 block, int shared_memory_size);
 
+  // XXX: std::vector used below
   hipError_t invoke(const char* kernel_name, dim3 grid, std::vector<void*>& args, hipStream_t stream);
 
 #if AOTRITON_USE_ZSTD
