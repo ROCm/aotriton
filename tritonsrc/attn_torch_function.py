@@ -471,8 +471,8 @@ class _attention(torch.autograd.Function):
             BLOCK_M = 128
             BLOCK_N = 64
         if q.dtype == torch.float32:
-            BLOCK_M //= 2
-            BLOCK_N //= 2
+            BLOCK_M = max(16, BLOCK_M // 2)
+            BLOCK_N = max(16, BLOCK_N // 2)
         # debug_mask = torch.zeros((q.shape[0], q.shape[1], max_seqlens_q, max_seqlens_k), device=q.device, dtype=ctx.encoded_softmax.dtype)
         grid_dk_dv = lambda META: (
             triton.cdiv(max_seqlens_k, META['BLOCK_N']),
