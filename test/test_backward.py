@@ -42,15 +42,6 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
         pytest.skip("_scaled_dot_product_attention: Explicit attn_mask should not be set when is_causal=True")
     # if BATCH > 1 and seqlen_q >= 1024 and seqlen_k >= 1024:
     #     torch.cuda.empty_cache()
-    '''
-    Shader _ZN2at6native12_GLOBAL__N_119cunn_SoftMaxForwardILi2EdddNS1_22SoftMaxForwardEpilogueEEEvPT2_PKT0_i causes Segfault
-    for Case test_op_bwd[False-0.0-dtype2-0.0-False-587-64-8-4-4], but cannot be reproduced reliably
-    Avoiding running it on GPU for now
-    '''
-    if seqlen_k == 587:
-        REF_DEVICE = 'cpu'
-    else:
-        REF_DEVICE = 'cuda'
     SKIP_DK_DV = False
     SKIP_DQ = False
     SKIP_DB = True if bias_type is None else False
@@ -61,7 +52,7 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
     transpose = (1, 2) if storage_flip else None
     ctx = SdpaContext(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, dtype,
                       bias_type=bias_type, storage_flip=transpose, device='cuda')
-    ctx.create_ref_inputs(ref_device=REF_DEVICE)
+    ctx.create_ref_inputs()
     ctx.set_require_grads(skip_dq=SKIP_DQ, skip_dk_dv=SKIP_DK_DV, skip_db=SKIP_DB)
     return_encoded_softmax = True
     q, k, v, b = ctx.dev_tensors

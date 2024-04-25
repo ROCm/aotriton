@@ -1,3 +1,4 @@
+import os
 from typing import List, Tuple, Optional
 from collections import namedtuple
 import torch
@@ -116,6 +117,10 @@ class SdpaContext(object):
     def dtype(self):
         return self.dev_tensors[0].dtype
 
+    @property
+    def ref_device(self):
+        return self.ref_tensors[0].device
+
     @staticmethod
     def clone_tensor(t, dtype, device=None):
         if t is None:
@@ -126,7 +131,28 @@ class SdpaContext(object):
     def clone_tensor_tuple(in_tensors, dtype, device=None):
         return tuple([SdpaContext.clone_tensor(t, dtype=dtype, device=device) for t in in_tensors])
 
-    def create_ref_inputs(self, ref_device=None):
+    def create_ref_inputs(self):
+        ref_device_option = os.getenv('AOTRITON_REF_DEVICE_OPTION', default='default')
+        if ref_device_option == 'default':
+            '''
+            Shader _ZN2at6native12_GLOBAL__N_119cunn_SoftMaxForwardILi2EdddNS1_22SoftMaxForwardEpilogueEEEvPT2_PKT0_i causes Segfault
+            for Case test_op_bwd[False-0.0-dtype2-0.0-False-587-64-8-4-4], but cannot be reproduced by running this individual UT.
+            Avoiding running it on GPU for now
+            '''
+            if seqlen_k == 587:
+                ref_device = 'cpu'
+            else:
+                ref_device = 'cuda'
+        elif ref_device_option == 'cuda':
+            ref_device = 'cuda'
+        elif ref_device_option == 'cpu':
+            ref_device = 'cpu'
+        else:
+            assert False, f'Unknown ref_device_option value {ref_device_option}. Allowed choices "default" "cpu" "cuda"'
+        assert ref_device == 'cuda'
+        self.create_ref_inputs_with_device(ref_device)
+
+    def create_ref_inputs_with_device(self, ref_device):
         dtype = self.dtype
         hp_dtype = torch.float64 if dtype == torch.float32 else torch.float32
         self.ref_tensors = self.clone_tensor_tuple(self.dev_tensors, dtype=hp_dtype, device=ref_device)
@@ -152,12 +178,13 @@ class SdpaContext(object):
     @staticmethod
     def _compute_ref_forward(ref_tensors, p : SdpaParams):
         ref_q, ref_k, ref_v, ref_b = ref_tensors
+        dropout_mask = p.dropout_mask if p.dropout_mask is None else p.dropout_mask.to(device=ref_q.device)
         ref_out, ref_softmax = torch.ops.aten._scaled_dot_product_attention_math(ref_q, ref_k, ref_v,
                                                                     dropout_p=p.dropout_p,
                                                                     is_causal=p.causal,
                                                                     attn_mask=ref_b,
                                                                     scale=p.sm_scale,
-                                                                    dropout_mask=p.dropout_mask)
+                                                                    dropout_mask=dropout_mask)
         return (ref_out, ref_softmax)
 
     def compute_ref_forward(self, p : SdpaParams):
