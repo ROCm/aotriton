@@ -4,6 +4,7 @@
 
 import pytest
 import torch
+import os
 
 from attn_torch_function import attention
 from _common_test import SdpaContext, SdpaParams
@@ -40,10 +41,6 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
         pytest.skip("PyTorch's Flash V2 does not accept casual=True when seqlen_q != seqlen_k. Skipping")
     if causal and bias_type is not None:
         pytest.skip("_scaled_dot_product_attention: Explicit attn_mask should not be set when is_causal=True")
-    if seqlen_k == 587:
-        REF_DEVICE = 'cpu'
-    else:
-        REF_DEVICE = 'cuda'
     SKIP_DK_DV = False
     SKIP_DQ = False
     SKIP_DB = True if bias_type is None else False
@@ -54,7 +51,7 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
     transpose = (1, 2) if storage_flip else None
     ctx = SdpaContext(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, dtype,
                       bias_type=bias_type, storage_flip=transpose, device='cuda')
-    ctx.create_ref_inputs(ref_device=REF_DEVICE)
+    ctx.create_ref_inputs()
     ctx.set_require_grads(skip_dq=SKIP_DQ, skip_dk_dv=SKIP_DK_DV, skip_db=SKIP_DB)
 
     return_encoded_softmax = True
