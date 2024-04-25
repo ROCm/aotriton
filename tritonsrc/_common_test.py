@@ -170,7 +170,7 @@ class SdpaContext(object):
         if b is None or not b.requires_grad:
             db = None
         else:
-            db, b_ref.grad = b_ref.grad.clone(), None
+            db, b.grad = b.grad.clone(), None
         return (dq, dk, dv, db)
 
     # Note: this follows pytorch's testing approach and expects low precision dout
