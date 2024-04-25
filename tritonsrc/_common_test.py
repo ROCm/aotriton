@@ -47,7 +47,11 @@ def get_rtol(true_value: torch.Tensor, computed_value: torch.Tensor) -> float:
     return deviation.max().item()
 
 def get_atol(true_value: torch.Tensor, computed_value: torch.Tensor) -> float:
-    deviation = true_value - computed_value
+    # Low precision may yield NAN due to numerical instability
+    # See https://github.com/pytorch/pytorch/issues/116176 for a real-world example.
+    # Section 3 in https://arxiv.org/abs/2112.05682v3 explains how accelerated
+    # SDPA does not suffer from it.
+    deviation = torch.nan_to_num(true_value - computed_value)
     atol = torch.abs(deviation).max().item()
     return atol
 
