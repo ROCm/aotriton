@@ -25,7 +25,7 @@ class bwd_preprocess(FlashKernel):
         'Delta' : 2,
     }
     TYPE_CHOICES = {
-        frozenset(['Out', 'DO']) : ['*fp16:16', '*bf16:16'],
+        frozenset(['Out', 'DO']) : ['*fp16:16', '*bf16:16', '*fp32:16'],
         frozenset(['Delta']) : ['*fp32:16'],
         frozenset(['seqlen_q']) : ['u64'],
         frozenset(['head_dim']) : ['i32'],
