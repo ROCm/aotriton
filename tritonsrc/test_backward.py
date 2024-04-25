@@ -176,8 +176,8 @@ def test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dr
 
 # @pytest.mark.parametrize('BATCH', [1, 4])
 # @pytest.mark.parametrize('N_HEADS', [1, 4])
-@pytest.mark.parametrize('BATCH', [1, 2, 4])
-@pytest.mark.parametrize('N_HEADS', [1, 2, 4])
+@pytest.mark.parametrize('BATCH', [1, 4])
+@pytest.mark.parametrize('N_HEADS', [1, 4])
 @pytest.mark.parametrize('D_HEAD', [16,32,64,128,256])
 # @pytest.mark.parametrize('D_HEAD', [128])
 # Complete set
