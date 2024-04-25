@@ -188,7 +188,7 @@ class SdpaContext(object):
         if out is None and ref is None:
             return True
         atol, rtol = get_tolerances(ref, lp_ref, fudge_factor)
-        return torch.allclose(out, ref.to(out.dtype), atol=atol, rtol=rtol)
+        return torch.allclose(out.to(device=ref.device), ref.to(out.dtype), atol=atol, rtol=rtol)
 
     def validate_with_reference(self, out, grads):
         out_allclose = self._validate(out, self.refout_tensors[0], self.lp_refout_tensors[0], self.OUT_FUDGE_FACTOR)
