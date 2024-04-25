@@ -134,6 +134,8 @@ class SdpaContext(object):
     def create_ref_inputs(self):
         ref_device_option = os.getenv('AOTRITON_REF_DEVICE_OPTION', default='default')
         if ref_device_option == 'default':
+            q, k, v, b = self.dev_tensors
+            seqlen_k = k.shape[2]
             '''
             Shader _ZN2at6native12_GLOBAL__N_119cunn_SoftMaxForwardILi2EdddNS1_22SoftMaxForwardEpilogueEEEvPT2_PKT0_i causes Segfault
             for Case test_op_bwd[False-0.0-dtype2-0.0-False-587-64-8-4-4], but cannot be reproduced by running this individual UT.
