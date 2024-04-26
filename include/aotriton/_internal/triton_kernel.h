@@ -10,9 +10,7 @@
 #endif
 
 #include "../runtime.h"
-#if AOTRITON_USE_ZSTD
 #include <vector>
-#endif
 #include <unordered_map>
 #include <shared_mutex>
 #include <tuple>
