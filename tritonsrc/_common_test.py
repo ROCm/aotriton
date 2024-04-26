@@ -151,7 +151,6 @@ class SdpaContext(object):
             ref_device = 'cpu'
         else:
             assert False, f'Unknown ref_device_option value {ref_device_option}. Allowed choices "default" "cpu" "cuda"'
-        assert ref_device == 'cuda'
         self.create_ref_inputs_with_device(ref_device)
 
     def create_ref_inputs_with_device(self, ref_device):
