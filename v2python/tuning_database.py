@@ -62,7 +62,7 @@ class KernelTuningDatabase(object):
     def select_gpu(self, gpu, index):
         arch = AOTRITON_GPU_ARCH_TUNING_STRING[gpu]
         if arch not in self.arch_dict:
-            print('For kernel {self._kdesc.KERNEL_FAMILY}.{self._kdesc.name}, Architecture {arch} was not found in tuning database, using dummy one instead')
+            print(f'For kernel {self._kdesc.KERNEL_FAMILY}.{self._kdesc.name}, Architecture {arch} was not found in tuning database, using dummy one instead')
             self.arch_dict[arch] = EmptyKernelTuningDatabaseForArch(self._kdesc, arch)
         return self.arch_dict[arch].set_gpu(gpu, index)
 
