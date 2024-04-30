@@ -94,13 +94,17 @@ class SdpaContext(object):
             kdims = (kdims[i], kdims[j], kdims[k], kdims[l])
             vdims = (vdims[i], vdims[j], vdims[k], vdims[l])
             # bdims = (bdims[1], bdims[0])
-        q = torch.empty(qdims, dtype=dtype, device=device).normal_(mean=0., std=0.5)
-        k = torch.empty(kdims, dtype=dtype, device=device).normal_(mean=0., std=0.5)
-        v = torch.empty(vdims, dtype=dtype, device=device).normal_(mean=0., std=0.5)
+        # q = torch.empty(qdims, dtype=dtype, device=device).normal_(mean=0., std=0.5)
+        # k = torch.empty(kdims, dtype=dtype, device=device).normal_(mean=0., std=0.5)
+        # v = torch.empty(vdims, dtype=dtype, device=device).normal_(mean=0., std=0.5)
+        q = torch.rand(*qdims, dtype=dtype, device=device)
+        k = torch.rand(*kdims, dtype=dtype, device=device)
+        v = torch.rand(*vdims, dtype=dtype, device=device)
         if bias_type is None:
             b = None
         elif bias_type == 'matrix':
-            b = torch.empty(bdims, dtype=dtype, device="cuda").normal_(mean=0., std=0.5)
+            # b = torch.empty(bdims, dtype=dtype, device="cuda").normal_(mean=0., std=0.5)
+            b = torch.rand(*bdims, dtype=dtype, device=device)
             b = b.expand(BATCH, N_HEADS, b.shape[0], b.shape[1])
         else:
             assert False, f'Unsupported bias_type {bias_type}'
