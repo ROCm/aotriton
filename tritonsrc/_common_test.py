@@ -246,3 +246,41 @@ class SdpaContext(object):
             grads_allclose.append(allclose)
             grads_adiff.append(adiff)
         return out_allclose, out_adiff, grads_allclose, grads_adiff
+
+class SdpaContextFromDump_InputOnly(SdpaContext):
+    def _load(self, tensors):
+        return tuple([torch.tensor(t, device='cuda') if t is not None else None for t in tensors])
+
+    def __init__(self, q, k, v, b):
+        q, k, v, b = self._load((q, k, v, b))
+        b = b.expand(q.shape[0], q.shape[1], b.shape[0], b.shape[1])
+        self.dev_tensors = (q, k, v, b)
+        self.FUDGE_FACTORS = (4, 2, 2, 2)
+        self.OUT_FUDGE_FACTOR = 3
+
+class SdpaContextFromDump_Complete(SdpaContextFromDump_InputOnly):
+
+    def set_require_grads(self):
+        self._require_grads(self.dev_tensors)
+
+    def compute_ref_forward(self, ref_out, lp_ref_out):
+        self.refout_tensors = self._load((ref_out, None))
+        self.lp_refout_tensors = self._load((lp_ref_out, None))
+
+    def compute_backward(self,
+                         out, dout,
+                         D_ref,
+                         D_ref_lp,
+                         ):
+        dout, = self._load([dout])
+        # self.dout_tensors = self._compute_backward(self.dev_tensors, out, dout)
+        out.backward(dout)
+        q, k, v, b = self.dev_tensors
+        dq = q.grad
+        dk = k.grad
+        dv = v.grad
+        db = b.grad
+        self.dout_tensors = (dq, dk, dv, db)
+        print(f'{self.dout_tensors=}')
+        self.dref_tensors = self._load(D_ref)
+        self.lp_dref_tensors = self._load(D_ref_lp)
