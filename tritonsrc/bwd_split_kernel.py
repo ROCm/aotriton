@@ -476,9 +476,6 @@ def bwd_kernel_dq(
             dp = tl.where(keep, dp / (1 - dropout_p), 0)
         # compute ds = p * (dp - delta[:, None])
         ds = p * (dp - Di[:, None])
-        if BIAS_TYPE == 1:
-            if store_db:
-                tl.store(DB_block_ptr, ds.to(DB.type.element_ty), boundary_check=(0,1))
         # compute dq. Unfortunately we cannot avoid transpose here as this loop
         # uses k both normal and transpose.
         if BLOCK_M == 1:
@@ -486,6 +483,9 @@ def bwd_kernel_dq(
         else:
             # ds.shape = (BLOCK_M, BLOCK_N), kt.shape = (BLOCK_DMODEL, BLOCK_N)
             dq += tl.dot(ds.to(Q.type.element_ty), tl.trans(kt)) # (BLOCK_M, BLOCK_DMODEL)
+        if BIAS_TYPE == 1:
+            if store_db:
+                tl.store(DB_block_ptr, ds.to(DB.type.element_ty), boundary_check=(0,1))
         # update pointers
         K_block_ptr = tl.advance(K_block_ptr, (0, BLOCK_N))
         V_block_ptr = tl.advance(V_block_ptr, (0, BLOCK_N))
