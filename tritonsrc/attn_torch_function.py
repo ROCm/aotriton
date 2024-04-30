@@ -6,14 +6,17 @@ import copy
 import torch
 import triton
 import triton.language as tl
-from flash import attn_fwd as bare_attn_fwd
 from flash import (
+    debug_fill_dropout_rng as bare_debug_fill_dropout_rng,
+    attn_fwd as bare_attn_fwd,
     bwd_preprocess as bare_bwd_preprocess,
     bwd_kernel_dk_dv as bare_bwd_kernel_dk_dv,
     bwd_kernel_dq as bare_bwd_kernel_dq
 )
 
 VERBOSE=False
+DEFAULT_PHILOX_SEED = 0x1BF52
+DEFAULT_PHILOX_OFFSET = 0x1D4B42
 
 def is_power_of_two(n: int) -> bool:
     return (n & (n - 1) == 0) and n != 0
@@ -266,8 +269,8 @@ class _attention(torch.autograd.Function):
             if encoded_softmax is not None:
                 print(f'{encoded_softmax.shape=} {encoded_softmax.dtype=}')
 
-        philox_seed = 114514
-        philox_offset = 1919810
+        philox_seed = DEFAULT_PHILOX_SEED
+        philox_offset = DEFAULT_PHILOX_OFFSET
         if b is None:
             b = torch.empty((0,0,0,0), device=q.device, dtype=q.dtype)
             BIAS_TYPE = 0
@@ -683,3 +686,21 @@ class _attention(torch.autograd.Function):
         return dq, dk, dv, None if db.numel() == 0 else db, None, None, None, None, None, None, None
 
 attention = _attention.apply
+
+def debug_fill_dropout_rng(dropout_rng, philox_seed, philox_offset):
+    BLOCK_M = 64
+    BLOCK_N = 32
+    BATCH, N_HEADS, seqlen_q, seqlen_k = dropout_rng.size()
+    grid_rng = lambda META: (
+        triton.cdiv(seqlen_q, META['BLOCK_M']),
+        N_HEADS,
+        BATCH,
+    )
+    r = dropout_rng
+    bare_debug_fill_dropout_rng[grid_rng](r,
+            r.stride(0), r.stride(1), r.stride(2), r.stride(3),
+            seqlen_q, seqlen_k,
+            philox_seed,
+            philox_offset,
+            BLOCK_M, BLOCK_N,
+            num_stages=1)

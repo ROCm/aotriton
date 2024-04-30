@@ -3,9 +3,11 @@
 # SPDX-License-Identifier: MIT
 
 import torch
-from aotriton_flash import attn_fwd, attn_bwd
+from aotriton_flash import attn_fwd, attn_bwd, debug_fill_dropout_rng
 
 VERBOSE=False
+DEFAULT_PHILOX_SEED = 0x1BF52
+DEFAULT_PHILOX_OFFSET = 0x1D4B42
 
 def is_power_of_two(n: int) -> bool:
     return (n & (n - 1) == 0) and n != 0
@@ -53,8 +55,8 @@ class _attention(torch.autograd.Function):
             if encoded_softmax is not None:
                 print(f'{encoded_softmax.shape=} {encoded_softmax.dtype=}')
 
-        philox_seed = 114514
-        philox_offset = 1919810
+        philox_seed = DEFAULT_PHILOX_SEED
+        philox_offset = DEFAULT_PHILOX_OFFSET
 
         attn_fwd(q, k, v, b, sm_scale, M, o,
                  dropout_p, philox_seed, philox_offset, encoded_softmax, causal);
