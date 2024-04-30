@@ -61,10 +61,10 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
     tri_out, encoded_softmax, _ = attention(q, k, v, b, causal, sm_scale, dropout_p, return_encoded_softmax, USE_AUTOTUNE)
     dropout_mask = encoded_softmax >= 0
     sdpa_params = SdpaParams(causal=causal, sm_scale=sm_scale, dropout_p=dropout_p, dropout_mask=dropout_mask)
-    ctx.compute_ref_forward(sdpa_params)
+    ref_out, _ = ctx.compute_ref_forward(sdpa_params)
     dout = torch.randn_like(tri_out)
     ctx.compute_backward(tri_out, dout)
-    is_allclose, grads_allclose = ctx.validate_with_reference(tri_out, ctx.dout_tensors)
+    is_allclose, adiff, grads_allclose, grads_adiff = ctx.validate_with_reference(tri_out, ctx.dout_tensors)
     if not is_allclose:
         import numpy as np
         err_idx = np.unravel_index(torch.argmax(torch.abs(ref_out - tri_out)).cpu().numpy(), ref_out.shape)
@@ -137,6 +137,7 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
         print(f'{err_idx=}')
         print(f'{tri_db[err_idx]=} {ref_db[err_idx]=} error = {torch.abs(tri_db[err_idx] - ref_db[err_idx])}')
     assert dk_allclose and dv_allclose and dq_allclose and db_allclose, f'{dk_allclose=} {dv_allclose=} {dq_allclose=} {db_allclose=}'
+    print(f'{adiff=} {grads_adiff=}')
 
 # @pytest.mark.parametrize('BATCH', [1])
 # @pytest.mark.parametrize('N_HEADS', [1])

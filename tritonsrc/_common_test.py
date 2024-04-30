@@ -222,18 +222,23 @@ class SdpaContext(object):
     @staticmethod
     def _validate(out, ref, lp_ref, fudge_factor, tname):
         if out is None and ref is None:
-            return True
+            return True, float('nan')
         atol, rtol = get_tolerances(ref, lp_ref, fudge_factor)
         assert out is not None, f'd{tname} is none'
         assert ref is not None, f'd{tname}_ref is none'
         # print(f'{out=}')
         # print(f'{ref=}')
-        return torch.allclose(out.to(device=ref.device), ref.to(out.dtype), atol=atol, rtol=rtol)
+        x = out.to(device=ref.device)
+        y = ref.to(out.dtype)
+        max_adiff = float(torch.max(torch.abs(x - y)))
+        return torch.allclose(x, y, atol=atol, rtol=rtol), max_adiff
 
     def validate_with_reference(self, out, grads):
-        out_allclose = self._validate(out, self.refout_tensors[0], self.lp_refout_tensors[0], self.OUT_FUDGE_FACTOR, 'out')
+        out_allclose, out_adiff = self._validate(out, self.refout_tensors[0], self.lp_refout_tensors[0], self.OUT_FUDGE_FACTOR, 'out')
         grads_allclose = []
+        grads_adiff = []
         for grad, ref, lp_ref, fudge_factor, tname in zip(grads, self.dref_tensors, self.lp_dref_tensors, self.FUDGE_FACTORS, self.TENSOR_NAMES):
-            allclose = self._validate(grad, ref, lp_ref, fudge_factor, tname)
+            allclose, adiff = self._validate(grad, ref, lp_ref, fudge_factor, tname)
             grads_allclose.append(allclose)
-        return out_allclose, grads_allclose
+            grads_adiff.append(adiff)
+        return out_allclose, out_adiff, grads_allclose, grads_adiff
