@@ -77,13 +77,14 @@ def get_tolerances(
 SdpaParams = namedtuple('SdpaParams', ['causal', 'sm_scale', 'dropout_p', 'dropout_mask'])
 
 class SdpaContext(object):
+    TENSOR_NAMES = ('q', 'k', 'v', 'b')
 
     def __init__(self, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, dtype,
                  bias_type=None, storage_flip=None, device='cuda'):
         qdims = (BATCH, N_HEADS, seqlen_q, D_HEAD)
         kdims = (BATCH, N_HEADS, seqlen_k, D_HEAD)
         vdims = (BATCH, N_HEADS, seqlen_k, D_HEAD)
-        bdims = (BATCH, N_HEADS, seqlen_q, seqlen_k)
+        bdims = (seqlen_q, seqlen_k)
         if storage_flip is not None:
             order = [0,1,2,3]
             x, y = storage_flip
@@ -92,7 +93,7 @@ class SdpaContext(object):
             qdims = (qdims[i], qdims[j], qdims[k], qdims[l])
             kdims = (kdims[i], kdims[j], kdims[k], kdims[l])
             vdims = (vdims[i], vdims[j], vdims[k], vdims[l])
-            bdims = (bdims[i], bdims[j], bdims[k], bdims[l])
+            # bdims = (bdims[1], bdims[0])
         q = torch.empty(qdims, dtype=dtype, device=device).normal_(mean=0., std=0.5)
         k = torch.empty(kdims, dtype=dtype, device=device).normal_(mean=0., std=0.5)
         v = torch.empty(vdims, dtype=dtype, device=device).normal_(mean=0., std=0.5)
@@ -100,6 +101,7 @@ class SdpaContext(object):
             b = None
         elif bias_type == 'matrix':
             b = torch.empty(bdims, dtype=dtype, device="cuda").normal_(mean=0., std=0.5)
+            b = b.expand(BATCH, N_HEADS, b.shape[0], b.shape[1])
         else:
             assert False, f'Unsupported bias_type {bias_type}'
         if storage_flip is not None:
@@ -107,8 +109,13 @@ class SdpaContext(object):
             q = torch.transpose(q, x, y)
             k = torch.transpose(k, x, y)
             v = torch.transpose(v, x, y)
+            '''
+            # No need to support flipped storage
+            # attn_mask.stride(-1) is assumed to be 1 in PyTorch
             if b is not None:
-                b = torch.transpose(b, x, y)
+                b = torch.transpose(b, 2, 3)
+                print(f'{b.stride()=}')
+            '''
         self.dev_tensors = (q, k, v, b)
         self.FUDGE_FACTORS = (4, 2, 2, 2)
         self.OUT_FUDGE_FACTOR = 3
@@ -180,25 +187,26 @@ class SdpaContext(object):
     def _compute_ref_forward(ref_tensors, p : SdpaParams):
         ref_q, ref_k, ref_v, ref_b = ref_tensors
         dropout_mask = p.dropout_mask if p.dropout_mask is None else p.dropout_mask.to(device=ref_q.device)
-        ref_out, ref_softmax = torch.ops.aten._scaled_dot_product_attention_math(ref_q, ref_k, ref_v,
+        ref_out, ref_mask = torch.ops.aten._scaled_dot_product_attention_math(ref_q, ref_k, ref_v,
                                                                     dropout_p=p.dropout_p,
                                                                     is_causal=p.causal,
                                                                     attn_mask=ref_b,
                                                                     scale=p.sm_scale,
                                                                     dropout_mask=dropout_mask)
-        return (ref_out, ref_softmax)
+        return (ref_out, ref_mask)
 
     def compute_ref_forward(self, p : SdpaParams):
         self.refout_tensors = self._compute_ref_forward(self.ref_tensors, p)
         self.lp_refout_tensors = self._compute_ref_forward(self.lp_ref_tensors, p)
+        return self.lp_refout_tensors
 
     @staticmethod
     def _compute_backward(in_tensors, out, dout):
         q, k, v, b = in_tensors
         out.backward(dout.to(device=out.device, dtype=out.dtype))
-        dq, q.grad = None if q.requires_grad else q.grad.clone(), None
-        dk, k.grad = None if k.requires_grad else k.grad.clone(), None
-        dv, v.grad = None if v.requires_grad else v.grad.clone(), None
+        dq, q.grad = None if not q.requires_grad else q.grad.clone(), None
+        dk, k.grad = None if not k.requires_grad else k.grad.clone(), None
+        dv, v.grad = None if not v.requires_grad else v.grad.clone(), None
         if b is None or not b.requires_grad:
             db = None
         else:
@@ -212,16 +220,20 @@ class SdpaContext(object):
         self.lp_dref_tensors = self._compute_backward(self.lp_ref_tensors, self.lp_refout_tensors[0], dout)
 
     @staticmethod
-    def _validate(out, ref, lp_ref, fudge_factor):
+    def _validate(out, ref, lp_ref, fudge_factor, tname):
         if out is None and ref is None:
             return True
         atol, rtol = get_tolerances(ref, lp_ref, fudge_factor)
+        assert out is not None, f'd{tname} is none'
+        assert ref is not None, f'd{tname}_ref is none'
+        # print(f'{out=}')
+        # print(f'{ref=}')
         return torch.allclose(out.to(device=ref.device), ref.to(out.dtype), atol=atol, rtol=rtol)
 
     def validate_with_reference(self, out, grads):
-        out_allclose = self._validate(out, self.refout_tensors[0], self.lp_refout_tensors[0], self.OUT_FUDGE_FACTOR)
+        out_allclose = self._validate(out, self.refout_tensors[0], self.lp_refout_tensors[0], self.OUT_FUDGE_FACTOR, 'out')
         grads_allclose = []
-        for grad, ref, lp_ref, fudge_factor in zip(grads, self.dref_tensors, self.lp_dref_tensors, self.FUDGE_FACTORS):
-            allclose = self._validate(grad, ref, lp_ref, fudge_factor)
+        for grad, ref, lp_ref, fudge_factor, tname in zip(grads, self.dref_tensors, self.lp_dref_tensors, self.FUDGE_FACTORS, self.TENSOR_NAMES):
+            allclose = self._validate(grad, ref, lp_ref, fudge_factor, tname)
             grads_allclose.append(allclose)
         return out_allclose, grads_allclose

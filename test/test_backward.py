@@ -61,7 +61,8 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
     tri_out, encoded_softmax, _ = attention(q, k, v, b, causal, sm_scale, dropout_p, return_encoded_softmax, USE_AUTOTUNE)
     dropout_mask = encoded_softmax >= 0
     sdpa_params = SdpaParams(causal=causal, sm_scale=sm_scale, dropout_p=dropout_p, dropout_mask=dropout_mask)
-    ctx.compute_ref_forward(sdpa_params)
+    ref_out, _ = ctx.compute_ref_forward(sdpa_params)
+
     dout = torch.randn_like(tri_out)
     ctx.compute_backward(tri_out, dout)
     is_allclose, grads_allclose = ctx.validate_with_reference(tri_out, ctx.dout_tensors)
@@ -76,6 +77,17 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
     dq_allclose, dk_allclose, dv_allclose, db_allclose = grads_allclose
     tri_dq, tri_dk, tri_dv, tri_db = ctx.dout_tensors
     ref_dq, ref_dk, ref_dv, ref_db = ctx.dref_tensors
+    if not SKIP_DQ:
+        assert tri_dq is not None
+        assert ref_dq is not None
+    if not SKIP_DK_DV:
+        assert tri_dk is not None
+        assert tri_dv is not None
+        assert ref_dk is not None
+        assert ref_dv is not None
+    if not SKIP_DB:
+        assert tri_db is not None
+        assert ref_db is not None
     def TO(ref_tensor):
         return ref_tensor.to(device=q.device, dtype=dtype)
     if not dv_allclose:

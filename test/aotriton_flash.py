@@ -30,6 +30,8 @@ def mk_aotensor(q, if_empty_then_like=None):
         assert False, f'Unsupported tensor rank {rank}, shape {q.shape}'
     if q is None:
         return klass(0, [0] * rank, [0] * rank, cast_dtype(if_empty_then_like.dtype))
+    if q is not None:
+        assert q.stride(-1) == 1, "AOTriton assumes the last stride of Tensors be 1"
     return klass(q.data_ptr(), tuple(q.size()), q.stride(), cast_dtype(q.dtype))
 
 def attn_fwd(q, k, v, b, sm_scale, M, o,
