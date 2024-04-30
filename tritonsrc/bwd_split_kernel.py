@@ -477,8 +477,8 @@ def bwd_kernel_dq(
         # compute ds = p * (dp - delta[:, None])
         ds = p * (dp - Di[:, None])
         if BIAS_TYPE == 1:
-            # if store_db:
-            tl.store(DB_block_ptr, ds.to(DB.type.element_ty), boundary_check=(0,1))
+            if store_db:
+                tl.store(DB_block_ptr, ds.to(DB.type.element_ty), boundary_check=(0,1))
         # compute dq. Unfortunately we cannot avoid transpose here as this loop
         # uses k both normal and transpose.
         if BLOCK_M == 1:
