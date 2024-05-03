@@ -144,11 +144,14 @@ class ShimMakefileGenerator(MakefileGenerator):
         grand_target = LIBRARY_NAME
         self._build_dir = Path(args.build_dir)
         f = open(self._build_dir / 'Makefile.shim', 'w')
+        arf = open(self._build_dir / 'ar.txt', 'w')
         super().__init__(args=args, grand_target=grand_target, out=f)
         self._library_suffixes = ['.a']  if args.archive_only else ['.a', '.so']
+        self._arf = arf
 
     def __del__(self):
         self._out.close()
+        self._arf.close()
 
     def gen_children(self, out):
         for k in triton_kernels:
@@ -173,7 +176,8 @@ class ShimMakefileGenerator(MakefileGenerator):
             fn = f'{LIBRARY_NAME}{s}'
             print(fn, ': ', all_object_files, file=self._out)
             if s == '.a':
-                print('\t', '${AR} -r ', fn, all_object_files, file=f)
+                print('\t', '${AR} -r ', fn, '@ar.txt', file=f)
+                print(all_object_files, file=self._arf)
             if s == '.so':
                 print('\t', COMPILER, ' -g -shared -fPIC -o ', fn, all_object_files, file=f)
             print('\n\n', file=f)

@@ -59,10 +59,11 @@ def bench_flash_attention(BATCH, H, N_CTX, D_HEAD, causal, mode, provider, dtype
         q = torch.randn((BATCH, H, N_CTX, D_HEAD), dtype=dtype, device="cuda", requires_grad=True)
         k = torch.randn((BATCH, H, N_CTX, D_HEAD), dtype=dtype, device="cuda", requires_grad=True)
         v = torch.randn((BATCH, H, N_CTX, D_HEAD), dtype=dtype, device="cuda", requires_grad=True)
+        b = None
         sm_scale = 1.3
         autotune = True
         return_encoded_softmax = False
-        fn = lambda: attention(q, k, v, causal, sm_scale, split_kernel, return_encoded_softmax, autotune)
+        fn = lambda: attention(q, k, v, b, causal, sm_scale, split_kernel, return_encoded_softmax, autotune)
         if mode == 'bwd':
             o = fn()
             do = torch.randn_like(o)

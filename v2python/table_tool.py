@@ -17,6 +17,8 @@ def parse():
                    help='Action to perform')
     p.add_argument('--table_name', type=str, help='Table to dump/load')
     p.add_argument('--table_file', type=str, help='CSV file of dump/load')
+    p.add_argument('--select_where', type=str, default='', help='Extra WHERE clause for SQL to only dump selected rows to CSV file')
+    p.add_argument('--ignore_id', action='store_true', help='Ignore row IDs when loading CSV to database, useful for table merge')
     args = p.parse_args()
     return args
 
@@ -129,7 +131,7 @@ class TuningDatabase(object):
 
     def dumpcsv(self, table_name, table_file):
         with open(table_file, mode='w', newline='') as file:
-            self._cur.execute(f"SELECT * FROM {table_name};")
+            self._cur.execute(f"SELECT * FROM {table_name} WHERE {self._args.select_where};")
             writer = csv.writer(file)
             colunm_names = [tup[0] for tup in self._cur.description]
             writer.writerow(colunm_names)
@@ -143,10 +145,15 @@ class TuningDatabase(object):
         with open(table_file, mode='r', newline='') as file:
             reader = csv.reader(file)
             csv_headers = next(reader)
+            if self._args.ignore_id:
+                assert csv_headers[0] == 'id', "--ignore_id: First column of CSV is not 'id'. This tool does not handle more compilicated situations."
+                csv_headers = csv_headers[1:]
             colunm_names = ', '.join(csv_headers)
             placeholders = ', '.join(['?'] * len(csv_headers))
             stmt = f'INSERT INTO {table_name} ({colunm_names}) VALUES({placeholders});'
             for row in reader:
+                if self._args.ignore_id:
+                    row = row[1:]
                 self._cur.execute(stmt, row)
             self._conn.commit()
 
