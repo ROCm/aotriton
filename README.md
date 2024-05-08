@@ -3,9 +3,9 @@
 ```
 mkdir build
 cd build
-cmake .. -DCMAKE_INSTALL_PREFIX=./install_dir -DCMAKE_BUILD_TYPE=Release
+cmake .. -DCMAKE_INSTALL_PREFIX=./install_dir -DCMAKE_BUILD_TYPE=Release -G Ninja
 # Use ccmake to tweak options
-make install
+ninja install
 ```
 
 The library and the header file can be found under `build/install_dir` afterwards.
@@ -16,6 +16,8 @@ system, `make install` will run the whole build process unconditionally.
 ### Prerequisites
 
 * `hipcc` in `/opt/rocm/bin`, as a part of [ROCm](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/)
+* `cmake`
+* `ninja`
 
 ## Generation
 

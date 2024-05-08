@@ -93,7 +93,7 @@ class KernelTuningEntryForFunctionalOnGPU(object):
             fs_atk_values = tuple(atk_values)
             self._lut_tensor[indices] = self._lut_dic[fs_atk_values]
         # FIXME: Debugging
-        if self._kdesc.SHIM_KERNEL_NAME == 'attn_fwd':
+        if False and self._kdesc.SHIM_KERNEL_NAME == 'attn_fwd':
             print(f'_build_lut_tensor {self._autotune_key_values=}')
             print(f'_build_lut_tensor {self._autotune_key_buckets=}')
             print(f'_build_lut_tensor {self._lut_tensor=}', flush=True)
@@ -136,7 +136,7 @@ class KernelTuningEntryForFunctionalOnGPU(object):
         ALIGN = ',\n' + 4 * ' '
         return ALIGN.join(kernel_image_perfs)
 
-    def write_lut_source(self, outdir : 'pathlib.Path', compressed):
+    def write_lut_source(self, outdir : 'pathlib.Path', compressed, bare_mode):
         gpu_kernel_image_dir = outdir.parent / f'gpu_kernel_image.{self._kdesc.SHIM_KERNEL_NAME}'
         lut_tensor, sigs = self.get_lut()
         try:
@@ -146,6 +146,8 @@ class KernelTuningEntryForFunctionalOnGPU(object):
             raise e
         godel_number = first_sig.godel_number
         ofn = outdir / f'{first_sig.functional_signature}_{first_sig.target_gpu}.cc'
+        if bare_mode:
+            return ofn
         with open(ofn, 'w') as f:
             d = {
                 'incbin_kernel_images'  : self.codegen_incbin_code(gpu_kernel_image_dir, compressed=compressed),
