@@ -12,7 +12,6 @@ set(CMAKE_CXX_COMPILER hipcc)
 
 set(VENV_DIR "${CMAKE_CURRENT_BINARY_DIR}/venv" CACHE STRING "Virtual Environment Directory")
 set(AOTRITON_HIPCC_PATH "hipcc" CACHE STRING "Set HIPCC Path")
-option(AOTRITON_BUILD_V1 "Build AOTriton API V1" OFF) # Compiler aborted when compiling hsaco files
 option(AOTRITON_BUILD_V2 "Build AOTriton API V2" ON)
 option(AOTRITON_NO_SHARED "Disable shared object build. Incompatible with AOTRITON_COMPRESS_KERNEL." ON)
 option(AOTRITON_NO_PYTHON "Disable python binding build" OFF)
@@ -92,10 +91,6 @@ add_custom_target(aotriton_venv_triton
   BYPRODUCTS "${VENV_SITE}/triton/_C/libtriton.so"
   )
 add_dependencies(aotriton_venv_triton aotriton_venv_req)
-
-if(AOTRITON_BUILD_V1)
-    add_subdirectory(csrc)
-endif(AOTRITON_BUILD_V1)
 
 if(AOTRITON_BUILD_V2)
     add_subdirectory(v2src)
