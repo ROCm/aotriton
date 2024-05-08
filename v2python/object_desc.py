@@ -7,10 +7,6 @@ import json
 
 SOURCE_PATH = Path(__file__).resolve()
 
-def _get_template(name='kernel_shim.cc'):
-    with open(SOURCE_PATH.parent.parent / 'csrc' / 'template' / name, 'r') as f:
-        return f.read()
-
 class ObjectFileDescription(object):
     SIGNATURE_TO_C = {
         'fp32'  : 'float',
@@ -28,9 +24,6 @@ class ObjectFileDescription(object):
     DEFAULT_NUM_WARPS = 4
     DEFAULT_NUM_STAGES = 4
     DEFAULT_WAVES_PER_EU = 0
-    CXX_TEMPLATE = _get_template()
-    CXX_HEADER_TEMPLATE_HEADER = _get_template('kernel_shim.header.h')
-    CXX_HEADER_TEMPLATE_FOOTER = _get_template('kernel_shim.footer.h')
 
     def __init__(self,
                  triton_kernel_desc : 'KernelDescription',
@@ -129,32 +122,6 @@ class ObjectFileDescription(object):
     def target_gpu(self):
         return self._signature.target_gpu
 
-    def generate_shim_source(self) -> str:
-        shim_arguments, casted_shim_parameters = self.compute_c_argument()
-        # template_arguments, template_constants = self.compute_template_arguments()
-        template_specialization = self.compute_struct_template_specialization(align1=len(self.SHIM_KERNEL_NAME)+1)
-        fmt = {
-                'hsaco_kernel_name' : self.binary_entrance,
-                'incbin_symbol_name' : self.SHIM_KERNEL_NAME + '__' + self.compact_signature,
-                'hsaco_kernel_path' : self._hsaco_kernel_path.absolute(),
-                'shim_kernel_name' : self.SHIM_KERNEL_NAME,
-                'shim_kernel_specialization' : template_specialization,
-                'num_warps' : self.num_warps,
-                'num_stages' : self.num_stages,
-                'warp_size' : self.warp_size,
-                'shared_memory_size' : self._metadata['shared'],
-                'shim_arguments' : shim_arguments,
-                'casted_shim_parameters' : casted_shim_parameters,
-               }
-        return ObjectFileDescription.CXX_TEMPLATE.format_map(fmt)
-
-    def generate_shim_header_leading(self) -> str:
-        fmt = {
-                'template_constants': self.compute_struct_template_typenames(),
-                'shim_kernel_name': self.SHIM_KERNEL_NAME,
-        }
-        return ObjectFileDescription.CXX_HEADER_TEMPLATE_HEADER.format_map(fmt)
-
     def generate_shim_header_member_function(self) -> str:
         TEMPLATE = ' hipError_t operator()(dim3 grid, {shim_arguments}, hipStream_t stream);\n'
         shim_arguments, _ = self.compute_c_argument()
@@ -174,9 +141,6 @@ class ObjectFileDescription(object):
             'shim_kernel_specialization': template_specialization,
         }
         return TEMPLATE.format_map(fmt)
-
-    def generate_shim_header_trailing(self) -> str:
-        return self.CXX_HEADER_TEMPLATE_FOOTER
 
     def compute_c_argument(self, align1=23, align2=30):
         arguments = self.get_c_arguments()
