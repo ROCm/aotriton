@@ -2,6 +2,9 @@
 # SPDX-License-Identifier: MIT
 
 message("CMAKE_SOURCE_DIR ${CMAKE_SOURCE_DIR}")
+message("CMAKE_CURRENT_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}")
+cmake_path(GET CMAKE_CURRENT_SOURCE_DIR PARENT_PATH CMAKE_CURRENT_SOURCE_PARENT_DIR)
+message("CMAKE_CURRENT_SOURCE_PARENT_DIR ${CMAKE_CURRENT_SOURCE_PARENT_DIR}")
 message("CMAKE_CURRENT_LIST_DIR ${CMAKE_CURRENT_LIST_DIR}")
 message("CMAKE_CURRENT_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}")
 set(AOTRITON_V2_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}")
@@ -13,7 +16,7 @@ if(AOTRITON_COMPRESS_KERNEL)
 endif(AOTRITON_COMPRESS_KERNEL)
 add_custom_target(aotriton_v2_gen_compile
   COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} PATH="${VENV_DIR}/bin:$ENV{PATH}" python -m v2python.generate_compile --target_gpus ${TARGET_GPUS} --build_dir "${AOTRITON_V2_BUILD_DIR}" ${AOTRITON_GEN_FLAGS}
-  WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
   BYPRODUCTS "${AOTRITON_V2_BUILD_DIR}/Makefile.compile"
 )
 add_dependencies(aotriton_v2_gen_compile aotriton_venv_triton)
@@ -51,7 +54,7 @@ message(STATUS "AOTRITON_SHIM_FLAGS ${AOTRITON_SHIM_FLAGS}")
 
 add_custom_target(aotriton_v2_gen_shim
   COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} PATH="${VENV_DIR}/bin:$ENV{PATH}" python -m v2python.generate_shim --target_gpus ${TARGET_GPUS} --build_dir ${AOTRITON_V2_BUILD_DIR} ${AOTRITON_SHIM_FLAGS}
-  WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
   COMMAND_EXPAND_LISTS
   BYPRODUCTS "${AOTRITON_V2_BUILD_DIR}/Makefile.shim"
 )
@@ -68,7 +71,7 @@ add_dependencies(aotriton_v2 aotriton_v2_gen_shim)
 
 include(GNUInstallDirs)
 message("CMAKE_INSTALL_INCLUDEDIR ${CMAKE_INSTALL_INCLUDEDIR}")
-install(DIRECTORY "${CMAKE_SOURCE_DIR}/include/aotriton" DESTINATION ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_INCLUDEDIR})
+install(DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}/include/aotriton" DESTINATION ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_INCLUDEDIR})
 # A few considerations
 # 1. .so file is used for sanity check to ensure all symbols are resolved,
 #    but it will not be installed because .a is what you should use to avoid setting
@@ -82,4 +85,4 @@ add_dependencies(aotriton aotriton_v2)
 # target_link_libraries(aotriton INTERFACE ${CMAKE_INSTALL_PREFIX}/lib/libaotriton_v2.a)
 # target_include_directories(aotriton INTERFACE ${CMAKE_INSTALL_PREFIX}/include)
 target_link_libraries(aotriton INTERFACE ${AOTRITON_V2_BUILD_DIR}/libaotriton_v2.a)
-target_include_directories(aotriton INTERFACE ${CMAKE_SOURCE_DIR}/include)
+target_include_directories(aotriton INTERFACE ${CMAKE_CURRENT_SOURCE_PARENT_DIR}/include)
