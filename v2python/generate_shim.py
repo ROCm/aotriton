@@ -25,6 +25,8 @@ def parse():
     p.add_argument("--build_dir", type=str, default='build/', help="build directory")
     p.add_argument("--archive_only", action='store_true', help='Only generate archive library instead of shared library. No linking with dependencies.')
     p.add_argument("--enable_zstd", type=str, default=None, help="Use zstd to compress the compiled kernel")
+    p.add_argument("--bare_mode", action='store_true', help="Instead of generating a proper Makefile, only generate a list of source files and leave the remaining tasks to cmake.")
+    p.add_argument("--verbose", action='store_true', help="Print debugging messages")
     args = p.parse_args()
     args._build_root = Path(args.build_dir)
     # print(args)
@@ -53,6 +55,14 @@ class Generator(object):
     @property
     def is_file(self):
         return False
+
+    @property
+    def is_bare(self):
+        return self._args.bare_mode
+
+    def verbose(self, *args, **kwargs):
+        if self._args.verbose:
+            print(*args, **kwargs)
 
     @property
     def build_root(self):
@@ -135,6 +145,8 @@ class MakefileGenerator(MakefileSegmentGenerator):
         shutil.copyfileobj(self._main_content, self._out)
 
     def write_conclude(self):
+        if self.is_bare:
+            return
         print('.PHONY: ', ' '.join(self._phony), file=self._out)
 
 class ShimMakefileGenerator(MakefileGenerator):
@@ -143,7 +155,10 @@ class ShimMakefileGenerator(MakefileGenerator):
         # grand_target = LIBRARY_NAME + '.a' if args.archive else '.so'
         grand_target = LIBRARY_NAME
         self._build_dir = Path(args.build_dir)
-        f = open(self._build_dir / 'Makefile.shim', 'w')
+        if args.bare_mode:  # CAVEAT: .is_bare is unavailable at the moment
+            f = open(self._build_dir / 'Bare.shim', 'w')
+        else:
+            f = open(self._build_dir / 'Makefile.shim', 'w')
         arf = open(self._build_dir / 'ar.txt', 'w')
         super().__init__(args=args, grand_target=grand_target, out=f)
         self._library_suffixes = ['.a']  if args.archive_only else ['.a', '.so']
@@ -161,6 +176,8 @@ class ShimMakefileGenerator(MakefileGenerator):
     def write_prelude(self):
         f = self._out
         super().write_prelude()
+        if self.is_bare:
+            return
         print(f"HIPCC={COMPILER}", file=f)
         print(f"AR={LINKER}", file=f)
         print(f"EXTRA_COMPILER_OPTIONS=-O0 -g -ggdb3", file=f)
@@ -170,6 +187,8 @@ class ShimMakefileGenerator(MakefileGenerator):
         print(self._grand_target, ':', ' '.join([f'{LIBRARY_NAME}{s}' for s in self._library_suffixes]), '\n\n', file=self._out)
 
     def write_conclude(self):
+        if self.is_bare:
+            return
         f = self._out
         all_object_files = ' '.join([str(p) for p in self.list_of_output_object_files])
         for s in self._library_suffixes:
@@ -209,9 +228,12 @@ class SourceBuilder(MakefileSegmentGenerator):
             ofn.parent.mkdir(parents=True, exist_ok=True)
             makefile_target = ofn.relative_to(self._build_dir)
             self._objpaths.append(makefile_target)
-            print(makefile_target, ':', str(cfn.absolute()), file=self._out)
-            cmd = self._cc_cmd + f' {cfn.absolute()} -I{self._build_dir.absolute()} -o {ofn.absolute()} -c'
-            print('\t', cmd, '\n', file=self._out)
+            if self.is_bare:
+                print(str(cfn.absolute()), file=self._out)
+            else:
+                print(makefile_target, ':', str(cfn.absolute()), file=self._out)
+                cmd = self._cc_cmd + f' {cfn.absolute()} -I{self._build_dir.absolute()} -o {ofn.absolute()} -c'
+                print('\t', cmd, '\n', file=self._out)
 
     @property
     def list_of_self_object_files(self) -> 'list[Path]':
@@ -248,9 +270,12 @@ class KernelShimGenerator(MakefileSegmentGenerator):
     def write_body(self):
         ofn = self._shim_src.with_suffix('.o')
         makefile_target = ofn.relative_to(self.build_root)
-        print(makefile_target, ':', str(self._shim_hdr.absolute()), str(self._shim_src.absolute()), file=self._out)
-        cmd  = self._cc_cmd + f' {self._shim_src.absolute()} -o {ofn.absolute()} -c -fPIC -std=c++20'
-        print('\t', cmd, '\n', file=self._out)
+        if self.is_bare:
+            print(str(self._shim_src.absolute()), file=self._out)
+        else:
+            print(makefile_target, ':', str(self._shim_hdr.absolute()), str(self._shim_src.absolute()), file=self._out)
+            cmd  = self._cc_cmd + f' {self._shim_src.absolute()} -o {ofn.absolute()} -c -fPIC -std=c++20'
+            print('\t', cmd, '\n', file=self._out)
         self._objpaths.append(makefile_target)
 
     def gen_children(self, out):
@@ -268,10 +293,14 @@ class KernelShimGenerator(MakefileSegmentGenerator):
                 break
             '''
 
+        if self.is_bare:
+            return
         for o in k.gen_all_object_files(p, tuned_db=ktd, sancheck_fileexists=True):
             yield ObjectShimCodeGenerator(self._args, k, o)
 
     def write_conclude(self):
+        if self.is_bare:
+            return
         objs = [c._odesc for c in self._children if isinstance(c, ObjectShimCodeGenerator)]
         self._kdesc.write_shim_header(self._fhdr, objs)
         self._kdesc.write_shim_source(self._fsrc, objs)
@@ -291,19 +320,23 @@ class AutotuneCodeGenerator(MakefileSegmentGenerator):
         self._lut = lut
 
     def write_body(self):
-        print('AutotuneCodeGenerator')
+        self.verbose('AutotuneCodeGenerator')
         # Write the code to file
         self._ofn = self._lut.write_lut_source(self._outdir,
-                                               compressed=self._args.enable_zstd is not None)
-        print(f'\t lut = {self._fsels}')
-        print(f'\t ofn = {self._ofn}')
+                                               compressed=self._args.enable_zstd is not None,
+                                               bare_mode=self.is_bare)
+        self.verbose(f'\t lut = {self._fsels}')
+        self.verbose(f'\t ofn = {self._ofn}')
         self._obj_fn = self._ofn.with_suffix('.o')
         self._makefile_target = self._obj_fn.relative_to(self._build_dir)
         # Write the Makefile segment
-        print('#', self._fsels, file=self._out)
-        print(self._makefile_target, ':', self._ofn.relative_to(self._build_dir), file=self._out)
-        cmd  = self._cc_cmd + f' {self._ofn.absolute()} -o {self._obj_fn.absolute()} -c'
-        print('\t', cmd, '\n', file=self._out)
+        if self.is_bare:
+            print(str(self._ofn.absolute()), file=self._out)
+        else:
+            print('#', self._fsels, file=self._out)
+            print(self._makefile_target, ':', self._ofn.relative_to(self._build_dir), file=self._out)
+            cmd  = self._cc_cmd + f' {self._ofn.absolute()} -o {self._obj_fn.absolute()} -c'
+            print('\t', cmd, '\n', file=self._out)
 
     @property
     def list_of_self_object_files(self) -> 'list[Path]':
