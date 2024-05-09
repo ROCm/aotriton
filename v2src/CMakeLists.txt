@@ -42,22 +42,41 @@ foreach(RULE IN LISTS HSACO_RULES)
   list(POP_FRONT RULE WAVESPEREU)
   list(POP_FRONT RULE TGTGPU)
   list(POP_FRONT RULE SIG)
-  add_custom_command(OUTPUT "${HSACO}"
-    COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_DIR}/bin/python"
-    "${AOTRITON_COMPILER}"
-    "${SRC}"
-    "--kernel_name" "${KNAME}"
-    "-o" "${HSACO}"
-    "-g" "1,1,1"
-    "--num_warps" "${NWARPS}"
-    "--num_stages" "${NSTAGES}"
-    "--waves_per_eu" "${WAVESPEREU}"
-    "--target" "${TGTGPU}"
-    "--signature" "${SIG}"
-    DEPENDS aotriton_venv_triton
-  )
+  if(AOTRITON_COMPRESS_KERNEL)
+    add_custom_command(OUTPUT "${HSACO}.zst"
+      COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_DIR}/bin/python"
+      "${AOTRITON_COMPILER}"
+      "${SRC}"
+      "--kernel_name" "${KNAME}"
+      "-o" "${HSACO}"
+      "-g" "1,1,1"
+      "--num_warps" "${NWARPS}"
+      "--num_stages" "${NSTAGES}"
+      "--waves_per_eu" "${WAVESPEREU}"
+      "--target" "${TGTGPU}"
+      "--signature" "${SIG}"
+      COMMAND ${ZSTD_EXEC} "-f" ${HSACO}
+      DEPENDS aotriton_venv_triton
+    )
+    list(APPEND ALL_HSACOS "${HSACO}.zst")
+  else(AOTRITON_COMPRESS_KERNEL)
+    add_custom_command(OUTPUT "${HSACO}"
+      COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_DIR}/bin/python"
+      "${AOTRITON_COMPILER}"
+      "${SRC}"
+      "--kernel_name" "${KNAME}"
+      "-o" "${HSACO}"
+      "-g" "1,1,1"
+      "--num_warps" "${NWARPS}"
+      "--num_stages" "${NSTAGES}"
+      "--waves_per_eu" "${WAVESPEREU}"
+      "--target" "${TGTGPU}"
+      "--signature" "${SIG}"
+      DEPENDS aotriton_venv_triton
+    )
+    list(APPEND ALL_HSACOS "${HSACO}")
+  endif(AOTRITON_COMPRESS_KERNEL)
   # message("HSACO ${HSACO}")
-  list(APPEND ALL_HSACOS ${HSACO})
 endforeach(RULE)
 
 if(DEFINED ENV{MAX_JOBS})
@@ -82,15 +101,15 @@ add_custom_target(aotriton_v2_compile ALL DEPENDS ${ALL_HSACOS})
 #   # There are other by-products we did not bother to list here
 # )
 
-# set(AOTRITON_SHIM_FLAGS "")
-# if(AOTRITON_NO_SHARED)
-#     list(APPEND AOTRITON_SHIM_FLAGS "--archive_only" "${AOTRITON_SHIM_FLAGS}")
-# endif(AOTRITON_NO_SHARED)
-# if(AOTRITON_ZSTD_INCLUDE)
-#     list(APPEND AOTRITON_SHIM_FLAGS "--enable_zstd" "${AOTRITON_ZSTD_INCLUDE}")
-# endif()
-# message(STATUS "AOTRITON_ZSTD_INCLUDE ${AOTRITON_ZSTD_INCLUDE}")
-# message(STATUS "AOTRITON_SHIM_FLAGS ${AOTRITON_SHIM_FLAGS}")
+set(AOTRITON_SHIM_FLAGS "")
+if(AOTRITON_NO_SHARED)
+    list(APPEND AOTRITON_SHIM_FLAGS "--archive_only" "${AOTRITON_SHIM_FLAGS}")
+endif(AOTRITON_NO_SHARED)
+if(AOTRITON_ZSTD_INCLUDE)
+    list(APPEND AOTRITON_SHIM_FLAGS "--enable_zstd" "${AOTRITON_ZSTD_INCLUDE}")
+endif()
+message(STATUS "AOTRITON_ZSTD_INCLUDE ${AOTRITON_ZSTD_INCLUDE}")
+message(STATUS "AOTRITON_SHIM_FLAGS ${AOTRITON_SHIM_FLAGS}")
 
 execute_process(
   COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_DIR}/bin/python" -m v2python.generate_shim --target_gpus ${TARGET_GPUS} --build_dir ${AOTRITON_V2_BUILD_DIR} --bare_mode
@@ -101,8 +120,9 @@ file(STRINGS "${AOTRITON_V2_BUILD_DIR}/Bare.shim" SHIM_CC_FILES)
 # CAVEAT: Actual shim code can only be generated during build phase because it
 # requires some kernel information. (Notably shared memory requirement)
 add_custom_target(aotriton_v2_gen_shim 
-  COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_DIR}/bin/python" -m v2python.generate_shim --target_gpus ${TARGET_GPUS} --build_dir ${AOTRITON_V2_BUILD_DIR}
+  COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_DIR}/bin/python" -m v2python.generate_shim --target_gpus ${TARGET_GPUS} --build_dir ${AOTRITON_V2_BUILD_DIR} ${AOTRITON_SHIM_FLAGS}
   BYPRODUCTS ${SHIM_CC_FILES}  # Essential, otherwise add_library complains
+  COMMAND_EXPAND_LISTS
   WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/.."
 )
 add_dependencies(aotriton_v2_gen_shim aotriton_v2_compile)
