@@ -113,7 +113,7 @@ def main():
     for i in equal_to_1:
         constexprs.update({i: 1})
     # print(f'{kernel=}')
-    ccinfo = triton.compile(kernel, signature=signature, constants=constexprs, configs=[config], num_warps=args.num_warps, num_stages=args.num_stages, waves_per_eu=args.waves_per_eu, aot_arch=args.target)
+    ccinfo = triton.compile(kernel, single_cpu=True, signature=signature, constants=constexprs, configs=[config], num_warps=args.num_warps, num_stages=args.num_stages, waves_per_eu=args.waves_per_eu, aot_arch=args.target)
     hsaco_path = ccinfo.asm.get('hsaco_path', None)
     if args.verbose:
         print(dir(ccinfo))

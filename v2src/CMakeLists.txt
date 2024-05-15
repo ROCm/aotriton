@@ -27,6 +27,7 @@ message("AOTRITON_COMPILER ${AOTRITON_COMPILER}")
 
 execute_process(
   COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_DIR}/bin/python" -m v2python.generate_compile --target_gpus ${TARGET_GPUS} --build_dir "${AOTRITON_V2_BUILD_DIR}" --bare_mode
+  COMMAND_ECHO STDOUT
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
 )
 message("Bare.compile: ${AOTRITON_V2_BUILD_DIR}/Bare.compile")
@@ -113,6 +114,7 @@ message(STATUS "AOTRITON_SHIM_FLAGS ${AOTRITON_SHIM_FLAGS}")
 
 execute_process(
   COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_DIR}/bin/python" -m v2python.generate_shim --target_gpus ${TARGET_GPUS} --build_dir ${AOTRITON_V2_BUILD_DIR} --bare_mode
+  COMMAND_ECHO STDOUT
   WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/.."
 )
 file(STRINGS "${AOTRITON_V2_BUILD_DIR}/Bare.shim" SHIM_CC_FILES)

@@ -18,6 +18,31 @@ LINKER = 'ar'
 
 LIBRARY_NAME = 'libaotriton_v2'
 
+class NoWriteIfNoUpdateFile(object):
+    def __init__(self, ofn : Path):
+        self._ofn = ofn
+        self._old_content = ''
+        self._mf = io.StringIO()
+        if ofn.exists():
+            with open(ofn) as f:
+                self._old_content = f.read()
+
+    @property
+    def path(self):
+        return self._ofn
+
+    @property
+    def memory_file(self):
+        return self._mf
+
+    def close(self):
+        mf = self.memory_file
+        mf.seek(0)
+        if mf.read() != self._old_content:
+            mf.seek(0)
+            with open(self.path, 'w') as of:
+                shutil.copyfileobj(mf, of)
+
 def parse():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument("--target_gpus", type=str, default=None, nargs='*',
@@ -249,10 +274,10 @@ class KernelShimGenerator(MakefileSegmentGenerator):
         self._kdesc.set_target_gpus(args.target_gpus)
         self._shim_path = Path(args.build_dir) / k.KERNEL_FAMILY
         self._shim_path.mkdir(parents=True, exist_ok=True)
-        self._shim_hdr = self._shim_path / Path(self.SHIM_FILE_STEM + '.h')
-        self._shim_src = self._shim_hdr.with_suffix('.cc')
-        self._fhdr = open(self._shim_hdr, 'w')
-        self._fsrc = open(self._shim_src, 'w')
+        self._shim_hdr = NoWriteIfNoUpdateFile(self._shim_path / Path(self.SHIM_FILE_STEM + '.h'))
+        self._shim_src = NoWriteIfNoUpdateFile(self._shim_hdr.path.with_suffix('.cc'))
+        self._fhdr = self._shim_hdr.memory_file
+        self._fsrc = self._shim_src.memory_file
         # Autotune dispatcher
         self._autotune_path = Path(args.build_dir) / k.KERNEL_FAMILY / f'autotune.{k.SHIM_KERNEL_NAME}'
         self._autotune_path.mkdir(parents=True, exist_ok=True)
@@ -264,17 +289,17 @@ class KernelShimGenerator(MakefileSegmentGenerator):
         return 'shim.' + self._kdesc.SHIM_KERNEL_NAME
 
     def __del__(self):
-        self._fhdr.close()
-        self._fsrc.close()
+        self._shim_hdr.close()
+        self._shim_src.close()
 
     def write_body(self):
-        ofn = self._shim_src.with_suffix('.o')
+        ofn = self._shim_src.path.with_suffix('.o')
         makefile_target = ofn.relative_to(self.build_root)
         if self.is_bare:
-            print(str(self._shim_src.absolute()), file=self._out)
+            print(str(self._shim_src.path.absolute()), file=self._out)
         else:
-            print(makefile_target, ':', str(self._shim_hdr.absolute()), str(self._shim_src.absolute()), file=self._out)
-            cmd  = self._cc_cmd + f' {self._shim_src.absolute()} -o {ofn.absolute()} -c -fPIC -std=c++20'
+            print(makefile_target, ':', str(self._shim_hdr.path.absolute()), str(self._shim_src.path.absolute()), file=self._out)
+            cmd  = self._cc_cmd + f' {self._shim_src.path.absolute()} -o {ofn.absolute()} -c -fPIC -std=c++20'
             print('\t', cmd, '\n', file=self._out)
         self._objpaths.append(makefile_target)
 
