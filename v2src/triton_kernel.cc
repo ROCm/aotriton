@@ -5,6 +5,7 @@
 #include <aotriton/runtime.h>
 #include <incbin.h>
 #include <iostream>
+#include <mutex>
 #if AOTRITON_USE_ZSTD
 #include <zstd.h>
 #endif
