@@ -68,8 +68,8 @@ class SQLiteKernelTuningDatabaseForArch(CommonKernelTuningDatabaseForArch):
         self._select_all_stmt_base = f'SELECT {stmt_all_columns} from {self._table_name} '
         stmt_tune_columns = ', '.join(self._tuning_column_names)
         self._select_tune_stmt_base = f'SELECT DISTINCT {stmt_tune_columns} from {self._table_name} '
-        print(f'{self._input_column_names=}')
-        print(f'{self._tuning_column_names=}')
+        # print(f'{self._input_column_names=}')
+        # print(f'{self._tuning_column_names=}')
 
     '''
     Unlike the json version, this one needs perf_meta for deduplication
@@ -80,8 +80,8 @@ class SQLiteKernelTuningDatabaseForArch(CommonKernelTuningDatabaseForArch):
         if not selected_rows:
             patched_values = self._apply_fallback(mfsels, where_columns, where_values)
             selected_columns, selected_rows = self._select_from_table(where_columns, patched_values, with_inputs=with_duplicates)
-        print(f'{selected_columns=}')
-        print(f'{selected_rows=}')
+        # print(f'{selected_columns=}')
+        # print(f'{selected_rows=}')
         assert selected_rows
         # TODO: Support KernelDescription.DOWNGRADER
         # return columns, values, self._downgrade(rows)
@@ -139,15 +139,15 @@ class SQLiteKernelTuningDatabaseForArch(CommonKernelTuningDatabaseForArch):
             return KernelTuningEntryForFunctionalOnGPU(kdesc, self, fsels,
                                                        indexed=None, autotune_keys=None,
                                                        perf_meta=perf_meta)
-        print(f'{autotune_keys=}')
+        # print(f'{autotune_keys=}')
         self._build_db_index(fsels)
         where_columns, where_values, selected_columns, selected_rows = self._lookup_tuning_info(fsels, perf_meta, with_duplicates=True)
-        print(f'SQLite.get_lut {fsels=}')
-        print(f'SQLite.get_lut {where_columns=}')
-        print(f'SQLite.get_lut {where_values=}')
+        # print(f'SQLite.get_lut {fsels=}')
+        # print(f'SQLite.get_lut {where_columns=}')
+        # print(f'SQLite.get_lut {where_values=}')
         lut_key = tuple([s.compact_signature for s in fsels])
         if lut_key not in self._lut:
-            print(f'{selected_rows=}')
+            # print(f'{selected_rows=}')
             assert selected_rows
             self._lut[lut_key] = KernelTuningEntryForFunctionalOnGPU(kdesc, self, fsels,
                                                                      selected_columns, selected_rows,
@@ -213,12 +213,12 @@ class SQLiteKernelTuningDatabaseForArch(CommonKernelTuningDatabaseForArch):
 
     def _select_from_table(self, columns, values, with_inputs):
         conds = [ 'arch = ?' ]
-        print(f'{columns=} {values=}')
+        # print(f'{columns=} {values=}')
         # Check value is not None in case falling back to any value
         conds += [f'{column} = ?' for column, v in zip(columns, values) if v is not None]
         select_vals = [self._arch]
         select_vals += [v for v in values if v is not None]
-        print(f'{conds=}')
+        # print(f'{conds=}')
         if with_inputs:
             stmt_base = self._select_all_stmt_base
             selected_columns = self._column_names
@@ -226,8 +226,8 @@ class SQLiteKernelTuningDatabaseForArch(CommonKernelTuningDatabaseForArch):
             stmt_base = self._select_tune_stmt_base
             selected_columns = self._tuning_column_names
         select_stmt = stmt_base + ' WHERE ' + ' AND '.join(conds)
-        print(f'{select_stmt=}')
-        print(f'{select_vals=}')
+        # print(f'{select_stmt=}')
+        # print(f'{select_vals=}')
         return selected_columns, self._conn.execute(select_stmt, select_vals).fetchall()
 
     def extract_inputs(self, columns, row):

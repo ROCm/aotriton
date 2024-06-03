@@ -10,16 +10,75 @@ message("CMAKE_CURRENT_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}")
 set(AOTRITON_V2_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}")
 execute_process(COMMAND ${CMAKE_COMMAND} -E make_directory "${AOTRITON_V2_BUILD_DIR}")
 
-set(AOTRITON_GEN_FLAGS "")
-if(AOTRITON_COMPRESS_KERNEL)
-  list(APPEND AOTRITON_GEN_FLAGS "--enable_zstd" "${ZSTD_EXEC}")
-endif(AOTRITON_COMPRESS_KERNEL)
-add_custom_target(aotriton_v2_gen_compile
-  COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} PATH="${VENV_DIR}/bin:$ENV{PATH}" python -m v2python.generate_compile --target_gpus ${TARGET_GPUS} --build_dir "${AOTRITON_V2_BUILD_DIR}" ${AOTRITON_GEN_FLAGS}
+get_filename_component(AOTRITON_COMPILER "${CMAKE_CURRENT_LIST_DIR}/../v2python/compile.py" ABSOLUTE)
+message("AOTRITON_COMPILER ${AOTRITON_COMPILER}")
+
+# set(AOTRITON_GEN_FLAGS "")
+# if(AOTRITON_COMPRESS_KERNEL)
+#   list(APPEND AOTRITON_GEN_FLAGS "--enable_zstd" "${ZSTD_EXEC}")
+# endif(AOTRITON_COMPRESS_KERNEL)
+
+# add_custom_target(aotriton_v2_gen_compile
+#   COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} PATH="${VENV_DIR}/bin:$ENV{PATH}" python -m v2python.generate_compile --target_gpus ${TARGET_GPUS} --build_dir "${AOTRITON_V2_BUILD_DIR}" ${AOTRITON_GEN_FLAGS}
+#   WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+#   BYPRODUCTS "${AOTRITON_V2_BUILD_DIR}/Makefile.compile"
+# )
+# add_dependencies(aotriton_v2_gen_compile aotriton_venv_triton)
+
+execute_process(
+  COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_DIR}/bin/python" -m v2python.generate_compile --target_gpus ${TARGET_GPUS} --build_dir "${AOTRITON_V2_BUILD_DIR}" --bare_mode
+  COMMAND_ECHO STDOUT
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
-  BYPRODUCTS "${AOTRITON_V2_BUILD_DIR}/Makefile.compile"
 )
-add_dependencies(aotriton_v2_gen_compile aotriton_venv_triton)
+message("Bare.compile: ${AOTRITON_V2_BUILD_DIR}/Bare.compile")
+file(STRINGS "${AOTRITON_V2_BUILD_DIR}/Bare.compile" HSACO_RULES)
+set(ALL_HSACOS "")
+foreach(RULE IN LISTS HSACO_RULES)
+  # message("${RULE}")
+  list(POP_FRONT RULE HSACO)
+  list(POP_FRONT RULE SRC)
+  list(POP_FRONT RULE KNAME)
+  list(POP_FRONT RULE NWARPS)
+  list(POP_FRONT RULE NSTAGES)
+  list(POP_FRONT RULE WAVESPEREU)
+  list(POP_FRONT RULE TGTGPU)
+  list(POP_FRONT RULE SIG)
+  if(AOTRITON_COMPRESS_KERNEL)
+    add_custom_command(OUTPUT "${HSACO}.zst"
+      COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_DIR}/bin/python"
+      "${AOTRITON_COMPILER}"
+      "${SRC}"
+      "--kernel_name" "${KNAME}"
+      "-o" "${HSACO}"
+      "-g" "1,1,1"
+      "--num_warps" "${NWARPS}"
+      "--num_stages" "${NSTAGES}"
+      "--waves_per_eu" "${WAVESPEREU}"
+      "--target" "${TGTGPU}"
+      "--signature" "${SIG}"
+      COMMAND ${ZSTD_EXEC} "-f" ${HSACO}
+      DEPENDS aotriton_venv_triton
+    )
+    list(APPEND ALL_HSACOS "${HSACO}.zst")
+  else(AOTRITON_COMPRESS_KERNEL)
+    add_custom_command(OUTPUT "${HSACO}"
+      COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_DIR}/bin/python"
+      "${AOTRITON_COMPILER}"
+      "${SRC}"
+      "--kernel_name" "${KNAME}"
+      "-o" "${HSACO}"
+      "-g" "1,1,1"
+      "--num_warps" "${NWARPS}"
+      "--num_stages" "${NSTAGES}"
+      "--waves_per_eu" "${WAVESPEREU}"
+      "--target" "${TGTGPU}"
+      "--signature" "${SIG}"
+      DEPENDS aotriton_venv_triton
+    )
+    list(APPEND ALL_HSACOS "${HSACO}")
+  endif(AOTRITON_COMPRESS_KERNEL)
+  # message("HSACO ${HSACO}")
+endforeach(RULE)
 
 if(DEFINED ENV{MAX_JOBS})
   set(MAX_JOBS "$ENV{MAX_JOBS}")
@@ -30,17 +89,18 @@ else()
   endif()
 endif()
 
-add_custom_target(aotriton_v2_compile
-  # (CAVEAT) KNOWN PROBLEM: Will not work if LD_PRELOAD is not empty
-  # FIXME: Change this into `-E env --modify LD_PRELOAD=path_list_prepend:${AMDOCL_LD_PRELOAD}` when minimal cmake >= 3.25
-  COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} PATH="${VENV_DIR}/bin:$ENV{PATH}" make -j ${MAX_JOBS} -f Makefile.compile LIBHSA_RUNTIME64=${AMDHSA_LD_PRELOAD}
-  WORKING_DIRECTORY "${AOTRITON_V2_BUILD_DIR}"
-  COMMAND_EXPAND_LISTS
-  BYPRODUCTS "${AOTRITON_V2_BUILD_DIR}/flash/attn_fwd.h"
-  "${AOTRITON_V2_BUILD_DIR}/flash/attn_fwd.cc"
-  # There are other by-products we did not bother to list here
-)
-add_dependencies(aotriton_v2_compile aotriton_v2_gen_compile)
+add_custom_target(aotriton_v2_compile ALL DEPENDS ${ALL_HSACOS})
+
+# add_custom_target(aotriton_v2_compile
+#   # (CAVEAT) KNOWN PROBLEM: Will not work if LD_PRELOAD is not empty
+#   # FIXME: Change this into `-E env --modify LD_PRELOAD=path_list_prepend:${AMDOCL_LD_PRELOAD}` when minimal cmake >= 3.25
+#   COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} PATH="${VENV_DIR}/bin:$ENV{PATH}" make -j ${MAX_JOBS} -f Makefile.compile LIBHSA_RUNTIME64=${AMDHSA_LD_PRELOAD}
+#   WORKING_DIRECTORY "${AOTRITON_V2_BUILD_DIR}"
+#   COMMAND_EXPAND_LISTS
+#   BYPRODUCTS "${AOTRITON_V2_BUILD_DIR}/flash/attn_fwd.h"
+#   "${AOTRITON_V2_BUILD_DIR}/flash/attn_fwd.cc"
+#   # There are other by-products we did not bother to list here
+# )
 
 set(AOTRITON_SHIM_FLAGS "")
 if(AOTRITON_NO_SHARED)
@@ -52,22 +112,49 @@ endif()
 message(STATUS "AOTRITON_ZSTD_INCLUDE ${AOTRITON_ZSTD_INCLUDE}")
 message(STATUS "AOTRITON_SHIM_FLAGS ${AOTRITON_SHIM_FLAGS}")
 
-add_custom_target(aotriton_v2_gen_shim
-  COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} PATH="${VENV_DIR}/bin:$ENV{PATH}" python -m v2python.generate_shim --target_gpus ${TARGET_GPUS} --build_dir ${AOTRITON_V2_BUILD_DIR} ${AOTRITON_SHIM_FLAGS}
-  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
-  COMMAND_EXPAND_LISTS
-  BYPRODUCTS "${AOTRITON_V2_BUILD_DIR}/Makefile.shim"
+execute_process(
+  COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_DIR}/bin/python" -m v2python.generate_shim --target_gpus ${TARGET_GPUS} --build_dir ${AOTRITON_V2_BUILD_DIR} --bare_mode
+  COMMAND_ECHO STDOUT
+  WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/.."
 )
-add_dependencies(aotriton_v2_gen_shim aotriton_v2_compile) # Shim source files need json metadata
+file(STRINGS "${AOTRITON_V2_BUILD_DIR}/Bare.shim" SHIM_CC_FILES)
 
-message(STATUS "AOTRITON_EXTRA_COMPILER_OPTIONS ${AOTRITON_EXTRA_COMPILER_OPTIONS}")
-add_custom_target(aotriton_v2
-  ALL
-  COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} PATH="${VENV_DIR}/bin:$ENV{PATH}" make -j ${MAX_JOBS} -f Makefile.shim HIPCC=${AOTRITON_HIPCC_PATH} AR=${CMAKE_AR} EXTRA_COMPILER_OPTIONS=${AOTRITON_EXTRA_COMPILER_OPTIONS}
-  WORKING_DIRECTORY "${AOTRITON_V2_BUILD_DIR}"
-  BYPRODUCTS "${AOTRITON_V2_BUILD_DIR}/libaotriton_v2.a"
+# CAVEAT: Actual shim code can only be generated during build phase because it
+# requires some kernel information. (Notably shared memory requirement)
+add_custom_target(aotriton_v2_gen_shim 
+  COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_DIR}/bin/python" -m v2python.generate_shim --target_gpus ${TARGET_GPUS} --build_dir ${AOTRITON_V2_BUILD_DIR} ${AOTRITON_SHIM_FLAGS}
+  BYPRODUCTS ${SHIM_CC_FILES}  # Essential, otherwise add_library complains
+  COMMAND_EXPAND_LISTS
+  WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/.."
 )
+add_dependencies(aotriton_v2_gen_shim aotriton_v2_compile)
+
+if(AOTRITON_NO_SHARED)
+  add_library(aotriton_v2 STATIC ${SHIM_CC_FILES})
+else(AOTRITON_NO_SHARED)
+  add_library(aotriton_v2 SHARED ${SHIM_CC_FILES})
+endif(AOTRITON_NO_SHARED)
 add_dependencies(aotriton_v2 aotriton_v2_gen_shim)
+
+if(AOTRITON_ZSTD_INCLUDE)
+  target_compile_definitions(aotriton_v2 PRIVATE -DAOTRITON_USE_ZSTD=1)
+  target_include_directories(aotriton_v2 PRIVATE ${AOTRITON_ZSTD_INCLUDE})
+else(AOTRITON_ZSTD_INCLUDE)
+  target_compile_definitions(aotriton_v2 PRIVATE -DAOTRITON_USE_ZSTD=0)
+endif(AOTRITON_ZSTD_INCLUDE)
+target_include_directories(aotriton_v2 PUBLIC ${CMAKE_CURRENT_LIST_DIR}/../include)
+target_include_directories(aotriton_v2 PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+target_include_directories(aotriton_v2 PRIVATE ${CMAKE_CURRENT_LIST_DIR}/../third_party/incbin)
+target_compile_options(aotriton_v2 PRIVATE -fPIC --no-offload-arch=all)
+
+# message(STATUS "AOTRITON_EXTRA_COMPILER_OPTIONS ${AOTRITON_EXTRA_COMPILER_OPTIONS}")
+# add_custom_target(aotriton_v2
+#   ALL
+#   COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} PATH="${VENV_DIR}/bin:$ENV{PATH}" make -j ${MAX_JOBS} -f Makefile.shim HIPCC=${AOTRITON_HIPCC_PATH} AR=${CMAKE_AR} EXTRA_COMPILER_OPTIONS=${AOTRITON_EXTRA_COMPILER_OPTIONS}
+#   WORKING_DIRECTORY "${AOTRITON_V2_BUILD_DIR}"
+#   BYPRODUCTS "${AOTRITON_V2_BUILD_DIR}/libaotriton_v2.a"
+# )
+# add_dependencies(aotriton_v2 aotriton_v2_gen_shim)
 
 include(GNUInstallDirs)
 message("CMAKE_INSTALL_INCLUDEDIR ${CMAKE_INSTALL_INCLUDEDIR}")

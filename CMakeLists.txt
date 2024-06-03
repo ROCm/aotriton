@@ -12,8 +12,6 @@ set(CMAKE_CXX_COMPILER hipcc)
 
 set(VENV_DIR "${CMAKE_CURRENT_BINARY_DIR}/venv" CACHE STRING "Virtual Environment Directory")
 set(AOTRITON_HIPCC_PATH "hipcc" CACHE STRING "Set HIPCC Path")
-option(AOTRITON_BUILD_V1 "Build AOTriton API V1" OFF) # Compiler aborted when compiling hsaco files
-option(AOTRITON_BUILD_V2 "Build AOTriton API V2" ON)
 option(AOTRITON_NO_SHARED "Disable shared object build. Incompatible with AOTRITON_COMPRESS_KERNEL." ON)
 option(AOTRITON_NO_PYTHON "Disable python binding build" OFF)
 option(AOTRITON_ENABLE_ASAN "Enable Address Sanitizer. Implies -g" OFF)
@@ -71,36 +69,33 @@ set(Python_ARTIFACTS_INTERACTIVE TRUE)
 execute_process(COMMAND "${Python3_EXECUTABLE}" -m venv "${VENV_DIR}")
 
 set(ENV{VIRTUAL_ENV} "${VENV_DIR}")
+message("VENV_DIR ${VENV_DIR}")
 # set(Python3_FIND_VIRTUALENV FIRST)
 # unset(Python3_EXECUTABLE)
 # find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
-execute_process(COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} PATH="${VENV_DIR}/bin:$ENV{PATH}" python -m site --user-site OUTPUT_VARIABLE VENV_SITE)
+execute_process(COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_DIR}/bin/python" -c "import site; print(site.getsitepackages()[0], end='')" OUTPUT_VARIABLE VENV_SITE)
+# string(STRIP "${VENV_SITE}" VENV_SITE)
 message("VENV_SITE ${VENV_SITE}")
 
-add_custom_target(aotriton_venv_req
-  COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} PATH="${VENV_DIR}/bin:$ENV{PATH}" python -m pip install -r "${CMAKE_CURRENT_LIST_DIR}/requirements.txt"
-  BYPRODUCTS "${VENV_DIR}/bin/pytest"
-)
+execute_process(COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_DIR}/bin/python" -m pip install -r "${CMAKE_CURRENT_LIST_DIR}/requirements.txt")
 
 set(TRITON_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/triton_build")
 execute_process(COMMAND ${CMAKE_COMMAND} -E make_directory "${TRITON_BUILD_DIR}")
-add_custom_target(aotriton_venv_triton
-  COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} PATH="${VENV_DIR}/bin:$ENV{PATH}" TRITON_BUILD_DIR=${TRITON_BUILD_DIR} python setup.py develop
+set(AOTRITON_TRITON_SO "${CMAKE_CURRENT_LIST_DIR}/third_party/triton/python/triton/_C/libtriton.so")
+set(AOTRITON_TRITON_EGGLINK "${VENV_SITE}/triton.egg-link")
+message("AOTRITON_TRITON_EGGLINK ${AOTRITON_TRITON_EGGLINK}")
+
+add_custom_command(OUTPUT "${AOTRITON_TRITON_EGGLINK}"
+  COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} TRITON_BUILD_DIR=${TRITON_BUILD_DIR} "${VENV_DIR}/bin/python" setup.py develop
   # COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} python -m pip show triton
   WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/third_party/triton/python/"
-  BYPRODUCTS "${VENV_SITE}/triton/_C/libtriton.so"
-  )
-add_dependencies(aotriton_venv_triton aotriton_venv_req)
+  BYPRODUCTS "${AOTRITON_TRITON_SO}"
+)
+add_custom_target(aotriton_venv_triton ALL DEPENDS ${AOTRITON_TRITON_EGGLINK})
 
-if(AOTRITON_BUILD_V1)
-    add_subdirectory(csrc)
-endif(AOTRITON_BUILD_V1)
+add_subdirectory(v2src)
 
-if(AOTRITON_BUILD_V2)
-    add_subdirectory(v2src)
-
-    if(NOT AOTRITON_NO_PYTHON)
-        add_subdirectory(bindings) # FIXME: compile python binding
-    endif()
-endif(AOTRITON_BUILD_V2)
+if(NOT AOTRITON_NO_PYTHON)
+    add_subdirectory(bindings) # FIXME: compile python binding
+endif()

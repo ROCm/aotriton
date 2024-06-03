@@ -6,6 +6,7 @@ from .kernel_desc import get_template
 import numpy as np
 import itertools
 import io
+import shutil
 import sys
 
 class KernelTuningEntryForFunctionalOnGPU(object):
@@ -93,7 +94,7 @@ class KernelTuningEntryForFunctionalOnGPU(object):
             fs_atk_values = tuple(atk_values)
             self._lut_tensor[indices] = self._lut_dic[fs_atk_values]
         # FIXME: Debugging
-        if self._kdesc.SHIM_KERNEL_NAME == 'attn_fwd':
+        if False and self._kdesc.SHIM_KERNEL_NAME == 'attn_fwd':
             print(f'_build_lut_tensor {self._autotune_key_values=}')
             print(f'_build_lut_tensor {self._autotune_key_buckets=}')
             print(f'_build_lut_tensor {self._lut_tensor=}', flush=True)
@@ -136,7 +137,7 @@ class KernelTuningEntryForFunctionalOnGPU(object):
         ALIGN = ',\n' + 4 * ' '
         return ALIGN.join(kernel_image_perfs)
 
-    def write_lut_source(self, outdir : 'pathlib.Path', compressed):
+    def write_lut_source(self, outdir : 'pathlib.Path', compressed, bare_mode):
         gpu_kernel_image_dir = outdir.parent / f'gpu_kernel_image.{self._kdesc.SHIM_KERNEL_NAME}'
         lut_tensor, sigs = self.get_lut()
         try:
@@ -146,28 +147,40 @@ class KernelTuningEntryForFunctionalOnGPU(object):
             raise e
         godel_number = first_sig.godel_number
         ofn = outdir / f'{first_sig.functional_signature}_{first_sig.target_gpu}.cc'
-        with open(ofn, 'w') as f:
-            d = {
-                'incbin_kernel_images'  : self.codegen_incbin_code(gpu_kernel_image_dir, compressed=compressed),
-                'incbin_kernel_names'   : self.codegen_incbin_names(gpu_kernel_image_dir, compressed=compressed),
-                'kernel_family_name'    : self._kdesc.KERNEL_FAMILY,
-                'shim_kernel_name'      : self._kdesc.SHIM_KERNEL_NAME,
-                'godel_number'          : godel_number,
-                'perf_fields'           : ';\n    '.join(self._kdesc.perf_fields),
-                'kernel_image_objects'  : self.codegen_kernel_image_objects(gpu_kernel_image_dir),
-                'kernel_image_perfs'    : self.codegen_kernel_image_perfs(gpu_kernel_image_dir),
-                'lut_dtype'             : self._lut_cdtype,
-                'lut_shape'             : self._lut_cshape,
-                'lut_data'              : self.lut_cdata,
-                'param_class_name'      : self._kdesc.param_class_name,
-                'binning_autotune_keys' : self.codegen_binning_code(),
-                'binned_indices'        : self.codegen_binned_indices(),
-                'perf_field_assignment' : self.codegen_perf_assignment(),
-                'gpu'                   : self._dba.gpu,
-                'arch_number'           : self._dba.arch_number,
-                'human_readable_signature' : first_sig.human_readable_signature
-            }
-            print(self.LUT_TEMPLATE.format_map(d), file=f)
+        if bare_mode:
+            return ofn
+        if ofn.exists():
+            with open(ofn) as f:
+                old_content = f.read()
+        else:
+            old_content = ''
+        mf = io.StringIO()  # Memory File
+        d = {
+            'incbin_kernel_images'  : self.codegen_incbin_code(gpu_kernel_image_dir, compressed=compressed),
+            'incbin_kernel_names'   : self.codegen_incbin_names(gpu_kernel_image_dir, compressed=compressed),
+            'kernel_family_name'    : self._kdesc.KERNEL_FAMILY,
+            'shim_kernel_name'      : self._kdesc.SHIM_KERNEL_NAME,
+            'godel_number'          : godel_number,
+            'perf_fields'           : ';\n    '.join(self._kdesc.perf_fields),
+            'kernel_image_objects'  : self.codegen_kernel_image_objects(gpu_kernel_image_dir),
+            'kernel_image_perfs'    : self.codegen_kernel_image_perfs(gpu_kernel_image_dir),
+            'lut_dtype'             : self._lut_cdtype,
+            'lut_shape'             : self._lut_cshape,
+            'lut_data'              : self.lut_cdata,
+            'param_class_name'      : self._kdesc.param_class_name,
+            'binning_autotune_keys' : self.codegen_binning_code(),
+            'binned_indices'        : self.codegen_binned_indices(),
+            'perf_field_assignment' : self.codegen_perf_assignment(),
+            'gpu'                   : self._dba.gpu,
+            'arch_number'           : self._dba.arch_number,
+            'human_readable_signature' : first_sig.human_readable_signature
+        }
+        print(self.LUT_TEMPLATE.format_map(d), file=mf)
+        mf.seek(0)
+        if mf.read() != old_content:
+            mf.seek(0)
+            with open(ofn, 'w') as of:
+                shutil.copyfileobj(mf, of)
         return ofn
 
     @property
