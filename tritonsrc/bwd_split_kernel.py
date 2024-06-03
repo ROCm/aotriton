@@ -16,7 +16,7 @@ Extra Credits:
 """
 import triton
 import triton.language as tl
-from fwd_kernel import dropout_mask, dropout_rng, dropout_offsets
+from dropout import dropout_mask, dropout_rng, dropout_offsets
 
 # Helper function, but not always usable due to compiler bugs (esp. used with tl.trans)
 @triton.jit
