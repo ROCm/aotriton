@@ -9,6 +9,7 @@ import triton.language as tl
 from flash import (
     debug_fill_dropout_rng as bare_debug_fill_dropout_rng,
     attn_fwd as bare_attn_fwd,
+    attn_fwd_varlen as bare_attn_fwd_varlen,
     bwd_preprocess as bare_bwd_preprocess,
     bwd_kernel_dk_dv as bare_bwd_kernel_dk_dv,
     bwd_kernel_dq as bare_bwd_kernel_dq
@@ -239,7 +240,6 @@ class _attention(torch.autograd.Function):
             num_stages = 4 if Lk <= 64 else 3
             num_warps = 4 if Lk <= 64 else 8
 
-        stage = 3 if causal else 1
         grid = lambda META: (
             triton.cdiv(q.shape[2], META['BLOCK_M']),
             q.shape[1],
@@ -260,7 +260,6 @@ class _attention(torch.autograd.Function):
             print(f'{v.data_ptr()=:x}')
             print(f'{M.data_ptr()=:x}')
             print(f'{o.data_ptr()=:x}')
-            print(f'{stage=}')
             print(f'max_seqlens_q={q.shape[2]}')
             print(f'max_seqlens_k={k.shape[2]}')
             print(f'{v.data_ptr()=:x}')

@@ -18,6 +18,7 @@ import triton
 import triton.language as tl
 
 from fwd_kernel import attn_fwd
+from fwd_kernel_varlen import attn_fwd_varlen
 from bwd_preprocess import bwd_preprocess
 from bwd_split_kernel import bwd_kernel_dk_dv, bwd_kernel_dq
 from dropout_rng import debug_fill_dropout_rng
