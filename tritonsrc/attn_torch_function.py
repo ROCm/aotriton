@@ -9,7 +9,6 @@ import triton.language as tl
 from flash import (
     debug_fill_dropout_rng as bare_debug_fill_dropout_rng,
     attn_fwd as bare_attn_fwd,
-    attn_fwd_varlen as bare_attn_fwd_varlen,
     bwd_preprocess as bare_bwd_preprocess,
     bwd_kernel_dk_dv as bare_bwd_kernel_dk_dv,
     bwd_kernel_dq as bare_bwd_kernel_dq
@@ -47,7 +46,7 @@ TRITON_CONFIG_LIST_FWD = [
 
 @triton.autotune(
    configs=TRITON_CONFIG_LIST_FWD,
-   key=['seqlen_q', 'seqlen_k', 'CAUSAL'],
+   key=['max_seqlen_q', 'max_seqlen_k', 'CAUSAL'],
 )
 @triton.jit
 def tuned_attn_fwd(
@@ -57,8 +56,11 @@ def tuned_attn_fwd(
     stride_vz, stride_vh, stride_vk, stride_vn,
     stride_bz, stride_bh, stride_bm, stride_bn,
     stride_oz, stride_oh, stride_om, stride_on,
-    seqlen_q,
-    seqlen_k,
+    cu_seqlens_q,
+    cu_seqlens_k,
+    num_seqlens,
+    max_seqlen_q,
+    max_seqlen_k,
     head_dim,
     dropout_p,
     philox_seed,
@@ -81,8 +83,11 @@ def tuned_attn_fwd(
             stride_vz, stride_vh, stride_vk, stride_vn,
             stride_bz, stride_bh, stride_bm, stride_bn,
             stride_oz, stride_oh, stride_om, stride_on,
-            seqlen_q,
-            seqlen_k,
+            cu_seqlens_q,
+            cu_seqlens_k,
+            num_seqlens,
+            max_seqlen_q,
+            max_seqlen_k,
             head_dim,
             dropout_p,
             philox_seed,
@@ -109,7 +114,7 @@ TRITON_CONFIG_LIST_BWD_SIZED = [
 
 @triton.autotune(
    configs=TRITON_CONFIG_LIST_BWD_SIZED,
-   key=['max_seqlens_q', 'max_seqlens_k'],
+   key=['max_seqlen_q', 'max_seqlen_k'],
 )
 @triton.jit
 def sized_tuned_bwd_kernel_dk_dv(
@@ -124,7 +129,11 @@ def sized_tuned_bwd_kernel_dk_dv(
     stride_oz, stride_oh, stride_om, stride_ok,
     stride_dkz, stride_dkh, stride_dkn, stride_dkk,
     stride_dvz, stride_dvh, stride_dvk, stride_dvn,
-    max_seqlens_q, max_seqlens_k,
+    cu_seqlens_q,
+    cu_seqlens_k,
+    num_seqlens,
+    max_seqlen_q,
+    max_seqlen_k,
     head_dim,
     dropout_p,
     philox_seed,
@@ -149,7 +158,11 @@ def sized_tuned_bwd_kernel_dk_dv(
             stride_oz, stride_oh, stride_om, stride_ok,
             stride_dkz, stride_dkh, stride_dkn, stride_dkk,
             stride_dvz, stride_dvh, stride_dvk, stride_dvn,
-            max_seqlens_q, max_seqlens_k,
+            cu_seqlens_q,
+            cu_seqlens_k,
+            num_seqlens,
+            max_seqlen_q,
+            max_seqlen_k,
             head_dim,
             dropout_p,
             philox_seed,
@@ -165,7 +178,7 @@ def sized_tuned_bwd_kernel_dk_dv(
 
 @triton.autotune(
    configs=TRITON_CONFIG_LIST_BWD_SIZED,
-   key=['max_seqlens_q', 'max_seqlens_k'],
+   key=['max_seqlen_q', 'max_seqlen_k'],
 )
 @triton.jit
 def sized_tuned_bwd_kernel_dq(
@@ -180,7 +193,11 @@ def sized_tuned_bwd_kernel_dq(
     stride_oz, stride_oh, stride_om, stride_ok,
     stride_dqz, stride_dqh, stride_dqm, stride_dqk,
     stride_dbz, stride_dbh, stride_dbm, stride_dbn,
-    max_seqlens_q, max_seqlens_k,
+    cu_seqlens_q,
+    cu_seqlens_k,
+    num_seqlens,
+    max_seqlen_q,
+    max_seqlen_k,
     head_dim,
     dropout_p,
     philox_seed,
@@ -203,7 +220,11 @@ def sized_tuned_bwd_kernel_dq(
         stride_oz, stride_oh, stride_om, stride_ok,
         stride_dqz, stride_dqh, stride_dqm, stride_dqk,
         stride_dbz, stride_dbh, stride_dbm, stride_dbn,
-        max_seqlens_q, max_seqlens_k,
+        cu_seqlens_q,
+        cu_seqlens_k,
+        num_seqlens,
+        max_seqlen_q,
+        max_seqlen_k,
         head_dim,
         dropout_p,
         philox_seed,
@@ -231,8 +252,8 @@ class _attention(torch.autograd.Function):
         head_dim_rounded = 2 ** (Lk - 1).bit_length()
         head_dim_rounded = max(16, head_dim_rounded)
         padded_head = head_dim_rounded != Lk
-        max_seqlens_q = q.shape[2]
-        max_seqlens_k = k.shape[2]
+        max_seqlen_q = q.shape[2]
+        max_seqlen_k = k.shape[2]
         o = torch.zeros_like(q)
         if torch.version.hip is None:
             BLOCK_M = 128
@@ -245,6 +266,7 @@ class _attention(torch.autograd.Function):
             q.shape[1],
             q.shape[0],
         )
+        null_tensor = torch.empty((0), device=q.device, dtype=torch.int32)
         M = torch.empty((q.shape[0] * q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)
         if return_encoded_softmax:
             encoded_softmax = torch.ones((q.shape[0], q.shape[1], q.shape[2], k.shape[2]), device=q.device, dtype=_attention.DEBUG_MASK_DTYPE) * 114.514
@@ -260,8 +282,8 @@ class _attention(torch.autograd.Function):
             print(f'{v.data_ptr()=:x}')
             print(f'{M.data_ptr()=:x}')
             print(f'{o.data_ptr()=:x}')
-            print(f'max_seqlens_q={q.shape[2]}')
-            print(f'max_seqlens_k={k.shape[2]}')
+            print(f'max_seqlen_q={q.shape[2]}')
+            print(f'max_seqlen_k={k.shape[2]}')
             print(f'{v.data_ptr()=:x}')
             print(f'{v.stride(1)=:x}')
             print(f'{v.data_ptr() + q.shape[0] * q.shape[1] * v.stride(1)=:x}')
@@ -299,8 +321,11 @@ class _attention(torch.autograd.Function):
                 v.stride(0), v.stride(1), v.stride(2), v.stride(3),
                 b.stride(0), b.stride(1), b.stride(2), b.stride(3),
                 o.stride(0), o.stride(1), o.stride(2), o.stride(3),
-                seqlen_q=q.shape[2],
-                seqlen_k=k.shape[2],
+                cu_seqlens_q=null_tensor,
+                cu_seqlens_k=null_tensor,
+                num_seqlens=0,
+                max_seqlen_q=q.shape[2],
+                max_seqlen_k=k.shape[2],
                 head_dim=Lk,
                 dropout_p=dropout_p,
                 philox_seed=philox_seed,
@@ -324,8 +349,11 @@ class _attention(torch.autograd.Function):
                 v.stride(0), v.stride(1), v.stride(2), v.stride(3),
                 b.stride(0), b.stride(1), b.stride(2), b.stride(3),
                 o.stride(0), o.stride(1), o.stride(2), o.stride(3),
-                seqlen_q=q.shape[2],
-                seqlen_k=k.shape[2],
+                cu_seqlens_q=null_tensor,
+                cu_seqlens_k=null_tensor,
+                num_seqlens=0,
+                max_seqlen_q=q.shape[2],
+                max_seqlen_k=k.shape[2],
                 head_dim=Lk,
                 dropout_p=dropout_p,
                 philox_seed=philox_seed,
@@ -369,8 +397,8 @@ class _attention(torch.autograd.Function):
                 'Q.dtype' : str(q.dtype),
                 'N_HEADS' : N_HEADS,
                 'D_HEAD' : D_HEAD,
-                'max_seqlens_q' : max_seqlens_q,
-                'max_seqlens_k' : max_seqlens_k,
+                'max_seqlen_q' : max_seqlen_q,
+                'max_seqlen_k' : max_seqlen_k,
                 'CAUSAL' : causal,
                 'RETURN_ENCODED_SOFTMAX': encoded_softmax is not None,
                 'BLOCK_DMODEL' : Lk,
@@ -423,11 +451,12 @@ class _attention(torch.autograd.Function):
         dv = torch.empty_like(v)
         db = torch.empty_like(b)
         delta = torch.empty_like(L)
-        max_seqlens_q = q.shape[2]
-        max_seqlens_k = k.shape[2]
+        null_tensor = torch.empty((0), device=q.device, dtype=torch.int32)
+        max_seqlen_q = q.shape[2]
+        max_seqlen_k = k.shape[2]
         MAX_BLOCK = 64 if ctx.dropout_p == 0 else 16
-        # BLOCK = min(max_seqlens_q, max_seqlens_k, q.shape[-1], MAX_BLOCK)
-        # BLOCK = BLOCK if is_supported_by_tl_dot(max_seqlens_q) and is_supported_by_tl_dot(max_seqlens_k) else 1
+        # BLOCK = min(max_seqlen_q, max_seqlen_k, q.shape[-1], MAX_BLOCK)
+        # BLOCK = BLOCK if is_supported_by_tl_dot(max_seqlen_q) and is_supported_by_tl_dot(max_seqlen_k) else 1
         if not ctx.autotune:
             BLOCK = 16 # FIXME: Variable block size
         else:
@@ -439,7 +468,7 @@ class _attention(torch.autograd.Function):
             o, do, delta,
             o.stride(0), o.stride(1), o.stride(2), o.stride(3),
             do.stride(0), do.stride(1), do.stride(2), do.stride(3),
-            max_seqlens_q,
+            max_seqlen_q,
             Lk,
             BLOCK_M=BLOCK, D_HEAD=head_dim_rounded,
             PADDED_HEAD=padded_head, # FIXME: irregular head dimension
@@ -460,7 +489,7 @@ class _attention(torch.autograd.Function):
         use_small_block = ctx.dropout_p > 0.0
         use_medium_block = ctx.bias_type != 0
         if use_small_block:
-            # DQ_BLOCK_M = min(max_seqlens_q, BLOCK)
+            # DQ_BLOCK_M = min(max_seqlen_q, BLOCK)
             BLOCK_M = 32
             BLOCK_N = 16
         elif use_medium_block:
@@ -472,9 +501,9 @@ class _attention(torch.autograd.Function):
         if q.dtype == torch.float32:
             BLOCK_M = max(16, BLOCK_M // 2)
             BLOCK_N = max(16, BLOCK_N // 2)
-        # debug_mask = torch.zeros((q.shape[0], q.shape[1], max_seqlens_q, max_seqlens_k), device=q.device, dtype=ctx.encoded_softmax.dtype)
+        # debug_mask = torch.zeros((q.shape[0], q.shape[1], max_seqlen_q, max_seqlen_k), device=q.device, dtype=ctx.encoded_softmax.dtype)
         grid_dk_dv = lambda META: (
-            triton.cdiv(max_seqlens_k, META['BLOCK_N']),
+            triton.cdiv(max_seqlen_k, META['BLOCK_N']),
             q.shape[1],
             q.shape[0],
         )
@@ -499,8 +528,11 @@ class _attention(torch.autograd.Function):
                     do.stride(0), do.stride(1), do.stride(2), do.stride(3),
                     dk.stride(0), dk.stride(1), dk.stride(2), dk.stride(3),
                     dv.stride(0), dv.stride(1), dv.stride(2), dv.stride(3),
-                    max_seqlens_q=max_seqlens_q,
-                    max_seqlens_k=max_seqlens_k,
+                    cu_seqlens_q=null_tensor,
+                    cu_seqlens_k=null_tensor,
+                    num_seqlens=0,
+                    max_seqlen_q=max_seqlen_q,
+                    max_seqlen_k=max_seqlen_k,
                     head_dim=Lk,
                     dropout_p=ctx.dropout_p,
                     philox_seed=ctx.philox_seed,
@@ -523,8 +555,8 @@ class _attention(torch.autograd.Function):
                         'Q.shape' : list(q.shape),
                         'Q.dtype' : str(q.dtype),
                         'N_HEADS' : q.shape[1],
-                        'max_seqlens_q': max_seqlens_q,
-                        'max_seqlens_k': max_seqlens_k,
+                        'max_seqlen_q': max_seqlen_q,
+                        'max_seqlen_k': max_seqlen_k,
                         'head_dim' : ctx.BLOCK_DMODEL,
                         'BLOCK_DMODEL' : head_dim_rounded,
                         'CAUSAL'  : ctx.causal,
@@ -557,8 +589,11 @@ class _attention(torch.autograd.Function):
                     do.stride(0), do.stride(1), do.stride(2), do.stride(3),
                     dk.stride(0), dk.stride(1), dk.stride(2), dk.stride(3),
                     dv.stride(0), dv.stride(1), dv.stride(2), dv.stride(3),
-                    max_seqlens_q=max_seqlens_q,
-                    max_seqlens_k=max_seqlens_k,
+                    cu_seqlens_q=null_tensor,
+                    cu_seqlens_k=null_tensor,
+                    num_seqlens=0,
+                    max_seqlen_q=max_seqlen_q,
+                    max_seqlen_k=max_seqlen_k,
                     head_dim=Lk,
                     dropout_p=ctx.dropout_p,
                     philox_seed=ctx.philox_seed,
@@ -585,13 +620,13 @@ class _attention(torch.autograd.Function):
                 print(f'Full fwd mask: {ctx.encoded_softmax[0,0]}')
                 print(f'Full mask div: {debug_mask[0,0] / ctx.encoded_softmax[0,0]}')
                 print(f'Full dv: {dv}')
-                if max_seqlens_q == 32:
+                if max_seqlen_q == 32:
                     print(f'2nd block bwd mask: {debug_mask[0,0, 16:]}')
                     print(f'2nd block fwd mask: {ctx.encoded_softmax[0,0, 16:]}')
             # print(f'Full q: {q}', file=sys.stderr)
             # assert mask_allclose
         grid_dq = lambda META: (
-            triton.cdiv(max_seqlens_q, META['BLOCK_M']),
+            triton.cdiv(max_seqlen_q, META['BLOCK_M']),
             q.shape[1],
             q.shape[0],
         )
@@ -609,8 +644,11 @@ class _attention(torch.autograd.Function):
                     do.stride(0), do.stride(1), do.stride(2), do.stride(3),
                     dq.stride(0), dq.stride(1), dq.stride(2), dq.stride(3),
                     stride_dbz, stride_dbh, stride_dbm, stride_dbn,
-                    max_seqlens_q=max_seqlens_q,
-                    max_seqlens_k=max_seqlens_k,
+                    cu_seqlens_q=null_tensor,
+                    cu_seqlens_k=null_tensor,
+                    num_seqlens=0,
+                    max_seqlen_q=max_seqlen_q,
+                    max_seqlen_k=max_seqlen_k,
                     head_dim=Lk,
                     dropout_p=ctx.dropout_p,
                     philox_seed=ctx.philox_seed,
@@ -633,8 +671,8 @@ class _attention(torch.autograd.Function):
                         'Q.shape' : list(q.shape),
                         'Q.dtype' : str(q.dtype),
                         'N_HEADS' : q.shape[1],
-                        'max_seqlens_q': max_seqlens_q,
-                        'max_seqlens_k': max_seqlens_k,
+                        'max_seqlen_q': max_seqlen_q,
+                        'max_seqlen_k': max_seqlen_k,
                         'head_dim' : ctx.BLOCK_DMODEL,
                         'BLOCK_DMODEL' : head_dim_rounded,
                         'CAUSAL'  : ctx.causal,
@@ -666,8 +704,11 @@ class _attention(torch.autograd.Function):
                     do.stride(0), do.stride(1), do.stride(2), do.stride(3),
                     dq.stride(0), dq.stride(1), dq.stride(2), dq.stride(3),
                     stride_dbz, stride_dbh, stride_dbm, stride_dbn,
-                    max_seqlens_q=max_seqlens_q,
-                    max_seqlens_k=max_seqlens_k,
+                    cu_seqlens_q=null_tensor,
+                    cu_seqlens_k=null_tensor,
+                    num_seqlens=0,
+                    max_seqlen_q=max_seqlen_q,
+                    max_seqlen_k=max_seqlen_k,
                     head_dim=Lk,
                     dropout_p=ctx.dropout_p,
                     philox_seed=ctx.philox_seed,

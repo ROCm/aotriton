@@ -27,8 +27,11 @@ def attn_fwd(
     stride_vz, stride_vh, stride_vk, stride_vn,
     stride_bz, stride_bh, stride_bm, stride_bn,
     stride_oz, stride_oh, stride_om, stride_on,
-    seqlen_q,
-    seqlen_k,
+    cu_seqlens_q,
+    cu_seqlens_k,
+    num_seqlens,   # set num_seqlens to zero to ignore cu_seqlens_q/k
+    max_seqlen_q,  # and use max_seqlen_q/k for all seqlen_q/k 
+    max_seqlen_k,
     head_dim,
     dropout_p,
     philox_seed,
@@ -50,6 +53,23 @@ def attn_fwd(
     num_h = tl.num_programs(1)
     num_z = tl.num_programs(2)
     off_zh = off_z * num_h + off_h * 1
+    if num_seqlens > 0:
+        cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
+        cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
+        seqlen_q = cu_seqlens_q_end - cu_seqlens_q_start
+        if start_m * BLOCK_M > seqlen_q:
+            return
+        cu_seqlens_k_start = tl.load(cu_seqlens_k + off_z)
+        cu_seqlens_k_end = tl.load(cu_seqlens_k + off_z + 1)
+        seqlen_k = cu_seqlens_k_end - cu_seqlens_k_start
+        batch_index = 0
+    else:
+        cu_seqlens_q_start = 0
+        cu_seqlens_k_start = 0
+        seqlen_q = max_seqlen_q
+        seqlen_k = max_seqlen_k
+        batch_index = off_z
+
     if start_m * BLOCK_M + BLOCK_M > seqlen_q:
         q_padded = True
     else:
@@ -62,7 +82,7 @@ def attn_fwd(
     else:
         seqlen_k_faligned = seqlen_k
 
-    q_offset = off_h * stride_qh + off_z * stride_qz
+    q_offset = off_h * stride_qh + batch_index * stride_qz + cu_seqlens_q_start * stride_qm
     Q_block_ptr = tl.make_block_ptr(
         base=Q + q_offset,
         shape=(seqlen_q, head_dim),
@@ -71,7 +91,7 @@ def attn_fwd(
         block_shape=(BLOCK_M, BLOCK_DMODEL),
         order=(1, 0)
     )
-    k_offset = off_h * stride_kh + off_z * stride_kz
+    k_offset = off_h * stride_kh + batch_index * stride_kz + cu_seqlens_k_start * stride_kn
     K_block_ptr = tl.make_block_ptr(
         base=K + k_offset,
         shape=(head_dim, seqlen_k),
@@ -80,7 +100,7 @@ def attn_fwd(
         block_shape=(BLOCK_DMODEL, BLOCK_N),
         order=(0, 1)
     )
-    v_offset = off_h * stride_vh + off_z * stride_vz
+    v_offset = off_h * stride_vh + batch_index * stride_vz + cu_seqlens_k_start * stride_vk
     V_block_ptr = tl.make_block_ptr(
         base=V + v_offset,
         shape=(seqlen_k, head_dim),
@@ -93,7 +113,7 @@ def attn_fwd(
         B_block_ptr = 0
     elif BIAS_TYPE == 1:
         B_block_ptr = tl.make_block_ptr(
-                base=B + off_h * stride_bh + off_z * stride_bz,
+                base=B + off_h * stride_bh + batch_index * stride_bz,
                 shape=(seqlen_q, seqlen_k),
                 strides=(stride_bm, stride_bn),
                 offsets=(start_m * BLOCK_M, 0),
@@ -114,7 +134,7 @@ def attn_fwd(
     else:
         encoded_softmax_block_ptr = 0
     # write back O
-    o_offset = off_h * stride_oh + off_z * stride_oz
+    o_offset = off_h * stride_oh + batch_index * stride_oz + cu_seqlens_q_start * stride_om
     O_block_ptr = tl.make_block_ptr(
         base=Out + o_offset,
         shape=(seqlen_q, head_dim),
@@ -124,7 +144,7 @@ def attn_fwd(
         order=(1, 0)
     )
 
-    M_ptr_base = M + off_zh * seqlen_q
+    M_ptr_base = M + off_zh * max_seqlen_q
     if ENABLE_DROPOUT:
         batch_philox_offset = philox_offset_base + off_zh * seqlen_q * seqlen_k
     else:

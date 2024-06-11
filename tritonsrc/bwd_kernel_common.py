@@ -182,7 +182,8 @@ def bwd_kernel_dq_db_common(
     DQ_block_ptr, DB_block_ptr, store_db,
     l_ptrs,
     D_ptrs,
-    seqlen_q, seqlen_k,
+    seqlen_q,
+    seqlen_k,
     start_m,
     head_dim,
     dropout_p,
@@ -196,6 +197,10 @@ def bwd_kernel_dq_db_common(
     PADDED_HEAD: tl.constexpr,
     BIAS_TYPE: tl.constexpr,
 ):
+    if start_m + BLOCK_N > seqlen_k:
+        k_padded = True
+    else:
+        k_padded = False
     # initialize offsets
     offs_m = start_m + tl.arange(0, BLOCK_M)
     offs_n = tl.arange(0, BLOCK_N)
