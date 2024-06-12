@@ -50,10 +50,9 @@ def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dro
     ref_out, _ = ctx.compute_ref_forward(sdpa_params)
 
     # # Backward
-    # dout = torch.rand_like(tri_out)
-    # ctx.compute_backward(tri_out, dout)
-    # is_allclose, adiff, grads_allclose, grads_adiff = ctx.validate_with_reference(tri_out, ctx.dout_tensors)
-    is_allclose, adiff = ctx.validate_with_reference(tri_out)
+    dout = torch.rand_like(tri_out)
+    ctx.compute_backward(tri_out, dout)
+    is_allclose, adiff, grads_allclose, grads_adiff = ctx.validate_with_reference(tri_out, ctx.dout_tensors)
 
     # Test Forward
     if not is_allclose:
@@ -84,10 +83,10 @@ def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dro
     assert is_allclose, f'Forward pass {is_allclose=}'
 
 @pytest.mark.parametrize('N_HEADS', [1, 4])
-# @pytest.mark.parametrize('D_HEAD', [8, 16, 21, 32, 64, 72, 96, 128, 160, 192, 203, 256])
-@pytest.mark.parametrize('D_HEAD', [4])  # Faster "collecting items"
+@pytest.mark.parametrize('D_HEAD', [8, 16, 21, 32, 64, 72, 96, 128, 160, 192, 203, 256])
+# @pytest.mark.parametrize('D_HEAD', [4])  # Faster "collecting items"
 # @pytest.mark.parametrize('n_seqlen', range(1, 24, 5))
-@pytest.mark.parametrize('n_seqlen', [1, 2])
+@pytest.mark.parametrize('n_seqlen', [8])
 @pytest.mark.parametrize('causal', [False, True])
 @pytest.mark.parametrize('dropout_p', [0.0, 0.5])
 @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16, torch.float32])

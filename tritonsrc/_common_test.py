@@ -280,8 +280,8 @@ class VarlenSdpaContext(SdpaContext):
         #
         #       AOTriton works in the same level as PyTorch's SDPA backends and
         #       its UT should generate the tensor in the preprocessed format directly.
-        dims = (np.sum(seqlens), num_heads, head_dim)
-        return torch.rand(*dims, dtype=dtype, device=device)
+        dims = (1, np.sum(seqlens), num_heads, head_dim)
+        return torch.rand(*dims, dtype=dtype, device=device).transpose(1, 2)
         '''
         def _size(seqlen):
             return (seqlen, num_heads, head_dim) if not packed else (seq_len[i], 3 * num_heads * head_dim)
@@ -321,9 +321,9 @@ class VarlenSdpaContext(SdpaContext):
         seqlen_q_start = 0
         seqlen_k_start = 0
         for i, (seqlen_q, seqlen_k) in enumerate(zip(seqlens_q, seqlens_k)):
-            ref_q = packed_ref_q[seqlen_q_start:seqlen_q_start+seqlen_q, :, :].transpose(0, 1)
-            ref_k = packed_ref_k[seqlen_k_start:seqlen_k_start+seqlen_k, :, :].transpose(0, 1)
-            ref_v = packed_ref_v[seqlen_k_start:seqlen_k_start+seqlen_k, :, :].transpose(0, 1)
+            ref_q = packed_ref_q[0, :, seqlen_q_start:seqlen_q_start+seqlen_q, :]
+            ref_k = packed_ref_k[0, :, seqlen_k_start:seqlen_k_start+seqlen_k, :]
+            ref_v = packed_ref_v[0, :, seqlen_k_start:seqlen_k_start+seqlen_k, :]
             dropout_mask = packed_dropout_mask[i, :, :, :] if packed_dropout_mask is not None else None
             print(f'REF {seqlen_q_start=} {seqlen_q_start+seqlen_q=} {ref_q.shape=} {ref_k.shape=} {ref_v.shape=}')
             print(f'REF {ref_q.stride()=}')
@@ -341,7 +341,7 @@ class VarlenSdpaContext(SdpaContext):
             ref_mask_array.append(ref_mask)
             seqlen_q_start += seqlen_q
             seqlen_k_start += seqlen_k
-        ref_out = torch.cat(ref_out_array, dim=1).transpose(0, 1)
+        ref_out = torch.cat(ref_out_array, dim=1).unsqueeze(dim=0)
         return ref_out, None
 
     def compute_ref_forward(self, p : SdpaParams):
@@ -351,6 +351,10 @@ class VarlenSdpaContext(SdpaContext):
         return self.lp_refout_tensors
 
     # Debugging
-    def validate_with_reference(self, out):
+    def validate_with_reference(self, out, grads):
         out_allclose, out_adiff = self._validate(out, self.refout_tensors[0], self.lp_refout_tensors[0], self.OUT_FUDGE_FACTOR, 'out')
-        return out_allclose, out_adiff
+        return out_allclose, out_adiff, None, None
+
+    # Also Debugging
+    def compute_backward(self, out, dout):
+        self.dout_tensors = None

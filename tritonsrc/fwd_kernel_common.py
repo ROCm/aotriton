@@ -23,6 +23,7 @@ def attn_fwd_common(
         dropout_p,
         philox_seed,
         batch_philox_offset,
+        max_seqlen_k,  # It's put after philox because it is not needed by anything other than dropout
         encoded_softmax_block_ptr,
         CAUSAL: tl.constexpr,
         BLOCK_M: tl.constexpr,
@@ -74,7 +75,7 @@ def attn_fwd_common(
     acc, l_i, m_i = attn_fwd_inner(
         acc, l_i, m_i, q, K_block_ptr, V_block_ptr, B_block_ptr,
         start_m, seqlen_q, q_padded, seqlen_k_low, seqlen_k_high, False,
-        dropout_p, seqlen_k, philox_seed, batch_philox_offset, encoded_softmax_block_ptr,
+        dropout_p, max_seqlen_k, philox_seed, batch_philox_offset, encoded_softmax_block_ptr,
         BLOCK_M, BLOCK_DMODEL, BLOCK_N,
         False, offs_m, offs_n,
         pre_load_v,

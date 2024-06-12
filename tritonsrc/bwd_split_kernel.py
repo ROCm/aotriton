@@ -65,11 +65,24 @@ def bwd_kernel_dk_dv(
         cu_seqlens_k_end = tl.load(cu_seqlens_k + off_z + 1)
         seqlen_k = cu_seqlens_k_end - cu_seqlens_k_start
         batch_index = 0
-    else:
+    elif num_seqlens == 0:
         cu_seqlens_q_start = 0
         cu_seqlens_k_start = 0
         seqlen_q = max_seqlen_q
         seqlen_k = max_seqlen_k
+        batch_index = off_z
+    else: # < 0 for padded seqlen
+        cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
+        cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
+        seqlen_q = cu_seqlens_q_end - cu_seqlens_q_start
+        if start_m * BLOCK_M > seqlen_q:
+            return
+        cu_seqlens_k_start = tl.load(cu_seqlens_k + off_z)
+        cu_seqlens_k_end = tl.load(cu_seqlens_k + off_z + 1)
+        seqlen_k = cu_seqlens_k_end - cu_seqlens_k_start
+        # Varlen, but padded to Rank 4 tensor
+        cu_seqlens_q_start = 0
+        cu_seqlens_k_start = 0
         batch_index = off_z
     # Initialize pointers to Q, K, V
     # Q is consumed depending on block ID. Every block uses
@@ -218,11 +231,24 @@ def bwd_kernel_dq(
         cu_seqlens_k_end = tl.load(cu_seqlens_k + off_z + 1)
         seqlen_k = cu_seqlens_k_end - cu_seqlens_k_start
         batch_index = 0
-    else:
+    elif num_seqlens == 0:
         cu_seqlens_q_start = 0
         cu_seqlens_k_start = 0
         seqlen_q = max_seqlen_q
         seqlen_k = max_seqlen_k
+        batch_index = off_z
+    else: # < 0 for padded seqlen
+        cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
+        cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
+        seqlen_q = cu_seqlens_q_end - cu_seqlens_q_start
+        if start_m * BLOCK_M > seqlen_q:
+            return
+        cu_seqlens_k_start = tl.load(cu_seqlens_k + off_z)
+        cu_seqlens_k_end = tl.load(cu_seqlens_k + off_z + 1)
+        seqlen_k = cu_seqlens_k_end - cu_seqlens_k_start
+        # Varlen, but padded to Rank 4 tensor
+        cu_seqlens_q_start = 0
+        cu_seqlens_k_start = 0
         batch_index = off_z
     # Initialize pointers to Q, K, V
     q_offset = off_h * stride_qh + batch_index * stride_qz + cu_seqlens_q_start * stride_qm

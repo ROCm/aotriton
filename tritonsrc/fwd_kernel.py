@@ -53,6 +53,7 @@ def attn_fwd(
     num_h = tl.num_programs(1)
     num_z = tl.num_programs(2)
     off_zh = off_z * num_h + off_h * 1
+    # FIXME: Better pattern for this branch? It's copied into three kernels
     if num_seqlens > 0:
         cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
         cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
@@ -63,11 +64,24 @@ def attn_fwd(
         cu_seqlens_k_end = tl.load(cu_seqlens_k + off_z + 1)
         seqlen_k = cu_seqlens_k_end - cu_seqlens_k_start
         batch_index = 0
-    else:
+    elif num_seqlens == 0:
         cu_seqlens_q_start = 0
         cu_seqlens_k_start = 0
         seqlen_q = max_seqlen_q
         seqlen_k = max_seqlen_k
+        batch_index = off_z
+    else: # < 0 for padded seqlen
+        cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
+        cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
+        seqlen_q = cu_seqlens_q_end - cu_seqlens_q_start
+        if start_m * BLOCK_M > seqlen_q:
+            return
+        cu_seqlens_k_start = tl.load(cu_seqlens_k + off_z)
+        cu_seqlens_k_end = tl.load(cu_seqlens_k + off_z + 1)
+        seqlen_k = cu_seqlens_k_end - cu_seqlens_k_start
+        # Varlen, but padded to Rank 4 tensor
+        cu_seqlens_q_start = 0
+        cu_seqlens_k_start = 0
         batch_index = off_z
 
     if start_m * BLOCK_M + BLOCK_M > seqlen_q:
@@ -124,9 +138,9 @@ def attn_fwd(
         tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
     if RETURN_ENCODED_SOFTMAX:
         encoded_softmax_block_ptr = tl.make_block_ptr(
-                base=encoded_softmax + off_zh * seqlen_q * seqlen_k,
+                base=encoded_softmax + off_zh * max_seqlen_q * max_seqlen_k,
                 shape=(seqlen_q, seqlen_k),
-                strides=(seqlen_k, 1),
+                strides=(max_seqlen_k, 1),
                 offsets=(start_m * BLOCK_M, 0),
                 block_shape=(BLOCK_M, BLOCK_N),
                 order=(1, 0)
@@ -146,7 +160,7 @@ def attn_fwd(
 
     M_ptr_base = M + off_zh * max_seqlen_q
     if ENABLE_DROPOUT:
-        batch_philox_offset = philox_offset_base + off_zh * seqlen_q * seqlen_k
+        batch_philox_offset = philox_offset_base + off_zh * max_seqlen_q * max_seqlen_q
     else:
         batch_philox_offset = 0
 
@@ -165,6 +179,7 @@ def attn_fwd(
                     dropout_p,
                     philox_seed,
                     batch_philox_offset,
+                    max_seqlen_k,
                     encoded_softmax_block_ptr,
                     CAUSAL=CAUSAL,
                     BLOCK_M=BLOCK_M,
