@@ -16,19 +16,24 @@
 namespace aotriton::v2::flash {
 
 hipError_t
-attn_fwd(T4 q,
-         T4 k,
-         T4 v,
-         T4 b,
-         float sm_scale,
-         T2 softmax_lse,
-         T4 out,
-         float dropout_p,
-         uint64_t philox_seed,
-         uint64_t philox_offset,
-         T4 encoded_softmax,
-         bool is_causal,
-         aotriton::Stream stream_wrap) {
+_attn_fwd_common(T4 q,
+                 T4 k,
+                 T4 v,
+                 T1 cu_seqlens_q,
+                 T1 cu_seqlens_k,
+                 int64_t num_seqlens,
+                 int64_t max_seqlen_q,
+                 int64_t max_seqlen_k,
+                 T4 b,
+                 float sm_scale,
+                 T2 softmax_lse,
+                 T4 out,
+                 float dropout_p,
+                 uint64_t philox_seed,
+                 uint64_t philox_offset,
+                 T4 encoded_softmax,
+                 bool is_causal,
+                 aotriton::Stream stream_wrap) {
   hipError_t err;
   auto stream = stream_wrap.native();
   auto arch = getArchFromStream(stream);
@@ -48,8 +53,6 @@ attn_fwd(T4 q,
 #endif
     return grid;
   };
-  int seqlen_q = q.size(2);
-  int seqlen_k = k.size(2);
   int head_size = q.size(3);
   int head_dim_rounded = std::max<int>(16, aotriton::bit_ceil(head_size));
   int bias_type = 0;
@@ -66,9 +69,12 @@ attn_fwd(T4 q,
     .encoded_softmax = &encoded_softmax,
     .sm_scale = sm_scale,
     .M = &softmax_lse,
-    .seqlen_q = seqlen_q,
-    .seqlen_k = seqlen_k,
-    .head_dim = static_cast<uint64_t>(head_size),
+    .cu_seqlens_q = &cu_seqlens_q,
+    .cu_seqlens_k = &cu_seqlens_k,
+    .num_seqlens = num_seqlens,
+    .max_seqlen_q = max_seqlen_q,
+    .max_seqlen_k = max_seqlen_k,
+    .head_dim = static_cast<int32_t>(head_size),
     .dropout_p = dropout_p,
     .philox_seed = philox_seed,
     .philox_offset_base = static_cast<uint32_t>(philox_offset),
@@ -88,6 +94,46 @@ attn_fwd(T4 q,
   }
   err = context.launch(params, stream);
   return err;
+}
+
+hipError_t
+attn_fwd(T4 q,
+         T4 k,
+         T4 v,
+         T4 b,
+         float sm_scale,
+         T2 softmax_lse,
+         T4 out,
+         float dropout_p,
+         uint64_t philox_seed,
+         uint64_t philox_offset,
+         T4 encoded_softmax,
+         bool is_causal,
+         aotriton::Stream stream_wrap) {
+  auto null_t1 = T1::get_null_tensor();
+  return _attn_fwd_common(q, k, v, null_t1, null_t1, 0, q.size(2), k.size(2), b, sm_scale, softmax_lse, out, dropout_p, philox_seed, philox_offset, encoded_softmax, is_causal, stream_wrap);
+}
+
+hipError_t
+attn_fwd_compact_varlen(T4 q, // 1 x num_heads x total_q x head_size, total_q := \sum_{i=0}^{b} s_i
+                        T4 k, // 1 x num_heads x total_k x head_size, total_k := \sum_{i=0}^{b} s_i
+                        T4 v, // 1 x num_heads x total_v x head_size, total_, := \sum_{i=0}^{b} s_i
+                        T1 cu_seqlens_q, // b+1, i64
+                        T1 cu_seqlens_k, // b+1, i64
+                        int64_t max_seqlen_q,
+                        int64_t max_seqlen_k,
+                        T4 b, // reserved, note this b is "bias", not "batch"
+                        float sm_scale,
+                        T2 softmax_lse,
+                        T4 Out, // 1 x num_heads x total_q x head_size
+                        float dropout_p,
+                        uint64_t philox_seed,
+                        uint64_t philox_offset,
+                        T4 encoded_softmax,
+                        bool is_causal,
+                        aotriton::Stream stream)
+{
+  return _attn_fwd_common(q, k, v, cu_seqlens_q, cu_seqlens_k, cu_seqlens_q.size(0) - 1, max_seqlen_q, max_seqlen_k, b, sm_scale, softmax_lse, out, dropout_p, philox_seed, philox_offset, encoded_softmax, is_causal, stream_wrap);
 }
 
 }
