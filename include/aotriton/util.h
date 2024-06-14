@@ -90,10 +90,11 @@ public:
     return dtype_;
   }
 
-  static TensorView<Rank> get_null_tensor() {
+  static TensorView<Rank> get_null_tensor(DType dtype) {
       return TensorView<Rank>{0,
                               std::array<uint64_t, Rank>{},
-                              std::array<uint64_t, Rank>{}};
+                              std::array<uint64_t, Rank>{},
+                              dtype};
   }
 private:
   const void* base_ = nullptr;

@@ -1,9 +1,9 @@
 // Copyright © 2023-2024 Advanced Micro Devices, Inc.
 // SPDX-License-Identifier: MIT
 
+#include <aotriton/_internal/util.h>
 #include <aotriton/flash.h>
 #include <aotriton/util.h>
-#include <aotriton/_internal/util.h>
 #include <flash/shim.attn_fwd.h>
 #include <iostream>
 
@@ -21,9 +21,9 @@ _attn_fwd_common(T4 q,
                  T4 v,
                  T1 cu_seqlens_q,
                  T1 cu_seqlens_k,
-                 int64_t num_seqlens,
-                 int64_t max_seqlen_q,
-                 int64_t max_seqlen_k,
+                 int32_t num_seqlens,
+                 int32_t max_seqlen_q,
+                 int32_t max_seqlen_k,
                  T4 b,
                  float sm_scale,
                  T2 softmax_lse,
@@ -44,7 +44,7 @@ _attn_fwd_common(T4 q,
               << " pre_load_v = " << params.pre_load_v << std::endl;
 #endif
     dim3 grid {
-      aotriton::cdiv<uint32_t>(params.seqlen_q, params.BLOCK_M),
+      aotriton::cdiv<uint32_t>(params.max_seqlen_q, params.BLOCK_M),
       uint32_t(params.Q->size(1)),
       uint32_t(params.Q->size(0)),
     };
@@ -110,30 +110,63 @@ attn_fwd(T4 q,
          T4 encoded_softmax,
          bool is_causal,
          aotriton::Stream stream_wrap) {
-  auto null_t1 = T1::get_null_tensor();
-  return _attn_fwd_common(q, k, v, null_t1, null_t1, 0, q.size(2), k.size(2), b, sm_scale, softmax_lse, out, dropout_p, philox_seed, philox_offset, encoded_softmax, is_causal, stream_wrap);
+  auto null_t1 = T1::get_null_tensor(DType::kInt32);
+  return _attn_fwd_common(q,
+                          k,
+                          v,
+                          null_t1,
+                          null_t1,
+                          0,
+                          q.size(2),
+                          k.size(2),
+                          b,
+                          sm_scale,
+                          softmax_lse,
+                          out,
+                          dropout_p,
+                          philox_seed,
+                          philox_offset,
+                          encoded_softmax,
+                          is_causal,
+                          stream_wrap);
 }
 
 hipError_t
-attn_fwd_compact_varlen(T4 q, // 1 x num_heads x total_q x head_size, total_q := \sum_{i=0}^{b} s_i
-                        T4 k, // 1 x num_heads x total_k x head_size, total_k := \sum_{i=0}^{b} s_i
-                        T4 v, // 1 x num_heads x total_v x head_size, total_, := \sum_{i=0}^{b} s_i
+attn_fwd_compact_varlen(T4 q,            // 1 x num_heads x total_q x head_size, total_q := \sum_{i=0}^{b} s_i
+                        T4 k,            // 1 x num_heads x total_k x head_size, total_k := \sum_{i=0}^{b} s_i
+                        T4 v,            // 1 x num_heads x total_v x head_size, total_, := \sum_{i=0}^{b} s_i
                         T1 cu_seqlens_q, // b+1, i64
                         T1 cu_seqlens_k, // b+1, i64
-                        int64_t max_seqlen_q,
-                        int64_t max_seqlen_k,
+                        int32_t max_seqlen_q,
+                        int32_t max_seqlen_k,
                         T4 b, // reserved, note this b is "bias", not "batch"
                         float sm_scale,
                         T2 softmax_lse,
-                        T4 Out, // 1 x num_heads x total_q x head_size
+                        T4 out, // 1 x num_heads x total_q x head_size
                         float dropout_p,
                         uint64_t philox_seed,
                         uint64_t philox_offset,
                         T4 encoded_softmax,
                         bool is_causal,
-                        aotriton::Stream stream)
-{
-  return _attn_fwd_common(q, k, v, cu_seqlens_q, cu_seqlens_k, cu_seqlens_q.size(0) - 1, max_seqlen_q, max_seqlen_k, b, sm_scale, softmax_lse, out, dropout_p, philox_seed, philox_offset, encoded_softmax, is_causal, stream_wrap);
+                        aotriton::Stream stream_wrap) {
+  return _attn_fwd_common(q,
+                          k,
+                          v,
+                          cu_seqlens_q,
+                          cu_seqlens_k,
+                          cu_seqlens_q.size(0) - 1,
+                          max_seqlen_q,
+                          max_seqlen_k,
+                          b,
+                          sm_scale,
+                          softmax_lse,
+                          out,
+                          dropout_p,
+                          philox_seed,
+                          philox_offset,
+                          encoded_softmax,
+                          is_causal,
+                          stream_wrap);
 }
 
 }

@@ -37,9 +37,9 @@ attn_fwd_compact_varlen(T4 q, // 1 x num_heads x total_q x head_size, total_q :=
                         T4 v, // 1 x num_heads x total_v x head_size, total_, := \sum_{i=0}^{b} s_i
                         T1 cu_seqlens_q, // b+1, i64
                         T1 cu_seqlens_k, // b+1, i64
-                        int64_t num_seqlens,
-                        int64_t max_seqlen_q, // FIXME: Switch to Tensor
-                        int64_t max_seqlen_k,
+                        int32_t num_seqlens,
+                        int32_t max_seqlen_q, // FIXME: Switch to Tensor
+                        int32_t max_seqlen_k,
                         T4 b, // reserved, note this b is "bias", not "batch"
                         float sm_scale,
                         T2 softmax_lse,
@@ -77,9 +77,9 @@ attn_bwd_compact_varlen(T4 q, // 1 x num_heads x total_q x head_size, total_q :=
                         T4 v, // 1 x num_heads x total_v x head_size, total_, := \sum_{i=0}^{b}
                         T1 cu_seqlens_q, // b+1, i64
                         T1 cu_seqlens_k, // b+1, i64
-                        int64_t num_seqlens,
-                        int64_t max_seqlen_q,
-                        int64_t max_seqlen_k,
+                        int32_t num_seqlens,
+                        int32_t max_seqlen_q,
+                        int32_t max_seqlen_k,
                         T4 b, // reserved
                         float sm_scale,
                         T4 out,  // batch_size x num_heads x seqlen_q x head_size

@@ -47,6 +47,8 @@ class bwd_kernel_dk_dv(FlashKernel):
         '_default' : 4,
         'L': 2,
         'D': 2,
+        'cu_seqlens_q': 1,
+        'cu_seqlens_k': 1,
     }
     TYPE_CHOICES = {
         frozenset(['Q', 'K', 'V', 'B', 'Out', 'DO', 'DK', 'DV']) : match_fwd('Q'),

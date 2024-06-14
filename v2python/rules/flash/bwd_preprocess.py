@@ -27,7 +27,7 @@ class bwd_preprocess(FlashKernel):
     TYPE_CHOICES = {
         frozenset(['Out', 'DO']) : ['*fp16:16', '*bf16:16', '*fp32:16'],
         frozenset(['Delta']) : ['*fp32:16'],
-        frozenset(['seqlen_q']) : ['u64'],
+        frozenset(['seqlen_q']) : ['i32'],
         frozenset(['head_dim']) : ['i32'],
     }
     FEAT_CHOICES = {
@@ -65,6 +65,7 @@ class bwd_preprocess_varlen(FlashKernel):
     TENSOR_RANKS = {
         '_default' : 4,
         'Delta' : 2,
+        'cu_seqlens_q': 1,
     }
     TYPE_CHOICES = {
         frozenset(['Out', 'DO']) : ['*fp16:16', '*bf16:16', '*fp32:16'],

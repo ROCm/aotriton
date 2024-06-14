@@ -65,6 +65,8 @@ class attn_fwd(FlashKernel):
     TENSOR_RANKS = {
         '_default' : 4,
         'M': 2,
+        'cu_seqlens_q': 1,
+        'cu_seqlens_k': 1,
     }
     EXPECTED_IDENTICAL_TENSOR_STRIDES = [
         # Not needed stride_o* exist
