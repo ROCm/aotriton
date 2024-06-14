@@ -380,7 +380,6 @@ attn_bwd_compact_varlen(T4 q,            // 1 x num_heads x total_q x head_size,
                         T4 v,            // 1 x num_heads x total_v x head_size, total_, := \sum_{i=0}^{b}
                         T1 cu_seqlens_q, // b+1, i64
                         T1 cu_seqlens_k, // b+1, i64
-                        int32_t num_seqlens,
                         int32_t max_seqlen_q,
                         int32_t max_seqlen_k,
                         T4 b, // reserved
