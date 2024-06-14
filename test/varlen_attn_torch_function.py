@@ -3,7 +3,8 @@
 # SPDX-License-Identifier: MIT
 
 import torch
-from aotriton_flash import attn_fwd_compact_varlen, attn_bwd_compact_varln
+import numpy as np
+from aotriton_flash import attn_fwd_compact_varlen, attn_bwd_compact_varlen
 
 VERBOSE=False
 DEFAULT_PHILOX_SEED = 0x1BF52
@@ -15,7 +16,7 @@ def is_power_of_two(n: int) -> bool:
 def is_supported_by_tl_dot(n: int) -> bool:
     return is_power_of_two(n) and n >= 16
 
-class _attention(torch.autograd.Function):
+class _attention_varlen(torch.autograd.Function):
 
     # DEBUG_MASK_DTYPE = torch.int32
     # DEBUG_MASK_DTYPE = torch.float32
@@ -27,16 +28,18 @@ class _attention(torch.autograd.Function):
         Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
         assert Lq == Lk and Lk == Lv
         # assert Lk in {16, 32, 64, 128}
+        batch = len(seqlens_q)
+        num_heads = q.shape[1]
         max_seqlen_q = int(np.max(seqlens_q))
         max_seqlen_k = int(np.max(seqlens_k))
-        batch = len(seqlens_q)
         cu_seqlens_q = torch.tensor([0] + np.cumsum(seqlens_q).tolist(), dtype=torch.int32, device=q.device)
         cu_seqlens_k = torch.tensor([0] + np.cumsum(seqlens_k).tolist(), dtype=torch.int32, device=q.device)
         o = torch.zeros_like(q)
+        b = torch.empty((0,0,0,0), device=q.device, dtype=q.dtype)
 
-        M = torch.empty((q.shape[0] * q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)
+        M = torch.zeros((batch * num_heads, max_seqlen_q), device=q.device, dtype=torch.float32)
         if return_encoded_softmax:
-            encoded_softmax = torch.zeros((q.shape[0], q.shape[1], q.shape[2], k.shape[2]), device=q.device, dtype=q.dtype)
+            encoded_softmax = torch.zeros((batch, num_heads, max_seqlen_q, max_seqlen_k), device=q.device, dtype=q.dtype)
         else:
             encoded_softmax = None
         if False or VERBOSE:
@@ -60,7 +63,7 @@ class _attention(torch.autograd.Function):
         philox_offset = DEFAULT_PHILOX_OFFSET
 
         attn_fwd_compact_varlen(q, k, v,
-                                cu_seqlens_q, cu_seqlens_k, batch, max_seqlen_q, max_seqlen_k,
+                                cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
                                 b, sm_scale, M, o,
                                 dropout_p, philox_seed, philox_offset, encoded_softmax, causal);
 
@@ -104,9 +107,9 @@ class _attention(torch.autograd.Function):
         db = torch.empty_like(b) if b is not None else None
         delta = torch.empty_like(L)
         attn_bwd_compact_varlen(q, k, v,
-                                cu_seqlens_q, cu_seqlens_k, batch, max_seqlen_q, max_seqlen_k,
+                                cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
                                 b, sm_scale, o, do, dq, dk, dv, db, L, delta,
                                 dropout_p, philox_seed, philox_offset, causal);
-        return dq, dk, dv, db, None, None, None, None, None, None, None
+        return dq, dk, dv, None, None, None, None, None, None, None, None
 
-attention = _attention.apply
+varlen_attention = _attention_varlen.apply

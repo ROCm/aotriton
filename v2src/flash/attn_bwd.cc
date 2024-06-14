@@ -65,7 +65,7 @@ bwd_preprocess_varlen(T4 out,
     dim3 grid {
       aotriton::cdiv<uint32_t>(params.Out->size(2), params.BLOCK_M),
       uint32_t(params.Out->size(1)),
-      uint32_t(params.Out->size(0)),
+      uint32_t(params.cu_seqlens_q->size(0) - 1),
     };
     // std::cerr << "Grid conf " << grid.x << " " << grid.y << " " << grid.z << std::endl;
     return grid;
@@ -125,7 +125,7 @@ bwd_kernel_dk_dv(T4 q,
     dim3 grid {
       aotriton::cdiv<uint32_t>(max_seqlen_k, params.BLOCK_N),
       uint32_t(params.Q->size(1)),
-      uint32_t(params.Q->size(0)),
+      params.num_seqlens == 0 ? uint32_t(params.Q->size(0)) : params.num_seqlens,
     };
     return grid;
   };
@@ -198,11 +198,11 @@ bwd_kernel_dq(T4 q,
   hipError_t err;
   auto stream = stream_wrap.native();
   auto arch = getArchFromStream(stream);
-  auto grid_calculator = [max_seqlen_q](const BwdKernelDqParams& params) -> dim3 {
+  auto grid_calculator = [num_seqlens, max_seqlen_q](const BwdKernelDqParams& params) -> dim3 {
     dim3 grid {
       aotriton::cdiv<uint32_t>(max_seqlen_q, params.BLOCK_M),
       uint32_t(params.Q->size(1)),
-      uint32_t(params.Q->size(0)),
+      params.num_seqlens == 0 ? uint32_t(params.Q->size(0)) : params.num_seqlens,
     };
     return grid;
   };

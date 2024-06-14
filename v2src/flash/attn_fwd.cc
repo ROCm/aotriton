@@ -46,7 +46,7 @@ _attn_fwd_common(T4 q,
     dim3 grid {
       aotriton::cdiv<uint32_t>(params.max_seqlen_q, params.BLOCK_M),
       uint32_t(params.Q->size(1)),
-      uint32_t(params.Q->size(0)),
+      params.num_seqlens == 0 ? uint32_t(params.Q->size(0)) : params.num_seqlens,
     };
 #if AOTRITON_VERBOSE
     std::cerr << "Grid conf " << grid.x << " " << grid.y << " " << grid.z << std::endl;

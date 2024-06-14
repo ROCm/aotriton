@@ -149,6 +149,7 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
         print(f'{err_idx=}')
         print(f'{tri_db[err_idx]=} {ref_db[err_idx]=} error = {torch.abs(tri_db[err_idx] - ref_db[err_idx])}')
     assert dk_allclose and dv_allclose and dq_allclose and db_allclose, f'{dk_allclose=} {dv_allclose=} {dq_allclose=} {db_allclose=}'
+    print(f'{tri_out=}')
     print(f'{adiff=} {grads_adiff=}')
 
 # @pytest.mark.parametrize('BATCH', [1])
@@ -209,3 +210,25 @@ def test_op_bwd_with_matrix_bias(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, sm_
     _scaled_dot_product_attention: Explicit attn_mask should not be set when is_causal=True
     '''
     _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
+
+def main():
+    BATCH = 1
+    D_HEAD = 80
+    N_HEADS = 2
+    seqlen_q = 6432
+    seqlen_k = 6432
+    '''
+    N_HEADS = 6432
+    seqlen_q = 2
+    seqlen_k = 2
+    '''
+    causal = False
+    sm_scale = 1.2
+    dropout_p = 0.0
+    dtype = torch.bfloat16
+    storage_flip = False
+    bias_type = None
+    _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
+
+if __name__ == '__main__':
+    main()

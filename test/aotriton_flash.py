@@ -4,6 +4,8 @@
 from pyaotriton.v2.flash import (
     attn_fwd as fa_forward,
     attn_bwd as fa_backward,
+    attn_fwd_compact_varlen as fa_forward_compact_varlen,
+    attn_bwd_compact_varlen as fa_backward_compact_varlen,
     debug_fill_dropout_rng as fa_debug_fill_dropout_rng,
 )
 from pyaotriton import T1, T2, T4, DType, Stream
@@ -80,4 +82,57 @@ def debug_fill_dropout_rng(R, philox_seed, philox_offset):
                                     philox_seed,
                                     philox_offset,
                                     Stream())
+    print(f'{err=}')
+
+def attn_fwd_compact_varlen(q, k, v,
+        cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
+        b, sm_scale, M, o,
+        dropout_p, philox_seed, philox_offset, encoded_softmax, is_causal):
+    err = fa_forward_compact_varlen(mk_aotensor(q),
+                                    mk_aotensor(k),
+                                    mk_aotensor(v),
+                                    mk_aotensor(cu_seqlens_q),
+                                    mk_aotensor(cu_seqlens_k),
+                                    max_seqlen_q,
+                                    max_seqlen_k,
+                                    mk_aotensor(b, if_empty_then_like=q),
+                                    float(sm_scale),
+                                    mk_aotensor(M),
+                                    mk_aotensor(o),
+                                    float(dropout_p),
+                                    int(philox_seed),
+                                    int(philox_offset),
+                                    mk_aotensor(encoded_softmax, if_empty_then_like=q),
+                                    is_causal,
+                                    Stream())
+    print(f'{err=}')
+
+def attn_bwd_compact_varlen(q, k, v,
+        cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
+        b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
+        dropout_p, philox_seed, philox_offset, is_causal):
+    b = mk_aotensor(b, if_empty_then_like=q)
+    print(f'{b=}')
+    err = fa_backward_compact_varlen(mk_aotensor(q),
+                                     mk_aotensor(k),
+                                     mk_aotensor(v),
+                                     mk_aotensor(cu_seqlens_q),
+                                     mk_aotensor(cu_seqlens_k),
+                                     max_seqlen_q,
+                                     max_seqlen_k,
+                                     b,
+                                     float(sm_scale),
+                                     mk_aotensor(o),
+                                     mk_aotensor(dout),
+                                     mk_aotensor(dq),
+                                     mk_aotensor(dk),
+                                     mk_aotensor(dv),
+                                     mk_aotensor(db, if_empty_then_like=q),
+                                     mk_aotensor(L),
+                                     mk_aotensor(delta),
+                                     float(dropout_p),
+                                     int(philox_seed),
+                                     int(philox_offset),
+                                     is_causal,
+                                     Stream())
     print(f'{err=}')
