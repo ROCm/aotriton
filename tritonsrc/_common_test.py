@@ -295,13 +295,6 @@ class VarlenSdpaContext(SdpaContext):
         q  = self._rng_varlen_tensor(N_HEADS, seqlens_q, D_HEAD, dtype, device)
         k  = self._rng_varlen_tensor(N_HEADS, seqlens_k, D_HEAD, dtype, device)
         v  = self._rng_varlen_tensor(N_HEADS, seqlens_k, D_HEAD, dtype, device)
-        # for i in range(N_HEADS):
-        #     q[0, i,  :4, :] = torch.eye(4) * 1
-        #     q[0, i, 4:8, :] = torch.eye(4) * 0
-        #     k[0, i,  :4, :] = torch.eye(4) * 1
-        #     k[0, i, 4:8, :] = torch.eye(4) * 0
-        #     v[0, i,  :4, :] = torch.eye(4) * 1
-        #     v[0, i, 4:8, :] = torch.eye(4) * 0
         b = None
         self.dev_tensors = (q, k, v, b)
         self.OUT_FUDGE_FACTOR = 3
@@ -352,9 +345,3 @@ class VarlenSdpaContext(SdpaContext):
         self.lp_refout_tensors = self._compute_ref_forward_varlen(self.lp_ref_tensors, self._seqlens_q, self._seqlens_k, p)
         return self.lp_refout_tensors
 
-    '''
-    # Debugging
-    def validate_with_reference(self, out, grads):
-        out_allclose, out_adiff = self._validate(out, self.refout_tensors[0], self.lp_refout_tensors[0], self.OUT_FUDGE_FACTOR, 'out')
-        return out_allclose, out_adiff, None, None
-    '''

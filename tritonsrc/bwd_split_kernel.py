@@ -51,8 +51,6 @@ def bwd_kernel_dk_dv(
 ):
     start_m = tl.program_id(0) * BLOCK_N
     off_h = tl.program_id(1) # head index
-    # if off_h != 0:
-    #     return
     off_z = tl.program_id(2) # batch index, for varlen it indicates index in cu_seqlens_q/k
     num_h = tl.num_programs(1)
     num_z = tl.num_programs(2)
@@ -172,10 +170,6 @@ def bwd_kernel_dk_dv(
         block_shape=(BLOCK_N, BLOCK_DMODEL),
         order=(1, 0)
     )
-    '''
-    if off_z == 1:
-        tl.device_print('cu_seqlens_q_start off_h dk_offset', cu_seqlens_q_start, off_h, dk_offset)
-    '''
 
     bwd_kernel_dk_dv_common(
         Q_block_ptr, KT_block_ptr, VT_block_ptr, B_block_ptr,

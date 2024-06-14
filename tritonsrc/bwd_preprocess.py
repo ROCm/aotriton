@@ -30,8 +30,6 @@ def bwd_preprocess(
     D_HEAD: tl.constexpr,
     PADDED_HEAD: tl.constexpr,
 ):
-    # off_m = tl.program_id(0) * BLOCK_M + tl.arange(0, BLOCK_M)
-    # off_n = tl.arange(0, D_HEAD)
     off_m = tl.program_id(0) * BLOCK_M
     off_h = tl.program_id(1) # head index
     off_z = tl.program_id(2) # batch index
