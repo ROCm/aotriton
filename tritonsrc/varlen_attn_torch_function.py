@@ -9,7 +9,7 @@ import triton
 import triton.language as tl
 from flash import (
     attn_fwd as bare_attn_fwd,
-    bwd_preprocess as bare_bwd_preprocess,
+    bwd_preprocess_varlen as bare_bwd_preprocess_varlen,
     bwd_kernel_dk_dv as bare_bwd_kernel_dk_dv,
     bwd_kernel_dq as bare_bwd_kernel_dq
 )
@@ -26,8 +26,9 @@ class _varlen_attention(torch.autograd.Function):
     # DEBUG_MASK_DTYPE = torch.int32
     DEBUG_MASK_DTYPE = torch.float32
 
+    # TODO: rename seqlen_q -> seqlens_q
     @staticmethod
-    def forward(ctx, q, k, v, seqlens_q, seqlens_k, causal, sm_scale, dropout_p, return_encoded_softmax,
+    def forward(ctx, q, k, v, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax,
                 autotune=False, return_autotune=False):
         dtype = q.dtype
         # shape constraints
@@ -37,12 +38,12 @@ class _varlen_attention(torch.autograd.Function):
         head_dim_rounded = max(16, head_dim_rounded)
         padded_head = head_dim_rounded != Lk
         # Varlen packed all batches of seqlens into dim[0]
-        batch = len(seqlens_q)
+        batch = len(seqlen_q)
         num_heads = q.shape[1]
-        max_seqlen_q = int(np.max(seqlens_q))
-        max_seqlen_k = int(np.max(seqlens_k))
-        cu_seqlens_q = torch.tensor([0] + np.cumsum(seqlens_q).tolist(), dtype=torch.int32, device=q.device)
-        cu_seqlens_k = torch.tensor([0] + np.cumsum(seqlens_k).tolist(), dtype=torch.int32, device=q.device)
+        max_seqlen_q = int(np.max(seqlen_q))
+        max_seqlen_k = int(np.max(seqlen_k))
+        cu_seqlens_q = torch.tensor([0] + np.cumsum(seqlen_q).tolist(), dtype=torch.int32, device=q.device)
+        cu_seqlens_k = torch.tensor([0] + np.cumsum(seqlen_k).tolist(), dtype=torch.int32, device=q.device)
         o = torch.zeros_like(q)
 
         grid = lambda META: (
@@ -53,7 +54,7 @@ class _varlen_attention(torch.autograd.Function):
         # Fixed M is (Batch, num_heads, seqlen)
         # Varlen M then will be (batch, num_heads, max_seqlen_q)
         # TODO: Ensure this tensor follows PyTorch's convention
-        M = torch.empty((batch, num_heads, max_seqlen_q), device=q.device, dtype=torch.float32)
+        M = torch.zeros((batch, num_heads, max_seqlen_q), device=q.device, dtype=torch.float32)
         if return_encoded_softmax:
             encoded_softmax = torch.ones((batch, num_heads, max_seqlen_q, max_seqlen_k),
                     device=q.device,
@@ -121,7 +122,7 @@ class _varlen_attention(torch.autograd.Function):
             RETURN_ENCODED_SOFTMAX=encoded_softmax is not None
             # DEBUG
             BLOCK_M = BLOCK_N = 16
-            print(f'{BLOCK_M=} {BLOCK_N=} {RETURN_ENCODED_SOFTMAX=} seqlens_q={seqlens_q} seqlens_k={seqlens_k} {cu_seqlens_q=} {cu_seqlens_k=} {q.shape=} {q.stride()=}',
+            print(f'{BLOCK_M=} {BLOCK_N=} {RETURN_ENCODED_SOFTMAX=} seqlen_q={seqlen_q} seqlen_k={seqlen_k} {cu_seqlens_q=} {cu_seqlens_k=} {q.shape=} {q.stride()=}',
                     flush=True)
             bare_attn_fwd[grid](
                 q, k, v, b, sm_scale, M, o,
@@ -164,9 +165,13 @@ class _varlen_attention(torch.autograd.Function):
             block_m = min(128, q.shape[2], k.shape[2])
         grid = (triton.cdiv(max_seqlen_q, block_m), num_heads, batch)
         print(f'{grid=}')
-        ctx.save_for_backward(q, k, v, o, M)
-        ctx.seqlens_q = seqlens_q
-        ctx.seqlens_k = seqlens_k
+        ctx.save_for_backward(q, k, v, b, o, M)
+        ctx.seqlen_q = seqlen_q
+        ctx.seqlen_k = seqlen_k
+        ctx.cu_seqlens_q = cu_seqlens_q
+        ctx.cu_seqlens_k = cu_seqlens_k
+        ctx.max_seqlen_q = max_seqlen_q
+        ctx.max_seqlen_k = max_seqlen_k
         ctx.grid = grid
         ctx.sm_scale = sm_scale
         ctx.head_dim = Lk
@@ -175,6 +180,7 @@ class _varlen_attention(torch.autograd.Function):
         ctx.philox_seed = philox_seed
         ctx.philox_offset = philox_offset
         ctx.encoded_softmax = encoded_softmax # FIXME: for debugging only
+        ctx.bias_type = 0
         ctx.tuning_result = [('attn_fwd_varlen', tuning_result)] if tuning_result is not None else None
         if ctx.tuning_result is not None:
             for kernel_name, best in ctx.tuning_result:
@@ -191,34 +197,42 @@ class _varlen_attention(torch.autograd.Function):
         head_dim_rounded = max(16, head_dim_rounded)
         padded_head = head_dim_rounded != ctx.head_dim
 
-        seqlens_q = ctx.seqlens_q
-        seqlens_k = ctx.seqlens_k
+        seqlen_q = ctx.seqlen_q
+        seqlen_k = ctx.seqlen_k
+        cu_seqlens_q = ctx.cu_seqlens_q
+        cu_seqlens_k = ctx.cu_seqlens_k
+        max_seqlen_q = ctx.max_seqlen_q
+        max_seqlen_k = ctx.max_seqlen_k
+        batch = len(seqlen_q)
+        num_heads = q.shape[1]
 
         dq = torch.empty_like(q)
+        dq.fill_(float('nan'))
         dk = torch.empty_like(k)
+        dk.fill_(float('nan'))
         dv = torch.empty_like(v)
+        dv.fill_(float('nan'))
         db = torch.empty_like(b)
         delta = torch.empty_like(L)
-        max_seqlen_q = int(np.max(seqlens_q))
-        max_seqlen_k = int(np.max(seqlens_k))
         MAX_BLOCK = 64 if ctx.dropout_p == 0 else 16
-        # BLOCK = min(max_seqlens_q, max_seqlens_k, q.shape[-1], MAX_BLOCK)
-        # BLOCK = BLOCK if is_supported_by_tl_dot(max_seqlens_q) and is_supported_by_tl_dot(max_seqlens_k) else 1
+        # BLOCK = min(max_seqlen_q, max_seqlen_k, q.shape[-1], MAX_BLOCK)
+        # BLOCK = BLOCK if is_supported_by_tl_dot(max_seqlen_q) and is_supported_by_tl_dot(max_seqlen_k) else 1
         if not ctx.autotune:
             BLOCK = 16 # FIXME: Variable block size
         else:
             BLOCK = 128
         return_autotune = ctx.tuning_result is not None
 
-        grid_prep = (triton.cdiv(do.shape[2], BLOCK), do.shape[1], do.shape[0])
-        bare_bwd_preprocess[grid_prep](
+        grid_prep = (triton.cdiv(max_seqlen_q, BLOCK), num_heads, batch)
+        bare_bwd_preprocess_varlen[grid_prep](
             o, do, delta,
-            o.stride(0), o.stride(1), o.stride(2),
-            do.stride(0), do.stride(1), do.stride(2),
-            max_seqlens_q,
-            Lk,
+            o.stride(0), o.stride(1), o.stride(2), o.stride(3),
+            do.stride(0), do.stride(1), do.stride(2), do.stride(3),
+            cu_seqlens_q=cu_seqlens_q,
+            max_seqlen_q=max_seqlen_q,
+            head_dim=Lk,
             BLOCK_M=BLOCK, D_HEAD=head_dim_rounded,
-            PADDED_HEAD=padded_head, # FIXME: irregular head dimension
+            PADDED_HEAD=padded_head,
         )
         if False or VERBOSE:
             print(f'{q.shape=} {q.stride()=}')
@@ -229,14 +243,16 @@ class _varlen_attention(torch.autograd.Function):
             print(f'{dk.shape=} {dk.stride()=}')
             print(f'{dv.shape=} {dv.stride()=}')
             print(f'{do.shape=} {do.stride()=}')
-            print(f'{L=} {L.shape=}')
-            print(f'{delta=}')
+            print(f'{L.shape=} {L=}')
+            for i in range(num_heads):
+                print(f'L[:,{i},:]={L[:,i,:]}')
+            print(f'{delta.shape=} {delta=}')
             print(f'{BLOCK=}')
 
         use_small_block = ctx.dropout_p > 0.0
         use_medium_block = ctx.bias_type != 0
         if use_small_block:
-            # DQ_BLOCK_M = min(max_seqlens_q, BLOCK)
+            # DQ_BLOCK_M = min(max_seqlen_q, BLOCK)
             BLOCK_M = 32
             BLOCK_N = 16
         elif use_medium_block:
@@ -248,11 +264,11 @@ class _varlen_attention(torch.autograd.Function):
         if q.dtype == torch.float32:
             BLOCK_M = max(16, BLOCK_M // 2)
             BLOCK_N = max(16, BLOCK_N // 2)
-        # debug_mask = torch.zeros((q.shape[0], q.shape[1], max_seqlens_q, max_seqlens_k), device=q.device, dtype=ctx.encoded_softmax.dtype)
+        # debug_mask = torch.zeros((q.shape[0], q.shape[1], max_seqlen_q, max_seqlen_k), device=q.device, dtype=ctx.encoded_softmax.dtype)
         grid_dk_dv = lambda META: (
-            triton.cdiv(max_seqlens_k, META['BLOCK_N']),
-            q.shape[1],
-            q.shape[0],
+            triton.cdiv(max_seqlen_k, META['BLOCK_N']),
+            num_heads,
+            batch,
         )
         stride_dbz, stride_dbh, stride_dbm, stride_dbn = db.stride()
         if db.numel() == 0 or not b.requires_grad:
@@ -275,8 +291,11 @@ class _varlen_attention(torch.autograd.Function):
                     do.stride(0), do.stride(1), do.stride(2), do.stride(3),
                     dk.stride(0), dk.stride(1), dk.stride(2), dk.stride(3),
                     dv.stride(0), dv.stride(1), dv.stride(2), dv.stride(3),
-                    max_seqlens_q=max_seqlens_q,
-                    max_seqlens_k=max_seqlens_k,
+                    cu_seqlens_q=cu_seqlens_q,
+                    cu_seqlens_k=cu_seqlens_k,
+                    num_seqlens=len(cu_seqlens_q),
+                    max_seqlen_q=max_seqlen_q,
+                    max_seqlen_k=max_seqlen_k,
                     head_dim=Lk,
                     dropout_p=ctx.dropout_p,
                     philox_seed=ctx.philox_seed,
@@ -299,8 +318,8 @@ class _varlen_attention(torch.autograd.Function):
                         'Q.shape' : list(q.shape),
                         'Q.dtype' : str(q.dtype),
                         'N_HEADS' : q.shape[1],
-                        'max_seqlens_q': max_seqlens_q,
-                        'max_seqlens_k': max_seqlens_k,
+                        'max_seqlen_q': max_seqlen_q,
+                        'max_seqlen_k': max_seqlen_k,
                         'head_dim' : ctx.BLOCK_DMODEL,
                         'BLOCK_DMODEL' : head_dim_rounded,
                         'CAUSAL'  : ctx.causal,
@@ -333,8 +352,11 @@ class _varlen_attention(torch.autograd.Function):
                     do.stride(0), do.stride(1), do.stride(2), do.stride(3),
                     dk.stride(0), dk.stride(1), dk.stride(2), dk.stride(3),
                     dv.stride(0), dv.stride(1), dv.stride(2), dv.stride(3),
-                    max_seqlens_q=max_seqlens_q,
-                    max_seqlens_k=max_seqlens_k,
+                    cu_seqlens_q=cu_seqlens_q,
+                    cu_seqlens_k=cu_seqlens_k,
+                    num_seqlens=len(cu_seqlens_q),
+                    max_seqlen_q=max_seqlen_q,
+                    max_seqlen_k=max_seqlen_k,
                     head_dim=Lk,
                     dropout_p=ctx.dropout_p,
                     philox_seed=ctx.philox_seed,
@@ -361,15 +383,15 @@ class _varlen_attention(torch.autograd.Function):
                 print(f'Full fwd mask: {ctx.encoded_softmax[0,0]}')
                 print(f'Full mask div: {debug_mask[0,0] / ctx.encoded_softmax[0,0]}')
                 print(f'Full dv: {dv}')
-                if max_seqlens_q == 32:
+                if max_seqlen_q == 32:
                     print(f'2nd block bwd mask: {debug_mask[0,0, 16:]}')
                     print(f'2nd block fwd mask: {ctx.encoded_softmax[0,0, 16:]}')
             # print(f'Full q: {q}', file=sys.stderr)
             # assert mask_allclose
         grid_dq = lambda META: (
-            triton.cdiv(max_seqlens_q, META['BLOCK_M']),
-            q.shape[1],
-            q.shape[0],
+            triton.cdiv(max_seqlen_q, META['BLOCK_M']),
+            num_heads,
+            batch,
         )
         if q.requires_grad:
             if ctx.autotune:
@@ -385,8 +407,11 @@ class _varlen_attention(torch.autograd.Function):
                     do.stride(0), do.stride(1), do.stride(2), do.stride(3),
                     dq.stride(0), dq.stride(1), dq.stride(2), dq.stride(3),
                     stride_dbz, stride_dbh, stride_dbm, stride_dbn,
-                    max_seqlens_q=max_seqlens_q,
-                    max_seqlens_k=max_seqlens_k,
+                    cu_seqlens_q=cu_seqlens_q,
+                    cu_seqlens_k=cu_seqlens_k,
+                    num_seqlens=len(cu_seqlens_q),
+                    max_seqlen_q=max_seqlen_q,
+                    max_seqlen_k=max_seqlen_k,
                     head_dim=Lk,
                     dropout_p=ctx.dropout_p,
                     philox_seed=ctx.philox_seed,
@@ -409,8 +434,8 @@ class _varlen_attention(torch.autograd.Function):
                         'Q.shape' : list(q.shape),
                         'Q.dtype' : str(q.dtype),
                         'N_HEADS' : q.shape[1],
-                        'max_seqlens_q': max_seqlens_q,
-                        'max_seqlens_k': max_seqlens_k,
+                        'max_seqlen_q': max_seqlen_q,
+                        'max_seqlen_k': max_seqlen_k,
                         'head_dim' : ctx.BLOCK_DMODEL,
                         'BLOCK_DMODEL' : head_dim_rounded,
                         'CAUSAL'  : ctx.causal,
@@ -442,8 +467,11 @@ class _varlen_attention(torch.autograd.Function):
                     do.stride(0), do.stride(1), do.stride(2), do.stride(3),
                     dq.stride(0), dq.stride(1), dq.stride(2), dq.stride(3),
                     stride_dbz, stride_dbh, stride_dbm, stride_dbn,
-                    max_seqlens_q=max_seqlens_q,
-                    max_seqlens_k=max_seqlens_k,
+                    cu_seqlens_q=cu_seqlens_q,
+                    cu_seqlens_k=cu_seqlens_k,
+                    num_seqlens=len(cu_seqlens_q),
+                    max_seqlen_q=max_seqlen_q,
+                    max_seqlen_k=max_seqlen_k,
                     head_dim=Lk,
                     dropout_p=ctx.dropout_p,
                     philox_seed=ctx.philox_seed,
