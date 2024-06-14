@@ -16,5 +16,9 @@ def dropout_rng(philox_seed, philox_offset, m, n, stride):
 @triton.jit
 def dropout_mask(philox_seed, philox_offset, dropout_p, m, n, stride):
     rng_output = dropout_rng(philox_seed, philox_offset, m, n, stride)
+    # if tl.program_id(2) == 1:
+    #     rng_keep = rng_output > -1.0
+    # else:
+    #     rng_keep = rng_output > dropout_p
     rng_keep = rng_output > dropout_p
     return rng_keep

@@ -21,12 +21,14 @@ def bwd_kernel_dk_dv_common(
     DK_block_ptr, DV_block_ptr,
     l_ptrs,
     D_ptrs,
-    seqlen_q, seqlen_k,
+    seqlen_q,
+    seqlen_k,
     start_m,
     head_dim,
     dropout_p,
     philox_seed,
     batch_philox_offset,
+    max_seqlen_k,  # It's put after philox because it is not needed by anything other than dropout
     BLOCK_M: tl.constexpr,
     BLOCK_DMODEL: tl.constexpr,
     BLOCK_N: tl.constexpr,
@@ -138,8 +140,8 @@ def bwd_kernel_dk_dv_common(
         p = tl.math.exp2(qk - l_i) # (BLOCK_M, BLOCK_N)
         # -- compute dv ----
         if ENABLE_DROPOUT:
-            philox_offset = batch_philox_offset + start_n * seqlen_k + start_m
-            keep = dropout_mask(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, seqlen_k)
+            philox_offset = batch_philox_offset + start_n * max_seqlen_k + start_m
+            keep = dropout_mask(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, max_seqlen_k)
             # CAVEAT: do NOT update p, ds needs the original p
             if BLOCK_M == 1:
                 dv += tl.where(keep, p / (1 - dropout_p), 0.0).to(Q_block_ptr.dtype.element_ty) * do
@@ -189,6 +191,7 @@ def bwd_kernel_dq_db_common(
     dropout_p,
     philox_seed,
     batch_philox_offset,
+    max_seqlen_k,  # It's put after philox because it is not needed by anything other than dropout
     BLOCK_M: tl.constexpr,
     BLOCK_DMODEL: tl.constexpr,
     BLOCK_N: tl.constexpr,
@@ -284,8 +287,8 @@ def bwd_kernel_dq_db_common(
         dp = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
         dp += dot(BLOCK_M, BLOCK_DMODEL, BLOCK_DMODEL, do, vt)
         if ENABLE_DROPOUT:
-            philox_offset = batch_philox_offset + start_m * seqlen_k + start_n
-            keep = dropout_mask(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, seqlen_k)
+            philox_offset = batch_philox_offset + start_m * max_seqlen_k + start_n
+            keep = dropout_mask(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, max_seqlen_k)
             dp = tl.where(keep, dp / (1 - dropout_p), 0)
         # compute ds = p * (dp - delta[:, None])
         ds = p * (dp - Di[:, None])

@@ -206,3 +206,23 @@ def test_op_bwd_with_matrix_bias(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, sm_
     _scaled_dot_product_attention: Explicit attn_mask should not be set when is_causal=True
     '''
     _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
+
+def main():
+    BATCH = 1
+    D_HEAD = 80
+    '''
+    N_HEADS = 2
+    seqlens_q = 6432
+    seqlens_k = 6432
+    '''
+    N_HEADS = 6432
+    seqlens_q = 2
+    seqlens_k = 2
+    causal = False
+    sm_scale = 1.2
+    dropout_p = 0.5
+    dtype = torch.bfloat16
+    _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
+
+if __name__ == '__main__':
+    main()

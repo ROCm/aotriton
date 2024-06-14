@@ -16,8 +16,8 @@ from _common_test import VarlenSdpaContext, SdpaParams
 SEQLEN_Q = [4, 8, 64, 143]
 SEQLEN_K = [4, 8, 63, 128]
 
-# SEQLEN_Q = [16]
-# SEQLEN_K = [16]
+# SEQLEN_Q = [4]
+# SEQLEN_K = [4]
 
 POSSIBLE_SEQLEN = sorted(set(SEQLEN_Q + SEQLEN_K))
 
@@ -34,8 +34,8 @@ def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dro
     if causal and not np.allclose(seqlens_q, seqlens_k):
         pytest.skip("PyTorch's Flash V2 does not accept casual=True when seqlen_q != seqlen_k. Skipping")
     # Data creation
-    SKIP_DK_DV = True  # No backward
-    SKIP_DQ = True  # No backward
+    SKIP_DK_DV = False
+    SKIP_DQ = False
     USE_AUTOTUNE = False
     torch.manual_seed(20)
     ctx = VarlenSdpaContext(N_HEADS, D_HEAD, seqlens_q, seqlens_k, dtype, device='cuda')
@@ -51,8 +51,12 @@ def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dro
 
     # # Backward
     dout = torch.rand_like(tri_out)
+    # for i in range(N_HEADS):
+    #     dout[0, i,  :4, :] = torch.eye(4) * 1
+    #     dout[0, i, 4:8, :] = torch.eye(4) * 1
     ctx.compute_backward(tri_out, dout)
     is_allclose, adiff, grads_allclose, grads_adiff = ctx.validate_with_reference(tri_out, ctx.dout_tensors)
+    torch.set_printoptions(threshold=114514, linewidth=200)
 
     # Test Forward
     if not is_allclose:
@@ -82,11 +86,88 @@ def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dro
         # print(f'{ref_out[16,:4,:4]=}')
     assert is_allclose, f'Forward pass {is_allclose=}'
 
+    dq_allclose, dk_allclose, dv_allclose, db_allclose = grads_allclose
+    tri_dq, tri_dk, tri_dv, tri_db = ctx.dout_tensors
+    ref_dq, ref_dk, ref_dv, ref_db = ctx.dref_tensors
+    def TO(ref_tensor):
+        return ref_tensor.to(device=q.device, dtype=dtype)
+    if not dv_allclose:
+        import numpy as np
+        err_idx = np.unravel_index(torch.argmax(torch.abs(TO(ref_dv) - tri_dv)).cpu().numpy(), ref_dv.shape)
+        print(f'{q.shape=} {q.stride()=} {q.dtype=}')
+        print(f'{k.shape=} {k.stride()=} {k.dtype=}')
+        print(f'{v.shape=} {v.stride()=} {v.dtype=}')
+        print(f'{err_idx=}')
+        print(f'{tri_dv[err_idx]=}')
+        print(f'{ref_dv[err_idx]=}')
+        print(f'{tri_dv[0,0,:4,:4]=}')
+        print(f'{ref_dv[0,0,:4,:4]=}')
+        # for head in range(N_HEADS):
+        #     print(f'{head=}')
+        #     print(f'{tri_dv[0,head,15,:4]=}')
+        #     print(f'{ref_dv[0,head,15,:4]=}')
+        #     print(f'{tri_dv[0,head,16,:4]=}')
+        #     print(f'{ref_dv[0,head,16,:4]=}')
+        # # for head in range(N_HEADS):
+        #     print(f'{torch.allclose(tri_dv[0, head], ref_dv[0, head], atol=1e-2)=}')
+        print(f'{torch.isnan(ref_dv).any()=}')
+
+    if dv_allclose and not dk_allclose:
+        import numpy as np
+        err_idx = np.unravel_index(torch.argmax(torch.abs(TO(ref_dk) - tri_dk)).cpu().numpy(), ref_dk.shape)
+        print(f'{err_idx=}')
+        print(f'{tri_dk[err_idx]=} {ref_dk[err_idx]=} error = {torch.abs(tri_dk[err_idx] - ref_dk[err_idx])}')
+        # print(f'{tri_dk[0,0,15,:4]=}')
+        # print(f'{ref_dk[0,0,15,:4]=}')
+        # print(f'{tri_dk[0,0,16,:4]=}')
+        # print(f'{ref_dk[0,0,16,:4]=}')
+        # for head in range(N_HEADS):
+        #     print(f'{torch.allclose(tri_dv[0, head], ref_dv[0, head], atol=1e-2)=}')
+
+    if dk_allclose and dv_allclose and not dq_allclose:
+        import numpy as np
+        err_idx = np.unravel_index(torch.argmax(torch.abs(TO(ref_dq) - tri_dq)).cpu().numpy(), ref_dq.shape)
+        print(f'{err_idx=}')
+        print(f'{tri_dq[err_idx]=} {ref_dq[err_idx]=} error = {torch.abs(tri_dq[err_idx] - ref_dq[err_idx])}')
+        for i in range(15, 21):
+            print(f'{i=} {tri_dq[0,0,i,:4]=}')
+            print(f'{i=} {ref_dq[0,0,i,:4]=}')
+
+    if dk_allclose and dv_allclose and dq_allclose and not db_allclose:
+        import numpy as np
+        err_idx = np.unravel_index(torch.argmax(torch.abs(TO(ref_db) - tri_db)).cpu().numpy(), ref_db.shape)
+        print(f'{err_idx=}')
+        print(f'{tri_db[err_idx]=} {ref_db[err_idx]=} error = {torch.abs(tri_db[err_idx] - ref_db[err_idx])}')
+
+    if True:
+        # for head in range(N_HEADS):
+        #     print(f'{head=}')
+        #     print(f'{tri_dk[0,head,3,:4]=}')
+        #     print(f'{ref_dk[0,head,3,:4]=}')
+        #     print(f'{tri_dk[0,head,4,:4]=}')
+        #     print(f'{ref_dk[0,head,4,:4]=}')
+        #     print(f'{tri_dv[0,head,3,:4]=}')
+        #     print(f'{ref_dv[0,head,3,:4]=}')
+        #     print(f'{tri_dv[0,head,4,:4]=}')
+        #     print(f'{ref_dv[0,head,4,:4]=}')
+        # for i in range(N_HEADS):
+        #     print(f'tri_dk[{i},:,:]={tri_dk[0,i,:,:]}')
+        #     print(f'ref_dk[{i},:,:]={ref_dk[0,i,:,:]}')
+        print(f'{dout.shape=}')
+        print(f'{tri_dv=}')
+        print(f'{ref_dv=}')
+        # print(f'{tri_dq=}')
+
+    assert dk_allclose and dv_allclose and dq_allclose and db_allclose, f'{dk_allclose=} {dv_allclose=} {dq_allclose=} {db_allclose=}'
+    # assert dv_allclose and dq_allclose and db_allclose, f'{dk_allclose=} {dv_allclose=} {dq_allclose=} {db_allclose=}'
+    print(f'{adiff=} {grads_adiff=}')
+
 @pytest.mark.parametrize('N_HEADS', [1, 4])
-@pytest.mark.parametrize('D_HEAD', [8, 16, 21, 32, 64, 72, 96, 128, 160, 192, 203, 256])
-# @pytest.mark.parametrize('D_HEAD', [4])  # Faster "collecting items"
-# @pytest.mark.parametrize('n_seqlen', range(1, 24, 5))
-@pytest.mark.parametrize('n_seqlen', [8])
+# @pytest.mark.parametrize('N_HEADS', [2])
+# @pytest.mark.parametrize('D_HEAD', [8, 16, 21, 32, 64, 72, 96, 128, 160, 192, 203, 256])
+@pytest.mark.parametrize('D_HEAD', [16])  # Faster "collecting items"
+@pytest.mark.parametrize('n_seqlen', range(1, 24, 5))
+# @pytest.mark.parametrize('n_seqlen', [2])
 @pytest.mark.parametrize('causal', [False, True])
 @pytest.mark.parametrize('dropout_p', [0.0, 0.5])
 @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16, torch.float32])
@@ -96,3 +177,17 @@ def test_op_bwd(N_HEADS, D_HEAD, n_seqlen, causal, sm_scale, dropout_p, dtype):
     seqlens_q = rng_seqlens(n_seqlen)
     seqlens_k = seqlens_q if causal else rng_seqlens(n_seqlen)
     _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dropout_p, dtype)
+
+def main():
+    N_HEADS = 2
+    D_HEAD = 4
+    seqlens_q = np.array([4, 8])
+    seqlens_k = seqlens_q
+    causal = False
+    sm_scale = 1.2
+    dropout_p = 0.5
+    dtype = torch.float16
+    _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dropout_p, dtype)
+
+if __name__ == '__main__':
+    main()

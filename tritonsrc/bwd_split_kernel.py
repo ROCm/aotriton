@@ -51,19 +51,21 @@ def bwd_kernel_dk_dv(
 ):
     start_m = tl.program_id(0) * BLOCK_N
     off_h = tl.program_id(1) # head index
-    off_z = tl.program_id(2) # batch index
+    # if off_h != 0:
+    #     return
+    off_z = tl.program_id(2) # batch index, for varlen it indicates index in cu_seqlens_q/k
     num_h = tl.num_programs(1)
     num_z = tl.num_programs(2)
     off_zh = off_z * num_h + off_h * 1
     if num_seqlens > 0:
-        cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
-        cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
-        seqlen_q = cu_seqlens_q_end - cu_seqlens_q_start
-        if start_m * BLOCK_M > seqlen_q:
-            return
         cu_seqlens_k_start = tl.load(cu_seqlens_k + off_z)
         cu_seqlens_k_end = tl.load(cu_seqlens_k + off_z + 1)
         seqlen_k = cu_seqlens_k_end - cu_seqlens_k_start
+        if start_m >= seqlen_k:
+            return
+        cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
+        cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
+        seqlen_q = cu_seqlens_q_end - cu_seqlens_q_start
         batch_index = 0
     elif num_seqlens == 0:
         cu_seqlens_q_start = 0
@@ -72,18 +74,19 @@ def bwd_kernel_dk_dv(
         seqlen_k = max_seqlen_k
         batch_index = off_z
     else: # < 0 for padded seqlen
-        cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
-        cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
-        seqlen_q = cu_seqlens_q_end - cu_seqlens_q_start
-        if start_m * BLOCK_M > seqlen_q:
-            return
         cu_seqlens_k_start = tl.load(cu_seqlens_k + off_z)
         cu_seqlens_k_end = tl.load(cu_seqlens_k + off_z + 1)
         seqlen_k = cu_seqlens_k_end - cu_seqlens_k_start
+        if start_m >= seqlen_k:
+            return
+        cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
+        cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
+        seqlen_q = cu_seqlens_q_end - cu_seqlens_q_start
         # Varlen, but padded to Rank 4 tensor
         cu_seqlens_q_start = 0
         cu_seqlens_k_start = 0
         batch_index = off_z
+
     # Initialize pointers to Q, K, V
     # Q is consumed depending on block ID. Every block uses
     # previous block offset by BLOCK_M x D_HEAD.
@@ -137,8 +140,12 @@ def bwd_kernel_dk_dv(
     else:
         tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
     # pointer to row-wise quantities in value-like data
+    # Shape (batch, num_heads, max_seqlen_q)
+    # In varlen cases, batch == len(cu_seqlens_q) - 1).
+    # Hence off_z plays the same role in varlen/non-varlen
     D_ptrs = D + off_zh * max_seqlen_q
     l_ptrs = L + off_zh * max_seqlen_q
+
     # This lower loop bound is because of the causal mask. We create a lower triangular
     # result. The upper triangular is -inf (becomes 0 when we do e^x). As such, it can
     # be ignored in the GEMM.
@@ -165,6 +172,10 @@ def bwd_kernel_dk_dv(
         block_shape=(BLOCK_N, BLOCK_DMODEL),
         order=(1, 0)
     )
+    '''
+    if off_z == 1:
+        tl.device_print('cu_seqlens_q_start off_h dk_offset', cu_seqlens_q_start, off_h, dk_offset)
+    '''
 
     bwd_kernel_dk_dv_common(
         Q_block_ptr, KT_block_ptr, VT_block_ptr, B_block_ptr,
@@ -178,6 +189,7 @@ def bwd_kernel_dk_dv(
         dropout_p,
         philox_seed,
         batch_philox_offset,
+        max_seqlen_k,
         BLOCK_M,
         BLOCK_DMODEL,
         BLOCK_N,
@@ -225,7 +237,7 @@ def bwd_kernel_dq(
         cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
         cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
         seqlen_q = cu_seqlens_q_end - cu_seqlens_q_start
-        if start_m * BLOCK_M > seqlen_q:
+        if start_m >= seqlen_q:
             return
         cu_seqlens_k_start = tl.load(cu_seqlens_k + off_z)
         cu_seqlens_k_end = tl.load(cu_seqlens_k + off_z + 1)
@@ -241,7 +253,7 @@ def bwd_kernel_dq(
         cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
         cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
         seqlen_q = cu_seqlens_q_end - cu_seqlens_q_start
-        if start_m * BLOCK_M > seqlen_q:
+        if start_m >= seqlen_q:
             return
         cu_seqlens_k_start = tl.load(cu_seqlens_k + off_z)
         cu_seqlens_k_end = tl.load(cu_seqlens_k + off_z + 1)
@@ -345,6 +357,7 @@ def bwd_kernel_dq(
         dropout_p,
         philox_seed,
         batch_philox_offset,
+        max_seqlen_k,
         BLOCK_M,
         BLOCK_DMODEL,
         BLOCK_N,

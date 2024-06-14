@@ -239,9 +239,9 @@ class SdpaContext(object):
 
     # Note: this follows pytorch's testing approach and expects low precision dout
     def compute_backward(self, out, dout):
-        self.dout_tensors = self._compute_backward(self.dev_tensors, out, dout)
         self.dref_tensors = self._compute_backward(self.ref_tensors, self.refout_tensors[0], dout)
         self.lp_dref_tensors = self._compute_backward(self.lp_ref_tensors, self.lp_refout_tensors[0], dout)
+        self.dout_tensors = self._compute_backward(self.dev_tensors, out, dout)
 
     @staticmethod
     def _validate(out, ref, lp_ref, fudge_factor, tname):
@@ -295,12 +295,13 @@ class VarlenSdpaContext(SdpaContext):
         q  = self._rng_varlen_tensor(N_HEADS, seqlens_q, D_HEAD, dtype, device)
         k  = self._rng_varlen_tensor(N_HEADS, seqlens_k, D_HEAD, dtype, device)
         v  = self._rng_varlen_tensor(N_HEADS, seqlens_k, D_HEAD, dtype, device)
-        # q[:4, 0, :] = torch.eye(4)
-        # q[4:8, 0, :] = torch.eye(4)
-        # k[:4, 0, :] = torch.eye(4)
-        # k[4:8, 0, :] = torch.eye(4)
-        # v[:4, 0, :] = torch.eye(4) * 1.14514
-        # v[4:8, 0, :] = torch.eye(4) * 2.
+        # for i in range(N_HEADS):
+        #     q[0, i,  :4, :] = torch.eye(4) * 1
+        #     q[0, i, 4:8, :] = torch.eye(4) * 0
+        #     k[0, i,  :4, :] = torch.eye(4) * 1
+        #     k[0, i, 4:8, :] = torch.eye(4) * 0
+        #     v[0, i,  :4, :] = torch.eye(4) * 1
+        #     v[0, i, 4:8, :] = torch.eye(4) * 0
         b = None
         self.dev_tensors = (q, k, v, b)
         self.OUT_FUDGE_FACTOR = 3
@@ -331,6 +332,7 @@ class VarlenSdpaContext(SdpaContext):
                 print(f'REF {packed_dropout_mask.shape=}')
                 print(f'REF {dropout_mask.shape=}')
                 dropout_mask = dropout_mask[:, :seqlen_q, :seqlen_k]  # Trim to actual seqlen
+                print(f'REF CLAMPED {dropout_mask.shape=}')
                 # print(f'REF {dropout_mask=}')
             ref_out, ref_mask = torch.ops.aten._scaled_dot_product_attention_math(ref_q, ref_k, ref_v,
                                                                         dropout_p=p.dropout_p,
@@ -350,11 +352,9 @@ class VarlenSdpaContext(SdpaContext):
         self.lp_refout_tensors = self._compute_ref_forward_varlen(self.lp_ref_tensors, self._seqlens_q, self._seqlens_k, p)
         return self.lp_refout_tensors
 
+    '''
     # Debugging
     def validate_with_reference(self, out, grads):
         out_allclose, out_adiff = self._validate(out, self.refout_tensors[0], self.lp_refout_tensors[0], self.OUT_FUDGE_FACTOR, 'out')
         return out_allclose, out_adiff, None, None
-
-    # Also Debugging
-    def compute_backward(self, out, dout):
-        self.dout_tensors = None
+    '''

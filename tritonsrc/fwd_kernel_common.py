@@ -98,7 +98,7 @@ def attn_fwd_common(
         acc, l_i, m_i = attn_fwd_inner(
             acc, l_i, m_i, q, K_block_ptr, V_block_ptr, B_block_ptr,
             start_m, seqlen_q, q_padded, seqlen_k_low, seqlen_k_high, k_padded,
-            dropout_p, seqlen_k, philox_seed, batch_philox_offset, encoded_softmax_block_ptr,
+            dropout_p, max_seqlen_k, philox_seed, batch_philox_offset, encoded_softmax_block_ptr,
             BLOCK_M, BLOCK_DMODEL, BLOCK_N,
             CAUSAL, offs_m, offs_n,
             pre_load_v,

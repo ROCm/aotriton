@@ -58,7 +58,7 @@ def attn_fwd(
         cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
         cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
         seqlen_q = cu_seqlens_q_end - cu_seqlens_q_start
-        if start_m * BLOCK_M > seqlen_q:
+        if start_m * BLOCK_M >= seqlen_q:
             return
         cu_seqlens_k_start = tl.load(cu_seqlens_k + off_z)
         cu_seqlens_k_end = tl.load(cu_seqlens_k + off_z + 1)
@@ -74,7 +74,7 @@ def attn_fwd(
         cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
         cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
         seqlen_q = cu_seqlens_q_end - cu_seqlens_q_start
-        if start_m * BLOCK_M > seqlen_q:
+        if start_m * BLOCK_M >= seqlen_q:
             return
         cu_seqlens_k_start = tl.load(cu_seqlens_k + off_z)
         cu_seqlens_k_end = tl.load(cu_seqlens_k + off_z + 1)
@@ -160,7 +160,7 @@ def attn_fwd(
 
     M_ptr_base = M + off_zh * max_seqlen_q
     if ENABLE_DROPOUT:
-        batch_philox_offset = philox_offset_base + off_zh * max_seqlen_q * max_seqlen_q
+        batch_philox_offset = philox_offset_base + off_zh * max_seqlen_q * max_seqlen_k
     else:
         batch_philox_offset = 0
 
