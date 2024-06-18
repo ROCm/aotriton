@@ -6,6 +6,38 @@ import triton.language as tl
 
 from fwd_kernel_inner import attn_fwd_inner
 
+'''
+@triton.jit
+def store0(O_block_ptr, acc):
+    tl.store(O_block_ptr, acc.to(O_block_ptr.type.element_ty))
+
+@triton.jit
+def store1(O_block_ptr, acc):
+    tl.store(O_block_ptr, acc.to(O_block_ptr.type.element_ty), boundary_check=(0,))
+
+@triton.jit
+def store2(O_block_ptr, acc):
+    tl.store(O_block_ptr, acc.to(O_block_ptr.type.element_ty), boundary_check=(1,))
+
+@triton.jit
+def store3(O_block_ptr, acc):
+    tl.store(O_block_ptr, acc.to(O_block_ptr.type.element_ty), boundary_check=(1,0))
+'''
+
+@triton.jit
+def store_a(O_block_ptr, acc, q_padded):
+    if not q_padded:
+        tl.store(O_block_ptr, acc)
+    else:
+        tl.store(O_block_ptr, acc, boundary_check=(0,))
+
+@triton.jit
+def store_b(O_block_ptr, acc, q_padded):
+    if not q_padded:
+        tl.store(O_block_ptr, acc, boundary_check=(1,))
+    else:
+        tl.store(O_block_ptr, acc, boundary_check=(1,0,))
+
 @triton.jit
 def attn_fwd_common(
         Q_block_ptr,
@@ -48,6 +80,8 @@ def attn_fwd_common(
     # don't work as expected with `exp` in the loop
     qk_scale = sm_scale * 1.44269504089
     # load q: it will stay in SRAM throughout on NV GPUs but in VGPRs on AMD GPUs
+    q = tl.load(Q_block_ptr, boundary_check=(0,1), padding_option="zero")
+    '''
     if q_padded:
         if PADDED_HEAD:
             q = tl.load(Q_block_ptr, boundary_check=(0,1), padding_option="zero")
@@ -58,6 +92,7 @@ def attn_fwd_common(
             q = tl.load(Q_block_ptr, boundary_check=(1,), padding_option="zero")
         else:
             q = tl.load(Q_block_ptr)
+    '''
     q = (q * qk_scale).to(Q_block_ptr.type.element_ty)
     # stage 1: off-band
     # For causal = True, STAGE = 3 and attn_fwd_inner gets 1 as its STAGE
@@ -125,6 +160,10 @@ def attn_fwd_common(
     else:
         tl.store(m_ptrs, m_i + tl.math.log2(l_i))
 
+    acc = acc.to(O_block_ptr.type.element_ty)
+    tl.store(O_block_ptr, acc, boundary_check=(1,0,))
+
+    '''
     if q_padded:
         if PADDED_HEAD:
             tl.store(O_block_ptr, acc.to(O_block_ptr.type.element_ty), boundary_check=(0,1))
@@ -135,3 +174,4 @@ def attn_fwd_common(
             tl.store(O_block_ptr, acc.to(O_block_ptr.type.element_ty), boundary_check=(1,))
         else:
             tl.store(O_block_ptr, acc.to(O_block_ptr.type.element_ty))
+    '''

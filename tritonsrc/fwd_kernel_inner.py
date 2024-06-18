@@ -49,6 +49,8 @@ def attn_fwd_inner(
     for start_n in range(lo, hi, BLOCK_N):
         # -- compute qk ----
         # MARGINAL_BLOCK serves as a compile-time switch for first attn_fwd_inner calls to "solid" blocks
+        k = tl.load(K_block_ptr, boundary_check=(1,0), padding_option="zero")
+        '''
         if MARGINAL_BLOCK and k_padded:
             if PADDED_HEAD:
                 k = tl.load(K_block_ptr, boundary_check=(1,0), padding_option="zero")
@@ -70,6 +72,9 @@ def attn_fwd_inner(
                     v = tl.load(V_block_ptr, boundary_check=(1,), padding_option="zero")
                 else:
                     v = tl.load(V_block_ptr)
+        '''
+        if pre_load_v:
+            v = tl.load(V_block_ptr, boundary_check=(0,1), padding_option="zero")
         qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
         if MARGINAL_BLOCK:
             if CAUSAL:
@@ -83,6 +88,8 @@ def attn_fwd_inner(
         if BIAS_TYPE == 0:
             pass
         elif BIAS_TYPE == 1:
+            bias = tl.load(B_block_ptr, boundary_check=(0,1), padding_option="zero")
+            '''
             if q_padded and k_padded:  # CAVEAT: using "or" disables the partial boundary_check branches
                 bias = tl.load(B_block_ptr, boundary_check=(0,1), padding_option="zero")
             elif q_padded:
@@ -91,6 +98,7 @@ def attn_fwd_inner(
                 bias = tl.load(B_block_ptr, boundary_check=(1,), padding_option="zero")
             else:
                 bias = tl.load(B_block_ptr)
+            '''
             qk += bias * 1.44269504089
         else:
             tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
@@ -117,6 +125,8 @@ def attn_fwd_inner(
         alpha = tl.math.exp2(m_i - m_ij)
         acc = acc * alpha[:, None]
         if not pre_load_v:
+            v = tl.load(V_block_ptr, boundary_check=(0,1), padding_option="zero")
+            '''
             if MARGINAL_BLOCK and k_padded:
                 if PADDED_HEAD:
                     v = tl.load(V_block_ptr, boundary_check=(0,1), padding_option="zero")
@@ -127,6 +137,7 @@ def attn_fwd_inner(
                     v = tl.load(V_block_ptr, boundary_check=(1,), padding_option="zero")
                 else:
                     v = tl.load(V_block_ptr)
+            '''
         # -- update m_i and l_i
         l_i = l_i * alpha + l_ij
         # update m_i and l_i
