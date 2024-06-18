@@ -4,3 +4,4 @@ packaging
 pluggy
 numpy
 setuptools
+wheel
