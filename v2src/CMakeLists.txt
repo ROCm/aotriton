@@ -131,8 +131,10 @@ add_dependencies(aotriton_v2_gen_shim aotriton_v2_compile)
 
 if(AOTRITON_NO_SHARED)
   add_library(aotriton_v2 STATIC ${SHIM_CC_FILES})
+  set(AOTRITON_LIBRARY_FILE libaotriton_v2.a)
 else(AOTRITON_NO_SHARED)
   add_library(aotriton_v2 SHARED ${SHIM_CC_FILES})
+  set(AOTRITON_LIBRARY_FILE libaotriton_v2.so)
 endif(AOTRITON_NO_SHARED)
 add_dependencies(aotriton_v2 aotriton_v2_gen_shim)
 
@@ -164,12 +166,12 @@ install(DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}/include/aotriton" DESTINAT
 #    but it will not be installed because .a is what you should use to avoid setting
 #    search paths for shared libraries
 # 2. The archive library will be installed into the hardcode lib/ directory, to avoid Debian vs RHEL divergence.
-install(FILES "${AOTRITON_V2_BUILD_DIR}/libaotriton_v2.a" DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)
+install(FILES "${AOTRITON_V2_BUILD_DIR}/${AOTRITON_LIBRARY_FILE}" DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)
 
 # Python binding only available for AOTriton V2 API
 add_library(aotriton INTERFACE)
 add_dependencies(aotriton aotriton_v2)
 # target_link_libraries(aotriton INTERFACE ${CMAKE_INSTALL_PREFIX}/lib/libaotriton_v2.a)
 # target_include_directories(aotriton INTERFACE ${CMAKE_INSTALL_PREFIX}/include)
-target_link_libraries(aotriton INTERFACE ${AOTRITON_V2_BUILD_DIR}/libaotriton_v2.a)
+target_link_libraries(aotriton INTERFACE ${AOTRITON_V2_BUILD_DIR}/${AOTRITON_LIBRARY_FILE})
 target_include_directories(aotriton INTERFACE ${CMAKE_CURRENT_SOURCE_PARENT_DIR}/include)
