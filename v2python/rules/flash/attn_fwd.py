@@ -11,7 +11,11 @@ class attn_fwd(FlashKernel):
         'stride_vz', 'stride_vh', 'stride_vk', 'stride_vn',
         'stride_bz', 'stride_bh', 'stride_bm', 'stride_bn',
         'stride_oz', 'stride_oh', 'stride_om', 'stride_on',
-        'seqlen_q', 'seqlen_k',
+        'cu_seqlens_q',
+        'cu_seqlens_k',
+        'num_seqlens',
+        'max_seqlen_q',
+        'max_seqlen_k',
         'head_dim',
         'dropout_p',
         'philox_seed',
@@ -38,10 +42,9 @@ class attn_fwd(FlashKernel):
         frozenset(['Q', 'K', 'V', 'B', 'Out', 'encoded_softmax']) : ['*fp16:16', '*bf16:16', '*fp32:16'],
         frozenset(['sm_scale']) : ['fp32'],
         frozenset(['M']) : ['*fp32:16'],
-        # frozenset(select_pattern(ARGUMENTS, 'stride_', trim=1)) : ['u64'],
-        # frozenset(select_pattern(ARGUMENTS, 'stride_', trim=1)) : ['u64'],
-        frozenset(['seqlen_q', 'seqlen_k']) : ['i32'],
-        frozenset(['head_dim']) : ['u64'],
+        frozenset(['cu_seqlens_q', 'cu_seqlens_k']) : ['*i32:16'],
+        frozenset(['num_seqlens', 'max_seqlen_q', 'max_seqlen_k']) : ['i32'],
+        frozenset(['head_dim']) : ['i32'],
         frozenset(['dropout_p']) : ['fp32'],
         frozenset(['philox_seed']) : ['u64'],
         frozenset(['philox_offset_base']) : ['u32'],
@@ -62,6 +65,8 @@ class attn_fwd(FlashKernel):
     TENSOR_RANKS = {
         '_default' : 4,
         'M': 2,
+        'cu_seqlens_q': 1,
+        'cu_seqlens_k': 1,
     }
     EXPECTED_IDENTICAL_TENSOR_STRIDES = [
         # Not needed stride_o* exist
@@ -75,8 +80,8 @@ class attn_fwd(FlashKernel):
 
     # AUTOTUNE_KEYS can have Functional choices, which will be discarded later
     AUTOTUNE_KEYS = {
-        'seqlen_q' : BinningLessOrEqual,
-        'seqlen_k' : BinningLessOrEqual,
+        'max_seqlen_q' : BinningLessOrEqual,
+        'max_seqlen_k' : BinningLessOrEqual,
         'CAUSAL' : BinningExact,
     }
     # List of functionals that are not fully tuned in the tuning database

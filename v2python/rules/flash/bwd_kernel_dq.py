@@ -17,7 +17,11 @@ class bwd_kernel_dq(FlashKernel):
         'stride_oz', 'stride_oh', 'stride_om', 'stride_ok',
         'stride_dqz', 'stride_dqh', 'stride_dqm', 'stride_dqk',
         'stride_dbz', 'stride_dbh', 'stride_dbm', 'stride_dbn',
-        'seqlen_q', 'seqlen_k',
+        'cu_seqlens_q',
+        'cu_seqlens_k',
+        'num_seqlens',
+        'max_seqlen_q',
+        'max_seqlen_k',
         'head_dim',
         'dropout_p',
         'philox_seed',
@@ -45,12 +49,15 @@ class bwd_kernel_dq(FlashKernel):
         '_default' : 4,
         'L': 2,
         'D': 2,
+        'cu_seqlens_q': 1,
+        'cu_seqlens_k': 1,
     }
     TYPE_CHOICES = {
         frozenset(['Q', 'K', 'V', 'B', 'Out', 'dO', 'dQ', 'dB']) : match_fwd('Q'),
         frozenset(['sm_scale']) : match_fwd( 'sm_scale'),
         frozenset(['L', 'D']) : ['*fp32:16'],
-        frozenset(['seqlen_q', 'seqlen_k']) : ['u64'],
+        frozenset(['cu_seqlens_q', 'cu_seqlens_k']) : match_fwd('cu_seqlens_q'),
+        frozenset(['num_seqlens', 'max_seqlen_q', 'max_seqlen_k']) : match_fwd('num_seqlens'),
         frozenset(['head_dim']) : ['i32'],
         frozenset(['dropout_p']) : match_fwd('dropout_p'),
         frozenset(['philox_seed']) : match_fwd('philox_seed'),
@@ -75,8 +82,8 @@ class bwd_kernel_dq(FlashKernel):
     SHIM_KERNEL_NAME = 'bwd_kernel_dq'
 
     AUTOTUNE_KEYS = {
-        'seqlen_q' : BinningLessOrEqual,
-        'seqlen_k' : BinningLessOrEqual,
+        'max_seqlen_q' : BinningLessOrEqual,
+        'max_seqlen_k' : BinningLessOrEqual,
     }
     PARTIALLY_TUNED_FUNCTIONALS = [('PADDED_HEAD', None)]
     DOWNGRADER = []

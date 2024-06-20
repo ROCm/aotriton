@@ -1,18 +1,15 @@
 // Copyright © 2024 Advanced Micro Devices, Inc.
 // SPDX-License-Identifier: MIT
 
+#include <aotriton/_internal/util.h>
 #include <aotriton/flash.h>
 #include <aotriton/util.h>
-#include <aotriton/_internal/util.h>
 #include <flash/shim.debug_fill_dropout_rng.h>
 
 namespace aotriton::v2::flash {
 
 hipError_t
-debug_fill_dropout_rng(T4 r,
-                       uint64_t philox_seed,
-                       uint64_t philox_offset,
-                       aotriton::Stream stream_wrap) {
+debug_fill_dropout_rng(T4 r, uint64_t philox_seed, uint64_t philox_offset, aotriton::Stream stream_wrap) {
   hipError_t err;
   auto stream = stream_wrap.native();
   auto arch = getArchFromStream(stream);

@@ -4,7 +4,7 @@
 
 import triton
 import triton.language as tl
-from fwd_kernel import dropout_rng
+from dropout import dropout_rng
 
 @triton.jit
 def debug_fill_dropout_rng(R,
