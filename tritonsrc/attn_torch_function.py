@@ -434,8 +434,8 @@ class _attention(torch.autograd.Function):
             tuning_result = None
             block_m = min(128, q.shape[2], k.shape[2])
         grid = (triton.cdiv(q.shape[2], block_m), q.shape[1], q.shape[0])
-        print(f'{M=}')
-        print(f'{M.shape=}')
+        # print(f'{M=}')
+        # print(f'{M.shape=}')
         ctx.save_for_backward(q, k, v, b, o, M)
         ctx.grid = grid
         ctx.sm_scale = sm_scale
