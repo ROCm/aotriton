@@ -169,18 +169,19 @@ def attn_fwd(
     else:
         alibi_slope = None
 
+    off_zh = batch_index * num_head_q + off_h_q
     if ENABLE_DROPOUT:
-        off_hz = batch_index * num_head_q + off_h_q
-        batch_philox_offset = philox_offset_base + off_hz * max_seqlen_q * max_seqlen_k
+        batch_philox_offset = philox_offset_base + off_zh * max_seqlen_q * max_seqlen_k
     else:
         batch_philox_offset = 0
     # We can ask to return the dropout mask without actually doing any dropout. In
     # this case, we return an invalid pointer so indicate the mask is not valid.
     if RETURN_ENCODED_SOFTMAX:
-        encoded_sm_base = encoded_softmax + off_h_q * max_seqlen_q * max_seqlen_k
-        encoded_sm_ptrs = encoded_sm_base + offs_m[:, None] * max_seqlen_k + offs_n[None, :]
+        encoded_sm_base = encoded_softmax + off_zh * max_seqlen_q * max_seqlen_k
+        # encoded_sm_ptrs = encoded_sm_base + offs_m[:, None] * max_seqlen_k + offs_n[None, :]
     else:
-        encoded_sm_ptrs = None
+        encoded_sm_base = None
+        # encoded_sm_ptrs = None
     # initialize pointer to m and l
     m_i = tl.full([BLOCK_M], float("-inf"), dtype=tl.float32)
     l_i = tl.full([BLOCK_M], 1.0, dtype=tl.float32)
@@ -222,7 +223,7 @@ def attn_fwd(
                 seqlen_q, seqlen_k, head_dim,
                 start_m, block_min, block_max,
                 dropout_p, philox_seed, batch_philox_offset, max_seqlen_k,
-                encoded_sm_ptrs,
+                encoded_sm_base,
                 # offs_n_causal, masked_blocks, n_extra_tokens
                 0, 0, 0,
                 alibi_slope,
@@ -248,8 +249,9 @@ def attn_fwd(
             bias_ptrs += n_full_blocks * BLOCK_N * stride_bn
         else:
             tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
-        if RETURN_ENCODED_SOFTMAX:
-            encoded_sm_ptrs += n_full_blocks * BLOCK_N
+        # if RETURN_ENCODED_SOFTMAX:
+        #     encoded_sm_base += n_full_blocks * BLOCK_N
+            # encoded_sm_ptrs += n_full_blocks * BLOCK_N
         acc, l_i, m_i = attn_fwd_inner(
                 acc, l_i, m_i,
                 q, k_ptrs, v_ptrs, bias_ptrs,
@@ -257,7 +259,7 @@ def attn_fwd(
                 seqlen_q, seqlen_k, head_dim,
                 start_m, block_min, block_max,
                 dropout_p, philox_seed, batch_philox_offset, max_seqlen_k,
-                encoded_sm_ptrs,
+                encoded_sm_base,
                 offs_n_causal, masked_blocks, n_extra_tokens,
                 alibi_slope,
                 # CAUSAL, ....

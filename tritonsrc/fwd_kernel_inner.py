@@ -4,11 +4,22 @@
 import triton
 import triton.language as tl
 from dropout import dropout_mask, dropout_rng, dropout_offsets
+from masked_load_store import mstore2d
 
 # Convenience function to load with optional boundary checks.
 # "First" is the major dim, "second" is the minor dim.
 @triton.jit
-def load_fn(ptrs, offset_first, offset_second, boundary_first, boundary_second):
+def load_fn(ptrs, offset_first, offset_second, _in_boundary_first, _in_boundary_second):
+    boundary_first = _in_boundary_first
+    boundary_second = _in_boundary_second
+    """
+    # Debugging GPU segfault
+    boundary_first = 0
+    boundary_second = 0
+    mask = (offset_first[:, None] < boundary_first) & \
+           (offset_second[None, :] < boundary_second)
+    return tl.load(ptrs, mask=mask, other=0.0)
+    """
     if offset_first is not None and offset_second is not None:
         mask = (offset_first[:, None] < boundary_first) & \
                (offset_second[None, :] < boundary_second)
@@ -36,7 +47,7 @@ def attn_fwd_inner(
         ## Dropout
         dropout_p, philox_seed, batch_philox_offset, max_seqlen_k,
         ## Debug Return
-        encoded_sm_ptrs,
+        encoded_sm_base,
         ## Irregular support
         offs_n_causal, masked_blocks, n_extra_tokens,
         ## Alibi
@@ -63,6 +74,11 @@ def attn_fwd_inner(
         else:
             k_offs_n = None
         k_offs_d = None if not PADDED_HEAD else tl.arange(0, BLOCK_DMODEL)
+        '''
+        k_offs_n = start_n + tl.arange(0, BLOCK_N)
+        k_offs_d = tl.arange(0, BLOCK_DMODEL)
+        # k_offs_d = None if not PADDED_HEAD else tl.arange(0, BLOCK_DMODEL)
+        '''
         k = load_fn(k_ptrs, k_offs_d, k_offs_n, head_dim, seqlen_k)
         if PRE_LOAD_V:
             # We can use the same offsets as k, just with dims transposed.
@@ -115,10 +131,30 @@ def attn_fwd_inner(
             philox_offset = batch_philox_offset + start_m * BLOCK_M * max_seqlen_k + start_n
             keep = dropout_mask(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, max_seqlen_k)
             if RETURN_ENCODED_SOFTMAX:
-                tl.store(encoded_sm_ptrs, tl.where(keep, p, -p).to(q.type.element_ty))
+                mstore2d(tl.where(keep, p, -p).to(q.type.element_ty),
+                         BLOCK_M,
+                         BLOCK_N,
+                         o_base=encoded_sm_base,
+                         o_start_row=start_m * BLOCK_M,
+                         o_start_col=start_n,
+                         o_rows=seqlen_q,
+                         o_cols=seqlen_k,
+                         stride_row=max_seqlen_k,
+                         stride_col=1)
+                # tl.store(encoded_sm_ptrs, tl.where(keep, p, -p).to(q.type.element_ty))
             p = tl.where(keep, p, 0.0)
         elif RETURN_ENCODED_SOFTMAX:
-            tl.store(encoded_sm_ptrs, p.to(q.type.element_ty))
+            mstore2d(p.to(q.type.element_ty),
+                     BLOCK_M,
+                     BLOCK_N,
+                     o_base=encoded_sm_base,
+                     o_start_row=start_m * BLOCK_M,
+                     o_start_col=start_n,
+                     o_rows=seqlen_q,
+                     o_cols=seqlen_k,
+                     stride_row=max_seqlen_k,
+                     stride_col=1)
+            # tl.store(encoded_sm_ptrs, p.to(q.type.element_ty))
         # -- update output accumulator --
         alpha = tl.math.exp2(m_i - m_ij)
         acc = acc * alpha[:, None]
@@ -133,6 +169,6 @@ def attn_fwd_inner(
         v_ptrs += BLOCK_N * stride_vk
         if bias_ptrs is not None:
             bias_ptrs += BLOCK_N * stride_bn
-        if RETURN_ENCODED_SOFTMAX:
-            encoded_sm_ptrs += BLOCK_N
+        # if RETURN_ENCODED_SOFTMAX:
+        #     encoded_sm_ptrs += BLOCK_N
     return acc, l_i, m_i
