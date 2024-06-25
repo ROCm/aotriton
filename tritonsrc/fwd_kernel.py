@@ -134,11 +134,12 @@ def attn_fwd(
             return
 
     # If MQA / GQA, set the K and V head offsets appropriately.
-    group_size = num_head_q // num_head_k
-    if group_size != 1:
-        off_h_k = off_h_q // group_size
-    else:
-        off_h_k = off_h_q
+    # group_size = num_head_q // num_head_k
+    # if group_size != 1:
+    #     off_h_k = off_h_q // group_size
+    # else:
+    #     off_h_k = off_h_q
+    off_h_k = off_h_q if num_head_q != num_head_k else off_h_q // (num_head_q // num_head_k)
 
     n_extra_tokens = 0
     if seqlen_k < BLOCK_N:
