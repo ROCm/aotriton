@@ -22,6 +22,8 @@ struct [[param_class_name]] {
     const char* _debug_kernel_name = nullptr;
 #if AOTRITON_BUILD_FOR_TUNING
     int _has_preferred_kernel = -1; // For C++ based autotune database generation
+    const char* _preferred_kernel_psels = nullptr;
+    const char* _preferred_kernel_copts = nullptr;
 #endif
 
     int64_t godel_number() const;

@@ -19,6 +19,8 @@ using T1 = aotriton::TensorView<1>;
 struct ExtraArguments {
 #if AOTRITON_BUILD_FOR_TUNING
   int force_kernel_index = -1;
+  const char* selected_kernel_psels = nullptr;
+  const char* selected_kernel_copts = nullptr;
 #endif
 };
 

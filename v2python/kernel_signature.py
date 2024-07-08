@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 from .gpu_targets import AOTRITON_GPU_ARCH_TUNING_STRING
+import json
 
 class KernelSignature(object):
     def __init__(self,
@@ -83,3 +84,14 @@ class KernelSignature(object):
             for aname in ps.argument_names:
                 perf_key_value.append(f'.{aname} = {value}')
         return ', '.join(perf_key_value)
+
+    def jsongen_psels(self) -> str:
+        d = {}
+        for ps in self._perf_selections:
+            value = ps.argument_value
+            for aname in ps.argument_names:
+                d[aname] = value
+        return json.dumps(d)
+
+    def jsongen_copts(self) -> str:
+        return json.dumps(self._compiler_options)

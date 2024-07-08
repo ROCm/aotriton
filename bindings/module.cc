@@ -21,6 +21,8 @@ namespace pyaotriton {
           .def(py::init<>())
 #if AOTRITON_BUILD_FOR_TUNING
           .def_readwrite("force_kernel_index", &ExtraArguments::force_kernel_index)
+          .def_readonly("selected_kernel_psels", &ExtraArguments::selected_kernel_psels)
+          .def_readonly("selected_kernel_copts", &ExtraArguments::selected_kernel_copts)
 #endif
         ;
         m.def("attn_fwd",

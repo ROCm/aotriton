@@ -86,6 +86,7 @@ class attn_fwd(FlashKernel):
         'seqlen_q' : BinningLessOrEqual,
         'seqlen_k' : BinningLessOrEqual,
         'CAUSAL' : BinningExact,
+        'ENABLE_DROPOUT' : BinningExact,
     }
     # List of functionals that are not fully tuned in the tuning database
     # First element of the tuple is name. Second is the value to use instead
