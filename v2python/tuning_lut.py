@@ -131,6 +131,18 @@ class KernelTuningEntryForFunctionalOnGPU(object):
             incbin_lines.append(f'"{incbin_symbol_name}"')
         return 'static const char* incbin_kernel_names[] = {\n  ' + ",\n  ".join(incbin_lines) + "\n};"
 
+    def codegen_kernel_psels(self, kernel_image_dir, compressed=False):
+        lines = []
+        for sig in self._sigs:
+            lines.append(f'R"xyzw({sig.jsongen_psels()})xyzw"')
+        return 'static const char* kernel_psels[] = {\n  ' + ",\n  ".join(lines) + "\n};"
+
+    def codegen_kernel_copts(self, kernel_image_dir, compressed=False):
+        lines = []
+        for sig in self._sigs:
+            lines.append(f'R"xyzw({sig.jsongen_copts()})xyzw"')
+        return 'static const char* kernel_copts[] = {\n  ' + ",\n  ".join(lines) + "\n};"
+
     def codegen_kernel_image_objects(self, kernel_image_dir):
         kernel_image_symbols = []
         for incbin_symbol_name, _, o in self.gen_kernel_symbols(kernel_image_dir):
@@ -168,6 +180,8 @@ class KernelTuningEntryForFunctionalOnGPU(object):
         d = {
             'incbin_kernel_images'  : self.codegen_incbin_code(gpu_kernel_image_dir, compressed=compressed),
             'incbin_kernel_names'   : self.codegen_incbin_names(gpu_kernel_image_dir, compressed=compressed),
+            'kernel_psels'          : self.codegen_kernel_psels(gpu_kernel_image_dir, compressed=compressed),
+            'kernel_copts'          : self.codegen_kernel_copts(gpu_kernel_image_dir, compressed=compressed),
             'kernel_family_name'    : self._kdesc.KERNEL_FAMILY,
             'shim_kernel_name'      : self._kdesc.SHIM_KERNEL_NAME,
             'godel_number'          : godel_number,

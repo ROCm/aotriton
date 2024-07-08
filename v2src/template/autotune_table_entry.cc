@@ -30,6 +30,12 @@ namespace { // Anonymous namespace
 static constexpr int incbin_num_kernels = ARRAY_SIZE(incbin_kernel_names);
 #endif
 
+#if AOTRITON_BUILD_FOR_TUNING
+// PSels and Copts in JSON String
+[[kernel_psels]];
+[[kernel_copts]];
+#endif
+
 struct PerfFields {
   [[perf_fields]];
 };
@@ -57,6 +63,8 @@ void CURRENT_ENTRY_PUBLIC::operator()([[param_class_name]]& params) {
         if (preferred_index >= incbin_num_kernels)
             return ;
         params.selected_kernel = &image_list[preferred_index];
+        params._preferred_kernel_psels = kernel_psels[preferred_index];
+        params._preferred_kernel_copts = kernel_psels[preferred_index];
         return ;
     }
 #endif
