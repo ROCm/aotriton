@@ -18,11 +18,17 @@
 
 [[incbin_kernel_images]];
 
-#ifndef NDEBUG
+#if defined(NDEBUG) || AOTRITON_BUILD_FOR_TUNING
 [[incbin_kernel_names]];
 #endif
 
+#define ARRAY_SIZE(array)  (sizeof(array) / sizeof(array[0]))
+
 namespace { // Anonymous namespace
+
+#if AOTRITON_BUILD_FOR_TUNING
+static constexpr int incbin_num_kernels = ARRAY_SIZE(incbin_kernel_names);
+#endif
 
 struct PerfFields {
   [[perf_fields]];
@@ -45,6 +51,15 @@ namespace aotriton::v2::[[kernel_family_name]]::autotune {
 // using aotriton::v2::[[kernel_family_name]]::[[param_class_name]];
 
 void CURRENT_ENTRY_PUBLIC::operator()([[param_class_name]]& params) {
+#if AOTRITON_BUILD_FOR_TUNING
+    int preferred_index = params._has_preferred_kernel;
+    if (preferred_index >= 0) {
+        if (preferred_index >= incbin_num_kernels)
+            return ;
+        params.selected_kernel = &image_list[preferred_index];
+        return ;
+    }
+#endif
     [[binning_autotune_keys]]
     auto kernel_index = lut[[binned_indices]];
     params.selected_kernel = &image_list[kernel_index];

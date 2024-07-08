@@ -1,7 +1,8 @@
 # Copyright © 2023-2024 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-from ._common import FlashKernel, select_pattern, BinningLessOrEqual, BinningExact
+import itertools
+from ._common import FlashKernel, select_pattern, BinningLessOrEqual, BinningExact, Config
 
 class attn_fwd(FlashKernel):
     ARGUMENTS = [
@@ -11,6 +12,8 @@ class attn_fwd(FlashKernel):
         'stride_vz', 'stride_vh', 'stride_vk', 'stride_vn',
         'stride_bz', 'stride_bh', 'stride_bm', 'stride_bn',
         'stride_oz', 'stride_oh', 'stride_om', 'stride_on',
+        'num_head_q',
+        'num_head_k',
         'cu_seqlens_q',
         'cu_seqlens_k',
         'num_seqlens',
@@ -43,7 +46,7 @@ class attn_fwd(FlashKernel):
         frozenset(['sm_scale']) : ['fp32'],
         frozenset(['M']) : ['*fp32:16'],
         frozenset(['cu_seqlens_q', 'cu_seqlens_k']) : ['*i32:16'],
-        frozenset(['num_seqlens', 'max_seqlen_q', 'max_seqlen_k']) : ['i32'],
+        frozenset(['num_head_q', 'num_head_k', 'num_seqlens', 'max_seqlen_q', 'max_seqlen_k']) : ['i32'],
         frozenset(['head_dim']) : ['i32'],
         frozenset(['dropout_p']) : ['fp32'],
         frozenset(['philox_seed']) : ['u64'],
@@ -109,3 +112,28 @@ class attn_fwd(FlashKernel):
 
     DOWNGRADER = [(('RETURN_ENCODED_SOFTMAX', True), DOWNGRADE_RETURN_ENCODED_SOFTMAX)]
 
+    @staticmethod
+    def gen_autotune_configs(fsel_dict : 'dict[str, Any]'):
+        dtype = fsel_dict['Q']
+        ret = []
+        BLOCK_SIZES = [(128, 64), (64, 64), (64, 32)]
+        WAVES_PER_EU = [0, 1, 2, 3, 4]
+        PRE_LOAD_V = [True, False]
+        for (M, N), waves, pre in itertools.product(BLOCK_SIZES,
+                                                    WAVES_PER_EU,
+                                                    PRE_LOAD_V):
+            if dtype == '*fp32:16':
+                M //= 2
+            kw = {'BLOCK_M': M, 'BLOCK_N': N, 'waves_per_eu': waves, 'pre_load_v': pre}
+            yield Config(kw, num_stages=1, num_warps=4)
+        yield from [
+           Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 2, 'pre_load_v': False}, num_stages=1, num_warps=8),
+           Config({'BLOCK_M': 128, 'BLOCK_N':128, 'waves_per_eu': 2, 'pre_load_v': False}, num_stages=1, num_warps=4),
+           Config({'BLOCK_M': 256, 'BLOCK_N':128, 'waves_per_eu': 2, 'pre_load_v': False}, num_stages=1, num_warps=8),
+           Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'pre_load_v':  True}, num_stages=1, num_warps=4),
+           Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'pre_load_v': False}, num_stages=1, num_warps=4),
+           Config({'BLOCK_M':  64, 'BLOCK_N': 64, 'waves_per_eu': 4, 'pre_load_v': False}, num_stages=1, num_warps=8),
+           Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 1, 'pre_load_v': False}, num_stages=1, num_warps=4),
+           Config({'BLOCK_M':  32, 'BLOCK_N': 32, 'waves_per_eu': 4, 'pre_load_v': False}, num_stages=1, num_warps=8),
+           Config({'BLOCK_M': 16, 'BLOCK_N': 16, 'waves_per_eu': 1, 'pre_load_v': False}, num_stages=1, num_warps=4),
+        ]

@@ -117,7 +117,8 @@ bwd_kernel_dk_dv(T4 q,
                  uint64_t philox_seed,
                  uint64_t philox_offset,
                  bool is_causal,
-                 aotriton::Stream stream_wrap) {
+                 aotriton::Stream stream_wrap,
+                 ExtraArguments* extargs) {
   hipError_t err;
   auto stream = stream_wrap.native();
   auto arch = getArchFromStream(stream);
@@ -163,6 +164,10 @@ bwd_kernel_dk_dv(T4 q,
     .PADDED_HEAD = head_size_rounded != head_size,
     .BIAS_TYPE = bias_type,
   };
+#if AOTRITON_BUILD_FOR_TUNING
+  if (extargs)
+    params._has_preferred_kernel = extargs->force_kernel_index;
+#endif
   BwdKernelDkDvContext context;
   context.grid_calculator = grid_calculator;
   err = context.lookup_optimal(params, arch);
@@ -194,7 +199,8 @@ bwd_kernel_dq(T4 q,
               uint64_t philox_seed,
               uint64_t philox_offset,
               bool is_causal,
-              aotriton::Stream stream_wrap) {
+              aotriton::Stream stream_wrap,
+              ExtraArguments* extargs) {
   hipError_t err;
   auto stream = stream_wrap.native();
   auto arch = getArchFromStream(stream);
@@ -240,6 +246,10 @@ bwd_kernel_dq(T4 q,
     .PADDED_HEAD = head_size_rounded != head_size,
     .BIAS_TYPE = bias_type,
   };
+#if AOTRITON_BUILD_FOR_TUNING
+  if (extargs)
+    params._has_preferred_kernel = extargs->force_kernel_index;
+#endif
   BwdKernelDqContext context;
   context.grid_calculator = grid_calculator;
   err = context.lookup_optimal(params, arch);
@@ -273,7 +283,8 @@ _attn_bwd_common(T4 q,
                  uint64_t philox_seed,
                  uint64_t philox_offset,
                  bool is_causal,
-                 aotriton::Stream stream) {
+                 aotriton::Stream stream,
+                 ExtraArguments* extargs) {
   hipError_t ret;
   if (num_seqlens == 0)
     ret = bwd_preprocess(out, dout, delta, stream);
@@ -301,7 +312,8 @@ _attn_bwd_common(T4 q,
                          philox_seed,
                          philox_offset,
                          is_causal,
-                         stream);
+                         stream,
+                         extargs);
 
   if (ret != hipSuccess)
     return ret;
@@ -325,7 +337,8 @@ _attn_bwd_common(T4 q,
                       philox_seed,
                       philox_offset,
                       is_causal,
-                      stream);
+                      stream,
+                      extargs);
   return ret;
 }
 
@@ -347,7 +360,8 @@ attn_bwd(T4 q,
          uint64_t philox_seed,
          uint64_t philox_offset,
          bool is_causal,
-         aotriton::Stream stream) {
+         aotriton::Stream stream,
+         ExtraArguments* extargs) {
   auto null_t1 = T1::get_null_tensor(DType::kInt32);
   return _attn_bwd_common(q,
                           k,
@@ -371,7 +385,8 @@ attn_bwd(T4 q,
                           philox_seed,
                           philox_offset,
                           is_causal,
-                          stream);
+                          stream,
+                          extargs);
 }
 
 hipError_t
@@ -396,7 +411,8 @@ attn_bwd_compact_varlen(T4 q,            // 1 x num_heads x total_q x head_size,
                         uint64_t philox_seed,
                         uint64_t philox_offset,
                         bool is_causal,
-                        aotriton::Stream stream) {
+                        aotriton::Stream stream,
+                        ExtraArguments* extargs) {
   return _attn_bwd_common(q,
                           k,
                           v,
@@ -419,7 +435,8 @@ attn_bwd_compact_varlen(T4 q,            // 1 x num_heads x total_q x head_size,
                           philox_seed,
                           philox_offset,
                           is_causal,
-                          stream);
+                          stream,
+                          extargs);
 }
 
 }

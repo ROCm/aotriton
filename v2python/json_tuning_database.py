@@ -139,7 +139,11 @@ class JsonKernelTuningDatabaseForArch(CommonKernelTuningDatabaseForArch):
         tuning_info = self._index[fallback_tup] if with_duplicates else self._index_dedup[fallback_tup]
         return self._downgrade(fallback_applied_fsels, tuning_info)
 
-    def craft_perf_selection(self, tinfo, perf_meta: 'list[ArgumentSelection]'):
+    def craft_perf_selection(self,
+                             columns,
+                             row,
+                             perf_meta: 'list[ArgumentSelection]') -> 'list[TunedArgument], compiler_options':
+        tinfo = row
         if tinfo is None:  # default value when tuning db does not contain the kernel
             return [TunedArgument(meta, meta.default_value) for meta in perf_meta], None
         ps = dict(tinfo['tuned_kernel'])
@@ -157,7 +161,7 @@ class JsonKernelTuningDatabaseForArch(CommonKernelTuningDatabaseForArch):
         indexed = self._lookup_tuning_info(fsels, with_duplicates=not no_duplicate)
         assert indexed
         for tinfo in indexed:
-            yield self.craft_perf_selection(tinfo, perf_meta)
+            yield self.craft_perf_selection(None, tinfo, perf_meta)
 
     def get_lut(self,
                 kdesc : 'KernelDescription',

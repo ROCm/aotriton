@@ -155,6 +155,14 @@ class KernelDescription(object):
     def set_target_gpus(self, gpus):
         self._target_gpus = ['native'] if gpus is None else list(gpus)
 
+    def gen_perf_selections_from_kdesc(self,
+                                       gpu : str,
+                                       fsels : 'list[ArgumentSelection]'):
+        fsel_dict = ArgumentSelection.build_fsel_dict(fsels)
+        for cfg in self.gen_autotune_configs(fsel_dict):
+            psels, compiler_options = cfg.translate_to_psel_and_co(self._perf_meta)
+            yield gpu, fsels, psels, compiler_options
+
     def gen_all_object_files(self,
                              outpath : Path,
                              # kernel_name : str = None,
@@ -163,17 +171,27 @@ class KernelDescription(object):
                              sancheck_fileexists = False) -> 'Iterator[ObjectFileDescription]':
         def gen():
             if tuned_db is None or tuned_db.empty:
-                yield from itertools.product(self._target_gpus,
-                                             self.gen_func_selections(),
-                                             self.gen_perf_selections(),
-                                             [None])
+                if not hasattr(self, 'gen_autotune_configs'):
+                    yield from itertools.product(self._target_gpus,
+                                                 self.gen_func_selections(),
+                                                 self.gen_perf_selections(),
+                                                 [None])
+                    return
+                for gpu, fsels in itertools.product(self._target_gpus,
+                                                    self.gen_func_selections()):
+                    yield from self.gen_perf_selections_from_kdesc(gpu, fsels)
             else:
                 for gpu, fsels in itertools.product(self._target_gpus,
                                                     self.gen_func_selections()):
                     yield from self.gen_tuned_perf_selections(tuned_db, gpu, fsels)
         debug_counter = 0
         for gpu, fsels, psels, compiler_options in gen():
-            sig = KernelSignature(self, fsels, psels, compiler_options, gpu)
+            try:
+                sig = KernelSignature(self, fsels, psels, compiler_options, gpu)
+            except:
+                print(f"{fsels=}")
+                print(f"{psels=}")
+                exit()
             yield self.build_object_file_description(outpath, sig, sancheck_fileexists=sancheck_fileexists)
             if False: # Debugging
                 debug_counter += 1
