@@ -16,6 +16,12 @@ using T4 = aotriton::TensorView<4>;
 using T2 = aotriton::TensorView<2>;
 using T1 = aotriton::TensorView<1>;
 
+struct ExtraArguments {
+#if AOTRITON_BUILD_FOR_TUNING
+  int force_kernel_index = -1;
+#endif
+};
+
 hipError_t
 attn_fwd(T4 q, // batch_size x num_heads x seqlen_q x head_size
          T4 k, // batch_size x num_heads x seqlen_k x head_size
@@ -29,7 +35,8 @@ attn_fwd(T4 q, // batch_size x num_heads x seqlen_q x head_size
          uint64_t philox_offset,
          T4 encoded_softmax,
          bool is_causal,
-         aotriton::Stream stream);
+         aotriton::Stream stream,
+         ExtraArguments* extargs = nullptr);
 
 hipError_t
 attn_fwd_compact_varlen(T4 q, // 1 x num_heads x total_q x head_size, total_q := \sum_{i=0}^{b} s_i
@@ -48,7 +55,8 @@ attn_fwd_compact_varlen(T4 q, // 1 x num_heads x total_q x head_size, total_q :=
                         uint64_t philox_offset,
                         T4 encoded_softmax,
                         bool is_causal,
-                        aotriton::Stream stream);
+                        aotriton::Stream stream,
+                        ExtraArguments* extargs = nullptr);
 
 hipError_t
 attn_bwd(T4 q, // batch_size x num_heads x seqlen_q x head_size
@@ -68,7 +76,8 @@ attn_bwd(T4 q, // batch_size x num_heads x seqlen_q x head_size
          uint64_t philox_seed,
          uint64_t philox_offset,
          bool is_causal,
-         aotriton::Stream stream);
+         aotriton::Stream stream,
+         ExtraArguments* extargs = nullptr);
 
 hipError_t
 attn_bwd_compact_varlen(T4 q, // 1 x num_heads x total_q x head_size, total_q := \sum_{i=0}^{b}
@@ -92,7 +101,8 @@ attn_bwd_compact_varlen(T4 q, // 1 x num_heads x total_q x head_size, total_q :=
                         uint64_t philox_seed,
                         uint64_t philox_offset,
                         bool is_causal,
-                        aotriton::Stream stream);
+                        aotriton::Stream stream,
+                        ExtraArguments* extargs = nullptr);
 
 hipError_t
 debug_fill_dropout_rng(T4 r,

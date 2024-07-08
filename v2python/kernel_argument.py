@@ -75,6 +75,10 @@ class ArgumentMetadata(object):
     def argument_names(self):
         return [a[0] for a in self._ordered_arguments]
 
+    @property
+    def repr_name(self):
+        return self._ordered_arguments[0][0]
+
     def has_argument(self, aname):
         return aname in self.argument_names
 
@@ -213,6 +217,18 @@ class ArgumentSelection(object):
     def update_triton_api_signature(self, sig: dict):
         for place in self._meta.ordered_argument_places:
             sig[place] = self.triton_signature
+
+    # FIXME: XXX_CHOICES's key is unordered
+    '''
+    Build a dict that maps "representative name" to selected value
+    Consider changing it from frozenset to tuple
+    '''
+    @staticmethod
+    def build_fsel_dict(fsels : 'list[ArgumentSelection]'):
+        d = {}
+        for fsel in fsels:
+            d[fsel.meta.repr_name] = fsel.argument_value
+        return d
 
 class TunedArgument(ArgumentSelection):
     def __init__(self, meta : ArgumentMetadata, value):

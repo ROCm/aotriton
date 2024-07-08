@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 from ...kernel_desc import KernelDescription, get_possible_types, select_pattern
+from ...autotune_config import Config
 from ...autotune_binning import BinningLessOrEqual, BinningExact
 
 class FlashKernel(KernelDescription):

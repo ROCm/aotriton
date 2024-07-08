@@ -20,6 +20,9 @@ struct [[param_class_name]] {
 
     TritonKernel* selected_kernel = nullptr;
     const char* _debug_kernel_name = nullptr;
+#if AOTRITON_BUILD_FOR_TUNING
+    int _has_preferred_kernel = -1; // For C++ based autotune database generation
+#endif
 
     int64_t godel_number() const;
 };

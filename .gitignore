@@ -1,4 +1,6 @@
 __pycache__/
-build/
+*build*/
 *.swp
 tritonsrc/tune-*.json
+*.csv
+*.png

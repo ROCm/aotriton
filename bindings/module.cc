@@ -14,8 +14,15 @@ namespace py = pybind11;
 namespace pyaotriton {
   namespace v2 {
     namespace flash {
+      using aotriton::v2::flash::ExtraArguments;
       void setup_module(py::module_& m) {
         m.def("check_gpu", &aotriton::v2::flash::check_gpu, py::arg("stream"));
+        py::class_<ExtraArguments>(m, "ExtraArguments")
+          .def(py::init<>())
+#if AOTRITON_BUILD_FOR_TUNING
+          .def_readwrite("force_kernel_index", &ExtraArguments::force_kernel_index)
+#endif
+        ;
         m.def("attn_fwd",
               &aotriton::v2::flash::attn_fwd,
               "Flash Attention Forward Pass",
@@ -31,7 +38,8 @@ namespace pyaotriton {
               py::arg("philox_offset"),
               py::arg("encoded_softmax"),
               py::arg("is_causal"),
-              py::arg("stream") = nullptr);
+              py::arg("stream") = nullptr,
+              py::arg("extargs") = ExtraArguments());
         m.def("attn_fwd_compact_varlen",
               &aotriton::v2::flash::attn_fwd_compact_varlen,
               "Flash Attention Forward Pass, Compact Stored Varlen",
@@ -51,7 +59,8 @@ namespace pyaotriton {
               py::arg("philox_offset"),
               py::arg("encoded_softmax"),
               py::arg("is_causal"),
-              py::arg("stream") = nullptr);
+              py::arg("stream") = nullptr,
+              py::arg("extargs") = ExtraArguments());
         m.def("attn_bwd",
               &aotriton::v2::flash::attn_bwd,
               "Flash Attention Backward Pass",
@@ -72,7 +81,8 @@ namespace pyaotriton {
               py::arg("philox_seed"),
               py::arg("philox_offset"),
               py::arg("is_causal"),
-              py::arg("stream") = nullptr);
+              py::arg("stream") = nullptr,
+              py::arg("extargs") = ExtraArguments());
         m.def("attn_bwd_compact_varlen",
               &aotriton::v2::flash::attn_bwd_compact_varlen,
               "Flash Attention Backward Pass, Compact Stored Varlen",
@@ -97,7 +107,8 @@ namespace pyaotriton {
               py::arg("philox_seed"),
               py::arg("philox_offset"),
               py::arg("is_causal"),
-              py::arg("stream") = nullptr);
+              py::arg("stream") = nullptr,
+              py::arg("extargs") = ExtraArguments());
         m.def("debug_fill_dropout_rng",
               &aotriton::v2::flash::debug_fill_dropout_rng,
               "Flash Attention Debugging Function to get raw RNG numbers used in dropout",

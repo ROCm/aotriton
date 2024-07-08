@@ -26,19 +26,27 @@ class KernelTuningEntryForFunctionalOnGPU(object):
         self._fsels = fsels
         # print(f'{self._fsels=}')
         self._lut_dic = {}
-        self._autotune_keys = autotune_keys if autotune_keys is not None else None
+        self._autotune_keys = autotune_keys
         self._autotune_key_values = { key : set() for key, _ in autotune_keys } if autotune_keys is not None else None
         self._autotune_key_class = { key : klass for key, klass in autotune_keys } if autotune_keys is not None else None
         self._sigs = []
         self._sig_dict = {}
-        if rows is None and autotune_keys is None:
+        if autotune_keys is None:
             self._lut_dtype = np.uint8
             self._lut_cdtype = f'uint8_t'
             self._lut_tensor = np.array([0], dtype=np.uint8)
             self._lut_cshape = ''.join([f'[{s}]' for s in self._lut_tensor.shape])
             self._untuned = True
-            default_psels, default_co = dba.craft_perf_selection(None, perf_meta)
-            self._lut_dic[0] = self._allocate_sig(default_psels, default_co)[0]
+            # print(f'{dba.is_passthrough_tuning()=}')
+            if dba.is_passthrough_tuning():
+                # print(f'KernelTuningEntryForFunctionalOnGPU.__init__ {len(rows)=}')
+                for row in rows:
+                    psels, compiler_options = dba.craft_perf_selection(columns, row, perf_meta)
+                    self._allocate_sig(psels, compiler_options)
+                self._lut_dic[0] = 0
+            else:
+                default_psels, default_co = dba.craft_perf_selection(None, None, perf_meta)
+                self._lut_dic[0] = self._allocate_sig(default_psels, default_co)[0]
             return
         self._untuned = False
         # print(f'KernelTuningEntryForFunctionalOnGPU {fsels=}')
@@ -65,6 +73,7 @@ class KernelTuningEntryForFunctionalOnGPU(object):
 
     def _allocate_sig(self, psels, compiler_options):
         sig = KernelSignature(self._kdesc, self._fsels, psels, compiler_options, self._dba.gpu)
+        # print(f'_allocate_sig {sig.compact_signature}')
         compact = sig.compact_signature
         if compact not in self._sig_dict:
             self._sig_dict[compact] = (len(self._sigs), sig)
@@ -101,6 +110,7 @@ class KernelTuningEntryForFunctionalOnGPU(object):
 
     def gen_kernel_symbols(self, kernel_image_dir):
         for sig in self._sigs:
+            # print(f"gen_kernel_symbols {sig.compact_signature=}")
             o = self._kdesc.build_object_file_description(kernel_image_dir, sig)
             yield o.c_identifier_signature, o._hsaco_kernel_path, o
 
