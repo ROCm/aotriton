@@ -98,6 +98,7 @@ _attn_fwd_common(T4 q,
   err = context.lookup_optimal(params, arch);
 #if AOTRITON_BUILD_FOR_TUNING
   if (extargs) {
+    extargs->total_number_of_kernels = params._total_number_of_kernels;
     extargs->selected_kernel_psels = params._preferred_kernel_psels;
     extargs->selected_kernel_copts = params._preferred_kernel_copts;
   }
