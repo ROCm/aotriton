@@ -59,12 +59,16 @@ namespace aotriton::v2::[[kernel_family_name]]::autotune {
 void CURRENT_ENTRY_PUBLIC::operator()([[param_class_name]]& params) {
 #if AOTRITON_BUILD_FOR_TUNING
     int preferred_index = params._has_preferred_kernel;
+    params._total_number_of_kernels = incbin_num_kernels;
     if (preferred_index >= 0) {
         if (preferred_index >= incbin_num_kernels)
             return ;
         params.selected_kernel = &image_list[preferred_index];
+        params._debug_kernel_name = incbin_kernel_names[preferred_index];
         params._preferred_kernel_psels = kernel_psels[preferred_index];
-        params._preferred_kernel_copts = kernel_psels[preferred_index];
+        params._preferred_kernel_copts = kernel_copts[preferred_index];
+        const auto& perf = image_perf_list[preferred_index];
+        [[perf_field_assignment]];
         return ;
     }
 #endif

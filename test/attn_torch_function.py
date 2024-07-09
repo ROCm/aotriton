@@ -3,7 +3,16 @@
 # SPDX-License-Identifier: MIT
 
 import torch
-from aotriton_flash import attn_fwd, attn_bwd, debug_fill_dropout_rng
+from aotriton_flash import attn_fwd, attn_bwd, debug_fill_dropout_rng, ExtraArguments, hipError_t
+from collections import namedtuple
+from cpp_autotune import do_bench, cpp_autotune
+
+AttentionExtraArgs = namedtuple('AttentionExtraArgs',
+        ['return_encoded_softmax',
+         'autotune',
+         'return_autotune',
+         'autotune_validator'],
+        defaults=[False, False, False, None])
 
 VERBOSE=False
 DEFAULT_PHILOX_SEED = 0x1BF52
@@ -21,8 +30,9 @@ class _attention(torch.autograd.Function):
     # DEBUG_MASK_DTYPE = torch.float32
 
     @staticmethod
-    def forward(ctx, q, k, v, b, causal, sm_scale, dropout_p, return_encoded_softmax,
-                autotune=False, return_autotune=False):
+    def forward(ctx, q, k, v, b, causal, sm_scale, dropout_p,
+                attn_extra_args=AttentionExtraArgs()):
+        return_encoded_softmax, autotune, return_autotune = attn_extra_args[:3]
         # shape constraints
         Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
         assert Lq == Lk and Lk == Lv
@@ -58,8 +68,23 @@ class _attention(torch.autograd.Function):
         philox_seed = DEFAULT_PHILOX_SEED
         philox_offset = DEFAULT_PHILOX_OFFSET
 
-        attn_fwd(q, k, v, b, sm_scale, M, o,
-                 dropout_p, philox_seed, philox_offset, encoded_softmax, causal);
+        if autotune and return_autotune:
+            assert attn_extra_args.autotune_validator is not None
+            def func(extargs):
+                print(f'running attn_fwd with {extargs.force_kernel_index=}')
+                try:
+                    ret = attn_fwd(q, k, v, b, sm_scale, M, o,
+                                   dropout_p, philox_seed, philox_offset, encoded_softmax, causal,
+                                   extargs);
+                except Exception as e:
+                    print(e)
+                    return hipError_t.hipErrorLaunchFailure, None
+                return ret, (o,)
+            tuning_result = cpp_autotune(ExtraArguments, func, attn_extra_args.autotune_validator)
+        else:
+            attn_fwd(q, k, v, b, sm_scale, M, o,
+                     dropout_p, philox_seed, philox_offset, encoded_softmax, causal);
+            tuning_result = None
 
         ctx.save_for_backward(q, k, v, b, o, M)
         ctx.sm_scale = sm_scale
@@ -69,7 +94,8 @@ class _attention(torch.autograd.Function):
         ctx.philox_seed = philox_seed
         ctx.philox_offset = philox_offset
         ctx.encoded_softmax = encoded_softmax # FIXME: for debugging only
-        return o, encoded_softmax, None
+        ctx.tuning_result = [('attn_fwd', tuning_result)] if tuning_result is not None else None
+        return o, encoded_softmax, ctx.tuning_result
 
     @staticmethod
     def backward(ctx, do, _, __):
@@ -91,6 +117,6 @@ class _attention(torch.autograd.Function):
         seqlen_k = k.shape[2]
         attn_bwd(q, k, v, b, sm_scale, o, do, dq, dk, dv, db, L, delta,
                  dropout_p, philox_seed, philox_offset, causal);
-        return dq, dk, dv, db, None, None, None, None, None, None, None
+        return dq, dk, dv, db, None, None, None, None, None
 
 attention = _attention.apply

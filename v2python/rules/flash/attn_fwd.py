@@ -83,8 +83,8 @@ class attn_fwd(FlashKernel):
 
     # AUTOTUNE_KEYS can have Functional choices, which will be discarded later
     AUTOTUNE_KEYS = {
-        'seqlen_q' : BinningLessOrEqual,
-        'seqlen_k' : BinningLessOrEqual,
+        'max_seqlen_q' : BinningLessOrEqual,
+        'max_seqlen_k' : BinningLessOrEqual,
         'CAUSAL' : BinningExact,
         'ENABLE_DROPOUT' : BinningExact,
     }
