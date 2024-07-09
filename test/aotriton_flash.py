@@ -88,7 +88,8 @@ def debug_fill_dropout_rng(R, philox_seed, philox_offset):
                                     philox_seed,
                                     philox_offset,
                                     Stream())
-    print(f'debug_fill_dropout_rng {err=}')
+    # print(f'debug_fill_dropout_rng {err=}')
+    return err
 
 def attn_fwd_compact_varlen(q, k, v,
         cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
@@ -111,7 +112,8 @@ def attn_fwd_compact_varlen(q, k, v,
                                     mk_aotensor(encoded_softmax, if_empty_then_like=q),
                                     is_causal,
                                     Stream())
-    print(f'{err=}')
+    # print(f'{err=}')
+    return err
 
 def attn_bwd_compact_varlen(q, k, v,
         cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
@@ -141,4 +143,5 @@ def attn_bwd_compact_varlen(q, k, v,
                                      int(philox_offset),
                                      is_causal,
                                      Stream())
-    print(f'{err=}')
+    # print(f'{err=}')
+    return err

@@ -71,7 +71,7 @@ class _attention(torch.autograd.Function):
         if autotune and return_autotune:
             assert attn_extra_args.autotune_validator is not None
             def func(extargs):
-                print(f'running attn_fwd with {extargs.force_kernel_index=}')
+                # print(f'running attn_fwd with {extargs.force_kernel_index=}')
                 try:
                     ret = attn_fwd(q, k, v, b, sm_scale, M, o,
                                    dropout_p, philox_seed, philox_offset, encoded_softmax, causal,
