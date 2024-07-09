@@ -186,7 +186,7 @@ class Tuner(object):
 def parse():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument('--batch', type=int, nargs=1, default=[1], help='(Not a functional) Batch size.')
-    p.add_argument('--n_heads', type=int, nargs=1, default=[48], help='(Not a functional) Number of heads')
+    p.add_argument('--n_heads', type=int, nargs=1, default=[12], help='(Not a functional) Number of heads')
     p.add_argument('--sm_scale', type=float, nargs=1, default=[1.2], help='(Not a functional) Softmax Scale')
     p.add_argument('--return_encoded_softmax', type=bool, default=[False],
                    help="(A functional for debugging) kernel that returns softmax(dropout(QK')) to validate the correctness of dropout")

@@ -113,7 +113,7 @@ def cpp_autotune(extarg_klass, kernel_func, validator):
         def func():
             return kernel_func(extargs)
         # t = do_bench(func, validator=validator, quantiles=(0.5, 0.2, 0.8))
-        t = do_bench(func, validator=validator)
+        t = do_bench(func, warmup=75, rep=300, validator=validator)
         r = AutotuneResult(kernel_index=kernel_index,
                            time=t,
                            psels=json.loads(extargs.selected_kernel_psels),
