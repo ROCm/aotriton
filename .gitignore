@@ -4,3 +4,7 @@ __pycache__/
 tritonsrc/tune-*.json
 *.csv
 *.png
+1
+2
+1.*
+2.*

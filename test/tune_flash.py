@@ -11,6 +11,7 @@ import argparse
 import itertools
 import os
 import time
+import math
 
 from rocm_arch import rocm_get_gpuarch
 from attn_torch_function import (
@@ -61,6 +62,9 @@ class Tuner(object):
 
     def profile(self, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type):
         a = self._args
+        if causal and seqlen_q != seqlen_k:
+            print('FA does not support accept casual=True when seqlen_q != seqlen_k. Skipping')
+            return
         '''
         Create SdpaContext for testing
         '''
@@ -78,9 +82,11 @@ class Tuner(object):
             philox_seed = DEFAULT_PHILOX_SEED
             philox_offset = DEFAULT_PHILOX_OFFSET
             debug_fill_dropout_rng(r, philox_seed, philox_offset)
+            mask = r > dropout_p
+            torch.cuda.synchronize()
         else:
-            r = None
-        sdpa_params = SdpaParams(causal=causal, sm_scale=sm_scale, dropout_p=dropout_p, dropout_mask=r)
+            mask = None
+        sdpa_params = SdpaParams(causal=causal, sm_scale=sm_scale, dropout_p=dropout_p, dropout_mask=mask)
         ref_out, _ = ctx.compute_ref_forward(sdpa_params)
 
         '''
@@ -88,6 +94,14 @@ class Tuner(object):
         '''
         def fwd_validator(tri_out):
             is_allclose, adiff, _, _ = ctx.validate_with_reference(tri_out, None, no_backward=True)
+            '''
+            if not is_allclose:
+                import numpy as np
+                err_idx = np.unravel_index(torch.argmax(torch.abs(ref_out - tri_out)).cpu().numpy(), ref_out.shape)
+                print(f'{err_idx=}')
+                print(f'{tri_out[err_idx]=}')
+                print(f'{ref_out[err_idx]=}')
+            '''
             return is_allclose
 
         ext = AttentionExtraArgs(return_encoded_softmax=return_encoded_softmax,

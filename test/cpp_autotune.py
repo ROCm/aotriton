@@ -2,6 +2,8 @@ from collections import namedtuple
 from aotriton_flash import hipError_t
 import json
 import sys
+import math
+from tqdm import tqdm
 
 def do_bench(fn, *, warmup=25, rep=100,
              grad_to_none=None,
@@ -31,11 +33,16 @@ def do_bench(fn, *, warmup=25, rep=100,
     assert return_mode in ["min", "max", "mean", "median"]
     import torch
 
+    torch.cuda.synchronize()
     ret, outs = fn()
-    print(f'{ret=} {outs=}', file=sys.stderr, flush=True)
     if ret != hipError_t.hipSuccess:
+        # print(f'{ret=}', file=sys.stderr, flush=True)
         return float('inf')
-    if not validator(*outs):
+    torch.cuda.synchronize()
+    valret = validator(*outs)
+    # print(f'{valret=}', flush=True)
+    if not valret:
+        # assert False
         return float('inf')
     torch.cuda.synchronize()
 
@@ -98,17 +105,49 @@ def cpp_autotune(extarg_klass, kernel_func, validator):
     kernel_index = 0
     extargs = extarg_klass()
     timings = []
+    pbar = None
+    failed = 0
+    success = 0
     while True:
         extargs.force_kernel_index = kernel_index
         def func():
             return kernel_func(extargs)
-        t = do_bench(func, validator=validator, quantiles=(0.5, 0.2, 0.8))
-        timings.append(AutotuneResult(kernel_index=kernel_index,
-                                      time=t,
-                                      psels=json.loads(extargs.selected_kernel_psels),
-                                      copts=json.loads(extargs.selected_kernel_copts)))
+        # t = do_bench(func, validator=validator, quantiles=(0.5, 0.2, 0.8))
+        t = do_bench(func, validator=validator)
+        r = AutotuneResult(kernel_index=kernel_index,
+                           time=t,
+                           psels=json.loads(extargs.selected_kernel_psels),
+                           copts=json.loads(extargs.selected_kernel_copts))
+        timings.append(r)
+        '''
+        if kernel_index == 0:
+            print(f'Benchmarking with {kernel_index=}. Time {t}')
+        else:
+            print(f'Benchmarking with {kernel_index=} out of {extargs.total_number_of_kernels}. Time {t}')
+        '''
+        assert extargs.total_number_of_kernels > 0
+        if math.isinf(t):
+            failed += 1
+        else:
+            success += 1
+
+        if pbar is None and extargs.total_number_of_kernels > 0:
+            pbar = tqdm(total=extargs.total_number_of_kernels, unit="configs")
+            pbar.set_description(f'Success {success}, Fail {failed}. Last time {t:.2g}')
+        if pbar is not None:
+            pbar.set_description(f'Success {success}, Fail {failed}. Last time {t:.2g}')
+            pbar.update(1)
+
+        #     print(f'{r.psels=}')
+        #     print(f'{r.copts=}')
         kernel_index += 1
         if kernel_index >= extargs.total_number_of_kernels:
             break
-    print(f'cpp_autotune {timings=}')
-    return min(timings, key=lambda atr:atr.time)
+    # print(f'cpp_autotune {timings=}')
+    ret = min(timings, key=lambda atr:atr.time)
+    # print(f'{ret=}')
+    if math.isinf(ret.time):
+        # with open("/proc/self/maps") as f:
+        #     print(f.read(), file=sys.stderr)
+        print("ERROR: No configuration works")
+    return ret
