@@ -35,7 +35,7 @@ def bwd_kernel_dk_dv(
     stride_dvz, stride_dvh, stride_dvk, stride_dvn,
     cu_seqlens_q,
     cu_seqlens_k,
-    num_seqlens,   # set num_seqlens to zero to ignore cu_seqlens_q/k
+    num_seqlens : 'i32',   # set num_seqlens to zero to ignore cu_seqlens_q/k
     max_seqlen_q, # and use max_seqlen_q/k for all seqlen_q/k
     max_seqlen_k,
     head_dim,
@@ -56,6 +56,13 @@ def bwd_kernel_dk_dv(
     num_h = tl.num_programs(1)
     num_z = tl.num_programs(2)
     off_zh = off_z * num_h + off_h * 1
+
+    cu_seqlens_q_start = 0
+    cu_seqlens_k_start = 0
+    seqlen_q = max_seqlen_q
+    seqlen_k = max_seqlen_k
+    batch_index = off_z
+
     if num_seqlens > 0:
         cu_seqlens_k_start = tl.load(cu_seqlens_k + off_z)
         cu_seqlens_k_end = tl.load(cu_seqlens_k + off_z + 1)
@@ -66,13 +73,8 @@ def bwd_kernel_dk_dv(
         cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
         seqlen_q = cu_seqlens_q_end - cu_seqlens_q_start
         batch_index = 0
-    elif num_seqlens == 0:
-        cu_seqlens_q_start = 0
-        cu_seqlens_k_start = 0
-        seqlen_q = max_seqlen_q
-        seqlen_k = max_seqlen_k
-        batch_index = off_z
-    else: # < 0 for padded seqlen
+
+    if num_seqlens < 0:  # for padded seqlen
         cu_seqlens_k_start = tl.load(cu_seqlens_k + off_z)
         cu_seqlens_k_end = tl.load(cu_seqlens_k + off_z + 1)
         seqlen_k = cu_seqlens_k_end - cu_seqlens_k_start
@@ -248,6 +250,13 @@ def bwd_kernel_dq(
     num_h = tl.num_programs(1)
     num_z = tl.num_programs(2)
     off_zh = off_z * num_h + off_h * 1
+
+    cu_seqlens_q_start = 0
+    cu_seqlens_k_start = 0
+    seqlen_q = max_seqlen_q
+    seqlen_k = max_seqlen_k
+    batch_index = off_z
+
     if num_seqlens > 0:
         cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
         cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
@@ -258,13 +267,8 @@ def bwd_kernel_dq(
         cu_seqlens_k_end = tl.load(cu_seqlens_k + off_z + 1)
         seqlen_k = cu_seqlens_k_end - cu_seqlens_k_start
         batch_index = 0
-    elif num_seqlens == 0:
-        cu_seqlens_q_start = 0
-        cu_seqlens_k_start = 0
-        seqlen_q = max_seqlen_q
-        seqlen_k = max_seqlen_k
-        batch_index = off_z
-    else: # < 0 for padded seqlen
+
+    if num_seqlens < 0:  # for padded seqlen
         cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
         cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
         seqlen_q = cu_seqlens_q_end - cu_seqlens_q_start
