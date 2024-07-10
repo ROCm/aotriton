@@ -74,6 +74,9 @@ void CURRENT_ENTRY_PUBLIC::operator()([[param_class_name]]& params) {
 #endif
     [[binning_autotune_keys]]
     auto kernel_index = lut[[binned_indices]];
+    if (kernel_index < 0) {
+      return ;
+    }
     params.selected_kernel = &image_list[kernel_index];
 #ifndef NDEBUG
     std::cerr << __FILE__ << " kernel_index = " << int(kernel_index) << std::endl;
