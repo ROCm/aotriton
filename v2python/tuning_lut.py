@@ -32,9 +32,9 @@ class KernelTuningEntryForFunctionalOnGPU(object):
         self._sigs = []
         self._sig_dict = {}
         if autotune_keys is None:
-            self._lut_dtype = np.uint8
-            self._lut_cdtype = f'uint8_t'
-            self._lut_tensor = np.array([0], dtype=np.uint8)
+            self._lut_dtype = np.int8
+            self._lut_cdtype = f'int8_t'
+            self._lut_tensor = np.array([0], dtype=np.int8)
             self._lut_cshape = ''.join([f'[{s}]' for s in self._lut_tensor.shape])
             self._untuned = True
             # print(f'{dba.is_passthrough_tuning()=}')
@@ -88,11 +88,11 @@ class KernelTuningEntryForFunctionalOnGPU(object):
 
     def _build_lut_tensor(self):
         self._autotune_key_buckets = [ klass(self._autotune_key_values[key]) for key, klass in self._autotune_keys ]
-        for dtype in [np.uint8, np.uint16, np.uint32, np.uint64]:
+        for dtype in [np.int8, np.int16, np.int32, np.int64]:
             if len(self._sigs) < np.iinfo(dtype).max:
                 break
         self._lut_dtype = dtype
-        self._lut_cdtype = f'uint{np.iinfo(dtype).bits}_t'
+        self._lut_cdtype = f'int{np.iinfo(dtype).bits}_t'
         self._lut_tensor = np.empty([bucket.nvalues for bucket in self._autotune_key_buckets], dtype=dtype)
         assert self._lut_tensor.size > 0, 'LUT tensor must be non-empty. Empty LUT is not constructed by _build_lut_tensor'
         self._lut_cshape = ''.join([f'[{s}]' for s in self._lut_tensor.shape])
@@ -101,7 +101,7 @@ class KernelTuningEntryForFunctionalOnGPU(object):
         for indices, atk_values in zip(itertools.product(*list_of_atk_indices),
                                        itertools.product(*self._list_of_atk_representatives)):
             fs_atk_values = tuple(atk_values)
-            self._lut_tensor[indices] = self._lut_dic[fs_atk_values]
+            self._lut_tensor[indices] = self._lut_dic.get(fs_atk_values, -1)
         # FIXME: Debugging
         if False and self._kdesc.SHIM_KERNEL_NAME == 'attn_fwd':
             print(f'_build_lut_tensor {self._autotune_key_values=}')
