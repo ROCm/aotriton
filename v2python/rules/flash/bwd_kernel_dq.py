@@ -82,8 +82,8 @@ class bwd_kernel_dq(FlashKernel):
     SHIM_KERNEL_NAME = 'bwd_kernel_dq'
 
     AUTOTUNE_KEYS = {
-        'seqlen_q' : BinningLessOrEqual,
-        'seqlen_k' : BinningLessOrEqual,
+        'max_seqlen_q' : BinningLessOrEqual,
+        'max_seqlen_k' : BinningLessOrEqual,
     }
     PARTIALLY_TUNED_FUNCTIONALS = [('PADDED_HEAD', None)]
     DOWNGRADER = []

@@ -127,6 +127,11 @@ class KernelDescription(object):
                     break
             if is_type:
                 self.AUTOTUNE_KEYS_VALIDATED.append((key, self.AUTOTUNE_KEYS[key]))
+        '''
+        AUTOTUNE_KEYS sanity check, otherwise autotune code may be broken (already happened twice).
+        '''
+        for key in self.AUTOTUNE_KEYS:
+            assert key in self.ARGUMENTS, f'AUTOTUNE_KEYS "{key}" cannot be found in {self.__class__.__name__}.ARGUMENTS'
 
     @property
     def name(self):
