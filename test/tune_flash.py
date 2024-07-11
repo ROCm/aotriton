@@ -61,10 +61,31 @@ class Tuner(object):
             self.profile(*tup)
 
     def profile(self, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type):
-        a = self._args
+        if seqlen_q > 8192 and seqlen_k > 8192:
+            N_HEADS = 1
         if causal and seqlen_q != seqlen_k:
             print('FA does not support accept casual=True when seqlen_q != seqlen_k. Skipping')
             return
+        if causal and bias_type != 0:
+            print('FA does not support accept casual=True when bias_type != 0. Skipping')
+            return
+        torch.cuda.empty_cache()
+        '''
+        Create reference dropout_mask
+        '''
+        if dropout_p > 0.0:
+            rdims = (BATCH, N_HEADS, seqlen_q, seqlen_k)
+            r = torch.empty(rdims, device='cuda', dtype=torch.float32)
+            philox_seed = DEFAULT_PHILOX_SEED
+            philox_offset = DEFAULT_PHILOX_OFFSET
+            debug_fill_dropout_rng(r, philox_seed, philox_offset)
+            mask = r > dropout_p
+            torch.cuda.synchronize()
+            del r
+        else:
+            mask = None
+        torch.cuda.empty_cache()
+        a = self._args
         '''
         Create SdpaContext for testing
         '''
@@ -73,19 +94,6 @@ class Tuner(object):
         ctx.create_ref_inputs()
         ctx.set_require_grads(skip_db=True)
         q, k, v, b = ctx.dev_tensors
-        '''
-        Create reference dropout_mask
-        '''
-        if dropout_p > 0.0:
-            rdims = (BATCH, N_HEADS, seqlen_q, seqlen_k)
-            r = torch.empty(rdims, device=q.device, dtype=torch.float32)
-            philox_seed = DEFAULT_PHILOX_SEED
-            philox_offset = DEFAULT_PHILOX_OFFSET
-            debug_fill_dropout_rng(r, philox_seed, philox_offset)
-            mask = r > dropout_p
-            torch.cuda.synchronize()
-        else:
-            mask = None
         sdpa_params = SdpaParams(causal=causal, sm_scale=sm_scale, dropout_p=dropout_p, dropout_mask=mask)
         ref_out, _ = ctx.compute_ref_forward(sdpa_params)
 
@@ -191,8 +199,8 @@ def parse():
     p.add_argument('--return_encoded_softmax', type=bool, default=[False],
                    help="(A functional for debugging) kernel that returns softmax(dropout(QK')) to validate the correctness of dropout")
     p.add_argument('--d_head', type=int, nargs='+', default=[16,32,64,128,256], help='Head dimensions.')
-    p.add_argument('--seqlen_q', type=int, nargs='+', default=[256,1024,2048,4096,8192,16384,32768], help='Sequence length of Q.')
-    p.add_argument('--seqlen_k', type=int, nargs='+', default=[256,1024,2048,4096,8192,16384,32768], help='Sequence length of K/V.')
+    p.add_argument('--seqlen_q', type=int, nargs='+', default=[4,8,16,32,64,128,256,1024,2048,4096,8192,16384], help='Sequence length of Q.')
+    p.add_argument('--seqlen_k', type=int, nargs='+', default=[4,8,16,32,64,128,256,1024,2048,4096,8192,16384], help='Sequence length of K/V.')
     p.add_argument('--causal', type=int, nargs='+', default=[True,False], choices=[0, 1], help='Causal mask. (Use 0/1 for False/True')
     p.add_argument('--dropout_p', type=float, nargs='+', default=[0.5, 0.0], help='Probablity to dropout (0 to disable).')
     p.add_argument('--dtype', type=str, nargs='+',
