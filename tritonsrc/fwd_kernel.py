@@ -31,14 +31,14 @@ def attn_fwd(
         stride_vz, stride_vh, stride_vk, stride_vn,
         stride_bz, stride_bh, stride_bm, stride_bn,
         stride_oz, stride_oh, stride_om, stride_on,
-        num_head_q,
-        num_head_k,
+        num_head_q : 'i32',
+        num_head_k : 'i32',
         cu_seqlens_q,
         cu_seqlens_k,
-        num_seqlens,
-        max_seqlen_q,
-        max_seqlen_k,
-        head_dim,
+        num_seqlens : 'i32',
+        max_seqlen_q : 'i32',
+        max_seqlen_k : 'i32',
+        head_dim : 'i32',
         dropout_p,
         philox_seed,
         philox_offset_base,
@@ -292,7 +292,9 @@ def attn_fwd(
     # FIXME: MQA/GQA L tensor
     # TODO: make writing of L optional
     # write back LSE
-    L_ptr_base = L + (off_z * num_head_q + off_h_q)  * max_seqlen_q
+
+    # L's shape: (batch, head, seqlen_q)
+    L_ptr_base = L + (off_z * num_head_q + off_h_q) * max_seqlen_q
     l_ptrs = L_ptr_base + offs_m
     # If seqlen_q not multiple of BLOCK_M, we need to mask out the last few rows.
     # This is only true for the last M block. For others, overflow_size will be -ve
