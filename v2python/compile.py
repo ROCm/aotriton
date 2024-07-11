@@ -24,6 +24,8 @@ KNOWN_TARGETS = {
         None     : None,
         'MI200'  : GPUTarget('hip', 'gfx90a', 64),
         'MI300X' : GPUTarget('hip', 'gfx942', 64),
+        'Navi31' : GPUTarget('hip', 'gfx1100', 32),
+        'Navi32' : GPUTarget('hip', 'gfx1101', 32),
 }
 
 def main():
