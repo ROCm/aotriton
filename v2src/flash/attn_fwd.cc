@@ -55,6 +55,8 @@ _attn_fwd_common(T4 q,
     return grid;
   };
   int head_size = q.size(3);
+  int num_head_q = q.size(1);
+  int num_head_k = k.size(1);
   int head_dim_rounded = std::max<int>(16, aotriton::bit_ceil(head_size));
   int bias_type = 0;
   if (b) {
@@ -70,8 +72,8 @@ _attn_fwd_common(T4 q,
     .encoded_softmax = &encoded_softmax,
     .sm_scale = sm_scale,
     .M = &softmax_lse,
-    .num_head_q = head_size,
-    .num_head_k = head_size,
+    .num_head_q = num_head_q,
+    .num_head_k = num_head_k,
     .num_seqlens = num_seqlens,
     .max_seqlen_q = max_seqlen_q,
     .max_seqlen_k = max_seqlen_k,
