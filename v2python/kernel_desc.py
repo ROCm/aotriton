@@ -12,7 +12,7 @@ from .kernel_argument import (
 )
 from .kernel_signature import KernelSignature
 from .object_desc import ObjectFileDescription
-from .gpu_targets import AOTRITON_SUPPORTED_GPUS
+from .gpu_targets import AOTRITON_SUPPORTED_GPUS, AOTRITON_GPU_WARPSIZE
 
 SOURCE_PATH = Path(__file__).resolve()
 
@@ -89,6 +89,14 @@ class KernelDescription(object):
         print(f"{self.TYPE_CHOICES=}")
         print(f"{self.FEAT_CHOICES=}")
 
+    def gen_patched_autotune_configs(self, gpu, fsel_dict):
+        if AOTRITON_GPU_WARPSIZE[gpu] == 64:
+            yield from self.gen_autotune_configs(fsel_dict)
+            return
+        for cfg in self.gen_autotune_configs(fsel_dict):
+            cfg.num_warps *= 2
+            yield cfg
+
     def __init__(self, triton_kernel_name, triton_file_path):
         self.insert_tensor_strides_to_choices(last_is_continuous=True)
         self._DATA_ARGUMENTS = None
@@ -164,7 +172,7 @@ class KernelDescription(object):
                                        gpu : str,
                                        fsels : 'list[ArgumentSelection]'):
         fsel_dict = ArgumentSelection.build_fsel_dict(fsels)
-        for cfg in self.gen_autotune_configs(fsel_dict):
+        for cfg in self.gen_patched_autotune_configs(gpu, fsel_dict):
             psels, compiler_options = cfg.translate_to_psel_and_co(self._perf_meta)
             yield gpu, fsels, psels, compiler_options
 
