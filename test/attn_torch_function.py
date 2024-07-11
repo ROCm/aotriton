@@ -100,7 +100,7 @@ class _attention(torch.autograd.Function):
     @staticmethod
     def backward(ctx, do, _, __):
         q, k, v, b, o, L = ctx.saved_tensors
-        print(f'{b=}')
+        # print(f'{b=}')
         sm_scale = ctx.sm_scale
         dropout_p = ctx.dropout_p
         philox_seed = ctx.philox_seed
@@ -108,15 +108,16 @@ class _attention(torch.autograd.Function):
         causal = ctx.causal
         # if q.shape[-1] <= 32:
         # do = do.contiguous()
-        dq = torch.zeros_like(q)
+        dq = torch.empty_like(q)
         dk = torch.empty_like(k)
         dv = torch.empty_like(v)
         db = torch.empty_like(b) if b is not None else None
         delta = torch.empty_like(L)
         seqlen_q = q.shape[2]
         seqlen_k = k.shape[2]
-        attn_bwd(q, k, v, b, sm_scale, o, do, dq, dk, dv, db, L, delta,
-                 dropout_p, philox_seed, philox_offset, causal);
+        ret = attn_bwd(q, k, v, b, sm_scale, o, do, dq, dk, dv, db, L, delta,
+                       dropout_p, philox_seed, philox_offset, causal);
+        assert ret == hipError_t.hipSuccess, ret
         return dq, dk, dv, db, None, None, None, None, None
 
 attention = _attention.apply
