@@ -5,4 +5,3 @@ pluggy
 numpy
 setuptools
 wheel
-tqdm
