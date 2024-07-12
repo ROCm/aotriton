@@ -61,7 +61,7 @@ foreach(RULE IN LISTS HSACO_RULES)
       "--waves_per_eu" "${WAVESPEREU}"
       "--target" "${TGTGPU}"
       "--signature" "${SIG}"
-      COMMAND ${ZSTD_EXEC} "-f" ${HSACO}
+      COMMAND ${ZSTD_EXEC} "-q" "-f" ${HSACO}
       DEPENDS aotriton_venv_triton
     )
     list(APPEND ALL_HSACOS "${HSACO}.zst")
