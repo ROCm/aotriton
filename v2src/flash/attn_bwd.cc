@@ -128,6 +128,7 @@ bwd_kernel_dk_dv(T4 q,
       uint32_t(params.Q->size(1)),
       params.num_seqlens == 0 ? uint32_t(params.Q->size(0)) : params.num_seqlens,
     };
+    // std::cerr << "bwd_kernel_dk_dv grid conf " << grid.x << " " << grid.y << " " << grid.z << std::endl;
     return grid;
   };
   constexpr int kMinHeadDimCompiled = 16;
@@ -210,6 +211,7 @@ bwd_kernel_dq(T4 q,
       uint32_t(params.Q->size(1)),
       params.num_seqlens == 0 ? uint32_t(params.Q->size(0)) : params.num_seqlens,
     };
+    // std::cerr << "bwd_kernel_dq grid conf " << grid.x << " " << grid.y << " " << grid.z << std::endl;
     return grid;
   };
   constexpr int kMinHeadDimCompiled = 16;
