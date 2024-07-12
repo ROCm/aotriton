@@ -149,7 +149,7 @@ class SdpaContext(object):
     def clone_tensor_tuple(in_tensors, dtype, device=None):
         return tuple([SdpaContext.clone_tensor(t, dtype=dtype, device=device) for t in in_tensors])
 
-    def create_ref_inputs(self):
+    def create_ref_inputs(self, target_gpu_device='cuda'):
         ref_device_option = os.getenv('AOTRITON_REF_DEVICE_OPTION', default='default')
         if ref_device_option == 'default':
             seqlen_k = self.seqlen_k
@@ -161,9 +161,9 @@ class SdpaContext(object):
             if seqlen_k == 587:
                 ref_device = 'cpu'
             else:
-                ref_device = 'cuda'
+                ref_device = target_gpu_device
         elif ref_device_option == 'cuda':
-            ref_device = 'cuda'
+            ref_device = target_gpu_device
         elif ref_device_option == 'cpu':
             ref_device = 'cpu'
         else:

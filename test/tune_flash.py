@@ -33,6 +33,7 @@ class TunerWorker(object):
         self._args = args
         self._arch = rocm_get_gpuarch()
         self._tqdm_position = 0
+        self._gpu_device = 'cuda'
 
     @property
     def verbose(self):
@@ -71,7 +72,7 @@ class TunerWorker(object):
         '''
         if dropout_p > 0.0:
             rdims = (BATCH, N_HEADS, seqlen_q, seqlen_k)
-            r = torch.empty(rdims, device='cuda', dtype=torch.float32)
+            r = torch.empty(rdims, device=self._gpu_device, dtype=torch.float32)
             philox_seed = DEFAULT_PHILOX_SEED
             philox_offset = DEFAULT_PHILOX_OFFSET
             debug_fill_dropout_rng(r, philox_seed, philox_offset)
@@ -86,8 +87,8 @@ class TunerWorker(object):
         Create SdpaContext for testing
         '''
         ctx = SdpaContext(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, dtype,
-                          bias_type=bias_type, storage_flip=None, device='cuda')
-        ctx.create_ref_inputs()
+                          bias_type=bias_type, storage_flip=None, device=self._gpu_device)
+        ctx.create_ref_inputs(target_gpu_device=self._gpu_device)
         ctx.set_require_grads(skip_db=True)
         q, k, v, b = ctx.dev_tensors
         sdpa_params = SdpaParams(causal=causal, sm_scale=sm_scale, dropout_p=dropout_p, dropout_mask=mask)
@@ -145,25 +146,30 @@ class TunerWorker(object):
 
 class IPCTunerWorker(TunerWorker):
 
+    def set_shard(self, shard):
+        self._tqdm_position = shard
+        self._gpu_device = f'cuda:{shard}'
+
     def do_profile(self, ipc_read, ipc_write):
         a = self._args
         shard, total_shards = ipc_read.get()
         print(f'{shard=} {total_shards=}')
         shard_prefx= '' if shard is None else f'[Shard {shard:02d}/{total_shards:02d}]'
-        self._tqdm_position = shard
-        for i, tup in enumerate(self.gen()):
-            if i % total_shards != shard:
-                continue
-            print(f"{shard_prefx}[{i:06d}] Handling {tup}")
-            if a.continue_from is not None and i < a.continue_from:
-                continue
-            if a.stop_at is not None and i > a.stop_at:
-                break
-            if a.dry_run:
-                continue
-            action, inputs, best_configs = self.profile_single_config(*tup)
-            if action == 'Success':
-                ipc_write.put((inputs, best_configs))
+        self.set_shard(shard)
+        with torch.cuda.device(shard):
+            for i, tup in enumerate(self.gen()):
+                if i % total_shards != shard:
+                    continue
+                print(f"{shard_prefx}[{i:06d}] Handling {tup}")
+                if a.continue_from is not None and i < a.continue_from:
+                    continue
+                if a.stop_at is not None and i > a.stop_at:
+                    break
+                if a.dry_run:
+                    continue
+                action, inputs, best_configs = self.profile_single_config(*tup)
+                if action == 'Success':
+                    ipc_write.put((inputs, best_configs))
         ipc_write.put((None, shard))
 
 class Tuner(object):
@@ -172,7 +178,10 @@ class Tuner(object):
     def __init__(self, args):
         self._args = args
         self._arch = rocm_get_gpuarch()
-        dbargs = ['python3', '-m', 'v2python.table_tool', '-v', '-f', self._args.db_file, '-k', self.KERNEL_FAMILY]
+        dbargs = ['python3', '-m', 'v2python.table_tool']
+        if self.verbose:
+            dbargs += ['-v']
+        dbargs += ['-f', self._args.db_file, '-k', self.KERNEL_FAMILY]
         if args.create_table_only:
             dbargs += ['--action', 'createtableonly']
         self._dbp = subprocess.Popen(dbargs,
