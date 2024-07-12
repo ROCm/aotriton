@@ -240,22 +240,25 @@ class Tuner(object):
             self.splice_pipes()
 
     def splice_pipes(self):
-        for i in range(10):
+        nattempts = 10 if self.verbose else 1
+        for i in range(nattempts):
             while True:
                 line = self._dbp.stdout.readline()
                 if line:
                     print(line, end='')
                 else:
-                    time.sleep(0.1)
+                    if self.verbose:
+                        time.sleep(0.1)
                     break
 
-        for i in range(10):
+        for i in range(nattempts):
             while True:
                 line = self._dbp.stderr.readline()
                 if line:
                     print(line, end='', file=sys.stderr)
                 else:
-                    time.sleep(0.1)
+                    if self.verbose:
+                        time.sleep(0.1)
                     break
         sys.stdout.flush()
         sys.stderr.flush()
