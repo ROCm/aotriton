@@ -95,6 +95,8 @@ class KernelDescription(object):
             return
         for cfg in self.gen_autotune_configs(fsel_dict):
             cfg.num_warps *= 2
+            if cfg.num_warps > 8:  # ignore super large block
+                continue
             yield cfg
 
     def __init__(self, triton_kernel_name, triton_file_path):
