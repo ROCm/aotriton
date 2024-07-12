@@ -5,6 +5,7 @@
 import pytest
 import torch
 
+import os
 import triton
 from attn_torch_function import attention
 
@@ -20,6 +21,12 @@ except BaseException:
         FLASH_VER = None
 HAS_FLASH = FLASH_VER is not None
 
+n_ctx = os.getenv('N_CTX', default=list(range(10, 14)))
+if isinstance(n_ctx, str):
+    n_ctx = map(lambda x: int(x), n_ctx.split(','))
+X_VALS = list(map(lambda x: 2 ** x, n_ctx))
+print(f'{X_VALS=}')
+
 BATCH, N_HEADS, N_CTX, D_HEAD = 4, 48, 4096, 64
 # vary seq length for fixed head and batch=4
 configs = []
@@ -27,7 +34,9 @@ for mode in ['fwd']:
     for causal in [False, True]:
         configs.append(triton.testing.Benchmark(
             x_names=['N_CTX'],
-            x_vals=[2**i for i in range(10, 15)],
+            x_vals=list(X_VALS),
+            # x_vals=[2**i for i in range(10, 14)],  # 2 ** 15 not working for now
+            # x_vals=[2**12],
             line_arg='provider',
             line_vals=['triton'] + (['flash'] if HAS_FLASH else []),
             line_names=['Triton'] + ([f'Flash-{FLASH_VER}'] if HAS_FLASH else []),
