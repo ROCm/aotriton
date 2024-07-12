@@ -7,6 +7,9 @@ import torch
 import json
 import sys
 import subprocess
+import queue
+import multiprocessing
+from multiprocessing import Process, Queue
 import argparse
 import itertools
 import os
@@ -25,20 +28,11 @@ from _common_test import SdpaContext, SdpaParams
 
 _DEBUG_SKIP_TUNE_BACKWARD = True
 
-class Tuner(object):
-    KERNEL_FAMILY = 'FLASH'
-
+class TunerWorker(object):
     def __init__(self, args):
         self._args = args
         self._arch = rocm_get_gpuarch()
-        dbargs = ['python3', '-m', 'v2python.table_tool', '-v', '-f', self._args.db_file, '-k', self.KERNEL_FAMILY]
-        if args.create_table_only:
-            dbargs += ['--action', 'createtableonly']
-        self._dbp = subprocess.Popen(dbargs,
-                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                     text=True)
-        os.set_blocking(self._dbp.stdout.fileno(), False)
-        os.set_blocking(self._dbp.stderr.fileno(), False)
+        self._tqdm_position = 0
 
     @property
     def verbose(self):
@@ -48,27 +42,29 @@ class Tuner(object):
         a = self._args
         yield from itertools.product(a.batch, a.n_heads, a.d_head, a.seqlen_q, a.seqlen_k, a.causal, a.sm_scale, a.dropout_p, a.return_encoded_softmax, a.dtype, a.bias_type)
 
-    def profile_all(self):
+    def do_profile(self):
         a = self._args
         for i, tup in enumerate(self.gen()):
-            print(f"[{i:06d}] Handling {tup}")
+            print(f"{shard_prefx}[{i:06d}] Handling {tup}")
             if a.continue_from is not None and i < a.continue_from:
                 continue
             if a.stop_at is not None and i > a.stop_at:
                 break
             if a.dry_run:
                 continue
-            self.profile(*tup)
+            action, inputs, best_configs = self.profile_single_config(*tup)
+            if action == 'Success':
+                self.pipe_configs(inputs, best_configs)
 
-    def profile(self, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type):
+    def profile_single_config(self, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type):
         if seqlen_q > 8192 and seqlen_k > 8192:
             N_HEADS = 1
         if causal and seqlen_q != seqlen_k:
             print('FA does not support accept casual=True when seqlen_q != seqlen_k. Skipping')
-            return
+            return 'Skip', None, None
         if causal and bias_type != 0:
             print('FA does not support accept casual=True when bias_type != 0. Skipping')
-            return
+            return 'Skip', None, None
         torch.cuda.empty_cache()
         '''
         Create reference dropout_mask
@@ -115,7 +111,8 @@ class Tuner(object):
         ext = AttentionExtraArgs(return_encoded_softmax=return_encoded_softmax,
                 autotune=True,
                 return_autotune=True,
-                autotune_validator=fwd_validator)
+                autotune_validator=fwd_validator,
+                cpp_autotune_tqdm_position=self._tqdm_position)
         tri_out, encoded_softmax, best_configs = attention(q, k, v, b, causal, sm_scale, dropout_p, ext)
         if self.verbose:
             print('Returned best configs')
@@ -144,7 +141,86 @@ class Tuner(object):
             'PADDED_HEAD' : head_dim_rounded != D_HEAD,
             'BIAS_TYPE' : bias_type,
         }
-        self.pipe_configs(inputs, best_configs)
+        return 'Success', inputs, best_configs
+
+class IPCTunerWorker(TunerWorker):
+
+    def do_profile(self, ipc_read, ipc_write):
+        a = self._args
+        shard, total_shards = ipc_read.get()
+        print(f'{shard=} {total_shards=}')
+        shard_prefx= '' if shard is None else f'[Shard {shard:02d}/{total_shards:02d}]'
+        self._tqdm_position = shard
+        for i, tup in enumerate(self.gen()):
+            if i % total_shards != shard:
+                continue
+            print(f"{shard_prefx}[{i:06d}] Handling {tup}")
+            if a.continue_from is not None and i < a.continue_from:
+                continue
+            if a.stop_at is not None and i > a.stop_at:
+                break
+            if a.dry_run:
+                continue
+            action, inputs, best_configs = self.profile_single_config(*tup)
+            if action == 'Success':
+                ipc_write.put((inputs, best_configs))
+        ipc_write.put((None, shard))
+
+class Tuner(object):
+    KERNEL_FAMILY = 'FLASH'
+
+    def __init__(self, args):
+        self._args = args
+        self._arch = rocm_get_gpuarch()
+        dbargs = ['python3', '-m', 'v2python.table_tool', '-v', '-f', self._args.db_file, '-k', self.KERNEL_FAMILY]
+        if args.create_table_only:
+            dbargs += ['--action', 'createtableonly']
+        self._dbp = subprocess.Popen(dbargs,
+                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                     text=True)
+        os.set_blocking(self._dbp.stdout.fileno(), False)
+        os.set_blocking(self._dbp.stderr.fileno(), False)
+
+    @property
+    def verbose(self):
+        return self._args.verbose
+
+    def profile_all(self):
+        a = self._args
+        if a.use_multigpu is None:
+            for inputs, best_configs in TunerWorker(args).do_profile():
+                self.pipe_configs(inputs, best_configs)
+            return
+        shards = list([i for i in range(torch.cuda.device_count())]) if -1 in a.use_multigpu else a.use_multigpu
+        ipc_write = Queue()
+        ipc_read = Queue()
+        ipc_tuners = [IPCTunerWorker(self._args) for i in shards]
+        workers = [Process(target=worker.do_profile, args=(ipc_write, ipc_read)) for worker in ipc_tuners]
+        nlive_processes = len(workers)
+        for i, p in enumerate(workers):
+            ipc_write.put((i, nlive_processes))
+        for p in workers:
+            p.start()
+        while nlive_processes > 0:
+            try:
+                inputs, best_configs = ipc_read.get(timeout=30)
+                # print(f'{inputs=}')
+                # print(f'{best_configs=}')
+                if inputs is None:
+                    shard = best_configs
+                    nlive_processes -= 1
+                    print(f'Shard {shard} has completed all tasks. Updated {nlive_processes=}')
+                    continue
+                self.pipe_configs(inputs, best_configs)
+            except queue.Empty:
+                print("Timed out. Re-scan live processes")
+                # "watchdog"
+                nlive_processes = 0
+                for i, p in enumerate(workers):
+                    nlive_processes += 1 if p.is_alive() else 0
+                print(f"{nlive_processes=}")
+        for p in workers:
+            p.join()
 
     def pipe_configs(self, inputs, best_configs):
         for kernel_name, best in best_configs:
@@ -216,6 +292,7 @@ def parse():
     p.add_argument('--stop_at', type=int, default=None, help="Stop at n-th functional set")
     p.add_argument('--db_file', type=str, required=True, help="Sqlite Database file")
     p.add_argument('--create_table_only', action='store_true', help="Do not insert data, only create tables. Used for schema updates.")
+    p.add_argument('--use_multigpu', type=int, nargs='+', default=None, help='Profiling on multiple GPUs. Passing -1 for all GPUs available to pytorch.')
     args = p.parse_args()
     args.dtype = [ getattr(torch, t) for t in args.dtype ]
     args.causal = [ bool(c) for c in args.causal ]
@@ -223,6 +300,7 @@ def parse():
     return args
 
 def main():
+    multiprocessing.set_start_method('spawn')  # Otherwise torch complains
     args = parse()
     tuner = Tuner(args)
     tuner.profile_all()
