@@ -37,6 +37,8 @@ class _varlen_attention(torch.autograd.Function):
         head_dim_rounded = 2 ** (Lk - 1).bit_length()
         head_dim_rounded = max(16, head_dim_rounded)
         padded_head = head_dim_rounded != Lk
+        num_head_q = q.shape[1]
+        num_head_k = k.shape[1]
         # Varlen packed all batches of seqlens into dim[0]
         batch = len(seqlen_q)
         num_heads = q.shape[1]
@@ -131,6 +133,8 @@ class _varlen_attention(torch.autograd.Function):
                 v.stride(0), v.stride(1), v.stride(2), v.stride(3),
                 b.stride(0), b.stride(1), b.stride(2), b.stride(3),
                 o.stride(0), o.stride(1), o.stride(2), o.stride(3),
+                num_head_q=num_head_q,
+                num_head_k=num_head_k,
                 cu_seqlens_q=cu_seqlens_q,
                 cu_seqlens_k=cu_seqlens_k,
                 num_seqlens=len(cu_seqlens_q),
