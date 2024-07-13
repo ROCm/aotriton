@@ -100,7 +100,7 @@ def do_bench(fn, *, warmup=25, rep=100,
 
 AutotuneResult = namedtuple('AutotuneResult', ['kernel_index', 'time', 'psels', 'copts'])
 
-def cpp_autotune(extarg_klass, kernel_func, validator, *, tqdm_position=None):
+def cpp_autotune(extarg_klass, kernel_func, validator, *, tqdm_position=None, tqdm_prefix=''):
     assert validator is not None
     kernel_index = 0
     extargs = extarg_klass()
@@ -133,9 +133,9 @@ def cpp_autotune(extarg_klass, kernel_func, validator, *, tqdm_position=None):
 
         if pbar is None and extargs.total_number_of_kernels > 0:
             pbar = tqdm(total=extargs.total_number_of_kernels, unit="configs", position=tqdm_position)
-            pbar.set_description(f'Success {success}, Fail {failed}. Last time {t:.2g}')
+            pbar.set_description(f'{tqdm_prefix} Success {success}, Fail {failed}. Last time {t:.2g}')
         if pbar is not None:
-            pbar.set_description(f'Success {success}, Fail {failed}. Last time {t:.2g}')
+            pbar.set_description(f'{tqdm_prefix} Success {success}, Fail {failed}. Last time {t:.2g}')
             pbar.update(1)
 
         #     print(f'{r.psels=}')

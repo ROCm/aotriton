@@ -13,8 +13,9 @@ AttentionExtraArgs = namedtuple('AttentionExtraArgs',
          'return_autotune',
          'autotune_validator',
          'cpp_autotune_tqdm_position',
+         'cpp_autotune_tqdm_prefix',
          ],
-        defaults=[False, False, False, None, None])
+        defaults=[False, False, False, None, None, ''])
 
 VERBOSE=False
 DEFAULT_PHILOX_SEED = 0x1BF52
@@ -84,7 +85,8 @@ class _attention(torch.autograd.Function):
                 return ret, (o,)
             tuning_result = cpp_autotune(ExtraArguments, func,
                                          attn_extra_args.autotune_validator,
-                                         tqdm_position=attn_extra_args.cpp_autotune_tqdm_position)
+                                         tqdm_position=attn_extra_args.cpp_autotune_tqdm_position,
+                                         tqdm_prefix=attn_extra_args.cpp_autotune_tqdm_prefix)
         else:
             attn_fwd(q, k, v, b, sm_scale, M, o,
                      dropout_p, philox_seed, philox_offset, encoded_softmax, causal);
