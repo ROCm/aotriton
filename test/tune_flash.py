@@ -46,7 +46,7 @@ class TunerWorker(object):
     def do_profile(self):
         a = self._args
         for i, tup in enumerate(self.gen()):
-            print(f"{shard_prefx}[{i:06d}] Handling {tup}")
+            print(f"[{i:06d}] Handling {tup}")
             if a.continue_from is not None and i < a.continue_from:
                 continue
             if a.stop_at is not None and i > a.stop_at:
@@ -55,7 +55,7 @@ class TunerWorker(object):
                 continue
             action, inputs, best_configs = self.profile_single_config(*tup)
             if action == 'Success':
-                self.pipe_configs(inputs, best_configs)
+                yield inputs, best_configs
 
     def profile_single_config(self, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type):
         if seqlen_q > 8192 and seqlen_k > 8192:
@@ -197,7 +197,7 @@ class Tuner(object):
     def profile_all(self):
         a = self._args
         if a.use_multigpu is None:
-            for inputs, best_configs in TunerWorker(args).do_profile():
+            for inputs, best_configs in TunerWorker(a).do_profile():
                 self.pipe_configs(inputs, best_configs)
             return
         shards = list([i for i in range(torch.cuda.device_count())]) if -1 in a.use_multigpu else a.use_multigpu
