@@ -28,36 +28,23 @@ from _common_test import SdpaContext, SdpaParams
 
 _DEBUG_SKIP_TUNE_BACKWARD = True
 
-class TunerWorker(object):
+class ArgArchVerbose:
     def __init__(self, args):
         self._args = args
         self._arch = rocm_get_gpuarch()
-        self._tqdm_position = 0
-        self._gpu_device = 'cuda'
 
     @property
     def verbose(self):
         return self._args.verbose
 
-    def gen(self):
-        a = self._args
-        yield from itertools.product(a.batch, a.n_heads, a.d_head, a.seqlen_q, a.seqlen_k, a.causal, a.sm_scale, a.dropout_p, a.return_encoded_softmax, a.dtype, a.bias_type)
+class TunerWorker(ArgArchVerbose):
+    def __init__(self, args):
+        super().__init__(args)
+        self._tqdm_position = 0
+        self._gpu_device = 'cuda'
 
-    def do_profile(self):
-        a = self._args
-        for i, tup in enumerate(self.gen()):
-            print(f"[{i:06d}] Handling {tup}")
-            if a.continue_from is not None and i < a.continue_from:
-                continue
-            if a.stop_at is not None and i > a.stop_at:
-                break
-            if a.dry_run:
-                continue
-            action, inputs, best_configs = self.profile_single_config(*tup)
-            if action == 'Success':
-                yield inputs, best_configs
-
-    def profile_single_config(self, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type):
+    def profile_single_config(self, tup, *, shard_prefix=''):
+        BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type = tup
         if seqlen_q > 8192 and seqlen_k > 8192:
             N_HEADS = 1
         if causal and seqlen_q != seqlen_k:
@@ -113,7 +100,9 @@ class TunerWorker(object):
                 autotune=True,
                 return_autotune=True,
                 autotune_validator=fwd_validator,
-                cpp_autotune_tqdm_position=self._tqdm_position)
+                cpp_autotune_tqdm_position=self._tqdm_position,
+                cpp_autotune_tqdm_prefix=f'{shard_prefix}{tup}',
+                )
         tri_out, encoded_softmax, best_configs = attention(q, k, v, b, causal, sm_scale, dropout_p, ext)
         if self.verbose:
             print('Returned best configs')
@@ -145,6 +134,7 @@ class TunerWorker(object):
         return 'Success', inputs, best_configs
 
 class IPCTunerWorker(TunerWorker):
+    END_OF_QUEUE_OBJECT = (-1, None)
 
     def set_shard(self, shard):
         self._tqdm_position = shard
@@ -154,35 +144,49 @@ class IPCTunerWorker(TunerWorker):
         a = self._args
         shard, total_shards = ipc_read.get()
         print(f'{shard=} {total_shards=}')
-        shard_prefx= '' if shard is None else f'[Shard {shard:02d}/{total_shards:02d}]'
+        shard_prefix= '' if shard is None else f'[Shard {shard:02d}/{total_shards:02d}]'
         self.set_shard(shard)
+        with torch.cuda.device(shard):
+            while True:
+                try:
+                    i, tup = ipc_read.get()
+                    if i == -1 and tup is None:
+                        break
+                    prefix = shard_prefix + f'[{i:06d}]'
+                    action, inputs, best_configs = self.profile_single_config(tup, shard_prefix=prefix)
+                    if action == 'Success':
+                        ipc_write.put((i, inputs, best_configs))
+                except ValueError:  # mp.Queue closed
+                    break
+        '''
         with torch.cuda.device(shard):
             for i, tup in enumerate(self.gen()):
                 if i % total_shards != shard:
                     continue
-                print(f"{shard_prefx}[{i:06d}] Handling {tup}")
+                print(f"{shard_prefix}[{i:06d}] Handling {tup}")
                 if a.continue_from is not None and i < a.continue_from:
                     continue
                 if a.stop_at is not None and i > a.stop_at:
                     break
                 if a.dry_run:
                     continue
-                action, inputs, best_configs = self.profile_single_config(*tup)
+                action, inputs, best_configs = self.profile_single_config(tup)
                 if action == 'Success':
                     ipc_write.put((inputs, best_configs))
         ipc_write.put((None, shard))
+        '''
 
-class Tuner(object):
+class DbAccessor(ArgArchVerbose):
     KERNEL_FAMILY = 'FLASH'
+    END_OF_QUEUE_OBJECT = (-1, None, None)
 
-    def __init__(self, args):
-        self._args = args
-        self._arch = rocm_get_gpuarch()
+    def create_dbp(self):
+        a = self._args
         dbargs = ['python3', '-m', 'v2python.table_tool']
         if self.verbose:
             dbargs += ['-v']
         dbargs += ['-f', self._args.db_file, '-k', self.KERNEL_FAMILY]
-        if args.create_table_only:
+        if a.create_table_only:
             dbargs += ['--action', 'createtableonly']
         self._dbp = subprocess.Popen(dbargs,
                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -190,52 +194,25 @@ class Tuner(object):
         os.set_blocking(self._dbp.stdout.fileno(), False)
         os.set_blocking(self._dbp.stderr.fileno(), False)
 
-    @property
-    def verbose(self):
-        return self._args.verbose
-
-    def profile_all(self):
-        a = self._args
-        if a.use_multigpu is None:
-            for inputs, best_configs in TunerWorker(a).do_profile():
-                self.pipe_configs(inputs, best_configs)
-            return
-        shards = list([i for i in range(torch.cuda.device_count())]) if -1 in a.use_multigpu else a.use_multigpu
-        ipc_write = Queue()
-        ipc_read = Queue()
-        ipc_tuners = [IPCTunerWorker(self._args) for i in shards]
-        workers = [Process(target=worker.do_profile, args=(ipc_write, ipc_read)) for worker in ipc_tuners]
-        nlive_processes = len(workers)
-        for i, p in enumerate(workers):
-            ipc_write.put((i, nlive_processes))
-        for p in workers:
-            p.start()
-        while nlive_processes > 0:
+    def pipe_from_ipc(self, ipc_read):
+        self.create_dbp()
+        while True:
             try:
-                inputs, best_configs = ipc_read.get(timeout=30)
-                # print(f'{inputs=}')
-                # print(f'{best_configs=}')
-                if inputs is None:
-                    shard = best_configs
-                    nlive_processes -= 1
-                    print(f'Shard {shard} has completed all tasks. Updated {nlive_processes=}')
-                    continue
-                self.pipe_configs(inputs, best_configs)
-            except queue.Empty:
-                print("Timed out. Re-scan live processes")
-                # "watchdog"
-                nlive_processes = 0
-                for i, p in enumerate(workers):
-                    nlive_processes += 1 if p.is_alive() else 0
-                print(f"{nlive_processes=}")
-        for p in workers:
-            p.join()
+                i, inputs, best_configs = ipc_read.get(timeout=30)
+                if i == -1 and inputs is None:
+                    print('[DbAccessor] No more tasks. Exiting')
+                    break
+                self.pipe_configs(inputs, best_configs, prefix=f'[{i:06d}]')
+            except ValueError:  # mp.Queue closed
+                break
+        self.stop()
+        return
 
-    def pipe_configs(self, inputs, best_configs):
+    def pipe_configs(self, inputs, best_configs, *, prefix=''):
         for kernel_name, best in best_configs:
             j = self.translate_config(inputs, kernel_name, best)
             js = json.dumps(j, separators=(',', ':'))
-            print(f'Piping to db process {js}')
+            print(f'{prefix}Piping to db process {js}')
             print(js, file=self._dbp.stdin, flush=True)
             self.splice_pipes()
 
@@ -279,6 +256,103 @@ class Tuner(object):
         self._dbp.wait()
         self.splice_pipes()
 
+class TunerManager(ArgArchVerbose):
+
+    def gen(self):
+        a = self._args
+        yield from itertools.product(a.batch, a.n_heads, a.d_head, a.seqlen_q, a.seqlen_k, a.causal, a.sm_scale, a.dropout_p, a.return_encoded_softmax, a.dtype, a.bias_type)
+
+    def gen_itup(self):
+        a = self._args
+        for i, tup in enumerate(self.gen()):
+            # print(f"[{i:06d}] Handling {tup}")
+            if a.continue_from is not None and i < a.continue_from:
+                continue
+            if a.stop_at is not None and i > a.stop_at:
+                break
+            if a.dry_run:
+                continue
+            yield i, tup
+
+    def profile_all(self):
+        a = self._args
+        dba = DbAccessor(a)
+        if a.use_multigpu is None:
+            for i, tup in self.gen_itup():
+                action, inputs, best_configs = self.profile_single_config(tup)
+                if action == 'Success':
+                    dba.pipe_configs(inputs, best_configs)
+            dba.stop()
+            return
+        shards = list([i for i in range(torch.cuda.device_count())]) if -1 in a.use_multigpu else a.use_multigpu
+        ipc_write = Queue()
+        ipc_worker_out = Queue()
+        ipc_tuners = [IPCTunerWorker(self._args) for i in shards]
+        workers = [Process(target=worker.do_profile, args=(ipc_write, ipc_worker_out)) for worker in ipc_tuners]
+        db_accessor = Process(target=dba.pipe_from_ipc, args=(ipc_worker_out,))
+
+        '''
+        Start processes
+        '''
+        nlive_processes = len(workers)
+        for i, p in enumerate(workers):
+            ipc_write.put((i, nlive_processes))
+        for p in workers:
+            p.start()
+        db_accessor.start()
+        '''
+        Dispatching tasks to ipc_write
+        '''
+        for i, tup in self.gen_itup():
+            obj = (i, tup)
+            any_process_alive = self.write_to_ipc(ipc_write, obj, workers)
+            if not any_process_alive:
+                break
+        nlive_processes = self.scan_live_processes(workers)
+        for i in range(nlive_processes):
+            self.write_to_ipc(ipc_write, IPCTunerWorker.END_OF_QUEUE_OBJECT, workers)
+        ipc_write.close()
+        """
+        while nlive_processes > 0:
+            try:
+                inputs, best_configs = ipc_worker_out.get(timeout=30)
+                # print(f'{inputs=}')
+                # print(f'{best_configs=}')
+                if inputs is None:
+                    shard = best_configs
+                    nlive_processes -= 1
+                    print(f'Shard {shard} has completed all tasks. Updated {nlive_processes=}')
+                    continue
+                self.pipe_configs(inputs, best_configs)
+            except queue.Empty:
+                print("Timed out. Re-scan live processes")
+                # "watchdog"
+        """
+        for p in workers:
+            p.join()
+        print('All workers joined')
+        ipc_worker_out.put(DbAccessor.END_OF_QUEUE_OBJECT)
+        ipc_worker_out.close()
+
+    def write_to_ipc(self, ipc_write, obj, workers):
+        while True:
+            try:
+                ipc_write.put(obj, timeout=60)
+                return True
+            except queue.Full:
+                print("Task Queue Full. Re-scan live processes")
+                nlive_processes = self.scan_live_processes(workers)
+                print(f"{nlive_processes=}")
+                if nlive_processes == 0:
+                    print("PANIC: All Processes Died")
+                    return False
+
+    def scan_live_processes(self, workers):
+        nlive_processes = 0
+        for i, p in enumerate(workers):
+            nlive_processes += 1 if p.is_alive() else 0
+        return nlive_processes
+
 def parse():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument('--batch', type=int, nargs=1, default=[1], help='(Not a functional) Batch size.')
@@ -314,9 +388,8 @@ def parse():
 def main():
     multiprocessing.set_start_method('spawn')  # Otherwise torch complains
     args = parse()
-    tuner = Tuner(args)
+    tuner = TunerManager(args)
     tuner.profile_all()
-    tuner.stop()
 
 if __name__ == '__main__':
     main()
