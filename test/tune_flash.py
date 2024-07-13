@@ -37,6 +37,10 @@ class ArgArchVerbose:
     def verbose(self):
         return self._args.verbose
 
+    def print(self, text):
+        if self.verbose:
+            print(text)
+
 class TunerWorker(ArgArchVerbose):
     def __init__(self, args):
         super().__init__(args)
@@ -44,15 +48,18 @@ class TunerWorker(ArgArchVerbose):
         self._gpu_device = 'cuda'
 
     def profile_single_config(self, tup, *, shard_prefix=''):
+        a = self._args
         BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type = tup
         if seqlen_q > 8192 and seqlen_k > 8192:
             N_HEADS = 1
         if causal and seqlen_q != seqlen_k:
-            print('FA does not support accept casual=True when seqlen_q != seqlen_k. Skipping')
+            self.print('FA does not support accept casual=True when seqlen_q != seqlen_k. Skipping')
             return 'Skip', None, None
         if causal and bias_type != 0:
-            print('FA does not support accept casual=True when bias_type != 0. Skipping')
+            self.print('FA does not support accept casual=True when bias_type != 0. Skipping')
             return 'Skip', None, None
+        if a.dry_run:
+            return 'Dryrun', None, None
         torch.cuda.empty_cache()
         '''
         Create reference dropout_mask
@@ -69,7 +76,6 @@ class TunerWorker(ArgArchVerbose):
         else:
             mask = None
         torch.cuda.empty_cache()
-        a = self._args
         '''
         Create SdpaContext for testing
         '''
@@ -182,6 +188,11 @@ class DbAccessor(ArgArchVerbose):
 
     def create_dbp(self):
         a = self._args
+        if a.json_file is not None and not a.dry_run:
+            assert a.json_file != a.db_file
+            self._jsonfile = open(a.json_file, 'w')
+        else:
+            self._jsonfile = None
         dbargs = ['python3', '-m', 'v2python.table_tool']
         if self.verbose:
             dbargs += ['-v']
@@ -212,7 +223,10 @@ class DbAccessor(ArgArchVerbose):
         for kernel_name, best in best_configs:
             j = self.translate_config(inputs, kernel_name, best)
             js = json.dumps(j, separators=(',', ':'))
-            print(f'{prefix}Piping to db process {js}')
+            if self._jsonfile is None:
+                print(f'{prefix}Piping to db process {js}')
+            else:
+                print(js, file=self._jsonfile, flush=True)
             print(js, file=self._dbp.stdin, flush=True)
             self.splice_pipes()
 
@@ -251,6 +265,8 @@ class DbAccessor(ArgArchVerbose):
         return tuning_result
 
     def stop(self):
+        if self._jsonfile is not None:
+            self._jsonfile.close()
         self._dbp.stdin.close()
         print("Waiting for database process to terminate")
         self._dbp.wait()
@@ -270,19 +286,26 @@ class TunerManager(ArgArchVerbose):
                 continue
             if a.stop_at is not None and i > a.stop_at:
                 break
-            if a.dry_run:
-                continue
             yield i, tup
 
     def profile_all(self):
         a = self._args
         dba = DbAccessor(a)
         if a.use_multigpu is None:
+            dba.create_dbp()
+            dry_run_counter = 0
+            skip_counter = 0
+            worker = TunerWorker(a)
             for i, tup in self.gen_itup():
-                action, inputs, best_configs = self.profile_single_config(tup)
+                action, inputs, best_configs = worker.profile_single_config(tup)
                 if action == 'Success':
                     dba.pipe_configs(inputs, best_configs)
+                if action == 'Dryrun':
+                    dry_run_counter += 1
+                if action == 'Skip':
+                    skip_counter += 1
             dba.stop()
+            print(f"Valid sample points {dry_run_counter=}. Skipped invalid/unsupported points {skip_counter}")
             return
         shards = list([i for i in range(torch.cuda.device_count())]) if -1 in a.use_multigpu else a.use_multigpu
         ipc_write = Queue()
@@ -333,6 +356,8 @@ class TunerManager(ArgArchVerbose):
         print('All workers joined')
         ipc_worker_out.put(DbAccessor.END_OF_QUEUE_OBJECT)
         ipc_worker_out.close()
+        db_accessor.join()
+        print('Db accessor joined')
 
     def write_to_ipc(self, ipc_write, obj, workers):
         while True:
@@ -377,6 +402,7 @@ def parse():
     p.add_argument('--continue_from', type=int, default=None, help="Continue from n-th functional set")
     p.add_argument('--stop_at', type=int, default=None, help="Stop at n-th functional set")
     p.add_argument('--db_file', type=str, required=True, help="Sqlite Database file")
+    p.add_argument('--json_file', type=str, default=None, help="Json file for record. Disables printing json to stdout")
     p.add_argument('--create_table_only', action='store_true', help="Do not insert data, only create tables. Used for schema updates.")
     p.add_argument('--use_multigpu', type=int, nargs='+', default=None, help='Profiling on multiple GPUs. Passing -1 for all GPUs available to pytorch.')
     args = p.parse_args()
