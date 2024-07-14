@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 
 import torch
-from aotriton_flash import attn_fwd, attn_bwd, debug_fill_dropout_rng, ExtraArguments, hipError_t
+from aotriton_flash import attn_fwd, ipc_attn_fwd, attn_bwd, debug_fill_dropout_rng, ExtraArguments, hipError_t
 from collections import namedtuple
 from cpp_autotune import do_bench, cpp_autotune
 
@@ -14,8 +14,9 @@ AttentionExtraArgs = namedtuple('AttentionExtraArgs',
          'autotune_validator',
          'cpp_autotune_tqdm_position',
          'cpp_autotune_tqdm_prefix',
+         'gpu_device',
          ],
-        defaults=[False, False, False, None, None, ''])
+        defaults=[False, False, False, None, None, '', None])
 
 VERBOSE=False
 DEFAULT_PHILOX_SEED = 0x1BF52
@@ -73,16 +74,43 @@ class _attention(torch.autograd.Function):
 
         if autotune and return_autotune:
             assert attn_extra_args.autotune_validator is not None
-            def func(extargs):
-                # print(f'running attn_fwd with {extargs.force_kernel_index=}')
+            def sameprocess_func(extargs):
+                args = (q, k, v, b, sm_scale, M, o,
+                        dropout_p, philox_seed, philox_offset, encoded_softmax, causal,
+                        extargs)
                 try:
-                    ret = attn_fwd(q, k, v, b, sm_scale, M, o,
-                                   dropout_p, philox_seed, philox_offset, encoded_softmax, causal,
-                                   extargs);
+                    ret = attn_fwd(*args)
                 except Exception as e:
                     print(e)
                     return hipError_t.hipErrorLaunchFailure, None
                 return ret, (o,)
+            def ipc_func(force_kernel_index):
+                ipc = torch.multiprocessing.Queue()
+                shard = attn_extra_args.gpu_device
+                p = torch.multiprocessing.Process(target=ipc_attn_fwd, args=(ipc,))
+                # print(f'{q.data_ptr()=:x}')
+                # print(f'{k.data_ptr()=:x}')
+                # print(f'{v.data_ptr()=:x}')
+                # print(f'{b.data_ptr()=:x}')
+                # print(f'{M.data_ptr()=:x}')
+                # print(f'{o.data_ptr()=:x}')
+                ipc.put((q, k, v, b, sm_scale, M, o,
+                         dropout_p, philox_seed, philox_offset, encoded_softmax, causal,
+                         force_kernel_index, shard))
+                # print(f'Process attn_fwd starting')
+                p.start()
+                p.join()
+                # print(f'Process attn_fwd joined')
+                # print(f'Process exitcode {p.exitcode}')
+                ret = hipError_t.hipSuccess if p.exitcode == 0 else hipError_t.ErrorLaunchFailure
+                return ret, (o,)
+            def func(extargs, is_testing):
+                o.fill_(float('nan'))
+                # print(f'{is_testing=}')
+                if not is_testing:
+                    return sameprocess_func(extargs)
+                return ipc_func(extargs.force_kernel_index)
+                # print(f'running attn_fwd with {extargs.force_kernel_index=}')
             tuning_result = cpp_autotune(ExtraArguments, func,
                                          attn_extra_args.autotune_validator,
                                          tqdm_position=attn_extra_args.cpp_autotune_tqdm_position,
