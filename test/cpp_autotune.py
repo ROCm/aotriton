@@ -100,6 +100,9 @@ def do_bench(fn, *, warmup=25, rep=100,
 
 AutotuneResult = namedtuple('AutotuneResult', ['kernel_index', 'time', 'psels', 'copts'])
 
+# cannot be maxint in case extargs.total_number_of_kernels never returns a positive number
+CPP_AUTOTUNE_MAX_KERNELS = 100
+
 def cpp_autotune(extarg_klass, kernel_func, validator, *, tqdm_position=None, tqdm_prefix=''):
     assert validator is not None
     kernel_index = 0
@@ -108,6 +111,7 @@ def cpp_autotune(extarg_klass, kernel_func, validator, *, tqdm_position=None, tq
     pbar = None
     failed = 0
     success = 0
+    total_number_of_kernels = CPP_AUTOTUNE_MAX_KERNELS
     while True:
         extargs.force_kernel_index = kernel_index
         def func(is_testing=False):
@@ -124,6 +128,9 @@ def cpp_autotune(extarg_klass, kernel_func, validator, *, tqdm_position=None, tq
         if math.isinf(t):
             failed += 1
         else:
+            if extargs.total_number_of_kernels > 0:
+                assert extargs.total_number_of_kernels <= CPP_AUTOTUNE_MAX_KERNELS
+                total_number_of_kernels = extargs.total_number_of_kernels
             success += 1
             r = AutotuneResult(kernel_index=kernel_index,
                                time=t,
@@ -141,7 +148,7 @@ def cpp_autotune(extarg_klass, kernel_func, validator, *, tqdm_position=None, tq
         #     print(f'{r.psels=}')
         #     print(f'{r.copts=}')
         kernel_index += 1
-        if extargs.total_number_of_kernels > 0 and kernel_index >= extargs.total_number_of_kernels:
+        if kernel_index >= total_number_of_kernels:
             break
     # print(f'cpp_autotune {timings=}')
     ret = min(timings, key=lambda atr:atr.time)

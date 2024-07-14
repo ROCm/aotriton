@@ -2,6 +2,12 @@
 # Copyright © 2023-2024 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
+import os
+# FIXME: Should set PYTORCH_NO_HIP_MEMORY_CACHING=1 as well but need to wait for
+# https://github.com/pytorch/pytorch/issues/114534
+os.environ['HSA_SVM_GUARD_PAGES'] = '1'
+os.environ['HSA_DISABLE_FRAGMENT_ALLOCATOR'] = '1'
+
 import pytest
 import torch
 import json
@@ -12,7 +18,6 @@ import multiprocessing
 from multiprocessing import Process, Queue
 import argparse
 import itertools
-import os
 import time
 import math
 
@@ -109,6 +114,7 @@ class TunerWorker(ArgArchVerbose):
                 cpp_autotune_tqdm_position=self._tqdm_position,
                 cpp_autotune_tqdm_prefix=f'{prefix}{tup}',
                 gpu_device=shard,
+                tune_worker=self,
                 )
         tri_out, encoded_softmax, best_configs = attention(q, k, v, b, causal, sm_scale, dropout_p, ext)
         if self.verbose:
@@ -143,17 +149,29 @@ class TunerWorker(ArgArchVerbose):
 class IPCTunerWorker(TunerWorker):
     END_OF_QUEUE_OBJECT = (-1, None)
 
-    def set_shard(self, shard):
+    '''
+    Initialize multiprocessing related variables
+    '''
+    def init_mp(self, shard):
         self._shard = shard
         self._tqdm_position = shard
         self._gpu_device = f'cuda:{shard}'
+        self._cached_gpukernel_process = {}
+
+    def clean_mp(self, shard):
+        for k, tup in self._cached_gpukernel_process.items():
+            ipc_to, ipc_from, p = tup
+            ipc_to.put(None)
+            p.join()
+            ipc_to.close()
+            ipc_from.close()
 
     def do_profile(self, ipc_read, ipc_write):
         a = self._args
         shard, total_shards = ipc_read.get()
         print(f'{shard=} {total_shards=}')
         shard_prefix= '' if shard is None else f'[Shard {shard:02d}/{total_shards:02d}]'
-        self.set_shard(shard)
+        self.init_mp(shard)
         with torch.cuda.device(shard):
             while True:
                 try:
@@ -168,6 +186,7 @@ class IPCTunerWorker(TunerWorker):
                         ipc_write.put((i, inputs, best_configs))
                 except ValueError:  # mp.Queue closed
                     break
+        self.clean_mp(shard)
         '''
         with torch.cuda.device(shard):
             for i, tup in enumerate(self.gen()):
@@ -185,6 +204,14 @@ class IPCTunerWorker(TunerWorker):
                     ipc_write.put((inputs, best_configs))
         ipc_write.put((None, shard))
         '''
+
+    def request_cached_gpukernel_process(self, target, factory):
+        if target not in self._cached_gpukernel_process:
+            self._cached_gpukernel_process[target] = factory()
+        return self._cached_gpukernel_process[target]
+
+    def invalid_gpukernel_process_cache(self, target):
+        del self._cached_gpukernel_process[target]
 
 class DbAccessor(ArgArchVerbose):
     KERNEL_FAMILY = 'FLASH'
