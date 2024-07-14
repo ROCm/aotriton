@@ -3,6 +3,8 @@
 # SPDX-License-Identifier: MIT
 
 import torch
+import queue
+from torch.multiprocessing import Process
 from aotriton_flash import attn_fwd, ipc_attn_fwd, attn_bwd, debug_fill_dropout_rng, ExtraArguments, hipError_t
 from collections import namedtuple
 from cpp_autotune import do_bench, cpp_autotune
@@ -15,8 +17,9 @@ AttentionExtraArgs = namedtuple('AttentionExtraArgs',
          'cpp_autotune_tqdm_position',
          'cpp_autotune_tqdm_prefix',
          'gpu_device',
+         'tune_worker',
          ],
-        defaults=[False, False, False, None, None, '', None])
+        defaults=[False, False, False, None, None, '', None, None])
 
 VERBOSE=False
 DEFAULT_PHILOX_SEED = 0x1BF52
@@ -85,30 +88,50 @@ class _attention(torch.autograd.Function):
                     return hipError_t.hipErrorLaunchFailure, None
                 return ret, (o,)
             def ipc_func(force_kernel_index):
-                ipc = torch.multiprocessing.Queue()
                 shard = attn_extra_args.gpu_device
-                p = torch.multiprocessing.Process(target=ipc_attn_fwd, args=(ipc,))
+                tune_worker = attn_extra_args.tune_worker
+                def factory():
+                    ipc_to_worker = torch.multiprocessing.Queue()
+                    ipc_from_worker = torch.multiprocessing.Queue()
+                    ipc_to_worker.cancel_join_thread()
+                    ipc_from_worker.cancel_join_thread()
+                    p = Process(target=ipc_attn_fwd,
+                                args=(ipc_to_worker, ipc_from_worker))
+                    p.start()
+                    return (ipc_to_worker, ipc_from_worker, p)
+                ipc_to_worker, ipc_from_worker, p = tune_worker.request_cached_gpukernel_process(ipc_attn_fwd, factory)
                 # print(f'{q.data_ptr()=:x}')
                 # print(f'{k.data_ptr()=:x}')
                 # print(f'{v.data_ptr()=:x}')
                 # print(f'{b.data_ptr()=:x}')
                 # print(f'{M.data_ptr()=:x}')
                 # print(f'{o.data_ptr()=:x}')
-                ipc.put((q, k, v, b, sm_scale, M, o,
-                         dropout_p, philox_seed, philox_offset, encoded_softmax, causal,
-                         force_kernel_index, shard))
+                ipc_to_worker.put((q, k, v, b, sm_scale, M, o,
+                                   dropout_p, philox_seed, philox_offset, encoded_softmax, causal,
+                                   force_kernel_index, shard))
+                while p.is_alive():
+                    try:
+                        iret = ipc_from_worker.get(timeout=1)
+                        break
+                    except queue.Empty:
+                        # print(f'Process timeout {p.is_alive()=}')
+                        pass
                 # print(f'Process attn_fwd starting')
-                p.start()
-                p.join()
+                if not p.is_alive():
+                    # print(f'Process exitcode {p.exitcode}')
+                    tune_worker.invalid_gpukernel_process_cache(ipc_attn_fwd)
+                    p.join()
+                    ret = hipError_t.hipErrorLaunchFailure
+                else:
+                    ret = hipError_t.hipSuccess if iret == 0 else hipError_t.hipErrorLaunchFailure
                 # print(f'Process attn_fwd joined')
                 # print(f'Process exitcode {p.exitcode}')
-                ret = hipError_t.hipSuccess if p.exitcode == 0 else hipError_t.ErrorLaunchFailure
                 return ret, (o,)
             def func(extargs, is_testing):
-                o.fill_(float('nan'))
                 # print(f'{is_testing=}')
                 if not is_testing:
                     return sameprocess_func(extargs)
+                o.fill_(float('nan'))
                 return ipc_func(extargs.force_kernel_index)
                 # print(f'running attn_fwd with {extargs.force_kernel_index=}')
             tuning_result = cpp_autotune(ExtraArguments, func,
