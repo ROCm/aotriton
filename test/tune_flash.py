@@ -47,7 +47,7 @@ class TunerWorker(ArgArchVerbose):
         self._tqdm_position = 0
         self._gpu_device = 'cuda'
 
-    def profile_single_config(self, tup, *, shard_prefix=''):
+    def profile_single_config(self, tup, *, prefix='', shard=None):
         a = self._args
         BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type = tup
         if seqlen_q > 8192 and seqlen_k > 8192:
@@ -107,7 +107,8 @@ class TunerWorker(ArgArchVerbose):
                 return_autotune=True,
                 autotune_validator=fwd_validator,
                 cpp_autotune_tqdm_position=self._tqdm_position,
-                cpp_autotune_tqdm_prefix=f'{shard_prefix}{tup}',
+                cpp_autotune_tqdm_prefix=f'{prefix}{tup}',
+                gpu_device=shard,
                 )
         tri_out, encoded_softmax, best_configs = attention(q, k, v, b, causal, sm_scale, dropout_p, ext)
         if self.verbose:
@@ -143,6 +144,7 @@ class IPCTunerWorker(TunerWorker):
     END_OF_QUEUE_OBJECT = (-1, None)
 
     def set_shard(self, shard):
+        self._shard = shard
         self._tqdm_position = shard
         self._gpu_device = f'cuda:{shard}'
 
@@ -159,7 +161,9 @@ class IPCTunerWorker(TunerWorker):
                     if i == -1 and tup is None:
                         break
                     prefix = shard_prefix + f'[{i:06d}]'
-                    action, inputs, best_configs = self.profile_single_config(tup, shard_prefix=prefix)
+                    action, inputs, best_configs = self.profile_single_config(tup,
+                                                                              prefix=prefix,
+                                                                              shard=self._shard)
                     if action == 'Success':
                         ipc_write.put((i, inputs, best_configs))
                 except ValueError:  # mp.Queue closed
@@ -209,7 +213,7 @@ class DbAccessor(ArgArchVerbose):
         self.create_dbp()
         while True:
             try:
-                i, inputs, best_configs = ipc_read.get(timeout=30)
+                i, inputs, best_configs = ipc_read.get()
                 if i == -1 and inputs is None:
                     print('[DbAccessor] No more tasks. Exiting')
                     break
@@ -353,11 +357,15 @@ class TunerManager(ArgArchVerbose):
         """
         for p in workers:
             p.join()
+        ipc_write.close()
         print('All workers joined')
         ipc_worker_out.put(DbAccessor.END_OF_QUEUE_OBJECT)
         ipc_worker_out.close()
         db_accessor.join()
         print('Db accessor joined')
+        # Otherwise current process may block if any child died
+        ipc_write.cancel_join_thread()
+        ipc_worker_out.cancel_join_thread()
 
     def write_to_ipc(self, ipc_write, obj, workers):
         while True:
@@ -412,7 +420,9 @@ def parse():
     return args
 
 def main():
-    multiprocessing.set_start_method('spawn')  # Otherwise torch complains
+    assert os.getenv('PYTORCH_NO_CUDA_MEMORY_CACHING', default=0) == 0, 'PYTORCH_NO_HIP_MEMORY_CACHING does not play nicely with torch.multiprocessing. See https://github.com/pytorch/pytorch/issues/114534'
+    torch.multiprocessing.set_start_method('spawn', force=True)  # Otherwise torch complains
+    # multiprocessing.set_start_method('spawn')  # "context has already been set"
     args = parse()
     tuner = TunerManager(args)
     tuner.profile_all()

@@ -34,7 +34,7 @@ def do_bench(fn, *, warmup=25, rep=100,
     import torch
 
     torch.cuda.synchronize()
-    ret, outs = fn()
+    ret, outs = fn(is_testing=True)
     if ret != hipError_t.hipSuccess:
         # print(f'{ret=}', file=sys.stderr, flush=True)
         return float('inf')
@@ -110,26 +110,26 @@ def cpp_autotune(extarg_klass, kernel_func, validator, *, tqdm_position=None, tq
     success = 0
     while True:
         extargs.force_kernel_index = kernel_index
-        def func():
-            return kernel_func(extargs)
+        def func(is_testing=False):
+            return kernel_func(extargs, is_testing)
         # t = do_bench(func, validator=validator, quantiles=(0.5, 0.2, 0.8))
         t = do_bench(func, validator=validator)
-        r = AutotuneResult(kernel_index=kernel_index,
-                           time=t,
-                           psels=json.loads(extargs.selected_kernel_psels),
-                           copts=json.loads(extargs.selected_kernel_copts))
-        timings.append(r)
         '''
         if kernel_index == 0:
             print(f'Benchmarking with {kernel_index=}. Time {t}')
         else:
             print(f'Benchmarking with {kernel_index=} out of {extargs.total_number_of_kernels}. Time {t}')
         '''
-        assert extargs.total_number_of_kernels > 0
+        # assert extargs.total_number_of_kernels > 0
         if math.isinf(t):
             failed += 1
         else:
             success += 1
+            r = AutotuneResult(kernel_index=kernel_index,
+                               time=t,
+                               psels=json.loads(extargs.selected_kernel_psels),
+                               copts=json.loads(extargs.selected_kernel_copts))
+            timings.append(r)
 
         if pbar is None and extargs.total_number_of_kernels > 0:
             pbar = tqdm(total=extargs.total_number_of_kernels, unit="configs", position=tqdm_position)
@@ -141,7 +141,7 @@ def cpp_autotune(extarg_klass, kernel_func, validator, *, tqdm_position=None, tq
         #     print(f'{r.psels=}')
         #     print(f'{r.copts=}')
         kernel_index += 1
-        if kernel_index >= extargs.total_number_of_kernels:
+        if extargs.total_number_of_kernels > 0 and kernel_index >= extargs.total_number_of_kernels:
             break
     # print(f'cpp_autotune {timings=}')
     ret = min(timings, key=lambda atr:atr.time)

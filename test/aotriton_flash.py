@@ -58,6 +58,16 @@ def attn_fwd(q, k, v, b, sm_scale, M, o,
     # print(f'{err=}')
     return err
 
+def ipc_attn_fwd(ipc):
+    q, k, v, b, sm_scale, M, o, dropout_p, philox_seed, philox_offset, encoded_softmax, is_causal, force_kernel_index, shard = ipc.get()
+    extargs = ExtraArguments()
+    extargs.force_kernel_index = force_kernel_index
+    import torch
+    with torch.cuda.device(shard):
+        return attn_fwd(q, k, v, b, sm_scale, M, o,
+                        dropout_p, philox_seed, philox_offset, encoded_softmax, is_causal,
+                        extargs)
+
 def attn_bwd(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
              dropout_p, philox_seed, philox_offset, is_causal):
     b = mk_aotensor(b, if_empty_then_like=q)
