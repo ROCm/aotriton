@@ -51,18 +51,34 @@ class TunerWorker(ArgArchVerbose):
         super().__init__(args)
         self._tqdm_position = 0
         self._gpu_device = 'cuda'
+        self._cached_gpukernel_process = {}
 
     def profile_single_config(self, tup, *, prefix='', shard=None):
         a = self._args
         BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type = tup
+        head_dim_rounded = 2 ** (D_HEAD - 1).bit_length()
+        head_dim_rounded = max(16, head_dim_rounded)
+        inputs = {
+            'Q_dtype': str(dtype),
+            'N_HEADS': N_HEADS,
+            'D_HEAD': D_HEAD,
+            'max_seqlen_q': seqlen_q,
+            'max_seqlen_k': seqlen_k,
+            'CAUSAL': causal,
+            'RETURN_ENCODED_SOFTMAX': return_encoded_softmax,
+            'BLOCK_DMODEL': head_dim_rounded,
+            'ENABLE_DROPOUT' : dropout_p > 0.0,
+            'PADDED_HEAD' : head_dim_rounded != D_HEAD,
+            'BIAS_TYPE' : bias_type,
+        }
         if seqlen_q > 8192 and seqlen_k > 8192:
             N_HEADS = 1
         if causal and seqlen_q != seqlen_k:
             self.print('FA does not support accept casual=True when seqlen_q != seqlen_k. Skipping')
-            return 'Skip', None, None
+            return 'Skip', inputs, None
         if causal and bias_type != 0:
             self.print('FA does not support accept casual=True when bias_type != 0. Skipping')
-            return 'Skip', None, None
+            return 'Skip', inputs, None
         if a.dry_run:
             return 'Dryrun', None, None
         torch.cuda.empty_cache()
@@ -129,22 +145,39 @@ class TunerWorker(ArgArchVerbose):
                 print('Returned best configs after backward')
                 for kernel_name, best in best_configs:
                     print(f'{kernel_name=}')
-        head_dim_rounded = 2 ** (D_HEAD - 1).bit_length()
-        head_dim_rounded = max(16, head_dim_rounded)
-        inputs = {
-            'Q_dtype': str(dtype),
-            'N_HEADS': N_HEADS,
-            'D_HEAD': D_HEAD,
-            'max_seqlen_q': seqlen_q,
-            'max_seqlen_k': seqlen_k,
-            'CAUSAL': causal,
-            'RETURN_ENCODED_SOFTMAX': return_encoded_softmax,
-            'BLOCK_DMODEL': head_dim_rounded,
-            'ENABLE_DROPOUT' : dropout_p > 0.0,
-            'PADDED_HEAD' : head_dim_rounded != D_HEAD,
-            'BIAS_TYPE' : bias_type,
-        }
         return 'Success', inputs, best_configs
+
+    def do_profile(self, dba, gen):
+        dry_run_counter = 0
+        skip_counter = 0
+        for i, tup in gen():
+            action, inputs, best_configs = self.profile_single_config(tup)
+            if action == 'Success':
+                dba.pipe_configs(inputs, best_configs, _debug_task_id=i)
+            if action == 'Dryrun':
+                dry_run_counter += 1
+            if action == 'Skip':
+                dba.pipe_skipped_configs(inputs, _debug_task_id=i)
+                skip_counter += 1
+        dba.stop()
+        self.clean_cached_gpukernel_process()
+        print(f"Valid sample points {dry_run_counter=}. Skipped invalid/unsupported points {skip_counter}")
+
+    def request_cached_gpukernel_process(self, target, factory):
+        if target not in self._cached_gpukernel_process:
+            self._cached_gpukernel_process[target] = factory()
+        return self._cached_gpukernel_process[target]
+
+    def invalid_gpukernel_process_cache(self, target):
+        del self._cached_gpukernel_process[target]
+
+    def clean_cached_gpukernel_process(self):
+        for k, tup in self._cached_gpukernel_process.items():
+            ipc_to, ipc_from, p = tup
+            ipc_to.put(None)
+            p.join()
+            ipc_to.close()
+            ipc_from.close()
 
 class IPCTunerWorker(TunerWorker):
     END_OF_QUEUE_OBJECT = (-1, None)
@@ -159,12 +192,7 @@ class IPCTunerWorker(TunerWorker):
         self._cached_gpukernel_process = {}
 
     def clean_mp(self, shard):
-        for k, tup in self._cached_gpukernel_process.items():
-            ipc_to, ipc_from, p = tup
-            ipc_to.put(None)
-            p.join()
-            ipc_to.close()
-            ipc_from.close()
+        self.clean_cached_gpukernel_process()
 
     def do_profile(self, ipc_read, ipc_write):
         a = self._args
@@ -176,14 +204,14 @@ class IPCTunerWorker(TunerWorker):
             while True:
                 try:
                     i, tup = ipc_read.get()
+                    # print(f'ipc_read {i} {tup}')
                     if i == -1 and tup is None:
                         break
                     prefix = shard_prefix + f'[{i:06d}]'
                     action, inputs, best_configs = self.profile_single_config(tup,
                                                                               prefix=prefix,
                                                                               shard=self._shard)
-                    if action == 'Success':
-                        ipc_write.put((i, inputs, best_configs))
+                    ipc_write.put((i, action, inputs, best_configs))
                 except ValueError:  # mp.Queue closed
                     break
         self.clean_mp(shard)
@@ -204,14 +232,6 @@ class IPCTunerWorker(TunerWorker):
                     ipc_write.put((inputs, best_configs))
         ipc_write.put((None, shard))
         '''
-
-    def request_cached_gpukernel_process(self, target, factory):
-        if target not in self._cached_gpukernel_process:
-            self._cached_gpukernel_process[target] = factory()
-        return self._cached_gpukernel_process[target]
-
-    def invalid_gpukernel_process_cache(self, target):
-        del self._cached_gpukernel_process[target]
 
 class DbAccessor(ArgArchVerbose):
     KERNEL_FAMILY = 'FLASH'
@@ -240,19 +260,24 @@ class DbAccessor(ArgArchVerbose):
         self.create_dbp()
         while True:
             try:
-                i, inputs, best_configs = ipc_read.get()
+                i, action, inputs, best_configs = ipc_read.get()
                 if i == -1 and inputs is None:
                     print('[DbAccessor] No more tasks. Exiting')
                     break
-                self.pipe_configs(inputs, best_configs, prefix=f'[{i:06d}]')
+                if action == 'Success':
+                    self.pipe_configs(inputs, best_configs, prefix=f'[{i:06d}]', _debug_task_id=i)
+                if action == 'Skip':
+                    self.pipe_skipped_configs(inputs, prefix=f'[{i:06d} (skip)]', _debug_task_id=i)
             except ValueError:  # mp.Queue closed
                 break
         self.stop()
         return
 
-    def pipe_configs(self, inputs, best_configs, *, prefix=''):
+    def pipe_configs(self, inputs, best_configs, *, prefix='', _debug_task_id=None):
         for kernel_name, best in best_configs:
             j = self.translate_config(inputs, kernel_name, best)
+            if _debug_task_id is not None:
+                j['_debug_task_id'] = _debug_task_id
             js = json.dumps(j, separators=(',', ':'))
             if self._jsonfile is None:
                 print(f'{prefix}Piping to db process {js}')
@@ -260,6 +285,17 @@ class DbAccessor(ArgArchVerbose):
                 print(js, file=self._jsonfile, flush=True)
             print(js, file=self._dbp.stdin, flush=True)
             self.splice_pipes()
+
+    def pipe_skipped_configs(self, inputs, _debug_task_id, *, prefix=''):
+        skipped_result = {
+            'arch' : self._arch,
+            'inputs' : inputs,
+            '_debug_task_id' : _debug_task_id,
+            'result' : 'skipped',
+        }
+        js = json.dumps(skipped_result, separators=(',', ':'))
+        if self._jsonfile is not None:
+            print(js, file=self._jsonfile, flush=True)
 
     def splice_pipes(self):
         nattempts = 10 if self.verbose else 1
@@ -290,6 +326,7 @@ class DbAccessor(ArgArchVerbose):
             'arch' : self._arch,
             'kernel_name' : kernel_name,
             'inputs' : inputs,
+            'result' : 'tuned',
             'tuned_kernel' : best.psels,
             'compiler_options' : best.copts,
         }
@@ -312,7 +349,7 @@ class TunerManager(ArgArchVerbose):
     def gen_itup(self):
         a = self._args
         for i, tup in enumerate(self.gen()):
-            # print(f"[{i:06d}] Handling {tup}")
+            # print(f"[{i:06d}] gen_itup {tup}")
             if a.continue_from is not None and i < a.continue_from:
                 continue
             if a.stop_at is not None and i > a.stop_at:
@@ -324,19 +361,8 @@ class TunerManager(ArgArchVerbose):
         dba = DbAccessor(a)
         if a.use_multigpu is None:
             dba.create_dbp()
-            dry_run_counter = 0
-            skip_counter = 0
             worker = TunerWorker(a)
-            for i, tup in self.gen_itup():
-                action, inputs, best_configs = worker.profile_single_config(tup)
-                if action == 'Success':
-                    dba.pipe_configs(inputs, best_configs)
-                if action == 'Dryrun':
-                    dry_run_counter += 1
-                if action == 'Skip':
-                    skip_counter += 1
-            dba.stop()
-            print(f"Valid sample points {dry_run_counter=}. Skipped invalid/unsupported points {skip_counter}")
+            worker.do_profile(dba, self.gen_itup)
             return
         shards = list([i for i in range(torch.cuda.device_count())]) if -1 in a.use_multigpu else a.use_multigpu
         ipc_write = Queue()
@@ -359,6 +385,7 @@ class TunerManager(ArgArchVerbose):
         '''
         for i, tup in self.gen_itup():
             obj = (i, tup)
+            # print(f"write_to_ipc {obj}")
             any_process_alive = self.write_to_ipc(ipc_write, obj, workers)
             if not any_process_alive:
                 break
@@ -421,8 +448,8 @@ def parse():
     p.add_argument('--return_encoded_softmax', type=bool, default=[False],
                    help="(A functional for debugging) kernel that returns softmax(dropout(QK')) to validate the correctness of dropout")
     p.add_argument('--d_head', type=int, nargs='+', default=[16,32,64,128,256], help='Head dimensions.')
-    p.add_argument('--seqlen_q', type=int, nargs='+', default=[4,8,16,32,64,128,256,1024,2048,4096,8192,16384], help='Sequence length of Q.')
-    p.add_argument('--seqlen_k', type=int, nargs='+', default=[4,8,16,32,64,128,256,1024,2048,4096,8192,16384], help='Sequence length of K/V.')
+    p.add_argument('--seqlen_q', type=int, nargs='+', default=[4,8,16,32,64,128,256,1024,2048,4096,8192], help='Sequence length of Q.')
+    p.add_argument('--seqlen_k', type=int, nargs='+', default=[4,8,16,32,64,128,256,1024,2048,4096,8192], help='Sequence length of K/V.')
     p.add_argument('--causal', type=int, nargs='+', default=[True,False], choices=[0, 1], help='Causal mask. (Use 0/1 for False/True')
     p.add_argument('--dropout_p', type=float, nargs='+', default=[0.5, 0.0], help='Probablity to dropout (0 to disable).')
     p.add_argument('--dtype', type=str, nargs='+',
