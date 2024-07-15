@@ -241,7 +241,7 @@ class DbAccessor(ArgArchVerbose):
         a = self._args
         if a.json_file is not None and not a.dry_run:
             assert a.json_file != a.db_file
-            self._jsonfile = open(a.json_file, 'w')
+            self._jsonfile = open(a.json_file, 'a' if a.continue_from_json_file else 'w')
         else:
             self._jsonfile = None
         dbargs = ['python3', '-m', 'v2python.table_tool']
@@ -348,9 +348,17 @@ class TunerManager(ArgArchVerbose):
 
     def gen_itup(self):
         a = self._args
+        skip_set = set()
+        if a.continue_from_json_file and a.json_file is not None:
+            with open(a.json_file, 'r') as f:
+                for line in f.readlines():
+                    j = json.loads(line)
+                    skip_set.add(j['_debug_task_id'])
         for i, tup in enumerate(self.gen()):
             # print(f"[{i:06d}] gen_itup {tup}")
             if a.continue_from is not None and i < a.continue_from:
+                continue
+            if i in skip_set:
                 continue
             if a.stop_at is not None and i > a.stop_at:
                 break
@@ -465,6 +473,7 @@ def parse():
     p.add_argument('--stop_at', type=int, default=None, help="Stop at n-th functional set")
     p.add_argument('--db_file', type=str, required=True, help="Sqlite Database file")
     p.add_argument('--json_file', type=str, default=None, help="Json file for record. Disables printing json to stdout")
+    p.add_argument('--continue_from_json_file', action='store_true', help="Append to Json file instead of overwrite, and skip already tested entries.")
     p.add_argument('--create_table_only', action='store_true', help="Do not insert data, only create tables. Used for schema updates.")
     p.add_argument('--use_multigpu', type=int, nargs='+', default=None, help='Profiling on multiple GPUs. Passing -1 for all GPUs available to pytorch.')
     args = p.parse_args()
