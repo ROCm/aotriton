@@ -102,6 +102,11 @@ class TuningDatabase(object):
         if self.verbose:
             print(f'{line_text=}')
             print(f'{tune_info=}')
+        tune_result = tune_info.get('result', 'result-not-reported-in-older-version')
+        if not tune_result == 'tuned':
+            if self.verbose:
+                print(f'{tune_result=}')
+            return
         sql_table = self.ensure_table(tune_info)
         if create_table_only:
             return
