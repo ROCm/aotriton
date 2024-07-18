@@ -792,7 +792,6 @@ class _attention(torch.autograd.Function):
         max_seqlen_q = q.shape[2]
         max_seqlen_k = k.shape[2]
         MAX_BLOCK = 64 if ctx.dropout_p == 0 else 16
-        grid = lambda META: (max(triton.cdiv(max_seqlen_q, META['BLOCK_N1']), triton.cdiv(max_seqlen_k, META['BLOCK_N2'])), num_head_q, batch)
         stride_dbz, stride_dbh, stride_dbm, stride_dbn = db.stride()
         if db.numel() == 0 or not b.requires_grad:
             # Passing all zeros to indicate no elements
@@ -814,6 +813,7 @@ class _attention(torch.autograd.Function):
         # BLK_SLICE_FACTOR = 2
         BLOCK_M1, BLOCK_N1, BLOCK_M2, BLOCK_N2 = 16, 16, 16, 16
         BLK_SLICE_FACTOR = 1
+        grid = lambda META: (max(triton.cdiv(max_seqlen_k, META['BLOCK_M1']), triton.cdiv(max_seqlen_q, META['BLOCK_M2'])), num_head_q, batch)
         bare_attn_bwd[grid](
                 q, k, v, b, ctx.sm_scale,
                 o, do,

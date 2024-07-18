@@ -163,7 +163,7 @@ def attn_bwd(
             start_m += num_steps * MASK_BLOCK_M1
 
         # compute dK and dV for blocks that don't need masking further from the diagonal
-        num_steps = (seqlen_q - start_m) // BLOCK_M1
+        num_steps = (seqlen_q - start_m) // BLOCK_M1  # loop over q
 
         # tl.device_print('num_steps', num_steps)
         # tl.device_print('MASK_BLOCK_M1', MASK_BLOCK_M1)
@@ -214,7 +214,7 @@ def attn_bwd(
     # dq section
     #
     start_m = pid * BLOCK_M2
-    end_n = start_m + BLOCK_M2 if CAUSAL else seqlen_q
+    end_n = start_m + BLOCK_M2 if CAUSAL else seqlen_k  # look over k/v
 
     if start_m < seqlen_q:
         MASK_BLOCK_N2: tl.constexpr = BLOCK_N2 // BLK_SLICE_FACTOR
