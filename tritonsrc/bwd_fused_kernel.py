@@ -118,7 +118,7 @@ def attn_bwd(
     # after the first dkdv call.
     start_m = start_n if CAUSAL else 0
 
-    if start_m < seqlen_k:
+    if start_n < seqlen_k:
         MASK_BLOCK_M1: tl.constexpr = BLOCK_M1 // BLK_SLICE_FACTOR
         # offs_n = start_n + tl.arange(0, BLOCK_N1)
 
