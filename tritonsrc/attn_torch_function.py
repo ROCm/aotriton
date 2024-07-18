@@ -2,6 +2,7 @@
 # Copyright © 2023-2024 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
+from collections import namedtuple
 import copy
 import torch
 import triton
@@ -11,8 +12,17 @@ from flash import (
     attn_fwd as bare_attn_fwd,
     bwd_preprocess as bare_bwd_preprocess,
     bwd_kernel_dk_dv as bare_bwd_kernel_dk_dv,
-    bwd_kernel_dq as bare_bwd_kernel_dq
+    bwd_kernel_dq as bare_bwd_kernel_dq,
+    attn_bwd as bare_attn_bwd,
 )
+
+AttentionExtraArgs = namedtuple('AttentionExtraArgs',
+        ['return_encoded_softmax',
+         'autotune',
+         'return_autotune',
+         'fillnan',
+         ],
+        defaults=[False, False, False, False])
 
 VERBOSE=False
 DEFAULT_PHILOX_SEED = 0x1BF52
@@ -247,8 +257,9 @@ class _attention(torch.autograd.Function):
     DEBUG_MASK_DTYPE = torch.float32
 
     @staticmethod
-    def forward(ctx, q, k, v, b, causal, sm_scale, dropout_p, return_encoded_softmax,
-                autotune=False, return_autotune=False):
+    def forward(ctx, q, k, v, b, causal, sm_scale, dropout_p,
+                attn_extra_args=AttentionExtraArgs()):
+        return_encoded_softmax, autotune, return_autotune = attn_extra_args[:3]
         dtype = q.dtype
         # shape constraints
         Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
@@ -260,7 +271,7 @@ class _attention(torch.autograd.Function):
         num_head_k = q.shape[2]
         max_seqlen_q = q.shape[2]
         max_seqlen_k = k.shape[2]
-        o = torch.zeros_like(q)
+        o = torch.empty_like(q)
         if torch.version.hip is None:
             BLOCK_M = 128
             BLOCK_N = 64 if Lk <= 64 else 32
@@ -274,6 +285,9 @@ class _attention(torch.autograd.Function):
         )
         null_tensor = torch.empty((0), device=q.device, dtype=torch.int32)
         M = torch.empty((q.shape[0] * q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)
+        if attn_extra_args.fillnan:
+            for t in (o, M):
+                t.fill_(float('nan'))
         if return_encoded_softmax:
             encoded_softmax = torch.ones((q.shape[0], q.shape[1], q.shape[2], k.shape[2]), device=q.device, dtype=q.dtype)
         else:
@@ -447,13 +461,14 @@ class _attention(torch.autograd.Function):
         ctx.encoded_softmax = encoded_softmax # FIXME: for debugging only
         ctx.bias_type = BIAS_TYPE
         ctx.tuning_result = [('attn_fwd', tuning_result)] if tuning_result is not None else None
+        ctx.attn_extra_args = attn_extra_args
         if ctx.tuning_result is not None:
             for kernel_name, best in ctx.tuning_result:
                 print(f'{kernel_name=} {best.kwargs=} {best.num_warps=} {best.num_stages=}')
         return o, encoded_softmax, ctx.tuning_result
 
     @staticmethod
-    def backward(ctx, do, _, fwd_tuning_result):
+    def backward_split(ctx, do, _, fwd_tuning_result):
         q, k, v, b, o, L = ctx.saved_tensors
         # if q.shape[-1] <= 32:
         Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
@@ -461,12 +476,16 @@ class _attention(torch.autograd.Function):
         head_dim_rounded = 2 ** (ctx.head_dim - 1).bit_length()
         head_dim_rounded = max(16, head_dim_rounded)
         padded_head = head_dim_rounded != ctx.head_dim
+        attn_extra_args = ctx.attn_extra_args
 
         dq = torch.empty_like(q)
         dk = torch.empty_like(k)
         dv = torch.empty_like(v)
         db = torch.empty_like(b)
         delta = torch.empty_like(L)
+        if attn_extra_args.fillnan:
+            for t in (dq, dk, dv, db, delta):
+                t.fill_(float('nan'))
         null_tensor = torch.empty((0), device=q.device, dtype=torch.int32)
         num_head_q = q.shape[1]
         num_head_k = q.shape[2]
@@ -531,7 +550,7 @@ class _attention(torch.autograd.Function):
             stride_dbz, stride_dbh, stride_dbm, stride_dbn = 0,0,0,0
         else:
             db.fill_(float('nan'))
-        print(f'backward {ctx.bias_type=} {ctx.autotune=} {BLOCK_M=} {BLOCK_N=} {stride_dbz=} {stride_dbh=} {stride_dbm=} {stride_dbn=}')
+        # print(f'backward {ctx.bias_type=} {ctx.autotune=} {BLOCK_M=} {BLOCK_N=} {stride_dbz=} {stride_dbh=} {stride_dbm=} {stride_dbn=}')
         if k.requires_grad and v.requires_grad:
             if ctx.autotune:
                 sized_tuned_bwd_kernel_dk_dv[grid_dk_dv](
@@ -626,10 +645,10 @@ class _attention(torch.autograd.Function):
                     PADDED_HEAD=padded_head,
                     BIAS_TYPE=ctx.bias_type,
                 )
-        print(f"{dq.stride()=}", flush=True)
-        print(f"{dq.data_ptr()=:x}", flush=True)
-        print(f"{dk.stride()=}", flush=True)
-        print(f"{dk.data_ptr()=:x}", flush=True)
+        # print(f"{dq.stride()=}", flush=True)
+        # print(f"{dq.data_ptr()=:x}", flush=True)
+        # print(f"{dk.stride()=}", flush=True)
+        # print(f"{dk.data_ptr()=:x}", flush=True)
         # mask_allclose = torch.allclose(debug_mask < 0, ctx.encoded_softmax < 0)
         if False:
             mask_allclose = torch.allclose(torch.abs(debug_mask), torch.abs(ctx.encoded_softmax)) # Stores QK
@@ -745,6 +764,92 @@ class _attention(torch.autograd.Function):
                     BIAS_TYPE=ctx.bias_type,
                 )
         # print(h.asm["ttgir"])
+        return dq, dk, dv, None if db.numel() == 0 else db, None, None, None, None, None, None, None
+
+    @staticmethod
+    def backward(ctx, do, _, fwd_tuning_result):
+        q, k, v, b, o, L = ctx.saved_tensors
+        # if q.shape[-1] <= 32:
+        Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
+        assert Lq == Lk and Lk == Lv and Lk == ctx.head_dim
+        head_dim_rounded = 2 ** (ctx.head_dim - 1).bit_length()
+        head_dim_rounded = max(16, head_dim_rounded)
+        padded_head = head_dim_rounded != ctx.head_dim
+        attn_extra_args = ctx.attn_extra_args
+
+        dq = torch.empty_like(q)
+        dk = torch.empty_like(k)
+        dv = torch.empty_like(v)
+        db = torch.empty_like(b)
+        delta = torch.empty_like(L)
+        if attn_extra_args.fillnan:
+            for t in (dq, dk, dv, db, delta):
+                t.fill_(float('nan'))
+        null_tensor = torch.empty((0), device=q.device, dtype=torch.int32)
+        batch = q.shape[0]
+        num_head_q = q.shape[1]
+        num_head_k = q.shape[2]
+        max_seqlen_q = q.shape[2]
+        max_seqlen_k = k.shape[2]
+        MAX_BLOCK = 64 if ctx.dropout_p == 0 else 16
+        grid = lambda META: (max(triton.cdiv(max_seqlen_q, META['BLOCK_N1']), triton.cdiv(max_seqlen_k, META['BLOCK_N2'])), num_head_q, batch)
+        stride_dbz, stride_dbh, stride_dbm, stride_dbn = db.stride()
+        if db.numel() == 0 or not b.requires_grad:
+            # Passing all zeros to indicate no elements
+            stride_dbz, stride_dbh, stride_dbm, stride_dbn = 0,0,0,0
+        else:
+            db.fill_(float('nan'))
+        BLOCK = 128
+        grid_prep = (triton.cdiv(do.shape[2], BLOCK), do.shape[1], do.shape[0])
+        bare_bwd_preprocess[grid_prep](
+            o, do, delta,
+            o.stride(0), o.stride(1), o.stride(2), o.stride(3),
+            do.stride(0), do.stride(1), do.stride(2), do.stride(3),
+            max_seqlen_q,
+            Lk,
+            BLOCK_M=BLOCK, D_HEAD=head_dim_rounded,
+            PADDED_HEAD=padded_head, # FIXME: irregular head dimension
+        )
+        # BLOCK_M1, BLOCK_N1, BLOCK_M2, BLOCK_N2 = 32, 64, 64, 32
+        # BLK_SLICE_FACTOR = 2
+        BLOCK_M1, BLOCK_N1, BLOCK_M2, BLOCK_N2 = 16, 16, 16, 16
+        BLK_SLICE_FACTOR = 1
+        bare_attn_bwd[grid](
+                q, k, v, b, ctx.sm_scale,
+                o, do,
+                dk, dv, dq, db,
+                L, delta,
+                q.stride(0), q.stride(1), q.stride(2), q.stride(3),
+                k.stride(0), k.stride(1), k.stride(2), k.stride(3),
+                v.stride(0), v.stride(1), v.stride(2), v.stride(3),
+                b.stride(0), b.stride(1), b.stride(2), b.stride(3),
+                do.stride(0), do.stride(1), do.stride(2), do.stride(3),
+                dk.stride(0), dk.stride(1), dk.stride(2), dk.stride(3),
+                dv.stride(0), dv.stride(1), dv.stride(2), dv.stride(3),
+                dq.stride(0), dq.stride(1), dq.stride(2), dq.stride(3),
+                stride_dbz, stride_dbh, stride_dbm, stride_dbn,  # db may be empty
+                num_head_q=num_head_q,
+                num_head_k=num_head_k,
+                cu_seqlens_q=null_tensor,
+                cu_seqlens_k=null_tensor,
+                num_seqlens=0,
+                max_seqlen_q=q.shape[2],
+                max_seqlen_k=k.shape[2],
+                head_dim=Lk,
+                dropout_p=ctx.dropout_p,
+                philox_seed=ctx.philox_seed,
+                philox_offset_base=ctx.philox_offset,
+                BLOCK_DMODEL=head_dim_rounded,
+                CAUSAL=ctx.causal,
+                ENABLE_DROPOUT=ctx.dropout_p > 0.0,
+                PADDED_HEAD=padded_head,
+                BIAS_TYPE=ctx.bias_type,
+                BLOCK_M1=BLOCK_M1,
+                BLOCK_N1=BLOCK_N1,
+                BLOCK_M2=BLOCK_M2,
+                BLOCK_N2=BLOCK_N2,
+                BLK_SLICE_FACTOR=BLK_SLICE_FACTOR,
+                )
         return dq, dk, dv, None if db.numel() == 0 else db, None, None, None, None, None, None, None
 
 attention = _attention.apply

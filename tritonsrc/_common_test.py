@@ -81,7 +81,7 @@ class SdpaContext(object):
     TENSOR_NAMES = ('q', 'k', 'v', 'b')
 
     def __init__(self, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, dtype,
-                 bias_type=None, storage_flip=None, device='cuda'):
+                 bias_type=None, storage_flip=None, device='cuda', fillnan=False):
         qdims = (BATCH, N_HEADS, seqlen_q, D_HEAD)
         kdims = (BATCH, N_HEADS, seqlen_k, D_HEAD)
         vdims = (BATCH, N_HEADS, seqlen_k, D_HEAD)
@@ -124,6 +124,13 @@ class SdpaContext(object):
         self.dev_tensors = (q, k, v, b)
         # self.FUDGE_FACTORS = (4, 2, 2, 2)  # Matches the order of self.dev_tensors
         self.OUT_FUDGE_FACTOR = 3
+
+    @staticmethod
+    def fillnan(tensors):
+        for t in tensors:
+            if t is None:
+                continue
+            t.fill_(float('nan'))
 
     @property
     def dtype(self):

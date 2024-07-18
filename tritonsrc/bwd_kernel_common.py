@@ -49,16 +49,22 @@ def bwd_kernel_dk_dv_common(
     qk_scale = sm_scale * 1.44269504089
     # load k and v: they will stay in SRAM throughout
     # (BLOCK_DMODEL, BLOCK_N)
+    '''
     if PADDED_HEAD:
         kt = tl.load(KT_block_ptr, boundary_check=(1,0), padding_option="zero")
     else:
         kt = tl.load(KT_block_ptr, boundary_check=(1,), padding_option="zero")
+    '''
+    kt = tl.load(KT_block_ptr)
     kt = (kt * qk_scale).to(KT_block_ptr.type.element_ty)
     # (BLOCK_DMODEL, BLOCK_N)
+    '''
     if PADDED_HEAD:
         vt = tl.load(VT_block_ptr, boundary_check=(1,0), padding_option="zero")
     else:
         vt = tl.load(VT_block_ptr, boundary_check=(1,), padding_option="zero")
+    '''
+    vt = tl.load(VT_block_ptr)
     dv = tl.zeros([BLOCK_N, BLOCK_DMODEL], dtype=tl.float32)
     dk = tl.zeros([BLOCK_N, BLOCK_DMODEL], dtype=tl.float32)
     '''
@@ -88,6 +94,7 @@ def bwd_kernel_dk_dv_common(
         # -- load q, do --
         # TODO: It is more optimal to do OOB check only in the last iter.
         # (BLOCK_M, BLOCK_DMODEL), offs = (BLOCK_M * iter, 0) = (start_n, 0)
+        '''
         if PADDED_HEAD:
             q = tl.load(Q_block_ptr, boundary_check=(0,1), padding_option="zero")
         else:
@@ -97,6 +104,9 @@ def bwd_kernel_dk_dv_common(
             do = tl.load(DO_block_ptr, boundary_check=(0,1), padding_option="zero")
         else:
             do = tl.load(DO_block_ptr, boundary_check=(0,), padding_option="zero")
+        '''
+        q = tl.load(Q_block_ptr)
+        do = tl.load(DO_block_ptr)
         # -- compute qk ----
         qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
         # TODO: These two checks can be optimized to occur on the last iter.
@@ -219,15 +229,22 @@ def bwd_kernel_dq_db_common(
         B_block_ptr = tl.advance(B_block_ptr, (lo, 0))
     qk_scale = sm_scale * 1.44269504089
     # load q and do: they will stay in SRAM throughout
+    '''
     if PADDED_HEAD:
         q = tl.load(Q_block_ptr, boundary_check=(0,1), padding_option="zero")
     else:
         q = tl.load(Q_block_ptr, boundary_check=(0,), padding_option="zero")
+    '''
+    q = tl.load(Q_block_ptr)
     q = (q * qk_scale).to(Q_block_ptr.type.element_ty)
+    '''
     if PADDED_HEAD:
         do = tl.load(DO_block_ptr, boundary_check=(0,1), padding_option="zero")
     else:
         do = tl.load(DO_block_ptr, boundary_check=(0,), padding_option="zero")
+    '''
+    do = tl.load(DO_block_ptr)
+
     '''
            K1   K2      (d)V      dO
     Q1    qk11 qk12     (d)v1     dO1
@@ -244,12 +261,16 @@ def bwd_kernel_dq_db_common(
             k_padded = False
         # -- load k, v --
         # shape = (BLOCK_DMODEL, BLOCK_N), offs = (0, BLOCK_N * iter) = (0, start_n)
+        '''
         if PADDED_HEAD:
             kt = tl.load(K_block_ptr, boundary_check=(1,0), padding_option="zero")
             vt = tl.load(V_block_ptr, boundary_check=(1,0), padding_option="zero")
         else:
             kt = tl.load(K_block_ptr, boundary_check=(1,), padding_option="zero")
             vt = tl.load(V_block_ptr, boundary_check=(1,), padding_option="zero")
+        '''
+        kt = tl.load(K_block_ptr)
+        vt = tl.load(V_block_ptr)
         # -- compute qk ----
         # q.offs = (start_m, 0), k.offs = (0, start_n)
         qk = dot(BLOCK_M, BLOCK_DMODEL, BLOCK_DMODEL, q, kt)
