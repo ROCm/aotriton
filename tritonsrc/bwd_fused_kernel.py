@@ -147,8 +147,8 @@ def attn_bwd(
         k = (k * qk_scale).to(K_block_ptr.type.element_ty)
         v = tl.load(V_block_ptr)
 
-        num_steps = BLOCK_N1 // MASK_BLOCK_M1
         if CAUSAL:
+            num_steps = BLOCK_N1 // MASK_BLOCK_M1
             # compute dK and dV for blocks close to the diagonal that need to be masked
             dk, dv = bwd_kernel_dk_dv(dk, dv, Q, k, v, sm_scale, alibi_slope,
                                       DO, L, D,
@@ -175,7 +175,7 @@ def attn_bwd(
                                   seqlen_q,
                                   seqlen_k,
                                   head_dim,
-                                  MASK_BLOCK_M1, BLOCK_N1, BLOCK_DMODEL,
+                                  BLOCK_M1, BLOCK_N1, BLOCK_DMODEL,
                                   start_n, start_m, num_steps,
                                   MASK=False, PADDED_HEAD=PADDED_HEAD)
 
@@ -265,7 +265,7 @@ def attn_bwd(
                            seqlen_k,
                            head_dim,
                            BLOCK_M2,
-                           MASK_BLOCK_N2,
+                           BLOCK_N2,
                            BLOCK_DMODEL,
                            start_m, end_n - num_steps * BLOCK_N2, num_steps,
                            MASK=False, PADDED_HEAD=PADDED_HEAD)
