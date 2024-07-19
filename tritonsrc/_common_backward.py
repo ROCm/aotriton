@@ -43,12 +43,12 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
     q, k, v, b = ctx.dev_tensors
     # autotune = True
     # # triton implementation
-    ext = AttentionExtraArgs(return_encoded_softmax=True,
+    ext = AttentionExtraArgs(return_encoded_softmax=dropout_p > 0.0,
                              autotune=False,
                              return_autotune=False,
                              fillnan=True)
     tri_out, encoded_softmax, _ = attention(q, k, v, b, causal, sm_scale, dropout_p, ext)
-    dropout_mask = encoded_softmax >= 0
+    dropout_mask = encoded_softmax >= 0 if dropout_p > 0.0 else None
     sdpa_params = SdpaParams(causal=causal, sm_scale=sm_scale, dropout_p=dropout_p, dropout_mask=dropout_mask)
     ref_out, _ = ctx.compute_ref_forward(sdpa_params)
     dout = torch.rand_like(tri_out)
@@ -78,8 +78,9 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
         print(f'{q[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
         print(f'{k[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
         print(f'{v[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
-        print(f'{dropout_mask.shape=}')
-        print(f'{dropout_mask[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
+        if dropout_mask is not None:
+            print(f'{dropout_mask.shape=}')
+            print(f'{dropout_mask[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
         print(f'{err_idx=}')
         print(f'{tri_dv[err_idx]=}')
         print(f'{ref_dv[err_idx]=}')
@@ -114,7 +115,8 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
         print(f'{err_idx=}')
         print(f'{tri_dk[err_idx]=} {ref_dk[err_idx]=} error = {torch.abs(tri_dk[err_idx] - ref_dk[err_idx])}')
         print(f'{tri_dk[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]/ref_dk[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
-        print(f'{dropout_mask[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
+        if dropout_mask is not None:
+            print(f'{dropout_mask[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
         if seqlen_q <= 16 or True:
             torch.set_printoptions(linewidth=200, threshold=4096)
             print(f'{tri_dk[0,0]=}')
