@@ -96,8 +96,8 @@ def attn_bwd(
     DQ += dq_offset
     # M += off_chz
     # D += off_chz
-    L += off_zh
-    D += off_zh
+    L += off_zh * max_seqlen_q
+    D += off_zh * max_seqlen_q
 
     # offs_k = tl.arange(0, BLOCK_DMODEL)
 
