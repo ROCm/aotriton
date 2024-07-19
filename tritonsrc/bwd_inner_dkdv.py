@@ -1,5 +1,6 @@
 import triton
 import triton.language as tl
+from masked_load_store import mload1d, mload2d
 
 @triton.jit
 def bwd_kernel_dk_dv(dk, dv, Q, k, v, sm_scale, alibi_slope,
@@ -18,7 +19,7 @@ def bwd_kernel_dk_dv(dk, dv, Q, k, v, sm_scale, alibi_slope,
                      MASK: tl.constexpr,
                      PADDED_HEAD: tl.constexpr,
                      ):
-    offs_m = start_m + tl.arange(0, BLOCK_M1)
+    # offs_m = start_m + tl.arange(0, BLOCK_M1)
     offs_n = start_n + tl.arange(0, BLOCK_N1)
     # offs_k = tl.arange(0, BLOCK_DMODEL)
     QT_block_ptr = tl.make_block_ptr(base=Q, shape=(head_dim, seqlen_q), strides=(stride_qk, stride_qm),
@@ -34,9 +35,11 @@ def bwd_kernel_dk_dv(dk, dv, Q, k, v, sm_scale, alibi_slope,
             qT = tl.load(QT_block_ptr, boundary_check=(0,1), padding_option="zero")
         else:
             qT = tl.load(QT_block_ptr)
+
         # Load m before computing qk to reduce pipeline stall.
         offs_m = curr_m + tl.arange(0, BLOCK_M1)
-        m = tl.load(M + offs_m)
+        # m = tl.load(M + offs_m)
+        m = mload1d(BLOCK_M1, i_base=M, i_start=curr_m, i_nums=seqlen_q)
         kqT = tl.dot(k, qT)
         # if alibi_slope is not None:
         #     alibi_block = compute_alibi_block(alibi_slope, seqlen_q, seqlen_k, offs_m, offs_n, True)

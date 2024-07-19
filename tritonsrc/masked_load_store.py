@@ -6,6 +6,50 @@ import triton
 import triton.language as tl
 
 @triton.jit
+def mload1d(
+        REGS : tl.constexpr,
+        i_base,
+        i_start,
+        i_nums,
+):
+    offs = tl.arange(0, REGS) + i_start
+    i_ptrs = i_base + offs
+    # return tl.load(i_base + offs)
+    overflow = i_start + REGS - i_nums
+    # if overflow <= 0:
+    #     return tl.load(i_ptrs)
+    i_ptrs_mask = tl.full([REGS], 1, dtype=tl.int1)
+    i_ptrs_mask = i_ptrs_mask & (offs < i_nums)
+    return tl.load(i_ptrs, mask=i_ptrs_mask, other=0.0)
+
+@triton.jit
+def mload2d(
+        REG_ROWS : tl.constexpr,
+        REG_COLS : tl.constexpr,
+        i_base,
+        i_start_row,
+        i_start_col,
+        i_rows,
+        i_cols,
+        stride_row,
+        stride_col,
+):
+    off_rows = tl.arange(0, REG_ROWS) + i_start_row
+    off_cols = tl.arange(0, REG_COLS) + i_start_col
+    i_ptrs = i_base + off_rows[:, None] * stride_row + off_cols[None, :] * stride_col
+    row_overflow = i_start_row + REG_ROWS - i_rows
+    col_overflow = i_start_col + REG_COLS - i_cols
+    # if row_overflow <= 0 and col_overflow <= 0:
+    # if NOCHECK:
+    #     return tl.load(i_ptrs)
+    i_ptrs_mask = tl.full([REG_ROWS, REG_COLS], 1, dtype=tl.int1)
+    if row_overflow > 0:
+        i_ptrs_mask = i_ptrs_mask & (off_rows[:, None] < i_rows)
+    if col_overflow > 0:
+        i_ptrs_mask = i_ptrs_mask & (off_cols[None, :] < i_cols)
+    return tl.load(i_ptrs, mask=i_ptrs_mask, other=0.0)
+
+@triton.jit
 def mstore2d(
         registers,
         REG_ROWS : tl.constexpr,
