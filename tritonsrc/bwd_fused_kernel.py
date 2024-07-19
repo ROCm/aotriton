@@ -1,6 +1,6 @@
 import triton
 import triton.language as tl
-from masked_load_store import mstore2d
+from masked_load_store import mload2d, mstore2d
 from bwd_inner_dkdv import bwd_kernel_dk_dv
 from bwd_inner_dq import bwd_kernel_dq
 
@@ -143,9 +143,29 @@ def attn_bwd(
         )
 
         # load K and V: they stay in SRAM throughout the inner loop for dkdv.
-        k = tl.load(K_block_ptr)
+        # k = tl.load(K_block_ptr)
+        # k = tl.zeros([BLOCK_N1, BLOCK_DMODEL], dtype=K.dtype.element_ty)
+        k = mload2d(BLOCK_N1, BLOCK_DMODEL,
+                    i_base=K,
+                    i_start_row=start_n,
+                    i_start_col=0,
+                    i_rows=seqlen_k,
+                    i_cols=head_dim,
+                    stride_row=stride_kn,
+                    stride_col=stride_kk,
+                    )
         k = (k * qk_scale).to(K_block_ptr.type.element_ty)
-        v = tl.load(V_block_ptr)
+        # v = tl.load(V_block_ptr)
+        # v = tl.zeros([BLOCK_N1, BLOCK_DMODEL], dtype=V.dtype.element_ty)
+        v = mload2d(BLOCK_N1, BLOCK_DMODEL,
+                    i_base=V,
+                    i_start_row=start_n,
+                    i_start_col=0,
+                    i_rows=seqlen_k,
+                    i_cols=head_dim,
+                    stride_row=stride_vk,
+                    stride_col=stride_vn,
+                    )
 
         if CAUSAL:
             num_steps = BLOCK_N1 // MASK_BLOCK_M1
