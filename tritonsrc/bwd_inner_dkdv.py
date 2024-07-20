@@ -31,15 +31,28 @@ def bwd_kernel_dk_dv(dk, dv, Q, k, v, sm_scale, alibi_slope,
     curr_m = start_m
     step_m = BLOCK_M1
     for blk_idx in range(num_steps):
+        '''
         if PADDED_HEAD:
             qT = tl.load(QT_block_ptr, boundary_check=(0,1), padding_option="zero")
         else:
             qT = tl.load(QT_block_ptr)
+        '''
+        qT = mload2d(BLOCK_DMODEL, BLOCK_M1,
+                     i_base=Q,
+                     i_start_row=0,
+                     i_start_col=curr_m,
+                     i_rows=head_dim,
+                     i_cols=seqlen_q,
+                     stride_row=stride_qk,
+                     stride_col=stride_qm,
+                    )
 
         # Load m before computing qk to reduce pipeline stall.
         offs_m = curr_m + tl.arange(0, BLOCK_M1)
-        # m = tl.load(M + offs_m)
-        m = mload1d(BLOCK_M1, i_base=M, i_start=curr_m, i_nums=seqlen_q)
+        if curr_m + BLOCK_M1 <= seqlen_q:
+            m = tl.load(M + offs_m)
+        else:
+            m = mload1d(BLOCK_M1, i_base=M, i_start=curr_m, i_nums=seqlen_q)
         kqT = tl.dot(k, qT)
         # if alibi_slope is not None:
         #     alibi_block = compute_alibi_block(alibi_slope, seqlen_q, seqlen_k, offs_m, offs_n, True)

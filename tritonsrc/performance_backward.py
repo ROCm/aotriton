@@ -7,6 +7,7 @@ import pytest
 import torch
 
 import triton
+from collections import defaultdict
 from attn_torch_function import attention, AttentionExtraArgs
 
 try:
@@ -20,6 +21,7 @@ except BaseException:
     except BaseException:
         FLASH_VER = None
 HAS_FLASH = FLASH_VER is not None
+USE_TFLOPS = True
 
 d_heads = os.getenv('D_HEADS', default='64,128')
 d_heads = map(lambda x: int(x), d_heads.split(','))
@@ -39,9 +41,9 @@ for mode in ['bwd']:
                 x_vals=[512],
                 line_arg='provider',
                 line_vals=['triton'] + (['flash'] if HAS_FLASH else []),
-                line_names=['Triton'] + ([f'Flash-{FLASH_VER}'] if HAS_FLASH else []),
+                line_names=['Triton(TFLOPS)' if USE_TFLOPS else 'Triton(ms)'] + ([f'Flash-{FLASH_VER}'] if HAS_FLASH else []),
                 styles=[('red', '-'), ('blue', '-')],
-                ylabel='ms',
+                ylabel='TFLOPS' if USE_TFLOPS else 'ms',
                 plot_name=f'fused-attention-batch{BATCH}-head{N_HEADS}-d{D_HEAD}-{mode}-causal={causal}',
                 args={
                     'H': N_HEADS,
@@ -73,15 +75,21 @@ def bench_flash_attention(BATCH, H, N_CTX, D_HEAD, causal, mode, provider, dtype
         dropout_p = 0.0
         autotune = True
         return_encoded_softmax = False
+        best_configs = defaultdict(list)
+        def report_best_config(kernel_name, best):
+            best_configs[kernel_name].append((kernel_name, best))
         ext = AttentionExtraArgs(return_encoded_softmax=dropout_p > 0.0,
                                  autotune=True,
-                                 return_autotune=False)
+                                 return_autotune=False,
+                                 report_best_config=report_best_config)
         fn = lambda: attention(q, k, v, b, causal, sm_scale, dropout_p, ext)
         if mode == 'bwd':
             o, _, _ = fn()
             do = torch.randn_like(o)
             fn = lambda: o.backward(do, retain_graph=True)
         ms = triton.testing.do_bench(fn, warmup=warmup, rep=rep)
+        for k, v in best_configs.items():
+            print(f'{k} best_configs {v[0]}')
     if provider == "flash":
         qkv = torch.randn((BATCH, N_CTX, 3, H, D_HEAD), dtype=dtype, device=device, requires_grad=True)
         if FLASH_VER == 1:
@@ -105,7 +113,10 @@ def bench_flash_attention(BATCH, H, N_CTX, D_HEAD, causal, mode, provider, dtype
         total_flops *= 0.5
     if mode == 'bwd':
         total_flops *= 2.5  # 2.0(bwd) + 0.5(recompute)
-    return total_flops / ms * 1e-9
+    if USE_TFLOPS:
+        return total_flops / ms * 1e-9
+    else:
+        return ms
 
 
 # only works on post-Ampere GPUs right now
