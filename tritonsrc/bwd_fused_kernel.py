@@ -125,47 +125,51 @@ def attn_bwd(
         dv = tl.zeros([BLOCK_N1, BLOCK_DMODEL], dtype=tl.float32)
         dk = tl.zeros([BLOCK_N1, BLOCK_DMODEL], dtype=tl.float32)
 
-        K_block_ptr = tl.make_block_ptr(
-            base=K,
-            shape=(seqlen_k, head_dim),
-            strides=(stride_kn, stride_kk),
-            offsets=(start_n, 0),
-            block_shape=(BLOCK_N1, BLOCK_DMODEL),
-            order=(1, 0),
-        )
-        V_block_ptr = tl.make_block_ptr(
-            base=V,
-            shape=(seqlen_k, head_dim),
-            strides=(stride_vk, stride_vn),
-            offsets=(start_n, 0),
-            block_shape=(BLOCK_N1, BLOCK_DMODEL),
-            order=(1, 0),
-        )
-
         # load K and V: they stay in SRAM throughout the inner loop for dkdv.
-        # k = tl.load(K_block_ptr)
-        # k = tl.zeros([BLOCK_N1, BLOCK_DMODEL], dtype=K.dtype.element_ty)
-        k = mload2d(BLOCK_N1, BLOCK_DMODEL,
-                    i_base=K,
-                    i_start_row=start_n,
-                    i_start_col=0,
-                    i_rows=seqlen_k,
-                    i_cols=head_dim,
-                    stride_row=stride_kn,
-                    stride_col=stride_kk,
-                    )
-        k = (k * qk_scale).to(K_block_ptr.type.element_ty)
-        # v = tl.load(V_block_ptr)
-        # v = tl.zeros([BLOCK_N1, BLOCK_DMODEL], dtype=V.dtype.element_ty)
-        v = mload2d(BLOCK_N1, BLOCK_DMODEL,
-                    i_base=V,
-                    i_start_row=start_n,
-                    i_start_col=0,
-                    i_rows=seqlen_k,
-                    i_cols=head_dim,
-                    stride_row=stride_vk,
-                    stride_col=stride_vn,
-                    )
+        if False:
+            K_block_ptr = tl.make_block_ptr(
+                base=K,
+                shape=(seqlen_k, head_dim),
+                strides=(stride_kn, stride_kk),
+                offsets=(start_n, 0),
+                block_shape=(BLOCK_N1, BLOCK_DMODEL),
+                order=(1, 0),
+            )
+            k = tl.load(K_block_ptr)
+        else:
+            # k = tl.zeros([BLOCK_N1, BLOCK_DMODEL], dtype=K.dtype.element_ty)
+            k = mload2d(BLOCK_N1, BLOCK_DMODEL,
+                        i_base=K,
+                        i_start_row=start_n,
+                        i_start_col=0,
+                        i_rows=seqlen_k,
+                        i_cols=head_dim,
+                        stride_row=stride_kn,
+                        stride_col=stride_kk,
+                        )
+        k = (k * qk_scale).to(K.dtype.element_ty)
+        if False:
+            V_block_ptr = tl.make_block_ptr(
+                base=V,
+                shape=(seqlen_k, head_dim),
+                strides=(stride_vk, stride_vn),
+                offsets=(start_n, 0),
+                block_shape=(BLOCK_N1, BLOCK_DMODEL),
+                order=(1, 0),
+            )
+
+            v = tl.load(V_block_ptr)
+        else:
+            # v = tl.zeros([BLOCK_N1, BLOCK_DMODEL], dtype=V.dtype.element_ty)
+            v = mload2d(BLOCK_N1, BLOCK_DMODEL,
+                        i_base=V,
+                        i_start_row=start_n,
+                        i_start_col=0,
+                        i_rows=seqlen_k,
+                        i_cols=head_dim,
+                        stride_row=stride_vk,
+                        stride_col=stride_vn,
+                        )
 
         if CAUSAL:
             num_steps = BLOCK_N1 // MASK_BLOCK_M1
