@@ -8,20 +8,21 @@ from flash import (
 )
 
 TRITON_CONFIG_LIST_BWD = []
-for BLOCK_M in [16, 32, 64, 128, 256]:
-    for BLOCK_N in [16, 32, 64, 128, 256]:
-# for BLOCK_M in [16]:
-#     for BLOCK_N in [16]:
-        dic = {}
-        dic['BLOCK_M'] = BLOCK_M
-        dic['BLOCK_N'] = BLOCK_N
-        for waves_per_eu in range(0, 4+1):
-        # for waves_per_eu in range(0, 1):
-            dic['waves_per_eu'] = waves_per_eu
-            for num_stages in [0, 1]:
-                for num_warps in [1,2,4,8]:
-                    cfg = triton.Config(dict(dic), num_stages=num_stages, num_warps=num_warps)
-                    TRITON_CONFIG_LIST_BWD.append(cfg)
+# for BLOCK_M in [16, 32, 64]:
+#     for BLOCK_N in [16, 32, 64]:
+for BLOCK_M, BLOCK_N in [(32, 64), (64, 16)]:
+    dic = {}
+    dic['BLOCK_M'] = BLOCK_M
+    dic['BLOCK_N'] = BLOCK_N
+    # for waves_per_eu in range(0, 4+1):
+    for waves_per_eu in [0, 3]:
+        dic['waves_per_eu'] = waves_per_eu
+        # for num_stages in [0, 1]:
+        for num_stages in [1]:
+            # for num_warps in [1,2,4,8]:
+            for num_warps in [1,2]:
+                cfg = triton.Config(dict(dic), num_stages=num_stages, num_warps=num_warps)
+                TRITON_CONFIG_LIST_BWD.append(cfg)
 
 print(TRITON_CONFIG_LIST_BWD)
 
