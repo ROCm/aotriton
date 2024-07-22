@@ -95,14 +95,17 @@ def bwd_kernel_dk_dv(
     # Q is consumed depending on block ID. Every block uses
     # previous block offset by BLOCK_M x D_HEAD.
     q_offset = off_h * stride_qh + batch_index * stride_qz + cu_seqlens_q_start * stride_qm
-    Q_block_ptr = tl.make_block_ptr(
-        base=Q + q_offset,
-        shape=(seqlen_q, head_dim),
-        strides=(stride_qm, stride_qk),
-        offsets=(0, 0),
-        block_shape=(BLOCK_M, BLOCK_DMODEL),
-        order=(1, 0)
-    )
+    Q += q_offset
+    q_ptrs = Q + offs_m[:, None] * stride_qm + offs_d[None, :] * stride_qk
+    q_advance = BLOCK_M * stride_qm
+    # Q_block_ptr = tl.make_block_ptr(
+    #     base=Q,
+    #     shape=(seqlen_q, head_dim),
+    #     strides=(stride_qm, stride_qk),
+    #     offsets=(0, 0),
+    #     block_shape=(BLOCK_M, BLOCK_DMODEL),
+    #     order=(1, 0)
+    # )
     k_offset = off_h * stride_kh + batch_index * stride_kz + cu_seqlens_k_start * stride_kn
     K += k_offset
     kt_ptrs = K + offs_d[:, None] * stride_kk + offs_n[None, :] * stride_kn
@@ -138,14 +141,16 @@ def bwd_kernel_dk_dv(
         vt = load_fn(vt_ptrs, ld_offs_d, offs_n, head_dim, seqlen_k)
     # tl.device_print('vt', vt)
     do_offset = off_h * stride_oh + batch_index * stride_oz + cu_seqlens_q_start * stride_om
-    DO_block_ptr = tl.make_block_ptr(
-        base=DO + do_offset,
-        shape=(seqlen_q, head_dim),
-        strides=(stride_om, stride_ok),
-        offsets=(0, 0),
-        block_shape=(BLOCK_M, BLOCK_DMODEL),
-        order=(1, 0)
-    )
+    DO += do_offset
+    do_ptrs = DO + offs_m[:, None] * stride_om + offs_d[None, :] * stride_ok
+    # DO_block_ptr = tl.make_block_ptr(
+    #     base=DO,
+    #     shape=(seqlen_q, head_dim),
+    #     strides=(stride_om, stride_ok),
+    #     offsets=(0, 0),
+    #     block_shape=(BLOCK_M, BLOCK_DMODEL),
+    #     order=(1, 0)
+    # )
     if BIAS_TYPE == 0:
         B_block_ptr = 0
     elif BIAS_TYPE == 1:
@@ -180,8 +185,8 @@ def bwd_kernel_dk_dv(
     DV += dv_offset
 
     dk, dv = bwd_kernel_dk_dv_common(
-        Q_block_ptr, kt, vt, B_block_ptr,
-        sm_scale, DO_block_ptr,
+        q_ptrs, stride_qm, kt, vt, B_block_ptr,
+        sm_scale, do_ptrs, stride_om,
         l_ptrs,
         D_ptrs,
         seqlen_q, seqlen_k,

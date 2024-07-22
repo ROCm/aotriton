@@ -5,6 +5,7 @@
 import triton
 import triton.language as tl
 from dropout import dropout_mask, dropout_rng, dropout_offsets
+from masked_load_store import load_fn
 
 # Helper function, but not always usable due to compiler bugs (esp. used with tl.trans)
 @triton.jit
@@ -16,8 +17,8 @@ def dot(BLOCK_M : tl.constexpr, QDIM : tl.constexpr, KDIM : tl.constexpr, q, k):
 
 @triton.jit
 def bwd_kernel_dk_dv_common(
-    Q_block_ptr, kt, vt, B_block_ptr,
-    sm_scale, DO_block_ptr,
+    q_ptrs, q_stride, kt, vt, B_block_ptr,
+    sm_scale, do_ptrs, do_stride,
     l_ptrs,
     D_ptrs,
     seqlen_q,
@@ -39,11 +40,14 @@ def bwd_kernel_dk_dv_common(
     # initialize offsets
     offs_m = start_m + tl.arange(0, BLOCK_N)
     offs_n = tl.arange(0, BLOCK_M)
+    ld_offs_d = None if not PADDED_HEAD else tl.arange(0, BLOCK_DMODEL)
 
     lo = (start_m // BLOCK_M) * BLOCK_M if CAUSAL else 0
     hi = seqlen_q
-    Q_block_ptr = tl.advance(Q_block_ptr, (lo, 0))
-    DO_block_ptr = tl.advance(DO_block_ptr, (lo, 0))
+    q_ptrs += lo * q_stride
+    do_ptrs += lo * do_stride
+    # Q_block_ptr = tl.advance(Q_block_ptr, (lo, 0))
+    # DO_block_ptr = tl.advance(DO_block_ptr, (lo, 0))
 
     qk_scale = sm_scale * 1.44269504089
     # load k and v: they will stay in SRAM throughout
@@ -71,10 +75,11 @@ def bwd_kernel_dk_dv_common(
     '''
     # loop over q (seqlen_q, dhead), do (seqlen_q, d_head)
     for start_n in range(lo, hi, BLOCK_M):
-        if lo + BLOCK_M > seqlen_q:
+        if start_n + BLOCK_M > seqlen_q:
             q_padded = True
         else:
             q_padded = False
+        # TODO: Unify the name, the usage of m/n is very confusing
         offs_m_curr = offs_n[:, None] + start_n # (BLOCK_M, 1)
         # -- load q, do --
         # TODO: It is more optimal to do OOB check only in the last iter.
@@ -90,8 +95,17 @@ def bwd_kernel_dk_dv_common(
         else:
             do = tl.load(DO_block_ptr, boundary_check=(0,), padding_option="zero")
         '''
-        q = tl.load(Q_block_ptr)
-        do = tl.load(DO_block_ptr)
+        # q = tl.load(Q_block_ptr)
+        # do = tl.load(DO_block_ptr)
+        if q_padded:
+            q = load_fn(q_ptrs, offs_n + start_n, ld_offs_d, seqlen_q, head_dim)
+        else:
+            q = load_fn(q_ptrs, None, ld_offs_d, seqlen_q, head_dim)
+        # TODO: pre_load_do
+        if q_padded:
+            do = load_fn(do_ptrs, offs_n + start_n, ld_offs_d, seqlen_q, head_dim)
+        else:
+            do = load_fn(do_ptrs, None, ld_offs_d, seqlen_q, head_dim)
         # -- compute qk ----
         qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
         # TODO: These two checks can be optimized to occur on the last iter.
@@ -106,6 +120,7 @@ def bwd_kernel_dk_dv_common(
             pass
         elif BIAS_TYPE == 1:
             # FIXME: do boundary_check correctly
+            # TODO: check q_padded is correct calculated, the condition should be start_n + BLOCK_M
             """
             if q_padded and k_padded:  # CAVEAT: using "or" disables the partial boundary_check branches
                 bias = tl.load(B_block_ptr, boundary_check=(0,1), padding_option="zero")
@@ -139,12 +154,12 @@ def bwd_kernel_dk_dv_common(
             keep = dropout_mask(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, max_seqlen_k)
             # CAVEAT: do NOT update p, ds needs the original p
             if BLOCK_M == 1:
-                dv += tl.where(keep, p / (1 - dropout_p), 0.0).to(Q_block_ptr.dtype.element_ty) * do
+                dv += tl.where(keep, p / (1 - dropout_p), 0.0).to(q_ptrs.dtype.element_ty) * do
             else:
-                dv += tl.dot(tl.trans(tl.where(keep, p / (1 - dropout_p), 0.0)).to(Q_block_ptr.dtype.element_ty), do)
+                dv += tl.dot(tl.trans(tl.where(keep, p / (1 - dropout_p), 0.0)).to(q_ptrs.dtype.element_ty), do)
         else:
             if BLOCK_M == 1:
-                dv += p.to(Q_block_ptr.dtype.element_ty) * do
+                dv += p.to(q_ptrs.dtype.element_ty) * do
             else:
                 dv += tl.dot(tl.trans(p.to(do.dtype)), do)
         dp = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
@@ -158,13 +173,15 @@ def bwd_kernel_dk_dv_common(
         ds = p * (dp - Di) # (BLOCK_M, BLOCK_N)
         # compute dk
         if BLOCK_M == 1:
-            dk += ds.to(Q_block_ptr.dtype.element_ty) * q
+            dk += ds.to(q_ptrs.dtype.element_ty) * q
         else:
             # ds.shape = (BLOCK_M, BLOCK_N), q.shape = (BLOCK_M, BLOCK_DMODEL)
-            dk += tl.dot(tl.trans(ds.to(Q_block_ptr.dtype.element_ty)), q) # (BLOCK_N, BLOCK_DMODEL)
-        # update pointers
-        Q_block_ptr = tl.advance(Q_block_ptr, (BLOCK_M, 0))
-        DO_block_ptr = tl.advance(DO_block_ptr, (BLOCK_M, 0)) # Debug DO accessing problems
+            dk += tl.dot(tl.trans(ds.to(q_ptrs.dtype.element_ty)), q) # (BLOCK_N, BLOCK_DMODEL)
+        # update pointers (kept as comment)
+        # Q_block_ptr = tl.advance(Q_block_ptr, (BLOCK_M, 0))
+        # DO_block_ptr = tl.advance(DO_block_ptr, (BLOCK_M, 0)) # Debug DO accessing problems
+        q_ptrs += q_stride * BLOCK_M
+        do_ptrs += do_stride * BLOCK_M
         if BIAS_TYPE == 1:
             B_block_ptr = tl.advance(B_block_ptr, (BLOCK_M, 0))
     return (dk * sm_scale).to(kt.type.element_ty), dv.to(vt.type.element_ty)
