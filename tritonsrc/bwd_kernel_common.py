@@ -16,9 +16,8 @@ def dot(BLOCK_M : tl.constexpr, QDIM : tl.constexpr, KDIM : tl.constexpr, q, k):
 
 @triton.jit
 def bwd_kernel_dk_dv_common(
-    Q_block_ptr, kt, VT_block_ptr, B_block_ptr,
+    Q_block_ptr, kt, vt, B_block_ptr,
     sm_scale, DO_block_ptr,
-    DK_block_ptr, DV_block_ptr,
     l_ptrs,
     D_ptrs,
     seqlen_q,
@@ -51,13 +50,6 @@ def bwd_kernel_dk_dv_common(
     # (BLOCK_DMODEL, BLOCK_N)
     kt = (kt * qk_scale).to(kt.type.element_ty)
     # (BLOCK_DMODEL, BLOCK_N)
-    '''
-    if PADDED_HEAD:
-        vt = tl.load(VT_block_ptr, boundary_check=(1,0), padding_option="zero")
-    else:
-        vt = tl.load(VT_block_ptr, boundary_check=(1,), padding_option="zero")
-    '''
-    vt = tl.load(VT_block_ptr)
     dv = tl.zeros([BLOCK_N, BLOCK_DMODEL], dtype=tl.float32)
     dk = tl.zeros([BLOCK_N, BLOCK_DMODEL], dtype=tl.float32)
     '''
@@ -175,7 +167,7 @@ def bwd_kernel_dk_dv_common(
         DO_block_ptr = tl.advance(DO_block_ptr, (BLOCK_M, 0)) # Debug DO accessing problems
         if BIAS_TYPE == 1:
             B_block_ptr = tl.advance(B_block_ptr, (BLOCK_M, 0))
-    return (dk * sm_scale).to(DK_block_ptr.type.element_ty), dv.to(DV_block_ptr.type.element_ty)
+    return (dk * sm_scale).to(kt.type.element_ty), dv.to(vt.type.element_ty)
 
 @triton.jit
 def bwd_kernel_dq_db_common(

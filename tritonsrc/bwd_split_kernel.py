@@ -107,11 +107,11 @@ def bwd_kernel_dk_dv(
     K += k_offset
     kt_ptrs = K + offs_d[:, None] * stride_kk + offs_n[None, :] * stride_kn
     # kt_offs_n = None if start_m + BLOCK_N <= seqlen_k else start_m + tl.arange(0, BLOCK_N)
-    kt_offs_d = None if not PADDED_HEAD else tl.arange(0, BLOCK_DMODEL)
-    if start_m + BLOCK_N < seqlen_k:
-        kt = load_fn(kt_ptrs, kt_offs_d, None, head_dim, seqlen_k)
+    ld_offs_d = None if not PADDED_HEAD else tl.arange(0, BLOCK_DMODEL)
+    if start_m + BLOCK_N <= seqlen_k:
+        kt = load_fn(kt_ptrs, ld_offs_d, None, head_dim, seqlen_k)
     else:
-        kt = load_fn(kt_ptrs, kt_offs_d, offs_n, head_dim, seqlen_k)
+        kt = load_fn(kt_ptrs, ld_offs_d, offs_n, head_dim, seqlen_k)
     # KT_block_ptr = tl.make_block_ptr(
     #     base=K + k_offset,
     #     shape=(head_dim, seqlen_k),
@@ -121,14 +121,22 @@ def bwd_kernel_dk_dv(
     #     order=(0, 1)
     # )
     v_offset = off_h * stride_vh + batch_index * stride_vz + cu_seqlens_k_start * stride_vk
-    VT_block_ptr = tl.make_block_ptr(
-        base=V + v_offset,
-        shape=(head_dim, seqlen_k),
-        strides=(stride_vn, stride_vk),
-        offsets=(0, start_m),
-        block_shape=(BLOCK_DMODEL, BLOCK_N),
-        order=(0, 1)
-    )
+    V += v_offset
+    # VT_block_ptr = tl.make_block_ptr(
+    #     base=V,
+    #     shape=(head_dim, seqlen_k),
+    #     strides=(stride_vn, stride_vk),
+    #     offsets=(0, start_m),
+    #     block_shape=(BLOCK_DMODEL, BLOCK_N),
+    #     order=(0, 1)
+    # )
+    # vt = tl.load(VT_block_ptr)
+    vt_ptrs = V + offs_d[:, None] * stride_vn + offs_n[None, :] * stride_vk
+    if start_m + BLOCK_N <= seqlen_k:
+        vt = load_fn(vt_ptrs, ld_offs_d, None, head_dim, seqlen_k)
+    else:
+        vt = load_fn(vt_ptrs, ld_offs_d, offs_n, head_dim, seqlen_k)
+    # tl.device_print('vt', vt)
     do_offset = off_h * stride_oh + batch_index * stride_oz + cu_seqlens_q_start * stride_om
     DO_block_ptr = tl.make_block_ptr(
         base=DO + do_offset,
@@ -167,28 +175,13 @@ def bwd_kernel_dk_dv(
         batch_philox_offset = 0
 
     dk_offset = off_h * stride_dkh + batch_index * stride_dkz + cu_seqlens_k_start * stride_dkn
-    DK_block_ptr = tl.make_block_ptr(
-        base=DK + dk_offset,
-        shape=(seqlen_k, head_dim),
-        strides=(stride_dkn, stride_dkk),
-        offsets=(start_m, 0),
-        block_shape=(BLOCK_N, BLOCK_DMODEL),
-        order=(1, 0)
-    )
+    DK += dk_offset
     dv_offset = off_h * stride_dvh + batch_index * stride_dvz + cu_seqlens_k_start * stride_dvk
-    DV_block_ptr = tl.make_block_ptr(
-        base=DV + dv_offset,
-        shape=(seqlen_k, head_dim),
-        strides=(stride_dvk, stride_dvn),
-        offsets=(start_m, 0),
-        block_shape=(BLOCK_N, BLOCK_DMODEL),
-        order=(1, 0)
-    )
+    DV += dv_offset
 
     dk, dv = bwd_kernel_dk_dv_common(
-        Q_block_ptr, kt, VT_block_ptr, B_block_ptr,
+        Q_block_ptr, kt, vt, B_block_ptr,
         sm_scale, DO_block_ptr,
-        DK_block_ptr, DV_block_ptr,
         l_ptrs,
         D_ptrs,
         seqlen_q, seqlen_k,
@@ -208,7 +201,7 @@ def bwd_kernel_dk_dv(
     mstore2d(dk,
              BLOCK_N,
              BLOCK_DMODEL,
-             o_base=DK + dk_offset,
+             o_base=DK,
              o_start_row=start_m,
              o_start_col=0,
              o_rows=seqlen_k,
@@ -218,7 +211,7 @@ def bwd_kernel_dk_dv(
     mstore2d(dv,
              BLOCK_N,
              BLOCK_DMODEL,
-             o_base=DV + dv_offset,
+             o_base=DV,
              o_start_row=start_m,
              o_start_col=0,
              o_rows=seqlen_k,
