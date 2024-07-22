@@ -17,7 +17,7 @@ Extra Credits:
 import triton
 import triton.language as tl
 from bwd_kernel_common import bwd_kernel_dk_dv_common, bwd_kernel_dq_db_common
-from masked_load_store import mstore2d
+from masked_load_store import load_fn, mstore2d
 
 # TODO: Remove Unused 'Out' Argument from kernels below
 @triton.jit
@@ -50,12 +50,15 @@ def bwd_kernel_dk_dv(
     PADDED_HEAD: tl.constexpr,
     BIAS_TYPE: tl.constexpr,
 ):
-    start_m = tl.program_id(0) * BLOCK_N
+    start_m = tl.program_id(0) * BLOCK_N  # start_m is a misused name. For dkdv it partitions seqlen_k
     off_h = tl.program_id(1) # head index
     off_z = tl.program_id(2) # batch index, for varlen it indicates index in cu_seqlens_q/k
     num_h = tl.num_programs(1)
     num_z = tl.num_programs(2)
     off_zh = off_z * num_h + off_h * 1
+    offs_m = tl.arange(0, BLOCK_M)
+    offs_n = start_m + tl.arange(0, BLOCK_N)
+    offs_d = tl.arange(0, BLOCK_DMODEL)
 
     cu_seqlens_q_start = 0
     cu_seqlens_k_start = 0
@@ -101,14 +104,22 @@ def bwd_kernel_dk_dv(
         order=(1, 0)
     )
     k_offset = off_h * stride_kh + batch_index * stride_kz + cu_seqlens_k_start * stride_kn
-    KT_block_ptr = tl.make_block_ptr(
-        base=K + k_offset,
-        shape=(head_dim, seqlen_k),
-        strides=(stride_kk, stride_kn),
-        offsets=(0, start_m),
-        block_shape=(BLOCK_DMODEL, BLOCK_N),
-        order=(0, 1)
-    )
+    K += k_offset
+    kt_ptrs = K + offs_d[:, None] * stride_kk + offs_n[None, :] * stride_kn
+    # kt_offs_n = None if start_m + BLOCK_N <= seqlen_k else start_m + tl.arange(0, BLOCK_N)
+    kt_offs_d = None if not PADDED_HEAD else tl.arange(0, BLOCK_DMODEL)
+    if start_m + BLOCK_N < seqlen_k:
+        kt = load_fn(kt_ptrs, kt_offs_d, None, head_dim, seqlen_k)
+    else:
+        kt = load_fn(kt_ptrs, kt_offs_d, offs_n, head_dim, seqlen_k)
+    # KT_block_ptr = tl.make_block_ptr(
+    #     base=K + k_offset,
+    #     shape=(head_dim, seqlen_k),
+    #     strides=(stride_kk, stride_kn),
+    #     offsets=(0, start_m),
+    #     block_shape=(BLOCK_DMODEL, BLOCK_N),
+    #     order=(0, 1)
+    # )
     v_offset = off_h * stride_vh + batch_index * stride_vz + cu_seqlens_k_start * stride_vk
     VT_block_ptr = tl.make_block_ptr(
         base=V + v_offset,
@@ -175,7 +186,7 @@ def bwd_kernel_dk_dv(
     )
 
     dk, dv = bwd_kernel_dk_dv_common(
-        Q_block_ptr, KT_block_ptr, VT_block_ptr, B_block_ptr,
+        Q_block_ptr, kt, VT_block_ptr, B_block_ptr,
         sm_scale, DO_block_ptr,
         DK_block_ptr, DV_block_ptr,
         l_ptrs,
@@ -387,7 +398,7 @@ def bwd_kernel_dq(
         ENABLE_DROPOUT,
         PADDED_HEAD,
         BIAS_TYPE)
-    dq_ptrs, dq_masks = mstore2d(dq,
+    mstore2d(dq,
              BLOCK_M,
              BLOCK_DMODEL,
              o_base=DQ + dq_offset,
