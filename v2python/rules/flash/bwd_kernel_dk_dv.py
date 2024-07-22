@@ -1,7 +1,15 @@
 # Copyright © 2023-2024 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-from ._common import FlashKernel, get_possible_types, select_pattern, BinningLessOrEqual, BinningExact
+import itertools
+from ._common import (
+    FlashKernel,
+    get_possible_types,
+    select_pattern,
+    BinningLessOrEqual,
+    BinningExact,
+    Config
+)
 from .attn_fwd import attn_fwd
 
 class bwd_kernel_dk_dv(FlashKernel):
