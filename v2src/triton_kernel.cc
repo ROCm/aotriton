@@ -106,6 +106,9 @@ TritonKernel::load_for_device(int device_id, const char* kernel_name) {
     return std::make_tuple(nullptr, hipErrorInvalidImage);
   }
 #else
+  if (image_size_ == 0) {
+    return std::make_tuple(nullptr, hipErrorInvalidImage);
+  }
   auto image = kernel_image_;
 #endif
   hipModule_t mod;
@@ -139,6 +142,10 @@ TritonKernel::decompress_kernel() {
 #if AOTRITON_KERNEL_VERBOSE
     std::cerr << "Image not compressed by zstd" << std::endl;
 #endif
+    return nullptr;
+  }
+  if (decompressed_size == 0) {
+    // This means this GPU kernel cannot be compiled, or takes too long to compile
     return nullptr;
   }
   if (decompressed_size == ZSTD_CONTENTSIZE_UNKNOWN) {

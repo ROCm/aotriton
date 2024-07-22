@@ -322,7 +322,7 @@ class KernelShimGenerator(MakefileSegmentGenerator):
 
         if self.is_bare:
             return
-        for o in k.gen_all_object_files(p, tuned_db=self._ktd, sancheck_fileexists=True):
+        for o in k.gen_all_object_files(p, tuned_db=self._ktd, sancheck_fileexists=not args.build_for_tuning):
             yield ObjectShimCodeGenerator(self._args, k, o)
 
     def write_conclude(self):

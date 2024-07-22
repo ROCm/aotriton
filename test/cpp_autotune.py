@@ -37,13 +37,13 @@ def do_bench(fn, *, warmup=25, rep=100,
     ret, outs = fn(is_testing=True)
     if ret != hipError_t.hipSuccess:
         # print(f'{ret=}', file=sys.stderr, flush=True)
-        return float('inf')
+        return float('inf'), ret
     torch.cuda.synchronize()
     valret = validator(*outs)
     # print(f'{valret=}', flush=True)
     if not valret:
         # assert False
-        return float('inf')
+        return float('inf'), ret
     torch.cuda.synchronize()
 
     # We maintain a buffer of 256 MB that we clear
@@ -95,13 +95,13 @@ def do_bench(fn, *, warmup=25, rep=100,
         ret = torch.quantile(times, torch.tensor(quantiles, dtype=torch.float)).tolist()
         if len(ret) == 1:
             ret = ret[0]
-        return ret
-    return getattr(torch, return_mode)(times).item()
+        return ret, hipError_t.hipSuccess
+    return getattr(torch, return_mode)(times).item(), hipError_t.hipSuccess
 
 AutotuneResult = namedtuple('AutotuneResult', ['kernel_index', 'time', 'psels', 'copts'])
 
 # cannot be maxint in case extargs.total_number_of_kernels never returns a positive number
-CPP_AUTOTUNE_MAX_KERNELS = 100
+CPP_AUTOTUNE_MAX_KERNELS = 200
 
 def cpp_autotune(extarg_klass, kernel_func, validator, *, tqdm_position=None, tqdm_prefix=''):
     assert validator is not None
@@ -111,13 +111,14 @@ def cpp_autotune(extarg_klass, kernel_func, validator, *, tqdm_position=None, tq
     pbar = None
     failed = 0
     success = 0
+    noimage = 0
     total_number_of_kernels = CPP_AUTOTUNE_MAX_KERNELS
     while True:
         extargs.force_kernel_index = kernel_index
         def func(is_testing=False):
             return kernel_func(extargs, is_testing)
         # t = do_bench(func, validator=validator, quantiles=(0.5, 0.2, 0.8))
-        t = do_bench(func, validator=validator)
+        t, hip_status = do_bench(func, validator=validator)
         '''
         if kernel_index == 0:
             print(f'Benchmarking with {kernel_index=}. Time {t}')
@@ -126,7 +127,10 @@ def cpp_autotune(extarg_klass, kernel_func, validator, *, tqdm_position=None, tq
         '''
         # assert extargs.total_number_of_kernels > 0
         if math.isinf(t):
-            failed += 1
+            if hip_status == hipError_t.hipErrorInvalidImage:
+                noimage += 1
+            else:
+                failed += 1
         else:
             if extargs.total_number_of_kernels > 0:
                 assert extargs.total_number_of_kernels <= CPP_AUTOTUNE_MAX_KERNELS
@@ -138,11 +142,12 @@ def cpp_autotune(extarg_klass, kernel_func, validator, *, tqdm_position=None, tq
                                copts=json.loads(extargs.selected_kernel_copts))
             timings.append(r)
 
+        pbar_desc = f'{tqdm_prefix} Pass/Fail/NoImage {success}/{failed}/{noimage}. Last time {t:.2g}'
         if pbar is None and extargs.total_number_of_kernels > 0:
             pbar = tqdm(total=extargs.total_number_of_kernels, unit="configs", position=tqdm_position)
-            pbar.set_description(f'{tqdm_prefix} Success {success}, Fail {failed}. Last time {t:.2g}')
+            pbar.set_description(pbar_desc)
         if pbar is not None:
-            pbar.set_description(f'{tqdm_prefix} Success {success}, Fail {failed}. Last time {t:.2g}')
+            pbar.set_description(pbar_desc)
             pbar.update(1)
 
         #     print(f'{r.psels=}')
