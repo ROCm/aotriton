@@ -44,7 +44,7 @@ def parse():
     parser.add_argument("--grid", "-g", type=str, help="Launch grid of the kernel", required=True)
     parser.add_argument("--verbose", "-v", help="Enable vebose output", action='store_true')
     parser.add_argument("--nostrip", help="Keep debugging symbols", action='store_true')
-    parser.add_argument("--timeout", type=float, default=None, help='Maximal time the compiler can run')
+    parser.add_argument("--timeout", type=float, default=0.0, help='Maximal time the compiler can run. Passing 0 for indefinite.')
     args = parser.parse_args()
     return args
 
@@ -137,13 +137,18 @@ def do_compile(args):
 
 def ipc_compile(ipc_in, ipc_out):
     args = ipc_in.get()
-    out_path = do_compile(args)
-    ipc_out.put(out_path)
+    try:
+        out_path = do_compile(args)
+        ipc_out.put('Complete')
+    except Exception as e:
+        if args.verbose:
+            print(e)
+        ipc_out.put('Exception')
 
 def main():
     # command-line arguments
     args = parse()
-    if args.timeout is None:
+    if args.timeout <= 0:
         do_compile(args)
         return
     ipc_to_worker = Queue()
@@ -154,21 +159,25 @@ def main():
     worker.start()
     ipc_to_worker.put(args)
     try:
-        out_path = ipc_worker_out.get(timeout=args.timeout * 60.0)
+        status = ipc_worker_out.get(timeout=args.timeout * 60.0)
     except queue.Empty:
-        out_path = None
+        status = 'Timeout'
         worker.kill()
-        print(f'Compile {args.path=} {args.kernel_name} to {args.out_path=} timed out with {args.timeout} minutes',
+        print(f'Compiling {args.path=} {args.kernel_name} to {args.out_path=} timed out with {args.timeout} minutes',
               file=sys.stderr)
     ipc_to_worker.close()
     ipc_worker_out.close()
     worker.join()
+    if status != 'Timeout' and worker.exitcode != 0:
+        status = 'ExitWithError'
+    if args.verbose:
+        print(f'Compiling {args.path=} {args.kernel_name} to {args.out_path=} result with status {status} exitcode {worker.exitcode}')
     # Write an empty file to avoid errors
-    if out_path is None:
+    if status != 'Complete':
         with open(args.out_path.with_suffix('.hsaco'), 'bw') as f:
             pass
         with open(args.out_path.with_suffix('.json'), 'w') as f:
-            d = {'compile_status': 'Timeout'}
+            d = {'compile_status': status}
             json.dump(d, f, indent=2)
 
 if __name__ == "__main__":

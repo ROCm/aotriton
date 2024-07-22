@@ -87,3 +87,18 @@ class bwd_kernel_dq(FlashKernel):
     }
     PARTIALLY_TUNED_FUNCTIONALS = [('PADDED_HEAD', None)]
     DOWNGRADER = []
+
+    @staticmethod
+    def gen_autotune_configs(fsel_dict : 'dict[str, Any]'):
+        dtype = fsel_dict['Q']
+        ret = []
+        # TODO: right sizes for fp32?
+        BLOCK_SIZES = [16, 32, 64] if dtype != '*fp32:16' else [16, 32]
+        WAVES_PER_EU = [0, 1, 2, 3, 4]
+        NUM_WARPS = [1, 2, 4]
+        for M, N, waves, warps in itertools.product(BLOCK_SIZES,
+                                                    BLOCK_SIZES,
+                                                    WAVES_PER_EU,
+                                                    NUM_WARPS):
+            kw = {'BLOCK_M': M, 'BLOCK_N': N, 'waves_per_eu': waves}
+            yield Config(kw, num_stages=1, num_warps=warps)
