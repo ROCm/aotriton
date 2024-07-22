@@ -44,10 +44,10 @@ def bwd_kernel_dk_dv_common(
 
     lo = (start_m // BLOCK_M) * BLOCK_M if CAUSAL else 0
     hi = seqlen_q
-    q_ptrs += lo * q_stride
-    do_ptrs += lo * do_stride
     # Q_block_ptr = tl.advance(Q_block_ptr, (lo, 0))
     # DO_block_ptr = tl.advance(DO_block_ptr, (lo, 0))
+    q_ptrs += lo * q_stride
+    do_ptrs += lo * do_stride
 
     qk_scale = sm_scale * 1.44269504089
     # load k and v: they will stay in SRAM throughout
@@ -84,23 +84,16 @@ def bwd_kernel_dk_dv_common(
         # -- load q, do --
         # TODO: It is more optimal to do OOB check only in the last iter.
         # (BLOCK_M, BLOCK_DMODEL), offs = (BLOCK_M * iter, 0) = (start_n, 0)
-        '''
-        if PADDED_HEAD:
-            q = tl.load(Q_block_ptr, boundary_check=(0,1), padding_option="zero")
-        else:
-            q = tl.load(Q_block_ptr, boundary_check=(0,), padding_option="zero")
-        # do: (BLOCK_M, BLOCK_DMODEL)
-        if PADDED_HEAD:
-            do = tl.load(DO_block_ptr, boundary_check=(0,1), padding_option="zero")
-        else:
-            do = tl.load(DO_block_ptr, boundary_check=(0,), padding_option="zero")
-        '''
+        #
+        # This common function can be further split into regular and
+        # non-regular version, determined by tl.constexpr, just like the fwd kernel.
+
         # q = tl.load(Q_block_ptr)
-        # do = tl.load(DO_block_ptr)
         if q_padded:
             q = load_fn(q_ptrs, offs_n + start_n, ld_offs_d, seqlen_q, head_dim)
         else:
             q = load_fn(q_ptrs, None, ld_offs_d, seqlen_q, head_dim)
+        # do = tl.load(DO_block_ptr)
         # TODO: pre_load_do
         if q_padded:
             do = load_fn(do_ptrs, offs_n + start_n, ld_offs_d, seqlen_q, head_dim)
@@ -177,7 +170,7 @@ def bwd_kernel_dk_dv_common(
         else:
             # ds.shape = (BLOCK_M, BLOCK_N), q.shape = (BLOCK_M, BLOCK_DMODEL)
             dk += tl.dot(tl.trans(ds.to(q_ptrs.dtype.element_ty)), q) # (BLOCK_N, BLOCK_DMODEL)
-        # update pointers (kept as comment)
+        # update pointers (block_ptr code was left intentionally as comment)
         # Q_block_ptr = tl.advance(Q_block_ptr, (BLOCK_M, 0))
         # DO_block_ptr = tl.advance(DO_block_ptr, (BLOCK_M, 0)) # Debug DO accessing problems
         q_ptrs += q_stride * BLOCK_M
@@ -188,9 +181,9 @@ def bwd_kernel_dk_dv_common(
 
 @triton.jit
 def bwd_kernel_dq_db_common(
-    Q_block_ptr, K_block_ptr, V_block_ptr, B_block_ptr,
-    sm_scale, DO_block_ptr,
-    DQ_block_ptr, DB_block_ptr, store_db,
+    q, kt_ptrs, k_stride, vt_ptrs, v_stride, B_block_ptr,
+    sm_scale, do,
+    dq, DB_block_ptr, store_db,
     l_ptrs,
     D_ptrs,
     seqlen_q,
@@ -209,13 +202,12 @@ def bwd_kernel_dq_db_common(
     PADDED_HEAD: tl.constexpr,
     BIAS_TYPE: tl.constexpr,
 ):
-    if start_m + BLOCK_N > seqlen_k:
-        k_padded = True
-    else:
-        k_padded = False
     # initialize offsets
     offs_m = start_m + tl.arange(0, BLOCK_M)
     offs_n = tl.arange(0, BLOCK_N)
+    offs_d = tl.arange(0, BLOCK_DMODEL)
+    ld_offs_d = None if not PADDED_HEAD else tl.arange(0, BLOCK_DMODEL)
+
     # Check for OOB accesses on D and LSE
     overflow_size_q = start_m + BLOCK_M - seqlen_q
     if overflow_size_q > 0:
@@ -227,29 +219,16 @@ def bwd_kernel_dq_db_common(
     else:
         Di = tl.load(D_ptrs + offs_m)
         l_i = tl.load(l_ptrs + offs_m)
+
     dq = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)
     # loop over k, v
     lo = 0
     hi = min(start_m + BLOCK_M, seqlen_k) if CAUSAL else seqlen_k
     if BIAS_TYPE == 1:
         B_block_ptr = tl.advance(B_block_ptr, (lo, 0))
+
     qk_scale = sm_scale * 1.44269504089
-    # load q and do: they will stay in SRAM throughout
-    '''
-    if PADDED_HEAD:
-        q = tl.load(Q_block_ptr, boundary_check=(0,1), padding_option="zero")
-    else:
-        q = tl.load(Q_block_ptr, boundary_check=(0,), padding_option="zero")
-    '''
-    q = tl.load(Q_block_ptr)
-    q = (q * qk_scale).to(Q_block_ptr.type.element_ty)
-    '''
-    if PADDED_HEAD:
-        do = tl.load(DO_block_ptr, boundary_check=(0,1), padding_option="zero")
-    else:
-        do = tl.load(DO_block_ptr, boundary_check=(0,), padding_option="zero")
-    '''
-    do = tl.load(DO_block_ptr)
+    q = (q* qk_scale).to(q.type.element_ty)
 
     '''
            K1   K2      (d)V      dO
@@ -267,16 +246,18 @@ def bwd_kernel_dq_db_common(
             k_padded = False
         # -- load k, v --
         # shape = (BLOCK_DMODEL, BLOCK_N), offs = (0, BLOCK_N * iter) = (0, start_n)
-        '''
-        if PADDED_HEAD:
-            kt = tl.load(K_block_ptr, boundary_check=(1,0), padding_option="zero")
-            vt = tl.load(V_block_ptr, boundary_check=(1,0), padding_option="zero")
+        # kt = tl.load(K_block_ptr)
+        # vt = tl.load(V_block_ptr)
+        if k_padded:
+            kt = load_fn(kt_ptrs, ld_offs_d, offs_n + start_n, head_dim, seqlen_k)
         else:
-            kt = tl.load(K_block_ptr, boundary_check=(1,), padding_option="zero")
-            vt = tl.load(V_block_ptr, boundary_check=(1,), padding_option="zero")
-        '''
-        kt = tl.load(K_block_ptr)
-        vt = tl.load(V_block_ptr)
+            kt = load_fn(kt_ptrs, ld_offs_d, None, head_dim, seqlen_k)
+
+        # TODO: pre_load_vt
+        if k_padded:
+            vt = load_fn(vt_ptrs, ld_offs_d, offs_n + start_n, head_dim, seqlen_k)
+        else:
+            vt = load_fn(vt_ptrs, ld_offs_d, None, head_dim, seqlen_k)
         # -- compute qk ----
         # q.offs = (start_m, 0), k.offs = (0, start_n)
         qk = dot(BLOCK_M, BLOCK_DMODEL, BLOCK_DMODEL, q, kt)
@@ -319,18 +300,20 @@ def bwd_kernel_dq_db_common(
         # compute dq. Unfortunately we cannot avoid transpose here as this loop
         # uses k both normal and transpose.
         if BLOCK_M == 1:
-            dq += tl.view(kt, [BLOCK_DMODEL]) * ds.to(Q_block_ptr.type.element_ty)
+            dq += tl.view(kt, [BLOCK_DMODEL]) * ds.to(q.type.element_ty)
         else:
             # ds.shape = (BLOCK_M, BLOCK_N), kt.shape = (BLOCK_DMODEL, BLOCK_N)
-            dq += tl.dot(ds.to(Q_block_ptr.type.element_ty), tl.trans(kt)) # (BLOCK_M, BLOCK_DMODEL)
+            dq += tl.dot(ds.to(q.type.element_ty), tl.trans(kt)) # (BLOCK_M, BLOCK_DMODEL)
         if BIAS_TYPE == 1:
             if store_db:
                 tl.store(DB_block_ptr, ds.to(DB_block_ptr.type.element_ty), boundary_check=(0,1))
         # update pointers
-        K_block_ptr = tl.advance(K_block_ptr, (0, BLOCK_N))
-        V_block_ptr = tl.advance(V_block_ptr, (0, BLOCK_N))
+        # Keep the block ptr as comment
+        # K_block_ptr = tl.advance(K_block_ptr, (0, BLOCK_N))
+        # V_block_ptr = tl.advance(V_block_ptr, (0, BLOCK_N))
+        kt_ptrs += BLOCK_N * k_stride
+        vt_ptrs += BLOCK_N * v_stride
         if BIAS_TYPE == 1:
             B_block_ptr = tl.advance(B_block_ptr, (0, BLOCK_N))
             DB_block_ptr = tl.advance(DB_block_ptr, (0, BLOCK_N))
-    return (dq * sm_scale).to(DQ_block_ptr.type.element_ty)
-    # tl.store(DQ_block_ptr, (dq * sm_scale).to(DQ_block_ptr.type.element_ty), boundary_check=(0,1))
+    return (dq * sm_scale).to(dq.type.element_ty)
