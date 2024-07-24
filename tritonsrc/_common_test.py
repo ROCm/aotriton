@@ -264,8 +264,11 @@ class SdpaContext(object):
         max_adiff = float(torch.max(torch.abs(x - y)))
         return torch.allclose(x, y, atol=atol, rtol=rtol), max_adiff
 
-    def validate_with_reference(self, out, grads, *, no_backward=False):
-        out_allclose, out_adiff = self._validate(out, self.refout_tensors[0], self.lp_refout_tensors[0], self.OUT_FUDGE_FACTOR, 'out')
+    def validate_with_reference(self, out, grads, *, no_forward=False, no_backward=False):
+        if no_forward:
+            out_allclose, out_adiff = True, None
+        else:
+            out_allclose, out_adiff = self._validate(out, self.refout_tensors[0], self.lp_refout_tensors[0], self.OUT_FUDGE_FACTOR, 'out')
         if no_backward:
             return out_allclose, out_adiff, [], []
         grads_allclose = []

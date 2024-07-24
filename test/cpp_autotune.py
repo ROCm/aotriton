@@ -1,5 +1,5 @@
 from collections import namedtuple
-from aotriton_flash import hipError_t
+from aotriton_flash import hipError_t, CppTuneSpecialKernelIndex
 import json
 import sys
 import math
@@ -34,16 +34,17 @@ def do_bench(fn, *, warmup=25, rep=100,
     import torch
 
     torch.cuda.synchronize()
-    ret, outs = fn(is_testing=True)
-    if ret != hipError_t.hipSuccess:
-        # print(f'{ret=}', file=sys.stderr, flush=True)
-        return float('inf'), ret
+    num_of_subkernels, outs = fn(is_testing=True)
+    for ko in outs:
+        if ko.hip_status != hipError_t.hipSuccess:
+            # print(f'{ret=}', file=sys.stderr, flush=True)
+            return float('inf'), ko.hip_status
     torch.cuda.synchronize()
-    valret = validator(*outs)
-    # print(f'{valret=}', flush=True)
+    valret = validator(outs)
+    print(f'{valret=}', flush=True)
     if not valret:
         # assert False
-        return float('inf'), ret
+        return float('inf'), outs[0].hip_status
     torch.cuda.synchronize()
 
     # We maintain a buffer of 256 MB that we clear
@@ -98,15 +99,79 @@ def do_bench(fn, *, warmup=25, rep=100,
         return ret, hipError_t.hipSuccess
     return getattr(torch, return_mode)(times).item(), hipError_t.hipSuccess
 
+KernelOutput = namedtuple('KernelOutput', ['hip_status', 'output_tensors'])
 AutotuneResult = namedtuple('AutotuneResult', ['kernel_index', 'time', 'psels', 'copts'])
 
-# cannot be maxint in case extargs.total_number_of_kernels never returns a positive number
-CPP_AUTOTUNE_MAX_KERNELS = 200
+class CppTuneWapper(object):
+    def __init__(self, factory, sub_accessor=None):
+        self._extargs = factory()
+        self._sub_accessor = sub_accessor
+        self._current_sub = 0
 
-def cpp_autotune(extarg_klass, kernel_func, validator, *, tqdm_position=None, tqdm_prefix=''):
+    def set_current_sub(self, i):
+        self._current_sub = i
+
+    @property
+    def current_extargs(self):
+        if self._sub_accessor is None:
+            return self._extargs
+        return self._sub_accessor(self._extargs, self._current_sub)
+
+    @property
+    def force_kernel_index(self):
+        return self.current_extargs.force_kernel_index
+
+    @force_kernel_index.setter
+    def force_kernel_index(self, ki):
+        self.current_extargs.force_kernel_index = ki
+
+    @property
+    def total_number_of_kernels(self):
+        return self.current_extargs.total_number_of_kernels
+
+    @property
+    def selected_kernel_psels(self):
+        return self.current_extargs.selected_kernel_psels
+
+    @property
+    def selected_kernel_copts(self):
+        return self.current_extargs.selected_kernel_copts
+
+    @property
+    def capi_object(self):
+        return self._extargs
+
+# In case extargs.total_number_of_kernels never returns a positive number
+# Thus the number does not need to be too large since total_number_of_kernels
+# will eventually get updated by the output of extargs
+CPP_AUTOTUNE_MAX_KERNELS = 20
+
+''' Use extargs to profile pre-compiled GPU kernels
+
+@param extarg_factory: factory to construct extargs, can be class
+@param kernel_func: function that launch GPU kernels, taking the following form
+    @param extargs: CppTuneWapper
+    @param is_testing: run the kernel for testing purpose rather than measuring its performance.
+        Lots of preventive/defensive methods should be enabled if is_testing is
+        true. Notably:
+            1. Filling the output tensors with nan;
+            2. Running the GPU kernel in a separate process to avoid possible
+               GPU segfault.
+    @returns ret: kernel_func may profile multiple kernels simultaneously, so
+                  the return value is a tuple and follows
+        @0 number of kernels
+        @1 list of KernelOutput
+@param validator: validator
+'''
+def cpp_autotune(extarg_factory, kernel_func, validator, *, tqdm_position=None, tqdm_prefix=''):
     assert validator is not None
+    extargs = CppTuneWapper(extarg_factory)
+    return cpp_autotune_sub_kernel(extargs, kernel_func, validator,
+                                   tqdm_position=tqdm_position,
+                                   tqdm_prefix=tqdm_prefix)
+
+def cpp_autotune_sub_kernel(extargs, kernel_func, validator, *, tqdm_position=None, tqdm_prefix=''):
     kernel_index = 0
-    extargs = extarg_klass()
     timings = []
     pbar = None
     failed = 0
@@ -121,9 +186,9 @@ def cpp_autotune(extarg_klass, kernel_func, validator, *, tqdm_position=None, tq
         t, hip_status = do_bench(func, validator=validator)
         '''
         if kernel_index == 0:
-            print(f'Benchmarking with {kernel_index=}. Time {t}')
+            print(f'Benchmarking with {kernel_index=}. Time {t} {hip_status=}')
         else:
-            print(f'Benchmarking with {kernel_index=} out of {extargs.total_number_of_kernels}. Time {t}')
+            print(f'Benchmarking with {kernel_index=} out of {extargs.total_number_of_kernels}. Time {t} {hip_status=}')
         '''
         # assert extargs.total_number_of_kernels > 0
         if math.isinf(t):
@@ -133,7 +198,6 @@ def cpp_autotune(extarg_klass, kernel_func, validator, *, tqdm_position=None, tq
                 failed += 1
         else:
             if extargs.total_number_of_kernels > 0:
-                assert extargs.total_number_of_kernels <= CPP_AUTOTUNE_MAX_KERNELS
                 total_number_of_kernels = extargs.total_number_of_kernels
             success += 1
             r = AutotuneResult(kernel_index=kernel_index,
@@ -163,3 +227,26 @@ def cpp_autotune(extarg_klass, kernel_func, validator, *, tqdm_position=None, tq
         #     print(f.read(), file=sys.stderr)
         print("ERROR: No configuration works")
     return ret
+
+'''
+Tuning function for API with multiple kernels
+'''
+def cpp_autotune_multikernel(extarg_factory, sub_extarg_accessor,
+                             subkernel_names, kernel_func,
+                             validators, *, tqdm_position=None, tqdm_prefix=''):
+    extargs_with_subs = CppTuneWapper(extarg_factory, sub_extarg_accessor)
+    num_of_subkernels = len(subkernel_names)
+    def reset_kernel_index_to_skip():
+        for i in range(num_of_subkernels):
+            sub_extarg_accessor(extargs_with_subs.capi_object, i).force_kernel_index = CppTuneSpecialKernelIndex.kSkipGPUCall
+    all_ret = []
+    for sub_index, cur_name, cur_validator in zip(range(num_of_subkernels), subkernel_names, validators):
+        print(f'Tuning sub {cur_name}')
+        more_prefix = f'sub {cur_name} {sub_index:02d}/{num_of_subkernels:02d}' if tqdm_prefix else ''
+        reset_kernel_index_to_skip()
+        extargs_with_subs.set_current_sub(sub_index)
+        ret = cpp_autotune_sub_kernel(extargs_with_subs, kernel_func, cur_validator,
+                                      tqdm_position=tqdm_position,
+                                      tqdm_prefix=tqdm_prefix+more_prefix)
+        all_ret.append((cur_name, ret))
+    return all_ret
