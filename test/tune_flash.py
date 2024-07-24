@@ -423,8 +423,8 @@ class TunerManager(ArgArchVerbose):
         Start processes
         '''
         nlive_processes = len(workers)
-        for i, p in enumerate(workers):
-            ipc_write.put((i, nlive_processes))
+        for shard, p in zip(shards, workers):
+            ipc_write.put((shard, nlive_processes))
         for p in workers:
             p.start()
         db_accessor.start()
