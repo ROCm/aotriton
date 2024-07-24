@@ -41,7 +41,7 @@ def do_bench(fn, *, warmup=25, rep=100,
             return float('inf'), ko.hip_status
     torch.cuda.synchronize()
     valret = validator(outs)
-    print(f'{valret=}', flush=True)
+    # print(f'{valret=}', flush=True)
     if not valret:
         # assert False
         return float('inf'), outs[0].hip_status
@@ -200,6 +200,15 @@ def cpp_autotune_sub_kernel(extargs, kernel_func, validator, *, tqdm_position=No
             if extargs.total_number_of_kernels > 0:
                 total_number_of_kernels = extargs.total_number_of_kernels
             success += 1
+            # print(f'{extargs.total_number_of_kernels=}')
+            # print(f'{extargs.selected_kernel_psels=}')
+            # if hasattr(extargs.capi_object, 'dkdv'):
+            #     print(f'{extargs._extargs=}')
+            #     print(f'{extargs._extargs.dkdv=}')
+            #     print(f'{extargs._extargs.dkdv.force_kernel_index=}')
+            #     print(f'{extargs._extargs.dkdv.selected_kernel_psels=}')
+            #     print(f'{extargs._extargs.dqdb.force_kernel_index=}')
+            #     print(f'{extargs._extargs.dqdb.selected_kernel_psels=}')
             r = AutotuneResult(kernel_index=kernel_index,
                                time=t,
                                psels=json.loads(extargs.selected_kernel_psels),
@@ -241,7 +250,7 @@ def cpp_autotune_multikernel(extarg_factory, sub_extarg_accessor,
             sub_extarg_accessor(extargs_with_subs.capi_object, i).force_kernel_index = CppTuneSpecialKernelIndex.kSkipGPUCall
     all_ret = []
     for sub_index, cur_name, cur_validator in zip(range(num_of_subkernels), subkernel_names, validators):
-        print(f'Tuning sub {cur_name}')
+        # print(f'Tuning sub {cur_name}')
         more_prefix = f'sub {cur_name} {sub_index:02d}/{num_of_subkernels:02d}' if tqdm_prefix else ''
         reset_kernel_index_to_skip()
         extargs_with_subs.set_current_sub(sub_index)
@@ -249,4 +258,5 @@ def cpp_autotune_multikernel(extarg_factory, sub_extarg_accessor,
                                       tqdm_position=tqdm_position,
                                       tqdm_prefix=tqdm_prefix+more_prefix)
         all_ret.append((cur_name, ret))
+        # print(f'{all_ret=}')
     return all_ret

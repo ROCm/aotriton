@@ -194,7 +194,7 @@ class _attention(torch.autograd.Function):
             def sameprocess_func(extargs):
                 args = (q, k, v, b, sm_scale, o, do, dq, dk, dv, db, L, delta,
                         dropout_p, philox_seed, philox_offset, causal,
-                        extargs)
+                        extargs.capi_object)
                 try:
                     ret = attn_bwd(*args)
                 except Exception as e:
@@ -261,7 +261,7 @@ class _attention(torch.autograd.Function):
                 dv.fill_(float('nan'))
                 dq.fill_(float('nan'))
                 dkdv_ki = extargs.capi_object.dkdv.force_kernel_index
-                dqdb_ki = extargs.capi_object.dkdv.force_kernel_index
+                dqdb_ki = extargs.capi_object.dqdb.force_kernel_index
                 return ipc_func(dkdv_ki, dqdb_ki)
             def sub_extarg_accessor(bwd_extargs : BwdExtraArguments, i):
                 if i == 0:
