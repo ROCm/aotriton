@@ -7,9 +7,11 @@ from pyaotriton.v2.flash import (
     attn_fwd_compact_varlen as fa_forward_compact_varlen,
     attn_bwd_compact_varlen as fa_backward_compact_varlen,
     debug_fill_dropout_rng as fa_debug_fill_dropout_rng,
-    ExtraArguments as ExtraArguments,
+    FwdExtraArguments,
+    BwdExtraArguments,
 )
 from pyaotriton import T1, T2, T4, DType, Stream, hipError_t
+from pyaotriton.v2 import CppTuneSpecialKernelIndex
 
 def cast_dtype(dtype):
     assert not dtype.is_complex
@@ -40,7 +42,7 @@ def mk_aotensor(q, if_empty_then_like=None):
 def attn_fwd(q, k, v, b, sm_scale, M, o,
              dropout_p, philox_seed, philox_offset, encoded_softmax, is_causal,
              extargs=None):
-    extargs = ExtraArguments() if extargs is None else extargs
+    extargs = FwdExtraArguments() if extargs is None else extargs
     err = fa_forward(mk_aotensor(q),
                      mk_aotensor(k),
                      mk_aotensor(v),
@@ -65,7 +67,7 @@ def ipc_attn_fwd(ipc_to_read, ipc_to_write):
         if tup is None:
             break
         q, k, v, b, sm_scale, M, o, dropout_p, philox_seed, philox_offset, encoded_softmax, is_causal, force_kernel_index, shard = tup
-        extargs = ExtraArguments()
+        extargs = FwdExtraArguments()
         extargs.force_kernel_index = force_kernel_index
         with torch.cuda.device(shard):
             ret = attn_fwd(q, k, v, b, sm_scale, M, o,
@@ -75,7 +77,8 @@ def ipc_attn_fwd(ipc_to_read, ipc_to_write):
             ipc_to_write.put(ret)
 
 def attn_bwd(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
-             dropout_p, philox_seed, philox_offset, is_causal):
+             dropout_p, philox_seed, philox_offset, is_causal, extargs=None):
+    extargs = BwdExtraArguments() if extargs is None else extargs
     b = mk_aotensor(b, if_empty_then_like=q)
     # print(f'{b=}')
     err = fa_backward(mk_aotensor(q),
@@ -98,6 +101,23 @@ def attn_bwd(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
                       Stream())
     # print(f'{err=}')
     return err
+
+def ipc_attn_bwd(ipc_to_read, ipc_to_write):
+    import torch
+    while True:
+        tup = ipc_to_read.get()
+        if tup is None:
+            break
+        q, k, v, b, sm_scale, o, do, dq, dk, dv, db, L, delta, dropout_p, philox_seed, philox_offset, causal,dkdv_ki, dqdb_ki, shard = tup
+        extargs = BwdExtraArguments()
+        extargs.dkdv.force_kernel_index = dkdv_ki
+        extargs.dqdb.force_kernel_index = dqdb_ki
+        with torch.cuda.device(shard):
+            ret = attn_bwd(q, k, v, b, sm_scale, o, do, dq, dk, dv, db, L, delta,
+                           dropout_p, philox_seed, philox_offset, causal,
+                           extargs)
+            torch.cuda.synchronize()
+            ipc_to_write.put(ret)
 
 def debug_fill_dropout_rng(R, philox_seed, philox_offset):
     err = fa_debug_fill_dropout_rng(mk_aotensor(R),

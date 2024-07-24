@@ -54,6 +54,7 @@ class TunerWorker(ArgArchVerbose):
         self._cached_gpukernel_process = {}
 
     def profile_single_config(self, tup, *, prefix='', shard=None):
+        self.print(f'{tup=}')
         a = self._args
         BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type = tup
         head_dim_rounded = 2 ** (D_HEAD - 1).bit_length()
@@ -111,7 +112,8 @@ class TunerWorker(ArgArchVerbose):
         '''
         Now, enable autotune (C++ form), enable output validation
         '''
-        def fwd_validator(tri_out):
+        def fwd_validator(kernel_outputs : 'List[KernelOutput]'):
+            tri_out, = kernel_outputs[0].output_tensors
             is_allclose, adiff, _, _ = ctx.validate_with_reference(tri_out, None, no_backward=True)
             '''
             if not is_allclose:
@@ -123,10 +125,47 @@ class TunerWorker(ArgArchVerbose):
             '''
             return is_allclose
 
+        def bwd_both_validator(kernel_outputs : 'List[KernelOutput]'):
+            tri_dk, tri_dv, = kernel_outputs[0].output_tensors
+            tri_dq, tri_db, = kernel_outputs[1].output_tensors
+            dout_tensors = (tri_dq, tri_dk, tri_dv, tri_db)
+            _, _, grads_allclose, grads_adiff = ctx.validate_with_reference(None, dout_tensors, no_forward=True)
+            dq_allclose, dk_allclose, dv_allclose, db_allclose = grads_allclose
+            ref_dq, ref_dk, ref_dv, ref_db = ctx.dref_tensors
+            def TO(ref_tensor):
+                return ref_tensor.to(device=tri_dq.device, dtype=dtype)
+            if not dq_allclose:
+                import numpy as np
+                err_idx = np.unravel_index(torch.argmax(torch.abs(TO(ref_dq) - tri_dq)).cpu().numpy(), ref_dq.shape)
+                print(f'{err_idx=}')
+                print(f'{tri_dq[err_idx]=} {ref_dq[err_idx]=} error = {torch.abs(tri_dq[err_idx] - ref_dq[err_idx])}')
+            if not dk_allclose:
+                import numpy as np
+                err_idx = np.unravel_index(torch.argmax(torch.abs(TO(ref_dk) - tri_dk)).cpu().numpy(), ref_dk.shape)
+                print(f'{err_idx=}')
+                print(f'{tri_dk[err_idx]=} {ref_dk[err_idx]=} error = {torch.abs(tri_dk[err_idx] - ref_dk[err_idx])}')
+            if not dv_allclose:
+                import numpy as np
+                err_idx = np.unravel_index(torch.argmax(torch.abs(TO(ref_dv) - tri_dv)).cpu().numpy(), ref_dv.shape)
+                print(f'{err_idx=}')
+                print(f'{tri_dv[err_idx]=}')
+                print(f'{ref_dv[err_idx]=}')
+            return dk_allclose and dv_allclose, dq_allclose and db_allclose
+
+        def bwd_dkdv_validator(kernel_outputs : 'List[KernelOutput]'):
+            dkdv, dqdb = bwd_both_validator(kernel_outputs)
+            # assert dkdv  # Debug
+            return dkdv
+
+        def bwd_dqdb_validator(kernel_outputs : 'List[KernelOutput]'):
+            dkdv, dqdb = bwd_both_validator(kernel_outputs)
+            return dqdb
+
         ext = AttentionExtraArgs(return_encoded_softmax=return_encoded_softmax,
                 autotune=True,
                 return_autotune=True,
-                autotune_validator=fwd_validator,
+                fwd_validator=fwd_validator,
+                bwd_validators=[bwd_dkdv_validator, bwd_dqdb_validator],
                 cpp_autotune_tqdm_position=self._tqdm_position,
                 cpp_autotune_tqdm_prefix=f'{prefix}{tup}',
                 gpu_device=shard,
@@ -134,17 +173,17 @@ class TunerWorker(ArgArchVerbose):
                 )
         tri_out, encoded_softmax, best_configs = attention(q, k, v, b, causal, sm_scale, dropout_p, ext)
         if self.verbose:
-            print('Returned best configs')
+            print('Returned fwd best configs')
             for kernel_name, best in best_configs:
                 # print(f'{kernel_name=} {best.kwargs=} {best.num_warps=} {best.num_stages=}')
                 print(f'{kernel_name=}')
-        if not _DEBUG_SKIP_TUNE_BACKWARD:
-            dout = torch.randn_like(q)
-            tri_out.backward(dout)
-            if self.verbose:
-                print('Returned best configs after backward')
-                for kernel_name, best in best_configs:
-                    print(f'{kernel_name=}')
+        dout = torch.randn_like(q)
+        ctx.compute_backward(tri_out, dout)
+        tri_out.backward(dout)
+        if self.verbose:
+            print('Returned best configs after backward')
+            for kernel_name, best in best_configs:
+                print(f'{kernel_name=}')
         return 'Success', inputs, best_configs
 
     def do_profile(self, dba, gen):
