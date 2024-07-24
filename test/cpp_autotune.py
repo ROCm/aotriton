@@ -218,7 +218,10 @@ def cpp_autotune_sub_kernel(extargs, kernel_func, validator, *, tqdm_position=No
 
         pbar_desc = f'{tqdm_prefix} Pass/Fail/NoImage {success}/{failed}/{noimage}. Last time {t:.2g}'
         if pbar is None and extargs.total_number_of_kernels > 0:
-            pbar = tqdm(total=extargs.total_number_of_kernels, unit="configs", position=tqdm_position)
+            pbar = tqdm(total=extargs.total_number_of_kernels,
+                        unit="configs",
+                        position=tqdm_position,
+                        leave=None if tqdm_position is None else True)
             pbar.set_description(pbar_desc)
         if pbar is not None:
             pbar.set_description(pbar_desc)
