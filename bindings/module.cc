@@ -14,16 +14,18 @@ namespace py = pybind11;
 namespace pyaotriton {
   namespace v2 {
     namespace flash {
-      using aotriton::v2::flash::ExtraArguments;
+      using aotriton::v2::flash::FwdExtraArguments;
+      using aotriton::v2::flash::BwdExtraArguments;
       void setup_module(py::module_& m) {
         m.def("check_gpu", &aotriton::v2::flash::check_gpu, py::arg("stream"));
-        py::class_<ExtraArguments>(m, "ExtraArguments")
+        py::class_<FwdExtraArguments, aotriton::CppTune>(m, "FwdExtraArguments")
+          .def(py::init<>())
+        ;
+        py::class_<BwdExtraArguments>(m, "BwdExtraArguments")
           .def(py::init<>())
 #if AOTRITON_BUILD_FOR_TUNING
-          .def_readwrite("force_kernel_index", &ExtraArguments::force_kernel_index)
-          .def_readonly("total_number_of_kernels", &ExtraArguments::total_number_of_kernels)
-          .def_readonly("selected_kernel_psels", &ExtraArguments::selected_kernel_psels)
-          .def_readonly("selected_kernel_copts", &ExtraArguments::selected_kernel_copts)
+          .def_readwrite("dkdv", &BwdExtraArguments::dkdv)
+          .def_readwrite("dqdb", &BwdExtraArguments::dqdb)
 #endif
         ;
         m.def("attn_fwd",
@@ -42,7 +44,7 @@ namespace pyaotriton {
               py::arg("encoded_softmax"),
               py::arg("is_causal"),
               py::arg("stream") = nullptr,
-              py::arg("extargs") = ExtraArguments());
+              py::arg("extargs") = FwdExtraArguments());
         m.def("attn_fwd_compact_varlen",
               &aotriton::v2::flash::attn_fwd_compact_varlen,
               "Flash Attention Forward Pass, Compact Stored Varlen",
@@ -63,7 +65,7 @@ namespace pyaotriton {
               py::arg("encoded_softmax"),
               py::arg("is_causal"),
               py::arg("stream") = nullptr,
-              py::arg("extargs") = ExtraArguments());
+              py::arg("extargs") = FwdExtraArguments());
         m.def("attn_bwd",
               &aotriton::v2::flash::attn_bwd,
               "Flash Attention Backward Pass",
@@ -85,7 +87,7 @@ namespace pyaotriton {
               py::arg("philox_offset"),
               py::arg("is_causal"),
               py::arg("stream") = nullptr,
-              py::arg("extargs") = ExtraArguments());
+              py::arg("extargs") = BwdExtraArguments());
         m.def("attn_bwd_compact_varlen",
               &aotriton::v2::flash::attn_bwd_compact_varlen,
               "Flash Attention Backward Pass, Compact Stored Varlen",
@@ -111,7 +113,7 @@ namespace pyaotriton {
               py::arg("philox_offset"),
               py::arg("is_causal"),
               py::arg("stream") = nullptr,
-              py::arg("extargs") = ExtraArguments());
+              py::arg("extargs") = BwdExtraArguments());
         m.def("debug_fill_dropout_rng",
               &aotriton::v2::flash::debug_fill_dropout_rng,
               "Flash Attention Debugging Function to get raw RNG numbers used in dropout",
@@ -123,6 +125,16 @@ namespace pyaotriton {
     } // namespace flash
 
     void setup_module(py::module_& m) {
+      py::class_<aotriton::CppTune>(m, "CppTune")
+          .def(py::init<>())
+          .value("kSpecialKernelIndex_SkipGPUCall", aotriton::CppTune::kSpecialKernelIndex_SkipGPUCall)
+#if AOTRITON_BUILD_FOR_TUNING
+          .def_readwrite("force_kernel_index", &FwdExtraArguments::force_kernel_index)
+          .def_readonly("total_number_of_kernels", &FwdExtraArguments::total_number_of_kernels)
+          .def_readonly("selected_kernel_psels", &FwdExtraArguments::selected_kernel_psels)
+          .def_readonly("selected_kernel_copts", &FwdExtraArguments::selected_kernel_copts)
+#endif
+      ;
       py::module_ mod_flash = m.def_submodule("flash", "Flash Attention API");
       flash::setup_module(mod_flash);
     }

@@ -34,7 +34,7 @@ _attn_fwd_common(T4 q,
                  T4 encoded_softmax,
                  bool is_causal,
                  aotriton::Stream stream_wrap,
-                 ExtraArguments* extargs) {
+                 FwdExtraArguments* extargs) {
   hipError_t err;
   auto stream = stream_wrap.native();
   auto arch = getArchFromStream(stream);
@@ -91,8 +91,11 @@ _attn_fwd_common(T4 q,
     .BIAS_TYPE = bias_type,
   };
 #if AOTRITON_BUILD_FOR_TUNING
-  if (extargs)
+  if (extargs) {
     params._has_preferred_kernel = extargs->force_kernel_index;
+    if (params._has_preferred_kernel == CppTune::kSpecialKernelIndex_SkipGPUCall)
+        return hipSuccess;
+  }
 #endif
   AttnFwdContext context;
   context.grid_calculator = grid_calculator;
@@ -126,7 +129,7 @@ attn_fwd(T4 q,
          T4 encoded_softmax,
          bool is_causal,
          aotriton::Stream stream_wrap,
-         ExtraArguments* extargs) {
+         FwdExtraArguments* extargs) {
   auto null_t1 = T1::get_null_tensor(DType::kInt32);
   return _attn_fwd_common(q,
                           k,
@@ -167,7 +170,7 @@ attn_fwd_compact_varlen(T4 q,            // 1 x num_heads x total_q x head_size,
                         T4 encoded_softmax,
                         bool is_causal,
                         aotriton::Stream stream_wrap,
-                        ExtraArguments* extargs) {
+                        FwdExtraArguments* extargs) {
   return _attn_fwd_common(q,
                           k,
                           v,
