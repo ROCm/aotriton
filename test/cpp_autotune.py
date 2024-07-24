@@ -163,12 +163,13 @@ CPP_AUTOTUNE_MAX_KERNELS = 20
         @1 list of KernelOutput
 @param validator: validator
 '''
-def cpp_autotune(extarg_factory, kernel_func, validator, *, tqdm_position=None, tqdm_prefix=''):
+def cpp_autotune(extarg_factory, kernel_name, kernel_func, validator, *, tqdm_position=None, tqdm_prefix=''):
     assert validator is not None
     extargs = CppTuneWapper(extarg_factory)
+    more_prefix = f' UK {kernel_name} 1/1' if tqdm_prefix else ''
     return cpp_autotune_sub_kernel(extargs, kernel_func, validator,
                                    tqdm_position=tqdm_position,
-                                   tqdm_prefix=tqdm_prefix)
+                                   tqdm_prefix=tqdm_prefix+more_prefix)
 
 def cpp_autotune_sub_kernel(extargs, kernel_func, validator, *, tqdm_position=None, tqdm_prefix=''):
     kernel_index = 0
@@ -251,7 +252,7 @@ def cpp_autotune_multikernel(extarg_factory, sub_extarg_accessor,
     all_ret = []
     for sub_index, cur_name, cur_validator in zip(range(num_of_subkernels), subkernel_names, validators):
         # print(f'Tuning sub {cur_name}')
-        more_prefix = f'sub {cur_name} {sub_index:02d}/{num_of_subkernels:02d}' if tqdm_prefix else ''
+        more_prefix = f' MK {cur_name} {sub_index+1:02d}/{num_of_subkernels:02d}' if tqdm_prefix else ''
         reset_kernel_index_to_skip()
         extargs_with_subs.set_current_sub(sub_index)
         ret = cpp_autotune_sub_kernel(extargs_with_subs, kernel_func, cur_validator,

@@ -143,7 +143,7 @@ class _attention(torch.autograd.Function):
                 o.fill_(float('nan'))
                 return ipc_func(extargs.force_kernel_index)
                 # print(f'running attn_fwd with {extargs.force_kernel_index=}')
-            tuning_result = cpp_autotune(FwdExtraArguments, func,
+            tuning_result = cpp_autotune(FwdExtraArguments, 'attn_fwd', func,
                                          attn_extra_args.fwd_validator,
                                          tqdm_position=attn_extra_args.cpp_autotune_tqdm_position,
                                          tqdm_prefix=attn_extra_args.cpp_autotune_tqdm_prefix)
