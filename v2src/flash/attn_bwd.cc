@@ -168,7 +168,7 @@ bwd_kernel_dk_dv(T4 q,
 #if AOTRITON_BUILD_FOR_TUNING
   if (extargs) {
     params._has_preferred_kernel = extargs->dkdv.force_kernel_index;
-    if (params._has_preferred_kernel == CppTune::kSpecialKernelIndex_SkipGPUCall)
+    if (params._has_preferred_kernel == CppTuneSpecialKernelIndex::kSkipGPUCall)
         return hipSuccess;
   }
 #endif
@@ -254,7 +254,7 @@ bwd_kernel_dq(T4 q,
 #if AOTRITON_BUILD_FOR_TUNING
   if (extargs) {
     params._has_preferred_kernel = extargs->dqdb.force_kernel_index;
-    if (params._has_preferred_kernel == CppTune::kSpecialKernelIndex_SkipGPUCall)
+    if (params._has_preferred_kernel == CppTuneSpecialKernelIndex::kSkipGPUCall)
         return hipSuccess;
   }
 #endif
