@@ -14,8 +14,13 @@ struct CppTune {
   const char* selected_kernel_psels = nullptr;
   const char* selected_kernel_copts = nullptr;
 #endif
+};
 
-  static constexpr int kSpecialKernelIndex_SkipGPUCall = -2;
+enum CppTuneSpecialKernelIndex : int {
+  kDefault = -1,
+  kSkipGPUCall = -2,
 };
 
 }
+
+#endif

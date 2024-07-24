@@ -5,6 +5,7 @@
 #include <aotriton/flash.h>
 #include <aotriton/runtime.h>
 #include <aotriton/util.h>
+#include <aotriton/cpp_tune.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <string>
@@ -18,7 +19,7 @@ namespace pyaotriton {
       using aotriton::v2::flash::BwdExtraArguments;
       void setup_module(py::module_& m) {
         m.def("check_gpu", &aotriton::v2::flash::check_gpu, py::arg("stream"));
-        py::class_<FwdExtraArguments, aotriton::CppTune>(m, "FwdExtraArguments")
+        py::class_<FwdExtraArguments, aotriton::v2::CppTune>(m, "FwdExtraArguments")
           .def(py::init<>())
         ;
         py::class_<BwdExtraArguments>(m, "BwdExtraArguments")
@@ -125,16 +126,23 @@ namespace pyaotriton {
     } // namespace flash
 
     void setup_module(py::module_& m) {
-      py::class_<aotriton::CppTune>(m, "CppTune")
+      using aotriton::v2::CppTune;
+      py::class_<aotriton::v2::CppTune>(m, "CppTune")
           .def(py::init<>())
-          .value("kSpecialKernelIndex_SkipGPUCall", aotriton::CppTune::kSpecialKernelIndex_SkipGPUCall)
 #if AOTRITON_BUILD_FOR_TUNING
-          .def_readwrite("force_kernel_index", &FwdExtraArguments::force_kernel_index)
-          .def_readonly("total_number_of_kernels", &FwdExtraArguments::total_number_of_kernels)
-          .def_readonly("selected_kernel_psels", &FwdExtraArguments::selected_kernel_psels)
-          .def_readonly("selected_kernel_copts", &FwdExtraArguments::selected_kernel_copts)
+          .def_readwrite("force_kernel_index", &CppTune::force_kernel_index)
+          .def_readonly("total_number_of_kernels", &CppTune::total_number_of_kernels)
+          .def_readonly("selected_kernel_psels", &CppTune::selected_kernel_psels)
+          .def_readonly("selected_kernel_copts", &CppTune::selected_kernel_copts)
 #endif
       ;
+      using aotriton::v2::CppTuneSpecialKernelIndex;
+#define EV(name) value(#name, aotriton::v2::CppTuneSpecialKernelIndex::name)
+      py::enum_<CppTuneSpecialKernelIndex>(m, "CppTuneSpecialKernelIndex")
+        .EV(kDefault)
+        .EV(kSkipGPUCall)
+        .export_values();
+#undef EV
       py::module_ mod_flash = m.def_submodule("flash", "Flash Attention API");
       flash::setup_module(mod_flash);
     }
