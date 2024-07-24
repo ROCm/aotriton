@@ -242,8 +242,8 @@ class _attention(torch.autograd.Function):
                         pass
                 # print(f'Process attn_fwd starting')
                 if not p.is_alive():
-                    # print(f'Process exitcode {p.exitcode}')
-                    tune_worker.invalid_gpukernel_process_cache(ipc_attn_fwd)
+                    print(f'[shard {shard}] Process exitcode {p.exitcode}')
+                    tune_worker.invalid_gpukernel_process_cache(ipc_attn_bwd)
                     p.join()
                     ret = hipError_t.hipErrorLaunchFailure
                 else:
