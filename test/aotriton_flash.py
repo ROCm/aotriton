@@ -98,7 +98,8 @@ def attn_bwd(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
                       int(philox_seed),
                       int(philox_offset),
                       is_causal,
-                      Stream())
+                      Stream(),
+                      extargs)
     # print(f'{err=}')
     return err
 
@@ -156,7 +157,7 @@ def attn_bwd_compact_varlen(q, k, v,
         b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
         dropout_p, philox_seed, philox_offset, is_causal):
     b = mk_aotensor(b, if_empty_then_like=q)
-    print(f'{b=}')
+    # print(f'{b=}')
     err = fa_backward_compact_varlen(mk_aotensor(q),
                                      mk_aotensor(k),
                                      mk_aotensor(v),

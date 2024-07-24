@@ -131,6 +131,7 @@ class TunerWorker(ArgArchVerbose):
             dout_tensors = (tri_dq, tri_dk, tri_dv, tri_db)
             _, _, grads_allclose, grads_adiff = ctx.validate_with_reference(None, dout_tensors, no_forward=True)
             dq_allclose, dk_allclose, dv_allclose, db_allclose = grads_allclose
+            """
             ref_dq, ref_dk, ref_dv, ref_db = ctx.dref_tensors
             def TO(ref_tensor):
                 return ref_tensor.to(device=tri_dq.device, dtype=dtype)
@@ -150,6 +151,7 @@ class TunerWorker(ArgArchVerbose):
                 print(f'{err_idx=}')
                 print(f'{tri_dv[err_idx]=}')
                 print(f'{ref_dv[err_idx]=}')
+            """
             return dk_allclose and dv_allclose, dq_allclose and db_allclose
 
         def bwd_dkdv_validator(kernel_outputs : 'List[KernelOutput]'):
@@ -179,7 +181,6 @@ class TunerWorker(ArgArchVerbose):
                 print(f'{kernel_name=}')
         dout = torch.randn_like(q)
         ctx.compute_backward(tri_out, dout)
-        tri_out.backward(dout)
         if self.verbose:
             print('Returned best configs after backward')
             for kernel_name, best in best_configs:
