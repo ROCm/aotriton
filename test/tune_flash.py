@@ -21,6 +21,7 @@ import itertools
 import time
 import math
 from pathlib import Path
+from tqdm import tqdm
 
 from rocm_arch import rocm_get_gpuarch
 from attn_torch_function import (
@@ -50,7 +51,6 @@ class ArgArchVerbose:
 class TunerWorker(ArgArchVerbose):
     def __init__(self, args):
         super().__init__(args)
-        self._tqdm_position = 0
         self._gpu_device = 'cuda'
         self._cached_gpukernel_process = {}
 
@@ -105,7 +105,7 @@ class TunerWorker(ArgArchVerbose):
         ctx = SdpaContext(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, dtype,
                           bias_type=bias_type, storage_flip=None, device=self._gpu_device)
         ctx.create_ref_inputs(target_gpu_device=self._gpu_device)
-        ctx.set_require_grads(skip_db=True)
+        ctx.set_require_grads(skip_db=True if bias_type == 0 else False)
         q, k, v, b = ctx.dev_tensors
         sdpa_params = SdpaParams(causal=causal, sm_scale=sm_scale, dropout_p=dropout_p, dropout_mask=mask)
         ref_out, _ = ctx.compute_ref_forward(sdpa_params)
@@ -169,7 +169,7 @@ class TunerWorker(ArgArchVerbose):
                 return_autotune=True,
                 fwd_validator=fwd_validator,
                 bwd_validators=[bwd_dkdv_validator, bwd_dqdb_validator],
-                cpp_autotune_tqdm_position=self._tqdm_position,
+                cpp_autotune_tqdm_bar=self._tqdm_bar,
                 cpp_autotune_tqdm_prefix=f'{prefix}{tup}',
                 gpu_device=shard,
                 tune_worker=self,
@@ -189,6 +189,7 @@ class TunerWorker(ArgArchVerbose):
         return 'Success', inputs, best_configs
 
     def do_profile(self, dba, gen):
+        self._tqdm_bar = tqdm(total=1, unit="configs", position=1, leave=True)
         dry_run_counter = 0
         skip_counter = 0
         for i, tup in gen():
@@ -228,7 +229,7 @@ class IPCTunerWorker(TunerWorker):
     '''
     def init_mp(self, shard):
         self._shard = shard
-        self._tqdm_position = shard
+        self._tqdm_bar = tqdm(total=1, unit="configs", position=shard+1, leave=True)
         self._gpu_device = f'cuda:{shard}'
         self._cached_gpukernel_process = {}
 
@@ -245,7 +246,7 @@ class IPCTunerWorker(TunerWorker):
             while True:
                 try:
                     i, tup = ipc_read.get()
-                    # print(f'ipc_read {i} {tup}')
+                    self.print(f'ipc_read {i} {tup}')
                     if i == -1 and tup is None:
                         break
                     prefix = shard_prefix + f'[{i:06d}]'
@@ -434,13 +435,16 @@ class TunerManager(ArgArchVerbose):
         '''
         for i, tup in self.gen_itup():
             obj = (i, tup)
-            # print(f"write_to_ipc {obj}")
+            self.print(f"write_to_ipc {obj}")
             any_process_alive = self.write_to_ipc(ipc_write, obj, workers)
             if not any_process_alive:
+                self.print(f"{any_process_alive=}, leave the generator loop")
                 break
+        self.print("Task Generator Complete")
         nlive_processes = self.scan_live_processes(workers)
         for i in range(nlive_processes):
             self.write_to_ipc(ipc_write, IPCTunerWorker.END_OF_QUEUE_OBJECT, workers)
+            self.print(f"write_to_ipc {IPCTunerWorker.END_OF_QUEUE_OBJECT}")
         ipc_write.close()
         """
         while nlive_processes > 0:
