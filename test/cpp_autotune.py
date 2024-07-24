@@ -3,7 +3,6 @@ from aotriton_flash import hipError_t, CppTuneSpecialKernelIndex
 import json
 import sys
 import math
-from tqdm import tqdm
 
 def do_bench(fn, *, warmup=25, rep=100,
              grad_to_none=None,
@@ -163,15 +162,15 @@ CPP_AUTOTUNE_MAX_KERNELS = 20
         @1 list of KernelOutput
 @param validator: validator
 '''
-def cpp_autotune(extarg_factory, kernel_name, kernel_func, validator, *, tqdm_position=None, tqdm_prefix=''):
+def cpp_autotune(extarg_factory, kernel_name, kernel_func, validator, *, tqdm_bar=None, tqdm_prefix=''):
     assert validator is not None
     extargs = CppTuneWapper(extarg_factory)
     more_prefix = f' UK {kernel_name} 1/1' if tqdm_prefix else ''
     return cpp_autotune_sub_kernel(extargs, kernel_func, validator,
-                                   tqdm_position=tqdm_position,
+                                   tqdm_bar=tqdm_bar,
                                    tqdm_prefix=tqdm_prefix+more_prefix)
 
-def cpp_autotune_sub_kernel(extargs, kernel_func, validator, *, tqdm_position=None, tqdm_prefix=''):
+def cpp_autotune_sub_kernel(extargs, kernel_func, validator, *, tqdm_bar=None, tqdm_prefix=''):
     kernel_index = 0
     timings = []
     pbar = None
@@ -218,11 +217,8 @@ def cpp_autotune_sub_kernel(extargs, kernel_func, validator, *, tqdm_position=No
 
         pbar_desc = f'{tqdm_prefix} Pass/Fail/NoImage {success}/{failed}/{noimage}. Last time {t:.2g}'
         if pbar is None and extargs.total_number_of_kernels > 0:
-            pbar = tqdm(total=extargs.total_number_of_kernels,
-                        unit="configs",
-                        position=tqdm_position,
-                        leave=None if tqdm_position is None else True)
-            pbar.set_description(pbar_desc)
+            tqdm_bar.reset(extargs.total_number_of_kernels)
+            pbar = tqdm_bar
         if pbar is not None:
             pbar.set_description(pbar_desc)
             pbar.update(1)
@@ -246,7 +242,7 @@ Tuning function for API with multiple kernels
 '''
 def cpp_autotune_multikernel(extarg_factory, sub_extarg_accessor,
                              subkernel_names, kernel_func,
-                             validators, *, tqdm_position=None, tqdm_prefix=''):
+                             validators, *, tqdm_bar=None, tqdm_prefix=''):
     extargs_with_subs = CppTuneWapper(extarg_factory, sub_extarg_accessor)
     num_of_subkernels = len(subkernel_names)
     def reset_kernel_index_to_skip():
@@ -259,7 +255,7 @@ def cpp_autotune_multikernel(extarg_factory, sub_extarg_accessor,
         reset_kernel_index_to_skip()
         extargs_with_subs.set_current_sub(sub_index)
         ret = cpp_autotune_sub_kernel(extargs_with_subs, kernel_func, cur_validator,
-                                      tqdm_position=tqdm_position,
+                                      tqdm_bar=tqdm_bar,
                                       tqdm_prefix=tqdm_prefix+more_prefix)
         all_ret.append((cur_name, ret))
         # print(f'{all_ret=}')

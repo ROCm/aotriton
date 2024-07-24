@@ -22,7 +22,7 @@ AttentionExtraArgs = namedtuple('AttentionExtraArgs',
          'return_autotune',
          'fwd_validator',
          'bwd_validators',
-         'cpp_autotune_tqdm_position',
+         'cpp_autotune_tqdm_bar',
          'cpp_autotune_tqdm_prefix',
          'gpu_device',
          'tune_worker',
@@ -127,7 +127,7 @@ class _attention(torch.autograd.Function):
                         pass
                 # print(f'Process attn_fwd starting')
                 if not p.is_alive():
-                    # print(f'Process exitcode {p.exitcode}')
+                    print(f'Process exitcode {p.exitcode}')
                     tune_worker.invalid_gpukernel_process_cache(ipc_attn_fwd)
                     p.join()
                     ret = hipError_t.hipErrorLaunchFailure
@@ -145,7 +145,7 @@ class _attention(torch.autograd.Function):
                 # print(f'running attn_fwd with {extargs.force_kernel_index=}')
             tuning_result = cpp_autotune(FwdExtraArguments, 'attn_fwd', func,
                                          attn_extra_args.fwd_validator,
-                                         tqdm_position=attn_extra_args.cpp_autotune_tqdm_position,
+                                         tqdm_bar=attn_extra_args.cpp_autotune_tqdm_bar,
                                          tqdm_prefix=attn_extra_args.cpp_autotune_tqdm_prefix)
         else:
             attn_fwd(q, k, v, b, sm_scale, M, o,
@@ -273,7 +273,7 @@ class _attention(torch.autograd.Function):
                                                      ['bwd_kernel_dk_dv', 'bwd_kernel_dq'],
                                                      func,
                                                      attn_extra_args.bwd_validators,
-                                                     tqdm_position=attn_extra_args.cpp_autotune_tqdm_position,
+                                                     tqdm_bar=attn_extra_args.cpp_autotune_tqdm_bar,
                                                      tqdm_prefix=attn_extra_args.cpp_autotune_tqdm_prefix)
         else:
             ret = attn_bwd(q, k, v, b, sm_scale, o, do, dq, dk, dv, db, L, delta,
