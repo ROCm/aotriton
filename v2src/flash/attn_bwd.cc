@@ -168,8 +168,10 @@ bwd_kernel_dk_dv(T4 q,
 #if AOTRITON_BUILD_FOR_TUNING
   if (extargs) {
     params._has_preferred_kernel = extargs->dkdv.force_kernel_index;
-    if (params._has_preferred_kernel == CppTuneSpecialKernelIndex::kSkipGPUCall)
+    if (params._has_preferred_kernel == CppTuneSpecialKernelIndex::kSkipGPUCall) {
+        // std::cerr << "extargs->dkdv.force_kernel_index = " << extargs->dkdv.force_kernel_index << " EKI" << std::endl;
         return hipSuccess;
+    }
   }
 #endif
   BwdKernelDkDvContext context;
@@ -261,8 +263,10 @@ bwd_kernel_dq(T4 q,
 #if AOTRITON_BUILD_FOR_TUNING
   if (extargs) {
     params._has_preferred_kernel = extargs->dqdb.force_kernel_index;
-    if (params._has_preferred_kernel == CppTuneSpecialKernelIndex::kSkipGPUCall)
+    if (params._has_preferred_kernel == CppTuneSpecialKernelIndex::kSkipGPUCall) {
+        // std::cerr << "extargs->dqdb.force_kernel_index = " << extargs->dqdb.force_kernel_index << " EKI" << std::endl;
         return hipSuccess;
+    }
   }
 #endif
   BwdKernelDqContext context;
@@ -273,6 +277,7 @@ bwd_kernel_dq(T4 q,
     extargs->dqdb.total_number_of_kernels = params._total_number_of_kernels;
     extargs->dqdb.selected_kernel_psels = params._preferred_kernel_psels;
     extargs->dqdb.selected_kernel_copts = params._preferred_kernel_copts;
+    // std::cerr << "dqdb lookup_optimal = " << err << " EOL" << std::endl;
   }
 #endif
   if (err != hipSuccess) {
