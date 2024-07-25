@@ -197,6 +197,7 @@ class TunerWorker(ArgArchVerbose):
             if action == 'Success':
                 dba.pipe_configs(inputs, best_configs, _debug_task_id=i)
             if action == 'Dryrun':
+                print(f'{tup=} _debug_task_id={i}')
                 dry_run_counter += 1
             if action == 'Skip':
                 dba.pipe_skipped_configs(inputs, _debug_task_id=i)
