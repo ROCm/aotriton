@@ -85,6 +85,8 @@ class _attention(torch.autograd.Function):
 
         if autotune and return_autotune:
             assert attn_extra_args.fwd_validator is not None
+            from rocm_arch import rocm_get_gpuarch
+            gpu_arch = rocm_get_gpuarch()
             def sameprocess_func(extargs):
                 args = (q, k, v, b, sm_scale, M, o,
                         dropout_p, philox_seed, philox_offset, encoded_softmax, causal,
@@ -97,6 +99,9 @@ class _attention(torch.autograd.Function):
                                             output_tensors=None)]
                 return 1, [KernelOutput(hip_status=ret, output_tensors=[o])]
             def ipc_func(force_kernel_index):
+                if gpu_arch == 'gfx1100' and force_kernel_index >= 30:
+                    # These kernels are suspicous on Navi
+                    return 1, [KernelOutput(hip_status=hipError_t.hipErrorInvalidDevice, output_tensors=[o])]
                 shard = attn_extra_args.gpu_device
                 tune_worker = attn_extra_args.tune_worker
                 def factory():

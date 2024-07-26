@@ -12,6 +12,7 @@ from pyaotriton.v2.flash import (
 )
 from pyaotriton import T1, T2, T4, DType, Stream, hipError_t
 from pyaotriton.v2 import CppTuneSpecialKernelIndex
+import os
 
 def cast_dtype(dtype):
     assert not dtype.is_complex

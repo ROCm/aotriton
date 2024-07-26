@@ -76,6 +76,14 @@ def test_op_bwd_with_matrix_bias(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, sm_
     '''
     _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
 
+def main3():
+    tup = (1, 12, 32, 8, 8, True, 1.2, 0.5, False, torch.bfloat16, 0)
+    BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type = tup
+    if bias_type == 0:
+        bias_type = None
+    storage_flip = False
+    _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
+
 def main2():
     # Memo: False-0.0-dtype0-0.0-False-4-256-8-4-1
     # Memo: False-0.0-dtype0-0.0-False-4-256-8-1-4
@@ -116,4 +124,4 @@ def main():
     _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
 
 if __name__ == '__main__':
-    main2()
+    main3()
