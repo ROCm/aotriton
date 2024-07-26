@@ -125,6 +125,25 @@ class SdpaContext(object):
         # self.FUDGE_FACTORS = (4, 2, 2, 2)  # Matches the order of self.dev_tensors
         self.OUT_FUDGE_FACTOR = 3
 
+    '''
+    Create Tensors that will be kept b/w forward and backward pass
+    '''
+    def create_ctx_tensors(self):
+        q, k, v, b = self.dev_tensors
+        o = torch.empty_like(q)
+        M = torch.empty((q.shape[0] * q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)
+        self.ctx_tensors = (o, M)
+
+    def create_bwd_tensors(self):
+        q, k, v, b = self.dev_tensors
+        o, L = self.ctx_tensors
+        dq = torch.empty_like(q)
+        dk = torch.empty_like(k)
+        dv = torch.empty_like(v)
+        db = torch.empty_like(b) if b is not None else None
+        delta = torch.empty_like(L)
+        self.bwd_tensors = (dq, dk, dv, db, delta)
+
     @staticmethod
     def fillnan(tensors):
         for t in tensors:
@@ -245,10 +264,11 @@ class SdpaContext(object):
         return (dq, dk, dv, db)
 
     # Note: this follows pytorch's testing approach and expects low precision dout
-    def compute_backward(self, out, dout):
+    def compute_backward(self, out, dout, *, ref_only=False):
         self.dref_tensors = self._compute_backward(self.ref_tensors, self.refout_tensors[0], dout)
         self.lp_dref_tensors = self._compute_backward(self.lp_ref_tensors, self.lp_refout_tensors[0], dout)
-        self.dout_tensors = self._compute_backward(self.dev_tensors, out, dout)
+        if not ref_only:
+            self.dout_tensors = self._compute_backward(self.dev_tensors, out, dout)
 
     @staticmethod
     def _validate(out, ref, lp_ref, fudge_factor, tname):
