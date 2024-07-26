@@ -56,6 +56,8 @@ def tuned_attn_fwd(
     stride_vz, stride_vh, stride_vk, stride_vn,
     stride_bz, stride_bh, stride_bm, stride_bn,
     stride_oz, stride_oh, stride_om, stride_on,
+    num_head_q,
+    num_head_k,
     cu_seqlens_q,
     cu_seqlens_k,
     num_seqlens,
@@ -83,6 +85,8 @@ def tuned_attn_fwd(
             stride_vz, stride_vh, stride_vk, stride_vn,
             stride_bz, stride_bh, stride_bm, stride_bn,
             stride_oz, stride_oh, stride_om, stride_on,
+            num_head_q,
+            num_head_k,
             cu_seqlens_q,
             cu_seqlens_k,
             num_seqlens,
@@ -252,6 +256,8 @@ class _attention(torch.autograd.Function):
         head_dim_rounded = 2 ** (Lk - 1).bit_length()
         head_dim_rounded = max(16, head_dim_rounded)
         padded_head = head_dim_rounded != Lk
+        num_head_q = q.shape[1]
+        num_head_k = q.shape[2]
         max_seqlen_q = q.shape[2]
         max_seqlen_k = k.shape[2]
         o = torch.zeros_like(q)
@@ -269,7 +275,7 @@ class _attention(torch.autograd.Function):
         null_tensor = torch.empty((0), device=q.device, dtype=torch.int32)
         M = torch.empty((q.shape[0] * q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)
         if return_encoded_softmax:
-            encoded_softmax = torch.ones((q.shape[0], q.shape[1], q.shape[2], k.shape[2]), device=q.device, dtype=_attention.DEBUG_MASK_DTYPE) * 114.514
+            encoded_softmax = torch.ones((q.shape[0], q.shape[1], q.shape[2], k.shape[2]), device=q.device, dtype=q.dtype)
         else:
             encoded_softmax = None
         if False or VERBOSE:
@@ -321,6 +327,8 @@ class _attention(torch.autograd.Function):
                 v.stride(0), v.stride(1), v.stride(2), v.stride(3),
                 b.stride(0), b.stride(1), b.stride(2), b.stride(3),
                 o.stride(0), o.stride(1), o.stride(2), o.stride(3),
+                num_head_q=num_head_q,
+                num_head_k=num_head_k,
                 cu_seqlens_q=null_tensor,
                 cu_seqlens_k=null_tensor,
                 num_seqlens=0,
@@ -342,6 +350,10 @@ class _attention(torch.autograd.Function):
             RETURN_ENCODED_SOFTMAX=encoded_softmax is not None
             print(f'{BLOCK_M=} {BLOCK_N=} {RETURN_ENCODED_SOFTMAX=} seqlen_q={q.shape[2]} seqlen_k={k.shape[2]}',
                     flush=True)
+            print(f'{q.data_ptr()=:x} {k.data_ptr()=:x} {v.data_ptr()=:x} {b.data_ptr()=:x} {M.data_ptr()=:x} {o.data_ptr()=:x}', flush=True)
+            print(f'{encoded_softmax.data_ptr()=:x}', flush=True)
+            print(f'{q.shape=} {k.shape=} {v.shape=} {b.shape=} {M.shape=} {o.shape=}', flush=True)
+            print(f'{q.stride()=} {k.stride()=} {v.stride()=} {b.stride()=} {M.stride()=} {o.stride()=}', flush=True)
             bare_attn_fwd[grid](
                 q, k, v, b, sm_scale, M, o,
                 q.stride(0), q.stride(1), q.stride(2), q.stride(3),
@@ -349,6 +361,8 @@ class _attention(torch.autograd.Function):
                 v.stride(0), v.stride(1), v.stride(2), v.stride(3),
                 b.stride(0), b.stride(1), b.stride(2), b.stride(3),
                 o.stride(0), o.stride(1), o.stride(2), o.stride(3),
+                num_head_q=num_head_q,
+                num_head_k=num_head_k,
                 cu_seqlens_q=null_tensor,
                 cu_seqlens_k=null_tensor,
                 num_seqlens=0,
@@ -420,6 +434,8 @@ class _attention(torch.autograd.Function):
             tuning_result = None
             block_m = min(128, q.shape[2], k.shape[2])
         grid = (triton.cdiv(q.shape[2], block_m), q.shape[1], q.shape[0])
+        # print(f'{M=}')
+        # print(f'{M.shape=}')
         ctx.save_for_backward(q, k, v, b, o, M)
         ctx.grid = grid
         ctx.sm_scale = sm_scale
@@ -452,6 +468,8 @@ class _attention(torch.autograd.Function):
         db = torch.empty_like(b)
         delta = torch.empty_like(L)
         null_tensor = torch.empty((0), device=q.device, dtype=torch.int32)
+        num_head_q = q.shape[1]
+        num_head_k = q.shape[2]
         max_seqlen_q = q.shape[2]
         max_seqlen_k = k.shape[2]
         MAX_BLOCK = 64 if ctx.dropout_p == 0 else 16
@@ -608,6 +626,10 @@ class _attention(torch.autograd.Function):
                     PADDED_HEAD=padded_head,
                     BIAS_TYPE=ctx.bias_type,
                 )
+        print(f"{dq.stride()=}", flush=True)
+        print(f"{dq.data_ptr()=:x}", flush=True)
+        print(f"{dk.stride()=}", flush=True)
+        print(f"{dk.data_ptr()=:x}", flush=True)
         # mask_allclose = torch.allclose(debug_mask < 0, ctx.encoded_softmax < 0)
         if False:
             mask_allclose = torch.allclose(torch.abs(debug_mask), torch.abs(ctx.encoded_softmax)) # Stores QK

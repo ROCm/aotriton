@@ -17,6 +17,7 @@ Extra Credits:
 import triton
 import triton.language as tl
 from bwd_kernel_common import bwd_kernel_dk_dv_common, bwd_kernel_dq_db_common
+from masked_load_store import mstore2d
 
 # TODO: Remove Unused 'Out' Argument from kernels below
 @triton.jit
@@ -34,7 +35,7 @@ def bwd_kernel_dk_dv(
     stride_dvz, stride_dvh, stride_dvk, stride_dvn,
     cu_seqlens_q,
     cu_seqlens_k,
-    num_seqlens,   # set num_seqlens to zero to ignore cu_seqlens_q/k
+    num_seqlens : 'i32',   # set num_seqlens to zero to ignore cu_seqlens_q/k
     max_seqlen_q, # and use max_seqlen_q/k for all seqlen_q/k
     max_seqlen_k,
     head_dim,
@@ -55,6 +56,13 @@ def bwd_kernel_dk_dv(
     num_h = tl.num_programs(1)
     num_z = tl.num_programs(2)
     off_zh = off_z * num_h + off_h * 1
+
+    cu_seqlens_q_start = 0
+    cu_seqlens_k_start = 0
+    seqlen_q = max_seqlen_q
+    seqlen_k = max_seqlen_k
+    batch_index = off_z
+
     if num_seqlens > 0:
         cu_seqlens_k_start = tl.load(cu_seqlens_k + off_z)
         cu_seqlens_k_end = tl.load(cu_seqlens_k + off_z + 1)
@@ -65,13 +73,8 @@ def bwd_kernel_dk_dv(
         cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
         seqlen_q = cu_seqlens_q_end - cu_seqlens_q_start
         batch_index = 0
-    elif num_seqlens == 0:
-        cu_seqlens_q_start = 0
-        cu_seqlens_k_start = 0
-        seqlen_q = max_seqlen_q
-        seqlen_k = max_seqlen_k
-        batch_index = off_z
-    else: # < 0 for padded seqlen
+
+    if num_seqlens < 0:  # for padded seqlen
         cu_seqlens_k_start = tl.load(cu_seqlens_k + off_z)
         cu_seqlens_k_end = tl.load(cu_seqlens_k + off_z + 1)
         seqlen_k = cu_seqlens_k_end - cu_seqlens_k_start
@@ -171,7 +174,7 @@ def bwd_kernel_dk_dv(
         order=(1, 0)
     )
 
-    bwd_kernel_dk_dv_common(
+    dk, dv = bwd_kernel_dk_dv_common(
         Q_block_ptr, KT_block_ptr, VT_block_ptr, B_block_ptr,
         sm_scale, DO_block_ptr,
         DK_block_ptr, DV_block_ptr,
@@ -191,6 +194,26 @@ def bwd_kernel_dk_dv(
         ENABLE_DROPOUT,
         PADDED_HEAD,
         BIAS_TYPE)
+    mstore2d(dk,
+             BLOCK_N,
+             BLOCK_DMODEL,
+             o_base=DK + dk_offset,
+             o_start_row=start_m,
+             o_start_col=0,
+             o_rows=seqlen_k,
+             o_cols=head_dim,
+             stride_row=stride_dkn,
+             stride_col=stride_dkk)
+    mstore2d(dv,
+             BLOCK_N,
+             BLOCK_DMODEL,
+             o_base=DV + dv_offset,
+             o_start_row=start_m,
+             o_start_col=0,
+             o_rows=seqlen_k,
+             o_cols=head_dim,
+             stride_row=stride_dvk,
+             stride_col=stride_dvn)
 
 @triton.jit
 def bwd_kernel_dq(
@@ -227,6 +250,13 @@ def bwd_kernel_dq(
     num_h = tl.num_programs(1)
     num_z = tl.num_programs(2)
     off_zh = off_z * num_h + off_h * 1
+
+    cu_seqlens_q_start = 0
+    cu_seqlens_k_start = 0
+    seqlen_q = max_seqlen_q
+    seqlen_k = max_seqlen_k
+    batch_index = off_z
+
     if num_seqlens > 0:
         cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
         cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
@@ -237,13 +267,8 @@ def bwd_kernel_dq(
         cu_seqlens_k_end = tl.load(cu_seqlens_k + off_z + 1)
         seqlen_k = cu_seqlens_k_end - cu_seqlens_k_start
         batch_index = 0
-    elif num_seqlens == 0:
-        cu_seqlens_q_start = 0
-        cu_seqlens_k_start = 0
-        seqlen_q = max_seqlen_q
-        seqlen_k = max_seqlen_k
-        batch_index = off_z
-    else: # < 0 for padded seqlen
+
+    if num_seqlens < 0:  # for padded seqlen
         cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
         cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
         seqlen_q = cu_seqlens_q_end - cu_seqlens_q_start
@@ -302,7 +327,10 @@ def bwd_kernel_dq(
         batch_philox_offset = 0
 
     # initialize pointers to output
-    dq_offset = off_h * stride_dqh + batch_index * stride_dqz + cu_seqlens_q_start * stride_dqm
+    dq_offset = batch_index * stride_dqz + off_h * stride_dqh + cu_seqlens_q_start * stride_dqm
+    # tl.device_print('batch_index ', batch_index)
+    # tl.device_print('off_h ', off_h)
+    # tl.device_print('cu_seqlens_q_start ', cu_seqlens_q_start)
     DQ_block_ptr = tl.make_block_ptr(
         base=DQ + dq_offset,
         shape=(seqlen_q, head_dim),
@@ -339,7 +367,7 @@ def bwd_kernel_dq(
     else:
         tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
 
-    bwd_kernel_dq_db_common(
+    dq = bwd_kernel_dq_db_common(
         Q_block_ptr, K_block_ptr, V_block_ptr, B_block_ptr,
         sm_scale, DO_block_ptr,
         DQ_block_ptr, DB_block_ptr, store_db,
@@ -359,3 +387,19 @@ def bwd_kernel_dq(
         ENABLE_DROPOUT,
         PADDED_HEAD,
         BIAS_TYPE)
+    dq_ptrs, dq_masks = mstore2d(dq,
+             BLOCK_M,
+             BLOCK_DMODEL,
+             o_base=DQ + dq_offset,
+             o_start_row=start_m,
+             o_start_col=0,
+             o_rows=seqlen_q,
+             o_cols=head_dim,
+             stride_row=stride_dqm,
+             stride_col=stride_dqk)
+    # tl.device_print('dq_offset ', dq_offset)
+    # tl.device_print('stride_dqm ', stride_dqm)
+    # tl.device_print('stride_dqk ', stride_dqk)
+    # tl.device_print('head_dim ', head_dim)
+    # tl.device_print('dq_ptrs ', dq_ptrs)
+    # tl.device_print('dq_masks ', dq_masks)

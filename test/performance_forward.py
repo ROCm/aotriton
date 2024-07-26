@@ -6,7 +6,7 @@ import pytest
 import torch
 
 import triton
-from attn_torch_function import attention
+from attn_torch_function import attention, AttentionExtraArgs
 
 try:
     from flash_attn.flash_attn_interface import \
@@ -62,10 +62,12 @@ def bench_flash_attention(BATCH, H, N_CTX, D_HEAD, causal, mode, provider, dtype
         k = torch.randn((BATCH, H, N_CTX, D_HEAD), dtype=dtype, device="cuda", requires_grad=True)
         v = torch.randn((BATCH, H, N_CTX, D_HEAD), dtype=dtype, device="cuda", requires_grad=True)
         sm_scale = 1.3
-        autotune = False
-        return_encoded_softmax = False
+        dropout_p = 0.0
         b = None
-        fn = lambda: attention(q, k, v, b, causal, sm_scale, split_kernel, return_encoded_softmax, autotune)
+        ext = AttentionExtraArgs(return_encoded_softmax=causal,
+                autotune=False,
+                return_autotune=False)
+        fn = lambda: attention(q, k, v, b, causal, sm_scale, dropout_p, ext)
         if mode == 'bwd':
             o = fn()
             do = torch.randn_like(o)

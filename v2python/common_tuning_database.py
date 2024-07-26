@@ -40,6 +40,10 @@ class CommonKernelTuningDatabaseForArch(ABC):
     def arch_number(self):
         return self._arch_number
 
+    @classmethod
+    def is_passthrough_tuning(klass):
+        return False
+
     '''
     Create db index, and also initialize _fsel_positions so that _extract_keys_from_fsels can use it
     '''
@@ -47,6 +51,13 @@ class CommonKernelTuningDatabaseForArch(ABC):
     def _build_db_index(self, fsels):
         pass
 
+    '''
+    Callgraph: select -> _select_from_db -> _lookup_tuning_info
+                                         <-
+                         _select_from_db -> craft_perf_selection
+               <--------------------------- craft_perf_selection
+    Called by KernelDescription.gen_all_object_files to narrow down kernels to build for fsels
+    '''
     def select(self, fsels : 'list[ArgumentSelection]', perf_meta : 'list[ArgumentMetadata]') -> 'list[ArgumentSelection], dict[str,str]':
         if self.empty:
             yield [], None
@@ -61,12 +72,31 @@ class CommonKernelTuningDatabaseForArch(ABC):
         pass
 
     '''
-    tinfo: one piece of tuning information, can be a json object, or a row in SQLite database
+    Translate row into dict that only contains maps from input keys to values
     '''
     @abstractmethod
-    def craft_perf_selection(self, tinfo, perf_meta: 'list[ArgumentSelection]'):
+    def extract_inputs(self, columns, row):
         pass
 
+    '''
+    columns, row: one piece of tuning information, can be a json object, or a
+                  single row in SQLite database.
+                  For json database, columns is None (schemaless, metadata included in rows)
+    Called by select -> _select_from_db
+              or
+              KernelTuningEntryForFunctionalOnGPU
+    '''
+    @abstractmethod
+    def craft_perf_selection(self,
+                             columns,
+                             row,
+                             perf_meta: 'list[ArgumentSelection]') -> 'list[TunedArgument], compiler_options':
+        pass
+
+    '''
+    Callgraph: get_lut -> (Extract tuning info for kdesc+fsels)
+               <--------- Construct KernelTuningEntryForFunctionalOnGPU fro tuning info
+    '''
     @abstractmethod
     def get_lut(self,
                 kdesc : 'KernelDescription',

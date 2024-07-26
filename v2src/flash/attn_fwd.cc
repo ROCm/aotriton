@@ -33,7 +33,8 @@ _attn_fwd_common(T4 q,
                  uint64_t philox_offset,
                  T4 encoded_softmax,
                  bool is_causal,
-                 aotriton::Stream stream_wrap) {
+                 aotriton::Stream stream_wrap,
+                 ExtraArguments* extargs) {
   hipError_t err;
   auto stream = stream_wrap.native();
   auto arch = getArchFromStream(stream);
@@ -54,6 +55,8 @@ _attn_fwd_common(T4 q,
     return grid;
   };
   int head_size = q.size(3);
+  int num_head_q = q.size(1);
+  int num_head_k = k.size(1);
   int head_dim_rounded = std::max<int>(16, aotriton::bit_ceil(head_size));
   int bias_type = 0;
   if (b) {
@@ -69,11 +72,13 @@ _attn_fwd_common(T4 q,
     .encoded_softmax = &encoded_softmax,
     .sm_scale = sm_scale,
     .M = &softmax_lse,
-    .cu_seqlens_q = &cu_seqlens_q,
-    .cu_seqlens_k = &cu_seqlens_k,
+    .num_head_q = num_head_q,
+    .num_head_k = num_head_k,
     .num_seqlens = num_seqlens,
     .max_seqlen_q = max_seqlen_q,
     .max_seqlen_k = max_seqlen_k,
+    .cu_seqlens_q = &cu_seqlens_q,
+    .cu_seqlens_k = &cu_seqlens_k,
     .head_dim = static_cast<int32_t>(head_size),
     .dropout_p = dropout_p,
     .philox_seed = philox_seed,
@@ -85,10 +90,21 @@ _attn_fwd_common(T4 q,
     .PADDED_HEAD = head_dim_rounded != head_size,
     .BIAS_TYPE = bias_type,
   };
+#if AOTRITON_BUILD_FOR_TUNING
+  if (extargs)
+    params._has_preferred_kernel = extargs->force_kernel_index;
+#endif
   AttnFwdContext context;
   context.grid_calculator = grid_calculator;
   // .grid_calculator = grid_calculator
   err = context.lookup_optimal(params, arch);
+#if AOTRITON_BUILD_FOR_TUNING
+  if (extargs) {
+    extargs->total_number_of_kernels = params._total_number_of_kernels;
+    extargs->selected_kernel_psels = params._preferred_kernel_psels;
+    extargs->selected_kernel_copts = params._preferred_kernel_copts;
+  }
+#endif
   if (err != hipSuccess) {
     return err;
   }
@@ -109,7 +125,8 @@ attn_fwd(T4 q,
          uint64_t philox_offset,
          T4 encoded_softmax,
          bool is_causal,
-         aotriton::Stream stream_wrap) {
+         aotriton::Stream stream_wrap,
+         ExtraArguments* extargs) {
   auto null_t1 = T1::get_null_tensor(DType::kInt32);
   return _attn_fwd_common(q,
                           k,
@@ -128,7 +145,8 @@ attn_fwd(T4 q,
                           philox_offset,
                           encoded_softmax,
                           is_causal,
-                          stream_wrap);
+                          stream_wrap,
+                          extargs);
 }
 
 hipError_t
@@ -148,7 +166,8 @@ attn_fwd_compact_varlen(T4 q,            // 1 x num_heads x total_q x head_size,
                         uint64_t philox_offset,
                         T4 encoded_softmax,
                         bool is_causal,
-                        aotriton::Stream stream_wrap) {
+                        aotriton::Stream stream_wrap,
+                        ExtraArguments* extargs) {
   return _attn_fwd_common(q,
                           k,
                           v,
@@ -166,7 +185,8 @@ attn_fwd_compact_varlen(T4 q,            // 1 x num_heads x total_q x head_size,
                           philox_offset,
                           encoded_softmax,
                           is_causal,
-                          stream_wrap);
+                          stream_wrap,
+                          extargs);
 }
 
 }

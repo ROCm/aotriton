@@ -71,6 +71,8 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
         print(f'{err_idx=}')
         print(f'{tri_out[err_idx]=}')
         print(f'{ref_out[err_idx]=}')
+        print(f'{tri_out[0, 0, :4, :4]=}')
+        print(f'{ref_out[0, 0, :4, :4]=}')
     assert is_allclose, 'Forward pass {is_allclose=}'
 
     dq_allclose, dk_allclose, dv_allclose, db_allclose = grads_allclose
@@ -207,6 +209,28 @@ def test_op_bwd_with_matrix_bias(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, sm_
     '''
     _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
 
+def main2():
+    # Memo: False-0.0-dtype0-0.0-False-4-256-8-4-1
+    # Memo: False-0.0-dtype0-0.0-False-4-256-8-1-4
+    # False-1.2-dtype0-0.0-False-4-4-72-1-4
+    # BATCH = 8
+    # D_HEAD = 32
+    # N_HEADS = 8
+    # seqlen_q = 16
+    # seqlen_k = 16
+    BATCH = 4
+    D_HEAD = 1
+    N_HEADS = 8
+    seqlen_q = 256
+    seqlen_k = 4
+    causal = False
+    sm_scale = 1.2
+    dropout_p = 0.0
+    dtype = torch.float16
+    storage_flip = False
+    bias_type = None
+    _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
+
 def main():
     BATCH = 1
     D_HEAD = 80
@@ -225,4 +249,4 @@ def main():
     _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
 
 if __name__ == '__main__':
-    main()
+    main2()

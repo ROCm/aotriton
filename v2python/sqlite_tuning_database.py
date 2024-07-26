@@ -99,7 +99,10 @@ class SQLiteKernelTuningDatabaseForArch(CommonKernelTuningDatabaseForArch):
         for row in selected_rows:
             yield self.craft_perf_selection(selected_columns, row, perf_meta)
 
-    def craft_perf_selection(self, columns, row, perf_meta: 'list[ArgumentSelection]'):
+    def craft_perf_selection(self,
+                             columns,
+                             row,
+                             perf_meta: 'list[ArgumentSelection]') -> 'list[TunedArgument], compiler_options':
         if row is None:  # default value when tuning db does not contain the kernel
             return [TunedArgument(meta, meta.default_value) for meta in perf_meta], None
         ps = self._row_to_dict(columns, row, prefix='tuned_kernel')

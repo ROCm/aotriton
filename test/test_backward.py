@@ -4,8 +4,15 @@
 
 import pytest
 import torch
+import os
 
-from attn_torch_function import attention
+from attn_torch_function import (
+    DEFAULT_PHILOX_SEED,
+    DEFAULT_PHILOX_OFFSET,
+    attention,
+    debug_fill_dropout_rng,
+    AttentionExtraArgs
+)
 from _common_test import SdpaContext, SdpaParams
 
 def _make_block_eyes(q, base=1.0, inc=0.0):
@@ -54,11 +61,13 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
                       bias_type=bias_type, storage_flip=transpose, device='cuda')
     ctx.create_ref_inputs()
     ctx.set_require_grads(skip_dq=SKIP_DQ, skip_dk_dv=SKIP_DK_DV, skip_db=SKIP_DB)
-    return_encoded_softmax = True
     q, k, v, b = ctx.dev_tensors
     # autotune = True
     # # triton implementation
-    tri_out, encoded_softmax, _ = attention(q, k, v, b, causal, sm_scale, dropout_p, return_encoded_softmax, USE_AUTOTUNE)
+    ext = AttentionExtraArgs(return_encoded_softmax=True,
+            autotune=False,
+            return_autotune=False)
+    tri_out, encoded_softmax, _ = attention(q, k, v, b, causal, sm_scale, dropout_p, ext)
     dropout_mask = encoded_softmax >= 0
     sdpa_params = SdpaParams(causal=causal, sm_scale=sm_scale, dropout_p=dropout_p, dropout_mask=dropout_mask)
     ref_out, _ = ctx.compute_ref_forward(sdpa_params)
@@ -211,6 +220,24 @@ def test_op_bwd_with_matrix_bias(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, sm_
     '''
     _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
 
+def main2():
+    # Memo: False-0.0-dtype0-0.0-False-4-256-8-4-1
+    # Memo: False-0.0-dtype0-0.0-False-4-256-8-1-4
+    # False-1.2-dtype0-0.0-False-4-4-72-1-4
+    BATCH = 8
+    D_HEAD = 32
+    N_HEADS = 8
+    seqlen_q = 16
+    seqlen_k = 16
+    causal = False
+
+    sm_scale = 1.2
+    dropout_p = 0.0
+    dtype = torch.float16
+    storage_flip = False
+    bias_type = None
+    _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
+
 def main():
     BATCH = 1
     D_HEAD = 80
@@ -231,4 +258,4 @@ def main():
     _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
 
 if __name__ == '__main__':
-    main()
+    main2()

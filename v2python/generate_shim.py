@@ -51,6 +51,7 @@ def parse():
     p.add_argument("--archive_only", action='store_true', help='Only generate archive library instead of shared library. No linking with dependencies.')
     p.add_argument("--enable_zstd", type=str, default=None, help="Use zstd to compress the compiled kernel")
     p.add_argument("--bare_mode", action='store_true', help="Instead of generating a proper Makefile, only generate a list of source files and leave the remaining tasks to cmake.")
+    p.add_argument("--build_for_tuning", action='store_true', help="Include all GPU kernels in the dispatcher for performance tuning.")
     p.add_argument("--verbose", action='store_true', help="Print debugging messages")
     args = p.parse_args()
     args._build_root = Path(args.build_dir)
@@ -281,7 +282,9 @@ class KernelShimGenerator(MakefileSegmentGenerator):
         # Autotune dispatcher
         self._autotune_path = Path(args.build_dir) / k.KERNEL_FAMILY / f'autotune.{k.SHIM_KERNEL_NAME}'
         self._autotune_path.mkdir(parents=True, exist_ok=True)
-        self._ktd = KernelTuningDatabase(SOURCE_PATH.parent / 'rules', k)
+        self._ktd = KernelTuningDatabase(SOURCE_PATH.parent / 'rules',
+                                         k,
+                                         build_for_tuning=self._args.build_for_tuning)
         self._objpaths = []
 
     @property
@@ -307,7 +310,6 @@ class KernelShimGenerator(MakefileSegmentGenerator):
         k = self._kdesc
         p = self._shim_path / f'gpu_kernel_image.{k.SHIM_KERNEL_NAME}'
         args = self._args
-        ktd = KernelTuningDatabase(SOURCE_PATH.parent / 'rules', k)
         debug_counter = 0
         for gpu, fsels, lut in k.gen_tuned_kernel_lut(self._ktd):
             # print(f'KernelShimGenerator.gen_children {fsels=}')
@@ -320,7 +322,7 @@ class KernelShimGenerator(MakefileSegmentGenerator):
 
         if self.is_bare:
             return
-        for o in k.gen_all_object_files(p, tuned_db=ktd, sancheck_fileexists=True):
+        for o in k.gen_all_object_files(p, tuned_db=self._ktd, sancheck_fileexists=True):
             yield ObjectShimCodeGenerator(self._args, k, o)
 
     def write_conclude(self):

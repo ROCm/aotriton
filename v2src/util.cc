@@ -30,6 +30,8 @@ private:
 std::unordered_map<std::string, GpuArch> LazyArch::string_to_arch = {
   {"gfx90a:sramecc+:xnack-", GPU_ARCH_AMD_GFX90A},
   {"gfx942:sramecc+:xnack-", GPU_ARCH_AMD_GFX942},
+  {"gfx1100", GPU_ARCH_AMD_GFX1100},
+  {"gfx1101", GPU_ARCH_AMD_GFX1101},
 };
 
 GpuArch

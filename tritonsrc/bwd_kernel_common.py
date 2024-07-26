@@ -151,8 +151,7 @@ def bwd_kernel_dk_dv_common(
             if BLOCK_M == 1:
                 dv += p.to(Q_block_ptr.dtype.element_ty) * do
             else:
-                # dv += tl.dot(tl.trans(p.to(do.dtype)), do)
-                dv += tl.dot(tl.trans(p).to(do.dtype), do)
+                dv += tl.dot(tl.trans(p.to(do.dtype)), do)
         dp = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
         # compute dp = dot(do, vt)
         # dp += dot(BLOCK_M, BLOCK_DMODEL, BLOCK_DMODEL, do, vt)
@@ -173,9 +172,7 @@ def bwd_kernel_dk_dv_common(
         DO_block_ptr = tl.advance(DO_block_ptr, (BLOCK_M, 0)) # Debug DO accessing problems
         if BIAS_TYPE == 1:
             B_block_ptr = tl.advance(B_block_ptr, (BLOCK_M, 0))
-    # initialize pointers to output
-    tl.store(DK_block_ptr, (dk * sm_scale).to(DK_block_ptr.type.element_ty), boundary_check=(0,1))
-    tl.store(DV_block_ptr, dv.to(DV_block_ptr.type.element_ty), boundary_check=(0,1))
+    return (dk * sm_scale).to(DK_block_ptr.type.element_ty), dv.to(DV_block_ptr.type.element_ty)
 
 @triton.jit
 def bwd_kernel_dq_db_common(
@@ -308,4 +305,5 @@ def bwd_kernel_dq_db_common(
         if BIAS_TYPE == 1:
             B_block_ptr = tl.advance(B_block_ptr, (0, BLOCK_N))
             DB_block_ptr = tl.advance(DB_block_ptr, (0, BLOCK_N))
-    tl.store(DQ_block_ptr, (dq * sm_scale).to(DQ_block_ptr.type.element_ty), boundary_check=(0,1))
+    return (dq * sm_scale).to(DQ_block_ptr.type.element_ty)
+    # tl.store(DQ_block_ptr, (dq * sm_scale).to(DQ_block_ptr.type.element_ty), boundary_check=(0,1))

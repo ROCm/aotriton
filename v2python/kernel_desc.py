@@ -12,7 +12,7 @@ from .kernel_argument import (
 )
 from .kernel_signature import KernelSignature
 from .object_desc import ObjectFileDescription
-from .gpu_targets import AOTRITON_SUPPORTED_GPUS
+from .gpu_targets import AOTRITON_SUPPORTED_GPUS, AOTRITON_GPU_WARPSIZE
 
 SOURCE_PATH = Path(__file__).resolve()
 
@@ -89,6 +89,16 @@ class KernelDescription(object):
         print(f"{self.TYPE_CHOICES=}")
         print(f"{self.FEAT_CHOICES=}")
 
+    def gen_patched_autotune_configs(self, gpu, fsel_dict):
+        if AOTRITON_GPU_WARPSIZE[gpu] == 64:
+            yield from self.gen_autotune_configs(fsel_dict)
+            return
+        for cfg in self.gen_autotune_configs(fsel_dict):
+            cfg.num_warps *= 2
+            if cfg.num_warps > 8:  # ignore super large block
+                continue
+            yield cfg
+
     def __init__(self, triton_kernel_name, triton_file_path):
         self.insert_tensor_strides_to_choices(last_is_continuous=True)
         self._DATA_ARGUMENTS = None
@@ -127,6 +137,11 @@ class KernelDescription(object):
                     break
             if is_type:
                 self.AUTOTUNE_KEYS_VALIDATED.append((key, self.AUTOTUNE_KEYS[key]))
+        '''
+        AUTOTUNE_KEYS sanity check, otherwise autotune code may be broken (already happened twice).
+        '''
+        for key in self.AUTOTUNE_KEYS:
+            assert key in self.ARGUMENTS, f'AUTOTUNE_KEYS "{key}" cannot be found in {self.__class__.__name__}.ARGUMENTS'
 
     @property
     def name(self):
@@ -155,6 +170,14 @@ class KernelDescription(object):
     def set_target_gpus(self, gpus):
         self._target_gpus = ['native'] if gpus is None else list(gpus)
 
+    def gen_perf_selections_from_kdesc(self,
+                                       gpu : str,
+                                       fsels : 'list[ArgumentSelection]'):
+        fsel_dict = ArgumentSelection.build_fsel_dict(fsels)
+        for cfg in self.gen_patched_autotune_configs(gpu, fsel_dict):
+            psels, compiler_options = cfg.translate_to_psel_and_co(self._perf_meta)
+            yield gpu, fsels, psels, compiler_options
+
     def gen_all_object_files(self,
                              outpath : Path,
                              # kernel_name : str = None,
@@ -163,17 +186,27 @@ class KernelDescription(object):
                              sancheck_fileexists = False) -> 'Iterator[ObjectFileDescription]':
         def gen():
             if tuned_db is None or tuned_db.empty:
-                yield from itertools.product(self._target_gpus,
-                                             self.gen_func_selections(),
-                                             self.gen_perf_selections(),
-                                             [None])
+                if not hasattr(self, 'gen_autotune_configs'):
+                    yield from itertools.product(self._target_gpus,
+                                                 self.gen_func_selections(),
+                                                 self.gen_perf_selections(),
+                                                 [None])
+                    return
+                for gpu, fsels in itertools.product(self._target_gpus,
+                                                    self.gen_func_selections()):
+                    yield from self.gen_perf_selections_from_kdesc(gpu, fsels)
             else:
                 for gpu, fsels in itertools.product(self._target_gpus,
                                                     self.gen_func_selections()):
                     yield from self.gen_tuned_perf_selections(tuned_db, gpu, fsels)
         debug_counter = 0
         for gpu, fsels, psels, compiler_options in gen():
-            sig = KernelSignature(self, fsels, psels, compiler_options, gpu)
+            try:
+                sig = KernelSignature(self, fsels, psels, compiler_options, gpu)
+            except:
+                print(f"{fsels=}")
+                print(f"{psels=}")
+                exit()
             yield self.build_object_file_description(outpath, sig, sancheck_fileexists=sancheck_fileexists)
             if False: # Debugging
                 debug_counter += 1

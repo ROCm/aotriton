@@ -101,9 +101,9 @@ class SdpaContext(object):
         q = torch.rand(*qdims, dtype=dtype, device=device)
         k = torch.rand(*kdims, dtype=dtype, device=device)
         v = torch.rand(*vdims, dtype=dtype, device=device)
-        if bias_type is None:
+        if bias_type is None or bias_type == 0:
             b = None
-        elif bias_type == 'matrix':
+        elif bias_type == 'matrix' or bias_type == 1:
             # b = torch.empty(bdims, dtype=dtype, device="cuda").normal_(mean=0., std=0.5)
             b = torch.rand(*bdims, dtype=dtype, device=device)
             b = b.expand(BATCH, N_HEADS, b.shape[0], b.shape[1])
@@ -149,7 +149,7 @@ class SdpaContext(object):
     def clone_tensor_tuple(in_tensors, dtype, device=None):
         return tuple([SdpaContext.clone_tensor(t, dtype=dtype, device=device) for t in in_tensors])
 
-    def create_ref_inputs(self):
+    def create_ref_inputs(self, target_gpu_device='cuda'):
         ref_device_option = os.getenv('AOTRITON_REF_DEVICE_OPTION', default='default')
         if ref_device_option == 'default':
             seqlen_k = self.seqlen_k
@@ -161,9 +161,9 @@ class SdpaContext(object):
             if seqlen_k == 587:
                 ref_device = 'cpu'
             else:
-                ref_device = 'cuda'
+                ref_device = target_gpu_device
         elif ref_device_option == 'cuda':
-            ref_device = 'cuda'
+            ref_device = target_gpu_device
         elif ref_device_option == 'cpu':
             ref_device = 'cpu'
         else:
@@ -257,8 +257,10 @@ class SdpaContext(object):
         max_adiff = float(torch.max(torch.abs(x - y)))
         return torch.allclose(x, y, atol=atol, rtol=rtol), max_adiff
 
-    def validate_with_reference(self, out, grads):
+    def validate_with_reference(self, out, grads, *, no_backward=False):
         out_allclose, out_adiff = self._validate(out, self.refout_tensors[0], self.lp_refout_tensors[0], self.OUT_FUDGE_FACTOR, 'out')
+        if no_backward:
+            return out_allclose, out_adiff, [], []
         grads_allclose = []
         grads_adiff = []
         for grad, ref, lp_ref, fudge_factor, tname in zip(grads, self.dref_tensors, self.lp_dref_tensors, self.fudge_factors, self.TENSOR_NAMES):
