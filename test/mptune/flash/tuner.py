@@ -2,14 +2,19 @@
 # Copyright © 2024 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-from tuner_common import MonadAction, MonadMessage, Monad, MonadService
-from tuner_worker import TunerWorker, TunerService
+from ..core import (
+    MonadAction,
+    MonadMessage,
+    Monad,
+    MonadService,
+    TunerService as BaseTunerService,
+)
 
-class FlashTunerWorker(TunerWorker):
+class TunerMonad(Monad):
     def service_factory():
         return FlashTunerService(self._args, self)
 
-class FlashTunerService(TunerService):
+class TunerService(BaseTunerService):
 
     def create_ctx_cache(self, tup):
         '''
@@ -76,15 +81,15 @@ class FlashTunerService(TunerService):
 
         if self._arch == 'gfx1100':
             if seqlen_q > 4096 and seqlen_k > 4096:
-                yield request.skip('Navi kernels triggers "MES failed to response msg=" kernel error when handling large inputs.')
+                yield request.make_skip('Navi kernels triggers "MES failed to response msg=" kernel error when handling large inputs.')
                 return
         if seqlen_q > 8192 and seqlen_k > 8192:
             N_HEADS = 1
         if causal and seqlen_q != seqlen_k:
-            yield request.skip('FA does not support accept casual=True when seqlen_q != seqlen_k.')
+            yield request.make_skip('FA does not support accept casual=True when seqlen_q != seqlen_k.')
             return
         if causal and bias_type != 0:
-            yield request.skip('FA does not support accept casual=True when bias_type != 0.')
+            yield request.make_skip('FA does not support accept casual=True when bias_type != 0.')
             return
         if a.dry_run:
             yield request.dry_run()

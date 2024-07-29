@@ -2,12 +2,8 @@
 # Copyright © 2024 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-from tuner_common import MonadAction, MonadMessage, Monad, MonadService
-import torch
-
-class TunerWorker(Monad):
-    def service_factory():
-        return TunerService(self._args, self)
+from ..core import MonadAction, MonadMessage, Monad, MonadService
+from abc import abstractmethod
 
 class TunerService(MonadService):
 
@@ -20,15 +16,16 @@ class TunerService(MonadService):
         self._cached_tup = None
 
     def process(self, request):
+        import torch
         if request.action == MonadAction.Exit:
             yield request
             return
         with torch.cuda.device(self._gpu):
             torch.manual_seed(20)
-            for kernel_name, perf_number, kig in from self.profile(request):
-                yield request.pass(kernel_name=kernel_name,
-                                   perf_number=perf_number,
-                                   kig_dic=kig)
+            for kernel_name, perf_number, kig in self.profile(request):
+                yield request.make_pass(kernel_name=kernel_name,
+                                        perf_number=perf_number,
+                                        kig_dic=kig)
 
     def cleanup(self):
         pass
@@ -43,4 +40,8 @@ class TunerService(MonadService):
 
     @abstractmethod
     def create_ctx_cache(self, tup):
+        pass
+
+    @abstractmethod
+    def profile(self, request):
         pass

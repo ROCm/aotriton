@@ -2,11 +2,8 @@
 # Copyright © 2024 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-from tuner_common import MonadAction, MonadMessage, Monad, MonadService
-
-class DbMonad(Monad):
-    def service_factory():
-        return DbAccessor(self._args, self)
+from ..core import MonadAction, MonadMessage, Monad, MonadService
+from abc import abstractmethod
 
 class DbService(MonadService):
     KERNEL_FAMILY = None

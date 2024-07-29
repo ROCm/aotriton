@@ -3,9 +3,17 @@
 # SPDX-License-Identifier: MIT
 
 import itertools
-from tuner_db_accessor import DbAccessor
+from abc import abstractmethod
 
 class TunerManager(ArgArchVerbose):
+
+    @abstractmethod
+    def factory_dbaccessor(self):
+        pass
+
+    @abstractmethod
+    def factory_worker(self, nth_worker : int, gpu_device : int):
+        pass
 
     def gen_itup(self):
         a = self._args
@@ -27,10 +35,10 @@ class TunerManager(ArgArchVerbose):
 
     def profile_all(self):
         a = self._args
-        dba = DbAccessor(a)
+        dba = self.factory_dbaccessor()
         if a.use_multigpu is None:
             dba.create_dbp(self.KERNEL_FAMILY)
-            worker = TunerWorker(a)
+            worker = self.factory_worker()
             worker.do_profile(dba, self.gen_itup)
             return
         shards = list([i for i in range(torch.cuda.device_count())]) if -1 in a.use_multigpu else a.use_multigpu

@@ -2,27 +2,13 @@
 # Copyright © 2024 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-from rocm_arch import rocm_get_gpuarch
+from .aav import ArgArchVerbose
 from abc import ABC, abstractmethod
 from enum import Enum
 from multiprocessing import Process, Queue
 import queue
 from collections import namedtuple
-from dataclasses import dataclass
 from copy import deepcopy
-
-class ArgArchVerbose(ABC):
-    def __init__(self, args):
-        self._args = args
-        self._arch = rocm_get_gpuarch()
-
-    @property
-    def verbose(self):
-        return self._args.verbose
-
-    def print(self, text):
-        if self.verbose:
-            print(text)
 
 MonadAction = Enum('MonadAction', ['Pass', 'Skip', 'DryRun', 'Exit', 'Exception'])
 
@@ -59,17 +45,17 @@ class MonadMessage(ABC):
     def set_source(self, source):
         self._source = source
 
-    def skip(self, reason=None) -> MonadMessage:
+    def make_skip(self, reason=None) -> 'MonadMessage':
         ret = MonadMessage(self.task_id, MonadAction.Skip)
         ret._skip_reason = reason
         return ret
 
-    def dry_run(self) -> MonadMessage:
+    def make_dryrun(self) -> 'MonadMessage':
         ret = deepcopy(self)
         ret._action = MonadAction.DryRun
         return ret
 
-    def pass(self, **kwargs) -> MonadMessage:
+    def make_pass(self, **kwargs) -> 'MonadMessage':
         ret = deepcopy(self)
         ret._action = MonadAction.Pass
         for k, v in kwargs:
@@ -121,7 +107,7 @@ class Monad(ArgArchVerbose):
     '''
     1-1 Protocol: assert to ensure only creating QP once
     '''
-    def bind_1to1(self, downstream : Monad):
+    def bind_1to1(self, downstream : 'Monad'):
         assert self._q_down is None
         assert downstream._q_up is None
         self._q_down = downstream._q_up = Queue()
@@ -131,7 +117,7 @@ class Monad(ArgArchVerbose):
     '''
     1-N Protocol: assert to ensure no overwriting
     '''
-    def bind_1toN(self, downstreams : Monad):
+    def bind_1toN(self, downstreams : 'Monad'):
         assert self._q_down is None
         q = Queue()
         q.cancel_join_thread()
@@ -144,7 +130,7 @@ class Monad(ArgArchVerbose):
     '''
     N-1 Protocol: reuse downstream QP
     '''
-    def bind_Nto1(self, downstream : Monad):
+    def bind_Nto1(self, downstream : 'Monad'):
         if downstream._q_up is None:
             downstream._q_up = Queue()
             downstream._q_up.cancel_join_thread()
@@ -239,14 +225,3 @@ class MonadService(ArgArchVerbose):
 
     def report_status(self, msg):
         self._monad.report_status(msg)
-
-# In case extargs.total_number_of_kernels never returns a positive number
-# Thus the number does not need to be too large since total_number_of_kernels
-# will eventually get updated by the output of extargs
-CPP_AUTOTUNE_MAX_KERNELS = 20
-
-@dataclass
-class KernelIndexProress:
-    kernel_index : int = 0
-    last_success_kernel : int = None
-    total_kernel: int = CPP_AUTOTUNE_MAX_KERNELS
