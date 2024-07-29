@@ -2,17 +2,21 @@
 # Copyright © 2024 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-from tuner_common import MonadAction, MonadMessage, Monad, MonadService
-from tuner_db_accessor import DbMonad, DbService
+from ..core import (
+    MonadAction,
+    MonadMessage,
+    Monad,
+    MonadService,
+    DbService as BaseDbService,
+)
 
-class FlashDbMonad(DbMonad):
+class DbMonad(Monad):
     def service_factory():
-        return FlshDbService(self._args, self)
+        return DbAccessor(self._args, self)
 
-class FlashDbService(DbService):
+class DbAccessor(BaseDbService):
     KERNEL_FAMILY = 'FLASH'
 
-    @abstractmethod
     def constrcut_inputs(self, request):
         tup = request.tup
         BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type = tup
@@ -33,7 +37,6 @@ class FlashDbService(DbService):
         }
         return inputs
 
-    @abstractmethod
     def analysis_result(self, request):
         return request.perf_number
 
