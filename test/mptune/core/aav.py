@@ -8,7 +8,7 @@ from abc import ABC
 class ArgArchVerbose(ABC):
     def __init__(self, args):
         self._args = args
-        self._arch = rocm_get_gpuarch()
+        self._arch = rocm_get_gpuarch() if args.arch is None else args.arch
 
     @property
     def verbose(self):

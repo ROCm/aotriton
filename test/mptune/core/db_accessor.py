@@ -4,11 +4,15 @@
 
 from ..core import MonadAction, MonadMessage, Monad, MonadService
 from abc import abstractmethod
+import subprocess
+import os
+import sys
+import json
 
 class DbService(MonadService):
     KERNEL_FAMILY = None
 
-    def init(self, init_object):
+    def init(self, _):
         a = self._args
         if a.json_file is not None and not a.dry_run:
             assert a.json_file != a.db_file
@@ -28,14 +32,21 @@ class DbService(MonadService):
         os.set_blocking(self._dbp.stderr.fileno(), False)
 
     def process(self, request):
+        if request.action == MonadAction.Exit:
+            yield request.forward(self.monad)
+            return
         inputs = self.constrcut_inputs(request)
         if request.action == MonadAction.Pass:
+            payload = request.payload
             autotune_result = self.analysis_result(request)
-            self.pipe_configs(request.kernel_name, inputs, autotune_result, _debug_task_id=request.task_id)
+            self.pipe_configs(payload.profiled_kernel_name,
+                              inputs,
+                              autotune_result,
+                              _debug_task_id=request.task_id)
         if request.action == MonadAction.Skip:
             self.pipe_skipped_configs(inputs, request.task_id)
         if request.action in [MonadAction.Skip, MonadAction.DryRun]:
-            self.report_status(request)
+            yield request.forward(self.monad)
 
     def cleanup(self):
         if self._jsonfile is not None:
@@ -109,6 +120,6 @@ class DbService(MonadService):
             'compiler_options' : atr.copts,
             'time' : atr.time,
             '_debug_kernel_index' : atr.kernel_index,
-            '_debug_total_kernel' : atr.total_kernel,
+            '_debug_total_number_of_kernels' : atr.total_number_of_kernels,
         }
         return tuning_result

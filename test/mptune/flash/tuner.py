@@ -9,10 +9,12 @@ from ..core import (
     MonadService,
     TunerService as BaseTunerService,
 )
+DEFAULT_PHILOX_SEED = 0x1BF52
+DEFAULT_PHILOX_OFFSET = 0x1D4B42
 
 class TunerMonad(Monad):
-    def service_factory():
-        return FlashTunerService(self._args, self)
+    def service_factory(self):
+        return TunerService(self._args, self)
 
 class TunerService(BaseTunerService):
 
@@ -22,10 +24,6 @@ class TunerService(BaseTunerService):
         '''
         import torch
         from _common_test import SdpaContext, SdpaParams
-        from attn_torch_function import (
-            DEFAULT_PHILOX_SEED,
-            DEFAULT_PHILOX_OFFSET,
-        )
         from aotriton_flash import (
             debug_fill_dropout_rng,
             hipError_t,
@@ -33,6 +31,7 @@ class TunerService(BaseTunerService):
 
         torch.cuda.empty_cache()
         BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type = tup
+        dtype = getattr(torch, dtype)
         philox_seed = DEFAULT_PHILOX_SEED
         philox_offset = DEFAULT_PHILOX_OFFSET
         '''
@@ -47,22 +46,19 @@ class TunerService(BaseTunerService):
             del r
         else:
             mask = None
+        sdpa_params = SdpaParams(causal=causal, sm_scale=sm_scale, dropout_p=dropout_p, dropout_mask=mask)
         ctx = SdpaContext(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, dtype,
                           bias_type=bias_type, storage_flip=None, device=self._gpu_device)
         ctx.create_ctx_tensors()
         ctx.create_bwd_tensors()
         ctx.create_ref_inputs(target_gpu_device=self._gpu_device)
         ctx.set_require_grads(skip_db=True if bias_type == 0 else False)
-        sdpa_params = SdpaParams(causal=causal, sm_scale=sm_scale, dropout_p=dropout_p, dropout_mask=mask)
         self._cached_ctx = ctx
-        self._cached_params
+        self._cached_params = sdpa_params
 
     def profile(self, request):
+        a = self._args
         import torch
-        from attn_torch_function import (
-            DEFAULT_PHILOX_SEED,
-            DEFAULT_PHILOX_OFFSET,
-        )
         from aotriton_flash import (
             attn_fwd,
             attn_bwd,
@@ -71,35 +67,39 @@ class TunerService(BaseTunerService):
             BwdExtraArguments,
             hipError_t,
         )
-        from cpp_autotune import cpp_autotune_gen
+        from ..core import cpp_autotune_gen, KernelOutput, AutotuneResult
 
-        tup = request.tup
+        payload = request.payload
+        tup = payload.tup
         tid = request.task_id
         BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type = tup
+        encoded_softmax = None
+        dtype = getattr(torch, dtype)
         philox_seed = DEFAULT_PHILOX_SEED
         philox_offset = DEFAULT_PHILOX_OFFSET
 
         if self._arch == 'gfx1100':
             if seqlen_q > 4096 and seqlen_k > 4096:
-                yield request.make_skip('Navi kernels triggers "MES failed to response msg=" kernel error when handling large inputs.')
+                yield request.make_skip(self.monad, 'Navi kernels triggers "MES failed to response msg=" kernel error when handling large inputs.')
                 return
         if seqlen_q > 8192 and seqlen_k > 8192:
             N_HEADS = 1
         if causal and seqlen_q != seqlen_k:
-            yield request.make_skip('FA does not support accept casual=True when seqlen_q != seqlen_k.')
+            yield request.make_skip(self.monad, 'FA does not support accept casual=True when seqlen_q != seqlen_k.')
             return
         if causal and bias_type != 0:
-            yield request.make_skip('FA does not support accept casual=True when bias_type != 0.')
+            yield request.make_skip(self.monad, 'FA does not support accept casual=True when bias_type != 0.')
             return
         if a.dry_run:
-            yield request.dry_run()
+            yield request.make_dryrun(self.monad)
             return
 
-        ctx = self.hit_cache(tup)
+        ctx, sdpa_params = self.hit_cache(tup)
 
         q, k, v, b = ctx.dev_tensors
         # TODO: unify with attn_torch_function
         o, M = ctx.ctx_tensors
+        L = M  # alias
 
         def fwd_sub_extarg_accessor(fwd_extargs : FwdExtraArguments, i):
             return fwd_extargs
@@ -119,12 +119,15 @@ class TunerService(BaseTunerService):
                                         output_tensors=None)]
             return 1, [KernelOutput(hip_status=ret, output_tensors=[o])]
 
+        # ref_out is kept in the ctx
+        ref_out, _ = ctx.compute_ref_forward(sdpa_params)
+        # print(f'{payload.kig_dict=}')
         yield from cpp_autotune_gen(FwdExtraArguments,
                                     fwd_sub_extarg_accessor,
                                     ['attn_fwd'],
                                     fwd_func,
                                     [self.fwd_validator],
-                                    kernel_index_progress=request.kernel_index_progress)
+                                    kernel_index_progress_dict=payload.kig_dict)
 
         dq, dk, dv, db, delta = ctx.bwd_tensors
         dout = torch.randn_like(q)
@@ -137,7 +140,7 @@ class TunerService(BaseTunerService):
                 dq.fill_(float('nan'))
                 if db is not None:
                     db.fill_(float('nan'))
-            args = (q, k, v, b, sm_scale, o, do, dq, dk, dv, db, L, delta,
+            args = (q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
                     dropout_p, philox_seed, philox_offset, causal,
                     extargs.capi_object)
             try:
@@ -159,7 +162,7 @@ class TunerService(BaseTunerService):
                                     ['bwd_kernel_dk_dv', 'bwd_kernel_dq'],
                                     bwd_func,
                                     bwd_validators,
-                                    kernel_index_progress_dict=request.kig_dict)
+                                    kernel_index_progress_dict=payload.kig_dict)
 
     def fwd_validator(self, kernel_outputs : 'List[KernelOutput]'):
         tri_out, = kernel_outputs[0].output_tensors
