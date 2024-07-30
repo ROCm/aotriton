@@ -13,4 +13,11 @@ CPP_AUTOTUNE_MAX_KERNELS = 20
 class KernelIndexProress:
     kernel_index : int = 0
     last_success_kernel : int = None
-    total_kernel: int = CPP_AUTOTUNE_MAX_KERNELS
+    total_number_of_kernels: int = CPP_AUTOTUNE_MAX_KERNELS
+
+@dataclass
+class TuningResult:
+    tup: tuple
+    profiled_kernel_name: str = None
+    perf_number: list = None
+    kig_dict : dict[str, KernelIndexProress] = None

@@ -2,9 +2,12 @@ from collections import namedtuple
 from aotriton_flash import hipError_t, CppTuneSpecialKernelIndex
 import json
 import sys
+import os
 import math
 from copy import deepcopy
-from tuner_common import CPP_AUTOTUNE_MAX_KERNELS
+from .datatypes import CPP_AUTOTUNE_MAX_KERNELS
+
+CPPTUNE_DEBUG_FEW_KERNELS = int(os.getenv('CPPTUNE_DEBUG_FEW_KERNELS', default=-1))
 
 def do_bench(fn, *, warmup=25, rep=100,
              grad_to_none=None,
@@ -42,7 +45,7 @@ def do_bench(fn, *, warmup=25, rep=100,
             return float('inf'), ko.hip_status
     torch.cuda.synchronize()
     valret = validator(outs)
-    print(f'{valret=} {outs[0].hip_status=}', flush=True)
+    # print(f'{valret=} {outs[0].hip_status=}', flush=True)
     if not valret:
         # assert False
         return float('inf'), outs[0].hip_status
@@ -101,7 +104,7 @@ def do_bench(fn, *, warmup=25, rep=100,
     return getattr(torch, return_mode)(times).item(), hipError_t.hipSuccess
 
 KernelOutput = namedtuple('KernelOutput', ['hip_status', 'output_tensors'])
-AutotuneResult = namedtuple('AutotuneResult', ['kernel_index', 'total_kernel', 'time', 'psels', 'copts'])
+AutotuneResult = namedtuple('AutotuneResult', ['hip_status', 'kernel_index', 'total_number_of_kernels', 'time', 'psels', 'copts'])
 
 class CppTuneWapper(object):
     def __init__(self, factory, sub_accessor=None):
@@ -206,8 +209,9 @@ def cpp_autotune_sub_kernel(extargs, kernel_func, validator, *, tqdm_bar=None, t
             #     print(f'{extargs._extargs.dkdv.selected_kernel_psels=}')
             #     print(f'{extargs._extargs.dqdb.force_kernel_index=}')
             #     print(f'{extargs._extargs.dqdb.selected_kernel_psels=}')
-            r = AutotuneResult(kernel_index=kernel_index,
-                               total_kernel=total_number_of_kernels,
+            r = AutotuneResult(hip_status=hip_status,
+                               kernel_index=kernel_index,
+                               total_number_of_kernels=total_number_of_kernels,
                                time=t,
                                psels=json.loads(extargs.selected_kernel_psels),
                                copts=json.loads(extargs.selected_kernel_copts))
@@ -283,13 +287,16 @@ def cpp_autotune_sub_kernel_gen(extargs, kernel_func, validator, cur_kig):
         '''
         if extargs.total_number_of_kernels > 0:
             cur_kig.total_number_of_kernels = extargs.total_number_of_kernels
-        if hip_status==hipError_t.hipSuccess:
+            # !!!!!!!!!!!!!!!!!!! DEBUG !!!!!!!!!!!!!!!!!!!!!!!!!!
+            if CPPTUNE_DEBUG_FEW_KERNELS > 0:
+                cur_kig.total_number_of_kernels = min(CPPTUNE_DEBUG_FEW_KERNELS, extargs.total_number_of_kernels)
+        if hip_status == hipError_t.hipSuccess:
             cur_kig.last_success_kernel = extargs.force_kernel_index
         def safeload(s):
             return json.loads(s) if s else None
         yield AutotuneResult(hip_status=hip_status,
                              kernel_index=cur_kig.kernel_index,
-                             total_kernel=cur_kig.total_kernel,
+                             total_number_of_kernels=cur_kig.total_number_of_kernels,
                              time=t,
                              psels=safeload(extargs.selected_kernel_psels),
                              copts=safeload(extargs.selected_kernel_copts))

@@ -4,17 +4,29 @@
 
 import itertools
 from abc import abstractmethod
+from multiprocessing.connection import wait as wait_sentinels
+from .aav import ArgArchVerbose
+from .monad import Monad
 
 class TunerManager(ArgArchVerbose):
 
     @abstractmethod
-    def factory_dbaccessor(self):
+    def factory_state_tracker(self) -> Monad:
         pass
 
     @abstractmethod
-    def factory_worker(self, nth_worker : int, gpu_device : int):
+    def factory_source(self, side_channel) -> Monad:
         pass
 
+    @abstractmethod
+    def factory_dbaccessor(self, side_channel) -> Monad:
+        pass
+
+    @abstractmethod
+    def factory_worker(self, nth_worker : int, gpu_device : int, side_channel) -> Monad:
+        pass
+
+    '''
     def gen_itup(self):
         a = self._args
         skip_set = set()
@@ -32,7 +44,73 @@ class TunerManager(ArgArchVerbose):
             if a.stop_at is not None and i > a.stop_at:
                 break
             yield i, tup
+    '''
 
+    def build_graph(self):
+        a = self._args
+        state_tracker = self.factory_state_tracker()
+        side_channel = state_tracker.get_side_channel_input()
+        src = self.factory_source(side_channel=side_channel)
+        dba = self.factory_dbaccessor(side_channel=side_channel)
+        self._torch_gpus = a.use_multigpu
+        workers = [self.factory_worker(i, gpu_device, side_channel=side_channel) for i, gpu_device in enumerate(self._torch_gpus)]
+        src.bind_1toN(workers)
+        for worker in workers:
+            worker.bind_Nto1(dba)
+
+        self._all_monads = [state_tracker, src, dba] + workers
+        self._state_tracker = state_tracker
+        self._src = src
+        self._dba = dba
+        self._workers = workers
+        self._state_tracker.set_monads_to_track([src, dba] + workers)
+
+    def launch_graph(self):
+        a = self._args
+        self._state_tracker.start()
+        self._dba.start()
+        # torch_gpus = a.use_multigpu
+        # ngpus = len(torch_gpus)
+        # [worker.start((gpu, ngpus)) for worker, gpu in zip(self._workers, self._torch_gpus)]
+        self._src.start()
+        # Workers will get their init objects from _src
+        [worker.start() for worker in self._workers]
+        for m in self._all_monads:
+            print(f"{m.identifier=} {m.sentinel=}")
+        self._sentinel_to_monad = { monad.sentinel : monad for monad in self._all_monads }
+
+    def monitor(self):
+        success_monads = set()
+        while True:
+            alive_sentinels = []
+            for monad in self._all_monads:
+                if monad in success_monads:
+                    continue
+                alive_sentinels.append(monad.sentinel)
+            print(f'{alive_sentinels=}')
+            failures = wait_sentinels(alive_sentinels)
+            print(f'{failures=}')
+            monads = [self._sentinel_to_monad[sentinel] for sentinel in failures]
+            failed_monad_ids = [monad.identifier for monad in monads]
+            print(f'Monitor: {failed_monad_ids=}')
+            # Exiting of state_tracker indicates all tasks are done
+            if self._state_tracker in monads:
+                return
+            # Otherwise restart all faulty processes
+            for monad in monads:
+                if monad.exitcode != 0:
+                    prog = self._state_tracker.ask_for_last_message(monad)
+                    nextone = self._src.next_kernel(prog)
+                    monad.restart_with_last_progress(nextone)
+                else:
+                    monad.join()
+                    # TODO: who should notify the state tracker? The
+                    #       exiting monad or the observing manager.
+                    #       (For now the exiting monad is used)
+                    # self._state_tracker.confirm_exit(monad)
+                    success_monads.add(monad)
+
+    """
     def profile_all(self):
         a = self._args
         dba = self.factory_dbaccessor()
@@ -73,7 +151,8 @@ class TunerManager(ArgArchVerbose):
             self.write_to_ipc(ipc_write, IPCTunerWorker.END_OF_QUEUE_OBJECT, workers)
             self.print(f"write_to_ipc {IPCTunerWorker.END_OF_QUEUE_OBJECT}")
         ipc_write.close()
-        """
+
+        '''
         while nlive_processes > 0:
             try:
                 inputs, best_configs = ipc_worker_out.get(timeout=30)
@@ -88,7 +167,8 @@ class TunerManager(ArgArchVerbose):
             except queue.Empty:
                 print("Timed out. Re-scan live processes")
                 # "watchdog"
-        """
+        '''
+
         for p in workers:
             p.join()
         ipc_write.close()
@@ -100,7 +180,9 @@ class TunerManager(ArgArchVerbose):
         # Otherwise current process may block if any child died
         ipc_write.cancel_join_thread()
         ipc_worker_out.cancel_join_thread()
+    """
 
+    '''
     def write_to_ipc(self, ipc_write, obj, workers):
         while True:
             try:
@@ -113,9 +195,12 @@ class TunerManager(ArgArchVerbose):
                 if nlive_processes == 0:
                     print("PANIC: All Processes Died")
                     return False
+    '''
 
+    """
     def scan_live_processes(self, workers):
         nlive_processes = 0
         for i, p in enumerate(workers):
             nlive_processes += 1 if p.is_alive() else 0
         return nlive_processes
+    """

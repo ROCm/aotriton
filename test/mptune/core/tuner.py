@@ -20,12 +20,18 @@ class TunerService(MonadService):
         if request.action == MonadAction.Exit:
             yield request
             return
+        print(f'Worker receive {request}')
         with torch.cuda.device(self._gpu):
             torch.manual_seed(20)
+            item = 0
             for kernel_name, perf_number, kig in self.profile(request):
-                yield request.make_pass(kernel_name=kernel_name,
-                                        perf_number=perf_number,
-                                        kig_dic=kig)
+                yield request.forward(self.monad).update_payload(profiled_kernel_name=kernel_name,
+                                                                 perf_number=perf_number,
+                                                                 kig_dict=kig)
+                # print(f'Worker yield {kig=}')
+                print(f'Worker yield {item=}')
+                item += 1
+        print(f'Worker complete {request}')
 
     def cleanup(self):
         pass

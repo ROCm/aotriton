@@ -11,14 +11,15 @@ from ..core import (
 )
 
 class DbMonad(Monad):
-    def service_factory():
+    def service_factory(self):
         return DbAccessor(self._args, self)
 
 class DbAccessor(BaseDbService):
     KERNEL_FAMILY = 'FLASH'
 
     def constrcut_inputs(self, request):
-        tup = request.tup
+        payload = request.payload
+        tup = payload.tup
         BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type = tup
         head_dim_rounded = 2 ** (D_HEAD - 1).bit_length()
         head_dim_rounded = max(16, head_dim_rounded)
@@ -38,5 +39,4 @@ class DbAccessor(BaseDbService):
         return inputs
 
     def analysis_result(self, request):
-        return request.perf_number
-
+        return request.payload.perf_number
