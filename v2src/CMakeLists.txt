@@ -42,6 +42,9 @@ add_dependencies(aotriton_v2_compile aotriton_v2_gen_compile)
 set(AOTRITON_SHIM_FLAGS "")
 if(AOTRITON_NO_SHARED)
     list(APPEND AOTRITON_SHIM_FLAGS "--archive_only" "${AOTRITON_SHIM_FLAGS}")
+    set(AOTRITON_LIBRARY_FILE libaotriton_v2.a)
+else(AOTRITON_NO_SHARED)
+    set(AOTRITON_LIBRARY_FILE libaotriton_v2.so)
 endif(AOTRITON_NO_SHARED)
 if(AOTRITON_ZSTD_INCLUDE)
     list(APPEND AOTRITON_SHIM_FLAGS "--enable_zstd" "${AOTRITON_ZSTD_INCLUDE}")
@@ -62,7 +65,7 @@ add_custom_target(aotriton_v2
   ALL
   COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} PATH="${VENV_DIR}/bin:$ENV{PATH}" make -j ${MAX_JOBS} -f Makefile.shim HIPCC=${AOTRITON_HIPCC_PATH} AR=${CMAKE_AR} EXTRA_COMPILER_OPTIONS=${AOTRITON_EXTRA_COMPILER_OPTIONS}
   WORKING_DIRECTORY "${AOTRITON_V2_BUILD_DIR}"
-  BYPRODUCTS "${AOTRITON_V2_BUILD_DIR}/libaotriton_v2.a"
+  BYPRODUCTS "${AOTRITON_V2_BUILD_DIR}/${AOTRITON_LIBRARY_FILE}"
 )
 add_dependencies(aotriton_v2 aotriton_v2_gen_shim)
 
@@ -74,12 +77,12 @@ install(DIRECTORY "${CMAKE_SOURCE_DIR}/include/aotriton" DESTINATION ${CMAKE_INS
 #    but it will not be installed because .a is what you should use to avoid setting
 #    search paths for shared libraries
 # 2. The archive library will be installed into the hardcode lib/ directory, to avoid Debian vs RHEL divergence.
-install(FILES "${AOTRITON_V2_BUILD_DIR}/libaotriton_v2.a" DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)
+install(FILES "${AOTRITON_V2_BUILD_DIR}/${AOTRITON_LIBRARY_FILE}" DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)
 
 # Python binding only available for AOTriton V2 API
 add_library(aotriton INTERFACE)
 add_dependencies(aotriton aotriton_v2)
-# target_link_libraries(aotriton INTERFACE ${CMAKE_INSTALL_PREFIX}/lib/libaotriton_v2.a)
+# target_link_libraries(aotriton INTERFACE ${CMAKE_INSTALL_PREFIX}/lib/${AOTRITON_LIBRARY_FILE})
 # target_include_directories(aotriton INTERFACE ${CMAKE_INSTALL_PREFIX}/include)
-target_link_libraries(aotriton INTERFACE ${AOTRITON_V2_BUILD_DIR}/libaotriton_v2.a)
+target_link_libraries(aotriton INTERFACE ${AOTRITON_V2_BUILD_DIR}/${AOTRITON_LIBRARY_FILE})
 target_include_directories(aotriton INTERFACE ${CMAKE_SOURCE_DIR}/include)
