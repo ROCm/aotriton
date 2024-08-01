@@ -5,6 +5,7 @@
 from abc import ABC, abstractmethod
 from enum import Enum
 from copy import deepcopy
+from argparse import Namespace
 
 MonadAction = Enum('MonadAction', ['Pass',
     'Skip',
@@ -12,6 +13,7 @@ MonadAction = Enum('MonadAction', ['Pass',
     'Exit',
     'Exception',
     'OOB_Init',
+    'OOB_Died',
     'OOB_RequestStatus',  # OOB means side channel communication only
     'OOB_AckRecv',
 ])
@@ -59,6 +61,8 @@ class MonadMessage(ABC):
         return self
 
     def update_payload(self, **kwargs):
+        if self._payload is None:
+            self._payload = Namespace()
         for k, v in kwargs.items():
             setattr(self._payload, k, v)
         return self
@@ -89,6 +93,13 @@ class MonadMessage(ABC):
     def forward(self, monad) -> 'MonadMessage':
         ret = deepcopy(self).set_source(monad.identifier)
         return ret
+
+    def clone(self) -> 'MonadMessage':
+        return deepcopy(self)
+
+    def set_action(self, action):
+        self._action = action
+        return self
 
 # class QueuePair(object):
 # 

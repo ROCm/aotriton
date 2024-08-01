@@ -318,7 +318,8 @@ def cpp_autotune_gen(extarg_factory, sub_extarg_accessor,
         for i in range(num_of_subkernels):
             sub_extarg_accessor(extargs_with_subs.capi_object, i).force_kernel_index = CppTuneSpecialKernelIndex.kSkipGPUCall
     all_ret = []
-    kig_dict = deepcopy(kernel_index_progress_dict)
+    # kig_dict = deepcopy(kernel_index_progress_dict)
+    kig_dict = kernel_index_progress_dict  # Otherwise kernel progress are local to this function
     for sub_index, cur_name, cur_validator in zip(range(num_of_subkernels), subkernel_names, validators):
         # print(f'Tuning sub {cur_name}')
         reset_kernel_index_to_skip()

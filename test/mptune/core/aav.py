@@ -4,6 +4,7 @@
 
 from .rocm_arch import rocm_get_gpuarch
 from abc import ABC
+import sys
 
 class ArgArchVerbose(ABC):
     def __init__(self, args):
@@ -16,5 +17,4 @@ class ArgArchVerbose(ABC):
 
     def print(self, text):
         if self.verbose:
-            print(text)
-
+            print(text, flush=True)
