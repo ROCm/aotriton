@@ -42,6 +42,7 @@ class StateTrackerService(MonadService):
 
     def init(self, init_object):
         self._progress_tracker = {}
+        self._task_confirmation = {}
         self._alive_monads = set(init_object)
         pass
 
@@ -54,11 +55,19 @@ class StateTrackerService(MonadService):
             return
         if request.action == MonadAction.OOB_RequestStatus:
             print(f'Requesting Status {request.source=}')
-            self.monad._q_resume.put(self._progress_tracker[request.source])
+            progress = self._progress_tracker[request.source]
+            if progress.task_id in self._task_confirmation:
+                self.monad._q_resume.put(self._task_confirmation[progress.task_id] \
+                                             .clone() \
+                                             .set_source(request.source))
+            else:
+                self.monad._q_resume.put(progress)
             return
         if request.action == MonadAction.OOB_AckRecv:
             self._progress_tracker[request.source] = request
-            # print(f'Update {request.source=} to {request}')
+            if request.task_id is not None and request.source == 'dbaccessor':
+                self._task_confirmation[request.task_id] = request
+            self.print(f'Update _progress_tracker[{request.source=}] to {request}')
             return
         if request.action == MonadAction.Exit:
             self.print(f"before {self._alive_monads=} {request.source=}")
