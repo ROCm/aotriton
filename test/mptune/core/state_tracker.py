@@ -54,7 +54,7 @@ class StateTrackerService(MonadService):
             return
         if request.action == MonadAction.OOB_RequestStatus:
             print(f'Requesting Status {request.source=}')
-            self._q_resume.put(self._progress_tracker[request.source])
+            self.monad._q_resume.put(self._progress_tracker[request.source])
             return
         if request.action == MonadAction.OOB_AckRecv:
             self._progress_tracker[request.source] = request

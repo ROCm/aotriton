@@ -15,6 +15,7 @@ import subprocess
 from threading import Thread
 import multiprocessing
 from multiprocessing import Process
+from collections import defaultdict
 import argparse
 import time
 import math
@@ -59,7 +60,7 @@ class FlashSourceMonad(Monad):
 
     def next_index(self, kig: KernelIndexProress) -> bool:
         if kig.kernel_index >= kig.total_number_of_kernels:
-            return false
+            return False
         kig.kernel_index += 1
         return True
 
@@ -71,16 +72,53 @@ class FlashTunerSource(MonadService):
     def init(self, _):
         pass
 
+    def update_continue_dict(self, j, cd):
+        kn = j['kernel_name']
+        kig = j['_debug_kernel_index']
+        kit = j['_debug_total_number_of_kernels']
+        task_id = j['_debug_task_id']
+        if task_id not in cd:
+            cd[task_id] = TuningResult(tup=None, kig_dict=self.create_kig_dict())
+        # print(f'{cd=}', flush=True)
+        # print(f'{cd[task_id]=}', flush=True)
+        kig_dict = cd[task_id].kig_dict
+        target = kig_dict[kn]
+        target.kernel_index = max(target.kernel_index, kig)
+        target.total_number_of_kernels = kit
+        # if task_id == 0:
+        #     self.print(f'update cd[0] to {cd[0]} {kn=}')
+        all_complete = True
+        for kn in KERNEL_PRECEDENCE:
+            if kig_dict[kn].kernel_index + 1 < kig_dict[kn].total_number_of_kernels:
+                all_complete = False
+                cd[task_id].profiled_kernel_name = kn
+                # if task_id == 0:
+                #     self.print(f'Kernel {kn} incomplete: {kig_dict[kn].kernel_index + 1=} not < {kig_dict[kn].total_number_of_kernels=}')
+                break
+        if all_complete:
+            # if task_id == 0:
+            #     self.print(f'task 0 complete')
+            del cd[task_id]
+            return task_id
+        return None
+
     def process(self, _):
         a = self._args
         skip_set = set()
+        continue_dict = {}
         if a.continue_from_json_file and a.json_file is not None and a.json_file.is_file():
-            # assert False, 'Implement new skipset algorithm!'
             # TODO: skipset
             with open(a.json_file, 'r') as f:
                 for line in f.readlines():
                     j = json.loads(line)
-                    skip_set.add(j['_debug_task_id'])
+                    task_id = j['_debug_task_id']
+                    if task_id in skip_set:
+                        continue
+                    skip = self.update_continue_dict(j, continue_dict)
+                    if skip is not None:  # Must test is None, otherwise skip=False when task_id=0
+                        skip_set.add(skip)
+        self.print(f'{skip_set=}')
+        self.print(f'{continue_dict=}')
 
         for i, tup in enumerate(self.gen()):
             self.print(f"[{i:06d}] gen_itup {tup}")
@@ -90,7 +128,20 @@ class FlashTunerSource(MonadService):
                 continue
             if a.stop_at is not None and i > a.stop_at:
                 break
-            payload = TuningResult(tup=tup, kig_dict=self.create_kig_dict())
+            kig_dict = self.create_kig_dict()
+            if i in continue_dict:
+                known_kig_dict = continue_dict[i].kig_dict
+                for kn in KERNEL_PRECEDENCE:
+                    # print(f'{kig_dict=}')
+                    # print(f'{kig_dict[kn]=}')
+                    # print(f'{kig_dict[kn].kernel_index=}')
+                    # print(f'{known_kig_dict=}')
+                    # print(f'{known_kig_dict[kn]=}')
+                    # print(f'{known_kig_dict[kn].kernel_index=}', flush=True)
+                    kig_dict[kn].kernel_index = known_kig_dict[kn].kernel_index
+                    kig_dict[kn].last_success_kernel = known_kig_dict[kn].kernel_index
+                    kig_dict[kn].total_number_of_kernels = known_kig_dict[kn].total_number_of_kernels
+            payload = TuningResult(tup=tup, kig_dict=kig_dict)
             yield MonadMessage(task_id=i, action=MonadAction.Pass, source='source', payload=payload)
         self.print(f"gen_itup Exit")
         # Note: main_loop should handle Exit after forwarding all
@@ -137,7 +188,12 @@ def make_ui(manager : TunerManager):
     src = manager._src
     workers = manager._workers
     dbaccessor = manager._dba
-    app = mptune.tui.TunerApp(args=manager._args, info_queue=info_queue, src=src, workers=workers, dbaccessor=dbaccessor)
+    app = mptune.tui.TunerApp(args=manager._args,
+                              watchdog=manager.run_watchdog,
+                              info_queue=info_queue,
+                              src=src,
+                              workers=workers,
+                              dbaccessor=dbaccessor)
     return app
 
 def parse():
@@ -201,10 +257,10 @@ def main():
     tuner.build_graph()
     app = make_ui(tuner)
     tuner.launch_graph()
-    monitor_thread = Thread(target=tuner.monitor)
-    monitor_thread.start()
-    app.run()
-    monitor_thread.join()
+    # monitor_thread = Thread(target=tuner.monitor)
+    # monitor_thread.start()
+    app.run(mouse=False)
+    # monitor_thread.join()
 
 if __name__ == '__main__':
     main()

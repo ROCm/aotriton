@@ -83,9 +83,17 @@ class Monad(ArgArchVerbose):
     '''
     def restart_with_last_progress(self, continue_from):
         self._process.join()
+        self._process.close()
         def restart():
+            self.print(f'Restart {self.identifier} with continue_from = {continue_from}')
             self._process = Process(target=self.main, args=(self._q_up, self._q_down, continue_from))
             self._process.start()
+        if self._side_channel:
+            self._side_channel.put(MonadMessage(task_id=None,
+                                                payload=continue_from,
+                                                action=MonadAction.OOB_Restart,
+                                                source=self.identifier,
+                                                ))
         t = Timer(10.0, restart)
         t.start()
 

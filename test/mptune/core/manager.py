@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: MIT
 
 import itertools
+import time
 from abc import abstractmethod
 from multiprocessing.connection import wait as wait_sentinels
 from .aav import ArgArchVerbose
@@ -84,23 +85,91 @@ class TunerManager(ArgArchVerbose):
         for m in self._all_monads:
             self.print(f"{m.identifier=} {m.sentinel=}")
         self._sentinel_to_monad = { monad.sentinel : monad for monad in self._all_monads }
+        self._success_monads = set()
 
+    def pulling_sentinels(self, alive_monads):
+        ret = []
+        restarting = []
+        self.print(f'monitor time.sleep returns')
+        for monad in alive_monads:
+            try:
+                if monad.exitcode is not None:
+                    ret.append(monad)
+            except ValueError:
+                restarting.append(monad)
+        # exitcodes = [monad.exitcode for monad in alive_monads]
+        # self.print(f'{exitcodes=}')
+        return ret, restarting
+
+    def run_watchdog(self):
+        alive_sentinels = []
+        alive_monads = []
+        for monad in self._all_monads:
+            if monad in self._success_monads:
+                continue
+            # alive_sentinels.append(monad.sentinel)
+            alive_monads.append(monad)
+        self.print(f'monitor {alive_sentinels=}')
+        try:
+            # failures = wait_sentinels(alive_sentinels, timeout=0.1)
+            failures, restarting = self.pulling_sentinels(alive_monads)
+            self.print(f'monitor wait_sentinels {failures=}')
+        except Exception as e:
+            self.print(f'monitor wait_sentinels timeout or Exception {e}')
+            return
+        if not failures:
+            return
+        # monads = [self._sentinel_to_monad[sentinel] for sentinel in failures]
+        monads = failures
+        failed_monad_ids = [monad.identifier for monad in monads]
+        self.print(f'watchdog: {failed_monad_ids=}')
+        # Exiting of state_tracker indicates all tasks are done
+        if self._state_tracker in monads:
+            self.print(f'Monitor exits')
+            return
+        # Otherwise restart all faulty processes
+        for monad in monads:
+            if monad.exitcode != 0:
+                print(f'{monad.identifier} exit with code {monad.exitcode}', flush=True)
+                prog = self._state_tracker.ask_for_last_message(monad)
+                self._state_tracker.update_ui(prog.clone().set_action(MonadAction.OOB_Died).update_payload(exitcode=monad.exitcode))
+                if monad.identifier.startswith('worker_'):
+                    nextone = self._src.next_kernel(prog)
+                    monad.restart_with_last_progress(nextone)
+            else:
+                monad.join()
+                # TODO: who should notify the state tracker? The
+                #       exiting monad or the observing manager.
+                #       (For now the exiting monad is used)
+                # self._state_tracker.confirm_exit(monad)
+                self._success_monads.add(monad)
+
+    '''
     def monitor(self):
-        success_monads = set()
         while True:
             alive_sentinels = []
+            alive_monads = []
             for monad in self._all_monads:
-                if monad in success_monads:
+                if monad in self._success_monads:
                     continue
                 alive_sentinels.append(monad.sentinel)
-            self.print(f'{alive_sentinels=}')
-            failures = wait_sentinels(alive_sentinels)
-            self.print(f'{failures=}')
+                alive_monads.append(monad)
+            self.print(f'monitor {alive_sentinels=}')
+            try:
+                # failures = wait_sentinels(alive_sentinels, timeout=0.1)
+                failures = self.pulling_sentinels(alive_monads)
+                self.print(f'monitor wait_sentinels {failures=}')
+            except Exception as e:
+                self.print(f'monitor wait_sentinels timeout or Exception {e}')
+                continue
+            if not failures:
+                continue
             monads = [self._sentinel_to_monad[sentinel] for sentinel in failures]
             failed_monad_ids = [monad.identifier for monad in monads]
             self.print(f'Monitor: {failed_monad_ids=}')
             # Exiting of state_tracker indicates all tasks are done
             if self._state_tracker in monads:
+                self.print(f'Monitor exits')
                 return
             # Otherwise restart all faulty processes
             for monad in monads:
@@ -118,98 +187,4 @@ class TunerManager(ArgArchVerbose):
                     #       (For now the exiting monad is used)
                     # self._state_tracker.confirm_exit(monad)
                     success_monads.add(monad)
-
-    """
-    def profile_all(self):
-        a = self._args
-        dba = self.factory_dbaccessor()
-        if a.use_multigpu is None:
-            dba.create_dbp(self.KERNEL_FAMILY)
-            worker = self.factory_worker()
-            worker.do_profile(dba, self.gen_itup)
-            return
-        shards = list([i for i in range(torch.cuda.device_count())]) if -1 in a.use_multigpu else a.use_multigpu
-        ipc_write = Queue()
-        ipc_worker_out = Queue()
-        ipc_tuners = [IPCTunerWorker(self._args) for i in shards]
-        workers = [Process(target=worker.do_profile, args=(ipc_write, ipc_worker_out)) for worker in ipc_tuners]
-        db_accessor = Process(target=dba.pipe_from_ipc, args=(ipc_worker_out,))
-
-        '''
-        Start processes
-        '''
-        nlive_processes = len(workers)
-        for shard, p in zip(shards, workers):
-            ipc_write.put((shard, nlive_processes))
-        for p in workers:
-            p.start()
-        db_accessor.start()
-        '''
-        Dispatching tasks to ipc_write
-        '''
-        for i, tup in self.gen_itup():
-            obj = (i, tup)
-            self.print(f"write_to_ipc {obj}")
-            any_process_alive = self.write_to_ipc(ipc_write, obj, workers)
-            if not any_process_alive:
-                self.print(f"{any_process_alive=}, leave the generator loop")
-                break
-        self.print("Task Generator Complete")
-        nlive_processes = self.scan_live_processes(workers)
-        for i in range(nlive_processes):
-            self.write_to_ipc(ipc_write, IPCTunerWorker.END_OF_QUEUE_OBJECT, workers)
-            self.print(f"write_to_ipc {IPCTunerWorker.END_OF_QUEUE_OBJECT}")
-        ipc_write.close()
-
-        '''
-        while nlive_processes > 0:
-            try:
-                inputs, best_configs = ipc_worker_out.get(timeout=30)
-                # print(f'{inputs=}')
-                # print(f'{best_configs=}')
-                if inputs is None:
-                    shard = best_configs
-                    nlive_processes -= 1
-                    print(f'Shard {shard} has completed all tasks. Updated {nlive_processes=}')
-                    continue
-                self.pipe_configs(inputs, best_configs)
-            except queue.Empty:
-                print("Timed out. Re-scan live processes")
-                # "watchdog"
-        '''
-
-        for p in workers:
-            p.join()
-        ipc_write.close()
-        print('All workers joined')
-        ipc_worker_out.put(DbAccessor.END_OF_QUEUE_OBJECT)
-        ipc_worker_out.close()
-        db_accessor.join()
-        print('Db accessor joined')
-        # Otherwise current process may block if any child died
-        ipc_write.cancel_join_thread()
-        ipc_worker_out.cancel_join_thread()
-    """
-
     '''
-    def write_to_ipc(self, ipc_write, obj, workers):
-        while True:
-            try:
-                ipc_write.put(obj, timeout=60)
-                return True
-            except queue.Full:
-                print("Task Queue Full. Re-scan live processes")
-                nlive_processes = self.scan_live_processes(workers)
-                print(f"{nlive_processes=}")
-                if nlive_processes == 0:
-                    print("PANIC: All Processes Died")
-                    return False
-    '''
-
-    """
-    def scan_live_processes(self, workers):
-        nlive_processes = 0
-        for i, p in enumerate(workers):
-            nlive_processes += 1 if p.is_alive() else 0
-        return nlive_processes
-    """
