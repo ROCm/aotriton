@@ -276,6 +276,7 @@ def cpp_autotune_sub_kernel_gen(extargs, kernel_func, validator, cur_kig):
         extargs.force_kernel_index = cur_kig.last_success_kernel
         kernel_func(extargs, is_testing=False)
         return
+    # print(f'{cur_kig.kernel_index=}')
     while True:
         extargs.force_kernel_index = cur_kig.kernel_index
         def func(is_testing=False):

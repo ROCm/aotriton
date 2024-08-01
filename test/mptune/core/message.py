@@ -16,6 +16,7 @@ MonadAction = Enum('MonadAction', ['Pass',
     'OOB_Died',
     'OOB_RequestStatus',  # OOB means side channel communication only
     'OOB_AckRecv',
+    'OOB_Restart',
 ])
 
 '''

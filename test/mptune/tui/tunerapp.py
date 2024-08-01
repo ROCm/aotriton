@@ -22,6 +22,7 @@ class TunerApp(App):
 
     def __init__(self,
                  args,
+                 watchdog,
                  info_queue: 'Queue',
                  src : 'Monad',
                  workers : 'list[Monad]',
@@ -47,6 +48,7 @@ class TunerApp(App):
         # Monad.identifier (textual's id has limitations on character set)
         self._thread = Thread(target=self.pull_updates)
         self._thread.start()
+        self._watchdog = watchdog
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -60,6 +62,9 @@ class TunerApp(App):
             yield Label(f"N/A", id=f'{identifier}_current', classes='bar')
             yield ProgressBar(total=1, id=f'{identifier}_pbar', classes='bar')
         yield Footer()
+
+    def on_mount(self) -> None:
+        self._watchdog_timer = self.set_interval(0.2, self._watchdog)
 
     def on_unmount(self) -> None:
         # self._state_tracker.get_ui_update_queue().put(None)
@@ -100,6 +105,8 @@ class TunerApp(App):
                 msg = self.StateChange(monad_status='Running')
             if action == MonadAction.OOB_Died:
                 msg = self.StateChange(monad_status=f'Died of {payload.exitcode}')
+            if action == MonadAction.OOB_Restart:
+                msg = self.StateChange(monad_status=f'Restarting')
             if action == MonadAction.OOB_AckRecv:
                 if info.task_id is not None and payload.tup is not None:
                     msg = self.StateChange(text=f'{info.task_id:06d} {payload.tup}')
