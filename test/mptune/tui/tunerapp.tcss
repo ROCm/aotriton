@@ -1,0 +1,30 @@
+Screen {
+    layout: grid;
+    grid-size: 3;
+    grid-columns: 3fr 1fr 16fr;
+    grid-rows: 1;
+    grid-gutter: 0;
+}
+
+.gridheader {
+    height: 100%;
+    width: 100%;
+    # border: solid yellow;
+}
+
+.box {
+    height: 100%;
+    width: 100%;
+    # border: solid green;
+    row-span: 2;
+}
+
+.bar {
+    # height: 3;
+    width: 100%;
+    # border: solid blue;
+}
+
+Bar {
+    width: 100%;
+}

@@ -9,6 +9,7 @@ from collections import namedtuple
 from copy import deepcopy
 from .aav import ArgArchVerbose
 from .message import MonadAction, MonadMessage
+from threading import Timer
 
 '''
 A Monad will runs in a separate process.
@@ -38,7 +39,7 @@ class Monad(ArgArchVerbose):
         assert self._q_down is None
         assert downstream._q_up is None
         self._q_down = downstream._q_up = Queue()
-        self._q_down.cancel_join_thread()
+        # self._q_down.cancel_join_thread()
         # self._q_down.connect(self, downstream)
 
     '''
@@ -47,7 +48,7 @@ class Monad(ArgArchVerbose):
     def bind_1toN(self, downstreams : 'Monad'):
         assert self._q_down is None
         q = Queue()
-        q.cancel_join_thread()
+        # q.cancel_join_thread()
         self._q_down = q
         for ds in downstreams:
             assert ds._q_up is None
@@ -60,7 +61,7 @@ class Monad(ArgArchVerbose):
     def bind_Nto1(self, downstream : 'Monad'):
         if downstream._q_up is None:
             downstream._q_up = Queue()
-            downstream._q_up.cancel_join_thread()
+            # downstream._q_up.cancel_join_thread()
         assert self._q_down is None
         self._q_down = downstream._q_up
         # self._q_down.connect(self, downstream)
@@ -82,8 +83,11 @@ class Monad(ArgArchVerbose):
     '''
     def restart_with_last_progress(self, continue_from):
         self._process.join()
-        self._process = Process(target=self.main, args=(self._q_up, self._q_down, continue_from))
-        self._process.start()
+        def restart():
+            self._process = Process(target=self.main, args=(self._q_up, self._q_down, continue_from))
+            self._process.start()
+        t = Timer(10.0, restart)
+        t.start()
 
     @property
     def sentinel(self):
@@ -106,6 +110,8 @@ class Monad(ArgArchVerbose):
             self._side_channel.put(MonadMessage(task_id=None, action=MonadAction.OOB_Init, source=self.identifier))
         self.main_loop(service, q_up, q_down, continue_from)
         service.cleanup()
+        if self._side_channel:
+            self._side_channel.put(MonadMessage(task_id=None, action=MonadAction.Exit, source=self.identifier))
 
     def main_loop(self, service, q_up, q_down, continue_from):
         while True:
@@ -117,22 +123,26 @@ class Monad(ArgArchVerbose):
                         req = continue_from
                         continue_from = None
                     elif q_up:
+                        self.print(f'Monad {self.identifier} waiting for input')
                         req = q_up.get()
-                        print(f'Monad {self.identifier} receives {req}')
+                        self.print(f'Monad {self.identifier} receives {req}')
                         if req.action == MonadAction.Exit:
                             '''
                             Exit handling: instead of broadcasting in a 1-N queue,
                             putting the object back to the shared queue.
+                            ^ However this creates more bugs than solutions
                             '''
                             # q_up.put(req)
                             pass
-                    if self._side_channel:
+                    if self._side_channel and req.action != MonadAction.Exit:
                         self._side_channel.put(req.clone_ackrecv(self))
                 '''
                 Note for MonadService.process: propogate Exit to downstream.
                      Unless not needed.
                 '''
+                leaving = False
                 for res in service.process(req):
+                    action = res.action
                     res.set_source(self._identifier)
                     '''
                     Report to downstream and/or side channel
@@ -140,16 +150,21 @@ class Monad(ArgArchVerbose):
                       - side channel for status tracking
                     '''
                     if self._identifier == 'StateTracker':
-                        print(f'StateTracker yield {res}')
+                        self.print(f'StateTracker yield {res}')
                     if q_down:
-                        q_down.put(res)
-                    if self._side_channel:
-                        self._side_channel.put(res.forward(self))
-                    if res.action == MonadAction.Exit:
-                        print(f'Monad {self.identifier} exits the loop')
-                        return
+                        self.print(f'Monad {self._identifier} puts {res}')
+                        q_down.put(res.forward(self))
+                    if action == MonadAction.Exit:
+                        leaving = True
+                        self.print(f'Monad {self.identifier} found one Exit response. Will leave main_loop after forwarding all responses')
+                    elif self._side_channel:  # side channel doesn't take Exit action
+                        msg = res.forward(self)
+                        self.print(f'Monad {self.identifier} put side channel {msg}')
+                        self._side_channel.put(msg)
+                if leaving:
+                    return
             except ValueError:  # mp.Queue closed
-                break
+                return
 
     @abstractmethod
     def service_factory(self):

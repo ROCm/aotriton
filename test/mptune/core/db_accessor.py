@@ -12,28 +12,36 @@ import json
 class DbService(MonadService):
     KERNEL_FAMILY = None
 
-    def init(self, _):
+    def init(self, num_workers):
+        self._num_workers = num_workers
+        self._exit_workers = 0
         a = self._args
         if a.json_file is not None and not a.dry_run:
-            assert a.json_file != a.db_file
+            if a.db_file:
+                assert a.json_file != a.db_file
             self._jsonfile = open(a.json_file, 'a' if a.continue_from_json_file else 'w')
         else:
             self._jsonfile = None
-        dbargs = ['python3', '-m', 'v2python.table_tool']
-        if self.verbose:
-            dbargs += ['-v']
-        dbargs += ['-f', self._args.db_file, '-k', self.KERNEL_FAMILY]
-        if a.create_table_only:
-            dbargs += ['--action', 'createtableonly']
-        self._dbp = subprocess.Popen(dbargs,
-                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                     text=True)
-        os.set_blocking(self._dbp.stdout.fileno(), False)
-        os.set_blocking(self._dbp.stderr.fileno(), False)
+        if a.db_file:
+            dbargs = ['python3', '-m', 'v2python.table_tool']
+            if self.verbose:
+                dbargs += ['-v']
+            dbargs += ['-f', self._args.db_file, '-k', self.KERNEL_FAMILY]
+            if a.create_table_only:
+                dbargs += ['--action', 'createtableonly']
+            self._dbp = subprocess.Popen(dbargs,
+                                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                         text=True)
+            os.set_blocking(self._dbp.stdout.fileno(), False)
+            os.set_blocking(self._dbp.stderr.fileno(), False)
+        else:
+            self._dbp = None
 
     def process(self, request):
         if request.action == MonadAction.Exit:
-            yield request.forward(self.monad)
+            self._exit_workers += 1
+            if self._exit_workers >= self._num_workers:
+                yield request.forward(self.monad)
             return
         inputs = self.constrcut_inputs(request)
         if request.action == MonadAction.Pass:
@@ -43,6 +51,7 @@ class DbService(MonadService):
                               inputs,
                               autotune_result,
                               _debug_task_id=request.task_id)
+            yield request.forward(self.monad)
         if request.action == MonadAction.Skip:
             self.pipe_skipped_configs(inputs, request.task_id)
         if request.action in [MonadAction.Skip, MonadAction.DryRun]:
@@ -51,10 +60,11 @@ class DbService(MonadService):
     def cleanup(self):
         if self._jsonfile is not None:
             self._jsonfile.close()
-        self._dbp.stdin.close()
-        print("Waiting for database process to terminate")
-        self._dbp.wait()
-        self.splice_pipes()
+        if self._dbp:
+            self._dbp.stdin.close()
+            self.print("Waiting for database process to terminate")
+            self._dbp.wait()
+            self.splice_pipes()
 
     @abstractmethod
     def constrcut_inputs(self, request):
@@ -72,8 +82,9 @@ class DbService(MonadService):
             j['_debug_task_id'] = _debug_task_id
         js = json.dumps(j, separators=(',', ':'))
         print(js, file=self._jsonfile, flush=True)
-        print(js, file=self._dbp.stdin, flush=True)
-        self.splice_pipes()
+        if self._dbp:
+            print(js, file=self._dbp.stdin, flush=True)
+            self.splice_pipes()
 
     def pipe_skipped_configs(self, inputs, _debug_task_id):
         skipped_result = {

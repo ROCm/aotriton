@@ -7,6 +7,7 @@ from abc import abstractmethod
 from multiprocessing.connection import wait as wait_sentinels
 from .aav import ArgArchVerbose
 from .monad import Monad
+from .message import MonadMessage, MonadAction
 
 class TunerManager(ArgArchVerbose):
 
@@ -24,6 +25,10 @@ class TunerManager(ArgArchVerbose):
 
     @abstractmethod
     def factory_worker(self, nth_worker : int, gpu_device : int, side_channel) -> Monad:
+        pass
+
+    @abstractmethod
+    def factory_ui(self, state_tracker, src, workers, dbaccessor):
         pass
 
     '''
@@ -48,11 +53,12 @@ class TunerManager(ArgArchVerbose):
 
     def build_graph(self):
         a = self._args
+        self._torch_gpus = a.use_multigpu
+        num_workers = len(self._torch_gpus)
         state_tracker = self.factory_state_tracker()
         side_channel = state_tracker.get_side_channel_input()
         src = self.factory_source(side_channel=side_channel)
-        dba = self.factory_dbaccessor(side_channel=side_channel)
-        self._torch_gpus = a.use_multigpu
+        dba = self.factory_dbaccessor(num_workers=num_workers, side_channel=side_channel)
         workers = [self.factory_worker(i, gpu_device, side_channel=side_channel) for i, gpu_device in enumerate(self._torch_gpus)]
         src.bind_1toN(workers)
         for worker in workers:
@@ -76,7 +82,7 @@ class TunerManager(ArgArchVerbose):
         # Workers will get their init objects from _src
         [worker.start() for worker in self._workers]
         for m in self._all_monads:
-            print(f"{m.identifier=} {m.sentinel=}")
+            self.print(f"{m.identifier=} {m.sentinel=}")
         self._sentinel_to_monad = { monad.sentinel : monad for monad in self._all_monads }
 
     def monitor(self):
@@ -87,21 +93,24 @@ class TunerManager(ArgArchVerbose):
                 if monad in success_monads:
                     continue
                 alive_sentinels.append(monad.sentinel)
-            print(f'{alive_sentinels=}')
+            self.print(f'{alive_sentinels=}')
             failures = wait_sentinels(alive_sentinels)
-            print(f'{failures=}')
+            self.print(f'{failures=}')
             monads = [self._sentinel_to_monad[sentinel] for sentinel in failures]
             failed_monad_ids = [monad.identifier for monad in monads]
-            print(f'Monitor: {failed_monad_ids=}')
+            self.print(f'Monitor: {failed_monad_ids=}')
             # Exiting of state_tracker indicates all tasks are done
             if self._state_tracker in monads:
                 return
             # Otherwise restart all faulty processes
             for monad in monads:
                 if monad.exitcode != 0:
-                    prog = self._state_tracker.ask_for_last_message(monad)
-                    nextone = self._src.next_kernel(prog)
-                    monad.restart_with_last_progress(nextone)
+                    print(f'{monad.identifier} exit with code {monad.exitcode}', flush=True)
+                    prog = self._state_tracker.ask_for_last_message(monad, exitcode)
+                    self._state_tracker.update_ui(prog.clone().set_action(MonadAction.OOB_Died).update_payload(exitcode=monad.exitcode))
+                    if monad.identifier.startswith('worker_'):
+                        nextone = self._src.next_kernel(prog)
+                        monad.restart_with_last_progress(nextone)
                 else:
                     monad.join()
                     # TODO: who should notify the state tracker? The

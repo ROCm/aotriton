@@ -12,7 +12,9 @@ import pytest
 import json
 import sys
 import subprocess
+from threading import Thread
 import multiprocessing
+from multiprocessing import Process
 import argparse
 import time
 import math
@@ -73,7 +75,7 @@ class FlashTunerSource(MonadService):
         a = self._args
         skip_set = set()
         if a.continue_from_json_file and a.json_file is not None and a.json_file.is_file():
-            assert False, 'Implement new skipset algorithm!'
+            # assert False, 'Implement new skipset algorithm!'
             # TODO: skipset
             with open(a.json_file, 'r') as f:
                 for line in f.readlines():
@@ -81,7 +83,7 @@ class FlashTunerSource(MonadService):
                     skip_set.add(j['_debug_task_id'])
 
         for i, tup in enumerate(self.gen()):
-            print(f"[{i:06d}] gen_itup {tup}")
+            self.print(f"[{i:06d}] gen_itup {tup}")
             if a.continue_from is not None and i < a.continue_from:
                 continue
             if i in skip_set:
@@ -90,8 +92,11 @@ class FlashTunerSource(MonadService):
                 break
             payload = TuningResult(tup=tup, kig_dict=self.create_kig_dict())
             yield MonadMessage(task_id=i, action=MonadAction.Pass, source='source', payload=payload)
-        print(f"gen_itup Exit")
-        yield MonadMessage(task_id=None, action=MonadAction.Exit, source='source')
+        self.print(f"gen_itup Exit")
+        # Note: main_loop should handle Exit after forwarding all
+        # object yield from MonadService.progress
+        for i in range(len(self._args.use_multigpu)):
+            yield MonadMessage(task_id=None, action=MonadAction.Exit, source='source')
 
     def cleanup(self):
         pass
@@ -108,17 +113,32 @@ class FlashTunerManager(TunerManager):
                                 identifier='source',
                                 side_channel=side_channel)
 
-    def factory_dbaccessor(self, side_channel):
+    def factory_dbaccessor(self, num_workers, side_channel):
         return mptune.flash.DbMonad(self._args,
                                     identifier='dbaccessor',
-                                    side_channel=side_channel)
+                                    side_channel=side_channel,
+                                    init_object=num_workers)
 
     def factory_worker(self, nth_worker : int, gpu_device : int, side_channel):
         return mptune.flash.TunerMonad(self._args,
-                                       identifier=f'gpuworker/{nth_worker}:{gpu_device}',
+                                       identifier=f'worker_{nth_worker}_on_gpu_{gpu_device}',
                                        side_channel=side_channel,
                                        init_object=(nth_worker, gpu_device),
                                        )
+
+    def factory_ui(self, state_tracker, src, workers, dbaccessor):
+        return mptune.tui.TunerApp(state_tracker.get_ui_update_queue(),
+                                   src,
+                                   workers,
+                                   dbaccessor)
+
+def make_ui(manager : TunerManager):
+    info_queue = manager._state_tracker.get_ui_update_queue()
+    src = manager._src
+    workers = manager._workers
+    dbaccessor = manager._dba
+    app = mptune.tui.TunerApp(args=manager._args, info_queue=info_queue, src=src, workers=workers, dbaccessor=dbaccessor)
+    return app
 
 def parse():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -128,8 +148,10 @@ def parse():
     p.add_argument('--return_encoded_softmax', type=bool, default=[False],
                    help="(A functional for debugging) kernel that returns softmax(dropout(QK')) to validate the correctness of dropout")
     p.add_argument('--d_head', type=int, nargs='+', default=[16,32,64,128,256], help='Head dimensions.')
-    p.add_argument('--seqlen_q', type=int, nargs='+', default=[4,8,16,32,64,128,256,1024,2048,4096,8192], help='Sequence length of Q.')
-    p.add_argument('--seqlen_k', type=int, nargs='+', default=[4,8,16,32,64,128,256,1024,2048,4096,8192], help='Sequence length of K/V.')
+    # p.add_argument('--seqlen_q', type=int, nargs='+', default=[4,8,16,32,64,128,256,1024,2048,4096,8192], help='Sequence length of Q.')
+    # p.add_argument('--seqlen_k', type=int, nargs='+', default=[4,8,16,32,64,128,256,1024,2048,4096,8192], help='Sequence length of K/V.')
+    p.add_argument('--seqlen_q', type=int, nargs='+', default=[4,8,16,32,64,128,256,512,1024], help='Sequence length of Q.')
+    p.add_argument('--seqlen_k', type=int, nargs='+', default=[4,8,16,32,64,128,256,512,1024], help='Sequence length of K/V.')
     p.add_argument('--causal', type=int, nargs='+', default=[True,False], choices=[0, 1], help='Causal mask. (Use 0/1 for False/True')
     p.add_argument('--dropout_p', type=float, nargs='+', default=[0.5, 0.0], help='Probablity to dropout (0 to disable).')
     p.add_argument('--dtype', type=str, nargs='+',
@@ -143,9 +165,13 @@ def parse():
     p.add_argument('--dry_run', action='store_true', help="Print parameter combinations without running tests")
     p.add_argument('--continue_from', type=int, default=None, help="Continue from n-th functional set")
     p.add_argument('--stop_at', type=int, default=None, help="Stop at n-th functional set")
-    p.add_argument('--db_file', type=str, required=True, help="Sqlite Database file")
-    p.add_argument('--json_file', type=Path, default=None, help="Json file for record. Disables printing json to stdout")
-    p.add_argument('--continue_from_json_file', action='store_true', help="Append to Json file instead of overwrite, and skip already tested entries.")
+    p.add_argument('--db_file', type=str, default=None, help="Sqlite Database file (not recommended)")
+    p.add_argument('--json_file',
+                   type=Path,
+                   required=True,
+                   default=None,
+                   help="Json file for record. Disables printing json to stdout")
+    p.add_argument('--overwrite_json_file', dest='continue_from_json_file', action='store_false', help="Do NOT \"Append to Json file instead of overwrite, and skip already tested entries.\"")
     p.add_argument('--create_table_only', action='store_true', help="Do not insert data, only create tables. Used for schema updates.")
     p.add_argument('--use_multigpu', type=int, nargs='+', default=None, help='Profiling on multiple GPUs. Passing -1 for all GPUs available to pytorch.')
     p.add_argument('--arch', type=str, default=None, help='[NOT RECOMMENDED TO SET MANUALLY] Override GPU architecture string. Will use first GPU from `rocm_agent_enumerator -name` if not provided.')
@@ -173,8 +199,12 @@ def main():
     args = parse()
     tuner = FlashTunerManager(args)
     tuner.build_graph()
+    app = make_ui(tuner)
     tuner.launch_graph()
-    tuner.monitor()
+    monitor_thread = Thread(target=tuner.monitor)
+    monitor_thread.start()
+    app.run()
+    monitor_thread.join()
 
 if __name__ == '__main__':
     main()

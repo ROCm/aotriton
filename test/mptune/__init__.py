@@ -4,8 +4,10 @@
 
 from . import core
 from . import flash
+from . import tui
 
 __all__ = [
     "core",
     "flash",
+    "tui",
 ]
