@@ -131,11 +131,12 @@ class TunerManager(ArgArchVerbose):
         for monad in monads:
             if monad.exitcode != 0:
                 print(f'{monad.identifier} exit with code {monad.exitcode}', flush=True)
-                prog = self._state_tracker.ask_for_last_message(monad)
-                self._state_tracker.update_ui(prog.clone().set_action(MonadAction.OOB_Died).update_payload(exitcode=monad.exitcode))
+                last_known_working = self._state_tracker.ask_for_last_message(monad)
+                self._state_tracker.update_ui(last_known_working.clone().set_action(MonadAction.OOB_Died).update_payload(exitcode=monad.exitcode))
                 if monad.identifier.startswith('worker_'):
-                    nextone = self._src.next_kernel(prog)
-                    monad.restart_with_last_progress(nextone)
+                    nextone = self._src.next_kernel(last_known_working)
+                    nexttwo = self._src.next_kernel(nextone)
+                    monad.restart_with_last_progress(nexttwo)
             else:
                 monad.join()
                 # TODO: who should notify the state tracker? The
