@@ -5,6 +5,7 @@
 from .message import MonadMessage, MonadAction
 from .monad import Monad, MonadService
 from multiprocessing import Queue
+from datetime import datetime
 
 class StateTracker(Monad):
     def __init__(self, args, identifier='StateTracker'):
@@ -33,6 +34,12 @@ class StateTracker(Monad):
         self._q_up.put(msg)
         return self._q_resume.get()
 
+    def ask_for_alive_status(self):
+        msg = MonadMessage(task_id=None,
+                           action=MonadAction.OOB_QueryAlive)
+        self._q_up.put(msg)
+        return self._q_resume.get()
+
     def update_ui(self, info):
         if self._q_ui:
             self.print(f'StateTracker put ui {info}')
@@ -42,11 +49,20 @@ class StateTrackerService(MonadService):
 
     def init(self, init_object):
         self._progress_tracker = {}
+        self._alive_watchdog = {}
         self._task_confirmation = {}
         self._alive_monads = set(init_object)
         pass
 
     def process(self, request):
+        if request.action == MonadAction.OOB_QueryAlive:
+            alive = MonadMessage(task_id=None,
+                                 action=MonadAction.OOB_QueryAlive,
+                                 source=self.monad.identifier,
+                                 payload=self._alive_watchdog)
+            self.print(f'state_tracker reply {self._alive_watchdog=}')
+            self.monad._q_resume.put(alive)
+            return
         self.monad.update_ui(request)  # CAVEAT, do not change the source
         self.print(f'state_tracker send {request} to ui')
         if request.action == MonadAction.OOB_Init:
@@ -68,6 +84,9 @@ class StateTrackerService(MonadService):
             if request.task_id is not None and request.source == 'dbaccessor':
                 self._task_confirmation[request.task_id] = request
             self.print(f'Update _progress_tracker[{request.source=}] to {request}')
+            return
+        if request.action == MonadAction.Pass:
+            self._alive_watchdog[request.source] = datetime.now()
             return
         if request.action == MonadAction.Exit:
             self.print(f"before {self._alive_monads=} {request.source=}")
