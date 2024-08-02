@@ -4,6 +4,7 @@
 
 import itertools
 import time
+from datetime import datetime
 from abc import abstractmethod
 from multiprocessing.connection import wait as wait_sentinels
 from .aav import ArgArchVerbose
@@ -87,8 +88,8 @@ class TunerManager(ArgArchVerbose):
         self._sentinel_to_monad = { monad.sentinel : monad for monad in self._all_monads }
         self._success_monads = set()
 
-    def pulling_sentinels(self, alive_monads):
-        ret = []
+    def classify_monads(self, alive_monads):
+        exited = []
         restarting = []
         self.print(f'monitor time.sleep returns')
         for monad in alive_monads:
@@ -99,9 +100,30 @@ class TunerManager(ArgArchVerbose):
                 restarting.append(monad)
         # exitcodes = [monad.exitcode for monad in alive_monads]
         # self.print(f'{exitcodes=}')
-        return ret, restarting
+        return exited, restarting
+
+    def detect_gpu_freeze(self):
+        '''
+        Detect GPU worker freeze
+        '''
+        msg = self._state_tracker.ask_for_alive_status()
+        assert msg.action == MonadAction.OOB_QueryAlive
+        alive_status = msg.payload
+        now = datetime.now()
+        for monad in self._workers:
+            if monad.identifier not in alive_status:
+                continue
+            status = alive_status[monad.identifier]
+            lapsed = (now - status).total_seconds()
+            if lapsed > 5.0:
+                monad.kill()
+                self.print(f'Kill {monad.identifier} due to inactivity. {status=} {now=} {lapsed=}')
 
     def run_watchdog(self):
+        # Not very useful since such cases usually require GPU reset
+        # TODO: re-implement with amdsmi to confirm with GPU utilization
+        # self.detect_gpu_freeze()
+
         alive_sentinels = []
         alive_monads = []
         for monad in self._all_monads:
@@ -111,18 +133,16 @@ class TunerManager(ArgArchVerbose):
             alive_monads.append(monad)
         self.print(f'monitor {alive_sentinels=}')
         try:
-            # failures = wait_sentinels(alive_sentinels, timeout=0.1)
-            failures, restarting = self.pulling_sentinels(alive_monads)
-            self.print(f'monitor wait_sentinels {failures=}')
+            exited, restarting = self.classify_monads(alive_monads)
+            self.print(f'monitor wait_sentinels {exited=}')
         except Exception as e:
             self.print(f'monitor wait_sentinels timeout or Exception {e}')
             return
-        if not failures:
+        if not exited:
             return
-        # monads = [self._sentinel_to_monad[sentinel] for sentinel in failures]
-        monads = failures
-        failed_monad_ids = [monad.identifier for monad in monads]
-        self.print(f'watchdog: {failed_monad_ids=}')
+        monads = exited
+        exited_monad_ids = [monad.identifier for monad in monads]
+        self.print(f'watchdog: {exited_monad_ids=}')
         # Exiting of state_tracker indicates all tasks are done
         if self._state_tracker in monads:
             self.print(f'Monitor exits')
