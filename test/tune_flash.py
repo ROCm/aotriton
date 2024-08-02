@@ -142,7 +142,11 @@ class FlashTunerSource(MonadService):
                     kig_dict[kn].last_success_kernel = known_kig_dict[kn].kernel_index
                     kig_dict[kn].total_number_of_kernels = known_kig_dict[kn].total_number_of_kernels
             payload = TuningResult(tup=tup, kig_dict=kig_dict)
-            yield MonadMessage(task_id=i, action=MonadAction.Pass, source='source', payload=payload)
+            progress_in_db = MonadMessage(task_id=i, action=MonadAction.Pass, source='source', payload=payload)
+            if i in continue_dict:
+                if -1 in a.debug_skip_next_kernel or i in a.debug_skip_next_kernel:
+                    progress_in_db = self.monad.next_kernel(progress_in_db)
+            yield self.monad.next_kernel(progress_in_db)
         self.print(f"gen_itup Exit")
         # Note: main_loop should handle Exit after forwarding all
         # object yield from MonadService.progress
@@ -232,6 +236,17 @@ def parse():
     p.add_argument('--use_multigpu', type=int, nargs='+', default=None, help='Profiling on multiple GPUs. Passing -1 for all GPUs available to pytorch.')
     p.add_argument('--arch', type=str, default=None, help='[NOT RECOMMENDED TO SET MANUALLY] Override GPU architecture string. Will use first GPU from `rocm_agent_enumerator -name` if not provided.')
     p.add_argument('--confirm_to_override_arch', action='store_true', help='A defensive option to avoid setting --arch unintentionally.')
+    p.add_argument('--debug_skip_next_kernel',
+                   type=int,
+                   default=[],
+                   nargs='*',
+                   help='''[DEBUG] Skip the next untuned kernel for the given task ids.
+                           Passing -1 to indicate all task ids.
+                           For severely broken kernels, it is possble the process simply hangs
+                           indefinitely without kernel driver intervention or GPU reset.
+                           This option allow skipping next kernel relative to json record,
+                           which are usually the faulty kernel.'''
+                  )
     args = p.parse_args()
     assert args.return_encoded_softmax == [False], ('Do not support tuning return_encoded_softmax=True. '
             'RETURN_ENCODED_SOFTMAX will be removed in the future and debug_fill_dropout_rng will be preferred choice.')
