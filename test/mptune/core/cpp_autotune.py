@@ -278,7 +278,8 @@ def cpp_autotune_sub_kernel_gen(extargs, kernel_func, validator, cur_kig):
         return
     # print(f'{cur_kig.kernel_index=}')
     while True:
-        extargs.force_kernel_index = cur_kig.kernel_index
+        # max(0, ...) is the defensive approach to prevent -1 slipping into C++ component
+        extargs.force_kernel_index = max(0, cur_kig.kernel_index)
         def func(is_testing=False):
             return kernel_func(extargs, is_testing)
         t, hip_status = do_bench(func, validator=validator, quantiles=(0.5, 0.2, 0.8))
@@ -295,13 +296,14 @@ def cpp_autotune_sub_kernel_gen(extargs, kernel_func, validator, cur_kig):
             cur_kig.last_success_kernel = extargs.force_kernel_index
         def safeload(s):
             return json.loads(s) if s else None
+        cur_kig.kernel_index = extargs.force_kernel_index
         yield AutotuneResult(hip_status=hip_status,
                              kernel_index=cur_kig.kernel_index,
                              total_number_of_kernels=cur_kig.total_number_of_kernels,
                              time=t,
                              psels=safeload(extargs.selected_kernel_psels),
                              copts=safeload(extargs.selected_kernel_copts))
-        cur_kig.kernel_index += 1
+        cur_kig.kernel_index = extargs.force_kernel_index + 1
         if cur_kig.kernel_index >= cur_kig.total_number_of_kernels:
             break
     # TODO: Report no conf works
