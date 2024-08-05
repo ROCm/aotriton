@@ -33,26 +33,6 @@ class TunerManager(ArgArchVerbose):
     def factory_ui(self, state_tracker, src, workers, dbaccessor):
         pass
 
-    '''
-    def gen_itup(self):
-        a = self._args
-        skip_set = set()
-        if a.continue_from_json_file and a.json_file is not None and a.json_file.is_file():
-            with open(a.json_file, 'r') as f:
-                for line in f.readlines():
-                    j = json.loads(line)
-                    skip_set.add(j['_debug_task_id'])
-        for i, tup in enumerate(self.gen()):
-            # print(f"[{i:06d}] gen_itup {tup}")
-            if a.continue_from is not None and i < a.continue_from:
-                continue
-            if i in skip_set:
-                continue
-            if a.stop_at is not None and i > a.stop_at:
-                break
-            yield i, tup
-    '''
-
     def build_graph(self):
         a = self._args
         self._torch_gpus = a.use_multigpu
@@ -164,48 +144,3 @@ class TunerManager(ArgArchVerbose):
                 #       (For now the exiting monad is used)
                 # self._state_tracker.confirm_exit(monad)
                 self._success_monads.add(monad)
-
-    '''
-    def monitor(self):
-        while True:
-            alive_sentinels = []
-            alive_monads = []
-            for monad in self._all_monads:
-                if monad in self._success_monads:
-                    continue
-                alive_sentinels.append(monad.sentinel)
-                alive_monads.append(monad)
-            self.print(f'monitor {alive_sentinels=}')
-            try:
-                # failures = wait_sentinels(alive_sentinels, timeout=0.1)
-                failures = self.pulling_sentinels(alive_monads)
-                self.print(f'monitor wait_sentinels {failures=}')
-            except Exception as e:
-                self.print(f'monitor wait_sentinels timeout or Exception {e}')
-                continue
-            if not failures:
-                continue
-            monads = [self._sentinel_to_monad[sentinel] for sentinel in failures]
-            failed_monad_ids = [monad.identifier for monad in monads]
-            self.print(f'Monitor: {failed_monad_ids=}')
-            # Exiting of state_tracker indicates all tasks are done
-            if self._state_tracker in monads:
-                self.print(f'Monitor exits')
-                return
-            # Otherwise restart all faulty processes
-            for monad in monads:
-                if monad.exitcode != 0:
-                    print(f'{monad.identifier} exit with code {monad.exitcode}', flush=True)
-                    prog = self._state_tracker.ask_for_last_message(monad, exitcode)
-                    self._state_tracker.update_ui(prog.clone().set_action(MonadAction.OOB_Died).update_payload(exitcode=monad.exitcode))
-                    if monad.identifier.startswith('worker_'):
-                        nextone = self._src.next_kernel(prog)
-                        monad.restart_with_last_progress(nextone)
-                else:
-                    monad.join()
-                    # TODO: who should notify the state tracker? The
-                    #       exiting monad or the observing manager.
-                    #       (For now the exiting monad is used)
-                    # self._state_tracker.confirm_exit(monad)
-                    success_monads.add(monad)
-    '''

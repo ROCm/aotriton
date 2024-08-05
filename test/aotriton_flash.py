@@ -61,22 +61,6 @@ def attn_fwd(q, k, v, b, sm_scale, M, o,
     # print(f'{err=}')
     return err
 
-def ipc_attn_fwd(ipc_to_read, ipc_to_write):
-    import torch
-    while True:
-        tup = ipc_to_read.get()
-        if tup is None:
-            break
-        q, k, v, b, sm_scale, M, o, dropout_p, philox_seed, philox_offset, encoded_softmax, is_causal, force_kernel_index, shard = tup
-        extargs = FwdExtraArguments()
-        extargs.force_kernel_index = force_kernel_index
-        with torch.cuda.device(shard):
-            ret = attn_fwd(q, k, v, b, sm_scale, M, o,
-                           dropout_p, philox_seed, philox_offset, encoded_softmax, is_causal,
-                           extargs)
-            torch.cuda.synchronize()
-            ipc_to_write.put(ret)
-
 def attn_bwd(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
              dropout_p, philox_seed, philox_offset, is_causal, extargs=None):
     extargs = BwdExtraArguments() if extargs is None else extargs
@@ -103,23 +87,6 @@ def attn_bwd(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
                       extargs)
     # print(f'{err=}')
     return err
-
-def ipc_attn_bwd(ipc_to_read, ipc_to_write):
-    import torch
-    while True:
-        tup = ipc_to_read.get()
-        if tup is None:
-            break
-        q, k, v, b, sm_scale, o, do, dq, dk, dv, db, L, delta, dropout_p, philox_seed, philox_offset, causal,dkdv_ki, dqdb_ki, shard = tup
-        extargs = BwdExtraArguments()
-        extargs.dkdv.force_kernel_index = dkdv_ki
-        extargs.dqdb.force_kernel_index = dqdb_ki
-        with torch.cuda.device(shard):
-            ret = attn_bwd(q, k, v, b, sm_scale, o, do, dq, dk, dv, db, L, delta,
-                           dropout_p, philox_seed, philox_offset, causal,
-                           extargs)
-            torch.cuda.synchronize()
-            ipc_to_write.put(ret)
 
 def debug_fill_dropout_rng(R, philox_seed, philox_offset):
     err = fa_debug_fill_dropout_rng(mk_aotensor(R),

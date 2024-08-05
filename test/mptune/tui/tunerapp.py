@@ -30,15 +30,6 @@ class TunerApp(App):
         super().__init__()
         self._args = args
         self._info_queue = info_queue
-        # self._state_tracker = state_tracker
-        # self._state_tracker = state_tracker
-        # self._src = MonadWidget(src)
-        # self._workers = [MonadWidget(w) for w in workers]
-        # self._dbaccessor = MonadWidget(dbaccessor)
-        # self._all_widgets = [self._src] + self._workers + [self._dbaccessor]
-        # Not canonicial in terms of finding widgets but works for any
-        # Monad.identifier (textual's id has limitations on character set)
-        # self._monad_source_to_widget = { w.monad.identifier : w for w in self._all_widgets }
         self._src = src
         self._gpu_workers = workers
         self._dbaccessor = dbaccessor

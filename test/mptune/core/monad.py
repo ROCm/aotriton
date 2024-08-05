@@ -66,11 +66,6 @@ class Monad(ArgArchVerbose):
         self._q_down = downstream._q_up
         # self._q_down.connect(self, downstream)
 
-    # def plain_start(self, init_object):
-    #     assert self._q_up is None
-    #     self.init_obj = None
-    #     self._process = Process(target=self.main, args=(self._q_up, self._q_down, None))
-
     def start(self):
         self._process = Process(target=self.main, args=(self._q_up, self._q_down, None))
         self._process.start()
@@ -107,12 +102,6 @@ class Monad(ArgArchVerbose):
 
     def main(self, q_up, q_down, continue_from):
         service = self.service_factory()
-        # if q_up:
-        #     if hasattr(self, '_init_obj_for_restart'):
-        #         init_obj = self._init_obj_for_restart
-        #     else:
-        #         init_obj = q_up.get()
-        #         self._init_obj_for_restart = init_obj
         service.init(self._init_object)
         if self._side_channel:
             self._side_channel.put(MonadMessage(task_id=None, action=MonadAction.OOB_Init, source=self.identifier))

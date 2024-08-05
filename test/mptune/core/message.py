@@ -80,13 +80,6 @@ class MonadMessage(ABC):
         ret._action = MonadAction.DryRun
         return ret
 
-    # def make_pass(self, **kwargs) -> 'MonadMessage':
-    #     ret = deepcopy(self)
-    #     ret._action = MonadAction.Pass
-    #     for k, v in kwargs.items():
-    #         setattr(ret, k, v)
-    #     return ret
-
     def clone_ackrecv(self, monad) -> 'MonadMessage':
         ret = deepcopy(self).set_source(monad.identifier)
         ret._action = MonadAction.OOB_AckRecv
@@ -102,27 +95,3 @@ class MonadMessage(ABC):
     def set_action(self, action):
         self._action = action
         return self
-
-# class QueuePair(object):
-# 
-#     def __init__(self):
-#         self._request_flow = None
-#         self._feedback_flow = None
-#         self._monads_up = set()
-#         self._monads_down = set()
-# 
-#     @property
-#     def request_flow(self):
-#         if self._request_flow is None:
-#             self._request_flow = Queue()
-#         return self._request_flow
-# 
-#     @property
-#     def feedback_flow(self):
-#         if self._feedback_flow is None:
-#             self._feedback_flow = Queue()
-#         return self._feedback_flow
-# 
-#     def connect(self, up : Monad, down : Monad):
-#         self._monads_up.add(up)
-#         self._monads_down.add(down)

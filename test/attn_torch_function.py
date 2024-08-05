@@ -6,8 +6,8 @@ import torch
 import queue
 from torch.multiprocessing import Process
 from aotriton_flash import (
-    attn_fwd, ipc_attn_fwd,
-    attn_bwd, ipc_attn_bwd,
+    attn_fwd,
+    attn_bwd,
     debug_fill_dropout_rng,
     FwdExtraArguments,
     BwdExtraArguments,
@@ -19,14 +19,10 @@ AttentionExtraArgs = namedtuple('AttentionExtraArgs',
         ['return_encoded_softmax',
          'autotune',
          'return_autotune',
-         'fwd_validator',
-         'bwd_validators',
-         'cpp_autotune_tqdm_bar',
-         'cpp_autotune_tqdm_prefix',
          'gpu_device',
          'tune_worker',
          ],
-        defaults=[False, False, False, None, None, None, '', None, None])
+        defaults=[False, False, False, None, None])
 
 VERBOSE=False
 DEFAULT_PHILOX_SEED = 0x1BF52
