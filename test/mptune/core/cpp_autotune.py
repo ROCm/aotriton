@@ -145,124 +145,6 @@ class CppTuneWapper(object):
     def capi_object(self):
         return self._extargs
 
-''' Use extargs to profile pre-compiled GPU kernels
-
-@param extarg_factory: factory to construct extargs, can be class
-@param kernel_func: function that launch GPU kernels, taking the following form
-    @param extargs: CppTuneWapper
-    @param is_testing: run the kernel for testing purpose rather than measuring its performance.
-        Lots of preventive/defensive methods should be enabled if is_testing is
-        true. Notably:
-            1. Filling the output tensors with nan;
-            2. Running the GPU kernel in a separate process to avoid possible
-               GPU segfault.
-    @returns ret: kernel_func may profile multiple kernels simultaneously, so
-                  the return value is a tuple and follows
-        @0 number of kernels
-        @1 list of KernelOutput
-@param validator: validator
-'''
-def cpp_autotune(extarg_factory, kernel_name, kernel_func, validator, *, tqdm_bar=None, tqdm_prefix=''):
-    assert validator is not None
-    extargs = CppTuneWapper(extarg_factory)
-    more_prefix = f' UK {kernel_name} 1/1' if tqdm_prefix else ''
-    return cpp_autotune_sub_kernel(extargs, kernel_func, validator,
-                                   tqdm_bar=tqdm_bar,
-                                   tqdm_prefix=tqdm_prefix+more_prefix)
-
-def cpp_autotune_sub_kernel(extargs, kernel_func, validator, *, tqdm_bar=None, tqdm_prefix=''):
-    kernel_index = 0
-    timings = []
-    pbar = None
-    failed = 0
-    success = 0
-    noimage = 0
-    total_number_of_kernels = CPP_AUTOTUNE_MAX_KERNELS
-    while True:
-        extargs.force_kernel_index = kernel_index
-        def func(is_testing=False):
-            return kernel_func(extargs, is_testing)
-        # t = do_bench(func, validator=validator, quantiles=(0.5, 0.2, 0.8))
-        t, hip_status = do_bench(func, validator=validator)
-        '''
-        if kernel_index == 0:
-            print(f'Benchmarking with {kernel_index=}. Time {t} {hip_status=}')
-        else:
-            print(f'Benchmarking with {kernel_index=} out of {extargs.total_number_of_kernels}. Time {t} {hip_status=}')
-        '''
-        # assert extargs.total_number_of_kernels > 0
-        if extargs.total_number_of_kernels > 0:
-            total_number_of_kernels = extargs.total_number_of_kernels
-        if math.isinf(t):
-            if hip_status == hipError_t.hipErrorInvalidImage:
-                noimage += 1
-            else:
-                failed += 1
-        else:
-            success += 1
-            # print(f'{extargs.total_number_of_kernels=}')
-            # print(f'{extargs.selected_kernel_psels=}')
-            # if hasattr(extargs.capi_object, 'dkdv'):
-            #     print(f'{extargs._extargs=}')
-            #     print(f'{extargs._extargs.dkdv=}')
-            #     print(f'{extargs._extargs.dkdv.force_kernel_index=}')
-            #     print(f'{extargs._extargs.dkdv.selected_kernel_psels=}')
-            #     print(f'{extargs._extargs.dqdb.force_kernel_index=}')
-            #     print(f'{extargs._extargs.dqdb.selected_kernel_psels=}')
-            r = AutotuneResult(hip_status=hip_status,
-                               kernel_index=kernel_index,
-                               total_number_of_kernels=total_number_of_kernels,
-                               time=t,
-                               psels=json.loads(extargs.selected_kernel_psels),
-                               copts=json.loads(extargs.selected_kernel_copts))
-            timings.append(r)
-
-        pbar_desc = f'{tqdm_prefix} Pass/Fail/NoImage {success}/{failed}/{noimage}. Last time {t:.2g}'
-        if pbar is None and extargs.total_number_of_kernels > 0:
-            tqdm_bar.reset(extargs.total_number_of_kernels)
-            pbar = tqdm_bar
-        if pbar is not None:
-            pbar.set_description(pbar_desc)
-            pbar.update(1)
-
-        #     print(f'{r.psels=}')
-        #     print(f'{r.copts=}')
-        kernel_index += 1
-        if kernel_index >= total_number_of_kernels:
-            break
-    # print(f'cpp_autotune {timings=}')
-    ret = min(timings, key=lambda atr:atr.time)
-    # print(f'{ret=}')
-    if math.isinf(ret.time):
-        # with open("/proc/self/maps") as f:
-        #     print(f.read(), file=sys.stderr)
-        print("ERROR: No configuration works")
-    return ret
-
-'''
-Tuning function for API with multiple kernels
-'''
-def cpp_autotune_multikernel(extarg_factory, sub_extarg_accessor,
-                             subkernel_names, kernel_func,
-                             validators, *, tqdm_bar=None, tqdm_prefix=''):
-    extargs_with_subs = CppTuneWapper(extarg_factory, sub_extarg_accessor)
-    num_of_subkernels = len(subkernel_names)
-    def reset_kernel_index_to_skip():
-        for i in range(num_of_subkernels):
-            sub_extarg_accessor(extargs_with_subs.capi_object, i).force_kernel_index = CppTuneSpecialKernelIndex.kSkipGPUCall
-    all_ret = []
-    for sub_index, cur_name, cur_validator in zip(range(num_of_subkernels), subkernel_names, validators):
-        # print(f'Tuning sub {cur_name}')
-        more_prefix = f' MK {cur_name} {sub_index+1:02d}/{num_of_subkernels:02d}' if tqdm_prefix else ''
-        reset_kernel_index_to_skip()
-        extargs_with_subs.set_current_sub(sub_index)
-        ret = cpp_autotune_sub_kernel(extargs_with_subs, kernel_func, cur_validator,
-                                      tqdm_bar=tqdm_bar,
-                                      tqdm_prefix=tqdm_prefix+more_prefix)
-        all_ret.append((cur_name, ret))
-        # print(f'{all_ret=}')
-    return all_ret
-
 def cpp_autotune_sub_kernel_gen(extargs, kernel_func, validator, cur_kig):
     if cur_kig.kernel_index >= cur_kig.total_number_of_kernels:
         '''
@@ -314,9 +196,27 @@ def cpp_autotune_sub_kernel_gen(extargs, kernel_func, validator, cur_kig):
             break
     # TODO: Report no conf works
 
-'''
-The generator version of cpp_autotune_multikernel
-yields all results rather than the best one
+''' Use extargs to profile pre-compiled GPU kernels
+This is an generator of all tuning results, and yields all results rather than the best one.
+
+@param extarg_factory: factory to construct extargs for the API, can be class
+@param sub_extarg_accessor: extract extargs for sub kernels within the API call
+@param subkernel_names: names of sub kernels for API call
+@param kernel_func: function that launch GPU kernels, taking the following form
+    @param extargs: CppTuneWapper
+    @param is_testing: run the kernel for testing purpose rather than measuring its performance.
+        Lots of preventive/defensive methods should be enabled if is_testing is
+        true. Notably:
+            1. Filling the output tensors with nan;
+            2. Running the GPU kernel in a separate process to avoid possible
+               GPU segfault.
+    @returns ret: kernel_func may profile multiple kernels simultaneously, so
+                  the return value is a tuple and follows
+        @0 number of kernels
+        @1 list of KernelOutput
+@param validator: validator of each sub kernel
+@param kernel_index_progress_dict: dict[subkernel_name, KernelIndexProress].
+    Use to track the progress and resume the task if interrupted (e.g. by GPU Hangs)
 '''
 def cpp_autotune_gen(extarg_factory, sub_extarg_accessor,
                      subkernel_names, kernel_func,

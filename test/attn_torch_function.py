@@ -122,100 +122,15 @@ class _attention(torch.autograd.Function):
         delta = torch.empty_like(L)
         seqlen_q = q.shape[2]
         seqlen_k = k.shape[2]
-        if autotune and return_autotune:
-            fwd_tuning_result = ctx.tuning_result[0][1]
-            fwd_kernel_index = fwd_tuning_result.kernel_index
-            def sameprocess_func(extargs):
-                args = (q, k, v, b, sm_scale, o, do, dq, dk, dv, db, L, delta,
-                        dropout_p, philox_seed, philox_offset, causal,
-                        extargs.capi_object)
-                try:
-                    ret = attn_bwd(*args)
-                except Exception as e:
-                    print(e)
-                    return hipError_t.hipErrorLaunchFailure, None
-                return 2, [KernelOutput(hip_status=ret, output_tensors=[dk,dv]),
-                           KernelOutput(hip_status=ret, output_tensors=[dq,db]),
-                          ]
-            def ipc_func(dkdv_ki, dqdb_ki):
-                shard = attn_extra_args.gpu_device
-                tune_worker = attn_extra_args.tune_worker
-                def factory():
-                    ipc_to_worker = torch.multiprocessing.Queue()
-                    ipc_from_worker = torch.multiprocessing.Queue()
-                    ipc_to_worker.cancel_join_thread()
-                    ipc_from_worker.cancel_join_thread()
-                    p = Process(target=ipc_attn_bwd,
-                                args=(ipc_to_worker, ipc_from_worker))
-                    p.start()
-                    return (ipc_to_worker, ipc_from_worker, p)
-                ipc_to_worker, ipc_from_worker, p = tune_worker.request_cached_gpukernel_process(ipc_attn_bwd, factory)
-                detached_o = o.detach()
-                args = (# q.detach(), k.detach(), v.detach(), b.detach(),
-                        q, k, v, b,
-                        sm_scale, detached_o, do, dq, dk, dv, db, L, delta,
-                        dropout_p, philox_seed, philox_offset, causal,
-                        dkdv_ki, dqdb_ki, shard)
-                assert q.is_leaf
-                assert k.is_leaf
-                assert v.is_leaf
-                # assert o.is_leaf
-                assert dq.is_leaf
-                assert dk.is_leaf
-                assert dv.is_leaf
-                assert L.is_leaf
-                assert delta.is_leaf
-                assert do.is_leaf
-                ipc_to_worker.put(args)
-                while p.is_alive():
-                    try:
-                        iret = ipc_from_worker.get(timeout=1)
-                        break
-                    except queue.Empty:
-                        # print(f'Process timeout {p.is_alive()=}')
-                        pass
-                # print(f'Process attn_fwd starting')
-                if not p.is_alive():
-                    print(f'[shard {shard}] Process exitcode {p.exitcode}')
-                    tune_worker.invalid_gpukernel_process_cache(ipc_attn_bwd)
-                    p.join()
-                    ret = hipError_t.hipErrorLaunchFailure
-                else:
-                    ret = hipError_t.hipSuccess if iret == 0 else hipError_t.hipErrorLaunchFailure
-                # print(f'Process attn_fwd joined')
-                # print(f'Process exitcode {p.exitcode}')
-                return 2, [KernelOutput(hip_status=ret, output_tensors=[dk,dv]),
-                           KernelOutput(hip_status=ret, output_tensors=[dq,db]),
-                          ]
-            def func(extargs, is_testing) -> '(hipError_t, List[KernelOutput])':
-                # print(f'{is_testing=}')
-                if not is_testing:
-                    return sameprocess_func(extargs)
-                dk.fill_(float('nan'))
-                dv.fill_(float('nan'))
-                dq.fill_(float('nan'))
-                dkdv_ki = extargs.capi_object.dkdv.force_kernel_index
-                dqdb_ki = extargs.capi_object.dqdb.force_kernel_index
-                return ipc_func(dkdv_ki, dqdb_ki)
-            def sub_extarg_accessor(bwd_extargs : BwdExtraArguments, i):
-                if i == 0:
-                    return bwd_extargs.dkdv
-                if i == 1:
-                    return bwd_extargs.dqdb
-                assert False
-            tuning_result = cpp_autotune_multikernel(BwdExtraArguments, sub_extarg_accessor,
-                                                     ['bwd_kernel_dk_dv', 'bwd_kernel_dq'],
-                                                     func,
-                                                     attn_extra_args.bwd_validators,
-                                                     tqdm_bar=attn_extra_args.cpp_autotune_tqdm_bar,
-                                                     tqdm_prefix=attn_extra_args.cpp_autotune_tqdm_prefix)
-        else:
-            ret = attn_bwd(q, k, v, b, sm_scale, o, do, dq, dk, dv, db, L, delta,
-                           dropout_p, philox_seed, philox_offset, causal)
-            assert ret == hipError_t.hipSuccess, ret
-            tuning_result = None
+
+        ret = attn_bwd(q, k, v, b, sm_scale, o, do, dq, dk, dv, db, L, delta,
+                       dropout_p, philox_seed, philox_offset, causal)
+        assert ret == hipError_t.hipSuccess, ret
+        tuning_result = None
+
         if tuning_result is not None:
             ctx.tuning_result += tuning_result
+
         return dq, dk, dv, db, None, None, None, None, None
 
 attention = _attention.apply
