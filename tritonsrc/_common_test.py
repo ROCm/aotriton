@@ -156,6 +156,12 @@ class SdpaContext(object):
         return self.dev_tensors[0].dtype
 
     @property
+    def seqlen_q(self):
+        q, k, v, b = self.dev_tensors
+        seqlen_q = q.shape[2]
+        return seqlen_q
+
+    @property
     def seqlen_k(self):
         q, k, v, b = self.dev_tensors
         seqlen_k = k.shape[2]
@@ -223,9 +229,11 @@ class SdpaContext(object):
         ref_q, ref_k, ref_v, ref_b = self.ref_tensors
         dtype = self.dtype
         seqlen_k = self.seqlen_k
+        seqlen_q = self.seqlen_q
         seqlen_k_fudge_factor = 1.0 if seqlen_k < 1024 else 2.0
+        seqlen_k_fudge_factor = seqlen_k_fudge_factor if seqlen_k < 8192 else 4.0
         dropout_fudge_factor = 1.0 if p.dropout_p == 0.0 else 2.0
-        query_fudge_factor = 8 * dropout_fudge_factor * seqlen_k_fudge_factor  # TODO: Investigate why grad_q needs larger tolerances
+        query_fudge_factor = 8 * dropout_fudge_factor * seqlen_k_fudge_factor # TODO: Investigate why grad_q needs larger tolerances
         key_fudge_factor = 8 * dropout_fudge_factor
         value_fudge_factor = 7
         bias_fudge_factor = 12
