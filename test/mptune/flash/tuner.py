@@ -172,12 +172,16 @@ class TunerService(BaseTunerService):
         _, _, grads_allclose, grads_adiff = self._cached_ctx.validate_with_reference(None, dout_tensors, no_forward=True)
         dq_allclose, dk_allclose, dv_allclose, db_allclose = grads_allclose
         ref_dq, ref_dk, ref_dv, ref_db = self._cached_ctx.dref_tensors
-        return dk_allclose and dv_allclose, dq_allclose and db_allclose
+        return dk_allclose and dv_allclose, dq_allclose and db_allclose, grads_adiff
 
     def bwd_dkdv_validator(self, kernel_outputs : 'List[KernelOutput]'):
-        dkdv, dqdb = self.bwd_both_validator(kernel_outputs)
+        dkdv, dqdb, grads_adiff = self.bwd_both_validator(kernel_outputs)
+        # if not dkdv:
+        #     print(f'{grads_adiff=}')
         return dkdv
 
     def bwd_dqdb_validator(self, kernel_outputs : 'List[KernelOutput]'):
-        dkdv, dqdb = self.bwd_both_validator(kernel_outputs)
+        dkdv, dqdb, grads_adiff = self.bwd_both_validator(kernel_outputs)
+        # if not dqdb:
+        #     print(f'{grads_adiff=}')
         return dqdb
