@@ -76,13 +76,18 @@ class SQLiteKernelTuningDatabaseForArch(CommonKernelTuningDatabaseForArch):
     '''
     def _lookup_tuning_info(self, fsels, perf_meta, with_duplicates=True):
         mfsels, where_columns, where_values = self._extract_colunm_and_values(fsels)
-        selected_columns, selected_rows = self._select_from_table(where_columns, where_values, with_inputs=with_duplicates)
+        target_values = where_values
+        selected_columns, selected_rows = self._select_from_table(where_columns, target_values, with_inputs=with_duplicates)
         if not selected_rows:
             patched_values = self._apply_fallback(mfsels, where_columns, where_values)
-            selected_columns, selected_rows = self._select_from_table(where_columns, patched_values, with_inputs=with_duplicates)
+            target_values = patched_values
+            selected_columns, selected_rows = self._select_from_table(where_columns, target_values, with_inputs=with_duplicates)
         # print(f'{selected_columns=}')
         # print(f'{selected_rows=}')
-        assert selected_rows
+        if not selected_rows:
+            selection = ', '.join([f'{colname}={value}' for colname, value in zip(where_columns, where_values)])
+            fb_selection = ', '.join([f'{colname}={value}' for colname, value in zip(where_columns, patched_values)])
+            assert selected_rows, f'Cannot find any rows from selection ({selection}) (fallback to {fb_selection}) in table {self._table_name} arch {self._arch}'
         # TODO: Support KernelDescription.DOWNGRADER
         # return columns, values, self._downgrade(rows)
 
