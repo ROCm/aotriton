@@ -118,10 +118,10 @@ class TunerApp(App):
                 if kig_dict and payload.profiled_kernel_name in kig_dict:
                     kig = kig_dict[payload.profiled_kernel_name]
                     progress = (kig.kernel_index + 1, kig.total_number_of_kernels)
+                    text += f' {progress[0]:4d}/{progress[1]:4d}'
+                    text += f' Pass/Fail/NoImage/Uncertain = {kig.passed_kernels}/{kig.failed_kernels}/{kig.noimage_kernels}/{kig.uncertain_errors}'
                 else:
                     progress = None
-                if progress is not None:
-                    text += f' {progress[0]:4d}/{progress[1]:4d}'
                 msg = self.StateChange(text=text, progress=progress)
             if msg:
                 msg.source = info.source

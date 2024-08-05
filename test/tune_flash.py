@@ -72,6 +72,12 @@ class FlashTunerSource(MonadService):
     def init(self, _):
         pass
 
+    def is_valid_time(self, timing):
+        return isinstance(timing, list) and len(timing) == 3
+
+    def is_inf_time(self, timing):
+        return isinstance(timing, float) and math.isinf(timing)
+
     def update_continue_dict(self, j, cd):
         kn = j['kernel_name']
         kig = j['_debug_kernel_index']
@@ -85,6 +91,13 @@ class FlashTunerSource(MonadService):
         target = kig_dict[kn]
         target.kernel_index = max(target.kernel_index, kig)
         target.total_number_of_kernels = kit
+        timing = j['time']
+        if self.is_valid_time(timing):
+            target.passed_kernels += 1
+        elif self.is_inf_time(timing):
+            target.failed_kernels += 1
+        else:
+            target.uncertain_errors += 1
         # if task_id == 0:
         #     self.print(f'update cd[0] to {cd[0]} {kn=}')
         all_complete = True
@@ -138,9 +151,8 @@ class FlashTunerSource(MonadService):
                     # print(f'{known_kig_dict=}')
                     # print(f'{known_kig_dict[kn]=}')
                     # print(f'{known_kig_dict[kn].kernel_index=}', flush=True)
-                    kig_dict[kn].kernel_index = known_kig_dict[kn].kernel_index
+                    kig_dict[kn] = deepcopy(known_kig_dict[kn])
                     kig_dict[kn].last_success_kernel = known_kig_dict[kn].kernel_index
-                    kig_dict[kn].total_number_of_kernels = known_kig_dict[kn].total_number_of_kernels
             payload = TuningResult(tup=tup, kig_dict=kig_dict)
             progress_in_db = MonadMessage(task_id=i, action=MonadAction.Pass, source='source', payload=payload)
             if i in continue_dict:

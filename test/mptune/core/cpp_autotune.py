@@ -294,6 +294,12 @@ def cpp_autotune_sub_kernel_gen(extargs, kernel_func, validator, cur_kig):
                 cur_kig.total_number_of_kernels = min(CPPTUNE_DEBUG_FEW_KERNELS, extargs.total_number_of_kernels)
         if hip_status == hipError_t.hipSuccess:
             cur_kig.last_success_kernel = extargs.force_kernel_index
+            cur_kig.passed_kernels += 1
+        else:
+            if hip_status == hipError_t.hipErrorInvalidImage:
+                cur_kig.noimage_kernels += 1
+            else:
+                cur_kig.failed_kernels += 1
         def safeload(s):
             return json.loads(s) if s else None
         cur_kig.kernel_index = extargs.force_kernel_index
