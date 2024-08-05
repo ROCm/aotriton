@@ -14,7 +14,6 @@ from aotriton_flash import (
     hipError_t,
 )
 from collections import namedtuple
-from cpp_autotune import do_bench, cpp_autotune, KernelOutput, cpp_autotune_multikernel
 
 AttentionExtraArgs = namedtuple('AttentionExtraArgs',
         ['return_encoded_softmax',
@@ -83,79 +82,9 @@ class _attention(torch.autograd.Function):
         philox_seed = DEFAULT_PHILOX_SEED
         philox_offset = DEFAULT_PHILOX_OFFSET
 
-        if autotune and return_autotune:
-            assert attn_extra_args.fwd_validator is not None
-            from rocm_arch import rocm_get_gpuarch
-            gpu_arch = rocm_get_gpuarch()
-            def sameprocess_func(extargs):
-                args = (q, k, v, b, sm_scale, M, o,
-                        dropout_p, philox_seed, philox_offset, encoded_softmax, causal,
-                        extargs.capi_object)
-                try:
-                    ret = attn_fwd(*args)
-                except Exception as e:
-                    print(e)
-                    return 1, [KernelOutput(hip_status=hipError_t.hipErrorLaunchFailure,
-                                            output_tensors=None)]
-                return 1, [KernelOutput(hip_status=ret, output_tensors=[o])]
-            def ipc_func(force_kernel_index):
-                if gpu_arch == 'gfx1100' and force_kernel_index >= 30:
-                    # These kernels are suspicous on Navi
-                    return 1, [KernelOutput(hip_status=hipError_t.hipErrorInvalidDevice, output_tensors=[o])]
-                shard = attn_extra_args.gpu_device
-                tune_worker = attn_extra_args.tune_worker
-                def factory():
-                    ipc_to_worker = torch.multiprocessing.Queue()
-                    ipc_from_worker = torch.multiprocessing.Queue()
-                    ipc_to_worker.cancel_join_thread()
-                    ipc_from_worker.cancel_join_thread()
-                    p = Process(target=ipc_attn_fwd,
-                                args=(ipc_to_worker, ipc_from_worker))
-                    p.start()
-                    return (ipc_to_worker, ipc_from_worker, p)
-                ipc_to_worker, ipc_from_worker, p = tune_worker.request_cached_gpukernel_process(ipc_attn_fwd, factory)
-                # print(f'{q.data_ptr()=:x}')
-                # print(f'{k.data_ptr()=:x}')
-                # print(f'{v.data_ptr()=:x}')
-                # print(f'{b.data_ptr()=:x}')
-                # print(f'{M.data_ptr()=:x}')
-                # print(f'{o.data_ptr()=:x}')
-                ipc_to_worker.put((q, k, v, b, sm_scale, M, o,
-                                   dropout_p, philox_seed, philox_offset, encoded_softmax, causal,
-                                   force_kernel_index, shard))
-                while p.is_alive():
-                    try:
-                        iret = ipc_from_worker.get(timeout=1)
-                        break
-                    except queue.Empty:
-                        # print(f'Process timeout {p.is_alive()=}')
-                        pass
-                # print(f'Process attn_fwd starting')
-                if not p.is_alive():
-                    print(f'Process exitcode {p.exitcode}')
-                    tune_worker.invalid_gpukernel_process_cache(ipc_attn_fwd)
-                    p.join()
-                    ret = hipError_t.hipErrorLaunchFailure
-                else:
-                    ret = hipError_t.hipSuccess if iret == 0 else hipError_t.hipErrorLaunchFailure
-                # print(f'Process attn_fwd joined')
-                # print(f'Process exitcode {p.exitcode}')
-                return 1, [KernelOutput(hip_status=ret, output_tensors=[o])]
-            def func(extargs, is_testing):
-                # print(f'{is_testing=}')
-                if not is_testing:
-                    return sameprocess_func(extargs)
-                o.fill_(float('nan'))
-                return ipc_func(extargs.force_kernel_index)
-                # print(f'running attn_fwd with {extargs.force_kernel_index=}')
-            tuning_result = cpp_autotune(FwdExtraArguments, 'attn_fwd', func,
-                                         attn_extra_args.fwd_validator,
-                                         tqdm_bar=attn_extra_args.cpp_autotune_tqdm_bar,
-                                         tqdm_prefix=attn_extra_args.cpp_autotune_tqdm_prefix)
-        else:
-            attn_fwd(q, k, v, b, sm_scale, M, o,
-                     dropout_p, philox_seed, philox_offset, encoded_softmax, causal);
-            tuning_result = None
+        attn_fwd(q, k, v, b, sm_scale, M, o,
+                 dropout_p, philox_seed, philox_offset, encoded_softmax, causal);
+        tuning_result = None
 
         ctx.save_for_backward(q, k, v, b, o, M)
         ctx.sm_scale = sm_scale
