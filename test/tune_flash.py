@@ -294,7 +294,7 @@ def main():
     tuner.launch_graph()
     # monitor_thread = Thread(target=tuner.monitor)
     # monitor_thread.start()
-    app.run(mouse=False, inline=True, inline_no_clear=True)
+    app.run(mouse=False, inline=True)
     # monitor_thread.join()
 
 if __name__ == '__main__':
