@@ -135,6 +135,13 @@ class FlashTunerSource(MonadService):
 
         for i, tup in enumerate(self.gen()):
             self.print(f"[{i:06d}] gen_itup {tup}")
+            if a.selective_set:
+                if i in a.selective_set:
+                    payload = TuningResult(tup=tup, kig_dict=self.create_kig_dict())
+                    progress_in_db = MonadMessage(task_id=i, action=MonadAction.Pass, source='source', payload=payload)
+                    yield self.monad.next_kernel(progress_in_db)
+                    continue
+                continue
             if a.continue_from is not None and i < a.continue_from:
                 continue
             if i in skip_set:
@@ -222,8 +229,8 @@ def parse():
     p.add_argument('--d_head', type=int, nargs='+', default=[16,32,64,128,256], help='Head dimensions.')
     # p.add_argument('--seqlen_q', type=int, nargs='+', default=[4,8,16,32,64,128,256,1024,2048,4096,8192], help='Sequence length of Q.')
     # p.add_argument('--seqlen_k', type=int, nargs='+', default=[4,8,16,32,64,128,256,1024,2048,4096,8192], help='Sequence length of K/V.')
-    p.add_argument('--seqlen_q', type=int, nargs='+', default=[4,8,16,32,64,128,256,512,1024], help='Sequence length of Q.')
-    p.add_argument('--seqlen_k', type=int, nargs='+', default=[4,8,16,32,64,128,256,512,1024], help='Sequence length of K/V.')
+    p.add_argument('--seqlen_q', type=int, nargs='+', default=[4,8,16,32,64,128,256,512,1024,2048,4096,8192], help='Sequence length of Q.')
+    p.add_argument('--seqlen_k', type=int, nargs='+', default=[4,8,16,32,64,128,256,512,1024,2048,4096,8192], help='Sequence length of K/V.')
     p.add_argument('--causal', type=int, nargs='+', default=[True,False], choices=[0, 1], help='Causal mask. (Use 0/1 for False/True')
     p.add_argument('--dropout_p', type=float, nargs='+', default=[0.5, 0.0], help='Probablity to dropout (0 to disable).')
     p.add_argument('--dtype', type=str, nargs='+',
@@ -237,6 +244,7 @@ def parse():
     p.add_argument('--dry_run', action='store_true', help="Print parameter combinations without running tests")
     p.add_argument('--continue_from', type=int, default=None, help="Continue from n-th functional set")
     p.add_argument('--stop_at', type=int, default=None, help="Stop at n-th functional set")
+    p.add_argument('--selective_set', type=int, default=None, nargs='*', help="Only use the given task ids. Will override other options like --continue_from")
     p.add_argument('--db_file', type=str, default=None, help="Sqlite Database file (not recommended)")
     p.add_argument('--json_file',
                    type=Path,
