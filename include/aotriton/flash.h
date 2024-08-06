@@ -16,6 +16,7 @@ check_gpu(aotriton::Stream stream);
 using T4 = aotriton::TensorView<4>;
 using T2 = aotriton::TensorView<2>;
 using T1 = aotriton::TensorView<1>;
+using T0 = aotriton::TensorView<0>;
 
 struct FwdExtraArguments : public CppTune {
 };
@@ -35,8 +36,8 @@ attn_fwd(T4 q, // batch_size x num_heads x seqlen_q x head_size
          T2 softmax_lse,
          T4 Out, // batch_size x num_heads x seqlen_q x head_size
          float dropout_p,
-         uint64_t philox_seed,
-         uint64_t philox_offset,
+         T0 philox_seed,
+         T0 philox_offset,
          T4 encoded_softmax,
          bool is_causal,
          aotriton::Stream stream,
@@ -55,8 +56,8 @@ attn_fwd_compact_varlen(T4 q, // 1 x num_heads x total_q x head_size, total_q :=
                         T2 softmax_lse,
                         T4 Out, // 1 x num_heads x total_q x head_size
                         float dropout_p,
-                        uint64_t philox_seed,
-                        uint64_t philox_offset,
+                        T0 philox_seed,
+                        T0 philox_offset,
                         T4 encoded_softmax,
                         bool is_causal,
                         aotriton::Stream stream,
@@ -110,8 +111,8 @@ attn_bwd_compact_varlen(T4 q, // 1 x num_heads x total_q x head_size, total_q :=
 
 hipError_t
 debug_fill_dropout_rng(T4 r,
-                       uint64_t philox_seed,
-                       uint64_t philox_offset,
+                       T0 philox_seed,
+                       T0 philox_offset,
                        aotriton::Stream stream);
 
 } // aotriton::v2::flash

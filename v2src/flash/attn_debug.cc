@@ -9,7 +9,7 @@
 namespace aotriton::v2::flash {
 
 hipError_t
-debug_fill_dropout_rng(T4 r, uint64_t philox_seed, uint64_t philox_offset, aotriton::Stream stream_wrap) {
+debug_fill_dropout_rng(T4 r, T0 philox_seed, T0 philox_offset, aotriton::Stream stream_wrap) {
   hipError_t err;
   auto stream = stream_wrap.native();
   auto arch = getArchFromStream(stream);
@@ -28,8 +28,8 @@ debug_fill_dropout_rng(T4 r, uint64_t philox_seed, uint64_t philox_offset, aotri
     .R = &r,
     .seqlen_q = seqlen_q,
     .seqlen_k = seqlen_k,
-    .philox_seed = philox_seed,
-    .philox_offset_base = static_cast<uint32_t>(philox_offset),
+    .philox_seed_ptr = &philox_seed,
+    .philox_offset_base_ptr = &philox_offset,
   };
   DebugFillDropoutRngContext context;
   context.grid_calculator = grid_calculator;

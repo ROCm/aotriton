@@ -193,6 +193,15 @@ namespace pyaotriton {
     def_tensorview<4>(m, "T4");
     def_tensorview<2>(m, "T2");
     def_tensorview<1>(m, "T1");
+    // FIXME: deduplication of T0 code
+    py::class_<aotriton::TensorView<0>>(m, "T0")
+      .def(py::init<intptr_t, aotriton::DType>())
+      .def("size", &aotriton::TensorView<0>::size)
+      .def("stride", &aotriton::TensorView<0>::stride)
+      .def_property_readonly("sizes", &aotriton::TensorView<0>::sizes)
+      .def_property_readonly("strides", &aotriton::TensorView<0>::strides)
+      .def_property_readonly("data_ptr", &aotriton::TensorView<0>::data_ptr)
+      .def_property_readonly("dtype", &aotriton::TensorView<0>::dtype);
     py::module_ mod_v2api = m.def_submodule("v2", "v2 API namespace");
     v2::setup_module(mod_v2api);
   }

@@ -283,8 +283,8 @@ class _attention(torch.autograd.Function):
             if encoded_softmax is not None:
                 print(f'{encoded_softmax.shape=} {encoded_softmax.dtype=}')
 
-        philox_seed = DEFAULT_PHILOX_SEED
-        philox_offset = DEFAULT_PHILOX_OFFSET
+        philox_seed = torch.tensor([DEFAULT_PHILOX_SEED], device=q.device, dtype=torch.uint64)
+        philox_offset = torch.tensor([DEFAULT_PHILOX_OFFSET], device=q.device, dtype=torch.uint32)
         if b is None:
             b = torch.empty((0,0,0,0), device=q.device, dtype=q.dtype)
             BIAS_TYPE = 0
@@ -323,8 +323,8 @@ class _attention(torch.autograd.Function):
                 max_seqlen_k=k.shape[2],
                 head_dim=Lk,
                 dropout_p=dropout_p,
-                philox_seed=philox_seed,
-                philox_offset_base=philox_offset,
+                philox_seed_ptr=philox_seed,
+                philox_offset_base_ptr=philox_offset,
                 encoded_softmax=encoded_softmax,
                 CAUSAL=causal,
                 BLOCK_DMODEL=head_dim_rounded,
@@ -358,8 +358,8 @@ class _attention(torch.autograd.Function):
                 max_seqlen_k=k.shape[2],
                 head_dim=Lk,
                 dropout_p=dropout_p,
-                philox_seed=philox_seed,
-                philox_offset_base=philox_offset,
+                philox_seed_ptr=philox_seed,
+                philox_offset_base_ptr=philox_offset,
                 encoded_softmax=encoded_softmax,
                 CAUSAL=causal,
                 BLOCK_M=BLOCK_M,
@@ -650,34 +650,6 @@ class _attention(torch.autograd.Function):
         )
         if q.requires_grad:
             if ctx.autotune:
-                # sized_tuned_bwd_kernel_dq[grid_dq](
-                #     q, k, v, b, ctx.sm_scale,
-                #     o, do,
-                #     dq, db,
-                #     L, delta,
-                #     q.stride(0), q.stride(1), q.stride(2), q.stride(3),
-                #     k.stride(0), k.stride(1), k.stride(2), k.stride(3),
-                #     v.stride(0), v.stride(1), v.stride(2), v.stride(3),
-                #     b.stride(0), b.stride(1), b.stride(2), b.stride(3),
-                #     do.stride(0), do.stride(1), do.stride(2), do.stride(3),
-                #     dq.stride(0), dq.stride(1), dq.stride(2), dq.stride(3),
-                #     stride_dbz, stride_dbh, stride_dbm, stride_dbn,
-                #     cu_seqlens_q=null_tensor,
-                #     cu_seqlens_k=null_tensor,
-                #     num_seqlens=0,
-                #     max_seqlen_q=max_seqlen_q,
-                #     max_seqlen_k=max_seqlen_k,
-                #     head_dim=Lk,
-                #     dropout_p=ctx.dropout_p,
-                #     philox_seed=ctx.philox_seed,
-                #     philox_offset_base=ctx.philox_offset,
-                #     BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N,
-                #     BLOCK_DMODEL=head_dim_rounded,
-                #     CAUSAL=ctx.causal,
-                #     ENABLE_DROPOUT=ctx.dropout_p > 0.0,
-                #     PADDED_HEAD=padded_head,
-                #     BIAS_TYPE=ctx.bias_type,
-                # )
                 tuned_bwd_kernel_dq[grid_dq](
                     q, k, v, b, ctx.sm_scale,
                     o, do,

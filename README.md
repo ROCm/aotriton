@@ -3,21 +3,25 @@
 ```
 mkdir build
 cd build
+export PKG_CONFIG_PATH="${PKG_CONFIG_PATH}:${CONDA_PREFIX}/lib/pkgconfig"
 cmake .. -DCMAKE_INSTALL_PREFIX=./install_dir -DCMAKE_BUILD_TYPE=Release -G Ninja
 # Use ccmake to tweak options
 ninja install
 ```
 
 The library and the header file can be found under `build/install_dir` afterwards.
+You may ignore the `export PKG_CONFIG_PATH` part if you're not building with conda
 
-Note: do not run `make` separately, due to the limit of the current build
-system, `make install` will run the whole build process unconditionally.
+Note: do not run `ninja` separately, due to the limit of the current build
+system, `ninja install` will run the whole build process unconditionally.
 
 ### Prerequisites
 
 * `hipcc` in `/opt/rocm/bin`, as a part of [ROCm](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/)
 * `cmake`
 * `ninja`
+* `libzstd`
+  - Common names are `libzstd-dev` or `libzstd-dev`.
 
 ## Generation
 

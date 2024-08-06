@@ -31,7 +31,7 @@ option(AOTRITON_COMPRESS_KERNEL "Enable GPU kernel compression with zstd. Fail w
 set(AOTRITON_OVERRIDE_ZSTD_INCLUDE "" CACHE STRING "(For archive library users) override zstd header directory.\
 Caveat: should consider set AOTRITON_NO_SHARED because objects are compiled with this header file,\
 but shared objects will be linked to libzstd found by find_package later.")
-set(AOTRITON_OVERRIDE_ZSTD_LIB "" CACHE STRING "(For archive library users) override zstd header library")
+# set(AOTRITON_OVERRIDE_ZSTD_LIB "" CACHE STRING "(For archive library users) override zstd header library")
 if(AOTRITON_COMPRESS_KERNEL)
     find_program(ZSTD_EXEC zstd REQUIRED)
     include(FindPkgConfig)
