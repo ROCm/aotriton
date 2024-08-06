@@ -66,8 +66,8 @@ class bwd_kernel_dk_dv(FlashKernel):
         frozenset(['num_seqlens', 'max_seqlen_q', 'max_seqlen_k']) : match_fwd('num_seqlens'),
         frozenset(['head_dim']) : ['i32'],
         frozenset(['dropout_p']) : match_fwd('dropout_p'),
-        frozenset(['philox_seed']) : match_fwd('philox_seed'),
-        frozenset(['philox_offset_base']) : match_fwd('philox_offset_base'),
+        frozenset(['philox_seed']) : ['u64'],
+        frozenset(['philox_offset_base']) : ['u32'],
     }
     FEAT_CHOICES = {
         frozenset(['BLOCK_DMODEL']) : [16, 32, 64, 128, 256],

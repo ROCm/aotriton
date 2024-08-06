@@ -8,8 +8,8 @@ class debug_fill_dropout_rng(FlashKernel):
         'R',
         'stride_rz', 'stride_rh', 'stride_rm', 'stride_rn',
         'seqlen_q', 'seqlen_k',
-        'philox_seed',
-        'philox_offset_base',
+        'philox_seed_ptr',
+        'philox_offset_base_ptr',
         'BLOCK_M',  # tl.constexpr starts here
         'BLOCK_N',
     ]
@@ -18,12 +18,14 @@ class debug_fill_dropout_rng(FlashKernel):
     }
     TENSOR_RANKS = {
         '_default' : 4,
+        'philox_seed_ptr': 0,
+        'philox_offset_base_ptr': 0,
     }
     TYPE_CHOICES = {
         frozenset(['R']) : ['*fp32:16'],
         frozenset(['seqlen_q', 'seqlen_k']) : ['i32'],
-        frozenset(['philox_seed']) : ['u64'],
-        frozenset(['philox_offset_base']) : ['u32'],
+        frozenset(['philox_seed_ptr']) : ['*u64'],
+        frozenset(['philox_offset_base_ptr']) : ['*u32'],
     }
     FEAT_CHOICES = {
     }

@@ -75,8 +75,8 @@ class _attention(torch.autograd.Function):
             if encoded_softmax is not None:
                 print(f'{encoded_softmax.shape=} {encoded_softmax.dtype=}')
 
-        philox_seed = DEFAULT_PHILOX_SEED
-        philox_offset = DEFAULT_PHILOX_OFFSET
+        philox_seed = torch.tensor([DEFAULT_PHILOX_SEED], device=q.device, dtype=torch.uint64)
+        philox_offset = torch.tensor([DEFAULT_PHILOX_OFFSET], device=q.device, dtype=torch.uint32)
 
         attn_fwd(q, k, v, b, sm_scale, M, o,
                  dropout_p, philox_seed, philox_offset, encoded_softmax, causal);
@@ -103,8 +103,8 @@ class _attention(torch.autograd.Function):
         # print(f'{b=}')
         sm_scale = ctx.sm_scale
         dropout_p = ctx.dropout_p
-        philox_seed = ctx.philox_seed
-        philox_offset = ctx.philox_offset
+        philox_seed = ctx.philox_seed[0]
+        philox_offset = ctx.philox_offset[0]
         causal = ctx.causal
         attn_extra_args = ctx.attn_extra_args
         autotune = ctx.autotune

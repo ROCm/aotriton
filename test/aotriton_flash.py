@@ -10,7 +10,7 @@ from pyaotriton.v2.flash import (
     FwdExtraArguments,
     BwdExtraArguments,
 )
-from pyaotriton import T1, T2, T4, DType, Stream, hipError_t
+from pyaotriton import T0, T1, T2, T4, DType, Stream, hipError_t
 from pyaotriton.v2 import CppTuneSpecialKernelIndex
 import os
 
@@ -26,7 +26,9 @@ def cast_dtype(dtype):
 
 def mk_aotensor(q, if_empty_then_like=None):
     rank = len(q.shape) if q is not None else len(if_empty_then_like.shape)
-    if rank == 1:
+    if q is not None and q.numel() == 1:
+        return T0(q.data_ptr(), cast_dtype(q.dtype))
+    elif rank == 1:
         klass = T1
     elif rank == 2:
         klass = T2
@@ -52,8 +54,8 @@ def attn_fwd(q, k, v, b, sm_scale, M, o,
                      mk_aotensor(M),
                      mk_aotensor(o),
                      float(dropout_p),
-                     int(philox_seed),
-                     int(philox_offset),
+                     mk_aotensor(philox_seed),
+                     mk_aotensor(philox_offset),
                      mk_aotensor(encoded_softmax, if_empty_then_like=q),
                      is_causal,
                      Stream(),

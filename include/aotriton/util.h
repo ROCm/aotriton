@@ -80,6 +80,7 @@ public:
   std::array<uint64_t, Rank> sizes() const {
     return sizes_;
   }
+
   std::array<uint64_t, Rank> strides() const {
     return strides_;
   }
@@ -104,6 +105,48 @@ private:
   std::array<uint64_t, Rank> strides_;
   DType dtype_ = kUnknown;
 };
+
+template<>
+class TensorView<0> {
+public:
+  TensorView(intptr_t base, DType dtype)
+    : base_(reinterpret_cast<void*>(base))
+    , dtype_(dtype) {
+  }
+
+  operator bool() const {
+    return base_ != nullptr;
+  }
+
+  uint64_t size(int i) const {
+    return i == 0 ? 1 : 0;
+  }
+
+  uint64_t stride(int i) const {
+    return i == 0 ? 1 : 0;
+  }
+
+  std::array<uint64_t, 0> sizes() const {
+    return {};
+  }
+
+  std::array<uint64_t, 0> strides() const {
+    return {};
+  }
+
+  const void* data_ptr() const {
+    return base_;
+  }
+
+  DType dtype() const {
+    return dtype_;
+  }
+
+private:
+  const void* base_ = nullptr;
+  DType dtype_ = kUnknown;
+};
+
 
 extern template class TensorView<1>;
 extern template class TensorView<2>;

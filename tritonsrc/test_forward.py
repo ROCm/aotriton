@@ -5,7 +5,7 @@
 import pytest
 import torch
 
-from attn_torch_function import attention, debug_fill_dropout_rng, DEFAULT_PHILOX_SEED, DEFAULT_PHILOX_OFFSET
+from attn_torch_function import attention, AttentionExtraArgs, debug_fill_dropout_rng, DEFAULT_PHILOX_SEED, DEFAULT_PHILOX_OFFSET
 
 def scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_mask=None, dropout_p=0.0, is_causal=False, scale=None) -> torch.Tensor:
     # Efficient implementation equivalent to the following:
@@ -158,10 +158,11 @@ class FwdTester(object):
         p = torch.softmax(p.float(), dim=-1).half()
         ref_out = torch.matmul(p, v)
         '''
-        return_encoded_softmax = dropout_p > 0.0 and not self.use_fill_rng_for_dropout
-        # return_encoded_softmax = dropout_p > 0.0  # Reserved for debugging use_fill_rng_for_dropout
-        autotune = False
-        tri_out, encoded_softmax, _ = attention(q, k, v, b, causal, sm_scale, dropout_p, return_encoded_softmax, autotune)
+        ext = AttentionExtraArgs(return_encoded_softmax=dropout_p > 0.0 and not self.use_fill_rng_for_dropout,
+                                 autotune=False,
+                                 return_autotune=False,
+                                 fillnan=True)
+        tri_out, encoded_softmax, _ = attention(q, k, v, b, causal, sm_scale, dropout_p, ext)
 
         if self.use_fill_rng_for_dropout:
             rdims = (BATCH, N_HEADS, seqlen_q, seqlen_k)
