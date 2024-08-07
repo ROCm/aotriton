@@ -103,8 +103,8 @@ class _attention(torch.autograd.Function):
         # print(f'{b=}')
         sm_scale = ctx.sm_scale
         dropout_p = ctx.dropout_p
-        philox_seed = ctx.philox_seed[0]
-        philox_offset = ctx.philox_offset[0]
+        philox_seed = ctx.philox_seed
+        philox_offset = ctx.philox_offset
         causal = ctx.causal
         attn_extra_args = ctx.attn_extra_args
         autotune = ctx.autotune

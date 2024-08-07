@@ -78,8 +78,8 @@ attn_bwd(T4 q, // batch_size x num_heads x seqlen_q x head_size
          T2 softmax_lse,
          T2 delta, // buffer, empty_like(softmax_lse)
          float dropout_p,
-         uint64_t philox_seed,
-         uint64_t philox_offset,
+         T0 philox_seed,
+         T0 philox_offset,
          bool is_causal,
          aotriton::Stream stream,
          BwdExtraArguments* extargs = nullptr);
@@ -103,8 +103,8 @@ attn_bwd_compact_varlen(T4 q, // 1 x num_heads x total_q x head_size, total_q :=
                         T2 softmax_lse,
                         T2 delta, // buffer, empty_like(softmax_lse)
                         float dropout_p,
-                        uint64_t philox_seed,
-                        uint64_t philox_offset,
+                        T0 philox_seed,
+                        T0 philox_offset,
                         bool is_causal,
                         aotriton::Stream stream,
                         BwdExtraArguments* extargs = nullptr);
