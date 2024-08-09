@@ -307,7 +307,7 @@ def attn_fwd(
         tl.store(l_ptrs, m_i + tl.math.log2(l_i))
 
     o_base = Out + batch_index * stride_oz + off_h_q * stride_oh + cu_seqlens_q_start * stride_om
-    mstore2d(acc.to(Out.dtype.element_ty),
+    mstore2d(acc,
              BLOCK_M,
              BLOCK_DMODEL,
              o_base=o_base,
@@ -317,6 +317,7 @@ def attn_fwd(
              o_cols=head_dim,
              stride_row=stride_om,
              stride_col=stride_on)
+
     # # write back O
     # o_offset = Out + batch_index * stride_oz + off_h_q * stride_oh + cu_seqlens_q_start * stride_om
     # o_ptrs = o_offset + offs_m[:, None] * stride_om + offs_d[None, :] * stride_on

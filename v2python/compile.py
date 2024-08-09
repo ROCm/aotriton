@@ -6,17 +6,11 @@ from argparse import ArgumentParser
 from pathlib import Path
 from typing import List
 
-import triton
-from triton.compiler.code_generator import kernel_suffix
-from triton.backends.amd.driver import ty_to_cpp
-
 import shutil
 import subprocess
+from multiprocessing import Process, Queue
+import queue
 import json
-
-desc = """
-Triton ahead-of-time compiler:
-"""
 
 from triton.backends.compiler import GPUTarget
 
@@ -28,8 +22,11 @@ KNOWN_TARGETS = {
         'Navi32' : GPUTarget('hip', 'gfx1101', 32),
 }
 
-def main():
-    # command-line arguments
+desc = """
+Triton ahead-of-time compiler:
+"""
+
+def parse():
     parser = ArgumentParser(description=desc)
     parser.add_argument("path",
                         help="Path to Python source containing desired kernel in its scope. File will be executed.")
@@ -42,16 +39,21 @@ def main():
     parser.add_argument("--num_stages", "-ns", type=int, default=3,
                         help="Number of stages (meta-parameter of the kernel)")
     parser.add_argument("--waves_per_eu", type=int, default=0)
-    parser.add_argument("--out_name", "-on", type=str, default=None, help="Out name for the compiled kernel")
-    parser.add_argument("--out_path", "-o", type=Path, default=None, help="Out filename")
+    parser.add_argument("--out_path", "-o", type=Path, required=True, help="Out filename")
     parser.add_argument("--signature", "-s", type=str, help="Signature of the kernel", required=True)
     parser.add_argument("--grid", "-g", type=str, help="Launch grid of the kernel", required=True)
     parser.add_argument("--verbose", "-v", help="Enable vebose output", action='store_true')
     parser.add_argument("--nostrip", help="Keep debugging symbols", action='store_true')
+    parser.add_argument("--timeout", type=float, default=0.0, help='Maximal time the compiler can run. Passing 0 for indefinite.')
     args = parser.parse_args()
+    return args
 
-    out_name = args.out_name if args.out_name else args.kernel_name
-    out_path = args.out_path if args.out_path else Path(out_name)
+def do_compile(args):
+    import triton
+    from triton.compiler.code_generator import kernel_suffix
+    from triton.backends.amd.driver import ty_to_cpp
+
+    out_path = args.out_path
 
     # execute python sources and extract functions wrapped in JITFunction
     arg_path = Path(args.path)
@@ -128,44 +130,55 @@ def main():
         f.write(ccinfo.kernel)
     with open(out_path.with_suffix('.json'), 'w') as f:
         di = ccinfo.metadata._asdict()
-        del di['target']
+        del di['target']  # Cannot be serialized to Json
+        di['compile_status'] = 'Complete'
         json.dump(di, f, indent=2)
+    return out_path
 
-    '''
-    arg_names = []
-    arg_types = []
-    for i in signature.keys():
-        if i not in equal_to_1:
-            arg_names += [kernel.arg_names[i]]
-            arg_types += [signature[i]]
+def ipc_compile(ipc_in, ipc_out):
+    args = ipc_in.get()
+    try:
+        out_path = do_compile(args)
+        ipc_out.put('Complete')
+    except Exception as e:
+        if args.verbose:
+            print(e)
+        ipc_out.put('Exception')
 
-    # dump C stub code
-    suffix = kernel_suffix(signature.values(), attrs)
-    func_name = '_'.join([out_name, sig_hash, suffix])
-    hex_ = str(binascii.hexlify(ccinfo.asm["cubin"]))[2:-1]
-    params = {
-        "kernel_name": func_name,
-        "triton_kernel_name": args.kernel_name,
-        "bin_size": len(hex_),
-        "bin_data": ", ".join([f"0x{x}{y}" for x, y in zip(hex_[::2], hex_[1::2])]),
-        "signature": ", ".join([f"{ty_to_cpp(ty)} {name}" for name, ty in zip(arg_names, arg_types)]),
-        "full_signature": ", ".join([f"{ty_to_cpp(signature[i])} {kernel.arg_names[i]}" for i in signature.keys()]),
-        "arg_pointers": ", ".join([f"&{arg}" for arg in arg_names]),
-        "num_args": len(arg_names),
-        "kernel_docstring": doc_string,
-        "shared": ccinfo.metadata.shared,
-        "num_warps": args.num_warps,
-        "algo_info": '_'.join([const_sig, meta_sig]),
-        "gridX": grid[0],
-        "gridY": grid[1],
-        "gridZ": grid[2],
-        "_placeholder": "",
-    }
-    for ext in ['h', 'c']:
-        template_path = Path(__file__).parent / f"compile.{ext}"
-        with out_path.with_suffix(f".{sig_hash}_{suffix}.{ext}").open("w") as fp:
-            fp.write(Path(template_path).read_text().format(**params))
-    '''
+def main():
+    # command-line arguments
+    args = parse()
+    if args.timeout <= 0:
+        do_compile(args)
+        return
+    ipc_to_worker = Queue()
+    ipc_worker_out = Queue()
+    ipc_to_worker.cancel_join_thread()
+    ipc_worker_out.cancel_join_thread()
+    worker = Process(target=ipc_compile, args=(ipc_to_worker, ipc_worker_out))
+    worker.start()
+    ipc_to_worker.put(args)
+    try:
+        status = ipc_worker_out.get(timeout=args.timeout * 60.0)
+    except queue.Empty:
+        status = 'Timeout'
+        worker.kill()
+        print(f'Compiling {args.path=} {args.kernel_name} to {args.out_path=} timed out with {args.timeout} minutes',
+              file=sys.stderr)
+    ipc_to_worker.close()
+    ipc_worker_out.close()
+    worker.join()
+    if status != 'Timeout' and worker.exitcode != 0:
+        status = 'ExitWithError'
+    if args.verbose:
+        print(f'Compiling {args.path=} {args.kernel_name} to {args.out_path=} result with status {status} exitcode {worker.exitcode}')
+    # Write an empty file to avoid errors
+    if status != 'Complete':
+        with open(args.out_path.with_suffix('.hsaco'), 'bw') as f:
+            pass
+        with open(args.out_path.with_suffix('.json'), 'w') as f:
+            d = {'compile_status': status}
+            json.dump(d, f, indent=2)
 
 if __name__ == "__main__":
     main()

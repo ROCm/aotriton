@@ -1,0 +1,1 @@
+../../rocm_arch.py

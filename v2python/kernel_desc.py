@@ -93,11 +93,15 @@ class KernelDescription(object):
         if AOTRITON_GPU_WARPSIZE[gpu] == 64:
             yield from self.gen_autotune_configs(fsel_dict)
             return
+        yield from self.gen_autotune_configs(fsel_dict)
+        # Doubling the num_warps on WaveSize 32 may cause compiling problem
+        """
         for cfg in self.gen_autotune_configs(fsel_dict):
             cfg.num_warps *= 2
             if cfg.num_warps > 8:  # ignore super large block
                 continue
             yield cfg
+        """
 
     def __init__(self, triton_kernel_name, triton_file_path):
         self.insert_tensor_strides_to_choices(last_is_continuous=True)
