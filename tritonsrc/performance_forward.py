@@ -20,6 +20,8 @@ except BaseException:
     except BaseException:
         FLASH_VER = None
 HAS_FLASH = FLASH_VER is not None
+USE_TFLOPS = bool(int(os.getenv('USE_TFLOPS', default='1')))
+print(f'{USE_TFLOPS=}')
 
 n_ctx = os.getenv('N_CTX', default=list(range(10, 14)))
 if isinstance(n_ctx, str):
@@ -39,9 +41,9 @@ for mode in ['fwd']:
             # x_vals=[2**12],
             line_arg='provider',
             line_vals=['triton'] + (['flash'] if HAS_FLASH else []),
-            line_names=['Triton'] + ([f'Flash-{FLASH_VER}'] if HAS_FLASH else []),
+            line_names=['Triton(TFLOPS)' if USE_TFLOPS else 'Triton(ms)'] + ([f'Flash-{FLASH_VER}'] if HAS_FLASH else []),
             styles=[('red', '-'), ('blue', '-')],
-            ylabel='ms',
+            ylabel='TFLOPS' if USE_TFLOPS else 'ms',
             plot_name=f'fused-attention-batch{BATCH}-head{N_HEADS}-d{D_HEAD}-{mode}-causal={causal}',
             args={
                 'H': N_HEADS,
@@ -101,7 +103,10 @@ def bench_flash_attention(BATCH, H, N_CTX, D_HEAD, causal, mode, provider, dtype
         total_flops *= 0.5
     if mode == 'bwd':
         total_flops *= 2.5  # 2.0(bwd) + 0.5(recompute)
-    return total_flops / ms * 1e-9
+    if USE_TFLOPS:
+        return total_flops / ms * 1e-9
+    else:
+        return ms
 
 
 # only works on post-Ampere GPUs right now
