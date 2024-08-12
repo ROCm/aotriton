@@ -111,9 +111,15 @@ attn_bwd_compact_varlen(T4 q, // 1 x num_heads x total_q x head_size, total_q :=
 
 hipError_t
 debug_fill_dropout_rng(T4 r,
-                       T0 philox_seed,
-                       T0 philox_offset,
+                       uint64_t philox_seed,
+                       uint64_t philox_offset,
                        aotriton::Stream stream);
+
+hipError_t
+debug_fill_dropout_rng_tensor(T4 r,
+                              T0 philox_seed,
+                              T0 philox_offset,
+                              aotriton::Stream stream);
 
 } // aotriton::v2::flash
 

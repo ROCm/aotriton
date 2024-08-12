@@ -8,8 +8,8 @@ class debug_fill_dropout_rng(FlashKernel):
         'R',
         'stride_rz', 'stride_rh', 'stride_rm', 'stride_rn',
         'seqlen_q', 'seqlen_k',
-        'philox_seed_ptr',
-        'philox_offset_base_ptr',
+        'philox_seed',
+        'philox_offset',
         'BLOCK_M',  # tl.constexpr starts here
         'BLOCK_N',
     ]
@@ -18,14 +18,12 @@ class debug_fill_dropout_rng(FlashKernel):
     }
     TENSOR_RANKS = {
         '_default' : 4,
-        'philox_seed_ptr': 0,
-        'philox_offset_base_ptr': 0,
     }
     TYPE_CHOICES = {
         frozenset(['R']) : ['*fp32:16'],
         frozenset(['seqlen_q', 'seqlen_k']) : ['i32'],
-        frozenset(['philox_seed_ptr']) : ['*u64'],
-        frozenset(['philox_offset_base_ptr']) : ['*u32'],
+        frozenset(['philox_seed']) : ['u64'],
+        frozenset(['philox_offset']) : ['u32'],
     }
     FEAT_CHOICES = {
     }
@@ -40,3 +38,26 @@ class debug_fill_dropout_rng(FlashKernel):
     AUTOTUNE_KEYS = { }
     PARTIALLY_TUNED_FUNCTIONALS = [('PADDED_HEAD', None)]
     DOWNGRADER = []
+
+class debug_fill_dropout_rng_tensor(debug_fill_dropout_rng):
+    ARGUMENTS = [
+        'R',
+        'stride_rz', 'stride_rh', 'stride_rm', 'stride_rn',
+        'seqlen_q', 'seqlen_k',
+        'philox_seed_ptr',
+        'philox_offset_base_ptr',
+        'BLOCK_M',  # tl.constexpr starts here
+        'BLOCK_N',
+    ]
+    TYPE_CHOICES = {
+        frozenset(['R']) : ['*fp32:16'],
+        frozenset(['seqlen_q', 'seqlen_k']) : ['i32'],
+        frozenset(['philox_seed_ptr']) : ['*u64'],
+        frozenset(['philox_offset_base_ptr']) : ['*u32'],
+    }
+    TENSOR_RANKS = {
+        '_default' : 4,
+        'philox_seed_ptr': 0,
+        'philox_offset_base_ptr': 0,
+    }
+    SHIM_KERNEL_NAME = 'debug_fill_dropout_rng_tensor'
