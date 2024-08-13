@@ -36,9 +36,9 @@ def bwd_kernel_dk_dv(
     cu_seqlens_q,
     cu_seqlens_k,
     num_seqlens : 'i32',   # set num_seqlens to zero to ignore cu_seqlens_q/k
-    max_seqlen_q, # and use max_seqlen_q/k for all seqlen_q/k
-    max_seqlen_k,
-    head_dim,
+    max_seqlen_q : 'i32', # and use max_seqlen_q/k for all seqlen_q/k
+    max_seqlen_k : 'i32',
+    head_dim : 'i32',
     dropout_p,
     philox_seed_ptr,
     philox_offset_base_ptr,

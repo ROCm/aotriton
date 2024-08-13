@@ -257,7 +257,10 @@ class _attention(torch.autograd.Function):
             q.shape[0],
         )
         null_tensor = torch.empty((0), device=q.device, dtype=torch.int32)
-        M = torch.empty((q.shape[0] * q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)
+        def round_to_16x(x):
+            # return ((x + 15) // 16) * 16
+            return x
+        M = torch.empty((q.shape[0] * q.shape[1], round_to_16x(q.shape[2])), device=q.device, dtype=torch.float32)
         if attn_extra_args.fillnan:
             for t in (o, M):
                 t.fill_(float('nan'))
@@ -306,7 +309,7 @@ class _attention(torch.autograd.Function):
             BLOCK_M //= 2
 
         if autotune:
-            # assert False, "No time to test autotune for now"
+            assert False, "No time to test autotune for now"
             tuned_attn_fwd[grid](
                 q, k, v, b, sm_scale, M, o,
                 q.stride(0), q.stride(1), q.stride(2), q.stride(3),
@@ -499,19 +502,22 @@ class _attention(torch.autograd.Function):
 
         use_small_block = ctx.dropout_p > 0.0
         use_medium_block = ctx.bias_type != 0
-        if use_small_block:
-            # DQ_BLOCK_M = min(max_seqlen_q, BLOCK)
-            BLOCK_M = 32
-            BLOCK_N = 16
-        elif use_medium_block:
-            BLOCK_M = 64
-            BLOCK_N = 32
-        else:
-            BLOCK_M = 128
-            BLOCK_N = 64
-        if q.dtype == torch.float32:
-            BLOCK_M = max(16, BLOCK_M // 2)
-            BLOCK_N = max(16, BLOCK_N // 2)
+        # Profiling shows (16, 16) is optimal solution for most bwd configurations
+        BLOCK_M = 16
+        BLOCK_N = 16
+        # if use_small_block:
+        #     # DQ_BLOCK_M = min(max_seqlen_q, BLOCK)
+        #     BLOCK_M = 32
+        #     BLOCK_N = 16
+        # elif use_medium_block:
+        #     BLOCK_M = 64
+        #     BLOCK_N = 32
+        # else:
+        #     BLOCK_M = 64
+        #     BLOCK_N = 64
+        # if q.dtype == torch.float32:
+        #     BLOCK_M = max(16, BLOCK_M // 2)
+        #     BLOCK_N = max(16, BLOCK_N // 2)
         # debug_mask = torch.zeros((q.shape[0], q.shape[1], max_seqlen_q, max_seqlen_k), device=q.device, dtype=ctx.encoded_softmax.dtype)
         grid_dk_dv = lambda META: (
             triton.cdiv(max_seqlen_k, META['BLOCK_N']),
@@ -524,9 +530,10 @@ class _attention(torch.autograd.Function):
             stride_dbz, stride_dbh, stride_dbm, stride_dbn = 0,0,0,0
         else:
             db.fill_(float('nan'))
-        # print(f'backward {ctx.bias_type=} {ctx.autotune=} {BLOCK_M=} {BLOCK_N=} {stride_dbz=} {stride_dbh=} {stride_dbm=} {stride_dbn=}')
+        print(f'backward {ctx.bias_type=} {ctx.autotune=} {BLOCK_M=} {BLOCK_N=} {stride_dbz=} {stride_dbh=} {stride_dbm=} {stride_dbn=}')
         if k.requires_grad and v.requires_grad:
             if ctx.autotune:
+                assert False
                 tuned_bwd_kernel_dk_dv[grid_dk_dv](
                     q, k, v, b, ctx.sm_scale,
                     o, do,
@@ -591,6 +598,7 @@ class _attention(torch.autograd.Function):
                     ctx.tuning_result.append(('bwd_kernel_dk_dv', tuning_result))
                     print(f'{id(ctx.tuning_result)=}')
             else:
+                print('Running bare_bwd_kernel_dk_dv')
                 bare_bwd_kernel_dk_dv[grid_dk_dv](
                     q, k, v, b, ctx.sm_scale,
                     o, do,
@@ -622,6 +630,7 @@ class _attention(torch.autograd.Function):
                     PADDED_HEAD=padded_head,
                     BIAS_TYPE=ctx.bias_type,
                 )
+                print('bare_bwd_kernel_dk_dv Done')
         # print(f"{dq.stride()=}", flush=True)
         # print(f"{dq.data_ptr()=:x}", flush=True)
         # print(f"{dk.stride()=}", flush=True)
@@ -713,6 +722,7 @@ class _attention(torch.autograd.Function):
                     """
                     ctx.tuning_result.append(('bwd_kernel_dq', tuning_result))
             else:
+                print('Running bare_bwd_kernel_dq')
                 bare_bwd_kernel_dq[grid_dq](
                     q, k, v, b, ctx.sm_scale,
                     o, do,
@@ -743,6 +753,7 @@ class _attention(torch.autograd.Function):
                     PADDED_HEAD=padded_head,
                     BIAS_TYPE=ctx.bias_type,
                 )
+                print('bare_bwd_kernel_dq Done')
         # print(h.asm["ttgir"])
         return dq, dk, dv, None if db.numel() == 0 else db, None, None, None, None, None, None, None
 

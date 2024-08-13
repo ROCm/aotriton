@@ -10,7 +10,12 @@ from pyaotriton.v2.flash import (
     FwdExtraArguments,
     BwdExtraArguments,
 )
-from pyaotriton import T0, T1, T2, T4, DType, Stream, hipError_t
+from pyaotriton import T1, T2, T4, DType, Stream, hipError_t
+try:
+    from pyaotriton import T0
+    PASS_PHILOX_AS_TENSOR = True
+except:
+    PASS_PHILOX_AS_TENSOR = False
 from pyaotriton.v2 import CppTuneSpecialKernelIndex
 import os
 
@@ -27,7 +32,10 @@ def cast_dtype(dtype):
 def mk_aotensor(q, if_empty_then_like=None):
     rank = len(q.shape) if q is not None else len(if_empty_then_like.shape)
     if q is not None and q.numel() == 1:
-        return T0(q.data_ptr(), cast_dtype(q.dtype))
+        if PASS_PHILOX_AS_TENSOR:
+            return T0(q.data_ptr(), cast_dtype(q.dtype))
+        else:
+            return q[0]
     elif rank == 1:
         klass = T1
     elif rank == 2:

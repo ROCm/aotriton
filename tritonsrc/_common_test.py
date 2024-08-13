@@ -307,6 +307,77 @@ class SdpaContext(object):
             grads_adiff.append(adiff)
         return out_allclose, out_adiff, grads_allclose, grads_adiff
 
+    def display_validation_results(self, tri_out, is_allclose, adiff, grads_allclose, grads_adiff):
+        q, k, v, b = self.dev_tensors
+        dtype = q.dtype
+        SPARSE_HEAD_SINCE = 1
+        SPARSE_SEQ_SINCE = 1
+        ref_out = self.lp_refout_tensors[0]
+        if not is_allclose:
+            err_idx = np.unravel_index(torch.argmax(torch.abs(ref_out - tri_out)).cpu().numpy(), ref_out.shape)
+            print(f'{err_idx=}')
+            print(f'{tri_out[err_idx]=}')
+            print(f'{ref_out[err_idx]=}')
+        dq_allclose, dk_allclose, dv_allclose, db_allclose = grads_allclose
+        tri_dq, tri_dk, tri_dv, tri_db = self.dout_tensors
+        ref_dq, ref_dk, ref_dv, ref_db = self.dref_tensors
+        def TO(ref_tensor):
+            return ref_tensor.to(device=q.device, dtype=dtype)
+        if not dv_allclose:
+            err_idx = np.unravel_index(torch.argmax(torch.abs(TO(ref_dv) - tri_dv)).cpu().numpy(), ref_dv.shape)
+            print(f'{q.shape=} {q.stride()=} {q.dtype=}')
+            print(f'{k.shape=} {k.stride()=} {k.dtype=}')
+            print(f'{v.shape=} {v.stride()=} {v.dtype=}')
+            print(f'{q[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
+            print(f'{k[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
+            print(f'{v[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
+            # print(f'{dropout_mask[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
+            # print(f'{dropout_mask.shape=}')
+            print(f'{err_idx=}')
+            print(f'{tri_dv[err_idx]=}')
+            print(f'{ref_dv[err_idx]=}')
+            print(f'{torch.isnan(ref_dv).any()=}')
+            '''
+            any_nan = torch.isnan(ref_dv).any()
+            if any_nan:
+                torch.set_printoptions(linewidth=200)
+                print(f'{q=}')
+                print(f'{k=}')
+                print(f'{v=}')
+                print(f'{dropout_p=}')
+                print(f'{causal=}')
+                print(f'{sm_scale=}')
+            '''
+            if seqlen_q <= 16:
+                # torch.set_printoptions(linewidth=200, threshold=4096)
+                print(f'{tri_dk[0,0]=}')
+                print(f'{ref_dk[0,0]=}')
+                print(f'{tri_dv[0,0]=}')
+                print(f'{ref_dv[0,0]=}')
+                # print(f'{tri_dq[0,0]=}')
+                # print(f'{ref_dq[0,0]=}')
+
+        if dv_allclose and not dk_allclose:
+            print(f'{tri_out[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
+            print(f'{ref_out[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
+            print(f'{tri_dk[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
+            print(f'{ref_dk[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
+            err_idx = np.unravel_index(torch.argmax(torch.abs(TO(ref_dk) - tri_dk)).cpu().numpy(), ref_dk.shape)
+            print(f'{err_idx=}')
+            print(f'{tri_dk[err_idx]=} {ref_dk[err_idx]=} error = {torch.abs(tri_dk[err_idx] - ref_dk[err_idx])}')
+            print(f'{tri_dk[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]/ref_dk[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
+            # print(f'{dropout_mask[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
+
+        if dk_allclose and dv_allclose and not dq_allclose:
+            err_idx = np.unravel_index(torch.argmax(torch.abs(TO(ref_dq) - tri_dq)).cpu().numpy(), ref_dq.shape)
+            print(f'{err_idx=}')
+            print(f'{tri_dq[err_idx]=} {ref_dq[err_idx]=} error = {torch.abs(tri_dq[err_idx] - ref_dq[err_idx])}')
+
+        if dk_allclose and dv_allclose and dq_allclose and not db_allclose:
+            err_idx = np.unravel_index(torch.argmax(torch.abs(TO(ref_db) - tri_db)).cpu().numpy(), ref_db.shape)
+            print(f'{err_idx=}')
+            print(f'{tri_db[err_idx]=} {ref_db[err_idx]=} error = {torch.abs(tri_db[err_idx] - ref_db[err_idx])}')
+
 class VarlenSdpaContext(SdpaContext):
     TENSOR_NAMES = ('q', 'k', 'v', 'b')
 
@@ -385,3 +456,67 @@ class VarlenSdpaContext(SdpaContext):
         self.lp_refout_tensors = self._compute_ref_forward_varlen(self.lp_ref_tensors, self._seqlens_q, self._seqlens_k, p)
         return self.lp_refout_tensors
 
+class SdpaContextFromNPZ(SdpaContext):
+    def __init__(self, fn, dtype, device='cuda'):
+        d = np.load(fn)
+        def load(n, *, cast_to=dtype):
+            return torch.tensor(d[n], dtype=cast_to, device=device)
+        def load_qkv(*, prefix='', suffix='', keep_dtype=False):
+            cast_to = None if keep_dtype else dtype
+            # return tuple([torch.tensor(d[f'{prefix}{n}{suffix}'], dtype=cast_to, device=device) for n in 'qkvo'])
+            return tuple([load(f'{prefix}{n}{suffix}', cast_to=cast_to) for n in 'qkv'])
+        q, k, v = load_qkv()
+        b = None
+        self.dev_tensors = (q, k, v, b)
+        self.OUT_FUDGE_FACTOR = 3
+
+        # TODO: load dropout_mask
+
+        sm_scale = float(d['scale'])
+        assert not np.isnan(sm_scale), 'FIXME: suppport scale=None when capturing torch.nn.functional.scaled_dot_product_attention'
+        self.sdpa_params = SdpaParams(causal=bool(d['is_causal']),
+                                      sm_scale=sm_scale,
+                                      dropout_p=float(d['dropout_p']),
+                                      dropout_mask=None)
+
+        self.dout = load('upstream_grad')
+        self.refout_tensors = (load('o_ref'), None)
+        self.lp_refout_tensors = (load('o_lp_ref'), None)
+
+        dq, dk, dv = load_qkv(prefix='grads_', suffix='_ref', keep_dtype=True)
+        self.dref_tensors = (dq, dk, dv, None)
+        dq, dk, dv = load_qkv(prefix='grads_', suffix='_ref_lp', keep_dtype=True)
+        self.lp_dref_tensors = (dq, dk, dv, None)
+
+    def compute_ref_forward(self, p : SdpaParams):
+        self.fudge_factors = self._compute_fudge_factors(p)
+        pass
+
+    def compute_backward(self, out, dout, *, ref_only=False):
+        assert ref_only == False, 'SdpaContextFromNPZ.compute_backward is incompatible with ref_out=True'
+        self.dout_tensors = self._compute_backward(self.dev_tensors, out, dout)
+
+    def democode_save_tensors(self):
+        import numpy as np
+        np.savez('dump.npz',
+                 q=query.float().numpy(force=True),
+                 k=key.float().numpy(force=True),
+                 v=value.float().numpy(force=True),
+                 o=out.float().numpy(force=True),
+                 o_ref=out_ref.float().numpy(force=True),
+                 o_lp_ref=out_lp_ref.float().numpy(force=True),
+                 upstream_grad=upstream_grad.float().numpy(force=True),
+                 dropout_p=dropout_p,
+                 is_causal=int(is_causal),
+                 scale=float('nan') if scale is None else float(scale),
+                 enable_gqa=bool(enable_gqa),
+                 grads_q=grads[0].float().numpy(force=True),
+                 grads_k=grads[1].float().numpy(force=True),
+                 grads_v=grads[2].float().numpy(force=True),
+                 grads_q_ref_lp=grads_ref_lp[0].float().numpy(force=True),
+                 grads_k_ref_lp=grads_ref_lp[1].float().numpy(force=True),
+                 grads_v_ref_lp=grads_ref_lp[2].float().numpy(force=True),
+                 grads_q_ref=grads_ref[0].float().numpy(force=True),
+                 grads_k_ref=grads_ref[1].float().numpy(force=True),
+                 grads_v_ref=grads_ref[2].float().numpy(force=True),
+                 )

@@ -52,6 +52,6 @@ def debug_fill_dropout_rng_tensor(R,
                            seqlen_q, seqlen_k,
                            philox_seed,
                            philox_offset,
-                           BLOCK_M: tl.constexpr,
-                           BLOCK_N: tl.constexpr,
+                           BLOCK_M,
+                           BLOCK_N,
                            )

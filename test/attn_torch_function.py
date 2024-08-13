@@ -51,6 +51,10 @@ class _attention(torch.autograd.Function):
         seqlen_k = k.shape[2]
         o = torch.empty_like(q)
 
+        # def round_to_16x(x):
+        #     return ((x + 15) // 16) * 16
+        # M_padded = torch.empty((q.shape[0] * q.shape[1], round_to_16x(q.shape[2])), device=q.device, dtype=torch.float32)
+        # M = M_padded[:,:q.shape[2]]
         M = torch.empty((q.shape[0] * q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)
         if return_encoded_softmax:
             encoded_softmax = torch.zeros((q.shape[0], q.shape[1], q.shape[2], k.shape[2]), device=q.device, dtype=q.dtype)
@@ -95,6 +99,7 @@ class _attention(torch.autograd.Function):
         ctx.attn_extra_args = attn_extra_args
         ctx.autotune = autotune
         ctx.return_autotune = return_autotune
+        assert not torch.isnan(M).any()
         return o, encoded_softmax, ctx.tuning_result
 
     @staticmethod
@@ -127,6 +132,7 @@ class _attention(torch.autograd.Function):
         if tuning_result is not None:
             ctx.tuning_result += tuning_result
 
+        assert not torch.isnan(delta).any()
         return dq, dk, dv, db, None, None, None, None, None
 
 attention = _attention.apply
