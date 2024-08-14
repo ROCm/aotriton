@@ -114,6 +114,8 @@ class TunerApp(App):
                 else:
                     progress = None
                 msg = self.StateChange(text=text, progress=progress)
+            if action == MonadAction.Exception:
+                self.print(info.exception)
             if msg:
                 msg.source = info.source
                 self.post_message(msg)

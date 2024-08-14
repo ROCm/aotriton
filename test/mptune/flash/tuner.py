@@ -75,8 +75,6 @@ class TunerService(BaseTunerService):
         BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type = tup
         encoded_softmax = None
         dtype = getattr(torch, dtype)
-        philox_seed = DEFAULT_PHILOX_SEED
-        philox_offset = DEFAULT_PHILOX_OFFSET
 
         if self._arch == 'gfx1100':
             if seqlen_q > 4096 and seqlen_k > 4096:
@@ -96,6 +94,8 @@ class TunerService(BaseTunerService):
         # TODO: unify with attn_torch_function
         o, M = ctx.ctx_tensors
         L = M  # alias
+        philox_seed = torch.tensor([DEFAULT_PHILOX_SEED], device=q.device, dtype=torch.uint64)
+        philox_offset = torch.tensor([DEFAULT_PHILOX_OFFSET], device=q.device, dtype=torch.uint32)
 
         def fwd_sub_extarg_accessor(fwd_extargs : FwdExtraArguments, i):
             return fwd_extargs
@@ -143,7 +143,10 @@ class TunerService(BaseTunerService):
                 ret = attn_bwd(*args)
             except Exception as e:
                 self.report_exception(e)
-                return hipError_t.hipErrorLaunchFailure, None
+                ret = hipError_t.hipErrorLaunchFailure
+                return 2, [KernelOutput(hip_status=ret, output_tensors=None),
+                           KernelOutput(hip_status=ret, output_tensors=None),
+                          ]
             return 2, [KernelOutput(hip_status=ret, output_tensors=[dk,dv]),
                        KernelOutput(hip_status=ret, output_tensors=[dq,db]),
                       ]

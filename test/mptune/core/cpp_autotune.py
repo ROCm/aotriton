@@ -39,6 +39,8 @@ def do_bench(fn, *, warmup=25, rep=100,
 
     torch.cuda.synchronize()
     num_of_subkernels, outs = fn(is_testing=True)
+    # print(f'{num_of_subkernels=}')
+    # print(f'{outs=}')
     for ko in outs:
         if ko.hip_status != hipError_t.hipSuccess:
             # print(f'{ret=}', file=sys.stderr, flush=True)
