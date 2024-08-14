@@ -41,7 +41,8 @@ def attn_fwd(
         head_dim : 'i32',
         dropout_p,
         philox_seed_ptr,
-        philox_offset_base_ptr,
+        philox_offset1 : '*u32',
+        philox_offset2 : 'i32',
         encoded_softmax,
         CAUSAL: tl.constexpr,
         BLOCK_M: tl.constexpr,
@@ -66,10 +67,10 @@ def attn_fwd(
     offs_n = tl.arange(0, BLOCK_N)
     offs_d = tl.arange(0, BLOCK_DMODEL)
     philox_seed = 0
-    philox_offset_base = 0
+    philox_offset_base = philox_offset2
     if ENABLE_DROPOUT:
         philox_seed = tl.load(philox_seed_ptr)
-        philox_offset_base = tl.load(philox_offset_base_ptr)
+        philox_offset_base += tl.load(philox_offset1)
     if num_seqlens > 0:
         cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
         cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)

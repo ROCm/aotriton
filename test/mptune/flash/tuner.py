@@ -10,7 +10,9 @@ from ..core import (
     TunerService as BaseTunerService,
 )
 DEFAULT_PHILOX_SEED = 0x1BF52
-DEFAULT_PHILOX_OFFSET = 0x1D4B42
+DEFAULT_PHILOX_OFFSET_1 = 0x1D4000
+DEFAULT_PHILOX_OFFSET_2 = 0x000B42
+DEFAULT_PHILOX_OFFSET = DEFAULT_PHILOX_OFFSET_1 + DEFAULT_PHILOX_OFFSET_2
 
 class TunerMonad(Monad):
     def service_factory(self):
@@ -95,7 +97,8 @@ class TunerService(BaseTunerService):
         o, M = ctx.ctx_tensors
         L = M  # alias
         philox_seed = torch.tensor([DEFAULT_PHILOX_SEED], device=q.device, dtype=torch.uint64)
-        philox_offset = torch.tensor([DEFAULT_PHILOX_OFFSET], device=q.device, dtype=torch.uint32)
+        philox_offset1 = torch.tensor([DEFAULT_PHILOX_OFFSET_1], device=q.device, dtype=torch.uint32)
+        philox_offset2 = DEFAULT_PHILOX_OFFSET_2
 
         def fwd_sub_extarg_accessor(fwd_extargs : FwdExtraArguments, i):
             return fwd_extargs
@@ -105,7 +108,7 @@ class TunerService(BaseTunerService):
             if is_testing:
                 o.fill_(float('nan'))
             args = (q, k, v, b, sm_scale, M, o,
-                    dropout_p, philox_seed, philox_offset, encoded_softmax, causal,
+                    dropout_p, philox_seed, philox_offset1, philox_offset2, encoded_softmax, causal,
                     extargs.capi_object)
             try:
                 ret = attn_fwd(*args)
@@ -137,7 +140,7 @@ class TunerService(BaseTunerService):
                 if db is not None:
                     db.fill_(float('nan'))
             args = (q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
-                    dropout_p, philox_seed, philox_offset, causal,
+                    dropout_p, philox_seed, philox_offset1, philox_offset2, causal,
                     extargs.capi_object)
             try:
                 ret = attn_bwd(*args)

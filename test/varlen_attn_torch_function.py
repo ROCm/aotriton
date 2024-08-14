@@ -8,7 +8,9 @@ from aotriton_flash import attn_fwd_compact_varlen, attn_bwd_compact_varlen
 
 VERBOSE=False
 DEFAULT_PHILOX_SEED = 0x1BF52
-DEFAULT_PHILOX_OFFSET = 0x1D4B42
+DEFAULT_PHILOX_OFFSET_1 = 0x1D4000
+DEFAULT_PHILOX_OFFSET_2 = 0x000B42
+DEFAULT_PHILOX_OFFSET = DEFAULT_PHILOX_OFFSET_1 + DEFAULT_PHILOX_OFFSET_2
 
 def is_power_of_two(n: int) -> bool:
     return (n & (n - 1) == 0) and n != 0
@@ -60,12 +62,13 @@ class _attention_varlen(torch.autograd.Function):
                 print(f'{encoded_softmax.shape=} {encoded_softmax.dtype=}')
 
         philox_seed = DEFAULT_PHILOX_SEED
-        philox_offset = DEFAULT_PHILOX_OFFSET
+        philox_offset1 = torch.tensor([DEFAULT_PHILOX_OFFSET_1], device=q.device, dtype=torch.uint32)
+        philox_offset2 = DEFAULT_PHILOX_OFFSET_2
 
         attn_fwd_compact_varlen(q, k, v,
                                 cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
                                 b, sm_scale, M, o,
-                                dropout_p, philox_seed, philox_offset, encoded_softmax, causal);
+                                dropout_p, philox_seed, philox_offset1, philox_offset2, encoded_softmax, causal);
 
         ctx.save_for_backward(q, k, v, b, o, M)
         ctx.seqlens_q = seqlens_q
@@ -79,7 +82,8 @@ class _attention_varlen(torch.autograd.Function):
         ctx.causal = causal
         ctx.dropout_p = dropout_p
         ctx.philox_seed = philox_seed
-        ctx.philox_offset = philox_offset
+        ctx.philox_offset1 = philox_offset1
+        ctx.philox_offset2 = philox_offset2
         ctx.encoded_softmax = encoded_softmax # FIXME: for debugging only
         return o, encoded_softmax, None
 
@@ -97,7 +101,8 @@ class _attention_varlen(torch.autograd.Function):
         sm_scale = ctx.sm_scale
         dropout_p = ctx.dropout_p
         philox_seed = ctx.philox_seed
-        philox_offset = ctx.philox_offset
+        philox_offset1 = ctx.philox_offset1
+        philox_offset2 = ctx.philox_offset2
         causal = ctx.causal
         # if q.shape[-1] <= 32:
         # do = do.contiguous()
@@ -109,7 +114,7 @@ class _attention_varlen(torch.autograd.Function):
         attn_bwd_compact_varlen(q, k, v,
                                 cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
                                 b, sm_scale, o, do, dq, dk, dv, db, L, delta,
-                                dropout_p, philox_seed, philox_offset, causal);
+                                dropout_p, philox_seed, philox_offset1, philox_offset2, causal);
         return dq, dk, dv, None, None, None, None, None, None, None, None
 
 varlen_attention = _attention_varlen.apply

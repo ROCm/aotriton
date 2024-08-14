@@ -22,7 +22,8 @@ class attn_fwd(FlashKernel):
         'head_dim',
         'dropout_p',
         'philox_seed_ptr',
-        'philox_offset_base_ptr',
+        'philox_offset1',
+        'philox_offset2',
         'encoded_softmax',
         'CAUSAL', # tl.constexpr starts here
         'BLOCK_M',
@@ -50,7 +51,8 @@ class attn_fwd(FlashKernel):
         frozenset(['head_dim']) : ['i32'],
         frozenset(['dropout_p']) : ['fp32'],
         frozenset(['philox_seed_ptr']) : ['*u64'],
-        frozenset(['philox_offset_base_ptr']) : ['*u32'],
+        frozenset(['philox_offset1']) : ['*u32'],
+        frozenset(['philox_offset2']) : ['u32'],
     }
     FEAT_CHOICES = {
         frozenset(['CAUSAL']) : [False, True],
@@ -71,15 +73,10 @@ class attn_fwd(FlashKernel):
         'cu_seqlens_q': 1,
         'cu_seqlens_k': 1,
         'philox_seed_ptr': 0,
-        'philox_offset_base_ptr': 0,
+        'philox_offset1': 0,
     }
     EXPECTED_IDENTICAL_TENSOR_STRIDES = [
         # Not needed stride_o* exist
-    ]
-    LAUNCHER_PARAMETERS = [
-        'Q', 'K', 'V', 'sm_scale', 'M', 'Out',  # Basic functions
-        'dropout_p', 'philox_seed_ptr', 'philox_offset_base_ptr', 'encoded_softmax',  # dropout
-        'is_causal',  # Causal
     ]
     SHIM_KERNEL_NAME = 'attn_fwd'
 
