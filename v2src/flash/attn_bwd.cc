@@ -118,7 +118,7 @@ bwd_kernel_dk_dv(T4 q,
                  uint64_t philox_offset,
                  bool is_causal,
                  aotriton::Stream stream_wrap,
-                 ExtraArguments* extargs) {
+                 BwdExtraArguments* extargs) {
   hipError_t err;
   auto stream = stream_wrap.native();
   auto arch = getArchFromStream(stream);
@@ -166,12 +166,24 @@ bwd_kernel_dk_dv(T4 q,
     .BIAS_TYPE = bias_type,
   };
 #if AOTRITON_BUILD_FOR_TUNING
-  if (extargs)
-    params._has_preferred_kernel = extargs->force_kernel_index;
+  if (extargs) {
+    params._has_preferred_kernel = extargs->dkdv.force_kernel_index;
+    if (params._has_preferred_kernel == CppTuneSpecialKernelIndex::kSkipGPUCall) {
+        // std::cerr << "extargs->dkdv.force_kernel_index = " << extargs->dkdv.force_kernel_index << " EKI" << std::endl;
+        return hipSuccess;
+    }
+  }
 #endif
   BwdKernelDkDvContext context;
   context.grid_calculator = grid_calculator;
   err = context.lookup_optimal(params, arch);
+#if AOTRITON_BUILD_FOR_TUNING
+  if (extargs) {
+    extargs->dkdv.total_number_of_kernels = params._total_number_of_kernels;
+    extargs->dkdv.selected_kernel_psels = params._preferred_kernel_psels;
+    extargs->dkdv.selected_kernel_copts = params._preferred_kernel_copts;
+  }
+#endif
   if (err != hipSuccess) {
     return err;
   }
@@ -201,7 +213,7 @@ bwd_kernel_dq(T4 q,
               uint64_t philox_offset,
               bool is_causal,
               aotriton::Stream stream_wrap,
-              ExtraArguments* extargs) {
+              BwdExtraArguments* extargs) {
   hipError_t err;
   auto stream = stream_wrap.native();
   auto arch = getArchFromStream(stream);
@@ -249,12 +261,25 @@ bwd_kernel_dq(T4 q,
     .BIAS_TYPE = bias_type,
   };
 #if AOTRITON_BUILD_FOR_TUNING
-  if (extargs)
-    params._has_preferred_kernel = extargs->force_kernel_index;
+  if (extargs) {
+    params._has_preferred_kernel = extargs->dqdb.force_kernel_index;
+    if (params._has_preferred_kernel == CppTuneSpecialKernelIndex::kSkipGPUCall) {
+        // std::cerr << "extargs->dqdb.force_kernel_index = " << extargs->dqdb.force_kernel_index << " EKI" << std::endl;
+        return hipSuccess;
+    }
+  }
 #endif
   BwdKernelDqContext context;
   context.grid_calculator = grid_calculator;
   err = context.lookup_optimal(params, arch);
+#if AOTRITON_BUILD_FOR_TUNING
+  if (extargs) {
+    extargs->dqdb.total_number_of_kernels = params._total_number_of_kernels;
+    extargs->dqdb.selected_kernel_psels = params._preferred_kernel_psels;
+    extargs->dqdb.selected_kernel_copts = params._preferred_kernel_copts;
+    // std::cerr << "dqdb lookup_optimal = " << err << " EOL" << std::endl;
+  }
+#endif
   if (err != hipSuccess) {
     return err;
   }
@@ -286,7 +311,7 @@ _attn_bwd_common(T4 q,
                  uint64_t philox_offset,
                  bool is_causal,
                  aotriton::Stream stream,
-                 ExtraArguments* extargs) {
+                 BwdExtraArguments* extargs) {
   hipError_t ret;
   if (num_seqlens == 0)
     ret = bwd_preprocess(out, dout, delta, stream);
@@ -363,7 +388,7 @@ attn_bwd(T4 q,
          uint64_t philox_offset,
          bool is_causal,
          aotriton::Stream stream,
-         ExtraArguments* extargs) {
+         BwdExtraArguments* extargs) {
   auto null_t1 = T1::get_null_tensor(DType::kInt32);
   return _attn_bwd_common(q,
                           k,
@@ -414,7 +439,7 @@ attn_bwd_compact_varlen(T4 q,            // 1 x num_heads x total_q x head_size,
                         uint64_t philox_offset,
                         bool is_causal,
                         aotriton::Stream stream,
-                        ExtraArguments* extargs) {
+                        BwdExtraArguments* extargs) {
   return _attn_bwd_common(q,
                           k,
                           v,

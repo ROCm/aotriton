@@ -2,19 +2,23 @@
 
 import sqlite3
 import itertools
+from collections import defaultdict
 import json
+from copy import deepcopy
 import argparse
 import sys
+import math
 import csv
+from tqdm import tqdm
 
 def parse():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    p.add_argument('-f', '--file', type=str, required=True, help='Database file')
+    p.add_argument('-f', '--file', type=str, default=None, help='Database file')
     p.add_argument('-k', '--kernel_family', type=str, required=True, help='Kernel family')
     p.add_argument('-v', '--verbose', action='store_true', help='Verbose')
     p.add_argument('--action', type=str, required=False, default='pipejson',
-                   choices=['pipejson', 'createtableonly', 'dumpcsv', 'loadcsv'],
-                   help='Action to perform')
+                   choices=['pipejson', 'createtableonly', 'dumpcsv', 'loadcsv', 'rawjson', 'rawsc'],
+                   help='Action to perform. pipejson means directly inserting json objects into the database. rawjson means aggregating the raw profiling log (generated from the raw cpptune json objects) and insert the best kernel to database.')
     p.add_argument('--table_name', type=str, help='Table to dump/load')
     p.add_argument('--table_file', type=str, help='CSV file of dump/load')
     p.add_argument('--select_where', type=str, default='', help='Extra WHERE clause for SQL to only dump selected rows to CSV file')
@@ -31,9 +35,10 @@ class TuningDatabase(object):
 
     def __init__(self, args):
         self._args = args
-        self._conn = sqlite3.connect(args.file)  # TODO: use autocommit for python 3.12+
-        self._conn.isolation_level = None  # TODO: add --batch mode,
-        self._cur = self._conn.cursor()
+        if args.file is not None:
+            self._conn = sqlite3.connect(args.file)  # TODO: use autocommit for python 3.12+
+            self._conn.isolation_level = None  # TODO: add --batch mode,
+            self._cur = self._conn.cursor()
         self._table_existance_checked = set()
 
     @property
@@ -102,6 +107,9 @@ class TuningDatabase(object):
         if self.verbose:
             print(f'{line_text=}')
             print(f'{tune_info=}')
+        self.upsert_json(tune_info, create_table_only=create_table_only)
+
+    def upsert_json(self, tune_info, *, create_table_only):
         tune_result = tune_info.get('result', 'result-not-reported-in-older-version')
         if not tune_result == 'tuned':
             if self.verbose:
@@ -131,8 +139,9 @@ class TuningDatabase(object):
         self._conn.commit()
 
     def close(self):
-        self._cur.close()
-        self._conn.close()
+        if self._args.file is not None:
+            self._cur.close()
+            self._conn.close()
 
     def dumpcsv(self, table_name, table_file):
         with open(table_file, mode='w', newline='') as file:
@@ -162,6 +171,57 @@ class TuningDatabase(object):
                 self._cur.execute(stmt, row)
             self._conn.commit()
 
+    def init_aggregation(self):
+        self.task_database = {}  # dict: (arch, task_id, kernel_name) -> (best, json)
+
+    def aggregate(self, line_text):
+        if not line_text:
+            return
+        raw_info = json.loads(line_text)
+        if not raw_info['inputs']['Q_dtype'].startswith('torch.'):
+            raw_info['inputs']['Q_dtype'] = 'torch.' + raw_info['inputs']['Q_dtype']
+        timing = raw_info.get('time', float('inf'))
+        if isinstance(timing, float):
+            if math.isinf(timing):
+                return
+            assert False, f'time element in raw json log must be a list or float("inf") but get {timing}'
+        key = (raw_info['arch'], raw_info['_debug_task_id'], raw_info['kernel_name'])
+        if key in self.task_database:
+            best, _ = self.task_database[key]
+            if best > timing:
+                self.task_database[key] = (timing, raw_info)
+        else:
+            self.task_database[key] = (timing, raw_info)
+
+    def aggregation_results(self):
+        for timing, raw_info in self.task_database.values():
+            yield raw_info
+
+    def sancheck(self):
+        nkernels = defaultdict(list)
+        # inputs$Q_dtype=torch.float16, inputs$CAUSAL=False, inputs$BLOCK_DMODEL=16, inputs$ENABLE_DROPOUT=False, inputs$RETURN_ENCODED_SOFTMAX=False, inputs$PADDED_HEAD=False, inputs$BIAS_TYPE=0
+        select_entries = []
+        for key, v in self.task_database.items():
+            arch, task_id, kernel_name = key
+            nkernels[(arch, task_id)].append(kernel_name)
+            inputs = v[1]['inputs']
+            if inputs['Q_dtype'] == 'float16':
+                if inputs['CAUSAL'] == False:
+                    if inputs['BLOCK_DMODEL'] == 16:
+                        if inputs['ENABLE_DROPOUT'] == False:
+                            if inputs['RETURN_ENCODED_SOFTMAX'] == False:
+                                if inputs['PADDED_HEAD'] == False:
+                                    if inputs['BIAS_TYPE'] == 0:
+                                        select_entries.append(v)
+        redo_list = []
+        for key, v in nkernels.items():
+            arch, task_id = key
+            if len(v) != 3:
+                print(f"arch {arch} task {task_id} has insufficient number of kernels: {v}")
+                redo_list.append(task_id)
+        print(' '.join([f'{e}' for e in redo_list]))
+        print(select_entries)
+
 def main():
     args = parse()
     db = TuningDatabase(args)
@@ -174,6 +234,24 @@ def main():
         for line in sys.stdin:
             db.upsert(line, create_table_only=create_table_only)
         print("[table_tool] Input closed, exiting", file=sys.stderr)
+    elif args.action == 'rawjson':
+        db.init_aggregation()
+        for line in tqdm(sys.stdin):
+            db.aggregate(line)
+        for rawjson in db.aggregation_results():
+            # print(line)
+            db.upsert_json(rawjson, create_table_only=False)
+            # Handles CAUSAL=True and BIAS_TYPE=1 case
+            # No real use cases, just let the build system compile things
+            if rawjson['inputs']['CAUSAL'] == True and rawjson['inputs']['BIAS_TYPE'] == 0:
+                rj2 = deepcopy(rawjson)
+                rj2['inputs']['BIAS_TYPE'] = 1
+                db.upsert_json(rj2, create_table_only=False)
+    elif args.action == 'rawsc':
+        db.init_aggregation()
+        for line in tqdm(sys.stdin):
+            db.aggregate(line)
+        db.sancheck()
     elif args.action == 'dumpcsv':
         db.dumpcsv(args.table_name, args.table_file)
     elif args.action == 'loadcsv':

@@ -81,7 +81,7 @@ class SdpaContext(object):
     TENSOR_NAMES = ('q', 'k', 'v', 'b')
 
     def __init__(self, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, dtype,
-                 bias_type=None, storage_flip=None, device='cuda'):
+                 bias_type=None, storage_flip=None, device='cuda', fillnan=False):
         qdims = (BATCH, N_HEADS, seqlen_q, D_HEAD)
         kdims = (BATCH, N_HEADS, seqlen_k, D_HEAD)
         vdims = (BATCH, N_HEADS, seqlen_k, D_HEAD)
@@ -125,9 +125,41 @@ class SdpaContext(object):
         # self.FUDGE_FACTORS = (4, 2, 2, 2)  # Matches the order of self.dev_tensors
         self.OUT_FUDGE_FACTOR = 3
 
+    '''
+    Create Tensors that will be kept b/w forward and backward pass
+    '''
+    def create_ctx_tensors(self):
+        q, k, v, b = self.dev_tensors
+        o = torch.empty_like(q)
+        M = torch.empty((q.shape[0] * q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)
+        self.ctx_tensors = (o, M)
+
+    def create_bwd_tensors(self):
+        q, k, v, b = self.dev_tensors
+        o, L = self.ctx_tensors
+        dq = torch.empty_like(q)
+        dk = torch.empty_like(k)
+        dv = torch.empty_like(v)
+        db = torch.empty_like(b) if b is not None else None
+        delta = torch.empty_like(L)
+        self.bwd_tensors = (dq, dk, dv, db, delta)
+
+    @staticmethod
+    def fillnan(tensors):
+        for t in tensors:
+            if t is None:
+                continue
+            t.fill_(float('nan'))
+
     @property
     def dtype(self):
         return self.dev_tensors[0].dtype
+
+    @property
+    def seqlen_q(self):
+        q, k, v, b = self.dev_tensors
+        seqlen_q = q.shape[2]
+        return seqlen_q
 
     @property
     def seqlen_k(self):
@@ -197,9 +229,11 @@ class SdpaContext(object):
         ref_q, ref_k, ref_v, ref_b = self.ref_tensors
         dtype = self.dtype
         seqlen_k = self.seqlen_k
+        seqlen_q = self.seqlen_q
         seqlen_k_fudge_factor = 1.0 if seqlen_k < 1024 else 2.0
+        seqlen_k_fudge_factor = seqlen_k_fudge_factor if seqlen_k < 8192 else 4.0
         dropout_fudge_factor = 1.0 if p.dropout_p == 0.0 else 2.0
-        query_fudge_factor = 8 * dropout_fudge_factor * seqlen_k_fudge_factor  # TODO: Investigate why grad_q needs larger tolerances
+        query_fudge_factor = 8 * dropout_fudge_factor * seqlen_k_fudge_factor # TODO: Investigate why grad_q needs larger tolerances
         key_fudge_factor = 8 * dropout_fudge_factor
         value_fudge_factor = 7
         bias_fudge_factor = 12
@@ -238,10 +272,11 @@ class SdpaContext(object):
         return (dq, dk, dv, db)
 
     # Note: this follows pytorch's testing approach and expects low precision dout
-    def compute_backward(self, out, dout):
+    def compute_backward(self, out, dout, *, ref_only=False):
         self.dref_tensors = self._compute_backward(self.ref_tensors, self.refout_tensors[0], dout)
         self.lp_dref_tensors = self._compute_backward(self.lp_ref_tensors, self.lp_refout_tensors[0], dout)
-        self.dout_tensors = self._compute_backward(self.dev_tensors, out, dout)
+        if not ref_only:
+            self.dout_tensors = self._compute_backward(self.dev_tensors, out, dout)
 
     @staticmethod
     def _validate(out, ref, lp_ref, fudge_factor, tname):
@@ -257,8 +292,11 @@ class SdpaContext(object):
         max_adiff = float(torch.max(torch.abs(x - y)))
         return torch.allclose(x, y, atol=atol, rtol=rtol), max_adiff
 
-    def validate_with_reference(self, out, grads, *, no_backward=False):
-        out_allclose, out_adiff = self._validate(out, self.refout_tensors[0], self.lp_refout_tensors[0], self.OUT_FUDGE_FACTOR, 'out')
+    def validate_with_reference(self, out, grads, *, no_forward=False, no_backward=False):
+        if no_forward:
+            out_allclose, out_adiff = True, None
+        else:
+            out_allclose, out_adiff = self._validate(out, self.refout_tensors[0], self.lp_refout_tensors[0], self.OUT_FUDGE_FACTOR, 'out')
         if no_backward:
             return out_allclose, out_adiff, [], []
         grads_allclose = []

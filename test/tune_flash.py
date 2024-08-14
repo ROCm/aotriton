@@ -9,444 +9,215 @@ os.environ['HSA_SVM_GUARD_PAGES'] = '1'
 os.environ['HSA_DISABLE_FRAGMENT_ALLOCATOR'] = '1'
 
 import pytest
-import torch
 import json
 import sys
 import subprocess
-import queue
+from threading import Thread
 import multiprocessing
-from multiprocessing import Process, Queue
+from multiprocessing import Process
+from collections import defaultdict
 import argparse
-import itertools
 import time
 import math
-
-from rocm_arch import rocm_get_gpuarch
-from attn_torch_function import (
-    DEFAULT_PHILOX_SEED,
-    DEFAULT_PHILOX_OFFSET,
-    attention,
-    debug_fill_dropout_rng,
-    AttentionExtraArgs
+import itertools
+from copy import deepcopy
+from pathlib import Path
+from rocm_arch import rocm_get_gpuarch, rocm_get_allarch
+import mptune
+from mptune.core import (
+    ArgArchVerbose,
+    Monad,
+    MonadService,
+    MonadMessage,
+    MonadAction,
+    TunerManager,
+    TuningResult,
+    KernelIndexProress,
 )
-from _common_test import SdpaContext, SdpaParams
 
-_DEBUG_SKIP_TUNE_BACKWARD = True
+'''
+|----------------------------------------------------
+|FlashTup -> n * FlashTunerWorker -> FlashDbService |
+|    |           /                       /          |
+|FlashObserver  ~~~~~~~~~~~~~~~~~~~~~~~~            |
+|------------------- Watch Dog ----------------------
+                 FlashTunerManager
+'''
 
-class ArgArchVerbose:
-    def __init__(self, args):
-        self._args = args
-        self._arch = rocm_get_gpuarch()
+KERNEL_PRECEDENCE = ['attn_fwd', 'bwd_kernel_dk_dv', 'bwd_kernel_dq']
 
-    @property
-    def verbose(self):
-        return self._args.verbose
+class FlashSourceMonad(Monad):
+    def service_factory(self):
+        return FlashTunerSource(self._args, self)
 
-    def print(self, text):
-        if self.verbose:
-            print(text)
-
-class TunerWorker(ArgArchVerbose):
-    def __init__(self, args):
-        super().__init__(args)
-        self._tqdm_position = 0
-        self._gpu_device = 'cuda'
-        self._cached_gpukernel_process = {}
-
-    def profile_single_config(self, tup, *, prefix='', shard=None):
-        a = self._args
-        BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type = tup
-        head_dim_rounded = 2 ** (D_HEAD - 1).bit_length()
-        head_dim_rounded = max(16, head_dim_rounded)
-        inputs = {
-            'Q_dtype': str(dtype),
-            'N_HEADS': N_HEADS,
-            'D_HEAD': D_HEAD,
-            'max_seqlen_q': seqlen_q,
-            'max_seqlen_k': seqlen_k,
-            'CAUSAL': causal,
-            'RETURN_ENCODED_SOFTMAX': return_encoded_softmax,
-            'BLOCK_DMODEL': head_dim_rounded,
-            'ENABLE_DROPOUT' : dropout_p > 0.0,
-            'PADDED_HEAD' : head_dim_rounded != D_HEAD,
-            'BIAS_TYPE' : bias_type,
-        }
-        if seqlen_q > 8192 and seqlen_k > 8192:
-            N_HEADS = 1
-        if causal and seqlen_q != seqlen_k:
-            self.print('FA does not support accept casual=True when seqlen_q != seqlen_k. Skipping')
-            return 'Skip', inputs, None
-        if causal and bias_type != 0:
-            self.print('FA does not support accept casual=True when bias_type != 0. Skipping')
-            return 'Skip', inputs, None
-        if a.dry_run:
-            return 'Dryrun', None, None
-        torch.cuda.empty_cache()
-        '''
-        Create reference dropout_mask
-        '''
-        if dropout_p > 0.0:
-            rdims = (BATCH, N_HEADS, seqlen_q, seqlen_k)
-            r = torch.empty(rdims, device=self._gpu_device, dtype=torch.float32)
-            philox_seed = DEFAULT_PHILOX_SEED
-            philox_offset = DEFAULT_PHILOX_OFFSET
-            debug_fill_dropout_rng(r, philox_seed, philox_offset)
-            mask = r > dropout_p
-            torch.cuda.synchronize()
-            del r
-        else:
-            mask = None
-        torch.cuda.empty_cache()
-        '''
-        Create SdpaContext for testing
-        '''
-        ctx = SdpaContext(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, dtype,
-                          bias_type=bias_type, storage_flip=None, device=self._gpu_device)
-        ctx.create_ref_inputs(target_gpu_device=self._gpu_device)
-        ctx.set_require_grads(skip_db=True)
-        q, k, v, b = ctx.dev_tensors
-        sdpa_params = SdpaParams(causal=causal, sm_scale=sm_scale, dropout_p=dropout_p, dropout_mask=mask)
-        ref_out, _ = ctx.compute_ref_forward(sdpa_params)
-
-        '''
-        Now, enable autotune (C++ form), enable output validation
-        '''
-        def fwd_validator(tri_out):
-            is_allclose, adiff, _, _ = ctx.validate_with_reference(tri_out, None, no_backward=True)
-            '''
-            if not is_allclose:
-                import numpy as np
-                err_idx = np.unravel_index(torch.argmax(torch.abs(ref_out - tri_out)).cpu().numpy(), ref_out.shape)
-                print(f'{err_idx=}')
-                print(f'{tri_out[err_idx]=}')
-                print(f'{ref_out[err_idx]=}')
-            '''
-            return is_allclose
-
-        ext = AttentionExtraArgs(return_encoded_softmax=return_encoded_softmax,
-                autotune=True,
-                return_autotune=True,
-                autotune_validator=fwd_validator,
-                cpp_autotune_tqdm_position=self._tqdm_position,
-                cpp_autotune_tqdm_prefix=f'{prefix}{tup}',
-                gpu_device=shard,
-                tune_worker=self,
-                )
-        tri_out, encoded_softmax, best_configs = attention(q, k, v, b, causal, sm_scale, dropout_p, ext)
-        if self.verbose:
-            print('Returned best configs')
-            for kernel_name, best in best_configs:
-                # print(f'{kernel_name=} {best.kwargs=} {best.num_warps=} {best.num_stages=}')
-                print(f'{kernel_name=}')
-        if not _DEBUG_SKIP_TUNE_BACKWARD:
-            dout = torch.randn_like(q)
-            tri_out.backward(dout)
-            if self.verbose:
-                print('Returned best configs after backward')
-                for kernel_name, best in best_configs:
-                    print(f'{kernel_name=}')
-        return 'Success', inputs, best_configs
-
-    def do_profile(self, dba, gen):
-        dry_run_counter = 0
-        skip_counter = 0
-        for i, tup in gen():
-            action, inputs, best_configs = self.profile_single_config(tup)
-            if action == 'Success':
-                dba.pipe_configs(inputs, best_configs, _debug_task_id=i)
-            if action == 'Dryrun':
-                dry_run_counter += 1
-            if action == 'Skip':
-                dba.pipe_skipped_configs(inputs, _debug_task_id=i)
-                skip_counter += 1
-        dba.stop()
-        self.clean_cached_gpukernel_process()
-        print(f"Valid sample points {dry_run_counter=}. Skipped invalid/unsupported points {skip_counter}")
-
-    def request_cached_gpukernel_process(self, target, factory):
-        if target not in self._cached_gpukernel_process:
-            self._cached_gpukernel_process[target] = factory()
-        return self._cached_gpukernel_process[target]
-
-    def invalid_gpukernel_process_cache(self, target):
-        del self._cached_gpukernel_process[target]
-
-    def clean_cached_gpukernel_process(self):
-        for k, tup in self._cached_gpukernel_process.items():
-            ipc_to, ipc_from, p = tup
-            ipc_to.put(None)
-            p.join()
-            ipc_to.close()
-            ipc_from.close()
-
-class IPCTunerWorker(TunerWorker):
-    END_OF_QUEUE_OBJECT = (-1, None)
-
-    '''
-    Initialize multiprocessing related variables
-    '''
-    def init_mp(self, shard):
-        self._shard = shard
-        self._tqdm_position = shard
-        self._gpu_device = f'cuda:{shard}'
-        self._cached_gpukernel_process = {}
-
-    def clean_mp(self, shard):
-        self.clean_cached_gpukernel_process()
-
-    def do_profile(self, ipc_read, ipc_write):
-        a = self._args
-        shard, total_shards = ipc_read.get()
-        print(f'{shard=} {total_shards=}')
-        shard_prefix= '' if shard is None else f'[Shard {shard:02d}/{total_shards:02d}]'
-        self.init_mp(shard)
-        with torch.cuda.device(shard):
-            while True:
-                try:
-                    i, tup = ipc_read.get()
-                    # print(f'ipc_read {i} {tup}')
-                    if i == -1 and tup is None:
-                        break
-                    prefix = shard_prefix + f'[{i:06d}]'
-                    action, inputs, best_configs = self.profile_single_config(tup,
-                                                                              prefix=prefix,
-                                                                              shard=self._shard)
-                    ipc_write.put((i, action, inputs, best_configs))
-                except ValueError:  # mp.Queue closed
-                    break
-        self.clean_mp(shard)
-        '''
-        with torch.cuda.device(shard):
-            for i, tup in enumerate(self.gen()):
-                if i % total_shards != shard:
-                    continue
-                print(f"{shard_prefix}[{i:06d}] Handling {tup}")
-                if a.continue_from is not None and i < a.continue_from:
-                    continue
-                if a.stop_at is not None and i > a.stop_at:
-                    break
-                if a.dry_run:
-                    continue
-                action, inputs, best_configs = self.profile_single_config(tup)
-                if action == 'Success':
-                    ipc_write.put((inputs, best_configs))
-        ipc_write.put((None, shard))
-        '''
-
-class DbAccessor(ArgArchVerbose):
-    KERNEL_FAMILY = 'FLASH'
-    END_OF_QUEUE_OBJECT = (-1, None, None)
-
-    def create_dbp(self):
-        a = self._args
-        if a.json_file is not None and not a.dry_run:
-            assert a.json_file != a.db_file
-            self._jsonfile = open(a.json_file, 'a' if a.continue_from_json_file else 'w')
-        else:
-            self._jsonfile = None
-        dbargs = ['python3', '-m', 'v2python.table_tool']
-        if self.verbose:
-            dbargs += ['-v']
-        dbargs += ['-f', self._args.db_file, '-k', self.KERNEL_FAMILY]
-        if a.create_table_only:
-            dbargs += ['--action', 'createtableonly']
-        self._dbp = subprocess.Popen(dbargs,
-                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                     text=True)
-        os.set_blocking(self._dbp.stdout.fileno(), False)
-        os.set_blocking(self._dbp.stderr.fileno(), False)
-
-    def pipe_from_ipc(self, ipc_read):
-        self.create_dbp()
-        while True:
-            try:
-                i, action, inputs, best_configs = ipc_read.get()
-                if i == -1 and inputs is None:
-                    print('[DbAccessor] No more tasks. Exiting')
-                    break
-                if action == 'Success':
-                    self.pipe_configs(inputs, best_configs, prefix=f'[{i:06d}]', _debug_task_id=i)
-                if action == 'Skip':
-                    self.pipe_skipped_configs(inputs, prefix=f'[{i:06d} (skip)]', _debug_task_id=i)
-            except ValueError:  # mp.Queue closed
+    def next_kernel(self, msg : MonadMessage) -> MonadMessage:
+        inkig = msg.payload.kig_dict
+        outkig = deepcopy(inkig)
+        for kn in KERNEL_PRECEDENCE:
+            if self.next_index(outkig[kn]):
                 break
-        self.stop()
-        return
+        return msg.update_payload(kig_dict=outkig)
 
-    def pipe_configs(self, inputs, best_configs, *, prefix='', _debug_task_id=None):
-        for kernel_name, best in best_configs:
-            j = self.translate_config(inputs, kernel_name, best)
-            if _debug_task_id is not None:
-                j['_debug_task_id'] = _debug_task_id
-            js = json.dumps(j, separators=(',', ':'))
-            if self._jsonfile is None:
-                print(f'{prefix}Piping to db process {js}')
-            else:
-                print(js, file=self._jsonfile, flush=True)
-            print(js, file=self._dbp.stdin, flush=True)
-            self.splice_pipes()
+    def next_index(self, kig: KernelIndexProress) -> bool:
+        if kig.kernel_index >= kig.total_number_of_kernels:
+            return False
+        kig.kernel_index += 1
+        return True
 
-    def pipe_skipped_configs(self, inputs, _debug_task_id, *, prefix=''):
-        skipped_result = {
-            'arch' : self._arch,
-            'inputs' : inputs,
-            '_debug_task_id' : _debug_task_id,
-            'result' : 'skipped',
-        }
-        js = json.dumps(skipped_result, separators=(',', ':'))
-        if self._jsonfile is not None:
-            print(js, file=self._jsonfile, flush=True)
-
-    def splice_pipes(self):
-        nattempts = 10 if self.verbose else 1
-        for i in range(nattempts):
-            while True:
-                line = self._dbp.stdout.readline()
-                if line:
-                    print(line, end='')
-                else:
-                    if self.verbose:
-                        time.sleep(0.1)
-                    break
-
-        for i in range(nattempts):
-            while True:
-                line = self._dbp.stderr.readline()
-                if line:
-                    print(line, end='', file=sys.stderr)
-                else:
-                    if self.verbose:
-                        time.sleep(0.1)
-                    break
-        sys.stdout.flush()
-        sys.stderr.flush()
-
-    def translate_config(self, inputs, kernel_name, best):
-        tuning_result = {
-            'arch' : self._arch,
-            'kernel_name' : kernel_name,
-            'inputs' : inputs,
-            'result' : 'tuned',
-            'tuned_kernel' : best.psels,
-            'compiler_options' : best.copts,
-        }
-        return tuning_result
-
-    def stop(self):
-        if self._jsonfile is not None:
-            self._jsonfile.close()
-        self._dbp.stdin.close()
-        print("Waiting for database process to terminate")
-        self._dbp.wait()
-        self.splice_pipes()
-
-class TunerManager(ArgArchVerbose):
-
+class FlashTunerSource(MonadService):
     def gen(self):
         a = self._args
         yield from itertools.product(a.batch, a.n_heads, a.d_head, a.seqlen_q, a.seqlen_k, a.causal, a.sm_scale, a.dropout_p, a.return_encoded_softmax, a.dtype, a.bias_type)
 
-    def gen_itup(self):
+    def init(self, _):
+        pass
+
+    def is_valid_time(self, timing):
+        return isinstance(timing, list) and len(timing) == 3
+
+    def is_inf_time(self, timing):
+        return isinstance(timing, float) and math.isinf(timing)
+
+    def update_continue_dict(self, j, cd):
+        kn = j['kernel_name']
+        kig = j['_debug_kernel_index']
+        kit = j['_debug_total_number_of_kernels']
+        task_id = j['_debug_task_id']
+        if task_id not in cd:
+            cd[task_id] = TuningResult(tup=None, kig_dict=self.create_kig_dict())
+        # print(f'{cd=}', flush=True)
+        # print(f'{cd[task_id]=}', flush=True)
+        kig_dict = cd[task_id].kig_dict
+        target = kig_dict[kn]
+        target.kernel_index = max(target.kernel_index, kig)
+        target.total_number_of_kernels = kit
+        timing = j['time']
+        if self.is_valid_time(timing):
+            target.passed_kernels += 1
+        elif self.is_inf_time(timing):
+            target.failed_kernels += 1
+        else:
+            target.uncertain_errors += 1
+        # if task_id == 0:
+        #     self.print(f'update cd[0] to {cd[0]} {kn=}')
+        all_complete = True
+        for kn in KERNEL_PRECEDENCE:
+            if kig_dict[kn].kernel_index + 1 < kig_dict[kn].total_number_of_kernels:
+                all_complete = False
+                cd[task_id].profiled_kernel_name = kn
+                # if task_id == 0:
+                #     self.print(f'Kernel {kn} incomplete: {kig_dict[kn].kernel_index + 1=} not < {kig_dict[kn].total_number_of_kernels=}')
+                break
+        if all_complete:
+            # if task_id == 0:
+            #     self.print(f'task 0 complete')
+            del cd[task_id]
+            return task_id
+        return None
+
+    def process(self, _):
         a = self._args
         skip_set = set()
-        if a.continue_from_json_file and a.json_file is not None:
+        continue_dict = {}
+        if a.continue_from_json_file and a.json_file is not None and a.json_file.is_file():
+            # TODO: skipset
             with open(a.json_file, 'r') as f:
                 for line in f.readlines():
                     j = json.loads(line)
-                    skip_set.add(j['_debug_task_id'])
+                    task_id = j['_debug_task_id']
+                    if task_id in skip_set:
+                        continue
+                    skip = self.update_continue_dict(j, continue_dict)
+                    if skip is not None:  # Must test is None, otherwise skip=False when task_id=0
+                        skip_set.add(skip)
+        self.print(f'{skip_set=}')
+        self.print(f'{continue_dict=}')
+
         for i, tup in enumerate(self.gen()):
-            # print(f"[{i:06d}] gen_itup {tup}")
+            self.print(f"[{i:06d}] gen_itup {tup}")
+            if a.selective_set:
+                if i in a.selective_set:
+                    payload = TuningResult(tup=tup, kig_dict=self.create_kig_dict())
+                    progress_in_db = MonadMessage(task_id=i, action=MonadAction.Pass, source='source', payload=payload)
+                    yield self.monad.next_kernel(progress_in_db)
+                    continue
+                continue
             if a.continue_from is not None and i < a.continue_from:
                 continue
             if i in skip_set:
                 continue
             if a.stop_at is not None and i > a.stop_at:
                 break
-            yield i, tup
+            kig_dict = self.create_kig_dict()
+            if i in continue_dict:
+                known_kig_dict = continue_dict[i].kig_dict
+                for kn in KERNEL_PRECEDENCE:
+                    # print(f'{kig_dict=}')
+                    # print(f'{kig_dict[kn]=}')
+                    # print(f'{kig_dict[kn].kernel_index=}')
+                    # print(f'{known_kig_dict=}')
+                    # print(f'{known_kig_dict[kn]=}')
+                    # print(f'{known_kig_dict[kn].kernel_index=}', flush=True)
+                    kig_dict[kn] = deepcopy(known_kig_dict[kn])
+                    kig_dict[kn].last_success_kernel = known_kig_dict[kn].kernel_index
+            payload = TuningResult(tup=tup, kig_dict=kig_dict)
+            progress_in_db = MonadMessage(task_id=i, action=MonadAction.Pass, source='source', payload=payload)
+            if i in continue_dict:
+                if -1 in a.debug_skip_next_kernel or i in a.debug_skip_next_kernel:
+                    progress_in_db = self.monad.next_kernel(progress_in_db)
+            yield self.monad.next_kernel(progress_in_db)
+        self.print(f"gen_itup Exit")
+        # Note: main_loop should handle Exit after forwarding all
+        # object yield from MonadService.progress
+        for i in range(len(self._args.use_multigpu)):
+            yield MonadMessage(task_id=None, action=MonadAction.Exit, source='source')
 
-    def profile_all(self):
-        a = self._args
-        dba = DbAccessor(a)
-        if a.use_multigpu is None:
-            dba.create_dbp()
-            worker = TunerWorker(a)
-            worker.do_profile(dba, self.gen_itup)
-            return
-        shards = list([i for i in range(torch.cuda.device_count())]) if -1 in a.use_multigpu else a.use_multigpu
-        ipc_write = Queue()
-        ipc_worker_out = Queue()
-        ipc_tuners = [IPCTunerWorker(self._args) for i in shards]
-        workers = [Process(target=worker.do_profile, args=(ipc_write, ipc_worker_out)) for worker in ipc_tuners]
-        db_accessor = Process(target=dba.pipe_from_ipc, args=(ipc_worker_out,))
+    def cleanup(self):
+        pass
 
-        '''
-        Start processes
-        '''
-        nlive_processes = len(workers)
-        for i, p in enumerate(workers):
-            ipc_write.put((i, nlive_processes))
-        for p in workers:
-            p.start()
-        db_accessor.start()
-        '''
-        Dispatching tasks to ipc_write
-        '''
-        for i, tup in self.gen_itup():
-            obj = (i, tup)
-            # print(f"write_to_ipc {obj}")
-            any_process_alive = self.write_to_ipc(ipc_write, obj, workers)
-            if not any_process_alive:
-                break
-        nlive_processes = self.scan_live_processes(workers)
-        for i in range(nlive_processes):
-            self.write_to_ipc(ipc_write, IPCTunerWorker.END_OF_QUEUE_OBJECT, workers)
-        ipc_write.close()
-        """
-        while nlive_processes > 0:
-            try:
-                inputs, best_configs = ipc_worker_out.get(timeout=30)
-                # print(f'{inputs=}')
-                # print(f'{best_configs=}')
-                if inputs is None:
-                    shard = best_configs
-                    nlive_processes -= 1
-                    print(f'Shard {shard} has completed all tasks. Updated {nlive_processes=}')
-                    continue
-                self.pipe_configs(inputs, best_configs)
-            except queue.Empty:
-                print("Timed out. Re-scan live processes")
-                # "watchdog"
-        """
-        for p in workers:
-            p.join()
-        ipc_write.close()
-        print('All workers joined')
-        ipc_worker_out.put(DbAccessor.END_OF_QUEUE_OBJECT)
-        ipc_worker_out.close()
-        db_accessor.join()
-        print('Db accessor joined')
-        # Otherwise current process may block if any child died
-        ipc_write.cancel_join_thread()
-        ipc_worker_out.cancel_join_thread()
+    def create_kig_dict(self):
+        return { kn : KernelIndexProress() for kn in KERNEL_PRECEDENCE }
 
-    def write_to_ipc(self, ipc_write, obj, workers):
-        while True:
-            try:
-                ipc_write.put(obj, timeout=60)
-                return True
-            except queue.Full:
-                print("Task Queue Full. Re-scan live processes")
-                nlive_processes = self.scan_live_processes(workers)
-                print(f"{nlive_processes=}")
-                if nlive_processes == 0:
-                    print("PANIC: All Processes Died")
-                    return False
+class FlashTunerManager(TunerManager):
+    def factory_state_tracker(self):
+        return mptune.core.StateTracker(self._args)
 
-    def scan_live_processes(self, workers):
-        nlive_processes = 0
-        for i, p in enumerate(workers):
-            nlive_processes += 1 if p.is_alive() else 0
-        return nlive_processes
+    def factory_source(self, side_channel):
+        return FlashSourceMonad(self._args,
+                                identifier='source',
+                                side_channel=side_channel)
+
+    def factory_dbaccessor(self, num_workers, side_channel):
+        return mptune.flash.DbMonad(self._args,
+                                    identifier='dbaccessor',
+                                    side_channel=side_channel,
+                                    init_object=num_workers)
+
+    def factory_worker(self, nth_worker : int, gpu_device : int, side_channel):
+        return mptune.flash.TunerMonad(self._args,
+                                       identifier=f'worker_{nth_worker}_on_gpu_{gpu_device}',
+                                       side_channel=side_channel,
+                                       init_object=(nth_worker, gpu_device),
+                                       )
+
+    def factory_ui(self, state_tracker, src, workers, dbaccessor):
+        return mptune.tui.TunerApp(state_tracker.get_ui_update_queue(),
+                                   src,
+                                   workers,
+                                   dbaccessor)
+
+def make_ui(manager : TunerManager):
+    info_queue = manager._state_tracker.get_ui_update_queue()
+    src = manager._src
+    workers = manager._workers
+    dbaccessor = manager._dba
+    app = mptune.tui.TunerApp(args=manager._args,
+                              watchdog=manager.run_watchdog,
+                              info_queue=info_queue,
+                              src=src,
+                              workers=workers,
+                              dbaccessor=dbaccessor)
+    return app
 
 def parse():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -456,8 +227,10 @@ def parse():
     p.add_argument('--return_encoded_softmax', type=bool, default=[False],
                    help="(A functional for debugging) kernel that returns softmax(dropout(QK')) to validate the correctness of dropout")
     p.add_argument('--d_head', type=int, nargs='+', default=[16,32,64,128,256], help='Head dimensions.')
-    p.add_argument('--seqlen_q', type=int, nargs='+', default=[4,8,16,32,64,128,256,1024,2048,4096,8192], help='Sequence length of Q.')
-    p.add_argument('--seqlen_k', type=int, nargs='+', default=[4,8,16,32,64,128,256,1024,2048,4096,8192], help='Sequence length of K/V.')
+    # p.add_argument('--seqlen_q', type=int, nargs='+', default=[4,8,16,32,64,128,256,1024,2048,4096,8192], help='Sequence length of Q.')
+    # p.add_argument('--seqlen_k', type=int, nargs='+', default=[4,8,16,32,64,128,256,1024,2048,4096,8192], help='Sequence length of K/V.')
+    p.add_argument('--seqlen_q', type=int, nargs='+', default=[4,8,16,32,64,128,256,512,1024,2048,4096,8192], help='Sequence length of Q.')
+    p.add_argument('--seqlen_k', type=int, nargs='+', default=[4,8,16,32,64,128,256,512,1024,2048,4096,8192], help='Sequence length of K/V.')
     p.add_argument('--causal', type=int, nargs='+', default=[True,False], choices=[0, 1], help='Causal mask. (Use 0/1 for False/True')
     p.add_argument('--dropout_p', type=float, nargs='+', default=[0.5, 0.0], help='Probablity to dropout (0 to disable).')
     p.add_argument('--dtype', type=str, nargs='+',
@@ -471,24 +244,58 @@ def parse():
     p.add_argument('--dry_run', action='store_true', help="Print parameter combinations without running tests")
     p.add_argument('--continue_from', type=int, default=None, help="Continue from n-th functional set")
     p.add_argument('--stop_at', type=int, default=None, help="Stop at n-th functional set")
-    p.add_argument('--db_file', type=str, required=True, help="Sqlite Database file")
-    p.add_argument('--json_file', type=str, default=None, help="Json file for record. Disables printing json to stdout")
-    p.add_argument('--continue_from_json_file', action='store_true', help="Append to Json file instead of overwrite, and skip already tested entries.")
+    p.add_argument('--selective_set', type=int, default=None, nargs='*', help="Only use the given task ids. Will override other options like --continue_from")
+    p.add_argument('--db_file', type=str, default=None, help="Sqlite Database file (not recommended)")
+    p.add_argument('--json_file',
+                   type=Path,
+                   required=True,
+                   default=None,
+                   help="Json file for record. Disables printing json to stdout")
+    p.add_argument('--overwrite_json_file', dest='continue_from_json_file', action='store_false', help="Do NOT \"Append to Json file instead of overwrite, and skip already tested entries.\"")
     p.add_argument('--create_table_only', action='store_true', help="Do not insert data, only create tables. Used for schema updates.")
     p.add_argument('--use_multigpu', type=int, nargs='+', default=None, help='Profiling on multiple GPUs. Passing -1 for all GPUs available to pytorch.')
+    p.add_argument('--arch', type=str, default=None, help='[NOT RECOMMENDED TO SET MANUALLY] Override GPU architecture string. Will use first GPU from `rocm_agent_enumerator -name` if not provided.')
+    p.add_argument('--confirm_to_override_arch', action='store_true', help='A defensive option to avoid setting --arch unintentionally.')
+    p.add_argument('--debug_skip_next_kernel',
+                   type=int,
+                   default=[],
+                   nargs='*',
+                   help='''[DEBUG] Skip the next untuned kernel for the given task ids.
+                           Passing -1 to indicate all task ids.
+                           For severely broken kernels, it is possble the process simply hangs
+                           indefinitely without kernel driver intervention or GPU reset.
+                           This option allow skipping next kernel relative to json record,
+                           which are usually the faulty kernel.'''
+                  )
     args = p.parse_args()
-    args.dtype = [ getattr(torch, t) for t in args.dtype ]
+    assert args.return_encoded_softmax == [False], ('Do not support tuning return_encoded_softmax=True. '
+            'RETURN_ENCODED_SOFTMAX will be removed in the future and debug_fill_dropout_rng will be preferred choice.')
     args.causal = [ bool(c) for c in args.causal ]
+    if args.arch is None:
+        args.arch = rocm_get_gpuarch()
+    else:
+        assert args.confirm_to_override_arch
+    if args.use_multigpu is None:
+        args.use_multigpu = [0]
+    elif -1 in args.use_multigpu:
+        args.use_multigpu = list([i for i in range(len(rocm_get_allarch()))])
     # assert args.causal == [False], f'{args.causal=} {args.return_encoded_softmax=}'
     return args
 
 def main():
     assert os.getenv('PYTORCH_NO_CUDA_MEMORY_CACHING', default=0) == 0, 'PYTORCH_NO_HIP_MEMORY_CACHING does not play nicely with torch.multiprocessing. See https://github.com/pytorch/pytorch/issues/114534'
-    torch.multiprocessing.set_start_method('spawn', force=True)  # Otherwise torch complains
+    # We tried
+    # torch.multiprocessing.set_start_method('spawn', force=True)  # Otherwise torch complains
     # multiprocessing.set_start_method('spawn')  # "context has already been set"
     args = parse()
-    tuner = TunerManager(args)
-    tuner.profile_all()
+    tuner = FlashTunerManager(args)
+    tuner.build_graph()
+    app = make_ui(tuner)
+    tuner.launch_graph()
+    # monitor_thread = Thread(target=tuner.monitor)
+    # monitor_thread.start()
+    app.run(mouse=False, inline=True)
+    # monitor_thread.join()
 
 if __name__ == '__main__':
     main()

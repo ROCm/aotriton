@@ -147,8 +147,7 @@ class KernelTuningEntryForFunctionalOnGPU(object):
         kernel_image_symbols = []
         for incbin_symbol_name, _, o in self.gen_kernel_symbols(kernel_image_dir):
             assert o.compiled_files_exist, f'Compiled file {o._hsaco_kernel_path} not exists'
-            shared_memory_size = o._metadata['shared']
-            kernel_image_symbols.append(f'{{ mangle({incbin_symbol_name}), smangle({incbin_symbol_name}), {{ {o.num_warps * o.warp_size} , 1, 1 }}, {shared_memory_size} }},')
+            kernel_image_symbols.append(f'{{ mangle({incbin_symbol_name}), smangle({incbin_symbol_name}), {{ {o.num_warps * o.warp_size} , 1, 1 }}, {o.shared_memory_size} }},')
         ALIGN = '\n' + 4 * ' '
         return ALIGN.join(kernel_image_symbols)
 

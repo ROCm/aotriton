@@ -37,17 +37,25 @@ class ObjectFileDescription(object):
         self._hsaco_kernel_path = Path(hsaco_kernel_path)
         # self._hsaco_metatdata_path = Path() if triton_metadata_path is None else self._triton_file_path.with_suffix('.json')
         self._hsaco_metatdata_path = self._hsaco_kernel_path.with_suffix('.json')
-        if self._hsaco_metatdata_path.exists():
+        if self.compiled_files_exist:
             with self._hsaco_metatdata_path.open('r') as f:
                 self._metadata = json.load(f)
         else:
             if sancheck_fileexists:
-                assert False, f'Metadata file {self._hsaco_metatdata_path} does not exists'
+                assert False, f'GPU Kernel {self._hsaco_kernel_path} failed to compile. This is a bug when -DAOTRITON_BUILD_FOR_TUNING=OFF'
             self._metadata = {}
 
     @property
     def compiled_files_exist(self):
         return self._hsaco_kernel_path.exists() and self._hsaco_metatdata_path.exists()
+
+    @property
+    def compile_successful(self):
+        if self.compiled_files_exist:
+            with open(self._hsaco_metatdata_path) as f:
+                j = json.load(f)
+            return j['compile_status'] == 'Complete'
+        return False
 
     @property
     def godel_number(self):
@@ -88,8 +96,10 @@ class ObjectFileDescription(object):
 
     @property
     def binary_entrance(self):
-        assert self._metadata, f'Did not load the metadata from {self._hsaco_metatdata_path}'
-        return self._metadata['name']
+        if self.compile_successful:
+            assert self._metadata, f'Did not load the metadata from {self._hsaco_metatdata_path}'
+            return self._metadata['name']
+        return ''
 
     @property
     def obj(self):
@@ -99,6 +109,12 @@ class ObjectFileDescription(object):
     def signature(self):
         # print(f'{self._signature.triton_api_signature_list=}')
         return ', '.join(self._signature.triton_api_signature_list)
+
+    @property
+    def shared_memory_size(self):
+        if self.compile_successful:
+            return self._metadata['shared']
+        return -1
 
     @property
     def num_warps(self):
@@ -116,7 +132,9 @@ class ObjectFileDescription(object):
 
     @property
     def warp_size(self):
-        return self._metadata['warp_size']
+        if self.compile_successful:
+            return self._metadata['warp_size']
+        return 0
 
     @property
     def target_gpu(self):
