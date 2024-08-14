@@ -4,7 +4,7 @@
 mkdir build
 cd build
 export PKG_CONFIG_PATH="${PKG_CONFIG_PATH}:${CONDA_PREFIX}/lib/pkgconfig"
-cmake .. -DCMAKE_INSTALL_PREFIX=./install_dir -DCMAKE_BUILD_TYPE=Release -G Ninja
+cmake .. -DCMAKE_INSTALL_PREFIX=./install_dir -DCMAKE_BUILD_TYPE=Release -DAOTRITON_GPU_BUILD_TIMEOUT=0 -G Ninja
 # Use ccmake to tweak options
 ninja install
 ```
@@ -21,7 +21,7 @@ system, `ninja install` will run the whole build process unconditionally.
 * `cmake`
 * `ninja`
 * `libzstd`
-  - Common names are `libzstd-dev` or `libzstd-dev`.
+  - Common names are `libzstd-dev` or `libzstd-devel`.
 
 ## Generation
 
