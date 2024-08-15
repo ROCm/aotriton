@@ -347,7 +347,6 @@ class SdpaContext(object):
                 print(f'{dropout_p=}')
                 print(f'{causal=}')
                 print(f'{sm_scale=}')
-            '''
             if seqlen_q <= 16:
                 # torch.set_printoptions(linewidth=200, threshold=4096)
                 print(f'{tri_dk[0,0]=}')
@@ -356,6 +355,7 @@ class SdpaContext(object):
                 print(f'{ref_dv[0,0]=}')
                 # print(f'{tri_dq[0,0]=}')
                 # print(f'{ref_dq[0,0]=}')
+            '''
 
         if dv_allclose and not dk_allclose:
             print(f'{tri_out[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')

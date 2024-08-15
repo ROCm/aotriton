@@ -24,6 +24,8 @@ class attn_fwd(FlashKernel):
         'philox_seed_ptr',
         'philox_offset1',
         'philox_offset2',
+        'philox_seed_output',
+        'philox_offset_output',
         'encoded_softmax',
         'CAUSAL', # tl.constexpr starts here
         'BLOCK_M',
@@ -50,7 +52,7 @@ class attn_fwd(FlashKernel):
         frozenset(['num_head_q', 'num_head_k', 'num_seqlens', 'max_seqlen_q', 'max_seqlen_k']) : ['i32'],
         frozenset(['head_dim']) : ['i32'],
         frozenset(['dropout_p']) : ['fp32'],
-        frozenset(['philox_seed_ptr']) : ['*u64'],
+        frozenset(['philox_seed_ptr', 'philox_seed_output', 'philox_offset_output']) : ['*u64'],
         frozenset(['philox_offset1']) : ['*u32'],
         frozenset(['philox_offset2']) : ['u32'],
     }
@@ -74,6 +76,8 @@ class attn_fwd(FlashKernel):
         'cu_seqlens_k': 1,
         'philox_seed_ptr': 0,
         'philox_offset1': 0,
+        'philox_seed_output': 0,
+        'philox_offset_output': 0,
     }
     EXPECTED_IDENTICAL_TENSOR_STRIDES = [
         # Not needed stride_o* exist

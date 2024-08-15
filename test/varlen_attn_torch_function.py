@@ -64,11 +64,15 @@ class _attention_varlen(torch.autograd.Function):
         philox_seed = DEFAULT_PHILOX_SEED
         philox_offset1 = torch.tensor([DEFAULT_PHILOX_OFFSET_1], device=q.device, dtype=torch.uint32)
         philox_offset2 = DEFAULT_PHILOX_OFFSET_2
+        philox_seed_output = torch.tensor([0], device=q.device, dtype=torch.uint64)
+        philox_offset_output = torch.tensor([0], device=q.device, dtype=torch.uint64)
 
         attn_fwd_compact_varlen(q, k, v,
                                 cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
                                 b, sm_scale, M, o,
-                                dropout_p, philox_seed, philox_offset1, philox_offset2, encoded_softmax, causal);
+                                dropout_p, philox_seed, philox_offset1, philox_offset2,
+                                philox_seed_output, philox_offset_output,
+                                encoded_softmax, causal);
 
         ctx.save_for_backward(q, k, v, b, o, M)
         ctx.seqlens_q = seqlens_q

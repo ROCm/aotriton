@@ -99,6 +99,8 @@ class TunerService(BaseTunerService):
         philox_seed = torch.tensor([DEFAULT_PHILOX_SEED], device=q.device, dtype=torch.uint64)
         philox_offset1 = torch.tensor([DEFAULT_PHILOX_OFFSET_1], device=q.device, dtype=torch.uint32)
         philox_offset2 = DEFAULT_PHILOX_OFFSET_2
+        philox_seed_output = torch.tensor([0], device=q.device, dtype=torch.uint64)
+        philox_offset_output = torch.tensor([0], device=q.device, dtype=torch.uint64)
 
         def fwd_sub_extarg_accessor(fwd_extargs : FwdExtraArguments, i):
             return fwd_extargs
@@ -107,8 +109,12 @@ class TunerService(BaseTunerService):
             # print(f'{is_testing=}')
             if is_testing:
                 o.fill_(float('nan'))
+                philox_seed_output.fill_(0)
+                philox_offset_output.fill_(0)
             args = (q, k, v, b, sm_scale, M, o,
-                    dropout_p, philox_seed, philox_offset1, philox_offset2, encoded_softmax, causal,
+                    dropout_p, philox_seed, philox_offset1, philox_offset2,
+                    philox_seed_output, philox_offset_output,
+                    encoded_softmax, causal,
                     extargs.capi_object)
             try:
                 ret = attn_fwd(*args)
@@ -116,7 +122,8 @@ class TunerService(BaseTunerService):
                 self.report_exception(e)
                 return 1, [KernelOutput(hip_status=hipError_t.hipErrorLaunchFailure,
                                         output_tensors=None)]
-            return 1, [KernelOutput(hip_status=ret, output_tensors=[o])]
+            return 1, [KernelOutput(hip_status=ret,
+                                    output_tensors=[o, philox_seed_output, philox_offset_output])]
 
         # ref_out is kept in the ctx
         ref_out, _ = ctx.compute_ref_forward(sdpa_params)
@@ -140,8 +147,8 @@ class TunerService(BaseTunerService):
                 if db is not None:
                     db.fill_(float('nan'))
             args = (q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
-                    dropout_p, philox_seed, philox_offset1, philox_offset2, causal,
-                    extargs.capi_object)
+                    dropout_p, philox_seed_output, philox_offset_output, 0,
+                    causal, extargs.capi_object)
             try:
                 ret = attn_bwd(*args)
             except Exception as e:
@@ -167,9 +174,10 @@ class TunerService(BaseTunerService):
                                     kernel_index_progress_dict=payload.kig_dict)
 
     def fwd_validator(self, kernel_outputs : 'List[KernelOutput]'):
-        tri_out, = kernel_outputs[0].output_tensors
+        tri_out, philox_seed, philox_offset = kernel_outputs[0].output_tensors
         is_allclose, adiff, _, _ = self._cached_ctx.validate_with_reference(tri_out, None, no_backward=True)
-        return is_allclose
+        philox_correct = (philox_seed == DEFAULT_PHILOX_SEED) and (philox_seed_output == DEFAULT_PHILOX_OFFSET)
+        return is_allclose and philox_correct
 
     def bwd_both_validator(self, kernel_outputs : 'List[KernelOutput]'):
         tri_dk, tri_dv, = kernel_outputs[0].output_tensors

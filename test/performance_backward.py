@@ -66,7 +66,8 @@ def bench_flash_attention(BATCH, H, N_CTX, D_HEAD, causal, mode, provider, dtype
         dropout_p = 0.0
         ext = AttentionExtraArgs(return_encoded_softmax=causal,
                 autotune=False,
-                return_autotune=False)
+                return_autotune=False,
+                is_testing=False)
         fn = lambda: attention(q, k, v, None, causal, sm_scale, dropout_p, ext)
         if mode == 'bwd':
             o, _, _ = fn()
