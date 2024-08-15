@@ -51,7 +51,9 @@ foreach(RULE IN LISTS HSACO_RULES)
   list(POP_FRONT RULE SIG)
   if(AOTRITON_COMPRESS_KERNEL)
     add_custom_command(OUTPUT "${HSACO}.zst"
-      COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_DIR}/bin/python"
+      COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
+      TRITON_CACHE_DIR=${CMAKE_CURRENT_BINARY_DIR}/triton-cache
+      "${VENV_DIR}/bin/python"
       "${AOTRITON_COMPILER}"
       "${SRC}"
       "--kernel_name" "${KNAME}"
@@ -69,7 +71,9 @@ foreach(RULE IN LISTS HSACO_RULES)
     list(APPEND ALL_HSACOS "${HSACO}.zst")
   else(AOTRITON_COMPRESS_KERNEL)
     add_custom_command(OUTPUT "${HSACO}"
-      COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_DIR}/bin/python"
+      COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
+      TRITON_CACHE_DIR=${CMAKE_CURRENT_BINARY_DIR}/triton-cache
+      "${VENV_DIR}/bin/python"
       "${AOTRITON_COMPILER}"
       "${SRC}"
       "--kernel_name" "${KNAME}"
