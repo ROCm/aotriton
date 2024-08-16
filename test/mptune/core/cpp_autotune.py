@@ -44,13 +44,13 @@ def do_bench(fn, *, warmup=25, rep=100,
     for ko in outs:
         if ko.hip_status != hipError_t.hipSuccess:
             # print(f'{ret=}', file=sys.stderr, flush=True)
-            return float('inf'), ko.hip_status
+            return float('inf'), -1.0, ko.hip_status
     torch.cuda.synchronize()
-    valret = validator(outs)
+    valret, adiff = validator(outs)
     # print(f'{valret=} {outs[0].hip_status=}', flush=True)
     if not valret:
         # assert False
-        return float('inf'), outs[0].hip_status
+        return float('inf'), adiff, outs[0].hip_status
     torch.cuda.synchronize()
 
     # We maintain a buffer of 256 MB that we clear
@@ -102,8 +102,8 @@ def do_bench(fn, *, warmup=25, rep=100,
         ret = torch.quantile(times, torch.tensor(quantiles, dtype=torch.float)).tolist()
         if len(ret) == 1:
             ret = ret[0]
-        return ret, hipError_t.hipSuccess
-    return getattr(torch, return_mode)(times).item(), hipError_t.hipSuccess
+        return ret, adiff, hipError_t.hipSuccess
+    return getattr(torch, return_mode)(times).item(), adiff, hipError_t.hipSuccess
 
 KernelOutput = namedtuple('KernelOutput', ['hip_status', 'output_tensors'])
 AutotuneResult = namedtuple('AutotuneResult', ['hip_status', 'kernel_index', 'total_number_of_kernels', 'time', 'psels', 'copts'])
@@ -166,7 +166,7 @@ def cpp_autotune_sub_kernel_gen(extargs, kernel_func, validator, cur_kig):
         extargs.force_kernel_index = max(0, cur_kig.kernel_index)
         def func(is_testing=False):
             return kernel_func(extargs, is_testing)
-        t, hip_status = do_bench(func, validator=validator, quantiles=(0.5, 0.2, 0.8))
+        t, adiff, hip_status = do_bench(func, validator=validator, quantiles=(0.5, 0.2, 0.8))
         # assert extargs.total_number_of_kernels > 0
         '''
         Update kig
@@ -176,7 +176,8 @@ def cpp_autotune_sub_kernel_gen(extargs, kernel_func, validator, cur_kig):
             # !!!!!!!!!!!!!!!!!!! DEBUG !!!!!!!!!!!!!!!!!!!!!!!!!!
             if CPPTUNE_DEBUG_FEW_KERNELS > 0:
                 cur_kig.total_number_of_kernels = min(CPPTUNE_DEBUG_FEW_KERNELS, extargs.total_number_of_kernels)
-        if hip_status == hipError_t.hipSuccess:
+        cur_kig.last_adiff = adiff
+        if hip_status == hipError_t.hipSuccess and not (isinstance(t, float) and math.isinf(t)):
             cur_kig.last_success_kernel = extargs.force_kernel_index
             cur_kig.passed_kernels += 1
         else:

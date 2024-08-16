@@ -2,6 +2,7 @@
 # Copyright © 2024 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
+import math
 from ..core import (
     MonadAction,
     MonadMessage,
@@ -176,8 +177,8 @@ class TunerService(BaseTunerService):
     def fwd_validator(self, kernel_outputs : 'List[KernelOutput]'):
         tri_out, philox_seed, philox_offset = kernel_outputs[0].output_tensors
         is_allclose, adiff, _, _ = self._cached_ctx.validate_with_reference(tri_out, None, no_backward=True)
-        philox_correct = (philox_seed == DEFAULT_PHILOX_SEED) and (philox_seed_output == DEFAULT_PHILOX_OFFSET)
-        return is_allclose and philox_correct
+        philox_correct = (philox_seed == DEFAULT_PHILOX_SEED) and (philox_offset == DEFAULT_PHILOX_OFFSET)
+        return is_allclose and philox_correct, adiff
 
     def bwd_both_validator(self, kernel_outputs : 'List[KernelOutput]'):
         tri_dk, tri_dv, = kernel_outputs[0].output_tensors
@@ -190,12 +191,14 @@ class TunerService(BaseTunerService):
 
     def bwd_dkdv_validator(self, kernel_outputs : 'List[KernelOutput]'):
         dkdv, dqdb, grads_adiff = self.bwd_both_validator(kernel_outputs)
+        dq_adiff, dk_adiff, dv_adiff, db_adiff = grads_adiff
         # if not dkdv:
         #     print(f'{grads_adiff=}')
-        return dkdv
+        return dkdv, max(dk_adiff, dv_adiff)
 
     def bwd_dqdb_validator(self, kernel_outputs : 'List[KernelOutput]'):
         dkdv, dqdb, grads_adiff = self.bwd_both_validator(kernel_outputs)
+        dq_adiff, dk_adiff, dv_adiff, db_adiff = grads_adiff
         # if not dqdb:
         #     print(f'{grads_adiff=}')
-        return dqdb
+        return dqdb, dq_adiff if math.isnan(db_adiff) else max(dq_adiff, db_adiff)

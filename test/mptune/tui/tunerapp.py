@@ -111,6 +111,7 @@ class TunerApp(App):
                     progress = (kig.kernel_index + 1, kig.total_number_of_kernels)
                     text += f' {progress[0]:4d}/{progress[1]:4d}'
                     text += f' Pass/Fail/NoImage/Uncertain = {kig.passed_kernels}/{kig.failed_kernels}/{kig.noimage_kernels}/{kig.uncertain_errors}'
+                    text += f' Last adiff {kig.last_adiff}'
                 else:
                     progress = None
                 msg = self.StateChange(text=text, progress=progress)
