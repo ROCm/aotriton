@@ -767,7 +767,7 @@ class _attention(torch.autograd.Function):
                     head_dim=Lk,
                     dropout_p=ctx.dropout_p,
                     philox_seed_ptr=philox_seed,
-                    philox_offset1=philox_offset1,
+                    philox_offset1=philox_offset,
                     philox_offset2=0,
                     BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N,
                     BLOCK_DMODEL=head_dim_rounded,
