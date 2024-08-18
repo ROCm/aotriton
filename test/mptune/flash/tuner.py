@@ -174,31 +174,46 @@ class TunerService(BaseTunerService):
                                     bwd_validators,
                                     kernel_index_progress_dict=payload.kig_dict)
 
-    def fwd_validator(self, kernel_outputs : 'List[KernelOutput]'):
+    def fwd_validator(self, kernel_outputs : 'List[KernelOutput]', atr : 'AutotuneResult'):
         tri_out, philox_seed, philox_offset = kernel_outputs[0].output_tensors
-        is_allclose, adiff, _, _ = self._cached_ctx.validate_with_reference(tri_out, None, no_backward=True)
-        philox_correct = (philox_seed == DEFAULT_PHILOX_SEED) and (philox_offset == DEFAULT_PHILOX_OFFSET)
-        return is_allclose and philox_correct, adiff
+        is_allclose, adiffs, _, _, tft = self._cached_ctx.validate_with_reference(tri_out, None, no_backward=True,
+                                                                                  return_target_fudge_factors=True)
+        # Note: philox_seed/offset_output is only updated when causal=True. We
+        #       need a better closure solution for validator
+        # TODO: Check philox
+        # philox_correct = (philox_seed == DEFAULT_PHILOX_SEED) and (philox_offset == DEFAULT_PHILOX_OFFSET)
+        atr.ut_passed = is_allclose
+        atr.adiffs = adiffs
+        atr.target_fudge_factors = {'out' : tft['out']}
+        return atr
 
     def bwd_both_validator(self, kernel_outputs : 'List[KernelOutput]'):
         tri_dk, tri_dv, = kernel_outputs[0].output_tensors
         tri_dq, tri_db, = kernel_outputs[1].output_tensors
         dout_tensors = (tri_dq, tri_dk, tri_dv, tri_db)
-        _, _, grads_allclose, grads_adiff = self._cached_ctx.validate_with_reference(None, dout_tensors, no_forward=True)
+        _, _, grads_allclose, grads_adiff, tft = self._cached_ctx.validate_with_reference(None, dout_tensors,
+                                                                                          no_forward=True,
+                                                                                          return_target_fudge_factors=True)
         dq_allclose, dk_allclose, dv_allclose, db_allclose = grads_allclose
         ref_dq, ref_dk, ref_dv, ref_db = self._cached_ctx.dref_tensors
-        return dk_allclose and dv_allclose, dq_allclose and db_allclose, grads_adiff
+        return dk_allclose and dv_allclose, dq_allclose and db_allclose, grads_adiff, tft
 
-    def bwd_dkdv_validator(self, kernel_outputs : 'List[KernelOutput]'):
-        dkdv, dqdb, grads_adiff = self.bwd_both_validator(kernel_outputs)
+    def bwd_dkdv_validator(self, kernel_outputs : 'List[KernelOutput]', atr : 'AutotuneResult'):
+        dkdv, dqdb, grads_adiff, tft = self.bwd_both_validator(kernel_outputs)
         dq_adiff, dk_adiff, dv_adiff, db_adiff = grads_adiff
         # if not dkdv:
-        #     print(f'{grads_adiff=}')
-        return dkdv, max(dk_adiff, dv_adiff)
+        #     print(f'{grads_adiff=} {tft=}')
+        atr.ut_passed = dkdv
+        atr.adiffs = [dk_adiff, dv_adiff]
+        atr.target_fudge_factors = {'dk' : tft['k'], 'dv' : tft['v']}
+        return atr
 
-    def bwd_dqdb_validator(self, kernel_outputs : 'List[KernelOutput]'):
-        dkdv, dqdb, grads_adiff = self.bwd_both_validator(kernel_outputs)
+    def bwd_dqdb_validator(self, kernel_outputs : 'List[KernelOutput]', atr : 'AutotuneResult'):
+        dkdv, dqdb, grads_adiff, tft = self.bwd_both_validator(kernel_outputs)
         dq_adiff, dk_adiff, dv_adiff, db_adiff = grads_adiff
         # if not dqdb:
         #     print(f'{grads_adiff=}')
-        return dqdb, dq_adiff if math.isnan(db_adiff) else max(dq_adiff, db_adiff)
+        atr.ut_passed = dqdb
+        atr.adiffs = [dq_adiff, db_adiff]
+        atr.target_fudge_factors = {'dq' : tft['q'], 'db' : tft['b']}
+        return atr

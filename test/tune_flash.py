@@ -76,7 +76,7 @@ class FlashTunerSource(MonadService):
         return isinstance(timing, list) and len(timing) == 3
 
     def is_inf_time(self, timing):
-        return isinstance(timing, float) and math.isinf(timing)
+        return timing is None or isinstance(timing, float) and math.isinf(timing)
 
     def update_continue_dict(self, j, cd):
         kn = j['kernel_name']

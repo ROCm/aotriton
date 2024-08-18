@@ -5,16 +5,32 @@ import sys
 import os
 import math
 from copy import deepcopy
+from dataclasses import dataclass
+from typing import Union, Optional
 from .datatypes import CPP_AUTOTUNE_MAX_KERNELS
 
 CPPTUNE_DEBUG_FEW_KERNELS = int(os.getenv('CPPTUNE_DEBUG_FEW_KERNELS', default=-1))
 
-def do_bench(fn, *, warmup=25, rep=100,
+@dataclass
+class AutotuneResult:
+    hip_status : hipError_t = hipError_t.hipErrorUnknown
+    kernel_index : int = -1
+    total_number_of_kernels : int = -1
+    ut_passed : bool = False
+    time : float = float('inf')
+    # TODO: | requires python 3.10 (hopefully we can migrate to 3.10 when 3.9 reaches EOL)
+    adiffs : 'float | list[float] | None' = None
+    target_fudge_factors : 'float | list[float] | None' = None
+    psels : 'dict | None' = None
+    copts : 'dict | None' = None
+
+def do_bench(fn, atr : AutotuneResult,
+             *, warmup=25, rep=100,
              grad_to_none=None,
              quantiles=None,
              fast_flush=True,
              return_mode="mean",
-             validator=None):
+             validator=None) -> AutotuneResult:
     """
     Benchmark the runtime of the provided function. By default, return the median runtime of :code:`fn` along with
     the 20-th and 80-th performance percentile.
@@ -43,14 +59,19 @@ def do_bench(fn, *, warmup=25, rep=100,
     # print(f'{outs=}')
     for ko in outs:
         if ko.hip_status != hipError_t.hipSuccess:
-            # print(f'{ret=}', file=sys.stderr, flush=True)
-            return float('inf'), -1.0, ko.hip_status
+            atr.hip_status = ko.hip_status
+            return atr
+    atr.hip_status = hipError_t.hipSuccess
     torch.cuda.synchronize()
-    valret, adiff = validator(outs)
+    atr = validator(outs, atr)
     # print(f'{valret=} {outs[0].hip_status=}', flush=True)
-    if not valret:
-        # assert False
-        return float('inf'), adiff, outs[0].hip_status
+
+    # Do not return early, it is possible that no kernels can pass the UT and
+    # we have to raise fudge_factors
+    #
+    # if not valret:
+    #     # assert False
+    #     return float('inf'), adiff, outs[0].hip_status
     torch.cuda.synchronize()
 
     # We maintain a buffer of 256 MB that we clear
@@ -102,11 +123,10 @@ def do_bench(fn, *, warmup=25, rep=100,
         ret = torch.quantile(times, torch.tensor(quantiles, dtype=torch.float)).tolist()
         if len(ret) == 1:
             ret = ret[0]
-        return ret, adiff, hipError_t.hipSuccess
-    return getattr(torch, return_mode)(times).item(), adiff, hipError_t.hipSuccess
-
-KernelOutput = namedtuple('KernelOutput', ['hip_status', 'output_tensors'])
-AutotuneResult = namedtuple('AutotuneResult', ['hip_status', 'kernel_index', 'total_number_of_kernels', 'time', 'psels', 'copts'])
+        atr.time = ret
+        return atr
+    atr.time = getattr(torch, return_mode)(times).item()
+    return atr
 
 class CppTuneWapper(object):
     def __init__(self, factory, sub_accessor=None):
@@ -166,7 +186,9 @@ def cpp_autotune_sub_kernel_gen(extargs, kernel_func, validator, cur_kig):
         extargs.force_kernel_index = max(0, cur_kig.kernel_index)
         def func(is_testing=False):
             return kernel_func(extargs, is_testing)
-        t, adiff, hip_status = do_bench(func, validator=validator, quantiles=(0.5, 0.2, 0.8))
+        # ut_passed, t, adiff, fudge_factors, hip_status = do_bench(func, validator=validator, quantiles=(0.5, 0.2, 0.8))
+        atr = AutotuneResult()
+        atr = do_bench(func, atr, validator=validator, quantiles=(0.5, 0.2, 0.8))
         # assert extargs.total_number_of_kernels > 0
         '''
         Update kig
@@ -176,24 +198,23 @@ def cpp_autotune_sub_kernel_gen(extargs, kernel_func, validator, cur_kig):
             # !!!!!!!!!!!!!!!!!!! DEBUG !!!!!!!!!!!!!!!!!!!!!!!!!!
             if CPPTUNE_DEBUG_FEW_KERNELS > 0:
                 cur_kig.total_number_of_kernels = min(CPPTUNE_DEBUG_FEW_KERNELS, extargs.total_number_of_kernels)
-        cur_kig.last_adiff = adiff
-        if hip_status == hipError_t.hipSuccess and not (isinstance(t, float) and math.isinf(t)):
+        cur_kig.last_adiff = atr.adiffs
+        if atr.ut_passed:
             cur_kig.last_success_kernel = extargs.force_kernel_index
             cur_kig.passed_kernels += 1
         else:
-            if hip_status == hipError_t.hipErrorInvalidImage:
+            if atr.hip_status == hipError_t.hipErrorInvalidImage:
                 cur_kig.noimage_kernels += 1
             else:
                 cur_kig.failed_kernels += 1
         def safeload(s):
             return json.loads(s) if s else None
         cur_kig.kernel_index = extargs.force_kernel_index
-        yield AutotuneResult(hip_status=hip_status,
-                             kernel_index=cur_kig.kernel_index,
-                             total_number_of_kernels=cur_kig.total_number_of_kernels,
-                             time=t,
-                             psels=safeload(extargs.selected_kernel_psels),
-                             copts=safeload(extargs.selected_kernel_copts))
+        atr.kernel_index = cur_kig.kernel_index,
+        atr.total_number_of_kernels = cur_kig.total_number_of_kernels,
+        atr.psels = safeload(extargs.selected_kernel_psels)
+        atr.copts = safeload(extargs.selected_kernel_copts)
+        yield atr
         cur_kig.kernel_index = extargs.force_kernel_index + 1
         if cur_kig.kernel_index >= cur_kig.total_number_of_kernels:
             break
