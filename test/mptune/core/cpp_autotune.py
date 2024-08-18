@@ -11,6 +11,8 @@ from .datatypes import CPP_AUTOTUNE_MAX_KERNELS
 
 CPPTUNE_DEBUG_FEW_KERNELS = int(os.getenv('CPPTUNE_DEBUG_FEW_KERNELS', default=-1))
 
+KernelOutput = namedtuple('KernelOutput', ['hip_status', 'output_tensors'])
+
 @dataclass
 class AutotuneResult:
     hip_status : hipError_t = hipError_t.hipErrorUnknown
