@@ -55,8 +55,12 @@ class TunerService(MonadService):
     def hit_cache(self, tup):
         if self._cached_tup == tup:
             return self._cached_ctx, self._cached_params
-        del self._cached_ctx
-        del self._cached_params  # Must, dropout_p is there
+        if self._cached_ctx is not None:
+            del self._cached_ctx
+            self._cached_ctx = None
+        if self._cached_params is not None:
+            del self._cached_params  # Must, dropout_p is there
+            self._cached_params = None
         self.create_ctx_cache(tup)
         return self._cached_ctx, self._cached_params
 
