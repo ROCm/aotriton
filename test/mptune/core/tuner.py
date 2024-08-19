@@ -5,6 +5,11 @@
 from ..core import MonadAction, MonadMessage, Monad, MonadService
 from abc import abstractmethod
 
+class ProfilerEarlyExit(Exception):
+    def __init__(self, msg):
+        super().__init__()
+        self.msg = msg
+
 class TunerService(MonadService):
 
     def init(self, init_object):
@@ -37,8 +42,11 @@ class TunerService(MonadService):
                     item += 1
             except RuntimeError as e:
                 self.print(f'{self.monad.identifier} RuntimeError {e}')
-                self.print(f'{self.monad.identifier} {gen.value=}')
-                yield gen.value
+            except StopIteration as e:
+                self.print(f'{self.monad.identifier}')
+            except ProfilerEarlyExit as e:
+                assert e.msg.action != MonadAction.Pass
+                yield e.msg
         self.print(f'Worker complete {request}')
 
     def cleanup(self):

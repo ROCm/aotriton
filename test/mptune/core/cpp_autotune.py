@@ -212,8 +212,8 @@ def cpp_autotune_sub_kernel_gen(extargs, kernel_func, validator, cur_kig):
         def safeload(s):
             return json.loads(s) if s else None
         cur_kig.kernel_index = extargs.force_kernel_index
-        atr.kernel_index = cur_kig.kernel_index,
-        atr.total_number_of_kernels = cur_kig.total_number_of_kernels,
+        atr.kernel_index = cur_kig.kernel_index
+        atr.total_number_of_kernels = cur_kig.total_number_of_kernels
         atr.psels = safeload(extargs.selected_kernel_psels)
         atr.copts = safeload(extargs.selected_kernel_copts)
         yield atr

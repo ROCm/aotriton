@@ -9,6 +9,7 @@ from ..core import (
     Monad,
     MonadService,
     TunerService as BaseTunerService,
+    ProfilerEarlyExit as PEE,
 )
 DEFAULT_PHILOX_SEED = 0x1BF52
 DEFAULT_PHILOX_OFFSET_1 = 0x1D4000
@@ -81,15 +82,15 @@ class TunerService(BaseTunerService):
 
         if self._arch == 'gfx1100':
             if seqlen_q > 4096 and seqlen_k > 4096:
-                return request.make_skip(self.monad, 'Navi kernels triggers "MES failed to response msg=" kernel error when handling large inputs.')
-        if seqlen_q > 8192 and seqlen_k > 8192:
+                raise PEE(request.make_skip(self.monad, 'Navi kernels triggers "MES failed to response msg=" kernel error when handling large inputs.'))
+        if seqlen_q > 4096 and seqlen_k > 4096:
             N_HEADS = 1
         if causal and seqlen_q != seqlen_k:
-            return request.make_skip(self.monad, 'FA does not support accept casual=True when seqlen_q != seqlen_k.')
+            raise PEE(request.make_skip(self.monad, 'FA does not support accept casual=True when seqlen_q != seqlen_k.'))
         if causal and bias_type != 0:
-            return request.make_skip(self.monad, 'FA does not support accept casual=True when bias_type != 0.')
+            raise PEE(request.make_skip(self.monad, 'FA does not support accept casual=True when bias_type != 0.'))
         if a.dry_run:
-            return request.make_dryrun(self.monad)
+            raise PEE(request.make_dryrun(self.monad))
 
         ctx, sdpa_params = self.hit_cache(tup)
 
