@@ -79,6 +79,9 @@ class FlashTunerSource(MonadService):
         return timing is None or isinstance(timing, float) and math.isinf(timing)
 
     def update_continue_dict(self, j, cd):
+        result = j['result']
+        if result == 'skipped':
+            return
         kn = j['kernel_name']
         kig = j['_debug_kernel_index']
         kit = j['_debug_total_number_of_kernels']
