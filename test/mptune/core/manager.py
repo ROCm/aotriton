@@ -75,7 +75,7 @@ class TunerManager(ArgArchVerbose):
         for monad in alive_monads:
             try:
                 if monad.exitcode is not None:
-                    ret.append(monad)
+                    exited.append(monad)
             except ValueError:
                 restarting.append(monad)
         # exitcodes = [monad.exitcode for monad in alive_monads]
