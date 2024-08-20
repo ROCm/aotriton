@@ -275,6 +275,7 @@ def parse():
                            This option allow skipping next kernel relative to json record,
                            which are usually the faulty kernel.'''
                   )
+    p.add_argument('--debug_headless', action='store_true', help='Set headless mode for textual.App.')
     args = p.parse_args()
     assert args.return_encoded_softmax == [False], ('Do not support tuning return_encoded_softmax=True. '
             'RETURN_ENCODED_SOFTMAX will be removed in the future and debug_fill_dropout_rng will be preferred choice.')
@@ -302,7 +303,7 @@ def main():
     tuner.launch_graph()
     # monitor_thread = Thread(target=tuner.monitor)
     # monitor_thread.start()
-    app.run(mouse=False, inline=True)
+    app.run(mouse=False, inline=True, headless=args.debug_headless)
     # monitor_thread.join()
 
 if __name__ == '__main__':
