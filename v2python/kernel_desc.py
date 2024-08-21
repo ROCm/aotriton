@@ -4,6 +4,7 @@
 import itertools
 from collections import defaultdict
 import io
+import os
 from pathlib import Path
 from .kernel_argument import (
     ArgumentCategory,
@@ -15,6 +16,7 @@ from .object_desc import ObjectFileDescription
 from .gpu_targets import AOTRITON_SUPPORTED_GPUS, AOTRITON_GPU_WARPSIZE
 
 SOURCE_PATH = Path(__file__).resolve()
+AOTRITON_ENABLE_FP32 = bool(int(os.getenv('AOTRITON_ENABLE_FP32', True)))
 
 # We use [[ ]] instead of { } for C++ code template
 def get_template(name):
@@ -45,6 +47,7 @@ class KernelDescription(object):
     _ARGUMENT_CHOICES = None
     HEADER_TEMPLATE = get_template('shim.h')
     SOURCE_TEMPLATE = get_template('shim.cc')
+    MAIN_DATATYPES = ['*fp16:16', '*bf16:16', '*fp32:16'] if AOTRITON_ENABLE_FP32 else ['*fp16:16', '*bf16:16']
 
     TYPE_CHOICES = {
     }

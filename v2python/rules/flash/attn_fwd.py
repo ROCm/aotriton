@@ -45,7 +45,7 @@ class attn_fwd(FlashKernel):
         'Out' : select_pattern(ARGUMENTS, 'stride_o'),
     }
     TYPE_CHOICES = {
-        frozenset(['Q', 'K', 'V', 'B', 'Out', 'encoded_softmax']) : ['*fp16:16', '*bf16:16', '*fp32:16'],
+        frozenset(['Q', 'K', 'V', 'B', 'Out', 'encoded_softmax']) : FlashKernel.MAIN_DATATYPES,
         frozenset(['sm_scale']) : ['fp32'],
         frozenset(['M']) : ['*fp32:16'],
         frozenset(['cu_seqlens_q', 'cu_seqlens_k']) : ['*i32:16'],
