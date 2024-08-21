@@ -9,6 +9,15 @@ import io
 import shutil
 import sys
 
+class MissingLutEntry(Exception):
+    def __init__(self, ofn, fsels, lut_tensor):
+        self.ofn = ofn
+        self.fsels = fsels
+        self.lut_tensor = lut_tensor
+
+    def __repr__(self):
+        return f'{ofn} fsels={self._fsels} has broken tuning table:\n{lut_tensor}'
+
 class KernelTuningEntryForFunctionalOnGPU(object):
     LUT_TEMPLATE = get_template('autotune_table_entry.cc')
     BIN_INDEX_SUFFIX = '_binned_index'
@@ -169,7 +178,7 @@ class KernelTuningEntryForFunctionalOnGPU(object):
         godel_number = first_sig.godel_number
         ofn = outdir / f'{first_sig.functional_signature}_{first_sig.target_gpu}.cc'
         if not self._kdesc.sancheck_lut_tensor(lut_tensor, self._fsels):
-            assert False, f'{ofn} fsels={self._fsels} has broken tuning table:\n{lut_tensor}'
+            raise MissingLutEntry(ofn, self._fsels, lut_tensor)
         if bare_mode:
             return ofn
         if ofn.exists():

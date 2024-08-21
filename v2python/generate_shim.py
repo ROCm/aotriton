@@ -3,6 +3,7 @@
 
 from .rules import kernels as triton_kernels
 from .tuning_database import KernelTuningDatabase
+from .tuning_lut import MissingLutEntry
 import io
 import shutil
 import argparse
@@ -55,6 +56,7 @@ def parse():
     p.add_argument("--verbose", action='store_true', help="Print debugging messages")
     args = p.parse_args()
     args._build_root = Path(args.build_dir)
+    args._sanity_check_exceptions = []
     # print(args)
     return args
 
@@ -351,9 +353,14 @@ class AutotuneCodeGenerator(MakefileSegmentGenerator):
     def write_body(self):
         self.verbose('AutotuneCodeGenerator')
         # Write the code to file
-        self._ofn = self._lut.write_lut_source(self._outdir,
-                                               compressed=self._args.enable_zstd is not None,
-                                               bare_mode=self.is_bare)
+        try:
+            self._ofn = self._lut.write_lut_source(self._outdir,
+                                                   compressed=self._args.enable_zstd is not None,
+                                                   bare_mode=self.is_bare)
+        except MissingLutEntry as e:
+            print(e)
+            self._args._sanity_check_exceptions.append(e)
+            return
         self.verbose(f'\t lut = {self._fsels}')
         self.verbose(f'\t ofn = {self._ofn}')
         self._obj_fn = self._ofn.with_suffix('.o')
@@ -397,6 +404,8 @@ def main():
     args = parse()
     gen = ShimMakefileGenerator(args)
     gen.generate()
+    for e in args._sanity_check_exceptions:
+        raise e
 
 if __name__ == '__main__':
     main()
