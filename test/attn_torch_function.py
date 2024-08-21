@@ -95,10 +95,11 @@ class _attention(torch.autograd.Function):
 
         philox_seed_output = torch.tensor([0], device=q.device, dtype=torch.uint64)
         philox_offset_output = torch.tensor([0], device=q.device, dtype=torch.uint64)
-        attn_fwd(q, k, v, b, sm_scale, M, o,
-                 dropout_p, philox_seed, philox_offset1, philox_offset2,
-                 philox_seed_output, philox_offset_output,
-                 encoded_softmax, causal)
+        ret = attn_fwd(q, k, v, b, sm_scale, M, o,
+                       dropout_p, philox_seed, philox_offset1, philox_offset2,
+                       philox_seed_output, philox_offset_output,
+                       encoded_softmax, causal)
+        assert ret == hipError_t.hipSuccess, ret
         tuning_result = None
 
         ctx.save_for_backward(q, k, v, b, o, M)
