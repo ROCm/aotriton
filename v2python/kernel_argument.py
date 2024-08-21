@@ -192,6 +192,10 @@ class ArgumentSelection(object):
         return self.meta.argument_names
 
     @property
+    def repr_name(self):
+        return self.meta.repr_name
+
+    @property
     def argument_value(self):
         return self._selection_value
 

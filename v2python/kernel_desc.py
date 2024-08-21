@@ -396,3 +396,7 @@ class KernelDescription(object):
             lets.append(4 * ' ' + '},')
         return '\n'.join(lets)
 
+    def sancheck_lut_tensor(self,
+                            lut_tensor,
+                            fsels : 'list[ArgumentSelection]'):
+        raise NotImplemented(f'{self.__class__}.sancheck_lut_tensor')
