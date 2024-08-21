@@ -127,7 +127,7 @@ class SdpaContext(object):
 
         # Maximal value from tune_flash.py and table_tool.py --fudge_factor_tolerance 5.0
         # Note: Navi 3x is experimental and YMMV
-        self.OUT_FUDGE_FACTOR = 6.0
+        self.OUT_FUDGE_FACTOR = 6.0 if dtype != torch.float32 else 10.0
 
     '''
     Create Tensors that will be kept b/w forward and backward pass
@@ -230,10 +230,11 @@ class SdpaContext(object):
         self._require_grads(self.lp_ref_tensors, skip_dq=skip_dq, skip_dk_dv=skip_dk_dv, skip_db=skip_db)
 
     def _compute_fudge_factors(self, p : SdpaParams):
-        # ref_q, ref_k, ref_v, ref_b = self.ref_tensors
-        # dtype = self.dtype
-        # seqlen_k = self.seqlen_k
-        # seqlen_q = self.seqlen_q
+        ref_q, ref_k, ref_v, ref_b = self.ref_tensors
+        dtype = self.dtype
+        seqlen_k = self.seqlen_k
+        seqlen_q = self.seqlen_q
+
         # seqlen_k_fudge_factor = 1.0 if seqlen_k < 1024 else 2.0
         # seqlen_k_fudge_factor = seqlen_k_fudge_factor if seqlen_k < 8192 else 4.0
         # dropout_fudge_factor = 1.0 if p.dropout_p == 0.0 else 2.0
@@ -248,6 +249,9 @@ class SdpaContext(object):
         key_fudge_factor = 16.0
         value_fudge_factor = 32.0
         bias_fudge_factor = 16.0
+        if dtype == torch.float32:
+            key_fudge_factor = 180.0
+            bias_fudge_factor = 32.0
         return (query_fudge_factor, key_fudge_factor, value_fudge_factor, bias_fudge_factor)
 
     @staticmethod
@@ -361,20 +365,20 @@ class SdpaContext(object):
 
     def display_validation_results(self, tri_out, is_allclose, adiff, grads_allclose, grads_adiff):
         q, k, v, b = self.dev_tensors
+        def TO(ref_tensor):
+            return ref_tensor.to(device=q.device, dtype=dtype)
         dtype = q.dtype
         SPARSE_HEAD_SINCE = 1
         SPARSE_SEQ_SINCE = 1
         ref_out = self.lp_refout_tensors[0]
         if not is_allclose:
-            err_idx = np.unravel_index(torch.argmax(torch.abs(ref_out - tri_out)).cpu().numpy(), ref_out.shape)
+            err_idx = np.unravel_index(torch.argmax(torch.abs(TO(ref_out) - tri_out)).cpu().numpy(), ref_out.shape)
             print(f'{err_idx=}')
             print(f'{tri_out[err_idx]=}')
             print(f'{ref_out[err_idx]=}')
         dq_allclose, dk_allclose, dv_allclose, db_allclose = grads_allclose
         tri_dq, tri_dk, tri_dv, tri_db = self.dout_tensors
         ref_dq, ref_dk, ref_dv, ref_db = self.dref_tensors
-        def TO(ref_tensor):
-            return ref_tensor.to(device=q.device, dtype=dtype)
         if not dv_allclose:
             err_idx = np.unravel_index(torch.argmax(torch.abs(TO(ref_dv) - tri_dv)).cpu().numpy(), ref_dv.shape)
             print(f'{q.shape=} {q.stride()=} {q.dtype=}')

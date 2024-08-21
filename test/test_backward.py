@@ -73,10 +73,10 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
 
     dout = torch.rand_like(tri_out)
     ctx.compute_backward(tri_out, dout)
-    is_allclose, adiff, grads_allclose, grads_adiff = ctx.validate_with_reference(tri_out, ctx.dout_tensors)
+    is_allclose, adiff, grads_allclose, grads_adiff, tfts = ctx.validate_with_reference(tri_out, ctx.dout_tensors, return_target_fudge_factors=True)
     ctx.display_validation_results(tri_out, is_allclose, adiff, grads_allclose, grads_adiff)
 
-    assert is_allclose, 'Forward pass {is_allclose=}'
+    assert is_allclose, f'Forward pass {is_allclose=}'
     dq_allclose, dk_allclose, dv_allclose, db_allclose = grads_allclose
     tri_dq, tri_dk, tri_dv, tri_db = ctx.dout_tensors
     ref_dq, ref_dk, ref_dv, ref_db = ctx.dref_tensors
@@ -91,7 +91,7 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
     if not SKIP_DB:
         assert tri_db is not None
         assert ref_db is not None
-    assert dk_allclose and dv_allclose and dq_allclose and db_allclose, f'{dk_allclose=} {dv_allclose=} {dq_allclose=} {db_allclose=}'
+    assert dk_allclose and dv_allclose and dq_allclose and db_allclose, f'{dk_allclose=} {dv_allclose=} {dq_allclose=} {db_allclose=} {tfts=}'
     print(f'{tri_out=}')
     print(f'{adiff=} {grads_adiff=}')
 
