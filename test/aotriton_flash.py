@@ -11,6 +11,11 @@ from pyaotriton.v2.flash import (
     BwdExtraArguments,
 )
 from pyaotriton import T1, T2, T4, DType, Stream, hipError_t
+try:
+    from pyaotriton import T0
+    PASS_PHILOX_AS_TENSOR = True
+except:
+    PASS_PHILOX_AS_TENSOR = False
 from pyaotriton.v2 import CppTuneSpecialKernelIndex
 import os
 
@@ -26,7 +31,12 @@ def cast_dtype(dtype):
 
 def mk_aotensor(q, if_empty_then_like=None):
     rank = len(q.shape) if q is not None else len(if_empty_then_like.shape)
-    if rank == 1:
+    if q is not None and q.numel() == 1:
+        if PASS_PHILOX_AS_TENSOR:
+            return T0(q.data_ptr(), cast_dtype(q.dtype))
+        else:
+            return q[0]
+    elif rank == 1:
         klass = T1
     elif rank == 2:
         klass = T2
@@ -41,7 +51,9 @@ def mk_aotensor(q, if_empty_then_like=None):
     return klass(q.data_ptr(), tuple(q.size()), q.stride(), cast_dtype(q.dtype))
 
 def attn_fwd(q, k, v, b, sm_scale, M, o,
-             dropout_p, philox_seed, philox_offset, encoded_softmax, is_causal,
+             dropout_p, philox_seed, philox_offset1, philox_offset2,
+             philox_seed_output, philox_offset_output,
+             encoded_softmax, is_causal,
              extargs=None):
     extargs = FwdExtraArguments() if extargs is None else extargs
     err = fa_forward(mk_aotensor(q),
@@ -52,8 +64,11 @@ def attn_fwd(q, k, v, b, sm_scale, M, o,
                      mk_aotensor(M),
                      mk_aotensor(o),
                      float(dropout_p),
-                     int(philox_seed),
-                     int(philox_offset),
+                     mk_aotensor(philox_seed),
+                     mk_aotensor(philox_offset1),
+                     philox_offset2,
+                     T0(philox_seed_output.data_ptr(), DType.kUInt64),
+                     T0(philox_offset_output.data_ptr(), DType.kUInt64),
                      mk_aotensor(encoded_softmax, if_empty_then_like=q),
                      is_causal,
                      Stream(),
@@ -62,7 +77,7 @@ def attn_fwd(q, k, v, b, sm_scale, M, o,
     return err
 
 def attn_bwd(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
-             dropout_p, philox_seed, philox_offset, is_causal, extargs=None):
+             dropout_p, philox_seed, philox_offset1, philox_offset2, is_causal, extargs=None):
     extargs = BwdExtraArguments() if extargs is None else extargs
     b = mk_aotensor(b, if_empty_then_like=q)
     # print(f'{b=}')
@@ -80,8 +95,9 @@ def attn_bwd(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
                       mk_aotensor(L),
                       mk_aotensor(delta),
                       float(dropout_p),
-                      int(philox_seed),
-                      int(philox_offset),
+                      mk_aotensor(philox_seed),
+                      mk_aotensor(philox_offset1),
+                      philox_offset2,
                       is_causal,
                       Stream(),
                       extargs)
@@ -99,7 +115,9 @@ def debug_fill_dropout_rng(R, philox_seed, philox_offset):
 def attn_fwd_compact_varlen(q, k, v,
         cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
         b, sm_scale, M, o,
-        dropout_p, philox_seed, philox_offset, encoded_softmax, is_causal):
+        dropout_p, philox_seed, philox_offset1, philox_offset2,
+        philox_seed_output, philox_offset_output,
+        encoded_softmax, is_causal):
     err = fa_forward_compact_varlen(mk_aotensor(q),
                                     mk_aotensor(k),
                                     mk_aotensor(v),
@@ -112,8 +130,11 @@ def attn_fwd_compact_varlen(q, k, v,
                                     mk_aotensor(M),
                                     mk_aotensor(o),
                                     float(dropout_p),
-                                    int(philox_seed),
-                                    int(philox_offset),
+                                    mk_aotensor(philox_seed),
+                                    mk_aotensor(philox_offset1),
+                                    philox_offset2,
+                                    mk_aotensor(philox_seed_output),
+                                    mk_aotensor(philox_offset_output),
                                     mk_aotensor(encoded_softmax, if_empty_then_like=q),
                                     is_causal,
                                     Stream())
@@ -123,7 +144,7 @@ def attn_fwd_compact_varlen(q, k, v,
 def attn_bwd_compact_varlen(q, k, v,
         cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
         b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
-        dropout_p, philox_seed, philox_offset, is_causal):
+        dropout_p, philox_seed, philox_offset1, philox_offset2, is_causal):
     b = mk_aotensor(b, if_empty_then_like=q)
     # print(f'{b=}')
     err = fa_backward_compact_varlen(mk_aotensor(q),
@@ -144,8 +165,9 @@ def attn_bwd_compact_varlen(q, k, v,
                                      mk_aotensor(L),
                                      mk_aotensor(delta),
                                      float(dropout_p),
-                                     int(philox_seed),
-                                     int(philox_offset),
+                                     mk_aotensor(philox_seed),
+                                     mk_aotensor(philox_offset1),
+                                     philox_offset2,
                                      is_causal,
                                      Stream())
     # print(f'{err=}')

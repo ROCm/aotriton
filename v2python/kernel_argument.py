@@ -113,6 +113,11 @@ class ArgumentMetadata(object):
         triton_type = self._possible_values[0]
         return isinstance(triton_type, str) and triton_type.startswith('*')
 
+    @property
+    def is_bool(self) -> bool:
+        triton_type = self._possible_values[0]
+        return isinstance(triton_type, bool)
+
     def get_param_cc_type(self, triton_arg):
         triton_type = self._possible_values[0]
         if self.is_tensor:
@@ -187,6 +192,10 @@ class ArgumentSelection(object):
         return self.meta.argument_names
 
     @property
+    def repr_name(self):
+        return self.meta.repr_name
+
+    @property
     def argument_value(self):
         return self._selection_value
 
@@ -235,4 +244,4 @@ class TunedArgument(ArgumentSelection):
         self._meta = meta
         assert not meta.is_functional, f'Functional argument cannot be tuned'
         self._selection_index = None
-        self._selection_value = value
+        self._selection_value = bool(value) if meta.is_bool else value

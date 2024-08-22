@@ -129,7 +129,10 @@ class DbService(MonadService):
             'result' : 'tuned',
             'tuned_kernel' : atr.psels,
             'compiler_options' : atr.copts,
+            'ut_passed' : atr.ut_passed,
             'time' : atr.time,
+            'adiffs' : atr.adiffs,
+            'target_fudge_factors' : atr.target_fudge_factors,
             '_debug_kernel_index' : atr.kernel_index,
             '_debug_total_number_of_kernels' : atr.total_number_of_kernels,
         }

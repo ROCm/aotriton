@@ -35,6 +35,7 @@ GPU worker is not responsible to guess where to start the tuning.
 class KernelIndexProress:
     kernel_index : int = -1
     last_success_kernel : int = None
+    last_adiff : float = -1.0
     total_number_of_kernels: int = CPP_AUTOTUNE_MAX_KERNELS
     passed_kernels : int = 0
     failed_kernels : int = 0

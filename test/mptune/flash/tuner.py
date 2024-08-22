@@ -2,15 +2,19 @@
 # Copyright © 2024 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
+import math
 from ..core import (
     MonadAction,
     MonadMessage,
     Monad,
     MonadService,
     TunerService as BaseTunerService,
+    ProfilerEarlyExit as PEE,
 )
 DEFAULT_PHILOX_SEED = 0x1BF52
-DEFAULT_PHILOX_OFFSET = 0x1D4B42
+DEFAULT_PHILOX_OFFSET_1 = 0x1D4000
+DEFAULT_PHILOX_OFFSET_2 = 0x000B42
+DEFAULT_PHILOX_OFFSET = DEFAULT_PHILOX_OFFSET_1 + DEFAULT_PHILOX_OFFSET_2
 
 class TunerMonad(Monad):
     def service_factory(self):
@@ -75,20 +79,18 @@ class TunerService(BaseTunerService):
         BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type = tup
         encoded_softmax = None
         dtype = getattr(torch, dtype)
-        philox_seed = DEFAULT_PHILOX_SEED
-        philox_offset = DEFAULT_PHILOX_OFFSET
 
         if self._arch == 'gfx1100':
             if seqlen_q > 4096 and seqlen_k > 4096:
-                return request.make_skip(self.monad, 'Navi kernels triggers "MES failed to response msg=" kernel error when handling large inputs.')
-        if seqlen_q > 8192 and seqlen_k > 8192:
+                raise PEE(request.make_skip(self.monad, 'Navi kernels triggers "MES failed to response msg=" kernel error when handling large inputs.'))
+        if seqlen_q > 4096 and seqlen_k > 4096:
             N_HEADS = 1
         if causal and seqlen_q != seqlen_k:
-            return request.make_skip(self.monad, 'FA does not support accept casual=True when seqlen_q != seqlen_k.')
+            raise PEE(request.make_skip(self.monad, 'FA does not support accept casual=True when seqlen_q != seqlen_k.'))
         if causal and bias_type != 0:
-            return request.make_skip(self.monad, 'FA does not support accept casual=True when bias_type != 0.')
+            raise PEE(request.make_skip(self.monad, 'FA does not support accept casual=True when bias_type != 0.'))
         if a.dry_run:
-            return request.make_dryrun(self.monad)
+            raise PEE(request.make_dryrun(self.monad))
 
         ctx, sdpa_params = self.hit_cache(tup)
 
@@ -96,6 +98,11 @@ class TunerService(BaseTunerService):
         # TODO: unify with attn_torch_function
         o, M = ctx.ctx_tensors
         L = M  # alias
+        philox_seed = torch.tensor([DEFAULT_PHILOX_SEED], device=q.device, dtype=torch.uint64)
+        philox_offset1 = torch.tensor([DEFAULT_PHILOX_OFFSET_1], device=q.device, dtype=torch.uint32)
+        philox_offset2 = DEFAULT_PHILOX_OFFSET_2
+        philox_seed_output = torch.tensor([0], device=q.device, dtype=torch.uint64)
+        philox_offset_output = torch.tensor([0], device=q.device, dtype=torch.uint64)
 
         def fwd_sub_extarg_accessor(fwd_extargs : FwdExtraArguments, i):
             return fwd_extargs
@@ -104,8 +111,12 @@ class TunerService(BaseTunerService):
             # print(f'{is_testing=}')
             if is_testing:
                 o.fill_(float('nan'))
+                philox_seed_output.fill_(0)
+                philox_offset_output.fill_(0)
             args = (q, k, v, b, sm_scale, M, o,
-                    dropout_p, philox_seed, philox_offset, encoded_softmax, causal,
+                    dropout_p, philox_seed, philox_offset1, philox_offset2,
+                    philox_seed_output, philox_offset_output,
+                    encoded_softmax, causal,
                     extargs.capi_object)
             try:
                 ret = attn_fwd(*args)
@@ -113,7 +124,8 @@ class TunerService(BaseTunerService):
                 self.report_exception(e)
                 return 1, [KernelOutput(hip_status=hipError_t.hipErrorLaunchFailure,
                                         output_tensors=None)]
-            return 1, [KernelOutput(hip_status=ret, output_tensors=[o])]
+            return 1, [KernelOutput(hip_status=ret,
+                                    output_tensors=[o, philox_seed_output, philox_offset_output])]
 
         # ref_out is kept in the ctx
         ref_out, _ = ctx.compute_ref_forward(sdpa_params)
@@ -137,13 +149,16 @@ class TunerService(BaseTunerService):
                 if db is not None:
                     db.fill_(float('nan'))
             args = (q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
-                    dropout_p, philox_seed, philox_offset, causal,
-                    extargs.capi_object)
+                    dropout_p, philox_seed_output, philox_offset_output, 0,
+                    causal, extargs.capi_object)
             try:
                 ret = attn_bwd(*args)
             except Exception as e:
                 self.report_exception(e)
-                return hipError_t.hipErrorLaunchFailure, None
+                ret = hipError_t.hipErrorLaunchFailure
+                return 2, [KernelOutput(hip_status=ret, output_tensors=None),
+                           KernelOutput(hip_status=ret, output_tensors=None),
+                          ]
             return 2, [KernelOutput(hip_status=ret, output_tensors=[dk,dv]),
                        KernelOutput(hip_status=ret, output_tensors=[dq,db]),
                       ]
@@ -160,28 +175,46 @@ class TunerService(BaseTunerService):
                                     bwd_validators,
                                     kernel_index_progress_dict=payload.kig_dict)
 
-    def fwd_validator(self, kernel_outputs : 'List[KernelOutput]'):
-        tri_out, = kernel_outputs[0].output_tensors
-        is_allclose, adiff, _, _ = self._cached_ctx.validate_with_reference(tri_out, None, no_backward=True)
-        return is_allclose
+    def fwd_validator(self, kernel_outputs : 'List[KernelOutput]', atr : 'AutotuneResult'):
+        tri_out, philox_seed, philox_offset = kernel_outputs[0].output_tensors
+        is_allclose, adiffs, _, _, tft = self._cached_ctx.validate_with_reference(tri_out, None, no_backward=True,
+                                                                                  return_target_fudge_factors=True)
+        # Note: philox_seed/offset_output is only updated when causal=True. We
+        #       need a better closure solution for validator
+        # TODO: Check philox
+        # philox_correct = (philox_seed == DEFAULT_PHILOX_SEED) and (philox_offset == DEFAULT_PHILOX_OFFSET)
+        atr.ut_passed = is_allclose
+        atr.adiffs = adiffs
+        atr.target_fudge_factors = {'out' : tft['out']}
+        return atr
 
     def bwd_both_validator(self, kernel_outputs : 'List[KernelOutput]'):
         tri_dk, tri_dv, = kernel_outputs[0].output_tensors
         tri_dq, tri_db, = kernel_outputs[1].output_tensors
         dout_tensors = (tri_dq, tri_dk, tri_dv, tri_db)
-        _, _, grads_allclose, grads_adiff = self._cached_ctx.validate_with_reference(None, dout_tensors, no_forward=True)
+        _, _, grads_allclose, grads_adiff, tft = self._cached_ctx.validate_with_reference(None, dout_tensors,
+                                                                                          no_forward=True,
+                                                                                          return_target_fudge_factors=True)
         dq_allclose, dk_allclose, dv_allclose, db_allclose = grads_allclose
         ref_dq, ref_dk, ref_dv, ref_db = self._cached_ctx.dref_tensors
-        return dk_allclose and dv_allclose, dq_allclose and db_allclose, grads_adiff
+        return dk_allclose and dv_allclose, dq_allclose and db_allclose, grads_adiff, tft
 
-    def bwd_dkdv_validator(self, kernel_outputs : 'List[KernelOutput]'):
-        dkdv, dqdb, grads_adiff = self.bwd_both_validator(kernel_outputs)
+    def bwd_dkdv_validator(self, kernel_outputs : 'List[KernelOutput]', atr : 'AutotuneResult'):
+        dkdv, dqdb, grads_adiff, tft = self.bwd_both_validator(kernel_outputs)
+        dq_adiff, dk_adiff, dv_adiff, db_adiff = grads_adiff
         # if not dkdv:
-        #     print(f'{grads_adiff=}')
-        return dkdv
+        #     print(f'{grads_adiff=} {tft=}')
+        atr.ut_passed = dkdv
+        atr.adiffs = [dk_adiff, dv_adiff]
+        atr.target_fudge_factors = {'dk' : tft['k'], 'dv' : tft['v']}
+        return atr
 
-    def bwd_dqdb_validator(self, kernel_outputs : 'List[KernelOutput]'):
-        dkdv, dqdb, grads_adiff = self.bwd_both_validator(kernel_outputs)
+    def bwd_dqdb_validator(self, kernel_outputs : 'List[KernelOutput]', atr : 'AutotuneResult'):
+        dkdv, dqdb, grads_adiff, tft = self.bwd_both_validator(kernel_outputs)
+        dq_adiff, dk_adiff, dv_adiff, db_adiff = grads_adiff
         # if not dqdb:
         #     print(f'{grads_adiff=}')
-        return dqdb
+        atr.ut_passed = dqdb
+        atr.adiffs = [dq_adiff, db_adiff]
+        atr.target_fudge_factors = {'dq' : tft['q'], 'db' : tft['b']}
+        return atr

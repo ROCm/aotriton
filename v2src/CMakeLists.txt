@@ -30,10 +30,21 @@ if(AOTRITON_BUILD_FOR_TUNING)
 else(AOTRITON_BUILD_FOR_TUNING)
   set(GENERATE_OPTION "")
 endif()
+
+if(AOTRITON_ENABLE_FP32_INPUTS)
+  set(AOTRITON_ENABLE_FP32 1)
+else()
+  set(AOTRITON_ENABLE_FP32 0)
+endif()
+
 execute_process(
-  COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_DIR}/bin/python" -m v2python.generate_compile --target_gpus ${TARGET_GPUS} --build_dir "${AOTRITON_V2_BUILD_DIR}" --bare_mode ${GENERATE_OPTION}
+  COMMAND ${CMAKE_COMMAND}
+  -E env VIRTUAL_ENV=${VENV_DIR}
+  AOTRITON_ENABLE_FP32=${AOTRITON_ENABLE_FP32}
+  "${VENV_DIR}/bin/python" -m v2python.generate_compile --target_gpus ${TARGET_GPUS} --build_dir "${AOTRITON_V2_BUILD_DIR}" --bare_mode ${GENERATE_OPTION}
   COMMAND_ECHO STDOUT
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
+  COMMAND_ERROR_IS_FATAL ANY
 )
 message("Bare.compile: ${AOTRITON_V2_BUILD_DIR}/Bare.compile")
 file(STRINGS "${AOTRITON_V2_BUILD_DIR}/Bare.compile" HSACO_RULES)
@@ -50,7 +61,9 @@ foreach(RULE IN LISTS HSACO_RULES)
   list(POP_FRONT RULE SIG)
   if(AOTRITON_COMPRESS_KERNEL)
     add_custom_command(OUTPUT "${HSACO}.zst"
-      COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_DIR}/bin/python"
+      COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
+      TRITON_CACHE_DIR=${CMAKE_CURRENT_BINARY_DIR}/triton-cache
+      "${VENV_DIR}/bin/python"
       "${AOTRITON_COMPILER}"
       "${SRC}"
       "--kernel_name" "${KNAME}"
@@ -68,7 +81,9 @@ foreach(RULE IN LISTS HSACO_RULES)
     list(APPEND ALL_HSACOS "${HSACO}.zst")
   else(AOTRITON_COMPRESS_KERNEL)
     add_custom_command(OUTPUT "${HSACO}"
-      COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_DIR}/bin/python"
+      COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
+      TRITON_CACHE_DIR=${CMAKE_CURRENT_BINARY_DIR}/triton-cache
+      "${VENV_DIR}/bin/python"
       "${AOTRITON_COMPILER}"
       "${SRC}"
       "--kernel_name" "${KNAME}"
@@ -120,16 +135,23 @@ message(STATUS "AOTRITON_ZSTD_INCLUDE ${AOTRITON_ZSTD_INCLUDE}")
 message(STATUS "AOTRITON_SHIM_FLAGS ${AOTRITON_SHIM_FLAGS}")
 
 execute_process(
-  COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_DIR}/bin/python" -m v2python.generate_shim --target_gpus ${TARGET_GPUS} --build_dir ${AOTRITON_V2_BUILD_DIR} --bare_mode ${GENERATE_OPTION}
+  COMMAND ${CMAKE_COMMAND}
+  -E env VIRTUAL_ENV=${VENV_DIR}
+  AOTRITON_ENABLE_FP32=${AOTRITON_ENABLE_FP32}
+  "${VENV_DIR}/bin/python" -m v2python.generate_shim --target_gpus ${TARGET_GPUS} --build_dir ${AOTRITON_V2_BUILD_DIR} --bare_mode ${GENERATE_OPTION}
   COMMAND_ECHO STDOUT
   WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/.."
+  COMMAND_ERROR_IS_FATAL ANY
 )
 file(STRINGS "${AOTRITON_V2_BUILD_DIR}/Bare.shim" SHIM_CC_FILES)
 
 # CAVEAT: Actual shim code can only be generated during build phase because it
 # requires some kernel information. (Notably shared memory requirement)
 add_custom_target(aotriton_v2_gen_shim 
-  COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_DIR}/bin/python" -m v2python.generate_shim --target_gpus ${TARGET_GPUS} --build_dir ${AOTRITON_V2_BUILD_DIR} ${AOTRITON_SHIM_FLAGS} ${GENERATE_OPTION}
+  COMMAND ${CMAKE_COMMAND}
+  -E env VIRTUAL_ENV=${VENV_DIR}
+  AOTRITON_ENABLE_FP32=${AOTRITON_ENABLE_FP32}
+  "${VENV_DIR}/bin/python" -m v2python.generate_shim --target_gpus ${TARGET_GPUS} --build_dir ${AOTRITON_V2_BUILD_DIR} ${AOTRITON_SHIM_FLAGS} ${GENERATE_OPTION}
   BYPRODUCTS ${SHIM_CC_FILES}  # Essential, otherwise add_library complains
   COMMAND_EXPAND_LISTS
   WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/.."

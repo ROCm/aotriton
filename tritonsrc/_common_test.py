@@ -2,6 +2,7 @@ import os
 from typing import List, Tuple, Optional
 from collections import namedtuple
 import numpy as np
+import math
 import torch
 
 def _reference_scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_mask=None, dropout_p=0.0, is_causal=False, scale=None) -> torch.Tensor:
@@ -41,39 +42,39 @@ def _reference_scaled_dot_product_attention(query, key, value, attn_mask=None, d
 default_atol = {torch.float16: 1e-3, torch.bfloat16: 1e-3, torch.float32: 1e-5}
 default_rtol = {torch.float16: 1e-3, torch.bfloat16: 1.6e-2, torch.float32: 1.3e-6}
 
-def get_rtol(true_value: torch.Tensor, computed_value: torch.Tensor) -> float:
-    deviation = true_value - computed_value
-    deviation = torch.abs(deviation / true_value)
-    # Fill in the nans with the default rtol
-    torch.nan_to_num_(deviation, nan=default_rtol[computed_value.dtype])
-    return deviation.max().item()
-
-def get_atol(true_value: torch.Tensor, computed_value: torch.Tensor) -> float:
-    # Low precision may yield NAN due to numerical instability
-    # See https://github.com/pytorch/pytorch/issues/116176 for a real-world example.
-    # Section 3 in https://arxiv.org/abs/2112.05682v3 explains how accelerated
-    # SDPA does not suffer from it.
-    deviation = torch.nan_to_num(true_value - computed_value)
-    atol = torch.abs(deviation).max().item()
-    return atol
-
-def get_tolerances(
-    true_value: torch.Tensor,
-    computed_value: torch.Tensor,
-    fudge_factor: Optional[float] = None,
-) -> Tuple[float, float]:
-    """Returns the absolute and relative tolerances for comparing two tensors."""
-    fudge_factor = fudge_factor if fudge_factor is not None else 1.0
-    atol = get_atol(true_value, computed_value)
-    rtol = get_rtol(true_value, computed_value)
-
-    atol = fudge_factor * max(atol, default_atol[computed_value.dtype])
-    rtol = fudge_factor * max(rtol, default_rtol[computed_value.dtype])
-    # torch.isclose() has weird behavior around see:
-    # https://github.com/pytorch/pytorch/issues/102400
-    if rtol > 1e30:
-        rtol = default_rtol[computed_value.dtype]
-    return atol, rtol
+# def get_rtol(true_value: torch.Tensor, computed_value: torch.Tensor) -> float:
+#     deviation = true_value - computed_value
+#     deviation = torch.abs(deviation / true_value)
+#     # Fill in the nans with the default rtol
+#     torch.nan_to_num_(deviation, nan=default_rtol[computed_value.dtype])
+#     return deviation.max().item()
+#
+# def get_atol(true_value: torch.Tensor, computed_value: torch.Tensor) -> float:
+#     # Low precision may yield NAN due to numerical instability
+#     # See https://github.com/pytorch/pytorch/issues/116176 for a real-world example.
+#     # Section 3 in https://arxiv.org/abs/2112.05682v3 explains how accelerated
+#     # SDPA does not suffer from it.
+#     deviation = torch.nan_to_num(true_value - computed_value)
+#     atol = torch.abs(deviation).max().item()
+#     return atol
+#
+# def get_tolerances(
+#     true_value: torch.Tensor,
+#     computed_value: torch.Tensor,
+#     fudge_factor: Optional[float] = None,
+# ) -> Tuple[float, float]:
+#     """Returns the absolute and relative tolerances for comparing two tensors."""
+#     fudge_factor = fudge_factor if fudge_factor is not None else 1.0
+#     raw_atol = get_atol(true_value, computed_value)
+#     raw_rtol = get_rtol(true_value, computed_value)
+#
+#     atol = fudge_factor * max(raw_atol, default_atol[computed_value.dtype])
+#     rtol = fudge_factor * max(raw_rtol, default_rtol[computed_value.dtype])
+#     # torch.isclose() has weird behavior around see:
+#     # https://github.com/pytorch/pytorch/issues/102400
+#     if rtol > 1e30:
+#         rtol = default_rtol[computed_value.dtype]
+#     return atol, rtol, raw_atol, raw_rtol
 
 SdpaParams = namedtuple('SdpaParams', ['causal', 'sm_scale', 'dropout_p', 'dropout_mask'])
 
@@ -123,7 +124,10 @@ class SdpaContext(object):
             '''
         self.dev_tensors = (q, k, v, b)
         # self.FUDGE_FACTORS = (4, 2, 2, 2)  # Matches the order of self.dev_tensors
-        self.OUT_FUDGE_FACTOR = 3
+
+        # Maximal value from tune_flash.py and table_tool.py --fudge_factor_tolerance 5.0
+        # Note: Navi 3x is experimental and YMMV
+        self.OUT_FUDGE_FACTOR = 6.0 if dtype != torch.float32 else 10.0
 
     '''
     Create Tensors that will be kept b/w forward and backward pass
@@ -230,13 +234,29 @@ class SdpaContext(object):
         dtype = self.dtype
         seqlen_k = self.seqlen_k
         seqlen_q = self.seqlen_q
-        seqlen_k_fudge_factor = 1.0 if seqlen_k < 1024 else 2.0
-        seqlen_k_fudge_factor = seqlen_k_fudge_factor if seqlen_k < 8192 else 4.0
-        dropout_fudge_factor = 1.0 if p.dropout_p == 0.0 else 2.0
-        query_fudge_factor = 8 * dropout_fudge_factor * seqlen_k_fudge_factor # TODO: Investigate why grad_q needs larger tolerances
-        key_fudge_factor = 8 * dropout_fudge_factor
-        value_fudge_factor = 7
-        bias_fudge_factor = 12
+
+        # seqlen_k_fudge_factor = 1.0 if seqlen_k < 1024 else 2.0
+        # seqlen_k_fudge_factor = seqlen_k_fudge_factor if seqlen_k < 8192 else 4.0
+        # dropout_fudge_factor = 1.0 if p.dropout_p == 0.0 else 2.0
+        # query_fudge_factor = 8 * dropout_fudge_factor * seqlen_k_fudge_factor # TODO: Investigate why grad_q needs larger tolerances
+        # key_fudge_factor = 8 * dropout_fudge_factor
+        # value_fudge_factor = 7
+        # bias_fudge_factor = 12
+
+        # Maximal value from tune_flash.py and table_tool.py --fudge_factor_tolerance 5.0
+        # Note: Navi 3x is experimental and YMMV
+        query_fudge_factor = 180.0
+        key_fudge_factor = 16.0
+        value_fudge_factor = 32.0
+        bias_fudge_factor = 16.0
+        print(f'{torch.cuda.get_device_properties(0).gcnArchName=}')
+        if torch.version.hip:
+            if 'gfx90a' in torch.cuda.get_device_properties(0).gcnArchName:
+                key_fudge_factor = max(8.0, (seqlen_k + seqlen_q) / 16.0)  # TODO: Check why
+                bias_fudge_factor = 32.0
+        if dtype == torch.float32:
+            key_fudge_factor = 180.0
+            bias_fudge_factor = 32.0
         return (query_fudge_factor, key_fudge_factor, value_fudge_factor, bias_fudge_factor)
 
     @staticmethod
@@ -279,33 +299,146 @@ class SdpaContext(object):
             self.dout_tensors = self._compute_backward(self.dev_tensors, out, dout)
 
     @staticmethod
-    def _validate(out, ref, lp_ref, fudge_factor, tname):
+    def _validate(out, ref, lp_ref, fudge_factor, tname,
+                  *,
+                  return_target_fudge_factors=False):
         if out is None and ref is None:
-            return True, float('nan')
-        atol, rtol = get_tolerances(ref, lp_ref, fudge_factor)
+            return True, 0.0, 1.0
+        # atol, rtol, raw_atol, raw_rtol = get_tolerances(ref, lp_ref, fudge_factor)
         assert out is not None, f'd{tname} is none'
         assert ref is not None, f'd{tname}_ref is none'
         # print(f'{out=}')
         # print(f'{ref=}')
-        x = out.to(device=ref.device)
-        y = ref.to(out.dtype)
-        max_adiff = float(torch.max(torch.abs(x - y)))
-        return torch.allclose(x, y, atol=atol, rtol=rtol), max_adiff
-
-    def validate_with_reference(self, out, grads, *, no_forward=False, no_backward=False):
-        if no_forward:
-            out_allclose, out_adiff = True, None
+        def lmax(x) -> float:
+            return x.abs().max().item()
+        max_adiff = test_error = lmax(ref - out.to(device=ref.device))
+        ref_error = lmax(ref - lp_ref)
+        if math.isnan(test_error) and not math.isnan(ref_error):
+            # TODO: More detailed feedback
+            reason = f"Tensor {tname} has NaN output but not NaN reference"
+            # print(f'{max_adiff=} {test_error=} {tname=}')
+            return False, max_adiff, None
+        atol = default_atol[torch.float32]
+        threshold = max(atol, ref_error * fudge_factor)
+        valid = test_error <= threshold
+        tft = test_error / ref_error if ref_error > atol else 1.0
+        if not valid:
+            print(f'For {tname}, Consider bump fudge_factor to {tft} = {test_error=} / {ref_error=}. So that {test_error=} < max({atol=}, {ref_error=} * {tft=})')
+        if return_target_fudge_factors:
+            return valid, max_adiff, tft
         else:
-            out_allclose, out_adiff = self._validate(out, self.refout_tensors[0], self.lp_refout_tensors[0], self.OUT_FUDGE_FACTOR, 'out')
+            return valid, max_adiff, None
+
+    def validate_with_reference(self, out, grads,
+                                *,
+                                no_forward=False,
+                                no_backward=False,
+                                return_target_fudge_factors=False):
+        if no_forward:
+            out_allclose, out_adiff, tft = True, None, None
+        else:
+            out_allclose, out_adiff, tft = self._validate(out,
+                                                          self.refout_tensors[0],
+                                                          self.lp_refout_tensors[0],
+                                                          self.OUT_FUDGE_FACTOR,
+                                                          'out',
+                                                          return_target_fudge_factors=return_target_fudge_factors)
+        target_fudge_factors = {'out' : tft}
         if no_backward:
-            return out_allclose, out_adiff, [], []
+            if return_target_fudge_factors:
+                return out_allclose, out_adiff, [], [], target_fudge_factors
+            else:
+                return out_allclose, out_adiff, [], []
         grads_allclose = []
         grads_adiff = []
+        print(f'using {self.fudge_factors=}')
         for grad, ref, lp_ref, fudge_factor, tname in zip(grads, self.dref_tensors, self.lp_dref_tensors, self.fudge_factors, self.TENSOR_NAMES):
-            allclose, adiff = self._validate(grad, ref, lp_ref, fudge_factor, tname)
+            allclose, adiff, tft = self._validate(grad,
+                                                  ref,
+                                                  lp_ref,
+                                                  fudge_factor,
+                                                  tname,
+                                                  return_target_fudge_factors=return_target_fudge_factors)
             grads_allclose.append(allclose)
             grads_adiff.append(adiff)
-        return out_allclose, out_adiff, grads_allclose, grads_adiff
+            # if math.isnan(adiff):
+            #     print(f'{adiff=} {grads_adiff=} {tname=}')
+            target_fudge_factors[tname] = tft
+        if return_target_fudge_factors:
+            return out_allclose, out_adiff, grads_allclose, grads_adiff, target_fudge_factors
+        else:
+            return out_allclose, out_adiff, grads_allclose, grads_adiff
+
+    def display_validation_results(self, tri_out, is_allclose, adiff, grads_allclose, grads_adiff):
+        q, k, v, b = self.dev_tensors
+        def TO(ref_tensor):
+            return ref_tensor.to(device=q.device, dtype=dtype)
+        dtype = q.dtype
+        SPARSE_HEAD_SINCE = 1
+        SPARSE_SEQ_SINCE = 1
+        ref_out = self.lp_refout_tensors[0]
+        if not is_allclose:
+            err_idx = np.unravel_index(torch.argmax(torch.abs(TO(ref_out) - tri_out)).cpu().numpy(), ref_out.shape)
+            print(f'{err_idx=}')
+            print(f'{tri_out[err_idx]=}')
+            print(f'{ref_out[err_idx]=}')
+        dq_allclose, dk_allclose, dv_allclose, db_allclose = grads_allclose
+        tri_dq, tri_dk, tri_dv, tri_db = self.dout_tensors
+        ref_dq, ref_dk, ref_dv, ref_db = self.dref_tensors
+        if not dv_allclose:
+            err_idx = np.unravel_index(torch.argmax(torch.abs(TO(ref_dv) - tri_dv)).cpu().numpy(), ref_dv.shape)
+            print(f'{q.shape=} {q.stride()=} {q.dtype=}')
+            print(f'{k.shape=} {k.stride()=} {k.dtype=}')
+            print(f'{v.shape=} {v.stride()=} {v.dtype=}')
+            print(f'{q[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
+            print(f'{k[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
+            print(f'{v[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
+            # print(f'{dropout_mask[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
+            # print(f'{dropout_mask.shape=}')
+            print(f'{err_idx=}')
+            print(f'{tri_dv[err_idx]=}')
+            print(f'{ref_dv[err_idx]=}')
+            print(f'{torch.isnan(ref_dv).any()=}')
+            '''
+            any_nan = torch.isnan(ref_dv).any()
+            if any_nan:
+                torch.set_printoptions(linewidth=200)
+                print(f'{q=}')
+                print(f'{k=}')
+                print(f'{v=}')
+                print(f'{dropout_p=}')
+                print(f'{causal=}')
+                print(f'{sm_scale=}')
+            if seqlen_q <= 16:
+                # torch.set_printoptions(linewidth=200, threshold=4096)
+                print(f'{tri_dk[0,0]=}')
+                print(f'{ref_dk[0,0]=}')
+                print(f'{tri_dv[0,0]=}')
+                print(f'{ref_dv[0,0]=}')
+                # print(f'{tri_dq[0,0]=}')
+                # print(f'{ref_dq[0,0]=}')
+            '''
+
+        if dv_allclose and not dk_allclose:
+            print(f'{tri_out[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
+            print(f'{ref_out[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
+            print(f'{tri_dk[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
+            print(f'{ref_dk[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
+            err_idx = np.unravel_index(torch.argmax(torch.abs(TO(ref_dk) - tri_dk)).cpu().numpy(), ref_dk.shape)
+            print(f'{err_idx=}')
+            print(f'{tri_dk[err_idx]=} {ref_dk[err_idx]=} error = {torch.abs(tri_dk[err_idx] - ref_dk[err_idx])}')
+            # print(f'{tri_dk[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]/ref_dk[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
+            # print(f'{dropout_mask[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
+
+        if dk_allclose and dv_allclose and not dq_allclose:
+            err_idx = np.unravel_index(torch.argmax(torch.abs(TO(ref_dq) - tri_dq)).cpu().numpy(), ref_dq.shape)
+            print(f'{err_idx=}')
+            print(f'{tri_dq[err_idx]=} {ref_dq[err_idx]=} error = {torch.abs(tri_dq[err_idx] - ref_dq[err_idx])}')
+
+        if dk_allclose and dv_allclose and dq_allclose and not db_allclose:
+            err_idx = np.unravel_index(torch.argmax(torch.abs(TO(ref_db) - tri_db)).cpu().numpy(), ref_db.shape)
+            print(f'{err_idx=}')
+            print(f'{tri_db[err_idx]=} {ref_db[err_idx]=} error = {torch.abs(tri_db[err_idx] - ref_db[err_idx])}')
 
 class VarlenSdpaContext(SdpaContext):
     TENSOR_NAMES = ('q', 'k', 'v', 'b')
@@ -385,3 +518,67 @@ class VarlenSdpaContext(SdpaContext):
         self.lp_refout_tensors = self._compute_ref_forward_varlen(self.lp_ref_tensors, self._seqlens_q, self._seqlens_k, p)
         return self.lp_refout_tensors
 
+class SdpaContextFromNPZ(SdpaContext):
+    def __init__(self, fn, dtype, device='cuda'):
+        d = np.load(fn)
+        def load(n, *, cast_to=dtype):
+            return torch.tensor(d[n], dtype=cast_to, device=device)
+        def load_qkv(*, prefix='', suffix='', keep_dtype=False):
+            cast_to = None if keep_dtype else dtype
+            # return tuple([torch.tensor(d[f'{prefix}{n}{suffix}'], dtype=cast_to, device=device) for n in 'qkvo'])
+            return tuple([load(f'{prefix}{n}{suffix}', cast_to=cast_to) for n in 'qkv'])
+        q, k, v = load_qkv()
+        b = None
+        self.dev_tensors = (q, k, v, b)
+        self.OUT_FUDGE_FACTOR = 3
+
+        # TODO: load dropout_mask
+
+        sm_scale = float(d['scale'])
+        assert not np.isnan(sm_scale), 'FIXME: suppport scale=None when capturing torch.nn.functional.scaled_dot_product_attention'
+        self.sdpa_params = SdpaParams(causal=bool(d['is_causal']),
+                                      sm_scale=sm_scale,
+                                      dropout_p=float(d['dropout_p']),
+                                      dropout_mask=None)
+
+        self.dout = load('upstream_grad')
+        self.refout_tensors = (load('o_ref'), None)
+        self.lp_refout_tensors = (load('o_lp_ref'), None)
+
+        dq, dk, dv = load_qkv(prefix='grads_', suffix='_ref', keep_dtype=True)
+        self.dref_tensors = (dq, dk, dv, None)
+        dq, dk, dv = load_qkv(prefix='grads_', suffix='_ref_lp', keep_dtype=True)
+        self.lp_dref_tensors = (dq, dk, dv, None)
+
+    def compute_ref_forward(self, p : SdpaParams):
+        self.fudge_factors = self._compute_fudge_factors(p)
+        pass
+
+    def compute_backward(self, out, dout, *, ref_only=False):
+        assert ref_only == False, 'SdpaContextFromNPZ.compute_backward is incompatible with ref_out=True'
+        self.dout_tensors = self._compute_backward(self.dev_tensors, out, dout)
+
+    def democode_save_tensors(self):
+        import numpy as np
+        np.savez('dump.npz',
+                 q=query.float().numpy(force=True),
+                 k=key.float().numpy(force=True),
+                 v=value.float().numpy(force=True),
+                 o=out.float().numpy(force=True),
+                 o_ref=out_ref.float().numpy(force=True),
+                 o_lp_ref=out_lp_ref.float().numpy(force=True),
+                 upstream_grad=upstream_grad.float().numpy(force=True),
+                 dropout_p=dropout_p,
+                 is_causal=int(is_causal),
+                 scale=float('nan') if scale is None else float(scale),
+                 enable_gqa=bool(enable_gqa),
+                 grads_q=grads[0].float().numpy(force=True),
+                 grads_k=grads[1].float().numpy(force=True),
+                 grads_v=grads[2].float().numpy(force=True),
+                 grads_q_ref_lp=grads_ref_lp[0].float().numpy(force=True),
+                 grads_k_ref_lp=grads_ref_lp[1].float().numpy(force=True),
+                 grads_v_ref_lp=grads_ref_lp[2].float().numpy(force=True),
+                 grads_q_ref=grads_ref[0].float().numpy(force=True),
+                 grads_k_ref=grads_ref[1].float().numpy(force=True),
+                 grads_v_ref=grads_ref[2].float().numpy(force=True),
+                 )

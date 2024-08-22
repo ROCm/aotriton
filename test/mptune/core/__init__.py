@@ -18,7 +18,7 @@ from .datatypes import (
 )
 
 from .db_accessor import DbService
-from .tuner import TunerService
+from .tuner import TunerService, ProfilerEarlyExit
 from .manager import TunerManager
 from .cpp_autotune import (
     cpp_autotune_gen,
@@ -39,6 +39,7 @@ __all__ = [
     "TuningResult",
     "DbService",
     "TunerService",
+    "ProfilerEarlyExit",
     "cpp_autotune_gen",
     "KernelOutput",
     "AutotuneResult",

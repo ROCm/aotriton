@@ -35,3 +35,23 @@ def debug_fill_dropout_rng(R,
         rng = dropout_rng(philox_seed, philox_offset, BLOCK_M, BLOCK_N, seqlen_k)
         tl.store(R_block_ptr, rng.to(R_block_ptr.type.element_ty), boundary_check=(0,1))
         R_block_ptr = tl.advance(R_block_ptr, (0, BLOCK_N))
+
+@triton.jit
+def debug_fill_dropout_rng_tensor(R,
+                                  stride_rz, stride_rh, stride_rm, stride_rn,
+                                  seqlen_q, seqlen_k,
+                                  philox_seed_ptr,
+                                  philox_offset_base_ptr,
+                                  BLOCK_M: tl.constexpr,
+                                  BLOCK_N: tl.constexpr,
+                                  ):
+    philox_seed = tl.load(philox_seed_ptr)
+    philox_offset_base = tl.load(philox_offset_base_ptr)
+    debug_fill_dropout_rng(R,
+                           stride_rz, stride_rh, stride_rm, stride_rn,
+                           seqlen_q, seqlen_k,
+                           philox_seed,
+                           philox_offset_base,
+                           BLOCK_M,
+                           BLOCK_N,
+                           )

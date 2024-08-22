@@ -32,8 +32,9 @@ class bwd_kernel_dq(FlashKernel):
         'max_seqlen_k',
         'head_dim',
         'dropout_p',
-        'philox_seed',
-        'philox_offset_base',
+        'philox_seed_ptr',
+        'philox_offset1',
+        'philox_offset2',
         'BLOCK_M', # tl.constexpr starts here
         'BLOCK_DMODEL',
         'BLOCK_N',
@@ -59,6 +60,8 @@ class bwd_kernel_dq(FlashKernel):
         'D': 2,
         'cu_seqlens_q': 1,
         'cu_seqlens_k': 1,
+        'philox_seed_ptr': 0,
+        'philox_offset1': 0,
     }
     TYPE_CHOICES = {
         frozenset(['Q', 'K', 'V', 'B', 'Out', 'dO', 'dQ', 'dB']) : match_fwd('Q'),
@@ -68,8 +71,9 @@ class bwd_kernel_dq(FlashKernel):
         frozenset(['num_seqlens', 'max_seqlen_q', 'max_seqlen_k']) : match_fwd('num_seqlens'),
         frozenset(['head_dim']) : ['i32'],
         frozenset(['dropout_p']) : match_fwd('dropout_p'),
-        frozenset(['philox_seed']) : match_fwd('philox_seed'),
-        frozenset(['philox_offset_base']) : match_fwd('philox_offset_base'),
+        frozenset(['philox_seed_ptr']) : match_fwd('philox_seed_ptr'),
+        frozenset(['philox_offset1']) : match_fwd('philox_offset1'),
+        frozenset(['philox_offset2']) : match_fwd('philox_offset2'),
     }
     FEAT_CHOICES = {
         frozenset(['BLOCK_DMODEL']) : [16, 32, 64, 128, 256],

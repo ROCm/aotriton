@@ -64,7 +64,7 @@ class TunerManager(ArgArchVerbose):
         # Workers will get their init objects from _src
         [worker.start() for worker in self._workers]
         for m in self._all_monads:
-            self.print(f"{m.identifier=} {m.sentinel=}")
+            self.print(f"{m.identifier=} {m.sentinel=} {m.pid=}")
         self._sentinel_to_monad = { monad.sentinel : monad for monad in self._all_monads }
         self._success_monads = set()
 
@@ -75,7 +75,7 @@ class TunerManager(ArgArchVerbose):
         for monad in alive_monads:
             try:
                 if monad.exitcode is not None:
-                    ret.append(monad)
+                    exited.append(monad)
             except ValueError:
                 restarting.append(monad)
         # exitcodes = [monad.exitcode for monad in alive_monads]

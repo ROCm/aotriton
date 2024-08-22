@@ -41,7 +41,10 @@ namespace pyaotriton {
               py::arg("out"),
               py::arg("dropout_p"),
               py::arg("philox_seed"),
-              py::arg("philox_offset"),
+              py::arg("philox_offset1"),
+              py::arg("philox_offset2"),
+              py::arg("philox_seed_output"),
+              py::arg("philox_offset_output"),
               py::arg("encoded_softmax"),
               py::arg("is_causal"),
               py::arg("stream") = nullptr,
@@ -62,7 +65,10 @@ namespace pyaotriton {
               py::arg("out"),
               py::arg("dropout_p"),
               py::arg("philox_seed"),
-              py::arg("philox_offset"),
+              py::arg("philox_offset1"),
+              py::arg("philox_offset2"),
+              py::arg("philox_seed_output"),
+              py::arg("philox_offset_output"),
               py::arg("encoded_softmax"),
               py::arg("is_causal"),
               py::arg("stream") = nullptr,
@@ -85,7 +91,8 @@ namespace pyaotriton {
               py::arg("delta"),
               py::arg("dropout_p"),
               py::arg("philox_seed"),
-              py::arg("philox_offset"),
+              py::arg("philox_offset1"),
+              py::arg("philox_offset2"),
               py::arg("is_causal"),
               py::arg("stream") = nullptr,
               py::arg("extargs") = BwdExtraArguments());
@@ -111,12 +118,20 @@ namespace pyaotriton {
               py::arg("delta"),
               py::arg("dropout_p"),
               py::arg("philox_seed"),
-              py::arg("philox_offset"),
+              py::arg("philox_offset1"),
+              py::arg("philox_offset2"),
               py::arg("is_causal"),
               py::arg("stream") = nullptr,
               py::arg("extargs") = BwdExtraArguments());
         m.def("debug_fill_dropout_rng",
               &aotriton::v2::flash::debug_fill_dropout_rng,
+              "Flash Attention Debugging Function to get raw RNG numbers used in dropout",
+              py::arg("q"),
+              py::arg("philox_seed"),
+              py::arg("philox_offset"),
+              py::arg("stream") = nullptr);
+        m.def("debug_fill_dropout_rng_tensor",
+              &aotriton::v2::flash::debug_fill_dropout_rng_tensor,
               "Flash Attention Debugging Function to get raw RNG numbers used in dropout",
               py::arg("q"),
               py::arg("philox_seed"),
@@ -193,6 +208,15 @@ namespace pyaotriton {
     def_tensorview<4>(m, "T4");
     def_tensorview<2>(m, "T2");
     def_tensorview<1>(m, "T1");
+    // FIXME: deduplication of T0 code
+    py::class_<aotriton::TensorView<0>>(m, "T0")
+      .def(py::init<intptr_t, aotriton::DType>())
+      .def("size", &aotriton::TensorView<0>::size)
+      .def("stride", &aotriton::TensorView<0>::stride)
+      .def_property_readonly("sizes", &aotriton::TensorView<0>::sizes)
+      .def_property_readonly("strides", &aotriton::TensorView<0>::strides)
+      .def_property_readonly("data_ptr", &aotriton::TensorView<0>::data_ptr)
+      .def_property_readonly("dtype", &aotriton::TensorView<0>::dtype);
     py::module_ mod_v2api = m.def_submodule("v2", "v2 API namespace");
     v2::setup_module(mod_v2api);
   }

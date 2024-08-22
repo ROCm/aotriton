@@ -40,8 +40,11 @@ def attn_fwd(
         max_seqlen_k : 'i32',
         head_dim : 'i32',
         dropout_p,
-        philox_seed,
-        philox_offset_base,
+        philox_seed_ptr,
+        philox_offset1 : '*u32',
+        philox_offset2 : 'i32',
+        philox_seed_output : '*u64',
+        philox_offset_output : '*u64',
         encoded_softmax,
         CAUSAL: tl.constexpr,
         BLOCK_M: tl.constexpr,
@@ -65,6 +68,17 @@ def attn_fwd(
     offs_m = start_m * BLOCK_M + tl.arange(0, BLOCK_M)
     offs_n = tl.arange(0, BLOCK_N)
     offs_d = tl.arange(0, BLOCK_DMODEL)
+    philox_seed = 0
+    philox_offset_base = philox_offset2
+    if ENABLE_DROPOUT:
+        philox_seed = tl.load(philox_seed_ptr)
+        philox_offset_base += tl.load(philox_offset1)
+        if (tl.program_id(0) == 0 and tl.program_id(1) == 0) and tl.program_id(2) == 0:
+            if philox_seed_output.cast(dtype=tl.uint64, bitcast=True) != 0:
+                tl.store(philox_seed_output, philox_seed)
+            if philox_offset_output.cast(dtype=tl.uint64, bitcast=True) != 0:
+                tl.store(philox_offset_output,
+                         philox_offset_base.to(dtype=philox_seed_output.type.element_ty))
     if num_seqlens > 0:
         cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
         cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)

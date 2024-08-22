@@ -36,12 +36,13 @@ def bwd_kernel_dk_dv(
     cu_seqlens_q,
     cu_seqlens_k,
     num_seqlens : 'i32',   # set num_seqlens to zero to ignore cu_seqlens_q/k
-    max_seqlen_q, # and use max_seqlen_q/k for all seqlen_q/k
-    max_seqlen_k,
-    head_dim,
+    max_seqlen_q : 'i32', # and use max_seqlen_q/k for all seqlen_q/k
+    max_seqlen_k : 'i32',
+    head_dim : 'i32',
     dropout_p,
-    philox_seed,
-    philox_offset_base,
+    philox_seed_ptr,
+    philox_offset1 : '*u32',
+    philox_offset2 : 'u32',
     BLOCK_M: tl.constexpr,
     BLOCK_DMODEL: tl.constexpr,
     BLOCK_N: tl.constexpr,
@@ -50,6 +51,11 @@ def bwd_kernel_dk_dv(
     PADDED_HEAD: tl.constexpr,
     BIAS_TYPE: tl.constexpr,
 ):
+    philox_seed = 0
+    philox_offset_base = philox_offset2
+    if ENABLE_DROPOUT:
+        philox_seed = tl.load(philox_seed_ptr)
+        philox_offset_base += tl.load(philox_offset1)
     start_m = tl.program_id(0) * BLOCK_N  # start_m is a misused name. For dkdv it partitions seqlen_k
     off_h = tl.program_id(1) # head index
     off_z = tl.program_id(2) # batch index, for varlen it indicates index in cu_seqlens_q/k
@@ -244,8 +250,9 @@ def bwd_kernel_dq(
     max_seqlen_k,
     head_dim,
     dropout_p,
-    philox_seed,
-    philox_offset_base,
+    philox_seed_ptr,
+    philox_offset1 : '*u32',
+    philox_offset2 : 'u32',
     BLOCK_M: tl.constexpr, BLOCK_DMODEL: tl.constexpr,
     BLOCK_N: tl.constexpr,
     CAUSAL: tl.constexpr,
@@ -253,6 +260,11 @@ def bwd_kernel_dq(
     PADDED_HEAD: tl.constexpr,
     BIAS_TYPE: tl.constexpr,
 ):
+    philox_seed = 0
+    philox_offset_base = philox_offset2
+    if ENABLE_DROPOUT:
+        philox_seed = tl.load(philox_seed_ptr)
+        philox_offset_base += tl.load(philox_offset1)
     start_m = tl.program_id(0) * BLOCK_M
     off_h = tl.program_id(1) # head index
     off_z = tl.program_id(2) # batch index

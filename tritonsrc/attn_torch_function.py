@@ -35,7 +35,9 @@ AttentionExtraArgs = namedtuple('AttentionExtraArgs',
 
 VERBOSE=False
 DEFAULT_PHILOX_SEED = 0x1BF52
-DEFAULT_PHILOX_OFFSET = 0x1D4B42
+DEFAULT_PHILOX_OFFSET_1 = 0x1D4000
+DEFAULT_PHILOX_OFFSET_2 = 0x000B42
+DEFAULT_PHILOX_OFFSET = DEFAULT_PHILOX_OFFSET_1 + DEFAULT_PHILOX_OFFSET_2
 
 def is_power_of_two(n: int) -> bool:
     return (n & (n - 1) == 0) and n != 0
@@ -84,8 +86,11 @@ def tuned_attn_fwd(
     max_seqlen_k,
     head_dim,
     dropout_p,
-    philox_seed,
-    philox_offset_base,
+    philox_seed_ptr,
+    philox_offset1,
+    philox_offset2,
+    philox_seed_output,
+    philox_offset_output,
     encoded_softmax,
     CAUSAL: tl.constexpr,
     BLOCK_M: tl.constexpr,
@@ -113,8 +118,11 @@ def tuned_attn_fwd(
             max_seqlen_k,
             head_dim,
             dropout_p,
-            philox_seed,
-            philox_offset_base,
+            philox_seed_ptr,
+            philox_offset1,
+            philox_offset2,
+            philox_seed_output,
+            philox_offset_output,
             encoded_softmax,
             CAUSAL,
             BLOCK_M,
@@ -175,8 +183,9 @@ def tuned_attn_bwd(
     max_seqlen_k,
     head_dim,
     dropout_p,
-    philox_seed,
-    philox_offset_base,
+    philox_seed_ptr,
+    philox_offset1,
+    philox_offset2,
     BLOCK_DMODEL: tl.constexpr,
     CAUSAL: tl.constexpr,
     ENABLE_DROPOUT: tl.constexpr,
@@ -210,7 +219,7 @@ def tuned_attn_bwd(
             max_seqlen_k,
             head_dim,
             dropout_p,
-            philox_seed,
+            philox_seed_ptr,
             philox_offset_base,
             BLOCK_DMODEL,
             CAUSAL,
@@ -283,8 +292,12 @@ class _attention(torch.autograd.Function):
             if encoded_softmax is not None:
                 print(f'{encoded_softmax.shape=} {encoded_softmax.dtype=}')
 
-        philox_seed = DEFAULT_PHILOX_SEED
-        philox_offset = DEFAULT_PHILOX_OFFSET
+        philox_seed = torch.tensor([DEFAULT_PHILOX_SEED], device=q.device, dtype=torch.uint64)
+        philox_offset1 = torch.tensor([DEFAULT_PHILOX_OFFSET_1], device=q.device, dtype=torch.uint32)
+        philox_offset2 = DEFAULT_PHILOX_OFFSET_2
+        philox_seed_output = torch.tensor([0], device=q.device, dtype=torch.uint64)
+        philox_offset_output = torch.tensor([0], device=q.device, dtype=torch.uint64)
+
         if b is None:
             b = torch.empty((0,0,0,0), device=q.device, dtype=q.dtype)
             BIAS_TYPE = 0
@@ -306,7 +319,7 @@ class _attention(torch.autograd.Function):
             BLOCK_M //= 2
 
         if autotune:
-            # assert False, "No time to test autotune for now"
+            assert False, "tritonsrc based autotune is disabled for now due to potentially faulty triton.Config on Navi31"
             tuned_attn_fwd[grid](
                 q, k, v, b, sm_scale, M, o,
                 q.stride(0), q.stride(1), q.stride(2), q.stride(3),
@@ -323,8 +336,11 @@ class _attention(torch.autograd.Function):
                 max_seqlen_k=k.shape[2],
                 head_dim=Lk,
                 dropout_p=dropout_p,
-                philox_seed=philox_seed,
-                philox_offset_base=philox_offset,
+                philox_seed_ptr=philox_seed,
+                philox_offset1=philox_offset1,
+                philox_offset2=philox_offset2,
+                philox_seed_output=philox_seed_output,
+                philox_offset_output=philox_offset_output,
                 encoded_softmax=encoded_softmax,
                 CAUSAL=causal,
                 BLOCK_DMODEL=head_dim_rounded,
@@ -358,8 +374,11 @@ class _attention(torch.autograd.Function):
                 max_seqlen_k=k.shape[2],
                 head_dim=Lk,
                 dropout_p=dropout_p,
-                philox_seed=philox_seed,
-                philox_offset_base=philox_offset,
+                philox_seed_ptr=philox_seed,
+                philox_offset1=philox_offset1,
+                philox_offset2=philox_offset2,
+                philox_seed_output=philox_seed_output,
+                philox_offset_output=philox_offset_output,
                 encoded_softmax=encoded_softmax,
                 CAUSAL=causal,
                 BLOCK_M=BLOCK_M,
@@ -430,8 +449,8 @@ class _attention(torch.autograd.Function):
         ctx.head_dim = Lk
         ctx.causal = causal
         ctx.dropout_p = dropout_p
-        ctx.philox_seed = philox_seed
-        ctx.philox_offset = philox_offset
+        ctx.philox_seed = philox_seed_output
+        ctx.philox_offset = philox_offset_output
         ctx.encoded_softmax = encoded_softmax # FIXME: for debugging only
         ctx.bias_type = BIAS_TYPE
         ctx.tuning_result = [('attn_fwd', tuning_result)] if tuning_result is not None else None
@@ -451,6 +470,8 @@ class _attention(torch.autograd.Function):
         head_dim_rounded = max(16, head_dim_rounded)
         padded_head = head_dim_rounded != ctx.head_dim
         attn_extra_args = ctx.attn_extra_args
+        philox_seed = ctx.philox_seed
+        philox_offset = ctx.philox_offset
 
         dq = torch.empty_like(q)
         dk = torch.empty_like(k)
@@ -499,19 +520,22 @@ class _attention(torch.autograd.Function):
 
         use_small_block = ctx.dropout_p > 0.0
         use_medium_block = ctx.bias_type != 0
-        if use_small_block:
-            # DQ_BLOCK_M = min(max_seqlen_q, BLOCK)
-            BLOCK_M = 32
-            BLOCK_N = 16
-        elif use_medium_block:
-            BLOCK_M = 64
-            BLOCK_N = 32
-        else:
-            BLOCK_M = 128
-            BLOCK_N = 64
-        if q.dtype == torch.float32:
-            BLOCK_M = max(16, BLOCK_M // 2)
-            BLOCK_N = max(16, BLOCK_N // 2)
+        # Profiling shows (16, 16) is optimal solution for most bwd configurations
+        BLOCK_M = 16
+        BLOCK_N = 16
+        # if use_small_block:
+        #     # DQ_BLOCK_M = min(max_seqlen_q, BLOCK)
+        #     BLOCK_M = 32
+        #     BLOCK_N = 16
+        # elif use_medium_block:
+        #     BLOCK_M = 64
+        #     BLOCK_N = 32
+        # else:
+        #     BLOCK_M = 64
+        #     BLOCK_N = 64
+        # if q.dtype == torch.float32:
+        #     BLOCK_M = max(16, BLOCK_M // 2)
+        #     BLOCK_N = max(16, BLOCK_N // 2)
         # debug_mask = torch.zeros((q.shape[0], q.shape[1], max_seqlen_q, max_seqlen_k), device=q.device, dtype=ctx.encoded_softmax.dtype)
         grid_dk_dv = lambda META: (
             triton.cdiv(max_seqlen_k, META['BLOCK_N']),
@@ -524,9 +548,10 @@ class _attention(torch.autograd.Function):
             stride_dbz, stride_dbh, stride_dbm, stride_dbn = 0,0,0,0
         else:
             db.fill_(float('nan'))
-        # print(f'backward {ctx.bias_type=} {ctx.autotune=} {BLOCK_M=} {BLOCK_N=} {stride_dbz=} {stride_dbh=} {stride_dbm=} {stride_dbn=}')
+        print(f'backward {ctx.bias_type=} {ctx.autotune=} {BLOCK_M=} {BLOCK_N=} {stride_dbz=} {stride_dbh=} {stride_dbm=} {stride_dbn=}')
         if k.requires_grad and v.requires_grad:
             if ctx.autotune:
+                assert False
                 tuned_bwd_kernel_dk_dv[grid_dk_dv](
                     q, k, v, b, ctx.sm_scale,
                     o, do,
@@ -546,8 +571,9 @@ class _attention(torch.autograd.Function):
                     max_seqlen_k=max_seqlen_k,
                     head_dim=Lk,
                     dropout_p=ctx.dropout_p,
-                    philox_seed=ctx.philox_seed,
-                    philox_offset_base=ctx.philox_offset,
+                    philox_seed_ptr=philox_seed,
+                    philox_offset1=philox_offset,
+                    philox_offset2=0,
                     BLOCK_DMODEL=head_dim_rounded,
                     CAUSAL=ctx.causal,
                     ENABLE_DROPOUT=ctx.dropout_p > 0.0,
@@ -591,6 +617,7 @@ class _attention(torch.autograd.Function):
                     ctx.tuning_result.append(('bwd_kernel_dk_dv', tuning_result))
                     print(f'{id(ctx.tuning_result)=}')
             else:
+                print('Running bare_bwd_kernel_dk_dv')
                 bare_bwd_kernel_dk_dv[grid_dk_dv](
                     q, k, v, b, ctx.sm_scale,
                     o, do,
@@ -610,8 +637,9 @@ class _attention(torch.autograd.Function):
                     max_seqlen_k=max_seqlen_k,
                     head_dim=Lk,
                     dropout_p=ctx.dropout_p,
-                    philox_seed=ctx.philox_seed,
-                    philox_offset_base=ctx.philox_offset,
+                    philox_seed_ptr=philox_seed,
+                    philox_offset1=philox_offset,
+                    philox_offset2=0,
                     # debug_mask=debug_mask,
                     BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N,
                     BLOCK_DMODEL=head_dim_rounded,
@@ -622,6 +650,7 @@ class _attention(torch.autograd.Function):
                     PADDED_HEAD=padded_head,
                     BIAS_TYPE=ctx.bias_type,
                 )
+                print('bare_bwd_kernel_dk_dv Done')
         # print(f"{dq.stride()=}", flush=True)
         # print(f"{dq.data_ptr()=:x}", flush=True)
         # print(f"{dk.stride()=}", flush=True)
@@ -650,34 +679,6 @@ class _attention(torch.autograd.Function):
         )
         if q.requires_grad:
             if ctx.autotune:
-                # sized_tuned_bwd_kernel_dq[grid_dq](
-                #     q, k, v, b, ctx.sm_scale,
-                #     o, do,
-                #     dq, db,
-                #     L, delta,
-                #     q.stride(0), q.stride(1), q.stride(2), q.stride(3),
-                #     k.stride(0), k.stride(1), k.stride(2), k.stride(3),
-                #     v.stride(0), v.stride(1), v.stride(2), v.stride(3),
-                #     b.stride(0), b.stride(1), b.stride(2), b.stride(3),
-                #     do.stride(0), do.stride(1), do.stride(2), do.stride(3),
-                #     dq.stride(0), dq.stride(1), dq.stride(2), dq.stride(3),
-                #     stride_dbz, stride_dbh, stride_dbm, stride_dbn,
-                #     cu_seqlens_q=null_tensor,
-                #     cu_seqlens_k=null_tensor,
-                #     num_seqlens=0,
-                #     max_seqlen_q=max_seqlen_q,
-                #     max_seqlen_k=max_seqlen_k,
-                #     head_dim=Lk,
-                #     dropout_p=ctx.dropout_p,
-                #     philox_seed=ctx.philox_seed,
-                #     philox_offset_base=ctx.philox_offset,
-                #     BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N,
-                #     BLOCK_DMODEL=head_dim_rounded,
-                #     CAUSAL=ctx.causal,
-                #     ENABLE_DROPOUT=ctx.dropout_p > 0.0,
-                #     PADDED_HEAD=padded_head,
-                #     BIAS_TYPE=ctx.bias_type,
-                # )
                 tuned_bwd_kernel_dq[grid_dq](
                     q, k, v, b, ctx.sm_scale,
                     o, do,
@@ -697,8 +698,9 @@ class _attention(torch.autograd.Function):
                     max_seqlen_k=max_seqlen_k,
                     head_dim=Lk,
                     dropout_p=ctx.dropout_p,
-                    philox_seed=ctx.philox_seed,
-                    philox_offset_base=ctx.philox_offset,
+                    philox_seed_ptr=philox_seed,
+                    philox_offset1=philox_offset,
+                    philox_offset2=0,
                     BLOCK_DMODEL=head_dim_rounded,
                     CAUSAL=ctx.causal,
                     ENABLE_DROPOUT=ctx.dropout_p > 0.0,
@@ -741,6 +743,7 @@ class _attention(torch.autograd.Function):
                     """
                     ctx.tuning_result.append(('bwd_kernel_dq', tuning_result))
             else:
+                print('Running bare_bwd_kernel_dq')
                 bare_bwd_kernel_dq[grid_dq](
                     q, k, v, b, ctx.sm_scale,
                     o, do,
@@ -760,8 +763,9 @@ class _attention(torch.autograd.Function):
                     max_seqlen_k=max_seqlen_k,
                     head_dim=Lk,
                     dropout_p=ctx.dropout_p,
-                    philox_seed=ctx.philox_seed,
-                    philox_offset_base=ctx.philox_offset,
+                    philox_seed_ptr=philox_seed,
+                    philox_offset1=philox_offset,
+                    philox_offset2=0,
                     BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N,
                     BLOCK_DMODEL=head_dim_rounded,
                     CAUSAL=ctx.causal,
@@ -771,6 +775,7 @@ class _attention(torch.autograd.Function):
                     PADDED_HEAD=padded_head,
                     BIAS_TYPE=ctx.bias_type,
                 )
+                print('bare_bwd_kernel_dq Done')
         # print(h.asm["ttgir"])
         return dq, dk, dv, None if db.numel() == 0 else db, None, None, None, None, None, None, None
 
@@ -784,6 +789,8 @@ class _attention(torch.autograd.Function):
         head_dim_rounded = max(16, head_dim_rounded)
         padded_head = head_dim_rounded != ctx.head_dim
         attn_extra_args = ctx.attn_extra_args
+        philox_seed = ctx.philox_seed
+        philox_offset = ctx.philox_offset
 
         dq = torch.empty_like(q)
         dk = torch.empty_like(k)
@@ -846,8 +853,9 @@ class _attention(torch.autograd.Function):
                     max_seqlen_k=k.shape[2],
                     head_dim=Lk,
                     dropout_p=ctx.dropout_p,
-                    philox_seed=ctx.philox_seed,
-                    philox_offset_base=ctx.philox_offset,
+                    philox_seed_ptr=philox_seed,
+                    philox_offset1=philox_offset,
+                    philox_offset2=0,
                     BLOCK_DMODEL=head_dim_rounded,
                     CAUSAL=ctx.causal,
                     ENABLE_DROPOUT=ctx.dropout_p > 0.0,
@@ -882,8 +890,9 @@ class _attention(torch.autograd.Function):
                     max_seqlen_k=k.shape[2],
                     head_dim=Lk,
                     dropout_p=ctx.dropout_p,
-                    philox_seed=ctx.philox_seed,
-                    philox_offset_base=ctx.philox_offset,
+                    philox_seed_ptr=philox_seed,
+                    philox_offset1=philox_offset,
+                    philox_offset2=0,
                     BLOCK_DMODEL=head_dim_rounded,
                     CAUSAL=ctx.causal,
                     ENABLE_DROPOUT=ctx.dropout_p > 0.0,

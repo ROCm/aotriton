@@ -8,11 +8,13 @@ from copy import deepcopy
 import argparse
 import sys
 import math
+import numpy as np
 import csv
 from tqdm import tqdm
 
 def parse():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    p.add_argument('-i', type=str, default=None, help='Input CSV/JSON file')
     p.add_argument('-f', '--file', type=str, default=None, help='Database file')
     p.add_argument('-k', '--kernel_family', type=str, required=True, help='Kernel family')
     p.add_argument('-v', '--verbose', action='store_true', help='Verbose')
@@ -23,8 +25,125 @@ def parse():
     p.add_argument('--table_file', type=str, help='CSV file of dump/load')
     p.add_argument('--select_where', type=str, default='', help='Extra WHERE clause for SQL to only dump selected rows to CSV file')
     p.add_argument('--ignore_id', action='store_true', help='Ignore row IDs when loading CSV to database, useful for table merge')
+    p.add_argument('--fudge_factor_tolerance', type=float, default=5.0,
+                   help='''For rawjson mode.
+                   During the profiling, a "target" fudge factor is computed as
+                   the minimal fudge factor that allows the kernel to pass the
+                   unit tests.
+                   However kernels compiled with different options have
+                   different precisions, and the fatest kernel may have
+                   horrible number errors.
+                   This tolerance (called T) is a threshold factor to only
+                   select fatest kernels within a subset of kernel whose target
+                   fudge factor is smaller than T * "best target fudge factors".
+                   ''')
     args = p.parse_args()
     return args
+
+# TODO: Refactor this piece
+#       Use --kernel_family to lookup info
+
+class PerKernelResult(object):
+    KERNEL_NAME = None
+    KERNEL_OUT_TENSORS = []
+    KERNEL_MAX_FUDGE_FACTORS = None
+
+    def __init__(self, task_id):
+        self._tid = task_id
+        self._jarray = []
+
+    def collect(self, j):
+        self._jarray.append(j)
+
+    def conclude(self):
+        self.valid_out_tensors = self.KERNEL_OUT_TENSORS
+
+    def get_most_accurate_kernel(self):
+        tfts = { tn : [] for tn in self.valid_out_tensors }
+        for j in self._jarray:
+            for tn in self.valid_out_tensors:
+                tft = j['target_fudge_factors'][tn]
+                if tft is not None:
+                    tfts[tn].append(tft)
+        # FIXME: It is possible that one kernel excels at one tensor, while another kernel at another,
+        #        and at the end of the day no kernel meets the error tolerances
+        #        of two tensors at the same time.
+        #        Although unlikely for now but eventually we'll need a
+        #        resolution for this (use sum of target_fudge_factors?)
+        return { tn : max(1.0, np.min(tfts[tn])) for tn in self.valid_out_tensors }
+
+    def get_optimal_kernel(self, fudge_factor_tolerance):
+        best_tft = self.get_most_accurate_kernel()
+        fft = fudge_factor_tolerance
+        def is_acceptable(j):
+            if j['result'] != 'tuned':
+                return False
+            if not isinstance(j['time'], list):
+                return False
+            adiffs = j['adiffs']
+            if self.any_nan(adiffs):
+                return False
+            fits = { tn : j['target_fudge_factors'][tn] < fft * best_tft[tn] for tn in self.valid_out_tensors }
+            # print(f'{fits=}')
+            return all(fits.values())
+        acceptables = list(filter(is_acceptable, self._jarray))
+        def gettime(j):
+            return tuple(j['time'])
+        if not acceptables:
+            # print(f'{best_tft=}')
+            assert False, 'acceptables is empty'
+        # print(f'{acceptables=}')
+        optimal = min(acceptables, key=gettime)
+        return optimal
+
+    def any_nan(self, adiffs):
+        if isinstance(adiffs, float):
+            return math.isnan(adiffs)
+        else:
+            return any(map(math.isnan, adiffs))
+
+    @classmethod
+    def update_max_fudge_factor(klass, opti):
+        if klass.KERNEL_MAX_FUDGE_FACTORS is None:
+            klass.KERNEL_MAX_FUDGE_FACTORS = { tn : 0.0 for tn in klass.KERNEL_OUT_TENSORS }
+        for tn in klass.KERNEL_MAX_FUDGE_FACTORS:
+            otff = opti['target_fudge_factors'][tn]
+            if otff is None:
+                continue
+            klass.KERNEL_MAX_FUDGE_FACTORS[tn] = max(klass.KERNEL_MAX_FUDGE_FACTORS[tn], otff)
+
+class Pkr_AttnFwd(PerKernelResult):
+    KERNEL_NAME = 'attn_fwd'
+    KERNEL_OUT_TENSORS = ['out']
+
+class Pkr_BwdKernelDkDv(PerKernelResult):
+    KERNEL_NAME = 'bwd_kernel_dk_dv'
+    KERNEL_OUT_TENSORS = ['dk', 'dv']
+
+class Pkr_BwdKernelDq(PerKernelResult):
+    KERNEL_NAME = 'bwd_kernel_dq'
+    KERNEL_OUT_TENSORS = ['dq', 'db']
+
+    def conclude(self):
+        self.valid_out_tensors = self.KERNEL_OUT_TENSORS
+        if self._jarray[0]['inputs']['BIAS_TYPE'] == 0:
+            self.valid_out_tensors = ['dq']
+
+    def any_nan(self, adiffs):
+        if len(self.valid_out_tensors) == 0:  # db isn't there
+            return math.isnan(adiffs[0])
+        return any(map(math.isnan, adiffs))
+
+KERNEL_NAME_TO_FACTORY = {
+    'attn_fwd' : Pkr_AttnFwd,
+    'bwd_kernel_dk_dv' : Pkr_BwdKernelDkDv,
+    'bwd_kernel_dq' : Pkr_BwdKernelDq,
+}
+
+def pkr_factory(key):
+    arch, tid, kn = key
+    factory = KERNEL_NAME_TO_FACTORY[kn]
+    return factory(tid)
 
 class TuningDatabase(object):
     PYTYPE_TO_SQLTYPE = {
@@ -172,7 +291,7 @@ class TuningDatabase(object):
             self._conn.commit()
 
     def init_aggregation(self):
-        self.task_database = {}  # dict: (arch, task_id, kernel_name) -> (best, json)
+        self.pkr_database = {}  # dict: (arch, task_id, kernel_name) -> (best, json)
 
     def aggregate(self, line_text):
         if not line_text:
@@ -186,59 +305,36 @@ class TuningDatabase(object):
                 return
             assert False, f'time element in raw json log must be a list or float("inf") but get {timing}'
         key = (raw_info['arch'], raw_info['_debug_task_id'], raw_info['kernel_name'])
-        if key in self.task_database:
-            best, _ = self.task_database[key]
-            if best > timing:
-                self.task_database[key] = (timing, raw_info)
-        else:
-            self.task_database[key] = (timing, raw_info)
+        if key not in self.pkr_database:
+            self.pkr_database[key] = pkr_factory(key)
+        self.pkr_database[key].collect(raw_info)
 
     def aggregation_results(self):
-        for timing, raw_info in self.task_database.values():
-            yield raw_info
+        for pkr in self.pkr_database.values():
+            pkr.conclude()
+            opti = pkr.get_optimal_kernel(self._args.fudge_factor_tolerance)
+            pkr.update_max_fudge_factor(opti)
+            yield opti
 
     def sancheck(self):
-        nkernels = defaultdict(list)
-        # inputs$Q_dtype=torch.float16, inputs$CAUSAL=False, inputs$BLOCK_DMODEL=16, inputs$ENABLE_DROPOUT=False, inputs$RETURN_ENCODED_SOFTMAX=False, inputs$PADDED_HEAD=False, inputs$BIAS_TYPE=0
-        select_entries = []
-        for key, v in self.task_database.items():
-            arch, task_id, kernel_name = key
-            nkernels[(arch, task_id)].append(kernel_name)
-            inputs = v[1]['inputs']
-            if inputs['Q_dtype'] == 'float16':
-                if inputs['CAUSAL'] == False:
-                    if inputs['BLOCK_DMODEL'] == 16:
-                        if inputs['ENABLE_DROPOUT'] == False:
-                            if inputs['RETURN_ENCODED_SOFTMAX'] == False:
-                                if inputs['PADDED_HEAD'] == False:
-                                    if inputs['BIAS_TYPE'] == 0:
-                                        select_entries.append(v)
-        redo_list = []
-        for key, v in nkernels.items():
-            arch, task_id = key
-            if len(v) != 3:
-                print(f"arch {arch} task {task_id} has insufficient number of kernels: {v}")
-                redo_list.append(task_id)
-        print(' '.join([f'{e}' for e in redo_list]))
-        print(select_entries)
+        raise NotImplemented("sancheck action is not updated to latest testing scheme.")
 
-def main():
-    args = parse()
-    db = TuningDatabase(args)
+
+def do_main(args, db, fin):
     if args.action == 'pipejson' or args.action == 'createtableonly':
         # FIXME: support pipes and streaming file with json_stream
         if args.action == 'createtableonly':
             create_table_only = True
         else:
             create_table_only = False
-        for line in sys.stdin:
+        for line in fin:
             db.upsert(line, create_table_only=create_table_only)
         print("[table_tool] Input closed, exiting", file=sys.stderr)
     elif args.action == 'rawjson':
         db.init_aggregation()
-        for line in tqdm(sys.stdin):
+        for line in tqdm(fin):
             db.aggregate(line)
-        for rawjson in db.aggregation_results():
+        for rawjson in tqdm(db.aggregation_results()):
             # print(line)
             db.upsert_json(rawjson, create_table_only=False)
             # Handles CAUSAL=True and BIAS_TYPE=1 case
@@ -247,9 +343,11 @@ def main():
                 rj2 = deepcopy(rawjson)
                 rj2['inputs']['BIAS_TYPE'] = 1
                 db.upsert_json(rj2, create_table_only=False)
+        for klass in KERNEL_NAME_TO_FACTORY.values():
+            print(f'{klass.KERNEL_MAX_FUDGE_FACTORS=}')
     elif args.action == 'rawsc':
         db.init_aggregation()
-        for line in tqdm(sys.stdin):
+        for line in tqdm(fin):
             db.aggregate(line)
         db.sancheck()
     elif args.action == 'dumpcsv':
@@ -257,6 +355,15 @@ def main():
     elif args.action == 'loadcsv':
         db.loadcsv(args.table_file, args.table_name)
     db.close()
+
+def main():
+    args = parse()
+    db = TuningDatabase(args)
+    if args.i is not None:
+        with open(args.i) as f:
+            do_main(args, db, f)
+    else:
+        do_main(args, db, sys.stdin)
 
 if __name__ == '__main__':
     main()

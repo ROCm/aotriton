@@ -71,6 +71,7 @@ class MonadMessage(ABC):
 
     def make_skip(self, monad, reason=None) -> 'MonadMessage':
         ret = self.forward(monad)
+        ret._action = MonadAction.Skip
         ret._skip_reason = reason
         return ret
 

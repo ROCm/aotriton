@@ -97,6 +97,10 @@ class Monad(ArgArchVerbose):
         return self._process.sentinel
 
     @property
+    def pid(self):
+        return self._process.pid
+
+    @property
     def exitcode(self):
         return self._process.exitcode
 
