@@ -305,12 +305,6 @@ class TuningDatabase(object):
                 return
             assert False, f'time element in raw json log must be a list or float("inf") but get {timing}'
         key = (raw_info['arch'], raw_info['_debug_task_id'], raw_info['kernel_name'])
-        # if key in self.task_database:
-        #     best, _ = self.task_database[key]
-        #     if best > timing:
-        #         self.task_database[key] = (timing, raw_info)
-        # else:
-        #     self.task_database[key] = (timing, raw_info)
         if key not in self.pkr_database:
             self.pkr_database[key] = pkr_factory(key)
         self.pkr_database[key].collect(raw_info)
@@ -323,29 +317,7 @@ class TuningDatabase(object):
             yield opti
 
     def sancheck(self):
-        nkernels = defaultdict(list)
-        # inputs$Q_dtype=torch.float16, inputs$CAUSAL=False, inputs$BLOCK_DMODEL=16, inputs$ENABLE_DROPOUT=False, inputs$RETURN_ENCODED_SOFTMAX=False, inputs$PADDED_HEAD=False, inputs$BIAS_TYPE=0
-        select_entries = []
-        for key, v in self.task_database.items():
-            arch, task_id, kernel_name = key
-            nkernels[(arch, task_id)].append(kernel_name)
-            inputs = v[1]['inputs']
-            if inputs['Q_dtype'] == 'float16':
-                if inputs['CAUSAL'] == False:
-                    if inputs['BLOCK_DMODEL'] == 16:
-                        if inputs['ENABLE_DROPOUT'] == False:
-                            if inputs['RETURN_ENCODED_SOFTMAX'] == False:
-                                if inputs['PADDED_HEAD'] == False:
-                                    if inputs['BIAS_TYPE'] == 0:
-                                        select_entries.append(v)
-        redo_list = []
-        for key, v in nkernels.items():
-            arch, task_id = key
-            if len(v) != 3:
-                print(f"arch {arch} task {task_id} has insufficient number of kernels: {v}")
-                redo_list.append(task_id)
-        print(' '.join([f'{e}' for e in redo_list]))
-        print(select_entries)
+        raise NotImplemented("sancheck action is not updated to latest testing scheme.")
 
 
 def do_main(args, db, fin):

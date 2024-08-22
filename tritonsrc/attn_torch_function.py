@@ -266,10 +266,7 @@ class _attention(torch.autograd.Function):
             q.shape[0],
         )
         null_tensor = torch.empty((0), device=q.device, dtype=torch.int32)
-        def round_to_16x(x):
-            # return ((x + 15) // 16) * 16
-            return x
-        M = torch.empty((q.shape[0] * q.shape[1], round_to_16x(q.shape[2])), device=q.device, dtype=torch.float32)
+        M = torch.empty((q.shape[0] * q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)
         if attn_extra_args.fillnan:
             for t in (o, M):
                 t.fill_(float('nan'))
@@ -322,7 +319,7 @@ class _attention(torch.autograd.Function):
             BLOCK_M //= 2
 
         if autotune:
-            assert False, "No time to test autotune for now"
+            assert False, "tritonsrc based autotune is disabled for now due to potentially faulty triton.Config on Navi31"
             tuned_attn_fwd[grid](
                 q, k, v, b, sm_scale, M, o,
                 q.stride(0), q.stride(1), q.stride(2), q.stride(3),

@@ -107,30 +107,6 @@ def main_npz():
     # Add more printing here
     tri_dq, tri_dk, tri_dv, tri_db = ctx.dout_tensors
     ref_dq, ref_dk, ref_dv, ref_db = ctx.dref_tensors
-    err_idx=(6, 2, 4, 0)
-    print(f'{tri_dk[6, 2, 3, :]=}')
-    print(f'{tri_dk[6, 2, 4, :]=}')
-    print(f'{tri_dk[6, 2, 5, :]=}')
-    print(f'{tri_dk[6, 1, 3, :]=}')
-    print(f'{tri_dk[6, 1, 4, :]=}')
-    print(f'{tri_dk[6, 1, 5, :]=}')
-    print(f'{tri_dk[6, 3, 3, :]=}')
-    print(f'{tri_dk[6, 3, 4, :]=}')
-    print(f'{tri_dk[6, 3, 5, :]=}')
-
-    print(f'{tri_dk[5, 1, 3, :]=}')
-    print(f'{tri_dk[5, 1, 4, :]=}')
-    print(f'{tri_dk[5, 1, 5, :]=}')
-    print(f'{tri_dk[5, 3, 3, :]=}')
-    print(f'{tri_dk[5, 3, 4, :]=}')
-    print(f'{tri_dk[5, 3, 5, :]=}')
-
-    print(f'{tri_dk[7, 1, 3, :]=}')
-    print(f'{tri_dk[7, 1, 4, :]=}')
-    print(f'{tri_dk[7, 1, 5, :]=}')
-    print(f'{tri_dk[7, 3, 3, :]=}')
-    print(f'{tri_dk[7, 3, 4, :]=}')
-    print(f'{tri_dk[7, 3, 5, :]=}')
     print(f'{is_allclose=}')
     print(f'{dk_allclose=} {dv_allclose=} {dq_allclose=} {db_allclose=}')
     print(f'{adiff=} {grads_adiff=}')
