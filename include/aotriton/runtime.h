@@ -5,7 +5,7 @@
 #define AOTRITON_V2_API_RUNTIME_H
 
 #include <hip/hip_runtime.h>
-#include <aotriton_config.h>
+#include <aotriton/config.h>
 
 namespace AOTRITON_NS {
 

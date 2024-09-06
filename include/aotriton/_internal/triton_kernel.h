@@ -9,7 +9,7 @@
        "Inconsistent definition of this macro causes ABI incompatibility."
 #endif
 
-#include <aotriton_config.h>
+#include <aotriton/config.h>
 #include "../runtime.h"
 #include <vector>
 #include <unordered_map>

@@ -178,7 +178,7 @@ else(AOTRITON_COMPRESS_KERNEL)
   target_compile_definitions(aotriton_v2 PRIVATE -DAOTRITON_USE_ZSTD=0)
 endif(AOTRITON_COMPRESS_KERNEL)
 target_include_directories(aotriton_v2 PUBLIC ${CMAKE_CURRENT_LIST_DIR}/../include)
-target_include_directories(aotriton_v2 PUBLIC ${CMAKE_CURRENT_BINARY_DIR}/include/aotriton)
+target_include_directories(aotriton_v2 PUBLIC ${CMAKE_BINARY_DIR}/include)  # for <buid>/include/aotriton/config.h. Code should use <aotriton/config.h>
 target_include_directories(aotriton_v2 PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_include_directories(aotriton_v2 PRIVATE ${CMAKE_CURRENT_LIST_DIR}/../third_party/incbin)
 target_compile_options(aotriton_v2 PRIVATE -fPIC --no-offload-arch=all)
@@ -214,8 +214,10 @@ install(FILES "${AOTRITON_V2_BUILD_DIR}/${AOTRITON_LIBRARY_FILE}" DESTINATION ${
 
 # Python binding only available for AOTriton V2 API
 add_library(aotriton INTERFACE)
-add_dependencies(aotriton aotriton_v2)
+# add_dependencies(aotriton aotriton_v2)
 # target_link_libraries(aotriton INTERFACE ${CMAKE_INSTALL_PREFIX}/lib/libaotriton_v2.a)
 # target_include_directories(aotriton INTERFACE ${CMAKE_INSTALL_PREFIX}/include)
-target_link_libraries(aotriton INTERFACE ${AOTRITON_V2_BUILD_DIR}/${AOTRITON_LIBRARY_FILE})
-target_include_directories(aotriton INTERFACE ${CMAKE_CURRENT_SOURCE_PARENT_DIR}/include)
+# target_link_libraries(aotriton INTERFACE ${AOTRITON_V2_BUILD_DIR}/${AOTRITON_LIBRARY_FILE})
+# target_include_directories(aotriton INTERFACE ${CMAKE_CURRENT_SOURCE_PARENT_DIR}/include)
+# target_include_directories(aotriton INTERFACE ${CMAKE_CURRENT_SOURCE_PARENT_DIR}/include)
+target_link_libraries(aotriton INTERFACE aotriton_v2)

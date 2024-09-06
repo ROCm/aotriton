@@ -4,7 +4,7 @@
 #ifndef AOTRITON_V2_API_UTIL_H
 #define AOTRITON_V2_API_UTIL_H
 
-#include <aotriton_config.h>
+#include <aotriton/config.h>
 #include "dtypes.h"
 #include "runtime.h"
 #include <functional>

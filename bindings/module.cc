@@ -1,7 +1,7 @@
 // Copyright © 2023-2024 Advanced Micro Devices, Inc.
 // SPDX-License-Identifier: MIT
 
-#include <aotriton/aotriton_config.h>
+#include <aotriton/config.h>
 #include <aotriton/dtypes.h>
 #include <aotriton/flash.h>
 #include <aotriton/runtime.h>

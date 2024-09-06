@@ -4,7 +4,7 @@
 #ifndef AOTRITON_V2_INTERNAL_UTIL_H
 #define AOTRITON_V2_INTERNAL_UTIL_H
 
-#include <aotriton_config.h>
+#include <aotriton/config.h>
 #include <climits>
 #include <cstdint>
 
