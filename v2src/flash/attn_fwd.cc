@@ -1,6 +1,7 @@
 // Copyright © 2023-2024 Advanced Micro Devices, Inc.
 // SPDX-License-Identifier: MIT
 
+#include <aotriton/config.h>
 #include <aotriton/_internal/util.h>
 #include <aotriton/flash.h>
 #include <aotriton/util.h>
@@ -13,7 +14,7 @@
 #define AOTRITON_VERBOSE 1
 #endif
 
-namespace aotriton::v2::flash {
+namespace AOTRITON_NS::v2::flash {
 
 hipError_t
 _attn_fwd_common(T4 q,
@@ -36,7 +37,7 @@ _attn_fwd_common(T4 q,
                  T0 philox_offset_output,
                  T4 encoded_softmax,
                  bool is_causal,
-                 aotriton::Stream stream_wrap,
+                 AOTRITON_NS::Stream stream_wrap,
                  FwdExtraArguments* extargs) {
   hipError_t err;
   auto stream = stream_wrap.native();
@@ -48,7 +49,7 @@ _attn_fwd_common(T4 q,
               << " pre_load_v = " << params.pre_load_v << std::endl;
 #endif
     dim3 grid {
-      aotriton::cdiv<uint32_t>(params.max_seqlen_q, params.BLOCK_M),
+      AOTRITON_NS::cdiv<uint32_t>(params.max_seqlen_q, params.BLOCK_M),
       uint32_t(params.Q->size(1)),
       params.num_seqlens == 0 ? uint32_t(params.Q->size(0)) : params.num_seqlens,
     };
@@ -60,7 +61,7 @@ _attn_fwd_common(T4 q,
   int head_size = q.size(3);
   int num_head_q = q.size(1);
   int num_head_k = k.size(1);
-  int head_dim_rounded = std::max<int>(16, aotriton::bit_ceil(head_size));
+  int head_dim_rounded = std::max<int>(16, AOTRITON_NS::bit_ceil(head_size));
   int bias_type = 0;
   if (b) {
     bias_type = 1;
@@ -137,7 +138,7 @@ attn_fwd(T4 q,
          T0 philox_offset_output,
          T4 encoded_softmax,
          bool is_causal,
-         aotriton::Stream stream_wrap,
+         AOTRITON_NS::Stream stream_wrap,
          FwdExtraArguments* extargs) {
   auto null_t1 = T1::get_null_tensor(DType::kInt32);
   return _attn_fwd_common(q,
@@ -184,7 +185,7 @@ attn_fwd_compact_varlen(T4 q,            // 1 x num_heads x total_q x head_size,
                         T0 philox_offset_output,
                         T4 encoded_softmax,
                         bool is_causal,
-                        aotriton::Stream stream_wrap,
+                        AOTRITON_NS::Stream stream_wrap,
                         FwdExtraArguments* extargs) {
   return _attn_fwd_common(q,
                           k,

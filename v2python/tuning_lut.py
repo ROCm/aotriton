@@ -167,7 +167,7 @@ class KernelTuningEntryForFunctionalOnGPU(object):
         ALIGN = ',\n' + 4 * ' '
         return ALIGN.join(kernel_image_perfs)
 
-    def write_lut_source(self, outdir : 'pathlib.Path', compressed, bare_mode):
+    def write_lut_source(self, library_suffix : str, outdir : 'pathlib.Path', compressed, bare_mode):
         gpu_kernel_image_dir = outdir.parent / f'gpu_kernel_image.{self._kdesc.SHIM_KERNEL_NAME}'
         lut_tensor, sigs = self.get_lut()
         try:
@@ -188,6 +188,7 @@ class KernelTuningEntryForFunctionalOnGPU(object):
             old_content = ''
         mf = io.StringIO()  # Memory File
         d = {
+            'library_suffix'        : library_suffix,
             'incbin_kernel_images'  : self.codegen_incbin_code(gpu_kernel_image_dir, compressed=compressed),
             'incbin_kernel_names'   : self.codegen_incbin_names(gpu_kernel_image_dir, compressed=compressed),
             'kernel_psels'          : self.codegen_kernel_psels(gpu_kernel_image_dir, compressed=compressed),

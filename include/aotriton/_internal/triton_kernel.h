@@ -9,13 +9,14 @@
        "Inconsistent definition of this macro causes ABI incompatibility."
 #endif
 
+#include <aotriton_config.h>
 #include "../runtime.h"
 #include <vector>
 #include <unordered_map>
 #include <shared_mutex>
 #include <tuple>
 
-namespace aotriton {
+namespace AOTRITON_NS {
 
 class TritonKernel {
 public:

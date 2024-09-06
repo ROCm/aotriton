@@ -4,10 +4,11 @@
 #ifndef AOTRITON_V2_INTERNAL_UTIL_H
 #define AOTRITON_V2_INTERNAL_UTIL_H
 
+#include <aotriton_config.h>
 #include <climits>
 #include <cstdint>
 
-namespace aotriton {
+namespace AOTRITON_NS {
 
 inline uint32_t bit_width(uint32_t x) {
   if (x == 0)

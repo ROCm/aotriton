@@ -23,7 +23,7 @@
       throw std::runtime_error("FAILURE at Line " INCBIN_STRINGIZE(__LINE__));                               \
   } while (0)
 
-namespace aotriton {
+namespace AOTRITON_NS {
 
 TritonKernel::DeviceFunction::DeviceFunction(int device_id_, hipModule_t mod_, hipFunction_t func_)
   : device_id(device_id_)

@@ -5,7 +5,7 @@
 #include <string>
 #include <unordered_map>
 
-namespace aotriton {
+namespace AOTRITON_NS {
 
 struct LazyArch {
   LazyArch(hipDevice_t dev)
@@ -51,4 +51,4 @@ template class TensorView<2>;
 template class TensorView<3>;
 template class TensorView<4>;
 
-} // namespace aotriton
+} // namespace AOTRITON_NS

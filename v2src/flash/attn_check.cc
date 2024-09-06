@@ -1,6 +1,7 @@
 // Copyright © 2023-2024 Advanced Micro Devices, Inc.
 // SPDX-License-Identifier: MIT
 
+#include <aotriton/config.h>
 #include <aotriton/flash.h>
 #include <aotriton/runtime.h>
 #include <aotriton/util.h>
@@ -10,10 +11,10 @@
 #include <flash/shim.bwd_preprocess.h>
 #include <iostream>
 
-namespace aotriton::v2::flash {
+namespace AOTRITON_NS::v2::flash {
 
 hipError_t
-check_gpu(aotriton::Stream stream_wrap) {
+check_gpu(AOTRITON_NS::Stream stream_wrap) {
   auto stream = stream_wrap.native();
   auto arch = getArchFromStream(stream);
   if (AttnFwdContext::get_arch_number(arch) < 0 || BwdPreprocessContext::get_arch_number(arch) < 0 ||

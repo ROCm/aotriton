@@ -1,22 +1,23 @@
 // Copyright © 2024 Advanced Micro Devices, Inc.
 // SPDX-License-Identifier: MIT
 
+#include <aotriton/config.h>
 #include <aotriton/_internal/util.h>
 #include <aotriton/flash.h>
 #include <aotriton/util.h>
 #include <flash/shim.debug_fill_dropout_rng.h>
 #include <flash/shim.debug_fill_dropout_rng_tensor.h>
 
-namespace aotriton::v2::flash {
+namespace AOTRITON_NS::v2::flash {
 
 hipError_t
-debug_fill_dropout_rng_tensor(T4 r, T0 philox_seed, T0 philox_offset, aotriton::Stream stream_wrap) {
+debug_fill_dropout_rng_tensor(T4 r, T0 philox_seed, T0 philox_offset, AOTRITON_NS::Stream stream_wrap) {
   hipError_t err;
   auto stream = stream_wrap.native();
   auto arch = getArchFromStream(stream);
   auto grid_calculator = [](const DebugFillDropoutRngTensorParams& params) -> dim3 {
     dim3 grid {
-      aotriton::cdiv<uint32_t>(params.R->size(2), params.BLOCK_M),
+      AOTRITON_NS::cdiv<uint32_t>(params.R->size(2), params.BLOCK_M),
       uint32_t(params.R->size(1)),
       uint32_t(params.R->size(0)),
     };
@@ -43,13 +44,13 @@ debug_fill_dropout_rng_tensor(T4 r, T0 philox_seed, T0 philox_offset, aotriton::
 }
 
 hipError_t
-debug_fill_dropout_rng(T4 r, uint64_t philox_seed, uint64_t philox_offset, aotriton::Stream stream_wrap) {
+debug_fill_dropout_rng(T4 r, uint64_t philox_seed, uint64_t philox_offset, AOTRITON_NS::Stream stream_wrap) {
   hipError_t err;
   auto stream = stream_wrap.native();
   auto arch = getArchFromStream(stream);
   auto grid_calculator = [](const DebugFillDropoutRngParams& params) -> dim3 {
     dim3 grid {
-      aotriton::cdiv<uint32_t>(params.R->size(2), params.BLOCK_M),
+      AOTRITON_NS::cdiv<uint32_t>(params.R->size(2), params.BLOCK_M),
       uint32_t(params.R->size(1)),
       uint32_t(params.R->size(0)),
     };

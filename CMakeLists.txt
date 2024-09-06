@@ -24,6 +24,17 @@ set(TARGET_GPUS "MI200;MI300X;Navi31" CACHE STRING "Target Architecture (Note he
 option(AOTRITON_COMPRESS_KERNEL "Enable GPU kernel compression with zstd. Fail when zstd is unavailable. Only effective for AOTriton API V2" ON)
 # option(AOTRITON_COMPRESS_KERNEL_STATIC_ZSTD "Use static zstd library to avoid potential zstd version conflict (e.g. pytorch)" OFF)
 
+# Resolve name conflicts with suffix
+set(AOTRITON_NAME_SUFFIX "" CACHE STRING "Add suffix to namespace and library file name. This is to resovle name conflicts with PyTorch's AOTriton during testing.")
+if(AOTRITON_NAME_SUFFIX)
+  set(AOTRITON_ENABLE_SUFFIX ON)
+else()
+  set(AOTRITON_ENABLE_SUFFIX OFF)
+endif()
+configure_file(include/aotriton/config.h.in include/aotriton)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/include/aotriton/config.h
+  DESTINATION ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_INCLUDEDIR}/aotriton)
+
 # Note for archive library user:
 # get this property with:
 #   get_property(ZSTD_INCLUDE_DIR TARGET zstd::libzstd_shared PROPERTY INTERFACE_INCLUDE_DIRECTORIES)

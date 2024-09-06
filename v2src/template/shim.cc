@@ -5,7 +5,7 @@
 #include "shim.[[shim_kernel_name]].h"
 #include <aotriton/util.h>
 
-namespace aotriton::v2::[[kernel_family_name]] {
+namespace AOTRITON_NS::v2::[[kernel_family_name]] {
 
 int64_t [[param_class_name]]::godel_number() const
 {

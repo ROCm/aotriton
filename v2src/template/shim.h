@@ -3,6 +3,8 @@
 
 // clang-format off
 #pragma once
+
+#include <aotriton/config.h>
 #include <aotriton/_internal/triton_kernel.h>
 #include <aotriton/dtypes.h>
 #include <aotriton/flash.h>
@@ -10,7 +12,7 @@
 #include <functional>
 #include <string>
 
-namespace aotriton::v2::[[kernel_family_name]] {
+namespace AOTRITON_NS::v2::[[kernel_family_name]] {
 
 struct [[param_class_name]] {
     // Function related arguments
@@ -47,7 +49,7 @@ private:
 
 namespace autotune {
 
-using aotriton::v2::[[kernel_family_name]]::[[param_class_name]];
+using AOTRITON_NS::v2::[[kernel_family_name]]::[[param_class_name]];
 
 [[kernel_table_entry_declares]]
 

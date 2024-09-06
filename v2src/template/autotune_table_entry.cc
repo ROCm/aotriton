@@ -5,8 +5,8 @@
 #define INCBIN_PREFIX g_aotriton_FAMILY_[[kernel_family_name]]_KERNEL_[[shim_kernel_name]]_GPU_[[gpu]]_
 #define INCBIN_STYLE INCBIN_STYLE_SNAKE
 
-#define mangle(x) g_aotriton_FAMILY_[[kernel_family_name]]_KERNEL_[[shim_kernel_name]]_GPU_[[gpu]]_ ## x ## _data
-#define smangle(x) g_aotriton_FAMILY_[[kernel_family_name]]_KERNEL_[[shim_kernel_name]]_GPU_[[gpu]]_ ## x ## _size
+#define mangle(x) g_aotriton[[library_suffix]]_FAMILY_[[kernel_family_name]]_KERNEL_[[shim_kernel_name]]_GPU_[[gpu]]_ ## x ## _data
+#define smangle(x) g_aotriton[[library_suffix]]_FAMILY_[[kernel_family_name]]_KERNEL_[[shim_kernel_name]]_GPU_[[gpu]]_ ## x ## _size
 
 #include "../shim.[[shim_kernel_name]].h"
 #include <aotriton/_internal/triton_kernel.h>
@@ -45,7 +45,7 @@ PerfFields image_perf_list [] = {
     [[kernel_image_perfs]]
 };
 
-aotriton::TritonKernel image_list [] = {
+AOTRITON_NS::TritonKernel image_list [] = {
     [[kernel_image_objects]]
 };
 
@@ -53,9 +53,9 @@ aotriton::TritonKernel image_list [] = {
 
 }; // End of anonymous namespace
 
-namespace aotriton::v2::[[kernel_family_name]]::autotune {
+namespace AOTRITON_NS::v2::[[kernel_family_name]]::autotune {
 
-// using aotriton::v2::[[kernel_family_name]]::[[param_class_name]];
+// using AOTRITON_NS::v2::[[kernel_family_name]]::[[param_class_name]];
 
 void CURRENT_ENTRY_PUBLIC::operator()([[param_class_name]]& params) {
 #if AOTRITON_BUILD_FOR_TUNING

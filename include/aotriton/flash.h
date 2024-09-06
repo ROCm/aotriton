@@ -4,11 +4,12 @@
 #ifndef AOTRITON_V2_API_FLASH_ATTN_H
 #define AOTRITON_V2_API_FLASH_ATTN_H
 
+#include <aotriton_config.h>
 #include "runtime.h"
 #include "util.h"
 #include "cpp_tune.h"
 
-namespace aotriton::v2::flash {
+namespace AOTRITON_NS::v2::flash {
 
 hipError_t
 check_gpu(aotriton::Stream stream);

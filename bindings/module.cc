@@ -1,6 +1,7 @@
 // Copyright © 2023-2024 Advanced Micro Devices, Inc.
 // SPDX-License-Identifier: MIT
 
+#include <aotriton/aotriton_config.h>
 #include <aotriton/dtypes.h>
 #include <aotriton/flash.h>
 #include <aotriton/runtime.h>
@@ -11,6 +12,9 @@
 #include <string>
 
 namespace py = pybind11;
+#if AOTRITON_ENABLE_SUFFIX
+namespace aotriton = AOTRITON_NS;
+#endif
 
 namespace pyaotriton {
   namespace v2 {

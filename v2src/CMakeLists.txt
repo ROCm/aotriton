@@ -139,6 +139,7 @@ execute_process(
   -E env VIRTUAL_ENV=${VENV_DIR}
   AOTRITON_ENABLE_FP32=${AOTRITON_ENABLE_FP32}
   "${VENV_DIR}/bin/python" -m v2python.generate_shim --target_gpus ${TARGET_GPUS} --build_dir ${AOTRITON_V2_BUILD_DIR} --bare_mode ${GENERATE_OPTION}
+  --library_suffix "${AOTRITON_NAME_SUFFIX}"
   COMMAND_ECHO STDOUT
   WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/.."
   COMMAND_ERROR_IS_FATAL ANY
@@ -152,6 +153,7 @@ add_custom_target(aotriton_v2_gen_shim
   -E env VIRTUAL_ENV=${VENV_DIR}
   AOTRITON_ENABLE_FP32=${AOTRITON_ENABLE_FP32}
   "${VENV_DIR}/bin/python" -m v2python.generate_shim --target_gpus ${TARGET_GPUS} --build_dir ${AOTRITON_V2_BUILD_DIR} ${AOTRITON_SHIM_FLAGS} ${GENERATE_OPTION}
+  --library_suffix "${AOTRITON_NAME_SUFFIX}"
   BYPRODUCTS ${SHIM_CC_FILES}  # Essential, otherwise add_library complains
   COMMAND_EXPAND_LISTS
   WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/.."
@@ -160,12 +162,15 @@ add_dependencies(aotriton_v2_gen_shim aotriton_v2_compile)
 
 if(AOTRITON_NO_SHARED)
   add_library(aotriton_v2 STATIC ${SHIM_CC_FILES})
-  set(AOTRITON_LIBRARY_FILE libaotriton_v2.a)
+  set(AOTRITON_LIBRARY_FILE libaotriton${AOTRITON_NAME_SUFFIX}_v2.a)
 else(AOTRITON_NO_SHARED)
   add_library(aotriton_v2 SHARED ${SHIM_CC_FILES})
-  set(AOTRITON_LIBRARY_FILE libaotriton_v2.so)
+  set(AOTRITON_LIBRARY_FILE libaotriton${AOTRITON_NAME_SUFFIX}_v2.so)
 endif(AOTRITON_NO_SHARED)
 add_dependencies(aotriton_v2 aotriton_v2_gen_shim)
+if(AOTRITON_ENABLE_SUFFIX)
+  set_target_properties(aotriton_v2 PROPERTIES OUTPUT_NAME "aotriton${AOTRITON_NAME_SUFFIX}_v2")
+endif()
 
 if(AOTRITON_COMPRESS_KERNEL)
   target_compile_definitions(aotriton_v2 PRIVATE -DAOTRITON_USE_ZSTD=1)
@@ -173,6 +178,7 @@ else(AOTRITON_COMPRESS_KERNEL)
   target_compile_definitions(aotriton_v2 PRIVATE -DAOTRITON_USE_ZSTD=0)
 endif(AOTRITON_COMPRESS_KERNEL)
 target_include_directories(aotriton_v2 PUBLIC ${CMAKE_CURRENT_LIST_DIR}/../include)
+target_include_directories(aotriton_v2 PUBLIC ${CMAKE_CURRENT_BINARY_DIR}/include/aotriton)
 target_include_directories(aotriton_v2 PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_include_directories(aotriton_v2 PRIVATE ${CMAKE_CURRENT_LIST_DIR}/../third_party/incbin)
 target_compile_options(aotriton_v2 PRIVATE -fPIC --no-offload-arch=all)
@@ -196,7 +202,9 @@ endif(AOTRITON_COMPRESS_KERNEL)
 
 include(GNUInstallDirs)
 message("CMAKE_INSTALL_INCLUDEDIR ${CMAKE_INSTALL_INCLUDEDIR}")
-install(DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}/include/aotriton" DESTINATION ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_INCLUDEDIR})
+install(DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}/include/aotriton"
+  DESTINATION ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_INCLUDEDIR}
+  FILES_MATCHING PATTERN "*.h")
 # A few considerations
 # 1. .so file is used for sanity check to ensure all symbols are resolved,
 #    but it will not be installed because .a is what you should use to avoid setting
