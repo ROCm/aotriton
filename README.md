@@ -43,9 +43,25 @@ CMAKE_INSTALL_PREFIX.
 Currently the first kernel supported is FlashAttention as based on the
 [algorithm from Tri Dao](https://github.com/Dao-AILab/flash-attention).
 
-## PyTorch Consumption
+## PyTorch Consumption & Compatibility
 
 PyTorch [recently](https://github.com/pytorch/pytorch/pull/121561) expanded
 AOTriton support for FlashAttention. AOTriton is consumed in PyTorch through
 the [SDPA kernels](https://github.com/pytorch/pytorch/blob/main/aten/src/ATen/native/transformers/hip/flash_attn/flash_api.hip).
 The Triton kernels and bundled archive are built at PyTorch [build time](https://github.com/pytorch/pytorch/blob/main/cmake/External/aotriton.cmake).
+
+CAVEAT: As a fast moving target, AOTriton's FlashAttention API changes over
+time. Hence, a specific PyTorch release is only compatible with a few versions
+of AOTriton. The computability matrix is shown below
+
+|  PyTorch              |                 AOTriton Release                |
+|-----------------------|-------------------------------------------------|
+|  2.2 and earlier      |               N/A, no support                   |
+|        2.3            |               0.4b, 0.4.1b                      |
+|        2.4            |                   0.6b                          |
+
+
+For PyTorch main branch, check
+[aotriton_version.txt](https://github.com/pytorch/pytorch/blob/main/.ci/docker/aotriton_version.txt).
+The first line is the tag name, and the 4th line is the SHA-1 commit of
+AOTriton.
