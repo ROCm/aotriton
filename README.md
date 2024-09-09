@@ -52,7 +52,7 @@ The Triton kernels and bundled archive are built at PyTorch [build time](https:/
 
 CAVEAT: As a fast moving target, AOTriton's FlashAttention API changes over
 time. Hence, a specific PyTorch release is only compatible with a few versions
-of AOTriton. The computability matrix is shown below
+of AOTriton. The compatibility matrix is shown below
 
 |  PyTorch              |                 AOTriton Release                |
 |-----------------------|-------------------------------------------------|
