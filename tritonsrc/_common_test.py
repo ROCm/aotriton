@@ -80,12 +80,17 @@ SdpaParams = namedtuple('SdpaParams', ['causal', 'sm_scale', 'dropout_p', 'dropo
 
 class SdpaContext(object):
     TENSOR_NAMES = ('q', 'k', 'v', 'b')
+    USE_MATH_BACKEND = True
 
     def __init__(self, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, dtype,
                  bias_type=None, storage_flip=None, device='cuda', fillnan=False):
-        qdims = (BATCH, N_HEADS, seqlen_q, D_HEAD)
-        kdims = (BATCH, N_HEADS, seqlen_k, D_HEAD)
-        vdims = (BATCH, N_HEADS, seqlen_k, D_HEAD)
+        if isinstance(N_HEADS, int):
+            Q_HEADS = K_HEADS = N_HEADS
+        else:
+            Q_HEADS, K_HEADS = N_HEADS
+        qdims = (BATCH, Q_HEADS, seqlen_q, D_HEAD)
+        kdims = (BATCH, K_HEADS, seqlen_k, D_HEAD)
+        vdims = (BATCH, K_HEADS, seqlen_k, D_HEAD)
         bdims = (seqlen_q, seqlen_k)
         if storage_flip is not None:
             order = [0,1,2,3]
@@ -107,7 +112,7 @@ class SdpaContext(object):
         elif bias_type == 'matrix' or bias_type == 1:
             # b = torch.empty(bdims, dtype=dtype, device="cuda").normal_(mean=0., std=0.5)
             b = torch.rand(*bdims, dtype=dtype, device=device)
-            b = b.expand(BATCH, N_HEADS, b.shape[0], b.shape[1])
+            b = b.expand(BATCH, Q_HEADS, b.shape[0], b.shape[1])
         else:
             assert False, f'Unsupported bias_type {bias_type}'
         if storage_flip is not None:
@@ -229,19 +234,23 @@ class SdpaContext(object):
         self._require_grads(self.ref_tensors, skip_dq=skip_dq, skip_dk_dv=skip_dk_dv, skip_db=skip_db)
         self._require_grads(self.lp_ref_tensors, skip_dq=skip_dq, skip_dk_dv=skip_dk_dv, skip_db=skip_db)
 
-    def _compute_fudge_factors(self, p : SdpaParams):
+    def _compute_fudge_factors_python(self, p : SdpaParams):
+        seqlen_k = self.seqlen_k
+        seqlen_q = self.seqlen_q
+        seqlen_k_fudge_factor = 1.0 if seqlen_k < 1024 else 2.0
+        seqlen_k_fudge_factor = seqlen_k_fudge_factor if seqlen_k < 8192 else 4.0
+        dropout_fudge_factor = 1.0 if p.dropout_p == 0.0 else 2.0
+        query_fudge_factor = 8 * dropout_fudge_factor * seqlen_k_fudge_factor
+        key_fudge_factor = 8 * dropout_fudge_factor
+        value_fudge_factor = 7
+        bias_fudge_factor = 12
+        return (query_fudge_factor, key_fudge_factor, value_fudge_factor, bias_fudge_factor)
+
+    def _compute_fudge_factors_math(self, p : SdpaParams):
         ref_q, ref_k, ref_v, ref_b = self.ref_tensors
         dtype = self.dtype
         seqlen_k = self.seqlen_k
         seqlen_q = self.seqlen_q
-
-        # seqlen_k_fudge_factor = 1.0 if seqlen_k < 1024 else 2.0
-        # seqlen_k_fudge_factor = seqlen_k_fudge_factor if seqlen_k < 8192 else 4.0
-        # dropout_fudge_factor = 1.0 if p.dropout_p == 0.0 else 2.0
-        # query_fudge_factor = 8 * dropout_fudge_factor * seqlen_k_fudge_factor # TODO: Investigate why grad_q needs larger tolerances
-        # key_fudge_factor = 8 * dropout_fudge_factor
-        # value_fudge_factor = 7
-        # bias_fudge_factor = 12
 
         # Maximal value from tune_flash.py and table_tool.py --fudge_factor_tolerance 5.0
         # Note: Navi 3x is experimental and YMMV
@@ -259,9 +268,20 @@ class SdpaContext(object):
             bias_fudge_factor = 32.0
         return (query_fudge_factor, key_fudge_factor, value_fudge_factor, bias_fudge_factor)
 
+    def _compute_fudge_factors(self, p : SdpaParams):
+        if self.USE_MATH_BACKEND:
+            return self._compute_fudge_factors_math(p)
+        return self._compute_fudge_factors_python(p)
+
     @staticmethod
     def _compute_ref_forward(ref_tensors, p : SdpaParams):
         ref_q, ref_k, ref_v, ref_b = ref_tensors
+        num_head_q = ref_q.shape[1]
+        num_head_k = ref_k.shape[1]
+        num_head_v = ref_v.shape[1]
+        assert num_head_k == num_head_v
+        assert num_head_q % num_head_k == 0
+        enable_gqa = num_head_q != num_head_k
         dropout_mask = p.dropout_mask if p.dropout_mask is None else p.dropout_mask.to(device=ref_q.device)
         # _scaled_dot_product_attention_math seems also working for nested tensor
         ref_out, ref_mask = torch.ops.aten._scaled_dot_product_attention_math(ref_q, ref_k, ref_v,
@@ -269,7 +289,8 @@ class SdpaContext(object):
                                                                     is_causal=p.causal,
                                                                     attn_mask=ref_b,
                                                                     scale=p.sm_scale,
-                                                                    dropout_mask=dropout_mask)
+                                                                    dropout_mask=dropout_mask,
+                                                                    enable_gqa=enable_gqa)
         return (ref_out, ref_mask)
 
     def compute_ref_forward(self, p : SdpaParams):
