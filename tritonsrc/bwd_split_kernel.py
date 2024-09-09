@@ -33,6 +33,8 @@ def bwd_kernel_dk_dv(
     stride_oz, stride_oh, stride_om, stride_ok,
     stride_dkz, stride_dkh, stride_dkn, stride_dkk,
     stride_dvz, stride_dvh, stride_dvk, stride_dvn,
+    num_head_q : 'i32',
+    num_head_k : 'i32',
     cu_seqlens_q,
     cu_seqlens_k,
     num_seqlens : 'i32',   # set num_seqlens to zero to ignore cu_seqlens_q/k
@@ -57,11 +59,10 @@ def bwd_kernel_dk_dv(
         philox_seed = tl.load(philox_seed_ptr)
         philox_offset_base += tl.load(philox_offset1)
     start_m = tl.program_id(0) * BLOCK_N  # start_m is a misused name. For dkdv it partitions seqlen_k
-    off_h = tl.program_id(1) # head index
+    off_h_k = tl.program_id(1) # head index
     off_z = tl.program_id(2) # batch index, for varlen it indicates index in cu_seqlens_q/k
-    num_h = tl.num_programs(1)
     num_z = tl.num_programs(2)
-    off_zh = off_z * num_h + off_h * 1
+    off_zh = off_z * num_head_q + off_h_k * 1
     offs_m = tl.arange(0, BLOCK_M)
     offs_n = start_m + tl.arange(0, BLOCK_N)
     offs_d = tl.arange(0, BLOCK_DMODEL)
@@ -101,10 +102,11 @@ def bwd_kernel_dk_dv(
     # Initialize pointers to Q, K, V
     # Q is consumed depending on block ID. Every block uses
     # previous block offset by BLOCK_M x D_HEAD.
-    q_offset = off_h * stride_qh + batch_index * stride_qz + cu_seqlens_q_start * stride_qm
-    Q += q_offset
-    q_ptrs = Q + offs_m[:, None] * stride_qm + offs_d[None, :] * stride_qk
-    q_advance = BLOCK_M * stride_qm
+
+    # Note: Q pointers are deferred to later place.
+    #       GQA needs loop through off_h_q = i * off_h_k + off_h_k
+    # q_offset = off_h_q * stride_qh + batch_index * stride_qz + cu_seqlens_q_start * stride_qm
+
     # Q_block_ptr = tl.make_block_ptr(
     #     base=Q,
     #     shape=(seqlen_q, head_dim),
@@ -113,7 +115,7 @@ def bwd_kernel_dk_dv(
     #     block_shape=(BLOCK_M, BLOCK_DMODEL),
     #     order=(1, 0)
     # )
-    k_offset = off_h * stride_kh + batch_index * stride_kz + cu_seqlens_k_start * stride_kn
+    k_offset = off_h_k * stride_kh + batch_index * stride_kz + cu_seqlens_k_start * stride_kn
     K += k_offset
     kt_ptrs = K + offs_d[:, None] * stride_kk + offs_n[None, :] * stride_kn
     # kt_offs_n = None if start_m + BLOCK_N <= seqlen_k else start_m + tl.arange(0, BLOCK_N)
@@ -129,7 +131,7 @@ def bwd_kernel_dk_dv(
     #     block_shape=(BLOCK_DMODEL, BLOCK_N),
     #     order=(0, 1)
     # )
-    v_offset = off_h * stride_vh + batch_index * stride_vz + cu_seqlens_k_start * stride_vk
+    v_offset = off_h_k * stride_vh + batch_index * stride_vz + cu_seqlens_k_start * stride_vk
     V += v_offset
     # VT_block_ptr = tl.make_block_ptr(
     #     base=V,
@@ -146,9 +148,6 @@ def bwd_kernel_dk_dv(
     else:
         vt = load_fn(vt_ptrs, ld_offs_d, offs_n, head_dim, seqlen_k)
     # tl.device_print('vt', vt)
-    do_offset = off_h * stride_oh + batch_index * stride_oz + cu_seqlens_q_start * stride_om
-    DO += do_offset
-    do_ptrs = DO + offs_m[:, None] * stride_om + offs_d[None, :] * stride_ok
     # DO_block_ptr = tl.make_block_ptr(
     #     base=DO,
     #     shape=(seqlen_q, head_dim),
@@ -160,8 +159,9 @@ def bwd_kernel_dk_dv(
     if BIAS_TYPE == 0:
         B_block_ptr = 0
     elif BIAS_TYPE == 1:
+        # CAVEAT: bias is incompatible with GQA
         B_block_ptr = tl.make_block_ptr(
-                base=B + off_h * stride_bh + batch_index * stride_bz,
+                base=B + off_h_k * stride_bh + batch_index * stride_bz,
                 shape=(seqlen_q, seqlen_k),
                 strides=(stride_bm, stride_bn),
                 offsets=(0, start_m),
@@ -185,30 +185,42 @@ def bwd_kernel_dk_dv(
     else:
         batch_philox_offset = 0
 
-    dk_offset = off_h * stride_dkh + batch_index * stride_dkz + cu_seqlens_k_start * stride_dkn
+    dk_offset = off_h_k * stride_dkh + batch_index * stride_dkz + cu_seqlens_k_start * stride_dkn
     DK += dk_offset
-    dv_offset = off_h * stride_dvh + batch_index * stride_dvz + cu_seqlens_k_start * stride_dvk
+    dv_offset = off_h_k * stride_dvh + batch_index * stride_dvz + cu_seqlens_k_start * stride_dvk
     DV += dv_offset
 
-    dk, dv = bwd_kernel_dk_dv_common(
-        q_ptrs, stride_qm, kt, vt, B_block_ptr,
-        sm_scale, do_ptrs, stride_om,
-        l_ptrs,
-        D_ptrs,
-        seqlen_q, seqlen_k,
-        start_m,
-        head_dim,
-        dropout_p,
-        philox_seed,
-        batch_philox_offset,
-        max_seqlen_k,
-        BLOCK_M,
-        BLOCK_DMODEL,
-        BLOCK_N,
-        CAUSAL,
-        ENABLE_DROPOUT,
-        PADDED_HEAD,
-        BIAS_TYPE)
+    dv = tl.zeros([BLOCK_N, BLOCK_DMODEL], dtype=tl.float32)
+    dk = tl.zeros([BLOCK_N, BLOCK_DMODEL], dtype=tl.float32)
+    qk_scale = sm_scale * 1.44269504089
+    kt = (kt * qk_scale).to(kt.type.element_ty)
+    for off_h_q in range(off_h_k, num_head_q, num_head_k):
+        q_offset = off_h_q * stride_qh + batch_index * stride_qz + cu_seqlens_q_start * stride_qm
+        q_ptrs = Q + q_offset + offs_m[:, None] * stride_qm + offs_d[None, :] * stride_qk
+        do_offset = off_h_q * stride_oh + batch_index * stride_oz + cu_seqlens_q_start * stride_om
+        do_ptrs = DO + do_offset + offs_m[:, None] * stride_om + offs_d[None, :] * stride_ok
+        dk, dv = bwd_kernel_dk_dv_common(
+            dk, dv,
+            q_ptrs, stride_qm, kt, vt, B_block_ptr,
+            do_ptrs, stride_om,
+            l_ptrs,
+            D_ptrs,
+            seqlen_q, seqlen_k,
+            start_m,
+            head_dim,
+            dropout_p,
+            philox_seed,
+            batch_philox_offset,
+            max_seqlen_k,
+            BLOCK_M,
+            BLOCK_DMODEL,
+            BLOCK_N,
+            CAUSAL,
+            ENABLE_DROPOUT,
+            PADDED_HEAD,
+            BIAS_TYPE)
+    dk = (dk * sm_scale).to(kt.type.element_ty)
+    dv = dv.to(vt.type.element_ty)
     mstore2d(dk,
              BLOCK_N,
              BLOCK_DMODEL,
@@ -243,6 +255,8 @@ def bwd_kernel_dq(
     stride_oz, stride_oh, stride_om, stride_ok,
     stride_dqz, stride_dqh, stride_dqm, stride_dqk,
     stride_dbz, stride_dbh, stride_dbm, stride_dbn,
+    num_head_q : 'i32',
+    num_head_k : 'i32',
     cu_seqlens_q,
     cu_seqlens_k,
     num_seqlens,   # set num_seqlens to zero to ignore cu_seqlens_q/k
@@ -266,11 +280,11 @@ def bwd_kernel_dq(
         philox_seed = tl.load(philox_seed_ptr)
         philox_offset_base += tl.load(philox_offset1)
     start_m = tl.program_id(0) * BLOCK_M
-    off_h = tl.program_id(1) # head index
+    off_h_q = tl.program_id(1) # head index
+    off_h_k = off_h_q if num_head_q != num_head_k else off_h_q // (num_head_q // num_head_k)
     off_z = tl.program_id(2) # batch index
-    num_h = tl.num_programs(1)
     num_z = tl.num_programs(2)
-    off_zh = off_z * num_h + off_h * 1
+    off_zh = off_z * num_head_q + off_h_q * 1
     offs_m = start_m + tl.arange(0, BLOCK_M)
     offs_n = tl.arange(0, BLOCK_N)
     offs_d = tl.arange(0, BLOCK_DMODEL)
@@ -307,7 +321,7 @@ def bwd_kernel_dq(
         cu_seqlens_k_start = 0
         batch_index = off_z
     # Initialize pointers to Q, K, V
-    q_offset = off_h * stride_qh + batch_index * stride_qz + cu_seqlens_q_start * stride_qm
+    q_offset = off_h_q * stride_qh + batch_index * stride_qz + cu_seqlens_q_start * stride_qm
     Q += q_offset
     # Q_block_ptr = tl.make_block_ptr(
     #     base=Q,
@@ -322,7 +336,7 @@ def bwd_kernel_dq(
         q = load_fn(q_ptrs, None, ld_offs_d, seqlen_q, head_dim)
     else:
         q = load_fn(q_ptrs, offs_m, ld_offs_d, seqlen_q, head_dim)
-    k_offset = off_h * stride_kh + batch_index * stride_kz + cu_seqlens_k_start * stride_kn
+    k_offset = off_h_k * stride_kh + batch_index * stride_kz + cu_seqlens_k_start * stride_kn
     K += k_offset
     kt_ptrs = K + offs_d[:, None] * stride_kk + offs_n[None, :] * stride_kn
     # K_block_ptr = tl.make_block_ptr(
@@ -333,7 +347,7 @@ def bwd_kernel_dq(
     #     block_shape=(BLOCK_DMODEL, BLOCK_N),
     #     order=(0, 1)
     # )
-    v_offset = off_h * stride_vh + batch_index * stride_vz + cu_seqlens_k_start * stride_vk
+    v_offset = off_h_k * stride_vh + batch_index * stride_vz + cu_seqlens_k_start * stride_vk
     V += v_offset
     vt_ptrs = V + offs_d[:, None] * stride_vn + offs_n[None, :] * stride_vk
     # V_block_ptr = tl.make_block_ptr(
@@ -344,7 +358,7 @@ def bwd_kernel_dq(
     #     block_shape=(BLOCK_DMODEL, BLOCK_N),
     #     order=(0, 1)
     # )
-    do_offset = off_h * stride_oh + batch_index * stride_oz + cu_seqlens_q_start * stride_om
+    do_offset = off_h_q * stride_oh + batch_index * stride_oz + cu_seqlens_q_start * stride_om
     DO += do_offset
     # DO_block_ptr = tl.make_block_ptr(
     #     base=DO,
@@ -368,7 +382,7 @@ def bwd_kernel_dq(
         batch_philox_offset = 0
 
     # initialize pointers to output
-    dq_offset = batch_index * stride_dqz + off_h * stride_dqh + cu_seqlens_q_start * stride_dqm
+    dq_offset = batch_index * stride_dqz + off_h_q * stride_dqh + cu_seqlens_q_start * stride_dqm
     DQ += dq_offset
     # DQ_block_ptr = tl.make_block_ptr(
     #     base=DQ,
@@ -389,7 +403,7 @@ def bwd_kernel_dq(
         DB_block_ptr = 0
     elif BIAS_TYPE == 1:
         B_block_ptr = tl.make_block_ptr(
-                base=B + off_h * stride_bh + batch_index * stride_bz,
+                base=B + off_h_q * stride_bh + batch_index * stride_bz,
                 shape=(seqlen_q, seqlen_k),
                 strides=(stride_bm, stride_bn),
                 offsets=(start_m, 0),
@@ -401,7 +415,7 @@ def bwd_kernel_dq(
         # Still have to make one even if no_db = False
         # due to a limit of Triton: runtime branches must have identical data types.
         DB_block_ptr = tl.make_block_ptr(
-                base=DB + off_h * stride_dbh + batch_index * stride_dbz,
+                base=DB + off_h_q * stride_dbh + batch_index * stride_dbz,
                 shape=(seqlen_q, seqlen_k),
                 strides=(stride_dbm, stride_dbn),
                 offsets=(start_m, 0),

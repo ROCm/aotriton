@@ -17,8 +17,9 @@ def dot(BLOCK_M : tl.constexpr, QDIM : tl.constexpr, KDIM : tl.constexpr, q, k):
 
 @triton.jit
 def bwd_kernel_dk_dv_common(
+    dk, dv,
     q_ptrs, q_stride, kt, vt, B_block_ptr,
-    sm_scale, do_ptrs, do_stride,
+    do_ptrs, do_stride,
     l_ptrs,
     D_ptrs,
     seqlen_q,
@@ -49,13 +50,6 @@ def bwd_kernel_dk_dv_common(
     q_ptrs += lo * q_stride
     do_ptrs += lo * do_stride
 
-    qk_scale = sm_scale * 1.44269504089
-    # load k and v: they will stay in SRAM throughout
-    # (BLOCK_DMODEL, BLOCK_N)
-    kt = (kt * qk_scale).to(kt.type.element_ty)
-    # (BLOCK_DMODEL, BLOCK_N)
-    dv = tl.zeros([BLOCK_N, BLOCK_DMODEL], dtype=tl.float32)
-    dk = tl.zeros([BLOCK_N, BLOCK_DMODEL], dtype=tl.float32)
     '''
            K1   K2      (d)V      dO
     Q1    qk11 qk12     (d)v1     dO1
@@ -177,7 +171,7 @@ def bwd_kernel_dk_dv_common(
         do_ptrs += do_stride * BLOCK_M
         if BIAS_TYPE == 1:
             B_block_ptr = tl.advance(B_block_ptr, (BLOCK_M, 0))
-    return (dk * sm_scale).to(kt.type.element_ty), dv.to(vt.type.element_ty)
+    return dk, dv
 
 @triton.jit
 def bwd_kernel_dq_db_common(

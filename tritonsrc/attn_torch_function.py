@@ -250,7 +250,7 @@ class _attention(torch.autograd.Function):
         head_dim_rounded = max(16, head_dim_rounded)
         padded_head = head_dim_rounded != Lk
         num_head_q = q.shape[1]
-        num_head_k = q.shape[2]
+        num_head_k = k.shape[1]
         max_seqlen_q = q.shape[2]
         max_seqlen_k = k.shape[2]
         o = torch.empty_like(q)
@@ -483,7 +483,7 @@ class _attention(torch.autograd.Function):
                 t.fill_(float('nan'))
         null_tensor = torch.empty((0), device=q.device, dtype=torch.int32)
         num_head_q = q.shape[1]
-        num_head_k = q.shape[2]
+        num_head_k = k.shape[1]
         max_seqlen_q = q.shape[2]
         max_seqlen_k = k.shape[2]
         MAX_BLOCK = 64 if ctx.dropout_p == 0 else 16
@@ -564,6 +564,8 @@ class _attention(torch.autograd.Function):
                     do.stride(0), do.stride(1), do.stride(2), do.stride(3),
                     dk.stride(0), dk.stride(1), dk.stride(2), dk.stride(3),
                     dv.stride(0), dv.stride(1), dv.stride(2), dv.stride(3),
+                    num_head_q=num_head_q,
+                    num_head_k=num_head_k,
                     cu_seqlens_q=null_tensor,
                     cu_seqlens_k=null_tensor,
                     num_seqlens=0,
@@ -630,6 +632,8 @@ class _attention(torch.autograd.Function):
                     do.stride(0), do.stride(1), do.stride(2), do.stride(3),
                     dk.stride(0), dk.stride(1), dk.stride(2), dk.stride(3),
                     dv.stride(0), dv.stride(1), dv.stride(2), dv.stride(3),
+                    num_head_q=num_head_q,
+                    num_head_k=num_head_k,
                     cu_seqlens_q=null_tensor,
                     cu_seqlens_k=null_tensor,
                     num_seqlens=0,
@@ -644,7 +648,7 @@ class _attention(torch.autograd.Function):
                     BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N,
                     BLOCK_DMODEL=head_dim_rounded,
                     CAUSAL=ctx.causal,
-                    num_warps=4,
+                    num_warps=1, waves_per_eu=1,
                     num_stages=1,
                     ENABLE_DROPOUT=ctx.dropout_p > 0.0,
                     PADDED_HEAD=padded_head,
@@ -691,6 +695,8 @@ class _attention(torch.autograd.Function):
                     do.stride(0), do.stride(1), do.stride(2), do.stride(3),
                     dq.stride(0), dq.stride(1), dq.stride(2), dq.stride(3),
                     stride_dbz, stride_dbh, stride_dbm, stride_dbn,
+                    num_head_q=num_head_q,
+                    num_head_k=num_head_k,
                     cu_seqlens_q=null_tensor,
                     cu_seqlens_k=null_tensor,
                     num_seqlens=0,
@@ -756,6 +762,8 @@ class _attention(torch.autograd.Function):
                     do.stride(0), do.stride(1), do.stride(2), do.stride(3),
                     dq.stride(0), dq.stride(1), dq.stride(2), dq.stride(3),
                     stride_dbz, stride_dbh, stride_dbm, stride_dbn,
+                    num_head_q=num_head_q,
+                    num_head_k=num_head_k,
                     cu_seqlens_q=null_tensor,
                     cu_seqlens_k=null_tensor,
                     num_seqlens=0,
