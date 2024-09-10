@@ -62,7 +62,6 @@ def bwd_kernel_dk_dv(
     off_h_k = tl.program_id(1) # head index
     off_z = tl.program_id(2) # batch index, for varlen it indicates index in cu_seqlens_q/k
     num_z = tl.num_programs(2)
-    off_zh = off_z * num_head_q + off_h_k * 1
     offs_m = tl.arange(0, BLOCK_M)
     offs_n = start_m + tl.arange(0, BLOCK_N)
     offs_d = tl.arange(0, BLOCK_DMODEL)
@@ -170,20 +169,6 @@ def bwd_kernel_dk_dv(
                 )
     else:
         tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
-    # pointer to row-wise quantities in value-like data
-    # Shape (batch, num_heads, max_seqlen_q)
-    # In varlen cases, batch == len(cu_seqlens_q) - 1).
-    # Hence off_z plays the same role in varlen/non-varlen
-    D_ptrs = D + off_zh * max_seqlen_q
-    l_ptrs = L + off_zh * max_seqlen_q
-
-    # This lower loop bound is because of the causal mask. We create a lower triangular
-    # result. The upper triangular is -inf (becomes 0 when we do e^x). As such, it can
-    # be ignored in the GEMM.
-    if ENABLE_DROPOUT:
-        batch_philox_offset = philox_offset_base + off_zh * max_seqlen_q * max_seqlen_k
-    else:
-        batch_philox_offset = 0
 
     dk_offset = off_h_k * stride_dkh + batch_index * stride_dkz + cu_seqlens_k_start * stride_dkn
     DK += dk_offset
@@ -194,11 +179,28 @@ def bwd_kernel_dk_dv(
     dk = tl.zeros([BLOCK_N, BLOCK_DMODEL], dtype=tl.float32)
     qk_scale = sm_scale * 1.44269504089
     kt = (kt * qk_scale).to(kt.type.element_ty)
-    for off_h_q in range(off_h_k, num_head_q, num_head_k):
+    group_size = num_head_q // num_head_k
+    for off_h_q in range(off_h_k * group_size, off_h_k * group_size + group_size):
+        off_zh = off_z * num_head_q + off_h_q * 1
+        # This lower loop bound is because of the causal mask. We create a lower triangular
+        # result. The upper triangular is -inf (becomes 0 when we do e^x). As such, it can
+        # be ignored in the GEMM.
+        if ENABLE_DROPOUT:
+            batch_philox_offset = philox_offset_base + off_zh * max_seqlen_q * max_seqlen_k
+        else:
+            batch_philox_offset = 0
+        # pointer to row-wise quantities in value-like data
+        # Shape (batch, num_heads, max_seqlen_q)
+        # In varlen cases, batch == len(cu_seqlens_q) - 1).
+        # Hence off_z plays the same role in varlen/non-varlen
+        D_ptrs = D + off_zh * max_seqlen_q
+        l_ptrs = L + off_zh * max_seqlen_q
+
         q_offset = off_h_q * stride_qh + batch_index * stride_qz + cu_seqlens_q_start * stride_qm
         q_ptrs = Q + q_offset + offs_m[:, None] * stride_qm + offs_d[None, :] * stride_qk
         do_offset = off_h_q * stride_oh + batch_index * stride_oz + cu_seqlens_q_start * stride_om
         do_ptrs = DO + do_offset + offs_m[:, None] * stride_om + offs_d[None, :] * stride_ok
+
         dk, dv = bwd_kernel_dk_dv_common(
             dk, dv,
             q_ptrs, stride_qm, kt, vt, B_block_ptr,
@@ -281,7 +283,7 @@ def bwd_kernel_dq(
         philox_offset_base += tl.load(philox_offset1)
     start_m = tl.program_id(0) * BLOCK_M
     off_h_q = tl.program_id(1) # head index
-    off_h_k = off_h_q if num_head_q != num_head_k else off_h_q // (num_head_q // num_head_k)
+    off_h_k = off_h_q if num_head_q == num_head_k else off_h_q // (num_head_q // num_head_k)
     off_z = tl.program_id(2) # batch index
     num_z = tl.num_programs(2)
     off_zh = off_z * num_head_q + off_h_q * 1

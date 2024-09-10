@@ -153,7 +153,7 @@ def attn_fwd(
     #     off_h_k = off_h_q // group_size
     # else:
     #     off_h_k = off_h_q
-    off_h_k = off_h_q if num_head_q != num_head_k else off_h_q // (num_head_q // num_head_k)
+    off_h_k = off_h_q if num_head_q == num_head_k else off_h_q // (num_head_q // num_head_k)
 
     n_extra_tokens = 0
     if seqlen_k < BLOCK_N:

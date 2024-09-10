@@ -262,7 +262,7 @@ class _attention(torch.autograd.Function):
 
         grid = lambda META: (
             triton.cdiv(q.shape[2], META['BLOCK_M']),
-            q.shape[1],
+            num_head_q,
             q.shape[0],
         )
         null_tensor = torch.empty((0), device=q.device, dtype=torch.int32)
@@ -482,8 +482,8 @@ class _attention(torch.autograd.Function):
             for t in (dq, dk, dv, db, delta):
                 t.fill_(float('nan'))
         null_tensor = torch.empty((0), device=q.device, dtype=torch.int32)
-        num_head_q = q.shape[1]
-        num_head_k = k.shape[1]
+        num_head_q = int(q.shape[1])
+        num_head_k = int(k.shape[1])
         max_seqlen_q = q.shape[2]
         max_seqlen_k = k.shape[2]
         MAX_BLOCK = 64 if ctx.dropout_p == 0 else 16
@@ -539,7 +539,7 @@ class _attention(torch.autograd.Function):
         # debug_mask = torch.zeros((q.shape[0], q.shape[1], max_seqlen_q, max_seqlen_k), device=q.device, dtype=ctx.encoded_softmax.dtype)
         grid_dk_dv = lambda META: (
             triton.cdiv(max_seqlen_k, META['BLOCK_N']),
-            q.shape[1],
+            num_head_k,
             q.shape[0],
         )
         stride_dbz, stride_dbh, stride_dbm, stride_dbn = db.stride()
@@ -678,7 +678,7 @@ class _attention(torch.autograd.Function):
             # assert mask_allclose
         grid_dq = lambda META: (
             triton.cdiv(max_seqlen_q, META['BLOCK_M']),
-            q.shape[1],
+            num_head_q,
             q.shape[0],
         )
         if q.requires_grad:
