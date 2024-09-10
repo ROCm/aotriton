@@ -88,6 +88,22 @@ def main_npz():
     print(f'{dk_allclose=} {dv_allclose=} {dq_allclose=} {db_allclose=}')
     print(f'{adiff=} {grads_adiff=}')
 
+def main():
+    # False-1.2-dtype0-0.0-False-4-4-63-1-1
+    BATCH = 1
+    N_HEADS = 1
+    D_HEAD = 63
+    seqlen_q = 4
+    seqlen_k = 4
+    causal = False
+    dropout_p = 0.0
+    dtype = torch.float16
+    sm_scale = 1.2
+    storage_flip = False
+    bias_type = None
+    _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
+
 if __name__ == '__main__':
     # main3()
-    main_npz()
+    main()
+    # main_npz()
