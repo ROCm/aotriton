@@ -221,6 +221,17 @@ namespace pyaotriton {
       .def_property_readonly("strides", &aotriton::TensorView<0>::strides)
       .def_property_readonly("data_ptr", &aotriton::TensorView<0>::data_ptr)
       .def_property_readonly("dtype", &aotriton::TensorView<0>::dtype);
+    m.def("get_name_suffix",
+#if AOTRITON_ENABLE_SUFFIX
+#define xstr(s) str(s)
+#define str(s) #s
+          []() -> std::string { return xstr(AOTRITON_NAME_SUFFIX); }
+#undef xstr
+#undef str
+#else
+          []() -> std::string { return ""; }
+#endif
+         );
     py::module_ mod_v2api = m.def_submodule("v2", "v2 API namespace");
     v2::setup_module(mod_v2api);
   }
