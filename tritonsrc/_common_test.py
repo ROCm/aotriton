@@ -255,18 +255,36 @@ class SdpaContext(object):
 
         # Maximal value from tune_flash.py and table_tool.py --fudge_factor_tolerance 5.0
         # Note: Navi 3x is experimental and YMMV
-        query_fudge_factor = 180.0
-        key_fudge_factor = 16.0
-        value_fudge_factor = 32.0
-        bias_fudge_factor = 16.0
-        print(f'{torch.cuda.get_device_properties(0).gcnArchName=}')
-        if torch.version.hip:
-            if 'gfx90a' in torch.cuda.get_device_properties(0).gcnArchName:
-                key_fudge_factor = max(16.0, (seqlen_k + seqlen_q) / 16.0)  # TODO: Check why
-                bias_fudge_factor = 32.0
+        # query_fudge_factor = 180.0
+        # key_fudge_factor = 16.0
+        # value_fudge_factor = 32.0
+        # bias_fudge_factor = 16.0
+        # print(f'{torch.cuda.get_device_properties(0).gcnArchName=}')
+        # MI200 = 0
+        # if torch.version.hip:
+        #     if 'gfx90a' in torch.cuda.get_device_properties(0).gcnArchName:
+        #         MI200 = 1
+        #         # key_fudge_factor = max(16.0, (seqlen_k + seqlen_q) / 16.0)  # TODO: Check why
+        # if MI200:
+        #     bias_fudge_factor = 32.0
+        fudge_factors = {
+            "out": 4,
+            "grad_query": 150.0,
+            "grad_key": 64.0,
+            "grad_value": 8.0,
+            "grad_attn_mask": 45.0,
+        }
+        if seqlen_k >= 1024:
+            fudge_factors['grad_key'] = 70.0
+        if seqlen_k >= 2048:
+            fudge_factors['grad_key'] = 160.0
+            fudge_factors['grad_query'] = 650.0
         if dtype == torch.float32:
-            key_fudge_factor = 180.0
-            bias_fudge_factor = 32.0
+            fudge_factors['grad_key'] = 90.0
+        query_fudge_factor = fudge_factors['grad_query']
+        key_fudge_factor = fudge_factors['grad_key']
+        value_fudge_factor = fudge_factors['grad_value']
+        bias_fudge_factor = fudge_factors['grad_attn_mask']
         return (query_fudge_factor, key_fudge_factor, value_fudge_factor, bias_fudge_factor)
 
     def _compute_fudge_factors(self, p : SdpaParams):

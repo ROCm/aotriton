@@ -62,6 +62,11 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
         print(f'{ref_out[err_idx]=}')
         print(f'{tri_out[0, 0, :4, :4]=}')
         print(f'{ref_out[0, 0, :4, :4]=}')
+        # print(f'{tri_out[0, 1, :4, :4]=}')
+        # print(f'{ref_out[0, 1, :4, :4]=}')
+        # print(f'{tri_out[0, 4, :4, :4]=}')
+        # print(f'{ref_out[0, 4, :4, :4]=}')
+        print(f'{N_HEADS=}')
     assert is_allclose, 'Forward pass {is_allclose=}'
 
     dq_allclose, dk_allclose, dv_allclose, db_allclose = grads_allclose
