@@ -10,7 +10,11 @@ from pyaotriton.v2.flash import (
     FwdExtraArguments,
     BwdExtraArguments,
 )
-from pyaotriton import T1, T2, T4, DType, Stream, hipError_t
+from pyaotriton import T1, T2, T4, DType, Stream, hipError_t, get_name_suffix
+assert get_name_suffix() != "", ("To run tests, AOTriton must be compiled with suffixes "
+                                 "by passing -DAOTRITON_NAME_SUFFIX=SOME_SUFFIX to cmake. "
+                                 "Otherwise the AOTriton in-development may have conflicts with "
+                                 "AOTriton shipped with PyTorch.")
 try:
     from pyaotriton import T0
     PASS_PHILOX_AS_TENSOR = True
