@@ -95,7 +95,7 @@ def bwd_kernel_dk_dv_common(
         Di = tl.load(D_ptrs + offs_m_curr)
         l_i = tl.load(l_ptrs + offs_m_curr)
 
-        p = tl.math.exp2(qk - l_i) # (BLOCK_M, BLOCK_N)
+        p = tl.math.exp(qk - l_i) # (BLOCK_M, BLOCK_N)
         # -- compute dv ----
         if ENABLE_DROPOUT:
             philox_offset = batch_philox_offset + start_n * max_seqlen_k + start_m
