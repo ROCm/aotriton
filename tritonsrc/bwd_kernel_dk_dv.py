@@ -79,18 +79,22 @@ def bwd_kernel_dk_dv_common(
         # q = tl.load(Q_block_ptr)
         q = load_fn(q_ptrs, None, ld_offs_d, seqlen_q, head_dim)
         # do = tl.load(DO_block_ptr)
-        # TODO: pre_load_do
-        do = load_fn(do_ptrs, None, ld_offs_d, seqlen_q, head_dim)
+
         # -- compute qk ----
         qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
         # TODO: These two checks can be optimized to occur on the last iter.
         if CAUSAL:
             qk = tl.where(offs_m_curr >= offs_m[None, :], qk, float("-inf"))
         # q.offs = (start_n, 0), k.offs = (0, start_m)
-        qk += tl.dot(q, kt) # (BLOCK_M, BLOCK_N)
+        qk = tl.dot(q, kt, acc=qk) # (BLOCK_M, BLOCK_N)
+
+        # TODO: pre_load_do
+        do = load_fn(do_ptrs, None, ld_offs_d, seqlen_q, head_dim)
+
         # Check for OOB accesses on D and LSE
         Di = tl.load(D_ptrs + offs_m_curr)
         l_i = tl.load(l_ptrs + offs_m_curr)
+
         p = tl.math.exp2(qk - l_i) # (BLOCK_M, BLOCK_N)
         # -- compute dv ----
         if ENABLE_DROPOUT:
@@ -102,25 +106,22 @@ def bwd_kernel_dk_dv_common(
             else:
                 dv += tl.dot(tl.trans(tl.where(keep, p / (1 - dropout_p), 0.0)).to(q_ptrs.dtype.element_ty), do)
         else:
-            if BLOCK_M == 1:
-                dv += p.to(q_ptrs.dtype.element_ty) * do
-            else:
-                dv += tl.dot(tl.trans(p.to(do.dtype)), do)
-        dp = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
+            # dv += tl.dot(tl.trans(p.to(do.dtype)), do)
+            dv += tl.dot(p.to(do.dtype), do)
+
         # compute dp = dot(do, vt)
         # dp += dot(BLOCK_M, BLOCK_DMODEL, BLOCK_DMODEL, do, vt)
         # do.shape = (BLOCK_M, BLOCK_DMODEL) vt.shape = (BLOCK_DMODEL, BLOCK_N)
-        dp += tl.dot(do, vt)
+        dp = tl.dot(do, vt)
         if ENABLE_DROPOUT:
             dp = tl.where(keep, dp / (1 - dropout_p), 0)
         # compute ds = p * (dp - delta[:, None])
         ds = p * (dp - Di) # (BLOCK_M, BLOCK_N)
+
         # compute dk
-        if BLOCK_M == 1:
-            dk += ds.to(q_ptrs.dtype.element_ty) * q
-        else:
-            # ds.shape = (BLOCK_M, BLOCK_N), q.shape = (BLOCK_M, BLOCK_DMODEL)
-            dk += tl.dot(tl.trans(ds.to(q_ptrs.dtype.element_ty)), q) # (BLOCK_N, BLOCK_DMODEL)
+        # dk += tl.dot(tl.trans(ds.to(q_ptrs.dtype.element_ty)), q) # (BLOCK_N, BLOCK_DMODEL)
+        dk += tl.dot(ds.to(q_ptrs.dtype.element_ty), q) # (BLOCK_N, BLOCK_DMODEL)
+
         # update pointers (block_ptr code was left intentionally as comment)
         # Q_block_ptr = tl.advance(Q_block_ptr, (BLOCK_M, 0))
         # DO_block_ptr = tl.advance(DO_block_ptr, (BLOCK_M, 0)) # Debug DO accessing problems
