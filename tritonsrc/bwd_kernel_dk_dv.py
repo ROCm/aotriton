@@ -86,25 +86,6 @@ def bwd_kernel_dk_dv_common(
         # TODO: These two checks can be optimized to occur on the last iter.
         if CAUSAL:
             qk = tl.where(offs_m_curr >= offs_m[None, :], qk, float("-inf"))
-        if BIAS_TYPE == 0:
-            pass
-        elif BIAS_TYPE == 1:
-            # FIXME: do boundary_check correctly
-            # TODO: check q_padded is correct calculated, the condition should be start_n + BLOCK_M
-            """
-            if q_padded and k_padded:  # CAVEAT: using "or" disables the partial boundary_check branches
-                bias = tl.load(B_block_ptr, boundary_check=(0,1), padding_option="zero")
-            elif q_padded:
-                bias = tl.load(B_block_ptr, boundary_check=(0,), padding_option="zero")
-            elif k_padded:
-                bias = tl.load(B_block_ptr, boundary_check=(1,), padding_option="zero")
-            else:
-                bias = tl.load(B_block_ptr)
-            """
-            bias = tl.load(B_block_ptr, boundary_check=(0,1), padding_option="zero")
-            qk += bias * 1.44269504089
-        else:
-            tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
         # q.offs = (start_n, 0), k.offs = (0, start_m)
         qk += tl.dot(q, kt) # (BLOCK_M, BLOCK_N)
         # Check for OOB accesses on D and LSE
@@ -145,8 +126,6 @@ def bwd_kernel_dk_dv_common(
         # DO_block_ptr = tl.advance(DO_block_ptr, (BLOCK_M, 0)) # Debug DO accessing problems
         q_ptrs += q_stride * BLOCK_M
         do_ptrs += do_stride * BLOCK_M
-        if BIAS_TYPE == 1:
-            B_block_ptr = tl.advance(B_block_ptr, (BLOCK_M, 0))
     return dk, dv
 
 @triton.jit
