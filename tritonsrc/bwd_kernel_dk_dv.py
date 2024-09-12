@@ -84,11 +84,6 @@ def bwd_kernel_dk_dv_common(
         # -- compute qk ----
         qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
         # TODO: These two checks can be optimized to occur on the last iter.
-        overflow_size = start_n + BLOCK_M - seqlen_q
-        if overflow_size > 0:
-            boundary_n = tl.full((BLOCK_N, ), seqlen_q, dtype=tl.int32)
-            mask = offs_m_curr < boundary_n[None, :]
-            qk = tl.where(mask, qk, float("-inf"))
         if CAUSAL:
             qk = tl.where(offs_m_curr >= offs_m[None, :], qk, float("-inf"))
         if BIAS_TYPE == 0:
@@ -113,15 +108,8 @@ def bwd_kernel_dk_dv_common(
         # q.offs = (start_n, 0), k.offs = (0, start_m)
         qk += tl.dot(q, kt) # (BLOCK_M, BLOCK_N)
         # Check for OOB accesses on D and LSE
-        boundary = tl.full((BLOCK_M, ), BLOCK_M - overflow_size, dtype=tl.int32)
-        d_lse_ptrs_mask = boundary > tl.arange(0, BLOCK_M)
-        d_lse_padding = tl.full((BLOCK_M, ), 0, dtype=tl.float32)
-        Di = tl.load(D_ptrs + offs_m_curr,
-                     mask=d_lse_ptrs_mask[:, None],
-                     other=d_lse_padding[:, None])
-        l_i = tl.load(l_ptrs + offs_m_curr,
-                      mask=d_lse_ptrs_mask[:,None],
-                      other=d_lse_padding[:, None])
+        Di = tl.load(D_ptrs + offs_m_curr)
+        l_i = tl.load(l_ptrs + offs_m_curr)
         p = tl.math.exp2(qk - l_i) # (BLOCK_M, BLOCK_N)
         # -- compute dv ----
         if ENABLE_DROPOUT:
