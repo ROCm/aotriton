@@ -111,7 +111,7 @@ def bwd_kernel_dk_dv_common(
         else:
             tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
         # q.offs = (start_n, 0), k.offs = (0, start_m)
-        qk += dot(BLOCK_M, BLOCK_DMODEL, BLOCK_DMODEL, q, kt) # (BLOCK_M, BLOCK_N)
+        qk += tl.dot(q, kt) # (BLOCK_M, BLOCK_N)
         # Check for OOB accesses on D and LSE
         boundary = tl.full((BLOCK_M, ), BLOCK_M - overflow_size, dtype=tl.int32)
         d_lse_ptrs_mask = boundary > tl.arange(0, BLOCK_M)
