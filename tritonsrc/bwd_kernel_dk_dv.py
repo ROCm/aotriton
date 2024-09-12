@@ -67,10 +67,6 @@ def bwd_kernel_dk_dv_common(
     '''
     # loop over q (seqlen_q, dhead), do (seqlen_q, d_head)
     for start_n in range(lo, hi, BLOCK_M):
-        if start_n + BLOCK_M > seqlen_q:
-            q_padded = True
-        else:
-            q_padded = False
         # TODO: Unify the name, the usage of m/n is very confusing
         offs_m_curr = offs_n[:, None] + start_n # (BLOCK_M, 1)
         # -- load q, do --
@@ -81,16 +77,10 @@ def bwd_kernel_dk_dv_common(
         # non-regular version, determined by tl.constexpr, just like the fwd kernel.
 
         # q = tl.load(Q_block_ptr)
-        if q_padded:
-            q = load_fn(q_ptrs, offs_n + start_n, ld_offs_d, seqlen_q, head_dim)
-        else:
-            q = load_fn(q_ptrs, None, ld_offs_d, seqlen_q, head_dim)
+        q = load_fn(q_ptrs, None, ld_offs_d, seqlen_q, head_dim)
         # do = tl.load(DO_block_ptr)
         # TODO: pre_load_do
-        if q_padded:
-            do = load_fn(do_ptrs, offs_n + start_n, ld_offs_d, seqlen_q, head_dim)
-        else:
-            do = load_fn(do_ptrs, None, ld_offs_d, seqlen_q, head_dim)
+        do = load_fn(do_ptrs, None, ld_offs_d, seqlen_q, head_dim)
         # -- compute qk ----
         qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
         # TODO: These two checks can be optimized to occur on the last iter.
