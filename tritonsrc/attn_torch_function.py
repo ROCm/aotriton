@@ -521,8 +521,13 @@ class _attention(torch.autograd.Function):
         use_small_block = ctx.dropout_p > 0.0
         use_medium_block = ctx.bias_type != 0
         # Profiling shows (16, 16) is optimal solution for most bwd configurations
-        BLOCK_M = 16
-        BLOCK_N = 16
+        # BLOCK_M = 16
+        # BLOCK_N = 16
+        # For fused-attention-batch4-head48-d64-bwd-causal=False
+        BLOCK_M = 64
+        BLOCK_N = 64
+        N_WARPS = 2
+
         # if use_small_block:
         #     # DQ_BLOCK_M = min(max_seqlen_q, BLOCK)
         #     BLOCK_M = 32
@@ -548,7 +553,7 @@ class _attention(torch.autograd.Function):
             stride_dbz, stride_dbh, stride_dbm, stride_dbn = 0,0,0,0
         else:
             db.fill_(float('nan'))
-        print(f'backward {ctx.bias_type=} {ctx.autotune=} {BLOCK_M=} {BLOCK_N=} {stride_dbz=} {stride_dbh=} {stride_dbm=} {stride_dbn=}')
+        # print(f'backward {ctx.bias_type=} {ctx.autotune=} {BLOCK_M=} {BLOCK_N=} {stride_dbz=} {stride_dbh=} {stride_dbm=} {stride_dbn=}')
         if k.requires_grad and v.requires_grad:
             if ctx.autotune:
                 assert False
@@ -619,7 +624,7 @@ class _attention(torch.autograd.Function):
                     ctx.tuning_result.append(('bwd_kernel_dk_dv', tuning_result))
                     print(f'{id(ctx.tuning_result)=}')
             else:
-                print('Running bare_bwd_kernel_dk_dv')
+                # print('Running bare_bwd_kernel_dk_dv')
                 bare_bwd_kernel_dk_dv[grid_dk_dv](
                     q, k, v, b, ctx.sm_scale,
                     o, do,
@@ -648,13 +653,13 @@ class _attention(torch.autograd.Function):
                     BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N,
                     BLOCK_DMODEL=head_dim_rounded,
                     CAUSAL=ctx.causal,
-                    num_warps=1, waves_per_eu=1,
+                    num_warps=N_WARPS, waves_per_eu=1,
                     num_stages=1,
                     ENABLE_DROPOUT=ctx.dropout_p > 0.0,
                     PADDED_HEAD=padded_head,
                     BIAS_TYPE=ctx.bias_type,
                 )
-                print('bare_bwd_kernel_dk_dv Done')
+                # print('bare_bwd_kernel_dk_dv Done')
         # print(f"{dq.stride()=}", flush=True)
         # print(f"{dq.data_ptr()=:x}", flush=True)
         # print(f"{dk.stride()=}", flush=True)
@@ -749,7 +754,7 @@ class _attention(torch.autograd.Function):
                     """
                     ctx.tuning_result.append(('bwd_kernel_dq', tuning_result))
             else:
-                print('Running bare_bwd_kernel_dq')
+                # print('Running bare_bwd_kernel_dq')
                 bare_bwd_kernel_dq[grid_dq](
                     q, k, v, b, ctx.sm_scale,
                     o, do,
@@ -777,13 +782,13 @@ class _attention(torch.autograd.Function):
                     BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N,
                     BLOCK_DMODEL=head_dim_rounded,
                     CAUSAL=ctx.causal,
-                    num_warps=4, waves_per_eu=1,
+                    num_warps=1, waves_per_eu=1,
                     num_stages=1,
                     ENABLE_DROPOUT=ctx.dropout_p > 0.0,
                     PADDED_HEAD=padded_head,
                     BIAS_TYPE=ctx.bias_type,
                 )
-                print('bare_bwd_kernel_dq Done')
+                # print('bare_bwd_kernel_dq Done')
         # print(h.asm["ttgir"])
         return dq, dk, dv, None if db.numel() == 0 else db, None, None, None, None, None, None, None
 

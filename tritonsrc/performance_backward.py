@@ -2,11 +2,11 @@
 # Copyright © 2023-2024 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
+import triton
 import os
 import pytest
 import torch
 
-import triton
 from collections import defaultdict
 from attn_torch_function import attention, AttentionExtraArgs
 
@@ -26,8 +26,8 @@ USE_TFLOPS = True
 d_heads = os.getenv('D_HEADS', default='64,128')
 d_heads = map(lambda x: int(x), d_heads.split(','))
 
-# BATCH, N_HEADS, N_CTX, D_HEAD = 4, 48, 4096, 64
-BATCH, N_HEADS, N_CTX, D_HEAD = 512, 32, 512, 64
+BATCH, N_HEADS, N_CTX, D_HEAD = 4, 48, 4096, 64
+# BATCH, N_HEADS, N_CTX, D_HEAD = 512, 32, 512, 64
 # vary seq length for fixed head and batch=4
 configs = []
 for mode in ['bwd']:
@@ -37,8 +37,8 @@ for mode in ['bwd']:
             configs.append(triton.testing.Benchmark(
                 x_names=['N_CTX'],
                 # x_vals=[2**i for i in range(10, 15)],
-                # x_vals=[2**13],
-                x_vals=[512],
+                x_vals=[2**13],
+                # x_vals=[512],
                 line_arg='provider',
                 line_vals=['triton'] + (['flash'] if HAS_FLASH else []),
                 line_names=['Triton(TFLOPS)' if USE_TFLOPS else 'Triton(ms)'] + ([f'Flash-{FLASH_VER}'] if HAS_FLASH else []),
@@ -73,13 +73,11 @@ def bench_flash_attention(BATCH, H, N_CTX, D_HEAD, causal, mode, provider, dtype
         b = None
         sm_scale = 1.3
         dropout_p = 0.0
-        autotune = True
-        return_encoded_softmax = False
         best_configs = defaultdict(list)
         def report_best_config(kernel_name, best):
             best_configs[kernel_name].append((kernel_name, best))
         ext = AttentionExtraArgs(return_encoded_softmax=dropout_p > 0.0,
-                                 autotune=True,
+                                 autotune=False,
                                  return_autotune=False,
                                  report_best_config=report_best_config)
         fn = lambda: attention(q, k, v, b, causal, sm_scale, dropout_p, ext)
