@@ -67,7 +67,9 @@ def attn_fwd(
     off_z = tl.program_id(2)
     offs_m = start_m * BLOCK_M + tl.arange(0, BLOCK_M)
     offs_n = tl.arange(0, BLOCK_N)
-    offs_d = tl.arange(0, BLOCK_DMODEL)
+    # offs_d = tl.arange(0, BLOCK_DMODEL)
+    offs_d1 = tl.arange(0, BLOCK_DMODEL // 2)
+    offs_d2 = tl.arange(BLOCK_DMODEL // 2, BLOCK_DMODEL)
     philox_seed = 0
     philox_offset_base = philox_offset2
     if ENABLE_DROPOUT:
@@ -130,6 +132,7 @@ def attn_fwd(
         # the blocks that are all 0. We exit early.
         if n_blocks <= 0:
             o_offset = Out + batch_index * stride_oz + off_h_q * stride_oh + cu_seqlens_q_start * stride_om
+            offs_d = tl.arange(0, BLOCK_DMODEL)
             o_ptrs = o_offset + offs_m[:, None] * stride_om + offs_d[None, :] * stride_on
             acc = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=Out.type.element_ty)
             o_ptrs_mask = offs_m[:, None] < seqlen_q
@@ -163,15 +166,18 @@ def attn_fwd(
 
     # Compute pointers for all the tensors used in this kernel.
     q_offset = Q + batch_index * stride_qz + off_h_q * stride_qh + cu_seqlens_q_start * stride_qm
-    q_ptrs = q_offset + offs_m[:, None] * stride_qm + offs_d[None, :] * stride_qk
+    q_ptrs1 = q_offset + offs_m[:, None] * stride_qm + offs_d1[None, :] * stride_qk
+    q_ptrs2 = q_offset + offs_m[:, None] * stride_qm + offs_d2[None, :] * stride_qk
     k_offset = batch_index * stride_kz + off_h_k * stride_kh + cu_seqlens_k_start * stride_kn
-    k_ptrs = K + k_offset + offs_d[:, None] * stride_kk + offs_n[None, :] * stride_kn
+    k_ptrs1 = K + k_offset + offs_d1[:, None] * stride_kk + offs_n[None, :] * stride_kn
+    k_ptrs2 = K + k_offset + offs_d2[:, None] * stride_kk + offs_n[None, :] * stride_kn
     # tl.device_print('batch_index ', batch_index)
     # tl.device_print('off_h_k ', off_h_k)
     # tl.device_print('cu_seqlens_k_start ', cu_seqlens_k_start)
     # tl.device_print('k_offset ', k_offset)
     v_offset = V + batch_index * stride_vz + off_h_k * stride_vh + cu_seqlens_k_start * stride_vk
-    v_ptrs = v_offset + offs_n[:, None] * stride_vk + offs_d[None, :] * stride_vn
+    v_ptrs1 = v_offset + offs_n[:, None] * stride_vk + offs_d1[None, :] * stride_vn
+    v_ptrs2 = v_offset + offs_n[:, None] * stride_vk + offs_d2[None, :] * stride_vn
     if BIAS_TYPE == 0:
         bias_ptrs = None
     elif BIAS_TYPE == 1:
@@ -203,16 +209,21 @@ def attn_fwd(
     # initialize pointer to m and l
     m_i = tl.full([BLOCK_M], float("-inf"), dtype=tl.float32)
     l_i = tl.full([BLOCK_M], 1.0, dtype=tl.float32)
-    acc = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)
+    acc1 = tl.zeros([BLOCK_M, BLOCK_DMODEL // 2], dtype=tl.float32)
+    acc2 = tl.zeros([BLOCK_M, BLOCK_DMODEL // 2], dtype=tl.float32)
     # scale sm_scale by log_2(e) and use 2^x in the loop as we do not
     # have native e^x support in HW.
     qk_scale = sm_scale * 1.44269504089
     # Q is loaded once at the beginning and shared by all N blocks.
-    q_ptrs_mask = offs_m[:, None] < seqlen_q
+    q_ptrs_mask1 = offs_m[:, None] < seqlen_q
+    q_ptrs_mask2 = offs_m[:, None] < seqlen_q
     if PADDED_HEAD:
-        q_ptrs_mask = q_ptrs_mask & (offs_d[None, :] < head_dim)
-    q = tl.load(q_ptrs, mask=q_ptrs_mask, other=0.0)
-    q = (q * qk_scale).to(q.type.element_ty)
+        q_ptrs_mask1 = q_ptrs_mask1 & (offs_d1[None, :] < head_dim)
+        q_ptrs_mask2 = q_ptrs_mask2 & (offs_d2[None, :] < head_dim)
+    q1 = tl.load(q_ptrs1, mask=q_ptrs_mask1, other=0.0)
+    q1 = (q1 * qk_scale).to(q1.type.element_ty)
+    q2 = tl.load(q_ptrs2, mask=q_ptrs_mask2, other=0.0)
+    q2 = (q2 * qk_scale).to(q2.type.element_ty)
 
     # Here we compute how many full and masked blocks we have.
     padded_block_k = n_extra_tokens != 0
@@ -234,9 +245,9 @@ def attn_fwd(
     # value because there is no masking. Similarly we do not need padding.
     if n_full_blocks > 0:
         block_max = (n_blocks - masked_blocks) * BLOCK_N
-        acc, l_i, m_i = attn_fwd_inner(
-                acc, l_i, m_i,
-                q, k_ptrs, v_ptrs, bias_ptrs,
+        acc1, acc2, l_i, m_i = attn_fwd_inner(
+                acc1, acc2, l_i, m_i,
+                q1, q2, k_ptrs1, k_ptrs2, v_ptrs1, v_ptrs2, bias_ptrs,
                 stride_kn, stride_vk, stride_bn,
                 seqlen_q, seqlen_k, head_dim,
                 start_m, block_min, block_max,
@@ -259,8 +270,10 @@ def attn_fwd(
             offs_n_causal = offs_n + (seqlen_q - seqlen_k)
         else:
             offs_n_causal = 0
-        k_ptrs += n_full_blocks * BLOCK_N * stride_kn
-        v_ptrs += n_full_blocks * BLOCK_N * stride_vk
+        k_ptrs1 += n_full_blocks * BLOCK_N * stride_kn
+        k_ptrs2 += n_full_blocks * BLOCK_N * stride_kn
+        v_ptrs1 += n_full_blocks * BLOCK_N * stride_vk
+        v_ptrs2 += n_full_blocks * BLOCK_N * stride_vk
         if BIAS_TYPE == 0:
             pass
         elif BIAS_TYPE == 1:
@@ -270,9 +283,9 @@ def attn_fwd(
         # if RETURN_ENCODED_SOFTMAX:
         #     encoded_sm_base += n_full_blocks * BLOCK_N
             # encoded_sm_ptrs += n_full_blocks * BLOCK_N
-        acc, l_i, m_i = attn_fwd_inner(
-                acc, l_i, m_i,
-                q, k_ptrs, v_ptrs, bias_ptrs,
+        acc1, acc2, l_i, m_i = attn_fwd_inner(
+                acc1, acc2, l_i, m_i,
+                q1, q2, k_ptrs1, k_ptrs2, v_ptrs1, v_ptrs2, bias_ptrs,
                 stride_kn, stride_vk, stride_bn,
                 seqlen_q, seqlen_k, head_dim,
                 start_m, block_min, block_max,
@@ -285,9 +298,12 @@ def attn_fwd(
                 # _, MASK_STEPS, ...
                 PRE_LOAD_V, True, ENABLE_DROPOUT, RETURN_ENCODED_SOFTMAX, PADDED_HEAD)
     # epilogue
-    acc = acc / l_i[:, None]
+    # l_recip = 1 / l_i[:, None]
+    acc1 = acc1 / l_i[:, None]
+    acc2 = acc2 / l_i[:, None]
     if ENABLE_DROPOUT:
-        acc = acc / (1 - dropout_p)
+        acc1 = acc1 / (1 - dropout_p)
+        acc2 = acc2 / (1 - dropout_p)
     # If seqlen_q > seqlen_k but the delta is not a multiple of BLOCK_M,
     # then we have one block with a row of all NaNs which come from computing
     # softmax over a row of all -infs (-inf - inf = NaN). We check for that here
@@ -295,14 +311,16 @@ def attn_fwd(
     end_m_idx = (start_m + 1) * BLOCK_M
     start_m_idx = start_m * BLOCK_M
     causal_start_idx = seqlen_q - seqlen_k
-    acc = acc.to(Out.type.element_ty)
+    acc1 = acc1.to(Out.type.element_ty)
+    acc2 = acc2.to(Out.type.element_ty)
     if CAUSAL:
         if causal_start_idx > start_m_idx and causal_start_idx < end_m_idx:
             out_mask_boundary = tl.full((BLOCK_DMODEL, ), causal_start_idx, dtype=tl.int32)
             mask_m_offsets = start_m_idx + tl.arange(0, BLOCK_M)
             out_ptrs_mask = mask_m_offsets[:, None] >= out_mask_boundary[None, :]
             z = 0.0
-            acc = tl.where(out_ptrs_mask, acc, z.to(acc.type.element_ty))
+            acc1 = tl.where(out_ptrs_mask, acc1, z.to(acc1.type.element_ty))
+            acc2 = tl.where(out_ptrs_mask, acc2, z.to(acc2.type.element_ty))
     # FIXME: MQA/GQA L tensor
     # TODO: make writing of L optional
     # write back LSE
@@ -321,12 +339,22 @@ def attn_fwd(
         tl.store(l_ptrs, m_i + tl.math.log2(l_i))
 
     o_base = Out + batch_index * stride_oz + off_h_q * stride_oh + cu_seqlens_q_start * stride_om
-    mstore2d(acc,
+    mstore2d(acc1,
              BLOCK_M,
-             BLOCK_DMODEL,
+             BLOCK_DMODEL // 2,
              o_base=o_base,
              o_start_row=start_m * BLOCK_M,
              o_start_col=0,
+             o_rows=seqlen_q,
+             o_cols=head_dim,
+             stride_row=stride_om,
+             stride_col=stride_on)
+    mstore2d(acc2,
+             BLOCK_M,
+             BLOCK_DMODEL // 2,
+             o_base=o_base,
+             o_start_row=start_m * BLOCK_M,
+             o_start_col=BLOCK_DMODEL // 2,
              o_rows=seqlen_q,
              o_cols=head_dim,
              stride_row=stride_om,

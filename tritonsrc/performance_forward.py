@@ -23,6 +23,9 @@ HAS_FLASH = FLASH_VER is not None
 USE_TFLOPS = bool(int(os.getenv('USE_TFLOPS', default='1')))
 print(f'{USE_TFLOPS=}')
 
+d_heads = os.getenv('D_HEADS', default='64,128')
+d_heads = map(lambda x: int(x), d_heads.split(','))
+
 n_ctx = os.getenv('N_CTX', default=list(range(10, 14)))
 if isinstance(n_ctx, str):
     n_ctx = map(lambda x: int(x), n_ctx.split(','))
@@ -34,26 +37,27 @@ BATCH, N_HEADS, N_CTX, D_HEAD = 4, 48, 4096, 64
 configs = []
 for mode in ['fwd']:
     for causal in [False, True]:
-        configs.append(triton.testing.Benchmark(
-            x_names=['N_CTX'],
-            x_vals=list(X_VALS),
-            # x_vals=[2**i for i in range(10, 14)],  # 2 ** 15 not working for now
-            # x_vals=[2**12],
-            line_arg='provider',
-            line_vals=['triton'] + (['flash'] if HAS_FLASH else []),
-            line_names=['Triton(TFLOPS)' if USE_TFLOPS else 'Triton(ms)'] + ([f'Flash-{FLASH_VER}'] if HAS_FLASH else []),
-            styles=[('red', '-'), ('blue', '-')],
-            ylabel='TFLOPS' if USE_TFLOPS else 'ms',
-            plot_name=f'fused-attention-batch{BATCH}-head{N_HEADS}-d{D_HEAD}-{mode}-causal={causal}',
-            args={
-                'H': N_HEADS,
-                'BATCH': BATCH,
-                'D_HEAD': D_HEAD,
-                'dtype': torch.float16,
-                'mode': mode,
-                'causal': causal,
-                })
-        )
+        for D_HEAD in d_heads:
+            configs.append(triton.testing.Benchmark(
+                x_names=['N_CTX'],
+                x_vals=list(X_VALS),
+                # x_vals=[2**i for i in range(10, 14)],  # 2 ** 15 not working for now
+                # x_vals=[2**12],
+                line_arg='provider',
+                line_vals=['triton'] + (['flash'] if HAS_FLASH else []),
+                line_names=['Triton(TFLOPS)' if USE_TFLOPS else 'Triton(ms)'] + ([f'Flash-{FLASH_VER}'] if HAS_FLASH else []),
+                styles=[('red', '-'), ('blue', '-')],
+                ylabel='TFLOPS' if USE_TFLOPS else 'ms',
+                plot_name=f'fused-attention-batch{BATCH}-head{N_HEADS}-d{D_HEAD}-{mode}-causal={causal}',
+                args={
+                    'H': N_HEADS,
+                    'BATCH': BATCH,
+                    'D_HEAD': D_HEAD,
+                    'dtype': torch.float16,
+                    'mode': mode,
+                    'causal': causal,
+                    })
+            )
 
 
 @triton.testing.perf_report(configs)

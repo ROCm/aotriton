@@ -9,8 +9,14 @@ from masked_load_store import load_fn, mstore2d
 @triton.jit
 def attn_fwd_inner(
         # Problem Description
-        acc, l_i, m_i,
-        q, k_ptrs, v_ptrs, bias_ptrs,
+        acc1, acc2, l_i, m_i,
+        q1,
+        q2,
+        k_ptrs1,
+        k_ptrs2,
+        v_ptrs1,
+        v_ptrs2,
+        bias_ptrs,
         stride_kn, stride_vk, stride_bn,
         seqlen_q, seqlen_k, head_dim,
         # Sub-problem range
@@ -45,16 +51,18 @@ def attn_fwd_inner(
             k_offs_n = start_n + tl.arange(0, BLOCK_N)
         else:
             k_offs_n = None
-        k_offs_d = None if not PADDED_HEAD else tl.arange(0, BLOCK_DMODEL)
+        k_offs_d1 = None if not PADDED_HEAD else tl.arange(0, BLOCK_DMODEL // 2)
+        k_offs_d2 = None if not PADDED_HEAD else tl.arange(BLOCK_DMODEL // 2, BLOCK_DMODEL)
         '''
         k_offs_n = start_n + tl.arange(0, BLOCK_N)
         k_offs_d = tl.arange(0, BLOCK_DMODEL)
         # k_offs_d = None if not PADDED_HEAD else tl.arange(0, BLOCK_DMODEL)
         '''
-        k = load_fn(k_ptrs, k_offs_d, k_offs_n, head_dim, seqlen_k)
+        k1 = load_fn(k_ptrs1, k_offs_d1, k_offs_n, head_dim, seqlen_k)
         if PRE_LOAD_V:
             # We can use the same offsets as k, just with dims transposed.
-            v = load_fn(v_ptrs, k_offs_n, k_offs_d, seqlen_k, head_dim)
+            v1 = load_fn(v_ptrs1, k_offs_n, k_offs_d1, seqlen_k, head_dim)
+            v2 = load_fn(v_ptrs2, k_offs_n, k_offs_d2, seqlen_k, head_dim)
         qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
         # We start from end of seqlen_k so only the first iteration would need
         # to be checked for padding if it is not a multiple of block_n
@@ -75,7 +83,9 @@ def attn_fwd_inner(
             causal_mask = offs_m[:, None] >= causal_boundary[None, :]
             qk = tl.where(causal_mask, qk, float("-inf"))
         # -- compute qk ----
-        qk += tl.dot(q, k)
+        qk += tl.dot(q1, k1)
+        k2 = load_fn(k_ptrs2, k_offs_d2, k_offs_n, head_dim, seqlen_k)
+        qk += tl.dot(q2, k2)
         if bias_ptrs is not None:
             bias_offs_n = start_n + tl.arange(0, BLOCK_N) if MASK_STEPS else None
             bias = load_fn(bias_ptrs, offs_m, bias_offs_n, seqlen_q, seqlen_k)
@@ -129,18 +139,24 @@ def attn_fwd_inner(
             # tl.store(encoded_sm_ptrs, p.to(q.type.element_ty))
         # -- update output accumulator --
         alpha = tl.math.exp2(m_i - m_ij)
-        acc = acc * alpha[:, None]
+        acc1 = acc1 * alpha[:, None]
+        acc2 = acc2 * alpha[:, None]
         if not PRE_LOAD_V:
-            v = load_fn(v_ptrs, k_offs_n, k_offs_d, seqlen_k, head_dim)
+            v1 = load_fn(v_ptrs1, k_offs_n, k_offs_d1, seqlen_k, head_dim)
         # -- update m_i and l_i
         l_i = l_i * alpha + l_ij
         # update m_i and l_i
         m_i = m_ij
-        acc += tl.dot(p.to(v.type.element_ty), v)
-        k_ptrs += BLOCK_N * stride_kn
-        v_ptrs += BLOCK_N * stride_vk
+        acc1 += tl.dot(p.to(v1.type.element_ty), v1)
+        if not PRE_LOAD_V:
+            v2 = load_fn(v_ptrs2, k_offs_n, k_offs_d2, seqlen_k, head_dim)
+        acc2 += tl.dot(p.to(v2.type.element_ty), v2)
+        k_ptrs1 += BLOCK_N * stride_kn
+        k_ptrs2 += BLOCK_N * stride_kn
+        v_ptrs1 += BLOCK_N * stride_vk
+        v_ptrs2 += BLOCK_N * stride_vk
         if bias_ptrs is not None:
             bias_ptrs += BLOCK_N * stride_bn
         # if RETURN_ENCODED_SOFTMAX:
         #     encoded_sm_ptrs += BLOCK_N
-    return acc, l_i, m_i
+    return acc1, acc2, l_i, m_i
