@@ -4,6 +4,7 @@
 #include <aotriton/util.h>
 #include <string>
 #include <unordered_map>
+#include <string_view>
 
 namespace aotriton {
 
@@ -16,7 +17,12 @@ struct LazyArch {
     hipError_t err = hipGetDeviceProperties(&prop, dev_);
     if (err != hipSuccess)
       return GPU_ARCH_UNKNOWN;
-    auto iter = string_to_arch.find(prop.gcnArchName);
+    std::string_view arch(prop.gcnArchName);
+    const auto colon = arch.find(':');
+    if (colon != arch.npos) {
+      arch = std::string_view(prop.gcnArchName, colon);
+    }
+    auto iter = string_to_arch.find(std::string(arch));
     if (iter == string_to_arch.end())
       return GPU_ARCH_UNKNOWN;
     return iter->second;
@@ -28,8 +34,8 @@ private:
 };
 
 std::unordered_map<std::string, GpuArch> LazyArch::string_to_arch = {
-  {"gfx90a:sramecc+:xnack-", GPU_ARCH_AMD_GFX90A},
-  {"gfx942:sramecc+:xnack-", GPU_ARCH_AMD_GFX942},
+  {"gfx90a", GPU_ARCH_AMD_GFX90A},
+  {"gfx942", GPU_ARCH_AMD_GFX942},
   {"gfx1100", GPU_ARCH_AMD_GFX1100},
   {"gfx1101", GPU_ARCH_AMD_GFX1101},
 };
