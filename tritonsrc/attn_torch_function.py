@@ -319,7 +319,7 @@ class _attention(torch.autograd.Function):
             BLOCK_M //= 2
 
         if autotune:
-            assert False, "tritonsrc based autotune is disabled for now due to potentially faulty triton.Config on Navi31"
+            # assert False, "tritonsrc based autotune is disabled for now due to potentially faulty triton.Config on Navi31"
             tuned_attn_fwd[grid](
                 q, k, v, b, sm_scale, M, o,
                 q.stride(0), q.stride(1), q.stride(2), q.stride(3),
@@ -523,10 +523,21 @@ class _attention(torch.autograd.Function):
         # Profiling shows (16, 16) is optimal solution for most bwd configurations
         # BLOCK_M = 16
         # BLOCK_N = 16
-        # For fused-attention-batch4-head48-d64-bwd-causal=False
+        # For fused-attention-batch4-head48-d64-bwd-causal=False on MI200
         BLOCK_M = 64
         BLOCK_N = 64
         N_WARPS = 2
+        N_WAVES = 1
+        N_STGS = 1
+        # For fused-attention-batch4-head48-d64-bwd-causal=False on MI300
+        # But CPPTUNE does not match JIT results
+        # BLOCK_M = 16
+        # BLOCK_N = 32
+        BLOCK_M = 64
+        BLOCK_N = 64
+        N_WARPS = 1
+        N_WAVES = 0
+        N_STGS = 1
 
         # if use_small_block:
         #     # DQ_BLOCK_M = min(max_seqlen_q, BLOCK)
@@ -653,8 +664,8 @@ class _attention(torch.autograd.Function):
                     BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N,
                     BLOCK_DMODEL=head_dim_rounded,
                     CAUSAL=ctx.causal,
-                    num_warps=N_WARPS, waves_per_eu=1,
-                    num_stages=1,
+                    num_warps=N_WARPS, waves_per_eu=N_WAVES,
+                    num_stages=N_STGS,
                     ENABLE_DROPOUT=ctx.dropout_p > 0.0,
                     PADDED_HEAD=padded_head,
                     BIAS_TYPE=ctx.bias_type,

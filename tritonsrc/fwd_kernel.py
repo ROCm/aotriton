@@ -298,9 +298,9 @@ def attn_fwd(
                 # _, MASK_STEPS, ...
                 PRE_LOAD_V, True, ENABLE_DROPOUT, RETURN_ENCODED_SOFTMAX, PADDED_HEAD)
     # epilogue
-    # l_recip = 1 / l_i[:, None]
-    acc1 = acc1 / l_i[:, None]
-    acc2 = acc2 / l_i[:, None]
+    l_recip = 1 / l_i[:, None]
+    acc1 = acc1 * l_recip
+    acc2 = acc2 * l_recip
     if ENABLE_DROPOUT:
         acc1 = acc1 / (1 - dropout_p)
         acc2 = acc2 / (1 - dropout_p)
