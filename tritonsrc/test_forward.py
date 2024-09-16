@@ -116,11 +116,12 @@ class FwdTester(object):
                 q = torch.transpose(q, 1, 2)
                 k = torch.transpose(k, 1, 2)
                 v = torch.transpose(v, 1, 2)
-                if b is not None:
-                    b = torch.transpose(b, 1, 2)
                 assert q.shape == (BATCH, N_HEADS, seqlen_q, D_HEAD)
                 assert k.shape == (BATCH, N_HEADS, seqlen_k, D_HEAD)
                 assert v.shape == (BATCH, N_HEADS, seqlen_k, D_HEAD)
+                if b is not None:
+                    b = torch.transpose(b, 1, 2)
+                    assert b.shape == (BATCH, N_HEADS, seqlen_q, seqlen_k)
         if False: # Debugging
             q = (
                 torch.empty((Z, H, seqlen_q, D_HEAD), dtype=dtype, device="cuda")
