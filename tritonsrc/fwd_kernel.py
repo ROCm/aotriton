@@ -178,22 +178,21 @@ def attn_fwd(
     v_offset = V + batch_index * stride_vz + off_h_k * stride_vh + cu_seqlens_k_start * stride_vk
     v_ptrs1 = v_offset + offs_n[:, None] * stride_vk + offs_d1[None, :] * stride_vn
     v_ptrs2 = v_offset + offs_n[:, None] * stride_vk + offs_d2[None, :] * stride_vn
+
+    off_zh = batch_index * num_head_q + off_h_q
     if BIAS_TYPE == 0:
         bias_ptrs = None
     elif BIAS_TYPE == 1:
         # Note: this might get large enough to overflow on some configs
-        bias_offset = off_h_q * stride_bh
-        bias_ptrs = B + bias_offset + offs_m[:, None] * stride_bm + offs_n[None, :] * stride_bn
+        bias_offset = B + off_zh * max_seqlen_q * max_seqlen_k
+        bias_ptrs = bias_offset + offs_m[:, None] * stride_bm + offs_n[None, :] * stride_bn
     else:
         tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
-
     if USE_ALIBI:
         a_offset = batch_index * stride_az + off_h_q * stride_ah
         alibi_slope = tl.load(alibi_slopes + a_offset)
     else:
         alibi_slope = None
-
-    off_zh = batch_index * num_head_q + off_h_q
     if ENABLE_DROPOUT:
         batch_philox_offset = philox_offset_base + off_zh * max_seqlen_q * max_seqlen_k
     else:
@@ -286,7 +285,7 @@ def attn_fwd(
         acc1, acc2, l_i, m_i = attn_fwd_inner(
                 acc1, acc2, l_i, m_i,
                 q1, q2, k_ptrs1, k_ptrs2, v_ptrs1, v_ptrs2, bias_ptrs,
-                stride_kn, stride_vk, stride_bn,
+                stride_kn, stride_vk, stride_bm,
                 seqlen_q, seqlen_k, head_dim,
                 start_m, block_min, block_max,
                 dropout_p, philox_seed, batch_philox_offset, max_seqlen_k,
