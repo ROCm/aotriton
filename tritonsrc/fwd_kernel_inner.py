@@ -113,7 +113,7 @@ def attn_fwd_inner(
             philox_offset = batch_philox_offset + start_m * BLOCK_M * max_seqlen_k + start_n
             keep = dropout_mask(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, max_seqlen_k)
             if RETURN_ENCODED_SOFTMAX:
-                mstore2d(tl.where(keep, p, -p).to(q.type.element_ty),
+                mstore2d(tl.where(keep, p, -p).to(q1.type.element_ty),
                          BLOCK_M,
                          BLOCK_N,
                          o_base=encoded_sm_base,
@@ -126,7 +126,7 @@ def attn_fwd_inner(
                 # tl.store(encoded_sm_ptrs, tl.where(keep, p, -p).to(q.type.element_ty))
             p = tl.where(keep, p, 0.0)
         elif RETURN_ENCODED_SOFTMAX:
-            mstore2d(p.to(q.type.element_ty),
+            mstore2d(p.to(q1.type.element_ty),
                      BLOCK_M,
                      BLOCK_N,
                      o_base=encoded_sm_base,

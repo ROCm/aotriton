@@ -315,7 +315,7 @@ def attn_fwd(
     acc2 = acc2.to(Out.type.element_ty)
     if CAUSAL:
         if causal_start_idx > start_m_idx and causal_start_idx < end_m_idx:
-            out_mask_boundary = tl.full((BLOCK_DMODEL, ), causal_start_idx, dtype=tl.int32)
+            out_mask_boundary = tl.full((BLOCK_DMODEL // 2, ), causal_start_idx, dtype=tl.int32)
             mask_m_offsets = start_m_idx + tl.arange(0, BLOCK_M)
             out_ptrs_mask = mask_m_offsets[:, None] >= out_mask_boundary[None, :]
             z = 0.0
