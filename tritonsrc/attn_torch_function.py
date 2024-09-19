@@ -548,7 +548,7 @@ class _attention(torch.autograd.Function):
             stride_dbz, stride_dbh, stride_dbm, stride_dbn = 0,0,0,0
         else:
             db.fill_(float('nan'))
-        print(f'backward {ctx.bias_type=} {ctx.autotune=} {BLOCK_M=} {BLOCK_N=} {stride_dbz=} {stride_dbh=} {stride_dbm=} {stride_dbn=}')
+        # print(f'backward {ctx.bias_type=} {ctx.autotune=} {BLOCK_M=} {BLOCK_N=} {stride_dbz=} {stride_dbh=} {stride_dbm=} {stride_dbn=}')
         if k.requires_grad and v.requires_grad:
             if ctx.autotune:
                 # assert False, "autotune bwd kernel is disabled"
@@ -619,7 +619,7 @@ class _attention(torch.autograd.Function):
                     ctx.tuning_result.append(('bwd_kernel_dk_dv', tuning_result))
                     print(f'{id(ctx.tuning_result)=}')
             else:
-                print('Running bare_bwd_kernel_dk_dv')
+                # print('Running bare_bwd_kernel_dk_dv')
                 bare_bwd_kernel_dk_dv[grid_dk_dv](
                     q, k, v, b, ctx.sm_scale,
                     o, do,
@@ -654,7 +654,7 @@ class _attention(torch.autograd.Function):
                     PADDED_HEAD=padded_head,
                     BIAS_TYPE=ctx.bias_type,
                 )
-                print('bare_bwd_kernel_dk_dv Done')
+                # print('bare_bwd_kernel_dk_dv Done')
         # print(f"{dq.stride()=}", flush=True)
         # print(f"{dq.data_ptr()=:x}", flush=True)
         # print(f"{dk.stride()=}", flush=True)
@@ -749,7 +749,7 @@ class _attention(torch.autograd.Function):
                     """
                     ctx.tuning_result.append(('bwd_kernel_dq', tuning_result))
             else:
-                print('Running bare_bwd_kernel_dq')
+                # print('Running bare_bwd_kernel_dq')
                 bare_bwd_kernel_dq[grid_dq](
                     q, k, v, b, ctx.sm_scale,
                     o, do,
@@ -783,7 +783,7 @@ class _attention(torch.autograd.Function):
                     PADDED_HEAD=padded_head,
                     BIAS_TYPE=ctx.bias_type,
                 )
-                print('bare_bwd_kernel_dq Done')
+                # print('bare_bwd_kernel_dq Done')
         # print(h.asm["ttgir"])
         return dq, dk, dv, None if db.numel() == 0 else db, None, None, None, None, None, None, None
 
