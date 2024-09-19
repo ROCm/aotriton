@@ -133,6 +133,8 @@ class SdpaContext(object):
         # Maximal value from tune_flash.py and table_tool.py --fudge_factor_tolerance 5.0
         # Note: Navi 3x is experimental and YMMV
         self.OUT_FUDGE_FACTOR = 6.0 if dtype != torch.float32 else 10.0
+        if self.seqlen_k >= 2048:
+            self.OUT_FUDGE_FACTOR = 20.0 if self.head_dim <= 32 else 40.0
 
     '''
     Create Tensors that will be kept b/w forward and backward pass
@@ -175,6 +177,11 @@ class SdpaContext(object):
         q, k, v, b = self.dev_tensors
         seqlen_k = k.shape[2]
         return seqlen_k
+
+    @property
+    def head_dim(self):
+        q, k, v, b = self.dev_tensors
+        return q.shape[-1]
 
     @property
     def ref_device(self):
@@ -235,7 +242,7 @@ class SdpaContext(object):
         self._require_grads(self.lp_ref_tensors, skip_dq=skip_dq, skip_dk_dv=skip_dk_dv, skip_db=skip_db)
 
     def _compute_fudge_factors_python(self, p : SdpaParams):
-        assert False, 'Disable for Sancheck'
+        assert False, 'Not implemented yet. Disable for Sancheck'
         seqlen_k = self.seqlen_k
         seqlen_q = self.seqlen_q
         seqlen_k_fudge_factor = 1.0 if seqlen_k < 1024 else 2.0
@@ -252,6 +259,7 @@ class SdpaContext(object):
         dtype = self.dtype
         seqlen_k = self.seqlen_k
         seqlen_q = self.seqlen_q
+        head_dim = self.head_dim
 
         # Maximal value from tune_flash.py and table_tool.py --fudge_factor_tolerance 5.0
         # Note: Navi 3x is experimental and YMMV

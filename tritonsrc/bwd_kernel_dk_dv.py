@@ -46,12 +46,12 @@ def bwd_kernel_dk_dv(
     if ENABLE_DROPOUT:
         philox_seed = tl.load(philox_seed_ptr)
         philox_offset_base += tl.load(philox_offset1)
-    start_m = tl.program_id(0) * BLOCK_N  # start_m is a misused name. For dkdv it partitions seqlen_k
+    start_k = tl.program_id(0) * BLOCK_N  # start_k partitions seqlen_k
     off_h_k = tl.program_id(1) # head index
     off_z = tl.program_id(2) # batch index, for varlen it indicates index in cu_seqlens_q/k
     num_z = tl.num_programs(2)
     offs_m = tl.arange(0, BLOCK_M)
-    offs_n = start_m + tl.arange(0, BLOCK_N)
+    offs_n = start_k + tl.arange(0, BLOCK_N)
     offs_d = tl.arange(0, BLOCK_DMODEL)
     ld_offs_d = None if not PADDED_HEAD else tl.arange(0, BLOCK_DMODEL)
 
@@ -65,7 +65,7 @@ def bwd_kernel_dk_dv(
         cu_seqlens_k_start = tl.load(cu_seqlens_k + off_z)
         cu_seqlens_k_end = tl.load(cu_seqlens_k + off_z + 1)
         seqlen_k = cu_seqlens_k_end - cu_seqlens_k_start
-        if start_m >= seqlen_k:
+        if start_k >= seqlen_k:
             return
         cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
         cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
@@ -76,7 +76,7 @@ def bwd_kernel_dk_dv(
         cu_seqlens_k_start = tl.load(cu_seqlens_k + off_z)
         cu_seqlens_k_end = tl.load(cu_seqlens_k + off_z + 1)
         seqlen_k = cu_seqlens_k_end - cu_seqlens_k_start
-        if start_m >= seqlen_k:
+        if start_k >= seqlen_k:
             return
         cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
         cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
@@ -85,6 +85,12 @@ def bwd_kernel_dk_dv(
         cu_seqlens_q_start = 0
         cu_seqlens_k_start = 0
         batch_index = off_z
+
+    # Still need early exit in GPU kernel to support varlen
+    if CAUSAL:
+        # TODO: bottom right causal and windowed
+        if start_k > seqlen_q:
+            return
 
     # Initialize pointers to Q, K, V
     # Q is consumed depending on block ID. Every block uses
@@ -105,8 +111,8 @@ def bwd_kernel_dk_dv(
     k_offset = off_h_k * stride_kh + batch_index * stride_kz + cu_seqlens_k_start * stride_kn
     K += k_offset
     kt_ptrs = K + offs_d[:, None] * stride_kk + offs_n[None, :] * stride_kn
-    # kt_offs_n = None if start_m + BLOCK_N <= seqlen_k else start_m + tl.arange(0, BLOCK_N)
-    if start_m + BLOCK_N <= seqlen_k:
+    # kt_offs_n = None if start_k + BLOCK_N <= seqlen_k else start_k + tl.arange(0, BLOCK_N)
+    if start_k + BLOCK_N <= seqlen_k:
         kt = load_fn(kt_ptrs, ld_offs_d, None, head_dim, seqlen_k)
     else:
         kt = load_fn(kt_ptrs, ld_offs_d, offs_n, head_dim, seqlen_k)
@@ -130,7 +136,7 @@ def bwd_kernel_dk_dv(
     # )
     # vt = tl.load(VT_block_ptr)
     vt_ptrs = V + offs_d[:, None] * stride_vn + offs_n[None, :] * stride_vk
-    if start_m + BLOCK_N <= seqlen_k:
+    if start_k + BLOCK_N <= seqlen_k:
         vt = load_fn(vt_ptrs, ld_offs_d, None, head_dim, seqlen_k)
     else:
         vt = load_fn(vt_ptrs, ld_offs_d, offs_n, head_dim, seqlen_k)
@@ -151,7 +157,7 @@ def bwd_kernel_dk_dv(
                 base=B + off_h_k * stride_bh + batch_index * stride_bz,
                 shape=(seqlen_q, seqlen_k),
                 strides=(stride_bm, stride_bn),
-                offsets=(0, start_m),
+                offsets=(0, start_k),
                 block_shape=(BLOCK_M, BLOCK_N),
                 order=(1, 0)
                 )
@@ -168,6 +174,31 @@ def bwd_kernel_dk_dv(
     qk_scale = sm_scale * 1.44269504089
     kt = (kt * qk_scale).to(kt.type.element_ty)
     group_size = num_head_q // num_head_k
+
+    q_lo = start_k if CAUSAL else 0
+    q_hi = seqlen_q
+    real_seqlen_q = q_hi - q_lo  # seqlen_q after considering causal (and windowed in the future)
+    n_blocks = tl.cdiv(q_hi - q_lo, BLOCK_M)
+    n_extra_tokens = 0
+    if real_seqlen_q < BLOCK_M:
+        n_extra_tokens = BLOCK_M - real_seqlen_q
+    elif real_seqlen_q % BLOCK_M:
+        n_extra_tokens = real_seqlen_q % BLOCK_M
+    is_irregular_q = n_extra_tokens != 0
+    leading_masked_blocks = 0
+    trailing_masked_blocks = 0
+    if CAUSAL:
+        # leading masked blocks comes from the diagnoal cutting line from causal masks
+        # can be larger than one if BLOCK_N > BLOCK_M
+        leading_masked_blocks = tl.cdiv(BLOCK_N, BLOCK_M)
+        # trailing masked blocks comes from extra tokens
+        # Note trailing block may overlap with leading block
+        trailing_masked_blocks = 1 if is_irregular_q else 0
+    else:
+        leading_masked_blocks = 0
+        trailing_masked_blocks = 1 if is_irregular_q else 0
+    n_full_blocks = n_blocks - leading_masked_blocks - trailing_masked_blocks
+
     for off_h_q in range(off_h_k * group_size, off_h_k * group_size + group_size):
         off_zh = off_z * num_head_q + off_h_q * 1
         # This lower loop bound is because of the causal mask. We create a lower triangular
@@ -189,33 +220,90 @@ def bwd_kernel_dk_dv(
         do_offset = off_h_q * stride_oh + batch_index * stride_oz + cu_seqlens_q_start * stride_om
         do_ptrs = DO + do_offset + offs_m[:, None] * stride_om + offs_d[None, :] * stride_ok
 
-        dk, dv = bwd_inner_dk_dv(
-            dk, dv,
-            q_ptrs, stride_qm, kt, vt, B_block_ptr,
-            do_ptrs, stride_om,
-            l_ptrs,
-            D_ptrs,
-            seqlen_q, seqlen_k,
-            start_m,
-            head_dim,
-            dropout_p,
-            philox_seed,
-            batch_philox_offset,
-            max_seqlen_k,
-            BLOCK_M,
-            BLOCK_DMODEL,
-            BLOCK_N,
-            CAUSAL,
-            ENABLE_DROPOUT,
-            PADDED_HEAD,
-            BIAS_TYPE)
+        # dkdk kernel is a little tricky, its masked blocks can be found in both ends
+        # leading masked: by causal
+        # trailing: by irregular seqlen_q
+
+        # For initialization
+        lo = 0
+        hi = 0
+
+        if leading_masked_blocks:
+            lo = q_lo
+            hi = lo + leading_masked_blocks * BLOCK_M
+            # TODO: overflow_size maybe larger than on block (BLOCK_M)
+            #       In this case the bwd_inner_dk_dv can be further optimized
+            overflow_size = 0 if hi < q_hi else hi - q_hi
+            dk, dv = bwd_inner_dk_dv(
+                dk, dv,
+                q_ptrs, stride_qm, kt, vt, B_block_ptr,
+                do_ptrs, stride_om,
+                l_ptrs,
+                D_ptrs,
+                seqlen_q, seqlen_k, head_dim,
+                start_k, lo, hi, overflow_size,
+                dropout_p, philox_seed, batch_philox_offset, max_seqlen_k,
+                BLOCK_M,
+                BLOCK_DMODEL,
+                BLOCK_N,
+                False,  # FULL_BLOCKS
+                CAUSAL,
+                ENABLE_DROPOUT,
+                PADDED_HEAD,
+                BIAS_TYPE)
+            tl.debug_barrier()
+
+        if n_full_blocks > 0:
+            lo = q_lo + leading_masked_blocks * BLOCK_M
+            hi = lo + n_full_blocks * BLOCK_M
+            dk, dv = bwd_inner_dk_dv(
+                dk, dv,
+                q_ptrs, stride_qm, kt, vt, B_block_ptr,
+                do_ptrs, stride_om,
+                l_ptrs,
+                D_ptrs,
+                seqlen_q, seqlen_k, head_dim,
+                start_k, lo, hi, 0,
+                dropout_p, philox_seed, batch_philox_offset, max_seqlen_k,
+                BLOCK_M,
+                BLOCK_DMODEL,
+                BLOCK_N,
+                True,  # FULL_BLOCKS
+                False,  # CAUSAL has zero effect for full blocks
+                ENABLE_DROPOUT,
+                PADDED_HEAD,
+                BIAS_TYPE)
+
+        # use n_full_blocks to confirm the trailing masked blocks is not overlapping with leading masked_blocks
+        if n_full_blocks >= 0 and trailing_masked_blocks > 0:
+            tl.debug_barrier()
+            lo = q_lo + leading_masked_blocks * BLOCK_M + n_full_blocks * BLOCK_M
+            hi = q_hi
+            overflow_size = lo + trailing_masked_blocks * BLOCK_M - q_hi
+            dk, dv = bwd_inner_dk_dv(
+                dk, dv,
+                q_ptrs, stride_qm, kt, vt, B_block_ptr,
+                do_ptrs, stride_om,
+                l_ptrs,
+                D_ptrs,
+                seqlen_q, seqlen_k, head_dim,
+                start_k, lo, hi, overflow_size,
+                dropout_p, philox_seed, batch_philox_offset, max_seqlen_k,
+                BLOCK_M,
+                BLOCK_DMODEL,
+                BLOCK_N,
+                False,  # FULL_BLOCKS
+                CAUSAL,
+                ENABLE_DROPOUT,
+                PADDED_HEAD,
+                BIAS_TYPE)
     dk = (dk * sm_scale).to(kt.type.element_ty)
     dv = dv.to(vt.type.element_ty)
     mstore2d(dk,
              BLOCK_N,
              BLOCK_DMODEL,
              o_base=DK,
-             o_start_row=start_m,
+             o_start_row=start_k,
              o_start_col=0,
              o_rows=seqlen_k,
              o_cols=head_dim,
@@ -225,7 +313,7 @@ def bwd_kernel_dk_dv(
              BLOCK_N,
              BLOCK_DMODEL,
              o_base=DV,
-             o_start_row=start_m,
+             o_start_row=start_k,
              o_start_col=0,
              o_rows=seqlen_k,
              o_cols=head_dim,

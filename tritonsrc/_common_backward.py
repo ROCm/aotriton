@@ -62,12 +62,14 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
         print(f'{ref_out[err_idx]=}')
         print(f'{tri_out[0, 0, :4, :4]=}')
         print(f'{ref_out[0, 0, :4, :4]=}')
+        print(f'{tri_out[-1, -1, :4, :4]=}')
+        print(f'{ref_out[-1, -1, :4, :4]=}')
         # print(f'{tri_out[0, 1, :4, :4]=}')
         # print(f'{ref_out[0, 1, :4, :4]=}')
         # print(f'{tri_out[0, 4, :4, :4]=}')
         # print(f'{ref_out[0, 4, :4, :4]=}')
         print(f'{N_HEADS=}')
-    assert is_allclose, 'Forward pass {is_allclose=}'
+    assert is_allclose, f'Forward pass {is_allclose=}'
 
     dq_allclose, dk_allclose, dv_allclose, db_allclose = grads_allclose
     tri_dq, tri_dk, tri_dv, tri_db = ctx.dout_tensors
@@ -119,7 +121,7 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
         err_idx = np.unravel_index(torch.argmax(torch.abs(TO(ref_dk) - tri_dk)).cpu().numpy(), ref_dk.shape)
         print(f'{err_idx=}')
         print(f'{tri_dk[err_idx]=} {ref_dk[err_idx]=} error = {torch.abs(tri_dk[err_idx] - ref_dk[err_idx])}')
-        print(f'{tri_dk[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]/ref_dk[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
+        # print(f'{tri_dk[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]/ref_dk[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
         if dropout_mask is not None:
             print(f'{dropout_mask[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')
         if seqlen_q <= 16 or True:
