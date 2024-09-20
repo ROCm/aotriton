@@ -224,7 +224,7 @@ def bwd_kernel_dq(
     if n_full_blocks > 0:
         lo = 0
         hi = n_full_blocks * BLOCK_N
-        dq, kt_ptrs, vt_ptrs, B_block_ptr, DB_block_ptr = bwd_inner_dq(
+        dq = bwd_inner_dq(
             dq,
             DB_block_ptr, store_db,
             q, kt_ptrs, stride_kn, vt_ptrs, stride_vk, B_block_ptr,
@@ -252,7 +252,7 @@ def bwd_kernel_dq(
         lo = n_full_blocks * BLOCK_N
         hi = k_hi
         tl.debug_barrier()
-        dq, kt_ptrs, vt_ptrs, B_block_ptr, DB_block_ptr = bwd_inner_dq(
+        dq = bwd_inner_dq(
             dq,
             DB_block_ptr, store_db,
             q, kt_ptrs, stride_kn, vt_ptrs, stride_vk, B_block_ptr,

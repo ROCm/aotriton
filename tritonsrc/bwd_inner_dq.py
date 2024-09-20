@@ -63,9 +63,11 @@ def bwd_inner_dq(
         tl.device_print('Wrong l_i', l_i)
     '''
 
-    # loop over k, v
+    kt_ptrs += lo * k_stride
+    vt_ptrs += lo * v_stride
     if BIAS_TYPE == 1:
-        B_block_ptr = tl.advance(B_block_ptr, (lo, 0))
+        B_block_ptr = tl.advance(B_block_ptr, (0, lo))
+        DB_block_ptr = tl.advance(DB_block_ptr, (0, lo))
 
     '''
            K1   K2      (d)V      dO
@@ -181,4 +183,4 @@ def bwd_inner_dq(
         if BIAS_TYPE == 1:
             B_block_ptr = tl.advance(B_block_ptr, (0, BLOCK_N))
             DB_block_ptr = tl.advance(DB_block_ptr, (0, BLOCK_N))
-    return dq, kt_ptrs, vt_ptrs, B_block_ptr, DB_block_ptr
+    return dq
