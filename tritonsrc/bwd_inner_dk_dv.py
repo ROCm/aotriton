@@ -172,4 +172,4 @@ def bwd_inner_dk_dv(
         do_ptrs += do_stride * BLOCK_M
         if BIAS_TYPE == 1:
             B_block_ptr = tl.advance(B_block_ptr, (BLOCK_M, 0))
-    return dk, dv
+    return dk, dv, q_ptrs, do_ptrs, B_block_ptr

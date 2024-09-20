@@ -228,13 +228,13 @@ def bwd_kernel_dk_dv(
         lo = 0
         hi = 0
 
-        if leading_masked_blocks:
+        if leading_masked_blocks > 0:
             lo = q_lo
             hi = lo + leading_masked_blocks * BLOCK_M
             # TODO: overflow_size maybe larger than on block (BLOCK_M)
             #       In this case the bwd_inner_dk_dv can be further optimized
             overflow_size = 0 if hi < q_hi else hi - q_hi
-            dk, dv = bwd_inner_dk_dv(
+            dk, dv, q_ptrs, do_ptrs, B_block_ptr = bwd_inner_dk_dv(
                 dk, dv,
                 q_ptrs, stride_qm, kt, vt, B_block_ptr,
                 do_ptrs, stride_om,
@@ -256,7 +256,7 @@ def bwd_kernel_dk_dv(
         if n_full_blocks > 0:
             lo = q_lo + leading_masked_blocks * BLOCK_M
             hi = lo + n_full_blocks * BLOCK_M
-            dk, dv = bwd_inner_dk_dv(
+            dk, dv, q_ptrs, do_ptrs, B_block_ptr = bwd_inner_dk_dv(
                 dk, dv,
                 q_ptrs, stride_qm, kt, vt, B_block_ptr,
                 do_ptrs, stride_om,
@@ -280,7 +280,7 @@ def bwd_kernel_dk_dv(
             lo = q_lo + leading_masked_blocks * BLOCK_M + n_full_blocks * BLOCK_M
             hi = q_hi
             overflow_size = lo + trailing_masked_blocks * BLOCK_M - q_hi
-            dk, dv = bwd_inner_dk_dv(
+            dk, dv, q_ptrs, do_ptrs, B_block_ptr = bwd_inner_dk_dv(
                 dk, dv,
                 q_ptrs, stride_qm, kt, vt, B_block_ptr,
                 do_ptrs, stride_om,

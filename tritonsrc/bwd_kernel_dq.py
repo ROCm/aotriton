@@ -44,13 +44,13 @@ def bwd_kernel_dq(
     if ENABLE_DROPOUT:
         philox_seed = tl.load(philox_seed_ptr)
         philox_offset_base += tl.load(philox_offset1)
-    start_m = tl.program_id(0) * BLOCK_M
+    start_q = tl.program_id(0) * BLOCK_M
     off_h_q = tl.program_id(1) # head index
     off_h_k = off_h_q if num_head_q == num_head_k else off_h_q // (num_head_q // num_head_k)
     off_z = tl.program_id(2) # batch index
     num_z = tl.num_programs(2)
     off_zh = off_z * num_head_q + off_h_q * 1
-    offs_m = start_m + tl.arange(0, BLOCK_M)
+    offs_m = start_q + tl.arange(0, BLOCK_M)
     offs_n = tl.arange(0, BLOCK_N)
     offs_d = tl.arange(0, BLOCK_DMODEL)
     ld_offs_d = None if not PADDED_HEAD else tl.arange(0, BLOCK_DMODEL)
@@ -65,7 +65,7 @@ def bwd_kernel_dq(
         cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
         cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
         seqlen_q = cu_seqlens_q_end - cu_seqlens_q_start
-        if start_m >= seqlen_q:
+        if start_q >= seqlen_q:
             return
         cu_seqlens_k_start = tl.load(cu_seqlens_k + off_z)
         cu_seqlens_k_end = tl.load(cu_seqlens_k + off_z + 1)
@@ -76,7 +76,7 @@ def bwd_kernel_dq(
         cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
         cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
         seqlen_q = cu_seqlens_q_end - cu_seqlens_q_start
-        if start_m >= seqlen_q:
+        if start_q >= seqlen_q:
             return
         cu_seqlens_k_start = tl.load(cu_seqlens_k + off_z)
         cu_seqlens_k_end = tl.load(cu_seqlens_k + off_z + 1)
@@ -85,6 +85,13 @@ def bwd_kernel_dq(
         cu_seqlens_q_start = 0
         cu_seqlens_k_start = 0
         batch_index = off_z
+
+    # Still need early exit in GPU kernel to support varlen
+    if CAUSAL:
+        # TODO: bottom right causal and windowed
+        if start_q > seqlen_k:
+            return
+
     # Initialize pointers to Q, K, V
     q_offset = off_h_q * stride_qh + batch_index * stride_qz + cu_seqlens_q_start * stride_qm
     Q += q_offset
@@ -92,15 +99,17 @@ def bwd_kernel_dq(
     #     base=Q,
     #     shape=(seqlen_q, head_dim),
     #     strides=(stride_qm, stride_qk),
-    #     offsets=(start_m, 0),
+    #     offsets=(start_q, 0),
     #     block_shape=(BLOCK_M, BLOCK_DMODEL),
     #     order=(1, 0)
     # )
     q_ptrs = Q + offs_m[:, None] * stride_qm + offs_d[None, :] * stride_qk
-    if start_m + BLOCK_M <= seqlen_q:
+    if start_q + BLOCK_M <= seqlen_q:
         q = load_fn(q_ptrs, None, ld_offs_d, seqlen_q, head_dim)
     else:
         q = load_fn(q_ptrs, offs_m, ld_offs_d, seqlen_q, head_dim)
+    qk_scale = sm_scale * 1.44269504089
+    q = (q * qk_scale).to(q.type.element_ty)
     k_offset = off_h_k * stride_kh + batch_index * stride_kz + cu_seqlens_k_start * stride_kn
     K += k_offset
     kt_ptrs = K + offs_d[:, None] * stride_kk + offs_n[None, :] * stride_kn
@@ -129,12 +138,12 @@ def bwd_kernel_dq(
     #     base=DO,
     #     shape=(seqlen_q, head_dim),
     #     strides=(stride_om, stride_ok),
-    #     offsets=(start_m, 0),
+    #     offsets=(start_q, 0),
     #     block_shape=(BLOCK_M, BLOCK_DMODEL),
     #     order=(1, 0)
     # )
     do_ptrs = DO + offs_m[:, None] * stride_om + offs_d[None, :] * stride_ok
-    if start_m + BLOCK_M <= seqlen_q:
+    if start_q + BLOCK_M <= seqlen_q:
         do = load_fn(do_ptrs, None, ld_offs_d, seqlen_q, head_dim)
     else:
         do = load_fn(do_ptrs, offs_m, ld_offs_d, seqlen_q, head_dim)
@@ -153,15 +162,10 @@ def bwd_kernel_dq(
     #     base=DQ,
     #     shape=(seqlen_q, head_dim),
     #     strides=(stride_dqm, stride_dqk),
-    #     offsets=(start_m, 0),
+    #     offsets=(start_q, 0),
     #     block_shape=(BLOCK_M, BLOCK_DMODEL),
     #     order=(1, 0)
     # )
-    dq_ptrs = DQ + offs_m[:, None] * stride_dqm + offs_d[None, :] * stride_dqk
-    if start_m + BLOCK_M <= seqlen_q:
-        dq = load_fn(dq_ptrs, None, ld_offs_d, seqlen_q, head_dim)
-    else:
-        dq = load_fn(dq_ptrs, offs_m, ld_offs_d, seqlen_q, head_dim)
     store_db = True
     if BIAS_TYPE == 0:
         B_block_ptr = 0
@@ -171,7 +175,7 @@ def bwd_kernel_dq(
                 base=B + off_h_q * stride_bh + batch_index * stride_bz,
                 shape=(seqlen_q, seqlen_k),
                 strides=(stride_bm, stride_bn),
-                offsets=(start_m, 0),
+                offsets=(start_q, 0),
                 block_shape=(BLOCK_M, BLOCK_N),
                 order=(1, 0)
                 )
@@ -183,38 +187,169 @@ def bwd_kernel_dq(
                 base=DB + off_h_q * stride_dbh + batch_index * stride_dbz,
                 shape=(seqlen_q, seqlen_k),
                 strides=(stride_dbm, stride_dbn),
-                offsets=(start_m, 0),
+                offsets=(start_q, 0),
                 block_shape=(BLOCK_M, BLOCK_N),
                 order=(1, 0)
                 )
     else:
         tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
 
-    dq = bwd_inner_dq(
-        q, kt_ptrs, stride_kn, vt_ptrs, stride_vk, B_block_ptr,
-        sm_scale, do,
-        dq, DB_block_ptr, store_db,
-        l_ptrs,
-        D_ptrs,
-        seqlen_q, seqlen_k,
-        start_m,
-        head_dim,
-        dropout_p,
-        philox_seed,
-        batch_philox_offset,
-        max_seqlen_k,
-        BLOCK_M,
-        BLOCK_DMODEL,
-        BLOCK_N,
-        CAUSAL,
-        ENABLE_DROPOUT,
-        PADDED_HEAD,
-        BIAS_TYPE)
+    k_lo = 0
+    k_hi = min(start_q + BLOCK_M, seqlen_k) if CAUSAL else seqlen_k
+    real_seqlen_k = k_hi - k_lo  # seqlen_q after considering causal (and windowed in the future)
+    n_blocks = tl.cdiv(k_hi - k_lo, BLOCK_N)
+    n_extra_tokens = 0
+    if real_seqlen_k < BLOCK_N:
+        n_extra_tokens = BLOCK_N - real_seqlen_k
+    elif real_seqlen_k % BLOCK_N:
+        n_extra_tokens = real_seqlen_k % BLOCK_N
+    is_irregular_k = n_extra_tokens != 0
+    leading_masked_blocks = 0  # TODO: Windowed attention
+    trailing_masked_blocks = 0
+    # For causal masks, actually it is easier to calculate the full blocks and
+    # then derive trailing_masked_blocks. However this algorithm won't work for
+    # windowed masks. Therefore we still derive n_full_blocks from
+    # trailing_masked_blocks for long term stability.
+    if CAUSAL:
+        mask_top_edge = start_q
+        # For DQ, each CU compute along K/V direction
+        # Thus no leading masked blocks while trailing masked blocks comes from
+        # the diagnoal cutting line from causal masks
+        trailing_masked_blocks = tl.cdiv(k_hi - mask_top_edge // BLOCK_N * BLOCK_N, BLOCK_N)
+    else:
+        trailing_masked_blocks = 1 if is_irregular_k else 0
+
+    dq = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)
+    n_full_blocks = n_blocks - leading_masked_blocks - trailing_masked_blocks
+    if n_full_blocks > 0:
+        lo = 0
+        hi = n_full_blocks * BLOCK_N
+        dq, kt_ptrs, vt_ptrs, B_block_ptr, DB_block_ptr = bwd_inner_dq(
+            dq,
+            DB_block_ptr, store_db,
+            q, kt_ptrs, stride_kn, vt_ptrs, stride_vk, B_block_ptr,
+            do,
+            l_ptrs,
+            D_ptrs,
+            seqlen_q, seqlen_k, head_dim,
+            start_q, lo, hi,
+            dropout_p, philox_seed, batch_philox_offset, max_seqlen_k,
+            BLOCK_M,
+            BLOCK_DMODEL,
+            BLOCK_N,
+            True,  # FULL_BLOCKS
+            False,  # CAUSAL has zero effect for full blocks
+            ENABLE_DROPOUT,
+            PADDED_HEAD,
+            BIAS_TYPE)
+    # if tl.program_id(0) == tl.num_programs(0) - 1:
+    #     tl.device_print('n_full_blocks', n_full_blocks)
+    #     tl.device_print('trailing_masked_blocks', trailing_masked_blocks)
+    # if tl.program_id(0) == tl.num_programs(0) - 1:
+    #     tl.device_print('dq before', dq)
+    # Keep using "trailing_masked_blocks" for windowed attention
+    if trailing_masked_blocks > 0:
+        lo = n_full_blocks * BLOCK_N
+        hi = k_hi
+        tl.debug_barrier()
+        dq, kt_ptrs, vt_ptrs, B_block_ptr, DB_block_ptr = bwd_inner_dq(
+            dq,
+            DB_block_ptr, store_db,
+            q, kt_ptrs, stride_kn, vt_ptrs, stride_vk, B_block_ptr,
+            do,
+            l_ptrs,
+            D_ptrs,
+            seqlen_q, seqlen_k, head_dim,
+            start_q, lo, hi,
+            dropout_p, philox_seed, batch_philox_offset, max_seqlen_k,
+            BLOCK_M,
+            BLOCK_DMODEL,
+            BLOCK_N,
+            False,  # FULL_BLOCKS
+            CAUSAL,
+            ENABLE_DROPOUT,
+            PADDED_HEAD,
+            BIAS_TYPE)
+
+    '''
+    if True:
+        lo = 0
+        hi = seqlen_k
+        dq1 = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)
+        dq1 = bwd_inner_dq(
+            dq1,
+            DB_block_ptr, store_db,
+            q, kt_ptrs, stride_kn, vt_ptrs, stride_vk, B_block_ptr,
+            do,
+            l_ptrs,
+            D_ptrs,
+            seqlen_q, seqlen_k, head_dim,
+            start_q, 0, 17,
+            dropout_p, philox_seed, batch_philox_offset, max_seqlen_k,
+            BLOCK_M,
+            BLOCK_DMODEL,
+            BLOCK_N,
+            True,   # Debug, is right
+            False,  # FULL_BLOCKS
+            CAUSAL,
+            ENABLE_DROPOUT,
+            PADDED_HEAD,
+            BIAS_TYPE)
+    if True:
+        tl.debug_barrier()
+        dq = bwd_inner_dq(
+            dq,
+            DB_block_ptr, store_db,
+            q, kt_ptrs, stride_kn, vt_ptrs, stride_vk, B_block_ptr,
+            do,
+            l_ptrs,
+            D_ptrs,
+            seqlen_q, seqlen_k, head_dim,
+            start_q, 0, 16,
+            dropout_p, philox_seed, batch_philox_offset, max_seqlen_k,
+            BLOCK_M,
+            BLOCK_DMODEL,
+            BLOCK_N,
+            False,   # Debug, is right
+            False,  # FULL_BLOCKS
+            CAUSAL,
+            ENABLE_DROPOUT,
+            PADDED_HEAD,
+            BIAS_TYPE)
+        kt_ptrs += BLOCK_N * stride_kn * 1
+        vt_ptrs += BLOCK_N * stride_vk * 1
+        dq = bwd_inner_dq(
+            dq,
+            DB_block_ptr, store_db,
+            q, kt_ptrs, stride_kn, vt_ptrs, stride_vk, B_block_ptr,
+            do,
+            l_ptrs,
+            D_ptrs,
+            seqlen_q, seqlen_k, head_dim,
+            start_q, 16, 17,
+            dropout_p, philox_seed, batch_philox_offset, max_seqlen_k,
+            BLOCK_M,
+            BLOCK_DMODEL,
+            BLOCK_N,
+            False,   # Debug, is right
+            False,  # FULL_BLOCKS
+            CAUSAL,
+            ENABLE_DROPOUT,
+            PADDED_HEAD,
+            BIAS_TYPE)
+    '''
+    # if tl.program_id(0) == tl.num_programs(0) - 1:
+    #     tl.device_print('dq after', dq)
+    #     lo = n_full_blocks * BLOCK_N
+    #     hi = k_hi
+    #     tl.device_print('trailing lo', lo)
+    #     tl.device_print('trailing hi', hi)
+    dq = (dq * sm_scale).to(dq.type.element_ty)
     mstore2d(dq,
              BLOCK_M,
              BLOCK_DMODEL,
              o_base=DQ,
-             o_start_row=start_m,
+             o_start_row=start_q,
              o_start_col=0,
              o_rows=seqlen_q,
              o_cols=head_dim,
