@@ -21,7 +21,7 @@ except BaseException:
     except BaseException:
         FLASH_VER = None
 HAS_FLASH = FLASH_VER is not None
-USE_TFLOPS = True
+USE_TFLOPS = bool(int(os.getenv('USE_TFLOPS', default='1')))
 
 d_heads = os.getenv('D_HEADS', default='64,128')
 d_heads = map(lambda x: int(x), d_heads.split(','))
@@ -33,6 +33,7 @@ X_VALS = list(map(lambda x: 2 ** x, n_ctx))
 print(f'{X_VALS=}')
 
 BATCH, N_HEADS, N_CTX, D_HEAD = 4, 48, 4096, 64
+# BATCH, N_HEADS, N_CTX, D_HEAD = 8, 10, 4096, 64
 # BATCH, N_HEADS, N_CTX, D_HEAD = 512, 32, 512, 64
 # vary seq length for fixed head and batch=4
 configs = []
