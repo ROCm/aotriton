@@ -25,7 +25,7 @@ option(AOTRITON_COMPRESS_KERNEL "Enable GPU kernel compression with zstd. Fail w
 # option(AOTRITON_COMPRESS_KERNEL_STATIC_ZSTD "Use static zstd library to avoid potential zstd version conflict (e.g. pytorch)" OFF)
 
 # Resolve name conflicts with suffix
-set(AOTRITON_NAME_SUFFIX "" CACHE STRING "Add suffix to namespace and library file name. This is to resovle name conflicts with PyTorch's AOTriton during testing.")
+set(AOTRITON_NAME_SUFFIX "" CACHE STRING "Add suffix to namespace and library file name. This is to resolve name conflicts with PyTorch's AOTriton during testing.")
 if(AOTRITON_NAME_SUFFIX)
   set(AOTRITON_ENABLE_SUFFIX ON)
 else()
