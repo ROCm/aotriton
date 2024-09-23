@@ -50,7 +50,7 @@ def bwd_kernel_dq(
     off_z = tl.program_id(2) # batch index
     num_z = tl.num_programs(2)
     off_zh = off_z * num_head_q + off_h_q * 1
-    offs_m = start_q + tl.arange(0, BLOCK_M)
+    offs_q = start_q + tl.arange(0, BLOCK_M)
     offs_n = tl.arange(0, BLOCK_N)
     offs_d = tl.arange(0, BLOCK_DMODEL)
     ld_offs_d = None if not PADDED_HEAD else tl.arange(0, BLOCK_DMODEL)
@@ -103,11 +103,11 @@ def bwd_kernel_dq(
     #     block_shape=(BLOCK_M, BLOCK_DMODEL),
     #     order=(1, 0)
     # )
-    q_ptrs = Q + offs_m[:, None] * stride_qm + offs_d[None, :] * stride_qk
+    q_ptrs = Q + offs_q[:, None] * stride_qm + offs_d[None, :] * stride_qk
     if start_q + BLOCK_M <= seqlen_q:
         q = load_fn(q_ptrs, None, ld_offs_d, seqlen_q, head_dim)
     else:
-        q = load_fn(q_ptrs, offs_m, ld_offs_d, seqlen_q, head_dim)
+        q = load_fn(q_ptrs, offs_q, ld_offs_d, seqlen_q, head_dim)
     qk_scale = sm_scale * 1.44269504089
     q = (q * qk_scale).to(q.type.element_ty)
     k_offset = off_h_k * stride_kh + batch_index * stride_kz + cu_seqlens_k_start * stride_kn
@@ -142,11 +142,11 @@ def bwd_kernel_dq(
     #     block_shape=(BLOCK_M, BLOCK_DMODEL),
     #     order=(1, 0)
     # )
-    do_ptrs = DO + offs_m[:, None] * stride_om + offs_d[None, :] * stride_ok
+    do_ptrs = DO + offs_q[:, None] * stride_om + offs_d[None, :] * stride_ok
     if start_q + BLOCK_M <= seqlen_q:
         do = load_fn(do_ptrs, None, ld_offs_d, seqlen_q, head_dim)
     else:
-        do = load_fn(do_ptrs, offs_m, ld_offs_d, seqlen_q, head_dim)
+        do = load_fn(do_ptrs, offs_q, ld_offs_d, seqlen_q, head_dim)
     # pointer to row-wise quantities in value-like data
     D_ptrs = D + off_zh * max_seqlen_q
     l_ptrs = L + off_zh * max_seqlen_q
@@ -219,6 +219,12 @@ def bwd_kernel_dq(
     else:
         trailing_masked_blocks = 1 if is_irregular_k else 0
 
+    # Check for OOB accesses on D and LSE
+    q_boundary = tl.full((BLOCK_M, ), seqlen_q, dtype=tl.int32)
+    d_lse_ptrs_mask = offs_q < q_boundary
+    Di = tl.load(D_ptrs + offs_q, mask=d_lse_ptrs_mask, other=0.0)
+    l_i = tl.load(l_ptrs + offs_q, mask=d_lse_ptrs_mask, other=0.0)
+
     dq = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)
     n_full_blocks = n_blocks - leading_masked_blocks - trailing_masked_blocks
     if n_full_blocks > 0:
@@ -229,8 +235,7 @@ def bwd_kernel_dq(
             DB_block_ptr, store_db,
             q, kt_ptrs, stride_kn, vt_ptrs, stride_vk, B_block_ptr,
             do,
-            l_ptrs,
-            D_ptrs,
+            Di, l_i,
             seqlen_q, seqlen_k, head_dim,
             start_q, lo, hi,
             dropout_p, philox_seed, batch_philox_offset, max_seqlen_k,
@@ -257,8 +262,7 @@ def bwd_kernel_dq(
             DB_block_ptr, store_db,
             q, kt_ptrs, stride_kn, vt_ptrs, stride_vk, B_block_ptr,
             do,
-            l_ptrs,
-            D_ptrs,
+            Di, l_i,
             seqlen_q, seqlen_k, head_dim,
             start_q, lo, hi,
             dropout_p, philox_seed, batch_philox_offset, max_seqlen_k,

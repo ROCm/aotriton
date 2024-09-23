@@ -23,8 +23,7 @@ def bwd_inner_dq(
     # Problem Description
     q, kt_ptrs, k_stride, vt_ptrs, v_stride, B_block_ptr,
     do,
-    l_ptrs,
-    D_ptrs,
+    Di, l_i,
     seqlen_q, seqlen_k, head_dim,
     # Sub-problem range, (lo, hi) specify the range for seqlen_q
     start_q, lo, hi,
@@ -49,11 +48,6 @@ def bwd_inner_dq(
     offs_d = tl.arange(0, BLOCK_DMODEL)
     ld_offs_d = None if not PADDED_HEAD else tl.arange(0, BLOCK_DMODEL)
 
-    # Check for OOB accesses on D and LSE
-    q_boundary = tl.full((BLOCK_M, ), seqlen_q, dtype=tl.int32)
-    d_lse_ptrs_mask = offs_q < q_boundary
-    Di = tl.load(D_ptrs + offs_q, mask=d_lse_ptrs_mask, other=0.0)
-    l_i = tl.load(l_ptrs + offs_q, mask=d_lse_ptrs_mask, other=0.0)
     '''
     if DEBUG_RIGHT and start_q == 0:
         tl.device_print('Right Di', Di)
