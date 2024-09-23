@@ -130,7 +130,7 @@ def bwd_inner_dq(
         dp = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
         dp += dot(BLOCK_M, BLOCK_DMODEL, BLOCK_DMODEL, do, vt)
         if ENABLE_DROPOUT:
-            philox_offset = batch_philox_offset + start_m * max_seqlen_k + start_k
+            philox_offset = batch_philox_offset + start_q * max_seqlen_k + start_k
             keep = dropout_mask(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, max_seqlen_k)
             dp = tl.where(keep, dp / (1 - dropout_p), 0)
         # compute ds = p * (dp - delta[:, None])
