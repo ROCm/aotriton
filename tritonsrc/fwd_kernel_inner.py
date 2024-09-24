@@ -5,6 +5,7 @@ import triton
 import triton.language as tl
 from dropout import dropout_mask, dropout_rng, dropout_offsets
 from masked_load_store import load_fn, mstore2d
+from interleaved_dot import interleaved_dot_asym_ptr2nd
 
 @triton.jit
 def attn_fwd_inner(
@@ -35,6 +36,7 @@ def attn_fwd_inner(
         RETURN_ENCODED_SOFTMAX: tl.constexpr,
         PADDED_HEAD: tl.constexpr,
 ):
+    BLOCK_K : tl.constexpr = 64  # Pass as attn_fwd_inner
     offs_m = start_m * BLOCK_M + tl.arange(0, BLOCK_M)
     offs_n = tl.arange(0, BLOCK_N)
     # loop over k, v, and update accumulator
@@ -51,7 +53,10 @@ def attn_fwd_inner(
         k_offs_d = tl.arange(0, BLOCK_DMODEL)
         # k_offs_d = None if not PADDED_HEAD else tl.arange(0, BLOCK_DMODEL)
         '''
+
+        '''
         k = load_fn(k_ptrs, k_offs_d, k_offs_n, head_dim, seqlen_k)
+        '''
         if PRE_LOAD_V:
             # We can use the same offsets as k, just with dims transposed.
             v = load_fn(v_ptrs, k_offs_n, k_offs_d, seqlen_k, head_dim)
@@ -75,7 +80,18 @@ def attn_fwd_inner(
             causal_mask = offs_m[:, None] >= causal_boundary[None, :]
             qk = tl.where(causal_mask, qk, float("-inf"))
         # -- compute qk ----
+        '''
         qk += tl.dot(q, k)
+        '''
+        inter_k_offs_n = start_n + tl.arange(0, BLOCK_N)
+        inter_k_offs_d = tl.arange(0, BLOCK_K)
+        qk = interleaved_dot_asym_ptr2nd(qk,
+                                         q,
+                                         k_ptrs,
+                                         inter_k_offs_d[:, None],
+                                         1,  # stride_kk
+                                         BLOCK_M,
+                                         BLOCK_DMODEL, BLOCK_K)
         if bias_ptrs is not None:
             bias_offs_n = start_n + tl.arange(0, BLOCK_N) if MASK_STEPS else None
             bias = load_fn(bias_ptrs, offs_m, bias_offs_n, seqlen_q, seqlen_k)

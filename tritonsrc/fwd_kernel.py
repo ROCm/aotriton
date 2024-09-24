@@ -68,6 +68,8 @@ def attn_fwd(
     offs_m = start_m * BLOCK_M + tl.arange(0, BLOCK_M)
     offs_n = tl.arange(0, BLOCK_N)
     offs_d = tl.arange(0, BLOCK_DMODEL)
+    # BLOCK_K : tl.constexpr = 32
+    # offs_k = tl.arange(0, BLOCK_K)
     philox_seed = 0
     philox_offset_base = philox_offset2
     if ENABLE_DROPOUT:
@@ -164,8 +166,12 @@ def attn_fwd(
     # Compute pointers for all the tensors used in this kernel.
     q_offset = Q + batch_index * stride_qz + off_h_q * stride_qh + cu_seqlens_q_start * stride_qm
     q_ptrs = q_offset + offs_m[:, None] * stride_qm + offs_d[None, :] * stride_qk
+    '''
     k_offset = batch_index * stride_kz + off_h_k * stride_kh + cu_seqlens_k_start * stride_kn
     k_ptrs = K + k_offset + offs_d[:, None] * stride_kk + offs_n[None, :] * stride_kn
+    '''
+    k_offset = batch_index * stride_kz + off_h_k * stride_kh + cu_seqlens_k_start * stride_kn
+    k_ptrs = K + k_offset + offs_n[None, :] * stride_kn
     # tl.device_print('batch_index ', batch_index)
     # tl.device_print('off_h_k ', off_h_k)
     # tl.device_print('cu_seqlens_k_start ', cu_seqlens_k_start)

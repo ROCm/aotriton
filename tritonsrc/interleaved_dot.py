@@ -86,38 +86,98 @@ def dot_asym_ptr2nd_4(acc,
     return acc
 
 @triton.jit
+def dot_asym_ptr2nd_block0(acc,
+                           a_full,
+                           bm_ptrs, bk_ptrs,
+                           stride_bk,
+                           M : tl.constexpr,
+                           k_lo : tl.constexpr,
+                           k_hi : tl.constexpr,
+                           BLOCK_K : tl.constexpr):
+    a = a_full
+    return dot_asym_ptr2nd_0(acc, a, bm_ptrs, bk_ptrs, stride_bk, k_lo, k_hi, BLOCK_K)
+
+@triton.jit
+def dot_asym_ptr2nd_block1(acc,
+                           a_full,
+                           bm_ptrs, bk_ptrs,
+                           stride_bk,
+                           M : tl.constexpr,
+                           k_lo : tl.constexpr,
+                           k_hi : tl.constexpr,
+                           BLOCK_K : tl.constexpr):
+    # tl.static_print(f'M = {M}')
+    # tl.static_print(f'BLOCK_K = {BLOCK_K}')
+    a = a_full.reshape(M, 2, BLOCK_K).trans(0, 2, 1)
+    return dot_asym_ptr2nd_1(acc, a, bm_ptrs, bk_ptrs, stride_bk, k_lo, k_hi, BLOCK_K)
+
+@triton.jit
+def dot_asym_ptr2nd_block2(acc,
+                           a_full,
+                           bm_ptrs, bk_ptrs,
+                           stride_bk,
+                           M : tl.constexpr,
+                           k_lo : tl.constexpr,
+                           k_hi : tl.constexpr,
+                           BLOCK_K : tl.constexpr):
+    a = a_full.reshape(M, 2, 2, BLOCK_K).trans(0, 3, 2, 1)
+    return dot_asym_ptr2nd_2(acc, a, bm_ptrs, bk_ptrs, stride_bk, k_lo, k_hi, BLOCK_K)
+
+@triton.jit
+def dot_asym_ptr2nd_block3(acc,
+                           a_full,
+                           bm_ptrs, bk_ptrs,
+                           stride_bk,
+                           M : tl.constexpr,
+                           k_lo : tl.constexpr,
+                           k_hi : tl.constexpr,
+                           BLOCK_K : tl.constexpr):
+    a = a_full.reshape(M, 2, 2, 2, BLOCK_K).trans(0, 4, 3, 2, 1)
+    return dot_asym_ptr2nd_3(acc, a, bm_ptrs, bk_ptrs, stride_bk, k_lo, k_hi, BLOCK_K)
+
+@triton.jit
+def dot_asym_ptr2nd_block4(acc,
+                           a_full,
+                           bm_ptrs, bk_ptrs,
+                           stride_bk,
+                           M : tl.constexpr,
+                           k_lo : tl.constexpr,
+                           k_hi : tl.constexpr,
+                           BLOCK_K : tl.constexpr):
+    a = a_full.reshape(M, 2, 2, 2, 2, BLOCK_K).trans(0, 5, 4, 3, 2, 1)
+    return dot_asym_ptr2nd_4(acc, a, bm_ptrs, bk_ptrs, stride_bk, k_lo, k_hi, BLOCK_K)
+
+@triton.jit
 def dot_asym_ptr2nd_auto(acc,
                          a,
                          bm_ptrs, bk_ptrs,
                          stride_bk,
+                         M : tl.constexpr,
                          k_lo : tl.constexpr,
                          k_hi : tl.constexpr,
                          BLOCK_K : tl.constexpr,
                          ):
     N_BLOCKS : tl.constexpr = (k_hi - k_lo) // BLOCK_K
     if N_BLOCKS == 1:
-        return dot_asym_ptr2nd_0(acc, a, bm_ptrs, bk_ptrs, stride_bk, k_lo, k_hi, BLOCK_K)
+        return dot_asym_ptr2nd_block0(acc, a, bm_ptrs, bk_ptrs, stride_bk, M, k_lo, k_hi, BLOCK_K)
     elif N_BLOCKS == 2:
-        return dot_asym_ptr2nd_1(acc, a, bm_ptrs, bk_ptrs, stride_bk, k_lo, k_hi, BLOCK_K)
+        return dot_asym_ptr2nd_block1(acc, a, bm_ptrs, bk_ptrs, stride_bk, M, k_lo, k_hi, BLOCK_K)
     elif N_BLOCKS == 4:
-        return dot_asym_ptr2nd_2(acc, a, bm_ptrs, bk_ptrs, stride_bk, k_lo, k_hi, BLOCK_K)
+        return dot_asym_ptr2nd_block2(acc, a, bm_ptrs, bk_ptrs, stride_bk, M, k_lo, k_hi, BLOCK_K)
     elif N_BLOCKS == 8:
-        return dot_asym_ptr2nd_3(acc, a, bm_ptrs, bk_ptrs, stride_bk, k_lo, k_hi, BLOCK_K)
+        return dot_asym_ptr2nd_block3(acc, a, bm_ptrs, bk_ptrs, stride_bk, M, k_lo, k_hi, BLOCK_K)
     elif N_BLOCKS == 16:
-        return dot_asym_ptr2nd_4(acc, a, bm_ptrs, bk_ptrs, stride_bk, k_lo, k_hi, BLOCK_K)
+        return dot_asym_ptr2nd_block4(acc, a, bm_ptrs, bk_ptrs, stride_bk, M, k_lo, k_hi, BLOCK_K)
     else:
         tl.static_assert(False, f'Unsupport N_BLOCKS {N_BLOCKS} from ({hi=} - {lo=})/{BLOCK_K=}')
 
-'''
-Full Binary Tree load
-
-Load (M, K) matrix
-'''
 @triton.jit
 def interleaved_dot_asym_ptr2nd(acc,
                                 a,
                                 bm_ptrs, bk_ptrs,
                                 stride_bk,
+                                M : tl.constexpr,
                                 K : tl.constexpr,
                                 BLOCK_K : tl.constexpr):
-    return dot_asym_ptr2nd_auto(acc, a, bm_ptrs, bk_ptrs, stride_bk, 0, K, BLOCK_K)
+    # tl.static_print(f'M = {M}')
+    return dot_asym_ptr2nd_auto(acc, a, bm_ptrs, bk_ptrs, stride_bk, M, 0, K, BLOCK_K)
