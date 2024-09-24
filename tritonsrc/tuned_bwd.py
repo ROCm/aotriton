@@ -62,6 +62,7 @@ def tuned_bwd_kernel_dk_dv(
     ENABLE_DROPOUT: tl.constexpr,
     PADDED_HEAD: tl.constexpr,
     BIAS_TYPE: tl.constexpr,
+    SPLIT_DMODEL: tl.constexpr,
 ):
     bare_bwd_kernel_dk_dv(
             Q, K, V, B, sm_scale, Out, DO,
@@ -94,6 +95,7 @@ def tuned_bwd_kernel_dk_dv(
             ENABLE_DROPOUT,
             PADDED_HEAD=PADDED_HEAD,
             BIAS_TYPE=BIAS_TYPE,
+            SPLIT_DMODEL=SPLIT_DMODEL,
             )
 
 @triton.autotune(

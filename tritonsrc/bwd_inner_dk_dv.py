@@ -18,10 +18,13 @@ def dot(BLOCK_M : tl.constexpr, QDIM : tl.constexpr, KDIM : tl.constexpr, q, k):
 @triton.jit
 def bwd_inner_dk_dv(
     # I/O Tensor
-    dk, dv,
+    dk1, dk2,
+    dv1, dv2,
     # Problem Description
-    q_ptrs, q_stride, kt, vt, B_block_ptr,
-    do_ptrs, do_stride,
+    q_ptrs1, q_ptrs2, q_stride,
+    kt1, kt2, vt1, vt2,
+    B_block_ptr,
+    do_ptrs1, do_ptrs2, do_stride,
     l_ptrs,
     D_ptrs,
     seqlen_q, seqlen_k, head_dim,
@@ -40,16 +43,26 @@ def bwd_inner_dk_dv(
     ENABLE_DROPOUT: tl.constexpr,
     PADDED_HEAD: tl.constexpr,
     BIAS_TYPE: tl.constexpr,
+    SPLIT_DMODEL: tl.constexpr,
 ):
     # initialize offsets
     offs_k = start_k + tl.arange(0, BLOCK_N)
     offs_q = tl.arange(0, BLOCK_M)
-    ld_offs_d = None if not PADDED_HEAD else tl.arange(0, BLOCK_DMODEL)
+    if SPLIT_DMODEL:
+        ld_offs_d1 = None  # head_dim is always >= HALVED_DMODEL, otherwise BLOCK_DMODEL can be halved
+        ld_offs_d2 = None if not PADDED_HEAD else tl.arange(HALVED_DMODEL, BLOCK_DMODEL)
+    else:
+        ld_offs_d1 = None if not PADDED_HEAD else tl.arange(0, BLOCK_DMODEL)
+        ld_offs_d2 = 0
 
     # Q_block_ptr = tl.advance(Q_block_ptr, (lo, 0))
     # DO_block_ptr = tl.advance(DO_block_ptr, (lo, 0))
-    q_ptrs += lo * q_stride
-    do_ptrs += lo * do_stride
+    q_ptrs1 += lo * q_stride
+    do_ptrs1 += lo * do_stride
+    if SPLIT_DMODEL:
+        q_ptrs2 += lo * q_stride
+        do_ptrs2 += lo * do_stride
+
     if BIAS_TYPE == 1:
         B_block_ptr = tl.advance(B_block_ptr, (lo, 0))
 
@@ -81,17 +94,16 @@ def bwd_inner_dk_dv(
         # This common function can be further split into regular and
         # non-regular version, determined by tl.constexpr, just like the fwd kernel.
 
-        # q = tl.load(Q_block_ptr)
         if not FULL_BLOCKS:
-            q = load_fn(q_ptrs, offs_q + start_q, ld_offs_d, seqlen_q, head_dim)
+            q1 = load_fn(q_ptrs1, offs_q + start_q, ld_offs_d1, seqlen_q, head_dim)
         else:
-            q = load_fn(q_ptrs, None, ld_offs_d, seqlen_q, head_dim)
+            q1 = load_fn(q_ptrs1, None, ld_offs_d1, seqlen_q, head_dim)
         # do = tl.load(DO_block_ptr)
         # TODO: pre_load_do
         if not FULL_BLOCKS:
-            do = load_fn(do_ptrs, offs_q + start_q, ld_offs_d, seqlen_q, head_dim)
+            do1 = load_fn(do_ptrs1, offs_q + start_q, ld_offs_d1, seqlen_q, head_dim)
         else:
-            do = load_fn(do_ptrs, None, ld_offs_d, seqlen_q, head_dim)
+            do1 = load_fn(do_ptrs1, None, ld_offs_d1, seqlen_q, head_dim)
         # -- compute qk ----
         qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
         # TODO: These two checks can be optimized to occur on the last iter.
@@ -122,7 +134,13 @@ def bwd_inner_dk_dv(
         else:
             tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
         # q.offs = (start_q, 0), k.offs = (0, start_k)
-        qk += dot(BLOCK_M, BLOCK_DMODEL, BLOCK_DMODEL, q, kt) # (BLOCK_M, BLOCK_N)
+        qk += tl.dot(q1, kt1) # (BLOCK_M, BLOCK_N)
+        if SPLIT_DMODEL:
+            if not FULL_BLOCKS:
+                q2 = load_fn(q_ptrs2, offs_q + start_q, ld_offs_d2, seqlen_q, head_dim)
+            else:
+                q2 = load_fn(q_ptrs2, None, ld_offs_d2, seqlen_q, head_dim)
+            qk += tl.dot(q2, kt2) # (BLOCK_M, BLOCK_N)
         # Check for OOB accesses on D and LSE
         if FULL_BLOCKS:
             Di = tl.load(D_ptrs + offs_q_curr)
@@ -144,34 +162,57 @@ def bwd_inner_dk_dv(
             keep = dropout_mask(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, max_seqlen_k)
             # CAVEAT: do NOT update p, ds needs the original p
             if BLOCK_M == 1:
-                dv += tl.where(keep, p / (1 - dropout_p), 0.0).to(q_ptrs.dtype.element_ty) * do
+                dv1 += tl.where(keep, p / (1 - dropout_p), 0.0).to(q_ptrs1.dtype.element_ty) * do1
             else:
-                dv += tl.dot(tl.trans(tl.where(keep, p / (1 - dropout_p), 0.0)).to(q_ptrs.dtype.element_ty), do)
+                pt = tl.trans(tl.where(keep, p / (1 - dropout_p), 0.0)).to(q_ptrs1.dtype.element_ty)
+                dv1 += tl.dot(pt, do1)
         else:
             if BLOCK_M == 1:
-                dv += p.to(q_ptrs.dtype.element_ty) * do
+                dv1 += p.to(q_ptrs1.dtype.element_ty) * do1
             else:
-                dv += tl.dot(tl.trans(p.to(do.dtype)), do)
+                dv1 += tl.dot(tl.trans(p.to(do1.dtype)), do1)
+        if SPLIT_DMODEL:
+            if not FULL_BLOCKS:
+                do2 = load_fn(do_ptrs2, offs_q + start_q, ld_offs_d2, seqlen_q, head_dim)
+            else:
+                do2 = load_fn(do_ptrs2, None, ld_offs_d2, seqlen_q, head_dim)
         dp = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
         # compute dp = dot(do, vt)
         # dp += dot(BLOCK_M, BLOCK_DMODEL, BLOCK_DMODEL, do, vt)
         # do.shape = (BLOCK_M, BLOCK_DMODEL) vt.shape = (BLOCK_DMODEL, BLOCK_N)
-        dp += tl.dot(do, vt)
+        dp += tl.dot(do1, vt1)
+        dp += tl.dot(do2, vt2)
         if ENABLE_DROPOUT:
             dp = tl.where(keep, dp / (1 - dropout_p), 0)
+        if SPLIT_DMODEL:
+            if ENABLE_DROPOUT:
+                philox_offset = batch_philox_offset + start_q * max_seqlen_k + start_k
+                keep = dropout_mask(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, max_seqlen_k)
+                # CAVEAT: do NOT update p, ds needs the original p
+                if BLOCK_M == 1:
+                    dv2 += tl.where(keep, p / (1 - dropout_p), 0.0).to(q_ptrs1.dtype.element_ty) * do2
+                else:
+                    dv2 += tl.dot(pt, do2)
+            else:
+                if BLOCK_M == 1:
+                    dv2 += p.to(q_ptrs1.dtype.element_ty) * do2
+                else:
+                    dv2 += tl.dot(tl.trans(p.to(do2.dtype)), do2)
         # compute ds = p * (dp - delta[:, None])
-        ds = p * (dp - Di) # (BLOCK_M, BLOCK_N)
+        dst = tl.trans((p * (dp - Di)).to(q_ptrs1.dtype.element_ty)) # (BLOCK_M, BLOCK_N)
         # compute dk
-        if BLOCK_M == 1:
-            dk += ds.to(q_ptrs.dtype.element_ty) * q
-        else:
-            # ds.shape = (BLOCK_M, BLOCK_N), q.shape = (BLOCK_M, BLOCK_DMODEL)
-            dk += tl.dot(tl.trans(ds.to(q_ptrs.dtype.element_ty)), q) # (BLOCK_N, BLOCK_DMODEL)
+        dk1 += tl.dot(dst, q1) # (BLOCK_N, BLOCK_DMODEL)
+        if SPLIT_DMODEL:
+            dk2 += tl.dot(dst, q2) # (BLOCK_N, BLOCK_DMODEL)
+
         # update pointers (block_ptr code was left intentionally as comment)
         # Q_block_ptr = tl.advance(Q_block_ptr, (BLOCK_M, 0))
         # DO_block_ptr = tl.advance(DO_block_ptr, (BLOCK_M, 0)) # Debug DO accessing problems
-        q_ptrs += q_stride * BLOCK_M
-        do_ptrs += do_stride * BLOCK_M
+        q_ptrs1 += q_stride * BLOCK_M
+        do_ptrs1 += do_stride * BLOCK_M
+        if SPLIT_DMODEL:
+            q_ptrs2 += q_stride * BLOCK_M
+            do_ptrs2 += do_stride * BLOCK_M
         if BIAS_TYPE == 1:
             B_block_ptr = tl.advance(B_block_ptr, (BLOCK_M, 0))
-    return dk, dv
+    return dk1, dk2, dv1, dv2

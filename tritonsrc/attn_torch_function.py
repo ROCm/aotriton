@@ -581,6 +581,7 @@ class _attention(torch.autograd.Function):
                     ENABLE_DROPOUT=ctx.dropout_p > 0.0,
                     PADDED_HEAD=padded_head,
                     BIAS_TYPE=ctx.bias_type,
+                    SPLIT_DMODEL=True,
                 )
                 report = attn_extra_args.report_best_config
                 if report is not None:
@@ -653,6 +654,7 @@ class _attention(torch.autograd.Function):
                     ENABLE_DROPOUT=ctx.dropout_p > 0.0,
                     PADDED_HEAD=padded_head,
                     BIAS_TYPE=ctx.bias_type,
+                    SPLIT_DMODEL=True,
                 )
                 # print('bare_bwd_kernel_dk_dv Done')
         # print(f"{dq.stride()=}", flush=True)
