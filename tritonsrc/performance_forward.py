@@ -24,7 +24,8 @@ USE_TFLOPS = bool(int(os.getenv('USE_TFLOPS', default='1')))
 print(f'{USE_TFLOPS=}')
 
 d_heads = os.getenv('D_HEADS', default='64,128')
-d_heads = map(lambda x: int(x), d_heads.split(','))
+d_heads = list(map(lambda x: int(x), d_heads.split(',')))
+print(f'{d_heads=}')
 
 n_ctx = os.getenv('N_CTX', default=list(range(10, 14)))
 if isinstance(n_ctx, str):
@@ -38,6 +39,14 @@ configs = []
 for mode in ['fwd']:
     for causal in [False, True]:
         for D_HEAD in d_heads:
+            args = {
+                    'H': N_HEADS,
+                    'BATCH': BATCH,
+                    'D_HEAD': D_HEAD,
+                    'dtype': torch.float16,
+                    'mode': mode,
+                    'causal': causal,
+                    }
             configs.append(triton.testing.Benchmark(
                 x_names=['N_CTX'],
                 x_vals=list(X_VALS),
@@ -49,16 +58,7 @@ for mode in ['fwd']:
                 styles=[('red', '-'), ('blue', '-')],
                 ylabel='TFLOPS' if USE_TFLOPS else 'ms',
                 plot_name=f'fused-attention-batch{BATCH}-head{N_HEADS}-d{D_HEAD}-{mode}-causal={causal}',
-                args={
-                    'H': N_HEADS,
-                    'BATCH': BATCH,
-                    'D_HEAD': D_HEAD,
-                    'dtype': torch.float16,
-                    'mode': mode,
-                    'causal': causal,
-                    })
-            )
-
+                args=args))
 
 @triton.testing.perf_report(configs)
 def bench_flash_attention(BATCH, H, N_CTX, D_HEAD, causal, mode, provider, dtype=torch.float16, device="cuda"):
