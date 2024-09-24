@@ -24,7 +24,7 @@ HAS_FLASH = FLASH_VER is not None
 USE_TFLOPS = bool(int(os.getenv('USE_TFLOPS', default='1')))
 
 d_heads = os.getenv('D_HEADS', default='64,128')
-d_heads = map(lambda x: int(x), d_heads.split(','))
+d_heads = list(map(lambda x: int(x), d_heads.split(',')))
 
 n_ctx = os.getenv('N_CTX', default=list(range(10, 14)))
 if isinstance(n_ctx, str):
