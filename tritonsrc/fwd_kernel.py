@@ -177,7 +177,10 @@ def attn_fwd(
     # tl.device_print('cu_seqlens_k_start ', cu_seqlens_k_start)
     # tl.device_print('k_offset ', k_offset)
     v_offset = V + batch_index * stride_vz + off_h_k * stride_vh + cu_seqlens_k_start * stride_vk
-    v_ptrs = v_offset + offs_n[:, None] * stride_vk + offs_d[None, :] * stride_vn
+    if PRE_LOAD_V:
+        v_ptrs = v_offset + offs_n[:, None] * stride_vk + offs_d[None, :] * stride_vn
+    else:
+        v_ptrs = v_offset + offs_n[:, None] * stride_vk
     if BIAS_TYPE == 0:
         bias_ptrs = None
     elif BIAS_TYPE == 1:

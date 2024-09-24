@@ -147,12 +147,22 @@ def attn_fwd_inner(
         alpha = tl.math.exp2(m_i - m_ij)
         acc = acc * alpha[:, None]
         if not PRE_LOAD_V:
-            v = load_fn(v_ptrs, k_offs_n, k_offs_d, seqlen_k, head_dim)
+            pass  # interleaved_dot
+            # v = load_fn(v_ptrs, k_offs_n, k_offs_d, seqlen_k, head_dim)
         # -- update m_i and l_i
         l_i = l_i * alpha + l_ij
         # update m_i and l_i
         m_i = m_ij
-        acc += tl.dot(p.to(v.type.element_ty), v)
+        if PRE_LOAD_V:
+            acc += tl.dot(p.to(v.type.element_ty), v)
+        else:
+            acc = interleaved_dot_asym_ptr2nd(acc,
+                                              p.to(q.type.element_ty),
+                                              v_ptrs,
+                                              inter_k_offs_d[None, :],
+                                              1,  # stride_kk
+                                              BLOCK_M,
+                                              BLOCK_DMODEL, BLOCK_K)
         k_ptrs += BLOCK_N * stride_kn
         v_ptrs += BLOCK_N * stride_vk
         if bias_ptrs is not None:
