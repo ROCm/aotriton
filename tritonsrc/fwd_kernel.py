@@ -180,7 +180,7 @@ def attn_fwd(
     if PRE_LOAD_V:
         v_ptrs = v_offset + offs_n[:, None] * stride_vk + offs_d[None, :] * stride_vn
     else:
-        v_ptrs = v_offset + offs_n[:, None] * stride_vk
+        v_ptrs = v_offset + offs_n[:, None] * stride_vk  # interleaved_dot
     if BIAS_TYPE == 0:
         bias_ptrs = None
     elif BIAS_TYPE == 1:

@@ -91,7 +91,8 @@ def attn_fwd_inner(
                                          inter_k_offs_d[:, None],
                                          1,  # stride_kk
                                          BLOCK_M,
-                                         BLOCK_DMODEL, BLOCK_K)
+                                         BLOCK_DMODEL, BLOCK_K,
+                                         STACKED_A=True)
         if bias_ptrs is not None:
             bias_offs_n = start_n + tl.arange(0, BLOCK_N) if MASK_STEPS else None
             bias = load_fn(bias_ptrs, offs_m, bias_offs_n, seqlen_q, seqlen_k)
@@ -156,13 +157,16 @@ def attn_fwd_inner(
         if PRE_LOAD_V:
             acc += tl.dot(p.to(v.type.element_ty), v)
         else:
+            # tl.static_print(f'interleaved_dot_asym_ptr2nd input ret acc.shape = {acc.shape[0]} {acc.shape[1]}')
             acc = interleaved_dot_asym_ptr2nd(acc,
                                               p.to(q.type.element_ty),
                                               v_ptrs,
                                               inter_k_offs_d[None, :],
-                                              1,  # stride_kk
+                                              1,  # stride_vn
                                               BLOCK_M,
-                                              BLOCK_DMODEL, BLOCK_K)
+                                              BLOCK_DMODEL, BLOCK_K,
+                                              STACKED_A=False)
+            # tl.static_print(f'interleaved_dot_asym_ptr2nd ret acc.shape = {acc.shape[0]} {acc.shape[1]}')
         k_ptrs += BLOCK_N * stride_kn
         v_ptrs += BLOCK_N * stride_vk
         if bias_ptrs is not None:

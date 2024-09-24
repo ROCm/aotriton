@@ -67,7 +67,7 @@ TRITON_CONFIG_LIST_FWD = [
 
 @triton.autotune(
    configs=TRITON_CONFIG_LIST_FWD,
-   key=['max_seqlen_q', 'max_seqlen_k', 'CAUSAL'],
+   key=['max_seqlen_q', 'max_seqlen_k', 'CAUSAL', 'BLOCK_DMODEL'],
 )
 @triton.jit
 def tuned_attn_fwd(
