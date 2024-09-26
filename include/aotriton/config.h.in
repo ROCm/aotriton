@@ -1,0 +1,17 @@
+// Copyright © 2023-2024 Advanced Micro Devices, Inc.
+// SPDX-License-Identifier: MIT
+
+#ifndef AOTRITON_V2_CONFIG_H
+#define AOTRITON_V2_CONFIG_H
+
+#cmakedefine01 AOTRITON_ENABLE_SUFFIX
+
+#if AOTRITON_ENABLE_SUFFIX
+#cmakedefine AOTRITON_NAME_SUFFIX @AOTRITON_NAME_SUFFIX@
+#define AOTRITON_NS aotriton@AOTRITON_NAME_SUFFIX@
+#else
+#define AOTRITON_NAME_SUFFIX
+#define AOTRITON_NS aotriton
+#endif
+
+#endif
