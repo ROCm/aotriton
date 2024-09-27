@@ -9,10 +9,7 @@ if(AOTRITON_MIN_PYTHON VERSION_LESS "3.8")
   message(FATAL_ERROR "Do not set AOTRITON_MIN_PYTHON lower than 3.8. The code itself does not support it.")
 endif()
 
-add_subdirectory(third_party/pybind11)
 find_package(Python3 ${AOTRITON_MIN_PYTHON} COMPONENTS Interpreter REQUIRED)
-
-set(CMAKE_CXX_COMPILER hipcc)
 
 set(VENV_DIR "${CMAKE_CURRENT_BINARY_DIR}/venv" CACHE STRING "Virtual Environment Directory")
 set(AOTRITON_HIPCC_PATH "hipcc" CACHE STRING "Set HIPCC Path")
@@ -27,7 +24,11 @@ set(TARGET_GPUS "MI200;MI300X;Navi31" CACHE STRING "Target Architecture (Note he
 # Early failure for python binding
 if(NOT AOTRITON_NO_PYTHON)
   find_package(Python3 ${AOTRITON_MIN_PYTHON} COMPONENTS Development REQUIRED)
+  add_subdirectory(third_party/pybind11)
 endif()
+
+# Must be after pybind11
+set(CMAKE_CXX_COMPILER hipcc)
 
 # GPU kernel compression related options
 option(AOTRITON_COMPRESS_KERNEL "Enable GPU kernel compression with zstd. Fail when zstd is unavailable. Only effective for AOTriton API V2" ON)
