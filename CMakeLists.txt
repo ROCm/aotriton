@@ -4,9 +4,13 @@
 cmake_minimum_required(VERSION 3.18 FATAL_ERROR)
 
 project(AOTriton CXX C)
+set(AOTRITON_MIN_PYTHON 3.8 CACHE STRING "Minimal Python version for find_package.")
+if(AOTRITON_MIN_PYTHON VERSION_LESS "3.8")
+  message(FATAL_ERROR "Do not set AOTRITON_MIN_PYTHON lower than 3.8. The code itself does not support it.")
+endif()
 
 add_subdirectory(third_party/pybind11)
-find_package(Python3 COMPONENTS Interpreter REQUIRED)
+find_package(Python3 ${AOTRITON_MIN_PYTHON} COMPONENTS Interpreter REQUIRED)
 
 set(CMAKE_CXX_COMPILER hipcc)
 
@@ -22,7 +26,7 @@ set(TARGET_GPUS "MI200;MI300X;Navi31" CACHE STRING "Target Architecture (Note he
 
 # Early failure for python binding
 if(NOT AOTRITON_NO_PYTHON)
-  find_package(Python3 COMPONENTS Development REQUIRED)
+  find_package(Python3 ${AOTRITON_MIN_PYTHON} COMPONENTS Development REQUIRED)
 endif()
 
 # GPU kernel compression related options
