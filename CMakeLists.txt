@@ -20,6 +20,11 @@ option(AOTRITON_ENABLE_FP32_INPUTS "Enable FP32 support." ON)
 set(AOTRITON_GPU_BUILD_TIMEOUT "8.0" CACHE STRING "GPU kernel compiler times out after X minutes. 0 for indefinite. Highly recommended if AOTRITON_BUILD_FOR_TUNING=On.")
 set(TARGET_GPUS "MI200;MI300X;Navi31" CACHE STRING "Target Architecture (Note here uses Trade names)")
 
+# Early failure for python binding
+if(NOT AOTRITON_NO_PYTHON)
+  find_package(Python3 COMPONENTS Development REQUIRED)
+endif()
+
 # GPU kernel compression related options
 option(AOTRITON_COMPRESS_KERNEL "Enable GPU kernel compression with zstd. Fail when zstd is unavailable. Only effective for AOTriton API V2" ON)
 # option(AOTRITON_COMPRESS_KERNEL_STATIC_ZSTD "Use static zstd library to avoid potential zstd version conflict (e.g. pytorch)" OFF)
@@ -117,5 +122,5 @@ add_custom_target(aotriton_venv_triton ALL DEPENDS ${AOTRITON_TRITON_EGGLINK})
 add_subdirectory(v2src)
 
 if(NOT AOTRITON_NO_PYTHON)
-    add_subdirectory(bindings) # FIXME: compile python binding
+  add_subdirectory(bindings) # FIXME: compile python binding
 endif()
