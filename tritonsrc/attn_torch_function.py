@@ -319,6 +319,7 @@ class _attention(torch.autograd.Function):
             BLOCK_M //= 2
 
         if autotune:
+            assert False, "tritonsrc based autotune is disabled for now due to potentially faulty triton.Config on Navi31"
             tuned_attn_fwd[grid](
                 q, k, v, b, sm_scale, M, o,
                 q.stride(0), q.stride(1), q.stride(2), q.stride(3),
@@ -504,8 +505,6 @@ class _attention(torch.autograd.Function):
             BLOCK_M=BLOCK, D_HEAD=head_dim_rounded,
             PADDED_HEAD=padded_head, # FIXME: irregular head dimension
         )
-        print(f"{L=}")
-        print(f"{delta=}")
         if False or VERBOSE:
             print(f'{q.shape=} {q.stride()=}')
             print(f'{k.shape=} {k.stride()=}')
