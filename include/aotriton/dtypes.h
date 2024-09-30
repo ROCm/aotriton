@@ -4,9 +4,10 @@
 #ifndef AOTRITON_V2_API_DTYPES_H
 #define AOTRITON_V2_API_DTYPES_H
 
+#include <aotriton/config.h>
 #include <stdint.h>
 
-namespace aotriton {
+namespace AOTRITON_NS {
 
 enum DType : int32_t {
   kUnknown = 0,

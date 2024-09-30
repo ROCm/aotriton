@@ -4,7 +4,9 @@
 #ifndef AOTRITON_V2_API_CPP_TUNE_H
 #define AOTRITON_V2_API_CPP_TUNE_H
 
-namespace aotriton::v2 {
+#include <aotriton/config.h>
+
+namespace AOTRITON_NS::v2 {
 
 struct CppTune {
 #if AOTRITON_BUILD_FOR_TUNING

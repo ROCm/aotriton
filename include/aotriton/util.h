@@ -4,13 +4,14 @@
 #ifndef AOTRITON_V2_API_UTIL_H
 #define AOTRITON_V2_API_UTIL_H
 
+#include <aotriton/config.h>
 #include "dtypes.h"
 #include "runtime.h"
 #include <functional>
 #include <stdint.h>
 #include <string_view>
 
-namespace aotriton {
+namespace AOTRITON_NS {
 
 constexpr uint64_t
 CAT(uint32_t high, uint32_t low) {
@@ -155,6 +156,6 @@ extern template class TensorView<4>;
 
 GpuArch getArchFromStream(hipStream_t);
 
-} // namespace aotriton
+} // namespace AOTRITON_NS
 
 #endif

@@ -4,11 +4,12 @@
 cmake_minimum_required(VERSION 3.18 FATAL_ERROR)
 
 project(AOTriton CXX C)
+set(AOTRITON_MIN_PYTHON 3.8 CACHE STRING "Minimal Python version for find_package.")
+if(AOTRITON_MIN_PYTHON VERSION_LESS "3.8")
+  message(FATAL_ERROR "Do not set AOTRITON_MIN_PYTHON lower than 3.8. The code itself does not support it.")
+endif()
 
-add_subdirectory(third_party/pybind11)
-find_package(Python3 COMPONENTS Interpreter REQUIRED)
-
-set(CMAKE_CXX_COMPILER hipcc)
+find_package(Python3 ${AOTRITON_MIN_PYTHON} COMPONENTS Interpreter REQUIRED)
 
 set(VENV_DIR "${CMAKE_CURRENT_BINARY_DIR}/venv" CACHE STRING "Virtual Environment Directory")
 set(AOTRITON_HIPCC_PATH "hipcc" CACHE STRING "Set HIPCC Path")
@@ -20,9 +21,29 @@ option(AOTRITON_ENABLE_FP32_INPUTS "Enable FP32 support." ON)
 set(AOTRITON_GPU_BUILD_TIMEOUT "8.0" CACHE STRING "GPU kernel compiler times out after X minutes. 0 for indefinite. Highly recommended if AOTRITON_BUILD_FOR_TUNING=On.")
 set(TARGET_GPUS "MI200;MI300X;Navi31" CACHE STRING "Target Architecture (Note here uses Trade names)")
 
+# Early failure for python binding
+if(NOT AOTRITON_NO_PYTHON)
+  find_package(Python3 ${AOTRITON_MIN_PYTHON} COMPONENTS Development REQUIRED)
+  add_subdirectory(third_party/pybind11)
+endif()
+
+# Must be after pybind11
+set(CMAKE_CXX_COMPILER hipcc)
+
 # GPU kernel compression related options
 option(AOTRITON_COMPRESS_KERNEL "Enable GPU kernel compression with zstd. Fail when zstd is unavailable. Only effective for AOTriton API V2" ON)
 # option(AOTRITON_COMPRESS_KERNEL_STATIC_ZSTD "Use static zstd library to avoid potential zstd version conflict (e.g. pytorch)" OFF)
+
+# Resolve name conflicts with suffix
+set(AOTRITON_NAME_SUFFIX "" CACHE STRING "Add suffix to namespace and library file name. This is to resolve name conflicts with PyTorch's AOTriton during testing.")
+if(AOTRITON_NAME_SUFFIX)
+  set(AOTRITON_ENABLE_SUFFIX ON)
+else()
+  set(AOTRITON_ENABLE_SUFFIX OFF)
+endif()
+configure_file(include/aotriton/config.h.in include/aotriton/config.h)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/include/aotriton/config.h
+  DESTINATION ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_INCLUDEDIR}/aotriton)
 
 # Note for archive library user:
 # get this property with:
@@ -106,5 +127,5 @@ add_custom_target(aotriton_venv_triton ALL DEPENDS ${AOTRITON_TRITON_EGGLINK})
 add_subdirectory(v2src)
 
 if(NOT AOTRITON_NO_PYTHON)
-    add_subdirectory(bindings) # FIXME: compile python binding
+  add_subdirectory(bindings) # FIXME: compile python binding
 endif()

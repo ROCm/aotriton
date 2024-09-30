@@ -5,8 +5,9 @@
 #define AOTRITON_V2_API_RUNTIME_H
 
 #include <hip/hip_runtime.h>
+#include <aotriton/config.h>
 
-namespace aotriton {
+namespace AOTRITON_NS {
 
 // This is not a class for stream management (at least for now), but a way to
 // make sure AOTriton APIs can have python bindings with pybind11
