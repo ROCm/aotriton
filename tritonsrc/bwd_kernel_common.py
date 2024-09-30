@@ -49,7 +49,7 @@ def bwd_kernel_dk_dv_common(
     q_ptrs += lo * q_stride
     do_ptrs += lo * do_stride
 
-    # load k and v: they will stay in SRAM throughout
+    qk_scale = sm_scale * 1.44269504089
     # (BLOCK_DMODEL, BLOCK_N)
     dv = tl.zeros([BLOCK_N, BLOCK_DMODEL], dtype=tl.float32)
     dk = tl.zeros([BLOCK_N, BLOCK_DMODEL], dtype=tl.float32)
@@ -122,7 +122,7 @@ def bwd_kernel_dk_dv_common(
                 bias = tl.load(B_block_ptr)
             """
             bias = tl.load(B_block_ptr, boundary_check=(0,1), padding_option="zero")
-            qk += bias
+            qk += bias * 1.44269504089
         else:
             tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
         # q.offs = (start_n, 0), k.offs = (0, start_m)
@@ -137,7 +137,7 @@ def bwd_kernel_dk_dv_common(
         l_i = tl.load(l_ptrs + offs_m_curr,
                       mask=d_lse_ptrs_mask[:,None],
                       other=d_lse_padding[:, None])
-        p = tl.math.exp(sm_scale * qk - l_i) # (BLOCK_M, BLOCK_N)
+        p = tl.math.exp2(qk_scale * qk - l_i) # (BLOCK_M, BLOCK_N)
         # -- compute dv ----
         if ENABLE_DROPOUT:
             philox_offset = batch_philox_offset + start_n * max_seqlen_k + start_m
@@ -166,8 +166,7 @@ def bwd_kernel_dk_dv_common(
             dk += ds.to(q_ptrs.dtype.element_ty) * q
         else:
             # ds.shape = (BLOCK_M, BLOCK_N), q.shape = (BLOCK_M, BLOCK_DMODEL)
-            # dk += tl.dot(tl.trans(ds.to(q_ptrs.dtype.element_ty)), q) # (BLOCK_N, BLOCK_DMODEL)
-            dk = tl.dot(tl.trans(ds), q.to(ds.dtype), dk) # (BLOCK_N, BLOCK_DMODEL)
+            dk += tl.dot(tl.trans(ds.to(q_ptrs.dtype.element_ty)), q) # (BLOCK_N, BLOCK_DMODEL)
         # update pointers (block_ptr code was left intentionally as comment)
         # Q_block_ptr = tl.advance(Q_block_ptr, (BLOCK_M, 0))
         # DO_block_ptr = tl.advance(DO_block_ptr, (BLOCK_M, 0)) # Debug DO accessing problems
@@ -225,6 +224,7 @@ def bwd_kernel_dq_db_common(
     if BIAS_TYPE == 1:
         B_block_ptr = tl.advance(B_block_ptr, (lo, 0))
 
+    qk_scale = sm_scale * 1.44269504089
     '''
            K1   K2      (d)V      dO
     Q1    qk11 qk12     (d)v1     dO1
@@ -279,10 +279,10 @@ def bwd_kernel_dq_db_common(
             # FIXME: Must use boundary_check uncondtionally.
             # The optimized tl.load above causes nan for some reason
             bias = tl.load(B_block_ptr, boundary_check=(0,1), padding_option="zero")
-            qk += bias
+            qk += bias * 1.44269504089
         else:
             tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
-        p = tl.math.exp(sm_scale * qk - l_i[:, None])
+        p = tl.math.exp2(qk_scale * qk - l_i[:, None])
         # compute dp = dot(v, do)
         dp = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
         dp += dot(BLOCK_M, BLOCK_DMODEL, BLOCK_DMODEL, do, vt)

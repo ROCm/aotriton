@@ -204,6 +204,9 @@ def attn_fwd(
     m_i = tl.full([BLOCK_M], float("-inf"), dtype=tl.float32)
     l_i = tl.full([BLOCK_M], 1.0, dtype=tl.float32)
     acc = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)
+    # scale sm_scale by log_2(e) and use 2^x in the loop as we do not
+    # have native e^x support in HW.
+    qk_scale = sm_scale * 1.44269504089
     # Q is loaded once at the beginning and shared by all N blocks.
     q_ptrs_mask = offs_m[:, None] < seqlen_q
     if PADDED_HEAD:
@@ -231,7 +234,7 @@ def attn_fwd(
     if n_full_blocks > 0:
         block_max = (n_blocks - masked_blocks) * BLOCK_N
         acc, l_i, m_i = attn_fwd_inner(
-                acc, l_i, m_i, sm_scale,
+                acc, l_i, m_i, qk_scale,
                 q, k_ptrs, v_ptrs, bias_ptrs,
                 stride_kn, stride_vk, stride_bn,
                 seqlen_q, seqlen_k, head_dim,
@@ -267,7 +270,7 @@ def attn_fwd(
         #     encoded_sm_base += n_full_blocks * BLOCK_N
             # encoded_sm_ptrs += n_full_blocks * BLOCK_N
         acc, l_i, m_i = attn_fwd_inner(
-                acc, l_i, m_i, sm_scale,
+                acc, l_i, m_i, qk_scale,
                 q, k_ptrs, v_ptrs, bias_ptrs,
                 stride_kn, stride_vk, stride_bn,
                 seqlen_q, seqlen_k, head_dim,
@@ -312,9 +315,9 @@ def attn_fwd(
     if overflow_size > 0:
         boundary = tl.full((BLOCK_M, ), BLOCK_M - overflow_size, dtype=tl.int32)
         l_ptrs_mask = tl.arange(0, BLOCK_M) < boundary
-        tl.store(l_ptrs, m_i + tl.math.log(l_i), mask=l_ptrs_mask)
+        tl.store(l_ptrs, m_i + tl.math.log2(l_i), mask=l_ptrs_mask)
     else:
-        tl.store(l_ptrs, m_i + tl.math.log(l_i))
+        tl.store(l_ptrs, m_i + tl.math.log2(l_i))
 
     o_base = Out + batch_index * stride_oz + off_h_q * stride_oh + cu_seqlens_q_start * stride_om
     mstore2d(acc,
