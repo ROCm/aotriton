@@ -88,7 +88,7 @@ def attn_fwd_inner(
                                               global_n_positions)
 
         # softmax
-        m_ij = tl.maximum(m_i, tl.max(qk, 1))
+        m_ij = tl.maximum(m_i, sm_scale * tl.max(qk, 1))
         p = tl.math.exp(sm_scale * qk - m_ij[:, None])
 
         # CAVEAT: Must update l_ij before applying dropout

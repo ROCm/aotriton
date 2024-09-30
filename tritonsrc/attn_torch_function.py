@@ -504,6 +504,8 @@ class _attention(torch.autograd.Function):
             BLOCK_M=BLOCK, D_HEAD=head_dim_rounded,
             PADDED_HEAD=padded_head, # FIXME: irregular head dimension
         )
+        print(f"{L=}")
+        print(f"{delta=}")
         if False or VERBOSE:
             print(f'{q.shape=} {q.stride()=}')
             print(f'{k.shape=} {k.stride()=}')
