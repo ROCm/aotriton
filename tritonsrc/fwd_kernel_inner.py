@@ -9,7 +9,7 @@ from masked_load_store import load_fn, mstore2d
 @triton.jit
 def attn_fwd_inner(
         # Problem Description
-        acc, l_i, m_i,
+        acc, l_i, m_i, sm_scale,
         q, k_ptrs, v_ptrs, bias_ptrs,
         stride_kn, stride_vk, stride_bn,
         seqlen_q, seqlen_k, head_dim,
@@ -79,10 +79,6 @@ def attn_fwd_inner(
         if bias_ptrs is not None:
             bias_offs_n = start_n + tl.arange(0, BLOCK_N) if MASK_STEPS else None
             bias = load_fn(bias_ptrs, offs_m, bias_offs_n, seqlen_q, seqlen_k)
-            # While bias is added after multiplying qk with sm_scale,
-            # our optimization to use 2^x instead of e^x results in an additional
-            # scale factor of log2(e) which we must also multiply the bias with.
-            qk += (bias * 1.44269504089)
 
         if alibi_slope is not None:
             # Compute the global position of each token within the sequence
@@ -90,12 +86,10 @@ def attn_fwd_inner(
             global_n_positions = start_n + tl.arange(0, BLOCK_N)
             alibi_block = compute_alibi_block(alibi_slope, seqlen_q, seqlen_k, global_m_positions,
                                               global_n_positions)
-            qk += (alibi_block * 1.44269504089)  # scale factor of log2(e)
 
         # softmax
         m_ij = tl.maximum(m_i, tl.max(qk, 1))
-        qk = qk - m_ij[:, None]
-        p = tl.math.exp2(qk)
+        p = tl.math.exp(sm_scale * qk - m_ij[:, None])
 
         # CAVEAT: Must update l_ij before applying dropout
         l_ij = tl.sum(p, 1)
@@ -128,7 +122,7 @@ def attn_fwd_inner(
                      stride_col=1)
             # tl.store(encoded_sm_ptrs, p.to(q.type.element_ty))
         # -- update output accumulator --
-        alpha = tl.math.exp2(m_i - m_ij)
+        alpha = tl.math.exp(m_i - m_ij)
         acc = acc * alpha[:, None]
         if not PRE_LOAD_V:
             v = load_fn(v_ptrs, k_offs_n, k_offs_d, seqlen_k, head_dim)
