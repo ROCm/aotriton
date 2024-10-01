@@ -18,7 +18,7 @@ def dot(BLOCK_M : tl.constexpr, QDIM : tl.constexpr, KDIM : tl.constexpr, q, k):
 @triton.jit
 def bwd_inner_dk_dv(
     # I/O Tensor
-    dk, dv,
+    dk, dv, qk_scale,
     # Problem Description
     q_ptrs, q_stride, kt, vt, B_block_ptr,
     do_ptrs, do_stride,
@@ -137,7 +137,7 @@ def bwd_inner_dk_dv(
             l_i = tl.load(l_ptrs + offs_q_curr,
                           mask=d_lse_ptrs_mask[:,None],
                           other=d_lse_padding[:, None])
-        p = tl.math.exp2(qk - l_i) # (BLOCK_M, BLOCK_N)
+        p = tl.math.exp2(qk_scale * qk - l_i) # (BLOCK_M, BLOCK_N)
         # -- compute dv ----
         if ENABLE_DROPOUT:
             philox_offset = batch_philox_offset + start_q * max_seqlen_k + start_k

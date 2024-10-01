@@ -109,7 +109,6 @@ def bwd_kernel_dq(
     else:
         q = load_fn(q_ptrs, offs_q, ld_offs_d, seqlen_q, head_dim)
     qk_scale = sm_scale * 1.44269504089
-    q = (q * qk_scale).to(q.type.element_ty)
     k_offset = off_h_k * stride_kh + batch_index * stride_kz + cu_seqlens_k_start * stride_kn
     K += k_offset
     kt_ptrs = K + offs_d[:, None] * stride_kk + offs_n[None, :] * stride_kn
@@ -231,7 +230,7 @@ def bwd_kernel_dq(
         lo = 0
         hi = n_full_blocks * BLOCK_N
         dq = bwd_inner_dq(
-            dq,
+            dq, qk_scale,
             DB_block_ptr, store_db,
             q, kt_ptrs, stride_kn, vt_ptrs, stride_vk, B_block_ptr,
             do,
@@ -258,7 +257,7 @@ def bwd_kernel_dq(
         hi = k_hi
         tl.debug_barrier()
         dq = bwd_inner_dq(
-            dq,
+            dq, qk_scale,
             DB_block_ptr, store_db,
             q, kt_ptrs, stride_kn, vt_ptrs, stride_vk, B_block_ptr,
             do,

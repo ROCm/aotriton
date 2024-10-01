@@ -18,7 +18,7 @@ def dot(BLOCK_M : tl.constexpr, QDIM : tl.constexpr, KDIM : tl.constexpr, q, k):
 @triton.jit
 def bwd_inner_dq(
     # I/O Tensor
-    dq,
+    dq, qk_scale,
     DB_block_ptr, store_db,
     # Problem Description
     q, kt_ptrs, k_stride, vt_ptrs, v_stride, B_block_ptr,
@@ -119,7 +119,7 @@ def bwd_inner_dq(
             qk += bias * 1.44269504089
         else:
             tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
-        p = tl.math.exp2(qk - l_i[:, None])
+        p = tl.math.exp2(qk_scale * qk - l_i[:, None])
         # compute dp = dot(v, do)
         dp = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
         dp += dot(BLOCK_M, BLOCK_DMODEL, BLOCK_DMODEL, do, vt)
