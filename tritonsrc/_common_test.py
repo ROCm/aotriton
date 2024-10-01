@@ -249,7 +249,7 @@ class SdpaContext(object):
         key_fudge_factor = 16.0
         value_fudge_factor = 32.0
         bias_fudge_factor = 16.0
-        print(f'{torch.cuda.get_device_properties(0).gcnArchName=}')
+        # print(f'{torch.cuda.get_device_properties(0).gcnArchName=}')
         if torch.version.hip:
             if 'gfx90a' in torch.cuda.get_device_properties(0).gcnArchName:
                 key_fudge_factor = max(8.0, (seqlen_k + seqlen_q) / 16.0)  # TODO: Check why
@@ -323,7 +323,8 @@ class SdpaContext(object):
         valid = test_error <= threshold
         tft = test_error / ref_error if ref_error > atol else 1.0
         if not valid:
-            print(f'For {tname}, Consider bump fudge_factor to {tft} = {test_error=} / {ref_error=}. So that {test_error=} < max({atol=}, {ref_error=} * {tft=})')
+            pass
+            # print(f'For {tname}, Consider bump fudge_factor to {tft} = {test_error=} / {ref_error=}. So that {test_error=} < max({atol=}, {ref_error=} * {tft=})')
         if return_target_fudge_factors:
             return valid, max_adiff, tft
         else:
@@ -351,7 +352,7 @@ class SdpaContext(object):
                 return out_allclose, out_adiff, [], []
         grads_allclose = []
         grads_adiff = []
-        print(f'using {self.fudge_factors=}')
+        # print(f'using {self.fudge_factors=}')
         for grad, ref, lp_ref, fudge_factor, tname in zip(grads, self.dref_tensors, self.lp_dref_tensors, self.fudge_factors, self.TENSOR_NAMES):
             allclose, adiff, tft = self._validate(grad,
                                                   ref,
