@@ -18,7 +18,7 @@ def dot(BLOCK_M : tl.constexpr, QDIM : tl.constexpr, KDIM : tl.constexpr, q, k):
 @triton.jit
 def bwd_inner_dq(
     # I/O Tensor
-    dq, qk_scale,
+    dq, qk_scale, bias_scale,
     DB_block_ptr, store_db,
     # Problem Description
     q, kt_ptrs, k_stride, vt_ptrs, v_stride, B_block_ptr,
@@ -116,7 +116,7 @@ def bwd_inner_dq(
             # FIXME: Must use boundary_check uncondtionally.
             # The optimized tl.load above causes nan for some reason
             bias = tl.load(B_block_ptr, boundary_check=(0,1), padding_option="zero")
-            qk += bias * 1.44269504089
+            qk += bias * bias_scale
         else:
             tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
         p = tl.math.exp2(qk_scale * qk - l_i[:, None])

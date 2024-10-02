@@ -18,7 +18,7 @@ def dot(BLOCK_M : tl.constexpr, QDIM : tl.constexpr, KDIM : tl.constexpr, q, k):
 @triton.jit
 def bwd_inner_dk_dv(
     # I/O Tensor
-    dk, dv, qk_scale,
+    dk, dv, qk_scale, bias_scale,
     # Problem Description
     q_ptrs, q_stride, kt, vt, B_block_ptr,
     do_ptrs, do_stride,
@@ -118,7 +118,7 @@ def bwd_inner_dk_dv(
                 bias = tl.load(B_block_ptr)
             """
             bias = tl.load(B_block_ptr, boundary_check=(0,1), padding_option="zero")
-            qk += bias * 1.44269504089
+            qk += bias * bias_scale
         else:
             tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
         # q.offs = (start_q, 0), k.offs = (0, start_k)

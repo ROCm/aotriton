@@ -171,6 +171,7 @@ def bwd_kernel_dk_dv(
     dv = tl.zeros([BLOCK_N, BLOCK_DMODEL], dtype=tl.float32)
     dk = tl.zeros([BLOCK_N, BLOCK_DMODEL], dtype=tl.float32)
     qk_scale = sm_scale * 1.44269504089
+    bias_scale = 1.0 / sm_scale
     group_size : tl.constexpr = 1
 
     q_lo = start_k if CAUSAL else 0
@@ -233,7 +234,7 @@ def bwd_kernel_dk_dv(
             #       In this case the bwd_inner_dk_dv can be further optimized
             overflow_size = 0 if hi < q_hi else hi - q_hi
             dk, dv = bwd_inner_dk_dv(
-                dk, dv, qk_scale,
+                dk, dv, qk_scale, bias_scale,
                 q_ptrs, stride_qm, kt, vt, B_block_ptr,
                 do_ptrs, stride_om,
                 l_ptrs,
@@ -255,7 +256,7 @@ def bwd_kernel_dk_dv(
             lo = q_lo + leading_masked_blocks * BLOCK_M
             hi = lo + n_full_blocks * BLOCK_M
             dk, dv = bwd_inner_dk_dv(
-                dk, dv, qk_scale,
+                dk, dv, qk_scale, bias_scale,
                 q_ptrs, stride_qm, kt, vt, B_block_ptr,
                 do_ptrs, stride_om,
                 l_ptrs,
@@ -279,7 +280,7 @@ def bwd_kernel_dk_dv(
             hi = q_hi
             overflow_size = lo + trailing_masked_blocks * BLOCK_M - q_hi
             dk, dv = bwd_inner_dk_dv(
-                dk, dv, qk_scale,
+                dk, dv, qk_scale, bias_scale,
                 q_ptrs, stride_qm, kt, vt, B_block_ptr,
                 do_ptrs, stride_om,
                 l_ptrs,

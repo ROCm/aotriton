@@ -207,6 +207,7 @@ def attn_fwd(
     # scale sm_scale by log_2(e) and use 2^x in the loop as we do not
     # have native e^x support in HW.
     qk_scale = sm_scale * 1.44269504089
+    bias_scale = 1.0 / sm_scale
     # Q is loaded once at the beginning and shared by all N blocks.
     q_ptrs_mask = offs_m[:, None] < seqlen_q
     if PADDED_HEAD:
@@ -234,7 +235,7 @@ def attn_fwd(
     if n_full_blocks > 0:
         block_max = (n_blocks - masked_blocks) * BLOCK_N
         acc, l_i, m_i = attn_fwd_inner(
-                acc, l_i, m_i, qk_scale,
+                acc, l_i, m_i, qk_scale, bias_scale,
                 q, k_ptrs, v_ptrs, bias_ptrs,
                 stride_kn, stride_vk, stride_bn,
                 seqlen_q, seqlen_k, head_dim,
@@ -270,7 +271,7 @@ def attn_fwd(
         #     encoded_sm_base += n_full_blocks * BLOCK_N
             # encoded_sm_ptrs += n_full_blocks * BLOCK_N
         acc, l_i, m_i = attn_fwd_inner(
-                acc, l_i, m_i, qk_scale,
+                acc, l_i, m_i, qk_scale, bias_scale,
                 q, k_ptrs, v_ptrs, bias_ptrs,
                 stride_kn, stride_vk, stride_bn,
                 seqlen_q, seqlen_k, head_dim,
