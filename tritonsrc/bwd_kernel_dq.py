@@ -20,8 +20,6 @@ def bwd_kernel_dq(
     stride_oz, stride_oh, stride_om, stride_ok,
     stride_dqz, stride_dqh, stride_dqm, stride_dqk,
     stride_dbz, stride_dbh, stride_dbm, stride_dbn,
-    num_head_q : 'i32',
-    num_head_k : 'i32',
     cu_seqlens_q,
     cu_seqlens_k,
     num_seqlens,   # set num_seqlens to zero to ignore cu_seqlens_q/k
@@ -46,10 +44,11 @@ def bwd_kernel_dq(
         philox_offset_base += tl.load(philox_offset1)
     start_q = tl.program_id(0) * BLOCK_M
     off_h_q = tl.program_id(1) # head index
-    off_h_k = off_h_q if num_head_q == num_head_k else off_h_q // (num_head_q // num_head_k)
+    off_h_k = off_h_q
     off_z = tl.program_id(2) # batch index
+    num_h = tl.num_programs(1)
     num_z = tl.num_programs(2)
-    off_zh = off_z * num_head_q + off_h_q * 1
+    off_zh = off_z * num_h + off_h_q * 1
     offs_q = start_q + tl.arange(0, BLOCK_M)
     offs_n = tl.arange(0, BLOCK_N)
     offs_d = tl.arange(0, BLOCK_DMODEL)
