@@ -127,7 +127,10 @@ class SdpaContext(object):
 
         # Maximal value from tune_flash.py and table_tool.py --fudge_factor_tolerance 5.0
         # Note: Navi 3x is experimental and YMMV
-        self.OUT_FUDGE_FACTOR = 6.0 if dtype != torch.float32 else 10.0
+        self.OUT_FUDGE_FACTOR = 3.0
+        if torch.version.hip:
+            if 'gfx90a' in torch.cuda.get_device_properties(0).gcnArchName:
+                self.OUT_FUDGE_FACTOR = 6.0 if dtype != torch.float32 else 10.0
 
     '''
     Create Tensors that will be kept b/w forward and backward pass
@@ -245,18 +248,14 @@ class SdpaContext(object):
 
         # Maximal value from tune_flash.py and table_tool.py --fudge_factor_tolerance 5.0
         # Note: Navi 3x is experimental and YMMV
-        query_fudge_factor = 180.0
+        query_fudge_factor = 32.0
         key_fudge_factor = 16.0
-        value_fudge_factor = 32.0
+        value_fudge_factor = 16.0
         bias_fudge_factor = 16.0
         # print(f'{torch.cuda.get_device_properties(0).gcnArchName=}')
         if torch.version.hip:
             if 'gfx90a' in torch.cuda.get_device_properties(0).gcnArchName:
-                key_fudge_factor = max(8.0, (seqlen_k + seqlen_q) / 16.0)  # TODO: Check why
-                bias_fudge_factor = 32.0
-        if dtype == torch.float32:
-            key_fudge_factor = 180.0
-            bias_fudge_factor = 32.0
+                query_fudge_factor = 80.0
         return (query_fudge_factor, key_fudge_factor, value_fudge_factor, bias_fudge_factor)
 
     @staticmethod
