@@ -570,11 +570,6 @@ def bwd_kernel_dq(
             ENABLE_DROPOUT,
             PADDED_HEAD,
             BIAS_TYPE)
-    # if tl.program_id(0) == tl.num_programs(0) - 1:
-    #     tl.device_print('n_full_blocks', n_full_blocks)
-    #     tl.device_print('trailing_masked_blocks', trailing_masked_blocks)
-    # if tl.program_id(0) == tl.num_programs(0) - 1:
-    #     tl.device_print('dq before', dq)
     # Keep using "trailing_masked_blocks" for windowed attention
     if trailing_masked_blocks > 0:
         lo = n_full_blocks * BLOCK_N
@@ -597,80 +592,6 @@ def bwd_kernel_dq(
             ENABLE_DROPOUT,
             PADDED_HEAD,
             BIAS_TYPE)
-
-    '''
-    if True:
-        lo = 0
-        hi = seqlen_k
-        dq1 = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)
-        dq1 = bwd_inner_dq(
-            dq1,
-            DB_block_ptr, store_db,
-            q, kt_ptrs, stride_kn, vt_ptrs, stride_vk, B_block_ptr,
-            do,
-            l_ptrs,
-            D_ptrs,
-            seqlen_q, seqlen_k, head_dim,
-            start_q, 0, 17,
-            dropout_p, philox_seed, batch_philox_offset, max_seqlen_k,
-            BLOCK_M,
-            BLOCK_DMODEL,
-            BLOCK_N,
-            True,   # Debug, is right
-            False,  # FULL_BLOCKS
-            CAUSAL,
-            ENABLE_DROPOUT,
-            PADDED_HEAD,
-            BIAS_TYPE)
-    if True:
-        tl.debug_barrier()
-        dq = bwd_inner_dq(
-            dq,
-            DB_block_ptr, store_db,
-            q, kt_ptrs, stride_kn, vt_ptrs, stride_vk, B_block_ptr,
-            do,
-            l_ptrs,
-            D_ptrs,
-            seqlen_q, seqlen_k, head_dim,
-            start_q, 0, 16,
-            dropout_p, philox_seed, batch_philox_offset, max_seqlen_k,
-            BLOCK_M,
-            BLOCK_DMODEL,
-            BLOCK_N,
-            False,   # Debug, is right
-            False,  # FULL_BLOCKS
-            CAUSAL,
-            ENABLE_DROPOUT,
-            PADDED_HEAD,
-            BIAS_TYPE)
-        kt_ptrs += BLOCK_N * stride_kn * 1
-        vt_ptrs += BLOCK_N * stride_vk * 1
-        dq = bwd_inner_dq(
-            dq,
-            DB_block_ptr, store_db,
-            q, kt_ptrs, stride_kn, vt_ptrs, stride_vk, B_block_ptr,
-            do,
-            l_ptrs,
-            D_ptrs,
-            seqlen_q, seqlen_k, head_dim,
-            start_q, 16, 17,
-            dropout_p, philox_seed, batch_philox_offset, max_seqlen_k,
-            BLOCK_M,
-            BLOCK_DMODEL,
-            BLOCK_N,
-            False,   # Debug, is right
-            False,  # FULL_BLOCKS
-            CAUSAL,
-            ENABLE_DROPOUT,
-            PADDED_HEAD,
-            BIAS_TYPE)
-    '''
-    # if tl.program_id(0) == tl.num_programs(0) - 1:
-    #     tl.device_print('dq after', dq)
-    #     lo = n_full_blocks * BLOCK_N
-    #     hi = k_hi
-    #     tl.device_print('trailing lo', lo)
-    #     tl.device_print('trailing hi', hi)
     dq = (dq * sm_scale).to(dq.type.element_ty)
     mstore2d(dq,
              BLOCK_M,
@@ -682,9 +603,3 @@ def bwd_kernel_dq(
              o_cols=head_dim,
              stride_row=stride_dqm,
              stride_col=stride_dqk)
-    # tl.device_print('dq_offset ', dq_offset)
-    # tl.device_print('stride_dqm ', stride_dqm)
-    # tl.device_print('stride_dqk ', stride_dqk)
-    # tl.device_print('head_dim ', head_dim)
-    # tl.device_print('dq_ptrs ', dq_ptrs)
-    # tl.device_print('dq_masks ', dq_masks)

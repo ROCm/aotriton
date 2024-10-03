@@ -209,15 +209,6 @@ def bwd_inner_dq(
     offs_d = tl.arange(0, BLOCK_DMODEL)
     ld_offs_d = None if not PADDED_HEAD else tl.arange(0, BLOCK_DMODEL)
 
-    '''
-    if DEBUG_RIGHT and start_q == 0:
-        tl.device_print('Right Di', Di)
-        tl.device_print('Right l_i', l_i)
-    if not DEBUG_RIGHT and start_q == 0:
-        tl.device_print('Wrong Di', Di)
-        tl.device_print('Wrong l_i', l_i)
-    '''
-
     kt_ptrs += lo * k_stride
     vt_ptrs += lo * v_stride
     if BIAS_TYPE == 1:
@@ -298,33 +289,6 @@ def bwd_inner_dq(
         else:
             # ds.shape = (BLOCK_M, BLOCK_N), kt.shape = (BLOCK_DMODEL, BLOCK_N)
             dq = tl.dot(ds.to(q.type.element_ty), tl.trans(kt), acc=dq) # (BLOCK_M, BLOCK_DMODEL)
-
-        '''
-        if DEBUG_RIGHT:
-            if not FULL_BLOCKS and start_k == 0:
-                tl.device_print('Right dq first', dq)
-                tl.device_print('Right ds first', ds)
-            if not FULL_BLOCKS and start_k == 16:
-                tl.device_print('Right dq second', dq)
-                tl.device_print('Right ds second', ds)
-                # tl.device_print('Right p second', p)
-                # tl.device_print('Right dp second', dp)
-                tl.device_print('Right do second', do)
-                tl.device_print('Right vt second', vt)
-        if not DEBUG_RIGHT:
-            if not FULL_BLOCKS and start_k == 0:
-                tl.device_print('Wrong dq first', dq)
-                tl.device_print('Wrong ds first', ds)
-            if not FULL_BLOCKS and start_k == 16:
-                tl.device_print('Wrong dq second', dq)
-                tl.device_print('Wrong ds second', ds)
-                # tl.device_print('Wrong p second', p)
-                # tl.device_print('Wrong dp second', dp)
-                tl.device_print('Wrong do second', do)
-                tl.device_print('Wrong vt second', vt)
-        #     # tl.device_print('ds semi', ds)
-        #     tl.device_print('kt semi', kt)
-        '''
 
         if BIAS_TYPE == 1:
             if store_db:
