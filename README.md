@@ -54,12 +54,22 @@ CAVEAT: As a fast moving target, AOTriton's FlashAttention API changes over
 time. Hence, a specific PyTorch release is only compatible with a few versions
 of AOTriton. The compatibility matrix is shown below
 
-|  PyTorch              |           AOTriton Feature Release              |
+|  PyTorch Upstream     |           AOTriton Feature Release              |
 |-----------------------|-------------------------------------------------|
 |  2.2 and earlier      |               N/A, no support                   |
 |        2.3            |                   0.4b                          |
 |        2.4            |                   0.6b                          |
 |        2.5            |                   0.7b                          |
+
+ROCm's PyTorch release/<version> branch is slightly different from PyTorch
+upstream and may support more recent version of AOTriton
+
+|  PyTorch ROCm Fork    |           AOTriton Feature Release              |
+|-----------------------|-------------------------------------------------|
+|  2.2 and earlier      |               N/A, no support                   |
+|        2.3            |                   0.4b                          |
+|        2.4            |                   0.7b (backported)             |
+|        2.5            |                   0.7b (once released)          |
 
 ### Point Release
 
@@ -70,3 +80,7 @@ For PyTorch main branch, check
 [aotriton_version.txt](https://github.com/pytorch/pytorch/blob/main/.ci/docker/aotriton_version.txt).
 The first line is the tag name, and the 4th line is the SHA-1 commit of
 AOTriton.
+
+Note: we are migrating away from `aotriton_version.txt` file. If this file disappears, check
+[aotriton.cmake](https://github.com/pytorch/pytorch/blob/main/cmake/External/aotriton.cmake)
+instead.
