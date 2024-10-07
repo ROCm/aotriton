@@ -6,6 +6,7 @@ import triton
 import triton.language as tl
 from dropout import dropout_mask, dropout_rng, dropout_offsets
 from masked_load_store import load_fn
+from triton.language.extra import libdevice
 
 # Helper function, but not always usable due to compiler bugs (esp. used with tl.trans)
 @triton.jit
@@ -111,6 +112,11 @@ def bwd_inner_dq(
         else:
             tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
         p = tl.math.exp2(qk_scale * qk - l_i[:, None])
+
+        if not FULL_BLOCKS or CAUSAL:
+            if qk_scale == 0.0:
+                p = tl.where(libdevice.isnan(p), 0.0, p)
+
         # compute dp = dot(v, do)
         dp = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
         dp += dot(BLOCK_M, BLOCK_DMODEL, BLOCK_DMODEL, do, vt)
