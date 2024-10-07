@@ -176,11 +176,13 @@ class TuningDatabase(object):
     def sqltype(self, pytype):
         return self.PYTYPE_TO_SQLTYPE[pytype]
 
-    def collect_columns(self, sub_tune_info: dict, *, prefix=''):
+    def collect_columns(self, sub_tune_info: dict, *, prefix='', sans=()):
         ret = []
         for k, v in sub_tune_info.items():
             # Do not store Q.shape and others, which is an array and makes things more complicated
             if k.endswith('.shape'):
+                continue
+            if k in sans:
                 continue
             tup = (f'{prefix}{k}', v, self.value_to_pytype(v))
             ret.append(tup)
@@ -237,7 +239,7 @@ class TuningDatabase(object):
         sql_table = self.ensure_table(tune_info)
         if create_table_only:
             return
-        inputs_columns = self.collect_columns(tune_info['inputs'], prefix='inputs$')
+        inputs_columns = self.collect_columns(tune_info['inputs'], prefix='inputs$', sans=('BATCH'))
         tuned_kernel_columns = self.collect_columns(tune_info['tuned_kernel'], prefix='tuned_kernel$')
         compiler_options_columns = self.collect_columns(tune_info['compiler_options'], prefix='compiler_options$')
         all_colnames = ['arch'] + [colname for colname, _, _ in itertools.chain(inputs_columns, tuned_kernel_columns, compiler_options_columns)]

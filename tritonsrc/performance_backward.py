@@ -21,13 +21,20 @@ except BaseException:
     except BaseException:
         FLASH_VER = None
 HAS_FLASH = FLASH_VER is not None
-USE_TFLOPS = True
+USE_TFLOPS = bool(int(os.getenv('USE_TFLOPS', default='1')))
+print(f'{USE_TFLOPS=}')
 
 d_heads = os.getenv('D_HEADS', default='64,128')
-d_heads = map(lambda x: int(x), d_heads.split(','))
+d_heads = list(map(lambda x: int(x), d_heads.split(',')))
 
-# BATCH, N_HEADS, N_CTX, D_HEAD = 4, 48, 4096, 64
-BATCH, N_HEADS, N_CTX, D_HEAD = 512, 32, 512, 64
+n_ctx = os.getenv('N_CTX', default=list(range(10, 14)))
+if isinstance(n_ctx, str):
+    n_ctx = map(lambda x: int(x), n_ctx.split(','))
+X_VALS = list(map(lambda x: 2 ** x, n_ctx))
+print(f'{X_VALS=}')
+
+BATCH, N_HEADS, N_CTX, D_HEAD = 4, 48, 4096, 64
+# BATCH, N_HEADS, N_CTX, D_HEAD = 512, 32, 512, 64
 # vary seq length for fixed head and batch=4
 configs = []
 for mode in ['bwd']:
@@ -36,9 +43,9 @@ for mode in ['bwd']:
         for D_HEAD in d_heads:
             configs.append(triton.testing.Benchmark(
                 x_names=['N_CTX'],
+                x_vals=list(X_VALS),
                 # x_vals=[2**i for i in range(10, 15)],
                 # x_vals=[2**13],
-                x_vals=[512],
                 line_arg='provider',
                 line_vals=['triton'] + (['flash'] if HAS_FLASH else []),
                 line_names=['Triton(TFLOPS)' if USE_TFLOPS else 'Triton(ms)'] + ([f'Flash-{FLASH_VER}'] if HAS_FLASH else []),

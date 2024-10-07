@@ -127,7 +127,9 @@ class SdpaContext(object):
 
         # Maximal value from tune_flash.py and table_tool.py --fudge_factor_tolerance 5.0
         # Note: Navi 3x is experimental and YMMV
-        self.OUT_FUDGE_FACTOR = 6.0 if dtype != torch.float32 else 10.0
+        self.OUT_FUDGE_FACTOR = 3.0
+        if dtype == torch.float32:
+            self.OUT_FUDGE_FACTOR = 12.0
 
     '''
     Create Tensors that will be kept b/w forward and backward pass
@@ -245,18 +247,17 @@ class SdpaContext(object):
 
         # Maximal value from tune_flash.py and table_tool.py --fudge_factor_tolerance 5.0
         # Note: Navi 3x is experimental and YMMV
-        query_fudge_factor = 180.0
-        key_fudge_factor = 16.0
-        value_fudge_factor = 32.0
+        query_fudge_factor = 32.0
+        key_fudge_factor = 48.0
+        value_fudge_factor = 16.0
         bias_fudge_factor = 16.0
-        print(f'{torch.cuda.get_device_properties(0).gcnArchName=}')
+        # print(f'{torch.cuda.get_device_properties(0).gcnArchName=}')
         if torch.version.hip:
             if 'gfx90a' in torch.cuda.get_device_properties(0).gcnArchName:
-                key_fudge_factor = max(8.0, (seqlen_k + seqlen_q) / 16.0)  # TODO: Check why
-                bias_fudge_factor = 32.0
+                query_fudge_factor = 80.0
         if dtype == torch.float32:
             key_fudge_factor = 180.0
-            bias_fudge_factor = 32.0
+            bias_fudge_factor = 24.0
         return (query_fudge_factor, key_fudge_factor, value_fudge_factor, bias_fudge_factor)
 
     @staticmethod
@@ -321,9 +322,10 @@ class SdpaContext(object):
         atol = default_atol[torch.float32]
         threshold = max(atol, ref_error * fudge_factor)
         valid = test_error <= threshold
-        tft = test_error / ref_error if ref_error > atol else 1.0
+        tft = test_error / ref_error if ref_error * fudge_factor > atol else 1.0
         if not valid:
-            print(f'For {tname}, Consider bump fudge_factor to {tft} = {test_error=} / {ref_error=}. So that {test_error=} < max({atol=}, {ref_error=} * {tft=})')
+            pass
+            # print(f'For {tname}, Consider bump fudge_factor to {tft} = {test_error=} / {ref_error=}. So that {test_error=} < max({atol=}, {ref_error=} * {tft=})')
         if return_target_fudge_factors:
             return valid, max_adiff, tft
         else:
@@ -351,7 +353,7 @@ class SdpaContext(object):
                 return out_allclose, out_adiff, [], []
         grads_allclose = []
         grads_adiff = []
-        print(f'using {self.fudge_factors=}')
+        # print(f'using {self.fudge_factors=}')
         for grad, ref, lp_ref, fudge_factor, tname in zip(grads, self.dref_tensors, self.lp_dref_tensors, self.fudge_factors, self.TENSOR_NAMES):
             allclose, adiff, tft = self._validate(grad,
                                                   ref,

@@ -25,6 +25,7 @@ class DbAccessor(BaseDbService):
         head_dim_rounded = max(16, head_dim_rounded)
         inputs = {
             'Q_dtype': str(dtype),
+            'BATCH' : BATCH,
             'N_HEADS': N_HEADS,
             'D_HEAD': D_HEAD,
             'max_seqlen_q': seqlen_q,
