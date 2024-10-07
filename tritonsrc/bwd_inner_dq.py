@@ -94,16 +94,6 @@ def bwd_inner_dq(
         if BIAS_TYPE == 0:
             pass
         elif BIAS_TYPE == 1:
-            '''
-            if q_padded and k_padded:  # CAVEAT: using "or" disables the partial boundary_check branches
-                bias = tl.load(B_block_ptr, boundary_check=(0,1), padding_option="zero")
-            elif q_padded:
-                bias = tl.load(B_block_ptr, boundary_check=(0,), padding_option="zero")
-            elif k_padded:
-                bias = tl.load(B_block_ptr, boundary_check=(1,), padding_option="zero")
-            else:
-                bias = tl.load(B_block_ptr)
-            '''
             # FIXME: Must use boundary_check uncondtionally.
             # The optimized tl.load above causes nan for some reason
             bias = tl.load(B_block_ptr, boundary_check=(0,1), padding_option="zero")

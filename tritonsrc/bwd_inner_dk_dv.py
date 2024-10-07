@@ -107,17 +107,6 @@ def bwd_inner_dk_dv(
             pass
         elif BIAS_TYPE == 1:
             # FIXME: do boundary_check correctly
-            # TODO: check q_padded is correct calculated, the condition should be start_q + BLOCK_M
-            """
-            if q_padded and k_padded:  # CAVEAT: using "or" disables the partial boundary_check branches
-                bias = tl.load(B_block_ptr, boundary_check=(0,1), padding_option="zero")
-            elif q_padded:
-                bias = tl.load(B_block_ptr, boundary_check=(0,), padding_option="zero")
-            elif k_padded:
-                bias = tl.load(B_block_ptr, boundary_check=(1,), padding_option="zero")
-            else:
-                bias = tl.load(B_block_ptr)
-            """
             bias = tl.load(B_block_ptr, boundary_check=(0,1), padding_option="zero")
             qk += bias * bias_scale
         else:

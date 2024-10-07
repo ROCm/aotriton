@@ -47,11 +47,6 @@ def attn_fwd_inner(
         else:
             k_offs_n = None
         k_offs_d = None if not PADDED_HEAD else tl.arange(0, BLOCK_DMODEL)
-        '''
-        k_offs_n = start_n + tl.arange(0, BLOCK_N)
-        k_offs_d = tl.arange(0, BLOCK_DMODEL)
-        # k_offs_d = None if not PADDED_HEAD else tl.arange(0, BLOCK_DMODEL)
-        '''
         k = load_fn(k_ptrs, k_offs_d, k_offs_n, head_dim, seqlen_k)
         if PRE_LOAD_V:
             # We can use the same offsets as k, just with dims transposed.
