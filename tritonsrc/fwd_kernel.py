@@ -327,13 +327,3 @@ def attn_fwd(
              o_cols=head_dim,
              stride_row=stride_om,
              stride_col=stride_on)
-
-    # # write back O
-    # o_offset = Out + batch_index * stride_oz + off_h_q * stride_oh + cu_seqlens_q_start * stride_om
-    # o_ptrs = o_offset + offs_m[:, None] * stride_om + offs_d[None, :] * stride_on
-    # o_ptrs_mask = tl.full([BLOCK_M, BLOCK_DMODEL], 1, dtype=tl.int1)
-    # if overflow_size > 0:
-    #     o_ptrs_mask = o_ptrs_mask & (offs_m[:, None] < seqlen_q)
-    # if PADDED_HEAD:
-    #     o_ptrs_mask = o_ptrs_mask & (offs_d[None, :] < head_dim)
-    # tl.store(o_ptrs, acc.to(Out.dtype.element_ty), mask=o_ptrs_mask)
