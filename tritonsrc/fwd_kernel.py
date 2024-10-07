@@ -166,10 +166,6 @@ def attn_fwd(
     q_ptrs = q_offset + offs_m[:, None] * stride_qm + offs_d[None, :] * stride_qk
     k_offset = batch_index * stride_kz + off_h_k * stride_kh + cu_seqlens_k_start * stride_kn
     k_ptrs = K + k_offset + offs_d[:, None] * stride_kk + offs_n[None, :] * stride_kn
-    # tl.device_print('batch_index ', batch_index)
-    # tl.device_print('off_h_k ', off_h_k)
-    # tl.device_print('cu_seqlens_k_start ', cu_seqlens_k_start)
-    # tl.device_print('k_offset ', k_offset)
     v_offset = V + batch_index * stride_vz + off_h_k * stride_vh + cu_seqlens_k_start * stride_vk
     v_ptrs = v_offset + offs_n[:, None] * stride_vk + offs_d[None, :] * stride_vn
     if BIAS_TYPE == 0:

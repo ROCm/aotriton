@@ -64,7 +64,6 @@ def bwd_inner_dq(
     dO: (seqlen_q, hdim)
     dV: (seqlen_k, hdim)
     '''
-    # tl.device_print('bwd_inner_dq', FULL_BLOCKS, lo, hi)
     for start_k in range(lo, hi, BLOCK_N):
         offs_k_curr = offs_k[None, :] + start_k # (1, BLOCK_N)
         # -- load k, v --

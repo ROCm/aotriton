@@ -152,7 +152,6 @@ def bwd_kernel_dk_dv(
         vt = load_fn(vt_ptrs, ld_offs_d, None, head_dim, seqlen_k)
     else:
         vt = load_fn(vt_ptrs, ld_offs_d, offs_n, head_dim, seqlen_k)
-    # tl.device_print('vt', vt)
     # DO_block_ptr = tl.make_block_ptr(
     #     base=DO,
     #     shape=(seqlen_q, head_dim),
