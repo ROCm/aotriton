@@ -6,6 +6,7 @@ import triton
 import triton.language as tl
 from dropout import dropout_mask, dropout_rng, dropout_offsets
 from masked_load_store import load_fn
+from triton.language.extra import libdevice
 
 # Helper function, but not always usable due to compiler bugs (esp. used with tl.trans)
 @triton.jit
@@ -138,6 +139,10 @@ def bwd_inner_dk_dv(
                           mask=d_lse_ptrs_mask[:,None],
                           other=d_lse_padding[:, None])
         p = tl.math.exp2(qk_scale * qk - l_i) # (BLOCK_M, BLOCK_N)
+
+        if not FULL_BLOCKS or CAUSAL:
+            if qk_scale == 0.0:
+                p = tl.where(libdevice.isnan(p), 0.0, p)
         # -- compute dv ----
         if ENABLE_DROPOUT:
             philox_offset = batch_philox_offset + start_q * max_seqlen_k + start_k
