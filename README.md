@@ -61,7 +61,7 @@ of AOTriton. The compatibility matrix is shown below
 |        2.4            |                   0.6b                          |
 |        2.5            |                   0.7b                          |
 
-ROCm's PyTorch release/<version> branch is slightly different from PyTorch
+ROCm's PyTorch release/\<version\> branch is slightly different from PyTorch
 upstream and may support more recent version of AOTriton
 
 |  PyTorch ROCm Fork    |           AOTriton Feature Release              |
