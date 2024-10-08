@@ -34,6 +34,8 @@ def bwd_kernel_dk_dv(
     stride_oz, stride_oh, stride_om, stride_ok,
     stride_dkz, stride_dkh, stride_dkn, stride_dkk,
     stride_dvz, stride_dvh, stride_dvk, stride_dvn,
+    num_head_q : 'i32',
+    num_head_k : 'i32',
     cu_seqlens_q,
     cu_seqlens_k,
     num_seqlens : 'i32',   # set num_seqlens to zero to ignore cu_seqlens_q/k
@@ -60,7 +62,6 @@ def bwd_kernel_dk_dv(
     start_k = tl.program_id(0) * BLOCK_N  # start_k partitions seqlen_k
     off_h_k = tl.program_id(1) # head index
     off_z = tl.program_id(2) # batch index, for varlen it indicates index in cu_seqlens_q/k
-    num_h = tl.num_programs(1)
     num_z = tl.num_programs(2)
     offs_m = tl.arange(0, BLOCK_M)
     offs_n = start_k + tl.arange(0, BLOCK_N)
@@ -184,7 +185,7 @@ def bwd_kernel_dk_dv(
     dk = tl.zeros([BLOCK_N, BLOCK_DMODEL], dtype=tl.float32)
     qk_scale = sm_scale * 1.44269504089
     bias_scale = 1.0 / sm_scale
-    group_size : tl.constexpr = 1
+    group_size = num_head_q // num_head_k
 
     q_lo = start_k if CAUSAL else 0
     q_hi = seqlen_q
@@ -211,7 +212,7 @@ def bwd_kernel_dk_dv(
     n_full_blocks = n_blocks - leading_masked_blocks - trailing_masked_blocks
 
     for off_h_q in range(off_h_k * group_size, off_h_k * group_size + group_size):
-        off_zh = off_z * num_h + off_h_q * 1
+        off_zh = off_z * num_head_q + off_h_q * 1
         # This lower loop bound is because of the causal mask. We create a lower triangular
         # result. The upper triangular is -inf (becomes 0 when we do e^x). As such, it can
         # be ignored in the GEMM.
