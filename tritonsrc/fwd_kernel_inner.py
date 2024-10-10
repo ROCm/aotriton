@@ -89,10 +89,16 @@ def attn_fwd_inner(
             qk += alibi_block * bias_scale
 
         # softmax
-        m_ij = tl.maximum(m_i, qk_scale * tl.max(qk, 1))
+        m_ij = tl.maximum(m_i, tl.max(qk, 1))
         # FIXME: when sm_scale = 0.0 and MASK_STEPS/CAUSAL = True
         #        qk * qk_scale = nan
-        p = tl.math.exp2(qk * qk_scale - m_ij[:, None])
+        p = tl.math.exp2(qk_scale * (qk - m_ij[:, None]))
+
+        # tl.debug_barrier()
+        # tl.device_print('m_ij', m_ij)
+        # # tl.device_print('log p', qk * qk_scale - m_ij[:, None])
+        # # # tl.device_print('p', p)
+        # tl.debug_barrier()
 
         if MASK_STEPS or CAUSAL:
             if qk_scale == 0.0:
@@ -129,12 +135,13 @@ def attn_fwd_inner(
                      stride_col=1)
             # tl.store(encoded_sm_ptrs, p.to(q.type.element_ty))
         # -- update output accumulator --
-        alpha = tl.math.exp2(m_i - m_ij)
+        alpha = tl.math.exp2(qk_scale * (m_i - m_ij))
         acc = acc * alpha[:, None]
         if not PRE_LOAD_V:
             v = load_fn(v_ptrs, k_offs_n, k_offs_d, seqlen_k, head_dim)
         # -- update m_i and l_i
         l_i = l_i * alpha + l_ij
+
         # update m_i and l_i
         m_i = m_ij
         acc += tl.dot(p.to(v.type.element_ty), v)

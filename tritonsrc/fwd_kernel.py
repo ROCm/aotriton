@@ -280,6 +280,9 @@ def attn_fwd(
                 CAUSAL, BLOCK_M, BLOCK_DMODEL, BLOCK_N,
                 # _, MASK_STEPS, ...
                 PRE_LOAD_V, True, ENABLE_DROPOUT, RETURN_ENCODED_SOFTMAX, PADDED_HEAD)
+    # tl.debug_barrier()
+    # tl.device_print('ret acc', acc)
+    # tl.debug_barrier()
     # epilogue
     acc = acc / l_i[:, None]
     if ENABLE_DROPOUT:
@@ -312,9 +315,9 @@ def attn_fwd(
     if overflow_size > 0:
         boundary = tl.full((BLOCK_M, ), BLOCK_M - overflow_size, dtype=tl.int32)
         l_ptrs_mask = tl.arange(0, BLOCK_M) < boundary
-        tl.store(l_ptrs, m_i + tl.math.log2(l_i), mask=l_ptrs_mask)
+        tl.store(l_ptrs, m_i * qk_scale + tl.math.log2(l_i), mask=l_ptrs_mask)
     else:
-        tl.store(l_ptrs, m_i + tl.math.log2(l_i))
+        tl.store(l_ptrs, m_i * qk_scale + tl.math.log2(l_i))
 
     o_base = Out + batch_index * stride_oz + off_h_q * stride_oh + cu_seqlens_q_start * stride_om
     mstore2d(acc,
