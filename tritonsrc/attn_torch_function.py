@@ -318,7 +318,6 @@ class _attention(torch.autograd.Function):
             BLOCK_M //= 2
 
         if autotune:
-            assert False, "tritonsrc based autotune is disabled for now due to potentially faulty triton.Config on Navi31"
             tuned_attn_fwd[grid](
                 q, k, v, b, sm_scale, M, o,
                 q.stride(0), q.stride(1), q.stride(2), q.stride(3),
