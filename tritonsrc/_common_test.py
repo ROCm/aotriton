@@ -134,6 +134,9 @@ class SdpaContext(object):
         self.OUT_FUDGE_FACTOR = 3.0
         if dtype == torch.float32:
             self.OUT_FUDGE_FACTOR = 12.0
+        if torch.version.hip:
+            if 'gfx90a' in torch.cuda.get_device_properties(0).gcnArchName:
+                self.OUT_FUDGE_FACTOR = 12.0
 
     '''
     Create Tensors that will be kept b/w forward and backward pass
