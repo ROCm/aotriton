@@ -62,6 +62,19 @@ class KernelSignature(object):
         sf = ','.join([x for x in lf if x is not None])
         return 'FONLY__' + sf + '__'
 
+    '''
+    Similar to functional_signature, but some fields are 'Any' to make clustering possible
+    '''
+    def get_partial_functional_signature(self, sans):
+        def sig_with_sans(fsel):
+            if fsel.repr_name in sans:
+                return 'Any'
+            else:
+                return fsel.compact_signature
+        lf = [sig_with_sans(s) for s in self._func_selections]
+        sf = ','.join([x for x in lf if x is not None])
+        return 'FONLY__' + sf + '__'
+
     @property
     def arguments(self):
         return self._kdesc.ARGUMENTS
