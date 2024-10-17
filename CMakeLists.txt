@@ -30,10 +30,6 @@ endif()
 # Must be after pybind11
 set(CMAKE_CXX_COMPILER hipcc)
 
-# GPU kernel compression related options
-option(AOTRITON_COMPRESS_KERNEL "Enable GPU kernel compression with zstd. Fail when zstd is unavailable. Only effective for AOTriton API V2" ON)
-# option(AOTRITON_COMPRESS_KERNEL_STATIC_ZSTD "Use static zstd library to avoid potential zstd version conflict (e.g. pytorch)" OFF)
-
 # Resolve name conflicts with suffix
 set(AOTRITON_NAME_SUFFIX "" CACHE STRING "Add suffix to namespace and library file name. This is to resolve name conflicts with PyTorch's AOTriton during testing.")
 if(AOTRITON_NAME_SUFFIX)
@@ -45,39 +41,13 @@ configure_file(include/aotriton/config.h.in include/aotriton/config.h)
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/include/aotriton/config.h
   DESTINATION ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_INCLUDEDIR}/aotriton)
 
-# Note for archive library user:
-# get this property with:
-#   get_property(ZSTD_INCLUDE_DIR TARGET zstd::libzstd_shared PROPERTY INTERFACE_INCLUDE_DIRECTORIES)
-# "zstd::libzstd_shared" can be replaced with zstd::libzstd_static
-set(AOTRITON_OVERRIDE_ZSTD_INCLUDE "" CACHE STRING "(For archive library users) override zstd header directory.\
-Caveat: should consider set AOTRITON_NO_SHARED because objects are compiled with this header file,\
-but shared objects will be linked to libzstd found by find_package later.")
-if(AOTRITON_COMPRESS_KERNEL)
-    find_program(ZSTD_EXEC zstd REQUIRED)
-    include(FindPkgConfig)
-    pkg_search_module(ZSTD REQUIRED libzstd)
-    # if (AOTRITON_COMPRESS_KERNEL_STATIC_ZSTD)
-    #     set(ZSTD_TARGET zstd::libzstd_static)
-    # else()
-    #     if(TARGET zstd::libzstd_shared)
-    #         set(ZSTD_TARGET zstd::libzstd_shared)
-    #     else()
-    #         set(ZSTD_TARGET zstd::libzstd_static)
-    #     endif()
-    # endif()
-    # get_property(AOTRITON_ZSTD_INCLUDE TARGET ${ZSTD_TARGET} PROPERTY INTERFACE_INCLUDE_DIRECTORIES)
-    add_library(zstd_interface INTERFACE)
-    # There are other options but these are sufficient on EL8
-    target_link_libraries(zstd_interface INTERFACE ${ZSTD_LIBRARIES})
-    target_link_directories(zstd_interface INTERFACE ${ZSTD_LIBRARY_DIRS})
-    target_include_directories(zstd_interface INTERFACE ${ZSTD_INCLUDE_DIRS})
-    set(AOTRITON_ZSTD_INCLUDE "${ZSTD_INCLUDE_DIRS}")
-    message(STATUS "ZSTD_TARGET ${ZSTD_TARGET}")
-    message(STATUS "get_property AOTRITON_ZSTD_INCLUDE ${AOTRITON_ZSTD_INCLUDE}")
-    if(AOTRITON_OVERRIDE_ZSTD_INCLUDE)
-        set(AOTRITON_ZSTD_INCLUDE ${AOTRITON_OVERRIDE_ZSTD_INCLUDE})
-    endif()
-endif()
+# Kernel Storage V2 uses xz/LZMA for compression
+include(FindPkgConfig)
+pkg_search_module(LZMA REQUIRED liblzma)
+add_library(lzma_interface INTERFACE)
+target_link_libraries(lzma_interface INTERFACE ${LZMA_LIBRARIES})
+target_link_directories(lzma_interface INTERFACE ${LZMA_LIBRARY_DIRS})
+target_include_directories(lzma_interface INTERFACE ${LZMA_INCLUDE_DIRS})
 
 if(AOTRITON_ENABLE_ASAN)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -fsanitize=address -fno-omit-frame-pointer")
