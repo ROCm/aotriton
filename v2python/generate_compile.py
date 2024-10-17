@@ -14,6 +14,20 @@ import itertools
 SOURCE_PATH = Path(__file__).resolve()
 COMPILER = SOURCE_PATH.parent / 'compile.py'
 
+GPU_TO_DIRECTORY = {
+    'MI200'  : 'amd-gfx90a',
+    'MI300X' : 'amd-gfx942',
+    'Navi31' : 'amd-gfx110x',
+    'Navi32' : 'amd-gfx110x',
+}
+
+GPU_TO_CLUSTER_SUFFIX = {
+    'MI200'  : 'MI200',
+    'MI300X' : 'MI300X',
+    'Navi31' : 'Navi3x',
+    'Navi32' : 'Navi3x',
+}
+
 class ClusterKernel(object):
     def __init__(self):
         self._registry = []
@@ -21,16 +35,22 @@ class ClusterKernel(object):
     def collect_object_file(self, ofd : 'ObjectFileDescription'):
         self._registry.append(ofd)
 
-    def calc_clustering_scheme(self):
-        kdesc = self._registry[0]._triton_kernel_desc
+    def calc_clustering_scheme(self, n_combination):
         cluster_by = {}
+        if n_combination == 0:  # No need to change functional(s) to 'Any'
+            dic = defaultdict(list)
+            for ofd in self._registry:
+                fonly = ofd.functional_signature + '_' + GPU_TO_CLUSTER_SUFFIX[ofd.target_gpu]
+                dic[fonly].append(ofd)
+            cluster_by[None] = dic
+            return cluster_by
+        kdesc = self._registry[0]._triton_kernel_desc
         keys = []
         for m in kdesc._func_meta:
             if m.nchoices <= 1:
                 continue
             keys.append(m.repr_name)
-        N_COMBINATION = 2
-        for keycomb in itertools.combinations(keys, N_COMBINATION):
+        for keycomb in itertools.combinations(keys, n_combination):
             cluster_by[keycomb] = defaultdict(list)
         for by, dic in cluster_by.items():
             if isinstance(by, str):
@@ -40,7 +60,7 @@ class ClusterKernel(object):
             for ofd in self._registry:
                 ksig = ofd._signature
                 fonly = ksig.get_partial_functional_signature(sans) + ksig._gpu
-                dic[fonly].append(str(ofd.obj.absolute()))
+                dic[fonly].append(ofd)
         return cluster_by
 
 class ClusterKernelFamily(object):
@@ -61,10 +81,34 @@ class ClusterRegistry(object):
     def collect_object_file(self, ofd : 'ObjectFileDescription'):
         self._registry[ofd.KERNEL_FAMILY].collect_object_file(ofd)
 
-    def gen_clusters(self):
+    def gen_clusters(self, n_combination):
         for family, registry_0 in self._registry.items():
             for kernel_name, registry_1 in registry_0.gen_clusters():
-                yield family, kernel_name, registry_1.calc_clustering_scheme()
+                yield family, kernel_name, registry_1.calc_clustering_scheme(n_combination=n_combination)
+
+    def write_clustering_tests(self, f):
+        for family, kernel_name, cluster in self.gen_clusters(n_combination=2):
+            print(f'mkdir -p {family}/{kernel_name}', file=f)
+            for by, clusters in cluster.items():
+                bypath = '-'.join(by)
+                print(f'mkdir -p {family}/{kernel_name}/{bypath}', file=f)
+                for fonly, obj_list in clusters.items():
+                    tar = f'{family}/{kernel_name}/{bypath}/{fonly}.tar'
+                    print(f'tar cf {tar} ', ' '.join([str(o.obj.absolute()) for o in obj_list]), file=f)
+                    print(f'zstd {tar}', file=f)
+
+    def write_bare(self, args, f):
+        for family, kernel_name, cluster_bys in self.gen_clusters(n_combination=0):
+            # cluster_bys[None]: only cluster psels and copts
+            # Experiment shows it is not needed to cluster by one or more functionals.
+            # XZ + clustering psels+copts is good enough
+            clusters = cluster_bys[None]
+            for fonly, obj_list in clusters.items():
+                first_obj = obj_list[0]
+                dir_arch = GPU_TO_DIRECTORY[first_obj.target_gpu]
+                print(dir_arch, family, kernel_name, fonly, end=';', sep=';', file=f)
+                path_list = [str(o.obj.absolute()) for o in obj_list]
+                print(*path_list, sep=';', file=f)
 
 def parse():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -75,18 +119,19 @@ def parse():
     p.add_argument("--enable_zstd", type=str, default=None, help="Use zstd to compress the compiled kernel")
     p.add_argument("--bare_mode", action='store_true', help="Instead of generating a proper Makefile, only generate compiler options and leave the remaining tasks to cmake.")
     p.add_argument("--test_clustering", action='store_true', help="Generate TestClustering.sh to find the optimal clustering scheme.")
+    p.add_argument("--generate_cluster_info", action='store_true', help="Generate Bare.functionals for clustering.")
     p.add_argument("--build_for_tuning", action='store_true', help="Build all possible GPU kernels for performance tuning.")
     p.add_argument("--timeout", type=float, default=8.0, help='Maximal time the compiler can run. Passing < 0 for indefinite. No effect in bare mode (handled separately)')
     # p.add_argument("--autotune_data", type=str, default=None, help="Autotune results generated by tune_flash.py")
     args = p.parse_args()
-    if test_clustering:
-        args.cluster_registry = ClusterRegistry()
+    if args.test_clustering or args.generate_cluster_info:
+        args._cluster_registry = ClusterRegistry()
     # print(args)
     return args
 
 def gen_from_object(args, o : 'ObjectFileDescription', makefile):
-    if args.test_clustering:
-        args.cluster_registry.collect_object_file(o)
+    if args.test_clustering or args.generate_cluster_info:
+        args._cluster_registry.collect_object_file(o)
     if args.bare_mode:
         print(o.obj.absolute(), o.src.absolute(), o.entrance, o.num_warps, o.num_stages, o.waves_per_eu, o.target_gpu, o.signature, sep=';', file=makefile)
         return
@@ -156,15 +201,10 @@ def main():
     if args.test_clustering:
         archve_sh = 'TestClustering.sh'
         with open(build_dir / archve_sh, 'w') as f:
-            for family, kernel_name, cluster in args.cluster_registry.gen_clusters():
-                print(f'mkdir -p {family}/{kernel_name}', file=f)
-                for by, clusters in cluster.items():
-                    bypath = '-'.join(by)
-                    print(f'mkdir -p {family}/{kernel_name}/{bypath}', file=f)
-                    for fonly, obj_list in clusters.items():
-                        tar = f'{family}/{kernel_name}/{bypath}/{fonly}.tar'
-                        print(f'tar cf {tar} ', ' '.join(obj_list), file=f)
-                        print(f'zstd {tar}', file=f)
+            args._cluster_registry.write_clustering_tests(f)
+    if args.generate_cluster_info:
+        with open(build_dir / 'Bare.cluster', 'w') as f:
+            args._cluster_registry.write_bare(args, f)
 
 if __name__ == '__main__':
     main()
