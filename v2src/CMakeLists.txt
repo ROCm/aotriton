@@ -8,15 +8,12 @@ message("CMAKE_CURRENT_SOURCE_PARENT_DIR ${CMAKE_CURRENT_SOURCE_PARENT_DIR}")
 message("CMAKE_CURRENT_LIST_DIR ${CMAKE_CURRENT_LIST_DIR}")
 message("CMAKE_CURRENT_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}")
 set(AOTRITON_V2_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}")
+set(AOTRITON_KERNEL_STORAGE_V2_DIR "${AOTRITON_V2_BUILD_DIR}/aotriton.images")
 execute_process(COMMAND ${CMAKE_COMMAND} -E make_directory "${AOTRITON_V2_BUILD_DIR}")
+execute_process(COMMAND ${CMAKE_COMMAND} -E make_directory "${AOTRITON_KERNEL_STORAGE_V2_DIR}")
 
 get_filename_component(AOTRITON_COMPILER "${CMAKE_CURRENT_LIST_DIR}/../v2python/compile.py" ABSOLUTE)
 message("AOTRITON_COMPILER ${AOTRITON_COMPILER}")
-
-# set(AOTRITON_GEN_FLAGS "")
-# if(AOTRITON_COMPRESS_KERNEL)
-#   list(APPEND AOTRITON_GEN_FLAGS "--enable_zstd" "${ZSTD_EXEC}")
-# endif(AOTRITON_COMPRESS_KERNEL)
 
 # add_custom_target(aotriton_v2_gen_compile
 #   COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} PATH="${VENV_DIR}/bin:$ENV{PATH}" python -m v2python.generate_compile --target_gpus ${TARGET_GPUS} --build_dir "${AOTRITON_V2_BUILD_DIR}" ${AOTRITON_GEN_FLAGS}
@@ -37,18 +34,28 @@ else()
   set(AOTRITON_ENABLE_FP32 0)
 endif()
 
+# Compile HSACO Kernels
+
+## Generate Bare.compile file
 execute_process(
   COMMAND ${CMAKE_COMMAND}
   -E env VIRTUAL_ENV=${VENV_DIR}
   AOTRITON_ENABLE_FP32=${AOTRITON_ENABLE_FP32}
-  "${VENV_DIR}/bin/python" -m v2python.generate_compile --target_gpus ${TARGET_GPUS} --build_dir "${AOTRITON_V2_BUILD_DIR}" --bare_mode ${GENERATE_OPTION}
+  "${VENV_DIR}/bin/python" -m v2python.generate_compile
+  --target_gpus ${TARGET_GPUS} 
+  -build_dir "${AOTRITON_V2_BUILD_DIR}"
+  --bare_mode ${GENERATE_OPTION}
+  --generate_cluster_info
   COMMAND_ECHO STDOUT
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
   COMMAND_ERROR_IS_FATAL ANY
 )
 message("Bare.compile: ${AOTRITON_V2_BUILD_DIR}/Bare.compile")
+message("Bare.cluster: ${AOTRITON_V2_BUILD_DIR}/Bare.cluster")
 file(STRINGS "${AOTRITON_V2_BUILD_DIR}/Bare.compile" HSACO_RULES)
 set(ALL_HSACOS "")
+
+## Use Bare.compile file to generate custom rules
 foreach(RULE IN LISTS HSACO_RULES)
   # message("${RULE}")
   list(POP_FRONT RULE HSACO)
@@ -59,82 +66,63 @@ foreach(RULE IN LISTS HSACO_RULES)
   list(POP_FRONT RULE WAVESPEREU)
   list(POP_FRONT RULE TGTGPU)
   list(POP_FRONT RULE SIG)
-  if(AOTRITON_COMPRESS_KERNEL)
-    add_custom_command(OUTPUT "${HSACO}.zst"
-      COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
-      TRITON_CACHE_DIR=${CMAKE_CURRENT_BINARY_DIR}/triton-cache
-      "${VENV_DIR}/bin/python"
-      "${AOTRITON_COMPILER}"
-      "${SRC}"
-      "--kernel_name" "${KNAME}"
-      "-o" "${HSACO}"
-      "-g" "1,1,1"
-      "--num_warps" "${NWARPS}"
-      "--num_stages" "${NSTAGES}"
-      "--waves_per_eu" "${WAVESPEREU}"
-      "--target" "${TGTGPU}"
-      "--signature" "${SIG}"
-      "--timeout" "${AOTRITON_GPU_BUILD_TIMEOUT}"
-      COMMAND ${ZSTD_EXEC} "-q" "-f" ${HSACO}
-      DEPENDS aotriton_venv_triton
-    )
-    list(APPEND ALL_HSACOS "${HSACO}.zst")
-  else(AOTRITON_COMPRESS_KERNEL)
-    add_custom_command(OUTPUT "${HSACO}"
-      COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
-      TRITON_CACHE_DIR=${CMAKE_CURRENT_BINARY_DIR}/triton-cache
-      "${VENV_DIR}/bin/python"
-      "${AOTRITON_COMPILER}"
-      "${SRC}"
-      "--kernel_name" "${KNAME}"
-      "-o" "${HSACO}"
-      "-g" "1,1,1"
-      "--num_warps" "${NWARPS}"
-      "--num_stages" "${NSTAGES}"
-      "--waves_per_eu" "${WAVESPEREU}"
-      "--target" "${TGTGPU}"
-      "--signature" "${SIG}"
-      "--timeout" "${AOTRITON_GPU_BUILD_TIMEOUT}"
-      DEPENDS aotriton_venv_triton
-    )
-    list(APPEND ALL_HSACOS "${HSACO}")
-  endif(AOTRITON_COMPRESS_KERNEL)
-  # message("HSACO ${HSACO}")
+  add_custom_command(OUTPUT "${HSACO}"
+    COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
+    TRITON_CACHE_DIR=${CMAKE_CURRENT_BINARY_DIR}/triton-cache
+    "${VENV_DIR}/bin/python"
+    "${AOTRITON_COMPILER}"
+    "${SRC}"
+    "--kernel_name" "${KNAME}"
+    "-o" "${HSACO}"
+    "-g" "1,1,1"
+    "--num_warps" "${NWARPS}"
+    "--num_stages" "${NSTAGES}"
+    "--waves_per_eu" "${WAVESPEREU}"
+    "--target" "${TGTGPU}"
+    "--signature" "${SIG}"
+    "--timeout" "${AOTRITON_GPU_BUILD_TIMEOUT}"
+    DEPENDS aotriton_venv_triton
+  )
+  list(APPEND ALL_HSACOS "${HSACO}")
 endforeach(RULE)
-
-if(DEFINED ENV{MAX_JOBS})
-  set(MAX_JOBS "$ENV{MAX_JOBS}")
-else()
-  cmake_host_system_information(RESULT MAX_JOBS QUERY NUMBER_OF_PHYSICAL_CORES)
-  if(MAX_JOBS LESS 2) # In case of failures.
-    set(MAX_JOBS 2)
-  endif()
-endif()
-
+## Add a virtual target
 add_custom_target(aotriton_v2_compile ALL DEPENDS ${ALL_HSACOS})
 
-# add_custom_target(aotriton_v2_compile
-#   # (CAVEAT) KNOWN PROBLEM: Will not work if LD_PRELOAD is not empty
-#   # FIXME: Change this into `-E env --modify LD_PRELOAD=path_list_prepend:${AMDOCL_LD_PRELOAD}` when minimal cmake >= 3.25
-#   COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} PATH="${VENV_DIR}/bin:$ENV{PATH}" make -j ${MAX_JOBS} -f Makefile.compile LIBHSA_RUNTIME64=${AMDHSA_LD_PRELOAD}
-#   WORKING_DIRECTORY "${AOTRITON_V2_BUILD_DIR}"
-#   COMMAND_EXPAND_LISTS
-#   BYPRODUCTS "${AOTRITON_V2_BUILD_DIR}/flash/attn_fwd.h"
-#   "${AOTRITON_V2_BUILD_DIR}/flash/attn_fwd.cc"
-#   # There are other by-products we did not bother to list here
-# )
+
+# Kernel Storage V2
+file(STRINGS "${AOTRITON_V2_BUILD_DIR}/Bare.cluster" CLUSTER_RULES)
+set(ALL_AKS2 "")
+foreach(RULE IN LISTS CLUSTER_RULES)
+  list(POP_FRONT RULE DIR_ARCH)
+  list(POP_FRONT RULE DIR_FAMILY)
+  list(POP_FRONT RULE DIR_KERNEL)
+  list(POP_FRONT RULE FONLY)
+  string(JOIN "/" AKS2
+    AOTRITON_KERNEL_STORAGE_V2_DIR
+    DIR_ARCH
+    DIR_FAMILY
+    DIR_FAMILY)
+  add_custom_command(OUTPUT "${AKS2}"
+    COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
+    "${VENV_DIR}/bin/python"
+    -m v2python.archive_for_kernel_storage_v2
+    -o "${AKS2}"
+    --
+    ${RULE}
+    DEPENDS aotriton_v2_compile
+    COMMAND_EXPAND_LISTS)
+  list(APPEND ALL_AKS2 "${AKS2}")
+endforeach(RULE)
+add_custom_target(aotriton_kernel_storage_v2 ALL DEPENDS ${ALL_AKS2})
+
 
 set(AOTRITON_SHIM_FLAGS "")
 if(AOTRITON_NO_SHARED)
     list(APPEND AOTRITON_SHIM_FLAGS "--archive_only" "${AOTRITON_SHIM_FLAGS}")
 endif(AOTRITON_NO_SHARED)
-if(AOTRITON_COMPRESS_KERNEL)
-    list(APPEND AOTRITON_SHIM_FLAGS "--enable_zstd" "${AOTRITON_ZSTD_INCLUDE}")
-endif()
 if(AOTRITON_NAME_SUFFIX)
   list(APPEND AOTRITON_SHIM_FLAGS "--library_suffix" "${AOTRITON_NAME_SUFFIX}")
 endif()
-message(STATUS "AOTRITON_ZSTD_INCLUDE ${AOTRITON_ZSTD_INCLUDE}")
 message(STATUS "AOTRITON_SHIM_FLAGS ${AOTRITON_SHIM_FLAGS}")
 
 execute_process(
@@ -159,6 +147,7 @@ add_custom_target(aotriton_v2_gen_shim
   COMMAND_EXPAND_LISTS
   WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/.."
 )
+# Note shim and kernel storage v2 are parallel targets
 add_dependencies(aotriton_v2_gen_shim aotriton_v2_compile)
 
 if(AOTRITON_NO_SHARED)
@@ -173,11 +162,6 @@ if(AOTRITON_ENABLE_SUFFIX)
   set_target_properties(aotriton_v2 PROPERTIES OUTPUT_NAME "aotriton${AOTRITON_NAME_SUFFIX}_v2")
 endif()
 
-if(AOTRITON_COMPRESS_KERNEL)
-  target_compile_definitions(aotriton_v2 PRIVATE -DAOTRITON_USE_ZSTD=1)
-else(AOTRITON_COMPRESS_KERNEL)
-  target_compile_definitions(aotriton_v2 PRIVATE -DAOTRITON_USE_ZSTD=0)
-endif(AOTRITON_COMPRESS_KERNEL)
 target_include_directories(aotriton_v2 PUBLIC ${CMAKE_CURRENT_LIST_DIR}/../include)
 target_include_directories(aotriton_v2 PUBLIC ${CMAKE_BINARY_DIR}/include)  # for <buid>/include/aotriton/config.h. Code should use <aotriton/config.h>
 target_include_directories(aotriton_v2 PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
@@ -188,9 +172,7 @@ if(AOTRITON_BUILD_FOR_TUNING)
 else(AOTRITON_BUILD_FOR_TUNING)
   target_compile_definitions(aotriton_v2 PRIVATE -DAOTRITON_BUILD_FOR_TUNING=0)
 endif(AOTRITON_BUILD_FOR_TUNING)
-if(AOTRITON_COMPRESS_KERNEL)
-  target_link_libraries(aotriton_v2 zstd_interface)
-endif(AOTRITON_COMPRESS_KERNEL)
+target_link_libraries(aotriton_v2 lzma_interface)
 
 # message(STATUS "AOTRITON_EXTRA_COMPILER_OPTIONS ${AOTRITON_EXTRA_COMPILER_OPTIONS}")
 # add_custom_target(aotriton_v2
