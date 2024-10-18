@@ -66,6 +66,7 @@ struct AKS2_Header {
 
 struct AKS2_Metadata {
   uint32_t shared_memory;
+  uint32_t number_of_threads;
   uint32_t offset;
   uint32_t image_size;
   uint32_t filename_length;
@@ -80,6 +81,7 @@ struct AKS2_Metadata {
 // -- Compressed
 // N * varlen: (Directory)
 //     4B shared memory size
+//     4B number of threads in a GPU thread block
 //     4B offset (from end of the header file)
 //     4B image size
 //     4B file name length (M), including trailing '\0'
@@ -143,13 +145,16 @@ PackedKernel::PackedKernel(int fd) {
 PackedKernel::~PackedKernel() {
 }
 
-std::tuple<void*, int>
+TritonKernel::Essentials
 PackedKernel::filter(const char* stem_name) const {
   std::string_view filename(stem_name);
   auto iter = directory_.find(filename);
   if (iter == directory_.end())
     return std::make_tuple(nullptr, 0);
-  return std::make_tuple(kernel_start_ + iter->second.offset, iter->second.shared_memory);
+  const auto& meta = iter->second;
+  return std::make_tuple(kernel_start_ + meta.offset,
+                         meta.shared_memory,
+                         dim3{meta.number_of_threads, 1, 1});
 }
 
 }

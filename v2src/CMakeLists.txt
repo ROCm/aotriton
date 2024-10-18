@@ -105,7 +105,7 @@ foreach(RULE IN LISTS CLUSTER_RULES)
   add_custom_command(OUTPUT "${AKS2}"
     COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
     "${VENV_DIR}/bin/python"
-    -m v2python.archive_for_kernel_storage_v2
+    -m v2python.aks2
     -o "${AKS2}"
     --
     ${RULE}

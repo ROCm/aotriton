@@ -162,7 +162,7 @@ class KernelTuningEntryForFunctionalOnGPU(object):
         kernel_image_symbols = []
         for _, _, o in self.gen_kernel_symbols(kernel_image_dir):
             assert o.compiled_files_exist, f'Compiled file {o._hsaco_kernel_path} not exists'
-            kernel_image_symbols.append(f'{{ PACKAGE_PATH, "{o.obj.stem}", {{ {o.num_warps * o.warp_size} , 1, 1 }} }},')
+            kernel_image_symbols.append(f'{{ PACKAGE_PATH, "{o.obj.stem}" }},')
         ALIGN = '\n' + 4 * ' '
         return ALIGN.join(kernel_image_symbols)
 

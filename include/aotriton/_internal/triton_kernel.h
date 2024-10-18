@@ -17,7 +17,9 @@ class PackedKernel;
 
 class TritonKernel {
 public:
-  TritonKernel(const char* package_path, const char* stem_name, dim3 block);
+  using Essentials = std::tuple<void*, int, dim3>;
+
+  TritonKernel(const char* package_path, const char* stem_name);
 
   hipError_t invoke(const char* kernel_name, dim3 grid, std::vector<void*>& args, hipStream_t stream);
 
@@ -41,10 +43,10 @@ private:
   std::unordered_map<int, DeviceFunction> funcache_;
   std::shared_mutex mutex_;
 
+  int shared_memory_size_ = 0;
   dim3 block_ { 256, 1, 1 };
   void* kernel_image_ = nullptr;
-  int shared_memory_size_ = 0;
-  std::tuple<void*, int> void* decompress_kernel();
+  Essentials decompress_kernel();
   std::shared_object<PackedKernel> packed_kernel_;
 };
 
