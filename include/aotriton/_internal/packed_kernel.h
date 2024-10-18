@@ -5,6 +5,7 @@
 #define AOTRITON_V2_API_PACKED_KERNEL_H
 
 #include <aotriton/config.h>
+#include <aotriton/_internal/triton_kernel.h>
 #include <memory>
 #include <shared_mutex>
 #include <stdint.h>
@@ -27,7 +28,7 @@ public:
     return final_status_;
   }
 
-  std::tuple<void*, int> filter(const char* stem_name) const;
+  TritonKernel::Essentials filter(const char* stem_name) const;
 
 private:
   static std::shared_mutex registry_mutex_;
