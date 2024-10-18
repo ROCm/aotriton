@@ -1,13 +1,6 @@
 // Copyright © 2023-2024 Advanced Micro Devices, Inc.
 // SPDX-License-Identifier: MIT
 
-// clang-format off
-#define INCBIN_PREFIX g_aotriton[[library_suffix]]_FAMILY_[[kernel_family_name]]_KERNEL_[[shim_kernel_name]]_GPU_[[gpu]]_
-#define INCBIN_STYLE INCBIN_STYLE_SNAKE
-
-#define mangle(x) g_aotriton[[library_suffix]]_FAMILY_[[kernel_family_name]]_KERNEL_[[shim_kernel_name]]_GPU_[[gpu]]_ ## x ## _data
-#define smangle(x) g_aotriton[[library_suffix]]_FAMILY_[[kernel_family_name]]_KERNEL_[[shim_kernel_name]]_GPU_[[gpu]]_ ## x ## _size
-
 #include "../shim.[[shim_kernel_name]].h"
 #include <aotriton/_internal/triton_kernel.h>
 #include <aotriton/cpp_tune.h>
@@ -17,19 +10,9 @@
 // [[human_readable_signature]]
 #define CURRENT_ENTRY_PUBLIC Autotune_[[shim_kernel_name]]__A[[arch_number]]__F[[godel_number]]
 
-[[incbin_kernel_images]];
-
-#if defined(NDEBUG) || AOTRITON_BUILD_FOR_TUNING
-[[incbin_kernel_names]];
-#endif
-
 #define ARRAY_SIZE(array)  (sizeof(array) / sizeof(array[0]))
 
 namespace { // Anonymous namespace
-
-#if AOTRITON_BUILD_FOR_TUNING
-static constexpr int incbin_num_kernels = ARRAY_SIZE(incbin_kernel_names);
-#endif
 
 #if AOTRITON_BUILD_FOR_TUNING
 // PSels and Copts in JSON String
@@ -45,9 +28,15 @@ PerfFields image_perf_list [] = {
     [[kernel_image_perfs]]
 };
 
+const char* PACKAGE_PATH = [[package_path]];
+
 AOTRITON_NS::TritonKernel image_list [] = {
     [[kernel_image_objects]]
 };
+
+#if AOTRITON_BUILD_FOR_TUNING
+static constexpr int total_num_kernels = ARRAY_SIZE(image_list);
+#endif
 
 [[lut_dtype]] lut[[lut_shape]] = [[lut_data]];
 

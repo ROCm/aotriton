@@ -50,7 +50,6 @@ def parse():
                    help="Ahead of Time (AOT) Compile Architecture. PyTorch is required for autodetection if --targets is missing.")
     p.add_argument("--build_dir", type=str, default='build/', help="build directory")
     p.add_argument("--archive_only", action='store_true', help='Only generate archive library instead of shared library. No linking with dependencies.')
-    p.add_argument("--enable_zstd", type=str, default=None, nargs='*', help="Use zstd to compress the compiled kernel")
     p.add_argument("--library_suffix", type=str, default='', help="Add suffix to the library name 'aotriton' to avoid symbol conflicts")
     p.add_argument("--bare_mode", action='store_true', help="Instead of generating a proper Makefile, only generate a list of source files and leave the remaining tasks to cmake.")
     p.add_argument("--build_for_tuning", action='store_true', help="Include all GPU kernels in the dispatcher for performance tuning.")
@@ -133,12 +132,6 @@ class MakefileSegmentGenerator(Generator):
     def __init__(self, args, out):
         super().__init__(args, out);
         self._cc_cmd = '$(HIPCC) $(EXTRA_COMPILER_OPTIONS) '
-        if self._args.enable_zstd is not None:
-            for d in self._args.enable_zstd:
-                self._cc_cmd += f' "-I{d}" '
-            self._cc_cmd += f'-DAOTRITON_USE_ZSTD=1'
-        else:
-            self._cc_cmd += ' -DAOTRITON_USE_ZSTD=0'
         self._cc_cmd += f' -I{INCBIN} -I{COMMON_INCLUDE} -fPIC -std=c++20'
 
     @property
@@ -357,7 +350,6 @@ class AutotuneCodeGenerator(MakefileSegmentGenerator):
         try:
             self._ofn = self._lut.write_lut_source(self._args.library_suffix,
                                                    self._outdir,
-                                                   compressed=self._args.enable_zstd is not None,
                                                    bare_mode=self.is_bare)
         except MissingLutEntry as e:
             print(e)
