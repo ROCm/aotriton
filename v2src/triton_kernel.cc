@@ -2,13 +2,11 @@
 // SPDX-License-Identifier: MIT
 
 #include <aotriton/_internal/triton_kernel.h>
+#include <aotriton/_internal/packed_kernel.h>
 #include <aotriton/runtime.h>
 #include <incbin.h>
 #include <iostream>
 #include <mutex>
-#if AOTRITON_USE_ZSTD
-#include <zstd.h>
-#endif
 
 #ifdef NDEBUG
 #define AOTRITON_KERNEL_VERBOSE 0
@@ -38,11 +36,11 @@ TritonKernel::DeviceFunction::~DeviceFunction() {
 }
 
 
-TritonKernel::TritonKernel(const void* image, size_t image_size, dim3 block, int shared_memory_size)
-  : kernel_image_(image)
-  , image_size_(image_size)
+TritonKernel::TritonKernel(const char* package_path, const char* stem_name, dim3 block, int shared_memory_size)
+  : package_path_(package_path)
+  , stem_name_(stem_name)
   , block_(block)
-  , shared_memory_size_(shared_memory_size) {
+{
 }
 
 hipError_t
@@ -96,24 +94,17 @@ TritonKernel::load_for_device(int device_id, const char* kernel_name) {
     (void*)(uintptr_t)err.size(), err.data(), (void*)(uintptr_t)log.size(), log.data(), (void*)(uintptr_t)1
   };
 
-#if AOTRITON_USE_ZSTD
-  auto image = decompress_kernel();
+  std::tie(kernel_image_, shared_memory_size_) = decompress_kernel();
 #if AOTRITON_KERNEL_VERBOSE
-  std::cerr << "Decompress kernel from " << kernel_image_ << " with size " << image_size_ << " to " << image
-            << " with size " << decompressed_kernel_image_.size() << std::endl;
+  // std::cerr << "Decompress kernel from " << kernel_image_ << " with size " << image_size_ << " to " << image
+  //           << " with size " << decompressed_kernel_image_.size() << std::endl;
 #endif
-  if (!image) {
+  if (!kernel_image_) {
     return std::make_tuple(nullptr, hipErrorInvalidImage);
   }
-#else
-  if (image_size_ == 0) {
-    return std::make_tuple(nullptr, hipErrorInvalidImage);
-  }
-  auto image = kernel_image_;
-#endif
   hipModule_t mod;
   hipFunction_t func;
-  AOTRITON_HIP_CHECK_RETURN(hipModuleLoadDataEx(&mod, image, 5, opt, optval));
+  AOTRITON_HIP_CHECK_RETURN(hipModuleLoadDataEx(&mod, kernel_image_, 5, opt, optval));
   AOTRITON_HIP_CHECK_RETURN(hipModuleGetFunction(&func, mod, kernel_name));
   funcache_.emplace(std::piecewise_construct,
                     std::forward_as_tuple(device_id),
@@ -121,56 +112,25 @@ TritonKernel::load_for_device(int device_id, const char* kernel_name) {
   return std::make_tuple(func, hipSuccess);
 }
 
-#if AOTRITON_USE_ZSTD
-void
 TritonKernel::clear_decompressed_image() {
-  decompressed_kernel_image_.clear();
+  std::unique_lock lock(mutex_);
+  kernel_image_ = nullptr;
+  packed_kernel_.reset();
 }
 
 void*
 TritonKernel::decompress_kernel() {
-  if (!decompressed_kernel_image_.empty()) {
-#if AOTRITON_KERNEL_VERBOSE
-    std::cerr << "decompressed_kernel_image_ already initialized as "
-              << (void*)decompressed_kernel_image_.data()
-              << " with size: " << decompressed_kernel_image_.size() << std::endl;
-#endif
-    return decompressed_kernel_image_.data();
+  {
+    std::shared_lock lock(mutex_);
+    if (kernel_image_) {
+      return std::make_shared(kernel_image_, shared_memory_size_);
+    }
   }
-  unsigned long long const decompressed_size = ZSTD_getFrameContentSize(kernel_image_, image_size_);
-  if (decompressed_size == ZSTD_CONTENTSIZE_ERROR) {
-#if AOTRITON_KERNEL_VERBOSE
-    std::cerr << "Image not compressed by zstd" << std::endl;
-#endif
-    return nullptr;
+  std::unique_lock lock(mutex_);
+  if (!packed_kernel_) {
+    packed_kernel_ = PackedKernel::open(package_path_)
   }
-  if (decompressed_size == 0) {
-    // This means this GPU kernel cannot be compiled, or takes too long to compile
-    return nullptr;
-  }
-  if (decompressed_size == ZSTD_CONTENTSIZE_UNKNOWN) {
-#if AOTRITON_KERNEL_VERBOSE
-    std::cerr << "Unknown original size" << std::endl;
-#endif
-    return nullptr;
-  }
-  if (ZSTD_isError(decompressed_size))
-    return nullptr;
-#if AOTRITON_KERNEL_VERBOSE
-  std::cerr << "decompressed_size read as " << decompressed_size << std::endl;
-#endif
-  decompressed_kernel_image_.resize(decompressed_size);
-#if AOTRITON_KERNEL_VERBOSE
-  std::cerr << "decompressed_kernel_image_ resized to " << (void*)decompressed_kernel_image_.data()
-            << " with size: " << decompressed_kernel_image_.size() << std::endl;
-#endif
-  auto err = ZSTD_decompress(
-    decompressed_kernel_image_.data(), decompressed_kernel_image_.size(), kernel_image_, image_size_);
-  if (ZSTD_isError(err))
-    return nullptr;
-  return decompressed_kernel_image_.data();
+  return packed_kernel_->filter(stem_name);
 }
-
-#endif
 
 }

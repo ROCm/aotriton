@@ -116,7 +116,6 @@ def parse():
                    help="Ahead of Time (AOT) Compile Architecture. PyTorch is required for autodetection if --targets is missing.")
     p.add_argument("--build_dir", type=str, default='build/', help="build directory")
     p.add_argument("--python", type=str, default=None, help="python binary to run compile.py")
-    p.add_argument("--enable_zstd", type=str, default=None, help="Use zstd to compress the compiled kernel")
     p.add_argument("--bare_mode", action='store_true', help="Instead of generating a proper Makefile, only generate compiler options and leave the remaining tasks to cmake.")
     p.add_argument("--test_clustering", action='store_true', help="Generate TestClustering.sh to find the optimal clustering scheme.")
     p.add_argument("--generate_cluster_info", action='store_true', help="Generate Bare.functionals for clustering.")
@@ -148,8 +147,6 @@ def gen_from_object(args, o : 'ObjectFileDescription', makefile):
     cmd += f" --signature '{o.signature}'"
     cmd += f" --timeout {args.timeout}"
     print('\t', cmd, file=makefile)
-    if args.enable_zstd is not None:
-        print('\t', f'{args.enable_zstd} -f {o.obj.absolute()}', '\n', file=makefile)
     print('', file=makefile)
     return target_fn
 
