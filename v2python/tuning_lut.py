@@ -155,8 +155,8 @@ class KernelTuningEntryForFunctionalOnGPU(object):
     def codegen_package_path(self, kernel_image_dir):
         for _, _, o in self.gen_kernel_symbols(kernel_image_dir):
             dir_arch = Path(GPU_TO_DIRECTORY[o.target_gpu])
-            fonly = ofd.functional_signature + '_' + GPU_TO_CLUSTER_SUFFIX[o.target_gpu]
-            return str(dir_arch / o.KERNEL_FAMILY / o.SHIM_KERNEL_NAME / fonly)
+            fonly = o.functional_signature + '_' + GPU_TO_CLUSTER_SUFFIX[o.target_gpu]
+            return 'R"xyzw(' + str(dir_arch / o.KERNEL_FAMILY / o.SHIM_KERNEL_NAME / fonly) + ')xyzw"'
 
     def codegen_kernel_image_objects(self, kernel_image_dir):
         kernel_image_symbols = []

@@ -4,6 +4,9 @@
 cmake_minimum_required(VERSION 3.18 FATAL_ERROR)
 
 project(AOTriton CXX C)
+
+set(CMAKE_CXX_STANDARD 20)
+
 set(AOTRITON_MIN_PYTHON 3.8 CACHE STRING "Minimal Python version for find_package.")
 if(AOTRITON_MIN_PYTHON VERSION_LESS "3.8")
   message(FATAL_ERROR "Do not set AOTRITON_MIN_PYTHON lower than 3.8. The code itself does not support it.")
