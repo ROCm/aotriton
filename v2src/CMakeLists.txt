@@ -43,7 +43,7 @@ execute_process(
   AOTRITON_ENABLE_FP32=${AOTRITON_ENABLE_FP32}
   "${VENV_DIR}/bin/python" -m v2python.generate_compile
   --target_gpus ${TARGET_GPUS} 
-  -build_dir "${AOTRITON_V2_BUILD_DIR}"
+  --build_dir "${AOTRITON_V2_BUILD_DIR}"
   --bare_mode ${GENERATE_OPTION}
   --generate_cluster_info
   COMMAND_ECHO STDOUT
@@ -98,10 +98,12 @@ foreach(RULE IN LISTS CLUSTER_RULES)
   list(POP_FRONT RULE DIR_KERNEL)
   list(POP_FRONT RULE FONLY)
   string(JOIN "/" AKS2
-    AOTRITON_KERNEL_STORAGE_V2_DIR
-    DIR_ARCH
-    DIR_FAMILY
-    DIR_FAMILY)
+    ${AOTRITON_KERNEL_STORAGE_V2_DIR}
+    ${DIR_ARCH}
+    ${DIR_FAMILY}
+    ${DIR_KERNEL}
+    "${FONLY}.aks2")
+  message(STATUS "AKS2 ${AKS2}")
   add_custom_command(OUTPUT "${AKS2}"
     COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
     "${VENV_DIR}/bin/python"
@@ -110,6 +112,7 @@ foreach(RULE IN LISTS CLUSTER_RULES)
     --
     ${RULE}
     DEPENDS aotriton_v2_compile
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
     COMMAND_EXPAND_LISTS)
   list(APPEND ALL_AKS2 "${AKS2}")
 endforeach(RULE)

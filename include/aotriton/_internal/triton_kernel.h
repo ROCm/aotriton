@@ -8,6 +8,7 @@
 #include "../runtime.h"
 #include <vector>
 #include <unordered_map>
+#include <memory>
 #include <shared_mutex>
 #include <tuple>
 
@@ -17,7 +18,7 @@ class PackedKernel;
 
 class TritonKernel {
 public:
-  using Essentials = std::tuple<void*, int, dim3>;
+  using Essentials = std::tuple<const void*, int, dim3>;
 
   TritonKernel(const char* package_path, const char* stem_name);
 
@@ -45,9 +46,9 @@ private:
 
   int shared_memory_size_ = 0;
   dim3 block_ { 256, 1, 1 };
-  void* kernel_image_ = nullptr;
+  const void* kernel_image_ = nullptr;
   Essentials decompress_kernel();
-  std::shared_object<PackedKernel> packed_kernel_;
+  std::shared_ptr<PackedKernel> packed_kernel_;
 };
 
 }

@@ -33,11 +33,14 @@ public:
 private:
   static std::shared_mutex registry_mutex_;
   static std::unordered_map<std::string_view, PackedKernelPtr> registry_;
-  std::vector<char> decompressed_content_;
+  // Note: do NOT drop the decompressed directory, its content is used by
+  //       the unordered_map directory_
+  std::vector<uint8_t> decompressed_content_;
   hipError_t final_status_;
 
-  const char* kernel_start_;
-  std::unordered_map<std::string_view, AKS2_Metadata> directory_;
+  const uint8_t* kernel_start_;
+  // Note: again, AKS2_Metadata points to directory at decompressed_content_
+  std::unordered_map<std::string_view, const AKS2_Metadata*> directory_;
 };
 
 };

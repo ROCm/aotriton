@@ -111,6 +111,7 @@ TritonKernel::load_for_device(int device_id, const char* kernel_name) {
   return std::make_tuple(func, hipSuccess);
 }
 
+void
 TritonKernel::clear_decompressed_image() {
   std::unique_lock lock(mutex_);
   kernel_image_ = nullptr;
@@ -122,14 +123,14 @@ TritonKernel::decompress_kernel() {
   {
     std::shared_lock lock(mutex_);
     if (kernel_image_) {
-      return std::make_shared(kernel_image_, shared_memory_size_);
+      return std::make_tuple(kernel_image_, shared_memory_size_, block_);
     }
   }
   std::unique_lock lock(mutex_);
   if (!packed_kernel_) {
-    packed_kernel_ = PackedKernel::open(package_path_)
+    packed_kernel_ = PackedKernel::open(package_path_);
   }
-  return packed_kernel_->filter(stem_name);
+  return packed_kernel_->filter(stem_name_);
 }
 
 }

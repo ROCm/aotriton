@@ -4,7 +4,7 @@ import json
 import sys
 from argparse import ArgumentParser
 from pathlib import Path
-from lzma import LZMACompressor
+import lzma
 from dataclasses import dataclass, fields
 
 desc = """
@@ -42,12 +42,13 @@ def load_hsaco(hsaco : Path, offset):
             shared_memory_size = j['shared']
             block_threads = j['num_warps'] * j['warp_size']
         filename = str(hsaco.stem)
-        return AKS2_DirectoryEntry(shared_memory_size=shared_memory_size,
-                                   block_threads=block_threads,
-                                   offset=offset,
-                                   image_size=len(blob),
-                                   filename_length=len(filename)+1,
-                                   filename=filename)
+        entry = AKS2_DirectoryEntry(shared_memory_size=shared_memory_size,
+                                    block_threads=block_threads,
+                                    offset=offset,
+                                    image_size=len(blob),
+                                    filename_length=len(filename)+1,
+                                    filename=filename)
+        return entry, blob
 
 def u32(val):
     return val.to_bytes(4, byteorder=sys.byteorder, signed=False)
@@ -87,9 +88,9 @@ class AKS2(object):
 
     def write(self, f):
         f.write(AKS2_MAGIC)
-        write_u32(self.total_uncompressed_size)
-        write_u32(self.number_of_kernels)
-        write_u32(self.directory_size)
+        write_u32(self.total_uncompressed_size, f)
+        write_u32(self.number_of_kernels, f)
+        write_u32(self.directory_size, f)
         lzc = lzma.LZMACompressor()
         for entry in self.directory:
             entry_blob = directory_entry_blob(entry)
@@ -102,9 +103,9 @@ def do_create(args):
     if not args.hsaco_files:
         print("No input file, exit")
         return
-    aks2 = AKS2(args)
+    aks2 = AKS2()
     aks2.load(args)
-    with open(args.o, "wb") as f:
+    with open(Path(args.o).with_suffix('.aks2'), "wb") as f:
         aks2.write(f)
 
 def main():
