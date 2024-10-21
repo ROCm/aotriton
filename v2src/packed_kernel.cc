@@ -89,7 +89,7 @@ struct AKS2_Metadata {
 //     4B image size
 //     4B file name length (M), including trailing '\0'
 //     MB file name
-// N * varlen: Kernel Images
+// N * varlen: Kernel Images (TODO: alignment requirements?)
 PackedKernel::PackedKernel(int fd) {
   AKS2_Header header;
   ::read(fd, &header, sizeof(AKS2_Header));
@@ -98,6 +98,7 @@ PackedKernel::PackedKernel(int fd) {
     return;
   }
   decompressed_content_.resize(header.uncompressed_size);
+  directory_.clear();
 
   lzma_stream strm = LZMA_STREAM_INIT;
   lzma_ret ret = lzma_stream_decoder(&strm, UINT64_MAX, LZMA_CONCATENATED);
@@ -124,6 +125,7 @@ PackedKernel::PackedKernel(int fd) {
     lzma_ret ret = lzma_code(&strm, action);
     if (ret != LZMA_OK && ret != LZMA_STREAM_END) {
       decompressed_content_.clear();
+      directory_.clear();
       final_status_ = hipErrorIllegalState; // Content not fully decompressed
       return;
     }
@@ -139,9 +141,11 @@ PackedKernel::PackedKernel(int fd) {
   kernel_start_ = parse_ptr;
   if (kernel_start_ - decompressed_content_.data() != header.directory_size) {
     decompressed_content_.clear();
+    directory_.clear();
     // Directory size not matching
     final_status_ = hipErrorIllegalAddress;
   }
+  final_status_ = hipSuccess;
 }
 
 PackedKernel::~PackedKernel() {
