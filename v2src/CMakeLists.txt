@@ -197,6 +197,8 @@ install(DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}/include/aotriton"
 #    search paths for shared libraries
 # 2. The archive library will be installed into the hardcode lib/ directory, to avoid Debian vs RHEL divergence.
 install(FILES "${AOTRITON_V2_BUILD_DIR}/${AOTRITON_LIBRARY_FILE}" DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)
+install(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/aotriton.images"
+  DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)
 
 # Python binding only available for AOTriton V2 API
 add_library(aotriton INTERFACE)
