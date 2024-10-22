@@ -54,7 +54,6 @@ void CURRENT_ENTRY_PUBLIC::operator()([[param_class_name]]& params) {
         if (preferred_index >= incbin_num_kernels)
             return ;
         params.selected_kernel = &image_list[preferred_index];
-        params._debug_kernel_name = incbin_kernel_names[preferred_index];
         params._preferred_kernel_psels = kernel_psels[preferred_index];
         params._preferred_kernel_copts = kernel_copts[preferred_index];
         const auto& perf = image_perf_list[preferred_index];
@@ -70,7 +69,6 @@ void CURRENT_ENTRY_PUBLIC::operator()([[param_class_name]]& params) {
     params.selected_kernel = &image_list[kernel_index];
 #ifndef NDEBUG
     std::cerr << __FILE__ << " kernel_index = " << int(kernel_index) << std::endl;
-    params._debug_kernel_name = incbin_kernel_names[kernel_index];
 #endif
     const auto& perf = image_perf_list[kernel_index];
     [[perf_field_assignment]];

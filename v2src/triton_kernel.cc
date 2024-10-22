@@ -52,13 +52,13 @@ TritonKernel::invoke(const char* kernel_name, dim3 grid, std::vector<void*>& arg
   // Use reader lock to peek the state
   hipFunction_t func = nullptr;
   {
-    std::shared_lock lock(mutex_);
+    std::shared_lock lock(funcache_mutex_);
     func = cfind_function(device_id);
   }
 
   if (!func) {
     // Use writer lock to initialize the module for device
-    std::unique_lock lock(mutex_);
+    std::unique_lock lock(funcache_mutex_);
     // Check again, in case another waiter has initialized the device
     func = cfind_function(device_id);
     if (!func) {
@@ -93,7 +93,9 @@ TritonKernel::load_for_device(int device_id, const char* kernel_name) {
     (void*)(uintptr_t)err.size(), err.data(), (void*)(uintptr_t)log.size(), log.data(), (void*)(uintptr_t)1
   };
 
+  std::cerr << "Trying to decompress kernel " << package_path_ << " " << stem_name_  << std::endl;
   std::tie(kernel_image_, shared_memory_size_, block_) = decompress_kernel();
+  std::cerr << "Decompress kernel to " << kernel_image_ << std::endl;
 #if AOTRITON_KERNEL_VERBOSE
   // std::cerr << "Decompress kernel from " << kernel_image_ << " with size " << image_size_ << " to " << image
   //           << " with size " << decompressed_kernel_image_.size() << std::endl;
@@ -113,24 +115,37 @@ TritonKernel::load_for_device(int device_id, const char* kernel_name) {
 
 void
 TritonKernel::clear_decompressed_image() {
-  std::unique_lock lock(mutex_);
+  std::unique_lock lock(packedkernel_mutex_);
   kernel_image_ = nullptr;
   packed_kernel_.reset();
 }
 
 TritonKernel::Essentials
 TritonKernel::decompress_kernel() {
+  std::cerr << __FILE__ << ":" << __LINE__ << std::endl;
   {
-    std::shared_lock lock(mutex_);
+    std::cerr << __FILE__ << ":" << __LINE__ << std::endl;
+    std::shared_lock lock(packedkernel_mutex_);
+    std::cerr << __FILE__ << ":" << __LINE__ << std::endl;
+    std::cerr << "kernel_image_: " << kernel_image_ << std::endl;
     if (kernel_image_) {
       return std::make_tuple(kernel_image_, shared_memory_size_, block_);
     }
+    lock.unlock();
   }
-  std::unique_lock lock(mutex_);
+
+  std::cerr << __FILE__ << ":" << __LINE__ << std::endl;
+  std::unique_lock lock(packedkernel_mutex_);
+  // auto success = packedkernel_mutex_.try_lock();
+  // std::cerr << __FILE__ << ":" << __LINE__ << " success: " << success << std::endl;
+  std::cerr << __FILE__ << ":" << __LINE__ << std::endl;
   if (!packed_kernel_) {
     packed_kernel_ = PackedKernel::open(package_path_);
   }
-  return packed_kernel_->filter(stem_name_);
+  if (packed_kernel_) { // open may fail
+    return packed_kernel_->filter(stem_name_);
+  }
+  return std::make_tuple(nullptr, 0, 0);
 }
 
 }

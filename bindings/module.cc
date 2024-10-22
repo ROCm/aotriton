@@ -9,6 +9,7 @@
 #include <aotriton/cpp_tune.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
+#include <pybind11/gil.h>
 #include <string>
 
 namespace py = pybind11;
@@ -36,6 +37,7 @@ namespace pyaotriton {
         m.def("attn_fwd",
               &aotriton::v2::flash::attn_fwd,
               "Flash Attention Forward Pass",
+              py::call_guard<py::gil_scoped_release>(),
               py::arg("q"),
               py::arg("k"),
               py::arg("v"),
@@ -56,6 +58,7 @@ namespace pyaotriton {
         m.def("attn_fwd_compact_varlen",
               &aotriton::v2::flash::attn_fwd_compact_varlen,
               "Flash Attention Forward Pass, Compact Stored Varlen",
+              py::call_guard<py::gil_scoped_release>(),
               py::arg("q"),
               py::arg("k"),
               py::arg("v"),
@@ -80,6 +83,7 @@ namespace pyaotriton {
         m.def("attn_bwd",
               &aotriton::v2::flash::attn_bwd,
               "Flash Attention Backward Pass",
+              py::call_guard<py::gil_scoped_release>(),
               py::arg("q"),
               py::arg("k"),
               py::arg("v"),
@@ -103,6 +107,7 @@ namespace pyaotriton {
         m.def("attn_bwd_compact_varlen",
               &aotriton::v2::flash::attn_bwd_compact_varlen,
               "Flash Attention Backward Pass, Compact Stored Varlen",
+              py::call_guard<py::gil_scoped_release>(),
               py::arg("q"),
               py::arg("k"),
               py::arg("v"),
@@ -130,6 +135,7 @@ namespace pyaotriton {
         m.def("debug_fill_dropout_rng",
               &aotriton::v2::flash::debug_fill_dropout_rng,
               "Flash Attention Debugging Function to get raw RNG numbers used in dropout",
+              py::call_guard<py::gil_scoped_release>(),
               py::arg("q"),
               py::arg("philox_seed"),
               py::arg("philox_offset"),
@@ -137,6 +143,7 @@ namespace pyaotriton {
         m.def("debug_fill_dropout_rng_tensor",
               &aotriton::v2::flash::debug_fill_dropout_rng_tensor,
               "Flash Attention Debugging Function to get raw RNG numbers used in dropout",
+              py::call_guard<py::gil_scoped_release>(),
               py::arg("q"),
               py::arg("philox_seed"),
               py::arg("philox_offset"),
