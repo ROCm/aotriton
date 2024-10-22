@@ -1,8 +1,8 @@
 // Copyright © 2023-2024 Advanced Micro Devices, Inc.
 // SPDX-License-Identifier: MIT
 
-#include <aotriton/_internal/triton_kernel.h>
 #include <aotriton/_internal/packed_kernel.h>
+#include <aotriton/_internal/triton_kernel.h>
 #include <aotriton/runtime.h>
 #include <incbin.h>
 #include <iostream>
@@ -35,17 +35,16 @@ TritonKernel::DeviceFunction::~DeviceFunction() {
   }
 }
 
-
 TritonKernel::TritonKernel(const char* package_path, const char* stem_name)
   : package_path_(package_path)
-  , stem_name_(stem_name)
-{
+  , stem_name_(stem_name) {
 }
 
 hipError_t
 TritonKernel::invoke(const char* kernel_name, dim3 grid, std::vector<void*>& args, hipStream_t stream) {
 #if AOTRITON_KERNEL_VERBOSE
-  std::cerr << "Invoking TritonKernel " << this << " with kernel_name = \"" << kernel_name << '"' << std::endl;
+  std::cerr << "Invoking TritonKernel " << this << " with kernel_name = \"" << kernel_name << '"'
+            << std::endl;
 #endif
   int device_id;
   AOTRITON_HIP_CHECK_RETURN(hipGetDevice(&device_id));
@@ -66,8 +65,17 @@ TritonKernel::invoke(const char* kernel_name, dim3 grid, std::vector<void*>& arg
       std::tie(func, err) = load_for_device(device_id, kernel_name);
     }
   }
-  return hipModuleLaunchKernel(
-    func, grid.x, grid.y, grid.z, block_.x, block_.y, block_.z, shared_memory_size_, stream, args.data(), 0);
+  return hipModuleLaunchKernel(func,
+                               grid.x,
+                               grid.y,
+                               grid.z,
+                               block_.x,
+                               block_.y,
+                               block_.z,
+                               shared_memory_size_,
+                               stream,
+                               args.data(),
+                               0);
 }
 
 hipFunction_t
@@ -89,20 +97,24 @@ TritonKernel::load_for_device(int device_id, const char* kernel_name) {
   const unsigned int logbufsize = 8192;
   std::vector<char> err(errbufsize, 0);
   std::vector<char> log(errbufsize, 0);
-  void* optval[] = {
-    (void*)(uintptr_t)err.size(), err.data(), (void*)(uintptr_t)log.size(), log.data(), (void*)(uintptr_t)1
-  };
+  void* optval[] = { (void*)(uintptr_t)err.size(),
+                     err.data(),
+                     (void*)(uintptr_t)log.size(),
+                     log.data(),
+                     (void*)(uintptr_t)1 };
 
 #if AOTRITON_KERNEL_VERBOSE
-  std::cerr << "Trying to decompress kernel " << package_path_ << " " << stem_name_  << std::endl;
+  std::cerr << "Trying to decompress kernel " << package_path_ << " " << stem_name_ << std::endl;
 #endif
   std::tie(kernel_image_, shared_memory_size_, block_) = decompress_kernel();
 #if AOTRITON_KERNEL_VERBOSE
   std::cerr << "Decompress kernel to " << kernel_image_ << std::endl;
 #endif
 #if AOTRITON_KERNEL_VERBOSE
-  // std::cerr << "Decompress kernel from " << kernel_image_ << " with size " << image_size_ << " to " << image
-  //           << " with size " << decompressed_kernel_image_.size() << std::endl;
+  // std::cerr << "Decompress kernel from " << kernel_image_ << " with size " <<
+  // image_size_ << " to " << image
+  //           << " with size " << decompressed_kernel_image_.size() <<
+  //           std::endl;
 #endif
   if (!kernel_image_) {
     return std::make_tuple(nullptr, hipErrorInvalidImage);
