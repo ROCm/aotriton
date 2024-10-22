@@ -93,9 +93,13 @@ TritonKernel::load_for_device(int device_id, const char* kernel_name) {
     (void*)(uintptr_t)err.size(), err.data(), (void*)(uintptr_t)log.size(), log.data(), (void*)(uintptr_t)1
   };
 
+#if AOTRITON_KERNEL_VERBOSE
   std::cerr << "Trying to decompress kernel " << package_path_ << " " << stem_name_  << std::endl;
+#endif
   std::tie(kernel_image_, shared_memory_size_, block_) = decompress_kernel();
+#if AOTRITON_KERNEL_VERBOSE
   std::cerr << "Decompress kernel to " << kernel_image_ << std::endl;
+#endif
 #if AOTRITON_KERNEL_VERBOSE
   // std::cerr << "Decompress kernel from " << kernel_image_ << " with size " << image_size_ << " to " << image
   //           << " with size " << decompressed_kernel_image_.size() << std::endl;
@@ -122,23 +126,14 @@ TritonKernel::clear_decompressed_image() {
 
 TritonKernel::Essentials
 TritonKernel::decompress_kernel() {
-  std::cerr << __FILE__ << ":" << __LINE__ << std::endl;
   {
-    std::cerr << __FILE__ << ":" << __LINE__ << std::endl;
     std::shared_lock lock(packedkernel_mutex_);
-    std::cerr << __FILE__ << ":" << __LINE__ << std::endl;
-    std::cerr << "kernel_image_: " << kernel_image_ << std::endl;
     if (kernel_image_) {
       return std::make_tuple(kernel_image_, shared_memory_size_, block_);
     }
-    lock.unlock();
   }
 
-  std::cerr << __FILE__ << ":" << __LINE__ << std::endl;
   std::unique_lock lock(packedkernel_mutex_);
-  // auto success = packedkernel_mutex_.try_lock();
-  // std::cerr << __FILE__ << ":" << __LINE__ << " success: " << success << std::endl;
-  std::cerr << __FILE__ << ":" << __LINE__ << std::endl;
   if (!packed_kernel_) {
     packed_kernel_ = PackedKernel::open(package_path_);
   }

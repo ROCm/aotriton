@@ -103,7 +103,7 @@ foreach(RULE IN LISTS CLUSTER_RULES)
     ${DIR_FAMILY}
     ${DIR_KERNEL}
     "${FONLY}.aks2")
-  message(STATUS "AKS2 ${AKS2}")
+  # message(STATUS "Add AKS2 ${AKS2}")
   add_custom_command(OUTPUT "${AKS2}"
     COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
     "${VENV_DIR}/bin/python"
