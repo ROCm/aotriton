@@ -4,53 +4,51 @@
 #ifndef AOTRITON_V2_API_TRITON_KERNEL_H
 #define AOTRITON_V2_API_TRITON_KERNEL_H
 
-#ifndef AOTRITON_USE_ZSTD
-#error "Must define AOTRITON_USE_ZSTD explicitly. "\
-       "Inconsistent definition of this macro causes ABI incompatibility."
-#endif
-
-#include <aotriton/config.h>
 #include "../runtime.h"
-#include <vector>
-#include <unordered_map>
+#include <aotriton/config.h>
+#include <memory>
 #include <shared_mutex>
 #include <tuple>
+#include <unordered_map>
+#include <vector>
 
 namespace AOTRITON_NS {
 
+class PackedKernel;
+
 class TritonKernel {
 public:
-  TritonKernel(const void* image, size_t image_size, dim3 block, int shared_memory_size);
+  using Essentials = std::tuple<const void*, int, dim3>;
+
+  TritonKernel(const char* package_path, const char* stem_name);
 
   hipError_t invoke(const char* kernel_name, dim3 grid, std::vector<void*>& args, hipStream_t stream);
 
-#if AOTRITON_USE_ZSTD
   void clear_decompressed_image();
-#endif
+
 private:
   std::tuple<hipFunction_t, hipError_t> load_for_device(int device_id, const char* kernel_name);
   hipFunction_t cfind_function(int device_id) const;
 
-  const void* kernel_image_ = nullptr;
+  const char* package_path_ = nullptr;
+  const char* stem_name_ = nullptr;
   size_t image_size_ = 0;
   struct DeviceFunction {
-    DeviceFunction(int device_id_,
-                   hipModule_t mod_,
-                   hipFunction_t func_);
+    DeviceFunction(int device_id_, hipModule_t mod_, hipFunction_t func_);
     ~DeviceFunction();
     int device_id = -1;
     hipModule_t mod = nullptr;
-    hipFunction_t func = nullptr; 
+    hipFunction_t func = nullptr;
   };
   std::unordered_map<int, DeviceFunction> funcache_;
-  std::shared_mutex mutex_;
+  std::shared_mutex funcache_mutex_;
 
+  int shared_memory_size_ = 0;
   dim3 block_ { 256, 1, 1 };
-  int shared_memory_size_;
-#if AOTRITON_USE_ZSTD
-  std::vector<char> decompressed_kernel_image_;
-  void* decompress_kernel();
-#endif
+  const void* kernel_image_ = nullptr;
+  Essentials decompress_kernel();
+  std::shared_ptr<PackedKernel> packed_kernel_ = nullptr;
+  std::shared_mutex packedkernel_mutex_;
 };
 
 }
