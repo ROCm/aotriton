@@ -3,6 +3,7 @@
 
 #include <aotriton/_internal/packed_kernel.h>
 #include <aotriton/runtime.h>
+#include <iostream>
 #include <cstring>
 #include <dlfcn.h>
 #include <fcntl.h>
@@ -20,6 +21,7 @@ namespace {
 
 const fs::path&
 locate_aotriton_images() {
+  std::cerr << __FILE__ << ":" << __LINE__ << std::endl;
   static fs::path aotriton_images = []() {
     Dl_info info;
     dladdr((void*)locate_aotriton_images, &info);
@@ -37,6 +39,7 @@ std::unordered_map<std::string_view, PackedKernelPtr> PackedKernel::registry_;
 
 PackedKernelPtr
 PackedKernel::open(const char* package_path) {
+  std::cerr << __FILE__ << ":" << __LINE__ << std::endl;
   std::string_view path_view(package_path);
   {
     // Fast path
@@ -45,19 +48,28 @@ PackedKernel::open(const char* package_path) {
       return registry_[path_view];
   }
 
+  std::cerr << __FILE__ << ":" << __LINE__ << std::endl;
   // Slow path, registry doesn't contain this kernel
   std::unique_lock lock(registry_mutex_);
+  std::cerr << __FILE__ << ":" << __LINE__ << std::endl;
   // Prevent TOCTTOU b/w two locks
   if (registry_.contains(package_path))
     return registry_[path_view];
   const auto& storage_base = locate_aotriton_images();
+  std::cerr << "Open dir " << storage_base << std::endl;
   int dirfd = ::open(storage_base.c_str(), O_RDONLY);
-  int aks2fd = ::openat(dirfd, package_path, O_RDONLY);
+  std::string rel_path(package_path);
+  rel_path += ".aks2";
+  std::cerr << "Open at " << rel_path << std::endl;
+  int aks2fd = ::openat(dirfd, rel_path.c_str(), O_RDONLY);
   auto ret = std::make_shared<PackedKernel>(aks2fd);
   close(aks2fd);
   close(dirfd);
-  registry_.emplace(path_view, ret);
-  return ret;
+  if (ret->status() == hipSuccess) {
+    registry_.emplace(path_view, ret);
+    return ret;
+  }
+  return nullptr;
 }
 
 struct AKS2_Header {
@@ -91,9 +103,11 @@ struct AKS2_Metadata {
 //     MB file name
 // N * varlen: Kernel Images (TODO: alignment requirements?)
 PackedKernel::PackedKernel(int fd) {
+  std::cerr << __FILE__ << ":" << __LINE__ << " fd = " << fd << std::endl;
   AKS2_Header header;
-  ::read(fd, &header, sizeof(AKS2_Header));
-  if (header.magic != AKS2_MAGIC) {
+  auto header_read = ::read(fd, &header, sizeof(AKS2_Header));
+  if (header_read == sizeof(AKS2_MAGIC) && header.magic != AKS2_MAGIC) {
+    std::cerr << __FILE__ << ":" << __LINE__ << " header_read = " << header_read << std::endl;
     final_status_ = hipErrorInvalidSource; // Broken at XZ level
     return;
   }
@@ -101,8 +115,9 @@ PackedKernel::PackedKernel(int fd) {
   directory_.clear();
 
   lzma_stream strm = LZMA_STREAM_INIT;
-  lzma_ret ret = lzma_stream_decoder(&strm, UINT64_MAX, LZMA_CONCATENATED);
+  lzma_ret ret = lzma_stream_decoder(&strm, UINT64_MAX, 0);
   if (ret != LZMA_OK) {
+    std::cerr << __FILE__ << ":" << __LINE__ << " ret = " << ret << std::endl;
     final_status_ = hipErrorInvalidSource; // Broken at XZ level
     return;
   }
@@ -136,6 +151,7 @@ PackedKernel::PackedKernel(int fd) {
     parse_ptr += sizeof(*metadata);
     std::string_view filename(reinterpret_cast<const char*>(parse_ptr));
     directory_.emplace(filename, metadata);
+    std::cerr << "Add kernel " << i << ": " << filename << " offset: " << metadata->offset << std::endl;
     parse_ptr += metadata->filename_length;
   }
   kernel_start_ = parse_ptr;
@@ -153,6 +169,8 @@ PackedKernel::~PackedKernel() {
 
 TritonKernel::Essentials
 PackedKernel::filter(const char* stem_name) const {
+  std::cerr << __FILE__ << ":" << __LINE__ << std::endl;
+  std::cerr << "final_status_: " << final_status_ << std::endl;
   std::string_view filename(stem_name);
   auto iter = directory_.find(filename);
   if (iter == directory_.end())

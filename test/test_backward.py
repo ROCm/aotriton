@@ -261,5 +261,5 @@ def main():
     _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
 
 if __name__ == '__main__':
-    # main2()
-    main_npz()
+    main2()
+    # main_npz()

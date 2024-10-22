@@ -42,13 +42,14 @@ private:
     hipFunction_t func = nullptr; 
   };
   std::unordered_map<int, DeviceFunction> funcache_;
-  std::shared_mutex mutex_;
+  std::shared_mutex funcache_mutex_;
 
   int shared_memory_size_ = 0;
   dim3 block_ { 256, 1, 1 };
   const void* kernel_image_ = nullptr;
   Essentials decompress_kernel();
-  std::shared_ptr<PackedKernel> packed_kernel_;
+  std::shared_ptr<PackedKernel> packed_kernel_ = nullptr;
+  std::shared_mutex packedkernel_mutex_;
 };
 
 }
