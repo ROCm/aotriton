@@ -52,6 +52,7 @@ def parse():
     p.add_argument("--archive_only", action='store_true', help='Only generate archive library instead of shared library. No linking with dependencies.')
     p.add_argument("--library_suffix", type=str, default='', help="Add suffix to the library name 'aotriton' to avoid symbol conflicts")
     p.add_argument("--bare_mode", action='store_true', help="Instead of generating a proper Makefile, only generate a list of source files and leave the remaining tasks to cmake.")
+    p.add_argument("--noimage_mode", action='store_true', help="Expect the GPU kernel images are built separately.")
     p.add_argument("--build_for_tuning", action='store_true', help="Include all GPU kernels in the dispatcher for performance tuning.")
     p.add_argument("--verbose", action='store_true', help="Print debugging messages")
     args = p.parse_args()
@@ -320,7 +321,7 @@ class KernelShimGenerator(MakefileSegmentGenerator):
 
         if self.is_bare:
             return
-        for o in k.gen_all_object_files(p, tuned_db=self._ktd, sancheck_fileexists=not args.build_for_tuning):
+        for o in k.gen_all_object_files(p, tuned_db=self._ktd, sancheck_fileexists=not args.build_for_tuning and not args.noimage_mode):
             yield ObjectShimCodeGenerator(self._args, k, o)
 
     def write_conclude(self):
@@ -328,7 +329,7 @@ class KernelShimGenerator(MakefileSegmentGenerator):
             return
         objs = [c._odesc for c in self._children if isinstance(c, ObjectShimCodeGenerator)]
         self._kdesc.write_shim_header(self._fhdr, objs)
-        self._kdesc.write_shim_source(self._fsrc, objs)
+        self._kdesc.write_shim_source(self._fsrc, objs, noimage_mode=self._args.noimage_mode)
 
     @property
     def list_of_self_object_files(self) -> 'list[Path]':
@@ -350,7 +351,8 @@ class AutotuneCodeGenerator(MakefileSegmentGenerator):
         try:
             self._ofn = self._lut.write_lut_source(self._args.library_suffix,
                                                    self._outdir,
-                                                   bare_mode=self.is_bare)
+                                                   bare_mode=self.is_bare,
+                                                   noimage_mode=self._args.noimage_mode)
         except MissingLutEntry as e:
             print(e)
             self._args._sanity_check_exceptions.append(e)

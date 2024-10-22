@@ -158,10 +158,11 @@ class KernelTuningEntryForFunctionalOnGPU(object):
             fonly = o.functional_signature + '_' + GPU_TO_CLUSTER_SUFFIX[o.target_gpu]
             return 'R"xyzw(' + str(dir_arch / o.KERNEL_FAMILY / o.SHIM_KERNEL_NAME / fonly) + ')xyzw"'
 
-    def codegen_kernel_image_objects(self, kernel_image_dir):
+    def codegen_kernel_image_objects(self, kernel_image_dir, noimage_mode):
         kernel_image_symbols = []
         for _, _, o in self.gen_kernel_symbols(kernel_image_dir):
-            assert o.compiled_files_exist, f'Compiled file {o._hsaco_kernel_path} not exists'
+            if not noimage_mode:
+                assert o.compiled_files_exist, f'Compiled file {o._hsaco_kernel_path} not exists'
             kernel_image_symbols.append(f'{{ PACKAGE_PATH, "{o.obj.stem}" }},')
         ALIGN = '\n' + 4 * ' '
         return ALIGN.join(kernel_image_symbols)
@@ -173,7 +174,7 @@ class KernelTuningEntryForFunctionalOnGPU(object):
         ALIGN = ',\n' + 4 * ' '
         return ALIGN.join(kernel_image_perfs)
 
-    def write_lut_source(self, library_suffix : str, outdir : 'pathlib.Path', bare_mode):
+    def write_lut_source(self, library_suffix : str, outdir : 'pathlib.Path', bare_mode, noimage_mode):
         gpu_kernel_image_dir = outdir.parent / f'gpu_kernel_image.{self._kdesc.SHIM_KERNEL_NAME}'
         lut_tensor, sigs = self.get_lut()
         try:
@@ -202,7 +203,8 @@ class KernelTuningEntryForFunctionalOnGPU(object):
             'godel_number'          : godel_number,
             'perf_fields'           : ';\n    '.join(self._kdesc.perf_fields),
             'package_path'          : self.codegen_package_path(gpu_kernel_image_dir),
-            'kernel_image_objects'  : self.codegen_kernel_image_objects(gpu_kernel_image_dir),
+            'kernel_image_objects'  : self.codegen_kernel_image_objects(gpu_kernel_image_dir,
+                                                                        noimage_mode=noimage_mode),
             'kernel_image_perfs'    : self.codegen_kernel_image_perfs(gpu_kernel_image_dir),
             'lut_dtype'             : self._lut_cdtype,
             'lut_shape'             : self._lut_cshape,
