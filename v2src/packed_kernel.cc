@@ -165,6 +165,9 @@ PackedKernel::PackedKernel(int fd) {
       return;
     }
   }
+#if AOTRITON_KERNEL_VERBOSE
+  std::cerr << "PackedKernel decompressed to " << (void*)decompressed_content_.data() << std::endl;
+#endif
   const uint8_t* parse_ptr = decompressed_content_.data();
   for (uint32_t i = 0; i < header.number_of_kernels; i++) {
     auto metadata = reinterpret_cast<const AKS2_Metadata*>(parse_ptr);
@@ -177,6 +180,9 @@ PackedKernel::PackedKernel(int fd) {
     parse_ptr += metadata->filename_length;
   }
   kernel_start_ = parse_ptr;
+#if AOTRITON_KERNEL_VERBOSE
+  std::cerr << "PackedKernel.kernel_start_ = " << (void*)kernel_start_ << std::endl;
+#endif
   if (kernel_start_ - decompressed_content_.data() != header.directory_size) {
     decompressed_content_.clear();
     directory_.clear();
@@ -184,6 +190,9 @@ PackedKernel::PackedKernel(int fd) {
     final_status_ = hipErrorIllegalAddress;
     return ;
   }
+#if AOTRITON_KERNEL_VERBOSE
+  std::cerr << "PackedKernel.kernel_start_ sanity check passed" << std::endl;
+#endif
   final_status_ = hipSuccess;
 }
 

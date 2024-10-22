@@ -45,7 +45,7 @@ TritonKernel::TritonKernel(const char* package_path, const char* stem_name)
 hipError_t
 TritonKernel::invoke(const char* kernel_name, dim3 grid, std::vector<void*>& args, hipStream_t stream) {
 #if AOTRITON_KERNEL_VERBOSE
-  std::cerr << "Invoking TritonKernel " << this << " with kernel_name = " << kernel_name << std::endl;
+  std::cerr << "Invoking TritonKernel " << this << " with kernel_name = \"" << kernel_name << '"' << std::endl;
 #endif
   int device_id;
   AOTRITON_HIP_CHECK_RETURN(hipGetDevice(&device_id));
@@ -138,6 +138,10 @@ TritonKernel::decompress_kernel() {
     packed_kernel_ = PackedKernel::open(package_path_);
   }
   if (packed_kernel_) { // open may fail
+#if AOTRITON_KERNEL_VERBOSE
+    std::cerr << "PackedKernel::open returns " << packed_kernel_.get()
+              << " status: " << packed_kernel_->status() << std::endl;
+#endif
     return packed_kernel_->filter(stem_name_);
   }
   return std::make_tuple(nullptr, 0, 0);
