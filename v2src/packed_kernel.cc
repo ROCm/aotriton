@@ -3,14 +3,14 @@
 
 #include <aotriton/_internal/packed_kernel.h>
 #include <aotriton/runtime.h>
-#include <iostream>
 #include <cstring>
 #include <dlfcn.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <filesystem>
+#include <iostream>
 #include <lzma.h>
 #include <unistd.h>
-#include <errno.h>
 
 #ifdef NDEBUG
 #define AOTRITON_KERNEL_VERBOSE 0
@@ -73,8 +73,8 @@ PackedKernel::open(const char* package_path) {
   int aks2fd = ::openat(dirfd, rel_path.c_str(), O_RDONLY);
   if (aks2fd < 0) {
 #if AOTRITON_KERNEL_VERBOSE
-  std::cerr << "openat(\"" << storage_base << "\", \"" << rel_path << "\")"
-            << " failed. errno: " << errno << std::endl;
+    std::cerr << "openat(\"" << storage_base << "\", \"" << rel_path << "\")"
+              << " failed. errno: " << errno << std::endl;
 #endif
     return nullptr;
   }
@@ -188,7 +188,7 @@ PackedKernel::PackedKernel(int fd) {
     directory_.clear();
     // Directory size not matching
     final_status_ = hipErrorIllegalAddress;
-    return ;
+    return;
   }
 #if AOTRITON_KERNEL_VERBOSE
   std::cerr << "PackedKernel.kernel_start_ sanity check passed" << std::endl;
@@ -202,16 +202,16 @@ PackedKernel::~PackedKernel() {
 TritonKernel::Essentials
 PackedKernel::filter(const char* stem_name) const {
   if (status() != hipSuccess) {
-    return std::make_tuple(nullptr, 0, dim3{0,0,0});
+    return std::make_tuple(nullptr, 0, dim3 { 0, 0, 0 });
   }
   std::string_view filename(stem_name);
   auto iter = directory_.find(filename);
   if (iter == directory_.end())
-    return std::make_tuple(nullptr, 0, dim3{0, 1, 1});
+    return std::make_tuple(nullptr, 0, dim3 { 0, 1, 1 });
   auto meta = iter->second;
   return std::make_tuple(kernel_start_ + meta->offset,
                          meta->shared_memory,
-                         dim3{meta->number_of_threads, 1, 1});
+                         dim3 { meta->number_of_threads, 1, 1 });
 }
 
 }

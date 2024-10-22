@@ -4,8 +4,8 @@
 #ifndef AOTRITON_V2_API_PACKED_KERNEL_H
 #define AOTRITON_V2_API_PACKED_KERNEL_H
 
-#include <aotriton/config.h>
 #include <aotriton/_internal/triton_kernel.h>
+#include <aotriton/config.h>
 #include <memory>
 #include <shared_mutex>
 #include <stdint.h>
