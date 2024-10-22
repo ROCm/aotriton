@@ -8,9 +8,15 @@
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <filesystem>
-#include <linux/limits.h> // PATH_MAX
 #include <lzma.h>
 #include <unistd.h>
+#include <errno.h>
+
+#ifdef NDEBUG
+#define AOTRITON_KERNEL_VERBOSE 0
+#else
+#define AOTRITON_KERNEL_VERBOSE 1
+#endif
 
 namespace fs = std::filesystem;
 static const std::string_view KERNEL_STORAGE_V2_BASE = "aotriton.images";
@@ -21,10 +27,12 @@ namespace {
 
 const fs::path&
 locate_aotriton_images() {
-  std::cerr << __FILE__ << ":" << __LINE__ << std::endl;
   static fs::path aotriton_images = []() {
     Dl_info info;
     dladdr((void*)locate_aotriton_images, &info);
+#if AOTRITON_KERNEL_VERBOSE
+    std::cerr << "dladdr locates libaotriton at: " << info.dli_fname << std::endl;
+#endif
     return fs::path(info.dli_fname).parent_path() / KERNEL_STORAGE_V2_BASE;
   }();
   return aotriton_images;
@@ -39,7 +47,6 @@ std::unordered_map<std::string_view, PackedKernelPtr> PackedKernel::registry_;
 
 PackedKernelPtr
 PackedKernel::open(const char* package_path) {
-  std::cerr << __FILE__ << ":" << __LINE__ << std::endl;
   std::string_view path_view(package_path);
   {
     // Fast path
@@ -48,20 +55,29 @@ PackedKernel::open(const char* package_path) {
       return registry_[path_view];
   }
 
-  std::cerr << __FILE__ << ":" << __LINE__ << std::endl;
   // Slow path, registry doesn't contain this kernel
   std::unique_lock lock(registry_mutex_);
-  std::cerr << __FILE__ << ":" << __LINE__ << std::endl;
   // Prevent TOCTTOU b/w two locks
   if (registry_.contains(package_path))
     return registry_[path_view];
   const auto& storage_base = locate_aotriton_images();
-  std::cerr << "Open dir " << storage_base << std::endl;
+#if AOTRITON_KERNEL_VERBOSE
+  std::cerr << "open dir " << storage_base << std::endl;
+#endif
   int dirfd = ::open(storage_base.c_str(), O_RDONLY);
   std::string rel_path(package_path);
   rel_path += ".aks2";
-  std::cerr << "Open at " << rel_path << std::endl;
+#if AOTRITON_KERNEL_VERBOSE
+  std::cerr << "openat " << rel_path << std::endl;
+#endif
   int aks2fd = ::openat(dirfd, rel_path.c_str(), O_RDONLY);
+  if (aks2fd < 0) {
+#if AOTRITON_KERNEL_VERBOSE
+  std::cerr << "openat(\"" << storage_base << "\", \"" << rel_path << "\")"
+            << " failed. errno: " << errno << std::endl;
+#endif
+    return nullptr;
+  }
   auto ret = std::make_shared<PackedKernel>(aks2fd);
   close(aks2fd);
   close(dirfd);
@@ -69,6 +85,10 @@ PackedKernel::open(const char* package_path) {
     registry_.emplace(path_view, ret);
     return ret;
   }
+#if AOTRITON_KERNEL_VERBOSE
+  std::cerr << "PackedKernel::open(" << package_path << ") failed."
+            << " Final status " << ret->status() << std::endl;
+#endif
   return nullptr;
 }
 
@@ -103,11 +123,9 @@ struct AKS2_Metadata {
 //     MB file name
 // N * varlen: Kernel Images (TODO: alignment requirements?)
 PackedKernel::PackedKernel(int fd) {
-  std::cerr << __FILE__ << ":" << __LINE__ << " fd = " << fd << std::endl;
   AKS2_Header header;
   auto header_read = ::read(fd, &header, sizeof(AKS2_Header));
-  if (header_read == sizeof(AKS2_MAGIC) && header.magic != AKS2_MAGIC) {
-    std::cerr << __FILE__ << ":" << __LINE__ << " header_read = " << header_read << std::endl;
+  if (header_read == sizeof(AKS2_MAGIC) && std::string_view(header.magic, 4) != AKS2_MAGIC) {
     final_status_ = hipErrorInvalidSource; // Broken at XZ level
     return;
   }
@@ -117,7 +135,9 @@ PackedKernel::PackedKernel(int fd) {
   lzma_stream strm = LZMA_STREAM_INIT;
   lzma_ret ret = lzma_stream_decoder(&strm, UINT64_MAX, 0);
   if (ret != LZMA_OK) {
-    std::cerr << __FILE__ << ":" << __LINE__ << " ret = " << ret << std::endl;
+#if AOTRITON_KERNEL_VERBOSE
+    std::cerr << " lzma_stream_decoder error: " << ret << std::endl;
+#endif
     final_status_ = hipErrorInvalidSource; // Broken at XZ level
     return;
   }
@@ -151,7 +171,9 @@ PackedKernel::PackedKernel(int fd) {
     parse_ptr += sizeof(*metadata);
     std::string_view filename(reinterpret_cast<const char*>(parse_ptr));
     directory_.emplace(filename, metadata);
+#if AOTRITON_KERNEL_VERBOSE
     std::cerr << "Add kernel " << i << ": " << filename << " offset: " << metadata->offset << std::endl;
+#endif
     parse_ptr += metadata->filename_length;
   }
   kernel_start_ = parse_ptr;
@@ -160,6 +182,7 @@ PackedKernel::PackedKernel(int fd) {
     directory_.clear();
     // Directory size not matching
     final_status_ = hipErrorIllegalAddress;
+    return ;
   }
   final_status_ = hipSuccess;
 }
@@ -169,8 +192,9 @@ PackedKernel::~PackedKernel() {
 
 TritonKernel::Essentials
 PackedKernel::filter(const char* stem_name) const {
-  std::cerr << __FILE__ << ":" << __LINE__ << std::endl;
-  std::cerr << "final_status_: " << final_status_ << std::endl;
+  if (status() != hipSuccess) {
+    return std::make_tuple(nullptr, 0, dim3{0,0,0});
+  }
   std::string_view filename(stem_name);
   auto iter = directory_.find(filename);
   if (iter == directory_.end())
