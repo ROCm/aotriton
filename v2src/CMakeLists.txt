@@ -15,13 +15,6 @@ execute_process(COMMAND ${CMAKE_COMMAND} -E make_directory "${AOTRITON_KERNEL_ST
 get_filename_component(AOTRITON_COMPILER "${CMAKE_CURRENT_LIST_DIR}/../v2python/compile.py" ABSOLUTE)
 message("AOTRITON_COMPILER ${AOTRITON_COMPILER}")
 
-# add_custom_target(aotriton_v2_gen_compile
-#   COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} PATH="${VENV_DIR}/bin:$ENV{PATH}" python -m v2python.generate_compile --target_gpus ${TARGET_GPUS} --build_dir "${AOTRITON_V2_BUILD_DIR}" ${AOTRITON_GEN_FLAGS}
-#   WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
-#   BYPRODUCTS "${AOTRITON_V2_BUILD_DIR}/Makefile.compile"
-# )
-# add_dependencies(aotriton_v2_gen_compile aotriton_venv_triton)
-
 if(AOTRITON_BUILD_FOR_TUNING)
   set(GENERATE_OPTION "--build_for_tuning")
 else(AOTRITON_BUILD_FOR_TUNING)
@@ -142,8 +135,6 @@ execute_process(
 )
 file(STRINGS "${AOTRITON_V2_BUILD_DIR}/Bare.shim" SHIM_CC_FILES)
 
-# CAVEAT: Actual shim code can only be generated during build phase because it
-# requires some kernel information. (Notably shared memory requirement)
 add_custom_target(aotriton_v2_gen_shim 
   COMMAND ${CMAKE_COMMAND}
   -E env VIRTUAL_ENV=${VENV_DIR}
@@ -154,7 +145,7 @@ add_custom_target(aotriton_v2_gen_shim
   WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/.."
 )
 if(NOT AOTRITON_NOIMAGE_MODE)
-  # shim and compile can be parallel targets
+  # shim and compile can be parallel targets under Storage v2
   # However we still keep the dependency because we want sanity check to make
   # sure all GPU objects referenced by shim layer have been built
   # (The actual effect of --noimage_mode for generate_shim is to disable this check)
@@ -185,15 +176,6 @@ else(AOTRITON_BUILD_FOR_TUNING)
 endif(AOTRITON_BUILD_FOR_TUNING)
 target_link_libraries(aotriton_v2 lzma_interface)
 
-# message(STATUS "AOTRITON_EXTRA_COMPILER_OPTIONS ${AOTRITON_EXTRA_COMPILER_OPTIONS}")
-# add_custom_target(aotriton_v2
-#   ALL
-#   COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} PATH="${VENV_DIR}/bin:$ENV{PATH}" make -j ${MAX_JOBS} -f Makefile.shim HIPCC=${AOTRITON_HIPCC_PATH} AR=${CMAKE_AR} EXTRA_COMPILER_OPTIONS=${AOTRITON_EXTRA_COMPILER_OPTIONS}
-#   WORKING_DIRECTORY "${AOTRITON_V2_BUILD_DIR}"
-#   BYPRODUCTS "${AOTRITON_V2_BUILD_DIR}/libaotriton_v2.a"
-# )
-# add_dependencies(aotriton_v2 aotriton_v2_gen_shim)
-
 include(GNUInstallDirs)
 message("CMAKE_INSTALL_INCLUDEDIR ${CMAKE_INSTALL_INCLUDEDIR}")
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}/include/aotriton"
@@ -212,10 +194,4 @@ endif(NOT AOTRITON_NOIMAGE_MODE)
 
 # Python binding only available for AOTriton V2 API
 add_library(aotriton INTERFACE)
-# add_dependencies(aotriton aotriton_v2)
-# target_link_libraries(aotriton INTERFACE ${CMAKE_INSTALL_PREFIX}/lib/libaotriton_v2.a)
-# target_include_directories(aotriton INTERFACE ${CMAKE_INSTALL_PREFIX}/include)
-# target_link_libraries(aotriton INTERFACE ${AOTRITON_V2_BUILD_DIR}/${AOTRITON_LIBRARY_FILE})
-# target_include_directories(aotriton INTERFACE ${CMAKE_CURRENT_SOURCE_PARENT_DIR}/include)
-# target_include_directories(aotriton INTERFACE ${CMAKE_CURRENT_SOURCE_PARENT_DIR}/include)
 target_link_libraries(aotriton INTERFACE aotriton_v2)
