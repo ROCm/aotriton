@@ -110,12 +110,6 @@ TritonKernel::load_for_device(int device_id, const char* kernel_name) {
 #if AOTRITON_KERNEL_VERBOSE
   std::cerr << "Decompress kernel to " << kernel_image_ << std::endl;
 #endif
-#if AOTRITON_KERNEL_VERBOSE
-  // std::cerr << "Decompress kernel from " << kernel_image_ << " with size " <<
-  // image_size_ << " to " << image
-  //           << " with size " << decompressed_kernel_image_.size() <<
-  //           std::endl;
-#endif
   if (!kernel_image_) {
     return std::make_tuple(nullptr, hipErrorInvalidImage);
   }
