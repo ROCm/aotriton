@@ -79,6 +79,20 @@ def test_op_bwd_with_matrix_bias(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, sm_
     '''
     _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
 
+@pytest.mark.parametrize('BATCH', [1, 4])
+@pytest.mark.parametrize('N_HEADS', [(16, 8), (10, 2)])
+@pytest.mark.parametrize('D_HEAD', [8, 203, 256])
+@pytest.mark.parametrize('seqlen_q', [4, 143, 2048])
+@pytest.mark.parametrize('seqlen_k', [4, 127, 579, 2048])
+@pytest.mark.parametrize('causal', [False, True])
+@pytest.mark.parametrize('dropout_p', [0.0, 0.5])
+@pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16, torch.float32])
+@pytest.mark.parametrize('sm_scale', [1.2])
+@pytest.mark.parametrize('storage_flip', [False])
+def test_gqa(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
+    bias_type = None
+    _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
+
 def main_npz():
     SKIP_DK_DV = False
     SKIP_DQ = False

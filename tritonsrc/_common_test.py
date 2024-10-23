@@ -83,9 +83,13 @@ class SdpaContext(object):
 
     def __init__(self, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, dtype,
                  bias_type=None, storage_flip=None, device='cuda', fillnan=False):
-        qdims = (BATCH, N_HEADS, seqlen_q, D_HEAD)
-        kdims = (BATCH, N_HEADS, seqlen_k, D_HEAD)
-        vdims = (BATCH, N_HEADS, seqlen_k, D_HEAD)
+        if isinstance(N_HEADS, int):
+            Q_HEADS = K_HEADS = N_HEADS
+        else:
+            Q_HEADS, K_HEADS = N_HEADS
+        qdims = (BATCH, Q_HEADS, seqlen_q, D_HEAD)
+        kdims = (BATCH, K_HEADS, seqlen_k, D_HEAD)
+        vdims = (BATCH, K_HEADS, seqlen_k, D_HEAD)
         bdims = (seqlen_q, seqlen_k)
         if storage_flip is not None:
             order = [0,1,2,3]
@@ -107,7 +111,7 @@ class SdpaContext(object):
         elif bias_type == 'matrix' or bias_type == 1:
             # b = torch.empty(bdims, dtype=dtype, device="cuda").normal_(mean=0., std=0.5)
             b = torch.rand(*bdims, dtype=dtype, device=device)
-            b = b.expand(BATCH, N_HEADS, b.shape[0], b.shape[1])
+            b = b.expand(BATCH, Q_HEADS, b.shape[0], b.shape[1])
         else:
             assert False, f'Unsupported bias_type {bias_type}'
         if storage_flip is not None:
@@ -130,6 +134,9 @@ class SdpaContext(object):
         self.OUT_FUDGE_FACTOR = 3.0
         if dtype == torch.float32:
             self.OUT_FUDGE_FACTOR = 12.0
+        if torch.version.hip:
+            if 'gfx90a' in torch.cuda.get_device_properties(0).gcnArchName:
+                self.OUT_FUDGE_FACTOR = 12.0
 
     '''
     Create Tensors that will be kept b/w forward and backward pass
@@ -263,6 +270,12 @@ class SdpaContext(object):
     @staticmethod
     def _compute_ref_forward(ref_tensors, p : SdpaParams):
         ref_q, ref_k, ref_v, ref_b = ref_tensors
+        num_head_q = ref_q.shape[1]
+        num_head_k = ref_k.shape[1]
+        num_head_v = ref_v.shape[1]
+        assert num_head_k == num_head_v
+        assert num_head_q % num_head_k == 0
+        enable_gqa = num_head_q != num_head_k
         dropout_mask = p.dropout_mask if p.dropout_mask is None else p.dropout_mask.to(device=ref_q.device)
         # _scaled_dot_product_attention_math seems also working for nested tensor
         ref_out, ref_mask = torch.ops.aten._scaled_dot_product_attention_math(ref_q, ref_k, ref_v,
@@ -270,7 +283,8 @@ class SdpaContext(object):
                                                                     is_causal=p.causal,
                                                                     attn_mask=ref_b,
                                                                     scale=p.sm_scale,
-                                                                    dropout_mask=dropout_mask)
+                                                                    dropout_mask=dropout_mask,
+                                                                    enable_gqa=enable_gqa)
         return (ref_out, ref_mask)
 
     def compute_ref_forward(self, p : SdpaParams):
