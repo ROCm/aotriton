@@ -5,6 +5,26 @@ import numpy as np
 import math
 import torch
 
+
+
+def sdpa_math(query, key, value, attn_mask=None, dropout_p=0.0, dropout_mask=None, is_causal=False, scale=None, enable_gqa=False):
+    if torch.__version__ >= '2.5.0':
+        return torch.ops.aten._scaled_dot_product_attention_math(query, key, value,
+                                                                 dropout_p=dropout_p,
+                                                                 is_causal=is_causal,
+                                                                 attn_mask=attn_mask,
+                                                                 scale=scale,
+                                                                 dropout_mask=dropout_mask,
+                                                                 enable_gqa=enable_gqa)
+    else:
+        return torch.ops.aten._scaled_dot_product_attention_math(query, key, value,
+                                                                 dropout_p=dropout_p,
+                                                                 is_causal=is_causal,
+                                                                 attn_mask=attn_mask,
+                                                                 scale=scale,
+                                                                 dropout_mask=dropout_mask)
+
+
 def _reference_scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_mask=None, dropout_p=0.0, is_causal=False, scale=None) -> torch.Tensor:
     # Efficient implementation equivalent to the following:
     L, S = query.size(-2), key.size(-2)
@@ -278,13 +298,13 @@ class SdpaContext(object):
         enable_gqa = num_head_q != num_head_k
         dropout_mask = p.dropout_mask if p.dropout_mask is None else p.dropout_mask.to(device=ref_q.device)
         # _scaled_dot_product_attention_math seems also working for nested tensor
-        ref_out, ref_mask = torch.ops.aten._scaled_dot_product_attention_math(ref_q, ref_k, ref_v,
-                                                                    dropout_p=p.dropout_p,
-                                                                    is_causal=p.causal,
-                                                                    attn_mask=ref_b,
-                                                                    scale=p.sm_scale,
-                                                                    dropout_mask=dropout_mask,
-                                                                    enable_gqa=enable_gqa)
+        ref_out, ref_mask = sdpa_math(ref_q, ref_k, ref_v,
+                                      dropout_p=p.dropout_p,
+                                      is_causal=p.causal,
+                                      attn_mask=ref_b,
+                                      scale=p.sm_scale,
+                                      dropout_mask=dropout_mask,
+                                      enable_gqa=enable_gqa)
         return (ref_out, ref_mask)
 
     def compute_ref_forward(self, p : SdpaParams):
