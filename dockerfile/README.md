@@ -2,7 +2,6 @@
 
 ## Current Limitations
 
-* Only support AOTriton 0.7.x;
 * Only support ROCm 6.2
     + You need to edit some files for other ROCm versions
 

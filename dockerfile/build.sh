@@ -8,12 +8,32 @@ if [ "$#" -ne 5 ]; then
   exit 1
 fi
 
-TRITON_HASH="657ec732"
 INPUT_DIR="$1"
 WORKSPACE="$2"
 OUTPUT_DIR="$3"
 AOTRITON_GIT_NAME="$4"
 AOTRITON_TARGET_GPUS="$5"
+
+if [ -z ${TRITON_HASH+x} ]; then
+  echo "Guessing Triton's Hash from AOTriton's Git tag"
+  case "${AOTRITON_GIT_NAME}" in
+    0.7b)
+      TRITON_HASH="657ec732"
+      ;;
+    0.7.*b)
+      TRITON_HASH="657ec732"
+      ;;
+    0.8b)
+      TRITON_HASH="b5cc222d"
+      ;;
+    *)
+      echo "Cannot guess Triton's hash from tag. Set env var TRITON_HASH to proceed"
+      echo 'The value can be get from `head -c 8 third_party/triton/cmake/llvm-hash.txt`'
+      echo '(Must switch branch and update submodule first)'
+      exit
+      ;;
+  esac
+fi
 
 DOCKER_IMAGE=aotriton:manylinux_2_28-buildenv-tiny  # TODO: FIXME
 
