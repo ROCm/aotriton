@@ -13,9 +13,11 @@ if(AOTRITON_MIN_PYTHON VERSION_LESS "3.8")
 endif()
 
 find_package(Python3 ${AOTRITON_MIN_PYTHON} COMPONENTS Interpreter REQUIRED)
+# Must set this otherwise hip-config-amd.cmake cannot find AMDDeviceLibs
+list(APPEND CMAKE_PREFIX_PATH "/opt/rocm")
+find_package(hip REQUIRED)
 
 set(VENV_DIR "${CMAKE_CURRENT_BINARY_DIR}/venv" CACHE STRING "Virtual Environment Directory")
-set(AOTRITON_HIPCC_PATH "hipcc" CACHE STRING "Set HIPCC Path")
 option(AOTRITON_NO_PYTHON "Disable python binding build" OFF)
 option(AOTRITON_ENABLE_ASAN "Enable Address Sanitizer. Implies -g" OFF)
 option(AOTRITON_BUILD_FOR_TUNING "Build all GPU kernels and set -DAOTRITON_BUILD_FOR_TUNING=1 (=0 otherwise)" OFF)
@@ -29,9 +31,6 @@ if(NOT AOTRITON_NO_PYTHON)
   find_package(Python3 ${AOTRITON_MIN_PYTHON} COMPONENTS Development REQUIRED)
   add_subdirectory(third_party/pybind11)
 endif()
-
-# Must be after pybind11
-set(CMAKE_CXX_COMPILER hipcc)
 
 # Resolve name conflicts with suffix
 set(AOTRITON_NAME_SUFFIX "" CACHE STRING "Add suffix to namespace and library file name. This is to resolve name conflicts with PyTorch's AOTriton during testing.")
