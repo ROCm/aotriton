@@ -1,11 +1,12 @@
 # Build Manylinux-2-28 Compatible AOTriton From Source
 
-## Current Limitations
+Technical details of this build system can be found at Technical.md
 
-* Only support ROCm 6.2
-    + You need to edit some files for other ROCm versions
+## Use different ROCm releases
 
-See Technical.md for technical details of this build system.
+Set env var `AMDGPU_INSTALLER` to URL of RHEL 8.10 `amdgpu-install` package.
+The latest package can be found at
+https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/amdgpu-install.html#red-hat-enterprise-linux
 
 ## TL;DR (Use 0.7.1b as an example)
 

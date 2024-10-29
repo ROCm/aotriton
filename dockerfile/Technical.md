@@ -34,3 +34,10 @@ The build process can be partitions into two steps
    In this case, the `manylinux_2_28.Dockerfile` can be used as guides to build AOTriton
    on bare-metal systems.
 2. Conda is not used because Conda as of today (Oct 2024) is still on glibc_2_17
+
+## Development Notes
+
+### Support newer AOTriton
+
+Edit the `case "${AOTRITON_GIT_NAME}" in` part of `build.sh` and add Triton
+hashes for newer AOTriton.

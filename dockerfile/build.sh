@@ -38,7 +38,12 @@ fi
 DOCKER_IMAGE=aotriton:manylinux_2_28-buildenv-tiny  # TODO: FIXME
 
 if [ -z "$(docker images -q ${DOCKER_IMAGE} 2> /dev/null)" ]; then
-  docker build -t ${DOCKER_IMAGE} -f manylinux_2_28.Dockerfile .
+  if [ -z ${AMDGPU_INSTALLER+x} ]; then
+    build_options="--build-arg amdgpu_installer=${AMDGPU_INSTALLER}"
+  else
+    build_options=""
+  fi
+  docker build ${build_options} -t ${DOCKER_IMAGE} -f manylinux_2_28.Dockerfile .
 fi
 
 if [ "$WORKSPACE" == "tmpfs" ]; then
@@ -53,7 +58,7 @@ echo /input/install.sh ${TRITON_HASH} ${AOTRITON_GIT_NAME} "${AOTRITON_TARGET_GP
 
 docker run --mount "type=bind,source=$(realpath ${INPUT_DIR}),target=/input" \
   --mount "type=bind,source=$(realpath ${OUTPUT_DIR}),target=/output" \
-  ${workspace_option1} ${workspace_option2} \
+  ${workspace_option1} "${workspace_option2}" \
   -w / \
   -it ${DOCKER_IMAGE} \
   bash \
