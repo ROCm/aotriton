@@ -1,0 +1,37 @@
+From 5c17565afeec4e5cb41db547d880a282118658c6 Mon Sep 17 00:00:00 2001
+From: Xinya Zhang <Xinya.Zhang@amd.com>
+Date: Tue, 29 Oct 2024 07:59:30 +0000
+Subject: [PATCH] Link to hip::host
+
+---
+ CMakeLists.txt       | 1 +
+ v2src/CMakeLists.txt | 1 +
+ 2 files changed, 2 insertions(+)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index f67d96b..c27fc91 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -7,6 +7,7 @@ project(AOTriton CXX C)
+ 
+ add_subdirectory(third_party/pybind11)
+ find_package(Python3 COMPONENTS Interpreter REQUIRED)
++find_package(hip REQUIRED)
+ 
+ set(VENV_DIR "${CMAKE_CURRENT_BINARY_DIR}/venv" CACHE STRING "Virtual Environment Directory")
+ set(AOTRITON_HIPCC_PATH "hipcc" CACHE STRING "Set HIPCC Path")
+diff --git a/v2src/CMakeLists.txt b/v2src/CMakeLists.txt
+index 0cc58d1..b3e1b12 100644
+--- a/v2src/CMakeLists.txt
++++ b/v2src/CMakeLists.txt
+@@ -184,6 +184,7 @@ endif(AOTRITON_BUILD_FOR_TUNING)
+ if(AOTRITON_COMPRESS_KERNEL)
+   target_link_libraries(aotriton_v2 zstd_interface)
+ endif(AOTRITON_COMPRESS_KERNEL)
++target_link_libraries(aotriton_v2 hip::host hip::amdhip64)
+ 
+ # message(STATUS "AOTRITON_EXTRA_COMPILER_OPTIONS ${AOTRITON_EXTRA_COMPILER_OPTIONS}")
+ # add_custom_target(aotriton_v2
+-- 
+2.43.5
+

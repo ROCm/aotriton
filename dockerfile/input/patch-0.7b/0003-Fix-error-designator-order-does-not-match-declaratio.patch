@@ -1,0 +1,30 @@
+From 3dca5d3cde6f0501a629e7fd31e04960f904b79a Mon Sep 17 00:00:00 2001
+From: Xinya Zhang <Xinya.Zhang@amd.com>
+Date: Tue, 29 Oct 2024 08:30:41 +0000
+Subject: [PATCH] Fix error: designator order does not match declaration order
+ when using GCC13
+
+---
+ v2src/flash/attn_fwd.cc | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/v2src/flash/attn_fwd.cc b/v2src/flash/attn_fwd.cc
+index 1702d8f..f774f19 100644
+--- a/v2src/flash/attn_fwd.cc
++++ b/v2src/flash/attn_fwd.cc
+@@ -85,10 +85,10 @@ _attn_fwd_common(T4 q,
+     .head_dim = static_cast<int32_t>(head_size),
+     .dropout_p = dropout_p,
+     .philox_seed_ptr = &philox_seed,
+-    .philox_offset1 = &philox_offset1,
+-    .philox_offset2 = static_cast<uint32_t>(philox_offset2),
+     .philox_seed_output = &philox_seed_output,
+     .philox_offset_output = &philox_offset_output,
++    .philox_offset1 = &philox_offset1,
++    .philox_offset2 = static_cast<uint32_t>(philox_offset2),
+     .CAUSAL = is_causal,
+     .BLOCK_DMODEL = head_dim_rounded,
+     .ENABLE_DROPOUT = dropout_p > 0.0,
+-- 
+2.43.5
+
