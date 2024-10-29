@@ -1,0 +1,62 @@
+# Build Manylinux-2-28 Compatible AOTriton From Source
+
+## Current Limitations
+
+* Only support AOTriton 0.7.x;
+* Only support ROCm 6.2
+    + You need to edit some files for other ROCm versions
+
+See Technical.md for technical details of this build system.
+
+## TL;DR (Use 0.7.1b as an example)
+
+Throughout this text, `aotriton/` always refers to the root directory of
+AOTriton source code.
+
+```
+cd aotriton/dockerfile
+bash build.sh input tmpfs output 0.7.1b "MI300X;MI200;Navi31"
+```
+
+To check its usage, run `bash build.sh` without any arguments.
+
+Note: as of this version, the `build.sh` only supports AOTriton 0.7.x releases.
+Support of future releases will be added later (notably the Triton hash problem).
+
+## Argument: input
+
+This specifies input directory, which must be `aotriton/dockerfile/input/`,
+because this directory must include critical files including
+
+1. install scripts `install*.sh`
+2. Patches to build on AlmaLinux 8 (under `patch-*`)
+
+### Cached Triton
+
+It is highly recommended to cache the LLVM/MLIR package used by Triton in the `input` directory.
+It can be downloaded from
+```
+https://oaitriton.blob.core.windows.net/public/llvm-builds/llvm-657ec732-almalinux-x64.tar.gz
+```
+
+Here `657ec732` is the Hash of this MLIR package and will change depending on
+the Triton compiler used by the AOTriton. The pinned version can be found at
+`aotriton/third_party/triton/cmake/llvm-hash.txt`.
+
+*What If I don't cache this MLIR package*
+
+The build script of Triton will download this ~1GiB tarball for you, but will take
+undetermined amount of time (depending on your Internet speed). In addition,
+there is *NO progress bar* shown during this process, and the build process
+would simply fail if the downloading failed.
+
+## Argument: tmpfs
+
+Can be any directory to store temporary build files.
+Use `tmpfs` to mount `tmpfs` for better performance.
+`tmpfs` is only recommended for system with large physical memories (> 128GB),
+because AOTriton build needs ~15GiB disk space per architecture.
+
+## Argument: output
+
+Output directory. The compiled aotriton tarball will be put here.
