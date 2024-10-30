@@ -20,8 +20,8 @@ system, `ninja install` will run the whole build process unconditionally.
 * `hipcc` in `/opt/rocm/bin`, as a part of [ROCm](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/)
 * `cmake`
 * `ninja`
-* `libzstd`
-  - Common names are `libzstd-dev` or `libzstd-devel`.
+* `liblzma`
+  - Common names are `liblzma-dev` or `xz-devel`.
 
 ## Generation
 
