@@ -25,11 +25,14 @@ Support of future releases will be added later (notably the Triton hash problem)
 
 ## Argument: input
 
-This specifies input directory, which must be `aotriton/dockerfile/input/`,
-because this directory must include critical files including
+This specifies input directory, which must contain all files and subdirectories
+under `aotriton/dockerfile/input/`, which are critical files for the build, including:
 
 1. install scripts `install*.sh`
 2. Patches to build on AlmaLinux 8 (under `patch-*`)
+
+You may use the `aotriton/dockerfile/input/` directly, or copy the whole
+directory to some other place and start build from there.
 
 ### Cached Triton
 
