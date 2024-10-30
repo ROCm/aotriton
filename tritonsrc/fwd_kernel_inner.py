@@ -5,6 +5,7 @@ import triton
 import triton.language as tl
 from dropout import dropout_mask, dropout_rng, dropout_offsets
 from masked_load_store import load_fn, mstore2d
+from triton.language.extra import libdevice
 
 @triton.jit
 def attn_fwd_inner(
@@ -46,11 +47,6 @@ def attn_fwd_inner(
         else:
             k_offs_n = None
         k_offs_d = None if not PADDED_HEAD else tl.arange(0, BLOCK_DMODEL)
-        '''
-        k_offs_n = start_n + tl.arange(0, BLOCK_N)
-        k_offs_d = tl.arange(0, BLOCK_DMODEL)
-        # k_offs_d = None if not PADDED_HEAD else tl.arange(0, BLOCK_DMODEL)
-        '''
         k = load_fn(k_ptrs, k_offs_d, k_offs_n, head_dim, seqlen_k)
         if PRE_LOAD_V:
             # We can use the same offsets as k, just with dims transposed.
@@ -94,7 +90,13 @@ def attn_fwd_inner(
 
         # softmax
         m_ij = tl.maximum(m_i, qk_scale * tl.max(qk, 1))
+        # FIXME: when sm_scale = 0.0 and MASK_STEPS/CAUSAL = True
+        #        qk * qk_scale = nan
         p = tl.math.exp2(qk * qk_scale - m_ij[:, None])
+
+        if MASK_STEPS or CAUSAL:
+            if qk_scale == 0.0:
+                p = tl.where(libdevice.isnan(p), 0.0, p)
 
         # CAVEAT: Must update l_ij before applying dropout
         l_ij = tl.sum(p, 1)

@@ -166,10 +166,6 @@ def attn_fwd(
     q_ptrs = q_offset + offs_m[:, None] * stride_qm + offs_d[None, :] * stride_qk
     k_offset = batch_index * stride_kz + off_h_k * stride_kh + cu_seqlens_k_start * stride_kn
     k_ptrs = K + k_offset + offs_d[:, None] * stride_kk + offs_n[None, :] * stride_kn
-    # tl.device_print('batch_index ', batch_index)
-    # tl.device_print('off_h_k ', off_h_k)
-    # tl.device_print('cu_seqlens_k_start ', cu_seqlens_k_start)
-    # tl.device_print('k_offset ', k_offset)
     v_offset = V + batch_index * stride_vz + off_h_k * stride_vh + cu_seqlens_k_start * stride_vk
     v_ptrs = v_offset + offs_n[:, None] * stride_vk + offs_d[None, :] * stride_vn
     if BIAS_TYPE == 0:
@@ -331,13 +327,3 @@ def attn_fwd(
              o_cols=head_dim,
              stride_row=stride_om,
              stride_col=stride_on)
-
-    # # write back O
-    # o_offset = Out + batch_index * stride_oz + off_h_q * stride_oh + cu_seqlens_q_start * stride_om
-    # o_ptrs = o_offset + offs_m[:, None] * stride_om + offs_d[None, :] * stride_on
-    # o_ptrs_mask = tl.full([BLOCK_M, BLOCK_DMODEL], 1, dtype=tl.int1)
-    # if overflow_size > 0:
-    #     o_ptrs_mask = o_ptrs_mask & (offs_m[:, None] < seqlen_q)
-    # if PADDED_HEAD:
-    #     o_ptrs_mask = o_ptrs_mask & (offs_d[None, :] < head_dim)
-    # tl.store(o_ptrs, acc.to(Out.dtype.element_ty), mask=o_ptrs_mask)
