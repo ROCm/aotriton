@@ -229,7 +229,7 @@ class ShimMakefileGenerator(MakefileGenerator):
                 print('\t', '${AR} -r ', fn, '@ar.txt', file=f)
                 print(all_object_files, file=self._arf)
             if s == '.so':
-                print('\t', COMPILER, ' -g -shared -fPIC -o ', fn, all_object_files, file=f)
+                print('\t', COMPILER, ' -g -shared -fPIC -o ', fn, ' @ar.txt', file=f)
             print('\n\n', file=f)
 
     '''
