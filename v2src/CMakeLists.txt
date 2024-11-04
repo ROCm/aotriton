@@ -159,7 +159,6 @@ endif()
 target_include_directories(aotriton_v2 PUBLIC ${CMAKE_CURRENT_LIST_DIR}/../include)
 target_include_directories(aotriton_v2 PUBLIC ${CMAKE_BINARY_DIR}/include)  # for <build>/include/aotriton/config.h. Code should use <aotriton/config.h>
 target_include_directories(aotriton_v2 PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
-target_include_directories(aotriton_v2 PRIVATE ${CMAKE_CURRENT_LIST_DIR}/../third_party/incbin)
 target_compile_options(aotriton_v2 PRIVATE -fPIC)
 if(AOTRITON_BUILD_FOR_TUNING)
   target_compile_definitions(aotriton_v2 PRIVATE -DAOTRITON_BUILD_FOR_TUNING=1)

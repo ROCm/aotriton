@@ -4,7 +4,6 @@
 #include <aotriton/_internal/packed_kernel.h>
 #include <aotriton/_internal/triton_kernel.h>
 #include <aotriton/runtime.h>
-#include <incbin.h>
 #include <iostream>
 #include <mutex>
 
@@ -14,11 +13,14 @@
 #define AOTRITON_KERNEL_VERBOSE 1
 #endif
 
+#define STRINGIFICATION(s) STRINGIFICATION_I(s)
+#define STRINGIFICATION_I(s) #s
+
 #define AOTRITON_HIP_CHECK_RETURN(expr)                                                                      \
   do {                                                                                                       \
     auto r = (expr);                                                                                         \
     if (r != hipSuccess)                                                                                     \
-      throw std::runtime_error("FAILURE at Line " INCBIN_STRINGIZE(__LINE__));                               \
+      throw std::runtime_error("FAILURE at Line " STRINGIFICATION(__LINE__));                                \
   } while (0)
 
 namespace AOTRITON_NS {

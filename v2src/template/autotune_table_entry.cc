@@ -4,7 +4,6 @@
 #include "../shim.[[shim_kernel_name]].h"
 #include <aotriton/_internal/triton_kernel.h>
 #include <aotriton/cpp_tune.h>
-#include <incbin.h>
 #include <iostream>
 
 // [[human_readable_signature]]
@@ -49,9 +48,9 @@ namespace AOTRITON_NS::v2::[[kernel_family_name]]::autotune {
 void CURRENT_ENTRY_PUBLIC::operator()([[param_class_name]]& params) {
 #if AOTRITON_BUILD_FOR_TUNING
     int preferred_index = params._has_preferred_kernel;
-    params._total_number_of_kernels = incbin_num_kernels;
+    params._total_number_of_kernels = total_num_kernels;
     if (preferred_index != -1) {
-        if (preferred_index >= incbin_num_kernels)
+        if (preferred_index >= total_num_kernels)
             return ;
         params.selected_kernel = &image_list[preferred_index];
         params._preferred_kernel_psels = kernel_psels[preferred_index];
