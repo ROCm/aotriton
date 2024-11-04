@@ -168,6 +168,8 @@ else(AOTRITON_BUILD_FOR_TUNING)
 endif(AOTRITON_BUILD_FOR_TUNING)
 target_link_libraries(aotriton_v2 PRIVATE lzma_interface)
 target_link_libraries(aotriton_v2 PUBLIC hip::host hip::amdhip64)
+set_target_properties(aotriton_v2 PROPERTIES VERSION
+  ${AOTRITON_VERSION_MAJOR}.${AOTRITON_VERSION_MINOR}.${AOTRITON_VERSION_PATCH})
 
 include(GNUInstallDirs)
 message("CMAKE_INSTALL_INCLUDEDIR ${CMAKE_INSTALL_INCLUDEDIR}")

@@ -5,6 +5,17 @@ cmake_minimum_required(VERSION 3.18 FATAL_ERROR)
 
 project(AOTriton CXX C)
 
+# Version numbers
+set(AOTRITON_VERSION_MAJOR 0)
+set(AOTRITON_VERSION_MINOR 8)
+set(AOTRITON_VERSION_PATCH 0)
+execute_process(
+  COMMAND git log -1 --format=%H
+  WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+  OUTPUT_VARIABLE AOTRITON_GIT_SHA1
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+
 set(CMAKE_CXX_STANDARD 20)
 
 set(AOTRITON_MIN_PYTHON 3.8 CACHE STRING "Minimal Python version for find_package.")
