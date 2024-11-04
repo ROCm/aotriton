@@ -156,8 +156,10 @@ if(AOTRITON_ENABLE_SUFFIX)
   set_target_properties(aotriton_v2 PROPERTIES OUTPUT_NAME "aotriton${AOTRITON_NAME_SUFFIX}_v2")
 endif()
 
-target_include_directories(aotriton_v2 PUBLIC ${CMAKE_CURRENT_LIST_DIR}/../include)
-target_include_directories(aotriton_v2 PUBLIC ${CMAKE_BINARY_DIR}/include)  # for <build>/include/aotriton/config.h. Code should use <aotriton/config.h>
+target_include_directories(aotriton_v2 PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_LIST_DIR}/../include>)
+# for <build>/include/aotriton/config.h. Code should use <aotriton/config.h>
+target_include_directories(aotriton_v2 PUBLIC $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/include>)
+target_include_directories(aotriton_v2 INTERFACE $<INSTALL_INTERFACE:include>)
 target_include_directories(aotriton_v2 PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_compile_options(aotriton_v2 PRIVATE -fPIC)
 if(AOTRITON_BUILD_FOR_TUNING)
@@ -168,19 +170,35 @@ endif(AOTRITON_BUILD_FOR_TUNING)
 target_link_libraries(aotriton_v2 PRIVATE lzma_interface)
 target_link_libraries(aotriton_v2 PUBLIC hip::host hip::amdhip64)
 set_target_properties(aotriton_v2 PROPERTIES VERSION
-  ${AOTRITON_VERSION_MAJOR}.${AOTRITON_VERSION_MINOR}.${AOTRITON_VERSION_PATCH})
+  ${AOTRITON_VERSION_MAJOR_INT}.${AOTRITON_VERSION_MINOR_INT}.${AOTRITON_VERSION_PATCH_INT})
 
 include(GNUInstallDirs)
 message("CMAKE_INSTALL_INCLUDEDIR ${CMAKE_INSTALL_INCLUDEDIR}")
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}/include/aotriton"
         DESTINATION ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_INCLUDEDIR}
         FILES_MATCHING PATTERN "*.h")
-# A few considerations
-# 1. .so file is used for sanity check to ensure all symbols are resolved,
-#    but it will not be installed because .a is what you should use to avoid setting
-#    search paths for shared libraries
-# 2. The archive library will be installed into the hardcode lib/ directory, to avoid Debian vs RHEL divergence.
-install(FILES "${AOTRITON_V2_BUILD_DIR}/${AOTRITON_LIBRARY_FILE}" DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)
+install(TARGETS aotriton_v2
+        EXPORT aotriton-targets
+        DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)
+install(EXPORT aotriton-targets
+  DESTINATION ${CMAKE_INSTALL_PREFIX}/lib/cmake/aotriton)
+
+# Packages
+include(CMakePackageConfigHelpers)
+configure_package_config_file(${CMAKE_CURRENT_SOURCE_DIR}/config.cmake.in
+  "${CMAKE_CURRENT_BINARY_DIR}/aotriton-config.cmake"
+  INSTALL_DESTINATION "lib/cmake/aotriton"
+  NO_SET_AND_CHECK_MACRO
+  NO_CHECK_REQUIRED_COMPONENTS_MACRO)
+write_basic_package_version_file(
+  "${CMAKE_CURRENT_BINARY_DIR}/aotriton-config-version.cmake"
+  VERSION "${AOTRITON_VERSION_MAJOR_INT}.${AOTRITON_VERSION_MINOR_INT}.${AOTRITON_VERSION_PATCH_INT}"
+  COMPATIBILITY AnyNewerVersion)
+install(FILES
+  ${CMAKE_CURRENT_BINARY_DIR}/aotriton-config.cmake
+  ${CMAKE_CURRENT_BINARY_DIR}/aotriton-config-version.cmake
+  DESTINATION lib/cmake/aotriton)
+
 if(NOT AOTRITON_NOIMAGE_MODE)
   install(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/aotriton.images"
           DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)
