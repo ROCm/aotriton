@@ -187,7 +187,7 @@ def attn_fwd(
     else:
         alibi_slope = None
 
-    off_zh = batch_index * num_head_q + off_h_q
+    off_zh = off_z * num_head_q + off_h_q
     if ENABLE_DROPOUT:
         batch_philox_offset = philox_offset_base + off_zh * max_seqlen_q * max_seqlen_k
     else:
