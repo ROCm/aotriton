@@ -93,15 +93,19 @@ def attn_fwd_inner(
                                               global_n_positions)
             qk += alibi_block * bias_scale
 
-        # softmax
-        m_ij = tl.maximum(m_i, qk_scale * tl.max(qk, 1))
-        p = tl.math.exp2(qk * qk_scale - m_ij[:, None])
+        # This has softmax approach has numerical errors for large inputs:
+        # See: https://github.com/ROCm/aotriton/issues/54
+        # m_ij = tl.maximum(m_i, qk_scale * tl.max(qk, 1))
+        # p = tl.math.exp2(qk * qk_scale - m_ij[:, None])
+        m_ij = tl.maximum(m_i, tl.max(qk, 1))
+        p = tl.math.exp2(qk_scale * (qk - m_ij[:, None]))
         if MASK_STEPS or CAUSAL:
             if qk_scale == 0.0:
                 p = tl.where(libdevice.isnan(p), 0.0, p)
 
         # CAVEAT: Must update l_ij before applying dropout
         l_ij = tl.sum(p, 1)
+        m_ij = m_ij * qk_scale
         if ENABLE_DROPOUT:
             philox_offset = batch_philox_offset + start_m * BLOCK_M * max_seqlen_k + start_n
             keep = dropout_mask(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, max_seqlen_k)
