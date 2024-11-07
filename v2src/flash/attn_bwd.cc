@@ -127,7 +127,7 @@ bwd_kernel_dk_dv(T4 q,
   auto grid_calculator = [max_seqlen_k](const BwdKernelDkDvParams& params) -> dim3 {
     dim3 grid {
       AOTRITON_NS::cdiv<uint32_t>(max_seqlen_k, params.BLOCK_N),
-      uint32_t(params.Q->size(1)),
+      uint32_t(params.K->size(1)),
       params.num_seqlens == 0 ? uint32_t(params.Q->size(0)) : params.num_seqlens,
     };
     // std::cerr << "bwd_kernel_dk_dv grid conf " << grid.x << " " << grid.y << " " << grid.z << std::endl;
@@ -135,6 +135,8 @@ bwd_kernel_dk_dv(T4 q,
   };
   constexpr int kMinHeadDimCompiled = 16;
   int head_size = q.size(3);
+  int num_head_q = q.size(1);
+  int num_head_k = k.size(1);
   int head_size_rounded = std::max(kMinHeadDimCompiled, bit_ceil(head_size));
   int bias_type = 0;
   if (b) {
@@ -152,6 +154,8 @@ bwd_kernel_dk_dv(T4 q,
     .sm_scale = sm_scale,
     .L = &softmax_lse,
     .D = &delta,
+    .num_head_q = num_head_q,
+    .num_head_k = num_head_k,
     .cu_seqlens_q = &cu_seqlens_q,
     .cu_seqlens_k = &cu_seqlens_k,
     .num_seqlens = num_seqlens,
@@ -232,6 +236,8 @@ bwd_kernel_dq(T4 q,
   };
   constexpr int kMinHeadDimCompiled = 16;
   int head_size = q.size(3);
+  int num_head_q = q.size(1);
+  int num_head_k = k.size(1);
   int head_size_rounded = std::max(kMinHeadDimCompiled, bit_ceil(head_size));
   int bias_type = 0;
   if (b) {
@@ -249,6 +255,8 @@ bwd_kernel_dq(T4 q,
     .sm_scale = sm_scale,
     .L = &softmax_lse,
     .D = &delta,
+    .num_head_q = num_head_q,
+    .num_head_k = num_head_k,
     .cu_seqlens_q = &cu_seqlens_q,
     .cu_seqlens_k = &cu_seqlens_k,
     .num_seqlens = num_seqlens,
