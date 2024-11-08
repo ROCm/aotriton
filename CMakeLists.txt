@@ -16,7 +16,6 @@ find_package(Python3 ${AOTRITON_MIN_PYTHON} COMPONENTS Interpreter REQUIRED)
 
 set(VENV_DIR "${CMAKE_CURRENT_BINARY_DIR}/venv" CACHE STRING "Virtual Environment Directory")
 set(AOTRITON_HIPCC_PATH "hipcc" CACHE STRING "Set HIPCC Path")
-option(AOTRITON_NO_SHARED "Build as archive library." OFF)
 option(AOTRITON_NO_PYTHON "Disable python binding build" OFF)
 option(AOTRITON_ENABLE_ASAN "Enable Address Sanitizer. Implies -g" OFF)
 option(AOTRITON_BUILD_FOR_TUNING "Build all GPU kernels and set -DAOTRITON_BUILD_FOR_TUNING=1 (=0 otherwise)" OFF)
