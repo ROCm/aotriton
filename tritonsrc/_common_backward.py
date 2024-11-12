@@ -41,20 +41,14 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
     q, k, v, b = ctx.dev_tensors
     # autotune = True
     # # triton implementation
-    ext = AttentionExtraArgs(return_encoded_softmax=True, #dropout_p > 0.0,
+    ext = AttentionExtraArgs(return_encoded_softmax=dropout_p > 0.0,
                              autotune=False,
                              return_autotune=False,
                              fillnan=True)
     tri_out, encoded_softmax, _ = attention(q, k, v, b, causal, sm_scale, dropout_p, ext)
-    print(f'{encoded_softmax=}')
-    print(f'{encoded_softmax.shape=}')
-    print(f'{v=}')
-    print(f'{v.shape=}')
-    print(f'{tri_out.shape=}')
     dropout_mask = encoded_softmax >= 0 if dropout_p > 0.0 else None
     sdpa_params = SdpaParams(causal=causal, sm_scale=sm_scale, dropout_p=dropout_p, dropout_mask=dropout_mask)
     ref_out, _ = ctx.compute_ref_forward(sdpa_params)
-    print(f'{ref_out.shape=}')
     dout = torch.rand_like(tri_out)
     ctx.compute_backward(tri_out, dout)
     is_allclose, adiff, grads_allclose, grads_adiff = ctx.validate_with_reference(tri_out, ctx.dout_tensors)

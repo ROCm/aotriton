@@ -117,10 +117,7 @@ def attn_fwd_inner(
                 # tl.store(encoded_sm_ptrs, tl.where(keep, p, -p).to(q.type.element_ty))
             p = tl.where(keep, p, 0.0)
         elif RETURN_ENCODED_SOFTMAX:
-            causal_boundary = start_n + offs_n_causal
-            causal_mask = offs_m[:, None] >= causal_boundary[None, :]
             mstore2d(p.to(q.type.element_ty),
-                     # causal_mask.to(q.type.element_ty),
                      BLOCK_M,
                      BLOCK_N,
                      o_base=encoded_sm_base,
@@ -133,20 +130,13 @@ def attn_fwd_inner(
             # tl.store(encoded_sm_ptrs, p.to(q.type.element_ty))
         # -- update output accumulator --
         alpha = tl.math.exp2(m_i - m_ij)
-        # tl.device_print('alpha: ', alpha)
         acc = acc * alpha[:, None]
-        # tl.debug_barrier()
-        # tl.device_print('acc: ', acc)
         if not PRE_LOAD_V:
             v = load_fn(v_ptrs, k_offs_n, k_offs_d, seqlen_k, head_dim)
         # -- update m_i and l_i
         l_i = l_i * alpha + l_ij
         # update m_i and l_i
         m_i = m_ij
-        # tl.device_print('v: ', v)
-        # tl.debug_barrier()
-        # delta = tl.dot(p.to(v.type.element_ty), v)
-        # tl.device_print('delta: ', delta)
         acc += tl.dot(p.to(v.type.element_ty), v)
         k_ptrs += BLOCK_N * stride_kn
         v_ptrs += BLOCK_N * stride_vk
@@ -154,5 +144,4 @@ def attn_fwd_inner(
             bias_ptrs += BLOCK_N * stride_bn
         # if RETURN_ENCODED_SOFTMAX:
         #     encoded_sm_ptrs += BLOCK_N
-        # tl.device_print('inner acc: ', acc)
     return acc, l_i, m_i
