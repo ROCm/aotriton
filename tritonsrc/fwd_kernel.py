@@ -119,10 +119,15 @@ def attn_fwd(
     if CAUSAL:
         # If seqlen_q == seqlen_k, the attn scores are a square matrix.
         # If seqlen_q != seqlen_k, attn scores are rectangular which means
-        # the causal mask boundary is bottom right aligned, and ends at either
-        # the top edge (seqlen_q < seqlen_k) or left edge.
         # This captures the decrease in n_blocks if we have a rectangular attn matrix
-        n_blocks_seqlen = cdiv_fn((start_m + 1) * BLOCK_M + seqlen_k - seqlen_q, BLOCK_N)
+
+        # bottom right aligned version. Ends at either
+        # the top edge (seqlen_q < seqlen_k) or left edge.
+        # n_blocks_seqlen = cdiv_fn((start_m + 1) * BLOCK_M + seqlen_k - seqlen_q, BLOCK_N)
+
+        # top left aligned version. Ends at either
+        n_blocks_seqlen = cdiv_fn((start_m + 1) * BLOCK_M, BLOCK_N)
+
         # This is what adjusts the block_max for the current WG, only
         # if CAUSAL. Otherwise we want to always iterate through all n_blocks
         n_blocks = min(n_blocks, n_blocks_seqlen)
@@ -252,7 +257,10 @@ def attn_fwd(
     # Remaining blocks, if any, are full / not masked.
     if masked_blocks > 0:
         if CAUSAL:
-            offs_n_causal = offs_n + (seqlen_q - seqlen_k)
+            # Bottom right variant
+            # offs_n_causal = offs_n + (seqlen_q - seqlen_k)
+            # Top left variant
+            offs_n_causal = offs_n
         else:
             offs_n_causal = 0
         k_ptrs += n_full_blocks * BLOCK_N * stride_kn
