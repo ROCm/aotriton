@@ -307,6 +307,7 @@ def attn_fwd(
             out_ptrs_mask = mask_m_offsets[:, None] >= out_mask_boundary[None, :]
             z = 0.0
             acc = tl.where(out_ptrs_mask, acc, z.to(acc.type.element_ty))
+    tl.device_print('outer acc after CAUSAL: ', acc)
     # FIXME: MQA/GQA L tensor
     # TODO: make writing of L optional
     # write back LSE

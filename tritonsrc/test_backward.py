@@ -175,14 +175,14 @@ def main():
 
 def main_nsq_causal():
     BATCH = 1
-    D_HEAD = 1
+    N_HEADS = 1
+    D_HEAD = 8
     '''
     N_HEADS = 2
     seqlens_q = 6432
     seqlens_k = 6432
     '''
-    N_HEADS = 1
-    seqlen_q = 2
+    seqlen_q = 8
     seqlen_k = 4
     causal = True
     sm_scale = 1.2
