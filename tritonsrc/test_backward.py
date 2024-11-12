@@ -173,6 +173,25 @@ def main():
     dtype = torch.bfloat16
     _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
 
+def main_nsq_causal():
+    BATCH = 1
+    D_HEAD = 1
+    '''
+    N_HEADS = 2
+    seqlens_q = 6432
+    seqlens_k = 6432
+    '''
+    N_HEADS = 1
+    seqlen_q = 2
+    seqlen_k = 4
+    causal = True
+    sm_scale = 1.2
+    dropout_p = 0.0
+    dtype = torch.float16
+    storage_flip = False
+    bias_type = None
+    _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
+
 if __name__ == '__main__':
-    # main3()
-    main_npz()
+    main_nsq_causal()
+    # main_npz()
