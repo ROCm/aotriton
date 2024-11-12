@@ -4,7 +4,13 @@ AOTRITON_GIT_NAME="$1"
 AOTRITON_TARGET_GPUS="$2"
 
 cd /root/build
-git clone -b ${AOTRITON_GIT_NAME} --recursive https://github.com/ROCm/aotriton.git
+(
+  git clone --recursive https://github.com/ROCm/aotriton.git
+  cd aotriton
+  git checkout ${AOTRITON_GIT_NAME}
+  git submodule sync
+  git submodule update --init --recursive --force 
+)
 cd /root/build/aotriton/
 for f in /input/patch-${AOTRITON_GIT_NAME}/*.patch
 do
