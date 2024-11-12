@@ -99,12 +99,6 @@ def bwd_kernel_dq(
         cu_seqlens_k_start = 0
         batch_index = off_z
 
-    # Still need early exit in GPU kernel to support varlen
-    if CAUSAL:
-        # TODO: bottom right causal and windowed
-        if start_q > seqlen_k:
-            return
-
     # Initialize pointers to Q, K, V
     q_offset = off_h_q * stride_qh + batch_index * stride_qz + cu_seqlens_q_start * stride_qm
     Q += q_offset

@@ -99,12 +99,6 @@ def bwd_kernel_dk_dv(
         cu_seqlens_k_start = 0
         batch_index = off_z
 
-    # Still need early exit in GPU kernel to support varlen
-    if CAUSAL:
-        # TODO: bottom right causal and windowed
-        if start_k > seqlen_q:
-            return
-
     # Initialize pointers to Q, K, V
     # Q is consumed depending on block ID. Every block uses
     # previous block offset by BLOCK_M x D_HEAD.
