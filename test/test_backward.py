@@ -44,8 +44,6 @@ but in PyTorch API it does not present at all
 '''
 
 def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type):
-    if causal and seqlen_q != seqlen_k:
-        pytest.skip("PyTorch's Flash V2 does not accept casual=True when seqlen_q != seqlen_k. Skipping")
     if causal and bias_type is not None:
         pytest.skip("_scaled_dot_product_attention: Explicit attn_mask should not be set when is_causal=True")
     # if BATCH > 1 and seqlen_q >= 1024 and seqlen_k >= 1024:
