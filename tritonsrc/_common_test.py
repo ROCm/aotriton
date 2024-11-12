@@ -5,17 +5,24 @@ import numpy as np
 import math
 import torch
 
+HAS_REDUCED_SDPA = hasattr(torch.backends.cuda, "allow_fp16_bf16_reduction_math_sdp")
 
+def allow_fp16_bf16_reduction_math_sdp(v : bool):
+    if HAS_REDUCED_SDPA:
+        torch.backends.cuda.allow_fp16_bf16_reduction_math_sdp(v)
 
 def sdpa_math(query, key, value, attn_mask=None, dropout_p=0.0, dropout_mask=None, is_causal=False, scale=None, enable_gqa=False):
     if torch.__version__ >= '2.5.0':
-        return torch.ops.aten._scaled_dot_product_attention_math(query, key, value,
+        allow_fp16_bf16_reduction_math_sdp(True)
+        retv = torch.ops.aten._scaled_dot_product_attention_math(query, key, value,
                                                                  dropout_p=dropout_p,
                                                                  is_causal=is_causal,
                                                                  attn_mask=attn_mask,
                                                                  scale=scale,
                                                                  dropout_mask=dropout_mask,
                                                                  enable_gqa=enable_gqa)
+        allow_fp16_bf16_reduction_math_sdp(False)
+        return retv
     else:
         return torch.ops.aten._scaled_dot_product_attention_math(query, key, value,
                                                                  dropout_p=dropout_p,
