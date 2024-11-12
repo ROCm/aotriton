@@ -298,16 +298,20 @@ def attn_fwd(
     # and store 0s where there are NaNs as these rows should've been zeroed out.
     end_m_idx = (start_m + 1) * BLOCK_M
     start_m_idx = start_m * BLOCK_M
-    causal_start_idx = seqlen_q - seqlen_k
+    # Bottom right alignment
+    # causal_start_idx = seqlen_q - seqlen_k
+    # Top left alignment
+    causal_start_idx = 0
     acc = acc.to(Out.type.element_ty)
     if CAUSAL:
+        tl.assume(start_m_idx >= 0)
+        tl.assume(end_m_idx >= 0)
         if causal_start_idx > start_m_idx and causal_start_idx < end_m_idx:
             out_mask_boundary = tl.full((BLOCK_DMODEL, ), causal_start_idx, dtype=tl.int32)
             mask_m_offsets = start_m_idx + tl.arange(0, BLOCK_M)
             out_ptrs_mask = mask_m_offsets[:, None] >= out_mask_boundary[None, :]
             z = 0.0
             acc = tl.where(out_ptrs_mask, acc, z.to(acc.type.element_ty))
-    tl.device_print('outer acc after CAUSAL: ', acc)
     # FIXME: MQA/GQA L tensor
     # TODO: make writing of L optional
     # write back LSE
