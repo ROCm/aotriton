@@ -3,6 +3,7 @@
 
 #include <aotriton/_internal/packed_kernel.h>
 #include <aotriton/runtime.h>
+#include <mutex>
 #include <cstring>
 #include <dlfcn.h>
 #include <errno.h>
