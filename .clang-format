@@ -10,3 +10,9 @@ ColumnLimit: 110
 AlignArrayOfStructures: Right
 # For code in bindings/
 NamespaceIndentation: Inner
+# Function arguments alignment
+AllowAllParametersOfDeclarationOnNextLine: false
+AllowAllArgumentsOnNextLine: false
+AlignAfterOpenBracket: Align
+BinPackArguments: false
+BinPackParameters: false

@@ -1,14 +1,12 @@
 // Copyright © 2023-2024 Advanced Micro Devices, Inc.
 // SPDX-License-Identifier: MIT
 
+#include <aotriton/_internal/packed_kernel.h>
 #include <aotriton/_internal/triton_kernel.h>
 #include <aotriton/runtime.h>
 #include <incbin.h>
 #include <iostream>
 #include <mutex>
-#if AOTRITON_USE_ZSTD
-#include <zstd.h>
-#endif
 
 #ifdef NDEBUG
 #define AOTRITON_KERNEL_VERBOSE 0
@@ -37,31 +35,29 @@ TritonKernel::DeviceFunction::~DeviceFunction() {
   }
 }
 
-
-TritonKernel::TritonKernel(const void* image, size_t image_size, dim3 block, int shared_memory_size)
-  : kernel_image_(image)
-  , image_size_(image_size)
-  , block_(block)
-  , shared_memory_size_(shared_memory_size) {
+TritonKernel::TritonKernel(const char* package_path, const char* stem_name)
+  : package_path_(package_path)
+  , stem_name_(stem_name) {
 }
 
 hipError_t
 TritonKernel::invoke(const char* kernel_name, dim3 grid, std::vector<void*>& args, hipStream_t stream) {
 #if AOTRITON_KERNEL_VERBOSE
-  std::cerr << "Invoking TritonKernel " << this << " with kernel_name = " << kernel_name << std::endl;
+  std::cerr << "Invoking TritonKernel " << this << " with kernel_name = \"" << kernel_name << '"'
+            << std::endl;
 #endif
   int device_id;
   AOTRITON_HIP_CHECK_RETURN(hipGetDevice(&device_id));
   // Use reader lock to peek the state
   hipFunction_t func = nullptr;
   {
-    std::shared_lock lock(mutex_);
+    std::shared_lock lock(funcache_mutex_);
     func = cfind_function(device_id);
   }
 
   if (!func) {
     // Use writer lock to initialize the module for device
-    std::unique_lock lock(mutex_);
+    std::unique_lock lock(funcache_mutex_);
     // Check again, in case another waiter has initialized the device
     func = cfind_function(device_id);
     if (!func) {
@@ -69,8 +65,17 @@ TritonKernel::invoke(const char* kernel_name, dim3 grid, std::vector<void*>& arg
       std::tie(func, err) = load_for_device(device_id, kernel_name);
     }
   }
-  return hipModuleLaunchKernel(
-    func, grid.x, grid.y, grid.z, block_.x, block_.y, block_.z, shared_memory_size_, stream, args.data(), 0);
+  return hipModuleLaunchKernel(func,
+                               grid.x,
+                               grid.y,
+                               grid.z,
+                               block_.x,
+                               block_.y,
+                               block_.z,
+                               shared_memory_size_,
+                               stream,
+                               args.data(),
+                               0);
 }
 
 hipFunction_t
@@ -92,28 +97,25 @@ TritonKernel::load_for_device(int device_id, const char* kernel_name) {
   const unsigned int logbufsize = 8192;
   std::vector<char> err(errbufsize, 0);
   std::vector<char> log(errbufsize, 0);
-  void* optval[] = {
-    (void*)(uintptr_t)err.size(), err.data(), (void*)(uintptr_t)log.size(), log.data(), (void*)(uintptr_t)1
-  };
+  void* optval[] = { (void*)(uintptr_t)err.size(),
+                     err.data(),
+                     (void*)(uintptr_t)log.size(),
+                     log.data(),
+                     (void*)(uintptr_t)1 };
 
-#if AOTRITON_USE_ZSTD
-  auto image = decompress_kernel();
 #if AOTRITON_KERNEL_VERBOSE
-  std::cerr << "Decompress kernel from " << kernel_image_ << " with size " << image_size_ << " to " << image
-            << " with size " << decompressed_kernel_image_.size() << std::endl;
+  std::cerr << "Trying to decompress kernel " << package_path_ << " " << stem_name_ << std::endl;
 #endif
-  if (!image) {
+  std::tie(kernel_image_, shared_memory_size_, block_) = decompress_kernel();
+#if AOTRITON_KERNEL_VERBOSE
+  std::cerr << "Decompress kernel to " << kernel_image_ << std::endl;
+#endif
+  if (!kernel_image_) {
     return std::make_tuple(nullptr, hipErrorInvalidImage);
   }
-#else
-  if (image_size_ == 0) {
-    return std::make_tuple(nullptr, hipErrorInvalidImage);
-  }
-  auto image = kernel_image_;
-#endif
   hipModule_t mod;
   hipFunction_t func;
-  AOTRITON_HIP_CHECK_RETURN(hipModuleLoadDataEx(&mod, image, 5, opt, optval));
+  AOTRITON_HIP_CHECK_RETURN(hipModuleLoadDataEx(&mod, kernel_image_, 5, opt, optval));
   AOTRITON_HIP_CHECK_RETURN(hipModuleGetFunction(&func, mod, kernel_name));
   funcache_.emplace(std::piecewise_construct,
                     std::forward_as_tuple(device_id),
@@ -121,56 +123,34 @@ TritonKernel::load_for_device(int device_id, const char* kernel_name) {
   return std::make_tuple(func, hipSuccess);
 }
 
-#if AOTRITON_USE_ZSTD
 void
 TritonKernel::clear_decompressed_image() {
-  decompressed_kernel_image_.clear();
+  std::unique_lock lock(packedkernel_mutex_);
+  kernel_image_ = nullptr;
+  packed_kernel_.reset();
 }
 
-void*
+TritonKernel::Essentials
 TritonKernel::decompress_kernel() {
-  if (!decompressed_kernel_image_.empty()) {
-#if AOTRITON_KERNEL_VERBOSE
-    std::cerr << "decompressed_kernel_image_ already initialized as "
-              << (void*)decompressed_kernel_image_.data()
-              << " with size: " << decompressed_kernel_image_.size() << std::endl;
-#endif
-    return decompressed_kernel_image_.data();
+  {
+    std::shared_lock lock(packedkernel_mutex_);
+    if (kernel_image_) {
+      return std::make_tuple(kernel_image_, shared_memory_size_, block_);
+    }
   }
-  unsigned long long const decompressed_size = ZSTD_getFrameContentSize(kernel_image_, image_size_);
-  if (decompressed_size == ZSTD_CONTENTSIZE_ERROR) {
-#if AOTRITON_KERNEL_VERBOSE
-    std::cerr << "Image not compressed by zstd" << std::endl;
-#endif
-    return nullptr;
-  }
-  if (decompressed_size == 0) {
-    // This means this GPU kernel cannot be compiled, or takes too long to compile
-    return nullptr;
-  }
-  if (decompressed_size == ZSTD_CONTENTSIZE_UNKNOWN) {
-#if AOTRITON_KERNEL_VERBOSE
-    std::cerr << "Unknown original size" << std::endl;
-#endif
-    return nullptr;
-  }
-  if (ZSTD_isError(decompressed_size))
-    return nullptr;
-#if AOTRITON_KERNEL_VERBOSE
-  std::cerr << "decompressed_size read as " << decompressed_size << std::endl;
-#endif
-  decompressed_kernel_image_.resize(decompressed_size);
-#if AOTRITON_KERNEL_VERBOSE
-  std::cerr << "decompressed_kernel_image_ resized to " << (void*)decompressed_kernel_image_.data()
-            << " with size: " << decompressed_kernel_image_.size() << std::endl;
-#endif
-  auto err = ZSTD_decompress(
-    decompressed_kernel_image_.data(), decompressed_kernel_image_.size(), kernel_image_, image_size_);
-  if (ZSTD_isError(err))
-    return nullptr;
-  return decompressed_kernel_image_.data();
-}
 
+  std::unique_lock lock(packedkernel_mutex_);
+  if (!packed_kernel_) {
+    packed_kernel_ = PackedKernel::open(package_path_);
+  }
+  if (packed_kernel_) { // open may fail
+#if AOTRITON_KERNEL_VERBOSE
+    std::cerr << "PackedKernel::open returns " << packed_kernel_.get()
+              << " status: " << packed_kernel_->status() << std::endl;
 #endif
+    return packed_kernel_->filter(stem_name_);
+  }
+  return std::make_tuple(nullptr, 0, 0);
+}
 
 }
