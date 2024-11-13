@@ -8,7 +8,7 @@ namespace py = pybind11;
 namespace pyaotriton {
 #define EV(name) value(#name, name)
   void def_hipruntime(py::module_& m) {
-    py::enum_<hipError_t>(m, "hipError_t")
+    py::enum_<hipError_t>(m, "hipError_t", py::module_local())
       .EV(hipSuccess)
       .EV(hipErrorInvalidValue)
       .EV(hipErrorOutOfMemory)
