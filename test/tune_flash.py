@@ -71,6 +71,10 @@ class FlashTunerSource(MonadService):
             BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type = tup
             if seqlen_q > 4096 and seqlen_k > 4096:
                 BATCH = 2
+            if causal and seqlen_q * seqlen_k >= 4096 * 4096:
+                # Prevent OOM, causal=True needs more memory
+                N_HEADS = 2
+                BATCH = 2
             yield (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type)
 
     def init(self, _):
@@ -142,7 +146,7 @@ class FlashTunerSource(MonadService):
 
         for i, tup in enumerate(self.gen()):
             self.print(f"[{i:06d}] gen_itup {tup}")
-            batch, n_heads, d_head, seqlen_q, seqlen_k = tup[:5]
+            batch, n_heads, d_head, seqlen_q, seqlen_k, causal = tup[:6]
             if a.selective_set:
                 if i in a.selective_set:
                     payload = TuningResult(tup=tup, kig_dict=self.create_kig_dict())
@@ -155,6 +159,8 @@ class FlashTunerSource(MonadService):
             if i in skip_set:
                 continue
             if seqlen_q > a.max_seqlen_q or seqlen_k > a.max_seqlen_k:
+                continue
+            if a.causal_non_square_only and causal and seqlen_q == seqlen_k:
                 continue
             if a.stop_at is not None and i > a.stop_at:
                 break
@@ -244,6 +250,7 @@ def parse():
     p.add_argument('--max_seqlen_q', type=int, default=8192, help='A neat way to limit max value of --seqlen_q.')
     p.add_argument('--max_seqlen_k', type=int, default=8192, help='A neat way to limit max value of --seqlen_k.')
     p.add_argument('--causal', type=int, nargs='+', default=[True,False], choices=[0, 1], help='Causal mask. (Use 0/1 for False/True')
+    p.add_argument('--causal_non_square_only', action='store_true', help='Skip causal=True and seqlen_q == seqlen_k cases.')
     p.add_argument('--dropout_p', type=float, nargs='+', default=[0.5, 0.0], help='Probablity to dropout (0 to disable).')
     p.add_argument('--dtype', type=str, nargs='+',
                    default=['float16', 'bfloat16', 'float32'],
