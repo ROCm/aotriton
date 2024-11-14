@@ -184,8 +184,9 @@ class KernelTuningEntryForFunctionalOnGPU(object):
             raise e
         godel_number = first_sig.godel_number
         ofn = outdir / f'{first_sig.functional_signature}_{first_sig.target_gpu}.cc'
+        raise_lut_entry = False
         if not self._kdesc.sancheck_lut_tensor(lut_tensor, self._fsels):
-            raise MissingLutEntry(ofn, self._fsels, lut_tensor)
+            raise_lut_entry = True
         if bare_mode:
             return ofn
         if ofn.exists():
@@ -223,6 +224,8 @@ class KernelTuningEntryForFunctionalOnGPU(object):
             mf.seek(0)
             with open(ofn, 'w') as of:
                 shutil.copyfileobj(mf, of)
+        if raise_lut_entry:
+            raise MissingLutEntry(ofn, self._fsels, lut_tensor)
         return ofn
 
     @property
