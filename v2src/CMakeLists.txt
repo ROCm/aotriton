@@ -49,10 +49,14 @@ if(NOT AOTRITON_NOIMAGE_MODE)
   )
   message("Bare.compile: ${AOTRITON_V2_BUILD_DIR}/Bare.compile")
   message("Bare.cluster: ${AOTRITON_V2_BUILD_DIR}/Bare.cluster")
+  set(AOTRITON_HSACO_RECORD "${AOTRITON_V2_BUILD_DIR}/Bare.targets")
   file(STRINGS "${AOTRITON_V2_BUILD_DIR}/Bare.compile" HSACO_RULES)
-  set(ALL_HSACOS "")
+  list(LENGTH HSACO_RULES NUM_HSACO_RULES)
+  message("Bare.compile ${NUM_HSACO_RULES} rules read")
 
   ## Use Bare.compile file to generate custom rules
+  file(WRITE "${AOTRITON_HSACO_RECORD}" "") 
+  set(I "0")  # Progress
   foreach(RULE IN LISTS HSACO_RULES)
     # message("${RULE}")
     list(POP_FRONT RULE HSACO)
@@ -80,9 +84,13 @@ if(NOT AOTRITON_NOIMAGE_MODE)
       "--timeout" "${AOTRITON_GPU_BUILD_TIMEOUT}"
       DEPENDS aotriton_venv_triton
     )
-    list(APPEND ALL_HSACOS "${HSACO}")
+    # DO NOT USE list(APPEND). It is quadratic growth
+    file(APPEND "${AOTRITON_HSACO_RECORD}" "${HSACO}" "\n")
+    message(CONFIGURE_LOG "hsaco progress ${I}/${NUM_HSACO_RULES}")
   endforeach(RULE)
   ## Add a virtual target
+  ### FIXME: AOTRITON_HSACO_RECORD file is duplicated from Bare.compile
+  file(STRINGS "${AOTRITON_HSACO_RECORD}" ALL_HSACOS)
   add_custom_target(aotriton_v2_compile ALL DEPENDS ${ALL_HSACOS})
 
   # Kernel Storage V2
