@@ -289,9 +289,11 @@ def attn_fwd(
                 # _, MASK_STEPS, ...
                 PRE_LOAD_V, True, ENABLE_DROPOUT, RETURN_ENCODED_SOFTMAX, PADDED_HEAD)
     # epilogue
-    acc = acc / l_i[:, None]
+    l_recip = 1.0 / l_i[:, None]
+    acc = acc * l_recip
     if ENABLE_DROPOUT:
-        acc = acc / (1 - dropout_p)
+        dropout_scale = 1.0 / (1 - dropout_p)
+        acc = acc * dropout_scale
     # If seqlen_q > seqlen_k but the delta is not a multiple of BLOCK_M,
     # then we have one block with a row of all NaNs which come from computing
     # softmax over a row of all -infs (-inf - inf = NaN). We check for that here

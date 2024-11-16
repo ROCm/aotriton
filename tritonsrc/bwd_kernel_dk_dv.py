@@ -205,6 +205,7 @@ def bwd_kernel_dk_dv(
         trailing_masked_blocks = 1 if is_irregular_q else 0
     n_full_blocks = n_blocks - leading_masked_blocks - trailing_masked_blocks
 
+    dropout_scale = 1.0 / (1.0 - dropout_p) if ENABLE_DROPOUT else 1.0
     for off_h_q in range(off_h_k * group_size, off_h_k * group_size + group_size):
         off_zh = off_z * num_head_q + off_h_q * 1
         # This lower loop bound is because of the causal mask. We create a lower triangular
@@ -248,7 +249,7 @@ def bwd_kernel_dk_dv(
                 D_ptrs,
                 seqlen_q, seqlen_k, head_dim,
                 start_k, lo, hi, overflow_size,
-                dropout_p, philox_seed, batch_philox_offset, max_seqlen_k,
+                dropout_p, dropout_scale, philox_seed, batch_philox_offset, max_seqlen_k,
                 BLOCK_M,
                 BLOCK_DMODEL,
                 BLOCK_N,
@@ -270,7 +271,7 @@ def bwd_kernel_dk_dv(
                 D_ptrs,
                 seqlen_q, seqlen_k, head_dim,
                 start_k, lo, hi, 0,
-                dropout_p, philox_seed, batch_philox_offset, max_seqlen_k,
+                dropout_p, dropout_scale, philox_seed, batch_philox_offset, max_seqlen_k,
                 BLOCK_M,
                 BLOCK_DMODEL,
                 BLOCK_N,
@@ -294,7 +295,7 @@ def bwd_kernel_dk_dv(
                 D_ptrs,
                 seqlen_q, seqlen_k, head_dim,
                 start_k, lo, hi, overflow_size,
-                dropout_p, philox_seed, batch_philox_offset, max_seqlen_k,
+                dropout_p, dropout_scale, philox_seed, batch_philox_offset, max_seqlen_k,
                 BLOCK_M,
                 BLOCK_DMODEL,
                 BLOCK_N,
