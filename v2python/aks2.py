@@ -41,8 +41,13 @@ def load_hsaco(hsaco : Path, offset):
         blob = f.read()
         with open(hsaco.with_suffix('.json')) as jf:
             j = json.load(jf)
-            shared_memory_size = j['shared']
-            block_threads = j['num_warps'] * j['warp_size']
+            if len(blob) > 0:
+                shared_memory_size = j['shared']
+                block_threads = j['num_warps'] * j['warp_size']
+            else:
+                shared_memory_size = 0
+                block_threads = 0
+                assert j['compile_status'] != 'Complete'
         filename = str(hsaco.stem)
         entry = AKS2_DirectoryEntry(shared_memory_size=shared_memory_size,
                                     block_threads=block_threads,
