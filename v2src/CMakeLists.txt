@@ -69,7 +69,7 @@ if(NOT AOTRITON_NOIMAGE_MODE)
     list(POP_FRONT RULE SIG)
     add_custom_command(OUTPUT "${HSACO}"
       COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
-      TRITON_CACHE_DIR=${CMAKE_CURRENT_BINARY_DIR}/triton-cache
+      TRITON_CACHE_DIR=${CMAKE_BINARY_DIR}/triton-cache
       "${VENV_DIR}/bin/python"
       "${AOTRITON_COMPILER}"
       "${SRC}"
