@@ -100,16 +100,18 @@ class bwd_kernel_dk_dv(FlashKernel):
     DOWNGRADER = []
 
     @staticmethod
-    def gen_autotune_configs(fsel_dict : 'dict[str, Any]'):
+    def gen_autotune_configs(gpu, fsel_dict : 'dict[str, Any]'):
         dtype = fsel_dict['Q']
         ret = []
         # TODO: right sizes for fp32?
         BLOCK_SIZES = [16, 32, 64] if dtype != '*fp32:16' else [16, 32]
         WAVES_PER_EU = [0, 1, 2, 3, 4]
         NUM_WARPS = [1, 2, 4]
-        for M, N, waves, warps in itertools.product(BLOCK_SIZES,
-                                                    BLOCK_SIZES,
-                                                    WAVES_PER_EU,
-                                                    NUM_WARPS):
+        NUM_STAGES = [1, 2]
+        for M, N, waves, warps, stages in itertools.product(BLOCK_SIZES,
+                                                            BLOCK_SIZES,
+                                                            WAVES_PER_EU,
+                                                            NUM_WARPS,
+                                                            NUM_STAGES):
             kw = {'BLOCK_M': M, 'BLOCK_N': N, 'waves_per_eu': waves}
-            yield Config(kw, num_stages=1, num_warps=warps)
+            yield Config(kw, num_stages=stages, num_warps=warps)

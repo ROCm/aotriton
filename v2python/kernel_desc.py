@@ -94,9 +94,9 @@ class KernelDescription(object):
 
     def gen_patched_autotune_configs(self, gpu, fsel_dict):
         if AOTRITON_GPU_WARPSIZE[gpu] == 64:
-            yield from self.gen_autotune_configs(fsel_dict)
+            yield from self.gen_autotune_configs(gpu, fsel_dict)
             return
-        yield from self.gen_autotune_configs(fsel_dict)
+        yield from self.gen_autotune_configs(gpu, fsel_dict)
         # Doubling the num_warps on WaveSize 32 may cause compiling problem
         """
         for cfg in self.gen_autotune_configs(fsel_dict):
