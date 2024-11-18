@@ -93,12 +93,7 @@ def attn_fwd_inner(
         # m_ij = tl.maximum(m_i, qk_scale * tl.max(qk, 1))
         # p = tl.math.exp2(qk * qk_scale - m_ij[:, None])
         m_ij = tl.maximum(m_i, tl.max(qk, 1))
-        kern = qk_scale * (qk - m_ij[:, None])
-        if bias_ptrs is not None:
-            # all -inf qk (injected by bias tensor), and thus
-            # m_ij = -inf, qk - m_ij = nan
-            kern = tl.where(libdevice.isnan(kern), float("-inf"), kern)
-        p = tl.math.exp2(kern)
+        p = tl.math.exp2(qk_scale * (qk - m_ij[:, None]))
 
         # When sm_scale = 0.0 and MASK_STEPS/CAUSAL = True
         # qk * qk_scale = -inf * 0.0 = nan
@@ -138,8 +133,7 @@ def attn_fwd_inner(
                      stride_col=1)
             # tl.store(encoded_sm_ptrs, p.to(q.type.element_ty))
         # -- update output accumulator --
-        alpha = tl.math.exp2(m_i - m_ij) if bias_ptrs is None else \
-                tl.math.exp2(m_i - tl.where(libdevice.isinf(m_ij) and m_ij < 0, 0.0, m_ij))
+        alpha = tl.math.exp2(m_i - m_ij)
         acc = acc * alpha[:, None]
         if not PRE_LOAD_V:
             v = load_fn(v_ptrs, k_offs_n, k_offs_d, seqlen_k, head_dim)
