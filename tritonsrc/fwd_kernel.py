@@ -207,7 +207,7 @@ def attn_fwd(
     # scale sm_scale by log_2(e) and use 2^x in the loop as we do not
     # have native e^x support in HW.
     qk_scale = sm_scale * 1.44269504089
-    bias_scale = 1.0 / sm_scale
+    bias_scale = 1.0 / sm_scale  # TODO: legacy code to remove
     # Q is loaded once at the beginning and shared by all N blocks.
     q_ptrs_mask = offs_m[:, None] < seqlen_q
     if PADDED_HEAD:
