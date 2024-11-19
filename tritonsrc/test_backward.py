@@ -214,6 +214,23 @@ def main_nsq_causal():
     bias_type = None
     _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
 
+def main_bug_introduced_when_fixing_54():
+    # Original problem: https://github.com/ROCm/aotriton/issues/54
+    # Failed Fix: https://github.com/ROCm/aotriton/commit/14d673f4ea90a5a4e1cea5442d22bc7b1e9146cf
+    BATCH = 1
+    D_HEAD = 4
+    N_HEADS = 1
+    seqlen_q = 64
+    seqlen_k = 64
+    causal = False
+    sm_scale = 1.2
+    dropout_p = 0.0
+    dtype = torch.float16
+    storage_flip = False
+    bias_type = None
+    _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
+
 if __name__ == '__main__':
-    main_nsq_causal()
+    main_bug_introduced_when_fixing_54()
+    # main_nsq_causal()
     # main_npz()
