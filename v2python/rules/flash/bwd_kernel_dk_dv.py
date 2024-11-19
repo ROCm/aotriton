@@ -113,5 +113,7 @@ class bwd_kernel_dk_dv(FlashKernel):
                                                             WAVES_PER_EU,
                                                             NUM_WARPS,
                                                             NUM_STAGES):
+            if M < N:
+                continue  # deduplicate
             kw = {'BLOCK_M': M, 'BLOCK_N': N, 'waves_per_eu': waves}
             yield Config(kw, num_stages=stages, num_warps=warps)

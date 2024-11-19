@@ -119,12 +119,14 @@ class attn_fwd(FlashKernel):
     @staticmethod
     def gen_autotune_configs(gpu : str, fsel_dict : 'dict[str, Any]'):
         dtype = fsel_dict['Q']
+        HEAD_DIM = fsel_dict['BLOCK_DMODEL']
         ret = []
-        BLOCK_SIZES = [(128, 64), (64, 64), (64, 32)]
-        if 'MI' in gpu:
-            BLOCK_SIZES.append((128, 128))
-        elif 'Navi' in gpu:
-            BLOCK_SIZES += [(32, 32), (32, 16)]
+        MI = 'MI' in gpu
+        Navi = 'Navi' in gpu
+        if MI:
+            BLOCK_SIZES = [(32, 16), (128, 64), (64, 64), (64, 32), (128, 128)]
+        elif Navi:
+            BLOCK_SIZES = [(64, 32), (32, 32), (32, 16)]
             if '*fp32' not in dtype:
                 BLOCK_SIZES += [(16, 16)]
             else:
@@ -139,11 +141,17 @@ class attn_fwd(FlashKernel):
                                                                    NUM_WARPS,
                                                                    NUM_STAGES,
                                                                    PRE_LOAD_V):
+            if warps == 1 and M * N >= 64 * 128:
+                continue  # Timeout
+            if stages == 2 and M * N >= 64 * 32:
+                continue  # Timeout
+            if Navi and HEAD_DIM == 256 and stages == 2:
+                continue  # Timeout
             if dtype == '*fp32:16':
                 M //= 2
             kw = {'BLOCK_M': M, 'BLOCK_N': N, 'waves_per_eu': waves, 'pre_load_v': pre}
             yield Config(kw, num_stages=stages, num_warps=warps)
-        if 'MI' in gpu:
+        if MI:
             pass
             # Covered in general logic above
             # yield from [
@@ -153,7 +161,7 @@ class attn_fwd(FlashKernel):
             #     Config({'BLOCK_M': 128, 'BLOCK_N':  64, 'waves_per_eu': 1, 'pre_load_v': False}, num_stages=1, num_warps=4),
             #     Config({'BLOCK_M': 128, 'BLOCK_N':  32, 'waves_per_eu': 2, 'pre_load_v': False}, num_stages=1, num_warps=4),
             # ]
-        elif 'Navi' in gpu:
+        elif Navi:
             pass
             # Covered in general logic above
             # yield from [
