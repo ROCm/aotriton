@@ -83,8 +83,6 @@ class TunerService(BaseTunerService):
         if self._arch == 'gfx1100':
             if seqlen_q > 4096 and seqlen_k > 4096:
                 raise PEE(request.make_skip(self.monad, 'Navi kernels triggers "MES failed to response msg=" kernel error when handling large inputs.'))
-        if seqlen_q > 4096 and seqlen_k > 4096:
-            N_HEADS = 1
         if causal and bias_type != 0:
             raise PEE(request.make_skip(self.monad, 'FA does not support accept casual=True when bias_type != 0.'))
         if a.dry_run:
