@@ -30,10 +30,19 @@ X_VALS = list(map(lambda x: 2 ** x, n_ctx))
 print(f'{X_VALS=}')
 
 BATCH, N_HEADS, N_CTX, D_HEAD = 4, 48, 4096, 64
+
+D_HEAD = int(os.getenv('D_HEAD', default=D_HEAD))
 # vary seq length for fixed head and batch=4
+USE_CAUSAL = bool(int(os.getenv('USE_CAUSAL', default='1')))
+ALL_CAUSALS = [False, True] if USE_CAUSAL else [False]
+print(f'{ALL_CAUSALS=}')
+
+USE_AUTOTUNE = bool(int(os.getenv('USE_AUTOTUNE', default='1')))
+print(f'{USE_AUTOTUNE=}')
+
 configs = []
 for mode in ['fwd']:
-    for causal in [False, True]:
+    for causal in ALL_CAUSALS:
         configs.append(triton.testing.Benchmark(
             x_names=['N_CTX'],
             x_vals=list(X_VALS),
@@ -74,7 +83,7 @@ def bench_flash_attention(BATCH, H, N_CTX, D_HEAD, causal, mode, provider, dtype
         sm_scale = 1.3
         dropout_p = 0.0
         ext = AttentionExtraArgs(return_encoded_softmax=False,
-                                 autotune=True,
+                                 autotune=USE_AUTOTUNE,
                                  return_autotune=False)
         fn = lambda: attention(q, k, v, b, causal, sm_scale, dropout_p, ext)
         if mode == 'bwd':
