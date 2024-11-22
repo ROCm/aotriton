@@ -71,7 +71,7 @@ class FlashTunerSource(MonadService):
             BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type = tup
             if seqlen_q > 4096 and seqlen_k > 4096:
                 BATCH = 2
-            if causal and seqlen_q * seqlen_k >= 4096 * 4096:
+            if (causal or bias_type != 0) and seqlen_q * seqlen_k >= 4096 * 4096:
                 # Prevent OOM, causal=True needs more memory
                 N_HEADS = 2
                 BATCH = 2
