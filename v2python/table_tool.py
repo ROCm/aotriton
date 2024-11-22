@@ -365,17 +365,26 @@ def do_main(args, db, fin):
         print("[table_tool] Input closed, exiting", file=sys.stderr)
     elif args.action == 'rawjson':
         db.init_aggregation()
-        for line in tqdm(fin):
+        pbar = tqdm(total=fin_size, desc='Processed bytes')
+        for line in fin:
             db.aggregate(line)
-        for rawjson in tqdm(db.aggregation_results()):
+            pbar.update(len(line))  # FIXME: support UTF-8 which len(line) != number of bytes
+        pbar = tqdm(total=len(db.pkr_database), desc='Processed kernels')
+        for rawjson in db.aggregation_results():
             # print(line)
             db.upsert_json(rawjson, create_table_only=False)
+            # Handles PADDED_HEAD=True calse
+            rj1 = deepcopy(rawjson)
+            rj1['inputs']['PADDED_HEAD'] = True
+            db.upsert_json(rj1, create_table_only=False)
+
             # Handles CAUSAL=True and BIAS_TYPE=1 case
             # No real use cases, just let the build system compile things
             if rawjson['inputs']['CAUSAL'] == True and rawjson['inputs']['BIAS_TYPE'] == 0:
                 rj2 = deepcopy(rawjson)
                 rj2['inputs']['BIAS_TYPE'] = 1
                 db.upsert_json(rj2, create_table_only=False)
+            pbar.update(1)
         for klass in KERNEL_NAME_TO_FACTORY.values():
             print(f'{klass.KERNEL_MAX_FUDGE_FACTORS=}')
     elif args.action == 'rawsc':
