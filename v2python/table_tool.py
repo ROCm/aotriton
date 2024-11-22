@@ -42,6 +42,7 @@ def parse():
     args = p.parse_args()
     if args.action == 'rawsc':
         assert args.sc_report is not None, '--sc_report is required for --action rawsc'
+        assert args.sc_report.endswith('.sc_report'), "For safety, --sc_report file must use .sc_report suffix to avoid overwritting raw json file"
     if args.action != 'rawsc':
         assert args.kernel_family, f'--kernel_family is needed for --action {args.action}'
     return args
