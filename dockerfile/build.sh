@@ -24,10 +24,10 @@ if [ -z ${TRITON_LLVM_HASH+x} ]; then
       TRITON_LLVM_HASH="657ec732"
       ;;
     0.8b)
-      TRITON_LLVM_HASH="b5cc222d"
+      TRITON_LLVM_HASH="bd9145c8"
       ;;
     *)
-      echo "Only 0.7b, 0.7.1b and 0.8b are supported right now"
+      echo "Only 0.7b, 0.7.xb and 0.8b are supported right now"
       exit
       ;;
   esac
