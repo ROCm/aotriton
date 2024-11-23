@@ -95,7 +95,7 @@ class attn_fwd(FlashKernel):
     # First element of the tuple is name. Second is the value to use instead
     PARTIALLY_TUNED_FUNCTIONALS = [
         ('RETURN_ENCODED_SOFTMAX', False),
-        ('PADDED_HEAD', None),
+        ('PADDED_HEAD', False),
         ('BIAS_TYPE', None)
     ]
 

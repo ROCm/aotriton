@@ -373,11 +373,6 @@ def do_main(args, db, fin):
         for rawjson in db.aggregation_results():
             # print(line)
             db.upsert_json(rawjson, create_table_only=False)
-            # Handles PADDED_HEAD=True calse
-            rj1 = deepcopy(rawjson)
-            rj1['inputs']['PADDED_HEAD'] = True
-            db.upsert_json(rj1, create_table_only=False)
-
             # Handles CAUSAL=True and BIAS_TYPE=1 case
             # No real use cases, just let the build system compile things
             if rawjson['inputs']['CAUSAL'] == True and rawjson['inputs']['BIAS_TYPE'] == 0:
