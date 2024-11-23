@@ -318,6 +318,13 @@ class TuningDatabase(object):
         if not line_text:
             return
         raw_info = json.loads(line_text)
+        if raw_info.get('kernel_name') == 'attn_fwd':
+            BM = raw_info['tuned_kernel']['BLOCK_M']
+            BN = raw_info['tuned_kernel']['BLOCK_N']
+            if BM < BN:
+                # print(raw_info)
+                # Known faulty kernel for fp32
+                return
         if not raw_info['inputs']['Q_dtype'].startswith('torch.'):
             raw_info['inputs']['Q_dtype'] = 'torch.' + raw_info['inputs']['Q_dtype']
         timing = raw_info.get('time', float('inf'))

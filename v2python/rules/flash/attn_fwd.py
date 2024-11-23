@@ -149,6 +149,8 @@ class attn_fwd(FlashKernel):
                 continue  # Timeout
             if dtype == '*fp32:16':
                 M //= 2
+            if M < N:  # Faulty or duplicate
+                continue
             kw = {'BLOCK_M': M, 'BLOCK_N': N, 'waves_per_eu': waves, 'pre_load_v': pre}
             yield Config(kw, num_stages=stages, num_warps=warps)
         if MI:
