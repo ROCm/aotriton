@@ -289,6 +289,8 @@ class SdpaContext(object):
         if torch.version.hip:
             if 'gfx90a' in torch.cuda.get_device_properties(0).gcnArchName:
                 query_fudge_factor = 80.0
+                key_fudge_factor = 330.0
+                bias_fudge_factor = 36.0
         if dtype == torch.float32:
             key_fudge_factor = 180.0
             bias_fudge_factor = 24.0
