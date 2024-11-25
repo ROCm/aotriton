@@ -347,6 +347,7 @@ class AutotuneCodeGenerator(MakefileSegmentGenerator):
 
     def write_body(self):
         self.verbose('AutotuneCodeGenerator')
+        do_raise = None
         # Write the code to file
         try:
             self._ofn = self._lut.write_lut_source(self._args.library_suffix,
@@ -354,9 +355,10 @@ class AutotuneCodeGenerator(MakefileSegmentGenerator):
                                                    bare_mode=self.is_bare,
                                                    noimage_mode=self._args.noimage_mode)
         except MissingLutEntry as e:
+            do_raise = e
+            self._ofn = e.ofn
             print(e)
             self._args._sanity_check_exceptions.append(e)
-            return
         self.verbose(f'\t lut = {self._fsels}')
         self.verbose(f'\t ofn = {self._ofn}')
         self._obj_fn = self._ofn.with_suffix('.o')
@@ -369,6 +371,8 @@ class AutotuneCodeGenerator(MakefileSegmentGenerator):
             print(self._makefile_target, ':', self._ofn.relative_to(self._build_dir), file=self._out)
             cmd  = self._cc_cmd + f' {self._ofn.absolute()} -o {self._obj_fn.absolute()} -c'
             print('\t', cmd, '\n', file=self._out)
+        if do_raise:
+            raise do_raise
 
     @property
     def list_of_self_object_files(self) -> 'list[Path]':

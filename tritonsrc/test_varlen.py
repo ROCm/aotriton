@@ -26,8 +26,6 @@ def rng_seqlens(n_seqlen):
 
 def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dropout_p, dtype):
     import numpy as np
-    if causal and not np.allclose(seqlens_q, seqlens_k):
-        pytest.skip("PyTorch's Flash V2 does not accept casual=True when seqlen_q != seqlen_k. Skipping")
     # Data creation
     SKIP_DK_DV = False
     SKIP_DQ = False

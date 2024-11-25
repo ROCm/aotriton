@@ -99,12 +99,6 @@ def bwd_kernel_dq(
         cu_seqlens_k_start = 0
         batch_index = off_z
 
-    # Still need early exit in GPU kernel to support varlen
-    if CAUSAL:
-        # TODO: bottom right causal and windowed
-        if start_q > seqlen_k:
-            return
-
     # Initialize pointers to Q, K, V
     q_offset = off_h_q * stride_qh + batch_index * stride_qz + cu_seqlens_q_start * stride_qm
     Q += q_offset
@@ -207,7 +201,7 @@ def bwd_kernel_dq(
     else:
         tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
 
-    k_lo = 0
+    k_lo = 0  # reserved for windowed attention
     k_hi = min(start_q + BLOCK_M, seqlen_k) if CAUSAL else seqlen_k
     real_seqlen_k = k_hi - k_lo  # seqlen_q after considering causal (and windowed in the future)
     n_blocks = tl.cdiv(k_hi - k_lo, BLOCK_N)
@@ -217,6 +211,7 @@ def bwd_kernel_dq(
     elif real_seqlen_k % BLOCK_N:
         n_extra_tokens = real_seqlen_k % BLOCK_N
     is_irregular_k = n_extra_tokens != 0
+    n_full_blocks = (k_hi - k_lo) // BLOCK_N
     leading_masked_blocks = 0  # TODO: Windowed attention
     trailing_masked_blocks = 0
     # For causal masks, actually it is easier to calculate the full blocks and
@@ -224,11 +219,11 @@ def bwd_kernel_dq(
     # windowed masks. Therefore we still derive n_full_blocks from
     # trailing_masked_blocks for long term stability.
     if CAUSAL:
-        mask_top_edge = start_q
-        # For DQ, each CU compute along K/V direction
-        # Thus no leading masked blocks while trailing masked blocks comes from
-        # the diagnoal cutting line from causal masks
-        trailing_masked_blocks = tl.cdiv(k_hi - mask_top_edge // BLOCK_N * BLOCK_N, BLOCK_N)
+        # TODO: Botton right variant
+        # Top left variant
+        mask_top_edge = min(start_q, seqlen_k)
+        n_full_blocks = (mask_top_edge - k_lo) // BLOCK_N
+        trailing_masked_blocks = n_blocks - n_full_blocks
     else:
         trailing_masked_blocks = 1 if is_irregular_k else 0
 
@@ -239,7 +234,6 @@ def bwd_kernel_dq(
     l_i = tl.load(l_ptrs + offs_q, mask=d_lse_ptrs_mask, other=0.0)
 
     dq = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)
-    n_full_blocks = n_blocks - leading_masked_blocks - trailing_masked_blocks
     if n_full_blocks > 0:
         lo = 0
         hi = n_full_blocks * BLOCK_N
