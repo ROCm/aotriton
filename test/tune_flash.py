@@ -65,7 +65,7 @@ class FlashSourceMonad(Monad):
         return True
 
 class FlashTunerSource(MonadService):
-    def gen(self):
+    def gen_from_argv(self):
         a = self._args
         for tup in itertools.product(a.batch, a.n_heads, a.d_head, a.seqlen_q, a.seqlen_k, a.causal, a.sm_scale, a.dropout_p, a.return_encoded_softmax, a.dtype, a.bias_type):
             BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type = tup
@@ -76,6 +76,27 @@ class FlashTunerSource(MonadService):
                 N_HEADS = 2
                 BATCH = 2
             yield (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type)
+
+    def gen(self):
+        a = self._args
+        if not a.entry_from_json:
+            yield from self.gen_from_argv()
+            return
+        with open(a.entry_from_json) as fin:
+            for line in fin:
+                j = json.loads(line)
+                D_HEAD = j['d_head']
+                seqlen_q = j['seqlen_q']
+                seqlen_k = j['seqlen_k']
+                causal = j['causal']
+                dropout_p = j['dropout_p']
+                dtype = j['dtype']
+                bias_type = j['bias_type']
+                for BATCH, N_HEADS, sm_scale, return_encoded_softmax in itertools.product(a.batch, a.n_heads, a.sm_scale, a.return_encoded_softmax):
+                    if seqlen_q * seqlen_k >= a.limit_memory_at_seqlen ** 2:
+                        BATCH = 2
+                        N_HEADS = 2
+                    yield (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type)
 
     def init(self, _):
         pass
@@ -240,28 +261,30 @@ def make_ui(manager : TunerManager):
     return app
 
 def parse():
+    NARG_PLUS = '+' if '--entry_from_json' not in sys.argv else '*'
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument('--batch', type=int, nargs=1, default=[8], help='(Not a functional) Batch size.')
     p.add_argument('--n_heads', type=int, nargs=1, default=[12], help='(Not a functional) Number of heads')
     p.add_argument('--sm_scale', type=float, nargs=1, default=[1.2], help='(Not a functional) Softmax Scale')
     p.add_argument('--return_encoded_softmax', type=bool, default=[False],
                    help="(A functional for debugging) kernel that returns softmax(dropout(QK')) to validate the correctness of dropout")
-    p.add_argument('--d_head', type=int, nargs='+', default=[16,32,64,128,256], help='Head dimensions.')
+    p.add_argument('--d_head', type=int, nargs=NARG_PLUS, default=[16,32,64,128,256], help='Head dimensions.')
     # p.add_argument('--seqlen_q', type=int, nargs='+', default=[4,8,16,32,64,128,256,1024,2048,4096,8192], help='Sequence length of Q.')
     # p.add_argument('--seqlen_k', type=int, nargs='+', default=[4,8,16,32,64,128,256,1024,2048,4096,8192], help='Sequence length of K/V.')
-    p.add_argument('--seqlen_q', type=int, nargs='+', default=[4,8,16,32,64,128,256,512,1024,2048,4096,8192], help='Sequence length of Q.')
-    p.add_argument('--seqlen_k', type=int, nargs='+', default=[4,8,16,32,64,128,256,512,1024,2048,4096,8192], help='Sequence length of K/V.')
+    p.add_argument('--seqlen_q', type=int, nargs=NARG_PLUS, default=[4,8,16,32,64,128,256,512,1024,2048,4096,8192], help='Sequence length of Q.')
+    p.add_argument('--seqlen_k', type=int, nargs=NARG_PLUS, default=[4,8,16,32,64,128,256,512,1024,2048,4096,8192], help='Sequence length of K/V.')
     p.add_argument('--max_seqlen_q', type=int, default=8192, help='A neat way to limit max value of --seqlen_q.')
     p.add_argument('--max_seqlen_k', type=int, default=8192, help='A neat way to limit max value of --seqlen_k.')
     p.add_argument('--complement_seqlens', action='store_true', help='Select NOT (seqlen_q <= max_seqlen_q and seqlen_k <= max_seqlen_k)')
-    p.add_argument('--causal', type=int, nargs='+', default=[True,False], choices=[0, 1], help='Causal mask. (Use 0/1 for False/True')
+    p.add_argument('--limit_memory_at_seqlen', type=int, default=4096, help='When testing with --entry_from_json, use batch=2 and n_heads=2 when seqlen_q*seqlen_k >= this_value ** 2.')
+    p.add_argument('--causal', type=int, nargs=NARG_PLUS, default=[True,False], choices=[0, 1], help='Causal mask. (Use 0/1 for False/True')
     p.add_argument('--causal_non_square_only', action='store_true', help='Skip causal=True and seqlen_q == seqlen_k cases.')
-    p.add_argument('--dropout_p', type=float, nargs='+', default=[0.5, 0.0], help='Probablity to dropout (0 to disable).')
-    p.add_argument('--dtype', type=str, nargs='+',
+    p.add_argument('--dropout_p', type=float, nargs=NARG_PLUS, default=[0.5, 0.0], help='Probablity to dropout (0 to disable).')
+    p.add_argument('--dtype', type=str, nargs=NARG_PLUS,
                    default=['float16', 'bfloat16', 'float32'],
                    choices=['float16', 'bfloat16', 'float32'],
                    help='Datatype to profile.')
-    p.add_argument('--bias_type', type=int, nargs='+', default=[0, 1], choices=[0, 1], help='Bias types to profile, 0: None, 1: Matrix.')
+    p.add_argument('--bias_type', type=int, nargs=NARG_PLUS, default=[0, 1], choices=[0, 1], help='Bias types to profile, 0: None, 1: Matrix.')
     p.add_argument('--verbose', action='store_true', help='Verbose')
     p.add_argument('--validate',
                    action='store_true', help='Validate the correctness of the output to avoid faulty autotune configs')
@@ -270,6 +293,7 @@ def parse():
     p.add_argument('--stop_at', type=int, default=None, help="Stop at n-th functional set")
     p.add_argument('--selective_set', type=int, default=[], nargs='*', help="Only use the given task ids. Will override other options like --continue_from")
     p.add_argument('--sc_report', type=str, default=None, help="Re-run tests according to sc_report file generated by `table_tool --action rawsc`")
+    p.add_argument('--entry_from_json', type=str, default=None, help="Re-run tests according to sc_report file generated by `table_tool --action rawsc`")
     p.add_argument('--db_file', type=str, default=None, help="Sqlite Database file (not recommended)")
     p.add_argument('--json_file',
                    type=Path,
@@ -309,6 +333,10 @@ def parse():
         with open(args.sc_report) as f:
             j = json.load(f)
         args.selective_set += j["need_rerun"]
+    if args.entry_from_json:
+        if not args.entry_from_json.endswith('.cfg'):
+            print("--entry_from_json should only take files with .cfg suffix, to avoid potential conflict with --json_file")
+            exit(-1)
     # assert args.causal == [False], f'{args.causal=} {args.return_encoded_softmax=}'
     return args
 
