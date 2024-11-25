@@ -9,8 +9,15 @@ class FlashKernel(KernelDescription):
     KERNEL_FAMILY = 'flash'
 
     def sancheck_lut_tensor(self,
+                            gpu,
                             lut_tensor,
                             fsels : 'list[ArgumentSelection]'):
+        # Only kernels that provide gen_autotune_configs may have entries in
+        # tuning database
+        if not hasattr(self, 'gen_autotune_configs'):
+            return True
+        MI = 'MI' in gpu
+        Navi = 'Navi' in gpu
         def check_value(repr_name):
             for fsel in fsels:
                 if fsel.repr_name == repr_name:
@@ -23,4 +30,9 @@ class FlashKernel(KernelDescription):
             to_check = lut_tensor.diagonal()
         else:
             to_check = lut_tensor
-        return (to_check >= 0).all()
+        if MI:
+            return (to_check >= 0).all() and lut_tensor.shape == (12, 12)
+        elif Navi:
+            return (to_check >= 0).all() and lut_tensor.shape == (10, 10)
+        else:
+            assert False, f"Unknown {gpu}"

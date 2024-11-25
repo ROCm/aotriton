@@ -399,6 +399,7 @@ class KernelDescription(object):
         return '\n'.join(lets)
 
     def sancheck_lut_tensor(self,
+                            gpu,
                             lut_tensor,
                             fsels : 'list[ArgumentSelection]'):
         raise NotImplemented(f'{self.__class__}.sancheck_lut_tensor')
