@@ -27,13 +27,18 @@ GPU_TO_CLUSTER_SUFFIX = {
 }
 
 class MissingLutEntry(Exception):
-    def __init__(self, ofn, fsels, lut_tensor):
+    def __init__(self, gpu, kdesc, ofn, fsels, lut_tensor):
+        self.gpu = gpu
+        self.kdesc = kdesc
         self.ofn = ofn
         self.fsels = fsels
         self.lut_tensor = lut_tensor
 
     def __repr__(self):
         return f'{ofn} fsels={self._fsels} has broken tuning table:\n{lut_tensor}'
+
+    def get_missing_lut_entries(self) -> "list[str]":
+        return self.kdesc.get_missing_lut_entries(self.gpu, self.lut_tensor, self.fsels)
 
 class KernelTuningEntryForFunctionalOnGPU(object):
     LUT_TEMPLATE = get_template('autotune_table_entry.cc')
@@ -225,7 +230,7 @@ class KernelTuningEntryForFunctionalOnGPU(object):
             with open(ofn, 'w') as of:
                 shutil.copyfileobj(mf, of)
         if raise_lut_entry:
-            raise MissingLutEntry(ofn, self._fsels, lut_tensor)
+            raise MissingLutEntry(self._dba.gpu, self._kdesc, ofn, self._fsels, lut_tensor)
         return ofn
 
     @property
