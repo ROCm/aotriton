@@ -355,12 +355,13 @@ class AutotuneCodeGenerator(MakefileSegmentGenerator):
                                                    bare_mode=self.is_bare,
                                                    noimage_mode=self._args.noimage_mode)
         except MissingLutEntry as e:
-            do_raise = e
-            self._ofn = e.ofn
-            print(e)
-            self._args._sanity_check_exceptions.append(e)
-            for j in e.get_missing_lut_entries():
-                print("TUNE_FLASH Json Item: ", j)
+            if not self._args.build_for_tuning:
+                do_raise = e
+                self._ofn = e.ofn
+                print(e)
+                self._args._sanity_check_exceptions.append(e)
+                for j in e.get_missing_lut_entries():
+                    print("TUNE_FLASH Json Item: ", j)
         self.verbose(f'\t lut = {self._fsels}')
         self.verbose(f'\t ofn = {self._ofn}')
         self._obj_fn = self._ofn.with_suffix('.o')
