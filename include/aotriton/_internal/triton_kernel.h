@@ -46,7 +46,8 @@ private:
   int shared_memory_size_ = 0;
   dim3 block_ { 256, 1, 1 };
   const void* kernel_image_ = nullptr;
-  Essentials decompress_kernel();
+  bool kernel_loaded_ = false;
+  void decompress_kernel();
   std::shared_ptr<PackedKernel> packed_kernel_ = nullptr;
   std::shared_mutex packedkernel_mutex_;
 };

@@ -108,7 +108,7 @@ TritonKernel::load_for_device(int device_id, const char* kernel_name) {
 #if AOTRITON_KERNEL_VERBOSE
   std::cerr << "Trying to decompress kernel " << package_path_ << " " << stem_name_ << std::endl;
 #endif
-  std::tie(kernel_image_, shared_memory_size_, block_) = decompress_kernel();
+  decompress_kernel();
 #if AOTRITON_KERNEL_VERBOSE
   std::cerr << "Decompress kernel to " << kernel_image_ << std::endl;
 #endif
@@ -132,16 +132,21 @@ TritonKernel::clear_decompressed_image() {
   packed_kernel_.reset();
 }
 
-TritonKernel::Essentials
+// kernel_loaded_ is essential. When build for tuning, it is not possible to
+// tell if a kernel is loaded, or the kernel image failed to compile and thus
+// does not exists from beginning by testing kernel_image_ == nullptr
+void
 TritonKernel::decompress_kernel() {
-  {
-    std::shared_lock lock(packedkernel_mutex_);
-    if (kernel_image_) {
-      return std::make_tuple(kernel_image_, shared_memory_size_, block_);
-    }
+  if (kernel_loaded_) {
+    return ;
   }
 
   std::unique_lock lock(packedkernel_mutex_);
+  // Check again, another thread may have updated this when this thread is
+  // waiting for the lock
+  if (kernel_loaded_) {
+    return ;
+  }
   if (!packed_kernel_) {
     packed_kernel_ = PackedKernel::open(package_path_);
   }
@@ -150,9 +155,10 @@ TritonKernel::decompress_kernel() {
     std::cerr << "PackedKernel::open returns " << packed_kernel_.get()
               << " status: " << packed_kernel_->status() << std::endl;
 #endif
-    return packed_kernel_->filter(stem_name_);
+    std::tie(kernel_image_, shared_memory_size_, block_) = packed_kernel_->filter(stem_name_);
   }
-  return std::make_tuple(nullptr, 0, 0);
+  // FIXME: There should be a memory barrier here for non-X86 CPUs.
+  kernel_loaded_ = true;
 }
 
 }

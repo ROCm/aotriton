@@ -16,6 +16,8 @@ from attn_torch_function import (
 )
 from _common_test import SdpaContext, SdpaParams, SdpaContextFromNPZ
 
+FOR_RELEASE = bool(int(os.getenv('FOR_RELEASE', default='0')))
+
 def _make_block_eyes(q, base=1.0, inc=0.0):
     dhead = q.shape[-1]
     seqlen = q.shape[2]
@@ -55,7 +57,7 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
     torch.manual_seed(20)
     transpose = (1, 2) if storage_flip else None
     ctx = SdpaContext(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, dtype,
-                      bias_type=bias_type, storage_flip=transpose, device='cuda')
+                      bias_type=bias_type, storage_flip=transpose, device='cuda', fillnan=True)
     ctx.create_ref_inputs()
     ctx.set_require_grads(skip_dq=SKIP_DQ, skip_dk_dv=SKIP_DK_DV, skip_db=SKIP_DB)
     q, k, v, b = ctx.dev_tensors
@@ -95,8 +97,8 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
 
 # @pytest.mark.parametrize('BATCH', [1])
 # @pytest.mark.parametrize('N_HEADS', [1])
-@pytest.mark.parametrize('BATCH', [1, 4])
-@pytest.mark.parametrize('N_HEADS', [1, 4])
+@pytest.mark.parametrize('BATCH', [1, 4] if not FOR_RELEASE else [4])
+@pytest.mark.parametrize('N_HEADS', [1, 4] if not FOR_RELEASE else [8])
 # @pytest.mark.parametrize('D_HEAD', [16, 32, 64, 128, 256])
 # Irregular-only PyTorch set
 # @pytest.mark.parametrize('D_HEAD', [8, 21, 72, 96, 160, 192, 203])
@@ -114,7 +116,7 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
 # @pytest.mark.parametrize('dropout_p', [0.0])
 @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16, torch.float32])
 # @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
-@pytest.mark.parametrize('sm_scale', [0.0, 1.2])
+@pytest.mark.parametrize('sm_scale', [0.0, 1.2] if not FOR_RELEASE else [1.2])
 @pytest.mark.parametrize('storage_flip', [False, True])
 # @pytest.mark.parametrize('return_encoded_softmax', [False])
 def test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
@@ -123,8 +125,8 @@ def test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dr
 
 # @pytest.mark.parametrize('BATCH', [1, 4])
 # @pytest.mark.parametrize('N_HEADS', [1, 4])
-@pytest.mark.parametrize('BATCH', [1, 4])
-@pytest.mark.parametrize('N_HEADS', [1, 4])
+@pytest.mark.parametrize('BATCH', [1, 4] if not FOR_RELEASE else [4])
+@pytest.mark.parametrize('N_HEADS', [1, 4] if not FOR_RELEASE else [8])
 @pytest.mark.parametrize('D_HEAD', [16,32,64,128,256])
 # @pytest.mark.parametrize('D_HEAD', [128])
 # Complete set
@@ -141,7 +143,7 @@ def test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dr
 # @pytest.mark.parametrize('dropout_p', [0.0])
 @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16, torch.float32])
 # @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
-@pytest.mark.parametrize('sm_scale', [0.0, 1.2])
+@pytest.mark.parametrize('sm_scale', [0.0, 1.2] if not FOR_RELEASE else [1.2])
 @pytest.mark.parametrize('storage_flip', [False, True])
 # @pytest.mark.parametrize('return_encoded_softmax', [False])
 def test_op_bwd_with_matrix_bias(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, sm_scale, dropout_p, dtype, storage_flip):
@@ -152,12 +154,48 @@ def test_op_bwd_with_matrix_bias(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, sm_
     '''
     _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
 
+@pytest.mark.parametrize('BATCH', [1, 4] if not FOR_RELEASE else [4])
+@pytest.mark.parametrize('N_HEADS', [(16, 8), (10, 2)])
+@pytest.mark.parametrize('D_HEAD', [8, 203, 256])
+@pytest.mark.parametrize('seqlen_q', [4, 143, 2048])
+@pytest.mark.parametrize('seqlen_k', [4, 127, 579, 2048])
+@pytest.mark.parametrize('causal', [False, True])
+@pytest.mark.parametrize('dropout_p', [0.0, 0.5])
+@pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16, torch.float32])
+@pytest.mark.parametrize('sm_scale', [1.2])
+@pytest.mark.parametrize('storage_flip', [False])
+def test_gqa(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
+    bias_type = None
+    _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
+
+def test_large_bf16_nan_values():
+    q = torch.full((1, 1, 1, 16), 133120.0, dtype=torch.bfloat16, device="cuda")
+    k = torch.full((1, 1, 1, 16), 133120.0, dtype=torch.bfloat16, device="cuda")
+    v = torch.full((1, 1, 1, 16), 133120.0, dtype=torch.bfloat16, device="cuda")
+    b = None
+    from torch.nn.functional import scaled_dot_product_attention
+    from torch.nn.attention import sdpa_kernel, SDPBackend
+    with sdpa_kernel(SDPBackend.MATH):
+        out = scaled_dot_product_attention(q, k, v)
+    print(out)
+
+    causal = False
+    sm_scale = 0.125
+    dropout_p = 0
+    ext = AttentionExtraArgs(return_encoded_softmax=causal,
+                             autotune=False,
+                             return_autotune=False)
+    tri_out, encoded_softmax, _ = attention(q, k, v, b, causal, sm_scale, dropout_p, ext)
+
+    print(tri_out)
+    assert not torch.isnan(tri_out).any(), "Output should not contain NaNs!"
+
 def main_npz():
     SKIP_DK_DV = False
     SKIP_DQ = False
     SKIP_DB = True
     fn = sys.argv[1]
-    ctx = SdpaContextFromNPZ(fn, dtype=torch.bfloat16, device='cuda')
+    ctx = SdpaContextFromNPZ(fn, dtype=None, device='cuda')
     q, k, v, b = ctx.dev_tensors
     assert b is None, 'TODO: support bias in SdpaContextFromNPZ'
     ctx.create_ref_inputs()

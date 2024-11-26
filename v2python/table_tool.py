@@ -7,6 +7,7 @@ import json
 from copy import deepcopy
 import argparse
 import sys
+import os
 import math
 import numpy as np
 import csv
@@ -16,7 +17,7 @@ def parse():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument('-i', type=str, default=None, help='Input CSV/JSON file')
     p.add_argument('-f', '--file', type=str, default=None, help='Database file')
-    p.add_argument('-k', '--kernel_family', type=str, required=True, help='Kernel family')
+    p.add_argument('-k', '--kernel_family', type=str, help='Kernel family')
     p.add_argument('-v', '--verbose', action='store_true', help='Verbose')
     p.add_argument('--action', type=str, required=False, default='pipejson',
                    choices=['pipejson', 'createtableonly', 'dumpcsv', 'loadcsv', 'rawjson', 'rawsc'],
@@ -37,7 +38,13 @@ def parse():
                    select fatest kernels within a subset of kernel whose target
                    fudge factor is smaller than T * "best target fudge factors".
                    ''')
+    p.add_argument('--sc_report', type=str, default=None, help='Write san check results to this JSON file. Required for --action rawsc')
     args = p.parse_args()
+    if args.action == 'rawsc':
+        assert args.sc_report is not None, '--sc_report is required for --action rawsc'
+        assert args.sc_report.endswith('.sc_report'), "For safety, --sc_report file must use .sc_report suffix to avoid overwritting raw json file"
+    if args.action != 'rawsc':
+        assert args.kernel_family, f'--kernel_family is needed for --action {args.action}'
     return args
 
 # TODO: Refactor this piece
@@ -52,6 +59,10 @@ class PerKernelResult(object):
         self._tid = task_id
         self._jarray = []
 
+    @property
+    def tid(self):
+        return self._tid
+
     def collect(self, j):
         self._jarray.append(j)
 
@@ -65,6 +76,9 @@ class PerKernelResult(object):
                 tft = j['target_fudge_factors'][tn]
                 if tft is not None:
                     tfts[tn].append(tft)
+        for tft in tfts.values():
+            if len(tft) == 0:
+                return None
         # FIXME: It is possible that one kernel excels at one tensor, while another kernel at another,
         #        and at the end of the day no kernel meets the error tolerances
         #        of two tensors at the same time.
@@ -72,8 +86,11 @@ class PerKernelResult(object):
         #        resolution for this (use sum of target_fudge_factors?)
         return { tn : max(1.0, np.min(tfts[tn])) for tn in self.valid_out_tensors }
 
-    def get_optimal_kernel(self, fudge_factor_tolerance):
+    def get_optimal_kernel(self, fudge_factor_tolerance, allow_no_acceptable=False):
         best_tft = self.get_most_accurate_kernel()
+        if allow_no_acceptable and best_tft is None:
+            return None
+        assert best_tft is not None
         fft = fudge_factor_tolerance
         def is_acceptable(j):
             if j['result'] != 'tuned':
@@ -90,6 +107,8 @@ class PerKernelResult(object):
         def gettime(j):
             return tuple(j['time'])
         if not acceptables:
+            if allow_no_acceptable:
+                return None
             # print(f'{best_tft=}')
             assert False, 'acceptables is empty'
         # print(f'{acceptables=}')
@@ -299,6 +318,13 @@ class TuningDatabase(object):
         if not line_text:
             return
         raw_info = json.loads(line_text)
+        if raw_info.get('kernel_name') == 'attn_fwd':
+            BM = raw_info['tuned_kernel']['BLOCK_M']
+            BN = raw_info['tuned_kernel']['BLOCK_N']
+            if BM < BN:
+                # print(raw_info)
+                # Known faulty kernel for fp32
+                return
         if not raw_info['inputs']['Q_dtype'].startswith('torch.'):
             raw_info['inputs']['Q_dtype'] = 'torch.' + raw_info['inputs']['Q_dtype']
         timing = raw_info.get('time', float('inf'))
@@ -318,11 +344,23 @@ class TuningDatabase(object):
             pkr.update_max_fudge_factor(opti)
             yield opti
 
-    def sancheck(self):
-        raise NotImplemented("sancheck action is not updated to latest testing scheme.")
-
+    def sancheck(self, fout):
+        need_rerun = set()
+        for pkr in self.pkr_database.values():
+            pkr.conclude()
+            opti = pkr.get_optimal_kernel(self._args.fudge_factor_tolerance, allow_no_acceptable=True)
+            if opti is None:
+                need_rerun.add(pkr.tid)
+        sc_report = {
+            'need_rerun' : list(need_rerun),
+        }
+        json.dump(sc_report, fout, indent=2)
 
 def do_main(args, db, fin):
+    fin.seek(0, os.SEEK_END)
+    fin_size = fin.tell()
+    fin.seek(0)
+    print(f'{fin_size=}')
     if args.action == 'pipejson' or args.action == 'createtableonly':
         # FIXME: support pipes and streaming file with json_stream
         if args.action == 'createtableonly':
@@ -334,9 +372,12 @@ def do_main(args, db, fin):
         print("[table_tool] Input closed, exiting", file=sys.stderr)
     elif args.action == 'rawjson':
         db.init_aggregation()
-        for line in tqdm(fin):
+        pbar = tqdm(total=fin_size, desc='Processed bytes')
+        for line in fin:
             db.aggregate(line)
-        for rawjson in tqdm(db.aggregation_results()):
+            pbar.update(len(line))  # FIXME: support UTF-8 which len(line) != number of bytes
+        pbar = tqdm(total=len(db.pkr_database), desc='Processed kernels')
+        for rawjson in db.aggregation_results():
             # print(line)
             db.upsert_json(rawjson, create_table_only=False)
             # Handles CAUSAL=True and BIAS_TYPE=1 case
@@ -345,13 +386,17 @@ def do_main(args, db, fin):
                 rj2 = deepcopy(rawjson)
                 rj2['inputs']['BIAS_TYPE'] = 1
                 db.upsert_json(rj2, create_table_only=False)
+            pbar.update(1)
         for klass in KERNEL_NAME_TO_FACTORY.values():
             print(f'{klass.KERNEL_MAX_FUDGE_FACTORS=}')
     elif args.action == 'rawsc':
         db.init_aggregation()
-        for line in tqdm(fin):
+        pbar = tqdm(total=fin_size, desc='Processed bytes')
+        for line in fin:
             db.aggregate(line)
-        db.sancheck()
+            pbar.update(len(line))  # FIXME: support UTF-8 which len(line) != number of bytes
+        with open(args.sc_report, 'w') as fout:
+            db.sancheck(fout)
     elif args.action == 'dumpcsv':
         db.dumpcsv(args.table_name, args.table_file)
     elif args.action == 'loadcsv':

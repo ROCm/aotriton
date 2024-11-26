@@ -5,6 +5,7 @@
 #include <aotriton/runtime.h>
 #include <mutex>
 #include <cstring>
+#include <cassert>
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -210,6 +211,12 @@ PackedKernel::filter(const char* stem_name) const {
   if (iter == directory_.end())
     return std::make_tuple(nullptr, 0, dim3 { 0, 1, 1 });
   auto meta = iter->second;
+  if (meta->image_size == 0) {
+    // TODO: Sanity check for shared_memory
+    assert(meta->shared_memory == 0);
+    assert(meta->number_of_threads == 0);
+    return std::make_tuple(nullptr, 0, 0);
+  }
   return std::make_tuple(kernel_start_ + meta->offset,
                          meta->shared_memory,
                          dim3 { meta->number_of_threads, 1, 1 });

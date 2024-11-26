@@ -171,16 +171,6 @@ class CppTuneWapper(object):
 
 def cpp_autotune_sub_kernel_gen(extargs, kernel_func, validator, cur_kig):
     if cur_kig.kernel_index >= cur_kig.total_number_of_kernels:
-        '''
-        CAVEAT: Must run kernel_func at least once.
-                Otherwise this may happen:
-                    1. Running fwd and bwd tuning;
-                    2. Bwd kernel segfaulted;
-                    3. Resume the tuning process after skipping the kernel;
-                    4. The o tensor is empty/nan and the bwd output becomes garbage.
-        '''
-        extargs.force_kernel_index = cur_kig.last_success_kernel
-        kernel_func(extargs, is_testing=False)
         return
     # print(f'{cur_kig.kernel_index=}')
     while True:
@@ -265,3 +255,13 @@ def cpp_autotune_gen(extarg_factory, sub_extarg_accessor,
                                                cur_validator,
                                                cur_kig):
             yield cur_name, ret, deepcopy(kig_dict)
+        '''
+        CAVEAT: Must run kernel_func at least once.
+                Otherwise this may happen:
+                    1. Running fwd and bwd tuning;
+                    2. Bwd kernel segfaulted;
+                    3. Resume the tuning process after skipping the kernel;
+                    4. The o tensor is empty/nan and the bwd output becomes garbage.
+        '''
+        extargs_with_subs.force_kernel_index = cur_kig.last_success_kernel
+        kernel_func(extargs_with_subs, is_testing=False)

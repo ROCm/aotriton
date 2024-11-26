@@ -31,7 +31,7 @@ def bwd_inner_dq(
     ## Dropout
     ### max_seqlen_k is put in Dropout section because it is not needed by
     ### anything other than dropout
-    dropout_p, philox_seed, batch_philox_offset, max_seqlen_k,
+    dropout_p, dropout_scale, philox_seed, batch_philox_offset, max_seqlen_k,
     # constexpr starts here
     BLOCK_M: tl.constexpr,
     BLOCK_DMODEL: tl.constexpr,
@@ -112,7 +112,7 @@ def bwd_inner_dq(
         if ENABLE_DROPOUT:
             philox_offset = batch_philox_offset + start_q * max_seqlen_k + start_k
             keep = dropout_mask(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, max_seqlen_k)
-            dp = tl.where(keep, dp / (1 - dropout_p), 0)
+            dp = tl.where(keep, dp * dropout_scale, 0)
         # compute ds = p * (dp - delta[:, None])
         ds = p * (dp - Di[:, None])
         # compute dq. Unfortunately we cannot avoid transpose here as this loop

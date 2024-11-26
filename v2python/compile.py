@@ -159,19 +159,20 @@ def main():
     worker = Process(target=ipc_compile, args=(ipc_to_worker, ipc_worker_out))
     worker.start()
     ipc_to_worker.put(args)
-    try:
-        status = ipc_worker_out.get(timeout=args.timeout * 60.0)
-    except queue.Empty:
-        status = 'Timeout'
+    worker.join(args.timeout * 60.0)
+    if worker.exitcode == 0:
+        status = ipc_worker_out.get()
+    elif worker.exitcode is None:
         worker.kill()
+        status = 'Timeout'
+    else:
+        status = 'ExitWithError'
+    if status == 'Timeout':
         print(f'Compiling {args.path=} {args.kernel_name} to {args.out_path=} timed out with {args.timeout} minutes',
               file=sys.stderr)
     ipc_to_worker.close()
     ipc_worker_out.close()
-    worker.join()
-    if status != 'Timeout' and worker.exitcode != 0:
-        status = 'ExitWithError'
-    if args.verbose:
+    if args.verbose and status == 'ExitWithError':
         print(f'Compiling {args.path=} {args.kernel_name} to {args.out_path=} result with status {status} exitcode {worker.exitcode}')
     # Write an empty file to avoid errors
     if status != 'Complete':

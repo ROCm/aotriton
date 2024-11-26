@@ -93,12 +93,34 @@ def test_gqa(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropo
     bias_type = None
     _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
 
+def test_large_bf16_nan_values():
+    q = torch.full((1, 1, 1, 16), 133120.0, dtype=torch.bfloat16, device="cuda")
+    k = torch.full((1, 1, 1, 16), 133120.0, dtype=torch.bfloat16, device="cuda")
+    v = torch.full((1, 1, 1, 16), 133120.0, dtype=torch.bfloat16, device="cuda")
+    b = None
+    from torch.nn.functional import scaled_dot_product_attention
+    from torch.nn.attention import sdpa_kernel, SDPBackend
+    with sdpa_kernel(SDPBackend.MATH):
+        out = scaled_dot_product_attention(q, k, v)
+    print(out)
+
+    causal = False
+    sm_scale = 0.125
+    dropout_p = 0
+    ext = AttentionExtraArgs(return_encoded_softmax=causal,
+                             autotune=False,
+                             return_autotune=False)
+    tri_out, encoded_softmax, _ = attention(q, k, v, b, causal, sm_scale, dropout_p, ext)
+
+    print(tri_out)
+    assert not torch.isnan(tri_out).any(), "Output should not contain NaNs!"
+
 def main_npz():
     SKIP_DK_DV = False
     SKIP_DQ = False
     SKIP_DB = True
     fn = sys.argv[1]
-    ctx = SdpaContextFromNPZ(fn, dtype=torch.bfloat16, device='cuda')
+    ctx = SdpaContextFromNPZ(fn, dtype=None, device='cuda')
     q, k, v, b = ctx.dev_tensors
     assert b is None, 'TODO: support bias in SdpaContextFromNPZ'
     ctx.create_ref_inputs()
@@ -192,6 +214,23 @@ def main_nsq_causal():
     bias_type = None
     _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
 
+def main_bug_introduced_when_fixing_54():
+    # Original problem: https://github.com/ROCm/aotriton/issues/54
+    # Failed Fix: https://github.com/ROCm/aotriton/commit/14d673f4ea90a5a4e1cea5442d22bc7b1e9146cf
+    BATCH = 1
+    D_HEAD = 4
+    N_HEADS = 1
+    seqlen_q = 64
+    seqlen_k = 64
+    causal = False
+    sm_scale = 1.2
+    dropout_p = 0.0
+    dtype = torch.float16
+    storage_flip = False
+    bias_type = None
+    _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
+
 if __name__ == '__main__':
-    main_nsq_causal()
+    main_bug_introduced_when_fixing_54()
+    # main_nsq_causal()
     # main_npz()

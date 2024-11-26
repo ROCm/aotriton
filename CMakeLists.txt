@@ -47,6 +47,9 @@ set(TARGET_GPUS "MI200;MI300X;Navi31" CACHE STRING "Target Architecture (Note he
 if(NOT AOTRITON_NO_PYTHON)
   find_package(Python3 ${AOTRITON_MIN_PYTHON} COMPONENTS Development REQUIRED)
   add_subdirectory(third_party/pybind11)
+  if(NOT EXISTS ${CMAKE_SOURCE_DIR}/third_party/pybind11/CMakeLists.txt)
+    message(FATAL_ERROR "third_party/pybind11 is not initialized\nRun `git submodule sync && git submodule update --init --recursive --force` to fix it.")
+  endif()
 endif()
 
 # Resolve name conflicts with suffix
@@ -56,6 +59,8 @@ if(AOTRITON_NAME_SUFFIX)
 else()
   set(AOTRITON_ENABLE_SUFFIX OFF)
 endif()
+
+include(GNUInstallDirs)
 configure_file(include/aotriton/config.h.in include/aotriton/config.h)
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/include/aotriton/config.h
   DESTINATION ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_INCLUDEDIR}/aotriton)

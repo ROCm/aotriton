@@ -169,8 +169,8 @@ def attn_fwd(
     # Compute pointers for all the tensors used in this kernel.
     q_offset = Q + batch_index * stride_qz + off_h_q * stride_qh + cu_seqlens_q_start * stride_qm
     q_ptrs = q_offset + offs_m[:, None] * stride_qm + offs_d[None, :] * stride_qk
-    k_offset = batch_index * stride_kz + off_h_k * stride_kh + cu_seqlens_k_start * stride_kn
-    k_ptrs = K + k_offset + offs_d[:, None] * stride_kk + offs_n[None, :] * stride_kn
+    k_offset = K + batch_index * stride_kz + off_h_k * stride_kh + cu_seqlens_k_start * stride_kn
+    k_ptrs = k_offset + offs_d[:, None] * stride_kk + offs_n[None, :] * stride_kn
     v_offset = V + batch_index * stride_vz + off_h_k * stride_vh + cu_seqlens_k_start * stride_vk
     v_ptrs = v_offset + offs_n[:, None] * stride_vk + offs_d[None, :] * stride_vn
     if BIAS_TYPE == 0:
@@ -188,7 +188,7 @@ def attn_fwd(
     else:
         alibi_slope = None
 
-    off_zh = batch_index * num_head_q + off_h_q
+    off_zh = off_z * num_head_q + off_h_q
     if ENABLE_DROPOUT:
         batch_philox_offset = philox_offset_base + off_zh * max_seqlen_q * max_seqlen_k
     else:
@@ -202,13 +202,13 @@ def attn_fwd(
         encoded_sm_base = None
         # encoded_sm_ptrs = None
     # initialize pointer to m and l
-    m_i = tl.full([BLOCK_M], float("-inf"), dtype=tl.float32)
+    m_i = tl.full([BLOCK_M], -3.40282e+38, dtype=tl.float32)
     l_i = tl.full([BLOCK_M], 1.0, dtype=tl.float32)
     acc = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)
     # scale sm_scale by log_2(e) and use 2^x in the loop as we do not
     # have native e^x support in HW.
     qk_scale = sm_scale * 1.44269504089
-    bias_scale = 1.0 / sm_scale
+    bias_scale = 1.0 / sm_scale  # TODO: legacy code to remove
     # Q is loaded once at the beginning and shared by all N blocks.
     q_ptrs_mask = offs_m[:, None] < seqlen_q
     if PADDED_HEAD:
@@ -289,9 +289,11 @@ def attn_fwd(
                 # _, MASK_STEPS, ...
                 PRE_LOAD_V, True, ENABLE_DROPOUT, RETURN_ENCODED_SOFTMAX, PADDED_HEAD)
     # epilogue
-    acc = acc / l_i[:, None]
+    l_recip = 1.0 / l_i[:, None]
+    acc = acc * l_recip
     if ENABLE_DROPOUT:
-        acc = acc / (1 - dropout_p)
+        dropout_scale = 1.0 / (1 - dropout_p)
+        acc = acc * dropout_scale
     # If seqlen_q > seqlen_k but the delta is not a multiple of BLOCK_M,
     # then we have one block with a row of all NaNs which come from computing
     # softmax over a row of all -infs (-inf - inf = NaN). We check for that here

@@ -95,7 +95,7 @@ class attn_fwd(FlashKernel):
     # First element of the tuple is name. Second is the value to use instead
     PARTIALLY_TUNED_FUNCTIONALS = [
         ('RETURN_ENCODED_SOFTMAX', False),
-        ('PADDED_HEAD', None),
+        ('PADDED_HEAD', False),
         ('BIAS_TYPE', None)
     ]
 
@@ -117,27 +117,62 @@ class attn_fwd(FlashKernel):
     DOWNGRADER = [(('RETURN_ENCODED_SOFTMAX', True), DOWNGRADE_RETURN_ENCODED_SOFTMAX)]
 
     @staticmethod
-    def gen_autotune_configs(fsel_dict : 'dict[str, Any]'):
+    def gen_autotune_configs(gpu : str, fsel_dict : 'dict[str, Any]'):
         dtype = fsel_dict['Q']
+        HEAD_DIM = fsel_dict['BLOCK_DMODEL']
         ret = []
-        BLOCK_SIZES = [(128, 64), (64, 64), (64, 32)]
+        MI = 'MI' in gpu
+        Navi = 'Navi' in gpu
+        if MI:
+            BLOCK_SIZES = [(32, 16), (128, 64), (64, 64), (64, 32), (128, 128)]
+        elif Navi:
+            BLOCK_SIZES = [(64, 32), (32, 32), (32, 16)]
+            if '*fp32' not in dtype:
+                BLOCK_SIZES += [(16, 16)]
+            else:
+                # M //= 2 will effectively yield (16,32), (16,16)
+                pass
         WAVES_PER_EU = [0, 1, 2, 3, 4]
+        NUM_WARPS = [1, 2, 4]
         PRE_LOAD_V = [True, False]
-        for (M, N), waves, pre in itertools.product(BLOCK_SIZES,
-                                                    WAVES_PER_EU,
-                                                    PRE_LOAD_V):
+        NUM_STAGES = [1, 2]
+        for (M, N), waves, warps, stages, pre in itertools.product(BLOCK_SIZES,
+                                                                   WAVES_PER_EU,
+                                                                   NUM_WARPS,
+                                                                   NUM_STAGES,
+                                                                   PRE_LOAD_V):
+            if warps == 1 and M * N >= 64 * 128:
+                continue  # Timeout
+            if stages == 2 and M * N >= 64 * 32:
+                continue  # Timeout
+            if Navi and HEAD_DIM == 256 and stages == 2:
+                continue  # Timeout
             if dtype == '*fp32:16':
                 M //= 2
+            if M < N:  # Faulty or duplicate
+                continue
             kw = {'BLOCK_M': M, 'BLOCK_N': N, 'waves_per_eu': waves, 'pre_load_v': pre}
-            yield Config(kw, num_stages=1, num_warps=4)
-        yield from [
-           Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 2, 'pre_load_v': False}, num_stages=1, num_warps=8),
-           Config({'BLOCK_M': 128, 'BLOCK_N':128, 'waves_per_eu': 2, 'pre_load_v': False}, num_stages=1, num_warps=4),
-           Config({'BLOCK_M': 256, 'BLOCK_N':128, 'waves_per_eu': 2, 'pre_load_v': False}, num_stages=1, num_warps=8),
-           Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'pre_load_v':  True}, num_stages=1, num_warps=4),
-           Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'pre_load_v': False}, num_stages=1, num_warps=4),
-           Config({'BLOCK_M':  64, 'BLOCK_N': 64, 'waves_per_eu': 4, 'pre_load_v': False}, num_stages=1, num_warps=8),
-           Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 1, 'pre_load_v': False}, num_stages=1, num_warps=4),
-           Config({'BLOCK_M':  32, 'BLOCK_N': 32, 'waves_per_eu': 4, 'pre_load_v': False}, num_stages=1, num_warps=8),
-           Config({'BLOCK_M': 16, 'BLOCK_N': 16, 'waves_per_eu': 1, 'pre_load_v': False}, num_stages=1, num_warps=4),
-        ]
+            yield Config(kw, num_stages=stages, num_warps=warps)
+        if MI:
+            pass
+            # Covered in general logic above
+            # yield from [
+            #     Config({'BLOCK_M': 128, 'BLOCK_N': 128, 'waves_per_eu': 2, 'pre_load_v': False}, num_stages=1, num_warps=4),
+            #     Config({'BLOCK_M': 128, 'BLOCK_N':  64, 'waves_per_eu': 2, 'pre_load_v': False}, num_stages=1, num_warps=4),
+            #     Config({'BLOCK_M': 128, 'BLOCK_N':  64, 'waves_per_eu': 3, 'pre_load_v': False}, num_stages=1, num_warps=4),
+            #     Config({'BLOCK_M': 128, 'BLOCK_N':  64, 'waves_per_eu': 1, 'pre_load_v': False}, num_stages=1, num_warps=4),
+            #     Config({'BLOCK_M': 128, 'BLOCK_N':  32, 'waves_per_eu': 2, 'pre_load_v': False}, num_stages=1, num_warps=4),
+            # ]
+        elif Navi:
+            pass
+            # Covered in general logic above
+            # yield from [
+            #     Config({'BLOCK_M': 32, 'BLOCK_N': 32, 'waves_per_eu': 4, 'pre_load_v': False}, num_stages=1, num_warps=2),
+            #     Config({'BLOCK_M': 32, 'BLOCK_N': 32, 'waves_per_eu': 2, 'pre_load_v': False}, num_stages=1, num_warps=2),
+            #     Config({'BLOCK_M': 32, 'BLOCK_N': 16, 'waves_per_eu': 4, 'pre_load_v': False}, num_stages=1, num_warps=2),
+            #     Config({'BLOCK_M': 32, 'BLOCK_N': 16, 'waves_per_eu': 2, 'pre_load_v': False}, num_stages=1, num_warps=2),
+            #     Config({'BLOCK_M': 16, 'BLOCK_N': 16, 'waves_per_eu': 4, 'pre_load_v': False}, num_stages=1, num_warps=2),
+            #     Config({'BLOCK_M': 16, 'BLOCK_N': 16, 'waves_per_eu': 2, 'pre_load_v': False}, num_stages=1, num_warps=2),
+            # ]
+        else:
+            assert False, f'Unknown GPU {gpu}'  # Sanity check, should be removed in the future

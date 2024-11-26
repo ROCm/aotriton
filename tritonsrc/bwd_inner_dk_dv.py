@@ -31,7 +31,7 @@ def bwd_inner_dk_dv(
     ## Dropout
     ### max_seqlen_k is put in Dropout section because it is not needed by
     ### anything other than dropout
-    dropout_p, philox_seed, batch_philox_offset, max_seqlen_k,
+    dropout_p, dropout_scale, philox_seed, batch_philox_offset, max_seqlen_k,
     # constexpr starts here
     BLOCK_M: tl.constexpr,
     BLOCK_DMODEL: tl.constexpr,
@@ -138,9 +138,9 @@ def bwd_inner_dk_dv(
             keep = dropout_mask(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, max_seqlen_k)
             # CAVEAT: do NOT update p, ds needs the original p
             if BLOCK_M == 1:
-                dv += tl.where(keep, p / (1 - dropout_p), 0.0).to(q_ptrs.dtype.element_ty) * do
+                dv += tl.where(keep, p * dropout_scale, 0.0).to(q_ptrs.dtype.element_ty) * do
             else:
-                dv += tl.dot(tl.trans(tl.where(keep, p / (1 - dropout_p), 0.0)).to(q_ptrs.dtype.element_ty), do)
+                dv += tl.dot(tl.trans(tl.where(keep, p * dropout_scale, 0.0)).to(q_ptrs.dtype.element_ty), do)
         else:
             if BLOCK_M == 1:
                 dv += p.to(q_ptrs.dtype.element_ty) * do
@@ -152,7 +152,7 @@ def bwd_inner_dk_dv(
         # do.shape = (BLOCK_M, BLOCK_DMODEL) vt.shape = (BLOCK_DMODEL, BLOCK_N)
         dp += tl.dot(do, vt)
         if ENABLE_DROPOUT:
-            dp = tl.where(keep, dp / (1 - dropout_p), 0)
+            dp = tl.where(keep, dp * dropout_scale, 0)
         # compute ds = p * (dp - delta[:, None])
         ds = p * (dp - Di) # (BLOCK_M, BLOCK_N)
         # compute dk

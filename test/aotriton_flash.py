@@ -35,7 +35,7 @@ def cast_dtype(dtype):
 
 def mk_aotensor(q, if_empty_then_like=None):
     rank = len(q.shape) if q is not None else len(if_empty_then_like.shape)
-    if q is not None and q.numel() == 1:
+    if q is not None and len(q.shape) == 1 and q.numel() == 1:
         if PASS_PHILOX_AS_TENSOR:
             return T0(q.data_ptr(), cast_dtype(q.dtype))
         else:
