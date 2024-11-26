@@ -1,10 +1,23 @@
 #!/bin/bash
 
 if [ "$#" -ne 5 ]; then
-  echo "Fatal. Must Use build.sh <Input directory> <Workspace directory> <Output Directory> <AOTriton's GIT Name> <AOTriton's Target GPU>"
-  echo "Specify tmpfs as Workspace directory will mount type=tmpfs for AOTriton's build"
-  echo ""
-  echo "Example: bash build.sh input tmpfs output 0.7.1b \"MI300X;MI200\""
+  echo 'Fatal. Must Use build.sh <Input directory> <Workspace directory> <Output Directory> <AOTriton GIT Name> <AOTriton Target GPUs>
+Specify tmpfs as Workspace directory will mount type=tmpfs instead.
+
+Example: bash build.sh input tmpfs output 0.7.1b "MI300X;MI200"
+
+CAVEAT: tmpfs is only recommended for systems with > 100GiB physical memory.
+
+Supported Environment Variables
+
+  TRITON_LLVM_HASH: Override the LLVM hash. Useful when tags are not supported
+                    or git commit sha1 is used.
+  NOIMAGE_MODE=ON: Pass -DAOTRITON_NOIMAGE_MODE=ON to AOTriton build.
+
+Example Usage of Environment Variables:
+
+  NOIMAGE_MODE=ON TRITON_LLVM_HASH=bd9145c8 bash build.sh input tmpfs output 3c542918a0 "MI300X;MI200;Navi31"
+'
   exit 1
 fi
 
@@ -31,6 +44,10 @@ if [ -z ${TRITON_LLVM_HASH+x} ]; then
       exit
       ;;
   esac
+fi
+
+if [ -z ${NOIMAGE_MODE+x} ]; then
+  NOIMAGE_MODE="OFF"
 fi
 
 DOCKER_IMAGE=aotriton:manylinux_2_28-buildenv-tiny
@@ -60,4 +77,4 @@ docker run --mount "type=bind,source=$(realpath ${INPUT_DIR}),target=/input" \
   -w / \
   -it ${DOCKER_IMAGE} \
   bash \
-  /input/install.sh ${TRITON_LLVM_HASH} ${AOTRITON_GIT_NAME} "${AOTRITON_TARGET_GPUS}"
+  /input/install.sh ${TRITON_LLVM_HASH} ${AOTRITON_GIT_NAME} "${AOTRITON_TARGET_GPUS}" ${NOIMAGE_MODE}
