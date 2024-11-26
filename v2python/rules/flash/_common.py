@@ -66,6 +66,6 @@ class FlashKernel(KernelDescription):
         for M_id, N_id in zip(M_idxs, N_idxs):
             d = deepcopy(base)
             d['seqlen_q'] = SEQLEN_Q[M_id]
-            d['seqlen_k'] = SEQLEN_K[M_id]
+            d['seqlen_k'] = SEQLEN_K[N_id]
             ret.append(json.dumps(d))
         return ret
