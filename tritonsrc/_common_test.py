@@ -566,6 +566,17 @@ class VarlenSdpaContext(SdpaContext):
 class SdpaContextFromNPZ(SdpaContext):
     def __init__(self, fn, dtype, device='cuda'):
         d = np.load(fn)
+        def real_dtype():
+            if d['is_fp16']:
+                return torch.float16
+            if d['is_bf16']:
+                return torch.bfloat16
+            if d['is_fp32']:
+                return torch.float32
+        if dtype is not None:
+            assert dtype == real_dtype()
+        else:
+            dtype = real_dtype()
         def load(n, *, cast_to=dtype):
             return torch.tensor(d[n], dtype=cast_to, device=device)
         def load_qkv(*, prefix='', suffix='', keep_dtype=False):
@@ -606,6 +617,9 @@ class SdpaContextFromNPZ(SdpaContext):
     def democode_save_tensors(self):
         import numpy as np
         np.savez('dump.npz',
+                 is_fp16=int(query.dtype == torch.float16),
+                 is_bf16=int(query.dtype == torch.bfloat16),
+                 is_fp32=int(query.dtype == torch.float32),
                  q=query.float().numpy(force=True),
                  k=key.float().numpy(force=True),
                  v=value.float().numpy(force=True),

@@ -120,7 +120,7 @@ def main_npz():
     SKIP_DQ = False
     SKIP_DB = True
     fn = sys.argv[1]
-    ctx = SdpaContextFromNPZ(fn, dtype=torch.bfloat16, device='cuda')
+    ctx = SdpaContextFromNPZ(fn, dtype=None, device='cuda')
     q, k, v, b = ctx.dev_tensors
     assert b is None, 'TODO: support bias in SdpaContextFromNPZ'
     ctx.create_ref_inputs()
