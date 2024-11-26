@@ -30,10 +30,8 @@ class FlashKernel(KernelDescription):
             to_check = lut_tensor.diagonal()
         else:
             to_check = lut_tensor
-        if MI:
+        if MI or Navi:
             return (to_check >= 0).all() and lut_tensor.shape == (12, 12)
-        elif Navi:
-            return (to_check >= 0).all() and lut_tensor.shape == (10, 10)
         else:
             assert False, f"Unknown {gpu}"
 
