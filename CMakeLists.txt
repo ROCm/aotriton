@@ -59,6 +59,8 @@ if(AOTRITON_NAME_SUFFIX)
 else()
   set(AOTRITON_ENABLE_SUFFIX OFF)
 endif()
+
+include(GNUInstallDirs)
 configure_file(include/aotriton/config.h.in include/aotriton/config.h)
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/include/aotriton/config.h
   DESTINATION ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_INCLUDEDIR}/aotriton)
