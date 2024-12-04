@@ -63,8 +63,8 @@ def attn_fwd_inner(
             k_offs_n = None
         # k_offs_d = None if not PADDED_HEAD else tl.arange(0, BLOCK_DMODEL)
         # k = load_fn(k_ptrs, k_offs_d, k_offs_n, head_dim, seqlen_k)
-        tl.static_print(f'{MASK_STEPS=}')
-        tl.static_print(f'{PADDED_HEAD=}')
+        # tl.static_print(f'{MASK_STEPS=}')
+        # tl.static_print(f'{PADDED_HEAD=}')
         k0, k1, k2 = composed_load(k_ptrs0, k_ptrs1, k_ptrs2,
                                    k_offs_n,
                                    BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,

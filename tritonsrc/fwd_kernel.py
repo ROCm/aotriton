@@ -58,9 +58,7 @@ def attn_fwd(
         encoded_softmax,
         CAUSAL: tl.constexpr,
         BLOCK_M: tl.constexpr,
-        BLOCK_DMODEL0: tl.constexpr,
-        BLOCK_DMODEL1: tl.constexpr,
-        BLOCK_DMODEL2: tl.constexpr,
+        BLOCK_DMODEL: tl.constexpr,
         BLOCK_N: tl.constexpr,
         pre_load_v: tl.constexpr,
         ENABLE_DROPOUT: tl.constexpr,
@@ -68,8 +66,24 @@ def attn_fwd(
         PADDED_HEAD: tl.constexpr,
         BIAS_TYPE: tl.constexpr,
 ):
+    tl.static_assert(BLOCK_DMODEL > 0, 'BLOCK_DMODEL must be greater than 0')
+    BLOCK_DMODEL_R0 : tl.constexpr = BLOCK_DMODEL
+    BLOCK_DMODEL0 : tl.constexpr = 2 ** (BLOCK_DMODEL_R0.bit_length() - 1)
+    BLOCK_DMODEL_R1 : tl.constexpr = BLOCK_DMODEL_R0 - BLOCK_DMODEL0
+    BLOCK_DMODEL1 : tl.constexpr = 2 ** (BLOCK_DMODEL_R1.bit_length() - 1) if BLOCK_DMODEL_R1 > 0 else 0
+    BLOCK_DMODEL_R2 : tl.constexpr = BLOCK_DMODEL_R1 - BLOCK_DMODEL1
+    BLOCK_DMODEL2 : tl.constexpr = 2 ** (BLOCK_DMODEL_R2.bit_length() - 1) if BLOCK_DMODEL_R2 > 0 else 0
+    BLOCK_DMODEL_R3 : tl.constexpr = BLOCK_DMODEL_R2 - BLOCK_DMODEL2
+    # tl.static_print(f'{BLOCK_DMODEL=}')
+    # tl.static_print(f'{BLOCK_DMODEL0=}')
+    # tl.static_print(f'{BLOCK_DMODEL1=}')
+    # tl.static_print(f'{BLOCK_DMODEL2=}')
+    # tl.static_print(f'{BLOCK_DMODEL_R0=}')
+    # tl.static_print(f'{BLOCK_DMODEL_R1=}')
+    # tl.static_print(f'{BLOCK_DMODEL_R2=}')
+    # tl.static_print(f'{BLOCK_DMODEL_R3=}')
+    tl.static_assert(BLOCK_DMODEL_R3 == 0, f'BLOCK_DMODEL = {BLOCK_DMODEL} = 0b{BLOCK_DMODEL:b} cannot be factored into <= 3 power of two values')
     # The supported D0D1D2 pattern is xxx/xx0/x00, x means non-zero power of two, 0 means 0
-    tl.static_assert(BLOCK_DMODEL0 > 0, 'BLOCK_DMODEL0 must be greater than 0')
     # Truth Table of supported BLOCK_DMODELs value
     #
     # |        | D2 > 0 | D2 = 0 |

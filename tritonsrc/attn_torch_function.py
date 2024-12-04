@@ -23,7 +23,7 @@ from sized_tuned_bwd import (
     sized_tuned_bwd_kernel_dq,
 )
 
-def round_head_dim(head_dim, n_pieces=3):
+def factor_head_dim(head_dim, n_pieces=3):
     ret = [0] * 3
     Lk = head_dim
     for i in range(n_pieces):
@@ -36,6 +36,7 @@ def round_head_dim(head_dim, n_pieces=3):
             break
     while sum(ret) < head_dim:
         ret[-1] *= 2
+        ret = sorted(ret, reverse=True)
     return ret
 
 AttentionExtraArgs = namedtuple('AttentionExtraArgs',
@@ -260,9 +261,10 @@ class _attention(torch.autograd.Function):
         # shape constraints
         Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
         assert Lq == Lk and Lk == Lv
-        head_dim_rounded = round_head_dim(Lk)
-        padded_head = sum(head_dim_rounded) != Lk
-        assert not padded_head, f"sum({head_dim_rounded=}) = {sum(head_dim_rounded)} != {Lk=}"
+        head_dim_factors = factor_head_dim(Lk)
+        head_dim_rounded = sum(head_dim_factors)
+        padded_head = head_dim_rounded != Lk
+        assert not padded_head, f"sum({head_dim_factors=}) = {sum(head_dim_factors)} != {Lk=}"
         num_head_q = q.shape[1]
         num_head_k = k.shape[1]
         max_seqlen_q = q.shape[2]
@@ -395,9 +397,7 @@ class _attention(torch.autograd.Function):
                 encoded_softmax=encoded_softmax,
                 CAUSAL=causal,
                 BLOCK_M=BLOCK_M,
-                BLOCK_DMODEL0=head_dim_rounded[0],
-                BLOCK_DMODEL1=head_dim_rounded[1],
-                BLOCK_DMODEL2=head_dim_rounded[2],
+                BLOCK_DMODEL=head_dim_rounded,
                 BLOCK_N=BLOCK_N,
                 pre_load_v=False,
                 ENABLE_DROPOUT=dropout_p > 0.0,
@@ -481,8 +481,8 @@ class _attention(torch.autograd.Function):
         # if q.shape[-1] <= 32:
         Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
         assert Lq == Lk and Lk == Lv and Lk == ctx.head_dim
-        head_dim_rounded = 2 ** (ctx.head_dim - 1).bit_length()
-        head_dim_rounded = max(16, head_dim_rounded)
+        head_dim_factors = factor_head_dim(Lk)
+        head_dim_rounded = sum(head_dim_factors)
         padded_head = head_dim_rounded != ctx.head_dim
         attn_extra_args = ctx.attn_extra_args
         philox_seed = ctx.philox_seed
