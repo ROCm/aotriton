@@ -17,8 +17,10 @@ system, `ninja install` will run the whole build process unconditionally.
 
 ### Prerequisites
 
-* `hipcc` in `/opt/rocm/bin`, as a part of [ROCm](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/)
-* `cmake`
+* `gcc >= 8` or `clang >= 10`
+    + For Designated initializers, but only gcc >= 9 is tested.
+    + The binary delivery is compiled with gcc13
+* `cmake >= 3.26`
 * `ninja`
 * `liblzma`
   - Common names are `liblzma-dev` or `xz-devel`.
@@ -59,7 +61,14 @@ of AOTriton. The compatibility matrix is shown below
 |  2.2 and earlier      |               N/A, no support                   |
 |        2.3            |                   0.4b                          |
 |        2.4            |                   0.6b                          |
-|        2.5            |                   0.7b                          |
+|        2.5            |                   0.7b, 0.8b<sup>(1)</sup>      |
+|        2.6            |                   0.8b<sup>(2)</sup>            |
+
+1. 0.8b's API is backward compatible with 0.7b, but the packaging scheme
+    has changed drastically.
+2. PyTorch 2.6 requires some 0.8b-only features. Hence even if PyTorch 2.6
+   can compile with 0.7b due to API compatibility, the end product will
+   suffer from runtime errors.
 
 ROCm's PyTorch release/\<version\> branch is slightly different from PyTorch
 upstream and may support more recent version of AOTriton
@@ -70,6 +79,7 @@ upstream and may support more recent version of AOTriton
 |        2.3            |                   0.4b                          |
 |        2.4            |                   0.7b (backported)             |
 |        2.5            |                   0.7b (once released)          |
+|        2.6            |                   0.8b (once released)          |
 
 ### Point Release
 
