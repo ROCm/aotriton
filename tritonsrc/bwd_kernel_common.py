@@ -310,3 +310,124 @@ def bwd_inner_dq(
             B_block_ptr = tl.advance(B_block_ptr, (0, BLOCK_N))
             DB_block_ptr = tl.advance(DB_block_ptr, (0, BLOCK_N))
     return dq
+
+@triton.jit
+def bwd_inner_dq_reduce(
+    # I/O Tensor
+    dq_main, dq_tail, qk_scale, bias_scale,
+    DB_block_ptr, store_db,
+    # Problem Description
+    q_main, q_tail, 
+    kt_ptrs_main, kt_ptrs_tail, k_stride,
+    vt_ptrs_main, vt_ptrs_tail, v_stride,
+    B_block_ptr,
+    do_main, do_tail,
+    Di, l_i,
+    seqlen_q, seqlen_k, head_dim,
+    # Sub-problem range
+    start_q, lo, hi,
+    dropout_p, philox_seed, batch_philox_offset, max_seqlen_k,
+    # constexpr
+    BLOCK_M: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    BLOCK_DMODEL_MAIN: tl.constexpr,
+    BLOCK_DMODEL_TAIL: tl.constexpr,
+    FULL_BLOCKS: tl.constexpr,
+    CAUSAL: tl.constexpr,
+    ENABLE_DROPOUT: tl.constexpr,
+    PADDED_HEAD: tl.constexpr,
+    BIAS_TYPE: tl.constexpr,
+):
+    offs_q = start_q + tl.arange(0, BLOCK_M)
+    offs_k = tl.arange(0, BLOCK_N)
+    offs_d_main = tl.arange(0, BLOCK_DMODEL_MAIN)
+    offs_d_tail = tl.arange(0, BLOCK_DMODEL_TAIL)
+    
+    kt_ptrs_main += lo * k_stride
+    kt_ptrs_tail += lo * k_stride
+    vt_ptrs_main += lo * v_stride
+    vt_ptrs_tail += lo * v_stride
+
+    if BIAS_TYPE == 1:
+        B_block_ptr = tl.advance(B_block_ptr, (0, lo))
+        DB_block_ptr = tl.advance(DB_block_ptr, (0, lo))
+
+    for start_k in range(lo, hi, BLOCK_N):
+        # Load K main and tail
+        if not FULL_BLOCKS:
+            kt_main = load_fn(kt_ptrs_main, offs_d_main, offs_k + start_k, BLOCK_DMODEL_MAIN, seqlen_k)
+            kt_tail = load_fn(kt_ptrs_tail, offs_d_tail, offs_k + start_k, head_dim - BLOCK_DMODEL_MAIN, seqlen_k)
+            vt_main = load_fn(vt_ptrs_main, offs_d_main, offs_k + start_k, BLOCK_DMODEL_MAIN, seqlen_k)
+            vt_tail = load_fn(vt_ptrs_tail, offs_d_tail, offs_k + start_k, head_dim - BLOCK_DMODEL_MAIN, seqlen_k)
+        else:
+            kt_main = load_fn(kt_ptrs_main, offs_d_main, None, BLOCK_DMODEL_MAIN, seqlen_k)
+            kt_tail = load_fn(kt_ptrs_tail, offs_d_tail, None, head_dim - BLOCK_DMODEL_MAIN, seqlen_k)
+            vt_main = load_fn(vt_ptrs_main, offs_d_main, None, BLOCK_DMODEL_MAIN, seqlen_k)
+            vt_tail = load_fn(vt_ptrs_tail, offs_d_tail, None, head_dim - BLOCK_DMODEL_MAIN, seqlen_k)
+
+        # Initialize qk
+        qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
+        
+        # Compute QK for main and tail
+        qk += dot(BLOCK_M, BLOCK_DMODEL_MAIN, BLOCK_DMODEL_MAIN, q_main, kt_main)
+        qk += dot(BLOCK_M, BLOCK_DMODEL_TAIL, BLOCK_DMODEL_TAIL, q_tail, kt_tail)
+
+        # Handle masking and bias
+        offs_k_curr = offs_k[None, :] + start_k
+        if not FULL_BLOCKS:
+            k_boundary = tl.full((BLOCK_M, ), seqlen_k, dtype=tl.int32)
+            mask = offs_k_curr < k_boundary[:, None]
+            qk = tl.where(mask, qk, float("-inf"))
+        if CAUSAL:
+            qk = tl.where(offs_q[:, None] >= offs_k_curr, qk, float("-inf"))
+        
+        if BIAS_TYPE == 0:
+            pass
+        elif BIAS_TYPE == 1:
+            bias = tl.load(B_block_ptr, boundary_check=(0,1), padding_option="zero")
+            qk += bias * bias_scale
+        else:
+            tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
+
+        # Compute attention weights
+        p = tl.math.exp2(qk_scale * qk - l_i[:, None])
+        if not FULL_BLOCKS or CAUSAL:
+            if qk_scale == 0.0:
+                p = tl.where(libdevice.isnan(p), 0.0, p)
+
+        # Compute dP
+        dp = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
+        dp += dot(BLOCK_M, BLOCK_DMODEL_MAIN, BLOCK_DMODEL_MAIN, do_main, vt_main)
+        dp += dot(BLOCK_M, BLOCK_DMODEL_TAIL, BLOCK_DMODEL_TAIL, do_tail, vt_tail)
+
+        if ENABLE_DROPOUT:
+            philox_offset = batch_philox_offset + start_q * max_seqlen_k + start_k
+            keep = dropout_mask(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, max_seqlen_k)
+            dp = tl.where(keep, dp / (1 - dropout_p), 0)
+
+        # Compute dS
+        ds = p * (dp - Di[:, None])
+                    
+        # Compute dQ for main and tail separately
+        if BLOCK_M == 1:
+            dq_main += tl.view(kt_main, [BLOCK_DMODEL_MAIN]) * ds.to(q_main.dtype)
+            dq_tail += tl.view(kt_tail, [BLOCK_DMODEL_TAIL]) * ds.to(q_tail.dtype)
+        else:
+            dq_main = tl.dot(ds.to(q_main.dtype), tl.trans(kt_main), acc=dq_main)
+            dq_tail = tl.dot(ds.to(q_tail.dtype), tl.trans(kt_tail), acc=dq_tail)
+        
+        if BIAS_TYPE == 1:
+            if store_db:
+                tl.store(DB_block_ptr, ds.to(DB_block_ptr.type.element_ty), boundary_check=(0,1))
+        
+        # Update pointers
+        kt_ptrs_main += BLOCK_N * k_stride
+        kt_ptrs_tail += BLOCK_N * k_stride
+        vt_ptrs_main += BLOCK_N * v_stride
+        vt_ptrs_tail += BLOCK_N * v_stride
+        
+        if BIAS_TYPE == 1:
+            B_block_ptr = tl.advance(B_block_ptr, (0, BLOCK_N))
+            DB_block_ptr = tl.advance(DB_block_ptr, (0, BLOCK_N))
+
+    return dq_main, dq_tail

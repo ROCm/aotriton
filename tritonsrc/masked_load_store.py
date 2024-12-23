@@ -102,3 +102,43 @@ def mstore2d(
         o_ptrs_mask = o_ptrs_mask & (off_cols[None, :] < o_cols)
     tl.store(o_ptrs, registers, mask=o_ptrs_mask)
     return o_ptrs, o_ptrs_mask
+
+@triton.jit
+def mstore2d_reduce(
+    registers_main, registers_tail,
+    REG_ROWS : tl.constexpr,
+    o_base,
+    o_start_row,
+    o_start_col,
+    o_rows,
+    o_cols,
+    stride_row,
+    stride_col,
+    BLOCK_DMODEL_MAIN: tl.constexpr,
+    BLOCK_DMODEL_TAIL: tl.constexpr,
+):
+    off_rows = tl.arange(0, REG_ROWS) + o_start_row
+    off_cols_main = tl.arange(0, BLOCK_DMODEL_MAIN) + o_start_col
+    o_ptrs_main = o_base + off_rows[:, None] * stride_row + off_cols_main[None, :] * stride_col
+    o_ptrs_mask_main = tl.full([REG_ROWS, BLOCK_DMODEL_MAIN], 1, dtype=tl.int1)
+    
+    row_overflow = o_start_row + REG_ROWS - o_rows
+    if row_overflow > 0:
+        o_ptrs_mask_main = o_ptrs_mask_main & (off_rows[:, None] < o_rows)
+    col_overflow_main = o_start_col + BLOCK_DMODEL_MAIN - o_cols
+    if col_overflow_main > 0:
+        o_ptrs_mask_main = o_ptrs_mask_main & (off_cols_main[None, :] < o_cols)
+    
+    tl.store(o_ptrs_main, registers_main, mask=o_ptrs_mask_main)
+    if o_cols > BLOCK_DMODEL_MAIN:
+        off_cols_tail = tl.arange(0, BLOCK_DMODEL_TAIL) + o_start_col + BLOCK_DMODEL_MAIN
+        o_ptrs_tail = o_base + off_rows[:, None] * stride_row + off_cols_tail[None, :] * stride_col
+        o_ptrs_mask_tail = tl.full([REG_ROWS, BLOCK_DMODEL_TAIL], 1, dtype=tl.int1)
+        
+        if row_overflow > 0:
+            o_ptrs_mask_tail = o_ptrs_mask_tail & (off_rows[:, None] < o_rows)
+        col_overflow_tail = (o_start_col + BLOCK_DMODEL_MAIN + BLOCK_DMODEL_TAIL) - o_cols
+        if col_overflow_tail > 0:
+            o_ptrs_mask_tail = o_ptrs_mask_tail & (off_cols_tail[None, :] < o_cols)
+        
+        tl.store(o_ptrs_tail, registers_tail, mask=o_ptrs_mask_tail)

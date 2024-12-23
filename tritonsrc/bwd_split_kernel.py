@@ -16,10 +16,9 @@ Extra Credits:
 """
 import triton
 import triton.language as tl
-from bwd_kernel_common import bwd_inner_dk_dv, bwd_inner_dq
-from masked_load_store import load_fn, mstore2d
+from bwd_kernel_common import bwd_inner_dk_dv, bwd_inner_dq, bwd_inner_dq_reduce
+from masked_load_store import load_fn, mstore2d, mstore2d_reduce
 
-# TODO: Remove Unused 'Out' Argument from kernels below
 @triton.jit
 def bwd_kernel_dk_dv(
     Q, K, V, B, sm_scale, Out, DO,
@@ -332,7 +331,296 @@ def bwd_kernel_dk_dv(
              stride_col=stride_dvn)
 
 @triton.jit
-def bwd_kernel_dq(
+def bwd_kernel_dq_reduce(
+    Q, K, V, B, sm_scale, Out, DO,
+    DQ, DB,
+    L,
+    D,
+    stride_qz, stride_qh, stride_qm, stride_qk,
+    stride_kz, stride_kh, stride_kn, stride_kk,
+    stride_vz, stride_vh, stride_vk, stride_vn,
+    stride_bz, stride_bh, stride_bm, stride_bn,
+    stride_oz, stride_oh, stride_om, stride_ok,
+    stride_dqz, stride_dqh, stride_dqm, stride_dqk,
+    stride_dbz, stride_dbh, stride_dbm, stride_dbn,
+    cu_seqlens_q,
+    cu_seqlens_k,
+    num_seqlens,   # set num_seqlens to zero to ignore cu_seqlens_q/k
+    max_seqlen_q, # and use max_seqlen_q/k for all seqlen_q/k
+    max_seqlen_k,
+    head_dim,
+    dropout_p,
+    philox_seed_ptr,
+    philox_offset1 : '*u32',
+    philox_offset2 : 'u32',
+    BLOCK_M: tl.constexpr,
+    BLOCK_DMODEL_MAIN: tl.constexpr,
+    BLOCK_DMODEL_TAIL: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    CAUSAL: tl.constexpr,
+    ENABLE_DROPOUT: tl.constexpr,
+    PADDED_HEAD: tl.constexpr,
+    BIAS_TYPE: tl.constexpr,
+):
+    # Initialize random seed for dropout
+    philox_seed = 0
+    philox_offset_base = philox_offset2
+    if ENABLE_DROPOUT:
+        philox_seed = tl.load(philox_seed_ptr)
+        philox_offset_base += tl.load(philox_offset1)
+
+    # Program ID
+    start_q = tl.program_id(0) * BLOCK_M
+    off_h_q = tl.program_id(1)
+    off_h_k = off_h_q
+    off_z = tl.program_id(2)
+    
+    # Calculate batch/head indices
+    num_h = tl.num_programs(1)
+    num_z = tl.num_programs(2)
+    off_zh = off_z * num_h + off_h_q
+
+    # Initialize offsets
+    offs_q = start_q + tl.arange(0, BLOCK_M)
+    offs_n = tl.arange(0, BLOCK_N)
+    offs_d_main = tl.arange(0, BLOCK_DMODEL_MAIN)
+    offs_d_tail = tl.arange(0, BLOCK_DMODEL_TAIL)
+
+    # Handle sequence lengths
+    cu_seqlens_q_start = 0
+    cu_seqlens_k_start = 0
+    seqlen_q = max_seqlen_q
+    seqlen_k = max_seqlen_k
+    batch_index = off_z
+
+    if num_seqlens > 0:
+        cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
+        cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
+        seqlen_q = cu_seqlens_q_end - cu_seqlens_q_start
+        if start_q >= seqlen_q:
+            return
+        cu_seqlens_k_start = tl.load(cu_seqlens_k + off_z)
+        cu_seqlens_k_end = tl.load(cu_seqlens_k + off_z + 1)
+        seqlen_k = cu_seqlens_k_end - cu_seqlens_k_start
+        batch_index = 0
+
+    if num_seqlens < 0:  # for padded seqlen
+        cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
+        cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
+        seqlen_q = cu_seqlens_q_end - cu_seqlens_q_start
+        if start_q >= seqlen_q:
+            return
+        cu_seqlens_k_start = tl.load(cu_seqlens_k + off_z)
+        cu_seqlens_k_end = tl.load(cu_seqlens_k + off_z + 1)
+        seqlen_k = cu_seqlens_k_end - cu_seqlens_k_start
+        # Varlen, but padded to Rank 4 tensor
+        cu_seqlens_q_start = 0
+        cu_seqlens_k_start = 0
+        batch_index = off_z
+
+    # Still need early exit in GPU kernel to support varlen
+    if CAUSAL:
+        # TODO: bottom right causal and windowed
+        if start_q > seqlen_k:
+            return
+
+    # Initialize pointers to Q, K, V
+    q_offset = off_h_q * stride_qh + batch_index * stride_qz + cu_seqlens_q_start * stride_qm
+    Q += q_offset
+
+    # Load Q main and tail
+    q_ptrs_main = Q + offs_q[:, None] * stride_qm + tl.arange(0, BLOCK_DMODEL_MAIN)[None, :] * stride_qk
+    q_ptrs_tail = Q + offs_q[:, None] * stride_qm + (BLOCK_DMODEL_MAIN + tl.arange(0, BLOCK_DMODEL_TAIL))[None, :] * stride_qk
+    
+    if start_q + BLOCK_M <= seqlen_q:
+        q_main = load_fn(q_ptrs_main, None, offs_d_main, seqlen_q, BLOCK_DMODEL_MAIN)
+        q_tail = load_fn(q_ptrs_tail, None, offs_d_tail, seqlen_q, head_dim - BLOCK_DMODEL_MAIN)
+    else:
+        q_main = load_fn(q_ptrs_main, offs_q, offs_d_main, seqlen_q, BLOCK_DMODEL_MAIN)
+        q_tail = load_fn(q_ptrs_tail, offs_q, offs_d_tail, seqlen_q, head_dim - BLOCK_DMODEL_MAIN)
+
+    # Initialize pointers to DO
+    do_offset = off_h_q * stride_oh + batch_index * stride_oz + cu_seqlens_q_start * stride_om
+    DO += do_offset
+    
+    # Load DO main and tail
+    do_ptrs_main = DO + offs_q[:, None] * stride_om + tl.arange(0, BLOCK_DMODEL_MAIN)[None, :] * stride_ok
+    do_ptrs_tail = DO + offs_q[:, None] * stride_om + (BLOCK_DMODEL_MAIN + tl.arange(0, BLOCK_DMODEL_TAIL))[None, :] * stride_ok
+    
+    if start_q + BLOCK_M <= seqlen_q:
+        do_main = load_fn(do_ptrs_main, None, offs_d_main, seqlen_q, BLOCK_DMODEL_MAIN)
+        do_tail = load_fn(do_ptrs_tail, None, offs_d_tail, seqlen_q, head_dim - BLOCK_DMODEL_MAIN)
+    else:
+        do_main = load_fn(do_ptrs_main, offs_q, offs_d_main, seqlen_q, BLOCK_DMODEL_MAIN)
+        do_tail = load_fn(do_ptrs_tail, offs_q, offs_d_tail, seqlen_q, head_dim - BLOCK_DMODEL_MAIN)
+
+    # Initialize pointers to K and V
+    k_offset = off_h_k * stride_kh + batch_index * stride_kz + cu_seqlens_k_start * stride_kn
+    v_offset = off_h_k * stride_vh + batch_index * stride_vz + cu_seqlens_k_start * stride_vk
+    K += k_offset
+    V += v_offset
+
+    # Setup K and V pointers for main and tail
+    kt_ptrs_main = K + tl.arange(0, BLOCK_DMODEL_MAIN)[:, None] * stride_kk + offs_n[None, :] * stride_kn
+    kt_ptrs_tail = K + (BLOCK_DMODEL_MAIN + tl.arange(0, BLOCK_DMODEL_TAIL))[:, None] * stride_kk + offs_n[None, :] * stride_kn
+    vt_ptrs_main = V + tl.arange(0, BLOCK_DMODEL_MAIN)[:, None] * stride_vn + offs_n[None, :] * stride_vk
+    vt_ptrs_tail = V + (BLOCK_DMODEL_MAIN + tl.arange(0, BLOCK_DMODEL_TAIL))[:, None] * stride_vn + offs_n[None, :] * stride_vk
+
+    # Initialize pointers to LSE and D
+    D_ptrs = D + off_zh * max_seqlen_q
+    l_ptrs = L + off_zh * max_seqlen_q
+    if ENABLE_DROPOUT:
+        batch_philox_offset = philox_offset_base + off_zh * max_seqlen_q * max_seqlen_k
+    else:
+        batch_philox_offset = 0
+
+    # Check for OOB accesses on D and LSE
+    q_boundary = tl.full((BLOCK_M, ), seqlen_q, dtype=tl.int32)
+    d_lse_ptrs_mask = offs_q < q_boundary
+    Di = tl.load(D_ptrs + offs_q, mask=d_lse_ptrs_mask, other=0.0)
+    l_i = tl.load(l_ptrs + offs_q, mask=d_lse_ptrs_mask, other=0.0)
+
+    # Initialize output tensors
+    dq_main = tl.zeros([BLOCK_M, BLOCK_DMODEL_MAIN], dtype=tl.float32)
+    dq_tail = tl.zeros([BLOCK_M, BLOCK_DMODEL_TAIL], dtype=tl.float32)
+
+    # Setup bias pointers if needed
+    store_db = True
+    if BIAS_TYPE == 0:
+        B_block_ptr = 0
+        DB_block_ptr = 0
+    elif BIAS_TYPE == 1:
+        B_block_ptr = tl.make_block_ptr(
+                base=B + off_h_q * stride_bh + batch_index * stride_bz,
+                shape=(seqlen_q, seqlen_k),
+                strides=(stride_bm, stride_bn),
+                offsets=(start_q, 0),
+                block_shape=(BLOCK_M, BLOCK_N),
+                order=(1, 0)
+                )
+        if (stride_dbz == 0 and stride_dbh == 0) and stride_dbm == 0:
+            store_db = False
+        # Still have to make one even if no_db = False
+        # due to a limit of Triton: runtime branches must have identical data types.
+        DB_block_ptr = tl.make_block_ptr(
+                base=DB + off_h_q * stride_dbh + batch_index * stride_dbz,
+                shape=(seqlen_q, seqlen_k),
+                strides=(stride_dbm, stride_dbn),
+                offsets=(start_q, 0),
+                block_shape=(BLOCK_M, BLOCK_N),
+                order=(1, 0)
+                )
+    else:
+        tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
+
+    # Calculate scaling factors
+    qk_scale = sm_scale * 1.44269504089
+    bias_scale = 1.0 / sm_scale
+
+    # Calculate block ranges
+    k_lo = 0
+    k_hi = min(start_q + BLOCK_M, seqlen_k) if CAUSAL else seqlen_k
+    real_seqlen_k = k_hi - k_lo
+    
+    n_blocks = tl.cdiv(k_hi - k_lo, BLOCK_N)
+    n_extra_tokens = 0
+    if real_seqlen_k < BLOCK_N:
+        n_extra_tokens = BLOCK_N - real_seqlen_k
+    elif real_seqlen_k % BLOCK_N:
+        n_extra_tokens = real_seqlen_k % BLOCK_N
+        
+    is_irregular_k = n_extra_tokens != 0
+    leading_masked_blocks = 0
+    trailing_masked_blocks = 0
+    if CAUSAL:
+        mask_top_edge = start_q
+        trailing_masked_blocks = tl.cdiv(k_hi - mask_top_edge // BLOCK_N * BLOCK_N, BLOCK_N)
+    else:
+        trailing_masked_blocks = 1 if is_irregular_k else 0
+                
+    # Check for OOB accesses on D and LSE
+    q_boundary = tl.full((BLOCK_M, ), seqlen_q, dtype=tl.int32)
+    d_lse_ptrs_mask = offs_q < q_boundary
+    Di = tl.load(D_ptrs + offs_q, mask=d_lse_ptrs_mask, other=0.0)
+    l_i = tl.load(l_ptrs + offs_q, mask=d_lse_ptrs_mask, other=0.0)
+
+    n_full_blocks = n_blocks - leading_masked_blocks - trailing_masked_blocks
+    
+    # Process blocks
+    if n_full_blocks > 0:
+        lo = 0
+        hi = n_full_blocks * BLOCK_N
+        
+        dq_main, dq_tail = bwd_inner_dq_reduce(
+            dq_main, dq_tail, qk_scale, bias_scale,
+            DB_block_ptr, store_db,
+            q_main, q_tail,
+            kt_ptrs_main, kt_ptrs_tail, stride_kn,
+            vt_ptrs_main, vt_ptrs_tail, stride_vk,
+            B_block_ptr,
+            do_main, do_tail,
+            Di, l_i,
+            seqlen_q, seqlen_k, head_dim,
+            start_q, lo, hi,
+            dropout_p, philox_seed, batch_philox_offset, max_seqlen_k,
+            BLOCK_M,
+            BLOCK_N,
+            BLOCK_DMODEL_MAIN,
+            BLOCK_DMODEL_TAIL,
+            True,  # FULL_BLOCKS
+            False,  # CAUSAL has zero effect for full blocks
+            ENABLE_DROPOUT,
+            PADDED_HEAD,
+            BIAS_TYPE
+        )
+
+    if trailing_masked_blocks > 0:
+        lo = n_full_blocks * BLOCK_N
+        hi = k_hi
+        tl.debug_barrier()
+        dq_main, dq_tail = bwd_inner_dq_reduce(
+            dq_main, dq_tail, qk_scale, bias_scale,
+            DB_block_ptr, store_db,
+            q_main, q_tail,
+            kt_ptrs_main, kt_ptrs_tail, stride_kn,
+            vt_ptrs_main, vt_ptrs_tail, stride_vk,
+            B_block_ptr,
+            do_main, do_tail,
+            Di, l_i,
+            seqlen_q, seqlen_k, head_dim,
+            start_q, lo, hi,
+            dropout_p, philox_seed, batch_philox_offset, max_seqlen_k,
+            BLOCK_M,
+            BLOCK_N,
+            BLOCK_DMODEL_MAIN,
+            BLOCK_DMODEL_TAIL,
+            False,  # FULL_BLOCKS
+            CAUSAL,
+            ENABLE_DROPOUT,
+            PADDED_HEAD,
+            BIAS_TYPE
+        )
+
+    # Scale and store results
+    dq_main = (dq_main * sm_scale).to(dq_main.type.element_ty)
+    dq_tail = (dq_tail * sm_scale).to(dq_tail.type.element_ty)
+
+    # Store results
+    dq_offset = batch_index * stride_dqz + off_h_q * stride_dqh + cu_seqlens_q_start * stride_dqm
+    mstore2d_reduce(
+        dq_main, dq_tail,
+        BLOCK_M,
+        DQ + dq_offset,
+        start_q, 0,
+        seqlen_q, head_dim,
+        stride_dqm, stride_dqk,
+        BLOCK_DMODEL_MAIN,
+        BLOCK_DMODEL_TAIL
+    )
+
+
+@triton.jit
+def bwd_kernel_dq_full(
     Q, K, V, B, sm_scale, Out, DO,
     DQ, DB,
     L,
@@ -603,3 +891,190 @@ def bwd_kernel_dq(
              o_cols=head_dim,
              stride_row=stride_dqm,
              stride_col=stride_dqk)
+
+
+@triton.jit
+def get_head_main_tail_dim(head_dim, BLOCK_DMODEL):
+    if (head_dim > 32) & (head_dim <= 48):
+        return 32, 16
+    elif (head_dim > 64) & (head_dim <= 80):
+        return 64, 16
+    elif (head_dim > 80) & (head_dim <= 96):
+        return 64, 32
+    else:
+        return BLOCK_DMODEL, 0 
+
+
+@triton.jit
+def get_block_sizes(head_dim, BLOCK_DMODEL):
+    if head_dim > 64 and head_dim <= 96:
+        main, tail = 64, 16
+    elif head_dim > 32 and head_dim <= 48:
+        main, tail = 32, 16
+    else:
+        main, tail = BLOCK_DMODEL, 0
+    return main, tail
+
+
+@triton.jit
+def bwd_kernel_dq(
+    Q, K, V, B, sm_scale, Out, DO,
+    DQ, DB,
+    L,
+    D,
+    stride_qz, stride_qh, stride_qm, stride_qk,
+    stride_kz, stride_kh, stride_kn, stride_kk,
+    stride_vz, stride_vh, stride_vk, stride_vn,
+    stride_bz, stride_bh, stride_bm, stride_bn,
+    stride_oz, stride_oh, stride_om, stride_ok,
+    stride_dqz, stride_dqh, stride_dqm, stride_dqk,
+    stride_dbz, stride_dbh, stride_dbm, stride_dbn,
+    cu_seqlens_q,
+    cu_seqlens_k,
+    num_seqlens,   # set num_seqlens to zero to ignore cu_seqlens_q/k
+    max_seqlen_q, # and use max_seqlen_q/k for all seqlen_q/k
+    max_seqlen_k,
+    head_dim: tl.constexpr,
+    dropout_p,
+    philox_seed_ptr,
+    philox_offset1 : '*u32',
+    philox_offset2 : 'u32',
+    BLOCK_M: tl.constexpr,
+    BLOCK_DMODEL: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    CAUSAL: tl.constexpr,
+    ENABLE_DROPOUT: tl.constexpr,
+    PADDED_HEAD: tl.constexpr,
+    BIAS_TYPE: tl.constexpr,
+):
+    
+    if (head_dim > 32 and head_dim <=48):
+        BLOCK_N_TEST: tl.constexpr = 16
+        bwd_kernel_dq_reduce(
+            Q, K, V, B, sm_scale, Out, DO,
+            DQ, DB,
+            L,
+            D,
+            stride_qz, stride_qh, stride_qm, stride_qk,
+            stride_kz, stride_kh, stride_kn, stride_kk,
+            stride_vz, stride_vh, stride_vk, stride_vn,
+            stride_bz, stride_bh, stride_bm, stride_bn,
+            stride_oz, stride_oh, stride_om, stride_ok,
+            stride_dqz, stride_dqh, stride_dqm, stride_dqk,
+            stride_dbz, stride_dbh, stride_dbm, stride_dbn,
+            cu_seqlens_q,
+            cu_seqlens_k,
+            num_seqlens,   # set num_seqlens to zero to ignore cu_seqlens_q/k
+            max_seqlen_q, # and use max_seqlen_q/k for all seqlen_q/k
+            max_seqlen_k,
+            head_dim,
+            dropout_p,
+            philox_seed_ptr,
+            philox_offset1,
+            philox_offset2,
+            BLOCK_M,
+            32,
+            16,
+            BLOCK_N_TEST,
+            CAUSAL,
+            ENABLE_DROPOUT,
+            PADDED_HEAD,
+            BIAS_TYPE,
+        )
+    elif (head_dim > 64 and head_dim <=80):
+        BLOCK_N_TEST: tl.constexpr = 16
+        bwd_kernel_dq_reduce(
+            Q, K, V, B, sm_scale, Out, DO,
+            DQ, DB,
+            L,
+            D,
+            stride_qz, stride_qh, stride_qm, stride_qk,
+            stride_kz, stride_kh, stride_kn, stride_kk,
+            stride_vz, stride_vh, stride_vk, stride_vn,
+            stride_bz, stride_bh, stride_bm, stride_bn,
+            stride_oz, stride_oh, stride_om, stride_ok,
+            stride_dqz, stride_dqh, stride_dqm, stride_dqk,
+            stride_dbz, stride_dbh, stride_dbm, stride_dbn,
+            cu_seqlens_q,
+            cu_seqlens_k,
+            num_seqlens,   # set num_seqlens to zero to ignore cu_seqlens_q/k
+            max_seqlen_q, # and use max_seqlen_q/k for all seqlen_q/k
+            max_seqlen_k,
+            head_dim,
+            dropout_p,
+            philox_seed_ptr,
+            philox_offset1,
+            philox_offset2,
+            BLOCK_M,
+            64,
+            16,
+            BLOCK_N_TEST,
+            CAUSAL,
+            ENABLE_DROPOUT,
+            PADDED_HEAD,
+            BIAS_TYPE,
+        )
+        
+    elif (head_dim > 80 and head_dim <=96):
+        BLOCK_N_TEST: tl.constexpr = 16
+        bwd_kernel_dq_reduce(
+            Q, K, V, B, sm_scale, Out, DO,
+            DQ, DB,
+            L,
+            D,
+            stride_qz, stride_qh, stride_qm, stride_qk,
+            stride_kz, stride_kh, stride_kn, stride_kk,
+            stride_vz, stride_vh, stride_vk, stride_vn,
+            stride_bz, stride_bh, stride_bm, stride_bn,
+            stride_oz, stride_oh, stride_om, stride_ok,
+            stride_dqz, stride_dqh, stride_dqm, stride_dqk,
+            stride_dbz, stride_dbh, stride_dbm, stride_dbn,
+            cu_seqlens_q,
+            cu_seqlens_k,
+            num_seqlens,   # set num_seqlens to zero to ignore cu_seqlens_q/k
+            max_seqlen_q, # and use max_seqlen_q/k for all seqlen_q/k
+            max_seqlen_k,
+            head_dim,
+            dropout_p,
+            philox_seed_ptr,
+            philox_offset1,
+            philox_offset2,
+            BLOCK_M,
+            64,
+            32,
+            BLOCK_N_TEST,
+            CAUSAL,
+            ENABLE_DROPOUT,
+            PADDED_HEAD,
+            BIAS_TYPE,
+        )
+    else:
+        bwd_kernel_dq_full(
+            Q, K, V, B, sm_scale, Out, DO,
+            DQ, DB,
+            L,
+            D,
+            stride_qz, stride_qh, stride_qm, stride_qk,
+            stride_kz, stride_kh, stride_kn, stride_kk,
+            stride_vz, stride_vh, stride_vk, stride_vn,
+            stride_bz, stride_bh, stride_bm, stride_bn,
+            stride_oz, stride_oh, stride_om, stride_ok,
+            stride_dqz, stride_dqh, stride_dqm, stride_dqk,
+            stride_dbz, stride_dbh, stride_dbm, stride_dbn,
+            cu_seqlens_q,
+            cu_seqlens_k,
+            num_seqlens,   # set num_seqlens to zero to ignore cu_seqlens_q/k
+            max_seqlen_q, # and use max_seqlen_q/k for all seqlen_q/k
+            max_seqlen_k,
+            head_dim,
+            dropout_p,
+            philox_seed_ptr,
+            philox_offset1,
+            philox_offset2,
+            BLOCK_M, BLOCK_DMODEL,
+            BLOCK_N,
+            CAUSAL,
+            ENABLE_DROPOUT,
+            PADDED_HEAD,
+            BIAS_TYPE,
+        )
