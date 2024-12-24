@@ -17,11 +17,11 @@ Extra Credits:
 import triton
 import triton.language as tl
 from bwd_kernel_common import bwd_inner_dk_dv, bwd_inner_dq
-from masked_load_store import load_fn, mstore2d
+from bwd_kernel_reduce import bwd_inner_dq_reduce, bwd_inner_dk_dv_reduce, bwd_kernel_dq_reduce, bwd_kernel_dk_dv_reduce
+from masked_load_store import load_fn, mstore2d, mstore2d_reduce
 
-# TODO: Remove Unused 'Out' Argument from kernels below
 @triton.jit
-def bwd_kernel_dk_dv(
+def bwd_kernel_dk_dv_full(
     Q, K, V, B, sm_scale, Out, DO,
     DK, DV,
     L,
@@ -332,7 +332,137 @@ def bwd_kernel_dk_dv(
              stride_col=stride_dvn)
 
 @triton.jit
-def bwd_kernel_dq(
+def bwd_kernel_dk_dv(
+    Q, K, V, B, sm_scale, Out, DO,
+    DK, DV,
+    L,
+    D,
+    stride_qz, stride_qh, stride_qm, stride_qk,
+    stride_kz, stride_kh, stride_kn, stride_kk,
+    stride_vz, stride_vh, stride_vk, stride_vn,
+    stride_bz, stride_bh, stride_bm, stride_bn,
+    stride_oz, stride_oh, stride_om, stride_ok,
+    stride_dkz, stride_dkh, stride_dkn, stride_dkk,
+    stride_dvz, stride_dvh, stride_dvk, stride_dvn,
+    cu_seqlens_q,
+    cu_seqlens_k,
+    num_seqlens : 'i32',   # set num_seqlens to zero to ignore cu_seqlens_q/k
+    max_seqlen_q : 'i32', # and use max_seqlen_q/k for all seqlen_q/k
+    max_seqlen_k : 'i32',
+    head_dim : 'i32',
+    dropout_p,
+    philox_seed_ptr,
+    philox_offset1 : '*u32',
+    philox_offset2 : 'u32',
+    BLOCK_M: tl.constexpr,
+    BLOCK_DMODEL: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    CAUSAL: tl.constexpr,
+    ENABLE_DROPOUT: tl.constexpr,
+    PADDED_HEAD: tl.constexpr,
+    BIAS_TYPE: tl.constexpr,
+): 
+    if (head_dim > 32 and head_dim <=48):
+        bwd_kernel_dk_dv_reduce(
+            Q, K, V, B, sm_scale, Out, DO,
+            DK, DV,
+            L,
+            D,
+            stride_qz, stride_qh, stride_qm, stride_qk,
+            stride_kz, stride_kh, stride_kn, stride_kk,
+            stride_vz, stride_vh, stride_vk, stride_vn,
+            stride_bz, stride_bh, stride_bm, stride_bn,
+            stride_oz, stride_oh, stride_om, stride_ok,
+            stride_dkz, stride_dkh, stride_dkn, stride_dkk,
+            stride_dvz, stride_dvh, stride_dvk, stride_dvn,
+            cu_seqlens_q,
+            cu_seqlens_k,
+            num_seqlens,
+            max_seqlen_q,
+            max_seqlen_k,
+            head_dim,
+            dropout_p,
+            philox_seed_ptr,
+            philox_offset1,
+            philox_offset2,
+            BLOCK_M,
+            BLOCK_DMODEL,
+            32,
+            16,
+            BLOCK_N,
+            CAUSAL,
+            ENABLE_DROPOUT,
+            PADDED_HEAD,
+            BIAS_TYPE,
+        )
+    elif (head_dim > 64 and head_dim <=80):
+        bwd_kernel_dk_dv_reduce(
+            Q, K, V, B, sm_scale, Out, DO,
+            DK, DV,
+            L,
+            D,
+            stride_qz, stride_qh, stride_qm, stride_qk,
+            stride_kz, stride_kh, stride_kn, stride_kk,
+            stride_vz, stride_vh, stride_vk, stride_vn,
+            stride_bz, stride_bh, stride_bm, stride_bn,
+            stride_oz, stride_oh, stride_om, stride_ok,
+            stride_dkz, stride_dkh, stride_dkn, stride_dkk,
+            stride_dvz, stride_dvh, stride_dvk, stride_dvn,
+            cu_seqlens_q,
+            cu_seqlens_k,
+            num_seqlens,
+            max_seqlen_q,
+            max_seqlen_k,
+            head_dim,
+            dropout_p,
+            philox_seed_ptr,
+            philox_offset1,
+            philox_offset2,
+            BLOCK_M,
+            BLOCK_DMODEL,
+            64,
+            16,
+            BLOCK_N,
+            CAUSAL,
+            ENABLE_DROPOUT,
+            PADDED_HEAD,
+            BIAS_TYPE,
+        )
+    else:
+        bwd_kernel_dk_dv_full(
+            Q, K, V, B, sm_scale, Out, DO,
+            DK, DV,
+            L,
+            D,
+            stride_qz, stride_qh, stride_qm, stride_qk,
+            stride_kz, stride_kh, stride_kn, stride_kk,
+            stride_vz, stride_vh, stride_vk, stride_vn,
+            stride_bz, stride_bh, stride_bm, stride_bn,
+            stride_oz, stride_oh, stride_om, stride_ok,
+            stride_dkz, stride_dkh, stride_dkn, stride_dkk,
+            stride_dvz, stride_dvh, stride_dvk, stride_dvn,
+            cu_seqlens_q,
+            cu_seqlens_k,
+            num_seqlens,
+            max_seqlen_q,
+            max_seqlen_k,
+            head_dim,
+            dropout_p,
+            philox_seed_ptr,
+            philox_offset1,
+            philox_offset2,
+            BLOCK_M,
+            BLOCK_DMODEL,
+            BLOCK_N,
+            CAUSAL,
+            ENABLE_DROPOUT,
+            PADDED_HEAD,
+            BIAS_TYPE,
+        )
+
+
+@triton.jit
+def bwd_kernel_dq_full(
     Q, K, V, B, sm_scale, Out, DO,
     DQ, DB,
     L,
@@ -603,3 +733,163 @@ def bwd_kernel_dq(
              o_cols=head_dim,
              stride_row=stride_dqm,
              stride_col=stride_dqk)
+
+@triton.jit
+def bwd_kernel_dq(
+    Q, K, V, B, sm_scale, Out, DO,
+    DQ, DB,
+    L,
+    D,
+    stride_qz, stride_qh, stride_qm, stride_qk,
+    stride_kz, stride_kh, stride_kn, stride_kk,
+    stride_vz, stride_vh, stride_vk, stride_vn,
+    stride_bz, stride_bh, stride_bm, stride_bn,
+    stride_oz, stride_oh, stride_om, stride_ok,
+    stride_dqz, stride_dqh, stride_dqm, stride_dqk,
+    stride_dbz, stride_dbh, stride_dbm, stride_dbn,
+    cu_seqlens_q,
+    cu_seqlens_k,
+    num_seqlens,   # set num_seqlens to zero to ignore cu_seqlens_q/k
+    max_seqlen_q, # and use max_seqlen_q/k for all seqlen_q/k
+    max_seqlen_k,
+    head_dim: tl.constexpr,
+    dropout_p,
+    philox_seed_ptr,
+    philox_offset1 : '*u32',
+    philox_offset2 : 'u32',
+    BLOCK_M: tl.constexpr,
+    BLOCK_DMODEL: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    CAUSAL: tl.constexpr,
+    ENABLE_DROPOUT: tl.constexpr,
+    PADDED_HEAD: tl.constexpr,
+    BIAS_TYPE: tl.constexpr,
+):  
+    if (head_dim > 32 and head_dim <=48):
+        bwd_kernel_dq_reduce(
+            Q, K, V, B, sm_scale, Out, DO,
+            DQ, DB,
+            L,
+            D,
+            stride_qz, stride_qh, stride_qm, stride_qk,
+            stride_kz, stride_kh, stride_kn, stride_kk,
+            stride_vz, stride_vh, stride_vk, stride_vn,
+            stride_bz, stride_bh, stride_bm, stride_bn,
+            stride_oz, stride_oh, stride_om, stride_ok,
+            stride_dqz, stride_dqh, stride_dqm, stride_dqk,
+            stride_dbz, stride_dbh, stride_dbm, stride_dbn,
+            cu_seqlens_q,
+            cu_seqlens_k,
+            num_seqlens,   # set num_seqlens to zero to ignore cu_seqlens_q/k
+            max_seqlen_q, # and use max_seqlen_q/k for all seqlen_q/k
+            max_seqlen_k,
+            head_dim,
+            dropout_p,
+            philox_seed_ptr,
+            philox_offset1,
+            philox_offset2,
+            BLOCK_M,
+            32,
+            16,
+            BLOCK_N,
+            CAUSAL,
+            ENABLE_DROPOUT,
+            PADDED_HEAD,
+            BIAS_TYPE,
+        )
+    elif (head_dim > 64 and head_dim <=80):
+        BLOCK_N_TEST: tl.constexpr = 16
+        bwd_kernel_dq_reduce(
+            Q, K, V, B, sm_scale, Out, DO,
+            DQ, DB,
+            L,
+            D,
+            stride_qz, stride_qh, stride_qm, stride_qk,
+            stride_kz, stride_kh, stride_kn, stride_kk,
+            stride_vz, stride_vh, stride_vk, stride_vn,
+            stride_bz, stride_bh, stride_bm, stride_bn,
+            stride_oz, stride_oh, stride_om, stride_ok,
+            stride_dqz, stride_dqh, stride_dqm, stride_dqk,
+            stride_dbz, stride_dbh, stride_dbm, stride_dbn,
+            cu_seqlens_q,
+            cu_seqlens_k,
+            num_seqlens,   # set num_seqlens to zero to ignore cu_seqlens_q/k
+            max_seqlen_q, # and use max_seqlen_q/k for all seqlen_q/k
+            max_seqlen_k,
+            head_dim,
+            dropout_p,
+            philox_seed_ptr,
+            philox_offset1,
+            philox_offset2,
+            BLOCK_M,
+            64,
+            16,
+            BLOCK_N_TEST,
+            CAUSAL,
+            ENABLE_DROPOUT,
+            PADDED_HEAD,
+            BIAS_TYPE,
+        )
+        
+    elif (head_dim > 80 and head_dim <=96):
+        bwd_kernel_dq_reduce(
+            Q, K, V, B, sm_scale, Out, DO,
+            DQ, DB,
+            L,
+            D,
+            stride_qz, stride_qh, stride_qm, stride_qk,
+            stride_kz, stride_kh, stride_kn, stride_kk,
+            stride_vz, stride_vh, stride_vk, stride_vn,
+            stride_bz, stride_bh, stride_bm, stride_bn,
+            stride_oz, stride_oh, stride_om, stride_ok,
+            stride_dqz, stride_dqh, stride_dqm, stride_dqk,
+            stride_dbz, stride_dbh, stride_dbm, stride_dbn,
+            cu_seqlens_q,
+            cu_seqlens_k,
+            num_seqlens,   # set num_seqlens to zero to ignore cu_seqlens_q/k
+            max_seqlen_q, # and use max_seqlen_q/k for all seqlen_q/k
+            max_seqlen_k,
+            head_dim,
+            dropout_p,
+            philox_seed_ptr,
+            philox_offset1,
+            philox_offset2,
+            BLOCK_M,
+            64,
+            32,
+            BLOCK_N,
+            CAUSAL,
+            ENABLE_DROPOUT,
+            PADDED_HEAD,
+            BIAS_TYPE,
+        )
+    else:
+        bwd_kernel_dq_full(
+            Q, K, V, B, sm_scale, Out, DO,
+            DQ, DB,
+            L,
+            D,
+            stride_qz, stride_qh, stride_qm, stride_qk,
+            stride_kz, stride_kh, stride_kn, stride_kk,
+            stride_vz, stride_vh, stride_vk, stride_vn,
+            stride_bz, stride_bh, stride_bm, stride_bn,
+            stride_oz, stride_oh, stride_om, stride_ok,
+            stride_dqz, stride_dqh, stride_dqm, stride_dqk,
+            stride_dbz, stride_dbh, stride_dbm, stride_dbn,
+            cu_seqlens_q,
+            cu_seqlens_k,
+            num_seqlens,   # set num_seqlens to zero to ignore cu_seqlens_q/k
+            max_seqlen_q, # and use max_seqlen_q/k for all seqlen_q/k
+            max_seqlen_k,
+            head_dim,
+            dropout_p,
+            philox_seed_ptr,
+            philox_offset1,
+            philox_offset2,
+            BLOCK_M, BLOCK_DMODEL,
+            BLOCK_N,
+            CAUSAL,
+            ENABLE_DROPOUT,
+            PADDED_HEAD,
+            BIAS_TYPE,
+        )
