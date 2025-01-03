@@ -51,9 +51,6 @@ def parse():
 
 def do_compile(args):
     import triton
-    from triton.compiler.code_generator import kernel_suffix
-    from triton.backends.amd.driver import ty_to_cpp
-
     out_path = args.out_path
 
     # execute python sources and extract functions wrapped in JITFunction
@@ -105,15 +102,16 @@ def do_compile(args):
             return False
         return None
 
-    hints = {i: constexpr(s.split(":")[1]) for i, s in enumerate(signature) if ":" in s}
+    hints = {(i, ): constexpr(s.split(":")[1]) for i, s in enumerate(signature) if ":" in s}
     hints = {k: v for k, v in hints.items() if v is not None}
     constants = {kernel.arg_names[i]: constexpr(s) for i, s in enumerate(signature)}
     constants = {k: v for k, v in constants.items() if v is not None}
-    signature = {
-        kernel.arg_names[i]: s.split(":")[0]
-        for i, s in enumerate(signature)
-        if kernel.arg_names[i] not in constants
-    }
+    for key, value in hints.items():
+        if value == 1:
+            constants[kernel.arg_names[key[0]]] = value
+    signature = {kernel.arg_names[i]: s.split(":")[0] for i, s in enumerate(signature)}
+    for key in constants:
+        signature[key] = 'constexpr'
     const_sig = 'x'.join([str(v) for v in constants.values()])
     doc_string = [f"{k}={v}" for k, v in constants.items()]
     doc_string += [f"num_warps={args.num_warps}", f"num_stages={args.num_stages}"]
@@ -121,12 +119,11 @@ def do_compile(args):
     # compile ast into cubin
     for h in hints.values():
         assert h in [1, 16], f"Only 1 and 16 are valid hints, got {h}"
-    attrs = triton.backends.compiler.AttrsDescriptor.from_hints(hints)
-    for p, v in attrs.get_constants().items():
-        constants.update({kernel.arg_names[p]: v})
-    src = triton.compiler.ASTSource(fn=kernel, constants=constants, signature=signature, attrs=attrs)
+    attrs = {k: [("tt.divisibility", 16)] for k, v in hints.items() if v == 16}
+    src = triton.compiler.ASTSource(fn=kernel, constexprs=constants, signature=signature, attrs=attrs)
     opts = {"num_warps": args.num_warps, "num_stages": args.num_stages}
     ccinfo = triton.compile(src, target=KNOWN_TARGETS[args.target], options=opts)
+
     # import pdb; pdb.set_trace()
     with open(out_path.with_suffix('.hsaco'), 'bw') as f:
         f.write(ccinfo.kernel)
