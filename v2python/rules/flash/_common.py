@@ -16,6 +16,8 @@ class FlashKernel(KernelDescription):
         # tuning database
         if not hasattr(self, 'gen_autotune_configs'):
             return True
+        if gpu == 'Unidentified':  # Will not have a tuning database
+            return True
         MI = 'MI' in gpu
         Navi = 'Navi' in gpu
         def check_value(repr_name):
