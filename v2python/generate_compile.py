@@ -2,7 +2,11 @@
 # SPDX-License-Identifier: MIT
 
 from .rules import kernels as triton_kernels
-from .tuning_database import KernelTuningDatabase
+from .tuning_database import (
+    KernelTuningDatabase,
+    GPU_TO_DIRECTORY,
+    GPU_TO_CLUSTER_SUFFIX,
+)
 import io
 import shutil
 import argparse
@@ -13,20 +17,6 @@ import itertools
 
 SOURCE_PATH = Path(__file__).resolve()
 COMPILER = SOURCE_PATH.parent / 'compile.py'
-
-GPU_TO_DIRECTORY = {
-    'MI200'  : 'amd-gfx90a',
-    'MI300X' : 'amd-gfx942',
-    'Navi31' : 'amd-gfx110x',
-    'Navi32' : 'amd-gfx110x',
-}
-
-GPU_TO_CLUSTER_SUFFIX = {
-    'MI200'  : 'MI200',
-    'MI300X' : 'MI300X',
-    'Navi31' : 'Navi3x',
-    'Navi32' : 'Navi3x',
-}
 
 class ClusterKernel(object):
     def __init__(self):

@@ -8,7 +8,11 @@ from .gpu_targets import AOTRITON_GPU_ARCH_TUNING_STRING
 from .common_tuning_database import CommonKernelTuningDatabaseForArch
 from .sqlite_tuning_database import SQLiteKernelTuningDatabaseForArch
 from .downgrader import TuningDowngrader
-from .tuning_lut import KernelTuningEntryForFunctionalOnGPU
+from .tuning_lut import (
+    KernelTuningEntryForFunctionalOnGPU,
+    GPU_TO_DIRECTORY,
+    GPU_TO_CLUSTER_SUFFIX,
+)
 
 class EmptyKernelTuningDatabaseForArch(CommonKernelTuningDatabaseForArch):
     def __init__(self, k, arch):
