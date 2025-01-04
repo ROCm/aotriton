@@ -268,7 +268,7 @@ def parse():
     p.add_argument('--sm_scale', type=float, nargs=1, default=[1.2], help='(Not a functional) Softmax Scale')
     p.add_argument('--return_encoded_softmax', type=bool, default=[False],
                    help="(A functional for debugging) kernel that returns softmax(dropout(QK')) to validate the correctness of dropout")
-    p.add_argument('--d_head', type=int, nargs=NARG_PLUS, default=[16,32,64,128,256], help='Head dimensions.')
+    p.add_argument('--d_head', type=int, nargs=NARG_PLUS, default=[16,32,64,128,256,512], help='Head dimensions.')
     # p.add_argument('--seqlen_q', type=int, nargs='+', default=[4,8,16,32,64,128,256,1024,2048,4096,8192], help='Sequence length of Q.')
     # p.add_argument('--seqlen_k', type=int, nargs='+', default=[4,8,16,32,64,128,256,1024,2048,4096,8192], help='Sequence length of K/V.')
     p.add_argument('--seqlen_q', type=int, nargs=NARG_PLUS, default=[4,8,16,32,64,128,256,512,1024,2048,4096,8192], help='Sequence length of Q.')
