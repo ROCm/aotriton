@@ -1,4 +1,4 @@
-# Copyright © 2023-2024 Advanced Micro Devices, Inc.
+# Copyright © 2023-2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
 from pyaotriton.v2.flash import (
@@ -20,8 +20,16 @@ try:
     PASS_PHILOX_AS_TENSOR = True
 except:
     PASS_PHILOX_AS_TENSOR = False
+
 from pyaotriton.v2 import CppTuneSpecialKernelIndex
 import os
+
+AOTRITON_TORCH_ONLY_USE_CPU = bool(int(os.getenv('AOTRITON_TORCH_ONLY_USE_CPU', default='0')))
+if AOTRITON_TORCH_ONLY_USE_CPU:
+    from pyaotriton import HipMemory, hipDeviceSynchronize
+else:
+    # Let user import HipMemory unconditionally but its usage should be guarded with AOTRITON_TORCH_ONLY_USE_CPU
+    HipMemory = None
 
 def cast_dtype(dtype):
     assert not dtype.is_complex
@@ -33,11 +41,13 @@ def cast_dtype(dtype):
     typename = f'k{maintype}{bits}'
     return getattr(DType, typename)
 
-def mk_aotensor(q, if_empty_then_like=None):
+def _do_mk_aotensor(q, if_empty_then_like=None, force_data_ptr=None):
     rank = len(q.shape) if q is not None else len(if_empty_then_like.shape)
-    if q is not None and len(q.shape) == 1 and q.numel() == 1:
+    def lazy_data_ptr():
+        return q.data_ptr() if force_data_ptr is None else force_data_ptr
+    if q is not None and len(q.shape) == 1 and q.numel() in [0, 1]:
         if PASS_PHILOX_AS_TENSOR:
-            return T0(q.data_ptr(), cast_dtype(q.dtype))
+            return T0(lazy_data_ptr(), cast_dtype(q.dtype))
         else:
             return q[0]
     elif rank == 1:
@@ -52,7 +62,32 @@ def mk_aotensor(q, if_empty_then_like=None):
         return klass(0, [0] * rank, [0] * rank, cast_dtype(if_empty_then_like.dtype))
     if q is not None:
         assert q.stride(-1) == 1, "AOTriton assumes the last stride of Tensors be 1"
-    return klass(q.data_ptr(), tuple(q.size()), q.stride(), cast_dtype(q.dtype))
+    return klass(lazy_data_ptr(), tuple(q.size()), q.stride(), cast_dtype(q.dtype))
+
+if not AOTRITON_TORCH_ONLY_USE_CPU:
+    def mk_aotensor(q, if_empty_then_like=None):
+        return _do_mk_aotensor(q, if_empty_then_like=if_empty_then_like), q
+else:
+    def mk_aotensor(q, if_empty_then_like=None):
+        if q is None or q.device.type != 'cpu':
+            return _do_mk_aotensor(q, if_empty_then_like=if_empty_then_like), q
+        devm = HipMemory()
+        nbytes = q.untyped_storage().nbytes()
+        devm.alloc(nbytes)
+        devm.load_from_host(q.data_ptr(), nbytes)
+        qview = _do_mk_aotensor(q,
+                                if_empty_then_like=if_empty_then_like,
+                                force_data_ptr=devm.get_pointer())
+        return qview, devm
+
+    def _torch_cpu_only_copy_back(cputensors, devms):
+        hipDeviceSynchronize()
+        for cput, devm in zip(cputensors, devms):
+            if cput is None or devm is None:
+                continue
+            nbytes = cput.untyped_storage().nbytes()
+            devm.store_to_host(cput.data_ptr(), nbytes)
+        hipDeviceSynchronize()
 
 def attn_fwd(q, k, v, b, sm_scale, M, o,
              dropout_p, philox_seed, philox_offset1, philox_offset2,
@@ -60,51 +95,85 @@ def attn_fwd(q, k, v, b, sm_scale, M, o,
              encoded_softmax, is_causal,
              extargs=None):
     extargs = FwdExtraArguments() if extargs is None else extargs
-    err = fa_forward(mk_aotensor(q),
-                     mk_aotensor(k),
-                     mk_aotensor(v),
-                     mk_aotensor(b, if_empty_then_like=q),
+    qview, qdevm = mk_aotensor(q)
+    kview, kdevm = mk_aotensor(k)
+    vview, vdevm = mk_aotensor(v)
+    bview, bdevm = mk_aotensor(b, if_empty_then_like=q)
+    Mview, Mdevm = mk_aotensor(M)
+    oview, odevm = mk_aotensor(o)
+    seedview, seeddevm = mk_aotensor(philox_seed)
+    offset1view, offset1devm = mk_aotensor(philox_offset1)
+    seedoutview, seedoutdevm = mk_aotensor(philox_seed_output)
+    offsetoutview, offsetoutdevm = mk_aotensor(philox_offset_output)
+    esmview, esmdevm = mk_aotensor(encoded_softmax, if_empty_then_like=q)
+    if AOTRITON_TORCH_ONLY_USE_CPU:
+        hipDeviceSynchronize()
+    err = fa_forward(qview,
+                     kview,
+                     vview,
+                     bview,
                      float(sm_scale),
-                     mk_aotensor(M),
-                     mk_aotensor(o),
+                     Mview,
+                     oview,
                      float(dropout_p),
-                     mk_aotensor(philox_seed),
-                     mk_aotensor(philox_offset1),
+                     seedview,
+                     offset1view,
                      philox_offset2,
-                     T0(philox_seed_output.data_ptr(), DType.kUInt64),
-                     T0(philox_offset_output.data_ptr(), DType.kUInt64),
-                     mk_aotensor(encoded_softmax, if_empty_then_like=q),
+                     seedoutview,
+                     offsetoutview,
+                     esmview,
                      is_causal,
                      Stream(),
                      extargs)
+    if AOTRITON_TORCH_ONLY_USE_CPU:
+        _torch_cpu_only_copy_back([M, o, philox_seed_output, philox_offset_output, encoded_softmax],
+                                  [Mdevm, odevm, seedoutdevm, offsetoutdevm, esmdevm])
     # print(f'{err=}')
     return err
 
 def attn_bwd(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
              dropout_p, philox_seed, philox_offset1, philox_offset2, is_causal, extargs=None):
     extargs = BwdExtraArguments() if extargs is None else extargs
-    b = mk_aotensor(b, if_empty_then_like=q)
+    qview, qdevm = mk_aotensor(q)
+    kview, kdevm = mk_aotensor(k)
+    vview, vdevm = mk_aotensor(v)
+    bview, bdevm = mk_aotensor(b, if_empty_then_like=q)
+    oview, odevm = mk_aotensor(o)
+    doutview, doutdevm = mk_aotensor(dout)
+    dqview, dqdevm = mk_aotensor(dq)
+    dkview, dkdevm = mk_aotensor(dk)
+    dvview, dvdevm = mk_aotensor(dv)
+    dbview, dbdevm = mk_aotensor(db, if_empty_then_like=q)
+    Lview, Ldevm = mk_aotensor(L)
+    deltaview, deltadevm = mk_aotensor(delta)
+    seedview, seeddevm = mk_aotensor(philox_seed)
+    offset1view, offset1devm = mk_aotensor(philox_offset1)
+    if AOTRITON_TORCH_ONLY_USE_CPU:
+        hipDeviceSynchronize()
     # print(f'{b=}')
-    err = fa_backward(mk_aotensor(q),
-                      mk_aotensor(k),
-                      mk_aotensor(v),
-                      b,
+    err = fa_backward(qview,
+                      kview,
+                      vview,
+                      bview,
                       float(sm_scale),
-                      mk_aotensor(o),
-                      mk_aotensor(dout),
-                      mk_aotensor(dq),
-                      mk_aotensor(dk),
-                      mk_aotensor(dv),
-                      mk_aotensor(db, if_empty_then_like=q),
-                      mk_aotensor(L),
-                      mk_aotensor(delta),
+                      oview,
+                      doutview,
+                      dqview,
+                      dkview,
+                      dvview,
+                      dbview,
+                      Lview,
+                      deltaview,
                       float(dropout_p),
-                      mk_aotensor(philox_seed),
-                      mk_aotensor(philox_offset1),
+                      seedview,
+                      offset1view,
                       philox_offset2,
                       is_causal,
                       Stream(),
                       extargs)
+    if AOTRITON_TORCH_ONLY_USE_CPU:
+        _torch_cpu_only_copy_back([dq, dk, dv, db, delta],
+                                  [dqdevm, dkdevm, dvdevm, dbdevm, deltadevm])
     # print(f'{err=}')
     return err
 

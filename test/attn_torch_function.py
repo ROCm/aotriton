@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Copyright © 2023-2024 Advanced Micro Devices, Inc.
+# Copyright © 2023-2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
 import torch
@@ -12,6 +12,8 @@ from aotriton_flash import (
     FwdExtraArguments,
     BwdExtraArguments,
     hipError_t,
+    AOTRITON_TORCH_ONLY_USE_CPU,
+    HipMemory,
 )
 from collections import namedtuple
 
@@ -148,7 +150,7 @@ class _attention(torch.autograd.Function):
         if tuning_result is not None:
             ctx.tuning_result += tuning_result
 
-        assert not torch.isnan(delta).any()
+        assert not torch.isnan(delta).any(), f'{delta=}'
         return dq, dk, dv, db, None, None, None, None, None
 
 attention = _attention.apply
