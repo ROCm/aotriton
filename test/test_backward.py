@@ -14,7 +14,7 @@ from attn_torch_function import (
     debug_fill_dropout_rng,
     AttentionExtraArgs
 )
-from _common_test import SdpaContext, SdpaParams, SdpaContextFromNPZ
+from _common_test import SdpaContext, SdpaParams, SdpaContextFromNPZ, AOTRITON_TORCH_ONLY_USE_CPU
 
 FOR_RELEASE = bool(int(os.getenv('FOR_RELEASE', default='0')))
 
@@ -169,9 +169,10 @@ def test_gqa(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropo
     _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
 
 def test_large_bf16_nan_values():
-    q = torch.full((1, 1, 1, 16), 133120.0, dtype=torch.bfloat16, device="cuda")
-    k = torch.full((1, 1, 1, 16), 133120.0, dtype=torch.bfloat16, device="cuda")
-    v = torch.full((1, 1, 1, 16), 133120.0, dtype=torch.bfloat16, device="cuda")
+    real_device = "cuda" if not AOTRITON_TORCH_ONLY_USE_CPU else "cpu"
+    q = torch.full((1, 1, 1, 16), 133120.0, dtype=torch.bfloat16, device=real_device)
+    k = torch.full((1, 1, 1, 16), 133120.0, dtype=torch.bfloat16, device=real_device)
+    v = torch.full((1, 1, 1, 16), 133120.0, dtype=torch.bfloat16, device=real_device)
     b = None
     from torch.nn.functional import scaled_dot_product_attention
     from torch.nn.attention import sdpa_kernel, SDPBackend
