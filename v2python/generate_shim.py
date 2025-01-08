@@ -55,6 +55,7 @@ def parse():
     p.add_argument("--noimage_mode", action='store_true', help="Expect the GPU kernel images are built separately.")
     p.add_argument("--build_for_tuning", action='store_true', help="Include all GPU kernels in the dispatcher for performance tuning.")
     p.add_argument("--verbose", action='store_true', help="Print debugging messages")
+    p.add_argument("--lut_sanity_check", action='store_true', help="Do not raise exceptions when the look up table (lut) is incomplete.")
     args = p.parse_args()
     args._build_root = Path(args.build_dir)
     args._sanity_check_exceptions = []
@@ -361,7 +362,7 @@ class AutotuneCodeGenerator(MakefileSegmentGenerator):
                 print(e)
                 self._args._sanity_check_exceptions.append(e)
                 for j in e.get_missing_lut_entries():
-                    print("TUNE_FLASH Json Item: ", j)
+                    print("TUNE_FLASH --entry_from_json Item: ", j)
             else:
                 pass  # Ignore MissingLutEntry when --build_for_tuning
         self.verbose(f'\t lut = {self._fsels}')
@@ -376,7 +377,7 @@ class AutotuneCodeGenerator(MakefileSegmentGenerator):
             print(self._makefile_target, ':', self._ofn.relative_to(self._build_dir), file=self._out)
             cmd  = self._cc_cmd + f' {self._ofn.absolute()} -o {self._obj_fn.absolute()} -c'
             print('\t', cmd, '\n', file=self._out)
-        if do_raise:
+        if do_raise and not self._args.lut_sanity_check:
             raise do_raise
 
     @property
