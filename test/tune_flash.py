@@ -65,17 +65,21 @@ class FlashSourceMonad(Monad):
         return True
 
 class FlashTunerSource(MonadService):
+    def clamp_memory_usage(self, tup):
+        a = self._args
+        BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type = tup
+        if seqlen_q * seqlen_k * D_HEAD >= 2048 * 2048 * 256:
+            BATCH = 3
+        if (causal or bias_type != 0) and seqlen_q * seqlen_k * D_HEAD >= 2048 * 2048 * 256:
+            # Prevent OOM, causal=True needs more memory
+            N_HEADS = 2
+            BATCH = 2
+        return (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type)
+
     def gen_from_argv(self):
         a = self._args
         for tup in itertools.product(a.batch, a.n_heads, a.d_head, a.seqlen_q, a.seqlen_k, a.causal, a.sm_scale, a.dropout_p, a.return_encoded_softmax, a.dtype, a.bias_type):
-            BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type = tup
-            if seqlen_q > 4096 and seqlen_k > 4096:
-                BATCH = 2
-            if (causal or bias_type != 0) and seqlen_q * seqlen_k >= 4096 * 4096:
-                # Prevent OOM, causal=True needs more memory
-                N_HEADS = 2
-                BATCH = 2
-            yield (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type)
+            yield self.clamp_memory_usage(tup)
 
     def gen(self):
         a = self._args
@@ -93,10 +97,8 @@ class FlashTunerSource(MonadService):
                 dtype = j['dtype']
                 bias_type = j['bias_type']
                 for BATCH, N_HEADS, sm_scale, return_encoded_softmax in itertools.product(a.batch, a.n_heads, a.sm_scale, a.return_encoded_softmax):
-                    if seqlen_q * seqlen_k >= a.limit_memory_at_seqlen ** 2:
-                        BATCH = 2
-                        N_HEADS = 2
-                    yield (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type)
+                    tup = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type)
+                    yield self.clamp_memory_usage(tup)
 
     def init(self, _):
         pass
