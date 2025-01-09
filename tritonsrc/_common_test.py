@@ -19,7 +19,7 @@ def allow_fp16_bf16_reduction_math_sdp(v : bool):
         torch.backends.cuda.allow_fp16_bf16_reduction_math_sdp(v)
 
 def sdpa_math(query, key, value, attn_mask=None, dropout_p=0.0, dropout_mask=None, is_causal=False, scale=None, enable_gqa=False):
-    if torch.__version__ >= '2.5.0':
+    if str(torch.__version__) >= '2.5.0':
         allow_fp16_bf16_reduction_math_sdp(True)
         retv = torch.ops.aten._scaled_dot_product_attention_math(query, key, value,
                                                                  dropout_p=dropout_p,
@@ -306,7 +306,7 @@ class SdpaContext(object):
                 key_fudge_factor = 330.0
                 bias_fudge_factor = 36.0
         if AOTRITON_TORCH_ONLY_USE_CPU:
-            query_fudge_factor = 90.0
+            query_fudge_factor = 128.0
             key_fudge_factor = 330.0
             bias_fudge_factor = 36.0
             value_fudge_factor = 36.0
