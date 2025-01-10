@@ -38,6 +38,7 @@ std::unordered_map<std::string, GpuArch> LazyArch::string_to_arch = {
   {"gfx942", GPU_ARCH_AMD_GFX942},
   {"gfx1100", GPU_ARCH_AMD_GFX1100},
   {"gfx1101", GPU_ARCH_AMD_GFX1101},
+  {"gfx950", GPU_ARCH_AMD_GFX950},
 };
 
 GpuArch
