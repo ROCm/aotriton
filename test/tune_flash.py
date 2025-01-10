@@ -69,11 +69,11 @@ class FlashTunerSource(MonadService):
         a = self._args
         BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type = tup
         if seqlen_q * seqlen_k * D_HEAD >= 2048 * 2048 * 256:
-            BATCH = 3
+            BATCH = min(BATCH, 3)
         if (causal or bias_type != 0) and seqlen_q * seqlen_k * D_HEAD >= 2048 * 2048 * 256:
             # Prevent OOM, causal=True needs more memory
-            N_HEADS = 2
-            BATCH = 2
+            N_HEADS = min(N_HEADS, 2)
+            BATCH = min(BATCH, 2)
         return (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type)
 
     def gen_from_argv(self):
