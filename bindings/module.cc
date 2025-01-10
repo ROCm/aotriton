@@ -198,6 +198,7 @@ namespace pyaotriton {
   }
 
   void def_hipruntime(py::module_& m);
+  void def_hipmemory(py::module_& m);
 
   template<int Rank>
   void def_tensorview(py::module_& m, const std::string& name) {
@@ -219,6 +220,7 @@ namespace pyaotriton {
     def_tensorview<4>(m, "T4");
     def_tensorview<2>(m, "T2");
     def_tensorview<1>(m, "T1");
+    def_hipmemory(m);
     // FIXME: deduplication of T0 code
     py::class_<aotriton::TensorView<0>>(m, "T0")
       .def(py::init<intptr_t, aotriton::DType>())

@@ -6,13 +6,20 @@ import math
 import torch
 
 HAS_REDUCED_SDPA = hasattr(torch.backends.cuda, "allow_fp16_bf16_reduction_math_sdp")
+# Set this env var when GPU system is not reliable
+# In addition to compute reference in CPU. The any other operators like input generations
+# are done on CPU as well
+AOTRITON_TORCH_ONLY_USE_CPU = bool(int(os.getenv('AOTRITON_TORCH_ONLY_USE_CPU', default='0')))
+# Usually we compare with GPU because it is much faster
+# Overrides by AOTRITON_TORCH_ONLY_USE_CPU=1
+AOTRITON_REF_DEVICE_OPTION = os.getenv('AOTRITON_REF_DEVICE_OPTION', default='default')
 
 def allow_fp16_bf16_reduction_math_sdp(v : bool):
     if HAS_REDUCED_SDPA:
         torch.backends.cuda.allow_fp16_bf16_reduction_math_sdp(v)
 
 def sdpa_math(query, key, value, attn_mask=None, dropout_p=0.0, dropout_mask=None, is_causal=False, scale=None, enable_gqa=False):
-    if torch.__version__ >= '2.5.0':
+    if str(torch.__version__) >= '2.5.0':
         allow_fp16_bf16_reduction_math_sdp(True)
         retv = torch.ops.aten._scaled_dot_product_attention_math(query, key, value,
                                                                  dropout_p=dropout_p,
@@ -110,6 +117,8 @@ class SdpaContext(object):
 
     def __init__(self, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, dtype,
                  bias_type=None, storage_flip=None, device='cuda', fillnan=False):
+        real_device = 'cpu' if AOTRITON_TORCH_ONLY_USE_CPU else device
+        self._target_device = device
         if isinstance(N_HEADS, int):
             Q_HEADS = K_HEADS = N_HEADS
         else:
@@ -130,14 +139,14 @@ class SdpaContext(object):
         # q = torch.empty(qdims, dtype=dtype, device=device).normal_(mean=0., std=0.5)
         # k = torch.empty(kdims, dtype=dtype, device=device).normal_(mean=0., std=0.5)
         # v = torch.empty(vdims, dtype=dtype, device=device).normal_(mean=0., std=0.5)
-        q = torch.rand(*qdims, dtype=dtype, device=device)
-        k = torch.rand(*kdims, dtype=dtype, device=device)
-        v = torch.rand(*vdims, dtype=dtype, device=device)
+        q = torch.rand(*qdims, dtype=dtype, device=real_device)
+        k = torch.rand(*kdims, dtype=dtype, device=real_device)
+        v = torch.rand(*vdims, dtype=dtype, device=real_device)
         if bias_type is None or bias_type == 0:
             b = None
         elif bias_type == 'matrix' or bias_type == 1:
             # b = torch.empty(bdims, dtype=dtype, device="cuda").normal_(mean=0., std=0.5)
-            b = torch.rand(*bdims, dtype=dtype, device=device)
+            b = torch.rand(*bdims, dtype=dtype, device=real_device)
             b = b.expand(BATCH, Q_HEADS, b.shape[0], b.shape[1])
         else:
             assert False, f'Unsupported bias_type {bias_type}'
@@ -164,6 +173,8 @@ class SdpaContext(object):
         if torch.version.hip:
             if 'gfx90a' in torch.cuda.get_device_properties(0).gcnArchName:
                 self.OUT_FUDGE_FACTOR = 12.0
+        if AOTRITON_TORCH_ONLY_USE_CPU:
+            self.OUT_FUDGE_FACTOR = 12.0
 
     '''
     Create Tensors that will be kept b/w forward and backward pass
@@ -222,7 +233,10 @@ class SdpaContext(object):
         return tuple([SdpaContext.clone_tensor(t, dtype=dtype, device=device) for t in in_tensors])
 
     def create_ref_inputs(self, target_gpu_device='cuda'):
-        ref_device_option = os.getenv('AOTRITON_REF_DEVICE_OPTION', default='default')
+        if AOTRITON_TORCH_ONLY_USE_CPU:
+            ref_device_option = 'cpu'
+        else:
+            ref_device_option = AOTRITON_REF_DEVICE_OPTION
         if ref_device_option == 'default':
             seqlen_k = self.seqlen_k
             '''
@@ -291,6 +305,11 @@ class SdpaContext(object):
                 query_fudge_factor = 80.0
                 key_fudge_factor = 330.0
                 bias_fudge_factor = 36.0
+        if AOTRITON_TORCH_ONLY_USE_CPU:
+            query_fudge_factor = 128.0
+            key_fudge_factor = 330.0
+            bias_fudge_factor = 36.0
+            value_fudge_factor = 36.0
         if dtype == torch.float32:
             key_fudge_factor = 180.0
             bias_fudge_factor = 24.0

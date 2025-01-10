@@ -3,6 +3,7 @@
 
 #include <aotriton/runtime.h>
 #include <pybind11/pybind11.h>
+
 namespace py = pybind11;
 
 namespace pyaotriton {
@@ -89,5 +90,6 @@ namespace pyaotriton {
       .EV(hipErrorTbd)
       .export_values();
 #undef EV
+    m.def("hipDeviceSynchronize", &hipDeviceSynchronize);
   }
 } // namespace pyaotriton

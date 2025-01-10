@@ -22,8 +22,8 @@ class ObjectFileDescription(object):
         return t.startswith('*')
 
     DEFAULT_NUM_WARPS = 4
-    DEFAULT_NUM_STAGES = 4
-    DEFAULT_WAVES_PER_EU = 0
+    DEFAULT_NUM_STAGES = 1
+    DEFAULT_WAVES_PER_EU = 1
 
     def __init__(self,
                  triton_kernel_desc : 'KernelDescription',
