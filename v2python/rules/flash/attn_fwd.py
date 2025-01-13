@@ -58,7 +58,7 @@ class attn_fwd(FlashKernel):
     }
     FEAT_CHOICES = {
         frozenset(['CAUSAL']) : [False, True],
-        frozenset(['BLOCK_DMODEL']) : [16, 32, 64, 128, 256],
+        frozenset(['BLOCK_DMODEL']) : [16, 32, 64, 128, 256, 512],
         frozenset(['ENABLE_DROPOUT']) : [False, True],
         frozenset(['RETURN_ENCODED_SOFTMAX']) : [False, True],
         frozenset(['PADDED_HEAD']) : [False, True],
