@@ -61,10 +61,6 @@ def attn_fwd_inner(
             k_offs_n = start_n + tl.arange(0, BLOCK_N)
         else:
             k_offs_n = None
-        # k_offs_d = None if not PADDED_HEAD else tl.arange(0, BLOCK_DMODEL)
-        # k = load_fn(k_ptrs, k_offs_d, k_offs_n, head_dim, seqlen_k)
-        # tl.static_print(f'{MASK_STEPS=}')
-        # tl.static_print(f'{PADDED_HEAD=}')
         k0, k1, k2 = composed_load(k_ptrs0, k_ptrs1, k_ptrs2,
                                    k_offs_n,
                                    BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
@@ -144,7 +140,7 @@ def attn_fwd_inner(
             philox_offset = batch_philox_offset + start_m * BLOCK_M * max_seqlen_k + start_n
             keep = dropout_mask(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, max_seqlen_k)
             if RETURN_ENCODED_SOFTMAX:
-                mstore2d(tl.where(keep, p, -p).to(q.type.element_ty),
+                mstore2d(tl.where(keep, p, -p).to(q0.type.element_ty),
                          BLOCK_M,
                          BLOCK_N,
                          o_base=encoded_sm_base,
@@ -157,7 +153,7 @@ def attn_fwd_inner(
                 # tl.store(encoded_sm_ptrs, tl.where(keep, p, -p).to(q.type.element_ty))
             p = tl.where(keep, p, 0.0)
         elif RETURN_ENCODED_SOFTMAX:
-            mstore2d(p.to(q.type.element_ty),
+            mstore2d(p.to(q0.type.element_ty),
                      BLOCK_M,
                      BLOCK_N,
                      o_base=encoded_sm_base,

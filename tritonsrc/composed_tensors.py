@@ -151,6 +151,7 @@ def composed_dot_rhs(
     return (ax, ay, az)
 
 
+
 # Element-wise mul, broadcasting rhs to composed lhs
 @triton.jit
 def composed_mul_lhs(
@@ -164,6 +165,20 @@ def composed_mul_lhs(
     ly = ly * rhs if D1 > 0 else ly
     lz = lz * rhs if D2 > 0 else lz
     return (lx, ly, lz)
+
+@triton.jit
+def composed_mul_acc(
+        lx, ly, lz,
+        rhs,
+        x, y, z,
+        D0 : tl.constexpr,
+        D1 : tl.constexpr,
+        D2 : tl.constexpr
+):
+    x += lx * rhs
+    y += ly * rhs if D1 > 0 else ly
+    z += lz * rhs if D2 > 0 else lz
+    return (x, y, z)
 
 @triton.jit
 def composed_store(
