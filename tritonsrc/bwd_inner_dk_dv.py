@@ -9,13 +9,8 @@ from masked_load_store import load_fn
 from triton.language.extra import libdevice
 from composed_tensors import (
     composed_offs_1d,
-    composed_zeros_2d,
-    composed_ptrs,
-    composed_load,
     composed_advance,
-    composed_to,
-    composed_store,
-    composed_mul_lhs,
+    composed_load,
     composed_dot_both,
     composed_dot_rhs,
     composed_mul_lhs,
@@ -152,7 +147,7 @@ def bwd_inner_dk_dv(
             tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
         # q.offs = (start_q, 0), k.offs = (0, start_k)
         
-        qk += composed_dot_both(q0, q1, q2,
+        qk = composed_dot_both(q0, q1, q2,
                                 kt0, kt1, kt2,
                                 qk,
                                 BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2
@@ -211,8 +206,6 @@ def bwd_inner_dk_dv(
         ds = p * (dp - Di) # (BLOCK_M, BLOCK_N)
         # compute dk
         if BLOCK_M == 1:
-            dk += ds.to(q_ptrs.dtype.element_ty) * q
-            
             dk0, dk1, dk2 = composed_mul_acc(q0, q1, q2,
                                             ds.to(q0.dtype.element_ty),
                                             dk0, dk1, dk2,
