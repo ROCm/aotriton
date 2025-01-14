@@ -184,7 +184,7 @@ def bwd_inner_dk_dv(
                                              dv0, dv1, dv2,
                                              BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
         else:            
-            dv0, dv1, dv2 = composed_dot_rhs(tl.trans(p_dropped),
+            dv0, dv1, dv2 = composed_dot_rhs(tl.trans(p_dropped.to(do0.dtype)),
                                              do0, do1, do2,
                                              dv0, dv1, dv2,
                                              BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
