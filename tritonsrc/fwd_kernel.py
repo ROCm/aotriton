@@ -147,10 +147,10 @@ def attn_fwd(
 
         # bottom right aligned version. Ends at either
         # the top edge (seqlen_q < seqlen_k) or left edge.
-        n_blocks_seqlen = cdiv_fn((start_m + 1) * BLOCK_M + seqlen_k - seqlen_q, BLOCK_N)
+        # n_blocks_seqlen = cdiv_fn((start_m + 1) * BLOCK_M + seqlen_k - seqlen_q, BLOCK_N)
 
         # top left aligned version. Ends at either
-        # n_blocks_seqlen = cdiv_fn((start_m + 1) * BLOCK_M, BLOCK_N)
+        n_blocks_seqlen = cdiv_fn((start_m + 1) * BLOCK_M, BLOCK_N)
 
         # This is what adjusts the block_max for the current WG, only
         # if CAUSAL. Otherwise we want to always iterate through all n_blocks
@@ -159,18 +159,19 @@ def attn_fwd(
         # the blocks that are all 0. We exit early.
         if n_blocks <= 0:
             acc0, acc1, acc2 = composed_zeros_2d(BLOCK_M, BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2, dtype=Out.type.element_ty)
+            # We still need to write 0s to the result
             composed_store(acc0, acc1, acc2,
-                   BLOCK_M,
-                   BLOCK_DMODEL0,
-                   BLOCK_DMODEL1,
-                   BLOCK_DMODEL2,
-                   o_base=o_base,
-                   o_start_row=start_m * BLOCK_M,
-                   o_start_col=0,
-                   o_rows=seqlen_q,
-                   o_cols=BLOCK_DMODEL,
-                   stride_row=stride_om,
-                   stride_col=stride_on)
+                           BLOCK_M,
+                           BLOCK_DMODEL0,
+                           BLOCK_DMODEL1,
+                           BLOCK_DMODEL2,
+                           o_base=o_base,
+                           o_start_row=start_m * BLOCK_M,
+                           o_start_col=0,
+                           o_rows=seqlen_q,
+                           o_cols=BLOCK_DMODEL,
+                           stride_row=stride_om,
+                           stride_col=stride_on)
             # The tensor allocated for L is based on max_seqlen_q as that is
             # statically known.
             L_ptr_base = L + (off_z * num_head_q + off_h_q)  * max_seqlen_q
@@ -242,7 +243,6 @@ def attn_fwd(
     # initialize pointer to m and l
     m_i = tl.full([BLOCK_M], -3.40282e+38, dtype=tl.float32)
     l_i = tl.full([BLOCK_M], 1.0, dtype=tl.float32)
-    # acc0, acc1, acc2 = tl.zeros([BLOCK_M, BLOCK_DMODEL], dtype=tl.float32)
     acc0, acc1, acc2 = composed_zeros_2d(BLOCK_M, BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
 
     # scale sm_scale by log_2(e) and use 2^x in the loop as we do not
@@ -326,8 +326,6 @@ def attn_fwd(
             offs_n_causal = offs_n
         else:
             offs_n_causal = 0
-        # k_ptrs0, k_ptrs1, k_ptrs2 += n_full_blocks * BLOCK_N * stride_kn
-        # v_ptrs0, v_ptrs1, v_ptrs2 += n_full_blocks * BLOCK_N * stride_vk
         k_ptrs0, k_ptrs1, k_ptrs2 = composed_advance(k_ptrs0, k_ptrs1, k_ptrs2,
                                                      n_full_blocks * BLOCK_N * stride_kn,
                                                      BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2
@@ -372,14 +370,12 @@ def attn_fwd(
     # acc0, acc1, acc2 = acc0, acc1, acc2 * l_recip
     acc0, acc1, acc2 = composed_mul_lhs(acc0, acc1, acc2,
                                         l_recip,
-                                        BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2
-                                       )
+                                        BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
     if ENABLE_DROPOUT:
         dropout_scale = 1.0 / (1 - dropout_p)
         acc0, acc1, acc2 = composed_mul_lhs(acc0, acc1, acc2,
                                         dropout_scale,
-                                        BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2
-                                       )
+                                        BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
     # If seqlen_q > seqlen_k but the delta is not a multiple of BLOCK_M,
     # then we have one block with a row of all NaNs which come from computing
     # softmax over a row of all -infs (-inf - inf = NaN). We check for that here
@@ -390,32 +386,24 @@ def attn_fwd(
     # causal_start_idx = seqlen_q - seqlen_k
     # Top left alignment
     causal_start_idx = 0
-
-    # acc0, acc1, acc2 = acc0, acc1, acc2.to(Out.type.element_ty)
     acc0, acc1, acc2 = composed_to(acc0, acc1, acc2, Out.type.element_ty)
-
     if CAUSAL:
         tl.assume(start_m_idx >= 0)
         tl.assume(end_m_idx >= 0)
         if causal_start_idx > start_m_idx and causal_start_idx < end_m_idx:
-            # Create masks for each BLOCK_DMODEL section
             mask_m_offsets = start_m_idx + tl.arange(0, BLOCK_M)
             z = 0.0
-
             out_mask_boundary0 = tl.full((BLOCK_DMODEL0,), causal_start_idx, dtype=tl.int32)
             out_ptrs_mask0 = mask_m_offsets[:, None] >= out_mask_boundary0[None, :]
             acc0 = tl.where(out_ptrs_mask0, acc0, z.to(acc0.type.element_ty))
-
             if BLOCK_DMODEL1 > 0:
                 out_mask_boundary1 = tl.full((BLOCK_DMODEL1,), causal_start_idx + BLOCK_DMODEL0, dtype=tl.int32)
                 out_ptrs_mask1 = mask_m_offsets[:, None] >= out_mask_boundary1[None, :]
                 acc1 = tl.where(out_ptrs_mask1, acc1, z.to(acc1.type.element_ty))
-
             if BLOCK_DMODEL2 > 0:
                 out_mask_boundary2 = tl.full((BLOCK_DMODEL2,), causal_start_idx + BLOCK_DMODEL0 + BLOCK_DMODEL1, dtype=tl.int32)
                 out_ptrs_mask2 = mask_m_offsets[:, None] >= out_mask_boundary2[None, :]
                 acc2 = tl.where(out_ptrs_mask2, acc2, z.to(acc2.type.element_ty))
-
     # FIXME: MQA/GQA L tensor
     # TODO: make writing of L optional
     # write back LSE

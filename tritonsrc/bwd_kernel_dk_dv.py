@@ -75,12 +75,7 @@ def bwd_kernel_dk_dv(
     BLOCK_DMODEL_R2 : tl.constexpr = BLOCK_DMODEL_R1 - BLOCK_DMODEL1
     BLOCK_DMODEL2 : tl.constexpr = 2 ** (BLOCK_DMODEL_R2.bit_length() - 1) if BLOCK_DMODEL_R2 > 0 else 0
     BLOCK_DMODEL_R3 : tl.constexpr = BLOCK_DMODEL_R2 - BLOCK_DMODEL2
-    
-    tl.static_print(f'{BLOCK_DMODEL=}')
-    tl.static_print(f'{BLOCK_DMODEL0=}')
-    tl.static_print(f'{BLOCK_DMODEL1=}')
-    tl.static_print(f'{BLOCK_DMODEL2=}')
-    
+        
     tl.static_assert(BLOCK_DMODEL_R3 == 0, f'BLOCK_DMODEL = {BLOCK_DMODEL} = 0b{BLOCK_DMODEL:b} cannot be factored into <= 3 power of two values')
     tl.static_assert(BLOCK_DMODEL1 > 0 or BLOCK_DMODEL2 == 0, 'Only trailing BLOCK_DMODELx can be 0')
     
@@ -157,38 +152,38 @@ def bwd_kernel_dk_dv(
     
     if start_k + BLOCK_N <= seqlen_k:
         kt0, kt1, kt2 = composed_load(k_ptrs0, k_ptrs1, k_ptrs2,
-                                   None,
-                                   BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
-                                   seqlen_k, head_dim,
-                                   other=0.0,
-                                   PADDED_ROW=False,
-                                   PADDED_COL=PADDED_HEAD,
-                                   TRANSPOSED=True)
+                                      None,
+                                      BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                      seqlen_k, head_dim,
+                                      other=0.0,
+                                      PADDED_ROW=False,
+                                      PADDED_COL=PADDED_HEAD,
+                                      TRANSPOSED=True)
         vt0, vt1, vt2 = composed_load(v_ptrs0, v_ptrs1, v_ptrs2,
-                                   None,
-                                   BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
-                                   seqlen_k, head_dim,
-                                   other=0.0,
-                                   PADDED_ROW=False,
-                                   PADDED_COL=PADDED_HEAD,
-                                   TRANSPOSED=True)
+                                      None,
+                                      BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                      seqlen_k, head_dim,
+                                      other=0.0,
+                                      PADDED_ROW=False,
+                                      PADDED_COL=PADDED_HEAD,
+                                      TRANSPOSED=True)
     else:
         kt0, kt1, kt2 = composed_load(k_ptrs0, k_ptrs1, k_ptrs2,
-                                   offs_n,
-                                   BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
-                                   seqlen_k, head_dim,
-                                   other=0.0,
-                                   PADDED_ROW=True,
-                                   PADDED_COL=PADDED_HEAD,
-                                   TRANSPOSED=True)
+                                      offs_n,
+                                      BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                      seqlen_k, head_dim,
+                                      other=0.0,
+                                      PADDED_ROW=True,
+                                      PADDED_COL=PADDED_HEAD,
+                                      TRANSPOSED=True)
         vt0, vt1, vt2 = composed_load(v_ptrs0, v_ptrs1, v_ptrs2,
-                                   offs_n,
-                                   BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
-                                   seqlen_k, head_dim,
-                                   other=0.0,
-                                   PADDED_ROW=True,
-                                   PADDED_COL=PADDED_HEAD,
-                                   TRANSPOSED=True)
+                                      offs_n,
+                                      BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                      seqlen_k, head_dim,
+                                      other=0.0,
+                                      PADDED_ROW=True,
+                                      PADDED_COL=PADDED_HEAD,
+                                      TRANSPOSED=True)
     # KT_block_ptr = tl.make_block_ptr(
     #     base=K + k_offset,
     #     shape=(head_dim, seqlen_k),
@@ -396,8 +391,7 @@ def bwd_kernel_dk_dv(
     
     dk0, dk1, dk2 = composed_mul_lhs(dk0, dk1, dk2,
                                      sm_scale,
-                                     BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2
-                                    )
+                                     BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
     dk0, dk1, dk2 = composed_to(dk0, dk1, dk2, kt0.type.element_ty)
     dv0, dv1, dv2 = composed_to(dv0, dv1, dv2, vt0.type.element_ty)
     

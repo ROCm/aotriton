@@ -63,13 +63,11 @@ def bwd_inner_dq(
     offs_q = start_q + tl.arange(0, BLOCK_M)
     offs_k = tl.arange(0, BLOCK_N)
     kt_ptrs0, kt_ptrs1, kt_ptrs2 = composed_advance(kt_ptrs0, kt_ptrs1, kt_ptrs2,
-                                                 lo * k_stride,
-                                                 BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2
-                                             )
+                                                    lo * k_stride,
+                                                    BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
     vt_ptrs0, vt_ptrs1, vt_ptrs2 = composed_advance(vt_ptrs0, vt_ptrs1, vt_ptrs2,
-                                                 lo * v_stride,
-                                                 BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2
-                                             )
+                                                    lo * v_stride,
+                                                    BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
     if BIAS_TYPE == 1:
         B_block_ptr = tl.advance(B_block_ptr, (0, lo))
         DB_block_ptr = tl.advance(DB_block_ptr, (0, lo))
@@ -96,30 +94,29 @@ def bwd_inner_dq(
         PADDED_SEQ : tl.constexpr = not FULL_BLOCKS
         
         kt0, kt1, kt2 = composed_load(kt_ptrs0, kt_ptrs1, kt_ptrs2,
-                                   k_offs_n,
-                                   BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
-                                   seqlen_k, head_dim,
-                                   other=0.0,
-                                   PADDED_ROW=PADDED_SEQ,
-                                   PADDED_COL=PADDED_HEAD,
-                                   TRANSPOSED=True)
+                                      k_offs_n,
+                                      BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                      seqlen_k, head_dim,
+                                      other=0.0,
+                                      PADDED_ROW=PADDED_SEQ,
+                                      PADDED_COL=PADDED_HEAD,
+                                      TRANSPOSED=True)
         # TODO: pre_load_vt
         vt0, vt1, vt2 = composed_load(vt_ptrs0, vt_ptrs1, vt_ptrs2,
-                                   k_offs_n,
-                                   BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
-                                   seqlen_k, head_dim,
-                                   other=0.0,
-                                   PADDED_ROW=PADDED_SEQ,
-                                   PADDED_COL=PADDED_HEAD,
-                                   TRANSPOSED=True)
+                                      k_offs_n,
+                                      BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                      seqlen_k, head_dim,
+                                      other=0.0,
+                                      PADDED_ROW=PADDED_SEQ,
+                                      PADDED_COL=PADDED_HEAD,
+                                      TRANSPOSED=True)
         # -- compute qk ----
         # q.offs = (start_m, 0), k.offs = (0, start_k)
         qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)        
         qk = composed_dot_both(q0, q1, q2,
-                                kt0, kt1, kt2,
-                                qk,
-                                BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2
-                                )
+                               kt0, kt1, kt2,
+                               qk,
+                               BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
         if not FULL_BLOCKS:
             k_boundary = tl.full((BLOCK_M, ), seqlen_k, dtype=tl.int32)
             mask = offs_k_curr < k_boundary[:, None]
@@ -145,10 +142,9 @@ def bwd_inner_dq(
         # compute dp = dot(v, do)
         dp = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
         dp = composed_dot_both(do0, do1, do2,
-                                vt0, vt1, vt2,
-                                dp,
-                                BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2
-                                )
+                               vt0, vt1, vt2,
+                               dp,
+                               BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
         if ENABLE_DROPOUT:
             philox_offset = batch_philox_offset + start_q * max_seqlen_k + start_k
             keep = dropout_mask(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, max_seqlen_k)
@@ -167,11 +163,11 @@ def bwd_inner_dq(
         else:
             # ds.shape = (BLOCK_M, BLOCK_N), kt.shape = (BLOCK_DMODEL, BLOCK_N)
             dq0, dq1, dq2 = composed_dot_rhs(ds.to(q0.type.element_ty),
-                                            tl.trans(kt0),
-                                            tl.trans(kt1),
-                                            tl.trans(kt2),
-                                            dq0, dq1, dq2,
-                                            BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
+                                             tl.trans(kt0),
+                                             tl.trans(kt1),
+                                             tl.trans(kt2),
+                                             dq0, dq1, dq2,
+                                             BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
         if BIAS_TYPE == 1:
             if store_db:
                 tl.store(DB_block_ptr, ds.to(DB_block_ptr.type.element_ty), boundary_check=(0,1))
@@ -181,12 +177,10 @@ def bwd_inner_dq(
         # V_block_ptr = tl.advance(V_block_ptr, (0, BLOCK_N))
         kt_ptrs0, kt_ptrs1, kt_ptrs2 = composed_advance(kt_ptrs0, kt_ptrs1, kt_ptrs2,
                                                         BLOCK_N * k_stride,
-                                                        BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2
-                                                        )
+                                                        BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
         vt_ptrs0, vt_ptrs1, vt_ptrs2 = composed_advance(vt_ptrs0, vt_ptrs1, vt_ptrs2,
                                                         BLOCK_N * v_stride,
-                                                        BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2
-                                                        )
+                                                        BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
         if BIAS_TYPE == 1:
             B_block_ptr = tl.advance(B_block_ptr, (0, BLOCK_N))
             DB_block_ptr = tl.advance(DB_block_ptr, (0, BLOCK_N))

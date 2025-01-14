@@ -71,7 +71,6 @@ def attn_fwd_inner(
                                    TRANSPOSED=True)
         if PRE_LOAD_V:
             # We can use the same offsets as k, just with dims transposed.
-            # v = load_fn(v_ptrs, k_offs_n, k_offs_d, seqlen_k, head_dim)
             v0, v1, v2 = composed_load(v_ptrs0, v_ptrs1, v_ptrs2,
                                        k_offs_n,
                                        BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
@@ -103,8 +102,7 @@ def attn_fwd_inner(
         qk = composed_dot_both(q0, q1, q2,
                                k0, k1, k2,
                                qk,
-                               BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2
-                               ) * qk_scale
+                               BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2) * qk_scale
         if bias_ptrs is not None:
             bias_offs_n = start_n + tl.arange(0, BLOCK_N) if MASK_STEPS else None
             bias = load_fn(bias_ptrs, offs_m, bias_offs_n, seqlen_q, seqlen_k)
@@ -166,12 +164,10 @@ def attn_fwd_inner(
             # tl.store(encoded_sm_ptrs, p.to(q.type.element_ty))
         # -- update output accumulator --
         alpha = tl.math.exp2(m_i - m_ij)
-        # acc0, acc1, acc2 = acc0, acc1, acc2 * alpha[:, None]
         acc0, acc1, acc2 = composed_mul_lhs(acc0, acc1, acc2,
                                             alpha[:, None],
                                             BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
         if not PRE_LOAD_V:
-            # v = load_fn(v_ptrs, k_offs_n, k_offs_d, seqlen_k, head_dim)
             v0, v1, v2 = composed_load(v_ptrs0, v_ptrs1, v_ptrs2,
                                        k_offs_n,
                                        BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
@@ -184,19 +180,16 @@ def attn_fwd_inner(
         l_i = l_i * alpha + l_ij
         # update m_i and l_i
         m_i = m_ij
-        # acc0, acc1, acc2 += tl.dot(p.to(v.type.element_ty), v)
         acc0, acc1, acc2 = composed_dot_rhs(p.to(v0.type.element_ty),
                                             v0, v1, v2,
                                             acc0, acc1, acc2,
                                             BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
         k_ptrs0, k_ptrs1, k_ptrs2 = composed_advance(k_ptrs0, k_ptrs1, k_ptrs2,
                                                      BLOCK_N * stride_kn,
-                                                     BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2
-                                                    )
+                                                     BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
         v_ptrs0, v_ptrs1, v_ptrs2 = composed_advance(v_ptrs0, v_ptrs1, v_ptrs2,
                                                      BLOCK_N * stride_vk,
-                                                     BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2
-                                                    )
+                                                     BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
         if bias_ptrs is not None:
             bias_ptrs += BLOCK_N * stride_bn
         # if RETURN_ENCODED_SOFTMAX:

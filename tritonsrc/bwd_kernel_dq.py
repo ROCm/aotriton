@@ -132,29 +132,29 @@ def bwd_kernel_dq(
                                               BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
     if start_q + BLOCK_M <= seqlen_q:
         q0, q1, q2 = composed_load(q_ptrs0, q_ptrs1, q_ptrs2,
-                                    offs_q,
-                                    BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
-                                    seqlen_q, head_dim,
-                                    other=0.0,
-                                    PADDED_ROW=False,
-                                    PADDED_COL=PADDED_HEAD,
-                                    TRANSPOSED=False)
+                                   offs_q,
+                                   BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                   seqlen_q, head_dim,
+                                   other=0.0,
+                                   PADDED_ROW=False,
+                                   PADDED_COL=PADDED_HEAD,
+                                   TRANSPOSED=False)
     else:
         q0, q1, q2 = composed_load(q_ptrs0, q_ptrs1, q_ptrs2,
-                                    offs_q,
-                                    BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
-                                    seqlen_q, head_dim,
-                                    other=0.0,
-                                    PADDED_ROW=True,
-                                    PADDED_COL=PADDED_HEAD,
-                                    TRANSPOSED=False)
+                                   offs_q,
+                                   BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                   seqlen_q, head_dim,
+                                   other=0.0,
+                                   PADDED_ROW=True,
+                                   PADDED_COL=PADDED_HEAD,
+                                   TRANSPOSED=False)
     qk_scale = sm_scale * 1.44269504089
     bias_scale = 1.0 / sm_scale
     kt_ptrs0, kt_ptrs1, kt_ptrs2 = composed_ptrs(K,
-                                              stride_kz, stride_kh, stride_kn, stride_kk,
-                                              batch_index, off_h_k, cu_seqlens_k_start + offs_n,
-                                              BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
-                                              TRANSPOSED=True)
+                                                 stride_kz, stride_kh, stride_kn, stride_kk,
+                                                 batch_index, off_h_k, cu_seqlens_k_start + offs_n,
+                                                 BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                                 TRANSPOSED=True)
     # K_block_ptr = tl.make_block_ptr(
     #     base=K,
     #     shape=(head_dim, seqlen_k),
@@ -165,15 +165,15 @@ def bwd_kernel_dq(
     # )
     
     vt_ptrs0, vt_ptrs1, vt_ptrs2 = composed_ptrs(V,
-                                              stride_vz, stride_vh, stride_vk, stride_vn,
-                                              batch_index, off_h_k, cu_seqlens_k_start + offs_n,
-                                              BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
-                                              TRANSPOSED=True)
+                                                 stride_vz, stride_vh, stride_vk, stride_vn,
+                                                 batch_index, off_h_k, cu_seqlens_k_start + offs_n,
+                                                 BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                                 TRANSPOSED=True)
     
     do_ptrs0, do_ptrs1, do_ptrs2 = composed_ptrs(DO,
-                                                  stride_oz, stride_oh, stride_om, stride_ok,
-                                                  batch_index, off_h_q, cu_seqlens_q_start + offs_q,
-                                                  BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
+                                                 stride_oz, stride_oh, stride_om, stride_ok,
+                                                 batch_index, off_h_q, cu_seqlens_q_start + offs_q,
+                                                 BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
     # DO_block_ptr = tl.make_block_ptr(
     #     base=DO,
     #     shape=(seqlen_q, head_dim),
@@ -185,22 +185,22 @@ def bwd_kernel_dq(
     
     if start_q + BLOCK_M <= seqlen_q:
         do0, do1, do2 = composed_load(do_ptrs0, do_ptrs1, do_ptrs2,
-                                   None,
-                                   BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
-                                   seqlen_q, head_dim,
-                                   other=0.0,
-                                   PADDED_ROW=False,
-                                   PADDED_COL=PADDED_HEAD,
-                                   TRANSPOSED=False)
+                                      None,
+                                      BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                      seqlen_q, head_dim,
+                                      other=0.0,
+                                      PADDED_ROW=False,
+                                      PADDED_COL=PADDED_HEAD,
+                                      TRANSPOSED=False)
     else:
         do0, do1, do2 = composed_load(do_ptrs0, do_ptrs1, do_ptrs2,
-                                   offs_q,
-                                   BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
-                                   seqlen_q, head_dim,
-                                   other=0.0,
-                                   PADDED_ROW=True,
-                                   PADDED_COL=PADDED_HEAD,
-                                   TRANSPOSED=False)
+                                      offs_q,
+                                      BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                      seqlen_q, head_dim,
+                                      other=0.0,
+                                      PADDED_ROW=True,
+                                      PADDED_COL=PADDED_HEAD,
+                                      TRANSPOSED=False)
     # pointer to row-wise quantities in value-like data
     D_ptrs = D + off_zh * max_seqlen_q
     l_ptrs = L + off_zh * max_seqlen_q
@@ -341,8 +341,7 @@ def bwd_kernel_dq(
             BIAS_TYPE)
     dq0, dq1, dq2 = composed_mul_lhs(dq0, dq1, dq2,
                                      sm_scale,
-                                     BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2
-                                     )
+                                     BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
     dq0, dq1, dq2 = composed_to(dq0, dq1, dq2, dq0.type.element_ty)
     composed_store(dq0, dq1, dq2,
                    BLOCK_M,
