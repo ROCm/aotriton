@@ -216,7 +216,7 @@ def composed_casual_mask(
         ptrs_mask2 = mask_offsets[:, None] >= mask_boundary2[None, :]
         z = tl.where(ptrs_mask2, z, other)
     return (x, y, z)
-                
+
 @triton.jit
 def composed_store(
         regs0, regs1, regs2,

@@ -67,6 +67,7 @@ def attn_fwd(
         PADDED_HEAD: tl.constexpr,
         BIAS_TYPE: tl.constexpr,
 ):
+    # TODO: Put this decomposition into a @triton.jit function when tuple support is more complete
     tl.static_assert(BLOCK_DMODEL > 0, 'BLOCK_DMODEL must be greater than 0')
     BLOCK_DMODEL_R0 : tl.constexpr = BLOCK_DMODEL
     BLOCK_DMODEL0 : tl.constexpr = 2 ** (BLOCK_DMODEL_R0.bit_length() - 1)
@@ -75,9 +76,10 @@ def attn_fwd(
     BLOCK_DMODEL_R2 : tl.constexpr = BLOCK_DMODEL_R1 - BLOCK_DMODEL1
     BLOCK_DMODEL2 : tl.constexpr = 2 ** (BLOCK_DMODEL_R2.bit_length() - 1) if BLOCK_DMODEL_R2 > 0 else 0
     BLOCK_DMODEL_R3 : tl.constexpr = BLOCK_DMODEL_R2 - BLOCK_DMODEL2
-    
+
     tl.static_assert(BLOCK_DMODEL_R3 == 0, f'BLOCK_DMODEL = {BLOCK_DMODEL} = 0b{BLOCK_DMODEL:b} cannot be factored into <= 3 power of two values')
     tl.static_assert(BLOCK_DMODEL1 > 0 or BLOCK_DMODEL2 == 0, 'Only trailing BLOCK_DMODELx can be 0')
+
     # lower case pre_load_v for backward compatibility, minimize changes to
     # other files. Will be fixed in a separate PR
     PRE_LOAD_V : tl.constexpr = pre_load_v
@@ -91,7 +93,7 @@ def attn_fwd(
     offs_n = tl.arange(0, BLOCK_N)
     # offs_d = tl.arange(0, BLOCK_DMODEL)
     # offs_d = composed_offs_1d(BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
-    # ^ NOT WORKING 
+    # ^ NOT WORKING
     philox_seed = 0
     philox_offset_base = philox_offset2
     if ENABLE_DROPOUT:
@@ -132,7 +134,7 @@ def attn_fwd(
         cu_seqlens_q_start = 0
         cu_seqlens_k_start = 0
         batch_index = off_z
-        
+
     o_base = Out + batch_index * stride_oz + off_h_q * stride_oh + cu_seqlens_q_start * stride_om
     # Now we compute whether we need to exit early due to causal masking.
     # This is because for seqlen_q > seqlen_k, M rows of the attn scores

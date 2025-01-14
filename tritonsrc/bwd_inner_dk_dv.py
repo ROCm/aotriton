@@ -62,10 +62,10 @@ def bwd_inner_dk_dv(
     # initialize offsets
     offs_k = start_k + tl.arange(0, BLOCK_N)
     offs_q = tl.arange(0, BLOCK_M)
-    
+
     q_ptrs0, q_ptrs1, q_ptrs2 = composed_advance(q_ptrs0, q_ptrs1, q_ptrs2,
                                                  lo * q_stride,
-                                                 BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)    
+                                                 BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
     do_ptrs0, do_ptrs1, do_ptrs2 = composed_advance(do_ptrs0, do_ptrs1, do_ptrs2,
                                                     lo * do_stride,
                                                     BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
@@ -101,12 +101,12 @@ def bwd_inner_dk_dv(
         # non-regular version, determined by tl.constexpr, just like the fwd kernel.
 
         # q = tl.load(Q_block_ptr)
-        
+
         if FULL_BLOCKS:
             q_offs_m = None
         else:
             q_offs_m = start_q + tl.arange(0, BLOCK_M)
-            
+
         PADDED_SEQ : tl.constexpr = not FULL_BLOCKS
         q0, q1, q2 = composed_load(q_ptrs0, q_ptrs1, q_ptrs2,
                                    q_offs_m,
@@ -177,18 +177,18 @@ def bwd_inner_dk_dv(
             p_dropped = tl.where(keep, p * dropout_scale, 0.0).to(do0.type.element_ty)
         else:
             p_dropped = p
-        
-        if BLOCK_M == 1:            
+
+        if BLOCK_M == 1:
             dv0, dv1, dv2 = composed_mul_acc(do0, do1, do2,
                                              p_dropped,
                                              dv0, dv1, dv2,
                                              BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
-        else:            
+        else:
             dv0, dv1, dv2 = composed_dot_rhs(tl.trans(p_dropped.to(do0.dtype)),
                                              do0, do1, do2,
                                              dv0, dv1, dv2,
                                              BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
-        
+
         dp = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
         # compute dp = dot(do, vt)
         # dp += dot(BLOCK_M, BLOCK_DMODEL, BLOCK_DMODEL, do, vt)
@@ -207,14 +207,14 @@ def bwd_inner_dk_dv(
                                              ds.to(q_ptrs0.dtype.element_ty),
                                              dk0, dk1, dk2,
                                              BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
-            
+
         else:
             # ds.shape = (BLOCK_M, BLOCK_N), q.shape = (BLOCK_M, BLOCK_DMODEL)
             dk0, dk1, dk2 = composed_dot_rhs(tl.trans(ds.to(q_ptrs0.dtype.element_ty)),
                                              q0, q1, q2,
                                              dk0, dk1, dk2,
                                              BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
-            
+
         # update pointers (block_ptr code was left intentionally as comment)
         # Q_block_ptr = tl.advance(Q_block_ptr, (BLOCK_M, 0))
         # DO_block_ptr = tl.advance(DO_block_ptr, (BLOCK_M, 0)) # Debug DO accessing problems

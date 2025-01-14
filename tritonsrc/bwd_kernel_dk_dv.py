@@ -33,6 +33,7 @@ from composed_tensors import (
     composed_mul_lhs,
     composed_mul_acc,
 )
+
 # TODO: Remove Unused 'Out' Argument from kernels below
 @triton.jit
 def bwd_kernel_dk_dv(
@@ -75,10 +76,10 @@ def bwd_kernel_dk_dv(
     BLOCK_DMODEL_R2 : tl.constexpr = BLOCK_DMODEL_R1 - BLOCK_DMODEL1
     BLOCK_DMODEL2 : tl.constexpr = 2 ** (BLOCK_DMODEL_R2.bit_length() - 1) if BLOCK_DMODEL_R2 > 0 else 0
     BLOCK_DMODEL_R3 : tl.constexpr = BLOCK_DMODEL_R2 - BLOCK_DMODEL2
-        
+
     tl.static_assert(BLOCK_DMODEL_R3 == 0, f'BLOCK_DMODEL = {BLOCK_DMODEL} = 0b{BLOCK_DMODEL:b} cannot be factored into <= 3 power of two values')
     tl.static_assert(BLOCK_DMODEL1 > 0 or BLOCK_DMODEL2 == 0, 'Only trailing BLOCK_DMODELx can be 0')
-    
+
     philox_seed = 0
     philox_offset_base = philox_offset2
     if ENABLE_DROPOUT:
@@ -137,7 +138,7 @@ def bwd_kernel_dk_dv(
     #     block_shape=(BLOCK_M, BLOCK_DMODEL),
     #     order=(1, 0)
     # )
-    
+
     k_ptrs0, k_ptrs1, k_ptrs2 = composed_ptrs(K,
                                               stride_kz, stride_kh, stride_kn, stride_kk,
                                               batch_index, off_h_k, cu_seqlens_k_start + offs_n,
@@ -149,7 +150,7 @@ def bwd_kernel_dk_dv(
                                               batch_index, off_h_k, cu_seqlens_k_start + offs_n,
                                               BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
                                               TRANSPOSED=True)
-    
+
     if start_k + BLOCK_N <= seqlen_k:
         kt0, kt1, kt2 = composed_load(k_ptrs0, k_ptrs1, k_ptrs2,
                                       None,
@@ -191,7 +192,7 @@ def bwd_kernel_dk_dv(
     #     offsets=(0, start_m),
     #     block_shape=(BLOCK_DMODEL, BLOCK_N),
     #     order=(0, 1)
-    # ) 
+    # )
 
     # VT_block_ptr = tl.make_block_ptr(
     #     base=V,
@@ -281,7 +282,7 @@ def bwd_kernel_dk_dv(
                                                   stride_qz, stride_qh, stride_qm, stride_qk,
                                                   batch_index, off_h_q, cu_seqlens_q_start + offs_m,
                                                   BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
-        
+
         do_ptrs0, do_ptrs1, do_ptrs2 = composed_ptrs(DO,
                                                   stride_oz, stride_oh, stride_om, stride_ok,
                                                   batch_index, off_h_q, cu_seqlens_q_start + offs_m,
@@ -303,7 +304,7 @@ def bwd_kernel_dk_dv(
             overflow_size = 0 if hi < q_hi else hi - q_hi
             dk0, dk1, dk2, dv0, dv1, dv2 = bwd_inner_dk_dv(
                 dk0, dk1, dk2,
-                dv0, dv1, dv2, 
+                dv0, dv1, dv2,
                 qk_scale, bias_scale,
                 q_ptrs0, q_ptrs1, q_ptrs2,
                 stride_qm,
@@ -388,13 +389,13 @@ def bwd_kernel_dk_dv(
                 ENABLE_DROPOUT,
                 PADDED_HEAD,
                 BIAS_TYPE)
-    
+
     dk0, dk1, dk2 = composed_mul_lhs(dk0, dk1, dk2,
                                      sm_scale,
                                      BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
     dk0, dk1, dk2 = composed_to(dk0, dk1, dk2, kt0.type.element_ty)
     dv0, dv1, dv2 = composed_to(dv0, dv1, dv2, vt0.type.element_ty)
-    
+
     composed_store(dk0, dk1, dk2,
                    BLOCK_N,
                    BLOCK_DMODEL0,
@@ -407,7 +408,7 @@ def bwd_kernel_dk_dv(
                    o_cols=head_dim,
                    stride_row=stride_dkn,
                    stride_col=stride_dkk)
-    
+
     composed_store(dv0, dv1, dv2,
                    BLOCK_N,
                    BLOCK_DMODEL0,

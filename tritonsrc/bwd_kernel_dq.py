@@ -71,8 +71,10 @@ def bwd_kernel_dq(
     BLOCK_DMODEL_R2 : tl.constexpr = BLOCK_DMODEL_R1 - BLOCK_DMODEL1
     BLOCK_DMODEL2 : tl.constexpr = 2 ** (BLOCK_DMODEL_R2.bit_length() - 1) if BLOCK_DMODEL_R2 > 0 else 0
     BLOCK_DMODEL_R3 : tl.constexpr = BLOCK_DMODEL_R2 - BLOCK_DMODEL2
+
     tl.static_assert(BLOCK_DMODEL_R3 == 0, f'BLOCK_DMODEL = {BLOCK_DMODEL} = 0b{BLOCK_DMODEL:b} cannot be factored into <= 3 power of two values')
     tl.static_assert(BLOCK_DMODEL1 > 0 or BLOCK_DMODEL2 == 0, 'Only trailing BLOCK_DMODELx can be 0')
+
     philox_seed = 0
     philox_offset_base = philox_offset2
     if ENABLE_DROPOUT:
@@ -163,13 +165,13 @@ def bwd_kernel_dq(
     #     block_shape=(BLOCK_DMODEL, BLOCK_N),
     #     order=(0, 1)
     # )
-    
+
     vt_ptrs0, vt_ptrs1, vt_ptrs2 = composed_ptrs(V,
                                                  stride_vz, stride_vh, stride_vk, stride_vn,
                                                  batch_index, off_h_k, cu_seqlens_k_start + offs_n,
                                                  BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
                                                  TRANSPOSED=True)
-    
+
     do_ptrs0, do_ptrs1, do_ptrs2 = composed_ptrs(DO,
                                                  stride_oz, stride_oh, stride_om, stride_ok,
                                                  batch_index, off_h_q, cu_seqlens_q_start + offs_q,
@@ -182,7 +184,7 @@ def bwd_kernel_dq(
     #     block_shape=(BLOCK_M, BLOCK_DMODEL),
     #     order=(1, 0)
     # )
-    
+
     if start_q + BLOCK_M <= seqlen_q:
         do0, do1, do2 = composed_load(do_ptrs0, do_ptrs1, do_ptrs2,
                                       None,
