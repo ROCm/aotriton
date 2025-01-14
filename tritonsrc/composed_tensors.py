@@ -181,6 +181,29 @@ def composed_mul_acc(
     return (x, y, z)
 
 @triton.jit
+def composed_casual_mask(
+        x, y, z,
+        mask_offsets,
+        causal_start_idx,
+        other,
+        D0 : tl.constexpr,
+        D1 : tl.constexpr,
+        D2 : tl.constexpr
+):
+    mask_boundary0 = tl.full((D0,), causal_start_idx, dtype=tl.int32)
+    ptrs_mask0 = mask_offsets[:, None] >= mask_boundary0[None, :]
+    x = tl.where(ptrs_mask0, x, other)
+    if D1 > 0:
+        mask_boundary1 = tl.full((D1,), causal_start_idx + D0, dtype=tl.int32)
+        ptrs_mask1 = mask_offsets[:, None] >= mask_boundary1[None, :]
+        y = tl.where(ptrs_mask1, y, other)
+    if D2 > 0:
+        mask_boundary2 = tl.full((D2,), causal_start_idx + D0 + D1, dtype=tl.int32)
+        ptrs_mask2 = mask_offsets[:, None] >= mask_boundary2[None, :]
+        z = tl.where(ptrs_mask2, z, other)
+    return (x, y, z)
+                
+@triton.jit
 def composed_store(
         regs0, regs1, regs2,
         REG_ROWS  : tl.constexpr,

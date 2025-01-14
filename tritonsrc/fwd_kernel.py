@@ -27,6 +27,7 @@ from composed_tensors import (
     composed_to,
     composed_store,
     composed_mul_lhs,
+    composed_casual_mask,
 )
 
 @triton.jit
@@ -393,17 +394,12 @@ def attn_fwd(
         if causal_start_idx > start_m_idx and causal_start_idx < end_m_idx:
             mask_m_offsets = start_m_idx + tl.arange(0, BLOCK_M)
             z = 0.0
-            out_mask_boundary0 = tl.full((BLOCK_DMODEL0,), causal_start_idx, dtype=tl.int32)
-            out_ptrs_mask0 = mask_m_offsets[:, None] >= out_mask_boundary0[None, :]
-            acc0 = tl.where(out_ptrs_mask0, acc0, z.to(acc0.type.element_ty))
-            if BLOCK_DMODEL1 > 0:
-                out_mask_boundary1 = tl.full((BLOCK_DMODEL1,), causal_start_idx + BLOCK_DMODEL0, dtype=tl.int32)
-                out_ptrs_mask1 = mask_m_offsets[:, None] >= out_mask_boundary1[None, :]
-                acc1 = tl.where(out_ptrs_mask1, acc1, z.to(acc1.type.element_ty))
-            if BLOCK_DMODEL2 > 0:
-                out_mask_boundary2 = tl.full((BLOCK_DMODEL2,), causal_start_idx + BLOCK_DMODEL0 + BLOCK_DMODEL1, dtype=tl.int32)
-                out_ptrs_mask2 = mask_m_offsets[:, None] >= out_mask_boundary2[None, :]
-                acc2 = tl.where(out_ptrs_mask2, acc2, z.to(acc2.type.element_ty))
+            acc0, acc1, acc2 = composed_casual_mask(acc0, acc1, acc2,
+                                                    mask_m_offsets, causal_start_idx,
+                                                    z.to(acc0.type.element_ty),
+                                                    BLOCK_DMODEL0,
+                                                    BLOCK_DMODEL1,
+                                                    BLOCK_DMODEL2)
     # FIXME: MQA/GQA L tensor
     # TODO: make writing of L optional
     # write back LSE
