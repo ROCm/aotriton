@@ -129,13 +129,26 @@ def bwd_kernel_dk_dv(
     # Initialize pointers to Q, K, V
     # Q is consumed depending on block ID. Every block uses
     # previous block offset by BLOCK_M x D_HEAD.
+
+    # Note: Q pointers are deferred to later place.
+    #       GQA needs loop through off_h_q = i * off_h_k + off_h_k
+    # q_offset = off_h_q * stride_qh + batch_index * stride_qz + cu_seqlens_q_start * stride_qm
+
+    # Q_block_ptr = tl.make_block_ptr(
+    #     base=Q,
+    #     shape=(seqlen_q, head_dim),
+    #     strides=(stride_qm, stride_qk),
+    #     offsets=(0, 0),
+    #     block_shape=(BLOCK_M, BLOCK_DMODEL),
+    #     order=(1, 0)
+    # )
     
     k_ptrs0, k_ptrs1, k_ptrs2 = composed_ptrs(K,
                                               stride_kz, stride_kh, stride_kn, stride_kk,
                                               batch_index, off_h_k, cu_seqlens_k_start + offs_n,
                                               BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
                                               TRANSPOSED=True)
-    
+    # kt_offs_n = None if start_k + BLOCK_N <= seqlen_k else start_k + tl.arange(0, BLOCK_N)
     v_ptrs0, v_ptrs1, v_ptrs2 = composed_ptrs(V,
                                               stride_vz, stride_vh, stride_vk, stride_vn,
                                               batch_index, off_h_k, cu_seqlens_k_start + offs_n,
@@ -175,8 +188,33 @@ def bwd_kernel_dk_dv(
                                    other=0.0,
                                    PADDED_ROW=True,
                                    PADDED_COL=PADDED_HEAD,
-                                   TRANSPOSED=True)   
-    
+                                   TRANSPOSED=True)
+    # KT_block_ptr = tl.make_block_ptr(
+    #     base=K + k_offset,
+    #     shape=(head_dim, seqlen_k),
+    #     strides=(stride_kk, stride_kn),
+    #     offsets=(0, start_m),
+    #     block_shape=(BLOCK_DMODEL, BLOCK_N),
+    #     order=(0, 1)
+    # ) 
+
+    # VT_block_ptr = tl.make_block_ptr(
+    #     base=V,
+    #     shape=(head_dim, seqlen_k),
+    #     strides=(stride_vn, stride_vk),
+    #     offsets=(0, start_m),
+    #     block_shape=(BLOCK_DMODEL, BLOCK_N),
+    #     order=(0, 1)
+    # )
+    # vt = tl.load(VT_block_ptr)
+    # DO_block_ptr = tl.make_block_ptr(
+    #     base=DO,
+    #     shape=(seqlen_q, head_dim),
+    #     strides=(stride_om, stride_ok),
+    #     offsets=(0, 0),
+    #     block_shape=(BLOCK_M, BLOCK_DMODEL),
+    #     order=(1, 0)
+    # )
     if BIAS_TYPE == 0:
         B_block_ptr = 0
     elif BIAS_TYPE == 1:
@@ -191,16 +229,14 @@ def bwd_kernel_dk_dv(
                 )
     else:
         tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
-        
-    
+
     dk_offset = off_h_k * stride_dkh + batch_index * stride_dkz + cu_seqlens_k_start * stride_dkn
     DK += dk_offset
     dv_offset = off_h_k * stride_dvh + batch_index * stride_dvz + cu_seqlens_k_start * stride_dvk
     DV += dv_offset
-    
+
     dv0, dv1, dv2 = composed_zeros_2d(BLOCK_N, BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
     dk0, dk1, dk2 = composed_zeros_2d(BLOCK_N, BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
-    
     qk_scale = sm_scale * 1.44269504089
     bias_scale = 1.0 / sm_scale
     group_size = num_head_q // num_head_k
