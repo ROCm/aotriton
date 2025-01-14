@@ -45,7 +45,7 @@ def bwd_inner_dq(
     ## Dropout
     ### max_seqlen_k is put in Dropout section because it is not needed by
     ### anything other than dropout
-    dropout_p, philox_seed, batch_philox_offset, max_seqlen_k,
+    dropout_p, dropout_scale, philox_seed, batch_philox_offset, max_seqlen_k,
     # constexpr starts here
     BLOCK_M: tl.constexpr,
     BLOCK_DMODEL0: tl.constexpr,
@@ -73,9 +73,22 @@ def bwd_inner_dq(
     if BIAS_TYPE == 1:
         B_block_ptr = tl.advance(B_block_ptr, (0, lo))
         DB_block_ptr = tl.advance(DB_block_ptr, (0, lo))
+
+    '''
+           K1   K2      (d)V      dO
+    Q1    qk11 qk12     (d)v1     dO1
+    Q2    qk21 qk22     (d)v2     dO2
+
+    QK: (seqlen_q, seqlen_k)
+    dO: (seqlen_q, hdim)
+    dV: (seqlen_k, hdim)
+    '''
     for start_k in range(lo, hi, BLOCK_N):
         offs_k_curr = offs_k[None, :] + start_k # (1, BLOCK_N)
-        
+        # -- load k, v --
+        # shape = (BLOCK_DMODEL, BLOCK_N), offs = (0, BLOCK_N * iter) = (0, start_k)
+        # kt = tl.load(K_block_ptr)
+        # vt = tl.load(V_block_ptr)
         if FULL_BLOCKS:
             k_offs_n = None
         else:
@@ -90,7 +103,7 @@ def bwd_inner_dq(
                                    PADDED_ROW=PADDED_SEQ,
                                    PADDED_COL=PADDED_HEAD,
                                    TRANSPOSED=True)
-        
+        # TODO: pre_load_vt
         vt0, vt1, vt2 = composed_load(vt_ptrs0, vt_ptrs1, vt_ptrs2,
                                    k_offs_n,
                                    BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
@@ -99,7 +112,8 @@ def bwd_inner_dq(
                                    PADDED_ROW=PADDED_SEQ,
                                    PADDED_COL=PADDED_HEAD,
                                    TRANSPOSED=True)
-        
+        # -- compute qk ----
+        # q.offs = (start_m, 0), k.offs = (0, start_k)
         qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)        
         qk = composed_dot_both(q0, q1, q2,
                                 kt0, kt1, kt2,
@@ -116,14 +130,18 @@ def bwd_inner_dq(
         if BIAS_TYPE == 0:
             pass
         elif BIAS_TYPE == 1:
+            # FIXME: Must use boundary_check uncondtionally.
+            # The optimized tl.load above causes nan for some reason
             bias = tl.load(B_block_ptr, boundary_check=(0,1), padding_option="zero")
             qk += bias * bias_scale
         else:
             tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
         p = tl.math.exp2(qk_scale * qk - l_i[:, None])
+
         if not FULL_BLOCKS or CAUSAL:
             if qk_scale == 0.0:
                 p = tl.where(libdevice.isnan(p), 0.0, p)
+
         # compute dp = dot(v, do)
         dp = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
         dp = composed_dot_both(do0, do1, do2,
@@ -134,9 +152,11 @@ def bwd_inner_dq(
         if ENABLE_DROPOUT:
             philox_offset = batch_philox_offset + start_q * max_seqlen_k + start_k
             keep = dropout_mask(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, max_seqlen_k)
-            dp = tl.where(keep, dp / (1 - dropout_p), 0)
+            dp = tl.where(keep, dp * dropout_scale, 0)
         # compute ds = p * (dp - delta[:, None])
         ds = p * (dp - Di[:, None])
+        # compute dq. Unfortunately we cannot avoid transpose here as this loop
+        # uses k both normal and transpose.
         if BLOCK_M == 1:
             dq0, dq1, dq2 = composed_mul_acc(tl.view(kt0, [BLOCK_DMODEL0]),
                                              tl.view(kt1, [BLOCK_DMODEL1]),
@@ -145,6 +165,7 @@ def bwd_inner_dq(
                                              dq0, dq1, dq2,
                                              BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
         else:
+            # ds.shape = (BLOCK_M, BLOCK_N), kt.shape = (BLOCK_DMODEL, BLOCK_N)
             dq0, dq1, dq2 = composed_dot_rhs(ds.to(q0.type.element_ty),
                                             tl.trans(kt0),
                                             tl.trans(kt1),
@@ -154,14 +175,18 @@ def bwd_inner_dq(
         if BIAS_TYPE == 1:
             if store_db:
                 tl.store(DB_block_ptr, ds.to(DB_block_ptr.type.element_ty), boundary_check=(0,1))
+        # update pointers
+        # Keep the block ptr as comment
+        # K_block_ptr = tl.advance(K_block_ptr, (0, BLOCK_N))
+        # V_block_ptr = tl.advance(V_block_ptr, (0, BLOCK_N))
         kt_ptrs0, kt_ptrs1, kt_ptrs2 = composed_advance(kt_ptrs0, kt_ptrs1, kt_ptrs2,
-                                                 BLOCK_N * k_stride,
-                                                 BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2
-                                             )
+                                                        BLOCK_N * k_stride,
+                                                        BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2
+                                                        )
         vt_ptrs0, vt_ptrs1, vt_ptrs2 = composed_advance(vt_ptrs0, vt_ptrs1, vt_ptrs2,
-                                                 BLOCK_N * v_stride,
-                                                 BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2
-                                             )
+                                                        BLOCK_N * v_stride,
+                                                        BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2
+                                                        )
         if BIAS_TYPE == 1:
             B_block_ptr = tl.advance(B_block_ptr, (0, BLOCK_N))
             DB_block_ptr = tl.advance(DB_block_ptr, (0, BLOCK_N))
