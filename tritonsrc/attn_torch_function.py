@@ -28,7 +28,10 @@ def factor_head_dim(head_dim, n_pieces=3):
     Lk = head_dim
     for i in range(n_pieces):
         max_po2 = 2 ** (Lk.bit_length() - 1)
-        max_po2 = max(16, max_po2)
+        # Technically Triton now supports all power-of-two, lowering to 1
+        # But PyTorch pads all inputs to multiple of 8.
+        # In addition we do not have the capability to support that many choices
+        max_po2 = max(8, max_po2)
         ret[i] = max_po2
         # print(f"\t{i=}: {Lk=} {max_po2=} left: {Lk - max_po2}")
         Lk -= max_po2

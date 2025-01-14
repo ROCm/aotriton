@@ -151,6 +151,20 @@ def composed_dot_rhs(
     return (ax, ay, az)
 
 
+# Row/Col-wise inner product, without accumulator
+@triton.jit
+def composed_inner_product(
+        lx, ly, lz,
+        rx, ry, rz,
+        D0 : tl.constexpr,
+        D1 : tl.constexpr,
+        D2 : tl.constexpr,
+        axis : tl.constexpr,
+):
+    x = tl.sum(lx * rx, axis=axis)
+    y = tl.sum(ly * ry, axis=axis) if D1 > 0 else 0
+    z = tl.sum(lz * rz, axis=axis) if D2 > 0 else 0
+    return x + y + z
 
 # Element-wise mul, broadcasting rhs to composed lhs
 @triton.jit
