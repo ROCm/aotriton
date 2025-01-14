@@ -41,7 +41,7 @@ class FlashKernel(KernelDescription):
         from copy import deepcopy
         import json
         import numpy as np
-        base = {}
+        base = {'gpu' : gpu}
         def check_value(repr_name):
             for fsel in fsels:
                 if fsel.repr_name == repr_name:

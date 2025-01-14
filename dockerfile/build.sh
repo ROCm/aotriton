@@ -54,9 +54,9 @@ DOCKER_IMAGE=aotriton:manylinux_2_28-buildenv-tiny
 
 if [ -z "$(docker images -q ${DOCKER_IMAGE} 2> /dev/null)" ]; then
   if [ -z ${AMDGPU_INSTALLER+x} ]; then
-    build_options="--build-arg amdgpu_installer=${AMDGPU_INSTALLER}"
-  else
     build_options=""
+  else
+    build_options="--build-arg amdgpu_installer=${AMDGPU_INSTALLER}"
   fi
   docker build ${build_options} -t ${DOCKER_IMAGE} -f manylinux_2_28.Dockerfile .
 fi
