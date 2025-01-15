@@ -143,13 +143,17 @@ def composed_dot_rhs(
         ax, ay, az,
         D0 : tl.constexpr,
         D1 : tl.constexpr,
-        D2 : tl.constexpr
+        D2 : tl.constexpr,
+        TRANSPOSE_LHS : tl.constexpr = False,
 ):
+    SUB16D : tl.constexpr = ((D0 > 0 and D0 < 16) or (D1 > 0 and D1 < 16)) or (D2 > 0 and D2 < 16)
+    lhs = tl.trans(lhs).to(rx.dtype) if TRANSPOSE_LHS and SUB16D else (
+            tl.trans(lhs.to(rx.dtype)) if TRANSPOSE_LHS else lhs
+          )
     ax = tl.dot(lhs, rx, acc=ax)
     ay = tl.dot(lhs, ry, acc=ay) if D1 > 0 else ay
     az = tl.dot(lhs, rz, acc=az) if D2 > 0 else az
     return (ax, ay, az)
-
 
 # Row/Col-wise inner product, without accumulator
 @triton.jit

@@ -174,20 +174,23 @@ def bwd_inner_dk_dv(
             philox_offset = batch_philox_offset + start_q * max_seqlen_k + start_k
             keep = dropout_mask(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, max_seqlen_k)
             # CAVEAT: do NOT update p, ds needs the original p
-            p_dropped = tl.where(keep, p * dropout_scale, 0.0).to(do0.type.element_ty)
+            p_dropped = tl.where(keep, p * dropout_scale, 0.0)
         else:
             p_dropped = p
 
         if BLOCK_M == 1:
+            # dv += p.to(q_ptrs.dtype.element_ty) * do
             dv0, dv1, dv2 = composed_mul_acc(do0, do1, do2,
-                                             p_dropped,
+                                             p_dropped.to(do0.dtype),
                                              dv0, dv1, dv2,
                                              BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
         else:
-            dv0, dv1, dv2 = composed_dot_rhs(tl.trans(p_dropped.to(do0.dtype)),
+            # dv += tl.dot(tl.trans(p.to(do.dtype)), do)
+            dv0, dv1, dv2 = composed_dot_rhs(p_dropped,
                                              do0, do1, do2,
                                              dv0, dv1, dv2,
-                                             BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
+                                             BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                             TRANSPOSE_LHS=True)
 
         dp = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
         # compute dp = dot(do, vt)
@@ -210,10 +213,11 @@ def bwd_inner_dk_dv(
 
         else:
             # ds.shape = (BLOCK_M, BLOCK_N), q.shape = (BLOCK_M, BLOCK_DMODEL)
-            dk0, dk1, dk2 = composed_dot_rhs(tl.trans(ds.to(q_ptrs0.dtype.element_ty)),
+            dk0, dk1, dk2 = composed_dot_rhs(ds,
                                              q0, q1, q2,
                                              dk0, dk1, dk2,
-                                             BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
+                                             BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                             TRANSPOSE_LHS=True)
 
         # update pointers (block_ptr code was left intentionally as comment)
         # Q_block_ptr = tl.advance(Q_block_ptr, (BLOCK_M, 0))

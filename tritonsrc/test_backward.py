@@ -161,16 +161,16 @@ def main2():
     # Memo: False-0.0-dtype0-0.0-False-4-256-8-4-1
     # Memo: False-0.0-dtype0-0.0-False-4-256-8-1-4
     # False-1.2-dtype0-0.0-False-4-4-72-1-4
-    # BATCH = 8
-    # D_HEAD = 32
-    # N_HEADS = 8
-    # seqlen_q = 16
-    # seqlen_k = 16
-    BATCH = 4
-    D_HEAD = 1
+    BATCH = 8
     N_HEADS = 8
-    seqlen_q = 256
+    seqlen_q = 32
     seqlen_k = 4
+    D_HEAD = 16
+    # BATCH = 4
+    # D_HEAD = 1
+    # N_HEADS = 8
+    # seqlen_q = 256
+    # seqlen_k = 4
     causal = False
     sm_scale = 1.2
     dropout_p = 0.0
@@ -232,6 +232,7 @@ def main_bug_introduced_when_fixing_54():
     _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
 
 if __name__ == '__main__':
-    main_bug_introduced_when_fixing_54()
+    main2()
+    # main_bug_introduced_when_fixing_54()
     # main_nsq_causal()
     # main_npz()
