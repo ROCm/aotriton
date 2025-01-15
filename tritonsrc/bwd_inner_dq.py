@@ -90,9 +90,9 @@ def bwd_inner_dq(
         if FULL_BLOCKS:
             k_offs_n = None
         else:
-            k_offs_n = start_q + tl.arange(0, BLOCK_M)
+            k_offs_n = start_k + tl.arange(0, BLOCK_M)
         PADDED_SEQ : tl.constexpr = not FULL_BLOCKS
-        
+
         kt0, kt1, kt2 = composed_load(kt_ptrs0, kt_ptrs1, kt_ptrs2,
                                       k_offs_n,
                                       BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
