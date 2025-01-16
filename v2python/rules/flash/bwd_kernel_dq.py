@@ -4,7 +4,7 @@
 import itertools
 from ._common import (
     FlashKernel,
-    get_possible_types,
+    get_possible_choices,
     select_pattern,
     BinningLessOrEqual,
     BinningExact,
@@ -45,8 +45,8 @@ class bwd_kernel_dq(FlashKernel):
         'PADDED_HEAD',
         'BIAS_TYPE',
     ]
-    match_fwd = lambda aname : get_possible_types(attn_fwd, aname)
-    match_kv = lambda aname : get_possible_types(bwd_kernel_dk_dv, aname)
+    match_fwd = lambda aname : get_possible_choices(attn_fwd, aname)
+    match_kv = lambda aname : get_possible_choices(bwd_kernel_dk_dv, aname)
     TENSOR_STRIDE_INPUTS = {
         'Q' : select_pattern(ARGUMENTS, 'stride_q'),
         'K' : select_pattern(ARGUMENTS, 'stride_k'),
@@ -78,7 +78,7 @@ class bwd_kernel_dq(FlashKernel):
         frozenset(['philox_offset2']) : match_fwd('philox_offset2'),
     }
     FEAT_CHOICES = {
-        frozenset(['BLOCK_DMODEL']) : [16, 32, 64, 128, 256],
+        frozenset(['BLOCK_DMODEL']) : match_fwd('BLOCK_DMODEL'),
         frozenset(['CAUSAL']) : match_kv('CAUSAL'),
         frozenset(['ENABLE_DROPOUT']) : match_fwd('ENABLE_DROPOUT'),
         frozenset(['PADDED_HEAD']) : [False, True],

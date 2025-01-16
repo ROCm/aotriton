@@ -26,7 +26,7 @@ def get_template(name):
 def join_dicts(dicts : 'list[dict]') -> dict:
     return { k:v for d in dicts for k,v in d.items() }
 
-def get_possible_types(klass, arg_name : str) -> 'list[str]':
+def get_possible_choices(klass, arg_name : str) -> 'list[Any]':
     for d in [klass.TYPE_CHOICES, klass.FEAT_CHOICES, klass.PERF_CHOICES]:
         for k, v in d.items():
             if arg_name in k:
