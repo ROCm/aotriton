@@ -23,7 +23,7 @@ from sized_tuned_bwd import (
     sized_tuned_bwd_kernel_dq,
 )
 
-def factor_head_dim(head_dim, dtype=torch.float16, n_pieces=3):
+def factor_head_dim(head_dim, n_pieces=3):
     ret = [0] * 3
     Lk = head_dim
     for i in range(n_pieces):
@@ -32,8 +32,6 @@ def factor_head_dim(head_dim, dtype=torch.float16, n_pieces=3):
         # But PyTorch pads all inputs to multiple of 8.
         # In addition we do not have the capability to support that many choices
         max_po2 = max(8, max_po2)
-        if dtype == torch.bfloat16:
-            max_po2 = max(16, max_po2)
         ret[i] = max_po2
         # print(f"\t{i=}: {Lk=} {max_po2=} left: {Lk - max_po2}")
         Lk -= max_po2
@@ -266,10 +264,10 @@ class _attention(torch.autograd.Function):
         # shape constraints
         Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
         assert Lq == Lk and Lk == Lv
-        head_dim_factors = factor_head_dim(Lk, dtype)
+        head_dim_factors = factor_head_dim(Lk)
         head_dim_rounded = sum(head_dim_factors)
         padded_head = head_dim_rounded != Lk
-        # assert not padded_head, f"sum({head_dim_factors=}) = {sum(head_dim_factors)} != {Lk=}"
+        assert not padded_head, f"sum({head_dim_factors=}) = {sum(head_dim_factors)} != {Lk=}"
         num_head_q = q.shape[1]
         num_head_k = k.shape[1]
         max_seqlen_q = q.shape[2]
@@ -483,11 +481,10 @@ class _attention(torch.autograd.Function):
     @staticmethod
     def backward_split(ctx, do, _, fwd_tuning_result):
         q, k, v, b, o, L = ctx.saved_tensors
-        q_dtype = q.dtype
         # if q.shape[-1] <= 32:
         Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
         assert Lq == Lk and Lk == Lv and Lk == ctx.head_dim
-        head_dim_factors = factor_head_dim(Lk, q_dtype)
+        head_dim_factors = factor_head_dim(Lk)
         head_dim_rounded = sum(head_dim_factors)
         padded_head = head_dim_rounded != ctx.head_dim
         attn_extra_args = ctx.attn_extra_args

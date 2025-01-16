@@ -65,7 +65,7 @@ def composed_load(
         D0 : tl.constexpr,
         D1 : tl.constexpr,
         D2 : tl.constexpr,
-        i_rows: tl.constexpr,
+        i_rows,
         i_cols,
         other,
         PADDED_ROW : tl.constexpr,
@@ -74,52 +74,20 @@ def composed_load(
 ):
     COLS0, COLS1, COLS2 = composed_offs_1d(D0, D1, D2)
     if TRANSPOSED:
-        if PADDED_ROW:
-            ptrs_mask = ROWS[None, :] < i_rows
-            if PADDED_COL:
-                x_mask = ptrs_mask & (COLS0[:, None] < i_cols) if D1 == 0 else ptrs_mask
-                y_mask = ptrs_mask & (COLS1[:, None] < i_cols) if D2 == 0 else ptrs_mask
-                z_mask = ptrs_mask & (COLS2[:, None] < i_cols)
-            else:
-                x_mask = ptrs_mask
-                y_mask = ptrs_mask
-                z_mask = ptrs_mask
-        else:
-            ptrs_mask = None
-            if PADDED_COL:
-                x_mask = COLS0[:, None] < i_cols if D1 == 0 else None
-                y_mask = COLS1[:, None] < i_cols if D2 == 0 else None
-                z_mask = COLS2[:, None] < i_cols
-            else:
-                x_mask = None
-                y_mask = None
-                z_mask = None
+        ptrs_mask = ROWS[None, :] < i_rows if PADDED_ROW or PADDED_COL else None
+        # x_mask is only needed when D0 > 0 and D1 == 0 and D2 == 0
+        x_mask = ptrs_mask & (COLS0[:, None] < i_cols) if PADDED_COL and D1 == 0 else ptrs_mask
+        y_mask = ptrs_mask & (COLS1[:, None] < i_cols) if PADDED_COL and D2 == 0 else ptrs_mask
+        z_mask = ptrs_mask & (COLS2[:, None] < i_cols) if PADDED_COL and True    else ptrs_mask
     else:
-        if PADDED_ROW:
-            ptrs_mask = ROWS[:, None] < i_rows
-            if PADDED_COL:
-                x_mask = ptrs_mask & (COLS0[None, :] < i_cols) if D1 == 0 else ptrs_mask
-                y_mask = ptrs_mask & (COLS1[None, :] < i_cols) if D2 == 0 else ptrs_mask
-                z_mask = ptrs_mask & (COLS2[None, :] < i_cols)
-            else:
-                x_mask = ptrs_mask
-                y_mask = ptrs_mask
-                z_mask = ptrs_mask
-        else:
-            ptrs_mask = None
-            if PADDED_COL:
-                x_mask = COLS0[None, :] < i_cols if D1 == 0 else None
-                y_mask = COLS1[None, :] < i_cols if D2 == 0 else None
-                z_mask = COLS2[None, :] < i_cols
-            else:
-                x_mask = None
-                y_mask = None
-                z_mask = None
+        ptrs_mask = ROWS[:, None] < i_rows if PADDED_ROW or PADDED_COL else None
+        # x_mask is only needed when D0 > 0 and D1 == 0 and D2 == 0
+        x_mask = ptrs_mask & (COLS0[None, :] < i_cols) if PADDED_COL and D1 == 0 else ptrs_mask
+        y_mask = ptrs_mask & (COLS1[None, :] < i_cols) if PADDED_COL and D2 == 0 else ptrs_mask
+        z_mask = ptrs_mask & (COLS2[None, :] < i_cols) if PADDED_COL and True    else ptrs_mask
     x = tl.load(x) if x_mask is None else tl.load(x, mask=x_mask, other=other)
-    if D1 > 0:
-        y = tl.load(y) if y_mask is None else tl.load(y, mask=y_mask, other=other)
-    if D2 > 0:
-        z = tl.load(z) if z_mask is None else tl.load(z, mask=z_mask, other=other)
+    y = tl.load(y) if y_mask is None else tl.load(y, mask=y_mask, other=other)
+    z = tl.load(z) if z_mask is None else tl.load(z, mask=z_mask, other=other)
     return (x, y, z)
 
 
