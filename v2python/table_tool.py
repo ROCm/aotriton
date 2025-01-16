@@ -285,7 +285,11 @@ class TuningDatabase(object):
 
     def dumpcsv(self, table_name, table_file):
         with open(table_file, mode='w', newline='') as file:
-            self._cur.execute(f"SELECT * FROM {table_name} WHERE {self._args.select_where};")
+            stmt = f"SELECT * FROM {table_name}"
+            if self._args.select_where:
+                stmt += f" WHERE {self._args.select_where}"
+            stmt += ";"
+            self._cur.execute(stmt)
             writer = csv.writer(file)
             colunm_names = [tup[0] for tup in self._cur.description]
             writer.writerow(colunm_names)
@@ -357,10 +361,13 @@ class TuningDatabase(object):
         json.dump(sc_report, fout, indent=2)
 
 def do_main(args, db, fin):
-    fin.seek(0, os.SEEK_END)
-    fin_size = fin.tell()
-    fin.seek(0)
-    print(f'{fin_size=}')
+    if fin.seekable():
+        fin.seek(0, os.SEEK_END)
+        fin_size = fin.tell()
+        fin.seek(0)
+        print(f'{fin_size=}')
+    else:
+        fin_size = 0
     if args.action == 'pipejson' or args.action == 'createtableonly':
         # FIXME: support pipes and streaming file with json_stream
         if args.action == 'createtableonly':
