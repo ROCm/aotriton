@@ -131,6 +131,19 @@ def composed_dot_both(
     acc = tl.dot(lz, rz, acc=acc) if D2 > 0 else acc
     return acc
 
+@triton.jit
+def small_safe_dot(lhs, rhs, D, acc=None):
+    if D == 8 and rhs.dtype == tl.bfloat16:
+        padding = tl.zeros_like(rhs)
+        padded_rhs = tl.join(rhs, padding).reshape(rhs.shape[0], rhs.shape[1] * 2)
+        padded_prod = tl.dot(lhs, padded_rhs)
+        prod, _ = padded_prod.reshape(lhs.shape[0], rhs.shape[1], 2).split()
+        if acc is not None:
+            acc += prod
+            return acc
+        return prod
+    else:
+        return tl.dot(lhs, rhs, acc=acc)
 
 # Inner dot, broadcasting lhs to composed rhs
 #   lhs: (M, N)
@@ -150,9 +163,9 @@ def composed_dot_rhs(
     lhs = tl.trans(lhs).to(rx.dtype) if TRANSPOSE_LHS and SUB16D else (
             tl.trans(lhs.to(rx.dtype)) if TRANSPOSE_LHS else lhs
           )
-    ax = tl.dot(lhs, rx, acc=ax)
-    ay = tl.dot(lhs, ry, acc=ay) if D1 > 0 else ay
-    az = tl.dot(lhs, rz, acc=az) if D2 > 0 else az
+    ax = small_safe_dot(lhs, rx, D0, acc=ax)
+    ay = small_safe_dot(lhs, ry, D1, acc=ay) if D1 > 0 else ay
+    az = small_safe_dot(lhs, rz, D2, acc=az) if D2 > 0 else az
     return (ax, ay, az)
 
 # Row/Col-wise inner product, without accumulator
