@@ -46,9 +46,7 @@ int64_t
     return -1;
 }
 
-struct [[metadata_class_name]] {
-    [[define_compiled_in_features]]
-};
+[[define_compiled_in_features]]
 
 [[context_class_name]]::AutoTuneTableEntry
 [[context_class_name]]::autotune_table[][ [[number_of_functionals]] ] = {

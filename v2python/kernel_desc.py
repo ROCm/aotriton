@@ -418,22 +418,23 @@ class KernelDescription(object):
             if not meta.is_feature:
                 continue
             ctype = meta.get_codegen_compiled_in_features_ctype()
-            decl_code = f'static const std::vector<{ctype}>& get_{meta.repr_name}_choices() const;'
+            decl_code = f'static const std::vector<{ctype}>& get_{meta.repr_name}_choices();'
             decl_list.append(decl_code)
         return '\n    '.join(decl_list)
 
     def codegen_define_compiled_in_features(self):
         def_list = []
+        meta_class = self.metadata_class_name
         for meta in self._func_meta:
             if not meta.is_feature:
                 continue
             ctype = meta.get_codegen_compiled_in_features_ctype()
             choices = ', '.join(meta.get_codegen_compiled_in_features_values())
             def_code = f'''
-    const std::vector<{ctype}>& get_{meta.repr_name}_choices() const
-    {{
-        static const std::vector<{ctype}> choices = {{ {choices} }};
-        return choices;
-    }}'''
+const std::vector<{ctype}>& {meta_class}::get_{meta.repr_name}_choices()
+{{
+    static const std::vector<{ctype}> choices = {{ {choices} }};
+    return choices;
+}}'''
             def_list.append(def_code)
         return '\n'.join(def_list)
