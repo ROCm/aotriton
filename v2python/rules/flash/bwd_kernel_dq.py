@@ -105,6 +105,8 @@ class bwd_kernel_dq(FlashKernel):
     @staticmethod
     def gen_autotune_configs(gpu, fsel_dict : 'dict[str, Any]'):
         dtype = fsel_dict['Q']
+        MI = 'MI' in gpu
+        Navi = 'Navi' in gpu
         ret = []
         # TODO: right sizes for fp32?
         BLOCK_SIZES = [16, 32, 64] if dtype != '*fp32:16' else [16, 32]
@@ -119,4 +121,10 @@ class bwd_kernel_dq(FlashKernel):
             if M < N:
                 continue  # deduplicate
             kw = {'BLOCK_M': M, 'BLOCK_N': N, 'waves_per_eu': waves}
+            if Navi and M == 64  and N == 64 and stages == 2:
+                continue  # No optimal kernel according to 0.8b tuning db
+            if Navi and M == 64  and N == 64 and warps != 4:
+                continue  # No optimal kernel according to 0.8b tuning db
+            if Navi and M > 32 and warps == 1:
+                continue  # No optimal kernel according to 0.8b tuning db
             yield Config(kw, num_stages=stages, num_warps=warps)
