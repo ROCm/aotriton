@@ -87,10 +87,7 @@ def bwd_inner_dq(
         # shape = (BLOCK_DMODEL, BLOCK_N), offs = (0, BLOCK_N * iter) = (0, start_k)
         # kt = tl.load(K_block_ptr)
         # vt = tl.load(V_block_ptr)
-        if FULL_BLOCKS:
-            k_offs_n = None
-        else:
-            k_offs_n = start_k + tl.arange(0, BLOCK_M)
+        k_offs_n = start_k + tl.arange(0, BLOCK_N)
         PADDED_SEQ : tl.constexpr = not FULL_BLOCKS
 
         kt0, kt1, kt2 = composed_load(kt_ptrs0, kt_ptrs1, kt_ptrs2,
@@ -112,7 +109,7 @@ def bwd_inner_dq(
                                       TRANSPOSED=True)
         # -- compute qk ----
         # q.offs = (start_m, 0), k.offs = (0, start_k)
-        qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)        
+        qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
         qk = composed_dot_both(q0, q1, q2,
                                kt0, kt1, kt2,
                                qk,

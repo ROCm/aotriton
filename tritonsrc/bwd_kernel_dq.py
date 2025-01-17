@@ -187,7 +187,7 @@ def bwd_kernel_dq(
 
     if start_q + BLOCK_M <= seqlen_q:
         do0, do1, do2 = composed_load(do_ptrs0, do_ptrs1, do_ptrs2,
-                                      None,
+                                      offs_q,
                                       BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
                                       seqlen_q, head_dim,
                                       other=0.0,

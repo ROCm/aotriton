@@ -267,17 +267,12 @@ class _attention(torch.autograd.Function):
         head_dim_factors = factor_head_dim(Lk)
         head_dim_rounded = sum(head_dim_factors)
         padded_head = head_dim_rounded != Lk
-        assert not padded_head, f"sum({head_dim_factors=}) = {sum(head_dim_factors)} != {Lk=}"
+        # assert not padded_head, f"sum({head_dim_factors=}) = {sum(head_dim_factors)} != {Lk=}"
         num_head_q = q.shape[1]
         num_head_k = k.shape[1]
         max_seqlen_q = q.shape[2]
         max_seqlen_k = k.shape[2]
         o = torch.empty_like(q)
-        if torch.version.hip is None:
-            BLOCK_M = 128
-            BLOCK_N = 64 if Lk <= 64 else 32
-            num_stages = 4 if Lk <= 64 else 3
-            num_warps = 4 if Lk <= 64 else 8
 
         grid = lambda META: (
             triton.cdiv(q.shape[2], META['BLOCK_M']),

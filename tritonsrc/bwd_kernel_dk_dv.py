@@ -153,7 +153,7 @@ def bwd_kernel_dk_dv(
 
     if start_k + BLOCK_N <= seqlen_k:
         kt0, kt1, kt2 = composed_load(k_ptrs0, k_ptrs1, k_ptrs2,
-                                      None,
+                                      offs_n,
                                       BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
                                       seqlen_k, head_dim,
                                       other=0.0,
@@ -161,7 +161,7 @@ def bwd_kernel_dk_dv(
                                       PADDED_COL=PADDED_HEAD,
                                       TRANSPOSED=True)
         vt0, vt1, vt2 = composed_load(v_ptrs0, v_ptrs1, v_ptrs2,
-                                      None,
+                                      offs_n,
                                       BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
                                       seqlen_k, head_dim,
                                       other=0.0,

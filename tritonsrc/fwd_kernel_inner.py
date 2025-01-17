@@ -57,7 +57,7 @@ def attn_fwd_inner(
     for start_n in range(block_min, block_max, BLOCK_N):
         # For padded blocks, we will overrun the tensor size if
         # we load all BLOCK_N. For others, the blocks are all within range.
-        if MASK_STEPS:
+        if MASK_STEPS or PADDED_HEAD:
             k_offs_n = start_n + tl.arange(0, BLOCK_N)
         else:
             k_offs_n = None

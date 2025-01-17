@@ -169,8 +169,9 @@ def composed_dot_rhs(
     return (ax, ay, az)
 
 # Row/Col-wise inner product, without accumulator
+# Always Cast to FP32 for precision
 @triton.jit
-def composed_inner_product(
+def composed_inner_product_fp32(
         lx, ly, lz,
         rx, ry, rz,
         D0 : tl.constexpr,
@@ -178,9 +179,9 @@ def composed_inner_product(
         D2 : tl.constexpr,
         axis : tl.constexpr,
 ):
-    x = tl.sum(lx * rx, axis=axis)
-    y = tl.sum(ly * ry, axis=axis) if D1 > 0 else 0
-    z = tl.sum(lz * rz, axis=axis) if D2 > 0 else 0
+    x = tl.sum(lx.to(tl.float32) * rx.to(tl.float32), axis=axis)
+    y = tl.sum(ly.to(tl.float32) * ry.to(tl.float32), axis=axis) if D1 > 0 else 0
+    z = tl.sum(lz.to(tl.float32) * rz.to(tl.float32), axis=axis) if D2 > 0 else 0
     return x + y + z
 
 # Element-wise mul, broadcasting rhs to composed lhs

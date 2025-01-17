@@ -102,7 +102,7 @@ def bwd_inner_dk_dv(
 
         # q = tl.load(Q_block_ptr)
 
-        if FULL_BLOCKS:
+        if FULL_BLOCKS and not PADDED_HEAD:
             q_offs_m = None
         else:
             q_offs_m = start_q + tl.arange(0, BLOCK_M)
