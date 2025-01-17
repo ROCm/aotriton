@@ -31,7 +31,21 @@ bwd_preprocess(T4 out, T4 dout, T2 delta, AOTRITON_NS::Stream stream_wrap) {
   //       Different kernels may have different rules.
   constexpr int kMinHeadDimCompiled = 16;
   int head_size = out.size(3);
-  int head_size_rounded = std::max(kMinHeadDimCompiled, bit_ceil(head_size));
+  const auto& compiled_head_dims = BwdPreprocessMetadata::get_D_HEAD_choices();
+  int head_size_rounded = round_value(head_size, compiled_head_dims);
+  if (head_size_rounded < 0) {
+#if AOTRITON_VERBOSE
+    std::cerr << "Head dimension " << head_size << " unsupported. ";
+    if (compiled_head_dims.empty()) {
+      std::cerr << "No head dimension (BLOCK_DMODEL) compiled into the binary." << std::endl;
+    } else {
+      std::cerr << "Maximal dimesion compiled into the binary is "
+                << compiled_head_dims.back()
+                << std::endl;
+    }
+#endif
+    return hipErrorInvalidValue;
+  }
   // Requires C++ 20
   BwdPreprocessParams params = {
     .Out = &out,
@@ -39,7 +53,7 @@ bwd_preprocess(T4 out, T4 dout, T2 delta, AOTRITON_NS::Stream stream_wrap) {
     .Delta = &delta,
     .seqlen_q = static_cast<int32_t>(out.size(2)),
     .head_dim = head_size,
-    .D_HEAD = bit_ceil(head_size),
+    .D_HEAD = head_size_rounded,
     .PADDED_HEAD = head_size_rounded != head_size,
   };
   BwdPreprocessContext context;
@@ -75,7 +89,21 @@ bwd_preprocess_varlen(T4 out,
   //       Different kernels may have different rules.
   constexpr int kMinHeadDimCompiled = 16;
   int head_size = out.size(3);
-  int head_size_rounded = std::max(kMinHeadDimCompiled, bit_ceil(head_size));
+  const auto& compiled_head_dims = BwdPreprocessVarlenMetadata::get_D_HEAD_choices();
+  int head_size_rounded = round_value(head_size, compiled_head_dims);
+  if (head_size_rounded < 0) {
+#if AOTRITON_VERBOSE
+    std::cerr << "Head dimension " << head_size << " unsupported. ";
+    if (compiled_head_dims.empty()) {
+      std::cerr << "No head dimension (BLOCK_DMODEL) compiled into the binary." << std::endl;
+    } else {
+      std::cerr << "Maximal dimesion compiled into the binary is "
+                << compiled_head_dims.back()
+                << std::endl;
+    }
+#endif
+    return hipErrorInvalidValue;
+  }
   // Requires C++ 20
   BwdPreprocessVarlenParams params = {
     .Out = &out,
@@ -84,7 +112,7 @@ bwd_preprocess_varlen(T4 out,
     .cu_seqlens_q = &cu_seqlens_q,
     .max_seqlen_q = max_seqlen_q,
     .head_dim = head_size,
-    .D_HEAD = bit_ceil(head_size),
+    .D_HEAD = head_size_rounded,
     .PADDED_HEAD = head_size_rounded != head_size,
   };
   BwdPreprocessVarlenContext context;
@@ -137,7 +165,21 @@ bwd_kernel_dk_dv(T4 q,
   int head_size = q.size(3);
   int num_head_q = q.size(1);
   int num_head_k = k.size(1);
-  int head_size_rounded = std::max(kMinHeadDimCompiled, bit_ceil(head_size));
+  const auto& compiled_head_dims = BwdKernelDkDvMetadata::get_BLOCK_DMODEL_choices();
+  int head_size_rounded = round_value(head_size, compiled_head_dims);
+  if (head_size_rounded < 0) {
+#if AOTRITON_VERBOSE
+    std::cerr << "Head dimension " << head_size << " unsupported. ";
+    if (compiled_head_dims.empty()) {
+      std::cerr << "No head dimension (BLOCK_DMODEL) compiled into the binary." << std::endl;
+    } else {
+      std::cerr << "Maximal dimesion compiled into the binary is "
+                << compiled_head_dims.back()
+                << std::endl;
+    }
+#endif
+    return hipErrorInvalidValue;
+  }
   int bias_type = 0;
   if (b) {
     bias_type = 1;
@@ -238,7 +280,21 @@ bwd_kernel_dq(T4 q,
   int head_size = q.size(3);
   int num_head_q = q.size(1);
   int num_head_k = k.size(1);
-  int head_size_rounded = std::max(kMinHeadDimCompiled, bit_ceil(head_size));
+  const auto& compiled_head_dims = BwdKernelDqMetadata::get_BLOCK_DMODEL_choices();
+  int head_size_rounded = round_value(head_size, compiled_head_dims);
+  if (head_size_rounded < 0) {
+#if AOTRITON_VERBOSE
+    std::cerr << "Head dimension " << head_size << " unsupported. ";
+    if (compiled_head_dims.empty()) {
+      std::cerr << "No head dimension (BLOCK_DMODEL) compiled into the binary." << std::endl;
+    } else {
+      std::cerr << "Maximal dimesion compiled into the binary is "
+                << compiled_head_dims.back()
+                << std::endl;
+    }
+#endif
+    return hipErrorInvalidValue;
+  }
   int bias_type = 0;
   if (b) {
     bias_type = 1;
@@ -267,7 +323,7 @@ bwd_kernel_dq(T4 q,
     .philox_seed_ptr = &philox_seed,
     .philox_offset1 = &philox_offset1,
     .philox_offset2 = static_cast<uint32_t>(philox_offset2),
-    .BLOCK_DMODEL = bit_ceil(head_size),
+    .BLOCK_DMODEL = head_size_rounded,
     .CAUSAL = is_causal,
     .ENABLE_DROPOUT = dropout_p > 0.0,
     .PADDED_HEAD = head_size_rounded != head_size,

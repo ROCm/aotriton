@@ -7,6 +7,8 @@
 #include <aotriton/config.h>
 #include <climits>
 #include <cstdint>
+#include <algorithm>
+#include <vector>
 
 namespace AOTRITON_NS {
 
@@ -26,6 +28,16 @@ inline int32_t bit_ceil(int32_t x) {
 
 inline bool is_power_of_2(uint32_t x) {
   return (x != 0) && ((x & (x - 1)) == 0);
+}
+
+inline int32_t round_value(int32_t value,
+                           const std::vector<int32_t>& to_values,
+                           int32_t oob_value = -1) {
+  auto iter = std::lower_bound(to_values.begin(), to_values.end(), value);
+  if (iter == to_values.end()) {
+    return oob_value;
+  }
+  return *iter;
 }
 
 }
