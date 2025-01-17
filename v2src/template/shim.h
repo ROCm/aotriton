@@ -11,6 +11,7 @@
 #include <aotriton/runtime.h>
 #include <functional>
 #include <string>
+#include <vector>
 
 namespace AOTRITON_NS::v2::[[kernel_family_name]] {
 
@@ -45,6 +46,11 @@ private:
 
     using AutoTuneTableEntry = std::function<void([[param_class_name]]& params)>;
     static AutoTuneTableEntry autotune_table[][ [[number_of_functionals]] ];
+};
+
+struct [[metadata_class_name]] {
+    // Note: FEAT_CHOICES here
+    [[declare_compiled_in_features]]
 };
 
 namespace autotune {

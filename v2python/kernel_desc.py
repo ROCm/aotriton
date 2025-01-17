@@ -248,6 +248,10 @@ class KernelDescription(object):
         return "".join(x.capitalize() for x in self.SHIM_KERNEL_NAME.lower().split("_")) + 'Context'
 
     @property
+    def metadata_class_name(self):
+        return "".join(x.capitalize() for x in self.SHIM_KERNEL_NAME.lower().split("_")) + 'Metadata'
+
+    @property
     def func_fields(self):
         return sum([m.param_cc_fields for m in self._func_meta], [])
 
@@ -260,8 +264,10 @@ class KernelDescription(object):
               'shim_kernel_name'    : self.SHIM_KERNEL_NAME,
               'param_class_name'    : self.param_class_name,
               'context_class_name'  : self.context_class_name,
+              'metadata_class_name' : self.metadata_class_name,
               'func_fields'         : ';\n    '.join(self.func_fields),
               'perf_fields'         : ';\n    '.join(self.perf_fields),
+              'declare_compiled_in_features' : self.codegen_declare_compiled_in_features(),
               'kernel_table_entry_declares' : self.codegen_kernel_table_entry_declares(object_files),
               'number_of_functionals': self._godel_number,
             }
@@ -276,11 +282,13 @@ class KernelDescription(object):
               'shim_kernel_name'    : self.SHIM_KERNEL_NAME,
               'param_class_name'    : self.param_class_name,
               'context_class_name'  : self.context_class_name,
+              'metadata_class_name' : self.metadata_class_name,
               'godel_number_body'   : self.godel_number_body,
               'put_kernel_arguments_on_stack' : put_kernel_arguments_on_stack,
               'let_kernel_arguments' : let_kernel_arguments,
               'get_arch_number_body' : self.arch_number_body,
               'number_of_functionals': self._godel_number,
+              'define_compiled_in_features' : self.codegen_define_compiled_in_features(),
               # 'copy_perf_fields_body': self.copy_perf_fields_body,
               # 'kernel_table_entry_declares' : self.codegen_kernel_table_entry_declares(object_files),
               'kernel_table_entries' : self.codegen_kernel_table_entries(object_files),
@@ -403,3 +411,29 @@ class KernelDescription(object):
                             lut_tensor,
                             fsels : 'list[ArgumentSelection]'):
         raise NotImplemented(f'{self.__class__}.sancheck_lut_tensor')
+
+    def codegen_declare_compiled_in_features(self):
+        decl_list = []
+        for meta in self._func_meta:
+            if not meta.is_feature:
+                continue
+            ctype = meta.get_codegen_compiled_in_features_ctype()
+            decl_code = f'static const std::vector<{ctype}>& get_{meta.repr_name}_choices() const;'
+            decl_list.append(decl_code)
+        return '\n    '.join(decl_list)
+
+    def codegen_define_compiled_in_features(self):
+        def_list = []
+        for meta in self._func_meta:
+            if not meta.is_feature:
+                continue
+            ctype = meta.get_codegen_compiled_in_features_ctype()
+            choices = ', '.join(meta.get_codegen_compiled_in_features_values())
+            def_code = f'''
+    const std::vector<{ctype}>& get_{meta.repr_name}_choices() const
+    {{
+        static const std::vector<{ctype}> choices = {{ {choices} }};
+        return choices;
+    }}'''
+            def_list.append(def_code)
+        return '\n'.join(def_list)
