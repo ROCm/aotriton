@@ -176,9 +176,8 @@ def attn_fwd(
     if BIAS_TYPE == 0:
         bias_ptrs = None
     elif BIAS_TYPE == 1:
-        # Note: this might get large enough to overflow on some configs
-        bias_offset = off_h_q * stride_bh
-        bias_ptrs = B + bias_offset + offs_m[:, None] * stride_bm + offs_n[None, :] * stride_bn
+        bias_offset = B + batch_index * stride_bz + off_h_q * stride_bh
+        bias_ptrs = bias_offset + offs_m[:, None] * stride_bm + offs_n[None, :] * stride_bn
     else:
         tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
 
