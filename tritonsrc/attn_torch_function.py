@@ -13,6 +13,7 @@ from flash import (
     bwd_preprocess as bare_bwd_preprocess,
     bwd_kernel_dk_dv as bare_bwd_kernel_dk_dv,
     bwd_kernel_dq as bare_bwd_kernel_dq,
+    bwd_fuse_kernel as bare_bwd_fuse_kernel,
 )
 from tuned_bwd import (
     tuned_bwd_kernel_dk_dv,
