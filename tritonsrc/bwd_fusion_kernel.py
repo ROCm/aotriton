@@ -22,7 +22,7 @@ from masked_load_store import load_fn, mstore2d
 
 # TODO: Remove Unused 'Out' Argument from kernels below
 @triton.jit
-def fused_attn_bwd_kernel(
+def bwd_fusion_kernel(
     # I/O tensors
     Q, K, V, B, sm_scale, Out, DO,
     DQ, DK, DV, DB,
