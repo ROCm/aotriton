@@ -270,7 +270,7 @@ def parse():
     p.add_argument('--sm_scale', type=float, nargs=1, default=[1.2], help='(Not a functional) Softmax Scale')
     p.add_argument('--return_encoded_softmax', type=bool, default=[False],
                    help="(A functional for debugging) kernel that returns softmax(dropout(QK')) to validate the correctness of dropout")
-    p.add_argument('--d_head', type=int, nargs=NARG_PLUS, default=[8, 16, 32, 48, 64, 72, 96, 128, 160, 192, 224, 256], help='Head dimensions.')
+    p.add_argument('--d_head', type=int, nargs=NARG_PLUS, default=[16, 32, 48, 64, 72, 80, 96, 128, 160, 192, 224, 256], help='Head dimensions.')
     # p.add_argument('--seqlen_q', type=int, nargs='+', default=[4,8,16,32,64,128,256,1024,2048,4096,8192], help='Sequence length of Q.')
     # p.add_argument('--seqlen_k', type=int, nargs='+', default=[4,8,16,32,64,128,256,1024,2048,4096,8192], help='Sequence length of K/V.')
     p.add_argument('--seqlen_q', type=int, nargs=NARG_PLUS, default=[4,8,16,32,64,128,256,512,1024,2048,4096,8192], help='Sequence length of Q.')
@@ -301,7 +301,7 @@ def parse():
                    type=Path,
                    required=True,
                    default=None,
-                   help="Json file for record. Disables printing json to stdout")
+                   help="Json file for record. Disables printing json to stdout. File Name '1.json' implies --overwrite_json_file")
     p.add_argument('--overwrite_json_file', dest='continue_from_json_file', action='store_false', help="Do NOT \"Append to Json file instead of overwrite, and skip already tested entries.\"")
     p.add_argument('--create_table_only', action='store_true', help="Do not insert data, only create tables. Used for schema updates.")
     p.add_argument('--use_multigpu', type=int, nargs='+', default=None, help='Profiling on multiple GPUs. Passing -1 for all GPUs available to pytorch.')
@@ -339,6 +339,9 @@ def parse():
         if not args.entry_from_json.endswith('.cfg'):
             print("--entry_from_json should only take files with .cfg suffix, to avoid potential conflict with --json_file")
             exit(-1)
+    if args.json_file.stem == '1':
+        args.continue_from_json_file = False
+        print("--json_file uses 1 as its name, assuming for debugging purpose and enforces --overwrite_json_file")
     # assert args.causal == [False], f'{args.causal=} {args.return_encoded_softmax=}'
     return args
 
