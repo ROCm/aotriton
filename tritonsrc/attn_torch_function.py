@@ -821,19 +821,9 @@ class _attention(torch.autograd.Function):
             stride_dbz, stride_dbh, stride_dbm, stride_dbn = 0,0,0,0
         else:
             db.fill_(float('nan'))
-        BLOCK = 128
-        grid_prep = (triton.cdiv(do.shape[2], BLOCK), do.shape[1], do.shape[0])
-        bare_bwd_preprocess[grid_prep](
-            o, do, delta,
-            o.stride(0), o.stride(1), o.stride(2), o.stride(3),
-            do.stride(0), do.stride(1), do.stride(2), do.stride(3),
-            max_seqlen_q,
-            Lk,
-            BLOCK_M=BLOCK, D_HEAD=head_dim_rounded,
-            PADDED_HEAD=padded_head, # FIXME: irregular head dimension
-        )
+        
         BLOCK_M1, BLOCK_N1, BLOCK_M2, BLOCK_N2 = 32, 64, 64, 32
-        BLK_SLICE_FACTOR = 2
+        # BLK_SLICE_FACTOR = 2
         # BLOCK_M1, BLOCK_N1, BLOCK_M2, BLOCK_N2 = 16, 16, 16, 16
         # BLK_SLICE_FACTOR = 1
         grid = lambda META: (max(triton.cdiv(max_seqlen_k, META['BLOCK_M1']), triton.cdiv(max_seqlen_q, META['BLOCK_M2'])), num_head_q, batch)
@@ -875,11 +865,11 @@ class _attention(torch.autograd.Function):
                 best = copy.deepcopy(tuned_attn_bwd.best_config)
                 attn_extra_args.report_best_config('attn_bwd', best)
         else:
-            bare_attn_bwd[grid](
+            bare_bwd_fuse_kernel[grid](
                     q, k, v, b, ctx.sm_scale,
                     o, do,
                     dk, dv, dq, db,
-                    L, delta,
+                    L,
                     q.stride(0), q.stride(1), q.stride(2), q.stride(3),
                     k.stride(0), k.stride(1), k.stride(2), k.stride(3),
                     v.stride(0), v.stride(1), v.stride(2), v.stride(3),
@@ -910,7 +900,6 @@ class _attention(torch.autograd.Function):
                     BLOCK_N1=BLOCK_N1,
                     BLOCK_M2=BLOCK_M2,
                     BLOCK_N2=BLOCK_N2,
-                    BLK_SLICE_FACTOR=BLK_SLICE_FACTOR,
                     )
         return dq, dk, dv, None if db.numel() == 0 else db, None, None, None, None, None, None, None
 

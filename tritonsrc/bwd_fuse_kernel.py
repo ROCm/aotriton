@@ -24,18 +24,19 @@ from masked_load_store import load_fn, mstore2d
 @triton.jit
 def bwd_fuse_kernel(
     # I/O tensors
-    Q, K, V, B, sm_scale, Out, DO,
-    DQ, DK, DV, DB,
-    L, D,
+    Q, K, V, B, sm_scale, 
+    Out, DO,
+    DK, DV, DQ, DB,
+    L,
     # Strides  
     stride_qz, stride_qh, stride_qm, stride_qk,
     stride_kz, stride_kh, stride_kn, stride_kk,
     stride_vz, stride_vh, stride_vk, stride_vn,
     stride_bz, stride_bh, stride_bm, stride_bn,
     stride_oz, stride_oh, stride_om, stride_ok,
-    stride_dqz, stride_dqh, stride_dqm, stride_dqk,
     stride_dkz, stride_dkh, stride_dkn, stride_dkk,
     stride_dvz, stride_dvh, stride_dvk, stride_dvn,
+    stride_dqz, stride_dqh, stride_dqm, stride_dqk,
     stride_dbz, stride_dbh, stride_dbm, stride_dbn,
     # Problem size
     num_head_q: tl.constexpr,
@@ -52,25 +53,27 @@ def bwd_fuse_kernel(
     philox_offset1,
     philox_offset2: tl.constexpr,
     # Constants
-    BLOCK_M: tl.constexpr,
-    BLOCK_N: tl.constexpr,
     BLOCK_DMODEL: tl.constexpr,
     CAUSAL: tl.constexpr,
     ENABLE_DROPOUT: tl.constexpr,
     PADDED_HEAD: tl.constexpr,
     BIAS_TYPE: tl.constexpr,
+    BLOCK_M1: tl.constexpr,
+    BLOCK_N1: tl.constexpr,
+    BLOCK_M2: tl.constexpr,
+    BLOCK_N2: tl.constexpr,
 ):
     philox_seed = 0
     philox_offset_base = philox_offset2
     if ENABLE_DROPOUT:
         philox_seed = tl.load(philox_seed_ptr)
         philox_offset_base += tl.load(philox_offset1)
-    start_k = tl.program_id(0) * BLOCK_N  # start_k partitions seqlen_k
+    start_k = tl.program_id(0) * BLOCK_N1  # start_k partitions seqlen_k
     off_h_k = tl.program_id(1) # head index
     off_z = tl.program_id(2) # batch index, for varlen it indicates index in cu_seqlens_q/k
     num_z = tl.num_programs(2)
-    offs_m = tl.arange(0, BLOCK_M)
-    offs_n = start_k + tl.arange(0, BLOCK_N)
+    offs_m = tl.arange(0, BLOCK_M1)
+    offs_n = start_k + tl.arange(0, BLOCK_N1)
     offs_d = tl.arange(0, BLOCK_DMODEL)
     ld_offs_d = None if not PADDED_HEAD else tl.arange(0, BLOCK_DMODEL)
 
@@ -107,13 +110,13 @@ def bwd_fuse_kernel(
 
     # Initialize pointers to Q, K, V
     # Q is consumed depending on block ID. Every block uses
-    # previous block offset by BLOCK_M x D_HEAD.
+    # previous block offset by BLOCK_M1 x D_HEAD.
 
     k_offset = off_h_k * stride_kh + batch_index * stride_kz + cu_seqlens_k_start * stride_kn
     K_dkv = K + k_offset
     kt_ptrs = K_dkv + offs_d[:, None] * stride_kk + offs_n[None, :] * stride_kn
-    # kt_offs_n = None if start_k + BLOCK_N <= seqlen_k else start_k + tl.arange(0, BLOCK_N)
-    if start_k + BLOCK_N <= seqlen_k:
+    # kt_offs_n = None if start_k + BLOCK_N1 <= seqlen_k else start_k + tl.arange(0, BLOCK_N1)
+    if start_k + BLOCK_N1 <= seqlen_k:
         kt = load_fn(kt_ptrs, ld_offs_d, None, head_dim, seqlen_k)
     else:
         kt = load_fn(kt_ptrs, ld_offs_d, offs_n, head_dim, seqlen_k)
@@ -121,7 +124,7 @@ def bwd_fuse_kernel(
     v_offset = off_h_k * stride_vh + batch_index * stride_vz + cu_seqlens_k_start * stride_vk
     V_dkv = V + v_offset
     vt_ptrs = V_dkv + offs_d[:, None] * stride_vn + offs_n[None, :] * stride_vk
-    if start_k + BLOCK_N <= seqlen_k:
+    if start_k + BLOCK_N1 <= seqlen_k:
         vt = load_fn(vt_ptrs, ld_offs_d, None, head_dim, seqlen_k)
     else:
         vt = load_fn(vt_ptrs, ld_offs_d, offs_n, head_dim, seqlen_k)
@@ -135,7 +138,7 @@ def bwd_fuse_kernel(
                 shape=(seqlen_q, seqlen_k),
                 strides=(stride_bm, stride_bn),
                 offsets=(0, start_k),
-                block_shape=(BLOCK_M, BLOCK_N),
+                block_shape=(BLOCK_M1, BLOCK_N1),
                 order=(1, 0)
                 )
     else:
@@ -146,8 +149,8 @@ def bwd_fuse_kernel(
     dv_offset = off_h_k * stride_dvh + batch_index * stride_dvz + cu_seqlens_k_start * stride_dvk
     DV += dv_offset
 
-    dv = tl.zeros([BLOCK_N, BLOCK_DMODEL], dtype=tl.float32)
-    dk = tl.zeros([BLOCK_N, BLOCK_DMODEL], dtype=tl.float32)
+    dv = tl.zeros([BLOCK_N1, BLOCK_DMODEL], dtype=tl.float32)
+    dk = tl.zeros([BLOCK_N1, BLOCK_DMODEL], dtype=tl.float32)
     qk_scale = sm_scale * 1.44269504089
     bias_scale = 1.0 / sm_scale
     group_size = num_head_q // num_head_k
@@ -155,19 +158,19 @@ def bwd_fuse_kernel(
     q_lo = start_k if CAUSAL else 0
     q_hi = seqlen_q
     real_seqlen_q = q_hi - q_lo  # seqlen_q after considering causal (and windowed in the future)
-    n_blocks = tl.cdiv(q_hi - q_lo, BLOCK_M)
+    n_blocks = tl.cdiv(q_hi - q_lo, BLOCK_M1)
     n_extra_tokens = 0
-    if real_seqlen_q < BLOCK_M:
-        n_extra_tokens = BLOCK_M - real_seqlen_q
-    elif real_seqlen_q % BLOCK_M:
-        n_extra_tokens = real_seqlen_q % BLOCK_M
+    if real_seqlen_q < BLOCK_M1:
+        n_extra_tokens = BLOCK_M1 - real_seqlen_q
+    elif real_seqlen_q % BLOCK_M1:
+        n_extra_tokens = real_seqlen_q % BLOCK_M1
     is_irregular_q = n_extra_tokens != 0
     leading_masked_blocks = 0
     trailing_masked_blocks = 0
     if CAUSAL:
         # leading masked blocks comes from the diagnoal cutting line from causal masks
-        # can be larger than one if BLOCK_N > BLOCK_M
-        leading_masked_blocks = tl.cdiv(BLOCK_N, BLOCK_M)
+        # can be larger than one if BLOCK_N1 > BLOCK_M1
+        leading_masked_blocks = tl.cdiv(BLOCK_N1, BLOCK_M1)
         # trailing masked blocks comes from extra tokens
         # Note trailing block may overlap with leading block
         trailing_masked_blocks = 1 if is_irregular_q else 0
@@ -209,8 +212,8 @@ def bwd_fuse_kernel(
 
         if leading_masked_blocks > 0:
             lo = q_lo
-            hi = lo + leading_masked_blocks * BLOCK_M
-            # TODO: overflow_size maybe larger than on block (BLOCK_M)
+            hi = lo + leading_masked_blocks * BLOCK_M1
+            # TODO: overflow_size maybe larger than on block (BLOCK_M1)
             #       In this case the bwd_inner_dk_dv can be further optimized
             overflow_size = 0 if hi < q_hi else hi - q_hi
             dk, dv = bwd_inner_dk_dv_fuse(
@@ -222,9 +225,9 @@ def bwd_fuse_kernel(
                 seqlen_q, seqlen_k, head_dim,
                 start_k, lo, hi, overflow_size,
                 dropout_p, dropout_scale, philox_seed, batch_philox_offset, max_seqlen_k,
-                BLOCK_M,
+                BLOCK_M1,
                 BLOCK_DMODEL,
-                BLOCK_N,
+                BLOCK_N1,
                 False,  # FULL_BLOCKS
                 CAUSAL,
                 ENABLE_DROPOUT,
@@ -233,8 +236,8 @@ def bwd_fuse_kernel(
             tl.debug_barrier()
 
         if n_full_blocks > 0:
-            lo = q_lo + leading_masked_blocks * BLOCK_M
-            hi = lo + n_full_blocks * BLOCK_M            
+            lo = q_lo + leading_masked_blocks * BLOCK_M1
+            hi = lo + n_full_blocks * BLOCK_M1            
             dk, dv = bwd_inner_dk_dv_fuse(
                 dk, dv, qk_scale, bias_scale,
                 q_ptrs, stride_qm, kt, vt, B_block_ptr,
@@ -244,9 +247,9 @@ def bwd_fuse_kernel(
                 seqlen_q, seqlen_k, head_dim,
                 start_k, lo, hi, 0,
                 dropout_p, dropout_scale, philox_seed, batch_philox_offset, max_seqlen_k,
-                BLOCK_M,
+                BLOCK_M1,
                 BLOCK_DMODEL,
-                BLOCK_N,
+                BLOCK_N1,
                 True,  # FULL_BLOCKS
                 False,  # CAUSAL has zero effect for full blocks
                 ENABLE_DROPOUT,
@@ -256,9 +259,9 @@ def bwd_fuse_kernel(
         # use n_full_blocks to confirm the trailing masked blocks is not overlapping with leading masked_blocks
         if n_full_blocks >= 0 and trailing_masked_blocks > 0:
             tl.debug_barrier()
-            lo = q_lo + leading_masked_blocks * BLOCK_M + n_full_blocks * BLOCK_M
+            lo = q_lo + leading_masked_blocks * BLOCK_M1 + n_full_blocks * BLOCK_M1
             hi = q_hi
-            overflow_size = lo + trailing_masked_blocks * BLOCK_M - q_hi
+            overflow_size = lo + trailing_masked_blocks * BLOCK_M1 - q_hi
             dk, dv = bwd_inner_dk_dv_fuse(
                 dk, dv, qk_scale, bias_scale,
                 q_ptrs, stride_qm, kt, vt, B_block_ptr,
@@ -268,9 +271,9 @@ def bwd_fuse_kernel(
                 seqlen_q, seqlen_k, head_dim,
                 start_k, lo, hi, overflow_size,
                 dropout_p, dropout_scale, philox_seed, batch_philox_offset, max_seqlen_k,
-                BLOCK_M,
+                BLOCK_M1,
                 BLOCK_DMODEL,
-                BLOCK_N,
+                BLOCK_N1,
                 False,  # FULL_BLOCKS
                 CAUSAL,
                 ENABLE_DROPOUT,
@@ -280,14 +283,14 @@ def bwd_fuse_kernel(
     dk = (dk * sm_scale).to(kt.type.element_ty)
     dv = dv.to(vt.type.element_ty)
     mstore2d(dk,
-            BLOCK_N, 
+            BLOCK_N1, 
             BLOCK_DMODEL,
             DK,
             start_k, 0,
             seqlen_k, head_dim,
             stride_dkn, stride_dkk)
     mstore2d(dv,
-            BLOCK_N,
+            BLOCK_N1,
             BLOCK_DMODEL, 
             DV,
             start_k, 0,
@@ -302,12 +305,12 @@ def bwd_fuse_kernel(
     off_z = tl.program_id(2) # batch index
     num_z = tl.num_programs(2)
     off_zh = off_z * num_head_q + off_h_q * 1
-    offs_q = start_q + tl.arange(0, BLOCK_N)
-    offs_n = tl.arange(0, BLOCK_M)
+    offs_q = start_q + tl.arange(0, BLOCK_M2)
+    offs_n = tl.arange(0, BLOCK_N2)
     offs_d = tl.arange(0, BLOCK_DMODEL)
     
     
-    off_m = tl.program_id(0) * BLOCK_N
+    off_m = tl.program_id(0) * BLOCK_M2
     off_h = off_h_q # head index
     off_z = tl.program_id(2) # batch index
     num_h = tl.num_programs(1)
@@ -317,7 +320,7 @@ def bwd_fuse_kernel(
         shape=(seqlen_q, head_dim),
         strides=(stride_om, stride_ok),
         offsets=(off_m, 0),
-        block_shape=(BLOCK_N, BLOCK_DMODEL),
+        block_shape=(BLOCK_M2, BLOCK_DMODEL),
         order=(1, 0)
     )
     # load
@@ -331,11 +334,11 @@ def bwd_fuse_kernel(
     #     shape=(seqlen_q, head_dim),
     #     strides=(stride_qm, stride_qk),
     #     offsets=(start_q, 0),
-    #     block_shape=(BLOCK_N, BLOCK_DMODEL),
+    #     block_shape=(BLOCK_M2, BLOCK_DMODEL),
     #     order=(1, 0)
     # )
     q_ptrs = Q + offs_q[:, None] * stride_qm + offs_d[None, :] * stride_qk
-    if start_q + BLOCK_N <= seqlen_q:
+    if start_q + BLOCK_M2 <= seqlen_q:
         q = load_fn(q_ptrs, None, ld_offs_d, seqlen_q, head_dim)
     else:
         q = load_fn(q_ptrs, offs_q, ld_offs_d, seqlen_q, head_dim)
@@ -347,7 +350,7 @@ def bwd_fuse_kernel(
     #     shape=(head_dim, seqlen_k),
     #     strides=(stride_kk, stride_kn),
     #     offsets=(0, 0),
-    #     block_shape=(BLOCK_DMODEL, BLOCK_M),
+    #     block_shape=(BLOCK_DMODEL, BLOCK_N2),
     #     order=(0, 1)
     # )
     v_offset = off_h_k * stride_vh + batch_index * stride_vz + cu_seqlens_k_start * stride_vk
@@ -358,7 +361,7 @@ def bwd_fuse_kernel(
     #     shape=(head_dim, seqlen_k),
     #     strides=(stride_vn, stride_vk),
     #     offsets=(0, 0),
-    #     block_shape=(BLOCK_DMODEL, BLOCK_M),
+    #     block_shape=(BLOCK_DMODEL, BLOCK_N2),
     #     order=(0, 1)
     # )
     do_offset = off_h_q * stride_oh + batch_index * stride_oz + cu_seqlens_q_start * stride_om
@@ -368,11 +371,11 @@ def bwd_fuse_kernel(
     #     shape=(seqlen_q, head_dim),
     #     strides=(stride_om, stride_ok),
     #     offsets=(start_q, 0),
-    #     block_shape=(BLOCK_N, BLOCK_DMODEL),
+    #     block_shape=(BLOCK_M2, BLOCK_DMODEL),
     #     order=(1, 0)
     # )
     do_ptrs = DO + offs_q[:, None] * stride_om + offs_d[None, :] * stride_ok
-    if start_q + BLOCK_N <= seqlen_q:
+    if start_q + BLOCK_M2 <= seqlen_q:
         do = load_fn(do_ptrs, None, ld_offs_d, seqlen_q, head_dim)
     else:
         do = load_fn(do_ptrs, offs_q, ld_offs_d, seqlen_q, head_dim)
@@ -395,7 +398,7 @@ def bwd_fuse_kernel(
     #     shape=(seqlen_q, head_dim),
     #     strides=(stride_dqm, stride_dqk),
     #     offsets=(start_q, 0),
-    #     block_shape=(BLOCK_N, BLOCK_DMODEL),
+    #     block_shape=(BLOCK_M2, BLOCK_DMODEL),
     #     order=(1, 0)
     # )
     store_db = True
@@ -408,7 +411,7 @@ def bwd_fuse_kernel(
                 shape=(seqlen_q, seqlen_k),
                 strides=(stride_bm, stride_bn),
                 offsets=(start_q, 0),
-                block_shape=(BLOCK_N, BLOCK_M),
+                block_shape=(BLOCK_M2, BLOCK_N2),
                 order=(1, 0)
                 )
         if (stride_dbz == 0 and stride_dbh == 0) and stride_dbm == 0:
@@ -420,23 +423,23 @@ def bwd_fuse_kernel(
                 shape=(seqlen_q, seqlen_k),
                 strides=(stride_dbm, stride_dbn),
                 offsets=(start_q, 0),
-                block_shape=(BLOCK_N, BLOCK_M),
+                block_shape=(BLOCK_M2, BLOCK_N2),
                 order=(1, 0)
                 )
     else:
         tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
 
     k_lo = 0  # reserved for windowed attention
-    k_hi = min(start_q + BLOCK_N, seqlen_k) if CAUSAL else seqlen_k
+    k_hi = min(start_q + BLOCK_M2, seqlen_k) if CAUSAL else seqlen_k
     real_seqlen_k = k_hi - k_lo  # seqlen_q after considering causal (and windowed in the future)
-    n_blocks = tl.cdiv(k_hi - k_lo, BLOCK_M)
+    n_blocks = tl.cdiv(k_hi - k_lo, BLOCK_N2)
     n_extra_tokens = 0
-    if real_seqlen_k < BLOCK_M:
-        n_extra_tokens = BLOCK_M - real_seqlen_k
-    elif real_seqlen_k % BLOCK_M:
-        n_extra_tokens = real_seqlen_k % BLOCK_M
+    if real_seqlen_k < BLOCK_N2:
+        n_extra_tokens = BLOCK_N2 - real_seqlen_k
+    elif real_seqlen_k % BLOCK_N2:
+        n_extra_tokens = real_seqlen_k % BLOCK_N2
     is_irregular_k = n_extra_tokens != 0
-    n_full_blocks = (k_hi - k_lo) // BLOCK_M
+    n_full_blocks = (k_hi - k_lo) // BLOCK_N2
     leading_masked_blocks = 0  # TODO: Windowed attention
     trailing_masked_blocks = 0
     # For causal masks, actually it is easier to calculate the full blocks and
@@ -447,23 +450,23 @@ def bwd_fuse_kernel(
         # TODO: Botton right variant
         # Top left variant
         mask_top_edge = min(start_q, seqlen_k)
-        n_full_blocks = (mask_top_edge - k_lo) // BLOCK_M
+        n_full_blocks = (mask_top_edge - k_lo) // BLOCK_N2
         trailing_masked_blocks = n_blocks - n_full_blocks
     else:
         trailing_masked_blocks = 1 if is_irregular_k else 0
 
     # Check for OOB accesses on D and LSE
-    q_boundary = tl.full((BLOCK_N, ), seqlen_q, dtype=tl.int32)
+    q_boundary = tl.full((BLOCK_M2, ), seqlen_q, dtype=tl.int32)
     d_lse_ptrs_mask = offs_q < q_boundary
     # Di = tl.load(D_ptrs + offs_q, mask=d_lse_ptrs_mask, other=0.0)
     
     l_i = tl.load(l_ptrs + offs_q, mask=d_lse_ptrs_mask, other=0.0)
 
     dropout_scale = 1.0 / (1.0 - dropout_p) if ENABLE_DROPOUT else 1.0
-    dq = tl.zeros([BLOCK_N, BLOCK_DMODEL], dtype=tl.float32)
+    dq = tl.zeros([BLOCK_M2, BLOCK_DMODEL], dtype=tl.float32)
     if n_full_blocks > 0:
         lo = 0
-        hi = n_full_blocks * BLOCK_M
+        hi = n_full_blocks * BLOCK_N2
         dq = bwd_inner_dq(
             dq, qk_scale, bias_scale,
             DB_block_ptr, store_db,
@@ -473,9 +476,9 @@ def bwd_fuse_kernel(
             seqlen_q, seqlen_k, head_dim,
             start_q, lo, hi,
             dropout_p, dropout_scale, philox_seed, batch_philox_offset, max_seqlen_k,
-            BLOCK_N,
+            BLOCK_M2,
             BLOCK_DMODEL,
-            BLOCK_M,
+            BLOCK_N2,
             True,  # FULL_BLOCKS
             False,  # CAUSAL has zero effect for full blocks
             ENABLE_DROPOUT,
@@ -483,7 +486,7 @@ def bwd_fuse_kernel(
             BIAS_TYPE)
     # Keep using "trailing_masked_blocks" for windowed attention
     if trailing_masked_blocks > 0:
-        lo = n_full_blocks * BLOCK_M
+        lo = n_full_blocks * BLOCK_N2
         hi = k_hi
         tl.debug_barrier()
         dq = bwd_inner_dq(
@@ -495,9 +498,9 @@ def bwd_fuse_kernel(
             seqlen_q, seqlen_k, head_dim,
             start_q, lo, hi,
             dropout_p, dropout_scale, philox_seed, batch_philox_offset, max_seqlen_k,
-            BLOCK_N,
+            BLOCK_M2,
             BLOCK_DMODEL,
-            BLOCK_M,
+            BLOCK_N2,
             False,  # FULL_BLOCKS
             CAUSAL,
             ENABLE_DROPOUT,
@@ -505,7 +508,7 @@ def bwd_fuse_kernel(
             BIAS_TYPE)
     dq = (dq * sm_scale).to(dq.type.element_ty)
     mstore2d(dq,
-             BLOCK_N,
+             BLOCK_M2,
              BLOCK_DMODEL,
              o_base=DQ,
              o_start_row=start_q,
