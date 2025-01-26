@@ -331,6 +331,11 @@ class TuningDatabase(object):
                 return
         if not raw_info['inputs']['Q_dtype'].startswith('torch.'):
             raw_info['inputs']['Q_dtype'] = 'torch.' + raw_info['inputs']['Q_dtype']
+        # Workaround to fix a bug where BLOCK_DMODEL was not correctly rounded
+        # in mptune/flash/db_accessor.py
+        if raw_info['inputs']['D_HEAD'] in [16, 32, 48, 64, 72, 80, 96, 128, 160, 192, 224, 256]:
+            raw_info['inputs']['BLOCK_DMODEL'] = raw_info['inputs']['D_HEAD']
+            raw_info['inputs']['PADDED_HEAD'] = False
         timing = raw_info.get('time', float('inf'))
         if isinstance(timing, float):
             if math.isinf(timing):
