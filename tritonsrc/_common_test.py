@@ -295,7 +295,7 @@ class SdpaContext(object):
 
         # Maximal value from tune_flash.py and table_tool.py --fudge_factor_tolerance 5.0
         # Note: Navi 3x is experimental and YMMV
-        query_fudge_factor = 32.0
+        query_fudge_factor = 128.0  # NPOT
         key_fudge_factor = 48.0
         value_fudge_factor = 16.0
         bias_fudge_factor = 16.0
