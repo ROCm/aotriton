@@ -242,6 +242,7 @@ class SdpaContext(object):
         else:
             ref_device_option = AOTRITON_REF_DEVICE_OPTION
         if ref_device_option == 'default':
+            ref_device = target_gpu_device
             seqlen_k = self.seqlen_k
             hdim = self.hdim
             '''
@@ -252,8 +253,6 @@ class SdpaContext(object):
             if self.dtype == torch.float32:
                 if seqlen_k == 587 or hdim % 16 != 0:
                     ref_device = 'cpu'
-                else:
-                    ref_device = target_gpu_device
         elif ref_device_option == 'cuda':
             ref_device = target_gpu_device
         elif ref_device_option == 'cpu':
