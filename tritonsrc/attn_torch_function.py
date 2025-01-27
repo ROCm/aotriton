@@ -821,7 +821,17 @@ class _attention(torch.autograd.Function):
             stride_dbz, stride_dbh, stride_dbm, stride_dbn = 0,0,0,0
         else:
             db.fill_(float('nan'))
-        
+        # BLOCK = 128
+        # grid_prep = (triton.cdiv(do.shape[2], BLOCK), do.shape[1], do.shape[0])
+        # bare_bwd_preprocess[grid_prep](
+        #     o, do, delta,
+        #     o.stride(0), o.stride(1), o.stride(2), o.stride(3),
+        #     do.stride(0), do.stride(1), do.stride(2), do.stride(3),
+        #     max_seqlen_q,
+        #     Lk,
+        #     BLOCK_M=BLOCK, D_HEAD=head_dim_rounded,
+        #     PADDED_HEAD=padded_head, # FIXME: irregular head dimension
+        # )
         BLOCK_M1, BLOCK_N1, BLOCK_M2, BLOCK_N2 = 32, 64, 64, 32
         # BLK_SLICE_FACTOR = 2
         # BLOCK_M1, BLOCK_N1, BLOCK_M2, BLOCK_N2 = 16, 16, 16, 16
