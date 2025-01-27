@@ -1,7 +1,7 @@
 # Copyright © 2023-2024 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-from ._common import FlashKernel, get_possible_types, select_pattern, BinningLessOrEqual, BinningExact
+from ._common import FlashKernel, get_possible_choices, select_pattern, BinningLessOrEqual, BinningExact
 from .attn_fwd import attn_fwd
 
 class bwd_preprocess(FlashKernel):
@@ -31,7 +31,7 @@ class bwd_preprocess(FlashKernel):
         frozenset(['head_dim']) : ['i32'],
     }
     FEAT_CHOICES = {
-        frozenset(['D_HEAD']) : get_possible_types(attn_fwd, 'BLOCK_DMODEL'),
+        frozenset(['D_HEAD']) : get_possible_choices(attn_fwd, 'BLOCK_DMODEL'),
         frozenset(['PADDED_HEAD']) : [False, True],
     }
     PERF_CHOICES = {
@@ -75,7 +75,7 @@ class bwd_preprocess_varlen(FlashKernel):
         frozenset(['head_dim']) : ['i32'],
     }
     FEAT_CHOICES = {
-        frozenset(['D_HEAD']) : get_possible_types(attn_fwd, 'BLOCK_DMODEL'),
+        frozenset(['D_HEAD']) : get_possible_choices(attn_fwd, 'BLOCK_DMODEL'),
         frozenset(['PADDED_HEAD']) : [False, True],
     }
     PERF_CHOICES = {

@@ -15,9 +15,31 @@ from flash import (
 )
 from attn_torch_function import (
         DEFAULT_PHILOX_SEED,
+        DEFAULT_PHILOX_OFFSET_1,
+        DEFAULT_PHILOX_OFFSET_2,
         DEFAULT_PHILOX_OFFSET,
         tuned_attn_fwd
 )
+
+def factor_head_dim(head_dim, n_pieces=3):
+    ret = [0] * 3
+    Lk = head_dim
+    for i in range(n_pieces):
+        max_po2 = 2 ** (Lk.bit_length() - 1)
+        # Technically Triton now supports all power-of-two, lowering to 1
+        # But PyTorch pads all inputs to multiple of 8.
+        # In addition we do not have the capability to support that many choices
+        max_po2 = max(8, max_po2)
+        ret[i] = max_po2
+        # print(f"\t{i=}: {Lk=} {max_po2=} left: {Lk - max_po2}")
+        Lk -= max_po2
+        if Lk <= 0:
+            break
+    while sum(ret) < head_dim:
+        ret[-1] *= 2
+        ret = sorted(ret, reverse=True)
+    return ret
+
 
 VERBOSE = True
 
@@ -34,8 +56,8 @@ class _varlen_attention(torch.autograd.Function):
         # shape constraints
         Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
         assert Lq == Lk and Lk == Lv
-        head_dim_rounded = 2 ** (Lk - 1).bit_length()
-        head_dim_rounded = max(16, head_dim_rounded)
+        head_dim_factors = factor_head_dim(Lk)
+        head_dim_rounded = sum(head_dim_factors)
         padded_head = head_dim_rounded != Lk
         num_head_q = q.shape[1]
         num_head_k = k.shape[1]
@@ -80,8 +102,12 @@ class _varlen_attention(torch.autograd.Function):
             if encoded_softmax is not None:
                 print(f'{encoded_softmax.shape=} {encoded_softmax.dtype=}')
 
-        philox_seed = DEFAULT_PHILOX_SEED
-        philox_offset = DEFAULT_PHILOX_OFFSET
+        philox_seed = torch.tensor([DEFAULT_PHILOX_SEED], device=q.device, dtype=torch.uint64)
+        philox_offset1 = torch.tensor([DEFAULT_PHILOX_OFFSET_1], device=q.device, dtype=torch.uint32)
+        philox_offset2 = DEFAULT_PHILOX_OFFSET_2
+        philox_seed_output = torch.tensor([0], device=q.device, dtype=torch.uint64)
+        philox_offset_output = torch.tensor([0], device=q.device, dtype=torch.uint64)
+
         b = torch.empty((0,0,0,0), device=q.device, dtype=q.dtype)
         BIAS_TYPE = 0
 
@@ -142,8 +168,11 @@ class _varlen_attention(torch.autograd.Function):
                 max_seqlen_k=max_seqlen_k,
                 head_dim=Lk,
                 dropout_p=dropout_p,
-                philox_seed=philox_seed,
-                philox_offset_base=philox_offset,
+                philox_seed_ptr=philox_seed,
+                philox_offset1=philox_offset1,
+                philox_offset2=philox_offset2,
+                philox_seed_output=philox_seed_output,
+                philox_offset_output=philox_offset_output,
                 encoded_softmax=encoded_softmax,
                 CAUSAL=causal,
                 BLOCK_M=BLOCK_M,
@@ -181,8 +210,8 @@ class _varlen_attention(torch.autograd.Function):
         ctx.head_dim = Lk
         ctx.causal = causal
         ctx.dropout_p = dropout_p
-        ctx.philox_seed = philox_seed
-        ctx.philox_offset = philox_offset
+        ctx.philox_seed = philox_seed_output
+        ctx.philox_offset = philox_offset_output
         ctx.encoded_softmax = encoded_softmax # FIXME: for debugging only
         ctx.bias_type = 0
         ctx.tuning_result = [('attn_fwd_varlen', tuning_result)] if tuning_result is not None else None
@@ -197,10 +226,24 @@ class _varlen_attention(torch.autograd.Function):
         # if q.shape[-1] <= 32:
         Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
         assert Lq == Lk and Lk == Lv and Lk == ctx.head_dim
-        head_dim_rounded = 2 ** (ctx.head_dim - 1).bit_length()
-        head_dim_rounded = max(16, head_dim_rounded)
+        head_dim_factors = factor_head_dim(Lk)
+        head_dim_rounded = sum(head_dim_factors)
         padded_head = head_dim_rounded != ctx.head_dim
+        philox_seed = ctx.philox_seed
+        philox_offset = ctx.philox_offset
 
+        dq = torch.empty_like(q)
+        dk = torch.empty_like(k)
+        dv = torch.empty_like(v)
+        db = torch.empty_like(b)
+        delta = torch.empty_like(L)
+        if True: # attn_extra_args.fillnan:
+            for t in (dq, dk, dv, db, delta):
+                t.fill_(float('nan'))
+
+        null_tensor = torch.empty((0), device=q.device, dtype=torch.int32)
+        num_head_q = int(q.shape[1])
+        num_head_k = int(k.shape[1])
         seqlen_q = ctx.seqlen_q
         seqlen_k = ctx.seqlen_k
         cu_seqlens_q = ctx.cu_seqlens_q
@@ -210,14 +253,6 @@ class _varlen_attention(torch.autograd.Function):
         batch = len(seqlen_q)
         num_heads = q.shape[1]
 
-        dq = torch.empty_like(q)
-        dq.fill_(float('nan'))
-        dk = torch.empty_like(k)
-        dk.fill_(float('nan'))
-        dv = torch.empty_like(v)
-        dv.fill_(float('nan'))
-        db = torch.empty_like(b)
-        delta = torch.empty_like(L)
         MAX_BLOCK = 64 if ctx.dropout_p == 0 else 16
         # BLOCK = min(max_seqlen_q, max_seqlen_k, q.shape[-1], MAX_BLOCK)
         # BLOCK = BLOCK if is_supported_by_tl_dot(max_seqlen_q) and is_supported_by_tl_dot(max_seqlen_k) else 1
@@ -302,8 +337,9 @@ class _varlen_attention(torch.autograd.Function):
                     max_seqlen_k=max_seqlen_k,
                     head_dim=Lk,
                     dropout_p=ctx.dropout_p,
-                    philox_seed=ctx.philox_seed,
-                    philox_offset_base=ctx.philox_offset,
+                    philox_seed_ptr=philox_seed,
+                    philox_offset1=philox_offset,
+                    philox_offset2=0,
                     BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N,
                     BLOCK_DMODEL=head_dim_rounded,
                     CAUSAL=ctx.causal,
@@ -356,15 +392,18 @@ class _varlen_attention(torch.autograd.Function):
                     do.stride(0), do.stride(1), do.stride(2), do.stride(3),
                     dk.stride(0), dk.stride(1), dk.stride(2), dk.stride(3),
                     dv.stride(0), dv.stride(1), dv.stride(2), dv.stride(3),
+                    num_head_q=num_head_q,
+                    num_head_k=num_head_k,
                     cu_seqlens_q=cu_seqlens_q,
                     cu_seqlens_k=cu_seqlens_k,
-                    num_seqlens=len(cu_seqlens_q),
+                    num_seqlens=len(cu_seqlens_q) - 1,
                     max_seqlen_q=max_seqlen_q,
                     max_seqlen_k=max_seqlen_k,
                     head_dim=Lk,
                     dropout_p=ctx.dropout_p,
-                    philox_seed=ctx.philox_seed,
-                    philox_offset_base=ctx.philox_offset,
+                    philox_seed_ptr=philox_seed,
+                    philox_offset1=philox_offset,
+                    philox_offset2=0,
                     # debug_mask=debug_mask,
                     BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N,
                     BLOCK_DMODEL=head_dim_rounded,
@@ -411,15 +450,18 @@ class _varlen_attention(torch.autograd.Function):
                     do.stride(0), do.stride(1), do.stride(2), do.stride(3),
                     dq.stride(0), dq.stride(1), dq.stride(2), dq.stride(3),
                     stride_dbz, stride_dbh, stride_dbm, stride_dbn,
+                    num_head_q=num_head_q,
+                    num_head_k=num_head_k,
                     cu_seqlens_q=cu_seqlens_q,
                     cu_seqlens_k=cu_seqlens_k,
-                    num_seqlens=len(cu_seqlens_q),
+                    num_seqlens=len(cu_seqlens_q) - 1,
                     max_seqlen_q=max_seqlen_q,
                     max_seqlen_k=max_seqlen_k,
                     head_dim=Lk,
                     dropout_p=ctx.dropout_p,
-                    philox_seed=ctx.philox_seed,
-                    philox_offset_base=ctx.philox_offset,
+                    philox_seed_ptr=philox_seed,
+                    philox_offset1=philox_offset,
+                    philox_offset2=0,
                     BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N,
                     BLOCK_DMODEL=head_dim_rounded,
                     CAUSAL=ctx.causal,
@@ -471,15 +513,18 @@ class _varlen_attention(torch.autograd.Function):
                     do.stride(0), do.stride(1), do.stride(2), do.stride(3),
                     dq.stride(0), dq.stride(1), dq.stride(2), dq.stride(3),
                     stride_dbz, stride_dbh, stride_dbm, stride_dbn,
+                    num_head_q=num_head_q,
+                    num_head_k=num_head_k,
                     cu_seqlens_q=cu_seqlens_q,
                     cu_seqlens_k=cu_seqlens_k,
-                    num_seqlens=len(cu_seqlens_q),
+                    num_seqlens=len(cu_seqlens_q) - 1,
                     max_seqlen_q=max_seqlen_q,
                     max_seqlen_k=max_seqlen_k,
                     head_dim=Lk,
                     dropout_p=ctx.dropout_p,
-                    philox_seed=ctx.philox_seed,
-                    philox_offset_base=ctx.philox_offset,
+                    philox_seed_ptr=philox_seed,
+                    philox_offset1=philox_offset,
+                    philox_offset2=0,
                     BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N,
                     BLOCK_DMODEL=head_dim_rounded,
                     CAUSAL=ctx.causal,

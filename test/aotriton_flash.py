@@ -178,7 +178,8 @@ def attn_bwd(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
     return err
 
 def debug_fill_dropout_rng(R, philox_seed, philox_offset):
-    err = fa_debug_fill_dropout_rng(mk_aotensor(R),
+    Rview, Rdevm = mk_aotensor(R)
+    err = fa_debug_fill_dropout_rng(Rview,
                                     philox_seed,
                                     philox_offset,
                                     Stream())
@@ -191,24 +192,37 @@ def attn_fwd_compact_varlen(q, k, v,
         dropout_p, philox_seed, philox_offset1, philox_offset2,
         philox_seed_output, philox_offset_output,
         encoded_softmax, is_causal):
-    err = fa_forward_compact_varlen(mk_aotensor(q),
-                                    mk_aotensor(k),
-                                    mk_aotensor(v),
-                                    mk_aotensor(cu_seqlens_q),
-                                    mk_aotensor(cu_seqlens_k),
+    qview, qdevm = mk_aotensor(q)
+    kview, kdevm = mk_aotensor(k)
+    vview, vdevm = mk_aotensor(v)
+    cuqview, cuqdevm = mk_aotensor(cu_seqlens_q),
+    cukview, cukdevm = mk_aotensor(cu_seqlens_k),
+    bview, bdevm = mk_aotensor(b, if_empty_then_like=q)
+    Mview, Mdevm = mk_aotensor(M)
+    oview, odevm = mk_aotensor(o)
+    seedview, seeddevm = mk_aotensor(philox_seed)
+    offset1view, offset1devm = mk_aotensor(philox_offset1)
+    seedoutview, seedoutdevm = mk_aotensor(philox_seed_output)
+    offsetoutview, offsetoutdevm = mk_aotensor(philox_offset_output)
+    esmview, esmdevm = mk_aotensor(encoded_softmax, if_empty_then_like=q)
+    err = fa_forward_compact_varlen(qview,
+                                    kview,
+                                    vview,
+                                    cuqview,
+                                    cukview,
                                     max_seqlen_q,
                                     max_seqlen_k,
-                                    mk_aotensor(b, if_empty_then_like=q),
+                                    bview,
                                     float(sm_scale),
-                                    mk_aotensor(M),
-                                    mk_aotensor(o),
+                                    Mview,
+                                    oview,
                                     float(dropout_p),
-                                    mk_aotensor(philox_seed),
-                                    mk_aotensor(philox_offset1),
+                                    seedview,
+                                    offset1view,
                                     philox_offset2,
-                                    mk_aotensor(philox_seed_output),
-                                    mk_aotensor(philox_offset_output),
-                                    mk_aotensor(encoded_softmax, if_empty_then_like=q),
+                                    seedoutview,
+                                    offsetoutview,
+                                    esmview,
                                     is_causal,
                                     Stream())
     # print(f'{err=}')
@@ -218,28 +232,43 @@ def attn_bwd_compact_varlen(q, k, v,
         cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
         b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
         dropout_p, philox_seed, philox_offset1, philox_offset2, is_causal):
-    b = mk_aotensor(b, if_empty_then_like=q)
+    qview, qdevm = mk_aotensor(q)
+    kview, kdevm = mk_aotensor(k)
+    vview, vdevm = mk_aotensor(v)
+    cuqview, cuqdevm = mk_aotensor(cu_seqlens_q),
+    cukview, cukdevm = mk_aotensor(cu_seqlens_k),
+    bview, bdevm = mk_aotensor(b, if_empty_then_like=q)
+    oview, odevm = mk_aotensor(o)
+    doutview, doutdevm = mk_aotensor(dout)
+    dqview, dqdevm = mk_aotensor(dq)
+    dkview, dkdevm = mk_aotensor(dk)
+    dvview, dvdevm = mk_aotensor(dv)
+    dbview, dbdevm = mk_aotensor(db, if_empty_then_like=q)
+    Lview, Ldevm = mk_aotensor(L)
+    deltaview, deltadevm = mk_aotensor(delta)
+    seedview, seeddevm = mk_aotensor(philox_seed)
+    offset1view, offset1devm = mk_aotensor(philox_offset1)
     # print(f'{b=}')
-    err = fa_backward_compact_varlen(mk_aotensor(q),
-                                     mk_aotensor(k),
-                                     mk_aotensor(v),
-                                     mk_aotensor(cu_seqlens_q),
-                                     mk_aotensor(cu_seqlens_k),
+    err = fa_backward_compact_varlen(qview,
+                                     kview,
+                                     vview,
+                                     cuqview,
+                                     cukview,
                                      max_seqlen_q,
                                      max_seqlen_k,
-                                     b,
+                                     bview,
                                      float(sm_scale),
-                                     mk_aotensor(o),
-                                     mk_aotensor(dout),
-                                     mk_aotensor(dq),
-                                     mk_aotensor(dk),
-                                     mk_aotensor(dv),
-                                     mk_aotensor(db, if_empty_then_like=q),
-                                     mk_aotensor(L),
-                                     mk_aotensor(delta),
+                                     oview,
+                                     doutview,
+                                     dqview,
+                                     dkview,
+                                     dvview,
+                                     dbview,
+                                     Lview,
+                                     deltaview,
                                      float(dropout_p),
-                                     mk_aotensor(philox_seed),
-                                     mk_aotensor(philox_offset1),
+                                     seedview,
+                                     offset1view,
                                      philox_offset2,
                                      is_causal,
                                      Stream())

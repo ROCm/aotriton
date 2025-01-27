@@ -21,8 +21,13 @@ class DbAccessor(BaseDbService):
         payload = request.payload
         tup = payload.tup
         BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type = tup
-        head_dim_rounded = 2 ** (D_HEAD - 1).bit_length()
-        head_dim_rounded = max(16, head_dim_rounded)
+        # TODO: Use proper solution
+        # Duct taped solution for tuning database
+        if D_HEAD not in [16, 32, 48, 64, 72, 80, 96, 128, 160, 192, 224, 256]:
+            head_dim_rounded = 2 ** (D_HEAD - 1).bit_length()
+            head_dim_rounded = max(16, head_dim_rounded)
+        else:
+            head_dim_rounded = D_HEAD
         inputs = {
             'Q_dtype': str(dtype),
             'BATCH' : BATCH,
