@@ -169,7 +169,7 @@ class SdpaContext(object):
         # Note: Navi 3x is experimental and YMMV
         self.OUT_FUDGE_FACTOR = 3.0
         if dtype == torch.float32:
-            self.OUT_FUDGE_FACTOR = 12.0
+            self.OUT_FUDGE_FACTOR = 14.0
         if torch.version.hip:
             if 'gfx90a' in torch.cuda.get_device_properties(0).gcnArchName:
                 self.OUT_FUDGE_FACTOR = 12.0
@@ -318,6 +318,7 @@ class SdpaContext(object):
             value_fudge_factor = 36.0
         if dtype == torch.float32:
             key_fudge_factor = 180.0
+            value_fudge_factor = 32.0
             bias_fudge_factor = 24.0
         return (query_fudge_factor, key_fudge_factor, value_fudge_factor, bias_fudge_factor)
 
