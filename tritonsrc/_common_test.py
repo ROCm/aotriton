@@ -207,6 +207,10 @@ class SdpaContext(object):
         return self.dev_tensors[0].dtype
 
     @property
+    def hdim(self):
+        return self.dev_tensors[0].shape[-1]
+
+    @property
     def seqlen_q(self):
         q, k, v, b = self.dev_tensors
         seqlen_q = q.shape[2]
@@ -239,15 +243,17 @@ class SdpaContext(object):
             ref_device_option = AOTRITON_REF_DEVICE_OPTION
         if ref_device_option == 'default':
             seqlen_k = self.seqlen_k
+            hdim = self.hdim
             '''
             Shader _ZN2at6native12_GLOBAL__N_119cunn_SoftMaxForwardILi2EdddNS1_22SoftMaxForwardEpilogueEEEvPT2_PKT0_i causes Segfault
             for Case test_op_bwd[False-0.0-dtype2-0.0-False-587-64-8-4-4], but cannot be reproduced by running this individual UT.
             Avoiding running it on GPU for now
             '''
-            if seqlen_k == 587:
-                ref_device = 'cpu'
-            else:
-                ref_device = target_gpu_device
+            if self.dtype == torch.float32:
+                if seqlen_k == 587 or hdim % 16 != 0:
+                    ref_device = 'cpu'
+                else:
+                    ref_device = target_gpu_device
         elif ref_device_option == 'cuda':
             ref_device = target_gpu_device
         elif ref_device_option == 'cpu':
