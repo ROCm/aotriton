@@ -193,7 +193,6 @@ def bwd_fuse_kernel(
         # Shape (batch, num_heads, max_seqlen_q)
         # In varlen cases, batch == len(cu_seqlens_q) - 1).
         # Hence off_z plays the same role in varlen/non-varlen
-        D_ptrs = D + off_zh * max_seqlen_q
         l_ptrs = L + off_zh * max_seqlen_q
 
         q_offset = off_h_q * stride_qh + batch_index * stride_qz + cu_seqlens_q_start * stride_qm
@@ -221,7 +220,6 @@ def bwd_fuse_kernel(
                 q_ptrs, stride_qm, kt, vt, B_block_ptr,
                 do_ptrs, o_ptrs, stride_om,
                 l_ptrs,
-                D_ptrs,
                 seqlen_q, seqlen_k, head_dim,
                 start_k, lo, hi, overflow_size,
                 dropout_p, dropout_scale, philox_seed, batch_philox_offset, max_seqlen_k,
@@ -243,7 +241,6 @@ def bwd_fuse_kernel(
                 q_ptrs, stride_qm, kt, vt, B_block_ptr,
                 do_ptrs, o_ptrs, stride_om,
                 l_ptrs,
-                D_ptrs,
                 seqlen_q, seqlen_k, head_dim,
                 start_k, lo, hi, 0,
                 dropout_p, dropout_scale, philox_seed, batch_philox_offset, max_seqlen_k,
@@ -267,7 +264,6 @@ def bwd_fuse_kernel(
                 q_ptrs, stride_qm, kt, vt, B_block_ptr,
                 do_ptrs, o_ptrs, stride_om,
                 l_ptrs,
-                D_ptrs,
                 seqlen_q, seqlen_k, head_dim,
                 start_k, lo, hi, overflow_size,
                 dropout_p, dropout_scale, philox_seed, batch_philox_offset, max_seqlen_k,

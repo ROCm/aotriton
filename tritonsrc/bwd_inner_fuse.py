@@ -24,7 +24,6 @@ def bwd_inner_dk_dv_fuse(
     q_ptrs, q_stride, kt, vt, B_block_ptr,
     do_ptrs, o_ptrs, do_stride,
     l_ptrs,
-    D_ptrs,
     seqlen_q, seqlen_k, head_dim,
     # Sub-problem range, (lo, hi) specify the range for seqlen_q
     start_k, lo, hi, overflow_size,
