@@ -23,6 +23,25 @@ from sized_tuned_bwd import (
     sized_tuned_bwd_kernel_dq,
 )
 
+def factor_head_dim(head_dim, n_pieces=3):
+    ret = [0] * 3
+    Lk = head_dim
+    for i in range(n_pieces):
+        max_po2 = 2 ** (Lk.bit_length() - 1)
+        # Technically Triton now supports all power-of-two, lowering to 1
+        # But PyTorch pads all inputs to multiple of 8.
+        # In addition we do not have the capability to support that many choices
+        max_po2 = max(8, max_po2)
+        ret[i] = max_po2
+        # print(f"\t{i=}: {Lk=} {max_po2=} left: {Lk - max_po2}")
+        Lk -= max_po2
+        if Lk <= 0:
+            break
+    while sum(ret) < head_dim:
+        ret[-1] *= 2
+        ret = sorted(ret, reverse=True)
+    return ret
+
 AttentionExtraArgs = namedtuple('AttentionExtraArgs',
         ['return_encoded_softmax',
          'autotune',
@@ -245,19 +264,15 @@ class _attention(torch.autograd.Function):
         # shape constraints
         Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
         assert Lq == Lk and Lk == Lv
-        head_dim_rounded = 2 ** (Lk - 1).bit_length()
-        head_dim_rounded = max(16, head_dim_rounded)
+        head_dim_factors = factor_head_dim(Lk)
+        head_dim_rounded = sum(head_dim_factors)
         padded_head = head_dim_rounded != Lk
+        # assert not padded_head, f"sum({head_dim_factors=}) = {sum(head_dim_factors)} != {Lk=}"
         num_head_q = q.shape[1]
         num_head_k = k.shape[1]
         max_seqlen_q = q.shape[2]
         max_seqlen_k = k.shape[2]
         o = torch.empty_like(q)
-        if torch.version.hip is None:
-            BLOCK_M = 128
-            BLOCK_N = 64 if Lk <= 64 else 32
-            num_stages = 4 if Lk <= 64 else 3
-            num_warps = 4 if Lk <= 64 else 8
 
         grid = lambda META: (
             triton.cdiv(q.shape[2], META['BLOCK_M']),
@@ -318,7 +333,6 @@ class _attention(torch.autograd.Function):
             BLOCK_M //= 2
 
         if autotune:
-            assert False, "tritonsrc based autotune is disabled for now due to potentially faulty triton.Config on Navi31"
             tuned_attn_fwd[grid](
                 q, k, v, b, sm_scale, M, o,
                 q.stride(0), q.stride(1), q.stride(2), q.stride(3),
@@ -465,8 +479,8 @@ class _attention(torch.autograd.Function):
         # if q.shape[-1] <= 32:
         Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
         assert Lq == Lk and Lk == Lv and Lk == ctx.head_dim
-        head_dim_rounded = 2 ** (ctx.head_dim - 1).bit_length()
-        head_dim_rounded = max(16, head_dim_rounded)
+        head_dim_factors = factor_head_dim(Lk)
+        head_dim_rounded = sum(head_dim_factors)
         padded_head = head_dim_rounded != ctx.head_dim
         attn_extra_args = ctx.attn_extra_args
         philox_seed = ctx.philox_seed
@@ -550,7 +564,6 @@ class _attention(torch.autograd.Function):
         print(f'backward {ctx.bias_type=} {ctx.autotune=} {BLOCK_M=} {BLOCK_N=} {stride_dbz=} {stride_dbh=} {stride_dbm=} {stride_dbn=}')
         if k.requires_grad and v.requires_grad:
             if ctx.autotune:
-                assert False
                 tuned_bwd_kernel_dk_dv[grid_dk_dv](
                     q, k, v, b, ctx.sm_scale,
                     o, do,

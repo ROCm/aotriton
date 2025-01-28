@@ -4,7 +4,7 @@
 import itertools
 from ._common import (
     FlashKernel,
-    get_possible_types,
+    get_possible_choices,
     select_pattern,
     BinningLessOrEqual,
     BinningExact,
@@ -45,8 +45,8 @@ class bwd_kernel_dq(FlashKernel):
         'PADDED_HEAD',
         'BIAS_TYPE',
     ]
-    match_fwd = lambda aname : get_possible_types(attn_fwd, aname)
-    match_kv = lambda aname : get_possible_types(bwd_kernel_dk_dv, aname)
+    match_fwd = lambda aname : get_possible_choices(attn_fwd, aname)
+    match_kv = lambda aname : get_possible_choices(bwd_kernel_dk_dv, aname)
     TENSOR_STRIDE_INPUTS = {
         'Q' : select_pattern(ARGUMENTS, 'stride_q'),
         'K' : select_pattern(ARGUMENTS, 'stride_k'),
@@ -78,7 +78,7 @@ class bwd_kernel_dq(FlashKernel):
         frozenset(['philox_offset2']) : match_fwd('philox_offset2'),
     }
     FEAT_CHOICES = {
-        frozenset(['BLOCK_DMODEL']) : [16, 32, 64, 128, 256],
+        frozenset(['BLOCK_DMODEL']) : match_fwd('BLOCK_DMODEL'),
         frozenset(['CAUSAL']) : match_kv('CAUSAL'),
         frozenset(['ENABLE_DROPOUT']) : match_fwd('ENABLE_DROPOUT'),
         frozenset(['PADDED_HEAD']) : [False, True],
@@ -105,6 +105,8 @@ class bwd_kernel_dq(FlashKernel):
     @staticmethod
     def gen_autotune_configs(gpu, fsel_dict : 'dict[str, Any]'):
         dtype = fsel_dict['Q']
+        MI = 'MI' in gpu
+        Navi = 'Navi' in gpu
         ret = []
         # TODO: right sizes for fp32?
         BLOCK_SIZES = [16, 32, 64] if dtype != '*fp32:16' else [16, 32]
@@ -119,4 +121,10 @@ class bwd_kernel_dq(FlashKernel):
             if M < N:
                 continue  # deduplicate
             kw = {'BLOCK_M': M, 'BLOCK_N': N, 'waves_per_eu': waves}
+            if Navi and M == 64  and N == 64 and stages == 2:
+                continue  # No optimal kernel according to 0.8b tuning db
+            if Navi and M == 64  and N == 64 and warps != 4:
+                continue  # No optimal kernel according to 0.8b tuning db
+            if Navi and M > 32 and warps == 1:
+                continue  # No optimal kernel according to 0.8b tuning db
             yield Config(kw, num_stages=stages, num_warps=warps)

@@ -58,7 +58,7 @@ class attn_fwd(FlashKernel):
     }
     FEAT_CHOICES = {
         frozenset(['CAUSAL']) : [False, True],
-        frozenset(['BLOCK_DMODEL']) : [16, 32, 64, 128, 256],
+        frozenset(['BLOCK_DMODEL']) : [16, 32, 48, 64, 72, 80, 96, 128, 160, 192, 224, 256],
         frozenset(['ENABLE_DROPOUT']) : [False, True],
         frozenset(['RETURN_ENCODED_SOFTMAX']) : [False, True],
         frozenset(['PADDED_HEAD']) : [False, True],
@@ -151,6 +151,14 @@ class attn_fwd(FlashKernel):
                 M //= 2
             if M < N:  # Faulty or duplicate
                 continue
+            if MI and M > 32 and N > 16 and stages == 2:
+                continue  # No optimal kernel according to 0.8b tuning db
+            if MI and M > 64 and N > 64 and warps == 1:
+                continue  # No optimal kernel according to 0.8b tuning db
+            if Navi and M > 32 and N > 32 and stages == 2:
+                continue  # No optimal kernel according to 0.8b tuning db
+            if Navi and M > 32 and N > 32 and warps == 1:
+                continue  # No optimal kernel according to 0.8b tuning db
             kw = {'BLOCK_M': M, 'BLOCK_N': N, 'waves_per_eu': waves, 'pre_load_v': pre}
             yield Config(kw, num_stages=stages, num_warps=warps)
         if MI:

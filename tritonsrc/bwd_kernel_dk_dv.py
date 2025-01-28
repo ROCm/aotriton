@@ -19,6 +19,20 @@ import triton
 import triton.language as tl
 from bwd_inner_dk_dv import bwd_inner_dk_dv
 from masked_load_store import load_fn, mstore2d
+from composed_tensors import (
+    composed_offs_1d,
+    composed_zeros_2d,
+    composed_ptrs,
+    composed_load,
+    composed_advance,
+    composed_to,
+    composed_store,
+    composed_mul_lhs,
+    composed_dot_both,
+    composed_dot_rhs,
+    composed_mul_lhs,
+    composed_mul_acc,
+)
 
 # TODO: Remove Unused 'Out' Argument from kernels below
 @triton.jit
@@ -54,6 +68,18 @@ def bwd_kernel_dk_dv(
     PADDED_HEAD: tl.constexpr,
     BIAS_TYPE: tl.constexpr,
 ):
+    tl.static_assert(BLOCK_DMODEL > 0, 'BLOCK_DMODEL must be greater than 0')
+    BLOCK_DMODEL_R0 : tl.constexpr = BLOCK_DMODEL
+    BLOCK_DMODEL0 : tl.constexpr = 2 ** (BLOCK_DMODEL_R0.bit_length() - 1)
+    BLOCK_DMODEL_R1 : tl.constexpr = BLOCK_DMODEL_R0 - BLOCK_DMODEL0
+    BLOCK_DMODEL1 : tl.constexpr = 2 ** (BLOCK_DMODEL_R1.bit_length() - 1) if BLOCK_DMODEL_R1 > 0 else 0
+    BLOCK_DMODEL_R2 : tl.constexpr = BLOCK_DMODEL_R1 - BLOCK_DMODEL1
+    BLOCK_DMODEL2 : tl.constexpr = 2 ** (BLOCK_DMODEL_R2.bit_length() - 1) if BLOCK_DMODEL_R2 > 0 else 0
+    BLOCK_DMODEL_R3 : tl.constexpr = BLOCK_DMODEL_R2 - BLOCK_DMODEL2
+
+    tl.static_assert(BLOCK_DMODEL_R3 == 0, f'BLOCK_DMODEL = {BLOCK_DMODEL} = 0b{BLOCK_DMODEL:b} cannot be factored into <= 3 power of two values')
+    tl.static_assert(BLOCK_DMODEL1 > 0 or BLOCK_DMODEL2 == 0, 'Only trailing BLOCK_DMODELx can be 0')
+
     philox_seed = 0
     philox_offset_base = philox_offset2
     if ENABLE_DROPOUT:
@@ -65,9 +91,6 @@ def bwd_kernel_dk_dv(
     num_z = tl.num_programs(2)
     offs_m = tl.arange(0, BLOCK_M)
     offs_n = start_k + tl.arange(0, BLOCK_N)
-    offs_d = tl.arange(0, BLOCK_DMODEL)
-    ld_offs_d = None if not PADDED_HEAD else tl.arange(0, BLOCK_DMODEL)
-
     cu_seqlens_q_start = 0
     cu_seqlens_k_start = 0
     seqlen_q = max_seqlen_q
@@ -115,14 +138,53 @@ def bwd_kernel_dk_dv(
     #     block_shape=(BLOCK_M, BLOCK_DMODEL),
     #     order=(1, 0)
     # )
-    k_offset = off_h_k * stride_kh + batch_index * stride_kz + cu_seqlens_k_start * stride_kn
-    K += k_offset
-    kt_ptrs = K + offs_d[:, None] * stride_kk + offs_n[None, :] * stride_kn
+
+    k_ptrs0, k_ptrs1, k_ptrs2 = composed_ptrs(K,
+                                              stride_kz, stride_kh, stride_kn, stride_kk,
+                                              batch_index, off_h_k, cu_seqlens_k_start + offs_n,
+                                              BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                              TRANSPOSED=True)
     # kt_offs_n = None if start_k + BLOCK_N <= seqlen_k else start_k + tl.arange(0, BLOCK_N)
+    v_ptrs0, v_ptrs1, v_ptrs2 = composed_ptrs(V,
+                                              stride_vz, stride_vh, stride_vk, stride_vn,
+                                              batch_index, off_h_k, cu_seqlens_k_start + offs_n,
+                                              BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                              TRANSPOSED=True)
+
     if start_k + BLOCK_N <= seqlen_k:
-        kt = load_fn(kt_ptrs, ld_offs_d, None, head_dim, seqlen_k)
+        kt0, kt1, kt2 = composed_load(k_ptrs0, k_ptrs1, k_ptrs2,
+                                      offs_n,
+                                      BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                      seqlen_k, head_dim,
+                                      other=0.0,
+                                      PADDED_ROW=False,
+                                      PADDED_COL=PADDED_HEAD,
+                                      TRANSPOSED=True)
+        vt0, vt1, vt2 = composed_load(v_ptrs0, v_ptrs1, v_ptrs2,
+                                      offs_n,
+                                      BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                      seqlen_k, head_dim,
+                                      other=0.0,
+                                      PADDED_ROW=False,
+                                      PADDED_COL=PADDED_HEAD,
+                                      TRANSPOSED=True)
     else:
-        kt = load_fn(kt_ptrs, ld_offs_d, offs_n, head_dim, seqlen_k)
+        kt0, kt1, kt2 = composed_load(k_ptrs0, k_ptrs1, k_ptrs2,
+                                      offs_n,
+                                      BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                      seqlen_k, head_dim,
+                                      other=0.0,
+                                      PADDED_ROW=True,
+                                      PADDED_COL=PADDED_HEAD,
+                                      TRANSPOSED=True)
+        vt0, vt1, vt2 = composed_load(v_ptrs0, v_ptrs1, v_ptrs2,
+                                      offs_n,
+                                      BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                      seqlen_k, head_dim,
+                                      other=0.0,
+                                      PADDED_ROW=True,
+                                      PADDED_COL=PADDED_HEAD,
+                                      TRANSPOSED=True)
     # KT_block_ptr = tl.make_block_ptr(
     #     base=K + k_offset,
     #     shape=(head_dim, seqlen_k),
@@ -131,8 +193,7 @@ def bwd_kernel_dk_dv(
     #     block_shape=(BLOCK_DMODEL, BLOCK_N),
     #     order=(0, 1)
     # )
-    v_offset = off_h_k * stride_vh + batch_index * stride_vz + cu_seqlens_k_start * stride_vk
-    V += v_offset
+
     # VT_block_ptr = tl.make_block_ptr(
     #     base=V,
     #     shape=(head_dim, seqlen_k),
@@ -142,11 +203,6 @@ def bwd_kernel_dk_dv(
     #     order=(0, 1)
     # )
     # vt = tl.load(VT_block_ptr)
-    vt_ptrs = V + offs_d[:, None] * stride_vn + offs_n[None, :] * stride_vk
-    if start_k + BLOCK_N <= seqlen_k:
-        vt = load_fn(vt_ptrs, ld_offs_d, None, head_dim, seqlen_k)
-    else:
-        vt = load_fn(vt_ptrs, ld_offs_d, offs_n, head_dim, seqlen_k)
     # DO_block_ptr = tl.make_block_ptr(
     #     base=DO,
     #     shape=(seqlen_q, head_dim),
@@ -175,8 +231,8 @@ def bwd_kernel_dk_dv(
     dv_offset = off_h_k * stride_dvh + batch_index * stride_dvz + cu_seqlens_k_start * stride_dvk
     DV += dv_offset
 
-    dv = tl.zeros([BLOCK_N, BLOCK_DMODEL], dtype=tl.float32)
-    dk = tl.zeros([BLOCK_N, BLOCK_DMODEL], dtype=tl.float32)
+    dv0, dv1, dv2 = composed_zeros_2d(BLOCK_N, BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
+    dk0, dk1, dk2 = composed_zeros_2d(BLOCK_N, BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
     qk_scale = sm_scale * 1.44269504089
     bias_scale = 1.0 / sm_scale
     group_size = num_head_q // num_head_k
@@ -222,10 +278,15 @@ def bwd_kernel_dk_dv(
         D_ptrs = D + off_zh * max_seqlen_q
         l_ptrs = L + off_zh * max_seqlen_q
 
-        q_offset = off_h_q * stride_qh + batch_index * stride_qz + cu_seqlens_q_start * stride_qm
-        q_ptrs = Q + q_offset + offs_m[:, None] * stride_qm + offs_d[None, :] * stride_qk
-        do_offset = off_h_q * stride_oh + batch_index * stride_oz + cu_seqlens_q_start * stride_om
-        do_ptrs = DO + do_offset + offs_m[:, None] * stride_om + offs_d[None, :] * stride_ok
+        q_ptrs0, q_ptrs1, q_ptrs2 = composed_ptrs(Q,
+                                                  stride_qz, stride_qh, stride_qm, stride_qk,
+                                                  batch_index, off_h_q, cu_seqlens_q_start + offs_m,
+                                                  BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
+
+        do_ptrs0, do_ptrs1, do_ptrs2 = composed_ptrs(DO,
+                                                  stride_oz, stride_oh, stride_om, stride_ok,
+                                                  batch_index, off_h_q, cu_seqlens_q_start + offs_m,
+                                                  BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
 
         # dkdk kernel is a little tricky, its masked blocks can be found in both ends
         # leading masked: by causal
@@ -241,17 +302,25 @@ def bwd_kernel_dk_dv(
             # TODO: overflow_size maybe larger than on block (BLOCK_M)
             #       In this case the bwd_inner_dk_dv can be further optimized
             overflow_size = 0 if hi < q_hi else hi - q_hi
-            dk, dv = bwd_inner_dk_dv(
-                dk, dv, qk_scale, bias_scale,
-                q_ptrs, stride_qm, kt, vt, B_block_ptr,
-                do_ptrs, stride_om,
+            dk0, dk1, dk2, dv0, dv1, dv2 = bwd_inner_dk_dv(
+                dk0, dk1, dk2,
+                dv0, dv1, dv2,
+                qk_scale, bias_scale,
+                q_ptrs0, q_ptrs1, q_ptrs2,
+                stride_qm,
+                kt0, kt1, kt2, vt0, vt1, vt2,
+                B_block_ptr,
+                do_ptrs0, do_ptrs1, do_ptrs2,
+                stride_om,
                 l_ptrs,
                 D_ptrs,
                 seqlen_q, seqlen_k, head_dim,
                 start_k, lo, hi, overflow_size,
                 dropout_p, dropout_scale, philox_seed, batch_philox_offset, max_seqlen_k,
                 BLOCK_M,
-                BLOCK_DMODEL,
+                BLOCK_DMODEL0,
+                BLOCK_DMODEL1,
+                BLOCK_DMODEL2,
                 BLOCK_N,
                 False,  # FULL_BLOCKS
                 CAUSAL,
@@ -263,17 +332,25 @@ def bwd_kernel_dk_dv(
         if n_full_blocks > 0:
             lo = q_lo + leading_masked_blocks * BLOCK_M
             hi = lo + n_full_blocks * BLOCK_M
-            dk, dv = bwd_inner_dk_dv(
-                dk, dv, qk_scale, bias_scale,
-                q_ptrs, stride_qm, kt, vt, B_block_ptr,
-                do_ptrs, stride_om,
+            dk0, dk1, dk2, dv0, dv1, dv2 = bwd_inner_dk_dv(
+                dk0, dk1, dk2,
+                dv0, dv1, dv2,
+                qk_scale, bias_scale,
+                q_ptrs0, q_ptrs1, q_ptrs2,
+                stride_qm,
+                kt0, kt1, kt2, vt0, vt1, vt2,
+                B_block_ptr,
+                do_ptrs0, do_ptrs1, do_ptrs2,
+                stride_om,
                 l_ptrs,
                 D_ptrs,
                 seqlen_q, seqlen_k, head_dim,
                 start_k, lo, hi, 0,
                 dropout_p, dropout_scale, philox_seed, batch_philox_offset, max_seqlen_k,
                 BLOCK_M,
-                BLOCK_DMODEL,
+                BLOCK_DMODEL0,
+                BLOCK_DMODEL1,
+                BLOCK_DMODEL2,
                 BLOCK_N,
                 True,  # FULL_BLOCKS
                 False,  # CAUSAL has zero effect for full blocks
@@ -287,43 +364,61 @@ def bwd_kernel_dk_dv(
             lo = q_lo + leading_masked_blocks * BLOCK_M + n_full_blocks * BLOCK_M
             hi = q_hi
             overflow_size = lo + trailing_masked_blocks * BLOCK_M - q_hi
-            dk, dv = bwd_inner_dk_dv(
-                dk, dv, qk_scale, bias_scale,
-                q_ptrs, stride_qm, kt, vt, B_block_ptr,
-                do_ptrs, stride_om,
+            dk0, dk1, dk2, dv0, dv1, dv2 = bwd_inner_dk_dv(
+                dk0, dk1, dk2,
+                dv0, dv1, dv2,
+                qk_scale, bias_scale,
+                q_ptrs0, q_ptrs1, q_ptrs2,
+                stride_qm,
+                kt0, kt1, kt2, vt0, vt1, vt2,
+                B_block_ptr,
+                do_ptrs0, do_ptrs1, do_ptrs2,
+                stride_om,
                 l_ptrs,
                 D_ptrs,
                 seqlen_q, seqlen_k, head_dim,
                 start_k, lo, hi, overflow_size,
                 dropout_p, dropout_scale, philox_seed, batch_philox_offset, max_seqlen_k,
                 BLOCK_M,
-                BLOCK_DMODEL,
+                BLOCK_DMODEL0,
+                BLOCK_DMODEL1,
+                BLOCK_DMODEL2,
                 BLOCK_N,
                 False,  # FULL_BLOCKS
                 CAUSAL,
                 ENABLE_DROPOUT,
                 PADDED_HEAD,
                 BIAS_TYPE)
-    dk = (dk * sm_scale).to(kt.type.element_ty)
-    dv = dv.to(vt.type.element_ty)
-    mstore2d(dk,
-             BLOCK_N,
-             BLOCK_DMODEL,
-             o_base=DK,
-             o_start_row=start_k,
-             o_start_col=0,
-             o_rows=seqlen_k,
-             o_cols=head_dim,
-             stride_row=stride_dkn,
-             stride_col=stride_dkk)
-    mstore2d(dv,
-             BLOCK_N,
-             BLOCK_DMODEL,
-             o_base=DV,
-             o_start_row=start_k,
-             o_start_col=0,
-             o_rows=seqlen_k,
-             o_cols=head_dim,
-             stride_row=stride_dvk,
-             stride_col=stride_dvn)
+
+    dk0, dk1, dk2 = composed_mul_lhs(dk0, dk1, dk2,
+                                     sm_scale,
+                                     BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
+    dk0, dk1, dk2 = composed_to(dk0, dk1, dk2, kt0.type.element_ty)
+    dv0, dv1, dv2 = composed_to(dv0, dv1, dv2, vt0.type.element_ty)
+
+    composed_store(dk0, dk1, dk2,
+                   BLOCK_N,
+                   BLOCK_DMODEL0,
+                   BLOCK_DMODEL1,
+                   BLOCK_DMODEL2,
+                   o_base=DK,
+                   o_start_row=start_k,
+                   o_start_col=0,
+                   o_rows=seqlen_k,
+                   o_cols=head_dim,
+                   stride_row=stride_dkn,
+                   stride_col=stride_dkk)
+
+    composed_store(dv0, dv1, dv2,
+                   BLOCK_N,
+                   BLOCK_DMODEL0,
+                   BLOCK_DMODEL1,
+                   BLOCK_DMODEL2,
+                   o_base=DV,
+                   o_start_row=start_k,
+                   o_start_col=0,
+                   o_rows=seqlen_k,
+                   o_cols=head_dim,
+                   stride_row=stride_dvk,
+                   stride_col=stride_dvn)
 

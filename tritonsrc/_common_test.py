@@ -169,7 +169,7 @@ class SdpaContext(object):
         # Note: Navi 3x is experimental and YMMV
         self.OUT_FUDGE_FACTOR = 3.0
         if dtype == torch.float32:
-            self.OUT_FUDGE_FACTOR = 12.0
+            self.OUT_FUDGE_FACTOR = 14.0
         if torch.version.hip:
             if 'gfx90a' in torch.cuda.get_device_properties(0).gcnArchName:
                 self.OUT_FUDGE_FACTOR = 12.0
@@ -207,6 +207,10 @@ class SdpaContext(object):
         return self.dev_tensors[0].dtype
 
     @property
+    def hdim(self):
+        return self.dev_tensors[0].shape[-1]
+
+    @property
     def seqlen_q(self):
         q, k, v, b = self.dev_tensors
         seqlen_q = q.shape[2]
@@ -238,16 +242,17 @@ class SdpaContext(object):
         else:
             ref_device_option = AOTRITON_REF_DEVICE_OPTION
         if ref_device_option == 'default':
+            ref_device = target_gpu_device
             seqlen_k = self.seqlen_k
+            hdim = self.hdim
             '''
             Shader _ZN2at6native12_GLOBAL__N_119cunn_SoftMaxForwardILi2EdddNS1_22SoftMaxForwardEpilogueEEEvPT2_PKT0_i causes Segfault
             for Case test_op_bwd[False-0.0-dtype2-0.0-False-587-64-8-4-4], but cannot be reproduced by running this individual UT.
             Avoiding running it on GPU for now
             '''
-            if seqlen_k == 587:
-                ref_device = 'cpu'
-            else:
-                ref_device = target_gpu_device
+            if self.dtype == torch.float32:
+                if seqlen_k == 587 or hdim % 16 != 0:
+                    ref_device = 'cpu'
         elif ref_device_option == 'cuda':
             ref_device = target_gpu_device
         elif ref_device_option == 'cpu':
@@ -295,10 +300,10 @@ class SdpaContext(object):
 
         # Maximal value from tune_flash.py and table_tool.py --fudge_factor_tolerance 5.0
         # Note: Navi 3x is experimental and YMMV
-        query_fudge_factor = 32.0
+        query_fudge_factor = 148.0  # NPOT
         key_fudge_factor = 48.0
         value_fudge_factor = 16.0
-        bias_fudge_factor = 16.0
+        bias_fudge_factor = 17.0
         # print(f'{torch.cuda.get_device_properties(0).gcnArchName=}')
         if torch.version.hip:
             if 'gfx90a' in torch.cuda.get_device_properties(0).gcnArchName:
@@ -312,6 +317,7 @@ class SdpaContext(object):
             value_fudge_factor = 36.0
         if dtype == torch.float32:
             key_fudge_factor = 180.0
+            value_fudge_factor = 32.0
             bias_fudge_factor = 24.0
         return (query_fudge_factor, key_fudge_factor, value_fudge_factor, bias_fudge_factor)
 
