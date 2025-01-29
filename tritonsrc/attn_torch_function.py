@@ -307,7 +307,7 @@ class _attention(torch.autograd.Function):
                 print(f'{encoded_softmax.shape=} {encoded_softmax.dtype=}')
 
         philox_seed = torch.tensor([DEFAULT_PHILOX_SEED], device=q.device, dtype=torch.uint64)
-        philox_offset1 = torch.tensor([DEFAULT_PHILOX_OFFSET_1], device=q.device, dtype=torch.uint32)
+        philox_offset1 = torch.tensor([DEFAULT_PHILOX_OFFSET_1], device=q.device, dtype=torch.uint64)
         philox_offset2 = DEFAULT_PHILOX_OFFSET_2
         philox_seed_output = torch.tensor([0], device=q.device, dtype=torch.uint64)
         philox_offset_output = torch.tensor([0], device=q.device, dtype=torch.uint64)
@@ -372,36 +372,62 @@ class _attention(torch.autograd.Function):
             print(f'{q.shape=} {k.shape=} {v.shape=} {b.shape=} {M.shape=} {o.shape=}', flush=True)
             print(f'{q.stride()=} {k.stride()=} {v.stride()=} {b.stride()=} {M.stride()=} {o.stride()=}', flush=True)
             bare_attn_fwd[grid](
-                q, k, v, b, sm_scale, M, o,
+                # Basic SDPA
+                q, k, v, sm_scale, M, o,
                 q.stride(0), q.stride(1), q.stride(2), q.stride(3),
                 k.stride(0), k.stride(1), k.stride(2), k.stride(3),
                 v.stride(0), v.stride(1), v.stride(2), v.stride(3),
-                b.stride(0), b.stride(1), b.stride(2), b.stride(3),
                 o.stride(0), o.stride(1), o.stride(2), o.stride(3),
-                num_head_q=num_head_q,
-                num_head_k=num_head_k,
+                # MQA/GQA
+                Num_head_q=num_head_q,
+                Num_head_k=num_head_k,
+                # Varlen
+                Num_seqlens=0,
                 cu_seqlens_q=null_tensor,
                 cu_seqlens_k=null_tensor,
-                num_seqlens=0,
-                max_seqlen_q=q.shape[2],
-                max_seqlen_k=k.shape[2],
-                head_dim=Lk,
+                Max_seqlen_q=q.shape[2],
+                Max_seqlen_k=k.shape[2],
+                # Head Dimensions
+                BLOCK_DMODEL=head_dim_rounded,
+                Head_dim=Lk,
+                PADDED_HEAD=padded_head,
+                # droput and PRNG
+                ENABLE_DROPOUT=dropout_p > 0.0,
                 dropout_p=dropout_p,
                 philox_seed_ptr=philox_seed,
                 philox_offset1=philox_offset1,
                 philox_offset2=philox_offset2,
                 philox_seed_output=philox_seed_output,
                 philox_offset_output=philox_offset_output,
-                encoded_softmax=encoded_softmax,
-                CAUSAL=causal,
-                BLOCK_M=BLOCK_M,
-                BLOCK_DMODEL=head_dim_rounded,
-                BLOCK_N=BLOCK_N,
-                pre_load_v=False,
-                ENABLE_DROPOUT=dropout_p > 0.0,
                 RETURN_ENCODED_SOFTMAX=encoded_softmax is not None,
-                PADDED_HEAD=padded_head,
+                encoded_softmax=encoded_softmax,
+                # Causal
+                CAUSAL_TYPE=1 if causal else 0,
+                # bias
                 BIAS_TYPE=BIAS_TYPE,
+                B=b,
+                stride_bz=b.stride(0), stride_bh=b.stride(1),
+                stride_bm=b.stride(2), stride_bn=b.stride(3),
+                # INT8
+                INT8=False,
+                INT8_KV=False,
+                Q_descale=0,
+                K_descale=0,
+                USE_P_SCALE=False,
+                P_scale=0, P_descale=0, V_descale=0,
+                # Alibi
+                USE_ALIBI=False,
+                alibi_slopes=None,
+                stride_az=0, stride_ah=0,
+                # Persistent related arguments
+                PERSISTENT_TYPE=0,
+                persistent_atomic_counter=0,
+                Num_CU=40,
+                GRID_CU_MULTIP=2,
+                # Performance
+                BLOCK_M=BLOCK_M,
+                BLOCK_N=BLOCK_N,
+                PRE_LOAD_V=False,
                 num_stages=1,
             )
 

@@ -73,9 +73,9 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
         print(f'{q.shape=} {q.stride()=} {q.dtype=}')
         print(f'{k.shape=} {k.stride()=} {k.dtype=}')
         print(f'{v.shape=} {v.stride()=} {v.dtype=}')
-        print(f'{q[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
-        print(f'{k[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
-        print(f'{v[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
+        print(f'{q[0,0,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
+        print(f'{k[0,0,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
+        print(f'{v[0,0,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
         if dropout_mask is not None:
             print(f'{dropout_mask.shape=}')
             print(f'{dropout_mask[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')

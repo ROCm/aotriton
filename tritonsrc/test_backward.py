@@ -11,6 +11,10 @@ from _common_backward import _do_test_op_bwd
 from _common_test import SdpaContext, SdpaParams, SdpaContextFromNPZ
 from attn_torch_function import attention, AttentionExtraArgs
 
+POT_HEADDIMS = [16, 32, 64, 128, 256]
+NPOT_HEADDIMS = [48, 72, 80, 96, 160, 192, 224]
+PRIME_HEADDIMS = [7, 23, 37, 53, 67, 73, 89, 113, 149, 179, 211, 241]
+
 # @pytest.mark.parametrize('BATCH', [1])
 # @pytest.mark.parametrize('N_HEADS', [1])
 @pytest.mark.parametrize('BATCH', [1, 4])
@@ -22,7 +26,7 @@ from attn_torch_function import attention, AttentionExtraArgs
 # @pytest.mark.parametrize('seqlen_k', [1, 4, 32, 128, 256, 512, 1024, 3, 217, 339, 313, 491, 988])
 # PyTorch set
 # @pytest.mark.parametrize('D_HEAD', [8, 16, 21, 32, 64, 72, 96, 128, 160, 192, 203, 256])
-@pytest.mark.parametrize('D_HEAD', [8, 16, 32, 48, 64, 72, 96, 128, 160, 192, 224, 256])
+@pytest.mark.parametrize('D_HEAD', POT_HEADDIMS)
 @pytest.mark.parametrize('seqlen_q', [4, 8, 64, 143, 256, 512, 1024, 2048])
 @pytest.mark.parametrize('seqlen_k', [4, 8, 64, 128, 256, 587, 1024, 2048])
 # Currently debugging
@@ -53,7 +57,7 @@ def test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dr
 # @pytest.mark.parametrize('N_HEADS', [1, 4])
 @pytest.mark.parametrize('BATCH', [1, 4])
 @pytest.mark.parametrize('N_HEADS', [1, 4])
-@pytest.mark.parametrize('D_HEAD', [16,32,64,128,256])
+@pytest.mark.parametrize('D_HEAD', POT_HEADDIMS)
 # @pytest.mark.parametrize('D_HEAD', [128])
 # Complete set
 # @pytest.mark.parametrize('seqlen_q', [4,8,16,17,32,64,128,143,256,512,1024,2048])
