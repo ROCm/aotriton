@@ -23,6 +23,23 @@ from sized_tuned_bwd import (
     sized_tuned_bwd_kernel_dq,
 )
 
+# Note: we don't use Enum class because accessing the integer requires using
+#       `.value` property, which makes the code verbose.
+class CausalType:
+    NONE = 0
+    TOP_LEFT = 1
+    BOTTOM_RIGHT = 2
+
+class BiasType:
+    NONE = 0
+    MATRIX = 1
+    VECTOR = 2  # CAVEAT: Unsupported in kernel
+
+class PersistentType:
+    NONE = 0
+    FIXED = 1
+    DYNAMIC = 2
+
 def factor_head_dim(head_dim, n_pieces=3):
     ret = [0] * 3
     Lk = head_dim
@@ -306,17 +323,31 @@ class _attention(torch.autograd.Function):
             if encoded_softmax is not None:
                 print(f'{encoded_softmax.shape=} {encoded_softmax.dtype=}')
 
-        philox_seed = torch.tensor([DEFAULT_PHILOX_SEED], device=q.device, dtype=torch.uint64)
-        philox_offset1 = torch.tensor([DEFAULT_PHILOX_OFFSET_1], device=q.device, dtype=torch.uint64)
-        philox_offset2 = DEFAULT_PHILOX_OFFSET_2
-        philox_seed_output = torch.tensor([0], device=q.device, dtype=torch.uint64)
-        philox_offset_output = torch.tensor([0], device=q.device, dtype=torch.uint64)
+        if dropout_p > 0.0:
+            philox_seed = torch.tensor([DEFAULT_PHILOX_SEED], device=q.device, dtype=torch.uint64)
+            philox_offset1 = torch.tensor([DEFAULT_PHILOX_OFFSET_1], device=q.device, dtype=torch.uint64)
+            philox_offset2 = DEFAULT_PHILOX_OFFSET_2
+            philox_seed_output = torch.tensor([0], device=q.device, dtype=torch.uint64)
+            philox_offset_output = torch.tensor([0], device=q.device, dtype=torch.uint64)
+        else:
+            u64nulltensor = torch.empty([0], device=q.device, dtype=torch.uint64)
+            philox_seed = u64nulltensor
+            philox_offset1 = u64nulltensor
+            philox_offset2 = 0
+            philox_seed_output = u64nulltensor
+            philox_offset_output = u64nulltensor
 
         if b is None:
             b = torch.empty((0,0,0,0), device=q.device, dtype=q.dtype)
-            BIAS_TYPE = 0
+            BIAS_TYPE = BiasType.NONE
         else:
-            BIAS_TYPE = 1
+            BIAS_TYPE = BiasType.MATRIX
+
+        # TODO alibi_slopes
+        alibi_slopes = torch.empty((0,0), device=q.device, dtype=q.dtype)
+
+        # TODO: int8
+        q_descale = k_descale = p_scale = p_descale = v_descale = 0
 
         use_small_block = dropout_p > 0.0 or BIAS_TYPE != 0 or return_encoded_softmax
         use_medium_block = False # reserved
@@ -334,7 +365,7 @@ class _attention(torch.autograd.Function):
 
         if autotune:
             tuned_attn_fwd[grid](
-                q, k, v, b, sm_scale, M, o,
+                q, k, v, b, alibi_slopes, sm_scale, M, o,
                 q.stride(0), q.stride(1), q.stride(2), q.stride(3),
                 k.stride(0), k.stride(1), k.stride(2), k.stride(3),
                 v.stride(0), v.stride(1), v.stride(2), v.stride(3),
@@ -373,11 +404,14 @@ class _attention(torch.autograd.Function):
             print(f'{q.stride()=} {k.stride()=} {v.stride()=} {b.stride()=} {M.stride()=} {o.stride()=}', flush=True)
             bare_attn_fwd[grid](
                 # Basic SDPA
-                q, k, v, sm_scale, M, o,
-                q.stride(0), q.stride(1), q.stride(2), q.stride(3),
-                k.stride(0), k.stride(1), k.stride(2), k.stride(3),
-                v.stride(0), v.stride(1), v.stride(2), v.stride(3),
-                o.stride(0), o.stride(1), o.stride(2), o.stride(3),
+                q, k, v, b, alibi_slopes, sm_scale, M, o,
+                q_descale, k_descale, p_scale, p_descale, v_descale,
+                *q.stride(),
+                *k.stride(),
+                *v.stride(),
+                *o.stride(),
+                *b.stride(),
+                *alibi_slopes.stride(),
                 # MQA/GQA
                 Num_head_q=num_head_q,
                 Num_head_k=num_head_k,
@@ -402,28 +436,21 @@ class _attention(torch.autograd.Function):
                 RETURN_ENCODED_SOFTMAX=encoded_softmax is not None,
                 encoded_softmax=encoded_softmax,
                 # Causal
-                CAUSAL_TYPE=1 if causal else 0,
+                CAUSAL_TYPE=CausalType.TOP_LEFT if causal else CausalType.NONE,
                 # bias
                 BIAS_TYPE=BIAS_TYPE,
-                B=b,
-                stride_bz=b.stride(0), stride_bh=b.stride(1),
-                stride_bm=b.stride(2), stride_bn=b.stride(3),
                 # INT8
                 INT8=False,
                 INT8_KV=False,
-                Q_descale=0,
-                K_descale=0,
                 USE_P_SCALE=False,
-                P_scale=0, P_descale=0, V_descale=0,
                 # Alibi
                 USE_ALIBI=False,
-                alibi_slopes=None,
-                stride_az=0, stride_ah=0,
                 # Persistent related arguments
-                PERSISTENT_TYPE=0,
+                PERSISTENT_TYPE=PersistentType.NONE,
                 persistent_atomic_counter=0,
                 Num_CU=40,
                 GRID_CU_MULTIP=2,
+                Batch=q.shape[0],
                 # Performance
                 BLOCK_M=BLOCK_M,
                 BLOCK_N=BLOCK_N,

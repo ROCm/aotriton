@@ -37,7 +37,7 @@ IS_AOT_COMPILING = True
 if IS_AOT_COMPILING:
     from triton.language import int32 as constexpr_or_i32
     from triton.language import float32 as constexpr_or_f32
-    from triton.language import int1 as constexpr_or_int1
+    from triton.language import int1 as constexpr_or_bool
 else:
     from triton.language import constexpr as constexpr_or_i32
     from triton.language import constexpr as constexpr_or_f32
@@ -50,11 +50,14 @@ def cdiv_fn(x, y):
 @triton.jit
 def attn_fwd(
         # Basic SDPA
-        Q, K, V, Sm_scale : constexpr_or_f32, L, Out,
+        Q, K, V, B, A, Sm_scale : constexpr_or_f32, L, Out,
+        Q_descale, K_descale, P_scale, P_descale, V_descale,
         stride_qz, stride_qh, stride_qm, stride_qk,
         stride_kz, stride_kh, stride_kn, stride_kk,
         stride_vz, stride_vh, stride_vk, stride_vn,
         stride_oz, stride_oh, stride_om, stride_on,
+        stride_bz, stride_bh, stride_bm, stride_bn,
+        stride_az, stride_ah,
         # MQA/GQA
         Num_head_q : constexpr_or_i32,
         Num_head_k : constexpr_or_i32,
@@ -71,9 +74,9 @@ def attn_fwd(
         # dropout and PRNG
         ENABLE_DROPOUT: tl.constexpr,
         dropout_p,
-        philox_seed_ptr,
+        philox_seed_ptr : '*u64',
         philox_offset1 : '*u32',
-        philox_offset2 : 'i32',
+        philox_offset2 : tl.int32,  # TODO: move to tl.int64
         philox_seed_output : '*u64',
         philox_offset_output : '*u64',
         RETURN_ENCODED_SOFTMAX: tl.constexpr,
@@ -82,23 +85,18 @@ def attn_fwd(
         CAUSAL_TYPE: tl.constexpr,
         # bias
         BIAS_TYPE: tl.constexpr,
-        B,
-        stride_bz, stride_bh, stride_bm, stride_bn,
         # alibi
         USE_ALIBI: tl.constexpr,
-        alibi_slopes,
-        stride_az, stride_ah,  # alibi
         # INT8
         INT8: tl.constexpr,
         INT8_KV: tl.constexpr,
-        Q_descale, K_descale,
         USE_P_SCALE: tl.constexpr,
-        P_scale, P_descale, V_descale,
         # Persistent related arguments
         PERSISTENT_TYPE: tl.constexpr,  # 0: disable, 1: fixed, 2: dynamic
         persistent_atomic_counter,
         Num_CU : constexpr_or_i32,
         GRID_CU_MULTIP: tl.constexpr,
+        Batch : constexpr_or_i32,
         # Performance
         BLOCK_M: tl.constexpr,
         BLOCK_N: tl.constexpr,
@@ -108,7 +106,6 @@ def attn_fwd(
     ## tl.constexpr to variable
     IS_CAUSAL : tl.constexpr = CAUSAL_TYPE != 0
     IS_CAUSAL_BOTTOM_RIGHT : tl.constexpr = CAUSAL_TYPE == 2
-    PADDED_VARLEN : tl.constexpr = Num_seqlens < 0
     USE_BIAS : tl.constexpr = BIAS_TYPE == 1
     tl.static_assert(BIAS_TYPE == 0 or BIAS_TYPE == 1, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
     BATCH = tl.num_programs(2)
