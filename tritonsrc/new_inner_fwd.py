@@ -18,11 +18,11 @@ from composed_tensors import (
 @triton.jit
 def _attn_fwd_inner(
         # Inputs
-        acc,
+        acc0, acc1, acc2,
         l_i, m_i, Qk_scale,
-        q,
-        k_ptrs,
-        v_ptrs,
+        q0, q1, q2,
+        k_ptrs0, k_ptrs1, k_ptrs2,
+        v_ptrs0, v_ptrs1, v_ptrs2,
         bias_ptrs,
         stride_kn, stride_vk, stride_bn,
         # Task positions
@@ -41,7 +41,9 @@ def _attn_fwd_inner(
         # CAUSAL and BLOCK SIZES
         IS_CAUSAL: tl.constexpr,
         BLOCK_M: tl.constexpr,
-        BLOCK_DMODEL: tl.constexpr,
+        BLOCK_DMODEL0: tl.constexpr,
+        BLOCK_DMODEL1: tl.constexpr,
+        BLOCK_DMODEL2: tl.constexpr,
         BLOCK_N: tl.constexpr,
         OFFS_M: tl.constexpr,
         OFFS_N: tl.constexpr,
@@ -57,15 +59,28 @@ def _attn_fwd_inner(
     for start_n in range(block_min, block_max, BLOCK_N):
         # For padded blocks, we will overrun the tensor size if
         # we load all BLOCK_N. For others, the blocks are all within range.
-        if MASK_STEPS:
+        if MASK_STEPS or PADDED_HEAD:
             k_offs_n = start_n + tl.arange(0, BLOCK_N)
         else:
             k_offs_n = None
-        k_offs_k = None if not PADDED_HEAD else tl.arange(0, BLOCK_DMODEL)
-        k = load_fn(k_ptrs, k_offs_k, k_offs_n, Head_dim, actual_seqlen_k)
+        k0, k1, k2 = composed_load(k_ptrs0, k_ptrs1, k_ptrs2,
+                                   k_offs_n,
+                                   BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                   actual_seqlen_k, Head_dim,
+                                   other=0.0,
+                                   PADDED_ROW=MASK_STEPS,
+                                   PADDED_COL=PADDED_HEAD,
+                                   TRANSPOSED=True)
         if PRE_LOAD_V:
             # We can use the same offsets as k, just with dims transposed.
-            v = load_fn(v_ptrs, k_offs_n, k_offs_k, actual_seqlen_k, Head_dim)
+            v0, v1, v2 = composed_load(v_ptrs0, v_ptrs1, v_ptrs2,
+                                       k_offs_n,
+                                       BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                       actual_seqlen_k, Head_dim,
+                                       other=0.0,
+                                       PADDED_ROW=MASK_STEPS,
+                                       PADDED_COL=PADDED_HEAD,
+                                       TRANSPOSED=False)
         qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
         # We start from end of seqlen_k so only the first iteration would need
         # to be checked for padding if it is not a multiple of block_n
@@ -86,12 +101,16 @@ def _attn_fwd_inner(
             causal_mask = OFFS_M[:, None] >= causal_boundary[None, :]
             qk = tl.where(causal_mask, qk, float("-inf"))
         # -- compute qk ----
+        # TODO: INT8 NPOT OPTIMIZATION
         if INT8_GEMM:
             qk += ((((tl.dot(q, k).to(tl.float32) * q_descale)) * k_descale) * Qk_scale)
         else:
             if INT8_KV:
                 k = (k * k_descale).to(q.type.element_ty)
-            qk += (tl.dot(q, k) * Qk_scale)
+            qk = composed_dot_both(q0, q1, q2,
+                                   k0, k1, k2,
+                                   qk,
+                                   BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2) * Qk_scale
 
         if bias_ptrs is not None:
             bias_offs_n = start_n + tl.arange(0, BLOCK_N) if MASK_STEPS else None
@@ -110,10 +129,17 @@ def _attn_fwd_inner(
             qk += (alibi_block * 1.44269504089)  # scale factor of log2(e)
 
         # softmax
+        # Note: DO NOT USE the following FMA optimization pattern, which has
+        # numerical errors for large inputs:
+        #   m_ij = tl.maximum(m_i, Qk_scale * tl.max(qk, 1))
+        #   p = tl.math.exp2(qk * Qk_scale - m_ij[:, None])
+        # See: https://github.com/ROCm/aotriton/issues/54
         m_ij = tl.maximum(m_i, tl.max(qk, 1))
         qk = qk - m_ij[:, None]
         p = tl.math.exp2(qk)
 
+        # When sm_scale = 0.0 and MASK_STEPS/CAUSAL = True
+        # qk * Qk_scale = -inf * 0.0 = nan
         if MASK_STEPS or IS_CAUSAL:
             if Qk_scale == 0.0:
                 p = tl.where(libdevice.isnan(p), 0.0, p)
@@ -148,14 +174,24 @@ def _attn_fwd_inner(
                      stride_col=1)
         # -- update output accumulator --
         alpha = tl.math.exp2(m_i - m_ij)
-        acc = acc * alpha[:, None]
+        acc0, acc1, acc2 = composed_mul_lhs(acc0, acc1, acc2,
+                                            alpha[:, None],
+                                            BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
         if not PRE_LOAD_V:
-            v = load_fn(v_ptrs, k_offs_n, k_offs_k, actual_seqlen_k, Head_dim)
+            v0, v1, v2 = composed_load(v_ptrs0, v_ptrs1, v_ptrs2,
+                                       k_offs_n,
+                                       BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                       actual_seqlen_k, Head_dim,
+                                       other=0.0,
+                                       PADDED_ROW=MASK_STEPS,
+                                       PADDED_COL=PADDED_HEAD,
+                                       TRANSPOSED=False)
         # -- update m_i and l_i
         l_i = l_i * alpha + l_ij
         # update m_i and l_i
         m_i = m_ij
 
+        # TODO: INT8 NPOT OPTIMIZATION
         if INT8_GEMM:
             if USE_P_SCALE:
                 p = (p * p_scale).to(tl.int8)
@@ -167,12 +203,17 @@ def _attn_fwd_inner(
         else:
             if INT8_KV:
                 v = (v * v_descale).to(p.type.element_ty)
-            acc += tl.dot(p.to(v.type.element_ty), v)
+            acc0, acc1, acc2 = composed_dot_rhs(p.to(v0.type.element_ty),
+                                                v0, v1, v2,
+                                                acc0, acc1, acc2,
+                                                BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
 
-        k_ptrs += BLOCK_N * stride_kn
-        v_ptrs += BLOCK_N * stride_vk
+        k_ptrs0, k_ptrs1, k_ptrs2 = composed_advance(k_ptrs0, k_ptrs1, k_ptrs2,
+                                                     BLOCK_N * stride_kn,
+                                                     BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
+        v_ptrs0, v_ptrs1, v_ptrs2 = composed_advance(v_ptrs0, v_ptrs1, v_ptrs2,
+                                                     BLOCK_N * stride_vk,
+                                                     BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
         if bias_ptrs is not None:
             bias_ptrs += BLOCK_N * stride_bn
-    return acc, l_i, m_i
-
-
+    return acc0, acc1, acc2, l_i, m_i
