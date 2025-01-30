@@ -128,7 +128,7 @@ def attn_fwd(
         Num_WG = Num_CU * GRID_CU_MULTIP  # number of workgroups launched
         num_tiles_per_head = tl.cdiv(Max_seqlen_q, BLOCK_M)  # the number of work units (tiles) of a single head
         num_tiles_per_sample = num_tiles_per_head * Num_head_q  # times the number of heads
-        num_tiles_total = num_tiles_per_sample * BATCH  # times the number of samples
+        num_tiles_total = num_tiles_per_sample * Batch  # times the number of samples
         if PERSISTENT_TYPE == 2:
             tile_id = persistent_atomic_counter.atomic_add(1)  # retuns the value BEFORE the atomic operation
         else:
@@ -484,5 +484,6 @@ def attn_fwd(
                 tile_id = persistent_atomic_counter.atomic_add(1)
             else:
                 tile_id += Num_WG
+            tl.device_print('tile_id increased to', tile_id)
         else:
             tile_id = num_tiles_total  # break after single tile

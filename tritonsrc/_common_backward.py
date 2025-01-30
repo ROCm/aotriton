@@ -6,7 +6,7 @@ import pytest
 import torch
 
 from _common_test import SdpaContext, SdpaParams
-from attn_torch_function import attention, AttentionExtraArgs
+from attn_torch_function import attention, AttentionExtraArgs, PersistentType
 
 '''
 Flash Attention is batch operator that evaluates sm(QK')V
@@ -44,7 +44,8 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
     ext = AttentionExtraArgs(return_encoded_softmax=dropout_p > 0.0,
                              autotune=False,
                              return_autotune=False,
-                             fillnan=True)
+                             fillnan=True,
+                             persistent_type=PersistentType.FIXED)
     tri_out, encoded_softmax, _ = attention(q, k, v, b, causal, sm_scale, dropout_p, ext)
     dropout_mask = encoded_softmax >= 0 if dropout_p > 0.0 else None
     sdpa_params = SdpaParams(causal=causal, sm_scale=sm_scale, dropout_p=dropout_p, dropout_mask=dropout_mask)

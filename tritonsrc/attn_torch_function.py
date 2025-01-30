@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: MIT
 
 from collections import namedtuple
+from dataclasses import dataclass
 import copy
 import torch
 import triton
@@ -59,6 +60,16 @@ def factor_head_dim(head_dim, n_pieces=3):
         ret = sorted(ret, reverse=True)
     return ret
 
+@dataclass
+class AttentionExtraArgs:
+    return_encoded_softmax : bool = False
+    autotune : bool = False
+    return_autotune : bool = False
+    fillnan : bool = False
+    report_best_config : bool = False
+    persistent_type : int = PersistentType.NONE
+
+'''
 AttentionExtraArgs = namedtuple('AttentionExtraArgs',
         ['return_encoded_softmax',
          'autotune',
@@ -67,6 +78,7 @@ AttentionExtraArgs = namedtuple('AttentionExtraArgs',
          'report_best_config',
          ],
         defaults=[False, False, False, False, None])
+'''
 
 VERBOSE=False
 DEFAULT_PHILOX_SEED = 0x1BF52
@@ -276,7 +288,9 @@ class _attention(torch.autograd.Function):
     @staticmethod
     def forward(ctx, q, k, v, b, causal, sm_scale, dropout_p,
                 attn_extra_args=AttentionExtraArgs()):
-        return_encoded_softmax, autotune, return_autotune = attn_extra_args[:3]
+        return_encoded_softmax = attn_extra_args.return_encoded_softmax
+        autotune = attn_extra_args.autotune
+        return_autotune = attn_extra_args.return_autotune
         dtype = q.dtype
         # shape constraints
         Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
@@ -285,17 +299,24 @@ class _attention(torch.autograd.Function):
         head_dim_rounded = sum(head_dim_factors)
         padded_head = head_dim_rounded != Lk
         # assert not padded_head, f"sum({head_dim_factors=}) = {sum(head_dim_factors)} != {Lk=}"
+        batch = q.shape[0]
         num_head_q = q.shape[1]
         num_head_k = k.shape[1]
         max_seqlen_q = q.shape[2]
         max_seqlen_k = k.shape[2]
         o = torch.empty_like(q)
 
-        grid = lambda META: (
-            triton.cdiv(q.shape[2], META['BLOCK_M']),
-            num_head_q,
-            q.shape[0],
-        )
+        if attn_extra_args.persistent_type == PersistentType.NONE:
+            grid = lambda META: (
+                triton.cdiv(q.shape[2], META['BLOCK_M']),
+                num_head_q,
+                q.shape[0],
+            )
+            Num_CU = 0
+        else:
+            Num_CU = torch.cuda.get_device_properties(q.device).multi_processor_count
+            grid = lambda META: (min(Num_CU * META['GRID_CU_MULTIP'],
+                                     triton.cdiv(max_seqlen_q, META['BLOCK_M']) * num_head_q * batch), )
         null_tensor = torch.empty((0), device=q.device, dtype=torch.int32)
         M = torch.empty((q.shape[0] * q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)
         if attn_extra_args.fillnan:
@@ -362,6 +383,11 @@ class _attention(torch.autograd.Function):
             BLOCK_N = 64
         if dtype == torch.float32:
             BLOCK_M //= 2
+
+        if attn_extra_args.persistent_type == PersistentType.DYNAMIC:
+            persistent_atomic_counter = torch.zeros([1], device=q.device, dtype=torch.int32)
+        else:
+            persistent_atomic_counter = None
 
         if autotune:
             tuned_attn_fwd[grid](
@@ -446,11 +472,11 @@ class _attention(torch.autograd.Function):
                 # Alibi
                 USE_ALIBI=False,
                 # Persistent related arguments
-                PERSISTENT_TYPE=PersistentType.NONE,
-                persistent_atomic_counter=0,
-                Num_CU=40,
+                PERSISTENT_TYPE=attn_extra_args.persistent_type,
+                persistent_atomic_counter=persistent_atomic_counter,
+                Num_CU=Num_CU,
                 GRID_CU_MULTIP=2,
-                Batch=q.shape[0],
+                Batch=batch,
                 # Performance
                 BLOCK_M=BLOCK_M,
                 BLOCK_N=BLOCK_N,
@@ -648,7 +674,7 @@ class _attention(torch.autograd.Function):
                     BIAS_TYPE=ctx.bias_type,
                 )
                 report = attn_extra_args.report_best_config
-                if report is not None:
+                if report:
                     best = copy.deepcopy(tuned_bwd_kernel_dk_dv.best_config)
                     attn_extra_args.report_best_config('bwd_kernel_dk_dv', best)
                 if return_autotune:
@@ -779,7 +805,7 @@ class _attention(torch.autograd.Function):
                     BIAS_TYPE=ctx.bias_type,
                 )
                 report = attn_extra_args.report_best_config
-                if report is not None:
+                if report:
                     best = copy.deepcopy(tuned_bwd_kernel_dq.best_config)
                     attn_extra_args.report_best_config('bwd_kernel_dq', best)
                 if return_autotune:
@@ -936,7 +962,7 @@ class _attention(torch.autograd.Function):
                     BIAS_TYPE=ctx.bias_type,
                     )
             report = attn_extra_args.report_best_config
-            if report is not None:
+            if report:
                 best = copy.deepcopy(tuned_attn_bwd.best_config)
                 attn_extra_args.report_best_config('attn_bwd', best)
         else:
