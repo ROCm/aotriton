@@ -484,6 +484,5 @@ def attn_fwd(
                 tile_id = persistent_atomic_counter.atomic_add(1)
             else:
                 tile_id += Num_WG
-            tl.device_print('tile_id increased to', tile_id)
         else:
             tile_id = num_tiles_total  # break after single tile

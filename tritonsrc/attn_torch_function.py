@@ -69,17 +69,6 @@ class AttentionExtraArgs:
     report_best_config : bool = False
     persistent_type : int = PersistentType.NONE
 
-'''
-AttentionExtraArgs = namedtuple('AttentionExtraArgs',
-        ['return_encoded_softmax',
-         'autotune',
-         'return_autotune',
-         'fillnan',
-         'report_best_config',
-         ],
-        defaults=[False, False, False, False, None])
-'''
-
 VERBOSE=False
 DEFAULT_PHILOX_SEED = 0x1BF52
 DEFAULT_PHILOX_OFFSET_1 = 0x1D4000
