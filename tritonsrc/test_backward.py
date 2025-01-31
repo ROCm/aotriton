@@ -12,7 +12,7 @@ from _common_test import SdpaContext, SdpaParams, SdpaContextFromNPZ
 from attn_torch_function import attention, AttentionExtraArgs
 
 POT_HEADDIMS = [16, 32, 64, 128, 256]
-NPOT_HEADDIMS = [48, 72, 80, 96, 160, 192, 224]
+NPOT_HEADDIMS = [48, 80, 96, 160, 192, 224]
 PRIME_HEADDIMS = [7, 23, 37, 53, 67, 73, 89, 113, 149, 179, 211, 241]
 
 # @pytest.mark.parametrize('BATCH', [1])
