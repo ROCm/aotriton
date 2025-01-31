@@ -119,6 +119,8 @@ def attn_fwd(
     IS_CAUSAL : tl.constexpr = CAUSAL_TYPE != 0
     IS_CAUSAL_BOTTOM_RIGHT : tl.constexpr = CAUSAL_TYPE == 2
     USE_BIAS : tl.constexpr = BIAS_TYPE == 1
+    PERSISTENT : tl.constexpr = (PERSISTENT_TYPE > 0)
+    PERSISTENT_DYNAMIC : tl.constexpr = (PERSISTENT_TYPE == 2)
     tl.static_assert(BIAS_TYPE == 0 or BIAS_TYPE == 1, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
     BATCH = tl.num_programs(2)
     L_not_null = L.cast(dtype=tl.uint64, bitcast=True) != 0  # Allows null L for training=False
@@ -137,12 +139,12 @@ def attn_fwd(
                 tl.store(philox_offset_output,
                          philox_offset_base.to(dtype=philox_seed_output.type.element_ty))
 
-    if PERSISTENT_TYPE != 0:  # if persistent, kernel loops over multiple tiles
+    if PERSISTENT:  # if persistent, kernel loops over multiple tiles
         Num_WG = Num_CU * GRID_CU_MULTIP  # number of workgroups launched
         num_tiles_per_head = tl.cdiv(Max_seqlen_q, BLOCK_M)  # the number of work units (tiles) of a single head
         num_tiles_per_sample = num_tiles_per_head * Num_head_q  # times the number of heads
         num_tiles_total = num_tiles_per_sample * Batch  # times the number of samples
-        if PERSISTENT_TYPE == 2:
+        if PERSISTENT_DYNAMIC:
             tile_id = persistent_atomic_counter.atomic_add(1)  # retuns the value BEFORE the atomic operation
         else:
             tile_id = tl.program_id(0)
@@ -153,7 +155,7 @@ def attn_fwd(
     continue_condition : tl.int1 = True  # as we can't have return statements inside while loop in Triton
 
     while tile_id < num_tiles_total:  # loops more than once only if PERSISTENT
-        if PERSISTENT_TYPE != 0:
+        if PERSISTENT_DYNAMIC:
             # tile id basically tells us the Q block we are handling
             off_z = tile_id // num_tiles_per_sample  # at which batch sample are we
             off_h_q = tile_id % num_tiles_per_sample // num_tiles_per_head  # at which head are we inside the sample
@@ -538,8 +540,8 @@ def attn_fwd(
                                stride_row=stride_om,
                                stride_col=stride_on)
 
-        if PERSISTENT_TYPE != 0:
-            if PERSISTENT_TYPE == 2:
+        if PERSISTENT:
+            if PERSISTENT_DYNAMIC:
                 tile_id = persistent_atomic_counter.atomic_add(1)
             else:
                 tile_id += Num_WG
