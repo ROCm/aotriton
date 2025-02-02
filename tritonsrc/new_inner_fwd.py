@@ -10,16 +10,28 @@ from composed_tensors import (
     composed_offs_1d,
     composed_advance,
     composed_load,
-    composed_dot_both,
     composed_dot_rhs,
     composed_mul_lhs,
 )
+
+# IS_JIT_COMPILING = not bool(int(os.getenv('AOTRITON_COMPILER', default='0')))
+IS_JIT_COMPILING = False
+
+if IS_JIT_COMPILING:
+    from triton.language import constexpr as constexpr_or_i32
+    from triton.language import constexpr as constexpr_or_f32
+    from triton.language import constexpr as constexpr_or_bool
+else:
+    from triton.language import int32 as constexpr_or_i32
+    from triton.language import float32 as constexpr_or_f32
+    from triton.language import int1 as constexpr_or_bool
+
 
 @triton.jit
 def _attn_fwd_inner(
         # Inputs
         acc0, acc1, acc2,
-        l_i, m_i, Qk_scale,
+        l_i, m_i, Qk_scale : constexpr_or_f32,
         q0, q1, q2,
         k_ptrs0, k_ptrs1, k_ptrs2,
         v_ptrs0, v_ptrs1, v_ptrs2,
@@ -29,7 +41,7 @@ def _attn_fwd_inner(
         start_m, block_min, block_max,
         actual_seqlen_k, actual_seqlen_q, Head_dim,
         # Dropout
-        dropout_p, philox_seed, batch_philox_offset, Max_seqlen_k,  # FILEPR
+        dropout_p, philox_seed, batch_philox_offset, Max_seqlen_k,
         encoded_sm_base,
         # CAUSAL (Partial block)
         offs_n_causal,
@@ -107,10 +119,12 @@ def _attn_fwd_inner(
         else:
             if INT8_KV:
                 k = (k * k_descale).to(q.type.element_ty)
-            qk = composed_dot_both(q0, q1, q2,
-                                   k0, k1, k2,
-                                   qk,
-                                   BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2) * Qk_scale
+            # DO NOT CALL composed_dot_both.
+            # The generated code will trigger https://github.com/ROCm/aotriton/issues/54
+            # for BLOCK_M = 126 and BLOCK_N = 64
+            qk += (Qk_scale * tl.dot(q0, k0))
+            if BLOCK_DMODEL1 > 0 : qk += (Qk_scale * tl.dot(q1, k1))
+            if BLOCK_DMODEL2 > 0 : qk += (Qk_scale * tl.dot(q2, k2))
 
         if bias_ptrs is not None:
             bias_offs_n = start_n + tl.arange(0, BLOCK_N) if MASK_STEPS else None

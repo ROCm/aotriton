@@ -16,7 +16,12 @@ OpenAI kernel team
 
 import triton
 import triton.language as tl
-from new_inner_fwd import _attn_fwd_inner
+from new_inner_fwd import (
+    _attn_fwd_inner,
+    IS_JIT_COMPILING,
+    constexpr_or_f32,
+    constexpr_or_i32,
+)
 from masked_load_store import mstore2d
 from composed_tensors import (
     composed_offs_1d,
@@ -30,18 +35,6 @@ from composed_tensors import (
     composed_casual_mask,
 )
 import os
-
-# IS_AOT_COMPILING = bool(int(os.getenv('AOTRITON_COMPILER', default='0')))
-IS_AOT_COMPILING = True
-
-if IS_AOT_COMPILING:
-    from triton.language import int32 as constexpr_or_i32
-    from triton.language import float32 as constexpr_or_f32
-    from triton.language import int1 as constexpr_or_bool
-else:
-    from triton.language import constexpr as constexpr_or_i32
-    from triton.language import constexpr as constexpr_or_f32
-    from triton.language import constexpr as constexpr_or_bool
 
 @triton.jit
 def cdiv_fn(x, y):
