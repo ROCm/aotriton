@@ -52,7 +52,7 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
     ref_out, _ = ctx.compute_ref_forward(sdpa_params)
     dout = torch.rand_like(tri_out)
     ctx.compute_backward(tri_out, dout)
-    is_allclose, adiff, grads_allclose, grads_adiff = ctx.validate_with_reference(tri_out, ctx.dout_tensors)
+    is_allclose, adiff, grads_allclose, grads_adiff, tfts = ctx.validate_with_reference(tri_out, ctx.dout_tensors, return_target_fudge_factors=True)
     if not is_allclose:
         import numpy as np
         err_idx = np.unravel_index(torch.argmax(torch.abs(ref_out - tri_out)).cpu().numpy(), ref_out.shape)
@@ -61,6 +61,7 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
         print(f'{ref_out[err_idx]=}')
         print(f'{tri_out[0, 0, :4, :4]=}')
         print(f'{ref_out[0, 0, :4, :4]=}')
+        print(f'{tri_out[0, 0, 0, 64:]=}')
     assert is_allclose, 'Forward pass {is_allclose=}'
 
     dq_allclose, dk_allclose, dv_allclose, db_allclose = grads_allclose
@@ -136,6 +137,6 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
         err_idx = np.unravel_index(torch.argmax(torch.abs(TO(ref_db) - tri_db)).cpu().numpy(), ref_db.shape)
         print(f'{err_idx=}')
         print(f'{tri_db[err_idx]=} {ref_db[err_idx]=} error = {torch.abs(tri_db[err_idx] - ref_db[err_idx])}')
-    assert dk_allclose and dv_allclose and dq_allclose and db_allclose, f'{dk_allclose=} {dv_allclose=} {dq_allclose=} {db_allclose=}'
+    assert dk_allclose and dv_allclose and dq_allclose and db_allclose, f'{dk_allclose=} {dv_allclose=} {dq_allclose=} {db_allclose=} {tfts=}'
     print(f'{adiff=} {grads_adiff=}')
 
