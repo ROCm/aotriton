@@ -1,4 +1,4 @@
-# Copyright © 2024 Advanced Micro Devices, Inc.
+# Copyright © 2024-2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
 import triton
@@ -10,49 +10,63 @@ from composed_tensors import (
     composed_offs_1d,
     composed_advance,
     composed_load,
-    composed_dot_both,
     composed_dot_rhs,
     composed_mul_lhs,
 )
 
+# IS_JIT_COMPILING = not bool(int(os.getenv('AOTRITON_COMPILER', default='0')))
+IS_JIT_COMPILING = False
+
+if IS_JIT_COMPILING:
+    from triton.language import constexpr as constexpr_or_i32
+    from triton.language import constexpr as constexpr_or_f32
+    from triton.language import constexpr as constexpr_or_bool
+else:
+    from triton.language import int32 as constexpr_or_i32
+    from triton.language import float32 as constexpr_or_f32
+    from triton.language import int1 as constexpr_or_bool
+
+
 @triton.jit
-def attn_fwd_inner(
-        # Problem Description
+def _attn_fwd_inner(
+        # Inputs
         acc0, acc1, acc2,
-        l_i, m_i, qk_scale, bias_scale,
+        l_i, m_i, Qk_scale : constexpr_or_f32,
         q0, q1, q2,
         k_ptrs0, k_ptrs1, k_ptrs2,
         v_ptrs0, v_ptrs1, v_ptrs2,
         bias_ptrs,
         stride_kn, stride_vk, stride_bn,
-        seqlen_q, seqlen_k, head_dim,
-        # Sub-problem range
+        # Task positions
         start_m, block_min, block_max,
-        # Auxiliary options
-        ## Dropout
-        dropout_p, philox_seed, batch_philox_offset, max_seqlen_k,
-        ## Debug Return
+        actual_seqlen_k, actual_seqlen_q, Head_dim,
+        # Dropout
+        dropout_p, philox_seed, batch_philox_offset, Max_seqlen_k,
         encoded_sm_base,
-        ## Irregular support
-        offs_n_causal, masked_blocks, n_extra_tokens,
-        ## Alibi
+        # CAUSAL (Partial block)
+        offs_n_causal,
+        masked_blocks,
+        n_extra_tokens,
+        # Alibi
         alibi_slope,
-        # constexpr starts here
-        CAUSAL: tl.constexpr,
+        q_descale, k_descale, v_descale, p_scale,
+        # CAUSAL and BLOCK SIZES
+        IS_CAUSAL: tl.constexpr,
         BLOCK_M: tl.constexpr,
         BLOCK_DMODEL0: tl.constexpr,
         BLOCK_DMODEL1: tl.constexpr,
         BLOCK_DMODEL2: tl.constexpr,
         BLOCK_N: tl.constexpr,
+        OFFS_M: tl.constexpr,
+        OFFS_N: tl.constexpr,
         PRE_LOAD_V: tl.constexpr,
         MASK_STEPS: tl.constexpr,
         ENABLE_DROPOUT: tl.constexpr,
         RETURN_ENCODED_SOFTMAX: tl.constexpr,
         PADDED_HEAD: tl.constexpr,
-):
-    offs_m = start_m * BLOCK_M + tl.arange(0, BLOCK_M)
-    offs_n = tl.arange(0, BLOCK_N)
-    k_offs_d = composed_offs_1d(BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
+        INT8_GEMM: tl.constexpr,
+        INT8_KV: tl.constexpr,
+        USE_P_SCALE: tl.constexpr):
     # loop over k, v, and update accumulator
     for start_n in range(block_min, block_max, BLOCK_N):
         # For padded blocks, we will overrun the tensor size if
@@ -64,7 +78,7 @@ def attn_fwd_inner(
         k0, k1, k2 = composed_load(k_ptrs0, k_ptrs1, k_ptrs2,
                                    k_offs_n,
                                    BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
-                                   seqlen_k, head_dim,
+                                   actual_seqlen_k, Head_dim,
                                    other=0.0,
                                    PADDED_ROW=MASK_STEPS,
                                    PADDED_COL=PADDED_HEAD,
@@ -74,7 +88,7 @@ def attn_fwd_inner(
             v0, v1, v2 = composed_load(v_ptrs0, v_ptrs1, v_ptrs2,
                                        k_offs_n,
                                        BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
-                                       seqlen_k, head_dim,
+                                       actual_seqlen_k, Head_dim,
                                        other=0.0,
                                        PADDED_ROW=MASK_STEPS,
                                        PADDED_COL=PADDED_HEAD,
@@ -90,78 +104,88 @@ def attn_fwd_inner(
             # last step might get wasted but that is okay. check if this masking works For
             # that case.
             if (start_n + BLOCK_N == block_max) and (n_extra_tokens != 0):
-                boundary_m = tl.full([BLOCK_M], seqlen_k, dtype=tl.int32)
-                size_n = start_n + offs_n[None, :]
+                boundary_m = tl.full([BLOCK_M], actual_seqlen_k, dtype=tl.int32)
+                size_n = start_n + OFFS_N[None, :]
                 mask = size_n < boundary_m[:, None]
                 qk = tl.where(mask, qk, float("-inf"))
-        if CAUSAL:
+        if IS_CAUSAL:
             causal_boundary = start_n + offs_n_causal
-            causal_mask = offs_m[:, None] >= causal_boundary[None, :]
+            causal_mask = OFFS_M[:, None] >= causal_boundary[None, :]
             qk = tl.where(causal_mask, qk, float("-inf"))
         # -- compute qk ----
-        qk = composed_dot_both(q0, q1, q2,
-                               k0, k1, k2,
-                               qk,
-                               BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2) * qk_scale
+        # TODO: INT8 NPOT OPTIMIZATION
+        if INT8_GEMM:
+            qk += ((((tl.dot(q, k).to(tl.float32) * q_descale)) * k_descale) * Qk_scale)
+        else:
+            if INT8_KV:
+                k = (k * k_descale).to(q.type.element_ty)
+            # DO NOT CALL composed_dot_both.
+            # The generated code will trigger https://github.com/ROCm/aotriton/issues/54
+            # for BLOCK_M = 126 and BLOCK_N = 64
+            qk += (Qk_scale * tl.dot(q0, k0))
+            if BLOCK_DMODEL1 > 0 : qk += (Qk_scale * tl.dot(q1, k1))
+            if BLOCK_DMODEL2 > 0 : qk += (Qk_scale * tl.dot(q2, k2))
+
         if bias_ptrs is not None:
             bias_offs_n = start_n + tl.arange(0, BLOCK_N) if MASK_STEPS else None
-            bias = load_fn(bias_ptrs, offs_m, bias_offs_n, seqlen_q, seqlen_k)
+            bias = load_fn(bias_ptrs, OFFS_M, bias_offs_n, actual_seqlen_q, actual_seqlen_k)
             # While bias is added after multiplying qk with sm_scale,
             # our optimization to use 2^x instead of e^x results in an additional
             # scale factor of log2(e) which we must also multiply the bias with.
-            qk += bias * 1.44269504089
+            qk += (bias * 1.44269504089)
 
         if alibi_slope is not None:
             # Compute the global position of each token within the sequence
             global_m_positions = start_m * BLOCK_M + tl.arange(0, BLOCK_M)
             global_n_positions = start_n + tl.arange(0, BLOCK_N)
-            alibi_block = compute_alibi_block(alibi_slope, seqlen_q, seqlen_k, global_m_positions,
+            alibi_block = compute_alibi_block(alibi_slope, actual_seqlen_q, actual_seqlen_k, global_m_positions,
                                               global_n_positions)
-            qk += alibi_block * 1.44269504089
+            qk += (alibi_block * 1.44269504089)  # scale factor of log2(e)
 
-        # This has softmax approach has numerical errors for large inputs:
+        # softmax
+        # Note: DO NOT USE the following FMA optimization pattern, which has
+        # numerical errors for large inputs:
+        #   m_ij = tl.maximum(m_i, Qk_scale * tl.max(qk, 1))
+        #   p = tl.math.exp2(qk * Qk_scale - m_ij[:, None])
         # See: https://github.com/ROCm/aotriton/issues/54
-        # m_ij = tl.maximum(m_i, qk_scale * tl.max(qk, 1))
-        # p = tl.math.exp2(qk * qk_scale - m_ij[:, None])
         m_ij = tl.maximum(m_i, tl.max(qk, 1))
-        p = tl.math.exp2(qk - m_ij[:, None])
+        qk = qk - m_ij[:, None]
+        p = tl.math.exp2(qk)
 
         # When sm_scale = 0.0 and MASK_STEPS/CAUSAL = True
-        # qk * qk_scale = -inf * 0.0 = nan
-        if MASK_STEPS or CAUSAL:
-            if qk_scale == 0.0:
+        # qk * Qk_scale = -inf * 0.0 = nan
+        if MASK_STEPS or IS_CAUSAL:
+            if Qk_scale == 0.0:
                 p = tl.where(libdevice.isnan(p), 0.0, p)
 
         # CAVEAT: Must update l_ij before applying dropout
         l_ij = tl.sum(p, 1)
         if ENABLE_DROPOUT:
-            philox_offset = batch_philox_offset + start_m * BLOCK_M * max_seqlen_k + start_n
-            keep = dropout_mask(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, max_seqlen_k)
+            philox_offset = batch_philox_offset + start_m * BLOCK_M * Max_seqlen_k + start_n
+            keep = dropout_mask(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, Max_seqlen_k)
             if RETURN_ENCODED_SOFTMAX:
-                mstore2d(tl.where(keep, p, -p).to(q0.type.element_ty),
+                mstore2d(tl.where(keep, p, -p).to(encoded_sm_base.type.element_ty),
                          BLOCK_M,
                          BLOCK_N,
                          o_base=encoded_sm_base,
                          o_start_row=start_m * BLOCK_M,
                          o_start_col=start_n,
-                         o_rows=seqlen_q,
-                         o_cols=seqlen_k,
-                         stride_row=max_seqlen_k,
+                         o_rows=actual_seqlen_q,
+                         o_cols=actual_seqlen_k,
+                         stride_row=Max_seqlen_k,
                          stride_col=1)
-                # tl.store(encoded_sm_ptrs, tl.where(keep, p, -p).to(q.type.element_ty))
             p = tl.where(keep, p, 0.0)
         elif RETURN_ENCODED_SOFTMAX:
-            mstore2d(p.to(q0.type.element_ty),
+            mstore2d(p.to(encoded_sm_base.type.element_ty),
                      BLOCK_M,
                      BLOCK_N,
                      o_base=encoded_sm_base,
                      o_start_row=start_m * BLOCK_M,
                      o_start_col=start_n,
-                     o_rows=seqlen_q,
-                     o_cols=seqlen_k,
-                     stride_row=max_seqlen_k,
+                     o_rows=actual_seqlen_q,
+                     o_cols=actual_seqlen_k,
+                     stride_row=Max_seqlen_k,
                      stride_col=1)
-            # tl.store(encoded_sm_ptrs, p.to(q.type.element_ty))
         # -- update output accumulator --
         alpha = tl.math.exp2(m_i - m_ij)
         acc0, acc1, acc2 = composed_mul_lhs(acc0, acc1, acc2,
@@ -171,7 +195,7 @@ def attn_fwd_inner(
             v0, v1, v2 = composed_load(v_ptrs0, v_ptrs1, v_ptrs2,
                                        k_offs_n,
                                        BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
-                                       seqlen_k, head_dim,
+                                       actual_seqlen_k, Head_dim,
                                        other=0.0,
                                        PADDED_ROW=MASK_STEPS,
                                        PADDED_COL=PADDED_HEAD,
@@ -180,10 +204,24 @@ def attn_fwd_inner(
         l_i = l_i * alpha + l_ij
         # update m_i and l_i
         m_i = m_ij
-        acc0, acc1, acc2 = composed_dot_rhs(p.to(v0.type.element_ty),
-                                            v0, v1, v2,
-                                            acc0, acc1, acc2,
-                                            BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
+
+        # TODO: INT8 NPOT OPTIMIZATION
+        if INT8_GEMM:
+            if USE_P_SCALE:
+                p = (p * p_scale).to(tl.int8)
+                # They are all int8
+                acc += tl.dot(p, v)
+            else:
+                # v is in int8 but p is not, we want the gemm in p's type
+                acc += tl.dot(p, v.to(p.type.element_ty))
+        else:
+            if INT8_KV:
+                v = (v * v_descale).to(p.type.element_ty)
+            acc0, acc1, acc2 = composed_dot_rhs(p.to(v0.type.element_ty),
+                                                v0, v1, v2,
+                                                acc0, acc1, acc2,
+                                                BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
+
         k_ptrs0, k_ptrs1, k_ptrs2 = composed_advance(k_ptrs0, k_ptrs1, k_ptrs2,
                                                      BLOCK_N * stride_kn,
                                                      BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
@@ -192,6 +230,4 @@ def attn_fwd_inner(
                                                      BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
         if bias_ptrs is not None:
             bias_ptrs += BLOCK_N * stride_bn
-        # if RETURN_ENCODED_SOFTMAX:
-        #     encoded_sm_ptrs += BLOCK_N
     return acc0, acc1, acc2, l_i, m_i
