@@ -211,6 +211,13 @@ class SdpaContext(object):
         return self.dev_tensors[0].shape[-1]
 
     @property
+    def is_hdim_NPOT_optimized(self):
+        def is_power_of_two(n: int) -> bool:
+            return (n & (n - 1) == 0) and n != 0
+        hdim = self.hdim
+        return not is_power_of_two(hdim)
+
+    @property
     def seqlen_q(self):
         q, k, v, b = self.dev_tensors
         seqlen_q = q.shape[2]
@@ -308,8 +315,8 @@ class SdpaContext(object):
         if torch.version.hip:
             if 'gfx90a' in torch.cuda.get_device_properties(0).gcnArchName:
                 query_fudge_factor = 80.0
-                key_fudge_factor = 330.0
-                bias_fudge_factor = 36.0
+                key_fudge_factor = 500.0 if self.is_hdim_NPOT_optimized else 340.0
+                bias_fudge_factor = 45.0 if self.is_hdim_NPOT_optimized else 36.0
         if AOTRITON_TORCH_ONLY_USE_CPU:
             query_fudge_factor = 128.0
             key_fudge_factor = 330.0
