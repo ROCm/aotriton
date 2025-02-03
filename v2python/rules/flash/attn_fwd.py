@@ -79,7 +79,7 @@ class attn_fwd(FlashKernel):
         frozenset(['philox_seed_ptr', 'philox_seed_output', 'philox_offset_output']) : ['*u64'],
         frozenset(['philox_offset1']) : ['*u32'],
         frozenset(['philox_offset2']) : ['u32'],
-        frozenset(['persistent_atomic_counter']) : ['*u32'],
+        frozenset(['persistent_atomic_counter']) : ['*i32'],
         frozenset(['Num_CU', 'Batch']) : ['i32'],
     }
     FEAT_CHOICES = {
@@ -120,9 +120,9 @@ class attn_fwd(FlashKernel):
 
     # AUTOTUNE_KEYS can have Functional choices, which will be discarded later
     AUTOTUNE_KEYS = {
-        'max_seqlen_q' : BinningLessOrEqual,
-        'max_seqlen_k' : BinningLessOrEqual,
-        'CAUSAL' : BinningExact,
+        'Max_seqlen_q' : BinningLessOrEqual,
+        'Max_seqlen_k' : BinningLessOrEqual,
+        'CAUSAL_TYPE' : BinningExact,
         'ENABLE_DROPOUT' : BinningExact,
     }
     # List of functionals that are not fully tuned in the tuning database

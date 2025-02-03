@@ -67,10 +67,10 @@ class bwd_kernel_dq(FlashKernel):
     }
     TYPE_CHOICES = {
         frozenset(['Q', 'K', 'V', 'B', 'Out', 'dO', 'dQ', 'dB']) : match_fwd('Q'),
-        frozenset(['sm_scale']) : match_fwd( 'sm_scale'),
+        frozenset(['sm_scale']) : match_fwd('Sm_scale'),
         frozenset(['L', 'D']) : ['*fp32:16'],
         frozenset(['cu_seqlens_q', 'cu_seqlens_k']) : match_fwd('cu_seqlens_q'),
-        frozenset(['num_seqlens', 'max_seqlen_q', 'max_seqlen_k']) : match_fwd('num_seqlens'),
+        frozenset(['num_seqlens', 'max_seqlen_q', 'max_seqlen_k']) : match_fwd('Num_seqlens'),
         frozenset(['head_dim', 'num_head_q', 'num_head_k']) : ['i32'],
         frozenset(['dropout_p']) : match_fwd('dropout_p'),
         frozenset(['philox_seed_ptr']) : match_fwd('philox_seed_ptr'),

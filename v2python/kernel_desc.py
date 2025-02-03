@@ -92,20 +92,6 @@ class KernelDescription(object):
         print(f"{self.TYPE_CHOICES=}")
         print(f"{self.FEAT_CHOICES=}")
 
-    def gen_patched_autotune_configs(self, gpu, fsel_dict):
-        if AOTRITON_GPU_WARPSIZE[gpu] == 64:
-            yield from self.gen_autotune_configs(gpu, fsel_dict)
-            return
-        yield from self.gen_autotune_configs(gpu, fsel_dict)
-        # Doubling the num_warps on WaveSize 32 may cause compiling problem
-        """
-        for cfg in self.gen_autotune_configs(fsel_dict):
-            cfg.num_warps *= 2
-            if cfg.num_warps > 8:  # ignore super large block
-                continue
-            yield cfg
-        """
-
     def __init__(self, triton_kernel_name, triton_file_path):
         self.insert_tensor_strides_to_choices(last_is_continuous=True)
         self._DATA_ARGUMENTS = None
@@ -169,7 +155,7 @@ class KernelDescription(object):
         if dba.empty:  # Fallback to selection defined by KernelDescription
             for psels in self.gen_perf_selections():
                 yield gpu, fsels, psels, None
-            return
+                return  # For empty tuning database. Only need one option
 
         for psels, compiler_options in dba.select(fsels, self._perf_meta):
             yield gpu, fsels, psels, compiler_options
@@ -177,11 +163,11 @@ class KernelDescription(object):
     def set_target_gpus(self, gpus):
         self._target_gpus = ['native'] if gpus is None else list(gpus)
 
-    def gen_perf_selections_from_kdesc(self,
-                                       gpu : str,
-                                       fsels : 'list[ArgumentSelection]'):
+    def _gen_all_options_from_kdesc_autotune_configs(self,
+                                                     gpu : str,
+                                                     fsels : 'list[ArgumentSelection]'):
         fsel_dict = ArgumentSelection.build_fsel_dict(fsels)
-        for cfg in self.gen_patched_autotune_configs(gpu, fsel_dict):
+        for cfg in self.gen_autotune_configs(gpu, fsel_dict):
             psels, compiler_options = cfg.translate_to_psel_and_co(self._perf_meta)
             yield gpu, fsels, psels, compiler_options
 
@@ -189,20 +175,24 @@ class KernelDescription(object):
                              outpath : Path,
                              # kernel_name : str = None,
                              # file_name_prefix : str = None,
-                             tuned_db : 'KernelTuningDatabase' = None,
+                             tuned_db : 'KernelTuningDatabase',
                              sancheck_fileexists = False) -> 'Iterator[ObjectFileDescription]':
+        assert tuned_db is not None, '[KernelDescription.gen_all_object_files] Must pass not None tuned_db'
         def gen():
-            if tuned_db is None or tuned_db.empty:
-                if not hasattr(self, 'gen_autotune_configs'):
+            if tuned_db.build_for_tuning:
+                if hasattr(self, 'gen_autotune_configs'):
+                    # Build for Tuning, for complex kernels wait for tuning
+                    for gpu, fsels in itertools.product(self._target_gpus,
+                                                        self.gen_func_selections()):
+                        yield from self._gen_all_options_from_kdesc_autotune_configs(gpu, fsels)
+                else:
+                    # Build for Tuning, for simple kernels
                     yield from itertools.product(self._target_gpus,
                                                  self.gen_func_selections(),
                                                  self.gen_perf_selections(),
                                                  [None])
-                    return
-                for gpu, fsels in itertools.product(self._target_gpus,
-                                                    self.gen_func_selections()):
-                    yield from self.gen_perf_selections_from_kdesc(gpu, fsels)
             else:
+                # Not Build for Tuning, checking database
                 for gpu, fsels in itertools.product(self._target_gpus,
                                                     self.gen_func_selections()):
                     yield from self.gen_tuned_perf_selections(tuned_db, gpu, fsels)
