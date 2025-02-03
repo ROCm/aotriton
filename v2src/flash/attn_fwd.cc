@@ -20,12 +20,13 @@ hipError_t
 _attn_fwd_common(T4 q,
                  T4 k,
                  T4 v,
+                 T4 b,
+                 T2 a,
                  T1 cu_seqlens_q,
                  T1 cu_seqlens_k,
                  int32_t num_seqlens,
                  int32_t max_seqlen_q,
                  int32_t max_seqlen_k,
-                 T4 b,
                  float sm_scale,
                  T2 softmax_lse,
                  T4 out,
@@ -37,6 +38,7 @@ _attn_fwd_common(T4 q,
                  T0 philox_offset_output,
                  T4 encoded_softmax,
                  bool is_causal,
+                 T0 persistent_atomic_counter,
                  AOTRITON_NS::Stream stream_wrap,
                  FwdExtraArguments* extargs) {
   hipError_t err;
@@ -58,6 +60,7 @@ _attn_fwd_common(T4 q,
 #endif
     return grid;
   };
+  int batch = q.size(0);
   int head_size = q.size(3);
   int num_head_q = q.size(1);
   int num_head_k = k.size(1);
@@ -86,30 +89,38 @@ _attn_fwd_common(T4 q,
     .K = &k,
     .V = &v,
     .B = &b,
+    .A = &a,
     .Out = &out,
     .encoded_softmax = &encoded_softmax,
-    .sm_scale = sm_scale,
-    .M = &softmax_lse,
-    .num_head_q = num_head_q,
-    .num_head_k = num_head_k,
-    .num_seqlens = num_seqlens,
-    .max_seqlen_q = max_seqlen_q,
-    .max_seqlen_k = max_seqlen_k,
+    .Sm_scale = sm_scale,
+    .L = &softmax_lse,
+    .Num_head_q = num_head_q,
+    .Num_head_k = num_head_k,
+    .Num_seqlens = num_seqlens,
+    .Max_seqlen_q = max_seqlen_q,
+    .Max_seqlen_k = max_seqlen_k,
     .cu_seqlens_q = &cu_seqlens_q,
     .cu_seqlens_k = &cu_seqlens_k,
-    .head_dim = static_cast<int32_t>(head_size),
+    .Head_dim = static_cast<int32_t>(head_size),
     .dropout_p = dropout_p,
     .philox_seed_ptr = &philox_seed,
     .philox_seed_output = &philox_seed_output,
     .philox_offset_output = &philox_offset_output,
     .philox_offset1 = &philox_offset1,
     .philox_offset2 = static_cast<uint32_t>(philox_offset2),
-    .CAUSAL = is_causal,
+    .CAUSAL_TYPE = is_causal ? 1 : 0,
+    .persistent_atomic_counter = &persistent_atomic_counter,
+    .Num_CU = 80,
+    .Batch = batch,
     .BLOCK_DMODEL = head_size_rounded,
     .ENABLE_DROPOUT = dropout_p > 0.0,
     .RETURN_ENCODED_SOFTMAX = bool(encoded_softmax),
     .PADDED_HEAD = head_size_rounded != head_size,
     .BIAS_TYPE = bias_type,
+    .USE_ALIBI = false,
+    .INT8 = false,
+    .INT8_KV = false,
+    .USE_P_SCALE = false,
   };
 #if AOTRITON_BUILD_FOR_TUNING
   if (extargs) {
@@ -141,6 +152,7 @@ attn_fwd(T4 q,
          T4 k,
          T4 v,
          T4 b,
+         T2 a,
          float sm_scale,
          T2 softmax_lse,
          T4 out,
@@ -154,16 +166,19 @@ attn_fwd(T4 q,
          bool is_causal,
          AOTRITON_NS::Stream stream_wrap,
          FwdExtraArguments* extargs) {
+  auto null_persistent_atomic_counter = T1::get_null_tensor(DType::kInt32);
   auto null_t1 = T1::get_null_tensor(DType::kInt32);
+  auto alibi_null_t2 = T2::get_null_tensor(q.dtype());
   return _attn_fwd_common(q,
                           k,
                           v,
+                          b,
+                          alibi_null_t2,
                           null_t1,
                           null_t1,
                           0,
                           q.size(2),
                           k.size(2),
-                          b,
                           sm_scale,
                           softmax_lse,
                           out,
@@ -175,6 +190,7 @@ attn_fwd(T4 q,
                           philox_offset_output,
                           encoded_softmax,
                           is_causal,
+                          null_persistent_atomic_counter,
                           stream_wrap,
                           extargs);
 }
@@ -183,11 +199,11 @@ hipError_t
 attn_fwd_compact_varlen(T4 q,            // 1 x num_heads x total_q x head_size, total_q := \sum_{i=0}^{b} s_i
                         T4 k,            // 1 x num_heads x total_k x head_size, total_k := \sum_{i=0}^{b} s_i
                         T4 v,            // 1 x num_heads x total_v x head_size, total_, := \sum_{i=0}^{b} s_i
+                        T4 b,            // reserved, note this b is "bias", not "batch"
                         T1 cu_seqlens_q, // b+1, i64
                         T1 cu_seqlens_k, // b+1, i64
                         int32_t max_seqlen_q,
                         int32_t max_seqlen_k,
-                        T4 b, // reserved, note this b is "bias", not "batch"
                         float sm_scale,
                         T2 softmax_lse,
                         T4 out, // 1 x num_heads x total_q x head_size
@@ -201,15 +217,18 @@ attn_fwd_compact_varlen(T4 q,            // 1 x num_heads x total_q x head_size,
                         bool is_causal,
                         AOTRITON_NS::Stream stream_wrap,
                         FwdExtraArguments* extargs) {
+  auto null_persistent_atomic_counter = T1::get_null_tensor(DType::kInt32);
+  auto alibi_null_t2 = T2::get_null_tensor(q.dtype());
   return _attn_fwd_common(q,
                           k,
                           v,
+                          b,
+                          alibi_null_t2,
                           cu_seqlens_q,
                           cu_seqlens_k,
                           cu_seqlens_q.size(0) - 1,
                           max_seqlen_q,
                           max_seqlen_k,
-                          b,
                           sm_scale,
                           softmax_lse,
                           out,
@@ -221,6 +240,7 @@ attn_fwd_compact_varlen(T4 q,            // 1 x num_heads x total_q x head_size,
                           philox_offset_output,
                           encoded_softmax,
                           is_causal,
+                          null_persistent_atomic_counter,
                           stream_wrap,
                           extargs);
 }
