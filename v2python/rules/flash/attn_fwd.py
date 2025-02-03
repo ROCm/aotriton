@@ -170,7 +170,7 @@ class attn_fwd(FlashKernel):
         WAVES_PER_EU = [0, 1, 2, 3, 4]
         NUM_WARPS = [1, 2, 4]
         PRE_LOAD_V = [True, False]
-        NUM_STAGES = [1, 2]
+        NUM_STAGES = [1]
         for (M, N), waves, warps, stages, pre in itertools.product(BLOCK_SIZES,
                                                                    WAVES_PER_EU,
                                                                    NUM_WARPS,

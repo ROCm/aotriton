@@ -112,7 +112,7 @@ class bwd_kernel_dq(FlashKernel):
         BLOCK_SIZES = [16, 32, 64] if dtype != '*fp32:16' else [16, 32]
         WAVES_PER_EU = [0, 1, 2, 3, 4]
         NUM_WARPS = [1, 2, 4]
-        NUM_STAGES = [1, 2]
+        NUM_STAGES = [1]
         for M, N, waves, warps, stages in itertools.product(BLOCK_SIZES,
                                                             BLOCK_SIZES,
                                                             WAVES_PER_EU,
