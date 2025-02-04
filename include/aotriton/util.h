@@ -144,6 +144,9 @@ public:
     return dtype_;
   }
 
+  static TensorView<0> get_null_tensor(DType dtype) {
+      return TensorView<0>{0, dtype};
+  }
 private:
   const void* base_ = nullptr;
   DType dtype_ = kUnknown;

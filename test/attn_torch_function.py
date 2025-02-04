@@ -16,14 +16,15 @@ from aotriton_flash import (
     HipMemory,
 )
 from collections import namedtuple
+from dataclasses import dataclass
 
-AttentionExtraArgs = namedtuple('AttentionExtraArgs',
-        ['return_encoded_softmax',
-         'autotune',
-         'return_autotune',
-         'is_testing'
-         ],
-        defaults=[False, False, False, True])
+@dataclass
+class AttentionExtraArgs:
+    return_encoded_softmax : bool = False
+    autotune : bool = False
+    return_autotune : bool = False
+    is_testing : bool = True
+    fillnan : bool = False
 
 VERBOSE=False
 DEFAULT_PHILOX_SEED = 0x1BF52
@@ -45,7 +46,9 @@ class _attention(torch.autograd.Function):
     @staticmethod
     def forward(ctx, q, k, v, b, causal, sm_scale, dropout_p,
                 attn_extra_args=AttentionExtraArgs()):
-        return_encoded_softmax, autotune, return_autotune = attn_extra_args[:3]
+        return_encoded_softmax = attn_extra_args.return_encoded_softmax
+        autotune = attn_extra_args.autotune
+        return_autotune = attn_extra_args.return_autotune
         # shape constraints
         Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
         assert Lq == Lk and Lk == Lv
@@ -59,6 +62,9 @@ class _attention(torch.autograd.Function):
         # M_padded = torch.empty((q.shape[0] * q.shape[1], round_to_16x(q.shape[2])), device=q.device, dtype=torch.float32)
         # M = M_padded[:,:q.shape[2]]
         M = torch.empty((q.shape[0] * q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)
+        if attn_extra_args.fillnan:
+            for t in (o, M):
+                t.fill_(float('nan'))
         if return_encoded_softmax:
             encoded_softmax = torch.zeros((q.shape[0], q.shape[1], q.shape[2], k.shape[2]), device=q.device, dtype=q.dtype)
         else:

@@ -130,6 +130,7 @@ def bwd_inner_dq(
             qk += bias * bias_scale
         else:
             tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
+        # FIXME: Potential bug https://github.com/ROCm/aotriton/issues/54
         p = tl.math.exp2(qk_scale * qk - l_i[:, None])
 
         if not FULL_BLOCKS or CAUSAL:

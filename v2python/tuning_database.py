@@ -117,4 +117,8 @@ class KernelTuningDatabase(object):
 
     @property
     def empty(self):
-        return not self.arch_dict or self._build_for_tuning
+        return not self.arch_dict or self.build_for_tuning
+
+    @property
+    def build_for_tuning(self):
+        return self._build_for_tuning

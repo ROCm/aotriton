@@ -164,6 +164,7 @@ def bwd_inner_dk_dv(
             l_i = tl.load(l_ptrs + offs_q_curr,
                           mask=d_lse_ptrs_mask[:,None],
                           other=d_lse_padding[:, None])
+        # FIXME: Potential bug https://github.com/ROCm/aotriton/issues/54
         p = tl.math.exp2(qk_scale * qk - l_i) # (BLOCK_M, BLOCK_N)
 
         if not FULL_BLOCKS or CAUSAL:

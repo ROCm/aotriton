@@ -6,7 +6,7 @@ import pytest
 import torch
 
 from _common_test import SdpaContext, SdpaParams
-from attn_torch_function import attention, AttentionExtraArgs
+from attn_torch_function import attention, AttentionExtraArgs, PersistentType
 
 '''
 Flash Attention is batch operator that evaluates sm(QK')V
@@ -44,14 +44,15 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
     ext = AttentionExtraArgs(return_encoded_softmax=dropout_p > 0.0,
                              autotune=False,
                              return_autotune=False,
-                             fillnan=True)
+                             fillnan=True,
+                             persistent_type=PersistentType.DYNAMIC if causal else PersistentType.NONE)
     tri_out, encoded_softmax, _ = attention(q, k, v, b, causal, sm_scale, dropout_p, ext)
     dropout_mask = encoded_softmax >= 0 if dropout_p > 0.0 else None
     sdpa_params = SdpaParams(causal=causal, sm_scale=sm_scale, dropout_p=dropout_p, dropout_mask=dropout_mask)
     ref_out, _ = ctx.compute_ref_forward(sdpa_params)
     dout = torch.rand_like(tri_out)
     ctx.compute_backward(tri_out, dout)
-    is_allclose, adiff, grads_allclose, grads_adiff = ctx.validate_with_reference(tri_out, ctx.dout_tensors)
+    is_allclose, adiff, grads_allclose, grads_adiff, tfts = ctx.validate_with_reference(tri_out, ctx.dout_tensors, return_target_fudge_factors=True)
     if not is_allclose:
         import numpy as np
         err_idx = np.unravel_index(torch.argmax(torch.abs(ref_out - tri_out)).cpu().numpy(), ref_out.shape)
@@ -60,6 +61,7 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
         print(f'{ref_out[err_idx]=}')
         print(f'{tri_out[0, 0, :4, :4]=}')
         print(f'{ref_out[0, 0, :4, :4]=}')
+        print(f'{tri_out[0, 0, 0, 64:]=}')
     assert is_allclose, 'Forward pass {is_allclose=}'
 
     dq_allclose, dk_allclose, dv_allclose, db_allclose = grads_allclose
@@ -73,9 +75,9 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
         print(f'{q.shape=} {q.stride()=} {q.dtype=}')
         print(f'{k.shape=} {k.stride()=} {k.dtype=}')
         print(f'{v.shape=} {v.stride()=} {v.dtype=}')
-        print(f'{q[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
-        print(f'{k[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
-        print(f'{v[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
+        print(f'{q[0,0,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
+        print(f'{k[0,0,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
+        print(f'{v[0,0,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
         if dropout_mask is not None:
             print(f'{dropout_mask.shape=}')
             print(f'{dropout_mask[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
@@ -135,6 +137,6 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
         err_idx = np.unravel_index(torch.argmax(torch.abs(TO(ref_db) - tri_db)).cpu().numpy(), ref_db.shape)
         print(f'{err_idx=}')
         print(f'{tri_db[err_idx]=} {ref_db[err_idx]=} error = {torch.abs(tri_db[err_idx] - ref_db[err_idx])}')
-    assert dk_allclose and dv_allclose and dq_allclose and db_allclose, f'{dk_allclose=} {dv_allclose=} {dq_allclose=} {db_allclose=}'
+    assert dk_allclose and dv_allclose and dq_allclose and db_allclose, f'{dk_allclose=} {dv_allclose=} {dq_allclose=} {db_allclose=} {tfts=}'
     print(f'{adiff=} {grads_adiff=}')
 

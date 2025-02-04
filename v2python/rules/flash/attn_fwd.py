@@ -6,78 +6,113 @@ from ._common import FlashKernel, select_pattern, BinningLessOrEqual, BinningExa
 
 class attn_fwd(FlashKernel):
     ARGUMENTS = [
-        'Q', 'K', 'V', 'B', 'sm_scale', 'M', 'Out',
-        'stride_qz', 'stride_qh', 'stride_qm', 'stride_qk',
-        'stride_kz', 'stride_kh', 'stride_kn', 'stride_kk',
-        'stride_vz', 'stride_vh', 'stride_vk', 'stride_vn',
-        'stride_bz', 'stride_bh', 'stride_bm', 'stride_bn',
-        'stride_oz', 'stride_oh', 'stride_om', 'stride_on',
-        'num_head_q',
-        'num_head_k',
-        'cu_seqlens_q',
-        'cu_seqlens_k',
-        'num_seqlens',
-        'max_seqlen_q',
-        'max_seqlen_k',
-        'head_dim',
-        'dropout_p',
-        'philox_seed_ptr',
-        'philox_offset1',
-        'philox_offset2',
-        'philox_seed_output',
-        'philox_offset_output',
-        'encoded_softmax',
-        'CAUSAL', # tl.constexpr starts here
-        'BLOCK_M',
-        'BLOCK_DMODEL',
-        'BLOCK_N',
-        'pre_load_v',
-        'ENABLE_DROPOUT',
-        'RETURN_ENCODED_SOFTMAX',
-        'PADDED_HEAD',
-        'BIAS_TYPE',
+        # Basic SDPA
+        "Q", "K", "V", "B", "A", "Sm_scale", "L", "Out",
+        "Q_descale", "K_descale", "P_scale", "P_descale", "V_descale",
+        "stride_qz", "stride_qh", "stride_qm", "stride_qk",
+        "stride_kz", "stride_kh", "stride_kn", "stride_kk",
+        "stride_vz", "stride_vh", "stride_vk", "stride_vn",
+        "stride_oz", "stride_oh", "stride_om", "stride_on",
+        "stride_bz", "stride_bh", "stride_bm", "stride_bn",
+        "stride_az", "stride_ah",
+        # MQA/GQA
+        "Num_head_q",
+        "Num_head_k",
+        # Varlen
+        "Num_seqlens",
+        "cu_seqlens_q",
+        "cu_seqlens_k",
+        "Max_seqlen_q",
+        "Max_seqlen_k",
+        # Head Dimensions
+        "BLOCK_DMODEL",
+        "Head_dim",
+        "PADDED_HEAD",
+        # dropout and PRNG
+        "ENABLE_DROPOUT",
+        "dropout_p",
+        "philox_seed_ptr",
+        "philox_offset1",
+        "philox_offset2",
+        "philox_seed_output",
+        "philox_offset_output",
+        "RETURN_ENCODED_SOFTMAX",
+        "encoded_softmax",
+        # causal, (Planned Feature) windowed attention
+        "CAUSAL_TYPE",
+        # bias
+        "BIAS_TYPE",
+        # alibi
+        "USE_ALIBI",
+        # INT8
+        "INT8",
+        "INT8_KV",
+        "USE_P_SCALE",
+        # Persistent related arguments
+        "PERSISTENT_TYPE",
+        "persistent_atomic_counter",
+        "Num_CU",
+        "GRID_CU_MULTIP",
+        "Batch",
+        # Performance
+        "BLOCK_M",
+        "BLOCK_N",
+        "PRE_LOAD_V",
     ]
     TENSOR_STRIDE_INPUTS = {
         'Q' : select_pattern(ARGUMENTS, 'stride_q'),
         'K' : select_pattern(ARGUMENTS, 'stride_k'),
         'V' : select_pattern(ARGUMENTS, 'stride_v'),
         'B' : select_pattern(ARGUMENTS, 'stride_b'),
+        'A' : select_pattern(ARGUMENTS, 'stride_a'),
         'Out' : select_pattern(ARGUMENTS, 'stride_o'),
     }
     TYPE_CHOICES = {
-        frozenset(['Q', 'K', 'V', 'B', 'Out', 'encoded_softmax']) : FlashKernel.MAIN_DATATYPES,
-        frozenset(['sm_scale']) : ['fp32'],
-        frozenset(['M']) : ['*fp32:16'],
+        frozenset(['Q', 'K', 'V', 'B', 'A', 'Out', 'encoded_softmax']) : FlashKernel.MAIN_DATATYPES,
+        frozenset(['Sm_scale']) : ['fp32'],
+        frozenset(['L']) : ['*fp32:16'],
         frozenset(['cu_seqlens_q', 'cu_seqlens_k']) : ['*i32:16'],
-        frozenset(['num_head_q', 'num_head_k', 'num_seqlens', 'max_seqlen_q', 'max_seqlen_k']) : ['i32'],
-        frozenset(['head_dim']) : ['i32'],
+        frozenset(['Num_head_q', 'Num_head_k', 'Num_seqlens', 'Max_seqlen_q', 'Max_seqlen_k']) : ['i32'],
+        frozenset(['Head_dim']) : ['i32'],
         frozenset(['dropout_p']) : ['fp32'],
         frozenset(['philox_seed_ptr', 'philox_seed_output', 'philox_offset_output']) : ['*u64'],
         frozenset(['philox_offset1']) : ['*u32'],
         frozenset(['philox_offset2']) : ['u32'],
+        frozenset(['persistent_atomic_counter']) : ['*i32'],
+        frozenset(['Num_CU', 'Batch']) : ['i32'],
     }
     FEAT_CHOICES = {
-        frozenset(['CAUSAL']) : [False, True],
-        frozenset(['BLOCK_DMODEL']) : [16, 32, 48, 64, 72, 80, 96, 128, 160, 192, 224, 256],
+        frozenset(["Q_descale", "K_descale", "P_scale", "P_descale", "V_descale"]) : [0],  # INT8 For the future
+        # Can support CAUSAL_TYPE = 2 (Bottom right alignment) but this will
+        # further increse the number of kernels. Will be added later along with
+        # windowed attention
+        frozenset(['CAUSAL_TYPE']) : [0, 1],
+        frozenset(['BLOCK_DMODEL']) : [16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256],
         frozenset(['ENABLE_DROPOUT']) : [False, True],
         frozenset(['RETURN_ENCODED_SOFTMAX']) : [False, True],
         frozenset(['PADDED_HEAD']) : [False, True],
         frozenset(['BIAS_TYPE']) : [0, 1],
+        frozenset(['USE_ALIBI']) : [False],
+        frozenset(['INT8', 'INT8_KV', 'USE_P_SCALE']) : [False],  # INT8 for the future
     }
     PERF_CHOICES = {
+        frozenset(['PERSISTENT_TYPE']) : [0], # [0, 1, 2],
+        frozenset(['GRID_CU_MULTIP']) : [2],
         frozenset(['BLOCK_M']) : [16],
         frozenset(['BLOCK_N']) : [16],
-        frozenset(['pre_load_v']) : [True, False],
+        frozenset(['PRE_LOAD_V']) : [False], # [False, True],
     }
     TENSOR_RANKS = {
         '_default' : 4,
-        'M': 2,
+        'A': 2,
+        'L': 2,
         'cu_seqlens_q': 1,
         'cu_seqlens_k': 1,
         'philox_seed_ptr': 0,
         'philox_offset1': 0,
         'philox_seed_output': 0,
         'philox_offset_output': 0,
+        'persistent_atomic_counter': 0,
     }
     EXPECTED_IDENTICAL_TENSOR_STRIDES = [
         # Not needed stride_o* exist
@@ -86,9 +121,9 @@ class attn_fwd(FlashKernel):
 
     # AUTOTUNE_KEYS can have Functional choices, which will be discarded later
     AUTOTUNE_KEYS = {
-        'max_seqlen_q' : BinningLessOrEqual,
-        'max_seqlen_k' : BinningLessOrEqual,
-        'CAUSAL' : BinningExact,
+        'Max_seqlen_q' : BinningLessOrEqual,
+        'Max_seqlen_k' : BinningLessOrEqual,
+        'CAUSAL_TYPE' : BinningExact,
         'ENABLE_DROPOUT' : BinningExact,
     }
     # List of functionals that are not fully tuned in the tuning database
@@ -120,6 +155,7 @@ class attn_fwd(FlashKernel):
     def gen_autotune_configs(gpu : str, fsel_dict : 'dict[str, Any]'):
         dtype = fsel_dict['Q']
         HEAD_DIM = fsel_dict['BLOCK_DMODEL']
+        CAUSAL_TYPE = fsel_dict['CAUSAL_TYPE']
         ret = []
         MI = 'MI' in gpu
         Navi = 'Navi' in gpu
@@ -135,7 +171,7 @@ class attn_fwd(FlashKernel):
         WAVES_PER_EU = [0, 1, 2, 3, 4]
         NUM_WARPS = [1, 2, 4]
         PRE_LOAD_V = [True, False]
-        NUM_STAGES = [1, 2]
+        NUM_STAGES = [1]
         for (M, N), waves, warps, stages, pre in itertools.product(BLOCK_SIZES,
                                                                    WAVES_PER_EU,
                                                                    NUM_WARPS,
@@ -160,6 +196,9 @@ class attn_fwd(FlashKernel):
             if Navi and M > 32 and N > 32 and warps == 1:
                 continue  # No optimal kernel according to 0.8b tuning db
             kw = {'BLOCK_M': M, 'BLOCK_N': N, 'waves_per_eu': waves, 'pre_load_v': pre}
+            # TODO: Add Dyamic PERSISTENT_TYPE IFF causal is enabled to tuning database
+            # kw['PERSISTENT_TYPE'] = 2 if CAUSAL_TYPE != 0 else 0
+            kw['PERSISTENT_TYPE'] = 0
             yield Config(kw, num_stages=stages, num_warps=warps)
         if MI:
             pass
