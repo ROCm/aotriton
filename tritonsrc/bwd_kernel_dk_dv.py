@@ -56,7 +56,7 @@ def bwd_kernel_dk_dv(
     max_seqlen_q : 'i32', # and use max_seqlen_q/k for all seqlen_q/k
     max_seqlen_k : 'i32',
     head_dim : 'i32',
-    dropout_p,
+    dropout_p : tl.float32,
     philox_seed_ptr,
     philox_offset1 : '*u32',
     philox_offset2 : 'u32',
@@ -80,6 +80,7 @@ def bwd_kernel_dk_dv(
     tl.static_assert(BLOCK_DMODEL_R3 == 0, f'BLOCK_DMODEL = {BLOCK_DMODEL} = 0b{BLOCK_DMODEL:b} cannot be factored into <= 3 power of two values')
     tl.static_assert(BLOCK_DMODEL1 > 0 or BLOCK_DMODEL2 == 0, 'Only trailing BLOCK_DMODELx can be 0')
 
+    idropout_p = ((dropout_p - 0.5) * 0xFFFFFFFF).to(tl.int32)
     philox_seed = 0
     philox_offset_base = philox_offset2
     if ENABLE_DROPOUT:
@@ -316,7 +317,7 @@ def bwd_kernel_dk_dv(
                 D_ptrs,
                 seqlen_q, seqlen_k, head_dim,
                 start_k, lo, hi, overflow_size,
-                dropout_p, dropout_scale, philox_seed, batch_philox_offset, max_seqlen_k,
+                idropout_p, dropout_scale, philox_seed, batch_philox_offset, max_seqlen_k,
                 BLOCK_M,
                 BLOCK_DMODEL0,
                 BLOCK_DMODEL1,
@@ -346,7 +347,7 @@ def bwd_kernel_dk_dv(
                 D_ptrs,
                 seqlen_q, seqlen_k, head_dim,
                 start_k, lo, hi, 0,
-                dropout_p, dropout_scale, philox_seed, batch_philox_offset, max_seqlen_k,
+                idropout_p, dropout_scale, philox_seed, batch_philox_offset, max_seqlen_k,
                 BLOCK_M,
                 BLOCK_DMODEL0,
                 BLOCK_DMODEL1,
@@ -378,7 +379,7 @@ def bwd_kernel_dk_dv(
                 D_ptrs,
                 seqlen_q, seqlen_k, head_dim,
                 start_k, lo, hi, overflow_size,
-                dropout_p, dropout_scale, philox_seed, batch_philox_offset, max_seqlen_k,
+                idropout_p, dropout_scale, philox_seed, batch_philox_offset, max_seqlen_k,
                 BLOCK_M,
                 BLOCK_DMODEL0,
                 BLOCK_DMODEL1,

@@ -3,7 +3,7 @@
 
 import triton
 import triton.language as tl
-from dropout import dropout_mask, dropout_rng, dropout_offsets
+from dropout import fast_dropout_mask
 from masked_load_store import load_fn, mstore2d
 from triton.language.extra import libdevice
 from composed_tensors import (
@@ -41,7 +41,7 @@ def _attn_fwd_inner(
         start_m, block_min, block_max,
         actual_seqlen_k, actual_seqlen_q, Head_dim,
         # Dropout
-        dropout_p, philox_seed, batch_philox_offset, Max_seqlen_k,
+        idropout_p, philox_seed, batch_philox_offset, Max_seqlen_k,
         encoded_sm_base,
         # CAUSAL (Partial block)
         offs_n_causal,
@@ -162,7 +162,7 @@ def _attn_fwd_inner(
         l_ij = tl.sum(p, 1)
         if ENABLE_DROPOUT:
             philox_offset = batch_philox_offset + start_m * BLOCK_M * Max_seqlen_k + start_n
-            keep = dropout_mask(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, Max_seqlen_k)
+            keep = fast_dropout_mask(philox_seed, philox_offset, idropout_p, BLOCK_M, BLOCK_N, Max_seqlen_k)
             if RETURN_ENCODED_SOFTMAX:
                 mstore2d(tl.where(keep, p, -p).to(encoded_sm_base.type.element_ty),
                          BLOCK_M,

@@ -52,7 +52,7 @@ def bwd_kernel_dq(
     max_seqlen_q, # and use max_seqlen_q/k for all seqlen_q/k
     max_seqlen_k,
     head_dim,
-    dropout_p,
+    dropout_p : tl.float32,
     philox_seed_ptr,
     philox_offset1 : '*u32',
     philox_offset2 : 'u32',
@@ -282,6 +282,7 @@ def bwd_kernel_dq(
     Di = tl.load(D_ptrs + offs_q, mask=d_lse_ptrs_mask, other=0.0)
     l_i = tl.load(l_ptrs + offs_q, mask=d_lse_ptrs_mask, other=0.0)
 
+    idropout_p = ((dropout_p - 0.5) * 0xFFFFFFFF).to(tl.int32)
     dropout_scale = 1.0 / (1.0 - dropout_p) if ENABLE_DROPOUT else 1.0
     dq0, dq1, dq2 = composed_zeros_2d(BLOCK_M, BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
     n_full_blocks = n_blocks - leading_masked_blocks - trailing_masked_blocks
@@ -301,7 +302,7 @@ def bwd_kernel_dq(
             Di, l_i,
             seqlen_q, seqlen_k, head_dim,
             start_q, lo, hi,
-            dropout_p, dropout_scale, philox_seed, batch_philox_offset, max_seqlen_k,
+            idropout_p, dropout_scale, philox_seed, batch_philox_offset, max_seqlen_k,
             BLOCK_M,
             BLOCK_DMODEL0,
             BLOCK_DMODEL1,
@@ -330,7 +331,7 @@ def bwd_kernel_dq(
             Di, l_i,
             seqlen_q, seqlen_k, head_dim,
             start_q, lo, hi,
-            dropout_p, dropout_scale, philox_seed, batch_philox_offset, max_seqlen_k,
+            idropout_p, dropout_scale, philox_seed, batch_philox_offset, max_seqlen_k,
             BLOCK_M,
             BLOCK_DMODEL0,
             BLOCK_DMODEL1,

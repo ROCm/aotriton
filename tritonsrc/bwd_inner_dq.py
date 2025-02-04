@@ -4,7 +4,7 @@
 
 import triton
 import triton.language as tl
-from dropout import dropout_mask, dropout_rng, dropout_offsets
+from dropout import fast_dropout_mask
 from masked_load_store import load_fn
 from triton.language.extra import libdevice
 from composed_tensors import (
@@ -45,7 +45,7 @@ def bwd_inner_dq(
     ## Dropout
     ### max_seqlen_k is put in Dropout section because it is not needed by
     ### anything other than dropout
-    dropout_p, dropout_scale, philox_seed, batch_philox_offset, max_seqlen_k,
+    idropout_p, dropout_scale, philox_seed, batch_philox_offset, max_seqlen_k,
     # constexpr starts here
     BLOCK_M: tl.constexpr,
     BLOCK_DMODEL0: tl.constexpr,
@@ -145,7 +145,7 @@ def bwd_inner_dq(
                                BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
         if ENABLE_DROPOUT:
             philox_offset = batch_philox_offset + start_q * max_seqlen_k + start_k
-            keep = dropout_mask(philox_seed, philox_offset, dropout_p, BLOCK_M, BLOCK_N, max_seqlen_k)
+            keep = fast_dropout_mask(philox_seed, philox_offset, idropout_p, BLOCK_M, BLOCK_N, max_seqlen_k)
             dp = tl.where(keep, dp * dropout_scale, 0)
         # compute ds = p * (dp - delta[:, None])
         ds = p * (dp - Di[:, None])

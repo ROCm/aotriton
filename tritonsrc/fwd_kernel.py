@@ -66,10 +66,10 @@ def attn_fwd(
         PADDED_HEAD: tl.constexpr,
         # dropout and PRNG
         ENABLE_DROPOUT: tl.constexpr,
-        dropout_p,
+        dropout_p : tl.float32,
         philox_seed_ptr : '*u64',
-        philox_offset1 : '*u32',
-        philox_offset2 : tl.int32,  # TODO: move to tl.int64
+        philox_offset1 : '*u64',
+        philox_offset2 : tl.uint64,  # TODO: move to tl.int64
         philox_seed_output : '*u64',
         philox_offset_output : '*u64',
         RETURN_ENCODED_SOFTMAX: tl.constexpr,
@@ -124,6 +124,7 @@ def attn_fwd(
     INT8_GEMM: tl.constexpr = INT8 and (not INT8_KV)
 
     ## philox
+    idropout_p = ((dropout_p - 0.5) * 0xFFFFFFFF).to(tl.int32)
     philox_seed = 0
     philox_offset_base = philox_offset2
     if ENABLE_DROPOUT:
@@ -392,7 +393,7 @@ def attn_fwd(
                             start_m, block_min, block_max,
                             seqlen_k, seqlen_q, Head_dim,
                             # Dropout
-                            dropout_p, philox_seed, batch_philox_offset, Max_seqlen_k,
+                            idropout_p, philox_seed, batch_philox_offset, Max_seqlen_k,
                             encoded_sm_base,
                             # offs_n_causal, masked_blocks, n_extra_tokens, _
                             0, 0, 0,
@@ -451,7 +452,7 @@ def attn_fwd(
                             start_m, block_min, block_max,
                             seqlen_k, seqlen_q, Head_dim,
                             # Dropout
-                            dropout_p, philox_seed, batch_philox_offset, Max_seqlen_k,
+                            idropout_p, philox_seed, batch_philox_offset, Max_seqlen_k,
                             encoded_sm_base,
                             # CAUSAL: offs_n_causal, masked_blocks, n_extra_tokens, _
                             offs_n_causal, masked_blocks, n_extra_tokens,
