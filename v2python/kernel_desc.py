@@ -57,6 +57,10 @@ class KernelDescription(object):
     }
 
     @property
+    def FULL_KERNEL_NAME(self):
+        return f'{self.KERNEL_FAMILY}.{self.SHIM_KERNEL_NAME}'
+
+    @property
     def ARGUMENT_CHOICES(self):
         if self._ARGUMENT_CHOICES is None:
             self._ARGUMENT_CHOICES = join_dicts([self.TYPE_CHOICES, self.FEAT_CHOICES, self.PERF_CHOICES])
