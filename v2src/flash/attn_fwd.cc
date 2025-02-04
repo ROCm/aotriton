@@ -51,9 +51,9 @@ _attn_fwd_common(T4 q,
               << " pre_load_v = " << params.pre_load_v << std::endl;
 #endif
     dim3 grid {
-      AOTRITON_NS::cdiv<uint32_t>(params.max_seqlen_q, params.BLOCK_M),
+      AOTRITON_NS::cdiv<uint32_t>(params.Max_seqlen_q, params.BLOCK_M),
       uint32_t(params.Q->size(1)),
-      params.num_seqlens == 0 ? uint32_t(params.Q->size(0)) : params.num_seqlens,
+      params.Num_seqlens == 0 ? uint32_t(params.Q->size(0)) : params.Num_seqlens,
     };
 #if AOTRITON_VERBOSE
     std::cerr << "Grid conf " << grid.x << " " << grid.y << " " << grid.z << std::endl;
@@ -101,26 +101,26 @@ _attn_fwd_common(T4 q,
     .Max_seqlen_k = max_seqlen_k,
     .cu_seqlens_q = &cu_seqlens_q,
     .cu_seqlens_k = &cu_seqlens_k,
+    .BLOCK_DMODEL = head_size_rounded,
     .Head_dim = static_cast<int32_t>(head_size),
+    .PADDED_HEAD = head_size_rounded != head_size,
+    .ENABLE_DROPOUT = dropout_p > 0.0,
     .dropout_p = dropout_p,
     .philox_seed_ptr = &philox_seed,
     .philox_seed_output = &philox_seed_output,
     .philox_offset_output = &philox_offset_output,
     .philox_offset1 = &philox_offset1,
     .philox_offset2 = static_cast<uint32_t>(philox_offset2),
-    .CAUSAL_TYPE = is_causal ? 1 : 0,
-    .persistent_atomic_counter = &persistent_atomic_counter,
-    .Num_CU = 80,
-    .Batch = batch,
-    .BLOCK_DMODEL = head_size_rounded,
-    .ENABLE_DROPOUT = dropout_p > 0.0,
     .RETURN_ENCODED_SOFTMAX = bool(encoded_softmax),
-    .PADDED_HEAD = head_size_rounded != head_size,
+    .CAUSAL_TYPE = is_causal ? 1 : 0,
     .BIAS_TYPE = bias_type,
     .USE_ALIBI = false,
     .INT8 = false,
     .INT8_KV = false,
     .USE_P_SCALE = false,
+    .persistent_atomic_counter = &persistent_atomic_counter,
+    .Num_CU = 80,
+    .Batch = batch,
   };
 #if AOTRITON_BUILD_FOR_TUNING
   if (extargs) {
@@ -166,7 +166,7 @@ attn_fwd(T4 q,
          bool is_causal,
          AOTRITON_NS::Stream stream_wrap,
          FwdExtraArguments* extargs) {
-  auto null_persistent_atomic_counter = T1::get_null_tensor(DType::kInt32);
+  auto null_persistent_atomic_counter = T0::get_null_tensor(DType::kInt32);
   auto null_t1 = T1::get_null_tensor(DType::kInt32);
   auto alibi_null_t2 = T2::get_null_tensor(q.dtype());
   return _attn_fwd_common(q,
@@ -217,7 +217,7 @@ attn_fwd_compact_varlen(T4 q,            // 1 x num_heads x total_q x head_size,
                         bool is_causal,
                         AOTRITON_NS::Stream stream_wrap,
                         FwdExtraArguments* extargs) {
-  auto null_persistent_atomic_counter = T1::get_null_tensor(DType::kInt32);
+  auto null_persistent_atomic_counter = T0::get_null_tensor(DType::kInt32);
   auto alibi_null_t2 = T2::get_null_tensor(q.dtype());
   return _attn_fwd_common(q,
                           k,

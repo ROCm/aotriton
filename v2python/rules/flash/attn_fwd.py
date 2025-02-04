@@ -105,13 +105,14 @@ class attn_fwd(FlashKernel):
     TENSOR_RANKS = {
         '_default' : 4,
         'A': 2,
-        'M': 2,
+        'L': 2,
         'cu_seqlens_q': 1,
         'cu_seqlens_k': 1,
         'philox_seed_ptr': 0,
         'philox_offset1': 0,
         'philox_seed_output': 0,
         'philox_offset_output': 0,
+        'persistent_atomic_counter': 0,
     }
     EXPECTED_IDENTICAL_TENSOR_STRIDES = [
         # Not needed stride_o* exist
