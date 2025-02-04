@@ -71,7 +71,6 @@ class attn_fwd(FlashKernel):
         frozenset(['Q', 'K', 'V', 'B', 'A', 'Out', 'encoded_softmax']) : FlashKernel.MAIN_DATATYPES,
         frozenset(['Sm_scale']) : ['fp32'],
         frozenset(['L']) : ['*fp32:16'],
-        frozenset(["Q_descale", "K_descale", "P_scale", "P_descale", "V_descale"]) : [0],  # INT8 For the future
         frozenset(['cu_seqlens_q', 'cu_seqlens_k']) : ['*i32:16'],
         frozenset(['Num_head_q', 'Num_head_k', 'Num_seqlens', 'Max_seqlen_q', 'Max_seqlen_k']) : ['i32'],
         frozenset(['Head_dim']) : ['i32'],
@@ -83,6 +82,7 @@ class attn_fwd(FlashKernel):
         frozenset(['Num_CU', 'Batch']) : ['i32'],
     }
     FEAT_CHOICES = {
+        frozenset(["Q_descale", "K_descale", "P_scale", "P_descale", "V_descale"]) : [0],  # INT8 For the future
         # Can support CAUSAL_TYPE = 2 (Bottom right alignment) but this will
         # further increse the number of kernels. Will be added later along with
         # windowed attention
@@ -96,11 +96,11 @@ class attn_fwd(FlashKernel):
         frozenset(['INT8', 'INT8_KV', 'USE_P_SCALE']) : [False],  # INT8 for the future
     }
     PERF_CHOICES = {
-        frozenset(['PERSISTENT_TYPE']) : [0, 1, 2],
+        frozenset(['PERSISTENT_TYPE']) : [0], # [0, 1, 2],
         frozenset(['GRID_CU_MULTIP']) : [2],
         frozenset(['BLOCK_M']) : [16],
         frozenset(['BLOCK_N']) : [16],
-        frozenset(['PRE_LOAD_V']) : [True, False],
+        frozenset(['PRE_LOAD_V']) : [False], # [False, True],
     }
     TENSOR_RANKS = {
         '_default' : 4,

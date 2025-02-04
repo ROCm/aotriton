@@ -48,7 +48,7 @@ _attn_fwd_common(T4 q,
 #if AOTRITON_VERBOSE
     std::cerr << "Selected Kernel "
               << " BLOCK_M = " << params.BLOCK_M << " BLOCK_N = " << params.BLOCK_N
-              << " pre_load_v = " << params.pre_load_v << std::endl;
+              << " PRE_LOAD_V = " << params.PRE_LOAD_V << std::endl;
 #endif
     dim3 grid {
       AOTRITON_NS::cdiv<uint32_t>(params.Max_seqlen_q, params.BLOCK_M),
