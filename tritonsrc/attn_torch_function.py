@@ -41,6 +41,11 @@ class PersistentType:
     FIXED = 1
     DYNAMIC = 2
 
+class ReturnEncodedSoftmaxType:
+    NONE = 0
+    RETURN_ALL = 1
+    DISCARD_OUTPUT = 2
+
 def factor_head_dim(head_dim, n_pieces=3):
     ret = [0] * 3
     Lk = head_dim
@@ -60,6 +65,10 @@ def factor_head_dim(head_dim, n_pieces=3):
         ret = sorted(ret, reverse=True)
     return ret
 
+def get_idropout_p(dropout_p):
+    delta_p = dropout_p - 0.5
+    return int(0xFFFFFFFF * delta_p)
+
 @dataclass
 class AttentionExtraArgs:
     return_encoded_softmax : bool = False
@@ -68,6 +77,7 @@ class AttentionExtraArgs:
     fillnan : bool = False
     report_best_config : bool = False
     persistent_type : int = PersistentType.NONE
+    is_testing : bool = True
 
 VERBOSE=False
 DEFAULT_PHILOX_SEED = 0x1BF52
@@ -313,8 +323,10 @@ class _attention(torch.autograd.Function):
                 t.fill_(float('nan'))
         if return_encoded_softmax:
             encoded_softmax = torch.ones((q.shape[0], q.shape[1], q.shape[2], k.shape[2]), device=q.device, dtype=q.dtype)
+            return_encoded_softmax_type = ReturnEncodedSoftmaxType.RETURN_ALL
         else:
             encoded_softmax = None
+            return_encoded_softmax_type = ReturnEncodedSoftmaxType.NONE
         if False or VERBOSE:
             print(f'{q.shape=}')
             print(f'{k.shape=}')
@@ -404,7 +416,7 @@ class _attention(torch.autograd.Function):
                 CAUSAL=causal,
                 BLOCK_DMODEL=head_dim_rounded,
                 ENABLE_DROPOUT=dropout_p > 0.0,
-                RETURN_ENCODED_SOFTMAX=encoded_softmax is not None,
+                RETURN_ENCODED_SOFTMAX_TYPE=return_encoded_softmax_type,
                 PADDED_HEAD=padded_head,
                 BIAS_TYPE=BIAS_TYPE,
             )
@@ -448,7 +460,7 @@ class _attention(torch.autograd.Function):
                 philox_offset2=philox_offset2,
                 philox_seed_output=philox_seed_output,
                 philox_offset_output=philox_offset_output,
-                RETURN_ENCODED_SOFTMAX=encoded_softmax is not None,
+                RETURN_ENCODED_SOFTMAX_TYPE=return_encoded_softmax_type,
                 encoded_softmax=encoded_softmax,
                 # Causal
                 CAUSAL_TYPE=CausalType.TOP_LEFT if causal else CausalType.NONE,
@@ -502,7 +514,7 @@ class _attention(torch.autograd.Function):
                 'max_seqlen_q' : max_seqlen_q,
                 'max_seqlen_k' : max_seqlen_k,
                 'CAUSAL' : causal,
-                'RETURN_ENCODED_SOFTMAX': encoded_softmax is not None,
+                'RETURN_ENCODED_SOFTMAX_TYPE': encoded_softmax is not None,
                 'BLOCK_DMODEL' : Lk,
                 'ENABLE_DROPOUT' : dropout_p > 0.0,
             }
@@ -539,6 +551,8 @@ class _attention(torch.autograd.Function):
         if ctx.tuning_result is not None:
             for kernel_name, best in ctx.tuning_result:
                 print(f'{kernel_name=} {best.kwargs=} {best.num_warps=} {best.num_stages=}')
+        if attn_extra_args.is_testing:
+            assert not torch.isnan(M).any()
         return o, encoded_softmax, ctx.tuning_result
 
     @staticmethod
@@ -602,8 +616,8 @@ class _attention(torch.autograd.Function):
         use_small_block = ctx.dropout_p > 0.0
         use_medium_block = ctx.bias_type != 0
         # Profiling shows (16, 16) is optimal solution for most bwd configurations
-        BLOCK_M = 16
-        BLOCK_N = 16
+        BLOCK_M = 32
+        BLOCK_N = 32
         # if use_small_block:
         #     # DQ_BLOCK_M = min(max_seqlen_q, BLOCK)
         #     BLOCK_M = 32
@@ -728,7 +742,7 @@ class _attention(torch.autograd.Function):
                     BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N,
                     BLOCK_DMODEL=head_dim_rounded,
                     CAUSAL=ctx.causal,
-                    num_warps=2, waves_per_eu=1,
+                    num_warps=4, waves_per_eu=1,
                     num_stages=1,
                     ENABLE_DROPOUT=ctx.dropout_p > 0.0,
                     PADDED_HEAD=padded_head,
@@ -864,6 +878,8 @@ class _attention(torch.autograd.Function):
                     BIAS_TYPE=ctx.bias_type,
                 )
                 print('bare_bwd_kernel_dq Done')
+        if attn_extra_args.is_testing:
+            assert not torch.isnan(delta).any(), f'{delta=}'
         # print(h.asm["ttgir"])
         return dq, dk, dv, None if db.numel() == 0 else db, None, None, None, None, None, None, None
 
@@ -887,7 +903,8 @@ class _attention(torch.autograd.Function):
         delta = torch.empty_like(L)
         if attn_extra_args.fillnan:
             for t in (dq, dk, dv, db, delta):
-                t.fill_(float('nan'))
+                # t.fill_(float('nan'))
+                t.fill_(float(114.514))
         null_tensor = torch.empty((0), device=q.device, dtype=torch.int32)
         batch = q.shape[0]
         num_head_q = q.shape[1]

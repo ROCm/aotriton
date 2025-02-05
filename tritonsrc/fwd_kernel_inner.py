@@ -41,8 +41,8 @@ def _attn_fwd_inner(
         start_m, block_min, block_max,
         actual_seqlen_k, actual_seqlen_q, Head_dim,
         # Dropout
-        idropout_p, philox_seed, batch_philox_offset, Max_seqlen_k,
-        encoded_sm_base,
+        idropout_p, philox_seed, batch_philox_offset, philox_offset_stride,
+        encoded_sm_base, Max_seqlen_k,
         # CAUSAL (Partial block)
         offs_n_causal,
         masked_blocks,
@@ -161,8 +161,10 @@ def _attn_fwd_inner(
         # CAVEAT: Must update l_ij before applying dropout
         l_ij = tl.sum(p, 1)
         if ENABLE_DROPOUT:
-            philox_offset = batch_philox_offset + start_m * BLOCK_M * Max_seqlen_k + start_n
-            keep = fast_dropout_mask(philox_seed, philox_offset, idropout_p, BLOCK_M, BLOCK_N, Max_seqlen_k)
+            # philox_offset = batch_philox_offset + start_m * BLOCK_M * Max_seqlen_k + start_n
+            keep = fast_dropout_mask(philox_seed, idropout_p,
+                                     batch_philox_offset, start_m * BLOCK_M, start_n,
+                                     BLOCK_M, BLOCK_N, philox_offset_stride)
             if RETURN_ENCODED_SOFTMAX:
                 mstore2d(tl.where(keep, p, -p).to(encoded_sm_base.type.element_ty),
                          BLOCK_M,
