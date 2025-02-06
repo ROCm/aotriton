@@ -1,7 +1,7 @@
 # Copyright © 2024 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-from ._common import FlashKernel, select_pattern
+from ._common import FlashKernel, select_pattern, get_possible_choices
 
 class debug_fill_dropout_rng(FlashKernel):
     ARGUMENTS = [
@@ -20,10 +20,10 @@ class debug_fill_dropout_rng(FlashKernel):
         '_default' : 4,
     }
     TYPE_CHOICES = {
-        frozenset(['R']) : ['*fp32:16'],
+        frozenset(['R']) : ['*fp32:16', '*i32:16'],
         frozenset(['seqlen_q', 'seqlen_k']) : ['i32'],
         frozenset(['philox_seed']) : ['u64'],
-        frozenset(['philox_offset']) : ['u32'],
+        frozenset(['philox_offset']) : ['u64'],
     }
     FEAT_CHOICES = {
     }
@@ -50,10 +50,10 @@ class debug_fill_dropout_rng_tensor(debug_fill_dropout_rng):
         'BLOCK_N',
     ]
     TYPE_CHOICES = {
-        frozenset(['R']) : ['*fp32:16'],
+        frozenset(['R']) : get_possible_choices(debug_fill_dropout_rng, 'R')
         frozenset(['seqlen_q', 'seqlen_k']) : ['i32'],
         frozenset(['philox_seed_ptr']) : ['*u64'],
-        frozenset(['philox_offset_base_ptr']) : ['*u32'],
+        frozenset(['philox_offset_base_ptr']) : ['*u64'],
     }
     TENSOR_RANKS = {
         '_default' : 4,

@@ -65,14 +65,12 @@ def debug_fill_dropout_rng_tensor(R,
                                   stride_rz, stride_rh, stride_rm, stride_rn,
                                   seqlen_q, seqlen_k,
                                   philox_seed_ptr: '*u64',
-                                  philox_offset1 : '*u64',
-                                  philox_offset2 : tl.uint64,
+                                  philox_offset_base_ptr : '*u64',
                                   BLOCK_M: tl.constexpr,
                                   BLOCK_N: tl.constexpr,
                                   ):
     philox_seed = tl.load(philox_seed_ptr)
-    philox_offset_base = philox_offset2
-    philox_offset_base += tl.load(philox_offset1)
+    philox_offset_base = tl.load(philox_offset_base_ptr)
     debug_fill_dropout_rng(R,
                            stride_rz, stride_rh, stride_rm, stride_rn,
                            seqlen_q, seqlen_k,
