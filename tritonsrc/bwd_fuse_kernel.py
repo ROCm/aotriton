@@ -293,7 +293,7 @@ def bwd_fuse_kernel(
             seqlen_k, head_dim,
             stride_dvk, stride_dvn)
     # dq computation
-    start_q = start_k
+    start_q = tl.program_id(0) * BLOCK_M2
     if start_q >= seqlen_q:
         return
     off_h_q = tl.program_id(1) # head index
