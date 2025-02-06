@@ -129,7 +129,7 @@ class attn_fwd(FlashKernel):
     # List of functionals that are not fully tuned in the tuning database
     # First element of the tuple is name. Second is the value to use instead
     PARTIALLY_TUNED_FUNCTIONALS = [
-        ('RETURN_ENCODED_SOFTMAX', 0),
+        ('RETURN_ENCODED_SOFTMAX_TYPE', 0),
         ('PADDED_HEAD', False),
         ('BIAS_TYPE', None)
     ]
@@ -149,7 +149,7 @@ class attn_fwd(FlashKernel):
         compiler_options['num_stages'] = 2
         '''
 
-    DOWNGRADER = [(('RETURN_ENCODED_SOFTMAX', True), DOWNGRADE_RETURN_ENCODED_SOFTMAX)]
+    DOWNGRADER = [(('RETURN_ENCODED_SOFTMAX_TYPE', 2), DOWNGRADE_RETURN_ENCODED_SOFTMAX)]
 
     @staticmethod
     def gen_autotune_configs(gpu : str, fsel_dict : 'dict[str, Any]'):
