@@ -1,3 +1,7 @@
+#!/usr/bin/env python
+# Copyright ©2025 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
 import os
 from typing import List, Tuple, Optional
 from collections import namedtuple
@@ -169,7 +173,7 @@ class SdpaContext(object):
         # Note: Navi 3x is experimental and YMMV
         self.OUT_FUDGE_FACTOR = 3.0
         if dtype == torch.float32:
-            self.OUT_FUDGE_FACTOR = 12.0
+            self.OUT_FUDGE_FACTOR = 14.0
         if torch.version.hip:
             if 'gfx90a' in torch.cuda.get_device_properties(0).gcnArchName:
                 self.OUT_FUDGE_FACTOR = 12.0
@@ -207,6 +211,17 @@ class SdpaContext(object):
         return self.dev_tensors[0].dtype
 
     @property
+    def hdim(self):
+        return self.dev_tensors[0].shape[-1]
+
+    @property
+    def is_hdim_NPOT_optimized(self):
+        def is_power_of_two(n: int) -> bool:
+            return (n & (n - 1) == 0) and n != 0
+        hdim = self.hdim
+        return not is_power_of_two(hdim)
+
+    @property
     def seqlen_q(self):
         q, k, v, b = self.dev_tensors
         seqlen_q = q.shape[2]
@@ -238,16 +253,24 @@ class SdpaContext(object):
         else:
             ref_device_option = AOTRITON_REF_DEVICE_OPTION
         if ref_device_option == 'default':
+            ref_device = target_gpu_device
             seqlen_k = self.seqlen_k
+            hdim = self.hdim
+            '''
+            test_gqa[False-1.2-dtype0-0.5-False-579-2048-203-N_HEADS1-4]
+            triggers GPU segfault when testing with -k 'test_gqa[False-1.2-'
+            (Cannot be reproduced independently)
+            '''
+            if seqlen_k == 579:
+                ref_device = 'cpu'
             '''
             Shader _ZN2at6native12_GLOBAL__N_119cunn_SoftMaxForwardILi2EdddNS1_22SoftMaxForwardEpilogueEEEvPT2_PKT0_i causes Segfault
             for Case test_op_bwd[False-0.0-dtype2-0.0-False-587-64-8-4-4], but cannot be reproduced by running this individual UT.
             Avoiding running it on GPU for now
             '''
-            if seqlen_k == 587:
-                ref_device = 'cpu'
-            else:
-                ref_device = target_gpu_device
+            if self.dtype == torch.float32:
+                if seqlen_k == 587 or hdim % 16 != 0:
+                    ref_device = 'cpu'
         elif ref_device_option == 'cuda':
             ref_device = target_gpu_device
         elif ref_device_option == 'cpu':
@@ -295,23 +318,25 @@ class SdpaContext(object):
 
         # Maximal value from tune_flash.py and table_tool.py --fudge_factor_tolerance 5.0
         # Note: Navi 3x is experimental and YMMV
-        query_fudge_factor = 32.0
+        query_fudge_factor = 148.0  # NPOT
         key_fudge_factor = 48.0
-        value_fudge_factor = 16.0
-        bias_fudge_factor = 16.0
+        # value_fudge_factor = 16.0
+        value_fudge_factor = 36.0
+        bias_fudge_factor = 17.0
         # print(f'{torch.cuda.get_device_properties(0).gcnArchName=}')
         if torch.version.hip:
             if 'gfx90a' in torch.cuda.get_device_properties(0).gcnArchName:
                 query_fudge_factor = 80.0
-                key_fudge_factor = 330.0
-                bias_fudge_factor = 36.0
+                key_fudge_factor = 500.0 if self.is_hdim_NPOT_optimized else 340.0
+                bias_fudge_factor = 45.0 if self.is_hdim_NPOT_optimized else 36.0
         if AOTRITON_TORCH_ONLY_USE_CPU:
             query_fudge_factor = 128.0
             key_fudge_factor = 330.0
             bias_fudge_factor = 36.0
-            value_fudge_factor = 36.0
+            # value_fudge_factor = 36.0
         if dtype == torch.float32:
             key_fudge_factor = 180.0
+            # value_fudge_factor = 32.0
             bias_fudge_factor = 24.0
         return (query_fudge_factor, key_fudge_factor, value_fudge_factor, bias_fudge_factor)
 
@@ -446,6 +471,8 @@ class SdpaContext(object):
             print(f'{err_idx=}')
             print(f'{tri_out[err_idx]=}')
             print(f'{ref_out[err_idx]=}')
+            print(f'{tri_out[0, 0, :4, :16]=}')
+            print(f'{ref_out[0, 0, :4, :16]=}')
         dq_allclose, dk_allclose, dv_allclose, db_allclose = grads_allclose
         tri_dq, tri_dk, tri_dv, tri_db = self.dout_tensors
         ref_dq, ref_dk, ref_dv, ref_db = self.dref_tensors
@@ -454,9 +481,9 @@ class SdpaContext(object):
             print(f'{q.shape=} {q.stride()=} {q.dtype=}')
             print(f'{k.shape=} {k.stride()=} {k.dtype=}')
             print(f'{v.shape=} {v.stride()=} {v.dtype=}')
-            print(f'{q[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
-            print(f'{k[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
-            print(f'{v[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
+            # print(f'{q[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
+            # print(f'{k[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
+            # print(f'{v[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
             # print(f'{dropout_mask[:,:,  :SPARSE_SEQ_SINCE+1, :SPARSE_HEAD_SINCE+1]=}')
             # print(f'{dropout_mask.shape=}')
             print(f'{err_idx=}')

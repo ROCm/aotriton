@@ -11,17 +11,24 @@ from _common_backward import _do_test_op_bwd
 from _common_test import SdpaContext, SdpaParams, SdpaContextFromNPZ
 from attn_torch_function import attention, AttentionExtraArgs
 
+FOR_RELEASE = bool(int(os.getenv('FOR_RELEASE', default='0')))
+
+POT_HEADDIMS = [16, 32, 64, 128, 256]
+NPOT_HEADDIMS = [48, 80, 96, 160, 192, 224]
+PRIME_HEADDIMS = [7, 23, 37, 53, 67, 73, 89, 113, 149, 179, 211, 241]
+
 # @pytest.mark.parametrize('BATCH', [1])
 # @pytest.mark.parametrize('N_HEADS', [1])
-@pytest.mark.parametrize('BATCH', [1, 4])
-@pytest.mark.parametrize('N_HEADS', [1, 4])
+@pytest.mark.parametrize('BATCH', [1, 4] if not FOR_RELEASE else [3])
+@pytest.mark.parametrize('N_HEADS', [1, 4] if not FOR_RELEASE else [8])
 # @pytest.mark.parametrize('D_HEAD', [16, 32, 64, 128, 256])
 # Irregular-only PyTorch set
 # @pytest.mark.parametrize('D_HEAD', [8, 21, 72, 96, 160, 192, 203])
 # @pytest.mark.parametrize('seqlen_q', [1, 4, 32, 128, 256, 512, 1024, 7, 394, 250, 399, 511, 1019])
 # @pytest.mark.parametrize('seqlen_k', [1, 4, 32, 128, 256, 512, 1024, 3, 217, 339, 313, 491, 988])
 # PyTorch set
-@pytest.mark.parametrize('D_HEAD', [8, 16, 21, 32, 64, 72, 96, 128, 160, 192, 203, 256])
+# @pytest.mark.parametrize('D_HEAD', [8, 16, 21, 32, 64, 72, 96, 128, 160, 192, 203, 256])
+@pytest.mark.parametrize('D_HEAD', POT_HEADDIMS + NPOT_HEADDIMS + PRIME_HEADDIMS)
 @pytest.mark.parametrize('seqlen_q', [4, 8, 64, 143, 256, 512, 1024, 2048])
 @pytest.mark.parametrize('seqlen_k', [4, 8, 64, 128, 256, 587, 1024, 2048])
 # Currently debugging
@@ -39,7 +46,7 @@ from attn_torch_function import attention, AttentionExtraArgs
 @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16, torch.float32])
 # @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
 # @pytest.mark.parametrize('dtype', [torch.float16])
-@pytest.mark.parametrize('sm_scale', [0.0, 1.2])
+@pytest.mark.parametrize('sm_scale', [0.0, 1.2] if not FOR_RELEASE else [1.2])
 # @pytest.mark.parametrize('sm_scale', [1.2])
 # @pytest.mark.parametrize('storage_flip', [False])
 @pytest.mark.parametrize('storage_flip', [False, True])
@@ -50,9 +57,9 @@ def test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dr
 
 # @pytest.mark.parametrize('BATCH', [1, 4])
 # @pytest.mark.parametrize('N_HEADS', [1, 4])
-@pytest.mark.parametrize('BATCH', [1, 4])
-@pytest.mark.parametrize('N_HEADS', [1, 4])
-@pytest.mark.parametrize('D_HEAD', [16,32,64,128,256])
+@pytest.mark.parametrize('BATCH', [1, 4] if not FOR_RELEASE else [3])
+@pytest.mark.parametrize('N_HEADS', [1, 4] if not FOR_RELEASE else [8])
+@pytest.mark.parametrize('D_HEAD', POT_HEADDIMS + NPOT_HEADDIMS + PRIME_HEADDIMS)
 # @pytest.mark.parametrize('D_HEAD', [128])
 # Complete set
 # @pytest.mark.parametrize('seqlen_q', [4,8,16,17,32,64,128,143,256,512,1024,2048])
@@ -68,7 +75,7 @@ def test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dr
 # @pytest.mark.parametrize('dropout_p', [0.0])
 @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16, torch.float32])
 # @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
-@pytest.mark.parametrize('sm_scale', [0.0, 1.2])
+@pytest.mark.parametrize('sm_scale', [0.0, 1.2] if not FOR_RELEASE else [1.2])
 @pytest.mark.parametrize('storage_flip', [False, True])
 # @pytest.mark.parametrize('return_encoded_softmax', [False])
 def test_op_bwd_with_matrix_bias(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, sm_scale, dropout_p, dtype, storage_flip):
@@ -160,16 +167,16 @@ def main2():
     # Memo: False-0.0-dtype0-0.0-False-4-256-8-4-1
     # Memo: False-0.0-dtype0-0.0-False-4-256-8-1-4
     # False-1.2-dtype0-0.0-False-4-4-72-1-4
-    # BATCH = 8
-    # D_HEAD = 32
-    # N_HEADS = 8
-    # seqlen_q = 16
-    # seqlen_k = 16
-    BATCH = 4
-    D_HEAD = 1
+    BATCH = 8
     N_HEADS = 8
-    seqlen_q = 256
+    seqlen_q = 32
     seqlen_k = 4
+    D_HEAD = 16
+    # BATCH = 4
+    # D_HEAD = 1
+    # N_HEADS = 8
+    # seqlen_q = 256
+    # seqlen_k = 4
     causal = False
     sm_scale = 1.2
     dropout_p = 0.0
@@ -231,6 +238,7 @@ def main_bug_introduced_when_fixing_54():
     _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
 
 if __name__ == '__main__':
-    main_bug_introduced_when_fixing_54()
+    main2()
+    # main_bug_introduced_when_fixing_54()
     # main_nsq_causal()
     # main_npz()

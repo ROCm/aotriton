@@ -4,7 +4,7 @@
 import itertools
 from ._common import (
     FlashKernel,
-    get_possible_types,
+    get_possible_choices,
     select_pattern,
     BinningLessOrEqual,
     BinningExact,
@@ -44,7 +44,7 @@ class bwd_kernel_dk_dv(FlashKernel):
         'PADDED_HEAD',
         'BIAS_TYPE',
     ]
-    match_fwd = lambda aname : get_possible_types(attn_fwd, aname)
+    match_fwd = lambda aname : get_possible_choices(attn_fwd, aname)
     TENSOR_STRIDE_INPUTS = {
         'Q' : select_pattern(ARGUMENTS, 'stride_q'),
         'K' : select_pattern(ARGUMENTS, 'stride_k'),
@@ -65,10 +65,10 @@ class bwd_kernel_dk_dv(FlashKernel):
     }
     TYPE_CHOICES = {
         frozenset(['Q', 'K', 'V', 'B', 'Out', 'DO', 'DK', 'DV']) : match_fwd('Q'),
-        frozenset(['sm_scale']) : match_fwd( 'sm_scale'),
+        frozenset(['sm_scale']) : match_fwd( 'Sm_scale'),
         frozenset(['L', 'D']) : ['*fp32:16'],
         frozenset(['cu_seqlens_q', 'cu_seqlens_k']) : match_fwd('cu_seqlens_q'),
-        frozenset(['num_seqlens', 'max_seqlen_q', 'max_seqlen_k']) : match_fwd('num_seqlens'),
+        frozenset(['num_seqlens', 'max_seqlen_q', 'max_seqlen_k']) : match_fwd('Num_seqlens'),
         frozenset(['head_dim', 'num_head_q', 'num_head_k']) : ['i32'],
         frozenset(['dropout_p']) : match_fwd('dropout_p'),
         frozenset(['philox_seed_ptr']) : match_fwd('philox_seed_ptr'),
@@ -76,7 +76,7 @@ class bwd_kernel_dk_dv(FlashKernel):
         frozenset(['philox_offset2']) : match_fwd('philox_offset2'),
     }
     FEAT_CHOICES = {
-        frozenset(['BLOCK_DMODEL']) : [16, 32, 64, 128, 256],
+        frozenset(['BLOCK_DMODEL']) : match_fwd('BLOCK_DMODEL'),
         frozenset(['CAUSAL']) : [True, False],
         frozenset(['ENABLE_DROPOUT']) : match_fwd('ENABLE_DROPOUT'),
         frozenset(['PADDED_HEAD']) : [False, True],
@@ -102,12 +102,14 @@ class bwd_kernel_dk_dv(FlashKernel):
     @staticmethod
     def gen_autotune_configs(gpu, fsel_dict : 'dict[str, Any]'):
         dtype = fsel_dict['Q']
+        MI = 'MI' in gpu
+        Navi = 'Navi' in gpu
         ret = []
         # TODO: right sizes for fp32?
         BLOCK_SIZES = [16, 32, 64] if dtype != '*fp32:16' else [16, 32]
         WAVES_PER_EU = [0, 1, 2, 3, 4]
         NUM_WARPS = [1, 2, 4]
-        NUM_STAGES = [1, 2]
+        NUM_STAGES = [1]
         for M, N, waves, warps, stages in itertools.product(BLOCK_SIZES,
                                                             BLOCK_SIZES,
                                                             WAVES_PER_EU,
@@ -115,5 +117,11 @@ class bwd_kernel_dk_dv(FlashKernel):
                                                             NUM_STAGES):
             if M < N:
                 continue  # deduplicate
+            if MI and M == 64 and N == 64 and warps == 4:
+                continue  # No optimal kernel according to 0.8b tuning db
+            if Navi and M > 32 and warps == 1:
+                continue  # No optimal kernel according to 0.8b tuning db
+            if Navi and M == 64  and N == 64 and warps != 4:
+                continue  # No optimal kernel according to 0.8b tuning db
             kw = {'BLOCK_M': M, 'BLOCK_N': N, 'waves_per_eu': waves}
             yield Config(kw, num_stages=stages, num_warps=warps)

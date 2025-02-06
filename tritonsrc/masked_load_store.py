@@ -101,4 +101,6 @@ def mstore2d(
     if col_overflow > 0:
         o_ptrs_mask = o_ptrs_mask & (off_cols[None, :] < o_cols)
     tl.store(o_ptrs, registers, mask=o_ptrs_mask)
-    return o_ptrs, o_ptrs_mask
+    # Do not return variables unused by the caller
+    # See: https://github.com/triton-lang/triton/issues/5768
+    # return o_ptrs, o_ptrs_mask

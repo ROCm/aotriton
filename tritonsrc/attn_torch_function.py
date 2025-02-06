@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: MIT
 
 from collections import namedtuple
+from dataclasses import dataclass
 import copy
 import torch
 import triton
@@ -24,14 +25,50 @@ from sized_tuned_bwd import (
     sized_tuned_bwd_kernel_dq,
 )
 
-AttentionExtraArgs = namedtuple('AttentionExtraArgs',
-        ['return_encoded_softmax',
-         'autotune',
-         'return_autotune',
-         'fillnan',
-         'report_best_config',
-         ],
-        defaults=[False, False, False, False, None])
+# Note: we don't use Enum class because accessing the integer requires using
+#       `.value` property, which makes the code verbose.
+class CausalType:
+    NONE = 0
+    TOP_LEFT = 1
+    BOTTOM_RIGHT = 2
+
+class BiasType:
+    NONE = 0
+    MATRIX = 1
+    VECTOR = 2  # CAVEAT: Unsupported in kernel
+
+class PersistentType:
+    NONE = 0
+    FIXED = 1
+    DYNAMIC = 2
+
+def factor_head_dim(head_dim, n_pieces=3):
+    ret = [0] * 3
+    Lk = head_dim
+    for i in range(n_pieces):
+        max_po2 = 2 ** (Lk.bit_length() - 1)
+        # Technically Triton now supports all power-of-two, lowering to 1
+        # But PyTorch pads all inputs to multiple of 8.
+        # In addition we do not have the capability to support that many choices
+        max_po2 = max(16, max_po2)
+        ret[i] = max_po2
+        # print(f"\t{i=}: {Lk=} {max_po2=} left: {Lk - max_po2}")
+        Lk -= max_po2
+        if Lk <= 0:
+            break
+    while sum(ret) < head_dim:
+        ret[-1] *= 2
+        ret = sorted(ret, reverse=True)
+    return ret
+
+@dataclass
+class AttentionExtraArgs:
+    return_encoded_softmax : bool = False
+    autotune : bool = False
+    return_autotune : bool = False
+    fillnan : bool = False
+    report_best_config : bool = False
+    persistent_type : int = PersistentType.NONE
 
 VERBOSE=False
 DEFAULT_PHILOX_SEED = 0x1BF52
@@ -241,30 +278,35 @@ class _attention(torch.autograd.Function):
     @staticmethod
     def forward(ctx, q, k, v, b, causal, sm_scale, dropout_p,
                 attn_extra_args=AttentionExtraArgs()):
-        return_encoded_softmax, autotune, return_autotune = attn_extra_args[:3]
+        return_encoded_softmax = attn_extra_args.return_encoded_softmax
+        autotune = attn_extra_args.autotune
+        return_autotune = attn_extra_args.return_autotune
         dtype = q.dtype
         # shape constraints
         Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
         assert Lq == Lk and Lk == Lv
-        head_dim_rounded = 2 ** (Lk - 1).bit_length()
-        head_dim_rounded = max(16, head_dim_rounded)
+        head_dim_factors = factor_head_dim(Lk)
+        head_dim_rounded = sum(head_dim_factors)
         padded_head = head_dim_rounded != Lk
+        # assert not padded_head, f"sum({head_dim_factors=}) = {sum(head_dim_factors)} != {Lk=}"
+        batch = q.shape[0]
         num_head_q = q.shape[1]
         num_head_k = k.shape[1]
         max_seqlen_q = q.shape[2]
         max_seqlen_k = k.shape[2]
         o = torch.empty_like(q)
-        if torch.version.hip is None:
-            BLOCK_M = 128
-            BLOCK_N = 64 if Lk <= 64 else 32
-            num_stages = 4 if Lk <= 64 else 3
-            num_warps = 4 if Lk <= 64 else 8
 
-        grid = lambda META: (
-            triton.cdiv(q.shape[2], META['BLOCK_M']),
-            num_head_q,
-            q.shape[0],
-        )
+        if attn_extra_args.persistent_type == PersistentType.NONE:
+            grid = lambda META: (
+                triton.cdiv(q.shape[2], META['BLOCK_M']),
+                num_head_q,
+                q.shape[0],
+            )
+            Num_CU = 0
+        else:
+            Num_CU = torch.cuda.get_device_properties(q.device).multi_processor_count
+            grid = lambda META: (min(Num_CU * META['GRID_CU_MULTIP'],
+                                     triton.cdiv(max_seqlen_q, META['BLOCK_M']) * num_head_q * batch), )
         null_tensor = torch.empty((0), device=q.device, dtype=torch.int32)
         M = torch.empty((q.shape[0] * q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)
         if attn_extra_args.fillnan:
@@ -292,17 +334,31 @@ class _attention(torch.autograd.Function):
             if encoded_softmax is not None:
                 print(f'{encoded_softmax.shape=} {encoded_softmax.dtype=}')
 
-        philox_seed = torch.tensor([DEFAULT_PHILOX_SEED], device=q.device, dtype=torch.uint64)
-        philox_offset1 = torch.tensor([DEFAULT_PHILOX_OFFSET_1], device=q.device, dtype=torch.uint32)
-        philox_offset2 = DEFAULT_PHILOX_OFFSET_2
-        philox_seed_output = torch.tensor([0], device=q.device, dtype=torch.uint64)
-        philox_offset_output = torch.tensor([0], device=q.device, dtype=torch.uint64)
+        if dropout_p > 0.0:
+            philox_seed = torch.tensor([DEFAULT_PHILOX_SEED], device=q.device, dtype=torch.uint64)
+            philox_offset1 = torch.tensor([DEFAULT_PHILOX_OFFSET_1], device=q.device, dtype=torch.uint64)
+            philox_offset2 = DEFAULT_PHILOX_OFFSET_2
+            philox_seed_output = torch.tensor([0], device=q.device, dtype=torch.uint64)
+            philox_offset_output = torch.tensor([0], device=q.device, dtype=torch.uint64)
+        else:
+            u64nulltensor = torch.empty([0], device=q.device, dtype=torch.uint64)
+            philox_seed = u64nulltensor
+            philox_offset1 = u64nulltensor
+            philox_offset2 = 0
+            philox_seed_output = u64nulltensor
+            philox_offset_output = u64nulltensor
 
         if b is None:
             b = torch.empty((0,0,0,0), device=q.device, dtype=q.dtype)
-            BIAS_TYPE = 0
+            BIAS_TYPE = BiasType.NONE
         else:
-            BIAS_TYPE = 1
+            BIAS_TYPE = BiasType.MATRIX
+
+        # TODO alibi_slopes
+        alibi_slopes = torch.empty((0,0), device=q.device, dtype=q.dtype)
+
+        # TODO: int8
+        q_descale = k_descale = p_scale = p_descale = v_descale = 0
 
         use_small_block = dropout_p > 0.0 or BIAS_TYPE != 0 or return_encoded_softmax
         use_medium_block = False # reserved
@@ -318,10 +374,14 @@ class _attention(torch.autograd.Function):
         if dtype == torch.float32:
             BLOCK_M //= 2
 
+        if attn_extra_args.persistent_type == PersistentType.DYNAMIC:
+            persistent_atomic_counter = torch.zeros([1], device=q.device, dtype=torch.int32)
+        else:
+            persistent_atomic_counter = None
+
         if autotune:
-            assert False, "tritonsrc based autotune is disabled for now due to potentially faulty triton.Config on Navi31"
             tuned_attn_fwd[grid](
-                q, k, v, b, sm_scale, M, o,
+                q, k, v, b, alibi_slopes, sm_scale, M, o,
                 q.stride(0), q.stride(1), q.stride(2), q.stride(3),
                 k.stride(0), k.stride(1), k.stride(2), k.stride(3),
                 v.stride(0), v.stride(1), v.stride(2), v.stride(3),
@@ -359,36 +419,58 @@ class _attention(torch.autograd.Function):
             print(f'{q.shape=} {k.shape=} {v.shape=} {b.shape=} {M.shape=} {o.shape=}', flush=True)
             print(f'{q.stride()=} {k.stride()=} {v.stride()=} {b.stride()=} {M.stride()=} {o.stride()=}', flush=True)
             bare_attn_fwd[grid](
-                q, k, v, b, sm_scale, M, o,
-                q.stride(0), q.stride(1), q.stride(2), q.stride(3),
-                k.stride(0), k.stride(1), k.stride(2), k.stride(3),
-                v.stride(0), v.stride(1), v.stride(2), v.stride(3),
-                b.stride(0), b.stride(1), b.stride(2), b.stride(3),
-                o.stride(0), o.stride(1), o.stride(2), o.stride(3),
-                num_head_q=num_head_q,
-                num_head_k=num_head_k,
+                # Basic SDPA
+                q, k, v, b, alibi_slopes, sm_scale, M, o,
+                q_descale, k_descale, p_scale, p_descale, v_descale,
+                *q.stride(),
+                *k.stride(),
+                *v.stride(),
+                *o.stride(),
+                *b.stride(),
+                *alibi_slopes.stride(),
+                # MQA/GQA
+                Num_head_q=num_head_q,
+                Num_head_k=num_head_k,
+                # Varlen
+                Num_seqlens=0,
                 cu_seqlens_q=null_tensor,
                 cu_seqlens_k=null_tensor,
-                num_seqlens=0,
-                max_seqlen_q=q.shape[2],
-                max_seqlen_k=k.shape[2],
-                head_dim=Lk,
+                Max_seqlen_q=q.shape[2],
+                Max_seqlen_k=k.shape[2],
+                # Head Dimensions
+                BLOCK_DMODEL=head_dim_rounded,
+                Head_dim=Lk,
+                PADDED_HEAD=padded_head,
+                # droput and PRNG
+                ENABLE_DROPOUT=dropout_p > 0.0,
                 dropout_p=dropout_p,
                 philox_seed_ptr=philox_seed,
                 philox_offset1=philox_offset1,
                 philox_offset2=philox_offset2,
                 philox_seed_output=philox_seed_output,
                 philox_offset_output=philox_offset_output,
-                encoded_softmax=encoded_softmax,
-                CAUSAL=causal,
-                BLOCK_M=BLOCK_M,
-                BLOCK_DMODEL=head_dim_rounded,
-                BLOCK_N=BLOCK_N,
-                pre_load_v=False,
-                ENABLE_DROPOUT=dropout_p > 0.0,
                 RETURN_ENCODED_SOFTMAX=encoded_softmax is not None,
-                PADDED_HEAD=padded_head,
+                encoded_softmax=encoded_softmax,
+                # Causal
+                CAUSAL_TYPE=CausalType.TOP_LEFT if causal else CausalType.NONE,
+                # bias
                 BIAS_TYPE=BIAS_TYPE,
+                # INT8
+                INT8=False,
+                INT8_KV=False,
+                USE_P_SCALE=False,
+                # Alibi
+                USE_ALIBI=False,
+                # Persistent related arguments
+                PERSISTENT_TYPE=attn_extra_args.persistent_type,
+                persistent_atomic_counter=persistent_atomic_counter,
+                Num_CU=Num_CU,
+                GRID_CU_MULTIP=2,
+                Batch=batch,
+                # Performance
+                BLOCK_M=BLOCK_M,
+                BLOCK_N=BLOCK_N,
+                PRE_LOAD_V=False,
                 num_stages=1,
             )
 
@@ -466,8 +548,8 @@ class _attention(torch.autograd.Function):
         # if q.shape[-1] <= 32:
         Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
         assert Lq == Lk and Lk == Lv and Lk == ctx.head_dim
-        head_dim_rounded = 2 ** (ctx.head_dim - 1).bit_length()
-        head_dim_rounded = max(16, head_dim_rounded)
+        head_dim_factors = factor_head_dim(Lk)
+        head_dim_rounded = sum(head_dim_factors)
         padded_head = head_dim_rounded != ctx.head_dim
         attn_extra_args = ctx.attn_extra_args
         philox_seed = ctx.philox_seed
@@ -551,7 +633,6 @@ class _attention(torch.autograd.Function):
         print(f'backward {ctx.bias_type=} {ctx.autotune=} {BLOCK_M=} {BLOCK_N=} {stride_dbz=} {stride_dbh=} {stride_dbm=} {stride_dbn=}')
         if k.requires_grad and v.requires_grad:
             if ctx.autotune:
-                assert False
                 tuned_bwd_kernel_dk_dv[grid_dk_dv](
                     q, k, v, b, ctx.sm_scale,
                     o, do,
@@ -583,7 +664,7 @@ class _attention(torch.autograd.Function):
                     BIAS_TYPE=ctx.bias_type,
                 )
                 report = attn_extra_args.report_best_config
-                if report is not None:
+                if report:
                     best = copy.deepcopy(tuned_bwd_kernel_dk_dv.best_config)
                     attn_extra_args.report_best_config('bwd_kernel_dk_dv', best)
                 if return_autotune:
@@ -714,7 +795,7 @@ class _attention(torch.autograd.Function):
                     BIAS_TYPE=ctx.bias_type,
                 )
                 report = attn_extra_args.report_best_config
-                if report is not None:
+                if report:
                     best = copy.deepcopy(tuned_bwd_kernel_dq.best_config)
                     attn_extra_args.report_best_config('bwd_kernel_dq', best)
                 if return_autotune:

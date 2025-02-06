@@ -26,7 +26,7 @@ def get_template(name):
 def join_dicts(dicts : 'list[dict]') -> dict:
     return { k:v for d in dicts for k,v in d.items() }
 
-def get_possible_types(klass, arg_name : str) -> 'list[str]':
+def get_possible_choices(klass, arg_name : str) -> 'list[Any]':
     for d in [klass.TYPE_CHOICES, klass.FEAT_CHOICES, klass.PERF_CHOICES]:
         for k, v in d.items():
             if arg_name in k:
@@ -55,6 +55,10 @@ class KernelDescription(object):
     }
     PERF_CHOICES = {
     }
+
+    @property
+    def FULL_KERNEL_NAME(self):
+        return f'{self.KERNEL_FAMILY}.{self.SHIM_KERNEL_NAME}'
 
     @property
     def ARGUMENT_CHOICES(self):
@@ -91,20 +95,6 @@ class KernelDescription(object):
                 self.FEAT_CHOICES[frozenset(constant_strides)] = [1]
         print(f"{self.TYPE_CHOICES=}")
         print(f"{self.FEAT_CHOICES=}")
-
-    def gen_patched_autotune_configs(self, gpu, fsel_dict):
-        if AOTRITON_GPU_WARPSIZE[gpu] == 64:
-            yield from self.gen_autotune_configs(gpu, fsel_dict)
-            return
-        yield from self.gen_autotune_configs(gpu, fsel_dict)
-        # Doubling the num_warps on WaveSize 32 may cause compiling problem
-        """
-        for cfg in self.gen_autotune_configs(fsel_dict):
-            cfg.num_warps *= 2
-            if cfg.num_warps > 8:  # ignore super large block
-                continue
-            yield cfg
-        """
 
     def __init__(self, triton_kernel_name, triton_file_path):
         self.insert_tensor_strides_to_choices(last_is_continuous=True)
@@ -169,7 +159,7 @@ class KernelDescription(object):
         if dba.empty:  # Fallback to selection defined by KernelDescription
             for psels in self.gen_perf_selections():
                 yield gpu, fsels, psels, None
-            return
+                return  # For empty tuning database. Only need one option
 
         for psels, compiler_options in dba.select(fsels, self._perf_meta):
             yield gpu, fsels, psels, compiler_options
@@ -177,11 +167,11 @@ class KernelDescription(object):
     def set_target_gpus(self, gpus):
         self._target_gpus = ['native'] if gpus is None else list(gpus)
 
-    def gen_perf_selections_from_kdesc(self,
-                                       gpu : str,
-                                       fsels : 'list[ArgumentSelection]'):
+    def _gen_all_options_from_kdesc_autotune_configs(self,
+                                                     gpu : str,
+                                                     fsels : 'list[ArgumentSelection]'):
         fsel_dict = ArgumentSelection.build_fsel_dict(fsels)
-        for cfg in self.gen_patched_autotune_configs(gpu, fsel_dict):
+        for cfg in self.gen_autotune_configs(gpu, fsel_dict):
             psels, compiler_options = cfg.translate_to_psel_and_co(self._perf_meta)
             yield gpu, fsels, psels, compiler_options
 
@@ -189,20 +179,24 @@ class KernelDescription(object):
                              outpath : Path,
                              # kernel_name : str = None,
                              # file_name_prefix : str = None,
-                             tuned_db : 'KernelTuningDatabase' = None,
+                             tuned_db : 'KernelTuningDatabase',
                              sancheck_fileexists = False) -> 'Iterator[ObjectFileDescription]':
+        assert tuned_db is not None, '[KernelDescription.gen_all_object_files] Must pass not None tuned_db'
         def gen():
-            if tuned_db is None or tuned_db.empty:
-                if not hasattr(self, 'gen_autotune_configs'):
+            if tuned_db.build_for_tuning:
+                if hasattr(self, 'gen_autotune_configs'):
+                    # Build for Tuning, for complex kernels wait for tuning
+                    for gpu, fsels in itertools.product(self._target_gpus,
+                                                        self.gen_func_selections()):
+                        yield from self._gen_all_options_from_kdesc_autotune_configs(gpu, fsels)
+                else:
+                    # Build for Tuning, for simple kernels
                     yield from itertools.product(self._target_gpus,
                                                  self.gen_func_selections(),
                                                  self.gen_perf_selections(),
                                                  [None])
-                    return
-                for gpu, fsels in itertools.product(self._target_gpus,
-                                                    self.gen_func_selections()):
-                    yield from self.gen_perf_selections_from_kdesc(gpu, fsels)
             else:
+                # Not Build for Tuning, checking database
                 for gpu, fsels in itertools.product(self._target_gpus,
                                                     self.gen_func_selections()):
                     yield from self.gen_tuned_perf_selections(tuned_db, gpu, fsels)
@@ -248,6 +242,10 @@ class KernelDescription(object):
         return "".join(x.capitalize() for x in self.SHIM_KERNEL_NAME.lower().split("_")) + 'Context'
 
     @property
+    def metadata_class_name(self):
+        return "".join(x.capitalize() for x in self.SHIM_KERNEL_NAME.lower().split("_")) + 'Metadata'
+
+    @property
     def func_fields(self):
         return sum([m.param_cc_fields for m in self._func_meta], [])
 
@@ -260,8 +258,10 @@ class KernelDescription(object):
               'shim_kernel_name'    : self.SHIM_KERNEL_NAME,
               'param_class_name'    : self.param_class_name,
               'context_class_name'  : self.context_class_name,
+              'metadata_class_name' : self.metadata_class_name,
               'func_fields'         : ';\n    '.join(self.func_fields),
               'perf_fields'         : ';\n    '.join(self.perf_fields),
+              'declare_compiled_in_features' : self.codegen_declare_compiled_in_features(),
               'kernel_table_entry_declares' : self.codegen_kernel_table_entry_declares(object_files),
               'number_of_functionals': self._godel_number,
             }
@@ -276,11 +276,13 @@ class KernelDescription(object):
               'shim_kernel_name'    : self.SHIM_KERNEL_NAME,
               'param_class_name'    : self.param_class_name,
               'context_class_name'  : self.context_class_name,
+              'metadata_class_name' : self.metadata_class_name,
               'godel_number_body'   : self.godel_number_body,
               'put_kernel_arguments_on_stack' : put_kernel_arguments_on_stack,
               'let_kernel_arguments' : let_kernel_arguments,
               'get_arch_number_body' : self.arch_number_body,
               'number_of_functionals': self._godel_number,
+              'define_compiled_in_features' : self.codegen_define_compiled_in_features(),
               # 'copy_perf_fields_body': self.copy_perf_fields_body,
               # 'kernel_table_entry_declares' : self.codegen_kernel_table_entry_declares(object_files),
               'kernel_table_entries' : self.codegen_kernel_table_entries(object_files),
@@ -403,3 +405,30 @@ class KernelDescription(object):
                             lut_tensor,
                             fsels : 'list[ArgumentSelection]'):
         raise NotImplemented(f'{self.__class__}.sancheck_lut_tensor')
+
+    def codegen_declare_compiled_in_features(self):
+        decl_list = []
+        for meta in self._func_meta:
+            if not meta.is_feature:
+                continue
+            ctype = meta.get_codegen_compiled_in_features_ctype()
+            decl_code = f'static const std::vector<{ctype}>& get_{meta.repr_name}_choices();'
+            decl_list.append(decl_code)
+        return '\n    '.join(decl_list)
+
+    def codegen_define_compiled_in_features(self):
+        def_list = []
+        meta_class = self.metadata_class_name
+        for meta in self._func_meta:
+            if not meta.is_feature:
+                continue
+            ctype = meta.get_codegen_compiled_in_features_ctype()
+            choices = ', '.join(meta.get_codegen_compiled_in_features_values())
+            def_code = f'''
+const std::vector<{ctype}>& {meta_class}::get_{meta.repr_name}_choices()
+{{
+    static const std::vector<{ctype}> choices = {{ {choices} }};
+    return choices;
+}}'''
+            def_list.append(def_code)
+        return '\n'.join(def_list)

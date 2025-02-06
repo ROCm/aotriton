@@ -18,6 +18,10 @@ from _common_test import SdpaContext, SdpaParams, SdpaContextFromNPZ, AOTRITON_T
 
 FOR_RELEASE = bool(int(os.getenv('FOR_RELEASE', default='0')))
 
+POT_HEADDIMS = [16, 32, 64, 128, 256]
+NPOT_HEADDIMS = [48, 80, 96, 160, 192, 224]
+PRIME_HEADDIMS = [7, 23, 37, 53, 67, 73, 89, 113, 149, 179, 211, 241]
+
 def _make_block_eyes(q, base=1.0, inc=0.0):
     dhead = q.shape[-1]
     seqlen = q.shape[2]
@@ -63,11 +67,12 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
     q, k, v, b = ctx.dev_tensors
     # autotune = True
     # # triton implementation
-    ext = AttentionExtraArgs(return_encoded_softmax=True,
-            autotune=False,
-            return_autotune=False)
+    ext = AttentionExtraArgs(return_encoded_softmax=False if dropout_p == 0 else True,
+                             autotune=False,
+                             return_autotune=False,
+                             fillnan=True)
     tri_out, encoded_softmax, _ = attention(q, k, v, b, causal, sm_scale, dropout_p, ext)
-    dropout_mask = encoded_softmax >= 0
+    dropout_mask = encoded_softmax >= 0 if encoded_softmax is not None else None
     sdpa_params = SdpaParams(causal=causal, sm_scale=sm_scale, dropout_p=dropout_p, dropout_mask=dropout_mask)
     ref_out, _ = ctx.compute_ref_forward(sdpa_params)
 
@@ -97,7 +102,7 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
 
 # @pytest.mark.parametrize('BATCH', [1])
 # @pytest.mark.parametrize('N_HEADS', [1])
-@pytest.mark.parametrize('BATCH', [1, 4] if not FOR_RELEASE else [4])
+@pytest.mark.parametrize('BATCH', [1, 4] if not FOR_RELEASE else [3])
 @pytest.mark.parametrize('N_HEADS', [1, 4] if not FOR_RELEASE else [8])
 # @pytest.mark.parametrize('D_HEAD', [16, 32, 64, 128, 256])
 # Irregular-only PyTorch set
@@ -105,7 +110,7 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
 # @pytest.mark.parametrize('seqlen_q', [1, 4, 32, 128, 256, 512, 1024, 7, 394, 250, 399, 511, 1019])
 # @pytest.mark.parametrize('seqlen_k', [1, 4, 32, 128, 256, 512, 1024, 3, 217, 339, 313, 491, 988])
 # PyTorch set
-@pytest.mark.parametrize('D_HEAD', [8, 16, 21, 32, 64, 72, 96, 128, 160, 192, 203, 256])
+@pytest.mark.parametrize('D_HEAD', POT_HEADDIMS + NPOT_HEADDIMS + PRIME_HEADDIMS)
 @pytest.mark.parametrize('seqlen_q', [4, 8, 64, 143, 256, 512, 1024, 2048])
 @pytest.mark.parametrize('seqlen_k', [4, 8, 64, 127, 256, 587, 1024, 2048])
 # Minimal set
@@ -125,9 +130,9 @@ def test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dr
 
 # @pytest.mark.parametrize('BATCH', [1, 4])
 # @pytest.mark.parametrize('N_HEADS', [1, 4])
-@pytest.mark.parametrize('BATCH', [1, 4] if not FOR_RELEASE else [4])
+@pytest.mark.parametrize('BATCH', [1, 4] if not FOR_RELEASE else [3])
 @pytest.mark.parametrize('N_HEADS', [1, 4] if not FOR_RELEASE else [8])
-@pytest.mark.parametrize('D_HEAD', [16,32,64,128,256])
+@pytest.mark.parametrize('D_HEAD', POT_HEADDIMS + NPOT_HEADDIMS + PRIME_HEADDIMS)
 # @pytest.mark.parametrize('D_HEAD', [128])
 # Complete set
 # @pytest.mark.parametrize('seqlen_q', [4,8,16,17,32,64,128,143,256,512,1024,2048])

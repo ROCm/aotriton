@@ -46,6 +46,8 @@ int64_t
     return -1;
 }
 
+[[define_compiled_in_features]]
+
 [[context_class_name]]::AutoTuneTableEntry
 [[context_class_name]]::autotune_table[][ [[number_of_functionals]] ] = {
 [[kernel_table_entries]]

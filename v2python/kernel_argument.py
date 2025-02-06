@@ -118,6 +118,11 @@ class ArgumentMetadata(object):
         triton_type = self._possible_values[0]
         return isinstance(triton_type, bool)
 
+    @property
+    def is_int(self) -> bool:
+        triton_type = self._possible_values[0]
+        return isinstance(triton_type, int)
+
     def get_param_cc_type(self, triton_arg):
         triton_type = self._possible_values[0]
         if self.is_tensor:
@@ -172,6 +177,21 @@ class ArgumentMetadata(object):
     def set_incomplete_tuning(self, fallback_value):
         self._incomplete_tuning = True
         self._fallback_tuning_value = fallback_value
+
+    def get_codegen_compiled_in_features_ctype(self):
+        ctype = None
+        if self.is_bool:
+            ctype = 'bool'
+        elif self.is_int:
+            ctype = 'int32_t'
+        else:
+            assert False, f'compiled_in_features: unknown meta type, choices {meta._possible_values}'
+        return ctype
+
+    def get_codegen_compiled_in_features_values(self):
+        if self.is_bool:
+            return ['true' if v else 'false' for v in self._possible_values]
+        return [str(v) for v in self._possible_values]
 
 class ArgumentSelection(object):
     def __init__(self, meta : ArgumentMetadata, selection_index : int):
