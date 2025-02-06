@@ -36,7 +36,7 @@ class attn_fwd(FlashKernel):
         "philox_offset2",
         "philox_seed_output",
         "philox_offset_output",
-        "RETURN_ENCODED_SOFTMAX",
+        "RETURN_ENCODED_SOFTMAX_TYPE",
         "encoded_softmax",
         # causal, (Planned Feature) windowed attention
         "CAUSAL_TYPE",
@@ -89,7 +89,7 @@ class attn_fwd(FlashKernel):
         frozenset(['CAUSAL_TYPE']) : [0, 1],
         frozenset(['BLOCK_DMODEL']) : [16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256],
         frozenset(['ENABLE_DROPOUT']) : [False, True],
-        frozenset(['RETURN_ENCODED_SOFTMAX']) : [False, True],
+        frozenset(['RETURN_ENCODED_SOFTMAX_TYPE']) : [0, 2],
         frozenset(['PADDED_HEAD']) : [False, True],
         frozenset(['BIAS_TYPE']) : [0, 1],
         frozenset(['USE_ALIBI']) : [False],
@@ -129,7 +129,7 @@ class attn_fwd(FlashKernel):
     # List of functionals that are not fully tuned in the tuning database
     # First element of the tuple is name. Second is the value to use instead
     PARTIALLY_TUNED_FUNCTIONALS = [
-        ('RETURN_ENCODED_SOFTMAX', False),
+        ('RETURN_ENCODED_SOFTMAX', 0),
         ('PADDED_HEAD', False),
         ('BIAS_TYPE', None)
     ]

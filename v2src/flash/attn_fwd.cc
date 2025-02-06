@@ -111,7 +111,7 @@ _attn_fwd_common(T4 q,
     .philox_offset_output = &philox_offset_output,
     .philox_offset1 = &philox_offset1,
     .philox_offset2 = static_cast<uint32_t>(philox_offset2),
-    .RETURN_ENCODED_SOFTMAX = bool(encoded_softmax),
+    .RETURN_ENCODED_SOFTMAX_TYPE = 0,
     .CAUSAL_TYPE = is_causal ? 1 : 0,
     .BIAS_TYPE = bias_type,
     .USE_ALIBI = false,
@@ -144,6 +144,23 @@ _attn_fwd_common(T4 q,
     return err;
   }
   err = context.launch(params, stream);
+  if (err != hipSuccess) {
+    return err;
+  }
+  if (encoded_softmax) {
+    // Type 2: only write to encoded_softmax and disregard Out and L.
+    params.RETURN_ENCODED_SOFTMAX_TYPE = 2;
+    AttnFwdContext context2;
+    context2.grid_calculator = grid_calculator;
+    err = context.lookup_optimal(params, arch);
+    if (err != hipSuccess) {
+      return err;
+    }
+    err = context.launch(params, stream);
+    if (err != hipSuccess) {
+      return err;
+    }
+  }
   return err;
 }
 
