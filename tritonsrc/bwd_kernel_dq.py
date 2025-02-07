@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Copyright © 2023-2024 Advanced Micro Devices, Inc.
+# Copyright © 2023-2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
 """
@@ -18,6 +18,7 @@ Extra Credits:
 import triton
 import triton.language as tl
 from bwd_inner_dq import bwd_inner_dq
+from dropout import PHILOX_RN_PER_OFFSET
 from masked_load_store import load_fn, mstore2d
 from composed_tensors import (
     composed_offs_1d,
@@ -52,10 +53,10 @@ def bwd_kernel_dq(
     max_seqlen_q, # and use max_seqlen_q/k for all seqlen_q/k
     max_seqlen_k,
     head_dim,
-    dropout_p,
+    dropout_p : tl.float32,
     philox_seed_ptr,
-    philox_offset1 : '*u32',
-    philox_offset2 : 'u32',
+    philox_offset1 : '*u64',
+    philox_offset2 : 'u64',
     BLOCK_M: tl.constexpr, BLOCK_DMODEL: tl.constexpr,
     BLOCK_N: tl.constexpr,
     CAUSAL: tl.constexpr,
@@ -77,6 +78,7 @@ def bwd_kernel_dq(
 
     philox_seed = 0
     philox_offset_base = philox_offset2
+    philox_offset_stride = tl.cdiv(max_seqlen_k, PHILOX_RN_PER_OFFSET)
     if ENABLE_DROPOUT:
         philox_seed = tl.load(philox_seed_ptr)
         philox_offset_base += tl.load(philox_offset1)
@@ -207,7 +209,7 @@ def bwd_kernel_dq(
     D_ptrs = D + off_zh * max_seqlen_q
     l_ptrs = L + off_zh * max_seqlen_q
     if ENABLE_DROPOUT:
-        batch_philox_offset = philox_offset_base + off_zh * max_seqlen_q * max_seqlen_k
+        batch_philox_offset = philox_offset_base + off_zh * max_seqlen_q * philox_offset_stride
     else:
         batch_philox_offset = 0
 
@@ -282,6 +284,7 @@ def bwd_kernel_dq(
     Di = tl.load(D_ptrs + offs_q, mask=d_lse_ptrs_mask, other=0.0)
     l_i = tl.load(l_ptrs + offs_q, mask=d_lse_ptrs_mask, other=0.0)
 
+    idropout_p = ((dropout_p - 0.5) * 0xFFFFFFFF).to(tl.int32)
     dropout_scale = 1.0 / (1.0 - dropout_p) if ENABLE_DROPOUT else 1.0
     dq0, dq1, dq2 = composed_zeros_2d(BLOCK_M, BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
     n_full_blocks = n_blocks - leading_masked_blocks - trailing_masked_blocks
@@ -301,7 +304,7 @@ def bwd_kernel_dq(
             Di, l_i,
             seqlen_q, seqlen_k, head_dim,
             start_q, lo, hi,
-            dropout_p, dropout_scale, philox_seed, batch_philox_offset, max_seqlen_k,
+            idropout_p, dropout_scale, philox_seed, batch_philox_offset, philox_offset_stride,
             BLOCK_M,
             BLOCK_DMODEL0,
             BLOCK_DMODEL1,
@@ -330,7 +333,7 @@ def bwd_kernel_dq(
             Di, l_i,
             seqlen_q, seqlen_k, head_dim,
             start_q, lo, hi,
-            dropout_p, dropout_scale, philox_seed, batch_philox_offset, max_seqlen_k,
+            idropout_p, dropout_scale, philox_seed, batch_philox_offset, philox_offset_stride,
             BLOCK_M,
             BLOCK_DMODEL0,
             BLOCK_DMODEL1,

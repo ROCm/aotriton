@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Copyright © 2023-2024 Advanced Micro Devices, Inc.
+# Copyright © 2023-2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
 from collections import namedtuple
@@ -10,6 +10,7 @@ import triton
 import triton.language as tl
 from flash import (
     debug_fill_dropout_rng as bare_debug_fill_dropout_rng,
+    debug_simulate_encoded_softmax,
     attn_fwd as bare_attn_fwd,
     bwd_preprocess as bare_bwd_preprocess,
     bwd_kernel_dk_dv as bare_bwd_kernel_dk_dv,
@@ -60,6 +61,10 @@ def factor_head_dim(head_dim, n_pieces=3):
         ret = sorted(ret, reverse=True)
     return ret
 
+def get_idropout_p(dropout_p):
+    delta_p = dropout_p - 0.5
+    return int(0xFFFFFFFF * delta_p)
+
 @dataclass
 class AttentionExtraArgs:
     return_encoded_softmax : bool = False
@@ -68,6 +73,7 @@ class AttentionExtraArgs:
     fillnan : bool = False
     report_best_config : bool = False
     persistent_type : int = PersistentType.NONE
+    is_testing : bool = True
 
 VERBOSE=False
 DEFAULT_PHILOX_SEED = 0x1BF52
@@ -313,8 +319,10 @@ class _attention(torch.autograd.Function):
                 t.fill_(float('nan'))
         if return_encoded_softmax:
             encoded_softmax = torch.ones((q.shape[0], q.shape[1], q.shape[2], k.shape[2]), device=q.device, dtype=q.dtype)
+            return_encoded_softmax_type = True
         else:
             encoded_softmax = None
+            return_encoded_softmax_type = False
         if False or VERBOSE:
             print(f'{q.shape=}')
             print(f'{k.shape=}')
@@ -359,7 +367,7 @@ class _attention(torch.autograd.Function):
         # TODO: int8
         q_descale = k_descale = p_scale = p_descale = v_descale = 0
 
-        use_small_block = dropout_p > 0.0 or BIAS_TYPE != 0 or return_encoded_softmax
+        use_small_block = dropout_p > 0.0 or BIAS_TYPE != 0
         use_medium_block = False # reserved
         if use_small_block:
             BLOCK_M = 64
@@ -400,11 +408,11 @@ class _attention(torch.autograd.Function):
                 philox_offset2=philox_offset2,
                 philox_seed_output=philox_seed_output,
                 philox_offset_output=philox_offset_output,
-                encoded_softmax=encoded_softmax,
+                encoded_softmax=None,
                 CAUSAL=causal,
                 BLOCK_DMODEL=head_dim_rounded,
                 ENABLE_DROPOUT=dropout_p > 0.0,
-                RETURN_ENCODED_SOFTMAX=encoded_softmax is not None,
+                RETURN_ENCODED_SOFTMAX=False,
                 PADDED_HEAD=padded_head,
                 BIAS_TYPE=BIAS_TYPE,
             )
@@ -448,8 +456,8 @@ class _attention(torch.autograd.Function):
                 philox_offset2=philox_offset2,
                 philox_seed_output=philox_seed_output,
                 philox_offset_output=philox_offset_output,
-                RETURN_ENCODED_SOFTMAX=encoded_softmax is not None,
-                encoded_softmax=encoded_softmax,
+                RETURN_ENCODED_SOFTMAX=False,
+                encoded_softmax=None,
                 # Causal
                 CAUSAL_TYPE=CausalType.TOP_LEFT if causal else CausalType.NONE,
                 # bias
@@ -472,6 +480,23 @@ class _attention(torch.autograd.Function):
                 PRE_LOAD_V=False,
                 num_stages=1,
             )
+        if return_encoded_softmax:
+            grid = lambda META: (
+                triton.cdiv(encoded_softmax.shape[2], META['BLOCK_M']),
+                encoded_softmax.shape[1],
+                encoded_softmax.shape[0],
+            )
+            debug_simulate_encoded_softmax[grid](encoded_softmax,
+                                                 *encoded_softmax.stride(),
+                                                 dropout_p,
+                                                 Num_head_q=encoded_softmax.shape[1],
+                                                 Max_seqlen_q=encoded_softmax.shape[2],
+                                                 Max_seqlen_k=encoded_softmax.shape[3],
+                                                 philox_seed_ptr=philox_seed_output,
+                                                 philox_offset_base_ptr=philox_offset_output,
+                                                 BLOCK_M=32,
+                                                 BLOCK_N=32)
+            print(f'{encoded_softmax=}')
 
         ctx.autotune = autotune
         ctx.return_autotune = return_autotune
@@ -539,6 +564,8 @@ class _attention(torch.autograd.Function):
         if ctx.tuning_result is not None:
             for kernel_name, best in ctx.tuning_result:
                 print(f'{kernel_name=} {best.kwargs=} {best.num_warps=} {best.num_stages=}')
+        if attn_extra_args.is_testing:
+            assert not torch.isnan(M).any()
         return o, encoded_softmax, ctx.tuning_result
 
     @staticmethod
@@ -602,8 +629,8 @@ class _attention(torch.autograd.Function):
         use_small_block = ctx.dropout_p > 0.0
         use_medium_block = ctx.bias_type != 0
         # Profiling shows (16, 16) is optimal solution for most bwd configurations
-        BLOCK_M = 16
-        BLOCK_N = 16
+        BLOCK_M = 32
+        BLOCK_N = 32
         # if use_small_block:
         #     # DQ_BLOCK_M = min(max_seqlen_q, BLOCK)
         #     BLOCK_M = 32
@@ -728,7 +755,7 @@ class _attention(torch.autograd.Function):
                     BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N,
                     BLOCK_DMODEL=head_dim_rounded,
                     CAUSAL=ctx.causal,
-                    num_warps=2, waves_per_eu=1,
+                    num_warps=4, waves_per_eu=1,
                     num_stages=1,
                     ENABLE_DROPOUT=ctx.dropout_p > 0.0,
                     PADDED_HEAD=padded_head,
@@ -864,6 +891,8 @@ class _attention(torch.autograd.Function):
                     BIAS_TYPE=ctx.bias_type,
                 )
                 print('bare_bwd_kernel_dq Done')
+        if attn_extra_args.is_testing:
+            assert not torch.isnan(delta).any(), f'{delta=}'
         # print(h.asm["ttgir"])
         return dq, dk, dv, None if db.numel() == 0 else db, None, None, None, None, None, None, None
 

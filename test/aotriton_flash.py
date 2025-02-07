@@ -7,6 +7,7 @@ from pyaotriton.v2.flash import (
     attn_fwd_compact_varlen as fa_forward_compact_varlen,
     attn_bwd_compact_varlen as fa_backward_compact_varlen,
     debug_fill_dropout_rng as fa_debug_fill_dropout_rng,
+    debug_simulate_encoded_softmax as fa_debug_simulate_encoded_softmax,
     FwdExtraArguments,
     BwdExtraArguments,
 )
@@ -184,6 +185,18 @@ def debug_fill_dropout_rng(R, philox_seed, philox_offset):
                                     philox_offset,
                                     Stream())
     # print(f'debug_fill_dropout_rng {err=}')
+    return err
+
+def debug_simulate_encoded_softmax(R, dropout_p, philox_seed, philox_offset1, philox_offset2):
+    Rview, Rdevm = mk_aotensor(R)
+    seedview, seeddevm = mk_aotensor(philox_seed)
+    offsetview, offsetdevm = mk_aotensor(philox_offset1)
+    err = fa_debug_simulate_encoded_softmax(Rview,
+                                            dropout_p,
+                                            seedview,
+                                            offsetview,
+                                            philox_offset2,
+                                            Stream())
     return err
 
 def attn_fwd_compact_varlen(q, k, v,

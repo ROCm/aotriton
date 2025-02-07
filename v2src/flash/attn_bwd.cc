@@ -1,4 +1,4 @@
-// Copyright © 2023-2024 Advanced Micro Devices, Inc.
+// Copyright © 2023-2025 Advanced Micro Devices, Inc.
 // SPDX-License-Identifier: MIT
 
 #include <aotriton/config.h>
@@ -207,7 +207,7 @@ bwd_kernel_dk_dv(T4 q,
     .dropout_p = dropout_p,
     .philox_seed_ptr = &philox_seed,
     .philox_offset1 = &philox_offset1,
-    .philox_offset2 = static_cast<uint32_t>(philox_offset2),
+    .philox_offset2 = static_cast<uint64_t>(philox_offset2),
     .BLOCK_DMODEL = head_size_rounded,
     .CAUSAL = is_causal,
     .ENABLE_DROPOUT = dropout_p > 0.0,
@@ -322,7 +322,7 @@ bwd_kernel_dq(T4 q,
     .dropout_p = dropout_p,
     .philox_seed_ptr = &philox_seed,
     .philox_offset1 = &philox_offset1,
-    .philox_offset2 = static_cast<uint32_t>(philox_offset2),
+    .philox_offset2 = static_cast<uint64_t>(philox_offset2),
     .BLOCK_DMODEL = head_size_rounded,
     .CAUSAL = is_causal,
     .ENABLE_DROPOUT = dropout_p > 0.0,

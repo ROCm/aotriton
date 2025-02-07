@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Copyright © 2024 Advanced Micro Devices, Inc.
+# Copyright © 2024-2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
 import math
@@ -91,11 +91,19 @@ class TunerService(BaseTunerService):
         # TODO: unify with attn_torch_function
         o, M = ctx.ctx_tensors
         L = M  # alias
-        philox_seed = torch.tensor([DEFAULT_PHILOX_SEED], device=q.device, dtype=torch.uint64)
-        philox_offset1 = torch.tensor([DEFAULT_PHILOX_OFFSET_1], device=q.device, dtype=torch.uint32)
-        philox_offset2 = DEFAULT_PHILOX_OFFSET_2
-        philox_seed_output = torch.tensor([0], device=q.device, dtype=torch.uint64)
-        philox_offset_output = torch.tensor([0], device=q.device, dtype=torch.uint64)
+        if dropout_p > 0.0:
+            philox_seed = torch.tensor([DEFAULT_PHILOX_SEED], device=q.device, dtype=torch.uint64)
+            philox_offset1 = torch.tensor([DEFAULT_PHILOX_OFFSET_1], device=q.device, dtype=torch.uint32)
+            philox_offset2 = DEFAULT_PHILOX_OFFSET_2
+            philox_seed_output = torch.tensor([0], device=q.device, dtype=torch.uint64)
+            philox_offset_output = torch.tensor([0], device=q.device, dtype=torch.uint64)
+        else:
+            nulltensor = torch.empty([0], device=q.device, dtype=torch.uint64)
+            philox_seed = nulltensor
+            philox_offset1 = nulltensor
+            philox_offset2 = 0
+            philox_seed_output = nulltensor
+            philox_offset_output = nulltensor
 
         def fwd_sub_extarg_accessor(fwd_extargs : FwdExtraArguments, i):
             return fwd_extargs

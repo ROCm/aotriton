@@ -1,4 +1,4 @@
-# Copyright © 2023-2024 Advanced Micro Devices, Inc.
+# Copyright © 2023-2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
 import itertools
@@ -76,8 +76,8 @@ class attn_fwd(FlashKernel):
         frozenset(['Head_dim']) : ['i32'],
         frozenset(['dropout_p']) : ['fp32'],
         frozenset(['philox_seed_ptr', 'philox_seed_output', 'philox_offset_output']) : ['*u64'],
-        frozenset(['philox_offset1']) : ['*u32'],
-        frozenset(['philox_offset2']) : ['u32'],
+        frozenset(['philox_offset1']) : ['*u64'],
+        frozenset(['philox_offset2']) : ['u64'],
         frozenset(['persistent_atomic_counter']) : ['*i32'],
         frozenset(['Num_CU', 'Batch']) : ['i32'],
     }
@@ -89,7 +89,7 @@ class attn_fwd(FlashKernel):
         frozenset(['CAUSAL_TYPE']) : [0, 1],
         frozenset(['BLOCK_DMODEL']) : [16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256],
         frozenset(['ENABLE_DROPOUT']) : [False, True],
-        frozenset(['RETURN_ENCODED_SOFTMAX']) : [False, True],
+        frozenset(['RETURN_ENCODED_SOFTMAX']) : [False],
         frozenset(['PADDED_HEAD']) : [False, True],
         frozenset(['BIAS_TYPE']) : [0, 1],
         frozenset(['USE_ALIBI']) : [False],
