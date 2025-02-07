@@ -9,6 +9,7 @@ from aotriton_flash import (
     attn_fwd,
     attn_bwd,
     debug_fill_dropout_rng,
+    debug_simulate_encoded_softmax,
     FwdExtraArguments,
     BwdExtraArguments,
     hipError_t,
@@ -89,10 +90,21 @@ class _attention(torch.autograd.Function):
                 print(f'{encoded_softmax.shape=} {encoded_softmax.dtype=}')
 
         philox_null = torch.empty([0], device=q.device, dtype=torch.uint64)
-        assert philox_null.data_ptr() == 0
-        philox_seed = torch.tensor([DEFAULT_PHILOX_SEED], device=q.device, dtype=torch.uint64)
-        philox_offset1 = torch.tensor([DEFAULT_PHILOX_OFFSET_1], device=q.device, dtype=torch.uint32)
-        philox_offset2 = DEFAULT_PHILOX_OFFSET_2
+        if dropout_p > 0.0:
+            assert philox_null.data_ptr() == 0
+            philox_seed = torch.tensor([DEFAULT_PHILOX_SEED], device=q.device, dtype=torch.uint64)
+            philox_offset1 = torch.tensor([DEFAULT_PHILOX_OFFSET_1], device=q.device, dtype=torch.uint64)
+            philox_offset2 = DEFAULT_PHILOX_OFFSET_2
+            philox_seed_output = torch.tensor([0], device=q.device, dtype=torch.uint64)
+            philox_offset_output = torch.tensor([0], device=q.device, dtype=torch.uint64)
+            assert philox_seed_output.data_ptr() != 0
+            assert philox_offset_output.data_ptr() != 0
+        else:
+            philox_seed = philox_null
+            philox_offset1 = philox_null
+            philox_offset2 = 0
+            philox_seed_output = philox_null
+            philox_offset_output = philox_null
 
         # Check GPU kernel accepts nullptr for philox_*_output
         if attn_extra_args.is_testing:
@@ -101,8 +113,6 @@ class _attention(torch.autograd.Function):
                      philox_null, philox_null,
                      encoded_softmax, causal)
 
-        philox_seed_output = torch.tensor([0], device=q.device, dtype=torch.uint64)
-        philox_offset_output = torch.tensor([0], device=q.device, dtype=torch.uint64)
         ret = attn_fwd(q, k, v, b, sm_scale, M, o,
                        dropout_p, philox_seed, philox_offset1, philox_offset2,
                        philox_seed_output, philox_offset_output,
