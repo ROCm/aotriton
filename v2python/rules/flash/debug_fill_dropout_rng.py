@@ -50,7 +50,7 @@ class debug_fill_dropout_rng_tensor(debug_fill_dropout_rng):
         'BLOCK_N',
     ]
     TYPE_CHOICES = {
-        frozenset(['R']) : get_possible_choices(debug_fill_dropout_rng, 'R')
+        frozenset(['R']) : get_possible_choices(debug_fill_dropout_rng, 'R'),
         frozenset(['seqlen_q', 'seqlen_k']) : ['i32'],
         frozenset(['philox_seed_ptr']) : ['*u64'],
         frozenset(['philox_offset_base_ptr']) : ['*u64'],

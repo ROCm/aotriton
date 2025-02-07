@@ -23,8 +23,8 @@ class debug_simulate_encoded_softmax(FlashKernel):
         frozenset(['R']) : FlashKernel.MAIN_DATATYPES,
         frozenset(['dropout_p']) : ['fp32'],
         frozenset(['Num_head_q', 'Max_seqlen_q', 'Max_seqlen_k']) : ['i32'],
-        frozenset(['philox_seed']) : ['u64'],
-        frozenset(['philox_offset']) : ['u64'],
+        frozenset(['philox_seed_ptr']) : ['*u64'],
+        frozenset(['philox_offset_base_ptr']) : ['*u64'],
     }
     FEAT_CHOICES = {
     }
