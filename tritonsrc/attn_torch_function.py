@@ -916,8 +916,7 @@ class _attention(torch.autograd.Function):
         delta = torch.empty_like(L)
         if attn_extra_args.fillnan:
             for t in (dq, dk, dv, db, delta):
-                # t.fill_(float('nan'))
-                t.fill_(float(114.514))
+                t.fill_(float('nan'))
         null_tensor = torch.empty((0), device=q.device, dtype=torch.int32)
         batch = q.shape[0]
         num_head_q = q.shape[1]
