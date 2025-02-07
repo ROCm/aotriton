@@ -76,4 +76,43 @@ debug_fill_dropout_rng(T4 r, uint64_t philox_seed, uint64_t philox_offset, AOTRI
   return err;
 }
 
+hipError_t
+debug_simulate_encoded_softmax(T4 r,
+                               float dropout_p,
+                               T0 philox_seed,
+                               T0 philox_offset,
+                               AOTRITON_NS::Stream stream_wrap) {
+  hipError_t err;
+  auto stream = stream_wrap.native();
+  auto arch = getArchFromStream(stream);
+  auto grid_calculator = [](const DebugSimulateEncodedSoftmaxParams& params) -> dim3 {
+    dim3 grid {
+      AOTRITON_NS::cdiv<uint32_t>(params.R->size(2), params.BLOCK_M),
+      uint32_t(params.R->size(1)),
+      uint32_t(params.R->size(0)),
+    };
+    return grid;
+  };
+  int num_heads = r.size(1);
+  int seqlen_q = r.size(2);
+  int seqlen_k = r.size(3);
+  DebugFillDropoutRngTensorParams params = {
+    .R = &r,
+    .dropout_p = dropout_p,
+    .Num_head_q = num_heads,
+    .Max_seqlen_q = seqlen_q,
+    .Max_seqlen_k = seqlen_k,
+    .philox_seed_ptr = &philox_seed,
+    .philox_offset_base_ptr = &philox_offset,
+  };
+  DebugSimulateEncodedSoftmaxParams context;
+  context.grid_calculator = grid_calculator;
+  err = context.lookup_optimal(params, arch);
+  if (err != hipSuccess) {
+    return err;
+  }
+  err = context.launch(params, stream);
+  return err;
+}
+
 }

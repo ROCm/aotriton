@@ -148,18 +148,10 @@ _attn_fwd_common(T4 q,
     return err;
   }
   if (encoded_softmax) {
-    // Type 2: only write to encoded_softmax and disregard Out and L.
-    params.RETURN_ENCODED_SOFTMAX_TYPE = 2;
-    AttnFwdContext context2;
-    context2.grid_calculator = grid_calculator;
-    err = context.lookup_optimal(params, arch);
-    if (err != hipSuccess) {
-      return err;
-    }
-    err = context.launch(params, stream);
-    if (err != hipSuccess) {
-      return err;
-    }
+    return debug_simulate_encoded_softmax(encoded_softmax,
+                                          philox_seed_output,
+                                          philox_offset_output,
+                                          stream_wrap);
   }
   return err;
 }

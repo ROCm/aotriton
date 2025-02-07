@@ -1,10 +1,11 @@
 #!/usr/bin/env python
-# Copyright © 2024 Advanced Micro Devices, Inc.
+# Copyright © 2024-2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
 import triton
 import triton.language as tl
-from dropout import fast_philox
+from dropout import fast_philox, fast_dropout_mask, PHILOX_RN_PER_OFFSET
+from masked_load_store import mstore2d
 
 @triton.jit
 def debug_fill_dropout_rng(R,
@@ -79,3 +80,40 @@ def debug_fill_dropout_rng_tensor(R,
                            BLOCK_M,
                            BLOCK_N,
                            )
+
+@triton.jit
+def debug_simulate_encoded_softmax(R,
+                                   stride_rz, stride_rh, stride_rm, stride_rn,
+                                   dropout_p, Num_head_q, Max_seqlen_q, Max_seqlen_k,
+                                   philox_seed_ptr: '*u64',
+                                   philox_offset_base_ptr : '*u64',
+                                   BLOCK_M: tl.constexpr,
+                                   BLOCK_N: tl.constexpr,
+                                   ):
+    philox_seed = tl.load(philox_seed_ptr)
+    philox_offset_base = tl.load(philox_offset_base_ptr)
+    idropout_p = ((dropout_p - 0.5) * 0xFFFFFFFF).to(tl.int32)
+    philox_offset_stride = tl.cdiv(Max_seqlen_k, PHILOX_RN_PER_OFFSET)
+
+    start_m = tl.program_id(0)
+    off_h_q = tl.program_id(1)
+    off_z = tl.program_id(2)
+    off_zh = off_z * Num_head_q + off_h_q
+    encoded_sm_base = R + off_zh * Max_seqlen_q * Max_seqlen_k
+    batch_philox_offset = philox_offset_base + off_zh * Max_seqlen_q * philox_offset_stride
+    # Simulated value, should not be used to validate qk's correctness
+    p = tl.full([BLOCK_M, BLOCK_N], 0.5, dtype=R.type.element_ty)
+    for start_n in range(0, Max_seqlen_k, BLOCK_N):
+        keep = fast_dropout_mask(philox_seed, idropout_p,
+                                 batch_philox_offset, start_m * BLOCK_M, start_n,
+                                 BLOCK_M, BLOCK_N, philox_offset_stride)
+        mstore2d(tl.where(keep, p, -p),
+                 BLOCK_M,
+                 BLOCK_N,
+                 o_base=encoded_sm_base,
+                 o_start_row=start_m * BLOCK_M,
+                 o_start_col=start_n,
+                 o_rows=Max_seqlen_q,
+                 o_cols=Max_seqlen_k,
+                 stride_row=Max_seqlen_k,
+                 stride_col=1)

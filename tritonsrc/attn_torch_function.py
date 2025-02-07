@@ -10,6 +10,7 @@ import triton
 import triton.language as tl
 from flash import (
     debug_fill_dropout_rng as bare_debug_fill_dropout_rng,
+    debug_simulate_encoded_softmax,
     attn_fwd as bare_attn_fwd,
     bwd_preprocess as bare_bwd_preprocess,
     bwd_kernel_dk_dv as bare_bwd_kernel_dk_dv,
@@ -371,7 +372,7 @@ class _attention(torch.autograd.Function):
         # TODO: int8
         q_descale = k_descale = p_scale = p_descale = v_descale = 0
 
-        use_small_block = dropout_p > 0.0 or BIAS_TYPE != 0 or return_encoded_softmax
+        use_small_block = dropout_p > 0.0 or BIAS_TYPE != 0
         use_medium_block = False # reserved
         if use_small_block:
             BLOCK_M = 64
@@ -412,11 +413,11 @@ class _attention(torch.autograd.Function):
                 philox_offset2=philox_offset2,
                 philox_seed_output=philox_seed_output,
                 philox_offset_output=philox_offset_output,
-                encoded_softmax=encoded_softmax,
+                encoded_softmax=None,
                 CAUSAL=causal,
                 BLOCK_DMODEL=head_dim_rounded,
                 ENABLE_DROPOUT=dropout_p > 0.0,
-                RETURN_ENCODED_SOFTMAX_TYPE=return_encoded_softmax_type,
+                RETURN_ENCODED_SOFTMAX_TYPE=0,
                 PADDED_HEAD=padded_head,
                 BIAS_TYPE=BIAS_TYPE,
             )
@@ -460,8 +461,8 @@ class _attention(torch.autograd.Function):
                 philox_offset2=philox_offset2,
                 philox_seed_output=philox_seed_output,
                 philox_offset_output=philox_offset_output,
-                RETURN_ENCODED_SOFTMAX_TYPE=return_encoded_softmax_type,
-                encoded_softmax=encoded_softmax,
+                RETURN_ENCODED_SOFTMAX_TYPE=0,
+                encoded_softmax=None,
                 # Causal
                 CAUSAL_TYPE=CausalType.TOP_LEFT if causal else CausalType.NONE,
                 # bias
@@ -484,6 +485,23 @@ class _attention(torch.autograd.Function):
                 PRE_LOAD_V=False,
                 num_stages=1,
             )
+        if return_encoded_softmax:
+            grid = lambda META: (
+                triton.cdiv(encoded_softmax.shape[2], META['BLOCK_M']),
+                encoded_softmax.shape[1],
+                encoded_softmax.shape[0],
+            )
+            debug_simulate_encoded_softmax[grid](encoded_softmax,
+                                                 *encoded_softmax.stride(),
+                                                 dropout_p,
+                                                 Num_head_q=encoded_softmax.shape[1],
+                                                 Max_seqlen_q=encoded_softmax.shape[2],
+                                                 Max_seqlen_k=encoded_softmax.shape[3],
+                                                 philox_seed_ptr=philox_seed_output,
+                                                 philox_offset_base_ptr=philox_offset_output,
+                                                 BLOCK_M=32,
+                                                 BLOCK_N=32)
+            print(f'{encoded_softmax=}')
 
         ctx.autotune = autotune
         ctx.return_autotune = return_autotune

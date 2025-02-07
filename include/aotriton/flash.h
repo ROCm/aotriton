@@ -130,6 +130,14 @@ debug_fill_dropout_rng_tensor(T4 r,
                               T0 philox_offset,
                               AOTRITON_NS::Stream stream);
 
+// varlen should use len(cu_seqlens_q) - 1 for the batch size
+hipError_t
+debug_simulate_encoded_softmax(T4 r,  // batch_size x num_heads x max_seqlen_q x max_seqlen_k
+                               float dropout_p,
+                               T0 philox_seed,
+                               T0 philox_offset,
+                               stream_wrap);
+
 } // AOTRITON_NS::v2::flash
 
 #endif
