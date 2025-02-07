@@ -65,7 +65,7 @@ debug_fill_dropout_rng(T4 r, uint64_t philox_seed, uint64_t philox_offset, AOTRI
     .seqlen_q = seqlen_q,
     .seqlen_k = seqlen_k,
     .philox_seed = philox_seed,
-    .philox_offset = static_cast<uint32_t>(philox_offset),
+    .philox_offset = philox_offset,
   };
   DebugFillDropoutRngContext context;
   context.grid_calculator = grid_calculator;
