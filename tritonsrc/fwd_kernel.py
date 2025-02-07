@@ -73,7 +73,7 @@ def attn_fwd(
         philox_offset2 : tl.uint64,  # TODO: move to tl.int64
         philox_seed_output : '*u64',
         philox_offset_output : '*u64',
-        RETURN_ENCODED_SOFTMAX_TYPE: tl.constexpr,
+        RETURN_ENCODED_SOFTMAX: tl.constexpr,
         encoded_softmax,
         # causal, (Planned Feature) windowed attention
         CAUSAL_TYPE: tl.constexpr,
@@ -123,8 +123,6 @@ def attn_fwd(
     BATCH = tl.num_programs(2)
     L_not_null = L.cast(dtype=tl.uint64, bitcast=True) != 0  # Allows null L for training=False
     INT8_GEMM: tl.constexpr = INT8 and (not INT8_KV)
-    RETURN_ENCODED_SOFTMAX : tl.constexpr = RETURN_ENCODED_SOFTMAX_TYPE != 0
-    DISCARD_OUTPUT : tl.constexpr = RETURN_ENCODED_SOFTMAX_TYPE == 2
 
     ## philox
     idropout_p = ((dropout_p - 0.5) * 0xFFFFFFFF).to(tl.int32)
@@ -418,7 +416,6 @@ def attn_fwd(
                             MASK_STEPS=False,
                             ENABLE_DROPOUT=ENABLE_DROPOUT,
                             RETURN_ENCODED_SOFTMAX=RETURN_ENCODED_SOFTMAX,
-                            DISCARD_OUTPUT=DISCARD_OUTPUT,
                             PADDED_HEAD=PADDED_HEAD,
                             INT8_GEMM=INT8_GEMM,
                             INT8_KV=INT8_KV,
@@ -478,7 +475,6 @@ def attn_fwd(
                             MASK_STEPS=True,
                             ENABLE_DROPOUT=ENABLE_DROPOUT,
                             RETURN_ENCODED_SOFTMAX=RETURN_ENCODED_SOFTMAX,
-                            DISCARD_OUTPUT=DISCARD_OUTPUT,
                             PADDED_HEAD=PADDED_HEAD,
                             INT8_GEMM=INT8_GEMM,
                             INT8_KV=INT8_KV,
@@ -521,7 +517,7 @@ def attn_fwd(
                                                                 BLOCK_DMODEL2)
 
                 overflow_size = end_m_idx - seqlen_q
-                if L_not_null and not DISCARD_OUTPUT:
+                if L_not_null:
                     # write back LSE
                     l_ptrs = L + off_z * Num_head_q * Max_seqlen_q + off_h_q * Max_seqlen_q + offs_m
                     # If seqlen_q not multiple of BLOCK_M, we need to mask out the last few rows.
@@ -536,19 +532,18 @@ def attn_fwd(
                 # tl.device_print('acc1', acc1)
                 # tl.device_print('acc2', acc2)
                 # write back O
-                if not DISCARD_OUTPUT:
-                    composed_store(acc0, acc1, acc2,
-                                   BLOCK_M,
-                                   BLOCK_DMODEL0,
-                                   BLOCK_DMODEL1,
-                                   BLOCK_DMODEL2,
-                                   o_base=o_base,
-                                   o_start_row=start_m * BLOCK_M,
-                                   o_start_col=0,
-                                   o_rows=seqlen_q,
-                                   o_cols=Head_dim,
-                                   stride_row=stride_om,
-                                   stride_col=stride_on)
+                composed_store(acc0, acc1, acc2,
+                               BLOCK_M,
+                               BLOCK_DMODEL0,
+                               BLOCK_DMODEL1,
+                               BLOCK_DMODEL2,
+                               o_base=o_base,
+                               o_start_row=start_m * BLOCK_M,
+                               o_start_col=0,
+                               o_rows=seqlen_q,
+                               o_cols=Head_dim,
+                               stride_row=stride_om,
+                               stride_col=stride_on)
 
         if PERSISTENT:
             if PERSISTENT_DYNAMIC:

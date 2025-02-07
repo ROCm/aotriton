@@ -42,11 +42,6 @@ class PersistentType:
     FIXED = 1
     DYNAMIC = 2
 
-class ReturnEncodedSoftmaxType:
-    NONE = 0
-    RETURN_ALL = 1
-    DISCARD_OUTPUT = 2
-
 def factor_head_dim(head_dim, n_pieces=3):
     ret = [0] * 3
     Lk = head_dim
@@ -324,10 +319,10 @@ class _attention(torch.autograd.Function):
                 t.fill_(float('nan'))
         if return_encoded_softmax:
             encoded_softmax = torch.ones((q.shape[0], q.shape[1], q.shape[2], k.shape[2]), device=q.device, dtype=q.dtype)
-            return_encoded_softmax_type = ReturnEncodedSoftmaxType.RETURN_ALL
+            return_encoded_softmax_type = True
         else:
             encoded_softmax = None
-            return_encoded_softmax_type = ReturnEncodedSoftmaxType.NONE
+            return_encoded_softmax_type = False
         if False or VERBOSE:
             print(f'{q.shape=}')
             print(f'{k.shape=}')
@@ -417,7 +412,7 @@ class _attention(torch.autograd.Function):
                 CAUSAL=causal,
                 BLOCK_DMODEL=head_dim_rounded,
                 ENABLE_DROPOUT=dropout_p > 0.0,
-                RETURN_ENCODED_SOFTMAX_TYPE=0,
+                RETURN_ENCODED_SOFTMAX=False,
                 PADDED_HEAD=padded_head,
                 BIAS_TYPE=BIAS_TYPE,
             )
@@ -461,7 +456,7 @@ class _attention(torch.autograd.Function):
                 philox_offset2=philox_offset2,
                 philox_seed_output=philox_seed_output,
                 philox_offset_output=philox_offset_output,
-                RETURN_ENCODED_SOFTMAX_TYPE=0,
+                RETURN_ENCODED_SOFTMAX=False,
                 encoded_softmax=None,
                 # Causal
                 CAUSAL_TYPE=CausalType.TOP_LEFT if causal else CausalType.NONE,
@@ -532,7 +527,7 @@ class _attention(torch.autograd.Function):
                 'max_seqlen_q' : max_seqlen_q,
                 'max_seqlen_k' : max_seqlen_k,
                 'CAUSAL' : causal,
-                'RETURN_ENCODED_SOFTMAX_TYPE': encoded_softmax is not None,
+                'RETURN_ENCODED_SOFTMAX': encoded_softmax is not None,
                 'BLOCK_DMODEL' : Lk,
                 'ENABLE_DROPOUT' : dropout_p > 0.0,
             }

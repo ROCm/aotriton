@@ -63,7 +63,6 @@ def _attn_fwd_inner(
         MASK_STEPS: tl.constexpr,
         ENABLE_DROPOUT: tl.constexpr,
         RETURN_ENCODED_SOFTMAX: tl.constexpr,
-        DISCARD_OUTPUT: tl.constexpr,
         PADDED_HEAD: tl.constexpr,
         INT8_GEMM: tl.constexpr,
         INT8_KV: tl.constexpr,
@@ -189,11 +188,6 @@ def _attn_fwd_inner(
                      o_cols=actual_seqlen_k,
                      stride_row=Max_seqlen_k,
                      stride_col=1)
-        if DISCARD_OUTPUT:
-            k_ptrs0, k_ptrs1, k_ptrs2 = composed_advance(k_ptrs0, k_ptrs1, k_ptrs2,
-                                                         BLOCK_N * stride_kn,
-                                                         BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
-            continue
         # -- update output accumulator --
         alpha = tl.math.exp2(m_i - m_ij)
         acc0, acc1, acc2 = composed_mul_lhs(acc0, acc1, acc2,
