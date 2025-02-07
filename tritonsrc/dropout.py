@@ -1,3 +1,6 @@
+# Copyright © 2025 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
 import triton
 import triton.language as tl
 
