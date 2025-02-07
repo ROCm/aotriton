@@ -8,8 +8,9 @@ class debug_simulate_encoded_softmax(FlashKernel):
         'R',
         'stride_rz', 'stride_rh', 'stride_rm', 'stride_rn',
         'dropout_p', 'Num_head_q', 'Max_seqlen_q', 'Max_seqlen_k',
-        'philox_seed_ptr',
-        'philox_offset_base_ptr',
+        "philox_seed_ptr",
+        "philox_offset1",
+        "philox_offset2",
         'BLOCK_M',  # tl.constexpr starts here
         'BLOCK_N',
     ]
@@ -25,7 +26,8 @@ class debug_simulate_encoded_softmax(FlashKernel):
         frozenset(['dropout_p']) : ['fp32'],
         frozenset(['Num_head_q', 'Max_seqlen_q', 'Max_seqlen_k']) : ['i32'],
         frozenset(['philox_seed_ptr']) : ['*u64'],
-        frozenset(['philox_offset_base_ptr']) : ['*u64'],
+        frozenset(['philox_offset1']) : ['*u64'],
+        frozenset(['philox_offset2']) : ['u64'],
     }
     FEAT_CHOICES = {
     }

@@ -81,7 +81,8 @@ hipError_t
 debug_simulate_encoded_softmax(T4 r,
                                float dropout_p,
                                T0 philox_seed,
-                               T0 philox_offset,
+                               T0 philox_offset1,
+                               uint64_t philox_offset2,
                                AOTRITON_NS::Stream stream_wrap) {
   hipError_t err;
   auto stream = stream_wrap.native();
@@ -104,7 +105,8 @@ debug_simulate_encoded_softmax(T4 r,
     .Max_seqlen_q = seqlen_q,
     .Max_seqlen_k = seqlen_k,
     .philox_seed_ptr = &philox_seed,
-    .philox_offset_base_ptr = &philox_offset,
+    .philox_offset1 = &philox_offset1,
+    .philox_offset2 = philox_offset2,
   };
   DebugSimulateEncodedSoftmaxContext context;
   context.grid_calculator = grid_calculator;

@@ -135,7 +135,8 @@ hipError_t
 debug_simulate_encoded_softmax(T4 r,  // batch_size x num_heads x max_seqlen_q x max_seqlen_k
                                float dropout_p,
                                T0 philox_seed,
-                               T0 philox_offset,
+                               T0 philox_offset1,
+                               uint64_t philox_offset2,
                                AOTRITON_NS::Stream stream);
 
 } // AOTRITON_NS::v2::flash

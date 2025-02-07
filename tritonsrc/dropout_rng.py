@@ -86,13 +86,15 @@ def debug_fill_dropout_rng_tensor(R,
 def debug_simulate_encoded_softmax(R,
                                    stride_rz, stride_rh, stride_rm, stride_rn,
                                    dropout_p, Num_head_q, Max_seqlen_q, Max_seqlen_k,
-                                   philox_seed_ptr: '*u64',
-                                   philox_offset_base_ptr : '*u64',
+                                   philox_seed_ptr : '*u64',
+                                   philox_offset1 : '*u64',
+                                   philox_offset2 : tl.uint64,  # TODO: move to tl.int64
                                    BLOCK_M: tl.constexpr,
                                    BLOCK_N: tl.constexpr,
                                    ):
     philox_seed = tl.load(philox_seed_ptr)
-    philox_offset_base = tl.load(philox_offset_base_ptr)
+    philox_offset_base = philox_offset2
+    philox_offset_base += tl.load(philox_offset1)
     idropout_p = ((dropout_p - 0.5) * 0xFFFFFFFF).to(tl.int32)
     philox_offset_stride = tl.cdiv(Max_seqlen_k, PHILOX_RN_PER_OFFSET)
 
@@ -100,7 +102,7 @@ def debug_simulate_encoded_softmax(R,
     off_h_q = tl.program_id(1)
     off_z = tl.program_id(2)
     off_zh = off_z * Num_head_q + off_h_q
-    encoded_sm_base = R + off_zh * Max_seqlen_q * Max_seqlen_k
+    encoded_sm_base = R + off_z * stride_rz + off_h_q * stride_rh
     batch_philox_offset = philox_offset_base + off_zh * Max_seqlen_q * philox_offset_stride
     # Simulated value, should not be used to validate qk's correctness
     p = tl.full([BLOCK_M, BLOCK_N], 0.5, dtype=R.type.element_ty)
@@ -116,5 +118,5 @@ def debug_simulate_encoded_softmax(R,
                  o_start_col=start_n,
                  o_rows=Max_seqlen_q,
                  o_cols=Max_seqlen_k,
-                 stride_row=Max_seqlen_k,
+                 stride_row=stride_rm,
                  stride_col=1)

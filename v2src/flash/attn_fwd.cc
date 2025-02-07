@@ -110,7 +110,7 @@ _attn_fwd_common(T4 q,
     .philox_seed_output = &philox_seed_output,
     .philox_offset_output = &philox_offset_output,
     .philox_offset1 = &philox_offset1,
-    .philox_offset2 = static_cast<uint32_t>(philox_offset2),
+    .philox_offset2 = philox_offset2,
     .RETURN_ENCODED_SOFTMAX = false,
     .CAUSAL_TYPE = is_causal ? 1 : 0,
     .BIAS_TYPE = bias_type,
@@ -150,8 +150,9 @@ _attn_fwd_common(T4 q,
   if (encoded_softmax) {
     return debug_simulate_encoded_softmax(encoded_softmax,
                                           dropout_p,
-                                          philox_seed_output,
-                                          philox_offset_output,
+                                          philox_seed,
+                                          philox_offset1,
+                                          philox_offset2,
                                           stream_wrap);
   }
   return err;

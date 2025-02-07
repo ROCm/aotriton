@@ -154,8 +154,9 @@ namespace pyaotriton {
               py::call_guard<py::gil_scoped_release>(),
               py::arg("r"),
               py::arg("dropout_p"),
-              py::arg("philox_seed"),
-              py::arg("philox_offset"),
+              py::arg("philox_seed_ptr"),
+              py::arg("philox_offset1"),
+              py::arg("philox_offset2"),
               py::arg("stream") = nullptr);
       }
     } // namespace flash
