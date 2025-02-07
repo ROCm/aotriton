@@ -5,6 +5,7 @@ from .attn_fwd import attn_fwd
 from .bwd_preprocess import bwd_preprocess, bwd_preprocess_varlen
 from .bwd_kernel_dk_dv import bwd_kernel_dk_dv
 from .bwd_kernel_dq import bwd_kernel_dq
+from .bwd_kernel_fuse import bwd_kernel_fuse
 from .debug_fill_dropout_rng import debug_fill_dropout_rng, debug_fill_dropout_rng_tensor
 
 SOURCE_FILE = 'tritonsrc/flash.py'
