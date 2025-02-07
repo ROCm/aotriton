@@ -17,7 +17,8 @@ class debug_simulate_encoded_softmax(FlashKernel):
         'R' : select_pattern(ARGUMENTS, 'stride_r'),
     }
     TENSOR_RANKS = {
-        '_default' : 4,
+        'R' : 4,
+        '_default' : 0,
     }
     TYPE_CHOICES = {
         frozenset(['R']) : FlashKernel.MAIN_DATATYPES,

@@ -22,7 +22,8 @@ def debug_fill_dropout_rng(R,
     d_offset = off_h * stride_rh + off_z * stride_rz
     num_h = tl.num_programs(1)
     off_zh = off_z * num_h + off_h * 1
-    batch_philox_offset = philox_offset_base + off_zh * seqlen_q * seqlen_k
+    philox_offset_stride = tl.cdiv(seqlen_k, PHILOX_RN_PER_OFFSET)
+    batch_philox_offset = philox_offset_base + off_zh * seqlen_q * philox_offset_stride
     R_block_ptr = tl.make_block_ptr(
         base=R + d_offset,
         shape=(seqlen_q, seqlen_k),
@@ -45,8 +46,8 @@ def debug_fill_dropout_rng(R,
     #        errors), because it cannot generate 1.0 otherwise
     SCALE : tl.constexpr = 2.32830658e-10
     for start_n in range(0, seqlen_k, BLOCK_N):
-        philox_offset = batch_philox_offset + start_m * BLOCK_M * seqlen_k + start_n
-        rng = fast_philox(philox_seed, philox_offset, BLOCK_M, BLOCK_N, seqlen_k)
+        philox_offset = batch_philox_offset + start_m * BLOCK_M * philox_offset_stride + start_n // PHILOX_RN_PER_OFFSET
+        rng = fast_philox(philox_seed, philox_offset, BLOCK_M, BLOCK_N // PHILOX_RN_PER_OFFSET, philox_offset_stride)
         if R.type.element_ty == tl.float32:
             # Attept to translate [-MAX_I32-1, MAX_I32] to [0.0, 1.0]
             # 0 should be translated to 0.0

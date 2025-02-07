@@ -136,7 +136,7 @@ debug_simulate_encoded_softmax(T4 r,  // batch_size x num_heads x max_seqlen_q x
                                float dropout_p,
                                T0 philox_seed,
                                T0 philox_offset,
-                               stream_wrap);
+                               AOTRITON_NS::Stream stream);
 
 } // AOTRITON_NS::v2::flash
 

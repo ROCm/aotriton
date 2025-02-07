@@ -7,6 +7,7 @@
 #include <aotriton/util.h>
 #include <flash/shim.debug_fill_dropout_rng.h>
 #include <flash/shim.debug_fill_dropout_rng_tensor.h>
+#include <flash/shim.debug_simulate_encoded_softmax.h>
 
 namespace AOTRITON_NS::v2::flash {
 
@@ -96,7 +97,7 @@ debug_simulate_encoded_softmax(T4 r,
   int num_heads = r.size(1);
   int seqlen_q = r.size(2);
   int seqlen_k = r.size(3);
-  DebugFillDropoutRngTensorParams params = {
+  DebugSimulateEncodedSoftmaxParams params = {
     .R = &r,
     .dropout_p = dropout_p,
     .Num_head_q = num_heads,
@@ -105,7 +106,7 @@ debug_simulate_encoded_softmax(T4 r,
     .philox_seed_ptr = &philox_seed,
     .philox_offset_base_ptr = &philox_offset,
   };
-  DebugSimulateEncodedSoftmaxParams context;
+  DebugSimulateEncodedSoftmaxContext context;
   context.grid_calculator = grid_calculator;
   err = context.lookup_optimal(params, arch);
   if (err != hipSuccess) {

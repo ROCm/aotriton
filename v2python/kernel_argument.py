@@ -18,6 +18,9 @@ class ArgumentMetadata(object):
         'fp16' : 'DType::kFloat16',
         'bf16' : 'DType::kBFloat16',
         'fp32' : 'DType::kFloat32',
+        'i32'  : 'DType::kInt32',
+        'u32'  : 'DType::kUInt32',
+        'u64'  : 'DType::kUInt64',
     }
     def __init__(self, grouped_arguments_as_set, possible_values, cat : ArgumentCategory, kdesc):
         assert grouped_arguments_as_set

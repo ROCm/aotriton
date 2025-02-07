@@ -149,6 +149,7 @@ _attn_fwd_common(T4 q,
   }
   if (encoded_softmax) {
     return debug_simulate_encoded_softmax(encoded_softmax,
+                                          dropout_p,
                                           philox_seed_output,
                                           philox_offset_output,
                                           stream_wrap);
