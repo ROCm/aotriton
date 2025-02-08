@@ -15,6 +15,7 @@ kernels = [
     bwd_preprocess_varlen('bwd_preprocess_varlen', SOURCE_FILE),
     bwd_kernel_dk_dv('bwd_kernel_dk_dv', SOURCE_FILE),
     bwd_kernel_dq('bwd_kernel_dq', SOURCE_FILE),
+    bwd_kernel_fuse('bwd_kernel_fuse', SOURCE_FILE),
     debug_fill_dropout_rng('debug_fill_dropout_rng', SOURCE_FILE),
     debug_fill_dropout_rng_tensor('debug_fill_dropout_rng_tensor', SOURCE_FILE),
 ]
