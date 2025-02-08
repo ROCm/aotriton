@@ -25,7 +25,7 @@ class bwd_kernel_fuse(FlashKernel):
         'stride_dkz', 'stride_dkh', 'stride_dkn', 'stride_dkk',
         'stride_dvz', 'stride_dvh', 'stride_dvk', 'stride_dvn',
         'stride_dqz', 'stride_dqh', 'stride_dqm', 'stride_dqk',
-        ' stride_dbz', 'stride_dbh', 'stride_dbm', 'stride_dbn',
+        'stride_dbz', 'stride_dbh', 'stride_dbm', 'stride_dbn',
         'num_head_q',
         'num_head_k',
         'cu_seqlens_q',
@@ -57,6 +57,8 @@ class bwd_kernel_fuse(FlashKernel):
         'DO' : select_pattern(ARGUMENTS, 'stride_o'),
         'DK' : select_pattern(ARGUMENTS, 'stride_dk'),
         'DV' : select_pattern(ARGUMENTS, 'stride_dv'),
+        'DQ' : select_pattern(ARGUMENTS, 'stride_dq'),
+        'DB' : select_pattern(ARGUMENTS, 'stride_db'),
     }
     TENSOR_RANKS = {
         '_default' : 4,
@@ -67,7 +69,7 @@ class bwd_kernel_fuse(FlashKernel):
         'philox_offset1': 0,
     }
     TYPE_CHOICES = {
-        frozenset(['Q', 'K', 'V', 'B', 'Out', 'DO', 'DQ', 'DK', 'DV']) : match_fwd('Q'),
+        frozenset(['Q', 'K', 'V', 'B', 'Out', 'DO', 'DQ', 'DK', 'DV', 'DB']) : match_fwd('Q'),
         frozenset(['sm_scale']) : match_fwd( 'Sm_scale'),
         frozenset(['L']) : ['*fp32:16'],
         frozenset(['cu_seqlens_q', 'cu_seqlens_k']) : match_fwd('cu_seqlens_q'),
