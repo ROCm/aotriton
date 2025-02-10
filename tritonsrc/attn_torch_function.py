@@ -497,8 +497,9 @@ class _attention(torch.autograd.Function):
                                                  Num_head_q=encoded_softmax.shape[1],
                                                  Max_seqlen_q=encoded_softmax.shape[2],
                                                  Max_seqlen_k=encoded_softmax.shape[3],
-                                                 philox_seed_ptr=philox_seed_output,
-                                                 philox_offset_base_ptr=philox_offset_output,
+                                                 philox_seed_ptr=philox_seed,
+                                                 philox_offset1=philox_offset1,
+                                                 philox_offset2=philox_offset2,
                                                  BLOCK_M=32,
                                                  BLOCK_N=32)
             print(f'{encoded_softmax=}')
