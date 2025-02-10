@@ -3,6 +3,7 @@
 
 from .gpu_targets import AOTRITON_GPU_ARCH_TUNING_STRING
 import json
+from .kernel_argument import ArgumentSelection
 
 class KernelSignature(object):
     def __init__(self,
@@ -13,7 +14,8 @@ class KernelSignature(object):
                  gpu : str):
         self._kdesc = kdesc
         self._func_selections = func_selections
-        self._perf_selections = perf_selections
+        fsel_dict = ArgumentSelection.build_fsel_dict(func_selections)
+        self._perf_selections = [p.substitute_if_lambda(gpu, fsel_dict) for p in perf_selections]
         self._selections = list(func_selections) + list(perf_selections)
         self._compiler_options = {} if compiler_options is None else compiler_options
         self._gpu = gpu

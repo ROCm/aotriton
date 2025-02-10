@@ -25,6 +25,9 @@ class ArgumentMetadata(object):
     def __init__(self, grouped_arguments_as_set, possible_values, cat : ArgumentCategory, kdesc):
         assert grouped_arguments_as_set
         self._grouped_arguments_as_set = grouped_arguments_as_set
+        for v in possible_values:
+            if callable(v):
+                assert 'return' in v.__annotations__, f'PERF_CHOICES {grouped_arguments_as_set} in Class {kdesc} must have return type annotations'
         self._possible_values = possible_values
         self._npossible = len(possible_values)
         self._cat = cat
@@ -131,6 +134,8 @@ class ArgumentMetadata(object):
         if self.is_tensor:
             rank = self._kdesc.get_tensor_rank(triton_arg)
             return f'const T{rank}*'
+        if callable(triton_type):
+            triton_type = triton_type.__annotations__['return']()
         if isinstance(triton_type, str):
             return ObjectFileDescription.SIGNATURE_TO_C[triton_type]
         elif isinstance(triton_type, bool):
@@ -221,6 +226,15 @@ class ArgumentSelection(object):
     @property
     def argument_value(self):
         return self._selection_value
+
+    @property
+    def is_lambda(self):
+        return callable(self._selection_value)
+
+    def substitute_if_lambda(self, gpu, fsel_dict):
+        if self.is_lambda:
+            self._selection_value = self._selection_value(gpu, fsel_dict)
+        return self
 
     @property
     def godel_number(self):
