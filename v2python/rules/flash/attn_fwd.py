@@ -96,7 +96,7 @@ class attn_fwd(FlashKernel):
         frozenset(['INT8', 'INT8_KV', 'USE_P_SCALE']) : [False],  # INT8 for the future
     }
     PERF_CHOICES = {
-        frozenset(['PERSISTENT_TYPE']) : [0], # [0, 1, 2],
+        frozenset(['PERSISTENT_TYPE']) : [lambda fsel_dict : 2 if fsel_dict['CAUSAL_TYPE'] else 0],
         frozenset(['GRID_CU_MULTIP']) : [2],
         frozenset(['BLOCK_M']) : [16],
         frozenset(['BLOCK_N']) : [16],

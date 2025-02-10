@@ -147,8 +147,12 @@ class KernelDescription(object):
     def gen_func_selections(self) -> 'tuple[ArgumentSelection]':
         return itertools.product(*self._func_selections)
 
-    def gen_perf_selections(self) -> 'tuple[ArgumentSelection]':
-        return itertools.product(*self._perf_selections)
+    def gen_perf_selections(self, gpu, fsels) -> 'tuple[ArgumentSelection]':
+        fsel_dict = ArgumentSelection.build_fsel_dict(fsels)
+        def format_element(elem):
+            return elem(fsel_dict) if callable(elem) else elem
+        for tups in itertools.product(*self._perf_selections):
+            yield tuple([format_element(e) for e in tups])
 
     def gen_tuned_perf_selections(self,
                                   tuned_db : 'KernelTuningDatabase',
@@ -157,7 +161,7 @@ class KernelDescription(object):
         dba = tuned_db.select_gpu(gpu, self._target_gpus.index(gpu))
 
         if dba.empty:  # Fallback to selection defined by KernelDescription
-            for psels in self.gen_perf_selections():
+            for psels in self.gen_perf_selections(gpu, fsels):
                 yield gpu, fsels, psels, None
                 return  # For empty tuning database. Only need one option
 
@@ -190,11 +194,10 @@ class KernelDescription(object):
                                                         self.gen_func_selections()):
                         yield from self._gen_all_options_from_kdesc_autotune_configs(gpu, fsels)
                 else:
-                    # Build for Tuning, for simple kernels
-                    yield from itertools.product(self._target_gpus,
-                                                 self.gen_func_selections(),
-                                                 self.gen_perf_selections(),
-                                                 [None])
+                    for gpu, fsels in itertools.product(self._target_gpus,
+                                                        self.gen_func_selections()):
+                        yield from itertools.product(self.gen_perf_selections(gpu, fsels),
+                                                     [None])
             else:
                 # Not Build for Tuning, checking database
                 for gpu, fsels in itertools.product(self._target_gpus,
