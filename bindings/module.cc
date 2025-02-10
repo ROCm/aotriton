@@ -1,4 +1,4 @@
-// Copyright © 2023-2024 Advanced Micro Devices, Inc.
+// Copyright © 2023-2025 Advanced Micro Devices, Inc.
 // SPDX-License-Identifier: MIT
 
 #include <aotriton/config.h>
@@ -147,6 +147,16 @@ namespace pyaotriton {
               py::arg("q"),
               py::arg("philox_seed"),
               py::arg("philox_offset"),
+              py::arg("stream") = nullptr);
+        m.def("debug_simulate_encoded_softmax",
+              &aotriton::v2::flash::debug_simulate_encoded_softmax,
+              "Flash Attention Debugging Function to get raw RNG numbers used in dropout",
+              py::call_guard<py::gil_scoped_release>(),
+              py::arg("r"),
+              py::arg("dropout_p"),
+              py::arg("philox_seed_ptr"),
+              py::arg("philox_offset1"),
+              py::arg("philox_offset2"),
               py::arg("stream") = nullptr);
       }
     } // namespace flash

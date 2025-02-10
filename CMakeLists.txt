@@ -1,4 +1,4 @@
-# Copyright © 2023-2024 Advanced Micro Devices, Inc.
+# Copyright © 2023-2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
 cmake_minimum_required(VERSION 3.18 FATAL_ERROR)
@@ -98,17 +98,17 @@ execute_process(COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_
 if(NOT AOTRITON_NOIMAGE_MODE)
   set(TRITON_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/triton_build")
   execute_process(COMMAND ${CMAKE_COMMAND} -E make_directory "${TRITON_BUILD_DIR}")
-  set(AOTRITON_TRITON_SO "${CMAKE_CURRENT_LIST_DIR}/third_party/triton/python/triton/_C/libtriton.so")
-  set(AOTRITON_TRITON_EGGLINK "${VENV_SITE}/triton.egg-link")
-  message("AOTRITON_TRITON_EGGLINK ${AOTRITON_TRITON_EGGLINK}")
+  # set(AOTRITON_TRITON_EGGLINK "${VENV_SITE}/triton.egg-link")
+  # message("AOTRITON_TRITON_EGGLINK ${AOTRITON_TRITON_EGGLINK}")
+  set(AOTRITON_TRITON_SO "${VENV_SITE}/triton/_C/libtriton.so")
 
   add_custom_command(OUTPUT "${AOTRITON_TRITON_EGGLINK}"
-    COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} TRITON_BUILD_DIR=${TRITON_BUILD_DIR} "${VENV_DIR}/bin/python" setup.py develop
+    COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} TRITON_BUILD_DIR=${TRITON_BUILD_DIR} "${VENV_DIR}/bin/python" -m pip install .
     # COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} python -m pip show triton
     WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/third_party/triton/python/"
     BYPRODUCTS "${AOTRITON_TRITON_SO}"
   )
-  add_custom_target(aotriton_venv_triton ALL DEPENDS ${AOTRITON_TRITON_EGGLINK})
+  add_custom_target(aotriton_venv_triton ALL DEPENDS ${AOTRITON_TRITON_SO})
 endif(NOT AOTRITON_NOIMAGE_MODE)
 
 add_subdirectory(v2src)

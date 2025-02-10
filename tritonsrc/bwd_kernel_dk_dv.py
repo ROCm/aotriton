@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Copyright © 2023-2024 Advanced Micro Devices, Inc.
+# Copyright © 2023-2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
 """
@@ -18,6 +18,7 @@ Extra Credits:
 import triton
 import triton.language as tl
 from bwd_inner_dk_dv import bwd_inner_dk_dv
+from dropout import PHILOX_RN_PER_OFFSET
 from masked_load_store import load_fn, mstore2d
 from composed_tensors import (
     composed_offs_1d,
@@ -56,10 +57,10 @@ def bwd_kernel_dk_dv(
     max_seqlen_q : 'i32', # and use max_seqlen_q/k for all seqlen_q/k
     max_seqlen_k : 'i32',
     head_dim : 'i32',
-    dropout_p,
+    dropout_p : tl.float32,
     philox_seed_ptr,
-    philox_offset1 : '*u32',
-    philox_offset2 : 'u32',
+    philox_offset1 : '*u64',
+    philox_offset2 : 'u64',
     BLOCK_M: tl.constexpr,
     BLOCK_DMODEL: tl.constexpr,
     BLOCK_N: tl.constexpr,
@@ -80,8 +81,10 @@ def bwd_kernel_dk_dv(
     tl.static_assert(BLOCK_DMODEL_R3 == 0, f'BLOCK_DMODEL = {BLOCK_DMODEL} = 0b{BLOCK_DMODEL:b} cannot be factored into <= 3 power of two values')
     tl.static_assert(BLOCK_DMODEL1 > 0 or BLOCK_DMODEL2 == 0, 'Only trailing BLOCK_DMODELx can be 0')
 
+    idropout_p = ((dropout_p - 0.5) * 0xFFFFFFFF).to(tl.int32)
     philox_seed = 0
     philox_offset_base = philox_offset2
+    philox_offset_stride = tl.cdiv(max_seqlen_k, PHILOX_RN_PER_OFFSET)
     if ENABLE_DROPOUT:
         philox_seed = tl.load(philox_seed_ptr)
         philox_offset_base += tl.load(philox_offset1)
@@ -268,7 +271,7 @@ def bwd_kernel_dk_dv(
         # result. The upper triangular is -inf (becomes 0 when we do e^x). As such, it can
         # be ignored in the GEMM.
         if ENABLE_DROPOUT:
-            batch_philox_offset = philox_offset_base + off_zh * max_seqlen_q * max_seqlen_k
+            batch_philox_offset = philox_offset_base + off_zh * max_seqlen_q * philox_offset_stride
         else:
             batch_philox_offset = 0
         # pointer to row-wise quantities in value-like data
@@ -316,7 +319,7 @@ def bwd_kernel_dk_dv(
                 D_ptrs,
                 seqlen_q, seqlen_k, head_dim,
                 start_k, lo, hi, overflow_size,
-                dropout_p, dropout_scale, philox_seed, batch_philox_offset, max_seqlen_k,
+                idropout_p, dropout_scale, philox_seed, batch_philox_offset, philox_offset_stride,
                 BLOCK_M,
                 BLOCK_DMODEL0,
                 BLOCK_DMODEL1,
@@ -346,7 +349,7 @@ def bwd_kernel_dk_dv(
                 D_ptrs,
                 seqlen_q, seqlen_k, head_dim,
                 start_k, lo, hi, 0,
-                dropout_p, dropout_scale, philox_seed, batch_philox_offset, max_seqlen_k,
+                idropout_p, dropout_scale, philox_seed, batch_philox_offset, philox_offset_stride,
                 BLOCK_M,
                 BLOCK_DMODEL0,
                 BLOCK_DMODEL1,
@@ -378,7 +381,7 @@ def bwd_kernel_dk_dv(
                 D_ptrs,
                 seqlen_q, seqlen_k, head_dim,
                 start_k, lo, hi, overflow_size,
-                dropout_p, dropout_scale, philox_seed, batch_philox_offset, max_seqlen_k,
+                idropout_p, dropout_scale, philox_seed, batch_philox_offset, philox_offset_stride,
                 BLOCK_M,
                 BLOCK_DMODEL0,
                 BLOCK_DMODEL1,

@@ -1,4 +1,4 @@
-// Copyright © 2023-2024 Advanced Micro Devices, Inc.
+// Copyright © 2023-2025 Advanced Micro Devices, Inc.
 // SPDX-License-Identifier: MIT
 
 #include <aotriton/config.h>
@@ -110,8 +110,8 @@ _attn_fwd_common(T4 q,
     .philox_seed_output = &philox_seed_output,
     .philox_offset_output = &philox_offset_output,
     .philox_offset1 = &philox_offset1,
-    .philox_offset2 = static_cast<uint32_t>(philox_offset2),
-    .RETURN_ENCODED_SOFTMAX = bool(encoded_softmax),
+    .philox_offset2 = static_cast<uint64_t>(philox_offset2),
+    .RETURN_ENCODED_SOFTMAX = false,
     .CAUSAL_TYPE = is_causal ? 1 : 0,
     .BIAS_TYPE = bias_type,
     .USE_ALIBI = false,
@@ -144,6 +144,17 @@ _attn_fwd_common(T4 q,
     return err;
   }
   err = context.launch(params, stream);
+  if (err != hipSuccess) {
+    return err;
+  }
+  if (encoded_softmax) {
+    return debug_simulate_encoded_softmax(encoded_softmax,
+                                          dropout_p,
+                                          philox_seed,
+                                          philox_offset1,
+                                          philox_offset2,
+                                          stream_wrap);
+  }
   return err;
 }
 
