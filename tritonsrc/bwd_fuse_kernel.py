@@ -17,8 +17,25 @@ Extra Credits:
 
 import triton
 import triton.language as tl
-from bwd_inner_fuse import bwd_inner_dk_dv_fuse, bwd_inner_dq
+from bwd_inner_fuse import bwd_inner_dk_dv_fuse
+from bwd_inner_dq import bwd_inner_dq
+from dropout import PHILOX_RN_PER_OFFSET
 from masked_load_store import load_fn, mstore2d
+from composed_tensors import (
+    composed_offs_1d,
+    composed_zeros_2d,
+    composed_ptrs,
+    composed_load,
+    composed_advance,
+    composed_to,
+    composed_store,
+    composed_mul_lhs,
+    composed_dot_both,
+    composed_dot_rhs,
+    composed_mul_lhs,
+    composed_mul_acc,
+    composed_inner_product_fp32,
+)
 
 # TODO: Remove Unused 'Out' Argument from kernels below
 @triton.jit
@@ -48,10 +65,10 @@ def bwd_fuse_kernel(
     max_seqlen_k: tl.constexpr,
     head_dim: tl.constexpr,
     # Dropout
-    dropout_p: tl.constexpr,
+    dropout_p : tl.float32,
     philox_seed_ptr,
-    philox_offset1,
-    philox_offset2: tl.constexpr,
+    philox_offset1 : '*u64',
+    philox_offset2 : 'u64',
     # Constants
     BLOCK_DMODEL: tl.constexpr,
     CAUSAL: tl.constexpr,
@@ -63,8 +80,22 @@ def bwd_fuse_kernel(
     BLOCK_M2: tl.constexpr,
     BLOCK_N2: tl.constexpr,
 ):
+    tl.static_assert(BLOCK_DMODEL > 0, 'BLOCK_DMODEL must be greater than 0')
+    BLOCK_DMODEL_R0 : tl.constexpr = BLOCK_DMODEL
+    BLOCK_DMODEL0 : tl.constexpr = 2 ** (BLOCK_DMODEL_R0.bit_length() - 1)
+    BLOCK_DMODEL_R1 : tl.constexpr = BLOCK_DMODEL_R0 - BLOCK_DMODEL0
+    BLOCK_DMODEL1 : tl.constexpr = 2 ** (BLOCK_DMODEL_R1.bit_length() - 1) if BLOCK_DMODEL_R1 > 0 else 0
+    BLOCK_DMODEL_R2 : tl.constexpr = BLOCK_DMODEL_R1 - BLOCK_DMODEL1
+    BLOCK_DMODEL2 : tl.constexpr = 2 ** (BLOCK_DMODEL_R2.bit_length() - 1) if BLOCK_DMODEL_R2 > 0 else 0
+    BLOCK_DMODEL_R3 : tl.constexpr = BLOCK_DMODEL_R2 - BLOCK_DMODEL2
+
+    tl.static_assert(BLOCK_DMODEL_R3 == 0, f'BLOCK_DMODEL = {BLOCK_DMODEL} = 0b{BLOCK_DMODEL:b} cannot be factored into <= 3 power of two values')
+    tl.static_assert(BLOCK_DMODEL1 > 0 or BLOCK_DMODEL2 == 0, 'Only trailing BLOCK_DMODELx can be 0')
+
+    idropout_p = ((dropout_p - 0.5) * 0xFFFFFFFF).to(tl.int32)
     philox_seed = 0
     philox_offset_base = philox_offset2
+    philox_offset_stride = tl.cdiv(max_seqlen_k, PHILOX_RN_PER_OFFSET)
     if ENABLE_DROPOUT:
         philox_seed = tl.load(philox_seed_ptr)
         philox_offset_base += tl.load(philox_offset1)
@@ -74,9 +105,6 @@ def bwd_fuse_kernel(
     num_z = tl.num_programs(2)
     offs_m = tl.arange(0, BLOCK_M1)
     offs_n = start_k + tl.arange(0, BLOCK_N1)
-    offs_d = tl.arange(0, BLOCK_DMODEL)
-    ld_offs_d = None if not PADDED_HEAD else tl.arange(0, BLOCK_DMODEL)
-
     cu_seqlens_q_start = 0
     cu_seqlens_k_start = 0
     seqlen_q = max_seqlen_q
@@ -107,28 +135,52 @@ def bwd_fuse_kernel(
         cu_seqlens_q_start = 0
         cu_seqlens_k_start = 0
         batch_index = off_z
-
-    # Initialize pointers to Q, K, V
-    # Q is consumed depending on block ID. Every block uses
-    # previous block offset by BLOCK_M1 x D_HEAD.
-
-    k_offset = off_h_k * stride_kh + batch_index * stride_kz + cu_seqlens_k_start * stride_kn
-    K_dkv = K + k_offset
-    kt_ptrs = K_dkv + offs_d[:, None] * stride_kk + offs_n[None, :] * stride_kn
+    k_ptrs0, k_ptrs1, k_ptrs2 = composed_ptrs(K,
+                                              stride_kz, stride_kh, stride_kn, stride_kk,
+                                              batch_index, off_h_k, cu_seqlens_k_start + offs_n,
+                                              BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                              TRANSPOSED=True)
     # kt_offs_n = None if start_k + BLOCK_N1 <= seqlen_k else start_k + tl.arange(0, BLOCK_N1)
-    if start_k + BLOCK_N1 <= seqlen_k:
-        kt = load_fn(kt_ptrs, ld_offs_d, None, head_dim, seqlen_k)
-    else:
-        kt = load_fn(kt_ptrs, ld_offs_d, offs_n, head_dim, seqlen_k)
+    v_ptrs0, v_ptrs1, v_ptrs2 = composed_ptrs(V,
+                                              stride_vz, stride_vh, stride_vk, stride_vn,
+                                              batch_index, off_h_k, cu_seqlens_k_start + offs_n,
+                                              BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                              TRANSPOSED=True)
 
-    v_offset = off_h_k * stride_vh + batch_index * stride_vz + cu_seqlens_k_start * stride_vk
-    V_dkv = V + v_offset
-    vt_ptrs = V_dkv + offs_d[:, None] * stride_vn + offs_n[None, :] * stride_vk
     if start_k + BLOCK_N1 <= seqlen_k:
-        vt = load_fn(vt_ptrs, ld_offs_d, None, head_dim, seqlen_k)
+        kt0, kt1, kt2 = composed_load(k_ptrs0, k_ptrs1, k_ptrs2,
+                                      offs_n,
+                                      BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                      seqlen_k, head_dim,
+                                      other=0.0,
+                                      PADDED_ROW=False,
+                                      PADDED_COL=PADDED_HEAD,
+                                      TRANSPOSED=True)
+        vt0, vt1, vt2 = composed_load(v_ptrs0, v_ptrs1, v_ptrs2,
+                                      offs_n,
+                                      BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                      seqlen_k, head_dim,
+                                      other=0.0,
+                                      PADDED_ROW=False,
+                                      PADDED_COL=PADDED_HEAD,
+                                      TRANSPOSED=True)
     else:
-        vt = load_fn(vt_ptrs, ld_offs_d, offs_n, head_dim, seqlen_k)
-
+        kt0, kt1, kt2 = composed_load(k_ptrs0, k_ptrs1, k_ptrs2,
+                                      offs_n,
+                                      BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                      seqlen_k, head_dim,
+                                      other=0.0,
+                                      PADDED_ROW=True,
+                                      PADDED_COL=PADDED_HEAD,
+                                      TRANSPOSED=True)
+        vt0, vt1, vt2 = composed_load(v_ptrs0, v_ptrs1, v_ptrs2,
+                                      offs_n,
+                                      BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                      seqlen_k, head_dim,
+                                      other=0.0,
+                                      PADDED_ROW=True,
+                                      PADDED_COL=PADDED_HEAD,
+                                      TRANSPOSED=True)
     if BIAS_TYPE == 0:
         B_block_ptr = 0
     elif BIAS_TYPE == 1:
@@ -149,8 +201,8 @@ def bwd_fuse_kernel(
     dv_offset = off_h_k * stride_dvh + batch_index * stride_dvz + cu_seqlens_k_start * stride_dvk
     DV += dv_offset
 
-    dv = tl.zeros([BLOCK_N1, BLOCK_DMODEL], dtype=tl.float32)
-    dk = tl.zeros([BLOCK_N1, BLOCK_DMODEL], dtype=tl.float32)
+    dv0, dv1, dv2 = composed_zeros_2d(BLOCK_N1, BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
+    dk0, dk1, dk2 = composed_zeros_2d(BLOCK_N1, BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
     qk_scale = sm_scale * 1.44269504089
     bias_scale = 1.0 / sm_scale
     group_size = num_head_q // num_head_k
@@ -186,7 +238,7 @@ def bwd_fuse_kernel(
         # result. The upper triangular is -inf (becomes 0 when we do e^x). As such, it can
         # be ignored in the GEMM.
         if ENABLE_DROPOUT:
-            batch_philox_offset = philox_offset_base + off_zh * max_seqlen_q * max_seqlen_k
+            batch_philox_offset = philox_offset_base + off_zh * max_seqlen_q * philox_offset_stride
         else:
             batch_philox_offset = 0
         # pointer to row-wise quantities in value-like data
@@ -195,11 +247,19 @@ def bwd_fuse_kernel(
         # Hence off_z plays the same role in varlen/non-varlen
         l_ptrs = L + off_zh * max_seqlen_q
 
-        q_offset = off_h_q * stride_qh + batch_index * stride_qz + cu_seqlens_q_start * stride_qm
-        q_ptrs = Q + q_offset + offs_m[:, None] * stride_qm + offs_d[None, :] * stride_qk
-        do_offset = off_h_q * stride_oh + batch_index * stride_oz + cu_seqlens_q_start * stride_om
-        do_ptrs = DO + do_offset + offs_m[:, None] * stride_om + offs_d[None, :] * stride_ok
-        o_ptrs = Out + do_offset + offs_m[:, None] * stride_om + offs_d[None, :] * stride_ok
+        q_ptrs0, q_ptrs1, q_ptrs2 = composed_ptrs(Q,
+                                                  stride_qz, stride_qh, stride_qm, stride_qk,
+                                                  batch_index, off_h_q, cu_seqlens_q_start + offs_m,
+                                                  BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
+
+        do_ptrs0, do_ptrs1, do_ptrs2 = composed_ptrs(DO,
+                                                     stride_oz, stride_oh, stride_om, stride_ok,
+                                                     batch_index, off_h_q, cu_seqlens_q_start + offs_m,
+                                                     BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
+        o_ptrs0, o_ptrs1, o_ptrs2 = composed_ptrs(Out,
+                                                  stride_oz, stride_oh, stride_om, stride_ok,
+                                                  batch_index, off_h_q, cu_seqlens_q_start + offs_m,
+                                                  BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
 
         # dkdk kernel is a little tricky, its masked blocks can be found in both ends
         # leading masked: by causal
@@ -215,16 +275,25 @@ def bwd_fuse_kernel(
             # TODO: overflow_size maybe larger than on block (BLOCK_M1)
             #       In this case the bwd_inner_dk_dv can be further optimized
             overflow_size = 0 if hi < q_hi else hi - q_hi
-            dk, dv = bwd_inner_dk_dv_fuse(
-                dk, dv, qk_scale, bias_scale,
-                q_ptrs, stride_qm, kt, vt, B_block_ptr,
-                do_ptrs, o_ptrs, stride_om,
+            dk0, dk1, dk2, dv0, dv1, dv2 = bwd_inner_dk_dv_fuse(
+                dk0, dk1, dk2,
+                dv0, dv1, dv2,
+                qk_scale, bias_scale,
+                q_ptrs0, q_ptrs1, q_ptrs2,
+                stride_qm,
+                kt0, kt1, kt2, vt0, vt1, vt2,
+                B_block_ptr,
+                do_ptrs0, do_ptrs1, do_ptrs2,
+                o_ptrs0, o_ptrs1, o_ptrs2,
+                stride_om,
                 l_ptrs,
                 seqlen_q, seqlen_k, head_dim,
                 start_k, lo, hi, overflow_size,
-                dropout_p, dropout_scale, philox_seed, batch_philox_offset, max_seqlen_k,
+                idropout_p, dropout_scale, philox_seed, batch_philox_offset, philox_offset_stride,
                 BLOCK_M1,
-                BLOCK_DMODEL,
+                BLOCK_DMODEL0,
+                BLOCK_DMODEL1,
+                BLOCK_DMODEL2,
                 BLOCK_N1,
                 False,  # FULL_BLOCKS
                 CAUSAL,
@@ -235,17 +304,26 @@ def bwd_fuse_kernel(
 
         if n_full_blocks > 0:
             lo = q_lo + leading_masked_blocks * BLOCK_M1
-            hi = lo + n_full_blocks * BLOCK_M1            
-            dk, dv = bwd_inner_dk_dv_fuse(
-                dk, dv, qk_scale, bias_scale,
-                q_ptrs, stride_qm, kt, vt, B_block_ptr,
-                do_ptrs, o_ptrs, stride_om,
+            hi = lo + n_full_blocks * BLOCK_M1
+            dk0, dk1, dk2, dv0, dv1, dv2 = bwd_inner_dk_dv_fuse(
+                dk0, dk1, dk2,
+                dv0, dv1, dv2,
+                qk_scale, bias_scale,
+                q_ptrs0, q_ptrs1, q_ptrs2,
+                stride_qm,
+                kt0, kt1, kt2, vt0, vt1, vt2,
+                B_block_ptr,
+                do_ptrs0, do_ptrs1, do_ptrs2,
+                o_ptrs0, o_ptrs1, o_ptrs2,
+                stride_om,
                 l_ptrs,
                 seqlen_q, seqlen_k, head_dim,
                 start_k, lo, hi, 0,
-                dropout_p, dropout_scale, philox_seed, batch_philox_offset, max_seqlen_k,
+                idropout_p, dropout_scale, philox_seed, batch_philox_offset, philox_offset_stride,
                 BLOCK_M1,
-                BLOCK_DMODEL,
+                BLOCK_DMODEL0,
+                BLOCK_DMODEL1,
+                BLOCK_DMODEL2,
                 BLOCK_N1,
                 True,  # FULL_BLOCKS
                 False,  # CAUSAL has zero effect for full blocks
@@ -259,39 +337,64 @@ def bwd_fuse_kernel(
             lo = q_lo + leading_masked_blocks * BLOCK_M1 + n_full_blocks * BLOCK_M1
             hi = q_hi
             overflow_size = lo + trailing_masked_blocks * BLOCK_M1 - q_hi
-            dk, dv = bwd_inner_dk_dv_fuse(
-                dk, dv, qk_scale, bias_scale,
-                q_ptrs, stride_qm, kt, vt, B_block_ptr,
-                do_ptrs, o_ptrs, stride_om,
+            dk0, dk1, dk2, dv0, dv1, dv2 = bwd_inner_dk_dv_fuse(
+                dk0, dk1, dk2,
+                dv0, dv1, dv2,
+                qk_scale, bias_scale,
+                q_ptrs0, q_ptrs1, q_ptrs2,
+                stride_qm,
+                kt0, kt1, kt2, vt0, vt1, vt2,
+                B_block_ptr,
+                do_ptrs0, do_ptrs1, do_ptrs2,
+                o_ptrs0, o_ptrs1, o_ptrs2,
+                stride_om,
                 l_ptrs,
                 seqlen_q, seqlen_k, head_dim,
                 start_k, lo, hi, overflow_size,
-                dropout_p, dropout_scale, philox_seed, batch_philox_offset, max_seqlen_k,
+                idropout_p, dropout_scale, philox_seed, batch_philox_offset, philox_offset_stride,
                 BLOCK_M1,
-                BLOCK_DMODEL,
+                BLOCK_DMODEL0,
+                BLOCK_DMODEL1,
+                BLOCK_DMODEL2,
                 BLOCK_N1,
                 False,  # FULL_BLOCKS
                 CAUSAL,
                 ENABLE_DROPOUT,
                 PADDED_HEAD,
                 BIAS_TYPE)
-    
-    dk = (dk * sm_scale).to(kt.type.element_ty)
-    dv = dv.to(vt.type.element_ty)
-    mstore2d(dk,
-            BLOCK_N1, 
-            BLOCK_DMODEL,
-            DK,
-            start_k, 0,
-            seqlen_k, head_dim,
-            stride_dkn, stride_dkk)
-    mstore2d(dv,
-            BLOCK_N1,
-            BLOCK_DMODEL, 
-            DV,
-            start_k, 0,
-            seqlen_k, head_dim,
-            stride_dvk, stride_dvn)
+
+    dk0, dk1, dk2 = composed_mul_lhs(dk0, dk1, dk2,
+                                     sm_scale,
+                                     BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
+    dk0, dk1, dk2 = composed_to(dk0, dk1, dk2, kt0.type.element_ty)
+    dv0, dv1, dv2 = composed_to(dv0, dv1, dv2, vt0.type.element_ty)
+
+    composed_store(dk0, dk1, dk2,
+                   BLOCK_N1,
+                   BLOCK_DMODEL0,
+                   BLOCK_DMODEL1,
+                   BLOCK_DMODEL2,
+                   o_base=DK,
+                   o_start_row=start_k,
+                   o_start_col=0,
+                   o_rows=seqlen_k,
+                   o_cols=head_dim,
+                   stride_row=stride_dkn,
+                   stride_col=stride_dkk)
+
+    composed_store(dv0, dv1, dv2,
+                   BLOCK_N1,
+                   BLOCK_DMODEL0,
+                   BLOCK_DMODEL1,
+                   BLOCK_DMODEL2,
+                   o_base=DV,
+                   o_start_row=start_k,
+                   o_start_col=0,
+                   o_rows=seqlen_k,
+                   o_cols=head_dim,
+                   stride_row=stride_dvk,
+                   stride_col=stride_dvn)
+
     # dq computation
     start_q = tl.program_id(0) * BLOCK_M2
     if start_q >= seqlen_q:
@@ -303,100 +406,94 @@ def bwd_fuse_kernel(
     off_zh = off_z * num_head_q + off_h_q * 1
     offs_q = start_q + tl.arange(0, BLOCK_M2)
     offs_n = tl.arange(0, BLOCK_N2)
-    offs_d = tl.arange(0, BLOCK_DMODEL)
-    
-    
-    off_m = tl.program_id(0) * BLOCK_M2
-    off_h = off_h_q # head index
-    off_z = tl.program_id(2) # batch index
-    num_h = tl.num_programs(1)
-    o_offset = off_h * stride_oh + off_z * stride_oz
-    O_block_ptr = tl.make_block_ptr(
-        base=Out + o_offset,
-        shape=(seqlen_q, head_dim),
-        strides=(stride_om, stride_ok),
-        offsets=(off_m, 0),
-        block_shape=(BLOCK_M2, BLOCK_DMODEL),
-        order=(1, 0)
-    )
-    # load
-    o = tl.load(O_block_ptr, boundary_check=(0,1), padding_option="zero").to(tl.float32)
+    q_ptrs0, q_ptrs1, q_ptrs2 = composed_ptrs(Q,
+                                              stride_qz, stride_qh, stride_qm, stride_qk,
+                                              batch_index, off_h_q, cu_seqlens_q_start + offs_q,
+                                              BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
+    if start_q + BLOCK_M2 <= seqlen_q:
+        q0, q1, q2 = composed_load(q_ptrs0, q_ptrs1, q_ptrs2,
+                                   offs_q,
+                                   BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                   seqlen_q, head_dim,
+                                   other=0.0,
+                                   PADDED_ROW=False,
+                                   PADDED_COL=PADDED_HEAD,
+                                   TRANSPOSED=False)
+    else:
+        q0, q1, q2 = composed_load(q_ptrs0, q_ptrs1, q_ptrs2,
+                                   offs_q,
+                                   BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                   seqlen_q, head_dim,
+                                   other=0.0,
+                                   PADDED_ROW=True,
+                                   PADDED_COL=PADDED_HEAD,
+                                   TRANSPOSED=False)
+    qk_scale = sm_scale * 1.44269504089
+    bias_scale = 1.0 / sm_scale
+    kt_ptrs0, kt_ptrs1, kt_ptrs2 = composed_ptrs(K,
+                                                 stride_kz, stride_kh, stride_kn, stride_kk,
+                                                 batch_index, off_h_k, cu_seqlens_k_start + offs_n,
+                                                 BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                                 TRANSPOSED=True)
+    vt_ptrs0, vt_ptrs1, vt_ptrs2 = composed_ptrs(V,
+                                                 stride_vz, stride_vh, stride_vk, stride_vn,
+                                                 batch_index, off_h_k, cu_seqlens_k_start + offs_n,
+                                                 BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                                 TRANSPOSED=True)
 
-    # Initialize pointers to Q, K, V
-    q_offset = off_h_q * stride_qh + batch_index * stride_qz + cu_seqlens_q_start * stride_qm
-    Q += q_offset
-    # Q_block_ptr = tl.make_block_ptr(
-    #     base=Q,
-    #     shape=(seqlen_q, head_dim),
-    #     strides=(stride_qm, stride_qk),
-    #     offsets=(start_q, 0),
-    #     block_shape=(BLOCK_M2, BLOCK_DMODEL),
-    #     order=(1, 0)
-    # )
-    q_ptrs = Q + offs_q[:, None] * stride_qm + offs_d[None, :] * stride_qk
+    do_ptrs0, do_ptrs1, do_ptrs2 = composed_ptrs(DO,
+                                                 stride_oz, stride_oh, stride_om, stride_ok,
+                                                 batch_index, off_h_q, cu_seqlens_q_start + offs_q,
+                                                 BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
+    o_ptrs0, o_ptrs1, o_ptrs2 = composed_ptrs(Out,
+                                              stride_oz, stride_oh, stride_om, stride_ok,
+                                              batch_index, off_h_q, cu_seqlens_q_start + offs_q,
+                                              BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
+
     if start_q + BLOCK_M2 <= seqlen_q:
-        q = load_fn(q_ptrs, None, ld_offs_d, seqlen_q, head_dim)
+        do0, do1, do2 = composed_load(do_ptrs0, do_ptrs1, do_ptrs2,
+                                      offs_q,
+                                      BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                      seqlen_q, head_dim,
+                                      other=0.0,
+                                      PADDED_ROW=False,
+                                      PADDED_COL=PADDED_HEAD,
+                                      TRANSPOSED=False)
+        o0, o1, o2 = composed_load(o_ptrs0, o_ptrs1, o_ptrs2,
+                                   offs_q,
+                                   BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                   seqlen_q, head_dim,
+                                   other=0.0,
+                                   PADDED_ROW=False,
+                                   PADDED_COL=PADDED_HEAD,
+                                   TRANSPOSED=False)
     else:
-        q = load_fn(q_ptrs, offs_q, ld_offs_d, seqlen_q, head_dim)
-    k_offset = off_h_k * stride_kh + batch_index * stride_kz + cu_seqlens_k_start * stride_kn
-    K += k_offset
-    kt_ptrs = K + offs_d[:, None] * stride_kk + offs_n[None, :] * stride_kn
-    # K_block_ptr = tl.make_block_ptr(
-    #     base=K,
-    #     shape=(head_dim, seqlen_k),
-    #     strides=(stride_kk, stride_kn),
-    #     offsets=(0, 0),
-    #     block_shape=(BLOCK_DMODEL, BLOCK_N2),
-    #     order=(0, 1)
-    # )
-    v_offset = off_h_k * stride_vh + batch_index * stride_vz + cu_seqlens_k_start * stride_vk
-    V += v_offset
-    vt_ptrs = V + offs_d[:, None] * stride_vn + offs_n[None, :] * stride_vk
-    # V_block_ptr = tl.make_block_ptr(
-    #     base=V,
-    #     shape=(head_dim, seqlen_k),
-    #     strides=(stride_vn, stride_vk),
-    #     offsets=(0, 0),
-    #     block_shape=(BLOCK_DMODEL, BLOCK_N2),
-    #     order=(0, 1)
-    # )
-    do_offset = off_h_q * stride_oh + batch_index * stride_oz + cu_seqlens_q_start * stride_om
-    DO += do_offset
-    # DO_block_ptr = tl.make_block_ptr(
-    #     base=DO,
-    #     shape=(seqlen_q, head_dim),
-    #     strides=(stride_om, stride_ok),
-    #     offsets=(start_q, 0),
-    #     block_shape=(BLOCK_M2, BLOCK_DMODEL),
-    #     order=(1, 0)
-    # )
-    do_ptrs = DO + offs_q[:, None] * stride_om + offs_d[None, :] * stride_ok
-    if start_q + BLOCK_M2 <= seqlen_q:
-        do = load_fn(do_ptrs, None, ld_offs_d, seqlen_q, head_dim)
-    else:
-        do = load_fn(do_ptrs, offs_q, ld_offs_d, seqlen_q, head_dim)
-    Di = tl.sum(o * do, axis=1)
-        
-    
+        do0, do1, do2 = composed_load(do_ptrs0, do_ptrs1, do_ptrs2,
+                                      offs_q,
+                                      BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                      seqlen_q, head_dim,
+                                      other=0.0,
+                                      PADDED_ROW=True,
+                                      PADDED_COL=PADDED_HEAD,
+                                      TRANSPOSED=False)
+        o0, o1, o2 = composed_load(o_ptrs0, o_ptrs1, o_ptrs2,
+                                   offs_q,
+                                   BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                   seqlen_q, head_dim,
+                                   other=0.0,
+                                   PADDED_ROW=True,
+                                   PADDED_COL=PADDED_HEAD,
+                                   TRANSPOSED=False)
     # pointer to row-wise quantities in value-like data
-    # D_ptrs = D + off_zh * max_seqlen_q
     l_ptrs = L + off_zh * max_seqlen_q
     if ENABLE_DROPOUT:
-        batch_philox_offset = philox_offset_base + off_zh * max_seqlen_q * max_seqlen_k
+        batch_philox_offset = philox_offset_base + off_zh * max_seqlen_q * philox_offset_stride
     else:
         batch_philox_offset = 0
 
     # initialize pointers to output
     dq_offset = batch_index * stride_dqz + off_h_q * stride_dqh + cu_seqlens_q_start * stride_dqm
     DQ += dq_offset
-    # DQ_block_ptr = tl.make_block_ptr(
-    #     base=DQ,
-    #     shape=(seqlen_q, head_dim),
-    #     strides=(stride_dqm, stride_dqk),
-    #     offsets=(start_q, 0),
-    #     block_shape=(BLOCK_M2, BLOCK_DMODEL),
-    #     order=(1, 0)
-    # )
     store_db = True
     if BIAS_TYPE == 0:
         B_block_ptr = 0
@@ -454,26 +551,37 @@ def bwd_fuse_kernel(
     # Check for OOB accesses on D and LSE
     q_boundary = tl.full((BLOCK_M2, ), seqlen_q, dtype=tl.int32)
     d_lse_ptrs_mask = offs_q < q_boundary
-    # Di = tl.load(D_ptrs + offs_q, mask=d_lse_ptrs_mask, other=0.0)
-    
+    Di = composed_inner_product_fp32(o0, o1, o2,
+                                     do0, do1, do2,
+                                     BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                     axis=1)
     l_i = tl.load(l_ptrs + offs_q, mask=d_lse_ptrs_mask, other=0.0)
 
+    idropout_p = ((dropout_p - 0.5) * 0xFFFFFFFF).to(tl.int32)
     dropout_scale = 1.0 / (1.0 - dropout_p) if ENABLE_DROPOUT else 1.0
-    dq = tl.zeros([BLOCK_M2, BLOCK_DMODEL], dtype=tl.float32)
+    dq0, dq1, dq2 = composed_zeros_2d(BLOCK_M2, BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
+    n_full_blocks = n_blocks - leading_masked_blocks - trailing_masked_blocks
     if n_full_blocks > 0:
         lo = 0
         hi = n_full_blocks * BLOCK_N2
-        dq = bwd_inner_dq(
-            dq, qk_scale, bias_scale,
+        dq0, dq1, dq2 = bwd_inner_dq(
+            dq0, dq1, dq2,
+            qk_scale, bias_scale,
             DB_block_ptr, store_db,
-            q, kt_ptrs, stride_kn, vt_ptrs, stride_vk, B_block_ptr,
-            do,
+            q0, q1, q2,
+            kt_ptrs0, kt_ptrs1, kt_ptrs2,
+            stride_kn,
+            vt_ptrs0, vt_ptrs1, vt_ptrs2,
+            stride_vk, B_block_ptr,
+            do0, do1, do2,
             Di, l_i,
             seqlen_q, seqlen_k, head_dim,
             start_q, lo, hi,
-            dropout_p, dropout_scale, philox_seed, batch_philox_offset, max_seqlen_k,
+            idropout_p, dropout_scale, philox_seed, batch_philox_offset, philox_offset_stride,
             BLOCK_M2,
-            BLOCK_DMODEL,
+            BLOCK_DMODEL0,
+            BLOCK_DMODEL1,
+            BLOCK_DMODEL2,
             BLOCK_N2,
             True,  # FULL_BLOCKS
             False,  # CAUSAL has zero effect for full blocks
@@ -485,32 +593,44 @@ def bwd_fuse_kernel(
         lo = n_full_blocks * BLOCK_N2
         hi = k_hi
         tl.debug_barrier()
-        dq = bwd_inner_dq(
-            dq, qk_scale, bias_scale,
+        dq0, dq1, dq2 = bwd_inner_dq(
+            dq0, dq1, dq2,
+            qk_scale, bias_scale,
             DB_block_ptr, store_db,
-            q, kt_ptrs, stride_kn, vt_ptrs, stride_vk, B_block_ptr,
-            do,
+            q0, q1, q2,
+            kt_ptrs0, kt_ptrs1, kt_ptrs2,
+            stride_kn,
+            vt_ptrs0, vt_ptrs1, vt_ptrs2,
+            stride_vk, B_block_ptr,
+            do0, do1, do2,
             Di, l_i,
             seqlen_q, seqlen_k, head_dim,
             start_q, lo, hi,
-            dropout_p, dropout_scale, philox_seed, batch_philox_offset, max_seqlen_k,
+            idropout_p, dropout_scale, philox_seed, batch_philox_offset, philox_offset_stride,
             BLOCK_M2,
-            BLOCK_DMODEL,
+            BLOCK_DMODEL0,
+            BLOCK_DMODEL1,
+            BLOCK_DMODEL2,
             BLOCK_N2,
             False,  # FULL_BLOCKS
             CAUSAL,
             ENABLE_DROPOUT,
             PADDED_HEAD,
             BIAS_TYPE)
-    dq = (dq * sm_scale).to(dq.type.element_ty)
-    mstore2d(dq,
-             BLOCK_M2,
-             BLOCK_DMODEL,
-             o_base=DQ,
-             o_start_row=start_q,
-             o_start_col=0,
-             o_rows=seqlen_q,
-             o_cols=head_dim,
-             stride_row=stride_dqm,
-             stride_col=stride_dqk)
+    dq0, dq1, dq2 = composed_mul_lhs(dq0, dq1, dq2,
+                                     sm_scale,
+                                     BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
+    dq0, dq1, dq2 = composed_to(dq0, dq1, dq2, dq0.type.element_ty)
+    composed_store(dq0, dq1, dq2,
+                   BLOCK_M2,
+                   BLOCK_DMODEL0,
+                   BLOCK_DMODEL1,
+                   BLOCK_DMODEL2,
+                   o_base=DQ,
+                   o_start_row=start_q,
+                   o_start_col=0,
+                   o_rows=seqlen_q,
+                   o_cols=head_dim,
+                   stride_row=stride_dqm,
+                   stride_col=stride_dqk)
 
