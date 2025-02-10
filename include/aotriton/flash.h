@@ -44,6 +44,7 @@ attn_fwd(T4 q, // batch_size x num_heads x seqlen_q x head_size
          T0 philox_offset_output,
          T4 encoded_softmax,
          bool is_causal,
+         T0 atomic_for_causal,
          AOTRITON_NS::Stream stream,
          FwdExtraArguments* extargs = nullptr);
 
@@ -67,6 +68,7 @@ attn_fwd_compact_varlen(T4 q, // 1 x num_heads x total_q x head_size, total_q :=
                         T0 philox_offset_output,
                         T4 encoded_softmax,
                         bool is_causal,
+                        T0 atomic_for_causal,
                         AOTRITON_NS::Stream stream,
                         FwdExtraArguments* extargs = nullptr);
 

@@ -174,9 +174,9 @@ attn_fwd(T4 q,
          T0 philox_offset_output,
          T4 encoded_softmax,
          bool is_causal,
+         T0 atomic_for_causal,
          AOTRITON_NS::Stream stream_wrap,
          FwdExtraArguments* extargs) {
-  auto null_persistent_atomic_counter = T0::get_null_tensor(DType::kInt32);
   auto null_t1 = T1::get_null_tensor(DType::kInt32);
   auto alibi_null_t2 = T2::get_null_tensor(q.dtype());
   return _attn_fwd_common(q,
@@ -200,7 +200,7 @@ attn_fwd(T4 q,
                           philox_offset_output,
                           encoded_softmax,
                           is_causal,
-                          null_persistent_atomic_counter,
+                          atomic_for_causal,
                           stream_wrap,
                           extargs);
 }
@@ -225,9 +225,9 @@ attn_fwd_compact_varlen(T4 q,            // 1 x num_heads x total_q x head_size,
                         T0 philox_offset_output,
                         T4 encoded_softmax,
                         bool is_causal,
+                        T0 atomic_for_causal,
                         AOTRITON_NS::Stream stream_wrap,
                         FwdExtraArguments* extargs) {
-  auto null_persistent_atomic_counter = T0::get_null_tensor(DType::kInt32);
   auto alibi_null_t2 = T2::get_null_tensor(q.dtype());
   return _attn_fwd_common(q,
                           k,
@@ -250,7 +250,7 @@ attn_fwd_compact_varlen(T4 q,            // 1 x num_heads x total_q x head_size,
                           philox_offset_output,
                           encoded_softmax,
                           is_causal,
-                          null_persistent_atomic_counter,
+                          atomic_for_causal,
                           stream_wrap,
                           extargs);
 }

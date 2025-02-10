@@ -53,6 +53,7 @@ namespace pyaotriton {
               py::arg("philox_offset_output"),
               py::arg("encoded_softmax"),
               py::arg("is_causal"),
+              py::arg("atomic_for_causal"),
               py::arg("stream") = nullptr,
               py::arg("extargs") = FwdExtraArguments());
         m.def("attn_fwd_compact_varlen",
@@ -78,6 +79,7 @@ namespace pyaotriton {
               py::arg("philox_offset_output"),
               py::arg("encoded_softmax"),
               py::arg("is_causal"),
+              py::arg("atomic_for_causal"),
               py::arg("stream") = nullptr,
               py::arg("extargs") = FwdExtraArguments());
         m.def("attn_bwd",
