@@ -16,7 +16,7 @@ class KernelSignature(object):
         self._func_selections = func_selections
         fsel_dict = ArgumentSelection.build_fsel_dict(func_selections)
         self._perf_selections = [p.substitute_if_lambda(gpu, fsel_dict) for p in perf_selections]
-        self._selections = list(func_selections) + list(perf_selections)
+        self._selections = list(self._func_selections) + list(self._perf_selections)
         self._compiler_options = {} if compiler_options is None else compiler_options
         self._gpu = gpu
         self._arch = AOTRITON_GPU_ARCH_TUNING_STRING[gpu]
@@ -88,6 +88,7 @@ class KernelSignature(object):
         l = [None] * len(self.arguments)
         for k, v in sig.items():
             l[k] = v
+        assert not any(element is None for element in l)
         return l
 
     def codegen_perf_object(self) -> str:

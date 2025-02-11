@@ -148,11 +148,8 @@ class KernelDescription(object):
         return itertools.product(*self._func_selections)
 
     def gen_perf_selections(self, gpu, fsels) -> 'tuple[ArgumentSelection]':
-        fsel_dict = ArgumentSelection.build_fsel_dict(fsels)
-        def format_element(elem):
-            return elem(fsel_dict) if callable(elem) else elem
-        for tups in itertools.product(*self._perf_selections):
-            yield tuple([format_element(e) for e in tups])
+        # Function options is handled at KernelSignature
+        return itertools.product(*self._perf_selections)
 
     def gen_tuned_perf_selections(self,
                                   tuned_db : 'KernelTuningDatabase',

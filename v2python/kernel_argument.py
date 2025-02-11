@@ -4,6 +4,7 @@
 import numpy as np
 from enum import Enum
 from .object_desc import ObjectFileDescription
+from copy import deepcopy
 
 '''
 Note: we category the Triton kernel arguments into three types.
@@ -205,7 +206,9 @@ class ArgumentSelection(object):
     def __init__(self, meta : ArgumentMetadata, selection_index : int):
         self._meta = meta
         self._selection_index = selection_index
-        self._selection_value = self._meta.select(selection_index)
+        self._selection = self._meta.select(selection_index)
+        self._is_lambda = callable(self._selection)
+        self._selection_value = self._selection if not self._is_lambda else None
 
     @property
     def meta(self):
@@ -225,15 +228,20 @@ class ArgumentSelection(object):
 
     @property
     def argument_value(self):
+        assert self._selection_value is not None
         return self._selection_value
 
     @property
     def is_lambda(self):
-        return callable(self._selection_value)
+        return self._is_lambda
 
     def substitute_if_lambda(self, gpu, fsel_dict):
         if self.is_lambda:
-            self._selection_value = self._selection_value(gpu, fsel_dict)
+            copy = deepcopy(self)
+            copy._selection_value = copy._selection(gpu, fsel_dict)
+            assert copy._selection_value is not None
+            # print(f"substitute_if_lambda to {copy._selection_value} {fsel_dict=}")
+            return copy
         return self
 
     @property
@@ -242,7 +250,7 @@ class ArgumentSelection(object):
 
     @property
     def triton_signature(self):
-        return str(self._selection_value)
+        return str(self.argument_value)
 
     # compact_signature must be valid file name
     @property
@@ -281,4 +289,10 @@ class TunedArgument(ArgumentSelection):
         self._meta = meta
         assert not meta.is_functional, f'Functional argument cannot be tuned'
         self._selection_index = None
-        self._selection_value = bool(value) if meta.is_bool else value
+        if callable(value):
+            self._selection = value
+            self._is_lambda = True
+            self._selection_value = None
+        else:
+            self._is_lambda = False
+            self._selection_value = bool(value) if meta.is_bool else value
