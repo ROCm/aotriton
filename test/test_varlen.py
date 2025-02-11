@@ -112,9 +112,6 @@ def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dro
 @pytest.mark.parametrize('N_HEADS', [1, 4] if not FOR_RELEASE else [3])
 @pytest.mark.parametrize('D_HEAD', POT_HEADDIMS + NPOT_HEADDIMS + PRIME_HEADDIMS)
 @pytest.mark.parametrize('n_seqlen', range(1, 24, 5) if not FOR_RELEASE else range(2, 24, 5))
-# @pytest.mark.parametrize('D_HEAD', [16])  # Faster "collecting items"
-@pytest.mark.parametrize('n_seqlen', range(1, 24, 5))
-# @pytest.mark.parametrize('n_seqlen', [2])
 @pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
 @pytest.mark.parametrize('dropout_p', [0.0, 0.5])
 @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16, torch.float32])

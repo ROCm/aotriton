@@ -210,8 +210,8 @@ def attn_fwd_compact_varlen(q, k, v,
     qview, qdevm = mk_aotensor(q)
     kview, kdevm = mk_aotensor(k)
     vview, vdevm = mk_aotensor(v)
-    cuqview, cuqdevm = mk_aotensor(cu_seqlens_q),
-    cukview, cukdevm = mk_aotensor(cu_seqlens_k),
+    cuqview, cuqdevm = mk_aotensor(cu_seqlens_q)
+    cukview, cukdevm = mk_aotensor(cu_seqlens_k)
     bview, bdevm = mk_aotensor(b, if_empty_then_like=q)
     Mview, Mdevm = mk_aotensor(M)
     oview, odevm = mk_aotensor(o)
@@ -224,11 +224,11 @@ def attn_fwd_compact_varlen(q, k, v,
     err = fa_forward_compact_varlen(qview,
                                     kview,
                                     vview,
+                                    bview,
                                     cuqview,
                                     cukview,
                                     max_seqlen_q,
                                     max_seqlen_k,
-                                    bview,
                                     float(sm_scale),
                                     Mview,
                                     oview,
@@ -252,8 +252,8 @@ def attn_bwd_compact_varlen(q, k, v,
     qview, qdevm = mk_aotensor(q)
     kview, kdevm = mk_aotensor(k)
     vview, vdevm = mk_aotensor(v)
-    cuqview, cuqdevm = mk_aotensor(cu_seqlens_q),
-    cukview, cukdevm = mk_aotensor(cu_seqlens_k),
+    cuqview, cuqdevm = mk_aotensor(cu_seqlens_q)
+    cukview, cukdevm = mk_aotensor(cu_seqlens_k)
     bview, bdevm = mk_aotensor(b, if_empty_then_like=q)
     oview, odevm = mk_aotensor(o)
     doutview, doutdevm = mk_aotensor(dout)
