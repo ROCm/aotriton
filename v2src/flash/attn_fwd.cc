@@ -80,6 +80,7 @@ _attn_fwd_common(T4 q,
     return hipErrorInvalidValue;
   }
   int bias_type = 0;
+  // TODO: Replace magic numbers used in BIAS_TYPE, CAUSAL_TYPE, PERSISTENT_TYPE
   if (b) {
     bias_type = 1;
   }
@@ -119,7 +120,7 @@ _attn_fwd_common(T4 q,
     .INT8_KV = false,
     .USE_P_SCALE = false,
     .persistent_atomic_counter = &persistent_atomic_counter,
-    .Num_CU = 80,
+    .Num_CU = params.PERSISTENT_TYPE == 0 ? 80 : getMultiProcessorCount(stream),
     .Batch = batch,
   };
 #if AOTRITON_BUILD_FOR_TUNING
@@ -142,6 +143,11 @@ _attn_fwd_common(T4 q,
 #endif
   if (err != hipSuccess) {
     return err;
+  }
+  // Note: PERSISTENT_TYPE is compiled as a perf tuning option, even if it
+  //       drastically changes the kernel behaviors
+  if (params.PERSISTENT_TYPE == 2 && !persistent_atomic_counter) {
+    return hipErrorInvalidValue;  // must have persistent_atomic_counter set
   }
   err = context.launch(params, stream);
   if (err != hipSuccess) {
