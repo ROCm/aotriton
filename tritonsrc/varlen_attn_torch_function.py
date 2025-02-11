@@ -11,14 +11,18 @@ from flash import (
     attn_fwd as bare_attn_fwd,
     bwd_preprocess_varlen as bare_bwd_preprocess_varlen,
     bwd_kernel_dk_dv as bare_bwd_kernel_dk_dv,
-    bwd_kernel_dq as bare_bwd_kernel_dq
+    bwd_kernel_dq as bare_bwd_kernel_dq,
+    debug_simulate_encoded_softmax,
 )
 from attn_torch_function import (
         DEFAULT_PHILOX_SEED,
         DEFAULT_PHILOX_OFFSET_1,
         DEFAULT_PHILOX_OFFSET_2,
         DEFAULT_PHILOX_OFFSET,
-        tuned_attn_fwd
+        tuned_attn_fwd,
+        PersistentType,
+        CausalType,
+        AttentionExtraArgs,
 )
 
 def factor_head_dim(head_dim, n_pieces=3):
@@ -29,7 +33,7 @@ def factor_head_dim(head_dim, n_pieces=3):
         # Technically Triton now supports all power-of-two, lowering to 1
         # But PyTorch pads all inputs to multiple of 8.
         # In addition we do not have the capability to support that many choices
-        max_po2 = max(8, max_po2)
+        max_po2 = max(16, max_po2)
         ret[i] = max_po2
         # print(f"\t{i=}: {Lk=} {max_po2=} left: {Lk - max_po2}")
         Lk -= max_po2
@@ -50,8 +54,11 @@ class _varlen_attention(torch.autograd.Function):
 
     # TODO: rename seqlen_q -> seqlens_q
     @staticmethod
-    def forward(ctx, q, k, v, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax,
-                autotune=False, return_autotune=False):
+    def forward(ctx, q, k, v, seqlen_q, seqlen_k, causal, sm_scale, dropout_p,
+                attn_extra_args=AttentionExtraArgs()):
+        return_encoded_softmax = attn_extra_args.return_encoded_softmax
+        autotune = attn_extra_args.autotune
+        return_autotune = attn_extra_args.return_autotune
         dtype = q.dtype
         # shape constraints
         Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
@@ -70,17 +77,36 @@ class _varlen_attention(torch.autograd.Function):
         cu_seqlens_k = torch.tensor([0] + np.cumsum(seqlen_k).tolist(), dtype=torch.int32, device=q.device)
         o = torch.zeros_like(q)
 
-        grid = lambda META: (
-            triton.cdiv(max_seqlen_q, META['BLOCK_M']),
-            num_heads,
-            batch,
-        )
+        persistent_type = attn_extra_args.persistent_type
+        if persistent_type == PersistentType.AUTOSELECT:
+            persistent_type = PersistentType.NONE if not causal else PersistentType.DYNAMIC
+
+        null_tensor = torch.empty((0), device=q.device, dtype=torch.int32)
+        if persistent_type == PersistentType.DYNAMIC:
+            persistent_atomic_counter = torch.zeros([1], device=q.device, dtype=torch.int32)
+        else:
+            persistent_atomic_counter = null_tensor
+
+        if persistent_type == PersistentType.NONE:
+            grid = lambda META: (
+                triton.cdiv(max_seqlen_q, META['BLOCK_M']),
+                num_head_q,
+                batch,
+            )
+            Num_CU = 0
+        else:
+            Num_CU = torch.cuda.get_device_properties(q.device).multi_processor_count
+            grid = lambda META: (min(Num_CU * META['GRID_CU_MULTIP'],
+                                     triton.cdiv(max_seqlen_q, META['BLOCK_M']) * num_head_q * batch), )
         # Fixed M is (Batch, num_heads, seqlen)
         # Varlen M then will be (batch, num_heads, max_seqlen_q)
         # TODO: Ensure this tensor follows PyTorch's convention
-        M = torch.zeros((batch, num_heads, max_seqlen_q), device=q.device, dtype=torch.float32)
+        M = torch.zeros((batch, num_head_q, max_seqlen_q), device=q.device, dtype=torch.float32)
+        if attn_extra_args.fillnan:
+            for t in (o, M):
+                t.fill_(float('nan'))
         if return_encoded_softmax:
-            encoded_softmax = torch.ones((batch, num_heads, max_seqlen_q, max_seqlen_k),
+            encoded_softmax = torch.ones((batch, num_head_q, max_seqlen_q, max_seqlen_k),
                     device=q.device,
                     dtype=_varlen_attention.DEBUG_MASK_DTYPE) * 114.514
             print(f'{encoded_softmax.shape=}')
@@ -110,6 +136,12 @@ class _varlen_attention(torch.autograd.Function):
 
         b = torch.empty((0,0,0,0), device=q.device, dtype=q.dtype)
         BIAS_TYPE = 0
+
+        # TODO alibi_slopes
+        alibi_slopes = torch.empty((0,0), device=q.device, dtype=q.dtype)
+
+        # TODO: int8
+        q_descale = k_descale = p_scale = p_descale = v_descale = 0
 
         use_small_block = dropout_p > 0.0 or return_encoded_softmax
         use_medium_block = False # reserved
@@ -150,41 +182,80 @@ class _varlen_attention(torch.autograd.Function):
             RETURN_ENCODED_SOFTMAX=encoded_softmax is not None
             # DEBUG
             BLOCK_M = BLOCK_N = 16
-            print(f'{BLOCK_M=} {BLOCK_N=} {RETURN_ENCODED_SOFTMAX=} seqlen_q={seqlen_q} seqlen_k={seqlen_k} {cu_seqlens_q=} {cu_seqlens_k=} {q.shape=} {q.stride()=}',
+            print(f'{head_dim_rounded=} {BLOCK_M=} {BLOCK_N=} {RETURN_ENCODED_SOFTMAX=} seqlen_q={seqlen_q} seqlen_k={seqlen_k} {cu_seqlens_q=} {cu_seqlens_k=} {q.shape=} {q.stride()=}',
                     flush=True)
             bare_attn_fwd[grid](
-                q, k, v, b, sm_scale, M, o,
-                q.stride(0), q.stride(1), q.stride(2), q.stride(3),
-                k.stride(0), k.stride(1), k.stride(2), k.stride(3),
-                v.stride(0), v.stride(1), v.stride(2), v.stride(3),
-                b.stride(0), b.stride(1), b.stride(2), b.stride(3),
-                o.stride(0), o.stride(1), o.stride(2), o.stride(3),
-                num_head_q=num_head_q,
-                num_head_k=num_head_k,
+                # Basic SDPA
+                q, k, v, b, alibi_slopes, sm_scale, M, o,
+                q_descale, k_descale, p_scale, p_descale, v_descale,
+                *q.stride(),
+                *k.stride(),
+                *v.stride(),
+                *o.stride(),
+                *b.stride(),
+                *alibi_slopes.stride(),
+                # MQA/GQA
+                Num_head_q=num_head_q,
+                Num_head_k=num_head_k,
+                # Varlen
+                Num_seqlens=len(cu_seqlens_q) - 1,
                 cu_seqlens_q=cu_seqlens_q,
                 cu_seqlens_k=cu_seqlens_k,
-                num_seqlens=len(cu_seqlens_q),
-                max_seqlen_q=max_seqlen_q,
-                max_seqlen_k=max_seqlen_k,
-                head_dim=Lk,
+                Max_seqlen_q=max_seqlen_q,
+                Max_seqlen_k=max_seqlen_k,
+                # Head Dimensions
+                BLOCK_DMODEL=head_dim_rounded,
+                Head_dim=Lk,
+                PADDED_HEAD=padded_head,
+                # droput and PRNG
+                ENABLE_DROPOUT=dropout_p > 0.0,
                 dropout_p=dropout_p,
                 philox_seed_ptr=philox_seed,
                 philox_offset1=philox_offset1,
                 philox_offset2=philox_offset2,
                 philox_seed_output=philox_seed_output,
                 philox_offset_output=philox_offset_output,
-                encoded_softmax=encoded_softmax,
-                CAUSAL=causal,
-                BLOCK_M=BLOCK_M,
-                BLOCK_DMODEL=head_dim_rounded,
-                BLOCK_N=BLOCK_N,
-                pre_load_v=False,
-                ENABLE_DROPOUT=dropout_p > 0.0,
-                RETURN_ENCODED_SOFTMAX=encoded_softmax is not None,
-                PADDED_HEAD=padded_head,
+                RETURN_ENCODED_SOFTMAX=False,
+                encoded_softmax=None,
+                # Causal
+                CAUSAL_TYPE=CausalType.TOP_LEFT if causal else CausalType.NONE,
+                # bias
                 BIAS_TYPE=BIAS_TYPE,
+                # INT8
+                INT8=False,
+                INT8_KV=False,
+                USE_P_SCALE=False,
+                # Alibi
+                USE_ALIBI=False,
+                # Persistent related arguments
+                PERSISTENT_TYPE=persistent_type,
+                persistent_atomic_counter=persistent_atomic_counter,
+                Num_CU=Num_CU,
+                GRID_CU_MULTIP=2,
+                Batch=batch,
+                # Performance
+                BLOCK_M=BLOCK_M,
+                BLOCK_N=BLOCK_N,
+                PRE_LOAD_V=False,
                 num_stages=1,
             )
+        if return_encoded_softmax:
+            grid = lambda META: (
+                triton.cdiv(encoded_softmax.shape[2], META['BLOCK_M']),
+                encoded_softmax.shape[1],
+                encoded_softmax.shape[0],
+            )
+            debug_simulate_encoded_softmax[grid](encoded_softmax,
+                                                 *encoded_softmax.stride(),
+                                                 dropout_p,
+                                                 Num_head_q=encoded_softmax.shape[1],
+                                                 Max_seqlen_q=encoded_softmax.shape[2],
+                                                 Max_seqlen_k=encoded_softmax.shape[3],
+                                                 philox_seed_ptr=philox_seed,
+                                                 philox_offset1=philox_offset1,
+                                                 philox_offset2=philox_offset2,
+                                                 BLOCK_M=32,
+                                                 BLOCK_N=32)
 
         ctx.autotune = autotune
         ctx.return_autotune = return_autotune
@@ -196,7 +267,7 @@ class _varlen_attention(torch.autograd.Function):
         else:
             tuning_result = None
             block_m = min(128, q.shape[2], k.shape[2])
-        grid = (triton.cdiv(max_seqlen_q, block_m), num_heads, batch)
+        grid = (triton.cdiv(max_seqlen_q, block_m), num_head_q, batch)
         print(f'{grid=}')
         ctx.save_for_backward(q, k, v, b, o, M)
         ctx.seqlen_q = seqlen_q
@@ -215,6 +286,7 @@ class _varlen_attention(torch.autograd.Function):
         ctx.encoded_softmax = encoded_softmax # FIXME: for debugging only
         ctx.bias_type = 0
         ctx.tuning_result = [('attn_fwd_varlen', tuning_result)] if tuning_result is not None else None
+        ctx.attn_extra_args = attn_extra_args
         if ctx.tuning_result is not None:
             for kernel_name, best in ctx.tuning_result:
                 print(f'{kernel_name=} {best.kwargs=} {best.num_warps=} {best.num_stages=}')
@@ -229,6 +301,7 @@ class _varlen_attention(torch.autograd.Function):
         head_dim_factors = factor_head_dim(Lk)
         head_dim_rounded = sum(head_dim_factors)
         padded_head = head_dim_rounded != ctx.head_dim
+        attn_extra_args = ctx.attn_extra_args
         philox_seed = ctx.philox_seed
         philox_offset = ctx.philox_offset
 
@@ -237,7 +310,7 @@ class _varlen_attention(torch.autograd.Function):
         dv = torch.empty_like(v)
         db = torch.empty_like(b)
         delta = torch.empty_like(L)
-        if True: # attn_extra_args.fillnan:
+        if attn_extra_args.fillnan:
             for t in (dq, dk, dv, db, delta):
                 t.fill_(float('nan'))
 
