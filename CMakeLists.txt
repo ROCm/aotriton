@@ -102,13 +102,12 @@ if(NOT AOTRITON_NOIMAGE_MODE)
   # message("AOTRITON_TRITON_EGGLINK ${AOTRITON_TRITON_EGGLINK}")
   set(AOTRITON_TRITON_SO "${VENV_SITE}/triton/_C/libtriton.so")
 
-  add_custom_command(OUTPUT "${AOTRITON_TRITON_EGGLINK}"
+  add_custom_command(OUTPUT "${AOTRITON_TRITON_SO}"
     COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} TRITON_BUILD_DIR=${TRITON_BUILD_DIR} "${VENV_DIR}/bin/python" -m pip install .
     # COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} python -m pip show triton
     WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/third_party/triton/python/"
-    BYPRODUCTS "${AOTRITON_TRITON_SO}"
   )
-  add_custom_target(aotriton_venv_triton ALL DEPENDS ${AOTRITON_TRITON_SO})
+  add_custom_target(aotriton_venv_triton ALL DEPENDS "${AOTRITON_TRITON_SO}")
 endif(NOT AOTRITON_NOIMAGE_MODE)
 
 add_subdirectory(v2src)
