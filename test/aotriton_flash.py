@@ -125,7 +125,7 @@ def attn_fwd(q, k, v, b, sm_scale, M, o,
                      offsetoutview,
                      esmview,
                      is_causal,
-                     atomic,
+                     atomicview,
                      Stream(),
                      extargs)
     if AOTRITON_TORCH_ONLY_USE_CPU:
@@ -240,7 +240,7 @@ def attn_fwd_compact_varlen(q, k, v,
                                     offsetoutview,
                                     esmview,
                                     is_causal,
-                                    atomic,
+                                    atomicview,
                                     Stream())
     # print(f'{err=}')
     return err
