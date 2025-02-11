@@ -61,18 +61,31 @@ class _attention_varlen(torch.autograd.Function):
             if encoded_softmax is not None:
                 print(f'{encoded_softmax.shape=} {encoded_softmax.dtype=}')
 
-        philox_seed = DEFAULT_PHILOX_SEED
-        philox_offset1 = torch.tensor([DEFAULT_PHILOX_OFFSET_1], device=q.device, dtype=torch.uint32)
-        philox_offset2 = DEFAULT_PHILOX_OFFSET_2
-        philox_seed_output = torch.tensor([0], device=q.device, dtype=torch.uint64)
-        philox_offset_output = torch.tensor([0], device=q.device, dtype=torch.uint64)
+        philox_null = torch.empty([0], device=q.device, dtype=torch.uint64)
+        if dropout_p > 0.0:
+            philox_seed = DEFAULT_PHILOX_SEED
+            philox_offset1 = torch.tensor([DEFAULT_PHILOX_OFFSET_1], device=q.device, dtype=torch.uint64)
+            philox_offset2 = DEFAULT_PHILOX_OFFSET_2
+            philox_seed_output = torch.tensor([0], device=q.device, dtype=torch.uint64)
+            philox_offset_output = torch.tensor([0], device=q.device, dtype=torch.uint64)
+        else:
+            philox_seed = philox_null
+            philox_offset1 = philox_null
+            philox_offset2 = 0
+            philox_seed_output = philox_null
+            philox_offset_output = philox_null
+
+        if causal:
+            atomic = torch.zeros([1], device=q.device, dtype=torch.int32)
+        else:
+            atomic = torch.empty([0], device=q.device, dtype=torch.int32)
 
         attn_fwd_compact_varlen(q, k, v,
                                 cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
                                 b, sm_scale, M, o,
                                 dropout_p, philox_seed, philox_offset1, philox_offset2,
                                 philox_seed_output, philox_offset_output,
-                                encoded_softmax, causal);
+                                encoded_softmax, causal, atomic);
 
         ctx.save_for_backward(q, k, v, b, o, M)
         ctx.seqlens_q = seqlens_q

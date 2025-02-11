@@ -106,17 +106,22 @@ class _attention(torch.autograd.Function):
             philox_seed_output = philox_null
             philox_offset_output = philox_null
 
+        if causal:
+            atomic = torch.zeros([1], device=q.device, dtype=torch.int32)
+        else:
+            atomic = torch.empty([0], device=q.device, dtype=torch.int32)
+
         # Check GPU kernel accepts nullptr for philox_*_output
         if attn_extra_args.is_testing:
             attn_fwd(q, k, v, b, sm_scale, M, o,
                      dropout_p, philox_seed, philox_offset1, philox_offset2,
                      philox_null, philox_null,
-                     encoded_softmax, causal)
+                     encoded_softmax, causal, atomic)
 
         ret = attn_fwd(q, k, v, b, sm_scale, M, o,
                        dropout_p, philox_seed, philox_offset1, philox_offset2,
                        philox_seed_output, philox_offset_output,
-                       encoded_softmax, causal)
+                       encoded_softmax, causal, atomic)
         assert ret == hipError_t.hipSuccess, ret
         tuning_result = None
 

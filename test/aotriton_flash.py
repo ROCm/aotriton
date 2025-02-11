@@ -93,7 +93,7 @@ else:
 def attn_fwd(q, k, v, b, sm_scale, M, o,
              dropout_p, philox_seed, philox_offset1, philox_offset2,
              philox_seed_output, philox_offset_output,
-             encoded_softmax, is_causal,
+             encoded_softmax, is_causal, atomic,
              extargs=None):
     extargs = FwdExtraArguments() if extargs is None else extargs
     qview, qdevm = mk_aotensor(q)
@@ -107,6 +107,7 @@ def attn_fwd(q, k, v, b, sm_scale, M, o,
     seedoutview, seedoutdevm = mk_aotensor(philox_seed_output)
     offsetoutview, offsetoutdevm = mk_aotensor(philox_offset_output)
     esmview, esmdevm = mk_aotensor(encoded_softmax, if_empty_then_like=q)
+    atomicview, atomicdevm = mk_aotensor(atomic)
     if AOTRITON_TORCH_ONLY_USE_CPU:
         hipDeviceSynchronize()
     err = fa_forward(qview,
@@ -124,6 +125,7 @@ def attn_fwd(q, k, v, b, sm_scale, M, o,
                      offsetoutview,
                      esmview,
                      is_causal,
+                     atomic,
                      Stream(),
                      extargs)
     if AOTRITON_TORCH_ONLY_USE_CPU:
@@ -204,7 +206,7 @@ def attn_fwd_compact_varlen(q, k, v,
         b, sm_scale, M, o,
         dropout_p, philox_seed, philox_offset1, philox_offset2,
         philox_seed_output, philox_offset_output,
-        encoded_softmax, is_causal):
+        encoded_softmax, is_causal, atomic):
     qview, qdevm = mk_aotensor(q)
     kview, kdevm = mk_aotensor(k)
     vview, vdevm = mk_aotensor(v)
@@ -218,6 +220,7 @@ def attn_fwd_compact_varlen(q, k, v,
     seedoutview, seedoutdevm = mk_aotensor(philox_seed_output)
     offsetoutview, offsetoutdevm = mk_aotensor(philox_offset_output)
     esmview, esmdevm = mk_aotensor(encoded_softmax, if_empty_then_like=q)
+    atomicview, atomicdevm = mk_aotensor(atomic)
     err = fa_forward_compact_varlen(qview,
                                     kview,
                                     vview,
@@ -237,6 +240,7 @@ def attn_fwd_compact_varlen(q, k, v,
                                     offsetoutview,
                                     esmview,
                                     is_causal,
+                                    atomic,
                                     Stream())
     # print(f'{err=}')
     return err
