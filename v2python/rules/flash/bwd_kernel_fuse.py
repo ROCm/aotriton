@@ -43,10 +43,8 @@ class bwd_kernel_fuse(FlashKernel):
         'ENABLE_DROPOUT',
         'PADDED_HEAD',
         'BIAS_TYPE',
-        'BLOCK_M1',
-        'BLOCK_N1',
-        'BLOCK_M2',
-        'BLOCK_N2',
+        'BLOCK_M',
+        'BLOCK_N',
     ]
     match_fwd = lambda aname : get_possible_choices(attn_fwd, aname)
     TENSOR_STRIDE_INPUTS = {
@@ -88,10 +86,8 @@ class bwd_kernel_fuse(FlashKernel):
         frozenset(['BIAS_TYPE']) : [0, 1],
     }
     PERF_CHOICES = {
-        frozenset(['BLOCK_M1']) : match_fwd('BLOCK_M'),
-        frozenset(['BLOCK_N1']) : match_fwd('BLOCK_N'),
-        frozenset(['BLOCK_M2']) : match_fwd('BLOCK_M'),
-        frozenset(['BLOCK_N2']) : match_fwd('BLOCK_N'),
+        frozenset(['BLOCK_M']) : match_fwd('BLOCK_M'),
+        frozenset(['BLOCK_N']) : match_fwd('BLOCK_N'),
     }
     EXPECTED_IDENTICAL_TENSOR_STRIDES = [
     ]

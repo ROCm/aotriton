@@ -493,8 +493,9 @@ class _attention(torch.autograd.Function):
                                                  Num_head_q=encoded_softmax.shape[1],
                                                  Max_seqlen_q=encoded_softmax.shape[2],
                                                  Max_seqlen_k=encoded_softmax.shape[3],
-                                                 philox_seed_ptr=philox_seed_output,
-                                                 philox_offset_base_ptr=philox_offset_output,
+                                                 philox_seed_ptr=philox_seed,
+                                                 philox_offset1=philox_offset1,
+                                                 philox_offset2=philox_offset2,
                                                  BLOCK_M=32,
                                                  BLOCK_N=32)
             print(f'{encoded_softmax=}')
@@ -959,9 +960,9 @@ class _attention(torch.autograd.Function):
         # BLK_SLICE_FACTOR = 2
         # BLOCK_M1, BLOCK_N1, BLOCK_M2, BLOCK_N2 = 16, 16, 16, 16
         # BLK_SLICE_FACTOR = 1
-        grid = lambda META: (max(triton.cdiv(max_seqlen_k, META['BLOCK_N1']), triton.cdiv(max_seqlen_q, META['BLOCK_M2'])), num_head_q, q.shape[0])
         if k.requires_grad and v.requires_grad and q.requires_grad:
             if ctx.autotune:
+                grid = lambda META: (max(triton.cdiv(max_seqlen_k, META['BLOCK_M1']), triton.cdiv(max_seqlen_q, META['BLOCK_M2'])), num_head_q, batch)
                 tuned_attn_bwd[grid](
                         q, k, v, b, ctx.sm_scale,
                         o, do,
@@ -1000,7 +1001,8 @@ class _attention(torch.autograd.Function):
                     attn_extra_args.report_best_config('attn_bwd', best)
             else:
                 print('Running bare_bwd_fuse_kernel')
-                bare_bwd_fuse_kernel[grid](
+                grid_fuse = lambda META: (triton.cdiv(max_seqlen_k, META['BLOCK_N']) + triton.cdiv(max_seqlen_q, META['BLOCK_N']) * (num_head_q//num_head_k), num_head_k, q.shape[0])
+                bare_bwd_fuse_kernel[grid_fuse](
                         q, k, v, b, ctx.sm_scale,
                         o, do,
                         dk, dv, dq, db,
@@ -1031,10 +1033,8 @@ class _attention(torch.autograd.Function):
                         ENABLE_DROPOUT=ctx.dropout_p > 0.0,
                         PADDED_HEAD=padded_head,
                         BIAS_TYPE=ctx.bias_type,
-                        BLOCK_M1=BLOCK_M1,
-                        BLOCK_N1=BLOCK_N1,
-                        BLOCK_M2=BLOCK_M2,
-                        BLOCK_N2=BLOCK_N2,
+                        BLOCK_M=BLOCK_M,
+                        BLOCK_N=BLOCK_N,
                         )
         return dq, dk, dv, None if db.numel() == 0 else db, None, None, None, None, None, None, None
 
