@@ -372,8 +372,9 @@ bwd_kernel_fuse(T4 q,
                 T4 dout,
                 T4 dk,
                 T4 dv,
+                T4 dq,
+                T4 db,
                 T2 softmax_lse,
-                T2 delta,
                 float dropout_p,
                 T0 philox_seed,
                 T0 philox_offset1,
@@ -384,9 +385,12 @@ bwd_kernel_fuse(T4 q,
   hipError_t err;
   auto stream = stream_wrap.native();
   auto arch = getArchFromStream(stream);
-  auto grid_calculator = [max_seqlen_k](const BwdKernelDkDvParams& params) -> dim3 {
+  int num_head_q = q.size(1);
+  int num_head_k = k.size(1);
+  auto grid_calculator = [max_seqlen_k](const BwdKernelFuseParams& params) -> dim3 {
     dim3 grid {
-      AOTRITON_NS::cdiv<uint32_t>(max_seqlen_k, params.BLOCK_N),
+      AOTRITON_NS::cdiv<uint32_t>(max_seqlen_k, params.BLOCK_N) +
+      AOTRITON_NS::cdiv<uint32_t>(max_seqlen_q, params.BLOCK_N) * (num_head_q / num_head_k),
       uint32_t(params.K->size(1)),
       params.num_seqlens == 0 ? uint32_t(params.Q->size(0)) : params.num_seqlens,
     };
@@ -395,9 +399,7 @@ bwd_kernel_fuse(T4 q,
   };
   constexpr int kMinHeadDimCompiled = 16;
   int head_size = q.size(3);
-  int num_head_q = q.size(1);
-  int num_head_k = k.size(1);
-  const auto& compiled_head_dims = BwdKernelDkDvMetadata::get_BLOCK_DMODEL_choices();
+  const auto& compiled_head_dims = BwdKernelFuseMetadata::get_BLOCK_DMODEL_choices();
   int head_size_rounded = round_value(head_size, compiled_head_dims);
   if (head_size_rounded < 0) {
 #if AOTRITON_VERBOSE
@@ -416,7 +418,7 @@ bwd_kernel_fuse(T4 q,
   if (b) {
     bias_type = 1;
   }
-  BwdKernelDkDvParams params = {
+  BwdKernelFuseParams params = {
     .Q = &q,
     .K = &k,
     .V = &v,
@@ -425,9 +427,10 @@ bwd_kernel_fuse(T4 q,
     .DO = &dout,
     .DK = &dk,
     .DV = &dv,
+    .DQ = &dq,
+    .DB = &db,
     .sm_scale = sm_scale,
     .L = &softmax_lse,
-    .D = &delta,
     .num_head_q = num_head_q,
     .num_head_k = num_head_k,
     .head_dim = head_size,
@@ -448,21 +451,21 @@ bwd_kernel_fuse(T4 q,
   };
 #if AOTRITON_BUILD_FOR_TUNING
   if (extargs) {
-    params._has_preferred_kernel = extargs->dkdv.force_kernel_index;
+    params._has_preferred_kernel = extargs->fuse.force_kernel_index;
     if (params._has_preferred_kernel == CppTuneSpecialKernelIndex::kSkipGPUCall) {
-        // std::cerr << "extargs->dkdv.force_kernel_index = " << extargs->dkdv.force_kernel_index << " EKI" << std::endl;
+        // std::cerr << "extargs->fuse.force_kernel_index = " << extargs->fuse.force_kernel_index << " EKI" << std::endl;
         return hipSuccess;
     }
   }
 #endif
-  BwdKernelDkDvContext context;
+  BwdKernelFuseContext context;
   context.grid_calculator = grid_calculator;
   err = context.lookup_optimal(params, arch);
 #if AOTRITON_BUILD_FOR_TUNING
   if (extargs) {
-    extargs->dkdv.total_number_of_kernels = params._total_number_of_kernels;
-    extargs->dkdv.selected_kernel_psels = params._preferred_kernel_psels;
-    extargs->dkdv.selected_kernel_copts = params._preferred_kernel_copts;
+    extargs->fuse.total_number_of_kernels = params._total_number_of_kernels;
+    extargs->fuse.selected_kernel_psels = params._preferred_kernel_psels;
+    extargs->fuse.selected_kernel_copts = params._preferred_kernel_copts;
   }
 #endif
   if (err != hipSuccess) {
