@@ -7,6 +7,7 @@
 #include <aotriton/util.h>
 #include <flash/shim.attn_fwd.h>
 #include <flash/shim.bwd_kernel_dk_dv.h>
+#include <flash/shim.bwd_kernel_fuse.h>
 #include <flash/shim.bwd_kernel_dq.h>
 #include <flash/shim.bwd_preprocess.h>
 #include <iostream>

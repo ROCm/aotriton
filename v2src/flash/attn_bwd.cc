@@ -534,6 +534,33 @@ _attn_bwd_common(T4 q,
 
   if (ret != hipSuccess)
     return ret;
+  ret = bwd_kernel_fuse(q,
+                        k,
+                        v,
+                        cu_seqlens_q,
+                        cu_seqlens_k,
+                        num_seqlens,
+                        max_seqlen_q,
+                        max_seqlen_k,
+                        b,
+                        sm_scale,
+                        out,
+                        dout,
+                        dk,
+                        dv,
+                        dq,
+                        db,
+                        softmax_lse,
+                        dropout_p,
+                        philox_seed,
+                        philox_offset1,
+                        philox_offset2,
+                        is_causal,
+                        stream,
+                        extargs);
+
+  if (ret != hipSuccess)
+    return ret;
   ret = bwd_kernel_dq(q,
                       k,
                       v,
