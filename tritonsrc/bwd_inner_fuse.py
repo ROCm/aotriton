@@ -68,6 +68,9 @@ def bwd_inner_dk_dv_fuse(
     do_ptrs0, do_ptrs1, do_ptrs2 = composed_advance(do_ptrs0, do_ptrs1, do_ptrs2,
                                                     lo * do_stride,
                                                     BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
+    o_ptrs0, o_ptrs1, o_ptrs2 = composed_advance(o_ptrs0, o_ptrs1, o_ptrs2,
+                                                 lo * do_stride,
+                                                 BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
     if BIAS_TYPE == 1:
         B_block_ptr = tl.advance(B_block_ptr, (lo, 0))
 
@@ -125,7 +128,7 @@ def bwd_inner_dk_dv_fuse(
                                       PADDED_ROW=PADDED_SEQ,
                                       PADDED_COL=PADDED_HEAD,
                                       TRANSPOSED=False)
-        o0, o1, o2 = composed_load(o_ptrs0, do_ptrs1, do_ptrs2,
+        o0, o1, o2 = composed_load(o_ptrs0, o_ptrs1, o_ptrs2,
                                    q_offs_m,
                                    BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
                                    seqlen_q, head_dim,
@@ -214,7 +217,7 @@ def bwd_inner_dk_dv_fuse(
         if ENABLE_DROPOUT:
             dp = tl.where(keep, dp * dropout_scale, 0)
         # compute ds = p * (dp - delta[:, None])
-        ds = p * (dp - Di) # (BLOCK_M, BLOCK_N)
+        ds = p * (dp - Di[:, None]) # (BLOCK_M, BLOCK_N)
         # compute dk
         if BLOCK_M == 1:
             dk0, dk1, dk2 = composed_mul_acc(q0, q1, q2,
@@ -239,6 +242,9 @@ def bwd_inner_dk_dv_fuse(
         do_ptrs0, do_ptrs1, do_ptrs2 = composed_advance(do_ptrs0, do_ptrs1, do_ptrs2,
                                                         do_stride * BLOCK_M,
                                                         BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
+        o_ptrs0, o_ptrs1, o_ptrs2 = composed_advance(o_ptrs0, o_ptrs1, o_ptrs2,
+                                                     do_stride * BLOCK_M,
+                                                     BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
         if BIAS_TYPE == 1:
             B_block_ptr = tl.advance(B_block_ptr, (BLOCK_M, 0))
     return dk0, dk1, dk2, dv0, dv1, dv2
