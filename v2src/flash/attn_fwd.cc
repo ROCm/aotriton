@@ -50,17 +50,30 @@ _attn_fwd_common(T4 q,
               << " BLOCK_M = " << params.BLOCK_M << " BLOCK_N = " << params.BLOCK_N
               << " PRE_LOAD_V = " << params.PRE_LOAD_V << std::endl;
 #endif
-    dim3 grid {
-      AOTRITON_NS::cdiv<uint32_t>(params.Max_seqlen_q, params.BLOCK_M),
-      uint32_t(params.Q->size(1)),
-      params.Num_seqlens == 0 ? uint32_t(params.Q->size(0)) : params.Num_seqlens,
-    };
+    auto nblocks = AOTRITON_NS::cdiv<uint32_t>(params.Max_seqlen_q, params.BLOCK_M);
+    if (params.PERSISTENT_TYPE == 0) {
+      dim3 grid {
+        nblocks,
+        uint32_t(params.Q->size(1)),
+        params.Batch,
+      };
 #if AOTRITON_VERBOSE
-    std::cerr << "Grid conf " << grid.x << " " << grid.y << " " << grid.z << std::endl;
+      std::cerr << "Grid conf " << grid.x << " " << grid.y << " " << grid.z << std::endl;
 #endif
+      return grid;
+    }
+    // PERSISTENT or PERSISTENT_DYNAMIC
+    // grid = lambda META: (min(NUM_CU * META['GRID_CU_MULTIP'],
+    //                      triton.cdiv(metadata.max_seqlens_q, META['BLOCK_M']) * nheads_q * batch), )
+    int from_cu = params.Num_CU * params.GRID_CU_MULTIP;
+    int from_in = nblocks * params.Num_head_q * params.Batch;
+    dim3 grid {
+      std::min(from_cu, from_in),
+      1,
+      1,
+    };
     return grid;
   };
-  int batch = q.size(0);
   int head_size = q.size(3);
   int num_head_q = q.size(1);
   int num_head_k = k.size(1);
@@ -121,7 +134,7 @@ _attn_fwd_common(T4 q,
     .USE_P_SCALE = false,
     .persistent_atomic_counter = &persistent_atomic_counter,
     .Num_CU = params.PERSISTENT_TYPE == 0 ? 80 : getMultiProcessorCount(stream),
-    .Batch = batch,
+    .Batch = num_seqlens == 0 ? q.size(0) : num_seqlens,
   };
 #if AOTRITON_BUILD_FOR_TUNING
   if (extargs) {

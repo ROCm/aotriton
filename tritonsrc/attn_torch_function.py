@@ -314,9 +314,9 @@ class _attention(torch.autograd.Function):
 
         if persistent_type == PersistentType.NONE:
             grid = lambda META: (
-                triton.cdiv(q.shape[2], META['BLOCK_M']),
+                triton.cdiv(max_seqlen_q, META['BLOCK_M']),
                 num_head_q,
-                q.shape[0],
+                batch,
             )
             Num_CU = 0
         else:
