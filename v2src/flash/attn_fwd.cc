@@ -50,8 +50,14 @@ _attn_fwd_common(T4 q,
               << " BLOCK_M = " << params.BLOCK_M << " BLOCK_N = " << params.BLOCK_N
               << " PRE_LOAD_V = " << params.PRE_LOAD_V << std::endl;
 #endif
+    bool unsupported_by_persistent = params.Num_seqlens != 0;
     auto nblocks = AOTRITON_NS::cdiv<uint32_t>(params.Max_seqlen_q, params.BLOCK_M);
-    if (params.PERSISTENT_TYPE == 0) {
+    // Use default grid if not persistent, or input is unsupported_by_persistent,
+    // in which case persistent is turned off IN TRITON KERNEL
+    // and this kernel will expect regular grid configs.
+    //
+    // Note: This fallback behavior is determined by GPU kernel at runtime.
+    if (params.PERSISTENT_TYPE == 0 || unsupported_by_persistent) {
       dim3 grid {
         nblocks,
         uint32_t(params.Q->size(1)),

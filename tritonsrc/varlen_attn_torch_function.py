@@ -79,7 +79,12 @@ class _varlen_attention(torch.autograd.Function):
 
         persistent_type = attn_extra_args.persistent_type
         if persistent_type == PersistentType.AUTOSELECT:
-            persistent_type = PersistentType.NONE
+            persistent_type = PersistentType.NONE if not causal else PersistentType.DYNAMIC
+
+        unsupported_by_persistent = len(cu_seqlens_q) > 0
+
+        # We fall back to default kernel when DYNAMIC
+        # assert persistent_type == PersistentType.NONE, "main_perf kernel does not fully support varlen + persistent dynamic yet"
 
         null_tensor = torch.empty((0), device=q.device, dtype=torch.int32)
         if persistent_type == PersistentType.DYNAMIC:
@@ -87,9 +92,8 @@ class _varlen_attention(torch.autograd.Function):
         else:
             persistent_atomic_counter = null_tensor
 
-        assert persistent_type == PersistentType.NONE, "main_perf kernel does not fully support varlen + persistent dynamic yet"
-
-        if persistent_type == PersistentType.NONE:
+        # The fallback-ed kernel needs fallback launch options
+        if persistent_type == PersistentType.NONE or unsupported_by_persistent:
             grid = lambda META: (
                 triton.cdiv(max_seqlen_q, META['BLOCK_M']),
                 num_head_q,
