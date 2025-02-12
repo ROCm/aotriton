@@ -54,7 +54,7 @@ def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dro
     # # Backward
     dout = torch.rand_like(tri_out)
     ctx.compute_backward(tri_out, dout)
-    is_allclose, adiff, grads_allclose, grads_adiff = ctx.validate_with_reference(tri_out, ctx.dout_tensors)
+    is_allclose, adiff, grads_allclose, grads_adiff, tfts = ctx.validate_with_reference(tri_out, ctx.dout_tensors, return_target_fudge_factors=True)
     torch.set_printoptions(threshold=114514, linewidth=200)
 
     # Test Forward
@@ -70,7 +70,7 @@ def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dro
         print(f'{ref_out[err_idx]=}')
         print(f'{tri_out[0, :4, :]=}')
         print(f'{ref_out[0, :4, :]=}')
-    assert is_allclose, f'Forward pass {is_allclose=}'
+    assert is_allclose, f'Forward pass {is_allclose=}, {tfts=}'
 
     dq_allclose, dk_allclose, dv_allclose, db_allclose = grads_allclose
     tri_dq, tri_dk, tri_dv, tri_db = ctx.dout_tensors
@@ -106,7 +106,7 @@ def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dro
         print(f'{err_idx=}')
         print(f'{tri_db[err_idx]=} {ref_db[err_idx]=} error = {torch.abs(tri_db[err_idx] - ref_db[err_idx])}')
 
-    assert dk_allclose and dv_allclose and dq_allclose and db_allclose, f'{dk_allclose=} {dv_allclose=} {dq_allclose=} {db_allclose=}'
+    assert dk_allclose and dv_allclose and dq_allclose and db_allclose, f'{dk_allclose=} {dv_allclose=} {dq_allclose=} {db_allclose=} {tfts=}'
     print(f'{adiff=} {grads_adiff=}')
 
 @pytest.mark.parametrize('N_HEADS', [1, 4] if not FOR_RELEASE else [3])
