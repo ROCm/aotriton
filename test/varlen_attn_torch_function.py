@@ -44,6 +44,9 @@ class _attention_varlen(torch.autograd.Function):
         b = torch.empty((0,0,0,0), device=q.device, dtype=q.dtype)
 
         M = torch.zeros((batch * num_heads, max_seqlen_q), device=q.device, dtype=torch.float32)
+        if attn_extra_args.fillnan:
+            for t in (o, M):
+                t.fill_(float('nan'))
         if return_encoded_softmax:
             encoded_softmax = torch.zeros((batch, num_heads, max_seqlen_q, max_seqlen_k), device=q.device, dtype=q.dtype)
         else:

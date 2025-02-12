@@ -54,7 +54,7 @@ def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dro
     # # Backward
     dout = torch.rand_like(tri_out)
     ctx.compute_backward(tri_out, dout)
-    is_allclose, adiff, grads_allclose, grads_adiff = ctx.validate_with_reference(tri_out, ctx.dout_tensors)
+    is_allclose, adiff, grads_allclose, grads_adiff, tfts = ctx.validate_with_reference(tri_out, ctx.dout_tensors, return_target_fudge_factors=True)
     torch.set_printoptions(threshold=114514, linewidth=200)
 
     # Test Forward
@@ -64,13 +64,16 @@ def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dro
         print(f'{tri_out.shape=}')
         print(f'{seqlens_q=}')
         print(f'{seqlens_k=}')
-        err_idx = np.unravel_index(torch.argmax(torch.abs(ref_out - tri_out)).cpu().numpy(), ref_out.shape)
+        err_idx = np.unravel_index(torch.argmax(torch.abs(ref_out.cpu() - tri_out.cpu())).numpy(), ref_out.shape)
         print(f'{err_idx=}')
         print(f'{tri_out[err_idx]=}')
         print(f'{ref_out[err_idx]=}')
-        print(f'{tri_out=}')
-        print(f'{ref_out=}')
-    assert is_allclose, f'Forward pass {is_allclose=}'
+        for seqlen in cu_seqlens_q[:-1]:
+            print(f'{seqlen=} {tri_out[0,0,seqlen,0]=}')
+            print(f'{seqlen=} {ref_out[0,0,seqlen,0]=}')
+        # print(f'{tri_out=}')
+        # print(f'{ref_out=}')
+    assert is_allclose, f'Forward pass {is_allclose=} {tfts=}'
 
     dq_allclose, dk_allclose, dv_allclose, db_allclose = grads_allclose
     tri_dq, tri_dk, tri_dv, tri_db = ctx.dout_tensors
