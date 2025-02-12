@@ -15,7 +15,7 @@ from flash import (
     bwd_preprocess as bare_bwd_preprocess,
     bwd_kernel_dk_dv as bare_bwd_kernel_dk_dv,
     bwd_kernel_dq as bare_bwd_kernel_dq,
-    bwd_fuse_kernel as bare_bwd_fuse_kernel,
+    bwd_kernel_fuse as bare_bwd_kernel_fuse,
 )
 from tuned_bwd import (
     tuned_bwd_kernel_dk_dv,
@@ -1000,9 +1000,9 @@ class _attention(torch.autograd.Function):
                     best = copy.deepcopy(tuned_attn_bwd.best_config)
                     attn_extra_args.report_best_config('attn_bwd', best)
             else:
-                print('Running bare_bwd_fuse_kernel')
+                print('Running bare_bwd_kernel_fuse')
                 grid_fuse = lambda META: (triton.cdiv(max_seqlen_k, META['BLOCK_N']) + triton.cdiv(max_seqlen_q, META['BLOCK_N']) * (num_head_q//num_head_k), num_head_k, q.shape[0])
-                bare_bwd_fuse_kernel[grid_fuse](
+                bare_bwd_kernel_fuse[grid_fuse](
                         q, k, v, b, ctx.sm_scale,
                         o, do,
                         dk, dv, dq, db,
@@ -1036,6 +1036,7 @@ class _attention(torch.autograd.Function):
                         BLOCK_M=BLOCK_M,
                         BLOCK_N=BLOCK_N,
                         )
+                print('bare_bwd_kernel_fuse Done')
         return dq, dk, dv, None if db.numel() == 0 else db, None, None, None, None, None, None, None
 
     backward = backward_fused

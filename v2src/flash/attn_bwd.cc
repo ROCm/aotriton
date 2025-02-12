@@ -7,6 +7,7 @@
 #include <aotriton/util.h>
 #include <flash/shim.bwd_kernel_dk_dv.h>
 #include <flash/shim.bwd_kernel_dq.h>
+#include <flash/shim.bwd_kernel_fuse.h>
 #include <flash/shim.bwd_preprocess.h>
 #include <flash/shim.bwd_preprocess_varlen.h>
 #include <iostream>
@@ -347,6 +348,121 @@ bwd_kernel_dq(T4 q,
     extargs->dqdb.selected_kernel_psels = params._preferred_kernel_psels;
     extargs->dqdb.selected_kernel_copts = params._preferred_kernel_copts;
     // std::cerr << "dqdb lookup_optimal = " << err << " EOL" << std::endl;
+  }
+#endif
+  if (err != hipSuccess) {
+    return err;
+  }
+  err = context.launch(params, stream);
+  return err;
+}
+
+hipError_t
+bwd_kernel_fuse(T4 q,
+                T4 k,
+                T4 v,
+                T1 cu_seqlens_q,
+                T1 cu_seqlens_k,
+                int32_t num_seqlens,
+                int32_t max_seqlen_q,
+                int32_t max_seqlen_k,
+                T4 b,
+                float sm_scale,
+                T4 out,
+                T4 dout,
+                T4 dk,
+                T4 dv,
+                T2 softmax_lse,
+                T2 delta,
+                float dropout_p,
+                T0 philox_seed,
+                T0 philox_offset1,
+                int64_t philox_offset2,
+                bool is_causal,
+                AOTRITON_NS::Stream stream_wrap,
+                BwdExtraArguments* extargs) {
+  hipError_t err;
+  auto stream = stream_wrap.native();
+  auto arch = getArchFromStream(stream);
+  auto grid_calculator = [max_seqlen_k](const BwdKernelDkDvParams& params) -> dim3 {
+    dim3 grid {
+      AOTRITON_NS::cdiv<uint32_t>(max_seqlen_k, params.BLOCK_N),
+      uint32_t(params.K->size(1)),
+      params.num_seqlens == 0 ? uint32_t(params.Q->size(0)) : params.num_seqlens,
+    };
+    // std::cerr << "bwd_kernel_dk_dv grid conf " << grid.x << " " << grid.y << " " << grid.z << std::endl;
+    return grid;
+  };
+  constexpr int kMinHeadDimCompiled = 16;
+  int head_size = q.size(3);
+  int num_head_q = q.size(1);
+  int num_head_k = k.size(1);
+  const auto& compiled_head_dims = BwdKernelDkDvMetadata::get_BLOCK_DMODEL_choices();
+  int head_size_rounded = round_value(head_size, compiled_head_dims);
+  if (head_size_rounded < 0) {
+#if AOTRITON_VERBOSE
+    std::cerr << "Head dimension " << head_size << " unsupported. ";
+    if (compiled_head_dims.empty()) {
+      std::cerr << "No head dimension (BLOCK_DMODEL) compiled into the binary." << std::endl;
+    } else {
+      std::cerr << "Maximal dimesion compiled into the binary is "
+                << compiled_head_dims.back()
+                << std::endl;
+    }
+#endif
+    return hipErrorInvalidValue;
+  }
+  int bias_type = 0;
+  if (b) {
+    bias_type = 1;
+  }
+  BwdKernelDkDvParams params = {
+    .Q = &q,
+    .K = &k,
+    .V = &v,
+    .B = &b,
+    .Out = &out,
+    .DO = &dout,
+    .DK = &dk,
+    .DV = &dv,
+    .sm_scale = sm_scale,
+    .L = &softmax_lse,
+    .D = &delta,
+    .num_head_q = num_head_q,
+    .num_head_k = num_head_k,
+    .head_dim = head_size,
+    .cu_seqlens_q = &cu_seqlens_q,
+    .cu_seqlens_k = &cu_seqlens_k,
+    .num_seqlens = num_seqlens,
+    .max_seqlen_q = max_seqlen_q,
+    .max_seqlen_k = max_seqlen_k,
+    .dropout_p = dropout_p,
+    .philox_seed_ptr = &philox_seed,
+    .philox_offset1 = &philox_offset1,
+    .philox_offset2 = static_cast<uint64_t>(philox_offset2),
+    .BLOCK_DMODEL = head_size_rounded,
+    .CAUSAL = is_causal,
+    .ENABLE_DROPOUT = dropout_p > 0.0,
+    .PADDED_HEAD = head_size_rounded != head_size,
+    .BIAS_TYPE = bias_type,
+  };
+#if AOTRITON_BUILD_FOR_TUNING
+  if (extargs) {
+    params._has_preferred_kernel = extargs->dkdv.force_kernel_index;
+    if (params._has_preferred_kernel == CppTuneSpecialKernelIndex::kSkipGPUCall) {
+        // std::cerr << "extargs->dkdv.force_kernel_index = " << extargs->dkdv.force_kernel_index << " EKI" << std::endl;
+        return hipSuccess;
+    }
+  }
+#endif
+  BwdKernelDkDvContext context;
+  context.grid_calculator = grid_calculator;
+  err = context.lookup_optimal(params, arch);
+#if AOTRITON_BUILD_FOR_TUNING
+  if (extargs) {
+    extargs->dkdv.total_number_of_kernels = params._total_number_of_kernels;
+    extargs->dkdv.selected_kernel_psels = params._preferred_kernel_psels;
+    extargs->dkdv.selected_kernel_copts = params._preferred_kernel_copts;
   }
 #endif
   if (err != hipSuccess) {

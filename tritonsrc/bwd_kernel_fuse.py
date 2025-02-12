@@ -39,7 +39,7 @@ from composed_tensors import (
 
 # TODO: Remove Unused 'Out' Argument from kernels below
 @triton.jit
-def bwd_fuse_kernel(
+def bwd_kernel_fuse(
     # I/O tensors
     Q, K, V, B, sm_scale, 
     Out, DO,
