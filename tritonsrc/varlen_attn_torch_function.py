@@ -79,13 +79,15 @@ class _varlen_attention(torch.autograd.Function):
 
         persistent_type = attn_extra_args.persistent_type
         if persistent_type == PersistentType.AUTOSELECT:
-            persistent_type = PersistentType.NONE if not causal else PersistentType.DYNAMIC
+            persistent_type = PersistentType.NONE
 
         null_tensor = torch.empty((0), device=q.device, dtype=torch.int32)
         if persistent_type == PersistentType.DYNAMIC:
             persistent_atomic_counter = torch.zeros([1], device=q.device, dtype=torch.int32)
         else:
             persistent_atomic_counter = null_tensor
+
+        assert persistent_type == PersistentType.NONE, "main_perf kernel does not fully support varlen + persistent dynamic yet"
 
         if persistent_type == PersistentType.NONE:
             grid = lambda META: (
