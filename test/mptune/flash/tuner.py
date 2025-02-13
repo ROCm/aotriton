@@ -72,7 +72,7 @@ class TunerService(BaseTunerService):
             FusedBwdExtraArguments,
             hipError_t,
         )
-        from ..core import cpp_autotune_gen, KernelOutput, AutotuneResult
+        from ..core import cpp_autotune_gen, KernelOutput, AutotuneResult, CPPTUNE_SKIP_KERNELS
 
         payload = request.payload
         tup = payload.tup
@@ -137,7 +137,13 @@ class TunerService(BaseTunerService):
                                     ['attn_fwd'],
                                     fwd_func,
                                     [self.fwd_validator],
-                                    kernel_index_progress_dict=payload.kig_dict)
+                                    kernel_index_progress_dict=payload.kig_dict,
+                                    output_is_required_by_other_kernels=True)
+
+        # Early exit when both bwd are disabled
+        # Skipping of individual kernels is handled in cpp_autotune_gen directly
+        if 'bwd_kernel_dk_dv' in CPPTUNE_SKIP_KERNELS and 'bwd_kernel_dq' in CPPTUNE_SKIP_KERNELS:
+            return
 
         dq, dk, dv, db, delta = ctx.bwd_tensors
         dout = torch.randn_like(q)
@@ -175,7 +181,8 @@ class TunerService(BaseTunerService):
                                     ['bwd_kernel_dk_dv', 'bwd_kernel_dq'],
                                     bwd_func,
                                     bwd_validators,
-                                    kernel_index_progress_dict=payload.kig_dict)
+                                    kernel_index_progress_dict=payload.kig_dict,
+                                    output_is_required_by_other_kernels=False)
 
     def fwd_validator(self, kernel_outputs : 'List[KernelOutput]', atr : 'AutotuneResult'):
         tri_out, philox_seed, philox_offset = kernel_outputs[0].output_tensors
