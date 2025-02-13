@@ -8,6 +8,7 @@ from torch.multiprocessing import Process
 from aotriton_flash import (
     attn_fwd,
     attn_bwd,
+    attn_bwd_fused,
     debug_fill_dropout_rng,
     debug_simulate_encoded_softmax,
     FwdExtraArguments,
@@ -137,7 +138,7 @@ class _attention(torch.autograd.Function):
         return o, encoded_softmax, ctx.tuning_result
 
     @staticmethod
-    def backward(ctx, do, _, __):
+    def backward_split(ctx, do, _, __):
         q, k, v, b, o, L = ctx.saved_tensors
         # print(f'{b=}')
         sm_scale = ctx.sm_scale
@@ -168,5 +169,39 @@ class _attention(torch.autograd.Function):
 
         assert not torch.isnan(delta).any(), f'{delta=}'
         return dq, dk, dv, db, None, None, None, None, None
+    
+    @staticmethod
+    def backward_fuse(ctx, do, _, __):
+        q, k, v, b, o, L = ctx.saved_tensors
+        # print(f'{b=}')
+        sm_scale = ctx.sm_scale
+        dropout_p = ctx.dropout_p
+        philox_seed = ctx.philox_seed
+        philox_offset = ctx.philox_offset
+        causal = ctx.causal
+        attn_extra_args = ctx.attn_extra_args
+        autotune = ctx.autotune
+        return_autotune = ctx.return_autotune
+        # if q.shape[-1] <= 32:
+        # do = do.contiguous()
+        dq = torch.empty_like(q)
+        dk = torch.empty_like(k)
+        dv = torch.empty_like(v)
+        db = torch.empty_like(b) if b is not None else None
+        delta = torch.empty_like(L)
+        seqlen_q = q.shape[2]
+        seqlen_k = k.shape[2]
+
+        ret = attn_bwd_fused(q, k, v, b, sm_scale, o, do, dq, dk, dv, db, L, delta,
+                       dropout_p, philox_seed, philox_offset, 0, causal)
+        assert ret == hipError_t.hipSuccess, ret
+        tuning_result = None
+
+        if tuning_result is not None:
+            ctx.tuning_result += tuning_result
+
+        assert not torch.isnan(delta).any(), f'{delta=}'
+        return dq, dk, dv, db, None, None, None, None, None
+    backward = backward_split
 
 attention = _attention.apply

@@ -4,6 +4,7 @@
 from pyaotriton.v2.flash import (
     attn_fwd as fa_forward,
     attn_bwd as fa_backward,
+    attn_bwd_fused as fa_backward_fused,
     attn_fwd_compact_varlen as fa_forward_compact_varlen,
     attn_bwd_compact_varlen as fa_backward_compact_varlen,
     debug_fill_dropout_rng as fa_debug_fill_dropout_rng,
@@ -153,6 +154,52 @@ def attn_bwd(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
         hipDeviceSynchronize()
     # print(f'{b=}')
     err = fa_backward(qview,
+                      kview,
+                      vview,
+                      bview,
+                      float(sm_scale),
+                      oview,
+                      doutview,
+                      dqview,
+                      dkview,
+                      dvview,
+                      dbview,
+                      Lview,
+                      deltaview,
+                      float(dropout_p),
+                      seedview,
+                      offset1view,
+                      philox_offset2,
+                      is_causal,
+                      Stream(),
+                      extargs)
+    if AOTRITON_TORCH_ONLY_USE_CPU:
+        _torch_cpu_only_copy_back([dq, dk, dv, db, delta],
+                                  [dqdevm, dkdevm, dvdevm, dbdevm, deltadevm])
+    # print(f'{err=}')
+    return err
+
+def attn_bwd_fused(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
+             dropout_p, philox_seed, philox_offset1, philox_offset2, is_causal, extargs=None):
+    extargs = BwdExtraArguments() if extargs is None else extargs
+    qview, qdevm = mk_aotensor(q)
+    kview, kdevm = mk_aotensor(k)
+    vview, vdevm = mk_aotensor(v)
+    bview, bdevm = mk_aotensor(b, if_empty_then_like=q)
+    oview, odevm = mk_aotensor(o)
+    doutview, doutdevm = mk_aotensor(dout)
+    dqview, dqdevm = mk_aotensor(dq)
+    dkview, dkdevm = mk_aotensor(dk)
+    dvview, dvdevm = mk_aotensor(dv)
+    dbview, dbdevm = mk_aotensor(db, if_empty_then_like=q)
+    Lview, Ldevm = mk_aotensor(L)
+    deltaview, deltadevm = mk_aotensor(delta)
+    seedview, seeddevm = mk_aotensor(philox_seed)
+    offset1view, offset1devm = mk_aotensor(philox_offset1)
+    if AOTRITON_TORCH_ONLY_USE_CPU:
+        hipDeviceSynchronize()
+    # print(f'{b=}')
+    err = fa_backward_fused(qview,
                       kview,
                       vview,
                       bview,
