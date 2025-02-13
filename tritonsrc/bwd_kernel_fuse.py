@@ -89,64 +89,62 @@ def bwd_kernel_fuse(
 
     tl.static_assert(BLOCK_DMODEL_R3 == 0, f'BLOCK_DMODEL = {BLOCK_DMODEL} = 0b{BLOCK_DMODEL:b} cannot be factored into <= 3 power of two values')
     tl.static_assert(BLOCK_DMODEL1 > 0 or BLOCK_DMODEL2 == 0, 'Only trailing BLOCK_DMODELx can be 0')
-
-    idropout_p = ((dropout_p - 0.5) * 0xFFFFFFFF).to(tl.int32)
-    philox_seed = 0
-    philox_offset_base = philox_offset2
-    philox_offset_stride = tl.cdiv(max_seqlen_k, PHILOX_RN_PER_OFFSET)
-    if ENABLE_DROPOUT:
-        philox_seed = tl.load(philox_seed_ptr)
-        philox_offset_base += tl.load(philox_offset1)
-    group_size = num_head_q // num_head_k
-    
     pid = tl.program_id(0)
     NUM_KV_BLOCKS = tl.cdiv(max_seqlen_k, BLOCK_N)
     NUM_Q_BLOCKS = tl.cdiv(max_seqlen_q, BLOCK_N)
-    
-    off_h_k = tl.program_id(1) # kv head index
-    off_z = tl.program_id(2) # batch index, for varlen it indicates index in cu_seqlens_q/k
-    num_z = tl.num_programs(2)
-    cu_seqlens_q_start = 0
-    cu_seqlens_k_start = 0
-    seqlen_q = max_seqlen_q
-    seqlen_k = max_seqlen_k
-    batch_index = off_z
-    
-    if num_seqlens > 0:
-            cu_seqlens_k_start = tl.load(cu_seqlens_k + off_z)
-            cu_seqlens_k_end = tl.load(cu_seqlens_k + off_z + 1)
-            seqlen_k = cu_seqlens_k_end - cu_seqlens_k_start
-            cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
-            cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
-            seqlen_q = cu_seqlens_q_end - cu_seqlens_q_start
-            batch_index = 0
-    
-    if num_seqlens < 0:  # for padded seqlen
-        cu_seqlens_k_start = tl.load(cu_seqlens_k + off_z)
-        cu_seqlens_k_end = tl.load(cu_seqlens_k + off_z + 1)
-        seqlen_k = cu_seqlens_k_end - cu_seqlens_k_start
-        cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
-        cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
-        seqlen_q = cu_seqlens_q_end - cu_seqlens_q_start
-        # Varlen, but padded to Rank 4 tensor
-        cu_seqlens_q_start = 0
-        cu_seqlens_k_start = 0
-        batch_index = off_z
-    
-    qk_scale = sm_scale * 1.44269504089
-    bias_scale = 1.0 / sm_scale
     
     if pid >= NUM_KV_BLOCKS:
         # dq compute block
         off_pid = pid - NUM_KV_BLOCKS
         start_q = (off_pid % NUM_Q_BLOCKS) * BLOCK_N
+        off_h_k = tl.program_id(1) # kv head index
+        group_size = num_head_q // num_head_k
         off_h_q = (off_pid // NUM_Q_BLOCKS) + off_h_k * group_size # q head index
         
-        off_h_k = off_h_q if num_head_q == num_head_k else off_h_q // (num_head_q // num_head_k)
+        off_z = tl.program_id(2) # batch index, for varlen it indicates index in cu_seqlens_q/k
+        num_z = tl.num_programs(2)
         off_zh = off_z * num_head_q + off_h_q * 1
         offs_q = start_q + tl.arange(0, BLOCK_N)
         offs_n = tl.arange(0, BLOCK_M)
         
+        philox_seed = 0
+        philox_offset_base = philox_offset2
+        philox_offset_stride = tl.cdiv(max_seqlen_k, PHILOX_RN_PER_OFFSET)
+        if ENABLE_DROPOUT:
+            philox_seed = tl.load(philox_seed_ptr)
+            philox_offset_base += tl.load(philox_offset1)
+        cu_seqlens_q_start = 0
+        cu_seqlens_k_start = 0
+        seqlen_q = max_seqlen_q
+        seqlen_k = max_seqlen_k
+        batch_index = off_z
+
+        if num_seqlens > 0:
+            cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
+            cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
+            seqlen_q = cu_seqlens_q_end - cu_seqlens_q_start
+            if start_q >= seqlen_q:
+                return
+            cu_seqlens_k_start = tl.load(cu_seqlens_k + off_z)
+            cu_seqlens_k_end = tl.load(cu_seqlens_k + off_z + 1)
+            seqlen_k = cu_seqlens_k_end - cu_seqlens_k_start
+            batch_index = 0
+
+        if num_seqlens < 0:  # for padded seqlen
+            cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
+            cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
+            seqlen_q = cu_seqlens_q_end - cu_seqlens_q_start
+            if start_q >= seqlen_q:
+                return
+            cu_seqlens_k_start = tl.load(cu_seqlens_k + off_z)
+            cu_seqlens_k_end = tl.load(cu_seqlens_k + off_z + 1)
+            seqlen_k = cu_seqlens_k_end - cu_seqlens_k_start
+            # Varlen, but padded to Rank 4 tensor
+            cu_seqlens_q_start = 0
+            cu_seqlens_k_start = 0
+            batch_index = off_z
+        qk_scale = sm_scale * 1.44269504089
+        bias_scale = 1.0 / sm_scale
         if num_seqlens > 0:
             if start_q >= seqlen_q:
                 return
@@ -380,19 +378,50 @@ def bwd_kernel_fuse(
                     stride_row=stride_dqm,
                     stride_col=stride_dqk)
     else:
-        #dk dv compute block
-        start_k = pid * BLOCK_N  # start_k partitions seqlen_k
-        
+        idropout_p = ((dropout_p - 0.5) * 0xFFFFFFFF).to(tl.int32)
+        philox_seed = 0
+        philox_offset_base = philox_offset2
+        philox_offset_stride = tl.cdiv(max_seqlen_k, PHILOX_RN_PER_OFFSET)
+        if ENABLE_DROPOUT:
+            philox_seed = tl.load(philox_seed_ptr)
+            philox_offset_base += tl.load(philox_offset1)
+        start_k = tl.program_id(0) * BLOCK_N  # start_k partitions seqlen_k
+        off_h_k = tl.program_id(1) # head index
+        off_z = tl.program_id(2) # batch index, for varlen it indicates index in cu_seqlens_q/k
+        num_z = tl.num_programs(2)
         offs_m = tl.arange(0, BLOCK_M)
         offs_n = start_k + tl.arange(0, BLOCK_N)
+        cu_seqlens_q_start = 0
+        cu_seqlens_k_start = 0
+        seqlen_q = max_seqlen_q
+        seqlen_k = max_seqlen_k
+        batch_index = off_z
 
         if num_seqlens > 0:
+            cu_seqlens_k_start = tl.load(cu_seqlens_k + off_z)
+            cu_seqlens_k_end = tl.load(cu_seqlens_k + off_z + 1)
+            seqlen_k = cu_seqlens_k_end - cu_seqlens_k_start
             if start_k >= seqlen_k:
                 return
+            cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
+            cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
+            seqlen_q = cu_seqlens_q_end - cu_seqlens_q_start
+            batch_index = 0
+
         if num_seqlens < 0:  # for padded seqlen
+            cu_seqlens_k_start = tl.load(cu_seqlens_k + off_z)
+            cu_seqlens_k_end = tl.load(cu_seqlens_k + off_z + 1)
+            seqlen_k = cu_seqlens_k_end - cu_seqlens_k_start
             if start_k >= seqlen_k:
                 return
-        
+            cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
+            cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
+            seqlen_q = cu_seqlens_q_end - cu_seqlens_q_start
+            # Varlen, but padded to Rank 4 tensor
+            cu_seqlens_q_start = 0
+            cu_seqlens_k_start = 0
+            batch_index = off_z
+
         k_ptrs0, k_ptrs1, k_ptrs2 = composed_ptrs(K,
                                                 stride_kz, stride_kh, stride_kn, stride_kk,
                                                 batch_index, off_h_k, cu_seqlens_k_start + offs_n,
@@ -461,7 +490,9 @@ def bwd_kernel_fuse(
 
         dv0, dv1, dv2 = composed_zeros_2d(BLOCK_N, BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
         dk0, dk1, dk2 = composed_zeros_2d(BLOCK_N, BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
-                
+        qk_scale = sm_scale * 1.44269504089
+        bias_scale = 1.0 / sm_scale
+        group_size = num_head_q // num_head_k
         q_lo = start_k if CAUSAL else 0
         q_hi = seqlen_q
         real_seqlen_q = q_hi - q_lo  # seqlen_q after considering causal (and windowed in the future)
@@ -526,7 +557,7 @@ def bwd_kernel_fuse(
 
             if leading_masked_blocks > 0:
                 lo = q_lo
-                hi = min(lo + leading_masked_blocks * BLOCK_M, q_hi)
+                hi = lo + leading_masked_blocks * BLOCK_M
                 # TODO: overflow_size maybe larger than on block (BLOCK_M)
                 #       In this case the bwd_inner_dk_dv can be further optimized
                 overflow_size = 0 if hi < q_hi else hi - q_hi
