@@ -88,7 +88,7 @@ class KernelSignature(object):
         l = [None] * len(self.arguments)
         for k, v in sig.items():
             l[k] = v
-        assert not any(element is None for element in l)
+        assert not any(element is None for element in l), f'l={l} kdesc: {self._kdesc.SHIM_KERNEL_NAME}'
         return l
 
     def codegen_perf_object(self) -> str:
