@@ -74,7 +74,7 @@ class BootstrapTuningDatabaseForArch(EmptyKernelTuningDatabaseForArch):
                 perf_meta : 'list[ArgumentMetadata]'):
         fsel_dict = ArgumentSelection.build_fsel_dict(fsels)
         rows = []
-        for cfg in kdesc.gen_patched_autotune_configs(self._gpu, fsel_dict):
+        for cfg in kdesc.gen_autotune_configs(self._gpu, fsel_dict):
             psels, compiler_options = cfg.translate_to_psel_and_co(perf_meta)
             rows.append((psels, compiler_options))
         # print(f'get_lut {len(rows)=}')
