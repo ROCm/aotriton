@@ -40,7 +40,7 @@ bwd_kernel_fuse(T4 q,
   auto arch = getArchFromStream(stream);
   int num_head_q = q.size(1);
   int num_head_k = k.size(1);
-  auto grid_calculator = [max_seqlen_k](const BwdKernelFuseParams& params) -> dim3 {
+  auto grid_calculator = [max_seqlen_k, max_seqlen_q, num_head_q, num_head_k](const BwdKernelFuseParams& params) -> dim3 {
     dim3 grid {
       AOTRITON_NS::cdiv<uint32_t>(max_seqlen_k, params.BLOCK_N) +
       AOTRITON_NS::cdiv<uint32_t>(max_seqlen_q, params.BLOCK_N) * (num_head_q / num_head_k),
