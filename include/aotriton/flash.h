@@ -91,6 +91,27 @@ attn_bwd(T4 q, // batch_size x num_heads x seqlen_q x head_size
          bool is_causal,
          AOTRITON_NS::Stream stream,
          BwdExtraArguments* extargs = nullptr);
+         hipError_t
+attn_bwd_fused(T4 q, // batch_size x num_heads x seqlen_q x head_size
+         T4 k, // batch_size x num_heads x seqlen_k x head_size
+         T4 v, // batch_size x num_heads x seqlen_k x head_size
+         T4 b, // batch_size x num_heads x seqlen_q x seqlen_k
+         float sm_scale,
+         T4 out,  // batch_size x num_heads x seqlen_q x head_size
+         T4 dout, // batch_size x num_heads x seqlen_q x head_size
+         T4 dq,   // batch_size x num_heads x seqlen_q x head_size
+         T4 dk,   // batch_size x num_heads x seqlen_k x head_size
+         T4 dv,   // batch_size x num_heads x seqlen_k x head_size
+         T4 db,   // batch_size x num_heads x seqlen_q x seqlen_k
+         T2 softmax_lse,
+         T2 delta, // buffer, empty_like(softmax_lse)
+         float dropout_p,
+         T0 philox_seed,
+         T0 philox_offset1,
+         int64_t philox_offset2,
+         bool is_causal,
+         AOTRITON_NS::Stream stream,
+         BwdExtraArguments* extargs = nullptr);
 
 hipError_t
 attn_bwd_compact_varlen(T4 q, // 1 x num_heads x total_q x head_size, total_q := \sum_{i=0}^{b}
