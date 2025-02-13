@@ -199,9 +199,15 @@ class attn_fwd(FlashKernel):
                 continue  # No optimal kernel according to 0.8b tuning db
             if Navi and M > 32 and N > 32 and warps == 1:
                 continue  # No optimal kernel according to 0.8b tuning db
-            kw = {'BLOCK_M': M, 'BLOCK_N': N, 'waves_per_eu': waves, 'GRID_CU_MULTIP': 2, 'PRE_LOAD_V': pre}
+            persistent_type = 2 if CAUSAL_TYPE != 0 else 0
+            kw = { 'PERSISTENT_TYPE' : persistent_type,
+                   'GRID_CU_MULTIP': 2,
+                   'BLOCK_M': M,
+                   'BLOCK_N': N,
+                   'waves_per_eu': waves,
+                   'PRE_LOAD_V': pre,
+                 }
             # TODO: Add Dyamic PERSISTENT_TYPE IFF causal is enabled to tuning database
-            kw['PERSISTENT_TYPE'] = 2 if CAUSAL_TYPE != 0 else 0
             yield Config(kw, num_stages=stages, num_warps=warps)
         if MI:
             pass
