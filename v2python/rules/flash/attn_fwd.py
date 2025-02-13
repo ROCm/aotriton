@@ -87,7 +87,7 @@ class attn_fwd(FlashKernel):
         # further increse the number of kernels. Will be added later along with
         # windowed attention
         frozenset(['CAUSAL_TYPE']) : [0, 1],
-        frozenset(['BLOCK_DMODEL']) : [16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256],
+        frozenset(['BLOCK_DMODEL']) : [16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256, 512],
         frozenset(['ENABLE_DROPOUT']) : [False, True],
         frozenset(['RETURN_ENCODED_SOFTMAX']) : [False],
         frozenset(['PADDED_HEAD']) : [False, True],
