@@ -185,6 +185,8 @@ class attn_fwd(FlashKernel):
                 continue  # Timeout
             if Navi and HEAD_DIM == 256 and stages == 2:
                 continue  # Timeout
+            if HEAD_DIM >= 512 and M == 128 and N == 128 and warps == 2:
+                continue  # Timeout
             if dtype == '*fp32:16':
                 M //= 2
             if M < N:  # Faulty or duplicate
