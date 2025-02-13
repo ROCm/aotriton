@@ -525,8 +525,8 @@ def bwd_kernel_fuse(
             hi = 0
 
             if leading_masked_blocks > 0:
-                lo = q_lo
-                hi = lo + leading_masked_blocks * BLOCK_M
+                lo = max(q_lo, start_k)
+                hi = min(lo + leading_masked_blocks * BLOCK_M, q_hi)
                 # TODO: overflow_size maybe larger than on block (BLOCK_M)
                 #       In this case the bwd_inner_dk_dv can be further optimized
                 overflow_size = 0 if hi < q_hi else hi - q_hi
