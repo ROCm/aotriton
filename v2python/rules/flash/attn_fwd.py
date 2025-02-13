@@ -95,8 +95,10 @@ class attn_fwd(FlashKernel):
         frozenset(['USE_ALIBI']) : [False],
         frozenset(['INT8', 'INT8_KV', 'USE_P_SCALE']) : [False],  # INT8 for the future
     }
+    def PERSISTENT_TYPE(gpu, fsel_dict) -> int:  # NOTE: Return type annotation is REQUIRED
+        return 2 if fsel_dict['CAUSAL_TYPE'] else 0
     PERF_CHOICES = {
-        frozenset(['PERSISTENT_TYPE']) : [0], # [0, 1, 2],
+        frozenset(['PERSISTENT_TYPE']) : [PERSISTENT_TYPE],
         frozenset(['GRID_CU_MULTIP']) : [2],
         frozenset(['BLOCK_M']) : [16],
         frozenset(['BLOCK_N']) : [16],
@@ -197,8 +199,7 @@ class attn_fwd(FlashKernel):
                 continue  # No optimal kernel according to 0.8b tuning db
             kw = {'BLOCK_M': M, 'BLOCK_N': N, 'waves_per_eu': waves, 'pre_load_v': pre}
             # TODO: Add Dyamic PERSISTENT_TYPE IFF causal is enabled to tuning database
-            # kw['PERSISTENT_TYPE'] = 2 if CAUSAL_TYPE != 0 else 0
-            kw['PERSISTENT_TYPE'] = 0
+            kw['PERSISTENT_TYPE'] = 2 if CAUSAL_TYPE != 0 else 0
             yield Config(kw, num_stages=stages, num_warps=warps)
         if MI:
             pass

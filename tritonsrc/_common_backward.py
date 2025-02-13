@@ -45,7 +45,7 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
                              autotune=False,
                              return_autotune=False,
                              fillnan=True,
-                             persistent_type=PersistentType.DYNAMIC if causal else PersistentType.NONE)
+                             persistent_type=PersistentType.AUTOSELECT)
     tri_out, encoded_softmax, _ = attention(q, k, v, b, causal, sm_scale, dropout_p, ext)
     dropout_mask = encoded_softmax >= 0 if dropout_p > 0.0 else None
     sdpa_params = SdpaParams(causal=causal, sm_scale=sm_scale, dropout_p=dropout_p, dropout_mask=dropout_mask)

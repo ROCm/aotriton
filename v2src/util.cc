@@ -53,6 +53,25 @@ getArchFromStream(hipStream_t stream) {
   return device_to_arch[dev];
 }
 
+int getMultiProcessorCount(hipStream_t stream) {
+  static std::unordered_map<hipDevice_t, int> device_to_CUs;
+  hipDevice_t dev;
+  hipError_t err = hipStreamGetDevice(stream, &dev);
+  if (err != hipSuccess)
+    return 40;  // A guessed number
+
+  auto iter = device_to_CUs.find(dev);
+  if (iter == device_to_CUs.end()) {
+    hipDeviceProp_t prop;
+    err = hipGetDeviceProperties(&prop, dev);
+    if (err != hipSuccess)
+      return 40;  // A guessed number
+    device_to_CUs[dev] = prop.multiProcessorCount;
+    return prop.multiProcessorCount;
+  }
+  return iter->second;
+}
+
 template class TensorView<1>;
 template class TensorView<2>;
 template class TensorView<3>;

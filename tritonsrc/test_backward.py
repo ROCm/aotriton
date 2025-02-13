@@ -41,7 +41,7 @@ PRIME_HEADDIMS = [7, 23, 37, 53, 67, 73, 89, 113, 149, 179, 211, 241]
 # Minimal set
 # @pytest.mark.parametrize('seqlen_q', [32, 128])
 # @pytest.mark.parametrize('seqlen_k', [32, 128])
-@pytest.mark.parametrize('causal', [False, True])
+@pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
 @pytest.mark.parametrize('dropout_p', [0.0, 0.5])
 @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16, torch.float32])
 # @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
@@ -91,7 +91,7 @@ def test_op_bwd_with_matrix_bias(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, sm_
 @pytest.mark.parametrize('D_HEAD', [8, 203, 256])
 @pytest.mark.parametrize('seqlen_q', [4, 143, 2048])
 @pytest.mark.parametrize('seqlen_k', [4, 127, 579, 2048])
-@pytest.mark.parametrize('causal', [False, True])
+@pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
 @pytest.mark.parametrize('dropout_p', [0.0, 0.5])
 @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16, torch.float32])
 @pytest.mark.parametrize('sm_scale', [1.2])
