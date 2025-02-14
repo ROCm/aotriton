@@ -271,6 +271,6 @@ def cpp_autotune_gen(extarg_factory, sub_extarg_accessor,
                     4. The o tensor is empty/nan because fwd is skipped, and
                        the bwd output becomes garbage.
         '''
-        if output_is_required_by_other_kernels:
-            extargs_with_subs.force_kernel_index = cur_kig.last_success_kernel
-            kernel_func(extargs_with_subs, is_testing=False)
+    if output_is_required_by_other_kernels:
+        extargs_with_subs.force_kernel_index = cur_kig.last_success_kernel
+        kernel_func(extargs_with_subs, is_testing=False)

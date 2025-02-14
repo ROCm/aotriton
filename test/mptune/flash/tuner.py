@@ -29,23 +29,24 @@ class TunerService(BaseTunerService):
         import torch
         from _common_test import SdpaContext, SdpaParams
         from aotriton_flash import (
-            debug_fill_dropout_rng,
+            debug_simulate_encoded_softmax,
             hipError_t,
         )
 
         torch.cuda.empty_cache()
         BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type = tup
         dtype = getattr(torch, dtype)
-        philox_seed = DEFAULT_PHILOX_SEED
-        philox_offset = DEFAULT_PHILOX_OFFSET
         '''
         Create reference dropout_mask
         '''
         if dropout_p > 0.0:
             rdims = (BATCH, N_HEADS, seqlen_q, seqlen_k)
             r = torch.empty(rdims, device=self._gpu_device, dtype=torch.float32)
-            debug_fill_dropout_rng(r, philox_seed, philox_offset)
-            mask = r > dropout_p
+            philox_seed = torch.tensor([DEFAULT_PHILOX_SEED], device=r.device, dtype=torch.uint64)
+            philox_offset1 = torch.tensor([DEFAULT_PHILOX_OFFSET_1], device=r.device, dtype=torch.uint64)
+            philox_offset2 = DEFAULT_PHILOX_OFFSET_2
+            debug_simulate_encoded_softmax(r, dropout_p, philox_seed, philox_offset1, philox_offset2)
+            mask = r >= 0
             torch.cuda.synchronize()
             del r
         else:
@@ -66,7 +67,6 @@ class TunerService(BaseTunerService):
         from aotriton_flash import (
             attn_fwd,
             attn_bwd,
-            debug_fill_dropout_rng,
             FwdExtraArguments,
             BwdExtraArguments,
             FusedBwdExtraArguments,
@@ -94,7 +94,7 @@ class TunerService(BaseTunerService):
         L = M  # alias
         if dropout_p > 0.0:
             philox_seed = torch.tensor([DEFAULT_PHILOX_SEED], device=q.device, dtype=torch.uint64)
-            philox_offset1 = torch.tensor([DEFAULT_PHILOX_OFFSET_1], device=q.device, dtype=torch.uint32)
+            philox_offset1 = torch.tensor([DEFAULT_PHILOX_OFFSET_1], device=q.device, dtype=torch.uint64)
             philox_offset2 = DEFAULT_PHILOX_OFFSET_2
             philox_seed_output = torch.tensor([0], device=q.device, dtype=torch.uint64)
             philox_offset_output = torch.tensor([0], device=q.device, dtype=torch.uint64)
@@ -106,6 +106,7 @@ class TunerService(BaseTunerService):
             philox_seed_output = nulltensor
             philox_offset_output = nulltensor
 
+
         def fwd_sub_extarg_accessor(fwd_extargs : FwdExtraArguments, i):
             return fwd_extargs
 
@@ -115,10 +116,14 @@ class TunerService(BaseTunerService):
                 o.fill_(float('nan'))
                 philox_seed_output.fill_(0)
                 philox_offset_output.fill_(0)
+            if causal:
+                atomic = torch.zeros([1], device=q.device, dtype=torch.int32)
+            else:
+                atomic = torch.empty([0], device=q.device, dtype=torch.int32)
             args = (q, k, v, b, sm_scale, M, o,
                     dropout_p, philox_seed, philox_offset1, philox_offset2,
                     philox_seed_output, philox_offset_output,
-                    encoded_softmax, causal,
+                    encoded_softmax, causal, atomic,
                     extargs.capi_object)
             try:
                 ret = attn_fwd(*args)
