@@ -1039,7 +1039,7 @@ class _attention(torch.autograd.Function):
                 print('bare_bwd_kernel_fuse Done')
         return dq, dk, dv, None if db.numel() == 0 else db, None, None, None, None, None, None, None
 
-    backward = backward_split
+    backward = backward_fused
 
 attention = _attention.apply
 

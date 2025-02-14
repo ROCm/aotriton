@@ -36,7 +36,7 @@ def bwd_inner_dk_dv_fuse(
     q_ptrs0, q_ptrs1, q_ptrs2,
     q_stride,
     kt0, kt1, kt2, vt0, vt1, vt2,
-    B_block_ptr,
+    B_ptr, stride_bm,
     do_ptrs0, do_ptrs1, do_ptrs2,
     o_ptrs0, o_ptrs1, o_ptrs2,
     do_stride,
@@ -72,7 +72,7 @@ def bwd_inner_dk_dv_fuse(
                                                  lo * do_stride,
                                                  BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
     if BIAS_TYPE == 1:
-        B_block_ptr = tl.advance(B_block_ptr, (lo, 0))
+        B_ptr = B_ptr + lo * stride_bm
 
     '''
            K1   K2      (d)V      dO
@@ -151,7 +151,8 @@ def bwd_inner_dk_dv_fuse(
             pass
         elif BIAS_TYPE == 1:
             # FIXME: do boundary_check correctly
-            bias = tl.load(B_block_ptr, boundary_check=(0,1), padding_option="zero")
+            # bias = tl.load(B_block_ptr, boundary_check=(0,1), padding_option="zero")
+            bias = tl.load(B_ptr + start_q * stride_bm)
             qk += bias * bias_scale
         else:
             tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
@@ -246,6 +247,6 @@ def bwd_inner_dk_dv_fuse(
                                                      do_stride * BLOCK_M,
                                                      BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
         if BIAS_TYPE == 1:
-            B_block_ptr = tl.advance(B_block_ptr, (BLOCK_M, 0))
+            B_ptr = B_ptr + BLOCK_M * stride_bm
     return dk0, dk1, dk2, dv0, dv1, dv2
 

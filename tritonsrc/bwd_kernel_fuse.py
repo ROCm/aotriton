@@ -469,17 +469,18 @@ def bwd_kernel_fuse(
                                         PADDED_COL=PADDED_HEAD,
                                         TRANSPOSED=True)
         if BIAS_TYPE == 0:
-            B_block_ptr = 0
+            B_ptr = 0
         elif BIAS_TYPE == 1:
             # CAVEAT: bias is incompatible with GQA
-            B_block_ptr = tl.make_block_ptr(
-                    base=B + off_h_k * stride_bh + batch_index * stride_bz,
-                    shape=(seqlen_q, seqlen_k),
-                    strides=(stride_bm, stride_bn),
-                    offsets=(0, start_k),
-                    block_shape=(BLOCK_M, BLOCK_N),
-                    order=(1, 0)
-                    )
+            # B_block_ptr = tl.make_block_ptr(
+            #         base=B + off_h_k * stride_bh + batch_index * stride_bz,
+            #         shape=(seqlen_q, seqlen_k),
+            #         strides=(stride_bm, stride_bn),
+            #         offsets=(0, start_k),
+            #         block_shape=(BLOCK_M, BLOCK_N),
+            #         order=(1, 0)
+            #         )
+            B_ptr = B + off_h_k * stride_bh + batch_index * stride_bz + start_k * stride_bn
         else:
             tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
 
@@ -568,7 +569,7 @@ def bwd_kernel_fuse(
                     q_ptrs0, q_ptrs1, q_ptrs2,
                     stride_qm,
                     kt0, kt1, kt2, vt0, vt1, vt2,
-                    B_block_ptr,
+                    B_ptr, stride_bm,
                     do_ptrs0, do_ptrs1, do_ptrs2,
                     o_ptrs0, o_ptrs1, o_ptrs2,
                     stride_om,
@@ -598,7 +599,7 @@ def bwd_kernel_fuse(
                     q_ptrs0, q_ptrs1, q_ptrs2,
                     stride_qm,
                     kt0, kt1, kt2, vt0, vt1, vt2,
-                    B_block_ptr,
+                    B_ptr, stride_bm,
                     do_ptrs0, do_ptrs1, do_ptrs2,
                     o_ptrs0, o_ptrs1, o_ptrs2,
                     stride_om,
@@ -630,7 +631,7 @@ def bwd_kernel_fuse(
                     q_ptrs0, q_ptrs1, q_ptrs2,
                     stride_qm,
                     kt0, kt1, kt2, vt0, vt1, vt2,
-                    B_block_ptr,
+                    B_ptr, stride_bm,
                     do_ptrs0, do_ptrs1, do_ptrs2,
                     o_ptrs0, o_ptrs1, o_ptrs2,
                     stride_om,
