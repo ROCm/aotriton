@@ -130,7 +130,7 @@ class SdpaContext(object):
         qdims = (BATCH, Q_HEADS, seqlen_q, D_HEAD)
         kdims = (BATCH, K_HEADS, seqlen_k, D_HEAD)
         vdims = (BATCH, K_HEADS, seqlen_k, D_HEAD)
-        bdims = (seqlen_q, seqlen_k)
+        bdims = (BATCH, Q_HEADS, seqlen_q, seqlen_k)
         if storage_flip is not None:
             order = [0,1,2,3]
             x, y = storage_flip
@@ -139,7 +139,7 @@ class SdpaContext(object):
             qdims = (qdims[i], qdims[j], qdims[k], qdims[l])
             kdims = (kdims[i], kdims[j], kdims[k], kdims[l])
             vdims = (vdims[i], vdims[j], vdims[k], vdims[l])
-            # bdims = (bdims[1], bdims[0])
+            bdims = (bdims[i], bdims[j], bdims[k], bdims[l])
         # q = torch.empty(qdims, dtype=dtype, device=device).normal_(mean=0., std=0.5)
         # k = torch.empty(kdims, dtype=dtype, device=device).normal_(mean=0., std=0.5)
         # v = torch.empty(vdims, dtype=dtype, device=device).normal_(mean=0., std=0.5)
@@ -151,7 +151,7 @@ class SdpaContext(object):
         elif bias_type == 'matrix' or bias_type == 1:
             # b = torch.empty(bdims, dtype=dtype, device="cuda").normal_(mean=0., std=0.5)
             b = torch.rand(*bdims, dtype=dtype, device=real_device)
-            b = b.expand(BATCH, Q_HEADS, b.shape[0], b.shape[1])
+            # b = b.expand(BATCH, Q_HEADS, b.shape[0], b.shape[1])
         else:
             assert False, f'Unsupported bias_type {bias_type}'
         if storage_flip is not None:
