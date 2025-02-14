@@ -480,7 +480,7 @@ def bwd_kernel_fuse(
             #         block_shape=(BLOCK_M, BLOCK_N),
             #         order=(1, 0)
             #         )
-            B_ptr = B + off_h_k * stride_bh + batch_index * stride_bz + start_k * stride_bn
+            B_ptr = B + off_h_k * stride_bh + batch_index * stride_bz + (start_k + tl.arange(0, BLOCK_N))[None, :] * stride_bn
         else:
             tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
 

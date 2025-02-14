@@ -152,7 +152,7 @@ def bwd_inner_dk_dv_fuse(
         elif BIAS_TYPE == 1:
             # FIXME: do boundary_check correctly
             # bias = tl.load(B_block_ptr, boundary_check=(0,1), padding_option="zero")
-            bias = tl.load(B_ptr + start_q * stride_bm)
+            bias = tl.load(B_ptr + offs_q[:, None] * stride_bm)
             qk += bias * bias_scale
         else:
             tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
