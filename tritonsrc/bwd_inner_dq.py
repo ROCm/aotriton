@@ -62,6 +62,8 @@ def bwd_inner_dq(
     # initialize offsets
     offs_q = start_q + tl.arange(0, BLOCK_M)
     offs_k = tl.arange(0, BLOCK_N)
+    offs_m = tl.arange(0, BLOCK_M)
+    offs_n = tl.arange(0, BLOCK_N)
     kt_ptrs0, kt_ptrs1, kt_ptrs2 = composed_advance(kt_ptrs0, kt_ptrs1, kt_ptrs2,
                                                     lo * k_stride,
                                                     BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
@@ -126,8 +128,9 @@ def bwd_inner_dq(
         elif BIAS_TYPE == 1:
             # FIXME: Must use boundary_check uncondtionally.
             # The optimized tl.load above causes nan for some reason
-            bias_offs_n = start_k + tl.arange(0, BLOCK_N)
-            bias = load_fn(B_ptr, offs_q, bias_offs_n, seqlen_q, seqlen_k)
+            bias_ptr = B_ptr + offs_m[:, None] * stride_bm + offs_n[None, :] * stride_bn
+            mask = (offs_q[:, None] < seqlen_q) & ((offs_k[None, :] + start_k) < seqlen_k)
+            bias = tl.load(bias_ptr, mask=mask, other=0.0)
             qk += bias * bias_scale
         else:
             tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
@@ -172,8 +175,6 @@ def bwd_inner_dq(
                                              BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
         if BIAS_TYPE == 1:
             if store_db:
-                offs_m = tl.arange(0, BLOCK_M)
-                offs_n = tl.arange(0, BLOCK_N)
                 db_ptr = DB_ptr + offs_m[:, None] * stride_dbm + (offs_n[None, :] + start_k) * stride_dbn
                 mask = (offs_q[:, None] < seqlen_q) & ((offs_n[None, :] + start_k) < seqlen_k)
                 tl.store(db_ptr, ds.to(q0.type.element_ty), mask=mask)

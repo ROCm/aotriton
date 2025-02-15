@@ -243,8 +243,7 @@ def bwd_kernel_fuse(
             B_ptr_dq = 0
             DB_ptr = 0
         elif BIAS_TYPE == 1:
-            bias_offset = B + off_h_q * stride_bh + batch_index * stride_bz
-            B_ptr_dq = bias_offset + offs_q[:, None] * stride_bm + (tl.arange(0, BLOCK_M))[None, :] * stride_bn
+            B_ptr_dq = B + off_h_q * stride_bh + batch_index * stride_bz + start_q * stride_dbm
             if (stride_dbz == 0 and stride_dbh == 0) and stride_dbm == 0:
                 store_db = False
             DB_ptr = DB + off_h_q * stride_dbh + batch_index * stride_dbz + start_q * stride_dbm
