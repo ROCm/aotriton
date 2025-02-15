@@ -171,7 +171,8 @@ class _attention(torch.autograd.Function):
         return dq, dk, dv, db, None, None, None, None, None
     
     @staticmethod
-    def backward_fuse(ctx, do, _, __):
+    def backward_fused(ctx, do, _, __):
+        print("runing backward_fuse")
         q, k, v, b, o, L = ctx.saved_tensors
         # print(f'{b=}')
         sm_scale = ctx.sm_scale

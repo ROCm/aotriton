@@ -240,29 +240,14 @@ def bwd_kernel_fuse(
         DQ += dq_offset
         store_db = True
         if BIAS_TYPE == 0:
-            B_block_ptr = 0
-            DB_block_ptr = 0
+            B_ptr_dq = 0
+            DB_ptr = 0
         elif BIAS_TYPE == 1:
-            B_block_ptr = tl.make_block_ptr(
-                    base=B + off_h_q * stride_bh + batch_index * stride_bz,
-                    shape=(seqlen_q, seqlen_k),
-                    strides=(stride_bm, stride_bn),
-                    offsets=(start_q, 0),
-                    block_shape=(BLOCK_N, BLOCK_M),
-                    order=(1, 0)
-                    )
+            bias_offset = B + off_h_q * stride_bh + batch_index * stride_bz
+            B_ptr_dq = bias_offset + offs_q[:, None] * stride_bm + (tl.arange(0, BLOCK_M))[None, :] * stride_bn
             if (stride_dbz == 0 and stride_dbh == 0) and stride_dbm == 0:
                 store_db = False
-            # Still have to make one even if no_db = False
-            # due to a limit of Triton: runtime branches must have identical data types.
-            DB_block_ptr = tl.make_block_ptr(
-                    base=DB + off_h_q * stride_dbh + batch_index * stride_dbz,
-                    shape=(seqlen_q, seqlen_k),
-                    strides=(stride_dbm, stride_dbn),
-                    offsets=(start_q, 0),
-                    block_shape=(BLOCK_N, BLOCK_M),
-                    order=(1, 0)
-                    )
+            DB_ptr = DB + off_h_q * stride_dbh + batch_index * stride_dbz + start_q * stride_dbm
         else:
             tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
 
@@ -311,12 +296,14 @@ def bwd_kernel_fuse(
             dq0, dq1, dq2 = bwd_inner_dq(
                 dq0, dq1, dq2,
                 qk_scale, bias_scale,
-                DB_block_ptr, store_db,
+                DB_ptr, store_db,
                 q0, q1, q2,
                 kt_ptrs0, kt_ptrs1, kt_ptrs2,
                 stride_kn,
                 vt_ptrs0, vt_ptrs1, vt_ptrs2,
-                stride_vk, B_block_ptr,
+                stride_vk,
+                stride_bn, stride_bm,  stride_dbn, stride_dbm,
+                B_ptr_dq,
                 do0, do1, do2,
                 Di, l_i,
                 seqlen_q, seqlen_k, head_dim,
@@ -340,12 +327,14 @@ def bwd_kernel_fuse(
             dq0, dq1, dq2 = bwd_inner_dq(
                 dq0, dq1, dq2,
                 qk_scale, bias_scale,
-                DB_block_ptr, store_db,
+                DB_ptr, store_db,
                 q0, q1, q2,
                 kt_ptrs0, kt_ptrs1, kt_ptrs2,
                 stride_kn,
                 vt_ptrs0, vt_ptrs1, vt_ptrs2,
-                stride_vk, B_block_ptr,
+                stride_vk, 
+                stride_bn, stride_bm,  stride_dbn, stride_dbm,
+                B_ptr_dq,
                 do0, do1, do2,
                 Di, l_i,
                 seqlen_q, seqlen_k, head_dim,
@@ -480,7 +469,8 @@ def bwd_kernel_fuse(
             #         block_shape=(BLOCK_M, BLOCK_N),
             #         order=(1, 0)
             #         )
-            B_ptr = B + off_h_k * stride_bh + batch_index * stride_bz + (start_k + tl.arange(0, BLOCK_N))[None, :] * stride_bn
+            bias_offset = B + off_h_k * stride_bh + batch_index * stride_bz
+            B_ptr = bias_offset + offs_m[:, None] * stride_bm +  offs_n[None, :] * stride_bn
         else:
             tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
 
