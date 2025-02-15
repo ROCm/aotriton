@@ -53,6 +53,7 @@ namespace pyaotriton {
               py::arg("philox_offset_output"),
               py::arg("encoded_softmax"),
               py::arg("is_causal"),
+              py::arg("atomic_for_causal"),
               py::arg("stream") = nullptr,
               py::arg("extargs") = FwdExtraArguments());
         m.def("attn_fwd_compact_varlen",
@@ -62,11 +63,11 @@ namespace pyaotriton {
               py::arg("q"),
               py::arg("k"),
               py::arg("v"),
+              py::arg("b"),
               py::arg("cu_seqlens_q"),
               py::arg("cu_seqlens_k"),
               py::arg("max_seqlen_q"),
               py::arg("max_seqlen_k"),
-              py::arg("b"),
               py::arg("sm_scale"),
               py::arg("softmax_lse"),
               py::arg("out"),
@@ -78,6 +79,7 @@ namespace pyaotriton {
               py::arg("philox_offset_output"),
               py::arg("encoded_softmax"),
               py::arg("is_causal"),
+              py::arg("atomic_for_causal"),
               py::arg("stream") = nullptr,
               py::arg("extargs") = FwdExtraArguments());
         m.def("attn_bwd",

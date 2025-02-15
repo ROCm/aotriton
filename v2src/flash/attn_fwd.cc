@@ -50,17 +50,36 @@ _attn_fwd_common(T4 q,
               << " BLOCK_M = " << params.BLOCK_M << " BLOCK_N = " << params.BLOCK_N
               << " PRE_LOAD_V = " << params.PRE_LOAD_V << std::endl;
 #endif
-    dim3 grid {
-      AOTRITON_NS::cdiv<uint32_t>(params.Max_seqlen_q, params.BLOCK_M),
-      uint32_t(params.Q->size(1)),
-      params.Num_seqlens == 0 ? uint32_t(params.Q->size(0)) : params.Num_seqlens,
-    };
+    bool unsupported_by_persistent = params.Num_seqlens != 0;
+    auto nblocks = AOTRITON_NS::cdiv<uint32_t>(params.Max_seqlen_q, params.BLOCK_M);
+    // Use default grid if not persistent, or input is unsupported_by_persistent,
+    // in which case persistent is turned off IN TRITON KERNEL
+    // and this kernel will expect regular grid configs.
+    //
+    // Note: This fallback behavior is determined by GPU kernel at runtime.
+    if (params.PERSISTENT_TYPE == 0 || unsupported_by_persistent) {
+      dim3 grid {
+        nblocks,
+        uint32_t(params.Q->size(1)),
+        params.Batch,
+      };
 #if AOTRITON_VERBOSE
-    std::cerr << "Grid conf " << grid.x << " " << grid.y << " " << grid.z << std::endl;
+      std::cerr << "Grid conf " << grid.x << " " << grid.y << " " << grid.z << std::endl;
 #endif
+      return grid;
+    }
+    // PERSISTENT or PERSISTENT_DYNAMIC
+    // grid = lambda META: (min(NUM_CU * META['GRID_CU_MULTIP'],
+    //                      triton.cdiv(metadata.max_seqlens_q, META['BLOCK_M']) * nheads_q * batch), )
+    int from_cu = params.Num_CU * params.GRID_CU_MULTIP;
+    int from_in = nblocks * params.Num_head_q * params.Batch;
+    dim3 grid {
+      std::min(from_cu, from_in),
+      1,
+      1,
+    };
     return grid;
   };
-  int batch = q.size(0);
   int head_size = q.size(3);
   int num_head_q = q.size(1);
   int num_head_k = k.size(1);
@@ -80,6 +99,7 @@ _attn_fwd_common(T4 q,
     return hipErrorInvalidValue;
   }
   int bias_type = 0;
+  // TODO: Replace magic numbers used in BIAS_TYPE, CAUSAL_TYPE, PERSISTENT_TYPE
   if (b) {
     bias_type = 1;
   }
@@ -119,8 +139,8 @@ _attn_fwd_common(T4 q,
     .INT8_KV = false,
     .USE_P_SCALE = false,
     .persistent_atomic_counter = &persistent_atomic_counter,
-    .Num_CU = 80,
-    .Batch = batch,
+    .Num_CU = params.PERSISTENT_TYPE == 0 ? 80 : getMultiProcessorCount(stream),
+    .Batch = num_seqlens == 0 ? q.size(0) : num_seqlens,
   };
 #if AOTRITON_BUILD_FOR_TUNING
   if (extargs) {
@@ -142,6 +162,11 @@ _attn_fwd_common(T4 q,
 #endif
   if (err != hipSuccess) {
     return err;
+  }
+  // Note: PERSISTENT_TYPE is compiled as a perf tuning option, even if it
+  //       drastically changes the kernel behaviors
+  if (params.PERSISTENT_TYPE == 2 && !persistent_atomic_counter) {
+    return hipErrorInvalidValue;  // must have persistent_atomic_counter set
   }
   err = context.launch(params, stream);
   if (err != hipSuccess) {
@@ -174,9 +199,9 @@ attn_fwd(T4 q,
          T0 philox_offset_output,
          T4 encoded_softmax,
          bool is_causal,
+         T0 atomic_for_causal,
          AOTRITON_NS::Stream stream_wrap,
          FwdExtraArguments* extargs) {
-  auto null_persistent_atomic_counter = T0::get_null_tensor(DType::kInt32);
   auto null_t1 = T1::get_null_tensor(DType::kInt32);
   auto alibi_null_t2 = T2::get_null_tensor(q.dtype());
   return _attn_fwd_common(q,
@@ -200,7 +225,7 @@ attn_fwd(T4 q,
                           philox_offset_output,
                           encoded_softmax,
                           is_causal,
-                          null_persistent_atomic_counter,
+                          atomic_for_causal,
                           stream_wrap,
                           extargs);
 }
@@ -225,9 +250,9 @@ attn_fwd_compact_varlen(T4 q,            // 1 x num_heads x total_q x head_size,
                         T0 philox_offset_output,
                         T4 encoded_softmax,
                         bool is_causal,
+                        T0 atomic_for_causal,
                         AOTRITON_NS::Stream stream_wrap,
                         FwdExtraArguments* extargs) {
-  auto null_persistent_atomic_counter = T0::get_null_tensor(DType::kInt32);
   auto alibi_null_t2 = T2::get_null_tensor(q.dtype());
   return _attn_fwd_common(q,
                           k,
@@ -250,7 +275,7 @@ attn_fwd_compact_varlen(T4 q,            // 1 x num_heads x total_q x head_size,
                           philox_offset_output,
                           encoded_softmax,
                           is_causal,
-                          null_persistent_atomic_counter,
+                          atomic_for_causal,
                           stream_wrap,
                           extargs);
 }

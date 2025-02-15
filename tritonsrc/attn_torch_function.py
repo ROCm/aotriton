@@ -39,6 +39,7 @@ class BiasType:
     VECTOR = 2  # CAVEAT: Unsupported in kernel
 
 class PersistentType:
+    AUTOSELECT = -1
     NONE = 0
     FIXED = 1
     DYNAMIC = 2
@@ -73,7 +74,7 @@ class AttentionExtraArgs:
     return_autotune : bool = False
     fillnan : bool = False
     report_best_config : bool = False
-    persistent_type : int = PersistentType.NONE
+    persistent_type : int = PersistentType.AUTOSELECT
     is_testing : bool = True
 
 VERBOSE=False
@@ -302,18 +303,27 @@ class _attention(torch.autograd.Function):
         max_seqlen_k = k.shape[2]
         o = torch.empty_like(q)
 
-        if attn_extra_args.persistent_type == PersistentType.NONE:
+        persistent_type = attn_extra_args.persistent_type
+        if persistent_type == PersistentType.AUTOSELECT:
+            persistent_type = PersistentType.NONE if not causal else PersistentType.DYNAMIC
+
+        null_tensor = torch.empty((0), device=q.device, dtype=torch.int32)
+        if persistent_type == PersistentType.DYNAMIC:
+            persistent_atomic_counter = torch.zeros([1], device=q.device, dtype=torch.int32)
+        else:
+            persistent_atomic_counter = null_tensor
+
+        if persistent_type == PersistentType.NONE:
             grid = lambda META: (
-                triton.cdiv(q.shape[2], META['BLOCK_M']),
+                triton.cdiv(max_seqlen_q, META['BLOCK_M']),
                 num_head_q,
-                q.shape[0],
+                batch,
             )
             Num_CU = 0
         else:
             Num_CU = torch.cuda.get_device_properties(q.device).multi_processor_count
             grid = lambda META: (min(Num_CU * META['GRID_CU_MULTIP'],
                                      triton.cdiv(max_seqlen_q, META['BLOCK_M']) * num_head_q * batch), )
-        null_tensor = torch.empty((0), device=q.device, dtype=torch.int32)
         M = torch.empty((q.shape[0] * q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)
         if attn_extra_args.fillnan:
             for t in (o, M):
@@ -381,11 +391,6 @@ class _attention(torch.autograd.Function):
             BLOCK_N = 64
         if dtype == torch.float32:
             BLOCK_M //= 2
-
-        if attn_extra_args.persistent_type == PersistentType.DYNAMIC:
-            persistent_atomic_counter = torch.zeros([1], device=q.device, dtype=torch.int32)
-        else:
-            persistent_atomic_counter = None
 
         if autotune:
             tuned_attn_fwd[grid](
@@ -470,7 +475,7 @@ class _attention(torch.autograd.Function):
                 # Alibi
                 USE_ALIBI=False,
                 # Persistent related arguments
-                PERSISTENT_TYPE=attn_extra_args.persistent_type,
+                PERSISTENT_TYPE=persistent_type,
                 persistent_atomic_counter=persistent_atomic_counter,
                 Num_CU=Num_CU,
                 GRID_CU_MULTIP=2,

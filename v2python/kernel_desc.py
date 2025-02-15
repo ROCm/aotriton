@@ -147,7 +147,8 @@ class KernelDescription(object):
     def gen_func_selections(self) -> 'tuple[ArgumentSelection]':
         return itertools.product(*self._func_selections)
 
-    def gen_perf_selections(self) -> 'tuple[ArgumentSelection]':
+    def gen_perf_selections(self, gpu, fsels) -> 'tuple[ArgumentSelection]':
+        # Function options is handled at KernelSignature
         return itertools.product(*self._perf_selections)
 
     def gen_tuned_perf_selections(self,
@@ -157,7 +158,7 @@ class KernelDescription(object):
         dba = tuned_db.select_gpu(gpu, self._target_gpus.index(gpu))
 
         if dba.empty:  # Fallback to selection defined by KernelDescription
-            for psels in self.gen_perf_selections():
+            for psels in self.gen_perf_selections(gpu, fsels):
                 yield gpu, fsels, psels, None
                 return  # For empty tuning database. Only need one option
 
@@ -190,11 +191,10 @@ class KernelDescription(object):
                                                         self.gen_func_selections()):
                         yield from self._gen_all_options_from_kdesc_autotune_configs(gpu, fsels)
                 else:
-                    # Build for Tuning, for simple kernels
-                    yield from itertools.product(self._target_gpus,
-                                                 self.gen_func_selections(),
-                                                 self.gen_perf_selections(),
-                                                 [None])
+                    for gpu, fsels in itertools.product(self._target_gpus,
+                                                        self.gen_func_selections()):
+                        yield from itertools.product(self.gen_perf_selections(gpu, fsels),
+                                                     [None])
             else:
                 # Not Build for Tuning, checking database
                 for gpu, fsels in itertools.product(self._target_gpus,

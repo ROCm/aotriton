@@ -159,6 +159,7 @@ extern template class TensorView<3>;
 extern template class TensorView<4>;
 
 GpuArch getArchFromStream(hipStream_t);
+int getMultiProcessorCount(hipStream_t stream);
 
 } // namespace AOTRITON_NS
 
