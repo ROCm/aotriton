@@ -71,7 +71,7 @@ def bwd_inner_dk_dv_fuse(
     o_ptrs0, o_ptrs1, o_ptrs2 = composed_advance(o_ptrs0, o_ptrs1, o_ptrs2,
                                                  lo * do_stride,
                                                  BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
-    
+
 
     '''
            K1   K2      (d)V      dO

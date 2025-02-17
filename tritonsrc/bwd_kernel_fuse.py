@@ -41,11 +41,11 @@ from composed_tensors import (
 @triton.jit
 def bwd_kernel_fuse(
     # I/O tensors
-    Q, K, V, B, sm_scale, 
+    Q, K, V, B, sm_scale,
     Out, DO,
     DK, DV, DQ, DB,
     L,
-    # Strides  
+    # Strides
     stride_qz, stride_qh, stride_qm, stride_qk,
     stride_kz, stride_kh, stride_kn, stride_kk,
     stride_vz, stride_vh, stride_vk, stride_vn,
@@ -57,7 +57,7 @@ def bwd_kernel_fuse(
     stride_dbz, stride_dbh, stride_dbm, stride_dbn,
     # Problem size
     num_head_q: tl.constexpr,
-    num_head_k: tl.constexpr, 
+    num_head_k: tl.constexpr,
     cu_seqlens_q,
     cu_seqlens_k,
     num_seqlens: tl.constexpr,
@@ -92,7 +92,7 @@ def bwd_kernel_fuse(
     pid = tl.program_id(0)
     NUM_KV_BLOCKS = tl.cdiv(max_seqlen_k, BLOCK_N)
     NUM_Q_BLOCKS = tl.cdiv(max_seqlen_q, BLOCK_N)
-    
+
     if pid >= NUM_KV_BLOCKS:
         # dq compute block
         off_pid = pid - NUM_KV_BLOCKS
@@ -100,13 +100,13 @@ def bwd_kernel_fuse(
         off_h_k = tl.program_id(1) # kv head index
         group_size = num_head_q // num_head_k
         off_h_q = (off_pid // NUM_Q_BLOCKS) + off_h_k * group_size # q head index
-        
+
         off_z = tl.program_id(2) # batch index, for varlen it indicates index in cu_seqlens_q/k
         num_z = tl.num_programs(2)
         off_zh = off_z * num_head_q + off_h_q * 1
         offs_q = start_q + tl.arange(0, BLOCK_N)
         offs_n = tl.arange(0, BLOCK_M)
-        
+
         philox_seed = 0
         philox_offset_base = philox_offset2
         philox_offset_stride = tl.cdiv(max_seqlen_k, PHILOX_RN_PER_OFFSET)
@@ -150,7 +150,7 @@ def bwd_kernel_fuse(
                 return
         if num_seqlens < 0:  # for padded seqlen
             if start_q >= seqlen_q:
-                return    
+                return
         q_ptrs0, q_ptrs1, q_ptrs2 = composed_ptrs(Q,
                                                 stride_qz, stride_qh, stride_qm, stride_qk,
                                                 batch_index, off_h_q, cu_seqlens_q_start + offs_q,
@@ -173,7 +173,7 @@ def bwd_kernel_fuse(
                                     PADDED_ROW=True,
                                     PADDED_COL=PADDED_HEAD,
                                     TRANSPOSED=False)
-        
+
         kt_ptrs0, kt_ptrs1, kt_ptrs2 = composed_ptrs(K,
                                                     stride_kz, stride_kh, stride_kn, stride_kk,
                                                     batch_index, off_h_k, cu_seqlens_k_start + offs_n,
@@ -331,7 +331,7 @@ def bwd_kernel_fuse(
                 kt_ptrs0, kt_ptrs1, kt_ptrs2,
                 stride_kn,
                 vt_ptrs0, vt_ptrs1, vt_ptrs2,
-                stride_vk, 
+                stride_vk,
                 stride_bn, stride_bm,  stride_dbn, stride_dbm,
                 B_ptr_dq,
                 do0, do1, do2,

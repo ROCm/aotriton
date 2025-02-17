@@ -174,7 +174,7 @@ class _attention(torch.autograd.Function):
 
         assert not torch.isnan(delta).any(), f'{delta=}'
         return dq, dk, dv, db, None, None, None, None, None
-    
+
     @staticmethod
     def backward_fused(ctx, do, _, __):
         print("runing backward_fuse")
