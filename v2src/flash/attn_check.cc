@@ -19,7 +19,8 @@ check_gpu(AOTRITON_NS::Stream stream_wrap) {
   auto stream = stream_wrap.native();
   auto arch = getArchFromStream(stream);
   if (AttnFwdContext::get_arch_number(arch) < 0 || BwdPreprocessContext::get_arch_number(arch) < 0 ||
-      BwdKernelDkDvContext::get_arch_number(arch) < 0 || BwdKernelDqContext::get_arch_number(arch) < 0) {
+      BwdKernelDkDvContext::get_arch_number(arch) < 0 || BwdKernelDqContext::get_arch_number(arch) < 0 ||
+      BwdKernelFuseContext::get_arch_number(arch) < 0) {
     return hipErrorNoBinaryForGpu;
   }
   return hipSuccess;

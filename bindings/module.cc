@@ -22,6 +22,7 @@ namespace pyaotriton {
     namespace flash {
       using aotriton::v2::flash::FwdExtraArguments;
       using aotriton::v2::flash::BwdExtraArguments;
+      using aotriton::v2::flash::FusedBwdExtraArguments;
       void setup_module(py::module_& m) {
         m.def("check_gpu", &aotriton::v2::flash::check_gpu, py::arg("stream"));
         py::class_<FwdExtraArguments, aotriton::v2::CppTune>(m, "FwdExtraArguments")
@@ -32,6 +33,12 @@ namespace pyaotriton {
 #if AOTRITON_BUILD_FOR_TUNING
           .def_readwrite("dkdv", &BwdExtraArguments::dkdv)
           .def_readwrite("dqdb", &BwdExtraArguments::dqdb)
+#endif
+        ;
+        py::class_<FusedBwdExtraArguments>(m, "FusedBwdExtraArguments")
+          .def(py::init<>())
+#if AOTRITON_BUILD_FOR_TUNING
+          .def_readwrite("fuse", &FusedBwdExtraArguments::fuse)
 #endif
         ;
         m.def("attn_fwd",
@@ -129,7 +136,7 @@ namespace pyaotriton {
               py::arg("philox_offset2"),
               py::arg("is_causal"),
               py::arg("stream") = nullptr,
-              py::arg("extargs") = BwdExtraArguments());
+              py::arg("extargs") = FusedBwdExtraArguments());
         m.def("attn_bwd_compact_varlen",
               &aotriton::v2::flash::attn_bwd_compact_varlen,
               "Flash Attention Backward Pass, Compact Stored Varlen",

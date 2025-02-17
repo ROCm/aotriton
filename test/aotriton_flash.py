@@ -11,6 +11,7 @@ from pyaotriton.v2.flash import (
     debug_simulate_encoded_softmax as fa_debug_simulate_encoded_softmax,
     FwdExtraArguments,
     BwdExtraArguments,
+    FusedBwdExtraArguments,
 )
 from pyaotriton import T1, T2, T4, DType, Stream, hipError_t, get_name_suffix
 assert get_name_suffix() != "", ("To run tests, AOTriton must be compiled with suffixes "
@@ -183,7 +184,7 @@ def attn_bwd(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
 
 def attn_bwd_fused(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
              dropout_p, philox_seed, philox_offset1, philox_offset2, is_causal, extargs=None):
-    extargs = BwdExtraArguments() if extargs is None else extargs
+    extargs = FusedBwdExtraArguments() if extargs is None else extargs
     qview, qdevm = mk_aotensor(q)
     kview, kdevm = mk_aotensor(k)
     vview, vdevm = mk_aotensor(v)

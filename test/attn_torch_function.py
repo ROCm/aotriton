@@ -13,6 +13,7 @@ from aotriton_flash import (
     debug_simulate_encoded_softmax,
     FwdExtraArguments,
     BwdExtraArguments,
+    FusedBwdExtraArguments,
     hipError_t,
     AOTRITON_TORCH_ONLY_USE_CPU,
     HipMemory,
