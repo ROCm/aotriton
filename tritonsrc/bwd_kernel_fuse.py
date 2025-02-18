@@ -243,10 +243,10 @@ def bwd_kernel_fuse(
             B_ptr_dq = 0
             DB_ptr = 0
         elif BIAS_TYPE == 1:
-            B_ptr_dq = B + off_h_q * stride_bh + batch_index * stride_bz + start_q * stride_dbm
+            B_ptr_dq = B + off_h_q * stride_bh + batch_index * stride_bz
             if (stride_dbz == 0 and stride_dbh == 0) and stride_dbm == 0:
                 store_db = False
-            DB_ptr = DB + off_h_q * stride_dbh + batch_index * stride_dbz + start_q * stride_dbm
+            DB_ptr = DB + off_h_q * stride_dbh + batch_index * stride_dbz
         else:
             tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
 

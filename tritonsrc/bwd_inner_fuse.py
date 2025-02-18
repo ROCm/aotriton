@@ -150,8 +150,8 @@ def bwd_inner_dk_dv_fuse(
             pass
         elif BIAS_TYPE == 1:
             # FIXME: do boundary_check correctly
-            bias_ptr = B_ptr + offs_q_curr[:, None] * stride_bm + offs_k * stride_bn
-            mask = (offs_q_curr[:, None] < seqlen_q) & (offs_k < seqlen_k)
+            bias_ptr = B_ptr + offs_q_curr * stride_bm + offs_k[None, :] * stride_bn
+            mask = (offs_q_curr < seqlen_q) & (offs_k[None, :] < seqlen_k)
             bias = tl.load(bias_ptr, mask=mask, other=0.0)
             qk += bias * bias_scale
         else:
