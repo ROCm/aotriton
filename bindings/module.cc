@@ -22,6 +22,7 @@ namespace pyaotriton {
     namespace flash {
       using aotriton::v2::flash::FwdExtraArguments;
       using aotriton::v2::flash::BwdExtraArguments;
+      using aotriton::v2::flash::FusedBwdExtraArguments;
       void setup_module(py::module_& m) {
         m.def("check_gpu", &aotriton::v2::flash::check_gpu, py::arg("stream"));
         py::class_<FwdExtraArguments, aotriton::v2::CppTune>(m, "FwdExtraArguments")
@@ -33,6 +34,9 @@ namespace pyaotriton {
           .def_readwrite("dkdv", &BwdExtraArguments::dkdv)
           .def_readwrite("dqdb", &BwdExtraArguments::dqdb)
 #endif
+        ;
+        py::class_<FusedBwdExtraArguments, aotriton::v2::CppTune>(m, "FusedBwdExtraArguments")
+          .def(py::init<>())
         ;
         m.def("attn_fwd",
               &aotriton::v2::flash::attn_fwd,
@@ -106,6 +110,30 @@ namespace pyaotriton {
               py::arg("is_causal"),
               py::arg("stream") = nullptr,
               py::arg("extargs") = BwdExtraArguments());
+        m.def("attn_bwd_fused",
+              &aotriton::v2::flash::attn_bwd_fused,
+              "Flash Attention Backward Pass",
+              py::call_guard<py::gil_scoped_release>(),
+              py::arg("q"),
+              py::arg("k"),
+              py::arg("v"),
+              py::arg("b"),
+              py::arg("sm_scale"),
+              py::arg("out"),
+              py::arg("dout"),
+              py::arg("dq"),
+              py::arg("dk"),
+              py::arg("dv"),
+              py::arg("db"),
+              py::arg("softmax_lse"),
+              py::arg("delta"),
+              py::arg("dropout_p"),
+              py::arg("philox_seed"),
+              py::arg("philox_offset1"),
+              py::arg("philox_offset2"),
+              py::arg("is_causal"),
+              py::arg("stream") = nullptr,
+              py::arg("extargs") = FusedBwdExtraArguments());
         m.def("attn_bwd_compact_varlen",
               &aotriton::v2::flash::attn_bwd_compact_varlen,
               "Flash Attention Backward Pass, Compact Stored Varlen",

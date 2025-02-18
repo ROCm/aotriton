@@ -15,6 +15,7 @@ from flash import (
     bwd_preprocess as bare_bwd_preprocess,
     bwd_kernel_dk_dv as bare_bwd_kernel_dk_dv,
     bwd_kernel_dq as bare_bwd_kernel_dq,
+    bwd_kernel_fuse as bare_bwd_kernel_fuse,
 )
 from tuned_bwd import (
     tuned_bwd_kernel_dk_dv,
@@ -908,8 +909,8 @@ class _attention(torch.autograd.Function):
         # if q.shape[-1] <= 32:
         Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
         assert Lq == Lk and Lk == Lv and Lk == ctx.head_dim
-        head_dim_rounded = 2 ** (ctx.head_dim - 1).bit_length()
-        head_dim_rounded = max(16, head_dim_rounded)
+        head_dim_factors = factor_head_dim(ctx.head_dim)
+        head_dim_rounded = sum(head_dim_factors)
         padded_head = head_dim_rounded != ctx.head_dim
         attn_extra_args = ctx.attn_extra_args
         philox_seed = ctx.philox_seed
@@ -924,109 +925,83 @@ class _attention(torch.autograd.Function):
             for t in (dq, dk, dv, db, delta):
                 t.fill_(float('nan'))
         null_tensor = torch.empty((0), device=q.device, dtype=torch.int32)
-        batch = q.shape[0]
-        num_head_q = q.shape[1]
-        num_head_k = q.shape[2]
+        num_head_q = int(q.shape[1])
+        num_head_k = int(k.shape[1])
         max_seqlen_q = q.shape[2]
         max_seqlen_k = k.shape[2]
         MAX_BLOCK = 64 if ctx.dropout_p == 0 else 16
+        # BLOCK = min(max_seqlen_q, max_seqlen_k, q.shape[-1], MAX_BLOCK)
+        # BLOCK = BLOCK if is_supported_by_tl_dot(max_seqlen_q) and is_supported_by_tl_dot(max_seqlen_k) else 1
+        if not ctx.autotune:
+            BLOCK = 16 # FIXME: Variable block size
+        else:
+            BLOCK = 128
+        return_autotune = ctx.tuning_result is not None
+        if False or VERBOSE:
+            print(f'{q.shape=} {q.stride()=}')
+            print(f'{k.shape=} {k.stride()=}')
+            print(f'{v.shape=} {v.stride()=}')
+            print(f'{o.shape=} {o.stride()=}')
+            print(f'{dq.shape=} {dq.stride()=}')
+            print(f'{dk.shape=} {dk.stride()=}')
+            print(f'{dv.shape=} {dv.stride()=}')
+            print(f'{do.shape=} {do.stride()=}')
+            print(f'{L=} {L.shape=}')
+            print(f'{delta=}')
+            print(f'{BLOCK=}')
+
+        use_small_block = ctx.dropout_p > 0.0
+        use_medium_block = ctx.bias_type != 0
+        # Profiling shows (16, 16) is optimal solution for most bwd configurations
+        BLOCK_M = 16
+        BLOCK_N = 16
         stride_dbz, stride_dbh, stride_dbm, stride_dbn = db.stride()
         if db.numel() == 0 or not b.requires_grad:
             # Passing all zeros to indicate no elements
             stride_dbz, stride_dbh, stride_dbm, stride_dbn = 0,0,0,0
         else:
             db.fill_(float('nan'))
-        BLOCK = 128
-        grid_prep = (triton.cdiv(do.shape[2], BLOCK), do.shape[1], do.shape[0])
-        bare_bwd_preprocess[grid_prep](
-            o, do, delta,
-            o.stride(0), o.stride(1), o.stride(2), o.stride(3),
-            do.stride(0), do.stride(1), do.stride(2), do.stride(3),
-            max_seqlen_q,
-            Lk,
-            BLOCK_M=BLOCK, D_HEAD=head_dim_rounded,
-            PADDED_HEAD=padded_head, # FIXME: irregular head dimension
-        )
-        BLOCK_M1, BLOCK_N1, BLOCK_M2, BLOCK_N2 = 32, 64, 64, 32
-        BLK_SLICE_FACTOR = 2
-        # BLOCK_M1, BLOCK_N1, BLOCK_M2, BLOCK_N2 = 16, 16, 16, 16
-        # BLK_SLICE_FACTOR = 1
-        grid = lambda META: (max(triton.cdiv(max_seqlen_k, META['BLOCK_M1']), triton.cdiv(max_seqlen_q, META['BLOCK_M2'])), num_head_q, batch)
-        if ctx.autotune:
-            tuned_attn_bwd[grid](
-                    q, k, v, b, ctx.sm_scale,
-                    o, do,
-                    dk, dv, dq, db,
-                    L, delta,
-                    q.stride(0), q.stride(1), q.stride(2), q.stride(3),
-                    k.stride(0), k.stride(1), k.stride(2), k.stride(3),
-                    v.stride(0), v.stride(1), v.stride(2), v.stride(3),
-                    b.stride(0), b.stride(1), b.stride(2), b.stride(3),
-                    do.stride(0), do.stride(1), do.stride(2), do.stride(3),
-                    dk.stride(0), dk.stride(1), dk.stride(2), dk.stride(3),
-                    dv.stride(0), dv.stride(1), dv.stride(2), dv.stride(3),
-                    dq.stride(0), dq.stride(1), dq.stride(2), dq.stride(3),
-                    stride_dbz, stride_dbh, stride_dbm, stride_dbn,  # db may be empty
-                    num_head_q=num_head_q,
-                    num_head_k=num_head_k,
-                    cu_seqlens_q=null_tensor,
-                    cu_seqlens_k=null_tensor,
-                    num_seqlens=0,
-                    max_seqlen_q=q.shape[2],
-                    max_seqlen_k=k.shape[2],
-                    head_dim=Lk,
-                    dropout_p=ctx.dropout_p,
-                    philox_seed_ptr=philox_seed,
-                    philox_offset1=philox_offset,
-                    philox_offset2=0,
-                    BLOCK_DMODEL=head_dim_rounded,
-                    CAUSAL=ctx.causal,
-                    ENABLE_DROPOUT=ctx.dropout_p > 0.0,
-                    PADDED_HEAD=padded_head,
-                    BIAS_TYPE=ctx.bias_type,
-                    )
-            report = attn_extra_args.report_best_config
-            if report:
-                best = copy.deepcopy(tuned_attn_bwd.best_config)
-                attn_extra_args.report_best_config('attn_bwd', best)
-        else:
-            bare_attn_bwd[grid](
-                    q, k, v, b, ctx.sm_scale,
-                    o, do,
-                    dk, dv, dq, db,
-                    L, delta,
-                    q.stride(0), q.stride(1), q.stride(2), q.stride(3),
-                    k.stride(0), k.stride(1), k.stride(2), k.stride(3),
-                    v.stride(0), v.stride(1), v.stride(2), v.stride(3),
-                    b.stride(0), b.stride(1), b.stride(2), b.stride(3),
-                    do.stride(0), do.stride(1), do.stride(2), do.stride(3),
-                    dk.stride(0), dk.stride(1), dk.stride(2), dk.stride(3),
-                    dv.stride(0), dv.stride(1), dv.stride(2), dv.stride(3),
-                    dq.stride(0), dq.stride(1), dq.stride(2), dq.stride(3),
-                    stride_dbz, stride_dbh, stride_dbm, stride_dbn,  # db may be empty
-                    num_head_q=num_head_q,
-                    num_head_k=num_head_k,
-                    cu_seqlens_q=null_tensor,
-                    cu_seqlens_k=null_tensor,
-                    num_seqlens=0,
-                    max_seqlen_q=q.shape[2],
-                    max_seqlen_k=k.shape[2],
-                    head_dim=Lk,
-                    dropout_p=ctx.dropout_p,
-                    philox_seed_ptr=philox_seed,
-                    philox_offset1=philox_offset,
-                    philox_offset2=0,
-                    BLOCK_DMODEL=head_dim_rounded,
-                    CAUSAL=ctx.causal,
-                    ENABLE_DROPOUT=ctx.dropout_p > 0.0,
-                    PADDED_HEAD=padded_head,
-                    BIAS_TYPE=ctx.bias_type,
-                    BLOCK_M1=BLOCK_M1,
-                    BLOCK_N1=BLOCK_N1,
-                    BLOCK_M2=BLOCK_M2,
-                    BLOCK_N2=BLOCK_N2,
-                    BLK_SLICE_FACTOR=BLK_SLICE_FACTOR,
-                    )
+        if k.requires_grad and v.requires_grad and q.requires_grad:
+            if ctx.autotune:
+                assert False
+            else:
+                print('Running bare_bwd_kernel_fuse')
+                grid_fuse = lambda META: (triton.cdiv(max_seqlen_k, META['BLOCK_N']) + triton.cdiv(max_seqlen_q, META['BLOCK_N']) * (num_head_q//num_head_k), num_head_k, q.shape[0])
+                bare_bwd_kernel_fuse[grid_fuse](
+                        q, k, v, b, ctx.sm_scale,
+                        o, do,
+                        dk, dv, dq, db,
+                        L,
+                        q.stride(0), q.stride(1), q.stride(2), q.stride(3),
+                        k.stride(0), k.stride(1), k.stride(2), k.stride(3),
+                        v.stride(0), v.stride(1), v.stride(2), v.stride(3),
+                        b.stride(0), b.stride(1), b.stride(2), b.stride(3),
+                        do.stride(0), do.stride(1), do.stride(2), do.stride(3),
+                        dk.stride(0), dk.stride(1), dk.stride(2), dk.stride(3),
+                        dv.stride(0), dv.stride(1), dv.stride(2), dv.stride(3),
+                        dq.stride(0), dq.stride(1), dq.stride(2), dq.stride(3),
+                        stride_dbz, stride_dbh, stride_dbm, stride_dbn,  # db may be empty
+                        num_head_q=num_head_q,
+                        num_head_k=num_head_k,
+                        cu_seqlens_q=null_tensor,
+                        cu_seqlens_k=null_tensor,
+                        num_seqlens=0,
+                        max_seqlen_q=q.shape[2],
+                        max_seqlen_k=k.shape[2],
+                        head_dim=Lk,
+                        dropout_p=ctx.dropout_p,
+                        philox_seed_ptr=philox_seed,
+                        philox_offset1=philox_offset,
+                        philox_offset2=0,
+                        BLOCK_DMODEL=head_dim_rounded,
+                        CAUSAL=ctx.causal,
+                        ENABLE_DROPOUT=ctx.dropout_p > 0.0,
+                        PADDED_HEAD=padded_head,
+                        BIAS_TYPE=ctx.bias_type,
+                        BLOCK_M=BLOCK_M,
+                        BLOCK_N=BLOCK_N,
+                        )
+                print('bare_bwd_kernel_fuse Done')
         return dq, dk, dv, None if db.numel() == 0 else db, None, None, None, None, None, None, None
 
     backward = backward_split

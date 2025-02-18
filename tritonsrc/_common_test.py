@@ -336,7 +336,7 @@ class SdpaContext(object):
             # value_fudge_factor = 36.0
         if dtype == torch.float32:
             key_fudge_factor = 180.0
-            # value_fudge_factor = 32.0
+            value_fudge_factor = 50.0
             bias_fudge_factor = 24.0
         return (query_fudge_factor, key_fudge_factor, value_fudge_factor, bias_fudge_factor)
 

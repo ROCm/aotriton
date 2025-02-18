@@ -69,6 +69,7 @@ class TunerService(BaseTunerService):
             debug_fill_dropout_rng,
             FwdExtraArguments,
             BwdExtraArguments,
+            FusedBwdExtraArguments,
             hipError_t,
         )
         from ..core import cpp_autotune_gen, KernelOutput, AutotuneResult
