@@ -150,8 +150,7 @@ def bwd_inner_dk_dv_fuse(
             pass
         elif BIAS_TYPE == 1:
             # FIXME: do boundary_check correctly
-            offs_q_bias = start_q + tl.arange(0, BLOCK_M)
-            bias = load_fn(B_ptr, offs_q_bias, offs_k, seqlen_q, seqlen_k)
+            bias = load_fn(B_ptr, offs_q_curr, offs_k, seqlen_q, seqlen_k)
             qk += bias * bias_scale
         else:
             tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
@@ -245,7 +244,5 @@ def bwd_inner_dk_dv_fuse(
         o_ptrs0, o_ptrs1, o_ptrs2 = composed_advance(o_ptrs0, o_ptrs1, o_ptrs2,
                                                      do_stride * BLOCK_M,
                                                      BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
-        if BIAS_TYPE == 1:
-            B_ptr = B_ptr + BLOCK_M * stride_bm
     return dk0, dk1, dk2, dv0, dv1, dv2
 
