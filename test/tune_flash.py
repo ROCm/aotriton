@@ -169,7 +169,7 @@ class FlashTunerSource(MonadService):
 
         for i, tup in enumerate(self.gen()):
             self.print(f"[{i:06d}] gen_itup {tup}")
-            batch, n_heads, d_head, seqlen_q, seqlen_k, causal = tup[:6]
+            batch, n_heads, d_head, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type = tup
             if a.selective_set:
                 if i in a.selective_set:
                     payload = TuningResult(tup=tup, kig_dict=self.create_kig_dict())
@@ -180,6 +180,8 @@ class FlashTunerSource(MonadService):
             if a.continue_from is not None and i < a.continue_from:
                 continue
             if i in skip_set:
+                continue
+            if a.skip_bias and bias_type:
                 continue
             if seqlen_q > a.max_seqlen_q or seqlen_k > a.max_seqlen_k:
                 if not a.complement_seqlens:
@@ -287,6 +289,7 @@ def parse():
                    choices=['float16', 'bfloat16', 'float32'],
                    help='Datatype to profile.')
     p.add_argument('--bias_type', type=int, nargs=NARG_PLUS, default=[0, 1], choices=[0, 1], help='Bias types to profile, 0: None, 1: Matrix.')
+    p.add_argument('--skip_bias', action='store_true', help='A neat way to skip bias=1 without changing the task_id.')
     p.add_argument('--verbose', action='store_true', help='Verbose')
     p.add_argument('--validate',
                    action='store_true', help='Validate the correctness of the output to avoid faulty autotune configs')
