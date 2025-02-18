@@ -280,9 +280,9 @@ def bwd_kernel_fuse(
         q_boundary = tl.full((BLOCK_N, ), seqlen_q, dtype=tl.int32)
         d_lse_ptrs_mask = offs_q < q_boundary
         Di = composed_inner_product_fp32(o0, o1, o2,
-                                        do0, do1, do2,
-                                        BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
-                                        axis=1)
+                                         do0, do1, do2,
+                                         BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                         axis=1)
         l_i = tl.load(l_ptrs + offs_q, mask=d_lse_ptrs_mask, other=0.0)
 
         idropout_p = ((dropout_p - 0.5) * 0xFFFFFFFF).to(tl.int32)
