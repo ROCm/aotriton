@@ -152,82 +152,82 @@ def bwd_kernel_fuse(
             if start_q >= seqlen_q:
                 return
         q_ptrs0, q_ptrs1, q_ptrs2 = composed_ptrs(Q,
-                                                stride_qz, stride_qh, stride_qm, stride_qk,
-                                                batch_index, off_h_q, cu_seqlens_q_start + offs_q,
-                                                BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
+                                                  stride_qz, stride_qh, stride_qm, stride_qk,
+                                                  batch_index, off_h_q, cu_seqlens_q_start + offs_q,
+                                                  BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
         if start_q + BLOCK_N <= seqlen_q:
             q0, q1, q2 = composed_load(q_ptrs0, q_ptrs1, q_ptrs2,
-                                    offs_q,
-                                    BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
-                                    seqlen_q, head_dim,
-                                    other=0.0,
-                                    PADDED_ROW=False,
-                                    PADDED_COL=PADDED_HEAD,
-                                    TRANSPOSED=False)
+                                       offs_q,
+                                       BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                       seqlen_q, head_dim,
+                                       other=0.0,
+                                       PADDED_ROW=False,
+                                       PADDED_COL=PADDED_HEAD,
+                                       TRANSPOSED=False)
         else:
             q0, q1, q2 = composed_load(q_ptrs0, q_ptrs1, q_ptrs2,
-                                    offs_q,
-                                    BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
-                                    seqlen_q, head_dim,
-                                    other=0.0,
-                                    PADDED_ROW=True,
-                                    PADDED_COL=PADDED_HEAD,
-                                    TRANSPOSED=False)
+                                       offs_q,
+                                       BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                       seqlen_q, head_dim,
+                                       other=0.0,
+                                       PADDED_ROW=True,
+                                       PADDED_COL=PADDED_HEAD,
+                                       TRANSPOSED=False)
 
         kt_ptrs0, kt_ptrs1, kt_ptrs2 = composed_ptrs(K,
-                                                    stride_kz, stride_kh, stride_kn, stride_kk,
-                                                    batch_index, off_h_k, cu_seqlens_k_start + offs_n,
-                                                    BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
-                                                    TRANSPOSED=True)
+                                                     stride_kz, stride_kh, stride_kn, stride_kk,
+                                                     batch_index, off_h_k, cu_seqlens_k_start + offs_n,
+                                                     BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                                     TRANSPOSED=True)
         vt_ptrs0, vt_ptrs1, vt_ptrs2 = composed_ptrs(V,
-                                                    stride_vz, stride_vh, stride_vk, stride_vn,
-                                                    batch_index, off_h_k, cu_seqlens_k_start + offs_n,
-                                                    BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
-                                                    TRANSPOSED=True)
+                                                     stride_vz, stride_vh, stride_vk, stride_vn,
+                                                     batch_index, off_h_k, cu_seqlens_k_start + offs_n,
+                                                     BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                                     TRANSPOSED=True)
 
         do_ptrs0, do_ptrs1, do_ptrs2 = composed_ptrs(DO,
-                                                    stride_oz, stride_oh, stride_om, stride_ok,
-                                                    batch_index, off_h_q, cu_seqlens_q_start + offs_q,
-                                                    BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
+                                                     stride_oz, stride_oh, stride_om, stride_ok,
+                                                     batch_index, off_h_q, cu_seqlens_q_start + offs_q,
+                                                     BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
         o_ptrs0, o_ptrs1, o_ptrs2 = composed_ptrs(Out,
-                                                stride_oz, stride_oh, stride_om, stride_ok,
-                                                batch_index, off_h_q, cu_seqlens_q_start + offs_q,
-                                                BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
+                                                  stride_oz, stride_oh, stride_om, stride_ok,
+                                                  batch_index, off_h_q, cu_seqlens_q_start + offs_q,
+                                                  BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
 
         if start_q + BLOCK_N <= seqlen_q:
             do0, do1, do2 = composed_load(do_ptrs0, do_ptrs1, do_ptrs2,
-                                        offs_q,
-                                        BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
-                                        seqlen_q, head_dim,
-                                        other=0.0,
-                                        PADDED_ROW=False,
-                                        PADDED_COL=PADDED_HEAD,
-                                        TRANSPOSED=False)
+                                          offs_q,
+                                          BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                          seqlen_q, head_dim,
+                                          other=0.0,
+                                          PADDED_ROW=False,
+                                          PADDED_COL=PADDED_HEAD,
+                                          TRANSPOSED=False)
             o0, o1, o2 = composed_load(o_ptrs0, o_ptrs1, o_ptrs2,
-                                    offs_q,
-                                    BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
-                                    seqlen_q, head_dim,
-                                    other=0.0,
-                                    PADDED_ROW=False,
-                                    PADDED_COL=PADDED_HEAD,
-                                    TRANSPOSED=False)
+                                       offs_q,
+                                       BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                       seqlen_q, head_dim,
+                                       other=0.0,
+                                       PADDED_ROW=False,
+                                       PADDED_COL=PADDED_HEAD,
+                                       TRANSPOSED=False)
         else:
             do0, do1, do2 = composed_load(do_ptrs0, do_ptrs1, do_ptrs2,
-                                        offs_q,
-                                        BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
-                                        seqlen_q, head_dim,
-                                        other=0.0,
-                                        PADDED_ROW=True,
-                                        PADDED_COL=PADDED_HEAD,
-                                        TRANSPOSED=False)
+                                          offs_q,
+                                          BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                          seqlen_q, head_dim,
+                                          other=0.0,
+                                          PADDED_ROW=True,
+                                          PADDED_COL=PADDED_HEAD,
+                                          TRANSPOSED=False)
             o0, o1, o2 = composed_load(o_ptrs0, o_ptrs1, o_ptrs2,
-                                    offs_q,
-                                    BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
-                                    seqlen_q, head_dim,
-                                    other=0.0,
-                                    PADDED_ROW=True,
-                                    PADDED_COL=PADDED_HEAD,
-                                    TRANSPOSED=False)
+                                       offs_q,
+                                       BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                       seqlen_q, head_dim,
+                                       other=0.0,
+                                       PADDED_ROW=True,
+                                       PADDED_COL=PADDED_HEAD,
+                                       TRANSPOSED=False)
         # pointer to row-wise quantities in value-like data
         l_ptrs = L + off_zh * max_seqlen_q
         if ENABLE_DROPOUT:
@@ -354,17 +354,17 @@ def bwd_kernel_fuse(
                                         BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
         dq0, dq1, dq2 = composed_to(dq0, dq1, dq2, dq0.type.element_ty)
         composed_store(dq0, dq1, dq2,
-                    BLOCK_N,
-                    BLOCK_DMODEL0,
-                    BLOCK_DMODEL1,
-                    BLOCK_DMODEL2,
-                    o_base=DQ,
-                    o_start_row=start_q,
-                    o_start_col=0,
-                    o_rows=seqlen_q,
-                    o_cols=head_dim,
-                    stride_row=stride_dqm,
-                    stride_col=stride_dqk)
+                       BLOCK_N,
+                       BLOCK_DMODEL0,
+                       BLOCK_DMODEL1,
+                       BLOCK_DMODEL2,
+                       o_base=DQ,
+                       o_start_row=start_q,
+                       o_start_col=0,
+                       o_rows=seqlen_q,
+                       o_cols=head_dim,
+                       stride_row=stride_dqm,
+                       stride_col=stride_dqk)
     else:
         idropout_p = ((dropout_p - 0.5) * 0xFFFFFFFF).to(tl.int32)
         philox_seed = 0
@@ -411,51 +411,51 @@ def bwd_kernel_fuse(
             batch_index = off_z
 
         k_ptrs0, k_ptrs1, k_ptrs2 = composed_ptrs(K,
-                                                stride_kz, stride_kh, stride_kn, stride_kk,
-                                                batch_index, off_h_k, cu_seqlens_k_start + offs_n,
-                                                BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
-                                                TRANSPOSED=True)
+                                                  stride_kz, stride_kh, stride_kn, stride_kk,
+                                                  batch_index, off_h_k, cu_seqlens_k_start + offs_n,
+                                                  BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                                  TRANSPOSED=True)
         # kt_offs_n = None if start_k + BLOCK_N <= seqlen_k else start_k + tl.arange(0, BLOCK_N)
         v_ptrs0, v_ptrs1, v_ptrs2 = composed_ptrs(V,
-                                                stride_vz, stride_vh, stride_vk, stride_vn,
-                                                batch_index, off_h_k, cu_seqlens_k_start + offs_n,
-                                                BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
-                                                TRANSPOSED=True)
+                                                  stride_vz, stride_vh, stride_vk, stride_vn,
+                                                  batch_index, off_h_k, cu_seqlens_k_start + offs_n,
+                                                  BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                                  TRANSPOSED=True)
 
         if start_k + BLOCK_N <= seqlen_k:
             kt0, kt1, kt2 = composed_load(k_ptrs0, k_ptrs1, k_ptrs2,
-                                        offs_n,
-                                        BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
-                                        seqlen_k, head_dim,
-                                        other=0.0,
-                                        PADDED_ROW=False,
-                                        PADDED_COL=PADDED_HEAD,
-                                        TRANSPOSED=True)
+                                          offs_n,
+                                          BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                          seqlen_k, head_dim,
+                                          other=0.0,
+                                          PADDED_ROW=False,
+                                          PADDED_COL=PADDED_HEAD,
+                                          TRANSPOSED=True)
             vt0, vt1, vt2 = composed_load(v_ptrs0, v_ptrs1, v_ptrs2,
-                                        offs_n,
-                                        BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
-                                        seqlen_k, head_dim,
-                                        other=0.0,
-                                        PADDED_ROW=False,
-                                        PADDED_COL=PADDED_HEAD,
-                                        TRANSPOSED=True)
+                                          offs_n,
+                                          BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                          seqlen_k, head_dim,
+                                          other=0.0,
+                                          PADDED_ROW=False,
+                                          PADDED_COL=PADDED_HEAD,
+                                          TRANSPOSED=True)
         else:
             kt0, kt1, kt2 = composed_load(k_ptrs0, k_ptrs1, k_ptrs2,
-                                        offs_n,
-                                        BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
-                                        seqlen_k, head_dim,
-                                        other=0.0,
-                                        PADDED_ROW=True,
-                                        PADDED_COL=PADDED_HEAD,
-                                        TRANSPOSED=True)
+                                          offs_n,
+                                          BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                          seqlen_k, head_dim,
+                                          other=0.0,
+                                          PADDED_ROW=True,
+                                          PADDED_COL=PADDED_HEAD,
+                                          TRANSPOSED=True)
             vt0, vt1, vt2 = composed_load(v_ptrs0, v_ptrs1, v_ptrs2,
-                                        offs_n,
-                                        BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
-                                        seqlen_k, head_dim,
-                                        other=0.0,
-                                        PADDED_ROW=True,
-                                        PADDED_COL=PADDED_HEAD,
-                                        TRANSPOSED=True)
+                                          offs_n,
+                                          BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                          seqlen_k, head_dim,
+                                          other=0.0,
+                                          PADDED_ROW=True,
+                                          PADDED_COL=PADDED_HEAD,
+                                          TRANSPOSED=True)
         if BIAS_TYPE == 0:
             B_ptr = 0
         elif BIAS_TYPE == 1:
@@ -523,18 +523,18 @@ def bwd_kernel_fuse(
             l_ptrs = L + off_zh * max_seqlen_q
 
             q_ptrs0, q_ptrs1, q_ptrs2 = composed_ptrs(Q,
-                                                    stride_qz, stride_qh, stride_qm, stride_qk,
-                                                    batch_index, off_h_q, cu_seqlens_q_start + offs_m,
-                                                    BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
+                                                      stride_qz, stride_qh, stride_qm, stride_qk,
+                                                      batch_index, off_h_q, cu_seqlens_q_start + offs_m,
+                                                      BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
 
             do_ptrs0, do_ptrs1, do_ptrs2 = composed_ptrs(DO,
-                                                        stride_oz, stride_oh, stride_om, stride_ok,
-                                                        batch_index, off_h_q, cu_seqlens_q_start + offs_m,
-                                                        BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
+                                                         stride_oz, stride_oh, stride_om, stride_ok,
+                                                         batch_index, off_h_q, cu_seqlens_q_start + offs_m,
+                                                         BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
             o_ptrs0, o_ptrs1, o_ptrs2 = composed_ptrs(Out,
-                                                    stride_oz, stride_oh, stride_om, stride_ok,
-                                                    batch_index, off_h_q, cu_seqlens_q_start + offs_m,
-                                                    BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
+                                                      stride_oz, stride_oh, stride_om, stride_ok,
+                                                      batch_index, off_h_q, cu_seqlens_q_start + offs_m,
+                                                      BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
 
             # dkdk kernel is a little tricky, its masked blocks can be found in both ends
             # leading masked: by causal
@@ -645,29 +645,29 @@ def bwd_kernel_fuse(
         dv0, dv1, dv2 = composed_to(dv0, dv1, dv2, vt0.type.element_ty)
 
         composed_store(dk0, dk1, dk2,
-                    BLOCK_N,
-                    BLOCK_DMODEL0,
-                    BLOCK_DMODEL1,
-                    BLOCK_DMODEL2,
-                    o_base=DK,
-                    o_start_row=start_k,
-                    o_start_col=0,
-                    o_rows=seqlen_k,
-                    o_cols=head_dim,
-                    stride_row=stride_dkn,
-                    stride_col=stride_dkk)
+                       BLOCK_N,
+                       BLOCK_DMODEL0,
+                       BLOCK_DMODEL1,
+                       BLOCK_DMODEL2,
+                       o_base=DK,
+                       o_start_row=start_k,
+                       o_start_col=0,
+                       o_rows=seqlen_k,
+                       o_cols=head_dim,
+                       stride_row=stride_dkn,
+                       stride_col=stride_dkk)
 
         composed_store(dv0, dv1, dv2,
-                    BLOCK_N,
-                    BLOCK_DMODEL0,
-                    BLOCK_DMODEL1,
-                    BLOCK_DMODEL2,
-                    o_base=DV,
-                    o_start_row=start_k,
-                    o_start_col=0,
-                    o_rows=seqlen_k,
-                    o_cols=head_dim,
-                    stride_row=stride_dvk,
-                    stride_col=stride_dvn)
+                       BLOCK_N,
+                       BLOCK_DMODEL0,
+                       BLOCK_DMODEL1,
+                       BLOCK_DMODEL2,
+                       o_base=DV,
+                       o_start_row=start_k,
+                       o_start_col=0,
+                       o_rows=seqlen_k,
+                       o_cols=head_dim,
+                       stride_row=stride_dvk,
+                       stride_col=stride_dvn)
 
 
