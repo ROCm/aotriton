@@ -62,18 +62,12 @@ def bwd_inner_dq(
     # initialize offsets
     offs_q = start_q + tl.arange(0, BLOCK_M)
     offs_k = tl.arange(0, BLOCK_N)
-    offs_m = tl.arange(0, BLOCK_M)
-    offs_n = tl.arange(0, BLOCK_N)
     kt_ptrs0, kt_ptrs1, kt_ptrs2 = composed_advance(kt_ptrs0, kt_ptrs1, kt_ptrs2,
                                                     lo * k_stride,
                                                     BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
     vt_ptrs0, vt_ptrs1, vt_ptrs2 = composed_advance(vt_ptrs0, vt_ptrs1, vt_ptrs2,
                                                     lo * v_stride,
                                                     BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
-    # if BIAS_TYPE == 1:
-    #     B_ptr = B_ptr + lo * stride_bn
-    #     DB_ptr = DB_ptr + lo * stride_dbn
-
     '''
            K1   K2      (d)V      dO
     Q1    qk11 qk12     (d)v1     dO1
@@ -128,8 +122,8 @@ def bwd_inner_dq(
         elif BIAS_TYPE == 1:
             # FIXME: Must use boundary_check uncondtionally.
             # The optimized tl.load above causes nan for some reason
-            bias_ptr = B_ptr + offs_m[:, None] * stride_bm + offs_n[None, :] * stride_bn
-            mask = (offs_q[:, None] < seqlen_q) & ((offs_k[None, :] + start_k) < seqlen_k)
+            bias_ptr = B_ptr + offs_q[:, None] * stride_bm + offs_k_curr * stride_bn
+            mask = (offs_q[:, None] < seqlen_q) & (offs_k_curr < seqlen_k)
             bias = tl.load(bias_ptr, mask=mask, other=0.0)
             qk += bias * bias_scale
         else:
@@ -175,8 +169,8 @@ def bwd_inner_dq(
                                              BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
         if BIAS_TYPE == 1:
             if store_db:
-                db_ptr = DB_ptr + offs_m[:, None] * stride_dbm + (offs_n[None, :] + start_k) * stride_dbn
-                mask = (offs_q[:, None] < seqlen_q) & ((offs_n[None, :] + start_k) < seqlen_k)
+                db_ptr = DB_ptr + offs_q[:, None] * stride_dbm + (offs_k[None, :] + start_k) * stride_dbn
+                mask = (offs_q[:, None] < seqlen_q) & ((offs_k[None, :] + start_k) < seqlen_k)
                 tl.store(db_ptr, ds.to(q0.type.element_ty), mask=mask)
         # update pointers
         # Keep the block ptr as comment
@@ -188,7 +182,4 @@ def bwd_inner_dq(
         vt_ptrs0, vt_ptrs1, vt_ptrs2 = composed_advance(vt_ptrs0, vt_ptrs1, vt_ptrs2,
                                                         BLOCK_N * v_stride,
                                                         BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
-        if BIAS_TYPE == 1:
-            B_ptr = B_ptr + BLOCK_N * stride_bn
-            DB_ptr = DB_ptr + BLOCK_N * stride_dbn
     return dq0, dq1, dq2
