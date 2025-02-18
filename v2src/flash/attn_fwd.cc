@@ -158,6 +158,7 @@ _attn_fwd_common(T4 q,
     extargs->total_number_of_kernels = params._total_number_of_kernels;
     extargs->selected_kernel_psels = params._preferred_kernel_psels;
     extargs->selected_kernel_copts = params._preferred_kernel_copts;
+    context.peek_kernel_image = extargs->peek_kernel_image;
   }
 #endif
   if (err != hipSuccess) {
@@ -171,6 +172,11 @@ _attn_fwd_common(T4 q,
   err = context.launch(params, stream);
   if (err != hipSuccess) {
     return err;
+  }
+  if (extargs && extargs->peek_kernel_image) {
+    auto essentials = params.selected_kernel->get_image_info_iff_decompressed();
+    extargs->kernel_image = essentials.image;
+    extargs->image_size = essentials.size;
   }
   if (encoded_softmax) {
     return debug_simulate_encoded_softmax(encoded_softmax,

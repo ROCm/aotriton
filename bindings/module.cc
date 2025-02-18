@@ -200,6 +200,12 @@ namespace pyaotriton {
           .def_readonly("total_number_of_kernels", &CppTune::total_number_of_kernels)
           .def_readonly("selected_kernel_psels", &CppTune::selected_kernel_psels)
           .def_readonly("selected_kernel_copts", &CppTune::selected_kernel_copts)
+          .def_readwrite("peek_kernel_image", &CppTune::peek_kernel_image)
+          .def("get_kernel_image",
+               [](const CppTune* tune) {
+                  std::string s((const char*)tune->kernel_image, tune->image_size);
+                  return py::bytes(s);
+               })
 #endif
       ;
       using aotriton::v2::CppTuneSpecialKernelIndex;

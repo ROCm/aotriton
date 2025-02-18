@@ -231,12 +231,18 @@ bwd_kernel_dk_dv(T4 q,
     extargs->dkdv.total_number_of_kernels = params._total_number_of_kernels;
     extargs->dkdv.selected_kernel_psels = params._preferred_kernel_psels;
     extargs->dkdv.selected_kernel_copts = params._preferred_kernel_copts;
+    context.peek_kernel_image = extargs->dkdv.peek_kernel_image;
   }
 #endif
   if (err != hipSuccess) {
     return err;
   }
   err = context.launch(params, stream);
+  if (extargs && extargs->dkdv.peek_kernel_image) {
+    auto essentials = params.selected_kernel->get_image_info_iff_decompressed();
+    extargs->dkdv.kernel_image = essentials.image;
+    extargs->dkdv.image_size = essentials.size;
+  }
   return err;
 }
 
@@ -346,6 +352,7 @@ bwd_kernel_dq(T4 q,
     extargs->dqdb.total_number_of_kernels = params._total_number_of_kernels;
     extargs->dqdb.selected_kernel_psels = params._preferred_kernel_psels;
     extargs->dqdb.selected_kernel_copts = params._preferred_kernel_copts;
+    context.peek_kernel_image = extargs->dqdb.peek_kernel_image;
     // std::cerr << "dqdb lookup_optimal = " << err << " EOL" << std::endl;
   }
 #endif
@@ -353,6 +360,11 @@ bwd_kernel_dq(T4 q,
     return err;
   }
   err = context.launch(params, stream);
+  if (extargs && extargs->dqdb.peek_kernel_image) {
+    auto essentials = params.selected_kernel->get_image_info_iff_decompressed();
+    extargs->dqdb.kernel_image = essentials.image;
+    extargs->dqdb.image_size = essentials.size;
+  }
   return err;
 }
 

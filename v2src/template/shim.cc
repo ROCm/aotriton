@@ -37,7 +37,11 @@ hipError_t
                                 const_cast<void*>(static_cast<const void*>(&global_scratch)),
     };
     dim3 grid = grid_calculator(params);
+#if AOTRITON_BUILD_FOR_TUNING
+    return params.selected_kernel->invoke("[[triton_kernel_name]]", grid, args, peek_kernel_image, stream);
+#else
     return params.selected_kernel->invoke("[[triton_kernel_name]]", grid, args, stream);
+#endif
 }
 
 int64_t

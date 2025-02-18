@@ -105,9 +105,9 @@ _bwd_kernel_fuse(T4 q,
   };
 #if AOTRITON_BUILD_FOR_TUNING
   if (extargs) {
-    params._has_preferred_kernel = extargs->fuse.force_kernel_index;
+    params._has_preferred_kernel = extargs->force_kernel_index;
     if (params._has_preferred_kernel == CppTuneSpecialKernelIndex::kSkipGPUCall) {
-        // std::cerr << "extargs->fuse.force_kernel_index = " << extargs->fuse.force_kernel_index << " EKI" << std::endl;
+        // std::cerr << "extargs->force_kernel_index = " << extargs->force_kernel_index << " EKI" << std::endl;
         return hipSuccess;
     }
   }
@@ -117,15 +117,21 @@ _bwd_kernel_fuse(T4 q,
   err = context.lookup_optimal(params, arch);
 #if AOTRITON_BUILD_FOR_TUNING
   if (extargs) {
-    extargs->fuse.total_number_of_kernels = params._total_number_of_kernels;
-    extargs->fuse.selected_kernel_psels = params._preferred_kernel_psels;
-    extargs->fuse.selected_kernel_copts = params._preferred_kernel_copts;
+    extargs->total_number_of_kernels = params._total_number_of_kernels;
+    extargs->selected_kernel_psels = params._preferred_kernel_psels;
+    extargs->selected_kernel_copts = params._preferred_kernel_copts;
+    context.peek_kernel_image = extargs->peek_kernel_image;
   }
 #endif
   if (err != hipSuccess) {
     return err;
   }
   err = context.launch(params, stream);
+  if (extargs && extargs->peek_kernel_image) {
+    auto essentials = params.selected_kernel->get_image_info_iff_decompressed();
+    extargs->kernel_image = essentials.image;
+    extargs->image_size = essentials.size;
+  }
   return err;
 }
 
