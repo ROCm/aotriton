@@ -35,11 +35,8 @@ namespace pyaotriton {
           .def_readwrite("dqdb", &BwdExtraArguments::dqdb)
 #endif
         ;
-        py::class_<FusedBwdExtraArguments>(m, "FusedBwdExtraArguments")
+        py::class_<FusedBwdExtraArguments, aotriton::v2::CppTune>(m, "FusedBwdExtraArguments")
           .def(py::init<>())
-#if AOTRITON_BUILD_FOR_TUNING
-          .def_readwrite("fuse", &FusedBwdExtraArguments::fuse)
-#endif
         ;
         m.def("attn_fwd",
               &aotriton::v2::flash::attn_fwd,

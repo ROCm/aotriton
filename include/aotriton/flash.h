@@ -28,10 +28,7 @@ struct BwdExtraArguments {
 #endif
 };
 
-struct FusedBwdExtraArguments {
-#if AOTRITON_BUILD_FOR_TUNING
-  FwdExtraArguments fuse;
-#endif
+struct FusedBwdExtraArguments : public CppTune {
 };
 
 hipError_t
