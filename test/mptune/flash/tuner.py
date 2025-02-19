@@ -133,6 +133,11 @@ class TunerService(BaseTunerService):
             return 1, [KernelOutput(hip_status=ret,
                                     output_tensors=[o, philox_seed_output, philox_offset_output])]
 
+        if 'bwd_kernel_dk_dv' in CPPTUNE_SKIP_KERNELS and 'bwd_kernel_dq' in CPPTUNE_SKIP_KERNELS:
+            skip_bwd = True
+        else:
+            skip_bwd = False
+
         # ref_out is kept in the ctx
         ref_out, _ = ctx.compute_ref_forward(sdpa_params)
         # print(f'{payload.kig_dict=}')
@@ -142,11 +147,11 @@ class TunerService(BaseTunerService):
                                     fwd_func,
                                     [self.fwd_validator],
                                     kernel_index_progress_dict=payload.kig_dict,
-                                    output_is_required_by_other_kernels=True)
+                                    output_is_required_by_other_kernels=not skip_bwd)
 
         # Early exit when both bwd are disabled
         # Skipping of individual kernels is handled in cpp_autotune_gen directly
-        if 'bwd_kernel_dk_dv' in CPPTUNE_SKIP_KERNELS and 'bwd_kernel_dq' in CPPTUNE_SKIP_KERNELS:
+        if skip_bwd:
             return
 
         dq, dk, dv, db, delta = ctx.bwd_tensors
