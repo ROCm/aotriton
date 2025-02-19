@@ -8,6 +8,10 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Union, Optional
 from .datatypes import CPP_AUTOTUNE_MAX_KERNELS
+import elftools
+import msgpack
+from elftools.elf.elffile import ELFFile
+from elftools.elf.sections import NoteSection
 
 CPPTUNE_DEBUG_FEW_KERNELS = int(os.getenv('CPPTUNE_DEBUG_FEW_KERNELS', default=-1))
 # In order to skip, the value should match what tuner.py provided to
@@ -174,13 +178,38 @@ class CppTuneWapper(object):
     def capi_object(self):
         return self._extargs
 
+SIGNATURE = 'AMDGPU'
+
+def check_spill_registers(extargs):
+    hsaco = extargs.get_kernel_image()
+    if len(hsaco) == 0:
+        return False
+    VGPR_SPILL_THRESHOLD = 50
+    SGPR_SPILL_THRESHOLD = 100
+    too_many_spills = False
+    for sect in ELFFile(memf).iter_sections():
+        if not isinstance(sect, NoteSection):
+            continue
+        for note in sect.iter_notes():
+            if note['n_name'] != SIGNATURE:
+                continue
+            desc = note['n_desc']
+            meta = msgpack.unpackb(desc)
+            for k in meta['amdhsa.kernels']:
+                vgpr_spill_count = k.get('.vgpr_spill_count', -1)
+                sgpr_spill_count = k.get('.sgpr_spill_count', -1)
+                if vgpr_spill_count > VGPR_SPILL_THRESHOLD:
+                    too_many_spills = True
+                    break
+                if sgpr_spill_count > SGPR_SPILL_THRESHOLD:
+                    too_many_spills = True
+                    break
+    return too_many_spills
+
 def cpp_autotune_sub_kernel_gen(extargs, kernel_func, validator, cur_kig):
     if cur_kig.kernel_index >= cur_kig.total_number_of_kernels:
         return
-    # print(f'{cur_kig.kernel_index=}')
-    while True:
-        # max(0, ...) is the defensive approach to prevent -1 slipping into C++ component
-        extargs.force_kernel_index = max(0, cur_kig.kernel_index)
+    def benchmark_this():
         def func(is_testing=False):
             return kernel_func(extargs, is_testing)
         # ut_passed, t, adiff, fudge_factors, hip_status = do_bench(func, validator=validator, quantiles=(0.5, 0.2, 0.8))
@@ -211,7 +240,19 @@ def cpp_autotune_sub_kernel_gen(extargs, kernel_func, validator, cur_kig):
         atr.total_number_of_kernels = cur_kig.total_number_of_kernels
         atr.psels = safeload(extargs.selected_kernel_psels)
         atr.copts = safeload(extargs.selected_kernel_copts)
-        yield atr
+        return atr
+    # print(f'{cur_kig.kernel_index=}')
+    while True:
+        # max(0, ...) is the defensive approach to prevent -1 slipping into C++ component
+        extargs.force_kernel_index = max(0, cur_kig.kernel_index)
+
+        extargs.peek_kernel_image = True
+        _ = kernel_func(extargs, is_testing=False)
+        too_many_spills = check_spill_registers(extargs)
+
+        if not too_many_spills:
+            yield benchmark_this()
+
         cur_kig.kernel_index = extargs.force_kernel_index + 1
         if cur_kig.kernel_index >= cur_kig.total_number_of_kernels:
             break
