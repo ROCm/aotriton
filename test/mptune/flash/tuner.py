@@ -69,7 +69,6 @@ class TunerService(BaseTunerService):
             attn_bwd,
             FwdExtraArguments,
             BwdExtraArguments,
-            FusedBwdExtraArguments,
             hipError_t,
         )
         from ..core import cpp_autotune_gen, KernelOutput, AutotuneResult, CPPTUNE_SKIP_KERNELS

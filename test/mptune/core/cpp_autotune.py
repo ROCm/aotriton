@@ -3,6 +3,7 @@ from aotriton_flash import hipError_t, CppTuneSpecialKernelIndex
 import json
 import sys
 import os
+import io
 import math
 from copy import deepcopy
 from dataclasses import dataclass
@@ -139,7 +140,7 @@ def do_bench(fn, atr : AutotuneResult,
     atr.time = getattr(torch, return_mode)(times).item()
     return atr
 
-class CppTuneWapper(object):
+class CppTuneWrapper(object):
     def __init__(self, factory, sub_accessor=None):
         self._extargs = factory()
         self._sub_accessor = sub_accessor
@@ -178,52 +179,70 @@ class CppTuneWapper(object):
     def capi_object(self):
         return self._extargs
 
+    def get_kernel_image(self):
+        return self.current_extargs.get_kernel_image()
+
+    @property
+    def peek_kernel_image(self):
+        return self.current_extargs.peek_kernel_image
+
+    @peek_kernel_image.setter
+    def peek_kernel_image(self, flag):
+        self.current_extargs.peek_kernel_image = flag
+
 SIGNATURE = 'AMDGPU'
 
-def check_spill_registers(extargs):
+def check_spill_registers(extargs, atr):
+    too_many_spills = False
+    noimage = False
+    # print('enter check_spill_registers')
     hsaco = extargs.get_kernel_image()
+    # print(f'{len(hsaco)=}')
     if len(hsaco) == 0:
-        return False
+        noimage = True
+        return too_many_spills, noimage
     VGPR_SPILL_THRESHOLD = 50
     SGPR_SPILL_THRESHOLD = 100
-    too_many_spills = False
+    find_metadata = False
+    memf = io.BytesIO(hsaco)
     for sect in ELFFile(memf).iter_sections():
         if not isinstance(sect, NoteSection):
             continue
         for note in sect.iter_notes():
+            # print(f"{note['n_name']=}")
             if note['n_name'] != SIGNATURE:
                 continue
             desc = note['n_desc']
             meta = msgpack.unpackb(desc)
+            # from pprint import pprint
+            # pprint(meta)
+            find_metadata = True
             for k in meta['amdhsa.kernels']:
                 vgpr_spill_count = k.get('.vgpr_spill_count', -1)
                 sgpr_spill_count = k.get('.sgpr_spill_count', -1)
+                # print(f'{vgpr_spill_count=}', f'{sgpr_spill_count=}')
                 if vgpr_spill_count > VGPR_SPILL_THRESHOLD:
                     too_many_spills = True
                     break
                 if sgpr_spill_count > SGPR_SPILL_THRESHOLD:
                     too_many_spills = True
                     break
-    return too_many_spills
+    return too_many_spills, noimage
 
 def cpp_autotune_sub_kernel_gen(extargs, kernel_func, validator, cur_kig):
     if cur_kig.kernel_index >= cur_kig.total_number_of_kernels:
         return
-    def benchmark_this():
+    def safeload(s):
+        return json.loads(s) if s else None
+    def benchmark_this(atr):
         def func(is_testing=False):
             return kernel_func(extargs, is_testing)
         # ut_passed, t, adiff, fudge_factors, hip_status = do_bench(func, validator=validator, quantiles=(0.5, 0.2, 0.8))
-        atr = AutotuneResult()
         atr = do_bench(func, atr, validator=validator, quantiles=(0.5, 0.2, 0.8))
         # assert extargs.total_number_of_kernels > 0
         '''
         Update kig
         '''
-        if extargs.total_number_of_kernels > 0:
-            cur_kig.total_number_of_kernels = extargs.total_number_of_kernels
-            # !!!!!!!!!!!!!!!!!!! DEBUG !!!!!!!!!!!!!!!!!!!!!!!!!!
-            if CPPTUNE_DEBUG_FEW_KERNELS > 0:
-                cur_kig.total_number_of_kernels = min(CPPTUNE_DEBUG_FEW_KERNELS, extargs.total_number_of_kernels)
         cur_kig.last_adiff = atr.adiffs
         if atr.ut_passed:
             cur_kig.last_success_kernel = extargs.force_kernel_index
@@ -233,25 +252,41 @@ def cpp_autotune_sub_kernel_gen(extargs, kernel_func, validator, cur_kig):
                 cur_kig.noimage_kernels += 1
             else:
                 cur_kig.failed_kernels += 1
-        def safeload(s):
-            return json.loads(s) if s else None
         cur_kig.kernel_index = extargs.force_kernel_index
-        atr.kernel_index = cur_kig.kernel_index
-        atr.total_number_of_kernels = cur_kig.total_number_of_kernels
-        atr.psels = safeload(extargs.selected_kernel_psels)
-        atr.copts = safeload(extargs.selected_kernel_copts)
         return atr
     # print(f'{cur_kig.kernel_index=}')
     while True:
         # max(0, ...) is the defensive approach to prevent -1 slipping into C++ component
         extargs.force_kernel_index = max(0, cur_kig.kernel_index)
+        atr = AutotuneResult()
 
+        # Extract information by peeking
         extargs.peek_kernel_image = True
         _ = kernel_func(extargs, is_testing=False)
-        too_many_spills = check_spill_registers(extargs)
+        extargs.peek_kernel_image = False
+        atr.kernel_index = extargs.force_kernel_index
+        if extargs.total_number_of_kernels > 0:
+            cur_kig.total_number_of_kernels = extargs.total_number_of_kernels
+            # !!!!!!!!!!!!!!!!!!! DEBUG !!!!!!!!!!!!!!!!!!!!!!!!!!
+            if CPPTUNE_DEBUG_FEW_KERNELS > 0:
+                cur_kig.total_number_of_kernels = min(CPPTUNE_DEBUG_FEW_KERNELS, extargs.total_number_of_kernels)
+        atr.total_number_of_kernels = cur_kig.total_number_of_kernels
+        atr.psels = safeload(extargs.selected_kernel_psels)
+        atr.copts = safeload(extargs.selected_kernel_copts)
 
-        if not too_many_spills:
-            yield benchmark_this()
+        too_many_spills, noimage = check_spill_registers(extargs, atr)
+
+        if too_many_spills:
+            atr.hip_status = hipError_t.hipErrorCooperativeLaunchTooLarge
+            cur_kig.vspill_kernels += 1
+            # print(f'{atr.adiffs=}')
+            yield atr
+        elif noimage:
+            atr.hip_status = hipError_t.hipErrorNoBinaryForGpu
+            cur_kig.noimage_kernels += 1
+            yield atr
+        else:
+            yield benchmark_this(atr)
 
         cur_kig.kernel_index = extargs.force_kernel_index + 1
         if cur_kig.kernel_index >= cur_kig.total_number_of_kernels:
@@ -265,7 +300,7 @@ This is an generator of all tuning results, and yields all results rather than t
 @param sub_extarg_accessor: extract extargs for sub kernels within the API call
 @param subkernel_names: names of sub kernels for API call
 @param kernel_func: function that launch GPU kernels, taking the following form
-    @param extargs: CppTuneWapper
+    @param extargs: CppTuneWrapper
     @param is_testing: run the kernel for testing purpose rather than measuring its performance.
         Lots of preventive/defensive methods should be enabled if is_testing is
         true. Notably:
@@ -283,7 +318,7 @@ This is an generator of all tuning results, and yields all results rather than t
 def cpp_autotune_gen(extarg_factory, sub_extarg_accessor,
                      subkernel_names, kernel_func,
                      validators, *, kernel_index_progress_dict, output_is_required_by_other_kernels):
-    extargs_with_subs = CppTuneWapper(extarg_factory, sub_extarg_accessor)
+    extargs_with_subs = CppTuneWrapper(extarg_factory, sub_extarg_accessor)
     num_of_subkernels = len(subkernel_names)
     def reset_kernel_index_to_skip():
         for i in range(num_of_subkernels):
