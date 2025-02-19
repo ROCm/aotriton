@@ -35,6 +35,8 @@ class AutotuneResult:
     target_fudge_factors : 'float | list[float] | None' = None
     psels : 'dict | None' = None
     copts : 'dict | None' = None
+    sgpr_spill_count : int = -1
+    vgpr_spill_count : int = -1
 
 def do_bench(fn, atr : AutotuneResult,
              *, warmup=25, rep=100,
@@ -201,10 +203,10 @@ def check_spill_registers(extargs, atr):
     if len(hsaco) == 0:
         noimage = True
         return too_many_spills, noimage
-    VGPR_SPILL_THRESHOLD = 50
-    SGPR_SPILL_THRESHOLD = 100
     find_metadata = False
     memf = io.BytesIO(hsaco)
+    vgpr_spill_count = -1
+    sgpr_spill_count = -1
     for sect in ELFFile(memf).iter_sections():
         if not isinstance(sect, NoteSection):
             continue
@@ -227,6 +229,8 @@ def check_spill_registers(extargs, atr):
                 if sgpr_spill_count > SGPR_SPILL_THRESHOLD:
                     too_many_spills = True
                     break
+    atr.vgpr_spill_count = vgpr_spill_count
+    atr.sgpr_spill_count = sgpr_spill_count
     return too_many_spills, noimage
 
 def cpp_autotune_sub_kernel_gen(extargs, kernel_func, validator, cur_kig):
