@@ -244,8 +244,13 @@ def cpp_autotune_sub_kernel_gen(extargs, kernel_func, validator, cur_kig):
         Update kig
         '''
         cur_kig.last_adiff = atr.adiffs
+        # Update last_success_kernel if having precision
+        # This is more tolerating than ut_passed
+        if atr.adiffs is not None:
+            if cur_kig.best_adiffs is None or cur_kig.best_adiffs < atr.adiffs:
+                cur_kig.best_adiffs = deepcopy(atr.adiffs)
+                cur_kig.last_success_kernel = extargs.force_kernel_index
         if atr.ut_passed:
-            cur_kig.last_success_kernel = extargs.force_kernel_index
             cur_kig.passed_kernels += 1
         else:
             if atr.hip_status == hipError_t.hipErrorInvalidImage:

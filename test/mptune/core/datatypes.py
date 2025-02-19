@@ -42,6 +42,7 @@ class KernelIndexProress:
     vspill_kernels : int = 0
     noimage_kernels : int = 0
     uncertain_errors : int = 0
+    best_adiffs : 'float | list[float] | None' = None
 
 @dataclass
 class TuningResult:
