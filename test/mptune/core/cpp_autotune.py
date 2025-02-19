@@ -23,6 +23,9 @@ CPPTUNE_SKIP_KERNELS = os.getenv('CPPTUNE_SKIP_KERNELS', default='').split(',')
 
 KernelOutput = namedtuple('KernelOutput', ['hip_status', 'output_tensors'])
 
+VGPR_SPILL_THRESHOLD = int(os.getenv('VGPR_SPILL_THRESHOLD', default=256))
+SGPR_SPILL_THRESHOLD = int(os.getenv('SGPR_SPILL_THRESHOLD', default=2048))
+
 @dataclass
 class AutotuneResult:
     hip_status : hipError_t = hipError_t.hipErrorUnknown
