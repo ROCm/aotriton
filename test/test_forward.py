@@ -147,18 +147,18 @@ def test_gqa(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropo
     bias_type = None
     _do_test_op_fwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
 
-@pytest.mark.parametrize('BATCH', [1, 4] if not FOR_RELEASE else [3])
-@pytest.mark.parametrize('N_HEADS', [1, 4] if not FOR_RELEASE else [8])
-@pytest.mark.parametrize('D_HEAD', POT_HEADDIMS + NPOT_HEADDIMS + PRIME_HEADDIMS)
+@pytest.mark.parametrize('BATCH', [3])
+@pytest.mark.parametrize('N_HEADS', [7])
+@pytest.mark.parametrize('D_HEAD', PRIME_HEADDIMS)
 @pytest.mark.parametrize('seqlen_q', PRIME_SEQLEN_Q)
 @pytest.mark.parametrize('seqlen_k', PRIME_SEQLEN_K)
 @pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
 @pytest.mark.parametrize('dropout_p', [0.0, 0.5])
 @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16, torch.float32])
-@pytest.mark.parametrize('sm_scale', [0.0, 1.2] if not FOR_RELEASE else [1.2])
+@pytest.mark.parametrize('sm_scale', [1.2])
 @pytest.mark.parametrize('storage_flip', [False, True])
-def test_irregular_qk_fwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
-    bias_type = None
+@pytest.mark.parametrize('bias_type', [None, 'matrix'], ids=['BiasOff', 'BiasOn'])
+def test_irregulars(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type):
     _do_test_op_fwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
 
 
