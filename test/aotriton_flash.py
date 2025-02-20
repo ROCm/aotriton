@@ -1,18 +1,25 @@
 # Copyright © 2023-2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
+import os
+IGNORE_BACKWARD_IMPORT = bool(int(os.getenv('IGNORE_BACKWARD_IMPORT', default='0')))
+
 from pyaotriton.v2.flash import (
     attn_fwd as fa_forward,
-    attn_bwd as fa_backward,
-    attn_bwd_fused as fa_backward_fused,
     attn_fwd_compact_varlen as fa_forward_compact_varlen,
-    attn_bwd_compact_varlen as fa_backward_compact_varlen,
-    debug_fill_dropout_rng as fa_debug_fill_dropout_rng,
+    # debug_fill_dropout_rng as fa_debug_fill_dropout_rng,
     debug_simulate_encoded_softmax as fa_debug_simulate_encoded_softmax,
     FwdExtraArguments,
-    BwdExtraArguments,
-    FusedBwdExtraArguments,
 )
+if not IGNORE_BACKWARD_IMPORT:
+    from pyaotriton.v2.flash import (
+        attn_bwd as fa_backward,
+        attn_bwd_fused as fa_backward_fused,
+        attn_bwd_compact_varlen as fa_backward_compact_varlen,
+        BwdExtraArguments,
+        FusedBwdExtraArguments,
+    )
+
 from pyaotriton import T1, T2, T4, DType, Stream, hipError_t, get_name_suffix
 assert get_name_suffix() != "", ("To run tests, AOTriton must be compiled with suffixes "
                                  "by passing -DAOTRITON_NAME_SUFFIX=SOME_SUFFIX to cmake. "
@@ -228,14 +235,14 @@ def attn_bwd_fused(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
     # print(f'{err=}')
     return err
 
-def debug_fill_dropout_rng(R, philox_seed, philox_offset):
-    Rview, Rdevm = mk_aotensor(R)
-    err = fa_debug_fill_dropout_rng(Rview,
-                                    philox_seed,
-                                    philox_offset,
-                                    Stream())
-    # print(f'debug_fill_dropout_rng {err=}')
-    return err
+# def debug_fill_dropout_rng(R, philox_seed, philox_offset):
+#     Rview, Rdevm = mk_aotensor(R)
+#     err = fa_debug_fill_dropout_rng(Rview,
+#                                     philox_seed,
+#                                     philox_offset,
+#                                     Stream())
+#     # print(f'debug_fill_dropout_rng {err=}')
+#     return err
 
 def debug_simulate_encoded_softmax(R, dropout_p, philox_seed, philox_offset1, philox_offset2):
     Rview, Rdevm = mk_aotensor(R)
