@@ -5,19 +5,22 @@
 import torch
 import queue
 from torch.multiprocessing import Process
+from aotriton_flash import IGNORE_BACKWARD_IMPORT
 from aotriton_flash import (
     attn_fwd,
-    attn_bwd,
-    attn_bwd_fused,
-    debug_fill_dropout_rng,
     debug_simulate_encoded_softmax,
     FwdExtraArguments,
-    BwdExtraArguments,
-    FusedBwdExtraArguments,
     hipError_t,
     AOTRITON_TORCH_ONLY_USE_CPU,
     HipMemory,
 )
+if not IGNORE_BACKWARD_IMPORT:
+    from aotriton_flash import (
+        attn_bwd,
+        attn_bwd_fused,
+        BwdExtraArguments,
+        FusedBwdExtraArguments,
+    )
 from collections import namedtuple
 from dataclasses import dataclass
 
