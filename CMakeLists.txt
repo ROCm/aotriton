@@ -38,6 +38,7 @@ set(VENV_DIR "${CMAKE_CURRENT_BINARY_DIR}/venv" CACHE STRING "Virtual Environmen
 option(AOTRITON_NO_PYTHON "Disable python binding build" OFF)
 option(AOTRITON_ENABLE_ASAN "Enable Address Sanitizer. Implies -g" OFF)
 option(AOTRITON_BUILD_FOR_TUNING "Build all GPU kernels and set -DAOTRITON_BUILD_FOR_TUNING=1 (=0 otherwise)" OFF)
+set(AOTRITON_BUILD_FOR_TUNING_BUT_SKIP_KERNEL "" CACHE STRING "Use tuning database for certain kernels when AOTRITON_BUILD_FOR_TUNING=ON")
 option(AOTRITON_ENABLE_FP32_INPUTS "Enable FP32 support." ON)
 option(AOTRITON_NOIMAGE_MODE "Only build C++ Shim part. Kernel image builds are disabled" OFF)
 set(AOTRITON_GPU_BUILD_TIMEOUT "8.0" CACHE STRING "GPU kernel compiler times out after X minutes. 0 for indefinite. Highly recommended if AOTRITON_BUILD_FOR_TUNING=On.")
