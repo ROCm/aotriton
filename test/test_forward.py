@@ -19,6 +19,8 @@ FOR_RELEASE = bool(int(os.getenv('FOR_RELEASE', default='0')))
 POT_HEADDIMS = [16, 32, 64, 128, 256]
 NPOT_HEADDIMS = [48, 80, 96, 160, 192, 224]
 PRIME_HEADDIMS = [7, 23, 37, 53, 67, 73, 89, 113, 149, 179, 211, 241]
+PRIME_SEQLEN_Q = [11, 17, 37, 67, 157, 257, 523, 1033, 2063, 4919, 10601]
+PRIME_SEQLEN_K = [13, 31, 41, 71, 211, 337, 571, 1063, 2081, 5237, 11369]
 
 '''
 Flash Attention is batch operator that evaluates sm(QK')V
@@ -62,14 +64,14 @@ def _do_test_op_fwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
     sdpa_params = SdpaParams(causal=causal, sm_scale=sm_scale, dropout_p=dropout_p, dropout_mask=dropout_mask)
     ref_out, _ = ctx.compute_ref_forward(sdpa_params)
 
-    is_allclose, adiff, _, _ = ctx.validate_with_reference(tri_out, None, no_backward=True)
+    is_allclose, adiff, _, _, tfts = ctx.validate_with_reference(tri_out, None, no_backward=True, return_target_fudge_factors=True)
     if not is_allclose:
         import numpy as np
         err_idx = np.unravel_index(torch.argmax(torch.abs(ref_out.to(device=tri_out.device) - tri_out)).cpu().numpy(), ref_out.shape)
         print(f'{err_idx=}')
         print(f'{tri_out[err_idx]=}')
         print(f'{ref_out[err_idx]=}')
-    assert is_allclose, 'Forward pass {is_allclose=}'
+    assert is_allclose, f'Forward pass {is_allclose=} {tfts=}'
     print(f'{adiff=}')
 
 # @pytest.mark.parametrize('BATCH', [1])
@@ -144,6 +146,21 @@ def test_op_fwd_with_matrix_bias(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, sm_
 def test_gqa(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
     bias_type = None
     _do_test_op_fwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
+
+@pytest.mark.parametrize('BATCH', [1, 4] if not FOR_RELEASE else [3])
+@pytest.mark.parametrize('N_HEADS', [1, 4] if not FOR_RELEASE else [8])
+@pytest.mark.parametrize('D_HEAD', POT_HEADDIMS + NPOT_HEADDIMS + PRIME_HEADDIMS)
+@pytest.mark.parametrize('seqlen_q', PRIME_SEQLEN_Q)
+@pytest.mark.parametrize('seqlen_k', PRIME_SEQLEN_K)
+@pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
+@pytest.mark.parametrize('dropout_p', [0.0, 0.5])
+@pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16, torch.float32])
+@pytest.mark.parametrize('sm_scale', [0.0, 1.2] if not FOR_RELEASE else [1.2])
+@pytest.mark.parametrize('storage_flip', [False, True])
+def test_irregular_qk_fwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
+    bias_type = None
+    _do_test_op_fwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
+
 
 dtype0 = torch.float16
 dtype1 = torch.bfloat16
