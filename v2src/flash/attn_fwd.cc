@@ -159,6 +159,9 @@ _attn_fwd_common(T4 q,
     extargs->selected_kernel_psels = params._preferred_kernel_psels;
     extargs->selected_kernel_copts = params._preferred_kernel_copts;
     context.peek_kernel_image = extargs->peek_kernel_image;
+#if AOTRITON_VERBOSE
+    std::cerr << "extargs->peek_kernel_image " << extargs->peek_kernel_image << std::endl;
+#endif
   }
 #endif
   if (err != hipSuccess) {
@@ -170,13 +173,19 @@ _attn_fwd_common(T4 q,
     return hipErrorInvalidValue;  // must have persistent_atomic_counter set
   }
   err = context.launch(params, stream);
-  if (err != hipSuccess) {
-    return err;
-  }
+#if AOTRITON_BUILD_FOR_TUNING
   if (extargs && extargs->peek_kernel_image) {
     auto essentials = params.selected_kernel->get_image_info_iff_decompressed();
     extargs->kernel_image = essentials.image;
     extargs->image_size = essentials.size;
+#if AOTRITON_VERBOSE
+    std::cerr << "peek_kernel_image returns image at: " << essentials.image
+              << " size: " << essentials.size << std::endl;
+#endif
+  }
+#endif
+  if (err != hipSuccess) {
+    return err;
   }
   if (encoded_softmax) {
     return debug_simulate_encoded_softmax(encoded_softmax,
