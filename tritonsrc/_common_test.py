@@ -159,13 +159,8 @@ class SdpaContext(object):
             q = torch.transpose(q, x, y)
             k = torch.transpose(k, x, y)
             v = torch.transpose(v, x, y)
-            '''
-            # No need to support flipped storage
-            # attn_mask.stride(-1) is assumed to be 1 in PyTorch
             if b is not None:
-                b = torch.transpose(b, 2, 3)
-                print(f'{b.stride()=}')
-            '''
+                b = torch.transpose(b, x, y)
         self.dev_tensors = (q, k, v, b)
         # self.FUDGE_FACTORS = (4, 2, 2, 2)  # Matches the order of self.dev_tensors
 
