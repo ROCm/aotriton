@@ -160,14 +160,29 @@ class Pkr_BwdKernelDq(PerKernelResult):
             self.valid_out_tensors = ['dq']
 
     def any_nan(self, adiffs):
+        # TODO: shouldn't this be == 1?
         if len(self.valid_out_tensors) == 0:  # db isn't there
             return math.isnan(adiffs[0])
         return any(map(math.isnan, adiffs))
+
+class Pkr_FusedBwdKernel(PerKernelResult):
+    KERNEL_NAME = 'bwd_kernel_fuse'
+    KERNEL_OUT_TENSORS = ['dk', 'dv', 'dq', 'db']
+    KERNEL_OUT_TENSORS_NOBIAS = ['dk', 'dv', 'dq', 'db']
+
+    def conclude(self):
+        bias = self._jarray[0]['inputs']['BIAS_TYPE']
+        self.valid_out_tensors = self.KERNEL_OUT_TENSORS if bias else self.KERNEL_OUT_TENSORS_NOBIAS
+
+    def any_nan(self, adiffs):
+        ntensors = len(self.valid_out_tensors)
+        return any(map(math.isnan, adiffs[:ntensors]))
 
 KERNEL_NAME_TO_FACTORY = {
     'attn_fwd' : Pkr_AttnFwd,
     'bwd_kernel_dk_dv' : Pkr_BwdKernelDkDv,
     'bwd_kernel_dq' : Pkr_BwdKernelDq,
+    'bwd_kernel_fuse' : Pkr_FusedBwdKernel,
 }
 
 def pkr_factory(key):
