@@ -362,12 +362,17 @@ class TuningDatabase(object):
                 if key in raw_info['inputs']:
                     oldv = raw_info['inputs'][key]
                     newv = rf(oldv)
+                    if oldv == newv:
+                        continue
                     if check_only:
+                        # print(f'{key=} {oldv=} {newv=}')
                         return True
                     else:
                         raw_info['inputs'][key] = newv
             return False
         need_rounding = rounding(check_only=True)
+        if need_rounding != round_inputs:
+            print(raw_info)
         assert need_rounding == round_inputs, '--round_inputs should only be applied to json with irregular inputs, and vise versa'
         if round_inputs:
             rounding(check_only=False)
