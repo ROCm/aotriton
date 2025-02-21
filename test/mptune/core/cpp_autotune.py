@@ -68,6 +68,7 @@ def do_bench(fn, atr : AutotuneResult,
     :type return_mode: str
     """
     assert return_mode in ["min", "max", "mean", "median"]
+    assert isinstance(atr, AutotuneResult)
     import torch
 
     torch.cuda.synchronize()
@@ -81,6 +82,7 @@ def do_bench(fn, atr : AutotuneResult,
     atr.hip_status = hipError_t.hipSuccess
     torch.cuda.synchronize()
     atr = validator(outs, atr)
+    assert isinstance(atr, AutotuneResult)
     # print(f'{valret=} {outs[0].hip_status=}', flush=True)
 
     # Do not return early, it is possible that no kernels can pass the UT and
@@ -329,7 +331,7 @@ This is an generator of all tuning results, and yields all results rather than t
 '''
 def cpp_autotune_gen(extarg_factory, sub_extarg_accessor,
                      subkernel_names, kernel_func,
-                     validators, *, kernel_index_progress_dict, output_is_required_by_other_kernels):
+                     validators, *, kernel_index_progress_dict, run_last_success_kernel_once):
     extargs_with_subs = CppTuneWrapper(extarg_factory, sub_extarg_accessor)
     num_of_subkernels = len(subkernel_names)
     def reset_kernel_index_to_skip():
@@ -359,6 +361,6 @@ def cpp_autotune_gen(extarg_factory, sub_extarg_accessor,
                     4. The o tensor is empty/nan because fwd is skipped, and
                        the bwd output becomes garbage.
         '''
-    if output_is_required_by_other_kernels:
+    if run_last_success_kernel_once:
         extargs_with_subs.force_kernel_index = cur_kig.last_success_kernel
         kernel_func(extargs_with_subs, is_testing=False)
