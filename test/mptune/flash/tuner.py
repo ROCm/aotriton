@@ -64,13 +64,17 @@ class TunerService(BaseTunerService):
     def profile(self, request):
         a = self._args
         import torch
+        from aotriton_flash import IGNORE_BACKWARD_IMPORT
         from aotriton_flash import (
             attn_fwd,
-            attn_bwd,
             FwdExtraArguments,
-            BwdExtraArguments,
             hipError_t,
         )
+        if not IGNORE_BACKWARD_IMPORT:
+            from aotriton_flash import (
+                attn_bwd,
+                FusedBwdExtraArguments,
+            )
         from ..core import cpp_autotune_gen, KernelOutput, AutotuneResult, CPPTUNE_SKIP_KERNELS
 
         payload = request.payload
@@ -105,11 +109,10 @@ class TunerService(BaseTunerService):
             philox_seed_output = nulltensor
             philox_offset_output = nulltensor
 
+        def subless_sub_extarg_accessor(extargs, i):
+            return extargs
 
-        def fwd_sub_extarg_accessor(fwd_extargs : FwdExtraArguments, i):
-            return fwd_extargs
-
-        def fwd_func(extargs, is_testing):
+        def fwd_func(extargs : 'CppTuneWrapper', is_testing):
             # print(f'{is_testing=}')
             if is_testing:
                 o.fill_(float('nan'))
@@ -123,7 +126,7 @@ class TunerService(BaseTunerService):
                     dropout_p, philox_seed, philox_offset1, philox_offset2,
                     philox_seed_output, philox_offset_output,
                     encoded_softmax, causal, atomic,
-                    extargs.capi_object)
+                    extargs.capi_object if extargs is not None else None)
             try:
                 ret = attn_fwd(*args)
             except Exception as e:
@@ -133,21 +136,34 @@ class TunerService(BaseTunerService):
             return 1, [KernelOutput(hip_status=ret,
                                     output_tensors=[o, philox_seed_output, philox_offset_output])]
 
+        skip_fwd = 'attn_fwd' in CPPTUNE_SKIP_KERNELS
         if 'bwd_kernel_dk_dv' in CPPTUNE_SKIP_KERNELS and 'bwd_kernel_dq' in CPPTUNE_SKIP_KERNELS:
-            skip_bwd = True
+            skip_split_bwd = True
         else:
-            skip_bwd = False
+            skip_split_bwd = False
+
+        if 'bwd_kernel_fuse' in CPPTUNE_SKIP_KERNELS:
+            skip_fused_bwd = True
+        else:
+            skip_fused_bwd = False
+
+        skip_bwd = skip_split_bwd and skip_fused_bwd
 
         # ref_out is kept in the ctx
         ref_out, _ = ctx.compute_ref_forward(sdpa_params)
         # print(f'{payload.kig_dict=}')
-        yield from cpp_autotune_gen(FwdExtraArguments,
-                                    fwd_sub_extarg_accessor,
-                                    ['attn_fwd'],
-                                    fwd_func,
-                                    [self.fwd_validator],
-                                    kernel_index_progress_dict=payload.kig_dict,
-                                    output_is_required_by_other_kernels=not skip_bwd)
+        if not skip_fwd:
+            # if skip_fwd, run manually to use default tuning db
+            run_last_success_kernel_once = not skip_fwd and not skip_bwd
+            yield from cpp_autotune_gen(FwdExtraArguments,
+                                        subless_sub_extarg_accessor,
+                                        ['attn_fwd'],
+                                        fwd_func,
+                                        [self.fwd_validator],
+                                        kernel_index_progress_dict=payload.kig_dict,
+                                        run_last_success_kernel_once=run_last_success_kernel_once)
+        if skip_fwd:
+            fwd_func(None, is_testing=True)
 
         # Early exit when both bwd are disabled
         # Skipping of individual kernels is handled in cpp_autotune_gen directly
@@ -158,7 +174,8 @@ class TunerService(BaseTunerService):
         dout = torch.randn_like(q)
         ctx.compute_backward(None, dout, ref_only=True)
 
-        def bwd_func(extargs, is_testing):
+        bwd_validators = (self.bwd_dkdv_validator, self.bwd_dqdb_validator)
+        def generic_bwd_func(extargs, is_testing, bwd_operator, split):
             if is_testing:
                 dk.fill_(float('nan'))
                 dv.fill_(float('nan'))
@@ -169,29 +186,56 @@ class TunerService(BaseTunerService):
                     dropout_p, philox_seed_output, philox_offset_output, 0,
                     causal, extargs.capi_object)
             try:
-                ret = attn_bwd(*args)
+                ret = bwd_operator(*args)
             except Exception as e:
                 self.report_exception(e)
                 ret = hipError_t.hipErrorLaunchFailure
-                return 2, [KernelOutput(hip_status=ret, output_tensors=None),
-                           KernelOutput(hip_status=ret, output_tensors=None),
+                if split:
+                    return 2, [KernelOutput(hip_status=ret, output_tensors=None),
+                               KernelOutput(hip_status=ret, output_tensors=None),
+                              ]
+                else:
+                    return 1, [KernelOutput(hip_status=ret, output_tensors=None)]
+            if split:
+                return 2, [KernelOutput(hip_status=ret, output_tensors=[dk,dv]),
+                           KernelOutput(hip_status=ret, output_tensors=[dq,db]),
                           ]
-            return 2, [KernelOutput(hip_status=ret, output_tensors=[dk,dv]),
-                       KernelOutput(hip_status=ret, output_tensors=[dq,db]),
-                      ]
-        def bwd_sub_extarg_accessor(bwd_extargs : BwdExtraArguments, i):
+            else:
+                return 1, [KernelOutput(hip_status=ret, output_tensors=[dk,dv,dq,db])]
+        def bwd_sub_extarg_accessor(bwd_extargs : 'BwdExtraArguments', i):
             if i == 0:
                 return bwd_extargs.dkdv
             if i == 1:
                 return bwd_extargs.dqdb
             assert False
-        bwd_validators = (self.bwd_dkdv_validator, self.bwd_dqdb_validator)
-        yield from cpp_autotune_gen(BwdExtraArguments, bwd_sub_extarg_accessor,
-                                    ['bwd_kernel_dk_dv', 'bwd_kernel_dq'],
-                                    bwd_func,
-                                    bwd_validators,
-                                    kernel_index_progress_dict=payload.kig_dict,
-                                    output_is_required_by_other_kernels=False)
+
+        if not skip_split_bwd:
+            from aotriton_flash import (
+                attn_bwd,
+                BwdExtraArguments,
+            )
+            def bwd_func(extargs, is_testing):
+                return generic_bwd_func(extargs, is_testing, attn_bwd, split=True)
+            yield from cpp_autotune_gen(BwdExtraArguments, bwd_sub_extarg_accessor,
+                                        ['bwd_kernel_dk_dv', 'bwd_kernel_dq'],
+                                        bwd_func,
+                                        bwd_validators,
+                                        kernel_index_progress_dict=payload.kig_dict,
+                                        run_last_success_kernel_once=False)
+        if not skip_fused_bwd:
+            from aotriton_flash import (
+                attn_bwd_fused,
+                FusedBwdExtraArguments,
+            )
+            def bwd_func(extargs, is_testing):
+                return generic_bwd_func(extargs, is_testing, attn_bwd_fused, split=False)
+            yield from cpp_autotune_gen(FusedBwdExtraArguments,
+                                        subless_sub_extarg_accessor,
+                                        ['bwd_kernel_fuse'],
+                                        bwd_func,
+                                        [self.bwd_fused_validator],
+                                        kernel_index_progress_dict=payload.kig_dict,
+                                        run_last_success_kernel_once=False)
 
     def fwd_validator(self, kernel_outputs : 'List[KernelOutput]', atr : 'AutotuneResult'):
         tri_out, philox_seed, philox_offset = kernel_outputs[0].output_tensors
@@ -204,6 +248,19 @@ class TunerService(BaseTunerService):
         atr.ut_passed = is_allclose
         atr.adiffs = adiffs
         atr.target_fudge_factors = {'out' : tft['out']}
+        return atr
+
+    def bwd_fused_validator(self, kernel_outputs : 'List[KernelOutput]', atr : 'AutotuneResult'):
+        tri_dk, tri_dv, tri_dq, tri_db = kernel_outputs[0].output_tensors
+        dout_tensors = (tri_dq, tri_dk, tri_dv, tri_db)
+        _, _, grads_allclose, grads_adiff, tft = self._cached_ctx.validate_with_reference(None, dout_tensors,
+                                                                                          no_forward=True,
+                                                                                          return_target_fudge_factors=True)
+        dq_allclose, dk_allclose, dv_allclose, db_allclose = grads_allclose
+        dq_adiff, dk_adiff, dv_adiff, db_adiff = grads_adiff
+        atr.ut_passed = dq_allclose and dk_allclose and dv_allclose and db_allclose
+        atr.adiffs = [dk_adiff, dv_adiff, dq_adiff, db_adiff]
+        atr.target_fudge_factors = {'dk' : tft['k'], 'dv' : tft['v'], 'dq' : tft['q'], 'db' : tft['b']}
         return atr
 
     def bwd_both_validator(self, kernel_outputs : 'List[KernelOutput]'):

@@ -44,7 +44,7 @@ from mptune.core import (
                  FlashTunerManager
 '''
 
-KERNEL_PRECEDENCE = ['attn_fwd', 'bwd_kernel_dk_dv', 'bwd_kernel_dq']
+KERNEL_PRECEDENCE = ['attn_fwd', 'bwd_kernel_dk_dv', 'bwd_kernel_dq', 'bwd_kernel_fuse']
 
 class FlashSourceMonad(Monad):
     def service_factory(self):
