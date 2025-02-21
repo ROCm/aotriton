@@ -79,7 +79,7 @@ class bwd_kernel_fuse(FlashKernel):
         frozenset(['philox_offset2']) : match_fwd('philox_offset2'),
     }
     FEAT_CHOICES = {
-        frozenset(['BLOCK_DMODEL']) : match_fwd('BLOCK_DMODEL'),
+        frozenset(['BLOCK_DMODEL']) : [hdim for hdim in match_fwd('BLOCK_DMODEL') if hdim <= 256],
         frozenset(['CAUSAL']) : [True, False],
         frozenset(['ENABLE_DROPOUT']) : match_fwd('ENABLE_DROPOUT'),
         frozenset(['PADDED_HEAD']) : [False, True],
