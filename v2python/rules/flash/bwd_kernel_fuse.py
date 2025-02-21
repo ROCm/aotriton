@@ -105,6 +105,7 @@ class bwd_kernel_fuse(FlashKernel):
     @staticmethod
     def gen_autotune_configs(gpu, fsel_dict : 'dict[str, Any]'):
         dtype = fsel_dict['Q']
+        HEAD_DIM = fsel_dict['BLOCK_DMODEL']
         MI = 'MI' in gpu
         Navi = 'Navi' in gpu
         ret = []
@@ -126,5 +127,7 @@ class bwd_kernel_fuse(FlashKernel):
                 continue  # No optimal kernel according to 0.8b tuning db
             if Navi and M == 64  and N == 64 and warps != 4:
                 continue  # No optimal kernel according to 0.8b tuning db
+            if HEAD_DIM > 256 and M == 64 and N == 64 and warps == 1:
+                continue  # Timeout
             kw = {'BLOCK_M': M, 'BLOCK_N': N, 'waves_per_eu': waves}
             yield Config(kw, num_stages=stages, num_warps=warps)
