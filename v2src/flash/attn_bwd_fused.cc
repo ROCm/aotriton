@@ -51,7 +51,6 @@ _bwd_kernel_fuse(T4 q,
     // std::cerr << "bwd_kernel_dk_dv grid conf " << grid.x << " " << grid.y << " " << grid.z << std::endl;
     return grid;
   };
-  constexpr int kMinHeadDimCompiled = 16;
   int head_size = q.size(3);
   const auto& compiled_head_dims = BwdKernelFuseMetadata::get_BLOCK_DMODEL_choices();
   int head_size_rounded = round_value(head_size, compiled_head_dims);
@@ -121,17 +120,26 @@ _bwd_kernel_fuse(T4 q,
     extargs->selected_kernel_psels = params._preferred_kernel_psels;
     extargs->selected_kernel_copts = params._preferred_kernel_copts;
     context.peek_kernel_image = extargs->peek_kernel_image;
+#if AOTRITON_VERBOSE
+    std::cerr << "extargs->peek_kernel_image " << extargs->peek_kernel_image << std::endl;
+#endif
   }
 #endif
   if (err != hipSuccess) {
     return err;
   }
   err = context.launch(params, stream);
+#if AOTRITON_BUILD_FOR_TUNING
   if (extargs && extargs->peek_kernel_image) {
     auto essentials = params.selected_kernel->get_image_info_iff_decompressed();
     extargs->kernel_image = essentials.image;
     extargs->image_size = essentials.size;
+#if AOTRITON_VERBOSE
+    std::cerr << "peek_kernel_image returns image at: " << essentials.image
+              << " size: " << essentials.size << std::endl;
+#endif
   }
+#endif
   return err;
 }
 
