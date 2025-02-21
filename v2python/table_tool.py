@@ -13,6 +13,16 @@ import numpy as np
 import csv
 from tqdm import tqdm
 
+# FIXME: load from kdesc
+HEAD_DIMS = np.array([16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256, 512], dtype=np.int32)
+ROUND_INPUTS = bool(int(os.getenv('ROUND_INPUTS', True)))
+
+def round_to_power_of_two(x):
+    return 2 ** (x - 1).bit_length()
+
+def round_to_array(x, arr):
+    return int(np.min(arr[arr >= x]))
+
 def parse():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument('-i', type=str, default=None, help='Input CSV/JSON file')
@@ -26,6 +36,7 @@ def parse():
     p.add_argument('--table_file', type=str, help='CSV file of dump/load')
     p.add_argument('--select_where', type=str, default='', help='Extra WHERE clause for SQL to only dump selected rows to CSV file')
     p.add_argument('--ignore_id', action='store_true', help='Ignore row IDs when loading CSV to database, useful for table merge')
+    p.add_argument('--round_inputs', action='store_true', help='Round seqlens and hdims of input json. Will fail if any inputs does not need rounding')
     p.add_argument('--fudge_factor_tolerance', type=float, default=5.0,
                    help='''For rawjson mode.
                    During the profiling, a "target" fudge factor is computed as
@@ -190,7 +201,7 @@ class TuningDatabase(object):
             return str
         if isinstance(v, float):
             return float
-        assert False, f"Unsupported type for value {v}"
+        assert False, f"Unsupported type for value {v} {v.__class__=}"
 
     def sqltype(self, pytype):
         return self.PYTYPE_TO_SQLTYPE[pytype]
@@ -319,6 +330,7 @@ class TuningDatabase(object):
         self.pkr_database = {}  # dict: (arch, task_id, kernel_name) -> (best, json)
 
     def aggregate(self, line_text):
+        round_inputs = self._args.round_inputs
         if not line_text:
             return
         raw_info = json.loads(line_text)
@@ -333,9 +345,34 @@ class TuningDatabase(object):
             raw_info['inputs']['Q_dtype'] = 'torch.' + raw_info['inputs']['Q_dtype']
         # Workaround to fix a bug where BLOCK_DMODEL was not correctly rounded
         # in mptune/flash/db_accessor.py
-        if raw_info['inputs']['D_HEAD'] in [16, 32, 48, 64, 72, 80, 96, 128, 160, 192, 224, 256]:
+        if raw_info['inputs']['D_HEAD'] in HEAD_DIMS:
             raw_info['inputs']['BLOCK_DMODEL'] = raw_info['inputs']['D_HEAD']
             raw_info['inputs']['PADDED_HEAD'] = False
+        def rounding(check_only):
+            need_rounding = False
+            # Round D_HEAD
+            # It is not used, but it is part of UNIQUE constraints
+            def round_hdims(x):
+                return round_to_array(x, HEAD_DIMS)
+            round_seqlen = round_to_power_of_two
+            for key, rf in [ ('D_HEAD', round_hdims),
+                             ('Max_seqlen_q', round_seqlen),
+                             ('Max_seqlen_k', round_seqlen),
+                           ]:
+                if key in raw_info['inputs']:
+                    oldv = raw_info['inputs'][key]
+                    newv = rf(oldv)
+                    if check_only:
+                        return True
+                    else:
+                        raw_info['inputs'][key] = newv
+            return False
+        need_rounding = rounding(check_only=True)
+        assert need_rounding == round_inputs, '--round_inputs should only be applied to json with irregular inputs, and vise versa'
+        if round_inputs:
+            rounding(check_only=False)
+            raw_info['inputs']['PADDED_HEAD'] = False
+        assert raw_info['inputs']['PADDED_HEAD'] == False
         timing = raw_info.get('time', float('inf'))
         if isinstance(timing, float):
             if math.isinf(timing):
@@ -394,7 +431,7 @@ def do_main(args, db, fin):
             db.upsert_json(rawjson, create_table_only=False)
             # Handles CAUSAL=True and BIAS_TYPE=1 case
             # No real use cases, just let the build system compile things
-            if rawjson['inputs']['CAUSAL'] == True and rawjson['inputs']['BIAS_TYPE'] == 0:
+            if rawjson['inputs']['CAUSAL_TYPE'] == True and rawjson['inputs']['BIAS_TYPE'] == 0:
                 rj2 = deepcopy(rawjson)
                 rj2['inputs']['BIAS_TYPE'] = 1
                 db.upsert_json(rj2, create_table_only=False)
