@@ -449,9 +449,13 @@ def do_main(args, db, fin):
         for rawjson in db.aggregation_results():
             # print(line)
             db.upsert_json(rawjson, create_table_only=False)
+            if 'CAUSAL_TYPE' in rawjson['inputs']:
+                causal = rawjson['inputs']['CAUSAL_TYPE']
+            else:
+                causal = rawjson['inputs']['CAUSAL']
             # Handles CAUSAL=True and BIAS_TYPE=1 case
             # No real use cases, just let the build system compile things
-            if rawjson['inputs']['CAUSAL_TYPE'] == True and rawjson['inputs']['BIAS_TYPE'] == 0:
+            if causal == True and rawjson['inputs']['BIAS_TYPE'] == 0:
                 rj2 = deepcopy(rawjson)
                 rj2['inputs']['BIAS_TYPE'] = 1
                 db.upsert_json(rj2, create_table_only=False)
