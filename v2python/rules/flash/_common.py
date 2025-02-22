@@ -7,11 +7,14 @@ from ...autotune_binning import BinningLessOrEqual, BinningExact
 
 class FlashKernel(KernelDescription):
     KERNEL_FAMILY = 'flash'
+    LUT_FULL_SEQLEN_Q = [4,8,16,32,64,128,256,512,1024,2048,4096,8192]
+    LUT_FULL_SEQLEN_K = [4,8,16,32,64,128,256,512,1024,2048,4096,8192]
 
     def sancheck_lut_tensor(self,
                             gpu,
                             lut_tensor,
                             fsels : 'list[ArgumentSelection]'):
+        LUT_TENSOR_SIZE = (len(self.LUT_FULL_SEQLEN_Q), len(self.LUT_FULL_SEQLEN_K))
         # Only kernels that provide gen_autotune_configs may have entries in
         # tuning database
         if not hasattr(self, 'gen_autotune_configs'):
@@ -33,13 +36,11 @@ class FlashKernel(KernelDescription):
         else:
             to_check = lut_tensor
         if MI or Navi:
-            return (to_check >= 0).all() and lut_tensor.shape == (12, 12)
+            return (to_check >= 0).all() and lut_tensor.shape == LUT_TENSOR_SIZE
         else:
             assert False, f"Unknown {gpu}"
 
     def get_missing_lut_entries(self, gpu, lut_tensor, fsels) -> list[dict]:
-        SEQLEN_Q = [4,8,16,32,64,128,256,512,1024,2048,4096,8192]
-        SEQLEN_K = [4,8,16,32,64,128,256,512,1024,2048,4096,8192]
         from copy import deepcopy
         import json
         import numpy as np
@@ -65,7 +66,7 @@ class FlashKernel(KernelDescription):
         M_idxs, N_idxs = np.where(lut_tensor < 0)
         for M_id, N_id in zip(M_idxs, N_idxs):
             d = deepcopy(base)
-            d['seqlen_q'] = SEQLEN_Q[M_id]
-            d['seqlen_k'] = SEQLEN_K[N_id]
+            d['seqlen_q'] = self.LUT_FULL_SEQLEN_Q[M_id]
+            d['seqlen_k'] = self.LUT_FULL_SEQLEN_K[N_id]
             ret.append(json.dumps(d))
         return ret

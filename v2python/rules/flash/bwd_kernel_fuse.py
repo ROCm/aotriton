@@ -131,3 +131,7 @@ class bwd_kernel_fuse(FlashKernel):
                 continue  # Timeout
             kw = {'BLOCK_M': M, 'BLOCK_N': N, 'waves_per_eu': waves}
             yield Config(kw, num_stages=stages, num_warps=warps)
+
+    # 16, 32, 64, 128, 256, 512, 1024
+    LUT_FULL_SEQLEN_Q = [16,32,64,128,256,512,1024]
+    LUT_FULL_SEQLEN_K = [16,32,64,128,256,512,1024]
