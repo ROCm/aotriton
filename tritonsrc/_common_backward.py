@@ -37,7 +37,6 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
     ctx.create_ref_inputs()
     ctx.set_require_grads(skip_dq=SKIP_DQ, skip_dk_dv=SKIP_DK_DV, skip_db=SKIP_DB)
 
-    return_encoded_softmax = True
     q, k, v, b = ctx.dev_tensors
     # autotune = True
     # # triton implementation
