@@ -143,7 +143,7 @@ class _attention(torch.autograd.Function):
         ctx.attn_extra_args = attn_extra_args
         ctx.autotune = autotune
         ctx.return_autotune = return_autotune
-        assert not torch.isnan(M).any()
+        assert not torch.isnan(M).any(), f'L tensor has NaN'
         return o, encoded_softmax, ctx.tuning_result
 
     @staticmethod
