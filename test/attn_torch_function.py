@@ -2,6 +2,7 @@
 # Copyright © 2023-2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
+import os
 import torch
 import queue
 from torch.multiprocessing import Process
@@ -23,6 +24,8 @@ if not IGNORE_BACKWARD_IMPORT:
     )
 from collections import namedtuple
 from dataclasses import dataclass
+
+BWD_FUSED = bool(int(os.getenv('BWD_FUSED', default='0')))
 
 @dataclass
 class AttentionExtraArgs:
@@ -210,8 +213,8 @@ class _attention(torch.autograd.Function):
         if tuning_result is not None:
             ctx.tuning_result += tuning_result
 
-        assert not torch.isnan(delta).any(), f'{delta=}'
+        assert not torch.isnan(delta).any(), f'delta contains NaN'
         return dq, dk, dv, db, None, None, None, None, None
-    backward = backward_split
+    backward = backward_fused if BWD_FUSED else backward_split
 
 attention = _attention.apply
