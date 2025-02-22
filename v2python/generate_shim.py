@@ -27,6 +27,12 @@ class NoWriteIfNoUpdateFile(object):
         if ofn.exists():
             with open(ofn) as f:
                 self._old_content = f.read()
+            self._opened = True
+        else:
+            self._opened = False
+
+    def __del__(self):
+        assert not self._opened, f'Memory file {self.path=} unflushed'
 
     @property
     def path(self):
@@ -37,6 +43,7 @@ class NoWriteIfNoUpdateFile(object):
         return self._mf
 
     def close(self):
+        self._opened = False
         mf = self.memory_file
         mf.seek(0)
         if mf.read() != self._old_content:
@@ -303,10 +310,6 @@ class KernelShimGenerator(MakefileSegmentGenerator):
     def SHIM_FILE_STEM(self):
         return 'shim.' + self._kdesc.SHIM_KERNEL_NAME
 
-    def __del__(self):
-        self._shim_hdr.close()
-        self._shim_src.close()
-
     def write_body(self):
         ofn = self._shim_src.path.with_suffix('.o')
         makefile_target = ofn.relative_to(self.build_root)
@@ -343,6 +346,8 @@ class KernelShimGenerator(MakefileSegmentGenerator):
         objs = [c._odesc for c in self._children if isinstance(c, ObjectShimCodeGenerator)]
         self._kdesc.write_shim_header(self._fhdr, objs)
         self._kdesc.write_shim_source(self._fsrc, objs, noimage_mode=self._args.noimage_mode)
+        self._shim_hdr.close()
+        self._shim_src.close()
 
     @property
     def list_of_self_object_files(self) -> 'list[Path]':
