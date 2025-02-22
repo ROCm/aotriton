@@ -11,16 +11,29 @@ from attn_torch_function import (
     DEFAULT_PHILOX_SEED,
     DEFAULT_PHILOX_OFFSET,
     attention,
-    debug_fill_dropout_rng,
-    AttentionExtraArgs
+    AttentionExtraArgs,
+    BWD_FUSED,
 )
 from _common_test import SdpaContext, SdpaParams, SdpaContextFromNPZ, AOTRITON_TORCH_ONLY_USE_CPU
 
 FOR_RELEASE = bool(int(os.getenv('FOR_RELEASE', default='0')))
 
-POT_HEADDIMS = [16, 32, 64, 128, 256]
+POT_HEADDIMS = [16, 32, 64, 128, 256] + ([512] if not BWD_FUSED else [])
 NPOT_HEADDIMS = [48, 80, 96, 160, 192, 224]
-PRIME_HEADDIMS = [7, 23, 37, 53, 67, 73, 89, 113, 149, 179, 211, 241]
+PRIME_HEADDIMS = [7, 23, 37, 53, 67, 73, 89, 113, 149, 179, 211, 241] + ([401] if not BWD_FUSED else [])
+PRIME_SEQLEN_Q = [11, 17, 37, 67, 157, 257, 523, 1033, 2063, 4919, 10601]
+PRIME_SEQLEN_K = [13, 31, 41, 71, 211, 337, 571, 1063, 2081, 5237, 11369]
+
+'''
+Note: for now we cannot really test both fused and split kernel at the same
+      time. Env var BWD_FUSED is used to make the switch.
+
+      However we still add BWDOP to the tests arguments so we can easily tell
+      the actual bwd op being tested.
+'''
+#TODO: Let BWDOP determine the real backward op at runtime
+
+BWDOP_ids = ['Fused'] if BWD_FUSED else ['Split']
 
 def _make_block_eyes(q, base=1.0, inc=0.0):
     dhead = q.shape[-1]
@@ -124,7 +137,8 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
 @pytest.mark.parametrize('sm_scale', [0.0, 1.2] if not FOR_RELEASE else [1.2])
 @pytest.mark.parametrize('storage_flip', [False, True])
 # @pytest.mark.parametrize('return_encoded_softmax', [False])
-def test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
+@pytest.mark.parametrize('BWDOP', BWDOP_ids)
+def test_op_bwd(BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
     bias_type = None
     _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
 
@@ -151,7 +165,8 @@ def test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dr
 @pytest.mark.parametrize('sm_scale', [0.0, 1.2] if not FOR_RELEASE else [1.2])
 @pytest.mark.parametrize('storage_flip', [False, True])
 # @pytest.mark.parametrize('return_encoded_softmax', [False])
-def test_op_bwd_with_matrix_bias(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, sm_scale, dropout_p, dtype, storage_flip):
+@pytest.mark.parametrize('BWDOP', BWDOP_ids)
+def test_op_bwd_with_matrix_bias(BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, sm_scale, dropout_p, dtype, storage_flip):
     causal = False
     bias_type = 'matrix'
     '''
@@ -169,11 +184,13 @@ def test_op_bwd_with_matrix_bias(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, sm_
 @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16, torch.float32])
 @pytest.mark.parametrize('sm_scale', [1.2])
 @pytest.mark.parametrize('storage_flip', [False])
-def test_gqa(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
+@pytest.mark.parametrize('BWDOP', BWDOP_ids)
+def test_gqa(BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
     bias_type = None
     _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
 
-def test_large_bf16_nan_values():
+@pytest.mark.parametrize('BWDOP', BWDOP_ids)
+def test_large_bf16_nan_values(BWDOP):
     real_device = "cuda" if not AOTRITON_TORCH_ONLY_USE_CPU else "cpu"
     q = torch.full((1, 1, 1, 16), 133120.0, dtype=torch.bfloat16, device=real_device)
     k = torch.full((1, 1, 1, 16), 133120.0, dtype=torch.bfloat16, device=real_device)
