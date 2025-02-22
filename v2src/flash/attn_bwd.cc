@@ -238,11 +238,13 @@ bwd_kernel_dk_dv(T4 q,
     return err;
   }
   err = context.launch(params, stream);
+#if AOTRITON_BUILD_FOR_TUNING
   if (extargs && extargs->dkdv.peek_kernel_image) {
     auto essentials = params.selected_kernel->get_image_info_iff_decompressed();
     extargs->dkdv.kernel_image = essentials.image;
     extargs->dkdv.image_size = essentials.size;
   }
+#endif
   return err;
 }
 
@@ -360,11 +362,13 @@ bwd_kernel_dq(T4 q,
     return err;
   }
   err = context.launch(params, stream);
+#if AOTRITON_BUILD_FOR_TUNING
   if (extargs && extargs->dqdb.peek_kernel_image) {
     auto essentials = params.selected_kernel->get_image_info_iff_decompressed();
     extargs->dqdb.kernel_image = essentials.image;
     extargs->dqdb.image_size = essentials.size;
   }
+#endif
   return err;
 }
 
