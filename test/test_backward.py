@@ -189,6 +189,21 @@ def test_gqa(BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
     bias_type = None
     _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
 
+@pytest.mark.parametrize('BATCH', [3])
+@pytest.mark.parametrize('N_HEADS', [5])
+@pytest.mark.parametrize('D_HEAD', PRIME_HEADDIMS)
+@pytest.mark.parametrize('seqlen_q', PRIME_SEQLEN_Q)
+@pytest.mark.parametrize('seqlen_k', PRIME_SEQLEN_K)
+@pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
+@pytest.mark.parametrize('dropout_p', [0.0, 0.5])
+@pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16, torch.float32])
+@pytest.mark.parametrize('sm_scale', [1.2])
+@pytest.mark.parametrize('storage_flip', [False, True])
+@pytest.mark.parametrize('bias_type', [None, 'matrix'], ids=['BiasOff', 'BiasOn'])
+@pytest.mark.parametrize('BWDOP', BWDOP_ids)
+def test_irregulars(BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type):
+    _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
+
 @pytest.mark.parametrize('BWDOP', BWDOP_ids)
 def test_large_bf16_nan_values(BWDOP):
     real_device = "cuda" if not AOTRITON_TORCH_ONLY_USE_CPU else "cpu"
