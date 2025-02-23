@@ -125,8 +125,8 @@ class bwd_kernel_fuse(FlashKernel):
                 continue  # No optimal kernel according to 0.8b tuning db
             if Navi and M > 32 and warps == 1:
                 continue  # No optimal kernel according to 0.8b tuning db
-            if Navi and M == 64  and N == 64 and warps != 4:
-                continue  # No optimal kernel according to 0.8b tuning db
+            if Navi and M == 32  and N == 32 and warps != 4:
+                continue  # Timeout
             if HEAD_DIM > 256 and M == 64 and N == 64 and warps == 1:
                 continue  # Timeout
             kw = {'BLOCK_M': M, 'BLOCK_N': N, 'waves_per_eu': waves}
