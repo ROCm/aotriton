@@ -35,6 +35,33 @@ from mptune.core import (
     KernelIndexProress,
 )
 
+def get_total_memory_from_amdsmi():
+    from amdsmi import (
+        amdsmi_init,
+        amdsmi_get_processor_handles,
+        amdsmi_get_gpu_vram_usage,
+        AmdSmiException,
+        amdsmi_shut_down,
+    )
+    amdsmi_init()
+    vram_cap = -1
+    try:
+        devices = amdsmi_get_processor_handles()
+        for device in devices:
+            vram_usage = amdsmi_get_gpu_vram_usage(device)
+            total_memory = vram_usage['vram_total'] / (1024 ** 1)  # MB -> GB
+            vram_cap = min(vram_cap, total_memory) if vram_cap > 0 else total_memory
+    except AmdSmiException as e:
+        print(e)
+    finally:
+        try:
+            amdsmi_shut_down()
+        except AmdSmiException as e:
+            print(e)
+    return vram_cap
+
+VRAM_CAP_IN_GB = get_total_memory_from_amdsmi()
+
 '''
 |----------------------------------------------------
 |FlashTup -> n * FlashTunerWorker -> FlashDbService |
@@ -68,9 +95,9 @@ class FlashTunerSource(MonadService):
     def clamp_memory_usage(self, tup):
         a = self._args
         BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type = tup
-        if seqlen_q * seqlen_k * D_HEAD >= 2048 * 2048 * 256:
+        if seqlen_q * seqlen_k * D_HEAD >= 2048 * 2048 * VRAM_CAP_IN_GB:
             BATCH = min(BATCH, 3)
-        if (causal or bias_type != 0) and seqlen_q * seqlen_k * D_HEAD >= 2048 * 2048 * 256:
+        if (causal or bias_type != 0) and seqlen_q * seqlen_k * D_HEAD >= 2048 * 2048 * VRAM_CAP_IN_GB:
             # Prevent OOM, causal=True needs more memory
             N_HEADS = min(N_HEADS, 2)
             BATCH = min(BATCH, 2)
