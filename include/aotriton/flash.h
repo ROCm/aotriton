@@ -110,7 +110,6 @@ attn_bwd_fused(T4 q, // batch_size x num_heads x seqlen_q x head_size
                T4 dv,   // batch_size x num_heads x seqlen_k x head_size
                T4 db,   // batch_size x num_heads x seqlen_q x seqlen_k
                T2 softmax_lse,
-               T2 delta, // buffer, empty_like(softmax_lse)
                float dropout_p,
                T0 philox_seed,
                T0 philox_offset1,
