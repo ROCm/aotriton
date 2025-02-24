@@ -36,8 +36,8 @@ BATCH, N_HEADS, N_CTX, D_HEAD = 4, 48, 4096, 64
 # vary seq length for fixed head and batch=4
 configs = []
 for mode in ['fwd']:
-    # for causal in [False, True]:
-    for causal in [False]:
+    for causal in [False, True]:
+    # for causal in [False]:
         for D_HEAD in d_heads:
             configs.append(triton.testing.Benchmark(
                 x_names=['N_CTX'],
@@ -63,7 +63,7 @@ for mode in ['fwd']:
 
 @triton.testing.perf_report(configs)
 def bench_flash_attention(BATCH, H, N_CTX, D_HEAD, causal, mode, provider, dtype=torch.float16, device="cuda"):
-    print(f"{N_CTX=}")
+    # print(f"{N_CTX=}")
     assert mode in ['fwd', 'bwd']
     warmup = 25
     rep = 100
@@ -78,7 +78,7 @@ def bench_flash_attention(BATCH, H, N_CTX, D_HEAD, causal, mode, provider, dtype
         sm_scale = 1.3
         dropout_p = 0.0
         b = None
-        ext = AttentionExtraArgs(return_encoded_softmax=causal,
+        ext = AttentionExtraArgs(return_encoded_softmax=dropout_p > 0.0,
                 autotune=False,
                 return_autotune=False,
                 is_testing=False)
