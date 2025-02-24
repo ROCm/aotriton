@@ -23,27 +23,23 @@ class NoWriteIfNoUpdateFile(object):
     def __init__(self, ofn : Path):
         self._ofn = ofn
         self._old_content = ''
-        self._mf = io.StringIO()
-        if ofn.exists():
-            with open(ofn) as f:
-                self._old_content = f.read()
-            self._opened = True
-        else:
-            self._opened = False
-
-    def __del__(self):
-        assert not self._opened, f'Memory file {self.path=} unflushed'
 
     @property
     def path(self):
         return self._ofn
 
+    def __enter__(self):
+        self._mf = io.StringIO()
+        if self._ofn.exists():
+            with open(self._ofn) as f:
+                self._old_content = f.read()
+        return self._mf
+
     @property
     def memory_file(self):
         return self._mf
 
-    def close(self):
-        self._opened = False
+    def __exit__(self, exc_type, exc_val, exc_tb):
         mf = self.memory_file
         mf.seek(0)
         if mf.read() != self._old_content:
@@ -295,8 +291,6 @@ class KernelShimGenerator(MakefileSegmentGenerator):
         self._shim_path.mkdir(parents=True, exist_ok=True)
         self._shim_hdr = NoWriteIfNoUpdateFile(self._shim_path / Path(self.SHIM_FILE_STEM + '.h'))
         self._shim_src = NoWriteIfNoUpdateFile(self._shim_hdr.path.with_suffix('.cc'))
-        self._fhdr = self._shim_hdr.memory_file
-        self._fsrc = self._shim_src.memory_file
         # Autotune dispatcher
         self._autotune_path = Path(args.build_dir) / k.KERNEL_FAMILY / f'autotune.{k.SHIM_KERNEL_NAME}'
         self._autotune_path.mkdir(parents=True, exist_ok=True)
@@ -344,10 +338,9 @@ class KernelShimGenerator(MakefileSegmentGenerator):
         if self.is_bare:
             return
         objs = [c._odesc for c in self._children if isinstance(c, ObjectShimCodeGenerator)]
-        self._kdesc.write_shim_header(self._fhdr, objs)
-        self._kdesc.write_shim_source(self._fsrc, objs, noimage_mode=self._args.noimage_mode)
-        self._shim_hdr.close()
-        self._shim_src.close()
+        with self._shim_hdr as fhdr, self._shim_src as fsrc:
+            self._kdesc.write_shim_header(fhdr, objs)
+            self._kdesc.write_shim_source(fsrc, objs, noimage_mode=self._args.noimage_mode)
 
     @property
     def list_of_self_object_files(self) -> 'list[Path]':
