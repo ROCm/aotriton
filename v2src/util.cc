@@ -39,6 +39,7 @@ std::unordered_map<std::string, GpuArch> LazyArch::string_to_arch = {
   {"gfx1100", GPU_ARCH_AMD_GFX1100},
   {"gfx1101", GPU_ARCH_AMD_GFX1101},
   {"gfx950", GPU_ARCH_AMD_GFX950},
+  {"gfx1200", GPU_ARCH_AMD_GFX1200},
 };
 
 GpuArch
@@ -51,6 +52,11 @@ getArchFromStream(hipStream_t stream) {
   LazyArch lazy(dev);
   device_to_arch.try_emplace(dev, lazy);
   return device_to_arch[dev];
+}
+
+bool isArchExperimentallySupported(const hipDeviceProp_t* dprops) {
+  std::string_view arch(dprops->gcnArchName);
+  return (arch == "gfx950" || arch == "gfx1200");
 }
 
 int getMultiProcessorCount(hipStream_t stream) {
