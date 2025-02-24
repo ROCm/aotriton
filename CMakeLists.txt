@@ -28,9 +28,9 @@ set(CMAKE_CXX_USE_RESPONSE_FILE_FOR_OBJECTS ON)
 set(CMAKE_NINJA_FORCE_RESPONSE_FILE         ON)
 set(CMAKE_CXX_USE_RESPONSE_FILE_FOR_LIBRARIES ON)
 
-set(AOTRITON_MIN_PYTHON 3.8 CACHE STRING "Minimal Python version for find_package.")
-if(AOTRITON_MIN_PYTHON VERSION_LESS "3.8")
-  message(FATAL_ERROR "Do not set AOTRITON_MIN_PYTHON lower than 3.8. The code itself does not support it.")
+set(AOTRITON_MIN_PYTHON 3.10 CACHE STRING "Minimal Python version for find_package.")
+if(AOTRITON_MIN_PYTHON VERSION_LESS "3.10")
+  message(FATAL_ERROR "Do not set AOTRITON_MIN_PYTHON lower than 3.10. The code itself does not support it.")
 endif()
 
 find_package(Python3 ${AOTRITON_MIN_PYTHON} COMPONENTS Interpreter REQUIRED)
