@@ -9,12 +9,12 @@ class FlashKernel(KernelDescription):
     KERNEL_FAMILY = 'flash'
     LUT_FULL_SEQLEN_Q = [4,8,16,32,64,128,256,512,1024,2048,4096,8192]
     LUT_FULL_SEQLEN_K = [4,8,16,32,64,128,256,512,1024,2048,4096,8192]
+    LUT_FULL_SEQLEN_NAVI = [4,8,16,32,64,128,256,512,1024]
 
     def sancheck_lut_tensor(self,
                             gpu,
                             lut_tensor,
                             fsels : 'list[ArgumentSelection]'):
-        LUT_TENSOR_SIZE = (len(self.LUT_FULL_SEQLEN_Q), len(self.LUT_FULL_SEQLEN_K))
         # Only kernels that provide gen_autotune_configs may have entries in
         # tuning database
         if not hasattr(self, 'gen_autotune_configs'):
@@ -23,11 +23,15 @@ class FlashKernel(KernelDescription):
             return True
         MI = 'MI' in gpu
         Navi = 'Navi' in gpu
+        LUT_TENSOR_SIZE = (len(self.LUT_FULL_SEQLEN_Q), len(self.LUT_FULL_SEQLEN_K))
+        LUT_TENSOR_SIZE_NAVI = (len(self.LUT_FULL_SEQLEN_NAVI), len(self.LUT_FULL_SEQLEN_NAVI))
         def check_value(repr_name):
+            if not isinstance(repr_name, list):
+                repr_name = [repr_name]
             for fsel in fsels:
-                if fsel.repr_name == repr_name:
+                if fsel.repr_name in repr_name:
                     return fsel.argument_value
-        is_causal = check_value('CAUSAL')
+        is_causal = check_value(['CAUSAL', 'CAUSAL_TYPE'])
         bias_type = check_value('BIAS_TYPE')
         if lut_tensor.size == 1:
             to_check = lut_tensor
@@ -35,8 +39,10 @@ class FlashKernel(KernelDescription):
             to_check = lut_tensor.diagonal()
         else:
             to_check = lut_tensor
-        if MI or Navi:
+        if MI:
             return (to_check >= 0).all() and lut_tensor.shape == LUT_TENSOR_SIZE
+        elif Navi:
+            return (to_check >= 0).all() and (lut_tensor.shape == LUT_TENSOR_SIZE or lut_tensor.shape == LUT_TENSOR_SIZE_NAVI)
         else:
             assert False, f"Unknown {gpu}"
 
@@ -46,10 +52,12 @@ class FlashKernel(KernelDescription):
         import numpy as np
         base = {'gpu' : gpu}
         def check_value(repr_name):
+            if not isinstance(repr_name, list):
+                repr_name = [repr_name]
             for fsel in fsels:
-                if fsel.repr_name == repr_name:
+                if fsel.repr_name in repr_name:
                     return fsel.argument_value
-        base['causal'] = check_value('CAUSAL')
+        base['causal'] = check_value(['CAUSAL', 'CAUSAL_TYPE'])
         base['d_head'] = check_value('BLOCK_DMODEL')
         base['dropout_p'] = 0.5 if check_value('ENABLE_DROPOUT') else 0.0
         def dtype():
