@@ -124,6 +124,7 @@ class PerKernelResult(object):
             assert False, 'acceptables is empty'
         # print(f'{acceptables=}')
         optimal = min(acceptables, key=gettime)
+        optimal = self.remove_unused(optimal)
         return optimal
 
     def any_nan(self, adiffs):
@@ -131,6 +132,9 @@ class PerKernelResult(object):
             return math.isnan(adiffs)
         else:
             return any(map(math.isnan, adiffs))
+
+    def remove_unused(self, optimal):
+        return optimal
 
     @classmethod
     def update_max_fudge_factor(klass, opti):
@@ -150,6 +154,12 @@ class Pkr_BwdKernelDkDv(PerKernelResult):
     KERNEL_NAME = 'bwd_kernel_dk_dv'
     KERNEL_OUT_TENSORS = ['dk', 'dv']
 
+    def remove_unused(self, optimal):
+        for key in ['USE_ALIBI', 'INT8', 'INT8_KV', 'USE_P_SCALE']:
+            if key in optimal['inputs']:
+                del optimal['inputs'][key]
+        return optimal
+
 class Pkr_BwdKernelDq(PerKernelResult):
     KERNEL_NAME = 'bwd_kernel_dq'
     KERNEL_OUT_TENSORS = ['dq', 'db']
@@ -164,6 +174,8 @@ class Pkr_BwdKernelDq(PerKernelResult):
         if len(self.valid_out_tensors) == 0:  # db isn't there
             return math.isnan(adiffs[0])
         return any(map(math.isnan, adiffs))
+
+    remove_unused = Pkr_BwdKernelDkDv.remove_unused
 
 class Pkr_FusedBwdKernel(PerKernelResult):
     KERNEL_NAME = 'bwd_kernel_fuse'
