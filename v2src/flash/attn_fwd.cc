@@ -139,7 +139,7 @@ _attn_fwd_common(T4 q,
     .INT8_KV = false,
     .USE_P_SCALE = false,
     .persistent_atomic_counter = &persistent_atomic_counter,
-    .Num_CU = params.PERSISTENT_TYPE == 0 ? 80 : getMultiProcessorCount(stream),
+    .Num_CU = is_causal ? getMultiProcessorCount(stream) : 80,
     .Batch = num_seqlens == 0 ? q.size(0) : num_seqlens,
   };
 #if AOTRITON_BUILD_FOR_TUNING
