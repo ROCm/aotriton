@@ -2,7 +2,11 @@
 # SPDX-License-Identifier: MIT
 
 import itertools
+import os
 from ._common import FlashKernel, select_pattern, BinningLessOrEqual, BinningExact, Config
+
+AOTRITON_FLASH_BLOCK_DMODEL = os.getenv('AOTRITON_FLASH_BLOCK_DMODEL', default='16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256, 512')
+AOTRITON_FLASH_BLOCK_DMODEL = [int(d) for d in AOTRITON_FLASH_BLOCK_DMODEL.split(',')]
 
 class attn_fwd(FlashKernel):
     ARGUMENTS = [
@@ -87,7 +91,7 @@ class attn_fwd(FlashKernel):
         # further increse the number of kernels. Will be added later along with
         # windowed attention
         frozenset(['CAUSAL_TYPE']) : [0, 1],
-        frozenset(['BLOCK_DMODEL']) : [16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256, 512],
+        frozenset(['BLOCK_DMODEL']) : AOTRITON_FLASH_BLOCK_DMODEL,
         frozenset(['ENABLE_DROPOUT']) : [False, True],
         frozenset(['RETURN_ENCODED_SOFTMAX']) : [False],
         frozenset(['PADDED_HEAD']) : [False, True],
