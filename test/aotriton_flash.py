@@ -189,7 +189,7 @@ def attn_bwd(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
     # print(f'{err=}')
     return err
 
-def attn_bwd_fused(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
+def attn_bwd_fused(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L,
              dropout_p, philox_seed, philox_offset1, philox_offset2, is_causal, extargs=None):
     extargs = FusedBwdExtraArguments() if extargs is None else extargs
     qview, qdevm = mk_aotensor(q)
@@ -203,7 +203,6 @@ def attn_bwd_fused(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
     dvview, dvdevm = mk_aotensor(dv)
     dbview, dbdevm = mk_aotensor(db, if_empty_then_like=q)
     Lview, Ldevm = mk_aotensor(L)
-    deltaview, deltadevm = mk_aotensor(delta)
     seedview, seeddevm = mk_aotensor(philox_seed)
     offset1view, offset1devm = mk_aotensor(philox_offset1)
     if AOTRITON_TORCH_ONLY_USE_CPU:
@@ -230,8 +229,8 @@ def attn_bwd_fused(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
                             Stream(),
                             extargs)
     if AOTRITON_TORCH_ONLY_USE_CPU:
-        _torch_cpu_only_copy_back([dq, dk, dv, db, delta],
-                                  [dqdevm, dkdevm, dvdevm, dbdevm, deltadevm])
+        _torch_cpu_only_copy_back([dq, dk, dv, db],
+                                  [dqdevm, dkdevm, dvdevm, dbdevm])
     # print(f'{err=}')
     return err
 
