@@ -18,6 +18,7 @@ GPU_TO_DIRECTORY = {
     'Navi31' : 'amd-gfx110x',
     'Navi32' : 'amd-gfx110x',
     'Unidentified' : 'amd-gfx950',
+    'Unidentified02'    : 'amd-gfx120x',
 }
 
 GPU_TO_CLUSTER_SUFFIX = {
@@ -25,7 +26,8 @@ GPU_TO_CLUSTER_SUFFIX = {
     'MI300X' : 'MI300X',
     'Navi31' : 'Navi3x',
     'Navi32' : 'Navi3x',
-    'Unidentified' : 'Unidentified',
+    'Unidentified'      : 'Unidentified',
+    'Unidentified02'    : 'Unidentified02',
 }
 
 class MissingLutEntry(Exception):
