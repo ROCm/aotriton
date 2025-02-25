@@ -177,9 +177,14 @@ class TunerService(BaseTunerService):
                 dq.fill_(float('nan'))
                 if db is not None:
                     db.fill_(float('nan'))
-            args = (q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
-                    dropout_p, philox_seed_output, philox_offset_output, 0,
-                    causal, extargs.capi_object)
+            if split:
+                args = (q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
+                        dropout_p, philox_seed_output, philox_offset_output, 0,
+                        causal, extargs.capi_object)
+            else:
+                args = (q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L,
+                        dropout_p, philox_seed_output, philox_offset_output, 0,
+                        causal, extargs.capi_object)
             try:
                 ret = bwd_operator(*args)
             except Exception as e:
