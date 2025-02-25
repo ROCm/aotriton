@@ -228,10 +228,10 @@ def check_spill_registers(extargs, atr):
                 vgpr_spill_count = k.get('.vgpr_spill_count', -1)
                 sgpr_spill_count = k.get('.sgpr_spill_count', -1)
                 # print(f'{vgpr_spill_count=}', f'{sgpr_spill_count=}')
-                if vgpr_spill_count > VGPR_SPILL_THRESHOLD:
+                if VGPR_SPILL_THRESHOLD > 0 and vgpr_spill_count > VGPR_SPILL_THRESHOLD:
                     too_many_spills = True
                     break
-                if sgpr_spill_count > SGPR_SPILL_THRESHOLD:
+                if VGPR_SPILL_THRESHOLD > 0 and sgpr_spill_count > SGPR_SPILL_THRESHOLD:
                     too_many_spills = True
                     break
     atr.vgpr_spill_count = vgpr_spill_count
