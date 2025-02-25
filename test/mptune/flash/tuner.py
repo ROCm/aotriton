@@ -70,11 +70,6 @@ class TunerService(BaseTunerService):
             FwdExtraArguments,
             hipError_t,
         )
-        if not IGNORE_BACKWARD_IMPORT:
-            from aotriton_flash import (
-                attn_bwd,
-                FusedBwdExtraArguments,
-            )
         from ..core import cpp_autotune_gen, KernelOutput, AutotuneResult, CPPTUNE_SKIP_KERNELS
 
         payload = request.payload
