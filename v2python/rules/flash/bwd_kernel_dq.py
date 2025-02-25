@@ -123,6 +123,8 @@ class bwd_kernel_dq(FlashKernel):
             kw = {'BLOCK_M': M, 'BLOCK_N': N, 'waves_per_eu': waves}
             if Navi and M == 64  and N == 64 and stages == 2:
                 continue  # No optimal kernel according to 0.8b tuning db
-            if Navi and M >= 32 and N >= 32 and warps < 4:
+            if Navi and M * N >= 32 * 32 and warps < 4:
+                continue  # Timeout
+            if Navi and M * N >= 32 * 16 and warps < 2:
                 continue  # Timeout
             yield Config(kw, num_stages=stages, num_warps=warps)
