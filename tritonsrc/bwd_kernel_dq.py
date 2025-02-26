@@ -173,7 +173,15 @@ def bwd_kernel_dq(
                 batch_index = off_z
 
         if continue_condition:
-            # Initialize pointers to Q
+            # Initialize pointers to Q, K, V
+            # Q_block_ptr = tl.make_block_ptr(
+            #     base=Q,
+            #     shape=(seqlen_q, head_dim),
+            #     strides=(stride_qm, stride_qk),
+            #     offsets=(start_q, 0),
+            #     block_shape=(BLOCK_M, BLOCK_DMODEL),
+            #     order=(1, 0)
+            # )
             q_ptrs0, q_ptrs1, q_ptrs2 = composed_ptrs(Q,
                                                     stride_qz, stride_qh, stride_qm, stride_qk,
                                                     batch_index, off_h_q, cu_seqlens_q_start + offs_q,
@@ -205,6 +213,14 @@ def bwd_kernel_dq(
                                                         batch_index, off_h_k, cu_seqlens_k_start + offs_n,
                                                         BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
                                                         TRANSPOSED=True)
+            # K_block_ptr = tl.make_block_ptr(
+            #     base=K,
+            #     shape=(head_dim, seqlen_k),
+            #     strides=(stride_kk, stride_kn),
+            #     offsets=(0, 0),
+            #     block_shape=(BLOCK_DMODEL, BLOCK_N),
+            #     order=(0, 1)
+            # )
 
             vt_ptrs0, vt_ptrs1, vt_ptrs2 = composed_ptrs(V,
                                                         stride_vz, stride_vh, stride_vk, stride_vn,
@@ -244,19 +260,43 @@ def bwd_kernel_dq(
             else:
                 batch_philox_offset = 0
 
-            # Initialize pointers to output DQ
+            # Initialize pointers to output
             dq_offset = batch_index * stride_dqz + off_h_q * stride_dqh + cu_seqlens_q_start * stride_dqm
             DQ_ptr = DQ + dq_offset
-
-            # Initialize pointers to bias and its gradient if needed
+            # DQ_block_ptr = tl.make_block_ptr(
+            #     base=DQ,
+            #     shape=(seqlen_q, head_dim),
+            #     strides=(stride_dqm, stride_dqk),
+            #     offsets=(start_q, 0),
+            #     block_shape=(BLOCK_M, BLOCK_DMODEL),
+            #     order=(1, 0)
+            # )
             store_db = True
             if BIAS_TYPE == 0:
                 B_ptr = 0
                 DB_ptr = 0
             elif BIAS_TYPE == 1:
+                # B_block_ptr = tl.make_block_ptr(
+                #         base=B + off_h_q * stride_bh + batch_index * stride_bz,
+                #         shape=(seqlen_q, seqlen_k),
+                #         strides=(stride_bm, stride_bn),
+                #         offsets=(start_q, 0),
+                #         block_shape=(BLOCK_M, BLOCK_N),
+                #         order=(1, 0)
+                #         )
                 B_ptr = B + off_h_q * stride_bh + batch_index * stride_bz
                 if (stride_dbz == 0 and stride_dbh == 0) and stride_dbm == 0:
                     store_db = False
+                # Still have to make one even if no_db = False
+                # due to a limit of Triton: runtime branches must have identical data types.
+                # DB_block_ptr = tl.make_block_ptr(
+                #         base=DB + off_h_q * stride_dbh + batch_index * stride_dbz,
+                #         shape=(seqlen_q, seqlen_k),
+                #         strides=(stride_dbm, stride_dbn),
+                #         offsets=(start_q, 0),
+                #         block_shape=(BLOCK_M, BLOCK_N),
+                #         order=(1, 0)
+                #         )
                 DB_ptr = DB + off_h_q * stride_dbh + batch_index * stride_dbz
             else:
                 tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
