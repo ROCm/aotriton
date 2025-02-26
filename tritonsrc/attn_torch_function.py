@@ -597,6 +597,7 @@ class _attention(torch.autograd.Function):
             for t in (dq, dk, dv, db, delta):
                 t.fill_(float('nan'))
         null_tensor = torch.empty((0), device=q.device, dtype=torch.int32)
+        batch = q.shape[0]
         num_head_q = int(q.shape[1])
         num_head_k = int(k.shape[1])
         max_seqlen_q = q.shape[2]
@@ -609,7 +610,16 @@ class _attention(torch.autograd.Function):
         else:
             BLOCK = 128
         return_autotune = ctx.tuning_result is not None
+        
+        persistent_type = attn_extra_args.persistent_type
+        if persistent_type == PersistentType.AUTOSELECT:
+            persistent_type = PersistentType.NONE if not ctx.causal else PersistentType.DYNAMIC
 
+        null_tensor = torch.empty((0), device=q.device, dtype=torch.int32)
+        if persistent_type == PersistentType.DYNAMIC:
+            persistent_atomic_counter = torch.zeros([1], device=q.device, dtype=torch.int32)
+        else:
+            persistent_atomic_counter = null_tensor
         grid_prep = (triton.cdiv(do.shape[2], BLOCK), do.shape[1], do.shape[0])
         bare_bwd_preprocess[grid_prep](
             o, do, delta,
@@ -790,11 +800,17 @@ class _attention(torch.autograd.Function):
                     print(f'2nd block fwd mask: {ctx.encoded_softmax[0,0, 16:]}')
             # print(f'Full q: {q}', file=sys.stderr)
             # assert mask_allclose
-        grid_dq = lambda META: (
-            triton.cdiv(max_seqlen_q, META['BLOCK_M']),
-            num_head_q,
-            q.shape[0],
-        )
+        if persistent_type == PersistentType.NONE:
+            grid_dq = lambda META: (
+                triton.cdiv(max_seqlen_q, META['BLOCK_M']),
+                num_head_q,
+                batch,
+            )
+            Num_CU = 0
+        else:
+            Num_CU = torch.cuda.get_device_properties(q.device).multi_processor_count
+            grid_dq = lambda META: (min(Num_CU * META['GRID_CU_MULTIP'],
+                                     triton.cdiv(max_seqlen_q, META['BLOCK_M']) * num_head_q * batch), )
         if q.requires_grad:
             if ctx.autotune:
                 tuned_bwd_kernel_dq[grid_dq](
@@ -890,7 +906,14 @@ class _attention(torch.autograd.Function):
                     philox_offset2=0,
                     BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N,
                     BLOCK_DMODEL=head_dim_rounded,
-                    CAUSAL=ctx.causal,
+                    # Causal
+                    CAUSAL_TYPE=CausalType.TOP_LEFT if ctx.causal else CausalType.NONE,
+                    # Persistent related arguments
+                    PERSISTENT_TYPE=persistent_type,
+                    persistent_atomic_counter=persistent_atomic_counter,
+                    Num_CU=Num_CU,
+                    GRID_CU_MULTIP=2,
+                    Batch=batch,
                     num_warps=4, waves_per_eu=1,
                     num_stages=1,
                     ENABLE_DROPOUT=ctx.dropout_p > 0.0,
