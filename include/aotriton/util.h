@@ -41,7 +41,7 @@ enum GpuArch : uint64_t {
   GPU_ARCH_AMD_GFX1100 = CAT(GpuVendor::kAMD, 0x1100),
   GPU_ARCH_AMD_GFX1101 = CAT(GpuVendor::kAMD, 0x1101),
   GPU_ARCH_AMD_GFX950 = CAT(GpuVendor::kAMD, 0x950),
-  GPU_ARCH_AMD_GFX1200 = CAT(GpuVendor::kAMD, 0x1200),
+  GPU_ARCH_AMD_GFX1201 = CAT(GpuVendor::kAMD, 0x1201),
 };
 
 template<int Rank>

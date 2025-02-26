@@ -7,7 +7,7 @@ AOTRITON_SUPPORTED_GPUS = {
     'Navi31'    : 'GPU_ARCH_AMD_GFX1100',
     'Navi32'    : 'GPU_ARCH_AMD_GFX1101',
     'Unidentified'    : 'GPU_ARCH_AMD_GFX950',
-    'Unidentified02'  : 'GPU_ARCH_AMD_GFX1200',
+    'Unidentified02'  : 'GPU_ARCH_AMD_GFX1201',
 }
 
 AOTRITON_GPU_ARCH_TUNING_STRING = {
@@ -16,7 +16,7 @@ AOTRITON_GPU_ARCH_TUNING_STRING = {
     'Navi31'    : 'gfx1100',
     'Navi32'    : 'gfx1101',
     'Unidentified'    : 'gfx950',
-    'Unidentified02'  : 'gfx1200',
+    'Unidentified02'  : 'gfx1201',
 }
 
 AOTRITON_GPU_WARPSIZE = {
