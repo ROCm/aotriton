@@ -51,6 +51,14 @@ class FlashKernel(KernelDescription):
         import json
         import numpy as np
         base = {'gpu' : gpu}
+        MI = 'MI' in gpu
+        Navi = 'Navi' in gpu
+        if Navi:
+            lut_full_seqlen_q = self.LUT_FULL_SEQLEN_NAVI
+            lut_full_seqlen_k = self.LUT_FULL_SEQLEN_NAVI
+        else:
+            lut_full_seqlen_q = self.LUT_FULL_SEQLEN_Q
+            lut_full_seqlen_k = self.LUT_FULL_SEQLEN_K
         def check_value(repr_name):
             if not isinstance(repr_name, list):
                 repr_name = [repr_name]
@@ -71,10 +79,18 @@ class FlashKernel(KernelDescription):
         base['dtype'] = dtype()
         base['bias_type'] = check_value('BIAS_TYPE')
         ret = []
-        M_idxs, N_idxs = np.where(lut_tensor < 0)
-        for M_id, N_id in zip(M_idxs, N_idxs):
-            d = deepcopy(base)
-            d['seqlen_q'] = self.LUT_FULL_SEQLEN_Q[M_id]
-            d['seqlen_k'] = self.LUT_FULL_SEQLEN_K[N_id]
-            ret.append(json.dumps(d))
+        if lut_tensor.size == 1:
+            for seqlen_q in lut_full_seqlen_q:
+                for seqlen_k in lut_full_seqlen_k:
+                    d = deepcopy(base)
+                    d['seqlen_q'] = seqlen_q
+                    d['seqlen_k'] = seqlen_k
+                    ret.append(json.dumps(d))
+        else:
+            M_idxs, N_idxs = np.where(lut_tensor < 0)
+            for M_id, N_id in zip(M_idxs, N_idxs):
+                d = deepcopy(base)
+                d['seqlen_q'] = lut_full_seqlen_q[M_id]
+                d['seqlen_k'] = lut_full_seqlen_k[N_id]
+                ret.append(json.dumps(d))
         return ret

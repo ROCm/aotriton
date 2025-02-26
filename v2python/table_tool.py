@@ -101,7 +101,9 @@ class PerKernelResult(object):
         best_tft = self.get_most_accurate_kernel()
         if allow_no_acceptable and best_tft is None:
             return None
-        assert best_tft is not None
+        if best_tft is None:
+            print(f'NEED RERUN TID: {self.tid}')
+            return None
         fft = fudge_factor_tolerance
         def is_acceptable(j):
             if j['result'] != 'tuned':
@@ -138,6 +140,8 @@ class PerKernelResult(object):
 
     @classmethod
     def update_max_fudge_factor(klass, opti):
+        if opti is None:
+            return
         if klass.KERNEL_MAX_FUDGE_FACTORS is None:
             klass.KERNEL_MAX_FUDGE_FACTORS = { tn : 0.0 for tn in klass.KERNEL_OUT_TENSORS }
         for tn in klass.KERNEL_MAX_FUDGE_FACTORS:
@@ -459,7 +463,8 @@ def do_main(args, db, fin):
             pbar.update(len(line))  # FIXME: support UTF-8 which len(line) != number of bytes
         pbar = tqdm(total=len(db.pkr_database), desc='Processed kernels')
         for rawjson in db.aggregation_results():
-            # print(line)
+            if rawjson is None:
+                continue
             db.upsert_json(rawjson, create_table_only=False)
             if 'CAUSAL_TYPE' in rawjson['inputs']:
                 causal = rawjson['inputs']['CAUSAL_TYPE']
