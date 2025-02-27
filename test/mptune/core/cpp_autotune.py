@@ -367,7 +367,5 @@ def cpp_autotune_gen(extarg_factory, sub_extarg_accessor,
         reset_kernel_index_to_skip()
         extargs_with_subs.set_current_sub(sub_index)
         cur_kig = kig_dict[cur_name]
-        cur_kig.last_success_kernel = 1
-        print(f'run_last_success_kernel_once {cur_kig.last_success_kernel=}')
         extargs_with_subs.force_kernel_index = cur_kig.last_success_kernel
         kernel_func(extargs_with_subs, is_testing=False)
