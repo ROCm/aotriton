@@ -617,9 +617,11 @@ class _attention(torch.autograd.Function):
 
         null_tensor = torch.empty((0), device=q.device, dtype=torch.int32)
         if persistent_type == PersistentType.DYNAMIC:
-            persistent_atomic_counter = torch.zeros([1], device=q.device, dtype=torch.int32)
+            persistent_atomic_counter_dq = torch.zeros([1], device=q.device, dtype=torch.int32)
+            persistent_atomic_counter_dkv = torch.zeros([1], device=q.device, dtype=torch.int32)
         else:
-            persistent_atomic_counter = null_tensor
+            persistent_atomic_counter_dq = null_tensor
+            persistent_atomic_counter_dkv = null_tensor
         grid_prep = (triton.cdiv(do.shape[2], BLOCK), do.shape[1], do.shape[0])
         bare_bwd_preprocess[grid_prep](
             o, do, delta,
@@ -662,11 +664,17 @@ class _attention(torch.autograd.Function):
         #     BLOCK_M = max(16, BLOCK_M // 2)
         #     BLOCK_N = max(16, BLOCK_N // 2)
         # debug_mask = torch.zeros((q.shape[0], q.shape[1], max_seqlen_q, max_seqlen_k), device=q.device, dtype=ctx.encoded_softmax.dtype)
-        grid_dk_dv = lambda META: (
-            triton.cdiv(max_seqlen_k, META['BLOCK_N']),
-            num_head_k,
-            q.shape[0],
-        )
+        if persistent_type == PersistentType.NONE:
+            grid_dk_dv = lambda META: (
+                triton.cdiv(max_seqlen_k, META['BLOCK_N']),
+                num_head_k,
+                batch,
+            )
+            Num_CU = 0
+        else:
+            Num_CU = torch.cuda.get_device_properties(q.device).multi_processor_count
+            grid_dk_dv = lambda META: (min(Num_CU * META['GRID_CU_MULTIP'],
+                                     triton.cdiv(max_seqlen_k, META['BLOCK_N']) * num_head_k * batch), )
         stride_dbz, stride_dbh, stride_dbm, stride_dbn = db.stride()
         if db.numel() == 0 or not b.requires_grad:
             # Passing all zeros to indicate no elements
@@ -771,7 +779,14 @@ class _attention(torch.autograd.Function):
                     # debug_mask=debug_mask,
                     BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N,
                     BLOCK_DMODEL=head_dim_rounded,
-                    CAUSAL=ctx.causal,
+                    # Causal
+                    CAUSAL_TYPE=CausalType.TOP_LEFT if ctx.causal else CausalType.NONE,
+                    # Persistent related arguments
+                    PERSISTENT_TYPE=persistent_type,
+                    persistent_atomic_counter=persistent_atomic_counter_dkv,
+                    Num_CU=Num_CU,
+                    GRID_CU_MULTIP=2,
+                    Batch=batch,
                     num_warps=4, waves_per_eu=1,
                     num_stages=1,
                     ENABLE_DROPOUT=ctx.dropout_p > 0.0,
@@ -910,7 +925,7 @@ class _attention(torch.autograd.Function):
                     CAUSAL_TYPE=CausalType.TOP_LEFT if ctx.causal else CausalType.NONE,
                     # Persistent related arguments
                     PERSISTENT_TYPE=persistent_type,
-                    persistent_atomic_counter=persistent_atomic_counter,
+                    persistent_atomic_counter=persistent_atomic_counter_dq,
                     Num_CU=Num_CU,
                     GRID_CU_MULTIP=2,
                     Batch=batch,
