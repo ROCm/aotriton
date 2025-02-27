@@ -142,6 +142,11 @@ class TunerService(BaseTunerService):
         else:
             skip_fused_bwd = False
 
+        if seqlen_q < 16 or seqlen_q > 1024:
+            skip_fused_bwd = True
+        if seqlen_k < 16 or seqlen_k > 1024:
+            skip_fused_bwd = True
+
         skip_bwd = skip_split_bwd and skip_fused_bwd
 
         # ref_out is kept in the ctx
