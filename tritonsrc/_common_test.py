@@ -321,7 +321,7 @@ class SdpaContext(object):
         # print(f'{torch.cuda.get_device_properties(0).gcnArchName=}')
         if torch.version.hip:
             if 'gfx90a' in torch.cuda.get_device_properties(0).gcnArchName:
-                query_fudge_factor = 130.0 if isinstance(self, VarlenSdpaContext) else 80.0
+                query_fudge_factor = max(query_fudge_factor, 130.0 if isinstance(self, VarlenSdpaContext) else 80.0)
                 key_fudge_factor = 500.0 if self.is_hdim_NPOT_optimized else 340.0
                 bias_fudge_factor = 45.0 if self.is_hdim_NPOT_optimized else 36.0
         if AOTRITON_TORCH_ONLY_USE_CPU:
