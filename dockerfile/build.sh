@@ -50,15 +50,26 @@ if [ -z ${NOIMAGE_MODE+x} ]; then
   NOIMAGE_MODE="OFF"
 fi
 
-DOCKER_IMAGE=aotriton:manylinux_2_28-buildenv-tiny
+if [ -z ${DOCKER_IMAGE+x} ]; then
+  DOCKER_IMAGE=aotriton:manylinux_2_28-buildenv-tiny
+fi
 
 if [ -z "$(docker images -q ${DOCKER_IMAGE} 2> /dev/null)" ]; then
   if [ -z ${AMDGPU_INSTALLER+x} ]; then
-    build_options="--build-arg amdgpu_installer=${AMDGPU_INSTALLER}"
-  else
     build_options=""
+  else
+    build_options="--build-arg amdgpu_installer=${AMDGPU_INSTALLER}"
   fi
-  docker build ${build_options} -t ${DOCKER_IMAGE} -f manylinux_2_28.Dockerfile .
+  if [ -z ${AMDGPU_INSTALLER_SELECT_VERSION+x} ]; then
+    version_selection="true"
+  else
+    version_selection="${AMDGPU_INSTALLER_SELECT_VERSION}"
+  fi
+  echo "docker build ${build_options} ${version_selection} -t ${DOCKER_IMAGE} -f manylinux_2_28.Dockerfile ."
+  docker build ${build_options} \
+    --build-arg amdgpu_installer_select_version="${version_selection}" \
+    -t ${DOCKER_IMAGE} \
+    -f manylinux_2_28.Dockerfile .
 fi
 
 if [ "$WORKSPACE" == "tmpfs" ]; then
