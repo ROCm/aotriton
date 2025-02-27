@@ -34,6 +34,13 @@ if SMALL_HEADDIM_ONLY:
     NPOT_HEADDIMS = remove_larger_than(NPOT_HEADDIMS, 192)
     PRIME_HEADDIMS = remove_larger_than(PRIME_HEADDIMS, 192)
 
+REGULAR_HEADDIM_ONLY = bool(int(os.getenv('REGULAR_HEADDIM_ONLY', default='0')))
+
+if REGULAR_HEADDIM_ONLY:
+    ALL_HEADDIMS = POT_HEADDIMS + NPOT_HEADDIMS + PRIME_HEADDIMS
+else:
+    ALL_HEADDIMS = POT_HEADDIMS + NPOT_HEADDIMS
+
 '''
 Note: for now we cannot really test both fused and split kernel at the same
       time. Env var BWD_FUSED is used to make the switch.
@@ -133,7 +140,7 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
 # @pytest.mark.parametrize('seqlen_q', [1, 4, 32, 128, 256, 512, 1024, 7, 394, 250, 399, 511, 1019])
 # @pytest.mark.parametrize('seqlen_k', [1, 4, 32, 128, 256, 512, 1024, 3, 217, 339, 313, 491, 988])
 # PyTorch set
-@pytest.mark.parametrize('D_HEAD', POT_HEADDIMS + NPOT_HEADDIMS + PRIME_HEADDIMS)
+@pytest.mark.parametrize('D_HEAD', ALL_HEADDIMS)
 @pytest.mark.parametrize('seqlen_q', [4, 8, 64, 143, 256, 512, 1024, 2048])
 @pytest.mark.parametrize('seqlen_k', [4, 8, 64, 127, 256, 587, 1024, 2048])
 # Minimal set
@@ -156,7 +163,7 @@ def test_op_bwd(BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_sc
 # @pytest.mark.parametrize('N_HEADS', [1, 4])
 @pytest.mark.parametrize('BATCH', [1, 4] if not FOR_RELEASE else [3])
 @pytest.mark.parametrize('N_HEADS', [1, 4] if not FOR_RELEASE else [8])
-@pytest.mark.parametrize('D_HEAD', POT_HEADDIMS + NPOT_HEADDIMS + PRIME_HEADDIMS)
+@pytest.mark.parametrize('D_HEAD', ALL_HEADDIMS)
 # @pytest.mark.parametrize('D_HEAD', [128])
 # Complete set
 # @pytest.mark.parametrize('seqlen_q', [4,8,16,17,32,64,128,143,256,512,1024,2048])
