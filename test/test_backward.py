@@ -24,6 +24,16 @@ PRIME_HEADDIMS = [7, 23, 37, 53, 67, 73, 89, 113, 149, 179, 211, 241] + ([401] i
 PRIME_SEQLEN_Q = [11, 17, 37, 67, 157, 257, 523, 1033, 2063, 4919, 10601]
 PRIME_SEQLEN_K = [13, 31, 41, 71, 211, 337, 571, 1063, 2081, 5237, 11369]
 
+SMALL_HEADDIM_ONLY = bool(int(os.getenv('FOR_RELEASE', default='0')))
+
+def remove_larger_than(data_list, threshold):
+    return [x for x in data_list if x <= threshold]
+
+if SMALL_HEADDIM_ONLY:
+    POT_HEADDIMS = remove_larger_than(POT_HEADDIMS, 192)
+    NPOT_HEADDIMS = remove_larger_than(NPOT_HEADDIMS, 192)
+    PRIME_HEADDIMS = remove_larger_than(PRIME_HEADDIMS, 192)
+
 '''
 Note: for now we cannot really test both fused and split kernel at the same
       time. Env var BWD_FUSED is used to make the switch.
