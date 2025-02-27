@@ -19,7 +19,7 @@ class FlashKernel(KernelDescription):
         # tuning database
         if not hasattr(self, 'gen_autotune_configs'):
             return True
-        if gpu == 'Unidentified':  # Will not have a tuning database
+        if 'Unidentified' in gpu:  # Tuning database depends on others
             return True
         MI = 'MI' in gpu
         Navi = 'Navi' in gpu
@@ -47,6 +47,8 @@ class FlashKernel(KernelDescription):
             assert False, f"Unknown {gpu}"
 
     def get_missing_lut_entries(self, gpu, lut_tensor, fsels) -> list[dict]:
+        if 'Unidentified' in gpu:  # Tuning database depends on others
+            return []
         from copy import deepcopy
         import json
         import numpy as np

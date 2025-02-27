@@ -15,8 +15,8 @@ AOTRITON_GPU_ARCH_TUNING_STRING = {
     'MI300X'    : 'gfx942',
     'Navi31'    : 'gfx1100',
     'Navi32'    : 'gfx1101',
-    'Unidentified'    : 'gfx950',
-    'Unidentified02'  : 'gfx1201',
+    'Unidentified'    : 'gfx950',  # Mostly Copied from gfx942
+    'Unidentified02'  : 'gfx1100', # NOT gfx1100, but use gfx942's db
 }
 
 AOTRITON_GPU_WARPSIZE = {
