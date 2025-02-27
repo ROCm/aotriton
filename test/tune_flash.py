@@ -97,7 +97,7 @@ class FlashTunerSource(MonadService):
         BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type = tup
         if seqlen_q * seqlen_k * D_HEAD >= 2048 * 2048 * VRAM_CAP_IN_GB:
             BATCH = min(BATCH, 3)
-            N_HEADS = min(N_HEADS, 8)
+            N_HEADS = min(N_HEADS, 4)
         if (causal or bias_type != 0) and seqlen_q * seqlen_k * D_HEAD >= 2048 * 2048 * VRAM_CAP_IN_GB:
             # Prevent OOM, causal=True needs more memory
             N_HEADS = min(N_HEADS, 2)

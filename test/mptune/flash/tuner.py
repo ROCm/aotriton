@@ -54,6 +54,7 @@ class TunerService(BaseTunerService):
         sdpa_params = SdpaParams(causal=causal, sm_scale=sm_scale, dropout_p=dropout_p, dropout_mask=mask)
         ctx = SdpaContext(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, dtype,
                           bias_type=bias_type, storage_flip=None, device=self._gpu_device)
+        ## For reproducible values
         ctx.create_ctx_tensors()
         ctx.create_bwd_tensors()
         ctx.create_ref_inputs(target_gpu_device=self._gpu_device)
@@ -86,10 +87,8 @@ class TunerService(BaseTunerService):
 
         ctx, sdpa_params = self.hit_cache(tup)
 
-        q, k, v, b = ctx.dev_tensors
-        # TODO: unify with attn_torch_function
-        o, M = ctx.ctx_tensors
-        L = M  # alias
+        q = ctx.dev_tensors[0]
+
         if dropout_p > 0.0:
             philox_seed = torch.tensor([DEFAULT_PHILOX_SEED], device=q.device, dtype=torch.uint64)
             philox_offset1 = torch.tensor([DEFAULT_PHILOX_OFFSET_1], device=q.device, dtype=torch.uint64)
@@ -106,30 +105,6 @@ class TunerService(BaseTunerService):
 
         def subless_sub_extarg_accessor(extargs, i):
             return extargs
-
-        def fwd_func(extargs : 'CppTuneWrapper', is_testing):
-            # print(f'{is_testing=}')
-            if is_testing:
-                o.fill_(float('nan'))
-                philox_seed_output.fill_(0)
-                philox_offset_output.fill_(0)
-            if causal:
-                atomic = torch.zeros([1], device=q.device, dtype=torch.int32)
-            else:
-                atomic = torch.empty([0], device=q.device, dtype=torch.int32)
-            args = (q, k, v, b, sm_scale, M, o,
-                    dropout_p, philox_seed, philox_offset1, philox_offset2,
-                    philox_seed_output, philox_offset_output,
-                    encoded_softmax, causal, atomic,
-                    extargs.capi_object if extargs is not None else None)
-            try:
-                ret = attn_fwd(*args)
-            except Exception as e:
-                self.report_exception(e)
-                return 1, [KernelOutput(hip_status=hipError_t.hipErrorLaunchFailure,
-                                        output_tensors=None)]
-            return 1, [KernelOutput(hip_status=ret,
-                                    output_tensors=[o, philox_seed_output, philox_offset_output])]
 
         skip_fwd = 'attn_fwd' in CPPTUNE_SKIP_KERNELS
         if 'bwd_kernel_dk_dv' in CPPTUNE_SKIP_KERNELS and 'bwd_kernel_dq' in CPPTUNE_SKIP_KERNELS:
@@ -150,7 +125,41 @@ class TunerService(BaseTunerService):
         skip_bwd = skip_split_bwd and skip_fused_bwd
 
         # ref_out is kept in the ctx
-        ref_out, _ = ctx.compute_ref_forward(sdpa_params)
+        _ = ctx.compute_ref_forward(sdpa_params)
+        ctx.save_integrity_checksum()
+
+        def fwd_func(extargs : 'CppTuneWrapper', is_testing):
+            # Faulty kernel may rewrite any tensor
+            q, k, v, b = ctx.dev_tensors
+            o, M = ctx.ctx_tensors
+            L = M  # alias
+            if is_testing:
+                o.fill_(float('nan'))
+                M.fill_(float('nan'))
+                philox_seed_output.fill_(0)
+                philox_offset_output.fill_(0)
+            if causal:
+                atomic = torch.zeros([1], device=q.device, dtype=torch.int32)
+            else:
+                atomic = torch.empty([0], device=q.device, dtype=torch.int32)
+            args = (q, k, v, b, sm_scale, M, o,
+                    dropout_p, philox_seed, philox_offset1, philox_offset2,
+                    philox_seed_output, philox_offset_output,
+                    encoded_softmax, causal, atomic,
+                    extargs.capi_object if extargs is not None else None)
+            try:
+                ret = attn_fwd(*args)
+            except Exception as e:
+                self.report_exception(e)
+                return 1, [KernelOutput(hip_status=hipError_t.hipErrorLaunchFailure,
+                                        output_tensors=None)]
+            if is_testing:
+                integrity, who = ctx.check_integrity()
+                if not integrity:
+                    ret = hipError_t.hipErrorDeinitialized
+                    ctx.restore_integrity(who, sdpa_params)
+            return 1, [KernelOutput(hip_status=ret,
+                                    output_tensors=[o, philox_seed_output, philox_offset_output])]
         # print(f'{payload.kig_dict=}')
         if not skip_fwd:
             # if skip_fwd, run manually to use default tuning db
@@ -162,6 +171,8 @@ class TunerService(BaseTunerService):
                                         [self.fwd_validator],
                                         kernel_index_progress_dict=payload.kig_dict,
                                         run_last_success_kernel_once=run_last_success_kernel_once)
+            # print(f'{M=}')
+            # print(f'{o=}')
         if skip_fwd:
             fwd_func(None, is_testing=True)
 
@@ -170,12 +181,19 @@ class TunerService(BaseTunerService):
         if skip_bwd:
             return
 
-        dq, dk, dv, db, delta = ctx.bwd_tensors
-        dout = torch.randn_like(q)
-        ctx.compute_backward(None, dout, ref_only=True)
+        integrity, who = ctx.check_integrity()
+        if not integrity:
+            ctx.restore_integrity(who, sdpa_params)
+        ctx.compute_backward(None, None, ref_only=True)
+        dout = ctx.ddev_tensors[0]
+        ctx.save_integrity_checksum()
 
         bwd_validators = (self.bwd_dkdv_validator, self.bwd_dqdb_validator)
         def generic_bwd_func(extargs, is_testing, bwd_operator, split):
+            q, k, v, b = ctx.dev_tensors
+            dq, dk, dv, db, delta = ctx.bwd_tensors
+            o, M = ctx.ctx_tensors
+            L = M  # alias
             if is_testing:
                 dk.fill_(float('nan'))
                 dv.fill_(float('nan'))
@@ -201,6 +219,11 @@ class TunerService(BaseTunerService):
                               ]
                 else:
                     return 1, [KernelOutput(hip_status=ret, output_tensors=None)]
+            if is_testing:
+                integrity, who = ctx.check_integrity()
+                if not integrity:
+                    ret = hipError_t.hipErrorDeinitialized
+                    ctx.restore_integrity(who, sdpa_params)
             if split:
                 return 2, [KernelOutput(hip_status=ret, output_tensors=[dk,dv]),
                            KernelOutput(hip_status=ret, output_tensors=[dq,db]),

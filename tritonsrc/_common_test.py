@@ -2,12 +2,14 @@
 # Copyright ©2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
+import io
 import os
 from typing import List, Tuple, Optional
 from collections import namedtuple
 import numpy as np
 import math
 import torch
+import hashlib
 
 HAS_REDUCED_SDPA = hasattr(torch.backends.cuda, "allow_fp16_bf16_reduction_math_sdp")
 # Set this env var when GPU system is not reliable
@@ -17,6 +19,17 @@ AOTRITON_TORCH_ONLY_USE_CPU = bool(int(os.getenv('AOTRITON_TORCH_ONLY_USE_CPU', 
 # Usually we compare with GPU because it is much faster
 # Overrides by AOTRITON_TORCH_ONLY_USE_CPU=1
 AOTRITON_REF_DEVICE_OPTION = os.getenv('AOTRITON_REF_DEVICE_OPTION', default='default')
+
+def calc_checksums(tensors):
+    def checksum(t):
+        if t is None:
+            return None
+        tensor_bytes = io.BytesIO()
+        torch.save(t, tensor_bytes)
+        return hashlib.blake2s(tensor_bytes.getvalue()).hexdigest()
+    ret = [ checksum(t) for t in tensors ]
+    # print(f'{ret=}')
+    return ret
 
 def allow_fp16_bf16_reduction_math_sdp(v : bool):
     if HAS_REDUCED_SDPA:
@@ -120,9 +133,30 @@ class SdpaContext(object):
     TENSOR_NAMES = ('q', 'k', 'v', 'b')
 
     def __init__(self, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, dtype,
-                 bias_type=None, storage_flip=None, device='cuda', fillnan=False):
+                 bias_type=None, storage_flip=None, device='cuda', fillnan=False,
+                 prng_seed=0x9be9_98d4_cf17_5339,
+                 with_backward=True,
+                 ):
         real_device = 'cpu' if AOTRITON_TORCH_ONLY_USE_CPU else device
+        self._real_device = real_device
+        self._prng_seed = prng_seed
         self._target_device = device
+        self._input_shapes = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, dtype, bias_type, storage_flip, device, fillnan, prng_seed, with_backward)
+        self._create_inputs()
+        # Maximal value from tune_flash.py and table_tool.py --fudge_factor_tolerance 5.0
+        # Note: Navi 3x is experimental and YMMV
+        self.OUT_FUDGE_FACTOR = 3.0
+        if dtype == torch.float32:
+            self.OUT_FUDGE_FACTOR = 14.0
+        if torch.version.hip:
+            if 'gfx90a' in torch.cuda.get_device_properties(0).gcnArchName:
+                self.OUT_FUDGE_FACTOR = 12.0
+        if AOTRITON_TORCH_ONLY_USE_CPU:
+            self.OUT_FUDGE_FACTOR = 12.0
+
+
+    def _create_inputs(self):
+        BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, dtype, bias_type, storage_flip, device, fillnan, prng_seed, with_backward = self._input_shapes
         if isinstance(N_HEADS, int):
             Q_HEADS = K_HEADS = N_HEADS
         else:
@@ -143,14 +177,18 @@ class SdpaContext(object):
         # q = torch.empty(qdims, dtype=dtype, device=device).normal_(mean=0., std=0.5)
         # k = torch.empty(kdims, dtype=dtype, device=device).normal_(mean=0., std=0.5)
         # v = torch.empty(vdims, dtype=dtype, device=device).normal_(mean=0., std=0.5)
-        q = torch.rand(*qdims, dtype=dtype, device=real_device)
-        k = torch.rand(*kdims, dtype=dtype, device=real_device)
-        v = torch.rand(*vdims, dtype=dtype, device=real_device)
+        g = torch.Generator(device=self._real_device)
+        g.manual_seed(self._prng_seed)
+        def rng(dims):
+            return torch.rand(*dims, generator=g, dtype=dtype, device=self._real_device)
+        q = rng(qdims)
+        k = rng(kdims)
+        v = rng(vdims)
         if bias_type is None or bias_type == 0:
             b = None
         elif bias_type == 'matrix' or bias_type == 1:
             # b = torch.empty(bdims, dtype=dtype, device="cuda").normal_(mean=0., std=0.5)
-            b = torch.rand(*bdims, dtype=dtype, device=real_device)
+            b = rng(bdims)
             # b = b.expand(BATCH, Q_HEADS, b.shape[0], b.shape[1])
         else:
             assert False, f'Unsupported bias_type {bias_type}'
@@ -161,19 +199,9 @@ class SdpaContext(object):
             v = torch.transpose(v, x, y)
             if b is not None:
                 b = torch.transpose(b, x, y)
-        self.dev_tensors = (q, k, v, b)
-        # self.FUDGE_FACTORS = (4, 2, 2, 2)  # Matches the order of self.dev_tensors
-
-        # Maximal value from tune_flash.py and table_tool.py --fudge_factor_tolerance 5.0
-        # Note: Navi 3x is experimental and YMMV
-        self.OUT_FUDGE_FACTOR = 3.0
-        if dtype == torch.float32:
-            self.OUT_FUDGE_FACTOR = 14.0
-        if torch.version.hip:
-            if 'gfx90a' in torch.cuda.get_device_properties(0).gcnArchName:
-                self.OUT_FUDGE_FACTOR = 12.0
-        if AOTRITON_TORCH_ONLY_USE_CPU:
-            self.OUT_FUDGE_FACTOR = 12.0
+        dout = rng(q.shape) if with_backward else None
+        self.dev_tensors = ( q, k, v, b )
+        self.ddev_tensors = tuple([dout])
 
     '''
     Create Tensors that will be kept b/w forward and backward pass
@@ -375,7 +403,8 @@ class SdpaContext(object):
         return (dq, dk, dv, db)
 
     # Note: this follows pytorch's testing approach and expects low precision dout
-    def compute_backward(self, out, dout, *, ref_only=False):
+    def compute_backward(self, out, _in_dout, *, ref_only=False):
+        dout = _in_dout if _in_dout is not None else self.ddev_tensors[0]
         self.dref_tensors = self._compute_backward(self.ref_tensors, self.refout_tensors[0], dout)
         self.lp_dref_tensors = self._compute_backward(self.lp_ref_tensors, self.lp_refout_tensors[0], dout)
         if not ref_only:
@@ -526,6 +555,53 @@ class SdpaContext(object):
             err_idx = np.unravel_index(torch.argmax(torch.abs(TO(ref_db) - tri_db)).cpu().numpy(), ref_db.shape)
             print(f'{err_idx=}')
             print(f'{tri_db[err_idx]=} {ref_db[err_idx]=} error = {torch.abs(tri_db[err_idx] - ref_db[err_idx])}')
+
+
+    def save_integrity_checksum(self):
+        self._tensor_checksums = {}
+        self._tensor_checksums['dev'] = calc_checksums(self.dev_tensors)
+        self._tensor_checksums['ref'] = calc_checksums(self.ref_tensors)
+        self._tensor_checksums['lp_ref'] = calc_checksums(self.lp_ref_tensors)
+        if hasattr(self, 'dref_tensors'):
+            self._tensor_checksums['dref'] = calc_checksums(self.dref_tensors)
+            self._tensor_checksums['lp_dref'] = calc_checksums(self.lp_dref_tensors)
+
+    def check_integrity(self):
+        for key in ['dev', 'ref', 'lp_ref', 'dref', 'lp_dref']:
+            prop_key = f'{key}_tensors'
+            if not hasattr(self, prop_key):
+                continue
+            tensors = getattr(self, prop_key)
+            saved_checksums = self._tensor_checksums[key]
+            current_checksums = calc_checksums(tensors)
+            if saved_checksums != current_checksums:
+                # print(f'who={key} {current_checksums=} != {saved_checksums=}')
+                return False, key
+        return True, None
+
+    def restore_integrity(self, who, sdpa_params):
+        if who == 'dev':
+            todo = [ 'input', 'fwd_ref', 'bwd_ref' ]
+        if who in [ 'ref', 'lp_ref' ]:
+            todo = [ 'fwd_ref', 'bwd_ref' ]
+        if who in [ 'dref', 'lp_dref' ]:
+            todo = [ 'fwd_ref', 'bwd_ref' ]
+        if 'input' in todo:
+            del self.dev_tensors
+            del self.ddev_tensors
+            self._create_inputs()
+            q, k, v, b = self.dev_tensors
+            self.set_require_grads(skip_db=True if b is None else False)
+        if 'fwd_ref' in todo:
+            del self.ref_tensors
+            del self.lp_ref_tensors
+            self.create_ref_inputs(target_gpu_device=self._real_device)
+            self.compute_ref_forward(sdpa_params)
+        if hasattr(self, 'dref') and 'bwd_ref' in todo:
+            del self.dref_tensors
+            del self.lp_dref_tensors
+            self.compute_backward(None, None, sdpa_params)
+            # print('self.compute_backward')
 
 class VarlenSdpaContext(SdpaContext):
     TENSOR_NAMES = ('q', 'k', 'v', 'b')
