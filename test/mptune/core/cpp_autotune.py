@@ -331,7 +331,12 @@ This is an generator of all tuning results, and yields all results rather than t
 '''
 def cpp_autotune_gen(extarg_factory, sub_extarg_accessor,
                      subkernel_names, kernel_func,
-                     validators, *, kernel_index_progress_dict, run_last_success_kernel_once):
+                     validators,
+                     *,
+                     kernel_index_progress_dict,
+                     run_last_success_kernel_once,
+                     integrity_checker,
+                     ):
     extargs_with_subs = CppTuneWrapper(extarg_factory, sub_extarg_accessor)
     num_of_subkernels = len(subkernel_names)
     def reset_kernel_index_to_skip():
@@ -351,6 +356,11 @@ def cpp_autotune_gen(extarg_factory, sub_extarg_accessor,
                                                kernel_func,
                                                cur_validator,
                                                cur_kig):
+            yield cur_name, ret, deepcopy(kig_dict)
+        integrity = integrity_checker()
+        if not integrity:
+            ret.adiffs = None
+            ret.hip_status = hipError_t.hipErrorDeinitialized
             yield cur_name, ret, deepcopy(kig_dict)
     '''
     CAVEAT: Must run kernel_func at least once.

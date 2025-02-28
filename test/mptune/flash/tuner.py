@@ -2,6 +2,7 @@
 # Copyright © 2024-2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
+import os
 import math
 from ..core import (
     MonadAction,
@@ -15,6 +16,7 @@ DEFAULT_PHILOX_SEED = 0x1BF52
 DEFAULT_PHILOX_OFFSET_1 = 0x1D4000
 DEFAULT_PHILOX_OFFSET_2 = 0x000B42
 DEFAULT_PHILOX_OFFSET = DEFAULT_PHILOX_OFFSET_1 + DEFAULT_PHILOX_OFFSET_2
+INTEGRITY_CHECK_PER_HSACO = bool(int(os.getenv('INTEGRITY_CHECK_PER_HSACO', default='0')))
 
 class TunerMonad(Monad):
     def service_factory(self):
@@ -128,6 +130,11 @@ class TunerService(BaseTunerService):
         _ = ctx.compute_ref_forward(sdpa_params)
         ctx.save_integrity_checksum()
 
+        def integrity_check_and_restore():
+            integrity, who = ctx.check_integrity()
+            if not integrity:
+                ctx.restore_integrity(who, sdpa_params)
+            return integrity
         def fwd_func(extargs : 'CppTuneWrapper', is_testing):
             # Faulty kernel may rewrite any tensor
             q, k, v, b = ctx.dev_tensors
@@ -153,7 +160,7 @@ class TunerService(BaseTunerService):
                 self.report_exception(e)
                 return 1, [KernelOutput(hip_status=hipError_t.hipErrorLaunchFailure,
                                         output_tensors=None)]
-            if is_testing:
+            if INTEGRITY_CHECK_PER_HSACO and is_testing:
                 integrity, who = ctx.check_integrity()
                 if not integrity:
                     ret = hipError_t.hipErrorDeinitialized
@@ -170,7 +177,8 @@ class TunerService(BaseTunerService):
                                         fwd_func,
                                         [self.fwd_validator],
                                         kernel_index_progress_dict=payload.kig_dict,
-                                        run_last_success_kernel_once=run_last_success_kernel_once)
+                                        run_last_success_kernel_once=run_last_success_kernel_once,
+                                        integrity_checker=integrity_check_and_restore)
             # print(f'{M=}')
             # print(f'{o=}')
         if skip_fwd:
@@ -181,9 +189,6 @@ class TunerService(BaseTunerService):
         if skip_bwd:
             return
 
-        integrity, who = ctx.check_integrity()
-        if not integrity:
-            ctx.restore_integrity(who, sdpa_params)
         ctx.compute_backward(None, None, ref_only=True)
         dout = ctx.ddev_tensors[0]
         ctx.save_integrity_checksum()
@@ -219,7 +224,7 @@ class TunerService(BaseTunerService):
                               ]
                 else:
                     return 1, [KernelOutput(hip_status=ret, output_tensors=None)]
-            if is_testing:
+            if INTEGRITY_CHECK_PER_HSACO and is_testing:
                 integrity, who = ctx.check_integrity()
                 if not integrity:
                     ret = hipError_t.hipErrorDeinitialized
@@ -249,7 +254,8 @@ class TunerService(BaseTunerService):
                                         bwd_func,
                                         bwd_validators,
                                         kernel_index_progress_dict=payload.kig_dict,
-                                        run_last_success_kernel_once=False)
+                                        run_last_success_kernel_once=False,
+                                        integrity_checker=integrity_check_and_restore)
         if not skip_fused_bwd:
             from aotriton_flash import (
                 attn_bwd_fused,
@@ -263,7 +269,8 @@ class TunerService(BaseTunerService):
                                         bwd_func,
                                         [self.bwd_fused_validator],
                                         kernel_index_progress_dict=payload.kig_dict,
-                                        run_last_success_kernel_once=False)
+                                        run_last_success_kernel_once=False,
+                                        integrity_checker=integrity_check_and_restore)
 
     def fwd_validator(self, kernel_outputs : 'List[KernelOutput]', atr : 'AutotuneResult'):
         tri_out, philox_seed, philox_offset = kernel_outputs[0].output_tensors
