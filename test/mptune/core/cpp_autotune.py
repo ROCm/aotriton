@@ -346,6 +346,7 @@ def cpp_autotune_gen(extarg_factory, sub_extarg_accessor,
     # kig_dict = deepcopy(kernel_index_progress_dict)
     kig_dict = kernel_index_progress_dict  # Otherwise kernel progress are local to this function
     for sub_index, cur_name, cur_validator in zip(range(num_of_subkernels), subkernel_names, validators):
+        kernel_called = False
         if cur_name in CPPTUNE_SKIP_KERNELS:
             continue
         # print(f'Tuning sub {cur_name}')
@@ -356,12 +357,14 @@ def cpp_autotune_gen(extarg_factory, sub_extarg_accessor,
                                                kernel_func,
                                                cur_validator,
                                                cur_kig):
+            kernel_called = True
             yield cur_name, ret, deepcopy(kig_dict)
-        integrity = integrity_checker()
-        if not integrity:
-            ret.adiffs = None
-            ret.hip_status = hipError_t.hipErrorDeinitialized
-            yield cur_name, ret, deepcopy(kig_dict)
+        if kernel_called:
+            integrity = integrity_checker()
+            if not integrity:
+                ret.adiffs = None
+                ret.hip_status = hipError_t.hipErrorDeinitialized
+                yield cur_name, ret, deepcopy(kig_dict)
     '''
     CAVEAT: Must run kernel_func at least once.
             Otherwise this may happen:
