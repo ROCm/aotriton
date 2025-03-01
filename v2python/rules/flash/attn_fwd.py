@@ -174,8 +174,8 @@ class attn_fwd(FlashKernel):
             else:
                 # M //= 2 will effectively yield (16,32), (16,16)
                 pass
-        WAVES_PER_EU = [0, 1, 2, 3, 4]
-        NUM_WARPS = [1, 2, 4]
+        WAVES_PER_EU = [1, 2, 3, 4]
+        NUM_WARPS = [2, 4]
         PRE_LOAD_V = [False]
         NUM_STAGES = [1]
         for (M, N), waves, warps, stages, pre in itertools.product(BLOCK_SIZES,
