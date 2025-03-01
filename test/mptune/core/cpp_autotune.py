@@ -256,7 +256,7 @@ def cpp_autotune_sub_kernel_gen(extargs, kernel_func, validator, cur_kig):
         # Update last_success_kernel if having precision
         # This is more tolerating than ut_passed
         if atr.adiffs is not None:
-            if cur_kig.best_adiffs is None or cur_kig.best_adiffs < atr.adiffs:
+            if cur_kig.best_adiffs is None or atr.adiffs < cur_kig.best_adiffs:
                 cur_kig.best_adiffs = deepcopy(atr.adiffs)
                 cur_kig.last_success_kernel = extargs.force_kernel_index
         if atr.ut_passed:
@@ -381,4 +381,4 @@ def cpp_autotune_gen(extarg_factory, sub_extarg_accessor,
         extargs_with_subs.set_current_sub(sub_index)
         cur_kig = kig_dict[cur_name]
         extargs_with_subs.force_kernel_index = cur_kig.last_success_kernel
-        kernel_func(extargs_with_subs, is_testing=False)
+        kernel_func(extargs_with_subs, is_testing=True)
