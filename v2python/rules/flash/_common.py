@@ -5,11 +5,28 @@ from ...kernel_desc import KernelDescription, get_possible_choices, select_patte
 from ...autotune_config import Config
 from ...autotune_binning import BinningLessOrEqual, BinningExact
 
+def check_value(fsels, repr_name):
+    if not isinstance(repr_name, list):
+        repr_name = [repr_name]
+    for fsel in fsels:
+        if fsel.repr_name in repr_name:
+            return fsel.argument_value
+    assert False, f'Cannot find {repr_name=} in {fsels=}'
+
 class FlashKernel(KernelDescription):
     KERNEL_FAMILY = 'flash'
     LUT_FULL_SEQLEN_Q = [4,8,16,32,64,128,256,512,1024,2048,4096,8192]
     LUT_FULL_SEQLEN_K = [4,8,16,32,64,128,256,512,1024,2048,4096,8192]
     LUT_FULL_SEQLEN_NAVI = [4,8,16,32,64,128,256,512,1024]
+
+    def is_functional_disabled_on_gpu(self, gpu, fsels):
+        if not hasattr(self, 'gen_autotune_configs'):  # only check acutal FA kernels
+            return False
+        is_causal = check_value(fsels, ['CAUSAL', 'CAUSAL_TYPE'])
+        bias_type = check_value(fsels, 'BIAS_TYPE')
+        if is_causal and bias_type != 0:
+            return True
+        return False
 
     def sancheck_lut_tensor(self,
                             gpu,
@@ -21,22 +38,14 @@ class FlashKernel(KernelDescription):
             return True
         if 'Unidentified' in gpu:  # Tuning database depends on others
             return True
+        if self.is_functional_disabled_on_gpu(gpu, fsels):
+            return True  # ignore disabled functionals
         MI = 'MI' in gpu
         Navi = 'Navi' in gpu
         LUT_TENSOR_SIZE = (len(self.LUT_FULL_SEQLEN_Q), len(self.LUT_FULL_SEQLEN_K))
         LUT_TENSOR_SIZE_NAVI = (len(self.LUT_FULL_SEQLEN_NAVI), len(self.LUT_FULL_SEQLEN_NAVI))
-        def check_value(repr_name):
-            if not isinstance(repr_name, list):
-                repr_name = [repr_name]
-            for fsel in fsels:
-                if fsel.repr_name in repr_name:
-                    return fsel.argument_value
-        is_causal = check_value(['CAUSAL', 'CAUSAL_TYPE'])
-        bias_type = check_value('BIAS_TYPE')
         if lut_tensor.size == 1:
             to_check = lut_tensor
-        elif is_causal and bias_type:
-            to_check = lut_tensor.diagonal()
         else:
             to_check = lut_tensor
         if MI:
@@ -61,17 +70,11 @@ class FlashKernel(KernelDescription):
         else:
             lut_full_seqlen_q = self.LUT_FULL_SEQLEN_Q
             lut_full_seqlen_k = self.LUT_FULL_SEQLEN_K
-        def check_value(repr_name):
-            if not isinstance(repr_name, list):
-                repr_name = [repr_name]
-            for fsel in fsels:
-                if fsel.repr_name in repr_name:
-                    return fsel.argument_value
-        base['causal'] = check_value(['CAUSAL', 'CAUSAL_TYPE'])
-        base['d_head'] = check_value('BLOCK_DMODEL')
-        base['dropout_p'] = 0.5 if check_value('ENABLE_DROPOUT') else 0.0
+        base['causal'] = check_value(fsels, ['CAUSAL', 'CAUSAL_TYPE'])
+        base['d_head'] = check_value(fsels, 'BLOCK_DMODEL')
+        base['dropout_p'] = 0.5 if check_value(fsels, 'ENABLE_DROPOUT') else 0.0
         def dtype():
-            value = check_value('Q')
+            value = check_value(fsels, 'Q')
             if value.startswith('*fp16'):
                 return 'float16'
             if value.startswith('*bf16'):
@@ -79,7 +82,7 @@ class FlashKernel(KernelDescription):
             if value.startswith('*fp32'):
                 return 'float32'
         base['dtype'] = dtype()
-        base['bias_type'] = check_value('BIAS_TYPE')
+        base['bias_type'] = check_value(fsels, 'BIAS_TYPE')
         ret = []
         if lut_tensor.size == 1:
             for seqlen_q in lut_full_seqlen_q:
