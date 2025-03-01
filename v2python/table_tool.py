@@ -36,7 +36,7 @@ def parse():
     p.add_argument('--table_file', type=str, help='CSV file of dump/load')
     p.add_argument('--select_where', type=str, default='', help='Extra WHERE clause for SQL to only dump selected rows to CSV file')
     p.add_argument('--ignore_id', action='store_true', help='Ignore row IDs when loading CSV to database, useful for table merge')
-    p.add_argument('--round_inputs', action='store_true', help='Round seqlens and hdims of input json. Will fail if any inputs does not need rounding')
+    p.add_argument('--round_inputs', action='store_true', help='Round seqlens and hdims of input json. Will fail if any inputs does not need rounding. If only hdim is rounded PADDED_HEAD=False entry will not be updated')
     p.add_argument('--fudge_factor_tolerance', type=float, default=5.0,
                    help='''For rawjson mode.
                    During the profiling, a "target" fudge factor is computed as
@@ -111,7 +111,7 @@ class PerKernelResult(object):
             if not isinstance(j['time'], list):
                 return False
             adiffs = j['adiffs']
-            if self.any_nan(adiffs):
+            if adiffs is None or self.any_nan(adiffs):
                 return False
             fits = { tn : j['target_fudge_factors'][tn] < fft * best_tft[tn] for tn in self.valid_out_tensors }
             # print(f'{fits=}')
@@ -388,7 +388,7 @@ class TuningDatabase(object):
             raw_info['inputs']['BLOCK_DMODEL'] = raw_info['inputs']['D_HEAD']
             raw_info['inputs']['PADDED_HEAD'] = False
         def rounding(check_only):
-            need_rounding = False
+            need_rounding_keys = []
             # Round D_HEAD
             # It is not used, but it is part of UNIQUE constraints
             def round_hdims(x):
@@ -405,18 +405,27 @@ class TuningDatabase(object):
                         continue
                     if check_only:
                         # print(f'{key=} {oldv=} {newv=}')
-                        return True
+                        need_rounding_keys.append(key)
                     else:
                         raw_info['inputs'][key] = newv
-            return False
-        need_rounding = rounding(check_only=True)
+            return need_rounding_keys
+        need_rounding_keys = rounding(check_only=True)
+        need_rounding = len(need_rounding_keys) > 0
         if need_rounding != round_inputs:
             print(raw_info)
         assert need_rounding == round_inputs, '--round_inputs should only be applied to json with irregular inputs, and vise versa'
+        if len(need_rounding_keys) == 1 and 'D_HEAD' in need_rounding_keys:
+            only_hdim_rounded = True
+        else:
+            only_hdim_rounded = False
         if round_inputs:
             rounding(check_only=False)
-            raw_info['inputs']['PADDED_HEAD'] = False
-        assert raw_info['inputs']['PADDED_HEAD'] == False
+            if not only_hdim_rounded:
+                raw_info['inputs']['PADDED_HEAD'] = False
+            else:
+                assert raw_info['inputs']['PADDED_HEAD'] == True, f'{need_rounding_keys=}'
+        else:
+            assert raw_info['inputs']['PADDED_HEAD'] == False
         timing = raw_info.get('time', float('inf'))
         if isinstance(timing, float):
             if math.isinf(timing):
