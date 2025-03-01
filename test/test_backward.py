@@ -22,24 +22,33 @@ POT_HEADDIMS = [16, 32, 64, 128, 256] + ([512] if not BWD_FUSED else [])
 NPOT_HEADDIMS = [48, 80, 96, 160, 192, 224]
 PRIME_HEADDIMS = [7, 23, 37, 53, 67, 73, 89, 113, 149, 179, 211, 241] + ([401] if not BWD_FUSED else [])
 PRIME_SEQLEN_Q = [11, 17, 37, 67, 157, 257, 523, 1033, 2063, 4919, 10601]
-PRIME_SEQLEN_K = [13, 31, 41, 71, 211, 337, 571, 1063, 2081, 5237, 11369]
+PRIME_SEQLEN_K = [13, 31, 41, 71, 223, 337, 571, 1063, 2081, 5237, 11369]
 
-SMALL_HEADDIM_ONLY = bool(int(os.getenv('FOR_RELEASE', default='0')))
+SMALL_HEADDIM_ONLY = bool(int(os.getenv('SMALL_HEADDIM_ONLY', default='0')))
+LARGE_HEADDIM_ONLY = bool(int(os.getenv('LARGE_HEADDIM_ONLY', default='0')))
 
 def remove_larger_than(data_list, threshold):
     return [x for x in data_list if x <= threshold]
+
+def remove_not_larger_than(data_list, threshold):
+    return [x for x in data_list if x > threshold]
 
 if SMALL_HEADDIM_ONLY:
     POT_HEADDIMS = remove_larger_than(POT_HEADDIMS, 192)
     NPOT_HEADDIMS = remove_larger_than(NPOT_HEADDIMS, 192)
     PRIME_HEADDIMS = remove_larger_than(PRIME_HEADDIMS, 192)
 
+if LARGE_HEADDIM_ONLY:
+    POT_HEADDIMS = remove_not_larger_than(POT_HEADDIMS, 192)
+    NPOT_HEADDIMS = remove_not_larger_than(NPOT_HEADDIMS, 192)
+    PRIME_HEADDIMS = remove_not_larger_than(PRIME_HEADDIMS, 192)
+
 REGULAR_HEADDIM_ONLY = bool(int(os.getenv('REGULAR_HEADDIM_ONLY', default='0')))
 
 if REGULAR_HEADDIM_ONLY:
-    ALL_HEADDIMS = POT_HEADDIMS + NPOT_HEADDIMS + PRIME_HEADDIMS
-else:
     ALL_HEADDIMS = POT_HEADDIMS + NPOT_HEADDIMS
+else:
+    ALL_HEADDIMS = POT_HEADDIMS + NPOT_HEADDIMS + PRIME_HEADDIMS
 
 '''
 Note: for now we cannot really test both fused and split kernel at the same
@@ -193,7 +202,8 @@ def test_op_bwd_with_matrix_bias(BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen
 
 @pytest.mark.parametrize('BATCH', [1, 4] if not FOR_RELEASE else [4])
 @pytest.mark.parametrize('N_HEADS', [(16, 8), (10, 2)])
-@pytest.mark.parametrize('D_HEAD', [8, 203, 256])
+# @pytest.mark.parametrize('D_HEAD', [8] if SMALL_HEADDIM_ONLY else [8, 203, 256])
+@pytest.mark.parametrize('D_HEAD', ALL_HEADDIMS)
 @pytest.mark.parametrize('seqlen_q', [4, 143, 2048])
 @pytest.mark.parametrize('seqlen_k', [4, 127, 579, 2048])
 @pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
