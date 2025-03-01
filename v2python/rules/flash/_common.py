@@ -17,7 +17,7 @@ class FlashKernel(KernelDescription):
     KERNEL_FAMILY = 'flash'
     LUT_FULL_SEQLEN_Q = [4,8,16,32,64,128,256,512,1024,2048,4096,8192]
     LUT_FULL_SEQLEN_K = [4,8,16,32,64,128,256,512,1024,2048,4096,8192]
-    LUT_FULL_SEQLEN_NAVI = [4,8,16,32,64,128,256,512,1024]
+    LUT_FULL_SEQLEN_NAVI = [16,32,64,128,256,512,1024]
 
     def is_functional_disabled_on_gpu(self, gpu, fsels):
         if not hasattr(self, 'gen_autotune_configs'):  # only check acutal FA kernels
