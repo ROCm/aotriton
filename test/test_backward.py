@@ -20,7 +20,13 @@ FOR_RELEASE = bool(int(os.getenv('FOR_RELEASE', default='0')))
 
 POT_HEADDIMS = [16, 32, 64, 128, 256] + ([512] if not BWD_FUSED else [])
 NPOT_HEADDIMS = [48, 80, 96, 160, 192, 224]
-PRIME_HEADDIMS = [7, 23, 37, 53, 67, 73, 83, 113, 149, 179, 211, 241] + ([401] if not BWD_FUSED else [])
+# Prime head dimensions must be disabled
+# PyTorch allocate tensors compactly by default. For example:
+#   print(torch.rand((3,5,1033, 57), dtype=torch.float16, device='cuda').stride())
+#   (294405, 58881, 57, 1)
+# GPU kernels are unable to support unaligned memory access in any performant way
+# PRIME_HEADDIMS = [7, 23, 37, 53, 67, 73, 83, 113, 149, 179, 211, 241] + ([401] if not BWD_FUSED else [])
+# Multiple of 8 head dimensions are tested instead
 M8_HEADDIMS = [8, 24, 40, 56, 72, 88, 96, 120, 152, 184, 216, 248] + ([408] if not BWD_FUSED else [])
 PRIME_SEQLEN_Q = [11, 17, 37, 67, 157, 257, 523, 1033, 2063, 4919, 10601]
 PRIME_SEQLEN_K = [13, 31, 41, 71, 223, 337, 571, 1063, 2081, 5237, 11369]
@@ -43,13 +49,13 @@ def round_list_to_8x(data_list):
 if SMALL_HEADDIM_ONLY:
     POT_HEADDIMS = remove_larger_than(POT_HEADDIMS, 192)
     NPOT_HEADDIMS = remove_larger_than(NPOT_HEADDIMS, 192)
-    PRIME_HEADDIMS = remove_larger_than(PRIME_HEADDIMS, 192)
+    # PRIME_HEADDIMS = remove_larger_than(PRIME_HEADDIMS, 192)
     M8_HEADDIMS = remove_larger_than(M8_HEADDIMS, 192)
 
 if LARGE_HEADDIM_ONLY:
     POT_HEADDIMS = remove_not_larger_than(POT_HEADDIMS, 192)
     NPOT_HEADDIMS = remove_not_larger_than(NPOT_HEADDIMS, 192)
-    PRIME_HEADDIMS = remove_not_larger_than(PRIME_HEADDIMS, 192)
+    # PRIME_HEADDIMS = remove_not_larger_than(PRIME_HEADDIMS, 192)
     M8_HEADDIMS = remove_not_larger_than(M8_HEADDIMS, 192)
 
 REGULAR_HEADDIM_ONLY = bool(int(os.getenv('REGULAR_HEADDIM_ONLY', default='0')))
@@ -62,7 +68,7 @@ if REGULAR_HEADDIM_ONLY:
 elif HEADDIM_8X_ONLY:
     ALL_HEADDIMS = M8_HEADDIMS
 else:
-    ALL_HEADDIMS = POT_HEADDIMS + NPOT_HEADDIMS + PRIME_HEADDIMS
+    ALL_HEADDIMS = POT_HEADDIMS + NPOT_HEADDIMS + M8_HEADDIMS
 
 '''
 Note: for now we cannot really test both fused and split kernel at the same
@@ -232,7 +238,7 @@ def test_gqa(BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
 
 @pytest.mark.parametrize('BATCH', [3])
 @pytest.mark.parametrize('N_HEADS', [5])
-@pytest.mark.parametrize('D_HEAD', PRIME_HEADDIMS)
+@pytest.mark.parametrize('D_HEAD', ALL_HEADDIMS)
 @pytest.mark.parametrize('seqlen_q', PRIME_SEQLEN_Q)
 @pytest.mark.parametrize('seqlen_k', PRIME_SEQLEN_K)
 @pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
