@@ -20,7 +20,8 @@ FOR_RELEASE = bool(int(os.getenv('FOR_RELEASE', default='0')))
 
 POT_HEADDIMS = [16, 32, 64, 128, 256] + ([512] if not BWD_FUSED else [])
 NPOT_HEADDIMS = [48, 80, 96, 160, 192, 224]
-PRIME_HEADDIMS = [7, 23, 37, 53, 67, 73, 89, 113, 149, 179, 211, 241] + ([401] if not BWD_FUSED else [])
+PRIME_HEADDIMS = [7, 23, 37, 53, 67, 73, 83, 113, 149, 179, 211, 241] + ([401] if not BWD_FUSED else [])
+M8_HEADDIMS = [8, 24, 40, 56, 72, 88, 96, 120, 152, 184, 216, 248] + ([408] if not BWD_FUSED else [])
 PRIME_SEQLEN_Q = [11, 17, 37, 67, 157, 257, 523, 1033, 2063, 4919, 10601]
 PRIME_SEQLEN_K = [13, 31, 41, 71, 223, 337, 571, 1063, 2081, 5237, 11369]
 
@@ -33,20 +34,33 @@ def remove_larger_than(data_list, threshold):
 def remove_not_larger_than(data_list, threshold):
     return [x for x in data_list if x > threshold]
 
+def cdiv(x, div):
+    return (x + div - 1) // div
+
+def round_list_to_8x(data_list):
+    return [cdiv(x, 8) * 8 for x in data_list]
+
 if SMALL_HEADDIM_ONLY:
     POT_HEADDIMS = remove_larger_than(POT_HEADDIMS, 192)
     NPOT_HEADDIMS = remove_larger_than(NPOT_HEADDIMS, 192)
     PRIME_HEADDIMS = remove_larger_than(PRIME_HEADDIMS, 192)
+    M8_HEADDIMS = remove_larger_than(M8_HEADDIMS, 192)
 
 if LARGE_HEADDIM_ONLY:
     POT_HEADDIMS = remove_not_larger_than(POT_HEADDIMS, 192)
     NPOT_HEADDIMS = remove_not_larger_than(NPOT_HEADDIMS, 192)
     PRIME_HEADDIMS = remove_not_larger_than(PRIME_HEADDIMS, 192)
+    M8_HEADDIMS = remove_not_larger_than(M8_HEADDIMS, 192)
 
 REGULAR_HEADDIM_ONLY = bool(int(os.getenv('REGULAR_HEADDIM_ONLY', default='0')))
+HEADDIM_8X_ONLY = bool(int(os.getenv('HEADDIM_8X_ONLY', default='0')))
+
+assert not (REGULAR_HEADDIM_ONLY and HEADDIM_8X_ONLY), f'{REGULAR_HEADDIM_ONLY=} and {HEADDIM_8X_ONLY=} are mutually exclusive'
 
 if REGULAR_HEADDIM_ONLY:
     ALL_HEADDIMS = POT_HEADDIMS + NPOT_HEADDIMS
+elif HEADDIM_8X_ONLY:
+    ALL_HEADDIMS = M8_HEADDIMS
 else:
     ALL_HEADDIMS = POT_HEADDIMS + NPOT_HEADDIMS + PRIME_HEADDIMS
 
@@ -91,8 +105,8 @@ but in PyTorch API it does not present at all
 def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type):
     if causal and bias_type is not None:
         pytest.skip("_scaled_dot_product_attention: Explicit attn_mask should not be set when is_causal=True")
-    # if BATCH > 1 and seqlen_q >= 1024 and seqlen_k >= 1024:
-    #     torch.cuda.empty_cache()
+    if BATCH > 1 and seqlen_q * seqlen_k >= 1024 * 1024:
+        torch.cuda.empty_cache()
     SKIP_DK_DV = False
     SKIP_DQ = False
     SKIP_DB = True if bias_type is None else False
@@ -142,7 +156,7 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
 # @pytest.mark.parametrize('BATCH', [1])
 # @pytest.mark.parametrize('N_HEADS', [1])
 @pytest.mark.parametrize('BATCH', [1, 4] if not FOR_RELEASE else [3])
-@pytest.mark.parametrize('N_HEADS', [1, 4] if not FOR_RELEASE else [8])
+@pytest.mark.parametrize('N_HEADS', [1, 4] if not FOR_RELEASE else [5])
 # @pytest.mark.parametrize('D_HEAD', [16, 32, 64, 128, 256])
 # Irregular-only PyTorch set
 # @pytest.mark.parametrize('D_HEAD', [8, 21, 72, 96, 160, 192, 203])
@@ -171,7 +185,7 @@ def test_op_bwd(BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_sc
 # @pytest.mark.parametrize('BATCH', [1, 4])
 # @pytest.mark.parametrize('N_HEADS', [1, 4])
 @pytest.mark.parametrize('BATCH', [1, 4] if not FOR_RELEASE else [3])
-@pytest.mark.parametrize('N_HEADS', [1, 4] if not FOR_RELEASE else [8])
+@pytest.mark.parametrize('N_HEADS', [1, 4] if not FOR_RELEASE else [5])
 @pytest.mark.parametrize('D_HEAD', ALL_HEADDIMS)
 # @pytest.mark.parametrize('D_HEAD', [128])
 # Complete set
