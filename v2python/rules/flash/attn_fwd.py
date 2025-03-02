@@ -164,7 +164,7 @@ class attn_fwd(FlashKernel):
         CAUSAL_TYPE = fsel_dict['CAUSAL_TYPE']
         ret = []
         MI = 'MI' in gpu
-        Navi = 'Navi' in gpu
+        Navi = 'Navi' in gpu or gpu.startswith('RX')
         if MI:
             BLOCK_SIZES = [(32, 16), (128, 64), (64, 64), (64, 32), (128, 128)]
         elif Navi:

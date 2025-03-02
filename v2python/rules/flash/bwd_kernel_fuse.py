@@ -107,7 +107,7 @@ class bwd_kernel_fuse(FlashKernel):
         dtype = fsel_dict['Q']
         HEAD_DIM = fsel_dict['BLOCK_DMODEL']
         MI = 'MI' in gpu
-        Navi = 'Navi' in gpu
+        Navi = 'Navi' in gpu or gpu.startswith('RX')
         ret = []
         # TODO: right sizes for fp32?
         BLOCK_SIZES = [16, 32, 64] if dtype != '*fp32:16' else [16, 32]

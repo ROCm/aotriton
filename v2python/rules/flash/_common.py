@@ -41,7 +41,7 @@ class FlashKernel(KernelDescription):
         if self.is_functional_disabled_on_gpu(gpu, fsels):
             return True  # ignore disabled functionals
         MI = 'MI' in gpu
-        Navi = 'Navi' in gpu
+        Navi = 'Navi' in gpu or gpu.startswith('RX')
         LUT_TENSOR_SIZE = (len(self.LUT_FULL_SEQLEN_Q), len(self.LUT_FULL_SEQLEN_K))
         LUT_TENSOR_SIZE_NAVI = (len(self.LUT_FULL_SEQLEN_NAVI), len(self.LUT_FULL_SEQLEN_NAVI))
         if lut_tensor.size == 1:
@@ -63,7 +63,7 @@ class FlashKernel(KernelDescription):
         import numpy as np
         base = {'gpu' : gpu}
         MI = 'MI' in gpu
-        Navi = 'Navi' in gpu
+        Navi = 'Navi' in gpu or gpu.startswith('RX')
         if Navi:
             lut_full_seqlen_q = self.LUT_FULL_SEQLEN_NAVI
             lut_full_seqlen_k = self.LUT_FULL_SEQLEN_NAVI
