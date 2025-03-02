@@ -342,18 +342,36 @@ class TuningDatabase(object):
                 writer.writerow(tup)
 
     def loadcsv(self, table_file, table_name):
+        pbar = tqdm(desc='Processed lines')
         with open(table_file, mode='r', newline='') as file:
             reader = csv.reader(file)
             csv_headers = next(reader)
+            pbar.update(1)
             if self._args.ignore_id:
                 assert csv_headers[0] == 'id', "--ignore_id: First column of CSV is not 'id'. This tool does not handle more compilicated situations."
                 csv_headers = csv_headers[1:]
             colunm_names = ', '.join(csv_headers)
             placeholders = ', '.join(['?'] * len(csv_headers))
-            stmt = f'INSERT INTO {table_name} ({colunm_names}) VALUES({placeholders});'
+            stmt = f'INSERT INTO {table_name} ({colunm_names}) VALUES({placeholders})'
+            tuned_kernel_columns = [ cname for cname in csv_headers if cname.startswith('tuned_kernel$') ]
+            compiler_options_columns = [ cname for cname in csv_headers if cname.startswith('compiler_options$') ]
+            both_columns = tuned_kernel_columns + compiler_options_columns
+            cindices = []
+            for i, cname in enumerate(csv_headers):
+                if cname in both_columns:
+                    cindices.append(i)
+            stmt += ' ON CONFLICT DO UPDATE SET '
+            stmt += ', '.join([f'{colname}=?' for colname in both_columns])
+            print('stmt', stmt)
+            print(f'{cindices=} {len(cindices)=} {len(csv_headers)=}')
+            for i in cindices:
+                print(f'{i=}: {csv_headers[i]=}')
             for row in reader:
+                pbar.update(1)
                 if self._args.ignore_id:
                     row = row[1:]
+                for i in cindices:
+                    row.append(row[i])
                 self._cur.execute(stmt, row)
             self._conn.commit()
 
