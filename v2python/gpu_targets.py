@@ -16,7 +16,12 @@ AOTRITON_GPU_ARCH_TUNING_STRING = {
     'Navi31'    : 'gfx1100',
     'Navi32'    : 'gfx1101',
     'Unidentified'    : 'gfx950',  # Mostly Copied from gfx942
-    'RX9070XT'  : 'gfx1100', # NOT gfx1100, but use gfx942's db
+    'RX9070XT'  : 'gfx1201', # NOT gfx1100, but use gfx942's db
+}
+
+AOTRITON_TUNING_DATABASE_REUSE = {
+    'gfx950' : 'gfx942',
+    'gfx1201' : 'gfx1100',
 }
 
 AOTRITON_GPU_WARPSIZE = {

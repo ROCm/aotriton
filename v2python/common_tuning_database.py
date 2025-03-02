@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 from abc import ABC, abstractmethod
+from .gpu_targets import AOTRITON_TUNING_DATABASE_REUSE
 
 '''
 Note: unlike KernelDescription, whose constants will be specialized for EVERY kernel.
@@ -17,10 +18,15 @@ class CommonKernelTuningDatabaseForArch(ABC):
         self._arch = arch
         self._gpu = None
         self._downgrader = downgrader
+        self._db_arch = AOTRITON_TUNING_DATABASE_REUSE.get(arch, self.arch)
 
     @property
     def arch(self):
         return self._arch
+
+    @property
+    def db_arch(self):
+        return self._db_arch
 
     @property
     @abstractmethod
