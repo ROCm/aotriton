@@ -384,8 +384,8 @@ class TuningDatabase(object):
             raw_info['inputs']['Q_dtype'] = 'torch.' + raw_info['inputs']['Q_dtype']
         # Workaround to fix a bug where BLOCK_DMODEL was not correctly rounded
         # in mptune/flash/db_accessor.py
-        if raw_info['inputs']['D_HEAD'] in HEAD_DIMS:
-            raw_info['inputs']['BLOCK_DMODEL'] = raw_info['inputs']['D_HEAD']
+        raw_info['inputs']['BLOCK_DMODEL'] = round_to_array(raw_info['inputs']['D_HEAD'], HEAD_DIMS)
+        if raw_info['inputs']['BLOCK_DMODEL'] == raw_info['inputs']['D_HEAD']:
             raw_info['inputs']['PADDED_HEAD'] = False
         def rounding(check_only):
             need_rounding_keys = []
@@ -414,10 +414,10 @@ class TuningDatabase(object):
         if need_rounding != round_inputs:
             print(raw_info)
         assert need_rounding == round_inputs, '--round_inputs should only be applied to json with irregular inputs, and vise versa'
-        if len(need_rounding_keys) == 1 and 'D_HEAD' in need_rounding_keys:
-            only_hdim_rounded = True
-        else:
-            only_hdim_rounded = False
+        # if len(need_rounding_keys) == 1 and 'D_HEAD' in need_rounding_keys:
+        #     only_hdim_rounded = True
+        # else:
+        only_hdim_rounded = False
         if round_inputs:
             rounding(check_only=False)
             if not only_hdim_rounded:
