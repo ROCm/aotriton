@@ -59,9 +59,9 @@ getArchFromStream(hipStream_t stream) {
   return device_to_arch[dev];
 }
 
-bool isArchExperimentallySupported(const hipDeviceProp_t* dprops) {
-  auto arch = gcnArchNameSansColon(dprops->gcnArchName);
-  return (arch == "gfx950" || arch == "gfx1201");
+bool isArchExperimentallySupported(hipStream_t stream) {
+  auto arch = getArchFromStream(stream);
+  return (arch == GPU_ARCH_AMD_GFX950 || arch == GPU_ARCH_AMD_GFX1201);
 }
 
 int getMultiProcessorCount(hipStream_t stream) {
