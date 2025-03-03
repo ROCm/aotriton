@@ -39,8 +39,14 @@ if [ -z ${TRITON_LLVM_HASH+x} ]; then
     0.8b)
       TRITON_LLVM_HASH="bd9145c8"
       ;;
+    0.8.*b)
+      TRITON_LLVM_HASH="bd9145c8"
+      ;;
+    0.9b)
+      TRITON_LLVM_HASH="86b69c31"
+      ;;
     *)
-      echo "Only 0.7b, 0.7.xb and 0.8b are supported right now"
+      echo "Unknown AOTRITON_GIT_NAME ${AOTRITON_GIT_NAME}. Please set TRITON_LLVM_HASH explicitly."
       exit
       ;;
   esac
