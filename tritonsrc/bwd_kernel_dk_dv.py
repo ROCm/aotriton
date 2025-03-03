@@ -194,6 +194,7 @@ def bwd_kernel_dk_dv(
                                                       batch_index, off_h_k, cu_seqlens_k_start + offs_n,
                                                       BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
                                                       TRANSPOSED=True)
+            # kt_offs_n = None if start_k + BLOCK_N <= seqlen_k else start_k + tl.arange(0, BLOCK_N)
             v_ptrs0, v_ptrs1, v_ptrs2 = composed_ptrs(V,
                                                       stride_vz, stride_vh, stride_vk, stride_vn,
                                                       batch_index, off_h_k, cu_seqlens_k_start + offs_n,
