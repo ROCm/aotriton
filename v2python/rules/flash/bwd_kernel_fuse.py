@@ -107,12 +107,12 @@ class bwd_kernel_fuse(FlashKernel):
         dtype = fsel_dict['Q']
         HEAD_DIM = fsel_dict['BLOCK_DMODEL']
         MI = 'MI' in gpu
-        Navi = 'Navi' in gpu
+        Navi = 'Navi' in gpu or gpu.startswith('RX')
         ret = []
         # TODO: right sizes for fp32?
         BLOCK_SIZES = [16, 32, 64] if dtype != '*fp32:16' else [16, 32]
-        WAVES_PER_EU = [0, 1, 2, 3, 4]
-        NUM_WARPS = [1, 2, 4]
+        WAVES_PER_EU = [1, 2, 3, 4]
+        NUM_WARPS = [2, 4]
         NUM_STAGES = [1]
         for M, N, waves, warps, stages in itertools.product(BLOCK_SIZES,
                                                             BLOCK_SIZES,

@@ -20,9 +20,61 @@ FOR_RELEASE = bool(int(os.getenv('FOR_RELEASE', default='0')))
 
 POT_HEADDIMS = [16, 32, 64, 128, 256] + ([512] if not BWD_FUSED else [])
 NPOT_HEADDIMS = [48, 80, 96, 160, 192, 224]
+<<<<<<< HEAD
 PRIME_HEADDIMS = [7, 23, 37, 53, 67, 73, 89, 113, 149, 179, 211, 241] + ([401] if not BWD_FUSED else [])
 PRIME_SEQLEN_Q = [11, 17, 37, 67, 157, 257, 523, 1033, 2063, 4919, 10601]
 PRIME_SEQLEN_K = [13, 31, 41, 71, 211, 337, 571, 1063, 2081, 5237, 11369]
+=======
+# Prime head dimensions must be disabled
+# PyTorch allocate tensors compactly by default. For example:
+#   print(torch.rand((3,5,1033, 57), dtype=torch.float16, device='cuda').stride())
+#   (294405, 58881, 57, 1)
+# GPU kernels are unable to support unaligned memory access in any performant way
+# PRIME_HEADDIMS = [7, 23, 37, 53, 67, 73, 83, 113, 149, 179, 211, 241] + ([401] if not BWD_FUSED else [])
+# Multiple of 8 head dimensions are tested instead
+M8_HEADDIMS = [8, 24, 40, 56, 72, 88, 96, 120, 152, 184, 216, 248] + ([408] if not BWD_FUSED else [])
+PRIME_SEQLEN_Q = [11, 17, 37, 67, 157, 257, 523, 1033, 2063, 4919, 10601]
+PRIME_SEQLEN_K = [13, 31, 41, 71, 223, 337, 571, 1063, 2081, 5237, 11369]
+
+SMALL_HEADDIM_ONLY = bool(int(os.getenv('SMALL_HEADDIM_ONLY', default='0')))
+LARGE_HEADDIM_ONLY = bool(int(os.getenv('LARGE_HEADDIM_ONLY', default='0')))
+
+def remove_larger_than(data_list, threshold):
+    return [x for x in data_list if x <= threshold]
+
+def remove_not_larger_than(data_list, threshold):
+    return [x for x in data_list if x > threshold]
+
+def cdiv(x, div):
+    return (x + div - 1) // div
+
+def round_list_to_8x(data_list):
+    return [cdiv(x, 8) * 8 for x in data_list]
+
+if SMALL_HEADDIM_ONLY:
+    POT_HEADDIMS = remove_larger_than(POT_HEADDIMS, 192)
+    NPOT_HEADDIMS = remove_larger_than(NPOT_HEADDIMS, 192)
+    # PRIME_HEADDIMS = remove_larger_than(PRIME_HEADDIMS, 192)
+    M8_HEADDIMS = remove_larger_than(M8_HEADDIMS, 192)
+
+if LARGE_HEADDIM_ONLY:
+    POT_HEADDIMS = remove_not_larger_than(POT_HEADDIMS, 192)
+    NPOT_HEADDIMS = remove_not_larger_than(NPOT_HEADDIMS, 192)
+    # PRIME_HEADDIMS = remove_not_larger_than(PRIME_HEADDIMS, 192)
+    M8_HEADDIMS = remove_not_larger_than(M8_HEADDIMS, 192)
+
+REGULAR_HEADDIM_ONLY = bool(int(os.getenv('REGULAR_HEADDIM_ONLY', default='0')))
+HEADDIM_8X_ONLY = bool(int(os.getenv('HEADDIM_8X_ONLY', default='0')))
+
+assert not (REGULAR_HEADDIM_ONLY and HEADDIM_8X_ONLY), f'{REGULAR_HEADDIM_ONLY=} and {HEADDIM_8X_ONLY=} are mutually exclusive'
+
+if REGULAR_HEADDIM_ONLY:
+    ALL_HEADDIMS = POT_HEADDIMS + NPOT_HEADDIMS
+elif HEADDIM_8X_ONLY:
+    ALL_HEADDIMS = M8_HEADDIMS
+else:
+    ALL_HEADDIMS = POT_HEADDIMS + NPOT_HEADDIMS + M8_HEADDIMS
+>>>>>>> origin/xinyazhang/0.9b-ending_perf
 
 '''
 Note: for now we cannot really test both fused and split kernel at the same
@@ -65,8 +117,8 @@ but in PyTorch API it does not present at all
 def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type):
     if causal and bias_type is not None:
         pytest.skip("_scaled_dot_product_attention: Explicit attn_mask should not be set when is_causal=True")
-    # if BATCH > 1 and seqlen_q >= 1024 and seqlen_k >= 1024:
-    #     torch.cuda.empty_cache()
+    if BATCH > 1 and seqlen_q * seqlen_k >= 1024 * 1024:
+        torch.cuda.empty_cache()
     SKIP_DK_DV = False
     SKIP_DQ = False
     SKIP_DB = True if bias_type is None else False
@@ -116,14 +168,14 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
 # @pytest.mark.parametrize('BATCH', [1])
 # @pytest.mark.parametrize('N_HEADS', [1])
 @pytest.mark.parametrize('BATCH', [1, 4] if not FOR_RELEASE else [3])
-@pytest.mark.parametrize('N_HEADS', [1, 4] if not FOR_RELEASE else [8])
+@pytest.mark.parametrize('N_HEADS', [1, 4] if not FOR_RELEASE else [5])
 # @pytest.mark.parametrize('D_HEAD', [16, 32, 64, 128, 256])
 # Irregular-only PyTorch set
 # @pytest.mark.parametrize('D_HEAD', [8, 21, 72, 96, 160, 192, 203])
 # @pytest.mark.parametrize('seqlen_q', [1, 4, 32, 128, 256, 512, 1024, 7, 394, 250, 399, 511, 1019])
 # @pytest.mark.parametrize('seqlen_k', [1, 4, 32, 128, 256, 512, 1024, 3, 217, 339, 313, 491, 988])
 # PyTorch set
-@pytest.mark.parametrize('D_HEAD', POT_HEADDIMS + NPOT_HEADDIMS + PRIME_HEADDIMS)
+@pytest.mark.parametrize('D_HEAD', ALL_HEADDIMS)
 @pytest.mark.parametrize('seqlen_q', [4, 8, 64, 143, 256, 512, 1024, 2048])
 @pytest.mark.parametrize('seqlen_k', [4, 8, 64, 127, 256, 587, 1024, 2048])
 # Minimal set
@@ -145,8 +197,8 @@ def test_op_bwd(BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_sc
 # @pytest.mark.parametrize('BATCH', [1, 4])
 # @pytest.mark.parametrize('N_HEADS', [1, 4])
 @pytest.mark.parametrize('BATCH', [1, 4] if not FOR_RELEASE else [3])
-@pytest.mark.parametrize('N_HEADS', [1, 4] if not FOR_RELEASE else [8])
-@pytest.mark.parametrize('D_HEAD', POT_HEADDIMS + NPOT_HEADDIMS + PRIME_HEADDIMS)
+@pytest.mark.parametrize('N_HEADS', [1, 4] if not FOR_RELEASE else [5])
+@pytest.mark.parametrize('D_HEAD', ALL_HEADDIMS)
 # @pytest.mark.parametrize('D_HEAD', [128])
 # Complete set
 # @pytest.mark.parametrize('seqlen_q', [4,8,16,17,32,64,128,143,256,512,1024,2048])
@@ -176,7 +228,8 @@ def test_op_bwd_with_matrix_bias(BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen
 
 @pytest.mark.parametrize('BATCH', [1, 4] if not FOR_RELEASE else [4])
 @pytest.mark.parametrize('N_HEADS', [(16, 8), (10, 2)])
-@pytest.mark.parametrize('D_HEAD', [8, 203, 256])
+# @pytest.mark.parametrize('D_HEAD', [8] if SMALL_HEADDIM_ONLY else [8, 203, 256])
+@pytest.mark.parametrize('D_HEAD', ALL_HEADDIMS)
 @pytest.mark.parametrize('seqlen_q', [4, 143, 2048])
 @pytest.mark.parametrize('seqlen_k', [4, 127, 579, 2048])
 @pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
@@ -191,7 +244,11 @@ def test_gqa(BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
 
 @pytest.mark.parametrize('BATCH', [3])
 @pytest.mark.parametrize('N_HEADS', [5])
+<<<<<<< HEAD
 @pytest.mark.parametrize('D_HEAD', PRIME_HEADDIMS)
+=======
+@pytest.mark.parametrize('D_HEAD', ALL_HEADDIMS)
+>>>>>>> origin/xinyazhang/0.9b-ending_perf
 @pytest.mark.parametrize('seqlen_q', PRIME_SEQLEN_Q)
 @pytest.mark.parametrize('seqlen_k', PRIME_SEQLEN_K)
 @pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])

@@ -36,7 +36,11 @@ def parse():
     p.add_argument('--table_file', type=str, help='CSV file of dump/load')
     p.add_argument('--select_where', type=str, default='', help='Extra WHERE clause for SQL to only dump selected rows to CSV file')
     p.add_argument('--ignore_id', action='store_true', help='Ignore row IDs when loading CSV to database, useful for table merge')
+<<<<<<< HEAD
     p.add_argument('--round_inputs', action='store_true', help='Round seqlens and hdims of input json. Will fail if any inputs does not need rounding')
+=======
+    p.add_argument('--round_inputs', action='store_true', help='Round seqlens and hdims of input json. Will fail if any inputs does not need rounding. If only hdim is rounded PADDED_HEAD=False entry will not be updated')
+>>>>>>> origin/xinyazhang/0.9b-ending_perf
     p.add_argument('--fudge_factor_tolerance', type=float, default=5.0,
                    help='''For rawjson mode.
                    During the profiling, a "target" fudge factor is computed as
@@ -101,7 +105,9 @@ class PerKernelResult(object):
         best_tft = self.get_most_accurate_kernel()
         if allow_no_acceptable and best_tft is None:
             return None
-        assert best_tft is not None
+        if best_tft is None:
+            print(f'NEED RERUN TID: {self.tid}')
+            return None
         fft = fudge_factor_tolerance
         def is_acceptable(j):
             if j['result'] != 'tuned':
@@ -109,7 +115,7 @@ class PerKernelResult(object):
             if not isinstance(j['time'], list):
                 return False
             adiffs = j['adiffs']
-            if self.any_nan(adiffs):
+            if adiffs is None or self.any_nan(adiffs):
                 return False
             fits = { tn : j['target_fudge_factors'][tn] < fft * best_tft[tn] for tn in self.valid_out_tensors }
             # print(f'{fits=}')
@@ -138,6 +144,8 @@ class PerKernelResult(object):
 
     @classmethod
     def update_max_fudge_factor(klass, opti):
+        if opti is None:
+            return
         if klass.KERNEL_MAX_FUDGE_FACTORS is None:
             klass.KERNEL_MAX_FUDGE_FACTORS = { tn : 0.0 for tn in klass.KERNEL_OUT_TENSORS }
         for tn in klass.KERNEL_MAX_FUDGE_FACTORS:
@@ -338,18 +346,36 @@ class TuningDatabase(object):
                 writer.writerow(tup)
 
     def loadcsv(self, table_file, table_name):
+        pbar = tqdm(desc='Processed lines')
         with open(table_file, mode='r', newline='') as file:
             reader = csv.reader(file)
             csv_headers = next(reader)
+            pbar.update(1)
             if self._args.ignore_id:
                 assert csv_headers[0] == 'id', "--ignore_id: First column of CSV is not 'id'. This tool does not handle more compilicated situations."
                 csv_headers = csv_headers[1:]
             colunm_names = ', '.join(csv_headers)
             placeholders = ', '.join(['?'] * len(csv_headers))
-            stmt = f'INSERT INTO {table_name} ({colunm_names}) VALUES({placeholders});'
+            stmt = f'INSERT INTO {table_name} ({colunm_names}) VALUES({placeholders})'
+            tuned_kernel_columns = [ cname for cname in csv_headers if cname.startswith('tuned_kernel$') ]
+            compiler_options_columns = [ cname for cname in csv_headers if cname.startswith('compiler_options$') ]
+            both_columns = tuned_kernel_columns + compiler_options_columns
+            cindices = []
+            for i, cname in enumerate(csv_headers):
+                if cname in both_columns:
+                    cindices.append(i)
+            stmt += ' ON CONFLICT DO UPDATE SET '
+            stmt += ', '.join([f'{colname}=?' for colname in both_columns])
+            print('stmt', stmt)
+            print(f'{cindices=} {len(cindices)=} {len(csv_headers)=}')
+            for i in cindices:
+                print(f'{i=}: {csv_headers[i]=}')
             for row in reader:
+                pbar.update(1)
                 if self._args.ignore_id:
                     row = row[1:]
+                for i in cindices:
+                    row.append(row[i])
                 self._cur.execute(stmt, row)
             self._conn.commit()
 
@@ -368,15 +394,31 @@ class TuningDatabase(object):
                 # print(raw_info)
                 # Known faulty kernel for fp32
                 return
+            PRE_LOAD_V = raw_info['tuned_kernel']['PRE_LOAD_V']
+            # Skip PRE_LOAD_V=2
+            if PRE_LOAD_V:
+                return
+        if raw_info.get('tuned_kernel', None) is not None:
+            # Skip num_stages=2
+            if raw_info['compiler_options']['num_stages'] == 2:
+                return
         if not raw_info['inputs']['Q_dtype'].startswith('torch.'):
             raw_info['inputs']['Q_dtype'] = 'torch.' + raw_info['inputs']['Q_dtype']
         # Workaround to fix a bug where BLOCK_DMODEL was not correctly rounded
         # in mptune/flash/db_accessor.py
+<<<<<<< HEAD
         if raw_info['inputs']['D_HEAD'] in HEAD_DIMS:
             raw_info['inputs']['BLOCK_DMODEL'] = raw_info['inputs']['D_HEAD']
             raw_info['inputs']['PADDED_HEAD'] = False
         def rounding(check_only):
             need_rounding = False
+=======
+        raw_info['inputs']['BLOCK_DMODEL'] = round_to_array(raw_info['inputs']['D_HEAD'], HEAD_DIMS)
+        if raw_info['inputs']['BLOCK_DMODEL'] == raw_info['inputs']['D_HEAD']:
+            raw_info['inputs']['PADDED_HEAD'] = False
+        def rounding(check_only):
+            need_rounding_keys = []
+>>>>>>> origin/xinyazhang/0.9b-ending_perf
             # Round D_HEAD
             # It is not used, but it is part of UNIQUE constraints
             def round_hdims(x):
@@ -393,6 +435,7 @@ class TuningDatabase(object):
                         continue
                     if check_only:
                         # print(f'{key=} {oldv=} {newv=}')
+<<<<<<< HEAD
                         return True
                     else:
                         raw_info['inputs'][key] = newv
@@ -405,6 +448,29 @@ class TuningDatabase(object):
             rounding(check_only=False)
             raw_info['inputs']['PADDED_HEAD'] = False
         assert raw_info['inputs']['PADDED_HEAD'] == False
+=======
+                        need_rounding_keys.append(key)
+                    else:
+                        raw_info['inputs'][key] = newv
+            return need_rounding_keys
+        need_rounding_keys = rounding(check_only=True)
+        need_rounding = len(need_rounding_keys) > 0
+        if need_rounding != round_inputs:
+            print(raw_info)
+        assert need_rounding == round_inputs, '--round_inputs should only be applied to json with irregular inputs, and vise versa'
+        # if len(need_rounding_keys) == 1 and 'D_HEAD' in need_rounding_keys:
+        #     only_hdim_rounded = True
+        # else:
+        only_hdim_rounded = False
+        if round_inputs:
+            rounding(check_only=False)
+            if not only_hdim_rounded:
+                raw_info['inputs']['PADDED_HEAD'] = False
+            else:
+                assert raw_info['inputs']['PADDED_HEAD'] == True, f'{need_rounding_keys=}'
+        else:
+            assert raw_info['inputs']['PADDED_HEAD'] == False
+>>>>>>> origin/xinyazhang/0.9b-ending_perf
         timing = raw_info.get('time', float('inf'))
         if isinstance(timing, float):
             if math.isinf(timing):
@@ -459,7 +525,8 @@ def do_main(args, db, fin):
             pbar.update(len(line))  # FIXME: support UTF-8 which len(line) != number of bytes
         pbar = tqdm(total=len(db.pkr_database), desc='Processed kernels')
         for rawjson in db.aggregation_results():
-            # print(line)
+            if rawjson is None:
+                continue
             db.upsert_json(rawjson, create_table_only=False)
             if 'CAUSAL_TYPE' in rawjson['inputs']:
                 causal = rawjson['inputs']['CAUSAL_TYPE']

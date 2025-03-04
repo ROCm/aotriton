@@ -111,3 +111,7 @@ class KernelSignature(object):
 
     def jsongen_copts(self) -> str:
         return json.dumps(self._compiler_options)
+
+    def is_functional_disabled(self):
+        return self._kdesc.is_functional_disabled_on_gpu(self._gpu, self._func_selections)
+

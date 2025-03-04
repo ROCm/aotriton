@@ -131,6 +131,8 @@ def parse():
     return args
 
 def gen_from_object(args, o : 'ObjectFileDescription', makefile):
+    if o.is_functional_disabled():
+        return
     if args.test_clustering or args.generate_cluster_info:
         args._cluster_registry.collect_object_file(o)
     if args.bare_mode:

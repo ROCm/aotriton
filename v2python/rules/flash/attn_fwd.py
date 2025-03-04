@@ -164,7 +164,7 @@ class attn_fwd(FlashKernel):
         CAUSAL_TYPE = fsel_dict['CAUSAL_TYPE']
         ret = []
         MI = 'MI' in gpu
-        Navi = 'Navi' in gpu
+        Navi = 'Navi' in gpu or gpu.startswith('RX')
         if MI:
             BLOCK_SIZES = [(32, 16), (128, 64), (64, 64), (64, 32), (128, 128)]
         elif Navi:
@@ -174,9 +174,9 @@ class attn_fwd(FlashKernel):
             else:
                 # M //= 2 will effectively yield (16,32), (16,16)
                 pass
-        WAVES_PER_EU = [0, 1, 2, 3, 4]
-        NUM_WARPS = [1, 2, 4]
-        PRE_LOAD_V = [True, False]
+        WAVES_PER_EU = [1, 2, 3, 4]
+        NUM_WARPS = [2, 4]
+        PRE_LOAD_V = [False]
         NUM_STAGES = [1]
         for (M, N), waves, warps, stages, pre in itertools.product(BLOCK_SIZES,
                                                                    WAVES_PER_EU,

@@ -2,6 +2,7 @@
 # Copyright © 2024-2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
+import os
 import math
 from ..core import (
     MonadAction,
@@ -15,6 +16,7 @@ DEFAULT_PHILOX_SEED = 0x1BF52
 DEFAULT_PHILOX_OFFSET_1 = 0x1D4000
 DEFAULT_PHILOX_OFFSET_2 = 0x000B42
 DEFAULT_PHILOX_OFFSET = DEFAULT_PHILOX_OFFSET_1 + DEFAULT_PHILOX_OFFSET_2
+INTEGRITY_CHECK_PER_HSACO = bool(int(os.getenv('INTEGRITY_CHECK_PER_HSACO', default='0')))
 
 class TunerMonad(Monad):
     def service_factory(self):
@@ -54,6 +56,7 @@ class TunerService(BaseTunerService):
         sdpa_params = SdpaParams(causal=causal, sm_scale=sm_scale, dropout_p=dropout_p, dropout_mask=mask)
         ctx = SdpaContext(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, dtype,
                           bias_type=bias_type, storage_flip=None, device=self._gpu_device)
+        ## For reproducible values
         ctx.create_ctx_tensors()
         ctx.create_bwd_tensors()
         ctx.create_ref_inputs(target_gpu_device=self._gpu_device)
@@ -86,10 +89,8 @@ class TunerService(BaseTunerService):
 
         ctx, sdpa_params = self.hit_cache(tup)
 
-        q, k, v, b = ctx.dev_tensors
-        # TODO: unify with attn_torch_function
-        o, M = ctx.ctx_tensors
-        L = M  # alias
+        q = ctx.dev_tensors[0]
+
         if dropout_p > 0.0:
             philox_seed = torch.tensor([DEFAULT_PHILOX_SEED], device=q.device, dtype=torch.uint64)
             philox_offset1 = torch.tensor([DEFAULT_PHILOX_OFFSET_1], device=q.device, dtype=torch.uint64)
@@ -107,10 +108,46 @@ class TunerService(BaseTunerService):
         def subless_sub_extarg_accessor(extargs, i):
             return extargs
 
+<<<<<<< HEAD
         def fwd_func(extargs : 'CppTuneWrapper', is_testing):
             # print(f'{is_testing=}')
+=======
+        skip_fwd = 'attn_fwd' in CPPTUNE_SKIP_KERNELS
+        if 'bwd_kernel_dk_dv' in CPPTUNE_SKIP_KERNELS and 'bwd_kernel_dq' in CPPTUNE_SKIP_KERNELS:
+            skip_split_bwd = True
+        else:
+            skip_split_bwd = False
+
+        if 'bwd_kernel_fuse' in CPPTUNE_SKIP_KERNELS:
+            skip_fused_bwd = True
+        else:
+            skip_fused_bwd = False
+
+        if seqlen_q < 16 or seqlen_q > 1024:
+            skip_fused_bwd = True
+        if seqlen_k < 16 or seqlen_k > 1024:
+            skip_fused_bwd = True
+
+        skip_bwd = skip_split_bwd and skip_fused_bwd
+
+        # ref_out is kept in the ctx
+        _ = ctx.compute_ref_forward(sdpa_params)
+        ctx.save_integrity_checksum()
+
+        def integrity_check_and_restore():
+            integrity, who = ctx.check_integrity()
+            if not integrity:
+                ctx.restore_integrity(who, sdpa_params)
+            return integrity
+        def fwd_func(extargs : 'CppTuneWrapper', is_testing):
+            # Faulty kernel may rewrite any tensor
+            q, k, v, b = ctx.dev_tensors
+            o, M = ctx.ctx_tensors
+            L = M  # alias
+>>>>>>> origin/xinyazhang/0.9b-ending_perf
             if is_testing:
                 o.fill_(float('nan'))
+                M.fill_(float('nan'))
                 philox_seed_output.fill_(0)
                 philox_offset_output.fill_(0)
             if causal:
@@ -128,8 +165,14 @@ class TunerService(BaseTunerService):
                 self.report_exception(e)
                 return 1, [KernelOutput(hip_status=hipError_t.hipErrorLaunchFailure,
                                         output_tensors=None)]
+            if INTEGRITY_CHECK_PER_HSACO and is_testing:
+                integrity, who = ctx.check_integrity()
+                if not integrity:
+                    ret = hipError_t.hipErrorDeinitialized
+                    ctx.restore_integrity(who, sdpa_params)
             return 1, [KernelOutput(hip_status=ret,
                                     output_tensors=[o, philox_seed_output, philox_offset_output])]
+<<<<<<< HEAD
 
         skip_fwd = 'attn_fwd' in CPPTUNE_SKIP_KERNELS
         if 'bwd_kernel_dk_dv' in CPPTUNE_SKIP_KERNELS and 'bwd_kernel_dq' in CPPTUNE_SKIP_KERNELS:
@@ -146,6 +189,8 @@ class TunerService(BaseTunerService):
 
         # ref_out is kept in the ctx
         ref_out, _ = ctx.compute_ref_forward(sdpa_params)
+=======
+>>>>>>> origin/xinyazhang/0.9b-ending_perf
         # print(f'{payload.kig_dict=}')
         if not skip_fwd:
             # if skip_fwd, run manually to use default tuning db
@@ -156,7 +201,14 @@ class TunerService(BaseTunerService):
                                         fwd_func,
                                         [self.fwd_validator],
                                         kernel_index_progress_dict=payload.kig_dict,
+<<<<<<< HEAD
                                         run_last_success_kernel_once=run_last_success_kernel_once)
+=======
+                                        run_last_success_kernel_once=run_last_success_kernel_once,
+                                        integrity_checker=integrity_check_and_restore)
+            # print(f'{M=}')
+            # print(f'{o=}')
+>>>>>>> origin/xinyazhang/0.9b-ending_perf
         if skip_fwd:
             fwd_func(None, is_testing=True)
 
@@ -165,12 +217,19 @@ class TunerService(BaseTunerService):
         if skip_bwd:
             return
 
-        dq, dk, dv, db, delta = ctx.bwd_tensors
-        dout = torch.randn_like(q)
-        ctx.compute_backward(None, dout, ref_only=True)
+        ctx.compute_backward(None, None, ref_only=True)
+        dout = ctx.ddev_tensors[0]
+        ctx.save_integrity_checksum()
 
         bwd_validators = (self.bwd_dkdv_validator, self.bwd_dqdb_validator)
         def generic_bwd_func(extargs, is_testing, bwd_operator, split):
+<<<<<<< HEAD
+=======
+            q, k, v, b = ctx.dev_tensors
+            dq, dk, dv, db, delta = ctx.bwd_tensors
+            o, M = ctx.ctx_tensors
+            L = M  # alias
+>>>>>>> origin/xinyazhang/0.9b-ending_perf
             if is_testing:
                 dk.fill_(float('nan'))
                 dv.fill_(float('nan'))
@@ -196,6 +255,14 @@ class TunerService(BaseTunerService):
                               ]
                 else:
                     return 1, [KernelOutput(hip_status=ret, output_tensors=None)]
+<<<<<<< HEAD
+=======
+            if INTEGRITY_CHECK_PER_HSACO and is_testing:
+                integrity, who = ctx.check_integrity()
+                if not integrity:
+                    ret = hipError_t.hipErrorDeinitialized
+                    ctx.restore_integrity(who, sdpa_params)
+>>>>>>> origin/xinyazhang/0.9b-ending_perf
             if split:
                 return 2, [KernelOutput(hip_status=ret, output_tensors=[dk,dv]),
                            KernelOutput(hip_status=ret, output_tensors=[dq,db]),
@@ -221,7 +288,12 @@ class TunerService(BaseTunerService):
                                         bwd_func,
                                         bwd_validators,
                                         kernel_index_progress_dict=payload.kig_dict,
+<<<<<<< HEAD
                                         run_last_success_kernel_once=False)
+=======
+                                        run_last_success_kernel_once=False,
+                                        integrity_checker=integrity_check_and_restore)
+>>>>>>> origin/xinyazhang/0.9b-ending_perf
         if not skip_fused_bwd:
             from aotriton_flash import (
                 attn_bwd_fused,
@@ -235,7 +307,12 @@ class TunerService(BaseTunerService):
                                         bwd_func,
                                         [self.bwd_fused_validator],
                                         kernel_index_progress_dict=payload.kig_dict,
+<<<<<<< HEAD
                                         run_last_success_kernel_once=False)
+=======
+                                        run_last_success_kernel_once=False,
+                                        integrity_checker=integrity_check_and_restore)
+>>>>>>> origin/xinyazhang/0.9b-ending_perf
 
     def fwd_validator(self, kernel_outputs : 'List[KernelOutput]', atr : 'AutotuneResult'):
         tri_out, philox_seed, philox_offset = kernel_outputs[0].output_tensors

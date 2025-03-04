@@ -369,8 +369,9 @@ class AutotuneCodeGenerator(MakefileSegmentGenerator):
             self._ofn = e.ofn  # regardless --build_for_tuning or not
             if not is_tuning_on_for_kernel(self._args, self._kdesc):
                 do_raise = e
-                print(e)
+                print('raise', e)
                 self._args._sanity_check_exceptions.append(e)
+                # import ipdb; ipdb.set_trace()
                 for j in e.get_missing_lut_entries():
                     print("TUNE_FLASH --entry_from_json Item: ", j)
             else:

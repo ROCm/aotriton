@@ -116,12 +116,12 @@ class bwd_kernel_dk_dv(FlashKernel):
         HEAD_DIM = fsel_dict['BLOCK_DMODEL']
         CAUSAL_TYPE = fsel_dict['CAUSAL_TYPE']
         MI = 'MI' in gpu
-        Navi = 'Navi' in gpu
+        Navi = 'Navi' in gpu or gpu.startswith('RX')
         ret = []
         # TODO: right sizes for fp32?
         BLOCK_SIZES = [16, 32, 64] if dtype != '*fp32:16' else [16, 32]
-        WAVES_PER_EU = [0, 1, 2, 3, 4]
-        NUM_WARPS = [1, 2, 4]
+        WAVES_PER_EU = [1, 2, 3, 4]
+        NUM_WARPS = [2, 4]
         NUM_STAGES = [1]
         for M, N, waves, warps, stages in itertools.product(BLOCK_SIZES,
                                                             BLOCK_SIZES,
@@ -138,8 +138,12 @@ class bwd_kernel_dk_dv(FlashKernel):
                 continue  # Timeout
             if Navi and M * N >= 32 * 16 and warps < 2:
                 continue  # Timeout
+<<<<<<< HEAD
             persistent_type = 2 if CAUSAL_TYPE != 0 else 0
             kw = { 'PERSISTENT_TYPE' : persistent_type,
                    'GRID_CU_MULTIP': 2,
                    'BLOCK_M': M, 'BLOCK_N': N, 'waves_per_eu': waves}
+=======
+            kw = {'BLOCK_M': M, 'BLOCK_N': N, 'waves_per_eu': waves}
+>>>>>>> origin/xinyazhang/0.9b-ending_perf
             yield Config(kw, num_stages=stages, num_warps=warps)

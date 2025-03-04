@@ -18,7 +18,11 @@ GPU_TO_DIRECTORY = {
     'Navi31' : 'amd-gfx110x',
     'Navi32' : 'amd-gfx110x',
     'Unidentified' : 'amd-gfx950',
+<<<<<<< HEAD
     'Unidentified02'    : 'amd-gfx120x',
+=======
+    'RX9070XT'    : 'amd-gfx120x',
+>>>>>>> origin/xinyazhang/0.9b-ending_perf
 }
 
 GPU_TO_CLUSTER_SUFFIX = {
@@ -27,7 +31,11 @@ GPU_TO_CLUSTER_SUFFIX = {
     'Navi31' : 'Navi3x',
     'Navi32' : 'Navi3x',
     'Unidentified'      : 'Unidentified',
+<<<<<<< HEAD
     'Unidentified02'    : 'Unidentified02',
+=======
+    'RX9070XT'    : 'RX9070XT',
+>>>>>>> origin/xinyazhang/0.9b-ending_perf
 }
 
 class MissingLutEntry(Exception):
@@ -66,7 +74,8 @@ class KernelTuningEntryForFunctionalOnGPU(object):
         self._autotune_key_class = { key : klass for key, klass in autotune_keys } if autotune_keys is not None else None
         self._sigs = []
         self._sig_dict = {}
-        if autotune_keys is None:
+        self._feature_disabled = self._kdesc.is_functional_disabled_on_gpu(self._dba.gpu, self._fsels)
+        if autotune_keys is None or self._feature_disabled:
             self._lut_dtype = np.int8
             self._lut_cdtype = f'int8_t'
             self._lut_tensor = np.array([0], dtype=np.int8)
@@ -170,7 +179,7 @@ class KernelTuningEntryForFunctionalOnGPU(object):
     def codegen_kernel_image_objects(self, kernel_image_dir, noimage_mode):
         kernel_image_symbols = []
         for _, _, o in self.gen_kernel_symbols(kernel_image_dir):
-            if not noimage_mode:
+            if not noimage_mode and not self._feature_disabled:
                 assert o.compiled_files_exist, f'Compiled file {o._hsaco_kernel_path} not exists'
             kernel_image_symbols.append(f'{{ PACKAGE_PATH, "{o.obj.stem}" }},')
         ALIGN = '\n' + 4 * ' '

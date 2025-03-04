@@ -256,7 +256,7 @@ def cpp_autotune_sub_kernel_gen(extargs, kernel_func, validator, cur_kig):
         # Update last_success_kernel if having precision
         # This is more tolerating than ut_passed
         if atr.adiffs is not None:
-            if cur_kig.best_adiffs is None or cur_kig.best_adiffs < atr.adiffs:
+            if cur_kig.best_adiffs is None or atr.adiffs < cur_kig.best_adiffs:
                 cur_kig.best_adiffs = deepcopy(atr.adiffs)
                 cur_kig.last_success_kernel = extargs.force_kernel_index
         if atr.ut_passed:
@@ -331,7 +331,16 @@ This is an generator of all tuning results, and yields all results rather than t
 '''
 def cpp_autotune_gen(extarg_factory, sub_extarg_accessor,
                      subkernel_names, kernel_func,
+<<<<<<< HEAD
                      validators, *, kernel_index_progress_dict, run_last_success_kernel_once):
+=======
+                     validators,
+                     *,
+                     kernel_index_progress_dict,
+                     run_last_success_kernel_once,
+                     integrity_checker,
+                     ):
+>>>>>>> origin/xinyazhang/0.9b-ending_perf
     extargs_with_subs = CppTuneWrapper(extarg_factory, sub_extarg_accessor)
     num_of_subkernels = len(subkernel_names)
     def reset_kernel_index_to_skip():
@@ -341,6 +350,7 @@ def cpp_autotune_gen(extarg_factory, sub_extarg_accessor,
     # kig_dict = deepcopy(kernel_index_progress_dict)
     kig_dict = kernel_index_progress_dict  # Otherwise kernel progress are local to this function
     for sub_index, cur_name, cur_validator in zip(range(num_of_subkernels), subkernel_names, validators):
+        kernel_called = False
         if cur_name in CPPTUNE_SKIP_KERNELS:
             continue
         # print(f'Tuning sub {cur_name}')
@@ -351,7 +361,9 @@ def cpp_autotune_gen(extarg_factory, sub_extarg_accessor,
                                                kernel_func,
                                                cur_validator,
                                                cur_kig):
+            kernel_called = True
             yield cur_name, ret, deepcopy(kig_dict)
+<<<<<<< HEAD
         '''
         CAVEAT: Must run kernel_func at least once.
                 Otherwise this may happen:
@@ -362,5 +374,28 @@ def cpp_autotune_gen(extarg_factory, sub_extarg_accessor,
                        the bwd output becomes garbage.
         '''
     if run_last_success_kernel_once:
+=======
+        if kernel_called:
+            integrity = integrity_checker()
+            if not integrity:
+                ret.adiffs = None
+                ret.hip_status = hipError_t.hipErrorDeinitialized
+                yield cur_name, ret, deepcopy(kig_dict)
+    '''
+    CAVEAT: Must run kernel_func at least once.
+            Otherwise this may happen:
+                1. Running fwd and bwd tuning;
+                2. Bwd kernel segfaulted;
+                3. Resume the tuning process after skipping the kernel;
+                4. The o tensor is empty/nan because fwd is skipped, and
+                   the bwd output becomes garbage.
+    '''
+    if not run_last_success_kernel_once:
+        return
+    for sub_index, cur_name, cur_validator in zip(range(num_of_subkernels), subkernel_names, validators):
+        reset_kernel_index_to_skip()
+        extargs_with_subs.set_current_sub(sub_index)
+        cur_kig = kig_dict[cur_name]
+>>>>>>> origin/xinyazhang/0.9b-ending_perf
         extargs_with_subs.force_kernel_index = cur_kig.last_success_kernel
-        kernel_func(extargs_with_subs, is_testing=False)
+        kernel_func(extargs_with_subs, is_testing=True)
