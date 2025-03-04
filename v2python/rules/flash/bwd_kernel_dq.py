@@ -40,10 +40,16 @@ class bwd_kernel_dq(FlashKernel):
         'BLOCK_M', # tl.constexpr starts here
         'BLOCK_DMODEL',
         'BLOCK_N',
-        'CAUSAL',
+        'CAUSAL_TYPE',
         'ENABLE_DROPOUT',
         'PADDED_HEAD',
         'BIAS_TYPE',
+        # Persistent related arguments
+        "PERSISTENT_TYPE",
+        "persistent_atomic_counter",
+        "Num_CU",
+        "GRID_CU_MULTIP",
+        "Batch",
     ]
     match_fwd = lambda aname : get_possible_choices(attn_fwd, aname)
     match_kv = lambda aname : get_possible_choices(bwd_kernel_dk_dv, aname)
@@ -76,15 +82,19 @@ class bwd_kernel_dq(FlashKernel):
         frozenset(['philox_seed_ptr']) : match_fwd('philox_seed_ptr'),
         frozenset(['philox_offset1']) : match_fwd('philox_offset1'),
         frozenset(['philox_offset2']) : match_fwd('philox_offset2'),
+        frozenset(['persistent_atomic_counter']) : match_fwd('persistent_atomic_counter'),
+        frozenset(['Num_CU', 'Batch']) : match_fwd('Num_CU'),
     }
     FEAT_CHOICES = {
         frozenset(['BLOCK_DMODEL']) : match_fwd('BLOCK_DMODEL'),
-        frozenset(['CAUSAL']) : match_kv('CAUSAL'),
+        frozenset(['CAUSAL_TYPE']) :  match_fwd('CAUSAL_TYPE'),
         frozenset(['ENABLE_DROPOUT']) : match_fwd('ENABLE_DROPOUT'),
         frozenset(['PADDED_HEAD']) : [False, True],
         frozenset(['BIAS_TYPE']) : [0, 1],
     }
     PERF_CHOICES = {
+        frozenset(['PERSISTENT_TYPE']) : match_fwd('PERSISTENT_TYPE'),
+        frozenset(['GRID_CU_MULTIP']) : match_fwd('GRID_CU_MULTIP'),
         frozenset(['BLOCK_M']) : match_fwd('BLOCK_M'),
         frozenset(['BLOCK_N']) : match_fwd('BLOCK_N'),
     }
@@ -98,6 +108,7 @@ class bwd_kernel_dq(FlashKernel):
     AUTOTUNE_KEYS = {
         'max_seqlen_q' : BinningLessOrEqual,
         'max_seqlen_k' : BinningLessOrEqual,
+        'CAUSAL_TYPE' : BinningExact,
     }
     PARTIALLY_TUNED_FUNCTIONALS = [('PADDED_HEAD', False)]
     DOWNGRADER = []
@@ -107,6 +118,7 @@ class bwd_kernel_dq(FlashKernel):
         dtype = fsel_dict['Q']
         MI = 'MI' in gpu
         Navi = 'Navi' in gpu
+        CAUSAL_TYPE = fsel_dict['CAUSAL_TYPE']
         ret = []
         # TODO: right sizes for fp32?
         BLOCK_SIZES = [16, 32, 64] if dtype != '*fp32:16' else [16, 32]
@@ -120,7 +132,10 @@ class bwd_kernel_dq(FlashKernel):
                                                             NUM_STAGES):
             if M < N:
                 continue  # deduplicate
-            kw = {'BLOCK_M': M, 'BLOCK_N': N, 'waves_per_eu': waves}
+            persistent_type = 2 if CAUSAL_TYPE != 0 else 0
+            kw = { 'PERSISTENT_TYPE' : persistent_type,
+                   'GRID_CU_MULTIP': 2,
+                   'BLOCK_M': M, 'BLOCK_N': N, 'waves_per_eu': waves}
             if Navi and M == 64  and N == 64 and stages == 2:
                 continue  # No optimal kernel according to 0.8b tuning db
             if Navi and M * N >= 32 * 32 and warps < 4:
