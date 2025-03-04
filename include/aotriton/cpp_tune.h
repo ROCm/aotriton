@@ -15,6 +15,10 @@ struct CppTune {
   int total_number_of_kernels = -1;
   const char* selected_kernel_psels = nullptr;
   const char* selected_kernel_copts = nullptr;
+  // Fields to extract kernel image
+  bool peek_kernel_image = false;  // Set true to examine the image without launching it
+  const void* kernel_image = nullptr;
+  size_t image_size = 0;
 #endif
 };
 

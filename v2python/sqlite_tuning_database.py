@@ -27,7 +27,7 @@ class SQLiteKernelTuningDatabaseForArch(CommonKernelTuningDatabaseForArch):
     @property
     def empty(self):
         stmt = f'SELECT COUNT(id) FROM {self._table_name} WHERE arch = ?'
-        nitem, = self._conn.execute(stmt, (self._arch,)).fetchone()
+        nitem, = self._conn.execute(stmt, (self.db_arch,)).fetchone()
         return nitem == 0
 
     def _build_db_index(self, fsels):
@@ -85,9 +85,15 @@ class SQLiteKernelTuningDatabaseForArch(CommonKernelTuningDatabaseForArch):
         # print(f'{selected_columns=}')
         # print(f'{selected_rows=}')
         if not selected_rows:
-            selection = ', '.join([f'{colname}={value}' for colname, value in zip(where_columns, where_values)])
-            fb_selection = ', '.join([f'{colname}={value}' for colname, value in zip(where_columns, patched_values)])
-            assert selected_rows, f'Cannot find any rows from selection ({selection}) (fallback to {fb_selection}) in table {self._table_name} arch {self._arch}'
+            def fmtsql(value):
+                if isinstance(value, bool):
+                    return int(value)
+                if isinstance(value, str):
+                    return "'" + value + "'"
+                return value
+            selection = ' and '.join([f'{colname}={fmtsql(value)}' for colname, value in zip(where_columns, where_values)])
+            fb_selection = ' and '.join([f'{colname}={fmtsql(value)}' for colname, value in zip(where_columns, patched_values)])
+            assert selected_rows, f"Cannot find any rows from select * from {self._table_name} where arch='{self.db_arch}' and {selection} (fallback to {fb_selection})"
         # TODO: Support KernelDescription.DOWNGRADER
         # return columns, values, self._downgrade(rows)
 
@@ -224,7 +230,7 @@ class SQLiteKernelTuningDatabaseForArch(CommonKernelTuningDatabaseForArch):
         # print(f'{columns=} {values=}')
         # Check value is not None in case falling back to any value
         conds += [f'{column} = ?' for column, v in zip(columns, values) if v is not None]
-        select_vals = [self._arch]
+        select_vals = [self.db_arch]
         select_vals += [v for v in values if v is not None]
         # print(f'{conds=}')
         if with_inputs:

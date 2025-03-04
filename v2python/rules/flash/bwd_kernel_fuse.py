@@ -79,7 +79,7 @@ class bwd_kernel_fuse(FlashKernel):
         frozenset(['philox_offset2']) : match_fwd('philox_offset2'),
     }
     FEAT_CHOICES = {
-        frozenset(['BLOCK_DMODEL']) : match_fwd('BLOCK_DMODEL'),
+        frozenset(['BLOCK_DMODEL']) : [hdim for hdim in match_fwd('BLOCK_DMODEL') if hdim <= 256],
         frozenset(['CAUSAL']) : [True, False],
         frozenset(['ENABLE_DROPOUT']) : match_fwd('ENABLE_DROPOUT'),
         frozenset(['PADDED_HEAD']) : [False, True],
@@ -105,13 +105,14 @@ class bwd_kernel_fuse(FlashKernel):
     @staticmethod
     def gen_autotune_configs(gpu, fsel_dict : 'dict[str, Any]'):
         dtype = fsel_dict['Q']
+        HEAD_DIM = fsel_dict['BLOCK_DMODEL']
         MI = 'MI' in gpu
-        Navi = 'Navi' in gpu
+        Navi = 'Navi' in gpu or gpu.startswith('RX')
         ret = []
         # TODO: right sizes for fp32?
         BLOCK_SIZES = [16, 32, 64] if dtype != '*fp32:16' else [16, 32]
-        WAVES_PER_EU = [0, 1, 2, 3, 4]
-        NUM_WARPS = [1, 2, 4]
+        WAVES_PER_EU = [1, 2, 3, 4]
+        NUM_WARPS = [2, 4]
         NUM_STAGES = [1]
         for M, N, waves, warps, stages in itertools.product(BLOCK_SIZES,
                                                             BLOCK_SIZES,
@@ -124,7 +125,14 @@ class bwd_kernel_fuse(FlashKernel):
                 continue  # No optimal kernel according to 0.8b tuning db
             if Navi and M > 32 and warps == 1:
                 continue  # No optimal kernel according to 0.8b tuning db
-            if Navi and M == 64  and N == 64 and warps != 4:
-                continue  # No optimal kernel according to 0.8b tuning db
+            if Navi and M == 32  and N == 32 and warps != 4:
+                continue  # Timeout
+            if HEAD_DIM > 256 and M == 64 and N == 64 and warps == 1:
+                continue  # Timeout
             kw = {'BLOCK_M': M, 'BLOCK_N': N, 'waves_per_eu': waves}
             yield Config(kw, num_stages=stages, num_warps=warps)
+
+    # 16, 32, 64, 128, 256, 512, 1024
+    LUT_FULL_SEQLEN_Q = [16,32,64,128,256,512,1024]
+    LUT_FULL_SEQLEN_K = [16,32,64,128,256,512,1024]
+    LUT_FULL_SEQLEN_NAVI = [16,32,64,128,256,512,1024]

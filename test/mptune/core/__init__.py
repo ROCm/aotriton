@@ -24,6 +24,7 @@ from .cpp_autotune import (
     cpp_autotune_gen,
     KernelOutput,
     AutotuneResult,
+    CPPTUNE_SKIP_KERNELS,
 )
 from .state_tracker import StateTracker
 
@@ -43,5 +44,6 @@ __all__ = [
     "cpp_autotune_gen",
     "KernelOutput",
     "AutotuneResult",
+    "CPPTUNE_SKIP_KERNELS",
     "StateTracker",
 ]

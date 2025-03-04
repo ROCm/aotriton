@@ -39,8 +39,10 @@ class KernelIndexProress:
     total_number_of_kernels: int = CPP_AUTOTUNE_MAX_KERNELS
     passed_kernels : int = 0
     failed_kernels : int = 0
+    vspill_kernels : int = 0
     noimage_kernels : int = 0
     uncertain_errors : int = 0
+    best_adiffs : 'float | list[float] | None' = None
 
 @dataclass
 class TuningResult:

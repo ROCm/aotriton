@@ -139,7 +139,7 @@ _attn_fwd_common(T4 q,
     .INT8_KV = false,
     .USE_P_SCALE = false,
     .persistent_atomic_counter = &persistent_atomic_counter,
-    .Num_CU = params.PERSISTENT_TYPE == 0 ? 80 : getMultiProcessorCount(stream),
+    .Num_CU = is_causal ? getMultiProcessorCount(stream) : 80,
     .Batch = num_seqlens == 0 ? q.size(0) : num_seqlens,
   };
 #if AOTRITON_BUILD_FOR_TUNING
@@ -158,6 +158,10 @@ _attn_fwd_common(T4 q,
     extargs->total_number_of_kernels = params._total_number_of_kernels;
     extargs->selected_kernel_psels = params._preferred_kernel_psels;
     extargs->selected_kernel_copts = params._preferred_kernel_copts;
+    context.peek_kernel_image = extargs->peek_kernel_image;
+#if AOTRITON_VERBOSE
+    std::cerr << "extargs->peek_kernel_image " << extargs->peek_kernel_image << std::endl;
+#endif
   }
 #endif
   if (err != hipSuccess) {
@@ -169,6 +173,17 @@ _attn_fwd_common(T4 q,
     return hipErrorInvalidValue;  // must have persistent_atomic_counter set
   }
   err = context.launch(params, stream);
+#if AOTRITON_BUILD_FOR_TUNING
+  if (extargs && extargs->peek_kernel_image) {
+    auto essentials = params.selected_kernel->get_image_info_iff_decompressed();
+    extargs->kernel_image = essentials.image;
+    extargs->image_size = essentials.size;
+#if AOTRITON_VERBOSE
+    std::cerr << "peek_kernel_image returns image at: " << essentials.image
+              << " size: " << essentials.size << std::endl;
+#endif
+  }
+#endif
   if (err != hipSuccess) {
     return err;
   }

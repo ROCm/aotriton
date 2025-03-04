@@ -8,7 +8,7 @@ import torch
 
 import triton
 from collections import defaultdict
-from attn_torch_function import attention, AttentionExtraArgs
+from attn_torch_function import attention, AttentionExtraArgs, BWD_FUSED
 
 try:
     from flash_attn.flash_attn_interface import \
@@ -31,6 +31,9 @@ n_ctx = os.getenv('N_CTX', default=list(range(10, 14)))
 if isinstance(n_ctx, str):
     n_ctx = map(lambda x: int(x), n_ctx.split(','))
 X_VALS = list(map(lambda x: 2 ** x, n_ctx))
+x_vals = os.getenv('X_VALS', default=None)
+if x_vals is not None:
+    X_VALS = [int(e) for e in x_vals.split(',')]
 print(f'{X_VALS=}')
 
 BATCH, N_HEADS, N_CTX, D_HEAD = 4, 48, 4096, 64
@@ -38,6 +41,7 @@ BATCH, N_HEADS, N_CTX, D_HEAD = 4, 48, 4096, 64
 # vary seq length for fixed head and batch=4
 configs = []
 for mode in ['bwd']:
+    modename = 'fusedbwd' if BWD_FUSED else 'bwd'
     # for causal in [False, True]:
     for causal in [False]:
         for D_HEAD in d_heads:
@@ -51,7 +55,7 @@ for mode in ['bwd']:
                 line_names=['Triton(TFLOPS)' if USE_TFLOPS else 'Triton(ms)'] + ([f'Flash-{FLASH_VER}'] if HAS_FLASH else []),
                 styles=[('red', '-'), ('blue', '-')],
                 ylabel='TFLOPS' if USE_TFLOPS else 'ms',
-                plot_name=f'fused-attention-batch{BATCH}-head{N_HEADS}-d{D_HEAD}-{mode}-causal={causal}',
+                plot_name=f'fused-attention-batch{BATCH}-head{N_HEADS}-d{D_HEAD}-{modename}-causal={causal}',
                 args={
                     'H': N_HEADS,
                     'BATCH': BATCH,
@@ -65,10 +69,10 @@ for mode in ['bwd']:
 
 @triton.testing.perf_report(configs)
 def bench_flash_attention(BATCH, H, N_CTX, D_HEAD, causal, mode, provider, dtype=torch.float16, device="cuda"):
-    print(f"{N_CTX=}")
+    # print(f"{N_CTX=}")
     assert mode in ['fwd', 'bwd']
     warmup = 25
-    rep = 100
+    rep = 200
     split_kernel = False
     # Bwd pass only supports causal=True right now
     if mode == 'bwd':

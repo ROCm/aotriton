@@ -43,7 +43,13 @@ TritonKernel::TritonKernel(const char* package_path, const char* stem_name)
 }
 
 hipError_t
-TritonKernel::invoke(const char* kernel_name, dim3 grid, std::vector<void*>& args, hipStream_t stream) {
+TritonKernel::invoke(const char* kernel_name,
+                     dim3 grid,
+                     std::vector<void*>& args,
+#if AOTRITON_BUILD_FOR_TUNING
+                     bool peek_kernel_image,
+#endif
+                     hipStream_t stream) {
 #if AOTRITON_KERNEL_VERBOSE
   std::cerr << "Invoking TritonKernel " << this << " with kernel_name = \"" << kernel_name << '"'
             << std::endl;
@@ -67,14 +73,18 @@ TritonKernel::invoke(const char* kernel_name, dim3 grid, std::vector<void*>& arg
       std::tie(func, err) = load_for_device(device_id, kernel_name);
     }
   }
+#if AOTRITON_BUILD_FOR_TUNING
+  if (peek_kernel_image)
+    return hipSuccess;
+#endif
   return hipModuleLaunchKernel(func,
                                grid.x,
                                grid.y,
                                grid.z,
-                               block_.x,
-                               block_.y,
-                               block_.z,
-                               shared_memory_size_,
+                               essentials_.block.x,
+                               essentials_.block.y,
+                               essentials_.block.z,
+                               essentials_.shared_memory_size,
                                stream,
                                args.data(),
                                0);
@@ -110,14 +120,14 @@ TritonKernel::load_for_device(int device_id, const char* kernel_name) {
 #endif
   decompress_kernel();
 #if AOTRITON_KERNEL_VERBOSE
-  std::cerr << "Decompress kernel to " << kernel_image_ << std::endl;
+  std::cerr << "Decompress kernel to " << essentials_.image << std::endl;
 #endif
-  if (!kernel_image_) {
+  if (!essentials_.image) {
     return std::make_tuple(nullptr, hipErrorInvalidImage);
   }
   hipModule_t mod;
   hipFunction_t func;
-  AOTRITON_HIP_CHECK_RETURN(hipModuleLoadDataEx(&mod, kernel_image_, 5, opt, optval));
+  AOTRITON_HIP_CHECK_RETURN(hipModuleLoadDataEx(&mod, essentials_.image, 5, opt, optval));
   AOTRITON_HIP_CHECK_RETURN(hipModuleGetFunction(&func, mod, kernel_name));
   funcache_.emplace(std::piecewise_construct,
                     std::forward_as_tuple(device_id),
@@ -128,13 +138,20 @@ TritonKernel::load_for_device(int device_id, const char* kernel_name) {
 void
 TritonKernel::clear_decompressed_image() {
   std::unique_lock lock(packedkernel_mutex_);
-  kernel_image_ = nullptr;
+  essentials_.image = nullptr;
   packed_kernel_.reset();
 }
 
+#if AOTRITON_BUILD_FOR_TUNING
+TritonKernel::Essentials
+TritonKernel::get_image_info_iff_decompressed() const {
+  return essentials_;
+}
+#endif
+
 // kernel_loaded_ is essential. When build for tuning, it is not possible to
 // tell if a kernel is loaded, or the kernel image failed to compile and thus
-// does not exists from beginning by testing kernel_image_ == nullptr
+// does not exists from beginning by testing essentials_.image == nullptr
 void
 TritonKernel::decompress_kernel() {
   if (kernel_loaded_) {
@@ -155,7 +172,7 @@ TritonKernel::decompress_kernel() {
     std::cerr << "PackedKernel::open returns " << packed_kernel_.get()
               << " status: " << packed_kernel_->status() << std::endl;
 #endif
-    std::tie(kernel_image_, shared_memory_size_, block_) = packed_kernel_->filter(stem_name_);
+    essentials_ = packed_kernel_->filter(stem_name_);
   }
   // FIXME: There should be a memory barrier here for non-X86 CPUs.
   kernel_loaded_ = true;

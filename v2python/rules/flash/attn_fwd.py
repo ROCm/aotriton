@@ -2,7 +2,11 @@
 # SPDX-License-Identifier: MIT
 
 import itertools
+import os
 from ._common import FlashKernel, select_pattern, BinningLessOrEqual, BinningExact, Config
+
+AOTRITON_FLASH_BLOCK_DMODEL = os.getenv('AOTRITON_FLASH_BLOCK_DMODEL', default='16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256, 512')
+AOTRITON_FLASH_BLOCK_DMODEL = [int(d) for d in AOTRITON_FLASH_BLOCK_DMODEL.split(',')]
 
 class attn_fwd(FlashKernel):
     ARGUMENTS = [
@@ -87,7 +91,7 @@ class attn_fwd(FlashKernel):
         # further increse the number of kernels. Will be added later along with
         # windowed attention
         frozenset(['CAUSAL_TYPE']) : [0, 1],
-        frozenset(['BLOCK_DMODEL']) : [16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256],
+        frozenset(['BLOCK_DMODEL']) : AOTRITON_FLASH_BLOCK_DMODEL,
         frozenset(['ENABLE_DROPOUT']) : [False, True],
         frozenset(['RETURN_ENCODED_SOFTMAX']) : [False],
         frozenset(['PADDED_HEAD']) : [False, True],
@@ -160,7 +164,7 @@ class attn_fwd(FlashKernel):
         CAUSAL_TYPE = fsel_dict['CAUSAL_TYPE']
         ret = []
         MI = 'MI' in gpu
-        Navi = 'Navi' in gpu
+        Navi = 'Navi' in gpu or gpu.startswith('RX')
         if MI:
             BLOCK_SIZES = [(32, 16), (128, 64), (64, 64), (64, 32), (128, 128)]
         elif Navi:
@@ -170,9 +174,9 @@ class attn_fwd(FlashKernel):
             else:
                 # M //= 2 will effectively yield (16,32), (16,16)
                 pass
-        WAVES_PER_EU = [0, 1, 2, 3, 4]
-        NUM_WARPS = [1, 2, 4]
-        PRE_LOAD_V = [True, False]
+        WAVES_PER_EU = [1, 2, 3, 4]
+        NUM_WARPS = [2, 4]
+        PRE_LOAD_V = [False]
         NUM_STAGES = [1]
         for (M, N), waves, warps, stages, pre in itertools.product(BLOCK_SIZES,
                                                                    WAVES_PER_EU,
@@ -184,6 +188,8 @@ class attn_fwd(FlashKernel):
             if stages == 2 and M * N >= 64 * 32:
                 continue  # Timeout
             if Navi and HEAD_DIM == 256 and stages == 2:
+                continue  # Timeout
+            if HEAD_DIM >= 512 and M == 128 and N == 128 and warps == 2:
                 continue  # Timeout
             if dtype == '*fp32:16':
                 M //= 2
@@ -197,9 +203,15 @@ class attn_fwd(FlashKernel):
                 continue  # No optimal kernel according to 0.8b tuning db
             if Navi and M > 32 and N > 32 and warps == 1:
                 continue  # No optimal kernel according to 0.8b tuning db
-            kw = {'BLOCK_M': M, 'BLOCK_N': N, 'waves_per_eu': waves, 'pre_load_v': pre}
+            persistent_type = 2 if CAUSAL_TYPE != 0 else 0
+            kw = { 'PERSISTENT_TYPE' : persistent_type,
+                   'GRID_CU_MULTIP': 2,
+                   'BLOCK_M': M,
+                   'BLOCK_N': N,
+                   'waves_per_eu': waves,
+                   'PRE_LOAD_V': pre,
+                 }
             # TODO: Add Dyamic PERSISTENT_TYPE IFF causal is enabled to tuning database
-            kw['PERSISTENT_TYPE'] = 2 if CAUSAL_TYPE != 0 else 0
             yield Config(kw, num_stages=stages, num_warps=warps)
         if MI:
             pass

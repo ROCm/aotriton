@@ -23,20 +23,23 @@ class NoWriteIfNoUpdateFile(object):
     def __init__(self, ofn : Path):
         self._ofn = ofn
         self._old_content = ''
-        self._mf = io.StringIO()
-        if ofn.exists():
-            with open(ofn) as f:
-                self._old_content = f.read()
 
     @property
     def path(self):
         return self._ofn
 
+    def __enter__(self):
+        self._mf = io.StringIO()
+        if self._ofn.exists():
+            with open(self._ofn) as f:
+                self._old_content = f.read()
+        return self._mf
+
     @property
     def memory_file(self):
         return self._mf
 
-    def close(self):
+    def __exit__(self, exc_type, exc_val, exc_tb):
         mf = self.memory_file
         mf.seek(0)
         if mf.read() != self._old_content:
@@ -54,13 +57,24 @@ def parse():
     p.add_argument("--bare_mode", action='store_true', help="Instead of generating a proper Makefile, only generate a list of source files and leave the remaining tasks to cmake.")
     p.add_argument("--noimage_mode", action='store_true', help="Expect the GPU kernel images are built separately.")
     p.add_argument("--build_for_tuning", action='store_true', help="Include all GPU kernels in the dispatcher for performance tuning.")
+    p.add_argument("--build_for_tuning_but_skip_kernel", type=str, default='', nargs='*',
+                   help="Excluse certain GPU kernels for performance tuning when --build_for_tuning=True.")
     p.add_argument("--verbose", action='store_true', help="Print debugging messages")
     p.add_argument("--lut_sanity_check", action='store_true', help="Do not raise exceptions when the look up table (lut) is incomplete.")
     args = p.parse_args()
     args._build_root = Path(args.build_dir)
     args._sanity_check_exceptions = []
+    args.build_for_tuning_but_skip_kernel = args.build_for_tuning_but_skip_kernel
     # print(args)
     return args
+
+def is_tuning_on_for_kernel(args, k : 'KernelDescription'):
+    if not args.build_for_tuning:
+        return False
+    elif k.FULL_KERNEL_NAME in args.build_for_tuning_but_skip_kernel:
+        return False
+    else:
+        return True
 
 '''
 ShimMakefileGenerator
@@ -277,23 +291,18 @@ class KernelShimGenerator(MakefileSegmentGenerator):
         self._shim_path.mkdir(parents=True, exist_ok=True)
         self._shim_hdr = NoWriteIfNoUpdateFile(self._shim_path / Path(self.SHIM_FILE_STEM + '.h'))
         self._shim_src = NoWriteIfNoUpdateFile(self._shim_hdr.path.with_suffix('.cc'))
-        self._fhdr = self._shim_hdr.memory_file
-        self._fsrc = self._shim_src.memory_file
         # Autotune dispatcher
         self._autotune_path = Path(args.build_dir) / k.KERNEL_FAMILY / f'autotune.{k.SHIM_KERNEL_NAME}'
         self._autotune_path.mkdir(parents=True, exist_ok=True)
+        self._tuning = is_tuning_on_for_kernel(self._args, k)
         self._ktd = KernelTuningDatabase(SOURCE_PATH.parent / 'rules',
                                          k,
-                                         build_for_tuning=self._args.build_for_tuning)
+                                         build_for_tuning=self._tuning)
         self._objpaths = []
 
     @property
     def SHIM_FILE_STEM(self):
         return 'shim.' + self._kdesc.SHIM_KERNEL_NAME
-
-    def __del__(self):
-        self._shim_hdr.close()
-        self._shim_src.close()
 
     def write_body(self):
         ofn = self._shim_src.path.with_suffix('.o')
@@ -322,15 +331,16 @@ class KernelShimGenerator(MakefileSegmentGenerator):
 
         if self.is_bare:
             return
-        for o in k.gen_all_object_files(p, tuned_db=self._ktd, sancheck_fileexists=not args.build_for_tuning and not args.noimage_mode):
+        for o in k.gen_all_object_files(p, tuned_db=self._ktd, sancheck_fileexists=not self._tuning and not args.noimage_mode):
             yield ObjectShimCodeGenerator(self._args, k, o)
 
     def write_conclude(self):
         if self.is_bare:
             return
         objs = [c._odesc for c in self._children if isinstance(c, ObjectShimCodeGenerator)]
-        self._kdesc.write_shim_header(self._fhdr, objs)
-        self._kdesc.write_shim_source(self._fsrc, objs, noimage_mode=self._args.noimage_mode)
+        with self._shim_hdr as fhdr, self._shim_src as fsrc:
+            self._kdesc.write_shim_header(fhdr, objs)
+            self._kdesc.write_shim_source(fsrc, objs, noimage_mode=self._args.noimage_mode)
 
     @property
     def list_of_self_object_files(self) -> 'list[Path]':
@@ -357,10 +367,11 @@ class AutotuneCodeGenerator(MakefileSegmentGenerator):
                                                    noimage_mode=self._args.noimage_mode)
         except MissingLutEntry as e:
             self._ofn = e.ofn  # regardless --build_for_tuning or not
-            if not self._args.build_for_tuning:
+            if not is_tuning_on_for_kernel(self._args, self._kdesc):
                 do_raise = e
-                print(e)
+                print('raise', e)
                 self._args._sanity_check_exceptions.append(e)
+                # import ipdb; ipdb.set_trace()
                 for j in e.get_missing_lut_entries():
                     print("TUNE_FLASH --entry_from_json Item: ", j)
             else:

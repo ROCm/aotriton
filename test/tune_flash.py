@@ -35,6 +35,33 @@ from mptune.core import (
     KernelIndexProress,
 )
 
+def get_total_memory_from_amdsmi():
+    from amdsmi import (
+        amdsmi_init,
+        amdsmi_get_processor_handles,
+        amdsmi_get_gpu_vram_usage,
+        AmdSmiException,
+        amdsmi_shut_down,
+    )
+    amdsmi_init()
+    vram_cap = -1
+    try:
+        devices = amdsmi_get_processor_handles()
+        for device in devices:
+            vram_usage = amdsmi_get_gpu_vram_usage(device)
+            total_memory = vram_usage['vram_total'] / (1024 ** 1)  # MB -> GB
+            vram_cap = min(vram_cap, total_memory) if vram_cap > 0 else total_memory
+    except AmdSmiException as e:
+        print(e)
+    finally:
+        try:
+            amdsmi_shut_down()
+        except AmdSmiException as e:
+            print(e)
+    return vram_cap
+
+VRAM_CAP_IN_GB = get_total_memory_from_amdsmi()
+
 '''
 |----------------------------------------------------
 |FlashTup -> n * FlashTunerWorker -> FlashDbService |
@@ -44,7 +71,7 @@ from mptune.core import (
                  FlashTunerManager
 '''
 
-KERNEL_PRECEDENCE = ['attn_fwd', 'bwd_kernel_dk_dv', 'bwd_kernel_dq']
+KERNEL_PRECEDENCE = ['attn_fwd', 'bwd_kernel_dk_dv', 'bwd_kernel_dq', 'bwd_kernel_fuse']
 
 class FlashSourceMonad(Monad):
     def service_factory(self):
@@ -68,9 +95,10 @@ class FlashTunerSource(MonadService):
     def clamp_memory_usage(self, tup):
         a = self._args
         BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type = tup
-        if seqlen_q * seqlen_k * D_HEAD >= 2048 * 2048 * 256:
+        if seqlen_q * seqlen_k * D_HEAD >= 2048 * 2048 * VRAM_CAP_IN_GB:
             BATCH = min(BATCH, 3)
-        if (causal or bias_type != 0) and seqlen_q * seqlen_k * D_HEAD >= 2048 * 2048 * 256:
+            N_HEADS = min(N_HEADS, 4)
+        if (causal or bias_type != 0) and seqlen_q * seqlen_k * D_HEAD >= 2048 * 2048 * VRAM_CAP_IN_GB:
             # Prevent OOM, causal=True needs more memory
             N_HEADS = min(N_HEADS, 2)
             BATCH = min(BATCH, 2)
@@ -169,7 +197,7 @@ class FlashTunerSource(MonadService):
 
         for i, tup in enumerate(self.gen()):
             self.print(f"[{i:06d}] gen_itup {tup}")
-            batch, n_heads, d_head, seqlen_q, seqlen_k, causal = tup[:6]
+            batch, n_heads, d_head, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type = tup
             if a.selective_set:
                 if i in a.selective_set:
                     payload = TuningResult(tup=tup, kig_dict=self.create_kig_dict())
@@ -181,6 +209,14 @@ class FlashTunerSource(MonadService):
                 continue
             if i in skip_set:
                 continue
+            if a.skip_bias and bias_type:
+                continue
+            if a.min_seqlen_q is not None:
+                if seqlen_q < a.min_seqlen_q:
+                    continue
+            if a.min_seqlen_k is not None:
+                if seqlen_k < a.min_seqlen_k:
+                    continue
             if seqlen_q > a.max_seqlen_q or seqlen_k > a.max_seqlen_k:
                 if not a.complement_seqlens:
                     continue
@@ -270,13 +306,15 @@ def parse():
     p.add_argument('--sm_scale', type=float, nargs=1, default=[1.2], help='(Not a functional) Softmax Scale')
     p.add_argument('--return_encoded_softmax', type=bool, default=[False],
                    help="(A functional for debugging) kernel that returns softmax(dropout(QK')) to validate the correctness of dropout")
-    p.add_argument('--d_head', type=int, nargs=NARG_PLUS, default=[16, 32, 48, 64, 72, 80, 96, 128, 160, 192, 224, 256], help='Head dimensions.')
+    p.add_argument('--d_head', type=int, nargs=NARG_PLUS, default=[16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256, 512], help='Head dimensions.')
     # p.add_argument('--seqlen_q', type=int, nargs='+', default=[4,8,16,32,64,128,256,1024,2048,4096,8192], help='Sequence length of Q.')
     # p.add_argument('--seqlen_k', type=int, nargs='+', default=[4,8,16,32,64,128,256,1024,2048,4096,8192], help='Sequence length of K/V.')
     p.add_argument('--seqlen_q', type=int, nargs=NARG_PLUS, default=[4,8,16,32,64,128,256,512,1024,2048,4096,8192], help='Sequence length of Q.')
     p.add_argument('--seqlen_k', type=int, nargs=NARG_PLUS, default=[4,8,16,32,64,128,256,512,1024,2048,4096,8192], help='Sequence length of K/V.')
     p.add_argument('--max_seqlen_q', type=int, default=8192, help='A neat way to limit max value of --seqlen_q.')
     p.add_argument('--max_seqlen_k', type=int, default=8192, help='A neat way to limit max value of --seqlen_k.')
+    p.add_argument('--min_seqlen_q', type=int, default=None, help='A neat way to limit min value of --seqlen_q.')
+    p.add_argument('--min_seqlen_k', type=int, default=None, help='A neat way to limit min value of --seqlen_k.')
     p.add_argument('--complement_seqlens', action='store_true', help='Select NOT (seqlen_q <= max_seqlen_q and seqlen_k <= max_seqlen_k)')
     p.add_argument('--limit_memory_at_seqlen', type=int, default=4096, help='When testing with --entry_from_json, use batch=2 and n_heads=2 when seqlen_q*seqlen_k >= this_value ** 2.')
     p.add_argument('--causal', type=int, nargs=NARG_PLUS, default=[True,False], choices=[0, 1], help='Causal mask. (Use 0/1 for False/True')
@@ -287,6 +325,7 @@ def parse():
                    choices=['float16', 'bfloat16', 'float32'],
                    help='Datatype to profile.')
     p.add_argument('--bias_type', type=int, nargs=NARG_PLUS, default=[0, 1], choices=[0, 1], help='Bias types to profile, 0: None, 1: Matrix.')
+    p.add_argument('--skip_bias', action='store_true', help='A neat way to skip bias=1 without changing the task_id.')
     p.add_argument('--verbose', action='store_true', help='Verbose')
     p.add_argument('--validate',
                    action='store_true', help='Validate the correctness of the output to avoid faulty autotune configs')
@@ -322,6 +361,8 @@ def parse():
     args = p.parse_args()
     assert args.return_encoded_softmax == [False], ('Do not support tuning return_encoded_softmax=True. '
             'RETURN_ENCODED_SOFTMAX will be removed in the future and debug_fill_dropout_rng will be preferred choice.')
+    if args.complement_seqlens:
+        assert args.min_seqlen_q is None and args.min_seqlen_k is None, '--min_seqlen_q and --min_seqlen_k is not tested with --complement_seqlens'
     args.causal = [ bool(c) for c in args.causal ]
     if args.arch is None:
         args.arch = rocm_get_gpuarch()

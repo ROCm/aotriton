@@ -8,6 +8,15 @@
 
 namespace AOTRITON_NS {
 
+std::string_view gcnArchNameSansColon(const char* gcnArchName) {
+    std::string_view arch(gcnArchName);
+    const auto colon = arch.find(':');
+    if (colon != arch.npos) {
+      arch = std::string_view(gcnArchName, colon);
+    }
+    return arch;
+}
+
 struct LazyArch {
   LazyArch(hipDevice_t dev)
     : dev_(dev) {
@@ -17,11 +26,7 @@ struct LazyArch {
     hipError_t err = hipGetDeviceProperties(&prop, dev_);
     if (err != hipSuccess)
       return GPU_ARCH_UNKNOWN;
-    std::string_view arch(prop.gcnArchName);
-    const auto colon = arch.find(':');
-    if (colon != arch.npos) {
-      arch = std::string_view(prop.gcnArchName, colon);
-    }
+    auto arch = gcnArchNameSansColon(prop.gcnArchName);
     auto iter = string_to_arch.find(std::string(arch));
     if (iter == string_to_arch.end())
       return GPU_ARCH_UNKNOWN;
@@ -39,6 +44,7 @@ std::unordered_map<std::string, GpuArch> LazyArch::string_to_arch = {
   {"gfx1100", GPU_ARCH_AMD_GFX1100},
   {"gfx1101", GPU_ARCH_AMD_GFX1101},
   {"gfx950", GPU_ARCH_AMD_GFX950},
+  {"gfx1201", GPU_ARCH_AMD_GFX1201},
 };
 
 GpuArch
@@ -51,6 +57,11 @@ getArchFromStream(hipStream_t stream) {
   LazyArch lazy(dev);
   device_to_arch.try_emplace(dev, lazy);
   return device_to_arch[dev];
+}
+
+bool isArchExperimentallySupported(hipStream_t stream) {
+  auto arch = getArchFromStream(stream);
+  return (arch == GPU_ARCH_AMD_GFX950 || arch == GPU_ARCH_AMD_GFX1201);
 }
 
 int getMultiProcessorCount(hipStream_t stream) {

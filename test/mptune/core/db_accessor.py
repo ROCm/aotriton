@@ -133,6 +133,9 @@ class DbService(MonadService):
             'time' : atr.time,
             'adiffs' : atr.adiffs,
             'target_fudge_factors' : atr.target_fudge_factors,
+            'sgpr_spill_count' : atr.sgpr_spill_count,
+            'vgpr_spill_count' : atr.vgpr_spill_count,
+            'hip_status' : str(atr.hip_status),
             '_debug_kernel_index' : atr.kernel_index,
             '_debug_total_number_of_kernels' : atr.total_number_of_kernels,
         }

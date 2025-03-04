@@ -92,9 +92,13 @@ def debug_simulate_encoded_softmax(R,
                                    BLOCK_M: tl.constexpr,
                                    BLOCK_N: tl.constexpr,
                                    ):
-    philox_seed = tl.load(philox_seed_ptr)
+    # philox_seed = 0 sets philox_seed's dtype to i32
+    philox_seed = philox_seed_ptr.cast(dtype=tl.uint64, bitcast=True)
+    if philox_seed_ptr.cast(dtype=tl.uint64, bitcast=True) != 0:
+        philox_seed = tl.load(philox_seed_ptr)
     philox_offset_base = philox_offset2
-    philox_offset_base += tl.load(philox_offset1)
+    if philox_offset1.cast(dtype=tl.uint64, bitcast=True) != 0:
+        philox_offset_base += tl.load(philox_offset1)
     idropout_p = ((dropout_p - 0.5) * 0xFFFFFFFF).to(tl.int32)
     philox_offset_stride = tl.cdiv(Max_seqlen_k, PHILOX_RN_PER_OFFSET)
 

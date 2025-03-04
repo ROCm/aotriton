@@ -86,6 +86,9 @@ class KernelDescription(object):
                         self._DATA_ARGUMENTS[i] += '_ptr'
         return self._DATA_ARGUMENTS
 
+    def is_functional_disabled_on_gpu(self, gpu, fsels):
+        return False
+
     def insert_tensor_strides_to_choices(self, last_is_continuous=False):
         for tensor, strides in self.TENSOR_STRIDE_INPUTS.items():
             typed_strides = strides[:-1] if last_is_continuous else strides
@@ -191,6 +194,8 @@ class KernelDescription(object):
                                                         self.gen_func_selections()):
                         yield from self._gen_all_options_from_kdesc_autotune_configs(gpu, fsels)
                 else:
+                    # FIXME: This yield is incorrect (missing gpu and fsels)
+                    #        but apparently not triggering anything wrong right now.
                     for gpu, fsels in itertools.product(self._target_gpus,
                                                         self.gen_func_selections()):
                         yield from itertools.product(self.gen_perf_selections(gpu, fsels),
@@ -199,7 +204,14 @@ class KernelDescription(object):
                 # Not Build for Tuning, checking database
                 for gpu, fsels in itertools.product(self._target_gpus,
                                                     self.gen_func_selections()):
-                    yield from self.gen_tuned_perf_selections(tuned_db, gpu, fsels)
+                    if self.is_functional_disabled_on_gpu(gpu, fsels):
+                        # Empty tuning database
+                        # Disabling the compiling is done in generate_compile.py
+                        for psels in self.gen_perf_selections(gpu, fsels):
+                            yield gpu, fsels, psels, None
+                            break
+                    else:
+                        yield from self.gen_tuned_perf_selections(tuned_db, gpu, fsels)
         debug_counter = 0
         for gpu, fsels, psels, compiler_options in gen():
             try:

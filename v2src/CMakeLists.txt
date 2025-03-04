@@ -21,6 +21,14 @@ else(AOTRITON_BUILD_FOR_TUNING)
   set(GENERATE_OPTION "")
 endif()
 
+if(AOTRITON_BUILD_FOR_TUNING_BUT_SKIP_KERNEL)
+  if (NOT AOTRITON_BUILD_FOR_TUNING)
+    message(FATAL_ERROR "AOTRITON_BUILD_FOR_TUNING_BUT_SKIP_KERNEL is only relevant with AOTRITON_BUILD_FOR_TUNING=ON")
+  endif()
+  list(APPEND GENERATE_OPTION "--build_for_tuning_but_skip_kernel")
+  list(APPEND GENERATE_OPTION ${AOTRITON_BUILD_FOR_TUNING_BUT_SKIP_KERNEL})
+endif()
+
 if(AOTRITON_NOIMAGE_MODE)
   list(APPEND GENERATE_OPTION "--noimage_mode")
 endif()
@@ -70,6 +78,7 @@ if(NOT AOTRITON_NOIMAGE_MODE)
     add_custom_command(OUTPUT "${HSACO}"
       COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
       TRITON_CACHE_DIR=${CMAKE_BINARY_DIR}/triton-cache
+      TRITON_F32_DEFAULT="ieee"
       "${VENV_DIR}/bin/python"
       "${AOTRITON_COMPILER}"
       "${SRC}"

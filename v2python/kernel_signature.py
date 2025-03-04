@@ -88,7 +88,7 @@ class KernelSignature(object):
         l = [None] * len(self.arguments)
         for k, v in sig.items():
             l[k] = v
-        assert not any(element is None for element in l)
+        assert not any(element is None for element in l), f'l={l} kdesc: {self._kdesc.SHIM_KERNEL_NAME}'
         return l
 
     def codegen_perf_object(self) -> str:
@@ -111,3 +111,7 @@ class KernelSignature(object):
 
     def jsongen_copts(self) -> str:
         return json.dumps(self._compiler_options)
+
+    def is_functional_disabled(self):
+        return self._kdesc.is_functional_disabled_on_gpu(self._gpu, self._func_selections)
+

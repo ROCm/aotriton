@@ -18,14 +18,29 @@ class PackedKernel;
 
 class TritonKernel {
 public:
-  using Essentials = std::tuple<const void*, int, dim3>;
+  struct Essentials {
+    const void* image = nullptr;
+    size_t size = 0;
+    int shared_memory_size = 0;
+    dim3 block { 0, 0, 0 };
+  };
 
   TritonKernel(const char* package_path, const char* stem_name);
 
-  hipError_t invoke(const char* kernel_name, dim3 grid, std::vector<void*>& args, hipStream_t stream);
+  hipError_t invoke(const char* kernel_name,
+                    dim3 grid,
+                    std::vector<void*>& args,
+#if AOTRITON_BUILD_FOR_TUNING
+                    bool peek_kernel_image,
+#endif
+                    hipStream_t stream);
 
   void clear_decompressed_image();
 
+#if AOTRITON_BUILD_FOR_TUNING
+  // Will not work unless invoke is called at least once, i.e., If-and-only-iF decompressed
+  Essentials get_image_info_iff_decompressed() const;
+#endif
 private:
   std::tuple<hipFunction_t, hipError_t> load_for_device(int device_id, const char* kernel_name);
   hipFunction_t cfind_function(int device_id) const;
@@ -43,9 +58,7 @@ private:
   std::unordered_map<int, DeviceFunction> funcache_;
   std::shared_mutex funcache_mutex_;
 
-  int shared_memory_size_ = 0;
-  dim3 block_ { 256, 1, 1 };
-  const void* kernel_image_ = nullptr;
+  Essentials essentials_;
   bool kernel_loaded_ = false;
   void decompress_kernel();
   std::shared_ptr<PackedKernel> packed_kernel_ = nullptr;

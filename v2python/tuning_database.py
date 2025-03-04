@@ -4,7 +4,7 @@
 import pathlib
 import sqlite3
 from .kernel_argument import ArgumentSelection, TunedArgument
-from .gpu_targets import AOTRITON_GPU_ARCH_TUNING_STRING
+from .gpu_targets import AOTRITON_GPU_ARCH_TUNING_STRING, AOTRITON_TUNING_DATABASE_REUSE
 from .common_tuning_database import CommonKernelTuningDatabaseForArch
 from .sqlite_tuning_database import SQLiteKernelTuningDatabaseForArch
 from .downgrader import TuningDowngrader
@@ -74,7 +74,7 @@ class BootstrapTuningDatabaseForArch(EmptyKernelTuningDatabaseForArch):
                 perf_meta : 'list[ArgumentMetadata]'):
         fsel_dict = ArgumentSelection.build_fsel_dict(fsels)
         rows = []
-        for cfg in kdesc.gen_patched_autotune_configs(self._gpu, fsel_dict):
+        for cfg in kdesc.gen_autotune_configs(self._gpu, fsel_dict):
             psels, compiler_options = cfg.translate_to_psel_and_co(perf_meta)
             rows.append((psels, compiler_options))
         # print(f'get_lut {len(rows)=}')
@@ -104,6 +104,15 @@ class KernelTuningDatabase(object):
         for arch, in res.fetchall():
             dba = SQLiteKernelTuningDatabaseForArch(k, arch, self._conn, table_name, downgrader)
             self.arch_dict[arch] = dba
+
+        # Need a copy of DbForAch
+        for virtual, real in AOTRITON_TUNING_DATABASE_REUSE.items():
+            if virtual not in self.arch_dict:
+                if real in self.arch_dict:
+                    dba = SQLiteKernelTuningDatabaseForArch(k, real, self._conn, table_name, downgrader)
+                    self.arch_dict[virtual] = dba
+
+
 
     def select_gpu(self, gpu, index):
         arch = AOTRITON_GPU_ARCH_TUNING_STRING[gpu]

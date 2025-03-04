@@ -2,24 +2,30 @@
 # Copyright © 2023-2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
+import os
 import torch
 import queue
 from torch.multiprocessing import Process
+from aotriton_flash import IGNORE_BACKWARD_IMPORT
 from aotriton_flash import (
     attn_fwd,
-    attn_bwd,
-    attn_bwd_fused,
-    debug_fill_dropout_rng,
     debug_simulate_encoded_softmax,
     FwdExtraArguments,
-    BwdExtraArguments,
-    FusedBwdExtraArguments,
     hipError_t,
     AOTRITON_TORCH_ONLY_USE_CPU,
     HipMemory,
 )
+if not IGNORE_BACKWARD_IMPORT:
+    from aotriton_flash import (
+        attn_bwd,
+        attn_bwd_fused,
+        BwdExtraArguments,
+        FusedBwdExtraArguments,
+    )
 from collections import namedtuple
 from dataclasses import dataclass
+
+BWD_FUSED = bool(int(os.getenv('BWD_FUSED', default='0')))
 
 @dataclass
 class AttentionExtraArgs:
@@ -140,7 +146,8 @@ class _attention(torch.autograd.Function):
         ctx.attn_extra_args = attn_extra_args
         ctx.autotune = autotune
         ctx.return_autotune = return_autotune
-        assert not torch.isnan(M).any()
+        if attn_extra_args.is_testing:
+            assert not torch.isnan(M).any(), f'L tensor has NaN'
         return o, encoded_softmax, ctx.tuning_result
 
     @staticmethod
@@ -173,7 +180,8 @@ class _attention(torch.autograd.Function):
         if tuning_result is not None:
             ctx.tuning_result += tuning_result
 
-        assert not torch.isnan(delta).any(), f'{delta=}'
+        if attn_extra_args.is_testing:
+            assert not torch.isnan(delta).any(), f'{delta=}'
         return dq, dk, dv, db, None, None, None, None, None
 
     @staticmethod
@@ -195,11 +203,10 @@ class _attention(torch.autograd.Function):
         dk = torch.empty_like(k)
         dv = torch.empty_like(v)
         db = torch.empty_like(b) if b is not None else None
-        delta = torch.empty_like(L)
         seqlen_q = q.shape[2]
         seqlen_k = k.shape[2]
 
-        ret = attn_bwd_fused(q, k, v, b, sm_scale, o, do, dq, dk, dv, db, L, delta,
+        ret = attn_bwd_fused(q, k, v, b, sm_scale, o, do, dq, dk, dv, db, L,
                        dropout_p, philox_seed, philox_offset, 0, causal)
         assert ret == hipError_t.hipSuccess, ret
         tuning_result = None
@@ -207,8 +214,7 @@ class _attention(torch.autograd.Function):
         if tuning_result is not None:
             ctx.tuning_result += tuning_result
 
-        assert not torch.isnan(delta).any(), f'{delta=}'
         return dq, dk, dv, db, None, None, None, None, None
-    backward = backward_split
+    backward = backward_fused if BWD_FUSED else backward_split
 
 attention = _attention.apply

@@ -21,6 +21,7 @@ KNOWN_TARGETS = {
         'Navi31' : GPUTarget('hip', 'gfx1100', 32),
         'Navi32' : GPUTarget('hip', 'gfx1101', 32),
         'Unidentified' : GPUTarget('hip', 'gfx950', 64),
+        'RX9070XT' : GPUTarget('hip', 'gfx1201', 32),
 }
 
 desc = """

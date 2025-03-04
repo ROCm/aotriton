@@ -41,6 +41,9 @@ public:
     hipError_t launch(const [[param_class_name]]& params, hipStream_t stream);
     static int64_t get_arch_number(GpuArch arch);
 
+#if AOTRITON_BUILD_FOR_TUNING
+    bool peek_kernel_image = false;
+#endif
 private:
     GpuArch kernel_arch = GPU_ARCH_UNKNOWN;
 
