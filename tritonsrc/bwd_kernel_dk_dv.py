@@ -75,9 +75,9 @@ def bwd_kernel_dk_dv(
     BIAS_TYPE: tl.constexpr,
     PERSISTENT_TYPE: tl.constexpr,  # 0: disable, 1: fixed, 2: dynamic
     persistent_atomic_counter,
-    Num_CU : 'i32',
+    Num_CU : constexpr_or_i32,
     GRID_CU_MULTIP: tl.constexpr,
-    Batch: 'i32',
+    Batch: constexpr_or_i32,
 ):
     tl.static_assert(BLOCK_DMODEL > 0, 'BLOCK_DMODEL must be greater than 0')
     BLOCK_DMODEL_R0 : tl.constexpr = BLOCK_DMODEL
