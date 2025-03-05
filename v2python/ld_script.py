@@ -25,7 +25,9 @@ def write_linker_script(args):
             print(f"    BYTE(0x{c:02x})", file=f)
         print("""    BYTE(0)
   }
-}""", file=f)
+}
+INSERT AFTER .comment;
+""", file=f)
 
 def main():
     args = parse()
