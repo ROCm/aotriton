@@ -17,11 +17,14 @@ system, `ninja install` will run the whole build process unconditionally.
 
 ### Prerequisites
 
+* `python >= 3.10`
 * `gcc >= 8` or `clang >= 10`
-    + For Designated initializers, but only gcc >= 9 is tested.
-    + The binary delivery is compiled with gcc13
+  - For Designated initializers, but only gcc >= 9 is tested.
+  - The binary delivery is compiled with gcc13
 * `cmake >= 3.26`
+  - Only `cmake >= 3.30` is tested
 * `ninja`
+  - Only `ninja >= 1.11` is tested
 * `liblzma`
   - Common names are `liblzma-dev` or `xz-devel`.
 
@@ -38,7 +41,7 @@ The final build output is an archive object file any new project may link
 against.
 
 The archive file and header files are installed in the path specified by
-CMAKE_INSTALL_PREFIX.
+`CMAKE_INSTALL_PREFIX`.
 
 ## Kernel Support
 
@@ -47,10 +50,9 @@ Currently the first kernel supported is FlashAttention as based on the
 
 ## PyTorch Consumption & Compatibility
 
-PyTorch [recently](https://github.com/pytorch/pytorch/pull/121561) expanded
-AOTriton support for FlashAttention. AOTriton is consumed in PyTorch through
-the [SDPA kernels](https://github.com/pytorch/pytorch/blob/main/aten/src/ATen/native/transformers/hip/flash_attn/flash_api.hip).
-The Triton kernels and bundled archive are built at PyTorch [build time](https://github.com/pytorch/pytorch/blob/main/cmake/External/aotriton.cmake).
+AOTriton is consumed in PyTorch through
+the [SDPA kernels](https://github.com/pytorch/pytorch/blob/main/aten/src/ATen/native/transformers/hip/flash_attn/aot/mha_all_aot.hip).
+The precompiled binaries will be downloaded and shipped with PyTorch during [builds](https://github.com/pytorch/pytorch/blob/main/cmake/External/aotriton.cmake).
 
 CAVEAT: As a fast moving target, AOTriton's FlashAttention API changes over
 time. Hence, a specific PyTorch release is only compatible with a few versions
@@ -63,34 +65,29 @@ of AOTriton. The compatibility matrix is shown below
 |        2.4            |                   0.6b                          |
 |        2.5            |                   0.7b, 0.8b<sup>(1)</sup>      |
 |        2.6            |                   0.8b<sup>(2)</sup>            |
+|        2.7            |                   0.9b<sup>(3)</sup>            |
 
 1. 0.8b's API is backward compatible with 0.7b, but the packaging scheme
-    has changed drastically.
+   has changed drastically.
 2. PyTorch 2.6 requires some 0.8b-only features. Hence even if PyTorch 2.6
    can compile with 0.7b due to API compatibility, the end product will
    suffer from runtime errors.
+3. To be specific, it is shipped with 0.9.2b. 0.9b and 0.9.1b should not be
+   used in order to avoid linking issues, and confusion about version strings.
 
 ROCm's PyTorch release/\<version\> branch is slightly different from PyTorch
 upstream and may support more recent version of AOTriton
 
-|  PyTorch ROCm Fork    |           AOTriton Feature Release              |
+|  PyTorch ROCm Fork    |           AOTriton Release                      |
 |-----------------------|-------------------------------------------------|
 |  2.2 and earlier      |               N/A, no support                   |
 |        2.3            |                   0.4b                          |
 |        2.4            |                   0.7b (backported)             |
-|        2.5            |                   0.7b (once released)          |
-|        2.6            |                   0.8b (once released)          |
+|        2.5            |                   0.8b (backported)             |
+|        2.6            |                   0.8b (backported)             |
+|        2.7            |                   0.9b (once released)          |
 
 ### Point Release
 
 AOTriton's point releases maintain ABI compatibility and can be used as drop-in
 replacement of their corresponding feature releases.
-
-For PyTorch main branch, check
-[aotriton_version.txt](https://github.com/pytorch/pytorch/blob/main/.ci/docker/aotriton_version.txt).
-The first line is the tag name, and the 4th line is the SHA-1 commit of
-AOTriton.
-
-Note: we are migrating away from `aotriton_version.txt` file. If this file disappears, check
-[aotriton.cmake](https://github.com/pytorch/pytorch/blob/main/cmake/External/aotriton.cmake)
-instead.
