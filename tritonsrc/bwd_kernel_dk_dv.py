@@ -91,10 +91,12 @@ def bwd_kernel_dk_dv(
     tl.static_assert(BLOCK_DMODEL_R3 == 0, f'BLOCK_DMODEL = {BLOCK_DMODEL} = 0b{BLOCK_DMODEL:b} cannot be factored into <= 3 power of two values')
     tl.static_assert(BLOCK_DMODEL1 > 0 or BLOCK_DMODEL2 == 0, 'Only trailing BLOCK_DMODELx can be 0')
 
-    # Initialize causal mask type
+    # Adaptor code for AOTriton, to minimize main body code change
+    ## tl.constexpr to variable
     IS_CAUSAL : tl.constexpr = CAUSAL_TYPE != 0
     IS_CAUSAL_BOTTOM_RIGHT : tl.constexpr = CAUSAL_TYPE == 2
-
+    PERSISTENT : tl.constexpr = (PERSISTENT_TYPE > 0)
+    PERSISTENT_DYNAMIC : tl.constexpr = (PERSISTENT_TYPE == 2)
     # Initialize philox for dropout
     idropout_p = ((dropout_p - 0.5) * 0xFFFFFFFF).to(tl.int32)
     philox_seed = 0
@@ -103,10 +105,7 @@ def bwd_kernel_dk_dv(
     if ENABLE_DROPOUT:
         philox_seed = tl.load(philox_seed_ptr)
         philox_offset_base += tl.load(philox_offset1)
-    
-    # Setup for Persistent Dynamic optimization
-    PERSISTENT = (PERSISTENT_TYPE > 0)
-    PERSISTENT_DYNAMIC = (PERSISTENT_TYPE == 2)
+
     tile_id = 0
     num_tiles_total = 1
     num_tiles_per_head = 1

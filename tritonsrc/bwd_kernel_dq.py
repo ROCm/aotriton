@@ -85,7 +85,9 @@ def bwd_kernel_dq(
 
     tl.static_assert(BLOCK_DMODEL_R3 == 0, f'BLOCK_DMODEL = {BLOCK_DMODEL} = 0b{BLOCK_DMODEL:b} cannot be factored into <= 3 power of two values')
     tl.static_assert(BLOCK_DMODEL1 > 0 or BLOCK_DMODEL2 == 0, 'Only trailing BLOCK_DMODELx can be 0')
-
+    
+    # Adaptor code for AOTriton, to minimize main body code change
+    ## tl.constexpr to variable
     IS_CAUSAL : tl.constexpr = CAUSAL_TYPE != 0
     IS_CAUSAL_BOTTOM_RIGHT : tl.constexpr = CAUSAL_TYPE == 2
     USE_BIAS : tl.constexpr = BIAS_TYPE == 1
@@ -102,7 +104,6 @@ def bwd_kernel_dq(
         philox_seed = tl.load(philox_seed_ptr)
         philox_offset_base += tl.load(philox_offset1)
 
-    # Default values for standard kernel
     tile_id = 0
     num_tiles_total = 1
     num_tiles_per_head = 1
@@ -228,7 +229,6 @@ def bwd_kernel_dq(
                                                         BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
                                                         TRANSPOSED=True)
 
-            # Initialize pointers to DO
             do_ptrs0, do_ptrs1, do_ptrs2 = composed_ptrs(DO,
                                                         stride_oz, stride_oh, stride_om, stride_ok,
                                                         batch_index, off_h_q, cu_seqlens_q_start + offs_q,
