@@ -7,8 +7,8 @@ project(AOTriton CXX C)
 
 # Version numbers
 set(AOTRITON_VERSION_MAJOR_INT 0)
-set(AOTRITON_VERSION_MINOR_INT 9)
-set(AOTRITON_VERSION_PATCH_INT 2)
+set(AOTRITON_VERSION_MINOR_INT 10)
+set(AOTRITON_VERSION_PATCH_INT 0)
 # Must have integer-suffix, other 0 generates
 # /* #undef AOTRITON_VERSION_MAJOR */
 # in config.h
