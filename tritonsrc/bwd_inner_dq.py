@@ -131,9 +131,10 @@ def bwd_inner_dq(
         # FIXME: Potential bug https://github.com/ROCm/aotriton/issues/54
         p = tl.math.exp2(qk_scale * qk - l_i[:, None])
 
-        if not FULL_BLOCKS or CAUSAL:
-            if qk_scale == 0.0:
-                p = tl.where(libdevice.isnan(p), 0.0, p)
+        # if not FULL_BLOCKS or CAUSAL:
+        #     if qk_scale == 0.0:
+        #         p = tl.where(libdevice.isnan(p), 0.0, p)
+        p = tl.where(libdevice.isnan(p), 0.0, p)
 
         # compute dp = dot(v, do)
         dp = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)

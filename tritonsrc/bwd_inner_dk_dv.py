@@ -165,9 +165,10 @@ def bwd_inner_dk_dv(
         # FIXME: Potential bug https://github.com/ROCm/aotriton/issues/54
         p = tl.math.exp2(qk_scale * qk - l_i) # (BLOCK_M, BLOCK_N)
 
-        if not FULL_BLOCKS or CAUSAL:
-            if qk_scale == 0.0:
-                p = tl.where(libdevice.isnan(p), 0.0, p)
+        # if not FULL_BLOCKS or CAUSAL:
+        #     if qk_scale == 0.0:
+        #         p = tl.where(libdevice.isnan(p), 0.0, p)
+        p = tl.where(libdevice.isnan(p), 0.0, p)
         # -- compute dv ----
         if ENABLE_DROPOUT:
             # philox_offset = batch_philox_offset + start_q * philox_offset_stride + start_k
