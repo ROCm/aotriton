@@ -147,6 +147,7 @@ bwd_kernel_dk_dv(T4 q,
                  T0 philox_offset1,
                  int64_t philox_offset2,
                  bool is_causal,
+                 T0 persistent_atomic_counter,
                  AOTRITON_NS::Stream stream_wrap,
                  BwdExtraArguments* extargs) {
   hipError_t err;
@@ -209,10 +210,13 @@ bwd_kernel_dk_dv(T4 q,
     .philox_offset1 = &philox_offset1,
     .philox_offset2 = static_cast<uint64_t>(philox_offset2),
     .BLOCK_DMODEL = head_size_rounded,
-    .CAUSAL = is_causal,
+    .CAUSAL_TYPE = is_causal ? 1 : 0,
     .ENABLE_DROPOUT = dropout_p > 0.0,
     .PADDED_HEAD = head_size_rounded != head_size,
     .BIAS_TYPE = bias_type,
+    .persistent_atomic_counter = &persistent_atomic_counter,
+    .Num_CU = is_causal ? getMultiProcessorCount(stream) : 80,
+    .Batch = num_seqlens == 0 ? q.size(0) : num_seqlens,
   };
 #if AOTRITON_BUILD_FOR_TUNING
   if (extargs) {
@@ -270,6 +274,7 @@ bwd_kernel_dq(T4 q,
               T0 philox_offset1,
               int64_t philox_offset2,
               bool is_causal,
+              T0 persistent_atomic_counter,
               AOTRITON_NS::Stream stream_wrap,
               BwdExtraArguments* extargs) {
   hipError_t err;
@@ -332,10 +337,13 @@ bwd_kernel_dq(T4 q,
     .philox_offset1 = &philox_offset1,
     .philox_offset2 = static_cast<uint64_t>(philox_offset2),
     .BLOCK_DMODEL = head_size_rounded,
-    .CAUSAL = is_causal,
+    .CAUSAL_TYPE = is_causal ? 1 : 0,
     .ENABLE_DROPOUT = dropout_p > 0.0,
     .PADDED_HEAD = head_size_rounded != head_size,
     .BIAS_TYPE = bias_type,
+    .persistent_atomic_counter = &persistent_atomic_counter,
+    .Num_CU = is_causal ? getMultiProcessorCount(stream) : 80,
+    .Batch = num_seqlens == 0 ? q.size(0) : num_seqlens,
   };
 #if AOTRITON_BUILD_FOR_TUNING
   if (extargs) {
@@ -396,6 +404,7 @@ _attn_bwd_common(T4 q,
                  T0 philox_offset1,
                  int64_t philox_offset2,
                  bool is_causal,
+                 T0 atomic_for_causal,
                  AOTRITON_NS::Stream stream,
                  BwdExtraArguments* extargs) {
   hipError_t ret;
@@ -426,6 +435,7 @@ _attn_bwd_common(T4 q,
                          philox_offset1,
                          philox_offset2,
                          is_causal,
+                         atomic_for_causal,
                          stream,
                          extargs);
 
@@ -452,6 +462,7 @@ _attn_bwd_common(T4 q,
                       philox_offset1,
                       philox_offset2,
                       is_causal,
+                      atomic_for_causal,
                       stream,
                       extargs);
   return ret;
@@ -476,6 +487,7 @@ attn_bwd(T4 q,
          T0 philox_offset1,
          int64_t philox_offset2,
          bool is_causal,
+         T0 atomic_for_causal,
          AOTRITON_NS::Stream stream,
          BwdExtraArguments* extargs) {
   auto null_t1 = T1::get_null_tensor(DType::kInt32);
@@ -502,6 +514,7 @@ attn_bwd(T4 q,
                           philox_offset1,
                           philox_offset2,
                           is_causal,
+                          atomic_for_causal,
                           stream,
                           extargs);
 }
@@ -529,6 +542,7 @@ attn_bwd_compact_varlen(T4 q,            // 1 x num_heads x total_q x head_size,
                         T0 philox_offset1,
                         int64_t philox_offset2,
                         bool is_causal,
+                        T0 atomic_for_causal,
                         AOTRITON_NS::Stream stream,
                         BwdExtraArguments* extargs) {
   return _attn_bwd_common(q,
@@ -554,6 +568,7 @@ attn_bwd_compact_varlen(T4 q,            // 1 x num_heads x total_q x head_size,
                           philox_offset1,
                           philox_offset2,
                           is_causal,
+                          atomic_for_causal,
                           stream,
                           extargs);
 }
