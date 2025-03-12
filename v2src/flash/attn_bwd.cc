@@ -154,13 +154,27 @@ bwd_kernel_dk_dv(T4 q,
   auto stream = stream_wrap.native();
   auto arch = getArchFromStream(stream);
   auto grid_calculator = [max_seqlen_k](const BwdKernelDkDvParams& params) -> dim3 {
+    bool unsupported_by_persistent = params.Num_seqlens != 0;
+    auto nblocks = AOTRITON_NS::cdiv<uint32_t>(max_seqlen_k, params.BLOCK_N);
+    if (params.PERSISTENT_TYPE == 0 || unsupported_by_persistent) {
+      dim3 grid {
+          nblocks,
+          uint32_t(params.K->size(1)),
+          params.Batch,
+      };
+      // std::cerr << "bwd_kernel_dk_dv grid conf " << grid.x << " " << grid.y << " " << grid.z << std::endl;
+      return grid;
+    }
+    // PERSISTENT or PERSISTENT_DYNAMIC
+    int from_cu = params.Num_CU * params.GRID_CU_MULTIP;
+    int from_in = nblocks * params.num_head_k * params.Batch;
     dim3 grid {
-      AOTRITON_NS::cdiv<uint32_t>(max_seqlen_k, params.BLOCK_N),
-      uint32_t(params.K->size(1)),
-      params.num_seqlens == 0 ? uint32_t(params.Q->size(0)) : params.num_seqlens,
+      std::min(from_cu, from_in),
+      1,
+      1,
     };
-    // std::cerr << "bwd_kernel_dk_dv grid conf " << grid.x << " " << grid.y << " " << grid.z << std::endl;
     return grid;
+
   };
   constexpr int kMinHeadDimCompiled = 16;
   int head_size = q.size(3);
@@ -281,13 +295,27 @@ bwd_kernel_dq(T4 q,
   auto stream = stream_wrap.native();
   auto arch = getArchFromStream(stream);
   auto grid_calculator = [num_seqlens, max_seqlen_q](const BwdKernelDqParams& params) -> dim3 {
+    bool unsupported_by_persistent = params.Num_seqlens != 0;
+    auto nblocks = AOTRITON_NS::cdiv<uint32_t>(max_seqlen_q, params.BLOCK_M);
+    if (params.PERSISTENT_TYPE == 0 || unsupported_by_persistent) {
+      dim3 grid {
+        nblocks,
+        uint32_t(params.Q->size(1)),
+        params.Batch,
+      };
+      // std::cerr << "bwd_kernel_dq grid conf " << grid.x << " " << grid.y << " " << grid.z << std::endl;
+      return grid;
+    }
+
+    int from_cu = params.Num_CU * params.GRID_CU_MULTIP;
+    int from_in = nblocks * params.num_head_q * params.Batch;
     dim3 grid {
-      AOTRITON_NS::cdiv<uint32_t>(max_seqlen_q, params.BLOCK_M),
-      uint32_t(params.Q->size(1)),
-      params.num_seqlens == 0 ? uint32_t(params.Q->size(0)) : params.num_seqlens,
+      std::min(from_cu, from_in),
+      1,
+      1,
     };
-    // std::cerr << "bwd_kernel_dq grid conf " << grid.x << " " << grid.y << " " << grid.z << std::endl;
     return grid;
+
   };
   constexpr int kMinHeadDimCompiled = 16;
   int head_size = q.size(3);
