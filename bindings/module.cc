@@ -108,6 +108,7 @@ namespace pyaotriton {
               py::arg("philox_offset1"),
               py::arg("philox_offset2"),
               py::arg("is_causal"),
+              py::arg("atomic_for_causal"),
               py::arg("stream") = nullptr,
               py::arg("extargs") = BwdExtraArguments());
         m.def("attn_bwd_fused",
@@ -159,6 +160,7 @@ namespace pyaotriton {
               py::arg("philox_offset1"),
               py::arg("philox_offset2"),
               py::arg("is_causal"),
+              py::arg("atomic_for_causal"),
               py::arg("stream") = nullptr,
               py::arg("extargs") = BwdExtraArguments());
         m.def("debug_fill_dropout_rng",
