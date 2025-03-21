@@ -21,7 +21,11 @@ struct [[param_class_name]] {
     // Performance related arguments for current selection
     [[perf_fields]];
 
-    TritonKernel* selected_kernel = nullptr;
+    TritonKernel* kernel_on_device = nullptr;
+    std::string_view package_path;
+    std::string_view func_name;
+    std::string_view arch_name;
+    // Note to save ELF space, this object is constructed on the fly.
     const char* _debug_kernel_name = nullptr;
 #if AOTRITON_BUILD_FOR_TUNING
     int _has_preferred_kernel = -1; // For C++ based autotune database generation

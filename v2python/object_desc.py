@@ -25,7 +25,7 @@ class ObjectFileDescription(object):
     DEFAULT_NUM_STAGES = 1
     DEFAULT_WAVES_PER_EU = 1
 
-    def build_kernel_filename(self, signature: 'KernelSignature'):
+    def build_kernel_filename(self, sig: 'KernelSignature'):
         # print(f"{gpu=} {fsels=} {psels=} {compiler_options=}")
         # sig = KernelSignature(self, fsels, psels, compiler_options, gpu)
         # fn = file_name_prefix + '-Kernel-' if file_name_prefix else ''
@@ -79,11 +79,15 @@ class ObjectFileDescription(object):
 
     @property
     def compact_signature_components(self):
-        return self._signature.get_compact_filename_components()
+        return self._signature.get_compact_signature_components()
 
     @property
     def human_readable_signature(self):
         return self._signature.human_readable_signature
+
+    @property
+    def blake2b_compact_signature(self):
+        return self._signature.blake2b_compact_signature
 
     @property
     def c_identifier_signature(self):

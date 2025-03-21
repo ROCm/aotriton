@@ -27,14 +27,16 @@ PerfFields image_perf_list [] = {
     [[kernel_image_perfs]]
 };
 
-const char* PACKAGE_PATH = [[package_path]];
+constexpr std::string_view PACKAGE_PATH { R"xyzw([[package_path]])xyzw" };
+constexpr std::string_view FUNC_NAME { R"xyzw([[func_name]])xyzw" };
+constexpr std::string_view ARCH_NAME { R"xyzw([[arch_name]])xyzw" };
 
-AOTRITON_NS::TritonKernel image_list [] = {
+AOTRITON_NS::TritonKernel kernel_list[] = {
     [[kernel_image_objects]]
 };
 
 #if AOTRITON_BUILD_FOR_TUNING
-static constexpr int total_num_kernels = ARRAY_SIZE(image_list);
+static constexpr int total_num_kernels = ARRAY_SIZE(kernel_list);
 #endif
 
 [[lut_dtype]] lut[[lut_shape]] = [[lut_data]];
@@ -52,7 +54,7 @@ void CURRENT_ENTRY_PUBLIC::operator()([[param_class_name]]& params) {
     if (preferred_index != -1) {
         if (preferred_index >= total_num_kernels)
             return ;
-        params.selected_kernel = &image_list[preferred_index];
+        params.selected_kernel = &kernel_list[preferred_index];
         params._preferred_kernel_psels = kernel_psels[preferred_index];
         params._preferred_kernel_copts = kernel_copts[preferred_index];
         const auto& perf = image_perf_list[preferred_index];
@@ -65,7 +67,10 @@ void CURRENT_ENTRY_PUBLIC::operator()([[param_class_name]]& params) {
     if (kernel_index < 0) {
       return ;
     }
-    params.selected_kernel = &image_list[kernel_index];
+    params.kernel_on_device = &kernel_list[kernel_index];
+    params.package_path = PACKAGE_PATH;
+    params.func_name = FUNC_NAME;
+    params.arch_name = ARCH_NAME;
 #ifndef NDEBUG
     std::cerr << __FILE__ << " kernel_index = " << int(kernel_index) << std::endl;
 #endif

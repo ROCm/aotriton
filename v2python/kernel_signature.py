@@ -3,6 +3,7 @@
 
 from .gpu_targets import AOTRITON_GPU_ARCH_TUNING_STRING
 import json
+import hashlib
 from .kernel_argument import ArgumentSelection
 
 class KernelSignature(object):
@@ -42,15 +43,15 @@ class KernelSignature(object):
         lf = [s.compact_signature for s in self._func_selections]
         lp = [s.compact_signature for s in self._perf_selections]
         lc = [f'{self.get_compact_compiler_option_name(k)}{v}' for k, v in self._compiler_options.items() if k != '_debug']
-        func = '_'.join([x for x in lf if x is not None])
-        perf = '_'.join([x for x in lp if x is not None])
+        fsel = '_'.join([x for x in lf if x is not None])
+        psel = '_'.join([x for x in lp if x is not None])
         copts = '_'.join([x for x in lc if x is not None])
-        return func, perf, copts
+        return fsel, psel, copts
 
     @property
     def compact_signature(self):
-        func, perf, copts = self.get_compact_signature_components()
-        return 'F__' + sf + '__P__' + sp + '__CO__' + co
+        fsel, psel, copts = self.get_compact_signature_components()
+        return 'F__' + fsel + '__P__' + psel + '__CO__' + copts
 
     @property
     def human_readable_signature(self):
@@ -119,3 +120,8 @@ class KernelSignature(object):
     def is_functional_disabled(self):
         return self._kdesc.is_functional_disabled_on_gpu(self._gpu, self._func_selections)
 
+    @property
+    def blake2b_compact_signature(self):
+        s = self.compact_signature
+        h = hashlib.blake2b(s.encode('utf-8'), digest_size=8)
+        return h.hexdigest()

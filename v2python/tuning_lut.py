@@ -166,14 +166,25 @@ class KernelTuningEntryForFunctionalOnGPU(object):
         for _, _, o in self.gen_kernel_symbols(kernel_image_dir):
             dir_arch = Path(GPU_TO_DIRECTORY[o.target_gpu])
             fonly = o.functional_signature + '_' + GPU_TO_CLUSTER_SUFFIX[o.target_gpu]
-            return 'R"xyzw(' + str(dir_arch / o.KERNEL_FAMILY / o.SHIM_KERNEL_NAME / fonly) + ')xyzw"'
+            return str(dir_arch / o.KERNEL_FAMILY / o.SHIM_KERNEL_NAME / fonly)
+
+    def codegen_func_name(self, kernel_image_dir):
+        for _, _, o in self.gen_kernel_symbols(kernel_image_dir):
+            fsel, psel, copts = o.compact_signature_components
+            return fsel
+
+    def codegen_arch_name(self, kernel_image_dir):
+        for _, _, o in self.gen_kernel_symbols(kernel_image_dir):
+            return o.target_gpu
 
     def codegen_kernel_image_objects(self, kernel_image_dir, noimage_mode):
         kernel_image_symbols = []
         for _, _, o in self.gen_kernel_symbols(kernel_image_dir):
             if not noimage_mode and not self._feature_disabled:
                 assert o.compiled_files_exist, f'Compiled file {o._hsaco_kernel_path} not exists'
-            kernel_image_symbols.append(f'{{ PACKAGE_PATH, "{o.obj.stem}" }},')
+            fsel, psel, copts = o.compact_signature_components
+            b2sum_u64 = o.blake2b_compact_signature
+            kernel_image_symbols.append(f'{{ 0x{b2sum_u64}UL, "{psel}", "{copts}" }},')
         ALIGN = '\n' + 4 * ' '
         return ALIGN.join(kernel_image_symbols)
 
@@ -216,6 +227,8 @@ class KernelTuningEntryForFunctionalOnGPU(object):
             'godel_number'          : godel_number,
             'perf_fields'           : ';\n    '.join(self._kdesc.perf_fields),
             'package_path'          : self.codegen_package_path(gpu_kernel_image_dir),
+            'func_name'             : self.codegen_func_name(gpu_kernel_image_dir),
+            'arch_name'             : self.codegen_arch_name(gpu_kernel_image_dir),
             'kernel_image_objects'  : self.codegen_kernel_image_objects(gpu_kernel_image_dir,
                                                                         noimage_mode=noimage_mode),
             'kernel_image_perfs'    : self.codegen_kernel_image_perfs(gpu_kernel_image_dir),
