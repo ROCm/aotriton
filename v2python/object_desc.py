@@ -25,16 +25,28 @@ class ObjectFileDescription(object):
     DEFAULT_NUM_STAGES = 1
     DEFAULT_WAVES_PER_EU = 1
 
+    def build_kernel_filename(self, signature: 'KernelSignature'):
+        # print(f"{gpu=} {fsels=} {psels=} {compiler_options=}")
+        # sig = KernelSignature(self, fsels, psels, compiler_options, gpu)
+        # fn = file_name_prefix + '-Kernel-' if file_name_prefix else ''
+        # kernel_name =  if kernel_name is None else kernel_name
+        fn = self.SHIM_KERNEL_NAME
+        # print(f'{sig.compact_signature=}')
+        fn += '-Sig-' + sig.compact_signature
+        fn += '-Gpu-' + sig.target_gpu
+        fn += '.hsaco'
+        return fn
+
     def __init__(self,
                  triton_kernel_desc : 'KernelDescription',
                  signature: 'KernelSignature',
-                 hsaco_kernel_path : Path,
+                 hsaco_outpath : Path,
                  sancheck_fileexists = False):
         self._triton_kernel_desc = triton_kernel_desc
         self.KERNEL_FAMILY = self._triton_kernel_desc.KERNEL_FAMILY
         self.SHIM_KERNEL_NAME = self._triton_kernel_desc.SHIM_KERNEL_NAME
         self._signature = signature
-        self._hsaco_kernel_path = Path(hsaco_kernel_path)
+        self._hsaco_kernel_path = hsaco_outpath / self.build_kernel_filename(signature)
         # self._hsaco_metatdata_path = Path() if triton_metadata_path is None else self._triton_file_path.with_suffix('.json')
         self._hsaco_metatdata_path = self._hsaco_kernel_path.with_suffix('.json')
         if self.compiled_files_exist:
@@ -64,6 +76,10 @@ class ObjectFileDescription(object):
     @property
     def compact_signature(self):
         return self._signature.compact_signature
+
+    @property
+    def compact_signature_components(self):
+        return self._signature.get_compact_filename_components()
 
     @property
     def human_readable_signature(self):

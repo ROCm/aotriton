@@ -38,14 +38,18 @@ class KernelSignature(object):
     def godel_number(self):
         return sum([s.godel_number for s in self._func_selections])
 
-    @property
-    def compact_signature(self):
+    def get_compact_signature_components(self):
         lf = [s.compact_signature for s in self._func_selections]
         lp = [s.compact_signature for s in self._perf_selections]
         lc = [f'{self.get_compact_compiler_option_name(k)}{v}' for k, v in self._compiler_options.items() if k != '_debug']
-        sf = '_'.join([x for x in lf if x is not None])
-        sp = '_'.join([x for x in lp if x is not None])
-        co = '_'.join([x for x in lc if x is not None])
+        func = '_'.join([x for x in lf if x is not None])
+        perf = '_'.join([x for x in lp if x is not None])
+        copts = '_'.join([x for x in lc if x is not None])
+        return func, perf, copts
+
+    @property
+    def compact_signature(self):
+        func, perf, copts = self.get_compact_signature_components()
         return 'F__' + sf + '__P__' + sp + '__CO__' + co
 
     @property

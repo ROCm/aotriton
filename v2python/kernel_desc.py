@@ -227,16 +227,7 @@ class KernelDescription(object):
                     break
 
     def build_object_file_description(self, outpath, sig, sancheck_fileexists=False):
-        # print(f"{gpu=} {fsels=} {psels=} {compiler_options=}")
-        # sig = KernelSignature(self, fsels, psels, compiler_options, gpu)
-        # fn = file_name_prefix + '-Kernel-' if file_name_prefix else ''
-        # kernel_name =  if kernel_name is None else kernel_name
-        fn = self.SHIM_KERNEL_NAME
-        # print(f'{sig.compact_signature=}')
-        fn += '-Sig-' + sig.compact_signature
-        fn += '-Gpu-' + sig.target_gpu
-        fn += '.hsaco'
-        return ObjectFileDescription(self, sig, outpath / fn, sancheck_fileexists=sancheck_fileexists)
+        return ObjectFileDescription(self, sig, outpath, sancheck_fileexists=sancheck_fileexists)
 
     def gen_tuned_kernel_lut(self, tuned_db : 'KernelTuningDatabase') -> 'Iterator[KernelTuningLutForGPU]':
         for gpu, fsels in itertools.product(self._target_gpus,
