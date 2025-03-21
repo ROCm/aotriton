@@ -105,7 +105,7 @@ def bwd_kernel_fuse(
         num_z = tl.num_programs(2)
         off_zh = off_z * num_head_q + off_h_q * 1
         offs_q = start_q + tl.arange(0, BLOCK_N)
-        offs_n = tl.arange(0, BLOCK_M)
+        offs_n_dq = tl.arange(0, BLOCK_M)
 
         philox_seed = 0
         philox_offset_base = philox_offset2
@@ -176,12 +176,12 @@ def bwd_kernel_fuse(
 
         kt_ptrs0, kt_ptrs1, kt_ptrs2 = composed_ptrs(K,
                                                      stride_kz, stride_kh, stride_kn, stride_kk,
-                                                     batch_index, off_h_k, cu_seqlens_k_start + offs_n,
+                                                     batch_index, off_h_k, cu_seqlens_k_start + offs_n_dq,
                                                      BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
                                                      TRANSPOSED=True)
         vt_ptrs0, vt_ptrs1, vt_ptrs2 = composed_ptrs(V,
                                                      stride_vz, stride_vh, stride_vk, stride_vn,
-                                                     batch_index, off_h_k, cu_seqlens_k_start + offs_n,
+                                                     batch_index, off_h_k, cu_seqlens_k_start + offs_n_dq,
                                                      BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
                                                      TRANSPOSED=True)
 
