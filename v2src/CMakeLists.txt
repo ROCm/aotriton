@@ -202,6 +202,9 @@ execute_process(
 )
 target_link_options(aotriton_v2 PRIVATE
                     -T "${AOTRITON_V2_BUILD_DIR}/set_aotriton_version.ld")
+# Otherwise the binary size blows up
+# FIXME: Properly export symbols
+set_target_properties(aotriton_v2 PROPERTIES CXX_VISIBILITY_PRESET hidden)
 
 include(GNUInstallDirs)
 message("CMAKE_INSTALL_INCLUDEDIR ${CMAKE_INSTALL_INCLUDEDIR}")
