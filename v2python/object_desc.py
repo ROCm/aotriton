@@ -4,6 +4,7 @@
 
 from pathlib import Path
 import json
+import hashlib
 
 SOURCE_PATH = Path(__file__).resolve()
 
@@ -85,9 +86,13 @@ class ObjectFileDescription(object):
     def human_readable_signature(self):
         return self._signature.human_readable_signature
 
-    @property
-    def blake2b_compact_signature(self):
-        return self._signature.blake2b_compact_signature
+    def blake2b_hash(self, package_path):
+        raw = package_path.encode('utf-8')
+        _, psel, copts = self.compact_signature_components
+        s = '__P__' + psel + '__CO__' + copts + '-Gpu-' + self._signature.target_gpu
+        raw += s.encode('utf-8')
+        h = hashlib.blake2b(raw, digest_size=8)
+        return h.hexdigest(), raw
 
     @property
     def c_identifier_signature(self):

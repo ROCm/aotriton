@@ -3,7 +3,6 @@
 
 from .gpu_targets import AOTRITON_GPU_ARCH_TUNING_STRING
 import json
-import hashlib
 from .kernel_argument import ArgumentSelection
 
 class KernelSignature(object):
@@ -119,9 +118,3 @@ class KernelSignature(object):
 
     def is_functional_disabled(self):
         return self._kdesc.is_functional_disabled_on_gpu(self._gpu, self._func_selections)
-
-    @property
-    def blake2b_compact_signature(self):
-        s = self.compact_signature
-        h = hashlib.blake2b(s.encode('utf-8'), digest_size=8)
-        return h.hexdigest()
