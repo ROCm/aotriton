@@ -51,7 +51,7 @@ public:
 private:
     GpuArch kernel_arch = GPU_ARCH_UNKNOWN;
 
-    using AutoTuneTableEntry = std::function<void([[param_class_name]]& params)>;
+    typedef void (*AutoTuneTableEntry)([[param_class_name]]& params);
     static AutoTuneTableEntry autotune_table[][ [[number_of_functionals]] ];
 };
 

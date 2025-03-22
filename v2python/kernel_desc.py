@@ -390,9 +390,7 @@ class KernelDescription(object):
             godel_numbers = sorted(list(set([o.godel_number for o in object_files if o.target_gpu == target_gpu])))
             for godel_number in godel_numbers:
                 struct_name = self.get_autotune_struct_name(arch_number, godel_number)
-                decls.append(f'struct {struct_name} {{')
-                decls.append(f'    void operator()({self.param_class_name}& params);')
-                decls.append(f'}};')
+                decls.append(f'void {struct_name}({self.param_class_name}& params);')
         return '\n'.join(decls)
 
     def codegen_kernel_table_entries(self, object_files):
@@ -403,9 +401,9 @@ class KernelDescription(object):
             for godel_number in range(self._godel_number):
                 struct_name = self.get_autotune_struct_name(arch_number, godel_number)
                 if godel_number in godel_numbers:
-                    lets.append(8 * ' ' + f'autotune::{struct_name}(),')
+                    lets.append(8 * ' ' + f'&autotune::{struct_name},')
                 else:
-                    lets.append(8 * ' ' + f'[]({self.param_class_name}&) {{}},')
+                    lets.append(8 * ' ' + f'nullptr,')
             lets.append(4 * ' ' + '},')
         return '\n'.join(lets)
 

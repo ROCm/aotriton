@@ -46,7 +46,7 @@ namespace AOTRITON_NS::v2::[[kernel_family_name]]::autotune {
 
 // using AOTRITON_NS::v2::[[kernel_family_name]]::[[param_class_name]];
 
-void CURRENT_ENTRY_PUBLIC::operator()([[param_class_name]]& params) {
+void CURRENT_ENTRY_PUBLIC([[param_class_name]]& params) {
 #if AOTRITON_BUILD_FOR_TUNING
     int preferred_index = params._has_preferred_kernel;
     params._total_number_of_kernels = total_num_kernels;

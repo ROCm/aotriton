@@ -22,6 +22,8 @@ hipError_t
     }
     params.kernel_on_device = nullptr;
     auto tune_func = autotune_table[arch_number][params.godel_number()];
+    if (!tune_func)
+        return hipErrorProfilerNotInitialized;
     tune_func(params);
     if (!params.kernel_on_device)
         return hipErrorSharedObjectSymbolNotFound;
