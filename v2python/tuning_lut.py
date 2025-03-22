@@ -238,8 +238,7 @@ class KernelTuningEntryForFunctionalOnGPU(object):
             'lut_shape'             : self._lut_cshape,
             'lut_data'              : self.lut_cdata,
             'param_class_name'      : self._kdesc.param_class_name,
-            'binning_autotune_keys' : self.codegen_binning_code(),
-            'binned_indices'        : self.codegen_binned_indices(),
+            'deduplicated_lut_function' : self.codegen_deduplicated_lut_function(),
             'perf_field_assignment' : self.codegen_perf_assignment(),
             'gpu'                   : self._dba.gpu,
             'arch_number'           : self._dba.arch_number,
@@ -277,6 +276,24 @@ class KernelTuningEntryForFunctionalOnGPU(object):
         if self._untuned:
             return '[0]'
         return ''.join([f'[{key}{self.BIN_INDEX_SUFFIX}]' for key, _ in self._autotune_keys])
+
+    def codegen_deduplicated_lut_function(self):
+        d = {
+            'param_class_name'      : self._kdesc.param_class_name,
+            'lut_dtype'             : self._lut_cdtype,
+            'lut_shape'             : self._lut_cshape,
+            'binning_autotune_keys' : self.codegen_binning_code(),
+            'binned_indices'        : self.codegen_binned_indices(),
+        }
+        stmt = []
+        stmt.append('({param_class_name}& params, {lut_dtype} lut{lut_shape}) {{')
+        stmt.append('    {binning_autotune_keys}')
+        stmt.append('    return lut{binned_indices};')
+        stmt.append('}}')
+        ALIGN = '\n'
+        lambda_src = ALIGN.join(stmt).format_map(d)
+        lut_function_name = self._kdesc.register_code_lut(lambda_src, d['lut_dtype'], d['lut_shape'])
+        return lut_function_name
 
     def codegen_perf_assignment(self):
         ALIGN = ';\n' + 4 * ' '

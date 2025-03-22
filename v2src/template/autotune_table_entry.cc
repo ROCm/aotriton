@@ -61,8 +61,7 @@ void CURRENT_ENTRY_PUBLIC::operator()([[param_class_name]]& params) {
         return ;
     }
 #endif
-    [[binning_autotune_keys]]
-    auto kernel_index = lut[[binned_indices]];
+    auto kernel_index = [[deduplicated_lut_function]](params, lut);
     if (kernel_index < 0) {
       return ;
     }

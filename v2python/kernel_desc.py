@@ -142,6 +142,7 @@ class KernelDescription(object):
         '''
         for key in self.AUTOTUNE_KEYS:
             assert key in self.ARGUMENTS, f'AUTOTUNE_KEYS "{key}" cannot be found in {self.__class__.__name__}.ARGUMENTS'
+        self._lut_lambda_registry = {}
 
     @property
     def name(self):
@@ -267,6 +268,7 @@ class KernelDescription(object):
               'declare_compiled_in_features' : self.codegen_declare_compiled_in_features(),
               'kernel_table_entry_declares' : self.codegen_kernel_table_entry_declares(object_files),
               'number_of_functionals': self._godel_number,
+              'declare_list_of_deduplicated_lut_functions' : self.codegen_declare_list_of_deduplicated_lut_functions(),
             }
         print(self.HEADER_TEMPLATE.format_map(d), file=fout)
 
@@ -289,6 +291,7 @@ class KernelDescription(object):
               # 'copy_perf_fields_body': self.copy_perf_fields_body,
               # 'kernel_table_entry_declares' : self.codegen_kernel_table_entry_declares(object_files),
               'kernel_table_entries' : self.codegen_kernel_table_entries(object_files),
+              'list_of_deduplicated_lut_functions' : self.codegen_list_of_deduplicated_lut_functions(),
             }
         print(self.SOURCE_TEMPLATE.format_map(d), file=fout)
 
@@ -378,6 +381,9 @@ class KernelDescription(object):
     def get_autotune_struct_name(self, arch_number, godel_number):
         return f'Autotune_{self.SHIM_KERNEL_NAME}__A{arch_number}__F{godel_number}'
 
+    # def get_autotune_superclass_name(self):
+    #     return f'Autotune_{self.SHIM_KERNEL_NAME}__Superclass'
+
     def codegen_kernel_table_entry_declares(self, object_files):
         decls = []
         for arch_number, target_gpu in enumerate(self._target_gpus):
@@ -435,3 +441,25 @@ const std::vector<{ctype}>& {meta_class}::get_{meta.repr_name}_choices()
 }}'''
             def_list.append(def_code)
         return '\n'.join(def_list)
+
+    def register_code_lut(self, lambda_src : str, lut_dtype : str, lut_shape : str):
+        if lambda_src in self._lut_lambda_registry:
+            return self._lut_lambda_registry[lambda_src][0]
+        findex = len(self._lut_lambda_registry)
+        lut_function_name = f'{self.SHIM_KERNEL_NAME}__lut_lambda_{findex}'
+        self._lut_lambda_registry[lambda_src] = (lut_function_name, lut_dtype, lut_shape)
+        return lut_function_name
+
+    def codegen_list_of_deduplicated_lut_functions(self):
+        param_class_name = self.param_class_name
+        stmt = []
+        for src, (lut_function_name, lut_dtype, lut_shape) in self._lut_lambda_registry.items():
+            stmt.append(f'int {lut_function_name} {src}\n')
+        return '\n'.join(stmt)
+
+    def codegen_declare_list_of_deduplicated_lut_functions(self):
+        param_class_name = self.param_class_name
+        stmt = []
+        for _, (lut_function_name, lut_dtype, lut_shape) in self._lut_lambda_registry.items():
+            stmt.append(f'extern int {lut_function_name}({param_class_name}&, {lut_dtype} {lut_shape});')
+        return '\n'.join(stmt)

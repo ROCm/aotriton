@@ -66,6 +66,12 @@ int64_t
 
 [[define_compiled_in_features]]
 
+namespace autotune {
+
+[[list_of_deduplicated_lut_functions]]
+
+} // namespace autotune
+
 [[context_class_name]]::AutoTuneTableEntry
 [[context_class_name]]::autotune_table[][ [[number_of_functionals]] ] = {
 [[kernel_table_entries]]

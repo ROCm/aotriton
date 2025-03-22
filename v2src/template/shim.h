@@ -64,6 +64,8 @@ namespace autotune {
 
 using AOTRITON_NS::v2::[[kernel_family_name]]::[[param_class_name]];
 
+[[declare_list_of_deduplicated_lut_functions]]
+
 [[kernel_table_entry_declares]]
 
 }
