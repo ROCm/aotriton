@@ -4,7 +4,6 @@
 #include "../shim.[[shim_kernel_name]].h"
 #include <aotriton/_internal/triton_kernel.h>
 #include <aotriton/cpp_tune.h>
-#include <iostream>
 
 // [[human_readable_signature]]
 #define CURRENT_ENTRY_PUBLIC Autotune_[[shim_kernel_name]]__A[[arch_number]]__F[[godel_number]]
