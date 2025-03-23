@@ -177,16 +177,33 @@ class KernelTuningEntryForFunctionalOnGPU(object):
         for _, _, o in self.gen_kernel_symbols(kernel_image_dir):
             return o.target_gpu
 
-    def codegen_kernel_image_objects(self, kernel_image_dir, package_path, noimage_mode):
-        kernel_image_symbols = []
+    def codegen_compact_kernels(self, kernel_image_dir, package_path, noimage_mode):
+        meta_objects = []
+        string_dict = {None : 0}
+        def register_string(s):
+            assert s is not None # string_dict[None] tracks the total size
+            if s in string_dict:
+                return string_dict[s]
+            offset = string_dict[None]
+            string_dict[s] = offset
+            string_dict[None] = offset + len(s) + 1  # Need a trailing '\0'
+            return offset
         for _, _, o in self.gen_kernel_symbols(kernel_image_dir):
             if not noimage_mode and not self._feature_disabled:
                 assert o.compiled_files_exist, f'Compiled file {o._hsaco_kernel_path} not exists'
-            fsel, psel, copts = o.compact_signature_components
+            fsel, psel, copt = o.compact_signature_components
             b2sum_u64, raw = o.blake2b_hash(package_path)
-            kernel_image_symbols.append(f'{{ 0x{b2sum_u64}UL, "{psel}", "{copts}" }}, // {raw}')
+            assert len(b2sum_u64) == 16
+            b2sum_u64_hi = b2sum_u64[:8]
+            b2sum_u64_lo = b2sum_u64[8:]
+            psel_offset = register_string(psel)
+            copt_offset = register_string(copt)
+            meta_objects.append(f'{{ 0x{b2sum_u64_hi}u, 0x{b2sum_u64_lo}u, {psel_offset}, {copt_offset} }}, // {b2sum_u64} = b2sum -l 64 <<< {raw}')
+        assert string_dict[None] < 2 ** 16 - 1, f'Packed string size {string_dict[None]} exceeds uint16_t limit'
+        del string_dict[None]
+        packed_string = '\n'.join(['"' + s + '\\0"' for s in string_dict])
         ALIGN = '\n' + 4 * ' '
-        return ALIGN.join(kernel_image_symbols)
+        return packed_string, ALIGN.join(meta_objects)
 
     def codegen_kernel_image_perfs(self, kernel_image_dir):
         kernel_image_perfs = []
@@ -219,6 +236,9 @@ class KernelTuningEntryForFunctionalOnGPU(object):
             old_content = ''
         mf = io.StringIO()  # Memory File
         package_path = self.codegen_package_path(gpu_kernel_image_dir)
+        packed_string, meta_objects = self.codegen_compact_kernels(gpu_kernel_image_dir,
+                                                                   package_path,
+                                                                   noimage_mode=noimage_mode)
         d = {
             'library_suffix'        : library_suffix,
             'kernel_psels'          : self.codegen_kernel_psels(gpu_kernel_image_dir),
@@ -230,9 +250,8 @@ class KernelTuningEntryForFunctionalOnGPU(object):
             'package_path'          : package_path,
             'func_name'             : self.codegen_func_name(gpu_kernel_image_dir),
             'arch_name'             : self.codegen_arch_name(gpu_kernel_image_dir),
-            'kernel_image_objects'  : self.codegen_kernel_image_objects(gpu_kernel_image_dir,
-                                                                        package_path,
-                                                                        noimage_mode=noimage_mode),
+            'packed_string'         : packed_string,
+            'meta_objects'          : meta_objects,
             'kernel_image_perfs'    : self.codegen_kernel_image_perfs(gpu_kernel_image_dir),
             'lut_dtype'             : self._lut_cdtype,
             'lut_shape'             : self._lut_cshape,

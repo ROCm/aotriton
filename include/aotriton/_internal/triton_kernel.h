@@ -15,6 +15,13 @@
 
 namespace AOTRITON_NS {
 
+struct TritonKernelCompactMeta {
+  uint32_t blake2b_hi;
+  uint32_t blake2b_lo;
+  int16_t psel_offset;
+  int16_t copt_offset;
+};
+
 // To reduce the size of compiled shared library, we decompose the kernel image
 // name into a few components and only store one copy for components shared by
 // multiple kernels.
@@ -62,7 +69,13 @@ public:
     dim3 block { 0, 0, 0 };
   };
 
-  TritonKernel(uint64_t blake2b, std::string_view psel, std::string_view copt);
+  TritonKernel() {
+  }
+
+  void delayed_init(uint32_t blake2b_hi,
+                    uint32_t blake2b_lo,
+                    const char* psel,
+                    const char* copt);
 
   hipError_t invoke(std::string_view kernel_name,
                     std::string_view package_path,
@@ -92,7 +105,6 @@ private:
   uint64_t blake2b_; // TODO: sanity check of assemblied stem name
   std::string_view ksig_psel_; // psel_name component
   std::string_view ksig_copt_; // copt_name component
-  size_t image_size_ = 0;
   struct DeviceFunction {
     DeviceFunction(int device_id_, hipModule_t mod_, hipFunction_t func_);
     ~DeviceFunction();

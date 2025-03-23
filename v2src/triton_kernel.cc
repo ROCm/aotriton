@@ -70,10 +70,13 @@ TritonKernel::DeviceFunction::~DeviceFunction() {
   }
 }
 
-TritonKernel::TritonKernel(uint64_t blake2b, std::string_view psel, std::string_view copt)
-  : blake2b_(blake2b)
-  , ksig_psel_(psel)
-  , ksig_copt_(copt) {
+void TritonKernel::delayed_init(uint32_t blake2b_lo,
+                                uint32_t blake2b_hi,
+                                const char* psel,
+                                const char* copt) {
+  blake2b_ = (uint64_t) blake2b_hi << 32 | blake2b_lo;
+  ksig_psel_ = psel;
+  ksig_copt_ = copt;
 }
 
 hipError_t
