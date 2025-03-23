@@ -3,6 +3,7 @@
 
 import itertools
 import os
+import numpy as np
 from ._common import FlashKernel, select_pattern, BinningLessOrEqual, BinningExact, Config
 
 AOTRITON_FLASH_BLOCK_DMODEL = os.getenv('AOTRITON_FLASH_BLOCK_DMODEL', default='16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256, 512')
@@ -99,13 +100,13 @@ class attn_fwd(FlashKernel):
         frozenset(['USE_ALIBI']) : [False],
         frozenset(['INT8', 'INT8_KV', 'USE_P_SCALE']) : [False],  # INT8 for the future
     }
-    def PERSISTENT_TYPE(gpu, fsel_dict) -> int:  # NOTE: Return type annotation is REQUIRED
+    def PERSISTENT_TYPE(gpu, fsel_dict) -> 'i8':  # NOTE: Return type annotation is REQUIRED
         return 2 if fsel_dict['CAUSAL_TYPE'] else 0
     PERF_CHOICES = {
         frozenset(['PERSISTENT_TYPE']) : [PERSISTENT_TYPE],
-        frozenset(['GRID_CU_MULTIP']) : [2],
-        frozenset(['BLOCK_M']) : [16],
-        frozenset(['BLOCK_N']) : [16],
+        frozenset(['GRID_CU_MULTIP']) : np.array([2], dtype=np.int8),  # NOTE: use np.array with dtype to reduce size of the generate tuning infomation struct
+        frozenset(['BLOCK_M']) : np.array([16], dtype=np.int16),
+        frozenset(['BLOCK_N']) : np.array([16], dtype=np.int16),
         frozenset(['PRE_LOAD_V']) : [False], # [False, True],
     }
     TENSOR_RANKS = {

@@ -120,7 +120,9 @@ class KernelDescription(object):
         self._godel_number = self._func_meta[0].godel_number * self._func_meta[0].nchoices
         for m in self._perf_meta:
             m.sort_arguments(self.ARGUMENTS)
-        self._perf_meta = sorted(self._perf_meta, key=lambda m: m.first_apperance)
+        # self._perf_meta = sorted(self._perf_meta, key=lambda m: m.first_apperance)
+        # Note: Re-order with byte sizes can reduce the C-struct size in autotune files.
+        self._perf_meta = sorted(self._perf_meta, key=lambda m : m.param_cc_size, reverse=True)
         # Performance arguments do not need godel numbers, they will be handled in a different way
         # ArgumentMetadata.assign_godel_number(self._perf_meta)
         self._func_selections = [m.spawn_all_selections() for m in self._func_meta]

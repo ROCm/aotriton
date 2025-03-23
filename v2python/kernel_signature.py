@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 from .gpu_targets import AOTRITON_GPU_ARCH_TUNING_STRING
+import numpy
 import json
 from .kernel_argument import ArgumentSelection
 
@@ -109,6 +110,9 @@ class KernelSignature(object):
         d = {}
         for ps in self._perf_selections:
             value = ps.argument_value
+            if isinstance(value, numpy.number):
+                # Cast to python native for json dump
+                value = value.item()
             for aname in ps.argument_names:
                 d[aname] = value
         return json.dumps(d)
