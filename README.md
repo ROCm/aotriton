@@ -6,7 +6,7 @@ cd build
 export PKG_CONFIG_PATH="${PKG_CONFIG_PATH}:${CONDA_PREFIX}/lib/pkgconfig"
 cmake .. -DCMAKE_INSTALL_PREFIX=./install_dir -DCMAKE_BUILD_TYPE=Release -DAOTRITON_GPU_BUILD_TIMEOUT=0 -G Ninja
 # Use ccmake to tweak options
-ninja install
+ninja install/strip  # Use `ninja install` to keep symbols
 ```
 
 The library and the header file can be found under `build/install_dir` afterwards.
