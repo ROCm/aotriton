@@ -1,4 +1,4 @@
-// Copyright © 2024 Advanced Micro Devices, Inc.
+// Copyright © 2024-2025 Advanced Micro Devices, Inc.
 // SPDX-License-Identifier: MIT
 
 #include <aotriton/_internal/packed_kernel.h>
