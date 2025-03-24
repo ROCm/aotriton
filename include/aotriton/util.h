@@ -21,20 +21,20 @@ CAT(uint32_t high, uint32_t low) {
 }
 
 template<typename T>
-T
+T AOTRITON_API
 cdiv(T numerator, T denominator) {
   return (numerator + (denominator - 1)) / denominator;
 }
 
 // Use PCI IDs to avoid allocating numbers by ourselves
-enum GpuVendor : uint32_t {
+enum AOTRITON_API GpuVendor : uint32_t {
   kAMD = 0x1002,
   kNVIDIA = 0x10de,
   kINTEL = 0x8086,
 };
 
 // More bits for potential non-PCI architectures
-enum GpuArch : uint64_t {
+enum AOTRITON_API GpuArch : uint64_t {
   GPU_ARCH_UNKNOWN = 0,
   GPU_ARCH_AMD_GFX90A = CAT(GpuVendor::kAMD, 0x90a),
   GPU_ARCH_AMD_GFX942 = CAT(GpuVendor::kAMD, 0x942),
@@ -45,7 +45,7 @@ enum GpuArch : uint64_t {
 };
 
 template<int Rank>
-class TensorView {
+class AOTRITON_API TensorView {
 public:
   TensorView() {
   }
@@ -110,7 +110,7 @@ private:
 };
 
 template<>
-class TensorView<0> {
+class AOTRITON_API TensorView<0> {
 public:
   TensorView(intptr_t base, DType dtype)
     : base_(reinterpret_cast<void*>(base))
@@ -159,9 +159,9 @@ extern template class TensorView<2>;
 extern template class TensorView<3>;
 extern template class TensorView<4>;
 
-GpuArch getArchFromStream(hipStream_t);
-bool isArchExperimentallySupported(hipStream_t);
-int getMultiProcessorCount(hipStream_t stream);
+GpuArch AOTRITON_API getArchFromStream(hipStream_t);
+bool AOTRITON_API isArchExperimentallySupported(hipStream_t);
+int AOTRITON_API getMultiProcessorCount(hipStream_t stream);
 
 } // namespace AOTRITON_NS
 

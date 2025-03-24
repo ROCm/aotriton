@@ -12,7 +12,7 @@ namespace AOTRITON_NS {
 // This is not a class for stream management (at least for now), but a way to
 // make sure AOTriton APIs can have python bindings with pybind11
 template<typename DeviceStreamType>
-class StreamTemplate {
+class AOTRITON_API StreamTemplate {
 public:
   StreamTemplate()
     : stream_(nullptr) {

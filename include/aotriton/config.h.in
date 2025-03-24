@@ -19,4 +19,6 @@
 #cmakedefine AOTRITON_VERSION_PATCH @AOTRITON_VERSION_PATCH@
 #cmakedefine AOTRITON_GIT_SHA1 @AOTRITON_GIT_SHA1@
 
+#define AOTRITON_API __attribute__ ((visibility ("default")))
+
 #endif

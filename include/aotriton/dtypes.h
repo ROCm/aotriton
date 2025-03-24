@@ -9,7 +9,7 @@
 
 namespace AOTRITON_NS {
 
-enum DType : int32_t {
+enum AOTRITON_API DType : int32_t {
   kUnknown = 0,
   kFloat32 = 1,
   kFloat16 = 2,
