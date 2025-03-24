@@ -26,7 +26,7 @@ struct PerfFields {
   [[perf_fields]];
 };
 
-PerfFields image_perf_list [] = {
+static PerfFields image_perf_list [] = {
     [[kernel_image_perfs]]
 };
 
@@ -34,18 +34,18 @@ constexpr std::string_view PACKAGE_PATH { R"xyzw([[package_path]])xyzw" };
 constexpr std::string_view FUNC_NAME { R"xyzw([[func_name]])xyzw" };
 constexpr std::string_view ARCH_NAME { R"xyzw([[arch_name]])xyzw" };
 
-const char packed_string[] =
+static const char packed_string[] =
 [[packed_string]];
 
-AOTRITON_NS::TritonKernelCompactMeta meta_list[] = {
+static AOTRITON_NS::TritonKernelCompactMeta meta_list[] = {
     [[meta_objects]]
 };
 
 static constexpr int kTotalNumKernels = ARRAY_SIZE(meta_list);
 
-AOTRITON_NS::TritonKernelCluster<kTotalNumKernels> kernel_cluster(meta_list, packed_string);
+static AOTRITON_NS::TritonKernelCluster<kTotalNumKernels> kernel_cluster(meta_list, packed_string);
 
-[[lut_dtype]] lut[[lut_shape]] = [[lut_data]];
+static [[lut_dtype]] lut[[lut_shape]] = [[lut_data]];
 
 }; // End of anonymous namespace
 
