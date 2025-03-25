@@ -3,3 +3,4 @@ tqdm
 textual
 pyelftools
 msgpack
+pytest-xdist>=1.15  # Need worker_id fixture to identify GPU
