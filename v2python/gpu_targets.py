@@ -10,11 +10,13 @@ AOTRITON_SUPPORTED_GPUS = (
     # 'gfx942_mod2',
     'gfx950_mod0',
     'gfx1100_mod0',
+    'gfx1151_mod0',
     'gfx1201_mod0',
 )
 
 AOTRITON_TUNING_DATABASE_REUSE = {
     'gfx950_mod0'  : 'gfx942_mod0',
+    'gfx1151_mod0' : 'gfx1100_mod0',
     'gfx1201_mod0' : 'gfx1100_mod0',
 }
 
@@ -23,6 +25,7 @@ AOTRITON_ARCH_WARPSIZE = {
     'gfx942'     : 64,
     'gfx950'     : 64,
     'gfx1100'    : 32,
+    'gfx1151'    : 32,
     'gfx1201'    : 32,
 }
 

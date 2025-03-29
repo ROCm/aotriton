@@ -17,6 +17,7 @@ ARCH_TO_DIRECTORY = {
     'gfx942' : 'amd-gfx942',
     'gfx1100' : 'amd-gfx110x',
     'gfx1101' : 'amd-gfx110x',
+    'gfx1151' : 'amd-gfx115x',
     'gfx950' : 'amd-gfx950',
     'gfx1200'    : 'amd-gfx120x',
     'gfx1201'    : 'amd-gfx120x',

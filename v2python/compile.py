@@ -15,7 +15,7 @@ import json
 from triton.backends.compiler import GPUTarget
 
 KNOWN_TARGETS_MI = ['gfx90a', 'gfx942', 'gfx950']
-KNOWN_TARGETS_Navi = ['gfx1100', 'gfx1101', 'gfx1201']
+KNOWN_TARGETS_Navi = ['gfx1100', 'gfx1101', 'gfx1151', 'gfx1201']
 
 KNOWN_TARGETS = {
   arch : GPUTarget('hip', arch, 64) for arch in KNOWN_TARGETS_MI
