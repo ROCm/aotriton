@@ -43,6 +43,7 @@ std::unordered_map<std::string, GpuArch> LazyArch::string_to_arch = {
   {"gfx942", GPU_ARCH_AMD_GFX942},
   {"gfx1100", GPU_ARCH_AMD_GFX1100},
   {"gfx1101", GPU_ARCH_AMD_GFX1101},
+  {"gfx1151", GPU_ARCH_AMD_GFX1151},
   {"gfx950", GPU_ARCH_AMD_GFX950},
   {"gfx1201", GPU_ARCH_AMD_GFX1201},
 };
@@ -61,7 +62,7 @@ getArchFromStream(hipStream_t stream) {
 
 bool isArchExperimentallySupported(hipStream_t stream) {
   auto arch = getArchFromStream(stream);
-  return (arch == GPU_ARCH_AMD_GFX950 || arch == GPU_ARCH_AMD_GFX1201);
+  return (arch == GPU_ARCH_AMD_GFX950 || arch == GPU_ARCH_AMD_GFX1201 || arch == GPU_ARCH_AMD_GFX1151);
 }
 
 int getMultiProcessorCount(hipStream_t stream) {
