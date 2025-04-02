@@ -23,7 +23,7 @@ public:
     }
   }
   TritonKernel* get(int index) { return &cluster_[index]; }
-public:
+private:
   TritonKernel cluster_[N];
 };
 
