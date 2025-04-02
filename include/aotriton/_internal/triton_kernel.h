@@ -55,7 +55,9 @@ struct TritonKernelCompactMeta {
 //                          KERNEL NAME STORAGE SCHEME
 //  kernel_name: stored in shim.<kernel_name>.cc
 //  package_path, func_name, arch_name: stored in autotune_table_entry
-//  psel_name, copt_name: stored in each TritonKernel object
+//  psel_name, copt_name: consolated and stored in packed_string object.
+//                        Their offsets are stored in TritonKernelCompactMeta
+//                        objects.
 //
 
 class PackedKernel;
