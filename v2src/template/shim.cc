@@ -1,4 +1,4 @@
-// Copyright © 2023-2024 Advanced Micro Devices, Inc.
+// Copyright © 2023-2025 Advanced Micro Devices, Inc.
 // SPDX-License-Identifier: MIT
 
 // clang-format off
@@ -20,16 +20,19 @@ hipError_t
     if (arch_number < 0) {
         return hipErrorNoBinaryForGpu;
     }
-    params.selected_kernel = nullptr;
+    params.kernel_on_device = nullptr;
     auto tune_func = autotune_table[arch_number][params.godel_number()];
+    if (!tune_func)
+        return hipErrorProfilerNotInitialized;
     tune_func(params);
-    if (!params.selected_kernel)
+    if (!params.kernel_on_device)
         return hipErrorSharedObjectSymbolNotFound;
     return hipSuccess;
 }
 
 hipError_t
 [[context_class_name]]::launch(const [[param_class_name]]& params, hipStream_t stream) {
+    constexpr std::string_view triton_kernel_name { "[[triton_kernel_name]]" };
     auto arch = getArchFromStream(stream);
     hipDeviceptr_t global_scratch = 0;
     [[put_kernel_arguments_on_stack]];
@@ -38,9 +41,22 @@ hipError_t
     };
     dim3 grid = grid_calculator(params);
 #if AOTRITON_BUILD_FOR_TUNING
-    return params.selected_kernel->invoke("[[triton_kernel_name]]", grid, args, peek_kernel_image, stream);
+    return params.kernel_on_device->invoke(triton_kernel_name,
+                                           params.package_path,
+                                           params.func_name,
+                                           params.arch_name,
+                                           grid,
+                                           args,
+                                           peek_kernel_image,
+                                           stream);
 #else
-    return params.selected_kernel->invoke("[[triton_kernel_name]]", grid, args, stream);
+    return params.kernel_on_device->invoke(triton_kernel_name,
+                                           params.package_path,
+                                           params.func_name,
+                                           params.arch_name,
+                                           grid,
+                                           args,
+                                           stream);
 #endif
 }
 
@@ -51,6 +67,12 @@ int64_t
 }
 
 [[define_compiled_in_features]]
+
+namespace autotune {
+
+[[list_of_deduplicated_lut_functions]]
+
+} // namespace autotune
 
 [[context_class_name]]::AutoTuneTableEntry
 [[context_class_name]]::autotune_table[][ [[number_of_functionals]] ] = {

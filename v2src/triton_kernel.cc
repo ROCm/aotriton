@@ -1,10 +1,11 @@
-// Copyright © 2023-2024 Advanced Micro Devices, Inc.
+// Copyright © 2023-2025 Advanced Micro Devices, Inc.
 // SPDX-License-Identifier: MIT
 
 #include <aotriton/_internal/packed_kernel.h>
 #include <aotriton/_internal/triton_kernel.h>
 #include <aotriton/runtime.h>
 #include <iostream>
+#include <string>
 #include <mutex>
 
 #ifdef NDEBUG
@@ -25,6 +26,38 @@
 
 namespace AOTRITON_NS {
 
+constexpr std::string_view INTER_KERNEL_FUNC { "-Sig-F__" };
+constexpr std::string_view INTER_FUNC_PSEL { "__P__" };
+constexpr std::string_view INTER_PSEL_COPT { "__CO__" };
+constexpr std::string_view INTER_COPT_ARCH { "-Gpu-" };
+
+std::string construct_stem_name(std::string_view kernel_name,
+                                std::string_view func_name,
+                                std::string_view psel_name,
+                                std::string_view copt_name,
+                                std::string_view arch_name) {
+  std::string ret;
+  ret.reserve(kernel_name.size() +
+              INTER_KERNEL_FUNC.size() +
+              func_name.size() +
+              INTER_FUNC_PSEL.size() +
+              psel_name.size() +
+              INTER_PSEL_COPT.size() +
+              copt_name.size() +
+              INTER_COPT_ARCH.size() +
+              arch_name.size());
+  ret += kernel_name;
+  ret += INTER_KERNEL_FUNC;
+  ret += func_name;
+  ret += INTER_FUNC_PSEL;
+  ret += psel_name;
+  ret += INTER_PSEL_COPT;
+  ret += copt_name;
+  ret += INTER_COPT_ARCH;
+  ret += arch_name;
+  return ret;
+}
+
 TritonKernel::DeviceFunction::DeviceFunction(int device_id_, hipModule_t mod_, hipFunction_t func_)
   : device_id(device_id_)
   , mod(mod_)
@@ -37,13 +70,20 @@ TritonKernel::DeviceFunction::~DeviceFunction() {
   }
 }
 
-TritonKernel::TritonKernel(const char* package_path, const char* stem_name)
-  : package_path_(package_path)
-  , stem_name_(stem_name) {
+void TritonKernel::delayed_init(uint32_t blake2b_lo,
+                                uint32_t blake2b_hi,
+                                const char* psel,
+                                const char* copt) {
+  blake2b_ = (uint64_t) blake2b_hi << 32 | blake2b_lo;
+  ksig_psel_ = psel;
+  ksig_copt_ = copt;
 }
 
 hipError_t
-TritonKernel::invoke(const char* kernel_name,
+TritonKernel::invoke(std::string_view kernel_name,
+                     std::string_view package_path,
+                     std::string_view func_name,
+                     std::string_view arch_name,
                      dim3 grid,
                      std::vector<void*>& args,
 #if AOTRITON_BUILD_FOR_TUNING
@@ -70,7 +110,11 @@ TritonKernel::invoke(const char* kernel_name,
     func = cfind_function(device_id);
     if (!func) {
       hipError_t err;
-      std::tie(func, err) = load_for_device(device_id, kernel_name);
+      std::tie(func, err) = load_for_device(device_id,
+                                            kernel_name,
+                                            package_path,
+                                            func_name,
+                                            arch_name);
     }
   }
 #if AOTRITON_BUILD_FOR_TUNING
@@ -99,7 +143,11 @@ TritonKernel::cfind_function(int device_id) const {
 }
 
 std::tuple<hipFunction_t, hipError_t>
-TritonKernel::load_for_device(int device_id, const char* kernel_name) {
+TritonKernel::load_for_device(int device_id,
+                              std::string_view kernel_name,
+                              std::string_view package_path,
+                              std::string_view func_name,
+                              std::string_view arch_name) {
   hipJitOption opt[] = { hipJitOptionErrorLogBufferSizeBytes,
                          hipJitOptionErrorLogBuffer,
                          hipJitOptionInfoLogBufferSizeBytes,
@@ -114,11 +162,12 @@ TritonKernel::load_for_device(int device_id, const char* kernel_name) {
                      (void*)(uintptr_t)log.size(),
                      log.data(),
                      (void*)(uintptr_t)1 };
+  std::string stem_name = construct_stem_name(kernel_name, func_name, ksig_psel_, ksig_copt_, arch_name);
 
 #if AOTRITON_KERNEL_VERBOSE
-  std::cerr << "Trying to decompress kernel " << package_path_ << " " << stem_name_ << std::endl;
+  std::cerr << "Trying to decompress kernel " << package_path << " " << stem_name << std::endl;
 #endif
-  decompress_kernel();
+  decompress_kernel(package_path, stem_name);
 #if AOTRITON_KERNEL_VERBOSE
   std::cerr << "Decompress kernel to " << essentials_.image << std::endl;
 #endif
@@ -128,7 +177,7 @@ TritonKernel::load_for_device(int device_id, const char* kernel_name) {
   hipModule_t mod;
   hipFunction_t func;
   AOTRITON_HIP_CHECK_RETURN(hipModuleLoadDataEx(&mod, essentials_.image, 5, opt, optval));
-  AOTRITON_HIP_CHECK_RETURN(hipModuleGetFunction(&func, mod, kernel_name));
+  AOTRITON_HIP_CHECK_RETURN(hipModuleGetFunction(&func, mod, kernel_name.data()));
   funcache_.emplace(std::piecewise_construct,
                     std::forward_as_tuple(device_id),
                     std::forward_as_tuple(device_id, mod, func));
@@ -153,7 +202,8 @@ TritonKernel::get_image_info_iff_decompressed() const {
 // tell if a kernel is loaded, or the kernel image failed to compile and thus
 // does not exists from beginning by testing essentials_.image == nullptr
 void
-TritonKernel::decompress_kernel() {
+TritonKernel::decompress_kernel(std::string_view package_path,
+                                const std::string stem_name) {
   if (kernel_loaded_) {
     return ;
   }
@@ -165,14 +215,14 @@ TritonKernel::decompress_kernel() {
     return ;
   }
   if (!packed_kernel_) {
-    packed_kernel_ = PackedKernel::open(package_path_);
+    packed_kernel_ = PackedKernel::open(package_path);
   }
   if (packed_kernel_) { // open may fail
 #if AOTRITON_KERNEL_VERBOSE
     std::cerr << "PackedKernel::open returns " << packed_kernel_.get()
               << " status: " << packed_kernel_->status() << std::endl;
 #endif
-    essentials_ = packed_kernel_->filter(stem_name_);
+    essentials_ = packed_kernel_->filter(stem_name);
   }
   // FIXME: There should be a memory barrier here for non-X86 CPUs.
   kernel_loaded_ = true;

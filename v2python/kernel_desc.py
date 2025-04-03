@@ -1,4 +1,4 @@
-# Copyright © 2023-2024 Advanced Micro Devices, Inc.
+# Copyright © 2023-2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
 import itertools
@@ -120,7 +120,9 @@ class KernelDescription(object):
         self._godel_number = self._func_meta[0].godel_number * self._func_meta[0].nchoices
         for m in self._perf_meta:
             m.sort_arguments(self.ARGUMENTS)
-        self._perf_meta = sorted(self._perf_meta, key=lambda m: m.first_apperance)
+        # self._perf_meta = sorted(self._perf_meta, key=lambda m: m.first_apperance)
+        # Note: Re-order with byte sizes can reduce the C-struct size in autotune files.
+        self._perf_meta = sorted(self._perf_meta, key=lambda m : m.param_cc_size, reverse=True)
         # Performance arguments do not need godel numbers, they will be handled in a different way
         # ArgumentMetadata.assign_godel_number(self._perf_meta)
         self._func_selections = [m.spawn_all_selections() for m in self._func_meta]
@@ -142,6 +144,7 @@ class KernelDescription(object):
         '''
         for key in self.AUTOTUNE_KEYS:
             assert key in self.ARGUMENTS, f'AUTOTUNE_KEYS "{key}" cannot be found in {self.__class__.__name__}.ARGUMENTS'
+        self._lut_lambda_registry = {}
 
     @property
     def name(self):
@@ -227,16 +230,7 @@ class KernelDescription(object):
                     break
 
     def build_object_file_description(self, outpath, sig, sancheck_fileexists=False):
-        # print(f"{gpu=} {fsels=} {psels=} {compiler_options=}")
-        # sig = KernelSignature(self, fsels, psels, compiler_options, gpu)
-        # fn = file_name_prefix + '-Kernel-' if file_name_prefix else ''
-        # kernel_name =  if kernel_name is None else kernel_name
-        fn = self.SHIM_KERNEL_NAME
-        # print(f'{sig.compact_signature=}')
-        fn += '-Sig-' + sig.compact_signature
-        fn += '-Gpu-' + sig.target_gpu
-        fn += '.hsaco'
-        return ObjectFileDescription(self, sig, outpath / fn, sancheck_fileexists=sancheck_fileexists)
+        return ObjectFileDescription(self, sig, outpath, sancheck_fileexists=sancheck_fileexists)
 
     def gen_tuned_kernel_lut(self, tuned_db : 'KernelTuningDatabase') -> 'Iterator[KernelTuningLutForGPU]':
         for gpu, fsels in itertools.product(self._target_gpus,
@@ -276,6 +270,7 @@ class KernelDescription(object):
               'declare_compiled_in_features' : self.codegen_declare_compiled_in_features(),
               'kernel_table_entry_declares' : self.codegen_kernel_table_entry_declares(object_files),
               'number_of_functionals': self._godel_number,
+              'declare_list_of_deduplicated_lut_functions' : self.codegen_declare_list_of_deduplicated_lut_functions(),
             }
         print(self.HEADER_TEMPLATE.format_map(d), file=fout)
 
@@ -298,6 +293,7 @@ class KernelDescription(object):
               # 'copy_perf_fields_body': self.copy_perf_fields_body,
               # 'kernel_table_entry_declares' : self.codegen_kernel_table_entry_declares(object_files),
               'kernel_table_entries' : self.codegen_kernel_table_entries(object_files),
+              'list_of_deduplicated_lut_functions' : self.codegen_list_of_deduplicated_lut_functions(),
             }
         print(self.SOURCE_TEMPLATE.format_map(d), file=fout)
 
@@ -387,15 +383,16 @@ class KernelDescription(object):
     def get_autotune_struct_name(self, arch_number, godel_number):
         return f'Autotune_{self.SHIM_KERNEL_NAME}__A{arch_number}__F{godel_number}'
 
+    # def get_autotune_superclass_name(self):
+    #     return f'Autotune_{self.SHIM_KERNEL_NAME}__Superclass'
+
     def codegen_kernel_table_entry_declares(self, object_files):
         decls = []
         for arch_number, target_gpu in enumerate(self._target_gpus):
             godel_numbers = sorted(list(set([o.godel_number for o in object_files if o.target_gpu == target_gpu])))
             for godel_number in godel_numbers:
                 struct_name = self.get_autotune_struct_name(arch_number, godel_number)
-                decls.append(f'struct {struct_name} {{')
-                decls.append(f'    void operator()({self.param_class_name}& params);')
-                decls.append(f'}};')
+                decls.append(f'void {struct_name}({self.param_class_name}& params);')
         return '\n'.join(decls)
 
     def codegen_kernel_table_entries(self, object_files):
@@ -406,9 +403,9 @@ class KernelDescription(object):
             for godel_number in range(self._godel_number):
                 struct_name = self.get_autotune_struct_name(arch_number, godel_number)
                 if godel_number in godel_numbers:
-                    lets.append(8 * ' ' + f'autotune::{struct_name}(),')
+                    lets.append(8 * ' ' + f'&autotune::{struct_name},')
                 else:
-                    lets.append(8 * ' ' + f'[]({self.param_class_name}&) {{}},')
+                    lets.append(8 * ' ' + f'nullptr,')
             lets.append(4 * ' ' + '},')
         return '\n'.join(lets)
 
@@ -444,3 +441,25 @@ const std::vector<{ctype}>& {meta_class}::get_{meta.repr_name}_choices()
 }}'''
             def_list.append(def_code)
         return '\n'.join(def_list)
+
+    def register_code_lut(self, lambda_src : str, lut_dtype : str, lut_shape : str):
+        if lambda_src in self._lut_lambda_registry:
+            return self._lut_lambda_registry[lambda_src][0]
+        findex = len(self._lut_lambda_registry)
+        lut_function_name = f'{self.SHIM_KERNEL_NAME}__lut_lambda_{findex}'
+        self._lut_lambda_registry[lambda_src] = (lut_function_name, lut_dtype, lut_shape)
+        return lut_function_name
+
+    def codegen_list_of_deduplicated_lut_functions(self):
+        param_class_name = self.param_class_name
+        stmt = []
+        for src, (lut_function_name, lut_dtype, lut_shape) in self._lut_lambda_registry.items():
+            stmt.append(f'int {lut_function_name} {src}\n')
+        return '\n'.join(stmt)
+
+    def codegen_declare_list_of_deduplicated_lut_functions(self):
+        param_class_name = self.param_class_name
+        stmt = []
+        for _, (lut_function_name, lut_dtype, lut_shape) in self._lut_lambda_registry.items():
+            stmt.append(f'extern int {lut_function_name}({param_class_name}&, {lut_dtype} {lut_shape});')
+        return '\n'.join(stmt)

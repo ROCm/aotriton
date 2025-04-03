@@ -1,22 +1,51 @@
 #!/usr/bin/env python
-# Copyright © 2023-2024 Advanced Micro Devices, Inc.
+# Copyright © 2023-2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
 from pathlib import Path
+import numpy as np
 import json
+import hashlib
 
 SOURCE_PATH = Path(__file__).resolve()
 
 class ObjectFileDescription(object):
     SIGNATURE_TO_C = {
-        'fp32'  : 'float',
-        '*fp32' : 'const float*',
-        '*fp16' : 'const __fp16*',
-        '*bf16' : 'const __bf16*',
-        'i32'   : 'int32_t',
-        'i64'   : 'int64_t',
-        'u32'   : 'uint32_t',
-        'u64'   : 'uint64_t',
+        'fp32'    : 'float',
+        '*fp32'   : 'const float*',
+        '*fp16'   : 'const __fp16*',
+        '*bf16'   : 'const __bf16*',
+        'i8'      : 'int8_t',
+        'i16'     : 'int16_t',
+        'i32'     : 'int32_t',
+        'i64'     : 'int64_t',
+        'u8'      : 'uint8_t',
+        'u16'     : 'uint16_t',
+        'u32'     : 'uint32_t',
+        'u64'     : 'uint64_t',
+        np.int8   : 'int8_t',
+        np.int16  : 'int16_t',
+        np.int32  : 'int32_t',
+        np.int64  : 'int64_t',
+        np.uint8  : 'uint8_t',
+        np.uint16 : 'uint16_t',
+        np.uint32 : 'uint32_t',
+        np.uint64 : 'uint64_t',
+    }
+    C_SIZE = {
+        'bool'              : 1,
+        'const __bf16*'     : 8,
+        'const __fp16*'     : 8,
+        'const float*'      : 8,
+        'float'             : 4,
+        'int8_t'            : 1,
+        'int16_t'           : 2,
+        'int32_t'           : 4,
+        'int64_t'           : 8,
+        'uint8_t'           : 1,
+        'uint16_t'          : 2,
+        'uint32_t'          : 4,
+        'uint64_t'          : 8,
     }
     def is_tensor_type(t):
         return t.startswith('*')
@@ -25,16 +54,28 @@ class ObjectFileDescription(object):
     DEFAULT_NUM_STAGES = 1
     DEFAULT_WAVES_PER_EU = 1
 
+    def build_kernel_filename(self, sig: 'KernelSignature'):
+        # print(f"{gpu=} {fsels=} {psels=} {compiler_options=}")
+        # sig = KernelSignature(self, fsels, psels, compiler_options, gpu)
+        # fn = file_name_prefix + '-Kernel-' if file_name_prefix else ''
+        # kernel_name =  if kernel_name is None else kernel_name
+        fn = self.SHIM_KERNEL_NAME
+        # print(f'{sig.compact_signature=}')
+        fn += '-Sig-' + sig.compact_signature
+        fn += '-Gpu-' + sig.target_gpu
+        fn += '.hsaco'
+        return fn
+
     def __init__(self,
                  triton_kernel_desc : 'KernelDescription',
                  signature: 'KernelSignature',
-                 hsaco_kernel_path : Path,
+                 hsaco_outpath : Path,
                  sancheck_fileexists = False):
         self._triton_kernel_desc = triton_kernel_desc
         self.KERNEL_FAMILY = self._triton_kernel_desc.KERNEL_FAMILY
         self.SHIM_KERNEL_NAME = self._triton_kernel_desc.SHIM_KERNEL_NAME
         self._signature = signature
-        self._hsaco_kernel_path = Path(hsaco_kernel_path)
+        self._hsaco_kernel_path = hsaco_outpath / self.build_kernel_filename(signature)
         # self._hsaco_metatdata_path = Path() if triton_metadata_path is None else self._triton_file_path.with_suffix('.json')
         self._hsaco_metatdata_path = self._hsaco_kernel_path.with_suffix('.json')
         if self.compiled_files_exist:
@@ -66,8 +107,20 @@ class ObjectFileDescription(object):
         return self._signature.compact_signature
 
     @property
+    def compact_signature_components(self):
+        return self._signature.get_compact_signature_components()
+
+    @property
     def human_readable_signature(self):
         return self._signature.human_readable_signature
+
+    def blake2b_hash(self, package_path):
+        raw = package_path.encode('utf-8')
+        _, psel, copts = self.compact_signature_components
+        s = '__P__' + psel + '__CO__' + copts + '-Gpu-' + self._signature.target_gpu
+        raw += s.encode('utf-8')
+        h = hashlib.blake2b(raw, digest_size=8)
+        return h.hexdigest(), raw
 
     @property
     def c_identifier_signature(self):

@@ -1,7 +1,8 @@
-# Copyright © 2023-2024 Advanced Micro Devices, Inc.
+# Copyright © 2023-2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
 from .gpu_targets import AOTRITON_GPU_ARCH_TUNING_STRING
+import numpy
 import json
 from .kernel_argument import ArgumentSelection
 
@@ -38,15 +39,19 @@ class KernelSignature(object):
     def godel_number(self):
         return sum([s.godel_number for s in self._func_selections])
 
-    @property
-    def compact_signature(self):
+    def get_compact_signature_components(self):
         lf = [s.compact_signature for s in self._func_selections]
         lp = [s.compact_signature for s in self._perf_selections]
         lc = [f'{self.get_compact_compiler_option_name(k)}{v}' for k, v in self._compiler_options.items() if k != '_debug']
-        sf = '_'.join([x for x in lf if x is not None])
-        sp = '_'.join([x for x in lp if x is not None])
-        co = '_'.join([x for x in lc if x is not None])
-        return 'F__' + sf + '__P__' + sp + '__CO__' + co
+        fsel = '_'.join([x for x in lf if x is not None])
+        psel = '_'.join([x for x in lp if x is not None])
+        copts = '_'.join([x for x in lc if x is not None])
+        return fsel, psel, copts
+
+    @property
+    def compact_signature(self):
+        fsel, psel, copts = self.get_compact_signature_components()
+        return 'F__' + fsel + '__P__' + psel + '__CO__' + copts
 
     @property
     def human_readable_signature(self):
@@ -105,6 +110,9 @@ class KernelSignature(object):
         d = {}
         for ps in self._perf_selections:
             value = ps.argument_value
+            if isinstance(value, numpy.number):
+                # Cast to python native for json dump
+                value = value.item()
             for aname in ps.argument_names:
                 d[aname] = value
         return json.dumps(d)
@@ -114,4 +122,3 @@ class KernelSignature(object):
 
     def is_functional_disabled(self):
         return self._kdesc.is_functional_disabled_on_gpu(self._gpu, self._func_selections)
-

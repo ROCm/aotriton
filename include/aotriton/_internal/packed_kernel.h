@@ -1,4 +1,4 @@
-// Copyright © 2024 Advanced Micro Devices, Inc.
+// Copyright © 2024-2025 Advanced Micro Devices, Inc.
 // SPDX-License-Identifier: MIT
 
 #ifndef AOTRITON_V2_API_PACKED_KERNEL_H
@@ -21,14 +21,14 @@ struct AKS2_Metadata;
 
 class PackedKernel {
 public:
-  static PackedKernelPtr open(const char* package_path);
+  static PackedKernelPtr open(std::string_view package_path);
   PackedKernel(int fd);
   ~PackedKernel();
   hipError_t status() const {
     return final_status_;
   }
 
-  TritonKernel::Essentials filter(const char* stem_name) const;
+  TritonKernel::Essentials filter(std::string_view stem_name) const;
 
 private:
   static std::shared_mutex registry_mutex_;

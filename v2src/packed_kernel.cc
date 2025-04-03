@@ -1,4 +1,4 @@
-// Copyright © 2024 Advanced Micro Devices, Inc.
+// Copyright © 2024-2025 Advanced Micro Devices, Inc.
 // SPDX-License-Identifier: MIT
 
 #include <aotriton/_internal/packed_kernel.h>
@@ -48,20 +48,19 @@ std::shared_mutex PackedKernel::registry_mutex_;
 std::unordered_map<std::string_view, PackedKernelPtr> PackedKernel::registry_;
 
 PackedKernelPtr
-PackedKernel::open(const char* package_path) {
-  std::string_view path_view(package_path);
+PackedKernel::open(std::string_view package_path) {
   {
     // Fast path
     std::shared_lock lock(registry_mutex_);
     if (registry_.contains(package_path))
-      return registry_[path_view];
+      return registry_[package_path];
   }
 
   // Slow path, registry doesn't contain this kernel
   std::unique_lock lock(registry_mutex_);
   // Prevent TOCTTOU b/w two locks
   if (registry_.contains(package_path))
-    return registry_[path_view];
+    return registry_[package_path];
   const auto& storage_base = locate_aotriton_images();
 #if AOTRITON_KERNEL_VERBOSE
   std::cerr << "open dir " << storage_base << std::endl;
@@ -84,7 +83,7 @@ PackedKernel::open(const char* package_path) {
   close(aks2fd);
   close(dirfd);
   if (ret->status() == hipSuccess) {
-    registry_.emplace(path_view, ret);
+    registry_.emplace(package_path, ret);
     return ret;
   }
 #if AOTRITON_KERNEL_VERBOSE
@@ -202,12 +201,11 @@ PackedKernel::~PackedKernel() {
 }
 
 TritonKernel::Essentials
-PackedKernel::filter(const char* stem_name) const {
+PackedKernel::filter(std::string_view stem_name) const {
   if (status() != hipSuccess) {
     return { nullptr, 0, 0, dim3 { 0, 0, 0 } };
   }
-  std::string_view filename(stem_name);
-  auto iter = directory_.find(filename);
+  auto iter = directory_.find(stem_name);
   if (iter == directory_.end())
     return { nullptr, 0, 0, dim3 { 0, 1, 1 } };
   auto meta = iter->second;

@@ -1,4 +1,4 @@
-// Copyright © 2023-2024 Advanced Micro Devices, Inc.
+// Copyright © 2023-2025 Advanced Micro Devices, Inc.
 // SPDX-License-Identifier: MIT
 
 #ifndef AOTRITON_V2_CONFIG_H
@@ -18,5 +18,7 @@
 #cmakedefine AOTRITON_VERSION_MINOR @AOTRITON_VERSION_MINOR@
 #cmakedefine AOTRITON_VERSION_PATCH @AOTRITON_VERSION_PATCH@
 #cmakedefine AOTRITON_GIT_SHA1 @AOTRITON_GIT_SHA1@
+
+#define AOTRITON_API __attribute__ ((visibility ("default")))
 
 #endif

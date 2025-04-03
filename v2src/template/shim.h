@@ -1,4 +1,4 @@
-// Copyright © 2023-2024 Advanced Micro Devices, Inc.
+// Copyright © 2023-2025 Advanced Micro Devices, Inc.
 // SPDX-License-Identifier: MIT
 
 // clang-format off
@@ -21,7 +21,11 @@ struct [[param_class_name]] {
     // Performance related arguments for current selection
     [[perf_fields]];
 
-    TritonKernel* selected_kernel = nullptr;
+    TritonKernel* kernel_on_device = nullptr;
+    std::string_view package_path;
+    std::string_view func_name;
+    std::string_view arch_name;
+    // Note to save ELF space, this object is constructed on the fly.
     const char* _debug_kernel_name = nullptr;
 #if AOTRITON_BUILD_FOR_TUNING
     int _has_preferred_kernel = -1; // For C++ based autotune database generation
@@ -47,7 +51,7 @@ public:
 private:
     GpuArch kernel_arch = GPU_ARCH_UNKNOWN;
 
-    using AutoTuneTableEntry = std::function<void([[param_class_name]]& params)>;
+    typedef void (*AutoTuneTableEntry)([[param_class_name]]& params);
     static AutoTuneTableEntry autotune_table[][ [[number_of_functionals]] ];
 };
 
@@ -59,6 +63,8 @@ struct [[metadata_class_name]] {
 namespace autotune {
 
 using AOTRITON_NS::v2::[[kernel_family_name]]::[[param_class_name]];
+
+[[declare_list_of_deduplicated_lut_functions]]
 
 [[kernel_table_entry_declares]]
 

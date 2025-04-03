@@ -1,4 +1,4 @@
-// Copyright © 2024 Advanced Micro Devices, Inc.
+// Copyright © 2024-2025 Advanced Micro Devices, Inc.
 // SPDX-License-Identifier: MIT
 
 #ifndef AOTRITON_V2_API_CPP_TUNE_H
@@ -8,7 +8,7 @@
 
 namespace AOTRITON_NS::v2 {
 
-struct CppTune {
+struct AOTRITON_API CppTune {
 #if AOTRITON_BUILD_FOR_TUNING
   // TODO: Move them into a base class since they are common to all kernels
   int force_kernel_index = -1;
@@ -22,7 +22,7 @@ struct CppTune {
 #endif
 };
 
-enum CppTuneSpecialKernelIndex : int {
+enum AOTRITON_API CppTuneSpecialKernelIndex : int {
   kDefault = -1,
   kSkipGPUCall = -2,
 };

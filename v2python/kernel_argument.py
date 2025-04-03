@@ -131,12 +131,15 @@ class ArgumentMetadata(object):
         return isinstance(triton_type, int)
 
     def get_param_cc_type(self, triton_arg):
+        if isinstance(self._possible_values, np.ndarray):
+            triton_type = self._possible_values.dtype.type
+            return ObjectFileDescription.SIGNATURE_TO_C[triton_type]
         triton_type = self._possible_values[0]
         if self.is_tensor:
             rank = self._kdesc.get_tensor_rank(triton_arg)
             return f'const T{rank}*'
         if callable(triton_type):
-            triton_type = triton_type.__annotations__['return']()
+            triton_type = triton_type.__annotations__['return']
         if isinstance(triton_type, str):
             return ObjectFileDescription.SIGNATURE_TO_C[triton_type]
         elif isinstance(triton_type, bool):
@@ -155,6 +158,12 @@ class ArgumentMetadata(object):
         return [ self.get_param_cc_type(a[0]) + ' ' + a[0] for a in self._ordered_arguments ]
         # ret = [ cc_type + ' ' + a[0] for a in self._ordered_arguments ]
         # print(f'{ret=}')
+
+    @property
+    def param_cc_size(self):
+        for a in self._ordered_arguments:
+            cc_type = self.get_param_cc_type(a[0])
+            return ObjectFileDescription.C_SIZE[cc_type]
 
     def codegen_godel_number_calculation(self, fout):
         if self.nchoices <= 1:

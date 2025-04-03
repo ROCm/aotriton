@@ -1,4 +1,4 @@
-# Copyright © 2023-2024 Advanced Micro Devices, Inc.
+# Copyright © 2023-2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
 from .kernel_signature import KernelSignature
@@ -166,16 +166,44 @@ class KernelTuningEntryForFunctionalOnGPU(object):
         for _, _, o in self.gen_kernel_symbols(kernel_image_dir):
             dir_arch = Path(GPU_TO_DIRECTORY[o.target_gpu])
             fonly = o.functional_signature + '_' + GPU_TO_CLUSTER_SUFFIX[o.target_gpu]
-            return 'R"xyzw(' + str(dir_arch / o.KERNEL_FAMILY / o.SHIM_KERNEL_NAME / fonly) + ')xyzw"'
+            return str(dir_arch / o.KERNEL_FAMILY / o.SHIM_KERNEL_NAME / fonly)
 
-    def codegen_kernel_image_objects(self, kernel_image_dir, noimage_mode):
-        kernel_image_symbols = []
+    def codegen_func_name(self, kernel_image_dir):
+        for _, _, o in self.gen_kernel_symbols(kernel_image_dir):
+            fsel, psel, copts = o.compact_signature_components
+            return fsel
+
+    def codegen_arch_name(self, kernel_image_dir):
+        for _, _, o in self.gen_kernel_symbols(kernel_image_dir):
+            return o.target_gpu
+
+    def codegen_compact_kernels(self, kernel_image_dir, package_path, noimage_mode):
+        meta_objects = []
+        string_dict = {None : 0}
+        def register_string(s):
+            assert s is not None # string_dict[None] tracks the total size
+            if s in string_dict:
+                return string_dict[s]
+            offset = string_dict[None]
+            string_dict[s] = offset
+            string_dict[None] = offset + len(s) + 1  # Need a trailing '\0'
+            return offset
         for _, _, o in self.gen_kernel_symbols(kernel_image_dir):
             if not noimage_mode and not self._feature_disabled:
                 assert o.compiled_files_exist, f'Compiled file {o._hsaco_kernel_path} not exists'
-            kernel_image_symbols.append(f'{{ PACKAGE_PATH, "{o.obj.stem}" }},')
+            fsel, psel, copt = o.compact_signature_components
+            b2sum_u64, raw = o.blake2b_hash(package_path)
+            assert len(b2sum_u64) == 16
+            b2sum_u64_hi = b2sum_u64[:8]
+            b2sum_u64_lo = b2sum_u64[8:]
+            psel_offset = register_string(psel)
+            copt_offset = register_string(copt)
+            meta_objects.append(f'{{ 0x{b2sum_u64_hi}u, 0x{b2sum_u64_lo}u, {psel_offset}, {copt_offset} }}, // {b2sum_u64} = b2sum -l 64 <<< {raw}')
+        assert string_dict[None] < 2 ** 16 - 1, f'Packed string size {string_dict[None]} exceeds uint16_t limit'
+        del string_dict[None]
+        packed_string = '\n'.join(['"' + s + '\\0"' for s in string_dict])
         ALIGN = '\n' + 4 * ' '
-        return ALIGN.join(kernel_image_symbols)
+        return packed_string, ALIGN.join(meta_objects)
 
     def codegen_kernel_image_perfs(self, kernel_image_dir):
         kernel_image_perfs = []
@@ -207,6 +235,10 @@ class KernelTuningEntryForFunctionalOnGPU(object):
         else:
             old_content = ''
         mf = io.StringIO()  # Memory File
+        package_path = self.codegen_package_path(gpu_kernel_image_dir)
+        packed_string, meta_objects = self.codegen_compact_kernels(gpu_kernel_image_dir,
+                                                                   package_path,
+                                                                   noimage_mode=noimage_mode)
         d = {
             'library_suffix'        : library_suffix,
             'kernel_psels'          : self.codegen_kernel_psels(gpu_kernel_image_dir),
@@ -215,16 +247,17 @@ class KernelTuningEntryForFunctionalOnGPU(object):
             'shim_kernel_name'      : self._kdesc.SHIM_KERNEL_NAME,
             'godel_number'          : godel_number,
             'perf_fields'           : ';\n    '.join(self._kdesc.perf_fields),
-            'package_path'          : self.codegen_package_path(gpu_kernel_image_dir),
-            'kernel_image_objects'  : self.codegen_kernel_image_objects(gpu_kernel_image_dir,
-                                                                        noimage_mode=noimage_mode),
+            'package_path'          : package_path,
+            'func_name'             : self.codegen_func_name(gpu_kernel_image_dir),
+            'arch_name'             : self.codegen_arch_name(gpu_kernel_image_dir),
+            'packed_string'         : packed_string,
+            'meta_objects'          : meta_objects,
             'kernel_image_perfs'    : self.codegen_kernel_image_perfs(gpu_kernel_image_dir),
             'lut_dtype'             : self._lut_cdtype,
             'lut_shape'             : self._lut_cshape,
             'lut_data'              : self.lut_cdata,
             'param_class_name'      : self._kdesc.param_class_name,
-            'binning_autotune_keys' : self.codegen_binning_code(),
-            'binned_indices'        : self.codegen_binned_indices(),
+            'deduplicated_lut_function' : self.codegen_deduplicated_lut_function(),
             'perf_field_assignment' : self.codegen_perf_assignment(),
             'gpu'                   : self._dba.gpu,
             'arch_number'           : self._dba.arch_number,
@@ -262,6 +295,24 @@ class KernelTuningEntryForFunctionalOnGPU(object):
         if self._untuned:
             return '[0]'
         return ''.join([f'[{key}{self.BIN_INDEX_SUFFIX}]' for key, _ in self._autotune_keys])
+
+    def codegen_deduplicated_lut_function(self):
+        d = {
+            'param_class_name'      : self._kdesc.param_class_name,
+            'lut_dtype'             : self._lut_cdtype,
+            'lut_shape'             : self._lut_cshape,
+            'binning_autotune_keys' : self.codegen_binning_code(),
+            'binned_indices'        : self.codegen_binned_indices(),
+        }
+        stmt = []
+        stmt.append('({param_class_name}& params, {lut_dtype} lut{lut_shape}) {{')
+        stmt.append('    {binning_autotune_keys}')
+        stmt.append('    return lut{binned_indices};')
+        stmt.append('}}')
+        ALIGN = '\n'
+        lambda_src = ALIGN.join(stmt).format_map(d)
+        lut_function_name = self._kdesc.register_code_lut(lambda_src, d['lut_dtype'], d['lut_shape'])
+        return lut_function_name
 
     def codegen_perf_assignment(self):
         ALIGN = ';\n' + 4 * ' '
