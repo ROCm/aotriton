@@ -46,7 +46,9 @@ set(AOTRITON_BUILD_FOR_TUNING_BUT_SKIP_KERNEL "" CACHE STRING "Use tuning databa
 option(AOTRITON_ENABLE_FP32_INPUTS "Enable FP32 support." ON)
 option(AOTRITON_NOIMAGE_MODE "Only build C++ Shim part. Kernel image builds are disabled" OFF)
 set(AOTRITON_GPU_BUILD_TIMEOUT "8.0" CACHE STRING "GPU kernel compiler times out after X minutes. 0 for indefinite. Highly recommended if AOTRITON_BUILD_FOR_TUNING=On.")
-set(TARGET_GPUS "MI200;MI300X;Navi31;RX9070XT" CACHE STRING "Target Architecture (Note here uses Trade names)")
+set(AOTRITON_TARGET_ARCH "gfx90a;gfx942;gfx1100;gfx1201" CACHE STRING "Target GPU Architecture. Select all GPUs within the given list")
+set(TARGET_GPUS "OBSOLETE" CACHE STRING "OBSOLETE. To select only one GPU, use AOTRITON_TARGET_ARCH or AOTRITON_OVERRIDE_TARGET_GPUS.")
+set(AOTRITON_OVERRIDE_TARGET_GPUS "" CACHE STRING "Override AOTRITON_TARGET_ARCH, and only build for GPUs within this list.")
 
 # Early failure for python binding
 if(NOT AOTRITON_NO_PYTHON)
@@ -64,6 +66,10 @@ if(AOTRITON_NAME_SUFFIX)
 else()
   set(AOTRITON_ENABLE_SUFFIX OFF)
 endif()
+
+if(NOT TARGET_GPUS STREQUAL "OBSOLETE")
+  message(FATAL_ERROR "TARGET_GPUS is OBSOLETE in Dispatcher V3. Use AOTRITON_TARGET_ARCH or AOTRITON_OVERRIDE_TARGET_GPUS.")
+endif(TARGET_GPUS)
 
 include(GNUInstallDirs)
 configure_file(include/aotriton/config.h.in include/aotriton/config.h)
