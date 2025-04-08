@@ -45,7 +45,9 @@ static constexpr int kTotalNumKernels = ARRAY_SIZE(meta_list);
 
 static AOTRITON_NS::TritonKernelCluster<kTotalNumKernels> kernel_cluster(meta_list, packed_string);
 
-static [[lut_dtype]] lut[[lut_shape]] = [[lut_data]];
+static [[lut_dtype]] lut[[lut_shape]] =
+[[lut_data]]
+;
 
 }; // End of anonymous namespace
 
@@ -53,7 +55,7 @@ namespace AOTRITON_NS::v2::[[kernel_family_name]]::autotune {
 
 // using AOTRITON_NS::v2::[[kernel_family_name]]::[[param_class_name]];
 
-void CURRENT_ENTRY_PUBLIC([[param_class_name]]& params) {
+void CURRENT_ENTRY_PUBLIC([[param_class_name]]& params, int mod_number) {
 #if AOTRITON_BUILD_FOR_TUNING
     int preferred_index = params._has_preferred_kernel;
     params._total_number_of_kernels = kTotalNumKernels;

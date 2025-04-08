@@ -51,7 +51,7 @@ public:
 private:
     GpuArch kernel_arch = GPU_ARCH_UNKNOWN;
 
-    typedef void (*AutoTuneTableEntry)([[param_class_name]]& params);
+    typedef void (*AutoTuneTableEntry)([[param_class_name]]& params, int mod_number);
     static AutoTuneTableEntry autotune_table[][ [[number_of_functionals]] ];
 };
 

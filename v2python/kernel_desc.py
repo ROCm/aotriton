@@ -244,12 +244,14 @@ class KernelDescription(object):
     def build_object_file_description(self, outpath, sig, sancheck_fileexists=False):
         return ObjectFileDescription(self, sig, outpath, sancheck_fileexists=sancheck_fileexists)
 
+    # DispatcherV3 Note
+    # LUT object now handles different GPU mods under the same arch
     def gen_tuned_kernel_lut(self, tuned_db : 'KernelTuningDatabase') -> 'Iterator[KernelTuningLutForGPU]':
-        for gpu, fsels in itertools.product(self._target_gpus,
-                                            self.gen_func_selections()):
-            dba = tuned_db.select_gpu(gpu, self._target_gpus.index(gpu))
+        for (arch, gpus), fsels in  itertools.product(self._target_arch.items(),
+                                                      self.gen_func_selections()):
+            dba = tuned_db.select_gpus(gpus)
             # print(f'gen_tuned_kernel_lut {fsels=}')
-            yield gpu, fsels, dba.get_lut(self, self.AUTOTUNE_KEYS_VALIDATED, fsels, self._perf_meta)
+            yield dba.arch, fsels, dba.get_lut(self, self.AUTOTUNE_KEYS_VALIDATED, fsels, self._perf_meta)
 
     @property
     def param_class_name(self):
@@ -299,7 +301,7 @@ class KernelDescription(object):
               'godel_number_body'   : self.godel_number_body,
               'put_kernel_arguments_on_stack' : put_kernel_arguments_on_stack,
               'let_kernel_arguments' : let_kernel_arguments,
-              'get_arch_number_body' : self.codegen_arch_number_body(),
+              'get_archmod_number_body' : self.codegen_archmod_number_body(),
               'number_of_functionals': self._godel_number,
               'define_compiled_in_features' : self.codegen_define_compiled_in_features(),
               # 'copy_perf_fields_body': self.copy_perf_fields_body,
@@ -350,10 +352,13 @@ class KernelDescription(object):
     def get_arch_number(self, arch : str) -> int:
         return self._target_arch_keys.index(arch)
 
-    def codegen_arch_number_body(self):
+    def codegen_archmod_number_body(self):
         lets = []
         for i, arch in enumerate(self._target_arch_keys):
-            lets.append(f'if (Gpu2Arch(gpu) == {arch}) return {i}')
+            for j, gpu in enumerate(self._target_arch[arch]):
+                gpu_enum = f'GPU_AMD_ARCH_{gpu}'.upper()
+                # CAVEAT: must return j because some GPU mod may not be selected.
+                lets.append(f'if (gpu == {gpu_enum}) return {{ {i}, {j} }}')
         ALIGN = ';\n' + ' ' * 4
         return ALIGN.join(lets)
 
@@ -405,12 +410,12 @@ class KernelDescription(object):
             godel_numbers = sorted(list(set([o.godel_number for o in object_files if o.target_arch == target_arch])))
             for godel_number in godel_numbers:
                 struct_name = self.get_autotune_struct_name(arch_number, godel_number)
-                decls.append(f'void {struct_name}({self.param_class_name}& params);')
+                decls.append(f'void {struct_name}({self.param_class_name}& params, int mod_number);')
         return '\n'.join(decls)
 
     def codegen_kernel_table_entries(self, object_files):
         lets = []
-        for arch_number, target_gpu in enumerate(self._target_gpus):
+        for arch_number, target_arch in enumerate(self._target_arch_keys):
             lets.append(4 * ' ' + '{')
             godel_numbers = sorted(list(set([o.godel_number for o in object_files])))
             for godel_number in range(self._godel_number):
@@ -474,5 +479,5 @@ const std::vector<{ctype}>& {meta_class}::get_{meta.repr_name}_choices()
         param_class_name = self.param_class_name
         stmt = []
         for _, (lut_function_name, lut_dtype, lut_shape) in self._lut_lambda_registry.items():
-            stmt.append(f'extern int {lut_function_name}({param_class_name}&, {lut_dtype} {lut_shape});')
+            stmt.append(f'extern int {lut_function_name}({param_class_name}&, int, {lut_dtype} {lut_shape});')
         return '\n'.join(stmt)

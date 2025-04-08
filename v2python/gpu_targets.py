@@ -50,6 +50,8 @@ def cluster_gpus(gpus : list[str]) -> dict[str : list[str]]:
     for gpu in gpus:
         arch = gpu2arch(gpu)
         ret[arch].append(gpu)
+    for k, v in ret.items():
+        ret[k] = sorted(v)
     return ret
 
 def select_gpus(target_arch, target_gpus) -> list[str]:

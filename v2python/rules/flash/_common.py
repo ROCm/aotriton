@@ -37,9 +37,9 @@ class FlashKernel(KernelDescription):
         # tuning database
         if not hasattr(self, 'gen_autotune_configs'):
             return True
-        if 'Unidentified' in gpu:  # Tuning database depends on others
+        if 'gfx950' in arch:  # Tuning database depends on others
             return True
-        if self.is_functional_disabled_on_arch(gpu2arch(gpu), fsels):
+        if self.is_functional_disabled_on_arch(arch, fsels):
             return True  # ignore disabled functionals
         MI = (AOTRITON_ARCH_WARPSIZE[arch] == 64)
         Navi = (AOTRITON_ARCH_WARPSIZE[arch] == 32)

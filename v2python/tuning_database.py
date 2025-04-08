@@ -37,8 +37,7 @@ class EmptyKernelTuningDatabaseForArch(CommonKernelTuningDatabaseForArch):
                              columns,
                              row,
                              perf_meta: 'list[ArgumentSelection]') -> 'list[TunedArgument], compiler_options':
-        for gpu in self.for_gpus:
-            return gpu, [TunedArgument(meta, meta.default_value) for meta in perf_meta], None
+        return [TunedArgument(meta, meta.default_value) for meta in perf_meta], None
 
     def get_lut(self,
                 kdesc : 'KernelDescription',

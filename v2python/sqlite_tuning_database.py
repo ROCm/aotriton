@@ -110,34 +110,41 @@ class SQLiteKernelTuningDatabaseForArch(CommonKernelTuningDatabaseForArch):
         # get_lut needs this to identify the LUT
         return where_columns, tuple(where_values), selected_columns, selected_rows
 
+    @staticmethod
+    def locate_gpu_col(columns):
+        for i, cname in enumerate(columns):
+            if cname == 'gpu':
+                return i
+        return None
+
+    def get_gpu_from_row(self, gpu_col, row):
+        return self._db2for[row[gpu_col]]
+
     def _select_from_db(self,
                         fsels : 'list[ArgumentSelection]',
                         perf_meta : 'list[ArgumentMetadata]',
                         no_duplicate=True):
         _, _, selected_columns, selected_rows = self._lookup_tuning_info(fsels, perf_meta, with_duplicates=not no_duplicate)
         assert selected_rows
-        gpu_col = None
-        for i, cname in enumerate(selected_columns):
-            if cname == 'gpu':
-                gpu_col = i
+        gpu_col = self.locate_gpu_col(selected_columns)
         assert gpu_col is not None, f'_select_from_db must be called with gpu column selected. Current selection {selected_columns}'
         for row in selected_rows:
-            yield self.craft_perf_selection(selected_columns, gpu_col, row, perf_meta)
+            gpu = self.get_gpu_from_row(gpu_col, row)
+            psel, copt = self.craft_perf_selection(selected_columns, row, perf_meta)
+            yield gpu, psel, copt
 
     def craft_perf_selection(self,
                              columns,
-                             gpu_col,
                              row,
                              perf_meta: 'list[ArgumentSelection]') -> 'list[TunedArgument], compiler_options':
         if row is None:  # default value when tuning db does not contain the kernel
             return [TunedArgument(meta, meta.default_value) for meta in perf_meta], None
-        gpu = self._db2for[row[gpu_col]]
         ps = self._row_to_dict(columns, row, prefix='tuned_kernel')
         co = self._row_to_dict(columns, row, prefix='compiler_options')
         if 'waves_per_eu' in ps:
             co['waves_per_eu'] = ps['waves_per_eu']
             del ps['waves_per_eu']
-        return gpu, [TunedArgument(meta, ps[meta.argument_names[0]]) for meta in perf_meta], co
+        return [TunedArgument(meta, ps[meta.argument_names[0]]) for meta in perf_meta], co
 
     def _row_to_dict(self, columns, row, prefix):
         d = {}

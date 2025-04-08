@@ -12,14 +12,14 @@ class KernelSignature(object):
                  func_selections : 'tuple[ArgumentSelection]',
                  perf_selections : 'tuple[ArgumentSelection]',
                  compiler_options: dict,
-                 gpu : str):
+                 gpu_or_arch : str):
         self._kdesc = kdesc
+        self._arch = gpu2arch(gpu_or_arch)  # gpu2arch is identity if passing arch
         self._func_selections = func_selections
         fsel_dict = ArgumentSelection.build_fsel_dict(func_selections)
-        self._perf_selections = [p.substitute_if_lambda(gpu, fsel_dict) for p in perf_selections]
+        self._perf_selections = [p.substitute_if_lambda(self._arch, fsel_dict) for p in perf_selections]
         self._selections = list(self._func_selections) + list(self._perf_selections)
         self._compiler_options = {} if compiler_options is None else compiler_options
-        self._arch = gpu2arch(gpu)
 
     COMPACT_COMPILER_OPTION = {
         'waves_per_eu' : 'wave',
