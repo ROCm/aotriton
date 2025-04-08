@@ -133,6 +133,9 @@ class KernelTuningDatabase(object):
                 gpu404 = gpu
                 break
             real = AOTRITON_TUNING_DATABASE_REUSE[gpu]
+            if real not in self._gpu_set:
+                gpu404 = gpu
+                break
             reals.append(real)
         if gpu404 is not None:
             if not self._build_for_tuning:

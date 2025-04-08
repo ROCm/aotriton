@@ -15,8 +15,10 @@ class SQLiteKernelTuningDatabaseForArch(CommonKernelTuningDatabaseForArch):
     def __init__(self, k, for_gpus, db_gpus, conn, table_name, downgrader=None):
         super().__init__(k, for_gpus, db_gpus, downgrader=downgrader)
         assert len(for_gpus) == len(db_gpus), f'{for_gpus=} {db_gpus=}'
-        self._db2for = { d : f for d, f in zip(for_gpus, db_gpus) }
-        self._for2db = { f : d for d, f in zip(for_gpus, db_gpus) }
+        self._db2for = { d : f for f, d in zip(for_gpus, db_gpus) }
+        self._for2db = { f : d for f, d in zip(for_gpus, db_gpus) }
+        # print(f'{self._db2for=}')
+        # print(f'{self._db2for=}')
         self._conn = conn
         self._table_name = table_name
         self._input_column_names = None
