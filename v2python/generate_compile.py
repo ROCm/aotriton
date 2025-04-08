@@ -4,9 +4,9 @@
 from .rules import kernels as triton_kernels
 from .tuning_database import (
     KernelTuningDatabase,
-    GPU_TO_DIRECTORY,
-    GPU_TO_CLUSTER_SUFFIX,
+    ARCH_TO_DIRECTORY,
 )
+from .gpu_targets import AOTRITON_SUPPORTED_GPUS
 import io
 import shutil
 import argparse
@@ -40,7 +40,7 @@ class ClusterKernel(object):
         if n_combination == 0:  # No need to change functional(s) to 'Any'
             dic = defaultdict(list)
             for ofd in self._registry:
-                fonly = ofd.functional_signature + '_' + GPU_TO_CLUSTER_SUFFIX[ofd.target_gpu]
+                fonly = ofd.functional_signature + '_' + ofd.target_arch
                 dic[fonly].append(ofd)
             cluster_by[None] = dic
             return cluster_by
@@ -105,14 +105,14 @@ class ClusterRegistry(object):
             clusters = cluster_bys[None]
             for fonly, obj_list in clusters.items():
                 first_obj = obj_list[0]
-                dir_arch = GPU_TO_DIRECTORY[first_obj.target_gpu]
+                dir_arch = ARCH_TO_DIRECTORY[first_obj.target_arch]
                 print(dir_arch, family, kernel_name, fonly, end=';', sep=';', file=f)
                 path_list = [str(o.obj.absolute()) for o in obj_list]
                 print(*path_list, sep=';', file=f)
 
 def parse():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    p.add_argument("--target_gpus", type=str, default=None, nargs='*',
+    p.add_argument("--target_gpus", type=str, default=None, nargs='+', choices=AOTRITON_SUPPORTED_GPUS,
                    help="Ahead of Time (AOT) Compile Architecture. PyTorch is required for autodetection if --targets is missing.")
     p.add_argument("--build_dir", type=str, default='build/', help="build directory")
     p.add_argument("--python", type=str, default=None, help="python binary to run compile.py")
@@ -136,18 +136,14 @@ def gen_from_object(args, o : 'ObjectFileDescription', makefile):
     if args.test_clustering or args.generate_cluster_info:
         args._cluster_registry.collect_object_file(o)
     if args.bare_mode:
-        print(o.obj.absolute(), o.src.absolute(), o.entrance, o.num_warps, o.num_stages, o.waves_per_eu, o.target_gpu, o.signature, sep=';', file=makefile)
+        print(o.obj.absolute(), o.src.absolute(), o.entrance, o.num_warps, o.num_stages, o.waves_per_eu, o.target_arch, o.signature, sep=';', file=makefile)
         return
     print('#', o.human_readable_signature, file=makefile)
     target_fn = f'{o.KERNEL_FAMILY}/gpu_kernel_image.{o.SHIM_KERNEL_NAME}/{o._hsaco_kernel_path.name}'
     print(target_fn, ':', o.src.absolute(), COMPILER.absolute(), file=makefile)
     cmd  = f'LD_PRELOAD=$(LIBHSA_RUNTIME64) {COMPILER} {o.src.absolute()} --kernel_name {o.entrance} -o {o.obj.absolute()}'
     cmd += f' -g 1,1,1 --num_warps {o.num_warps} --num_stages {o.num_stages} --waves_per_eu {o.waves_per_eu}'
-    if o.target_gpu is not None:
-        cmd += f" --target '{o.target_gpu}'"
-        target_gpu = o.target_gpu
-    else:
-        target_gpu = 'native'
+    cmd += f" --target '{o.target_arch}'"
     cmd += f" --signature '{o.signature}'"
     cmd += f" --timeout {args.timeout}"
     print('\t', cmd, file=makefile)
@@ -160,14 +156,13 @@ def gen_from_kernel(args, k, build_dir, makefile):
     target_all = f'compile_{k.SHIM_KERNEL_NAME}'
     all_targets = []
     object_rules = io.StringIO()
-    arches = [None] if args.target_gpus is None else args.target_gpus
     # ktd = None if args.build_for_tuning else KernelTuningDatabase(SOURCE_PATH.parent / 'rules', k)
     tuning = is_tuning_on_for_kernel(args, k)
     ktd = KernelTuningDatabase(build_dir, k, build_for_tuning=tuning)
     if False: # Debugging
         if k.SHIM_KERNEL_NAME == 'attn_fwd':
             assert not ktd.empty
-    k.set_target_gpus(arches)
+    k.set_target_gpus(args.target_gpus)
     for o in k.gen_all_object_files(outpath, tuned_db=ktd):
         all_targets.append(gen_from_object(args, o, object_rules))
     if not args.bare_mode:

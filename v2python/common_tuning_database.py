@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 from abc import ABC, abstractmethod
-from .gpu_targets import AOTRITON_TUNING_DATABASE_REUSE
+from .gpu_targets import AOTRITON_TUNING_DATABASE_REUSE, gpu2arch
 
 '''
 Note: unlike KernelDescription, whose constants will be specialized for EVERY kernel.
@@ -13,34 +13,34 @@ Note: unlike KernelDescription, whose constants will be specialized for EVERY ke
       has zero information about the triton kernel.
 '''
 class CommonKernelTuningDatabaseForArch(ABC):
-    def __init__(self, k : 'KernelDescription', arch : str, downgrader=None):
+    def __init__(self, k : 'KernelDescription',
+                 for_gpus : list[str],
+                 db_gpus : list[str],
+                 downgrader=None):
+        self._for_gpus = for_gpus
+        self._db_gpus = db_gpus
         self._kdesc = k
-        self._arch = arch
-        self._gpu = None
         self._downgrader = downgrader
-        self._db_arch = AOTRITON_TUNING_DATABASE_REUSE.get(arch, self.arch)
+        self._arch = gpu2arch(for_gpus[0])
+        self._arch_number = self._kdesc.get_arch_number(self._arch)
+        print(f'CommonKernelTuningDatabaseForArch.__init__ {k.FULL_KERNEL_NAME} {db_gpus=}')
 
     @property
     def arch(self):
         return self._arch
 
     @property
-    def db_arch(self):
-        return self._db_arch
-
-    @property
     @abstractmethod
     def empty(self):
         pass
 
-    def set_gpu(self, gpu, index):
-        self._gpu = gpu
-        self._arch_number = index
-        return self
+    @property
+    def for_gpus(self):
+        return self._for_gpus
 
     @property
-    def gpu(self):
-        return self._gpu
+    def db_gpus(self):
+        return self._db_gpus
 
     @property
     def arch_number(self):
@@ -66,7 +66,8 @@ class CommonKernelTuningDatabaseForArch(ABC):
     '''
     def select(self, fsels : 'list[ArgumentSelection]', perf_meta : 'list[ArgumentMetadata]') -> 'list[ArgumentSelection], dict[str,str]':
         if self.empty:
-            yield [], None
+            for gpu in self.for_gpus:
+                yield gpu, [], None
         self._build_db_index(fsels)
         yield from self._select_from_db(fsels, perf_meta)
 

@@ -12,22 +12,14 @@ from pathlib import Path
 import os
 SKIPPED_LUT_CHECK = os.getenv('AOTRITON_SKIP_LUT_CHECK', default='').split(',')
 
-GPU_TO_DIRECTORY = {
-    'MI200'  : 'amd-gfx90a',
-    'MI300X' : 'amd-gfx942',
-    'Navi31' : 'amd-gfx110x',
-    'Navi32' : 'amd-gfx110x',
-    'Unidentified' : 'amd-gfx950',
-    'RX9070XT'    : 'amd-gfx120x',
-}
-
-GPU_TO_CLUSTER_SUFFIX = {
-    'MI200'  : 'MI200',
-    'MI300X' : 'MI300X',
-    'Navi31' : 'Navi3x',
-    'Navi32' : 'Navi3x',
-    'Unidentified'      : 'Unidentified',
-    'RX9070XT'    : 'RX9070XT',
+ARCH_TO_DIRECTORY = {
+    'gfx90a'  : 'amd-gfx90a',
+    'gfx942' : 'amd-gfx942',
+    'gfx1100' : 'amd-gfx110x',
+    'gfx1101' : 'amd-gfx110x',
+    'gfx950' : 'amd-gfx950',
+    'gfx1200'    : 'amd-gfx120x',
+    'gfx1201'    : 'amd-gfx120x',
 }
 
 class MissingLutEntry(Exception):
@@ -66,7 +58,7 @@ class KernelTuningEntryForFunctionalOnGPU(object):
         self._autotune_key_class = { key : klass for key, klass in autotune_keys } if autotune_keys is not None else None
         self._sigs = []
         self._sig_dict = {}
-        self._feature_disabled = self._kdesc.is_functional_disabled_on_gpu(self._dba.gpu, self._fsels)
+        self._feature_disabled = self._kdesc.is_functional_disabled_on_arch(self._dba.arch, self._fsels)
         if autotune_keys is None or self._feature_disabled:
             self._lut_dtype = np.int8
             self._lut_cdtype = f'int8_t'
@@ -164,8 +156,8 @@ class KernelTuningEntryForFunctionalOnGPU(object):
 
     def codegen_package_path(self, kernel_image_dir):
         for _, _, o in self.gen_kernel_symbols(kernel_image_dir):
-            dir_arch = Path(GPU_TO_DIRECTORY[o.target_gpu])
-            fonly = o.functional_signature + '_' + GPU_TO_CLUSTER_SUFFIX[o.target_gpu]
+            dir_arch = Path(ARCH_TO_DIRECTORY[o.target_arch])
+            fonly = o.functional_signature + '_' + o.target_arch
             return str(dir_arch / o.KERNEL_FAMILY / o.SHIM_KERNEL_NAME / fonly)
 
     def codegen_func_name(self, kernel_image_dir):
@@ -175,7 +167,7 @@ class KernelTuningEntryForFunctionalOnGPU(object):
 
     def codegen_arch_name(self, kernel_image_dir):
         for _, _, o in self.gen_kernel_symbols(kernel_image_dir):
-            return o.target_gpu
+            return o.target_arch
 
     def codegen_compact_kernels(self, kernel_image_dir, package_path, noimage_mode):
         meta_objects = []
@@ -221,11 +213,11 @@ class KernelTuningEntryForFunctionalOnGPU(object):
             print(f'[DEBUG] {self._fsels=}')
             raise e
         godel_number = first_sig.godel_number
-        ofn = outdir / f'{first_sig.functional_signature}_{first_sig.target_gpu}.cc'
+        ofn = outdir / f'{first_sig.functional_signature}_{first_sig.target_arch}.cc'
         raise_lut_entry = False
         if self._kdesc.FULL_KERNEL_NAME in SKIPPED_LUT_CHECK:
             pass
-        elif not self._kdesc.sancheck_lut_tensor(self._dba.gpu, lut_tensor, self._fsels):
+        elif not self._kdesc.sancheck_lut_tensor(self._dba.arch, lut_tensor, self._fsels):
             raise_lut_entry = True
         if bare_mode:
             return ofn

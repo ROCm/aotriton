@@ -12,10 +12,12 @@ from .downgrader import TuningDowngrader
 class SQLiteKernelTuningDatabaseForArch(CommonKernelTuningDatabaseForArch):
     UNDETECTED_COLUMN_PREFIX = '$$__UNDETECTED_'
 
-    def __init__(self, k, arch, conn, table_name, downgrader=None):
-        super().__init__(k, arch, downgrader=downgrader)
+    def __init__(self, k, for_gpus, db_gpus, conn, table_name, downgrader=None):
+        super().__init__(k, for_gpus, db_gpus, downgrader=downgrader)
+        assert len(for_gpus) == len(db_gpus), f'{for_gpus=} {db_gpus=}'
+        self._db2for = { d : f for d, f in zip(for_gpus, db_gpus) }
+        self._for2db = { f : d for d, f in zip(for_gpus, db_gpus) }
         self._conn = conn
-        self._kdesc = k
         self._table_name = table_name
         self._input_column_names = None
         self._column_names = None
@@ -23,12 +25,17 @@ class SQLiteKernelTuningDatabaseForArch(CommonKernelTuningDatabaseForArch):
         self._fsel_index_to_column_name = None
         self._lut = {}
         self._select_stmt_base = None
+        self._in_stmt = ', '.join(['?'] * len(db_gpus))
+        self._empty_stmt = f'SELECT COUNT(id) FROM {self._table_name} WHERE gpu IN ({self._in_stmt})'
+        self._cached_empty = None
 
     @property
     def empty(self):
-        stmt = f'SELECT COUNT(id) FROM {self._table_name} WHERE arch = ?'
-        nitem, = self._conn.execute(stmt, (self.db_arch,)).fetchone()
-        return nitem == 0
+        if not self._cached_empty:
+            # print(f'{self._empty_stmt=} {self.db_gpus=}')
+            nitem, = self._conn.execute(self._empty_stmt, self.db_gpus).fetchone()
+            self._cached_empty = (nitem == 0)
+        return self._cached_empty
 
     def _build_db_index(self, fsels):
         if self._fsel_index_to_column_name is not None:
@@ -40,7 +47,7 @@ class SQLiteKernelTuningDatabaseForArch(CommonKernelTuningDatabaseForArch):
         self._column_name_to_index = { tup[0] : index for index, tup in enumerate(cursor.description) }
         self._column_names = [tup[0] for tup in cursor.description]
         self._column_names_set = set(self._column_names)
-        self._tuning_column_names = [cn for cn in self._column_names if cn.startswith('tuned_kernel$') or cn.startswith('compiler_options$')]
+        self._tuning_column_names = ['gpu'] + [cn for cn in self._column_names if cn.startswith('tuned_kernel$') or cn.startswith('compiler_options$')]
         for fsel in fsels:
             mfsel = fsel.meta
             if mfsel.nchoices <= 1:
@@ -107,21 +114,28 @@ class SQLiteKernelTuningDatabaseForArch(CommonKernelTuningDatabaseForArch):
                         no_duplicate=True):
         _, _, selected_columns, selected_rows = self._lookup_tuning_info(fsels, perf_meta, with_duplicates=not no_duplicate)
         assert selected_rows
+        gpu_col = None
+        for i, cname in enumerate(selected_columns):
+            if cname == 'gpu':
+                gpu_col = i
+        assert gpu_col is not None, f'_select_from_db must be called with gpu column selected. Current selection {selected_columns}'
         for row in selected_rows:
-            yield self.craft_perf_selection(selected_columns, row, perf_meta)
+            yield self.craft_perf_selection(selected_columns, gpu_col, row, perf_meta)
 
     def craft_perf_selection(self,
                              columns,
+                             gpu_col,
                              row,
                              perf_meta: 'list[ArgumentSelection]') -> 'list[TunedArgument], compiler_options':
         if row is None:  # default value when tuning db does not contain the kernel
             return [TunedArgument(meta, meta.default_value) for meta in perf_meta], None
+        gpu = self._db2for[row[gpu_col]]
         ps = self._row_to_dict(columns, row, prefix='tuned_kernel')
         co = self._row_to_dict(columns, row, prefix='compiler_options')
         if 'waves_per_eu' in ps:
             co['waves_per_eu'] = ps['waves_per_eu']
             del ps['waves_per_eu']
-        return [TunedArgument(meta, ps[meta.argument_names[0]]) for meta in perf_meta], co
+        return gpu, [TunedArgument(meta, ps[meta.argument_names[0]]) for meta in perf_meta], co
 
     def _row_to_dict(self, columns, row, prefix):
         d = {}
@@ -226,11 +240,11 @@ class SQLiteKernelTuningDatabaseForArch(CommonKernelTuningDatabaseForArch):
         return fallback_values
 
     def _select_from_table(self, columns, values, with_inputs):
-        conds = [ 'arch = ?' ]
+        conds = [ f'gpu IN ({self._in_stmt})' ]
         # print(f'{columns=} {values=}')
         # Check value is not None in case falling back to any value
         conds += [f'{column} = ?' for column, v in zip(columns, values) if v is not None]
-        select_vals = [self.db_arch]
+        select_vals = list(self.db_gpus)
         select_vals += [v for v in values if v is not None]
         # print(f'{conds=}')
         if with_inputs:

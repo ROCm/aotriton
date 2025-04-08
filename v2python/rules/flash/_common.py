@@ -1,6 +1,7 @@
 # Copyright © 2023-2024 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
+from ...gpu_targets import gpu2arch, AOTRITON_ARCH_WARPSIZE
 from ...kernel_desc import KernelDescription, get_possible_choices, select_pattern
 from ...autotune_config import Config
 from ...autotune_binning import BinningLessOrEqual, BinningExact
@@ -19,7 +20,7 @@ class FlashKernel(KernelDescription):
     LUT_FULL_SEQLEN_K = [4,8,16,32,64,128,256,512,1024,2048,4096,8192]
     LUT_FULL_SEQLEN_NAVI = [16,32,64,128,256,512,1024]
 
-    def is_functional_disabled_on_gpu(self, gpu, fsels):
+    def is_functional_disabled_on_arch(self, arch, fsels):
         if not hasattr(self, 'gen_autotune_configs'):  # only check acutal FA kernels
             return False
         is_causal = check_value(fsels, ['CAUSAL', 'CAUSAL_TYPE'])
@@ -29,7 +30,7 @@ class FlashKernel(KernelDescription):
         return False
 
     def sancheck_lut_tensor(self,
-                            gpu,
+                            arch,
                             lut_tensor,
                             fsels : 'list[ArgumentSelection]'):
         # Only kernels that provide gen_autotune_configs may have entries in
@@ -38,10 +39,10 @@ class FlashKernel(KernelDescription):
             return True
         if 'Unidentified' in gpu:  # Tuning database depends on others
             return True
-        if self.is_functional_disabled_on_gpu(gpu, fsels):
+        if self.is_functional_disabled_on_arch(gpu2arch(gpu), fsels):
             return True  # ignore disabled functionals
-        MI = 'MI' in gpu
-        Navi = 'Navi' in gpu or gpu.startswith('RX')
+        MI = (AOTRITON_ARCH_WARPSIZE[arch] == 64)
+        Navi = (AOTRITON_ARCH_WARPSIZE[arch] == 32)
         LUT_TENSOR_SIZE = (len(self.LUT_FULL_SEQLEN_Q), len(self.LUT_FULL_SEQLEN_K))
         LUT_TENSOR_SIZE_NAVI = (len(self.LUT_FULL_SEQLEN_NAVI), len(self.LUT_FULL_SEQLEN_NAVI))
         if lut_tensor.size == 1:
@@ -62,8 +63,9 @@ class FlashKernel(KernelDescription):
         import json
         import numpy as np
         base = {'gpu' : gpu}
-        MI = 'MI' in gpu
-        Navi = 'Navi' in gpu or gpu.startswith('RX')
+        arch = gpu2arch(gpu)
+        MI = (AOTRITON_ARCH_WARPSIZE[arch] == 64)
+        Navi = (AOTRITON_ARCH_WARPSIZE[arch] == 32)
         if Navi:
             lut_full_seqlen_q = self.LUT_FULL_SEQLEN_NAVI
             lut_full_seqlen_k = self.LUT_FULL_SEQLEN_NAVI

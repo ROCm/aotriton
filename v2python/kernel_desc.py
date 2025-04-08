@@ -13,7 +13,7 @@ from .kernel_argument import (
 )
 from .kernel_signature import KernelSignature
 from .object_desc import ObjectFileDescription
-from .gpu_targets import AOTRITON_SUPPORTED_GPUS, AOTRITON_GPU_WARPSIZE
+from .gpu_targets import AOTRITON_SUPPORTED_GPUS, cluster_gpus
 
 SOURCE_PATH = Path(__file__).resolve()
 AOTRITON_ENABLE_FP32 = bool(int(os.getenv('AOTRITON_ENABLE_FP32', True)))
@@ -86,7 +86,7 @@ class KernelDescription(object):
                         self._DATA_ARGUMENTS[i] += '_ptr'
         return self._DATA_ARGUMENTS
 
-    def is_functional_disabled_on_gpu(self, gpu, fsels):
+    def is_functional_disabled_on_arch(self, arch, fsels):
         return False
 
     def insert_tensor_strides_to_choices(self, last_is_continuous=False):
@@ -128,6 +128,7 @@ class KernelDescription(object):
         self._func_selections = [m.spawn_all_selections() for m in self._func_meta]
         self._perf_selections = [m.spawn_all_selections() for m in self._perf_meta]
         self._target_gpus = None
+        self._target_arch = None
         self.AUTOTUNE_KEYS_VALIDATED = []
         for key in self.ARGUMENTS:
             if key not in self.AUTOTUNE_KEYS:
@@ -146,6 +147,12 @@ class KernelDescription(object):
             assert key in self.ARGUMENTS, f'AUTOTUNE_KEYS "{key}" cannot be found in {self.__class__.__name__}.ARGUMENTS'
         self._lut_lambda_registry = {}
 
+    def set_target_gpus(self, gpus):
+        # Note _target_gpus should not bu used
+        # self._target_gpus = list(gpus)
+        self._target_arch = cluster_gpus(gpus)
+        self._target_arch_keys = list(self._target_arch.keys())
+
     @property
     def name(self):
         return self._triton_kernel_name
@@ -157,22 +164,24 @@ class KernelDescription(object):
         # Function options is handled at KernelSignature
         return itertools.product(*self._perf_selections)
 
-    def gen_tuned_perf_selections(self,
-                                  tuned_db : 'KernelTuningDatabase',
-                                  gpu : str,
-                                  fsels : 'list[ArgumentSelection]'):
-        dba = tuned_db.select_gpu(gpu, self._target_gpus.index(gpu))
+    # DispatcherV3 Note:
+    #   Only called by gen_all_object_files to select perf options for all matched GPUs
+    def __gen_tuned_perf_selections(self,
+                                    tuned_db : 'KernelTuningDatabase',
+                                    arch : str,
+                                    gpus : list[str],
+                                    fsels : 'list[ArgumentSelection]'):
+        dba = tuned_db.select_gpus(gpus)
 
         if dba.empty:  # Fallback to selection defined by KernelDescription
-            for psels in self.gen_perf_selections(gpu, fsels):
-                yield gpu, fsels, psels, None
-                return  # For empty tuning database. Only need one option
+            for gpu in gpus:
+                for psels in self.gen_perf_selections(gpu, fsels):
+                    yield gpu, fsels, psels, None
+                    break  # For empty tuning database. Only need one option
+            return
 
-        for psels, compiler_options in dba.select(fsels, self._perf_meta):
+        for gpu, psels, compiler_options in dba.select(fsels, self._perf_meta):
             yield gpu, fsels, psels, compiler_options
-
-    def set_target_gpus(self, gpus):
-        self._target_gpus = ['native'] if gpus is None else list(gpus)
 
     def _gen_all_options_from_kdesc_autotune_configs(self,
                                                      gpu : str,
@@ -188,33 +197,36 @@ class KernelDescription(object):
                              # file_name_prefix : str = None,
                              tuned_db : 'KernelTuningDatabase',
                              sancheck_fileexists = False) -> 'Iterator[ObjectFileDescription]':
+        # DispatcherV3 Note:
+        #   This function generate all hsaco objects, for tuning or for running
+        #   Therefore, arch is always used.
         assert tuned_db is not None, '[KernelDescription.gen_all_object_files] Must pass not None tuned_db'
         def gen():
             if tuned_db.build_for_tuning:
                 if hasattr(self, 'gen_autotune_configs'):
                     # Build for Tuning, for complex kernels wait for tuning
-                    for gpu, fsels in itertools.product(self._target_gpus,
-                                                        self.gen_func_selections()):
-                        yield from self._gen_all_options_from_kdesc_autotune_configs(gpu, fsels)
+                    for arch, fsels in itertools.product(self._target_arch.keys(),
+                                                         self.gen_func_selections()):
+                        yield from self._gen_all_options_from_kdesc_autotune_configs(arch, fsels)
                 else:
                     # FIXME: This yield is incorrect (missing gpu and fsels)
                     #        but apparently not triggering anything wrong right now.
-                    for gpu, fsels in itertools.product(self._target_gpus,
+                    for arch, fsels in itertools.product(self._target_arch.keys(),
                                                         self.gen_func_selections()):
-                        yield from itertools.product(self.gen_perf_selections(gpu, fsels),
+                        yield from itertools.product(self.gen_perf_selections(arch, fsels),
                                                      [None])
-            else:
-                # Not Build for Tuning, checking database
-                for gpu, fsels in itertools.product(self._target_gpus,
-                                                    self.gen_func_selections()):
-                    if self.is_functional_disabled_on_gpu(gpu, fsels):
+                return
+            # Not Build for Tuning, checking database
+            for arch, gpus in self._target_arch.items():
+                for fsels in self.gen_func_selections():
+                    if self.is_functional_disabled_on_arch(arch, fsels):
                         # Empty tuning database
                         # Disabling the compiling is done in generate_compile.py
-                        for psels in self.gen_perf_selections(gpu, fsels):
-                            yield gpu, fsels, psels, None
+                        for psels in self.gen_perf_selections(arch, fsels):
+                            yield arch, fsels, psels, None
                             break
                     else:
-                        yield from self.gen_tuned_perf_selections(tuned_db, gpu, fsels)
+                        yield from self.__gen_tuned_perf_selections(tuned_db, arch, gpus, fsels)
         debug_counter = 0
         for gpu, fsels, psels, compiler_options in gen():
             try:
@@ -287,7 +299,7 @@ class KernelDescription(object):
               'godel_number_body'   : self.godel_number_body,
               'put_kernel_arguments_on_stack' : put_kernel_arguments_on_stack,
               'let_kernel_arguments' : let_kernel_arguments,
-              'get_arch_number_body' : self.arch_number_body,
+              'get_arch_number_body' : self.codegen_arch_number_body(),
               'number_of_functionals': self._godel_number,
               'define_compiled_in_features' : self.codegen_define_compiled_in_features(),
               # 'copy_perf_fields_body': self.copy_perf_fields_body,
@@ -335,12 +347,13 @@ class KernelDescription(object):
             m.codegen_godel_number_calculation(body)
         return body.getvalue()
 
-    @property
-    def arch_number_body(self):
+    def get_arch_number(self, arch : str) -> int:
+        return self._target_arch_keys.index(arch)
+
+    def codegen_arch_number_body(self):
         lets = []
-        for i, gpu in enumerate(self._target_gpus):
-            arch = AOTRITON_SUPPORTED_GPUS[gpu]
-            lets.append(f'if (arch == {arch}) return {i}')
+        for i, arch in enumerate(self._target_arch_keys):
+            lets.append(f'if (Gpu2Arch(gpu) == {arch}) return {i}')
         ALIGN = ';\n' + ' ' * 4
         return ALIGN.join(lets)
 
@@ -388,8 +401,8 @@ class KernelDescription(object):
 
     def codegen_kernel_table_entry_declares(self, object_files):
         decls = []
-        for arch_number, target_gpu in enumerate(self._target_gpus):
-            godel_numbers = sorted(list(set([o.godel_number for o in object_files if o.target_gpu == target_gpu])))
+        for arch_number, target_arch in enumerate(self._target_arch_keys):
+            godel_numbers = sorted(list(set([o.godel_number for o in object_files if o.target_arch == target_arch])))
             for godel_number in godel_numbers:
                 struct_name = self.get_autotune_struct_name(arch_number, godel_number)
                 decls.append(f'void {struct_name}({self.param_class_name}& params);')

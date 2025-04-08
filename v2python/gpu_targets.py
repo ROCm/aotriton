@@ -1,6 +1,8 @@
 # Copyright © 2023-2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
+from collections import defaultdict
+
 AOTRITON_SUPPORTED_GPUS = (
     'gfx90a_mod0',
     'gfx942_mod0',
@@ -44,7 +46,7 @@ def gpu2arch(gpu : str) -> str:
     return gpu.split('_mod')[0]
 
 def cluster_gpus(gpus : list[str]) -> dict[str : list[str]]:
-    ret = {}
+    ret = defaultdict(list)
     for gpu in gpus:
         arch = gpu2arch(gpu)
         ret[arch].append(gpu)

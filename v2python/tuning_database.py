@@ -4,19 +4,18 @@
 import pathlib
 import sqlite3
 from .kernel_argument import ArgumentSelection, TunedArgument
-from .gpu_targets import AOTRITON_GPU_ARCH_TUNING_STRING, AOTRITON_TUNING_DATABASE_REUSE
+from .gpu_targets import gpu2arch, AOTRITON_TUNING_DATABASE_REUSE
 from .common_tuning_database import CommonKernelTuningDatabaseForArch
 from .sqlite_tuning_database import SQLiteKernelTuningDatabaseForArch
 from .downgrader import TuningDowngrader
 from .tuning_lut import (
     KernelTuningEntryForFunctionalOnGPU,
-    GPU_TO_DIRECTORY,
-    GPU_TO_CLUSTER_SUFFIX,
+    ARCH_TO_DIRECTORY,
 )
 
 class EmptyKernelTuningDatabaseForArch(CommonKernelTuningDatabaseForArch):
-    def __init__(self, k, arch):
-        super().__init__(k, arch)
+    def __init__(self, k, for_gpus):
+        super().__init__(k, for_gpus, db_gpus=None)
 
     @property
     def empty(self):
@@ -38,7 +37,8 @@ class EmptyKernelTuningDatabaseForArch(CommonKernelTuningDatabaseForArch):
                              columns,
                              row,
                              perf_meta: 'list[ArgumentSelection]') -> 'list[TunedArgument], compiler_options':
-        return [TunedArgument(meta, meta.default_value) for meta in perf_meta], None
+        for gpu in self.for_gpus:
+            return gpu, [TunedArgument(meta, meta.default_value) for meta in perf_meta], None
 
     def get_lut(self,
                 kdesc : 'KernelDescription',
@@ -88,41 +88,64 @@ class KernelTuningDatabase(object):
 
     def __init__(self, tune_info_dir : pathlib.Path, k : 'KernelDescription', build_for_tuning=False):
         self._kdesc = k
-        self.arch_dict = {}
+        self.gpu_dict = {}
         self._build_for_tuning = build_for_tuning and hasattr(k, 'gen_autotune_configs')
+        self._cached_dba = {}
+        self._gpu_set = set()
         if self._build_for_tuning:
             return
         td = pathlib.Path(tune_info_dir) / self.MONOLITHIC_TUNING_DATABASE_FILE # in case tune_info_dir is str
         # print(f"Tryint to probe KernelTuningDatabase inside {td}")
-        downgrader = TuningDowngrader.create_from_kdesc(k)
+        self._downgrader = TuningDowngrader.create_from_kdesc(k)
         self._conn = sqlite3.connect(td)
-        table_name = k.KERNEL_FAMILY.upper() + '$' + k._triton_kernel_name
-        tup = self._conn.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='{table_name}';").fetchone()
+        self._table_name = k.KERNEL_FAMILY.upper() + '$' + k._triton_kernel_name
+        tup = self._conn.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='{self._table_name}';").fetchone()
         if tup is None:  # Table not exists
             return
-        res = self._conn.execute(f"SELECT DISTINCT arch FROM {table_name};")
-        for arch, in res.fetchall():
-            dba = SQLiteKernelTuningDatabaseForArch(k, arch, self._conn, table_name, downgrader)
-            self.arch_dict[arch] = dba
+        res = self._conn.execute(f"SELECT DISTINCT gpu FROM {self._table_name};")
+        self._gpu_set = set([gpu for gpu, in res.fetchall()])
+        # Due to the complexity of GPU selections, the creation of
+        # DatabaseForArch is deferred to select_gpus and acached in _cached_dba
 
-        # Need a copy of DbForAch
-        for virtual, real in AOTRITON_TUNING_DATABASE_REUSE.items():
-            if virtual not in self.arch_dict:
-                if real in self.arch_dict:
-                    dba = SQLiteKernelTuningDatabaseForArch(k, real, self._conn, table_name, downgrader)
-                    self.arch_dict[virtual] = dba
+    def select_gpus(self, gpus):
+        arches = set(map(gpu2arch, gpus))
+        assert len(arches) == 1, f'KernelTuningDatabase.select_gpus only accept gpus with the same arch, but receives {gpus=}, which becomes {arches=}'
+        cache_key = tuple(sorted(gpus))
+        if cache_key not in self._cached_dba:
+            self._cached_dba[cache_key] = self.__create_dba(cache_key)
+        return self._cached_dba[cache_key]
 
+    #     if arch not in self.gpu_dict:
+    #         if not self._build_for_tuning:
+    #             self.arch_dict[arch] = EmptyKernelTuningDatabaseForArch(self._kdesc, arch)
+    #         else:
+    #             self.arch_dict[arch] = BootstrapTuningDatabaseForArch(self._kdesc, arch)
+    #     return self.arch_dict[arch].set_gpu(gpu, index)
 
-
-    def select_gpu(self, gpu, index):
-        arch = AOTRITON_GPU_ARCH_TUNING_STRING[gpu]
-        if arch not in self.arch_dict:
+    def __create_dba(self, gpus):
+        gpu404 = None
+        reals = []
+        for gpu in gpus:
+            if gpu in self._gpu_set:
+                reals.append(gpu)
+                continue
+            if gpu not in AOTRITON_TUNING_DATABASE_REUSE:
+                gpu404 = gpu
+                break
+            real = AOTRITON_TUNING_DATABASE_REUSE[gpu]
+            reals.append(real)
+        if gpu404 is not None:
             if not self._build_for_tuning:
-                print(f'For kernel {self._kdesc.KERNEL_FAMILY}.{self._kdesc.name}, Architecture {arch} was not found in tuning database, using dummy one instead')
-                self.arch_dict[arch] = EmptyKernelTuningDatabaseForArch(self._kdesc, arch)
+                print(f'For kernel {self._kdesc.KERNEL_FAMILY}.{self._kdesc.name}, GPU {gpu} from list {gpus} was not found in tuning database, using dummy one instead')
+                return EmptyKernelTuningDatabaseForArch(self._kdesc, gpus)
             else:
-                self.arch_dict[arch] = BootstrapTuningDatabaseForArch(self._kdesc, arch)
-        return self.arch_dict[arch].set_gpu(gpu, index)
+                return BootstrapTuningDatabaseForArch(self._kdesc, gpus)
+        return SQLiteKernelTuningDatabaseForArch(self._kdesc,
+                                                 gpus,
+                                                 reals,
+                                                 self._conn,
+                                                 self._table_name,
+                                                 self._downgrader)
 
     @property
     def empty(self):

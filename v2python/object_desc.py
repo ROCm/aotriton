@@ -62,7 +62,7 @@ class ObjectFileDescription(object):
         fn = self.SHIM_KERNEL_NAME
         # print(f'{sig.compact_signature=}')
         fn += '-Sig-' + sig.compact_signature
-        fn += '-Gpu-' + sig.target_gpu
+        fn += '-Gpu-' + sig.target_arch
         fn += '.hsaco'
         return fn
 
@@ -117,7 +117,7 @@ class ObjectFileDescription(object):
     def blake2b_hash(self, package_path):
         raw = package_path.encode('utf-8')
         _, psel, copts = self.compact_signature_components
-        s = '__P__' + psel + '__CO__' + copts + '-Gpu-' + self._signature.target_gpu
+        s = '__P__' + psel + '__CO__' + copts + '-Gpu-' + self._signature.target_arch
         raw += s.encode('utf-8')
         h = hashlib.blake2b(raw, digest_size=8)
         return h.hexdigest(), raw
@@ -190,8 +190,8 @@ class ObjectFileDescription(object):
         return 0
 
     @property
-    def target_gpu(self):
-        return self._signature.target_gpu
+    def target_arch(self):
+        return self._signature.target_arch
 
     def generate_shim_header_member_function(self) -> str:
         TEMPLATE = ' hipError_t operator()(dim3 grid, {shim_arguments}, hipStream_t stream);\n'
