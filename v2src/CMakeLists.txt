@@ -19,6 +19,11 @@ execute_process(COMMAND ${CMAKE_COMMAND}
   --target_gpus ${AOTRITON_OVERRIDE_TARGET_GPUS}
   OUTPUT_VARIABLE EFFECTIVE_TARGET_GPUS)
 
+# Decompress tuning_database.sqlite.xz
+execute_process(COMMAND ${CMAKE_COMMAND} -E tar xf
+  "${CMAKE_SOURCE_DIR}/v2python/rules/tuning_database.sqlite3.tar.xz"
+  WORKING_DIRECTORY "${AOTRITON_V2_BUILD_DIR}")
+
 get_filename_component(AOTRITON_COMPILER "${CMAKE_CURRENT_LIST_DIR}/../v2python/compile.py" ABSOLUTE)
 message("AOTRITON_COMPILER ${AOTRITON_COMPILER}")
 

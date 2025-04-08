@@ -163,7 +163,7 @@ def gen_from_kernel(args, k, build_dir, makefile):
     arches = [None] if args.target_gpus is None else args.target_gpus
     # ktd = None if args.build_for_tuning else KernelTuningDatabase(SOURCE_PATH.parent / 'rules', k)
     tuning = is_tuning_on_for_kernel(args, k)
-    ktd = KernelTuningDatabase(SOURCE_PATH.parent / 'rules', k, build_for_tuning=tuning)
+    ktd = KernelTuningDatabase(build_dir, k, build_for_tuning=tuning)
     if False: # Debugging
         if k.SHIM_KERNEL_NAME == 'attn_fwd':
             assert not ktd.empty
