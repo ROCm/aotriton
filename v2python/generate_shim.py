@@ -51,7 +51,7 @@ def parse():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument("--target_gpus", type=str, default=None, nargs='*',
                    help="Ahead of Time (AOT) Compile Architecture. PyTorch is required for autodetection if --targets is missing.")
-    p.add_argument("--build_dir", type=str, default='build/', help="build directory")
+    p.add_argument("--build_dir", type=Path, default='build/', help="build directory")
     p.add_argument("--archive_only", action='store_true', help='Only generate archive library instead of shared library. No linking with dependencies.')
     p.add_argument("--library_suffix", type=str, default='', help="Add suffix to the library name 'aotriton' to avoid symbol conflicts")
     p.add_argument("--bare_mode", action='store_true', help="Instead of generating a proper Makefile, only generate a list of source files and leave the remaining tasks to cmake.")
@@ -62,7 +62,6 @@ def parse():
     p.add_argument("--verbose", action='store_true', help="Print debugging messages")
     p.add_argument("--lut_sanity_check", action='store_true', help="Do not raise exceptions when the look up table (lut) is incomplete.")
     args = p.parse_args()
-    args._build_root = Path(args.build_dir)
     args._sanity_check_exceptions = []
     args.build_for_tuning_but_skip_kernel = args.build_for_tuning_but_skip_kernel
     # print(args)
@@ -110,7 +109,7 @@ class Generator(object):
 
     @property
     def build_root(self):
-        return self._args._build_root
+        return self._args.build_dir
 
     def generate(self):
         self.write_prelude()
@@ -194,7 +193,7 @@ class ShimMakefileGenerator(MakefileGenerator):
     def __init__(self, args):
         # grand_target = LIBRARY_NAME + '.a' if args.archive else '.so'
         grand_target = LIBRARY_NAME
-        self._build_dir = Path(args.build_dir)
+        self._build_dir = args.build_dir
         if args.bare_mode:  # CAVEAT: .is_bare is unavailable at the moment
             f = open(self._build_dir / 'Bare.shim', 'w')
         else:
@@ -252,7 +251,7 @@ class SourceBuilder(MakefileSegmentGenerator):
 
     def __init__(self, args, out):
         super().__init__(args, out)
-        self._build_dir = Path(args.build_dir)
+        self._build_dir = args.build_dir
         self._srcdir = Path(CSRC)
         self._outdir = self._build_dir / self.DIR
         self._outdir.mkdir(parents=True, exist_ok=True)
@@ -287,15 +286,15 @@ class KernelShimGenerator(MakefileSegmentGenerator):
         # Shim code and functional dispatcher
         self._kdesc = k
         self._kdesc.set_target_gpus(args.target_gpus)
-        self._shim_path = Path(args.build_dir) / k.KERNEL_FAMILY
+        self._shim_path = args.build_dir / k.KERNEL_FAMILY
         self._shim_path.mkdir(parents=True, exist_ok=True)
         self._shim_hdr = NoWriteIfNoUpdateFile(self._shim_path / Path(self.SHIM_FILE_STEM + '.h'))
         self._shim_src = NoWriteIfNoUpdateFile(self._shim_hdr.path.with_suffix('.cc'))
         # Autotune dispatcher
-        self._autotune_path = Path(args.build_dir) / k.KERNEL_FAMILY / f'autotune.{k.SHIM_KERNEL_NAME}'
+        self._autotune_path = args.build_dir / k.KERNEL_FAMILY / f'autotune.{k.SHIM_KERNEL_NAME}'
         self._autotune_path.mkdir(parents=True, exist_ok=True)
         self._tuning = is_tuning_on_for_kernel(self._args, k)
-        self._ktd = KernelTuningDatabase(SOURCE_PATH.parent / 'rules',
+        self._ktd = KernelTuningDatabase(args.build_dir,
                                          k,
                                          build_for_tuning=self._tuning)
         self._objpaths = []
@@ -320,9 +319,9 @@ class KernelShimGenerator(MakefileSegmentGenerator):
         p = self._shim_path / f'gpu_kernel_image.{k.SHIM_KERNEL_NAME}'
         args = self._args
         debug_counter = 0
-        for gpu, fsels, lut in k.gen_tuned_kernel_lut(self._ktd):
+        for arch, fsels, lut in k.gen_tuned_kernel_lut(self._ktd):
             # print(f'KernelShimGenerator.gen_children {fsels=}')
-            yield AutotuneCodeGenerator(args, self.children_out, self._autotune_path, k, gpu, fsels, lut)
+            yield AutotuneCodeGenerator(args, self.children_out, self._autotune_path, k, arch, fsels, lut)
             '''
             debug_counter +=1
             if debug_counter >= 2:
@@ -347,12 +346,12 @@ class KernelShimGenerator(MakefileSegmentGenerator):
         return self._objpaths
 
 class AutotuneCodeGenerator(MakefileSegmentGenerator):
-    def __init__(self, args, fileout, outdir, k, gpu, fsels, lut):
+    def __init__(self, args, fileout, outdir, k, arch, fsels, lut):
         super().__init__(args, fileout)
-        self._build_dir = Path(args.build_dir)
+        self._build_dir = args.build_dir
         self._outdir = outdir
         self._kdesc = k
-        self._gpu = gpu
+        self._arch = arch
         self._fsels = fsels
         self._lut = lut
 
