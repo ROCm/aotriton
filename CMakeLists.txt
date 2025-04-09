@@ -69,7 +69,7 @@ endif()
 
 if(NOT TARGET_GPUS STREQUAL "OBSOLETE")
   message(FATAL_ERROR "TARGET_GPUS is OBSOLETE in Dispatcher V3. Use AOTRITON_TARGET_ARCH or AOTRITON_OVERRIDE_TARGET_GPUS.")
-endif(TARGET_GPUS)
+endif()
 
 include(GNUInstallDirs)
 configure_file(include/aotriton/config.h.in include/aotriton/config.h)
