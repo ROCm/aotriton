@@ -18,6 +18,7 @@ from _common_test import SdpaContext, SdpaParams, SdpaContextFromNPZ, AOTRITON_T
 
 @pytest.fixture()
 def torch_gpu(worker_id):
+    # Common worker_id values are "gw0", "gw1", etc.
     return int(worker_id[2:]) if worker_id != "master" else None
 
 FOR_RELEASE = bool(int(os.getenv('FOR_RELEASE', default='0')))
