@@ -37,7 +37,7 @@ _bwd_kernel_fuse(T4 q,
                  FusedBwdExtraArguments* extargs) {
   hipError_t err;
   auto stream = stream_wrap.native();
-  auto arch = getArchFromStream(stream);
+  auto gpu = getGpuFromStream(stream);
   int num_head_q = q.size(1);
   int num_head_k = k.size(1);
   auto grid_calculator = [max_seqlen_k, max_seqlen_q, num_head_q, num_head_k](const BwdKernelFuseParams& params) -> dim3 {
@@ -112,7 +112,7 @@ _bwd_kernel_fuse(T4 q,
 #endif
   BwdKernelFuseContext context;
   context.grid_calculator = grid_calculator;
-  err = context.lookup_optimal(params, arch);
+  err = context.lookup_optimal(params, gpu);
 #if AOTRITON_BUILD_FOR_TUNING
   if (extargs) {
     extargs->total_number_of_kernels = params._total_number_of_kernels;

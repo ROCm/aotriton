@@ -12,22 +12,14 @@ from pathlib import Path
 import os
 SKIPPED_LUT_CHECK = os.getenv('AOTRITON_SKIP_LUT_CHECK', default='').split(',')
 
-GPU_TO_DIRECTORY = {
-    'MI200'  : 'amd-gfx90a',
-    'MI300X' : 'amd-gfx942',
-    'Navi31' : 'amd-gfx110x',
-    'Navi32' : 'amd-gfx110x',
-    'Unidentified' : 'amd-gfx950',
-    'RX9070XT'    : 'amd-gfx120x',
-}
-
-GPU_TO_CLUSTER_SUFFIX = {
-    'MI200'  : 'MI200',
-    'MI300X' : 'MI300X',
-    'Navi31' : 'Navi3x',
-    'Navi32' : 'Navi3x',
-    'Unidentified'      : 'Unidentified',
-    'RX9070XT'    : 'RX9070XT',
+ARCH_TO_DIRECTORY = {
+    'gfx90a'  : 'amd-gfx90a',
+    'gfx942' : 'amd-gfx942',
+    'gfx1100' : 'amd-gfx110x',
+    'gfx1101' : 'amd-gfx110x',
+    'gfx950' : 'amd-gfx950',
+    'gfx1200'    : 'amd-gfx120x',
+    'gfx1201'    : 'amd-gfx120x',
 }
 
 class MissingLutEntry(Exception):
@@ -60,17 +52,18 @@ class KernelTuningEntryForFunctionalOnGPU(object):
         self._dba = dba
         self._fsels = fsels
         # print(f'{self._fsels=}')
-        self._lut_dic = {}
+        self._lut_dic = { gpu : {} for gpu in self._dba.for_gpus}
         self._autotune_keys = autotune_keys
         self._autotune_key_values = { key : set() for key, _ in autotune_keys } if autotune_keys is not None else None
         self._autotune_key_class = { key : klass for key, klass in autotune_keys } if autotune_keys is not None else None
         self._sigs = []
         self._sig_dict = {}
-        self._feature_disabled = self._kdesc.is_functional_disabled_on_gpu(self._dba.gpu, self._fsels)
+        self._feature_disabled = self._kdesc.is_functional_disabled_on_arch(self._dba.arch, self._fsels)
         if autotune_keys is None or self._feature_disabled:
+            ngpus = len(self._dba.for_gpus)
             self._lut_dtype = np.int8
             self._lut_cdtype = f'int8_t'
-            self._lut_tensor = np.array([0], dtype=np.int8)
+            self._lut_tensor = np.zeros([ngpus, 1], dtype=np.int8)
             self._lut_cshape = ''.join([f'[{s}]' for s in self._lut_tensor.shape])
             self._untuned = True
             # print(f'{dba.is_passthrough_tuning()=}')
@@ -79,20 +72,25 @@ class KernelTuningEntryForFunctionalOnGPU(object):
                 for row in rows:
                     psels, compiler_options = dba.craft_perf_selection(columns, row, perf_meta)
                     self._allocate_sig(psels, compiler_options)
-                self._lut_dic[0] = 0
+                for gpu in self._dba.for_gpus:
+                    self._lut_dic[gpu][0] = 0
             else:
                 default_psels, default_co = dba.craft_perf_selection(None, None, perf_meta)
-                self._lut_dic[0] = self._allocate_sig(default_psels, default_co)[0]
+                index = self._allocate_sig(default_psels, default_co)[0]
+                for gpu in self._dba.for_gpus:
+                    self._lut_dic[gpu][0] = index
             return
         self._untuned = False
         # print(f'KernelTuningEntryForFunctionalOnGPU {fsels=}')
         # print(f'{rows=}')
+        gpu_col = self._dba.locate_gpu_col(columns)
         for row in rows:
             # fs_atk_values = self.extract_autotune_key_values(tinfo)
             fs_atk_values = self.extract_autotune_key_values(columns, row)
             # print(f'{fs_atk_values=}')
             psels, compiler_options = dba.craft_perf_selection(columns, row, perf_meta)
-            self._lut_dic[fs_atk_values] = self._allocate_sig(psels, compiler_options)[0]
+            gpu = self._dba.get_gpu_from_row(gpu_col, row)
+            self._lut_dic[gpu][fs_atk_values] = self._allocate_sig(psels, compiler_options)[0]
         assert self._sigs
         self._lut_tensor = None
 
@@ -107,8 +105,10 @@ class KernelTuningEntryForFunctionalOnGPU(object):
         self._autotune_key_values[key].add(value)
         return value
 
+    # DispatcherV3 Note
+    # Signatures are shared by all GPU mods.
     def _allocate_sig(self, psels, compiler_options):
-        sig = KernelSignature(self._kdesc, self._fsels, psels, compiler_options, self._dba.gpu)
+        sig = KernelSignature(self._kdesc, self._fsels, psels, compiler_options, self._dba.arch)
         # print(f'_allocate_sig {sig.compact_signature}')
         compact = sig.compact_signature
         if compact not in self._sig_dict:
@@ -127,17 +127,24 @@ class KernelTuningEntryForFunctionalOnGPU(object):
         for dtype in [np.int8, np.int16, np.int32, np.int64]:
             if len(self._sigs) < np.iinfo(dtype).max:
                 break
+        ngpus = len(self._dba.for_gpus)
         self._lut_dtype = dtype
         self._lut_cdtype = f'int{np.iinfo(dtype).bits}_t'
-        self._lut_tensor = np.empty([bucket.nvalues for bucket in self._autotune_key_buckets], dtype=dtype)
+        self._lut_shape = [ngpus] + [bucket.nvalues for bucket in self._autotune_key_buckets]
+        self._lut_tensor = np.empty(self._lut_shape, dtype=dtype)
         assert self._lut_tensor.size > 0, 'LUT tensor must be non-empty. Empty LUT is not constructed by _build_lut_tensor'
         self._lut_cshape = ''.join([f'[{s}]' for s in self._lut_tensor.shape])
         self._list_of_atk_representatives = [bucket.representatives for bucket in self._autotune_key_buckets]
         list_of_atk_indices = [range(bucket.nvalues) for bucket in self._autotune_key_buckets]
-        for indices, atk_values in zip(itertools.product(*list_of_atk_indices),
-                                       itertools.product(*self._list_of_atk_representatives)):
-            fs_atk_values = tuple(atk_values)
-            self._lut_tensor[indices] = self._lut_dic.get(fs_atk_values, -1)
+        for i, gpu in enumerate(self._dba.for_gpus):
+            if i > 0:
+                # Assign default values.
+                # This allows partial tuning
+                self._lut_tensor[i] = self._lut_tensor[0]
+            for indices, atk_values in zip(itertools.product(*list_of_atk_indices),
+                                           itertools.product(*self._list_of_atk_representatives)):
+                fs_atk_values = tuple(atk_values)
+                self._lut_tensor[i][indices] = self._lut_dic[gpu].get(fs_atk_values, -1)
         # FIXME: Debugging
         if False and self._kdesc.SHIM_KERNEL_NAME == 'attn_fwd':
             print(f'_build_lut_tensor {self._autotune_key_values=}')
@@ -164,8 +171,8 @@ class KernelTuningEntryForFunctionalOnGPU(object):
 
     def codegen_package_path(self, kernel_image_dir):
         for _, _, o in self.gen_kernel_symbols(kernel_image_dir):
-            dir_arch = Path(GPU_TO_DIRECTORY[o.target_gpu])
-            fonly = o.functional_signature + '_' + GPU_TO_CLUSTER_SUFFIX[o.target_gpu]
+            dir_arch = Path(ARCH_TO_DIRECTORY[o.target_arch])
+            fonly = o.functional_signature + '_' + o.target_arch
             return str(dir_arch / o.KERNEL_FAMILY / o.SHIM_KERNEL_NAME / fonly)
 
     def codegen_func_name(self, kernel_image_dir):
@@ -175,7 +182,7 @@ class KernelTuningEntryForFunctionalOnGPU(object):
 
     def codegen_arch_name(self, kernel_image_dir):
         for _, _, o in self.gen_kernel_symbols(kernel_image_dir):
-            return o.target_gpu
+            return o.target_arch
 
     def codegen_compact_kernels(self, kernel_image_dir, package_path, noimage_mode):
         meta_objects = []
@@ -221,11 +228,13 @@ class KernelTuningEntryForFunctionalOnGPU(object):
             print(f'[DEBUG] {self._fsels=}')
             raise e
         godel_number = first_sig.godel_number
-        ofn = outdir / f'{first_sig.functional_signature}_{first_sig.target_gpu}.cc'
+        ofn = outdir / f'{first_sig.functional_signature}_{first_sig.target_arch}.cc'
         raise_lut_entry = False
         if self._kdesc.FULL_KERNEL_NAME in SKIPPED_LUT_CHECK:
             pass
-        elif not self._kdesc.sancheck_lut_tensor(self._dba.gpu, lut_tensor, self._fsels):
+        elif not self._kdesc.sancheck_lut_tensor(self._dba.arch, lut_tensor[0], self._fsels):
+            # We only check lut_tensor[0] here because lut_tensor[1:] are
+            # initialized from lut_tensor[0] (see _build_lut_tensor)
             raise_lut_entry = True
         if bare_mode:
             return ofn
@@ -259,7 +268,6 @@ class KernelTuningEntryForFunctionalOnGPU(object):
             'param_class_name'      : self._kdesc.param_class_name,
             'deduplicated_lut_function' : self.codegen_deduplicated_lut_function(),
             'perf_field_assignment' : self.codegen_perf_assignment(),
-            'gpu'                   : self._dba.gpu,
             'arch_number'           : self._dba.arch_number,
             'human_readable_signature' : first_sig.human_readable_signature
         }
@@ -270,13 +278,21 @@ class KernelTuningEntryForFunctionalOnGPU(object):
             with open(ofn, 'w') as of:
                 shutil.copyfileobj(mf, of)
         if raise_lut_entry:
-            raise MissingLutEntry(self._dba.gpu, self._kdesc, ofn, self._fsels, lut_tensor)
+            raise MissingLutEntry(self._dba.for_gpus[0], self._kdesc, ofn, self._fsels, lut_tensor)
         return ofn
 
     @property
     def lut_cdata(self):
         lut_tensor, _ = self.get_lut()
-        return np.array2string(lut_tensor, separator=',').replace('[', '{').replace(']', '}')
+        def fmt(t):
+            return np.array2string(t, separator=',').replace('[', '{').replace(']', '}')
+        tensor_text_list = []
+        for i, gpu in enumerate(self._dba.for_gpus):
+            text  = f'\n// GPU {gpu}\n'
+            text += fmt(lut_tensor[i])
+            text += f'\n// End of GPU {gpu}\n'
+            tensor_text_list.append(text)
+        return '{' + '\n,\n'.join(tensor_text_list) + '}'
         # cdata = io.StringIO()
         # with np.printoptions(threshold=sys.maxsize):
         #     print(lut_tensor, file=cdata)
@@ -305,9 +321,9 @@ class KernelTuningEntryForFunctionalOnGPU(object):
             'binned_indices'        : self.codegen_binned_indices(),
         }
         stmt = []
-        stmt.append('({param_class_name}& params, {lut_dtype} lut{lut_shape}) {{')
+        stmt.append('({param_class_name}& params, int mod_number, {lut_dtype} lut{lut_shape}) {{')
         stmt.append('    {binning_autotune_keys}')
-        stmt.append('    return lut{binned_indices};')
+        stmt.append('    return lut[mod_number]{binned_indices};')
         stmt.append('}}')
         ALIGN = '\n'
         lambda_src = ALIGN.join(stmt).format_map(d)
