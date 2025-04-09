@@ -12,22 +12,6 @@ AOTRITON_SUPPORTED_GPUS = (
     'gfx1100_mod0',
     'gfx1201_mod0',
 )
-#     'MI200'     : 'GPU_ARCH_AMD_GFX90A',
-#     'MI300X'    : 'GPU_ARCH_AMD_GFX942',
-#     'Navi31'    : 'GPU_ARCH_AMD_GFX1100',
-#     'Navi32'    : 'GPU_ARCH_AMD_GFX1101',
-#     'Unidentified'    : 'GPU_ARCH_AMD_GFX950',
-#     'RX9070XT'  : 'GPU_ARCH_AMD_GFX1201',
-
-
-# AOTRITON_GPU_ARCH_TUNING_STRING = {
-#     'MI200'     : 'gfx90a',
-#     'MI300X'    : 'gfx942',
-#     'Navi31'    : 'gfx1100',
-#     'Navi32'    : 'gfx1101',
-#     'Unidentified'    : 'gfx950',
-#     'RX9070XT'  : 'gfx1201',
-# }
 
 AOTRITON_TUNING_DATABASE_REUSE = {
     'gfx950_mod0'  : 'gfx942_mod0',
@@ -67,8 +51,9 @@ def select_gpus(target_arch, target_gpus) -> list[str]:
 def main():
     import argparse
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    p.add_argument("--target_arch", type=str, default=None, nargs='*', choices=AOTRITON_ARCH_WARPSIZE.keys(),
-                   help="Select specific list of architectures and related GPU tuning information.")
+    arch_metavar = '{' + ','.join(AOTRITON_ARCH_WARPSIZE.keys()) + '}'
+    p.add_argument("--target_arch", type=str, default=None, nargs='*', metavar=arch_metavar,
+                   help=f"Select architectures and related GPU tuning information. Unsupported ones will be ignored.")
     p.add_argument("--target_gpus", type=str, default=None, nargs='*', choices=AOTRITON_SUPPORTED_GPUS,
                    help="Select specific list of GPUs. Overrides --target_arch.")
     args = p.parse_args()
