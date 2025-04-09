@@ -104,8 +104,8 @@ def bwd_kernel_fuse(
         off_z = tl.program_id(2) # batch index, for varlen it indicates index in cu_seqlens_q/k
         num_z = tl.num_programs(2)
         off_zh = off_z * num_head_q + off_h_q * 1
-        offs_q = start_q + tl.arange(0, BLOCK_N)
-        offs_n = tl.arange(0, BLOCK_M)
+        offs_q_dq = start_q + tl.arange(0, BLOCK_N)
+        offs_k_dq = tl.arange(0, BLOCK_M)
 
         philox_seed = 0
         philox_offset_base = philox_offset2
@@ -153,11 +153,11 @@ def bwd_kernel_fuse(
                 return
         q_ptrs0, q_ptrs1, q_ptrs2 = composed_ptrs(Q,
                                                   stride_qz, stride_qh, stride_qm, stride_qk,
-                                                  batch_index, off_h_q, cu_seqlens_q_start + offs_q,
+                                                  batch_index, off_h_q, cu_seqlens_q_start + offs_q_dq,
                                                   BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
         if start_q + BLOCK_N <= seqlen_q:
             q0, q1, q2 = composed_load(q_ptrs0, q_ptrs1, q_ptrs2,
-                                       offs_q,
+                                       offs_q_dq,
                                        BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
                                        seqlen_q, head_dim,
                                        other=0.0,
@@ -166,7 +166,7 @@ def bwd_kernel_fuse(
                                        TRANSPOSED=False)
         else:
             q0, q1, q2 = composed_load(q_ptrs0, q_ptrs1, q_ptrs2,
-                                       offs_q,
+                                       offs_q_dq,
                                        BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
                                        seqlen_q, head_dim,
                                        other=0.0,
@@ -176,27 +176,27 @@ def bwd_kernel_fuse(
 
         kt_ptrs0, kt_ptrs1, kt_ptrs2 = composed_ptrs(K,
                                                      stride_kz, stride_kh, stride_kn, stride_kk,
-                                                     batch_index, off_h_k, cu_seqlens_k_start + offs_n,
+                                                     batch_index, off_h_k, cu_seqlens_k_start + offs_k_dq,
                                                      BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
                                                      TRANSPOSED=True)
         vt_ptrs0, vt_ptrs1, vt_ptrs2 = composed_ptrs(V,
                                                      stride_vz, stride_vh, stride_vk, stride_vn,
-                                                     batch_index, off_h_k, cu_seqlens_k_start + offs_n,
+                                                     batch_index, off_h_k, cu_seqlens_k_start + offs_k_dq,
                                                      BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
                                                      TRANSPOSED=True)
 
         do_ptrs0, do_ptrs1, do_ptrs2 = composed_ptrs(DO,
                                                      stride_oz, stride_oh, stride_om, stride_ok,
-                                                     batch_index, off_h_q, cu_seqlens_q_start + offs_q,
+                                                     batch_index, off_h_q, cu_seqlens_q_start + offs_q_dq,
                                                      BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
         o_ptrs0, o_ptrs1, o_ptrs2 = composed_ptrs(Out,
                                                   stride_oz, stride_oh, stride_om, stride_ok,
-                                                  batch_index, off_h_q, cu_seqlens_q_start + offs_q,
+                                                  batch_index, off_h_q, cu_seqlens_q_start + offs_q_dq,
                                                   BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
 
         if start_q + BLOCK_N <= seqlen_q:
             do0, do1, do2 = composed_load(do_ptrs0, do_ptrs1, do_ptrs2,
-                                          offs_q,
+                                          offs_q_dq,
                                           BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
                                           seqlen_q, head_dim,
                                           other=0.0,
@@ -204,7 +204,7 @@ def bwd_kernel_fuse(
                                           PADDED_COL=PADDED_HEAD,
                                           TRANSPOSED=False)
             o0, o1, o2 = composed_load(o_ptrs0, o_ptrs1, o_ptrs2,
-                                       offs_q,
+                                       offs_q_dq,
                                        BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
                                        seqlen_q, head_dim,
                                        other=0.0,
@@ -213,7 +213,7 @@ def bwd_kernel_fuse(
                                        TRANSPOSED=False)
         else:
             do0, do1, do2 = composed_load(do_ptrs0, do_ptrs1, do_ptrs2,
-                                          offs_q,
+                                          offs_q_dq,
                                           BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
                                           seqlen_q, head_dim,
                                           other=0.0,
@@ -221,7 +221,7 @@ def bwd_kernel_fuse(
                                           PADDED_COL=PADDED_HEAD,
                                           TRANSPOSED=False)
             o0, o1, o2 = composed_load(o_ptrs0, o_ptrs1, o_ptrs2,
-                                       offs_q,
+                                       offs_q_dq,
                                        BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
                                        seqlen_q, head_dim,
                                        other=0.0,
@@ -278,12 +278,12 @@ def bwd_kernel_fuse(
 
         # Check for OOB accesses on D and LSE
         q_boundary = tl.full((BLOCK_N, ), seqlen_q, dtype=tl.int32)
-        d_lse_ptrs_mask = offs_q < q_boundary
+        d_lse_ptrs_mask = offs_q_dq < q_boundary
         Di = composed_inner_product_fp32(o0, o1, o2,
                                          do0, do1, do2,
                                          BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
                                          axis=1)
-        l_i = tl.load(l_ptrs + offs_q, mask=d_lse_ptrs_mask, other=0.0)
+        l_i = tl.load(l_ptrs + offs_q_dq, mask=d_lse_ptrs_mask, other=0.0)
 
         idropout_p = ((dropout_p - 0.5) * 0xFFFFFFFF).to(tl.int32)
         dropout_scale = 1.0 / (1.0 - dropout_p) if ENABLE_DROPOUT else 1.0
@@ -377,8 +377,8 @@ def bwd_kernel_fuse(
         off_h_k = tl.program_id(1) # head index
         off_z = tl.program_id(2) # batch index, for varlen it indicates index in cu_seqlens_q/k
         num_z = tl.num_programs(2)
-        offs_m = tl.arange(0, BLOCK_M)
-        offs_n = start_k + tl.arange(0, BLOCK_N)
+        offs_q = tl.arange(0, BLOCK_M)
+        offs_k = start_k + tl.arange(0, BLOCK_N)
         cu_seqlens_q_start = 0
         cu_seqlens_k_start = 0
         seqlen_q = max_seqlen_q
@@ -412,19 +412,19 @@ def bwd_kernel_fuse(
 
         k_ptrs0, k_ptrs1, k_ptrs2 = composed_ptrs(K,
                                                   stride_kz, stride_kh, stride_kn, stride_kk,
-                                                  batch_index, off_h_k, cu_seqlens_k_start + offs_n,
+                                                  batch_index, off_h_k, cu_seqlens_k_start + offs_k,
                                                   BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
                                                   TRANSPOSED=True)
-        # kt_offs_n = None if start_k + BLOCK_N <= seqlen_k else start_k + tl.arange(0, BLOCK_N)
+        # kt_offs_k = None if start_k + BLOCK_N <= seqlen_k else start_k + tl.arange(0, BLOCK_N)
         v_ptrs0, v_ptrs1, v_ptrs2 = composed_ptrs(V,
                                                   stride_vz, stride_vh, stride_vk, stride_vn,
-                                                  batch_index, off_h_k, cu_seqlens_k_start + offs_n,
+                                                  batch_index, off_h_k, cu_seqlens_k_start + offs_k,
                                                   BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
                                                   TRANSPOSED=True)
 
         if start_k + BLOCK_N <= seqlen_k:
             kt0, kt1, kt2 = composed_load(k_ptrs0, k_ptrs1, k_ptrs2,
-                                          offs_n,
+                                          offs_k,
                                           BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
                                           seqlen_k, head_dim,
                                           other=0.0,
@@ -432,7 +432,7 @@ def bwd_kernel_fuse(
                                           PADDED_COL=PADDED_HEAD,
                                           TRANSPOSED=True)
             vt0, vt1, vt2 = composed_load(v_ptrs0, v_ptrs1, v_ptrs2,
-                                          offs_n,
+                                          offs_k,
                                           BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
                                           seqlen_k, head_dim,
                                           other=0.0,
@@ -441,7 +441,7 @@ def bwd_kernel_fuse(
                                           TRANSPOSED=True)
         else:
             kt0, kt1, kt2 = composed_load(k_ptrs0, k_ptrs1, k_ptrs2,
-                                          offs_n,
+                                          offs_k,
                                           BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
                                           seqlen_k, head_dim,
                                           other=0.0,
@@ -449,7 +449,7 @@ def bwd_kernel_fuse(
                                           PADDED_COL=PADDED_HEAD,
                                           TRANSPOSED=True)
             vt0, vt1, vt2 = composed_load(v_ptrs0, v_ptrs1, v_ptrs2,
-                                          offs_n,
+                                          offs_k,
                                           BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
                                           seqlen_k, head_dim,
                                           other=0.0,
@@ -524,16 +524,16 @@ def bwd_kernel_fuse(
 
             q_ptrs0, q_ptrs1, q_ptrs2 = composed_ptrs(Q,
                                                       stride_qz, stride_qh, stride_qm, stride_qk,
-                                                      batch_index, off_h_q, cu_seqlens_q_start + offs_m,
+                                                      batch_index, off_h_q, cu_seqlens_q_start + offs_q,
                                                       BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
 
             do_ptrs0, do_ptrs1, do_ptrs2 = composed_ptrs(DO,
                                                          stride_oz, stride_oh, stride_om, stride_ok,
-                                                         batch_index, off_h_q, cu_seqlens_q_start + offs_m,
+                                                         batch_index, off_h_q, cu_seqlens_q_start + offs_q,
                                                          BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
             o_ptrs0, o_ptrs1, o_ptrs2 = composed_ptrs(Out,
                                                       stride_oz, stride_oh, stride_om, stride_ok,
-                                                      batch_index, off_h_q, cu_seqlens_q_start + offs_m,
+                                                      batch_index, off_h_q, cu_seqlens_q_start + offs_q,
                                                       BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
 
             # dkdk kernel is a little tricky, its masked blocks can be found in both ends
