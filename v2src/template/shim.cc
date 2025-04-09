@@ -34,7 +34,6 @@ hipError_t
 hipError_t
 [[context_class_name]]::launch(const [[param_class_name]]& params, hipStream_t stream) {
     constexpr std::string_view triton_kernel_name { "[[triton_kernel_name]]" };
-    auto arch = getArchFromStream(stream);
     hipDeviceptr_t global_scratch = 0;
     [[put_kernel_arguments_on_stack]];
     std::vector<void*> args = { [[let_kernel_arguments]],

@@ -14,10 +14,17 @@
 namespace AOTRITON_NS {
 
 constexpr uint64_t
-CAT(uint32_t high, uint32_t low) {
+CAT64(uint32_t high, uint32_t low) {
   uint64_t high64 = high;
   uint64_t low64 = low;
   return (high64 << 32) | low64;
+}
+
+constexpr uint32_t
+CAT32(uint16_t high, uint16_t low) {
+  uint32_t high32 = high;
+  uint32_t low32 = low;
+  return (high32 << 16) | low32;
 }
 
 constexpr uint64_t
@@ -54,8 +61,8 @@ enum AOTRITON_API Gpu : uint64_t {
   GPU_AMD_ARCH_GFX1201_MOD0 = TRICAT(GpuVendor::kAMD, 0x1201, 0),
 };
 
-inline uint16_t Gpu2Arch(uint64_t gpu) {
-  return (gpu & 0xFFFF0000) >> 16;
+inline uint32_t Gpu2VendorArch(uint64_t gpu) {
+  return (gpu & 0xFFFF'FFFF'0000) >> 16;
 }
 
 template<int Rank>
@@ -173,7 +180,7 @@ extern template class TensorView<2>;
 extern template class TensorView<3>;
 extern template class TensorView<4>;
 
-GpuArch AOTRITON_API getArchFromStream(hipStream_t);
+Gpu AOTRITON_API getGpuFromStream(hipStream_t);
 bool AOTRITON_API isArchExperimentallySupported(hipStream_t);
 int AOTRITON_API getMultiProcessorCount(hipStream_t stream);
 

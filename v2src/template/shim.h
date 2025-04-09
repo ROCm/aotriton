@@ -41,16 +41,14 @@ class [[context_class_name]] {
 public:
     std::function<dim3(const [[param_class_name]]&)> grid_calculator;
 
-    hipError_t lookup_optimal([[param_class_name]]& params, GpuArch arch);
+    hipError_t lookup_optimal([[param_class_name]]& params, Gpu gpu);
     hipError_t launch(const [[param_class_name]]& params, hipStream_t stream);
-    static int64_t get_arch_number(GpuArch arch);
+    static std::tuple<int, int> get_archmod_number(Gpu gpu);
 
 #if AOTRITON_BUILD_FOR_TUNING
     bool peek_kernel_image = false;
 #endif
 private:
-    GpuArch kernel_arch = GPU_ARCH_UNKNOWN;
-
     typedef void (*AutoTuneTableEntry)([[param_class_name]]& params, int mod_number);
     static AutoTuneTableEntry autotune_table[][ [[number_of_functionals]] ];
 };

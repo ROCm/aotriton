@@ -17,7 +17,7 @@ hipError_t
 bwd_preprocess(T4 out, T4 dout, T2 delta, AOTRITON_NS::Stream stream_wrap) {
   hipError_t err;
   auto stream = stream_wrap.native();
-  auto arch = getArchFromStream(stream);
+  auto gpu = getGpuFromStream(stream);
   auto grid_calculator = [](const BwdPreprocessParams& params) -> dim3 {
     dim3 grid {
       AOTRITON_NS::cdiv<uint32_t>(params.Out->size(2), params.BLOCK_M),
@@ -58,7 +58,7 @@ bwd_preprocess(T4 out, T4 dout, T2 delta, AOTRITON_NS::Stream stream_wrap) {
   };
   BwdPreprocessContext context;
   context.grid_calculator = grid_calculator;
-  err = context.lookup_optimal(params, arch);
+  err = context.lookup_optimal(params, gpu);
   if (err != hipSuccess) {
     return err;
   }
@@ -75,7 +75,7 @@ bwd_preprocess_varlen(T4 out,
                       AOTRITON_NS::Stream stream_wrap) {
   hipError_t err;
   auto stream = stream_wrap.native();
-  auto arch = getArchFromStream(stream);
+  auto gpu = getGpuFromStream(stream);
   auto grid_calculator = [](const BwdPreprocessVarlenParams& params) -> dim3 {
     dim3 grid {
       AOTRITON_NS::cdiv<uint32_t>(params.Out->size(2), params.BLOCK_M),
@@ -117,7 +117,7 @@ bwd_preprocess_varlen(T4 out,
   };
   BwdPreprocessVarlenContext context;
   context.grid_calculator = grid_calculator;
-  err = context.lookup_optimal(params, arch);
+  err = context.lookup_optimal(params, gpu);
   if (err != hipSuccess) {
     return err;
   }
@@ -151,7 +151,7 @@ bwd_kernel_dk_dv(T4 q,
                  BwdExtraArguments* extargs) {
   hipError_t err;
   auto stream = stream_wrap.native();
-  auto arch = getArchFromStream(stream);
+  auto gpu = getGpuFromStream(stream);
   auto grid_calculator = [max_seqlen_k](const BwdKernelDkDvParams& params) -> dim3 {
     dim3 grid {
       AOTRITON_NS::cdiv<uint32_t>(max_seqlen_k, params.BLOCK_N),
@@ -225,7 +225,7 @@ bwd_kernel_dk_dv(T4 q,
 #endif
   BwdKernelDkDvContext context;
   context.grid_calculator = grid_calculator;
-  err = context.lookup_optimal(params, arch);
+  err = context.lookup_optimal(params, gpu);
 #if AOTRITON_BUILD_FOR_TUNING
   if (extargs) {
     extargs->dkdv.total_number_of_kernels = params._total_number_of_kernels;
@@ -274,7 +274,7 @@ bwd_kernel_dq(T4 q,
               BwdExtraArguments* extargs) {
   hipError_t err;
   auto stream = stream_wrap.native();
-  auto arch = getArchFromStream(stream);
+  auto gpu = getGpuFromStream(stream);
   auto grid_calculator = [num_seqlens, max_seqlen_q](const BwdKernelDqParams& params) -> dim3 {
     dim3 grid {
       AOTRITON_NS::cdiv<uint32_t>(max_seqlen_q, params.BLOCK_M),
@@ -348,7 +348,7 @@ bwd_kernel_dq(T4 q,
 #endif
   BwdKernelDqContext context;
   context.grid_calculator = grid_calculator;
-  err = context.lookup_optimal(params, arch);
+  err = context.lookup_optimal(params, gpu);
 #if AOTRITON_BUILD_FOR_TUNING
   if (extargs) {
     extargs->dqdb.total_number_of_kernels = params._total_number_of_kernels;

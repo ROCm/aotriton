@@ -43,7 +43,7 @@ _attn_fwd_common(T4 q,
                  FwdExtraArguments* extargs) {
   hipError_t err;
   auto stream = stream_wrap.native();
-  auto arch = getArchFromStream(stream);
+  auto gpu = getGpuFromStream(stream);
   auto grid_calculator = [](const AttnFwdParams& params) -> dim3 {
 #if AOTRITON_VERBOSE
     std::cerr << "Selected Kernel "
@@ -152,7 +152,7 @@ _attn_fwd_common(T4 q,
   AttnFwdContext context;
   context.grid_calculator = grid_calculator;
   // .grid_calculator = grid_calculator
-  err = context.lookup_optimal(params, arch);
+  err = context.lookup_optimal(params, gpu);
 #if AOTRITON_BUILD_FOR_TUNING
   if (extargs) {
     extargs->total_number_of_kernels = params._total_number_of_kernels;

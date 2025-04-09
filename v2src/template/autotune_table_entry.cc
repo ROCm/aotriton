@@ -37,6 +37,10 @@ constexpr std::string_view ARCH_NAME { R"xyzw([[arch_name]])xyzw" };
 static const char packed_string[] =
 [[packed_string]];
 
+// Checksum can be confirmed with `echo -n '<string>' | b2sum -l 64`
+// For example:
+//   $ echo -n 'amd-gfx110x/flash/attn_fwd/FONLY__^bf16@16,128,False,False,0,0___gfx1100__P__32_32_0_2_False__CO__wave3_warp2_stg1-Gpu-gfx1100' | b2sum -l 64
+//   c4b51ee645d79580  -
 static AOTRITON_NS::TritonKernelCompactMeta meta_list[] = {
     [[meta_objects]]
 };
@@ -70,7 +74,7 @@ void CURRENT_ENTRY_PUBLIC([[param_class_name]]& params, int mod_number) {
         return ;
     }
 #endif
-    auto kernel_index = [[deduplicated_lut_function]](params, lut);
+    auto kernel_index = [[deduplicated_lut_function]](params, mod_number, lut);
     if (kernel_index < 0) {
       return ;
     }

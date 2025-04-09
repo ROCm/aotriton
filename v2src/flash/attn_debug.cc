@@ -15,7 +15,7 @@ hipError_t
 debug_fill_dropout_rng_tensor(T4 r, T0 philox_seed, T0 philox_offset, AOTRITON_NS::Stream stream_wrap) {
   hipError_t err;
   auto stream = stream_wrap.native();
-  auto arch = getArchFromStream(stream);
+  auto gpu = getGpuFromStream(stream);
   auto grid_calculator = [](const DebugFillDropoutRngTensorParams& params) -> dim3 {
     dim3 grid {
       AOTRITON_NS::cdiv<uint32_t>(params.R->size(2), params.BLOCK_M),
@@ -36,7 +36,7 @@ debug_fill_dropout_rng_tensor(T4 r, T0 philox_seed, T0 philox_offset, AOTRITON_N
   };
   DebugFillDropoutRngTensorContext context;
   context.grid_calculator = grid_calculator;
-  err = context.lookup_optimal(params, arch);
+  err = context.lookup_optimal(params, gpu);
   if (err != hipSuccess) {
     return err;
   }
@@ -48,7 +48,7 @@ hipError_t
 debug_fill_dropout_rng(T4 r, uint64_t philox_seed, uint64_t philox_offset, AOTRITON_NS::Stream stream_wrap) {
   hipError_t err;
   auto stream = stream_wrap.native();
-  auto arch = getArchFromStream(stream);
+  auto gpu = getGpuFromStream(stream);
   auto grid_calculator = [](const DebugFillDropoutRngParams& params) -> dim3 {
     dim3 grid {
       AOTRITON_NS::cdiv<uint32_t>(params.R->size(2), params.BLOCK_M),
@@ -69,7 +69,7 @@ debug_fill_dropout_rng(T4 r, uint64_t philox_seed, uint64_t philox_offset, AOTRI
   };
   DebugFillDropoutRngContext context;
   context.grid_calculator = grid_calculator;
-  err = context.lookup_optimal(params, arch);
+  err = context.lookup_optimal(params, gpu);
   if (err != hipSuccess) {
     return err;
   }
@@ -86,7 +86,7 @@ debug_simulate_encoded_softmax(T4 r,
                                AOTRITON_NS::Stream stream_wrap) {
   hipError_t err;
   auto stream = stream_wrap.native();
-  auto arch = getArchFromStream(stream);
+  auto gpu = getGpuFromStream(stream);
   auto grid_calculator = [](const DebugSimulateEncodedSoftmaxParams& params) -> dim3 {
     dim3 grid {
       AOTRITON_NS::cdiv<uint32_t>(params.R->size(2), params.BLOCK_M),
@@ -110,7 +110,7 @@ debug_simulate_encoded_softmax(T4 r,
   };
   DebugSimulateEncodedSoftmaxContext context;
   context.grid_calculator = grid_calculator;
-  err = context.lookup_optimal(params, arch);
+  err = context.lookup_optimal(params, gpu);
   if (err != hipSuccess) {
     return err;
   }
