@@ -6,7 +6,7 @@ cd cpptune_build
 # -DCMAKE_INSTALL_PREFIX is mandatory to avoid conflicts with aotriton bundled by AOTriton
 cmake .. -DCMAKE_INSTALL_PREFIX=./install_dir -DCMAKE_BUILD_TYPE=Release -DAOTRITON_BUILD_FOR_TUNING=ON -DAOTRITON_NAME_SUFFIX=123 -G Ninja
 # Optionally only build for one arch
-# cmake .. -DCMAKE_INSTALL_PREFIX=./install_dir -DCMAKE_BUILD_TYPE=Release -DAOTRITON_BUILD_FOR_TUNING=ON -DTARGET_GPUS=Navi32 -DAOTRITON_NAME_SUFFIX=123 -G Ninja
+# cmake .. -DCMAKE_INSTALL_PREFIX=./install_dir -DCMAKE_BUILD_TYPE=Release -DAOTRITON_BUILD_FOR_TUNING=ON -DAOTRITON_OVERRIDE_TARGET_GPUS=gfx942_mod0 -DAOTRITON_NAME_SUFFIX=123 -G Ninja
 ninja install
 cd ..
 # Run profiling on Target GPU
