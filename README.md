@@ -84,7 +84,7 @@ upstream and may support more recent version of AOTriton
 |        2.3            |                   0.4b                          |
 |        2.4            |                   0.7b (backported)             |
 |        2.5            |                   0.8b (backported)             |
-|        2.6            |                   0.8b (backported)             |
+|        2.6            |                   0.9b (backported)             |
 |        2.7            |                   0.9b (once released)          |
 
 ### Point Release
