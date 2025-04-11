@@ -94,6 +94,19 @@ class SQLiteKernelTuningDatabaseForArch(CommonKernelTuningDatabaseForArch):
             selection = ' and '.join([f'{colname}={fmtsql(value)}' for colname, value in zip(where_columns, where_values)])
             fb_selection = ' and '.join([f'{colname}={fmtsql(value)}' for colname, value in zip(where_columns, patched_values)])
             assert selected_rows, f"Cannot find any rows from select * from {self._table_name} where arch='{self.db_arch}' and {selection} (fallback to {fb_selection})"
+        # GFX950 FIXME: Update the tuning database to fix num_warps entries
+        # Patch the compiler_options$num_warps to be all "4", which may reduce
+        # the timeout
+        if 'attn_fwd' not in self._table_name:
+            nwarp_col = None
+            for i in range(len(selected_columns)):
+                if selected_columns[i] == 'compiler_options$num_warps':
+                    nwarp_col = i
+                    break
+            assert nwarp_col is not None
+            for row in selected_rows:
+                row[nwarp_col] = 4
+
         # TODO: Support KernelDescription.DOWNGRADER
         # return columns, values, self._downgrade(rows)
 
