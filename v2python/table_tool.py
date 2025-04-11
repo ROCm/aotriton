@@ -162,6 +162,9 @@ class Pkr_BwdKernelDkDv(PerKernelResult):
         for key in ['USE_ALIBI', 'INT8', 'INT8_KV', 'USE_P_SCALE']:
             if key in optimal['inputs']:
                 del optimal['inputs'][key]
+        if 'CAUSAL_TYPE' in optimal['inputs']:
+            optimal['inputs']['CAUSAL'] = optimal['inputs']['CAUSAL_TYPE']
+            del optimal['inputs']['CAUSAL_TYPE']
         return optimal
 
 class Pkr_BwdKernelDq(PerKernelResult):
@@ -193,6 +196,8 @@ class Pkr_FusedBwdKernel(PerKernelResult):
     def any_nan(self, adiffs):
         ntensors = len(self.valid_out_tensors)
         return any(map(math.isnan, adiffs[:ntensors]))
+    
+    remove_unused = Pkr_BwdKernelDkDv.remove_unused
 
 KERNEL_NAME_TO_FACTORY = {
     'attn_fwd' : Pkr_AttnFwd,
@@ -383,6 +388,10 @@ class TuningDatabase(object):
         if not line_text:
             return
         raw_info = json.loads(line_text)
+        kernel_name = raw_info.get('kernel_name', '')
+        if kernel_name in ['bwd_kernel_dk_dv', 'bwd_kernel_dq', 'bwd_kernel_fuse'] and 'inputs' in raw_info and 'CAUSAL_TYPE' in raw_info['inputs']:
+            raw_info['inputs']['CAUSAL'] = raw_info['inputs']['CAUSAL_TYPE']
+            del raw_info['inputs']['CAUSAL_TYPE']
         if raw_info.get('kernel_name') == 'attn_fwd':
             BM = raw_info['tuned_kernel']['BLOCK_M']
             BN = raw_info['tuned_kernel']['BLOCK_N']
@@ -501,10 +510,12 @@ def do_main(args, db, fin):
             if rawjson is None:
                 continue
             db.upsert_json(rawjson, create_table_only=False)
-            if 'CAUSAL_TYPE' in rawjson['inputs']:
+            if 'CAUSAL' in rawjson['inputs']:
+                causal = rawjson['inputs']['CAUSAL']
+            elif 'CAUSAL_TYPE' in rawjson['inputs']:
                 causal = rawjson['inputs']['CAUSAL_TYPE']
             else:
-                causal = rawjson['inputs']['CAUSAL']
+                causal = False
             # Handles CAUSAL=True and BIAS_TYPE=1 case
             # No real use cases, just let the build system compile things
             if causal == True and rawjson['inputs']['BIAS_TYPE'] == 0:
