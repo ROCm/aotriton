@@ -98,14 +98,23 @@ class SQLiteKernelTuningDatabaseForArch(CommonKernelTuningDatabaseForArch):
         # Patch the compiler_options$num_warps to be all "4", which may reduce
         # the timeout
         if 'attn_fwd' not in self._table_name:
-            nwarp_col = None
-            for i in range(len(selected_columns)):
-                if selected_columns[i] == 'compiler_options$num_warps':
-                    nwarp_col = i
-                    break
-            assert nwarp_col is not None
-            for row in selected_rows:
+            def loc(columns, name):
+                for i in range(len(columns)):
+                    if columns[i] == name:
+                        return i
+                assert False, f'{name} cannot be found in {columns}'
+            nwarp_col = loc(selected_columns, 'compiler_options$num_warps')
+            hdim_col = loc(where_columns, 'inputs$BLOCK_DMODEL')
+            hdim = where_values[hdim_col]
+            m_col = loc(selected_columns, 'tuned_kernel$BLOCK_M')
+            n_col = loc(selected_columns, 'tuned_kernel$BLOCK_N')
+            for i in range(len(selected_rows)):
+                row = list(selected_rows[i])
                 row[nwarp_col] = 4
+                if hdim >= 256:
+                    row[m_col] = 16
+                    row[n_col] = 16
+                selected_rows[i] = row
 
         # TODO: Support KernelDescription.DOWNGRADER
         # return columns, values, self._downgrade(rows)
