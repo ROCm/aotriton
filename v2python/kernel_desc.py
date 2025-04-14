@@ -6,10 +6,15 @@ from collections import defaultdict
 import io
 import os
 from pathlib import Path
+from .conditional_value import (
+    ConditionalConstexpr,
+    ConditionalDeferredConstexpr,
+    ConditionalDeferredElse,
+)
 from .kernel_argument import (
     ArgumentCategory,
     ArgumentMetadata,
-    ArgumentSelection
+    ArgumentSelection,
 )
 from .kernel_signature import KernelSignature
 from .object_desc import ObjectFileDescription
@@ -33,13 +38,13 @@ def get_possible_choices(klass, arg_name : str) -> 'list[Any]':
                 return v
     assert False, f"cannot find {arg_name}"
 
-def select_pattern(arguments, prefix, trim_left=None, trim_right=None):
+def select_pattern(arguments, prefix, trim_left=None, trim_right=None, delete_when=None):
     ret = []
     for s in arguments:
         assert s.strip() == s, f'Input argument {s} within {arguments=} contains spaces at either end'
         if s.startswith(prefix):
             ret.append(s)
-    return ret[trim_left:trim_right]
+    return (ret[trim_left:trim_right], delete_when)
 
 class KernelDescription(object):
     ARGUMENTS = []
@@ -90,9 +95,14 @@ class KernelDescription(object):
         return False
 
     def insert_tensor_strides_to_choices(self, last_is_continuous=False):
-        for tensor, strides in self.TENSOR_STRIDE_INPUTS.items():
+        for tensor, (strides, delete_when) in self.TENSOR_STRIDE_INPUTS.items():
             typed_strides = strides[:-1] if last_is_continuous else strides
-            self.TYPE_CHOICES[frozenset(typed_strides)] = ['u64:16']
+            if delete_when is None:
+                stride_dtype = 'u64:16'
+            else:
+                feat, feat_value = delete_when
+                stride_dtype = ConditionalConstexpr(feat, feat_value, 0, 'u64:16')
+            self.TYPE_CHOICES[frozenset(typed_strides)] = [stride_dtype]
             constant_strides = [] if not last_is_continuous else strides[-1:]
             if constant_strides:
                 self.FEAT_CHOICES[frozenset(constant_strides)] = [1]
@@ -231,9 +241,11 @@ class KernelDescription(object):
         for gpu, fsels, psels, compiler_options in gen():
             try:
                 sig = KernelSignature(self, fsels, psels, compiler_options, gpu)
-            except:
+            except Exception as e:
                 print(f"{fsels=}")
                 print(f"{psels=}")
+                import traceback
+                traceback.print_exc()
                 exit()
             yield self.build_object_file_description(outpath, sig, sancheck_fileexists=sancheck_fileexists)
             if False: # Debugging

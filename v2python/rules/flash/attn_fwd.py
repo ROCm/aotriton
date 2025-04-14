@@ -4,10 +4,22 @@
 import itertools
 import os
 import numpy as np
-from ._common import FlashKernel, select_pattern, BinningLessOrEqual, BinningExact, Config
+from ._common import (
+    FlashKernel,
+    select_pattern,
+    BinningLessOrEqual,
+    BinningExact,
+    Config,
+    ConditionalConstexpr as CC,
+    ConditionalDeferredConstexpr as CDC,
+    ConditionalDeferredElse as CDE,
+)
 
 AOTRITON_FLASH_BLOCK_DMODEL = os.getenv('AOTRITON_FLASH_BLOCK_DMODEL', default='16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256, 512')
 AOTRITON_FLASH_BLOCK_DMODEL = [int(d) for d in AOTRITON_FLASH_BLOCK_DMODEL.split(',')]
+
+_IF_DROPOUT = lambda elsechoice : [CC('ENABLE_DROPOUT', False, 0, elsechoice)]
+_IF_CAUSAL = lambda elsechoice, dtype=None : [CC('CAUSAL_TYPE', False, 0, elsechoice, else_dtype=dtype)]
 
 class attn_fwd(FlashKernel):
     ARGUMENTS = [
@@ -68,22 +80,25 @@ class attn_fwd(FlashKernel):
         'Q' : select_pattern(ARGUMENTS, 'stride_q'),
         'K' : select_pattern(ARGUMENTS, 'stride_k'),
         'V' : select_pattern(ARGUMENTS, 'stride_v'),
-        'B' : select_pattern(ARGUMENTS, 'stride_b'),
-        'A' : select_pattern(ARGUMENTS, 'stride_a'),
+        'B' : select_pattern(ARGUMENTS, 'stride_b', delete_when=('BIAS_TYPE', 0)),
+        'A' : select_pattern(ARGUMENTS, 'stride_a', delete_when=('USE_ALIBI', False)),
         'Out' : select_pattern(ARGUMENTS, 'stride_o'),
     }
     TYPE_CHOICES = {
-        frozenset(['Q', 'K', 'V', 'B', 'A', 'Out', 'encoded_softmax']) : FlashKernel.MAIN_DATATYPES,
+        frozenset(['Q', 'K', 'V', 'Out']) : FlashKernel.MAIN_DATATYPES,
+        frozenset(['B']) : [CDE('BIAS_TYPE', 0, 0, 'Q')],
+        frozenset(['A']) : [CDE('USE_ALIBI', False, 0, 'Q')],
+        frozenset(['encoded_softmax']) : [CDE('RETURN_ENCODED_SOFTMAX', False, 0, 'Q')],
         frozenset(['Sm_scale']) : ['fp32'],
         frozenset(['L']) : ['*fp32:16'],
         frozenset(['cu_seqlens_q', 'cu_seqlens_k']) : ['*i32:16'],
         frozenset(['Num_head_q', 'Num_head_k', 'Num_seqlens', 'Max_seqlen_q', 'Max_seqlen_k']) : ['i32'],
-        frozenset(['Head_dim']) : ['i32'],
-        frozenset(['dropout_p']) : ['fp32'],
-        frozenset(['philox_seed_ptr', 'philox_seed_output', 'philox_offset_output']) : ['*u64'],
-        frozenset(['philox_offset1']) : ['*u64'],
-        frozenset(['philox_offset2']) : ['u64'],
-        frozenset(['persistent_atomic_counter']) : ['*i32'],
+        frozenset(['Head_dim']) : [CDC('PADDED_HEAD', False, 'BLOCK_DMODEL', 'i32')],
+        frozenset(['dropout_p']) : _IF_DROPOUT('fp32'),
+        frozenset(['philox_seed_ptr', 'philox_seed_output', 'philox_offset_output']) : _IF_DROPOUT('fp32'),
+        frozenset(['philox_offset1']) : _IF_DROPOUT('*u64'),
+        frozenset(['philox_offset2']) : _IF_DROPOUT('u64'),
+        frozenset(['persistent_atomic_counter']) : _IF_CAUSAL('*i32'),
         frozenset(['Num_CU', 'Batch']) : ['i32'],
     }
     FEAT_CHOICES = {
@@ -100,10 +115,8 @@ class attn_fwd(FlashKernel):
         frozenset(['USE_ALIBI']) : [False],
         frozenset(['INT8', 'INT8_KV', 'USE_P_SCALE']) : [False],  # INT8 for the future
     }
-    def PERSISTENT_TYPE(arch, fsel_dict) -> 'i8':  # NOTE: Return type annotation is REQUIRED
-        return 2 if fsel_dict['CAUSAL_TYPE'] else 0
     PERF_CHOICES = {
-        frozenset(['PERSISTENT_TYPE']) : [PERSISTENT_TYPE],
+        frozenset(['PERSISTENT_TYPE']) : _IF_CAUSAL(2, dtype='i8'),
         frozenset(['GRID_CU_MULTIP']) : np.array([2], dtype=np.int8),  # NOTE: use np.array with dtype to reduce size of the generate tuning infomation struct
         frozenset(['BLOCK_M']) : np.array([16], dtype=np.int16),
         frozenset(['BLOCK_N']) : np.array([16], dtype=np.int16),

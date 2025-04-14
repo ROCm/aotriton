@@ -2,7 +2,14 @@
 # SPDX-License-Identifier: MIT
 
 from ...gpu_targets import gpu2arch, AOTRITON_ARCH_WARPSIZE
-from ...kernel_desc import KernelDescription, get_possible_choices, select_pattern
+from ...kernel_desc import (
+    KernelDescription,
+    get_possible_choices,
+    select_pattern,
+    ConditionalConstexpr,
+    ConditionalDeferredConstexpr,
+    ConditionalDeferredElse,
+)
 from ...autotune_config import Config
 from ...autotune_binning import BinningLessOrEqual, BinningExact
 
