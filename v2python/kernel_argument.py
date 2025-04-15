@@ -119,6 +119,8 @@ class ArgumentMetadata(object):
     @property
     def is_tensor(self) -> bool:
         triton_type = self._possible_values[0]
+        if isinstance(triton_type, ConditionalConstexpr):
+            return triton_type.is_tensor
         return isinstance(triton_type, str) and triton_type.startswith('*')
 
     @property
@@ -267,11 +269,18 @@ class ArgumentSelection(object):
 
     def substitute_conditional(self, arch, fsel_dict):
         if self.is_conditional:
-            copy = deepcopy(self)
-            copy._selection_value = copy._selection(arch, fsel_dict)
-            assert copy._selection_value is not None
-            # print(f"substitute_conditional to {copy._selection_value} {fsel_dict=}")
-            return copy
+            # TOO Expensive
+            # copy = deepcopy(self)
+            # copy._selection_value = copy._selection(arch, fsel_dict)
+            # assert copy._selection_value is not None
+            # # print(f"substitute_conditional to {copy._selection_value} {fsel_dict=}")
+            # return copy
+            if self._selection_index is None:
+                sub = TunedArgument(self._meta, self._selection)
+            else:
+                sub = ArgumentSelection(self._meta, self._selection_index)
+            sub._selection_value = self._selection(arch, fsel_dict)
+            return sub
         return self
 
     @property
@@ -310,10 +319,19 @@ class ArgumentSelection(object):
     Note: use tentative=True to disable None check in order to support ConditionalConstexpr
     '''
     @staticmethod
-    def build_fsel_dict(fsels : 'list[ArgumentSelection]', tentative=False):
+    def build_fsel_dict(fsels : 'list[ArgumentSelection]', tentative=False, all_args=False, with_meta=False):
         d = {}
-        for fsel in fsels:
-            d[fsel.meta.repr_name] = fsel.tentative_value if tentative else fsel.argument_value
+        if all_args:
+            for fsel in fsels:
+                v = fsel.tentative_value if tentative else fsel.argument_value
+                if with_meta:
+                    v = (v, fsel)
+                for aname in fsel.meta.argument_names:
+                    d[aname] = v
+        else:
+            assert not with_meta, 'Unsupported'
+            for fsel in fsels:
+                d[fsel.meta.repr_name] = fsel.tentative_value if tentative else fsel.argument_value
         return d
 
 class TunedArgument(ArgumentSelection):

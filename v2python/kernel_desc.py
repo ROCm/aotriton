@@ -9,7 +9,7 @@ from pathlib import Path
 from .conditional_value import (
     ConditionalConstexpr,
     ConditionalDeferredConstexpr,
-    ConditionalDeferredElse,
+    ConditionalDeferredElseTensor,
 )
 from .kernel_argument import (
     ArgumentCategory,
@@ -156,6 +156,8 @@ class KernelDescription(object):
         for key in self.AUTOTUNE_KEYS:
             assert key in self.ARGUMENTS, f'AUTOTUNE_KEYS "{key}" cannot be found in {self.__class__.__name__}.ARGUMENTS'
         self._lut_lambda_registry = {}
+        self._prepare_args_registry = {}
+        self._kargs_getter_dic = None
 
     def set_target_gpus(self, gpus):
         # Note _target_gpus should not bu used
@@ -301,7 +303,7 @@ class KernelDescription(object):
         print(self.HEADER_TEMPLATE.format_map(d), file=fout)
 
     def write_shim_source(self, fout, object_files, noimage_mode):
-        put_kernel_arguments_on_stack, let_kernel_arguments = self.codegen_kernel_arguments()
+        list_of_pp_args_function_defs, list_of_pp_args_function_decls = self.codegen_kernel_arguments()
         if not noimage_mode:
             assert self.SHIM_KERNEL_NAME == object_files[0].binary_entrance
         d = { 'kernel_family_name'  : self.KERNEL_FAMILY,
@@ -311,8 +313,8 @@ class KernelDescription(object):
               'context_class_name'  : self.context_class_name,
               'metadata_class_name' : self.metadata_class_name,
               'godel_number_body'   : self.godel_number_body,
-              'put_kernel_arguments_on_stack' : put_kernel_arguments_on_stack,
-              'let_kernel_arguments' : let_kernel_arguments,
+              'list_of_pp_args_function_defs' : list_of_pp_args_function_defs,
+              'list_of_pp_args_function_decls' : list_of_pp_args_function_decls,
               'get_archmod_number_body' : self.codegen_archmod_number_body(),
               'number_of_functionals': self._godel_number,
               'define_compiled_in_features' : self.codegen_define_compiled_in_features(),
@@ -329,30 +331,43 @@ class KernelDescription(object):
             print(f"{tensor_arg=} {ret}")
         return self.TENSOR_RANKS.get(tensor_arg, self.TENSOR_RANKS['_default'])
 
-    def codegen_kernel_arguments(self):
-        stack_lets = []
-        stack_variables = {}
-        for tensor_aname, stride_anames in self.TENSOR_STRIDE_INPUTS.items():
+    '''
+    Create a superset dict
+    codegen_deduplicated_pp_args_function_index will use a subset
+    '''
+    def codegen_kargs_getter_dic(self):
+        if self._kargs_getter_dic is not None:
+            return self._kargs_getter_dic
+        d = {}
+        for tensor_aname, (stride_anames, _) in self.TENSOR_STRIDE_INPUTS.items():
             tensor_rank = self.get_tensor_rank(tensor_aname)
-            for i in range(tensor_rank - 1):
+            for i in range(tensor_rank):
                 aname = stride_anames[i]
-                stack_lets.append(f'uint64_t {aname} = params.{tensor_aname}->stride({i})')
-                stack_variables[aname] = aname
+                d[aname] = f'params.{tensor_aname}->kparam_stride({i})'
         for m in self._func_meta:
             if not m.is_tensor:
                 continue
             for aname in m.argument_names:
-                stack_lets.append(f'const void* {aname}_ptr = params.{aname}->data_ptr()')
-                stack_variables[aname] = f'{aname}_ptr';
-        ALIGN = ',\n' + ' ' * 32
-        def plet(aname):
-            if aname in stack_variables.keys():
-                sname = stack_variables[aname]
-            else:
-                sname = f'params.{aname}'
-            return f'const_cast<void*>(static_cast<const void*>(&{sname}))'
-        lets = [plet(aname) for aname in self.KERNEL_DATA_ARGUMENTS]
-        return ';\n    '.join(stack_lets), ALIGN.join(lets)
+                d[aname] = f'params.{aname}->kparam_data_ptr()'
+        for aname in self.KERNEL_DATA_ARGUMENTS:
+            if aname in d:
+                continue
+            d[aname] = f'CAST(&params.{aname})'
+        self._kargs_getter_dic = d
+        return self._kargs_getter_dic
+
+    def codegen_kernel_arguments(self):
+        param_class_name = self.param_class_name
+        stmt = []
+        # array = ['PP_FUNC prepare_arguments [] = {']
+        array = []
+        for assign_skips, (pp_index, src, pp_function_name) in self._prepare_args_registry.items():
+            stmt.append(f'std::vector<void*> {pp_function_name}(const {param_class_name}& params,')
+            stmt.append(f'                                      hipDeviceptr_t* global_scratch) {{')
+            stmt.append(src)
+            stmt.append(f'}}')
+            array.append(pp_function_name)
+        return '\n'.join(stmt), ',\n  '.join(array)
 
     @property
     def godel_number_body(self):
@@ -479,6 +494,19 @@ const std::vector<{ctype}>& {meta_class}::get_{meta.repr_name}_choices()
         lut_function_name = f'{self.SHIM_KERNEL_NAME}__lut_lambda_{findex}'
         self._lut_lambda_registry[lambda_src] = (lut_function_name, lut_dtype, lut_shape)
         return lut_function_name
+
+    def lookup_prepare_args(self, assign_skips):
+        if assign_skips in self._prepare_args_registry:
+            return True, self._prepare_args_registry[assign_skips][0]
+        return False, -1
+
+    def register_prepare_args(self, assign_skips, pp_src : str):
+        if assign_skips in self._prepare_args_registry:
+            return self._prepare_args_registry[assign_skips][0]
+        findex = len(self._prepare_args_registry)
+        pp_function_name = f'{self.SHIM_KERNEL_NAME}_pp_args_{findex}'
+        self._prepare_args_registry[assign_skips] = (findex, pp_src, pp_function_name)
+        return findex
 
     def codegen_list_of_deduplicated_lut_functions(self):
         param_class_name = self.param_class_name

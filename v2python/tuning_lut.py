@@ -267,6 +267,7 @@ class KernelTuningEntryForFunctionalOnGPU(object):
             'lut_data'              : self.lut_cdata,
             'param_class_name'      : self._kdesc.param_class_name,
             'deduplicated_lut_function' : self.codegen_deduplicated_lut_function(),
+            'deduplicated_pp_args_function_index' : self.codegen_deduplicated_pp_args_function_index(first_sig),
             'perf_field_assignment' : self.codegen_perf_assignment(),
             'arch_number'           : self._dba.arch_number,
             'human_readable_signature' : first_sig.human_readable_signature
@@ -329,6 +330,55 @@ class KernelTuningEntryForFunctionalOnGPU(object):
         lambda_src = ALIGN.join(stmt).format_map(d)
         lut_function_name = self._kdesc.register_code_lut(lambda_src, d['lut_dtype'], d['lut_shape'])
         return lut_function_name
+
+    def codegen_deduplicated_pp_args_function_index(self, first_sig):
+        getters = self._kdesc.codegen_kargs_getter_dic();
+        fsel_dict = first_sig.build_final_fsel_dict(all_args=True)
+        assign_skips = tuple([isinstance(fsel_dict[aname], int) for aname in self._kdesc.KERNEL_DATA_ARGUMENTS])
+        hit, findex = self._kdesc.lookup_prepare_args(assign_skips)
+        if hit:
+            return findex
+        fsel_dict = first_sig.build_final_fsel_dict(all_args=True, with_meta=True)
+        stmt = []
+        for aname in self._kdesc.KERNEL_DATA_ARGUMENTS:
+            fval, fsel = fsel_dict[aname]
+            assign = getters[aname] + f', // {aname}'
+            if isinstance(fval, int):  # isinstance(True, int) == True
+                fval_str = str(fval)
+                if fsel.is_conditional and hasattr(fsel._selection, 'list_possible_constexpr_values'):
+                    all_vals = fsel._selection.list_possible_constexpr_values(first_sig._selections)
+                    fval_str = '/'.join(all_vals)
+                assign = '// ' + assign + f' as constexpr {fval_str}'
+            stmt.append(assign)
+        stmt.append('CAST(global_scratch)')
+        pfx = '  return { '
+        join = '\n' + ' ' * len(pfx)
+        sfx = '         };'
+        src = pfx + join.join(stmt) + '\n' + sfx
+        return self._kdesc.register_prepare_args(assign_skips, src)
+        # stack_lets = []
+        # stack_variables = {}
+        # for tensor_aname, stride_anames in self.TENSOR_STRIDE_INPUTS.items():
+        #     tensor_rank = self.get_tensor_rank(tensor_aname)
+        #     for i in range(tensor_rank - 1):
+        #         aname = stride_anames[i]
+        #         stack_lets.append(f'uint64_t {aname} = params.{tensor_aname}->stride({i})')
+        #         stack_variables[aname] = aname
+        # for m in self._func_meta:
+        #     if not m.is_tensor:
+        #         continue
+        #     for aname in m.argument_names:
+        #         stack_lets.append(f'const void* {aname}_ptr = params.{aname}->data_ptr()')
+        #         stack_variables[aname] = f'{aname}_ptr';
+        # ALIGN = ',\n' + ' ' * 32
+        # def plet(aname):
+        #     if aname in stack_variables.keys():
+        #         sname = stack_variables[aname]
+        #     else:
+        #         sname = f'params.{aname}'
+        #     return f'const_cast<void*>(static_cast<const void*>(&{sname}))'
+        # lets = [plet(aname) for aname in self.KERNEL_DATA_ARGUMENTS]
+        # return ';\n    '.join(stack_lets), ALIGN.join(lets)
 
     def codegen_perf_assignment(self):
         ALIGN = ';\n' + 4 * ' '

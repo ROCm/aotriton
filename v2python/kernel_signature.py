@@ -121,3 +121,6 @@ class KernelSignature(object):
 
     def is_functional_disabled(self):
         return self._kdesc.is_functional_disabled_on_arch(self.target_arch, self._func_selections)
+
+    def build_final_fsel_dict(self, all_args=False, with_meta=False):
+        return ArgumentSelection.build_fsel_dict(self._func_selections, all_args=all_args, with_meta=with_meta)

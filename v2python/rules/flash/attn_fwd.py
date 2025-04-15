@@ -12,7 +12,7 @@ from ._common import (
     Config,
     ConditionalConstexpr as CC,
     ConditionalDeferredConstexpr as CDC,
-    ConditionalDeferredElse as CDE,
+    ConditionalDeferredElseTensor as CDETensor,
 )
 
 AOTRITON_FLASH_BLOCK_DMODEL = os.getenv('AOTRITON_FLASH_BLOCK_DMODEL', default='16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256, 512')
@@ -86,16 +86,16 @@ class attn_fwd(FlashKernel):
     }
     TYPE_CHOICES = {
         frozenset(['Q', 'K', 'V', 'Out']) : FlashKernel.MAIN_DATATYPES,
-        frozenset(['B']) : [CDE('BIAS_TYPE', 0, 0, 'Q')],
-        frozenset(['A']) : [CDE('USE_ALIBI', False, 0, 'Q')],
-        frozenset(['encoded_softmax']) : [CDE('RETURN_ENCODED_SOFTMAX', False, 0, 'Q')],
+        frozenset(['B']) : [CDETensor('BIAS_TYPE', 0, 0, 'Q')],
+        frozenset(['A']) : [CDETensor('USE_ALIBI', False, 0, 'Q')],
+        frozenset(['encoded_softmax']) : [CDETensor('RETURN_ENCODED_SOFTMAX', False, 0, 'Q')],
         frozenset(['Sm_scale']) : ['fp32'],
         frozenset(['L']) : ['*fp32:16'],
         frozenset(['cu_seqlens_q', 'cu_seqlens_k']) : ['*i32:16'],
         frozenset(['Num_head_q', 'Num_head_k', 'Num_seqlens', 'Max_seqlen_q', 'Max_seqlen_k']) : ['i32'],
         frozenset(['Head_dim']) : [CDC('PADDED_HEAD', False, 'BLOCK_DMODEL', 'i32')],
         frozenset(['dropout_p']) : _IF_DROPOUT('fp32'),
-        frozenset(['philox_seed_ptr', 'philox_seed_output', 'philox_offset_output']) : _IF_DROPOUT('fp32'),
+        frozenset(['philox_seed_ptr', 'philox_seed_output', 'philox_offset_output']) : _IF_DROPOUT('*u64'),
         frozenset(['philox_offset1']) : _IF_DROPOUT('*u64'),
         frozenset(['philox_offset2']) : _IF_DROPOUT('u64'),
         frozenset(['persistent_atomic_counter']) : _IF_CAUSAL('*i32'),

@@ -35,10 +35,7 @@ hipError_t
 [[context_class_name]]::launch(const [[param_class_name]]& params, hipStream_t stream) {
     constexpr std::string_view triton_kernel_name { "[[triton_kernel_name]]" };
     hipDeviceptr_t global_scratch = 0;
-    [[put_kernel_arguments_on_stack]];
-    std::vector<void*> args = { [[let_kernel_arguments]],
-                                const_cast<void*>(static_cast<const void*>(&global_scratch)),
-    };
+    auto args = prepare_arguments[params.pp_args_index](params, &global_scratch);
     dim3 grid = grid_calculator(params);
 #if AOTRITON_BUILD_FOR_TUNING
     return params.kernel_on_device->invoke(triton_kernel_name,
@@ -68,6 +65,15 @@ std::tuple<int, int>
     //       getGpuFromStream should not return that mod from beginning.
     return std::make_tuple(-1, 0);
 }
+
+#define CAST(x) const_cast<void*>(static_cast<const void*>(x))
+typedef std::vector<void*>(*PP_FUNC)(const [[param_class_name]]& params);
+
+[[list_of_pp_args_function_defs]]
+
+PP_FUNC prepare_arguments = {
+  [[list_of_pp_args_function_decls]]
+};
 
 [[define_compiled_in_features]]
 

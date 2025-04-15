@@ -79,6 +79,7 @@ void CURRENT_ENTRY_PUBLIC([[param_class_name]]& params, int mod_number) {
       return ;
     }
     params.kernel_on_device = kernel_cluster.get(kernel_index);
+    params.pp_args_index = [[deduplicated_pp_args_function_index]];
     params.package_path = PACKAGE_PATH;
     params.func_name = FUNC_NAME;
     params.arch_name = ARCH_NAME;

@@ -8,7 +8,7 @@ from ...kernel_desc import (
     select_pattern,
     ConditionalConstexpr,
     ConditionalDeferredConstexpr,
-    ConditionalDeferredElse,
+    ConditionalDeferredElseTensor,
 )
 from ...autotune_config import Config
 from ...autotune_binning import BinningLessOrEqual, BinningExact

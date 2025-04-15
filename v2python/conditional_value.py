@@ -14,7 +14,9 @@
 #
 
 class ConditionalConstexpr(object):
-    def __init__(self, feat, feat_value, constexpr_value, else_choice, cond_op=None, else_dtype=None):
+    def __init__(self, feat, feat_value, constexpr_value, else_choice,
+                 cond_op=None,
+                 else_dtype=None):
         self._constexpr = constexpr_value
         self._cond_op = cond_op
         self._when_feat = feat
@@ -53,11 +55,32 @@ class ConditionalConstexpr(object):
     def get_triton_type(self):
         return self._else_dtype if self._else_dtype is not None else self._else
 
+    @property
+    def is_tensor(self):
+        return isinstance(self._else, str) and self._else.startswith('*')
+
 class ConditionalDeferredConstexpr(ConditionalConstexpr):
     def get_constexpr(self, fsel_dict):
         # print(f'{self._when_feat=} {self._constexpr=}')
         return fsel_dict[self._constexpr]
 
-class ConditionalDeferredElse(ConditionalConstexpr):
+    def list_possible_constexpr_values(self, selections):
+        for sel in selections:
+            if sel.meta.has_argument(self._constexpr):
+                return [str(v) for v in sel.meta._possible_values]
+
+# FIXME: Need specialized for Tensor so ArgumentMetadata.param_cc_fields can work
+class ConditionalDeferredElseTensor(ConditionalConstexpr):
     def get_else(self, fsel_dict):
         return fsel_dict[self._else]
+
+    @property
+    def is_tensor(self):
+        return True
+
+    def list_possible_constexpr_values(self, selections):
+        return ['nullptr']
+    # def list_possible_constexpr_values(self, selections):
+    #     for sel in selections:
+    #         if sel.meta.has_argument(self._else):
+    #             return [str(v) for v in sel.meta._possible_values]
