@@ -281,7 +281,10 @@ class KernelDescription(object):
 
     @property
     def func_fields(self):
-        return sum([m.param_cc_fields for m in self._func_meta], [])
+        unsorted_fields = sum([m.param_cc_fields_tuple for m in self._func_meta], [])
+        print(f'{self.SHIM_KERNEL_NAME} {unsorted_fields=}')
+        fields = sorted(unsorted_fields, key=lambda tup: tup[2])
+        return [cc_type + ' ' + aname for (cc_type, aname, _) in fields]
 
     @property
     def perf_fields(self):
@@ -303,7 +306,7 @@ class KernelDescription(object):
         print(self.HEADER_TEMPLATE.format_map(d), file=fout)
 
     def write_shim_source(self, fout, object_files, noimage_mode):
-        list_of_pp_args_function_defs, list_of_pp_args_function_decls = self.codegen_kernel_arguments()
+        list_of_pp_args_function_defs, list_of_pp_args_function_decls, pp_func_num = self.codegen_kernel_arguments()
         if not noimage_mode:
             assert self.SHIM_KERNEL_NAME == object_files[0].binary_entrance
         d = { 'kernel_family_name'  : self.KERNEL_FAMILY,
@@ -313,6 +316,7 @@ class KernelDescription(object):
               'context_class_name'  : self.context_class_name,
               'metadata_class_name' : self.metadata_class_name,
               'godel_number_body'   : self.godel_number_body,
+              'pp_func_num'         : pp_func_num,
               'list_of_pp_args_function_defs' : list_of_pp_args_function_defs,
               'list_of_pp_args_function_decls' : list_of_pp_args_function_decls,
               'get_archmod_number_body' : self.codegen_archmod_number_body(),
@@ -362,12 +366,14 @@ class KernelDescription(object):
         # array = ['PP_FUNC prepare_arguments [] = {']
         array = []
         for assign_skips, (pp_index, src, pp_function_name) in self._prepare_args_registry.items():
-            stmt.append(f'std::vector<void*> {pp_function_name}(const {param_class_name}& params,')
-            stmt.append(f'                                      hipDeviceptr_t* global_scratch) {{')
+            stmt.append(f'static std::vector<void*>')
+            stmt.append(f'{pp_function_name}(const {param_class_name}& params,')
+            stmt.append(' ' * len(pp_function_name) + ' hipDeviceptr_t* global_scratch) {')
             stmt.append(src)
             stmt.append(f'}}')
             array.append(pp_function_name)
-        return '\n'.join(stmt), ',\n  '.join(array)
+        pp_func_num = len(self._prepare_args_registry.keys())
+        return '\n'.join(stmt), ',\n  '.join(array), pp_func_num
 
     @property
     def godel_number_body(self):

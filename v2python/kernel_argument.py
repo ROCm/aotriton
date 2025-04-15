@@ -177,6 +177,14 @@ class ArgumentMetadata(object):
         # ret = [ cc_type + ' ' + a[0] for a in self._ordered_arguments ]
         # print(f'{ret=}')
 
+    # Return list of (ctype, aname, aindex)
+    @property
+    def param_cc_fields_tuple(self):
+        triton_arg = self._ordered_arguments[0][0]
+        if triton_arg.startswith('stride_'):
+            return []
+        return [ (self.__get_param_cc_type(a[0]), a[0], a[1]) for a in self._ordered_arguments ]
+
     @property
     def param_cc_size(self):
         for a in self._ordered_arguments:
