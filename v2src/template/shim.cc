@@ -11,7 +11,9 @@ namespace AOTRITON_NS::v2::[[kernel_family_name]] {
 #define CAST(x) const_cast<void*>(static_cast<const void*>(x))
 typedef std::vector<void*>(*PP_FUNC)(const [[param_class_name]]& params, hipDeviceptr_t*);
 
+namespace {
 extern PP_FUNC prepare_arguments[ [[pp_func_num]] ];
+}
 
 int64_t [[param_class_name]]::godel_number() const
 {
@@ -73,10 +75,11 @@ std::tuple<int, int>
 
 [[list_of_pp_args_function_defs]]
 
-// Should be static but we need forward declaration...
+namespace {
 PP_FUNC prepare_arguments[ [[pp_func_num]] ] = {
   [[list_of_pp_args_function_decls]]
 };
+}
 
 [[define_compiled_in_features]]
 
