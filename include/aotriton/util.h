@@ -180,6 +180,10 @@ public:
       return TensorView<0>{0, dtype};
   }
 
+  // For hipModuleLaunchKernel's kernelParams
+  void* kparam_data_ptr() const {
+    return const_cast<void*>(static_cast<const void*>(&base_));
+  }
 private:
   const void* base_ = nullptr;
   DType dtype_ = kUnknown;
