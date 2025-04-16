@@ -356,29 +356,6 @@ class KernelTuningEntryForFunctionalOnGPU(object):
         sfx = '         };'
         src = pfx + join.join(stmt) + '\n' + sfx
         return self._kdesc.register_prepare_args(assign_skips, src)
-        # stack_lets = []
-        # stack_variables = {}
-        # for tensor_aname, stride_anames in self.TENSOR_STRIDE_INPUTS.items():
-        #     tensor_rank = self.get_tensor_rank(tensor_aname)
-        #     for i in range(tensor_rank - 1):
-        #         aname = stride_anames[i]
-        #         stack_lets.append(f'uint64_t {aname} = params.{tensor_aname}->stride({i})')
-        #         stack_variables[aname] = aname
-        # for m in self._func_meta:
-        #     if not m.is_tensor:
-        #         continue
-        #     for aname in m.argument_names:
-        #         stack_lets.append(f'const void* {aname}_ptr = params.{aname}->data_ptr()')
-        #         stack_variables[aname] = f'{aname}_ptr';
-        # ALIGN = ',\n' + ' ' * 32
-        # def plet(aname):
-        #     if aname in stack_variables.keys():
-        #         sname = stack_variables[aname]
-        #     else:
-        #         sname = f'params.{aname}'
-        #     return f'const_cast<void*>(static_cast<const void*>(&{sname}))'
-        # lets = [plet(aname) for aname in self.KERNEL_DATA_ARGUMENTS]
-        # return ';\n    '.join(stack_lets), ALIGN.join(lets)
 
     def codegen_perf_assignment(self):
         ALIGN = ';\n' + 4 * ' '

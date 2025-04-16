@@ -80,7 +80,3 @@ class ConditionalDeferredElseTensor(ConditionalConstexpr):
 
     def list_possible_constexpr_values(self, selections):
         return ['nullptr']
-    # def list_possible_constexpr_values(self, selections):
-    #     for sel in selections:
-    #         if sel.meta.has_argument(self._else):
-    #             return [str(v) for v in sel.meta._possible_values]
