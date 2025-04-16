@@ -244,10 +244,10 @@ class ArgumentSelection(object):
     def is_lambda(self):
         return self._is_lambda
 
-    def substitute_if_lambda(self, gpu, fsel_dict):
+    def substitute_if_lambda(self, arch, fsel_dict):
         if self.is_lambda:
             copy = deepcopy(self)
-            copy._selection_value = copy._selection(gpu, fsel_dict)
+            copy._selection_value = copy._selection(arch, fsel_dict)
             assert copy._selection_value is not None
             # print(f"substitute_if_lambda to {copy._selection_value} {fsel_dict=}")
             return copy

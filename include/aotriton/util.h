@@ -14,10 +14,25 @@
 namespace AOTRITON_NS {
 
 constexpr uint64_t
-CAT(uint32_t high, uint32_t low) {
+CAT64(uint32_t high, uint32_t low) {
   uint64_t high64 = high;
   uint64_t low64 = low;
   return (high64 << 32) | low64;
+}
+
+constexpr uint32_t
+CAT32(uint16_t high, uint16_t low) {
+  uint32_t high32 = high;
+  uint32_t low32 = low;
+  return (high32 << 16) | low32;
+}
+
+constexpr uint64_t
+TRICAT(uint16_t high, uint16_t mid, uint16_t low) {
+  uint64_t high64 = high;
+  uint64_t mid64 = mid;
+  uint64_t low64 = low;
+  return (high64 << 32) | (mid64 << 16) | low64;
 }
 
 template<typename T>
@@ -27,22 +42,28 @@ cdiv(T numerator, T denominator) {
 }
 
 // Use PCI IDs to avoid allocating numbers by ourselves
-enum AOTRITON_API GpuVendor : uint32_t {
+enum AOTRITON_API GpuVendor : uint16_t {
   kAMD = 0x1002,
   kNVIDIA = 0x10de,
   kINTEL = 0x8086,
 };
 
 // More bits for potential non-PCI architectures
-enum AOTRITON_API GpuArch : uint64_t {
+enum AOTRITON_API Gpu : uint64_t {
   GPU_ARCH_UNKNOWN = 0,
-  GPU_ARCH_AMD_GFX90A = CAT(GpuVendor::kAMD, 0x90a),
-  GPU_ARCH_AMD_GFX942 = CAT(GpuVendor::kAMD, 0x942),
-  GPU_ARCH_AMD_GFX1100 = CAT(GpuVendor::kAMD, 0x1100),
-  GPU_ARCH_AMD_GFX1101 = CAT(GpuVendor::kAMD, 0x1101),
-  GPU_ARCH_AMD_GFX950 = CAT(GpuVendor::kAMD, 0x950),
-  GPU_ARCH_AMD_GFX1201 = CAT(GpuVendor::kAMD, 0x1201),
+  GPU_AMD_ARCH_GFX90A_MOD0  = TRICAT(GpuVendor::kAMD,  0x90a, 0),
+  GPU_AMD_ARCH_GFX942_MOD0  = TRICAT(GpuVendor::kAMD,  0x942, 0),
+  GPU_AMD_ARCH_GFX942_MOD1  = TRICAT(GpuVendor::kAMD,  0x942, 1),
+  GPU_AMD_ARCH_GFX942_MOD2  = TRICAT(GpuVendor::kAMD,  0x942, 2),
+  GPU_AMD_ARCH_GFX1100_MOD0 = TRICAT(GpuVendor::kAMD, 0x1100, 0),
+  GPU_AMD_ARCH_GFX1101_MOD0 = TRICAT(GpuVendor::kAMD, 0x1101, 0),
+  GPU_AMD_ARCH_GFX950_MOD0  = TRICAT(GpuVendor::kAMD,  0x950, 0),
+  GPU_AMD_ARCH_GFX1201_MOD0 = TRICAT(GpuVendor::kAMD, 0x1201, 0),
 };
+
+inline uint32_t Gpu2VendorArch(uint64_t gpu) {
+  return (gpu & 0xFFFF'FFFF'0000) >> 16;
+}
 
 template<int Rank>
 class AOTRITON_API TensorView {
@@ -159,7 +180,7 @@ extern template class TensorView<2>;
 extern template class TensorView<3>;
 extern template class TensorView<4>;
 
-GpuArch AOTRITON_API getArchFromStream(hipStream_t);
+Gpu AOTRITON_API getGpuFromStream(hipStream_t);
 bool AOTRITON_API isArchExperimentallySupported(hipStream_t);
 int AOTRITON_API getMultiProcessorCount(hipStream_t stream);
 

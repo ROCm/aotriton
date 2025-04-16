@@ -1,10 +1,10 @@
 # Copyright © 2023-2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-from .gpu_targets import AOTRITON_GPU_ARCH_TUNING_STRING
 import numpy
 import json
 from .kernel_argument import ArgumentSelection
+from .gpu_targets import gpu2arch
 
 class KernelSignature(object):
     def __init__(self,
@@ -12,15 +12,14 @@ class KernelSignature(object):
                  func_selections : 'tuple[ArgumentSelection]',
                  perf_selections : 'tuple[ArgumentSelection]',
                  compiler_options: dict,
-                 gpu : str):
+                 gpu_or_arch : str):
         self._kdesc = kdesc
+        self._arch = gpu2arch(gpu_or_arch)  # gpu2arch is identity if passing arch
         self._func_selections = func_selections
         fsel_dict = ArgumentSelection.build_fsel_dict(func_selections)
-        self._perf_selections = [p.substitute_if_lambda(gpu, fsel_dict) for p in perf_selections]
+        self._perf_selections = [p.substitute_if_lambda(self._arch, fsel_dict) for p in perf_selections]
         self._selections = list(self._func_selections) + list(self._perf_selections)
         self._compiler_options = {} if compiler_options is None else compiler_options
-        self._gpu = gpu
-        self._arch = AOTRITON_GPU_ARCH_TUNING_STRING[gpu]
 
     COMPACT_COMPILER_OPTION = {
         'waves_per_eu' : 'wave',
@@ -32,8 +31,8 @@ class KernelSignature(object):
         return self.COMPACT_COMPILER_OPTION.get(co, co)
 
     @property
-    def target_gpu(self):
-        return self._gpu
+    def target_arch(self):
+        return self._arch
 
     @property
     def godel_number(self):
@@ -121,4 +120,4 @@ class KernelSignature(object):
         return json.dumps(self._compiler_options)
 
     def is_functional_disabled(self):
-        return self._kdesc.is_functional_disabled_on_gpu(self._gpu, self._func_selections)
+        return self._kdesc.is_functional_disabled_on_arch(self.target_arch, self._func_selections)

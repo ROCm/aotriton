@@ -100,7 +100,7 @@ class attn_fwd(FlashKernel):
         frozenset(['USE_ALIBI']) : [False],
         frozenset(['INT8', 'INT8_KV', 'USE_P_SCALE']) : [False],  # INT8 for the future
     }
-    def PERSISTENT_TYPE(gpu, fsel_dict) -> 'i8':  # NOTE: Return type annotation is REQUIRED
+    def PERSISTENT_TYPE(arch, fsel_dict) -> 'i8':  # NOTE: Return type annotation is REQUIRED
         return 2 if fsel_dict['CAUSAL_TYPE'] else 0
     PERF_CHOICES = {
         frozenset(['PERSISTENT_TYPE']) : [PERSISTENT_TYPE],

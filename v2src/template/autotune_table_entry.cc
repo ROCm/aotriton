@@ -37,6 +37,10 @@ constexpr std::string_view ARCH_NAME { R"xyzw([[arch_name]])xyzw" };
 static const char packed_string[] =
 [[packed_string]];
 
+// Checksum can be confirmed with `echo -n '<string>' | b2sum -l 64`
+// For example:
+//   $ echo -n 'amd-gfx110x/flash/attn_fwd/FONLY__^bf16@16,128,False,False,0,0___gfx1100__P__32_32_0_2_False__CO__wave3_warp2_stg1-Gpu-gfx1100' | b2sum -l 64
+//   c4b51ee645d79580  -
 static AOTRITON_NS::TritonKernelCompactMeta meta_list[] = {
     [[meta_objects]]
 };
@@ -45,7 +49,9 @@ static constexpr int kTotalNumKernels = ARRAY_SIZE(meta_list);
 
 static AOTRITON_NS::TritonKernelCluster<kTotalNumKernels> kernel_cluster(meta_list, packed_string);
 
-static [[lut_dtype]] lut[[lut_shape]] = [[lut_data]];
+static [[lut_dtype]] lut[[lut_shape]] =
+[[lut_data]]
+;
 
 }; // End of anonymous namespace
 
@@ -53,7 +59,7 @@ namespace AOTRITON_NS::v2::[[kernel_family_name]]::autotune {
 
 // using AOTRITON_NS::v2::[[kernel_family_name]]::[[param_class_name]];
 
-void CURRENT_ENTRY_PUBLIC([[param_class_name]]& params) {
+void CURRENT_ENTRY_PUBLIC([[param_class_name]]& params, int mod_number) {
 #if AOTRITON_BUILD_FOR_TUNING
     int preferred_index = params._has_preferred_kernel;
     params._total_number_of_kernels = kTotalNumKernels;
@@ -68,7 +74,7 @@ void CURRENT_ENTRY_PUBLIC([[param_class_name]]& params) {
         return ;
     }
 #endif
-    auto kernel_index = [[deduplicated_lut_function]](params, lut);
+    auto kernel_index = [[deduplicated_lut_function]](params, mod_number, lut);
     if (kernel_index < 0) {
       return ;
     }

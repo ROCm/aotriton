@@ -1,4 +1,4 @@
-// Copyright © 2023-2024 Advanced Micro Devices, Inc.
+// Copyright © 2023-2025 Advanced Micro Devices, Inc.
 // SPDX-License-Identifier: MIT
 
 #include <aotriton/util.h>
@@ -17,51 +17,59 @@ std::string_view gcnArchNameSansColon(const char* gcnArchName) {
     return arch;
 }
 
-struct LazyArch {
-  LazyArch(hipDevice_t dev)
+using GpuClassifier = std::function<Gpu(const hipDeviceProp_t& prop)>;
+
+template<Gpu GPU>
+struct DummyClassifier {
+  Gpu operator()(const hipDeviceProp_t& prop) { return GPU; }
+};
+
+struct LazyGpu {
+  LazyGpu(hipDevice_t dev)
     : dev_(dev) {
   }
-  operator GpuArch() {
+  operator Gpu() {
     hipDeviceProp_t prop;
     hipError_t err = hipGetDeviceProperties(&prop, dev_);
     if (err != hipSuccess)
       return GPU_ARCH_UNKNOWN;
     auto arch = gcnArchNameSansColon(prop.gcnArchName);
-    auto iter = string_to_arch.find(std::string(arch));
-    if (iter == string_to_arch.end())
+    auto iter = string_to_classifier.find(std::string(arch));
+    if (iter == string_to_classifier.end())
       return GPU_ARCH_UNKNOWN;
-    return iter->second;
+    return iter->second(prop);
   }
 
 private:
   hipDevice_t dev_;
-  static std::unordered_map<std::string, GpuArch> string_to_arch;
+  static std::unordered_map<std::string, GpuClassifier> string_to_classifier;
 };
 
-std::unordered_map<std::string, GpuArch> LazyArch::string_to_arch = {
-  {"gfx90a", GPU_ARCH_AMD_GFX90A},
-  {"gfx942", GPU_ARCH_AMD_GFX942},
-  {"gfx1100", GPU_ARCH_AMD_GFX1100},
-  {"gfx1101", GPU_ARCH_AMD_GFX1101},
-  {"gfx950", GPU_ARCH_AMD_GFX950},
-  {"gfx1201", GPU_ARCH_AMD_GFX1201},
+std::unordered_map<std::string, GpuClassifier> LazyGpu::string_to_classifier = {
+  { "gfx90a", DummyClassifier<GPU_AMD_ARCH_GFX90A_MOD0 >() },
+  { "gfx942", DummyClassifier<GPU_AMD_ARCH_GFX942_MOD0 >() },
+  {"gfx1100", DummyClassifier<GPU_AMD_ARCH_GFX1100_MOD0>() },
+  {"gfx1101", DummyClassifier<GPU_AMD_ARCH_GFX1101_MOD0>() },
+  { "gfx950", DummyClassifier<GPU_AMD_ARCH_GFX950_MOD0 >() },
+  {"gfx1201", DummyClassifier<GPU_AMD_ARCH_GFX1201_MOD0>() },
 };
 
-GpuArch
-getArchFromStream(hipStream_t stream) {
-  static std::unordered_map<hipDevice_t, GpuArch> device_to_arch;
+Gpu
+getGpuFromStream(hipStream_t stream) {
+  static std::unordered_map<hipDevice_t, Gpu> device_to_arch;
   hipDevice_t dev;
   hipError_t err = hipStreamGetDevice(stream, &dev);
   if (err != hipSuccess)
     return GPU_ARCH_UNKNOWN;
-  LazyArch lazy(dev);
+  LazyGpu lazy(dev);
   device_to_arch.try_emplace(dev, lazy);
   return device_to_arch[dev];
 }
 
 bool isArchExperimentallySupported(hipStream_t stream) {
-  auto arch = getArchFromStream(stream);
-  return (arch == GPU_ARCH_AMD_GFX950 || arch == GPU_ARCH_AMD_GFX1201);
+  auto gpu = getGpuFromStream(stream);
+  uint32_t vendor_arch = Gpu2VendorArch(gpu);
+  return (vendor_arch == CAT32(GpuVendor::kAMD,  0x950) || vendor_arch == CAT32(GpuVendor::kAMD, 0x1201));
 }
 
 int getMultiProcessorCount(hipStream_t stream) {
