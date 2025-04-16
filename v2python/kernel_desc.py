@@ -98,10 +98,10 @@ class KernelDescription(object):
         for tensor, (strides, delete_when) in self.TENSOR_STRIDE_INPUTS.items():
             typed_strides = strides[:-1] if last_is_continuous else strides
             if delete_when is None:
-                stride_dtype = 'u64:16'
+                stride_dtype = 'u64:8'
             else:
                 feat, feat_value = delete_when
-                stride_dtype = ConditionalConstexpr(feat, feat_value, 0, 'u64:16')
+                stride_dtype = ConditionalConstexpr(feat, feat_value, 0, 'u64:8')
             self.TYPE_CHOICES[frozenset(typed_strides)] = [stride_dtype]
             constant_strides = [] if not last_is_continuous else strides[-1:]
             if constant_strides:
