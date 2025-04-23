@@ -2,6 +2,7 @@
 # Copyright © 2023-2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
+import os
 from collections import namedtuple
 from dataclasses import dataclass
 import copy
@@ -25,6 +26,8 @@ from sized_tuned_bwd import (
     sized_tuned_bwd_kernel_dk_dv,
     sized_tuned_bwd_kernel_dq,
 )
+
+BWD_FUSED = bool(int(os.getenv('BWD_FUSED', default='0')))
 
 # Note: we don't use Enum class because accessing the integer requires using
 #       `.value` property, which makes the code verbose.

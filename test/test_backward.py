@@ -94,20 +94,6 @@ def RP(x):
     rounded = 2 ** (x - 1).bit_length()
     return max(16, rounded)
 
-'''
-Flash Attention is batch operator that evaluates sm(QK')V
-Q = batch_size x ... x seqlen_q x head_size
-K = batch_size x ... x seqlen_k x head_size
-    => K' = batch_size x ... x head_size x seqlen_k
-V = batch_size x ... x seqlen_k x head_size
-sm(.) = softmax(.)
-The output size is
-batch_size x ... x seqlen_q x head_size
-
-Note: In Flash V2 API the ... is denoted as "num_heads", serving as uniformly sized sequences
-but in PyTorch API it does not present at all
-'''
-
 def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type):
     if causal and bias_type is not None:
         pytest.skip("_scaled_dot_product_attention: Explicit attn_mask should not be set when is_causal=True")
@@ -177,7 +163,6 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
 # @pytest.mark.parametrize('seqlen_k', [32, 128])
 @pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
 @pytest.mark.parametrize('dropout_p', [0.0, 0.5])
-# @pytest.mark.parametrize('dropout_p', [0.0])
 @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16, torch.float32])
 # @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
 @pytest.mark.parametrize('sm_scale', [0.0, 1.2] if not FOR_RELEASE else [1.2])
@@ -222,7 +207,6 @@ def test_op_bwd_with_matrix_bias(BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen
 
 @pytest.mark.parametrize('BATCH', [1, 4] if not FOR_RELEASE else [4])
 @pytest.mark.parametrize('N_HEADS', [(16, 8), (10, 2)])
-# @pytest.mark.parametrize('D_HEAD', [8] if SMALL_HEADDIM_ONLY else [8, 203, 256])
 @pytest.mark.parametrize('D_HEAD', ALL_HEADDIMS)
 @pytest.mark.parametrize('seqlen_q', [4, 143, 2048])
 @pytest.mark.parametrize('seqlen_k', [4, 127, 579, 2048])
