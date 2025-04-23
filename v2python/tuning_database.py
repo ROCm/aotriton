@@ -109,7 +109,7 @@ class KernelTuningDatabase(object):
         for virtual, real in AOTRITON_TUNING_DATABASE_REUSE.items():
             if virtual not in self.arch_dict:
                 if real in self.arch_dict:
-                    dba = SQLiteKernelTuningDatabaseForArch(k, real, self._conn, table_name, downgrader)
+                    dba = SQLiteKernelTuningDatabaseForArch(k, real, self._conn, table_name, downgrader, for_gpu=virtual)
                     self.arch_dict[virtual] = dba
 
 

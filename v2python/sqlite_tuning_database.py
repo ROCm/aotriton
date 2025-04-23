@@ -12,7 +12,7 @@ from .downgrader import TuningDowngrader
 class SQLiteKernelTuningDatabaseForArch(CommonKernelTuningDatabaseForArch):
     UNDETECTED_COLUMN_PREFIX = '$$__UNDETECTED_'
 
-    def __init__(self, k, arch, conn, table_name, downgrader=None):
+    def __init__(self, k, arch, conn, table_name, downgrader=None, for_gpu=None):
         super().__init__(k, arch, downgrader=downgrader)
         self._conn = conn
         self._kdesc = k
@@ -23,6 +23,7 @@ class SQLiteKernelTuningDatabaseForArch(CommonKernelTuningDatabaseForArch):
         self._fsel_index_to_column_name = None
         self._lut = {}
         self._select_stmt_base = None
+        self._for_gpu = for_gpu
 
     @property
     def empty(self):
@@ -97,7 +98,7 @@ class SQLiteKernelTuningDatabaseForArch(CommonKernelTuningDatabaseForArch):
         # GFX950 FIXME: Update the tuning database to fix num_warps entries
         # Patch the compiler_options$num_warps to be all "4", which may reduce
         # the timeout
-        if 'attn_fwd' not in self._table_name:
+        if 'attn_fwd' not in self._table_name and self._for_gpu == 'gfx950':
             def loc(columns, name):
                 for i in range(len(columns)):
                     if columns[i] == name:
