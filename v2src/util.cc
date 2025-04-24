@@ -50,6 +50,7 @@ std::unordered_map<std::string, GpuClassifier> LazyGpu::string_to_classifier = {
   { "gfx942", DummyClassifier<GPU_AMD_ARCH_GFX942_MOD0 >() },
   {"gfx1100", DummyClassifier<GPU_AMD_ARCH_GFX1100_MOD0>() },
   {"gfx1101", DummyClassifier<GPU_AMD_ARCH_GFX1101_MOD0>() },
+  {"gfx1151", DummyClassifier<GPU_AMD_ARCH_GFX1151_MOD0>() },
   { "gfx950", DummyClassifier<GPU_AMD_ARCH_GFX950_MOD0 >() },
   {"gfx1201", DummyClassifier<GPU_AMD_ARCH_GFX1201_MOD0>() },
 };
@@ -69,7 +70,9 @@ getGpuFromStream(hipStream_t stream) {
 bool isArchExperimentallySupported(hipStream_t stream) {
   auto gpu = getGpuFromStream(stream);
   uint32_t vendor_arch = Gpu2VendorArch(gpu);
-  return (vendor_arch == CAT32(GpuVendor::kAMD,  0x950) || vendor_arch == CAT32(GpuVendor::kAMD, 0x1201));
+  return (vendor_arch == CAT32(GpuVendor::kAMD,  0x950) ||
+          vendor_arch == CAT32(GpuVendor::kAMD, 0x1151) ||
+          vendor_arch == CAT32(GpuVendor::kAMD, 0x1201));
 }
 
 int getMultiProcessorCount(hipStream_t stream) {
