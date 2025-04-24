@@ -5,6 +5,9 @@
 #include <aotriton/_internal/triton_kernel.h>
 #include <aotriton/_internal/kernel_cluster.h>
 #include <aotriton/cpp_tune.h>
+#ifndef NDEBUG // for std::cerr
+    #include <iostream>
+#endif
 #include <string_view>
 
 // [[human_readable_signature]]
