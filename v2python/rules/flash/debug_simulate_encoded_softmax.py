@@ -1,9 +1,12 @@
 # Copyright © 2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-from ._common import FlashKernel, select_pattern, get_possible_choices
+from ._common import FlashKernel, select_pattern, get_possible_choices, OpAttn
 
+# TODO: Support return_softmax_cross_entropy with MetroKernel
 class debug_simulate_encoded_softmax(FlashKernel):
+    OP_KLASS = None
+    CONFIRM_NO_OP_KLASS = True
     ARGUMENTS = [
         'R',
         'stride_rz', 'stride_rh', 'stride_rm', 'stride_rn',
@@ -22,7 +25,7 @@ class debug_simulate_encoded_softmax(FlashKernel):
         '_default' : 0,
     }
     TYPE_CHOICES = {
-        frozenset(['R']) : FlashKernel.MAIN_DATATYPES,
+        frozenset(['R']) : OpAttn.MAIN_DATATYPES,
         frozenset(['dropout_p']) : ['fp32'],
         frozenset(['Num_head_q', 'Max_seqlen_q', 'Max_seqlen_k']) : ['i32'],
         frozenset(['philox_seed_ptr']) : ['*u64'],

@@ -3,37 +3,24 @@
 
 from ._common import FlashKernel, get_possible_choices, select_pattern, BinningLessOrEqual, BinningExact
 from .attn_fwd import attn_fwd
+from .op_attn_bwd import OpAttnBwd
+match_op = lambda aname : get_possible_choices(OpAttnBwd, aname)
 
+
+# TODO: rename stride_on to stride_ok and stride_don to stride_dok in tritonsrc
 class bwd_preprocess(FlashKernel):
+    OP_KLASS = OpAttnBwd
     ARGUMENTS = [
         'Out', 'DO',
-        'Delta',
-        'stride_oz', 'stride_oh', 'stride_om', 'stride_on',
-        'stride_doz', 'stride_doh', 'stride_dom', 'stride_don',
-        'seqlen_q',
+        'D',
+        'stride_oz', 'stride_oh', 'stride_om', 'stride_ok',
+        'stride_doz', 'stride_doh', 'stride_dom', 'stride_dok',
+        'max_seqlen_q',
         'head_dim',
         'BLOCK_M', # tl.constexpr starts here
-        'D_HEAD',
+        'BLOCK_DMODEL',  # TODO: Rename the triton kernel
         'PADDED_HEAD',
     ]
-    TENSOR_STRIDE_INPUTS = {
-        'Out' : select_pattern(ARGUMENTS, 'stride_o'),
-        'DO' : select_pattern(ARGUMENTS, 'stride_do'),
-    }
-    TENSOR_RANKS = {
-        '_default' : 4,
-        'Delta' : 2,
-    }
-    TYPE_CHOICES = {
-        frozenset(['Out', 'DO']) : ['*fp16:16', '*bf16:16', '*fp32:16'],
-        frozenset(['Delta']) : ['*fp32:16'],
-        frozenset(['seqlen_q']) : ['i32'],
-        frozenset(['head_dim']) : ['i32'],
-    }
-    FEAT_CHOICES = {
-        frozenset(['D_HEAD']) : get_possible_choices(attn_fwd, 'BLOCK_DMODEL'),
-        frozenset(['PADDED_HEAD']) : [False, True],
-    }
     PERF_CHOICES = {
         frozenset(['BLOCK_M']) : [128], # TODO: All possible values?
     }
@@ -46,38 +33,19 @@ class bwd_preprocess(FlashKernel):
     DOWNGRADER = []
 
 class bwd_preprocess_varlen(FlashKernel):
+    OP_KLASS = OpAttnBwd
     ARGUMENTS = [
         'Out', 'DO',
-        'Delta',
-        'stride_oz', 'stride_oh', 'stride_om', 'stride_on',
-        'stride_doz', 'stride_doh', 'stride_dom', 'stride_don',
+        'D',
+        'stride_oz', 'stride_oh', 'stride_om', 'stride_ok',
+        'stride_doz', 'stride_doh', 'stride_dom', 'stride_dok',
         'cu_seqlens_q',
         'max_seqlen_q',
         'head_dim',
         'BLOCK_M', # tl.constexpr starts here
-        'D_HEAD',
+        'BLOCK_DMODEL',
         'PADDED_HEAD',
     ]
-    TENSOR_STRIDE_INPUTS = {
-        'Out' : select_pattern(ARGUMENTS, 'stride_o'),
-        'DO' : select_pattern(ARGUMENTS, 'stride_do'),
-    }
-    TENSOR_RANKS = {
-        '_default' : 4,
-        'Delta' : 2,
-        'cu_seqlens_q': 1,
-    }
-    TYPE_CHOICES = {
-        frozenset(['Out', 'DO']) : ['*fp16:16', '*bf16:16', '*fp32:16'],
-        frozenset(['Delta']) : ['*fp32:16'],
-        frozenset(['cu_seqlens_q']) : ['*i32:16'],
-        frozenset(['max_seqlen_q']) : ['i32'],
-        frozenset(['head_dim']) : ['i32'],
-    }
-    FEAT_CHOICES = {
-        frozenset(['D_HEAD']) : get_possible_choices(attn_fwd, 'BLOCK_DMODEL'),
-        frozenset(['PADDED_HEAD']) : [False, True],
-    }
     PERF_CHOICES = {
         frozenset(['BLOCK_M']) : [128], # TODO: All possible values?
     }

@@ -7,17 +7,16 @@
 #include <aotriton/config.h>
 #include <aotriton/_internal/triton_kernel.h>
 #include <aotriton/dtypes.h>
-#include <aotriton/flash.h>
 #include <aotriton/runtime.h>
 #include <functional>
 #include <string>
 #include <vector>
+#include "op.[[op_name]].h"
 
 namespace AOTRITON_NS::v2::[[kernel_family_name]] {
 
 struct [[param_class_name]] {
-    // Function related arguments
-    [[func_fields]];
+    const [[op_param_class_name]] *params = nullptr;
     // Performance related arguments for current selection
     [[perf_fields]];
 

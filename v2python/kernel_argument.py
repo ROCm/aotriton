@@ -40,6 +40,8 @@ class ArgumentMetadata(object):
         self._ordered_arguments = None  # list[tuple[aname : str, aindex : int]]
 
     def sort_arguments(self, ALL_ARGUMENTS):
+        print(f'{ALL_ARGUMENTS=}')
+        print(f'{self._grouped_arguments_as_set=}')
         arguments_tuple = [(aname, ALL_ARGUMENTS.index(aname)) for aname in self._grouped_arguments_as_set]
         self._ordered_arguments = sorted(arguments_tuple, key=lambda at: at[1])
         self._first_apperance = self._ordered_arguments[0][1]
