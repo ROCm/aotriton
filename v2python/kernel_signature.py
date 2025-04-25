@@ -15,9 +15,9 @@ class KernelSignature(object):
                  gpu_or_arch : str):
         self._kdesc = kdesc
         self._arch = gpu2arch(gpu_or_arch)  # gpu2arch is identity if passing arch
-        self._func_selections = func_selections
-        fsel_dict = ArgumentSelection.build_fsel_dict(func_selections)
-        self._perf_selections = [p.substitute_if_lambda(self._arch, fsel_dict) for p in perf_selections]
+        init_fsel_dict = ArgumentSelection.build_fsel_dict(func_selections, tentative=True)
+        self._func_selections = [f.substitute_conditional(self._arch, init_fsel_dict) for f in func_selections]
+        self._perf_selections = [p.substitute_conditional(self._arch, init_fsel_dict) for p in perf_selections]
         self._selections = list(self._func_selections) + list(self._perf_selections)
         self._compiler_options = {} if compiler_options is None else compiler_options
 
@@ -121,3 +121,6 @@ class KernelSignature(object):
 
     def is_functional_disabled(self):
         return self._kdesc.is_functional_disabled_on_arch(self.target_arch, self._func_selections)
+
+    def build_final_fsel_dict(self, all_args=False, with_meta=False):
+        return ArgumentSelection.build_fsel_dict(self._func_selections, all_args=all_args, with_meta=with_meta)

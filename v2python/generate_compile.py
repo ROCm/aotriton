@@ -183,9 +183,12 @@ def main():
             print('LIBHSA_RUNTIME64=/opt/rocm/lib/libhsa-runtime64.so\n', file=f)
         makefile_content = io.StringIO()
         per_kernel_targets = []
-        for k in triton_kernels:
-            k.set_target_gpus(args.target_gpus)
-            per_kernel_targets.append(gen_from_kernel(args, k, build_dir, makefile_content))
+        try:
+            for k in triton_kernels:
+                k.set_target_gpus(args.target_gpus)
+                per_kernel_targets.append(gen_from_kernel(args, k, build_dir, makefile_content))
+        except Exception as e:
+            raise e
         if not args.bare_mode:
             print('all: ', end='', file=f)
             for t in per_kernel_targets:

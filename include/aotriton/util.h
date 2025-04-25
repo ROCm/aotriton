@@ -118,6 +118,16 @@ public:
     return dtype_;
   }
 
+  // For hipModuleLaunchKernel's kernelParams
+  void* kparam_data_ptr() const {
+    return const_cast<void*>(static_cast<const void*>(&base_));
+  }
+
+  // For hipModuleLaunchKernel's kernelParams
+  void* kparam_stride(int i) const {
+    return const_cast<void*>(static_cast<const void*>(&strides_[i]));
+  }
+
   static TensorView<Rank> get_null_tensor(DType dtype) {
       return TensorView<Rank>{0,
                               std::array<uint64_t, Rank>{},
@@ -169,6 +179,11 @@ public:
 
   static TensorView<0> get_null_tensor(DType dtype) {
       return TensorView<0>{0, dtype};
+  }
+
+  // For hipModuleLaunchKernel's kernelParams
+  void* kparam_data_ptr() const {
+    return const_cast<void*>(static_cast<const void*>(&base_));
   }
 private:
   const void* base_ = nullptr;
