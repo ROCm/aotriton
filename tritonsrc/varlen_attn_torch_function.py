@@ -331,6 +331,25 @@ class _varlen_attention(torch.autograd.Function):
         max_seqlen_k = ctx.max_seqlen_k
         batch = len(seqlen_q)
         num_heads = q.shape[1]
+        
+        
+        persistent_type = attn_extra_args.persistent_type
+        if persistent_type == PersistentType.AUTOSELECT:
+            persistent_type = PersistentType.NONE if not ctx.causal else PersistentType.DYNAMIC
+
+        unsupported_by_persistent_dq = len(cu_seqlens_q) > 0
+        unsupported_by_persistent_dkv = len(cu_seqlens_k) > 0
+
+        # We fall back to default kernel when DYNAMIC
+        # assert persistent_type == PersistentType.NONE, "main_perf kernel does not fully support varlen + persistent dynamic yet"
+
+        null_tensor = torch.empty((0), device=q.device, dtype=torch.int32)
+        if persistent_type == PersistentType.DYNAMIC:
+            persistent_atomic_counter_dkv = torch.zeros([1], device=q.device, dtype=torch.int32)
+            persistent_atomic_counter_dq = torch.zeros([1], device=q.device, dtype=torch.int32)
+        else:
+            persistent_atomic_counter_dkv = null_tensor
+            persistent_atomic_counter_dq = null_tensor
 
         MAX_BLOCK = 64 if ctx.dropout_p == 0 else 16
         # BLOCK = min(max_seqlen_q, max_seqlen_k, q.shape[-1], MAX_BLOCK)
@@ -383,11 +402,22 @@ class _varlen_attention(torch.autograd.Function):
             BLOCK_M = max(16, BLOCK_M // 2)
             BLOCK_N = max(16, BLOCK_N // 2)
         # debug_mask = torch.zeros((q.shape[0], q.shape[1], max_seqlen_q, max_seqlen_k), device=q.device, dtype=ctx.encoded_softmax.dtype)
-        grid_dk_dv = lambda META: (
-            triton.cdiv(max_seqlen_k, META['BLOCK_N']),
-            num_heads,
-            batch,
-        )
+        
+        # The fallback-ed kernel needs fallback launch options
+        if persistent_type == PersistentType.NONE or unsupported_by_persistent_dkv:
+            grid_dk_dv = lambda META: (
+                triton.cdiv(max_seqlen_k, META['BLOCK_N']),
+                num_heads,
+                batch,
+            )
+            Num_CU = 0
+        else:
+            Num_CU = torch.cuda.get_device_properties(q.device).multi_processor_count
+            grid_dk_dv = lambda META: (
+                triton.cdiv(max_seqlen_k, META['BLOCK_N']),
+                num_heads,
+                batch,
+            )
         stride_dbz, stride_dbh, stride_dbm, stride_dbn = db.stride()
         if db.numel() == 0 or not b.requires_grad:
             # Passing all zeros to indicate no elements
@@ -486,7 +516,14 @@ class _varlen_attention(torch.autograd.Function):
                     # debug_mask=debug_mask,
                     BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N,
                     BLOCK_DMODEL=head_dim_rounded,
-                    CAUSAL=ctx.causal,
+                    # Causal
+                    CAUSAL_TYPE=CausalType.TOP_LEFT if ctx.causal else CausalType.NONE,
+                    # Persistent related arguments
+                    PERSISTENT_TYPE=persistent_type,
+                    persistent_atomic_counter=persistent_atomic_counter_dkv,
+                    Num_CU=Num_CU,
+                    GRID_CU_MULTIP=2,
+                    Batch=batch,
                     num_warps=4,
                     num_stages=1,
                     ENABLE_DROPOUT=ctx.dropout_p > 0.0,
@@ -510,11 +547,21 @@ class _varlen_attention(torch.autograd.Function):
                     print(f'2nd block fwd mask: {ctx.encoded_softmax[0,0, 16:]}')
             # print(f'Full q: {q}', file=sys.stderr)
             # assert mask_allclose
-        grid_dq = lambda META: (
-            triton.cdiv(max_seqlen_q, META['BLOCK_M']),
-            num_heads,
-            batch,
-        )
+        
+        if persistent_type == PersistentType.NONE or unsupported_by_persistent_dq:
+            grid_dq = lambda META: (
+                triton.cdiv(max_seqlen_q, META['BLOCK_M']),
+                num_heads,
+                batch,
+            )
+            Num_CU = 0
+        else:
+            Num_CU = torch.cuda.get_device_properties(q.device).multi_processor_count
+            grid_dq = lambda META: (
+                triton.cdiv(max_seqlen_q, META['BLOCK_M']),
+                num_heads,
+                batch,
+            )
         if q.requires_grad:
             if ctx.autotune:
                 sized_tuned_bwd_kernel_dq[grid_dq](
@@ -606,7 +653,14 @@ class _varlen_attention(torch.autograd.Function):
                     philox_offset2=0,
                     BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N,
                     BLOCK_DMODEL=head_dim_rounded,
-                    CAUSAL=ctx.causal,
+                    # Causal
+                    CAUSAL_TYPE=CausalType.TOP_LEFT if ctx.causal else CausalType.NONE,
+                    # Persistent related arguments
+                    PERSISTENT_TYPE=persistent_type,
+                    persistent_atomic_counter=persistent_atomic_counter_dq,
+                    Num_CU=Num_CU,
+                    GRID_CU_MULTIP=2,
+                    Batch=batch,
                     num_warps=4, waves_per_eu=1,
                     num_stages=1,
                     ENABLE_DROPOUT=ctx.dropout_p > 0.0,
