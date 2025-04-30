@@ -11,12 +11,25 @@
 #include <functional>
 #include <string>
 #include <vector>
-#include "op.[[op_name]].h"
+#if ![[empty_op]]
+// "op.None.h" means this kernel is not linked to a op class.
+#include "op.[[op_name]].h" 
+#endif
 
 namespace AOTRITON_NS::v2::[[kernel_family_name]] {
 
+#if [[empty_op]]
+// The parameter class must be defined here when
+// There is no common operator for [[shim_kernel_name]].
 struct [[param_class_name]] {
-    const [[op_param_class_name]] *params = nullptr;
+    [[func_fields]];
+};
+#endif
+
+// "Closure" is used to refer the combination of "I/O data, performance related
+// arguments, and GPU kernels", which is a complete for execution.
+struct [[context_class_name]] {
+    const [[param_class_name]] *params = nullptr;
     // Performance related arguments for current selection
     [[perf_fields]];
 
@@ -32,25 +45,23 @@ struct [[param_class_name]] {
     int _total_number_of_kernels = -1;
     const char* _preferred_kernel_psels = nullptr;
     const char* _preferred_kernel_copts = nullptr;
+    bool peek_kernel_image = false;
 #endif
 
     int64_t godel_number() const;
 };
 
-class [[context_class_name]] {
-public:
-    std::function<dim3(const [[param_class_name]]&)> grid_calculator;
+namespace [[shim_kernel_name]]_helpers {
 
-    hipError_t lookup_optimal([[param_class_name]]& params, Gpu gpu);
-    hipError_t launch(const [[param_class_name]]& params, hipStream_t stream);
-    static std::tuple<int, int> get_archmod_number(Gpu gpu);
+constexpr int kMaxGodelNumber = [[number_of_functionals]];
 
-#if AOTRITON_BUILD_FOR_TUNING
-    bool peek_kernel_image = false;
-#endif
-private:
-    typedef void (*AutoTuneTableEntry)([[param_class_name]]& params, int mod_number);
-    static AutoTuneTableEntry autotune_table[][ [[number_of_functionals]] ];
+std::function<dim3(const [[context_class_name]]&)> grid_calculator;
+hipError_t lookup_optimal([[context_class_name]]& context, Gpu gpu);
+hipError_t launch(const [[context_class_name]]& context, hipStream_t stream);
+static std::tuple<int, int> get_archmod_number(Gpu gpu);
+
+typedef void (*AutoTuneTableEntry)([[context_class_name]]& context, int mod_number);
+static AutoTuneTableEntry autotune_table[][ kMaxGodelNumber ];
 };
 
 struct [[metadata_class_name]] {
@@ -60,7 +71,7 @@ struct [[metadata_class_name]] {
 
 namespace autotune {
 
-using AOTRITON_NS::v2::[[kernel_family_name]]::[[param_class_name]];
+extern const char [[shim_kernel_name]]_packed_string[];
 
 [[declare_list_of_deduplicated_lut_functions]]
 
