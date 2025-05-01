@@ -3,7 +3,7 @@
 
 from pathlib import Path
 from ..gpu_targets import cluster_gpus, gpu2arch
-from .parameter import build_dict, build_compact_dict, build_complete_dict
+from .argument import build_dict, build_compact_dict, build_complete_dict
 
 # Functional: describe the functional part of a certain compute process
 # Abstract from: type choice + functional choice of Triton kernels
@@ -17,9 +17,9 @@ from .parameter import build_dict, build_compact_dict, build_complete_dict
 class Functional(object):
 
     def __init__(self,
+                 meta_object,  # KernelDescription | Operator
                  arch,
                  arch_number,
-                 meta_object,  # KernelDescription | Operator
                  selections,
                  optimized_for):
         self._arch = arch
@@ -53,13 +53,24 @@ class Functional(object):
         return self._optimized_for
 
     @property
+    def noptimized_for(self):
+        return len(self._optimized_for)
+
+    @property
     def meta_object(self):
         return self._meta
+
+    @property
+    def godel_number(self):
+        return sum([s.godel_number for s in self._selections])
 
     @property
     def fsel_dict(self):
         return build_complete_dict(self._selections)
 
+    '''
+    dict of all parameter -> argument
+    '''
     @property
     def complete_dict(self):
         return build_complete_dict(self._selections)
@@ -67,26 +78,35 @@ class Functional(object):
     @property
     def human_readable_signature(self):
         lf = [s.human_readable_signature for s in self._selections]
-        return '#if 0 // Human-readable Signature \n' + '\n '.join([x for x in lf if x is not None]) + '\n#endif'
+        return 'Human-readable Signature \n// ' + '\n// '.join([x for x in lf if x is not None])
 
     @property
     def compact_choices(self) -> dict:
         return self._compact_dict
 
     '''
-    Note here we use FONLY__
-    file pack signature only cares about Functional
+    "core" signature
+    only directly used to supply TritonKernel as HSACO name component
+    '''
+    @property
+    def signature_in_func_name(self):
+        lf = [s.compact_signature for s in self._selections if s.show_in_compact]
+        return '_'.join([x for x in lf])
+
+    '''
+    file pack signature only cares about Functional, so it is FONLY__
     '''
     @property
     def filepack_signature(self):
-        lf = [s.compact_signature for s in self._selections]
-        sf = '_'.join([x for x in lf if x is not None])
+        sf = self.signature_in_func_name
         return 'FONLY__' + sf + f'___{self.arch}'
 
+    '''
+    Used by KSignature to construct full kernel name
+    '''
     @property
     def compact_signature(self):
-        lf = [s.compact_signature for s in self._selections]
-        sf = '_'.join([x for x in lf if x is not None])
+        sf = self.signature_in_func_name
         return 'F__' + sf + f'___{self.arch}'
 
     @property

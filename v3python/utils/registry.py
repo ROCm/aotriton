@@ -20,7 +20,7 @@ class StringRegistry(object):
           with the returned offset values.
     '''
     def get_data(self):
-        packed_string = '\n'.join(['"' + s + '\\0"' for s in self._string_dict])
+        packed_string = '\n'.join(['"' + s + '\\0"' for s in self._string_dict if s is not None])
         return packed_string
 
 
@@ -36,6 +36,9 @@ class FunctionRegistry(object):
         self._function_registry[fsrc] = (fret, fname, fparams)
         return fname
 
+    def get_data(self):
+        return self._function_registry
+
 class SignaturedFunctionRegistry(object):
     def __init__(self):
         self._function_registry = {}
@@ -48,8 +51,12 @@ class SignaturedFunctionRegistry(object):
         return findex
 
     def contains(self, fsig):
-        return fsig in self._function_registry
+        if fsig in self._function_registry:
+            return True, self._function_registry[fsig][0]
+        return False, None
 
+    def get_data(self):
+        return self._function_registry
 '''
 Class to register re-used code or objects
 '''
@@ -58,20 +65,20 @@ class RegistryRepository(object):
     def __init__(self):
         self._subreg_dict = {}
 
-    def get_string_registry(name):
+    def get_string_registry(self, name):
         if name not in self._subreg_dict:
             self._subreg_dict[name] = StringRegistry()
         return self._subreg_dict[name]
 
-    def get_function_registry(name):
+    def get_function_registry(self, name):
         if name not in self._subreg_dict:
             self._subreg_dict[name] = FunctionRegistry()
         return self._subreg_dict[name]
 
-    def get_signatured_function_registry(name):
+    def get_signatured_function_registry(self, name):
         if name not in self._subreg_dict:
             self._subreg_dict[name] = SignaturedFunctionRegistry()
         return self._subreg_dict[name]
 
-    def get_data(name):
+    def get_data(self, name):
         return self._subreg_dict[name].get_data()

@@ -16,7 +16,7 @@ AOTRITON_FLASH_BLOCK_DMODEL = os.getenv('AOTRITON_FLASH_BLOCK_DMODEL', default='
 AOTRITON_FLASH_BLOCK_DMODEL = [int(d) for d in AOTRITON_FLASH_BLOCK_DMODEL.split(',')]
 
 _IF_DROPOUT = lambda elsechoice : [CC('ENABLE_DROPOUT', False, 0, elsechoice)]
-_IF_CAUSAL = lambda elsechoice, dtype=None : [CC('CAUSAL_TYPE', False, 0, elsechoice, else_dtype=dtype)]
+_IF_CAUSAL = lambda elsechoice : [CC('CAUSAL_TYPE', False, 0, elsechoice)]
 
 class OpAttnFwd(OpAttn):
     NAME = 'attn_fwd'

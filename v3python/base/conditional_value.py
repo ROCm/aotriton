@@ -13,7 +13,14 @@
 #   - Specified by returning a single element numpy array
 #
 
-class ConditionalConstexpr(object):
+from .ttype import ConditionalValue
+from .guesstype import (
+    guess_vparam_type,
+    guess_tparam_type,
+    create_tensor_type,
+)
+
+class ConditionalConstexpr(ConditionalValue):
     def __init__(self, feat, feat_value, constexpr_value, else_choice,
                  cond_op=None,
                  else_dtype=None):
@@ -30,7 +37,6 @@ class ConditionalConstexpr(object):
                 f'For integer {else_choice=}, {else_dtype=} must be specified with np.int8 etc.'
             )
         self._else = else_choice
-        self._else_dtype = else_dtype
 
     def _is_matching(self, fsel_dict):
         return self._matched_result(fsel_dict[self._when_feat])
@@ -52,15 +58,20 @@ class ConditionalConstexpr(object):
     def get_else(self, fsel_dict):
         return self._else
 
-    def get_triton_type(self):
-        return self._else_dtype if self._else_dtype is not None else self._else
+    def get_ttype(self, rank=None):
+        if isinstance(self._else, str):
+            return guess_tparam_type(self._else, rank=rank)
+        return guess_vparam_type(self._else, rank=rank)
 
-    @property
-    def is_tensor(self):
-        return isinstance(self._else, str) and self._else.startswith('*')
+    # def get_triton_type(self):
+    #     return self._else_dtype if self._else_dtype is not None else self._else
+
+    # @property
+    # def is_tensor(self):
+    #     return isinstance(self._else, str) and self._else.startswith('*')
 
     def format_constexpr(self, arg):
-        return str(value)
+        return str(arg.value)
 
 class ConditionalDeferredConstexpr(ConditionalConstexpr):
     def get_constexpr(self, fsel_dict):
@@ -73,12 +84,15 @@ class ConditionalDeferredConstexpr(ConditionalConstexpr):
 
 # FIXME: Need specialized for Tensor so ArgumentMetadata.param_cc_fields can work
 class ConditionalDeferredElseTensor(ConditionalConstexpr):
-    def get_else(self, fsel_dict):
-        return fsel_dict[self._else]
+    # def get_else(self, fsel_dict):
+    #     return fsel_dict[self._else]
 
-    @property
-    def is_tensor(self):
-        return True
+    # @property
+    # def is_tensor(self):
+    #     return True
+
+    def get_ttype(self, rank=None):
+        return create_tensor_type('any', rank)
 
     def format_constexpr(self, _):
         return 'nullptr'

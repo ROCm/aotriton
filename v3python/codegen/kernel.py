@@ -38,12 +38,15 @@ class KernelShimGenerator(object):
 
         # registry
         self._registry_repo = RegistryRepository()
+        all_functionals = []
 
         # autotune phase
         fac = DatabaseFactories.create_factory(args.build_dir)
         for functional in kdesc.gen_functionals(self._target_arch):
+            # print(f'{functional=}')
             df = fac.create_view(functional)
             AutotuneCodeGenerator(self._args, functional, df, self._registry_repo).generate()
+            all_functionals.append(functional)
 
         # shim code phase
         # Must be after autotune due to common functions needed by autotune is
@@ -53,31 +56,31 @@ class KernelShimGenerator(object):
         shim_fn = 'shim.' + kdesc.NAME + '.h'
         fullfn = shim_path / shim_fn
         with LazyFile(fullfn) as fout:
-            self.write_shim_header(fout)
+            self.write_shim_header(all_functionals, fout)
         with LazyFile(fullfn.with_suffix('.cc')) as fout:
-            self.write_shim_source(fout)
+            self.write_shim_source(all_functionals, fout)
 
-    def write_shim_header(self, fout):
+    def write_shim_header(self, functionals, fout):
         kdesc = self._kdesc
         empty_op = kdesc.OPERATOR == NO_OPERATOR
         d = {
             'kernel_family_name'  : kdesc.FAMILY,
             'shim_kernel_name'    : kdesc.NAME,
             'param_class_name'    : kdesc.param_class_name,
-            'op_name'             : kdesc.op_name,
+            'op_name'             : kdesc.OPERATOR.NAME,
             'empty_op'            : 1 if empty_op else 0,
             'context_class_name'  : kdesc.context_class_name,
             'metadata_class_name' : kdesc.metadata_class_name,
             'func_fields'         : codegen_struct_cfields(kdesc.func_cfields, nalign=4),
             'perf_fields'         : codegen_struct_cfields(kdesc.perf_cfields, nalign=4),
             'declare_compiled_in_features' : self.codegen_declare_compiled_in_features(),
-            'kernel_table_entry_declares' : 'TODO kernel_table_entry_declares', # self.codegen_kernel_table_entry_declares(object_files),
+            'kernel_table_entry_declares' : self.codegen_kernel_table_entry_declares(functionals),
             'number_of_functionals': kdesc._godel_number,
             'declare_list_of_deduplicated_lut_functions' : self.codegen_declare_list_of_deduplicated_lut_functions(),
         }
         print(self.HEADER_TEMPLATE.format_map(d), file=fout)
 
-    def write_shim_source(self, fout):
+    def write_shim_source(self, functionals, fout):
         kdesc = self._kdesc
         op = kdesc.OPERATOR # TODO
         # list_of_pp_args_function_defs, list_of_pp_args_function_decls, pp_func_num = self.codegen_kernel_arguments()
@@ -96,9 +99,9 @@ class KernelShimGenerator(object):
             'number_of_functionals': kdesc._godel_number,
             'define_compiled_in_features' : self.codegen_define_compiled_in_features(),
             # 'copy_perf_fields_body': self.copy_perf_fields_body,
-            # 'kernel_table_entry_declares' : self.codegen_kernel_table_entry_declares(object_files),
+            'kernel_table_entry_declares' : self.codegen_kernel_table_entry_declares(functionals),
             'per_kernel_packed_string'  : self.codegen_per_kernel_packed_string(),
-            'kernel_table_entries' : 'TODO kernel_table_entries', # self.codegen_kernel_table_entries(),
+            'kernel_table_entries' : self.codegen_kernel_table_entries(functionals),
             'list_of_deduplicated_lut_functions' : self.codegen_list_of_deduplicated_lut_functions(),
         }
         print(self.SOURCE_TEMPLATE.format_map(d), file=fout)
@@ -109,13 +112,28 @@ class KernelShimGenerator(object):
     def codegen_declare_compiled_in_features(self):
         kdesc = self._kdesc
         decl_list = []
-        for meta in kdesc.list_argument_metadata():
-            if not meta.is_feature:
-                continue
-            ctype = meta.get_codegen_compiled_in_features_ctype()
-            decl_code = f'static const std::vector<{ctype}>& get_{meta.repr_name}_choices();'
+        for meta in kdesc.list_functional_params():
+            infotype = meta.ttype.infotype
+            decl_code = f'static const std::vector<{infotype}>& get_{meta.repr_name}_choices();'
             decl_list.append(decl_code)
         return '\n    '.join(decl_list)
+
+    def codegen_define_compiled_in_features(self):
+        def_list = []
+        kdesc = self._kdesc
+        meta_class = kdesc.metadata_class_name
+        for meta in kdesc.list_functional_params():
+            infotype = meta.ttype.infotype
+            choices = ', '.join([arg.cvalue for arg in meta])
+            def_code = f'''
+const std::vector<{infotype}>& {meta_class}::get_{meta.repr_name}_choices()
+{{
+    static const std::vector<{infotype}> choices = {{ {choices} }};
+    return choices;
+}}'''
+            def_list.append(def_code)
+        return '\n'.join(def_list)
+
 
     def codegen_kernel_table_entry_declares(self, object_files):
         return '/* TODO: kernel_table_entry_declares */'
@@ -123,7 +141,7 @@ class KernelShimGenerator(object):
     def codegen_godel_number_body(self):
         body = io.StringIO()
         kdesc = self._kdesc
-        for meta in kdesc.list_argument_metadata():
+        for meta in kdesc.list_functional_params():
             self.codegen_godel_number_calculation(meta, body)
         return body.getvalue()
 
@@ -134,11 +152,12 @@ class KernelShimGenerator(object):
         INDENT = 4 * ' '
         print(INDENT + '{', file=fout)
         print(2 * INDENT + 'int64_t number = 0;', file=fout)
-        for number, choice in enumerate(meta.possible_choices):
+        for number, choice in enumerate(meta.choices):
             assert not isinstance(choice, ConditionalConstexpr)
-            if meta.is_tensor:
-                elem_type = choice[1:].split(':')[0]
-                print(2 * INDENT + f'if (args.{triton_arg}->dtype() == {meta.DTYPE_NUMBER[elem_type]}) number = {number} ;', file=fout)
+            if meta.ttype.is_tensor:
+                # elem_type = choice[1:].split(':')[0]
+                elem_type = choice.element_type_enum
+                print(2 * INDENT + f'if (args.{triton_arg}->dtype() == {elem_type}) number = {number} ;', file=fout)
             else:
                 value = str(choice).lower()
                 print(2 * INDENT + f'if (args.{triton_arg} == {value}) number = {number} ;', file=fout)
@@ -155,24 +174,6 @@ class KernelShimGenerator(object):
         ALIGN = ';\n' + ' ' * 4
         return ALIGN.join(lets)
 
-    def codegen_define_compiled_in_features(self):
-        def_list = []
-        kdesc = self._kdesc
-        meta_class = kdesc.metadata_class_name
-        for meta in kdesc.list_argument_metadata():
-            if not meta.is_feature:
-                continue
-            ctype = meta.get_codegen_compiled_in_features_ctype()
-            choices = ', '.join(meta.get_codegen_compiled_in_features_values())
-            def_code = f'''
-const std::vector<{ctype}>& {meta_class}::get_{meta.repr_name}_choices()
-{{
-    static const std::vector<{ctype}> choices = {{ {choices} }};
-    return choices;
-}}'''
-            def_list.append(def_code)
-        return '\n'.join(def_list)
-
     def codegen_list_of_deduplicated_lut_functions(self):
         registry = self._registry_repo.get_data('lut_function')
         stmt = [f'{fret} {fname} {fsrc};' for fsrc, (fret, fname, fparams) in registry.items()]
@@ -182,3 +183,29 @@ const std::vector<{ctype}>& {meta_class}::get_{meta.repr_name}_choices()
         registry = self._registry_repo.get_data('lut_function')
         stmt = [f'extern {fret} {fname}{fparams};' for fsrc, (fret, fname, fparams) in registry.items()]
         return '\n'.join(stmt)
+
+    def codegen_autotune_struct_name(self, arch_number, godel_number):
+        return f'Autotune_{self._kdesc.NAME}__A{arch_number}__F{godel_number}'
+
+    def codegen_kernel_table_entry_declares(self, functionals):
+        decls = []
+        for arch_number, target_arch in enumerate(self._target_arch_keys):
+            godel_numbers = sorted(list(set([f.godel_number for f in functionals])))
+            for godel_number in godel_numbers:
+                struct_name = self.codegen_autotune_struct_name(arch_number, godel_number)
+                decls.append(f'void {struct_name}({self._kdesc.context_class_name}& params, int mod_number);')
+        return '\n'.join(decls)
+
+    def codegen_kernel_table_entries(self, functionals):
+        lets = []
+        for arch_number, target_arch in enumerate(self._target_arch_keys):
+            lets.append(4 * ' ' + '{')
+            godel_numbers = sorted(list(set([f.godel_number for f in functionals])))
+            for godel_number in range(self._kdesc.godel_number):
+                struct_name = self.codegen_autotune_struct_name(arch_number, godel_number)
+                if godel_number in godel_numbers:
+                    lets.append(8 * ' ' + f'&autotune::{struct_name},')
+                else:
+                    lets.append(8 * ' ' + f'nullptr,')
+            lets.append(4 * ' ' + '},')
+        return '\n'.join(lets)

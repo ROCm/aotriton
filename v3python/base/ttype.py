@@ -1,75 +1,81 @@
 # Copyright © 2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-from numpy import np
+from abc import ABC, abstractmethod
+import numpy as np
 from dataclasses import dataclass
 from typing import Callable, Any
 
 def default_fmt(value):
     return str(value)
 
+DTYPE_NUMBER = {
+    'fp16' : 'DType::kFloat16',
+    'bf16' : 'DType::kBFloat16',
+    'fp32' : 'DType::kFloat32',
+    'i32'  : 'DType::kInt32',
+    'u32'  : 'DType::kUInt32',
+    'u64'  : 'DType::kUInt64',
+}
+
 @dataclass
 class TI:
-    is_tensor   : bool = False
+    tensor_rank : int = None
     is_bool     : bool = False
     is_int      : bool = False
     nbits       : bool = False
-    ctype       : str = ''
+    ctype       : str = 'UNDEFINED_CTYPE'
     format_cvalue : Callable[[Any], str] = default_fmt
     is_class    : bool = False
+    alignment   : int = 0
+    element_ts  : str = None
 
     def nbytes(self):
         return (self.nbits - 1) // 8 + 1
 
-int8_t      = TI(is_tensor=False, is_bool=False, is_int= True, nbits= 8, ctype='int8_t')
-int16_t     = TI(is_tensor=False, is_bool=False, is_int= True, nbits=16, ctype='int16_t')
-int32_t     = TI(is_tensor=False, is_bool=False, is_int= True, nbits=32, ctype='int32_t')
-int64_t     = TI(is_tensor=False, is_bool=False, is_int= True, nbits=64, ctype='int64_t')
-uint8_t     = TI(is_tensor=False, is_bool=False, is_int= True, nbits= 8, ctype='uint8_t')
-uint16_t    = TI(is_tensor=False, is_bool=False, is_int= True, nbits=16, ctype='uint16_t')
-uint32_t    = TI(is_tensor=False, is_bool=False, is_int= True, nbits=32, ctype='uint32_t')
-uint64_t    = TI(is_tensor=False, is_bool=False, is_int= True, nbits=64, ctype='uint64_t')
+    @property
+    def is_tensor(self):
+        return self.tensor_rank is not None
+
+    def __str__(self):
+        if not self.is_tensor:
+            print('WARNING: this code path should not be triggered')
+            return self.ctype
+        return f'"^{self.element_ts}@{self.alignment}"'
+
+    @property
+    def element_type_enum(self):
+        if not self.is_tensor:
+            print('WARNING: this code path should not be triggered')
+            return self.ctype
+        return DTYPE_NUMBER[self.element_ts]
+
+    @property
+    def infotype(self):
+        if self.is_int or self.is_bool:
+            return self.ctype
+        if self.is_tensor:
+            return 'std::string'
+
+int8_t      = TI(is_int= True, nbits= 8, ctype='int8_t')
+int16_t     = TI(is_int= True, nbits=16, ctype='int16_t')
+int32_t     = TI(is_int= True, nbits=32, ctype='int32_t')
+int64_t     = TI(is_int= True, nbits=64, ctype='int64_t')
+uint8_t     = TI(is_int= True, nbits= 8, ctype='uint8_t')
+uint16_t    = TI(is_int= True, nbits=16, ctype='uint16_t')
+uint32_t    = TI(is_int= True, nbits=32, ctype='uint32_t')
+uint64_t    = TI(is_int= True, nbits=64, ctype='uint64_t')
 def __fmt_bool(v):
     return 'true' if v else 'false'
-bool_t      = TI(is_tensor=False, is_bool= True, is_int=False, nbits= 1, ctype='bool', format_cvalue=__fmt_bool)
-typename_t  = TI(is_class=True)
+bool_t      = TI(is_bool= True, nbits= 1, ctype='bool', format_cvalue=__fmt_bool)
+typename_t  = TI(is_class=True, ctype='typename')
+float_t     = TI(nbits=32, ctype='float')
 
-MAP_NP_TO_TTYPE = {
-    np.bool   : bool_t,
-    np.int8   : int8_t,
-    np.int16  : int16_t,
-    np.int32  : int32_t,
-    np.int64  : int64_t,
-    np.uint8  : uint8_t,
-    np.uint16 : uint16_t,
-    np.uint32 : uint32_t,
-    np.uint64 : uint64_t,
-    # 'fp32'    : 'float',
-    # '*fp32'   : 'const float*',
-    # '*fp16'   : 'const __fp16*',
-    # '*bf16'   : 'const __bf16*',
-    # 'i8'      : 'int8_t',
-    # 'i16'     : 'int16_t',
-    # 'i32'     : 'int32_t',
-    # 'i64'     : 'int64_t',
-    # 'u8'      : 'uint8_t',
-    # 'u16'     : 'uint16_t',
-    # 'u32'     : 'uint32_t',
-    # 'u64'     : 'uint64_t',
-}
+stride_a8    = TI(is_int= True, nbits=64, ctype='uint64_t', alignment=8)
+stride_a16   = TI(is_int= True, nbits=64, ctype='uint64_t', alignment=16)
 
-def tensor_type(rank):
-    return TI(is_tensor= True, is_bool=False, is_int=False, nbits=64, ctype=f'const T{rank}*')
-
-def guess_vparam_type(choices):
-    if isinstance(choices, np.ndarray):
-        return MAP_NP_TO_TTYPE(choices.dtype.type)
-    if all([isinstance(v, bool) for v in choices):
-        return bool_t
-    if all([isinstance(v, int) for v in choices):
-        if max(choices) < 16:  # Leave with some margin
-            return int8_t
-        if max(choices) < 8192:
-            return int16_t
-        return int32_t
-    assert False, f"Cannot guess valued parameter type from {choices=}"
+# Forward declaration
+class ConditionalValue(ABC):
+    @abstractmethod
+    def get_ttype(self, rank=None):
+        pass

@@ -2,8 +2,6 @@
 # Copyright © 2020-2022 OpenAI
 # SPDX-License-Identifier: MIT
 
-from ..base.argument import TunedArgument
-
 class Config:
     '''
     A compatibile class to store triton.Config

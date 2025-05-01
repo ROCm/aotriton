@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 from ..base import Functional
+import hashlib
 
 # Move to a dedicated file
 COMPACT_COMPILER_OPTIONS = {
@@ -21,6 +22,11 @@ class KernelSignature(object):
         return self._functional
 
     @property
+    def perf_cdict(self):
+        kdesc = self._functional.meta_object
+        return { p.name : p.cvalue for p in self._perfs }
+
+    @property
     def perf_signature(self):
         kdesc = self._functional.meta_object
         # TODO: Add prefix?
@@ -29,26 +35,28 @@ class KernelSignature(object):
         return psel
 
     @property
-    def copt_signature(self):
+    def copt_dict(self):
         kdesc = self._functional.meta_object
-        lc = [f"{COMPACT_COMPILER_OPTIONS[oname]}{v}" for oname, v in zip(kdesc.COMPILER_OPTIONS, self._copts)]
+        return { oname : v for oname, v in zip(kdesc.COMPILER_OPTIONS, self._copts) }
+
+    @property
+    def copt_signature(self):
+        lc = [f"{COMPACT_COMPILER_OPTIONS[oname]}{v}" for oname, v in self.copt_dict.items()]
         return '_'.join(lc)
 
     @property
     def both_signature(self):
         perf = self.perf_signature
         copt = self.copt_signature
-        return '__P__' + psel + '__CO__' + copts
+        return '__P__' + perf + '__CO__' + copt
 
     @property
     def full_compact_signature(self):
         return 'F__' + self._functional.compact_signature + self.both_signature
 
-    @property
     def blake2b_hash(self, package_path):
         raw = package_path.encode('utf-8')
-        _, psel, copts = self.compact_signature_components
-        s = '__P__' + psel + '__CO__' + copts + '-Gpu-' + self._signature.target_arch
+        s = self.both_signature + '-Arch-' + self._functional.arch
         raw += s.encode('utf-8')
         h = hashlib.blake2b(raw, digest_size=8)
         return h.hexdigest(), raw

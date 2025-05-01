@@ -8,6 +8,7 @@ from ..base import Functional
 from ..utils import (
     get_template,
     LazyFile,
+    dict2json,
 )
 from .common import codegen_struct_cfields
 import numpy as np
@@ -19,22 +20,36 @@ class AutotuneCodeGenerator(object):
     '''
     For generic it accepts Functional instead of a KernelDescription object
     '''
-    def __init__(self, args, f : Functional, dataframe_for_tuning, registry_repo):
+    def __init__(self,
+                 args,
+                 f : Functional,
+                 dataframe_for_tuning : 'pandas.DataFrame | None',
+                 registry_repo):
         self._args = args
         self._f = f
         self._df = dataframe_for_tuning
         self._registry_repo = registry_repo
         # TODO: support other binning algorithm
         kdesc = self._f.meta_object
-        self._lut_tensor, self._sigs, self._binning_dict = kdesc.translate_dataframe(self._df)
+        if args.build_for_tuning or self._df is None:
+            self._lut_tensor, self._sigs, self._binning_dict = kdesc.translate_empty_dataframe(f)
+            if args.build_for_tuning and kdesc.is_tunable:
+                self._sigs = kdesc.gen_sigatures_for_tuning(f)
+        else:
+            self._lut_tensor, self._sigs, self._binning_dict = kdesc.translate_dataframe(f, self._df)
 
     def generate(self):
+        # Un "self._" section
+        args = self._args
         f = self._f
-        tune_dir = args.build_dir / f.FAMILY / f'{f.TUNE_NAME}.{f.NAME}'
+        kdesc = f.meta_object
+
+        tune_dir = args.build_dir / kdesc.FAMILY / f'{kdesc.TUNE_NAME}.{kdesc.NAME}'
         tune_dir.mkdir(parents=True, exist_ok=True)
-        src = tune_dir / (f.filesystem_signature + '.cc')
+        src = tune_dir / (f.filepack_signature + '.cc')
+        print(f'Writing to {src}')
         with LazyFile(src) as fout:
-            self.write_autotune_src(path, fout)
+            self.write_autotune_src(fout)
 
     def write_autotune_src(self, fout):
         f = self._f
@@ -42,50 +57,63 @@ class AutotuneCodeGenerator(object):
         lut_ctype, lut_cshape, lut_cdata = self.codegen_format_lut(self._lut_tensor)
         # gpu_kernel_image_dir = args.build_dir / f.FAMILY / f'gpu_kernel_image.{f.NAME}'
         package_path = str(ARCH_TO_DIRECTORY[f.arch] / f.full_filepack_path)
-        meta_hsacos = self.codegen_compact_kernels(fmeta,
+        meta_hsacos = self.codegen_compact_kernels(kdesc,
                                                    self._sigs,
                                                    package_path)
         d = {
             'kernel_psels'          : self.codegen_kernel_psels(self._sigs),
             'kernel_copts'          : self.codegen_kernel_copts(self._sigs),
-            'kernel_family_name'    : f.FAMILY,
-            'shim_kernel_name'      : f.NAME,
-            'godel_number'          : f.godel_number,
-            'perf_fields'           : codegen_struct_cfields(fmeta.perf_fields, nalign=4),
+            'kernel_family_name'    : kdesc.FAMILY,
+            'shim_kernel_name'      : kdesc.NAME,
+            'godel_number'          : kdesc.godel_number,
+            'perf_fields'           : codegen_struct_cfields(kdesc.perf_cfields, nalign=4),
             'package_path'          : package_path,
-            'func_name'             : f.SIGNATURE,
+            'func_name'             : f.signature_in_func_name,
             'arch_name'             : f.arch,
             'meta_hsacos'           : meta_hsacos,
-            'kernel_image_perfs'    : self.codegen_kernel_image_perfs(),
+            'kernel_image_perfs'    : self.codegen_kernel_image_perfs(self._sigs),
             'lut_ctype'             : lut_ctype,
             'lut_cshape'            : lut_cshape,
             'lut_data'              : lut_cdata,
-            'param_class_name'      : f.param_class_name,
+            'param_class_name'      : kdesc.param_class_name,
+            'context_class_name'    : kdesc.context_class_name,
             'deduplicated_lut_function' : self.codegen_deduplicated_lut_function(lut_ctype, lut_cshape),
             'deduplicated_pp_args_function_index' : self.codegen_deduplicated_pp_args_function_index(f),
             'perf_field_assignment' : self.codegen_perf_assignment(),
             'arch_number'           : f.arch_number,
-            'human_readable_signature' : f.human_readable_signature
+            'human_readable_signature' : f.human_readable_signature,
         }
+        print(self.AUTOTUNE_TEMPLATE.format_map(d), file=fout)
 
-    def codegen_compact_kernels(self, fmeta, ksigs, package_path):
+    def codegen_kernel_psels(self, ksigs):
+        lines = []
+        for sig in ksigs:
+            lines.append(f'R"xyzw({dict2json(sig.perf_cdict)})xyzw"')
+        return 'static const char* kernel_psels[] = {\n  ' + ",\n  ".join(lines) + "\n}"
+
+    def codegen_kernel_copts(self, ksigs):
+        lines = []
+        for sig in ksigs:
+            lines.append(f'R"xyzw({dict2json(sig.copt_dict)})xyzw"')
+        return 'static const char* kernel_copts[] = {\n  ' + ",\n  ".join(lines) + "\n}"
+
+    def codegen_compact_kernels(self, kdesc, ksigs, package_path):
         meta_hsacos = []
         string_registry = self._registry_repo.get_string_registry('per_kernel_packed_string')
         def register_string(s):
             return string_registry.register(s)
-        for sig in sigs:
+        for sig in ksigs:
             # if not noimage_mode and not self._feature_disabled:
             #     assert o.compiled_files_exist, f'Compiled file {o._hsaco_kernel_path} not exists'
-            fsel, psel, copt = sig.compact_signature_components
             b2sum_u64, raw = sig.blake2b_hash(package_path)
             assert len(b2sum_u64) == 16
             b2sum_u64_hi = b2sum_u64[:8]
             b2sum_u64_lo = b2sum_u64[8:]
-            psel_offset = register_string(psel)
-            copt_offset = register_string(copt)
+            psel_offset = register_string(sig.perf_signature)
+            copt_offset = register_string(sig.copt_signature)
             meta_hsacos.append(f'{{ 0x{b2sum_u64_hi}u, 0x{b2sum_u64_lo}u, {psel_offset}, {copt_offset} }}, // {b2sum_u64} = b2sum -l 64 <<< {raw}')
-        assert string_dict[None] < 2 ** 16 - 1, f'Packed string size {string_dict[None]} exceeds uint16_t limit'
-        del string_dict[None]
+        # assert string_dict[None] < 2 ** 16 - 1, f'Packed string size {string_dict[None]} exceeds uint16_t limit'
+        # del string_dict[None]
         ALIGN = '\n' + 4 * ' '
         return ALIGN.join(meta_hsacos)
 
@@ -109,7 +137,7 @@ class AutotuneCodeGenerator(object):
         def fmt(t):
             return np.array2string(t, separator=',').replace('[', '{').replace(']', '}')
         tensor_text_list = []
-        for i, gpu in enumerate(self._dba.for_gpus):
+        for i, gpu in enumerate(f.optimized_for):
             text  = f'\n// GPU {gpu}\n'
             text += fmt(lut_tensor[i])
             text += f'\n// End of GPU {gpu}\n'
@@ -141,7 +169,7 @@ class AutotuneCodeGenerator(object):
         return lut_function_name
 
     def codegen_binning_code(self):
-        if self._untuned:
+        if self._binning_dict is None:
             return ''
         ALIGN = '\n' + 4 * ' '  # Note codegen_binning_lambda already contains ';'
         stmt = []
@@ -150,22 +178,25 @@ class AutotuneCodeGenerator(object):
         return ALIGN.join(stmt)
 
     def codegen_binned_indices(self):
-        if self._untuned:
+        if self._binning_dict is None:
             return '[0]'
         return ''.join([f'[{key}{self.BIN_INDEX_SUFFIX}]' for key, _ in self._autotune_keys])
 
     def codegen_deduplicated_pp_args_function_index(self, functional : Functional):
+        kdesc = self._f.meta_object
+
         pp_registry = self._registry_repo.get_signatured_function_registry('pp_function')
         fsel_dict = functional.fsel_dict
-        assign_skips = tuple([isinstance(fsel_dict[aname], int) for aname in self._kdesc.KERNEL_DATA_ARGUMENTS])
-        hit, findex = self._kdesc.lookup_prepare_args(assign_skips)
+        assign_skips = tuple([isinstance(fsel_dict[aname], int) for aname in kdesc.KERNEL_DATA_ARGUMENTS])
+        hit, findex = pp_registry.contains(assign_skips)
         if hit:
             return findex
         complete_dict = functional.complete_dict
+        getter_dict = self.codegen_getter(kdesc)
         stmt = []
-        for aname in functional.meta_object.KERNEL_DATA_ARGUMENTS:
+        for aname in kdesc.KERNEL_DATA_ARGUMENTS:
             arg = complete_dict[aname]
-            assign = getters[aname] + f', // {aname}'
+            assign = getter_dict[aname] + f', // {aname}'
             if isinstance(arg.value, int):  # isinstance(True, int) == True
                 fmt_val = str(arg.value)
                 if arg.maybe_conditional:
@@ -179,11 +210,29 @@ class AutotuneCodeGenerator(object):
         src = pfx + join.join(stmt) + '\n' + sfx
         return pp_registry.register(assign_skips, src)
 
+    def codegen_getter(self, kdesc):
+        d = {}
+        for tensor_aname, (stride_anames, _) in kdesc.TENSOR_STRIDE_INPUTS.items():
+            tensor_rank = kdesc.get_tensor_rank(tensor_aname)
+            for i in range(tensor_rank):
+                aname = stride_anames[i]
+                d[aname] = f'params.{tensor_aname}->kparam_stride({i})'
+        for m in kdesc.list_functional_params():
+            if not m.ttype.is_tensor:
+                continue
+            for aname in m.all_names:
+                d[aname] = f'params.{aname}->kparam_data_ptr()'
+        for aname in kdesc.KERNEL_DATA_ARGUMENTS:  # TODO: make this general
+            if aname in d:
+                continue
+            d[aname] = f'CAST(&params.{aname})'
+        return d
+
     def codegen_perf_assignment(self):
         kdesc = self._f.meta_object
         ALIGN = ';\n' + 4 * ' '
         stmt = []
-        for meta in kdesc._perf_meta:
-            for aname in meta.argument_names:
+        for meta in kdesc.list_performance_params():
+            for aname in meta.all_names:
                 stmt.append(f'context.{aname} = perf.{aname}')
         return ALIGN.join(stmt)

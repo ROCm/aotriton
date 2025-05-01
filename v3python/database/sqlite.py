@@ -13,7 +13,7 @@ def create_select_stmt(table_name, wheres):
     stmt = f"SELECT * FROM {table_name} WHERE "
     where_stmt = []
     params = []
-    for k, v in wheres.item():
+    for k, v in wheres.items():
         if isinstance(v, list) or isinstance(v, tuple):
             qm = ', '.join(['?'] * len(v))
             where_stmt.append(f'{k} = (qm)')
@@ -31,6 +31,7 @@ class Factory(object):
         self._conn = sqlite3.connect(path / self.SIGNATURE_FILE)
 
     def create_view(self, functional):
+        print(f'{functional=}')
         meta = functional.meta_object
         is_op = hasattr(meta, 'OPERATOR')
         pfx = 'OP$' if is_op else ''
@@ -41,4 +42,8 @@ class Factory(object):
         for key, value in functional.compact_choices.items():
             wheres[f'inputs${key}'] = value
         stmt, params = create_select_stmt(table_name, wheres)
-        return pd.read_sql_query(stmt, con, params=params)
+        try:
+            return pd.read_sql_query(stmt, self._conn, params=params)
+        except pd.errors.DatabaseError:
+            print(f'Table {table_name} do not exist')
+            return None

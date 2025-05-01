@@ -1,7 +1,19 @@
 # Copyright © 2023-2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-class Argument(object):
+'''
+Bind: assocation between template parameter and specific choice (typed)
+
+Note: Bind itself does not determine the full datatype of arguments. With C++ as analogy:
+
+typename<typename T>
+void func(Eigen::Tensor<T, 2>& t1, Eigen::Tensor<T, 3>& t2);
+
+Bind object describes assigning T to some datatype, the complete datatype of t1 and
+t2 need to be derived from info stored in Parameter object.
+'''
+
+class Bind(object):
     def __init__(self,
                  klass : 'Parameter',
                  value : 'Any',

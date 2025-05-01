@@ -2,5 +2,5 @@
 class Operator(object):
     pass
 
-class NO_OPERATOR(object):
-    pass
+class NO_OPERATOR(Operator):
+    NAME = None
