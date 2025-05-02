@@ -5,6 +5,7 @@
 
 import io
 from ..base.conditional_value import ConditionalConstexpr
+from ..base import typed_choice as TC
 from ..op import NO_OPERATOR
 from ..kernel.kdesc import KernelDescription
 from ..utils import (
@@ -83,7 +84,7 @@ class KernelShimGenerator(object):
     def write_shim_source(self, functionals, fout):
         kdesc = self._kdesc
         op = kdesc.OPERATOR # TODO
-        # list_of_pp_args_function_defs, list_of_pp_args_function_decls, pp_func_num = self.codegen_kernel_arguments()
+        list_of_pp_args_function_defs, list_of_pp_args_function_decls, pp_func_num = self.codegen_kernel_arguments()
         d = {
             'kernel_family_name'  : kdesc.FAMILY,
             'triton_kernel_name'  : kdesc.NAME,  # TODO: use signature so AMD_LOG_LEVEL=3 is more meaningful
@@ -92,9 +93,9 @@ class KernelShimGenerator(object):
             'context_class_name'  : kdesc.context_class_name,
             'metadata_class_name' : kdesc.metadata_class_name,
             'godel_number_body'   : self.codegen_godel_number_body(),
-            'pp_func_num'         : 'TODO pp_func_num', # pp_func_num,
-            'list_of_pp_args_function_defs' : 'TODO list_of_pp_args_function_defs', # list_of_pp_args_function_defs,
-            'list_of_pp_args_function_decls' : 'TODO list_of_pp_args_function_decls', # list_of_pp_args_function_decls,
+            'pp_func_num'         : pp_func_num,
+            'list_of_pp_args_function_defs' : list_of_pp_args_function_defs,
+            'list_of_pp_args_function_decls' : list_of_pp_args_function_decls,
             'get_archmod_number_body' : self.codegen_archmod_number_body(),
             'number_of_functionals': kdesc._godel_number,
             'define_compiled_in_features' : self.codegen_define_compiled_in_features(),
@@ -112,9 +113,9 @@ class KernelShimGenerator(object):
     def codegen_declare_compiled_in_features(self):
         kdesc = self._kdesc
         decl_list = []
-        for meta in kdesc.list_functional_params():
-            infotype = meta.ttype.infotype
-            decl_code = f'static const std::vector<{infotype}>& get_{meta.repr_name}_choices();'
+        for tp in kdesc.list_functional_params():
+            infotype = tp.repr_typed_choice.infotype
+            decl_code = f'static const std::vector<{infotype}>& get_{tp.repr_name}_choices();'
             decl_list.append(decl_code)
         return '\n    '.join(decl_list)
 
@@ -122,11 +123,11 @@ class KernelShimGenerator(object):
         def_list = []
         kdesc = self._kdesc
         meta_class = kdesc.metadata_class_name
-        for meta in kdesc.list_functional_params():
-            infotype = meta.ttype.infotype
-            choices = ', '.join([arg.cvalue for arg in meta])
+        for tp in kdesc.list_functional_params():
+            infotype = tp.repr_typed_choice.infotype
+            choices = ', '.join([str(tc) for tc in tp.choices])
             def_code = f'''
-const std::vector<{infotype}>& {meta_class}::get_{meta.repr_name}_choices()
+const std::vector<{infotype}>& {meta_class}::get_{tp.repr_name}_choices()
 {{
     static const std::vector<{infotype}> choices = {{ {choices} }};
     return choices;
@@ -148,19 +149,18 @@ const std::vector<{infotype}>& {meta_class}::get_{meta.repr_name}_choices()
     def codegen_godel_number_calculation(self, meta, fout):
         if meta.nchoices <= 1:
             return
-        triton_arg = meta.repr_name # meta._ordered_arguments[0][0]
+        aname = meta.repr_name # meta._ordered_arguments[0][0]
         INDENT = 4 * ' '
         print(INDENT + '{', file=fout)
         print(2 * INDENT + 'int64_t number = 0;', file=fout)
-        for number, choice in enumerate(meta.choices):
-            assert not isinstance(choice, ConditionalConstexpr)
-            if meta.ttype.is_tensor:
-                # elem_type = choice[1:].split(':')[0]
-                elem_type = choice.element_type_enum
-                print(2 * INDENT + f'if (args.{triton_arg}->dtype() == {elem_type}) number = {number} ;', file=fout)
+        for number, tc in enumerate(meta.choices):
+            assert not isinstance(tc, TC.ConditionalChoice)
+            if isinstance(tc, TC.tensor):
+                type_enum = tc.type_enum
+                print(2 * INDENT + f'if (args.{aname}->dtype() == {type_enum}) number = {number} ;', file=fout)
             else:
-                value = str(choice).lower()
-                print(2 * INDENT + f'if (args.{triton_arg} == {value}) number = {number} ;', file=fout)
+                value = str(tc).lower()
+                print(2 * INDENT + f'if (args.{aname} == {value}) number = {number} ;', file=fout)
         print(2 * INDENT + f'sum += number * {meta.godel_number};', file=fout)
         print(1 * INDENT + '}', file=fout)
 
@@ -209,3 +209,20 @@ const std::vector<{infotype}>& {meta_class}::get_{meta.repr_name}_choices()
                     lets.append(8 * ' ' + f'nullptr,')
             lets.append(4 * ' ' + '},')
         return '\n'.join(lets)
+
+    def codegen_kernel_arguments(self):
+        param_class_name = self._kdesc.param_class_name
+        pp_registry = self._registry_repo.get_data('pp_function')
+        stmt = []
+        # array = ['PP_FUNC prepare_arguments [] = {']
+        array = []
+        for assign_skips, (findex, src) in pp_registry.items():
+            pp_function_name = f'{self._kdesc.NAME}_pp_args_{findex}'
+            stmt.append(f'static std::vector<void*>')
+            stmt.append(f'{pp_function_name}(const {param_class_name}& params,')
+            stmt.append(' ' * len(pp_function_name) + ' hipDeviceptr_t* global_scratch) {')
+            stmt.append(src)
+            stmt.append(f'}}')
+            array.append(pp_function_name)
+        pp_func_num = len(pp_registry.keys())
+        return '\n'.join(stmt), ',\n  '.join(array), pp_func_num

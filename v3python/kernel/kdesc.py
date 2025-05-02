@@ -10,15 +10,15 @@ from pathlib import Path
 from ..base import (
     Tunable,
     Functional,
-    ConditionalValue,
+    ConditionalChoice,
     ConditionalConstexpr,
     ConditionalDeferredConstexpr,
     ConditionalDeferredElseTensor,
     Argument as Arg,
-    TemplateParameter,
-    TypeParameter as TParam,
-    ValueParameter as VParam,
+    TemplateParameter as TP,
+    PerformanceTemplateParameter as PTP,
 )
+from ..base import typed_choice as TC
 from ..op import (
     Operator,
     NO_OPERATOR,
@@ -184,15 +184,14 @@ class KernelDescription(Tunable):
     def insert_tensor_strides_to_choices(self, last_is_continuous=False):
         for tensor, (strides, delete_when) in self.TENSOR_STRIDE_INPUTS.items():
             typed_strides = strides[:-1] if last_is_continuous else strides
-            if delete_when is None:
-                stride_dtype = 'u64:8'
-            else:
+            stride_dtype = TC.stride_a8() # 'u64:8' but hidden in cfields
+            if delete_when is not None:
                 feat, feat_value = delete_when
-                stride_dtype = ConditionalConstexpr(feat, feat_value, 0, 'u64:8')
+                stride_dtype = ConditionalConstexpr(feat, feat_value, 0, stride_dtype)
             self.TYPE_CHOICES[frozenset(typed_strides)] = [stride_dtype]
             constant_strides = [] if not last_is_continuous else strides[-1:]
             if constant_strides:
-                self.FEAT_CHOICES[frozenset(constant_strides)] = [1]
+                self.FEAT_CHOICES[frozenset(constant_strides)] = [TC.constexpr.stride1()]
         print(f"{self.TYPE_CHOICES=}")
         print(f"{self.FEAT_CHOICES=}")
 
@@ -212,27 +211,23 @@ class KernelDescription(Tunable):
             if all([tt.is_tensor for tt in choices]):
                 return TParam(anames, choices, ttype=create_tensor_type('any', rank))
             return TParam(anames, choices, ttype=typename_t)
-        self._func_params += [VParam(k, v) for k, v in self.TYPE_CHOICES.items()]
-        self._func_params += [VParam(k, v) for k, v in self.FEAT_CHOICES.items()]
-        self._perf_params = [VParam(k, v) for k, v in self.PERF_CHOICES.items()]
+        self._func_params += [TP(k, v) for k, v in self.TYPE_CHOICES.items()]
+        self._func_params += [TP(k, v) for k, v in self.FEAT_CHOICES.items()]
+        self._perf_params = [PTP(k, v) for k, v in self.PERF_CHOICES.items()]
 
-        param_dict = { aname : param for param in [self._func_params + self._perf_params] for aname in param.all_names }
+        tp_dict = { aname : param for param in self._func_params + self._perf_params for aname in param.all_names }
 
         for m in self._func_params:
-            m.late_init(self.ARGUMENTS, param_dict, self.TENSOR_RANKS, self.TENSOR_STRIDE_INPUTS)
+            m.late_init(self.ARGUMENTS, tp_dict, self.TENSOR_RANKS, self.TENSOR_STRIDE_INPUTS)
             # for u, fallback in self.PARTIALLY_TUNED_FUNCTIONALS:
             #     if m.has_argument(u):
             #         m.set_incomplete_tuning(fallback)
+        for m in self._perf_params:
+            m.late_init(self.ARGUMENTS, tp_dict, self.TENSOR_RANKS, self.TENSOR_STRIDE_INPUTS)
         self._func_params = sorted(self._func_params, key=lambda m: m.first_apperance)
         # print(f'{self._func_meta}')
-        TemplateParameter.assign_godel_number(self._func_params)
-        # The godel number for architectures
+        TP.assign_godel_number(self._func_params)
         self._godel_number = self._func_params[0].godel_number * self._func_params[0].nchoices
-        for m in self._perf_params:
-            m.sort_arguments(self.ARGUMENTS)
-        # self._perf_meta = sorted(self._perf_meta, key=lambda m: m.first_apperance)
-        # Note: Re-order with byte sizes can reduce the C-struct size in autotune files.
-        self._perf_params = sorted(self._perf_params, key=lambda m : m.ttype.nbits, reverse=True)
         self.AUTOTUNE_KEYS_VALIDATED = []
         for key in self.ARGUMENTS:
             if key not in self.AUTOTUNE_KEYS:
@@ -249,6 +244,13 @@ class KernelDescription(Tunable):
         '''
         for key in self.AUTOTUNE_KEYS:
             assert key in self.ARGUMENTS, f'AUTOTUNE_KEYS "{key}" cannot be found in {self.__class__.__name__}.ARGUMENTS'
+        # Initialization of _func_cfields and _perf_cfields
+        self._func_cfields = sum([ p.get_cfields() for p in self.list_functional_params() ], [])
+        self._func_cfields = sorted(self._func_cfields, key=lambda p : p.index)
+        self._perf_cfields = sum([ p.get_cfields() for p in self.list_performance_params() ], [])
+        # Perf is sorted by size for more compact storage
+        # Not always optimal, but good enough for now.
+        self._perf_cfields = sorted(self._perf_cfields, key=lambda p : p.nbits, reverse=True)
 
     def list_functional_params(self):
         yield from self._func_params
@@ -259,12 +261,10 @@ class KernelDescription(Tunable):
     @property
     def func_cfields(self):
         return self._func_cfields
-        # return [ (p.field_ctype, aname) for p in self._func_params for aname in p.all_names]
 
     @property
     def perf_cfields(self):
         return self._perf_cfields
-        # return [ (p.field_ctype, aname) for p in self._perf_params for aname in p.all_names]
 
     def get_tensor_rank(self, tensor_arg):
         print(f'{self=} {self.TENSOR_RANKS=}')

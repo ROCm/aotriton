@@ -13,7 +13,7 @@ COMPACT_COMPILER_OPTIONS = {
 
 class KernelSignature(object):
 
-    def __init__(self, f : Functional, perf_values : 'list[Argument]', copt_values : list):
+    def __init__(self, f : Functional, perf_values : 'list[Bind]', copt_values : list):
         self._functional = f
         self._perfs = perf_values
         self._copts = copt_values
@@ -23,8 +23,11 @@ class KernelSignature(object):
 
     @property
     def perf_cdict(self):
-        kdesc = self._functional.meta_object
-        return { p.name : p.cvalue for p in self._perfs }
+        return { aname : tc.json_value for bind in self._perfs for aname, tc in bind }
+
+    def gen_typed_value(self):
+        for bind in self._perfs:
+            yield from bind
 
     @property
     def perf_signature(self):

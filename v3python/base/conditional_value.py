@@ -13,14 +13,9 @@
 #   - Specified by returning a single element numpy array
 #
 
-from .ttype import ConditionalValue
-from .guesstype import (
-    guess_vparam_type,
-    guess_tparam_type,
-    create_tensor_type,
-)
+from .typed_choice import ConditionalChoice
 
-class ConditionalConstexpr(ConditionalValue):
+class ConditionalConstexpr(ConditionalChoice):
     def __init__(self, feat, feat_value, constexpr_value, else_choice,
                  cond_op=None,
                  else_dtype=None):

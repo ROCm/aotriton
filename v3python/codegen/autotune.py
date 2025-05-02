@@ -5,6 +5,7 @@
 
 from ..gpu_targets import AOTRITON_ARCH_TO_DIRECTORY as ARCH_TO_DIRECTORY
 from ..base import Functional
+from ..base import typed_choice as TC
 from ..utils import (
     get_template,
     LazyFile,
@@ -120,7 +121,7 @@ class AutotuneCodeGenerator(object):
     def codegen_kernel_image_perfs(self, ksigs):
         kernel_image_perfs = []
         def codegen_perf_object(sig):
-            return ', '.join([f'.{arg.name} = {arg.cvalue}' for arg in sig._perfs])
+            return ', '.join([f'.{aname} = {tc.ctext}' for aname, tc in sig.gen_typed_value() ])
         for sig in ksigs:
             kernel_image_perfs.append('{ ' + codegen_perf_object(sig) + ' }')
         ALIGN = ',\n' + 4 * ' '
@@ -217,11 +218,11 @@ class AutotuneCodeGenerator(object):
             for i in range(tensor_rank):
                 aname = stride_anames[i]
                 d[aname] = f'params.{tensor_aname}->kparam_stride({i})'
-        for m in kdesc.list_functional_params():
-            if not m.ttype.is_tensor:
-                continue
-            for aname in m.all_names:
-                d[aname] = f'params.{aname}->kparam_data_ptr()'
+        for tp in kdesc.list_functional_params():
+            for aname in tp.all_names:
+                tc = tp.repr_choice.resolve(aname, bind_dict=None)
+                if isinstance(tc, TC.tensor):
+                    d[aname] = f'params.{aname}->kparam_data_ptr()'
         for aname in kdesc.KERNEL_DATA_ARGUMENTS:  # TODO: make this general
             if aname in d:
                 continue

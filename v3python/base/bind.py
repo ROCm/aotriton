@@ -1,6 +1,7 @@
 # Copyright © 2023-2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
+from . import typed_choice as TC
 '''
 Bind: assocation between template parameter and specific choice (typed)
 
@@ -20,8 +21,7 @@ class Bind(object):
                  nth_choice : int):
         self._klass = klass
         self._value = value
-        if self._klass.is_conditional_value(value):
-            self._conditional = value
+        self._conditional = isinstance(value, TC.ConditionalChoice)
         self._nth_choice = nth_choice
 
     ############## metadata/name/values ##############
@@ -37,9 +37,12 @@ class Bind(object):
     def value(self):
         return self._value
 
-    @property
-    def cvalue(self) -> str:
-        return self._klass._ttype.format_cvalue(self.value)
+    def __iter__(self):
+        for aname in self._klass.all_names:
+            yield aname, self.get_typed_value(aname)
+
+    def get_typed_value(self, aname):
+        return self._value.resolve(aname, bind_dict=None)
 
     ############## signature ##############
     @property
@@ -52,7 +55,7 @@ class Bind(object):
 
     @property
     def compact_signature(self):
-        return str(self.value) if self.show_in_compact else None
+        return str(self.value.triton_compile_signature) if self.show_in_compact else None
 
     @property
     def human_readable_signature(self):
@@ -65,11 +68,12 @@ class Bind(object):
 
     @property
     def is_unresolved(self):
-        return self._klass.maybe_conditional and self._klass.is_conditional_value(self._value)
+        return self._conditional and isinstance(self._value, ConditionalChoice)
 
     @property
-    def settle_unresolved(self, arch, sel_dict):
-        self._value = self._value(arch, sel_dict)
+    def settle_unresolved(self, bind_dict):
+        if self.is_unresolved:
+            self._value = self._value.resolve(bind_dict)
 
     @property
     def possible_constexpr_values(self):
@@ -77,6 +81,7 @@ class Bind(object):
 
     def format_constexpr(self):
         return self._conditional.format_constexpr(self)
+
 
 '''
 repr_name -> value dict

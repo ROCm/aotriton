@@ -20,25 +20,26 @@ class Functional(object):
                  meta_object,  # KernelDescription | Operator
                  arch,
                  arch_number,
-                 selections,
+                 binds,
                  optimized_for):
         self._arch = arch
         self._arch_number = arch_number
         self._meta = meta_object
-        self._selections = selections
+        self._binds = binds
         self._optimized_for = optimized_for
         self.__settle_conditional_values()
-        self._fsel_dict = build_dict(self._selections)
-        self._compact_dict = build_compact_dict(self._selections)
+        self._fsel_dict = build_dict(self._binds)
+        self._compact_dict = build_compact_dict(self._binds)
 
     def __settle_conditional_values(self):
         while True:
-            unresolved = [ sel for sel in self._selections if sel.is_unresolved ]
+            unresolved = [ bind for bind in self._binds if bind.is_unresolved ]
             if not unresolved:
                 break
-            sel_dict = build_dict(self._selections)
-            for sel in unresolved:
-                sel.settle_unresolved(self._arch, sel_dict)
+            bind_dict = build_dict(self._binds)
+            # bind_dict['__arch'] = self._arch
+            for bind in unresolved:
+                bind.settle_unresolved(bind_dict)
 
     @property
     def arch(self):
@@ -62,22 +63,22 @@ class Functional(object):
 
     @property
     def godel_number(self):
-        return sum([s.godel_number for s in self._selections])
+        return sum([s.godel_number for s in self._binds])
 
     @property
     def fsel_dict(self):
-        return build_complete_dict(self._selections)
+        return build_complete_dict(self._binds)
 
     '''
     dict of all parameter -> argument
     '''
     @property
     def complete_dict(self):
-        return build_complete_dict(self._selections)
+        return build_complete_dict(self._binds)
 
     @property
     def human_readable_signature(self):
-        lf = [s.human_readable_signature for s in self._selections]
+        lf = [s.human_readable_signature for s in self._binds]
         return 'Human-readable Signature \n// ' + '\n// '.join([x for x in lf if x is not None])
 
     @property
@@ -90,7 +91,7 @@ class Functional(object):
     '''
     @property
     def signature_in_func_name(self):
-        lf = [s.compact_signature for s in self._selections if s.show_in_compact]
+        lf = [s.compact_signature for s in self._binds if s.show_in_compact]
         return '_'.join([x for x in lf])
 
     '''
