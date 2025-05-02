@@ -15,7 +15,7 @@ from .op_attn_fwd import _IF_CAUSAL
 from v3python.base import typed_choice as TC
 
 class attn_fwd(FlashKernel):
-    OP_KLASS = OpAttnFwd
+    OPERATOR = OpAttnFwd
     NAME = 'attn_fwd'
     # Note: There is no other FWD metro kernel right now so the arguments are shared
     ARGUMENTS = OpAttnFwd.OP_ARGUMENTS

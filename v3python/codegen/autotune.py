@@ -203,8 +203,8 @@ class AutotuneCodeGenerator(object):
             # Comment out constexpr values
             if isinstance(tc, TC.constexpr_base):  # isinstance(True, int) == True
                 fmt_val = str(bind.value)
-                if bind.maybe_conditional:
-                    fmt_val = bind.format_constexpr()
+                if bind.param_maybe_conditional:
+                    fmt_val = bind.document_conditional_value()
                 assign = '// ' + assign + f' as constexpr {fmt_val}'
             stmt.append(assign)
         stmt.append('CAST(global_scratch)')
@@ -223,7 +223,7 @@ class AutotuneCodeGenerator(object):
                 d[aname] = f'params.{tensor_aname}->kparam_stride({i})'
         for tp in kdesc.list_functional_params():
             for aname in tp.all_names:
-                tc = tp.repr_choice.resolve(aname, bind_dict=None)
+                tc = tp.repr_choice.resolve(aname, tc_dict=None)
                 if isinstance(tc, TC.tensor):
                     d[aname] = f'params.{aname}->kparam_data_ptr()'
         for aname in kdesc.KERNEL_DATA_ARGUMENTS:  # TODO: make this general

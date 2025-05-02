@@ -11,7 +11,7 @@ class TypedChoice(ABC):
     '''
     Identity for settled TC. Only a few TC classes are unsettled.
     '''
-    def resolve(self, aname, bind_dict):
+    def resolve(self, aname, tc_dict):
         return self
 
     @property
@@ -22,6 +22,9 @@ class TypedChoice(ABC):
     @property
     @abstractmethod
     def triton_compile_signature(self):
+        pass
+
+    def resolve_rank(self, all_names, RANKS):
         pass
 
 '''
@@ -93,6 +96,8 @@ class int16_t(sint_base):
     NBITS = 16
 class int32_t(sint_base):
     NBITS = 32
+class int32a16_t(int32_t):
+    ALIGNMENT = 16
 class int64_t(sint_base):
     NBITS = 64
 class uint8_t(uint_base):
@@ -143,7 +148,7 @@ class constexpr_base(TypedChoice):
     # It is only meaningful for performance choices
     @property
     def json_value(self):
-        return self._value
+        return self._value if not isinstance(self._value, np.number) else self._value.item()
 
     @property
     def ctext(self):
@@ -212,7 +217,7 @@ class tensor(argument_base):
     def __init__(self, elem_ty : TypedChoice, rank):
         self._elem_ty = elem_ty
         self._rank = rank
-        self._specialized = None
+        self._specialized = {}
         self.ALIGNMENT = elem_ty.ALIGNMENT
 
     def resolve_rank(self, all_names, RANKS):
@@ -220,9 +225,12 @@ class tensor(argument_base):
         def specialize(aname):
             rank = RANKS.get(aname, default_rank)
             return tensor(elem_ty=self._elem_ty, rank=rank)
-        self._specialized = { aname : specialize(aname) for aname in all_names }
+        print(f'resolve_rank {self=} {self._elem_ty=} {all_names=} BEFORE {self._specialized=}')
+        self._specialized.update({ aname : specialize(aname) for aname in all_names })
+        print(f'resolve_rank {self=} {self._elem_ty=} {all_names=} AFTER  {self._specialized=}')
 
-    def resolve(self, aname, bind_dict):
+    def resolve(self, aname, tc_dict):
+        print(f'{self._specialized=} {aname=}')
         return self._specialized[aname]
 
     @property
@@ -299,6 +307,7 @@ ELEMENTAL_TYPE_MAP = {
     'i8'      : int8_t,
     'i16'     : int16_t,
     'i32'     : int32_t,
+    'i32:16'  : int32a16_t,
     'i64'     : int64_t,
     'u8'      : uint8_t,
     'u16'     : uint16_t,
@@ -318,6 +327,7 @@ def parse_complex(v : 'str | TypedChoice'):
     if isinstance(v, TypedChoice):  # Already typed
         return v
     assert isinstance(v, str), 'Unsupported choice {v=} with class {v.__class__=}'
+    print(f'{v=} {v.__class__=}')
     if v.startswith('*'):  # Tensor
         return tensor(elem_ty=ELEMENTAL_TYPE_MAP[v[1:]](), rank=None)
     return ELEMENTAL_TYPE_MAP[v]()

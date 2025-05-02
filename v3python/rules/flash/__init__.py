@@ -3,7 +3,7 @@
 
 # from ...metro import MetroKernel
 # from .ops import OpAttnFwd, OpAttnBwd
-# from .attn_fwd import attn_fwd
+from .attn_fwd import attn_fwd
 # from .bwd_preprocess import bwd_preprocess, bwd_preprocess_varlen
 # from .bwd_kernel_dk_dv import bwd_kernel_dk_dv
 # from .bwd_kernel_dq import bwd_kernel_dq
@@ -15,7 +15,7 @@ SOURCE_FILE = 'tritonsrc/flash.py'
 
 # __bwd_preprocess = bwd_preprocess('bwd_preprocess', SOURCE_FILE)
 # __bwd_preprocess_varlen = bwd_preprocess_varlen('bwd_preprocess_varlen', SOURCE_FILE)
-# __attn_fwd = attn_fwd('attn_fwd', SOURCE_FILE)
+__attn_fwd = attn_fwd('attn_fwd', SOURCE_FILE)
 # __bwd_kernel_dk_dv = bwd_kernel_dk_dv('bwd_kernel_dk_dv', SOURCE_FILE)
 # __bwd_kernel_dq = bwd_kernel_dq('bwd_kernel_dq', SOURCE_FILE)
 # __bwd_kernel_fuse = bwd_kernel_fuse('bwd_kernel_fuse', SOURCE_FILE)
@@ -30,11 +30,11 @@ __debug_simulate_encoded_softmax = debug_simulate_encoded_softmax('debug_simulat
 kernels = [
     #     __bwd_preprocess,
     #     __bwd_preprocess_varlen,
-    #     __attn_fwd,
+    __attn_fwd,
     #     __bwd_kernel_dk_dv,
     #     __bwd_kernel_dq,
     #     __bwd_kernel_fuse,
-    __debug_simulate_encoded_softmax,
+    # __debug_simulate_encoded_softmax,
 ]
 
 operators = [

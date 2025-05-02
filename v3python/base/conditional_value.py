@@ -3,8 +3,8 @@
 
 #
 # ConditionalConstexpr
-#   if cond_op(feat, feat_value):
-#       use constexpr_value
+#   if cond_op(if_feat, feat_value):
+#       use then_choice
 #   else:
 #       else_choice
 #
@@ -16,57 +16,119 @@
 from .typed_choice import ConditionalChoice, parse_choices
 
 class ConditionalConstexpr(ConditionalChoice):
-    def __init__(self, feat, feat_value, constexpr_value, else_choice,
+    def __init__(self, if_feat, if_value, then_choice, else_choice,
                  cond_op=None):
-        self._when_feat = feat
+        self._if_feat = if_feat
         if cond_op is None:
-            self._when_value = feat_value if isinstance(feat_value, list) else [feat_value]
+            self._if_value = if_value if isinstance(if_value, list) else [if_value]
         else:
-            self._when_value = feat_value
-        self._constexpr = parse_choices([constexpr_value])[0]
-        self._else = parse_choices([else_choice])[0]
+            self._if_value = if_value
+        self._then = self._parse_then(then_choice)
+        self._else = self._parse_else(else_choice)
         self._cond_op = cond_op
+        self._link = {}
         assert not isinstance(else_choice, list), 'Cannot use iteratable else_choice in ConditionalConstexpr'
         # if isinstance(else_choice, int):
         #     assert else_dtype is not None, (
         #         f'For integer {else_choice=}, {else_dtype=} must be specified with np.int8 etc.'
         #     )
 
-    def resolve(self, aname, bind_dict):
+    def _parse_then(self, choice):
+        return parse_choices([choice])[0]
+
+    def _parse_else(self, choice):
+        return parse_choices([choice])[0]
+
+    def link_deferral_target(self, tp_dict):
+        self._link['if'] = tp_dict[self._if_feat]
+
+    def resolve(self, aname, tc_dict):
+        if tc_dict is None:
+            return self.resolve_defalut(aname)
         def is_matching():
-            bond_value = bind_dict[self._when_feat].get_typed_value(aname).triton_compile_signature
+            # print(f'{self._if_feat=}')
+            # print(f'{tc_dict=}')
+            # print(f'{tc_dict[self._if_feat]=}')
+            # print(f'{tc_dict[self._if_feat].get_typed_value(aname)=}')
+            tc_value = tc_dict[self._if_feat].triton_compile_signature
             if self._cond_op is None:
-                return bond_value in self._when_value
-            return self._cond_op(bond_value, self._when_value)
-        if not is_matching() or bind_dict is None:
-            return self.resolve_else(aname, bind_dict)
+                return tc_value in self._if_value
+            return self._cond_op(tc_value, self._if_value)
+        if is_matching():
+            return self.resolve_then(aname, tc_dict)
         else:
-            return self.resolve_then(aname, bind_dict)
+            return self.resolve_else(aname, tc_dict)
 
-    def resolve_then(self, aname, bind_dict):
-        return self._constexpr
+    def resolve_defalut(self, aname):
+        return self.resolve_else(aname, tc_dict=None)
 
-    def resolve_else(self, aname, bind_dict):
-        return self._else.resolve(aname, bind_dict)
+    def resolve_then(self, aname, tc_dict):
+        return self._then
+
+    def resolve_else(self, aname, tc_dict):
+        return self._else.resolve(aname, tc_dict)
+
+    '''
+    ConditionalConstexpr may have tensor in else clause
+    '''
+    def resolve_rank(self, all_names, RANKS):
+        self._else.resolve_rank(all_names, RANKS)
 
     @property
     def itype(self):
-        return self.resolve_else(aname=None, bind_dict=None).itype
+        return self.resolve_else(aname=None, tc_dict=None).itype
 
     @property
     def triton_compile_signature(self):
         raise f"Unresolved ConditionalConstexpr {self=}"
 
     def document_conditional_value(self, bind):
-        return str(self._constexpr)
+        return str(self._then)
 
 class ConditionalDeferredConstexpr(ConditionalConstexpr):
+    def link_deferral_target(self, tp_dict):
+        self._link['if'] = tp_dict[self._if_feat]
+        self._link['then'] = tp_dict[self._then]
+
+    def _parse_then(self, choice):
+        return choice
+
+    def resolve_then(self, aname, tc_dict):
+        return tc_dict[self._then].resolve(self._then, tc_dict)
+
+    # ConditionalDeferredConstexpr defaults to else branch
+    # def resolve_defalut(self, aname):
+
     def document_conditional_value(self, bind):
         tp = bind.param_klass
-        return '/'.join([str(v) for v in param.choices])
+        return '/'.join([str(v) for v in tp.choices])
 
 # FIXME: Need specialized for Tensor so ArgumentMetadata.param_cc_fields can work
 class ConditionalDeferredElseTensor(ConditionalConstexpr):
+    def link_deferral_target(self, tp_dict):
+        self._link['if'] = tp_dict[self._if_feat]
+        self._link['else'] = tp_dict[self._else]
+        print(f"Link {self=}.{self._else=} to {self._link['else']=}")
+
+    def _parse_else(self, choice):
+        return choice
+
+    def resolve_else(self, aname, tc_dict):
+        return tc_dict[self._else].resolve(self._else, tc_dict)
+
+    '''
+    ConditionalDeferredElseTensor defaults to else branch
+    But need special handling because only TP (stored in _link['else'] is known
+    ATM for else
+    '''
+    def resolve_defalut(self, aname):
+        return self._link['else'].repr_choice.resolve(aname, tc_dict=None)
+
+    def resolve_rank(self, all_names, RANKS):
+        for tc in self._link['else'].choices:
+            print(f"{self._link['else']=}")
+            assert tc._specialized
+            tc.resolve_rank(all_names, RANKS)
 
     def document_conditional_value(self, bind):
         return 'nullptr'

@@ -41,9 +41,9 @@ In our case, it is
 TYPE_CHOICES = {
     ('Q', 'K') : ['*fp16', '*bf16'],
 }
-TENSOR_RANKS {
-    'Q' : 2
-    'K' : 3
+TENSOR_RANKS = {
+    'Q' : 2,
+    'K' : 3,
 }
 ```
 
@@ -56,9 +56,9 @@ TYPE_CHOICES = {
     ('Q', 'K') : ['*fp16', '*bf16'],
     ('V',) : [CDETensor('USE_V', False, 0, 'Q')],
 }
-TENSOR_RANKS {
-    'Q' : 2
-    'K' : 3
+TENSOR_RANKS = {
+    'Q' : 2,
+    'K' : 3,
 }
 ```
 
@@ -122,9 +122,9 @@ TYPE_CHOICES = {
 FEAT_CHOICES = {
     ('USE_V',) : [ False, True ]
 }
-TENSOR_RANKS {
-    'Q' : 2
-    'K' : 3
+TENSOR_RANKS = {
+    'Q' : 2,
+    'K' : 3,
 }
 ```
 
@@ -161,8 +161,18 @@ It is not difficult to set the TemplateParameter for `USE_V` will be initialized
    -> Bind(tp2, TC.tensor(elem_ty='bf16', rank=2), 0),
 ```
 
-Note, here a common interface `.resolve(aname, bind_dict)` shared by `Bind` and
-`TC` types is needed to settle ConditionalValue in Bind objects.
+<del> Note, here a common interface `.resolve(aname, bind_dict)` shared by `Bind` and
+`TC` types is needed to settle ConditionalValue in Bind objects. </del>
+
+Bind.resolve is replaced with `.value/.get_typed_value`. The planned `Bind.resolve(aname, bind_dict)`
+can be easily replaced with `Bind.value.resolve(aname, bind_dict)`
+
+Hence the end state of `__settle_conditional_values` is 
+`Bind(tp2, TC.tensor(elem_ty='bf16', rank=any), 0)` (unranked).
+To resolve the ranked TC.tensor object (`TC.tensor(elem_ty='bf16', rank=2)`),
+call `Bind(tp2).value.resolve('Q', bind_dict=None)`.
+
+Also, we still keep 'Q' in practice.
 
 ## Goal: Guide Compiling of HSACO kernels
 
@@ -191,7 +201,7 @@ Bind.__iter__(self):
 To make the code easier to read, Bind is made iterable.
 `Bind.get_typed_value` will return the `TC.*` object.
 
-Example `triton_compile_signature` values for TC.* objects
+Example `triton_compile_signature` values for `TC.*` objects
 
 |  Typed Choice         |           `triton_compile_signature`            |
 |-----------------------|-------------------------------------------------|
@@ -225,6 +235,66 @@ Specifically, for unsettled TC:
 * ConditionalValue should forward the non-optimized version's `.itype`
 * TC.tensor should return `.TensorView<{rank}>` regardless of its `elem_ty`
 * `aname` is required for `TC.tensor` to resolve the rank
+
+### CDETensor in `<Interface>Params`
+
+In "Settle ConditionalValue" Section, we only discussed the resolution of
+CDETensor with Functional context. However, code generation for
+`<Interface>Params` does not have such context.
+
+In order to processed, we decided to re-use the TC.tensor object in the
+deferred TP to track the default type for code generation
+
+More concretely, it is
+
+```
+TYPE_CHOICES = {
+    ('Q', 'K') : ['*fp16', '*bf16'],                // tp1
+    ('V',) : [CDETensor('USE_V', False, 0, 'Q')],   // tp2
+}
+FEAT_CHOICES = {
+    ('USE_V',) : [ False, True ]                    // fp1
+}
+TENSOR_RANKS = {
+    'Q' : 2,
+    'K' : 3,
+    'V' : 4,
+}
+
+(initialization, but without CDETensor handling)
+-> tp1.choices = [
+        TC.tensor(elem_ty='fp16', rank=any).specialized = {
+            'Q' : TC.tensor(elem_ty='fp16', rank=2),
+            'K' : TC.tensor(elem_ty='fp16', rank=3),
+        },
+        TC.tensor(elem_ty='bf16', rank=any).specialized = {
+            'Q' : TC.tensor(elem_ty='bf16', rank=2),
+            'K' : TC.tensor(elem_ty='bf16', rank=3),
+        },
+   ]
+   tp2.choices = [
+        CDETensor(fp1, False, 0, tp1),
+   ]
+(CDETensor handling, implemented in initialization, this is to show the delta change)
+-> tp1.choices = [
+        TC.tensor(elem_ty='fp16', rank=any).specialized = {
+            'Q' : TC.tensor(elem_ty='fp16', rank=2),
+            'K' : TC.tensor(elem_ty='fp16', rank=3),
+            'V' : TC.tensor(elem_ty='fp16', rank=3),
+        },
+        TC.tensor(elem_ty='bf16', rank=any).specialized = {
+            'Q' : TC.tensor(elem_ty='bf16', rank=2),
+            'K' : TC.tensor(elem_ty='bf16', rank=3),
+            'V' : TC.tensor(elem_ty='bf16', rank=4),
+        },
+   ]
+   tp2.choices = [
+        CDETensor(fp1, False, 0, tp1),
+   ]
+```
+
+To achieve this, `resolve_rank` is added to the base class TypedChoice and defaults to no-op,
+and also added to ConditionalDeferredElseTensor (CDETensor) as well.
 
 ### Tensor Strides
 

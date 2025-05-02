@@ -20,6 +20,7 @@ class TemplateParameter(object):
         self._choices = TC.parse_choices(choices)
         self._type_dict = {}
         self._type_fallback = None
+        print(f'TP {self._names=} Done')
 
     def __sort_arguments(self, ALL_ARGUMENTS):
         arguments_tuple = [(aname, ALL_ARGUMENTS.index(aname)) for aname in self._names]
@@ -30,16 +31,18 @@ class TemplateParameter(object):
         self._ordered_arguments = ordered_arguments
 
     def late_init(self, ALL_ARGUMENTS, tp_dict, RANKS, STRIDES):
+        print(f'TP {self._names=} late_init Start')
         self.__sort_arguments(ALL_ARGUMENTS)
         # Assocate ConditionalValue with the depending values
         for c in self._choices:
             if not isinstance(c, TC.ConditionalChoice):
                 continue
             self._maybe_conditional = True
+            # TODO: Do we really need this?
             c.link_deferral_target(tp_dict)
-        for c in self._choices:
-            if isinstance(c, TC.tensor):
-                c.resolve_rank(self.all_names, RANKS)
+        for tc in self._choices:
+            tc.resolve_rank(self.all_names, RANKS)
+        print(f'TP {self._names=} late_init Done')
 
     @property
     def repr_name(self):
@@ -59,7 +62,7 @@ class TemplateParameter(object):
 
     @property
     def repr_typed_choice(self):
-        return self.repr_choice.resolve(self.repr_name, bind_dict=None)
+        return self.repr_choice.resolve(self.repr_name, tc_dict=None)
 
     @property
     def choices(self):
@@ -99,7 +102,7 @@ class TemplateParameter(object):
     def get_cfields(self):
         def _gen():
             for aname, index in self._ordered_arguments:
-                resolved_tc = self.repr_choice.resolve(aname, bind_dict=None)
+                resolved_tc = self.repr_choice.resolve(aname, tc_dict=None)
                 if resolved_tc.HIDDEN:
                     # print(f'HIDDEN {aname=} {resolved_tc=}')
                     continue

@@ -43,7 +43,7 @@ class Bind(object):
             yield aname, self.get_typed_value(aname)
 
     def get_typed_value(self, aname) -> TC.TypedChoice:
-        return self._value.resolve(aname, bind_dict=None)
+        return self._value.resolve(aname, tc_dict=None)
 
     ############## signature ##############
     @property
@@ -73,12 +73,11 @@ class Bind(object):
 
     @property
     def is_unresolved(self):
-        return self.is_conditional and isinstance(self._value, ConditionalChoice)
+        return self.is_conditional and isinstance(self._value, TC.ConditionalChoice)
 
-    @property
-    def settle_unresolved(self, bind_dict):
+    def settle_unresolved(self, tc_dict):
         if self.is_unresolved:
-            tc = self._value.resolve(bind_dict)
+            tc = self._value.resolve(self.name, tc_dict)
             setattr(self, '_value', tc)
 
     def document_conditional_value(self):

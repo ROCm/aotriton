@@ -3,7 +3,7 @@
 
 from pathlib import Path
 from ..gpu_targets import cluster_gpus, gpu2arch
-from .argument import build_dict, build_compact_dict, build_complete_dict
+# from .argument import build_dict, build_compact_dict, build_complete_dict
 
 # Functional: describe the functional part of a certain compute process
 # Abstract from: type choice + functional choice of Triton kernels
@@ -13,6 +13,14 @@ from .argument import build_dict, build_compact_dict, build_complete_dict
 # 2. Arch number is assigned per-meta_object since it is possible some
 #    kernel/operator is not supported on certain arch
 
+def build_tc_dict(args):
+    return { arg.name : arg.value for arg in args }
+
+def build_compact_dict(args):
+    return { arg.name : arg.value for arg in args if arg.show_in_compact }
+
+def build_complete_dict(args):
+    return { aname : arg for arg in args for aname in arg._klass.all_names }
 
 class Functional(object):
 
@@ -28,7 +36,6 @@ class Functional(object):
         self._binds = binds
         self._optimized_for = optimized_for
         self.__settle_conditional_values()
-        self._fsel_dict = build_dict(self._binds)
         self._compact_dict = build_compact_dict(self._binds)
 
     def __settle_conditional_values(self):
@@ -36,10 +43,11 @@ class Functional(object):
             unresolved = [ bind for bind in self._binds if bind.is_unresolved ]
             if not unresolved:
                 break
-            bind_dict = build_dict(self._binds)
-            # bind_dict['__arch'] = self._arch
+            tc_dict = build_tc_dict(self._binds)
+            # tc_dict['__arch'] = self._arch
+            print(f'{tc_dict=}')
             for bind in unresolved:
-                bind.settle_unresolved(bind_dict)
+                bind.settle_unresolved(tc_dict)
 
     @property
     def arch(self):
@@ -69,10 +77,10 @@ class Functional(object):
     dict of all parameter -> typed choice
     '''
     def build_complete_bind_dict(self, with_resolved_tc=False):
-        bind_dict = build_complete_dict(self._binds)
+        d = build_complete_dict(self._binds)
         if not with_resolved_tc:
-            return bind_dict
-        return { aname : (bind, bind.get_typed_value(aname)) for aname, bind in bind_dict.items() }
+            return d
+        return { aname : (bind, bind.get_typed_value(aname)) for aname, bind in d.items() }
 
     @property
     def human_readable_signature(self):
