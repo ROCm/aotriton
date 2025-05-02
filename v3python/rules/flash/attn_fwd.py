@@ -12,6 +12,7 @@ from ._common import (
 )
 from .ops import OpAttnFwd
 from .op_attn_fwd import _IF_CAUSAL
+from v3python.base import typed_choice as TC
 
 class attn_fwd(FlashKernel):
     OP_KLASS = OpAttnFwd
@@ -20,7 +21,7 @@ class attn_fwd(FlashKernel):
     ARGUMENTS = OpAttnFwd.OP_ARGUMENTS
 
     PERF_CHOICES = {
-        frozenset(['PERSISTENT_TYPE']) : _IF_CAUSAL(2, dtype='i8'),
+        frozenset(['PERSISTENT_TYPE']) : _IF_CAUSAL(TC.constexpr.int8_t(2)),
         frozenset(['GRID_CU_MULTIP']) : np.array([2], dtype=np.int8),  # NOTE: use np.array with dtype to reduce size of the generate tuning infomation struct
         frozenset(['BLOCK_M']) : np.array([16], dtype=np.int16),
         frozenset(['BLOCK_N']) : np.array([16], dtype=np.int16),

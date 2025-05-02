@@ -22,6 +22,7 @@ class Bind(object):
         self._klass = klass
         self._value = value
         self._conditional = isinstance(value, TC.ConditionalChoice)
+        self._init_value = value
         self._nth_choice = nth_choice
 
     ############## metadata/name/values ##############
@@ -41,7 +42,7 @@ class Bind(object):
         for aname in self._klass.all_names:
             yield aname, self.get_typed_value(aname)
 
-    def get_typed_value(self, aname):
+    def get_typed_value(self, aname) -> TC.TypedChoice:
         return self._value.resolve(aname, bind_dict=None)
 
     ############## signature ##############
@@ -63,24 +64,26 @@ class Bind(object):
 
     ############## conditional ##############
     @property
-    def maybe_conditional(self):
+    def param_maybe_conditional(self):
         return self._klass.maybe_conditional
 
     @property
+    def is_conditional(self):
+        return self._conditional
+
+    @property
     def is_unresolved(self):
-        return self._conditional and isinstance(self._value, ConditionalChoice)
+        return self.is_conditional and isinstance(self._value, ConditionalChoice)
 
     @property
     def settle_unresolved(self, bind_dict):
         if self.is_unresolved:
-            self._value = self._value.resolve(bind_dict)
+            tc = self._value.resolve(bind_dict)
+            setattr(self, '_value', tc)
 
-    @property
-    def possible_constexpr_values(self):
-        return self._conditional.list_possible_constexpr_values(self._klass)
-
-    def format_constexpr(self):
-        return self._conditional.format_constexpr(self)
+    def document_conditional_value(self):
+        assert self.is_conditional
+        return self._init_value.document_conditional_value(self)
 
 
 '''

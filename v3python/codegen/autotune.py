@@ -187,21 +187,24 @@ class AutotuneCodeGenerator(object):
         kdesc = self._f.meta_object
 
         pp_registry = self._registry_repo.get_signatured_function_registry('pp_function')
-        fsel_dict = functional.fsel_dict
-        assign_skips = tuple([isinstance(fsel_dict[aname], int) for aname in kdesc.KERNEL_DATA_ARGUMENTS])
+        bind_dict = functional.build_complete_bind_dict(with_resolved_tc=True)
+        def _is_constexpr(aname):
+            bind, tc = bind_dict[aname]
+            return isinstance(tc, TC.constexpr_base)
+        assign_skips = tuple([_is_constexpr(aname) for aname in kdesc.KERNEL_DATA_ARGUMENTS])
         hit, findex = pp_registry.contains(assign_skips)
         if hit:
             return findex
-        complete_dict = functional.complete_dict
         getter_dict = self.codegen_getter(kdesc)
         stmt = []
         for aname in kdesc.KERNEL_DATA_ARGUMENTS:
-            arg = complete_dict[aname]
+            bind, tc = bind_dict[aname]
             assign = getter_dict[aname] + f', // {aname}'
-            if isinstance(arg.value, int):  # isinstance(True, int) == True
-                fmt_val = str(arg.value)
-                if arg.maybe_conditional:
-                    fmt_val = arg.format_constexpr()
+            # Comment out constexpr values
+            if isinstance(tc, TC.constexpr_base):  # isinstance(True, int) == True
+                fmt_val = str(bind.value)
+                if bind.maybe_conditional:
+                    fmt_val = bind.format_constexpr()
                 assign = '// ' + assign + f' as constexpr {fmt_val}'
             stmt.append(assign)
         stmt.append('CAST(global_scratch)')

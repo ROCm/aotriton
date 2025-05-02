@@ -65,16 +65,14 @@ class Functional(object):
     def godel_number(self):
         return sum([s.godel_number for s in self._binds])
 
-    @property
-    def fsel_dict(self):
-        return build_complete_dict(self._binds)
-
     '''
-    dict of all parameter -> argument
+    dict of all parameter -> typed choice
     '''
-    @property
-    def complete_dict(self):
-        return build_complete_dict(self._binds)
+    def build_complete_bind_dict(self, with_resolved_tc=False):
+        bind_dict = build_complete_dict(self._binds)
+        if not with_resolved_tc:
+            return bind_dict
+        return { aname : (bind, bind.get_typed_value(aname)) for aname, bind in bind_dict.items() }
 
     @property
     def human_readable_signature(self):
