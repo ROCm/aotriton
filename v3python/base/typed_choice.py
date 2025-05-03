@@ -43,7 +43,7 @@ class argument_base(TypedChoice):  # Will be actual argument
         return f'{T}{N}' if A is None else f'{T}{N}:{A}'
 
     '''
-    __str__ is reserved for the formatting of codegen_define_compiled_in_features
+    TODO: Reconsider the usage of __str__
     '''
     def __str__(self):
         return '"' + self.triton_compile_signature + '"'
@@ -54,6 +54,10 @@ class argument_base(TypedChoice):  # Will be actual argument
     @property
     def infotype(self):
         return 'std::string'
+
+    @property
+    def infotext(self):
+        return '"' + self.triton_compile_signature + '"'
 
     MAP_TRITON_TYPE_PFX = {
         'i'  : 'Int',
@@ -151,8 +155,8 @@ class constexpr_base(TypedChoice):
         return self._value if not isinstance(self._value, np.number) else self._value.item()
 
     @property
-    def ctext(self):
-        return self._value
+    def infotext(self):
+        return str(self._value)
 
     @property
     def triton_compile_signature(self):
@@ -162,14 +166,14 @@ class constexpr(object):
     class bool_t(constexpr_base):
         NBITS = 1
         @property
-        def ctext(self):
-            return 'true' if self._value else 'false'
-        @property
         def itype(self):
             return 'bool'
         @property
         def infotype(self):
             return 'bool'
+        @property
+        def infotext(self):
+            return 'true' if self._value else 'false'
     class int_base(constexpr_base):
         SIGNED = True
         @property
@@ -225,13 +229,13 @@ class tensor(argument_base):
         def specialize(aname):
             rank = RANKS.get(aname, default_rank)
             return tensor(elem_ty=self._elem_ty, rank=rank)
-        print(f'resolve_rank {self=} {self._elem_ty=} {all_names=} BEFORE {self._specialized=}')
+        # print(f'resolve_rank {self=} {self._elem_ty=} {all_names=} BEFORE {self._specialized=}')
         self._specialized.update({ aname : specialize(aname) for aname in all_names })
         print(f'resolve_rank {self=} {self._elem_ty=} {all_names=} AFTER  {self._specialized=}')
 
     def resolve(self, aname, tc_dict):
         print(f'{self._specialized=} {aname=}')
-        return self._specialized[aname]
+        return self._specialized.get(aname, self)
 
     @property
     def itype(self):

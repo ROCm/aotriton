@@ -18,6 +18,7 @@ class TemplateParameter(object):
                  choices):
         self._names = names
         self._choices = TC.parse_choices(choices)
+        self._maybe_conditional = any([isinstance(c, TC.ConditionalChoice) for c in self._choices])
         self._type_dict = {}
         self._type_fallback = None
         print(f'TP {self._names=} Done')
@@ -37,7 +38,6 @@ class TemplateParameter(object):
         for c in self._choices:
             if not isinstance(c, TC.ConditionalChoice):
                 continue
-            self._maybe_conditional = True
             # TODO: Do we really need this?
             c.link_deferral_target(tp_dict)
         for tc in self._choices:
@@ -75,9 +75,15 @@ class TemplateParameter(object):
     def create_nth(self, nth):
         return Bind(self, self._choices[nth], nth)
 
+    '''
+    Do not yield Bind directly
+    itertools.product will re-use "outer" bind objects.
+    However, in-order to support ConditionalChoice, bind objects store the
+    settled values for Functionals and thus cannot be re-used.
+    '''
     def __iter__(self):
-        for nth, v in enumerate(self._choices):
-            yield Bind(self, v, nth)
+        for nth in range(self.nchoices):
+            yield nth
 
     @property
     def maybe_conditional(self):

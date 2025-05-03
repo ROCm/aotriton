@@ -10,7 +10,6 @@
 #endif
 #include <string_view>
 
-// [[human_readable_signature]]
 #define CURRENT_ENTRY_PUBLIC Autotune_[[shim_kernel_name]]__A[[arch_number]]__F[[godel_number]]
 
 #define ARRAY_SIZE(array)  (sizeof(array) / sizeof(array[0]))
@@ -96,3 +95,5 @@ void CURRENT_ENTRY_PUBLIC([[context_class_name]]& context, int mod_number) {
 
 #undef CURRENT_ENTRY_PUBLIC
 }
+
+// [[human_readable_signature]]

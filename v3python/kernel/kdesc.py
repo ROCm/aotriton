@@ -271,10 +271,13 @@ class KernelDescription(Tunable):
         return self.TENSOR_RANKS.get(tensor_arg, self.TENSOR_RANKS['_default'])
 
     def gen_functionals(self, target_arch):
+        def create_binds_from_nths(nths):
+            return [ tp.create_nth(nth) for tp, nth in zip(self._func_params, nths) ]
         for arch_number, arch in enumerate(target_arch.keys()):
             gpus = target_arch[arch]
-            for fsels in itertools.product(*self._func_params):
-                yield Functional(self, arch, arch_number, fsels, optimized_for=gpus)
+            for nths in itertools.product(*self._func_params):
+                binds = create_binds_from_nths(nths)
+                yield Functional(self, arch, arch_number, binds, optimized_for=gpus)
 
     @property
     def godel_number(self):

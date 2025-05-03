@@ -114,6 +114,9 @@ class KernelShimGenerator(object):
         kdesc = self._kdesc
         decl_list = []
         for tp in kdesc.list_functional_params():
+            tc = tp.repr_typed_choice
+            if tp.maybe_conditional or tc.HIDDEN:
+                continue
             infotype = tp.repr_typed_choice.infotype
             decl_code = f'static const std::vector<{infotype}>& get_{tp.repr_name}_choices();'
             decl_list.append(decl_code)
@@ -124,8 +127,11 @@ class KernelShimGenerator(object):
         kdesc = self._kdesc
         meta_class = kdesc.metadata_class_name
         for tp in kdesc.list_functional_params():
+            tc = tp.repr_typed_choice
+            if tp.maybe_conditional or tc.HIDDEN:
+                continue
             infotype = tp.repr_typed_choice.infotype
-            choices = ', '.join([str(tc) for tc in tp.choices])
+            choices = ', '.join([tc.infotext for tc in tp.choices])
             def_code = f'''
 const std::vector<{infotype}>& {meta_class}::get_{tp.repr_name}_choices()
 {{

@@ -48,6 +48,7 @@ class Functional(object):
             print(f'{tc_dict=}')
             for bind in unresolved:
                 bind.settle_unresolved(tc_dict)
+                print(f'Settle {bind.name=} to {bind.value.triton_compile_signature=}')
 
     @property
     def arch(self):
@@ -74,6 +75,13 @@ class Functional(object):
         return sum([s.godel_number for s in self._binds])
 
     '''
+    dict of repr -> typed choice
+    Smaller one for resolution
+    '''
+    def build_tc_dict(self):
+        return build_tc_dict(self._binds)
+
+    '''
     dict of all parameter -> typed choice
     '''
     def build_complete_bind_dict(self, with_resolved_tc=False):
@@ -97,7 +105,7 @@ class Functional(object):
     '''
     @property
     def signature_in_func_name(self):
-        lf = [s.compact_signature for s in self._binds if s.show_in_compact]
+        lf = [bind.signature_in_func_name for bind in self._binds if bind.show_in_compact]
         return '_'.join([x for x in lf])
 
     '''

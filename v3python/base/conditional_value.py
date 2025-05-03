@@ -1,17 +1,19 @@
 # Copyright © 2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-#
-# ConditionalConstexpr
-#   if cond_op(if_feat, feat_value):
-#       use then_choice
-#   else:
-#       else_choice
-#
-# Determination of C type:
-#   - Guessed returned value
-#   - Specified by returning a single element numpy array
-#
+
+'''
+ConditionalConstexpr
+  if cond_op(if_feat, feat_value):
+      use then_choice
+  else:
+      else_choice
+
+Determination of C type:
+  - Specified by returning a single element numpy array
+
+NOTE: THE MEMBER VARIABLES OF THIS CLASS SHOULD BE READ-ONLY
+'''
 
 from .typed_choice import ConditionalChoice, parse_choices
 
@@ -51,6 +53,7 @@ class ConditionalConstexpr(ConditionalChoice):
             # print(f'{tc_dict[self._if_feat]=}')
             # print(f'{tc_dict[self._if_feat].get_typed_value(aname)=}')
             tc_value = tc_dict[self._if_feat].triton_compile_signature
+            print(f'ConditionalConstexpr.resolve: {self._if_feat=} {tc_value=} {self._if_value=}')
             if self._cond_op is None:
                 return tc_value in self._if_value
             return self._cond_op(tc_value, self._if_value)
@@ -100,7 +103,8 @@ class ConditionalDeferredConstexpr(ConditionalConstexpr):
     # def resolve_defalut(self, aname):
 
     def document_conditional_value(self, bind):
-        tp = bind.param_klass
+        tp = self._link['then']
+        # print(f'Call ConditionalDeferredConstexpr.document_conditional_value(), {tp.choices=}')
         return '/'.join([str(v) for v in tp.choices])
 
 # FIXME: Need specialized for Tensor so ArgumentMetadata.param_cc_fields can work
@@ -114,7 +118,7 @@ class ConditionalDeferredElseTensor(ConditionalConstexpr):
         return choice
 
     def resolve_else(self, aname, tc_dict):
-        return tc_dict[self._else].resolve(self._else, tc_dict)
+        return tc_dict[self._else] # Don't call .resolve(self._else, tc_dict)
 
     '''
     ConditionalDeferredElseTensor defaults to else branch
@@ -125,9 +129,9 @@ class ConditionalDeferredElseTensor(ConditionalConstexpr):
         return self._link['else'].repr_choice.resolve(aname, tc_dict=None)
 
     def resolve_rank(self, all_names, RANKS):
+        print(f"CDETensor.resolve_rank {all_names=} {self._link['else']=}")
         for tc in self._link['else'].choices:
             print(f"{self._link['else']=}")
-            assert tc._specialized
             tc.resolve_rank(all_names, RANKS)
 
     def document_conditional_value(self, bind):

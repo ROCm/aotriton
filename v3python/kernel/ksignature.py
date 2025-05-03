@@ -15,6 +15,9 @@ class KernelSignature(object):
 
     def __init__(self, f : Functional, perf_values : 'list[Bind]', copt_values : list):
         self._functional = f
+        tc_dict = f.build_tc_dict()
+        for bind in perf_values:
+            bind.settle_unresolved(tc_dict)
         self._perfs = perf_values
         self._copts = copt_values
 

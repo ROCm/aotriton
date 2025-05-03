@@ -33,10 +33,12 @@ class AutotuneCodeGenerator(object):
         # TODO: support other binning algorithm
         kdesc = self._f.meta_object
         if args.build_for_tuning or self._df is None:
+            print(f'translate_empty_dataframe for kernel {kdesc.NAME}')
             self._lut_tensor, self._sigs, self._binning_dict = kdesc.translate_empty_dataframe(f)
             if args.build_for_tuning and kdesc.is_tunable:
                 self._sigs = kdesc.gen_sigatures_for_tuning(f)
         else:
+            print(f'translate_dataframe for kernel {kdesc.NAME}')
             self._lut_tensor, self._sigs, self._binning_dict = kdesc.translate_dataframe(f, self._df)
 
     def generate(self):
@@ -121,7 +123,7 @@ class AutotuneCodeGenerator(object):
     def codegen_kernel_image_perfs(self, ksigs):
         kernel_image_perfs = []
         def codegen_perf_object(sig):
-            return ', '.join([f'.{aname} = {tc.ctext}' for aname, tc in sig.gen_typed_value() ])
+            return ', '.join([f'.{aname} = {tc.infotext}' for aname, tc in sig.gen_typed_value() ])
         for sig in ksigs:
             kernel_image_perfs.append('{ ' + codegen_perf_object(sig) + ' }')
         ALIGN = ',\n' + 4 * ' '
@@ -188,10 +190,17 @@ class AutotuneCodeGenerator(object):
 
         pp_registry = self._registry_repo.get_signatured_function_registry('pp_function')
         bind_dict = functional.build_complete_bind_dict(with_resolved_tc=True)
-        def _is_constexpr(aname):
+        def _pp_signature(aname):
             bind, tc = bind_dict[aname]
-            return isinstance(tc, TC.constexpr_base)
-        assign_skips = tuple([_is_constexpr(aname) for aname in kdesc.KERNEL_DATA_ARGUMENTS])
+            is_constexpr = isinstance(tc, TC.constexpr_base)
+            return is_constexpr
+            # tc_value = tc.json_value if is_constexpr else None
+            # print(f'\tassign_skips {aname} {is_constexpr=}')
+            # return (is_constexpr, tc_value)
+        assign_skips = tuple([_pp_signature(aname) for aname in kdesc.KERNEL_DATA_ARGUMENTS])
+        if True:
+            tc_dict = { aname : tc.triton_compile_signature for aname, (_, tc) in bind_dict.items() }
+            print(f'{functional.compact_signature=} {assign_skips=} {tc_dict=}')
         hit, findex = pp_registry.contains(assign_skips)
         if hit:
             return findex

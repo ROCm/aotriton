@@ -24,6 +24,7 @@ class Bind(object):
         self._conditional = isinstance(value, TC.ConditionalChoice)
         self._init_value = value
         self._nth_choice = nth_choice
+        print(f'Create Bind for {self.name}')
 
     ############## metadata/name/values ##############
     @property
@@ -43,6 +44,7 @@ class Bind(object):
             yield aname, self.get_typed_value(aname)
 
     def get_typed_value(self, aname) -> TC.TypedChoice:
+        print(f'get_typed_value {aname=} from Bind({self.name})')
         return self._value.resolve(aname, tc_dict=None)
 
     ############## signature ##############
@@ -59,8 +61,19 @@ class Bind(object):
         return str(self.value.triton_compile_signature) if self.show_in_compact else None
 
     @property
+    def signature_in_func_name(self):
+        if not self.show_in_compact:
+            return None
+        s = self.compact_signature
+        s = s.replace('*', '^').replace(':', '@').replace('True', 'T').replace('False', 'F')
+        return s
+
+    @property
     def human_readable_signature(self):
-        return f'{self.name} = {self.value}'
+        if not self.value.HIDDEN:
+            return f'{self.name} = {self.value}'
+        else:
+            return None
 
     ############## conditional ##############
     @property
@@ -78,6 +91,7 @@ class Bind(object):
     def settle_unresolved(self, tc_dict):
         if self.is_unresolved:
             tc = self._value.resolve(self.name, tc_dict)
+            print(f'settle_unresolved Bind({self.name}) from {self._value=} into {tc=}')
             setattr(self, '_value', tc)
 
     def document_conditional_value(self):
