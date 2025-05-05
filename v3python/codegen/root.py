@@ -19,12 +19,14 @@ class RootGenerator(object):
     def generate(self):
         args = self._args
         hsaco_for_kernels = []
+        shims = []
         for k in triton_kernels:
             registry_repo = RegistryRepository()
             ksg = KernelShimGenerator(self._args, k, registry_repo)
             ksg.generate()
             hsacos = registry_repo.get_data('hsaco')
             hsaco_for_kernels.append((k, hsacos))
+            shims += registry_repo.get_data('shim')
         # for op in dispatcher_operators:
         #     OpGenerator(self._args, op).generate()
         if args.noimage_mode:
@@ -47,6 +49,9 @@ class RootGenerator(object):
                         # functional == ksig._functional ?
                         self.write_hsaco(k, image_path, functional, ksig, rulefile)
                     self.write_cluster(k, image_path, functional, signatures, clusterfile)
+        with LazyFile(args.build_dir / 'Bare.shim') as shimfile:
+            for shim in shims:
+                print(str(shim.absolute()), file=shimfile)
 
     def write_hsaco(self, kdesc, path, functional, ksig, rulefile):
         print(f'{ksig=}')

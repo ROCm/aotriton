@@ -51,9 +51,9 @@ class AutotuneCodeGenerator(object):
 
         tune_dir = args.build_dir / kdesc.FAMILY / f'{kdesc.TUNE_NAME}.{kdesc.NAME}'
         tune_dir.mkdir(parents=True, exist_ok=True)
-        src = tune_dir / (f.filepack_signature + '.cc')
-        print(f'Writing to {src}')
-        with LazyFile(src) as fout:
+        self._shim_file = tune_dir / (f.filepack_signature + '.cc')
+        print(f'Writing to {self._shim_file}')
+        with LazyFile(self._shim_file) as fout:
             self.write_autotune_src(fout)
 
     def write_autotune_src(self, fout):
@@ -255,3 +255,7 @@ class AutotuneCodeGenerator(object):
     @property
     def all_signatures(self):
         return self._sigs
+
+    @property
+    def shim_file(self):
+        return self._shim_file

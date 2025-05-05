@@ -68,6 +68,16 @@ class HsacoRegistry(object):
     def get_data(self):
         return self._rule_registry
 
+class ListRegistry(object):
+    def __init__(self):
+        self._list_registry = []
+
+    def register(self, elem):
+        self._list_registry.append(elem)
+
+    def get_data(self):
+        return self._list_registry
+
 '''
 Class to register re-used code or objects
 '''
@@ -94,6 +104,11 @@ class RegistryRepository(object):
     def get_hsaco_registry(self, name):
         if name not in self._subreg_dict:
             self._subreg_dict[name] = HsacoRegistry()
+        return self._subreg_dict[name]
+
+    def get_list_registry(self, name):
+        if name not in self._subreg_dict:
+            self._subreg_dict[name] = ListRegistry()
         return self._subreg_dict[name]
 
     def get_data(self, name):

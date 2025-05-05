@@ -41,6 +41,7 @@ class KernelShimGenerator(object):
         # registry
         self._registry_repo = RegistryRepository()
         hsaco_registry = self._global_repo.get_hsaco_registry('hsaco')
+        shims_registry = self._global_repo.get_list_registry('shim')
         all_functionals = []
 
         # autotune phase
@@ -52,6 +53,7 @@ class KernelShimGenerator(object):
             acg = AutotuneCodeGenerator(self._args, functional, df, self._registry_repo)
             acg.generate()
             hsaco_registry.register(functional, acg.all_signatures)
+            shims_registry.register(acg.shim_file)
             all_functionals.append(functional)
 
         # shim code phase
