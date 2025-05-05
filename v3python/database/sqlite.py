@@ -3,6 +3,8 @@
 
 import sqlite3
 import pandas as pd
+from ..base import typed_choice as TC
+
 '''
 We don't really need a LazyTableView, if Lazy evaluation is needed, a
 LazyPandasDataFrame is more preferrable
@@ -16,11 +18,11 @@ def create_select_stmt(table_name, wheres):
     for k, v in wheres.items():
         if isinstance(v, list) or isinstance(v, tuple):
             qm = ', '.join(['?'] * len(v))
-            where_stmt.append(f'{k} = (qm)')
+            where_stmt.append(f'{k} IN ({qm})')
             params += v
         else:
             where_stmt.append(f'{k} = ?')
-            params.append(v)
+            params.append(v.sql_value if isinstance(v, TC.TypedChoice) else v)
     stmt += ' AND '.join(where_stmt)
     return stmt, params
 
@@ -28,22 +30,37 @@ class Factory(object):
     SIGNATURE_FILE = 'tuning_database.sqlite3'
 
     def __init__(self, path):
+        print(f'sqlite3.connect({path / self.SIGNATURE_FILE})')
         self._conn = sqlite3.connect(path / self.SIGNATURE_FILE)
+        self._conn.set_trace_callback(print) # Debug
 
     def create_view(self, functional):
         print(f'{functional=}')
         meta = functional.meta_object
         is_op = hasattr(meta, 'OPERATOR')
-        pfx = 'OP$' if is_op else ''
-        table_name = pfx + meta.FAMILY + '$' + meta.NAME
-        wheres = {
-            'gpu' : functional.optimized_for,
-        }
-        for key, value in functional.compact_choices.items():
-            wheres[f'inputs${key}'] = value
-        stmt, params = create_select_stmt(table_name, wheres)
+        # pfx = 'OP$' if is_op else ''
+        # TODO: Support Operator
+        pfx = ''
+        table_name = pfx + meta.FAMILY.upper() + '$' + meta.NAME
+        def build_sql(choice_dict):
+            wheres = {
+                'gpu' : functional.optimized_for,
+            }
+            for key, value in choice_dict.items():
+                if isinstance(value, TC.TypedChoice) and value.is_tensor:
+                    wheres[f'inputs${key}_dtype'] = value
+                else:
+                    wheres[f'inputs${key}'] = value
+            return create_select_stmt(table_name, wheres)
+        stmt, params = build_sql(functional.compact_choices)
         try:
+            print(f'select stmt: {stmt} params {params}')
+            df = pd.read_sql_query(stmt, self._conn, params=params)
+            if not df.empty:
+                return df
+            # Downgrade
+            stmt, params = build_sql(functional.fallback_choices)
             return pd.read_sql_query(stmt, self._conn, params=params)
         except pd.errors.DatabaseError:
-            print(f'Table {table_name} do not exist')
+            print(f'Table {table_name} may not exist. select stmt: {stmt} params {params}')
             return None

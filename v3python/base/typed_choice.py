@@ -24,8 +24,19 @@ class TypedChoice(ABC):
     def triton_compile_signature(self):
         pass
 
+    @property
+    def sql_value(self):
+        return self.triton_compile_signature
+
     def resolve_rank(self, all_names, RANKS):
         pass
+
+    @property
+    def is_tensor(self):
+        return False
+
+    def create_constexpr(self, value):
+        raise RuntimeError(f"create_constexpr is unsupported in class {self.__class__}")
 
 '''
 New design: ConditionalConstexpr is subclass of TypedChoice
@@ -88,6 +99,9 @@ class integer_base(argument_base):
     def itype(self):
         N = self.NBITS
         return f'int{N}_t' if self.SIGNED else f'uint{N}_t'
+    @property
+    def sql_value(self):
+        return f'torch.int{self.NBITS}' if self.SIGNED else f'torch.uint{self.NBITS}'
 class sint_base(integer_base):
     SIGNED = True
     TRITON_TYPE_PFX = 'i'
@@ -124,6 +138,9 @@ class float_base(argument_base):
     def itype(self):
         # Interface only pass fp32 arguments
         return 'float'
+    @property
+    def sql_value(self):
+        return f'torch.float{self.NBITS}'
 class fp16_t(float_base):
     NBITS = 16
 class bf16_t(float_base):
@@ -161,6 +178,10 @@ class constexpr_base(TypedChoice):
     @property
     def triton_compile_signature(self):
         return self._value
+
+    def create_constexpr(self, value):
+        assert self.__class__ != constexpr_base, 'create_constexpr cannot be called over constexpr_base'
+        return self.__class__(value)
 
 class constexpr(object):
     class bool_t(constexpr_base):
@@ -249,6 +270,16 @@ class tensor(argument_base):
     @property
     def type_enum(self):
         return self._elem_ty.type_enum
+
+    @property
+    def is_tensor(self):
+        return True
+
+    # SQL do not record pointer type (already inferred by column name)
+    @property
+    def sql_value(self):
+        elem_ty = self._elem_ty
+        return elem_ty.sql_value
 
 ##################### Guessing Functions #####################
 class Guess(object):

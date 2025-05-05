@@ -88,6 +88,9 @@ class ConditionalConstexpr(ConditionalChoice):
     def document_conditional_value(self, bind):
         return str(self._then)
 
+    def create_constexpr(self, value):
+        return self._else.create_constexpr(value)
+
 class ConditionalDeferredConstexpr(ConditionalConstexpr):
     def link_deferral_target(self, tp_dict):
         self._link['if'] = tp_dict[self._if_feat]
@@ -106,6 +109,10 @@ class ConditionalDeferredConstexpr(ConditionalConstexpr):
         tp = self._link['then']
         # print(f'Call ConditionalDeferredConstexpr.document_conditional_value(), {tp.choices=}')
         return '/'.join([str(v) for v in tp.choices])
+
+    def create_constexpr(self, value):
+        tp = self._link['then']
+        return tp.repr_choice.create_constexpr(value)
 
 # FIXME: Need specialized for Tensor so ArgumentMetadata.param_cc_fields can work
 class ConditionalDeferredElseTensor(ConditionalConstexpr):

@@ -138,7 +138,10 @@ class PerformanceTemplateParameter(TemplateParameter):
     So, move this function to the subclass as built-in sanity check.
     '''
     def create_direct(self, value):
-        return Bind(self, value, None)
+        # assert isinstance(self.repr_choice, TC.constexpr_base), f'{self.repr_choice.__class__=} is not subclass of TC.constexpr_base'
+        print(f'create_direct {self.repr_name=} {value=} {self.repr_choice=}')
+        typed_value = self.repr_choice.create_constexpr(value)
+        return Bind(self, typed_value, None)
 
 
 '''

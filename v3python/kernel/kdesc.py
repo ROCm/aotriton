@@ -279,6 +279,11 @@ class KernelDescription(Tunable):
                 binds = create_binds_from_nths(nths)
                 yield Functional(self, arch, arch_number, binds, optimized_for=gpus)
 
+    def fallback_compact_dict(self, compact_dict):
+        def fallback(k, v):
+            return self.PARTIALLY_TUNED_FUNCTIONALS.get(k, v)
+        return { k : fallback(k, v) for k, v in compact_dict.items()}
+
     @property
     def godel_number(self):
         return self._godel_number
@@ -286,34 +291,40 @@ class KernelDescription(Tunable):
     # TODO: dataframe name mangling should be deferred to database package.
     #       Possible solution is to attach a translator to DataFrame object
     def translate_dataframe(self, f : Functional, df : 'pandas.DataFrame'):
-        sparse_keys = [ f'inputs${key}' for key in self.AUTOTUNE_KEYS_VALIDATED ]
-        binning_dict = { key : algo(df[f'inputs${key}'].unique()) for key, algo in self.AUTOTUNE_KEYS_VALIDATED.item() }
+        sparse_keys = [ f'inputs${key}' for key, _ in self.AUTOTUNE_KEYS_VALIDATED ]
+        print(f'{sparse_keys=}')
+        binning_dict = { key : algo(df[f'inputs${key}'].unique()) for key, algo in self.AUTOTUNE_KEYS_VALIDATED }
         sparse_key_possible_values = { key : sorted(df[key].unique()) for key in sparse_keys }
         # sparse_shape is not used because lut is compact
         lut_shape = [f.noptimized_for] + [ len(sparse_key_possible_values[key]) for key in sparse_keys ]
         # lut starts with a large enough dtype
         lut_tensor = np.empty(lut_shape, dtype=np.int32)
-        perf_keys = [ 'tuned_kernel${meta.repr_name}' for meta in self._perf_params ]
-        copt_keys = [ 'compiler_options${key}' for key in self.COMPILER_OPTIONS ]
+        perf_keys = [ f'tuned_kernel${meta.repr_name}' for meta in self._perf_params ]
+        copt_keys = [ f'compiler_options${key}' for key in self.COMPILER_OPTIONS ]
         def perf_bind(series):
             return [ meta.create_direct(value) for meta, value in zip(self._perf_params, series[perf_keys]) ]
         sigs = []
         sigs_dict = {}
-        def discretization(tup):
-            key, value = tup
+        def discretization(key, value):
+            print(f'discretization {key=} {value=} to {sparse_key_possible_values[key].index(value)}')
             return sparse_key_possible_values[key].index(value)
         def find_ind(series):
             sparse = series[sparse_keys]
-            return [ discretization(key, value) for key, value in zip(sparse_keys, sparse) ]
+            return tuple([ discretization(key, value) for key, value in zip(sparse_keys, sparse) ])
         def register_sig(series):
+            print(f'{perf_keys=}')
+            print(f'{copt_keys=}')
+            print(f'{series=}')
+            # import ipdb; ipdb.set_trace();
             key = tuple(list(series[perf_keys]) + list(series[copt_keys]))
             if key not in sigs_dict:
-                sigs_dict[key] = len(sigs)
+                ret = len(sigs)
+                sigs_dict[key] = ret
                 sig = KernelSignature(f,
-                                      perf_bind(series)[perf_keys],
+                                      perf_bind(series),
                                       series[copt_keys])
                 sigs.append(sig)
-            return sigs_dict[sig.values_tuple]
+            return sigs_dict[key]
         for i, gpu in enumerate(f.optimized_for):
             if i > 0:
                 lut_tensor[i] = lut_tensor[0]
@@ -321,6 +332,7 @@ class KernelDescription(Tunable):
             for idx, series in df_i.iterrows():
                 lut_ind = find_ind(series)
                 sig_num = register_sig(series)
+                print(f'lut_tensor[{i}][{lut_ind}] = {sig_num}')
                 lut_tensor[i][lut_ind] = sig_num
         nsigs = len(sigs)
         for dtype in [np.int8, np.int16, np.int32, np.int64]:
@@ -328,6 +340,9 @@ class KernelDescription(Tunable):
                 break
         lut_tensor = lut_tensor.astype(dtype)
         # self.sancheck_lut_tensor(lut_tensor)
+        # print(f'{lut_tensor=}')
+        # print(f'{sigs=}')
+        # print(f'{binning_dict=}')
         return lut_tensor, sigs, binning_dict
 
     def translate_empty_dataframe(self, f : Functional):

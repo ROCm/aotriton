@@ -38,13 +38,11 @@ class attn_fwd(FlashKernel):
         'CAUSAL_TYPE' : BinningExact,
         'ENABLE_DROPOUT' : BinningExact,
     }
+
     # List of functionals that are not fully tuned in the tuning database
-    # First element of the tuple is name. Second is the value to use instead
-    PARTIALLY_TUNED_FUNCTIONALS = [
-        ('RETURN_ENCODED_SOFTMAX', False),
-        ('PADDED_HEAD', False),
-        ('BIAS_TYPE', None)
-    ]
+    PARTIALLY_TUNED_FUNCTIONALS = {
+        'PADDED_HEAD': False,
+    }
 
     # Python Trick: do not use @staticmethod, and also do not add 'self', and
     #               then there is no need to prefix the classname in DOWNGRADER list

@@ -183,7 +183,7 @@ class AutotuneCodeGenerator(object):
     def codegen_binned_indices(self):
         if self._binning_dict is None:
             return '[0]'
-        return ''.join([f'[{key}{self.BIN_INDEX_SUFFIX}]' for key, _ in self._autotune_keys])
+        return ''.join([f'[{key}{self.BIN_INDEX_SUFFIX}]' for key in self._binning_dict.keys()])
 
     def codegen_deduplicated_pp_args_function_index(self, functional : Functional):
         kdesc = self._f.meta_object

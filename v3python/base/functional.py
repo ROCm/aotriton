@@ -99,6 +99,10 @@ class Functional(object):
     def compact_choices(self) -> dict:
         return self._compact_dict
 
+    @property
+    def fallback_choices(self) -> dict:
+        return self.meta_object.fallback_compact_dict(self._compact_dict)
+
     '''
     "core" signature
     only directly used to supply TritonKernel as HSACO name component
