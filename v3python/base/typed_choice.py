@@ -160,10 +160,15 @@ class fp32a16_t(fp32_t):
 class constexpr_base(TypedChoice):
     SIGNED = None
     def __init__(self, value):
-        self._value = value
+        self._value = self.pytype(value)
 
     def __str__(self):
         return str(self._value)
+
+    @property
+    @abstractmethod
+    def pytype(self):
+        pass
 
     # Do not define this in superclass
     # It is only meaningful for performance choices
@@ -187,6 +192,9 @@ class constexpr(object):
     class bool_t(constexpr_base):
         NBITS = 1
         @property
+        def pytype(self):
+            return bool
+        @property
         def itype(self):
             return 'bool'
         @property
@@ -195,24 +203,22 @@ class constexpr(object):
         @property
         def infotext(self):
             return 'true' if self._value else 'false'
-    class int_base(constexpr_base):
+    class integer_base(constexpr_base):
+        SIGNED = None
+        @property
+        def pytype(self):
+            return int
+        @property
+        def itype(self):
+            N = self.NBITS
+            return f'int{N}_t' if self.SIGNED else f'uint{N}_t'
+        @property
+        def infotype(self):
+            return 'int'
+    class int_base(integer_base):
         SIGNED = True
-        @property
-        def itype(self):
-            N = self.NBITS
-            return f'int{N}_t'
-        @property
-        def infotype(self):
-            return 'int'
-    class uint_base(constexpr_base):
+    class uint_base(integer_base):
         SIGNED = False
-        @property
-        def itype(self):
-            N = self.NBITS
-            return f'uint{N}_t'
-        @property
-        def infotype(self):
-            return 'int'
     class int8_t(int_base):
         NBITS = 8
     class int16_t(int_base):

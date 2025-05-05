@@ -24,7 +24,7 @@ class Bind(object):
         self._conditional = isinstance(value, TC.ConditionalChoice)
         self._init_value = value
         self._nth_choice = nth_choice
-        print(f'Create Bind for {self.name}')
+        # print(f'Create Bind for {self.name}')
 
     ############## metadata/name/values ##############
     @property
@@ -44,7 +44,7 @@ class Bind(object):
             yield aname, self.get_typed_value(aname)
 
     def get_typed_value(self, aname) -> TC.TypedChoice:
-        print(f'get_typed_value {aname=} from Bind({self.name})')
+        # print(f'get_typed_value {aname=} from Bind({self.name})')
         return self._value.resolve(aname, tc_dict=None)
 
     ############## signature ##############

@@ -46,7 +46,7 @@ class KernelShimGenerator(object):
         for functional in kdesc.gen_functionals(self._target_arch):
             # print(f'{functional=}')
             df = fac.create_view(functional)
-            print(f'KernelShimGenerator.generate {df=}')
+            # print(f'KernelShimGenerator.generate {df=}')
             AutotuneCodeGenerator(self._args, functional, df, self._registry_repo).generate()
             all_functionals.append(functional)
 

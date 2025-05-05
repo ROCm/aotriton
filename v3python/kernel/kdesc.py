@@ -27,6 +27,7 @@ from .ksignature import KernelSignature
 from .object_desc import ObjectFileDescription
 from ..gpu_targets import AOTRITON_SUPPORTED_GPUS, cluster_gpus
 from ..utils import get_template
+import pandas as pd
 
 SOURCE_PATH = Path(__file__).resolve()
 AOTRITON_ENABLE_FP32 = bool(int(os.getenv('AOTRITON_ENABLE_FP32', True)))
@@ -292,7 +293,8 @@ class KernelDescription(Tunable):
     #       Possible solution is to attach a translator to DataFrame object
     def translate_dataframe(self, f : Functional, df : 'pandas.DataFrame'):
         sparse_keys = [ f'inputs${key}' for key, _ in self.AUTOTUNE_KEYS_VALIDATED ]
-        print(f'{sparse_keys=}')
+        nkeys = len(sparse_keys)
+        # print(f'{sparse_keys=}')
         binning_dict = { key : algo(df[f'inputs${key}'].unique()) for key, algo in self.AUTOTUNE_KEYS_VALIDATED }
         sparse_key_possible_values = { key : sorted(df[key].unique()) for key in sparse_keys }
         # sparse_shape is not used because lut is compact
@@ -301,39 +303,71 @@ class KernelDescription(Tunable):
         lut_tensor = np.empty(lut_shape, dtype=np.int32)
         perf_keys = [ f'tuned_kernel${meta.repr_name}' for meta in self._perf_params ]
         copt_keys = [ f'compiler_options${key}' for key in self.COMPILER_OPTIONS ]
-        def perf_bind(series):
-            return [ meta.create_direct(value) for meta, value in zip(self._perf_params, series[perf_keys]) ]
-        sigs = []
+        # def discretization(key, value):
+        #     # print(f'discretization {key=} {value=} to {sparse_key_possible_values[key].index(value)}')
+        #     return sparse_key_possible_values[key].index(value)
+        # def find_ind(series):
+        #     sparse = series[sparse_keys]
+        #     return tuple([ discretization(key, value) for key, value in zip(sparse_keys, sparse) ])
+        # def register_sig(series):
+        #     # print(f'{perf_keys=}')
+        #     # print(f'{copt_keys=}')
+        #     # print(f'{series=}')
+        #     # import ipdb; ipdb.set_trace();
+        #     key = tuple(list(series[perf_keys]) + list(series[copt_keys]))
+        #     if key not in sigs_dict:
+        #         ret = len(sigs)
+        #         sigs_dict[key] = ret
+        #         sig = KernelSignature(f,
+        #                               perf_bind(series),
+        #                               series[copt_keys])
+        #         sigs.append(sig)
+        #     return sigs_dict[key]
+        # def assign_unique_combinations(df, columns_to_combine, new_column_name):
+        #     """Assigns unique integer values to unique combinations of columns.
+
+        #     Args:
+        #         df: The input Pandas DataFrame.
+        #         columns_to_combine: A list of column names to combine.
+        #         new_column_name: The name of the new column to store the assigned values.
+
+        #     Returns:
+        #         The DataFrame with the new column added.
+        #     """
+        #     df[new_column_name] = pd.factorize(df[columns_to_combine].apply(tuple, axis=1))[0]
+        #     return df
+        # assign_unique_combinations(df, perf_keys + copt_keys, '$$sig_num')
+        np_sigs, revind = np.unique(df[perf_keys + copt_keys].to_numpy(), axis=0, return_inverse=True)
+        # df[i] == np_sigs[revind[i]]
+        df['$$sig_num'] = revind
         sigs_dict = {}
-        def discretization(key, value):
-            print(f'discretization {key=} {value=} to {sparse_key_possible_values[key].index(value)}')
-            return sparse_key_possible_values[key].index(value)
-        def find_ind(series):
-            sparse = series[sparse_keys]
-            return tuple([ discretization(key, value) for key, value in zip(sparse_keys, sparse) ])
-        def register_sig(series):
-            print(f'{perf_keys=}')
-            print(f'{copt_keys=}')
-            print(f'{series=}')
-            # import ipdb; ipdb.set_trace();
-            key = tuple(list(series[perf_keys]) + list(series[copt_keys]))
-            if key not in sigs_dict:
-                ret = len(sigs)
-                sigs_dict[key] = ret
-                sig = KernelSignature(f,
-                                      perf_bind(series),
-                                      series[copt_keys])
-                sigs.append(sig)
-            return sigs_dict[key]
+        def perf_bind(nprow):
+            return [ meta.create_direct(value) for meta, value in zip(self._perf_params, nprow) ]
+        nperfs = len(perf_keys)
+        def create_sig(nprow):
+            return KernelSignature(f,
+                                   perf_bind(nprow),
+                                   nprow[nperfs:].tolist())
+        sigs = [ create_sig(nprow) for nprow in np_sigs ]
+        for i, ind_key in enumerate(sparse_keys):
+            bucket = sparse_key_possible_values[ind_key]
+            def discretization(row):
+                return bucket.index(row[ind_key])
+            df[f'$$ind_{i}'] = df.apply(discretization, axis=1)
         for i, gpu in enumerate(f.optimized_for):
             if i > 0:
                 lut_tensor[i] = lut_tensor[0]
             df_i = df[df['gpu'] == gpu]
+            '''
             for idx, series in df_i.iterrows():
                 lut_ind = find_ind(series)
                 sig_num = register_sig(series)
-                print(f'lut_tensor[{i}][{lut_ind}] = {sig_num}')
+                # print(f'lut_tensor[{i}][{lut_ind}] = {sig_num}')
                 lut_tensor[i][lut_ind] = sig_num
+            '''
+            inds = tuple([df_i[f'$$ind_{i}'] for i in range(nkeys)])
+            sig_nums = df_i['$$sig_num']
+            lut_tensor[i][inds] = sig_nums
         nsigs = len(sigs)
         for dtype in [np.int8, np.int16, np.int32, np.int64]:
             if nsigs < np.iinfo(dtype).max:
