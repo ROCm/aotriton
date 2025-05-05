@@ -23,7 +23,7 @@ class KernelShimGenerator(object):
     HEADER_TEMPLATE = get_template('shim.h')
     SOURCE_TEMPLATE = get_template('shim.cc')
 
-    def __init__(self, args, k : KernelDescription):
+    def __init__(self, args, k : KernelDescription, global_repo : RegistryRepository):
         self._args = args
         self._kdesc = k
         # self._tuning = is_tuning_on_for_kernel(self._args, self._kdesc)
@@ -31,6 +31,7 @@ class KernelShimGenerator(object):
         self._target_arch = cluster_gpus(self._target_gpus)
         self._target_arch_keys = list(self._target_arch.keys())
         print(f'{self._target_arch=}')
+        self._global_repo = global_repo
 
     def generate(self):
         # Un "self._" section
@@ -39,6 +40,7 @@ class KernelShimGenerator(object):
 
         # registry
         self._registry_repo = RegistryRepository()
+        hsaco_registry = self._global_repo.get_hsaco_registry('hsaco')
         all_functionals = []
 
         # autotune phase
@@ -47,7 +49,9 @@ class KernelShimGenerator(object):
             # print(f'{functional=}')
             df = fac.create_view(functional)
             # print(f'KernelShimGenerator.generate {df=}')
-            AutotuneCodeGenerator(self._args, functional, df, self._registry_repo).generate()
+            acg = AutotuneCodeGenerator(self._args, functional, df, self._registry_repo)
+            acg.generate()
+            hsaco_registry.register(functional, acg.all_signatures)
             all_functionals.append(functional)
 
         # shim code phase

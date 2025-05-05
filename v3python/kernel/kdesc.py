@@ -23,8 +23,7 @@ from ..op import (
     Operator,
     NO_OPERATOR,
 )
-from .ksignature import KernelSignature
-from .object_desc import ObjectFileDescription
+from .ksignature import KernelSignature, COMPILER_OPTIONS, DEFAULT_COPT
 from ..gpu_targets import AOTRITON_SUPPORTED_GPUS, cluster_gpus
 from ..utils import get_template
 import pandas as pd
@@ -122,8 +121,6 @@ class KernelDescription(Tunable):
     _ARGUMENT_CHOICES = None
     HEADER_TEMPLATE = get_template('shim.h')
     SOURCE_TEMPLATE = get_template('shim.cc')
-    COMPILER_OPTIONS = [ 'waves_per_eu', 'num_warps', 'num_stages' ]
-    DEFAULT_COPT = [ 2, 4, 1 ]
 
     # Type and Feature are shared from Related Op
     # TYPE_CHOICES = {
@@ -196,11 +193,11 @@ class KernelDescription(Tunable):
         print(f"{self.TYPE_CHOICES=}")
         print(f"{self.FEAT_CHOICES=}")
 
-    def __init__(self, triton_kernel_name, triton_file_path):
+    def __init__(self, triton_kernel_name, triton_source_path):
         collect_functionals_from_op(self.__class__)
         self.insert_tensor_strides_to_choices(last_is_continuous=True)
         self._DATA_ARGUMENTS = None
-        self._triton_file_path = Path(triton_file_path)
+        self._triton_source_path = Path(triton_source_path)
         self._triton_kernel_name = triton_kernel_name
         self._func_params = []
         # FIXME: Support tensor with different ranks
@@ -253,6 +250,14 @@ class KernelDescription(Tunable):
         # Not always optimal, but good enough for now.
         self._perf_cfields = sorted(self._perf_cfields, key=lambda p : p.nbits, reverse=True)
 
+    @property
+    def triton_source_path(self):
+        return self._triton_source_path
+
+    @property
+    def triton_kernel_name(self):
+        return self._triton_kernel_name
+
     def list_functional_params(self):
         yield from self._func_params
 
@@ -304,7 +309,7 @@ class KernelDescription(Tunable):
         # lut starts with a large enough dtype
         lut_tensor = np.empty(lut_shape, dtype=np.int32)
         perf_keys = [ f'tuned_kernel${meta.repr_name}' for meta in self._perf_params ]
-        copt_keys = [ f'compiler_options${key}' for key in self.COMPILER_OPTIONS ]
+        copt_keys = [ f'compiler_options${key}' for key in COMPILER_OPTIONS ]
         # def discretization(key, value):
         #     # print(f'discretization {key=} {value=} to {sparse_key_possible_values[key].index(value)}')
         #     return sparse_key_possible_values[key].index(value)
@@ -384,7 +389,7 @@ class KernelDescription(Tunable):
     def translate_empty_dataframe(self, f : Functional):
         lut_tensor = np.zeros([f.noptimized_for, 1], dtype=np.int8)
         defaults = [ meta.create_nth(0) for meta in self._perf_params ]
-        sigs = [ KernelSignature(f, defaults, self.DEFAULT_COPT) ]
+        sigs = [ KernelSignature(f, defaults, DEFAULT_COPT) ]
         return lut_tensor, sigs, None
 
     @property

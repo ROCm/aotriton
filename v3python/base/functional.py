@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 from pathlib import Path
-from ..gpu_targets import cluster_gpus, gpu2arch
+from ..gpu_targets import cluster_gpus, gpu2arch, AOTRITON_ARCH_TO_DIRECTORY
 # from .argument import build_dict, build_compact_dict, build_complete_dict
 
 # Functional: describe the functional part of a certain compute process
@@ -90,6 +90,10 @@ class Functional(object):
             return d
         return { aname : (bind, bind.get_typed_value(aname)) for aname, bind in d.items() }
 
+    def build_complete_tc_dict(self, with_resolved_tc=False):
+        d = build_complete_dict(self._binds)
+        return { aname : bind.get_typed_value(aname) for aname, bind in d.items() }
+
     @property
     def human_readable_signature(self):
         lf = [s.human_readable_signature for s in self._binds]
@@ -124,13 +128,13 @@ class Functional(object):
     Used by KSignature to construct full kernel name
     '''
     @property
-    def compact_signature(self):
+    def compact_signature_noarch(self):
         sf = self.signature_in_func_name
-        return 'F__' + sf + f'___{self.arch}'
+        return 'F__' + sf
 
     @property
     def full_filepack_path(self):
-        return Path(self._meta.FAMILY) / self._meta.NAME / self.filepack_signature
+        return Path(AOTRITON_ARCH_TO_DIRECTORY[self.arch]) / self._meta.FAMILY / self._meta.NAME / self.filepack_signature
 
     def translate_dataframe(self, df):
         # Only meta object (kdesc/op) of a functional knows how to translate dataframe

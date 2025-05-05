@@ -6,6 +6,7 @@
 from ..gpu_targets import AOTRITON_ARCH_TO_DIRECTORY as ARCH_TO_DIRECTORY
 from ..base import Functional
 from ..base import typed_choice as TC
+from ..kernel.ksignature import KernelSignature
 from ..utils import (
     get_template,
     LazyFile,
@@ -40,6 +41,7 @@ class AutotuneCodeGenerator(object):
         else:
             print(f'translate_dataframe for kernel {kdesc.NAME}')
             self._lut_tensor, self._sigs, self._binning_dict = kdesc.translate_dataframe(f, self._df)
+        assert all([isinstance(k, KernelSignature)] for k in self._sigs)
 
     def generate(self):
         # Un "self._" section
@@ -59,7 +61,7 @@ class AutotuneCodeGenerator(object):
         kdesc = f.meta_object
         lut_ctype, lut_cshape, lut_cdata = self.codegen_format_lut(self._lut_tensor)
         # gpu_kernel_image_dir = args.build_dir / f.FAMILY / f'gpu_kernel_image.{f.NAME}'
-        package_path = str(ARCH_TO_DIRECTORY[f.arch] / f.full_filepack_path)
+        package_path = str(f.full_filepack_path)
         meta_hsacos = self.codegen_compact_kernels(kdesc,
                                                    self._sigs,
                                                    package_path)
@@ -200,7 +202,7 @@ class AutotuneCodeGenerator(object):
         assign_skips = tuple([_pp_signature(aname) for aname in kdesc.KERNEL_DATA_ARGUMENTS])
         if True:
             tc_dict = { aname : tc.triton_compile_signature for aname, (_, tc) in bind_dict.items() }
-            print(f'{functional.compact_signature=} {assign_skips=} {tc_dict=}')
+            print(f'{functional.compact_signature_noarch=} {assign_skips=} {tc_dict=}')
         hit, findex = pp_registry.contains(assign_skips)
         if hit:
             return findex
@@ -249,3 +251,7 @@ class AutotuneCodeGenerator(object):
             for aname in meta.all_names:
                 stmt.append(f'context.{aname} = perf.{aname}')
         return ALIGN.join(stmt)
+
+    @property
+    def all_signatures(self):
+        return self._sigs
