@@ -295,8 +295,10 @@ class KernelDescription(Tunable):
         sparse_keys = [ f'inputs${key}' for key, _ in self.AUTOTUNE_KEYS_VALIDATED ]
         nkeys = len(sparse_keys)
         # print(f'{sparse_keys=}')
-        binning_dict = { key : algo(df[f'inputs${key}'].unique()) for key, algo in self.AUTOTUNE_KEYS_VALIDATED }
-        sparse_key_possible_values = { key : sorted(df[key].unique()) for key in sparse_keys }
+        def sorted_unique_key(key):
+            return np.unique(df[key].to_numpy()).tolist()
+        sparse_key_possible_values = { key : sorted_unique_key(key) for key in sparse_keys }
+        binning_dict = { key : algo(sparse_key_possible_values[spk]) for spk, (key, algo) in zip(sparse_keys, self.AUTOTUNE_KEYS_VALIDATED) }
         # sparse_shape is not used because lut is compact
         lut_shape = [f.noptimized_for] + [ len(sparse_key_possible_values[key]) for key in sparse_keys ]
         # lut starts with a large enough dtype
@@ -351,9 +353,9 @@ class KernelDescription(Tunable):
         sigs = [ create_sig(nprow) for nprow in np_sigs ]
         for i, ind_key in enumerate(sparse_keys):
             bucket = sparse_key_possible_values[ind_key]
-            def discretization(row):
-                return bucket.index(row[ind_key])
-            df[f'$$ind_{i}'] = df.apply(discretization, axis=1)
+            def discretization(v):
+                return bucket.index(v)
+            df[f'$$ind_{i}'] = df[ind_key].apply(discretization)
         for i, gpu in enumerate(f.optimized_for):
             if i > 0:
                 lut_tensor[i] = lut_tensor[0]
