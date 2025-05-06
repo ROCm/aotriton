@@ -14,7 +14,6 @@ from ..base import (
     ConditionalConstexpr,
     ConditionalDeferredConstexpr,
     ConditionalDeferredElseTensor,
-    Argument as Arg,
     TemplateParameter as TP,
     PerformanceTemplateParameter as PTP,
 )

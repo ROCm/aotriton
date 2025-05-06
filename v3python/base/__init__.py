@@ -18,9 +18,6 @@ from .conditional_value import (
     ConditionalDeferredConstexpr,
     ConditionalDeferredElseTensor,
 )
-from .argument import (
-    Argument,
-)
 from .parameter import (
     TemplateParameter,
     PerformanceTemplateParameter,
