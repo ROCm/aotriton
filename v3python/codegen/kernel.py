@@ -10,9 +10,9 @@ from ..base import (
 )
 from .interface import InterfaceGenerator
 from ..kernel import KernelDescription
+from .template import get_template
 from ..utils import (
     LazyFile,
-    get_template,
 )
 from .common import codegen_struct_cfields
 from .autotune import AutotuneCodeGenerator

@@ -11,9 +11,9 @@ from ..base import (
     Interface,
     Functional,
 )
+from .template import get_template
 from ..utils import (
     LazyFile,
-    get_template,
     RegistryRepository,
 )
 # from ..utils.is_tuning_enabled import is_tuning_on_for_kernel
