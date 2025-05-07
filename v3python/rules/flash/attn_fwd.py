@@ -18,7 +18,7 @@ class attn_fwd(FlashKernel):
     SHARED_IFACE = OpAttnFwd
     NAME = 'attn_fwd'
     # Note: There is no other FWD metro kernel right now so the arguments are shared
-    ARGUMENTS = OpAttnFwd.OP_ARGUMENTS
+    ARGUMENTS = OpAttnFwd.ARGUMENTS
 
     PERF_CHOICES = {
         frozenset(['PERSISTENT_TYPE']) : _IF_CAUSAL(TC.constexpr.int8_t(2)),

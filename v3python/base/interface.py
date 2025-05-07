@@ -22,7 +22,7 @@ Interface: common items b/w Operator, KernelDescription and MetroKernel
 class Interface(ABC):
     FAMILY = None               # Must be defined
     NAME = None                 # Must be defined
-    TUNE_NAME = None            # Must be defined
+    TUNE_NAME = None            # Must be defined autotune/optune
     ARGUMENTS = None            # Must be defined
     SHARED_IFACE = None         # Optional, can be defined to share param struct
     TYPE_CHOICES = None         # Required For Operator
@@ -106,13 +106,22 @@ class Interface(ABC):
     def func_cfields(self):
         return self._func_cfields
 
-    @property
-    def class_name_base(self):
-        return "".join(x.capitalize() for x in self.NAME.lower().split("_"))
+    @classmethod
+    def _class_name_base(klass):
+        return "".join(x.capitalize() for x in klass.NAME.lower().split("_"))
 
     @property
+    def class_name_base(self):
+        return self._class_name_base()
+
+    '''
+    TODO: Auto-add 'op_' prefix to operators
+    '''
+    @property
     def param_class_name(self):
-        return self.class_name_base + 'Params'
+        if self.SHARED_IFACE is None:
+            return self.class_name_base + 'Params'
+        return self.SHARED_IFACE._class_name_base() + 'Params'
 
     @property
     def context_class_name(self):
@@ -121,6 +130,13 @@ class Interface(ABC):
     @property
     def metadata_class_name(self):
         return self.class_name_base + 'Metadata'
+
+    @property
+    @abstractmethod
+    def enum_name(self):
+        pass
+        # CamelName = self.NAME.replace('_', ' ').title().replace(' ', '')
+        return f'kOp_{self.class_name_base}'
 
     def get_tensor_rank(self, tensor_arg):
         log(lambda : f'get_tensor_rank {self=} {self.TENSOR_RANKS=}')

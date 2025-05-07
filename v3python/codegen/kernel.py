@@ -148,42 +148,6 @@ const std::vector<{infotype}>& {meta_class}::get_{tp.repr_name}_choices()
         ALIGN = ';\n' + ' ' * 4
         return ALIGN.join(lets)
 
-    def codegen_list_of_deduplicated_lut_functions(self):
-        registry = self._this_repo.get_data('lut_function')
-        stmt = [f'{fret} {fname} {fsrc};' for fsrc, (fret, fname, fparams) in registry.items()]
-        return '\n'.join(stmt)
-
-    def codegen_declare_list_of_deduplicated_lut_functions(self):
-        registry = self._this_repo.get_data('lut_function')
-        stmt = [f'extern {fret} {fname}{fparams};' for fsrc, (fret, fname, fparams) in registry.items()]
-        return '\n'.join(stmt)
-
-    def codegen_autotune_struct_name(self, arch_number, godel_number):
-        return f'Autotune_{self._iface.NAME}__A{arch_number}__F{godel_number}'
-
-    def codegen_kernel_table_entry_declares(self, functionals):
-        decls = []
-        for arch_number, target_arch in enumerate(self._target_arch_keys):
-            godel_numbers = sorted(list(set([f.godel_number for f in functionals])))
-            for godel_number in godel_numbers:
-                struct_name = self.codegen_autotune_struct_name(arch_number, godel_number)
-                decls.append(f'void {struct_name}({self._iface.context_class_name}& params, int mod_number);')
-        return '\n'.join(decls)
-
-    def codegen_kernel_table_entries(self, functionals):
-        lets = []
-        for arch_number, target_arch in enumerate(self._target_arch_keys):
-            lets.append(4 * ' ' + '{')
-            godel_numbers = sorted(list(set([f.godel_number for f in functionals])))
-            for godel_number in range(self._iface.godel_number):
-                struct_name = self.codegen_autotune_struct_name(arch_number, godel_number)
-                if godel_number in godel_numbers:
-                    lets.append(8 * ' ' + f'&autotune::{struct_name},')
-                else:
-                    lets.append(8 * ' ' + f'nullptr,')
-            lets.append(4 * ' ' + '},')
-        return '\n'.join(lets)
-
     def codegen_kernel_arguments(self):
         param_class_name = self._iface.param_class_name
         pp_registry = self._this_repo.get_data('pp_function')

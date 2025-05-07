@@ -18,7 +18,6 @@ from ..utils import (
 )
 # from ..utils.is_tuning_enabled import is_tuning_on_for_kernel
 from ..database import Factories as DatabaseFactories
-from .autotune import AutotuneCodeGenerator
 from ..gpu_targets import cluster_gpus
 
 class InterfaceGenerator(ABC):
@@ -61,8 +60,9 @@ class InterfaceGenerator(ABC):
             df = fac.create_view(functional)
             # print(f'KernelShimGenerator.generate {df=}')
             subg = self.create_sub_generator(functional, df)
-            subg.generate()
-            self._shim_files.append(subg.cc_file)
+            if subg is not None:
+                subg.generate()
+                self._shim_files.append(subg.cc_file)
             all_functionals.append(functional)
 
         # shim code phase
@@ -90,3 +90,43 @@ class InterfaceGenerator(ABC):
     @abstractmethod
     def write_shim_source(self, functionals, fout):
         pass
+
+    '''
+    Tuning Related functions
+    '''
+    def codegen_tune_struct_name(self, arch_number, godel_number):
+        tune_name = self._iface.TUNE_NAME.capitalize()
+        return f'{tune_name}_{self._iface.NAME}__A{arch_number}__F{godel_number}'
+
+    def codegen_kernel_table_entry_declares(self, functionals):
+        decls = []
+        for arch_number, target_arch in enumerate(self._target_arch_keys):
+            godel_numbers = sorted(list(set([f.godel_number for f in functionals])))
+            for godel_number in godel_numbers:
+                struct_name = self.codegen_tune_struct_name(arch_number, godel_number)
+                decls.append(f'void {struct_name}({self._iface.context_class_name}& params, int mod_number);')
+        return '\n'.join(decls)
+
+    def codegen_kernel_table_entries(self, functionals):
+        lets = []
+        for arch_number, target_arch in enumerate(self._target_arch_keys):
+            lets.append(4 * ' ' + '{')
+            godel_numbers = sorted(list(set([f.godel_number for f in functionals])))
+            for godel_number in range(self._iface.godel_number):
+                struct_name = self.codegen_tune_struct_name(arch_number, godel_number)
+                if godel_number in godel_numbers:
+                    lets.append(8 * ' ' + f'&{self._iface.TUNE_NAME}::{struct_name},')
+                else:
+                    lets.append(8 * ' ' + f'nullptr,')
+            lets.append(4 * ' ' + '},')
+        return '\n'.join(lets)
+
+    def codegen_list_of_deduplicated_lut_functions(self):
+        registry = self._this_repo.get_data('lut_function')
+        stmt = [f'{fret} {fname} {fsrc};' for fsrc, (fret, fname, fparams) in registry.items()]
+        return '\n'.join(stmt)
+
+    def codegen_declare_list_of_deduplicated_lut_functions(self):
+        registry = self._this_repo.get_data('lut_function')
+        stmt = [f'extern {fret} {fname}{fparams};' for fsrc, (fret, fname, fparams) in registry.items()]
+        return '\n'.join(stmt)

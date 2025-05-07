@@ -13,21 +13,21 @@
 
 namespace AOTRITON_NS::v3::[[op_family_name]] {
 
-struct [[op_param_class_name]] {
+struct [[param_class_name]] {
     // Function related arguments
     [[func_fields]];
 
-    enum MetroKernelEnum : int32_t {
+    enum BackendEnum : int32_t {
         None = -1,
-        [[list_of_metro_kernel_enum]],
-        Max = [[total_number_of_metro_kernels]]
+        [[list_of_backend_enum]],
+        Max = [[total_number_of_backends]]
     };
-    MetroKernelEnum metro_kernel_index = MetroKernelEnum::None;
+    BackendEnum backend_kernel_index = BackendEnum::None;
 
 #if AOTRITON_BUILD_FOR_TUNING
-    int _has_preferred_metro = -1;
-    constexpr int _total_number_of_metros = MetroKernelEnum::Max;
-    const char* _metro_name = nullptr;
+    int _has_preferred_backend = -1;
+    constexpr int _total_number_of_backends = BackendEnum::Max;
+    const char* _backend_name = nullptr;
 #endif
 
     // One more layer of dispatcher of functionals is added due to
@@ -38,25 +38,24 @@ struct [[op_param_class_name]] {
     int64_t godel_number() const;
 };
 
-class [[op_context_class_name]] {
+class [[context_class_name]] {
 public:
     enum KernelShimEnum : int32_t {
-        [[list_of_named_kernel_shim]],
-        Max = [[total_number_of_kernel_shims]]
+        // list_of_named_kernel_shim,
+        // Max = total_number_of_kernel_shims
+        Max = 1
     };
     // grid_calculators need to be defined in C++ source code
-    static std::function<dim3(const [[op_param_class_name]]&)> grid_calculators[ KernelShimEnum::Max ];
+    static std::function<dim3(const [[param_class_name]]&)> grid_calculators[ KernelShimEnum::Max ];
 
-    hipError_t lookup_optimal([[op_param_class_name]]& params, Gpu gpu);
-    hipError_t launch(const [[op_param_class_name]]& params, hipStream_t stream);
+    hipError_t lookup_optimal([[param_class_name]]& params, Gpu gpu);
+    hipError_t launch(const [[param_class_name]]& params, hipStream_t stream);
 private:
-    typedef void (*OpTuneTableEntry)([[op_param_class_name]]& params, Gpu gpu);
+    typedef void (*OpTuneTableEntry)([[param_class_name]]& params, Gpu gpu);
     static OpTuneTableEntry optune_table[ [[number_of_functionals]] ];
 };
 
 namespace optune {
-
-// using AOTRITON_NS::v3::[[op_family_name]]::[[op_param_class_name]];
 
 [[declare_list_of_deduplicated_lut_functions]]
 

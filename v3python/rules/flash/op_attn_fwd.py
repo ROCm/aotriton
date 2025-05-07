@@ -19,8 +19,8 @@ _IF_DROPOUT = lambda elsechoice : [CC('ENABLE_DROPOUT', False, 0, elsechoice)]
 _IF_CAUSAL = lambda elsechoice : [CC('CAUSAL_TYPE', False, 0, elsechoice)]
 
 class OpAttnFwd(OpAttn):
-    NAME = 'attn_fwd'
-    OP_ARGUMENTS = [
+    NAME = 'op_attn_fwd'
+    ARGUMENTS = [
         # Basic SDPA
         "Q", "K", "V", "B", "A", "Sm_scale", "L", "Out",
         "Q_descale", "K_descale", "P_scale", "P_descale", "V_descale",
@@ -75,12 +75,12 @@ class OpAttnFwd(OpAttn):
         "PRE_LOAD_V",
     ]
     TENSOR_STRIDE_INPUTS = {
-        'Q' : select_pattern(OP_ARGUMENTS, 'stride_q'),
-        'K' : select_pattern(OP_ARGUMENTS, 'stride_k'),
-        'V' : select_pattern(OP_ARGUMENTS, 'stride_v'),
-        'B' : select_pattern(OP_ARGUMENTS, 'stride_b', delete_when=('BIAS_TYPE', 0)),
-        'A' : select_pattern(OP_ARGUMENTS, 'stride_a', delete_when=('USE_ALIBI', False)),
-        'Out' : select_pattern(OP_ARGUMENTS, 'stride_o'),
+        'Q' : select_pattern(ARGUMENTS, 'stride_q'),
+        'K' : select_pattern(ARGUMENTS, 'stride_k'),
+        'V' : select_pattern(ARGUMENTS, 'stride_v'),
+        'B' : select_pattern(ARGUMENTS, 'stride_b', delete_when=('BIAS_TYPE', 0)),
+        'A' : select_pattern(ARGUMENTS, 'stride_a', delete_when=('USE_ALIBI', False)),
+        'Out' : select_pattern(ARGUMENTS, 'stride_o'),
     }
     TENSOR_RANKS = {
         '_default' : 4,

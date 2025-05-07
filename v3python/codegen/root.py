@@ -14,7 +14,6 @@ from ..utils import (
     RegistryRepository,
 )
 from ..gpu_targets import AOTRITON_ARCH_TO_DIRECTORY
-# from .op import OpGenerator
 
 class RootGenerator(object):
     def __init__(self, args):
@@ -24,16 +23,16 @@ class RootGenerator(object):
         args = self._args
         hsaco_for_kernels = []
         shims = []
+        for op in dispatcher_operators:
+            opg = OperatorGenerator(self._args, op, parent_repo=None)
+            opg.generate()
+            shims += opg.shim_files
         for k in triton_kernels:
             ksg = KernelShimGenerator(self._args, k, parent_repo=None)
             ksg.generate()
             hsacos = ksg.this_repo.get_data('hsaco')
             hsaco_for_kernels.append((k, hsacos))
             shims += ksg.shim_files
-        # for op in dispatcher_operators:
-        #     opg = OpGenerator(self._args, op)
-        #     opg.generate()
-        #     shims += opg.shim_files
 
         if args.noimage_mode:
             return

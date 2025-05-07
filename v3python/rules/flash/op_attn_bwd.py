@@ -14,7 +14,7 @@ from ._common import (
 )
 
 class OpAttnBwd(OpAttn):
-    NAME = 'attn_bwd'
+    NAME = 'op_attn_bwd'
     ARGUMENTS = [
         'Q', 'K', 'V', 'B', 'sm_scale', 'Out', 'DO',
         'DK', 'DV', 'DQ', 'DB',

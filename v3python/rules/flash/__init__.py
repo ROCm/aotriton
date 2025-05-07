@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 # from ...metro import MetroKernel
-# from .ops import OpAttnFwd, OpAttnBwd
+from .ops import OpAttnFwd # , OpAttnBwd
 from .attn_fwd import attn_fwd
 # from .bwd_preprocess import bwd_preprocess, bwd_preprocess_varlen
 # from .bwd_kernel_dk_dv import bwd_kernel_dk_dv
@@ -38,7 +38,7 @@ kernels = [
 ]
 
 operators = [
-    # OpAttnFwd()
+    OpAttnFwd()
     # [
     #     MetroKernel('triton', [__attn_fwd], is_fallback=True),
     # ]),
