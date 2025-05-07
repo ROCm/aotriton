@@ -11,14 +11,11 @@
 #include <functional>
 #include <string>
 #include <vector>
-#if ![[empty_op]]
-// "op.None.h" means this kernel is not linked to a op class.
-#include "op.[[op_name]].h" 
-#endif
+[[include_shared_iface]]
 
 namespace AOTRITON_NS::v2::[[kernel_family_name]] {
 
-#if [[empty_op]]
+#if [[not_shared]]
 // The parameter class must be defined here when
 // There is no common operator for [[shim_kernel_name]].
 struct [[param_class_name]] {

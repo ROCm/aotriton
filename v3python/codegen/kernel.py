@@ -6,7 +6,6 @@
 import io
 from ..base.conditional_value import ConditionalConstexpr
 from ..base import typed_choice as TC
-from ..op import NO_OPERATOR
 from ..kernel.kdesc import KernelDescription
 from ..utils import (
     LazyFile,
@@ -53,7 +52,7 @@ class KernelShimGenerator(object):
             acg = AutotuneCodeGenerator(self._args, functional, df, self._registry_repo)
             acg.generate()
             hsaco_registry.register(functional, acg.all_signatures)
-            shims_registry.register(acg.shim_file)
+            shims_registry.register(acg.autotune_cc)
             all_functionals.append(functional)
 
         # shim code phase
@@ -67,30 +66,36 @@ class KernelShimGenerator(object):
             self.write_shim_header(all_functionals, fout)
         with LazyFile(fullfn.with_suffix('.cc')) as fout:
             self.write_shim_source(all_functionals, fout)
+        shims_registry.register(fullfn)
+        shims_registry.register(fullfn.with_suffix('.cc'))
 
     def write_shim_header(self, functionals, fout):
         kdesc = self._kdesc
-        empty_op = kdesc.OPERATOR == NO_OPERATOR
+        not_shared = kdesc.SHARED_IFACE is None
+        if not_shared:
+            iface_header = '// No shared interface'
+        else:
+            hdr_name = kdesc.SHARED_IFACE.NAME
+            iface_header = f'#include "iface.{hdr_name}.h"'
         d = {
-            'kernel_family_name'  : kdesc.FAMILY,
-            'shim_kernel_name'    : kdesc.NAME,
-            'param_class_name'    : kdesc.param_class_name,
-            'op_name'             : kdesc.OPERATOR.NAME,
-            'empty_op'            : 1 if empty_op else 0,
-            'context_class_name'  : kdesc.context_class_name,
-            'metadata_class_name' : kdesc.metadata_class_name,
-            'func_fields'         : codegen_struct_cfields(kdesc.func_cfields, nalign=4),
-            'perf_fields'         : codegen_struct_cfields(kdesc.perf_cfields, nalign=4),
-            'declare_compiled_in_features' : self.codegen_declare_compiled_in_features(),
-            'kernel_table_entry_declares' : self.codegen_kernel_table_entry_declares(functionals),
-            'number_of_functionals': kdesc._godel_number,
+            'kernel_family_name'    : kdesc.FAMILY,
+            'shim_kernel_name'      : kdesc.NAME,
+            'param_class_name'      : kdesc.param_class_name,
+            'include_shared_iface'  : iface_header,
+            'not_shared'            : 1 if not_shared else 0,
+            'context_class_name'    : kdesc.context_class_name,
+            'metadata_class_name'   : kdesc.metadata_class_name,
+            'func_fields'           : codegen_struct_cfields(kdesc.func_cfields, nalign=4),
+            'perf_fields'           : codegen_struct_cfields(kdesc.perf_cfields, nalign=4),
+            'declare_compiled_in_features'  : self.codegen_declare_compiled_in_features(),
+            'kernel_table_entry_declares'   : self.codegen_kernel_table_entry_declares(functionals),
+            'number_of_functionals' : kdesc._godel_number,
             'declare_list_of_deduplicated_lut_functions' : self.codegen_declare_list_of_deduplicated_lut_functions(),
         }
         print(self.HEADER_TEMPLATE.format_map(d), file=fout)
 
     def write_shim_source(self, functionals, fout):
         kdesc = self._kdesc
-        op = kdesc.OPERATOR # TODO
         list_of_pp_args_function_defs, list_of_pp_args_function_decls, pp_func_num = self.codegen_kernel_arguments()
         d = {
             'kernel_family_name'  : kdesc.FAMILY,

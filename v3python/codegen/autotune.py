@@ -12,7 +12,7 @@ from ..utils import (
     LazyFile,
     dict2json,
 )
-from .common import codegen_struct_cfields
+from .common import codegen_struct_cfields, MissingLutEntry
 import numpy as np
 
 class AutotuneCodeGenerator(object):
@@ -33,6 +33,7 @@ class AutotuneCodeGenerator(object):
         self._registry_repo = registry_repo
         # TODO: support other binning algorithm
         kdesc = self._f.meta_object
+        self._autotune_cc = self.get_autotune_cc(f)
         if args.build_for_tuning or self._df is None:
             print(f'translate_empty_dataframe for kernel {kdesc.NAME}')
             self._lut_tensor, self._sigs, self._binning_dict = kdesc.translate_empty_dataframe(f)
@@ -41,19 +42,31 @@ class AutotuneCodeGenerator(object):
         else:
             print(f'translate_dataframe for kernel {kdesc.NAME}')
             self._lut_tensor, self._sigs, self._binning_dict = kdesc.translate_dataframe(f, self._df)
+            if not kdesc.sancheck_lut_tensor(f, self._lut_tensor):
+                ent = MissingLutEntry(f, lut_tensor)
+                if args._should_raise_for_lut(f):
+                    raise ent
+                else:
+                    for j in ent.get_missing_lut_entries():
+                        print("TUNE_FLASH --entry_from_json Item: ", j)
         assert all([isinstance(k, KernelSignature)] for k in self._sigs)
+
+    def get_autotune_cc(self, f):
+        kdesc = self._f.meta_object
+        tune_dir = self._args.build_dir / kdesc.FAMILY / f'{kdesc.TUNE_NAME}.{kdesc.NAME}'
+        tune_dir.mkdir(parents=True, exist_ok=True)
+        return tune_dir / (f.filepack_signature + '.cc')
+
+    @property
+    def autotune_cc(self):
+        return self._autotune_cc
 
     def generate(self):
         # Un "self._" section
         args = self._args
-        f = self._f
-        kdesc = f.meta_object
 
-        tune_dir = args.build_dir / kdesc.FAMILY / f'{kdesc.TUNE_NAME}.{kdesc.NAME}'
-        tune_dir.mkdir(parents=True, exist_ok=True)
-        self._shim_file = tune_dir / (f.filepack_signature + '.cc')
-        print(f'Writing to {self._shim_file}')
-        with LazyFile(self._shim_file) as fout:
+        print(f'Writing to {self._autotune_cc}')
+        with LazyFile(self._autotune_cc) as fout:
             self.write_autotune_src(fout)
 
     def write_autotune_src(self, fout):
@@ -247,7 +260,7 @@ class AutotuneCodeGenerator(object):
         kdesc = self._f.meta_object
         ALIGN = ';\n' + 4 * ' '
         stmt = []
-        for meta in kdesc.list_performance_params():
+        for meta in kdesc.gen_performance_params():
             for aname in meta.all_names:
                 stmt.append(f'context.{aname} = perf.{aname}')
         return ALIGN.join(stmt)
@@ -256,6 +269,3 @@ class AutotuneCodeGenerator(object):
     def all_signatures(self):
         return self._sigs
 
-    @property
-    def shim_file(self):
-        return self._shim_file

@@ -1,6 +1,7 @@
 # Copyright © 2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
+import os
 from .rules import (
     kernels as triton_kernels,
     operators as dispatcher_operators,
@@ -14,6 +15,16 @@ from .codegen import (
 import argparse
 from pathlib import Path
 from .gpu_targets import AOTRITON_SUPPORTED_GPUS
+
+SKIPPED_LUT_CHECK = os.getenv('AOTRITON_SKIP_LUT_CHECK', default='').split(',')
+
+def _should_raise_for_lut(args, f : 'Functional'):
+    if args.lut_sanity_check:
+        return False
+    iface = f.meta_object
+    if iface.UNTYPED_FULL_NAME in SKIPPED_LUT_CHECK:
+        return False
+    return True
 
 def parse():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -31,7 +42,7 @@ def parse():
     # Always True
     # p.add_argument("--generate_cluster_info", action='store_true', help="Generate Bare.functionals for clustering.")
     p.add_argument("--verbose", action='store_true', help="Print debugging messages")
-    p.add_argument("--lut_sanity_check", action='store_true', help="Do not raise exceptions when the look up table (lut) is incomplete.")
+    p.add_argument("--lut_sanity_check", action='store_true', help="By default, an exception will ba raised when any the look up table (LUT) is broken. With this option the exception is not raised, and diagnose information is printed for developers to re-run the tuning script in order to fix the database.")
     # Handled by CMake
     # p.add_argument("--timeout", type=float, default=8.0, help='Maximal time the compiler can run. Passing < 0 for indefinite. No effect in bare mode (handled separately)')
     args = p.parse_args()
@@ -39,6 +50,7 @@ def parse():
     args.build_for_tuning_but_skip_kernel = args.build_for_tuning_but_skip_kernel
     args._cluster_registry = ClusterRegistry()
     args._object_file_registry = []
+    args._should_raise_for_lut = lambda f : should_raise_for_lut(args, f)
     # print(args)
     return args
 

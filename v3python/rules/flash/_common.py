@@ -18,13 +18,14 @@ from v3python.autotune import (
     BinningExact,
 )
 
-def check_value(fsels, repr_name):
+def check_value(functional, repr_name):
     if not isinstance(repr_name, list):
         repr_name = [repr_name]
-    for fsel in fsels:
-        if fsel.repr_name in repr_name:
-            return fsel.argument_value
-    assert False, f'Cannot find {repr_name=} in {fsels=}'
+    tc = functional.compact_choices
+    for aname in repr_name:
+        if aname in tc:
+            return tc[aname]
+    assert False, f'Cannot find {repr_name=} in {functional=}'
 
 class OpAttn(Operator):
     OP_FAMILY = 'flash'
@@ -36,26 +37,26 @@ class FlashKernel(KernelDescription):
     LUT_FULL_SEQLEN_K = [4,8,16,32,64,128,256,512,1024,2048,4096,8192]
     LUT_FULL_SEQLEN_NAVI = [16,32,64,128,256,512,1024]
 
-    def is_functional_disabled_on_arch(self, arch, fsels):
+    def is_functional_disabled_on_arch(self, functional):
         if not hasattr(self, 'gen_autotune_configs'):  # only check acutal FA kernels
             return False
-        is_causal = check_value(fsels, ['CAUSAL', 'CAUSAL_TYPE'])
-        bias_type = check_value(fsels, 'BIAS_TYPE')
+        is_causal = check_value(functional, ['CAUSAL', 'CAUSAL_TYPE'])
+        bias_type = check_value(functional, 'BIAS_TYPE')
         if is_causal and bias_type != 0:
             return True
         return False
 
     def sancheck_lut_tensor(self,
-                            arch,
-                            lut_tensor,
-                            fsels : 'list[ArgumentSelection]'):
+                            functional : 'Functional',
+                            lut_tensor):
         # Only kernels that provide gen_autotune_configs may have entries in
         # tuning database
         if not hasattr(self, 'gen_autotune_configs'):
             return True
+        arch = functional.arch
         if 'gfx950' in arch:  # Tuning database depends on others
             return True
-        if self.is_functional_disabled_on_arch(arch, fsels):
+        if self.is_functional_disabled_on_arch(functional):
             return True  # ignore disabled functionals
         MI = (AOTRITON_ARCH_WARPSIZE[arch] == 64)
         Navi = (AOTRITON_ARCH_WARPSIZE[arch] == 32)
@@ -72,14 +73,17 @@ class FlashKernel(KernelDescription):
         else:
             assert False, f"Unknown {gpu}"
 
-    def get_missing_lut_entries(self, gpu, lut_tensor, fsels) -> list[dict]:
+    '''
+    TODO: new tuning framework should reuse KernelDescription
+    '''
+    def get_missing_lut_entries(self, lut_tensor, functional) -> list[dict]:
         if 'Unidentified' in gpu:  # Tuning database depends on others
             return []
         from copy import deepcopy
         import json
         import numpy as np
-        base = {'gpu' : gpu}
-        arch = gpu2arch(gpu)
+        arch = functional.arch
+        base = {'arch' : arch}
         MI = (AOTRITON_ARCH_WARPSIZE[arch] == 64)
         Navi = (AOTRITON_ARCH_WARPSIZE[arch] == 32)
         if Navi:
@@ -88,11 +92,11 @@ class FlashKernel(KernelDescription):
         else:
             lut_full_seqlen_q = self.LUT_FULL_SEQLEN_Q
             lut_full_seqlen_k = self.LUT_FULL_SEQLEN_K
-        base['causal'] = check_value(fsels, ['CAUSAL', 'CAUSAL_TYPE'])
-        base['d_head'] = check_value(fsels, 'BLOCK_DMODEL')
-        base['dropout_p'] = 0.5 if check_value(fsels, 'ENABLE_DROPOUT') else 0.0
+        base['causal'] = check_value(functional, ['CAUSAL', 'CAUSAL_TYPE'])
+        base['d_head'] = check_value(functional, 'BLOCK_DMODEL')
+        base['dropout_p'] = 0.5 if check_value(functional, 'ENABLE_DROPOUT') else 0.0
         def dtype():
-            value = check_value(fsels, 'Q')
+            value = check_value(functional, 'Q')
             if value.startswith('*fp16'):
                 return 'float16'
             if value.startswith('*bf16'):
