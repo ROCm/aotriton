@@ -8,7 +8,7 @@ from ..rules import (
     operators as dispatcher_operators,
 )
 from .kernel import KernelShimGenerator
-from .op import OperatorGenerator
+from .operator import OperatorGenerator
 from ..utils import (
     LazyFile,
     RegistryRepository,
