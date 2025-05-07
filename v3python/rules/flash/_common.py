@@ -18,6 +18,10 @@ from v3python.autotune import (
     BinningExact,
 )
 
+class OpAttn(Operator):
+    FAMILY = 'flash'
+    MAIN_DATATYPES = ['*fp16:16', '*bf16:16', '*fp32:16'] if AOTRITON_ENABLE_FP32 else ['*fp16:16', '*bf16:16']
+
 def check_value(functional, repr_name):
     if not isinstance(repr_name, list):
         repr_name = [repr_name]
@@ -26,10 +30,6 @@ def check_value(functional, repr_name):
         if aname in tc:
             return tc[aname]
     assert False, f'Cannot find {repr_name=} in {functional=}'
-
-class OpAttn(Operator):
-    OP_FAMILY = 'flash'
-    MAIN_DATATYPES = ['*fp16:16', '*bf16:16', '*fp32:16'] if AOTRITON_ENABLE_FP32 else ['*fp16:16', '*bf16:16']
 
 class FlashKernel(KernelDescription):
     FAMILY = 'flash'

@@ -6,4 +6,9 @@ from ..base import (
 )
 
 class Operator(Interface):
-    pass
+    TUNE_NAME = 'optune'
+
+    @property
+    def enum_name(self):
+        # CamelName = self.NAME.replace('_', ' ').title().replace(' ', '')
+        return f'kOp_{self.class_name_base}'

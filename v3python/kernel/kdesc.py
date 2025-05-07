@@ -58,7 +58,6 @@ class KernelDescription(Interface):
 
     @property
     def enum_name(self):
-        # CamelName = self.NAME.replace('_', ' ').title().replace(' ', '')
         return f'kShim_{self.class_name_base}'
 
     @property

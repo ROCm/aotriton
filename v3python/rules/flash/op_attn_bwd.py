@@ -15,7 +15,7 @@ from ._common import (
 
 class OpAttnBwd(OpAttn):
     NAME = 'attn_bwd'
-    OP_ARGUMENTS = [
+    ARGUMENTS = [
         'Q', 'K', 'V', 'B', 'sm_scale', 'Out', 'DO',
         'DK', 'DV', 'DQ', 'DB',
         'L', 'D',
@@ -50,17 +50,17 @@ class OpAttnBwd(OpAttn):
         'BIAS_TYPE',
     ]
     TENSOR_STRIDE_INPUTS = {
-        'Q' : select_pattern(OP_ARGUMENTS, 'stride_q'),
-        'K' : select_pattern(OP_ARGUMENTS, 'stride_k'),
-        'V' : select_pattern(OP_ARGUMENTS, 'stride_v'),
-        'B' : select_pattern(OP_ARGUMENTS, 'stride_b', delete_when=('BIAS_TYPE', 0)),
-        'Out' : select_pattern(OP_ARGUMENTS, 'stride_o'),
-        'DO' : select_pattern(OP_ARGUMENTS, 'stride_o'),
-        'DK' : select_pattern(OP_ARGUMENTS, 'stride_dk'),
-        'DV' : select_pattern(OP_ARGUMENTS, 'stride_dv'),
-        'DO' : select_pattern(OP_ARGUMENTS, 'stride_o'),
-        'DQ' : select_pattern(OP_ARGUMENTS, 'stride_dq'),
-        'DB' : select_pattern(OP_ARGUMENTS, 'stride_db', delete_when=('BIAS_TYPE', 0)),
+        'Q' : select_pattern(ARGUMENTS, 'stride_q'),
+        'K' : select_pattern(ARGUMENTS, 'stride_k'),
+        'V' : select_pattern(ARGUMENTS, 'stride_v'),
+        'B' : select_pattern(ARGUMENTS, 'stride_b', delete_when=('BIAS_TYPE', 0)),
+        'Out' : select_pattern(ARGUMENTS, 'stride_o'),
+        'DO' : select_pattern(ARGUMENTS, 'stride_o'),
+        'DK' : select_pattern(ARGUMENTS, 'stride_dk'),
+        'DV' : select_pattern(ARGUMENTS, 'stride_dv'),
+        'DO' : select_pattern(ARGUMENTS, 'stride_o'),
+        'DQ' : select_pattern(ARGUMENTS, 'stride_dq'),
+        'DB' : select_pattern(ARGUMENTS, 'stride_db', delete_when=('BIAS_TYPE', 0)),
     }
     TENSOR_RANKS = {
         '_default' : 4,

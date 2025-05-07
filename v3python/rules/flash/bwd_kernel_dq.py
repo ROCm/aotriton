@@ -16,7 +16,7 @@ match_op = lambda aname : get_possible_choices(OpAttnBwd, aname)
 match_kv = lambda aname : get_possible_choices(bwd_kernel_dk_dv, aname)
 
 class bwd_kernel_dq(FlashKernel):
-    OP_KLASS = OpAttnBwd
+    SHARED_IFACE = OpAttnBwd
     ARGUMENTS = [
         'Q', 'K', 'V', 'B', 'sm_scale', 'Out', 'DO',
         'DQ', 'DB',

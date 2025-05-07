@@ -15,7 +15,7 @@ from .op_attn_bwd import OpAttnBwd
 match_fwd = lambda aname : get_possible_choices(attn_fwd, aname)
 
 class bwd_kernel_dk_dv(FlashKernel):
-    OP_KLASS = OpAttnBwd
+    SHARED_IFACE = OpAttnBwd
     ARGUMENTS = [
         'Q', 'K', 'V', 'B', 'sm_scale', 'Out', 'DO',
         'DK', 'DV',

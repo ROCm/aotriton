@@ -3,8 +3,12 @@
 
 # Root of the Generation process
 
-from ..rules import kernels as triton_kernels
+from ..rules import (
+    kernels as triton_kernels,
+    operators as dispatcher_operators,
+)
 from .kernel import KernelShimGenerator
+from .op import OperatorGenerator
 from ..utils import (
     LazyFile,
     RegistryRepository,
@@ -21,14 +25,16 @@ class RootGenerator(object):
         hsaco_for_kernels = []
         shims = []
         for k in triton_kernels:
-            registry_repo = RegistryRepository()
-            ksg = KernelShimGenerator(self._args, k, registry_repo)
+            ksg = KernelShimGenerator(self._args, k, parent_repo=None)
             ksg.generate()
-            hsacos = registry_repo.get_data('hsaco')
+            hsacos = ksg.this_repo.get_data('hsaco')
             hsaco_for_kernels.append((k, hsacos))
-            shims += registry_repo.get_data('shim')
+            shims += ksg.shim_files
         # for op in dispatcher_operators:
-        #     OpGenerator(self._args, op).generate()
+        #     opg = OpGenerator(self._args, op)
+        #     opg.generate()
+        #     shims += opg.shim_files
+
         if args.noimage_mode:
             return
         # TODO: Support Cluter Functionals

@@ -38,9 +38,10 @@ kernels = [
 ]
 
 operators = [
-    #     OpAttnFwd([
-    #         MetroKernel('triton', [__attn_fwd], is_fallback=True),
-    #     ]),
+    # OpAttnFwd()
+    # [
+    #     MetroKernel('triton', [__attn_fwd], is_fallback=True),
+    # ]),
     #     OpAttnBwd([
     #         MetroKernel('triton_split',
     #                     [__bwd_preprocess,

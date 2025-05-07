@@ -4,6 +4,7 @@
 import sqlite3
 import pandas as pd
 from ..base import typed_choice as TC
+from ..op import Operator
 
 '''
 We don't really need a LazyTableView, if Lazy evaluation is needed, a
@@ -37,10 +38,7 @@ class Factory(object):
     def create_view(self, functional):
         print(f'{functional=}')
         meta = functional.meta_object
-        is_op = hasattr(meta, 'OPERATOR')
-        # pfx = 'OP$' if is_op else ''
-        # TODO: Support Operator
-        pfx = ''
+        pfx = 'OP$' if isinstance(meta, Operator) else ''
         table_name = pfx + meta.FAMILY.upper() + '$' + meta.NAME
         def build_sql(choice_dict):
             wheres = {

@@ -26,14 +26,14 @@ class AutotuneCodeGenerator(object):
                  args,
                  f : Functional,
                  dataframe_for_tuning : 'pandas.DataFrame | None',
-                 registry_repo):
+                 parent_repo):
         self._args = args
         self._f = f
         self._df = dataframe_for_tuning
-        self._registry_repo = registry_repo
+        self._parent_repo = parent_repo
         # TODO: support other binning algorithm
         kdesc = self._f.meta_object
-        self._autotune_cc = self.get_autotune_cc(f)
+        self._cc_file = self.get_cc_file(f)
         if args.build_for_tuning or self._df is None:
             print(f'translate_empty_dataframe for kernel {kdesc.NAME}')
             self._lut_tensor, self._sigs, self._binning_dict = kdesc.translate_empty_dataframe(f)
@@ -51,23 +51,25 @@ class AutotuneCodeGenerator(object):
                         print("TUNE_FLASH --entry_from_json Item: ", j)
         assert all([isinstance(k, KernelSignature)] for k in self._sigs)
 
-    def get_autotune_cc(self, f):
+    def get_cc_file(self, f):
         kdesc = self._f.meta_object
         tune_dir = self._args.build_dir / kdesc.FAMILY / f'{kdesc.TUNE_NAME}.{kdesc.NAME}'
         tune_dir.mkdir(parents=True, exist_ok=True)
         return tune_dir / (f.filepack_signature + '.cc')
 
     @property
-    def autotune_cc(self):
-        return self._autotune_cc
+    def cc_file(self):
+        return self._cc_file
 
     def generate(self):
         # Un "self._" section
         args = self._args
 
-        print(f'Writing to {self._autotune_cc}')
-        with LazyFile(self._autotune_cc) as fout:
+        print(f'Writing to {self._cc_file}')
+        with LazyFile(self._cc_file) as fout:
             self.write_autotune_src(fout)
+        hsaco_registry = self._parent_repo.get_hsaco_registry('hsaco')
+        hsaco_registry.register(self._f, self.all_signatures)
 
     def write_autotune_src(self, fout):
         f = self._f
@@ -117,7 +119,7 @@ class AutotuneCodeGenerator(object):
 
     def codegen_compact_kernels(self, kdesc, ksigs, package_path):
         meta_hsacos = []
-        string_registry = self._registry_repo.get_string_registry('per_kernel_packed_string')
+        string_registry = self._parent_repo.get_string_registry('per_kernel_packed_string')
         def register_string(s):
             return string_registry.register(s)
         for sig in ksigs:
@@ -180,7 +182,7 @@ class AutotuneCodeGenerator(object):
         stmt.append('}}')
         ALIGN = '\n'
         lambda_src = ALIGN.join(stmt).format_map(d)
-        lut_registry = self._registry_repo.get_function_registry('lut_function')
+        lut_registry = self._parent_repo.get_function_registry('lut_function')
         lut_params = lambda_params.format_map(d)
         lut_function_pfx = f'{kdesc.NAME}__lut_lambda'
         lut_function_name = lut_registry.register(lambda_src, 'int', lut_function_pfx, lut_params)
@@ -203,7 +205,7 @@ class AutotuneCodeGenerator(object):
     def codegen_deduplicated_pp_args_function_index(self, functional : Functional):
         kdesc = self._f.meta_object
 
-        pp_registry = self._registry_repo.get_signatured_function_registry('pp_function')
+        pp_registry = self._parent_repo.get_signatured_function_registry('pp_function')
         bind_dict = functional.build_complete_bind_dict(with_resolved_tc=True)
         def _pp_signature(aname):
             bind, tc = bind_dict[aname]

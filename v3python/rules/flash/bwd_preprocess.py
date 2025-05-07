@@ -9,7 +9,7 @@ match_op = lambda aname : get_possible_choices(OpAttnBwd, aname)
 
 # TODO: rename stride_on to stride_ok and stride_don to stride_dok in tritonsrc
 class bwd_preprocess(FlashKernel):
-    OP_KLASS = OpAttnBwd
+    SHARED_IFACE = OpAttnBwd
     ARGUMENTS = [
         'Out', 'DO',
         'D',
@@ -33,7 +33,7 @@ class bwd_preprocess(FlashKernel):
     DOWNGRADER = []
 
 class bwd_preprocess_varlen(FlashKernel):
-    OP_KLASS = OpAttnBwd
+    SHARED_IFACE = OpAttnBwd
     ARGUMENTS = [
         'Out', 'DO',
         'D',

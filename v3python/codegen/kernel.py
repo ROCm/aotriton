@@ -4,73 +4,29 @@
 # Generate <family>/shim.<kernel_name>.{h,cc}
 
 import io
-from ..base.conditional_value import ConditionalConstexpr
-from ..base import typed_choice as TC
-from ..kernel.kdesc import KernelDescription
+from ..base import (
+    typed_choice as TC,
+    Functional,
+)
+from .interface import InterfaceGenerator
+from ..kernel import KernelDescription
 from ..utils import (
     LazyFile,
     get_template,
-    RegistryRepository,
 )
-# from ..utils.is_tuning_enabled import is_tuning_on_for_kernel
-from ..database import Factories as DatabaseFactories
 from .common import codegen_struct_cfields
 from .autotune import AutotuneCodeGenerator
-from ..gpu_targets import cluster_gpus
 
-class KernelShimGenerator(object):
+class KernelShimGenerator(InterfaceGenerator):
     HEADER_TEMPLATE = get_template('shim.h')
     SOURCE_TEMPLATE = get_template('shim.cc')
+    PFX = 'shim'
 
-    def __init__(self, args, k : KernelDescription, global_repo : RegistryRepository):
-        self._args = args
-        self._kdesc = k
-        # self._tuning = is_tuning_on_for_kernel(self._args, self._kdesc)
-        self._target_gpus = args.target_gpus
-        self._target_arch = cluster_gpus(self._target_gpus)
-        self._target_arch_keys = list(self._target_arch.keys())
-        print(f'{self._target_arch=}')
-        self._global_repo = global_repo
-
-    def generate(self):
-        # Un "self._" section
-        args = self._args
-        kdesc = self._kdesc
-
-        # registry
-        self._registry_repo = RegistryRepository()
-        hsaco_registry = self._global_repo.get_hsaco_registry('hsaco')
-        shims_registry = self._global_repo.get_list_registry('shim')
-        all_functionals = []
-
-        # autotune phase
-        fac = DatabaseFactories.create_factory(args.build_dir)
-        for functional in kdesc.gen_functionals(self._target_arch):
-            # print(f'{functional=}')
-            df = fac.create_view(functional)
-            # print(f'KernelShimGenerator.generate {df=}')
-            acg = AutotuneCodeGenerator(self._args, functional, df, self._registry_repo)
-            acg.generate()
-            hsaco_registry.register(functional, acg.all_signatures)
-            shims_registry.register(acg.autotune_cc)
-            all_functionals.append(functional)
-
-        # shim code phase
-        # Must be after autotune due to common functions needed by autotune is
-        # generated in autotune module
-        shim_path = args.build_dir / kdesc.FAMILY
-        shim_path.mkdir(parents=True, exist_ok=True)
-        shim_fn = 'shim.' + kdesc.NAME + '.h'
-        fullfn = shim_path / shim_fn
-        with LazyFile(fullfn) as fout:
-            self.write_shim_header(all_functionals, fout)
-        with LazyFile(fullfn.with_suffix('.cc')) as fout:
-            self.write_shim_source(all_functionals, fout)
-        shims_registry.register(fullfn)
-        shims_registry.register(fullfn.with_suffix('.cc'))
+    def create_sub_generator(self, functional : Functional, df : 'pandas.DataFrame'):
+        return AutotuneCodeGenerator(self._args, functional, df, self._this_repo)
 
     def write_shim_header(self, functionals, fout):
-        kdesc = self._kdesc
+        kdesc = self._iface
         not_shared = kdesc.SHARED_IFACE is None
         if not_shared:
             iface_header = '// No shared interface'
@@ -95,7 +51,7 @@ class KernelShimGenerator(object):
         print(self.HEADER_TEMPLATE.format_map(d), file=fout)
 
     def write_shim_source(self, functionals, fout):
-        kdesc = self._kdesc
+        kdesc = self._iface
         list_of_pp_args_function_defs, list_of_pp_args_function_decls, pp_func_num = self.codegen_kernel_arguments()
         d = {
             'kernel_family_name'  : kdesc.FAMILY,
@@ -120,10 +76,10 @@ class KernelShimGenerator(object):
         print(self.SOURCE_TEMPLATE.format_map(d), file=fout)
 
     def codegen_per_kernel_packed_string(self):
-        return self._registry_repo.get_data('per_kernel_packed_string')
+        return self._this_repo.get_data('per_kernel_packed_string')
 
     def codegen_declare_compiled_in_features(self):
-        kdesc = self._kdesc
+        kdesc = self._iface
         decl_list = []
         for tp in kdesc.list_functional_params():
             tc = tp.repr_typed_choice
@@ -136,7 +92,7 @@ class KernelShimGenerator(object):
 
     def codegen_define_compiled_in_features(self):
         def_list = []
-        kdesc = self._kdesc
+        kdesc = self._iface
         meta_class = kdesc.metadata_class_name
         for tp in kdesc.list_functional_params():
             tc = tp.repr_typed_choice
@@ -159,7 +115,7 @@ const std::vector<{infotype}>& {meta_class}::get_{tp.repr_name}_choices()
 
     def codegen_godel_number_body(self):
         body = io.StringIO()
-        kdesc = self._kdesc
+        kdesc = self._iface
         for meta in kdesc.list_functional_params():
             self.codegen_godel_number_calculation(meta, body)
         return body.getvalue()
@@ -193,17 +149,17 @@ const std::vector<{infotype}>& {meta_class}::get_{tp.repr_name}_choices()
         return ALIGN.join(lets)
 
     def codegen_list_of_deduplicated_lut_functions(self):
-        registry = self._registry_repo.get_data('lut_function')
+        registry = self._this_repo.get_data('lut_function')
         stmt = [f'{fret} {fname} {fsrc};' for fsrc, (fret, fname, fparams) in registry.items()]
         return '\n'.join(stmt)
 
     def codegen_declare_list_of_deduplicated_lut_functions(self):
-        registry = self._registry_repo.get_data('lut_function')
+        registry = self._this_repo.get_data('lut_function')
         stmt = [f'extern {fret} {fname}{fparams};' for fsrc, (fret, fname, fparams) in registry.items()]
         return '\n'.join(stmt)
 
     def codegen_autotune_struct_name(self, arch_number, godel_number):
-        return f'Autotune_{self._kdesc.NAME}__A{arch_number}__F{godel_number}'
+        return f'Autotune_{self._iface.NAME}__A{arch_number}__F{godel_number}'
 
     def codegen_kernel_table_entry_declares(self, functionals):
         decls = []
@@ -211,7 +167,7 @@ const std::vector<{infotype}>& {meta_class}::get_{tp.repr_name}_choices()
             godel_numbers = sorted(list(set([f.godel_number for f in functionals])))
             for godel_number in godel_numbers:
                 struct_name = self.codegen_autotune_struct_name(arch_number, godel_number)
-                decls.append(f'void {struct_name}({self._kdesc.context_class_name}& params, int mod_number);')
+                decls.append(f'void {struct_name}({self._iface.context_class_name}& params, int mod_number);')
         return '\n'.join(decls)
 
     def codegen_kernel_table_entries(self, functionals):
@@ -219,7 +175,7 @@ const std::vector<{infotype}>& {meta_class}::get_{tp.repr_name}_choices()
         for arch_number, target_arch in enumerate(self._target_arch_keys):
             lets.append(4 * ' ' + '{')
             godel_numbers = sorted(list(set([f.godel_number for f in functionals])))
-            for godel_number in range(self._kdesc.godel_number):
+            for godel_number in range(self._iface.godel_number):
                 struct_name = self.codegen_autotune_struct_name(arch_number, godel_number)
                 if godel_number in godel_numbers:
                     lets.append(8 * ' ' + f'&autotune::{struct_name},')
@@ -229,13 +185,13 @@ const std::vector<{infotype}>& {meta_class}::get_{tp.repr_name}_choices()
         return '\n'.join(lets)
 
     def codegen_kernel_arguments(self):
-        param_class_name = self._kdesc.param_class_name
-        pp_registry = self._registry_repo.get_data('pp_function')
+        param_class_name = self._iface.param_class_name
+        pp_registry = self._this_repo.get_data('pp_function')
         stmt = []
         # array = ['PP_FUNC prepare_arguments [] = {']
         array = []
         for assign_skips, (findex, src) in pp_registry.items():
-            pp_function_name = f'{self._kdesc.NAME}_pp_args_{findex}'
+            pp_function_name = f'{self._iface.NAME}_pp_args_{findex}'
             stmt.append(f'static std::vector<void*>')
             stmt.append(f'{pp_function_name}(const {param_class_name}& params,')
             stmt.append(' ' * len(pp_function_name) + ' hipDeviceptr_t* global_scratch) {')
