@@ -16,7 +16,7 @@ from .template import get_template
 from ..utils import (
     LazyFile,
 )
-from .common import codegen_struct_cfields
+from .common import codegen_struct_cfields, codegen_includes
 from .optune import OptuneCodeGenerator
 
 '''
@@ -79,6 +79,7 @@ class OperatorGenerator(InterfaceGenerator):
             'launcher_table_entries'    : self.codegen_launch_table_entries(nalign=4),
             'list_of_deduplicated_lut_functions' : '// TODO' # self.codegen_declare_list_of_deduplicated_lut_functions(),
         }
+        d['includes'] = codegen_includes(self._src_include_repo.get_data())
         print(self.SOURCE_TEMPLATE.format_map(d), file=fout)
 
     def codegen_backend_enums(self, nalign):
@@ -103,13 +104,14 @@ class OperatorGenerator(InterfaceGenerator):
             return self.codegen_metro_launcher(backend, nalign)
         assert False, f'Unsupported backend class {backend.__class__}'
 
-    def codegen_kshim_launcher(self, backend : Interface, nalign):
+    def codegen_kshim_launcher(self, kdesc : KernelDescription, nalign):
         iface = self._iface
         stmt = []
+        self._add_header_for_source(kdesc)
         d = {
             'context_class_name'    : iface.context_class_name,
-            'launcher_func_name'    : self.codegen_launcher_func_name(backend),
-            'backend_context_name'  : backend.context_class_name,
+            'launcher_func_name'    : self.codegen_launcher_func_name(kdesc),
+            'backend_context_name'  : kdesc.context_class_name,
         }
         return self.KSHIM_LAUNCHER_TEMPLATE.format_map(d)
 
@@ -118,6 +120,7 @@ class OperatorGenerator(InterfaceGenerator):
         context_class_name = iface.context_class_name
         stmt = []
         for kdesc in metro.list_kernels():
+            self._add_header_for_source(kdesc)
             d = {
                 'backend_context_name'  : kdesc.context_class_name,
             }

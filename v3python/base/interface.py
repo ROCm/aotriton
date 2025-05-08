@@ -23,6 +23,7 @@ class Interface(ABC):
     FAMILY = None               # Must be defined
     NAME = None                 # Must be defined
     TUNE_NAME = None            # Must be defined autotune/optune
+    FILE_PFX = 'iface'          # Op uses iface, while Triton kernel uses 'shim'
     ARGUMENTS = None            # Must be defined
     SHARED_IFACE = None         # Optional, can be defined to share param struct
     TYPE_CHOICES = None         # Required For Operator

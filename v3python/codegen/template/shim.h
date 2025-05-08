@@ -11,11 +11,18 @@
 #include <functional>
 #include <string>
 #include <vector>
-[[include_shared_iface]]
+
+#if [[shared_iface]]
+namespace AOTRITON_NS::v3::[[shared_iface_family]] {
+    struct [[param_class_name]];
+}
+#endif
 
 namespace AOTRITON_NS::v3::[[kernel_family_name]] {
 
-#if [[not_shared]]
+#if [[shared_iface]]
+using AOTRITON_NS::v3::[[shared_iface_family]]::[[param_class_name]];
+#else
 // The parameter class must be defined here when
 // There is no common operator for [[shim_kernel_name]].
 struct [[param_class_name]] {

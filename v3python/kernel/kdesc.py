@@ -49,6 +49,7 @@ def select_pattern(arguments, prefix, trim_left=None, trim_right=None, delete_wh
 
 class KernelDescription(Interface):
     TUNE_NAME = 'autotune'
+    FILE_PFX = 'shim'
     ARGUMENTS = []
     NAME = None
     _ARGUMENT_CHOICES = None
@@ -75,7 +76,7 @@ class KernelDescription(Interface):
             print(f'{self._DATA_ARGUMENTS=}')
         return self._DATA_ARGUMENTS
 
-    def is_functional_disabled_on_arch(self, functional):
+    def is_functional_disabled(self, functional):
         return False
 
     def __init__(self, triton_kernel_name, triton_source_path):

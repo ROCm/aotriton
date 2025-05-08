@@ -5,8 +5,13 @@
 #include "shim.[[shim_kernel_name]].h"
 #include <aotriton/util.h>
 #include <tuple>
+[[includes]]
 
 namespace AOTRITON_NS::v3::[[kernel_family_name]] {
+
+#if [[shared_iface]]
+using AOTRITON_NS::v3::[[shared_iface_family]]::[[param_class_name]];
+#endif
 
 #define CAST(x) const_cast<void*>(static_cast<const void*>(x))
 typedef std::vector<void*>(*PP_FUNC)(const [[context_class_name]]& context, hipDeviceptr_t*);

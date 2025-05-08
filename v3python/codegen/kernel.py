@@ -14,7 +14,7 @@ from .template import get_template
 from ..utils import (
     LazyFile,
 )
-from .common import codegen_struct_cfields
+from .common import codegen_struct_cfields, codegen_includes
 from .autotune import AutotuneCodeGenerator
 
 class KernelShimGenerator(InterfaceGenerator):
@@ -27,18 +27,18 @@ class KernelShimGenerator(InterfaceGenerator):
 
     def write_shim_header(self, functionals, fout):
         kdesc = self._iface
-        not_shared = kdesc.SHARED_IFACE is None
-        if not_shared:
-            iface_header = '// No shared interface'
-        else:
-            hdr_name = kdesc.SHARED_IFACE.NAME
-            iface_header = f'#include "iface.{hdr_name}.h"'
+        shared_iface = kdesc.SHARED_IFACE is not None
+        if shared_iface:
+            self._add_header_for_source(kdesc.SHARED_IFACE)
+            # hdr_name = kdesc.SHARED_IFACE.NAME
+            # iface_header = f'#include "iface.{hdr_name}.h"'
+        shared_iface_family = kdesc.SHARED_IFACE.FAMILY if shared_iface else kdesc.FAMILY
         d = {
             'kernel_family_name'    : kdesc.FAMILY,
             'shim_kernel_name'      : kdesc.NAME,
             'param_class_name'      : kdesc.param_class_name,
-            'include_shared_iface'  : iface_header,
-            'not_shared'            : 1 if not_shared else 0,
+            'shared_iface_family'   : shared_iface_family,
+            'shared_iface'          : 1 if shared_iface else 0,
             'context_class_name'    : kdesc.context_class_name,
             'metadata_class_name'   : kdesc.metadata_class_name,
             'func_fields'           : codegen_struct_cfields(kdesc.func_cfields, nalign=4),
@@ -52,8 +52,12 @@ class KernelShimGenerator(InterfaceGenerator):
 
     def write_shim_source(self, functionals, fout):
         kdesc = self._iface
+        shared_iface = kdesc.SHARED_IFACE is not None
+        shared_iface_family = kdesc.SHARED_IFACE.FAMILY if shared_iface else kdesc.FAMILY
         list_of_pp_args_function_defs, list_of_pp_args_function_decls, pp_func_num = self.codegen_kernel_arguments()
         d = {
+            'shared_iface'        : 1 if shared_iface else 0,
+            'shared_iface_family' : shared_iface_family,
             'kernel_family_name'  : kdesc.FAMILY,
             'triton_kernel_name'  : kdesc.NAME,  # TODO: use signature so AMD_LOG_LEVEL=3 is more meaningful
             'shim_kernel_name'    : kdesc.NAME,
@@ -73,6 +77,7 @@ class KernelShimGenerator(InterfaceGenerator):
             'kernel_table_entries' : self.codegen_tune_table_entries(functionals),
             'list_of_deduplicated_lut_functions' : self.codegen_list_of_deduplicated_lut_functions(),
         }
+        d['includes'] = codegen_includes(self._src_include_repo.get_data())
         print(self.SOURCE_TEMPLATE.format_map(d), file=fout)
 
     def codegen_per_kernel_packed_string(self):

@@ -5,6 +5,7 @@
 #include "op.[[iface_name]].h"
 #include <aotriton/util.h>
 #include <tuple>
+[[includes]]
 
 namespace AOTRITON_NS::v3::[[family_name]] {
 

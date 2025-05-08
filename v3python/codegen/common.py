@@ -11,6 +11,10 @@ def codegen_struct_cfields(cfields, *, nalign):
     ALIGN = ';\n' + ' ' * nalign
     return ALIGN.join(rows)
 
+def codegen_includes(header_files):
+    includes = [f'#include "{fn}"' for fn in set(header_files)]
+    return '\n'.join(includes)
+
 class MissingLutEntry(Exception):
     def __init__(self,  functional, lut_tensor):
         self._functional = functional

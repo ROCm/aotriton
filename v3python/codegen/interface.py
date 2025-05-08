@@ -35,6 +35,8 @@ class InterfaceGenerator(ABC):
         # print(f'{self._target_arch=}')
         self._parent_repo = parent_repo
         self._this_repo = RegistryRepository()
+        self._hdr_include_repo = self._this_repo.get_list_registry('headers_needed_in_header_file')
+        self._src_include_repo = self._this_repo.get_list_registry('headers_needed_in_source_file')
         self._shim_files = []
 
     @property
@@ -91,6 +93,17 @@ class InterfaceGenerator(ABC):
     def write_shim_source(self, functionals, fout):
         pass
 
+    def _add_header_for_header(self, iface):
+        fn = self._translate_iface_to_header(iface)
+        self._hdr_include_repo.register(fn)
+
+    def _add_header_for_source(self, iface):
+        fn = self._translate_iface_to_header(iface)
+        self._src_include_repo.register(fn)
+
+    def _translate_iface_to_header(self, iface):
+        return f'{iface.FILE_PFX}.{iface.NAME}.h'
+
     '''
     Tuning Related functions
     '''
@@ -132,6 +145,9 @@ class InterfaceGenerator(ABC):
         stmt = [f'extern {fret} {fname}{fparams};' for fsrc, (fret, fname, fparams) in registry.items()]
         return '\n'.join(stmt)
 
+    '''
+    Godel Numbers
+    '''
     def codegen_godel_number_body(self):
         body = io.StringIO()
         iface = self._iface
