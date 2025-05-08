@@ -13,7 +13,7 @@
 #include <vector>
 [[include_shared_iface]]
 
-namespace AOTRITON_NS::v2::[[kernel_family_name]] {
+namespace AOTRITON_NS::v3::[[kernel_family_name]] {
 
 #if [[not_shared]]
 // The parameter class must be defined here when

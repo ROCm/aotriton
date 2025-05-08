@@ -43,7 +43,7 @@ static AOTRITON_NS::TritonKernelCompactMeta meta_list[] = {
 
 static constexpr int kTotalNumKernels = ARRAY_SIZE(meta_list);
 
-using AOTRITON_NS::v2::[[kernel_family_name]]::autotune::[[shim_kernel_name]]_packed_string;
+using AOTRITON_NS::v3::[[kernel_family_name]]::autotune::[[shim_kernel_name]]_packed_string;
 
 static AOTRITON_NS::TritonKernelCluster<kTotalNumKernels>
 kernel_cluster(meta_list,
@@ -55,7 +55,7 @@ static [[lut_ctype]] lut[[lut_cshape]] =
 
 }; // End of anonymous namespace
 
-namespace AOTRITON_NS::v2::[[kernel_family_name]]::autotune {
+namespace AOTRITON_NS::v3::[[kernel_family_name]]::autotune {
 
 // using AOTRITON_NS::v2::[[kernel_family_name]]::[[context_class_name]];
 

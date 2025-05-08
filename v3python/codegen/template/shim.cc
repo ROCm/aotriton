@@ -6,7 +6,7 @@
 #include <aotriton/util.h>
 #include <tuple>
 
-namespace AOTRITON_NS::v2::[[kernel_family_name]] {
+namespace AOTRITON_NS::v3::[[kernel_family_name]] {
 
 #define CAST(x) const_cast<void*>(static_cast<const void*>(x))
 typedef std::vector<void*>(*PP_FUNC)(const [[context_class_name]]& context, hipDeviceptr_t*);
