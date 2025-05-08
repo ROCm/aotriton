@@ -64,7 +64,7 @@ namespace optune {
 
 // When Functional's LUT is uniform or empty
 namespace {
-[[def_trivial_tunes]];
+[[def_trivial_tunes]]
 }
 
 [[context_class_name]]::OpTuneTableEntry

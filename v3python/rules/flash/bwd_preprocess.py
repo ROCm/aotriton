@@ -29,7 +29,9 @@ class bwd_preprocess(FlashKernel):
     NAME = 'bwd_preprocess'
 
     AUTOTUNE_KEYS = { }
-    PARTIALLY_TUNED_FUNCTIONALS = [('PADDED_HEAD', None)]
+    PARTIALLY_TUNED_FUNCTIONALS = {
+        'PADDED_HEAD': False,
+    }
     DOWNGRADER = []
 
 class bwd_preprocess_varlen(FlashKernel):
@@ -54,5 +56,7 @@ class bwd_preprocess_varlen(FlashKernel):
     NAME = 'bwd_preprocess_varlen'
 
     AUTOTUNE_KEYS = { }
-    PARTIALLY_TUNED_FUNCTIONALS = [('PADDED_HEAD', None)]
+    PARTIALLY_TUNED_FUNCTIONALS = {
+        'PADDED_HEAD': False,
+    }
     DOWNGRADER = []

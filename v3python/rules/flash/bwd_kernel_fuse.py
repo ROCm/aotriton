@@ -64,7 +64,9 @@ class bwd_kernel_fuse(FlashKernel):
         'max_seqlen_q' : BinningLessOrEqual,
         'max_seqlen_k' : BinningLessOrEqual,
     }
-    PARTIALLY_TUNED_FUNCTIONALS = [('PADDED_HEAD', False)]
+    PARTIALLY_TUNED_FUNCTIONALS = {
+        'PADDED_HEAD': False,
+    }
     DOWNGRADER = []
 
     @staticmethod

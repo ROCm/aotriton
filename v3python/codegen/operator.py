@@ -45,7 +45,8 @@ class OperatorGenerator(InterfaceGenerator):
         if trivial_enum is None:
             return super().codegen_tune_struct_name(arch_number, godel_number)
         tune_name = self._iface.TUNE_NAME
-        return f'{tune_name}_{self._iface.NAME}__Trivial_{trivial_enum}'
+        is_extern = False
+        return f'{tune_name}_{self._iface.NAME}__Trivial_{trivial_enum}', is_extern
 
     def write_shim_header(self, functionals, fout):
         iface = self._iface
@@ -59,7 +60,7 @@ class OperatorGenerator(InterfaceGenerator):
             'total_number_of_backends'      : self._iface.nbackends,
             'optune_table_entry_declares'   : self.codegen_tune_table_entry_declares(functionals),
             'number_of_functionals' : iface.godel_number,
-            'declare_list_of_deduplicated_lut_functions' : 'TODO' # self.codegen_declare_list_of_deduplicated_lut_functions(),
+            'declare_list_of_deduplicated_lut_functions' : '// TODO: declare_list_of_deduplicated_lut_functions' # self.codegen_declare_list_of_deduplicated_lut_functions(),
         }
         print(self.HEADER_TEMPLATE.format_map(d), file=fout)
 
@@ -116,7 +117,7 @@ class OperatorGenerator(InterfaceGenerator):
         iface = self._iface
         context_class_name = iface.context_class_name
         stmt = []
-        for kdesc in metro.kernels:
+        for kdesc in metro.list_kernels():
             d = {
                 'backend_context_name'  : kdesc.context_class_name,
             }
@@ -124,7 +125,7 @@ class OperatorGenerator(InterfaceGenerator):
             stmt.append(snippet)
         d = {
             'context_class_name'    : iface.context_class_name,
-            'launcher_func_name'    : self.codegen_launcher_func_name(backend),
+            'launcher_func_name'    : self.codegen_launcher_func_name(metro),
             'launch_every_kernel'   : '\n'.join(stmt),
         }
         return self.METRO_LAUNCHER_TEMPLATE.format_map(d)

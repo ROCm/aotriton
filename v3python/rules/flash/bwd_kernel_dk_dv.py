@@ -60,7 +60,9 @@ class bwd_kernel_dk_dv(FlashKernel):
         frozenset(['BLOCK_N']) : match_fwd('BLOCK_N'),
     }
 
-    PARTIALLY_TUNED_FUNCTIONALS = [('PADDED_HEAD', False)]
+    PARTIALLY_TUNED_FUNCTIONALS = {
+        'PADDED_HEAD': False,
+    }
     DOWNGRADER = []
 
     @staticmethod

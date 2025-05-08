@@ -13,7 +13,6 @@ class MetroKernel(Interface):
     TUNE_NAME = None
 
     def __init__(self,
-                 iface_klass : class,
                  metro_name : str,
                  kernels : list[KernelDescription]):
         self.NAME = metro_name

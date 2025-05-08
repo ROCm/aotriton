@@ -36,7 +36,9 @@ class debug_fill_dropout_rng(FlashKernel):
     NAME = 'debug_fill_dropout_rng'
 
     AUTOTUNE_KEYS = { }
-    PARTIALLY_TUNED_FUNCTIONALS = [('PADDED_HEAD', None)]
+    PARTIALLY_TUNED_FUNCTIONALS = {
+        'PADDED_HEAD': False,
+    }
     DOWNGRADER = []
 
 class debug_fill_dropout_rng_tensor(debug_fill_dropout_rng):

@@ -96,15 +96,16 @@ class InterfaceGenerator(ABC):
     '''
     def codegen_tune_struct_name(self, arch_number, godel_number):
         tune_name = self._iface.TUNE_NAME.capitalize()
-        return f'{tune_name}_{self._iface.NAME}__A{arch_number}__F{godel_number}'
+        return f'{tune_name}_{self._iface.NAME}__A{arch_number}__F{godel_number}', True
 
     def codegen_tune_table_entry_declares(self, functionals):
         decls = []
         for arch_number, target_arch in enumerate(self._target_arch_keys):
             godel_numbers = sorted(list(set([f.godel_number for f in functionals if f.arch == target_arch])))
             for godel_number in godel_numbers:
-                struct_name = self.codegen_tune_struct_name(arch_number, godel_number)
-                decls.append(f'void {struct_name}({self._iface.context_class_name}& params, int mod_number);')
+                struct_name, is_extern = self.codegen_tune_struct_name(arch_number, godel_number)
+                if is_extern:
+                    decls.append(f'void {struct_name}({self._iface.context_class_name}& params, int mod_number);')
         return '\n'.join(decls)
 
     def codegen_tune_table_entries(self, functionals):
@@ -113,7 +114,7 @@ class InterfaceGenerator(ABC):
             lets.append(4 * ' ' + '{')
             godel_numbers = sorted(list(set([f.godel_number for f in functionals if f.arch == target_arch])))
             for godel_number in range(self._iface.godel_number):
-                struct_name = self.codegen_tune_struct_name(arch_number, godel_number)
+                struct_name, is_extern = self.codegen_tune_struct_name(arch_number, godel_number)
                 if godel_number in godel_numbers:
                     lets.append(8 * ' ' + f'&{self._iface.TUNE_NAME}::{struct_name},')
                 else:

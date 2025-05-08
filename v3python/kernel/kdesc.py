@@ -17,10 +17,6 @@ from ..base import (
     TemplateParameter as TP,
     PerformanceTemplateParameter as PTP,
 )
-from ..op import (
-    Operator,
-    NO_OPERATOR,
-)
 from .ksignature import KernelSignature, COMPILER_OPTIONS, DEFAULT_COPT
 from ..gpu_targets import AOTRITON_SUPPORTED_GPUS, cluster_gpus
 import pandas as pd
@@ -34,8 +30,9 @@ def join_dicts(dicts : 'list[dict]') -> dict:
 def get_possible_choices(klass, arg_name : str) -> 'list[Any]':
     l = []
     for k in ['TYPE_CHOICES', 'FEAT_CHOICES', 'PERF_CHOICES']:
-        if hasattr(klass, k):
+        if hasattr(klass, k) and getattr(klass, k):
             l += [getattr(klass, k)]
+    print(f'{l=}')
     for d in l:
         for k, v in d.items():
             if arg_name in k:

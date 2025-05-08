@@ -43,5 +43,5 @@ class debug_simulate_encoded_softmax(FlashKernel):
     NAME = 'debug_simulate_encoded_softmax'
 
     AUTOTUNE_KEYS = { }
-    PARTIALLY_TUNED_FUNCTIONALS = []
+    PARTIALLY_TUNED_FUNCTIONALS = {}
     DOWNGRADER = []
