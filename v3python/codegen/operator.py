@@ -10,7 +10,8 @@ from ..base import (
     Interface,
 )
 from .interface import InterfaceGenerator
-from ..op import Operator
+from ..op import Operator, MetroKernel
+from ..kernel import KernelDescription
 from .template import get_template
 from ..utils import (
     LazyFile,
@@ -24,7 +25,8 @@ TODO: Unify with KernelShimGenerator
 class OperatorGenerator(InterfaceGenerator):
     HEADER_TEMPLATE = get_template('op.h')
     SOURCE_TEMPLATE = get_template('op.cc')
-    LAUNCHER_TEMPLATE = get_template('launcher.cc')
+    KSHIM_LAUNCHER_TEMPLATE = get_template('kshim_launcher.cc')
+    METRO_LAUNCHER_TEMPLATE = get_template('metro_launcher.cc')
     PFX = 'iface'
 
     # TODO: Optimize for single entry LUT/uniform LUT
@@ -93,15 +95,26 @@ class OperatorGenerator(InterfaceGenerator):
         return ALIGN.join(stmt)
 
     def codegen_single_launcher(self, backend : Interface, nalign):
+        if isinstance(backend, KernelDescription):
+            return self.codegen_kshim_launcher(backend, nalign)
+        if isinstance(backend, MetroKernel):
+            return self.codegen_metro_launcher(backend, nalign)
+        assert False, f'Unsupported backend class {backend.__class__}'
+
+    def codegen_kshim_launcher(self, backend : Interface, nalign):
         iface = self._iface
         stmt = []
-        context_class_name = iface.context_class_name
         d = {
             'context_class_name'    : iface.context_class_name,
             'launcher_func_name'    : self.codegen_launcher_func_name(backend),
             'backend_context_name'  : backend.context_class_name,
         }
-        return self.LAUNCHER_TEMPLATE.format_map(d)
+        return self.KSHIM_LAUNCHER_TEMPLATE.format_map(d)
+
+    def codegen_metro_launcher(self, backend : Interface, nalign):
+        iface = self._iface
+        stmt = []
+        context_class_name = iface.context_class_name
 
     def codegen_launcher_func_name(self, backend):
         return f'launcher_for_{backend.enum_name}'
