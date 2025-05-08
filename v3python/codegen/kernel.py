@@ -13,6 +13,7 @@ from ..kernel import KernelDescription
 from .template import get_template
 from ..utils import (
     LazyFile,
+    log
 )
 from .common import codegen_struct_cfields, codegen_includes
 from .autotune import AutotuneCodeGenerator
@@ -23,7 +24,12 @@ class KernelShimGenerator(InterfaceGenerator):
     PFX = 'shim'
 
     def create_sub_generator(self, functional : Functional, df : 'pandas.DataFrame'):
-        return AutotuneCodeGenerator(self._args, functional, df, self._this_repo)
+        if functional.meta_object.is_functional_disabled(functional):
+            log(lambda : f'Functional {functional.godel_number=} disabled')
+            use_this_functional = False
+            return None, use_this_functional
+        use_this_functional = True
+        return AutotuneCodeGenerator(self._args, functional, df, self._this_repo), use_this_functional
 
     def write_shim_header(self, functionals, fout):
         kdesc = self._iface

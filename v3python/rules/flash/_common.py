@@ -28,7 +28,7 @@ def check_value(functional, repr_name):
     tc = functional.compact_choices
     for aname in repr_name:
         if aname in tc:
-            return tc[aname]
+            return tc[aname].json_value
     assert False, f'Cannot find {repr_name=} in {functional=}'
 
 class FlashKernel(KernelDescription):
@@ -37,11 +37,12 @@ class FlashKernel(KernelDescription):
     LUT_FULL_SEQLEN_K = [4,8,16,32,64,128,256,512,1024,2048,4096,8192]
     LUT_FULL_SEQLEN_NAVI = [16,32,64,128,256,512,1024]
 
-    def is_functional_disabled_on_arch(self, functional):
+    def is_functional_disabled(self, functional):
         if not hasattr(self, 'gen_autotune_configs'):  # only check acutal FA kernels
             return False
         is_causal = check_value(functional, ['CAUSAL', 'CAUSAL_TYPE'])
         bias_type = check_value(functional, 'BIAS_TYPE')
+        # print(f'Functional {functional.godel_number=} {is_causal=} {bias_type=}')
         if is_causal and bias_type != 0:
             return True
         return False
@@ -56,7 +57,7 @@ class FlashKernel(KernelDescription):
         arch = functional.arch
         if 'gfx950' in arch:  # Tuning database depends on others
             return True
-        if self.is_functional_disabled_on_arch(functional):
+        if self.is_functional_disabled(functional):
             return True  # ignore disabled functionals
         MI = (AOTRITON_ARCH_WARPSIZE[arch] == 64)
         Navi = (AOTRITON_ARCH_WARPSIZE[arch] == 32)
@@ -66,10 +67,11 @@ class FlashKernel(KernelDescription):
             to_check = lut_tensor
         else:
             to_check = lut_tensor
+        print(f'{lut_tensor.shape=} ==? {LUT_TENSOR_SIZE=}')
         if MI:
-            return (to_check >= 0).all() and lut_tensor.shape == LUT_TENSOR_SIZE
+            return (to_check >= 0).all() and lut_tensor.shape[1:] == LUT_TENSOR_SIZE
         elif Navi:
-            return (to_check >= 0).all() and (lut_tensor.shape == LUT_TENSOR_SIZE or lut_tensor.shape == LUT_TENSOR_SIZE_NAVI)
+            return (to_check >= 0).all() and (lut_tensor.shape[1:] == LUT_TENSOR_SIZE or lut_tensor.shape[1:] == LUT_TENSOR_SIZE_NAVI)
         else:
             assert False, f"Unknown {gpu}"
 

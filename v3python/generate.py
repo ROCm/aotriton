@@ -18,7 +18,7 @@ from .gpu_targets import AOTRITON_SUPPORTED_GPUS
 
 SKIPPED_LUT_CHECK = os.getenv('AOTRITON_SKIP_LUT_CHECK', default='').split(',')
 
-def _should_raise_for_lut(args, f : 'Functional'):
+def should_raise_for_lut(args, f : 'Functional'):
     if args.lut_sanity_check:
         return False
     iface = f.meta_object

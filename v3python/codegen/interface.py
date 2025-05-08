@@ -61,11 +61,12 @@ class InterfaceGenerator(ABC):
             # print(f'{functional=}')
             df = fac.create_view(functional)
             # print(f'KernelShimGenerator.generate {df=}')
-            subg = self.create_sub_generator(functional, df)
+            subg, use_this_functional = self.create_sub_generator(functional, df)
             if subg is not None:
                 subg.generate()
                 self._shim_files.append(subg.cc_file)
-            all_functionals.append(functional)
+            if use_this_functional:
+                all_functionals.append(functional)
 
         # shim code phase
         # Must be after autotune due to common functions needed by autotune is
@@ -136,12 +137,16 @@ class InterfaceGenerator(ABC):
         return '\n'.join(lets)
 
     def codegen_list_of_deduplicated_lut_functions(self):
-        registry = self._this_repo.get_data('lut_function')
+        registry = self._this_repo.get_data('lut_function', return_none=True)
+        if registry is None:
+            return '// This Interface does not have tuning LUT function'
         stmt = [f'{fret} {fname} {fsrc};' for fsrc, (fret, fname, fparams) in registry.items()]
         return '\n'.join(stmt)
 
     def codegen_declare_list_of_deduplicated_lut_functions(self):
-        registry = self._this_repo.get_data('lut_function')
+        registry = self._this_repo.get_data('lut_function', return_none=True)
+        if registry is None:
+            return '// This Interface does not have tuning LUT function'
         stmt = [f'extern {fret} {fname}{fparams};' for fsrc, (fret, fname, fparams) in registry.items()]
         return '\n'.join(stmt)
 

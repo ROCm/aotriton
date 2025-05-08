@@ -39,7 +39,7 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
             print(f'translate_dataframe for kernel {kdesc.NAME}')
             self._lut_tensor, self._sigs, self._binning_dict = kdesc.translate_dataframe(f, self._df)
             if not kdesc.sancheck_lut_tensor(f, self._lut_tensor):
-                ent = MissingLutEntry(f, lut_tensor)
+                ent = MissingLutEntry(f, self._lut_tensor)
                 if args._should_raise_for_lut(f):
                     raise ent
                 else:

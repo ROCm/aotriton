@@ -119,5 +119,9 @@ class RegistryRepository(object):
     def get_dict_registry(self, name):
         return self._get_registry_with_factory(name, DictRegistry)
 
-    def get_data(self, name):
-        return self._subreg_dict[name].get_data()
+    def get_data(self, name, return_none=False):
+        if not return_none:
+            return self._subreg_dict[name].get_data()
+        if name in self._subreg_dict:
+            return self._subreg_dict[name].get_data()
+        return None

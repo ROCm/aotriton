@@ -34,10 +34,10 @@ class OperatorGenerator(InterfaceGenerator):
     def create_sub_generator(self, functional : Functional, df : 'pandas.DataFrame'):
         ocg = OptuneCodeGenerator(self._args, functional, df, self._this_repo)
         if not ocg.is_trivial:
-            return ocg
+            return ocg, True
         else:
             ocg.generate_trivial()
-        return None
+        return None, True
 
     def codegen_tune_struct_name(self, arch_number, godel_number):
         tt_dict = self._this_repo.get_data('trivial_tunes')
