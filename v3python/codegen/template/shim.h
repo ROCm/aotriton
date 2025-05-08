@@ -23,8 +23,6 @@ struct [[param_class_name]] {
 };
 #endif
 
-// "Closure" is used to refer the combination of "I/O data, performance related
-// arguments, and GPU kernels", which is a complete for execution.
 struct [[context_class_name]] {
     const [[param_class_name]] *params = nullptr;
     // Performance related arguments for current selection
@@ -45,20 +43,18 @@ struct [[context_class_name]] {
     bool peek_kernel_image = false;
 #endif
 
+    hipError_t lookup_optimal(Gpu gpu);
+    hipError_t launch(hipStream_t stream) const;
+
+    dim3 grid_calculator();
+    std::function<dim3(const [[context_class_name]]&)> custom_grid_calculator;
+
     int64_t godel_number() const;
-};
+    static std::tuple<int, int> get_archmod_number(Gpu gpu);
+    constexpr int kMaxGodelNumber = [[number_of_functionals]];
 
-namespace [[shim_kernel_name]]_helpers {
-
-constexpr int kMaxGodelNumber = [[number_of_functionals]];
-
-std::function<dim3(const [[context_class_name]]&)> grid_calculator;
-hipError_t lookup_optimal([[context_class_name]]& context, Gpu gpu);
-hipError_t launch(const [[context_class_name]]& context, hipStream_t stream);
-static std::tuple<int, int> get_archmod_number(Gpu gpu);
-
-typedef void (*AutoTuneTableEntry)([[context_class_name]]& context, int mod_number);
-static AutoTuneTableEntry autotune_table[][ kMaxGodelNumber ];
+    typedef void (*AutoTuneTableEntry)([[context_class_name]]& context, int mod_number);
+    static AutoTuneTableEntry autotune_table[][ kMaxGodelNumber ];
 };
 
 struct [[metadata_class_name]] {

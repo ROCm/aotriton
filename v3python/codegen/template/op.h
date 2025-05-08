@@ -11,18 +11,22 @@
 #include <string>
 #include <vector>
 
-namespace AOTRITON_NS::v3::[[op_family_name]] {
+namespace AOTRITON_NS::v3::[[family_name]] {
 
+// Unlike KernelDescription, Operator must have its own parameter class
 struct [[param_class_name]] {
-    // Function related arguments
     [[func_fields]];
+};
 
+struct [[context_class_name]] {
+    const [[param_class_name]] *params = nullptr;
     enum BackendEnum : int32_t {
         None = -1,
         [[list_of_backend_enum]],
         Max = [[total_number_of_backends]]
     };
-    BackendEnum backend_kernel_index = BackendEnum::None;
+    constexpr BackendEnum fallback_backend = [[fallback_backend]];
+    BackendEnum backend_index = BackendEnum::None;
 
 #if AOTRITON_BUILD_FOR_TUNING
     int _has_preferred_backend = -1;
@@ -36,30 +40,26 @@ struct [[param_class_name]] {
     // 3. Even metro kernel only has one kernel, another set LUT is need to
     //    determine which metro kernel (or backend) need to be used
     int64_t godel_number() const;
-};
 
-class [[context_class_name]] {
-public:
-    enum KernelShimEnum : int32_t {
-        // list_of_named_kernel_shim,
-        // Max = total_number_of_kernel_shims
-        Max = 1
-    };
-    // grid_calculators need to be defined in C++ source code
-    static std::function<dim3(const [[param_class_name]]&)> grid_calculators[ KernelShimEnum::Max ];
-
-    hipError_t lookup_optimal([[param_class_name]]& params, Gpu gpu);
-    hipError_t launch(const [[param_class_name]]& params, hipStream_t stream);
+    hipError_t lookup_optimal(Gpu gpu);
+    // Unlike Triton kernel, Operator's launch need gpu argument to eventually
+    // call backend's lookup_optimal
+    hipError_t launch(Gpu gpu, hipStream_t stream);
 private:
-    typedef void (*OpTuneTableEntry)([[param_class_name]]& params, Gpu gpu);
+    typedef void (*OpTuneTableEntry)([[context_class_name]]& context, Gpu gpu);
     static OpTuneTableEntry optune_table[ [[number_of_functionals]] ];
+
+    typedef hipError_t (*BackendLauncher)(const [[context_class_name]]& context,
+                                          Gpu gpu,
+                                          hipStream_t stream);
+    static BackendLauncher launcher_table[ BackendEnum::Max ];
 };
 
 namespace optune {
 
 [[declare_list_of_deduplicated_lut_functions]]
 
-[[kernel_table_entry_declares]]
+[[optune_table_entry_declares]]
 
 }
 

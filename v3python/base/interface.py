@@ -131,12 +131,13 @@ class Interface(ABC):
     def metadata_class_name(self):
         return self.class_name_base + 'Metadata'
 
+    '''
+    This is also the string stored in the database
+    '''
     @property
     @abstractmethod
-    def enum_name(self):
+    def enum_name(self) -> str:
         pass
-        # CamelName = self.NAME.replace('_', ' ').title().replace(' ', '')
-        return f'kOp_{self.class_name_base}'
 
     def get_tensor_rank(self, tensor_arg):
         log(lambda : f'get_tensor_rank {self=} {self.TENSOR_RANKS=}')

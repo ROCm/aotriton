@@ -23,52 +23,55 @@ int64_t [[context_class_name]]::godel_number() const
     return sum;
 }
 
-namespace [[shim_kernel_name]]_helpers {
-
 hipError_t
-lookup_optimal([[context_class_name]]& context, Gpu gpu) {
+[[context_class_name]]::lookup_optimal(Gpu gpu) {
     auto [arch_number, mod_number] = get_archmod_number(gpu);
     if (arch_number < 0) {
         return hipErrorNoBinaryForGpu;
     }
-    context.kernel_on_device = nullptr;
-    auto tune_func = autotune_table[arch_number][context.godel_number()];
+    kernel_on_device = nullptr;
+    auto tune_func = autotune_table[arch_number][godel_number()];
     if (!tune_func)
         return hipErrorProfilerNotInitialized;
-    tune_func(context, mod_number);
-    if (!context.kernel_on_device)
+    tune_func(*this, mod_number);
+    if (!kernel_on_device)
         return hipErrorSharedObjectSymbolNotFound;
     return hipSuccess;
 }
 
 hipError_t
-launch(const [[context_class_name]]& context, hipStream_t stream) {
+[[context_class_name]]::launch(hipStream_t stream) {
     constexpr std::string_view triton_kernel_name { "[[triton_kernel_name]]" };
     hipDeviceptr_t global_scratch = 0;
-    auto args = prepare_arguments[context.pp_args_index](context, &global_scratch);
-    dim3 grid = grid_calculator(context);
+    auto args = prepare_arguments[pp_args_index](*this, &global_scratch);
+    dim3 grid;
+    if (custom_grid_calculator) {
+        grid = custom_grid_calculator(*this);
+    } else {
+        grid = grid_calculator();
+    }
 #if AOTRITON_BUILD_FOR_TUNING
-    return context.kernel_on_device->invoke(triton_kernel_name,
-                                            contex.package_path,
-                                            context.func_name,
-                                            context.arch_name,
-                                            grid,
-                                            args,
-                                            peek_kernel_image,
-                                            stream);
+    return kernel_on_device->invoke(triton_kernel_name,
+                                    package_path,
+                                    func_name,
+                                    arch_name,
+                                    grid,
+                                    args,
+                                    peek_kernel_image,
+                                    stream);
 #else
-    return context.kernel_on_device->invoke(triton_kernel_name,
-                                            context.package_path,
-                                            context.func_name,
-                                            context.arch_name,
-                                            grid,
-                                            args,
-                                            stream);
+    return kernel_on_device->invoke(triton_kernel_name,
+                                    package_path,
+                                    func_name,
+                                    arch_name,
+                                    grid,
+                                    args,
+                                    stream);
 #endif
 }
 
 std::tuple<int, int>
-get_archmod_number(Gpu gpu) {
+[[context_class_name]]::get_archmod_number(Gpu gpu) {
     [[get_archmod_number_body]];
     // TODO: print warning about tuning for this GPU mod is not built.
     // Note: if some mod does not have tuning info in the database at all, the
@@ -76,7 +79,6 @@ get_archmod_number(Gpu gpu) {
     return std::make_tuple(-1, 0);
 }
 
-} // [[shim_kernel_name]]_helpers
 
 [[list_of_pp_args_function_defs]]
 
@@ -97,10 +99,8 @@ const char [[shim_kernel_name]]_packed_string[] =
 
 } // namespace autotune
 
-namespace [[shim_kernel_name]]_helpers {
-
-AutoTuneTableEntry
-autotune_table[][ [[number_of_functionals]] ] = {
+[[context_class_name]]::AutoTuneTableEntry
+[[context_class_name]]::autotune_table[][ [[number_of_functionals]] ] = {
 [[kernel_table_entries]]
 };
 

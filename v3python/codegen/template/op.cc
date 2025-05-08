@@ -2,32 +2,13 @@
 // SPDX-License-Identifier: MIT
 
 // clang-format off
-#include "op.[[op_name]].h"
+#include "op.[[iface_name]].h"
 #include <aotriton/util.h>
 #include <tuple>
-[[include_shim_kernel_headers]]
 
-namespace AOTRITON_NS::v3::[[op_family_name]] {
+namespace AOTRITON_NS::v3::[[family_name]] {
 
-// namespace shim = AOTRITON_NS::v2::[[kernel_family_name]];
-
-typedef bool(*REQUIREMENT_FUNC)(const [[op_param_class_name]]& params);
-typedef hipError_t (*METRO_LAUNCH_FUNC)(const [[op_param_class_name]]& params,
-                                        const [[op_context_class_name]]& context,
-                                        hipStream_t);
-
-namespace {
-constexpr auto FALLBACK_METRO_KERNEL = MetroKernelEnum::[[fallback]];
-extern REQUIREMENT_FUNC requirement_functions[ [[total_number_of_metro_kernels]] ];
-extern METRO_LAUNCH_FUNC launch_functions[ [[total_number_of_metro_kernels]] ];
-// We store the string in the database to avoid re-ordering the metro kernels accidentally.
-const char* kMetroKernelNames [] = {
-  [[list_of_named_kernel_namestrings]]
-};
-
-}
-
-int64_t [[op_param_class_name]]::godel_number() const
+int64_t [[context_class_name]]::godel_number() const
 {
     int64_t sum = 0;
 [[godel_number_body]]
@@ -35,60 +16,60 @@ int64_t [[op_param_class_name]]::godel_number() const
 }
 
 hipError_t
-[[op_context_class_name]]::lookup_optimal([[op_param_class_name]]& params, Gpu gpu) {
+[[context_class_name]]::lookup_optimal(Gpu gpu) {
     auto [arch_number, mod_number] = get_archmod_number(gpu);
     if (arch_number < 0) {
         return hipErrorNoBinaryForGpu;
     }
-    params.metro_kernel_index = MetroKernelEnum::None;
-    auto tune_func = optune_table[arch_number][params.godel_number()];
+    backend_index = BackendEnum::None;
+    auto tune_func = optune_table[arch_number][godel_number()];
     if (!tune_func)
         return hipErrorProfilerNotInitialized;
-    tune_func(params, mod_number);
-    if (params.metro_kernel_index >= 0 &&
-        requirement_functions[params.metro_kernel_index] &&
-        !requirement_functions[params.metro_kernel_index](params, gpu))
-        params.metro_kernel_index = FALLBACK_METRO_KERNEL;
-    if (params.metro_kernel_index < 0)
-        params.metro_kernel_index = FALLBACK_METRO_KERNEL;
-#if AOTRITON_BUILD_FOR_TUNING
-    if (params.metro_kernel_index < MetroKernelEnum::Max)
-        params._metro_name = kMetroKernelNames[params.metro_kernel_index];
-    else
-        params._metro_name = nullptr;
-#endif
+    tune_func(*this, mod_number);
+    // Operator's capability is union of all backends
+    // Hence there must be a backend that handles the inputs
     return hipSuccess;
 }
 
 hipError_t
-[[op_context_class_name]]::launch(const [[op_param_class_name]]& params, hipStream_t stream) {
-    if (params.metro_kernel_index < 0) {
+[[context_class_name]]::launch(Gpu gpu, hipStream_t stream) {
+    if (backend_index < 0) {
         return hipErrorPriorLaunchFailure;
     }
-    return launch_functions[params.metro_kernel_index](params, stream);
+    auto ret = launcher_table[backend_index](*this, gpu, stream);
+    // It is possible that the optimal backend does not support certain inputs
+    // In this case hipErrorPeerAccessUnsupported will be returned
+    if (ret == hipErrorPeerAccessUnsupported) {
+        return launcher_table[fallback_backend](*this, gpu, stream);
+    }
+    return ret
 }
 
+// Launchers are defined in op source file and no need to put them in to
+// optune namespace
 namespace {
-[[list_of_requirement_functions_defs]]
+[[def_backend_launchers]]
+}
 
-REQUIREMENT_FUNC requirement_functions[ [[total_number_of_metro_kernels]] ] {
-    [[list_of_requirement_functions_decls]]
+BackendLauncher
+[[context_class_name]]::launcher_table[ BackendEnum::Max ] = {
+    [[launcher_table_entries]]
 };
 
-[[list_of_metro_launch_functions_defs]]
-METRO_LAUNCH_FUNC launch_functions[ [[total_number_of_metro_kernels]] ];
-    [[metro_launch_entries]]
-}
-
-namespace metrotune {
+namespace optune {
 
 [[list_of_deduplicated_lut_functions]]
 
 } // namespace autotune
 
-[[op_context_class_name]]::OpTuneTableEntry
-[[op_context_class_name]]::optune_table[][ [[number_of_functionals]] ] = {
-[[kernel_table_entries]]
+// When Functional's LUT is uniform or empty
+namespace {
+[[def_trivial_tunes]];
+}
+
+[[context_class_name]]::OpTuneTableEntry
+[[context_class_name]]::optune_table[][ [[number_of_functionals]] ] = {
+[[optune_table_entries]]
 };
 
 }

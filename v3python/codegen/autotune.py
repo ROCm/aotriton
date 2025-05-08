@@ -1,9 +1,8 @@
 # Copyright © 2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-# Generate <family>/autotune.<kernel_name>/<functional>.{h,cc}
+# Generate <family>/autotune.<kernel_name>/<functional>.cc
 
-from ..gpu_targets import AOTRITON_ARCH_TO_DIRECTORY as ARCH_TO_DIRECTORY
 from ..base import Functional
 from ..base import typed_choice as TC
 from ..kernel.ksignature import KernelSignature
@@ -14,8 +13,9 @@ from ..utils import (
 )
 from .common import codegen_struct_cfields, MissingLutEntry
 import numpy as np
+from .basetune import BaseTuneCodeGenerator
 
-class AutotuneCodeGenerator(object):
+class AutotuneCodeGenerator(BaseTuneCodeGenerator):
     AUTOTUNE_TEMPLATE = get_template('autotune_table_entry.cc')
     BIN_INDEX_SUFFIX = '_binned_index'
 
@@ -27,13 +27,9 @@ class AutotuneCodeGenerator(object):
                  f : Functional,
                  dataframe_for_tuning : 'pandas.DataFrame | None',
                  parent_repo):
-        self._args = args
-        self._f = f
-        self._df = dataframe_for_tuning
-        self._parent_repo = parent_repo
+        super().__init__(args, f, dataframe_for_tuning, parent_repo)
         # TODO: support other binning algorithm
         kdesc = self._f.meta_object
-        self._cc_file = self.get_cc_file(f)
         if args.build_for_tuning or self._df is None:
             print(f'translate_empty_dataframe for kernel {kdesc.NAME}')
             self._lut_tensor, self._sigs, self._binning_dict = kdesc.translate_empty_dataframe(f)
@@ -50,16 +46,6 @@ class AutotuneCodeGenerator(object):
                     for j in ent.get_missing_lut_entries():
                         print("TUNE_FLASH --entry_from_json Item: ", j)
         assert all([isinstance(k, KernelSignature)] for k in self._sigs)
-
-    def get_cc_file(self, f):
-        kdesc = self._f.meta_object
-        tune_dir = self._args.build_dir / kdesc.FAMILY / f'{kdesc.TUNE_NAME}.{kdesc.NAME}'
-        tune_dir.mkdir(parents=True, exist_ok=True)
-        return tune_dir / (f.filepack_signature + '.cc')
-
-    @property
-    def cc_file(self):
-        return self._cc_file
 
     def generate(self):
         # Un "self._" section

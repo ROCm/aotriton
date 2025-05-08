@@ -44,7 +44,7 @@ class KernelShimGenerator(InterfaceGenerator):
             'func_fields'           : codegen_struct_cfields(kdesc.func_cfields, nalign=4),
             'perf_fields'           : codegen_struct_cfields(kdesc.perf_cfields, nalign=4),
             'declare_compiled_in_features'  : self.codegen_declare_compiled_in_features(),
-            'kernel_table_entry_declares'   : self.codegen_kernel_table_entry_declares(functionals),
+            'kernel_table_entry_declares'   : self.codegen_tune_table_entry_declares(functionals),
             'number_of_functionals' : kdesc._godel_number,
             'declare_list_of_deduplicated_lut_functions' : self.codegen_declare_list_of_deduplicated_lut_functions(),
         }
@@ -68,9 +68,9 @@ class KernelShimGenerator(InterfaceGenerator):
             'number_of_functionals': kdesc._godel_number,
             'define_compiled_in_features' : self.codegen_define_compiled_in_features(),
             # 'copy_perf_fields_body': self.copy_perf_fields_body,
-            'kernel_table_entry_declares' : self.codegen_kernel_table_entry_declares(functionals),
+            'kernel_table_entry_declares' : self.codegen_tune_table_entry_declares(functionals),
             'per_kernel_packed_string'  : self.codegen_per_kernel_packed_string(),
-            'kernel_table_entries' : self.codegen_kernel_table_entries(functionals),
+            'kernel_table_entries' : self.codegen_tune_table_entries(functionals),
             'list_of_deduplicated_lut_functions' : self.codegen_list_of_deduplicated_lut_functions(),
         }
         print(self.SOURCE_TEMPLATE.format_map(d), file=fout)
@@ -108,35 +108,6 @@ const std::vector<{infotype}>& {meta_class}::get_{tp.repr_name}_choices()
 }}'''
             def_list.append(def_code)
         return '\n'.join(def_list)
-
-
-    def codegen_kernel_table_entry_declares(self, object_files):
-        return '/* TODO: kernel_table_entry_declares */'
-
-    def codegen_godel_number_body(self):
-        body = io.StringIO()
-        kdesc = self._iface
-        for meta in kdesc.list_functional_params():
-            self.codegen_godel_number_calculation(meta, body)
-        return body.getvalue()
-
-    def codegen_godel_number_calculation(self, meta, fout):
-        if meta.nchoices <= 1:
-            return
-        aname = meta.repr_name # meta._ordered_arguments[0][0]
-        INDENT = 4 * ' '
-        print(INDENT + '{', file=fout)
-        print(2 * INDENT + 'int64_t number = 0;', file=fout)
-        for number, tc in enumerate(meta.choices):
-            assert not isinstance(tc, TC.ConditionalChoice)
-            if isinstance(tc, TC.tensor):
-                type_enum = tc.type_enum
-                print(2 * INDENT + f'if (args.{aname}->dtype() == {type_enum}) number = {number} ;', file=fout)
-            else:
-                value = str(tc).lower()
-                print(2 * INDENT + f'if (args.{aname} == {value}) number = {number} ;', file=fout)
-        print(2 * INDENT + f'sum += number * {meta.godel_number};', file=fout)
-        print(1 * INDENT + '}', file=fout)
 
     def codegen_archmod_number_body(self):
         lets = []

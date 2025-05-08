@@ -98,20 +98,20 @@ class InterfaceGenerator(ABC):
         tune_name = self._iface.TUNE_NAME.capitalize()
         return f'{tune_name}_{self._iface.NAME}__A{arch_number}__F{godel_number}'
 
-    def codegen_kernel_table_entry_declares(self, functionals):
+    def codegen_tune_table_entry_declares(self, functionals):
         decls = []
         for arch_number, target_arch in enumerate(self._target_arch_keys):
-            godel_numbers = sorted(list(set([f.godel_number for f in functionals])))
+            godel_numbers = sorted(list(set([f.godel_number for f in functionals if f.arch == target_arch])))
             for godel_number in godel_numbers:
                 struct_name = self.codegen_tune_struct_name(arch_number, godel_number)
                 decls.append(f'void {struct_name}({self._iface.context_class_name}& params, int mod_number);')
         return '\n'.join(decls)
 
-    def codegen_kernel_table_entries(self, functionals):
+    def codegen_tune_table_entries(self, functionals):
         lets = []
         for arch_number, target_arch in enumerate(self._target_arch_keys):
             lets.append(4 * ' ' + '{')
-            godel_numbers = sorted(list(set([f.godel_number for f in functionals])))
+            godel_numbers = sorted(list(set([f.godel_number for f in functionals if f.arch == target_arch])))
             for godel_number in range(self._iface.godel_number):
                 struct_name = self.codegen_tune_struct_name(arch_number, godel_number)
                 if godel_number in godel_numbers:
@@ -130,3 +130,29 @@ class InterfaceGenerator(ABC):
         registry = self._this_repo.get_data('lut_function')
         stmt = [f'extern {fret} {fname}{fparams};' for fsrc, (fret, fname, fparams) in registry.items()]
         return '\n'.join(stmt)
+
+    def codegen_godel_number_body(self):
+        body = io.StringIO()
+        iface = self._iface
+        for tp in iface.list_functional_params():
+            self.codegen_godel_number_calculation(tp, body)
+        return body.getvalue()
+
+    def codegen_godel_number_calculation(self, tp, fout):
+        if tp.nchoices <= 1:
+            return
+        aname = tp.repr_name # meta._ordered_arguments[0][0]
+        INDENT = 4 * ' '
+        print(INDENT + '{', file=fout)
+        print(2 * INDENT + 'int64_t number = 0;', file=fout)
+        for number, tc in enumerate(tp.choices):
+            assert not isinstance(tc, TC.ConditionalChoice)
+            if isinstance(tc, TC.tensor):
+                type_enum = tc.type_enum
+                print(2 * INDENT + f'if (args.{aname}->dtype() == {type_enum}) number = {number} ;', file=fout)
+            else:
+                value = str(tc).lower()
+                print(2 * INDENT + f'if (args.{aname} == {value}) number = {number} ;', file=fout)
+        print(2 * INDENT + f'sum += number * {tp.godel_number};', file=fout)
+        print(1 * INDENT + '}', file=fout)
+

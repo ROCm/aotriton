@@ -34,11 +34,13 @@ kernels = [
     #     __bwd_kernel_dk_dv,
     #     __bwd_kernel_dq,
     #     __bwd_kernel_fuse,
-    # __debug_simulate_encoded_softmax,
+    __debug_simulate_encoded_softmax,
 ]
 
 operators = [
-    OpAttnFwd()
+    OpAttnFwd([
+        __attn_fwd,
+    ])
     # [
     #     MetroKernel('triton', [__attn_fwd], is_fallback=True),
     # ]),

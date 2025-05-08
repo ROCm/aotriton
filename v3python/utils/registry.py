@@ -78,6 +78,16 @@ class ListRegistry(object):
     def get_data(self):
         return self._list_registry
 
+class DictRegistry(object):
+    def __init__(self):
+        self._dict_registry = {}
+
+    def register(self, key, value):
+        self._dict_registry[key] = value
+
+    def get_data(self):
+        return self._dict_registry
+
 '''
 Class to register re-used code or objects
 '''
@@ -86,30 +96,28 @@ class RegistryRepository(object):
     def __init__(self):
         self._subreg_dict = {}
 
-    def get_string_registry(self, name):
+    def _get_registry_with_factory(self, name, factory):
         if name not in self._subreg_dict:
-            self._subreg_dict[name] = StringRegistry()
+            self._subreg_dict[name] = factory()
         return self._subreg_dict[name]
+
+    def get_string_registry(self, name):
+        return self._get_registry_with_factory(name, StringRegistry)
 
     def get_function_registry(self, name):
-        if name not in self._subreg_dict:
-            self._subreg_dict[name] = FunctionRegistry()
-        return self._subreg_dict[name]
+        return self._get_registry_with_factory(name, FunctionRegistry)
 
     def get_signatured_function_registry(self, name):
-        if name not in self._subreg_dict:
-            self._subreg_dict[name] = SignaturedFunctionRegistry()
-        return self._subreg_dict[name]
+        return self._get_registry_with_factory(name, SignaturedFunctionRegistry)
 
     def get_hsaco_registry(self, name):
-        if name not in self._subreg_dict:
-            self._subreg_dict[name] = HsacoRegistry()
-        return self._subreg_dict[name]
+        return self._get_registry_with_factory(name, HsacoRegistry)
 
     def get_list_registry(self, name):
-        if name not in self._subreg_dict:
-            self._subreg_dict[name] = ListRegistry()
-        return self._subreg_dict[name]
+        return self._get_registry_with_factory(name, ListRegistry)
+
+    def get_dict_registry(self, name):
+        return self._get_registry_with_factory(name, DictRegistry)
 
     def get_data(self, name):
         return self._subreg_dict[name].get_data()

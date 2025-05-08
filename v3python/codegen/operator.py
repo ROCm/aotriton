@@ -7,6 +7,7 @@ import io
 from ..base import (
     typed_choice as TC,
     Functional,
+    Interface,
 )
 from .interface import InterfaceGenerator
 from ..op import Operator
@@ -15,6 +16,7 @@ from ..utils import (
     LazyFile,
 )
 from .common import codegen_struct_cfields
+from .optune import OptuneCodeGenerator
 
 '''
 TODO: Unify with KernelShimGenerator
@@ -22,37 +24,56 @@ TODO: Unify with KernelShimGenerator
 class OperatorGenerator(InterfaceGenerator):
     HEADER_TEMPLATE = get_template('op.h')
     SOURCE_TEMPLATE = get_template('op.cc')
+    LAUNCHER_TEMPLATE = get_template('launcher.cc')
     PFX = 'iface'
 
+    # TODO: Optimize for single entry LUT/uniform LUT
     def create_sub_generator(self, functional : Functional, df : 'pandas.DataFrame'):
+        ocg = OptuneCodeGenerator(self._args, functional, df, self._this_repo)
+        if not ocg.is_trivial:
+            return ocg
+        else:
+            ocg.generate_trivial()
         return None
-        # return OptuneCodeGenerator(self._args, functional, df, self._this_repo)
+
+    def codegen_tune_struct_name(self, arch_number, godel_number):
+        tt_dict = self._this_repo.get_data('trivial_tunes')
+        trivial_enum = tt_dict.get((arch_number, godel_number), None)
+        if trivial_enum is None:
+            return super().codegen_tune_struct_name(arch_number, godel_number)
+        tune_name = self._iface.TUNE_NAME
+        return f'{tune_name}_{self._iface.NAME}__Trivial_{trivial_enum}'
 
     def write_shim_header(self, functionals, fout):
         iface = self._iface
         d = {
-            'op_family_name'        : iface.FAMILY,
+            'family_name'           : iface.FAMILY,
             'param_class_name'      : iface.param_class_name,
             'context_class_name'    : iface.context_class_name,
             'func_fields'           : codegen_struct_cfields(iface.func_cfields, nalign=4),
             'list_of_backend_enum'  : self.codegen_backend_enums(nalign=8),
+            'fallback_backend'      : iface.fallback_backend,
             'total_number_of_backends'      : self._iface.nbackends,
-            'kernel_table_entry_declares'   : self.codegen_kernel_table_entry_declares(functionals),
+            'optune_table_entry_declares'   : self.codegen_tune_table_entry_declares(functionals),
             'number_of_functionals' : iface.godel_number,
             'declare_list_of_deduplicated_lut_functions' : 'TODO' # self.codegen_declare_list_of_deduplicated_lut_functions(),
         }
         print(self.HEADER_TEMPLATE.format_map(d), file=fout)
 
     def write_shim_source(self, functionals, fout):
-        return # TODO
+        iface = self._iface
         d = {
-            'op_family_name'        : iface.FAMILY,
-            'param_class_name'      : iface.param_class_name,
-            'context_class_name'    : iface.context_class_name,
-            'func_fields'           : codegen_struct_cfields(iface.func_cfields, nalign=4),
-            'kernel_table_entry_declares'   : self.codegen_kernel_table_entry_declares(functionals),
-            'number_of_functionals' : iface.godel_number,
-            'declare_list_of_deduplicated_lut_functions' : 'TODO' # self.codegen_declare_list_of_deduplicated_lut_functions(),
+            'family_name'               : iface.FAMILY,
+            'iface_name'                : iface.NAME,
+            'param_class_name'          : iface.param_class_name,
+            'context_class_name'        : iface.context_class_name,
+            'godel_number_body'         : self.codegen_godel_number_body(),
+            'def_trivial_tunes'         : self.codegen_trivial_tunes(),
+            'optune_table_entries'      : self.codegen_tune_table_entries(functionals),
+            'number_of_functionals'     : iface.godel_number,
+            'def_backend_launchers'     : self.codegen_launchers(nalign=0),
+            'launcher_table_entries'    : self.codegen_launch_table_entries(nalign=4),
+            'list_of_deduplicated_lut_functions' : '// TODO' # self.codegen_declare_list_of_deduplicated_lut_functions(),
         }
         print(self.SOURCE_TEMPLATE.format_map(d), file=fout)
 
@@ -62,3 +83,44 @@ class OperatorGenerator(InterfaceGenerator):
             stmt.append(f'{backend.enum_name} = {i}')
         ALIGN = ',\n' + ' ' * nalign
         return ALIGN.join(stmt)
+
+    def codegen_launchers(self, nalign):
+        iface = self._iface
+        stmt = []
+        for backend in iface.list_backends():
+            stmt.append(self.codegen_single_launcher(backend, nalign))
+        ALIGN = '\n\n'
+        return ALIGN.join(stmt)
+
+    def codegen_single_launcher(self, backend : Interface, nalign):
+        iface = self._iface
+        stmt = []
+        context_class_name = iface.context_class_name
+        d = {
+            'context_class_name'    : iface.context_class_name,
+            'launcher_func_name'    : self.codegen_launcher_func_name(backend),
+            'backend_context_name'  : backend.context_class_name,
+        }
+        return self.LAUNCHER_TEMPLATE.format_map(d)
+
+    def codegen_launcher_func_name(self, backend):
+        return f'launcher_for_{backend.enum_name}'
+
+    def codegen_launch_table_entries(self, nalign):
+        iface = self._iface
+        stmt = [ '&' + self.codegen_launcher_func_name(b) for b in iface.list_backends() ]
+        ALIGN = ',\n' + ' ' * nalign
+        return ALIGN.join(stmt)
+
+    def codegen_trivial_tunes(self):
+        trivial_tunes = self._this_repo.get_data('trivial_tunes')
+        uniques = set(trivial_tunes.values())
+        context_class_name = self._iface.context_class_name
+        tune_name = self._iface.TUNE_NAME
+        stmt = []
+        for trivial_enum in uniques:
+            stmt.append(f'void {tune_name}_{self._iface.NAME}__Trivial_{trivial_enum}({context_class_name}* context, Gpu) {{')
+            stmt.append(f'    context.backend_index = {context_class_name}::BackendEnum::{trivial_enum};')
+            stmt.append('}')
+            stmt.append('')
+        return '\n'.join(stmt)
