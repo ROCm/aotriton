@@ -15,10 +15,11 @@ class MetroKernel(Interface):
     def __init__(self,
                  iface_klass : class,
                  metro_name : str,
-                 backends : list[KernelDescription]):
+                 kernels : list[KernelDescription]):
         self.NAME = metro_name
         super().__init__()
         self._late_init()
+        self._kernels = kernels
 
     @property
     def class_name_base(self):
@@ -36,3 +37,6 @@ class MetroKernel(Interface):
 
     def translate_empty_dataframe(self, f : Functional):
         raise RuntimeError(f'translate_empty_dataframe should not be calle over any MetroKernel {self.NAME=}')
+
+    def list_kernels(self):
+        return self._kernels

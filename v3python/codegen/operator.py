@@ -27,6 +27,7 @@ class OperatorGenerator(InterfaceGenerator):
     SOURCE_TEMPLATE = get_template('op.cc')
     KSHIM_LAUNCHER_TEMPLATE = get_template('kshim_launcher.cc')
     METRO_LAUNCHER_TEMPLATE = get_template('metro_launcher.cc')
+    METRO_SNIPPET_TEMPLATE = get_template('snippet/metro_per_kernel.cc')
     PFX = 'iface'
 
     # TODO: Optimize for single entry LUT/uniform LUT
@@ -111,10 +112,22 @@ class OperatorGenerator(InterfaceGenerator):
         }
         return self.KSHIM_LAUNCHER_TEMPLATE.format_map(d)
 
-    def codegen_metro_launcher(self, backend : Interface, nalign):
+    def codegen_metro_launcher(self, metro : MetroKernel, nalign):
         iface = self._iface
-        stmt = []
         context_class_name = iface.context_class_name
+        stmt = []
+        for kdesc in metro.kernels:
+            d = {
+                'backend_context_name'  : kdesc.context_class_name,
+            }
+            snippet = self.METRO_SNIPPET_TEMPLATE.format_map(d)
+            stmt.append(snippet)
+        d = {
+            'context_class_name'    : iface.context_class_name,
+            'launcher_func_name'    : self.codegen_launcher_func_name(backend),
+            'launch_every_kernel'   : '\n'.join(stmt),
+        }
+        return self.METRO_LAUNCHER_TEMPLATE.format_map(d)
 
     def codegen_launcher_func_name(self, backend):
         return f'launcher_for_{backend.enum_name}'

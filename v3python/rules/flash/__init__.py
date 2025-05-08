@@ -13,12 +13,12 @@ from .debug_simulate_encoded_softmax import debug_simulate_encoded_softmax
 
 SOURCE_FILE = 'tritonsrc/flash.py'
 
-# __bwd_preprocess = bwd_preprocess('bwd_preprocess', SOURCE_FILE)
+__bwd_preprocess = bwd_preprocess('bwd_preprocess', SOURCE_FILE)
 # __bwd_preprocess_varlen = bwd_preprocess_varlen('bwd_preprocess_varlen', SOURCE_FILE)
 __attn_fwd = attn_fwd('attn_fwd', SOURCE_FILE)
-# __bwd_kernel_dk_dv = bwd_kernel_dk_dv('bwd_kernel_dk_dv', SOURCE_FILE)
-# __bwd_kernel_dq = bwd_kernel_dq('bwd_kernel_dq', SOURCE_FILE)
-# __bwd_kernel_fuse = bwd_kernel_fuse('bwd_kernel_fuse', SOURCE_FILE)
+__bwd_kernel_dk_dv = bwd_kernel_dk_dv('bwd_kernel_dk_dv', SOURCE_FILE)
+__bwd_kernel_dq = bwd_kernel_dq('bwd_kernel_dq', SOURCE_FILE)
+__bwd_kernel_fuse = bwd_kernel_fuse('bwd_kernel_fuse', SOURCE_FILE)
 # # TODO: aiter
 # # __bwd_aiter = bwd_aiter()
 # # TODO: Remove them from code base
@@ -51,31 +51,9 @@ operators = [
                        [__bwd_preprocess,
                         __bwd_kernel_dk_dv,
                         __bwd_kernel_dq]),
+        __bwd_kernel_fuse,
+        # TODO, Affine Kernels
     ]),
-    # [
-    #     MetroKernel('triton', [__attn_fwd], is_fallback=True),
-    # ]),
-    #     OpAttnBwd([
-    #         MetroKernel('triton_split',
-    #                     [__bwd_preprocess,
-    #                      __bwd_kernel_dk_dv,
-    #                      __bwd_kernel_dq],
-    #                      is_fallback=True),
-    #         MetroKernel('triton_fully_fused',
-    #                      [__bwd_preprocess,
-    #                       __bwd_kernel_fuse]),
-    #         # TODO, Affine Kernels
-    #         # MetroAttnBwd('aiter_semi_fused',
-    #         #             [__bwd_preprocess,
-    #         #               __bwd_aiter]),
-    #     ]),
 ]
-    # # TODO: Merge __bwd_preprocess_varlen into __bwd_preprocess
-    #         So we don't need OpAttnBwdVarlen
-    # 'AttnBwdVarlen' : [
-    #     MetroAttnBwd('triton_split',
-    #                  [__bwd_preprocess_varlen,
-    #                   __bwd_kernel_dk_dv,
-    #                   __bwd_kernel_dq],
-    #                   is_fallback=True]),
-    # ]
+
+# TODO: Merge __bwd_preprocess_varlen into __bwd_preprocess
