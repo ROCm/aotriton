@@ -25,6 +25,7 @@ class bwd_kernel_fuse(FlashKernel):
         'stride_vz', 'stride_vh', 'stride_vk', 'stride_vn',
         'stride_bz', 'stride_bh', 'stride_bk', 'stride_bn',
         'stride_oz', 'stride_oh', 'stride_om', 'stride_ok',
+        'stride_doz', 'stride_doh', 'stride_dom', 'stride_dok',
         'stride_dkz', 'stride_dkh', 'stride_dkn', 'stride_dkk',
         'stride_dvz', 'stride_dvh', 'stride_dvk', 'stride_dvn',
         'stride_dqz', 'stride_dqh', 'stride_dqm', 'stride_dqk',

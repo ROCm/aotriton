@@ -18,14 +18,14 @@ match_kv = lambda aname : get_possible_choices(bwd_kernel_dk_dv, aname)
 class bwd_kernel_dq(FlashKernel):
     SHARED_IFACE = OpAttnBwd
     ARGUMENTS = [
-        'Q', 'K', 'V', 'B', 'sm_scale', 'Out', 'DO',
+        'Q', 'K', 'V', 'B', 'sm_scale', 'DO',
         'DQ', 'DB',
         'L', 'D',
         'stride_qz', 'stride_qh', 'stride_qm', 'stride_qk',
         'stride_kz', 'stride_kh', 'stride_kn', 'stride_kk',
         'stride_vz', 'stride_vh', 'stride_vk', 'stride_vn',
         'stride_bz', 'stride_bh', 'stride_bk', 'stride_bn',
-        'stride_oz', 'stride_oh', 'stride_om', 'stride_ok',
+        'stride_doz', 'stride_doh', 'stride_dom', 'stride_dok',
         'stride_dqz', 'stride_dqh', 'stride_dqm', 'stride_dqk',
         'stride_dbz', 'stride_dbh', 'stride_dbm', 'stride_dbn',
         'num_head_q',

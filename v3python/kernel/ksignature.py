@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 from ..base import Functional
+from ..utils import log
 import hashlib
 
 # Move to a dedicated file
@@ -95,4 +96,9 @@ class KernelSignature(object):
                 complete_dict[aname] = tc
         kdesc = self._functional.meta_object
         ARGUMENTS = kdesc.ARGUMENTS
+        log(lambda: f'{kdesc.NAME=}')
+        log(lambda: f'{kdesc.ARGUMENTS=}')
+        log(lambda: f'{kdesc.TYPE_CHOICES=}')
+        log(lambda: f'{kdesc.FEAT_CHOICES=}')
+        log(lambda: f'{complete_dict=}')
         return ', '.join([str(complete_dict[aname].triton_compile_signature) for aname in ARGUMENTS])

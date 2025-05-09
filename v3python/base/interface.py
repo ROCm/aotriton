@@ -38,7 +38,7 @@ class Interface(ABC):
         return f'{self.FAMILY}.{self.NAME}'
 
     def _insert_tensor_strides_to_choices(self, last_is_continuous=False):
-        log(lambda:f"_insert_tensor_strides_to_choices {self.TENSOR_STRIDE_INPUTS=}")
+        log(lambda:f"_insert_tensor_strides_to_choices {self.NAME} {self.TENSOR_STRIDE_INPUTS=}")
         for tensor, (strides, delete_when) in self.TENSOR_STRIDE_INPUTS.items():
             typed_strides = strides[:-1] if last_is_continuous else strides
             stride_dtype = TC.stride_a8() # 'u64:8' but hidden in cfields
@@ -49,12 +49,12 @@ class Interface(ABC):
             constant_strides = [] if not last_is_continuous else strides[-1:]
             if constant_strides:
                 self.FEAT_CHOICES[frozenset(constant_strides)] = [TCC.stride1()]
-        log(lambda:f"_insert_tensor_strides_to_choices {self.TYPE_CHOICES=}")
-        log(lambda:f"_insert_tensor_strides_to_choices {self.FEAT_CHOICES=}")
+        log(lambda:f"_insert_tensor_strides_to_choices {self.NAME} {self.TYPE_CHOICES=}")
+        log(lambda:f"_insert_tensor_strides_to_choices {self.NAME} {self.FEAT_CHOICES=}")
 
     # Early init
     def __init__(self):
-        self._collect_functionals_from_shared()
+        collected = self._collect_functionals_from_shared()
         self._insert_tensor_strides_to_choices(last_is_continuous=True)
         def __ttypes(anames, choices):
             for aname in anames:
@@ -164,7 +164,7 @@ class Interface(ABC):
     def _collect_functionals_from_shared(self):
         mklass = self.SHARED_IFACE
         if mklass is None:
-            return
+            return True
         log(lambda:f'_collect_functionals_from_shared {self.__class__=} {mklass=}')
         log(lambda:f'_collect_functionals_from_shared source values:',
             lambda:f'{mklass.TYPE_CHOICES=}',
@@ -173,13 +173,13 @@ class Interface(ABC):
             lambda:f'{mklass.TENSOR_STRIDE_INPUTS=}',
             sep='\n')
         # Early detection
-        all_assigned = True
-        for which_choice in ['TYPE_CHOICES', 'FEAT_CHOICES']:
-            if getattr(self, which_choice, None) is None:
-                all_assigned = False
-                break
-        if all_assigned:
-            return
+        # all_assigned = True
+        # for which_choice in ['TYPE_CHOICES', 'FEAT_CHOICES']:
+        #     if getattr(self, which_choice, None) is None:
+        #         all_assigned = False
+        #         break
+        # if all_assigned:
+        #     return True
         args_order = { aname : i for i, aname in enumerate(self.ARGUMENTS) }
         args_in_use = set(self.ARGUMENTS)
         log(f'_collect_functionals_from_shared {args_order=}')
@@ -231,3 +231,4 @@ class Interface(ABC):
             f'{self.TENSOR_RANKS=}',
             f'{self.TENSOR_STRIDE_INPUTS=}',
             sep='\n')
+        return True
