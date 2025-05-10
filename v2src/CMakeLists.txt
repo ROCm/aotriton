@@ -160,7 +160,6 @@ file(STRINGS "${AOTRITON_V2_BUILD_DIR}/Bare.shim" SHIM_CC_FILES)
 
 add_library(aotriton_v2 SHARED ${SHIM_CC_FILES})
 set(AOTRITON_LIBRARY_FILE libaotriton${AOTRITON_NAME_SUFFIX}_v2.so)
-add_dependencies(aotriton_v2 aotriton_v2_gen_shim)
 if(AOTRITON_ENABLE_SUFFIX)
   set_target_properties(aotriton_v2 PROPERTIES OUTPUT_NAME "aotriton${AOTRITON_NAME_SUFFIX}_v2")
 endif()

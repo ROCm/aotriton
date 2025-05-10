@@ -6,6 +6,7 @@
 
 #include <aotriton/config.h>
 #include <aotriton/dtypes.h>
+#include <aotriton/util.h>
 #include <aotriton/runtime.h>
 #include <functional>
 #include <string>
@@ -25,7 +26,7 @@ struct [[context_class_name]] {
         [[list_of_backend_enum]],
         Max = [[total_number_of_backends]]
     };
-    constexpr BackendEnum fallback_backend = [[fallback_backend]];
+    static constexpr BackendEnum fallback_backend = [[fallback_backend]];
     BackendEnum backend_index = BackendEnum::None;
 
 #if AOTRITON_BUILD_FOR_TUNING
@@ -40,14 +41,16 @@ struct [[context_class_name]] {
     // 3. Even metro kernel only has one kernel, another set LUT is need to
     //    determine which metro kernel (or backend) need to be used
     int64_t godel_number() const;
+    static std::tuple<int, int> get_archmod_number(Gpu gpu);
+    static constexpr int kMaxGodelNumber = [[number_of_functionals]];
 
     hipError_t lookup_optimal(Gpu gpu);
     // Unlike Triton kernel, Operator's launch need gpu argument to eventually
     // call backend's lookup_optimal
-    hipError_t launch(Gpu gpu, hipStream_t stream);
+    hipError_t launch(Gpu gpu, hipStream_t stream) const;
 private:
-    typedef void (*OpTuneTableEntry)([[context_class_name]]& context, Gpu gpu);
-    static OpTuneTableEntry optune_table[ [[number_of_functionals]] ];
+    typedef void (*OpTuneTableEntry)([[context_class_name]]& context, int mod_number);
+    static OpTuneTableEntry optune_table[][ kMaxGodelNumber ];
 
     typedef hipError_t (*BackendLauncher)(const [[context_class_name]]& context,
                                           Gpu gpu,

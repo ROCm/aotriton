@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // clang-format off
-#include "op.[[iface_name]].h"
+#include "iface.[[iface_name]].h"
 #include <aotriton/util.h>
 #include <tuple>
 [[includes]]
@@ -12,6 +12,7 @@ namespace AOTRITON_NS::v3::[[family_name]] {
 int64_t [[context_class_name]]::godel_number() const
 {
     int64_t sum = 0;
+    const auto& args = *params;
 [[godel_number_body]]
     return sum;
 }
@@ -32,8 +33,17 @@ hipError_t
     return hipSuccess;
 }
 
+std::tuple<int, int>
+[[context_class_name]]::get_archmod_number(Gpu gpu) {
+    [[get_archmod_number_body]];
+    // TODO: print warning about tuning for this GPU mod is not built.
+    // Note: if some mod does not have tuning info in the database at all, the
+    //       getGpuFromStream should not return that mod from beginning.
+    return std::make_tuple(-1, 0);
+}
+
 hipError_t
-[[context_class_name]]::launch(Gpu gpu, hipStream_t stream) {
+[[context_class_name]]::launch(Gpu gpu, hipStream_t stream) const {
     if (backend_index < 0) {
         return hipErrorPriorLaunchFailure;
     }
@@ -43,7 +53,7 @@ hipError_t
     if (ret == hipErrorPeerAccessUnsupported) {
         return launcher_table[fallback_backend](*this, gpu, stream);
     }
-    return ret
+    return ret;
 }
 
 // Launchers are defined in op source file and no need to put them in to
@@ -52,7 +62,7 @@ namespace {
 [[def_backend_launchers]]
 }
 
-BackendLauncher
+[[context_class_name]]::BackendLauncher
 [[context_class_name]]::launcher_table[ BackendEnum::Max ] = {
     [[launcher_table_entries]]
 };

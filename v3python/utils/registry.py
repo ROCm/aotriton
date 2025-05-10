@@ -1,6 +1,8 @@
 # Copyright © 2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
+from dataclasses import dataclass
+
 class StringRegistry(object):
     def __init__(self):
         self._string_dict = {None:0}
@@ -23,6 +25,11 @@ class StringRegistry(object):
         packed_string = '\n'.join(['"' + s + '\\0"' for s in self._string_dict if s is not None])
         return packed_string
 
+@dataclass
+class FunctionItem:
+    ret    : str = ''
+    name   : str = ''
+    params : str = ''
 
 class FunctionRegistry(object):
     def __init__(self):
@@ -30,10 +37,10 @@ class FunctionRegistry(object):
 
     def register(self, fsrc, fret, fname_pfx, fparams):
         if fsrc in self._function_registry:
-            return self._function_registry[fsrc][0]
+            return self._function_registry[fsrc].name
         findex = len(self._function_registry)
         fname = fname_pfx + f'__{findex}'
-        self._function_registry[fsrc] = (fret, fname, fparams)
+        self._function_registry[fsrc] = FunctionItem(ret=fret, name=fname, params=fparams)
         return fname
 
     def get_data(self):

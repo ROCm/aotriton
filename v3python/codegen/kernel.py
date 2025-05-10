@@ -120,16 +120,6 @@ const std::vector<{infotype}>& {meta_class}::get_{tp.repr_name}_choices()
             def_list.append(def_code)
         return '\n'.join(def_list)
 
-    def codegen_archmod_number_body(self):
-        lets = []
-        for i, arch in enumerate(self._target_arch_keys):
-            for j, gpu in enumerate(self._target_arch[arch]):
-                gpu_enum = f'GPU_AMD_ARCH_{gpu}'.upper()
-                # CAVEAT: must return j because some GPU mod may not be selected.
-                lets.append(f'if (gpu == {gpu_enum}) return {{ {i}, {j} }}')
-        ALIGN = ';\n' + ' ' * 4
-        return ALIGN.join(lets)
-
     def codegen_kernel_arguments(self):
         param_class_name = self._iface.param_class_name
         pp_registry = self._this_repo.get_data('pp_function')

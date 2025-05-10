@@ -130,7 +130,10 @@ class InterfaceGenerator(ABC):
             for godel_number in range(self._iface.godel_number):
                 struct_name, is_extern = self.codegen_tune_struct_name(arch_number, godel_number)
                 if godel_number in godel_numbers:
-                    lets.append(8 * ' ' + f'&{self._iface.TUNE_NAME}::{struct_name},')
+                    if is_extern:
+                        lets.append(8 * ' ' + f'&{self._iface.TUNE_NAME}::{struct_name},')
+                    else:
+                        lets.append(8 * ' ' + f'&{struct_name},')
                 else:
                     lets.append(8 * ' ' + f'nullptr,')
             lets.append(4 * ' ' + '},')
@@ -140,14 +143,14 @@ class InterfaceGenerator(ABC):
         registry = self._this_repo.get_data('lut_function', return_none=True)
         if registry is None:
             return '// This Interface does not have tuning LUT function'
-        stmt = [f'{fret} {fname} {fsrc};' for fsrc, (fret, fname, fparams) in registry.items()]
+        stmt = [f'{item.ret} {item.name} {fsrc};' for fsrc, item in registry.items()]
         return '\n'.join(stmt)
 
     def codegen_declare_list_of_deduplicated_lut_functions(self):
         registry = self._this_repo.get_data('lut_function', return_none=True)
         if registry is None:
             return '// This Interface does not have tuning LUT function'
-        stmt = [f'extern {fret} {fname}{fparams};' for fsrc, (fret, fname, fparams) in registry.items()]
+        stmt = [f'extern {item.ret} {item.name}{item.params};' for fsrc, item in registry.items()]
         return '\n'.join(stmt)
 
     '''
@@ -178,3 +181,12 @@ class InterfaceGenerator(ABC):
         print(2 * INDENT + f'sum += number * {tp.godel_number};', file=fout)
         print(1 * INDENT + '}', file=fout)
 
+    def codegen_archmod_number_body(self):
+        lets = []
+        for i, arch in enumerate(self._target_arch_keys):
+            for j, gpu in enumerate(self._target_arch[arch]):
+                gpu_enum = f'GPU_AMD_ARCH_{gpu}'.upper()
+                # CAVEAT: must return j because some GPU mod may not be selected.
+                lets.append(f'if (gpu == {gpu_enum}) return {{ {i}, {j} }}')
+        ALIGN = ';\n' + ' ' * 4
+        return ALIGN.join(lets)

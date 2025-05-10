@@ -37,9 +37,9 @@ class KernelSignature(object):
     def perf_cdict(self):
         return { aname : tc.json_value for bind in self._perfs for aname, tc in bind }
 
-    def gen_typed_value(self):
-        for bind in self._perfs:
-            yield from bind
+    @property
+    def perf_compact_dict(self):
+        return { bind.name : bind.get_typed_value(bind.name) for bind in self._perfs }
 
     @property
     def perf_signature(self):

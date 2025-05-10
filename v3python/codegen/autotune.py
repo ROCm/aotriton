@@ -126,8 +126,11 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
 
     def codegen_kernel_image_perfs(self, ksigs):
         kernel_image_perfs = []
+        kdesc = self._f.meta_object
+        perf_cfields = kdesc.perf_cfields
         def codegen_perf_object(sig):
-            return ', '.join([f'.{aname} = {tc.infotext}' for aname, tc in sig.gen_typed_value() ])
+            dic = sig.perf_compact_dict
+            return ', '.join([f'.{field.aname} = {dic[field.aname].infotext}' for field in perf_cfields ])
         for sig in ksigs:
             kernel_image_perfs.append('{ ' + codegen_perf_object(sig) + ' }')
         ALIGN = ',\n' + 4 * ' '
@@ -161,7 +164,7 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
             'binning_autotune_keys' : self.codegen_binning_code(),
             'binned_indices'        : self.codegen_binned_indices(),
         }
-        lambda_params = '({param_class_name}& params, int mod_number, {lut_ctype} lut{lut_shape})'
+        lambda_params = '(const {param_class_name}& params, int mod_number, {lut_ctype} lut{lut_shape})'
         stmt = []
         stmt.append(lambda_params + ' {{')
         stmt.append('    {binning_autotune_keys}')

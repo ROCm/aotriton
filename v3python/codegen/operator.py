@@ -56,7 +56,7 @@ class OperatorGenerator(InterfaceGenerator):
             'context_class_name'    : iface.context_class_name,
             'func_fields'           : codegen_struct_cfields(iface.func_cfields, nalign=4),
             'list_of_backend_enum'  : self.codegen_backend_enums(nalign=8),
-            'fallback_backend'      : iface.fallback_backend,
+            'fallback_backend'      : iface.fallback_backend.enum_name,
             'total_number_of_backends'      : self._iface.nbackends,
             'optune_table_entry_declares'   : self.codegen_tune_table_entry_declares(functionals),
             'number_of_functionals' : iface.godel_number,
@@ -72,12 +72,13 @@ class OperatorGenerator(InterfaceGenerator):
             'param_class_name'          : iface.param_class_name,
             'context_class_name'        : iface.context_class_name,
             'godel_number_body'         : self.codegen_godel_number_body(),
+            'get_archmod_number_body'   : self.codegen_archmod_number_body(),
             'def_trivial_tunes'         : self.codegen_trivial_tunes(),
             'optune_table_entries'      : self.codegen_tune_table_entries(functionals),
             'number_of_functionals'     : iface.godel_number,
             'def_backend_launchers'     : self.codegen_launchers(nalign=0),
             'launcher_table_entries'    : self.codegen_launch_table_entries(nalign=4),
-            'list_of_deduplicated_lut_functions' : '// TODO' # self.codegen_declare_list_of_deduplicated_lut_functions(),
+            'list_of_deduplicated_lut_functions' : '// TODO: list_of_deduplicated_lut_functions' # self.codegen_declare_list_of_deduplicated_lut_functions(),
         }
         d['includes'] = codegen_includes(self._src_include_repo.get_data())
         print(self.SOURCE_TEMPLATE.format_map(d), file=fout)
@@ -149,7 +150,7 @@ class OperatorGenerator(InterfaceGenerator):
         tune_name = self._iface.TUNE_NAME
         stmt = []
         for trivial_enum in uniques:
-            stmt.append(f'void {tune_name}_{self._iface.NAME}__Trivial_{trivial_enum}({context_class_name}* context, Gpu) {{')
+            stmt.append(f'void {tune_name}_{self._iface.NAME}__Trivial_{trivial_enum}({context_class_name}& context, int) {{')
             stmt.append(f'    context.backend_index = {context_class_name}::BackendEnum::{trivial_enum};')
             stmt.append('}')
             stmt.append('')

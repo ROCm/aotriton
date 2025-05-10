@@ -8,6 +8,7 @@
 #include <aotriton/_internal/triton_kernel.h>
 #include <aotriton/dtypes.h>
 #include <aotriton/runtime.h>
+#include <aotriton/util.h>
 #include <functional>
 #include <string>
 #include <vector>
@@ -53,12 +54,12 @@ struct [[context_class_name]] {
     hipError_t lookup_optimal(Gpu gpu);
     hipError_t launch(hipStream_t stream) const;
 
-    dim3 grid_calculator();
+    dim3 grid_calculator() const;
     std::function<dim3(const [[context_class_name]]&)> custom_grid_calculator;
 
     int64_t godel_number() const;
     static std::tuple<int, int> get_archmod_number(Gpu gpu);
-    constexpr int kMaxGodelNumber = [[number_of_functionals]];
+    static constexpr int kMaxGodelNumber = [[number_of_functionals]];
 
     typedef void (*AutoTuneTableEntry)([[context_class_name]]& context, int mod_number);
     static AutoTuneTableEntry autotune_table[][ kMaxGodelNumber ];
