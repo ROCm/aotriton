@@ -27,5 +27,4 @@ class Config:
             co = {}
         co['num_warps'] = self.num_warps
         co['num_stages'] = self.num_stages
-        # print(f'translate_to_psel_and_co {psels=} {co=}')
         return psels, co

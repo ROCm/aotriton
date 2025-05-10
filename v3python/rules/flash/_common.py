@@ -17,6 +17,7 @@ from v3python.autotune import (
     BinningLessOrEqual,
     BinningExact,
 )
+from v3python.utils import log
 
 class OpAttn(Operator):
     FAMILY = 'flash'
@@ -67,7 +68,7 @@ class FlashKernel(KernelDescription):
             to_check = lut_tensor
         else:
             to_check = lut_tensor
-        print(f'{lut_tensor.shape=} ==? {LUT_TENSOR_SIZE=}')
+        log(lambda : f'{lut_tensor.shape=} ==? {LUT_TENSOR_SIZE=}')
         if MI:
             return (to_check >= 0).all() and lut_tensor.shape[1:] == LUT_TENSOR_SIZE
         elif Navi:

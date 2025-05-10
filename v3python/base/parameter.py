@@ -10,6 +10,7 @@ from .bind import Bind
 # from .ttype import TI, ConditionalValue
 from . import typed_choice as TC
 from .cfield import cfield
+from ..utils import log
 
 class TemplateParameter(object):
 
@@ -21,7 +22,7 @@ class TemplateParameter(object):
         self._maybe_conditional = any([isinstance(c, TC.ConditionalChoice) for c in self._choices])
         self._type_dict = {}
         self._type_fallback = None
-        print(f'TP {self._names=} Done')
+        log(lambda : f'TP {self._names=} Done')
 
     def __sort_arguments(self, ALL_ARGUMENTS):
         arguments_tuple = [(aname, ALL_ARGUMENTS.index(aname)) for aname in self._names]
@@ -32,7 +33,7 @@ class TemplateParameter(object):
         self._ordered_arguments = ordered_arguments
 
     def late_init(self, ALL_ARGUMENTS, tp_dict, RANKS, STRIDES):
-        print(f'TP {self._names=} late_init Start')
+        log(lambda : f'TP {self._names=} late_init Start')
         self.__sort_arguments(ALL_ARGUMENTS)
         # Assocate ConditionalValue with the depending values
         for c in self._choices:
@@ -42,7 +43,7 @@ class TemplateParameter(object):
             c.link_deferral_target(tp_dict)
         for tc in self._choices:
             tc.resolve_rank(self.all_names, RANKS)
-        print(f'TP {self._names=} late_init Done')
+        log(lambda : f'TP {self._names=} late_init Done')
 
     @property
     def repr_name(self):
@@ -139,7 +140,7 @@ class PerformanceTemplateParameter(TemplateParameter):
     '''
     def create_direct(self, value):
         # assert isinstance(self.repr_choice, TC.constexpr_base), f'{self.repr_choice.__class__=} is not subclass of TC.constexpr_base'
-        print(f'create_direct {self.repr_name=} {value=} {self.repr_choice=}')
+        log(lambda : f'create_direct {self.repr_name=} {value=} {self.repr_choice=}')
         typed_value = self.repr_choice.create_constexpr(value)
         return Bind(self, typed_value, None)
 

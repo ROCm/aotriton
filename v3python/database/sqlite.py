@@ -5,6 +5,7 @@ import sqlite3
 import pandas as pd
 from ..base import typed_choice as TC
 from ..op import Operator
+from ..utils import log
 
 '''
 We don't really need a LazyTableView, if Lazy evaluation is needed, a
@@ -31,12 +32,12 @@ class Factory(object):
     SIGNATURE_FILE = 'tuning_database.sqlite3'
 
     def __init__(self, path):
-        print(f'sqlite3.connect({path / self.SIGNATURE_FILE})')
+        log(lambda : f'sqlite3.connect({path / self.SIGNATURE_FILE})')
         self._conn = sqlite3.connect(path / self.SIGNATURE_FILE)
-        self._conn.set_trace_callback(print) # Debug
+        self._conn.set_trace_callback(log) # Debug
 
     def create_view(self, functional):
-        print(f'{functional=}')
+        log(lambda : f'{functional=}')
         meta = functional.meta_object
         pfx = 'OP$' if isinstance(meta, Operator) else ''
         table_name = pfx + meta.FAMILY.upper() + '$' + meta.NAME
@@ -52,7 +53,7 @@ class Factory(object):
             return create_select_stmt(table_name, wheres)
         stmt, params = build_sql(functional.compact_choices)
         try:
-            print(f'select stmt: {stmt} params {params}')
+            log(lambda : f'select stmt: {stmt} params {params}')
             df = pd.read_sql_query(stmt, self._conn, params=params)
             if not df.empty:
                 return df
@@ -60,5 +61,5 @@ class Factory(object):
             stmt, params = build_sql(functional.fallback_choices)
             return pd.read_sql_query(stmt, self._conn, params=params)
         except pd.errors.DatabaseError:
-            print(f'Table {table_name} may not exist. select stmt: {stmt} params {params}')
+            log(lambda : f'Table {table_name} may not exist. select stmt: {stmt} params {params}')
             return None

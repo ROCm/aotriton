@@ -10,6 +10,7 @@ from .template import get_template
 from ..utils import (
     LazyFile,
     dict2json,
+    log,
 )
 from .common import codegen_struct_cfields, MissingLutEntry
 import numpy as np
@@ -36,7 +37,7 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
             if args.build_for_tuning and kdesc.is_tunable:
                 self._sigs = kdesc.gen_sigatures_for_tuning(f)
         else:
-            print(f'translate_dataframe for kernel {kdesc.NAME}')
+            log(lambda : f'translate_dataframe for kernel {kdesc.NAME}')
             self._lut_tensor, self._sigs, self._binning_dict = kdesc.translate_dataframe(f, self._df)
             if not kdesc.sancheck_lut_tensor(f, self._lut_tensor):
                 ent = MissingLutEntry(f, self._lut_tensor)
@@ -51,7 +52,7 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
         # Un "self._" section
         args = self._args
 
-        print(f'Writing to {self._cc_file}')
+        log(lambda : f'Writing to {self._cc_file}')
         with LazyFile(self._cc_file) as fout:
             self.write_autotune_src(fout)
         hsaco_registry = self._parent_repo.get_hsaco_registry('hsaco')
@@ -203,7 +204,7 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
         assign_skips = tuple([_pp_signature(aname) for aname in kdesc.KERNEL_DATA_ARGUMENTS])
         if True:
             tc_dict = { aname : tc.triton_compile_signature for aname, (_, tc) in bind_dict.items() }
-            print(f'{functional.compact_signature_noarch=} {assign_skips=} {tc_dict=}')
+            log(lambda : f'{functional.compact_signature_noarch=} {assign_skips=} {tc_dict=}')
         hit, findex = pp_registry.contains(assign_skips)
         if hit:
             return findex

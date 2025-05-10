@@ -4,6 +4,7 @@
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
 import numpy as np
+from v3python.utils import log
 
 class TypedChoice(ABC):
     HIDDEN = False    # For strides
@@ -258,10 +259,10 @@ class tensor(argument_base):
             return tensor(elem_ty=self._elem_ty, rank=rank)
         # print(f'resolve_rank {self=} {self._elem_ty=} {all_names=} BEFORE {self._specialized=}')
         self._specialized.update({ aname : specialize(aname) for aname in all_names })
-        print(f'resolve_rank {self=} {self._elem_ty=} {all_names=} AFTER  {self._specialized=}')
+        log(lambda : f'resolve_rank {self=} {self._elem_ty=} {all_names=} AFTER  {self._specialized=}')
 
     def resolve(self, aname, tc_dict):
-        print(f'{self._specialized=} {aname=}')
+        log(lambda : f'{self._specialized=} {aname=}')
         return self._specialized.get(aname, self)
 
     @property
@@ -368,7 +369,7 @@ def parse_complex(v : 'str | TypedChoice'):
     if isinstance(v, TypedChoice):  # Already typed
         return v
     assert isinstance(v, str), 'Unsupported choice {v=} with class {v.__class__=}'
-    print(f'{v=} {v.__class__=}')
+    log(lambda : f'{v=} {v.__class__=}')
     if v.startswith('*'):  # Tensor
         return tensor(elem_ty=ELEMENTAL_TYPE_MAP[v[1:]](), rank=None)
     return ELEMENTAL_TYPE_MAP[v]()

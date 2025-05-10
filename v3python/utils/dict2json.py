@@ -3,5 +3,4 @@
 
 def dict2json(d) -> str:
     import json
-    print(f'{d=}')
     return json.dumps(d)

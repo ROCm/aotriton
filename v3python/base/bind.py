@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 from . import typed_choice as TC
+from ..utils import log
 '''
 Bind: assocation between template parameter and specific choice (typed)
 
@@ -91,7 +92,7 @@ class Bind(object):
     def settle_unresolved(self, tc_dict):
         if self.is_unresolved:
             tc = self._value.resolve(self.name, tc_dict)
-            print(f'settle_unresolved Bind({self.name}) from {self._value=} into {tc=}')
+            log(lambda : f'settle_unresolved Bind({self.name}) from {self._value=} into {tc=}')
             setattr(self, '_value', tc)
 
     def document_conditional_value(self):

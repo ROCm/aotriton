@@ -19,6 +19,7 @@ from ..base import (
 )
 from .ksignature import KernelSignature, COMPILER_OPTIONS, DEFAULT_COPT
 from ..gpu_targets import AOTRITON_SUPPORTED_GPUS, cluster_gpus
+from ..utils import log
 import pandas as pd
 
 SOURCE_PATH = Path(__file__).resolve()
@@ -32,7 +33,7 @@ def get_possible_choices(klass, arg_name : str) -> 'list[Any]':
     for k in ['TYPE_CHOICES', 'FEAT_CHOICES', 'PERF_CHOICES']:
         if hasattr(klass, k) and getattr(klass, k):
             l += [getattr(klass, k)]
-    print(f'{l=}')
+    log(lambda : f'{l=}')
     for d in l:
         for k, v in d.items():
             if arg_name in k:
@@ -73,7 +74,7 @@ class KernelDescription(Interface):
                         return True
                 return False
             self._DATA_ARGUMENTS = [ a for a in self.ARGUMENTS if is_data_argument(a) ]
-            print(f'{self._DATA_ARGUMENTS=}')
+            log(lambda : f'{self._DATA_ARGUMENTS=}')
         return self._DATA_ARGUMENTS
 
     def is_functional_disabled(self, functional):
@@ -158,6 +159,7 @@ class KernelDescription(Interface):
         '''
         Deduplication and assign numbers
         '''
+        log(lambda : f'{df[perf_keys + copt_keys]=}')
         np_sigs, revind = np.unique(df[perf_keys + copt_keys].to_numpy(), axis=0, return_inverse=True)
         df['$$sig_num'] = revind
         sigs_dict = {}

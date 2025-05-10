@@ -12,6 +12,7 @@ from .operator import OperatorGenerator
 from ..utils import (
     LazyFile,
     RegistryRepository,
+    log,
 )
 from ..gpu_targets import AOTRITON_ARCH_TO_DIRECTORY
 
@@ -47,7 +48,7 @@ class RootGenerator(object):
                 image_path = args.build_dir / k.FAMILY / f'gpu_kernel_image.{k.NAME}'
                 image_path.mkdir(parents=True, exist_ok=True)
                 for functional, signatures in hsacos.items():
-                    print(f'{signatures=}')
+                    log(lambda : f'{signatures=}')
                     for ksig in signatures:
                         # TODO: Add sanity check to ensure
                         # k == functional.meta_object and
@@ -59,7 +60,7 @@ class RootGenerator(object):
                 print(str(shim.absolute()), file=shimfile)
 
     def write_hsaco(self, kdesc, path, functional, ksig, rulefile):
-        print(f'{ksig=}')
+        log(lambda : f'{ksig=}')
         objfn = path / (ksig.full_compact_signature + '.hsaco')
         srcfn = kdesc.triton_source_path
         print(str(objfn.absolute()),

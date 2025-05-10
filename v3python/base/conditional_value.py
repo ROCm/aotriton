@@ -15,7 +15,7 @@ Determination of C type:
 NOTE: THE MEMBER VARIABLES OF THIS CLASS SHOULD BE READ-ONLY
 '''
 
-from .typed_choice import ConditionalChoice, parse_choices
+from .typed_choice import ConditionalChoice, parse_choices, log
 
 class ConditionalConstexpr(ConditionalChoice):
     def __init__(self, if_feat, if_value, then_choice, else_choice,
@@ -53,7 +53,7 @@ class ConditionalConstexpr(ConditionalChoice):
             # print(f'{tc_dict[self._if_feat]=}')
             # print(f'{tc_dict[self._if_feat].get_typed_value(aname)=}')
             tc_value = tc_dict[self._if_feat].triton_compile_signature
-            print(f'ConditionalConstexpr.resolve: {self._if_feat=} {tc_value=} {self._if_value=}')
+            log(lambda : f'ConditionalConstexpr.resolve: {self._if_feat=} {tc_value=} {self._if_value=}')
             if self._cond_op is None:
                 return tc_value in self._if_value
             return self._cond_op(tc_value, self._if_value)
@@ -119,7 +119,7 @@ class ConditionalDeferredElseTensor(ConditionalConstexpr):
     def link_deferral_target(self, tp_dict):
         self._link['if'] = tp_dict[self._if_feat]
         self._link['else'] = tp_dict[self._else]
-        print(f"Link {self=}.{self._else=} to {self._link['else']=}")
+        log(lambda : f"Link {self=}.{self._else=} to {self._link['else']=}")
 
     def _parse_else(self, choice):
         return choice
@@ -136,9 +136,9 @@ class ConditionalDeferredElseTensor(ConditionalConstexpr):
         return self._link['else'].repr_choice.resolve(aname, tc_dict=None)
 
     def resolve_rank(self, all_names, RANKS):
-        print(f"CDETensor.resolve_rank {all_names=} {self._link['else']=}")
+        log(lambda : f"CDETensor.resolve_rank {all_names=} {self._link['else']=}")
         for tc in self._link['else'].choices:
-            print(f"{self._link['else']=}")
+            log(lambda : f"{self._link['else']=}")
             tc.resolve_rank(all_names, RANKS)
 
     def document_conditional_value(self, bind):

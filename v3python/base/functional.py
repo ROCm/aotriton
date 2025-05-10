@@ -3,7 +3,7 @@
 
 from pathlib import Path
 from ..gpu_targets import cluster_gpus, gpu2arch, AOTRITON_ARCH_TO_DIRECTORY
-# from .argument import build_dict, build_compact_dict, build_complete_dict
+from ..utils import log
 
 # Functional: describe the functional part of a certain compute process
 # Abstract from: type choice + functional choice of Triton kernels
@@ -45,10 +45,10 @@ class Functional(object):
                 break
             tc_dict = build_tc_dict(self._binds)
             # tc_dict['__arch'] = self._arch
-            print(f'{tc_dict=}')
+            log(lambda : f'{tc_dict=}')
             for bind in unresolved:
                 bind.settle_unresolved(tc_dict)
-                print(f'Settle {bind.name=} to {bind.value.triton_compile_signature=}')
+                log(lambda : f'Settle {bind.name=} to {bind.value.triton_compile_signature=}')
 
     @property
     def arch(self):
