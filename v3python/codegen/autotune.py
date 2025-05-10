@@ -72,7 +72,7 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
             'kernel_copts'          : self.codegen_kernel_copts(self._sigs),
             'kernel_family_name'    : kdesc.FAMILY,
             'shim_kernel_name'      : kdesc.NAME,
-            'godel_number'          : kdesc.godel_number,
+            'godel_number'          : f.godel_number,
             'perf_fields'           : codegen_struct_cfields(kdesc.perf_cfields, nalign=4),
             'package_path'          : package_path,
             'func_name'             : f.signature_in_func_name,
