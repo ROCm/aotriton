@@ -18,7 +18,7 @@ class OptuneCodeGenerator(BaseTuneCodeGenerator):
                  parent_repo):
         super().__init__(args, f, dataframe_for_tuning, parent_repo)
         iface = self._f.meta_object
-        if self._df is None:
+        if self._df is None or self._df.empty:
             self._lut_tensor, self._backends, self._binning_dict = iface.translate_empty_dataframe(f)
         else:
             self._lut_tensor, self._backends, self._binning_dict = iface.translate_dataframe(f, self._df)

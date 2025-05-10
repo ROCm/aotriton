@@ -30,8 +30,8 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
         super().__init__(args, f, dataframe_for_tuning, parent_repo)
         # TODO: support other binning algorithm
         kdesc = self._f.meta_object
-        if args.build_for_tuning or self._df is None:
-            print(f'translate_empty_dataframe for kernel {kdesc.NAME}')
+        if args.build_for_tuning or self._df is None or self._df.empty:
+            log(lambda : f'translate_empty_dataframe for kernel {kdesc.NAME}')
             self._lut_tensor, self._sigs, self._binning_dict = kdesc.translate_empty_dataframe(f)
             if args.build_for_tuning and kdesc.is_tunable:
                 self._sigs = kdesc.gen_sigatures_for_tuning(f)
