@@ -67,3 +67,5 @@ namespace optune {
 }
 
 }
+
+// vim: set fileencoding=utf-8

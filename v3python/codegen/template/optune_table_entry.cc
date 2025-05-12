@@ -51,3 +51,5 @@ void CURRENT_ENTRY_PUBLIC([[op_param_class_name]]& params, int mod_number) {
 #undef mangle
 #undef smangle
 }
+
+// vim: set fileencoding=utf-8

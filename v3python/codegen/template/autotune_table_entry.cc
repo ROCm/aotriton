@@ -29,6 +29,7 @@ static PerfFields image_perf_list [] = {
     [[kernel_image_perfs]]
 };
 
+// u8R generates char8_t which is poorly supported almost everywhere.
 constexpr std::string_view PACKAGE_PATH { R"xyzw([[package_path]])xyzw" };
 constexpr std::string_view FUNC_NAME { R"xyzw([[func_name]])xyzw" };
 constexpr std::string_view ARCH_NAME { R"xyzw([[arch_name]])xyzw" };
@@ -94,3 +95,5 @@ void CURRENT_ENTRY_PUBLIC([[context_class_name]]& context, int mod_number) {
 }
 
 // [[human_readable_signature]]
+
+// vim: set fileencoding=utf-8

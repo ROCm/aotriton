@@ -82,3 +82,5 @@ extern const char [[shim_kernel_name]]_packed_string[];
 
 
 }
+
+// vim: set fileencoding=utf-8

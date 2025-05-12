@@ -35,6 +35,9 @@ class RootGenerator(object):
             hsaco_for_kernels.append((k, hsacos))
             shims += ksg.shim_files
 
+        with LazyFile(args.build_dir / 'Bare.shim') as shimfile:
+            for shim in shims:
+                print(str(shim.absolute()), file=shimfile)
         if args.noimage_mode:
             return
         # TODO: Support Cluter Functionals
@@ -55,9 +58,6 @@ class RootGenerator(object):
                         # functional == ksig._functional ?
                         self.write_hsaco(k, image_path, functional, ksig, rulefile)
                     self.write_cluster(k, image_path, functional, signatures, clusterfile)
-        with LazyFile(args.build_dir / 'Bare.shim') as shimfile:
-            for shim in shims:
-                print(str(shim.absolute()), file=shimfile)
 
     def write_hsaco(self, kdesc, path, functional, ksig, rulefile):
         log(lambda : f'{ksig=}')

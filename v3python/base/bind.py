@@ -66,7 +66,7 @@ class Bind(object):
         if not self.show_in_compact:
             return None
         s = self.compact_signature
-        s = s.replace('*', '^').replace(':', '@').replace('True', 'T').replace('False', 'F')
+        s = s.replace('*', '＊').replace(':', '@').replace('True', 'T').replace('False', 'F')
         return s
 
     @property
