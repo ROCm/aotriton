@@ -59,11 +59,17 @@ class RootGenerator(object):
                         self.write_hsaco(k, image_path, functional, ksig, rulefile)
                     self.write_cluster(k, image_path, functional, signatures, clusterfile)
 
+    def _objfn(self, kdesc, ksig):
+        return kdesc.NAME + '-Sig-' + ksig.full_compact_signature + '.hsaco'
+
+    def _absobjfn(self, path, kdesc, ksig):
+        full = path / self._objfn(kdesc, ksig)
+        return str(full.absolute())
+
     def write_hsaco(self, kdesc, path, functional, ksig, rulefile):
         log(lambda : f'{ksig=}')
-        objfn = path / (ksig.full_compact_signature + '.hsaco')
         srcfn = kdesc.triton_source_path
-        print(str(objfn.absolute()),
+        print(self._absobjfn(path, kdesc, ksig),
               str(srcfn.absolute()),
               kdesc.triton_kernel_name,
               ksig.num_warps,
@@ -77,5 +83,5 @@ class RootGenerator(object):
         full_filepack_path = functional.full_filepack_path
         print(*full_filepack_path.parts,
               end=';', sep=';', file=clusterfile)
-        path_list = [str((path / (ksig.full_compact_signature + '.hsaco')).absolute()) for ksig in signatures]
+        path_list = [self._absobjfn(path, kdesc, ksig) for ksig in signatures]
         print(*path_list, sep=';', file=clusterfile)

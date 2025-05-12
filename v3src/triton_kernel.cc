@@ -29,7 +29,7 @@ namespace AOTRITON_NS {
 constexpr std::string_view INTER_KERNEL_FUNC { "-Sig-F__" };
 constexpr std::string_view INTER_FUNC_PSEL { "__P__" };
 constexpr std::string_view INTER_PSEL_COPT { "__CO__" };
-constexpr std::string_view INTER_COPT_ARCH { "-Gpu-" };
+constexpr std::string_view INTER_COPT_ARCH { "--Arch_" };
 
 std::string construct_stem_name(std::string_view kernel_name,
                                 std::string_view func_name,
