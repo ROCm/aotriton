@@ -29,7 +29,7 @@ class AKS2_DirectoryEntry:
     offset : int = 0
     image_size : int = 0
     filename_length : int = 0
-    filename : str = 0
+    filename : bytes = 0
 
 _AKS2_DirectoryEntry_BaseSize = (len(fields(AKS2_DirectoryEntry)) - 1) * 4
 
@@ -48,7 +48,7 @@ def load_hsaco(hsaco : Path, offset):
                 shared_memory_size = 0
                 block_threads = 0
                 assert j['compile_status'] != 'Complete'
-        filename = str(hsaco.stem)
+        filename = str(hsaco.stem).encode('utf-8')
         entry = AKS2_DirectoryEntry(shared_memory_size=shared_memory_size,
                                     block_threads=block_threads,
                                     offset=offset,
@@ -69,9 +69,9 @@ def directory_entry_blob(entry):
                      u32(entry.offset),
                      u32(entry.image_size),
                      u32(entry.filename_length),
-                     entry.filename.encode(),
+                     entry.filename,
                      b'\0'])
-    assert len(blob) == directory_entry_size(entry)
+    assert len(blob) == directory_entry_size(entry), f'blob size {len(blob)} != directory entry size {directory_entry_size(entry)}'
     return blob
 
 class AKS2(object):

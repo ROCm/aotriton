@@ -113,12 +113,13 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
             # if not noimage_mode and not self._feature_disabled:
             #     assert o.compiled_files_exist, f'Compiled file {o._hsaco_kernel_path} not exists'
             b2sum_u64, raw = sig.blake2b_hash(package_path)
+            u8raw = raw.decode('utf-8')
             assert len(b2sum_u64) == 16
             b2sum_u64_hi = b2sum_u64[:8]
             b2sum_u64_lo = b2sum_u64[8:]
             psel_offset = register_string(sig.perf_signature)
             copt_offset = register_string(sig.copt_signature)
-            meta_hsacos.append(f'{{ 0x{b2sum_u64_hi}u, 0x{b2sum_u64_lo}u, {psel_offset}, {copt_offset} }}, // {b2sum_u64} = b2sum -l 64 <<< {raw}')
+            meta_hsacos.append(f'{{ 0x{b2sum_u64_hi}u, 0x{b2sum_u64_lo}u, {psel_offset}, {copt_offset} }}, // {b2sum_u64} = b2sum -l 64 <<< {u8raw}')
         # assert string_dict[None] < 2 ** 16 - 1, f'Packed string size {string_dict[None]} exceeds uint16_t limit'
         # del string_dict[None]
         ALIGN = '\n' + 4 * ' '
