@@ -155,4 +155,47 @@ debug_simulate_encoded_softmax(T4 r,  // batch_size x num_heads x max_seqlen_q x
 
 } // AOTRITON_NS::v2::flash
 
+
+namespace AOTRITON_NS::v3::flash {
+
+using T4 = AOTRITON_NS::TensorView<4>;
+using T2 = AOTRITON_NS::TensorView<2>;
+using T1 = AOTRITON_NS::TensorView<1>;
+using T0 = AOTRITON_NS::TensorView<0>;
+
+struct attn_fwd_params {
+    const T4* Q = nullptr;
+    const T4* K = nullptr;
+    const T4* V = nullptr;
+    const T4* B = nullptr;
+    float     Sm_scale;
+    const T2* L;
+    const T4* Out;
+    int32_t   Num_head_q;
+    int32_t   Num_head_k;
+    int32_t   Num_seqlens;
+    const T1* cu_seqlens_q = nullptr;
+    const T1* cu_seqlens_k = nullptr;
+    int32_t   Max_seqlen_q;
+    int32_t   Max_seqlen_k;
+    int32_t   Head_dim;
+    float     dropout_p;
+    const T0* philox_seed_ptr = nullptr;
+    const T0* philox_offset1 = nullptr;
+    uint64_t  philox_offset2;
+    const T0* philox_seed_output = nullptr;
+    const T0* philox_offset_output = nullptr;
+    const T4* encoded_softmax;
+    int8_t    causal_type;
+    const T0* persistent_atomic_counter;
+    int32_t   Num_CU;
+    int32_t   Batch;
+};
+
+hipError_t AOTRITON_API
+attn_fwd(const attn_fwd_params& params,
+         AOTRITON_NS::Stream stream);
+
+} // AOTRITON_NS::v3::flash
+
 #endif

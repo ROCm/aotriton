@@ -54,7 +54,71 @@ dim3 AttnFwdContext::grid_calculator() const {
     return grid;
 }
 
+hipError_t AOTRITON_API
+attn_fwd(const attn_fwd_params& in,
+         AOTRITON_NS::Stream stream_wrap) {
+  hipError_t err;
+  auto stream = stream_wrap.native();
+  auto gpu = getGpuFromStream(stream);
+  int batch = in.Q->size(0);
+  int head_dim = in.Q->size(3);
+  int num_head_q = in.Q->size(1);
+  int num_head_k = in.K->size(1);
+  const auto& compiled_head_dims = AttnFwdMetadata::get_BLOCK_DMODEL_choices();
+  int16_t head_dim_rounded = round_value(head_dim, compiled_head_dims);
+  OpAttnFwdParams params = {
+    .Q = in.Q,
+    .K = in.K,
+    .V = in.V,
+    .B = in.B,
+    .A = nullptr,
+    .Sm_scale = in.Sm_scale,
+    .L = in.L,
+    .Out = in.Out,
+    .Q_descale = false,
+    .K_descale = false,
+    .P_scale = false,
+    .P_descale = false,
+    .V_descale = false,
+    .Num_head_q = in.Num_head_q,
+    .Num_head_k = in.Num_head_q,
+    .Num_seqlens = in.Num_seqlens,
+    .cu_seqlens_q = in.cu_seqlens_q,
+    .cu_seqlens_k = in.cu_seqlens_k,
+    .Max_seqlen_q = in.Max_seqlen_q,
+    .Max_seqlen_k = in.Max_seqlen_q,
+    .BLOCK_DMODEL = head_dim_rounded,
+    .Head_dim = head_dim,
+    .PADDED_HEAD = head_dim_rounded != head_dim,
+    .ENABLE_DROPOUT = in.dropout_p > 0.0,
+    .dropout_p = in.dropout_p,
+    .philox_seed_ptr = in.philox_seed_ptr,
+    .philox_offset1 = in.philox_offset1,
+    .philox_offset2 = in.philox_offset2,
+    .philox_seed_output = in.philox_seed_output,
+    .philox_offset_output = in.philox_offset_output,
+    .RETURN_ENCODED_SOFTMAX = false,
+    .encoded_softmax = in.encoded_softmax,
+    .CAUSAL_TYPE = in.causal_type,
+    .BIAS_TYPE = int8_t(in.B ? 1 : 0),
+    .USE_ALIBI = false,
+    .INT8 = false,
+    .INT8_KV = false,
+    .USE_P_SCALE = false,
+    .persistent_atomic_counter = in.persistent_atomic_counter,
+    .Num_CU = in.causal_type != 0 ? getMultiProcessorCount(stream) : 80,
+    .Batch = int32_t(in.Num_seqlens == 0 ? batch : in.Num_seqlens),
+  };
+  OpAttnFwdContext context;
+  context.params = &params;
+  err = context.lookup_optimal(gpu);
+  if (err != hipSuccess) {
+    return err;
+  }
+  return context.launch(gpu, stream);
 }
+
+} // AOTRITON_NS::v3::flash
 
 
 namespace AOTRITON_NS::v2::flash {
@@ -306,4 +370,4 @@ attn_fwd_compact_varlen(T4 q,            // 1 x num_heads x total_q x head_size,
                           extargs);
 }
 
-}
+} // AOTRITON_NS::v2::flash
