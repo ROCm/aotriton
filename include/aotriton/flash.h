@@ -144,18 +144,6 @@ attn_bwd_compact_varlen(T4 q, // 1 x num_heads x total_q x head_size, total_q :=
                         AOTRITON_NS::Stream stream,
                         BwdExtraArguments* extargs = nullptr);
 
-hipError_t AOTRITON_API
-debug_fill_dropout_rng(T4 r,
-                       uint64_t philox_seed,
-                       uint64_t philox_offset,
-                       AOTRITON_NS::Stream stream);
-
-hipError_t AOTRITON_API
-debug_fill_dropout_rng_tensor(T4 r,
-                              T0 philox_seed,
-                              T0 philox_offset,
-                              AOTRITON_NS::Stream stream);
-
 // varlen should use len(cu_seqlens_q) - 1 for the batch size
 hipError_t AOTRITON_API
 debug_simulate_encoded_softmax(T4 r,  // batch_size x num_heads x max_seqlen_q x max_seqlen_k

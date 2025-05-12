@@ -161,22 +161,6 @@ namespace pyaotriton {
               py::arg("is_causal"),
               py::arg("stream") = nullptr,
               py::arg("extargs") = BwdExtraArguments());
-        m.def("debug_fill_dropout_rng",
-              &aotriton::v2::flash::debug_fill_dropout_rng,
-              "Flash Attention Debugging Function to get raw RNG numbers used in dropout",
-              py::call_guard<py::gil_scoped_release>(),
-              py::arg("q"),
-              py::arg("philox_seed"),
-              py::arg("philox_offset"),
-              py::arg("stream") = nullptr);
-        m.def("debug_fill_dropout_rng_tensor",
-              &aotriton::v2::flash::debug_fill_dropout_rng_tensor,
-              "Flash Attention Debugging Function to get raw RNG numbers used in dropout",
-              py::call_guard<py::gil_scoped_release>(),
-              py::arg("q"),
-              py::arg("philox_seed"),
-              py::arg("philox_offset"),
-              py::arg("stream") = nullptr);
         m.def("debug_simulate_encoded_softmax",
               &aotriton::v2::flash::debug_simulate_encoded_softmax,
               "Flash Attention Debugging Function to get raw RNG numbers used in dropout",
