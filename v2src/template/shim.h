@@ -22,6 +22,7 @@ struct [[param_class_name]] {
     [[perf_fields]];
 
     TritonKernel* kernel_on_device = nullptr;
+    int pp_args_index = -1;
     std::string_view package_path;
     std::string_view func_name;
     std::string_view arch_name;

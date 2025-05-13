@@ -125,7 +125,7 @@ def attn_fwd(
     INT8_GEMM: tl.constexpr = INT8 and (not INT8_KV)
 
     ## philox
-    idropout_p = ((dropout_p - 0.5) * 0xFFFFFFFF).to(tl.int32)
+    idropout_p = ((dropout_p - 0.5) * 0xFFFFFFFF).to(tl.int32) if ENABLE_DROPOUT else 0
     philox_seed = 0
     philox_offset_base = philox_offset2
     philox_offset_stride = tl.cdiv(Max_seqlen_k, PHILOX_RN_PER_OFFSET)

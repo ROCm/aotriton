@@ -4,6 +4,7 @@
 import numpy as np
 from enum import Enum
 from .object_desc import ObjectFileDescription
+from .conditional_value import ConditionalConstexpr
 from copy import deepcopy
 
 '''
@@ -27,8 +28,8 @@ class ArgumentMetadata(object):
         assert grouped_arguments_as_set
         self._grouped_arguments_as_set = grouped_arguments_as_set
         for v in possible_values:
-            if callable(v):
-                assert 'return' in v.__annotations__, f'PERF_CHOICES {grouped_arguments_as_set} in Class {kdesc} must have return type annotations'
+            if callable(v) and not isinstance(v, ConditionalConstexpr):
+                assert 'return' in v.__annotations__, f'Callable PERF_CHOICES {grouped_arguments_as_set} in Class {kdesc} must have return type annotations'
         self._possible_values = possible_values
         self._npossible = len(possible_values)
         self._cat = cat
@@ -118,6 +119,8 @@ class ArgumentMetadata(object):
     @property
     def is_tensor(self) -> bool:
         triton_type = self._possible_values[0]
+        if isinstance(triton_type, ConditionalConstexpr):
+            return triton_type.is_tensor
         return isinstance(triton_type, str) and triton_type.startswith('*')
 
     @property
@@ -130,22 +133,37 @@ class ArgumentMetadata(object):
         triton_type = self._possible_values[0]
         return isinstance(triton_type, int)
 
-    def get_param_cc_type(self, triton_arg):
+    def __get_param_cc_type(self, triton_arg):
+        # Case I: use np.array as list
         if isinstance(self._possible_values, np.ndarray):
             triton_type = self._possible_values.dtype.type
             return ObjectFileDescription.SIGNATURE_TO_C[triton_type]
+        # Case II: use list[str]
         triton_type = self._possible_values[0]
+        # Case II-1: ['*fp16', ...]
         if self.is_tensor:
             rank = self._kdesc.get_tensor_rank(triton_arg)
             return f'const T{rank}*'
-        if callable(triton_type):
+
+        # Case II-2: [ConditionalConstexpr]
+        if isinstance(triton_type, ConditionalConstexpr):
+            triton_type = triton_type.get_triton_type()
+        # Case II-3: [lambda]
+        elif callable(triton_type):
             triton_type = triton_type.__annotations__['return']
+
+        # Case II-2/3: type annotation/np.dtype to cc_type
         if isinstance(triton_type, str):
             return ObjectFileDescription.SIGNATURE_TO_C[triton_type]
+        elif isinstance(triton_type, np.ndarray):
+            return ObjectFileDescription.SIGNATURE_TO_C[triton_type.dtype.type]
+        # Case II-5: [False, True]
         elif isinstance(triton_type, bool):
             return 'bool'
+        # Case II-6: [16, 32, ...]
         elif isinstance(triton_type, int):
             return 'int32_t'
+        # Case II-7: [0.0, 0.1, ...]  # TODO: Unused in practice. Remove this later
         elif isinstance(triton_type, float):
             return 'float'
         assert False, f'{triton_arg} {triton_type}'
@@ -155,14 +173,22 @@ class ArgumentMetadata(object):
         triton_arg = self._ordered_arguments[0][0]
         if triton_arg.startswith('stride_'):
             return []
-        return [ self.get_param_cc_type(a[0]) + ' ' + a[0] for a in self._ordered_arguments ]
+        return [ self.__get_param_cc_type(a[0]) + ' ' + a[0] for a in self._ordered_arguments ]
         # ret = [ cc_type + ' ' + a[0] for a in self._ordered_arguments ]
         # print(f'{ret=}')
+
+    # Return list of (ctype, aname, aindex)
+    @property
+    def param_cc_fields_tuple(self):
+        triton_arg = self._ordered_arguments[0][0]
+        if triton_arg.startswith('stride_'):
+            return []
+        return [ (self.__get_param_cc_type(a[0]), a[0], a[1]) for a in self._ordered_arguments ]
 
     @property
     def param_cc_size(self):
         for a in self._ordered_arguments:
-            cc_type = self.get_param_cc_type(a[0])
+            cc_type = self.__get_param_cc_type(a[0])
             return ObjectFileDescription.C_SIZE[cc_type]
 
     def codegen_godel_number_calculation(self, fout):
@@ -216,8 +242,8 @@ class ArgumentSelection(object):
         self._meta = meta
         self._selection_index = selection_index
         self._selection = self._meta.select(selection_index)
-        self._is_lambda = callable(self._selection)
-        self._selection_value = self._selection if not self._is_lambda else None
+        self._is_conditional = callable(self._selection)
+        self._selection_value = self._selection if not self._is_conditional else None
 
     @property
     def meta(self):
@@ -240,17 +266,29 @@ class ArgumentSelection(object):
         assert self._selection_value is not None
         return self._selection_value
 
+    # Without None check, to support ConditionalConstexpr
     @property
-    def is_lambda(self):
-        return self._is_lambda
+    def tentative_value(self):
+        return self._selection_value
 
-    def substitute_if_lambda(self, arch, fsel_dict):
-        if self.is_lambda:
-            copy = deepcopy(self)
-            copy._selection_value = copy._selection(arch, fsel_dict)
-            assert copy._selection_value is not None
-            # print(f"substitute_if_lambda to {copy._selection_value} {fsel_dict=}")
-            return copy
+    @property
+    def is_conditional(self):
+        return self._is_conditional
+
+    def substitute_conditional(self, arch, fsel_dict):
+        if self.is_conditional:
+            # TOO Expensive
+            # copy = deepcopy(self)
+            # copy._selection_value = copy._selection(arch, fsel_dict)
+            # assert copy._selection_value is not None
+            # # print(f"substitute_conditional to {copy._selection_value} {fsel_dict=}")
+            # return copy
+            if self._selection_index is None:
+                sub = TunedArgument(self._meta, self._selection)
+            else:
+                sub = ArgumentSelection(self._meta, self._selection_index)
+            sub._selection_value = self._selection(arch, fsel_dict)
+            return sub
         return self
 
     @property
@@ -285,12 +323,23 @@ class ArgumentSelection(object):
     '''
     Build a dict that maps "representative name" to selected value
     Consider changing it from frozenset to tuple
+
+    Note: use tentative=True to disable None check in order to support ConditionalConstexpr
     '''
     @staticmethod
-    def build_fsel_dict(fsels : 'list[ArgumentSelection]'):
+    def build_fsel_dict(fsels : 'list[ArgumentSelection]', tentative=False, all_args=False, with_meta=False):
         d = {}
-        for fsel in fsels:
-            d[fsel.meta.repr_name] = fsel.argument_value
+        if all_args:
+            for fsel in fsels:
+                v = fsel.tentative_value if tentative else fsel.argument_value
+                if with_meta:
+                    v = (v, fsel)
+                for aname in fsel.meta.argument_names:
+                    d[aname] = v
+        else:
+            assert not with_meta, 'Unsupported'
+            for fsel in fsels:
+                d[fsel.meta.repr_name] = fsel.tentative_value if tentative else fsel.argument_value
         return d
 
 class TunedArgument(ArgumentSelection):
@@ -300,8 +349,8 @@ class TunedArgument(ArgumentSelection):
         self._selection_index = None
         if callable(value):
             self._selection = value
-            self._is_lambda = True
+            self._is_conditional = True
             self._selection_value = None
         else:
-            self._is_lambda = False
+            self._is_conditional = False
             self._selection_value = bool(value) if meta.is_bool else value

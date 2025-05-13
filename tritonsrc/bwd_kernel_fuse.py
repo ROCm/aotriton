@@ -285,7 +285,7 @@ def bwd_kernel_fuse(
                                          axis=1)
         l_i = tl.load(l_ptrs + offs_q_dq, mask=d_lse_ptrs_mask, other=0.0)
 
-        idropout_p = ((dropout_p - 0.5) * 0xFFFFFFFF).to(tl.int32)
+        idropout_p = ((dropout_p - 0.5) * 0xFFFFFFFF).to(tl.int32) if ENABLE_DROPOUT else 0
         dropout_scale = 1.0 / (1.0 - dropout_p) if ENABLE_DROPOUT else 1.0
         dq0, dq1, dq2 = composed_zeros_2d(BLOCK_N, BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
         n_full_blocks = n_blocks - leading_masked_blocks - trailing_masked_blocks
@@ -366,7 +366,7 @@ def bwd_kernel_fuse(
                        stride_row=stride_dqm,
                        stride_col=stride_dqk)
     else:
-        idropout_p = ((dropout_p - 0.5) * 0xFFFFFFFF).to(tl.int32)
+        idropout_p = ((dropout_p - 0.5) * 0xFFFFFFFF).to(tl.int32) if ENABLE_DROPOUT else 0
         philox_seed = 0
         philox_offset_base = philox_offset2
         philox_offset_stride = tl.cdiv(max_seqlen_k, PHILOX_RN_PER_OFFSET)
