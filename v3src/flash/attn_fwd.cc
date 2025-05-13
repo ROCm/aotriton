@@ -54,6 +54,10 @@ dim3 AttnFwdContext::grid_calculator() const {
     return grid;
 }
 
+attn_fwd_params::attn_fwd_params()
+{
+}
+
 hipError_t AOTRITON_API
 attn_fwd(const attn_fwd_params& in,
          int32_t params_version,

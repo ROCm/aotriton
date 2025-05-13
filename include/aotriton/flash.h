@@ -194,6 +194,7 @@ struct attn_fwd_params {
   T0       persistent_atomic_counter;
 
   static constexpr int32_t kVersion = 1;
+  attn_fwd_params();
 };
 
 hipError_t AOTRITON_API
@@ -231,6 +232,7 @@ struct attn_bwd_params {
   int8_t    causal_type;
 
   static constexpr int32_t kVersion = 1;
+  attn_bwd_params();
 };
 
 hipError_t AOTRITON_API

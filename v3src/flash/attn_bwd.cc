@@ -54,6 +54,10 @@ dim3 BwdKernelDqContext::grid_calculator() const {
   return grid;
 }
 
+attn_bwd_params::attn_bwd_params()
+{
+}
+
 hipError_t AOTRITON_API
 attn_bwd(const attn_bwd_params& in,
          int32_t params_version,

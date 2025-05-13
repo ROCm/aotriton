@@ -203,6 +203,10 @@ namespace pyaotriton {
     }
   } // namespace v2
 
+  namespace v3 {
+    void setup_module(py::module_& m); // Impl. goes into v3.cc
+  } // namespace v3
+
   void def_stream(py::module_& m) {
     py::class_<aotriton::Stream>(m, "Stream").def(py::init<>());
   }
@@ -272,6 +276,8 @@ namespace pyaotriton {
          );
     py::module_ mod_v2api = m.def_submodule("v2", "v2 API namespace");
     v2::setup_module(mod_v2api);
+    py::module_ mod_v3api = m.def_submodule("v3", "v3 API namespace");
+    v3::setup_module(mod_v3api);
   }
 
 } // namespace pyaotriton
