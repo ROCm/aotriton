@@ -1,7 +1,10 @@
 # Copyright © 2023-2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-from v3python.op import MetroKernel
+from v3python.op import (
+    MetroKernel,
+    ConditionalKernel,
+)
 from .ops import OpAttnFwd, OpAttnBwd
 from .attn_fwd import attn_fwd
 from .bwd_preprocess import (
@@ -45,13 +48,20 @@ class MetroBwdKernel(MetroKernel):
     SHARED_IFACE = OpAttnBwd
     ARGUMENTS = OpAttnBwd.ARGUMENTS
 
+class MetroFwdKernel(MetroKernel):
+    FAMILY = OpAttnFwd.FAMILY
+    SHARED_IFACE = OpAttnFwd
+    ARGUMENTS = OpAttnFwd.ARGUMENTS
+
 operators = [
     OpAttnFwd([
-        __attn_fwd,
+        MetroFwdKernel('triton',
+                       [__attn_fwd,
+                        ConditionalKernel('encoded_softmax', '->data_ptr() != nullptr', __debug_simulate_encoded_softmax)]),
     ]),
     OpAttnBwd([
         MetroBwdKernel('triton_split',
-                       [__bwd_preprocess,
+                       [ConditionalKernel('num_seqlens', '> 0', __bwd_preprocess_varlen, __bwd_preprocess),
                         __bwd_kernel_dk_dv,
                         __bwd_kernel_dq]),
         __bwd_kernel_fuse,

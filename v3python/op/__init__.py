@@ -3,6 +3,7 @@
 
 from .operator import Operator
 from .metro import MetroKernel
+from .conditional import ConditionalKernel
 
 class NO_OPERATOR(Operator):
     NAME = None

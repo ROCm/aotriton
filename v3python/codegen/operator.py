@@ -10,7 +10,7 @@ from ..base import (
     Interface,
 )
 from .interface import InterfaceGenerator
-from ..op import Operator, MetroKernel
+from ..op import Operator, MetroKernel, ConditionalKernel
 from ..kernel import KernelDescription
 from .template import get_template
 from ..utils import (
@@ -28,6 +28,7 @@ class OperatorGenerator(InterfaceGenerator):
     KSHIM_LAUNCHER_TEMPLATE = get_template('kshim_launcher.cc')
     METRO_LAUNCHER_TEMPLATE = get_template('metro_launcher.cc')
     METRO_SNIPPET_TEMPLATE = get_template('snippet/metro_per_kernel.cc')
+    IFELSE_SNIPPET_TEMPLATE = get_template('snippet/metro_per_kernel_ifelse.cc')
     PFX = 'iface'
 
     # TODO: Optimize for single entry LUT/uniform LUT
@@ -121,11 +122,25 @@ class OperatorGenerator(InterfaceGenerator):
         context_class_name = iface.context_class_name
         stmt = []
         for kdesc in metro.list_kernels():
-            self._add_header_for_source(kdesc)
-            d = {
-                'backend_context_name'  : kdesc.context_class_name,
-            }
-            snippet = self.METRO_SNIPPET_TEMPLATE.format_map(d)
+            if isinstance(kdesc, ConditionalKernel):
+                self._add_header_for_source(kdesc.if_kernel)
+                d = {
+                    'condition'             : f'context.params->{kdesc.if_parameter} {kdesc.if_expr}',
+                    'backend_context_name'  : kdesc.if_kernel.context_class_name,
+                }
+                if kdesc.else_kernel is None:
+                    snippet = self.METRO_SNIPPET_TEMPLATE.format_map(d)
+                else:
+                    self._add_header_for_source(kdesc.else_kernel)
+                    d['else_context_name'] = kdesc.else_kernel.context_class_name
+                    snippet = self.IFELSE_SNIPPET_TEMPLATE.format_map(d)
+            else:
+                self._add_header_for_source(kdesc)
+                d = {
+                    'condition'             : 'true',
+                    'backend_context_name'  : kdesc.context_class_name,
+                }
+                snippet = self.METRO_SNIPPET_TEMPLATE.format_map(d)
             stmt.append(snippet)
         stmt.append('return hipSuccess;')
         d = {
