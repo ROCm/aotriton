@@ -56,25 +56,30 @@ dim3 AttnFwdContext::grid_calculator() const {
 
 hipError_t AOTRITON_API
 attn_fwd(const attn_fwd_params& in,
-         AOTRITON_NS::Stream stream_wrap) {
+         int32_t params_version,
+         AOTRITON_NS::Stream stream_wrap,
+         const attn_options* options) {
+  if (params_version != attn_fwd_params::kVersion) {
+    return hipErrorInvalidSymbol; // params_version mismatch
+  }
   hipError_t err;
   auto stream = stream_wrap.native();
   auto gpu = getGpuFromStream(stream);
-  int batch = in.Q->size(0);
-  int head_dim = in.Q->size(3);
-  int num_head_q = in.Q->size(1);
-  int num_head_k = in.K->size(1);
+  int batch = in.Q.size(0);
+  int head_dim = in.Q.size(3);
+  int num_head_q = in.Q.size(1);
+  int num_head_k = in.K.size(1);
   const auto& compiled_head_dims = AttnFwdMetadata::get_BLOCK_DMODEL_choices();
   int16_t head_dim_rounded = round_value(head_dim, compiled_head_dims);
   OpAttnFwdParams params = {
-    .Q = in.Q,
-    .K = in.K,
-    .V = in.V,
-    .B = in.B,
+    .Q = nullptr_if_null_tensor(in.Q),
+    .K = nullptr_if_null_tensor(in.K),
+    .V = nullptr_if_null_tensor(in.V),
+    .B = nullptr_if_null_tensor(in.B),
     .A = nullptr,
     .Sm_scale = in.Sm_scale,
-    .L = in.L,
-    .Out = in.Out,
+    .L = nullptr_if_null_tensor(in.L),
+    .Out = nullptr_if_null_tensor(in.Out),
     .Q_descale = false,
     .K_descale = false,
     .P_scale = false,
@@ -83,8 +88,8 @@ attn_fwd(const attn_fwd_params& in,
     .Num_head_q = in.Num_head_q,
     .Num_head_k = in.Num_head_q,
     .Num_seqlens = in.Num_seqlens,
-    .cu_seqlens_q = in.cu_seqlens_q,
-    .cu_seqlens_k = in.cu_seqlens_k,
+    .cu_seqlens_q = nullptr_if_null_tensor(in.cu_seqlens_q),
+    .cu_seqlens_k = nullptr_if_null_tensor(in.cu_seqlens_k),
     .Max_seqlen_q = in.Max_seqlen_q,
     .Max_seqlen_k = in.Max_seqlen_q,
     .BLOCK_DMODEL = head_dim_rounded,
@@ -92,20 +97,20 @@ attn_fwd(const attn_fwd_params& in,
     .PADDED_HEAD = head_dim_rounded != head_dim,
     .ENABLE_DROPOUT = in.dropout_p > 0.0,
     .dropout_p = in.dropout_p,
-    .philox_seed_ptr = in.philox_seed_ptr,
-    .philox_offset1 = in.philox_offset1,
+    .philox_seed_ptr  = nullptr_if_null_tensor(in.philox_seed_ptr),
+    .philox_offset1   = nullptr_if_null_tensor(in.philox_offset1),
     .philox_offset2 = in.philox_offset2,
-    .philox_seed_output = in.philox_seed_output,
-    .philox_offset_output = in.philox_offset_output,
+    .philox_seed_output   = nullptr_if_null_tensor(in.philox_seed_output),
+    .philox_offset_output = nullptr_if_null_tensor(in.philox_offset_output),
     .RETURN_ENCODED_SOFTMAX = false,
-    .encoded_softmax = in.encoded_softmax,
+    .encoded_softmax = nullptr_if_null_tensor(in.encoded_softmax),
     .CAUSAL_TYPE = in.causal_type,
     .BIAS_TYPE = int8_t(in.B ? 1 : 0),
     .USE_ALIBI = false,
     .INT8 = false,
     .INT8_KV = false,
     .USE_P_SCALE = false,
-    .persistent_atomic_counter = in.persistent_atomic_counter,
+    .persistent_atomic_counter = nullptr_if_null_tensor(in.persistent_atomic_counter),
     .Num_CU = in.causal_type != 0 ? getMultiProcessorCount(stream) : 80,
     .Batch = int32_t(in.Num_seqlens == 0 ? batch : in.Num_seqlens),
   };

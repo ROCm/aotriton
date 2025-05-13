@@ -196,6 +196,14 @@ extern template class TensorView<2>;
 extern template class TensorView<3>;
 extern template class TensorView<4>;
 
+template<int Rank>
+const TensorView<Rank>* nullptr_if_null_tensor(const TensorView<Rank>& tensor) {
+  if (tensor) {
+    return &tensor;
+  }
+  return nullptr;
+}
+
 Gpu AOTRITON_API getGpuFromStream(hipStream_t);
 bool AOTRITON_API isArchExperimentallySupported(hipStream_t);
 int AOTRITON_API getMultiProcessorCount(hipStream_t stream);
