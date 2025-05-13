@@ -127,6 +127,7 @@ class OperatorGenerator(InterfaceGenerator):
             }
             snippet = self.METRO_SNIPPET_TEMPLATE.format_map(d)
             stmt.append(snippet)
+        stmt.append('return hipSuccess;')
         d = {
             'context_class_name'    : iface.context_class_name,
             'launcher_func_name'    : self.codegen_launcher_func_name(metro),

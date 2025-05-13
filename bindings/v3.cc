@@ -22,6 +22,9 @@ namespace pyaotriton::v3 {
       using aotriton::v3::flash::attn_bwd_params;
       using aotriton::v3::flash::attn_options;
       void setup_module(py::module_& m) {
+        py::class_<attn_options>(m, "attn_options")
+          .def(py::init<>())
+        ;
         py::class_<attn_fwd_params>(m, "attn_fwd_params")
           .def(py::init<>())
 #define RW(name) def_readwrite(#name, &attn_fwd_params::name)

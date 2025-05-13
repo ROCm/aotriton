@@ -185,6 +185,7 @@ struct AOTRITON_API attn_fwd_params {
   T4       K;
   T4       V;
   T4       B;
+  T2       A;
   float    Sm_scale;
   T2       L;
   T4       Out;
@@ -193,8 +194,8 @@ struct AOTRITON_API attn_fwd_params {
   // int32_t  Num_seqlens;      // Inferred from cu_seqlens_q
   T1       cu_seqlens_q;
   T1       cu_seqlens_k;
-  int32_t  Max_seqlen_q;        // Unused if cu_seqlens_q is empty
-  int32_t  Max_seqlen_k;        // Unused if cu_seqlens_k is empty
+  int32_t  Max_seqlen_q = 0;    // Unused if cu_seqlens_q is empty
+  int32_t  Max_seqlen_k = 0;    // Unused if cu_seqlens_k is empty
   // int32_t  Head_dim;
   float    dropout_p;
   T0       philox_seed_ptr;
@@ -205,7 +206,7 @@ struct AOTRITON_API attn_fwd_params {
   T4       encoded_softmax;
   T0       persistent_atomic_counter;
   int8_t   causal_type;
-  int8_t   varlen_type;
+  int8_t   varlen_type = 0;
 
   static constexpr int32_t kVersion = 1;
   attn_fwd_params();
@@ -236,8 +237,8 @@ struct AOTRITON_API attn_bwd_params {
   // int32_t   Num_seqlens;         // Inferred from cu_seqlens_q
   T1        cu_seqlens_q;
   T1        cu_seqlens_k;
-  int32_t   Max_seqlen_q;           // Unused if cu_seqlens_q is empty
-  int32_t   Max_seqlen_k;           // Unused if cu_seqlens_k is empty
+  int32_t   Max_seqlen_q = 0;       // Unused if cu_seqlens_q is empty
+  int32_t   Max_seqlen_k = 0;       // Unused if cu_seqlens_k is empty
   // int32_t   Head_dim;            // Inferred from Q.size()
   float     dropout_p;
   T0        philox_seed_ptr;

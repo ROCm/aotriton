@@ -6,5 +6,6 @@
         if (err != hipSuccess)
             return err;
         err = bcontext.launch(stream);
-        return err;
+        if (err != hipSuccess)
+            return err;
     }

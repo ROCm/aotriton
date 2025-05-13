@@ -13,7 +13,8 @@ from pyaotriton.v2.flash import (
 )
 from pyaotriton.v3.flash import (
     attn_fwd as fa_forward_op,
-    attn_fwd_params as fa_forward_op_params
+    attn_fwd_params as fa_forward_op_params,
+    attn_options,
 )
 if not IGNORE_BACKWARD_IMPORT:
     from pyaotriton.v2.flash import (
@@ -171,7 +172,9 @@ def attn_fwd(q, k, v, b, sm_scale, M, o,
         params.varlen_type = 0
         err = fa_forward_op(params,
                             fa_forward_op_params.kVersion,
-                            Stream())
+                            Stream(),
+                            attn_options()
+                            )
     if AOTRITON_TORCH_ONLY_USE_CPU:
         _torch_cpu_only_copy_back([M, o, philox_seed_output, philox_offset_output, encoded_softmax],
                                   [Mdevm, odevm, seedoutdevm, offsetoutdevm, esmdevm])
@@ -247,7 +250,9 @@ def attn_bwd(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
         params.varlen_type = 0
         err = fa_backward_op(params,
                              fa_backward_op_params.kVersion,
-                             Stream())
+                             Stream(),
+                             attn_options()
+                             )
     if AOTRITON_TORCH_ONLY_USE_CPU:
         _torch_cpu_only_copy_back([dq, dk, dv, db, delta],
                                   [dqdevm, dkdevm, dvdevm, dbdevm, deltadevm])
@@ -386,7 +391,9 @@ def attn_fwd_compact_varlen(q, k, v,
         params.varlen_type = 1
         err = fa_forward_op(params,
                             fa_forward_op_params.kVersion,
-                            Stream())
+                            Stream(),
+                            attn_options()
+                            )
     # print(f'{err=}')
     return err
 
@@ -462,6 +469,8 @@ def attn_bwd_compact_varlen(q, k, v,
         params.varlen_type = 1
         err = fa_backward_op(params,
                              fa_backward_op_params.kVersion,
-                             Stream())
+                             Stream(),
+                             attn_options()
+                             )
     # print(f'{err=}')
     return err
