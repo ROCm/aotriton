@@ -164,10 +164,23 @@ using T1 = AOTRITON_NS::TensorView<1>;
 using T0 = AOTRITON_NS::TensorView<0>;
 
 // For debugging and profiling purpose
-struct attn_options {
+struct AOTRITON_API attn_options {
 };
 
-struct attn_fwd_params {
+enum class AOTRITON_API CausalType : int8_t {
+  None = 0,
+  TopLeftAligned = 1,
+  BottomRightAligned = 2,
+  WindowedAttention = 3,
+};
+
+enum class AOTRITON_API VarlenType : int8_t {
+  None = 0,
+  CompactVarlen = 1,
+  PaddedVarlen = 2,
+};
+
+struct AOTRITON_API attn_fwd_params {
   T4       Q;
   T4       K;
   T4       V;
@@ -175,14 +188,14 @@ struct attn_fwd_params {
   float    Sm_scale;
   T2       L;
   T4       Out;
-  int32_t  Num_head_q;
-  int32_t  Num_head_k;
-  int32_t  Num_seqlens;
+  // int32_t  Num_head_q;       // Inferred from Q.size()
+  // int32_t  Num_head_k;       // Inferred from Q.size()
+  // int32_t  Num_seqlens;      // Inferred from cu_seqlens_q
   T1       cu_seqlens_q;
   T1       cu_seqlens_k;
-  int32_t  Max_seqlen_q;
-  int32_t  Max_seqlen_k;
-  int32_t  Head_dim;
+  int32_t  Max_seqlen_q;        // Unused if cu_seqlens_q is empty
+  int32_t  Max_seqlen_k;        // Unused if cu_seqlens_k is empty
+  // int32_t  Head_dim;
   float    dropout_p;
   T0       philox_seed_ptr;
   T0       philox_offset1;
@@ -190,8 +203,9 @@ struct attn_fwd_params {
   T0       philox_seed_output;
   T0       philox_offset_output;
   T4       encoded_softmax;
-  int8_t   causal_type;
   T0       persistent_atomic_counter;
+  int8_t   causal_type;
+  int8_t   varlen_type;
 
   static constexpr int32_t kVersion = 1;
   attn_fwd_params();
@@ -203,7 +217,7 @@ attn_fwd(const attn_fwd_params& params,
          AOTRITON_NS::Stream stream,
          const attn_options* options = nullptr);
 
-struct attn_bwd_params {
+struct AOTRITON_API attn_bwd_params {
   T4        Q;
   T4        K;
   T4        V;
@@ -217,19 +231,20 @@ struct attn_bwd_params {
   T4        DB;
   T2        L;
   T2        D;
-  int32_t   Num_head_q;
-  int32_t   Num_head_k;
-  int32_t   Num_seqlens;
+  // int32_t   Num_head_q;          // Inferred from Q.size()
+  // int32_t   Num_head_k;          // Inferred from Q.size()
+  // int32_t   Num_seqlens;         // Inferred from cu_seqlens_q
   T1        cu_seqlens_q;
   T1        cu_seqlens_k;
-  int32_t   Max_seqlen_q;
-  int32_t   Max_seqlen_k;
-  int32_t   Head_dim;
+  int32_t   Max_seqlen_q;           // Unused if cu_seqlens_q is empty
+  int32_t   Max_seqlen_k;           // Unused if cu_seqlens_k is empty
+  // int32_t   Head_dim;            // Inferred from Q.size()
   float     dropout_p;
   T0        philox_seed_ptr;
   T0        philox_offset1;
   uint64_t  philox_offset2;
   int8_t    causal_type;
+  int8_t    varlen_type = 0;
 
   static constexpr int32_t kVersion = 1;
   attn_bwd_params();

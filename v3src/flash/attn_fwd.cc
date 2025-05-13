@@ -73,6 +73,17 @@ attn_fwd(const attn_fwd_params& in,
   int head_dim = in.Q.size(3);
   int num_head_q = in.Q.size(1);
   int num_head_k = in.K.size(1);
+  int num_seqlens = 0;
+  int max_seqlen_q = in.Q.size(2);
+  int max_seqlen_k = in.K.size(2);
+  if (in.cu_seqlens_q) {
+    // Compact varlen, num_seqlens > 0
+    num_seqlens = in.cu_seqlens_q.size(0) - 1;
+    max_seqlen_q = in.Max_seqlen_q;
+  }
+  if (in.cu_seqlens_k) {
+    max_seqlen_k = in.Max_seqlen_k;
+  }
   const auto& compiled_head_dims = AttnFwdMetadata::get_BLOCK_DMODEL_choices();
   int16_t head_dim_rounded = round_value(head_dim, compiled_head_dims);
   OpAttnFwdParams params = {
@@ -89,13 +100,13 @@ attn_fwd(const attn_fwd_params& in,
     .P_scale = false,
     .P_descale = false,
     .V_descale = false,
-    .Num_head_q = in.Num_head_q,
-    .Num_head_k = in.Num_head_q,
-    .Num_seqlens = in.Num_seqlens,
+    .Num_head_q = num_head_q,
+    .Num_head_k = num_head_k,
+    .Num_seqlens = num_seqlens,
     .cu_seqlens_q = nullptr_if_null_tensor(in.cu_seqlens_q),
     .cu_seqlens_k = nullptr_if_null_tensor(in.cu_seqlens_k),
-    .Max_seqlen_q = in.Max_seqlen_q,
-    .Max_seqlen_k = in.Max_seqlen_q,
+    .Max_seqlen_q = max_seqlen_q,
+    .Max_seqlen_k = max_seqlen_q,
     .BLOCK_DMODEL = head_dim_rounded,
     .Head_dim = head_dim,
     .PADDED_HEAD = head_dim_rounded != head_dim,
@@ -116,7 +127,7 @@ attn_fwd(const attn_fwd_params& in,
     .USE_P_SCALE = false,
     .persistent_atomic_counter = nullptr_if_null_tensor(in.persistent_atomic_counter),
     .Num_CU = in.causal_type != 0 ? getMultiProcessorCount(stream) : 80,
-    .Batch = int32_t(in.Num_seqlens == 0 ? batch : in.Num_seqlens),
+    .Batch = int32_t(num_seqlens == 0 ? batch : num_seqlens),
   };
   OpAttnFwdContext context;
   context.params = &params;

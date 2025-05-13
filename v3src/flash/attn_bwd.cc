@@ -73,6 +73,17 @@ attn_bwd(const attn_bwd_params& in,
   int head_dim = in.Q.size(3);
   int num_head_q = in.Q.size(1);
   int num_head_k = in.K.size(1);
+  int max_seqlen_q = in.Q.size(2);
+  int max_seqlen_k = in.K.size(2);
+  int num_seqlens = 0;
+  if (in.cu_seqlens_q) {
+    // Compact varlen, num_seqlens > 0
+    num_seqlens = in.cu_seqlens_q.size(0) - 1;
+    max_seqlen_q = in.Max_seqlen_q;
+  }
+  if (in.cu_seqlens_k) {
+    max_seqlen_k = in.Max_seqlen_k;
+  }
   const auto& compiled_head_dims = BwdKernelDkDvMetadata::get_BLOCK_DMODEL_choices();
   int16_t head_dim_rounded = round_value(head_dim, compiled_head_dims);
   OpAttnBwdParams params = {
@@ -89,11 +100,11 @@ attn_bwd(const attn_bwd_params& in,
     .DB = nullptr_if_null_tensor(in.DB),
     .L = nullptr_if_null_tensor(in.L),
     .D = nullptr_if_null_tensor(in.D),
-    .num_head_q = in.Num_head_q,
-    .num_head_k = in.Num_head_k,
+    .num_head_q = num_head_q,
+    .num_head_k = num_head_k,
     .cu_seqlens_q = nullptr_if_null_tensor(in.cu_seqlens_q),
     .cu_seqlens_k = nullptr_if_null_tensor(in.cu_seqlens_k),
-    .num_seqlens = in.Num_seqlens,
+    .num_seqlens = num_seqlens,
     .max_seqlen_q = in.Max_seqlen_q,
     .max_seqlen_k = in.Max_seqlen_k,
     .head_dim = head_dim,
@@ -171,7 +182,7 @@ bwd_preprocess(T4 out, T4 dout, T2 delta, AOTRITON_NS::Stream stream_wrap) {
     .D = &delta,
     .max_seqlen_q = static_cast<int32_t>(out.size(2)),
     .head_dim = head_size,
-    .BLOCK_DMODEL = head_size_rounded,
+    .BLOCK_DMODEL = int16_t(head_size_rounded),
     .PADDED_HEAD = head_size_rounded != head_size,
   };
   BwdPreprocessContext context;
@@ -221,7 +232,7 @@ bwd_preprocess_varlen(T4 out,
     .cu_seqlens_q = &cu_seqlens_q,
     .max_seqlen_q = max_seqlen_q,
     .head_dim = head_size,
-    .BLOCK_DMODEL = head_size_rounded,
+    .BLOCK_DMODEL = int16_t(head_size_rounded),
     .PADDED_HEAD = head_size_rounded != head_size,
   };
   BwdPreprocessVarlenContext context;
@@ -308,7 +319,7 @@ bwd_kernel_dk_dv(T4 q,
     .philox_seed_ptr = &philox_seed,
     .philox_offset1 = &philox_offset1,
     .philox_offset2 = static_cast<uint64_t>(philox_offset2),
-    .BLOCK_DMODEL = head_size_rounded,
+    .BLOCK_DMODEL = int16_t(head_size_rounded),
     .CAUSAL = is_causal,
     .ENABLE_DROPOUT = dropout_p > 0.0,
     .PADDED_HEAD = head_size_rounded != head_size,
@@ -423,7 +434,7 @@ bwd_kernel_dq(T4 q,
     .philox_seed_ptr = &philox_seed,
     .philox_offset1 = &philox_offset1,
     .philox_offset2 = static_cast<uint64_t>(philox_offset2),
-    .BLOCK_DMODEL = head_size_rounded,
+    .BLOCK_DMODEL = int16_t(head_size_rounded),
     .CAUSAL = is_causal,
     .ENABLE_DROPOUT = dropout_p > 0.0,
     .PADDED_HEAD = head_size_rounded != head_size,
