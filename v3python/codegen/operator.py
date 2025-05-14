@@ -19,9 +19,6 @@ from ..utils import (
 from .common import codegen_struct_cfields, codegen_includes
 from .optune import OptuneCodeGenerator
 
-'''
-TODO: Unify with KernelShimGenerator
-'''
 class OperatorGenerator(InterfaceGenerator):
     HEADER_TEMPLATE = get_template('op.h')
     SOURCE_TEMPLATE = get_template('op.cc')
@@ -31,7 +28,6 @@ class OperatorGenerator(InterfaceGenerator):
     IFELSE_SNIPPET_TEMPLATE = get_template('snippet/metro_per_kernel_ifelse.cc')
     PFX = 'iface'
 
-    # TODO: Optimize for single entry LUT/uniform LUT
     def create_sub_generator(self, functional : Functional, df : 'pandas.DataFrame'):
         ocg = OptuneCodeGenerator(self._args, functional, df, self._this_repo)
         if not ocg.is_trivial:

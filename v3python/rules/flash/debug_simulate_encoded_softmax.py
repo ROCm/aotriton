@@ -6,7 +6,6 @@ from ._common import FlashKernel, select_pattern, get_possible_choices, OpAttn
 from v3python.op import NO_OPERATOR
 from .ops import OpAttnFwd
 
-# TODO: Support return_softmax_cross_entropy with MetroKernel
 class debug_simulate_encoded_softmax(FlashKernel):
     SHARED_IFACE = OpAttnFwd
     NAME = 'debug_simulate_encoded_softmax'

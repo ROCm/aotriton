@@ -27,9 +27,6 @@ __bwd_kernel_dq = bwd_kernel_dq('bwd_kernel_dq', SOURCE_FILE)
 __bwd_kernel_fuse = bwd_kernel_fuse('bwd_kernel_fuse', SOURCE_FILE)
 # # TODO: aiter
 # # __bwd_aiter = bwd_aiter()
-# # TODO: Remove them from code base
-# # debug_fill_dropout_rng(__debug_fill_dropout_rng', SOURCE_FILE)
-# # debug_fill_dropout_rng_tensor(__debug_fill_dropout_rng_tensor', SOURCE_FILE)
 # # TODO: Re-implement this as part of kernel(?)
 __debug_simulate_encoded_softmax = debug_simulate_encoded_softmax('debug_simulate_encoded_softmax', SOURCE_FILE)
 
@@ -68,5 +65,3 @@ operators = [
         # TODO, Affine Kernels
     ]),
 ]
-
-# TODO: Merge __bwd_preprocess_varlen into __bwd_preprocess
