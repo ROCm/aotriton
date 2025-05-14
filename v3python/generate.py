@@ -6,9 +6,6 @@ from .rules import (
     kernels as triton_kernels,
     operators as dispatcher_operators,
 )
-from .codegen.registry import (
-    ClusterRegistry,
-)
 from .codegen import (
     RootGenerator
 )
@@ -48,7 +45,6 @@ def parse():
     args = p.parse_args()
     args._sanity_check_exceptions = []
     args.build_for_tuning_but_skip_kernel = args.build_for_tuning_but_skip_kernel
-    args._cluster_registry = ClusterRegistry()
     args._object_file_registry = []
     args._should_raise_for_lut = lambda f : should_raise_for_lut(args, f)
     # print(args)
