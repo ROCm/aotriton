@@ -102,7 +102,7 @@ class SQLiteKernelTuningDatabaseForArch(CommonKernelTuningDatabaseForArch):
                 return value
             selection = ' and '.join([f'{colname}={fmtsql(value)}' for colname, value in zip(where_columns, where_values)])
             fb_selection = ' and '.join([f'{colname}={fmtsql(value)}' for colname, value in zip(where_columns, patched_values)])
-            assert selected_rows, f"Cannot find any rows from select * from {self._table_name} where gpu IN ({self._in_stmt}) and {selection} (fallback to {fb_selection})"
+            assert selected_rows, f"Cannot find any rows from select * from {self._table_name} where arch='{self.db_arch}' and {selection} (fallback to {fb_selection})"
         # TODO: Support KernelDescription.DOWNGRADER
         # return columns, values, self._downgrade(rows)
 
@@ -269,5 +269,3 @@ class SQLiteKernelTuningDatabaseForArch(CommonKernelTuningDatabaseForArch):
 
     def extract_inputs(self, columns, row):
         return self._row_to_dict(columns, row, prefix='inputs')
-
-SQLiteOpTuningDatabaseForArch = SQLiteKernelTuningDatabaseForArch

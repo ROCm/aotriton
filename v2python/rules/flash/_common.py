@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: MIT
 
 from ...gpu_targets import gpu2arch, AOTRITON_ARCH_WARPSIZE
-from ...op import Operator
 from ...kernel_desc import (
     KernelDescription,
     get_possible_choices,
@@ -10,7 +9,6 @@ from ...kernel_desc import (
     ConditionalConstexpr,
     ConditionalDeferredConstexpr,
     ConditionalDeferredElseTensor,
-    AOTRITON_ENABLE_FP32,
 )
 from ...autotune_config import Config
 from ...autotune_binning import BinningLessOrEqual, BinningExact
@@ -22,10 +20,6 @@ def check_value(fsels, repr_name):
         if fsel.repr_name in repr_name:
             return fsel.argument_value
     assert False, f'Cannot find {repr_name=} in {fsels=}'
-
-class OpAttn(Operator):
-    OP_FAMILY = 'flash'
-    MAIN_DATATYPES = ['*fp16:16', '*bf16:16', '*fp32:16'] if AOTRITON_ENABLE_FP32 else ['*fp16:16', '*bf16:16']
 
 class FlashKernel(KernelDescription):
     KERNEL_FAMILY = 'flash'

@@ -6,10 +6,7 @@ import sqlite3
 from .kernel_argument import ArgumentSelection, TunedArgument
 from .gpu_targets import gpu2arch, AOTRITON_TUNING_DATABASE_REUSE
 from .common_tuning_database import CommonKernelTuningDatabaseForArch
-from .sqlite_tuning_database import (
-    SQLiteKernelTuningDatabaseForArch,
-    SQLiteOpTuningDatabaseForArch,
-)
+from .sqlite_tuning_database import SQLiteKernelTuningDatabaseForArch
 from .downgrader import TuningDowngrader
 from .tuning_lut import (
     KernelTuningEntryForFunctionalOnGPU,
@@ -90,6 +87,7 @@ class KernelTuningDatabase(object):
 
     def __init__(self, tune_info_dir : pathlib.Path, k : 'KernelDescription', build_for_tuning=False):
         self._kdesc = k
+        self.gpu_dict = {}
         self._build_for_tuning = build_for_tuning and hasattr(k, 'gen_autotune_configs')
         self._cached_dba = {}
         self._gpu_set = set()
@@ -150,35 +148,6 @@ class KernelTuningDatabase(object):
                                                  self._conn,
                                                  self._table_name,
                                                  self._downgrader)
-
-    @property
-    def empty(self):
-        return not self.arch_dict or self.build_for_tuning
-
-    @property
-    def build_for_tuning(self):
-        return self._build_for_tuning
-
-class OpTuningDatabase(object):
-    MONOLITHIC_TUNING_DATABASE_FILE = 'tuning_database.sqlite3'
-    def __init__(self, tune_info_dir : pathlib.Path, op : 'Operator', build_for_tuning=False):
-        self._op = op
-        self._build_for_tuning = build_for_tuning
-        td = pathlib.Path(tune_info_dir) / self.MONOLITHIC_TUNING_DATABASE_FILE # in case tune_info_dir is str
-        self._conn = sqlite3.connect(td)
-        self._table_name = 'OP$' + op.OP_FAMILY.upper() + '$' + op.OP_NAME
-        res = self._conn.execute(f"SELECT DISTINCT gpu FROM {self._table_name};")
-        self._gpu_set = set([gpu for gpu, in res.fetchall()])
-
-    def __create_dba(self, gpus):
-        # TODO: Actually add content to database
-        return EmptyOpTuningDatabaseForArch(self._op, gpus)
-        return SQLiteOpTuningDatabaseForArch(self._op,
-                                             gpus,
-                                             gpus,
-                                             self._conn,
-                                             self._table_name,
-                                             self._downgrader)
 
     @property
     def empty(self):

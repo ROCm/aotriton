@@ -1,11 +1,8 @@
 # Copyright © 2023-2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-from .rules import (
-    kernels as triton_kernels,
-    operators as dispatcher_operators,
-)
-from .tuning_database import KernelTuningDatabase, OpTuningDatabase
+from .rules import kernels as triton_kernels
+from .tuning_database import KernelTuningDatabase
 from .tuning_lut import MissingLutEntry
 import io
 import shutil
@@ -89,9 +86,6 @@ ShimMakefileGenerator
      +- collect objects (ObjectShimCodeGenerator) for linking
      +- write Makefile rules for param and context classes
      +- generate param and context class implementations
- +- OpGenerator (WIP)
-     +- OptuneCodeGenerator for each functional variant of the kernel
-         +- generate lut entries under optune.<OP_NAME>/<functional_signature>.cc
 '''
 
 class Generator(object):
@@ -216,8 +210,6 @@ class ShimMakefileGenerator(MakefileGenerator):
     def gen_children(self, out):
         for k in triton_kernels:
             yield KernelShimGenerator(self._args, self.children_out, k)
-        for op in dispatcher_operators:
-            yield OpGenerator(self._args, self.children_out, op)
         yield SourceBuilder(self._args, self.children_out)
 
     def write_prelude(self):
@@ -293,7 +285,6 @@ class KernelShimGenerator(MakefileSegmentGenerator):
         super().__init__(args, out)
         # Shim code and functional dispatcher
         self._kdesc = k
-        print(f'{self._kdesc=}')
         self._kdesc.set_target_gpus(args.target_gpus)
         self._shim_path = args.build_dir / k.KERNEL_FAMILY
         self._shim_path.mkdir(parents=True, exist_ok=True)
@@ -424,75 +415,6 @@ class ObjectShimCodeGenerator(Generator):
     @property
     def list_of_output_object_files(self) -> 'list[Path]':
         return []
-
-class OpGenerator(MakefileSegmentGenerator):
-    TABLE_PATH = 'optune_table'
-
-    def __init__(self, args, out, op: 'Operator'):
-        super().__init__(args, out)
-        # Shim code and functional dispatcher
-        self._op = op
-        self._shim_path = args.build_dir / op.OP_FAMILY
-        self._hdr_fn = self._shim_path / Path(op.OP_NAME + '.h')
-        self._src_fn = self._hdr_fn.with_suffix('.cc')
-        # Autotune dispatcher
-        self._optune_path = args.build_dir / op.OP_FAMILY / f'optune.{op.OP_NAME}'
-        self._optune_path.mkdir(parents=True, exist_ok=True)
-        self._tuning = False # TODO: support tuning for ops
-        self._ktd = OpTuningDatabase(args.build_dir,
-                                     op,
-                                     build_for_tuning=self._tuning)
-        self._objpaths = []
-
-    def write_body(self):
-        ofn = self._src_fn.with_suffix('.o')
-        print(str(ofn.absolute()), file=self._out)
-        makefile_target = ofn.relative_to(self.build_root)
-        self._objpaths.append(makefile_target)
-
-    def gen_children(self, out):
-        for arch, fsels, lut in op.gen_tuned_op_lut(self._ktd):
-            # print(f'KernelShimGenerator.gen_children {fsels=}')
-            yield OptuneCodeGenerator(args, self.children_out, self._optune_path, op, arch, fsels, lut)
-
-    def write_conclude(self):
-        if self.is_bare:
-            return
-        objs = [c._odesc for c in self._children if isinstance(c, OptuneCodeGenerator)]
-        with self._shim_hdr as fhdr, self._shim_src as fsrc:
-            self._op.write_op_header(fhdr)
-            self._op.write_op_source(fsrc)
-
-class OptuneCodeGenerator(MakefileSegmentGenerator):
-    def __init__(self, args, fileout, outdir, op, arch, fsels, lut):
-        super().__init__(args, fileout)
-        self._build_dir = args.build_dir
-        self._outdir = outdir
-        self._op = op
-        self._arch = arch
-        self._fsels = fsels
-        self._lut = lut
-
-    def write_body(self):
-        assert self.is_bare
-        self.verbose('OptuneCodeGenerator')
-        do_raise = None
-        # Write the code to file
-        # Optune always has fallback
-        self._ofn = self._lut.write_lut_source(self._args.library_suffix,
-                                               self._outdir,
-                                               bare_mode=self.is_bare,
-                                               noimage_mode=self._args.noimage_mode)
-        self.verbose(f'\t lut = {self._fsels}')
-        self.verbose(f'\t ofn = {self._ofn}')
-        self._obj_fn = self._ofn.with_suffix('.o')
-        self._makefile_target = self._obj_fn.relative_to(self._build_dir)
-        # Write the Makefile segment
-        print(str(self._ofn.absolute()), file=self._out)
-
-    @property
-    def list_of_self_object_files(self) -> 'list[Path]':
-        return [self._makefile_target]
 
 def main():
     args = parse()

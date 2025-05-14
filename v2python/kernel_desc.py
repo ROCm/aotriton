@@ -32,11 +32,7 @@ def join_dicts(dicts : 'list[dict]') -> dict:
     return { k:v for d in dicts for k,v in d.items() }
 
 def get_possible_choices(klass, arg_name : str) -> 'list[Any]':
-    l = []
-    for k in ['TYPE_CHOICES', 'FEAT_CHOICES', 'PERF_CHOICES']:
-        if hasattr(klass, k):
-            l += [getattr(klass, k)]
-    for d in l:
+    for d in [klass.TYPE_CHOICES, klass.FEAT_CHOICES, klass.PERF_CHOICES]:
         for k, v in d.items():
             if arg_name in k:
                 return v
@@ -50,94 +46,24 @@ def select_pattern(arguments, prefix, trim_left=None, trim_right=None, delete_wh
             ret.append(s)
     return (ret[trim_left:trim_right], delete_when)
 
-def collect_functionals_from_op(klass):
-    mklass = klass.OP_KLASS
-    if mklass is None and klass.CONFIRM_NO_OP_KLASS:
-        return
-    print(f'collect_functionals_from_op {klass=} {mklass=}')
-    assert mklass, f'Class {klass} must define OP_KLASS'
-    # Early detection
-    all_assigned = True
-    for which_choice in ['TYPE_CHOICES', 'FEAT_CHOICES']:
-        if getattr(klass, which_choice, None) is None:
-            all_assigned = False
-            break
-    if all_assigned:
-        return
-    args_order = { aname : i for i, aname in enumerate(klass.ARGUMENTS) }
-    args_in_use = set(klass.ARGUMENTS)
-    print(f'{args_order=}')
-    # Selection is defined in Op but not all options are available in individual kernels
-    def remove_missing(args_to_determine : frozenset):
-        print(f'intersection {args_to_determine=} vs {args_in_use=}')
-        args_to_determine = set(args_to_determine).intersection(args_in_use)
-        print(f'result {args_to_determine=}')
-        sorted_args = sorted(args_to_determine, key = lambda aname : args_order[aname])
-        print(f'result {sorted_args=}')
-        return tuple(sorted_args)  # TODO: replace frozenset with tuple
-
-    CHOICE_FILTERS = klass.CHOICE_FILTERS
-    # remove_unsupported(('Q', 'K', 'V'), [16, 32, 64]) = [16], when CHOICE_FILTERS = { 'K' : lambda x : x < 32 }
-    def remove_unsupported(key, values):
-        if not CHOICE_FILTERS:
-            return values
-        for k in key:
-            if k in CHOICE_FILTERS:
-                return [ v for v in values if CHOICE_FILTERS[k](v) ]
-        return values
-
-    for which_choice in ['TYPE_CHOICES', 'FEAT_CHOICES']:
-        if getattr(klass, which_choice, None) is not None:
-            continue
-        mattr = getattr(mklass, which_choice)
-        dic = {}
-        for k, v in mattr.items():
-            args = remove_missing(k)
-            v = remove_unsupported(k, v)
-            if args:
-                dic[args] = v
-        setattr(klass, which_choice, dic)
-        print(f"{klass}'s final {which_choice} is {dic}")
-
-    for which_choice in ['TENSOR_RANKS', 'TENSOR_STRIDE_INPUTS']:
-        if getattr(klass, which_choice, None) is not None:
-            continue
-        mattr = getattr(mklass, which_choice)
-        dic = {}
-        for k, v in mattr.items():
-            if k in args_in_use:
-                dic[k] = v
-        setattr(klass, which_choice, dic)
-    klass.TENSOR_RANKS['_default'] = mklass.TENSOR_RANKS['_default']
-
 class KernelDescription(object):
-    OPERATOR_KLASS = None
     ARGUMENTS = []
     SHIM_KERNEL_NAME = None
     _ARGUMENT_CHOICES = None
     HEADER_TEMPLATE = get_template('shim.h')
     SOURCE_TEMPLATE = get_template('shim.cc')
+    MAIN_DATATYPES = ['*fp16:16', '*bf16:16', '*fp32:16'] if AOTRITON_ENABLE_FP32 else ['*fp16:16', '*bf16:16']
 
-    # Type and Feature are shared from Related Op
-    # TYPE_CHOICES = {
-    # }
-    # FEAT_CHOICES = {
-    # }
-    PERF_CHOICES = {
+    TYPE_CHOICES = {
     }
-    # Exclude unsupported combinations
-    CHOICE_FILTERS = {
+    FEAT_CHOICES = {
+    }
+    PERF_CHOICES = {
     }
 
     @property
     def FULL_KERNEL_NAME(self):
         return f'{self.KERNEL_FAMILY}.{self.SHIM_KERNEL_NAME}'
-
-    # FIXME: Unify with param_class_name
-    @property
-    def enum_name(self):
-        CamelName = self.SHIM_KERNEL_NAME.replace('_', ' ').title().replace(' ', '')
-        return f'kShim_{CamelName}'
 
     @property
     def ARGUMENT_CHOICES(self):
@@ -184,7 +110,6 @@ class KernelDescription(object):
         print(f"{self.FEAT_CHOICES=}")
 
     def __init__(self, triton_kernel_name, triton_file_path):
-        collect_functionals_from_op(self.__class__)
         self.insert_tensor_strides_to_choices(last_is_continuous=True)
         self._DATA_ARGUMENTS = None
         self._triton_file_path = Path(triton_file_path)
@@ -237,17 +162,12 @@ class KernelDescription(object):
     def set_target_gpus(self, gpus):
         # Note _target_gpus should not bu used
         # self._target_gpus = list(gpus)
-        self._target_gpus = gpus
         self._target_arch = cluster_gpus(gpus)
         self._target_arch_keys = list(self._target_arch.keys())
 
     @property
     def name(self):
         return self._triton_kernel_name
-
-    @property
-    def target_gpus(self):
-        return self._target_gpus
 
     def gen_func_selections(self) -> 'tuple[ArgumentSelection]':
         return itertools.product(*self._func_selections)
@@ -341,8 +261,8 @@ class KernelDescription(object):
     # DispatcherV3 Note
     # LUT object now handles different GPU mods under the same arch
     def gen_tuned_kernel_lut(self, tuned_db : 'KernelTuningDatabase') -> 'Iterator[KernelTuningLutForGPU]':
-        for (arch, gpus), fsels in itertools.product(self._target_arch.items(),
-                                                     self.gen_func_selections()):
+        for (arch, gpus), fsels in  itertools.product(self._target_arch.items(),
+                                                      self.gen_func_selections()):
             dba = tuned_db.select_gpus(gpus)
             # print(f'gen_tuned_kernel_lut {fsels=}')
             yield dba.arch, fsels, dba.get_lut(self, self.AUTOTUNE_KEYS_VALIDATED, fsels, self._perf_meta)
@@ -350,18 +270,6 @@ class KernelDescription(object):
     @property
     def param_class_name(self):
         return "".join(x.capitalize() for x in self.SHIM_KERNEL_NAME.lower().split("_")) + 'Params'
-
-    @property
-    def op_name(self):
-        if self.OP_KLASS is None:
-            return None
-        return self.OP_KLASS.OP_NAME
-
-    @property
-    def op_param_class_name(self):
-        if self.OP_KLASS is None:
-            return self.param_class_name
-        return self.OP_KLASS.param_class_name
 
     @property
     def context_class_name(self):
@@ -386,8 +294,6 @@ class KernelDescription(object):
         d = { 'kernel_family_name'  : self.KERNEL_FAMILY,
               'shim_kernel_name'    : self.SHIM_KERNEL_NAME,
               'param_class_name'    : self.param_class_name,
-              'op_name'             : self.op_name,
-              'op_param_class_name' : self.op_param_class_name,
               'context_class_name'  : self.context_class_name,
               'metadata_class_name' : self.metadata_class_name,
               'func_fields'         : ';\n    '.join(self.func_fields),
@@ -427,7 +333,6 @@ class KernelDescription(object):
         if self.SHIM_KERNEL_NAME == 'bwd_kernel_dq':
             ret = self.TENSOR_RANKS.get(tensor_arg, self.TENSOR_RANKS['_default'])
             print(f"{tensor_arg=} {ret}")
-        print(f'{self=} {self.TENSOR_RANKS=}')
         return self.TENSOR_RANKS.get(tensor_arg, self.TENSOR_RANKS['_default'])
 
     '''
