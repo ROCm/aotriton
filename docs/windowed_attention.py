@@ -312,5 +312,24 @@ def _validate_qkmask(seqlen_q, seqlen_k, BLOCK_M, BLOCK_N):
 def test_qkmask(Q, K, BLOCK_M, BLOCK_N):
     _validate_qkmask(Q, K, BLOCK_M, BLOCK_N)
 
+def _validate_negative_window(seqlen_q, seqlen_k, BLOCK_M, BLOCK_N):
+    for window_left in range(seqlen_q):
+        for window_right in range(0, window_left):
+            ref_mask = create_window_mask(seqlen_q, seqlen_k, window_left, -window_right)
+            validator = Validator(ref_mask, window_left, -window_right)
+            validator.validate(BLOCK_M, BLOCK_N)
+    for window_right in range(seqlen_k):
+        for window_left in range(0, window_right):
+            ref_mask = create_window_mask(seqlen_q, seqlen_k, -window_left, window_right)
+            validator = Validator(ref_mask, -window_left, window_right)
+            validator.validate(BLOCK_M, BLOCK_N)
+
+@pytest.mark.parametrize("Q", Qs)
+@pytest.mark.parametrize("K", Ks)
+@pytest.mark.parametrize("BLOCK_M", BMS)
+@pytest.mark.parametrize("BLOCK_N", BNS)
+def test_negative_window(Q, K, BLOCK_M, BLOCK_N):
+    _validate_negative_window(Q, K, BLOCK_M, BLOCK_N)
+
 if __name__ == '__main__':
     prelude()
