@@ -161,22 +161,6 @@ namespace pyaotriton {
               py::arg("is_causal"),
               py::arg("stream") = nullptr,
               py::arg("extargs") = BwdExtraArguments());
-        m.def("debug_fill_dropout_rng",
-              &aotriton::v2::flash::debug_fill_dropout_rng,
-              "Flash Attention Debugging Function to get raw RNG numbers used in dropout",
-              py::call_guard<py::gil_scoped_release>(),
-              py::arg("q"),
-              py::arg("philox_seed"),
-              py::arg("philox_offset"),
-              py::arg("stream") = nullptr);
-        m.def("debug_fill_dropout_rng_tensor",
-              &aotriton::v2::flash::debug_fill_dropout_rng_tensor,
-              "Flash Attention Debugging Function to get raw RNG numbers used in dropout",
-              py::call_guard<py::gil_scoped_release>(),
-              py::arg("q"),
-              py::arg("philox_seed"),
-              py::arg("philox_offset"),
-              py::arg("stream") = nullptr);
         m.def("debug_simulate_encoded_softmax",
               &aotriton::v2::flash::debug_simulate_encoded_softmax,
               "Flash Attention Debugging Function to get raw RNG numbers used in dropout",
@@ -218,6 +202,10 @@ namespace pyaotriton {
       flash::setup_module(mod_flash);
     }
   } // namespace v2
+
+  namespace v3 {
+    void setup_module(py::module_& m); // Impl. goes into v3.cc
+  } // namespace v3
 
   void def_stream(py::module_& m) {
     py::class_<aotriton::Stream>(m, "Stream").def(py::init<>());
@@ -288,6 +276,8 @@ namespace pyaotriton {
          );
     py::module_ mod_v2api = m.def_submodule("v2", "v2 API namespace");
     v2::setup_module(mod_v2api);
+    py::module_ mod_v3api = m.def_submodule("v3", "v3 API namespace");
+    v3::setup_module(mod_v3api);
   }
 
 } // namespace pyaotriton

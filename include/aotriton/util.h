@@ -144,6 +144,9 @@ private:
 template<>
 class AOTRITON_API TensorView<0> {
 public:
+  TensorView() {
+  }
+
   TensorView(intptr_t base, DType dtype)
     : base_(reinterpret_cast<void*>(base))
     , dtype_(dtype) {

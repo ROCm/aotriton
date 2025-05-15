@@ -35,10 +35,9 @@ from composed_tensors import (
     composed_mul_acc,
 )
 
-# TODO: Remove Unused 'Out' Argument from kernels below
 @triton.jit
 def bwd_kernel_dk_dv(
-    Q, K, V, B, sm_scale, Out, DO,
+    Q, K, V, B, sm_scale, DO,
     DK, DV,
     L,
     D,
@@ -46,7 +45,7 @@ def bwd_kernel_dk_dv(
     stride_kz, stride_kh, stride_kn, stride_kk,
     stride_vz, stride_vh, stride_vk, stride_vn,
     stride_bz, stride_bh, stride_bm, stride_bn,
-    stride_oz, stride_oh, stride_om, stride_ok,
+    stride_doz, stride_doh, stride_dom, stride_dok,
     stride_dkz, stride_dkh, stride_dkn, stride_dkk,
     stride_dvz, stride_dvh, stride_dvk, stride_dvn,
     num_head_q : 'i32',
@@ -209,7 +208,7 @@ def bwd_kernel_dk_dv(
     # DO_block_ptr = tl.make_block_ptr(
     #     base=DO,
     #     shape=(seqlen_q, head_dim),
-    #     strides=(stride_om, stride_ok),
+    #     strides=(stride_dom, stride_dok),
     #     offsets=(0, 0),
     #     block_shape=(BLOCK_M, BLOCK_DMODEL),
     #     order=(1, 0)
@@ -287,7 +286,7 @@ def bwd_kernel_dk_dv(
                                                   BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
 
         do_ptrs0, do_ptrs1, do_ptrs2 = composed_ptrs(DO,
-                                                  stride_oz, stride_oh, stride_om, stride_ok,
+                                                  stride_doz, stride_doh, stride_dom, stride_dok,
                                                   batch_index, off_h_q, cu_seqlens_q_start + offs_m,
                                                   BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
 
@@ -314,7 +313,7 @@ def bwd_kernel_dk_dv(
                 kt0, kt1, kt2, vt0, vt1, vt2,
                 B_block_ptr,
                 do_ptrs0, do_ptrs1, do_ptrs2,
-                stride_om,
+                stride_dom,
                 l_ptrs,
                 D_ptrs,
                 seqlen_q, seqlen_k, head_dim,
@@ -344,7 +343,7 @@ def bwd_kernel_dk_dv(
                 kt0, kt1, kt2, vt0, vt1, vt2,
                 B_block_ptr,
                 do_ptrs0, do_ptrs1, do_ptrs2,
-                stride_om,
+                stride_dom,
                 l_ptrs,
                 D_ptrs,
                 seqlen_q, seqlen_k, head_dim,
@@ -376,7 +375,7 @@ def bwd_kernel_dk_dv(
                 kt0, kt1, kt2, vt0, vt1, vt2,
                 B_block_ptr,
                 do_ptrs0, do_ptrs1, do_ptrs2,
-                stride_om,
+                stride_dom,
                 l_ptrs,
                 D_ptrs,
                 seqlen_q, seqlen_k, head_dim,

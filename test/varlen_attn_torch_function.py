@@ -5,7 +5,7 @@
 import torch
 import numpy as np
 from aotriton_flash import attn_fwd_compact_varlen, attn_bwd_compact_varlen
-from attn_torch_function import AttentionExtraArgs
+from attn_torch_function import AttentionExtraArgs, V3_API
 
 VERBOSE=False
 DEFAULT_PHILOX_SEED = 0x1BF52
@@ -92,7 +92,7 @@ class _attention_varlen(torch.autograd.Function):
                                 b, sm_scale, M, o,
                                 dropout_p, philox_seed, philox_offset1, philox_offset2,
                                 philox_seed_output, philox_offset_output,
-                                encoded_softmax, causal, atomic);
+                                encoded_softmax, causal, atomic, call_operator=V3_API);
 
         ctx.save_for_backward(q, k, v, b, o, M)
         ctx.seqlens_q = seqlens_q
@@ -138,7 +138,7 @@ class _attention_varlen(torch.autograd.Function):
         attn_bwd_compact_varlen(q, k, v,
                                 cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
                                 b, sm_scale, o, do, dq, dk, dv, db, L, delta,
-                                dropout_p, philox_seed, philox_offset, 0, causal);
+                                dropout_p, philox_seed, philox_offset, 0, causal, call_operator=V3_API);
         return dq, dk, dv, None, None, None, None, None, None, None, None
 
 varlen_attention = _attention_varlen.apply
