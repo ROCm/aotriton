@@ -138,10 +138,10 @@ class Validator:
         # is much easier than calculating the line intersections
         MS = np.arange(start_m, start_m+BLOCK_M)
         NS = np.arange(start_n, start_n+BLOCK_N)
-        def tril_mask():
-            return MS[:, None] <= NS[None, :] + k
+        def tril_mask(k):
+            return MS[:, None] + k >= NS[None, :]
         def triu_mask(k):
-            return MS + k <= NS
+            return MS[:, None] + k <= NS[None, :]
 
         mask = tril_mask(info.window_right) & triu_mask(-info.window_left)
 
@@ -178,14 +178,29 @@ pt(mask)
 print('Simulate bottom right aligned causal with simulated windowed attention with X[:, None] <= Y[None, :]')
 
 def sim_tril(m, k):
-    X = np.arange(0, m.shape[0])
-    Y = np.arange(0, m.shape[1]) + k
-    return np.where(X[:, None] <= Y[None, :], m, 0)
+    X = np.arange(0, m.shape[0]) + k
+    Y = np.arange(0, m.shape[1])
+    return np.where(X[:, None] >= Y[None, :], m, 0)
 
 def sim_triu(m, k):
     X = np.arange(0, m.shape[0]) + k
     Y = np.arange(0, m.shape[1])
     return np.where(X[:, None] <= Y[None, :], m, 0)
+
+ones = np.ones((5, 7), dtype=np.int8)
+for i in range(-5, 7):
+    s = sim_tril(ones, i)
+    r = np.tril(ones, i)
+    print(f'Validate sim_tril(k={i}) {np.allclose(s, r)}')
+    pt(s)
+    pt(r)
+
+for i in range(-5, 7):
+    s = sim_triu(ones, i)
+    r = np.triu(ones, i)
+    print(f'Validate sim_triu(k={i}) {np.allclose(s, r)}')
+    pt(s)
+    pt(r)
 
 def create_window_mask_sim(M, N, window_left, window_right):
     ones = np.ones((M, N), dtype=np.int8)
