@@ -168,8 +168,9 @@ def attn_fwd(
             start_m = tl.program_id(0)
             off_h_q = tl.program_id(1)
             off_z = tl.program_id(2)
+        start_M = start_m * BLOCK_M
 
-        offs_m = start_m * BLOCK_M + tl.arange(0, BLOCK_M)
+        offs_m = start_M + tl.arange(0, BLOCK_M)
         offs_n = tl.arange(0, BLOCK_N)
 
         if Num_seqlens > 0:
@@ -178,7 +179,7 @@ def attn_fwd(
             seqlen_q = cu_seqlens_q_end - cu_seqlens_q_start
             # We have a one-size-fits-all grid in id(0). Some seqlens might be too
             # small for all start_m so for those we return early.
-            if start_m * BLOCK_M >= seqlen_q:
+            if start_M >= seqlen_q:
                 continue_condition = False
                 # return
             cu_seqlens_k_start = tl.load(cu_seqlens_k + off_z)
@@ -189,7 +190,7 @@ def attn_fwd(
             cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
             cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
             seqlen_q = cu_seqlens_q_end - cu_seqlens_q_start
-            if start_m * BLOCK_M >= seqlen_q:
+            if start_M >= seqlen_q:
                 continue_condition = False
             cu_seqlens_k_start = tl.load(cu_seqlens_k + off_z)
             cu_seqlens_k_end = tl.load(cu_seqlens_k + off_z + 1)
@@ -328,7 +329,7 @@ def attn_fwd(
                 # have native e^x support in HW.
                 Qk_scale : constexpr_or_f32 = Sm_scale * 1.44269504089
                 # Q is loaded once at the beginning and shared by all N blocks.
-                if (start_m + 1) * BLOCK_M > seqlen_q:
+                if start_M + BLOCK_M > seqlen_q:
                     q0, q1, q2 = composed_load(q_ptrs0, q_ptrs1, q_ptrs2,
                                                offs_m,
                                                BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
@@ -396,7 +397,7 @@ def attn_fwd(
                             bias_ptrs,
                             stride_kn, stride_vk, stride_bn,
                             # Task positions
-                            start_m, block_min, block_max,
+                            start_M, block_min, block_max,
                             seqlen_k, seqlen_q, Head_dim,
                             # Dropout
                             idropout_p, philox_seed, batch_philox_offset, philox_offset_stride,
@@ -455,7 +456,7 @@ def attn_fwd(
                             bias_ptrs,
                             stride_kn, stride_vk, stride_bn,
                             # Task positions
-                            start_m, block_min, block_max,
+                            start_M, block_min, block_max,
                             seqlen_k, seqlen_q, Head_dim,
                             # Dropout
                             idropout_p, philox_seed, batch_philox_offset, philox_offset_stride,
@@ -505,13 +506,12 @@ def attn_fwd(
                 # then we have one block with a row of all NaNs which come from computing
                 # softmax over a row of all -infs (-inf - inf = NaN). We check for that here
                 # and store 0s where there are NaNs as these rows should've been zeroed out.
-                end_m_idx = (start_m + 1) * BLOCK_M
-                start_m_idx = start_m * BLOCK_M
+                end_M = start_M + BLOCK_M
                 causal_start_idx = seqlen_q - seqlen_k if IS_CAUSAL_BOTTOM_RIGHT else 0
                 acc0, acc1, acc2 = composed_to(acc0, acc1, acc2, Out.type.element_ty)
                 if IS_CAUSAL:
-                    if causal_start_idx > start_m_idx and causal_start_idx < end_m_idx:
-                        mask_m_offsets = start_m_idx + tl.arange(0, BLOCK_M)
+                    if causal_start_idx > start_M and causal_start_idx < end_M:
+                        mask_m_offsets = start_M + tl.arange(0, BLOCK_M)
                         z = 0.0
                         acc0, acc1, acc2 = composed_casual_mask(acc0, acc1, acc2,
                                                                 mask_m_offsets, causal_start_idx,
@@ -520,7 +520,7 @@ def attn_fwd(
                                                                 BLOCK_DMODEL1,
                                                                 BLOCK_DMODEL2)
 
-                overflow_size = end_m_idx - seqlen_q
+                overflow_size = end_M - seqlen_q
                 if L_not_null:
                     # write back LSE
                     l_ptrs = L + off_z * Num_head_q * Max_seqlen_q + off_h_q * Max_seqlen_q + offs_m

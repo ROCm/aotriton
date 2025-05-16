@@ -38,7 +38,7 @@ def _attn_fwd_inner(
         bias_ptrs,
         stride_kn, stride_vk, stride_bn,
         # Task positions
-        start_m, block_min, block_max,
+        start_M, block_min, block_max,
         actual_seqlen_k, actual_seqlen_q, Head_dim,
         # Dropout
         idropout_p, philox_seed, batch_philox_offset, philox_offset_stride,
@@ -68,11 +68,11 @@ def _attn_fwd_inner(
         INT8_KV: tl.constexpr,
         USE_P_SCALE: tl.constexpr):
     # loop over k, v, and update accumulator
-    for start_n in range(block_min, block_max, BLOCK_N):
+    for start_N in range(block_min, block_max, BLOCK_N):
         # For padded blocks, we will overrun the tensor size if
         # we load all BLOCK_N. For others, the blocks are all within range.
         if MASK_STEPS or PADDED_HEAD:
-            k_offs_n = start_n + tl.arange(0, BLOCK_N)
+            k_offs_n = start_N + tl.arange(0, BLOCK_N)
         else:
             k_offs_n = None
         k0, k1, k2 = composed_load(k_ptrs0, k_ptrs1, k_ptrs2,
@@ -103,13 +103,13 @@ def _attn_fwd_inner(
             # a solution is to always do BLOCK_M // BLOCK_N + 1 steps if not is_modulo_mn.
             # last step might get wasted but that is okay. check if this masking works For
             # that case.
-            if (start_n + BLOCK_N == block_max) and (n_extra_tokens != 0):
+            if (start_N + BLOCK_N == block_max) and (n_extra_tokens != 0):
                 boundary_m = tl.full([BLOCK_M], actual_seqlen_k, dtype=tl.int32)
-                size_n = start_n + OFFS_N[None, :]
+                size_n = start_N + OFFS_N[None, :]
                 mask = size_n < boundary_m[:, None]
                 qk = tl.where(mask, qk, float("-inf"))
         if IS_CAUSAL:
-            causal_boundary = start_n + offs_n_causal
+            causal_boundary = start_N + offs_n_causal
             causal_mask = OFFS_M[:, None] >= causal_boundary[None, :]
             qk = tl.where(causal_mask, qk, float("-inf"))
         # -- compute qk ----
@@ -127,7 +127,7 @@ def _attn_fwd_inner(
             if BLOCK_DMODEL2 > 0 : qk += (Qk_scale * tl.dot(q2, k2))
 
         if bias_ptrs is not None:
-            bias_offs_n = start_n + tl.arange(0, BLOCK_N) if MASK_STEPS else None
+            bias_offs_n = start_N + tl.arange(0, BLOCK_N) if MASK_STEPS else None
             bias = load_fn(bias_ptrs, OFFS_M, bias_offs_n, actual_seqlen_q, actual_seqlen_k)
             # While bias is added after multiplying qk with sm_scale,
             # our optimization to use 2^x instead of e^x results in an additional
@@ -136,8 +136,8 @@ def _attn_fwd_inner(
 
         if alibi_slope is not None:
             # Compute the global position of each token within the sequence
-            global_m_positions = start_m * BLOCK_M + tl.arange(0, BLOCK_M)
-            global_n_positions = start_n + tl.arange(0, BLOCK_N)
+            global_m_positions = start_M + tl.arange(0, BLOCK_M)
+            global_n_positions = start_N + tl.arange(0, BLOCK_N)
             alibi_block = compute_alibi_block(alibi_slope, actual_seqlen_q, actual_seqlen_k, global_m_positions,
                                               global_n_positions)
             qk += (alibi_block * 1.44269504089)  # scale factor of log2(e)
@@ -161,17 +161,17 @@ def _attn_fwd_inner(
         # CAVEAT: Must update l_ij before applying dropout
         l_ij = tl.sum(p, 1)
         if ENABLE_DROPOUT:
-            # philox_offset = batch_philox_offset + start_m * BLOCK_M * Max_seqlen_k + start_n
+            # philox_offset = batch_philox_offset + start_M * Max_seqlen_k + start_N
             keep = fast_dropout_mask(philox_seed, idropout_p,
-                                     batch_philox_offset, start_m * BLOCK_M, start_n,
+                                     batch_philox_offset, start_M, start_N,
                                      BLOCK_M, BLOCK_N, philox_offset_stride)
             if RETURN_ENCODED_SOFTMAX:
                 mstore2d(tl.where(keep, p, -p).to(encoded_sm_base.type.element_ty),
                          BLOCK_M,
                          BLOCK_N,
                          o_base=encoded_sm_base,
-                         o_start_row=start_m * BLOCK_M,
-                         o_start_col=start_n,
+                         o_start_row=start_M,
+                         o_start_col=start_N,
                          o_rows=actual_seqlen_q,
                          o_cols=actual_seqlen_k,
                          stride_row=Max_seqlen_k,
@@ -182,8 +182,8 @@ def _attn_fwd_inner(
                      BLOCK_M,
                      BLOCK_N,
                      o_base=encoded_sm_base,
-                     o_start_row=start_m * BLOCK_M,
-                     o_start_col=start_n,
+                     o_start_row=start_M,
+                     o_start_col=start_N,
                      o_rows=actual_seqlen_q,
                      o_cols=actual_seqlen_k,
                      stride_row=Max_seqlen_k,
