@@ -5,6 +5,22 @@
 import triton
 import triton.language as tl
 
+@triton.jit
+def closed_interval_isect(a_s, a_e, b_s, b_e):
+    if (b_s > a_e or a_s > b_e) or (a_s > a_e):
+        return 0, -1
+    o_s = max(a_s, b_s)
+    o_e = min(a_e, b_e)
+    return o_s, o_e
+
+@triton.jit
+def is_closed_interval_empty(a_s, a_e) -> bool:
+    return a_s > a_e
+
+@triton.jit
+def closed_interval_size(a_s, a_e) -> bool:
+    return max(0, a_e - a_s + 1)
+
 # Convenience function to load with optional boundary checks.
 # "First" is the major dim, "second" is the minor dim.
 @triton.jit

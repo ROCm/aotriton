@@ -16,7 +16,13 @@ AOTRITON_FLASH_BLOCK_DMODEL = os.getenv('AOTRITON_FLASH_BLOCK_DMODEL', default='
 AOTRITON_FLASH_BLOCK_DMODEL = [int(d) for d in AOTRITON_FLASH_BLOCK_DMODEL.split(',')]
 
 _IF_DROPOUT = lambda elsechoice : [CC('ENABLE_DROPOUT', False, 0, elsechoice)]
-_IF_CAUSAL = lambda elsechoice : [CC('CAUSAL_TYPE', False, 0, elsechoice)]
+_IF_CAUSAL = lambda elsechoice : [CC('CAUSAL_TYPE', 0, 0, elsechoice)]
+'''
+_IF_SLIDING_WINDOW:
+    If CAUSAL_TYPE != 3: set param as constexpr(0) else: set to elsechoice
+'''
+_IF_SLIDING_WINDOW = lambda elsechoice : [CC('CAUSAL_TYPE', 3, 0, elsechoice,
+                                             cond_op=lambda tc_value, _: tc != 3)]
 
 class OpAttnFwd(OpAttn):
     NAME = 'op_attn_fwd'
@@ -55,6 +61,7 @@ class OpAttnFwd(OpAttn):
         "encoded_softmax",
         # causal, (Planned Feature) windowed attention
         "CAUSAL_TYPE",
+        "Window_left", "Window_right",
         # bias
         "BIAS_TYPE",
         # alibi
@@ -108,15 +115,20 @@ class OpAttnFwd(OpAttn):
         frozenset(['philox_seed_ptr', 'philox_seed_output', 'philox_offset_output']) : _IF_DROPOUT('*u64'),
         frozenset(['philox_offset1']) : _IF_DROPOUT('*u64'),
         frozenset(['philox_offset2']) : _IF_DROPOUT('u64'),
+        frozenset(['Window_left', 'Window_right']) : _IF_SLIDING_WINDOW('i32'),
         frozenset(['persistent_atomic_counter']) : _IF_CAUSAL('*i32'),
         frozenset(['Num_CU', 'Batch']) : ['i32'],
     }
     FEAT_CHOICES = {
         frozenset(["Q_descale", "K_descale", "P_scale", "P_descale", "V_descale"]) : [0],  # INT8 For the future
         # Can support CAUSAL_TYPE = 2 (Bottom right alignment) but this will
-        # further increse the number of kernels. Will be added later along with
-        # windowed attention
-        frozenset(['CAUSAL_TYPE']) : [0, 1],
+        # further increse the number of kernels.
+        # Bottom right alignment is supported through
+        # windowed attention (CAUSAL_TYPE=3)
+        # Note:
+        #   Triton source supports [0,1,2,3] but this class is to guide build
+        #   of AOTriton. So only [0, 3] are kept.
+        frozenset(['CAUSAL_TYPE']) : [0, 3],
         frozenset(['BLOCK_DMODEL']) : AOTRITON_FLASH_BLOCK_DMODEL,
         frozenset(['ENABLE_DROPOUT']) : [False, True],
         frozenset(['RETURN_ENCODED_SOFTMAX']) : [False],

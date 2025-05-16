@@ -38,15 +38,13 @@ def _attn_fwd_inner(
         bias_ptrs,
         stride_kn, stride_vk, stride_bn,
         # Task positions
-        start_M, block_min, block_max,
+        start_M, nblocks_1, nblocks_2, Block_range_1, Block_range_2,
         actual_seqlen_k, actual_seqlen_q, Head_dim,
         # Dropout
         idropout_p, philox_seed, batch_philox_offset, philox_offset_stride,
         encoded_sm_base, Max_seqlen_k,
-        # CAUSAL (Partial block)
-        offs_n_causal,
-        masked_blocks,
-        n_extra_tokens,
+        # Causal/Sliding Window Attention
+        window_left, window_right,
         # Alibi
         alibi_slope,
         q_descale, k_descale, v_descale, p_scale,
@@ -68,7 +66,17 @@ def _attn_fwd_inner(
         INT8_KV: tl.constexpr,
         USE_P_SCALE: tl.constexpr):
     # loop over k, v, and update accumulator
-    for start_N in range(block_min, block_max, BLOCK_N):
+    # To overcome the challenge that we cannot loop over disjoint ranges in Triton like:
+    #   for i in range(s0, e0) + range(s1, e1):
+    #       pass
+    for block_index in range(nblocks_1+nblocks_2):
+        # Seccond Range is invalid (constexpr "None" defined in Full block path)
+        if Block_range_2 is None:
+            start_n = block_index + Block_range_1
+        else:
+            start_n = block_index + Block_range_1 if block_index < nblocks_1 else (block_index - nblocks_1 + Block_range_2)
+        start_N = start_n * BLOCK_N
+
         # For padded blocks, we will overrun the tensor size if
         # we load all BLOCK_N. For others, the blocks are all within range.
         if MASK_STEPS or PADDED_HEAD:
@@ -94,24 +102,31 @@ def _attn_fwd_inner(
                                        PADDED_COL=PADDED_HEAD,
                                        TRANSPOSED=False)
         qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
-        # We start from end of seqlen_k so only the first iteration would need
-        # to be checked for padding if it is not a multiple of block_n
-        # TODO: This can be optimized to only be true for the padded block.
-        if MASK_STEPS:
-            # If this is the last block / iteration, we want to
-            # mask if the sequence length is not a multiple of block size
-            # a solution is to always do BLOCK_M // BLOCK_N + 1 steps if not is_modulo_mn.
-            # last step might get wasted but that is okay. check if this masking works For
-            # that case.
-            if (start_N + BLOCK_N == block_max) and (n_extra_tokens != 0):
-                boundary_m = tl.full([BLOCK_M], actual_seqlen_k, dtype=tl.int32)
-                size_n = start_N + OFFS_N[None, :]
-                mask = size_n < boundary_m[:, None]
-                qk = tl.where(mask, qk, float("-inf"))
-        if IS_CAUSAL:
-            causal_boundary = start_N + offs_n_causal
-            causal_mask = OFFS_M[:, None] >= causal_boundary[None, :]
-            qk = tl.where(causal_mask, qk, float("-inf"))
+        if MASK_STEPS or IS_CAUSAL:
+            '''
+            MASK_STEPS: Need padding on seq_q or seq_k
+            IS_CAUSAL: apply causal mask (emulated with sliding window attention)
+            '''
+            mask = tl.full([BLOCK_M, BLOCK_N], True, dtype=tl.int1)
+            MS = OFFS_M
+            NS = start_N + OFFS_N
+            if MASK_STEPS: # Potentially for all blocks in the loop
+                q_mask = (MS[:, None] < actual_seqlen_q)
+                mask = mask & q_mask
+            if start_N + BLOCK_N > actual_seqlen_k: # Only one block at most
+                k_mask = (NS[None, :] < actual_seqlen_k)
+                mask = mask & k_mask
+            if IS_CAUSAL:
+                right_mask = MS[:, None] + window_right >= NS[None, :]
+                mask = mask & right_mask
+                left_mask = MS[:, None] - window_left <= NS[None, :]
+                mask = mask & left_mask
+            qk = tl.where(mask, qk, float("-inf"))
+        # if IS_CAUSAL:
+        #     causal_boundary = start_N + offs_n_causal
+        #     causal_mask = OFFS_M[:, None] >= causal_boundary[None, :]
+        #     qk = tl.where(causal_mask, qk, float("-inf"))
+
         # -- compute qk ----
         # TODO: INT8 NPOT OPTIMIZATION
         if INT8_GEMM:
@@ -121,7 +136,7 @@ def _attn_fwd_inner(
                 k = (k * k_descale).to(q.type.element_ty)
             # DO NOT CALL composed_dot_both.
             # The generated code will trigger https://github.com/ROCm/aotriton/issues/54
-            # for BLOCK_M = 126 and BLOCK_N = 64
+            # for BLOCK_M = 128 and BLOCK_N = 64
             qk += (Qk_scale * tl.dot(q0, k0))
             if BLOCK_DMODEL1 > 0 : qk += (Qk_scale * tl.dot(q1, k1))
             if BLOCK_DMODEL2 > 0 : qk += (Qk_scale * tl.dot(q2, k2))

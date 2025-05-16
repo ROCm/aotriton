@@ -35,8 +35,6 @@ class attn_fwd(FlashKernel):
     AUTOTUNE_KEYS = {
         'Max_seqlen_q' : BinningLessOrEqual,
         'Max_seqlen_k' : BinningLessOrEqual,
-        'CAUSAL_TYPE' : BinningExact,
-        'ENABLE_DROPOUT' : BinningExact,
     }
 
     # List of functionals that are not fully tuned in the tuning database

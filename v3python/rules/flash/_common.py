@@ -95,7 +95,7 @@ class FlashKernel(KernelDescription):
         else:
             lut_full_seqlen_q = self.LUT_FULL_SEQLEN_Q
             lut_full_seqlen_k = self.LUT_FULL_SEQLEN_K
-        base['causal'] = check_value(functional, ['CAUSAL', 'CAUSAL_TYPE'])
+        base['causal_type'] = check_value(functional, 'CAUSAL_TYPE')
         base['d_head'] = check_value(functional, 'BLOCK_DMODEL')
         base['dropout_p'] = 0.5 if check_value(functional, 'ENABLE_DROPOUT') else 0.0
         def dtype():
