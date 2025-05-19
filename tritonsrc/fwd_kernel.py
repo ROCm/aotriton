@@ -28,6 +28,7 @@ from masked_load_store import (
     closed_interval_isect,
     is_closed_interval_empty,
     closed_interval_size,
+    calculate_intervals,
 )
 from composed_tensors import (
     composed_offs_1d,
@@ -45,11 +46,6 @@ import os
 @triton.jit
 def cdiv_fn(x, y):
     return (x + y - 1) // y
-
-@triton.jit
-def div_rd(x, y):
-    d = x // y
-    return (d - 1) if d * y > x else d
 
 @triton.jit
 def attn_fwd(
@@ -228,124 +224,27 @@ def attn_fwd(
             o_base = Out + batch_index * stride_oz + off_h_q * stride_oh + cu_seqlens_q_start * stride_om
             mask_on_seq_q = (start_M + BLOCK_M > seqlen_q)
             mask_on_seq_k = (seqlen_k % BLOCK_N != 0)
-            # CAVEAT: this value is invalid if masked_seq_k_block is not 0
-            masked_seq_k_block = seqlen_k // BLOCK_N
             # need_to_handle_mask_on_seq_k = mask_on_seq_k
+            window_left, window_right, lb_lo, lb_hi, fb_lo, fb_hi, rb_lo, rb_hi = \
+                    calculate_intervals(IS_CAUSAL,
+                                        CAUSAL_TYPE,
+                                        Window_left,
+                                        Window_right,
+                                        start_M,
+                                        seqlen_q,
+                                        seqlen_k,
+                                        mask_on_seq_q,
+                                        BLOCK_M,
+                                        BLOCK_N)
+
+            lb_empty = is_closed_interval_empty(lb_lo, lb_hi)
+            rb_empty = is_closed_interval_empty(rb_lo, rb_hi)
+            fb_empty = is_closed_interval_empty(fb_lo, fb_hi)
+
             if IS_CAUSAL:
                 '''
                 Calculate masked blocks, and perform early exit
                 '''
-                if CAUSAL_TYPE == 1:
-                    window_left = seqlen_q
-                    window_right = 0
-                elif CAUSAL_TYPE == 2:
-                    window_left = seqlen_q - seqlen_k
-                    window_right = seqlen_k
-                else:
-                    window_left = Window_left
-                    window_right = Window_right
-                # tl.device_print('0 window_left', window_left)
-                # tl.device_print('0 window_right', window_right)
-                # tl.device_print('0 start_M', start_M)
-                # tl.device_print('0 BLOCK_M', BLOCK_M)
-                # tl.device_print('0 BLOCK_N', BLOCK_N)
-                # tl.device_print('0 seqlen_q', seqlen_q)
-                # tl.device_print('0 seqlen_k', seqlen_k)
-                # tl.device_print('0 mask_on_seq_q', mask_on_seq_q)
-
-                ### Intervals for Left Masked Blocks (Infinite on N axis)
-                # Intersection point (N axis) b/w window left line and M = start_M
-                # start_M - window_left = N
-                isec_lo = start_M - window_left
-                # Intersection point (N axis) b/w window left line and M = min(start_M + BLOCK_M, seqlen_q)
-                # M = + window_left + N = min(start_M + BLOCK_M, seqlen_q)
-                isec_hi = min(start_M + BLOCK_M, seqlen_q) - window_left
-                lsec_lob = div_rd(isec_lo, BLOCK_N)
-                lsec_hib = div_rd(isec_hi - 1, BLOCK_N)
-                # tl.device_print('1 lb_lo isect', isec_lo)
-                # tl.device_print('1 lb_hi isect', isec_hi)
-                # tl.device_print('1 Init lb_lo', lsec_lob)
-                # tl.device_print('1 Init lb_hi', lsec_hib)
-
-                ### Intervals for Right Masked Blocks (Infinite on N axis)
-                # Intersection point (N axis) b/w window left line and M = start_M
-                # M = N - window_right = start_M
-                isec_lo = start_M + window_right
-                # Intersection point (N axis) b/w window left line and M = min(start_M + BLOCK_M, seqlen_q)
-                # M = N - window_right = min(start_M + BLOCK_M, seqlen_q)
-                isec_hi = min(start_M + BLOCK_M, seqlen_q) + window_right
-                rsec_lob = div_rd(isec_lo, BLOCK_N)
-                # FIXME: we need to solve this
-                #  rsec_hib in Z
-                #  rsec_hib * BLOCK_N < isec_hi
-                #  maxmize rsec_hib
-                #  Example: isec_hi = 0, then rsec_hib = -1
-                rsec_hib = div_rd(isec_hi - 1, BLOCK_N)
-                # tl.device_print('2 rb_lo isect', isec_lo)
-                # tl.device_print('2 rb_hi isect', isec_hi)
-                # tl.device_print('2 Init rb_lo', rsec_lob)
-                # tl.device_print('2 Init rb_hi', rsec_hib)
-
-                ### Sanitize intervals: n < seqlen_k && n >= 0
-                # Valid Closed Interval WITH the trailing partial mask
-                # (intersection of n < seqlen_k and full blocks will handled later)
-                vb_lo = 0
-                vb_hi = (seqlen_k - 1) // BLOCK_N
-                # lb_*: Left masked Blocks index (LOw/HIgh)
-                # rb_*: Right masked Blocks index (LOw/HIgh)
-                # fb_*: Full Blocks index (LOw/HIgh)
-                lb_lo, lb_hi = closed_interval_isect(lsec_lob, lsec_hib, vb_lo, vb_hi)
-                rb_lo, rb_hi = closed_interval_isect(rsec_lob, rsec_hib, vb_lo, vb_hi)
-                # tl.device_print('3 Valid lb_lo', lb_lo)
-                # tl.device_print('3 Valid lb_hi', lb_hi)
-                # tl.device_print('3 Valid rb_lo', rb_lo)
-                # tl.device_print('3 Valid rb_hi', rb_hi)
-
-                # Check if left and right masked blocks overlapped
-                # ub_: United maksed Blocks
-                ub_lo, ub_hi = closed_interval_isect(lsec_lob, lsec_hib, rsec_lob, rsec_hib)
-                ub_empty = is_closed_interval_empty(ub_lo, ub_hi)
-
-                ### Sanitize intervals: m < seqlen_q (m >= 0 is ensured by start_m)
-                # All blocks need masking, unify them
-                if ub_empty and not mask_on_seq_q:
-                    '''
-                    fb_: Full blocks
-                    Only exists when there is no intersection b/w LB and RB,
-                    AND
-                    Seq. Q DOES NOT NEED MASKING
-                    '''
-                    fb_lo, fb_hi = closed_interval_isect(lsec_hib+1, rsec_lob-1, vb_lo, vb_hi)
-                else:
-                    '''
-                    Uniformly masked blocks
-                    LB and RB overlapps
-                    OR
-                    Seq. Q needs padding
-                    '''
-                    # Must use the un-sanitized interval as inputs
-                    lb_lo, lb_hi = closed_interval_isect(lsec_lob, rsec_hib, vb_lo, vb_hi)
-                    fb_lo, fb_hi =  -3, -4
-                    rb_lo, rb_hi =  -3, -4
-
-                '''
-                n = seqlen_k intersects with full blocks
-                Note: this implies RB is excluded by (n < seqlen_k && n >= 0)
-                '''
-                if fb_lo * BLOCK_N < seqlen_k and seqlen_k < fb_hi * BLOCK_N + BLOCK_N:
-                    # BLOCK_N = 16
-                    # seqlen_k  | fb_hi | Comment   |
-                    # -------------------------------
-                    # 15        |  -1   |  Empty    |
-                    # 17        |  0    | [..., 0]  |
-                    fb_hi = seqlen_k // BLOCK_N - 1
-                    # n = seqlen_k & FB implies RB is empty
-                    rb_lo = masked_seq_k_block
-                    rb_hi = masked_seq_k_block
-
-                lb_empty = is_closed_interval_empty(lb_lo, lb_hi)
-                rb_empty = is_closed_interval_empty(rb_lo, rb_hi)
-                fb_empty = is_closed_interval_empty(fb_lo, fb_hi)
 
                 # If we have no blocks after adjusting for seqlen deltas, this WG is part of
                 # the blocks that are all 0. We exit early.
@@ -375,29 +274,6 @@ def attn_fwd(
                         tl.store(l_ptrs, l, mask=l_ptrs_mask)
                     # TODO: Should dropout and return encoded softmax be handled here too?
                     continue_condition = False
-            else:
-                lb_lo, lb_hi = -1, -2
-                n_blocks = tl.cdiv(seqlen_k, BLOCK_N)
-                if mask_on_seq_q:
-                    lb_lo, lb_hi = 0, n_blocks - 1
-                    fb_lo, fb_hi = -1, -2
-                    rb_lo, rb_hi = -1, -2
-                    # need_to_handle_mask_on_seq_k = False # Handled by lb_* with [0, n_blocks]
-                else:
-                    fb_lo, fb_hi = 0, seqlen_k // BLOCK_N
-                    # automatically be empty when mask_on_seq_k == False
-                    rb_lo, rb_hi = seqlen_k // BLOCK_N + 1, n_blocks - 1
-                    # need_to_handle_mask_on_seq_k = False # Handled by lb_* with [0, n_blocks]
-                lb_empty = is_closed_interval_empty(lb_lo, lb_hi)
-                rb_empty = is_closed_interval_empty(rb_lo, rb_hi)
-                fb_empty = is_closed_interval_empty(fb_lo, fb_hi)
-
-            # tl.device_print('4 Final lb_lo', lb_lo)
-            # tl.device_print('4 Final lb_hi', lb_hi)
-            # tl.device_print('4 Final fb_lo', fb_lo)
-            # tl.device_print('4 Final fb_hi', fb_hi)
-            # tl.device_print('4 Final rb_lo', rb_lo)
-            # tl.device_print('4 Final rb_hi', rb_hi)
 
             if continue_condition:
                 # MQA / GQA has different K and V head offsets.
