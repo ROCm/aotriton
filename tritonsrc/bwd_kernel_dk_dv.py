@@ -252,12 +252,13 @@ def bwd_kernel_dk_dv(
     mask_on_seq_k = (start_k + BLOCK_N != seqlen_k)
 
     '''
-    Note dk dv calculation goes a different direction, perform a transpose when passing parameters.
-
-    Also note the block size is still (BLOCK_M, BLOCK_N) and hence the BLOCK_*
-    parameters should also be flipped
+    Notes:
+    1. dk dv calculation goes a different direction, perform a transpose when passing parameters.
+    2. the block size is still (BLOCK_M, BLOCK_N) and hence the BLOCK_*
+       parameters should also be flipped
+    3. The returned values must also be flipped
     '''
-    window_left, window_right, lb_lo, lb_hi, fb_lo, fb_hi, rb_lo, rb_hi = \
+    window_right, window_left, lb_lo, lb_hi, fb_lo, fb_hi, rb_lo, rb_hi = \
             calculate_intervals(IS_CAUSAL,
                                 CAUSAL_TYPE,
                                 Window_right,

@@ -153,6 +153,7 @@ def bwd_inner_dk_dv(
                 mask = mask & right_mask
                 left_mask = MS[:, None] - window_left <= NS[None, :]
                 mask = mask & left_mask
+            # tl.device_print('mask', mask)
             qk = tl.where(mask, qk, float("-inf"))
 
         if BIAS_TYPE == 0:
