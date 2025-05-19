@@ -48,7 +48,8 @@ def cdiv_fn(x, y):
 
 @triton.jit
 def div_rd(x, y):
-    return (x - (y - 1)) // y
+    d = x // y
+    return (d - 1) if d * y > x else d
 
 @triton.jit
 def attn_fwd(
@@ -246,6 +247,10 @@ def attn_fwd(
                 # tl.device_print('0 window_left', window_left)
                 # tl.device_print('0 window_right', window_right)
                 # tl.device_print('0 start_M', start_M)
+                # tl.device_print('0 BLOCK_M', BLOCK_M)
+                # tl.device_print('0 BLOCK_N', BLOCK_N)
+                # tl.device_print('0 seqlen_q', seqlen_q)
+                # tl.device_print('0 seqlen_k', seqlen_k)
                 # tl.device_print('0 mask_on_seq_q', mask_on_seq_q)
 
                 ### Intervals for Left Masked Blocks (Infinite on N axis)
@@ -285,7 +290,7 @@ def attn_fwd(
                 # Valid Closed Interval WITH the trailing partial mask
                 # (intersection of n < seqlen_k and full blocks will handled later)
                 vb_lo = 0
-                vb_hi = seqlen_k // BLOCK_N + (1 if mask_on_seq_k else 0)
+                vb_hi = (seqlen_k - 1) // BLOCK_N
                 # lb_*: Left masked Blocks index (LOw/HIgh)
                 # rb_*: Right masked Blocks index (LOw/HIgh)
                 # fb_*: Full Blocks index (LOw/HIgh)
@@ -320,8 +325,8 @@ def attn_fwd(
                     '''
                     # Must use the un-sanitized interval as inputs
                     lb_lo, lb_hi = closed_interval_isect(lsec_lob, rsec_hib, vb_lo, vb_hi)
-                    fb_lo, fb_hi =  -1, -2
-                    rb_lo, rb_hi =  -1, -2
+                    fb_lo, fb_hi =  -3, -4
+                    rb_lo, rb_hi =  -3, -4
 
                 '''
                 n = seqlen_k intersects with full blocks

@@ -75,6 +75,7 @@ def _attn_fwd_inner(
         else:
             start_n = block_index + Block_range_1 if block_index < nblocks_1 else (block_index - nblocks_1 + Block_range_2)
         start_N = start_n * BLOCK_N
+        # tl.device_print('start_N', start_N)
 
         # For padded blocks, we will overrun the tensor size if
         # we load all BLOCK_N. For others, the blocks are all within range.
@@ -109,12 +110,15 @@ def _attn_fwd_inner(
             mask = tl.full([BLOCK_M, BLOCK_N], True, dtype=tl.int1)
             MS = OFFS_M
             NS = start_N + OFFS_N
+            # isect with m = seqlen_q
             if MASK_STEPS: # Potentially for all blocks in the loop
                 q_mask = (MS[:, None] < actual_seqlen_q)
                 mask = mask & q_mask
+            # isect with n = seqlen_k
             if start_N + BLOCK_N > actual_seqlen_k: # Only one block at most
                 k_mask = (NS[None, :] < actual_seqlen_k)
                 mask = mask & k_mask
+            # isect with both windowed causal lines
             if IS_CAUSAL:
                 right_mask = MS[:, None] + window_right >= NS[None, :]
                 mask = mask & right_mask
