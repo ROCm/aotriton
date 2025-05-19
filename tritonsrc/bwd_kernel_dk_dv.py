@@ -19,7 +19,13 @@ import triton
 import triton.language as tl
 from bwd_inner_dk_dv import bwd_inner_dk_dv
 from dropout import PHILOX_RN_PER_OFFSET
-from masked_load_store import load_fn, mstore2d
+from masked_load_store import (
+    load_fn,
+    mstore2d,
+    is_closed_interval_empty,
+    calculate_intervals,
+    closed_interval_size,
+)
 from composed_tensors import (
     composed_offs_1d,
     composed_zeros_2d,
@@ -60,10 +66,13 @@ def bwd_kernel_dk_dv(
     philox_seed_ptr,
     philox_offset1 : '*u64',
     philox_offset2 : 'u64',
+    ## Sliding Window Attention
+    Window_left : 'i32',
+    Window_right : 'i32',
     BLOCK_M: tl.constexpr,
     BLOCK_DMODEL: tl.constexpr,
     BLOCK_N: tl.constexpr,
-    CAUSAL: tl.constexpr,
+    CAUSAL_TYPE: tl.constexpr,
     ENABLE_DROPOUT: tl.constexpr,
     PADDED_HEAD: tl.constexpr,
     BIAS_TYPE: tl.constexpr,
@@ -79,6 +88,7 @@ def bwd_kernel_dk_dv(
 
     tl.static_assert(BLOCK_DMODEL_R3 == 0, f'BLOCK_DMODEL = {BLOCK_DMODEL} = 0b{BLOCK_DMODEL:b} cannot be factored into <= 3 power of two values')
     tl.static_assert(BLOCK_DMODEL1 > 0 or BLOCK_DMODEL2 == 0, 'Only trailing BLOCK_DMODELx can be 0')
+    IS_CAUSAL : tl.constexpr = CAUSAL_TYPE != 0
 
     idropout_p = ((dropout_p - 0.5) * 0xFFFFFFFF).to(tl.int32) if ENABLE_DROPOUT else 0
     philox_seed = 0
@@ -239,29 +249,28 @@ def bwd_kernel_dk_dv(
     bias_scale = 1.0 / sm_scale
     group_size = num_head_q // num_head_k
 
-    q_lo = start_k if CAUSAL else 0
-    q_hi = seqlen_q
-    real_seqlen_q = q_hi - q_lo  # seqlen_q after considering causal (and windowed in the future)
-    n_blocks = tl.cdiv(q_hi - q_lo, BLOCK_M)
-    n_extra_tokens = 0
-    if real_seqlen_q < BLOCK_M:
-        n_extra_tokens = BLOCK_M - real_seqlen_q
-    elif real_seqlen_q % BLOCK_M:
-        n_extra_tokens = real_seqlen_q % BLOCK_M
-    is_irregular_q = n_extra_tokens != 0
-    leading_masked_blocks = 0
-    trailing_masked_blocks = 0
-    if CAUSAL:
-        # leading masked blocks comes from the diagnoal cutting line from causal masks
-        # can be larger than one if BLOCK_N > BLOCK_M
-        leading_masked_blocks = tl.cdiv(BLOCK_N, BLOCK_M)
-        # trailing masked blocks comes from extra tokens
-        # Note trailing block may overlap with leading block
-        trailing_masked_blocks = 1 if is_irregular_q else 0
-    else:
-        leading_masked_blocks = 0
-        trailing_masked_blocks = 1 if is_irregular_q else 0
-    n_full_blocks = n_blocks - leading_masked_blocks - trailing_masked_blocks
+    mask_on_seq_k = (start_k + BLOCK_N != seqlen_k)
+
+    '''
+    Note dk dv calculation goes a different direction, perform a transpose when passing parameters.
+
+    Also note the block size is still (BLOCK_M, BLOCK_N) and hence the BLOCK_*
+    parameters should also be flipped
+    '''
+    window_left, window_right, lb_lo, lb_hi, fb_lo, fb_hi, rb_lo, rb_hi = \
+            calculate_intervals(IS_CAUSAL,
+                                CAUSAL_TYPE,
+                                Window_right,
+                                Window_left,
+                                start_k,
+                                seqlen_k,
+                                seqlen_q,
+                                mask_on_seq_k,
+                                BLOCK_N,
+                                BLOCK_M)
+    lb_empty = is_closed_interval_empty(lb_lo, lb_hi)
+    rb_empty = is_closed_interval_empty(rb_lo, rb_hi)
+    fb_empty = is_closed_interval_empty(fb_lo, fb_hi)
 
     dropout_scale = 1.0 / (1.0 - dropout_p) if ENABLE_DROPOUT else 1.0
     for off_h_q in range(off_h_k * group_size, off_h_k * group_size + group_size):
@@ -294,16 +303,10 @@ def bwd_kernel_dk_dv(
         # leading masked: by causal
         # trailing: by irregular seqlen_q
 
-        # For initialization
-        lo = 0
-        hi = 0
-
-        if leading_masked_blocks > 0:
-            lo = q_lo
-            hi = lo + leading_masked_blocks * BLOCK_M
-            # TODO: overflow_size maybe larger than on block (BLOCK_M)
-            #       In this case the bwd_inner_dk_dv can be further optimized
-            overflow_size = 0 if hi < q_hi else hi - q_hi
+        if not fb_empty:
+            nblocks_1 = closed_interval_size(fb_lo, fb_hi)
+            # lo = q_lo + leading_masked_blocks * BLOCK_M
+            # hi = lo + n_full_blocks * BLOCK_M
             dk0, dk1, dk2, dv0, dv1, dv2 = bwd_inner_dk_dv(
                 dk0, dk1, dk2,
                 dv0, dv1, dv2,
@@ -317,55 +320,29 @@ def bwd_kernel_dk_dv(
                 l_ptrs,
                 D_ptrs,
                 seqlen_q, seqlen_k, head_dim,
-                start_k, lo, hi, overflow_size,
+                start_k, nblocks_1, 0, fb_lo, None,
                 idropout_p, dropout_scale, philox_seed, batch_philox_offset, philox_offset_stride,
-                BLOCK_M,
-                BLOCK_DMODEL0,
-                BLOCK_DMODEL1,
-                BLOCK_DMODEL2,
-                BLOCK_N,
-                False,  # FULL_BLOCKS
-                CAUSAL,
-                ENABLE_DROPOUT,
-                PADDED_HEAD,
-                BIAS_TYPE)
-            tl.debug_barrier()
-
-        if n_full_blocks > 0:
-            lo = q_lo + leading_masked_blocks * BLOCK_M
-            hi = lo + n_full_blocks * BLOCK_M
-            dk0, dk1, dk2, dv0, dv1, dv2 = bwd_inner_dk_dv(
-                dk0, dk1, dk2,
-                dv0, dv1, dv2,
-                qk_scale, bias_scale,
-                q_ptrs0, q_ptrs1, q_ptrs2,
-                stride_qm,
-                kt0, kt1, kt2, vt0, vt1, vt2,
-                B_block_ptr,
-                do_ptrs0, do_ptrs1, do_ptrs2,
-                stride_dom,
-                l_ptrs,
-                D_ptrs,
-                seqlen_q, seqlen_k, head_dim,
-                start_k, lo, hi, 0,
-                idropout_p, dropout_scale, philox_seed, batch_philox_offset, philox_offset_stride,
+                window_left,
+                window_right,
                 BLOCK_M,
                 BLOCK_DMODEL0,
                 BLOCK_DMODEL1,
                 BLOCK_DMODEL2,
                 BLOCK_N,
                 True,  # FULL_BLOCKS
-                False,  # CAUSAL has zero effect for full blocks
+                False,  # CAUSAL_TYPE has zero effect for full blocks
                 ENABLE_DROPOUT,
                 PADDED_HEAD,
                 BIAS_TYPE)
 
         # use n_full_blocks to confirm the trailing masked blocks is not overlapping with leading masked_blocks
-        if n_full_blocks >= 0 and trailing_masked_blocks > 0:
+        if not (lb_empty and rb_empty):
             tl.debug_barrier()
-            lo = q_lo + leading_masked_blocks * BLOCK_M + n_full_blocks * BLOCK_M
-            hi = q_hi
-            overflow_size = lo + trailing_masked_blocks * BLOCK_M - q_hi
+            # lo = q_lo + leading_masked_blocks * BLOCK_M + n_full_blocks * BLOCK_M
+            # hi = q_hi
+            # overflow_size = lo + trailing_masked_blocks * BLOCK_M - q_hi
+            nblocks_1 = closed_interval_size(lb_lo, lb_hi)
+            nblocks_2 = closed_interval_size(rb_lo, rb_hi)
             dk0, dk1, dk2, dv0, dv1, dv2 = bwd_inner_dk_dv(
                 dk0, dk1, dk2,
                 dv0, dv1, dv2,
@@ -379,15 +356,17 @@ def bwd_kernel_dk_dv(
                 l_ptrs,
                 D_ptrs,
                 seqlen_q, seqlen_k, head_dim,
-                start_k, lo, hi, overflow_size,
+                start_k, nblocks_1, nblocks_2, lb_lo, rb_lo,
                 idropout_p, dropout_scale, philox_seed, batch_philox_offset, philox_offset_stride,
+                window_left,
+                window_right,
                 BLOCK_M,
                 BLOCK_DMODEL0,
                 BLOCK_DMODEL1,
                 BLOCK_DMODEL2,
                 BLOCK_N,
                 False,  # FULL_BLOCKS
-                CAUSAL,
+                CAUSAL_TYPE,
                 ENABLE_DROPOUT,
                 PADDED_HEAD,
                 BIAS_TYPE)

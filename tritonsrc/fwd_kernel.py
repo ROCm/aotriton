@@ -383,7 +383,7 @@ def attn_fwd(
                     p_descale = None
                 # Compute for full blocks. Here we set causal to false regardless of its actual
                 # value because there is no masking. Similarly we do not need padding.
-                if not is_closed_interval_empty(fb_lo, fb_hi):
+                if not fb_empty:
                     nblocks_1 = closed_interval_size(fb_lo, fb_hi)
                     acc0, acc1, acc2, l_i, m_i = _attn_fwd_inner(
                             # Inputs
@@ -428,10 +428,11 @@ def attn_fwd(
                 tl.debug_barrier()
                 # masked blocks
                 if not (lb_empty and rb_empty):
-                    if IS_CAUSAL:
-                        offs_n_causal = offs_n + (seqlen_q - seqlen_k) if IS_CAUSAL_BOTTOM_RIGHT else offs_n
-                    else:
-                        offs_n_causal = 0
+                    # if IS_CAUSAL:
+                    #     offs_n_causal = offs_n + (seqlen_q - seqlen_k) if IS_CAUSAL_BOTTOM_RIGHT else offs_n
+                    # else:
+                    #     offs_n_causal = 0
+
                     # k_ptrs0, k_ptrs1, k_ptrs2 = composed_advance(k_ptrs0, k_ptrs1, k_ptrs2,
                     #                                              n_full_blocks * BLOCK_N * stride_kn,
                     #                                              BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2

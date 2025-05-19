@@ -13,9 +13,14 @@ from attn_torch_function import attention, AttentionExtraArgs
 
 FOR_RELEASE = bool(int(os.getenv('FOR_RELEASE', default='0')))
 
+def fmt_hdim(val):
+    return f'hdim{val}'
+
 POT_HEADDIMS = [16, 32, 64, 128, 256]
 NPOT_HEADDIMS = [48, 80, 96, 160, 192, 224]
-PRIME_HEADDIMS = [7, 23, 37, 53, 67, 73, 89, 113, 149, 179, 211, 241]
+# PRIME_HEADDIMS = [7, 23, 37, 53, 67, 73, 89, 113, 149, 179, 211, 241]
+# AOTriton does not support compact prime head dims due to memory alignment requirements
+PRIME_HEADDIMS = []
 
 # @pytest.mark.parametrize('BATCH', [1])
 # @pytest.mark.parametrize('N_HEADS', [1])
@@ -28,7 +33,7 @@ PRIME_HEADDIMS = [7, 23, 37, 53, 67, 73, 89, 113, 149, 179, 211, 241]
 # @pytest.mark.parametrize('seqlen_k', [1, 4, 32, 128, 256, 512, 1024, 3, 217, 339, 313, 491, 988])
 # PyTorch set
 # @pytest.mark.parametrize('D_HEAD', [8, 16, 21, 32, 64, 72, 96, 128, 160, 192, 203, 256])
-@pytest.mark.parametrize('D_HEAD', POT_HEADDIMS + NPOT_HEADDIMS + PRIME_HEADDIMS)
+@pytest.mark.parametrize('D_HEAD', POT_HEADDIMS + NPOT_HEADDIMS + PRIME_HEADDIMS, ids=fmt_hdim)
 @pytest.mark.parametrize('seqlen_q', [4, 8, 64, 143, 256, 512, 1024, 2048])
 @pytest.mark.parametrize('seqlen_k', [4, 8, 64, 128, 256, 587, 1024, 2048])
 # Currently debugging
@@ -59,7 +64,7 @@ def test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dr
 # @pytest.mark.parametrize('N_HEADS', [1, 4])
 @pytest.mark.parametrize('BATCH', [1, 4] if not FOR_RELEASE else [3])
 @pytest.mark.parametrize('N_HEADS', [1, 4] if not FOR_RELEASE else [8])
-@pytest.mark.parametrize('D_HEAD', POT_HEADDIMS + NPOT_HEADDIMS + PRIME_HEADDIMS)
+@pytest.mark.parametrize('D_HEAD', POT_HEADDIMS + NPOT_HEADDIMS + PRIME_HEADDIMS, ids=fmt_hdim)
 # @pytest.mark.parametrize('D_HEAD', [128])
 # Complete set
 # @pytest.mark.parametrize('seqlen_q', [4,8,16,17,32,64,128,143,256,512,1024,2048])
@@ -88,7 +93,7 @@ def test_op_bwd_with_matrix_bias(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, sm_
 
 @pytest.mark.parametrize('BATCH', [1, 4])
 @pytest.mark.parametrize('N_HEADS', [(16, 8), (10, 2)])
-@pytest.mark.parametrize('D_HEAD', [8, 203, 256])
+@pytest.mark.parametrize('D_HEAD', [8, 203, 256], ids=fmt_hdim)
 @pytest.mark.parametrize('seqlen_q', [4, 143, 2048])
 @pytest.mark.parametrize('seqlen_k', [4, 127, 579, 2048])
 @pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])

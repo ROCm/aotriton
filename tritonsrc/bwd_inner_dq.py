@@ -46,6 +46,9 @@ def bwd_inner_dq(
     start_q, lo, hi,
     ## Dropout
     idropout_p, dropout_scale, philox_seed, batch_philox_offset, philox_offset_stride,
+    ## Sliding Window Attention
+    Window_left : 'i32',
+    Window_right : 'i32',
     # constexpr starts here
     BLOCK_M: tl.constexpr,
     BLOCK_DMODEL0: tl.constexpr,
@@ -54,7 +57,7 @@ def bwd_inner_dq(
     BLOCK_N: tl.constexpr,
     # DEBUG_RIGHT: tl.constexpr,
     FULL_BLOCKS: tl.constexpr,
-    CAUSAL: tl.constexpr,
+    CAUSAL_TYPE: tl.constexpr,
     ENABLE_DROPOUT: tl.constexpr,
     PADDED_HEAD: tl.constexpr,
     BIAS_TYPE: tl.constexpr,
@@ -114,7 +117,7 @@ def bwd_inner_dq(
             k_boundary = tl.full((BLOCK_M, ), seqlen_k, dtype=tl.int32)
             mask = offs_k_curr < k_boundary[:, None]
             qk = tl.where(mask, qk, float("-inf"))
-        if CAUSAL:
+        if CAUSAL_TYPE:
             # qk = tl.where(offs_q[:, None] >= (offs_k[None, :] + start_k), qk, float("-inf"))
             qk = tl.where(offs_q[:, None] >= offs_k_curr, qk, float("-inf"))
         if BIAS_TYPE == 0:
@@ -131,7 +134,7 @@ def bwd_inner_dq(
         # FIXME: Potential bug https://github.com/ROCm/aotriton/issues/54
         p = tl.math.exp2(qk_scale * qk - l_i[:, None])
 
-        if not FULL_BLOCKS or CAUSAL:
+        if not FULL_BLOCKS or CAUSAL_TYPE:
             if qk_scale == 0.0:
                 p = tl.where(libdevice.isnan(p), 0.0, p)
 

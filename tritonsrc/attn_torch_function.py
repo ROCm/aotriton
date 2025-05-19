@@ -34,6 +34,31 @@ class CausalType:
     BOTTOM_RIGHT = 2
     WINDOWED = 3
 
+def translate_causal(causal, seqlen_q, seqlen_k):
+    window_left, window_right = 0, 0
+    if isinstance(causal, tuple):
+        window_left, window_right = causal
+        causal_type = CausalType.WINDOWED
+    elif isinstance(causal, bool):
+        # causal_type = CausalType.TOP_LEFT if causal else CausalType.NONE
+        causal_type = CausalType.WINDOWED if causal else CausalType.NONE
+        if causal:
+            window_left = seqlen_q
+            window_right = 0
+    else:
+        assert causal in [CausalType.NONE, CausalType.TOP_LEFT, CausalType.BOTTOM_RIGHT]
+        if causal == CausalType.TOP_LEFT:
+            causal_type = CausalType.WINDOWED
+            window_left = seqlen_q
+            window_right = 0
+        elif causal == CausalType.BOTTOM_RIGHT:
+            causal_type = CausalType.WINDOWED
+            window_left = seqlen_q - seqlen_k
+            window_right = seqlen_k
+        else:
+            causal_type = causal
+    return causal_type, window_left, window_right
+
 class BiasType:
     NONE = 0
     MATRIX = 1
@@ -307,28 +332,8 @@ class _attention(torch.autograd.Function):
         max_seqlen_q = q.shape[2]
         max_seqlen_k = k.shape[2]
         o = torch.empty_like(q)
-        window_left, window_right = 0, 0
-        if isinstance(causal, tuple):
-            window_left, window_right = causal
-            causal_type = CausalType.WINDOWED
-        elif isinstance(causal, bool):
-            # causal_type = CausalType.TOP_LEFT if causal else CausalType.NONE
-            causal_type = CausalType.WINDOWED if causal else CausalType.NONE
-            if causal:
-                window_left = max_seqlen_q
-                window_right = 0
-        else:
-            assert causal in [CausalType.NONE, CausalType.TOP_LEFT, CausalType.BOTTOM_RIGHT]
-            if causal == CausalType.TOP_LEFT:
-                causal_type = CausalType.WINDOWED
-                window_left = max_seqlen_q
-                window_right = 0
-            elif causal == CausalType.BOTTOM_RIGHT:
-                causal_type = CausalType.WINDOWED
-                window_left = max_seqlen_q - max_seqlen_k
-                window_right = max_seqlen_k
-            else:
-                causal_type = causal
+
+        causal_type, window_left, window_right = translate_causal(causal, max_seqlen_q, max_seqlen_k)
 
         persistent_type = attn_extra_args.persistent_type
         if persistent_type == PersistentType.AUTOSELECT:
@@ -617,6 +622,9 @@ class _attention(torch.autograd.Function):
         attn_extra_args = ctx.attn_extra_args
         philox_seed = ctx.philox_seed
         philox_offset = ctx.philox_offset
+        max_seqlen_q = q.shape[2]
+        max_seqlen_k = k.shape[2]
+        causal_type, window_left, window_right = translate_causal(ctx.causal, max_seqlen_q, max_seqlen_k)
 
         dq = torch.empty_like(q)
         dk = torch.empty_like(k)
@@ -629,8 +637,6 @@ class _attention(torch.autograd.Function):
         null_tensor = torch.empty((0), device=q.device, dtype=torch.int32)
         num_head_q = int(q.shape[1])
         num_head_k = int(k.shape[1])
-        max_seqlen_q = q.shape[2]
-        max_seqlen_k = k.shape[2]
         MAX_BLOCK = 64 if ctx.dropout_p == 0 else 16
         # BLOCK = min(max_seqlen_q, max_seqlen_k, q.shape[-1], MAX_BLOCK)
         # BLOCK = BLOCK if is_supported_by_tl_dot(max_seqlen_q) and is_supported_by_tl_dot(max_seqlen_k) else 1
@@ -721,7 +727,7 @@ class _attention(torch.autograd.Function):
                     philox_offset1=philox_offset,
                     philox_offset2=0,
                     BLOCK_DMODEL=head_dim_rounded,
-                    CAUSAL=ctx.causal,
+                    CAUSAL_TYPE=causal_type,
                     ENABLE_DROPOUT=ctx.dropout_p > 0.0,
                     PADDED_HEAD=padded_head,
                     BIAS_TYPE=ctx.bias_type,
@@ -765,8 +771,7 @@ class _attention(torch.autograd.Function):
             else:
                 print('Running bare_bwd_kernel_dk_dv')
                 bare_bwd_kernel_dk_dv[grid_dk_dv](
-                    q, k, v, b, ctx.sm_scale,
-                    o, do,
+                    q, k, v, b, ctx.sm_scale, do,
                     dk, dv,
                     L, delta,
                     q.stride(0), q.stride(1), q.stride(2), q.stride(3),
@@ -788,10 +793,12 @@ class _attention(torch.autograd.Function):
                     philox_seed_ptr=philox_seed,
                     philox_offset1=philox_offset,
                     philox_offset2=0,
+                    Window_left=window_left,
+                    Window_right=window_right,
                     # debug_mask=debug_mask,
                     BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N,
                     BLOCK_DMODEL=head_dim_rounded,
-                    CAUSAL=ctx.causal,
+                    CAUSAL_TYPE=causal_type,
                     num_warps=4, waves_per_eu=1,
                     num_stages=1,
                     ENABLE_DROPOUT=ctx.dropout_p > 0.0,
@@ -852,7 +859,7 @@ class _attention(torch.autograd.Function):
                     philox_offset1=philox_offset,
                     philox_offset2=0,
                     BLOCK_DMODEL=head_dim_rounded,
-                    CAUSAL=ctx.causal,
+                    CAUSAL_TYPE=causal_type,
                     ENABLE_DROPOUT=ctx.dropout_p > 0.0,
                     PADDED_HEAD=padded_head,
                     BIAS_TYPE=ctx.bias_type,
@@ -918,9 +925,11 @@ class _attention(torch.autograd.Function):
                     philox_seed_ptr=philox_seed,
                     philox_offset1=philox_offset,
                     philox_offset2=0,
+                    Window_left=window_left,
+                    Window_right=window_right,
                     BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N,
                     BLOCK_DMODEL=head_dim_rounded,
-                    CAUSAL=ctx.causal,
+                    CAUSAL_TYPE=causal_type,
                     num_warps=4, waves_per_eu=1,
                     num_stages=1,
                     ENABLE_DROPOUT=ctx.dropout_p > 0.0,
@@ -945,6 +954,9 @@ class _attention(torch.autograd.Function):
         attn_extra_args = ctx.attn_extra_args
         philox_seed = ctx.philox_seed
         philox_offset = ctx.philox_offset
+        max_seqlen_q = q.shape[2]
+        max_seqlen_k = k.shape[2]
+        causal_type, window_left, window_right = translate_causal(ctx.causal, max_seqlen_q, max_seqlen_k)
 
         dq = torch.empty_like(q)
         dk = torch.empty_like(k)
@@ -957,8 +969,6 @@ class _attention(torch.autograd.Function):
         null_tensor = torch.empty((0), device=q.device, dtype=torch.int32)
         num_head_q = int(q.shape[1])
         num_head_k = int(k.shape[1])
-        max_seqlen_q = q.shape[2]
-        max_seqlen_k = k.shape[2]
         MAX_BLOCK = 64 if ctx.dropout_p == 0 else 16
         # BLOCK = min(max_seqlen_q, max_seqlen_k, q.shape[-1], MAX_BLOCK)
         # BLOCK = BLOCK if is_supported_by_tl_dot(max_seqlen_q) and is_supported_by_tl_dot(max_seqlen_k) else 1
@@ -1024,7 +1034,7 @@ class _attention(torch.autograd.Function):
                         philox_offset1=philox_offset,
                         philox_offset2=0,
                         BLOCK_DMODEL=head_dim_rounded,
-                        CAUSAL=ctx.causal,
+                        CAUSAL_TYPE=causal_type,
                         ENABLE_DROPOUT=ctx.dropout_p > 0.0,
                         PADDED_HEAD=padded_head,
                         BIAS_TYPE=ctx.bias_type,

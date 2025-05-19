@@ -2,11 +2,16 @@
 # Copyright © 2024-2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
+import os
 import pytest
 import torch
 
 from _common_test import SdpaContext, SdpaParams
 from attn_torch_function import attention, AttentionExtraArgs, PersistentType
+
+SKIP_DK_DV = bool(int(os.getenv('SKIP_DK_DV', default='0')))
+SKIP_DQ = bool(int(os.getenv('SKIP_DQ', default='0')))
+SKIP_DB = bool(int(os.getenv('SKIP_DB', default='0')))
 
 '''
 Flash Attention is batch operator that evaluates sm(QK')V
@@ -25,9 +30,9 @@ but in PyTorch API it does not present at all
 def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type):
     if causal and bias_type is not None:
         pytest.skip("_scaled_dot_product_attention: Explicit attn_mask should not be set when is_causal=True")
-    SKIP_DK_DV = False
-    SKIP_DQ = False
-    SKIP_DB = True if bias_type is None else False
+    skip_dk_dv = SKIP_DK_DV
+    skip_dq = SKIP_DQ
+    skip_db = True if bias_type is None else SKIP_DB
     torch.manual_seed(20)
     SPARSE_HEAD_SINCE = 1
     SPARSE_SEQ_SINCE = 1
@@ -35,7 +40,7 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
     ctx = SdpaContext(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, dtype,
                       bias_type=bias_type, storage_flip=transpose, device='cuda')
     ctx.create_ref_inputs()
-    ctx.set_require_grads(skip_dq=SKIP_DQ, skip_dk_dv=SKIP_DK_DV, skip_db=SKIP_DB)
+    ctx.set_require_grads(skip_dq=skip_dq, skip_dk_dv=skip_dk_dv, skip_db=skip_db)
 
     q, k, v, b = ctx.dev_tensors
     # autotune = True

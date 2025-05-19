@@ -59,7 +59,7 @@ def bwd_kernel_dq(
     philox_offset2 : 'u64',
     BLOCK_M: tl.constexpr, BLOCK_DMODEL: tl.constexpr,
     BLOCK_N: tl.constexpr,
-    CAUSAL: tl.constexpr,
+    CAUSAL_TYPE: tl.constexpr,
     ENABLE_DROPOUT: tl.constexpr,
     PADDED_HEAD: tl.constexpr,
     BIAS_TYPE: tl.constexpr,
@@ -255,7 +255,7 @@ def bwd_kernel_dq(
         tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
 
     k_lo = 0  # reserved for windowed attention
-    k_hi = min(start_q + BLOCK_M, seqlen_k) if CAUSAL else seqlen_k
+    k_hi = min(start_q + BLOCK_M, seqlen_k) if CAUSAL_TYPE else seqlen_k
     real_seqlen_k = k_hi - k_lo  # seqlen_q after considering causal (and windowed in the future)
     n_blocks = tl.cdiv(k_hi - k_lo, BLOCK_N)
     n_extra_tokens = 0
@@ -271,7 +271,7 @@ def bwd_kernel_dq(
     # then derive trailing_masked_blocks. However this algorithm won't work for
     # windowed masks. Therefore we still derive n_full_blocks from
     # trailing_masked_blocks for long term stability.
-    if CAUSAL:
+    if CAUSAL_TYPE:
         # TODO: Botton right variant
         # Top left variant
         mask_top_edge = min(start_q, seqlen_k)
@@ -315,7 +315,7 @@ def bwd_kernel_dq(
             BLOCK_DMODEL2,
             BLOCK_N,
             True,  # FULL_BLOCKS
-            False,  # CAUSAL has zero effect for full blocks
+            False,  # CAUSAL_TYPE has zero effect for full blocks
             ENABLE_DROPOUT,
             PADDED_HEAD,
             BIAS_TYPE)
@@ -346,7 +346,7 @@ def bwd_kernel_dq(
             BLOCK_DMODEL2,
             BLOCK_N,
             False,  # FULL_BLOCKS
-            CAUSAL,
+            CAUSAL_TYPE,
             ENABLE_DROPOUT,
             PADDED_HEAD,
             BIAS_TYPE)
