@@ -8,8 +8,7 @@ from masked_load_store import load_fn, mstore2d
 from triton.language.extra import libdevice
 from composed_tensors import (
     composed_offs_1d,
-    composed_advance,
-    composed_load,
+    composed_load_with_offset,
     composed_dot_rhs,
     composed_mul_lhs,
 )
@@ -79,28 +78,28 @@ def _attn_fwd_inner(
 
         # For padded blocks, we will overrun the tensor size if
         # we load all BLOCK_N. For others, the blocks are all within range.
-        if MASK_STEPS or PADDED_HEAD:
-            k_offs_n = start_N + tl.arange(0, BLOCK_N)
-        else:
-            k_offs_n = None
-        k0, k1, k2 = composed_load(k_ptrs0, k_ptrs1, k_ptrs2,
-                                   k_offs_n,
-                                   BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
-                                   actual_seqlen_k, Head_dim,
-                                   other=0.0,
-                                   PADDED_ROW=MASK_STEPS,
-                                   PADDED_COL=PADDED_HEAD,
-                                   TRANSPOSED=True)
+        # if MASK_STEPS or PADDED_HEAD:
+        #     k_offs_n = start_N + tl.arange(0, BLOCK_N)
+        # else:
+        #     k_offs_n = None
+        k0, k1, k2 = composed_load_with_offset(k_ptrs0, k_ptrs1, k_ptrs2,
+                                               start_N, stride_kn, OFFS_N,
+                                               BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                               actual_seqlen_k, Head_dim,
+                                               other=0.0,
+                                               PADDED_ROW=MASK_STEPS,
+                                               PADDED_COL=PADDED_HEAD,
+                                               TRANSPOSED=True)
         if PRE_LOAD_V:
             # We can use the same offsets as k, just with dims transposed.
-            v0, v1, v2 = composed_load(v_ptrs0, v_ptrs1, v_ptrs2,
-                                       k_offs_n,
-                                       BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
-                                       actual_seqlen_k, Head_dim,
-                                       other=0.0,
-                                       PADDED_ROW=MASK_STEPS,
-                                       PADDED_COL=PADDED_HEAD,
-                                       TRANSPOSED=False)
+            v0, v1, v2 = composed_load_with_offset(v_ptrs0, v_ptrs1, v_ptrs2,
+                                                   start_N, stride_kn, OFFS_N,
+                                                   BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                                   actual_seqlen_k, Head_dim,
+                                                   other=0.0,
+                                                   PADDED_ROW=MASK_STEPS,
+                                                   PADDED_COL=PADDED_HEAD,
+                                                   TRANSPOSED=False)
         qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
         if MASK_STEPS or IS_CAUSAL:
             '''
@@ -121,6 +120,7 @@ def _attn_fwd_inner(
                 mask = mask & right_mask
                 left_mask = MS[:, None] - window_left <= NS[None, :]
                 mask = mask & left_mask
+            # tl.device_print('mask', mask)
             qk = tl.where(mask, qk, float("-inf"))
         # if IS_CAUSAL:
         #     causal_boundary = start_N + offs_n_causal
@@ -143,7 +143,7 @@ def _attn_fwd_inner(
 
         if bias_ptrs is not None:
             bias_offs_n = start_N + tl.arange(0, BLOCK_N) if MASK_STEPS else None
-            bias = load_fn(bias_ptrs, OFFS_M, bias_offs_n, actual_seqlen_q, actual_seqlen_k)
+            bias = load_fn(bias_ptrs + start_N * stride_bn, OFFS_M, bias_offs_n, actual_seqlen_q, actual_seqlen_k)
             # While bias is added after multiplying qk with sm_scale,
             # our optimization to use 2^x instead of e^x results in an additional
             # scale factor of log2(e) which we must also multiply the bias with.
@@ -209,14 +209,14 @@ def _attn_fwd_inner(
                                             alpha[:, None],
                                             BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
         if not PRE_LOAD_V:
-            v0, v1, v2 = composed_load(v_ptrs0, v_ptrs1, v_ptrs2,
-                                       k_offs_n,
-                                       BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
-                                       actual_seqlen_k, Head_dim,
-                                       other=0.0,
-                                       PADDED_ROW=MASK_STEPS,
-                                       PADDED_COL=PADDED_HEAD,
-                                       TRANSPOSED=False)
+            v0, v1, v2 = composed_load_with_offset(v_ptrs0, v_ptrs1, v_ptrs2,
+                                                   start_N, stride_kn, OFFS_N,
+                                                   BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                                   actual_seqlen_k, Head_dim,
+                                                   other=0.0,
+                                                   PADDED_ROW=MASK_STEPS,
+                                                   PADDED_COL=PADDED_HEAD,
+                                                   TRANSPOSED=False)
         # -- update m_i and l_i
         l_i = l_i * alpha + l_ij
         # update m_i and l_i
@@ -239,12 +239,12 @@ def _attn_fwd_inner(
                                                 acc0, acc1, acc2,
                                                 BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
 
-        k_ptrs0, k_ptrs1, k_ptrs2 = composed_advance(k_ptrs0, k_ptrs1, k_ptrs2,
-                                                     BLOCK_N * stride_kn,
-                                                     BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
-        v_ptrs0, v_ptrs1, v_ptrs2 = composed_advance(v_ptrs0, v_ptrs1, v_ptrs2,
-                                                     BLOCK_N * stride_vk,
-                                                     BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
-        if bias_ptrs is not None:
-            bias_ptrs += BLOCK_N * stride_bn
+        # k_ptrs0, k_ptrs1, k_ptrs2 = composed_advance(k_ptrs0, k_ptrs1, k_ptrs2,
+        #                                              BLOCK_N * stride_kn,
+        #                                              BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
+        # v_ptrs0, v_ptrs1, v_ptrs2 = composed_advance(v_ptrs0, v_ptrs1, v_ptrs2,
+        #                                              BLOCK_N * stride_vk,
+        #                                              BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
+        # if bias_ptrs is not None:
+        #     bias_ptrs += BLOCK_N * stride_bn
     return acc0, acc1, acc2, l_i, m_i

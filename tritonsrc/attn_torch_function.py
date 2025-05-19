@@ -32,6 +32,7 @@ class CausalType:
     NONE = 0
     TOP_LEFT = 1
     BOTTOM_RIGHT = 2
+    WINDOWED = 3
 
 class BiasType:
     NONE = 0
@@ -136,7 +137,9 @@ def tuned_attn_fwd(
     philox_seed_output,
     philox_offset_output,
     encoded_softmax,
-    CAUSAL: tl.constexpr,
+    CAUSAL_TYPE: tl.constexpr,
+    Window_left,
+    Window_right,
     BLOCK_M: tl.constexpr,
     BLOCK_DMODEL: tl.constexpr,
     BLOCK_N: tl.constexpr,
@@ -168,7 +171,9 @@ def tuned_attn_fwd(
             philox_seed_output,
             philox_offset_output,
             encoded_softmax,
-            CAUSAL,
+            CAUSAL_TYPE,
+            Window_left,
+            Window_right,
             BLOCK_M,
             BLOCK_DMODEL,
             BLOCK_N,
@@ -302,10 +307,32 @@ class _attention(torch.autograd.Function):
         max_seqlen_q = q.shape[2]
         max_seqlen_k = k.shape[2]
         o = torch.empty_like(q)
+        window_left, window_right = 0, 0
+        if isinstance(causal, tuple):
+            window_left, window_right = causal
+            causal_type = CausalType.WINDOWED
+        elif isinstance(causal, bool):
+            # causal_type = CausalType.TOP_LEFT if causal else CausalType.NONE
+            causal_type = CausalType.WINDOWED if causal else CausalType.NONE
+            if causal:
+                window_left = max_seqlen_q
+                window_right = 0
+        else:
+            assert causal in [CausalType.NONE, CausalType.TOP_LEFT, CausalType.BOTTOM_RIGHT]
+            if causal == CausalType.TOP_LEFT:
+                causal_type = CausalType.WINDOWED
+                window_left = max_seqlen_q
+                window_right = 0
+            elif causal == CausalType.BOTTOM_RIGHT:
+                causal_type = CausalType.WINDOWED
+                window_left = max_seqlen_q - max_seqlen_k
+                window_right = max_seqlen_k
+            else:
+                causal_type = causal
 
         persistent_type = attn_extra_args.persistent_type
         if persistent_type == PersistentType.AUTOSELECT:
-            persistent_type = PersistentType.NONE if not causal else PersistentType.DYNAMIC
+            persistent_type = PersistentType.NONE if causal_type == CausalType.NONE else PersistentType.DYNAMIC
 
         null_tensor = torch.empty((0), device=q.device, dtype=torch.int32)
         if persistent_type == PersistentType.DYNAMIC:
@@ -415,7 +442,7 @@ class _attention(torch.autograd.Function):
                 philox_seed_output=philox_seed_output,
                 philox_offset_output=philox_offset_output,
                 encoded_softmax=None,
-                CAUSAL=causal,
+                CAUSAL_TYPE=causal_type,
                 BLOCK_DMODEL=head_dim_rounded,
                 ENABLE_DROPOUT=dropout_p > 0.0,
                 RETURN_ENCODED_SOFTMAX=False,
@@ -431,6 +458,7 @@ class _attention(torch.autograd.Function):
                 print(f'{encoded_softmax.data_ptr()=:x}', flush=True)
             print(f'{q.shape=} {k.shape=} {v.shape=} {b.shape=} {M.shape=} {o.shape=}', flush=True)
             print(f'{q.stride()=} {k.stride()=} {v.stride()=} {b.stride()=} {M.stride()=} {o.stride()=}', flush=True)
+            print(f'{causal_type=} {window_left=} {window_right=}', flush=True)
             bare_attn_fwd[grid](
                 # Basic SDPA
                 q, k, v, b, alibi_slopes, sm_scale, M, o,
@@ -465,7 +493,9 @@ class _attention(torch.autograd.Function):
                 RETURN_ENCODED_SOFTMAX=False,
                 encoded_softmax=None,
                 # Causal
-                CAUSAL_TYPE=CausalType.TOP_LEFT if causal else CausalType.NONE,
+                CAUSAL_TYPE=causal_type,
+                Window_left=window_left,
+                Window_right=window_right,
                 # bias
                 BIAS_TYPE=BIAS_TYPE,
                 # INT8
@@ -572,7 +602,7 @@ class _attention(torch.autograd.Function):
             for kernel_name, best in ctx.tuning_result:
                 print(f'{kernel_name=} {best.kwargs=} {best.num_warps=} {best.num_stages=}')
         if attn_extra_args.is_testing:
-            assert not torch.isnan(M).any()
+            assert not torch.isnan(M).any(), f'{M.shape=} {M=}'
         return o, encoded_softmax, ctx.tuning_result
 
     @staticmethod

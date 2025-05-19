@@ -8,7 +8,7 @@ import triton.language as tl
 @triton.jit
 def closed_interval_isect(a_s, a_e, b_s, b_e):
     if (b_s > a_e or a_s > b_e) or (a_s > a_e):
-        return 0, -1
+        return -114, -514
     o_s = max(a_s, b_s)
     o_e = min(a_e, b_e)
     return o_s, o_e
