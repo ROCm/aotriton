@@ -174,7 +174,7 @@ def main2():
     # False-1.2-dtype0-0.0-False-4-4-72-1-4
     BATCH = 1
     N_HEADS = 1
-    seqlen_q = 32
+    seqlen_q = 64
     seqlen_k = 4
     D_HEAD = 16
     # BATCH = 4

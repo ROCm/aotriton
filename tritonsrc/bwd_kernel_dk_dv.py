@@ -249,7 +249,7 @@ def bwd_kernel_dk_dv(
     bias_scale = 1.0 / sm_scale
     group_size = num_head_q // num_head_k
 
-    mask_on_seq_k = (start_k + BLOCK_N != seqlen_k)
+    mask_on_seq_k = (start_k + BLOCK_N > seqlen_k)
 
     '''
     Notes:

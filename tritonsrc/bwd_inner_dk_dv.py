@@ -71,6 +71,7 @@ def bwd_inner_dk_dv(
     #                                                 lo * do_stride,
     #                                                 BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
 
+    # FIXME: Fix it
     if BIAS_TYPE == 1:
         B_block_ptr = tl.advance(B_block_ptr, (lo, 0))
 
@@ -114,6 +115,10 @@ def bwd_inner_dk_dv(
         else:
             q_offs_m = start_q + tl.arange(0, BLOCK_M)
 
+        # -- compute qk ----
+        qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
+
+        # -- preload q ----
         PADDED_SEQ : tl.constexpr = not FULL_BLOCKS
         q0, q1, q2 = composed_load_with_offset(q_ptrs0, q_ptrs1, q_ptrs2,
                                                start_q, q_stride, offs_q,
@@ -123,19 +128,8 @@ def bwd_inner_dk_dv(
                                                PADDED_ROW=PADDED_SEQ,
                                                PADDED_COL=PADDED_HEAD,
                                                TRANSPOSED=False)
-        # do = tl.load(DO_block_ptr)
-        # TODO: pre_load_do
-        do0, do1, do2 = composed_load_with_offset(do_ptrs0, do_ptrs1, do_ptrs2,
-                                                  start_q, do_stride, offs_q,
-                                                  BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
-                                                  seqlen_q, head_dim,
-                                                  other=0.0,
-                                                  PADDED_ROW=PADDED_SEQ,
-                                                  PADDED_COL=PADDED_HEAD,
-                                                  TRANSPOSED=False)
 
-        # -- compute qk ----
-        qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
+        # -- qk mask ----
         if not FULL_BLOCKS or IS_CAUSAL:
             mask = tl.full([BLOCK_M, BLOCK_N], True, dtype=tl.int1)
             MS = offs_q + start_q
@@ -159,7 +153,8 @@ def bwd_inner_dk_dv(
         if BIAS_TYPE == 0:
             pass
         elif BIAS_TYPE == 1:
-            # FIXME: do boundary_check correctly
+            # FIXME: move away from block pointers since tl.advance is
+            #        unsuitable for our currentl algorithm
             bias = tl.load(B_block_ptr, boundary_check=(0,1), padding_option="zero")
             qk += bias * bias_scale
         else:
@@ -199,6 +194,18 @@ def bwd_inner_dk_dv(
             p_dropped = tl.where(keep, p * dropout_scale, 0.0)
         else:
             p_dropped = p
+
+        # do = tl.load(DO_block_ptr)
+        # TODO: pre_load_do
+        do0, do1, do2 = composed_load_with_offset(do_ptrs0, do_ptrs1, do_ptrs2,
+                                                  start_q, do_stride, offs_q,
+                                                  BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                                  seqlen_q, head_dim,
+                                                  other=0.0,
+                                                  PADDED_ROW=PADDED_SEQ,
+                                                  PADDED_COL=PADDED_HEAD,
+                                                  TRANSPOSED=False)
+
 
         if BLOCK_M == 1:
             # dv += p.to(q_ptrs.dtype.element_ty) * do

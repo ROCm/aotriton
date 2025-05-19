@@ -902,10 +902,10 @@ class _attention(torch.autograd.Function):
             else:
                 print('Running bare_bwd_kernel_dq')
                 bare_bwd_kernel_dq[grid_dq](
-                    q, k, v, b, ctx.sm_scale,
-                    o, do,
+                    q, k, v, b, ctx.sm_scale, do,
                     dq, db,
-                    L, delta,
+                    L,
+                    delta,
                     q.stride(0), q.stride(1), q.stride(2), q.stride(3),
                     k.stride(0), k.stride(1), k.stride(2), k.stride(3),
                     v.stride(0), v.stride(1), v.stride(2), v.stride(3),
