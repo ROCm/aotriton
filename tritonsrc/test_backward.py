@@ -9,12 +9,14 @@ import os
 
 from _common_backward import _do_test_op_bwd
 from _common_test import SdpaContext, SdpaParams, SdpaContextFromNPZ
-from attn_torch_function import attention, AttentionExtraArgs
+from attn_torch_function import attention, AttentionExtraArgs, BWD_FUSED
 
 FOR_RELEASE = bool(int(os.getenv('FOR_RELEASE', default='0')))
 
 def fmt_hdim(val):
     return f'hdim{val}'
+
+BWDOP_ids = ['Fused'] if BWD_FUSED else (['V3'] if V3_API else ['Split'])
 
 POT_HEADDIMS = [16, 32, 64, 128, 256]
 NPOT_HEADDIMS = [48, 80, 96, 160, 192, 224]
@@ -56,7 +58,8 @@ PRIME_HEADDIMS = []
 # @pytest.mark.parametrize('storage_flip', [False])
 @pytest.mark.parametrize('storage_flip', [False, True])
 # @pytest.mark.parametrize('return_encoded_softmax', [False])
-def test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
+@pytest.mark.parametrize('BWDOP', BWDOP_ids)
+def test_op_bwd(BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
     bias_type = None
     _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
 
@@ -83,7 +86,8 @@ def test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dr
 @pytest.mark.parametrize('sm_scale', [0.0, 1.2] if not FOR_RELEASE else [1.2])
 @pytest.mark.parametrize('storage_flip', [False, True])
 # @pytest.mark.parametrize('return_encoded_softmax', [False])
-def test_op_bwd_with_matrix_bias(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, sm_scale, dropout_p, dtype, storage_flip):
+@pytest.mark.parametrize('BWDOP', BWDOP_ids)
+def test_op_bwd_with_matrix_bias(BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, sm_scale, dropout_p, dtype, storage_flip):
     causal = False
     bias_type = 'matrix'
     '''
@@ -101,7 +105,8 @@ def test_op_bwd_with_matrix_bias(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, sm_
 @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16, torch.float32])
 @pytest.mark.parametrize('sm_scale', [1.2])
 @pytest.mark.parametrize('storage_flip', [False])
-def test_gqa(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
+@pytest.mark.parametrize('BWDOP', BWDOP_ids)
+def test_gqa(BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
     bias_type = None
     _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
 

@@ -2,6 +2,7 @@
 # Copyright © 2023-2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
+import os
 from collections import namedtuple
 from dataclasses import dataclass
 import copy
@@ -25,6 +26,8 @@ from sized_tuned_bwd import (
     sized_tuned_bwd_kernel_dk_dv,
     sized_tuned_bwd_kernel_dq,
 )
+
+BWD_FUSED = bool(int(os.getenv('BWD_FUSED', default='0')))
 
 # Note: we don't use Enum class because accessing the integer requires using
 #       `.value` property, which makes the code verbose.
@@ -1016,6 +1019,7 @@ class _attention(torch.autograd.Function):
                         k.stride(0), k.stride(1), k.stride(2), k.stride(3),
                         v.stride(0), v.stride(1), v.stride(2), v.stride(3),
                         b.stride(0), b.stride(1), b.stride(2), b.stride(3),
+                        o.stride(0), o.stride(1), o.stride(2), o.stride(3),
                         do.stride(0), do.stride(1), do.stride(2), do.stride(3),
                         dk.stride(0), dk.stride(1), dk.stride(2), dk.stride(3),
                         dv.stride(0), dv.stride(1), dv.stride(2), dv.stride(3),
@@ -1033,6 +1037,8 @@ class _attention(torch.autograd.Function):
                         philox_seed_ptr=philox_seed,
                         philox_offset1=philox_offset,
                         philox_offset2=0,
+                        Window_left=window_left,
+                        Window_right=window_right,
                         BLOCK_DMODEL=head_dim_rounded,
                         CAUSAL_TYPE=causal_type,
                         ENABLE_DROPOUT=ctx.dropout_p > 0.0,
@@ -1044,7 +1050,7 @@ class _attention(torch.autograd.Function):
                 print('bare_bwd_kernel_fuse Done')
         return dq, dk, dv, None if db.numel() == 0 else db, None, None, None, None, None, None, None
 
-    backward = backward_split
+    backward = backward_fused if BWD_FUSED else backward_split
 
 attention = _attention.apply
 

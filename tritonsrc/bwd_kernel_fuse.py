@@ -20,7 +20,13 @@ import triton.language as tl
 from bwd_inner_fuse import bwd_inner_dk_dv_fuse
 from bwd_inner_dq import bwd_inner_dq
 from dropout import PHILOX_RN_PER_OFFSET
-from masked_load_store import load_fn, mstore2d
+from masked_load_store import (
+    load_fn,
+    mstore2d,
+    is_closed_interval_empty,
+    calculate_intervals,
+    closed_interval_size,
+)
 from composed_tensors import (
     composed_offs_1d,
     composed_zeros_2d,
@@ -69,9 +75,12 @@ def bwd_kernel_fuse(
     philox_seed_ptr,
     philox_offset1 : '*u64',
     philox_offset2 : 'u64',
+    # Windowed Attention
+    Window_left : 'i32',
+    Window_right : 'i32',
     # Constants
     BLOCK_DMODEL: tl.constexpr,
-    CAUSAL: tl.constexpr,
+    CAUSAL_TYPE: tl.constexpr,
     ENABLE_DROPOUT: tl.constexpr,
     PADDED_HEAD: tl.constexpr,
     BIAS_TYPE: tl.constexpr,
@@ -92,6 +101,7 @@ def bwd_kernel_fuse(
     pid = tl.program_id(0)
     NUM_KV_BLOCKS = tl.cdiv(max_seqlen_k, BLOCK_N)
     NUM_Q_BLOCKS = tl.cdiv(max_seqlen_q, BLOCK_N)
+    IS_CAUSAL : tl.constexpr = CAUSAL_TYPE != 0
 
     if pid >= NUM_KV_BLOCKS:
         # dq compute block
@@ -143,6 +153,7 @@ def bwd_kernel_fuse(
             cu_seqlens_q_start = 0
             cu_seqlens_k_start = 0
             batch_index = off_z
+
         qk_scale = sm_scale * 1.44269504089
         bias_scale = 1.0 / sm_scale
         if num_seqlens > 0:
@@ -250,35 +261,27 @@ def bwd_kernel_fuse(
         else:
             tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
 
-        k_lo = 0  # reserved for windowed attention
-        k_hi = min(start_q + BLOCK_N, seqlen_k) if CAUSAL else seqlen_k
-        real_seqlen_k = k_hi - k_lo  # seqlen_q after considering causal (and windowed in the future)
-        n_blocks = tl.cdiv(k_hi - k_lo, BLOCK_M)
-        n_extra_tokens = 0
-        if real_seqlen_k < BLOCK_M:
-            n_extra_tokens = BLOCK_M - real_seqlen_k
-        elif real_seqlen_k % BLOCK_M:
-            n_extra_tokens = real_seqlen_k % BLOCK_M
-        is_irregular_k = n_extra_tokens != 0
-        n_full_blocks = (k_hi - k_lo) // BLOCK_M
-        leading_masked_blocks = 0  # TODO: Windowed attention
-        trailing_masked_blocks = 0
-        # For causal masks, actually it is easier to calculate the full blocks and
-        # then derive trailing_masked_blocks. However this algorithm won't work for
-        # windowed masks. Therefore we still derive n_full_blocks from
-        # trailing_masked_blocks for long term stability.
-        if CAUSAL:
-            # TODO: Botton right variant
-            # Top left variant
-            mask_top_edge = min(start_q, seqlen_k)
-            n_full_blocks = (mask_top_edge - k_lo) // BLOCK_M
-            trailing_masked_blocks = n_blocks - n_full_blocks
-        else:
-            trailing_masked_blocks = 1 if is_irregular_k else 0
+        '''
+        For Fused kernel BLOCK_N is used for q direction on dq branch
+        '''
+        mask_on_seq_q = (start_q + BLOCK_N > seqlen_q)
+        window_left, window_right, lb_lo, lb_hi, fb_lo, fb_hi, rb_lo, rb_hi = \
+                calculate_intervals(IS_CAUSAL,
+                                    CAUSAL_TYPE,
+                                    Window_left,
+                                    Window_right,
+                                    start_q,
+                                    seqlen_q,
+                                    seqlen_k,
+                                    mask_on_seq_q,
+                                    BLOCK_N,
+                                    BLOCK_M)
+        lb_empty = is_closed_interval_empty(lb_lo, lb_hi)
+        rb_empty = is_closed_interval_empty(rb_lo, rb_hi)
+        fb_empty = is_closed_interval_empty(fb_lo, fb_hi)
 
         # Check for OOB accesses on D and LSE
-        q_boundary = tl.full((BLOCK_N, ), seqlen_q, dtype=tl.int32)
-        d_lse_ptrs_mask = offs_q_dq < q_boundary
+        d_lse_ptrs_mask = offs_q_dq < seqlen_q
         Di = composed_inner_product_fp32(o0, o1, o2,
                                          do0, do1, do2,
                                          BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
@@ -288,10 +291,9 @@ def bwd_kernel_fuse(
         idropout_p = ((dropout_p - 0.5) * 0xFFFFFFFF).to(tl.int32) if ENABLE_DROPOUT else 0
         dropout_scale = 1.0 / (1.0 - dropout_p) if ENABLE_DROPOUT else 1.0
         dq0, dq1, dq2 = composed_zeros_2d(BLOCK_N, BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
-        n_full_blocks = n_blocks - leading_masked_blocks - trailing_masked_blocks
-        if n_full_blocks > 0:
-            lo = 0
-            hi = n_full_blocks * BLOCK_M
+
+        if not fb_empty:
+            nblocks_1 = closed_interval_size(fb_lo, fb_hi)
             dq0, dq1, dq2 = bwd_inner_dq(
                 dq0, dq1, dq2,
                 qk_scale, bias_scale,
@@ -301,13 +303,15 @@ def bwd_kernel_fuse(
                 stride_kn,
                 vt_ptrs0, vt_ptrs1, vt_ptrs2,
                 stride_vk,
-                stride_bn, stride_bm,  stride_dbn, stride_dbm,
                 B_ptr_dq,
+                stride_bn, stride_bm,  stride_dbn, stride_dbm,
                 do0, do1, do2,
                 Di, l_i,
                 seqlen_q, seqlen_k, head_dim,
-                start_q, lo, hi,
+                start_q, nblocks_1, 0, fb_lo, None,
                 idropout_p, dropout_scale, philox_seed, batch_philox_offset, philox_offset_stride,
+                window_left,
+                window_right,
                 BLOCK_N,
                 BLOCK_DMODEL0,
                 BLOCK_DMODEL1,
@@ -318,11 +322,11 @@ def bwd_kernel_fuse(
                 ENABLE_DROPOUT,
                 PADDED_HEAD,
                 BIAS_TYPE)
-        # Keep using "trailing_masked_blocks" for windowed attention
-        if trailing_masked_blocks > 0:
-            lo = n_full_blocks * BLOCK_M
-            hi = k_hi
+
+        if not (lb_empty and rb_empty):
             tl.debug_barrier()
+            nblocks_1 = closed_interval_size(lb_lo, lb_hi)
+            nblocks_2 = closed_interval_size(rb_lo, rb_hi)
             dq0, dq1, dq2 = bwd_inner_dq(
                 dq0, dq1, dq2,
                 qk_scale, bias_scale,
@@ -332,20 +336,22 @@ def bwd_kernel_fuse(
                 stride_kn,
                 vt_ptrs0, vt_ptrs1, vt_ptrs2,
                 stride_vk,
-                stride_bn, stride_bm,  stride_dbn, stride_dbm,
                 B_ptr_dq,
+                stride_bn, stride_bm,  stride_dbn, stride_dbm,
                 do0, do1, do2,
                 Di, l_i,
                 seqlen_q, seqlen_k, head_dim,
-                start_q, lo, hi,
+                start_q, nblocks_1, nblocks_2, lb_lo, rb_lo,
                 idropout_p, dropout_scale, philox_seed, batch_philox_offset, philox_offset_stride,
+                window_left,
+                window_right,
                 BLOCK_N,
                 BLOCK_DMODEL0,
                 BLOCK_DMODEL1,
                 BLOCK_DMODEL2,
                 BLOCK_M,
                 False,  # FULL_BLOCKS
-                CAUSAL,
+                IS_CAUSAL,
                 ENABLE_DROPOUT,
                 PADDED_HEAD,
                 BIAS_TYPE)
@@ -482,29 +488,23 @@ def bwd_kernel_fuse(
         qk_scale = sm_scale * 1.44269504089
         bias_scale = 1.0 / sm_scale
         group_size = num_head_q // num_head_k
-        q_lo = start_k if CAUSAL else 0
-        q_hi = seqlen_q
-        real_seqlen_q = q_hi - q_lo  # seqlen_q after considering causal (and windowed in the future)
-        n_blocks = tl.cdiv(q_hi - q_lo, BLOCK_M)
-        n_extra_tokens = 0
-        if real_seqlen_q < BLOCK_M:
-            n_extra_tokens = BLOCK_M - real_seqlen_q
-        elif real_seqlen_q % BLOCK_M:
-            n_extra_tokens = real_seqlen_q % BLOCK_M
-        is_irregular_q = n_extra_tokens != 0
-        leading_masked_blocks = 0
-        trailing_masked_blocks = 0
-        if CAUSAL:
-            # leading masked blocks comes from the diagnoal cutting line from causal masks
-            # can be larger than one if BLOCK_N > BLOCK_M
-            leading_masked_blocks = tl.cdiv(BLOCK_N, BLOCK_M)
-            # trailing masked blocks comes from extra tokens
-            # Note trailing block may overlap with leading block
-            trailing_masked_blocks = 1 if is_irregular_q else 0
-        else:
-            leading_masked_blocks = 0
-            trailing_masked_blocks = 1 if is_irregular_q else 0
-        n_full_blocks = n_blocks - leading_masked_blocks - trailing_masked_blocks
+
+        mask_on_seq_k = (start_k + BLOCK_N > seqlen_k)
+        window_right, window_left, lb_lo, lb_hi, fb_lo, fb_hi, rb_lo, rb_hi = \
+                calculate_intervals(IS_CAUSAL,
+                                    CAUSAL_TYPE,
+                                    Window_right,
+                                    Window_left,
+                                    start_k,
+                                    seqlen_k,
+                                    seqlen_q,
+                                    mask_on_seq_k,
+                                    BLOCK_N,
+                                    BLOCK_M,
+                                    DEBUG=False)
+        lb_empty = is_closed_interval_empty(lb_lo, lb_hi)
+        rb_empty = is_closed_interval_empty(rb_lo, rb_hi)
+        fb_empty = is_closed_interval_empty(fb_lo, fb_hi)
 
         dropout_scale = 1.0 / (1.0 - dropout_p) if ENABLE_DROPOUT else 1.0
         for off_h_q in range(off_h_k * group_size, off_h_k * group_size + group_size):
@@ -536,20 +536,8 @@ def bwd_kernel_fuse(
                                                       batch_index, off_h_q, cu_seqlens_q_start + offs_q,
                                                       BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
 
-            # dkdk kernel is a little tricky, its masked blocks can be found in both ends
-            # leading masked: by causal
-            # trailing: by irregular seqlen_q
-
-            # For initialization
-            lo = 0
-            hi = 0
-
-            if leading_masked_blocks > 0:
-                lo = q_lo
-                hi = lo + leading_masked_blocks * BLOCK_M
-                # TODO: overflow_size maybe larger than on block (BLOCK_M)
-                #       In this case the bwd_inner_dk_dv can be further optimized
-                overflow_size = 0 if hi < q_hi else hi - q_hi
+            if not fb_empty:
+                nblocks_1 = closed_interval_size(fb_lo, fb_hi)
                 dk0, dk1, dk2, dv0, dv1, dv2 = bwd_inner_dk_dv_fuse(
                     dk0, dk1, dk2,
                     dv0, dv1, dv2,
@@ -559,42 +547,15 @@ def bwd_kernel_fuse(
                     kt0, kt1, kt2, vt0, vt1, vt2,
                     B_ptr, stride_bm, stride_bn,
                     do_ptrs0, do_ptrs1, do_ptrs2,
+                    stride_dom,
                     o_ptrs0, o_ptrs1, o_ptrs2,
                     stride_om,
                     l_ptrs,
                     seqlen_q, seqlen_k, head_dim,
-                    start_k, lo, hi, overflow_size,
+                    start_k, nblocks_1, 0, fb_lo, None,
                     idropout_p, dropout_scale, philox_seed, batch_philox_offset, philox_offset_stride,
-                    BLOCK_M,
-                    BLOCK_DMODEL0,
-                    BLOCK_DMODEL1,
-                    BLOCK_DMODEL2,
-                    BLOCK_N,
-                    False,  # FULL_BLOCKS
-                    CAUSAL,
-                    ENABLE_DROPOUT,
-                    PADDED_HEAD,
-                    BIAS_TYPE)
-                tl.debug_barrier()
-
-            if n_full_blocks > 0:
-                lo = q_lo + leading_masked_blocks * BLOCK_M
-                hi = lo + n_full_blocks * BLOCK_M
-                dk0, dk1, dk2, dv0, dv1, dv2 = bwd_inner_dk_dv_fuse(
-                    dk0, dk1, dk2,
-                    dv0, dv1, dv2,
-                    qk_scale, bias_scale,
-                    q_ptrs0, q_ptrs1, q_ptrs2,
-                    stride_qm,
-                    kt0, kt1, kt2, vt0, vt1, vt2,
-                    B_ptr, stride_bm, stride_bn,
-                    do_ptrs0, do_ptrs1, do_ptrs2,
-                    o_ptrs0, o_ptrs1, o_ptrs2,
-                    stride_om,
-                    l_ptrs,
-                    seqlen_q, seqlen_k, head_dim,
-                    start_k, lo, hi, 0,
-                    idropout_p, dropout_scale, philox_seed, batch_philox_offset, philox_offset_stride,
+                    window_left,
+                    window_right,
                     BLOCK_M,
                     BLOCK_DMODEL0,
                     BLOCK_DMODEL1,
@@ -606,12 +567,10 @@ def bwd_kernel_fuse(
                     PADDED_HEAD,
                     BIAS_TYPE)
 
-            # use n_full_blocks to confirm the trailing masked blocks is not overlapping with leading masked_blocks
-            if n_full_blocks >= 0 and trailing_masked_blocks > 0:
+            if not (lb_empty and rb_empty):
                 tl.debug_barrier()
-                lo = q_lo + leading_masked_blocks * BLOCK_M + n_full_blocks * BLOCK_M
-                hi = q_hi
-                overflow_size = lo + trailing_masked_blocks * BLOCK_M - q_hi
+                nblocks_1 = closed_interval_size(lb_lo, lb_hi)
+                nblocks_2 = closed_interval_size(rb_lo, rb_hi)
                 dk0, dk1, dk2, dv0, dv1, dv2 = bwd_inner_dk_dv_fuse(
                     dk0, dk1, dk2,
                     dv0, dv1, dv2,
@@ -621,19 +580,22 @@ def bwd_kernel_fuse(
                     kt0, kt1, kt2, vt0, vt1, vt2,
                     B_ptr, stride_bm, stride_bn,
                     do_ptrs0, do_ptrs1, do_ptrs2,
+                    stride_dom,
                     o_ptrs0, o_ptrs1, o_ptrs2,
                     stride_om,
                     l_ptrs,
                     seqlen_q, seqlen_k, head_dim,
-                    start_k, lo, hi, overflow_size,
+                    start_k, nblocks_1, nblocks_2, lb_lo, rb_lo,
                     idropout_p, dropout_scale, philox_seed, batch_philox_offset, philox_offset_stride,
+                    window_left,
+                    window_right,
                     BLOCK_M,
                     BLOCK_DMODEL0,
                     BLOCK_DMODEL1,
                     BLOCK_DMODEL2,
                     BLOCK_N,
                     False,  # FULL_BLOCKS
-                    CAUSAL,
+                    IS_CAUSAL,
                     ENABLE_DROPOUT,
                     PADDED_HEAD,
                     BIAS_TYPE)

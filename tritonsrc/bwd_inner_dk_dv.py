@@ -149,7 +149,7 @@ def bwd_inner_dk_dv(
         if BIAS_TYPE == 0:
             pass
         elif BIAS_TYPE == 1:
-            bias_ptrs = B_ptr + offs_q_curr * stride_bm + offs_k * stride_bn
+            bias_ptrs = B_ptr + offs_q_curr * stride_bm + offs_k[None, :] * stride_bn
             # tl.device_print('FULL_BLOCKS', FULL_BLOCKS)
             # tl.device_print('start_k', start_k)
             if not FULL_BLOCKS:

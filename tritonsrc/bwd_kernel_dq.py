@@ -63,6 +63,7 @@ def bwd_kernel_dq(
     philox_seed_ptr,
     philox_offset1 : '*u64',
     philox_offset2 : 'u64',
+    # Windowed Attention
     Window_left : 'i32',
     Window_right : 'i32',
     BLOCK_M: tl.constexpr, BLOCK_DMODEL: tl.constexpr,
