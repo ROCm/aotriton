@@ -224,17 +224,10 @@ def bwd_kernel_dk_dv(
     #     order=(1, 0)
     # )
     if BIAS_TYPE == 0:
-        B_block_ptr = 0
+        B_ptr = 0
     elif BIAS_TYPE == 1:
         # CAVEAT: bias is incompatible with GQA
-        B_block_ptr = tl.make_block_ptr(
-                base=B + off_h_k * stride_bh + batch_index * stride_bz,
-                shape=(seqlen_q, seqlen_k),
-                strides=(stride_bm, stride_bn),
-                offsets=(0, start_k),
-                block_shape=(BLOCK_M, BLOCK_N),
-                order=(1, 0)
-                )
+        B_ptr = B + off_h_k * stride_bh + batch_index * stride_bz
     else:
         tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
 
@@ -268,7 +261,8 @@ def bwd_kernel_dk_dv(
                                 seqlen_q,
                                 mask_on_seq_k,
                                 BLOCK_N,
-                                BLOCK_M)
+                                BLOCK_M,
+                                DEBUG=False)
     lb_empty = is_closed_interval_empty(lb_lo, lb_hi)
     rb_empty = is_closed_interval_empty(rb_lo, rb_hi)
     fb_empty = is_closed_interval_empty(fb_lo, fb_hi)
@@ -315,7 +309,7 @@ def bwd_kernel_dk_dv(
                 q_ptrs0, q_ptrs1, q_ptrs2,
                 stride_qm,
                 kt0, kt1, kt2, vt0, vt1, vt2,
-                B_block_ptr,
+                B_ptr, stride_bm, stride_bn,
                 do_ptrs0, do_ptrs1, do_ptrs2,
                 stride_dom,
                 l_ptrs,
@@ -351,7 +345,7 @@ def bwd_kernel_dk_dv(
                 q_ptrs0, q_ptrs1, q_ptrs2,
                 stride_qm,
                 kt0, kt1, kt2, vt0, vt1, vt2,
-                B_block_ptr,
+                B_ptr, stride_bm, stride_bn,
                 do_ptrs0, do_ptrs1, do_ptrs2,
                 stride_dom,
                 l_ptrs,

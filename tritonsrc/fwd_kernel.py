@@ -311,10 +311,9 @@ def attn_fwd(
 
                 if USE_BIAS:
                     # Note: this might get large enough to overflow on some configs
-                    bias_offset = B + batch_index * stride_bz + off_h_q * stride_bh  # FILEPR
-                    bias_ptrs = bias_offset + offs_m[:, None] * stride_bm + offs_n[None, :] * stride_bn
+                    B_ptrs = B + batch_index * stride_bz + off_h_q * stride_bh + offs_m[:, None] * stride_bm
                 else:
-                    bias_ptrs = None
+                    B_ptrs = None
 
                 if USE_ALIBI:
                     a_offset = off_z * stride_az + off_h_q * stride_ah
@@ -390,8 +389,8 @@ def attn_fwd(
                             q0, q1, q2,
                             k_ptrs0, k_ptrs1, k_ptrs2,
                             v_ptrs0, v_ptrs1, v_ptrs2,
-                            bias_ptrs,
-                            stride_kn, stride_vk, stride_bn,
+                            stride_kn, stride_vk,
+                            B_ptrs, stride_bn,
                             # Task positions
                             start_M, nblocks_1, 0, fb_lo, None,
                             seqlen_k, seqlen_q, Head_dim,
@@ -450,8 +449,8 @@ def attn_fwd(
                             q0, q1, q2,
                             k_ptrs0, k_ptrs1, k_ptrs2,
                             v_ptrs0, v_ptrs1, v_ptrs2,
-                            bias_ptrs,
-                            stride_kn, stride_vk, stride_bn,
+                            stride_kn, stride_vk,
+                            B_ptrs, stride_bn,
                             # Task positions
                             start_M, nblocks_1, nblocks_2, lb_lo, rb_lo,
                             seqlen_k, seqlen_q, Head_dim,

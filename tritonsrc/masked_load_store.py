@@ -36,7 +36,16 @@ def calculate_intervals(IS_CAUSAL,
                         seqlen_k,
                         mask_on_seq_q,
                         BLOCK_M,
-                        BLOCK_N):
+                        BLOCK_N,
+                        DEBUG=False):
+    masked_seq_k_block = seqlen_k // BLOCK_N
+    if DEBUG:
+        tl.device_print('0 start_M', start_M)
+        tl.device_print('0 BLOCK_M', BLOCK_M)
+        tl.device_print('0 BLOCK_N', BLOCK_N)
+        tl.device_print('0 seqlen_q', seqlen_q)
+        tl.device_print('0 seqlen_k', seqlen_k)
+
     if IS_CAUSAL:
         if CAUSAL_TYPE == 1:
             window_left = seqlen_q
@@ -47,16 +56,10 @@ def calculate_intervals(IS_CAUSAL,
         else:
             window_left = Window_left
             window_right = Window_right
-        # tl.device_print('0 window_left', window_left)
-        # tl.device_print('0 window_right', window_right)
-        # tl.device_print('0 start_M', start_M)
-        # tl.device_print('0 BLOCK_M', BLOCK_M)
-        # tl.device_print('0 BLOCK_N', BLOCK_N)
-        # tl.device_print('0 seqlen_q', seqlen_q)
-        # tl.device_print('0 seqlen_k', seqlen_k)
-        # tl.device_print('0 mask_on_seq_q', mask_on_seq_q)
-
-        masked_seq_k_block = seqlen_k // BLOCK_N
+        if DEBUG:
+            tl.device_print('0 window_left', window_left)
+            tl.device_print('0 window_right', window_right)
+            tl.device_print('0 mask_on_seq_q', mask_on_seq_q)
 
         ### Intervals for Left Masked Blocks (Infinite on N axis)
         # Intersection point (N axis) b/w window left line and M = start_M
@@ -67,10 +70,11 @@ def calculate_intervals(IS_CAUSAL,
         isec_hi = min(start_M + BLOCK_M, seqlen_q) - window_left
         lsec_lob = div_rd(isec_lo, BLOCK_N)
         lsec_hib = div_rd(isec_hi - 1, BLOCK_N)
-        # tl.device_print('1 lb_lo isect', isec_lo)
-        # tl.device_print('1 lb_hi isect', isec_hi)
-        # tl.device_print('1 Init lb_lo', lsec_lob)
-        # tl.device_print('1 Init lb_hi', lsec_hib)
+        if DEBUG:
+            tl.device_print('1 lb_lo isect', isec_lo)
+            tl.device_print('1 lb_hi isect', isec_hi)
+            tl.device_print('1 Init lb_lo', lsec_lob)
+            tl.device_print('1 Init lb_hi', lsec_hib)
 
         ### Intervals for Right Masked Blocks (Infinite on N axis)
         # Intersection point (N axis) b/w window left line and M = start_M
@@ -86,10 +90,11 @@ def calculate_intervals(IS_CAUSAL,
         #  maxmize rsec_hib
         #  Example: isec_hi = 0, then rsec_hib = -1
         rsec_hib = div_rd(isec_hi - 1, BLOCK_N)
-        # tl.device_print('2 rb_lo isect', isec_lo)
-        # tl.device_print('2 rb_hi isect', isec_hi)
-        # tl.device_print('2 Init rb_lo', rsec_lob)
-        # tl.device_print('2 Init rb_hi', rsec_hib)
+        if DEBUG:
+            tl.device_print('2 rb_lo isect', isec_lo)
+            tl.device_print('2 rb_hi isect', isec_hi)
+            tl.device_print('2 Init rb_lo', rsec_lob)
+            tl.device_print('2 Init rb_hi', rsec_hib)
 
         ### Sanitize intervals: n < seqlen_k && n >= 0
         # Valid Closed Interval WITH the trailing partial mask
@@ -101,10 +106,11 @@ def calculate_intervals(IS_CAUSAL,
         # fb_*: Full Blocks index (LOw/HIgh)
         lb_lo, lb_hi = closed_interval_isect(lsec_lob, lsec_hib, vb_lo, vb_hi)
         rb_lo, rb_hi = closed_interval_isect(rsec_lob, rsec_hib, vb_lo, vb_hi)
-        # tl.device_print('3 Valid lb_lo', lb_lo)
-        # tl.device_print('3 Valid lb_hi', lb_hi)
-        # tl.device_print('3 Valid rb_lo', rb_lo)
-        # tl.device_print('3 Valid rb_hi', rb_hi)
+        if DEBUG:
+            tl.device_print('3 Valid lb_lo', lb_lo)
+            tl.device_print('3 Valid lb_hi', lb_hi)
+            tl.device_print('3 Valid rb_lo', rb_lo)
+            tl.device_print('3 Valid rb_hi', rb_hi)
 
         # Check if left and right masked blocks overlapped
         # ub_: United maksed Blocks
@@ -148,6 +154,8 @@ def calculate_intervals(IS_CAUSAL,
             rb_lo = masked_seq_k_block
             rb_hi = masked_seq_k_block
     else:
+        window_left = 0
+        window_right = 0
         lb_lo, lb_hi = -1, -2
         n_blocks = tl.cdiv(seqlen_k, BLOCK_N)
         if mask_on_seq_q:
@@ -160,13 +168,18 @@ def calculate_intervals(IS_CAUSAL,
             # automatically be empty when mask_on_seq_k == False
             rb_lo, rb_hi = seqlen_k // BLOCK_N + 1, n_blocks - 1
             # need_to_handle_mask_on_seq_k = False # Handled by lb_* with [0, n_blocks]
+        if fb_lo * BLOCK_N < seqlen_k and seqlen_k < fb_hi * BLOCK_N + BLOCK_N:
+            fb_hi = seqlen_k // BLOCK_N - 1
+            rb_lo = masked_seq_k_block
+            rb_hi = masked_seq_k_block
 
-    # tl.device_print('4 Final lb_lo', lb_lo)
-    # tl.device_print('4 Final lb_hi', lb_hi)
-    # tl.device_print('4 Final fb_lo', fb_lo)
-    # tl.device_print('4 Final fb_hi', fb_hi)
-    # tl.device_print('4 Final rb_lo', rb_lo)
-    # tl.device_print('4 Final rb_hi', rb_hi)
+    if DEBUG:
+        tl.device_print('4 Final lb_lo', lb_lo)
+        tl.device_print('4 Final lb_hi', lb_hi)
+        tl.device_print('4 Final fb_lo', fb_lo)
+        tl.device_print('4 Final fb_hi', fb_hi)
+        tl.device_print('4 Final rb_lo', rb_lo)
+        tl.device_print('4 Final rb_hi', rb_hi)
 
     return window_left, window_right, lb_lo, lb_hi, fb_lo, fb_hi, rb_lo, rb_hi
 

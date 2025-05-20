@@ -34,7 +34,7 @@ def bwd_inner_dk_dv(
     q_ptrs0, q_ptrs1, q_ptrs2,
     q_stride,
     kt0, kt1, kt2, vt0, vt1, vt2,
-    B_block_ptr,
+    B_ptr, stride_bm, stride_bn,
     do_ptrs0, do_ptrs1, do_ptrs2,
     do_stride,
     l_ptrs,
@@ -70,10 +70,6 @@ def bwd_inner_dk_dv(
     # do_ptrs0, do_ptrs1, do_ptrs2 = composed_advance(do_ptrs0, do_ptrs1, do_ptrs2,
     #                                                 lo * do_stride,
     #                                                 BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
-
-    # FIXME: Fix it
-    if BIAS_TYPE == 1:
-        B_block_ptr = tl.advance(B_block_ptr, (lo, 0))
 
     '''
            K1   K2      (d)V      dO
@@ -153,9 +149,15 @@ def bwd_inner_dk_dv(
         if BIAS_TYPE == 0:
             pass
         elif BIAS_TYPE == 1:
-            # FIXME: move away from block pointers since tl.advance is
-            #        unsuitable for our currentl algorithm
-            bias = tl.load(B_block_ptr, boundary_check=(0,1), padding_option="zero")
+            bias_ptrs = B_ptr + offs_q_curr * stride_bm + offs_k * stride_bn
+            # tl.device_print('FULL_BLOCKS', FULL_BLOCKS)
+            # tl.device_print('start_k', start_k)
+            if not FULL_BLOCKS:
+                mask = (offs_q_curr < seqlen_q) & (offs_k < seqlen_k)[None, :]
+                bias = tl.load(bias_ptrs, mask=mask, other=0.0)
+                # tl.device_print('mask', mask)
+            else:
+                bias = tl.load(bias_ptrs)
             qk += bias * bias_scale
         else:
             tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
@@ -257,7 +259,5 @@ def bwd_inner_dk_dv(
         # do_ptrs0, do_ptrs1, do_ptrs2 = composed_advance(do_ptrs0, do_ptrs1, do_ptrs2,
         #                                                 do_stride * BLOCK_M,
         #                                                 BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
-        if BIAS_TYPE == 1:
-            B_block_ptr = tl.advance(B_block_ptr, (BLOCK_M, 0))
     return dk0, dk1, dk2, dv0, dv1, dv2
 

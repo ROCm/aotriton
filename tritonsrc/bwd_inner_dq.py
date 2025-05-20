@@ -36,8 +36,8 @@ def bwd_inner_dq(
     k_stride,
     vt_ptrs0, vt_ptrs1, vt_ptrs2,
     v_stride,
-    stride_bn, stride_bm,  stride_dbn, stride_dbm,
     B_ptr,
+    stride_bn, stride_bm, stride_dbn, stride_dbm,
     do0, do1, do2,
     Di, l_i,
     seqlen_q, seqlen_k, head_dim,
@@ -137,9 +137,12 @@ def bwd_inner_dq(
         elif BIAS_TYPE == 1:
             # FIXME: Must use boundary_check uncondtionally.
             # The optimized tl.load above causes nan for some reason
-            bias_ptr = B_ptr + offs_q[:, None] * stride_bm + offs_k_curr * stride_bn
-            mask = (offs_q[:, None] < seqlen_q) & (offs_k_curr < seqlen_k)
-            bias = tl.load(bias_ptr, mask=mask, other=0.0)
+            bias_ptrs = B_ptr + offs_q[:, None] * stride_bm + offs_k_curr * stride_bn
+            if not FULL_BLOCKS:
+                mask = (offs_q[:, None] < seqlen_q) & (offs_k_curr < seqlen_k)
+                bias = tl.load(bias_ptrs, mask=mask, other=0.0)
+            else:
+                bias = tl.load(bias_ptrs)
             qk += bias * bias_scale
         else:
             tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')

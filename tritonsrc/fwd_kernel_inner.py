@@ -34,8 +34,8 @@ def _attn_fwd_inner(
         q0, q1, q2,
         k_ptrs0, k_ptrs1, k_ptrs2,
         v_ptrs0, v_ptrs1, v_ptrs2,
-        bias_ptrs,
-        stride_kn, stride_vk, stride_bn,
+        stride_kn, stride_vk,
+        B_ptrs, stride_bn,
         # Task positions
         start_M, nblocks_1, nblocks_2, Block_range_1, Block_range_2,
         actual_seqlen_k, actual_seqlen_q, Head_dim,
@@ -145,9 +145,20 @@ def _attn_fwd_inner(
             if BLOCK_DMODEL1 > 0 : qk += (Qk_scale * tl.dot(q1, k1))
             if BLOCK_DMODEL2 > 0 : qk += (Qk_scale * tl.dot(q2, k2))
 
-        if bias_ptrs is not None:
-            bias_offs_n = start_N + tl.arange(0, BLOCK_N) if MASK_STEPS else None
-            bias = load_fn(bias_ptrs + start_N * stride_bn, OFFS_M, bias_offs_n, actual_seqlen_q, actual_seqlen_k)
+        if B_ptrs is not None:
+            NS = start_N + OFFS_N
+            bias_ptr = B_ptrs + NS[None, :] * stride_bn
+            # tl.device_print('MASK_STEPS', MASK_STEPS)
+            if MASK_STEPS:
+                mask = (OFFS_M[:, None] < actual_seqlen_q) & (NS[None, :] < actual_seqlen_k)
+                bias = tl.load(bias_ptr,
+                               mask=mask,
+                               other=0.0)
+                # tl.device_print('mask', mask)
+            else:
+                bias = tl.load(bias_ptr)
+            # bias_offs_n = start_N + tl.arange(0, BLOCK_N) if MASK_STEPS else None
+            # bias = load_fn(bias_ptrs + start_N * stride_bn, OFFS_M, bias_offs_n, actual_seqlen_q, actual_seqlen_k)
             # While bias is added after multiplying qk with sm_scale,
             # our optimization to use 2^x instead of e^x results in an additional
             # scale factor of log2(e) which we must also multiply the bias with.
