@@ -12,9 +12,14 @@ from _common_test import VarlenSdpaContext, SdpaParams
 
 FOR_RELEASE = bool(int(os.getenv('FOR_RELEASE', default='0')))
 
+def fmt_hdim(val):
+    return f'hdim{val}'
+
 POT_HEADDIMS = [16, 32, 64, 128, 256]
 NPOT_HEADDIMS = [48, 80, 96, 160, 192, 224]
-PRIME_HEADDIMS = [7, 23, 37, 53, 67, 73, 89, 113, 149, 179, 211, 241]
+# PRIME_HEADDIMS = [7, 23, 37, 53, 67, 73, 89, 113, 149, 179, 211, 241]
+# AOTriton does not support compact prime head dims due to memory alignment requirements
+PRIME_HEADDIMS = []
 
 # SEQLEN_Q = [4, 8, 64, 143, 256, 512, 1024, 2048]
 # SEQLEN_K = [4, 8, 64, 128, 256, 587, 1024, 2048]
@@ -87,6 +92,8 @@ def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dro
         print(f'{tri_dv[err_idx]=}')
         print(f'{ref_dv[err_idx]=}')
         print(f'{torch.isnan(ref_dv).any()=}')
+    print(f'{tri_dv[0,0,:,0]=}')
+    print(f'{ref_dv[0,0,:,0]=}')
 
     if dv_allclose and not dk_allclose:
         import numpy as np
@@ -110,7 +117,7 @@ def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dro
     print(f'{adiff=} {grads_adiff=}')
 
 @pytest.mark.parametrize('N_HEADS', [1, 4] if not FOR_RELEASE else [3])
-@pytest.mark.parametrize('D_HEAD', POT_HEADDIMS + NPOT_HEADDIMS + PRIME_HEADDIMS)
+@pytest.mark.parametrize('D_HEAD', POT_HEADDIMS + NPOT_HEADDIMS + PRIME_HEADDIMS, ids=fmt_hdim)
 @pytest.mark.parametrize('n_seqlen', range(1, 24, 5) if not FOR_RELEASE else range(2, 24, 5))
 # @pytest.mark.parametrize('n_seqlen', [2])
 @pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
@@ -124,13 +131,13 @@ def test_op_bwd(N_HEADS, D_HEAD, n_seqlen, causal, sm_scale, dropout_p, dtype):
     _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dropout_p, dtype)
 
 def main():
-    N_HEADS = 2
+    N_HEADS = 1
     D_HEAD = 16
     seqlens_q = np.array([4, 8])
     seqlens_k = seqlens_q
-    causal = False
+    causal = True
     sm_scale = 1.2
-    dropout_p = 0.5
+    dropout_p = 0.0
     dtype = torch.float16
     _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dropout_p, dtype)
 

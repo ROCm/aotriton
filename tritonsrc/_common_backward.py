@@ -106,8 +106,8 @@ def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale
             print(f'{ref_dk[0,0, :4, :4]=}')
             print(f'{tri_dv[0,0, :4, :4]=}')
             print(f'{ref_dv[0,0, :4, :4]=}')
-            # print(f'{tri_dq[0,0]=}')
-            # print(f'{ref_dq[0,0]=}')
+            print(f'{tri_dv[0,0]=}')
+            print(f'{ref_dv[0,0]=}')
 
     if dv_allclose and not dk_allclose:
         print(f'{tri_out[:,:,  :SPARSE_SEQ_SINCE, :SPARSE_HEAD_SINCE]=}')

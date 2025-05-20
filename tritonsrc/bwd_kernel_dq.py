@@ -23,6 +23,7 @@ from masked_load_store import (
     load_fn,
     mstore2d,
     is_closed_interval_empty,
+    parse_window,
     calculate_intervals,
     closed_interval_size,
 )
@@ -264,12 +265,18 @@ def bwd_kernel_dq(
     else:
         tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
 
+    window_left, window_right = parse_window(IS_CAUSAL,
+                                             CAUSAL_TYPE,
+                                             Window_left,
+                                             Window_right,
+                                             seqlen_q,
+                                             seqlen_k)
     mask_on_seq_q = (start_q + BLOCK_M > seqlen_q)
-    window_left, window_right, lb_lo, lb_hi, fb_lo, fb_hi, rb_lo, rb_hi = \
+    lb_lo, lb_hi, fb_lo, fb_hi, rb_lo, rb_hi = \
             calculate_intervals(IS_CAUSAL,
                                 CAUSAL_TYPE,
-                                Window_left,
-                                Window_right,
+                                window_left,
+                                window_right,
                                 start_q,
                                 seqlen_q,
                                 seqlen_k,

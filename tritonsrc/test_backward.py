@@ -12,6 +12,7 @@ from _common_test import SdpaContext, SdpaParams, SdpaContextFromNPZ
 from attn_torch_function import attention, AttentionExtraArgs, BWD_FUSED
 
 FOR_RELEASE = bool(int(os.getenv('FOR_RELEASE', default='0')))
+V3_API = 0 # V3 API is only meaningful for AOTriton
 
 def fmt_hdim(val):
     return f'hdim{val}'
@@ -178,8 +179,8 @@ def main2():
     # Memo: False-0.0-dtype0-0.0-False-4-256-8-1-4
     # False-1.2-dtype0-0.0-False-4-4-72-1-4
     BATCH = 1
-    N_HEADS = 1
-    seqlen_q = 64
+    N_HEADS = 2
+    seqlen_q = 4
     seqlen_k = 4
     D_HEAD = 16
     # BATCH = 4
@@ -187,12 +188,14 @@ def main2():
     # N_HEADS = 8
     # seqlen_q = 256
     # seqlen_k = 4
-    causal = True
+    # causal = True
+    causal = False
     sm_scale = 1.2
     dropout_p = 0.0
     dtype = torch.float16
     storage_flip = False
-    bias_type = None
+    # bias_type = None
+    bias_type = 'matrix'
     _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
 
 def main():

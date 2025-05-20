@@ -26,11 +26,48 @@ def div_rd(x, y):
     d = x // y
     return (d - 1) if d * y > x else d
 
+'''
+Parse IS_CAUSAL/CAUSAL_TYPE/Window_left/Window_right to actual window_left and window_right.
+Window_left and Window_right support two special values: 0x80000001i32 and 0x80000002i32
+In that case, the output window_left and window_right will be the value for CAUSAL_TYPE = 1 and 2 respectively.
+These two special values are for varlen where there is no uniform value for top left/bottom right aligned window.
+
+Must split parse_window away from calculate_intervals
+calculate_intervals is designed for row major processing, and to re-use the
+code, we transpose inputs for calculate_intervals when handling col major processing in dkdv kernel.
+
+However, window_left and window_right parsing is invariant row/col major
+processing, and need to split otherwise dkdv kernel's window_left/right will be incorrect.
+'''
+@triton.jit
+def parse_window(IS_CAUSAL,
+                 CAUSAL_TYPE,
+                 Window_left,
+                 Window_right,
+                 seqlen_q,
+                 seqlen_k):
+    # 0x80000001i32 = -2147483647
+    if CAUSAL_TYPE == 1 or Window_left == -2147483647:
+        window_left = seqlen_q
+    # 0x80000002i32 = -2147483646
+    elif CAUSAL_TYPE == 2 or Window_left == -2147483646:
+        window_left = seqlen_q
+    else:
+        window_left = Window_left
+    if CAUSAL_TYPE == 1 or Window_right == -2147483647:
+        window_right = 0
+    elif CAUSAL_TYPE == 2 or Window_right == -2147483646:
+        window_right = seqlen_k - seqlen_q
+    else:
+        window_right = Window_right
+    return window_left, window_right
+
+
 @triton.jit
 def calculate_intervals(IS_CAUSAL,
                         CAUSAL_TYPE,
-                        Window_left,
-                        Window_right,
+                        window_left,
+                        window_right,
                         start_M,
                         seqlen_q,
                         seqlen_k,
@@ -47,15 +84,6 @@ def calculate_intervals(IS_CAUSAL,
         tl.device_print('0 seqlen_k', seqlen_k)
 
     if IS_CAUSAL:
-        if CAUSAL_TYPE == 1:
-            window_left = seqlen_q
-            window_right = 0
-        elif CAUSAL_TYPE == 2:
-            window_left = seqlen_q - seqlen_k
-            window_right = seqlen_k
-        else:
-            window_left = Window_left
-            window_right = Window_right
         if DEBUG:
             tl.device_print('0 window_left', window_left)
             tl.device_print('0 window_right', window_right)
@@ -154,8 +182,6 @@ def calculate_intervals(IS_CAUSAL,
             rb_lo = masked_seq_k_block
             rb_hi = masked_seq_k_block
     else:
-        window_left = 0
-        window_right = 0
         lb_lo, lb_hi = -1, -2
         n_blocks = tl.cdiv(seqlen_k, BLOCK_N)
         if mask_on_seq_q:
@@ -181,7 +207,7 @@ def calculate_intervals(IS_CAUSAL,
         tl.device_print('4 Final rb_lo', rb_lo)
         tl.device_print('4 Final rb_hi', rb_hi)
 
-    return window_left, window_right, lb_lo, lb_hi, fb_lo, fb_hi, rb_lo, rb_hi
+    return lb_lo, lb_hi, fb_lo, fb_hi, rb_lo, rb_hi
 
 # Convenience function to load with optional boundary checks.
 # "First" is the major dim, "second" is the minor dim.

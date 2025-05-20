@@ -28,6 +28,7 @@ from masked_load_store import (
     closed_interval_isect,
     is_closed_interval_empty,
     closed_interval_size,
+    parse_window,
     calculate_intervals,
 )
 from composed_tensors import (
@@ -222,12 +223,18 @@ def attn_fwd(
             # This block of code determines what N is, and if this WG is operating
             # on those M rows.
             o_base = Out + batch_index * stride_oz + off_h_q * stride_oh + cu_seqlens_q_start * stride_om
+            window_left, window_right = parse_window(IS_CAUSAL,
+                                                     CAUSAL_TYPE,
+                                                     Window_left,
+                                                     Window_right,
+                                                     seqlen_q,
+                                                     seqlen_k)
             mask_on_seq_q = (start_M + BLOCK_M > seqlen_q)
-            window_left, window_right, lb_lo, lb_hi, fb_lo, fb_hi, rb_lo, rb_hi = \
+            lb_lo, lb_hi, fb_lo, fb_hi, rb_lo, rb_hi = \
                     calculate_intervals(IS_CAUSAL,
                                         CAUSAL_TYPE,
-                                        Window_left,
-                                        Window_right,
+                                        window_left,
+                                        window_right,
                                         start_M,
                                         seqlen_q,
                                         seqlen_k,

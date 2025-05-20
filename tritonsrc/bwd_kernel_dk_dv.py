@@ -23,6 +23,7 @@ from masked_load_store import (
     load_fn,
     mstore2d,
     is_closed_interval_empty,
+    parse_window,
     calculate_intervals,
     closed_interval_size,
 )
@@ -251,11 +252,17 @@ def bwd_kernel_dk_dv(
        parameters should also be flipped
     3. The returned values must also be flipped
     '''
-    window_right, window_left, lb_lo, lb_hi, fb_lo, fb_hi, rb_lo, rb_hi = \
+    window_left, window_right = parse_window(IS_CAUSAL,
+                                             CAUSAL_TYPE,
+                                             Window_left,
+                                             Window_right,
+                                             seqlen_q,
+                                             seqlen_k)
+    lb_lo, lb_hi, fb_lo, fb_hi, rb_lo, rb_hi = \
             calculate_intervals(IS_CAUSAL,
                                 CAUSAL_TYPE,
-                                Window_right,
-                                Window_left,
+                                window_right,
+                                window_left,
                                 start_k,
                                 seqlen_k,
                                 seqlen_q,
@@ -290,9 +297,9 @@ def bwd_kernel_dk_dv(
                                                   BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
 
         do_ptrs0, do_ptrs1, do_ptrs2 = composed_ptrs(DO,
-                                                  stride_doz, stride_doh, stride_dom, stride_dok,
-                                                  batch_index, off_h_q, cu_seqlens_q_start + offs_m,
-                                                  BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
+                                                     stride_doz, stride_doh, stride_dom, stride_dok,
+                                                     batch_index, off_h_q, cu_seqlens_q_start + offs_m,
+                                                     BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
 
         # dkdk kernel is a little tricky, its masked blocks can be found in both ends
         # leading masked: by causal
