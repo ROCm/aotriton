@@ -112,8 +112,10 @@ attn_bwd(const attn_bwd_params& in,
     .philox_seed_ptr  = &in.philox_seed_ptr,
     .philox_offset1   = &in.philox_offset1,
     .philox_offset2   = in.philox_offset2,
+    .Window_left = in.window_left,
+    .Window_right = in.window_left,
     .BLOCK_DMODEL = head_dim_rounded,
-    .CAUSAL = (in.causal_type == 1 ? true : false),
+    .CAUSAL_TYPE = in.causal_type,
     .ENABLE_DROPOUT = in.dropout_p > 0.0,
     .PADDED_HEAD = head_dim != head_dim_rounded,
     .BIAS_TYPE = bool(in.B) ? 1 : 0,
@@ -150,6 +152,9 @@ using BwdPreprocessVarlenMetadata  = AOTRITON_NS::v3::flash::BwdPreprocessVarlen
 using BwdKernelDkDvMetadata        = AOTRITON_NS::v3::flash::BwdKernelDkDvMetadata;
 using BwdKernelDqMetadata          = AOTRITON_NS::v3::flash::BwdKernelDqMetadata;
 using BwdKernelDqMetadata          = AOTRITON_NS::v3::flash::BwdKernelDqMetadata;
+
+using CausalType = AOTRITON_NS::v3::flash::CausalType;
+using WindowValue = AOTRITON_NS::v3::flash::WindowValue;
 
 hipError_t
 bwd_preprocess(T4 out, T4 dout, T2 delta, AOTRITON_NS::Stream stream_wrap) {
@@ -319,8 +324,10 @@ bwd_kernel_dk_dv(T4 q,
     .philox_seed_ptr = &philox_seed,
     .philox_offset1 = &philox_offset1,
     .philox_offset2 = static_cast<uint64_t>(philox_offset2),
+    .Window_left = WindowValue::TopLeftAligned,
+    .Window_right = WindowValue::TopLeftAligned,
     .BLOCK_DMODEL = int16_t(head_size_rounded),
-    .CAUSAL = is_causal,
+    .CAUSAL_TYPE = is_causal ? CausalType::WindowedAttention : CausalType::None,
     .ENABLE_DROPOUT = dropout_p > 0.0,
     .PADDED_HEAD = head_size_rounded != head_size,
     .BIAS_TYPE = bias_type,
@@ -434,8 +441,10 @@ bwd_kernel_dq(T4 q,
     .philox_seed_ptr = &philox_seed,
     .philox_offset1 = &philox_offset1,
     .philox_offset2 = static_cast<uint64_t>(philox_offset2),
+    .Window_left = WindowValue::TopLeftAligned,
+    .Window_right = WindowValue::TopLeftAligned,
     .BLOCK_DMODEL = int16_t(head_size_rounded),
-    .CAUSAL = is_causal,
+    .CAUSAL_TYPE = is_causal ? CausalType::WindowedAttention : CausalType::None,
     .ENABLE_DROPOUT = dropout_p > 0.0,
     .PADDED_HEAD = head_size_rounded != head_size,
     .BIAS_TYPE = bias_type,

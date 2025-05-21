@@ -22,7 +22,7 @@ _IF_SLIDING_WINDOW:
     If CAUSAL_TYPE != 3: set param as constexpr(0) else: set to elsechoice
 '''
 _IF_SLIDING_WINDOW = lambda elsechoice : [CC('CAUSAL_TYPE', 3, 0, elsechoice,
-                                             cond_op=lambda tc_value, _: tc != 3)]
+                                             cond_op=lambda tc_value, _: tc_value != 3)]
 
 class OpAttnFwd(OpAttn):
     NAME = 'op_attn_fwd'

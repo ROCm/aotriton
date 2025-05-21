@@ -83,6 +83,7 @@ class OpAttnBwd(OpAttn):
         frozenset(['philox_seed_ptr']) : match_fwd('philox_seed_ptr'),
         frozenset(['philox_offset1']) : match_fwd('philox_offset1'),
         frozenset(['philox_offset2']) : match_fwd('philox_offset2'),
+        frozenset(['Window_left', 'Window_right']) : match_fwd('Window_left'),
     }
     FEAT_CHOICES = {
         frozenset(['BLOCK_DMODEL']) : match_fwd('BLOCK_DMODEL'),

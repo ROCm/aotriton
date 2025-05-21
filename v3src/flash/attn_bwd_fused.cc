@@ -29,6 +29,8 @@ namespace AOTRITON_NS::v2::flash {
 using BwdKernelFuseParams = AOTRITON_NS::v3::flash::OpAttnBwdParams;
 using BwdKernelFuseContext = AOTRITON_NS::v3::flash::BwdKernelFuseContext;
 using BwdKernelFuseMetadata = AOTRITON_NS::v3::flash::BwdKernelFuseMetadata;
+using CausalType = AOTRITON_NS::v3::flash::CausalType;
+using WindowValue = AOTRITON_NS::v3::flash::WindowValue;
 
 hipError_t
 _bwd_kernel_fuse(T4 q,
@@ -105,8 +107,10 @@ _bwd_kernel_fuse(T4 q,
     .philox_seed_ptr = &philox_seed,
     .philox_offset1 = &philox_offset1,
     .philox_offset2 = static_cast<uint64_t>(philox_offset2),
+    .Window_left = WindowValue::TopLeftAligned,
+    .Window_right = WindowValue::TopLeftAligned,
     .BLOCK_DMODEL = head_size_rounded,
-    .CAUSAL = is_causal,
+    .CAUSAL_TYPE = is_causal ? CausalType::WindowedAttention : CausalType::None,
     .ENABLE_DROPOUT = dropout_p > 0.0,
     .PADDED_HEAD = head_size_rounded != head_size,
     .BIAS_TYPE = bias_type,

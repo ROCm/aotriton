@@ -120,6 +120,8 @@ attn_fwd(const attn_fwd_params& in,
     .RETURN_ENCODED_SOFTMAX = false,
     .encoded_softmax = &in.encoded_softmax,
     .CAUSAL_TYPE = in.causal_type,
+    .Window_left = in.window_left,
+    .Window_right = in.window_left,
     .BIAS_TYPE = int8_t(in.B ? 1 : 0),
     .USE_ALIBI = false,
     .INT8 = false,
@@ -146,6 +148,8 @@ namespace AOTRITON_NS::v2::flash {
 using AttnFwdParams = AOTRITON_NS::v3::flash::OpAttnFwdParams;
 using AttnFwdContext = AOTRITON_NS::v3::flash::AttnFwdContext;
 using AttnFwdMetadata = AOTRITON_NS::v3::flash::AttnFwdMetadata;
+using CausalType = AOTRITON_NS::v3::flash::CausalType;
+using WindowValue = AOTRITON_NS::v3::flash::WindowValue;
 
 hipError_t
 _attn_fwd_common(T4 q,
@@ -194,7 +198,7 @@ _attn_fwd_common(T4 q,
     return hipErrorInvalidValue;
   }
   int8_t bias_type = 0;
-  // TODO: Replace magic numbers used in BIAS_TYPE, CAUSAL_TYPE, PERSISTENT_TYPE
+  // TODO: Replace magic numbers used in BIAS_TYPE, PERSISTENT_TYPE
   if (b) {
     bias_type = 1;
   }
@@ -227,7 +231,9 @@ _attn_fwd_common(T4 q,
     .philox_offset_output = &philox_offset_output,
     .RETURN_ENCODED_SOFTMAX = false,
     .encoded_softmax = &encoded_softmax,
-    .CAUSAL_TYPE = int8_t(is_causal ? 1 : 0),
+    .CAUSAL_TYPE = is_causal ? CausalType::WindowedAttention : CausalType::None,
+    .Window_left = WindowValue::TopLeftAligned,
+    .Window_right = WindowValue::TopLeftAligned,
     .BIAS_TYPE = bias_type,
     .USE_ALIBI = false,
     .INT8 = false,

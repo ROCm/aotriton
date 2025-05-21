@@ -49,6 +49,8 @@ namespace pyaotriton::v3 {
           .RW(persistent_atomic_counter)
           .RW(causal_type)
           .RW(varlen_type)
+          .RW(window_left)
+          .RW(window_right)
 #undef RW
           .def_readonly_static("kVersion", &attn_fwd_params::kVersion)
         ;
@@ -78,6 +80,8 @@ namespace pyaotriton::v3 {
           .RW(philox_offset2)
           .RW(causal_type)
           .RW(varlen_type)
+          .RW(window_left)
+          .RW(window_right)
 #undef RW
           .def_readonly_static("kVersion", &attn_bwd_params::kVersion)
         ;
