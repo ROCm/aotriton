@@ -67,7 +67,8 @@ def bwd_kernel_dq(
     # Windowed Attention
     Window_left : 'i32',
     Window_right : 'i32',
-    BLOCK_M: tl.constexpr, BLOCK_DMODEL: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_DMODEL: tl.constexpr,
     BLOCK_N: tl.constexpr,
     CAUSAL_TYPE: tl.constexpr,
     ENABLE_DROPOUT: tl.constexpr,

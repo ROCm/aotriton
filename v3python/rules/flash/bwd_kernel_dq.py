@@ -37,11 +37,11 @@ class bwd_kernel_dq(FlashKernel):
         'max_seqlen_k',
         'head_dim',
         'dropout_p',
-        'Window_left',
-        'Window_right',
         'philox_seed_ptr',
         'philox_offset1',
         'philox_offset2',
+        'Window_left',
+        'Window_right',
         'BLOCK_M', # tl.constexpr starts here
         'BLOCK_DMODEL',
         'BLOCK_N',
