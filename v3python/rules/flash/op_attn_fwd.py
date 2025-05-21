@@ -61,7 +61,8 @@ class OpAttnFwd(OpAttn):
         "encoded_softmax",
         # causal, (Planned Feature) windowed attention
         "CAUSAL_TYPE",
-        "Window_left", "Window_right",
+        "Window_left",
+        "Window_right",
         # bias
         "BIAS_TYPE",
         # alibi
