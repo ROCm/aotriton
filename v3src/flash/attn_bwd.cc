@@ -139,18 +139,15 @@ using BwdPreprocessParams = AOTRITON_NS::v3::flash::OpAttnBwdParams;
 using BwdPreprocessVarlenParams = AOTRITON_NS::v3::flash::OpAttnBwdParams;
 using BwdKernelDkDvParams = AOTRITON_NS::v3::flash::OpAttnBwdParams;
 using BwdKernelDqParams = AOTRITON_NS::v3::flash::OpAttnBwdParams;
-using BwdKernelDqParams = AOTRITON_NS::v3::flash::OpAttnBwdParams;
 
 using BwdPreprocessContext        = AOTRITON_NS::v3::flash::BwdPreprocessContext;
 using BwdPreprocessVarlenContext  = AOTRITON_NS::v3::flash::BwdPreprocessVarlenContext;
 using BwdKernelDkDvContext        = AOTRITON_NS::v3::flash::BwdKernelDkDvContext;
 using BwdKernelDqContext          = AOTRITON_NS::v3::flash::BwdKernelDqContext;
-using BwdKernelDqContext          = AOTRITON_NS::v3::flash::BwdKernelDqContext;
 
 using BwdPreprocessMetadata        = AOTRITON_NS::v3::flash::BwdPreprocessMetadata;
 using BwdPreprocessVarlenMetadata  = AOTRITON_NS::v3::flash::BwdPreprocessVarlenMetadata;
 using BwdKernelDkDvMetadata        = AOTRITON_NS::v3::flash::BwdKernelDkDvMetadata;
-using BwdKernelDqMetadata          = AOTRITON_NS::v3::flash::BwdKernelDqMetadata;
 using BwdKernelDqMetadata          = AOTRITON_NS::v3::flash::BwdKernelDqMetadata;
 
 using CausalType = AOTRITON_NS::v3::flash::CausalType;

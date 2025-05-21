@@ -20,6 +20,9 @@ AOTRITON_TORCH_ONLY_USE_CPU = bool(int(os.getenv('AOTRITON_TORCH_ONLY_USE_CPU', 
 # Overrides by AOTRITON_TORCH_ONLY_USE_CPU=1
 AOTRITON_REF_DEVICE_OPTION = os.getenv('AOTRITON_REF_DEVICE_OPTION', default='default')
 
+def fmt_hdim(val):
+    return f'hdim{val}'
+
 def calc_checksums(tensors):
     def checksum(t):
         if t is None:

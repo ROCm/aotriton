@@ -28,6 +28,7 @@ from sized_tuned_bwd import (
 )
 
 BWD_FUSED = bool(int(os.getenv('BWD_FUSED', default='0')))
+V3_API = 0  # triton kernel does not have "V3 API"
 
 # Note: we don't use Enum class because accessing the integer requires using
 #       `.value` property, which makes the code verbose.
