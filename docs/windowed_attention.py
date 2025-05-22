@@ -49,13 +49,13 @@ class Validator:
         self._window_right = window_right
         self._seqlen_q, self._seqlen_k = self._ref_mask.shape
 
-    def validate(self, BLOCK_M, BLOCK_N):
+    def validate(self, BLOCK_M, BLOCK_N, *, verbose=False):
         # print(f'window_left = {self._window_left} window_right = {self._window_right} {BLOCK_M=} {BLOCK_N=}')
         mask = np.full_like(self._ref_mask, 2)
         for start_m in range(0, self._seqlen_q, BLOCK_M):
-            filler_info = self.create_filler(start_m, BLOCK_M, BLOCK_N)
+            filler_info = self.create_filler(start_m, BLOCK_M, BLOCK_N, verbose=verbose)
             # print(f'{start_m=} {filler_info=}')
-            mask[start_m:start_m+BLOCK_M] = self.line_fill(start_m, filler_info)
+            mask[start_m:start_m+BLOCK_M] = self.line_fill(start_m, filler_info, verbose=verbose)
         # pt(mask)
         is_allclose = np.allclose(mask, self._ref_mask)
         if not is_allclose:
@@ -331,5 +331,17 @@ def _validate_negative_window(seqlen_q, seqlen_k, BLOCK_M, BLOCK_N):
 def test_negative_window(Q, K, BLOCK_M, BLOCK_N):
     _validate_negative_window(Q, K, BLOCK_M, BLOCK_N)
 
+def main():
+    Q = 143
+    K = 4
+    BLOCK_M = 128
+    BLOCK_N = 64
+    window_left = Q
+    window_right = 0
+    ref_mask = create_window_mask(Q, K, window_left, window_right)
+    validator = Validator(ref_mask, window_left, window_right)
+    validator.validate(BLOCK_M, BLOCK_N, verbose=True)
+
 if __name__ == '__main__':
     prelude()
+    main()
