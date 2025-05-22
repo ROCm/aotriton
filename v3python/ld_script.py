@@ -1,4 +1,6 @@
 #!/usr/bin/env python
+# Copyright © 2025 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
 
 import argparse
 from pathlib import Path
