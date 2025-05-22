@@ -13,6 +13,7 @@ from attn_torch_function import (
     attention,
     AttentionExtraArgs,
     BWD_FUSED,
+    V3_API,
 )
 from _common_test import SdpaContext, SdpaParams, SdpaContextFromNPZ, AOTRITON_TORCH_ONLY_USE_CPU
 
@@ -84,7 +85,7 @@ Note: for now we cannot really test both fused and split kernel at the same
 '''
 #TODO: Let BWDOP determine the real backward op at runtime
 
-BWDOP_ids = ['Fused'] if BWD_FUSED else ['Split']
+BWDOP_ids = ['Fused'] if BWD_FUSED else (['V3'] if V3_API else ['Split'])
 
 def _make_block_eyes(q, base=1.0, inc=0.0):
     dhead = q.shape[-1]

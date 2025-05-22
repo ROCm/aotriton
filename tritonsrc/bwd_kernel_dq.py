@@ -34,7 +34,7 @@ from composed_tensors import (
 
 @triton.jit
 def bwd_kernel_dq(
-    Q, K, V, B, sm_scale, Out, DO,
+    Q, K, V, B, sm_scale, DO,
     DQ, DB,
     L,
     D,
@@ -42,7 +42,7 @@ def bwd_kernel_dq(
     stride_kz, stride_kh, stride_kn, stride_kk,
     stride_vz, stride_vh, stride_vk, stride_vn,
     stride_bz, stride_bh, stride_bm, stride_bn,
-    stride_oz, stride_oh, stride_om, stride_ok,
+    stride_doz, stride_doh, stride_dom, stride_dok,
     stride_dqz, stride_dqh, stride_dqm, stride_dqk,
     stride_dbz, stride_dbh, stride_dbm, stride_dbn,
     num_head_q : 'i32',
@@ -175,13 +175,13 @@ def bwd_kernel_dq(
                                                  TRANSPOSED=True)
 
     do_ptrs0, do_ptrs1, do_ptrs2 = composed_ptrs(DO,
-                                                 stride_oz, stride_oh, stride_om, stride_ok,
+                                                 stride_doz, stride_doh, stride_dom, stride_dok,
                                                  batch_index, off_h_q, cu_seqlens_q_start + offs_q,
                                                  BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
     # DO_block_ptr = tl.make_block_ptr(
     #     base=DO,
     #     shape=(seqlen_q, head_dim),
-    #     strides=(stride_om, stride_ok),
+    #     strides=(stride_dom, stride_dok),
     #     offsets=(start_q, 0),
     #     block_shape=(BLOCK_M, BLOCK_DMODEL),
     #     order=(1, 0)

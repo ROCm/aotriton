@@ -6,3 +6,4 @@ numpy
 setuptools
 wheel
 pybind11
+pandas

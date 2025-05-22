@@ -144,18 +144,6 @@ attn_bwd_compact_varlen(T4 q, // 1 x num_heads x total_q x head_size, total_q :=
                         AOTRITON_NS::Stream stream,
                         BwdExtraArguments* extargs = nullptr);
 
-hipError_t AOTRITON_API
-debug_fill_dropout_rng(T4 r,
-                       uint64_t philox_seed,
-                       uint64_t philox_offset,
-                       AOTRITON_NS::Stream stream);
-
-hipError_t AOTRITON_API
-debug_fill_dropout_rng_tensor(T4 r,
-                              T0 philox_seed,
-                              T0 philox_offset,
-                              AOTRITON_NS::Stream stream);
-
 // varlen should use len(cu_seqlens_q) - 1 for the batch size
 hipError_t AOTRITON_API
 debug_simulate_encoded_softmax(T4 r,  // batch_size x num_heads x max_seqlen_q x max_seqlen_k
@@ -166,5 +154,109 @@ debug_simulate_encoded_softmax(T4 r,  // batch_size x num_heads x max_seqlen_q x
                                AOTRITON_NS::Stream stream);
 
 } // AOTRITON_NS::v2::flash
+
+
+namespace AOTRITON_NS::v3::flash {
+
+using T4 = AOTRITON_NS::TensorView<4>;
+using T2 = AOTRITON_NS::TensorView<2>;
+using T1 = AOTRITON_NS::TensorView<1>;
+using T0 = AOTRITON_NS::TensorView<0>;
+
+// For debugging and profiling purpose
+struct AOTRITON_API attn_options {
+};
+
+enum class AOTRITON_API CausalType : int8_t {
+  None = 0,
+  TopLeftAligned = 1,
+  BottomRightAligned = 2,
+  WindowedAttention = 3,
+};
+
+enum class AOTRITON_API VarlenType : int8_t {
+  None = 0,
+  CompactVarlen = 1,
+  PaddedVarlen = 2,
+};
+
+struct AOTRITON_API attn_fwd_params {
+  T4       Q;
+  T4       K;
+  T4       V;
+  T4       B;
+  T2       A;
+  float    Sm_scale;
+  T2       L;
+  T4       Out;
+  // int32_t  Num_head_q;       // Inferred from Q.size()
+  // int32_t  Num_head_k;       // Inferred from Q.size()
+  // int32_t  Num_seqlens;      // Inferred from cu_seqlens_q
+  T1       cu_seqlens_q;
+  T1       cu_seqlens_k;
+  int32_t  Max_seqlen_q = 0;    // Unused if cu_seqlens_q is empty
+  int32_t  Max_seqlen_k = 0;    // Unused if cu_seqlens_k is empty
+  // int32_t  Head_dim;
+  float    dropout_p;
+  T0       philox_seed_ptr;
+  T0       philox_offset1;
+  uint64_t philox_offset2;
+  T0       philox_seed_output;
+  T0       philox_offset_output;
+  T4       encoded_softmax;
+  T0       persistent_atomic_counter;
+  int8_t   causal_type;
+  int8_t   varlen_type = 0;
+
+  static constexpr int32_t kVersion = 1;
+  attn_fwd_params();
+};
+
+hipError_t AOTRITON_API
+attn_fwd(const attn_fwd_params& params,
+         int32_t params_version,
+         AOTRITON_NS::Stream stream,
+         const attn_options* options = nullptr);
+
+struct AOTRITON_API attn_bwd_params {
+  T4        Q;
+  T4        K;
+  T4        V;
+  T4        B;
+  float     Sm_scale;
+  T4        Out;
+  T4        DO;
+  T4        DK;
+  T4        DV;
+  T4        DQ;
+  T4        DB;
+  T2        L;
+  T2        D;
+  // int32_t   Num_head_q;          // Inferred from Q.size()
+  // int32_t   Num_head_k;          // Inferred from Q.size()
+  // int32_t   Num_seqlens;         // Inferred from cu_seqlens_q
+  T1        cu_seqlens_q;
+  T1        cu_seqlens_k;
+  int32_t   Max_seqlen_q = 0;       // Unused if cu_seqlens_q is empty
+  int32_t   Max_seqlen_k = 0;       // Unused if cu_seqlens_k is empty
+  // int32_t   Head_dim;            // Inferred from Q.size()
+  float     dropout_p;
+  T0        philox_seed_ptr;
+  T0        philox_offset1;
+  uint64_t  philox_offset2;
+  int8_t    causal_type;
+  int8_t    varlen_type = 0;
+
+  static constexpr int32_t kVersion = 1;
+  attn_bwd_params();
+};
+
+hipError_t AOTRITON_API
+attn_bwd(const attn_bwd_params& params,
+         int32_t params_version,
+         AOTRITON_NS::Stream stream,
+         const attn_options* options = nullptr);
+
+} // AOTRITON_NS::v3::flash
 
 #endif

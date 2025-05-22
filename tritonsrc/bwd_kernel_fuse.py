@@ -37,7 +37,6 @@ from composed_tensors import (
     composed_inner_product_fp32,
 )
 
-# TODO: Remove Unused 'Out' Argument from kernels below
 @triton.jit
 def bwd_kernel_fuse(
     # I/O tensors
@@ -51,6 +50,7 @@ def bwd_kernel_fuse(
     stride_vz, stride_vh, stride_vk, stride_vn,
     stride_bz, stride_bh, stride_bm, stride_bn,
     stride_oz, stride_oh, stride_om, stride_ok,
+    stride_doz, stride_doh, stride_dom, stride_dok,
     stride_dkz, stride_dkh, stride_dkn, stride_dkk,
     stride_dvz, stride_dvh, stride_dvk, stride_dvn,
     stride_dqz, stride_dqh, stride_dqm, stride_dqk,
@@ -186,7 +186,7 @@ def bwd_kernel_fuse(
                                                      TRANSPOSED=True)
 
         do_ptrs0, do_ptrs1, do_ptrs2 = composed_ptrs(DO,
-                                                     stride_oz, stride_oh, stride_om, stride_ok,
+                                                     stride_doz, stride_doh, stride_dom, stride_dok,
                                                      batch_index, off_h_q, cu_seqlens_q_start + offs_q_dq,
                                                      BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
         o_ptrs0, o_ptrs1, o_ptrs2 = composed_ptrs(Out,
