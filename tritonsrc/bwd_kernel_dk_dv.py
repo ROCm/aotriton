@@ -98,9 +98,9 @@ def bwd_kernel_dk_dv(
     if ENABLE_DROPOUT:
         philox_seed = tl.load(philox_seed_ptr)
         philox_offset_base += tl.load(philox_offset1)
-    start_k = tl.program_id(0) * BLOCK_N  # start_k partitions seqlen_k
+    start_k = tl.program_id(2) * BLOCK_N  # start_k partitions seqlen_k
     off_h_k = tl.program_id(1) # head index
-    off_z = tl.program_id(2) # batch index, for varlen it indicates index in cu_seqlens_q/k
+    off_z = tl.program_id(0) # batch index, for varlen it indicates index in cu_seqlens_q/k
     num_z = tl.num_programs(2)
     offs_m = tl.arange(0, BLOCK_M)
     offs_n = start_k + tl.arange(0, BLOCK_N)

@@ -48,10 +48,10 @@ def bwd_preprocess(
     tl.static_assert(D_HEAD_R3 == 0, f'D_HEAD = {D_HEAD} = 0b{D_HEAD:b} cannot be factored into <= 3 power of two values')
     tl.static_assert(D_HEAD1 > 0 or D_HEAD2 == 0, 'Only trailing D_HEADx can be 0')
 
-    off_m = tl.program_id(0) * BLOCK_M
+    off_m = tl.program_id(2) * BLOCK_M
     offs_m = off_m + tl.arange(0, BLOCK_M)
     off_h = tl.program_id(1) # head index
-    off_z = tl.program_id(2) # batch index
+    off_z = tl.program_id(0) # batch index
     num_h = tl.num_programs(1)
 
     # BLOCK POINTERS ARE KEPT FOR DOCUMENTATION PURPOSE
@@ -149,10 +149,10 @@ def bwd_preprocess_varlen(
     tl.static_assert(D_HEAD_R3 == 0, f'D_HEAD = {D_HEAD} = 0b{D_HEAD:b} cannot be factored into <= 3 power of two values')
     tl.static_assert(D_HEAD1 > 0 or D_HEAD2 == 0, 'Only trailing D_HEADx can be 0')
 
-    off_m = tl.program_id(0) * BLOCK_M
+    off_m = tl.program_id(2) * BLOCK_M
     offs_m = off_m + tl.arange(0, BLOCK_M)
     off_h = tl.program_id(1) # head index
-    off_z = tl.program_id(2) # batch index
+    off_z = tl.program_id(0) # batch index
     num_h = tl.num_programs(1)
     cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
     cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)

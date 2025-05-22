@@ -99,7 +99,7 @@ def bwd_kernel_fuse(
 
     tl.static_assert(BLOCK_DMODEL_R3 == 0, f'BLOCK_DMODEL = {BLOCK_DMODEL} = 0b{BLOCK_DMODEL:b} cannot be factored into <= 3 power of two values')
     tl.static_assert(BLOCK_DMODEL1 > 0 or BLOCK_DMODEL2 == 0, 'Only trailing BLOCK_DMODELx can be 0')
-    pid = tl.program_id(0)
+    pid = tl.program_id(2)
     NUM_KV_BLOCKS = tl.cdiv(max_seqlen_k, BLOCK_N)
     NUM_Q_BLOCKS = tl.cdiv(max_seqlen_q, BLOCK_N)
     IS_CAUSAL : tl.constexpr = CAUSAL_TYPE != 0
@@ -112,8 +112,7 @@ def bwd_kernel_fuse(
         group_size = num_head_q // num_head_k
         off_h_q = (off_pid // NUM_Q_BLOCKS) + off_h_k * group_size # q head index
 
-        off_z = tl.program_id(2) # batch index, for varlen it indicates index in cu_seqlens_q/k
-        num_z = tl.num_programs(2)
+        off_z = tl.program_id(0) # batch index, for varlen it indicates index in cu_seqlens_q/k
         off_zh = off_z * num_head_q + off_h_q * 1
         offs_q_dq = start_q + tl.arange(0, BLOCK_N)
         offs_k_dq = tl.arange(0, BLOCK_M)
@@ -386,10 +385,9 @@ def bwd_kernel_fuse(
         if ENABLE_DROPOUT:
             philox_seed = tl.load(philox_seed_ptr)
             philox_offset_base += tl.load(philox_offset1)
-        start_k = tl.program_id(0) * BLOCK_N  # start_k partitions seqlen_k
+        start_k = tl.program_id(2) * BLOCK_N  # start_k partitions seqlen_k
         off_h_k = tl.program_id(1) # head index
-        off_z = tl.program_id(2) # batch index, for varlen it indicates index in cu_seqlens_q/k
-        num_z = tl.num_programs(2)
+        off_z = tl.program_id(0) # batch index, for varlen it indicates index in cu_seqlens_q/k
         offs_q = tl.arange(0, BLOCK_M)
         offs_k = start_k + tl.arange(0, BLOCK_N)
         cu_seqlens_q_start = 0

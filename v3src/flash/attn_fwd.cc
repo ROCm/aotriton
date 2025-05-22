@@ -32,9 +32,9 @@ dim3 AttnFwdContext::grid_calculator() const {
     // Note: This fallback behavior is determined by GPU kernel at runtime.
     if (this->PERSISTENT_TYPE == 0 || unsupported_by_persistent) {
       dim3 grid {
-        nblocks,
-        uint32_t(params->Q->size(1)),
         uint32_t(params->Batch),
+        uint32_t(params->Q->size(1)),
+        nblocks,
       };
 #if AOTRITON_VERBOSE
       std::cerr << "Grid conf " << grid.x << " " << grid.y << " " << grid.z << std::endl;
