@@ -15,7 +15,7 @@ from attn_torch_function import (
     BWD_FUSED,
     V3_API,
 )
-from _common_test import SdpaContext, SdpaParams, SdpaContextFromNPZ, AOTRITON_TORCH_ONLY_USE_CPU
+from _common_test import SdpaContext, SdpaParams, SdpaContextFromNPZ, AOTRITON_TORCH_ONLY_USE_CPU, fmt_hdim
 
 @pytest.fixture()
 def torch_gpu(worker_id):
@@ -183,7 +183,7 @@ def _test_op_bwd(args, device : int | None = None):
 # @pytest.mark.parametrize('seqlen_q', [1, 4, 32, 128, 256, 512, 1024, 7, 394, 250, 399, 511, 1019])
 # @pytest.mark.parametrize('seqlen_k', [1, 4, 32, 128, 256, 512, 1024, 3, 217, 339, 313, 491, 988])
 # PyTorch set
-@pytest.mark.parametrize('D_HEAD', ALL_HEADDIMS)
+@pytest.mark.parametrize('D_HEAD', ALL_HEADDIMS, ids=fmt_hdim)
 @pytest.mark.parametrize('seqlen_q', [4, 8, 64, 143, 256, 512, 1024, 2048])
 @pytest.mark.parametrize('seqlen_k', [4, 8, 64, 127, 256, 587, 1024, 2048])
 # Minimal set
@@ -207,7 +207,7 @@ def test_op_bwd(torch_gpu, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, ca
 # @pytest.mark.parametrize('N_HEADS', [1, 4])
 @pytest.mark.parametrize('BATCH', [1, 4] if not FOR_RELEASE else [3])
 @pytest.mark.parametrize('N_HEADS', [1, 4] if not FOR_RELEASE else [5])
-@pytest.mark.parametrize('D_HEAD', ALL_HEADDIMS)
+@pytest.mark.parametrize('D_HEAD', ALL_HEADDIMS, ids=fmt_hdim)
 # @pytest.mark.parametrize('D_HEAD', [128])
 # Complete set
 # @pytest.mark.parametrize('seqlen_q', [4,8,16,17,32,64,128,143,256,512,1024,2048])
@@ -239,7 +239,7 @@ def test_op_bwd_with_matrix_bias(torch_gpu, BWDOP, BATCH, N_HEADS, D_HEAD, seqle
 @pytest.mark.parametrize('BATCH', [1, 4] if not FOR_RELEASE else [4])
 @pytest.mark.parametrize('N_HEADS', [(16, 8), (10, 2)])
 # @pytest.mark.parametrize('D_HEAD', [8] if SMALL_HEADDIM_ONLY else [8, 203, 256])
-@pytest.mark.parametrize('D_HEAD', ALL_HEADDIMS)
+@pytest.mark.parametrize('D_HEAD', ALL_HEADDIMS, ids=fmt_hdim)
 @pytest.mark.parametrize('seqlen_q', [4, 143, 2048])
 @pytest.mark.parametrize('seqlen_k', [4, 127, 579, 2048])
 @pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])

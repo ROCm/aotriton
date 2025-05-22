@@ -90,6 +90,32 @@ def composed_load(
     z = tl.load(z) if z_mask is None else tl.load(z, mask=z_mask, other=other)
     return (x, y, z)
 
+@triton.jit
+def composed_load_with_offset(
+        x : tl.tensor,
+        y : tl.tensor,
+        z : tl.tensor,
+        offset,
+        stride,
+        OFFS : tl.constexpr,
+        D0 : tl.constexpr,
+        D1 : tl.constexpr,
+        D2 : tl.constexpr,
+        i_rows,
+        i_cols,
+        other,
+        PADDED_ROW : tl.constexpr,
+        PADDED_COL : tl.constexpr,
+        TRANSPOSED : tl.constexpr = False
+):
+    return composed_load(x + offset * stride, y + offset * stride, z + offset * stride,
+                         OFFS + offset,
+                         D0, D1, D2,
+                         i_rows, i_cols,
+                         other,
+                         PADDED_ROW=PADDED_ROW,
+                         PADDED_COL=PADDED_COL,
+                         TRANSPOSED=TRANSPOSED)
 
 @triton.jit
 def composed_advance(

@@ -4,8 +4,18 @@
 
 import pytest
 import torch
+import os
 
-from attn_torch_function import attention, AttentionExtraArgs, debug_fill_dropout_rng, DEFAULT_PHILOX_SEED, DEFAULT_PHILOX_OFFSET
+from attn_torch_function import (
+    attention,
+    AttentionExtraArgs,
+    debug_fill_dropout_rng,
+    DEFAULT_PHILOX_SEED,
+    DEFAULT_PHILOX_OFFSET,
+    CausalType,
+)
+
+FOR_RELEASE = bool(int(os.getenv('FOR_RELEASE', default='0')))
 
 def scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_mask=None, dropout_p=0.0, is_causal=False, scale=None) -> torch.Tensor:
     # Efficient implementation equivalent to the following:
@@ -240,11 +250,14 @@ class FwdTester(object):
         # compare
         assert is_allclose
 
+def fmt_hdim(val):
+    return f'hdim{val}'
+
 # @pytest.mark.parametrize('BATCH', [1, 4])
 # @pytest.mark.parametrize('N_HEADS', [1, 4])
-@pytest.mark.parametrize('BATCH', [1, 4])
-@pytest.mark.parametrize('N_HEADS', [1, 4])
-@pytest.mark.parametrize('D_HEAD', [8, 16, 21, 32, 64, 72, 96, 128, 160, 192, 203, 256])
+@pytest.mark.parametrize('BATCH', [1, 4] if not FOR_RELEASE else [3])
+@pytest.mark.parametrize('N_HEADS', [1, 4] if not FOR_RELEASE else [8])
+@pytest.mark.parametrize('D_HEAD', [8, 16, 21, 32, 64, 72, 96, 128, 160, 192, 203, 256], ids=fmt_hdim)
 # @pytest.mark.parametrize('D_HEAD', [128])
 # Complete set
 # @pytest.mark.parametrize('seqlen_q', [4,8,16,17,32,64,128,143,256,512,1024,2048])
@@ -256,12 +269,12 @@ class FwdTester(object):
 # @pytest.mark.parametrize('seqlen_k', [128,256,512,1024])
 # @pytest.mark.parametrize('seqlen_q', [32, 128])
 # @pytest.mark.parametrize('seqlen_k', [32, 128])
-@pytest.mark.parametrize('causal', [False, True])
+@pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
 @pytest.mark.parametrize('dropout_p', [0.0, 0.5])
 # @pytest.mark.parametrize('dropout_p', [0.0])
 @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
 # @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16, torch.float32])
-@pytest.mark.parametrize('sm_scale', [0.0, 1.2])
+@pytest.mark.parametrize('sm_scale', [0.0, 1.2] if not FOR_RELEASE else [1.2])
 @pytest.mark.parametrize('storage_flip', [False, True])
 # @pytest.mark.parametrize('return_encoded_softmax', [False])
 def test_op_fwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
@@ -316,3 +329,26 @@ def test_fill_dropout_rng(BATCH, N_HEADS, seqlen_q, seqlen_k, causal, storage_fl
     tester = FwdTester()
     tester.use_fill_rng_for_dropout = True
     tester.do_test_op_fwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
+
+def main():
+    BATCH = 1
+    N_HEADS = 1
+    D_HEAD = 16
+    # seqlen_q = 512
+    # seqlen_k = 4
+    seqlen_q = 143
+    seqlen_k = 256
+    causal = True
+    # seqlen_q = 16
+    # seqlen_k = 32
+    # causal = CausalType.BOTTOM_RIGHT
+    sm_scale = 1.2
+    dropout_p = 0.0
+    dtype = torch.float16
+    storage_flip = False
+    bias_type = None
+    tester = FwdTester()
+    tester.do_test_op_fwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
+
+if __name__ == '__main__':
+    main()

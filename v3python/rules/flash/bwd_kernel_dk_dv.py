@@ -1,4 +1,4 @@
-# Copyright © 2023-2024 Advanced Micro Devices, Inc.
+# Copyright © 2023-2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
 import itertools
@@ -39,10 +39,12 @@ class bwd_kernel_dk_dv(FlashKernel):
         'philox_seed_ptr',
         'philox_offset1',
         'philox_offset2',
+        'Window_left',
+        'Window_right',
         'BLOCK_M', # tl.constexpr starts here
         'BLOCK_DMODEL',
         'BLOCK_N',
-        'CAUSAL',
+        'CAUSAL_TYPE',
         'ENABLE_DROPOUT',
         'PADDED_HEAD',
         'BIAS_TYPE',

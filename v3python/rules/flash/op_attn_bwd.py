@@ -41,10 +41,11 @@ class OpAttnBwd(OpAttn):
         'philox_seed_ptr',
         'philox_offset1',
         'philox_offset2',
+        'Window_left', 'Window_right',
         'BLOCK_M', # tl.constexpr starts here
         'BLOCK_DMODEL',
         'BLOCK_N',
-        'CAUSAL',
+        'CAUSAL_TYPE',
         'ENABLE_DROPOUT',
         'PADDED_HEAD',
         'BIAS_TYPE',
@@ -82,10 +83,11 @@ class OpAttnBwd(OpAttn):
         frozenset(['philox_seed_ptr']) : match_fwd('philox_seed_ptr'),
         frozenset(['philox_offset1']) : match_fwd('philox_offset1'),
         frozenset(['philox_offset2']) : match_fwd('philox_offset2'),
+        frozenset(['Window_left', 'Window_right']) : match_fwd('Window_left'),
     }
     FEAT_CHOICES = {
         frozenset(['BLOCK_DMODEL']) : match_fwd('BLOCK_DMODEL'),
-        frozenset(['CAUSAL']) : [True, False],
+        frozenset(['CAUSAL_TYPE']) : [0, 3],
         frozenset(['ENABLE_DROPOUT']) : match_fwd('ENABLE_DROPOUT'),
         frozenset(['PADDED_HEAD']) : [False, True],
         frozenset(['BIAS_TYPE']) : [0, 1],

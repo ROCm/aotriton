@@ -42,8 +42,10 @@ class bwd_kernel_fuse(FlashKernel):
         'philox_seed_ptr',
         'philox_offset1',
         'philox_offset2',
+        'Window_left',
+        'Window_right',
         'BLOCK_DMODEL', # tl.constexpr starts here
-        'CAUSAL',
+        'CAUSAL_TYPE',
         'ENABLE_DROPOUT',
         'PADDED_HEAD',
         'BIAS_TYPE',

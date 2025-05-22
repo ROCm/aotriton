@@ -29,6 +29,46 @@ if not IGNORE_BACKWARD_IMPORT:
         attn_bwd_params as fa_backward_op_params
     )
 
+# Note: we don't use Enum class because accessing the integer requires using
+#       `.value` property, which makes the code verbose.
+class CausalType:
+    NONE = 0
+    TOP_LEFT = 1
+    BOTTOM_RIGHT = 2
+    WINDOWED = 3
+
+class WindowValue:
+    NONE = 0
+    TOP_LEFT_ALIGNED = -2147483647       # 0x80000001. Special value for varlen
+    BOTTOM_RIGHT_ALIGNED = -2147483646   # 0x80000002. Special value for varlen
+
+def translate_causal(causal, v3_api):
+    window_left, window_right = 0, 0
+    if isinstance(causal, tuple):
+        assert v3_api, 'Only V3_API supports windowed attention (causal = tuple([window_left, window_right]))'
+        window_left, window_right = causal
+        causal_type = CausalType.WINDOWED
+    elif isinstance(causal, bool):
+        # causal_type = CausalType.TOP_LEFT if causal else CausalType.NONE
+        causal_type = CausalType.WINDOWED if causal else CausalType.NONE
+        if causal:
+            window_left = WindowValue.TOP_LEFT_ALIGNED
+            window_right = WindowValue.TOP_LEFT_ALIGNED
+    else:
+        assert causal in [CausalType.NONE, CausalType.TOP_LEFT, CausalType.BOTTOM_RIGHT]
+        assert v3_api, 'CausalType.TOP_LEFT/BOTTOM_RIGHT variant is supported thru windowed attention, which requires V3 API'
+        if causal == CausalType.TOP_LEFT:
+            causal_type = CausalType.WINDOWED
+            window_left = WindowValue.TOP_LEFT_ALIGNED
+            window_right = WindowValue.TOP_LEFT_ALIGNED
+        elif causal == CausalType.BOTTOM_RIGHT:
+            causal_type = CausalType.WINDOWED
+            window_left = WindowValue.BOTTOM_RIGHT_ALIGNED
+            window_right = WindowValue.BOTTOM_RIGHT_ALIGNED
+        else:
+            causal_type = causal
+    return causal_type, window_left, window_right
+
 from pyaotriton import T1, T2, T4, DType, Stream, hipError_t, get_name_suffix
 assert get_name_suffix() != "", ("To run tests, AOTriton must be compiled with suffixes "
                                  "by passing -DAOTRITON_NAME_SUFFIX=SOME_SUFFIX to cmake. "
@@ -111,7 +151,7 @@ else:
 def attn_fwd(q, k, v, b, sm_scale, M, o,
              dropout_p, philox_seed, philox_offset1, philox_offset2,
              philox_seed_output, philox_offset_output,
-             encoded_softmax, is_causal, atomic,
+             encoded_softmax, causal, atomic,
              extargs=None, call_operator=False):
     extargs = FwdExtraArguments() if extargs is None else extargs
     qview, qdevm = mk_aotensor(q)
@@ -126,6 +166,7 @@ def attn_fwd(q, k, v, b, sm_scale, M, o,
     offsetoutview, offsetoutdevm = mk_aotensor(philox_offset_output)
     esmview, esmdevm = mk_aotensor(encoded_softmax, if_empty_then_like=q)
     atomicview, atomicdevm = mk_aotensor(atomic)
+    causal_type, window_left, window_right = translate_causal(causal, v3_api=call_operator)
     if AOTRITON_TORCH_ONLY_USE_CPU:
         hipDeviceSynchronize()
     if not call_operator:
@@ -143,7 +184,7 @@ def attn_fwd(q, k, v, b, sm_scale, M, o,
                          seedoutview,
                          offsetoutview,
                          esmview,
-                         is_causal,
+                         causal_type,
                          atomicview,
                          Stream(),
                          extargs)
@@ -168,7 +209,9 @@ def attn_fwd(q, k, v, b, sm_scale, M, o,
         params.philox_offset_output = offsetoutview
         params.encoded_softmax = esmview
         params.persistent_atomic_counter = atomicview
-        params.causal_type = 1 if is_causal else 0
+        params.causal_type = causal_type
+        params.window_left = window_left
+        params.window_right = window_right
         params.varlen_type = 0
         err = fa_forward_op(params,
                             fa_forward_op_params.kVersion,
@@ -182,7 +225,7 @@ def attn_fwd(q, k, v, b, sm_scale, M, o,
     return err
 
 def attn_bwd(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
-             dropout_p, philox_seed, philox_offset1, philox_offset2, is_causal,
+             dropout_p, philox_seed, philox_offset1, philox_offset2, causal,
              extargs=None, call_operator=False):
     extargs = BwdExtraArguments() if extargs is None else extargs
     qview, qdevm = mk_aotensor(q)
@@ -201,6 +244,7 @@ def attn_bwd(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
     offset1view, offset1devm = mk_aotensor(philox_offset1)
     if AOTRITON_TORCH_ONLY_USE_CPU:
         hipDeviceSynchronize()
+    causal_type, window_left, window_right = translate_causal(causal, v3_api=call_operator)
     # print(f'{b=}')
     if not call_operator:
         err = fa_backward(qview,
@@ -220,7 +264,7 @@ def attn_bwd(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
                           seedview,
                           offset1view,
                           philox_offset2,
-                          is_causal,
+                          causal,
                           Stream(),
                           extargs)
     else:
@@ -246,7 +290,9 @@ def attn_bwd(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
         params.philox_seed_ptr = seedview;
         params.philox_offset1 = offset1view;
         params.philox_offset2 = philox_offset2;
-        params.causal_type = 1 if is_causal else 0;
+        params.causal_type = causal_type
+        params.window_left = window_left
+        params.window_right = window_right
         params.varlen_type = 0
         err = fa_backward_op(params,
                              fa_backward_op_params.kVersion,
@@ -260,7 +306,7 @@ def attn_bwd(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
     return err
 
 def attn_bwd_fused(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L,
-             dropout_p, philox_seed, philox_offset1, philox_offset2, is_causal, extargs=None):
+             dropout_p, philox_seed, philox_offset1, philox_offset2, causal, extargs=None):
     extargs = FusedBwdExtraArguments() if extargs is None else extargs
     qview, qdevm = mk_aotensor(q)
     kview, kdevm = mk_aotensor(k)
@@ -277,6 +323,7 @@ def attn_bwd_fused(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L,
     offset1view, offset1devm = mk_aotensor(philox_offset1)
     if AOTRITON_TORCH_ONLY_USE_CPU:
         hipDeviceSynchronize()
+    causal_type, window_left, window_right = translate_causal(causal, v3_api=False)
     # print(f'{b=}')
     err = fa_backward_fused(qview,
                             kview,
@@ -294,7 +341,7 @@ def attn_bwd_fused(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L,
                             seedview,
                             offset1view,
                             philox_offset2,
-                            is_causal,
+                            causal_type,
                             Stream(),
                             extargs)
     if AOTRITON_TORCH_ONLY_USE_CPU:
@@ -329,7 +376,7 @@ def attn_fwd_compact_varlen(q, k, v,
         b, sm_scale, M, o,
         dropout_p, philox_seed, philox_offset1, philox_offset2,
         philox_seed_output, philox_offset_output,
-        encoded_softmax, is_causal, atomic, call_operator=False):
+        encoded_softmax, causal, atomic, call_operator=False):
     qview, qdevm = mk_aotensor(q)
     kview, kdevm = mk_aotensor(k)
     vview, vdevm = mk_aotensor(v)
@@ -344,6 +391,7 @@ def attn_fwd_compact_varlen(q, k, v,
     offsetoutview, offsetoutdevm = mk_aotensor(philox_offset_output)
     esmview, esmdevm = mk_aotensor(encoded_softmax, if_empty_then_like=q)
     atomicview, atomicdevm = mk_aotensor(atomic)
+    causal_type, window_left, window_right = translate_causal(causal, v3_api=call_operator)
     if not call_operator:
         err = fa_forward_compact_varlen(qview,
                                         kview,
@@ -363,7 +411,7 @@ def attn_fwd_compact_varlen(q, k, v,
                                         seedoutview,
                                         offsetoutview,
                                         esmview,
-                                        is_causal,
+                                        causal_type,
                                         atomicview,
                                         Stream())
     else:
@@ -387,7 +435,9 @@ def attn_fwd_compact_varlen(q, k, v,
         params.philox_offset_output = offsetoutview
         params.encoded_softmax = esmview
         params.persistent_atomic_counter = atomicview
-        params.causal_type = 1 if is_causal else 0
+        params.causal_type = causal_type
+        params.window_left = window_left
+        params.window_right = window_right
         params.varlen_type = 1
         err = fa_forward_op(params,
                             fa_forward_op_params.kVersion,
@@ -400,7 +450,7 @@ def attn_fwd_compact_varlen(q, k, v,
 def attn_bwd_compact_varlen(q, k, v,
         cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
         b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
-        dropout_p, philox_seed, philox_offset1, philox_offset2, is_causal, call_operator=False):
+        dropout_p, philox_seed, philox_offset1, philox_offset2, causal, call_operator=False):
     qview, qdevm = mk_aotensor(q)
     kview, kdevm = mk_aotensor(k)
     vview, vdevm = mk_aotensor(v)
@@ -417,6 +467,7 @@ def attn_bwd_compact_varlen(q, k, v,
     deltaview, deltadevm = mk_aotensor(delta)
     seedview, seeddevm = mk_aotensor(philox_seed)
     offset1view, offset1devm = mk_aotensor(philox_offset1)
+    causal_type, window_left, window_right = translate_causal(causal, v3_api=call_operator)
     # print(f'{b=}')
     if not call_operator:
         err = fa_backward_compact_varlen(qview,
@@ -440,7 +491,7 @@ def attn_bwd_compact_varlen(q, k, v,
                                          seedview,
                                          offset1view,
                                          philox_offset2,
-                                         is_causal,
+                                         causal_type,
                                          Stream())
     else:
         params = fa_backward_op_params()
@@ -465,7 +516,9 @@ def attn_bwd_compact_varlen(q, k, v,
         params.philox_seed_ptr = seedview;
         params.philox_offset1 = offset1view;
         params.philox_offset2 = philox_offset2;
-        params.causal_type = 1 if is_causal else 0;
+        params.causal_type = causal_type
+        params.window_left = window_left
+        params.window_right = window_right
         params.varlen_type = 1
         err = fa_backward_op(params,
                              fa_backward_op_params.kVersion,
