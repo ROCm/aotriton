@@ -163,7 +163,9 @@ if(AOTRITON_BUILD_FOR_TUNING)
     ${GENERATE_OPTION}
     --build_for_tuning_second_pass
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}")
-  add_dependencies(aotriton_v2_regen_shim aotriton_v2_compile)
+  if(NOT AOTRITON_NOIMAGE_MODE)
+    add_dependencies(aotriton_v2_regen_shim aotriton_v2_compile)
+  endif(NOT AOTRITON_NOIMAGE_MODE)
 endif(AOTRITON_BUILD_FOR_TUNING)
 
 set(AOTRITON_SHIM_FLAGS "")
