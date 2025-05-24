@@ -131,9 +131,9 @@ class _varlen_attention(torch.autograd.Function):
         # The fallback-ed kernel needs fallback launch options
         if persistent_type == PersistentType.NONE or unsupported_by_persistent:
             grid = lambda META: (
-                triton.cdiv(max_seqlen_q, META['BLOCK_M']),
-                num_head_q,
                 batch,
+                num_head_q,
+                triton.cdiv(max_seqlen_q, META['BLOCK_M']),
             )
             Num_CU = 0
         else:
@@ -285,9 +285,9 @@ class _varlen_attention(torch.autograd.Function):
             )
         if return_encoded_softmax:
             grid = lambda META: (
-                triton.cdiv(encoded_softmax.shape[2], META['BLOCK_M']),
-                encoded_softmax.shape[1],
                 encoded_softmax.shape[0],
+                encoded_softmax.shape[1],
+                triton.cdiv(encoded_softmax.shape[2], META['BLOCK_M']),
             )
             debug_simulate_encoded_softmax[grid](encoded_softmax,
                                                  *encoded_softmax.stride(),
@@ -311,7 +311,7 @@ class _varlen_attention(torch.autograd.Function):
         else:
             tuning_result = None
             block_m = min(128, q.shape[2], k.shape[2])
-        grid = (triton.cdiv(max_seqlen_q, block_m), num_head_q, batch)
+        grid = (batch, num_head_q, triton.cdiv(max_seqlen_q, block_m),)
         print(f'{grid=}')
         ctx.save_for_backward(q, k, v, b, o, M)
         ctx.seqlen_q = seqlen_q
@@ -380,7 +380,7 @@ class _varlen_attention(torch.autograd.Function):
             BLOCK = 128
         return_autotune = ctx.tuning_result is not None
 
-        grid_prep = (triton.cdiv(max_seqlen_q, BLOCK), num_heads, batch)
+        grid_prep = (batch, num_heads, triton.cdiv(max_seqlen_q, BLOCK),)
         bare_bwd_preprocess_varlen[grid_prep](
             o, do, delta,
             o.stride(0), o.stride(1), o.stride(2), o.stride(3),
@@ -423,9 +423,9 @@ class _varlen_attention(torch.autograd.Function):
             BLOCK_N = max(16, BLOCK_N // 2)
         # debug_mask = torch.zeros((q.shape[0], q.shape[1], max_seqlen_q, max_seqlen_k), device=q.device, dtype=ctx.encoded_softmax.dtype)
         grid_dk_dv = lambda META: (
-            triton.cdiv(max_seqlen_k, META['BLOCK_N']),
-            num_heads,
             batch,
+            num_heads,
+            triton.cdiv(max_seqlen_k, META['BLOCK_N']),
         )
         stride_dbz, stride_dbh, stride_dbm, stride_dbn = db.stride()
         if db.numel() == 0 or not b.requires_grad:
@@ -552,9 +552,9 @@ class _varlen_attention(torch.autograd.Function):
             # print(f'Full q: {q}', file=sys.stderr)
             # assert mask_allclose
         grid_dq = lambda META: (
-            triton.cdiv(max_seqlen_q, META['BLOCK_M']),
-            num_heads,
             batch,
+            num_heads,
+            triton.cdiv(max_seqlen_q, META['BLOCK_M']),
         )
         if q.requires_grad:
             if ctx.autotune:
