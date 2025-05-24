@@ -144,7 +144,7 @@ _bwd_kernel_fuse(T4 q,
   err = context.launch(stream);
 #if AOTRITON_BUILD_FOR_TUNING
   if (extargs && extargs->peek_kernel_image) {
-    auto essentials = context.selected_kernel->get_image_info_iff_decompressed();
+    auto essentials = context.kernel_on_device->get_image_info_iff_decompressed();
     extargs->kernel_image = essentials.image;
     extargs->image_size = essentials.size;
 #if AOTRITON_VERBOSE

@@ -31,7 +31,7 @@ struct [[context_class_name]] {
 
 #if AOTRITON_BUILD_FOR_TUNING
     int _has_preferred_backend = -1;
-    constexpr int _total_number_of_backends = BackendEnum::Max;
+    static constexpr int _total_number_of_backends = BackendEnum::Max;
     const char* _backend_name = nullptr;
 #endif
 
