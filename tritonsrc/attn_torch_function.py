@@ -27,6 +27,7 @@ from sized_tuned_bwd import (
     sized_tuned_bwd_kernel_dq,
 )
 
+assert os.getenv('TRITON_F32_DEFAULT', default=None) == 'ieee', 'Must set TRITON_F32_DEFAULT=ieee, otherwise Triton losses precision on fp32 datatypes'
 BWD_FUSED = bool(int(os.getenv('BWD_FUSED', default='0')))
 V3_API = 0  # triton kernel does not have "V3 API"
 
