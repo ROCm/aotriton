@@ -149,6 +149,23 @@ if(NOT AOTRITON_NOIMAGE_MODE)
   add_custom_target(aotriton_kernel_storage_v2 ALL DEPENDS ${ALL_AKS2})
 endif(NOT AOTRITON_NOIMAGE_MODE)
 
+# The build logic is slightly different when AOTRITON_BUILD_FOR_TUNING=ON
+# Some GPU kernels may fail to compile and autotune files should be re-generated accordingly
+if(AOTRITON_BUILD_FOR_TUNING)
+  # Regenerate with --ignore_missing_kernels
+  add_custom_target(aotriton_v2_regen_shim
+    COMMAND ${CMAKE_COMMAND}
+    -E env VIRTUAL_ENV=${VENV_DIR}
+    AOTRITON_ENABLE_FP32=${AOTRITON_ENABLE_FP32}
+    "${VENV_DIR}/bin/python" -m v3python.generate
+    --target_gpus ${EFFECTIVE_TARGET_GPUS}
+    --build_dir "${AOTRITON_V2_BUILD_DIR}"
+    ${GENERATE_OPTION}
+    --build_for_tuning_second_pass
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}")
+  add_dependencies(aotriton_v2_regen_shim aotriton_v2_compile)
+endif(AOTRITON_BUILD_FOR_TUNING)
+
 set(AOTRITON_SHIM_FLAGS "")
 if(AOTRITON_NAME_SUFFIX)
   list(APPEND AOTRITON_SHIM_FLAGS "--library_suffix" "${AOTRITON_NAME_SUFFIX}")
@@ -173,6 +190,7 @@ target_include_directories(aotriton_v2 PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_compile_options(aotriton_v2 PRIVATE -fPIC)
 if(AOTRITON_BUILD_FOR_TUNING)
   target_compile_definitions(aotriton_v2 PRIVATE -DAOTRITON_BUILD_FOR_TUNING=1)
+  add_dependencies(aotriton_v2 aotriton_v2_regen_shim)
 else(AOTRITON_BUILD_FOR_TUNING)
   target_compile_definitions(aotriton_v2 PRIVATE -DAOTRITON_BUILD_FOR_TUNING=0)
 endif(AOTRITON_BUILD_FOR_TUNING)

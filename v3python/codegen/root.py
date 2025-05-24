@@ -14,6 +14,10 @@ from ..utils import (
     RegistryRepository,
     log,
 )
+from .common import (
+    hsaco_dir,
+    hsaco_filename,
+)
 from ..gpu_targets import AOTRITON_ARCH_TO_DIRECTORY
 
 class RootGenerator(object):
@@ -35,6 +39,9 @@ class RootGenerator(object):
             hsaco_for_kernels.append((k, hsacos))
             shims += ksg.shim_files
 
+        if args.build_for_tuning_second_pass:
+            return
+
         with LazyFile(args.build_dir / 'Bare.shim') as shimfile:
             for shim in shims:
                 print(str(shim.absolute()), file=shimfile)
@@ -48,7 +55,7 @@ class RootGenerator(object):
             LazyFile(args.build_dir / 'Bare.cluster') as clusterfile,
         ):
             for k, hsacos in hsaco_for_kernels:
-                image_path = args.build_dir / k.FAMILY / f'gpu_kernel_image.{k.NAME}'
+                image_path = hsaco_dir(args.build_dir, k)
                 image_path.mkdir(parents=True, exist_ok=True)
                 for functional, signatures in hsacos.items():
                     log(lambda : f'{signatures=}')
@@ -59,11 +66,8 @@ class RootGenerator(object):
                         self.write_hsaco(k, image_path, functional, ksig, rulefile)
                     self.write_cluster(k, image_path, functional, signatures, clusterfile)
 
-    def _objfn(self, kdesc, ksig):
-        return kdesc.NAME + '-Sig-' + ksig.full_compact_signature + '.hsaco'
-
     def _absobjfn(self, path, kdesc, ksig):
-        full = path / self._objfn(kdesc, ksig)
+        full = path / hsaco_filename(kdesc, ksig)
         return str(full.absolute())
 
     def write_hsaco(self, kdesc, path, functional, ksig, rulefile):

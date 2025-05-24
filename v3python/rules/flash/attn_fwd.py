@@ -9,10 +9,12 @@ from ._common import (
     BinningLessOrEqual,
     BinningExact,
     Config,
+    check_value,
 )
 from .ops import OpAttnFwd
 from .op_attn_fwd import _IF_CAUSAL
 from v3python.base import typed_choice as TC
+from v3python.gpu_targets import AOTRITON_ARCH_PRODUCTION_LINE
 
 class attn_fwd(FlashKernel):
     SHARED_IFACE = OpAttnFwd
@@ -60,16 +62,17 @@ class attn_fwd(FlashKernel):
     DOWNGRADER = [(('RETURN_ENCODED_SOFTMAX', True), DOWNGRADE_RETURN_ENCODED_SOFTMAX)]
 
     @staticmethod
-    def gen_autotune_configs(gpu : str, fsel_dict : 'dict[str, Any]'):
-        dtype = fsel_dict['Q']
-        HEAD_DIM = fsel_dict['BLOCK_DMODEL']
-        CAUSAL_TYPE = fsel_dict['CAUSAL_TYPE']
+    def gen_autotune_configs(f : 'Functional'):
+        arch = f.arch
+        dtype = check_value(f, ['Q'])
+        HEAD_DIM = check_value(f, ['BLOCK_DMODEL'])
+        CAUSAL_TYPE = check_value(f, ['CAUSAL_TYPE'])
         ret = []
-        MI = 'MI' in gpu
-        Navi = 'Navi' in gpu or gpu.startswith('RX')
-        if MI:
+        CDNA = AOTRITON_ARCH_PRODUCTION_LINE[arch] == 'CDNA'
+        RDNA = AOTRITON_ARCH_PRODUCTION_LINE[arch] == 'RDNA'
+        if CDNA:
             BLOCK_SIZES = [(32, 16), (128, 64), (64, 64), (64, 32), (128, 128)]
-        elif Navi:
+        elif RDNA:
             BLOCK_SIZES = [(64, 32), (32, 32), (32, 16)]
             if '*fp32' not in dtype:
                 BLOCK_SIZES += [(16, 16)]
@@ -89,7 +92,7 @@ class attn_fwd(FlashKernel):
                 continue  # Timeout
             if stages == 2 and M * N >= 64 * 32:
                 continue  # Timeout
-            if Navi and HEAD_DIM == 256 and stages == 2:
+            if RDNA and HEAD_DIM == 256 and stages == 2:
                 continue  # Timeout
             if HEAD_DIM >= 512 and M == 128 and N == 128 and warps == 2:
                 continue  # Timeout
@@ -97,13 +100,13 @@ class attn_fwd(FlashKernel):
                 M //= 2
             if M < N:  # Faulty or duplicate
                 continue
-            if MI and M > 32 and N > 16 and stages == 2:
+            if CDNA and M > 32 and N > 16 and stages == 2:
                 continue  # No optimal kernel according to 0.8b tuning db
-            if MI and M > 64 and N > 64 and warps == 1:
+            if CDNA and M > 64 and N > 64 and warps == 1:
                 continue  # No optimal kernel according to 0.8b tuning db
-            if Navi and M > 32 and N > 32 and stages == 2:
+            if RDNA and M > 32 and N > 32 and stages == 2:
                 continue  # No optimal kernel according to 0.8b tuning db
-            if Navi and M > 32 and N > 32 and warps == 1:
+            if RDNA and M > 32 and N > 32 and warps == 1:
                 continue  # No optimal kernel according to 0.8b tuning db
             persistent_type = 2 if CAUSAL_TYPE != 0 else 0
             kw = { 'PERSISTENT_TYPE' : persistent_type,
@@ -115,7 +118,7 @@ class attn_fwd(FlashKernel):
                  }
             # TODO: Add Dyamic PERSISTENT_TYPE IFF causal is enabled to tuning database
             yield Config(kw, num_stages=stages, num_warps=warps)
-        if MI:
+        if CDNA:
             pass
             # Covered in general logic above
             # yield from [
@@ -125,7 +128,7 @@ class attn_fwd(FlashKernel):
             #     Config({'BLOCK_M': 128, 'BLOCK_N':  64, 'waves_per_eu': 1, 'pre_load_v': False}, num_stages=1, num_warps=4),
             #     Config({'BLOCK_M': 128, 'BLOCK_N':  32, 'waves_per_eu': 2, 'pre_load_v': False}, num_stages=1, num_warps=4),
             # ]
-        elif Navi:
+        elif RDNA:
             pass
             # Covered in general logic above
             # yield from [

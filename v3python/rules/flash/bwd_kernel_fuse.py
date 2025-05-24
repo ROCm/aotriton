@@ -8,10 +8,12 @@ from ._common import (
     select_pattern,
     BinningLessOrEqual,
     BinningExact,
-    Config
+    Config,
+    check_value,
 )
 from .attn_fwd import attn_fwd
 from .op_attn_bwd import OpAttnBwd
+from v3python.gpu_targets import AOTRITON_ARCH_PRODUCTION_LINE
 match_fwd = lambda aname : get_possible_choices(attn_fwd, aname)
 
 class bwd_kernel_fuse(FlashKernel):
@@ -73,12 +75,13 @@ class bwd_kernel_fuse(FlashKernel):
     DOWNGRADER = []
 
     @staticmethod
-    def gen_autotune_configs(gpu, fsel_dict : 'dict[str, Any]'):
-        dtype = fsel_dict['Q']
-        HEAD_DIM = fsel_dict['BLOCK_DMODEL']
-        MI = 'MI' in gpu
-        Navi = 'Navi' in gpu or gpu.startswith('RX')
+    def gen_autotune_configs(f : 'Functional'):
+        arch = f.arch
+        dtype = check_value(f, ['Q'])
+        HEAD_DIM = check_value(f, ['BLOCK_DMODEL'])
         ret = []
+        CDNA = AOTRITON_ARCH_PRODUCTION_LINE[arch] == 'CDNA'
+        RDNA = AOTRITON_ARCH_PRODUCTION_LINE[arch] == 'RDNA'
         # TODO: right sizes for fp32?
         BLOCK_SIZES = [16, 32, 64] if dtype != '*fp32:16' else [16, 32]
         WAVES_PER_EU = [1, 2, 3, 4]
@@ -91,11 +94,11 @@ class bwd_kernel_fuse(FlashKernel):
                                                             NUM_STAGES):
             if M < N:
                 continue  # deduplicate
-            if MI and M == 64 and N == 64 and warps == 4:
+            if CDNA and M == 64 and N == 64 and warps == 4:
                 continue  # No optimal kernel according to 0.8b tuning db
-            if Navi and M > 32 and warps == 1:
+            if RDNA and M > 32 and warps == 1:
                 continue  # No optimal kernel according to 0.8b tuning db
-            if Navi and M == 32  and N == 32 and warps != 4:
+            if RDNA and M == 32  and N == 32 and warps != 4:
                 continue  # Timeout
             if HEAD_DIM > 256 and M == 64 and N == 64 and warps == 1:
                 continue  # Timeout

@@ -11,11 +11,13 @@ AOTRITON_SUPPORTED_GPUS = (
     'gfx950_mod0',
     'gfx1100_mod0',
     'gfx1201_mod0',
+    'gfx1250_mod0',
 )
 
 AOTRITON_TUNING_DATABASE_REUSE = {
     'gfx950_mod0'  : 'gfx942_mod0',
     'gfx1201_mod0' : 'gfx1100_mod0',
+    'gfx1250_mod0' : 'gfx942_mod0',
 }
 
 AOTRITON_ARCH_TO_DIRECTORY = {
@@ -26,6 +28,7 @@ AOTRITON_ARCH_TO_DIRECTORY = {
     'gfx950'    : 'amd-gfx950',
     'gfx1200'   : 'amd-gfx120x',
     'gfx1201'   : 'amd-gfx120x',
+    'gfx1250'   : 'amd-gfx1250',
 }
 
 AOTRITON_ARCH_WARPSIZE = {
@@ -34,6 +37,18 @@ AOTRITON_ARCH_WARPSIZE = {
     'gfx950'     : 64,
     'gfx1100'    : 32,
     'gfx1201'    : 32,
+    'gfx1250'    : 32,
+}
+
+AOTRITON_ARCH_PRODUCTION_LINE = {
+    'gfx90a'     : 'CDNA',
+    'gfx942'     : 'CDNA',
+    'gfx950'     : 'CDNA',
+    'gfx1100'    : 'RDNA',
+    'gfx1150'    : 'RDNA',
+    'gfx1151'    : 'RDNA',
+    'gfx1201'    : 'RDNA',
+    'gfx1250'    : 'CDNA',
 }
 
 def gpu2arch(gpu : str) -> str:

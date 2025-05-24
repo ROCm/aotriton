@@ -210,6 +210,17 @@ class KernelDescription(Interface):
         sigs = [ KernelSignature(f, defaults, DEFAULT_COPT) ]
         return lut_tensor, sigs, None
 
+    def gen_signatures_for_tuning(self, f : Functional):
+        def gen_perfs(cfg) -> 'list[Bind]':
+            for meta in self._perf_params:
+                value = cfg.kwargs[meta.repr_name]
+                yield meta.create_direct(value)
+        def gen_copts(cfg) -> list[int]:
+            for copt, defopt in zip(COMPILER_OPTIONS, DEFAULT_COPT):
+                yield getattr(cfg, copt, defopt)
+        for cfg in self.gen_autotune_configs(f):
+            yield KernelSignature(f, list(gen_perfs(cfg)), list(gen_copts(cfg)))
+
     @property
     def is_tunable(self):
         return hasattr(self, 'gen_autotune_configs')

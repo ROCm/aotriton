@@ -2,6 +2,14 @@
 # SPDX-License-Identifier: MIT
 
 from v3python.utils import log
+from pathlib import Path
+
+def hsaco_filename(kdesc : 'KernelDescription',
+                   ksig : 'KernelSignature'):
+    return kdesc.NAME + '-Sig-' + ksig.full_compact_signature + '.hsaco'
+
+def hsaco_dir(build_dir : Path, k : 'KernelDescription'):
+    return build_dir / k.FAMILY / f'gpu_kernel_image.{k.NAME}'
 
 '''
 _cfields means the data type has been translated to c types

@@ -29,7 +29,7 @@ def check_value(functional, repr_name):
     tc = functional.compact_choices
     for aname in repr_name:
         if aname in tc:
-            return tc[aname].json_value
+            return tc[aname].triton_compile_signature
     assert False, f'Cannot find {repr_name=} in {functional=}'
 
 class FlashKernel(KernelDescription):
