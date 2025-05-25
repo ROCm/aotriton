@@ -27,6 +27,17 @@ from sized_tuned_bwd import (
     sized_tuned_bwd_kernel_dq,
 )
 
+def evaluate_gfx_arch_within(arch_list):
+    if not torch.cuda.is_available():
+        return False
+    gcn_arch_name = torch.cuda.get_device_properties('cuda').gcnArchName
+    return any(arch in gcn_arch_name for arch in arch_list)
+
+def is_rdna():
+    return evaluate_gfx_arch_within(['gfx1100', 'gfx1101', 'gfx1200', 'gfx1201', 'gfx1030', 'gfx1150', 'gfx1151'])
+
+IS_RDNA = is_rdna()
+
 assert os.getenv('TRITON_F32_DEFAULT', default=None) == 'ieee', 'Must set TRITON_F32_DEFAULT=ieee, otherwise Triton losses precision on fp32 datatypes'
 BWD_FUSED = bool(int(os.getenv('BWD_FUSED', default='0')))
 V3_API = 0  # triton kernel does not have "V3 API"
@@ -416,7 +427,7 @@ class _attention(torch.autograd.Function):
         q_descale = k_descale = p_scale = p_descale = v_descale = 0
 
         use_small_block = dropout_p > 0.0 or BIAS_TYPE != 0
-        use_medium_block = False # reserved
+        use_medium_block = IS_RDNA  # (128, 64) breaks on RDNA for some reason (register pressure?)
         if use_small_block:
             BLOCK_M = 64
             BLOCK_N = 32
