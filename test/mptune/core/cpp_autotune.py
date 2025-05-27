@@ -238,7 +238,7 @@ def check_spill_registers(extargs, atr):
     atr.sgpr_spill_count = sgpr_spill_count
     return too_many_spills, noimage
 
-def cpp_autotune_sub_kernel_gen(extargs, kernel_func, validator, cur_kig):
+def cpp_autotune_sub_kernel_gen(extargs, kernel_func, validator, cur_kig, *, FEWER_KERNEL=None):
     if cur_kig.kernel_index >= cur_kig.total_number_of_kernels:
         return
     def safeload(s):
@@ -284,6 +284,8 @@ def cpp_autotune_sub_kernel_gen(extargs, kernel_func, validator, cur_kig):
             # !!!!!!!!!!!!!!!!!!! DEBUG !!!!!!!!!!!!!!!!!!!!!!!!!!
             if CPPTUNE_DEBUG_FEW_KERNELS > 0:
                 cur_kig.total_number_of_kernels = min(CPPTUNE_DEBUG_FEW_KERNELS, extargs.total_number_of_kernels)
+            if FEWER_KERNEL is not None:
+                cur_kig.total_number_of_kernels = min(FEWER_KERNEL, extargs.total_number_of_kernels)
         atr.total_number_of_kernels = cur_kig.total_number_of_kernels
         atr.psels = safeload(extargs.selected_kernel_psels)
         atr.copts = safeload(extargs.selected_kernel_copts)
@@ -353,10 +355,13 @@ def cpp_autotune_gen(extarg_factory, sub_extarg_accessor,
         reset_kernel_index_to_skip()
         extargs_with_subs.set_current_sub(sub_index)
         cur_kig = kig_dict[cur_name]
+        FEWER_KERNEL = os.getenv(f'CPPTUNE_FEWER_KERNELS_{cur_name}', default=None)
+        FEWER_KERNEL = int(FEWER_KERNEL) if FEWER_KERNEL is not None else None
         for ret in cpp_autotune_sub_kernel_gen(extargs_with_subs,
                                                kernel_func,
                                                cur_validator,
-                                               cur_kig):
+                                               cur_kig,
+                                               FEWER_KERNEL=FEWER_KERNEL):
             kernel_called = True
             yield cur_name, ret, deepcopy(kig_dict)
         if kernel_called:
