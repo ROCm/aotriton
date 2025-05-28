@@ -2,7 +2,12 @@
 # SPDX-License-Identifier: MIT
 
 from pathlib import Path
-from ..gpu_targets import cluster_gpus, gpu2arch, AOTRITON_ARCH_TO_DIRECTORY
+from ..gpu_targets import (
+    cluster_gpus,
+    gpu2arch,
+    AOTRITON_ARCH_TO_DIRECTORY,
+    AOTRITON_TUNING_DATABASE_REUSE,
+)
 from ..utils import log
 
 # Functional: describe the functional part of a certain compute process
@@ -35,6 +40,7 @@ class Functional(object):
         self._meta = meta_object
         self._binds = binds
         self._optimized_for = optimized_for
+        self._database_gpus = [ AOTRITON_TUNING_DATABASE_REUSE.get(gpu, gpu) for gpu in optimized_for ]
         self.__settle_conditional_values()
         self._compact_dict = build_compact_dict(self._binds)
 
@@ -61,6 +67,10 @@ class Functional(object):
     @property
     def optimized_for(self):
         return self._optimized_for
+
+    @property
+    def database_gpus(self):
+        return self._database_gpus
 
     @property
     def noptimized_for(self):

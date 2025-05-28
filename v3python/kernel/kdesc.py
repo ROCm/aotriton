@@ -181,8 +181,9 @@ class KernelDescription(Interface):
             df[f'$$ind_{i}'] = df[ind_key].apply(discretization)
         '''
         Create LUT
+        Note: df's gpu column comes directly from DB. Hence database_gpus should be used.
         '''
-        for i, gpu in enumerate(f.optimized_for):
+        for i, gpu in enumerate(f.database_gpus):
             if i > 0:
                 lut_tensor[i] = lut_tensor[0]
             df_i = df[df['gpu'] == gpu]
