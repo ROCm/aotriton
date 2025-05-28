@@ -23,7 +23,14 @@ from fwd_kernel_inner import (
     constexpr_or_i32,
 )
 from dropout import PHILOX_RN_PER_OFFSET
-from masked_load_store import mstore2d
+from masked_load_store import (
+    mstore2d,
+    closed_interval_isect,
+    is_closed_interval_empty,
+    closed_interval_size,
+    parse_window,
+    calculate_intervals,
+)
 from composed_tensors import (
     composed_offs_1d,
     composed_zeros_2d,
@@ -77,6 +84,8 @@ def attn_fwd(
         encoded_softmax,
         # causal, (Planned Feature) windowed attention
         CAUSAL_TYPE: tl.constexpr,
+        Window_left: constexpr_or_i32,
+        Window_right: constexpr_or_i32,
         # bias
         BIAS_TYPE: tl.constexpr,
         # alibi
@@ -165,11 +174,12 @@ def attn_fwd(
             off_h_q = tile_id % num_tiles_per_sample // num_tiles_per_head  # at which head are we inside the sample
             start_m = tile_id % num_tiles_per_sample % num_tiles_per_head  # at which tile are we inside the head
         else:
-            start_m = tl.program_id(0)
+            start_m = tl.program_id(2)
             off_h_q = tl.program_id(1)
-            off_z = tl.program_id(2)
+            off_z = tl.program_id(0)
+        start_M = start_m * BLOCK_M
 
-        offs_m = start_m * BLOCK_M + tl.arange(0, BLOCK_M)
+        offs_m = start_M + tl.arange(0, BLOCK_M)
         offs_n = tl.arange(0, BLOCK_N)
 
         if Num_seqlens > 0:
@@ -178,7 +188,7 @@ def attn_fwd(
             seqlen_q = cu_seqlens_q_end - cu_seqlens_q_start
             # We have a one-size-fits-all grid in id(0). Some seqlens might be too
             # small for all start_m so for those we return early.
-            if start_m * BLOCK_M >= seqlen_q:
+            if start_M >= seqlen_q:
                 continue_condition = False
                 # return
             cu_seqlens_k_start = tl.load(cu_seqlens_k + off_z)
@@ -189,7 +199,7 @@ def attn_fwd(
             cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
             cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
             seqlen_q = cu_seqlens_q_end - cu_seqlens_q_start
-            if start_m * BLOCK_M >= seqlen_q:
+            if start_M >= seqlen_q:
                 continue_condition = False
             cu_seqlens_k_start = tl.load(cu_seqlens_k + off_z)
             cu_seqlens_k_end = tl.load(cu_seqlens_k + off_z + 1)
@@ -213,26 +223,37 @@ def attn_fwd(
             # This block of code determines what N is, and if this WG is operating
             # on those M rows.
             o_base = Out + batch_index * stride_oz + off_h_q * stride_oh + cu_seqlens_q_start * stride_om
-            n_blocks = cdiv_fn(seqlen_k, BLOCK_N)
+            window_left, window_right = parse_window(IS_CAUSAL,
+                                                     CAUSAL_TYPE,
+                                                     Window_left,
+                                                     Window_right,
+                                                     seqlen_q,
+                                                     seqlen_k)
+            mask_on_seq_q = (start_M + BLOCK_M > seqlen_q)
+            lb_lo, lb_hi, fb_lo, fb_hi, rb_lo, rb_hi = \
+                    calculate_intervals(IS_CAUSAL,
+                                        CAUSAL_TYPE,
+                                        window_left,
+                                        window_right,
+                                        start_M,
+                                        seqlen_q,
+                                        seqlen_k,
+                                        mask_on_seq_q,
+                                        BLOCK_M,
+                                        BLOCK_N)
+
+            lb_empty = is_closed_interval_empty(lb_lo, lb_hi)
+            rb_empty = is_closed_interval_empty(rb_lo, rb_hi)
+            fb_empty = is_closed_interval_empty(fb_lo, fb_hi)
+
             if IS_CAUSAL:
-                # If seqlen_q == seqlen_k, the attn scores are a square matrix.
-                # If seqlen_q != seqlen_k, attn scores are rectangular which means
+                '''
+                Calculate masked blocks, and perform early exit
+                '''
 
-                if CAUSAL_TYPE == 2:
-                    # bottom right aligned causal mask, and ends at either
-                    # the top edge (seqlen_q < seqlen_k) or left edge.
-                    # This captures the decrease in n_blocks if we have a rectangular attn matrix
-                    n_blocks_seqlen = cdiv_fn((start_m + 1) * BLOCK_M + seqlen_k - seqlen_q, BLOCK_N)
-                else:
-                    # top left aligned version
-                    n_blocks_seqlen = cdiv_fn((start_m + 1) * BLOCK_M, BLOCK_N)
-
-                # This is what adjusts the block_max for the current WG, only
-                # if IS_CAUSAL. Otherwise we want to always iterate through all n_blocks
-                n_blocks = min(n_blocks, n_blocks_seqlen)
                 # If we have no blocks after adjusting for seqlen deltas, this WG is part of
                 # the blocks that are all 0. We exit early.
-                if n_blocks <= 0:
+                if (lb_empty and fb_empty) and rb_empty:
                     acc0, acc1, acc2 = composed_zeros_2d(BLOCK_M, BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2, dtype=Out.type.element_ty)
                     # We still need to write 0s to the result
                     composed_store(acc0, acc1, acc2,
@@ -241,7 +262,7 @@ def attn_fwd(
                                    BLOCK_DMODEL1,
                                    BLOCK_DMODEL2,
                                    o_base=o_base,
-                                   o_start_row=start_m * BLOCK_M,
+                                   o_start_row=start_M,
                                    o_start_col=0,
                                    o_rows=seqlen_q,
                                    o_cols=BLOCK_DMODEL,
@@ -258,18 +279,17 @@ def attn_fwd(
                         tl.store(l_ptrs, l, mask=l_ptrs_mask)
                     # TODO: Should dropout and return encoded softmax be handled here too?
                     continue_condition = False
-                    # return
 
             if continue_condition:
                 # MQA / GQA has different K and V head offsets.
                 # Note: using If-then-else may trigger a compiler bug...
                 off_h_k = off_h_q // (Num_head_q // Num_head_k)
 
-                n_extra_tokens = 0
-                if seqlen_k < BLOCK_N:
-                    n_extra_tokens = BLOCK_N - seqlen_k
-                elif seqlen_k % BLOCK_N:
-                    n_extra_tokens = seqlen_k % BLOCK_N
+                # n_extra_tokens = 0
+                # if seqlen_k < BLOCK_N:
+                #     n_extra_tokens = BLOCK_N - seqlen_k
+                # elif seqlen_k % BLOCK_N:
+                #     n_extra_tokens = seqlen_k % BLOCK_N
 
                 # Compute pointers for all the tensors used in this kernel.
                 q_ptrs0, q_ptrs1, q_ptrs2 = composed_ptrs(Q,
@@ -298,10 +318,9 @@ def attn_fwd(
 
                 if USE_BIAS:
                     # Note: this might get large enough to overflow on some configs
-                    bias_offset = B + batch_index * stride_bz + off_h_q * stride_bh  # FILEPR
-                    bias_ptrs = bias_offset + offs_m[:, None] * stride_bm + offs_n[None, :] * stride_bn
+                    B_ptrs = B + batch_index * stride_bz + off_h_q * stride_bh + offs_m[:, None] * stride_bm
                 else:
-                    bias_ptrs = None
+                    B_ptrs = None
 
                 if USE_ALIBI:
                     a_offset = off_z * stride_az + off_h_q * stride_ah
@@ -328,7 +347,7 @@ def attn_fwd(
                 # have native e^x support in HW.
                 Qk_scale : constexpr_or_f32 = Sm_scale * 1.44269504089
                 # Q is loaded once at the beginning and shared by all N blocks.
-                if (start_m + 1) * BLOCK_M > seqlen_q:
+                if mask_on_seq_q:
                     q0, q1, q2 = composed_load(q_ptrs0, q_ptrs1, q_ptrs2,
                                                offs_m,
                                                BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
@@ -366,26 +385,10 @@ def attn_fwd(
                     v_descale = None
                     p_scale = None
                     p_descale = None
-                # Here we compute how many full and masked blocks we have.
-                padded_block_k = n_extra_tokens != 0
-                is_modulo_mn = not padded_block_k and (seqlen_q % BLOCK_M == 0)
-                if IS_CAUSAL:
-                    # There are always at least BLOCK_M // BLOCK_N masked blocks.
-                    # Additionally there might be one more due to dissimilar seqlens.
-                    masked_blocks = BLOCK_M // BLOCK_N + (not is_modulo_mn)
-                else:
-                    # Padding on Q does not need to be masked in the FA loop.
-                    masked_blocks = padded_block_k
-                # if IS_CAUSAL, not is_modulo_mn does not always result in an additional block.
-                # In this case we might exceed n_blocks so pick the min.
-                masked_blocks = min(masked_blocks, n_blocks)
-                n_full_blocks = n_blocks - masked_blocks
-                block_min = 0
-                block_max = n_blocks * BLOCK_N
                 # Compute for full blocks. Here we set causal to false regardless of its actual
                 # value because there is no masking. Similarly we do not need padding.
-                if n_full_blocks > 0:
-                    block_max = (n_blocks - masked_blocks) * BLOCK_N
+                if not fb_empty:
+                    nblocks_1 = closed_interval_size(fb_lo, fb_hi)
                     acc0, acc1, acc2, l_i, m_i = _attn_fwd_inner(
                             # Inputs
                             acc0, acc1, acc2,
@@ -393,16 +396,16 @@ def attn_fwd(
                             q0, q1, q2,
                             k_ptrs0, k_ptrs1, k_ptrs2,
                             v_ptrs0, v_ptrs1, v_ptrs2,
-                            bias_ptrs,
-                            stride_kn, stride_vk, stride_bn,
+                            stride_kn, stride_vk,
+                            B_ptrs, stride_bn,
                             # Task positions
-                            start_m, block_min, block_max,
+                            start_M, nblocks_1, 0, fb_lo, None,
                             seqlen_k, seqlen_q, Head_dim,
                             # Dropout
                             idropout_p, philox_seed, batch_philox_offset, philox_offset_stride,
                             encoded_sm_base, Max_seqlen_k,
-                            # offs_n_causal, masked_blocks, n_extra_tokens, _
-                            0, 0, 0,
+                            # Causal/Sliding Window Attention: window_left, window_right
+                            0, 0,
                             # Alibi
                             alibi_slope,
                             # INT8
@@ -425,26 +428,27 @@ def attn_fwd(
                             INT8_KV=INT8_KV,
                             USE_P_SCALE=USE_P_SCALE,
                             )
-                    block_min = block_max
-                    block_max = n_blocks * BLOCK_N
 
                 tl.debug_barrier()
-                # Remaining blocks, if any, are full / not masked.
-                if (masked_blocks > 0):
-                    if IS_CAUSAL:
-                        offs_n_causal = offs_n + (seqlen_q - seqlen_k) if IS_CAUSAL_BOTTOM_RIGHT else offs_n
-                    else:
-                        offs_n_causal = 0
-                    k_ptrs0, k_ptrs1, k_ptrs2 = composed_advance(k_ptrs0, k_ptrs1, k_ptrs2,
-                                                                 n_full_blocks * BLOCK_N * stride_kn,
-                                                                 BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2
-                                                                )
-                    v_ptrs0, v_ptrs1, v_ptrs2 = composed_advance(v_ptrs0, v_ptrs1, v_ptrs2,
-                                                                 n_full_blocks * BLOCK_N * stride_vk,
-                                                                 BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2
-                                                                )
-                    if USE_BIAS:
-                        bias_ptrs += n_full_blocks * BLOCK_N * stride_bn
+                # masked blocks
+                if not (lb_empty and rb_empty):
+                    # if IS_CAUSAL:
+                    #     offs_n_causal = offs_n + (seqlen_q - seqlen_k) if IS_CAUSAL_BOTTOM_RIGHT else offs_n
+                    # else:
+                    #     offs_n_causal = 0
+
+                    # k_ptrs0, k_ptrs1, k_ptrs2 = composed_advance(k_ptrs0, k_ptrs1, k_ptrs2,
+                    #                                              n_full_blocks * BLOCK_N * stride_kn,
+                    #                                              BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2
+                    #                                             )
+                    # v_ptrs0, v_ptrs1, v_ptrs2 = composed_advance(v_ptrs0, v_ptrs1, v_ptrs2,
+                    #                                              n_full_blocks * BLOCK_N * stride_vk,
+                    #                                              BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2
+                    #                                             )
+                    # if USE_BIAS:
+                    #     bias_ptrs += n_full_blocks * BLOCK_N * stride_bn
+                    nblocks_1 = closed_interval_size(lb_lo, lb_hi)
+                    nblocks_2 = closed_interval_size(rb_lo, rb_hi)
                     acc0, acc1, acc2, l_i, m_i = _attn_fwd_inner(
                             # Inputs
                             acc0, acc1, acc2,
@@ -452,16 +456,16 @@ def attn_fwd(
                             q0, q1, q2,
                             k_ptrs0, k_ptrs1, k_ptrs2,
                             v_ptrs0, v_ptrs1, v_ptrs2,
-                            bias_ptrs,
-                            stride_kn, stride_vk, stride_bn,
+                            stride_kn, stride_vk,
+                            B_ptrs, stride_bn,
                             # Task positions
-                            start_m, block_min, block_max,
+                            start_M, nblocks_1, nblocks_2, lb_lo, rb_lo,
                             seqlen_k, seqlen_q, Head_dim,
                             # Dropout
                             idropout_p, philox_seed, batch_philox_offset, philox_offset_stride,
                             encoded_sm_base, Max_seqlen_k,
-                            # CAUSAL: offs_n_causal, masked_blocks, n_extra_tokens, _
-                            offs_n_causal, masked_blocks, n_extra_tokens,
+                            # Causal/Sliding Window Attention
+                            window_left, window_right,
                             # Alibi
                             alibi_slope,
                             # INT8
@@ -505,13 +509,12 @@ def attn_fwd(
                 # then we have one block with a row of all NaNs which come from computing
                 # softmax over a row of all -infs (-inf - inf = NaN). We check for that here
                 # and store 0s where there are NaNs as these rows should've been zeroed out.
-                end_m_idx = (start_m + 1) * BLOCK_M
-                start_m_idx = start_m * BLOCK_M
+                end_M = start_M + BLOCK_M
                 causal_start_idx = seqlen_q - seqlen_k if IS_CAUSAL_BOTTOM_RIGHT else 0
                 acc0, acc1, acc2 = composed_to(acc0, acc1, acc2, Out.type.element_ty)
                 if IS_CAUSAL:
-                    if causal_start_idx > start_m_idx and causal_start_idx < end_m_idx:
-                        mask_m_offsets = start_m_idx + tl.arange(0, BLOCK_M)
+                    if causal_start_idx > start_M and causal_start_idx < end_M:
+                        mask_m_offsets = start_M + tl.arange(0, BLOCK_M)
                         z = 0.0
                         acc0, acc1, acc2 = composed_casual_mask(acc0, acc1, acc2,
                                                                 mask_m_offsets, causal_start_idx,
@@ -520,7 +523,7 @@ def attn_fwd(
                                                                 BLOCK_DMODEL1,
                                                                 BLOCK_DMODEL2)
 
-                overflow_size = end_m_idx - seqlen_q
+                overflow_size = end_M - seqlen_q
                 if L_not_null:
                     # write back LSE
                     l_ptrs = L + off_z * Num_head_q * Max_seqlen_q + off_h_q * Max_seqlen_q + offs_m

@@ -19,7 +19,14 @@ import triton
 import triton.language as tl
 from bwd_inner_dq import bwd_inner_dq
 from dropout import PHILOX_RN_PER_OFFSET
-from masked_load_store import load_fn, mstore2d
+from masked_load_store import (
+    load_fn,
+    mstore2d,
+    is_closed_interval_empty,
+    parse_window,
+    calculate_intervals,
+    closed_interval_size,
+)
 from composed_tensors import (
     composed_offs_1d,
     composed_zeros_2d,
@@ -57,9 +64,13 @@ def bwd_kernel_dq(
     philox_seed_ptr,
     philox_offset1 : '*u64',
     philox_offset2 : 'u64',
-    BLOCK_M: tl.constexpr, BLOCK_DMODEL: tl.constexpr,
+    # Windowed Attention
+    Window_left : 'i32',
+    Window_right : 'i32',
+    BLOCK_M: tl.constexpr,
+    BLOCK_DMODEL: tl.constexpr,
     BLOCK_N: tl.constexpr,
-    CAUSAL: tl.constexpr,
+    CAUSAL_TYPE: tl.constexpr,
     ENABLE_DROPOUT: tl.constexpr,
     PADDED_HEAD: tl.constexpr,
     BIAS_TYPE: tl.constexpr,
@@ -75,6 +86,7 @@ def bwd_kernel_dq(
 
     tl.static_assert(BLOCK_DMODEL_R3 == 0, f'BLOCK_DMODEL = {BLOCK_DMODEL} = 0b{BLOCK_DMODEL:b} cannot be factored into <= 3 power of two values')
     tl.static_assert(BLOCK_DMODEL1 > 0 or BLOCK_DMODEL2 == 0, 'Only trailing BLOCK_DMODELx can be 0')
+    IS_CAUSAL : tl.constexpr = CAUSAL_TYPE != 0
 
     philox_seed = 0
     philox_offset_base = philox_offset2
@@ -82,10 +94,10 @@ def bwd_kernel_dq(
     if ENABLE_DROPOUT:
         philox_seed = tl.load(philox_seed_ptr)
         philox_offset_base += tl.load(philox_offset1)
-    start_q = tl.program_id(0) * BLOCK_M
+    start_q = tl.program_id(2) * BLOCK_M
     off_h_q = tl.program_id(1) # head index
     off_h_k = off_h_q if num_head_q == num_head_k else off_h_q // (num_head_q // num_head_k)
-    off_z = tl.program_id(2) # batch index
+    off_z = tl.program_id(0) # batch index
     num_z = tl.num_programs(2)
     off_zh = off_z * num_head_q + off_h_q * 1
     offs_q = start_q + tl.arange(0, BLOCK_M)
@@ -254,45 +266,37 @@ def bwd_kernel_dq(
     else:
         tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
 
-    k_lo = 0  # reserved for windowed attention
-    k_hi = min(start_q + BLOCK_M, seqlen_k) if CAUSAL else seqlen_k
-    real_seqlen_k = k_hi - k_lo  # seqlen_q after considering causal (and windowed in the future)
-    n_blocks = tl.cdiv(k_hi - k_lo, BLOCK_N)
-    n_extra_tokens = 0
-    if real_seqlen_k < BLOCK_N:
-        n_extra_tokens = BLOCK_N - real_seqlen_k
-    elif real_seqlen_k % BLOCK_N:
-        n_extra_tokens = real_seqlen_k % BLOCK_N
-    is_irregular_k = n_extra_tokens != 0
-    n_full_blocks = (k_hi - k_lo) // BLOCK_N
-    leading_masked_blocks = 0  # TODO: Windowed attention
-    trailing_masked_blocks = 0
-    # For causal masks, actually it is easier to calculate the full blocks and
-    # then derive trailing_masked_blocks. However this algorithm won't work for
-    # windowed masks. Therefore we still derive n_full_blocks from
-    # trailing_masked_blocks for long term stability.
-    if CAUSAL:
-        # TODO: Botton right variant
-        # Top left variant
-        mask_top_edge = min(start_q, seqlen_k)
-        n_full_blocks = (mask_top_edge - k_lo) // BLOCK_N
-        trailing_masked_blocks = n_blocks - n_full_blocks
-    else:
-        trailing_masked_blocks = 1 if is_irregular_k else 0
+    window_left, window_right = parse_window(IS_CAUSAL,
+                                             CAUSAL_TYPE,
+                                             Window_left,
+                                             Window_right,
+                                             seqlen_q,
+                                             seqlen_k)
+    mask_on_seq_q = (start_q + BLOCK_M > seqlen_q)
+    lb_lo, lb_hi, fb_lo, fb_hi, rb_lo, rb_hi = \
+            calculate_intervals(IS_CAUSAL,
+                                CAUSAL_TYPE,
+                                window_left,
+                                window_right,
+                                start_q,
+                                seqlen_q,
+                                seqlen_k,
+                                mask_on_seq_q,
+                                BLOCK_M,
+                                BLOCK_N)
+    lb_empty = is_closed_interval_empty(lb_lo, lb_hi)
+    rb_empty = is_closed_interval_empty(rb_lo, rb_hi)
+    fb_empty = is_closed_interval_empty(fb_lo, fb_hi)
 
-    # Check for OOB accesses on D and LSE
-    q_boundary = tl.full((BLOCK_M, ), seqlen_q, dtype=tl.int32)
-    d_lse_ptrs_mask = offs_q < q_boundary
+    d_lse_ptrs_mask = offs_q < seqlen_q
     Di = tl.load(D_ptrs + offs_q, mask=d_lse_ptrs_mask, other=0.0)
     l_i = tl.load(l_ptrs + offs_q, mask=d_lse_ptrs_mask, other=0.0)
 
     idropout_p = ((dropout_p - 0.5) * 0xFFFFFFFF).to(tl.int32) if ENABLE_DROPOUT else 0
     dropout_scale = 1.0 / (1.0 - dropout_p) if ENABLE_DROPOUT else 1.0
     dq0, dq1, dq2 = composed_zeros_2d(BLOCK_M, BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
-    n_full_blocks = n_blocks - leading_masked_blocks - trailing_masked_blocks
-    if n_full_blocks > 0:
-        lo = 0
-        hi = n_full_blocks * BLOCK_N
+    if not fb_empty:
+        nblocks_1 = closed_interval_size(fb_lo, fb_hi)
         dq0, dq1, dq2 = bwd_inner_dq(
             dq0, dq1, dq2,
             qk_scale, bias_scale,
@@ -302,28 +306,31 @@ def bwd_kernel_dq(
             stride_kn,
             vt_ptrs0, vt_ptrs1, vt_ptrs2,
             stride_vk,
-            stride_bn, stride_bm,  stride_dbn, stride_dbm,
             B_ptr,
+            stride_bn, stride_bm, stride_dbn, stride_dbm,
             do0, do1, do2,
             Di, l_i,
             seqlen_q, seqlen_k, head_dim,
-            start_q, lo, hi,
+            start_q, nblocks_1, 0, fb_lo, None,
             idropout_p, dropout_scale, philox_seed, batch_philox_offset, philox_offset_stride,
+            window_left,
+            window_right,
             BLOCK_M,
             BLOCK_DMODEL0,
             BLOCK_DMODEL1,
             BLOCK_DMODEL2,
             BLOCK_N,
             True,  # FULL_BLOCKS
-            False,  # CAUSAL has zero effect for full blocks
+            False,  # CAUSAL_TYPE has zero effect for full blocks
             ENABLE_DROPOUT,
             PADDED_HEAD,
             BIAS_TYPE)
+
     # Keep using "trailing_masked_blocks" for windowed attention
-    if trailing_masked_blocks > 0:
-        lo = n_full_blocks * BLOCK_N
-        hi = k_hi
+    if not (lb_empty and rb_empty):
         tl.debug_barrier()
+        nblocks_1 = closed_interval_size(lb_lo, lb_hi)
+        nblocks_2 = closed_interval_size(rb_lo, rb_hi)
         dq0, dq1, dq2 = bwd_inner_dq(
             dq0, dq1, dq2,
             qk_scale, bias_scale,
@@ -333,20 +340,22 @@ def bwd_kernel_dq(
             stride_kn,
             vt_ptrs0, vt_ptrs1, vt_ptrs2,
             stride_vk,
-            stride_bn, stride_bm,  stride_dbn, stride_dbm,
             B_ptr,
+            stride_bn, stride_bm,  stride_dbn, stride_dbm,
             do0, do1, do2,
             Di, l_i,
             seqlen_q, seqlen_k, head_dim,
-            start_q, lo, hi,
+            start_q, nblocks_1, nblocks_2, lb_lo, rb_lo,
             idropout_p, dropout_scale, philox_seed, batch_philox_offset, philox_offset_stride,
+            window_left,
+            window_right,
             BLOCK_M,
             BLOCK_DMODEL0,
             BLOCK_DMODEL1,
             BLOCK_DMODEL2,
             BLOCK_N,
             False,  # FULL_BLOCKS
-            CAUSAL,
+            CAUSAL_TYPE,
             ENABLE_DROPOUT,
             PADDED_HEAD,
             BIAS_TYPE)

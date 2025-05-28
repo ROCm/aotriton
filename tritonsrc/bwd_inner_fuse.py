@@ -9,7 +9,7 @@ from masked_load_store import load_fn
 from triton.language.extra import libdevice
 from composed_tensors import (
     composed_offs_1d,
-    composed_advance,
+    composed_load_with_offset,
     composed_load,
     composed_dot_both,
     composed_dot_rhs,
@@ -38,14 +38,18 @@ def bwd_inner_dk_dv_fuse(
     kt0, kt1, kt2, vt0, vt1, vt2,
     B_ptr, stride_bm, stride_bn,
     do_ptrs0, do_ptrs1, do_ptrs2,
-    o_ptrs0, o_ptrs1, o_ptrs2,
     do_stride,
+    o_ptrs0, o_ptrs1, o_ptrs2,
+    o_stride,
     l_ptrs,
     seqlen_q, seqlen_k, head_dim,
     # Sub-problem range, (lo, hi) specify the range for seqlen_q
-    start_k, lo, hi, overflow_size,
+    start_k, nblocks_1, nblocks_2, Block_range_1, Block_range_2,
     ## Dropout
     idropout_p, dropout_scale, philox_seed, batch_philox_offset, philox_offset_stride,
+    ## Sliding Window Attention
+    window_left,
+    window_right,
     # constexpr starts here
     BLOCK_M: tl.constexpr,
     BLOCK_DMODEL0,
@@ -53,7 +57,7 @@ def bwd_inner_dk_dv_fuse(
     BLOCK_DMODEL2,
     BLOCK_N: tl.constexpr,
     FULL_BLOCKS: tl.constexpr,
-    CAUSAL: tl.constexpr,
+    IS_CAUSAL: tl.constexpr,
     ENABLE_DROPOUT: tl.constexpr,
     PADDED_HEAD: tl.constexpr,
     BIAS_TYPE: tl.constexpr,
@@ -62,15 +66,15 @@ def bwd_inner_dk_dv_fuse(
     offs_k = start_k + tl.arange(0, BLOCK_N)
     offs_q = tl.arange(0, BLOCK_M)
 
-    q_ptrs0, q_ptrs1, q_ptrs2 = composed_advance(q_ptrs0, q_ptrs1, q_ptrs2,
-                                                 lo * q_stride,
-                                                 BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
-    do_ptrs0, do_ptrs1, do_ptrs2 = composed_advance(do_ptrs0, do_ptrs1, do_ptrs2,
-                                                    lo * do_stride,
-                                                    BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
-    o_ptrs0, o_ptrs1, o_ptrs2 = composed_advance(o_ptrs0, o_ptrs1, o_ptrs2,
-                                                 lo * do_stride,
-                                                 BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
+    # q_ptrs0, q_ptrs1, q_ptrs2 = composed_advance(q_ptrs0, q_ptrs1, q_ptrs2,
+    #                                              lo * q_stride,
+    #                                              BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
+    # do_ptrs0, do_ptrs1, do_ptrs2 = composed_advance(do_ptrs0, do_ptrs1, do_ptrs2,
+    #                                                 lo * do_stride,
+    #                                                 BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
+    # o_ptrs0, o_ptrs1, o_ptrs2 = composed_advance(o_ptrs0, o_ptrs1, o_ptrs2,
+    #                                              lo * o_stride,
+    #                                              BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
 
 
     '''
@@ -90,69 +94,85 @@ def bwd_inner_dk_dv_fuse(
     start_k: select k and dV
     start_q: select q and dO
     '''
-    # loop over q (seqlen_q, dhead), do (seqlen_q, d_head)
-    for start_q in range(lo, hi, BLOCK_M):
+    # for start_q in range(lo, hi, BLOCK_M):
+    for block_index in range(nblocks_1+nblocks_2):
+        # Seccond Range is invalid (constexpr "None" defined in Full block path)
+        if Block_range_2 is None:
+            start_qi = block_index + Block_range_1
+        else:
+            start_qi = block_index + Block_range_1 if block_index < nblocks_1 else (block_index - nblocks_1 + Block_range_2)
+        start_q = start_qi * BLOCK_M
         # TODO: Unify the name, the usage of m/n is very confusing
         offs_q_curr = offs_q[:, None] + start_q # (BLOCK_M, 1)
         # -- load q, do --
-        # TODO: It is more optimal to do OOB check only in the last iter.
-        # (BLOCK_M, BLOCK_DMODEL), offs = (BLOCK_M * iter, 0) = (start_q, 0)
-        #
-        # This common function can be further split into regular and
-        # non-regular version, determined by tl.constexpr, just like the fwd kernel.
-
-        # q = tl.load(Q_block_ptr)
-
         if FULL_BLOCKS and not PADDED_HEAD:
             q_offs_m = None
         else:
             q_offs_m = start_q + tl.arange(0, BLOCK_M)
 
         PADDED_SEQ : tl.constexpr = not FULL_BLOCKS
-        q0, q1, q2 = composed_load(q_ptrs0, q_ptrs1, q_ptrs2,
-                                   q_offs_m,
-                                   BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
-                                   seqlen_q, head_dim,
-                                   other=0.0,
-                                   PADDED_ROW=PADDED_SEQ,
-                                   PADDED_COL=PADDED_HEAD,
-                                   TRANSPOSED=False)
+        q0, q1, q2 = composed_load_with_offset(q_ptrs0, q_ptrs1, q_ptrs2,
+                                               start_q, q_stride, offs_q,
+                                               BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                               seqlen_q, head_dim,
+                                               other=0.0,
+                                               PADDED_ROW=PADDED_SEQ,
+                                               PADDED_COL=PADDED_HEAD,
+                                               TRANSPOSED=False)
         # do = tl.load(DO_block_ptr)
         # TODO: pre_load_do
-        do0, do1, do2 = composed_load(do_ptrs0, do_ptrs1, do_ptrs2,
-                                      q_offs_m,
-                                      BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
-                                      seqlen_q, head_dim,
-                                      other=0.0,
-                                      PADDED_ROW=PADDED_SEQ,
-                                      PADDED_COL=PADDED_HEAD,
-                                      TRANSPOSED=False)
-        o0, o1, o2 = composed_load(o_ptrs0, o_ptrs1, o_ptrs2,
-                                   q_offs_m,
-                                   BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
-                                   seqlen_q, head_dim,
-                                   other=0.0,
-                                   PADDED_ROW=PADDED_SEQ,
-                                   PADDED_COL=PADDED_HEAD,
-                                   TRANSPOSED=False)
+        do0, do1, do2 = composed_load_with_offset(do_ptrs0, do_ptrs1, do_ptrs2,
+                                                  start_q, do_stride, offs_q,
+                                                  BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                                  seqlen_q, head_dim,
+                                                  other=0.0,
+                                                  PADDED_ROW=PADDED_SEQ,
+                                                  PADDED_COL=PADDED_HEAD,
+                                                  TRANSPOSED=False)
+        o0, o1, o2 = composed_load_with_offset(o_ptrs0, o_ptrs1, o_ptrs2,
+                                               start_q, o_stride, offs_q,
+                                               BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                               seqlen_q, head_dim,
+                                               other=0.0,
+                                               PADDED_ROW=PADDED_SEQ,
+                                               PADDED_COL=PADDED_HEAD,
+                                               TRANSPOSED=False)
 
         # -- compute qk ----
         qk = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
         # TODO: These two checks can be optimized to occur on the last iter.
-        if not FULL_BLOCKS:
-            if overflow_size > 0:
-                boundary_n = tl.full((BLOCK_N, ), seqlen_q, dtype=tl.int32)
-                mask = offs_q_curr < boundary_n[None, :]
-                qk = tl.where(mask, qk, float("-inf"))
-        if CAUSAL:
-            qk = tl.where(offs_q_curr >= offs_k[None, :], qk, float("-inf"))
+        # -- qk mask ----
+        if not FULL_BLOCKS or IS_CAUSAL:
+            mask = tl.full([BLOCK_M, BLOCK_N], True, dtype=tl.int1)
+            MS = offs_q + start_q
+            NS = offs_k
+            if not FULL_BLOCKS: # Potentially for all blocks in the loop
+                q_mask = (MS[:, None] < seqlen_q)
+                mask = mask & q_mask
+            # isect with n = seqlen_k
+            if start_k + BLOCK_N > seqlen_k: # Only one block at most
+                k_mask = (NS[None, :] < seqlen_k)
+                mask = mask & k_mask
+            # isect with both windowed causal lines
+            if IS_CAUSAL:
+                right_mask = MS[:, None] + window_right >= NS[None, :]
+                mask = mask & right_mask
+                left_mask = MS[:, None] - window_left <= NS[None, :]
+                mask = mask & left_mask
+            # tl.device_print('mask', mask)
+            qk = tl.where(mask, qk, float("-inf"))
+
         if BIAS_TYPE == 0:
             pass
         elif BIAS_TYPE == 1:
             # FIXME: do boundary_check correctly
-            bias_ptr = B_ptr + offs_q_curr * stride_bm + offs_k[None, :] * stride_bn
-            mask = (offs_q_curr < seqlen_q) & (offs_k[None, :] < seqlen_k)
-            bias = tl.load(bias_ptr, mask=mask, other=0.0)
+            bias_ptrs = B_ptr + offs_q_curr * stride_bm + offs_k[None, :] * stride_bn
+            if not FULL_BLOCKS:
+                mask = (offs_q_curr < seqlen_q) & (offs_k < seqlen_k)[None, :]
+                bias = tl.load(bias_ptrs, mask=mask, other=0.0)
+                # tl.device_print('mask', mask)
+            else:
+                bias = tl.load(bias_ptrs)
             qk += bias * bias_scale
         else:
             tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
@@ -165,12 +185,10 @@ def bwd_inner_dk_dv_fuse(
         if FULL_BLOCKS:
             l_i = tl.load(l_ptrs + offs_q_curr)
         else:
-            boundary = tl.full((BLOCK_M, ), BLOCK_M - overflow_size, dtype=tl.int32)
-            d_lse_ptrs_mask = boundary > tl.arange(0, BLOCK_M)
-            d_lse_padding = tl.full((BLOCK_M, ), 0, dtype=tl.float32)
+            d_lse_ptrs_mask = offs_q_curr < seqlen_q
             l_i = tl.load(l_ptrs + offs_q_curr,
-                          mask=d_lse_ptrs_mask[:,None],
-                          other=d_lse_padding[:, None])
+                          mask=d_lse_ptrs_mask,
+                          other=0.0)
         Di = composed_inner_product_fp32(o0, o1, o2,
                                          do0, do1, do2,
                                          BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
@@ -178,7 +196,7 @@ def bwd_inner_dk_dv_fuse(
         # FIXME: Potential bug https://github.com/ROCm/aotriton/issues/54
         p = tl.math.exp2(qk_scale * qk - l_i) # (BLOCK_M, BLOCK_N)
 
-        if not FULL_BLOCKS or CAUSAL:
+        if not FULL_BLOCKS or IS_CAUSAL:
             if qk_scale == 0.0:
                 p = tl.where(libdevice.isnan(p), 0.0, p)
         # -- compute dv ----
@@ -233,18 +251,5 @@ def bwd_inner_dk_dv_fuse(
                                              dk0, dk1, dk2,
                                              BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
                                              TRANSPOSE_LHS=True)
-
-        # update pointers (block_ptr code was left intentionally as comment)
-        # Q_block_ptr = tl.advance(Q_block_ptr, (BLOCK_M, 0))
-        # DO_block_ptr = tl.advance(DO_block_ptr, (BLOCK_M, 0)) # Debug DO accessing problems
-        q_ptrs0, q_ptrs1, q_ptrs2 = composed_advance(q_ptrs0, q_ptrs1, q_ptrs2,
-                                                     q_stride * BLOCK_M,
-                                                     BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
-        do_ptrs0, do_ptrs1, do_ptrs2 = composed_advance(do_ptrs0, do_ptrs1, do_ptrs2,
-                                                        do_stride * BLOCK_M,
-                                                        BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
-        o_ptrs0, o_ptrs1, o_ptrs2 = composed_advance(o_ptrs0, o_ptrs1, o_ptrs2,
-                                                     do_stride * BLOCK_M,
-                                                     BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
     return dk0, dk1, dk2, dv0, dv1, dv2
 

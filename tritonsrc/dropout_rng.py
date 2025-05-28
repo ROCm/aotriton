@@ -16,9 +16,9 @@ def debug_fill_dropout_rng(R,
                            BLOCK_M: tl.constexpr,
                            BLOCK_N: tl.constexpr,
                            ):
-    start_m = tl.program_id(0)
+    start_m = tl.program_id(2)
     off_h = tl.program_id(1) # head index
-    off_z = tl.program_id(2) # batch index
+    off_z = tl.program_id(0) # batch index
     d_offset = off_h * stride_rh + off_z * stride_rz
     num_h = tl.num_programs(1)
     off_zh = off_z * num_h + off_h * 1
@@ -102,9 +102,9 @@ def debug_simulate_encoded_softmax(R,
     idropout_p = ((dropout_p - 0.5) * 0xFFFFFFFF).to(tl.int32)
     philox_offset_stride = tl.cdiv(Max_seqlen_k, PHILOX_RN_PER_OFFSET)
 
-    start_m = tl.program_id(0)
+    start_m = tl.program_id(2)
     off_h_q = tl.program_id(1)
-    off_z = tl.program_id(2)
+    off_z = tl.program_id(0)
     off_zh = off_z * Num_head_q + off_h_q
     encoded_sm_base = R + off_z * stride_rz + off_h_q * stride_rh
     batch_philox_offset = philox_offset_base + off_zh * Max_seqlen_q * philox_offset_stride

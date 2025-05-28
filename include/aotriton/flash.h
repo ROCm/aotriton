@@ -167,17 +167,31 @@ using T0 = AOTRITON_NS::TensorView<0>;
 struct AOTRITON_API attn_options {
 };
 
-enum class AOTRITON_API CausalType : int8_t {
-  None = 0,
-  TopLeftAligned = 1,
-  BottomRightAligned = 2,
-  WindowedAttention = 3,
+// Note: DO NOT declare enums as enum class : int8_t. Enum class cannot be cased to
+// underlying types directly. Compiler complains:
+//   error: cannot convert ‘WindowValue’ to ‘int32_t’ {aka ‘int’} in initialization
+// etc.
+//
+// There is no plan to support enum in shim code generator, and hence the cast is unavoidable.
+
+// TopLeftAligned and BottomRightAligned are supported in Triton kernel, but
+// not compiled into the binary GPU kernels
+struct AOTRITON_API CausalType {
+  static constexpr int8_t None = 1;
+  // static constexpr int8_t TopLeftAligned = 1;
+  // static constexpr int8_t BottomRightAligned = 2;
+  static constexpr int8_t WindowedAttention = 3;
 };
 
-enum class AOTRITON_API VarlenType : int8_t {
-  None = 0,
-  CompactVarlen = 1,
-  PaddedVarlen = 2,
+struct AOTRITON_API WindowValue {
+  static constexpr int32_t TopLeftAligned = -2147483647;      // 0x80000001. Special value for varlen
+  static constexpr int32_t BottomRightAligned = -2147483646;  // 0x80000002. Special value for varlen
+};
+
+struct AOTRITON_API VarlenType {
+  static constexpr int8_t None = 0;
+  static constexpr int8_t CompactVarlen = 1;
+  static constexpr int8_t PaddedVarlen = 2;
 };
 
 struct AOTRITON_API attn_fwd_params {
@@ -207,6 +221,8 @@ struct AOTRITON_API attn_fwd_params {
   T0       persistent_atomic_counter;
   int8_t   causal_type;
   int8_t   varlen_type = 0;
+  int32_t  window_left;
+  int32_t  window_right;
 
   static constexpr int32_t kVersion = 1;
   attn_fwd_params();
@@ -246,6 +262,8 @@ struct AOTRITON_API attn_bwd_params {
   uint64_t  philox_offset2;
   int8_t    causal_type;
   int8_t    varlen_type = 0;
+  int32_t   window_left;
+  int32_t   window_right;
 
   static constexpr int32_t kVersion = 1;
   attn_bwd_params();
