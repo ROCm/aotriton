@@ -154,17 +154,20 @@ class Pkr_AttnFwd(PerKernelResult):
     KERNEL_NAME = 'attn_fwd'
     KERNEL_OUT_TENSORS = ['out']
 
+    def remove_unused(self, optimal):
+        for key in ['BATCH', 'N_HEADS', 'D_HEAD', 'RETURN_ENCODED_SOFTMAX']:
+            if key in optimal['inputs']:
+                del optimal['inputs'][key]
+        return optimal
+
 class Pkr_BwdKernelDkDv(PerKernelResult):
     KERNEL_NAME = 'bwd_kernel_dk_dv'
     KERNEL_OUT_TENSORS = ['dk', 'dv']
 
     def remove_unused(self, optimal):
-        for key in ['USE_ALIBI', 'INT8', 'INT8_KV', 'USE_P_SCALE']:
+        for key in ['BATCH', 'N_HEADS', 'D_HEAD', 'RETURN_ENCODED_SOFTMAX'] + ['USE_ALIBI', 'INT8', 'INT8_KV', 'USE_P_SCALE']:
             if key in optimal['inputs']:
                 del optimal['inputs'][key]
-        if 'CAUSAL_TYPE' in optimal['inputs']:
-            optimal['inputs']['CAUSAL'] = optimal['inputs']['CAUSAL_TYPE']
-            del optimal['inputs']['CAUSAL_TYPE']
         return optimal
 
 class Pkr_BwdKernelDq(PerKernelResult):
@@ -196,7 +199,7 @@ class Pkr_FusedBwdKernel(PerKernelResult):
     def any_nan(self, adiffs):
         ntensors = len(self.valid_out_tensors)
         return any(map(math.isnan, adiffs[:ntensors]))
-    
+
     remove_unused = Pkr_BwdKernelDkDv.remove_unused
 
 KERNEL_NAME_TO_FACTORY = {
@@ -224,6 +227,8 @@ class TuningDatabase(object):
             self._conn = sqlite3.connect(args.file)  # TODO: use autocommit for python 3.12+
             self._conn.isolation_level = None  # TODO: add --batch mode,
             self._cur = self._conn.cursor()
+        else:
+            self._conn = None
         self._table_existance_checked = set()
 
     @property
@@ -271,9 +276,9 @@ class TuningDatabase(object):
     def _create_table(self, tune_info):
         columns = self.collect_columns(tune_info['inputs'], prefix='inputs$')
         # UNIQUE = 'UNIQUE'
-        col_def = ['id INTEGER PRIMARY KEY', f'arch TEXT']
+        col_def = ['id INTEGER PRIMARY KEY', f'gpu TEXT']
         col_def += [f'{colname} {self.sqltype(pytype)}' for colname, _, pytype in columns]
-        unique = ', '.join(['arch'] + [colname for colname, _, _ in columns])
+        unique = ', '.join(['gpu'] + [colname for colname, _, _ in columns])
         columns = self.collect_columns(tune_info['tuned_kernel'], prefix='tuned_kernel$')
         col_def += [f'{colname} {self.sqltype(pytype)}' for colname, _, pytype in columns]
         columns = self.collect_columns(tune_info['compiler_options'], prefix='compiler_options$')
@@ -308,11 +313,12 @@ class TuningDatabase(object):
         inputs_columns = self.collect_columns(tune_info['inputs'], prefix='inputs$', sans=('BATCH'))
         tuned_kernel_columns = self.collect_columns(tune_info['tuned_kernel'], prefix='tuned_kernel$')
         compiler_options_columns = self.collect_columns(tune_info['compiler_options'], prefix='compiler_options$')
-        all_colnames = ['arch'] + [colname for colname, _, _ in itertools.chain(inputs_columns, tuned_kernel_columns, compiler_options_columns)]
+        all_colnames = ['gpu'] + [colname for colname, _, _ in itertools.chain(inputs_columns, tuned_kernel_columns, compiler_options_columns)]
         stmt_colnames = ', '.join(all_colnames)
         stmt_placeholders = ', '.join(['?'] * len(all_colnames))
         stmt = f'INSERT INTO {sql_table}({stmt_colnames}) VALUES({stmt_placeholders})'
-        values = [tune_info['arch']] + [v for _, v, _ in itertools.chain(inputs_columns, tuned_kernel_columns, compiler_options_columns)]
+        gpu = tune_info['arch'] + '_mod0'  # FIXME: non-mod0 gpu
+        values = [gpu] + [v for _, v, _ in itertools.chain(inputs_columns, tuned_kernel_columns, compiler_options_columns)]
         if self.verbose:
             print("values 1: ", values)
         stmt += ' ON CONFLICT DO UPDATE SET '
@@ -381,7 +387,7 @@ class TuningDatabase(object):
             self._conn.commit()
 
     def init_aggregation(self):
-        self.pkr_database = {}  # dict: (arch, task_id, kernel_name) -> (best, json)
+        self.pkr_database = {}  # dict: (gpu, task_id, kernel_name) -> (best, json)
 
     def aggregate(self, line_text):
         round_inputs = self._args.round_inputs
@@ -389,9 +395,6 @@ class TuningDatabase(object):
             return
         raw_info = json.loads(line_text)
         kernel_name = raw_info.get('kernel_name', '')
-        if kernel_name in ['bwd_kernel_dk_dv', 'bwd_kernel_dq', 'bwd_kernel_fuse'] and 'inputs' in raw_info and 'CAUSAL_TYPE' in raw_info['inputs']:
-            raw_info['inputs']['CAUSAL'] = raw_info['inputs']['CAUSAL_TYPE']
-            del raw_info['inputs']['CAUSAL_TYPE']
         if raw_info.get('kernel_name') == 'attn_fwd':
             BM = raw_info['tuned_kernel']['BLOCK_M']
             BN = raw_info['tuned_kernel']['BLOCK_N']
@@ -414,6 +417,7 @@ class TuningDatabase(object):
         raw_info['inputs']['BLOCK_DMODEL'] = round_to_array(raw_info['inputs']['D_HEAD'], HEAD_DIMS)
         if raw_info['inputs']['BLOCK_DMODEL'] == raw_info['inputs']['D_HEAD']:
             raw_info['inputs']['PADDED_HEAD'] = False
+        raw_info['inputs']['CAUSAL_TYPE'] = 3 if raw_info['inputs']['CAUSAL_TYPE'] == 1 else 0
         def rounding(check_only):
             need_rounding_keys = []
             # Round D_HEAD
@@ -510,18 +514,19 @@ def do_main(args, db, fin):
             if rawjson is None:
                 continue
             db.upsert_json(rawjson, create_table_only=False)
-            if 'CAUSAL' in rawjson['inputs']:
-                causal = rawjson['inputs']['CAUSAL']
-            elif 'CAUSAL_TYPE' in rawjson['inputs']:
-                causal = rawjson['inputs']['CAUSAL_TYPE']
-            else:
-                causal = False
-            # Handles CAUSAL=True and BIAS_TYPE=1 case
-            # No real use cases, just let the build system compile things
-            if causal == True and rawjson['inputs']['BIAS_TYPE'] == 0:
-                rj2 = deepcopy(rawjson)
-                rj2['inputs']['BIAS_TYPE'] = 1
-                db.upsert_json(rj2, create_table_only=False)
+            # Dispatcher v3 should nullified such cases
+            # if 'CAUSAL' in rawjson['inputs']:
+            #     causal = rawjson['inputs']['CAUSAL']
+            # elif 'CAUSAL_TYPE' in rawjson['inputs']:
+            #     causal = rawjson['inputs']['CAUSAL_TYPE']
+            # else:
+            #     causal = False
+            ## Handles CAUSAL=True and BIAS_TYPE=1 case
+            ## No real use cases, just let the build system compile things
+            #if causal == True and rawjson['inputs']['BIAS_TYPE'] == 0:
+            #    rj2 = deepcopy(rawjson)
+            #    rj2['inputs']['BIAS_TYPE'] = 1
+            #    db.upsert_json(rj2, create_table_only=False)
             pbar.update(1)
         for klass in KERNEL_NAME_TO_FACTORY.values():
             print(f'{klass.KERNEL_MAX_FUDGE_FACTORS=}')
