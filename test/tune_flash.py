@@ -120,7 +120,7 @@ class FlashTunerSource(MonadService):
                 D_HEAD = j['d_head']
                 seqlen_q = j['seqlen_q']
                 seqlen_k = j['seqlen_k']
-                causal = j['causal']
+                causal = j['causal_type'] != 0
                 dropout_p = j['dropout_p']
                 dtype = j['dtype']
                 bias_type = j['bias_type']
