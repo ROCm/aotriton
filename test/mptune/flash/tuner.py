@@ -17,6 +17,8 @@ DEFAULT_PHILOX_OFFSET_1 = 0x1D4000
 DEFAULT_PHILOX_OFFSET_2 = 0x000B42
 DEFAULT_PHILOX_OFFSET = DEFAULT_PHILOX_OFFSET_1 + DEFAULT_PHILOX_OFFSET_2
 INTEGRITY_CHECK_PER_HSACO = bool(int(os.getenv('INTEGRITY_CHECK_PER_HSACO', default='0')))
+# GFX950's compiler has problem handling irregulars. Must be tested with irregulars
+CPPTUNE_FLASH_DEFENSIVE_SEQLENS = bool(int(os.getenv('CPPTUNE_FLASH_DEFENSIVE_SEQLENS', default='0')))
 
 class TunerMonad(Monad):
     def service_factory(self):
@@ -38,6 +40,9 @@ class TunerService(BaseTunerService):
         torch.cuda.empty_cache()
         BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type = tup
         dtype = getattr(torch, dtype)
+        if CPPTUNE_FLASH_DEFENSIVE_SEQLENS:
+            seqlen_q -= 7
+            seqlen_k -= 7
         '''
         Create reference dropout_mask
         '''
