@@ -5,6 +5,7 @@ from pathlib import Path
 from ..gpu_targets import (
     cluster_gpus,
     gpu2arch,
+    AOTRITON_ARCH_TO_PACK,
     AOTRITON_ARCH_TO_DIRECTORY,
     AOTRITON_TUNING_DATABASE_REUSE,
 )
@@ -131,6 +132,16 @@ class Functional(object):
     '''
     @property
     def filepack_signature(self):
+        sf = self.signature_in_func_name
+        pack = AOTRITON_ARCH_TO_PACK.get(self.arch, self.arch)
+        return 'FONLY__' + sf + f'___{pack}'
+
+    '''
+    Unlike filepack which may consolates multiple arches into the same file.
+    Each arch has its own tunecc file.
+    '''
+    @property
+    def tunecc_signature(self):
         sf = self.signature_in_func_name
         return 'FONLY__' + sf + f'___{self.arch}'
 

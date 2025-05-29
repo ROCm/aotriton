@@ -27,17 +27,21 @@ AOTRITON_TUNING_DATABASE_REUSE = {
     'gfx1250_mod0' : 'gfx942_mod0',
 }
 
+AOTRITON_ARCH_TO_PACK = {
+    'gfx90a'    : 'gfx90a',
+    'gfx942'    : 'gfx942',
+    'gfx950'    : 'gfx950',
+    'gfx1100'   : 'gfx11xx',
+    'gfx1101'   : 'gfx11xx',
+    'gfx1151'   : 'gfx11xx',
+    'gfx1150'   : 'gfx11xx',
+    'gfx1201'   : 'gfx120x',
+    'gfx1200'   : 'gfx120x',
+    'gfx1250'   : 'gfx1250',
+}
+
 AOTRITON_ARCH_TO_DIRECTORY = {
-    'gfx90a'    : 'amd-gfx90a',
-    'gfx942'    : 'amd-gfx942',
-    'gfx950'    : 'amd-gfx950',
-    'gfx1100'   : 'amd-gfx11xx',
-    'gfx1101'   : 'amd-gfx11xx',
-    'gfx1151'   : 'amd-gfx11xx',
-    'gfx1150'   : 'amd-gfx11xx',
-    'gfx1201'   : 'amd-gfx120x',
-    'gfx1200'   : 'amd-gfx120x',
-    'gfx1250'   : 'amd-gfx1250',
+    k : f'amd-{v}' for k, v in AOTRITON_ARCH_TO_PACK.items()
 }
 
 AOTRITON_ARCH_WARPSIZE = {
