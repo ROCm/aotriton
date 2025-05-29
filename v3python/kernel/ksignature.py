@@ -28,7 +28,7 @@ class KernelSignature(object):
         for bind in perf_values:
             bind.settle_unresolved(tc_dict)
         self._perfs = perf_values
-        self._copts = copt_values
+        self._copts = list(copt_values)
 
     def functional(self):
         return self._functional
