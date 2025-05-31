@@ -1,6 +1,7 @@
 # Copyright © 2023-2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
+import os
 import itertools
 import numpy as np
 from ._common import (
@@ -15,6 +16,8 @@ from .ops import OpAttnFwd
 from .op_attn_fwd import _IF_CAUSAL
 from v3python.base import typed_choice as TC
 from v3python.gpu_targets import AOTRITON_ARCH_PRODUCTION_LINE
+
+PRE_LOAD_ONLY = bool(int(os.getenv('AOTRITON_PRE_LOAD_ONLY', default='0')))
 
 class attn_fwd(FlashKernel):
     SHARED_IFACE = OpAttnFwd
@@ -81,7 +84,8 @@ class attn_fwd(FlashKernel):
                 pass
         WAVES_PER_EU = [1, 2, 3, 4]
         NUM_WARPS = [2, 4]
-        PRE_LOAD_V = [False]
+        # TODO: restore PRE_LOAD_V = [True, False]
+        PRE_LOAD_V = [True] if PRE_LOAD_ONLY else [False]
         NUM_STAGES = [1]
         for (M, N), waves, warps, stages, pre in itertools.product(BLOCK_SIZES,
                                                                    WAVES_PER_EU,
