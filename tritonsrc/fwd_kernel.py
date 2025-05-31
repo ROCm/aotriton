@@ -129,7 +129,6 @@ def attn_fwd(
     PERSISTENT : tl.constexpr = (PERSISTENT_TYPE > 0)
     PERSISTENT_DYNAMIC : tl.constexpr = (PERSISTENT_TYPE == 2)
     tl.static_assert(BIAS_TYPE == 0 or BIAS_TYPE == 1, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
-    BATCH = tl.num_programs(2)
     L_not_null = L.cast(dtype=tl.uint64, bitcast=True) != 0  # Allows null L for training=False
     INT8_GEMM: tl.constexpr = INT8 and (not INT8_KV)
 

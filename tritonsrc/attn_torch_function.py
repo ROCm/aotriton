@@ -38,6 +38,30 @@ def is_rdna():
 
 IS_RDNA = is_rdna()
 
+'''
+Parse TRITON_PRINT_AUTOTUNING=1 output
+Example text:
+    BLOCK_M: 128, BLOCK_N: 64, waves_per_eu: 3, PRE_LOAD_V: False, GRID_CU_MULTIP: 2, num_warps: 4, num_ctas: 1, num_stages: 1, maxnreg: None;
+'''
+def parse_triton_print_autotuning(text):
+    if text is None:
+        return None
+    sections = text.split(',')
+    dic = {}
+    for sec in sections:
+        k, v = sec.split(':')
+        k = k.strip()
+        v = v.strip()
+        if v == 'None':
+            dic[k] = None
+        elif v in ['True', 'False']:
+            dic[k] = bool(v)
+        else:
+            dic[k] = int(v)
+    return dic
+
+AOTRITON_USE_PRINT_AUTOTUNING = parse_triton_print_autotuning(os.getenv('AOTRITON_USE_PRINT_AUTOTUNING', default=None))
+
 assert os.getenv('TRITON_F32_DEFAULT', default=None) == 'ieee', 'Must set TRITON_F32_DEFAULT=ieee, otherwise Triton losses precision on fp32 datatypes'
 BWD_FUSED = bool(int(os.getenv('BWD_FUSED', default='0')))
 V3_API = 0  # triton kernel does not have "V3 API"
@@ -439,8 +463,14 @@ class _attention(torch.autograd.Function):
             BLOCK_N = 64
         if dtype == torch.float32:
             BLOCK_M //= 2
+        # Default values
+        PRE_LOAD_V = False
+        WAVES_PER_EU = 2
+        NUM_WARPS = 4
+        NUM_STAGES = 1
 
         if autotune:
+            assert False, 'Autotune is broken, set USE_AUTOTUNE=0 and AOTRITON_USE_PRINT_AUTOTUNING to re-use tuning results from AITER/main_perf'
             tuned_attn_fwd[grid](
                 q, k, v, b, alibi_slopes, sm_scale, M, o,
                 q.stride(0), q.stride(1), q.stride(2), q.stride(3),
@@ -472,14 +502,26 @@ class _attention(torch.autograd.Function):
             )
         else:
             RETURN_ENCODED_SOFTMAX=encoded_softmax is not None
-            print(f'{BLOCK_M=} {BLOCK_N=} {RETURN_ENCODED_SOFTMAX=} seqlen_q={q.shape[2]} seqlen_k={k.shape[2]}',
-                    flush=True)
-            print(f'{q.data_ptr()=:x} {k.data_ptr()=:x} {v.data_ptr()=:x} {b.data_ptr()=:x} {M.data_ptr()=:x} {o.data_ptr()=:x}', flush=True)
-            if RETURN_ENCODED_SOFTMAX:
-                print(f'{encoded_softmax.data_ptr()=:x}', flush=True)
-            print(f'{q.shape=} {k.shape=} {v.shape=} {b.shape=} {M.shape=} {o.shape=}', flush=True)
-            print(f'{q.stride()=} {k.stride()=} {v.stride()=} {b.stride()=} {M.stride()=} {o.stride()=}', flush=True)
-            print(f'{causal_type=} {window_left=} {window_right=}', flush=True)
+            if AOTRITON_USE_PRINT_AUTOTUNING is not None:
+                dic = AOTRITON_USE_PRINT_AUTOTUNING
+                BLOCK_M = dic['BLOCK_M']
+                BLOCK_N = dic['BLOCK_N']
+                WAVES_PER_EU = dic['waves_per_eu']
+                PRE_LOAD_V = dic['PRE_LOAD_V']
+                NUM_WARPS = dic['num_warps']
+                NUM_STAGES = dic['num_stages']
+                assert dic['GRID_CU_MULTIP'] == 2
+                assert dic['num_ctas'] == 1
+                # print(dic)
+            else:
+                print(f'{BLOCK_M=} {BLOCK_N=} {RETURN_ENCODED_SOFTMAX=} seqlen_q={q.shape[2]} seqlen_k={k.shape[2]}',
+                        flush=True)
+                print(f'{q.data_ptr()=:x} {k.data_ptr()=:x} {v.data_ptr()=:x} {b.data_ptr()=:x} {M.data_ptr()=:x} {o.data_ptr()=:x}', flush=True)
+                if RETURN_ENCODED_SOFTMAX:
+                    print(f'{encoded_softmax.data_ptr()=:x}', flush=True)
+                print(f'{q.shape=} {k.shape=} {v.shape=} {b.shape=} {M.shape=} {o.shape=}', flush=True)
+                print(f'{q.stride()=} {k.stride()=} {v.stride()=} {b.stride()=} {M.stride()=} {o.stride()=}', flush=True)
+                print(f'{causal_type=} {window_left=} {window_right=}', flush=True)
             bare_attn_fwd[grid](
                 # Basic SDPA
                 q, k, v, b, alibi_slopes, sm_scale, M, o,
@@ -534,8 +576,10 @@ class _attention(torch.autograd.Function):
                 # Performance
                 BLOCK_M=BLOCK_M,
                 BLOCK_N=BLOCK_N,
-                PRE_LOAD_V=False,
-                num_stages=1,
+                PRE_LOAD_V=PRE_LOAD_V,
+                num_stages=NUM_STAGES,
+                num_warps=NUM_WARPS,
+                waves_per_eu=WAVES_PER_EU,
             )
         if return_encoded_softmax:
             grid = lambda META: (
