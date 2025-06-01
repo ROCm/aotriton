@@ -123,8 +123,11 @@ def do_compile(args):
     attrs = {k: [("tt.divisibility", 16)] for k, v in hints.items() if v == 16}
     attrs.update({k: [("tt.divisibility", 8)] for k, v in hints.items() if v == 8})
     src = triton.compiler.ASTSource(fn=kernel, constexprs=constants, signature=signature, attrs=attrs)
-    opts = {"num_warps": args.num_warps, "num_stages": args.num_stages}
-    ccinfo = triton.compile(src, target=KNOWN_TARGETS[args.target], options=opts)
+    target = KNOWN_TARGETS[args.target]
+    backend = triton.compiler.make_backend(target)
+    kwargs = {"num_warps": args.num_warps, "num_stages": args.num_stages, "waves_per_eu": args.waves_per_eu}
+    opts = backend.parse_options(kwargs)
+    ccinfo = triton.compile(src, target=target, options=opts.__dict__)
 
     # import pdb; pdb.set_trace()
     with open(out_path.with_suffix('.hsaco'), 'bw') as f:
