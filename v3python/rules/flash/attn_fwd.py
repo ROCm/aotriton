@@ -17,7 +17,15 @@ from .op_attn_fwd import _IF_CAUSAL
 from v3python.base import typed_choice as TC
 from v3python.gpu_targets import AOTRITON_ARCH_PRODUCTION_LINE
 
-PRE_LOAD_ONLY = bool(int(os.getenv('AOTRITON_PRE_LOAD_ONLY', default='0')))
+def _parse_preload_options():
+    val = int(os.getenv('AOTRITON_PRE_LOAD_OPTIONS', default='0'))
+    if val == 0:
+        return [False]
+    elif val == 1:
+        return [True]
+    else:
+        return [False, True]
+PRE_LOAD_OPTIONS = _parse_preload_options()
 
 class attn_fwd(FlashKernel):
     SHARED_IFACE = OpAttnFwd
@@ -84,8 +92,7 @@ class attn_fwd(FlashKernel):
                 pass
         WAVES_PER_EU = [1, 2, 3, 4]
         NUM_WARPS = [2, 4]
-        # TODO: restore PRE_LOAD_V = [True, False]
-        PRE_LOAD_V = [True] if PRE_LOAD_ONLY else [False]
+        PRE_LOAD_V = PRE_LOAD_OPTIONS
         NUM_STAGES = [1]
         for (M, N), waves, warps, stages, pre in itertools.product(BLOCK_SIZES,
                                                                    WAVES_PER_EU,
