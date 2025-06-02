@@ -402,10 +402,10 @@ class TuningDatabase(object):
                 # print(raw_info)
                 # Known faulty kernel for fp32
                 return
-            PRE_LOAD_V = raw_info['tuned_kernel']['PRE_LOAD_V']
-            # Skip PRE_LOAD_V=2
-            if PRE_LOAD_V:
-                return
+            # PRE_LOAD_V = raw_info['tuned_kernel']['PRE_LOAD_V']
+            # # Skip PRE_LOAD_V=2
+            # if PRE_LOAD_V:
+            #     return
         if raw_info.get('tuned_kernel', None) is not None:
             # Skip num_stages=2
             if raw_info['compiler_options']['num_stages'] == 2:
