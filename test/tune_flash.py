@@ -33,6 +33,7 @@ from mptune.core import (
     TunerManager,
     TuningResult,
     KernelIndexProress,
+    CPPTUNE_SKIP_KERNELS,
 )
 
 def get_total_memory_from_amdsmi():
@@ -95,13 +96,45 @@ class FlashTunerSource(MonadService):
     def clamp_memory_usage(self, tup):
         a = self._args
         BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type = tup
-        if seqlen_q * seqlen_k * D_HEAD >= 2048 * 2048 * VRAM_CAP_IN_GB:
-            BATCH = min(BATCH, 3)
-            N_HEADS = min(N_HEADS, 4)
-        if (causal or bias_type != 0) and seqlen_q * seqlen_k * D_HEAD >= 2048 * 2048 * VRAM_CAP_IN_GB:
-            # Prevent OOM, causal=True needs more memory
-            N_HEADS = min(N_HEADS, 2)
-            BATCH = min(BATCH, 2)
+        if 'bwd_kernel_dk_dv' in CPPTUNE_SKIP_KERNELS and 'bwd_kernel_dq' in CPPTUNE_SKIP_KERNELS and 'bwd_kernel_fuse' in CPPTUNE_SKIP_KERNELS:
+            skip_bwd = True
+        if skip_bwd:
+            # Empricial for FWD only
+            #   batch=3 nheads=4 seqlen=8192 d_head=256 dropout=0.5 bias=1 memory cost 32G
+            #   batch=3 nheads=4 seqlen=8192 d_head=256 dropout=0.0 bias=1 memory cost 28G
+            #   batch=3 nheads=4 seqlen=8192 d_head=256 dropout=0.5 bias=0 memory cost 26G
+            #   batch=3 nheads=4 seqlen=8192 d_head=256 dropout=0.0 bias=0 memory cost 21G
+            def current_cost():
+                base_cost = 0.11 * BATCH * N_HEADS * D_HEAD * seqlen_q * seqlen_k / (1024 ** 3)
+                factor = 1.0
+                if dropout_p > 0.0:
+                    factor += 0.25
+                if bias_type != 0:
+                    factor += 0.33
+                if dtype == 'float32':
+                    factor *= 2.0
+                return 2. * factor * base_cost  # Mul by 2. to ensure only use 50% or VRAM
+            if current_cost() > VRAM_CAP_IN_GB:
+                N_HEADS = min(N_HEADS, 24)
+            if current_cost() > VRAM_CAP_IN_GB:
+                N_HEADS = min(N_HEADS, 12)
+            if current_cost() > VRAM_CAP_IN_GB:
+                N_HEADS = min(N_HEADS, 6)
+            if current_cost() > VRAM_CAP_IN_GB:
+                N_HEADS = min(N_HEADS, 3)
+            if current_cost() > VRAM_CAP_IN_GB:
+                N_HEADS = min(N_HEADS, 2)
+            if current_cost() > VRAM_CAP_IN_GB:
+                BATCH = min(BATCH, 2)
+        else:
+            # Old empricical algorithm that (mostly) works with bwd
+            if seqlen_q * seqlen_k * D_HEAD >= 2048 * 2048 * VRAM_CAP_IN_GB:
+                BATCH = min(BATCH, 3)
+                N_HEADS = min(N_HEADS, 4)
+            if (causal or bias_type != 0) and seqlen_q * seqlen_k * D_HEAD >= 2048 * 2048 * VRAM_CAP_IN_GB:
+                # Prevent OOM, causal=True needs more memory
+                N_HEADS = min(N_HEADS, 2)
+                BATCH = min(BATCH, 2)
         return (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type)
 
     def gen_from_argv(self):

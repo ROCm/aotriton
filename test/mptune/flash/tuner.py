@@ -26,6 +26,28 @@ class TunerMonad(Monad):
 
 class TunerService(BaseTunerService):
 
+    def _parse_skip(self, tup):
+        BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type = tup
+        from ..core import CPPTUNE_SKIP_KERNELS
+        skip_fwd = 'attn_fwd' in CPPTUNE_SKIP_KERNELS
+        if 'bwd_kernel_dk_dv' in CPPTUNE_SKIP_KERNELS and 'bwd_kernel_dq' in CPPTUNE_SKIP_KERNELS:
+            skip_split_bwd = True
+        else:
+            skip_split_bwd = False
+
+        if 'bwd_kernel_fuse' in CPPTUNE_SKIP_KERNELS:
+            skip_fused_bwd = True
+        else:
+            skip_fused_bwd = False
+
+        if seqlen_q < 16 or seqlen_q > 1024:
+            skip_fused_bwd = True
+        if seqlen_k < 16 or seqlen_k > 1024:
+            skip_fused_bwd = True
+
+        skip_bwd = skip_split_bwd and skip_fused_bwd
+        return skip_fwd, skip_bwd, skip_split_bwd, skip_split_bwd
+
     def create_ctx_cache(self, tup):
         '''
         Defer the import to GPU process
@@ -43,6 +65,7 @@ class TunerService(BaseTunerService):
         if CPPTUNE_FLASH_DEFENSIVE_SEQLENS:
             seqlen_q -= 7
             seqlen_k -= 7
+        skip_fwd, skip_bwd, skip_split_bwd, skip_split_bwd = self._parse_skip(tup)
         '''
         Create reference dropout_mask
         '''
@@ -63,7 +86,8 @@ class TunerService(BaseTunerService):
                           bias_type=bias_type, storage_flip=None, device=self._gpu_device)
         ## For reproducible values
         ctx.create_ctx_tensors()
-        ctx.create_bwd_tensors()
+        if not skip_bwd:
+            ctx.create_bwd_tensors()
         ctx.create_ref_inputs(target_gpu_device=self._gpu_device)
         ctx.set_require_grads(skip_db=True if bias_type == 0 else False)
         self._cached_ctx = ctx
@@ -78,7 +102,7 @@ class TunerService(BaseTunerService):
             FwdExtraArguments,
             hipError_t,
         )
-        from ..core import cpp_autotune_gen, KernelOutput, AutotuneResult, CPPTUNE_SKIP_KERNELS
+        from ..core import cpp_autotune_gen, KernelOutput, AutotuneResult
 
         payload = request.payload
         tup = payload.tup
@@ -113,23 +137,7 @@ class TunerService(BaseTunerService):
         def subless_sub_extarg_accessor(extargs, i):
             return extargs
 
-        skip_fwd = 'attn_fwd' in CPPTUNE_SKIP_KERNELS
-        if 'bwd_kernel_dk_dv' in CPPTUNE_SKIP_KERNELS and 'bwd_kernel_dq' in CPPTUNE_SKIP_KERNELS:
-            skip_split_bwd = True
-        else:
-            skip_split_bwd = False
-
-        if 'bwd_kernel_fuse' in CPPTUNE_SKIP_KERNELS:
-            skip_fused_bwd = True
-        else:
-            skip_fused_bwd = False
-
-        if seqlen_q < 16 or seqlen_q > 1024:
-            skip_fused_bwd = True
-        if seqlen_k < 16 or seqlen_k > 1024:
-            skip_fused_bwd = True
-
-        skip_bwd = skip_split_bwd and skip_fused_bwd
+        skip_fwd, skip_bwd, skip_split_bwd, skip_split_bwd = self._parse_skip(tup)
 
         # ref_out is kept in the ctx
         _ = ctx.compute_ref_forward(sdpa_params)
