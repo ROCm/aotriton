@@ -16,9 +16,9 @@ namespace AOTRITON_NS::v3::flash {
 
 dim3 BwdPreprocessContext::grid_calculator() const {
   dim3 grid {
-    uint32_t(params->Out->size(0)),
-    uint32_t(params->Out->size(1)),
     AOTRITON_NS::cdiv<uint32_t>(params->Out->size(2), this->BLOCK_M),
+    uint32_t(params->Out->size(1)),
+    uint32_t(params->Out->size(0)),
   };
   // std::cerr << "Grid conf " << grid.x << " " << grid.y << " " << grid.z << std::endl;
   return grid;
@@ -26,9 +26,9 @@ dim3 BwdPreprocessContext::grid_calculator() const {
 
 dim3 BwdPreprocessVarlenContext::grid_calculator() const {
   dim3 grid {
-    uint32_t(params->cu_seqlens_q->size(0) - 1),
-    uint32_t(params->Out->size(1)),
     AOTRITON_NS::cdiv<uint32_t>(params->Out->size(2), this->BLOCK_M),
+    uint32_t(params->Out->size(1)),
+    uint32_t(params->cu_seqlens_q->size(0) - 1),
   };
   // std::cerr << "Grid conf " << grid.x << " " << grid.y << " " << grid.z << std::endl;
   return grid;
@@ -36,9 +36,9 @@ dim3 BwdPreprocessVarlenContext::grid_calculator() const {
 
 dim3 BwdKernelDkDvContext::grid_calculator() const {
   dim3 grid {
-    params->num_seqlens == 0 ? uint32_t(params->Q->size(0)) : params->num_seqlens,
-    uint32_t(params->K->size(1)),
     AOTRITON_NS::cdiv<uint32_t>(params->max_seqlen_k, this->BLOCK_N),
+    uint32_t(params->K->size(1)),
+    params->num_seqlens == 0 ? uint32_t(params->Q->size(0)) : params->num_seqlens,
   };
   // std::cerr << "bwd_kernel_dk_dv grid conf " << grid.x << " " << grid.y << " " << grid.z << std::endl;
   return grid;
@@ -46,9 +46,9 @@ dim3 BwdKernelDkDvContext::grid_calculator() const {
 
 dim3 BwdKernelDqContext::grid_calculator() const {
   dim3 grid {
-    params->num_seqlens == 0 ? uint32_t(params->Q->size(0)) : params->num_seqlens,
-    uint32_t(params->Q->size(1)),
     AOTRITON_NS::cdiv<uint32_t>(params->max_seqlen_q, this->BLOCK_M),
+    uint32_t(params->Q->size(1)),
+    params->num_seqlens == 0 ? uint32_t(params->Q->size(0)) : params->num_seqlens,
   };
   // std::cerr << "bwd_kernel_dq grid conf " << grid.x << " " << grid.y << " " << grid.z << std::endl;
   return grid;
