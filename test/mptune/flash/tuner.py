@@ -46,7 +46,7 @@ class TunerService(BaseTunerService):
             skip_fused_bwd = True
 
         skip_bwd = skip_split_bwd and skip_fused_bwd
-        return skip_fwd, skip_bwd, skip_split_bwd, skip_split_bwd
+        return skip_fwd, skip_bwd, skip_split_bwd, skip_fused_bwd
 
     def create_ctx_cache(self, tup):
         '''
@@ -65,7 +65,7 @@ class TunerService(BaseTunerService):
         if CPPTUNE_FLASH_DEFENSIVE_SEQLENS:
             seqlen_q -= 7
             seqlen_k -= 7
-        skip_fwd, skip_bwd, skip_split_bwd, skip_split_bwd = self._parse_skip(tup)
+        skip_fwd, skip_bwd, skip_split_bwd, skip_fused_bwd = self._parse_skip(tup)
         '''
         Create reference dropout_mask
         '''
@@ -137,7 +137,7 @@ class TunerService(BaseTunerService):
         def subless_sub_extarg_accessor(extargs, i):
             return extargs
 
-        skip_fwd, skip_bwd, skip_split_bwd, skip_split_bwd = self._parse_skip(tup)
+        skip_fwd, skip_bwd, skip_split_bwd, skip_fused_bwd = self._parse_skip(tup)
 
         # ref_out is kept in the ctx
         _ = ctx.compute_ref_forward(sdpa_params)

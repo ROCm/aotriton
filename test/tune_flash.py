@@ -98,6 +98,8 @@ class FlashTunerSource(MonadService):
         BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type = tup
         if 'bwd_kernel_dk_dv' in CPPTUNE_SKIP_KERNELS and 'bwd_kernel_dq' in CPPTUNE_SKIP_KERNELS and 'bwd_kernel_fuse' in CPPTUNE_SKIP_KERNELS:
             skip_bwd = True
+        else:
+            skip_bwd = False
         if skip_bwd:
             # Empricial for FWD only
             #   batch=3 nheads=4 seqlen=8192 d_head=256 dropout=0.5 bias=1 memory cost 32G
