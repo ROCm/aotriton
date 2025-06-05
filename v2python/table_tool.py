@@ -516,24 +516,25 @@ def do_main(args, db, fin):
             db.aggregate(line)
             pbar.update(len(line))  # FIXME: support UTF-8 which len(line) != number of bytes
         pbar = tqdm(total=len(db.pkr_database), desc='Processed kernels')
-        for rawjson in db.aggregation_results():
-            if rawjson is None:
-                continue
-            db.upsert_json(rawjson, create_table_only=False)
-            # Dispatcher v3 should nullified such cases
-            # if 'CAUSAL' in rawjson['inputs']:
-            #     causal = rawjson['inputs']['CAUSAL']
-            # elif 'CAUSAL_TYPE' in rawjson['inputs']:
-            #     causal = rawjson['inputs']['CAUSAL_TYPE']
-            # else:
-            #     causal = False
-            ## Handles CAUSAL=True and BIAS_TYPE=1 case
-            ## No real use cases, just let the build system compile things
-            #if causal == True and rawjson['inputs']['BIAS_TYPE'] == 0:
-            #    rj2 = deepcopy(rawjson)
-            #    rj2['inputs']['BIAS_TYPE'] = 1
-            #    db.upsert_json(rj2, create_table_only=False)
-            pbar.update(1)
+        with db._conn:  # Transaction
+            for rawjson in db.aggregation_results():
+                if rawjson is None:
+                    continue
+                db.upsert_json(rawjson, create_table_only=False)
+                # Dispatcher v3 should nullified such cases
+                # if 'CAUSAL' in rawjson['inputs']:
+                #     causal = rawjson['inputs']['CAUSAL']
+                # elif 'CAUSAL_TYPE' in rawjson['inputs']:
+                #     causal = rawjson['inputs']['CAUSAL_TYPE']
+                # else:
+                #     causal = False
+                ## Handles CAUSAL=True and BIAS_TYPE=1 case
+                ## No real use cases, just let the build system compile things
+                #if causal == True and rawjson['inputs']['BIAS_TYPE'] == 0:
+                #    rj2 = deepcopy(rawjson)
+                #    rj2['inputs']['BIAS_TYPE'] = 1
+                #    db.upsert_json(rj2, create_table_only=False)
+                pbar.update(1)
         for klass in KERNEL_NAME_TO_FACTORY.values():
             print(f'{klass.KERNEL_MAX_FUDGE_FACTORS=}')
     elif args.action == 'rawsc':
