@@ -20,8 +20,7 @@ AOTRITON_SUPPORTED_GPUS = (
 # TODO: AOTRITON_TUNING_DATABASE_REUSE -> AOTRITON_TUNING_DATABASE_FALLBACK
 # Load fallback entries first, and override with "patching" entries from real GPU
 AOTRITON_TUNING_DATABASE_REUSE = {
-    'gfx1201_mod0' : 'gfx1100_mod0',
-    'gfx1200_mod0' : 'gfx1100_mod0',
+    'gfx1200_mod0' : 'gfx1201_mod0',
     'gfx1151_mod0' : 'gfx1100_mod0',
     'gfx1150_mod0' : 'gfx1100_mod0',
     'gfx1250_mod0' : 'gfx942_mod0',
