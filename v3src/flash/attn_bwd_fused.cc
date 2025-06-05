@@ -65,6 +65,13 @@ _bwd_kernel_fuse(T4 q,
   int head_size = q.size(3);
   const auto& compiled_head_dims = BwdKernelFuseMetadata::get_BLOCK_DMODEL_choices();
   int head_size_rounded = round_value(head_size, compiled_head_dims);
+  // FIXME: Remove when compiler bug fixed
+  if (Gpu2VendorArch(gpu) == CAT32(GpuVendor::kAMD, 0x950)) {
+    if (head_size_rounded == 48)
+      head_size_rounded = 64;
+    if (head_size_rounded == 80)
+      head_size_rounded = 96;
+  }
   if (head_size_rounded < 0) {
 #if AOTRITON_VERBOSE
     std::cerr << "Head dimension " << head_size << " unsupported. ";
