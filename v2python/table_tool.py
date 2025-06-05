@@ -468,9 +468,15 @@ class TuningDatabase(object):
         self.pkr_database[key].collect(raw_info)
 
     def aggregation_results(self):
+        warned = False
         for pkr in self.pkr_database.values():
             pkr.conclude()
-            opti = pkr.get_optimal_kernel(self._args.fudge_factor_tolerance)
+            opti = pkr.get_optimal_kernel(self._args.fudge_factor_tolerance, allow_no_acceptable=True)
+            if opti is None:
+                if not warned:
+                    print('\nAcceptables is empty. Re-run tests on missing entries\n')
+                    warned = True
+                continue
             pkr.update_max_fudge_factor(opti)
             yield opti
 
