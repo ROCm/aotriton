@@ -14,14 +14,14 @@ import json
 
 from triton.backends.compiler import GPUTarget
 
-KNOWN_TARGETS_MI = ['gfx90a', 'gfx942', 'gfx950']
-KNOWN_TARGETS_Navi = ['gfx1100', 'gfx1101', 'gfx1201', 'gfx1200', 'gfx1151', 'gfx1150']
+KNOWN_TARGETS_64 = ['gfx90a', 'gfx942', 'gfx950']
+KNOWN_TARGETS_32 = ['gfx1100', 'gfx1101', 'gfx1201', 'gfx1200', 'gfx1151', 'gfx1150', 'gfx1250']
 
 KNOWN_TARGETS = {
-  arch : GPUTarget('hip', arch, 64) for arch in KNOWN_TARGETS_MI
+  arch : GPUTarget('hip', arch, 64) for arch in KNOWN_TARGETS_64
 }
 KNOWN_TARGETS.update({
-  arch : GPUTarget('hip', arch, 32) for arch in KNOWN_TARGETS_Navi
+  arch : GPUTarget('hip', arch, 32) for arch in KNOWN_TARGETS_32
 })
 
 desc = """
