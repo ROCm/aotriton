@@ -387,9 +387,9 @@ class _attention(torch.autograd.Function):
 
         if persistent_type == PersistentType.NONE:
             grid = lambda META: (
-                batch,
-                num_head_q,
                 triton.cdiv(max_seqlen_q, META['BLOCK_M']),
+                num_head_q,
+                batch,
             )
             Num_CU = 0
         else:
@@ -583,9 +583,9 @@ class _attention(torch.autograd.Function):
             )
         if return_encoded_softmax:
             grid = lambda META: (
-                encoded_softmax.shape[0],
-                encoded_softmax.shape[1],
                 triton.cdiv(encoded_softmax.shape[2], META['BLOCK_M']),
+                encoded_softmax.shape[1],
+                encoded_softmax.shape[0],
             )
             debug_simulate_encoded_softmax[grid](encoded_softmax,
                                                  *encoded_softmax.stride(),
@@ -648,7 +648,7 @@ class _attention(torch.autograd.Function):
         else:
             tuning_result = None
             block_m = min(128, q.shape[2], k.shape[2])
-        grid = (q.shape[0], q.shape[1], triton.cdiv(q.shape[2], block_m), )
+        grid = (triton.cdiv(q.shape[2], block_m), q.shape[1], q.shape[0])
         # print(f'{M=}')
         # print(f'{M.shape=}')
         ctx.save_for_backward(q, k, v, b, o, M)
@@ -706,7 +706,7 @@ class _attention(torch.autograd.Function):
             BLOCK = 128
         return_autotune = ctx.tuning_result is not None
 
-        grid_prep = (do.shape[0], do.shape[1], triton.cdiv(do.shape[2], BLOCK))
+        grid_prep = (triton.cdiv(do.shape[2], BLOCK), do.shape[1], do.shape[0])
         bare_bwd_preprocess[grid_prep](
             o, do, delta,
             o.stride(0), o.stride(1), o.stride(2), o.stride(3),
@@ -749,9 +749,9 @@ class _attention(torch.autograd.Function):
         #     BLOCK_N = max(16, BLOCK_N // 2)
         # debug_mask = torch.zeros((q.shape[0], q.shape[1], max_seqlen_q, max_seqlen_k), device=q.device, dtype=ctx.encoded_softmax.dtype)
         grid_dk_dv = lambda META: (
-            q.shape[0],
-            num_head_k,
             triton.cdiv(max_seqlen_k, META['BLOCK_N']),
+            num_head_k,
+            q.shape[0],
         )
         stride_dbz, stride_dbh, stride_dbm, stride_dbn = db.stride()
         if db.numel() == 0 or not b.requires_grad:
@@ -888,9 +888,9 @@ class _attention(torch.autograd.Function):
             # print(f'Full q: {q}', file=sys.stderr)
             # assert mask_allclose
         grid_dq = lambda META: (
-            q.shape[0],
-            num_head_q,
             triton.cdiv(max_seqlen_q, META['BLOCK_M']),
+            num_head_q,
+            q.shape[0],
         )
         if q.requires_grad:
             if ctx.autotune:
@@ -1066,10 +1066,7 @@ class _attention(torch.autograd.Function):
                 assert False
             else:
                 print('Running bare_bwd_kernel_fuse')
-                grid_fuse = lambda META: (
-                    q.shape[0],
-                    num_head_k,
-                    triton.cdiv(max_seqlen_k, META['BLOCK_N']) + triton.cdiv(max_seqlen_q, META['BLOCK_N']) * (num_head_q//num_head_k),)
+                grid_fuse = lambda META: (triton.cdiv(max_seqlen_k, META['BLOCK_N']) + triton.cdiv(max_seqlen_q, META['BLOCK_N']) * (num_head_q//num_head_k), num_head_k, q.shape[0])
                 bare_bwd_kernel_fuse[grid_fuse](
                         q, k, v, b, ctx.sm_scale,
                         o, do,
