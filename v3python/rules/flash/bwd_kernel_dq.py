@@ -4,6 +4,7 @@
 import itertools
 from ._common import (
     FlashKernel,
+    FlashBwdKernel,
     get_possible_choices,
     select_pattern,
     BinningLessOrEqual,
@@ -17,7 +18,7 @@ from v3python.gpu_targets import AOTRITON_ARCH_PRODUCTION_LINE
 match_op = lambda aname : get_possible_choices(OpAttnBwd, aname)
 match_kv = lambda aname : get_possible_choices(bwd_kernel_dk_dv, aname)
 
-class bwd_kernel_dq(FlashKernel):
+class bwd_kernel_dq(FlashBwdKernel):
     SHARED_IFACE = OpAttnBwd
     ARGUMENTS = [
         'Q', 'K', 'V', 'B', 'sm_scale', 'DO',
