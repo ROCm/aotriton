@@ -85,12 +85,14 @@ class FlashKernel(KernelDescription):
         base = {'arch' : arch}
         MI = (AOTRITON_ARCH_WARPSIZE[arch] == 64)
         Navi = (AOTRITON_ARCH_WARPSIZE[arch] == 32)
-        if Navi:
-            lut_full_seqlen_q = self.LUT_FULL_SEQLEN_NAVI
-            lut_full_seqlen_k = self.LUT_FULL_SEQLEN_NAVI
-        else:
-            lut_full_seqlen_q = self.LUT_FULL_SEQLEN_Q
-            lut_full_seqlen_k = self.LUT_FULL_SEQLEN_K
+        # if Navi:
+        #     lut_full_seqlen_q = self.LUT_FULL_SEQLEN_NAVI
+        #     lut_full_seqlen_k = self.LUT_FULL_SEQLEN_NAVI
+        # else:
+        #     lut_full_seqlen_q = self.LUT_FULL_SEQLEN_Q
+        #     lut_full_seqlen_k = self.LUT_FULL_SEQLEN_K
+        lut_full_seqlen_q = self.LUT_FULL_SEQLEN_Q
+        lut_full_seqlen_k = self.LUT_FULL_SEQLEN_K
         base['causal_type'] = check_value(functional, 'CAUSAL_TYPE')
         base['d_head'] = check_value(functional, 'BLOCK_DMODEL')
         base['dropout_p'] = 0.5 if check_value(functional, 'ENABLE_DROPOUT') else 0.0
