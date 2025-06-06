@@ -2,7 +2,13 @@
 # SPDX-License-Identifier: MIT
 
 from pathlib import Path
-from ..gpu_targets import cluster_gpus, gpu2arch, AOTRITON_ARCH_TO_DIRECTORY
+from ..gpu_targets import (
+    cluster_gpus,
+    gpu2arch,
+    AOTRITON_ARCH_TO_PACK,
+    AOTRITON_ARCH_TO_DIRECTORY,
+    AOTRITON_TUNING_DATABASE_REUSE,
+)
 from ..utils import log
 
 # Functional: describe the functional part of a certain compute process
@@ -35,6 +41,7 @@ class Functional(object):
         self._meta = meta_object
         self._binds = binds
         self._optimized_for = optimized_for
+        self._database_gpus = [ AOTRITON_TUNING_DATABASE_REUSE.get(gpu, gpu) for gpu in optimized_for ]
         self.__settle_conditional_values()
         self._compact_dict = build_compact_dict(self._binds)
 
@@ -61,6 +68,10 @@ class Functional(object):
     @property
     def optimized_for(self):
         return self._optimized_for
+
+    @property
+    def database_gpus(self):
+        return self._database_gpus
 
     @property
     def noptimized_for(self):
@@ -121,6 +132,16 @@ class Functional(object):
     '''
     @property
     def filepack_signature(self):
+        sf = self.signature_in_func_name
+        pack = AOTRITON_ARCH_TO_PACK.get(self.arch, self.arch)
+        return 'FONLY__' + sf + f'___{pack}'
+
+    '''
+    Unlike filepack which may consolates multiple arches into the same file.
+    Each arch has its own tunecc file.
+    '''
+    @property
+    def tunecc_signature(self):
         sf = self.signature_in_func_name
         return 'FONLY__' + sf + f'___{self.arch}'
 

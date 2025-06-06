@@ -68,6 +68,10 @@ class InterfaceGenerator(ABC):
             if use_this_functional:
                 all_functionals.append(functional)
 
+        # Skip re-generation of shim files
+        if args.build_for_tuning_second_pass:
+            return
+
         # shim code phase
         # Must be after autotune due to common functions needed by autotune is
         # generated in autotune module

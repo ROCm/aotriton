@@ -34,6 +34,7 @@ def parse():
     # p.add_argument("--bare_mode", action='store_true', help="Instead of generating a proper Makefile, only generate a list of source files and leave the remaining tasks to cmake.")
     p.add_argument("--noimage_mode", action='store_true', help="Expect the GPU kernel images are built separately.")
     p.add_argument("--build_for_tuning", action='store_true', help="Include all GPU kernels in the dispatcher for performance tuning.")
+    p.add_argument("--build_for_tuning_second_pass", action='store_true', help="Only re-generate autotune files. Ignore HSACO kernels in the autotune files that failed to compile.")
     p.add_argument("--build_for_tuning_but_skip_kernel", type=str, default='', nargs='*',
                    help="Excluse certain GPU kernels for performance tuning when --build_for_tuning=True.")
     # Always True

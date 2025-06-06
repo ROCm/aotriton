@@ -12,9 +12,9 @@ namespace AOTRITON_NS::v3::flash {
 
 dim3 DebugSimulateEncodedSoftmaxContext::grid_calculator() const {
   dim3 grid {
-    uint32_t(params->encoded_softmax->size(0)),
-    uint32_t(params->encoded_softmax->size(1)),
     AOTRITON_NS::cdiv<uint32_t>(params->encoded_softmax->size(2), BLOCK_M),
+    uint32_t(params->encoded_softmax->size(1)),
+    uint32_t(params->encoded_softmax->size(0)),
   };
   return grid;
 }
