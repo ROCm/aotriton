@@ -7,8 +7,10 @@ from collections import defaultdict
 from ..rules import (
     kernels as triton_kernels,
     operators as dispatcher_operators,
+    affine_kernels,
 )
 from .kernel import KernelShimGenerator
+from .affine import AffineGenerator
 from .operator import OperatorGenerator
 from ..utils import (
     LazyFile,
@@ -39,6 +41,12 @@ class RootGenerator(object):
             hsacos = ksg.this_repo.get_data('hsaco')
             hsaco_for_kernels.append((k, hsacos))
             shims += ksg.shim_files
+        for ak in affine_kernels:
+            aksg = AffineGenerator(self._args, k, parent_repo=None)
+            aksg.generate()
+            asms = aksg.this_repo.get_data('asms')
+            asms_for_kernels.append((k, asms))
+            shims += aksg.shim_files
 
         if args.build_for_tuning_second_pass:
             return
@@ -66,6 +74,10 @@ class RootGenerator(object):
                     ffp = functional.full_filepack_path
                     aol = [self._absobjfn(image_path, kdesc, ksig) for ksig in signatures]
                     cluster_dict[ffp] += aol
+        for akdesc, asms in hsaco_for_kernels:
+            for functional, asm in asms.items():
+                ffp = functional.full_filepack_path
+                cluster_dict[ffp].append(asm)
         with LazyFile(args.build_dir / 'Bare.cluster') as clusterfile:
             for ffp, aol in cluster_dict.items():
                 self.write_cluster(ffp, aol, clusterfile)

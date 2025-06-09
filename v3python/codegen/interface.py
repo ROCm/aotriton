@@ -64,7 +64,8 @@ class InterfaceGenerator(ABC):
             subg, use_this_functional = self.create_sub_generator(functional, df)
             if subg is not None:
                 subg.generate()
-                self._shim_files.append(subg.cc_file)
+                if subg.cc_file:
+                    self._shim_files.append(subg.cc_file)
             if use_this_functional:
                 all_functionals.append(functional)
 

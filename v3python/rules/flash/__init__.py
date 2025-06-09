@@ -16,6 +16,7 @@ from .bwd_kernel_dq import bwd_kernel_dq
 from .bwd_kernel_fuse import bwd_kernel_fuse
 # from .debug_fill_dropout_rng import debug_fill_dropout_rng, debug_fill_dropout_rng_tensor
 from .debug_simulate_encoded_softmax import debug_simulate_encoded_softmax
+from .aiter_bwd import bwd_dq_dk_dv_v3
 
 SOURCE_FILE = 'tritonsrc/flash.py'
 
@@ -64,4 +65,8 @@ operators = [
         __bwd_kernel_fuse,
         # TODO, Affine Kernels
     ]),
+]
+
+affine_kernels = [
+    bwd_dq_dk_dv_v3,
 ]
