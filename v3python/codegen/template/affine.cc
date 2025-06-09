@@ -22,6 +22,7 @@ int64_t [[context_class_name]]::godel_number() const
     int64_t sum = 0;
     const auto& args = *params;
 [[godel_number_body]]
+[[residual_godel_number_body]]
     return sum;
 }
 
@@ -31,6 +32,7 @@ hipError_t
     if (arch_number < 0) {
         return hipErrorNoBinaryForGpu;
     }
+    calculate_residual_func_fields();
     kernel_on_device = nullptr;
     // Unlike Triton's autotune_table
     // Affine kernel uses entries from "capability_table", which validate if
@@ -44,11 +46,9 @@ hipError_t
 
 hipError_t
 [[context_class_name]]::launch(hipStream_t stream) const {
-    constexpr std::string_view triton_kernel_name { "[[triton_kernel_name]]" };
-    hipDeviceptr_t global_scratch = 0;
-    auto args = prepare_arguments[pp_args_index](*this->params, &global_scratch);
+    auto args = prepare_arguments[pp_args_index](*this->params);
     dim3 grid = grid_calculator();
-    return kernel_on_device->invoke(triton_kernel_name,
+    return kernel_on_device->invoke(affine_kernel_name,
                                     package_path,
                                     func_name,
                                     arch_name,

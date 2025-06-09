@@ -18,13 +18,13 @@ from v3python.autotune import (
     BinningExact,
 )
 from v3python.utils import log
-from v3python.affine import AffineDescription
+from v3python.affine import AffineKernelDescription
 
 class OpAttn(Operator):
     FAMILY = 'flash'
     MAIN_DATATYPES = ['*fp16:16', '*bf16:16', '*fp32:16'] if AOTRITON_ENABLE_FP32 else ['*fp16:16', '*bf16:16']
 
-class FlashAffine(AffineDescription):
+class FlashAffine(AffineKernelDescription):
     FAMILY = 'flash'
     MODULE_FILE = __file__
 
