@@ -6,6 +6,7 @@ import pandas as pd
 from ..base import typed_choice as TC
 from ..op import Operator
 from ..utils import log
+from ..gpu_targets import AOTRITON_TUNING_DATABASE_REUSE
 
 '''
 We don't really need a LazyTableView, if Lazy evaluation is needed, a
@@ -41,9 +42,12 @@ class Factory(object):
         meta = functional.meta_object
         pfx = 'OP$' if isinstance(meta, Operator) else ''
         table_name = pfx + meta.FAMILY.upper() + '$' + meta.NAME
+        # TODO: Incremental changes:
+        # 1. load database_gpus first
+        # 2. then override entries with optimized_for gpus
         def build_sql(choice_dict):
             wheres = {
-                'gpu' : functional.optimized_for,
+                'gpu' : functional.database_gpus,
             }
             for key, value in choice_dict.items():
                 if isinstance(value, TC.TypedChoice) and value.is_tensor:

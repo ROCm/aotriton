@@ -6,6 +6,9 @@
 #include <aotriton/_internal/kernel_cluster.h>
 #include <aotriton/cpp_tune.h>
 #include <string_view>
+#ifndef NDEBUG
+#include <iostream>
+#endif
 
 #define CURRENT_ENTRY_PUBLIC Autotune_[[shim_kernel_name]]__A[[arch_number]]__F[[godel_number]]
 
@@ -64,10 +67,20 @@ void CURRENT_ENTRY_PUBLIC([[context_class_name]]& context, int mod_number) {
 #if AOTRITON_BUILD_FOR_TUNING
     int preferred_index = context._has_preferred_kernel;
     context._total_number_of_kernels = kTotalNumKernels;
+#ifndef NDEBUG
+    std::cerr << "Autotune_[[shim_kernel_name]]__A[[arch_number]]__F[[godel_number]] "
+              << "kTotalNumKernels = " << kTotalNumKernels << " "
+              << "_has_preferred_kernel = " << preferred_index << " "
+              << std::endl;
+#endif
     if (preferred_index != -1) {
         if (preferred_index >= kTotalNumKernels)
             return ;
         context.kernel_on_device = kernel_cluster.get(preferred_index);
+        context.pp_args_index = [[deduplicated_pp_args_function_index]];
+        context.package_path = PACKAGE_PATH;
+        context.func_name = FUNC_NAME;
+        context.arch_name = ARCH_NAME;
         context._preferred_kernel_psels = kernel_psels[preferred_index];
         context._preferred_kernel_copts = kernel_copts[preferred_index];
         const auto& perf = image_perf_list[preferred_index];

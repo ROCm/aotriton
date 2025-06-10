@@ -24,7 +24,7 @@ class BaseTuneCodeGenerator(ABC):
         iface = self._f.meta_object
         tune_dir = self._args.build_dir / iface.FAMILY / f'{iface.TUNE_NAME}.{iface.NAME}'
         tune_dir.mkdir(parents=True, exist_ok=True)
-        return tune_dir / (f.filepack_signature + '.cc')
+        return tune_dir / (f.tunecc_signature + '.cc')
 
     @property
     def cc_file(self):

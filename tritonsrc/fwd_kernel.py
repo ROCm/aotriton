@@ -129,7 +129,6 @@ def attn_fwd(
     PERSISTENT : tl.constexpr = (PERSISTENT_TYPE > 0)
     PERSISTENT_DYNAMIC : tl.constexpr = (PERSISTENT_TYPE == 2)
     tl.static_assert(BIAS_TYPE == 0 or BIAS_TYPE == 1, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
-    BATCH = tl.num_programs(2)
     L_not_null = L.cast(dtype=tl.uint64, bitcast=True) != 0  # Allows null L for training=False
     INT8_GEMM: tl.constexpr = INT8 and (not INT8_KV)
 
@@ -174,9 +173,9 @@ def attn_fwd(
             off_h_q = tile_id % num_tiles_per_sample // num_tiles_per_head  # at which head are we inside the sample
             start_m = tile_id % num_tiles_per_sample % num_tiles_per_head  # at which tile are we inside the head
         else:
-            start_m = tl.program_id(2)
+            start_m = tl.program_id(0)
             off_h_q = tl.program_id(1)
-            off_z = tl.program_id(0)
+            off_z = tl.program_id(2)
         start_M = start_m * BLOCK_M
 
         offs_m = start_M + tl.arange(0, BLOCK_M)

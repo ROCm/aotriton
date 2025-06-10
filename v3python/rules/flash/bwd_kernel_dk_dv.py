@@ -4,17 +4,20 @@
 import itertools
 from ._common import (
     FlashKernel,
+    FlashBwdKernel,
     get_possible_choices,
     select_pattern,
     BinningLessOrEqual,
     BinningExact,
-    Config
+    Config,
+    check_value,
 )
 from .attn_fwd import attn_fwd
 from .op_attn_bwd import OpAttnBwd
+from v3python.gpu_targets import AOTRITON_ARCH_PRODUCTION_LINE
 match_fwd = lambda aname : get_possible_choices(attn_fwd, aname)
 
-class bwd_kernel_dk_dv(FlashKernel):
+class bwd_kernel_dk_dv(FlashBwdKernel):
     SHARED_IFACE = OpAttnBwd
     ARGUMENTS = [
         'Q', 'K', 'V', 'B', 'sm_scale', 'DO',
@@ -68,16 +71,17 @@ class bwd_kernel_dk_dv(FlashKernel):
     DOWNGRADER = []
 
     @staticmethod
-    def gen_autotune_configs(gpu, fsel_dict : 'dict[str, Any]'):
-        dtype = fsel_dict['Q']
-        HEAD_DIM = fsel_dict['BLOCK_DMODEL']
-        MI = 'MI' in gpu
-        Navi = 'Navi' in gpu or gpu.startswith('RX')
+    def gen_autotune_configs(f : 'Functional'):
+        arch = f.arch
+        dtype = check_value(f, ['Q'])
+        HEAD_DIM = check_value(f, ['BLOCK_DMODEL'])
         ret = []
+        CDNA = AOTRITON_ARCH_PRODUCTION_LINE[arch] == 'CDNA'
+        RDNA = AOTRITON_ARCH_PRODUCTION_LINE[arch] == 'RDNA'
         # TODO: right sizes for fp32?
         BLOCK_SIZES = [16, 32, 64] if dtype != '*fp32:16' else [16, 32]
         WAVES_PER_EU = [1, 2, 3, 4]
-        NUM_WARPS = [2, 4]
+        NUM_WARPS = [4, 8] if HEAD_DIM >= 512 and RDNA else [2, 4]
         NUM_STAGES = [1]
         for M, N, waves, warps, stages in itertools.product(BLOCK_SIZES,
                                                             BLOCK_SIZES,
@@ -86,13 +90,13 @@ class bwd_kernel_dk_dv(FlashKernel):
                                                             NUM_STAGES):
             if M < N:
                 continue  # deduplicate
-            if MI and M == 64 and N == 64 and warps == 4:
+            if CDNA and M == 64 and N == 64 and warps == 4:
                 continue  # No optimal kernel according to 0.8b tuning db
             if HEAD_DIM >= 512 and M == 64 and N == 64 and warps == 1:
                 continue  # Timeout
-            if Navi and M * N >= 32 * 32 and warps < 4:
+            if RDNA and M * N >= 32 * 32 and warps < 4:
                 continue  # Timeout
-            if Navi and M * N >= 32 * 16 and warps < 2:
+            if RDNA and M * N >= 32 * 16 and warps < 2:
                 continue  # Timeout
             kw = {'BLOCK_M': M, 'BLOCK_N': N, 'waves_per_eu': waves}
             yield Config(kw, num_stages=stages, num_warps=warps)
