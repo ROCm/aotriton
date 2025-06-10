@@ -14,7 +14,7 @@ execute_process(COMMAND ${CMAKE_COMMAND} -E make_directory "${AOTRITON_KERNEL_ST
 
 execute_process(COMMAND ${CMAKE_COMMAND}
   -E env VIRTUAL_ENV=${VENV_DIR}
-  "${VENV_DIR}/bin/python" -m v2python.gpu_targets
+  PATH="/usr/bin:$ENV{PATH}" python -m v2python.gpu_targets
   --target_arch ${AOTRITON_TARGET_ARCH}
   --target_gpus ${AOTRITON_OVERRIDE_TARGET_GPUS}
   WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/.."
@@ -64,8 +64,8 @@ if(NOT AOTRITON_NOIMAGE_MODE)
     COMMAND ${CMAKE_COMMAND}
     -E env VIRTUAL_ENV=${VENV_DIR}
     AOTRITON_ENABLE_FP32=${AOTRITON_ENABLE_FP32}
-    "${VENV_DIR}/bin/python" -m v2python.generate_compile
-    --target_gpus ${EFFECTIVE_TARGET_GPUS} 
+    PATH="/usr/bin:$ENV{PATH}" python -m v2python.generate_compile
+    --target_gpus ${EFFECTIVE_TARGET_GPUS}
     --build_dir "${AOTRITON_V2_BUILD_DIR}"
     --bare_mode ${GENERATE_OPTION}
     --generate_cluster_info
@@ -97,7 +97,7 @@ if(NOT AOTRITON_NOIMAGE_MODE)
       COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
       TRITON_CACHE_DIR=${CMAKE_BINARY_DIR}/triton-cache
       TRITON_F32_DEFAULT="ieee"
-      "${VENV_DIR}/bin/python"
+      PATH="/usr/bin:$ENV{PATH}" python
       "${AOTRITON_COMPILER}"
       "${SRC}"
       "--kernel_name" "${KNAME}"
@@ -137,7 +137,7 @@ if(NOT AOTRITON_NOIMAGE_MODE)
     # message(STATUS "Add AKS2 ${AKS2}")
     add_custom_command(OUTPUT "${AKS2}"
       COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
-      "${VENV_DIR}/bin/python"
+      PATH="/usr/bin:$ENV{PATH}" python
       -m v2python.aks2
       -o "${AKS2}"
       --
@@ -160,18 +160,18 @@ execute_process(
   COMMAND ${CMAKE_COMMAND}
   -E env VIRTUAL_ENV=${VENV_DIR}
   AOTRITON_ENABLE_FP32=${AOTRITON_ENABLE_FP32}
-  "${VENV_DIR}/bin/python" -m v2python.generate_shim --target_gpus ${EFFECTIVE_TARGET_GPUS} --build_dir ${AOTRITON_V2_BUILD_DIR} --bare_mode ${GENERATE_OPTION}
+  PATH="/usr/bin:$ENV{PATH}" python -m v2python.generate_shim --target_gpus ${EFFECTIVE_TARGET_GPUS} --build_dir ${AOTRITON_V2_BUILD_DIR} --bare_mode ${GENERATE_OPTION}
   COMMAND_ECHO STDOUT
   WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/.."
   COMMAND_ERROR_IS_FATAL ANY
 )
 file(STRINGS "${AOTRITON_V2_BUILD_DIR}/Bare.shim" SHIM_CC_FILES)
 
-add_custom_target(aotriton_v2_gen_shim 
+add_custom_target(aotriton_v2_gen_shim
   COMMAND ${CMAKE_COMMAND}
   -E env VIRTUAL_ENV=${VENV_DIR}
   AOTRITON_ENABLE_FP32=${AOTRITON_ENABLE_FP32}
-  "${VENV_DIR}/bin/python" -m v2python.generate_shim --target_gpus ${EFFECTIVE_TARGET_GPUS} --build_dir ${AOTRITON_V2_BUILD_DIR} ${AOTRITON_SHIM_FLAGS} ${GENERATE_OPTION}
+  PATH="/usr/bin:$ENV{PATH}" python -m v2python.generate_shim --target_gpus ${EFFECTIVE_TARGET_GPUS} --build_dir ${AOTRITON_V2_BUILD_DIR} ${AOTRITON_SHIM_FLAGS} ${GENERATE_OPTION}
   BYPRODUCTS ${SHIM_CC_FILES}  # Essential, otherwise add_library complains
   COMMAND_EXPAND_LISTS
   WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/.."
@@ -210,7 +210,7 @@ set_target_properties(aotriton_v2 PROPERTIES VERSION
 execute_process(
   COMMAND ${CMAKE_COMMAND}
   -E env VIRTUAL_ENV=${VENV_DIR}
-  "${VENV_DIR}/bin/python" -m v2python.ld_script
+  PATH="/usr/bin:$ENV{PATH}" python -m v2python.ld_script
   -o "${AOTRITON_V2_BUILD_DIR}/set_aotriton_version.ld"
   ${AOTRITON_VERSION_MAJOR_INT}
   ${AOTRITON_VERSION_MINOR_INT}
