@@ -35,7 +35,7 @@ class KernelShimGenerator(InterfaceGenerator):
         kdesc = self._iface
         shared_iface = kdesc.SHARED_IFACE is not None
         if shared_iface:
-            self._add_header_for_source(kdesc.SHARED_IFACE)
+            self._add_iface_for_source(kdesc.SHARED_IFACE)
             # hdr_name = kdesc.SHARED_IFACE.NAME
             # iface_header = f'#include "iface.{hdr_name}.h"'
         shared_iface_family = kdesc.SHARED_IFACE.FAMILY if shared_iface else kdesc.FAMILY
@@ -54,6 +54,7 @@ class KernelShimGenerator(InterfaceGenerator):
             'number_of_functionals' : kdesc._godel_number,
             'declare_list_of_deduplicated_lut_functions' : self.codegen_declare_list_of_deduplicated_lut_functions(),
         }
+        d['includes'] = codegen_includes(self._hdr_include_repo.get_data())
         print(self.HEADER_TEMPLATE.format_map(d), file=fout)
 
     def write_shim_source(self, functionals, fout):

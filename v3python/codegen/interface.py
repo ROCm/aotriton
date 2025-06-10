@@ -99,11 +99,10 @@ class InterfaceGenerator(ABC):
     def write_shim_source(self, functionals, fout):
         pass
 
-    def _add_header_for_header(self, iface):
-        fn = self._translate_iface_to_header(iface)
+    def _add_include_to_header(self, fn):
         self._hdr_include_repo.register(fn)
 
-    def _add_header_for_source(self, iface):
+    def _add_iface_for_source(self, iface):
         fn = self._translate_iface_to_header(iface)
         self._src_include_repo.register(fn)
 
