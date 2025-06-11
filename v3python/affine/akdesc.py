@@ -4,6 +4,8 @@
 from abc import ABC, abstractmethod
 import numpy as np
 import itertools
+import functools
+import operator
 from collections import defaultdict
 import os
 from pathlib import Path
@@ -22,6 +24,7 @@ from ..gpu_targets import AOTRITON_SUPPORTED_GPUS, cluster_gpus
 from ..utils import log
 import pandas as pd
 
+# TODO: Support Affine kernels that do not use direct arguments
 class AffineKernelDescription(Interface):
     TUNE_NAME = None
     FILE_PFX = 'affine'
@@ -29,6 +32,7 @@ class AffineKernelDescription(Interface):
     CO_CSV = None
     SUPPORTED_ARCH = None
     RESIDUAL_CHOICES = None     # Affine kernel may have finer requirements
+    DIRECT_KERNEL_ARGS = None
 
     @property
     def enum_name(self):
@@ -48,8 +52,8 @@ class AffineKernelDescription(Interface):
             self._godel_number = self._func_params[0].godel_number * self._func_params[0].nchoices
         if self.CO_CSV is not None:
             desc_path = Path(self.MODULE_FILE).parent
-            df = pd.read_csv(desc_path / self.CO_CSV)
-            self._asmdb = self.translate_csv_df(df)
+            self._df = pd.read_csv(desc_path / self.CO_CSV, skipinitialspace=True)
+        self._residual_func_cfields  = sum([ p.get_cfields() for p in self.list_residual_functional_params() ], [])
 
     def list_residual_functional_params(self):
         yield from self._residual_func_params
@@ -82,18 +86,19 @@ class AffineKernelDescription(Interface):
     def translate_dataframe(self, f : Functional, df : 'pandas.DataFrame'):
         raise RuntimeError(f'translate_dataframe should not be calle over any AffineDescription {self.NAME=}')
 
-    def translate_empty_dataframe(self, f : Functional):
-        # TODO
-        lut_tensor = np.zeros([f.noptimized_for, 1], dtype=np.int8)
-        sigs = [ self.create_asm_description(f) ]
-        return lut_tensor, sigs, None
-
-    @abstractmethod
-    def create_asm_description(self, f):
-        pass
+    # Very kernel specific logic, leave for concrete class
+    # def translate_empty_dataframe(self, f : Functional):
 
     @property
     def is_tunable(self):
         return False
 
-    def translate_csv_df(self, csv):
+    @property
+    def residual_func_cfields(self):
+        return self._residual_func_cfields
+
+    @staticmethod
+    def select_df_by_dict(df : pd.DataFrame, dic : dict):
+        conds = [ df[k] == v for k, v in dic.items() ]
+        mask = reduce(operator.__and__, conds)
+        return df[mask]
