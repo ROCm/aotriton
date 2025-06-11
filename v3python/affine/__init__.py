@@ -2,4 +2,5 @@
 # SPDX-License-Identifier: MIT
 
 from .akdesc import AffineKernelDescription
+from .dkarg import DirectKernelArguments
 from .csv_translator import CSVTranslator

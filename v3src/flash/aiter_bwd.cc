@@ -11,6 +11,47 @@
 
 namespace AOTRITON_NS::v3::flash {
 
+void BwdDqDkDvV3::calculate_residual_func_fields() const {
+    const auto& args = *params;
+    auto check_if_uniform = [&]() -> bool {
+        // Reject varlen
+        if (args.cu_seqlens_q || args.cu_seqlens_k) return false;
+        // TODO: GQA support
+        if (args.num_head_q != args.num_head_k) return false;
+#define CMP_TENSOR(X, Y)
+        do {                                                            \
+            if (args.X->strides() != args.Y->strides()) return false;   \
+        } while(0)
+        CMP_TENSOR(Q, K);
+        CMP_TENSOR(Q, DO);
+        CMP_TENSOR(K, V);
+        // This is more restrict than AITER kernel
+        CMP_TENSOR(K, DK);
+        CMP_TENSOR(V, DV);
+#undef CMP_TENSOR
+        // Tensor Memory layout must be BHSD or BSHD
+        // D-last is ensured by caller
+        if (args.Q->stride(0) < args.Q->stride(2)) return false;
+
+        if (args.max_seqlen_q != args.max_seqlen_k) return false;
+        if (args.max_seqlen_q % 64) return false;
+        return true;
+    };
+    auto check_hdim_regular = [&]() -> bool {
+        if (args.head_dim == 64)
+            return true;
+        if (args.head_dim == 128)
+            return true;
+        if (args.head_dim == 192)
+            return true;
+        return false;
+    };
+    kIsUniformStride = check_if_uniform();
+    kIsSEQPad = (args.max_seqlen_q % 64 != 0);
+    kIsHDPad = !check_hdim_regular();
+    kIsGroupMode = (args.num_head_q != args.num_head_k);
+}
+
 dim3 BwdDqDkDvV3::grid_calculator() const {
 }
 

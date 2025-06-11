@@ -11,8 +11,6 @@ namespace AOTRITON_NS::v3::[[kernel_family_name]] {
 using AOTRITON_NS::v3::[[shared_iface_family]]::[[param_class_name]];
 #endif
 
-typedef std::vector<char>(*PP_FUNC)(const [[param_class_name]]& context, hipDeviceptr_t*);
-
 namespace {
 extern PP_FUNC prepare_arguments[ [[pp_func_num]] ];
 }
@@ -22,7 +20,6 @@ int64_t [[context_class_name]]::godel_number() const
     int64_t sum = 0;
     const auto& args = *params;
 [[godel_number_body]]
-[[residual_godel_number_body]]
     return sum;
 }
 
@@ -37,32 +34,61 @@ hipError_t
     // Unlike Triton's autotune_table
     // Affine kernel uses entries from "capability_table", which validate if
     // input is supported.
-    auto validator = capability_table[arch_number][godel_number()];
-    if (!validator)
+    auto capability_validator = capability_table[arch_number][godel_number()];
+    if (!capability_validator)
         return hipErrorPeerAccessUnsupported;
+    // capability_validator is responsible to
+    // 1. return hipErrorPeerAccessUnsupported when kernel cannot handle inputs
+    //    (Usually not required, can be identified with residual choices)
+    // 2. assign selected_pp_args
+    // 3. assign affine_kernel_name/package_path/func_name/arch_name
+    // 4. assign kernel_on_device
     return validator(*this, mod_number);
+}
+
+std::tuple<int, int>
+[[context_class_name]]::get_archmod_number(Gpu gpu) {
+    [[get_archmod_number_body]];
+    // TODO: print warning about tuning for this GPU mod is not built.
+    // Note: if some mod does not have tuning info in the database at all, the
+    //       getGpuFromStream should not return that mod from beginning.
+    return std::make_tuple(-1, 0);
 }
 
 
 hipError_t
 [[context_class_name]]::launch(hipStream_t stream) const {
-    auto args = prepare_arguments[pp_args_index](*this->params);
+    DirectKernelArguments direct_args;
+    auto args = (*selected_pp_args)(&direct_args);
     dim3 grid = grid_calculator();
-    return kernel_on_device->invoke(affine_kernel_name,
-                                    package_path,
-                                    func_name,
-                                    arch_name,
-                                    grid,
-                                    args,
-                                    stream);
+    return kernel_on_device->invoke_with_struct(affine_kernel_function_name,
+                                                package_path,
+                                                func_name,
+                                                arch_name,
+                                                grid,
+                                                &direct_args,
+                                                stream);
 }
-
-[[list_of_pp_args_function_defs]]
 
 namespace {
-PP_FUNC prepare_arguments[ [[pp_func_num]] ] = {
-  [[list_of_pp_args_function_decls]]
+
+// Kernels from ALL arches go here.
+AOTRITON_NS::TritonKernelCompactMeta meta_list[] = {
+    [[meta_cos]]
 };
+constexpr int kTotalNumKernels = ARRAY_SIZE(meta_list);
+const char packed_string[] =
+[[kernel_co_name_packed_string]];
+
+AOTRITON_NS::TritonKernelCluster<kTotalNumKernels>
+kernel_cluster(meta_list, packed_string);
+
+[[validator_defs]]
 }
+
+[[context_class_name]]::CapabilityTableEntry
+[[context_class_name]]::capability_table[][ [[number_of_functionals_with_residuals]] ] = {
+[[capability_table_entries]]
+};
 
 }
