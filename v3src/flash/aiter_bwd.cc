@@ -5,20 +5,20 @@
 #include <aotriton/_internal/util.h>
 #include <aotriton/flash.h>
 #include <aotriton/util.h>
-#include <flash/shim.attn_bwd.h>
 #include <flash/iface.op_attn_bwd.h>
+#include <flash/affine.bwd_dq_dk_dv_v3.h>
 #include <iostream>
 
 namespace AOTRITON_NS::v3::flash {
 
-void BwdDqDkDvV3::calculate_residual_func_fields() const {
+void BwdDqDkDvV3Context::calculate_residual_func_fields() {
     const auto& args = *params;
     auto check_if_uniform = [&]() -> bool {
         // Reject varlen
         if (args.cu_seqlens_q || args.cu_seqlens_k) return false;
         // TODO: GQA support
         if (args.num_head_q != args.num_head_k) return false;
-#define CMP_TENSOR(X, Y)
+#define CMP_TENSOR(X, Y)                                                \
         do {                                                            \
             if (args.X->strides() != args.Y->strides()) return false;   \
         } while(0)
@@ -46,13 +46,23 @@ void BwdDqDkDvV3::calculate_residual_func_fields() const {
             return true;
         return false;
     };
-    kIsUniformStride = check_if_uniform();
-    kIsSEQPad = (args.max_seqlen_q % 64 != 0);
-    kIsHDPad = !check_hdim_regular();
-    kIsGroupMode = (args.num_head_q != args.num_head_k);
+    residual_args.kIsUniformStride = check_if_uniform();
+    residual_args.kIsSEQPad = (args.max_seqlen_q % 64 != 0);
+    residual_args.kIsHDPad = !check_hdim_regular();
+    residual_args.kIsGroupMode = (args.num_head_q != args.num_head_k);
+    auto check_mask_type = [&]() -> int8_t {
+      if (args.CAUSAL_TYPE == CausalType::None)
+        return 0;
+      if (args.Window_left == WindowValue::TopLeftAligned &&
+          args.Window_right == WindowValue::TopLeftAligned)
+        return 1;
+      return 2;
+    };
+    residual_args.MaskType = check_mask_type();
 }
 
-dim3 BwdDqDkDvV3::grid_calculator() const {
+dim3 BwdDqDkDvV3Context::grid_calculator() const {
+  return {0, 0, 0};
 }
 
 hipError_t AOTRITON_API
@@ -81,7 +91,8 @@ aiter_bwd(const attn_bwd_params& in,
   if (in.cu_seqlens_k) {
     max_seqlen_k = in.Max_seqlen_k;
   }
-  const auto& compiled_head_dims = BwdKernelDkDvMetadata::get_BLOCK_DMODEL_choices();
+  static std::vector<int> compiled_head_dims {64, 128, 192};
+  // const auto& compiled_head_dims = BwdKernelDkDvMetadata::get_BLOCK_DMODEL_choices();
   int16_t head_dim_rounded = round_value(head_dim, compiled_head_dims);
   OpAttnBwdParams params = {
     .Q = &in.Q,
@@ -115,7 +126,7 @@ aiter_bwd(const attn_bwd_params& in,
     .CAUSAL_TYPE = in.causal_type,
     .ENABLE_DROPOUT = in.dropout_p > 0.0,
     .PADDED_HEAD = head_dim != head_dim_rounded,
-    .BIAS_TYPE = bool(in.B) ? 1 : 0,
+    .BIAS_TYPE = int8_t(bool(in.B) ? 1 : 0),
   };
   BwdDqDkDvV3Context context;
   context.params = &params;
@@ -123,7 +134,7 @@ aiter_bwd(const attn_bwd_params& in,
   if (err != hipSuccess) {
     return err;
   }
-  return context.launch(gpu, stream);
+  return context.launch(stream);
 }
 
 }

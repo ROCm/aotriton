@@ -33,17 +33,17 @@ class RootGenerator(object):
         hsaco_for_kernels = []
         asms_for_kernels = []
         shims = []
-        # for op in dispatcher_operators:
-        #     opg = OperatorGenerator(self._args, op, parent_repo=None)
-        #     opg.generate()
-        #     shims += opg.shim_files
-        # for k in triton_kernels:
-        #     ksg = KernelShimGenerator(self._args, k, parent_repo=None)
-        #     ksg.generate()
-        #     hsacos = ksg.this_repo.get_data('hsaco')
-        #     hsaco_for_kernels.append((k, hsacos))
-        #     shims += ksg.shim_files
-        print(f'{affine_kernels=}')
+        for op in dispatcher_operators:
+            opg = OperatorGenerator(self._args, op, parent_repo=None)
+            opg.generate()
+            shims += opg.shim_files
+        for k in triton_kernels:
+            ksg = KernelShimGenerator(self._args, k, parent_repo=None)
+            ksg.generate()
+            hsacos = ksg.this_repo.get_data('hsaco')
+            hsaco_for_kernels.append((k, hsacos))
+            shims += ksg.shim_files
+        # print(f'{affine_kernels=}')
         for ak in affine_kernels:
             print(f'{ak.__class__=}')
             aksg = AffineGenerator(self._args, ak, parent_repo=None)

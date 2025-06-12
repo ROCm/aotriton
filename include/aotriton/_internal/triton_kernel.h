@@ -89,6 +89,14 @@ public:
                     bool peek_kernel_image,
 #endif
                     hipStream_t stream);
+  hipError_t direct_invoke(std::string_view kernel_name,
+                           std::string_view package_path,
+                           std::string_view func_name,
+                           std::string_view arch_name,
+                           dim3 grid,
+                           void* struct_of_args,
+                           size_t sizeof_struct,
+                           hipStream_t stream);
 
   void clear_decompressed_image();
 

@@ -134,6 +134,66 @@ TritonKernel::invoke(std::string_view kernel_name,
                                0);
 }
 
+hipError_t
+TritonKernel::direct_invoke(std::string_view kernel_name,
+                            std::string_view package_path,
+                            std::string_view func_name,
+                            std::string_view arch_name,
+                            dim3 grid,
+                            void* struct_of_args,
+                            size_t sizeof_struct,
+                            hipStream_t stream)
+{
+  // TODO: Deduplication
+#if AOTRITON_KERNEL_VERBOSE
+  std::cerr << "Invoking TritonKernel " << this << " with kernel_name = \"" << kernel_name << '"'
+            << std::endl;
+#endif
+  int device_id;
+  AOTRITON_HIP_CHECK_RETURN(hipGetDevice(&device_id));
+  // Use reader lock to peek the state
+  hipFunction_t func = nullptr;
+  {
+    std::shared_lock lock(funcache_mutex_);
+    func = cfind_function(device_id);
+  }
+
+  if (!func) {
+    // Use writer lock to initialize the module for device
+    std::unique_lock lock(funcache_mutex_);
+    // Check again, in case another waiter has initialized the device
+    func = cfind_function(device_id);
+    if (!func) {
+      hipError_t err;
+      std::tie(func, err) = load_for_device(device_id,
+                                            kernel_name,
+                                            package_path,
+                                            func_name,
+                                            arch_name);
+    }
+  }
+#if AOTRITON_BUILD_FOR_TUNING
+  if (peek_kernel_image)
+    return hipSuccess;
+#endif
+  void* config[] = {HIP_LAUNCH_PARAM_BUFFER_POINTER,
+                    &struct_of_args,
+                    HIP_LAUNCH_PARAM_BUFFER_SIZE,
+                    &sizeof_struct,
+                    HIP_LAUNCH_PARAM_END};
+  return hipModuleLaunchKernel(func,
+                               grid.x,
+                               grid.y,
+                               grid.z,
+                               essentials_.block.x,
+                               essentials_.block.y,
+                               essentials_.block.z,
+                               essentials_.shared_memory_size,
+                               stream,
+                               nullptr,
+                               reinterpret_cast<void**>(&config));
+}
+
 hipFunction_t
 TritonKernel::cfind_function(int device_id) const {
   auto iter = funcache_.find(device_id);

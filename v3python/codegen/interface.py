@@ -168,21 +168,22 @@ class InterfaceGenerator(ABC):
             self.codegen_godel_number_calculation(tp, body)
         return body.getvalue()
 
-    def codegen_godel_number_calculation(self, tp, fout):
+    def codegen_godel_number_calculation(self, tp, fout, *, anamespace='args.'):
         if tp.nchoices <= 1:
             return
         aname = tp.repr_name # meta._ordered_arguments[0][0]
         INDENT = 4 * ' '
         print(INDENT + '{', file=fout)
-        print(2 * INDENT + 'int64_t number = 0;', file=fout)
+        print(2 * INDENT + 'int64_t number = -1;', file=fout)
         for number, tc in enumerate(tp.choices):
             assert not isinstance(tc, TC.ConditionalChoice)
             if isinstance(tc, TC.tensor):
                 type_enum = tc.type_enum
-                print(2 * INDENT + f'if (args.{aname}->dtype() == {type_enum}) number = {number} ;', file=fout)
+                print(2 * INDENT + f'if ({anamespace}{aname}->dtype() == {type_enum}) number = {number} ;', file=fout)
             else:
                 value = str(tc).lower()
-                print(2 * INDENT + f'if (args.{aname} == {value}) number = {number} ;', file=fout)
+                print(2 * INDENT + f'if ({anamespace}{aname} == {value}) number = {number} ;', file=fout)
+        print(2 * INDENT + f'if (number < 0) return -1;', file=fout)
         print(2 * INDENT + f'sum += number * {tp.godel_number};', file=fout)
         print(1 * INDENT + '}', file=fout)
 
