@@ -11,10 +11,6 @@ namespace AOTRITON_NS::v3::[[kernel_family_name]] {
 using AOTRITON_NS::v3::[[shared_iface_family]]::[[param_class_name]];
 #endif
 
-namespace {
-extern PP_FUNC prepare_arguments[ [[pp_func_num]] ];
-}
-
 int64_t [[context_class_name]]::godel_number() const
 {
     int64_t sum = 0;

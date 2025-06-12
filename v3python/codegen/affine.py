@@ -7,14 +7,17 @@ import io
 from ..base import (
     typed_choice as TC,
     Functional,
+    Interface,
 )
 from .interface import InterfaceGenerator
 from ..affine import AffineKernelDescription
-from ..affine_cap import AffineCapabilityGenerator
+from .affine_cap import AffineCapabilityGenerator
 from ..utils import (
     LazyFile,
-    log
+    RegistryRepository,
+    log,
 )
+from .template import get_template
 from .common import codegen_struct_cfields, codegen_includes
 import hashlib
 
@@ -27,23 +30,27 @@ class AffineGenerator(InterfaceGenerator):
         super().__init__(args, iface, parent_repo)
         akdesc = iface
         # Patch _target_arch since affine kernel may not support all arches.
-        self._target_arch = { arch: gpus in self._target_arch.items() if arch in akdesc.SUPPORTED_ARCH }
+        self._target_arch = { arch: gpus for arch, gpus in self._target_arch.items() if arch in akdesc.SUPPORTED_ARCH }
         del self._target_gpus  # For safety
-        self._this_repo.get_string_registry('affine_kernel_packed_string').register('.co')
 
     '''
     Unlike Triton kernel. Affine kernel does not need an autotune table.
     Hence even if a sub-generator is returned, this sub-generator will not generate dedicated files.
     All code will be consolidated into the affine.<kernel_name>.cc file
     '''
-    def create_sub_generator(self, functional : Functional):
+    def create_sub_generator(self, functional : Functional, df : 'pandas.DataFrame'):
         akdesc = functional.meta_object
         if akdesc.is_functional_disabled(functional):
             log(lambda : f'Functional {functional.godel_number=} disabled in affine kernel {akdesc.NAME}')
             use_this_functional = False
             return None, use_this_functional
         use_this_functional = True
-        return AffineCapabilityGenerator(self._args, akdesc, functional, self._this_repo), use_this_functional
+        df, dkarg = akdesc.translate_empty_dataframe(functional)
+        if df.empty:
+            use_this_functional = False
+            return None, use_this_functional
+        capgen = AffineCapabilityGenerator(self._args, akdesc, functional, df, dkarg, self._this_repo)
+        return capgen, use_this_functional
 
     def write_shim_header(self, functionals, fout):
         akdesc = self._iface
@@ -58,10 +65,10 @@ class AffineGenerator(InterfaceGenerator):
             'affine_kernel_name'      : akdesc.NAME,
             'param_class_name'      : akdesc.param_class_name,
             'context_class_name'    : akdesc.context_class_name,
-            'func_fields'           : codegen_struct_cfields(akdesc.func_cfields, nalign=4)
-            'residual_func_fields'  : codegen_struct_cfields(akdesc.residual_func_cfields(), nalign=8),
+            'func_fields'           : codegen_struct_cfields(akdesc.func_cfields, nalign=4),
+            'residual_func_fields'  : codegen_struct_cfields(akdesc.residual_func_cfields, nalign=8),
             'union_of_possible_structs'     : self.codegen_union_of_possible_structs(),
-            'pp_func_decls'         : self.codegen_pp_func_decls()
+            'pp_func_decls'         : self.codegen_pp_func_decls(),
             'number_of_functionals_with_residuals' : akdesc.godel_number,
         }
         d['includes'] = codegen_includes(self._hdr_include_repo.get_data())
@@ -104,23 +111,23 @@ class AffineGenerator(InterfaceGenerator):
 
     def codegen_union_of_possible_structs(self):
         akdesc = self._iface
-        if akdesc.DIRECT_ARGS is None:
+        if akdesc.DIRECT_KERNEL_ARGS is None:
             return ''
         stmt = []
         for dkargs in akdesc.DIRECT_KERNEL_ARGS:
             stmt.append(f'{dkargs.full_name} {dkargs.NAME}')
             self._add_include_to_header(dkargs.INCLUDE)
-        ALIGN = ' ' * 8 + ';'
+        ALIGN = ' ' * 8 + ';\n'
         return ALIGN.join(stmt)
 
     def codegen_pp_func_decls(self):
         akdesc = self._iface
-        if akdesc.DIRECT_ARGS is None:
+        if akdesc.DIRECT_KERNEL_ARGS is None:
             return ''
         stmt = []
         for dkargs in akdesc.DIRECT_KERNEL_ARGS:
             stmt.append(f'void pp_direct_kernel_args_for_{dkargs.NAME}(DirectKernelArguments&)')
-        ALIGN = ' ' * 4 + ';'
+        ALIGN = ' ' * 4 + ';\n'
         return ALIGN.join(stmt)
 
     def codegen_compact_kernels(self):
@@ -141,15 +148,16 @@ class AffineGenerator(InterfaceGenerator):
         return ALIGN.join(meta_cos)
 
     def codegen_capability_table(self, functionals):
-        validator_dic = self._this_repo.get_data('validator_function')
+        validator_registry = self._this_repo.get_data('validator_function')
         table_entries = {}
         validator_defs = []
-        for (arch, godel_number), fsrc in validator_dic.items():
-            validator_defs.append(fsrc)
+        for fsrc, item in validator_registry.items():
+            validator_defs.append(f'{item.ret} {item.name}{item.params}\n' + fsrc)
         capability_table_entries = self.codegen_tune_table_entries(functionals)
         ALIGN_V = '\n\n'
         return ALIGN_V.join(validator_defs), capability_table_entries
 
     def codegen_tune_struct_name(self, arch_number, godel_number):
-        validator_name = f'validator_A{arch_number}_F{godel_number}'
+        validator_registry = self._this_repo.get_data('validator_assignment')
+        validator_name = validator_registry.get((arch_number, godel_number), 'nullptr')
         return validator_name, False

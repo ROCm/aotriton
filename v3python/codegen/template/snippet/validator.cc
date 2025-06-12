@@ -1,4 +1,4 @@
-void validator_[[arch_number]]_F[[godel_number]]([[context_class_name]]& context, int mod_number) {
+{
     context.selected_pp_args = &context::pp_direct_kernel_args_for_[[direct_kernel_args]];
     context.kernel_on_device = kernel_cluster.get([[kernel_obj_index]]);
     context.affine_kernel_function_name = R"xyzwwzyx([[mangled_name]])xyzwwzyx";
