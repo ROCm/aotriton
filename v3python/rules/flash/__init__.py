@@ -68,5 +68,5 @@ operators = [
 ]
 
 affine_kernels = [
-    bwd_dq_dk_dv_v3,
+    bwd_dq_dk_dv_v3(),
 ]

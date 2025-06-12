@@ -16,30 +16,32 @@ from .attn_fwd import attn_fwd
 from .op_attn_bwd import OpAttnBwd
 from v3python.gpu_targets import AOTRITON_ARCH_PRODUCTION_LINE
 from v3python.affine import CSVTranslator, DirectKernelArguments
+from v3python.utils import log
 match_fwd = lambda aname : get_possible_choices(attn_fwd, aname)
 
-def translate_csv_hdim(self, hdim):
+def translate_csv_hdim(hdim):
     if hdim <= 64:
         return 64
     if hdim <= 128:
         return 128
     if hdim <= 192:
         return 192
-    assert False, f'Should not call translate_csv_hdim with hdim > 192, but got {hdim}'
+    assert False, f'Should not call translate_csv_hdim with hdim > 192, but got {hdim}. Need to remove such functional defensively with CHOICE_FILTERS or is_functional_disabled'
 
-def translate_csv_datatype(self, value):
+def translate_csv_datatype(value):
     if value == '*bf16:16':
         return 'FmhaBwdBf16'
     if value == '*fp16:16':
         return 'FmhaBwdFp16'
+    assert False, f'Should only call translate_csv_datatype with fp16/bf16, but got {value}. Need to remove such functional defensively with CHOICE_FILTERS or is_functional_disabled'
     return None
 
-def translate_regular_to_bothpad(self, is_regular):
+def translate_regular_to_bothpad(is_regular):
     if is_regular:
         return False
     return True
 
-def translate_csv_tskv(self, f, col):
+def translate_csv_tskv(f, col):
     ts_kv = 192 if f.arch == "gfx942" else 256
     def etrans(e):
         if e == 'DEFERRED':
@@ -62,19 +64,29 @@ class fmha_bwd_v3_group_args(fmha_bwd_v3_args):
     NAME = 'fmha_bwd_v3_group_args'
 
 class bwd_dq_dk_dv_v3(FlashAffine):
+    CO_DIR = 'fmha_v3_bwd'
+
     SHARED_IFACE = OpAttnBwd
     NAME = 'bwd_dq_dk_dv_v3'
+    ARGUMENTS = OpAttnBwd.ARGUMENTS
+    CHOICE_FILTERS = {
+        'Q' : lambda dtype : 'fp16' in dtype or 'bf16' in dtype,
+        'BLOCK_DMODEL' : lambda x : x in [64, 128, 192],        # Note: asm kernel only have 3 hdim variants
+        'BIAS_TYPE' : lambda b : b == 0,
+        'ENABLE_DROPOUT' : lambda dropout : dropout == False,   # TODO: support dropout = True with validated PRNG
+    }
+
     CO_CSV = 'aiter_bwd.csv'
     SUPPORTED_ARCH = ['gfx942', 'gfx950']
     RESIDUAL_CHOICES = {
         # In practice, kIsSEQPad and kIsHDPad are always false when ifUniformStrides is false
         # Hence kIsSEQPad and kIsHDPad are remove to make the table smaller
-        frozenset(['kIsUniformStride']) : [False, True],    # Inferred/Implicit
-        frozenset(['kIsSEQPad']) : [False, True],
-        frozenset(['kIsHDPad']) : [False, True],
-        frozenset(['kIsAtomic32']) : [True],                # Always use FP32 for better dq accuracy.
-        frozenset(['BF16Cvt']) : [0],                       # Always use RTNE when down casting from dq accumulator
-        frozenset(['kIsGroupMode']) : [False, True],
+        tuple(['kIsUniformStride']) : [False, True],    # Inferred/Implicit
+        tuple(['kIsSEQPad']) : [False, True],
+        tuple(['kIsHDPad']) : [False, True],
+        tuple(['kIsAtomic32']) : [True],                # Always use FP32 for better dq accuracy.
+        tuple(['BF16Cvt']) : [0],                       # Always use RTNE when down casting from dq accumulator
+        tuple(['kIsGroupMode']) : [False, True],
     }
     DIRECT_KERNEL_ARGS = [
         fmha_bwd_v3_args(),
@@ -114,20 +126,22 @@ class bwd_dq_dk_dv_v3(FlashAffine):
             return True
         hdim = check_value(functional, ['BLOCK_DMODEL'])
         if hdim > 192:
-            return False
-        is_causal = check_value(functional, ['CAUSAL', 'CAUSAL_TYPE'])
-        bias_type = check_value(functional, 'BIAS_TYPE')
-        if is_causal and bias_type != 0:
             return True
+        # Unnecessary since CHOICE_FILTERS ensures BIAS_TYPE == 0
+        # Kept in case furture ASM kernel supports BIAS_TYPE == 1
+        # is_causal = check_value(functional, ['CAUSAL', 'CAUSAL_TYPE'])
+        # bias_type = check_value(functional, 'BIAS_TYPE')
+        # if is_causal and bias_type != 0:
+        #     return True
         df = self.translate_empty_dataframe(functional)
         if df is None:
             return True
         return False
 
     DF_DICT_PATCH = [
-        # {'kIsSEQPad':  True, 'kIsHDPad': False}  # all such kernels (*_pssk) requires kIsUniformStride
-        {'kIsSEQPad': False, 'kIsHDPad':  True}
-        {'kIsSEQPad':  True, 'kIsHDPad':  True}
+        # {'kIsSEQPad':  True, 'kIsHDPad': False}  # requires kIsUniformStride
+        {'kIsSEQPad': False, 'kIsHDPad':  True},
+        {'kIsSEQPad':  True, 'kIsHDPad':  True},
     ]
     '''
     AITER ASM kernel has extra limitations
@@ -139,31 +153,45 @@ class bwd_dq_dk_dv_v3(FlashAffine):
     kernel
     '''
     def translate_empty_dataframe(self, f : 'Functional'):
-        complete_dict = f.build_complete_dict()
+        complete_dict = f.build_complete_tc_dict()
+        # print(f'{complete_dict=}')
         dic = {}
         for tr in self.CSV_TRANSLATORS:
+            log(lambda : f'{tr=} {tr.get_iface_param()=}')
             dic[tr.column] = tr.translate_tc(complete_dict[tr.get_iface_param()])
         kIsUniformStride = complete_dict['kIsUniformStride'].triton_compile_signature
         kIsSEQPad = complete_dict['kIsSEQPad'].triton_compile_signature
         kIsHDPad = complete_dict['kIsHDPad'].triton_compile_signature
         kIsGroupMode = complete_dict['kIsGroupMode'].triton_compile_signature
+        # print(f'{kIsUniformStride=}')
         if kIsUniformStride:
             '''
             kIsUniformStride=True: can use any kernel
             '''
+            canSEQPad = [True] if kIsSEQPad else [False, True]
+            canHDPad = [True] if kIsHDPad else [False, True]
+            def locate_csv_rows():
+                for pickIsSEQPad in canSEQPad:
+                    for pickIsHDPad in canHDPad:
+                        dic.update({'kIsSEQPad': pickIsSEQPad, 'kIsHDPad':  pickIsHDPad})
+                        ret = self.select_df_by_dict(self._df, dic)
+                        if not ret.empty:
+                            return ret, pickIsSEQPad, pickIsHDPad
+                return ret, pickIsSEQPad, pickIsHDPad
+            ret, pickIsSEQPad, pickIsHDPad = locate_csv_rows()
             pp_arg_klass = fmha_bwd_v3_genl_args
-            if not kIsSEQPad and kIsHDPad:
+            if not pickIsSEQPad and pickIsHDPad:
                 pp_arg_klass = fmha_bwd_v3_gen_args
-            if not kIsSEQPad and not kIsHDPad:
+            if not pickIsSEQPad and not pickIsHDPad:
                 pp_arg_klass = fmha_bwd_v3_args
             if kIsGroupMode:
                 pp_arg_klass = fmha_bwd_v3_group_args
-            return self.select_df_by_dict(self._df, dic), pp_arg_klass()
+            return ret, pp_arg_klass()
         for patch in self.DF_DICT_PATCH:
             dic.update(patch)
             ret = self.select_df_by_dict(self._df, dic)
             if not ret.empty:
-                return ret, pp_arg_klass()
+                break
         if kIsGroupMode:
             pp_arg_klass = fmha_bwd_v3_group_args
         else:

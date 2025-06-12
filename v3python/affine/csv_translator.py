@@ -2,15 +2,16 @@
 # SPDX-License-Identifier: MIT
 
 from dataclasses import dataclass
+from typing import Callable
 
 @dataclass
 class CSVTranslator:
     column : str = ''
     iface_param : str = ''
-    value_translator = None
+    value_translator : Callable = None
 
     def get_iface_param(self):
-        return self.column if self.iface_param is None else self.iface_param
+        return self.column if not self.iface_param else self.iface_param
 
     def translate_tc(self, tc):
         value = tc.triton_compile_signature

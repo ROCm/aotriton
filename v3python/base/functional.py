@@ -154,8 +154,12 @@ class Functional(object):
         return 'F__' + sf
 
     @property
+    def full_filepack_dir(self):
+        return Path(AOTRITON_ARCH_TO_DIRECTORY[self.arch]) / self._meta.FAMILY / self._meta.NAME
+
+    @property
     def full_filepack_path(self):
-        return Path(AOTRITON_ARCH_TO_DIRECTORY[self.arch]) / self._meta.FAMILY / self._meta.NAME / self.filepack_signature
+        return self.full_filepack_dir / self.filepack_signature
 
     def translate_dataframe(self, df):
         # Only meta object (kdesc/op) of a functional knows how to translate dataframe

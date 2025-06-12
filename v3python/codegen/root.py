@@ -3,6 +3,7 @@
 
 # Root of the Generation process
 
+from pathlib import Path
 from collections import defaultdict
 from ..rules import (
     kernels as triton_kernels,
@@ -30,22 +31,25 @@ class RootGenerator(object):
     def generate(self):
         args = self._args
         hsaco_for_kernels = []
+        asms_for_kernels = []
         shims = []
-        for op in dispatcher_operators:
-            opg = OperatorGenerator(self._args, op, parent_repo=None)
-            opg.generate()
-            shims += opg.shim_files
-        for k in triton_kernels:
-            ksg = KernelShimGenerator(self._args, k, parent_repo=None)
-            ksg.generate()
-            hsacos = ksg.this_repo.get_data('hsaco')
-            hsaco_for_kernels.append((k, hsacos))
-            shims += ksg.shim_files
+        # for op in dispatcher_operators:
+        #     opg = OperatorGenerator(self._args, op, parent_repo=None)
+        #     opg.generate()
+        #     shims += opg.shim_files
+        # for k in triton_kernels:
+        #     ksg = KernelShimGenerator(self._args, k, parent_repo=None)
+        #     ksg.generate()
+        #     hsacos = ksg.this_repo.get_data('hsaco')
+        #     hsaco_for_kernels.append((k, hsacos))
+        #     shims += ksg.shim_files
+        print(f'{affine_kernels=}')
         for ak in affine_kernels:
-            aksg = AffineGenerator(self._args, k, parent_repo=None)
+            print(f'{ak.__class__=}')
+            aksg = AffineGenerator(self._args, ak, parent_repo=None)
             aksg.generate()
             asms = aksg.this_repo.get_data('asms')
-            asms_for_kernels.append((k, asms))
+            asms_for_kernels.append((ak, asms))
             shims += aksg.shim_files
 
         if args.build_for_tuning_second_pass:
@@ -74,10 +78,17 @@ class RootGenerator(object):
                     ffp = functional.full_filepack_path
                     aol = [self._absobjfn(image_path, kdesc, ksig) for ksig in signatures]
                     cluster_dict[ffp] += aol
-        for akdesc, asms in hsaco_for_kernels:
-            for functional, asm in asms.items():
-                ffp = functional.full_filepack_path
-                cluster_dict[ffp].append(asm)
+        '''
+        Note: Affine kernel's functionals have residual choices, so it is not
+        completely the same with Triton kernel/Interface's functionals
+
+        However, Affine kernel's functionals do not use residual choices to
+        compute full_filepack_path, so eventually .hsaco and .co files will be
+        consolated into the same .aks2 file, which is intentional.
+        '''
+        for akdesc, asm_registry in asms_for_kernels:
+            for package_path, asms in asm_registry.items():
+                cluster_dict[Path(package_path)] += [ self._absasmfn(asm) for asm in asms ]
         with LazyFile(args.build_dir / 'Bare.cluster') as clusterfile:
             for ffp, aol in cluster_dict.items():
                 self.write_cluster(ffp, aol, clusterfile)
@@ -102,6 +113,10 @@ class RootGenerator(object):
     def write_cluster(self, ffp, aol, clusterfile):
         print(*ffp.parts, end=';', sep=';', file=clusterfile)
         print(*aol, sep=';', file=clusterfile)
+
+    def _absasmfn(self, asm_path):
+        full = self._args.root_dir / asm_path
+        return str(full.absolute())
 
     # def write_cluster(self, kdesc, path, functional, signatures, clusterfile):
     #     full_filepack_path = functional.full_filepack_path

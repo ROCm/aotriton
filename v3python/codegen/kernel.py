@@ -29,7 +29,7 @@ class KernelShimGenerator(InterfaceGenerator):
             use_this_functional = False
             return None, use_this_functional
         use_this_functional = True
-        return AffineShimGenerator(self._args, functional, self._this_repo), use_this_functional
+        return AutotuneCodeGenerator(self._args, functional, df, self._this_repo), use_this_functional
 
     def write_shim_header(self, functionals, fout):
         kdesc = self._iface

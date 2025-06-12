@@ -11,4 +11,4 @@ class DirectKernelArguments(object):
 
     @property
     def full_name(self):
-        return f'{NAMESPACE}::{NAME}'
+        return f'{self.NAMESPACE}::{self.NAME}'
