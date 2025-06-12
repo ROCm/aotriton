@@ -264,6 +264,7 @@ struct AOTRITON_API attn_bwd_params {
   int8_t    varlen_type = 0;
   int32_t   window_left;
   int32_t   window_right;
+  T4        DQ_ACC;                 // fp32 accumulator of dq
 
   static constexpr int32_t kVersion = 1;
   attn_bwd_params();

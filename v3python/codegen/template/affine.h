@@ -37,6 +37,7 @@ struct [[context_class_name]] {
     struct {
         [[residual_func_fields]];
     } residual_args;
+    bool check_inputs_are_supported();
     void calculate_residual_func_fields();
 
     // Re-use TritonKernel class

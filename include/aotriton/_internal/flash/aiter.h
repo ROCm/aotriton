@@ -313,6 +313,86 @@ struct fmha_bwd_v3_traits
     int ts_dq = 64;
 };
 
+namespace ck_tile {
+  using index_t = int32_t;
+}
+
+struct fmha_bwd_args
+{
+    const void* q_ptr;
+    const void* k_ptr;
+    const void* v_ptr;
+    const void* bias_ptr; // bias or alibi_slope pointer
+    const void* o_ptr;
+    const void* lse_ptr;
+    const void* do_ptr;
+    void* d_ptr;
+    void* rand_val_ptr;
+    void* dq_ptr;
+    void* dk_ptr;
+    void* dv_ptr;
+    void* dbias_ptr;
+    void* dq_acc_ptr;
+    const void* seqstart_q_ptr;
+    const void* seqstart_k_ptr;
+    const void* seqlen_k_ptr;
+    ck_tile::index_t seqlen_q;
+    ck_tile::index_t seqlen_k;
+    ck_tile::index_t batch;
+    ck_tile::index_t max_seqlen_q;
+    ck_tile::index_t max_seqlen_k;
+    ck_tile::index_t hdim_q;
+    ck_tile::index_t hdim_v;
+    ck_tile::index_t nhead_q;
+    ck_tile::index_t nhead_k;
+    float scale;
+    ck_tile::index_t stride_q;
+    ck_tile::index_t stride_k;
+    ck_tile::index_t stride_v;
+    ck_tile::index_t stride_bias; // if alibi, b*h need set this to h, 1*h need set this to 0
+    ck_tile::index_t stride_o;
+    ck_tile::index_t stride_randval;
+    ck_tile::index_t stride_do;
+    ck_tile::index_t stride_dq_acc;
+    ck_tile::index_t stride_dq;
+    ck_tile::index_t stride_dk;
+    ck_tile::index_t stride_dv;
+    ck_tile::index_t stride_dbias;
+    ck_tile::index_t nhead_stride_q;
+    ck_tile::index_t nhead_stride_k;
+    ck_tile::index_t nhead_stride_v;
+    ck_tile::index_t nhead_stride_bias;
+    ck_tile::index_t nhead_stride_o;
+    ck_tile::index_t nhead_stride_randval;
+    ck_tile::index_t nhead_stride_do;
+    ck_tile::index_t nhead_stride_lsed;
+    ck_tile::index_t nhead_stride_dq_acc;
+    ck_tile::index_t nhead_stride_dq;
+    ck_tile::index_t nhead_stride_dk;
+    ck_tile::index_t nhead_stride_dv;
+    ck_tile::index_t nhead_stride_dbias;
+    ck_tile::index_t batch_stride_q;
+    ck_tile::index_t batch_stride_k;
+    ck_tile::index_t batch_stride_v;
+    ck_tile::index_t batch_stride_bias;
+    ck_tile::index_t batch_stride_o;
+    ck_tile::index_t batch_stride_randval;
+    ck_tile::index_t batch_stride_do;
+    ck_tile::index_t batch_stride_lsed;
+    ck_tile::index_t batch_stride_dq_acc;
+    ck_tile::index_t batch_stride_dq;
+    ck_tile::index_t batch_stride_dk;
+    ck_tile::index_t batch_stride_dv;
+    ck_tile::index_t batch_stride_dbias;
+    ck_tile::index_t split_stride_dq_acc;
+    ck_tile::index_t window_size_left;
+    ck_tile::index_t window_size_right;
+    ck_tile::index_t mask_type;
+    float p_drop;
+    float p_undrop;
+    std::variant<std::pair<uint64_t, uint64_t>, std::pair<const void*, const void*>>
+        drop_seed_offset;
+};
 
 } // AOTRITON_NS::v3::flash::aiter
 
