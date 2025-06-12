@@ -27,6 +27,8 @@ hipError_t
     if (arch_number < 0) {
         return hipErrorNoBinaryForGpu;
     }
+    if (!check_inputs_are_supported())
+        return hipErrorPeerAccessUnsupported;
     calculate_residual_func_fields();
     kernel_on_device = nullptr;
     // Unlike Triton's autotune_table

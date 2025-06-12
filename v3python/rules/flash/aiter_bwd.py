@@ -63,6 +63,9 @@ class fmha_bwd_v3_genl_args(fmha_bwd_v3_args):
 class fmha_bwd_v3_group_args(fmha_bwd_v3_args):
     NAME = 'fmha_bwd_v3_group_args'
 
+class fmha_bwd_v3_swa_genl_args(fmha_bwd_v3_args):
+    NAME = 'fmha_bwd_v3_swa_genl_args'
+
 class bwd_dq_dk_dv_v3(FlashAffine):
     CO_DIR = 'fmha_v3_bwd'
 
@@ -77,7 +80,8 @@ class bwd_dq_dk_dv_v3(FlashAffine):
     }
 
     CO_CSV = 'aiter_bwd.csv'
-    SUPPORTED_ARCH = ['gfx942', 'gfx950']
+    # SUPPORTED_ARCH = ['gfx942', 'gfx950']
+    SUPPORTED_ARCH = ['gfx942']  # gfx950 requires dq_shuffle_kernel, which is more complicated
     RESIDUAL_CHOICES = {
         # In practice, kIsSEQPad and kIsHDPad are always false when ifUniformStrides is false
         # Hence kIsSEQPad and kIsHDPad are remove to make the table smaller
@@ -94,6 +98,7 @@ class bwd_dq_dk_dv_v3(FlashAffine):
         fmha_bwd_v3_gen_args(),
         fmha_bwd_v3_genl_args(),
         fmha_bwd_v3_group_args(),
+        fmha_bwd_v3_swa_genl_args(),
     ]
 
     def limits(self):
@@ -164,6 +169,11 @@ class bwd_dq_dk_dv_v3(FlashAffine):
         kIsSEQPad = complete_dict['kIsSEQPad'].triton_compile_signature
         kIsHDPad = complete_dict['kIsHDPad'].triton_compile_signature
         kIsGroupMode = complete_dict['kIsGroupMode'].triton_compile_signature
+        MaskType = complete_dict['MaskType'].triton_compile_signature
+        if MaskType == 2:  # SWA
+            dic.update({'kIsSEQPad': True, 'kIsHDPad':  True})
+            ret = self.select_df_by_dict(self._df, dic)
+            return ret, fmha_bwd_v3_swa_genl_args()
         # print(f'{kIsUniformStride=}')
         if kIsUniformStride:
             '''
