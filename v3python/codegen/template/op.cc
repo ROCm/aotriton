@@ -24,7 +24,10 @@ hipError_t
         return hipErrorNoBinaryForGpu;
     }
     backend_index = BackendEnum::None;
-    auto tune_func = optune_table[arch_number][godel_number()];
+    auto number = godel_number();
+    if (number < 0)
+        return hipErrorNotSupported;
+    auto tune_func = optune_table[arch_number][number];
     if (!tune_func)
         return hipErrorProfilerNotInitialized;
     tune_func(*this, mod_number);

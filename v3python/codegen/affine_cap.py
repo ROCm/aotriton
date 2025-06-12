@@ -39,7 +39,7 @@ class AffineCapabilityGenerator(BaseTuneCodeGenerator):
         validator_registry = self._parent_repo.get_function_registry('validator_function')
         val_function_pfx = f'validator_Arch_{f.arch}_lambda'
         val_params = f'({akdesc.context_class_name}& context, int mod_number)'
-        valf_name = validator_registry.register(fsrc, 'void', val_function_pfx, val_params)
+        valf_name = validator_registry.register(fsrc, 'hipError_t', val_function_pfx, val_params)
         validator_assignment = self._parent_repo.get_dict_registry('validator_assignment')
         validator_assignment.register((f.arch_number, f.godel_number), valf_name)
 
@@ -73,6 +73,7 @@ class AffineCapabilityGenerator(BaseTuneCodeGenerator):
             'context_class_name'    : akdesc.context_class_name,
             'kernel_obj_index'      : kernel_obj_index,
             'direct_kernel_args'    : self._dkarg.NAME,
+            'full_name_kernel_args' : self._dkarg.full_name,
             'package_path'          : package_path,
             'mangled_name'          : mangled_name,
         }

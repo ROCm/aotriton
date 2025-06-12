@@ -34,21 +34,24 @@ struct [[param_class_name]] {
 
 struct [[context_class_name]] {
     const [[param_class_name]] *params = nullptr;
-    [[residual_func_fields]];
+    struct {
+        [[residual_func_fields]];
+    } residual_args;
     void calculate_residual_func_fields();
 
     // Re-use TritonKernel class
     TritonKernel* kernel_on_device = nullptr;
 
     // Kernel arguments
-    struct DirectKernelArguments {
+    union DirectKernelArguments {
         [[union_of_possible_structs]]
     };
-    typedef void(*PP_FUNC)(DirectKernelArguments&);
+    typedef void([[context_class_name]]::*PP_FUNC)(DirectKernelArguments&) const;
     // These functions will be defined in
     // v3src/<family>/affine_<kernel_name>.cc
     [[pp_func_decls]];
     PP_FUNC selected_pp_args;
+    size_t sizeof_selected_args;
 
     // Kernel locator
     std::string_view affine_kernel_function_name;
@@ -70,7 +73,7 @@ struct [[context_class_name]] {
     static std::tuple<int, int> get_archmod_number(Gpu gpu);
     static constexpr int kMaxGodelNumber = [[number_of_functionals_with_residuals]];
 
-    typedef void (*CapabilityTableEntry)([[context_class_name]]& context, int mod_number);
+    typedef hipError_t (*CapabilityTableEntry)([[context_class_name]]& context, int mod_number);
     static CapabilityTableEntry capability_table[][ kMaxGodelNumber ];
 };
 

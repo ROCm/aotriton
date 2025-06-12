@@ -82,6 +82,7 @@ class bwd_dq_dk_dv_v3(FlashAffine):
         # In practice, kIsSEQPad and kIsHDPad are always false when ifUniformStrides is false
         # Hence kIsSEQPad and kIsHDPad are remove to make the table smaller
         tuple(['kIsUniformStride']) : [False, True],    # Inferred/Implicit
+        tuple(['MaskType']) : [0, 1, 2],                # 0: No, 1: TopLeft, 2: SWA
         tuple(['kIsSEQPad']) : [False, True],
         tuple(['kIsHDPad']) : [False, True],
         tuple(['kIsAtomic32']) : [True],                # Always use FP32 for better dq accuracy.
@@ -111,7 +112,7 @@ class bwd_dq_dk_dv_v3(FlashAffine):
     CSV_TRANSLATORS = [
         CSVTranslator(column='HDim', iface_param='BLOCK_DMODEL', value_translator=translate_csv_hdim),
         CSVTranslator(column='DataType', iface_param='Q', value_translator=translate_csv_datatype),
-        CSVTranslator(column='MaskType', iface_param='CAUSAL_TYPE'),  # Our value assignment matches ASM kernel
+        CSVTranslator(column='MaskType',),
         CSVTranslator(column='kIsAtomic32'),
         # CSVTranslator(column='kIsRegular'),
         CSVTranslator(column='BF16Cvt'),

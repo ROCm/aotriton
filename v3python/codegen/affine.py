@@ -32,6 +32,7 @@ class AffineGenerator(InterfaceGenerator):
         # Patch _target_arch since affine kernel may not support all arches.
         self._target_arch = { arch: gpus for arch, gpus in self._target_arch.items() if arch in akdesc.SUPPORTED_ARCH }
         del self._target_gpus  # For safety
+        self._target_arch_keys = list(self._target_arch.keys())
 
     '''
     Unlike Triton kernel. Affine kernel does not need an autotune table.
@@ -106,7 +107,7 @@ class AffineGenerator(InterfaceGenerator):
             self.codegen_godel_number_calculation(tp, body)
         print(' ' * 4, '// Residual Choices start here', body)
         for tp in iface.list_residual_functional_params():
-            self.codegen_godel_number_calculation(tp, body)
+            self.codegen_godel_number_calculation(tp, body, anamespace='residual_args.')  # Accessible directly in context object
         return body.getvalue()
 
     def codegen_union_of_possible_structs(self):
@@ -117,8 +118,8 @@ class AffineGenerator(InterfaceGenerator):
         for dkargs in akdesc.DIRECT_KERNEL_ARGS:
             stmt.append(f'{dkargs.full_name} {dkargs.NAME}')
             self._add_include_to_header(dkargs.INCLUDE)
-        ALIGN = ' ' * 8 + ';\n'
-        return ALIGN.join(stmt)
+        ALIGN = ';\n' + ' ' * 8
+        return ALIGN.join(stmt) + ';\n'
 
     def codegen_pp_func_decls(self):
         akdesc = self._iface
@@ -126,9 +127,9 @@ class AffineGenerator(InterfaceGenerator):
             return ''
         stmt = []
         for dkargs in akdesc.DIRECT_KERNEL_ARGS:
-            stmt.append(f'void pp_direct_kernel_args_for_{dkargs.NAME}(DirectKernelArguments&)')
-        ALIGN = ' ' * 4 + ';\n'
-        return ALIGN.join(stmt)
+            stmt.append(f'void pp_direct_kernel_args_for_{dkargs.NAME}(DirectKernelArguments&) const')
+        ALIGN = ';\n' + ' ' * 4
+        return ALIGN.join(stmt) + ';\n'
 
     def codegen_compact_kernels(self):
         dic = self._this_repo.get_data('affine_kernel_as_triton_kernel')

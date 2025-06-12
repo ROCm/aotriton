@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: MIT
 
 #include "affine.[[affine_kernel_name]].h"
+#include <aotriton/_internal/kernel_cluster.h>
 #include <aotriton/util.h>
 #include <tuple>
+[[includes]]
 
 namespace AOTRITON_NS::v3::[[kernel_family_name]] {
 
@@ -30,7 +32,10 @@ hipError_t
     // Unlike Triton's autotune_table
     // Affine kernel uses entries from "capability_table", which validate if
     // input is supported.
-    auto capability_validator = capability_table[arch_number][godel_number()];
+    auto number = godel_number();
+    if (number < 0)
+        return hipErrorPeerAccessUnsupported;
+    auto capability_validator = capability_table[arch_number][number];
     if (!capability_validator)
         return hipErrorPeerAccessUnsupported;
     // capability_validator is responsible to
@@ -39,7 +44,7 @@ hipError_t
     // 2. assign selected_pp_args
     // 3. assign affine_kernel_name/package_path/func_name/arch_name
     // 4. assign kernel_on_device
-    return validator(*this, mod_number);
+    return capability_validator(*this, mod_number);
 }
 
 std::tuple<int, int>
@@ -55,15 +60,16 @@ std::tuple<int, int>
 hipError_t
 [[context_class_name]]::launch(hipStream_t stream) const {
     DirectKernelArguments direct_args;
-    auto args = (*selected_pp_args)(&direct_args);
+    (*this.*selected_pp_args)(direct_args);
     dim3 grid = grid_calculator();
-    return kernel_on_device->invoke_with_struct(affine_kernel_function_name,
-                                                package_path,
-                                                func_name,
-                                                arch_name,
-                                                grid,
-                                                &direct_args,
-                                                stream);
+    return kernel_on_device->direct_invoke(affine_kernel_function_name,
+                                           package_path,
+                                           func_name,
+                                           arch_name,
+                                           grid,
+                                           &direct_args,
+                                           sizeof_selected_args,
+                                           stream);
 }
 
 namespace {
@@ -72,7 +78,9 @@ namespace {
 AOTRITON_NS::TritonKernelCompactMeta meta_list[] = {
     [[meta_cos]]
 };
+#define ARRAY_SIZE(array)  (sizeof(array) / sizeof(array[0]))
 constexpr int kTotalNumKernels = ARRAY_SIZE(meta_list);
+#undef ARRAY_SIZE
 const char packed_string[] =
 [[kernel_co_name_packed_string]];
 

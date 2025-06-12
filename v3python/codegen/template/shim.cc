@@ -35,7 +35,10 @@ hipError_t
         return hipErrorNoBinaryForGpu;
     }
     kernel_on_device = nullptr;
-    auto tune_func = autotune_table[arch_number][godel_number()];
+    auto number = godel_number();
+    if (number < 0)
+        return hipErrorNotSupported;
+    auto tune_func = autotune_table[arch_number][number];
     if (!tune_func)
         return hipErrorProfilerNotInitialized;
     tune_func(*this, mod_number);
