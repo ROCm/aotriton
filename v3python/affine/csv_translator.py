@@ -22,7 +22,7 @@ class CSVTranslator:
         return self.value_translator(value)
 
     def translate_csv_property(self, df, *, functional=None):
-        value = df[self.column].iat(0)
+        value = df[self.column].iat[0]
         if self.value_translator is None:
             return value
         if functional is not None:

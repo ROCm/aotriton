@@ -6,6 +6,7 @@
 
 #include <aotriton/config.h>
 #include <aotriton/_internal/aiter_hip_common.h>
+#include <variant>
 
 namespace AOTRITON_NS::v3::flash::aiter {
 
