@@ -54,7 +54,8 @@ bool BwdDqDkDvV3Context::check_inputs_are_supported() {
     auto max_e = std::max_element(strides.begin(), strides.end());    \
     if (max_e * 2 > numeric_limits<uint32_t>::max) {                  \
       return false;                                                   \
-    } while(0)
+    }                                                                 \
+  } while(0)
   CHECK_STRIDE(args.Q);
   CHECK_STRIDE(args.K);
   CHECK_STRIDE(args.V);
@@ -119,7 +120,7 @@ void BwdDqDkDvV3Context::calculate_residual_func_fields() {
     residual_args.MaskType = check_mask_type();
 }
 
-fmha_bwd_args
+aiter::fmha_bwd_args
 construct_fmha_bwd_args(const BwdDqDkDvV3Context& ctx) {
   const auto& args = *ctx.params;
   auto batch = args.Q->size(0);
@@ -177,8 +178,8 @@ construct_fmha_bwd_args(const BwdDqDkDvV3Context& ctx) {
     args.DV->data_ptr(),
     nullptr,    // dbias_buf->data_ptr(),
     dq_acc_buf->data_ptr(),
-    nullptr,    // was for varlen
-    nullptr,    // was for varlen
+    seqstart_q_ptr,    // was for varlen/group (why needed for group?)
+    seqstart_k_ptr,    // was for varlen/group
     nullptr,
     args.max_seqlen_q,
     args.max_seqlen_k,
@@ -235,10 +236,12 @@ construct_fmha_bwd_args(const BwdDqDkDvV3Context& ctx) {
     p_drop,
     p_undrop,
     drop_seed_offset};
-};
-
 }
 
+/*
+ * s/\<fmha_v3_traits\>/traits/g
+ * %s/FmhaBwdV3Ts<dq_dk_dv_v3_traits_>::/perf_args./g
+ */
 void BwdDqDkDvV3Context::pp_direct_kernel_args_for_fmha_bwd_v3_args(DirectKernelArguments& union_of_args) const {
   auto& args = &union_of_args.fmha_bwd_v3_args;
   auto a = construct_fmha_bwd_args(*this);
@@ -255,7 +258,7 @@ void BwdDqDkDvV3Context::pp_direct_kernel_args_for_fmha_bwd_v3_args(DirectKernel
   args.log2e   = ck_tile::log2e_v<float>;
   args.seq_len = a.seqlen_q;
 
-  args.Ts   = FmhaBwdV3Ts<dq_dk_dv_v3_traits_>::ts_kv * a.stride_k * 2;
+  args.Ts   = perf_args.ts_kv * a.stride_k * 2;
   args.Hs   = a.nhead_stride_q * 2;
   args.BAs  = a.batch_stride_q * 2;
   args.Seqs = a.stride_q * 2;
@@ -265,6 +268,24 @@ void BwdDqDkDvV3Context::pp_direct_kernel_args_for_fmha_bwd_v3_args(DirectKernel
   args.BAs_kv   = a.batch_stride_k * 2;
   args.Seqs_kv  = a.stride_k * 2;
   args.Seqs_dkv = a.stride_dk * 2;
+
+  auto traits = fmha_bwd_v3_traits {a.batch,
+                                    a.nhead_q,
+                                    a.seqlen_q,
+                                    a.hdim_q,
+                                    a.mask_type,
+                                    perf_args.ts_qo,
+                                    perf_args.ts_kv};
+  int gdx = (traits.s + traits.ts_kv - 1) / traits.ts_kv;
+  int gdy = traits.h;
+  int gdz = traits.b;
+  if (MaskType > 0) {
+    int num_tg = (traits.s + traits.ts_kv - 1) / traits.ts_kv;
+    gdx        = (num_tg % 2) ? (num_tg / 2 + 1) : (num_tg / 2);
+  }
+  dim3 grid {gdx, gdy, gdz};
+  dim3 block { 256, 1, 1 };
+  return std::make_tuple(grid, block);
 }
 
 
@@ -284,7 +305,7 @@ void BwdDqDkDvV3Context::pp_direct_kernel_args_for_fmha_bwd_v3_gen_args(DirectKe
   args.log2e   = ck_tile::log2e_v<float>;
   args.seq_len = a.seqlen_q;
 
-  args.Ts   = FmhaBwdV3Ts<dq_dk_dv_v3_traits_>::ts_kv * a.stride_k * 2;
+  args.Ts   = perf_args.ts_kv * a.stride_k * 2;
   args.Hs   = a.nhead_stride_q * 2;
   args.BAs  = a.batch_stride_q * 2;
   args.Seqs = a.stride_q * 2;
@@ -295,6 +316,24 @@ void BwdDqDkDvV3Context::pp_direct_kernel_args_for_fmha_bwd_v3_gen_args(DirectKe
   args.Seqs_kv  = a.stride_k * 2;
   args.Seqs_dkv = a.stride_dk * 2;
   args.head_dim = a.hdim_q;
+
+  auto traits = fmha_bwd_v3_traits {a.batch,
+                                    a.nhead_q,
+                                    a.seqlen_q,
+                                    a.hdim_q,
+                                    a.mask_type,
+                                    perf_args.ts_qo,
+                                    perf_args.ts_kv};
+  int gdx = (traits.s + traits.ts_kv - 1) / traits.ts_kv;
+  int gdy = traits.h;
+  int gdz = traits.b;
+  if (MaskType > 0) {
+    int num_tg = (traits.s + traits.ts_kv - 1) / traits.ts_kv;
+    gdx        = (num_tg % 2) ? (num_tg / 2 + 1) : (num_tg / 2);
+  }
+  dim3 grid {gdx, gdy, gdz};
+  dim3 block { 256, 1, 1 };
+  return std::make_tuple(grid, block);
 }
 
 
@@ -336,6 +375,24 @@ void BwdDqDkDvV3Context::pp_direct_kernel_args_for_fmha_bwd_v3_genl_args(DirectK
   args.Hs_dv    = a.nhead_stride_dv * 2;
   args.BAs_dv   = a.batch_stride_dv * 2;
   args.Seqs_dv  = a.stride_dv * 2;
+
+  auto traits = fmha_bwd_v3_traits {a.batch,
+                                    a.nhead_q,
+                                    a.seqlen_k,
+                                    a.hdim_q,
+                                    a.mask_type,
+                                    perf_args.ts_qo,
+                                    perf_args.ts_kv};
+  int gdx = (traits.s + traits.ts_kv - 1) / traits.ts_kv;
+  int gdy = traits.h;
+  int gdz = traits.b;
+  if (MaskType > 0) {
+    int num_tg = (traits.s + traits.ts_kv - 1) / traits.ts_kv;
+    gdx        = (num_tg % 2) ? (num_tg / 2 + 1) : (num_tg / 2);
+  }
+  dim3 grid {gdx, gdy, gdz};
+  dim3 block { 256, 1, 1 };
+  return std::make_tuple(grid, block);
 }
 
 
@@ -372,6 +429,21 @@ void BwdDqDkDvV3Context::pp_direct_kernel_args_for_fmha_bwd_v3_group_args(Direct
   args.ptr_qseq = a.seqstart_q_ptr;
   args.ptr_kseq = a.seqstart_k_ptr;
   args.head_dim = a.hdim_q;
+
+  auto traits = fmha_bwd_v3_traits {a.batch,
+                                    a.nhead_q,
+                                    a.max_seqlen_k,
+                                    a.hdim_q,
+                                    a.mask_type,
+                                    perf_args.ts_qo,
+                                    perf_args.ts_kv };
+  int gdx = (traits.s + traits.ts_kv - 1) / traits.ts_kv;
+  if (traits.mask > 0) {
+    gdx = (gdx % 2) ? (gdx / 2 + 1) : (gdx / 2);
+  }
+  dim3 grid {gdx, gdy, gdz};
+  dim3 block { 256, 1, 1 };
+  return std::make_tuple(grid, block);
 }
 
 #if 0 // TODO auto generic_mask = ck_tile::make_generic_attention_mask_coordinates_from_lr_window
@@ -412,12 +484,22 @@ void BwdDqDkDvV3Context::pp_direct_kernel_args_for_fmha_bwd_v3_swa_genl_args(Dir
   args.Hs_dv    = a.nhead_stride_dv * 2;
   args.BAs_dv   = a.batch_stride_dv * 2;
   args.Seqs_dv  = a.stride_dv * 2;
+
+  auto traits = fmha_bwd_v3_traits{a.batch,
+                                    a.nhead_q,
+                                    a.seqlen_k,
+                                    a.hdim_q,
+                                    a.mask_type,
+                                    perf_args.ts_qo,
+                                    perf_args.ts_kv};
+  int gdx = (traits.s + traits.ts_kv - 1) / traits.ts_kv;
+  int gdy = traits.h;
+  int gdz = traits.b;
+  dim3 grid {gdx, gdy, gdz};
+  dim3 block { 256, 1, 1 };
+  return std::make_tuple(grid, block);
 }
 #endif
-
-dim3 BwdDqDkDvV3Context::grid_calculator() const {
-  return {0, 0, 0};
-}
 
 hipError_t AOTRITON_API
 aiter_bwd(const attn_bwd_params& in,

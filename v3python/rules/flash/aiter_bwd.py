@@ -41,13 +41,12 @@ def translate_regular_to_bothpad(is_regular):
         return False
     return True
 
-def translate_csv_tskv(f, col):
+def translate_csv_tskv(f, value):
+    if value > 0:
+        return value
+    # Arch depedent ts_kv
     ts_kv = 192 if f.arch == "gfx942" else 256
-    def etrans(e):
-        if e == 'DEFERRED':
-            return ts_kv
-        return int(e)
-    return [etrans(e) for e in col]
+    return ts_kv
 
 class fmha_bwd_v3_args(DirectKernelArguments):
     NAME = 'fmha_bwd_v3_args'
@@ -124,6 +123,11 @@ class bwd_dq_dk_dv_v3(FlashAffine):
         CSVTranslator(column='kIsSEQPad'),
         CSVTranslator(column='kIsHDPad', iface_param='PADDED_HEAD'),
         CSVTranslator(column='kIsGroupMode'),
+    ]
+
+    CSV_PROPERTIES = [
+        CSVTranslator(column='ts_qo', iface_param='int32_t'),
+        CSVTranslator(column='ts_kv', iface_param='int32_t', value_translator=translate_csv_tskv),
     ]
 
     def is_functional_disabled(self, functional):

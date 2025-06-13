@@ -68,6 +68,7 @@ class AffineGenerator(InterfaceGenerator):
             'context_class_name'    : akdesc.context_class_name,
             'func_fields'           : codegen_struct_cfields(akdesc.func_cfields, nalign=4),
             'residual_func_fields'  : codegen_struct_cfields(akdesc.residual_func_cfields, nalign=8),
+            'csv_perf_fields'       : self.codegen_csv_perf_fields(),
             'union_of_possible_structs'     : self.codegen_union_of_possible_structs(),
             'pp_func_decls'         : self.codegen_pp_func_decls(),
             'number_of_functionals_with_residuals' : akdesc.godel_number,
@@ -110,6 +111,16 @@ class AffineGenerator(InterfaceGenerator):
             self.codegen_godel_number_calculation(tp, body, anamespace='residual_args.')  # Accessible directly in context object
         return body.getvalue()
 
+    def codegen_csv_perf_fields(self, nalign=8):
+        akdesc = self._iface
+        if akdesc.CSV_PROPERTIES is None:
+            return ''
+        stmt = []
+        for csvp in akdesc.CSV_PROPERTIES:
+            stmt.append(f'{csvp.iface_param} {csvp.column}')
+        ALIGN = ';\n' + ' ' * nalign
+        return ALIGN.join(stmt) + ';'  # The template doesn't contain ';' because this struct can be empty.
+
     def codegen_union_of_possible_structs(self):
         akdesc = self._iface
         if akdesc.DIRECT_KERNEL_ARGS is None:
@@ -127,7 +138,7 @@ class AffineGenerator(InterfaceGenerator):
             return ''
         stmt = []
         for dkargs in akdesc.DIRECT_KERNEL_ARGS:
-            stmt.append(f'void pp_direct_kernel_args_for_{dkargs.NAME}(DirectKernelArguments&) const')
+            stmt.append(f'std::tuple<dim3, dim3> pp_direct_kernel_args_for_{dkargs.NAME}(DirectKernelArguments&) const')
         ALIGN = ';\n' + ' ' * 4
         return ALIGN.join(stmt) + ';\n'
 

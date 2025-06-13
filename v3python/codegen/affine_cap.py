@@ -76,5 +76,19 @@ class AffineCapabilityGenerator(BaseTuneCodeGenerator):
             'full_name_kernel_args' : self._dkarg.full_name,
             'package_path'          : package_path,
             'mangled_name'          : mangled_name,
+            'perf_args_assignment'  : self.codegen_perf_args_assignment(),
         }
         return f.godel_number, self.VALIDATOR_TEMPLATE.format_map(d)
+
+    def codegen_perf_args_assignment(self, nalign=4):
+        akdesc = self._akdesc
+        if akdesc.CSV_PROPERTIES is None:
+            return ''
+        f = self._f
+        df = self._df
+        stmt = []
+        for csvp in akdesc.CSV_PROPERTIES:
+            value = csvp.translate_csv_property(df, functional=f)
+            stmt.append(f'perf_args.{csvp.column} = {value}')
+        ALIGN = ';\n' + ' ' * nalign
+        return ALIGN.join(stmt)

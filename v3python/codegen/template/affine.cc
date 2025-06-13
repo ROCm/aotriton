@@ -62,13 +62,13 @@ std::tuple<int, int>
 hipError_t
 [[context_class_name]]::launch(hipStream_t stream) const {
     DirectKernelArguments direct_args;
-    (*this.*selected_pp_args)(direct_args);
-    dim3 grid = grid_calculator();
+    auto [grid, block] = (*this.*selected_pp_args)(direct_args);
     return kernel_on_device->direct_invoke(affine_kernel_function_name,
                                            package_path,
                                            func_name,
                                            arch_name,
                                            grid,
+                                           block,
                                            &direct_args,
                                            sizeof_selected_args,
                                            stream);

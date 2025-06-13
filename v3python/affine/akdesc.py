@@ -32,6 +32,7 @@ class AffineKernelDescription(Interface):
     SUPPORTED_ARCH = None
     RESIDUAL_CHOICES = None     # Affine kernel may have finer requirements
     DIRECT_KERNEL_ARGS = None
+    CSV_PROPERTIES = None
 
     @property
     def enum_name(self):
