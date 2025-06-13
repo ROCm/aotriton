@@ -94,6 +94,7 @@ public:
                            std::string_view func_name,
                            std::string_view arch_name,
                            dim3 grid,
+                           dim3 block,
                            void* struct_of_args,
                            size_t sizeof_struct,
                            hipStream_t stream);

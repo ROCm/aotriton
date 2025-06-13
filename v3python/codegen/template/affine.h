@@ -37,6 +37,9 @@ struct [[context_class_name]] {
     struct {
         [[residual_func_fields]];
     } residual_args;
+    struct {
+        [[csv_perf_fields]]
+    } perf_args;
     bool check_inputs_are_supported();
     void calculate_residual_func_fields();
 
@@ -47,7 +50,7 @@ struct [[context_class_name]] {
     union DirectKernelArguments {
         [[union_of_possible_structs]]
     };
-    typedef void([[context_class_name]]::*PP_FUNC)(DirectKernelArguments&) const;
+    typedef std::tuple<dim3, dim3>([[context_class_name]]::*PP_FUNC)(DirectKernelArguments&) const;
     // These functions will be defined in
     // v3src/<family>/affine_<kernel_name>.cc
     [[pp_func_decls]];
@@ -67,8 +70,8 @@ struct [[context_class_name]] {
     hipError_t lookup_optimal(Gpu gpu);
     hipError_t launch(hipStream_t stream) const;
 
-    dim3 grid_calculator() const;
     std::function<dim3(const [[context_class_name]]&)> custom_grid_calculator;
+    dim3 grid;
 
     int64_t godel_number() const;
     static std::tuple<int, int> get_archmod_number(Gpu gpu);
