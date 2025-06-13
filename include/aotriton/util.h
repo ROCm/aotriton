@@ -113,7 +113,7 @@ public:
     return strides_;
   }
 
-  const void* data_ptr() const {
+  void* data_ptr() const {
     return base_;
   }
 
@@ -138,7 +138,7 @@ public:
                               dtype};
   }
 private:
-  const void* base_ = nullptr;
+  void* base_ = nullptr;
   std::array<uint64_t, Rank> sizes_;
   std::array<uint64_t, Rank> strides_;
   DType dtype_ = kUnknown;
@@ -175,7 +175,7 @@ public:
     return {};
   }
 
-  const void* data_ptr() const {
+  void* data_ptr() const {
     return base_;
   }
 
@@ -192,7 +192,7 @@ public:
     return const_cast<void*>(static_cast<const void*>(&base_));
   }
 private:
-  const void* base_ = nullptr;
+  void* base_ = nullptr;
   DType dtype_ = kUnknown;
 };
 
