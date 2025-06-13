@@ -89,6 +89,6 @@ class AffineCapabilityGenerator(BaseTuneCodeGenerator):
         stmt = []
         for csvp in akdesc.CSV_PROPERTIES:
             value = csvp.translate_csv_property(df, functional=f)
-            stmt.append(f'perf_args.{csvp.column} = {value}')
+            stmt.append(f'context.perf_args.{csvp.column} = {value}')
         ALIGN = ';\n' + ' ' * nalign
         return ALIGN.join(stmt)
