@@ -110,11 +110,11 @@ TritonKernel::invoke(std::string_view kernel_name,
     func = cfind_function(device_id);
     if (!func) {
       hipError_t err;
+      std::string stem_name = construct_stem_name(kernel_name, func_name, ksig_psel_, ksig_copt_, arch_name);
       std::tie(func, err) = load_for_device(device_id,
                                             kernel_name,
-                                            package_path,
-                                            func_name,
-                                            arch_name);
+                                            stem_name,
+                                            package_path);
     }
   }
 #if AOTRITON_BUILD_FOR_TUNING
@@ -135,7 +135,7 @@ TritonKernel::invoke(std::string_view kernel_name,
 }
 
 hipError_t
-TritonKernel::direct_invoke(std::string_view kernel_name,
+TritonKernel::direct_invoke(std::string_view mangled_kernel_function_name,
                             std::string_view package_path,
                             std::string_view func_name,
                             std::string_view arch_name,
@@ -167,10 +167,9 @@ TritonKernel::direct_invoke(std::string_view kernel_name,
     if (!func) {
       hipError_t err;
       std::tie(func, err) = load_for_device(device_id,
-                                            kernel_name,
-                                            package_path,
-                                            func_name,
-                                            arch_name);
+                                            mangled_kernel_function_name,
+                                            ksig_copt_,  // Affine use ksig_psel_ as arch, ksig_copt_ as file name
+                                            package_path);
     }
   }
 #if AOTRITON_BUILD_FOR_TUNING
@@ -205,10 +204,9 @@ TritonKernel::cfind_function(int device_id) const {
 
 std::tuple<hipFunction_t, hipError_t>
 TritonKernel::load_for_device(int device_id,
-                              std::string_view kernel_name,
-                              std::string_view package_path,
-                              std::string_view func_name,
-                              std::string_view arch_name) {
+                              std::string_view kernel_function_name,
+                              std::string_view stem_name,
+                              std::string_view package_path) {
   hipJitOption opt[] = { hipJitOptionErrorLogBufferSizeBytes,
                          hipJitOptionErrorLogBuffer,
                          hipJitOptionInfoLogBufferSizeBytes,
@@ -223,7 +221,6 @@ TritonKernel::load_for_device(int device_id,
                      (void*)(uintptr_t)log.size(),
                      log.data(),
                      (void*)(uintptr_t)1 };
-  std::string stem_name = construct_stem_name(kernel_name, func_name, ksig_psel_, ksig_copt_, arch_name);
 
 #if AOTRITON_KERNEL_VERBOSE
   std::cerr << "Trying to decompress kernel " << package_path << " " << stem_name << std::endl;
@@ -238,7 +235,7 @@ TritonKernel::load_for_device(int device_id,
   hipModule_t mod;
   hipFunction_t func;
   AOTRITON_HIP_CHECK_RETURN(hipModuleLoadDataEx(&mod, essentials_.image, 5, opt, optval));
-  AOTRITON_HIP_CHECK_RETURN(hipModuleGetFunction(&func, mod, kernel_name.data()));
+  AOTRITON_HIP_CHECK_RETURN(hipModuleGetFunction(&func, mod, kernel_function_name.data()));
   funcache_.emplace(std::piecewise_construct,
                     std::forward_as_tuple(device_id),
                     std::forward_as_tuple(device_id, mod, func));
@@ -264,7 +261,7 @@ TritonKernel::get_image_info_iff_decompressed() const {
 // does not exists from beginning by testing essentials_.image == nullptr
 void
 TritonKernel::decompress_kernel(std::string_view package_path,
-                                const std::string stem_name) {
+                                std::string_view stem_name) {
   if (kernel_loaded_) {
     return ;
   }

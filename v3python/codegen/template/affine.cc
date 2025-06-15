@@ -44,7 +44,7 @@ hipError_t
     // 1. return hipErrorPeerAccessUnsupported when kernel cannot handle inputs
     //    (Usually not required, can be identified with residual choices)
     // 2. assign selected_pp_args
-    // 3. assign affine_kernel_name/package_path/func_name/arch_name
+    // 3. assign affine_kernel_name/package_path/function_name/arch_name
     // 4. assign kernel_on_device
     return capability_validator(*this, mod_number);
 }
@@ -65,7 +65,7 @@ hipError_t
     auto [grid, block] = (*this.*selected_pp_args)(direct_args);
     return kernel_on_device->direct_invoke(affine_kernel_function_name,
                                            package_path,
-                                           func_name,
+                                           affine_kernel_function_name,
                                            arch_name,
                                            grid,
                                            block,
