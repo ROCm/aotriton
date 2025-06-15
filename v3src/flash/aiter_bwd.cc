@@ -7,6 +7,8 @@
 #include <aotriton/util.h>
 #include <flash/iface.op_attn_bwd.h>
 #include <flash/affine.bwd_dq_dk_dv_v3.h>
+#include <flash/shim.bwd_preprocess.h>
+#include <flash/shim.bwd_preprocess_varlen.h>
 #include <iostream>
 #include <algorithm>
 #include <limits>
@@ -49,6 +51,13 @@ bool BwdDqDkDvV3Context::check_inputs_are_supported() {
   if (args.head_dim > 192) return false;
   // TODO: support dropout kernel. fwd and bwd should have identical PRNG
   if (args.ENABLE_DROPOUT) return false;
+  // We do not have test suite to validate SWA at the moment.
+  if (args.CAUSAL_TYPE != CausalType::None) {
+      if (args.Window_left != WindowValue::TopLeftAligned ||
+          args.Window_right != WindowValue::TopLeftAligned) {
+        return false;
+      }
+  }
   // AITER ASM kernel only reads u32 strides.
 #define CHECK_STRIDE(T)                                               \
   do {                                                                \
@@ -469,9 +478,14 @@ BwdDqDkDvV3Context::pp_direct_kernel_args_for_fmha_bwd_v3_group_args(DirectKerne
   return std::make_tuple(grid, block);
 }
 
-#if 0 // TODO auto generic_mask = ck_tile::make_generic_attention_mask_coordinates_from_lr_window
 std::tuple<dim3, dim3>
 BwdDqDkDvV3Context::pp_direct_kernel_args_for_fmha_bwd_v3_swa_genl_args(DirectKernelArguments& union_of_args) const {
+  // As stated above, we do not have proper test suite to validate SWA support ATM
+  dim3 grid { 0, 0, 0};
+  dim3 block { 0, 1, 1 };
+  return std::make_tuple(grid, block);
+  // Leave the code for further development.
+#if 0 // TODO auto generic_mask = ck_tile::make_generic_attention_mask_coordinates_from_lr_window
   auto& args = union_of_args.fmha_bwd_v3_swa_genl_args;
   auto a = construct_fmha_bwd_args(*this);
   args.ptr_dq   = a.dq_acc_ptr;
@@ -523,10 +537,23 @@ BwdDqDkDvV3Context::pp_direct_kernel_args_for_fmha_bwd_v3_swa_genl_args(DirectKe
   dim3 grid {gdx, gdy, gdz};
   dim3 block { 256, 1, 1 };
   return std::make_tuple(grid, block);
-}
 #endif
+}
 
 #pragma GCC diagnostic pop
+
+// Defined in attn_bwd.cc
+
+extern hipError_t
+bwd_preprocess(T4 out, T4 dout, T2 delta, AOTRITON_NS::Stream stream_wrap);
+
+extern hipError_t
+bwd_preprocess_varlen(T4 out,
+                      T4 dout,
+                      T2 delta,
+                      T1 cu_seqlens_q,
+                      int32_t max_seqlen_q,
+                      AOTRITON_NS::Stream stream_wrap);
 
 hipError_t AOTRITON_API
 aiter_bwd(const attn_bwd_params& in,
@@ -595,12 +622,21 @@ aiter_bwd(const attn_bwd_params& in,
     .PADDED_HEAD = head_dim != head_dim_rounded,
     .BIAS_TYPE = int8_t(bool(in.B) ? 1 : 0),
   };
+  // Invoke context.lookup_optimal to confirm the input works
+  // TODO: this API should call Metro Kernel instead
+  // TODO: Metro kernel should call lookup_optimal for all context before invoking anything
   BwdDqDkDvV3Context context;
   context.params = &params;
   err = context.lookup_optimal(gpu);
   if (err != hipSuccess) {
     return err;
   }
+  if (num_seqlens == 0)
+    err = bwd_preprocess(in.Out, in.DO, in.D, stream);
+  else
+    err = bwd_preprocess_varlen(in.Out, in.DO, in.D, in.cu_seqlens_q, max_seqlen_q, stream);
+  if (err != hipSuccess)
+    return err;
   return context.launch(stream);
 }
 
