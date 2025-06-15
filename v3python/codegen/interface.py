@@ -57,7 +57,7 @@ class InterfaceGenerator(ABC):
 
         # autotune phase
         fac = DatabaseFactories.create_factory(args.build_dir)
-        print(f'{iface.__class__=}')
+        # print(f'{iface.__class__=}')
         for functional in iface.gen_functionals(self._target_arch):
             # print(f'{functional=}')
             df = fac.create_view(functional)

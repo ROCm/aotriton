@@ -78,6 +78,9 @@ class RootGenerator(object):
                     ffp = functional.full_filepack_path
                     aol = [self._absobjfn(image_path, kdesc, ksig) for ksig in signatures]
                     cluster_dict[ffp] += aol
+        with LazyFile(args.build_dir / 'Bare.cluster') as clusterfile:
+            for ffp, aol in cluster_dict.items():
+                self.write_cluster(ffp, aol, clusterfile)
         '''
         Note: Affine kernel's functionals have residual choices, so it is not
         completely the same with Triton kernel/Interface's functionals
@@ -86,11 +89,12 @@ class RootGenerator(object):
         compute full_filepack_path, so eventually .hsaco and .co files will be
         consolated into the same .aks2 file, which is intentional.
         '''
+        affine_dict = defaultdict(list)
         for akdesc, asm_registry in asms_for_kernels:
             for package_path, asms in asm_registry.items():
-                cluster_dict[Path(package_path)] += [ self._absasmfn(asm) for asm in asms ]
-        with LazyFile(args.build_dir / 'Bare.cluster') as clusterfile:
-            for ffp, aol in cluster_dict.items():
+                affine_dict[Path(package_path)] += [ self._absasmfn(asm) for asm in asms ]
+        with LazyFile(args.build_dir / 'Affine.cluster') as clusterfile:
+            for ffp, aol in affine_dict.items():
                 self.write_cluster(ffp, aol, clusterfile)
 
     def _absobjfn(self, path, kdesc, ksig):
