@@ -101,6 +101,14 @@ namespace pyaotriton::v3 {
               py::arg("params_version"),
               py::arg("stream") = nullptr,
               py::arg("options") = nullptr);
+        m.def("aiter_bwd",
+              &aotriton::v3::flash::aiter_bwd,
+              "Flash Attention Operator Backward Pass using AITER ASM Kernel.",
+              py::call_guard<py::gil_scoped_release>(),
+              py::arg("params"),
+              py::arg("params_version"),
+              py::arg("stream") = nullptr,
+              py::arg("options") = nullptr);
       }
   } // namespace pyaotriton::v3::flash
   void setup_module(py::module_& m) {
