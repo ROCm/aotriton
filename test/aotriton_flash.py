@@ -171,7 +171,6 @@ def attn_fwd(q, k, v, b, sm_scale, M, o,
     if AOTRITON_TORCH_ONLY_USE_CPU:
         hipDeviceSynchronize()
     if not call_operator:
-        print(f'attn_fwd {causal_type}')
         err = fa_forward(qview,
                          kview,
                          vview,
