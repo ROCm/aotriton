@@ -26,7 +26,8 @@ if not IGNORE_BACKWARD_IMPORT:
     )
     from pyaotriton.v3.flash import (
         attn_bwd as fa_backward_op,
-        attn_bwd_params as fa_backward_op_params
+        attn_bwd_params as fa_backward_op_params,
+        aiter_bwd as fa_aiter_bwd,
     )
 
 # Note: we don't use Enum class because accessing the integer requires using
@@ -170,6 +171,7 @@ def attn_fwd(q, k, v, b, sm_scale, M, o,
     if AOTRITON_TORCH_ONLY_USE_CPU:
         hipDeviceSynchronize()
     if not call_operator:
+        print(f'attn_fwd {causal_type}')
         err = fa_forward(qview,
                          kview,
                          vview,
@@ -348,6 +350,63 @@ def attn_bwd_fused(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L,
         _torch_cpu_only_copy_back([dq, dk, dv, db],
                                   [dqdevm, dkdevm, dvdevm, dbdevm])
     # print(f'{err=}')
+    return err
+
+def attn_bwd_aiter(q, k, v, b, sm_scale, o, dout, dq_acc, dk, dv, db, L, delta,
+                   dropout_p, philox_seed, philox_offset1, philox_offset2, causal, extargs=None):
+    extargs = BwdExtraArguments() if extargs is None else extargs
+    qview, qdevm = mk_aotensor(q)
+    kview, kdevm = mk_aotensor(k)
+    vview, vdevm = mk_aotensor(v)
+    bview, bdevm = mk_aotensor(b, if_empty_then_like=q)
+    oview, odevm = mk_aotensor(o)
+    doutview, doutdevm = mk_aotensor(dout)
+    dqaccview, dqaccdevm = mk_aotensor(dq_acc)
+    dkview, dkdevm = mk_aotensor(dk)
+    dvview, dvdevm = mk_aotensor(dv)
+    dbview, dbdevm = mk_aotensor(db, if_empty_then_like=q)
+    Lview, Ldevm = mk_aotensor(L)
+    deltaview, deltadevm = mk_aotensor(delta)
+    seedview, seeddevm = mk_aotensor(philox_seed)
+    offset1view, offset1devm = mk_aotensor(philox_offset1)
+    if AOTRITON_TORCH_ONLY_USE_CPU:
+        hipDeviceSynchronize()
+    # Keep using v3_api=False since we are not exposing Windowed Attention ATM
+    causal_type, window_left, window_right = translate_causal(causal, v3_api=False)
+    params = fa_backward_op_params()
+    params.Q = qview;
+    params.K = kview;
+    params.V = vview;
+    params.B = bview;
+    params.Sm_scale = float(sm_scale);
+    params.Out = oview;
+    params.DO = doutview;
+    params.DK = dkview;
+    params.DV = dvview;
+    params.DQ_ACC = dqaccview;
+    params.DB = dbview;
+    params.L = Lview;
+    params.D = deltaview;
+    # params.cu_seqlens_q
+    # params.cu_seqlens_k
+    # params.Max_seqlen_q
+    # params.Max_seqlen_k
+    params.dropout_p = float(dropout_p);
+    params.philox_seed_ptr = seedview;
+    params.philox_offset1 = offset1view;
+    params.philox_offset2 = philox_offset2;
+    params.causal_type = causal_type
+    params.window_left = window_left
+    params.window_right = window_right
+    params.varlen_type = 0
+    err = fa_aiter_bwd(params,
+                       fa_backward_op_params.kVersion,
+                       Stream(),
+                       attn_options()
+                       )
+    if AOTRITON_TORCH_ONLY_USE_CPU:
+        _torch_cpu_only_copy_back([dq_acc, dk, dv, db, delta],
+                                  [dqaccdevm, dkdevm, dvdevm, dbdevm, deltadevm])
     return err
 
 # def debug_fill_dropout_rng(R, philox_seed, philox_offset):
