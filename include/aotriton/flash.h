@@ -177,7 +177,7 @@ struct AOTRITON_API attn_options {
 // TopLeftAligned and BottomRightAligned are supported in Triton kernel, but
 // not compiled into the binary GPU kernels
 struct AOTRITON_API CausalType {
-  static constexpr int8_t None = 1;
+  static constexpr int8_t None = 0;
   // static constexpr int8_t TopLeftAligned = 1;
   // static constexpr int8_t BottomRightAligned = 2;
   static constexpr int8_t WindowedAttention = 3;
