@@ -45,7 +45,7 @@ class RootGenerator(object):
             shims += ksg.shim_files
         # print(f'{affine_kernels=}')
         for ak in affine_kernels:
-            print(f'{ak.__class__=}')
+            log(lambda : f'{ak.__class__=}')
             aksg = AffineGenerator(self._args, ak, parent_repo=None)
             aksg.generate()
             asms = aksg.this_repo.get_data('asms')

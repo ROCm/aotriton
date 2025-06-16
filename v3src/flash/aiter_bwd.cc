@@ -60,13 +60,21 @@ constexpr T log2e_rcp_v = 1. / log2e<T>::value;
 
 bool BwdDqDkDvV3Context::check_inputs_are_supported() {
   const auto& args = *params;
+#ifdef NDEBUG
 #define RETURN_IF(COND)                                               \
+  do {                                                                \
+    if (COND) {                                                       \
+      return false;                                                   \
+    }                                                                 \
+  } while(0)
+#else
   do {                                                                \
     if (COND) {                                                       \
       std::cerr << "Input unsupported due to " << #COND << std::endl; \
       return false;                                                   \
     }                                                                 \
   } while(0)
+#endif
   // No bias support
   RETURN_IF(args.BIAS_TYPE);
   // No Varlen support
@@ -90,17 +98,28 @@ bool BwdDqDkDvV3Context::check_inputs_are_supported() {
       }
   }
   // AITER ASM kernel only reads u32 strides.
+#ifdef NDEBUG
 #define CHECK_STRIDE(T)                                               \
   do {                                                                \
     auto strides = T->strides();                                      \
     size_t max_e = *std::max_element(strides.begin(), strides.end()); \
     if (max_e * 2 > std::numeric_limits<uint32_t>::max()) {           \
-      std::cerr << "Input unsupported due to large tensor " << #T << std::endl; \
-      std::cerr << "strides: "; for (auto s : strides) std::cerr << s << " "; std::cerr << std::endl; \
-      std::cerr << "max_e * 2: " << max_e * 2 << std::endl; \
       return false;                                                   \
     }                                                                 \
   } while(0)
+#else
+#define CHECK_STRIDE(T)                                               \
+  do {                                                                \
+    auto strides = T->strides();                                      \
+    size_t max_e = *std::max_element(strides.begin(), strides.end()); \
+    if (max_e * 2 > std::numeric_limits<uint32_t>::max()) {                                           \
+      std::cerr << "Input unsupported due to large tensor " << #T << std::endl;                       \
+      std::cerr << "strides: "; for (auto s : strides) std::cerr << s << " "; std::cerr << std::endl; \
+      std::cerr << "max_e * 2: " << max_e * 2 << std::endl;                                           \
+      return false;                                                   \
+    }                                                                 \
+  } while(0)
+#endif
   CHECK_STRIDE(args.Q);
   CHECK_STRIDE(args.K);
   CHECK_STRIDE(args.V);
