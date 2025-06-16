@@ -82,6 +82,7 @@ namespace pyaotriton::v3 {
           .RW(varlen_type)
           .RW(window_left)
           .RW(window_right)
+          .RW(DQ_ACC)
 #undef RW
           .def_readonly_static("kVersion", &attn_bwd_params::kVersion)
         ;
