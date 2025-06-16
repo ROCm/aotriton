@@ -95,7 +95,7 @@ class RootGenerator(object):
                 affine_dict[Path(package_path)] += [ self._absasmfn(asm) for asm in asms ]
         with LazyFile(args.build_dir / 'Affine.cluster') as clusterfile:
             for ffp, aol in affine_dict.items():
-                self.write_cluster(ffp, aol, clusterfile)
+                self.write_cluster(ffp, list(set(aol)), clusterfile)
 
     def _absobjfn(self, path, kdesc, ksig):
         full = path / hsaco_filename(kdesc, ksig)
