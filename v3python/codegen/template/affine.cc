@@ -5,6 +5,7 @@
 #include <aotriton/_internal/kernel_cluster.h>
 #include <aotriton/util.h>
 #include <tuple>
+#include <iostream>
 [[includes]]
 
 namespace AOTRITON_NS::v3::[[kernel_family_name]] {

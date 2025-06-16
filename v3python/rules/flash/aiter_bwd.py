@@ -100,19 +100,6 @@ class bwd_dq_dk_dv_v3(FlashAffine):
         fmha_bwd_v3_swa_genl_args(),
     ]
 
-    def limits(self):
-        ts_kv = 192 if get_gfx() == "gfx942" else 256
-        seqlen_limit = 64 if get_gfx() == "gfx942" else 256
-        dq_shuffle_kernel_define = "" if get_gfx() == "gfx942" else DQ_SHUFFLE_KERNEL_DEFINE
-        dq_shuffle_kernel_call = "" if get_gfx() == "gfx942" else DQ_SHUFFLE_KERNEL_CALL
-        dqdkdv_kernel = FMHA_BWD_KERNEL_HEADER + FMHA_BWD_API.format(
-            F_AITER_ASM_DIR=get_asm_dir(),
-            F_tile_size_kv=ts_kv,
-            F_seqlen_limit=seqlen_limit,
-            F_dq_shuffle_kernel_define=dq_shuffle_kernel_define,
-            F_dq_shuffle_kernel_call=dq_shuffle_kernel_call,
-        )
-
     CSV_TRANSLATORS = [
         CSVTranslator(column='HDim', iface_param='BLOCK_DMODEL', value_translator=translate_csv_hdim),
         CSVTranslator(column='DataType', iface_param='Q', value_translator=translate_csv_datatype),
@@ -164,7 +151,9 @@ class bwd_dq_dk_dv_v3(FlashAffine):
     '''
     def translate_empty_dataframe(self, f : 'Functional'):
         complete_dict = f.build_complete_tc_dict()
-        # print(f'{complete_dict=}')
+        if False:  # Debug
+            val_dict = { k: tp.triton_compile_signature for k, tp in complete_dict.items() }
+            print(f'Matching {val_dict=}')
         dic = {}
         for tr in self.CSV_TRANSLATORS:
             log(lambda : f'{tr=} {tr.get_iface_param()=}')

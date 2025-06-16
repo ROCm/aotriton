@@ -5,6 +5,7 @@
 #include "shim.[[shim_kernel_name]].h"
 #include <aotriton/util.h>
 #include <tuple>
+#include <iostream>
 [[includes]]
 
 namespace AOTRITON_NS::v3::[[kernel_family_name]] {
