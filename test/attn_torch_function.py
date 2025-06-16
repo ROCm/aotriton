@@ -21,11 +21,12 @@ if not IGNORE_BACKWARD_IMPORT:
         attn_bwd_fused,
         BwdExtraArguments,
         FusedBwdExtraArguments,
+        attn_bwd_aiter,
     )
 from collections import namedtuple
 from dataclasses import dataclass
 
-BWD_FUSED = bool(int(os.getenv('BWD_FUSED', default='0')))
+BWD_IMPL = int(os.getenv('BWD_IMPL', default='0'))
 V3_API = bool(int(os.getenv('V3_API', default='0')))
 
 @dataclass
@@ -191,7 +192,7 @@ class _attention(torch.autograd.Function):
 
     @staticmethod
     def backward_fused(ctx, do, _, __):
-        print("runing backward_fuse")
+        # print("runing backward_fuse")
         q, k, v, b, o, L = ctx.saved_tensors
         # print(f'{b=}')
         sm_scale = ctx.sm_scale
@@ -213,7 +214,7 @@ class _attention(torch.autograd.Function):
 
         assert not V3_API, 'attn_bwd_fused is not exposed in V3 API'
         ret = attn_bwd_fused(q, k, v, b, sm_scale, o, do, dq, dk, dv, db, L,
-                       dropout_p, philox_seed, philox_offset, 0, causal)
+                             dropout_p, philox_seed, philox_offset, 0, causal)
         assert ret == hipError_t.hipSuccess, ret
         tuning_result = None
 
@@ -221,6 +222,41 @@ class _attention(torch.autograd.Function):
             ctx.tuning_result += tuning_result
 
         return dq, dk, dv, db, None, None, None, None, None
-    backward = backward_fused if BWD_FUSED else backward_split
+
+    @staticmethod
+    def backward_aiter(ctx, do, _, __):
+        # print("runing backward_aiter")
+        q, k, v, b, o, L = ctx.saved_tensors
+        # print(f'{b=}')
+        sm_scale = ctx.sm_scale
+        dropout_p = ctx.dropout_p
+        philox_seed = ctx.philox_seed
+        philox_offset = ctx.philox_offset
+        causal = ctx.causal
+        attn_extra_args = ctx.attn_extra_args
+        autotune = ctx.autotune
+        return_autotune = ctx.return_autotune
+        # if q.shape[-1] <= 32:
+        # do = do.contiguous()
+        dq_acc = torch.empty_like(q, dtype=torch.float32)
+        dk = torch.empty_like(k)
+        dv = torch.empty_like(v)
+        db = torch.empty_like(b) if b is not None else None
+        delta = torch.empty_like(L)
+        seqlen_q = q.shape[2]
+        seqlen_k = k.shape[2]
+
+        assert not V3_API, 'attn_bwd_fused is not exposed in V3 API'
+        ret = attn_bwd_aiter(q, k, v, b, sm_scale, o, do, dq_acc, dk, dv, db, L, delta,
+                             dropout_p, philox_seed, philox_offset, 0, causal)
+        assert ret == hipError_t.hipSuccess, ret
+        tuning_result = None
+
+        if tuning_result is not None:
+            ctx.tuning_result += tuning_result
+        dq = dq_acc.to(dtype=q.dtype)
+
+        return dq, dk, dv, db, None, None, None, None, None
+    backward = backward_split if BWD_IMPL == 0 else (backward_fused if BWD_IMPL == 1 else backward_aiter)
 
 attention = _attention.apply

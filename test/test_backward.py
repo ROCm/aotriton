@@ -13,7 +13,7 @@ from attn_torch_function import (
     DEFAULT_PHILOX_OFFSET,
     attention,
     AttentionExtraArgs,
-    BWD_FUSED,
+    BWD_IMPL,
     V3_API,
 )
 from _common_test import SdpaContext, SdpaParams, SdpaContextFromNPZ, AOTRITON_TORCH_ONLY_USE_CPU, fmt_hdim
@@ -25,16 +25,30 @@ def torch_gpu(worker_id):
 
 FOR_RELEASE = bool(int(os.getenv('FOR_RELEASE', default='0')))
 
-POT_HEADDIMS = [16, 32, 64, 128, 256] + ([512] if not BWD_FUSED else [])
-NPOT_HEADDIMS = [48, 80, 96, 160, 192, 224]
+DTYPES = [torch.float16, torch.bfloat16, torch.float32]
+
+if BWD_IMPL == 0:
+    POT_HEADDIMS = [16, 32, 64, 128, 256, 512]
+    NPOT_HEADDIMS = [48, 80, 96, 160, 192, 224]
+    M8_HEADDIMS = [8, 24, 40, 56, 72, 88, 96, 120, 152, 184, 216, 248, 408]
+elif BWD_IMPL == 1:
+    POT_HEADDIMS = [16, 32, 64, 128, 256]
+    NPOT_HEADDIMS = [48, 80, 96, 160, 192, 224]
+    M8_HEADDIMS = [8, 24, 40, 56, 72, 88, 96, 120, 152, 184, 216, 248]
+elif BWD_IMPL == 2:
+    POT_HEADDIMS = [16, 32, 64, 128]
+    NPOT_HEADDIMS = [48, 80, 96, 160, 192]
+    M8_HEADDIMS = [8, 24, 40, 56, 72, 88, 96, 120, 152, 184]
+    DTYPES = [torch.float16, torch.bfloat16]
+else:
+    assert False, f'Unsupported BWD_IMPL {BWD_IMPL}'
 # Prime head dimensions must be disabled
 # PyTorch allocate tensors compactly by default. For example:
 #   print(torch.rand((3,5,1033, 57), dtype=torch.float16, device='cuda').stride())
 #   (294405, 58881, 57, 1)
 # GPU kernels are unable to support unaligned memory access in any performant way
-# PRIME_HEADDIMS = [7, 23, 37, 53, 67, 73, 83, 113, 149, 179, 211, 241] + ([401] if not BWD_FUSED else [])
+# PRIME_HEADDIMS = [7, 23, 37, 53, 67, 73, 83, 113, 149, 179, 211, 241] + ([401] if not BWD_IMPL else [])
 # Multiple of 8 head dimensions are tested instead
-M8_HEADDIMS = [8, 24, 40, 56, 72, 88, 96, 120, 152, 184, 216, 248] + ([408] if not BWD_FUSED else [])
 PRIME_SEQLEN_Q = [11, 17, 37, 67, 157, 257, 523, 1033, 2063, 4919, 10601]
 PRIME_SEQLEN_K = [13, 31, 41, 71, 223, 337, 571, 1063, 2081, 5237, 11369]
 
@@ -79,14 +93,25 @@ else:
 
 '''
 Note: for now we cannot really test both fused and split kernel at the same
-      time. Env var BWD_FUSED is used to make the switch.
+      time. Env var BWD_IMPL is used to make the switch.
 
       However we still add BWDOP to the tests arguments so we can easily tell
       the actual bwd op being tested.
 '''
 #TODO: Let BWDOP determine the real backward op at runtime
 
-BWDOP_ids = ['Fused'] if BWD_FUSED else (['V3'] if V3_API else ['Split'])
+def _get_BWDOP_id():
+    if V3_API:
+        return 'V3'
+    if BWD_IMPL == 2:
+        return 'AITRERASM'
+    if BWD_IMPL == 1:
+        return 'Fused'
+    if BWD_IMPL == 0:
+        return 'Split'
+    assert False, f'Unsupported BWD_IMPL {BWD_IMPL}'
+
+BWDOP_ids = [_get_BWDOP_id()]
 
 def _make_block_eyes(q, base=1.0, inc=0.0):
     dhead = q.shape[-1]
@@ -195,9 +220,9 @@ def _test_op_bwd(args, device : int | None = None):
 # @pytest.mark.parametrize('seqlen_q', [32, 128])
 # @pytest.mark.parametrize('seqlen_k', [32, 128])
 @pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
-@pytest.mark.parametrize('dropout_p', [0.0, 0.5])
+@pytest.mark.parametrize('dropout_p', [0.0, 0.5] if BWD_IMPL != 2 else [0.0])
 # @pytest.mark.parametrize('dropout_p', [0.0])
-@pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16, torch.float32])
+@pytest.mark.parametrize('dtype', DTYPES)
 # @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
 @pytest.mark.parametrize('sm_scale', [0.0, 0.125] if not FOR_RELEASE else ['l1', 'l2'])
 @pytest.mark.parametrize('storage_flip', [False, True])
@@ -208,38 +233,25 @@ def test_op_bwd(torch_gpu, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, ca
     args = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
     _test_op_bwd(args, device=torch_gpu)
 
-# @pytest.mark.parametrize('BATCH', [1, 4])
-# @pytest.mark.parametrize('N_HEADS', [1, 4])
-@pytest.mark.parametrize('BATCH', [1, 4] if not FOR_RELEASE else [3])
-@pytest.mark.parametrize('N_HEADS', [1, 4] if not FOR_RELEASE else [5])
-@pytest.mark.parametrize('D_HEAD', ALL_HEADDIMS, ids=fmt_hdim)
-# @pytest.mark.parametrize('D_HEAD', [128])
-# Complete set
-# @pytest.mark.parametrize('seqlen_q', [4,8,16,17,32,64,128,143,256,512,1024,2048])
-# @pytest.mark.parametrize('seqlen_k', [4,8,16,23,32,64,128,256,512,587,1024,2048])
-# PyTorch set
-@pytest.mark.parametrize('seqlen_q', [4, 8, 64, 143, 256, 512, 1024, 2048])
-@pytest.mark.parametrize('seqlen_k', [4, 8, 64, 128, 256, 587, 1024, 2048])
-# @pytest.mark.parametrize('seqlen_q', [128,256,512,1024])
-# @pytest.mark.parametrize('seqlen_k', [128,256,512,1024])
-# @pytest.mark.parametrize('seqlen_q', [128, 113])
-# @pytest.mark.parametrize('seqlen_k', [128, 79])
-@pytest.mark.parametrize('dropout_p', [0.0, 0.5])
-# @pytest.mark.parametrize('dropout_p', [0.0])
-@pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16, torch.float32])
-# @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
-@pytest.mark.parametrize('sm_scale', [0.0, 0.125] if not FOR_RELEASE else ['l1', 'l2'])
-@pytest.mark.parametrize('storage_flip', [False, True])
-# @pytest.mark.parametrize('return_encoded_softmax', [False])
-@pytest.mark.parametrize('BWDOP', BWDOP_ids)
-def test_op_bwd_with_matrix_bias(torch_gpu, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, sm_scale, dropout_p, dtype, storage_flip):
-    causal = False
-    bias_type = 'matrix'
-    '''
-    _scaled_dot_product_attention: Explicit attn_mask should not be set when is_causal=True
-    '''
-    args = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
-    _test_op_bwd(args, device=torch_gpu)
+if BWD_IMPL != 2:  # AITER ASM does not support bias ATM
+    @pytest.mark.parametrize('BATCH', [1, 4] if not FOR_RELEASE else [3])
+    @pytest.mark.parametrize('N_HEADS', [1, 4] if not FOR_RELEASE else [5])
+    @pytest.mark.parametrize('D_HEAD', ALL_HEADDIMS, ids=fmt_hdim)
+    @pytest.mark.parametrize('seqlen_q', [4, 8, 64, 143, 256, 512, 1024, 2048])
+    @pytest.mark.parametrize('seqlen_k', [4, 8, 64, 128, 256, 587, 1024, 2048])
+    @pytest.mark.parametrize('dropout_p', [0.0, 0.5] if BWD_IMPL != 2 else [0.0])
+    @pytest.mark.parametrize('dtype', DTYPES)
+    @pytest.mark.parametrize('sm_scale', [0.0, 1.2] if not FOR_RELEASE else [1.2])
+    @pytest.mark.parametrize('storage_flip', [False, True])
+    @pytest.mark.parametrize('BWDOP', BWDOP_ids)
+    def test_op_bwd_with_matrix_bias(torch_gpu, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, sm_scale, dropout_p, dtype, storage_flip):
+        causal = False
+        bias_type = 'matrix'
+        '''
+        _scaled_dot_product_attention: Explicit attn_mask should not be set when is_causal=True
+        '''
+        args = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
+        _test_op_bwd(args, device=torch_gpu)
 
 @pytest.mark.parametrize('BATCH', [1, 4] if not FOR_RELEASE else [4])
 @pytest.mark.parametrize('N_HEADS', [(16, 8), (10, 2)])
@@ -249,7 +261,7 @@ def test_op_bwd_with_matrix_bias(torch_gpu, BWDOP, BATCH, N_HEADS, D_HEAD, seqle
 @pytest.mark.parametrize('seqlen_k', [4, 127, 579, 2048])
 @pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
 @pytest.mark.parametrize('dropout_p', [0.0, 0.5])
-@pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16, torch.float32])
+@pytest.mark.parametrize('dtype', DTYPES)
 @pytest.mark.parametrize('sm_scale', [0.0, 0.125] if not FOR_RELEASE else ['l1', 'l2'])
 @pytest.mark.parametrize('storage_flip', [False])
 @pytest.mark.parametrize('BWDOP', BWDOP_ids)
@@ -266,7 +278,7 @@ if not FOR_RELEASE:  # Make the loading faster
     @pytest.mark.parametrize('seqlen_k', PRIME_SEQLEN_K)
     @pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
     @pytest.mark.parametrize('dropout_p', [0.0, 0.5])
-    @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16, torch.float32])
+    @pytest.mark.parametrize('dtype', DTYPES)
     @pytest.mark.parametrize('sm_scale', ['l1', 'l2'])
     @pytest.mark.parametrize('storage_flip', [False, True])
     @pytest.mark.parametrize('bias_type', [None, 'matrix'], ids=['BiasOff', 'BiasOn'])
@@ -393,10 +405,10 @@ def main2():
     # Memo: False-0.0-dtype0-0.0-False-4-256-8-1-4
     # False-1.2-dtype0-0.0-False-4-4-72-1-4
     BATCH = 8
-    D_HEAD = 32
+    D_HEAD = 64
     N_HEADS = 8
-    seqlen_q = 16
-    seqlen_k = 16
+    seqlen_q = 256
+    seqlen_k = 256
     causal = False
 
     sm_scale = 1.2
