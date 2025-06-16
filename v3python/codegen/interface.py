@@ -179,11 +179,24 @@ class InterfaceGenerator(ABC):
             assert not isinstance(tc, TC.ConditionalChoice)
             if isinstance(tc, TC.tensor):
                 type_enum = tc.type_enum
-                print(2 * INDENT + f'if ({anamespace}{aname}->dtype() == {type_enum}) number = {number} ;', file=fout)
+                getter = f'{anamespace}{aname}->dtype()'
+                print(2 * INDENT + f'if ({getter} == {type_enum}) number = {number} ;', file=fout)
+                vgetter = getter
             else:
                 value = str(tc).lower()
-                print(2 * INDENT + f'if ({anamespace}{aname} == {value}) number = {number} ;', file=fout)
-        print(2 * INDENT + f'if (number < 0) return -1;', file=fout)
+                getter = f'{anamespace}{aname}'
+                print(2 * INDENT + f'if ({getter} == {value}) number = {number} ;', file=fout)
+                # Otherwise cerr print int8 as char
+                if isinstance(tc, TC.constexpr.integer_base):
+                    vgetter = f'+{getter}'
+                else:
+                    vgetter = getter
+        print(2 * INDENT +  'if (number < 0) {', file=fout)
+        print(0 * INDENT +  '#ifndef NDEBUG', file=fout)
+        print(3 * INDENT + f'std::cerr << __FILE__ << ":" << __LINE__ << ": Unsupported {aname}, value: " << {vgetter} << std::endl;', file=fout)
+        print(0 * INDENT +  '#endif', file=fout)
+        print(3 * INDENT +  'return -1;', file=fout)
+        print(2 * INDENT +  '}', file=fout)
         print(2 * INDENT + f'sum += number * {tp.godel_number};', file=fout)
         print(1 * INDENT + '}', file=fout)
 
