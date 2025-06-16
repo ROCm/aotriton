@@ -16,9 +16,9 @@ namespace AOTRITON_NS::v3::flash {
 
 dim3 BwdPreprocessContext::grid_calculator() const {
   dim3 grid {
-    uint32_t(params->Out->size(0)),
-    uint32_t(params->Out->size(1)),
     AOTRITON_NS::cdiv<uint32_t>(params->Out->size(2), this->BLOCK_M),
+    uint32_t(params->Out->size(1)),
+    uint32_t(params->Out->size(0)),
   };
   // std::cerr << "Grid conf " << grid.x << " " << grid.y << " " << grid.z << std::endl;
   return grid;
@@ -26,9 +26,9 @@ dim3 BwdPreprocessContext::grid_calculator() const {
 
 dim3 BwdPreprocessVarlenContext::grid_calculator() const {
   dim3 grid {
-    uint32_t(params->cu_seqlens_q->size(0) - 1),
-    uint32_t(params->Out->size(1)),
     AOTRITON_NS::cdiv<uint32_t>(params->Out->size(2), this->BLOCK_M),
+    uint32_t(params->Out->size(1)),
+    uint32_t(params->cu_seqlens_q->size(0) - 1),
   };
   // std::cerr << "Grid conf " << grid.x << " " << grid.y << " " << grid.z << std::endl;
   return grid;
@@ -36,9 +36,9 @@ dim3 BwdPreprocessVarlenContext::grid_calculator() const {
 
 dim3 BwdKernelDkDvContext::grid_calculator() const {
   dim3 grid {
-    params->num_seqlens == 0 ? uint32_t(params->Q->size(0)) : params->num_seqlens,
-    uint32_t(params->K->size(1)),
     AOTRITON_NS::cdiv<uint32_t>(params->max_seqlen_k, this->BLOCK_N),
+    uint32_t(params->K->size(1)),
+    params->num_seqlens == 0 ? uint32_t(params->Q->size(0)) : params->num_seqlens,
   };
   // std::cerr << "bwd_kernel_dk_dv grid conf " << grid.x << " " << grid.y << " " << grid.z << std::endl;
   return grid;
@@ -46,9 +46,9 @@ dim3 BwdKernelDkDvContext::grid_calculator() const {
 
 dim3 BwdKernelDqContext::grid_calculator() const {
   dim3 grid {
-    params->num_seqlens == 0 ? uint32_t(params->Q->size(0)) : params->num_seqlens,
-    uint32_t(params->Q->size(1)),
     AOTRITON_NS::cdiv<uint32_t>(params->max_seqlen_q, this->BLOCK_M),
+    uint32_t(params->Q->size(1)),
+    params->num_seqlens == 0 ? uint32_t(params->Q->size(0)) : params->num_seqlens,
   };
   // std::cerr << "bwd_kernel_dq grid conf " << grid.x << " " << grid.y << " " << grid.z << std::endl;
   return grid;
@@ -86,6 +86,13 @@ attn_bwd(const attn_bwd_params& in,
   }
   const auto& compiled_head_dims = BwdKernelDkDvMetadata::get_BLOCK_DMODEL_choices();
   int16_t head_dim_rounded = round_value(head_dim, compiled_head_dims);
+  // FIXME: Remove when compiler bug fixed
+  if (Gpu2VendorArch(gpu) == CAT32(GpuVendor::kAMD, 0x950)) {
+    if (head_dim_rounded == 48)
+      head_dim_rounded = 64;
+    if (head_dim_rounded == 80)
+      head_dim_rounded = 96;
+  }
   OpAttnBwdParams params = {
     .Q = &in.Q,
     .K = &in.K,
@@ -164,6 +171,13 @@ bwd_preprocess(T4 out, T4 dout, T2 delta, AOTRITON_NS::Stream stream_wrap) {
   int head_size = out.size(3);
   const auto& compiled_head_dims = BwdPreprocessMetadata::get_BLOCK_DMODEL_choices();
   int head_size_rounded = round_value(head_size, compiled_head_dims);
+  // FIXME: Remove when compiler bug fixed
+  if (Gpu2VendorArch(gpu) == CAT32(GpuVendor::kAMD, 0x950)) {
+    if (head_size_rounded == 48)
+      head_size_rounded = 64;
+    if (head_size_rounded == 80)
+      head_size_rounded = 96;
+  }
   if (head_size_rounded < 0) {
 #if AOTRITON_VERBOSE
     std::cerr << "Head dimension " << head_size << " unsupported. ";
@@ -213,6 +227,13 @@ bwd_preprocess_varlen(T4 out,
   int head_size = out.size(3);
   const auto& compiled_head_dims = BwdPreprocessVarlenMetadata::get_BLOCK_DMODEL_choices();
   int head_size_rounded = round_value(head_size, compiled_head_dims);
+  // FIXME: Remove when compiler bug fixed
+  if (Gpu2VendorArch(gpu) == CAT32(GpuVendor::kAMD, 0x950)) {
+    if (head_size_rounded == 48)
+      head_size_rounded = 64;
+    if (head_size_rounded == 80)
+      head_size_rounded = 96;
+  }
   if (head_size_rounded < 0) {
 #if AOTRITON_VERBOSE
     std::cerr << "Head dimension " << head_size << " unsupported. ";
@@ -280,6 +301,13 @@ bwd_kernel_dk_dv(T4 q,
   int num_head_k = k.size(1);
   const auto& compiled_head_dims = BwdKernelDkDvMetadata::get_BLOCK_DMODEL_choices();
   int head_size_rounded = round_value(head_size, compiled_head_dims);
+  // FIXME: Remove when compiler bug fixed
+  if (Gpu2VendorArch(gpu) == CAT32(GpuVendor::kAMD, 0x950)) {
+    if (head_size_rounded == 48)
+      head_size_rounded = 64;
+    if (head_size_rounded == 80)
+      head_size_rounded = 96;
+  }
   if (head_size_rounded < 0) {
 #if AOTRITON_VERBOSE
     std::cerr << "Head dimension " << head_size << " unsupported. ";
@@ -329,23 +357,23 @@ bwd_kernel_dk_dv(T4 q,
     .PADDED_HEAD = head_size_rounded != head_size,
     .BIAS_TYPE = bias_type,
   };
+  BwdKernelDkDvContext context;
+  context.params = &params;
 #if AOTRITON_BUILD_FOR_TUNING
   if (extargs) {
-    params._has_preferred_kernel = extargs->dkdv.force_kernel_index;
-    if (params._has_preferred_kernel == CppTuneSpecialKernelIndex::kSkipGPUCall) {
+    context._has_preferred_kernel = extargs->dkdv.force_kernel_index;
+    if (context._has_preferred_kernel == CppTuneSpecialKernelIndex::kSkipGPUCall) {
         // std::cerr << "extargs->dkdv.force_kernel_index = " << extargs->dkdv.force_kernel_index << " EKI" << std::endl;
         return hipSuccess;
     }
   }
 #endif
-  BwdKernelDkDvContext context;
-  context.params = &params;
   err = context.lookup_optimal(gpu);
 #if AOTRITON_BUILD_FOR_TUNING
   if (extargs) {
     extargs->dkdv.total_number_of_kernels = context._total_number_of_kernels;
-    extargs->dkdv.kernel_on_device_psels = context._preferred_kernel_psels;
-    extargs->dkdv.kernel_on_device_copts = context._preferred_kernel_copts;
+    extargs->dkdv.selected_kernel_psels = context._preferred_kernel_psels;
+    extargs->dkdv.selected_kernel_copts = context._preferred_kernel_copts;
     context.peek_kernel_image = extargs->dkdv.peek_kernel_image;
   }
 #endif
@@ -397,6 +425,13 @@ bwd_kernel_dq(T4 q,
   // TODO: Add metadata to operators
   const auto& compiled_head_dims = BwdKernelDqMetadata::get_BLOCK_DMODEL_choices();
   int head_size_rounded = round_value(head_size, compiled_head_dims);
+  // FIXME: Remove when compiler bug fixed
+  if (Gpu2VendorArch(gpu) == CAT32(GpuVendor::kAMD, 0x950)) {
+    if (head_size_rounded == 48)
+      head_size_rounded = 64;
+    if (head_size_rounded == 80)
+      head_size_rounded = 96;
+  }
   if (head_size_rounded < 0) {
 #if AOTRITON_VERBOSE
     std::cerr << "Head dimension " << head_size << " unsupported. ";
@@ -461,8 +496,8 @@ bwd_kernel_dq(T4 q,
 #if AOTRITON_BUILD_FOR_TUNING
   if (extargs) {
     extargs->dqdb.total_number_of_kernels = context._total_number_of_kernels;
-    extargs->dqdb.kernel_on_device_psels = context._preferred_kernel_psels;
-    extargs->dqdb.kernel_on_device_copts = context._preferred_kernel_copts;
+    extargs->dqdb.selected_kernel_psels = context._preferred_kernel_psels;
+    extargs->dqdb.selected_kernel_copts = context._preferred_kernel_copts;
     context.peek_kernel_image = extargs->dqdb.peek_kernel_image;
     // std::cerr << "dqdb lookup_optimal = " << err << " EOL" << std::endl;
   }

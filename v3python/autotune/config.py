@@ -11,6 +11,7 @@ class Config:
         self.num_warps = num_warps
         self.num_ctas = num_ctas
         self.num_stages = num_stages
+        self.waves_per_eu = kwargs.get('waves_per_eu', 0)
         self.maxnreg = maxnreg
         self.pre_hook = pre_hook
 

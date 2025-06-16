@@ -13,10 +13,10 @@ namespace AOTRITON_NS::v3::flash {
 
 dim3 BwdKernelFuseContext::grid_calculator() const {
   dim3 grid {
-    params->num_seqlens == 0 ? uint32_t(params->Q->size(0)) : params->num_seqlens,
-    uint32_t(params->K->size(1)),
     AOTRITON_NS::cdiv<uint32_t>(params->max_seqlen_k, this->BLOCK_N) +
     AOTRITON_NS::cdiv<uint32_t>(params->max_seqlen_q, this->BLOCK_N) * (params->num_head_q / params->num_head_k),
+    uint32_t(params->K->size(1)),
+    params->num_seqlens == 0 ? uint32_t(params->Q->size(0)) : params->num_seqlens,
   };
   // std::cerr << "bwd_kernel_dk_dv grid conf " << grid.x << " " << grid.y << " " << grid.z << std::endl;
   return grid;
@@ -65,6 +65,13 @@ _bwd_kernel_fuse(T4 q,
   int head_size = q.size(3);
   const auto& compiled_head_dims = BwdKernelFuseMetadata::get_BLOCK_DMODEL_choices();
   int head_size_rounded = round_value(head_size, compiled_head_dims);
+  // FIXME: Remove when compiler bug fixed
+  if (Gpu2VendorArch(gpu) == CAT32(GpuVendor::kAMD, 0x950)) {
+    if (head_size_rounded == 48)
+      head_size_rounded = 64;
+    if (head_size_rounded == 80)
+      head_size_rounded = 96;
+  }
   if (head_size_rounded < 0) {
 #if AOTRITON_VERBOSE
     std::cerr << "Head dimension " << head_size << " unsupported. ";
@@ -144,7 +151,7 @@ _bwd_kernel_fuse(T4 q,
   err = context.launch(stream);
 #if AOTRITON_BUILD_FOR_TUNING
   if (extargs && extargs->peek_kernel_image) {
-    auto essentials = context.selected_kernel->get_image_info_iff_decompressed();
+    auto essentials = context.kernel_on_device->get_image_info_iff_decompressed();
     extargs->kernel_image = essentials.image;
     extargs->image_size = essentials.size;
 #if AOTRITON_VERBOSE

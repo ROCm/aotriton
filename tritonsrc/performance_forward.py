@@ -7,7 +7,7 @@ import torch
 
 import os
 import triton
-from attn_torch_function import attention, AttentionExtraArgs
+from attn_torch_function import attention, AttentionExtraArgs, AOTRITON_USE_PRINT_AUTOTUNING
 
 try:
     from flash_attn.flash_attn_interface import \
@@ -32,6 +32,8 @@ print(f'{X_VALS=}')
 BATCH, N_HEADS, N_CTX, D_HEAD = 4, 48, 4096, 64
 
 D_HEAD = int(os.getenv('D_HEAD', default=D_HEAD))
+BATCH = int(os.getenv('BATCH', default=BATCH))
+N_HEADS = int(os.getenv('N_HEADS', default=N_HEADS))
 # vary seq length for fixed head and batch=4
 USE_CAUSAL = bool(int(os.getenv('USE_CAUSAL', default='1')))
 ALL_CAUSALS = [False, True] if USE_CAUSAL else [False]

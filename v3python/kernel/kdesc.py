@@ -181,8 +181,9 @@ class KernelDescription(Interface):
             df[f'$$ind_{i}'] = df[ind_key].apply(discretization)
         '''
         Create LUT
+        Note: df's gpu column comes directly from DB. Hence database_gpus should be used.
         '''
-        for i, gpu in enumerate(f.optimized_for):
+        for i, gpu in enumerate(f.database_gpus):
             if i > 0:
                 lut_tensor[i] = lut_tensor[0]
             df_i = df[df['gpu'] == gpu]
@@ -209,6 +210,17 @@ class KernelDescription(Interface):
         defaults = [ meta.create_nth(0) for meta in self._perf_params ]
         sigs = [ KernelSignature(f, defaults, DEFAULT_COPT) ]
         return lut_tensor, sigs, None
+
+    def gen_signatures_for_tuning(self, f : Functional):
+        def gen_perfs(cfg) -> 'list[Bind]':
+            for meta in self._perf_params:
+                value = cfg.kwargs[meta.repr_name]
+                yield meta.create_direct(value)
+        def gen_copts(cfg) -> list[int]:
+            for copt, defopt in zip(COMPILER_OPTIONS, DEFAULT_COPT):
+                yield getattr(cfg, copt, defopt)
+        for cfg in self.gen_autotune_configs(f):
+            yield KernelSignature(f, list(gen_perfs(cfg)), list(gen_copts(cfg)))
 
     @property
     def is_tunable(self):

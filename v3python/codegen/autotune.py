@@ -12,9 +12,15 @@ from ..utils import (
     dict2json,
     log,
 )
-from .common import codegen_struct_cfields, MissingLutEntry
+from .common import (
+    codegen_struct_cfields,
+    MissingLutEntry,
+    hsaco_filename,
+    hsaco_dir,
+)
 import numpy as np
 from .basetune import BaseTuneCodeGenerator
+import json
 
 class AutotuneCodeGenerator(BaseTuneCodeGenerator):
     AUTOTUNE_TEMPLATE = get_template('autotune_table_entry.cc')
@@ -34,8 +40,22 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
         if args.build_for_tuning or self._df is None or self._df.empty:
             log(lambda : f'translate_empty_dataframe for kernel {kdesc.NAME}')
             self._lut_tensor, self._sigs, self._binning_dict = kdesc.translate_empty_dataframe(f)
+            # Replace sigs with configs from KernelDescription.gen_autotune_configs
             if args.build_for_tuning and kdesc.is_tunable:
-                self._sigs = kdesc.gen_sigatures_for_tuning(f)
+                self._sigs = list(kdesc.gen_signatures_for_tuning(f))
+                if args.build_for_tuning_second_pass:
+                    image_path = hsaco_dir(args.build_dir, kdesc)
+                    def hsaco_compile_successful(ksig : KernelSignature):
+                        full = image_path / hsaco_filename(kdesc, ksig)
+                        if not full.exists():
+                            return False
+                        meta = full.with_suffix('.json')
+                        if not meta.exists():
+                            return False
+                        with open(meta) as f:
+                            j = json.load(f)
+                            return j['compile_status'] == 'Complete'
+                    self._sigs = [ ksig for ksig in self._sigs if hsaco_compile_successful(ksig) ]
         else:
             log(lambda : f'translate_dataframe for kernel {kdesc.NAME}')
             self._lut_tensor, self._sigs, self._binning_dict = kdesc.translate_dataframe(f, self._df)
