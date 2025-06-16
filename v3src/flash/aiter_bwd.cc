@@ -9,9 +9,27 @@
 #include <flash/affine.bwd_dq_dk_dv_v3.h>
 #include <flash/shim.bwd_preprocess.h>
 #include <flash/shim.bwd_preprocess_varlen.h>
-#include <iostream>
 #include <algorithm>
 #include <limits>
+#ifndef NDEBUG
+#include <iostream>
+#include <stdio.h>
+#endif
+
+namespace AOTRITON_NS::v2::flash {
+
+extern hipError_t
+bwd_preprocess(T4 out, T4 dout, T2 delta, AOTRITON_NS::Stream stream_wrap);
+
+extern hipError_t
+bwd_preprocess_varlen(T4 out,
+                      T4 dout,
+                      T2 delta,
+                      T1 cu_seqlens_q,
+                      int32_t max_seqlen_q,
+                      AOTRITON_NS::Stream stream_wrap);
+
+}
 
 namespace AOTRITON_NS::v3::flash {
 
@@ -42,19 +60,32 @@ constexpr T log2e_rcp_v = 1. / log2e<T>::value;
 
 bool BwdDqDkDvV3Context::check_inputs_are_supported() {
   const auto& args = *params;
+#define RETURN_IF(COND)                                               \
+  do {                                                                \
+    if (COND) {                                                       \
+      std::cerr << "Input unsupported due to " << #COND << std::endl; \
+      return false;                                                   \
+    }                                                                 \
+  } while(0)
   // No bias support
-  if (args.BIAS_TYPE) return false;
+  RETURN_IF(args.BIAS_TYPE);
   // No Varlen support
-  if (args.cu_seqlens_q) return false;
-  if (args.cu_seqlens_k) return false;
+  RETURN_IF(args.cu_seqlens_q && *args.cu_seqlens_q);
+  RETURN_IF(args.cu_seqlens_k && *args.cu_seqlens_k);
   // Only support hdim <= 192
-  if (args.head_dim > 192) return false;
+  RETURN_IF(args.head_dim > 192);
   // TODO: support dropout kernel. fwd and bwd should have identical PRNG
-  if (args.ENABLE_DROPOUT) return false;
+  RETURN_IF(args.ENABLE_DROPOUT);
   // We do not have test suite to validate SWA at the moment.
   if (args.CAUSAL_TYPE != CausalType::None) {
       if (args.Window_left != WindowValue::TopLeftAligned ||
           args.Window_right != WindowValue::TopLeftAligned) {
+#ifndef NDEBUG
+        std::cerr << "Input unsupported due to args.CAUSAL_TYPE = " << int(args.CAUSAL_TYPE) << " and "
+                  << " args.Window_left = " << args.Window_left
+                  << " args.Window_right = " << args.Window_right
+                  << std::endl;
+#endif
         return false;
       }
   }
@@ -64,6 +95,9 @@ bool BwdDqDkDvV3Context::check_inputs_are_supported() {
     auto strides = T->strides();                                      \
     size_t max_e = *std::max_element(strides.begin(), strides.end()); \
     if (max_e * 2 > std::numeric_limits<uint32_t>::max()) {           \
+      std::cerr << "Input unsupported due to large tensor " << #T << std::endl; \
+      std::cerr << "strides: "; for (auto s : strides) std::cerr << s << " "; std::cerr << std::endl; \
+      std::cerr << "max_e * 2: " << max_e * 2 << std::endl; \
       return false;                                                   \
     }                                                                 \
   } while(0)
@@ -74,7 +108,7 @@ bool BwdDqDkDvV3Context::check_inputs_are_supported() {
   CHECK_STRIDE(args.DO);
   CHECK_STRIDE(args.DK);
   CHECK_STRIDE(args.DV);
-  CHECK_STRIDE(args.DQ);
+  CHECK_STRIDE(args.DQ_ACC);
   CHECK_STRIDE(args.DB);
 #undef CHECK_STRIDE
 
@@ -85,13 +119,29 @@ void BwdDqDkDvV3Context::calculate_residual_func_fields() {
     const auto& args = *params;
     auto check_if_uniform = [&]() -> bool {
         // Reject varlen
-        if (args.cu_seqlens_q || args.cu_seqlens_k) return false;
+        if (args.cu_seqlens_q && *args.cu_seqlens_q) return false;
+        if (args.cu_seqlens_k && *args.cu_seqlens_k) return false;
         // TODO: GQA support
         if (args.num_head_q != args.num_head_k) return false;
+#ifdef NDEBUG
 #define CMP_TENSOR(X, Y)                                                \
         do {                                                            \
             if (args.X->strides() != args.Y->strides()) return false;   \
         } while(0)
+#else
+#define CMP_TENSOR(X, Y)                                                \
+        do {                                                            \
+            std::cerr << #X << " strides: ";                            \
+            for (auto e : args.X->strides())                            \
+              std::cerr << e << " ";                                    \
+            std::cerr << std::endl;                                     \
+            std::cerr << #Y << " strides: ";                            \
+            for (auto e : args.Y->strides())                            \
+              std::cerr << e << " ";                                    \
+            std::cerr << std::endl;                                     \
+            if (args.X->strides() != args.Y->strides()) return false;   \
+        } while(0)
+#endif
         CMP_TENSOR(Q, K);
         CMP_TENSOR(Q, DO);
         CMP_TENSOR(K, V);
@@ -263,6 +313,9 @@ using DirectKernelArguments = BwdDqDkDvV3Context::DirectKernelArguments;
  */
 std::tuple<dim3, dim3>
 BwdDqDkDvV3Context::pp_direct_kernel_args_for_fmha_bwd_v3_args(DirectKernelArguments& union_of_args) const {
+#ifndef NDEBUG
+  std::cerr << "Calling " << __func__ << std::endl;
+#endif
   auto& args = union_of_args.fmha_bwd_v3_args;
   auto a = construct_fmha_bwd_args(*this);
   args.ptr_dq  = a.dq_acc_ptr;
@@ -312,6 +365,9 @@ BwdDqDkDvV3Context::pp_direct_kernel_args_for_fmha_bwd_v3_args(DirectKernelArgum
 
 std::tuple<dim3, dim3>
 BwdDqDkDvV3Context::pp_direct_kernel_args_for_fmha_bwd_v3_gen_args(DirectKernelArguments& union_of_args) const {
+#ifndef NDEBUG
+  std::cerr << "Calling " << __func__ << std::endl;
+#endif
   auto& args = union_of_args.fmha_bwd_v3_gen_args;
   auto a = construct_fmha_bwd_args(*this);
   args.ptr_dq  = a.dq_acc_ptr;
@@ -362,6 +418,9 @@ BwdDqDkDvV3Context::pp_direct_kernel_args_for_fmha_bwd_v3_gen_args(DirectKernelA
 
 std::tuple<dim3, dim3>
 BwdDqDkDvV3Context::pp_direct_kernel_args_for_fmha_bwd_v3_genl_args(DirectKernelArguments& union_of_args) const {
+#ifndef NDEBUG
+  std::cerr << "Calling " << __func__ << std::endl;
+#endif
   auto& args = union_of_args.fmha_bwd_v3_genl_args;
   auto a = construct_fmha_bwd_args(*this);
   args.ptr_dq   = a.dq_acc_ptr;
@@ -417,6 +476,39 @@ BwdDqDkDvV3Context::pp_direct_kernel_args_for_fmha_bwd_v3_genl_args(DirectKernel
   }
   dim3 grid {gdx, gdy, gdz};
   dim3 block { 256, 1, 1 };
+#ifndef NDEBUG
+  std::cerr << "Inside " << __func__ << std::endl
+            << "args.ptr_dq = " << args.ptr_dq << std::endl
+            << "args.ptr_dk = " << args.ptr_dk << std::endl
+            << "args.ptr_dv = " << args.ptr_dv << std::endl
+            << "args.ptr_q = " << args.ptr_q << std::endl
+            << "args.ptr_k = " << args.ptr_k << std::endl
+            << "args.ptr_v = " << args.ptr_v << std::endl
+            << std::endl;
+  auto hexdump = [](void *ptr, int buflen) {
+    unsigned char *buf = (unsigned char*)ptr;
+    int i, j;
+    fprintf(stderr, "hexdump: %08p\n", buf);
+    for (i=0; i<buflen; i+=16) {
+      fprintf(stderr, "%06x: ", i);
+      for (j=0; j<16; j++)
+        if (i+j < buflen)
+          fprintf(stderr, "%02x ", buf[i+j]);
+        else
+          fprintf(stderr, "   ");
+      fprintf(stderr, " ");
+      for (j=0; j<16; j++)
+        if (i+j < buflen)
+          fprintf(stderr, "%c", isprint(buf[i+j]) ? buf[i+j] : '.');
+      fprintf(stderr, "\n");
+    }
+  };
+  hexdump(&args, sizeof(args));
+  fprintf(stderr, "Union %p\n", &union_of_args);
+  fprintf(stderr, "Union %p\n", &union_of_args.fmha_bwd_v3_args);
+  fprintf(stderr, "Union %p\n", &union_of_args.fmha_bwd_v3_gen_args);
+  fprintf(stderr, "Union %p\n", &union_of_args.fmha_bwd_v3_genl_args);
+#endif
   return std::make_tuple(grid, block);
 }
 
@@ -542,19 +634,6 @@ BwdDqDkDvV3Context::pp_direct_kernel_args_for_fmha_bwd_v3_swa_genl_args(DirectKe
 
 #pragma GCC diagnostic pop
 
-// Defined in attn_bwd.cc
-
-extern hipError_t
-bwd_preprocess(T4 out, T4 dout, T2 delta, AOTRITON_NS::Stream stream_wrap);
-
-extern hipError_t
-bwd_preprocess_varlen(T4 out,
-                      T4 dout,
-                      T2 delta,
-                      T1 cu_seqlens_q,
-                      int32_t max_seqlen_q,
-                      AOTRITON_NS::Stream stream_wrap);
-
 hipError_t AOTRITON_API
 aiter_bwd(const attn_bwd_params& in,
           int32_t params_version,
@@ -631,6 +710,8 @@ aiter_bwd(const attn_bwd_params& in,
   if (err != hipSuccess) {
     return err;
   }
+  using AOTRITON_NS::v2::flash::bwd_preprocess;
+  using AOTRITON_NS::v2::flash::bwd_preprocess_varlen;
   if (num_seqlens == 0)
     err = bwd_preprocess(in.Out, in.DO, in.D, stream);
   else

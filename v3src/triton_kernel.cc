@@ -14,6 +14,10 @@
 #define AOTRITON_KERNEL_VERBOSE 1
 #endif
 
+#if AOTRITON_KERNEL_VERBOSE
+#include <stdio.h>
+#endif
+
 #define STRINGIFICATION(s) STRINGIFICATION_I(s)
 #define STRINGIFICATION_I(s) #s
 
@@ -147,7 +151,8 @@ TritonKernel::direct_invoke(std::string_view mangled_kernel_function_name,
 {
   // TODO: Deduplication
 #if AOTRITON_KERNEL_VERBOSE
-  std::cerr << "Invoking TritonKernel " << this << " with kernel_name = \"" << kernel_name << '"'
+  std::cerr << "Invoking Kernel " << this << " with kernel_name = \"" << mangled_kernel_function_name << '"'
+            << " struct_of_args = " << struct_of_args
             << std::endl;
 #endif
   int device_id;
@@ -172,15 +177,32 @@ TritonKernel::direct_invoke(std::string_view mangled_kernel_function_name,
                                             package_path);
     }
   }
-#if AOTRITON_BUILD_FOR_TUNING
-  if (peek_kernel_image)
-    return hipSuccess;
-#endif
   void* config[] = {HIP_LAUNCH_PARAM_BUFFER_POINTER,
-                    &struct_of_args,
+                    struct_of_args,
                     HIP_LAUNCH_PARAM_BUFFER_SIZE,
                     &sizeof_struct,
                     HIP_LAUNCH_PARAM_END};
+#if AOTRITON_KERNEL_VERBOSE
+  auto hexdump = [](void *ptr, int buflen) {
+    unsigned char *buf = (unsigned char*)ptr;
+    int i, j;
+    fprintf(stderr, "hexdump: %08p\n", buf);
+    for (i=0; i<buflen; i+=16) {
+      fprintf(stderr, "%06x: ", i);
+      for (j=0; j<16; j++)
+        if (i+j < buflen)
+          fprintf(stderr, "%02x ", buf[i+j]);
+        else
+          fprintf(stderr, "   ");
+      fprintf(stderr, " ");
+      for (j=0; j<16; j++)
+        if (i+j < buflen)
+          fprintf(stderr, "%c", isprint(buf[i+j]) ? buf[i+j] : '.');
+      fprintf(stderr, "\n");
+    }
+  };
+  hexdump(struct_of_args, sizeof_struct);
+#endif
   return hipModuleLaunchKernel(func,
                                grid.x,
                                grid.y,
