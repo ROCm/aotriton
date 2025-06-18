@@ -8,12 +8,19 @@ Set env var `AMDGPU_INSTALLER` to URL of RHEL 8.10 `amdgpu-install` package.
 The latest package can be found at
 https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/amdgpu-install.html#red-hat-enterprise-linux
 
-## TL;DR (Use 0.7.1b as an example)
+## TL;DR (Use 0.10b as an example)
 
 Throughout this text, `aotriton/` always refers to the root directory of
 AOTriton source code.
 
 ```
+cd aotriton/dockerfile
+bash build.sh input tmpfs output 0.10b "gfx90a;gfx942;gfx950;gfx1201"
+```
+
+### For Release Before 0.10b
+
+``` bash
 cd aotriton/dockerfile
 bash build.sh input tmpfs output 0.7.1b "MI300X;MI200;Navi31"
 ```
