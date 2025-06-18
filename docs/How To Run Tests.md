@@ -6,7 +6,7 @@ cd build-test
 # AOTRITON_NAME_SUFFIX is essential to avoid symbol conflicts with AOTriton bundled in PyTorch
 cmake .. -DCMAKE_INSTALL_PREFIX=./install_dir -DCMAKE_BUILD_TYPE=Release -DAOTRITON_GPU_BUILD_TIMEOUT=0 -G Ninja -DAOTRITON_NAME_SUFFIX=123
 # Optionally only build for one arch
-# cmake .. -DCMAKE_INSTALL_PREFIX=./install_dir -DCMAKE_BUILD_TYPE=Release -DAOTRITON_GPU_BUILD_TIMEOUT=0 -G Ninja -DAOTRITON_NAME_SUFFIX=123 -DTARGET_GPUS=MI300X
+# cmake .. -DCMAKE_INSTALL_PREFIX=./install_dir -DCMAKE_BUILD_TYPE=Release -DAOTRITON_GPU_BUILD_TIMEOUT=0 -G Ninja -DAOTRITON_NAME_SUFFIX=123 -DAOTRITON_TARGET_ARCH=gfx942
 ninja install
 FOR_RELEASE=1 PYTHONPATH=install_dir/lib/ pytest ../test/test_backward.py -v
 # Optionally starting from AOTriton >= 0.10.0
