@@ -4,7 +4,7 @@ if [ "$#" -ne 5 ]; then
   echo 'Fatal. Must Use build.sh <Input directory> <Workspace directory> <Output Directory> <AOTriton GIT Name> <AOTriton Target GPUs>
 Specify tmpfs as Workspace directory will mount type=tmpfs instead.
 
-Example: bash build.sh input tmpfs output 0.7.1b "MI300X;MI200"
+Example: bash build.sh input tmpfs output 0.7.1b "gfx942;gfx90a"
 
 CAVEAT: tmpfs is only recommended for systems with > 100GiB physical memory.
 
@@ -16,7 +16,7 @@ Supported Environment Variables
 
 Example Usage of Environment Variables:
 
-  NOIMAGE_MODE=ON TRITON_LLVM_HASH=bd9145c8 bash build.sh input tmpfs output 3c542918a0 "MI300X;MI200;Navi31"
+  NOIMAGE_MODE=ON TRITON_LLVM_HASH=bd9145c8 bash build.sh input tmpfs output 3c542918a0 "gfx90a;gfx942;gfx1201"
 '
   exit 1
 fi
