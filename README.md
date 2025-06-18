@@ -65,7 +65,8 @@ of AOTriton. The compatibility matrix is shown below
 |        2.4            |                   0.6b                          |
 |        2.5            |                   0.7b, 0.8b<sup>(1)</sup>      |
 |        2.6            |                   0.8b<sup>(2)</sup>            |
-|        2.7            |                   0.9b<sup>(3)</sup>            |
+|        2.7            |    0.9b<sup>(3)</sup>, 0.10b<sup>(4)</sup>      |
+|        2.8            |                  0.10b<sup>(4)</sup>            |
 
 1. 0.8b's API is backward compatible with 0.7b, but the packaging scheme
    has changed drastically.
@@ -74,6 +75,9 @@ of AOTriton. The compatibility matrix is shown below
    suffer from runtime errors.
 3. To be specific, it is shipped with 0.9.2b. 0.9b and 0.9.1b should not be
    used in order to avoid linking issues, and confusion about version strings.
+4. 0.10b is backward compatible with 0.9b's API. However, PyTorch 2.8 will
+   lose sliding window attention (SWA) support if built with 0.9b since this
+   feature is newly added in 0.10b.
 
 ROCm's PyTorch release/\<version\> branch is slightly different from PyTorch
 upstream and may support more recent version of AOTriton
@@ -85,7 +89,8 @@ upstream and may support more recent version of AOTriton
 |        2.4            |                   0.7b (backported)             |
 |        2.5            |                   0.8b (backported)             |
 |        2.6            |                   0.9b (backported)             |
-|        2.7            |                   0.9b (once released)          |
+|        2.7            |                   0.9b (backported)             |
+|        2.8            |                   0.10b (once released)         |
 
 ### Point Release
 
