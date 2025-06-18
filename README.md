@@ -1,6 +1,7 @@
 ## Build Instructions
 
 ```
+pip install -r requirements.txt
 mkdir build
 cd build
 export PKG_CONFIG_PATH="${PKG_CONFIG_PATH}:${CONDA_PREFIX}/lib/pkgconfig"
