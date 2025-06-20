@@ -113,7 +113,7 @@ public:
     return strides_;
   }
 
-  const void* data_ptr() const {
+  void* data_ptr() const {
     return base_;
   }
 
@@ -138,7 +138,7 @@ public:
                               dtype};
   }
 private:
-  const void* base_ = nullptr;
+  void* base_ = nullptr;
   std::array<uint64_t, Rank> sizes_;
   std::array<uint64_t, Rank> strides_;
   DType dtype_ = kUnknown;
@@ -175,7 +175,7 @@ public:
     return {};
   }
 
-  const void* data_ptr() const {
+  void* data_ptr() const {
     return base_;
   }
 
@@ -192,8 +192,19 @@ public:
     return const_cast<void*>(static_cast<const void*>(&base_));
   }
 private:
-  const void* base_ = nullptr;
+  void* base_ = nullptr;
   DType dtype_ = kUnknown;
+};
+
+// Some backend may require additional memory to run
+// In this case, passing the default base_options to v3::op()
+// v3::op will return hipErrorInvalidMemcpyDirection, with
+// base_options::workspace_tensor updated with required size
+//
+// Then caller need to allocate the memory, update
+// base_options::workspace_tensor and call v3::op() again
+struct AOTRITON_API base_options {
+  TensorView<1> workspace_tensor = { 0, {0}, {0}, DType::kUInt8 };
 };
 
 

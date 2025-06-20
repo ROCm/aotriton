@@ -16,6 +16,7 @@ AOTriton Kernel Storage V2 (AKS2) utility
 def parse():
     parser = ArgumentParser(description=desc)
     parser.add_argument("-o", help="Output AKS2 file")
+    parser.add_argument("--ignore_json", help="Ignore JSON files", action='store_true')
     parser.add_argument("hsaco_files", nargs='*', help="Input HSACO Files")
     args = parser.parse_args()
     return args
@@ -36,18 +37,22 @@ _AKS2_DirectoryEntry_BaseSize = (len(fields(AKS2_DirectoryEntry)) - 1) * 4
 def directory_entry_size(entry):
     return entry.filename_length + _AKS2_DirectoryEntry_BaseSize
 
-def load_hsaco(hsaco : Path, offset):
+def load_hsaco(hsaco : Path, offset, ignore_json):
     with open(hsaco, 'rb') as f:
         blob = f.read()
-        with open(hsaco.with_suffix('.json')) as jf:
-            j = json.load(jf)
-            if len(blob) > 0:
-                shared_memory_size = j['shared']
-                block_threads = j['num_warps'] * j['warp_size']
-            else:
-                shared_memory_size = 0
-                block_threads = 0
-                assert j['compile_status'] != 'Complete'
+        if ignore_json:
+            shared_memory_size = 0
+            block_threads = 0
+        else:
+            with open(hsaco.with_suffix('.json')) as jf:
+                j = json.load(jf)
+                if len(blob) > 0:
+                    shared_memory_size = j['shared']
+                    block_threads = j['num_warps'] * j['warp_size']
+                else:
+                    shared_memory_size = 0
+                    block_threads = 0
+                    assert j['compile_status'] != 'Complete'
         filename = str(hsaco.stem).encode('utf-8')
         entry = AKS2_DirectoryEntry(shared_memory_size=shared_memory_size,
                                     block_threads=block_threads,
@@ -86,7 +91,7 @@ class AKS2(object):
     def load(self, args):
         self.number_of_kernels = len(args.hsaco_files)
         for hsaco in args.hsaco_files:
-            entry, blob = load_hsaco(Path(hsaco), self.current_offset)
+            entry, blob = load_hsaco(Path(hsaco), self.current_offset, args.ignore_json)
             self.current_offset += len(blob)
             self.directory.append(entry)
             self.hsaco_blobs.append(blob)
