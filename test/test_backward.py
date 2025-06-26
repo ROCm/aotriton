@@ -6,6 +6,7 @@ import pytest
 import torch
 import os
 import sys
+import math
 
 from attn_torch_function import (
     DEFAULT_PHILOX_SEED,
@@ -116,6 +117,10 @@ but in PyTorch API it does not present at all
 
 def _do_test_op_bwd(args, device_str='cuda'):
     BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type = args
+    if sm_scale == 'l1':
+        sm_scale = 1.0 / D_HEAD
+    elif sm_scale == 'l2':
+        sm_scale = 1.0 / math.sqrt(D_HEAD)
     if causal and bias_type is not None:
         pytest.skip("_scaled_dot_product_attention: Explicit attn_mask should not be set when is_causal=True")
     if BATCH > 1 and seqlen_q * seqlen_k >= 1024 * 1024:
@@ -194,7 +199,7 @@ def _test_op_bwd(args, device : int | None = None):
 # @pytest.mark.parametrize('dropout_p', [0.0])
 @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16, torch.float32])
 # @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
-@pytest.mark.parametrize('sm_scale', [0.0, 1.2] if not FOR_RELEASE else [1.2])
+@pytest.mark.parametrize('sm_scale', [0.0, 0.125] if not FOR_RELEASE else ['l1', 'l2'])
 @pytest.mark.parametrize('storage_flip', [False, True])
 # @pytest.mark.parametrize('return_encoded_softmax', [False])
 @pytest.mark.parametrize('BWDOP', BWDOP_ids)
@@ -223,7 +228,7 @@ def test_op_bwd(torch_gpu, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, ca
 # @pytest.mark.parametrize('dropout_p', [0.0])
 @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16, torch.float32])
 # @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
-@pytest.mark.parametrize('sm_scale', [0.0, 1.2] if not FOR_RELEASE else [1.2])
+@pytest.mark.parametrize('sm_scale', [0.0, 0.125] if not FOR_RELEASE else ['l1', 'l2'])
 @pytest.mark.parametrize('storage_flip', [False, True])
 # @pytest.mark.parametrize('return_encoded_softmax', [False])
 @pytest.mark.parametrize('BWDOP', BWDOP_ids)
@@ -245,7 +250,7 @@ def test_op_bwd_with_matrix_bias(torch_gpu, BWDOP, BATCH, N_HEADS, D_HEAD, seqle
 @pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
 @pytest.mark.parametrize('dropout_p', [0.0, 0.5])
 @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16, torch.float32])
-@pytest.mark.parametrize('sm_scale', [1.2])
+@pytest.mark.parametrize('sm_scale', [0.0, 0.125] if not FOR_RELEASE else ['l1', 'l2'])
 @pytest.mark.parametrize('storage_flip', [False])
 @pytest.mark.parametrize('BWDOP', BWDOP_ids)
 def test_gqa(torch_gpu, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
@@ -262,7 +267,7 @@ if not FOR_RELEASE:  # Make the loading faster
     @pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
     @pytest.mark.parametrize('dropout_p', [0.0, 0.5])
     @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16, torch.float32])
-    @pytest.mark.parametrize('sm_scale', [1.2])
+    @pytest.mark.parametrize('sm_scale', ['l1', 'l2'])
     @pytest.mark.parametrize('storage_flip', [False, True])
     @pytest.mark.parametrize('bias_type', [None, 'matrix'], ids=['BiasOff', 'BiasOn'])
     @pytest.mark.parametrize('BWDOP', BWDOP_ids)

@@ -30,6 +30,10 @@ but in PyTorch API it does not present at all
 def _do_test_op_bwd(BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type):
     if causal and bias_type is not None:
         pytest.skip("_scaled_dot_product_attention: Explicit attn_mask should not be set when is_causal=True")
+    if sm_scale == 'l1':
+        sm_scale = 1.0 / D_HEAD
+    elif sm_scale == 'l2':
+        sm_scale = 1.0 / math.sqrt(D_HEAD)
     skip_dk_dv = SKIP_DK_DV
     skip_dq = SKIP_DQ
     skip_db = True if bias_type is None else SKIP_DB
