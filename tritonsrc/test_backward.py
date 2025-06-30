@@ -6,7 +6,6 @@ import sys
 import pytest
 import torch
 import os
-import math
 
 from _common_backward import _do_test_op_bwd
 from _common_test import SdpaContext, SdpaParams, SdpaContextFromNPZ

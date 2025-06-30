@@ -5,6 +5,7 @@
 import os
 import pytest
 import torch
+import math
 
 from _common_test import SdpaContext, SdpaParams
 from attn_torch_function import attention, AttentionExtraArgs, PersistentType
