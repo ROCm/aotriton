@@ -75,6 +75,7 @@ def bwd_kernel_dq(
     PADDED_HEAD: tl.constexpr,
     BIAS_TYPE: tl.constexpr,
 ):
+    RCP_LN2: tl.constexpr = 1.4426950408889634
     tl.static_assert(BLOCK_DMODEL > 0, 'BLOCK_DMODEL must be greater than 0')
     BLOCK_DMODEL_R0 : tl.constexpr = BLOCK_DMODEL
     BLOCK_DMODEL0 : tl.constexpr = 2 ** (BLOCK_DMODEL_R0.bit_length() - 1)
@@ -164,7 +165,7 @@ def bwd_kernel_dq(
                                    PADDED_ROW=True,
                                    PADDED_COL=PADDED_HEAD,
                                    TRANSPOSED=False)
-    qk_scale = sm_scale * 1.44269504089
+    qk_scale = sm_scale * RCP_LN2
     bias_scale = 1.0 / sm_scale
     kt_ptrs0, kt_ptrs1, kt_ptrs2 = composed_ptrs(K,
                                                  stride_kz, stride_kh, stride_kn, stride_kk,
@@ -290,7 +291,7 @@ def bwd_kernel_dq(
 
     d_lse_ptrs_mask = offs_q < seqlen_q
     Di = tl.load(D_ptrs + offs_q, mask=d_lse_ptrs_mask, other=0.0)
-    l_i = tl.load(l_ptrs + offs_q, mask=d_lse_ptrs_mask, other=0.0)
+    l_i = tl.load(l_ptrs + offs_q, mask=d_lse_ptrs_mask, other=0.0) * RCP_LN2
 
     idropout_p = ((dropout_p - 0.5) * 0xFFFFFFFF).to(tl.int32) if ENABLE_DROPOUT else 0
     dropout_scale = 1.0 / (1.0 - dropout_p) if ENABLE_DROPOUT else 1.0

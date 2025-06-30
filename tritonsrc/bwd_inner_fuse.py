@@ -189,6 +189,8 @@ def bwd_inner_dk_dv_fuse(
             l_i = tl.load(l_ptrs + offs_q_curr,
                           mask=d_lse_ptrs_mask,
                           other=0.0)
+        RCP_LN2: tl.constexpr = 1.4426950408889634
+        l_i *= RCP_LN2
         Di = composed_inner_product_fp32(o0, o1, o2,
                                          do0, do1, do2,
                                          BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,

@@ -179,6 +179,8 @@ def bwd_inner_dk_dv(
             l_i = tl.load(l_ptrs + offs_q_curr,
                           mask=d_lse_ptrs_mask,
                           other=0.0)
+        RCP_LN2: tl.constexpr = 1.4426950408889634
+        l_i *= RCP_LN2
         # FIXME: Potential bug https://github.com/ROCm/aotriton/issues/54
         p = tl.math.exp2(qk_scale * qk - l_i) # (BLOCK_M, BLOCK_N)
 
