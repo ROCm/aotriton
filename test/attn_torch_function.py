@@ -35,6 +35,7 @@ class AttentionExtraArgs:
     return_autotune : bool = False
     is_testing : bool = True
     fillnan : bool = False
+    return_logsumexp : bool = False
 
 VERBOSE=False
 DEFAULT_PHILOX_SEED = 0x1BF52
@@ -59,6 +60,8 @@ class _attention(torch.autograd.Function):
         return_encoded_softmax = attn_extra_args.return_encoded_softmax
         autotune = attn_extra_args.autotune
         return_autotune = attn_extra_args.return_autotune
+        if return_autotune and attn_extra_args.return_logsumexp:
+            assert False, 'Cannot set return_autotune and return_logsumexp at the same time. Both are returned as 3rd value'
         # shape constraints
         Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
         assert Lq == Lk and Lk == Lv
@@ -149,7 +152,8 @@ class _attention(torch.autograd.Function):
         ctx.return_autotune = return_autotune
         if attn_extra_args.is_testing:
             assert not torch.isnan(M).any(), f'L tensor has NaN'
-        return o, encoded_softmax, ctx.tuning_result
+        ret3 = M if attn_extra_args.return_logsumexp else ctx.tuning_result
+        return o, encoded_softmax, ret3
 
     @staticmethod
     def backward_split(ctx, do, _, __):

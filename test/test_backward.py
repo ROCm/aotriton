@@ -299,6 +299,26 @@ def test_large_bf16_nan_values(BWDOP):
     print(tri_out)
     assert not torch.isnan(tri_out).any(), "Output should not contain NaNs!"
 
+@pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16, torch.float32])
+def test_logsumexp_scaling(dtype):
+    REF_VALUE = 2.79018449783325195
+    device = 'cuda'
+    q = torch.eye(16, device=device, dtype=dtype).reshape((1,1,16,16))
+    k = torch.eye(16, device=device, dtype=dtype).reshape((1,1,16,16))
+    v = torch.eye(16, device=device, dtype=dtype).reshape((1,1,16,16))
+    b = None
+    causal = False
+    sm_scale = 1.0 / math.sqrt(16)
+    dropout_p = 0.0
+
+    ext = AttentionExtraArgs(return_encoded_softmax=False,
+                             autotune=False,
+                             return_autotune=False,
+                             return_logsumexp=True)
+    tri_out, _, L = attention(q, k, v, b, causal, sm_scale, dropout_p, ext)
+    ref_tensor = torch.full_like(L, REF_VALUE)
+    assert torch.allclose(L, ref_tensor)
+
 def main_npz():
     SKIP_DK_DV = False
     SKIP_DQ = False
