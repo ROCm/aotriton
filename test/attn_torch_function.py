@@ -28,6 +28,10 @@ from dataclasses import dataclass
 
 BWD_IMPL = int(os.getenv('BWD_IMPL', default='0'))
 V3_API = bool(int(os.getenv('V3_API', default='0')))
+if BWD_IMPL == 2:
+    PROBE_UNSUPPORTED = bool(int(os.getenv('PROBE_UNSUPPORTED', default='0')))
+else:
+    PROBE_UNSUPPORTED = False
 
 @dataclass
 class AttentionExtraArgs:
@@ -249,6 +253,8 @@ class _attention(torch.autograd.Function):
         assert not V3_API, 'attn_bwd_fused is not exposed in V3 API'
         ret = attn_bwd_aiter(q, k, v, b, sm_scale, o, do, dq_acc, dk, dv, db, L, delta,
                              dropout_p, philox_seed, philox_offset, 0, causal)
+        if PROBE_UNSUPPORTED and ret == hipError_t.hipErrorPeerAccessUnsupported:
+            raise NotImplementedError()
         assert ret == hipError_t.hipSuccess, ret
         tuning_result = None
 
