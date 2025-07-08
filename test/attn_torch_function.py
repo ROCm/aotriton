@@ -242,7 +242,7 @@ class _attention(torch.autograd.Function):
         return_autotune = ctx.return_autotune
         # if q.shape[-1] <= 32:
         # do = do.contiguous()
-        dq_acc = torch.empty_like(q, dtype=torch.float32)
+        dq_acc = torch.zeros_like(q, dtype=torch.float32)
         dk = torch.empty_like(k)
         dv = torch.empty_like(v)
         db = torch.empty_like(b) if b is not None else None
