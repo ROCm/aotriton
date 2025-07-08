@@ -87,7 +87,7 @@ class bwd_dq_dk_dv_v3(FlashAffine):
         tuple(['kIsUniformStride']) : [False, True],    # Inferred/Implicit
         tuple(['MaskType']) : [0, 1, 2],                # 0: No, 1: TopLeft, 2: SWA
         tuple(['kIsSEQPad']) : [False, True],
-        tuple(['kIsHDPad']) : [False, True],
+        # tuple(['kIsHDPad']) : [False, True],          # = PADDED_HEAD
         tuple(['kIsAtomic32']) : [True],                # Always use FP32 for better dq accuracy.
         tuple(['BF16Cvt']) : [0],                       # Always use RTNE when down casting from dq accumulator
         tuple(['kIsGroupMode']) : [False, True],
@@ -154,31 +154,35 @@ class bwd_dq_dk_dv_v3(FlashAffine):
         if False:  # Debug
             val_dict = { k: tp.triton_compile_signature for k, tp in complete_dict.items() }
             print(f'Matching {val_dict=}')
-        dic = {}
+        # Goal: Lookup CSV file from given Functional object f
+        # Step 1: construct where
+        # Step 2: Call self.select_df_by_dict(self._df, where)
+        where = {}
         for tr in self.CSV_TRANSLATORS:
-            log(lambda : f'{tr=} {tr.get_iface_param()=}')
-            dic[tr.column] = tr.translate_tc(complete_dict[tr.get_iface_param()])
+            where[tr.column] = tr.translate_tc(complete_dict[tr.get_iface_param()])
+            log(lambda : f'{tr=} {where[tr.column]=}')
         kIsUniformStride = complete_dict['kIsUniformStride'].triton_compile_signature
         kIsSEQPad = complete_dict['kIsSEQPad'].triton_compile_signature
-        kIsHDPad = complete_dict['kIsHDPad'].triton_compile_signature
+        kIsHDPad = complete_dict['PADDED_HEAD'].triton_compile_signature
         kIsGroupMode = complete_dict['kIsGroupMode'].triton_compile_signature
         MaskType = complete_dict['MaskType'].triton_compile_signature
         if MaskType == 2:  # SWA
-            dic.update({'kIsSEQPad': True, 'kIsHDPad':  True})
-            ret = self.select_df_by_dict(self._df, dic)
+            where.update({'kIsSEQPad': True, 'kIsHDPad':  True})
+            ret = self.select_df_by_dict(self._df, where)
             return ret, fmha_bwd_v3_swa_genl_args()
-        # print(f'{kIsUniformStride=}')
+        log(lambda : f'{kIsUniformStride=}')
         if kIsUniformStride:
             '''
             kIsUniformStride=True: can use any kernel
             '''
             canSEQPad = [True] if kIsSEQPad else [False, True]
             canHDPad = [True] if kIsHDPad else [False, True]
+            log(lambda : f'{kIsSEQPad=} {canSEQPad=} {kIsHDPad=} {canHDPad=}')
             def locate_csv_rows():
                 for pickIsSEQPad in canSEQPad:
                     for pickIsHDPad in canHDPad:
-                        dic.update({'kIsSEQPad': pickIsSEQPad, 'kIsHDPad':  pickIsHDPad})
-                        ret = self.select_df_by_dict(self._df, dic)
+                        where.update({'kIsSEQPad': pickIsSEQPad, 'kIsHDPad':  pickIsHDPad})
+                        ret = self.select_df_by_dict(self._df, where)
                         if not ret.empty:
                             return ret, pickIsSEQPad, pickIsHDPad
                 return ret, pickIsSEQPad, pickIsHDPad
@@ -192,8 +196,8 @@ class bwd_dq_dk_dv_v3(FlashAffine):
                 pp_arg_klass = fmha_bwd_v3_group_args
             return ret, pp_arg_klass()
         for patch in self.DF_DICT_PATCH:
-            dic.update(patch)
-            ret = self.select_df_by_dict(self._df, dic)
+            where.update(patch)
+            ret = self.select_df_by_dict(self._df, where)
             if not ret.empty:
                 break
         if kIsGroupMode:
