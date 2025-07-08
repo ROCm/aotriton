@@ -40,7 +40,7 @@ struct [[context_class_name]] {
     struct {
         [[csv_perf_fields]]
     } perf_args;
-    bool check_inputs_are_supported();
+    const char* check_inputs_are_supported();
     void calculate_residual_func_fields();
 
     // Re-use TritonKernel class

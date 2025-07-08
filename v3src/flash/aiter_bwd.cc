@@ -16,6 +16,9 @@
 #include <stdio.h>
 #endif
 
+#define STRINGIFICATION(s) STRINGIFICATION_I(s)
+#define STRINGIFICATION_I(s) #s
+
 namespace AOTRITON_NS::v2::flash {
 
 extern hipError_t
@@ -58,23 +61,14 @@ constexpr T log2e_rcp_v = 1. / log2e<T>::value;
 };
 // End of AITER/CK Compatitility code
 
-bool BwdDqDkDvV3Context::check_inputs_are_supported() {
+const char* BwdDqDkDvV3Context::check_inputs_are_supported() {
   const auto& args = *params;
-#ifdef NDEBUG
 #define RETURN_IF(COND)                                               \
   do {                                                                \
     if (COND) {                                                       \
-      return false;                                                   \
+      return "Input unsupported due to " STRINGIFICATION(COND);                     \
     }                                                                 \
   } while(0)
-#else
-  do {                                                                \
-    if (COND) {                                                       \
-      std::cerr << "Input unsupported due to " << #COND << std::endl; \
-      return false;                                                   \
-    }                                                                 \
-  } while(0)
-#endif
   // No bias support
   RETURN_IF(args.BIAS_TYPE);
   // No Varlen support
@@ -84,6 +78,7 @@ bool BwdDqDkDvV3Context::check_inputs_are_supported() {
   RETURN_IF(args.head_dim > 192);
   // TODO: support dropout kernel. fwd and bwd should have identical PRNG
   RETURN_IF(args.ENABLE_DROPOUT);
+#undef RETURN_IF
   // We do not have test suite to validate SWA at the moment.
   if (args.CAUSAL_TYPE != CausalType::None) {
       if (args.Window_left != WindowValue::TopLeftAligned ||
@@ -94,31 +89,22 @@ bool BwdDqDkDvV3Context::check_inputs_are_supported() {
                   << " args.Window_right = " << args.Window_right
                   << std::endl;
 #endif
-        return false;
+        return "Input unsupported due to SWA";
       }
   }
   // AITER ASM kernel only reads u32 strides.
-#ifdef NDEBUG
 #define CHECK_STRIDE(T)                                               \
   do {                                                                \
     auto strides = T->strides();                                      \
     size_t max_e = *std::max_element(strides.begin(), strides.end()); \
     if (max_e * 2 > std::numeric_limits<uint32_t>::max()) {           \
-      return false;                                                   \
+      return "Input unsupported due to large tensor " STRINGIFICATION(T);           \
     }                                                                 \
   } while(0)
-#else
-#define CHECK_STRIDE(T)                                               \
-  do {                                                                \
-    auto strides = T->strides();                                      \
-    size_t max_e = *std::max_element(strides.begin(), strides.end()); \
-    if (max_e * 2 > std::numeric_limits<uint32_t>::max()) {                                           \
-      std::cerr << "Input unsupported due to large tensor " << #T << std::endl;                       \
-      std::cerr << "strides: "; for (auto s : strides) std::cerr << s << " "; std::cerr << std::endl; \
-      std::cerr << "max_e * 2: " << max_e * 2 << std::endl;                                           \
-      return false;                                                   \
-    }                                                                 \
-  } while(0)
+#if 0
+      std::cerr << "Input unsupported due to large tensor " << #T << std::endl;
+      std::cerr << "strides: "; for (auto s : strides) std::cerr << s << " "; std::cerr << std::endl;
+      std::cerr << "max_e * 2: " << max_e * 2 << std::endl;
 #endif
   CHECK_STRIDE(args.Q);
   CHECK_STRIDE(args.K);
@@ -131,7 +117,7 @@ bool BwdDqDkDvV3Context::check_inputs_are_supported() {
   CHECK_STRIDE(args.DB);
 #undef CHECK_STRIDE
 
-  return true;
+  return nullptr;
 }
 
 void BwdDqDkDvV3Context::calculate_residual_func_fields() {
@@ -176,18 +162,9 @@ void BwdDqDkDvV3Context::calculate_residual_func_fields() {
         if (args.max_seqlen_q % 64) return false;
         return true;
     };
-    auto check_hdim_regular = [&]() -> bool {
-        if (args.head_dim == 64)
-            return true;
-        if (args.head_dim == 128)
-            return true;
-        if (args.head_dim == 192)
-            return true;
-        return false;
-    };
     residual_args.kIsUniformStride = check_if_uniform();
     residual_args.kIsSEQPad = (args.max_seqlen_q % 64 != 0);
-    residual_args.kIsHDPad = !check_hdim_regular();
+    // residual_args.kIsHDPad = !check_hdim_regular();
     residual_args.kIsGroupMode = (args.num_head_q != args.num_head_k);
     auto check_mask_type = [&]() -> int8_t {
       if (args.CAUSAL_TYPE == CausalType::None)

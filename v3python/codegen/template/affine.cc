@@ -28,19 +28,43 @@ hipError_t
     if (arch_number < 0) {
         return hipErrorNoBinaryForGpu;
     }
-    if (!check_inputs_are_supported())
+    const char* reject_reason = check_inputs_are_supported();
+    if (reject_reason) {
+#ifndef NDEBUG
+        std::cerr << "Unsupported inputs for backend "
+                  << "[[context_class_name]]"
+                  << " reason: "
+                  << reject_reason
+                  << std::endl;
+#endif
         return hipErrorPeerAccessUnsupported;
+    }
     calculate_residual_func_fields();
     kernel_on_device = nullptr;
     // Unlike Triton's autotune_table
     // Affine kernel uses entries from "capability_table", which validate if
     // input is supported.
     auto number = godel_number();
-    if (number < 0)
+    if (number < 0) {
+#ifndef NDEBUG
+        std::cerr << "Unsupported inputs for backend "
+                  << "[[context_class_name]]"
+                  << " reason: cannot assign godel number "
+                  << std::endl;
+#endif
         return hipErrorPeerAccessUnsupported;
+    }
     auto capability_validator = capability_table[arch_number][number];
-    if (!capability_validator)
+    if (!capability_validator) {
+#ifndef NDEBUG
+        std::cerr << "Unsupported inputs for backend "
+                  << "[[context_class_name]]"
+                  << " reason: capability table has no entry for godel number "
+                  << number
+                  << std::endl;
+#endif
         return hipErrorPeerAccessUnsupported;
+    }
     // capability_validator is responsible to
     // 1. return hipErrorPeerAccessUnsupported when kernel cannot handle inputs
     //    (Usually not required, can be identified with residual choices)
