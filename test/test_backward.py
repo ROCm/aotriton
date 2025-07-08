@@ -15,6 +15,8 @@ from attn_torch_function import (
     AttentionExtraArgs,
     BWD_IMPL,
     V3_API,
+    PROBE_UNSUPPORTED,
+    hipError_t,
 )
 from _common_test import SdpaContext, SdpaParams, SdpaContextFromNPZ, AOTRITON_TORCH_ONLY_USE_CPU, fmt_hdim
 
@@ -91,6 +93,9 @@ elif HEADDIM_8X_ONLY:
 else:
     ALL_HEADDIMS = POT_HEADDIMS + NPOT_HEADDIMS + M8_HEADDIMS
 
+# Deduplication
+ALL_HEADDIMS = sorted(list(set(ALL_HEADDIMS)))
+
 '''
 Note: for now we cannot really test both fused and split kernel at the same
       time. Env var BWD_IMPL is used to make the switch.
@@ -104,7 +109,7 @@ def _get_BWDOP_id():
     if V3_API:
         return 'V3'
     if BWD_IMPL == 2:
-        return 'AITRERASM'
+        return 'AITERASM'
     if BWD_IMPL == 1:
         return 'Fused'
     if BWD_IMPL == 0:
@@ -146,6 +151,13 @@ def _do_test_op_bwd(args, device_str='cuda'):
         sm_scale = 1.0 / D_HEAD
     elif sm_scale == 'l2':
         sm_scale = 1.0 / math.sqrt(D_HEAD)
+    if BWD_IMPL == 2:  # AITER ASM
+        if dropout_p > 0.0:
+            pytest.skip("Dropout unsupported in AITER ASM backend for now. Need adjust FWD PRNG function")
+        if D_HEAD < 64:
+            pytest.skip("hdim < 64 AITER ASM kernel does not exist.")
+        if D_HEAD > 192:
+            pytest.skip("hdim > 192 AITER ASM kernel does not exist.")
     if causal and bias_type is not None:
         pytest.skip("_scaled_dot_product_attention: Explicit attn_mask should not be set when is_causal=True")
     if BATCH > 1 and seqlen_q * seqlen_k >= 1024 * 1024:
@@ -173,7 +185,13 @@ def _do_test_op_bwd(args, device_str='cuda'):
     ref_out, _ = ctx.compute_ref_forward(sdpa_params)
 
     dout = torch.rand_like(tri_out)
-    ctx.compute_backward(tri_out, dout)
+    if PROBE_UNSUPPORTED:
+        try:
+            ctx.compute_backward(tri_out, dout)
+        except NotImplementedError as e:
+            pytest.xfail("Unsupported Config in AITER")
+    else:
+        ctx.compute_backward(tri_out, dout)
     is_allclose, adiff, grads_allclose, grads_adiff, tfts = ctx.validate_with_reference(tri_out, ctx.dout_tensors, return_target_fudge_factors=True)
     ctx.display_validation_results(tri_out, is_allclose, adiff, grads_allclose, grads_adiff)
 
