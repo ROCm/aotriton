@@ -78,6 +78,7 @@ const char* BwdDqDkDvV3Context::check_inputs_are_supported() {
   RETURN_IF(args.head_dim > 192);
   // TODO: support dropout kernel. fwd and bwd should have identical PRNG
   RETURN_IF(args.ENABLE_DROPOUT);
+  RETURN_IF(args.num_head_q != args.num_head_k);
 #undef RETURN_IF
   // We do not have test suite to validate SWA at the moment.
   if (args.CAUSAL_TYPE != CausalType::None) {
