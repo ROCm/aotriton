@@ -136,8 +136,8 @@ class bwd_dq_dk_dv_v3(FlashAffine):
         return False
 
     DF_DICT_PATCH = [
-        # {'kIsSEQPad':  True, 'kIsHDPad': False}  # requires kIsUniformStride
-        {'kIsSEQPad': False, 'kIsHDPad':  True},
+        {'kIsSEQPad':  True, 'kIsHDPad':  False},   # pssk calls fmha_bwd_v3_genl_
+        # {'kIsSEQPad': False, 'kIsHDPad':  True},  # pddv calls fmha_bwd_v3_gen_
         {'kIsSEQPad':  True, 'kIsHDPad':  True},
     ]
     '''
