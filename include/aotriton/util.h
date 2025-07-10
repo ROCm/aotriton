@@ -196,18 +196,6 @@ private:
   DType dtype_ = kUnknown;
 };
 
-// Some backend may require additional memory to run
-// In this case, passing the default base_options to v3::op()
-// v3::op will return hipErrorInvalidMemcpyDirection, with
-// base_options::workspace_tensor updated with required size
-//
-// Then caller need to allocate the memory, update
-// base_options::workspace_tensor and call v3::op() again
-struct AOTRITON_API base_options {
-  TensorView<1> workspace_tensor = { 0, {0}, {0}, DType::kUInt8 };
-};
-
-
 extern template class TensorView<1>;
 extern template class TensorView<2>;
 extern template class TensorView<3>;

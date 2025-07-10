@@ -249,12 +249,6 @@ _attn_fwd_common(T4 q,
     .Num_CU = is_causal ? getMultiProcessorCount(stream) : 80,
     .Batch = int32_t(num_seqlens == 0 ? q.size(0) : num_seqlens),
   };
-// #ifndef NDEBUG
-//   std::cerr << __FILE__ << ":" << __LINE__ << ": CAUSAL_TYPE" << int(params.CAUSAL_TYPE) << std::endl;
-//   std::cerr << __FILE__ << ":" << __LINE__ << ": is_causal" << is_causal << std::endl;
-//   std::cerr << __FILE__ << ":" << __LINE__ << ": WindowedAttention" << int(CausalType::WindowedAttention) << std::endl;
-//   std::cerr << __FILE__ << ":" << __LINE__ << ": None" << int(CausalType::None) << std::endl;
-// #endif
   AttnFwdContext context;
   context.params = &params;
 #if AOTRITON_BUILD_FOR_TUNING
