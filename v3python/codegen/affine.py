@@ -46,6 +46,7 @@ class AffineGenerator(InterfaceGenerator):
             use_this_functional = False
             return None, use_this_functional
         use_this_functional = True
+        log(lambda : f'Translating Functional with godel number {functional.godel_number}')
         df, dkarg = akdesc.translate_empty_dataframe(functional)
         if df.empty:
             use_this_functional = False
