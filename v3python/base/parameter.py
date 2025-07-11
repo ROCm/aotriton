@@ -119,6 +119,16 @@ class TemplateParameter(object):
                              nbits=resolved_tc.NBITS)
         return list(_gen())
 
+    def get_unprocessed_cfields(self):
+        def _gen():
+            for index, aname in enumerate(self._names):
+                resolved_tc = self.repr_choice.resolve(aname, tc_dict=None)
+                yield cfield(ctype=resolved_tc.itype,
+                             aname=aname,
+                             index=index,
+                             nbits=resolved_tc.NBITS)
+        return list(_gen())
+
 # class TypeParameter(TemplateParameter):
 #     @property
 #     def field_ctype(self):

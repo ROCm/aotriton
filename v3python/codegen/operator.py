@@ -105,7 +105,7 @@ class OperatorGenerator(InterfaceGenerator):
     def codegen_kshim_launcher(self, kdesc : KernelDescription, nalign):
         iface = self._iface
         stmt = []
-        self._add_header_for_source(kdesc)
+        self._add_iface_for_source(kdesc)
         d = {
             'context_class_name'    : iface.context_class_name,
             'launcher_func_name'    : self.codegen_launcher_func_name(kdesc),
@@ -119,7 +119,7 @@ class OperatorGenerator(InterfaceGenerator):
         stmt = []
         for kdesc in metro.list_kernels():
             if isinstance(kdesc, ConditionalKernel):
-                self._add_header_for_source(kdesc.if_kernel)
+                self._add_iface_for_source(kdesc.if_kernel)
                 d = {
                     'condition'             : f'context.params->{kdesc.if_parameter} {kdesc.if_expr}',
                     'backend_context_name'  : kdesc.if_kernel.context_class_name,
@@ -127,11 +127,11 @@ class OperatorGenerator(InterfaceGenerator):
                 if kdesc.else_kernel is None:
                     snippet = self.METRO_SNIPPET_TEMPLATE.format_map(d)
                 else:
-                    self._add_header_for_source(kdesc.else_kernel)
+                    self._add_iface_for_source(kdesc.else_kernel)
                     d['else_context_name'] = kdesc.else_kernel.context_class_name
                     snippet = self.IFELSE_SNIPPET_TEMPLATE.format_map(d)
             else:
-                self._add_header_for_source(kdesc)
+                self._add_iface_for_source(kdesc)
                 d = {
                     'condition'             : 'true',
                     'backend_context_name'  : kdesc.context_class_name,
