@@ -88,6 +88,7 @@ def bwd_kernel_fuse(
     BLOCK_M: tl.constexpr,
     BLOCK_N: tl.constexpr,
 ):
+    RCP_LN2: tl.constexpr = 1.4426950408889634
     tl.static_assert(BLOCK_DMODEL > 0, 'BLOCK_DMODEL must be greater than 0')
     BLOCK_DMODEL_R0 : tl.constexpr = BLOCK_DMODEL
     BLOCK_DMODEL0 : tl.constexpr = 2 ** (BLOCK_DMODEL_R0.bit_length() - 1)
@@ -294,6 +295,7 @@ def bwd_kernel_fuse(
                                          BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
                                          axis=1)
         l_i = tl.load(l_ptrs + offs_q_dq, mask=d_lse_ptrs_mask, other=0.0)
+        l_i *= RCP_LN2
 
         idropout_p = ((dropout_p - 0.5) * 0xFFFFFFFF).to(tl.int32) if ENABLE_DROPOUT else 0
         dropout_scale = 1.0 / (1.0 - dropout_p) if ENABLE_DROPOUT else 1.0

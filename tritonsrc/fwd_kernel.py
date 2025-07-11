@@ -526,14 +526,17 @@ def attn_fwd(
                 if L_not_null:
                     # write back LSE
                     l_ptrs = L + off_z * Num_head_q * Max_seqlen_q + off_h_q * Max_seqlen_q + offs_m
+                    LN2: tl.constexpr = 0.6931471824645996
+                    logsumexp = m_i + tl.math.log2(l_i)
+                    logsumexp *= 0.6931471824645996
                     # If seqlen_q not multiple of BLOCK_M, we need to mask out the last few rows.
                     # This is only true for the last M block. For others, overflow_size will be -ve
                     if overflow_size > 0:
                         boundary = tl.full((BLOCK_M, ), BLOCK_M - overflow_size, dtype=tl.int32)
                         l_ptrs_mask = tl.arange(0, BLOCK_M) < boundary
-                        tl.store(l_ptrs, m_i + tl.math.log2(l_i), mask=l_ptrs_mask)
+                        tl.store(l_ptrs, logsumexp, mask=l_ptrs_mask)
                     else:
-                        tl.store(l_ptrs, m_i + tl.math.log2(l_i))
+                        tl.store(l_ptrs, logsumexp)
                 # tl.device_print('final acc0', acc0)
                 # tl.device_print('acc1', acc1)
                 # tl.device_print('acc2', acc2)
