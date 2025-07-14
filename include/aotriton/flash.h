@@ -165,6 +165,8 @@ using T0 = AOTRITON_NS::TensorView<0>;
 
 // For debugging and profiling purpose
 struct AOTRITON_API attn_options : public base_options {
+    void* cookie = nullptr;
+    void (*allocate_dq_acc)(void* cookie) = nullptr;
 };
 
 // Note: DO NOT declare enums as enum class : int8_t. Enum class cannot be cased to

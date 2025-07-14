@@ -8,6 +8,7 @@
 #include <aotriton/dtypes.h>
 #include <aotriton/util.h>
 #include <aotriton/runtime.h>
+#include <aotriton/[[family_name]].h>
 #include <functional>
 #include <string>
 #include <vector>
@@ -20,7 +21,8 @@ struct [[param_class_name]] {
 };
 
 struct [[context_class_name]] {
-    const [[param_class_name]] *params = nullptr;
+    [[param_class_name]] *params = nullptr;
+    const [[call_options_struct]] *call_options = nullptr;
     enum BackendEnum : int32_t {
         None = -1,
         [[list_of_backend_enum]],

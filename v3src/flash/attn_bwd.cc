@@ -105,6 +105,7 @@ attn_bwd(const attn_bwd_params& in,
     .DV = &in.DV,
     .DQ = &in.DQ,
     .DB = &in.DB,
+    .DQ_ACC = &in.DQ_ACC,
     .L = &in.L,
     .D = &in.D,
     .num_head_q = num_head_q,
@@ -129,6 +130,7 @@ attn_bwd(const attn_bwd_params& in,
   };
   OpAttnBwdContext context;
   context.params = &params;
+  context.call_options = options;
   err = context.lookup_optimal(gpu);
   if (err != hipSuccess) {
     return err;

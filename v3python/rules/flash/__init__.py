@@ -4,6 +4,7 @@
 from v3python.op import (
     MetroKernel,
     ConditionalKernel,
+    Hook,
 )
 from .ops import OpAttnFwd, OpAttnBwd
 from .attn_fwd import attn_fwd
@@ -26,8 +27,7 @@ __attn_fwd = attn_fwd('attn_fwd', SOURCE_FILE)
 __bwd_kernel_dk_dv = bwd_kernel_dk_dv('bwd_kernel_dk_dv', SOURCE_FILE)
 __bwd_kernel_dq = bwd_kernel_dq('bwd_kernel_dq', SOURCE_FILE)
 __bwd_kernel_fuse = bwd_kernel_fuse('bwd_kernel_fuse', SOURCE_FILE)
-# # TODO: aiter
-# # __bwd_aiter = bwd_aiter()
+__bwd_aiter = bwd_dq_dk_dv_v3()
 # # TODO: Re-implement this as part of kernel(?)
 __debug_simulate_encoded_softmax = debug_simulate_encoded_softmax('debug_simulate_encoded_softmax', SOURCE_FILE)
 
@@ -63,7 +63,10 @@ operators = [
                         __bwd_kernel_dk_dv,
                         __bwd_kernel_dq]),
         __bwd_kernel_fuse,
-        # TODO, Affine Kernels
+        MetroBwdKernel('aiter_asm',
+                       [Hook("allocate_dq_acc", target='DQ_ACC'),
+                        __bwd_aiter,
+                        Hook("cast_dq_acc", target=None)]),
     ]),
 ]
 
