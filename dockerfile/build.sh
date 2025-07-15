@@ -45,6 +45,9 @@ if [ -z ${TRITON_LLVM_HASH+x} ]; then
     0.9b)
       TRITON_LLVM_HASH="86b69c31"
       ;;
+    0.9.*b)
+      TRITON_LLVM_HASH="86b69c31"
+      ;;
     0.10b)
       TRITON_LLVM_HASH="3c709802"
       ;;
