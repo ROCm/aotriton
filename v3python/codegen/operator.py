@@ -30,6 +30,8 @@ class OperatorGenerator(InterfaceGenerator):
     METRO_LAUNCHER_TEMPLATE = get_template('metro_launcher.cc')
     METRO_SNIPPET_TEMPLATE = get_template('snippet/metro_per_kernel.cc')
     IFELSE_SNIPPET_TEMPLATE = get_template('snippet/metro_per_kernel_ifelse.cc')
+    METRO_LAUNCH_SNIPPET_TEMPLATE = get_template('snippet/metro_launch_kernel.cc')
+    IFELSE_LAUNCH_SNIPPET_TEMPLATE = get_template('snippet/metro_launch_kernel_ifelse.cc')
     PFX = 'iface'
 
     def create_sub_generator(self, functional : Functional, df : 'pandas.DataFrame'):
@@ -121,34 +123,42 @@ class OperatorGenerator(InterfaceGenerator):
     def codegen_metro_launcher(self, metro : MetroKernel, nalign):
         iface = self._iface
         context_class_name = iface.context_class_name
-        stmt = []
+        lookup_stmt = []
+        launch_stmt = []
         # FIXME: lookup all and then launch, in case any sub-kernel failed
-        for kdesc in metro.list_kernels():
+        for nth, kdesc in enumerate(metro.list_kernels()):
             if isinstance(kdesc, ConditionalKernel):
                 self._add_iface_for_source(kdesc.if_kernel)
                 d = {
                     'condition'             : f'context.params->{kdesc.if_parameter} {kdesc.if_expr}',
                     'backend_context_name'  : kdesc.if_kernel.context_class_name,
+                    'nth_kernel'            : nth,
                 }
                 if kdesc.else_kernel is None:
                     snippet = self.METRO_SNIPPET_TEMPLATE.format_map(d)
+                    launch_snippet = self.METRO_LAUNCH_SNIPPET_TEMPLATE.format_map(d)
                 else:
                     self._add_iface_for_source(kdesc.else_kernel)
                     d['else_context_name'] = kdesc.else_kernel.context_class_name
                     snippet = self.IFELSE_SNIPPET_TEMPLATE.format_map(d)
+                    launch_snippet = self.IFELSE_LAUNCH_SNIPPET_TEMPLATE.format_map(d)
             else:
                 self._add_iface_for_source(kdesc)
                 d = {
                     'condition'             : 'true',
                     'backend_context_name'  : kdesc.context_class_name,
+                    'nth_kernel'            : nth,
                 }
                 snippet = self.METRO_SNIPPET_TEMPLATE.format_map(d)
-            stmt.append(snippet)
-        stmt.append('return hipSuccess;')
+                launch_snippet = self.METRO_LAUNCH_SNIPPET_TEMPLATE.format_map(d)
+            lookup_stmt.append(snippet)
+            launch_stmt.append(launch_snippet)
+        launch_stmt.append('return hipSuccess;')
         d = {
             'context_class_name'    : iface.context_class_name,
             'launcher_func_name'    : self.codegen_launcher_func_name(metro),
-            'launch_every_kernel'   : '\n'.join(stmt),
+            'lookup_every_kernel'   : '\n'.join(lookup_stmt),
+            'launch_every_kernel'   : '\n'.join(launch_stmt),
         }
         return self.METRO_LAUNCHER_TEMPLATE.format_map(d)
 
