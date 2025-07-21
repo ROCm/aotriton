@@ -164,7 +164,7 @@ using T1 = AOTRITON_NS::TensorView<1>;
 using T0 = AOTRITON_NS::TensorView<0>;
 
 // For debugging and profiling purpose
-struct AOTRITON_API attn_options {
+struct AOTRITON_API attn_options : public base_options {
 };
 
 // Note: DO NOT declare enums as enum class : int8_t. Enum class cannot be cased to
@@ -264,6 +264,7 @@ struct AOTRITON_API attn_bwd_params {
   int8_t    varlen_type = 0;
   int32_t   window_left;
   int32_t   window_right;
+  T4        DQ_ACC;                 // fp32 accumulator of dq
 
   static constexpr int32_t kVersion = 1;
   attn_bwd_params();
@@ -274,6 +275,20 @@ attn_bwd(const attn_bwd_params& params,
          int32_t params_version,
          AOTRITON_NS::Stream stream,
          const attn_options* options = nullptr);
+
+// NOTE: DEFERRED TO NEXT RELEASE
+//
+// hipError_t AOTRITON_API
+// aiter_fwd(const attn_fwd_params& params,
+//           int32_t params_version,
+//           AOTRITON_NS::Stream stream,
+//           const attn_options* options = nullptr);
+
+hipError_t AOTRITON_API
+aiter_bwd(const attn_bwd_params& params,
+          int32_t params_version,
+          AOTRITON_NS::Stream stream,
+          const attn_options* options = nullptr);
 
 } // AOTRITON_NS::v3::flash
 

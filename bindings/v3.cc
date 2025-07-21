@@ -82,6 +82,7 @@ namespace pyaotriton::v3 {
           .RW(varlen_type)
           .RW(window_left)
           .RW(window_right)
+          .RW(DQ_ACC)
 #undef RW
           .def_readonly_static("kVersion", &attn_bwd_params::kVersion)
         ;
@@ -96,6 +97,14 @@ namespace pyaotriton::v3 {
         m.def("attn_bwd",
               &aotriton::v3::flash::attn_bwd,
               "Flash Attention Operator Backward Pass",
+              py::call_guard<py::gil_scoped_release>(),
+              py::arg("params"),
+              py::arg("params_version"),
+              py::arg("stream") = nullptr,
+              py::arg("options") = nullptr);
+        m.def("aiter_bwd",
+              &aotriton::v3::flash::aiter_bwd,
+              "Flash Attention Operator Backward Pass using AITER ASM Kernel.",
               py::call_guard<py::gil_scoped_release>(),
               py::arg("params"),
               py::arg("params_version"),

@@ -121,33 +121,42 @@ if(NOT AOTRITON_NOIMAGE_MODE)
   add_custom_target(aotriton_v2_compile ALL DEPENDS ${ALL_HSACOS})
 
   # Kernel Storage V2
-  file(STRINGS "${AOTRITON_V2_BUILD_DIR}/Bare.cluster" CLUSTER_RULES ENCODING UTF-8)
   set(ALL_AKS2 "")
-  foreach(RULE IN LISTS CLUSTER_RULES)
-    list(POP_FRONT RULE DIR_ARCH)
-    list(POP_FRONT RULE DIR_FAMILY)
-    list(POP_FRONT RULE DIR_KERNEL)
-    list(POP_FRONT RULE FONLY)
-    string(JOIN "/" AKS2
-      ${AOTRITON_KERNEL_STORAGE_V2_DIR}
-      ${DIR_ARCH}
-      ${DIR_FAMILY}
-      ${DIR_KERNEL}
-      "${FONLY}.aks2")
-    # message(STATUS "Add AKS2 ${AKS2}")
-    add_custom_command(OUTPUT "${AKS2}"
-      COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
-      "${VENV_DIR}/bin/python"
-      -m v3python.aks2
-      -o "${AKS2}"
-      --
-      ${RULE}
-      DEPENDS aotriton_v2_compile
-      WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
-      COMMAND_EXPAND_LISTS)
-    list(APPEND ALL_AKS2 "${AKS2}")
-  endforeach(RULE)
-  add_custom_target(aotriton_kernel_storage_v2 ALL DEPENDS ${ALL_AKS2})
+  macro(ADD_FROM_CLUSTER_RULES)
+    foreach(RULE IN LISTS CLUSTER_RULES)
+      list(POP_FRONT RULE DIR_ARCH)
+      list(POP_FRONT RULE DIR_FAMILY)
+      list(POP_FRONT RULE DIR_KERNEL)
+      list(POP_FRONT RULE FONLY)
+      string(JOIN "/" AKS2
+        ${AOTRITON_KERNEL_STORAGE_V2_DIR}
+        ${DIR_ARCH}
+        ${DIR_FAMILY}
+        ${DIR_KERNEL}
+        "${FONLY}.aks2")
+      # message(STATUS "Add AKS2 ${AKS2}")
+      add_custom_command(OUTPUT "${AKS2}"
+        COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
+        "${VENV_DIR}/bin/python"
+        -m v3python.aks2
+        -o "${AKS2}"
+        ${AKS2_OPTIONS}
+        --
+        ${RULE}
+        DEPENDS aotriton_v2_compile
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
+        COMMAND_EXPAND_LISTS)
+      list(APPEND ALL_AKS2 "${AKS2}")
+    endforeach(RULE)
+  endmacro()
+  file(STRINGS "${AOTRITON_V2_BUILD_DIR}/Bare.cluster" CLUSTER_RULES ENCODING UTF-8)
+  set(AKS2_OPTIONS "")
+  ADD_FROM_CLUSTER_RULES()
+  # Affine kernels
+  file(STRINGS "${AOTRITON_V2_BUILD_DIR}/Affine.cluster" CLUSTER_RULES ENCODING UTF-8)
+  set(AKS2_OPTIONS "--ignore_json")
+  ADD_FROM_CLUSTER_RULES()
+  add_custom_target(aotriton_kernel_storage_v3 ALL DEPENDS ${ALL_AKS2})
 endif(NOT AOTRITON_NOIMAGE_MODE)
 
 # The build logic is slightly different when AOTRITON_BUILD_FOR_TUNING=ON

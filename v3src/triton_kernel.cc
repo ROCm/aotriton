@@ -14,6 +14,10 @@
 #define AOTRITON_KERNEL_VERBOSE 1
 #endif
 
+#if AOTRITON_KERNEL_VERBOSE
+#include <stdio.h>
+#endif
+
 #define STRINGIFICATION(s) STRINGIFICATION_I(s)
 #define STRINGIFICATION_I(s) #s
 
@@ -110,11 +114,11 @@ TritonKernel::invoke(std::string_view kernel_name,
     func = cfind_function(device_id);
     if (!func) {
       hipError_t err;
+      std::string stem_name = construct_stem_name(kernel_name, func_name, ksig_psel_, ksig_copt_, arch_name);
       std::tie(func, err) = load_for_device(device_id,
                                             kernel_name,
-                                            package_path,
-                                            func_name,
-                                            arch_name);
+                                            stem_name,
+                                            package_path);
     }
   }
 #if AOTRITON_BUILD_FOR_TUNING
@@ -134,6 +138,84 @@ TritonKernel::invoke(std::string_view kernel_name,
                                0);
 }
 
+hipError_t
+TritonKernel::direct_invoke(std::string_view mangled_kernel_function_name,
+                            std::string_view package_path,
+                            std::string_view func_name,
+                            std::string_view arch_name,
+                            dim3 grid,
+                            dim3 block,
+                            void* struct_of_args,
+                            size_t sizeof_struct,
+                            hipStream_t stream)
+{
+  // TODO: Deduplication
+#if AOTRITON_KERNEL_VERBOSE
+  std::cerr << "Invoking Kernel " << this << " with kernel_name = \"" << mangled_kernel_function_name << '"'
+            << " struct_of_args = " << struct_of_args
+            << std::endl;
+#endif
+  int device_id;
+  AOTRITON_HIP_CHECK_RETURN(hipGetDevice(&device_id));
+  // Use reader lock to peek the state
+  hipFunction_t func = nullptr;
+  {
+    std::shared_lock lock(funcache_mutex_);
+    func = cfind_function(device_id);
+  }
+
+  if (!func) {
+    // Use writer lock to initialize the module for device
+    std::unique_lock lock(funcache_mutex_);
+    // Check again, in case another waiter has initialized the device
+    func = cfind_function(device_id);
+    if (!func) {
+      hipError_t err;
+      std::tie(func, err) = load_for_device(device_id,
+                                            mangled_kernel_function_name,
+                                            ksig_copt_,  // Affine use ksig_psel_ as arch, ksig_copt_ as file name
+                                            package_path);
+    }
+  }
+  void* config[] = {HIP_LAUNCH_PARAM_BUFFER_POINTER,
+                    struct_of_args,
+                    HIP_LAUNCH_PARAM_BUFFER_SIZE,
+                    &sizeof_struct,
+                    HIP_LAUNCH_PARAM_END};
+#if AOTRITON_KERNEL_VERBOSE
+  auto hexdump = [](void *ptr, int buflen) {
+    unsigned char *buf = (unsigned char*)ptr;
+    int i, j;
+    fprintf(stderr, "hexdump: %08p\n", buf);
+    for (i=0; i<buflen; i+=16) {
+      fprintf(stderr, "%06x: ", i);
+      for (j=0; j<16; j++)
+        if (i+j < buflen)
+          fprintf(stderr, "%02x ", buf[i+j]);
+        else
+          fprintf(stderr, "   ");
+      fprintf(stderr, " ");
+      for (j=0; j<16; j++)
+        if (i+j < buflen)
+          fprintf(stderr, "%c", isprint(buf[i+j]) ? buf[i+j] : '.');
+      fprintf(stderr, "\n");
+    }
+  };
+  hexdump(struct_of_args, sizeof_struct);
+#endif
+  return hipModuleLaunchKernel(func,
+                               grid.x,
+                               grid.y,
+                               grid.z,
+                               block.x,
+                               block.y,
+                               block.z,
+                               0,
+                               stream,
+                               nullptr,
+                               reinterpret_cast<void**>(&config));
+}
+
 hipFunction_t
 TritonKernel::cfind_function(int device_id) const {
   auto iter = funcache_.find(device_id);
@@ -144,10 +226,9 @@ TritonKernel::cfind_function(int device_id) const {
 
 std::tuple<hipFunction_t, hipError_t>
 TritonKernel::load_for_device(int device_id,
-                              std::string_view kernel_name,
-                              std::string_view package_path,
-                              std::string_view func_name,
-                              std::string_view arch_name) {
+                              std::string_view kernel_function_name,
+                              std::string_view stem_name,
+                              std::string_view package_path) {
   hipJitOption opt[] = { hipJitOptionErrorLogBufferSizeBytes,
                          hipJitOptionErrorLogBuffer,
                          hipJitOptionInfoLogBufferSizeBytes,
@@ -162,7 +243,6 @@ TritonKernel::load_for_device(int device_id,
                      (void*)(uintptr_t)log.size(),
                      log.data(),
                      (void*)(uintptr_t)1 };
-  std::string stem_name = construct_stem_name(kernel_name, func_name, ksig_psel_, ksig_copt_, arch_name);
 
 #if AOTRITON_KERNEL_VERBOSE
   std::cerr << "Trying to decompress kernel " << package_path << " " << stem_name << std::endl;
@@ -177,7 +257,7 @@ TritonKernel::load_for_device(int device_id,
   hipModule_t mod;
   hipFunction_t func;
   AOTRITON_HIP_CHECK_RETURN(hipModuleLoadDataEx(&mod, essentials_.image, 5, opt, optval));
-  AOTRITON_HIP_CHECK_RETURN(hipModuleGetFunction(&func, mod, kernel_name.data()));
+  AOTRITON_HIP_CHECK_RETURN(hipModuleGetFunction(&func, mod, kernel_function_name.data()));
   funcache_.emplace(std::piecewise_construct,
                     std::forward_as_tuple(device_id),
                     std::forward_as_tuple(device_id, mod, func));
@@ -203,7 +283,7 @@ TritonKernel::get_image_info_iff_decompressed() const {
 // does not exists from beginning by testing essentials_.image == nullptr
 void
 TritonKernel::decompress_kernel(std::string_view package_path,
-                                const std::string stem_name) {
+                                std::string_view stem_name) {
   if (kernel_loaded_) {
     return ;
   }

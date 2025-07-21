@@ -1,6 +1,7 @@
 # Copyright © 2023-2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
+from pathlib import Path
 from ...gpu_targets import gpu2arch, AOTRITON_ARCH_WARPSIZE
 from ...op import Operator
 from ...kernel.kdesc import (
@@ -18,10 +19,20 @@ from v3python.autotune import (
     BinningExact,
 )
 from v3python.utils import log
+from v3python.affine import AffineKernelDescription
 
 class OpAttn(Operator):
     FAMILY = 'flash'
     MAIN_DATATYPES = ['*fp16:16', '*bf16:16', '*fp32:16'] if AOTRITON_ENABLE_FP32 else ['*fp16:16', '*bf16:16']
+
+class FlashAffine(AffineKernelDescription):
+    FAMILY = 'flash'
+    MODULE_FILE = __file__
+    AFFINE_KERNEL_ROOT = Path('third_party/aiter/hsa')
+    CO_DIR = None           # Required by subclass
+
+    def co_dir(self, functional):
+        return self.AFFINE_KERNEL_ROOT / functional.arch / self.CO_DIR
 
 def check_value(functional, repr_name):
     if not isinstance(repr_name, list):

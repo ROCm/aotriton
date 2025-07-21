@@ -28,6 +28,7 @@ def parse():
     p.add_argument("--target_gpus", type=str, default=None, nargs='+', choices=AOTRITON_SUPPORTED_GPUS,
                    help="Ahead of Time (AOT) Compile Architecture.")
     p.add_argument("--build_dir", type=Path, default='build/', help="build directory")
+    p.add_argument("--root_dir", type=Path, default='.', help="Root of repository directory")
     p.add_argument("--archive_only", action='store_true', help='Only generate archive library instead of shared library. No linking with dependencies.')
     p.add_argument("--library_suffix", type=str, default='', help="Add suffix to the library name 'aotriton' to avoid symbol conflicts")
     # Always True

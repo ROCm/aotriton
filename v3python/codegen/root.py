@@ -3,12 +3,15 @@
 
 # Root of the Generation process
 
+from pathlib import Path
 from collections import defaultdict
 from ..rules import (
     kernels as triton_kernels,
     operators as dispatcher_operators,
+    affine_kernels,
 )
 from .kernel import KernelShimGenerator
+from .affine import AffineGenerator
 from .operator import OperatorGenerator
 from ..utils import (
     LazyFile,
@@ -28,6 +31,7 @@ class RootGenerator(object):
     def generate(self):
         args = self._args
         hsaco_for_kernels = []
+        asms_for_kernels = []
         shims = []
         for op in dispatcher_operators:
             opg = OperatorGenerator(self._args, op, parent_repo=None)
@@ -39,6 +43,14 @@ class RootGenerator(object):
             hsacos = ksg.this_repo.get_data('hsaco')
             hsaco_for_kernels.append((k, hsacos))
             shims += ksg.shim_files
+        # print(f'{affine_kernels=}')
+        for ak in affine_kernels:
+            log(lambda : f'{ak.__class__=}')
+            aksg = AffineGenerator(self._args, ak, parent_repo=None)
+            aksg.generate()
+            asms = aksg.this_repo.get_data('asms')
+            asms_for_kernels.append((ak, asms))
+            shims += aksg.shim_files
 
         if args.build_for_tuning_second_pass:
             return
@@ -69,6 +81,21 @@ class RootGenerator(object):
         with LazyFile(args.build_dir / 'Bare.cluster') as clusterfile:
             for ffp, aol in cluster_dict.items():
                 self.write_cluster(ffp, aol, clusterfile)
+        '''
+        Note: Affine kernel's functionals have residual choices, so it is not
+        completely the same with Triton kernel/Interface's functionals
+
+        However, Affine kernel's functionals do not use residual choices to
+        compute full_filepack_path, so eventually .hsaco and .co files will be
+        consolated into the same .aks2 file, which is intentional.
+        '''
+        affine_dict = defaultdict(list)
+        for akdesc, asm_registry in asms_for_kernels:
+            for package_path, asms in asm_registry.items():
+                affine_dict[Path(package_path)] += [ self._absasmfn(asm) for asm in asms ]
+        with LazyFile(args.build_dir / 'Affine.cluster') as clusterfile:
+            for ffp, aol in affine_dict.items():
+                self.write_cluster(ffp, list(set(aol)), clusterfile)
 
     def _absobjfn(self, path, kdesc, ksig):
         full = path / hsaco_filename(kdesc, ksig)
@@ -90,6 +117,10 @@ class RootGenerator(object):
     def write_cluster(self, ffp, aol, clusterfile):
         print(*ffp.parts, end=';', sep=';', file=clusterfile)
         print(*aol, sep=';', file=clusterfile)
+
+    def _absasmfn(self, asm_path):
+        full = self._args.root_dir / asm_path
+        return str(full.absolute())
 
     # def write_cluster(self, kdesc, path, functional, signatures, clusterfile):
     #     full_filepack_path = functional.full_filepack_path

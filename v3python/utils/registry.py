@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 from dataclasses import dataclass
+from collections import defaultdict
 
 class StringRegistry(object):
     def __init__(self):
@@ -67,10 +68,13 @@ class SignaturedFunctionRegistry(object):
 
 class HsacoRegistry(object):
     def __init__(self):
-        self._rule_registry = {}
+        self._rule_registry = defaultdict(list)
 
-    def register(self, functional, sigatures):
-        self._rule_registry[functional] = sigatures
+    def register(self, functional, signatures, *, append=False):
+        if append:
+            self._rule_registry[functional].append(signatures)
+        else:
+            self._rule_registry[functional] = signatures
 
     def get_data(self):
         return self._rule_registry
