@@ -18,6 +18,7 @@ using T4 = AOTRITON_NS::TensorView<4>;
 using T2 = AOTRITON_NS::TensorView<2>;
 using T1 = AOTRITON_NS::TensorView<1>;
 using T0 = AOTRITON_NS::TensorView<0>;
+using LT4 = AOTRITON_NS::LazyTensor<4>;
 
 struct AOTRITON_API FwdExtraArguments : public CppTune {
 };
@@ -165,8 +166,6 @@ using T0 = AOTRITON_NS::TensorView<0>;
 
 // For debugging and profiling purpose
 struct AOTRITON_API attn_options : public base_options {
-    void* cookie = nullptr;
-    void (*allocate_dq_acc)(void* cookie) = nullptr;
 };
 
 // Note: DO NOT declare enums as enum class : int8_t. Enum class cannot be cased to
@@ -266,9 +265,9 @@ struct AOTRITON_API attn_bwd_params {
   int8_t    varlen_type = 0;
   int32_t   window_left;
   int32_t   window_right;
-  T4        DQ_ACC;                 // fp32 accumulator of dq
+  LT4       DQ_ACC;                 // fp32 accumulator of dq
 
-  static constexpr int32_t kVersion = 1;
+  static constexpr int32_t kVersion = 2;
   attn_bwd_params();
 };
 

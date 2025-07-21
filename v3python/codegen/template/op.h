@@ -8,6 +8,7 @@
 #include <aotriton/dtypes.h>
 #include <aotriton/util.h>
 #include <aotriton/runtime.h>
+#include <aotriton/_internal/lazy_tensor_internal.h>
 #include <aotriton/[[family_name]].h>
 #include <functional>
 #include <string>

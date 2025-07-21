@@ -3,6 +3,7 @@
 
 #include <aotriton/config.h>
 #include <aotriton/_internal/util.h>
+#include <aotriton/_internal/lazy_tensor_impl.h>
 #include <aotriton/flash.h>
 #include <aotriton/util.h>
 #include <flash/shim.bwd_kernel_dk_dv.h>
@@ -93,6 +94,7 @@ attn_bwd(const attn_bwd_params& in,
     if (head_dim_rounded == 80)
       head_dim_rounded = 96;
   }
+  LazyTensorInternal<4> lazy_dq_acc(in.DQ_ACC);
   OpAttnBwdParams params = {
     .Q = &in.Q,
     .K = &in.K,
@@ -105,7 +107,7 @@ attn_bwd(const attn_bwd_params& in,
     .DV = &in.DV,
     .DQ = &in.DQ,
     .DB = &in.DB,
-    .DQ_ACC = &in.DQ_ACC,
+    .DQ_ACC = &lazy_dq_acc;
     .L = &in.L,
     .D = &in.D,
     .num_head_q = num_head_q,

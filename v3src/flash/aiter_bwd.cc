@@ -3,6 +3,7 @@
 
 #include <aotriton/config.h>
 #include <aotriton/_internal/util.h>
+#include <aotriton/_internal/lazy_tensor_impl.h>
 #include <aotriton/flash.h>
 #include <aotriton/util.h>
 #include <flash/iface.op_attn_bwd.h>
@@ -663,6 +664,7 @@ aiter_bwd(const attn_bwd_params& in,
   static std::vector<int> compiled_head_dims {64, 128, 192};
   // const auto& compiled_head_dims = BwdKernelDkDvMetadata::get_BLOCK_DMODEL_choices();
   int16_t head_dim_rounded = round_value(head_dim, compiled_head_dims);
+  LazyTensorInternal<4> lazy_dq_acc(in.DQ_ACC);
   OpAttnBwdParams params = {
     .Q = &in.Q,
     .K = &in.K,
@@ -675,7 +677,7 @@ aiter_bwd(const attn_bwd_params& in,
     .DV = &in.DV,
     .DQ = &in.DQ,
     .DB = &in.DB,
-    .DQ_ACC = &in.DQ_ACC,
+    .DQ_ACC = &lazy_dq_acc;
     .L = &in.L,
     .D = &in.D,
     .num_head_q = num_head_q,

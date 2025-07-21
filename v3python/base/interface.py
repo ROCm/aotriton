@@ -56,14 +56,6 @@ class Interface(ABC):
     def __init__(self):
         collected = self._collect_functionals_from_shared()
         self._insert_tensor_strides_to_choices(last_is_continuous=True)
-        def __ttypes(anames, choices):
-            for aname in anames:
-                rank = self.get_tensor_rank(aname)
-                break
-            choices = [guess_tparam_type(v, rank=rank) for v in choices]
-            if all([tt.is_tensor for tt in choices]):
-                return TParam(anames, choices, ttype=create_tensor_type('any', rank))
-            return TParam(anames, choices, ttype=typename_t)
         self._func_params = []
         self._func_params += [TP(k, v) for k, v in self.TYPE_CHOICES.items()]
         self._func_params += [TP(k, v) for k, v in self.FEAT_CHOICES.items()]
