@@ -14,7 +14,6 @@ from ..op import (
     Operator,
     MetroKernel,
     ConditionalKernel,
-    Hook,
 )
 from ..kernel import KernelDescription
 from .template import get_template
@@ -31,7 +30,6 @@ class OperatorGenerator(InterfaceGenerator):
     METRO_LAUNCHER_TEMPLATE = get_template('metro_launcher.cc')
     METRO_SNIPPET_TEMPLATE = get_template('snippet/metro_per_kernel.cc')
     IFELSE_SNIPPET_TEMPLATE = get_template('snippet/metro_per_kernel_ifelse.cc')
-    HOOK_TEMPLATE = get_template('snippet/hook.cc')
     PFX = 'iface'
 
     def create_sub_generator(self, functional : Functional, df : 'pandas.DataFrame'):
@@ -126,15 +124,7 @@ class OperatorGenerator(InterfaceGenerator):
         stmt = []
         # FIXME: lookup all and then launch, in case any sub-kernel failed
         for kdesc in metro.list_kernels():
-            if isinstance(kdesc, Hook):  # TODO
-                d = {
-                    'returns'       : hook.target is not None,
-                    'target'        : hook.target,
-                    'hook_function' : hook.function,
-                    'cookie'        : hook.cookie,
-                }
-                snippet = self.HOOK_TEMPLATE.format_map(d)
-            elif isinstance(kdesc, ConditionalKernel):
+            if isinstance(kdesc, ConditionalKernel):
                 self._add_iface_for_source(kdesc.if_kernel)
                 d = {
                     'condition'             : f'context.params->{kdesc.if_parameter} {kdesc.if_expr}',

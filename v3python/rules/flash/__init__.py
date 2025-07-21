@@ -4,7 +4,6 @@
 from v3python.op import (
     MetroKernel,
     ConditionalKernel,
-    Hook,
 )
 from .ops import OpAttnFwd, OpAttnBwd
 from .attn_fwd import attn_fwd
@@ -64,9 +63,8 @@ operators = [
                         __bwd_kernel_dq]),
         __bwd_kernel_fuse,
         MetroBwdKernel('aiter_asm',
-                       [Hook("allocate_dq_acc", target='DQ_ACC'),
-                        __bwd_aiter,
-                        Hook("cast_dq_acc", target=None)]),
+                       [ConditionalKernel('num_seqlens', '> 0', __bwd_preprocess_varlen, __bwd_preprocess),
+                        __bwd_aiter]),
     ]),
 ]
 
