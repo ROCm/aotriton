@@ -71,7 +71,6 @@ class OpAttnBwd(OpAttn):
         'philox_seed_ptr': 0,
         'philox_offset1': 0,
     }
-    LAZY_TENSORS = ['DQ_ACC', ]
     match_fwd = lambda aname : get_possible_choices(OpAttnFwd, aname)
     TYPE_CHOICES = {
         frozenset(['Q', 'K', 'V', 'B', 'Out', 'DO', 'DK', 'DV', 'DQ', 'DB']) : match_fwd('Q'),

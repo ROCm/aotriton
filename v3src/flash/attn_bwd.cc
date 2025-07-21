@@ -3,7 +3,6 @@
 
 #include <aotriton/config.h>
 #include <aotriton/_internal/util.h>
-#include <aotriton/_internal/lazy_tensor_impl.h>
 #include <aotriton/flash.h>
 #include <aotriton/util.h>
 #include <flash/shim.bwd_kernel_dk_dv.h>
@@ -107,7 +106,7 @@ attn_bwd(const attn_bwd_params& in,
     .DV = &in.DV,
     .DQ = &in.DQ,
     .DB = &in.DB,
-    .DQ_ACC = &lazy_dq_acc;
+    .DQ_ACC = &lazy_dq_acc,
     .L = &in.L,
     .D = &in.D,
     .num_head_q = num_head_q,

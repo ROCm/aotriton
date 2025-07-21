@@ -18,7 +18,6 @@ using T4 = AOTRITON_NS::TensorView<4>;
 using T2 = AOTRITON_NS::TensorView<2>;
 using T1 = AOTRITON_NS::TensorView<1>;
 using T0 = AOTRITON_NS::TensorView<0>;
-using LT4 = AOTRITON_NS::LazyTensor<4>;
 
 struct AOTRITON_API FwdExtraArguments : public CppTune {
 };
@@ -163,9 +162,10 @@ using T4 = AOTRITON_NS::TensorView<4>;
 using T2 = AOTRITON_NS::TensorView<2>;
 using T1 = AOTRITON_NS::TensorView<1>;
 using T0 = AOTRITON_NS::TensorView<0>;
+using LT4 = AOTRITON_NS::LazyTensor<4>;
 
 // For debugging and profiling purpose
-struct AOTRITON_API attn_options : public base_options {
+struct AOTRITON_API attn_options {
 };
 
 // Note: DO NOT declare enums as enum class : int8_t. Enum class cannot be cased to

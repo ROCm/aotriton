@@ -5,7 +5,7 @@
 #define AOTRITON_V3_INTERNAL_LAZY_TENSOR_INTERNAL_H
 
 #ifndef AOTRITON_V2_API_UTIL_H
-#error "Need to include aotriton/util.h before aotriton/_internal/lazy_tensor_internal.h
+#error "Need to include aotriton/util.h before aotriton/_internal/lazy_tensor_internal.h"
 #endif
 
 #include <aotriton/config.h>
@@ -14,7 +14,7 @@ namespace AOTRITON_NS {
 
 template<int Rank>
 struct LazyTensorInternal {
-  LazyTensorInternal(LazyTensor<Rank>& lazy)
+  LazyTensorInternal(const LazyTensor<Rank>& lazy)
     : lazy_(lazy) {
   }
 
@@ -71,8 +71,8 @@ struct LazyTensorInternal {
 
 #undef LAZY_INIT
 private:
-  LazyTensor<Rank>& lazy_;
-  Tensor concrete_;
+  const LazyTensor<Rank>& lazy_;
+  mutable TensorView<Rank> concrete_;
 };
 
 };

@@ -256,7 +256,8 @@ class tensor(argument_base):
         default_rank = RANKS['_default']
         def specialize(aname):
             rank = RANKS.get(aname, default_rank)
-            return tensor(elem_ty=self._elem_ty, rank=rank)
+            # Must use __class__ to ensure lazy_tensor is resolved to lazy_tensor as well
+            return self.__class__(elem_ty=self._elem_ty, rank=rank)
         # print(f'resolve_rank {self=} {self._elem_ty=} {all_names=} BEFORE {self._specialized=}')
         self._specialized.update({ aname : specialize(aname) for aname in all_names })
         log(lambda : f'resolve_rank {self=} {self._elem_ty=} {all_names=} AFTER  {self._specialized=}')
@@ -292,7 +293,7 @@ class lazy_tensor(tensor):
     @property
     def itype(self):
         assert self._rank is not None
-        return f'LazyTensorImpl<TensorView<{self._rank}>>*'
+        return f'LazyTensorInternal<{self._rank}>*'
 
 ##################### Guessing Functions #####################
 class Guess(object):
@@ -382,6 +383,6 @@ def parse_complex(v : 'str | TypedChoice'):
     if v.startswith('*'):  # Tensor
         return tensor(elem_ty=ELEMENTAL_TYPE_MAP[v[1:]](), rank=None)
     if v.startswith(LAZY_TENSOR_PATTERN):
-        etype = v[LAZY_TENSOR_LEN:]
+        etype = v[LAZY_TENSOR_LEN+1:]
         return lazy_tensor(elem_ty=ELEMENTAL_TYPE_MAP[etype](), rank=None)
     return ELEMENTAL_TYPE_MAP[v]()

@@ -3,9 +3,9 @@
 
 #include <aotriton/config.h>
 #include <aotriton/_internal/util.h>
-#include <aotriton/_internal/lazy_tensor_impl.h>
 #include <aotriton/flash.h>
 #include <aotriton/util.h>
+#include <aotriton/_internal/lazy_tensor_internal.h>
 #include <flash/iface.op_attn_bwd.h>
 #include <flash/affine.bwd_dq_dk_dv_v3.h>
 #include <flash/shim.bwd_preprocess.h>
@@ -677,7 +677,7 @@ aiter_bwd(const attn_bwd_params& in,
     .DV = &in.DV,
     .DQ = &in.DQ,
     .DB = &in.DB,
-    .DQ_ACC = &lazy_dq_acc;
+    .DQ_ACC = &lazy_dq_acc,
     .L = &in.L,
     .D = &in.D,
     .num_head_q = num_head_q,
