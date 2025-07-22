@@ -67,7 +67,7 @@ const char* BwdDqDkDvV3Context::check_inputs_are_supported() {
 #define RETURN_IF(COND)                                               \
   do {                                                                \
     if (COND) {                                                       \
-      return "Input unsupported due to " STRINGIFICATION(COND);                     \
+      return "Input unsupported due to " STRINGIFICATION(COND);       \
     }                                                                 \
   } while(0)
   // No bias support
@@ -80,6 +80,7 @@ const char* BwdDqDkDvV3Context::check_inputs_are_supported() {
   // TODO: support dropout kernel. fwd and bwd should have identical PRNG
   RETURN_IF(args.ENABLE_DROPOUT);
   RETURN_IF(args.num_head_q != args.num_head_k);
+  RETURN_IF(!args.DQ_ACC);
 #undef RETURN_IF
   // We do not have test suite to validate SWA at the moment.
   if (args.CAUSAL_TYPE != CausalType::None) {
@@ -115,7 +116,6 @@ const char* BwdDqDkDvV3Context::check_inputs_are_supported() {
   CHECK_STRIDE(args.DO);
   CHECK_STRIDE(args.DK);
   CHECK_STRIDE(args.DV);
-  CHECK_STRIDE(args.DQ_ACC);
   CHECK_STRIDE(args.DB);
 #undef CHECK_STRIDE
 
@@ -717,7 +717,11 @@ aiter_bwd(const attn_bwd_params& in,
     err = bwd_preprocess_varlen(in.Out, in.DO, in.D, in.cu_seqlens_q, max_seqlen_q, stream);
   if (err != hipSuccess)
     return err;
-  return context.launch(stream);
+  err = context.launch(stream);
+  if (err == hipSuccess && lazy_dq_acc.activated()) {
+      lazy_dq_acc.finalize();
+  }
+  return err;
 }
 
 }

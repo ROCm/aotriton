@@ -40,6 +40,10 @@ kernels = [
     __debug_simulate_encoded_softmax,
 ]
 
+affine_kernels = [
+    __bwd_aiter,
+]
+
 class MetroBwdKernel(MetroKernel):
     FAMILY = OpAttnBwd.FAMILY
     SHARED_IFACE = OpAttnBwd
@@ -68,6 +72,3 @@ operators = [
     ]),
 ]
 
-affine_kernels = [
-    bwd_dq_dk_dv_v3(),
-]

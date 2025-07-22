@@ -18,16 +18,19 @@ struct LazyTensorInternal {
     : lazy_(lazy) {
   }
 
-#define LAZY_INIT if (!concrete_) { concrete_ = (*lazy_.acquire)(lazy_.cookie); }
+  bool activated() const {
+    return concrete_;
+  }
 
-  ~LazyTensorInternal() {
+  void finalize() {
     (*lazy_.dispose)(lazy_.cookie);
   }
 
   operator bool() const {
-    LAZY_INIT;
-    return bool(concrete_);
+    return lazy_;
   }
+
+#define LAZY_INIT if (!concrete_) { concrete_ = (*lazy_.acquire)(lazy_.cookie); }
 
   uint64_t size(int i) const {
     LAZY_INIT;
