@@ -1,3 +1,4 @@
+    // TODO: Replace with std::variant
     [[backend_context_name]] bcontext[[nth_kernel]]_if;
     [[else_context_name]] bcontext[[nth_kernel]]_else;
     bool condition[[nth_kernel]] = ([[condition]]);

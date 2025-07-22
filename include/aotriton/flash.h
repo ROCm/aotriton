@@ -166,6 +166,7 @@ using LT4 = AOTRITON_NS::LazyTensor<4>;
 
 // For debugging and profiling purpose
 struct AOTRITON_API attn_options {
+  int force_backend_index = -1;
 };
 
 // Note: DO NOT declare enums as enum class : int8_t. Enum class cannot be cased to

@@ -132,9 +132,13 @@ attn_bwd(const attn_bwd_params& in,
   OpAttnBwdContext context;
   context.params = &params;
   context.call_options = options;
-  err = context.lookup_optimal(gpu);
-  if (err != hipSuccess) {
-    return err;
+  if (options && options->force_backend_index >= 0) {
+    context.backend_index = static_cast<OpAttnBwdContext::BackendEnum>(options->force_backend_index);
+  } else {
+    err = context.lookup_optimal(gpu);
+    if (err != hipSuccess) {
+      return err;
+    }
   }
   err = context.launch(gpu, stream);
   if (err == hipSuccess && lazy_dq_acc.activated()) {
