@@ -25,6 +25,7 @@ from .cpp_autotune import (
     KernelOutput,
     AutotuneResult,
     CPPTUNE_SKIP_KERNELS,
+    do_bench,
 )
 from .state_tracker import StateTracker
 

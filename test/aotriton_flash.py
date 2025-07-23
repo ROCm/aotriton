@@ -228,7 +228,10 @@ def attn_fwd(q, k, v, b, sm_scale, M, o,
 def attn_bwd(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
              dropout_p, philox_seed, philox_offset1, philox_offset2, causal,
              extargs=None, call_operator=False):
-    extargs = BwdExtraArguments() if extargs is None else extargs
+    if call_operator:
+        extargs = BwdExtraArguments() if extargs is None else extargs
+    else:
+        extargs = attn_options() if extargs is None else extargs
     qview, qdevm = mk_aotensor(q)
     kview, kdevm = mk_aotensor(k)
     vview, vdevm = mk_aotensor(v)
@@ -298,8 +301,7 @@ def attn_bwd(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
         err = fa_backward_op(params,
                              fa_backward_op_params.kVersion,
                              Stream(),
-                             attn_options()
-                             )
+                             extargs)
     if AOTRITON_TORCH_ONLY_USE_CPU:
         _torch_cpu_only_copy_back([dq, dk, dv, db, delta],
                                   [dqdevm, dkdevm, dvdevm, dbdevm, deltadevm])
