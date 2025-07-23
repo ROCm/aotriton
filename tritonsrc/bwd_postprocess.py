@@ -13,7 +13,7 @@ from composed_tensors import (
 
 @triton.jit
 def bwd_postprocess(
-    DQ_ACC, DQ
+    DQ_ACC, DQ,
     stride_accz, stride_acch, stride_accm, stride_acck,
     stride_dqz, stride_dqh, stride_dqm, stride_dqk,
     seqlen_q,

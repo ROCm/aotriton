@@ -55,7 +55,7 @@ void dq_acc_dispose(void* cookie) {
 // We choose to specialize lazy_tensor for each major use
 namespace pyaotriton::lazy_tensor {
 
-  void setup_module(py::module_& m) {
+  void setup_dq_acc(py::module_& m) {
     m.def("dq_acc",
           [](const aotriton::TensorView<kRank>& dq, int device_index) {
             auto cookie = new dq_acc_cookie;
@@ -68,6 +68,5 @@ namespace pyaotriton::lazy_tensor {
             };
           });
   }
-
 
 }

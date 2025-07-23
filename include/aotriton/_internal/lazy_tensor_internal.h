@@ -18,12 +18,12 @@ struct LazyTensorInternal {
     : lazy_(lazy) {
   }
 
-  bool activated() const {
-    return concrete_;
+  ~LazyTensorInternal() {
+    (*lazy_.dispose)(lazy_.cookie);
   }
 
-  void finalize() {
-    (*lazy_.dispose)(lazy_.cookie);
+  bool activated() const {
+    return concrete_;
   }
 
   operator bool() const {

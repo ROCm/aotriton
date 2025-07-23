@@ -10,6 +10,7 @@
 #include <flash/affine.bwd_dq_dk_dv_v3.h>
 #include <flash/shim.bwd_preprocess.h>
 #include <flash/shim.bwd_preprocess_varlen.h>
+#include <flash/shim.bwd_postprocess.h>
 #include <algorithm>
 #include <limits>
 #ifndef NDEBUG
@@ -718,10 +719,29 @@ aiter_bwd(const attn_bwd_params& in,
   if (err != hipSuccess)
     return err;
   err = context.launch(stream);
-  if (err == hipSuccess && lazy_dq_acc.activated()) {
-      lazy_dq_acc.finalize();
+  if (err != hipSuccess)
+    return err;
+
+  {
+    BwdPostprocessContext context;
+    context.params = &params;
+    err = context.lookup_optimal(gpu);
+    if (err != hipSuccess)
+      return err;
+    err = context.launch(stream);
+    if (err != hipSuccess)
+      return err;
   }
   return err;
+}
+
+dim3 BwdPostprocessContext::grid_calculator() const {
+  dim3 grid {
+    AOTRITON_NS::cdiv<uint32_t>(params->DQ->size(2), this->BLOCK_M),
+    uint32_t(params->Out->size(1)),
+    uint32_t(params->Out->size(0)),
+  };
+  return grid;
 }
 
 }

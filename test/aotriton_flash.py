@@ -353,7 +353,7 @@ def attn_bwd_fused(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L,
     # print(f'{err=}')
     return err
 
-def attn_bwd_aiter(q, k, v, b, sm_scale, o, dout, dq_acc, dk, dv, db, L, delta,
+def attn_bwd_aiter(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, dq_acc, L, delta,
                    dropout_p, philox_seed, philox_offset1, philox_offset2, causal, extargs=None):
     extargs = BwdExtraArguments() if extargs is None else extargs
     qview, qdevm = mk_aotensor(q)
@@ -362,7 +362,8 @@ def attn_bwd_aiter(q, k, v, b, sm_scale, o, dout, dq_acc, dk, dv, db, L, delta,
     bview, bdevm = mk_aotensor(b, if_empty_then_like=q)
     oview, odevm = mk_aotensor(o)
     doutview, doutdevm = mk_aotensor(dout)
-    dqaccview, dqaccdevm = mk_aotensor(dq_acc)
+    # dqaccview, dqaccdevm = mk_aotensor(dq_acc)
+    dqview, dqdevm = mk_aotensor(dq)
     dkview, dkdevm = mk_aotensor(dk)
     dvview, dvdevm = mk_aotensor(dv)
     dbview, dbdevm = mk_aotensor(db, if_empty_then_like=q)
@@ -375,27 +376,28 @@ def attn_bwd_aiter(q, k, v, b, sm_scale, o, dout, dq_acc, dk, dv, db, L, delta,
     # Keep using v3_api=False since we are not exposing Windowed Attention ATM
     causal_type, window_left, window_right = translate_causal(causal, v3_api=False)
     params = fa_backward_op_params()
-    params.Q = qview;
-    params.K = kview;
-    params.V = vview;
-    params.B = bview;
-    params.Sm_scale = float(sm_scale);
-    params.Out = oview;
-    params.DO = doutview;
-    params.DK = dkview;
-    params.DV = dvview;
-    params.DQ_ACC = dqaccview;
-    params.DB = dbview;
-    params.L = Lview;
-    params.D = deltaview;
+    params.Q = qview
+    params.K = kview
+    params.V = vview
+    params.B = bview
+    params.Sm_scale = float(sm_scale)
+    params.Out = oview
+    params.DO = doutview
+    params.DQ = dqview
+    params.DK = dkview
+    params.DV = dvview
+    params.DQ_ACC = dq_acc
+    params.DB = dbview
+    params.L = Lview
+    params.D = deltaview
     # params.cu_seqlens_q
     # params.cu_seqlens_k
     # params.Max_seqlen_q
     # params.Max_seqlen_k
-    params.dropout_p = float(dropout_p);
-    params.philox_seed_ptr = seedview;
-    params.philox_offset1 = offset1view;
-    params.philox_offset2 = philox_offset2;
+    params.dropout_p = float(dropout_p)
+    params.philox_seed_ptr = seedview
+    params.philox_offset1 = offset1view
+    params.philox_offset2 = philox_offset2
     params.causal_type = causal_type
     params.window_left = window_left
     params.window_right = window_right
@@ -587,3 +589,9 @@ def attn_bwd_compact_varlen(q, k, v,
                              )
     # print(f'{err=}')
     return err
+
+def lazy_dq_acc(dq : 'torch.Tensor'):
+    from pyaotriton import lazy_tensor
+    dq_view = T4(dq.data_ptr(), tuple(dq.size()), dq.stride(), cast_dtype(dq.dtype))
+    return lazy_tensor.dq_acc(dq_view, dq.device.index)
+

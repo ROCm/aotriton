@@ -141,9 +141,6 @@ attn_bwd(const attn_bwd_params& in,
     }
   }
   err = context.launch(gpu, stream);
-  if (err == hipSuccess && lazy_dq_acc.activated()) {
-      lazy_dq_acc.finalize();
-  }
   return err;
 }
 

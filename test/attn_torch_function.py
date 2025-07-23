@@ -30,6 +30,7 @@ BWD_IMPL = int(os.getenv('BWD_IMPL', default='0'))
 V3_API = bool(int(os.getenv('V3_API', default='0')))
 if BWD_IMPL == 2:
     PROBE_UNSUPPORTED = bool(int(os.getenv('PROBE_UNSUPPORTED', default='0')))
+    from aotriton_flash import lazy_dq_acc
 else:
     PROBE_UNSUPPORTED = False
 
@@ -244,7 +245,9 @@ class _attention(torch.autograd.Function):
         # do = do.contiguous()
 
         # don't do zeros_like, dq_acc only supports BSHD
-        dq_acc = torch.zeros(*q.shape, dtype=torch.float32, device=q.device)
+        # dq_acc = torch.zeros(*q.shape, dtype=torch.float32, device=q.device)
+        dq = torch.empty_like(q)
+        dq_acc = lazy_dq_acc(q)
         dk = torch.empty_like(k)
         dv = torch.empty_like(v)
         db = torch.empty_like(b) if b is not None else None
@@ -253,7 +256,7 @@ class _attention(torch.autograd.Function):
         seqlen_k = k.shape[2]
 
         assert not V3_API, 'attn_bwd_fused is not exposed in V3 API'
-        ret = attn_bwd_aiter(q, k, v, b, sm_scale, o, do, dq_acc, dk, dv, db, L, delta,
+        ret = attn_bwd_aiter(q, k, v, b, sm_scale, o, do, dq, dk, dv, db, dq_acc, L, delta,
                              dropout_p, philox_seed, philox_offset, 0, causal)
         if PROBE_UNSUPPORTED and ret == hipError_t.hipErrorPeerAccessUnsupported:
             raise NotImplementedError()
@@ -262,7 +265,6 @@ class _attention(torch.autograd.Function):
 
         if tuning_result is not None:
             ctx.tuning_result += tuning_result
-        dq = dq_acc.to(dtype=q.dtype)
 
         return dq, dk, dv, db, None, None, None, None, None
     backward = backward_split if BWD_IMPL == 0 else (backward_fused if BWD_IMPL == 1 else backward_aiter)
