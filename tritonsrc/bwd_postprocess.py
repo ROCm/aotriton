@@ -20,7 +20,7 @@ def bwd_postprocess(
     head_dim,
     BLOCK_M: tl.constexpr,
     BLOCK_DMODEL: tl.constexpr,
-    PADDEBLOCK_DMODEL: tl.constexpr,
+    PADDED_HEAD: tl.constexpr,
 ):
     tl.static_assert(BLOCK_DMODEL > 0, 'BLOCK_DMODEL must be greater than 0')
     BLOCK_DMODEL_R0 : tl.constexpr = BLOCK_DMODEL
@@ -51,7 +51,7 @@ def bwd_postprocess(
                                          seqlen_q, head_dim,
                                          other=0.0,
                                          PADDED_ROW=True,
-                                         PADDED_COL=PADDEBLOCK_DMODEL,
+                                         PADDED_COL=PADDED_HEAD,
                                          TRANSPOSED=False)
     else:
         acc0, acc1, acc2 = composed_load(acc_ptrs0, acc_ptrs1, acc_ptrs2,
@@ -60,7 +60,7 @@ def bwd_postprocess(
                                          seqlen_q, head_dim,
                                          other=0.0,
                                          PADDED_ROW=False,
-                                         PADDED_COL=PADDEBLOCK_DMODEL,
+                                         PADDED_COL=PADDED_HEAD,
                                          TRANSPOSED=False)
 
     dq_ptrs0, dq_ptrs1, dq_ptrs2 = composed_ptrs(DQ,
@@ -69,15 +69,33 @@ def bwd_postprocess(
                                                  BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
 
     acc0, acc1, acc2 = composed_to(acc0, acc1, acc2, DQ.type.element_ty)
+    o_base = DQ + off_z * stride_dqz + off_h * stride_dqh
     composed_store(acc0, acc1, acc2,
                    BLOCK_M,
                    BLOCK_DMODEL0,
                    BLOCK_DMODEL1,
                    BLOCK_DMODEL2,
-                   o_base=DQ,
+                   o_base=o_base,
                    o_start_row=off_m,
                    o_start_col=0,
                    o_rows=seqlen_q,
                    o_cols=head_dim,
                    stride_row=stride_dqm,
                    stride_col=stride_dqk)
+
+if __name__ == '__main__':
+    def test():
+        import torch
+        BLOCK = 128
+        HDIM = 32
+        dq_acc = torch.rand((5, 3, 190, HDIM), dtype=torch.float, device='cuda')
+        dq = torch.empty_like(dq_acc, dtype=torch.bfloat16)
+        grid_post = (triton.cdiv(dq.shape[2], BLOCK), dq.shape[1], dq.shape[0])
+        bwd_postprocess[grid_post](dq_acc, dq,
+                                   *dq_acc.stride(), *dq.stride(),
+                                   dq_acc.shape[2], dq_acc.shape[3],
+                                   BLOCK, HDIM, False)
+        print(dq_acc)
+        print(dq)
+        print(torch.max(torch.abs(dq - dq_acc.to(torch.bfloat16))))
+    test()
