@@ -109,8 +109,16 @@ public:
     return sizes_;
   }
 
+  const uint64_t* size_ptr() const {
+    return sizes_.data();
+  }
+
   std::array<uint64_t, Rank> strides() const {
     return strides_;
+  }
+
+  const uint64_t* stride_ptr() const {
+    return strides_.data();
   }
 
   void* data_ptr() const {

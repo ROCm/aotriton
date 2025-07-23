@@ -7,6 +7,7 @@
 #include <aotriton/util.h>
 #include <ATen/core/Tensor.h>
 #include <ATen/core/TensorAccessor.h>
+#include <ATen/ops/zeros.h>
 #include <pybind11/pybind11.h>
 
 namespace py = pybind11;
@@ -16,22 +17,34 @@ namespace aotriton = AOTRITON_NS;
 
 namespace {
 
+static constexpr int kRank = 4;
+
 struct dq_acc_cookie {
-  TensorView<4> dq;
+  aotriton::TensorView<kRank> dq;
   int device_index;
   at::Tensor tensor;
+  std::array<uint64_t, kRank> tensor_strides;
 };
 
-TensorView<4> dq_acc_acquire(void* cookie) {
+aotriton::TensorView<kRank> dq_acc_acquire(void* cookie) {
   auto ctx = (dq_acc_cookie*)cookie;
   auto options = at::dtype(at::kFloat).device(at::kCUDA);
-  ctx->tensor = at::zeros(ctx->dq.sizes(), options);
+#define SZ(i)   (static_cast<int64_t>(ctx->dq.size(i)))
+  ctx->tensor = at::zeros( {SZ(0), SZ(1), SZ(2), SZ(3)}, options);
+#undef SZ
+#define ST(i)   (static_cast<uint64_t>(ctx->tensor.stride(i)))
+  ctx->tensor_strides = {ST(0), ST(1), ST(2), ST(3)};
+#undef ST
+  return aotriton::TensorView<kRank>(reinterpret_cast<intptr_t>(ctx->tensor.data_ptr()),
+                                     ctx->dq.sizes(),
+                                     ctx->tensor_strides,
+                                     aotriton::DType::kFloat32);
 }
 
 void dq_acc_dispose(void* cookie) {
   auto ctx = (dq_acc_cookie*)cookie;
-  using TA = at::TensorAccessor<at::ScalarType::Float, 4>;
-  ctx->tensor.to(TA(dq.data_ptr(), &dq.sizes(), &dq.strides()));
+  // Difficult to implement dq_acc.to(dq) in C++
+  // Move this to dedicated Triton kernel.
   delete ctx;
 }
 
@@ -44,11 +57,11 @@ namespace pyaotriton::lazy_tensor {
 
   void setup_module(py::module_& m) {
     m.def("dq_acc",
-          [](const aotriton::TensorView<4>& dq, int device_index) {
+          [](const aotriton::TensorView<kRank>& dq, int device_index) {
             auto cookie = new dq_acc_cookie;
             cookie->dq = dq;
             cookie->device_index = device_index;
-            return aotriton::LazyTensor<4> {
+            return aotriton::LazyTensor<kRank> {
               .cookie = cookie,
               .acquire = &dq_acc_acquire,
               .dispose = &dq_acc_dispose
