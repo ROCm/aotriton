@@ -11,6 +11,7 @@ from .bwd_preprocess import (
     bwd_preprocess,
     bwd_preprocess_varlen,
 )
+from .bwd_postprocess import bwd_postprocess
 from .bwd_kernel_dk_dv import bwd_kernel_dk_dv
 from .bwd_kernel_dq import bwd_kernel_dq
 from .bwd_kernel_fuse import bwd_kernel_fuse
@@ -22,6 +23,7 @@ SOURCE_FILE = 'tritonsrc/flash.py'
 
 __bwd_preprocess = bwd_preprocess('bwd_preprocess', SOURCE_FILE)
 __bwd_preprocess_varlen = bwd_preprocess_varlen('bwd_preprocess_varlen', SOURCE_FILE)
+__bwd_postprocess = bwd_postprocess('bwd_postprocess', SOURCE_FILE)
 __attn_fwd = attn_fwd('attn_fwd', SOURCE_FILE)
 __bwd_kernel_dk_dv = bwd_kernel_dk_dv('bwd_kernel_dk_dv', SOURCE_FILE)
 __bwd_kernel_dq = bwd_kernel_dq('bwd_kernel_dq', SOURCE_FILE)
@@ -33,6 +35,7 @@ __debug_simulate_encoded_softmax = debug_simulate_encoded_softmax('debug_simulat
 kernels = [
     __bwd_preprocess,
     __bwd_preprocess_varlen,
+    __bwd_postprocess,
     __attn_fwd,
     __bwd_kernel_dk_dv,
     __bwd_kernel_dq,
@@ -68,7 +71,8 @@ operators = [
         __bwd_kernel_fuse,
         MetroBwdKernel('aiter_asm',
                        [ConditionalKernel('num_seqlens', '> 0', __bwd_preprocess_varlen, __bwd_preprocess),
-                        __bwd_aiter]),
+                        __bwd_aiter,
+                        __bwd_postprocess]),
     ]),
 ]
 

@@ -29,6 +29,7 @@ class OpAttnBwd(OpAttn):
         'stride_dvz', 'stride_dvh', 'stride_dvk', 'stride_dvn',
         'stride_dqz', 'stride_dqh', 'stride_dqm', 'stride_dqk',
         'stride_dbz', 'stride_dbh', 'stride_dbm', 'stride_dbn',
+        'stride_accz', 'stride_acch', 'stride_accm', 'stride_acck',
         'num_head_q',
         'num_head_k',
         'cu_seqlens_q',
@@ -61,6 +62,7 @@ class OpAttnBwd(OpAttn):
         'DV' : select_pattern(ARGUMENTS, 'stride_dv'),
         'DQ' : select_pattern(ARGUMENTS, 'stride_dq'),
         'DB' : select_pattern(ARGUMENTS, 'stride_db', delete_when=('BIAS_TYPE', 0)),
+        'DQ_ACC' : select_pattern(ARGUMENTS, 'stride_acc'),
     }
     TENSOR_RANKS = {
         '_default' : 4,
