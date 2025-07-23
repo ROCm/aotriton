@@ -132,14 +132,26 @@ attn_bwd(const attn_bwd_params& in,
   OpAttnBwdContext context;
   context.params = &params;
   context.call_options = options;
+#ifndef NDEBUG
+  std::cerr << "v3::flash::attn_bwd options = " << options << std::endl;
+  if (options) {
+    std::cerr << "v3::flash::attn_bwd options->force_backend_index = "
+              << options->force_backend_index
+              << std::endl;
+  }
+#endif
   if (options && options->force_backend_index >= 0) {
     context.backend_index = static_cast<OpAttnBwdContext::BackendEnum>(options->force_backend_index);
+    context.disable_fallback = true;
   } else {
     err = context.lookup_optimal(gpu);
     if (err != hipSuccess) {
       return err;
     }
   }
+#ifndef NDEBUG
+  std::cerr << "v3::flash::attn_bwd context.backend_index = " << context.backend_index << std::endl;
+#endif
   err = context.launch(gpu, stream);
   return err;
 }

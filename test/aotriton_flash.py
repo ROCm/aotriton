@@ -225,13 +225,13 @@ def attn_fwd(q, k, v, b, sm_scale, M, o,
     # print(f'{err=}')
     return err
 
-def attn_bwd(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
+def attn_bwd(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, dq_acc, L, delta,
              dropout_p, philox_seed, philox_offset1, philox_offset2, causal,
              extargs=None, call_operator=False):
     if call_operator:
-        extargs = BwdExtraArguments() if extargs is None else extargs
-    else:
         extargs = attn_options() if extargs is None else extargs
+    else:
+        extargs = BwdExtraArguments() if extargs is None else extargs
     qview, qdevm = mk_aotensor(q)
     kview, kdevm = mk_aotensor(k)
     vview, vdevm = mk_aotensor(v)
@@ -284,6 +284,7 @@ def attn_bwd(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
         params.DV = dvview;
         params.DQ = dqview;
         params.DB = dbview;
+        params.DQ_ACC = dq_acc;
         params.L = Lview;
         params.D = deltaview;
         # params.cu_seqlens_q

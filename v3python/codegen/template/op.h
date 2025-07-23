@@ -31,6 +31,7 @@ struct [[context_class_name]] {
     };
     static constexpr BackendEnum fallback_backend = [[fallback_backend]];
     BackendEnum backend_index = BackendEnum::None;
+    bool disable_fallback = false;
 
 #if AOTRITON_BUILD_FOR_TUNING
     int _has_preferred_backend = -1;

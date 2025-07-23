@@ -14,6 +14,7 @@ from aotriton_flash import (
     hipError_t,
     AOTRITON_TORCH_ONLY_USE_CPU,
     HipMemory,
+    attn_options,
 )
 if not IGNORE_BACKWARD_IMPORT:
     from aotriton_flash import (
@@ -30,9 +31,16 @@ BWD_IMPL = int(os.getenv('BWD_IMPL', default='0'))
 V3_API = bool(int(os.getenv('V3_API', default='0')))
 if BWD_IMPL == 2:
     PROBE_UNSUPPORTED = bool(int(os.getenv('PROBE_UNSUPPORTED', default='0')))
-    from aotriton_flash import lazy_dq_acc
 else:
     PROBE_UNSUPPORTED = False
+
+if BWD_IMPL == 2 or V3_API:
+    from aotriton_flash import lazy_dq_acc
+else:
+    def lazy_dq_acc(dq):
+        return None
+
+FORCE_BWD_BACKEND = V3_API and (os.getenv('BWD_IMPL', default=None) is not None)
 
 @dataclass
 class AttentionExtraArgs:
@@ -176,15 +184,24 @@ class _attention(torch.autograd.Function):
         # if q.shape[-1] <= 32:
         # do = do.contiguous()
         dq = torch.empty_like(q)
+        dq_acc = lazy_dq_acc(q)
         dk = torch.empty_like(k)
         dv = torch.empty_like(v)
         db = torch.empty_like(b) if b is not None else None
         delta = torch.empty_like(L)
         seqlen_q = q.shape[2]
         seqlen_k = k.shape[2]
+        if FORCE_BWD_BACKEND:
+            extargs = attn_options()
+            extargs.force_backend_index = BWD_IMPL
+        else:
+            extargs = None
 
-        ret = attn_bwd(q, k, v, b, sm_scale, o, do, dq, dk, dv, db, L, delta,
-                       dropout_p, philox_seed, philox_offset, 0, causal, call_operator=V3_API)
+        ret = attn_bwd(q, k, v, b, sm_scale, o, do, dq, dk, dv, db, dq_acc, L, delta,
+                       dropout_p, philox_seed, philox_offset, 0, causal,
+                       extargs=extargs, call_operator=V3_API)
+        if PROBE_UNSUPPORTED and ret == hipError_t.hipErrorPeerAccessUnsupported:
+            raise NotImplementedError()
         assert ret == hipError_t.hipSuccess, ret
         tuning_result = None
 
@@ -267,6 +284,6 @@ class _attention(torch.autograd.Function):
             ctx.tuning_result += tuning_result
 
         return dq, dk, dv, db, None, None, None, None, None
-    backward = backward_split if BWD_IMPL == 0 else (backward_fused if BWD_IMPL == 1 else backward_aiter)
+    backward = backward_split if BWD_IMPL == 0 or V3_API else (backward_fused if BWD_IMPL == 1 else backward_aiter)
 
 attention = _attention.apply
