@@ -9,6 +9,7 @@ import numpy as np
 
 class Operator(Interface):
     TUNE_NAME = 'optune'
+    CALL_OPTIONS_NAME = None
 
     def __init__(self, backends : list[Interface]):
         super().__init__()

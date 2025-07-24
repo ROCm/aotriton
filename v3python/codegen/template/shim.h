@@ -9,6 +9,7 @@
 #include <aotriton/dtypes.h>
 #include <aotriton/runtime.h>
 #include <aotriton/util.h>
+#include <aotriton/_internal/lazy_tensor_internal.h>
 #include <functional>
 #include <string>
 #include <vector>

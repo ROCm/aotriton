@@ -338,8 +338,9 @@ def cpp_autotune_gen(extarg_factory, sub_extarg_accessor,
                      kernel_index_progress_dict,
                      run_last_success_kernel_once,
                      integrity_checker,
+                     extarg_wrapper=CppTuneWrapper,
                      ):
-    extargs_with_subs = CppTuneWrapper(extarg_factory, sub_extarg_accessor)
+    extargs_with_subs = extarg_wrapper(extarg_factory, sub_extarg_accessor)
     num_of_subkernels = len(subkernel_names)
     def reset_kernel_index_to_skip():
         for i in range(num_of_subkernels):

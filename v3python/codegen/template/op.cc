@@ -55,7 +55,17 @@ hipError_t
     // It is possible that the optimal backend does not support certain inputs
     // In this case hipErrorPeerAccessUnsupported will be returned
     if (ret == hipErrorPeerAccessUnsupported) {
-        return launcher_table[fallback_backend](*this, gpu, stream);
+        if (!disable_fallback) {
+#ifndef NDEBUG
+          std::cerr << "[[context_class_name]]::launch failed with optimal backend, "
+                     << "calling fallback." << std::endl;
+#endif
+          return launcher_table[fallback_backend](*this, gpu, stream);
+        }
+#ifndef NDEBUG
+        std::cerr << "[[context_class_name]]::launch failed with optimal backend, "
+                   << "fallback disabled, returning error." << std::endl;
+#endif
     }
     return ret;
 }

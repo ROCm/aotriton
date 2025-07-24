@@ -5,10 +5,12 @@
 #include <aotriton/_internal/util.h>
 #include <aotriton/flash.h>
 #include <aotriton/util.h>
+#include <aotriton/_internal/lazy_tensor_internal.h>
 #include <flash/iface.op_attn_bwd.h>
 #include <flash/affine.bwd_dq_dk_dv_v3.h>
 #include <flash/shim.bwd_preprocess.h>
 #include <flash/shim.bwd_preprocess_varlen.h>
+#include <flash/shim.bwd_postprocess.h>
 #include <algorithm>
 #include <limits>
 #ifndef NDEBUG
@@ -66,7 +68,7 @@ const char* BwdDqDkDvV3Context::check_inputs_are_supported() {
 #define RETURN_IF(COND)                                               \
   do {                                                                \
     if (COND) {                                                       \
-      return "Input unsupported due to " STRINGIFICATION(COND);                     \
+      return "Input unsupported due to " STRINGIFICATION(COND);       \
     }                                                                 \
   } while(0)
   // No bias support
@@ -79,6 +81,7 @@ const char* BwdDqDkDvV3Context::check_inputs_are_supported() {
   // TODO: support dropout kernel. fwd and bwd should have identical PRNG
   RETURN_IF(args.ENABLE_DROPOUT);
   RETURN_IF(args.num_head_q != args.num_head_k);
+  RETURN_IF(!args.DQ_ACC);
 #undef RETURN_IF
   // We do not have test suite to validate SWA at the moment.
   if (args.CAUSAL_TYPE != CausalType::None) {
@@ -114,7 +117,6 @@ const char* BwdDqDkDvV3Context::check_inputs_are_supported() {
   CHECK_STRIDE(args.DO);
   CHECK_STRIDE(args.DK);
   CHECK_STRIDE(args.DV);
-  CHECK_STRIDE(args.DQ_ACC);
   CHECK_STRIDE(args.DB);
 #undef CHECK_STRIDE
 
@@ -663,6 +665,7 @@ aiter_bwd(const attn_bwd_params& in,
   static std::vector<int> compiled_head_dims {64, 128, 192};
   // const auto& compiled_head_dims = BwdKernelDkDvMetadata::get_BLOCK_DMODEL_choices();
   int16_t head_dim_rounded = round_value(head_dim, compiled_head_dims);
+  LazyTensorInternal<4> lazy_dq_acc(in.DQ_ACC);
   OpAttnBwdParams params = {
     .Q = &in.Q,
     .K = &in.K,
@@ -675,7 +678,7 @@ aiter_bwd(const attn_bwd_params& in,
     .DV = &in.DV,
     .DQ = &in.DQ,
     .DB = &in.DB,
-    .DQ_ACC = &in.DQ_ACC,
+    .DQ_ACC = &lazy_dq_acc,
     .L = &in.L,
     .D = &in.D,
     .num_head_q = num_head_q,
@@ -715,7 +718,30 @@ aiter_bwd(const attn_bwd_params& in,
     err = bwd_preprocess_varlen(in.Out, in.DO, in.D, in.cu_seqlens_q, max_seqlen_q, stream);
   if (err != hipSuccess)
     return err;
-  return context.launch(stream);
+  err = context.launch(stream);
+  if (err != hipSuccess)
+    return err;
+
+  {
+    BwdPostprocessContext context;
+    context.params = &params;
+    err = context.lookup_optimal(gpu);
+    if (err != hipSuccess)
+      return err;
+    err = context.launch(stream);
+    if (err != hipSuccess)
+      return err;
+  }
+  return err;
+}
+
+dim3 BwdPostprocessContext::grid_calculator() const {
+  dim3 grid {
+    AOTRITON_NS::cdiv<uint32_t>(params->DQ->size(2), this->BLOCK_M),
+    uint32_t(params->Out->size(1)),
+    uint32_t(params->Out->size(0)),
+  };
+  return grid;
 }
 
 }
