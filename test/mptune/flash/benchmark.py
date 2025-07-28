@@ -21,13 +21,11 @@ CPPTUNE_FLASH_DEFENSIVE_SEQLENS = bool(int(os.getenv('CPPTUNE_FLASH_DEFENSIVE_SE
 
 class BenchmarkMonad(Monad):
     def service_factory(self):
-        print('BenchmarkMonad.service_factory')
         return BenchmarkService(self._args, self)
 
 class BenchmarkService(BaseTunerService):
 
     def create_ctx_cache(self, tup):
-        print('BenchmarkService.create_ctx_tensors')
         '''
         Defer the import to GPU process
         '''
@@ -64,15 +62,13 @@ class BenchmarkService(BaseTunerService):
                           bias_type=bias_type, storage_flip=None, device=self._gpu_device)
         ## For reproducible values
         ctx.create_ctx_tensors()
-        if not skip_bwd:
-            ctx.create_bwd_tensors()
+        ctx.create_bwd_tensors()
         ctx.create_ref_inputs(target_gpu_device=self._gpu_device)
         ctx.set_require_grads(skip_db=True if bias_type == 0 else False)
         self._cached_ctx = ctx
         self._cached_params = sdpa_params
 
     def profile(self, request):
-        print(self.__class__)
         a = self._args
         import torch
         from aotriton_flash import IGNORE_BACKWARD_IMPORT
@@ -86,7 +82,7 @@ class BenchmarkService(BaseTunerService):
         payload = request.payload
         tup = payload.tup
         tid = request.task_id
-        print(tup)
+        # print(tup)
         BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type, op_backend = tup
         encoded_softmax = None
         dtype = getattr(torch, dtype)
@@ -180,7 +176,7 @@ class BenchmarkService(BaseTunerService):
         atr = AutotuneResult()
         atr.kernel_index = op_backend
         atr.total_number_of_kernels = 3
-        extargs = attn_options
+        extargs = attn_options()
         extargs.force_backend_index = op_backend
         def func(is_testing=False):
             return generic_bwd_func(extargs, is_testing, bwd_operator=attn_bwd)
