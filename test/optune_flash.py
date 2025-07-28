@@ -177,8 +177,7 @@ class FlashOpTunerSource(MonadService):
                     task_id = j['_debug_task_id']
                     if task_id in skip_set:
                         continue
-                    if skip is not None:  # Must test is None, otherwise skip=False when task_id=0
-                        skip_set.add(skip)
+                    skip_set.add(task_id)
         self.print(f'{skip_set=}')
         self.print(f'{continue_dict=}')
 
