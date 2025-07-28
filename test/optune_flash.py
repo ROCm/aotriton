@@ -77,8 +77,10 @@ class FlashOpSourceMonad(Monad):
     def service_factory(self):
         return FlashOpTunerSource(self._args, self)
 
+    # Return value passed into restart_with_last_progress
+    # None means pull one from input channel
     def next_kernel(self, msg : MonadMessage) -> MonadMessage:
-        return msg
+        return None
 
 class FlashOpTunerSource(MonadService):
     def preprocess(self, tup):
@@ -168,7 +170,6 @@ class FlashOpTunerSource(MonadService):
     def process(self, _):
         a = self._args
         skip_set = set()
-        continue_dict = {}
         if a.continue_from_json_file and a.json_file is not None and a.json_file.is_file():
             # TODO: skipset
             with open(a.json_file, 'r') as f:
@@ -179,7 +180,6 @@ class FlashOpTunerSource(MonadService):
                         continue
                     skip_set.add(task_id)
         self.print(f'{skip_set=}')
-        self.print(f'{continue_dict=}')
 
         for i, tup in enumerate(self.gen()):
             self.print(f"[{i:06d}] gen_itup {tup}")
@@ -188,7 +188,7 @@ class FlashOpTunerSource(MonadService):
                 if i in a.selective_set:
                     payload = TuningResult(tup=tup, kig_dict=None)
                     progress_in_db = MonadMessage(task_id=i, action=MonadAction.Pass, source='source', payload=payload)
-                    yield self.monad.next_kernel(progress_in_db)
+                    yield progress_in_db
                     continue
                 continue
             if a.continue_from is not None and i < a.continue_from:
@@ -215,10 +215,7 @@ class FlashOpTunerSource(MonadService):
                 break
             payload = TuningResult(tup=tup, kig_dict=None)
             progress_in_db = MonadMessage(task_id=i, action=MonadAction.Pass, source='source', payload=payload)
-            if i in continue_dict:
-                if -1 in a.debug_skip_next_kernel or i in a.debug_skip_next_kernel:
-                    progress_in_db = self.monad.next_kernel(progress_in_db)
-            yield self.monad.next_kernel(progress_in_db)
+            yield progress_in_db
         self.print(f"gen_itup Exit")
         # Note: main_loop should handle Exit after forwarding all
         # object yield from MonadService.progress

@@ -84,11 +84,12 @@ class Monad(ArgArchVerbose):
             self._process = Process(target=self.main, args=(self._q_up, self._q_down, continue_from))
             self._process.start()
         if self._side_channel:
-            self._side_channel.put(MonadMessage(task_id=None,
-                                                payload=continue_from,
-                                                action=MonadAction.OOB_Restart,
-                                                source=self.identifier,
-                                                ))
+            if continue_from is not None:
+                self._side_channel.put(MonadMessage(task_id=None,
+                                                    payload=continue_from,
+                                                    action=MonadAction.OOB_Restart,
+                                                    source=self.identifier,
+                                                    ))
         t = Timer(10.0, restart)
         t.start()
 
@@ -143,6 +144,7 @@ class Monad(ArgArchVerbose):
                 '''
                 leaving = False
                 for res in service.process(req):
+                    assert res is not None, f'{self._identifier} recv a None object'
                     action = res.action
                     res.set_source(self._identifier)
                     '''
