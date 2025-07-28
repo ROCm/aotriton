@@ -8,7 +8,6 @@ from ..core import (
     MonadAction,
     MonadMessage,
     Monad,
-    MonadService,
     TunerService as BaseTunerService,
     ProfilerEarlyExit as PEE,
 )
@@ -22,11 +21,13 @@ CPPTUNE_FLASH_DEFENSIVE_SEQLENS = bool(int(os.getenv('CPPTUNE_FLASH_DEFENSIVE_SE
 
 class BenchmarkMonad(Monad):
     def service_factory(self):
-        return TunerService(self._args, self)
+        print('BenchmarkMonad.service_factory')
+        return BenchmarkService(self._args, self)
 
 class BenchmarkService(BaseTunerService):
 
     def create_ctx_cache(self, tup):
+        print('BenchmarkService.create_ctx_tensors')
         '''
         Defer the import to GPU process
         '''
@@ -71,6 +72,7 @@ class BenchmarkService(BaseTunerService):
         self._cached_params = sdpa_params
 
     def profile(self, request):
+        print(self.__class__)
         a = self._args
         import torch
         from aotriton_flash import IGNORE_BACKWARD_IMPORT
@@ -79,11 +81,12 @@ class BenchmarkService(BaseTunerService):
             FwdExtraArguments,
             hipError_t,
         )
-        from ..core import cpp_autotune_gen, KernelOutput, AutotuneResult
+        from ..core import cpp_autotune_gen, KernelOutput, AutotuneResult, do_bench
 
         payload = request.payload
         tup = payload.tup
         tid = request.task_id
+        print(tup)
         BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type, op_backend = tup
         encoded_softmax = None
         dtype = getattr(torch, dtype)
@@ -148,10 +151,12 @@ class BenchmarkService(BaseTunerService):
         from aotriton_flash import (
             attn_bwd,
             attn_options,
+            lazy_dq_acc,
         )
         def generic_bwd_func(extargs, is_testing, bwd_operator):
             q, k, v, b = ctx.dev_tensors
             dq, dk, dv, db, delta = ctx.bwd_tensors
+            dq_acc = lazy_dq_acc(dq)
             o, M = ctx.ctx_tensors
             L = M  # alias
             if is_testing:
@@ -160,29 +165,27 @@ class BenchmarkService(BaseTunerService):
                 dq.fill_(float('nan'))
                 if db is not None:
                     db.fill_(float('nan'))
-            args = (q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
+            CALL_OPERATOR=True
+            args = (q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, dq_acc, L, delta,
                     dropout_p, philox_seed_output, philox_offset_output, 0,
-                    causal, extargs.capi_object, call_operator=True)
+                    causal, extargs, CALL_OPERATOR)
             try:
                 ret = bwd_operator(*args)
             except Exception as e:
                 self.report_exception(e)
                 ret = hipError_t.hipErrorLaunchFailure
                 return 1, [KernelOutput(hip_status=ret, output_tensors=None)]
-            if INTEGRITY_CHECK_PER_HSACO and is_testing:
-                integrity, who = ctx.check_integrity()
-                if not integrity:
-                    ret = hipError_t.hipErrorDeinitialized
-                    ctx.restore_integrity(who, sdpa_params)
             return 1, [KernelOutput(hip_status=ret, output_tensors=[dk,dv,dq,db])]
 
         atr = AutotuneResult()
         atr.kernel_index = op_backend
         atr.total_number_of_kernels = 3
         extargs = attn_options
+        extargs.force_backend_index = op_backend
         def func(is_testing=False):
             return generic_bwd_func(extargs, is_testing, bwd_operator=attn_bwd)
-        yield do_bench(func, atr, validator=self.bwd_fused_validator, quantiles=(0.5, 0.2, 0.8))
+        atr = do_bench(func, atr, rep=250, validator=self.bwd_fused_validator)
+        yield op_backend, atr, None
 
     def fwd_validator(self, kernel_outputs : 'List[KernelOutput]', atr : 'AutotuneResult'):
         tri_out, philox_seed, philox_offset = kernel_outputs[0].output_tensors

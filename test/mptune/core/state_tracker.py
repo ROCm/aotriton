@@ -81,7 +81,7 @@ class StateTrackerService(MonadService):
             return
         if request.action == MonadAction.OOB_AckRecv:
             self._progress_tracker[request.source] = request
-            if request.task_id is not None and request.source == 'dbaccessor':
+            if request.task_id is not None and request.source in ['dbaccessor', 'opdb']:
                 self._task_confirmation[request.task_id] = request
             self.print(f'Update _progress_tracker[{request.source=}] to {request}')
             return
