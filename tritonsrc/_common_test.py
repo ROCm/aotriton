@@ -20,6 +20,8 @@ AOTRITON_TORCH_ONLY_USE_CPU = bool(int(os.getenv('AOTRITON_TORCH_ONLY_USE_CPU', 
 # Overrides by AOTRITON_TORCH_ONLY_USE_CPU=1
 AOTRITON_REF_DEVICE_OPTION = os.getenv('AOTRITON_REF_DEVICE_OPTION', default='default')
 
+TORCH_GE_2_7 = (str(torch.__version__) >= '2.7.0')
+
 def fmt_hdim(val):
     return f'hdim{val}'
 
@@ -278,7 +280,9 @@ class SdpaContext(object):
             ref_device_option = 'cpu'
         else:
             ref_device_option = AOTRITON_REF_DEVICE_OPTION
-        if ref_device_option == 'default':
+        if ref_device_option == 'default' and TORCH_GE_2_7:
+            ref_device = 'cuda'  # Known softmax issues have been fixed in 2.7
+        elif ref_device_option == 'default':
             ref_device = target_gpu_device
             seqlen_k = self.seqlen_k
             hdim = self.hdim
