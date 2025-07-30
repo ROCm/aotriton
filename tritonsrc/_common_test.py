@@ -25,6 +25,9 @@ TORCH_GE_2_7 = (str(torch.__version__) >= '2.7.0')
 def fmt_hdim(val):
     return f'hdim{val}'
 
+def cdiv(x, div):
+    return (x + div - 1) // div
+
 def calc_checksums(tensors):
     def checksum(t):
         if t is None:
@@ -169,10 +172,13 @@ class SdpaContext(object):
         qdims = (BATCH, Q_HEADS, seqlen_q, D_HEAD)
         kdims = (BATCH, K_HEADS, seqlen_k, D_HEAD)
         vdims = (BATCH, K_HEADS, seqlen_k, D_HEAD)
-        bdims = (BATCH, Q_HEADS, seqlen_q, seqlen_k)
+        def round_to_8x(n):
+            return 8 * cdiv(n, 8)
+        bdims = (BATCH, Q_HEADS, seqlen_q, round_to_8x(seqlen_k))
         if storage_flip is not None:
             order = [0,1,2,3]
             x, y = storage_flip
+            assert x != 3 and y != 3, 'Cannot storage_flip last dimension. Last dimension must be continuous'
             order[x], order[y] = order[y], order[x]
             i, j, k, l = order
             qdims = (qdims[i], qdims[j], qdims[k], qdims[l])
@@ -194,6 +200,7 @@ class SdpaContext(object):
         elif bias_type == 'matrix' or bias_type == 1:
             # b = torch.empty(bdims, dtype=dtype, device="cuda").normal_(mean=0., std=0.5)
             b = rng(bdims)
+            b = b[:, :, :, :seqlen_k]
             # b = b.expand(BATCH, Q_HEADS, b.shape[0], b.shape[1])
         else:
             assert False, f'Unsupported bias_type {bias_type}'
