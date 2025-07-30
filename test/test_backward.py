@@ -25,7 +25,7 @@ def torch_gpu(worker_id):
     # Common worker_id values are "gw0", "gw1", etc.
     return int(worker_id[2:]) if worker_id != "master" else None
 
-FOR_RELEASE = bool(int(os.getenv('FOR_RELEASE', default='0')))
+FOR_RELEASE = int(os.getenv('FOR_RELEASE', default='0'))
 
 DTYPES = [torch.float16, torch.bfloat16, torch.float32]
 
@@ -288,10 +288,10 @@ def test_gqa(torch_gpu, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causa
     args = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
     _test_op_bwd(args, device=torch_gpu)
 
-if not FOR_RELEASE:  # Make the loading faster
+if FOR_RELEASE > 1:  # Make the loading faster
     @pytest.mark.parametrize('BATCH', [3])
     @pytest.mark.parametrize('N_HEADS', [5])
-    @pytest.mark.parametrize('D_HEAD', ALL_HEADDIMS)
+    @pytest.mark.parametrize('D_HEAD', ALL_HEADDIMS, ids=fmt_hdim)
     @pytest.mark.parametrize('seqlen_q', PRIME_SEQLEN_Q)
     @pytest.mark.parametrize('seqlen_k', PRIME_SEQLEN_K)
     @pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
