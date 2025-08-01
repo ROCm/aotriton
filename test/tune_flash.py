@@ -96,6 +96,10 @@ class FlashTunerSource(MonadService):
     def clamp_memory_usage(self, tup):
         a = self._args
         BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type = tup
+        if sm_scale == 'l1':
+            sm_scale = 1.0 / D_HEAD
+        elif sm_scale == 'l2':
+            sm_scale = 1.0 / math.sqrt(D_HEAD)
         if 'bwd_kernel_dk_dv' in CPPTUNE_SKIP_KERNELS and 'bwd_kernel_dq' in CPPTUNE_SKIP_KERNELS and 'bwd_kernel_fuse' in CPPTUNE_SKIP_KERNELS:
             skip_bwd = True
         else:
@@ -338,7 +342,7 @@ def parse():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument('--batch', type=int, nargs=1, default=[8], help='(Not a functional) Batch size.')
     p.add_argument('--n_heads', type=int, nargs=1, default=[12], help='(Not a functional) Number of heads')
-    p.add_argument('--sm_scale', type=float, nargs=1, default=[1.2], help='(Not a functional) Softmax Scale')
+    p.add_argument('--sm_scale', type=float, nargs=1, default=['l1'], choices=['l1', 'l2', 1.2], help='(Not a functional) Softmax Scale')
     p.add_argument('--return_encoded_softmax', type=bool, default=[False],
                    help="(A functional for debugging) kernel that returns softmax(dropout(QK')) to validate the correctness of dropout")
     p.add_argument('--d_head', type=int, nargs=NARG_PLUS, default=[16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256, 512], help='Head dimensions.')

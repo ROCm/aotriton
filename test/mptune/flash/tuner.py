@@ -219,7 +219,7 @@ class TunerService(BaseTunerService):
                 if db is not None:
                     db.fill_(float('nan'))
             if split:
-                args = (q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
+                args = (q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, None, L, delta,
                         dropout_p, philox_seed_output, philox_offset_output, 0,
                         causal, extargs.capi_object)
             else:
