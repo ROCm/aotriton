@@ -17,13 +17,24 @@ from attn_torch_function import (
     V3_API,
     PROBE_UNSUPPORTED,
     hipError_t,
+    hipGetLastError,
 )
 from _common_test import SdpaContext, SdpaParams, SdpaContextFromNPZ, AOTRITON_TORCH_ONLY_USE_CPU, fmt_hdim
 
+ON_GPU = os.getenv('ON_GPU', default=None)
+
+SIGSEGV_ERROR_CODE = signal.SIGSEGV
+
+def exit_pytest():
+    # os.kill(os.getpid(), SIGSEGV_ERROR_CODE)
+    os._exit(139)
+
 @pytest.fixture()
 def torch_gpu(worker_id):
-    # Common worker_id values are "gw0", "gw1", etc.
-    return int(worker_id[2:]) if worker_id != "master" else None
+    if ON_GPU is None:
+        # Common worker_id values are "gw0", "gw1", etc.
+        return (int(worker_id[2:]) % 8) if worker_id != "master" else None
+    return int(ON_GPU)
 
 FOR_RELEASE = int(os.getenv('FOR_RELEASE', default='0'))
 
@@ -178,7 +189,9 @@ def _do_test_op_bwd(args, device_str='cuda'):
     ext = AttentionExtraArgs(return_encoded_softmax=False if dropout_p == 0 else True,
                              autotune=False,
                              return_autotune=False,
-                             fillnan=True)
+                             fillnan=True,
+                             illaddr_handler=exit_pytest,
+                             )
     tri_out, encoded_softmax, _ = attention(q, k, v, b, causal, sm_scale, dropout_p, ext)
     dropout_mask = encoded_softmax >= 0 if encoded_softmax is not None else None
     sdpa_params = SdpaParams(causal=causal, sm_scale=sm_scale, dropout_p=dropout_p, dropout_mask=dropout_mask)
@@ -215,11 +228,17 @@ def _do_test_op_bwd(args, device_str='cuda'):
     print(f'{adiff=} {grads_adiff=}')
 
 def _test_op_bwd(args, device : int | None = None):
-    if device is None:
-        _do_test_op_bwd(args, device_str='cuda')
-    else:
-        with torch.cuda.device(device):
-            _do_test_op_bwd(args, device_str=f'cuda:{device}')
+    try:
+        if device is None:
+            _do_test_op_bwd(args, device_str='cuda')
+        else:
+            with torch.cuda.device(device):
+                _do_test_op_bwd(args, device_str=f'cuda:{device}')
+    except RuntimeError as e:
+        if hipGetLastError() == hipError_t.hipErrorIllegalAddress:
+            exit_pytest()
+        raise e
+
 
 # @pytest.mark.parametrize('BATCH', [1])
 # @pytest.mark.parametrize('N_HEADS', [1])

@@ -91,5 +91,6 @@ namespace pyaotriton {
       .export_values();
 #undef EV
     m.def("hipDeviceSynchronize", &hipDeviceSynchronize);
+    m.def("hipGetLastError", &hipGetLastError);
   }
 } // namespace pyaotriton

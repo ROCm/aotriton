@@ -70,7 +70,7 @@ def translate_causal(causal, v3_api):
             causal_type = causal
     return causal_type, window_left, window_right
 
-from pyaotriton import T1, T2, T4, DType, Stream, hipError_t, get_name_suffix
+from pyaotriton import T1, T2, T4, DType, Stream, hipError_t, get_name_suffix, hipGetLastError
 assert get_name_suffix() != "", ("To run tests, AOTriton must be compiled with suffixes "
                                  "by passing -DAOTRITON_NAME_SUFFIX=SOME_SUFFIX to cmake. "
                                  "Otherwise the AOTriton in-development may have conflicts with "
