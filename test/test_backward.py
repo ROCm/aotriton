@@ -47,7 +47,7 @@ if BWD_IMPL == 0:
 elif BWD_IMPL == 1:
     POT_HEADDIMS = [16, 32, 64, 128, 256]
     NPOT_HEADDIMS = [48, 80, 96, 160, 192, 224]
-    M8_HEADDIMS = [8, 24, 40, 56, 72, 88, 96, 120, 152, 184, 216, 248]
+    M8_HEADDIMS = [8, 24, 40, 56, 72, 88, 96, 120, 152, 184, 216]
 elif BWD_IMPL == 2:
     POT_HEADDIMS = [16, 32, 64, 128]
     NPOT_HEADDIMS = [48, 80, 96, 160, 192]
@@ -62,6 +62,7 @@ else:
 # GPU kernels are unable to support unaligned memory access in any performant way
 # PRIME_HEADDIMS = [7, 23, 37, 53, 67, 73, 83, 113, 149, 179, 211, 241] + ([401] if not BWD_IMPL else [])
 # Multiple of 8 head dimensions are tested instead
+REGULAR_SEQLEN = [8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
 PRIME_SEQLEN_Q = [11, 17, 37, 67, 157, 257, 523, 1033, 2063, 4919, 10601]
 PRIME_SEQLEN_K = [13, 31, 41, 71, 223, 337, 571, 1063, 2081, 5237, 11369]
 
@@ -240,27 +241,14 @@ def _test_op_bwd(args, device : int | None = None):
         raise e
 
 
-# @pytest.mark.parametrize('BATCH', [1])
-# @pytest.mark.parametrize('N_HEADS', [1])
 @pytest.mark.parametrize('BATCH', [1, 4] if not FOR_RELEASE else [3])
 @pytest.mark.parametrize('N_HEADS', [1, 4] if not FOR_RELEASE else [5])
-# @pytest.mark.parametrize('D_HEAD', [16, 32, 64, 128, 256])
-# Irregular-only PyTorch set
-# @pytest.mark.parametrize('D_HEAD', [8, 21, 72, 96, 160, 192, 203])
-# @pytest.mark.parametrize('seqlen_q', [1, 4, 32, 128, 256, 512, 1024, 7, 394, 250, 399, 511, 1019])
-# @pytest.mark.parametrize('seqlen_k', [1, 4, 32, 128, 256, 512, 1024, 3, 217, 339, 313, 491, 988])
-# PyTorch set
 @pytest.mark.parametrize('D_HEAD', ALL_HEADDIMS, ids=fmt_hdim)
-@pytest.mark.parametrize('seqlen_q', [4, 8, 64, 143, 256, 512, 1024, 2048])
-@pytest.mark.parametrize('seqlen_k', [4, 8, 64, 127, 256, 587, 1024, 2048])
-# Minimal set
-# @pytest.mark.parametrize('seqlen_q', [32, 128])
-# @pytest.mark.parametrize('seqlen_k', [32, 128])
+@pytest.mark.parametrize('seqlen_q', REGULAR_SEQLEN)
+@pytest.mark.parametrize('seqlen_k', REGULAR_SEQLEN)
 @pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
 @pytest.mark.parametrize('dropout_p', [0.0, 0.5] if BWD_IMPL != 2 else [0.0])
-# @pytest.mark.parametrize('dropout_p', [0.0])
 @pytest.mark.parametrize('dtype', DTYPES)
-# @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
 @pytest.mark.parametrize('sm_scale', [0.0, 0.125] if not FOR_RELEASE else ['l1', 'l2'])
 @pytest.mark.parametrize('storage_flip', [False, True])
 # @pytest.mark.parametrize('return_encoded_softmax', [False])
@@ -274,8 +262,8 @@ if BWD_IMPL != 2:  # AITER ASM does not support bias ATM
     @pytest.mark.parametrize('BATCH', [1, 4] if not FOR_RELEASE else [3])
     @pytest.mark.parametrize('N_HEADS', [1, 4] if not FOR_RELEASE else [5])
     @pytest.mark.parametrize('D_HEAD', ALL_HEADDIMS, ids=fmt_hdim)
-    @pytest.mark.parametrize('seqlen_q', [4, 8, 64, 143, 256, 512, 1024, 2048])
-    @pytest.mark.parametrize('seqlen_k', [4, 8, 64, 128, 256, 587, 1024, 2048])
+    @pytest.mark.parametrize('seqlen_q', REGULAR_SEQLEN)
+    @pytest.mark.parametrize('seqlen_k', REGULAR_SEQLEN)
     @pytest.mark.parametrize('dropout_p', [0.0, 0.5] if BWD_IMPL != 2 else [0.0])
     @pytest.mark.parametrize('dtype', DTYPES)
     @pytest.mark.parametrize('sm_scale', [0.0, 1.2] if not FOR_RELEASE else [1.2])
