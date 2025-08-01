@@ -7,6 +7,8 @@ import torch
 import os
 import sys
 import math
+import pathlib
+import filelock
 
 from attn_torch_function import (
     DEFAULT_PHILOX_SEED,
@@ -23,18 +25,38 @@ from _common_test import SdpaContext, SdpaParams, SdpaContextFromNPZ, AOTRITON_T
 
 ON_GPU = os.getenv('ON_GPU', default=None)
 
-SIGSEGV_ERROR_CODE = signal.SIGSEGV
+# SIGSEGV_ERROR_CODE = signal.SIGSEGV
 
 def exit_pytest():
     # os.kill(os.getpid(), SIGSEGV_ERROR_CODE)
     os._exit(139)
 
-@pytest.fixture()
-def torch_gpu(worker_id):
-    if ON_GPU is None:
-        # Common worker_id values are "gw0", "gw1", etc.
-        return (int(worker_id[2:]) % 8) if worker_id != "master" else None
-    return int(ON_GPU)
+PYTEST_XDIST_WORKER_COUNT=int(os.getenv('PYTEST_XDIST_WORKER_COUNT', default='0'))
+
+@pytest.fixture(scope="session", autouse=True)
+def gpufilelock(tmp_path_factory, testrun_uid):
+    p = tmp_path_factory.mktemp("gpulock")
+    for gpu in range(PYTEST_XDIST_WORKER_COUNT):
+        (p / f'gpu{gpu}').touch(exist_ok=True)
+    return p
+
+if ON_GPU is not None:
+    @pytest.fixture()
+    def torch_gpu(worker_id, testrun_uid, gpufilelock):
+        yield int(ON_GPU)
+        return
+else:
+    @pytest.fixture()
+    def torch_gpu(worker_id, testrun_uid, gpufilelock):
+        while True:
+            for gpu in range(PYTEST_XDIST_WORKER_COUNT):
+                lock = filelock.FileLock(gpufilelock / f'gpu{gpu}')
+                try:
+                    with lock.acquire(blocking=False):
+                        yield gpu
+                        return
+                except filelock.Timeout:
+                    pass
 
 FOR_RELEASE = int(os.getenv('FOR_RELEASE', default='0'))
 
