@@ -8,7 +8,9 @@ import os
 import sys
 import math
 import pathlib
-import filelock
+import fcntl
+import struct
+import itertools
 
 from attn_torch_function import (
     DEFAULT_PHILOX_SEED,
@@ -32,30 +34,38 @@ def exit_pytest():
     os._exit(139)
 
 PYTEST_XDIST_WORKER_COUNT=int(os.getenv('PYTEST_XDIST_WORKER_COUNT', default='0'))
+STRUCT_FLOCK = 'hhllh'
+PAGE_SIZE = 4096
 
 @pytest.fixture(scope="session", autouse=True)
 def gpufilelock(tmp_path_factory, testrun_uid):
-    p = tmp_path_factory.mktemp("gpulock")
-    for gpu in range(PYTEST_XDIST_WORKER_COUNT):
-        (p / f'gpu{gpu}').touch(exist_ok=True)
-    return p
+    # get the temp directory shared by all workers
+    root_tmp_dir = tmp_path_factory.getbasetemp().parent
+    lockfile = root_tmp_dir / "gpulock"
+    with open(lockfile, 'wb') as f:
+        f.seek(PYTEST_XDIST_WORKER_COUNT * PAGE_SIZE - 1)
+        f.write(b'\0')
+    return lockfile
 
 if ON_GPU is not None:
     @pytest.fixture()
-    def torch_gpu(worker_id, testrun_uid, gpufilelock):
+    def torch_gpu():
         yield int(ON_GPU)
         return
 else:
-    @pytest.fixture()
+    @pytest.fixture(scope="session")  # For pytest-xdist, "session" scope is per-worker process
     def torch_gpu(worker_id, testrun_uid, gpufilelock):
-        while True:
-            for gpu in range(PYTEST_XDIST_WORKER_COUNT):
-                lock = filelock.FileLock(gpufilelock / f'gpu{gpu}')
+        with open(gpufilelock, 'wb') as f:
+            for gpu in itertools.cycle(range(PYTEST_XDIST_WORKER_COUNT)):
+                ld = struct.pack(STRUCT_FLOCK, fcntl.F_WRLCK, os.SEEK_SET, PAGE_SIZE * gpu, PAGE_SIZE, 0)
                 try:
-                    with lock.acquire(blocking=False):
-                        yield gpu
-                        return
-                except filelock.Timeout:
+                    ret = fcntl.fcntl(f, fcntl.F_SETLK, ld)
+                    print(f'{worker_id} uses GPU {gpu} filelock = {gpufilelock}', file=sys.stderr, flush=True)
+                    yield gpu
+                    ud = struct.pack(STRUCT_FLOCK, fcntl.F_UNLCK, os.SEEK_SET, PAGE_SIZE * gpu, PAGE_SIZE, 0)
+                    ret = fcntl.fcntl(f, fcntl.F_SETLK, ud)
+                    return
+                except BlockingIOError as e:
                     pass
 
 FOR_RELEASE = int(os.getenv('FOR_RELEASE', default='0'))
@@ -275,7 +285,7 @@ def _test_op_bwd(args, device : int | None = None):
 @pytest.mark.parametrize('storage_flip', [False, True])
 # @pytest.mark.parametrize('return_encoded_softmax', [False])
 @pytest.mark.parametrize('BWDOP', BWDOP_ids)
-def test_op_bwd(torch_gpu, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
+def test_regular_bwd(torch_gpu, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
     bias_type = None
     args = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
     _test_op_bwd(args, device=torch_gpu)
