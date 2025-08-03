@@ -10,4 +10,4 @@
 	url = https://github.com/pybind/pybind11.git
 [submodule "third_party/aiter"]
 	path = third_party/aiter
-	url = git@github.com:ROCm/aiter.git
+	url = https://github.com/ROCm/aiter.git
