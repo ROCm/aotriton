@@ -93,12 +93,23 @@ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/include/aotriton/config.h
   DESTINATION ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_INCLUDEDIR}/aotriton)
 
 # Kernel Storage V2 uses xz/LZMA for compression
-include(FindPkgConfig)
-pkg_search_module(LZMA REQUIRED liblzma)
-add_library(lzma_interface INTERFACE)
-target_link_libraries(lzma_interface INTERFACE ${LZMA_LIBRARIES})
-target_link_directories(lzma_interface INTERFACE ${LZMA_LIBRARY_DIRS})
-target_include_directories(lzma_interface INTERFACE ${LZMA_INCLUDE_DIRS})
+if(UNIX)
+  include(FindPkgConfig)
+  pkg_search_module(LZMA REQUIRED liblzma)
+  add_library(lzma_interface INTERFACE)
+  target_link_libraries(lzma_interface INTERFACE ${LZMA_LIBRARIES})
+  target_link_directories(lzma_interface INTERFACE ${LZMA_LIBRARY_DIRS})
+  target_include_directories(lzma_interface INTERFACE ${LZMA_INCLUDE_DIRS})
+else()
+  find_package(liblzma REQUIRED CONFIG)
+  if(NOT liblzma_FOUND)
+    message(FATAL_ERROR "liblzma package not found")
+  else()
+    message(STATUS "liblzma found: ${liblzma_VERSION}")
+  endif()
+  add_library(lzma_interface INTERFACE)
+  target_link_libraries(lzma_interface INTERFACE liblzma::liblzma)
+endif()
 
 if(AOTRITON_ENABLE_ASAN)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -fsanitize=address -fno-omit-frame-pointer")
@@ -111,15 +122,20 @@ execute_process(COMMAND "${Python3_EXECUTABLE}" -m venv "${VENV_DIR}")
 
 set(ENV{VIRTUAL_ENV} "${VENV_DIR}")
 message("VENV_DIR ${VENV_DIR}")
+if(WIN32)
+  set(VENV_BIN_PYTHON "${VENV_DIR}/Scripts/python")
+else()
+  set(VENV_BIN_PYTHON "${VENV_DIR}/bin/python")
+endif()
 # set(Python3_FIND_VIRTUALENV FIRST)
 # unset(Python3_EXECUTABLE)
 # find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
-execute_process(COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_DIR}/bin/python" -c "import site; print(site.getsitepackages()[0], end='')" OUTPUT_VARIABLE VENV_SITE)
+execute_process(COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_BIN_PYTHON}" -c "import site; print(site.getsitepackages()[0], end='')" OUTPUT_VARIABLE VENV_SITE)
 # string(STRIP "${VENV_SITE}" VENV_SITE)
 message("VENV_SITE ${VENV_SITE}")
 
-execute_process(COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_DIR}/bin/python" -m pip install -r "${CMAKE_CURRENT_LIST_DIR}/requirements.txt")
+execute_process(COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_BIN_PYTHON}" -m pip install -r "${CMAKE_CURRENT_LIST_DIR}/requirements.txt")
 
 # AOTRITON_NOIMAGE_MODE does not need Triton
 if(NOT AOTRITON_NOIMAGE_MODE)
@@ -127,10 +143,15 @@ if(NOT AOTRITON_NOIMAGE_MODE)
   execute_process(COMMAND ${CMAKE_COMMAND} -E make_directory "${TRITON_BUILD_DIR}")
   # set(AOTRITON_TRITON_EGGLINK "${VENV_SITE}/triton.egg-link")
   # message("AOTRITON_TRITON_EGGLINK ${AOTRITON_TRITON_EGGLINK}")
-  set(AOTRITON_TRITON_SO "${VENV_SITE}/triton/_C/libtriton.so")
+
+  if(WIN32)
+    set(AOTRITON_TRITON_SO "${VENV_SITE}/triton/_C/libtriton.pyd")
+  else()
+    set(AOTRITON_TRITON_SO "${VENV_SITE}/triton/_C/libtriton.so")
+  endif()
 
   add_custom_command(OUTPUT "${AOTRITON_TRITON_SO}"
-    COMMAND ${CMAKE_COMMAND} -E env TRITON_BUILD_PROTON=OFF VIRTUAL_ENV=${VENV_DIR} TRITON_BUILD_DIR=${TRITON_BUILD_DIR} "${VENV_DIR}/bin/python" -m pip install .
+    COMMAND ${CMAKE_COMMAND} -E env TRITON_BUILD_PROTON=OFF VIRTUAL_ENV=${VENV_DIR} TRITON_BUILD_DIR=${TRITON_BUILD_DIR} "${VENV_BIN_PYTHON}" -m pip install .
     # COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} python -m pip show triton
     WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/third_party/triton/"
   )

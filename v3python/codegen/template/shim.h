@@ -39,7 +39,7 @@ struct [[context_class_name]] {
 
     TritonKernel* kernel_on_device = nullptr;
     int pp_args_index = -1;
-    std::string_view package_path;
+    PathStringView package_path;
     std::string_view func_name;
     std::string_view arch_name;
     // Note to save ELF space, this object is constructed on the fly.

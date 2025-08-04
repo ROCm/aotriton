@@ -43,6 +43,9 @@ class RootGenerator(object):
             hsacos = ksg.this_repo.get_data('hsaco')
             hsaco_for_kernels.append((k, hsacos))
             shims += ksg.shim_files
+        # TODO: Fix this for Windows
+        # On Windows, you get "KeyError: 'validator_function'"
+        # See discussion in https://discord.com/channels/1239631572886491286/1401853302139912222/1401862203845378201
         # print(f'{affine_kernels=}')
         for ak in affine_kernels:
             log(lambda : f'{ak.__class__=}')

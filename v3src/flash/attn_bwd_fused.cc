@@ -116,11 +116,11 @@ _bwd_kernel_fuse(T4 q,
     .philox_offset2 = static_cast<uint64_t>(philox_offset2),
     .Window_left = WindowValue::TopLeftAligned,
     .Window_right = WindowValue::TopLeftAligned,
-    .BLOCK_DMODEL = head_size_rounded,
+    .BLOCK_DMODEL = static_cast<int8_t>(head_size_rounded),
     .CAUSAL_TYPE = is_causal ? CausalType::WindowedAttention : CausalType::None,
     .ENABLE_DROPOUT = dropout_p > 0.0,
     .PADDED_HEAD = head_size_rounded != head_size,
-    .BIAS_TYPE = bias_type,
+    .BIAS_TYPE = static_cast<int8_t>(bias_type),
   };
   BwdKernelFuseContext context;
   context.params = &params;
