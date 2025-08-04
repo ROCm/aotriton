@@ -95,8 +95,9 @@ else:
 # PRIME_HEADDIMS = [7, 23, 37, 53, 67, 73, 83, 113, 149, 179, 211, 241] + ([401] if not BWD_IMPL else [])
 # Multiple of 8 head dimensions are tested instead
 REGULAR_SEQLEN = [8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
-PRIME_SEQLEN_Q = [11, 17, 37, 67, 157, 257, 523, 1033, 2063, 4919, 10601]
-PRIME_SEQLEN_K = [13, 31, 41, 71, 223, 337, 571, 1063, 2081, 5237, 11369]
+REGULAR_SEQLEN_2K = [8, 16, 32, 64, 128, 256, 512, 1024, 2048]  # OOM when test with bias
+PRIME_SEQLEN_Q = [11, 17, 37, 67, 157, 257, 523, 1033, 2063, 4919]
+PRIME_SEQLEN_K = [13, 31, 41, 71, 223, 337, 571, 1063, 2081, 5237]
 
 SMALL_HEADDIM_ONLY = bool(int(os.getenv('SMALL_HEADDIM_ONLY', default='0')))
 LARGE_HEADDIM_ONLY = bool(int(os.getenv('LARGE_HEADDIM_ONLY', default='0')))
@@ -204,8 +205,7 @@ def _do_test_op_bwd(args, device_str='cuda'):
             pytest.skip("hdim > 192 AITER ASM kernel does not exist.")
     if causal and bias_type is not None:
         pytest.skip("_scaled_dot_product_attention: Explicit attn_mask should not be set when is_causal=True")
-    if BATCH > 1 and seqlen_q * seqlen_k >= 1024 * 1024:
-        torch.cuda.empty_cache()
+    torch.cuda.empty_cache()
     SKIP_DK_DV = False
     SKIP_DQ = False
     SKIP_DB = True if bias_type is None else False
@@ -294,8 +294,8 @@ if BWD_IMPL != 2:  # AITER ASM does not support bias ATM
     @pytest.mark.parametrize('BATCH', [1, 4] if not FOR_RELEASE else [3])
     @pytest.mark.parametrize('N_HEADS', [1, 4] if not FOR_RELEASE else [5])
     @pytest.mark.parametrize('D_HEAD', ALL_HEADDIMS, ids=fmt_hdim)
-    @pytest.mark.parametrize('seqlen_q', REGULAR_SEQLEN)
-    @pytest.mark.parametrize('seqlen_k', REGULAR_SEQLEN)
+    @pytest.mark.parametrize('seqlen_q', REGULAR_SEQLEN_2K)
+    @pytest.mark.parametrize('seqlen_k', REGULAR_SEQLEN_2K)
     @pytest.mark.parametrize('dropout_p', [0.0, 0.5] if BWD_IMPL != 2 else [0.0])
     @pytest.mark.parametrize('dtype', DTYPES)
     @pytest.mark.parametrize('sm_scale', [0.0, 1.2] if not FOR_RELEASE else [1.2])
@@ -341,6 +341,8 @@ if FOR_RELEASE > 1:  # Make the loading faster
     @pytest.mark.parametrize('bias_type', [None, 'matrix'], ids=['BiasOff', 'BiasOn'])
     @pytest.mark.parametrize('BWDOP', BWDOP_ids)
     def test_irregulars(torch_gpu, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type):
+        if bias_type is not None and (seqlen_q > 2048 or seqlen_k > 2048):
+            pytest.skip("Skip large UT with bias to avoid OOM")
         args = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
         _test_op_bwd(args, device=torch_gpu)
 
