@@ -8,6 +8,8 @@
 #include <aotriton/dtypes.h>
 #include <aotriton/util.h>
 #include <aotriton/runtime.h>
+#include <aotriton/_internal/lazy_tensor_internal.h>
+#include <aotriton/[[family_name]].h>
 #include <functional>
 #include <string>
 #include <vector>
@@ -20,7 +22,8 @@ struct [[param_class_name]] {
 };
 
 struct [[context_class_name]] {
-    const [[param_class_name]] *params = nullptr;
+    [[param_class_name]] *params = nullptr;
+    const [[call_options_struct]] *call_options = nullptr;
     enum BackendEnum : int32_t {
         None = -1,
         [[list_of_backend_enum]],
@@ -28,6 +31,7 @@ struct [[context_class_name]] {
     };
     static constexpr BackendEnum fallback_backend = [[fallback_backend]];
     BackendEnum backend_index = BackendEnum::None;
+    bool disable_fallback = false;
 
 #if AOTRITON_BUILD_FOR_TUNING
     int _has_preferred_backend = -1;

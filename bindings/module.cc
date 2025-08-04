@@ -207,6 +207,12 @@ namespace pyaotriton {
     void setup_module(py::module_& m); // Impl. goes into v3.cc
   } // namespace v3
 
+#if AOTRITON_USE_TORCH
+  namespace lazy_tensor {
+    void setup_module(py::module_& m); // Impl. goes into lazy_tensor.cc
+  } // namespace lazy_tensor
+#endif
+
   void def_stream(py::module_& m) {
     py::class_<aotriton::Stream>(m, "Stream").def(py::init<>());
   }
@@ -278,6 +284,10 @@ namespace pyaotriton {
     v2::setup_module(mod_v2api);
     py::module_ mod_v3api = m.def_submodule("v3", "v3 API namespace");
     v3::setup_module(mod_v3api);
+#if AOTRITON_USE_TORCH
+    py::module_ mod_lazy_tensor = m.def_submodule("lazy_tensor", "lazy_tensor API namespace");
+    lazy_tensor::setup_module(mod_lazy_tensor);
+#endif
   }
 
 } // namespace pyaotriton

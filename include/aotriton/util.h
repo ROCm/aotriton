@@ -109,8 +109,16 @@ public:
     return sizes_;
   }
 
+  const uint64_t* size_ptr() const {
+    return sizes_.data();
+  }
+
   std::array<uint64_t, Rank> strides() const {
     return strides_;
+  }
+
+  const uint64_t* stride_ptr() const {
+    return strides_.data();
   }
 
   void* data_ptr() const {
@@ -200,6 +208,24 @@ extern template class TensorView<1>;
 extern template class TensorView<2>;
 extern template class TensorView<3>;
 extern template class TensorView<4>;
+
+// Lazy allocated Tensors
+// For tensors that are only needed by certain backend of arguments
+//
+// Intentionally not using std::function to avoid potential ABI change in
+// libstdc++/libc++
+template<int Rank>
+struct LazyTensor {
+  void* cookie = nullptr;
+  TensorView<Rank> (*acquire)(void* cookie) = nullptr;
+  // Note for user: Remeber put necessary information to dispose this tensor to
+  //                "cookie" object in acquire.
+  void  (*dispose)(void* cookie) = nullptr;
+
+  operator bool() const {
+    return cookie != nullptr || acquire != nullptr || dispose != nullptr;
+  }
+};
 
 Gpu AOTRITON_API getGpuFromStream(hipStream_t);
 bool AOTRITON_API isArchExperimentallySupported(hipStream_t);

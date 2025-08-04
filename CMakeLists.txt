@@ -52,6 +52,7 @@ find_package(hip REQUIRED)
 
 set(VENV_DIR "${CMAKE_CURRENT_BINARY_DIR}/venv" CACHE STRING "Virtual Environment Directory")
 option(AOTRITON_NO_PYTHON "Disable python binding build" OFF)
+option(AOTRITON_USE_TORCH "Enable functions in python binding that requires libtorch" ON)
 option(AOTRITON_ENABLE_ASAN "Enable Address Sanitizer. Implies -g" OFF)
 option(AOTRITON_BUILD_FOR_TUNING "Build all GPU kernels and set -DAOTRITON_BUILD_FOR_TUNING=1 (=0 otherwise)" OFF)
 set(AOTRITON_BUILD_FOR_TUNING_BUT_SKIP_KERNEL "" CACHE STRING "Use tuning database for certain kernels when AOTRITON_BUILD_FOR_TUNING=ON")
@@ -69,6 +70,9 @@ if(NOT AOTRITON_NO_PYTHON)
   if(NOT EXISTS ${CMAKE_SOURCE_DIR}/third_party/pybind11/CMakeLists.txt)
     message(FATAL_ERROR "third_party/pybind11 is not initialized\nRun `git submodule sync && git submodule update --init --recursive --force` to fix it.")
   endif()
+  if(AOTRITON_USE_TORCH)
+      find_package(Torch REQUIRED)
+  endif(AOTRITON_USE_TORCH)
 endif()
 
 # Resolve name conflicts with suffix

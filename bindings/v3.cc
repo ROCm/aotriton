@@ -24,6 +24,7 @@ namespace pyaotriton::v3 {
       void setup_module(py::module_& m) {
         py::class_<attn_options>(m, "attn_options")
           .def(py::init<>())
+          .def_readwrite("force_backend_index", &attn_options::force_backend_index)
         ;
         py::class_<attn_fwd_params>(m, "attn_fwd_params")
           .def(py::init<>())
