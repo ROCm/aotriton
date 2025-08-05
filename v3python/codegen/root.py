@@ -48,9 +48,10 @@ class RootGenerator(object):
             log(lambda : f'{ak.__class__=}')
             aksg = AffineGenerator(self._args, ak, parent_repo=None)
             aksg.generate()
-            asms = aksg.this_repo.get_data('asms')
-            asms_for_kernels.append((ak, asms))
-            shims += aksg.shim_files
+            asms = aksg.this_repo.get_data('asms', return_none=True)
+            if asms is not None:
+                asms_for_kernels.append((ak, asms))
+                shims += aksg.shim_files
 
         if args.build_for_tuning_second_pass:
             return
