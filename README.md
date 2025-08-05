@@ -74,8 +74,9 @@ of AOTriton. The compatibility matrix is shown below
 2. PyTorch 2.6 requires some 0.8b-only features. Hence even if PyTorch 2.6
    can compile with 0.7b due to API compatibility, the end product will
    suffer from runtime errors.
-3. To be specific, it is shipped with 0.9.2b. 0.9b and 0.9.1b should not be
-   used in order to avoid linking issues, and confusion about version strings.
+3. To be specific, it is shipped with 0.9.2b. Other versions like 0.9b and 0.9.1b
+   should not be used in order to avoid linking issues, and also avoid
+   confusion about version strings.
 4. 0.10b is backward compatible with 0.9b's API. Hence it can be used as a drop-in
    replacement for installed PyTorch wheels by symlinking
    `libaotriton_v2.so.0.9.2` to `libaotriton_v2.so.0.10.0`. However, 0.10b
