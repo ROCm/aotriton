@@ -54,7 +54,7 @@ class RootGenerator(object):
             asms = aksg.this_repo.get_data('asms', return_none=True)
             if asms is not None:
                 asms_for_kernels.append((ak, asms))
-            shims += aksg.shim_files
+                shims += aksg.shim_files
 
         if args.build_for_tuning_second_pass:
             return
