@@ -37,22 +37,26 @@ PYTEST_XDIST_WORKER_COUNT=int(os.getenv('PYTEST_XDIST_WORKER_COUNT', default='0'
 STRUCT_FLOCK = 'hhllh'
 PAGE_SIZE = 4096
 
-@pytest.fixture(scope="session", autouse=True)
-def gpufilelock(tmp_path_factory, testrun_uid):
-    # get the temp directory shared by all workers
-    root_tmp_dir = tmp_path_factory.getbasetemp().parent
-    lockfile = root_tmp_dir / "gpulock"
-    with open(lockfile, 'wb') as f:
-        f.seek(PYTEST_XDIST_WORKER_COUNT * PAGE_SIZE - 1)
-        f.write(b'\0')
-    return lockfile
-
-if ON_GPU is not None:
+if PYTEST_XDIST_WORKER_COUNT == 0:  # No pytest
+    @pytest.fixture()
+    def torch_gpu():
+        return 0
+elif ON_GPU is not None:
     @pytest.fixture()
     def torch_gpu():
         yield int(ON_GPU)
         return
 else:
+    @pytest.fixture(scope="session", autouse=True)
+    def gpufilelock(tmp_path_factory, testrun_uid):
+        # get the temp directory shared by all workers
+        root_tmp_dir = tmp_path_factory.getbasetemp().parent
+        lockfile = root_tmp_dir / "gpulock"
+        with open(lockfile, 'wb') as f:
+            f.seek(PYTEST_XDIST_WORKER_COUNT * PAGE_SIZE - 1)
+            f.write(b'\0')
+        return lockfile
+
     @pytest.fixture(scope="session")  # For pytest-xdist, "session" scope is per-worker process
     def torch_gpu(worker_id, testrun_uid, gpufilelock):
         with open(gpufilelock, 'wb') as f:
