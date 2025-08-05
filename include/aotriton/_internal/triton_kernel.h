@@ -138,6 +138,11 @@ private:
   std::shared_mutex packedkernel_mutex_;
 };
 
+struct TritonAuxiliaryArguments {
+  hipDeviceptr_t global_scratch = 0;
+  hipDeviceptr_t profile_scratch = 0;
+};
+
 }
 
 #endif

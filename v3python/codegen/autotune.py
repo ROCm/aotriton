@@ -244,10 +244,12 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
                     fmt_val = bind.document_conditional_value()
                 assign = '// ' + assign + f' as constexpr {fmt_val}'
             stmt.append(assign)
-        stmt.append('CAST(global_scratch)')
+        stmt.append('CAST(&aux.global_scratch),')
+        stmt.append('CAST(&aux.profile_scratch)')
         pfx = '  return { '
         join = '\n' + ' ' * len(pfx)
         sfx = '         };'
+        # Do NOT join with ','. There are comment text after the parameter.
         src = pfx + join.join(stmt) + '\n' + sfx
         return pp_registry.register(assign_skips, src)
 
