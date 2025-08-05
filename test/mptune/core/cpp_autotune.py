@@ -367,7 +367,7 @@ def cpp_autotune_gen(extarg_factory, sub_extarg_accessor,
                                                cur_kig,
                                                FEWER_KERNEL=FEWER_KERNEL):
             kernel_called = True
-            print(f'atr {ret}')
+            # print(f'atr {ret}')
             yield cur_name, ret, deepcopy(kig_dict)
         if kernel_called:
             integrity = integrity_checker()
