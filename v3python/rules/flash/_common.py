@@ -138,10 +138,4 @@ class FlashKernel(KernelDescription):
 
 class FlashBwdKernel(FlashKernel):
     def is_functional_disabled(self, functional):
-        # FIXME: workaround a bug
-        # TODO: per-arch XXXXMetadata::get_BLOCK_DMODEL_choices
-        if functional.arch == 'gfx950':
-            hdim = check_value(functional, 'BLOCK_DMODEL')
-            if hdim in [48, 80]:
-                return True
         return super().is_functional_disabled(functional)
