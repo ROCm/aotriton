@@ -83,7 +83,9 @@ of AOTriton. The compatibility matrix is shown below
    cannot be built with PyTorch 2.7 due to the integrity check in the
    integration code.
 5. PyTorch 2.8 will lose sliding window attention (SWA) support if built with
-   0.9b since this feature is newly added in 0.10b.
+   0.9b since this feature is newly added in 0.10b. In addition,
+   https://github.com/pytorch/pytorch/pull/159773 is needed to properly
+   integrate SWA into PyTorch.
 
 ROCm's PyTorch release/\<version\> branch is slightly different from PyTorch
 upstream and may support more recent version of AOTriton
