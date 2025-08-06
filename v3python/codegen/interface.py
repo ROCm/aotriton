@@ -74,20 +74,22 @@ class InterfaceGenerator(ABC):
         if args.build_for_tuning_second_pass:
             return
 
-        if all_functionals:
-            # shim code phase
-            # Must be after autotune due to common functions needed by autotune is
-            # generated in autotune module
-            shim_path = args.build_dir / iface.FAMILY
-            shim_path.mkdir(parents=True, exist_ok=True)
-            shim_fn = self.PFX + '.' + iface.NAME + '.h'
-            fullfn = shim_path / shim_fn
-            with LazyFile(fullfn) as fout:
-                self.write_shim_header(all_functionals, fout)
-            with LazyFile(fullfn.with_suffix('.cc')) as fout:
-                self.write_shim_source(all_functionals, fout)
-            self._shim_files.append(fullfn)
-            self._shim_files.append(fullfn.with_suffix('.cc'))
+        # shim code phase
+        # Must be after autotune due to common functions needed by autotune is
+        # generated in autotune module
+        shim_path = args.build_dir / iface.FAMILY
+        shim_path.mkdir(parents=True, exist_ok=True)
+        shim_fn = self.PFX + '.' + iface.NAME + '.h'
+        fullfn = shim_path / shim_fn
+        with LazyFile(fullfn) as fout:
+            self.write_shim_header(all_functionals, fout)
+        # Note: should always generate the .cc file regardless
+        # AOTRITON_TARGET_ARCH has affine kernel, otherwise member functions of
+        # affine kernel context will be undefined
+        with LazyFile(fullfn.with_suffix('.cc')) as fout:
+            self.write_shim_source(all_functionals, fout)
+        self._shim_files.append(fullfn)
+        self._shim_files.append(fullfn.with_suffix('.cc'))
 
     @abstractmethod
     def create_sub_generator(self, functional : Functional):

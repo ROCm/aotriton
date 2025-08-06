@@ -83,7 +83,8 @@ class AffineGenerator(InterfaceGenerator):
         shared_iface_family = akdesc.SHARED_IFACE.FAMILY if shared_iface else akdesc.FAMILY
         validator_defs, capability_table_entries = self.codegen_capability_table(functionals)
         meta_cos = self.codegen_compact_kernels()
-        packed_string = self._this_repo.get_data('affine_kernel_packed_string')
+        packed_string = self._this_repo.get_data('affine_kernel_packed_string', return_none=True)
+        packed_string = '""' if packed_string is None else packed_string
         d = {
             'shared_iface'        : 1 if shared_iface else 0,
             'shared_iface_family' : shared_iface_family,
@@ -144,7 +145,9 @@ class AffineGenerator(InterfaceGenerator):
         return ALIGN.join(stmt) + ';\n'
 
     def codegen_compact_kernels(self):
-        dic = self._this_repo.get_data('affine_kernel_as_triton_kernel')
+        dic = self._this_repo.get_data('affine_kernel_as_triton_kernel', return_none=True)
+        if dic is None:
+            return ''
         meta_cos = []
         # TODO, Need something like ksignature for affine kernel
         for (arch, stem_co_name), (co_index, (offset_arch, offset_co)) in dic.items():
@@ -161,7 +164,9 @@ class AffineGenerator(InterfaceGenerator):
         return ALIGN.join(meta_cos)
 
     def codegen_capability_table(self, functionals):
-        validator_registry = self._this_repo.get_data('validator_function')
+        validator_registry = self._this_repo.get_data('validator_function', return_none=True)
+        if validator_registry is None:
+            return '', ''
         table_entries = {}
         validator_defs = []
         for fsrc, item in validator_registry.items():
