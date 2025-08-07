@@ -8,7 +8,6 @@ import io
 import shutil
 import argparse
 from pathlib import Path
-import os
 
 SOURCE_PATH = Path(__file__).resolve()
 CSRC = (SOURCE_PATH.parent.parent / 'v2src').absolute()
@@ -259,10 +258,9 @@ class SourceBuilder(MakefileSegmentGenerator):
         self._objpaths = []
 
     def write_body(self):
-        template_path = Path('template')
         for cfn in self._srcdir.rglob("*.cc"):
             rpath = cfn.relative_to(self._srcdir)
-            if template_path in rpath.parents:
+            if 'template/' in str(rpath):
                 print(f'Skip {rpath=}')
                 continue
             ofn = (self._outdir / rpath).with_suffix('.o')
