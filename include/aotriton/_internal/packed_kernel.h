@@ -21,7 +21,7 @@ struct AKS2_Metadata;
 
 class PackedKernel {
 public:
-  static PackedKernelPtr open(PathStringView package_path);
+  static PackedKernelPtr open(pstring_view package_path);
   PackedKernel(int fd);
   ~PackedKernel();
   hipError_t status() const {
@@ -32,7 +32,7 @@ public:
 
 private:
   static std::shared_mutex registry_mutex_;
-  static std::unordered_map<PathStringView, PackedKernelPtr> registry_;
+  static std::unordered_map<pstring_view, PackedKernelPtr> registry_;
   // Note: do NOT drop the decompressed directory, its content is used by
   //       the unordered_map directory_
   std::vector<uint8_t> decompressed_content_;

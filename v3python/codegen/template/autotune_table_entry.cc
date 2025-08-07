@@ -33,7 +33,7 @@ static PerfFields image_perf_list [] = {
 };
 
 // u8R generates char8_t which is poorly supported almost everywhere.
-constexpr PathStringView PACKAGE_PATH
+constexpr pstring_view PACKAGE_PATH
 #if defined(_WIN32)
 { LR"xyzw([[package_path]])xyzw" };
 #else

@@ -61,7 +61,7 @@ class RootGenerator(object):
 
         with LazyFile(args.build_dir / 'Bare.shim') as shimfile:
             for shim in shims:
-                print(str(shim.absolute()), file=shimfile)
+                print(shim.absolute().as_posix(), file=shimfile)
         if args.noimage_mode:
             return
         # TODO: Support Cluter Functionals

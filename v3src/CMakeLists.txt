@@ -191,16 +191,9 @@ if(AOTRITON_NAME_SUFFIX)
 endif()
 message(STATUS "AOTRITON_SHIM_FLAGS ${AOTRITON_SHIM_FLAGS}")
 
-file(STRINGS "${AOTRITON_V2_BUILD_DIR}/Bare.shim" SHIM_CC_STRINGS ENCODING UTF-8)
-# Convert `SHIM_CC_STRINGS` from list of STRINGs to list of PATHs so that
-# back slashes are property interpreted on Windows
-foreach(p IN LISTS SHIM_CC_STRINGS)
-  get_filename_component(p_path "${p}" ABSOLUTE)
-  list(APPEND SHIM_CC_FILES "${p_path}")
-endforeach()
+file(STRINGS "${AOTRITON_V2_BUILD_DIR}/Bare.shim" SHIM_CC_FILES ENCODING UTF-8)
 
 aux_source_directory(. CC_FILES)
-
 aux_source_directory(flash/ FLASH_CC_FILES)
 add_library(aotriton_v2 SHARED ${SHIM_CC_FILES} ${CC_FILES} ${FLASH_CC_FILES})
 set_target_properties(aotriton_v2 PROPERTIES LINKER_LANGUAGE CXX)

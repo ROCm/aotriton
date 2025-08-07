@@ -49,10 +49,10 @@ locate_aotriton_images() {
 namespace AOTRITON_NS {
 
 std::shared_mutex PackedKernel::registry_mutex_;
-std::unordered_map<PathStringView, PackedKernelPtr> PackedKernel::registry_;
+std::unordered_map<pstring_view, PackedKernelPtr> PackedKernel::registry_;
 
 PackedKernelPtr
-PackedKernel::open(PathStringView package_path) {
+PackedKernel::open(pstring_view package_path) {
   {
     // Fast path
     std::shared_lock lock(registry_mutex_);

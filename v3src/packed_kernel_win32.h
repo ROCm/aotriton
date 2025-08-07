@@ -41,7 +41,7 @@ static std::wstring utf8_to_wide(const std::string& utf8_str) {
 // Helper function to add long path prefix for Windows
 static std::wstring add_long_path_prefix(const std::wstring& path) {
     // Regular paths - add \\?\ prefix
-    return L"\\\\?\\" + path;
+    return LR"(\\?\)" + path;
 }
 
 // Convert HANDLE to int for our interface

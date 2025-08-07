@@ -60,7 +60,7 @@ struct [[context_class_name]] {
 
     // Kernel locator
     std::string_view affine_kernel_function_name;
-    PathStringView package_path;
+    pstring_view package_path;
     std::string_view arch_name;
     // Note to save ELF space, this object is constructed on the fly.
     const char* _debug_kernel_name = nullptr;
