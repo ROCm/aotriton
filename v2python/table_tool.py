@@ -30,7 +30,7 @@ def parse():
     p.add_argument('-k', '--kernel_family', type=str, help='Kernel family')
     p.add_argument('-v', '--verbose', action='store_true', help='Verbose')
     p.add_argument('--action', type=str, required=False, default='pipejson',
-                   choices=['pipejson', 'createtableonly', 'dumpcsv', 'loadcsv', 'rawjson', 'rawsc'],
+                   choices=['pipejson', 'createtableonly', 'dumpcsv', 'loadcsv', 'rawjson', 'rawjson_fudge_check', 'rawsc'],
                    help='Action to perform. pipejson means directly inserting json objects into the database. rawjson means aggregating the raw profiling log (generated from the raw cpptune json objects) and insert the best kernel to database.')
     p.add_argument('--table_name', type=str, help='Table to dump/load')
     p.add_argument('--table_file', type=str, help='CSV file of dump/load')
@@ -49,6 +49,7 @@ def parse():
                    select fatest kernels within a subset of kernel whose target
                    fudge factor is smaller than T * "best target fudge factors".
                    ''')
+    p.add_argument('--max_fudge_factor', type=float, default=100.0)
     p.add_argument('--sc_report', type=str, default=None, help='Write san check results to this JSON file. Required for --action rawsc')
     args = p.parse_args()
     if args.action == 'rawsc':
@@ -97,7 +98,7 @@ class PerKernelResult(object):
         #        resolution for this (use sum of target_fudge_factors?)
         return { tn : max(1.0, np.min(tfts[tn])) for tn in self.valid_out_tensors }
 
-    def get_optimal_kernel(self, fudge_factor_tolerance, allow_no_acceptable=False):
+    def get_optimal_kernel(self, fudge_factor_tolerance, max_fudge_factor, allow_no_acceptable=False):
         best_tft = self.get_most_accurate_kernel()
         if allow_no_acceptable and best_tft is None:
             return None
@@ -113,7 +114,7 @@ class PerKernelResult(object):
             adiffs = j['adiffs']
             if adiffs is None or self.any_nan(adiffs):
                 return False
-            fits = { tn : j['target_fudge_factors'][tn] < fft * best_tft[tn] for tn in self.valid_out_tensors }
+            fits = { tn : j['target_fudge_factors'][tn] < min(max_fudge_factor, fft * best_tft[tn]) for tn in self.valid_out_tensors }
             # print(f'{fits=}')
             return all(fits.values())
         acceptables = list(filter(is_acceptable, self._jarray))
@@ -150,7 +151,21 @@ class PerKernelResult(object):
                 continue
             klass.KERNEL_MAX_FUDGE_FACTORS[tn] = max(klass.KERNEL_MAX_FUDGE_FACTORS[tn], otff)
 
-class Pkr_AttnFwd(PerKernelResult):
+class FAPkr(PerKernelResult):
+    def entry_from_json(self):
+        head = self._jarray[0]
+        inputs = head['inputs']
+        d = {'arch' : head['arch']}
+        d['causal_type'] = inputs['CAUSAL_TYPE']
+        d['d_head'] = inputs['BLOCK_DMODEL']
+        d['dropout_p'] = 0.5 if inputs['ENABLE_DROPOUT'] else 0.0
+        d['dtype'] = inputs['Q_dtype'].removeprefix('torch.')
+        d['bias_type'] = inputs['BIAS_TYPE']
+        d['seqlen_q'] = inputs['Max_seqlen_q']
+        d['seqlen_k'] = inputs['Max_seqlen_k']
+        return json.dumps(d)
+
+class Pkr_AttnFwd(FAPkr):
     KERNEL_NAME = 'attn_fwd'
     KERNEL_OUT_TENSORS = ['out']
 
@@ -160,7 +175,7 @@ class Pkr_AttnFwd(PerKernelResult):
                 del optimal['inputs'][key]
         return optimal
 
-class Pkr_BwdKernelDkDv(PerKernelResult):
+class Pkr_BwdKernelDkDv(FAPkr):
     KERNEL_NAME = 'bwd_kernel_dk_dv'
     KERNEL_OUT_TENSORS = ['dk', 'dv']
 
@@ -170,7 +185,7 @@ class Pkr_BwdKernelDkDv(PerKernelResult):
                 del optimal['inputs'][key]
         return optimal
 
-class Pkr_BwdKernelDq(PerKernelResult):
+class Pkr_BwdKernelDq(FAPkr):
     KERNEL_NAME = 'bwd_kernel_dq'
     KERNEL_OUT_TENSORS = ['dq', 'db']
 
@@ -187,7 +202,7 @@ class Pkr_BwdKernelDq(PerKernelResult):
 
     remove_unused = Pkr_BwdKernelDkDv.remove_unused
 
-class Pkr_FusedBwdKernel(PerKernelResult):
+class Pkr_FusedBwdKernel(FAPkr):
     KERNEL_NAME = 'bwd_kernel_fuse'
     KERNEL_OUT_TENSORS = ['dk', 'dv', 'dq', 'db']
     KERNEL_OUT_TENSORS_NOBIAS = ['dk', 'dv', 'dq', 'db']
@@ -471,11 +486,12 @@ class TuningDatabase(object):
         warned = False
         for pkr in self.pkr_database.values():
             pkr.conclude()
-            opti = pkr.get_optimal_kernel(self._args.fudge_factor_tolerance, allow_no_acceptable=True)
+            opti = pkr.get_optimal_kernel(self._args.fudge_factor_tolerance, self._args.max_fudge_factor, allow_no_acceptable=True)
             if opti is None:
                 if not warned:
                     print('\nAcceptables is empty. Re-run tests on missing entries\n')
                     warned = True
+                print("\nTUNE_FLASH --entry_from_json Item: ", pkr.entry_from_json())
                 continue
             pkr.update_max_fudge_factor(opti)
             yield opti
@@ -484,7 +500,7 @@ class TuningDatabase(object):
         need_rerun = set()
         for pkr in self.pkr_database.values():
             pkr.conclude()
-            opti = pkr.get_optimal_kernel(self._args.fudge_factor_tolerance, allow_no_acceptable=True)
+            opti = pkr.get_optimal_kernel(self._args.fudge_factor_tolerance, self._args.max_fudge_factor, allow_no_acceptable=True)
             if opti is None:
                 need_rerun.add(pkr.tid)
         sc_report = {
@@ -509,32 +525,36 @@ def do_main(args, db, fin):
         for line in fin:
             db.upsert(line, create_table_only=create_table_only)
         print("[table_tool] Input closed, exiting", file=sys.stderr)
-    elif args.action == 'rawjson':
+    elif args.action in ['rawjson', 'rawjson_fudge_check']:
         db.init_aggregation()
         pbar = tqdm(total=fin_size, desc='Processed bytes')
         for line in fin:
             db.aggregate(line)
             pbar.update(len(line))  # FIXME: support UTF-8 which len(line) != number of bytes
-        pbar = tqdm(total=len(db.pkr_database), desc='Processed kernels')
-        with db._conn:  # Transaction
+        if args.action == 'rawjson_fudge_check':
             for rawjson in db.aggregation_results():
-                if rawjson is None:
-                    continue
-                db.upsert_json(rawjson, create_table_only=False)
-                # Dispatcher v3 should nullified such cases
-                # if 'CAUSAL' in rawjson['inputs']:
-                #     causal = rawjson['inputs']['CAUSAL']
-                # elif 'CAUSAL_TYPE' in rawjson['inputs']:
-                #     causal = rawjson['inputs']['CAUSAL_TYPE']
-                # else:
-                #     causal = False
-                ## Handles CAUSAL=True and BIAS_TYPE=1 case
-                ## No real use cases, just let the build system compile things
-                #if causal == True and rawjson['inputs']['BIAS_TYPE'] == 0:
-                #    rj2 = deepcopy(rawjson)
-                #    rj2['inputs']['BIAS_TYPE'] = 1
-                #    db.upsert_json(rj2, create_table_only=False)
-                pbar.update(1)
+                pass
+        else:
+            pbar = tqdm(total=len(db.pkr_database), desc='Processed kernels')
+            with db._conn:  # Transaction
+                for rawjson in db.aggregation_results():
+                    if rawjson is None:
+                        continue
+                    db.upsert_json(rawjson, create_table_only=False)
+                    # Dispatcher v3 should nullified such cases
+                    # if 'CAUSAL' in rawjson['inputs']:
+                    #     causal = rawjson['inputs']['CAUSAL']
+                    # elif 'CAUSAL_TYPE' in rawjson['inputs']:
+                    #     causal = rawjson['inputs']['CAUSAL_TYPE']
+                    # else:
+                    #     causal = False
+                    ## Handles CAUSAL=True and BIAS_TYPE=1 case
+                    ## No real use cases, just let the build system compile things
+                    #if causal == True and rawjson['inputs']['BIAS_TYPE'] == 0:
+                    #    rj2 = deepcopy(rawjson)
+                    #    rj2['inputs']['BIAS_TYPE'] = 1
+                    #    db.upsert_json(rj2, create_table_only=False)
+                    pbar.update(1)
         for klass in KERNEL_NAME_TO_FACTORY.values():
             print(f'{klass.KERNEL_MAX_FUDGE_FACTORS=}')
     elif args.action == 'rawsc':
