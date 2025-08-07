@@ -200,11 +200,6 @@ foreach(p IN LISTS SHIM_CC_STRINGS)
 endforeach()
 
 aux_source_directory(. CC_FILES)
-if(WIN32)
-  list(REMOVE_ITEM CC_FILES "./packed_kernel_unix.cc")
-else()
-  list(REMOVE_ITEM CC_FILES "./packed_kernel_win32.cc")
-endif()
 
 aux_source_directory(flash/ FLASH_CC_FILES)
 add_library(aotriton_v2 SHARED ${SHIM_CC_FILES} ${CC_FILES} ${FLASH_CC_FILES})
