@@ -28,6 +28,8 @@ system, `ninja install` will run the whole build process unconditionally.
   - Only `ninja >= 1.11` is tested
 * `liblzma`
   - Common names are `liblzma-dev` or `xz-devel`.
+* [`dlfcn-win32`](https://github.com/dlfcn-win32/dlfcn-win32) (**WINDOWS ONLY**)
+  - Windows version of the `dl` library.
 
 ## Generation
 

@@ -209,18 +209,6 @@ if(AOTRITON_ENABLE_SUFFIX)
   set_target_properties(aotriton_v2 PROPERTIES OUTPUT_NAME "aotriton${AOTRITON_NAME_SUFFIX}_v2")
 endif()
 
-include(GenerateExportHeader)
-generate_export_header(aotriton_v2
-  BASE_NAME aotriton
-  EXPORT_MACRO_NAME AOTRITON_API
-  EXPORT_FILE_NAME ${CMAKE_CURRENT_BINARY_DIR}/../include/aotriton/export.h
-)
-
-install(FILES ${CMAKE_CURRENT_BINARY_DIR}/../include/aotriton/export.h
-
-
-  DESTINATION ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_INCLUDEDIR}/aotriton)
-
 target_include_directories(aotriton_v2 PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_LIST_DIR}/../include>)
 # for <build>/include/aotriton/config.h. Code should use <aotriton/config.h>
 target_include_directories(aotriton_v2 PUBLIC $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/include>)

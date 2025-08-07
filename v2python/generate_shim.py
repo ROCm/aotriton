@@ -259,10 +259,10 @@ class SourceBuilder(MakefileSegmentGenerator):
         self._objpaths = []
 
     def write_body(self):
-        template_rpath = 'template' + os.path.sep
+        template_path = Path('template')
         for cfn in self._srcdir.rglob("*.cc"):
             rpath = cfn.relative_to(self._srcdir)
-            if template_rpath in str(rpath):
+            if template_path in rpath.parents:
                 print(f'Skip {rpath=}')
                 continue
             ofn = (self._outdir / rpath).with_suffix('.o')

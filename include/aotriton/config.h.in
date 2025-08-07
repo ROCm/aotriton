@@ -19,8 +19,6 @@
 #cmakedefine AOTRITON_VERSION_PATCH @AOTRITON_VERSION_PATCH@
 #cmakedefine AOTRITON_GIT_SHA1 @AOTRITON_GIT_SHA1@
 
-#include <aotriton/export.h>
-
 #ifdef _MSC_VER
 #define AOTRITON_API __declspec(dllexport)
 #else
