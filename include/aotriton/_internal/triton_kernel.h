@@ -13,6 +13,11 @@
 #include <unordered_map>
 #include <vector>
 
+#include <filesystem>
+
+using pstring_type = std::filesystem::path::string_type;
+using pstring_view = std::basic_string_view<std::filesystem::path::value_type>;
+
 namespace AOTRITON_NS {
 
 struct TritonKernelCompactMeta {
@@ -80,7 +85,7 @@ public:
                     const char* copt);
 
   hipError_t invoke(std::string_view kernel_name,
-                    std::string_view package_path,
+                    pstring_view package_path,
                     std::string_view func_name,
                     std::string_view arch_name,
                     dim3 grid,
@@ -90,7 +95,7 @@ public:
 #endif
                     hipStream_t stream);
   hipError_t direct_invoke(std::string_view mangled_kernel_function_name,
-                           std::string_view package_path,
+                           pstring_view package_path,
                            std::string_view func_name,
                            std::string_view arch_name,
                            dim3 grid,
@@ -109,7 +114,7 @@ private:
   std::tuple<hipFunction_t, hipError_t> load_for_device(int device_id,
                                                         std::string_view kernel_function_name,
                                                         std::string_view stem_name,
-                                                        std::string_view package_path);
+                                                        pstring_view package_path);
   hipFunction_t cfind_function(int device_id) const;
 
   uint64_t blake2b_; // TODO: sanity check of assemblied stem name
@@ -127,7 +132,7 @@ private:
 
   Essentials essentials_;
   bool kernel_loaded_ = false;
-  void decompress_kernel(std::string_view package_path,
+  void decompress_kernel(pstring_view package_path,
                          std::string_view stem_name);
   std::shared_ptr<PackedKernel> packed_kernel_ = nullptr;
   std::shared_mutex packedkernel_mutex_;

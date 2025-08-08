@@ -43,13 +43,17 @@ class RootGenerator(object):
             hsacos = ksg.this_repo.get_data('hsaco')
             hsaco_for_kernels.append((k, hsacos))
             shims += ksg.shim_files
+        # TODO: Fix this for Windows
+        # On Windows, you get "KeyError: 'validator_function'"
+        # See discussion in https://discord.com/channels/1239631572886491286/1401853302139912222/1401862203845378201
         # print(f'{affine_kernels=}')
         for ak in affine_kernels:
             log(lambda : f'{ak.__class__=}')
             aksg = AffineGenerator(self._args, ak, parent_repo=None)
             aksg.generate()
-            asms = aksg.this_repo.get_data('asms')
-            asms_for_kernels.append((ak, asms))
+            asms = aksg.this_repo.get_data('asms', return_none=True)
+            if asms is not None:
+                asms_for_kernels.append((ak, asms))
             shims += aksg.shim_files
 
         if args.build_for_tuning_second_pass:
@@ -57,7 +61,7 @@ class RootGenerator(object):
 
         with LazyFile(args.build_dir / 'Bare.shim') as shimfile:
             for shim in shims:
-                print(str(shim.absolute()), file=shimfile)
+                print(shim.absolute().as_posix(), file=shimfile)
         if args.noimage_mode:
             return
         # TODO: Support Cluter Functionals

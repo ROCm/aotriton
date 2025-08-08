@@ -127,7 +127,7 @@ attn_bwd(const attn_bwd_params& in,
     .CAUSAL_TYPE = in.causal_type,
     .ENABLE_DROPOUT = in.dropout_p > 0.0,
     .PADDED_HEAD = head_dim != head_dim_rounded,
-    .BIAS_TYPE = bool(in.B) ? 1 : 0,
+    .BIAS_TYPE = static_cast<int8_t>(bool(in.B) ? 1 : 0),
   };
   OpAttnBwdContext context;
   context.params = &params;

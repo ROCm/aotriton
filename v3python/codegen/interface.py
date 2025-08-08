@@ -83,6 +83,9 @@ class InterfaceGenerator(ABC):
         fullfn = shim_path / shim_fn
         with LazyFile(fullfn) as fout:
             self.write_shim_header(all_functionals, fout)
+        # Note: should always generate the .cc file regardless
+        # AOTRITON_TARGET_ARCH has affine kernel, otherwise member functions of
+        # affine kernel context will be undefined
         with LazyFile(fullfn.with_suffix('.cc')) as fout:
             self.write_shim_source(all_functionals, fout)
         self._shim_files.append(fullfn)

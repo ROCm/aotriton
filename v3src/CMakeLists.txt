@@ -14,7 +14,7 @@ execute_process(COMMAND ${CMAKE_COMMAND} -E make_directory "${AOTRITON_KERNEL_ST
 
 execute_process(COMMAND ${CMAKE_COMMAND}
   -E env VIRTUAL_ENV=${VENV_DIR}
-  "${VENV_DIR}/bin/python" -m v3python.gpu_targets
+  "${VENV_BIN_PYTHON}" -m v3python.gpu_targets
   --target_arch ${AOTRITON_TARGET_ARCH}
   --target_gpus ${AOTRITON_OVERRIDE_TARGET_GPUS}
   WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/.."
@@ -50,6 +50,11 @@ if(AOTRITON_NOIMAGE_MODE)
   list(APPEND GENERATE_OPTION "--noimage_mode")
 endif()
 
+if(WIN32)
+  find_package(dlfcn-win32 REQUIRED)
+  set(CMAKE_DL_LIBS dlfcn-win32::dl)
+endif()
+
 if(AOTRITON_ENABLE_FP32_INPUTS)
   set(AOTRITON_ENABLE_FP32 1)
 else()
@@ -61,7 +66,7 @@ execute_process(
 COMMAND ${CMAKE_COMMAND}
 -E env VIRTUAL_ENV=${VENV_DIR}
 AOTRITON_ENABLE_FP32=${AOTRITON_ENABLE_FP32}
-"${VENV_DIR}/bin/python" -m v3python.generate
+"${VENV_BIN_PYTHON}" -X utf8 -m v3python.generate
 --target_gpus ${EFFECTIVE_TARGET_GPUS}
 --build_dir "${AOTRITON_V2_BUILD_DIR}"
 ${GENERATE_OPTION}
@@ -97,7 +102,7 @@ if(NOT AOTRITON_NOIMAGE_MODE)
       TRITON_CACHE_DIR=${CMAKE_BINARY_DIR}/triton-cache
       TRITON_F32_DEFAULT="ieee"
       TRITON_STORE_BINARY_ONLY=1
-      "${VENV_DIR}/bin/python"
+      "${VENV_BIN_PYTHON}"
       "${AOTRITON_COMPILER}"
       "${SRC}"
       "--kernel_name" "${KNAME}"
@@ -137,7 +142,7 @@ if(NOT AOTRITON_NOIMAGE_MODE)
       # message(STATUS "Add AKS2 ${AKS2}")
       add_custom_command(OUTPUT "${AKS2}"
         COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
-        "${VENV_DIR}/bin/python"
+        "${VENV_BIN_PYTHON}"
         -m v3python.aks2
         -o "${AKS2}"
         ${AKS2_OPTIONS}
@@ -153,9 +158,11 @@ if(NOT AOTRITON_NOIMAGE_MODE)
   set(AKS2_OPTIONS "")
   ADD_FROM_CLUSTER_RULES()
   # Affine kernels
-  file(STRINGS "${AOTRITON_V2_BUILD_DIR}/Affine.cluster" CLUSTER_RULES ENCODING UTF-8)
-  set(AKS2_OPTIONS "--ignore_json")
-  ADD_FROM_CLUSTER_RULES()
+  if(EXISTS "${AOTRITON_V2_BUILD_DIR}/Affine.cluster")
+    file(STRINGS "${AOTRITON_V2_BUILD_DIR}/Affine.cluster" CLUSTER_RULES ENCODING UTF-8)
+    set(AKS2_OPTIONS "--ignore_json")
+    ADD_FROM_CLUSTER_RULES()
+  endif()
   add_custom_target(aotriton_kernel_storage_v3 ALL DEPENDS ${ALL_AKS2})
 endif(NOT AOTRITON_NOIMAGE_MODE)
 
@@ -167,7 +174,7 @@ if(AOTRITON_BUILD_FOR_TUNING)
     COMMAND ${CMAKE_COMMAND}
     -E env VIRTUAL_ENV=${VENV_DIR}
     AOTRITON_ENABLE_FP32=${AOTRITON_ENABLE_FP32}
-    "${VENV_DIR}/bin/python" -m v3python.generate
+    "${VENV_BIN_PYTHON}" -m v3python.generate
     --target_gpus ${EFFECTIVE_TARGET_GPUS}
     --build_dir "${AOTRITON_V2_BUILD_DIR}"
     ${GENERATE_OPTION}
@@ -189,7 +196,8 @@ file(STRINGS "${AOTRITON_V2_BUILD_DIR}/Bare.shim" SHIM_CC_FILES ENCODING UTF-8)
 aux_source_directory(. CC_FILES)
 aux_source_directory(flash/ FLASH_CC_FILES)
 add_library(aotriton_v2 SHARED ${SHIM_CC_FILES} ${CC_FILES} ${FLASH_CC_FILES})
-set(AOTRITON_LIBRARY_FILE libaotriton${AOTRITON_NAME_SUFFIX}_v2.so)
+set_target_properties(aotriton_v2 PROPERTIES LINKER_LANGUAGE CXX)
+target_link_libraries(aotriton_v2 PRIVATE ${CMAKE_DL_LIBS})
 if(AOTRITON_ENABLE_SUFFIX)
   set_target_properties(aotriton_v2 PROPERTIES OUTPUT_NAME "aotriton${AOTRITON_NAME_SUFFIX}_v2")
 endif()
@@ -199,7 +207,9 @@ target_include_directories(aotriton_v2 PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_
 target_include_directories(aotriton_v2 PUBLIC $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/include>)
 target_include_directories(aotriton_v2 INTERFACE $<INSTALL_INTERFACE:include>)
 target_include_directories(aotriton_v2 PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
-target_compile_options(aotriton_v2 PRIVATE -fPIC)
+set_target_properties(aotriton_v2 PROPERTIES
+  POSITION_INDEPENDENT_CODE ON
+)
 if(AOTRITON_BUILD_FOR_TUNING)
   target_compile_definitions(aotriton_v2 PRIVATE -DAOTRITON_BUILD_FOR_TUNING=1)
   add_dependencies(aotriton_v2 aotriton_v2_regen_shim)
@@ -211,22 +221,24 @@ target_link_libraries(aotriton_v2 PUBLIC hip::host hip::amdhip64)
 set_target_properties(aotriton_v2 PROPERTIES VERSION
   ${AOTRITON_VERSION_MAJOR_INT}.${AOTRITON_VERSION_MINOR_INT}.${AOTRITON_VERSION_PATCH_INT})
 
-execute_process(
-  COMMAND ${CMAKE_COMMAND}
-  -E env VIRTUAL_ENV=${VENV_DIR}
-  "${VENV_DIR}/bin/python" -m v3python.ld_script
-  -o "${AOTRITON_V2_BUILD_DIR}/set_aotriton_version.ld"
-  ${AOTRITON_VERSION_MAJOR_INT}
-  ${AOTRITON_VERSION_MINOR_INT}
-  ${AOTRITON_VERSION_PATCH_INT}
-  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
-  COMMAND_ERROR_IS_FATAL ANY
-)
-target_link_options(aotriton_v2 PRIVATE
-                    -T "${AOTRITON_V2_BUILD_DIR}/set_aotriton_version.ld")
-# Otherwise the binary size blows up
-# FIXME: Properly export symbols
-set_target_properties(aotriton_v2 PROPERTIES CXX_VISIBILITY_PRESET hidden)
+if(NOT WIN32)
+  execute_process(
+    COMMAND ${CMAKE_COMMAND}
+    -E env VIRTUAL_ENV=${VENV_DIR}
+    "${VENV_BIN_PYTHON}" -m v3python.ld_script
+    -o "${AOTRITON_V2_BUILD_DIR}/set_aotriton_version.ld"
+    ${AOTRITON_VERSION_MAJOR_INT}
+    ${AOTRITON_VERSION_MINOR_INT}
+    ${AOTRITON_VERSION_PATCH_INT}
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
+    COMMAND_ERROR_IS_FATAL ANY
+  )
+  target_link_options(aotriton_v2 PRIVATE
+                      -T "${AOTRITON_V2_BUILD_DIR}/set_aotriton_version.ld")
+endif()
+  # Otherwise the binary size blows up
+  # FIXME: Properly export symbols
+  set_target_properties(aotriton_v2 PROPERTIES CXX_VISIBILITY_PRESET hidden)
 
 include(GNUInstallDirs)
 message("CMAKE_INSTALL_INCLUDEDIR ${CMAKE_INSTALL_INCLUDEDIR}")

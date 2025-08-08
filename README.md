@@ -28,6 +28,8 @@ system, `ninja install` will run the whole build process unconditionally.
   - Only `ninja >= 1.11` is tested
 * `liblzma`
   - Common names are `liblzma-dev` or `xz-devel`.
+* [`dlfcn-win32`](https://github.com/dlfcn-win32/dlfcn-win32) (**WINDOWS ONLY**)
+  - Windows version of the `dl` library.
 
 ## Generation
 
@@ -104,3 +106,12 @@ upstream and may support more recent version of AOTriton
 
 AOTriton's point releases maintain ABI compatibility and can be used as drop-in
 replacement of their corresponding feature releases.
+
+### Windows Limitations
+
+1. AOTriton on Windows currently isn't able to build kernel images by itself.
+   This is because triton is not officially available on Windows yet.
+2. To build on Windows, set AOTRITON_NOIMAGE_MODE and use the `aotriton.images`
+   folder from a Linux build.
+3. The Windows version uses dlfcn-win32 which doesn't support file paths with
+   unicode characters in them. A fix for this is planned.

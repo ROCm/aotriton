@@ -47,7 +47,7 @@ dim3 AttnFwdContext::grid_calculator() const {
     uint32_t from_cu = params->Num_CU * this->GRID_CU_MULTIP;
     uint32_t from_in = nblocks * params->Num_head_q * params->Batch;
     dim3 grid {
-      std::min(from_cu, from_in),
+      uint32_t(std::min(from_cu, from_in)),
       1,
       1,
     };

@@ -8,11 +8,15 @@
 #include <cassert>
 #include <dlfcn.h>
 #include <errno.h>
-#include <fcntl.h>
 #include <filesystem>
 #include <iostream>
 #include <lzma.h>
-#include <unistd.h>
+
+#if defined(_WIN32)
+#include "packed_kernel_win32.h"
+#else
+#include "packed_kernel_unix.h"
+#endif
 
 #ifdef NDEBUG
 #define AOTRITON_KERNEL_VERBOSE 0
@@ -45,10 +49,10 @@ locate_aotriton_images() {
 namespace AOTRITON_NS {
 
 std::shared_mutex PackedKernel::registry_mutex_;
-std::unordered_map<std::string_view, PackedKernelPtr> PackedKernel::registry_;
+std::unordered_map<pstring_view, PackedKernelPtr> PackedKernel::registry_;
 
 PackedKernelPtr
-PackedKernel::open(std::string_view package_path) {
+PackedKernel::open(pstring_view package_path) {
   {
     // Fast path
     std::shared_lock lock(registry_mutex_);
@@ -62,6 +66,7 @@ PackedKernel::open(std::string_view package_path) {
   if (registry_.contains(package_path))
     return registry_[package_path];
   const auto& storage_base = locate_aotriton_images();
+#if !defined(_WIN32)
 #if AOTRITON_KERNEL_VERBOSE
   std::cerr << "open dir " << storage_base << std::endl;
 #endif
@@ -72,23 +77,43 @@ PackedKernel::open(std::string_view package_path) {
   std::cerr << "openat " << rel_path << std::endl;
 #endif
   int aks2fd = ::openat(dirfd, rel_path.c_str(), O_RDONLY);
+#else
+  // Build the full path using filesystem::path
+  fs::path full_path = storage_base / (std::wstring(package_path) + L".aks2");
+  std::string utf8_path;
+  auto u8str = full_path.u8string();
+  utf8_path = std::string(reinterpret_cast<const char*>(u8str.data()), u8str.size());
+
+  int aks2fd = fd_open(utf8_path.c_str());
+#endif
   if (aks2fd < 0) {
 #if AOTRITON_KERNEL_VERBOSE
+#if defined(_WIN32)
+    std::cerr << "open(\"" << utf8_path << "\")" << " failed." << std::endl;
+#else
     std::cerr << "openat(\"" << storage_base << "\", \"" << rel_path << "\")"
               << " failed. errno: " << errno << std::endl;
+#endif
 #endif
     return nullptr;
   }
   auto ret = std::make_shared<PackedKernel>(aks2fd);
-  close(aks2fd);
-  close(dirfd);
+  fd_close(aks2fd);
+#if !defined(_WIN32)
+  fd_close(dirfd);
+#endif
   if (ret->status() == hipSuccess) {
     registry_.emplace(package_path, ret);
     return ret;
   }
 #if AOTRITON_KERNEL_VERBOSE
+#if defined(_WIN32)
+  std::wcerr << L"PackedKernel::open(" << package_path << L") failed."
+            << L" Final status: " << ret->status() << std::endl;
+#else
   std::cerr << "PackedKernel::open(" << package_path << ") failed."
             << " Final status " << ret->status() << std::endl;
+#endif
 #endif
   return nullptr;
 }
@@ -107,7 +132,6 @@ struct AKS2_Metadata {
   uint32_t image_size;
   uint32_t filename_length;
 };
-
 // AKS2 Format
 // -- Uncompressed
 // 4B: AKS2  (AOTriton Kernel Storage version 2)
@@ -125,7 +149,7 @@ struct AKS2_Metadata {
 // N * varlen: Kernel Images (TODO: alignment requirements?)
 PackedKernel::PackedKernel(int fd) {
   AKS2_Header header;
-  auto header_read = ::read(fd, &header, sizeof(AKS2_Header));
+  auto header_read = fd_read(fd, &header, sizeof(AKS2_Header));
   if (header_read == sizeof(AKS2_MAGIC) && std::string_view(header.magic, 4) != AKS2_MAGIC) {
     final_status_ = hipErrorInvalidSource; // Broken at XZ level
     return;
@@ -151,7 +175,7 @@ PackedKernel::PackedKernel(int fd) {
   while (true) {
     if (strm.avail_in == 0) {
       strm.next_in = inbuf;
-      auto rbytes = read(fd, inbuf, AOTRITON_LZMA_BUFSIZ);
+      auto rbytes = fd_read(fd, inbuf, AOTRITON_LZMA_BUFSIZ);
       if (rbytes <= 0) {
         action = LZMA_FINISH;
         break;
@@ -217,7 +241,7 @@ PackedKernel::filter(std::string_view stem_name) const {
   }
   return { kernel_start_ + meta->offset,
            meta->image_size,
-           meta->shared_memory,
+           static_cast<int>(meta->shared_memory),
            dim3 { meta->number_of_threads, 1, 1 } };
 }
 

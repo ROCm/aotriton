@@ -33,7 +33,12 @@ static PerfFields image_perf_list [] = {
 };
 
 // u8R generates char8_t which is poorly supported almost everywhere.
-constexpr std::string_view PACKAGE_PATH { R"xyzw([[package_path]])xyzw" };
+constexpr pstring_view PACKAGE_PATH
+#if defined(_WIN32)
+{ LR"xyzw([[package_path]])xyzw" };
+#else
+{ R"xyzw([[package_path]])xyzw" };
+#endif
 constexpr std::string_view FUNC_NAME { R"xyzw([[func_name]])xyzw" };
 constexpr std::string_view ARCH_NAME { R"xyzw([[arch_name]])xyzw" };
 

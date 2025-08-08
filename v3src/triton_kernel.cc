@@ -85,7 +85,7 @@ void TritonKernel::delayed_init(uint32_t blake2b_lo,
 
 hipError_t
 TritonKernel::invoke(std::string_view kernel_name,
-                     std::string_view package_path,
+                     pstring_view package_path,
                      std::string_view func_name,
                      std::string_view arch_name,
                      dim3 grid,
@@ -140,7 +140,7 @@ TritonKernel::invoke(std::string_view kernel_name,
 
 hipError_t
 TritonKernel::direct_invoke(std::string_view mangled_kernel_function_name,
-                            std::string_view package_path,
+                            pstring_view package_path,
                             std::string_view func_name,
                             std::string_view arch_name,
                             dim3 grid,
@@ -228,7 +228,7 @@ std::tuple<hipFunction_t, hipError_t>
 TritonKernel::load_for_device(int device_id,
                               std::string_view kernel_function_name,
                               std::string_view stem_name,
-                              std::string_view package_path) {
+                              pstring_view package_path) {
   hipJitOption opt[] = { hipJitOptionErrorLogBufferSizeBytes,
                          hipJitOptionErrorLogBuffer,
                          hipJitOptionInfoLogBufferSizeBytes,
@@ -245,7 +245,12 @@ TritonKernel::load_for_device(int device_id,
                      (void*)(uintptr_t)1 };
 
 #if AOTRITON_KERNEL_VERBOSE
+#if defined(_WIN32)
+  std::wcerr << L"Trying to decompress kernel " << package_path;
+  std::cerr << " " << stem_name << std::endl;
+#else
   std::cerr << "Trying to decompress kernel " << package_path << " " << stem_name << std::endl;
+#endif
 #endif
   decompress_kernel(package_path, stem_name);
 #if AOTRITON_KERNEL_VERBOSE
@@ -282,7 +287,7 @@ TritonKernel::get_image_info_iff_decompressed() const {
 // tell if a kernel is loaded, or the kernel image failed to compile and thus
 // does not exists from beginning by testing essentials_.image == nullptr
 void
-TritonKernel::decompress_kernel(std::string_view package_path,
+TritonKernel::decompress_kernel(pstring_view package_path,
                                 std::string_view stem_name) {
   if (kernel_loaded_) {
     return ;
