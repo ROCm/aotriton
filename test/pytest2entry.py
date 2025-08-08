@@ -112,8 +112,19 @@ UT2TR = {
     'test_gqa' : Gqa(),
 }
 
+EPILOG = r'''Script to parse pytest output and generate .cfg file for tune_flash.py.
+Example Usage:
+    COLUMNS=400 BWD_IMPL=0 FOR_RELEASE=2 PYTHONPATH=build-TEST/install_dir/lib/ pytest -rfE test/test_backward.py -v 1>ut_X.out 2>ut_X.err )
+    python test/pytest2entry.py ut_X.out --out pass_X.cfg
+    vim pass_X.cfg  # run :sort u
+    PYTHONPATH=build-TUNE/install_dir/lib/ python test/tune_flash.py --json_file ~/pass_X.json --entry_from_json pass_X.cfg --use_multigpu -1)
+
+Note:
+    COLUMNS=400, -rfE and -v are ALL CRUCIAL to make pytest2entry function correctly.
+'''
+
 def parse():
-    p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    p = argparse.ArgumentParser(formatter_class=argparse.RawDescriptionHelpFormatter, epilog=EPILOG)
     p.add_argument('pytest_outs', help='PLAIN Standard output of pytest. Do NOT use --color=yes', nargs='+')
     p.add_argument('--out', help='Output .cfg file for tune_flash.py --entry_from_json', type=validate_cfg, default=None)
     p.add_argument('--arch', help='arch field in .cfg. Guess from current GPU by default since this tool should be run on the testing machine.', default=NATIVE_ARCH)
