@@ -88,10 +88,28 @@ class RegularBias(Translator):
             # "storage_flip": None if storage == 'False' else (1, 2),
         }
 
+class Gqa(Translator):
+    def parts2cfg(self, parts):
+        bias = 'BiasOff'
+        _bwd, storage, _sm_scale, dtype, dropout_p, causal, seqlen_k, seqlen_q, hdim, _, batch = parts
+        return {
+            "causal_type" : 0 if causal == 'CausalOff' else 1,
+            "d_head" : int(hdim.removeprefix('hdim')),
+            "dropout_p" : float(dropout_p),
+            "dtype" : DTYPE[dtype],
+            "bias_type" : 1 if bias == 'BiasOn' else 0,
+            "seqlen_q" : int(seqlen_q),
+            "seqlen_k" : int(seqlen_k),
+            "nheads" : (16, 8),
+            "batch" : int(batch),       # unread by tune_flash.py, but no harm as well
+            # "storage_flip": None if storage == 'False' else (1, 2),
+        }
+
 UT2TR = {
     'test_irregulars' : Irregulars(),
     'test_regular_bwd' : Regulars(),
     'test_op_bwd_with_matrix_bias' : RegularBias(),
+    'test_gqa' : Gqa(),
 }
 
 def parse():

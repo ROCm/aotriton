@@ -66,6 +66,10 @@ class TunerService(BaseTunerService):
         torch.cuda.empty_cache()
         BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type = tup
         dtype = getattr(torch, dtype)
+        if isinstance(N_HEADS, int):
+            Q_HEADS = K_HEADS = N_HEADS
+        else:
+            Q_HEADS, K_HEADS = N_HEADS
         if CPPTUNE_FLASH_DEFENSIVE_SEQLENS:
             seqlen_q -= 7
             seqlen_k -= 7
@@ -74,7 +78,7 @@ class TunerService(BaseTunerService):
         Create reference dropout_mask
         '''
         if dropout_p > 0.0:
-            rdims = (BATCH, N_HEADS, seqlen_q, seqlen_k)
+            rdims = (BATCH, Q_HEADS, seqlen_q, seqlen_k)
             r = torch.empty(rdims, device=self._gpu_device, dtype=torch.float32)
             philox_seed = torch.tensor([DEFAULT_PHILOX_SEED], device=r.device, dtype=torch.uint64)
             philox_offset1 = torch.tensor([DEFAULT_PHILOX_OFFSET_1], device=r.device, dtype=torch.uint64)

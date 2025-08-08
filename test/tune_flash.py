@@ -164,6 +164,8 @@ class FlashTunerSource(MonadService):
                 dtype = j['dtype']
                 bias_type = j['bias_type']
                 for BATCH, N_HEADS, sm_scale, return_encoded_softmax in itertools.product(a.batch, a.n_heads, a.sm_scale, a.return_encoded_softmax):
+                    if 'nheads' in j and isinstance(j['nheads'], list):
+                        N_HEADS = j['nheads']
                     tup = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type)
                     yield self.clamp_memory_usage(tup)
 
