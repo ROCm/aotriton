@@ -110,6 +110,9 @@ def parse_pytest_out(args, f, out):
         parts = re.split(SEP, line)
         utfn, utname, utparam = [ parts[i] for i in INDICES ]
         tr2cfg = {"arch": args.arch}
+        if utname not in UT2TR:
+            print(f'No handler. Skip {utname}')
+            continue
         tr2cfg.update(UT2TR[utname](utparam))
         print(json.dumps(tr2cfg), file=out)
 
