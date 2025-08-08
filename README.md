@@ -26,6 +26,7 @@ system, `ninja install` will run the whole build process unconditionally.
   - Only `cmake >= 3.30` is tested
 * `ninja`
   - Only `ninja >= 1.11` is tested
+  - `ninja >= 1.13.1` on Windows due to https://github.com/ninja-build/ninja/issues/2616
 * `liblzma`
   - Common names are `liblzma-dev` or `xz-devel`.
 * [`dlfcn-win32`](https://github.com/dlfcn-win32/dlfcn-win32) (**WINDOWS ONLY**)
