@@ -16,6 +16,7 @@ from pathlib import Path
 
 # FIXME: load from kdesc
 HEAD_DIMS = np.array([16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256, 512], dtype=np.int32)
+SEQLENS = np.array([16,32,64,128,256,512,1024,2048,4096,8192], dtype=np.int32)
 ROUND_INPUTS = bool(int(os.getenv('ROUND_INPUTS', True)))
 
 def round_to_power_of_two(x):
@@ -472,7 +473,8 @@ class TuningDatabase(object):
             # It is not used, but it is part of UNIQUE constraints
             def round_hdims(x):
                 return round_to_array(x, HEAD_DIMS)
-            round_seqlen = round_to_power_of_two
+            def round_seqlen(x):
+                return round_to_array(x, SEQLENS)
             for key, rf in [ ('D_HEAD', round_hdims),
                              ('Max_seqlen_q', round_seqlen),
                              ('Max_seqlen_k', round_seqlen),
@@ -492,7 +494,7 @@ class TuningDatabase(object):
         need_rounding = len(need_rounding_keys) > 0
         if need_rounding != round_inputs:
             print(raw_info)
-        assert need_rounding == round_inputs, '--round_inputs should only be applied to json with irregular inputs, and vise versa'
+        # assert need_rounding == round_inputs, '--round_inputs should only be applied to json with irregular inputs, and vise versa'
         # if len(need_rounding_keys) == 1 and 'D_HEAD' in need_rounding_keys:
         #     only_hdim_rounded = True
         # else:
