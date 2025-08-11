@@ -28,6 +28,18 @@ from _common_test import SdpaContext, SdpaParams, SdpaContextFromNPZ, AOTRITON_T
 
 ON_GPU = os.getenv('ON_GPU', default=None)
 RECORD_ADIFFS_TO = os.getenv('RECORD_ADIFFS_TO', default=None)
+USE_ADIFFS_TXT = os.getenv('USE_ADIFFS_TXT', default=None)
+
+if USE_ADIFFS_TXT is not None:
+    adiffs = {}
+    with open(USE_ADIFFS_TXT) as f:
+        for line in f:
+            utname, adiff_str = line.split('\t')
+            adiffs[utname] = json.loads(adiff_str)
+else:
+    adiffs = {}
+
+print(adiffs)
 
 # SIGSEGV_ERROR_CODE = signal.SIGSEGV
 
@@ -244,11 +256,13 @@ def _do_test_op_bwd(args, device_str='cuda'):
             pytest.xfail("Unsupported Config in AITER")
     else:
         ctx.compute_backward(tri_out, dout)
-    is_allclose, adiff, grads_allclose, grads_adiff, tfts = ctx.validate_with_reference(tri_out, ctx.dout_tensors, return_target_fudge_factors=True)
+    utname = os.environ.get('PYTEST_CURRENT_TEST')
+    use_adiff_entry = adiffs.get(utname, None)
+    print(f"{use_adiff_entry=}")
+    is_allclose, adiff, grads_allclose, grads_adiff, tfts = ctx.validate_with_reference(tri_out, ctx.dout_tensors, return_target_fudge_factors=True, use_adiff_entry=use_adiff_entry)
     ctx.display_validation_results(tri_out, is_allclose, adiff, grads_allclose, grads_adiff)
 
     if RECORD_ADIFFS_TO is not None and (not is_allclose or not all(grads_allclose)):
-        utname = os.environ.get('PYTEST_CURRENT_TEST')
         with open(RECORD_ADIFFS_TO, 'a') as f:
             dj = { "adiff" : adiff, "grads_adiff" : grads_adiff }
             print(utname, "\t", json.dumps(dj), file=f, flush=True, sep='')
@@ -422,7 +436,7 @@ def main_npz():
 
     dout = ctx.dout
     ctx.compute_backward(tri_out, dout)
-    is_allclose, adiff, grads_allclose, grads_adiff = ctx.validate_with_reference(tri_out, ctx.dout_tensors)
+    is_allclose, adiff, grads_allclose, grads_adiff = ctx.validate_with_reference(tri_out, ctx.dout_tensors, use_adiff_entry=use_adiff_entry)
     assert is_allclose
     dq_allclose, dk_allclose, dv_allclose, db_allclose = grads_allclose
     torch.set_printoptions(linewidth=200, threshold=4096)

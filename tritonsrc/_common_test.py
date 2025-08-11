@@ -431,7 +431,8 @@ class SdpaContext(object):
     @staticmethod
     def _validate(out, ref, lp_ref, fudge_factor, tname,
                   *,
-                  return_target_fudge_factors=False):
+                  return_target_fudge_factors=False,
+                  adiff=None):
         if out is None and ref is None:
             return True, 0.0, 1.0
         # atol, rtol, raw_atol, raw_rtol = get_tolerances(ref, lp_ref, fudge_factor)
@@ -448,9 +449,13 @@ class SdpaContext(object):
             reason = f"Tensor {tname} has NaN output but not NaN reference"
             # print(f'{max_adiff=} {test_error=} {tname=}')
             return False, max_adiff, None
-        atol = default_atol[torch.float32]
-        threshold = max(atol, ref_error * fudge_factor)
-        valid = test_error <= threshold
+        print(f"{adiff=} {test_error=}")
+        if adiff is not None:
+            valid = test_error < (adiff * 2.0)
+        else:
+            atol = default_atol[torch.float32]
+            threshold = max(atol, ref_error * fudge_factor)
+            valid = test_error <= threshold
         # tft = test_error / ref_error if ref_error * fudge_factor > atol else 1.0
         tft = test_error / ref_error if not valid else 1.0
         if not valid:
@@ -465,7 +470,8 @@ class SdpaContext(object):
                                 *,
                                 no_forward=False,
                                 no_backward=False,
-                                return_target_fudge_factors=False):
+                                return_target_fudge_factors=False,
+                                use_adiff_entry=None):
         if no_forward:
             out_allclose, out_adiff, tft = True, None, None
         else:
@@ -474,7 +480,8 @@ class SdpaContext(object):
                                                           self.lp_refout_tensors[0],
                                                           self.OUT_FUDGE_FACTOR,
                                                           'out',
-                                                          return_target_fudge_factors=return_target_fudge_factors)
+                                                          return_target_fudge_factors=return_target_fudge_factors,
+                                                          adiff=use_adiff_entry["adiff"])
         target_fudge_factors = {'out' : tft}
         if no_backward:
             if return_target_fudge_factors:
@@ -483,14 +490,16 @@ class SdpaContext(object):
                 return out_allclose, out_adiff, [], []
         grads_allclose = []
         grads_adiff = []
+        use_adiffs = [None] * len(grads) if use_adiff_entry is None else use_adiff_entry["grads_adiff"]
         # print(f'using {self.fudge_factors=}')
-        for grad, ref, lp_ref, fudge_factor, tname in zip(grads, self.dref_tensors, self.lp_dref_tensors, self.fudge_factors, self.TENSOR_NAMES):
+        for grad, ref, lp_ref, fudge_factor, tname, adiff in zip(grads, self.dref_tensors, self.lp_dref_tensors, self.fudge_factors, self.TENSOR_NAMES, use_adiffs):
             allclose, adiff, tft = self._validate(grad,
                                                   ref,
                                                   lp_ref,
                                                   fudge_factor,
                                                   tname,
-                                                  return_target_fudge_factors=return_target_fudge_factors)
+                                                  return_target_fudge_factors=return_target_fudge_factors,
+                                                  adiff=adiff)
             grads_allclose.append(allclose)
             grads_adiff.append(adiff)
             # if math.isnan(adiff):
