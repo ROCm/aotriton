@@ -11,6 +11,7 @@ import pathlib
 import fcntl
 import struct
 import itertools
+import json
 
 from attn_torch_function import (
     DEFAULT_PHILOX_SEED,
@@ -26,6 +27,7 @@ from attn_torch_function import (
 from _common_test import SdpaContext, SdpaParams, SdpaContextFromNPZ, AOTRITON_TORCH_ONLY_USE_CPU, fmt_hdim
 
 ON_GPU = os.getenv('ON_GPU', default=None)
+RECORD_ADIFFS_TO = os.getenv('RECORD_ADIFFS_TO', default=None)
 
 # SIGSEGV_ERROR_CODE = signal.SIGSEGV
 
@@ -245,6 +247,12 @@ def _do_test_op_bwd(args, device_str='cuda'):
     is_allclose, adiff, grads_allclose, grads_adiff, tfts = ctx.validate_with_reference(tri_out, ctx.dout_tensors, return_target_fudge_factors=True)
     ctx.display_validation_results(tri_out, is_allclose, adiff, grads_allclose, grads_adiff)
 
+    if RECORD_ADIFFS_TO is not None and (not is_allclose or not all(grads_allclose)):
+        utname = os.environ.get('PYTEST_CURRENT_TEST')
+        with open(RECORD_ADIFFS_TO, 'a') as f:
+            dj = { "adiff" : adiff, "grads_adiff" : grads_adiff }
+            print(utname, "\t", json.dumps(dj), file=f, flush=True, sep='')
+        pytest.xfail(f"RECORD ADIFFS {adiff=} {grads_adiff=}")
     assert is_allclose, f'Forward pass {is_allclose=} {tfts=}'
     dq_allclose, dk_allclose, dv_allclose, db_allclose = grads_allclose
     tri_dq, tri_dk, tri_dv, tri_db = ctx.dout_tensors
