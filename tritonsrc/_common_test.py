@@ -475,13 +475,14 @@ class SdpaContext(object):
         if no_forward:
             out_allclose, out_adiff, tft = True, None, None
         else:
+            use_adiff = None if use_adiff_entry is None else use_adiff_entry["adiff"]
             out_allclose, out_adiff, tft = self._validate(out,
                                                           self.refout_tensors[0],
                                                           self.lp_refout_tensors[0],
                                                           self.OUT_FUDGE_FACTOR,
                                                           'out',
                                                           return_target_fudge_factors=return_target_fudge_factors,
-                                                          adiff=use_adiff_entry["adiff"])
+                                                          adiff=use_adiff)
         target_fudge_factors = {'out' : tft}
         if no_backward:
             if return_target_fudge_factors:
