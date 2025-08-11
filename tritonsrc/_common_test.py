@@ -449,7 +449,7 @@ class SdpaContext(object):
             reason = f"Tensor {tname} has NaN output but not NaN reference"
             # print(f'{max_adiff=} {test_error=} {tname=}')
             return False, max_adiff, None
-        print(f"{adiff=} {test_error=}")
+        # print(f"{adiff=} {test_error=}")
         if adiff is not None:
             valid = test_error < (adiff * 2.0)
         else:
