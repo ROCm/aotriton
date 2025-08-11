@@ -108,7 +108,7 @@ class AffineGenerator(InterfaceGenerator):
         iface = self._iface
         for tp in iface.list_functional_params():
             self.codegen_godel_number_calculation(tp, body)
-        print(' ' * 4, '// Residual Choices start here', body)
+        print(' ' * 4, '// Residual Choices start here', file=body)
         for tp in iface.list_residual_functional_params():
             self.codegen_godel_number_calculation(tp, body, anamespace='residual_args.')  # Accessible directly in context object
         return body.getvalue()
