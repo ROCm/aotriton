@@ -7,8 +7,11 @@ from ..base import (
     Functional,
     Interface,
 )
+import numpy as np
 
 class BaseTuneCodeGenerator(ABC):
+    BIN_INDEX_SUFFIX = '_binned_index'
+
     def __init__(self,
                  args,
                  f : Functional,
@@ -33,3 +36,59 @@ class BaseTuneCodeGenerator(ABC):
     @abstractmethod
     def generate(self):
         pass
+
+    def codegen_deduplicated_lut_function(self, lut_ctype, lut_cshape):
+        iface = self._f.meta_object
+        d = {
+            'param_class_name'      : iface.param_class_name,
+            'lut_ctype'             : lut_ctype,
+            'lut_shape'             : lut_cshape,
+            'binning_autotune_keys' : self.codegen_binning_code(),
+            'binned_indices'        : self.codegen_binned_indices(),
+        }
+        lambda_params = '(const {param_class_name}& params, int mod_number, {lut_ctype} lut{lut_shape})'
+        stmt = []
+        stmt.append(lambda_params + ' {{')
+        stmt.append('    {binning_autotune_keys}')
+        stmt.append('    return lut[mod_number]{binned_indices};')
+        stmt.append('}}')
+        ALIGN = '\n'
+        lambda_src = ALIGN.join(stmt).format_map(d)
+        lut_registry = self._parent_repo.get_function_registry('lut_function')
+        lut_params = lambda_params.format_map(d)
+        lut_function_pfx = f'{iface.NAME}__lut_lambda'
+        lut_function_name = lut_registry.register(lambda_src, 'int', lut_function_pfx, lut_params)
+        return lut_function_name
+
+    def codegen_binning_code(self):
+        if self._binning_dict is None:
+            return ''
+        ALIGN = '\n' + 4 * ' '  # Note codegen_binning_lambda already contains ';'
+        stmt = []
+        for key, algo in self._binning_dict.items():
+            stmt += algo.codegen_binning_lambda(key, out_suffix=self.BIN_INDEX_SUFFIX)
+        return ALIGN.join(stmt)
+
+    def codegen_binned_indices(self):
+        if self._binning_dict is None:
+            return '[0]'
+        return ''.join([f'[{key}{self.BIN_INDEX_SUFFIX}]' for key in self._binning_dict.keys()])
+
+    def codegen_format_lut(self, lut_tensor):
+        f = self._f
+        max_value = np.max(lut_tensor)
+        for dtype in [np.int8, np.int16, np.int32, np.int64]:
+            if max_value < np.iinfo(dtype).max:
+                break
+        ctype =  f'int{np.iinfo(dtype).bits}_t'
+        cshape = ''.join([f'[{s}]' for s in lut_tensor.shape])
+        def fmt(t):
+            return np.array2string(t, separator=',').replace('[', '{').replace(']', '}')
+        tensor_text_list = []
+        for i, gpu in enumerate(f.optimized_for):
+            text  = f'\n// GPU {gpu}\n'
+            text += fmt(lut_tensor[i])
+            text += f'\n// End of GPU {gpu}\n'
+            tensor_text_list.append(text)
+        cdata = '{' + '\n,\n'.join(tensor_text_list) + '}'
+        return ctype, cshape, cdata

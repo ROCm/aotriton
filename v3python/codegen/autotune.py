@@ -18,13 +18,12 @@ from .common import (
     hsaco_filename,
     hsaco_dir,
 )
-import numpy as np
 from .basetune import BaseTuneCodeGenerator
 import json
+import numpy as np
 
 class AutotuneCodeGenerator(BaseTuneCodeGenerator):
     AUTOTUNE_TEMPLATE = get_template('autotune_table_entry.cc')
-    BIN_INDEX_SUFFIX = '_binned_index'
 
     '''
     For generic it accepts Functional instead of a KernelDescription object
@@ -102,7 +101,6 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
             'lut_ctype'             : lut_ctype,
             'lut_cshape'            : lut_cshape,
             'lut_data'              : lut_cdata,
-            'param_class_name'      : kdesc.param_class_name,
             'context_class_name'    : kdesc.context_class_name,
             'deduplicated_lut_function' : self.codegen_deduplicated_lut_function(lut_ctype, lut_cshape),
             'deduplicated_pp_args_function_index' : self.codegen_deduplicated_pp_args_function_index(f),
@@ -175,43 +173,6 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
             tensor_text_list.append(text)
         cdata = '{' + '\n,\n'.join(tensor_text_list) + '}'
         return ctype, cshape, cdata
-
-    def codegen_deduplicated_lut_function(self, lut_ctype, lut_cshape):
-        kdesc = self._f.meta_object
-        d = {
-            'param_class_name'      : kdesc.param_class_name,
-            'lut_ctype'             : lut_ctype,
-            'lut_shape'             : lut_cshape,
-            'binning_autotune_keys' : self.codegen_binning_code(),
-            'binned_indices'        : self.codegen_binned_indices(),
-        }
-        lambda_params = '(const {param_class_name}& params, int mod_number, {lut_ctype} lut{lut_shape})'
-        stmt = []
-        stmt.append(lambda_params + ' {{')
-        stmt.append('    {binning_autotune_keys}')
-        stmt.append('    return lut[mod_number]{binned_indices};')
-        stmt.append('}}')
-        ALIGN = '\n'
-        lambda_src = ALIGN.join(stmt).format_map(d)
-        lut_registry = self._parent_repo.get_function_registry('lut_function')
-        lut_params = lambda_params.format_map(d)
-        lut_function_pfx = f'{kdesc.NAME}__lut_lambda'
-        lut_function_name = lut_registry.register(lambda_src, 'int', lut_function_pfx, lut_params)
-        return lut_function_name
-
-    def codegen_binning_code(self):
-        if self._binning_dict is None:
-            return ''
-        ALIGN = '\n' + 4 * ' '  # Note codegen_binning_lambda already contains ';'
-        stmt = []
-        for key, algo in self._binning_dict.items():
-            stmt += algo.codegen_binning_lambda(key, out_suffix=self.BIN_INDEX_SUFFIX)
-        return ALIGN.join(stmt)
-
-    def codegen_binned_indices(self):
-        if self._binning_dict is None:
-            return '[0]'
-        return ''.join([f'[{key}{self.BIN_INDEX_SUFFIX}]' for key in self._binning_dict.keys()])
 
     def codegen_deduplicated_pp_args_function_index(self, functional : Functional):
         kdesc = self._f.meta_object

@@ -32,8 +32,9 @@ hipError_t
     if (!tune_func)
         return hipErrorProfilerNotInitialized;
     tune_func(*this, mod_number);
-    // Operator's capability is union of all backends
-    // Hence there must be a backend that handles the inputs
+    // In case tuning database is broken
+    if (backend_index < 0)
+        backend_index = fallback_backend;
     return hipSuccess;
 }
 

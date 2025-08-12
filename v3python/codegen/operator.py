@@ -82,7 +82,7 @@ class OperatorGenerator(InterfaceGenerator):
             'number_of_functionals'     : iface.godel_number,
             'def_backend_launchers'     : self.codegen_launchers(nalign=0),
             'launcher_table_entries'    : self.codegen_launch_table_entries(nalign=4),
-            'list_of_deduplicated_lut_functions' : '// TODO: list_of_deduplicated_lut_functions' # self.codegen_declare_list_of_deduplicated_lut_functions(),
+            'list_of_deduplicated_lut_functions' : self.codegen_list_of_deduplicated_lut_functions(),
         }
         d['includes'] = codegen_includes(self._src_include_repo.get_data())
         print(self.SOURCE_TEMPLATE.format_map(d), file=fout)
