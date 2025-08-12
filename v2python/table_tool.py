@@ -12,6 +12,7 @@ import math
 import numpy as np
 import csv
 from tqdm import tqdm
+from pathlib import Path
 
 # FIXME: load from kdesc
 HEAD_DIMS = np.array([16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256, 512], dtype=np.int32)
@@ -27,10 +28,11 @@ def parse():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument('-i', type=str, default=None, help='Input CSV/JSON file')
     p.add_argument('-f', '--file', type=str, default=None, help='Database file')
+    p.add_argument('--opfile', type=Path, default=None, help='Op Database file')
     p.add_argument('-k', '--kernel_family', type=str, help='Kernel family')
     p.add_argument('-v', '--verbose', action='store_true', help='Verbose')
     p.add_argument('--action', type=str, required=False, default='pipejson',
-                   choices=['pipejson', 'createtableonly', 'dumpcsv', 'loadcsv', 'rawjson', 'rawjson_fudge_check', 'rawsc'],
+                   choices=['pipejson', 'createtableonly', 'dumpcsv', 'loadcsv', 'rawjson', 'rawjson_fudge_check', 'opjson', 'rawsc'],
                    help='Action to perform. pipejson means directly inserting json objects into the database. rawjson means aggregating the raw profiling log (generated from the raw cpptune json objects) and insert the best kernel to database.')
     p.add_argument('--table_name', type=str, help='Table to dump/load')
     p.add_argument('--table_file', type=str, help='CSV file of dump/load')
@@ -110,7 +112,11 @@ class PerKernelResult(object):
             if j['result'] != 'tuned':
                 return False
             if not isinstance(j['time'], list):
-                return False
+                t = j['time']
+                if not isinstance(t, float):
+                    return False
+                if math.isnan(t) or math.isinf(t):
+                    return False
             adiffs = j['adiffs']
             if adiffs is None or self.any_nan(adiffs):
                 return False
@@ -119,6 +125,8 @@ class PerKernelResult(object):
             return all(fits.values())
         acceptables = list(filter(is_acceptable, self._jarray))
         def gettime(j):
+            if not isinstance(j['time'], list):
+                return j['time']
             return tuple(j['time'])
         if not acceptables:
             if allow_no_acceptable:
@@ -217,11 +225,15 @@ class Pkr_FusedBwdKernel(FAPkr):
 
     remove_unused = Pkr_BwdKernelDkDv.remove_unused
 
+class Pkr_OpAttnBwd(Pkr_FusedBwdKernel):
+    KERNEL_NAME = 'op_attn_bwd'
+
 KERNEL_NAME_TO_FACTORY = {
     'attn_fwd' : Pkr_AttnFwd,
     'bwd_kernel_dk_dv' : Pkr_BwdKernelDkDv,
     'bwd_kernel_dq' : Pkr_BwdKernelDq,
     'bwd_kernel_fuse' : Pkr_FusedBwdKernel,
+    'op_attn_bwd' : Pkr_OpAttnBwd,
 }
 
 def pkr_factory(key):
@@ -230,6 +242,7 @@ def pkr_factory(key):
     return factory(tid)
 
 class TuningDatabase(object):
+    OPTABLE = False
     PYTYPE_TO_SQLTYPE = {
         int : 'INTEGER',
         str : 'TEXT',
@@ -241,6 +254,8 @@ class TuningDatabase(object):
         if args.file is not None:
             self._conn = sqlite3.connect(args.file)  # TODO: use autocommit for python 3.12+
             self._conn.isolation_level = None  # TODO: add --batch mode,
+            if args.opfile is not None:
+                self._conn.execute(f"ATTACH DATABASE '{args.opfile.as_posix()}' AS op;")
             self._cur = self._conn.cursor()
         else:
             self._conn = None
@@ -326,8 +341,12 @@ class TuningDatabase(object):
         if create_table_only:
             return
         inputs_columns = self.collect_columns(tune_info['inputs'], prefix='inputs$', sans=('BATCH'))
-        tuned_kernel_columns = self.collect_columns(tune_info['tuned_kernel'], prefix='tuned_kernel$')
-        compiler_options_columns = self.collect_columns(tune_info['compiler_options'], prefix='compiler_options$')
+        if self.OPTABLE:
+            tuned_kernel_columns = self.collect_columns(tune_info['op'], prefix='op$')
+            compiler_options_columns = []
+        else:
+            tuned_kernel_columns = self.collect_columns(tune_info['tuned_kernel'], prefix='tuned_kernel$')
+            compiler_options_columns = self.collect_columns(tune_info['compiler_options'], prefix='compiler_options$')
         all_colnames = ['gpu'] + [colname for colname, _, _ in itertools.chain(inputs_columns, tuned_kernel_columns, compiler_options_columns)]
         stmt_colnames = ', '.join(all_colnames)
         stmt_placeholders = ', '.join(['?'] * len(all_colnames))
@@ -409,6 +428,8 @@ class TuningDatabase(object):
         if not line_text:
             return
         raw_info = json.loads(line_text)
+        if raw_info.get("result", None) == "skipped":
+            return
         kernel_name = raw_info.get('kernel_name', '')
         if raw_info.get('kernel_name') == 'attn_fwd':
             BM = raw_info['tuned_kernel']['BLOCK_M']
@@ -433,6 +454,18 @@ class TuningDatabase(object):
         if raw_info['inputs']['BLOCK_DMODEL'] == raw_info['inputs']['D_HEAD']:
             raw_info['inputs']['PADDED_HEAD'] = False
         raw_info['inputs']['CAUSAL_TYPE'] = 3 if raw_info['inputs']['CAUSAL_TYPE'] == 1 else 0
+
+        # For OpTune: move 'inputs'/'op_backend' and 'tflops' to 'op': {...}
+        # FIXME: Correctly store info with Tuner V3
+        if 'op_backend' in raw_info['inputs']:
+            op = {
+                'backend' : raw_info['inputs']['op_backend'],
+                'tflops' : raw_info.get('TFLOPS', float("NaN")),
+            }
+            raw_info['op'] = op
+            del raw_info['inputs']['op_backend']
+            raw_info['kernel_name'] = 'op_attn_bwd'
+
         def rounding(check_only):
             need_rounding_keys = []
             # Round D_HEAD
@@ -476,7 +509,8 @@ class TuningDatabase(object):
         if isinstance(timing, float):
             if math.isinf(timing):
                 return
-            assert False, f'time element in raw json log must be a list or float("inf") but get {timing}'
+            if not self.OPTABLE:
+                assert False, f'time element in raw json log must be a list or float("inf") but get {timing}'
         key = (raw_info['arch'], raw_info['_debug_task_id'], raw_info['kernel_name'])
         if key not in self.pkr_database:
             self.pkr_database[key] = pkr_factory(key)
@@ -525,7 +559,7 @@ def do_main(args, db, fin):
         for line in fin:
             db.upsert(line, create_table_only=create_table_only)
         print("[table_tool] Input closed, exiting", file=sys.stderr)
-    elif args.action in ['rawjson', 'rawjson_fudge_check']:
+    elif args.action in ['rawjson', 'rawjson_fudge_check', 'opjson']:
         db.init_aggregation()
         pbar = tqdm(total=fin_size, desc='Processed bytes')
         for line in fin:
@@ -571,9 +605,26 @@ def do_main(args, db, fin):
         db.loadcsv(args.table_file, args.table_name)
     db.close()
 
+class OpDatabase(TuningDatabase):
+    OPTABLE = True
+
+    def get_table_name(self, tune_info: dict) -> str:
+        kn = tune_info['kernel_name']
+        return f'{self._args.kernel_family}${kn}'
+
+    # Don't
+    def ensure_table(self, tune_info : dict) -> str:
+        return self.get_table_name(tune_info)
+
+    def _create_table(self, tune_info):
+        pass
+
 def main():
     args = parse()
-    db = TuningDatabase(args)
+    if args.action in ['opjson']:
+        db = OpDatabase(args)
+    else:
+        db = TuningDatabase(args)
     if args.i is not None:
         with open(args.i) as f:
             do_main(args, db, f)
