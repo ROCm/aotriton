@@ -1,13 +1,12 @@
 // Copyright © 2023-2025 Advanced Micro Devices, Inc.
 // SPDX-License-Identifier: MIT
 
-#include "../op.[[op_name]].h"
+#include "../iface.[[op_name]].h"
 // #include <aotriton/cpp_tune.h>  // TODO: add op_tune
 #include <string_view>
-
-namespace AOTRITON_NS::v3::[[op_family_name]]::optune {
-
-using AOTRITON_NS::v3::[[op_family_name]];
+#ifndef NDEBUG
+#include <iostream>
+#endif
 
 #define CURRENT_ENTRY_PUBLIC Optune_[[op_name]]__A[[arch_number]]__F[[godel_number]]
 
@@ -34,8 +33,6 @@ void CURRENT_ENTRY_PUBLIC([[context_class_name]]& context, int mod_number) {
 }
 
 #undef CURRENT_ENTRY_PUBLIC
-#undef mangle
-#undef smangle
 }
 
 // [[human_readable_signature]]

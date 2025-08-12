@@ -64,7 +64,7 @@ class OperatorGenerator(InterfaceGenerator):
             'total_number_of_backends'      : self._iface.nbackends,
             'optune_table_entry_declares'   : self.codegen_tune_table_entry_declares(functionals),
             'number_of_functionals' : iface.godel_number,
-            'declare_list_of_deduplicated_lut_functions' : '// TODO: declare_list_of_deduplicated_lut_functions' # self.codegen_declare_list_of_deduplicated_lut_functions(),
+            'declare_list_of_deduplicated_lut_functions' : self.codegen_declare_list_of_deduplicated_lut_functions(),
         }
         print(self.HEADER_TEMPLATE.format_map(d), file=fout)
 

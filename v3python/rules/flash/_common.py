@@ -129,6 +129,7 @@ class FlashKernel(KernelDescription):
         else:
             # TODO: support non-mod0
             _, M_idxs, N_idxs = np.where(lut_tensor < 0)
+            print(f'{M_idxs=} {N_idxs=} {lut_full_seqlen_q=} {lut_full_seqlen_k=}')
             for M_id, N_id in zip(M_idxs, N_idxs):
                 d = deepcopy(base)
                 d['seqlen_q'] = lut_full_seqlen_q[M_id]

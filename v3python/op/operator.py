@@ -71,7 +71,8 @@ class Operator(Interface):
         '''
         LUT tensor for Optune stores string directly.
         '''
-        return lut_tensor, np.unique(lut_tensor).tolist(), binning_dict
+        backend_inds = np.unique(lut_tensor).tolist()
+        return lut_tensor, [self._backends[ind].enum_name for ind in backend_inds], binning_dict
 
     def translate_empty_dataframe(self, f : Functional):
         lut_tensor = np.zeros([f.noptimized_for, 1], dtype=np.int8)
