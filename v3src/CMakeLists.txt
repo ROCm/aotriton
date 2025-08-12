@@ -29,6 +29,10 @@ execute_process(COMMAND ${CMAKE_COMMAND} -E tar xf
   "${CMAKE_SOURCE_DIR}/v3python/rules/tuning_database.sqlite3.tar.xz"
   WORKING_DIRECTORY "${AOTRITON_V2_BUILD_DIR}")
 
+execute_process(COMMAND ${CMAKE_COMMAND} -E tar xf
+  "${CMAKE_SOURCE_DIR}/v3python/rules/op_database.sqlite3.tar.xz"
+  WORKING_DIRECTORY "${AOTRITON_V2_BUILD_DIR}")
+
 get_filename_component(AOTRITON_COMPILER "${CMAKE_CURRENT_LIST_DIR}/../v3python/compile.py" ABSOLUTE)
 message("AOTRITON_COMPILER ${AOTRITON_COMPILER}")
 
