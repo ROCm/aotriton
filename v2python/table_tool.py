@@ -511,7 +511,11 @@ class TuningDatabase(object):
                 return
             if not self.OPTABLE:
                 assert False, f'time element in raw json log must be a list or float("inf") but get {timing}'
-        key = (raw_info['arch'], raw_info['_debug_task_id'], raw_info['kernel_name'])
+        if self.OPTABLE:
+            # FIXME: This is Hacking, need a proper fix.
+            key = (raw_info['arch'], raw_info['_debug_task_id'] // 3, 'op_attn_bwd')
+        else:
+            key = (raw_info['arch'], raw_info['_debug_task_id'], raw_info['kernel_name'])
         if key not in self.pkr_database:
             self.pkr_database[key] = pkr_factory(key)
         self.pkr_database[key].collect(raw_info)
