@@ -153,8 +153,8 @@ class FlashOpTunerSource(MonadService):
                 dropout_p = j['dropout_p']
                 dtype = j['dtype']
                 bias_type = j['bias_type']
-                op_backend = j['op_backend']
-                for BATCH, N_HEADS, sm_scale, return_encoded_softmax in itertools.product(a.batch, a.n_heads, a.sm_scale, a.return_encoded_softmax):
+                op_backends = [j['op_backend']] if 'op_backend' in j else a.op_backends
+                for BATCH, N_HEADS, sm_scale, return_encoded_softmax, op_backend in itertools.product(a.batch, a.n_heads, a.sm_scale, a.return_encoded_softmax, op_backends):
                     tup = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type, op_backend)
                     yield self.preprocess(tup)
 
