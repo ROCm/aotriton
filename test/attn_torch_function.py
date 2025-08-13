@@ -143,7 +143,7 @@ class _attention(torch.autograd.Function):
         else:
             atomic = torch.empty([0], device=q.device, dtype=torch.int32)
 
-        print(f'{attn_extra_args=}')
+        # print(f'{attn_extra_args=}')
         # Check GPU kernel accepts nullptr for philox_*_output
         if attn_extra_args.is_testing:
             ret = attn_fwd(q, k, v, b, sm_scale, M, o,
