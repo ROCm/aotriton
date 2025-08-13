@@ -226,7 +226,9 @@ class _attention(torch.autograd.Function):
         if tuning_result is not None:
             ctx.tuning_result += tuning_result
 
-        if attn_extra_args.is_testing:
+        # fused bwd does not need delta
+        # TODO: Make delta lazy tensor
+        if not V3_API and attn_extra_args.is_testing:
             assert not torch.isnan(delta).any(), f'{delta=}'
         return dq, dk, dv, db, None, None, None, None, None
 
