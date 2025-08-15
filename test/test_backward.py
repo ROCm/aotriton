@@ -87,6 +87,7 @@ else:
                     pass
 
 FOR_RELEASE = int(os.getenv('FOR_RELEASE', default='0'))
+SMALL_VRAM = bool(os.getenv('SMALL_VRAM', default='0'))
 
 DTYPES = [torch.float16, torch.bfloat16, torch.float32]
 
@@ -223,6 +224,8 @@ def _do_test_op_bwd(args, device_str='cuda'):
             pytest.skip("hdim > 192 AITER ASM kernel does not exist.")
     if causal and bias_type is not None:
         pytest.skip("_scaled_dot_product_attention: Explicit attn_mask should not be set when is_causal=True")
+    if SMALL_VRAM and seqlen_q * seqlen_k * D_HEAD > 4096 * 8192 * 256:
+        pytest.skip("Skip large tests (qkd > 4096 * 8192 * 256) due to low VRAM.")
     torch.cuda.empty_cache()
     SKIP_DK_DV = False
     SKIP_DQ = False
