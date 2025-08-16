@@ -515,7 +515,8 @@ class TuningDatabase(object):
                 assert False, f'time element in raw json log must be a list or float("inf") but get {timing}'
         if self.OPTABLE:
             # FIXME: This is Hacking, need a proper fix.
-            key = (raw_info['arch'], raw_info['_debug_task_id'] // 3, 'op_attn_bwd')
+            divisor = 3 if raw_info['arch'] in ['gfx950', 'gfx942'] else 2
+            key = (raw_info['arch'], raw_info['_debug_task_id'] // divisor, 'op_attn_bwd')
         else:
             key = (raw_info['arch'], raw_info['_debug_task_id'], raw_info['kernel_name'])
         if key not in self.pkr_database:
