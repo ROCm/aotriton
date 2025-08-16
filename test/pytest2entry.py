@@ -114,13 +114,15 @@ UT2TR = {
 
 EPILOG = r'''Script to parse pytest output and generate .cfg file for tune_flash.py.
 Example Usage:
-    COLUMNS=400 BWD_IMPL=0 FOR_RELEASE=2 PYTHONPATH=build-TEST/install_dir/lib/ pytest -rfE test/test_backward.py -v 1>ut_X.out 2>ut_X.err
+    COLUMNS=400 BWD_IMPL=0 FOR_RELEASE=2 PYTHONPATH=build-TEST/install_dir/lib/ pytest -rfEsx test/test_backward.py -v 1>ut_X.out 2>ut_X.err
     python test/pytest2entry.py ut_X.out --out pass_X.cfg
     vim pass_X.cfg  # run :sort u
     PYTHONPATH=build-TUNE/install_dir/lib/ python test/tune_flash.py --json_file ~/pass_X.json --entry_from_json pass_X.cfg --use_multigpu -1
 
 Note:
     COLUMNS=400, -rfE and -v are ALL CRUCIAL to make pytest2entry function correctly.
+    Using -rfEsx instead of -rfE allows users have more information about
+    skips/xfails controlled by env vars like SMALL_VRAM/PROBE_UNSUPPORTED.
 '''
 
 def parse():
