@@ -12,6 +12,7 @@ import fcntl
 import struct
 import itertools
 import json
+import gc
 
 from attn_torch_function import (
     DEFAULT_PHILOX_SEED,
@@ -87,7 +88,7 @@ else:
                     pass
 
 FOR_RELEASE = int(os.getenv('FOR_RELEASE', default='0'))
-SMALL_VRAM = bool(os.getenv('SMALL_VRAM', default='0'))
+SMALL_VRAM = bool(int(os.getenv('SMALL_VRAM', default='0')))
 
 DTYPES = [torch.float16, torch.bfloat16, torch.float32]
 
@@ -288,14 +289,18 @@ def _do_test_op_bwd(args, device_str='cuda'):
     assert dk_allclose and dv_allclose and dq_allclose and db_allclose, f'{dk_allclose=} {dv_allclose=} {dq_allclose=} {db_allclose=} {tfts=}'
     print(f'{tri_out=}')
     print(f'{adiff=} {grads_adiff=}')
+    return seqlen_q * seqlen_k * D_HEAD
 
 def _test_op_bwd(args, device : int | None = None):
     try:
         if device is None:
-            _do_test_op_bwd(args, device_str='cuda')
+            qkh = _do_test_op_bwd(args, device_str='cuda')
         else:
             with torch.cuda.device(device):
-                _do_test_op_bwd(args, device_str=f'cuda:{device}')
+                qkh = _do_test_op_bwd(args, device_str=f'cuda:{device}')
+        if qkh > 2048 * 2048 * 128:
+            gc.collect()
+            torch.cuda.empty_cache()
     except RuntimeError as e:
         if hipGetLastError() == hipError_t.hipErrorIllegalAddress:
             exit_pytest()
