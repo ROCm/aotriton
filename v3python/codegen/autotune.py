@@ -64,7 +64,7 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
                     raise ent
                 else:
                     for j in ent.get_missing_lut_entries():
-                        print("TUNE_FLASH --entry_from_json Item: ", j)
+                        print(kdesc.NAME, "TUNE_FLASH --entry_from_json Item: ", j)
         assert all([isinstance(k, KernelSignature)] for k in self._sigs)
 
     def generate(self):

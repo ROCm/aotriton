@@ -87,8 +87,12 @@ class PerKernelResult(object):
     def get_most_accurate_kernel(self):
         tfts = { tn : [] for tn in self.valid_out_tensors }
         for j in self._jarray:
+            if 'target_fudge_factors' not in j:
+                continue
+            if j['target_fudge_factors'] is None:
+                continue
             for tn in self.valid_out_tensors:
-                tft = j['target_fudge_factors'][tn]
+                tft = j['target_fudge_factors'].get(tn, None)
                 if tft is not None:
                     tfts[tn].append(tft)
         for tft in tfts.values():
@@ -102,6 +106,7 @@ class PerKernelResult(object):
         return { tn : max(1.0, np.min(tfts[tn])) for tn in self.valid_out_tensors }
 
     def get_optimal_kernel(self, fudge_factor_tolerance, max_fudge_factor, allow_no_acceptable=False):
+        verbose = False
         best_tft = self.get_most_accurate_kernel()
         if allow_no_acceptable and best_tft is None:
             return None
