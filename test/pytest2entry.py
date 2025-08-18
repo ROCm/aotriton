@@ -120,9 +120,11 @@ Example Usage:
     PYTHONPATH=build-TUNE/install_dir/lib/ python test/tune_flash.py --json_file ~/pass_X.json --entry_from_json pass_X.cfg --use_multigpu -1
 
 Note:
-    COLUMNS=400, -rfE and -v are ALL CRUCIAL to make pytest2entry function correctly.
-    Using -rfEsx instead of -rfE allows users have more information about
-    skips/xfails controlled by env vars like SMALL_VRAM/PROBE_UNSUPPORTED.
+    * COLUMNS=400, -rfE and -v are ALL CRUCIAL to make pytest2entry function correctly.
+    * Using -rfEsx instead of -rfE allows users have more information about
+      skips/xfails controlled by env vars like SMALL_VRAM/PROBE_UNSUPPORTED.
+    * Use -n ${NGPUS} to run UT in parallel. Add --max-worker-restart to
+      increase the restarting time (default is NGPU*4 which is pretty limited for full coverage)
 '''
 
 def parse():
