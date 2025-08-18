@@ -10,6 +10,7 @@ AOTRITON_SUPPORTED_GPUS = (
     # 'gfx942_mod2',
     'gfx950_mod0',
     'gfx1100_mod0',
+    'gfx1101_mod0',
     'gfx1151_mod0',
     'gfx1150_mod0',
     'gfx1201_mod0',
@@ -20,6 +21,7 @@ AOTRITON_SUPPORTED_GPUS = (
 # TODO: AOTRITON_TUNING_DATABASE_REUSE -> AOTRITON_TUNING_DATABASE_FALLBACK
 # Load fallback entries first, and override with "patching" entries from real GPU
 AOTRITON_TUNING_DATABASE_REUSE = {
+    'gfx1101_mod0' : 'gfx1100_mod0',
     'gfx1200_mod0' : 'gfx1201_mod0',
     'gfx1151_mod0' : 'gfx1100_mod0',
     'gfx1150_mod0' : 'gfx1100_mod0',
@@ -48,6 +50,7 @@ AOTRITON_ARCH_WARPSIZE = {
     'gfx942'     : 64,
     'gfx950'     : 64,
     'gfx1100'    : 32,
+    'gfx1101'    : 32,
     'gfx1151'    : 32,
     'gfx1150'    : 32,
     'gfx1201'    : 32,
@@ -60,6 +63,7 @@ AOTRITON_ARCH_PRODUCTION_LINE = {
     'gfx942'     : 'CDNA',
     'gfx950'     : 'CDNA',
     'gfx1100'    : 'RDNA',
+    'gfx1101'    : 'RDNA',
     'gfx1151'    : 'RDNA',
     'gfx1150'    : 'RDNA',
     'gfx1201'    : 'RDNA',
