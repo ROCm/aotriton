@@ -105,6 +105,7 @@ class FlashKernel(KernelDescription):
         #     lut_full_seqlen_k = self.LUT_FULL_SEQLEN_K
         lut_full_seqlen_q = self.LUT_FULL_SEQLEN_Q
         lut_full_seqlen_k = self.LUT_FULL_SEQLEN_K
+        LUT_TENSOR_SIZE = (len(self.LUT_FULL_SEQLEN_Q), len(self.LUT_FULL_SEQLEN_K))
         base['causal_type'] = check_value(functional, 'CAUSAL_TYPE')
         base['d_head'] = check_value(functional, 'BLOCK_DMODEL')
         base['dropout_p'] = 0.5 if check_value(functional, 'ENABLE_DROPOUT') else 0.0
@@ -128,8 +129,12 @@ class FlashKernel(KernelDescription):
                     ret.append(json.dumps(d))
         else:
             # TODO: support non-mod0
-            _, M_idxs, N_idxs = np.where(lut_tensor < 0)
-            print(f'{M_idxs=} {N_idxs=} {lut_full_seqlen_q=} {lut_full_seqlen_k=}')
+            if lut_tensor.shape[1:] == LUT_TENSOR_SIZE:
+                _, M_idxs, N_idxs = np.where(lut_tensor < 0)
+            else:
+                fake_lut = np.full(LUT_TENSOR_SIZE, -1, dtype=np.int32)
+                M_idxs, N_idxs = np.where(fake_lut < 0)
+            # print(f'{M_idxs=} {N_idxs=} {lut_full_seqlen_q=} {lut_full_seqlen_k=}')
             for M_id, N_id in zip(M_idxs, N_idxs):
                 d = deepcopy(base)
                 d['seqlen_q'] = lut_full_seqlen_q[M_id]
