@@ -461,6 +461,14 @@ class TuningDatabase(object):
             raw_info['inputs']['PADDED_HEAD'] = False
         raw_info['inputs']['CAUSAL_TYPE'] = 3 if raw_info['inputs']['CAUSAL_TYPE'] == 1 else 0
 
+        # Workaround to fix large block size for hdim=512 on navi31
+        if raw_info['arch'] in ['gfx1100', 'gfx1201'] and raw_info['inputs']['BLOCK_DMODEL'] == 512:
+            if 'tuned_kernel' in raw_info:
+                ti = raw_info['tuned_kernel']
+                print(f"{ti=}")
+                if ti['BLOCK_M'] > 16 or ti['BLOCK_N'] > 16:
+                    return
+
         # For OpTune: move 'inputs'/'op_backend' and 'tflops' to 'op': {...}
         # FIXME: Correctly store info with Tuner V3
         if 'op_backend' in raw_info['inputs']:
