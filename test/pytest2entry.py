@@ -10,7 +10,7 @@ import subprocess
 SEP = re.compile(r'[ :\[\]]')
 # Example: ['FAILED', 'test/test_backward.py', '', 'test_irregulars', 'Split-BiasOn-True-l1-dtype1-0.0-CausalOff-41-257-hdim32-5-3', '']
 INDICES = (1, 3, 4)
-NATIVE_ARCH = subprocess.check_output(['rocm_agent_enumerator -name'], shell=True).decode('utf8', errors='ignore').strip().split(':')[0]
+NATIVE_ARCH = subprocess.check_output(['rocm_agent_enumerator'], shell=True).decode('utf8', errors='ignore').strip().split()[0]
 
 DTYPE = {
     'dtype0' : 'float16',
