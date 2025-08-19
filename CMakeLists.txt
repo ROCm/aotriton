@@ -66,6 +66,7 @@ option(AOTRITON_BUILD_FOR_TUNING "Build all GPU kernels and set -DAOTRITON_BUILD
 set(AOTRITON_BUILD_FOR_TUNING_BUT_SKIP_KERNEL "" CACHE STRING "Use tuning database for certain kernels when AOTRITON_BUILD_FOR_TUNING=ON")
 option(AOTRITON_ENABLE_FP32_INPUTS "Enable FP32 support." ON)
 option(AOTRITON_NOIMAGE_MODE "Only build C++ Shim part. Kernel image builds are disabled" OFF)
+option(AOTRITON_INHERIT_SYSTEM_SITE_TRITON "Use system site packages and verify triton availability instead of building from source" OFF)
 set(AOTRITON_GPU_BUILD_TIMEOUT "8.0" CACHE STRING "GPU kernel compiler times out after X minutes. 0 for indefinite. Highly recommended if AOTRITON_BUILD_FOR_TUNING=On.")
 set(AOTRITON_TARGET_ARCH "gfx90a;gfx942;gfx950;gfx1100;gfx1101;gfx1151;gfx1150;gfx1201;gfx1200" CACHE STRING "Target GPU Architecture. Select all GPUs within the given list")
 set(TARGET_GPUS "OBSOLETE" CACHE STRING "OBSOLETE. To select only one GPU, use AOTRITON_TARGET_ARCH or AOTRITON_OVERRIDE_TARGET_GPUS.")
@@ -126,7 +127,11 @@ endif()
 set(Python_ARTIFACTS_INTERACTIVE TRUE)
 
 # Not a target, we need to override Python3_EXECUTABLE later
-execute_process(COMMAND "${Python3_EXECUTABLE}" -m venv "${VENV_DIR}")
+if(AOTRITON_INHERIT_SYSTEM_SITE_TRITON)
+  execute_process(COMMAND "${Python3_EXECUTABLE}" -m venv --system-site-packages "${VENV_DIR}")
+else()
+  execute_process(COMMAND "${Python3_EXECUTABLE}" -m venv "${VENV_DIR}")
+endif()
 
 set(ENV{VIRTUAL_ENV} "${VENV_DIR}")
 message("VENV_DIR ${VENV_DIR}")
@@ -145,8 +150,25 @@ message("VENV_SITE ${VENV_SITE}")
 
 execute_process(COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_BIN_PYTHON}" -m pip install -r "${CMAKE_CURRENT_LIST_DIR}/requirements.txt")
 
-# AOTRITON_NOIMAGE_MODE does not need Triton
-if(NOT AOTRITON_NOIMAGE_MODE)
+if(AOTRITON_NOIMAGE_MODE)
+  message(STATUS "[AOTriton] Skipping triton due to AOTRITON_NOIMAGE_MODE")
+elseif(AOTRITON_INHERIT_SYSTEM_SITE_TRITON)
+  # Check if triton can be imported in the venv
+  execute_process(
+    COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_BIN_PYTHON}" -c "import triton; import triton.language; print('Triton found: ', triton.__version__)"
+    RESULT_VARIABLE TRITON_CHECK_RESULT
+    OUTPUT_VARIABLE TRITON_OUTPUT
+    ERROR_VARIABLE TRITON_OUTPUT
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+  )
+
+  if(TRITON_CHECK_RESULT EQUAL 0)
+    message(STATUS "[AOTriton] ${TRITON_OUTPUT}")
+    add_custom_target(aotriton_venv_triton ALL)
+  else()
+    message(FATAL_ERROR "[AOTriton] AOTRITON_INHERIT_SYSTEM_SITE_TRITON is enabled but triton is not available in the virtual environment. Please install triton or disable this option. ${TRITON_OUTPUT}")
+  endif()
+else()
   set(TRITON_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/triton_build")
   execute_process(COMMAND ${CMAKE_COMMAND} -E make_directory "${TRITON_BUILD_DIR}")
   # set(AOTRITON_TRITON_EGGLINK "${VENV_SITE}/triton.egg-link")
@@ -164,7 +186,7 @@ if(NOT AOTRITON_NOIMAGE_MODE)
     WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/third_party/triton/"
   )
   add_custom_target(aotriton_venv_triton ALL DEPENDS "${AOTRITON_TRITON_SO}")
-endif(NOT AOTRITON_NOIMAGE_MODE)
+endif()
 
 add_subdirectory(v3src)
 
