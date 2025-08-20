@@ -73,6 +73,8 @@ def do_bench(fn, atr : AutotuneResult,
 
     torch.cuda.synchronize()
     num_of_subkernels, outs = fn(is_testing=True)
+    torch.cuda.synchronize()
+    assert hipGetLastError() != hipError_t.hipErrorIllegalAddress
     # print(f'{num_of_subkernels=}')
     # print(f'{outs=}')
     for ko in outs:
