@@ -36,6 +36,8 @@ if USE_ADIFFS_TXT is not None:
     with open(USE_ADIFFS_TXT) as f:
         for line in f:
             utname, adiff_str = line.split('\t')
+            if adiff_str == "OOM":
+                adiffs[utname] = "OOM"
             adiffs[utname] = json.loads(adiff_str)
 else:
     adiffs = {}
@@ -230,6 +232,11 @@ def _do_test_op_bwd(args, device_str='cuda'):
     if 'gfx11' in torch.cuda.get_device_properties(0).gcnArchName:
         if D_HEAD > 256:
             pytest.skip("Skip hdim > 256 on gfx11 arch due to register pressure.")
+    utname = os.environ.get('PYTEST_CURRENT_TEST')
+    use_adiff_entry = adiffs.get(utname, None)
+    if use_adiff_entry == "OOM":
+        pytest.skip("[Adiffs] Skip due to known OOM.")
+    print(f"{use_adiff_entry=}")
     torch.cuda.empty_cache()
     SKIP_DK_DV = False
     SKIP_DQ = False
@@ -263,9 +270,6 @@ def _do_test_op_bwd(args, device_str='cuda'):
             pytest.xfail("Unsupported Config in AITER")
     else:
         ctx.compute_backward(tri_out, dout)
-    utname = os.environ.get('PYTEST_CURRENT_TEST')
-    use_adiff_entry = adiffs.get(utname, None)
-    print(f"{use_adiff_entry=}")
     is_allclose, adiff, grads_allclose, grads_adiff, tfts = ctx.validate_with_reference(tri_out, ctx.dout_tensors, return_target_fudge_factors=True, use_adiff_entry=use_adiff_entry)
     ctx.display_validation_results(tri_out, is_allclose, adiff, grads_allclose, grads_adiff)
 
