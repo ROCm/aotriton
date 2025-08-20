@@ -159,6 +159,8 @@ class SdpaContext(object):
         if torch.version.hip:
             if 'gfx90a' in torch.cuda.get_device_properties(0).gcnArchName:
                 self.OUT_FUDGE_FACTOR = 12.0
+            if 'gfx1201' in torch.cuda.get_device_properties(0).gcnArchName:
+                self.OUT_FUDGE_FACTOR = max(self.OUT_FUDGE_FACTOR, 10.0)
         if AOTRITON_TORCH_ONLY_USE_CPU:
             self.OUT_FUDGE_FACTOR = 12.0
 
