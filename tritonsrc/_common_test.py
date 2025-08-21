@@ -374,7 +374,7 @@ class SdpaContext(object):
                 bias_fudge_factor = 45.0 if self.is_hdim_NPOT_optimized else 36.0
             # Navi31 needs larger factors
             if 'gfx1100' in torch.cuda.get_device_properties(0).gcnArchName:
-                query_fudge_factor = max(query_fudge_factor, 512.0 if p.dropout_p > 0.0 else query_fudge_factor)
+                query_fudge_factor = max(query_fudge_factor, 768.0 if p.dropout_p > 0.0 else 320.0)
         if AOTRITON_TORCH_ONLY_USE_CPU:
             query_fudge_factor = 128.0
             key_fudge_factor = 330.0
