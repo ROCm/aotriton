@@ -104,6 +104,12 @@ class FlashTunerSource(MonadService):
             skip_bwd = True
         else:
             skip_bwd = False
+        def min_heads(n_heads, scalar, pair):
+            if isinstance(n_heads, list):
+                if n_heads > pair:
+                    return pair
+                return n_heads
+            return min(n_heads, scalar)
         if skip_bwd:
             # Empricial for FWD only
             #   batch=3 nheads=4 seqlen=8192 d_head=256 dropout=0.5 bias=1 memory cost 32G
@@ -136,11 +142,11 @@ class FlashTunerSource(MonadService):
             # Old empricical algorithm that (mostly) works with bwd
             if seqlen_q * seqlen_k * D_HEAD >= 2048 * 2048 * VRAM_CAP_IN_GB:
                 BATCH = min(BATCH, 3)
-                N_HEADS = min(N_HEADS, 4)
+                N_HEADS = min_heads(N_HEADS, 4, [8,4])
             if (causal or bias_type != 0) and seqlen_q * seqlen_k * D_HEAD >= 2048 * 2048 * VRAM_CAP_IN_GB:
                 # Prevent OOM, causal=True needs more memory
-                N_HEADS = min(N_HEADS, 2)
                 BATCH = min(BATCH, 2)
+                N_HEADS = min_heads(N_HEADS, 2, [4,2])
         return (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type)
 
     def gen_from_argv(self):
@@ -225,7 +231,7 @@ class FlashTunerSource(MonadService):
         if a.continue_from_json_file and a.json_file is not None and a.json_file.is_file():
             # TODO: skipset
             with open(a.json_file, 'r') as f:
-                for line in f.readlines():
+                for line in f:
                     j = json.loads(line)
                     task_id = j['_debug_task_id']
                     if task_id in skip_set:
