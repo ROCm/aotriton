@@ -35,10 +35,11 @@ if USE_ADIFFS_TXT is not None:
     adiffs = {}
     with open(USE_ADIFFS_TXT) as f:
         for line in f:
-            utname, adiff_str = line.split('\t')
+            utname, adiff_str = line.rstrip().split('\t')
             if adiff_str == "OOM":
                 adiffs[utname] = "OOM"
-            adiffs[utname] = json.loads(adiff_str)
+            else:
+                adiffs[utname] = json.loads(adiff_str)
 else:
     adiffs = {}
 
