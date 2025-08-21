@@ -30,6 +30,7 @@ class StateTracker(Monad):
 
     def ask_for_last_message(self, monad):
         msg = MonadMessage(task_id=None, action=MonadAction.OOB_RequestStatus)
+        self.print(f'ask_for_last_message {monad.identifier=}')
         msg.set_source(monad.identifier)
         self._q_up.put(msg)
         return self._q_resume.get()
@@ -73,15 +74,25 @@ class StateTrackerService(MonadService):
             print(f'Requesting Status {request.source=}')
             progress = self._progress_tracker[request.source]
             if progress.task_id in self._task_confirmation:
+                self.print(f'Replying progress {self._task_confirmation[progress.task_id].payload=} to {request.source=}')
                 self.monad._q_resume.put(self._task_confirmation[progress.task_id] \
                                              .clone() \
                                              .set_source(request.source))
             else:
+                self.print(f'Replying progress {progress=} to {request.source=}')
                 self.monad._q_resume.put(progress)
             return
         if request.action == MonadAction.OOB_AckRecv:
             self._progress_tracker[request.source] = request
-            if request.task_id is not None and request.source in ['dbaccessor', 'opdb']:
+            '''
+            Cannot remember the reason to check the request.source
+            But the effect is clear, the SIGSEGV task reported by the worker as
+            AckRecv will be silently discarded and the progress will not be
+            updated
+            # Old code:
+            # if request.task_id is not None and request.source in ['dbaccessor', 'opdb']:
+            '''
+            if request.task_id is not None:
                 self._task_confirmation[request.task_id] = request
             self.print(f'Update _progress_tracker[{request.source=}] to {request}')
             return
