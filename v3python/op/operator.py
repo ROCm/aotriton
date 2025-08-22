@@ -60,7 +60,7 @@ class Operator(Interface):
             def discretization(v):
                 return bucket.index(v)
             df[f'$$ind_{i}'] = df[ind_key].apply(discretization)
-        for i, gpu in enumerate(f.optimized_for):
+        for i, gpu in enumerate(f.database_gpus):
             if i > 0:
                 lut_tensor[i] = lut_tensor[0]
             df_i = df[df['gpu'] == gpu]
