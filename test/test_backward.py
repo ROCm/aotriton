@@ -43,8 +43,6 @@ if USE_ADIFFS_TXT is not None:
 else:
     adiffs = {}
 
-print(adiffs)
-
 # SIGSEGV_ERROR_CODE = signal.SIGSEGV
 
 def exit_pytest():
