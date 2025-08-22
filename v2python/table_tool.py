@@ -84,7 +84,7 @@ class PerKernelResult(object):
     def conclude(self):
         self.valid_out_tensors = self.KERNEL_OUT_TENSORS
 
-    def get_most_accurate_kernel(self):
+    def _get_most_accurate_kernel_tft(self):
         tfts = { tn : [] for tn in self.valid_out_tensors }
         for j in self._jarray:
             if 'target_fudge_factors' not in j:
@@ -105,9 +105,9 @@ class PerKernelResult(object):
         #        resolution for this (use sum of target_fudge_factors?)
         return { tn : max(1.0, np.min(tfts[tn])) for tn in self.valid_out_tensors }
 
-    def get_optimal_kernel(self, fudge_factor_tolerance, max_fudge_factor, allow_no_acceptable=False):
+    def _get_optimal_kernel_tft(self, fudge_factor_tolerance, max_fudge_factor, allow_no_acceptable=False):
         verbose = False
-        best_tft = self.get_most_accurate_kernel()
+        best_tft = self._get_most_accurate_kernel_tft()
         if allow_no_acceptable and best_tft is None:
             return None
         if best_tft is None:
@@ -116,18 +116,27 @@ class PerKernelResult(object):
         fft = fudge_factor_tolerance
         def is_acceptable(j):
             if j['result'] != 'tuned':
+                if verbose:
+                    print('is_acceptable: result != tuned')
                 return False
             if not isinstance(j['time'], list):
                 t = j['time']
                 if not isinstance(t, float):
+                    if verbose:
+                        print('is_acceptable: time is not float')
                     return False
                 if math.isnan(t) or math.isinf(t):
+                    if verbose:
+                        print('is_acceptable: time is nan/inf')
                     return False
             adiffs = j['adiffs']
             if adiffs is None or self.any_nan(adiffs):
+                if verbose:
+                    print(f'is_acceptable: {adiffs=}')
                 return False
             fits = { tn : j['target_fudge_factors'][tn] < min(max_fudge_factor, fft * best_tft[tn]) for tn in self.valid_out_tensors }
-            # print(f'{fits=}')
+            if verbose:
+                print(f'{fits=}')
             return all(fits.values())
         acceptables = list(filter(is_acceptable, self._jarray))
         def gettime(j):
@@ -141,6 +150,68 @@ class PerKernelResult(object):
             assert False, 'acceptables is empty'
         # print(f'{acceptables=}')
         optimal = min(acceptables, key=gettime)
+        optimal = self.remove_unused(optimal)
+        return optimal
+
+    def sensible_gen(self):
+        for j in self._jarray:
+            if j['result'] != 'tuned':
+                continue
+            if 'target_fudge_factors' not in j:
+                continue
+            if j['target_fudge_factors'] is None:
+                continue
+            if not isinstance(j['time'], list):
+                t = j['time']
+                if not isinstance(t, float):
+                    continue
+                if math.isnan(t) or math.isinf(t):
+                    continue
+            adiffs = j['adiffs']
+            if adiffs is None or self.any_nan(adiffs):
+                continue
+            yield j
+
+    def get_accurate_kernels(self, tolerance_factor):
+        best_adiffs = None
+        sensibles = list(self.sensible_gen())
+        for j in sensibles:
+            if best_adiffs is None:
+                best_adiffs = j['adiffs']
+            elif best_adiffs > j['adiffs']:
+                best_adiffs = j['adiffs']
+        if best_adiffs is None:
+            return None, None
+        if isinstance(best_adiffs, list):
+            acceptable_adiffs = [ tolerance_factor * e for e in best_adiffs ]
+        else:
+            acceptable_adiffs = tolerance_factor * best_adiffs
+        return best_adiffs, [ j for j in sensibles if j['adiffs'] < acceptable_adiffs ]
+
+    def get_optimal_kernel(self, fudge_factor_tolerance, max_fudge_factor, allow_no_acceptable=False):
+        verbose = False
+        best_adiffs, acceptables = self.get_accurate_kernels(fudge_factor_tolerance)
+
+        if allow_no_acceptable and best_adiffs is None:
+            return None
+        if best_adiffs is None:
+            print(f'NEED RERUN TID: {self.tid}')
+            return None
+
+        def gettime(j):
+            if not isinstance(j['time'], list):
+                return j['time']
+            return tuple(j['time'])
+        if not acceptables:
+            if allow_no_acceptable:
+                return None
+            # print(f'{best_tft=}')
+            assert False, 'acceptables is empty'
+        # print(f'{acceptables=}')
+        # for acceptable in acceptables:
+        #     print(f'{acceptable=}')
+        optimal = min(acceptables, key=gettime)
+        # print(f'{best_adiffs=} {optimal["adiffs"]=}')
         optimal = self.remove_unused(optimal)
         return optimal
 
@@ -462,12 +533,12 @@ class TuningDatabase(object):
         raw_info['inputs']['CAUSAL_TYPE'] = 3 if raw_info['inputs']['CAUSAL_TYPE'] == 1 else 0
 
         # Workaround to fix large block size for hdim=512 on navi31
-        if raw_info['arch'] in ['gfx1100', 'gfx1201'] and raw_info['inputs']['BLOCK_DMODEL'] == 512:
-            if 'tuned_kernel' in raw_info:
-                ti = raw_info['tuned_kernel']
-                print(f"{ti=}")
-                if ti['BLOCK_M'] > 16 or ti['BLOCK_N'] > 16:
-                    return
+        # if raw_info['arch'] in ['gfx1100', 'gfx1201'] and raw_info['inputs']['BLOCK_DMODEL'] == 512:
+        #     if 'tuned_kernel' in raw_info:
+        #         ti = raw_info['tuned_kernel']
+        #         # print(f"{ti=}")
+        #         if ti['BLOCK_M'] > 16 or ti['BLOCK_N'] > 16:
+        #             return
 
         # For OpTune: move 'inputs'/'op_backend' and 'tflops' to 'op': {...}
         # FIXME: Correctly store info with Tuner V3
@@ -505,8 +576,9 @@ class TuningDatabase(object):
             return need_rounding_keys
         need_rounding_keys = rounding(check_only=True)
         need_rounding = len(need_rounding_keys) > 0
-        if need_rounding != round_inputs:
-            print(raw_info)
+        # if need_rounding != round_inputs:
+        #     print(raw_info)
+
         # assert need_rounding == round_inputs, '--round_inputs should only be applied to json with irregular inputs, and vise versa'
         # if len(need_rounding_keys) == 1 and 'D_HEAD' in need_rounding_keys:
         #     only_hdim_rounded = True
@@ -610,7 +682,7 @@ def do_main(args, db, fin):
                     #    db.upsert_json(rj2, create_table_only=False)
                     pbar.update(1)
         for klass in KERNEL_NAME_TO_FACTORY.values():
-            print(f'{klass.KERNEL_MAX_FUDGE_FACTORS=}')
+            print(f'{klass.KERNEL_NAME=} {klass.KERNEL_MAX_FUDGE_FACTORS=}')
     elif args.action == 'rawsc':
         db.init_aggregation()
         pbar = tqdm(total=fin_size, desc='Processed bytes')
