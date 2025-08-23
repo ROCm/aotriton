@@ -25,7 +25,14 @@ from attn_torch_function import (
     hipError_t,
     hipGetLastError,
 )
-from _common_test import SdpaContext, SdpaParams, SdpaContextFromNPZ, AOTRITON_TORCH_ONLY_USE_CPU, fmt_hdim
+from _common_test import (
+    SdpaContext,
+    SdpaParams,
+    SdpaContextFromNPZ,
+    AOTRITON_TORCH_ONLY_USE_CPU,
+    fmt_hdim,
+    fmt_nheads,
+)
 
 ON_GPU = os.getenv('ON_GPU', default=None)
 RECORD_ADIFFS_TO = os.getenv('RECORD_ADIFFS_TO', default=None)
@@ -147,17 +154,7 @@ if LARGE_HEADDIM_ONLY:
     # PRIME_HEADDIMS = remove_not_larger_than(PRIME_HEADDIMS, 192)
     M8_HEADDIMS = remove_not_larger_than(M8_HEADDIMS, 192)
 
-REGULAR_HEADDIM_ONLY = bool(int(os.getenv('REGULAR_HEADDIM_ONLY', default='0')))
-HEADDIM_8X_ONLY = bool(int(os.getenv('HEADDIM_8X_ONLY', default='0')))
-
-assert not (REGULAR_HEADDIM_ONLY and HEADDIM_8X_ONLY), f'{REGULAR_HEADDIM_ONLY=} and {HEADDIM_8X_ONLY=} are mutually exclusive'
-
-if REGULAR_HEADDIM_ONLY:
-    ALL_HEADDIMS = POT_HEADDIMS + NPOT_HEADDIMS
-elif HEADDIM_8X_ONLY:
-    ALL_HEADDIMS = M8_HEADDIMS
-else:
-    ALL_HEADDIMS = POT_HEADDIMS + NPOT_HEADDIMS + M8_HEADDIMS
+ALL_HEADDIMS = POT_HEADDIMS + NPOT_HEADDIMS + M8_HEADDIMS
 
 # Deduplication
 ALL_HEADDIMS = sorted(list(set(ALL_HEADDIMS)))
@@ -312,33 +309,49 @@ def _test_op_bwd(args, device : int | None = None):
             exit_pytest()
         raise e
 
+if FOR_RELEASE == 0:
+    @pytest.mark.parametrize('BATCH', [3])
+    @pytest.mark.parametrize('N_HEADS', [5, (10, 2)], ids=fmt_nheads)
+    @pytest.mark.parametrize('D_HEAD', [8, 64, 184], ids=fmt_hdim)
+    @pytest.mark.parametrize('seqlen_q', [11, 523, 2048])
+    @pytest.mark.parametrize('seqlen_k', [31, 337, 1063])
+    @pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
+    @pytest.mark.parametrize('dropout_p', [0.0, 0.5] if BWD_IMPL != 2 else [0.0])
+    @pytest.mark.parametrize('dtype', DTYPES)
+    @pytest.mark.parametrize('sm_scale', ['l1'])
+    @pytest.mark.parametrize('storage_flip', [True])
+    @pytest.mark.parametrize('BWDOP', BWDOP_ids)
+    def test_fast(torch_gpu, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
+        bias_type = None
+        args = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
+        _test_op_bwd(args, device=torch_gpu)
 
-@pytest.mark.parametrize('BATCH', [1, 4] if not FOR_RELEASE else [3])
-@pytest.mark.parametrize('N_HEADS', [1, 4] if not FOR_RELEASE else [5])
-@pytest.mark.parametrize('D_HEAD', ALL_HEADDIMS, ids=fmt_hdim)
-@pytest.mark.parametrize('seqlen_q', REGULAR_SEQLEN)
-@pytest.mark.parametrize('seqlen_k', REGULAR_SEQLEN)
-@pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
-@pytest.mark.parametrize('dropout_p', [0.0, 0.5] if BWD_IMPL != 2 else [0.0])
-@pytest.mark.parametrize('dtype', DTYPES)
-@pytest.mark.parametrize('sm_scale', [0.0, 0.125] if not FOR_RELEASE else ['l1', 'l2'])
-@pytest.mark.parametrize('storage_flip', [False, True])
-# @pytest.mark.parametrize('return_encoded_softmax', [False])
-@pytest.mark.parametrize('BWDOP', BWDOP_ids)
-def test_regular_bwd(torch_gpu, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
-    bias_type = None
-    args = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
-    _test_op_bwd(args, device=torch_gpu)
+if FOR_RELEASE > 0:
+    @pytest.mark.parametrize('BATCH', [3])
+    @pytest.mark.parametrize('N_HEADS', [5])
+    @pytest.mark.parametrize('D_HEAD', ALL_HEADDIMS, ids=fmt_hdim)
+    @pytest.mark.parametrize('seqlen_q', REGULAR_SEQLEN)
+    @pytest.mark.parametrize('seqlen_k', REGULAR_SEQLEN)
+    @pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
+    @pytest.mark.parametrize('dropout_p', [0.0, 0.5] if BWD_IMPL != 2 else [0.0])
+    @pytest.mark.parametrize('dtype', DTYPES)
+    @pytest.mark.parametrize('sm_scale', ['l1', 'l2'])
+    @pytest.mark.parametrize('storage_flip', [False, True])
+    @pytest.mark.parametrize('BWDOP', BWDOP_ids)
+    def test_regular_bwd(torch_gpu, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
+        bias_type = None
+        args = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
+        _test_op_bwd(args, device=torch_gpu)
 
-if BWD_IMPL != 2:  # AITER ASM does not support bias ATM
-    @pytest.mark.parametrize('BATCH', [1, 4] if not FOR_RELEASE else [3])
-    @pytest.mark.parametrize('N_HEADS', [1, 4] if not FOR_RELEASE else [5])
+if FOR_RELEASE > 0 and BWD_IMPL != 2:  # AITER ASM does not support bias ATM
+    @pytest.mark.parametrize('BATCH', [3])
+    @pytest.mark.parametrize('N_HEADS', [5])
     @pytest.mark.parametrize('D_HEAD', ALL_HEADDIMS, ids=fmt_hdim)
     @pytest.mark.parametrize('seqlen_q', REGULAR_SEQLEN_2K)
     @pytest.mark.parametrize('seqlen_k', REGULAR_SEQLEN_2K)
     @pytest.mark.parametrize('dropout_p', [0.0, 0.5] if BWD_IMPL != 2 else [0.0])
     @pytest.mark.parametrize('dtype', DTYPES)
-    @pytest.mark.parametrize('sm_scale', [0.0, 1.2] if not FOR_RELEASE else [1.2])
+    @pytest.mark.parametrize('sm_scale', ['l1'])
     @pytest.mark.parametrize('storage_flip', [False, True])
     @pytest.mark.parametrize('BWDOP', BWDOP_ids)
     def test_op_bwd_with_matrix_bias(torch_gpu, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, sm_scale, dropout_p, dtype, storage_flip):
@@ -350,22 +363,22 @@ if BWD_IMPL != 2:  # AITER ASM does not support bias ATM
         args = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
         _test_op_bwd(args, device=torch_gpu)
 
-@pytest.mark.parametrize('BATCH', [1, 4] if not FOR_RELEASE else [4])
-@pytest.mark.parametrize('N_HEADS', [(16, 8), (10, 2)])
-# @pytest.mark.parametrize('D_HEAD', [8] if SMALL_HEADDIM_ONLY else [8, 203, 256])
-@pytest.mark.parametrize('D_HEAD', ALL_HEADDIMS, ids=fmt_hdim)
-@pytest.mark.parametrize('seqlen_q', [4, 143, 2048])
-@pytest.mark.parametrize('seqlen_k', [4, 127, 579, 2048])
-@pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
-@pytest.mark.parametrize('dropout_p', [0.0, 0.5])
-@pytest.mark.parametrize('dtype', DTYPES)
-@pytest.mark.parametrize('sm_scale', [0.0, 0.125] if not FOR_RELEASE else ['l1', 'l2'])
-@pytest.mark.parametrize('storage_flip', [False])
-@pytest.mark.parametrize('BWDOP', BWDOP_ids)
-def test_gqa(torch_gpu, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
-    bias_type = None
-    args = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
-    _test_op_bwd(args, device=torch_gpu)
+if FOR_RELEASE > 0:  # Make the loading faster
+    @pytest.mark.parametrize('BATCH', [3])
+    @pytest.mark.parametrize('N_HEADS', [(16, 8), (10, 2)])
+    @pytest.mark.parametrize('D_HEAD', ALL_HEADDIMS, ids=fmt_hdim)
+    @pytest.mark.parametrize('seqlen_q', [4, 143, 2048])
+    @pytest.mark.parametrize('seqlen_k', [4, 127, 579, 2048])
+    @pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
+    @pytest.mark.parametrize('dropout_p', [0.0, 0.5])
+    @pytest.mark.parametrize('dtype', DTYPES)
+    @pytest.mark.parametrize('sm_scale', ['l1', 'l2'])
+    @pytest.mark.parametrize('storage_flip', [False])
+    @pytest.mark.parametrize('BWDOP', BWDOP_ids)
+    def test_gqa(torch_gpu, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
+        bias_type = None
+        args = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
+        _test_op_bwd(args, device=torch_gpu)
 
 if FOR_RELEASE > 1:  # Make the loading faster
     @pytest.mark.parametrize('BATCH', [3])
