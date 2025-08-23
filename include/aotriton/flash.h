@@ -16,6 +16,7 @@ using T4 = AOTRITON_NS::TensorView<4>;
 using T2 = AOTRITON_NS::TensorView<2>;
 using T1 = AOTRITON_NS::TensorView<1>;
 using T0 = AOTRITON_NS::TensorView<0>;
+using LT2 = AOTRITON_NS::LazyTensor<2>;
 using LT4 = AOTRITON_NS::LazyTensor<4>;
 
 // For debugging and profiling purpose
@@ -103,7 +104,7 @@ struct AOTRITON_API attn_bwd_params {
   T4        DQ;
   T4        DB;
   T2        L;
-  T2        D;
+  LT2       D;
   // int32_t   Num_head_q;          // Inferred from Q.size()
   // int32_t   Num_head_k;          // Inferred from Q.size()
   // int32_t   Num_seqlens;         // Inferred from cu_seqlens_q

@@ -665,6 +665,7 @@ aiter_bwd(const attn_bwd_params& in,
   static std::vector<int> compiled_head_dims {64, 128, 192};
   // const auto& compiled_head_dims = BwdKernelDkDvMetadata::get_BLOCK_DMODEL_choices();
   int16_t head_dim_rounded = round_value(head_dim, compiled_head_dims);
+  LazyTensorInternal<2> lazy_delta(in.D);
   LazyTensorInternal<4> lazy_dq_acc(in.DQ_ACC);
   OpAttnBwdParams params = {
     .Q = &in.Q,
@@ -680,7 +681,7 @@ aiter_bwd(const attn_bwd_params& in,
     .DB = &in.DB,
     .DQ_ACC = &lazy_dq_acc,
     .L = &in.L,
-    .D = &in.D,
+    .D = &lazy_delta,
     .num_head_q = num_head_q,
     .num_head_k = num_head_k,
     .cu_seqlens_q = &in.cu_seqlens_q,
@@ -713,9 +714,9 @@ aiter_bwd(const attn_bwd_params& in,
   using AOTRITON_NS::v2::flash::bwd_preprocess;
   using AOTRITON_NS::v2::flash::bwd_preprocess_varlen;
   if (num_seqlens == 0)
-    err = bwd_preprocess(in.Out, in.DO, in.D, stream);
+    err = bwd_preprocess(in.Out, in.DO, lazy_delta, stream);
   else
-    err = bwd_preprocess_varlen(in.Out, in.DO, in.D, in.cu_seqlens_q, max_seqlen_q, stream);
+    err = bwd_preprocess_varlen(in.Out, in.DO, lazy_delta, in.cu_seqlens_q, max_seqlen_q, stream);
   if (err != hipSuccess)
     return err;
   err = context.launch(stream);

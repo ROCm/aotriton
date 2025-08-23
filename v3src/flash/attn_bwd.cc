@@ -93,6 +93,7 @@ attn_bwd(const attn_bwd_params& in,
     if (head_dim_rounded == 80)
       head_dim_rounded = 96;
   }
+  LazyTensorInternal<2> lazy_delta(in.D);
   LazyTensorInternal<4> lazy_dq_acc(in.DQ_ACC);
   OpAttnBwdParams params = {
     .Q = &in.Q,
@@ -108,7 +109,7 @@ attn_bwd(const attn_bwd_params& in,
     .DB = &in.DB,
     .DQ_ACC = &lazy_dq_acc,
     .L = &in.L,
-    .D = &in.D,
+    .D = &lazy_delta,
     .num_head_q = num_head_q,
     .num_head_k = num_head_k,
     .cu_seqlens_q = &in.cu_seqlens_q,

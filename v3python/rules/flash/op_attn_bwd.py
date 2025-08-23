@@ -77,8 +77,8 @@ class OpAttnBwd(OpAttn):
     TYPE_CHOICES = {
         frozenset(['Q', 'K', 'V', 'B', 'Out', 'DO', 'DK', 'DV', 'DQ', 'DB']) : match_fwd('Q'),
         frozenset(['sm_scale']) : match_fwd( 'Sm_scale'),
-        frozenset(['L', 'D']) : ['*fp32:16'],
-        frozenset(['DQ_ACC']) : ['LazyTensor:*fp32:16'],
+        frozenset(['L']) : ['*fp32:16'],
+        frozenset(['D', 'DQ_ACC']) : ['LazyTensor:*fp32:16'],
         frozenset(['cu_seqlens_q', 'cu_seqlens_k']) : match_fwd('cu_seqlens_q'),
         frozenset(['num_seqlens', 'max_seqlen_q', 'max_seqlen_k']) : match_fwd('Num_seqlens'),
         frozenset(['head_dim', 'num_head_q', 'num_head_k']) : ['i32'],
