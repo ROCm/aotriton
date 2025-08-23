@@ -594,3 +594,7 @@ def lazy_dq_acc(dq : 'torch.Tensor'):
     dq_view = T4(dq.data_ptr(), tuple(dq.size()), dq.stride(), cast_dtype(dq.dtype))
     return lazy_tensor.dq_acc(dq_view, dq.device.index)
 
+def lazy_delta(L : 'torch.Tensor'):
+    from pyaotriton import lazy_tensor
+    L_view = T2(L.data_ptr(), tuple(L.size()), L.stride(), cast_dtype(L.dtype))
+    return lazy_tensor.delta(L_view, L.device.index)
