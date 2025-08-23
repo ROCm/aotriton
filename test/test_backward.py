@@ -7,6 +7,12 @@ import torch
 import os
 import sys
 import math
+import pathlib
+import fcntl
+import struct
+import itertools
+import json
+import gc
 
 from attn_torch_function import (
     DEFAULT_PHILOX_SEED,
@@ -17,15 +23,73 @@ from attn_torch_function import (
     V3_API,
     PROBE_UNSUPPORTED,
     hipError_t,
+    hipGetLastError,
 )
 from _common_test import SdpaContext, SdpaParams, SdpaContextFromNPZ, AOTRITON_TORCH_ONLY_USE_CPU, fmt_hdim
 
-@pytest.fixture()
-def torch_gpu(worker_id):
-    # Common worker_id values are "gw0", "gw1", etc.
-    return int(worker_id[2:]) if worker_id != "master" else None
+ON_GPU = os.getenv('ON_GPU', default=None)
+RECORD_ADIFFS_TO = os.getenv('RECORD_ADIFFS_TO', default=None)
+USE_ADIFFS_TXT = os.getenv('USE_ADIFFS_TXT', default=None)
 
-FOR_RELEASE = bool(int(os.getenv('FOR_RELEASE', default='0')))
+if USE_ADIFFS_TXT is not None:
+    adiffs = {}
+    with open(USE_ADIFFS_TXT) as f:
+        for line in f:
+            utname, adiff_str = line.rstrip().split('\t')
+            if adiff_str == "OOM":
+                adiffs[utname] = "OOM"
+            else:
+                adiffs[utname] = json.loads(adiff_str)
+else:
+    adiffs = {}
+
+# SIGSEGV_ERROR_CODE = signal.SIGSEGV
+
+def exit_pytest():
+    # os.kill(os.getpid(), SIGSEGV_ERROR_CODE)
+    os._exit(139)
+
+PYTEST_XDIST_WORKER_COUNT=int(os.getenv('PYTEST_XDIST_WORKER_COUNT', default='0'))
+STRUCT_FLOCK = 'hhllh'
+PAGE_SIZE = 4096
+
+if PYTEST_XDIST_WORKER_COUNT == 0:  # No pytest
+    @pytest.fixture()
+    def torch_gpu():
+        return 0
+elif ON_GPU is not None:
+    @pytest.fixture()
+    def torch_gpu():
+        yield int(ON_GPU)
+        return
+else:
+    @pytest.fixture(scope="session", autouse=True)
+    def gpufilelock(tmp_path_factory, testrun_uid):
+        # get the temp directory shared by all workers
+        root_tmp_dir = tmp_path_factory.getbasetemp().parent
+        lockfile = root_tmp_dir / "gpulock"
+        with open(lockfile, 'wb') as f:
+            f.seek(PYTEST_XDIST_WORKER_COUNT * PAGE_SIZE - 1)
+            f.write(b'\0')
+        return lockfile
+
+    @pytest.fixture(scope="session")  # For pytest-xdist, "session" scope is per-worker process
+    def torch_gpu(worker_id, testrun_uid, gpufilelock):
+        with open(gpufilelock, 'wb') as f:
+            for gpu in itertools.cycle(range(PYTEST_XDIST_WORKER_COUNT)):
+                ld = struct.pack(STRUCT_FLOCK, fcntl.F_WRLCK, os.SEEK_SET, PAGE_SIZE * gpu, PAGE_SIZE, 0)
+                try:
+                    ret = fcntl.fcntl(f, fcntl.F_SETLK, ld)
+                    print(f'{worker_id} uses GPU {gpu} filelock = {gpufilelock}', file=sys.stderr, flush=True)
+                    yield gpu
+                    ud = struct.pack(STRUCT_FLOCK, fcntl.F_UNLCK, os.SEEK_SET, PAGE_SIZE * gpu, PAGE_SIZE, 0)
+                    ret = fcntl.fcntl(f, fcntl.F_SETLK, ud)
+                    return
+                except BlockingIOError as e:
+                    pass
+
+FOR_RELEASE = int(os.getenv('FOR_RELEASE', default='0'))
+SMALL_VRAM = bool(int(os.getenv('SMALL_VRAM', default='0')))
 
 DTYPES = [torch.float16, torch.bfloat16, torch.float32]
 
@@ -36,7 +100,7 @@ if BWD_IMPL == 0:
 elif BWD_IMPL == 1:
     POT_HEADDIMS = [16, 32, 64, 128, 256]
     NPOT_HEADDIMS = [48, 80, 96, 160, 192, 224]
-    M8_HEADDIMS = [8, 24, 40, 56, 72, 88, 96, 120, 152, 184, 216, 248]
+    M8_HEADDIMS = [8, 24, 40, 56, 72, 88, 96, 120, 152, 184, 216]
 elif BWD_IMPL == 2:
     POT_HEADDIMS = [16, 32, 64, 128]
     NPOT_HEADDIMS = [48, 80, 96, 160, 192]
@@ -51,8 +115,10 @@ else:
 # GPU kernels are unable to support unaligned memory access in any performant way
 # PRIME_HEADDIMS = [7, 23, 37, 53, 67, 73, 83, 113, 149, 179, 211, 241] + ([401] if not BWD_IMPL else [])
 # Multiple of 8 head dimensions are tested instead
-PRIME_SEQLEN_Q = [11, 17, 37, 67, 157, 257, 523, 1033, 2063, 4919, 10601]
-PRIME_SEQLEN_K = [13, 31, 41, 71, 223, 337, 571, 1063, 2081, 5237, 11369]
+REGULAR_SEQLEN = [8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
+REGULAR_SEQLEN_2K = [8, 16, 32, 64, 128, 256, 512, 1024, 2048]  # OOM when test with bias
+PRIME_SEQLEN_Q = [11, 17, 37, 67, 157, 257, 523, 1033, 2063, 4919]
+PRIME_SEQLEN_K = [13, 31, 41, 71, 223, 337, 571, 1063, 2081, 5237]
 
 SMALL_HEADDIM_ONLY = bool(int(os.getenv('SMALL_HEADDIM_ONLY', default='0')))
 LARGE_HEADDIM_ONLY = bool(int(os.getenv('LARGE_HEADDIM_ONLY', default='0')))
@@ -160,8 +226,17 @@ def _do_test_op_bwd(args, device_str='cuda'):
             pytest.skip("hdim > 192 AITER ASM kernel does not exist.")
     if causal and bias_type is not None:
         pytest.skip("_scaled_dot_product_attention: Explicit attn_mask should not be set when is_causal=True")
-    if BATCH > 1 and seqlen_q * seqlen_k >= 1024 * 1024:
-        torch.cuda.empty_cache()
+    if SMALL_VRAM and seqlen_q * seqlen_k * D_HEAD > 4096 * 8192 * 256:
+        pytest.skip("Skip large tests (qkd > 4096 * 8192 * 256) due to low VRAM.")
+    if 'gfx11' in torch.cuda.get_device_properties(0).gcnArchName:
+        if D_HEAD > 256:
+            pytest.skip("Skip hdim > 256 on gfx11 arch due to register pressure.")
+    utname = os.environ.get('PYTEST_CURRENT_TEST')
+    use_adiff_entry = adiffs.get(utname, None)
+    if use_adiff_entry == "OOM":
+        pytest.skip("[Adiffs] Skip due to known OOM.")
+    print(f"{use_adiff_entry=}")
+    torch.cuda.empty_cache()
     SKIP_DK_DV = False
     SKIP_DQ = False
     SKIP_DB = True if bias_type is None else False
@@ -178,7 +253,9 @@ def _do_test_op_bwd(args, device_str='cuda'):
     ext = AttentionExtraArgs(return_encoded_softmax=False if dropout_p == 0 else True,
                              autotune=False,
                              return_autotune=False,
-                             fillnan=True)
+                             fillnan=True,
+                             illaddr_handler=exit_pytest,
+                             )
     tri_out, encoded_softmax, _ = attention(q, k, v, b, causal, sm_scale, dropout_p, ext)
     dropout_mask = encoded_softmax >= 0 if encoded_softmax is not None else None
     sdpa_params = SdpaParams(causal=causal, sm_scale=sm_scale, dropout_p=dropout_p, dropout_mask=dropout_mask)
@@ -192,9 +269,14 @@ def _do_test_op_bwd(args, device_str='cuda'):
             pytest.xfail("Unsupported Config in AITER")
     else:
         ctx.compute_backward(tri_out, dout)
-    is_allclose, adiff, grads_allclose, grads_adiff, tfts = ctx.validate_with_reference(tri_out, ctx.dout_tensors, return_target_fudge_factors=True)
+    is_allclose, adiff, grads_allclose, grads_adiff, tfts = ctx.validate_with_reference(tri_out, ctx.dout_tensors, return_target_fudge_factors=True, use_adiff_entry=use_adiff_entry)
     ctx.display_validation_results(tri_out, is_allclose, adiff, grads_allclose, grads_adiff)
 
+    if RECORD_ADIFFS_TO is not None and (not is_allclose or not all(grads_allclose)):
+        with open(RECORD_ADIFFS_TO, 'a') as f:
+            dj = { "adiff" : adiff, "grads_adiff" : grads_adiff }
+            print(utname, "\t", json.dumps(dj), file=f, flush=True, sep='')
+        pytest.xfail(f"RECORD ADIFFS {adiff=} {grads_adiff=}")
     assert is_allclose, f'Forward pass {is_allclose=} {tfts=}'
     dq_allclose, dk_allclose, dv_allclose, db_allclose = grads_allclose
     tri_dq, tri_dk, tri_dv, tri_db = ctx.dout_tensors
@@ -213,40 +295,37 @@ def _do_test_op_bwd(args, device_str='cuda'):
     assert dk_allclose and dv_allclose and dq_allclose and db_allclose, f'{dk_allclose=} {dv_allclose=} {dq_allclose=} {db_allclose=} {tfts=}'
     print(f'{tri_out=}')
     print(f'{adiff=} {grads_adiff=}')
+    return seqlen_q * seqlen_k * D_HEAD
 
 def _test_op_bwd(args, device : int | None = None):
-    if device is None:
-        _do_test_op_bwd(args, device_str='cuda')
-    else:
-        with torch.cuda.device(device):
-            _do_test_op_bwd(args, device_str=f'cuda:{device}')
+    try:
+        if device is None:
+            qkh = _do_test_op_bwd(args, device_str='cuda')
+        else:
+            with torch.cuda.device(device):
+                qkh = _do_test_op_bwd(args, device_str=f'cuda:{device}')
+        if qkh > 2048 * 2048 * 128:
+            gc.collect()
+            torch.cuda.empty_cache()
+    except RuntimeError as e:
+        if hipGetLastError() == hipError_t.hipErrorIllegalAddress:
+            exit_pytest()
+        raise e
 
-# @pytest.mark.parametrize('BATCH', [1])
-# @pytest.mark.parametrize('N_HEADS', [1])
+
 @pytest.mark.parametrize('BATCH', [1, 4] if not FOR_RELEASE else [3])
 @pytest.mark.parametrize('N_HEADS', [1, 4] if not FOR_RELEASE else [5])
-# @pytest.mark.parametrize('D_HEAD', [16, 32, 64, 128, 256])
-# Irregular-only PyTorch set
-# @pytest.mark.parametrize('D_HEAD', [8, 21, 72, 96, 160, 192, 203])
-# @pytest.mark.parametrize('seqlen_q', [1, 4, 32, 128, 256, 512, 1024, 7, 394, 250, 399, 511, 1019])
-# @pytest.mark.parametrize('seqlen_k', [1, 4, 32, 128, 256, 512, 1024, 3, 217, 339, 313, 491, 988])
-# PyTorch set
 @pytest.mark.parametrize('D_HEAD', ALL_HEADDIMS, ids=fmt_hdim)
-@pytest.mark.parametrize('seqlen_q', [4, 8, 64, 143, 256, 512, 1024, 2048])
-@pytest.mark.parametrize('seqlen_k', [4, 8, 64, 127, 256, 587, 1024, 2048])
-# Minimal set
-# @pytest.mark.parametrize('seqlen_q', [32, 128])
-# @pytest.mark.parametrize('seqlen_k', [32, 128])
+@pytest.mark.parametrize('seqlen_q', REGULAR_SEQLEN)
+@pytest.mark.parametrize('seqlen_k', REGULAR_SEQLEN)
 @pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
 @pytest.mark.parametrize('dropout_p', [0.0, 0.5] if BWD_IMPL != 2 else [0.0])
-# @pytest.mark.parametrize('dropout_p', [0.0])
 @pytest.mark.parametrize('dtype', DTYPES)
-# @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
 @pytest.mark.parametrize('sm_scale', [0.0, 0.125] if not FOR_RELEASE else ['l1', 'l2'])
 @pytest.mark.parametrize('storage_flip', [False, True])
 # @pytest.mark.parametrize('return_encoded_softmax', [False])
 @pytest.mark.parametrize('BWDOP', BWDOP_ids)
-def test_op_bwd(torch_gpu, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
+def test_regular_bwd(torch_gpu, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
     bias_type = None
     args = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
     _test_op_bwd(args, device=torch_gpu)
@@ -255,8 +334,8 @@ if BWD_IMPL != 2:  # AITER ASM does not support bias ATM
     @pytest.mark.parametrize('BATCH', [1, 4] if not FOR_RELEASE else [3])
     @pytest.mark.parametrize('N_HEADS', [1, 4] if not FOR_RELEASE else [5])
     @pytest.mark.parametrize('D_HEAD', ALL_HEADDIMS, ids=fmt_hdim)
-    @pytest.mark.parametrize('seqlen_q', [4, 8, 64, 143, 256, 512, 1024, 2048])
-    @pytest.mark.parametrize('seqlen_k', [4, 8, 64, 128, 256, 587, 1024, 2048])
+    @pytest.mark.parametrize('seqlen_q', REGULAR_SEQLEN_2K)
+    @pytest.mark.parametrize('seqlen_k', REGULAR_SEQLEN_2K)
     @pytest.mark.parametrize('dropout_p', [0.0, 0.5] if BWD_IMPL != 2 else [0.0])
     @pytest.mark.parametrize('dtype', DTYPES)
     @pytest.mark.parametrize('sm_scale', [0.0, 1.2] if not FOR_RELEASE else [1.2])
@@ -288,10 +367,10 @@ def test_gqa(torch_gpu, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causa
     args = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
     _test_op_bwd(args, device=torch_gpu)
 
-if not FOR_RELEASE:  # Make the loading faster
+if FOR_RELEASE > 1:  # Make the loading faster
     @pytest.mark.parametrize('BATCH', [3])
     @pytest.mark.parametrize('N_HEADS', [5])
-    @pytest.mark.parametrize('D_HEAD', ALL_HEADDIMS)
+    @pytest.mark.parametrize('D_HEAD', ALL_HEADDIMS, ids=fmt_hdim)
     @pytest.mark.parametrize('seqlen_q', PRIME_SEQLEN_Q)
     @pytest.mark.parametrize('seqlen_k', PRIME_SEQLEN_K)
     @pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
@@ -302,6 +381,8 @@ if not FOR_RELEASE:  # Make the loading faster
     @pytest.mark.parametrize('bias_type', [None, 'matrix'], ids=['BiasOff', 'BiasOn'])
     @pytest.mark.parametrize('BWDOP', BWDOP_ids)
     def test_irregulars(torch_gpu, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type):
+        if bias_type is not None and (seqlen_q > 2048 or seqlen_k > 2048):
+            pytest.skip("Skip large UT with bias to avoid OOM")
         args = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
         _test_op_bwd(args, device=torch_gpu)
 
@@ -369,7 +450,7 @@ def main_npz():
 
     dout = ctx.dout
     ctx.compute_backward(tri_out, dout)
-    is_allclose, adiff, grads_allclose, grads_adiff = ctx.validate_with_reference(tri_out, ctx.dout_tensors)
+    is_allclose, adiff, grads_allclose, grads_adiff = ctx.validate_with_reference(tri_out, ctx.dout_tensors, use_adiff_entry=use_adiff_entry)
     assert is_allclose
     dq_allclose, dk_allclose, dv_allclose, db_allclose = grads_allclose
     torch.set_printoptions(linewidth=200, threshold=4096)

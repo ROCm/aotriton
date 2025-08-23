@@ -80,7 +80,12 @@ if(NOT AOTRITON_NO_PYTHON)
     message(FATAL_ERROR "third_party/pybind11 is not initialized\nRun `git submodule sync && git submodule update --init --recursive --force` to fix it.")
   endif()
   if(AOTRITON_USE_TORCH)
-      find_package(Torch REQUIRED)
+    message(STATUS "Python3_EXECUTABLE: ${Python3_EXECUTABLE}")
+    execute_process(COMMAND "${Python3_EXECUTABLE}" -c "import torch; from pathlib import Path; print(str(Path(torch.__file__).parent))"
+                    OUTPUT_STRIP_TRAILING_WHITESPACE
+                    OUTPUT_VARIABLE TORCH_SITE)
+    message(STATUS "TORCH SITE: ${TORCH_SITE}")
+    find_package(Torch REQUIRED HINTS ${TORCH_SITE})
   endif(AOTRITON_USE_TORCH)
 endif()
 

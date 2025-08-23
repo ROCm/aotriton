@@ -8,3 +8,7 @@ tritonsrc/tune-*.json
 2
 1.*
 2.*
+*.out
+*.err
+*.log
+*.cfg

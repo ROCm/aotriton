@@ -12,9 +12,11 @@ import math
 import numpy as np
 import csv
 from tqdm import tqdm
+from pathlib import Path
 
 # FIXME: load from kdesc
 HEAD_DIMS = np.array([16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256, 512], dtype=np.int32)
+SEQLENS = np.array([16,32,64,128,256,512,1024,2048,4096,8192], dtype=np.int32)
 ROUND_INPUTS = bool(int(os.getenv('ROUND_INPUTS', True)))
 
 def round_to_power_of_two(x):
@@ -27,10 +29,11 @@ def parse():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument('-i', type=str, default=None, help='Input CSV/JSON file')
     p.add_argument('-f', '--file', type=str, default=None, help='Database file')
+    p.add_argument('--opfile', type=Path, default=None, help='Op Database file')
     p.add_argument('-k', '--kernel_family', type=str, help='Kernel family')
     p.add_argument('-v', '--verbose', action='store_true', help='Verbose')
     p.add_argument('--action', type=str, required=False, default='pipejson',
-                   choices=['pipejson', 'createtableonly', 'dumpcsv', 'loadcsv', 'rawjson', 'rawsc'],
+                   choices=['pipejson', 'createtableonly', 'dumpcsv', 'loadcsv', 'rawjson', 'rawjson_fudge_check', 'opjson', 'rawsc'],
                    help='Action to perform. pipejson means directly inserting json objects into the database. rawjson means aggregating the raw profiling log (generated from the raw cpptune json objects) and insert the best kernel to database.')
     p.add_argument('--table_name', type=str, help='Table to dump/load')
     p.add_argument('--table_file', type=str, help='CSV file of dump/load')
@@ -49,6 +52,7 @@ def parse():
                    select fatest kernels within a subset of kernel whose target
                    fudge factor is smaller than T * "best target fudge factors".
                    ''')
+    p.add_argument('--max_fudge_factor', type=float, default=100.0)
     p.add_argument('--sc_report', type=str, default=None, help='Write san check results to this JSON file. Required for --action rawsc')
     args = p.parse_args()
     if args.action == 'rawsc':
@@ -80,11 +84,15 @@ class PerKernelResult(object):
     def conclude(self):
         self.valid_out_tensors = self.KERNEL_OUT_TENSORS
 
-    def get_most_accurate_kernel(self):
+    def _get_most_accurate_kernel_tft(self):
         tfts = { tn : [] for tn in self.valid_out_tensors }
         for j in self._jarray:
+            if 'target_fudge_factors' not in j:
+                continue
+            if j['target_fudge_factors'] is None:
+                continue
             for tn in self.valid_out_tensors:
-                tft = j['target_fudge_factors'][tn]
+                tft = j['target_fudge_factors'].get(tn, None)
                 if tft is not None:
                     tfts[tn].append(tft)
         for tft in tfts.values():
@@ -97,8 +105,9 @@ class PerKernelResult(object):
         #        resolution for this (use sum of target_fudge_factors?)
         return { tn : max(1.0, np.min(tfts[tn])) for tn in self.valid_out_tensors }
 
-    def get_optimal_kernel(self, fudge_factor_tolerance, allow_no_acceptable=False):
-        best_tft = self.get_most_accurate_kernel()
+    def _get_optimal_kernel_tft(self, fudge_factor_tolerance, max_fudge_factor, allow_no_acceptable=False):
+        verbose = False
+        best_tft = self._get_most_accurate_kernel_tft()
         if allow_no_acceptable and best_tft is None:
             return None
         if best_tft is None:
@@ -107,17 +116,32 @@ class PerKernelResult(object):
         fft = fudge_factor_tolerance
         def is_acceptable(j):
             if j['result'] != 'tuned':
+                if verbose:
+                    print('is_acceptable: result != tuned')
                 return False
             if not isinstance(j['time'], list):
-                return False
+                t = j['time']
+                if not isinstance(t, float):
+                    if verbose:
+                        print('is_acceptable: time is not float')
+                    return False
+                if math.isnan(t) or math.isinf(t):
+                    if verbose:
+                        print('is_acceptable: time is nan/inf')
+                    return False
             adiffs = j['adiffs']
             if adiffs is None or self.any_nan(adiffs):
+                if verbose:
+                    print(f'is_acceptable: {adiffs=}')
                 return False
-            fits = { tn : j['target_fudge_factors'][tn] < fft * best_tft[tn] for tn in self.valid_out_tensors }
-            # print(f'{fits=}')
+            fits = { tn : j['target_fudge_factors'][tn] < min(max_fudge_factor, fft * best_tft[tn]) for tn in self.valid_out_tensors }
+            if verbose:
+                print(f'{fits=}')
             return all(fits.values())
         acceptables = list(filter(is_acceptable, self._jarray))
         def gettime(j):
+            if not isinstance(j['time'], list):
+                return j['time']
             return tuple(j['time'])
         if not acceptables:
             if allow_no_acceptable:
@@ -126,6 +150,68 @@ class PerKernelResult(object):
             assert False, 'acceptables is empty'
         # print(f'{acceptables=}')
         optimal = min(acceptables, key=gettime)
+        optimal = self.remove_unused(optimal)
+        return optimal
+
+    def sensible_gen(self):
+        for j in self._jarray:
+            if j['result'] != 'tuned':
+                continue
+            if 'target_fudge_factors' not in j:
+                continue
+            if j['target_fudge_factors'] is None:
+                continue
+            if not isinstance(j['time'], list):
+                t = j['time']
+                if not isinstance(t, float):
+                    continue
+                if math.isnan(t) or math.isinf(t):
+                    continue
+            adiffs = j['adiffs']
+            if adiffs is None or self.any_nan(adiffs):
+                continue
+            yield j
+
+    def get_accurate_kernels(self, tolerance_factor):
+        best_adiffs = None
+        sensibles = list(self.sensible_gen())
+        for j in sensibles:
+            if best_adiffs is None:
+                best_adiffs = j['adiffs']
+            elif best_adiffs > j['adiffs']:
+                best_adiffs = j['adiffs']
+        if best_adiffs is None:
+            return None, None
+        if isinstance(best_adiffs, list):
+            acceptable_adiffs = [ tolerance_factor * e for e in best_adiffs ]
+        else:
+            acceptable_adiffs = tolerance_factor * best_adiffs
+        return best_adiffs, [ j for j in sensibles if j['adiffs'] < acceptable_adiffs ]
+
+    def get_optimal_kernel(self, fudge_factor_tolerance, max_fudge_factor, allow_no_acceptable=False):
+        verbose = False
+        best_adiffs, acceptables = self.get_accurate_kernels(fudge_factor_tolerance)
+
+        if allow_no_acceptable and best_adiffs is None:
+            return None
+        if best_adiffs is None:
+            print(f'NEED RERUN TID: {self.tid}')
+            return None
+
+        def gettime(j):
+            if not isinstance(j['time'], list):
+                return j['time']
+            return tuple(j['time'])
+        if not acceptables:
+            if allow_no_acceptable:
+                return None
+            # print(f'{best_tft=}')
+            assert False, 'acceptables is empty'
+        # print(f'{acceptables=}')
+        # for acceptable in acceptables:
+        #     print(f'{acceptable=}')
+        optimal = min(acceptables, key=gettime)
+        # print(f'{best_adiffs=} {optimal["adiffs"]=}')
         optimal = self.remove_unused(optimal)
         return optimal
 
@@ -150,7 +236,21 @@ class PerKernelResult(object):
                 continue
             klass.KERNEL_MAX_FUDGE_FACTORS[tn] = max(klass.KERNEL_MAX_FUDGE_FACTORS[tn], otff)
 
-class Pkr_AttnFwd(PerKernelResult):
+class FAPkr(PerKernelResult):
+    def entry_from_json(self):
+        head = self._jarray[0]
+        inputs = head['inputs']
+        d = {'arch' : head['arch']}
+        d['causal_type'] = inputs['CAUSAL_TYPE']
+        d['d_head'] = inputs['BLOCK_DMODEL']
+        d['dropout_p'] = 0.5 if inputs['ENABLE_DROPOUT'] else 0.0
+        d['dtype'] = inputs['Q_dtype'].removeprefix('torch.')
+        d['bias_type'] = inputs['BIAS_TYPE']
+        d['seqlen_q'] = inputs['Max_seqlen_q']
+        d['seqlen_k'] = inputs['Max_seqlen_k']
+        return json.dumps(d)
+
+class Pkr_AttnFwd(FAPkr):
     KERNEL_NAME = 'attn_fwd'
     KERNEL_OUT_TENSORS = ['out']
 
@@ -160,7 +260,7 @@ class Pkr_AttnFwd(PerKernelResult):
                 del optimal['inputs'][key]
         return optimal
 
-class Pkr_BwdKernelDkDv(PerKernelResult):
+class Pkr_BwdKernelDkDv(FAPkr):
     KERNEL_NAME = 'bwd_kernel_dk_dv'
     KERNEL_OUT_TENSORS = ['dk', 'dv']
 
@@ -170,7 +270,7 @@ class Pkr_BwdKernelDkDv(PerKernelResult):
                 del optimal['inputs'][key]
         return optimal
 
-class Pkr_BwdKernelDq(PerKernelResult):
+class Pkr_BwdKernelDq(FAPkr):
     KERNEL_NAME = 'bwd_kernel_dq'
     KERNEL_OUT_TENSORS = ['dq', 'db']
 
@@ -187,7 +287,7 @@ class Pkr_BwdKernelDq(PerKernelResult):
 
     remove_unused = Pkr_BwdKernelDkDv.remove_unused
 
-class Pkr_FusedBwdKernel(PerKernelResult):
+class Pkr_FusedBwdKernel(FAPkr):
     KERNEL_NAME = 'bwd_kernel_fuse'
     KERNEL_OUT_TENSORS = ['dk', 'dv', 'dq', 'db']
     KERNEL_OUT_TENSORS_NOBIAS = ['dk', 'dv', 'dq', 'db']
@@ -202,11 +302,15 @@ class Pkr_FusedBwdKernel(PerKernelResult):
 
     remove_unused = Pkr_BwdKernelDkDv.remove_unused
 
+class Pkr_OpAttnBwd(Pkr_FusedBwdKernel):
+    KERNEL_NAME = 'op_attn_bwd'
+
 KERNEL_NAME_TO_FACTORY = {
     'attn_fwd' : Pkr_AttnFwd,
     'bwd_kernel_dk_dv' : Pkr_BwdKernelDkDv,
     'bwd_kernel_dq' : Pkr_BwdKernelDq,
     'bwd_kernel_fuse' : Pkr_FusedBwdKernel,
+    'op_attn_bwd' : Pkr_OpAttnBwd,
 }
 
 def pkr_factory(key):
@@ -215,6 +319,7 @@ def pkr_factory(key):
     return factory(tid)
 
 class TuningDatabase(object):
+    OPTABLE = False
     PYTYPE_TO_SQLTYPE = {
         int : 'INTEGER',
         str : 'TEXT',
@@ -226,6 +331,8 @@ class TuningDatabase(object):
         if args.file is not None:
             self._conn = sqlite3.connect(args.file)  # TODO: use autocommit for python 3.12+
             self._conn.isolation_level = None  # TODO: add --batch mode,
+            if args.opfile is not None:
+                self._conn.execute(f"ATTACH DATABASE '{args.opfile.as_posix()}' AS op;")
             self._cur = self._conn.cursor()
         else:
             self._conn = None
@@ -311,8 +418,12 @@ class TuningDatabase(object):
         if create_table_only:
             return
         inputs_columns = self.collect_columns(tune_info['inputs'], prefix='inputs$', sans=('BATCH'))
-        tuned_kernel_columns = self.collect_columns(tune_info['tuned_kernel'], prefix='tuned_kernel$')
-        compiler_options_columns = self.collect_columns(tune_info['compiler_options'], prefix='compiler_options$')
+        if self.OPTABLE:
+            tuned_kernel_columns = self.collect_columns(tune_info['op'], prefix='op$')
+            compiler_options_columns = []
+        else:
+            tuned_kernel_columns = self.collect_columns(tune_info['tuned_kernel'], prefix='tuned_kernel$')
+            compiler_options_columns = self.collect_columns(tune_info['compiler_options'], prefix='compiler_options$')
         all_colnames = ['gpu'] + [colname for colname, _, _ in itertools.chain(inputs_columns, tuned_kernel_columns, compiler_options_columns)]
         stmt_colnames = ', '.join(all_colnames)
         stmt_placeholders = ', '.join(['?'] * len(all_colnames))
@@ -394,6 +505,8 @@ class TuningDatabase(object):
         if not line_text:
             return
         raw_info = json.loads(line_text)
+        if raw_info.get("result", None) == "skipped":
+            return
         kernel_name = raw_info.get('kernel_name', '')
         if raw_info.get('kernel_name') == 'attn_fwd':
             BM = raw_info['tuned_kernel']['BLOCK_M']
@@ -418,13 +531,34 @@ class TuningDatabase(object):
         if raw_info['inputs']['BLOCK_DMODEL'] == raw_info['inputs']['D_HEAD']:
             raw_info['inputs']['PADDED_HEAD'] = False
         raw_info['inputs']['CAUSAL_TYPE'] = 3 if raw_info['inputs']['CAUSAL_TYPE'] == 1 else 0
+
+        # Workaround to fix large block size for hdim=512 on navi31
+        # if raw_info['arch'] in ['gfx1100', 'gfx1201'] and raw_info['inputs']['BLOCK_DMODEL'] == 512:
+        #     if 'tuned_kernel' in raw_info:
+        #         ti = raw_info['tuned_kernel']
+        #         # print(f"{ti=}")
+        #         if ti['BLOCK_M'] > 16 or ti['BLOCK_N'] > 16:
+        #             return
+
+        # For OpTune: move 'inputs'/'op_backend' and 'tflops' to 'op': {...}
+        # FIXME: Correctly store info with Tuner V3
+        if 'op_backend' in raw_info['inputs']:
+            op = {
+                'backend' : raw_info['inputs']['op_backend'],
+                'tflops' : raw_info.get('TFLOPS', float("NaN")),
+            }
+            raw_info['op'] = op
+            del raw_info['inputs']['op_backend']
+            raw_info['kernel_name'] = 'op_attn_bwd'
+
         def rounding(check_only):
             need_rounding_keys = []
             # Round D_HEAD
             # It is not used, but it is part of UNIQUE constraints
             def round_hdims(x):
                 return round_to_array(x, HEAD_DIMS)
-            round_seqlen = round_to_power_of_two
+            def round_seqlen(x):
+                return round_to_array(x, SEQLENS)
             for key, rf in [ ('D_HEAD', round_hdims),
                              ('Max_seqlen_q', round_seqlen),
                              ('Max_seqlen_k', round_seqlen),
@@ -442,9 +576,10 @@ class TuningDatabase(object):
             return need_rounding_keys
         need_rounding_keys = rounding(check_only=True)
         need_rounding = len(need_rounding_keys) > 0
-        if need_rounding != round_inputs:
-            print(raw_info)
-        assert need_rounding == round_inputs, '--round_inputs should only be applied to json with irregular inputs, and vise versa'
+        # if need_rounding != round_inputs:
+        #     print(raw_info)
+
+        # assert need_rounding == round_inputs, '--round_inputs should only be applied to json with irregular inputs, and vise versa'
         # if len(need_rounding_keys) == 1 and 'D_HEAD' in need_rounding_keys:
         #     only_hdim_rounded = True
         # else:
@@ -461,8 +596,14 @@ class TuningDatabase(object):
         if isinstance(timing, float):
             if math.isinf(timing):
                 return
-            assert False, f'time element in raw json log must be a list or float("inf") but get {timing}'
-        key = (raw_info['arch'], raw_info['_debug_task_id'], raw_info['kernel_name'])
+            if not self.OPTABLE:
+                assert False, f'time element in raw json log must be a list or float("inf") but get {timing}'
+        if self.OPTABLE:
+            # FIXME: This is Hacking, need a proper fix.
+            divisor = 3 if raw_info['arch'] in ['gfx950', 'gfx942'] else 2
+            key = (raw_info['arch'], raw_info['_debug_task_id'] // divisor, 'op_attn_bwd')
+        else:
+            key = (raw_info['arch'], raw_info['_debug_task_id'], raw_info['kernel_name'])
         if key not in self.pkr_database:
             self.pkr_database[key] = pkr_factory(key)
         self.pkr_database[key].collect(raw_info)
@@ -471,11 +612,12 @@ class TuningDatabase(object):
         warned = False
         for pkr in self.pkr_database.values():
             pkr.conclude()
-            opti = pkr.get_optimal_kernel(self._args.fudge_factor_tolerance, allow_no_acceptable=True)
+            opti = pkr.get_optimal_kernel(self._args.fudge_factor_tolerance, self._args.max_fudge_factor, allow_no_acceptable=True)
             if opti is None:
                 if not warned:
                     print('\nAcceptables is empty. Re-run tests on missing entries\n')
                     warned = True
+                print("\nTUNE_FLASH --entry_from_json Item: ", pkr.entry_from_json())
                 continue
             pkr.update_max_fudge_factor(opti)
             yield opti
@@ -484,7 +626,7 @@ class TuningDatabase(object):
         need_rerun = set()
         for pkr in self.pkr_database.values():
             pkr.conclude()
-            opti = pkr.get_optimal_kernel(self._args.fudge_factor_tolerance, allow_no_acceptable=True)
+            opti = pkr.get_optimal_kernel(self._args.fudge_factor_tolerance, self._args.max_fudge_factor, allow_no_acceptable=True)
             if opti is None:
                 need_rerun.add(pkr.tid)
         sc_report = {
@@ -509,34 +651,38 @@ def do_main(args, db, fin):
         for line in fin:
             db.upsert(line, create_table_only=create_table_only)
         print("[table_tool] Input closed, exiting", file=sys.stderr)
-    elif args.action == 'rawjson':
+    elif args.action in ['rawjson', 'rawjson_fudge_check', 'opjson']:
         db.init_aggregation()
         pbar = tqdm(total=fin_size, desc='Processed bytes')
         for line in fin:
             db.aggregate(line)
             pbar.update(len(line))  # FIXME: support UTF-8 which len(line) != number of bytes
-        pbar = tqdm(total=len(db.pkr_database), desc='Processed kernels')
-        with db._conn:  # Transaction
+        if args.action == 'rawjson_fudge_check':
             for rawjson in db.aggregation_results():
-                if rawjson is None:
-                    continue
-                db.upsert_json(rawjson, create_table_only=False)
-                # Dispatcher v3 should nullified such cases
-                # if 'CAUSAL' in rawjson['inputs']:
-                #     causal = rawjson['inputs']['CAUSAL']
-                # elif 'CAUSAL_TYPE' in rawjson['inputs']:
-                #     causal = rawjson['inputs']['CAUSAL_TYPE']
-                # else:
-                #     causal = False
-                ## Handles CAUSAL=True and BIAS_TYPE=1 case
-                ## No real use cases, just let the build system compile things
-                #if causal == True and rawjson['inputs']['BIAS_TYPE'] == 0:
-                #    rj2 = deepcopy(rawjson)
-                #    rj2['inputs']['BIAS_TYPE'] = 1
-                #    db.upsert_json(rj2, create_table_only=False)
-                pbar.update(1)
+                pass
+        else:
+            pbar = tqdm(total=len(db.pkr_database), desc='Processed kernels')
+            with db._conn:  # Transaction
+                for rawjson in db.aggregation_results():
+                    if rawjson is None:
+                        continue
+                    db.upsert_json(rawjson, create_table_only=False)
+                    # Dispatcher v3 should nullified such cases
+                    # if 'CAUSAL' in rawjson['inputs']:
+                    #     causal = rawjson['inputs']['CAUSAL']
+                    # elif 'CAUSAL_TYPE' in rawjson['inputs']:
+                    #     causal = rawjson['inputs']['CAUSAL_TYPE']
+                    # else:
+                    #     causal = False
+                    ## Handles CAUSAL=True and BIAS_TYPE=1 case
+                    ## No real use cases, just let the build system compile things
+                    #if causal == True and rawjson['inputs']['BIAS_TYPE'] == 0:
+                    #    rj2 = deepcopy(rawjson)
+                    #    rj2['inputs']['BIAS_TYPE'] = 1
+                    #    db.upsert_json(rj2, create_table_only=False)
+                    pbar.update(1)
         for klass in KERNEL_NAME_TO_FACTORY.values():
-            print(f'{klass.KERNEL_MAX_FUDGE_FACTORS=}')
+            print(f'{klass.KERNEL_NAME=} {klass.KERNEL_MAX_FUDGE_FACTORS=}')
     elif args.action == 'rawsc':
         db.init_aggregation()
         pbar = tqdm(total=fin_size, desc='Processed bytes')
@@ -551,9 +697,26 @@ def do_main(args, db, fin):
         db.loadcsv(args.table_file, args.table_name)
     db.close()
 
+class OpDatabase(TuningDatabase):
+    OPTABLE = True
+
+    def get_table_name(self, tune_info: dict) -> str:
+        kn = tune_info['kernel_name']
+        return f'{self._args.kernel_family}${kn}'
+
+    # Don't
+    def ensure_table(self, tune_info : dict) -> str:
+        return self.get_table_name(tune_info)
+
+    def _create_table(self, tune_info):
+        pass
+
 def main():
     args = parse()
-    db = TuningDatabase(args)
+    if args.action in ['opjson']:
+        db = OpDatabase(args)
+    else:
+        db = TuningDatabase(args)
     if args.i is not None:
         with open(args.i) as f:
             do_main(args, db, f)

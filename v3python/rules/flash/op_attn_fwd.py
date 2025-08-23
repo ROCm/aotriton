@@ -142,3 +142,6 @@ class OpAttnFwd(OpAttn):
         'Max_seqlen_q' : BinningLessOrEqual,
         'Max_seqlen_k' : BinningLessOrEqual,
     }
+    PARTIALLY_TUNED_FUNCTIONALS = {
+        'PADDED_HEAD': False,
+    }

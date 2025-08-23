@@ -58,6 +58,10 @@ class FlashKernel(KernelDescription):
         # print(f'Functional {functional.godel_number=} {is_causal=} {bias_type=}')
         if is_causal and bias_type != 0:
             return True
+        if functional.arch.startswith('gfx11'):
+            hdim = check_value(functional, 'BLOCK_DMODEL')
+            if hdim > 256:
+                return True
         return False
 
     def sancheck_lut_tensor(self,
@@ -105,6 +109,7 @@ class FlashKernel(KernelDescription):
         #     lut_full_seqlen_k = self.LUT_FULL_SEQLEN_K
         lut_full_seqlen_q = self.LUT_FULL_SEQLEN_Q
         lut_full_seqlen_k = self.LUT_FULL_SEQLEN_K
+        LUT_TENSOR_SIZE = (len(self.LUT_FULL_SEQLEN_Q), len(self.LUT_FULL_SEQLEN_K))
         base['causal_type'] = check_value(functional, 'CAUSAL_TYPE')
         base['d_head'] = check_value(functional, 'BLOCK_DMODEL')
         base['dropout_p'] = 0.5 if check_value(functional, 'ENABLE_DROPOUT') else 0.0
@@ -128,7 +133,12 @@ class FlashKernel(KernelDescription):
                     ret.append(json.dumps(d))
         else:
             # TODO: support non-mod0
-            _, M_idxs, N_idxs = np.where(lut_tensor < 0)
+            if lut_tensor.shape[1:] == LUT_TENSOR_SIZE:
+                _, M_idxs, N_idxs = np.where(lut_tensor < 0)
+            else:
+                fake_lut = np.full(LUT_TENSOR_SIZE, -1, dtype=np.int32)
+                M_idxs, N_idxs = np.where(fake_lut < 0)
+            # print(f'{M_idxs=} {N_idxs=} {lut_full_seqlen_q=} {lut_full_seqlen_k=}')
             for M_id, N_id in zip(M_idxs, N_idxs):
                 d = deepcopy(base)
                 d['seqlen_q'] = lut_full_seqlen_q[M_id]
@@ -138,10 +148,4 @@ class FlashKernel(KernelDescription):
 
 class FlashBwdKernel(FlashKernel):
     def is_functional_disabled(self, functional):
-        # FIXME: workaround a bug
-        # TODO: per-arch XXXXMetadata::get_BLOCK_DMODEL_choices
-        if functional.arch == 'gfx950':
-            hdim = check_value(functional, 'BLOCK_DMODEL')
-            if hdim in [48, 80]:
-                return True
         return super().is_functional_disabled(functional)

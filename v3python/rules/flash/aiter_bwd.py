@@ -44,6 +44,7 @@ def translate_regular_to_bothpad(is_regular):
 def translate_csv_tskv(f, value):
     if value > 0:
         return value
+    assert f.arch in ["gfx942", "gfx950"]
     # Arch depedent ts_kv
     ts_kv = 192 if f.arch == "gfx942" else 256
     return ts_kv
@@ -79,8 +80,8 @@ class bwd_dq_dk_dv_v3(FlashAffine):
     }
 
     CO_CSV = 'aiter_bwd.csv'
-    # SUPPORTED_ARCH = ['gfx942', 'gfx950']
-    SUPPORTED_ARCH = ['gfx942']  # gfx950 requires dq_shuffle_kernel, which is more complicated
+    # gfx950+16-bit dq_acc requires another dq_shuffle_kernel, but fp32 dq_acc doesn't
+    SUPPORTED_ARCH = ['gfx942', 'gfx950']
     RESIDUAL_CHOICES = {
         # In practice, kIsSEQPad and kIsHDPad are always false when ifUniformStrides is false
         # Hence kIsSEQPad and kIsHDPad are remove to make the table smaller

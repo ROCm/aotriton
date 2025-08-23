@@ -24,6 +24,10 @@ class TunerMonad(Monad):
     def service_factory(self):
         return TunerService(self._args, self)
 
+class FakeExtArgs:
+    def __init__(self, factory):
+        self.capi_object = factory()
+
 class TunerService(BaseTunerService):
 
     def _parse_skip(self, tup):
@@ -62,6 +66,10 @@ class TunerService(BaseTunerService):
         torch.cuda.empty_cache()
         BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, return_encoded_softmax, dtype, bias_type = tup
         dtype = getattr(torch, dtype)
+        if isinstance(N_HEADS, int):
+            Q_HEADS = K_HEADS = N_HEADS
+        else:
+            Q_HEADS, K_HEADS = N_HEADS
         if CPPTUNE_FLASH_DEFENSIVE_SEQLENS:
             seqlen_q -= 7
             seqlen_k -= 7
@@ -70,7 +78,7 @@ class TunerService(BaseTunerService):
         Create reference dropout_mask
         '''
         if dropout_p > 0.0:
-            rdims = (BATCH, N_HEADS, seqlen_q, seqlen_k)
+            rdims = (BATCH, Q_HEADS, seqlen_q, seqlen_k)
             r = torch.empty(rdims, device=self._gpu_device, dtype=torch.float32)
             philox_seed = torch.tensor([DEFAULT_PHILOX_SEED], device=r.device, dtype=torch.uint64)
             philox_offset1 = torch.tensor([DEFAULT_PHILOX_OFFSET_1], device=r.device, dtype=torch.uint64)
@@ -153,15 +161,17 @@ class TunerService(BaseTunerService):
             q, k, v, b = ctx.dev_tensors
             o, M = ctx.ctx_tensors
             L = M  # alias
+            if causal:
+                atomic = torch.zeros([1], device=q.device, dtype=torch.int32)
+            else:
+                atomic = torch.empty([0], device=q.device, dtype=torch.int32)
             if is_testing:
                 o.fill_(float('nan'))
                 M.fill_(float('nan'))
                 philox_seed_output.fill_(0)
                 philox_offset_output.fill_(0)
-            if causal:
-                atomic = torch.zeros([1], device=q.device, dtype=torch.int32)
-            else:
-                atomic = torch.empty([0], device=q.device, dtype=torch.int32)
+                # print(f'{atomic=}')
+            # print(f'Calling fwd_func with {extargs.force_kernel_index=}')
             args = (q, k, v, b, sm_scale, M, o,
                     dropout_p, philox_seed, philox_offset1, philox_offset2,
                     philox_seed_output, philox_offset_output,
@@ -183,24 +193,24 @@ class TunerService(BaseTunerService):
         # print(f'{payload.kig_dict=}')
         if not skip_fwd:
             # if skip_fwd, run manually to use default tuning db
-            run_last_success_kernel_once = not skip_fwd and not skip_bwd
             yield from cpp_autotune_gen(FwdExtraArguments,
                                         subless_sub_extarg_accessor,
                                         ['attn_fwd'],
                                         fwd_func,
                                         [self.fwd_validator],
                                         kernel_index_progress_dict=payload.kig_dict,
-                                        run_last_success_kernel_once=run_last_success_kernel_once,
                                         integrity_checker=integrity_check_and_restore)
-            # print(f'{M=}')
-            # print(f'{o=}')
-        if skip_fwd:
-            fwd_func(None, is_testing=True)
-
         # Early exit when both bwd are disabled
         # Skipping of individual kernels is handled in cpp_autotune_gen directly
         if skip_bwd:
             return
+        integrity, who = ctx.check_integrity()
+        if not integrity:
+            print('ctx.restore_integrity')
+            ctx.restore_integrity(who, sdpa_params)
+        extargs = FakeExtArgs(FwdExtraArguments)
+        extargs.capi_object.force_kernel_index = payload.kig_dict['attn_fwd'].last_success_kernel
+        fwd_func(extargs, is_testing=True)
 
         ctx.compute_backward(None, None, ref_only=True)
         dout = ctx.ddev_tensors[0]
@@ -219,7 +229,7 @@ class TunerService(BaseTunerService):
                 if db is not None:
                     db.fill_(float('nan'))
             if split:
-                args = (q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
+                args = (q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, None, L, delta,
                         dropout_p, philox_seed_output, philox_offset_output, 0,
                         causal, extargs.capi_object)
             else:
@@ -267,7 +277,6 @@ class TunerService(BaseTunerService):
                                         bwd_func,
                                         bwd_validators,
                                         kernel_index_progress_dict=payload.kig_dict,
-                                        run_last_success_kernel_once=False,
                                         integrity_checker=integrity_check_and_restore)
         if not skip_fused_bwd:
             from aotriton_flash import (
@@ -282,7 +291,6 @@ class TunerService(BaseTunerService):
                                         bwd_func,
                                         [self.bwd_fused_validator],
                                         kernel_index_progress_dict=payload.kig_dict,
-                                        run_last_success_kernel_once=False,
                                         integrity_checker=integrity_check_and_restore)
 
     def fwd_validator(self, kernel_outputs : 'List[KernelOutput]', atr : 'AutotuneResult'):

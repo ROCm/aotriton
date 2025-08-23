@@ -132,11 +132,6 @@ class KernelDescription(Interface):
     def perf_cfields(self):
         return self._perf_cfields
 
-    def fallback_compact_dict(self, compact_dict):
-        def fallback(k, v):
-            return self.PARTIALLY_TUNED_FUNCTIONALS.get(k, v)
-        return { k : fallback(k, v) for k, v in compact_dict.items()}
-
     # TODO: dataframe name mangling should be deferred to database package.
     #       Possible solution is to attach a translator to DataFrame object
     def translate_dataframe(self, f : Functional, df : 'pandas.DataFrame'):

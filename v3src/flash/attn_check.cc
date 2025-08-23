@@ -13,6 +13,9 @@
 #include <flash/shim.bwd_preprocess_varlen.h>
 #include <iostream>
 
+#define STRINGIFICATION(s) STRINGIFICATION_I(s)
+#define STRINGIFICATION_I(s) #s
+
 namespace AOTRITON_NS::v2::flash {
 
 using AttnFwdContext              = AOTRITON_NS::v3::flash::AttnFwdContext;
@@ -22,12 +25,23 @@ using BwdKernelDkDvContext        = AOTRITON_NS::v3::flash::BwdKernelDkDvContext
 using BwdKernelDqContext          = AOTRITON_NS::v3::flash::BwdKernelDqContext;
 using BwdKernelFuseContext        = AOTRITON_NS::v3::flash::BwdKernelFuseContext;
 
+#ifdef NDEBUG
 #define CHECK_FOR_KERNEL(Context)                                 \
   do {                                                            \
     auto [arch, mod] = Context::get_archmod_number(gpu);          \
     if (arch < 0)                                                 \
       return hipErrorNoBinaryForGpu;                              \
   } while(0)
+#else
+#define CHECK_FOR_KERNEL(Context)                                 \
+  do {                                                            \
+    auto [arch, mod] = Context::get_archmod_number(gpu);          \
+    if (arch < 0) {                                               \
+      std::cerr << STRINGIFICATION(Context) << ": hipErrorNoBinaryForGpu" << std::endl; \
+      return hipErrorNoBinaryForGpu;                              \
+    }                                                             \
+  } while(0)
+#endif
 
 hipError_t
 check_gpu(AOTRITON_NS::Stream stream_wrap) {

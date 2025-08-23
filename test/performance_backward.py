@@ -8,7 +8,7 @@ import torch
 
 import triton
 from collections import defaultdict
-from attn_torch_function import attention, AttentionExtraArgs, BWD_FUSED
+from attn_torch_function import attention, AttentionExtraArgs, BWD_IMPL, V3_API
 
 try:
     from flash_attn.flash_attn_interface import \
@@ -36,12 +36,22 @@ if x_vals is not None:
     X_VALS = [int(e) for e in x_vals.split(',')]
 print(f'{X_VALS=}')
 
+def _get_modename():
+    if V3_API:
+        return 'V3'
+    if BWD_IMPL == 2:
+        return 'AITERASM'
+    if BWD_IMPL == 1:
+        return 'Fused'
+    if BWD_IMPL == 0:
+        return 'Split'
+
 BATCH, N_HEADS, N_CTX, D_HEAD = 4, 48, 4096, 64
 # BATCH, N_HEADS, N_CTX, D_HEAD = 512, 32, 512, 64
 # vary seq length for fixed head and batch=4
 configs = []
 for mode in ['bwd']:
-    modename = 'fusedbwd' if BWD_FUSED else 'bwd'
+    modename = _get_modename()
     # for causal in [False, True]:
     for causal in [False]:
         for D_HEAD in d_heads:

@@ -27,20 +27,31 @@ def create_select_stmt(table_name, wheres):
             where_stmt.append(f'{k} = ?')
             params.append(v.sql_value if isinstance(v, TC.TypedChoice) else v)
     stmt += ' AND '.join(where_stmt)
+    # print('create_select_stmt', stmt)
     return stmt, params
 
 class Factory(object):
     SIGNATURE_FILE = 'tuning_database.sqlite3'
+    SECONDARY_DATABASES = {
+        'op': 'op_database.sqlite3',
+    }
 
     def __init__(self, path):
         log(lambda : f'sqlite3.connect({path / self.SIGNATURE_FILE})')
         self._conn = sqlite3.connect(path / self.SIGNATURE_FILE)
         self._conn.set_trace_callback(log) # Debug
+        for schema, bn in self.SECONDARY_DATABASES.items():
+            fn = path / bn
+            if fn.is_file():
+                log(lambda : f"ATTACH DATABASE '{fn.as_posix()}' AS {schema};")
+                self._conn.execute(f"ATTACH DATABASE '{fn.as_posix()}' AS {schema};")
+            else:
+                assert False, f'{fn} is not a file, {path}'
 
     def create_view(self, functional):
         log(lambda : f'{functional=}')
         meta = functional.meta_object
-        pfx = 'OP$' if isinstance(meta, Operator) else ''
+        pfx = 'op.' if isinstance(meta, Operator) else ''
         table_name = pfx + meta.FAMILY.upper() + '$' + meta.NAME
         # TODO: Incremental changes:
         # 1. load database_gpus first

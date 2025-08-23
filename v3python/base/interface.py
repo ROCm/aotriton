@@ -32,6 +32,7 @@ class Interface(ABC):
     CHOICE_FILTERS = None       # Optional, Exclude unsupported combinations
     TENSOR_RANKS = None         # Operator, Required if Interface has Tensor Inputs
     TENSOR_STRIDE_INPUTS = None # Operator, Required if Interface has Tensor Inputs
+    PARTIALLY_TUNED_FUNCTIONALS = {}    # Optional but usually needed
 
     @property
     def UNTYPED_FULL_NAME(self):
@@ -94,6 +95,11 @@ class Interface(ABC):
 
     def _build_tp_dict(self):
         return { aname : param for param in self.list_all_params() for aname in param.all_names }
+
+    def fallback_compact_dict(self, compact_dict):
+        def fallback(k, v):
+            return self.PARTIALLY_TUNED_FUNCTIONALS.get(k, v)
+        return { k : fallback(k, v) for k, v in compact_dict.items()}
 
     @property
     def func_cfields(self):
