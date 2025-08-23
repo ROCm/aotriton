@@ -714,9 +714,10 @@ aiter_bwd(const attn_bwd_params& in,
   using AOTRITON_NS::v2::flash::bwd_preprocess;
   using AOTRITON_NS::v2::flash::bwd_preprocess_varlen;
   if (num_seqlens == 0)
-    err = bwd_preprocess(in.Out, in.DO, lazy_delta, stream);
+    err = bwd_preprocess(in.Out, in.DO, lazy_delta.make_concrete(), stream);
   else
-    err = bwd_preprocess_varlen(in.Out, in.DO, lazy_delta, in.cu_seqlens_q, max_seqlen_q, stream);
+    err = bwd_preprocess_varlen(in.Out, in.DO, lazy_delta.make_concrete(),
+                                in.cu_seqlens_q, max_seqlen_q, stream);
   if (err != hipSuccess)
     return err;
   err = context.launch(stream);
