@@ -32,7 +32,7 @@ if [ -z "$(docker images -q ${BASE_DOCKER_IMAGE} 2>/dev/null)" ]; then
   docker build --network=host -t ${BASE_DOCKER_IMAGE} -f base.Dockerfile .
 fi
 
-SOURCE_VOLUME="aotriton-src-${GIT_SHORT}"
+SOURCE_VOLUME="aotriton-src-shared"
 # Download source code to volume
 docker volume create --name ${SOURCE_VOLUME}
 NEED_CLONE=0
@@ -69,7 +69,7 @@ function build_inside() {
     -w / \
     ${DOCKER_IMAGE} \
     bash \
-    /input/docker-script-build.sh ${TRITON_LLVM_HASH} ON
+    /input/docker-script-build.sh ${llvm_hash_url} ON
 }
 
 # build ROCM runtime image
