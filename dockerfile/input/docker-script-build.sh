@@ -7,6 +7,7 @@ NOIMAGE_MODE="$2"
 
 rsync -a --exclude='.git' /src/aotriton/ /root/build/aotriton/
 cd /src/aotriton/
+GIT_FULL=$(git rev-parse HEAD)
 GIT_SHORT=$(git rev-parse --short=12 HEAD)
 hipver=$(scl enable gcc-toolset-13 "cpp -I/opt/rocm/include /input/print_hip_version.h"|tail -n 1|sed 's/ //g')
 
@@ -21,6 +22,7 @@ if [ ${NOIMAGE_MODE} == "OFF" ]; then
 fi
 
 cd /root/build/
+export AOTRITON_CI_SUPPLIED_SHA1=${GIT_FULL}
 scl enable gcc-toolset-13 -- bash aotriton/.ci/build-release.sh "${NOIMAGE_MODE}"
 
 if [ ${NOIMAGE_MODE} == "OFF" ]; then
