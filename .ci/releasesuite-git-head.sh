@@ -61,6 +61,8 @@ INPUT_DIR=${SCRIPT_DIR}/../dockerfile/input
 OUTPUT_DIR="$1"
 
 function build_inside() {
+  DOCKER_IMAGE="$1"
+  NOIMAGE_MODE="$2"
   docker run --network=host -it --rm \
     -v ${SOURCE_VOLUME}:/src:ro \
     --mount "type=bind,source=$(realpath ${INPUT_DIR}),target=/input" \
@@ -69,7 +71,7 @@ function build_inside() {
     -w / \
     ${DOCKER_IMAGE} \
     bash \
-    /input/docker-script-build.sh ${llvm_hash_url} ON
+    /input/docker-script-build.sh ${llvm_hash_url} ${NOIMAGE_MODE}
 }
 
 # build ROCM runtime image
