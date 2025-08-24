@@ -18,12 +18,6 @@ struct LazyTensorInternal {
     : lazy_(lazy) {
   }
 
-  virtual ~LazyTensorInternal() {
-    if (lazy_.dispose) {
-      (*lazy_.dispose)(lazy_.cookie);
-    }
-  }
-
   bool activated() const {
     return concrete_;
   }

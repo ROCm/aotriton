@@ -228,6 +228,14 @@ struct LazyTensor {
   operator bool() const {
     return cookie != nullptr || acquire != nullptr || dispose != nullptr;
   }
+
+  // FIXME: This design is prone to memory leaks.
+  void free() {
+    if (dispose && cookie) {
+      (*dispose)(cookie);
+      cookie = nullptr;
+    }
+  }
 };
 
 Gpu AOTRITON_API getGpuFromStream(hipStream_t);

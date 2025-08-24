@@ -154,6 +154,8 @@ attn_bwd(const attn_bwd_params& in,
   std::cerr << "v3::flash::attn_bwd context.backend_index = " << context.backend_index << std::endl;
 #endif
   err = context.launch(gpu, stream);
+  in.D.free();
+  in.DQ_ACC.free();
   return err;
 }
 
