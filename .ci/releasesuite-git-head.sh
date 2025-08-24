@@ -23,8 +23,6 @@ fi
 
 GIT_SHORT=$(git rev-parse --short=12 HEAD)
 
-export NOIMAGE_MODE=ON
-
 BASE_DOCKER_IMAGE="aotriton:base"
 
 # build base docker image
@@ -42,7 +40,7 @@ if docker volume ls -q -f name="${SOURCE_VOLUME}" | grep -q "${SOURCE_VOLUME}"; 
     -v ${SOURCE_VOLUME}:/src \
     -w /src/aotriton \
     ${BASE_DOCKER_IMAGE} \
-    bash -c 'git fetch && git checkout ${GIT_SHORT} --recurse-submodules'
+    bash -c "set -ex; git fetch && git checkout ${GIT_SHORT} --recurse-submodules"
   if [ $? -ne 0 ]; then
     NEED_CLONE=1
   fi
@@ -54,7 +52,7 @@ if [ ${NEED_CLONE} -ne 0 ]; then
     -v ${SOURCE_VOLUME}:/src \
     -w /src \
     ${BASE_DOCKER_IMAGE} \
-    bash -c "git clone --recursive ${GIT_HTTPS_ORIGIN} && cd aotriton && git checkout ${GIT_SHORT} && git submodule sync && git submodule update --init --recursive --force"
+    bash -c "set -ex; git clone --recursive ${GIT_HTTPS_ORIGIN} && cd aotriton && git checkout ${GIT_SHORT} && git submodule sync && git submodule update --init --recursive --force"
 fi
 
 INPUT_DIR=${SCRIPT_DIR}/../dockerfile/input
