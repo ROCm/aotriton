@@ -104,7 +104,7 @@ struct AOTRITON_API attn_bwd_params {
   T4        DQ;
   T4        DB;
   T2        L;
-  LT2       D;
+  mutable LT2       D;              // Lazy Tensor must be mutable
   // int32_t   Num_head_q;          // Inferred from Q.size()
   // int32_t   Num_head_k;          // Inferred from Q.size()
   // int32_t   Num_seqlens;         // Inferred from cu_seqlens_q
@@ -121,7 +121,7 @@ struct AOTRITON_API attn_bwd_params {
   int8_t    varlen_type = 0;
   int32_t   window_left;
   int32_t   window_right;
-  LT4       DQ_ACC;                 // fp32 accumulator of dq
+  mutable LT4       DQ_ACC;          // fp32 accumulator of dq
 
   static constexpr int32_t kVersion = 3;
   attn_bwd_params();
