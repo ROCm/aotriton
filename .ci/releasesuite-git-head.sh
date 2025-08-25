@@ -5,9 +5,65 @@ if [ -z "$BASH_VERSION" ]; then
   exit 1
 fi
 
+function help() {
+  cat <<EOF
+Usage releasesuite-git-head.sh [-h] [--image] [--runtime] <output directory>.
+          -h: show help and exit.
+     --image: build GPU images.
+   --runtime: build C++ runtimes.
+By default both GPU images and runtimes are built.
+If either --image or --runtime is specified, the missing one will not be built.
+EOF
+>&2
+  exit $1
+}
+
+TEMP=$(getopt -o h --longoptions image,runtime -- "$@")
+
+if [ $? -ne 0 ]; then
+  echo "Error: Invalid option." >&2
+  help 1
+fi
+
+eval set -- "$TEMP"
+
+SUITE_SELECT_IMAGE=-1
+SUITE_SELECT_RUNTIME=-1
+SUITE_DEFAULT_SELECTION=1
+
+while true; do
+  case "$1" in
+    -h)
+      help 0
+      ;;
+    --image)
+      SUITE_SELECT_IMAGE=1
+      SUITE_DEFAULT_SELECTION=0
+      ;;
+    --runtime)
+      SUITE_SELECT_RUNTIME=1
+      SUITE_DEFAULT_SELECTION=0
+      ;;
+    '--')
+      shift
+      break
+      ;;
+  esac
+  shift
+done
+
 if [ "$#" -ne 1 ]; then
-  echo 'Missing arguments. Usage: releasesuite-git-head.sh <output dir>' >&2
-  exit 1
+  echo "$@"
+  echo 'Missing argument <output directory>.' >&2
+  help 1
+fi
+
+if [ ${SUITE_SELECT_IMAGE} -lt 0 ]; then
+  SUITE_SELECT_IMAGE=${SUITE_DEFAULT_SELECTION}
+fi
+
+if [ ${SUITE_SELECT_RUNTIME} -lt 0 ]; then
+  SUITE_SELECT_RUNTIME=${SUITE_DEFAULT_SELECTION}
 fi
 
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
@@ -59,8 +115,14 @@ INPUT_DIR=${SCRIPT_DIR}/../dockerfile/input
 OUTPUT_DIR="$1"
 
 function build_inside() {
-  DOCKER_IMAGE="$1"
+  rocmver="$1"
   NOIMAGE_MODE="$2"
+  DOCKER_IMAGE="aotriton:buildenv-rocm${rocmver}"
+  if [ -z "$(docker images -q ${DOCKER_IMAGE} 2>/dev/null)" ]; then
+    docker build --network=host -t ${DOCKER_IMAGE} \
+      --build-arg ROCM_VERSION_IN_URL=${rocmver} \
+      -f rocm.Dockerfile .
+  fi
   docker run --network=host -it --rm \
     -v ${SOURCE_VOLUME}:/src:ro \
     --mount "type=bind,source=$(realpath ${INPUT_DIR}),target=/input" \
@@ -72,17 +134,15 @@ function build_inside() {
     /input/docker-script-build.sh ${llvm_hash_url} ${NOIMAGE_MODE}
 }
 
-# build ROCM runtime image
-for rocmver in 6.2.4 6.3.4 6.4.3 7.0_rc1
-do
-  DOCKER_IMAGE="aotriton:buildenv-rocm${rocmver}"
-  if [ -z "$(docker images -q ${DOCKER_IMAGE} 2>/dev/null)" ]; then
-    docker build --network=host -t ${DOCKER_IMAGE} \
-      --build-arg ROCM_VERSION_IN_URL=${rocmver} \
-      -f rocm.Dockerfile .
-  fi
-  build_inside ${DOCKER_IMAGE} ON
-done
+if [ ${SUITE_SELECT_RUNTIME} -gt 0 ]; then
+  # build ROCM runtime image
+  for rocmver in 6.2.4 6.3.4 6.4.3 7.0_rc1
+  do
+    build_inside ${rocmver} ON
+  done
+fi
 
-# Automatically use last image
-build_inside ${DOCKER_IMAGE} OFF
+if [ ${SUITE_SELECT_IMAGE} -gt 0 ]; then
+  rocmver=7.0_rc1
+  build_inside ${rocmver} OFF
+fi
