@@ -94,7 +94,7 @@ def _attn_fwd_inner(
         if PRE_LOAD_V:
             # We can use the same offsets as k, just with dims transposed.
             v0, v1, v2 = composed_load_with_offset(v_ptrs0, v_ptrs1, v_ptrs2,
-                                                   start_N, stride_kn, OFFS_N,
+                                                   start_N, stride_vk, OFFS_N,
                                                    BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
                                                    actual_seqlen_k, Head_dim,
                                                    other=0.0,
@@ -225,7 +225,7 @@ def _attn_fwd_inner(
                                             BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
         if not PRE_LOAD_V:
             v0, v1, v2 = composed_load_with_offset(v_ptrs0, v_ptrs1, v_ptrs2,
-                                                   start_N, stride_kn, OFFS_N,
+                                                   start_N, stride_vk, OFFS_N,
                                                    BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
                                                    actual_seqlen_k, Head_dim,
                                                    other=0.0,
