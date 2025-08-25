@@ -135,8 +135,8 @@ class TunerManager(ArgArchVerbose):
                 self._state_tracker.update_ui(last_known_working.clone().set_action(MonadAction.OOB_Died).update_payload(exitcode=monad.exitcode))
                 if monad.identifier.startswith('worker_'):
                     nextone = self._src.next_kernel(last_known_working)
-                    nexttwo = self._src.next_kernel(nextone)
-                    monad.restart_with_last_progress(nexttwo)
+                    # nexttwo = self._src.next_kernel(nextone)
+                    monad.restart_with_last_progress(nextone)
             else:
                 monad.join()
                 # TODO: who should notify the state tracker? The

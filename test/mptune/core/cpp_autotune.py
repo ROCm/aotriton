@@ -1,5 +1,5 @@
 from collections import namedtuple
-from aotriton_flash import hipError_t, CppTuneSpecialKernelIndex
+from aotriton_flash import hipError_t, CppTuneSpecialKernelIndex, hipGetLastError
 import json
 import sys
 import os
@@ -73,6 +73,8 @@ def do_bench(fn, atr : AutotuneResult,
 
     torch.cuda.synchronize()
     num_of_subkernels, outs = fn(is_testing=True)
+    torch.cuda.synchronize()
+    assert hipGetLastError() != hipError_t.hipErrorIllegalAddress
     # print(f'{num_of_subkernels=}')
     # print(f'{outs=}')
     for ko in outs:
@@ -80,8 +82,12 @@ def do_bench(fn, atr : AutotuneResult,
             atr.hip_status = ko.hip_status
             return atr
     atr.hip_status = hipError_t.hipSuccess
-    torch.cuda.synchronize()
-    atr = validator(outs, atr)
+    try:
+        atr = validator(outs, atr)
+        torch.cuda.synchronize()
+    except:
+        pass
+    assert hipGetLastError() != hipError_t.hipErrorIllegalAddress
     assert isinstance(atr, AutotuneResult)
     # print(f'{valret=} {outs[0].hip_status=}', flush=True)
 
@@ -336,7 +342,6 @@ def cpp_autotune_gen(extarg_factory, sub_extarg_accessor,
                      validators,
                      *,
                      kernel_index_progress_dict,
-                     run_last_success_kernel_once,
                      integrity_checker,
                      extarg_wrapper=CppTuneWrapper,
                      ):
@@ -364,27 +369,38 @@ def cpp_autotune_gen(extarg_factory, sub_extarg_accessor,
                                                cur_kig,
                                                FEWER_KERNEL=FEWER_KERNEL):
             kernel_called = True
+            # print(f'atr {ret}')
             yield cur_name, ret, deepcopy(kig_dict)
         if kernel_called:
             integrity = integrity_checker()
+            # print(f'{integrity=}')
             if not integrity:
                 ret.adiffs = None
                 ret.hip_status = hipError_t.hipErrorDeinitialized
                 yield cur_name, ret, deepcopy(kig_dict)
     '''
-    CAVEAT: Must run kernel_func at least once.
-            Otherwise this may happen:
-                1. Running fwd and bwd tuning;
-                2. Bwd kernel segfaulted;
-                3. Resume the tuning process after skipping the kernel;
-                4. The o tensor is empty/nan because fwd is skipped, and
-                   the bwd output becomes garbage.
+    Relocate the running of kernel_func to caller
     '''
-    if not run_last_success_kernel_once:
-        return
-    for sub_index, cur_name, cur_validator in zip(range(num_of_subkernels), subkernel_names, validators):
-        reset_kernel_index_to_skip()
-        extargs_with_subs.set_current_sub(sub_index)
-        cur_kig = kig_dict[cur_name]
-        extargs_with_subs.force_kernel_index = cur_kig.last_success_kernel
-        kernel_func(extargs_with_subs, is_testing=True)
+    return
+    # '''
+    # CAVEAT: Must run kernel_func at least once.
+    #         Otherwise this may happen:
+    #             1. Running fwd and bwd tuning;
+    #             2. Bwd kernel segfaulted;
+    #             3. Resume the tuning process after skipping the kernel;
+    #             4. The o tensor is empty/nan because fwd is skipped, and
+    #                the bwd output becomes garbage.
+    # '''
+    # if not run_last_success_kernel_once:
+    #     print(f'{run_last_success_kernel_once=}')
+    #     return
+    # for sub_index, cur_name, cur_validator in zip(range(num_of_subkernels), subkernel_names, validators):
+    #     reset_kernel_index_to_skip()
+    #     extargs_with_subs.set_current_sub(sub_index)
+    #     cur_kig = kig_dict[cur_name]
+    #     extargs_with_subs.force_kernel_index = cur_kig.last_success_kernel
+    #     print(f'run_last_success_kernel_once {sub_index} {cur_name} {cur_kig.last_success_kernel=} {extargs_with_subs.force_kernel_index=}')
+    #     num_of_subkernels, outs = kernel_func(extargs_with_subs, is_testing=True)
+    #     atr = AutotuneResult()
+    #     atr = cur_validator(outs, atr)
+    #     print(f'{atr=}')

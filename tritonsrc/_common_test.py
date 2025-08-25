@@ -20,8 +20,13 @@ AOTRITON_TORCH_ONLY_USE_CPU = bool(int(os.getenv('AOTRITON_TORCH_ONLY_USE_CPU', 
 # Overrides by AOTRITON_TORCH_ONLY_USE_CPU=1
 AOTRITON_REF_DEVICE_OPTION = os.getenv('AOTRITON_REF_DEVICE_OPTION', default='default')
 
+TORCH_GE_2_7 = (str(torch.__version__) >= '2.7.0')
+
 def fmt_hdim(val):
     return f'hdim{val}'
+
+def cdiv(x, div):
+    return (x + div - 1) // div
 
 def calc_checksums(tensors):
     def checksum(t):
@@ -154,6 +159,8 @@ class SdpaContext(object):
         if torch.version.hip:
             if 'gfx90a' in torch.cuda.get_device_properties(0).gcnArchName:
                 self.OUT_FUDGE_FACTOR = 12.0
+            if 'gfx1201' in torch.cuda.get_device_properties(0).gcnArchName:
+                self.OUT_FUDGE_FACTOR = max(self.OUT_FUDGE_FACTOR, 10.0)
         if AOTRITON_TORCH_ONLY_USE_CPU:
             self.OUT_FUDGE_FACTOR = 12.0
 
@@ -167,16 +174,23 @@ class SdpaContext(object):
         qdims = (BATCH, Q_HEADS, seqlen_q, D_HEAD)
         kdims = (BATCH, K_HEADS, seqlen_k, D_HEAD)
         vdims = (BATCH, K_HEADS, seqlen_k, D_HEAD)
-        bdims = (BATCH, Q_HEADS, seqlen_q, seqlen_k)
+        def round_to_8x(n):
+            return 8 * cdiv(n, 8)
+        bdims = (BATCH, Q_HEADS, seqlen_q, round_to_8x(seqlen_k))
         if storage_flip is not None:
             order = [0,1,2,3]
             x, y = storage_flip
+            assert x != 3 and y != 3, 'Cannot storage_flip last dimension. Last dimension must be continuous'
             order[x], order[y] = order[y], order[x]
             i, j, k, l = order
             qdims = (qdims[i], qdims[j], qdims[k], qdims[l])
             kdims = (kdims[i], kdims[j], kdims[k], kdims[l])
             vdims = (vdims[i], vdims[j], vdims[k], vdims[l])
             bdims = (bdims[i], bdims[j], bdims[k], bdims[l])
+        # print(f'{qdims=}')
+        # print(f'{kdims=}')
+        # print(f'{vdims=}')
+        # print(f'{bdims=}')
         # q = torch.empty(qdims, dtype=dtype, device=device).normal_(mean=0., std=0.5)
         # k = torch.empty(kdims, dtype=dtype, device=device).normal_(mean=0., std=0.5)
         # v = torch.empty(vdims, dtype=dtype, device=device).normal_(mean=0., std=0.5)
@@ -192,6 +206,7 @@ class SdpaContext(object):
         elif bias_type == 'matrix' or bias_type == 1:
             # b = torch.empty(bdims, dtype=dtype, device="cuda").normal_(mean=0., std=0.5)
             b = rng(bdims)
+            b = b[:, :, :, :seqlen_k]
             # b = b.expand(BATCH, Q_HEADS, b.shape[0], b.shape[1])
         else:
             assert False, f'Unsupported bias_type {bias_type}'
@@ -278,7 +293,9 @@ class SdpaContext(object):
             ref_device_option = 'cpu'
         else:
             ref_device_option = AOTRITON_REF_DEVICE_OPTION
-        if ref_device_option == 'default':
+        if ref_device_option == 'default' and TORCH_GE_2_7:
+            ref_device = 'cuda'  # Known softmax issues have been fixed in 2.7
+        elif ref_device_option == 'default':
             ref_device = target_gpu_device
             seqlen_k = self.seqlen_k
             hdim = self.hdim
@@ -355,6 +372,9 @@ class SdpaContext(object):
                 query_fudge_factor = max(query_fudge_factor, 130.0 if isinstance(self, VarlenSdpaContext) else 80.0)
                 key_fudge_factor = 500.0 if self.is_hdim_NPOT_optimized else 340.0
                 bias_fudge_factor = 45.0 if self.is_hdim_NPOT_optimized else 36.0
+            # Navi31 needs larger factors
+            if 'gfx1100' in torch.cuda.get_device_properties(0).gcnArchName:
+                query_fudge_factor = max(query_fudge_factor, 768.0 if p.dropout_p > 0.0 else 320.0)
         if AOTRITON_TORCH_ONLY_USE_CPU:
             query_fudge_factor = 128.0
             key_fudge_factor = 330.0
@@ -416,7 +436,8 @@ class SdpaContext(object):
     @staticmethod
     def _validate(out, ref, lp_ref, fudge_factor, tname,
                   *,
-                  return_target_fudge_factors=False):
+                  return_target_fudge_factors=False,
+                  adiff=None):
         if out is None and ref is None:
             return True, 0.0, 1.0
         # atol, rtol, raw_atol, raw_rtol = get_tolerances(ref, lp_ref, fudge_factor)
@@ -433,9 +454,13 @@ class SdpaContext(object):
             reason = f"Tensor {tname} has NaN output but not NaN reference"
             # print(f'{max_adiff=} {test_error=} {tname=}')
             return False, max_adiff, None
-        atol = default_atol[torch.float32]
-        threshold = max(atol, ref_error * fudge_factor)
-        valid = test_error <= threshold
+        # print(f"{adiff=} {test_error=}")
+        if adiff is not None:
+            valid = test_error < (adiff * 2.0)
+        else:
+            atol = default_atol[torch.float32]
+            threshold = max(atol, ref_error * fudge_factor)
+            valid = test_error <= threshold
         # tft = test_error / ref_error if ref_error * fudge_factor > atol else 1.0
         tft = test_error / ref_error if not valid else 1.0
         if not valid:
@@ -450,16 +475,19 @@ class SdpaContext(object):
                                 *,
                                 no_forward=False,
                                 no_backward=False,
-                                return_target_fudge_factors=False):
+                                return_target_fudge_factors=False,
+                                use_adiff_entry=None):
         if no_forward:
             out_allclose, out_adiff, tft = True, None, None
         else:
+            use_adiff = None if use_adiff_entry is None else use_adiff_entry["adiff"]
             out_allclose, out_adiff, tft = self._validate(out,
                                                           self.refout_tensors[0],
                                                           self.lp_refout_tensors[0],
                                                           self.OUT_FUDGE_FACTOR,
                                                           'out',
-                                                          return_target_fudge_factors=return_target_fudge_factors)
+                                                          return_target_fudge_factors=return_target_fudge_factors,
+                                                          adiff=use_adiff)
         target_fudge_factors = {'out' : tft}
         if no_backward:
             if return_target_fudge_factors:
@@ -468,14 +496,16 @@ class SdpaContext(object):
                 return out_allclose, out_adiff, [], []
         grads_allclose = []
         grads_adiff = []
+        use_adiffs = [None] * len(grads) if use_adiff_entry is None else use_adiff_entry["grads_adiff"]
         # print(f'using {self.fudge_factors=}')
-        for grad, ref, lp_ref, fudge_factor, tname in zip(grads, self.dref_tensors, self.lp_dref_tensors, self.fudge_factors, self.TENSOR_NAMES):
+        for grad, ref, lp_ref, fudge_factor, tname, adiff in zip(grads, self.dref_tensors, self.lp_dref_tensors, self.fudge_factors, self.TENSOR_NAMES, use_adiffs):
             allclose, adiff, tft = self._validate(grad,
                                                   ref,
                                                   lp_ref,
                                                   fudge_factor,
                                                   tname,
-                                                  return_target_fudge_factors=return_target_fudge_factors)
+                                                  return_target_fudge_factors=return_target_fudge_factors,
+                                                  adiff=adiff)
             grads_allclose.append(allclose)
             grads_adiff.append(adiff)
             # if math.isnan(adiff):

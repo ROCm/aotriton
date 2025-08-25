@@ -70,7 +70,7 @@ def translate_causal(causal, v3_api):
             causal_type = causal
     return causal_type, window_left, window_right
 
-from pyaotriton import T1, T2, T4, DType, Stream, hipError_t, get_name_suffix
+from pyaotriton import T1, T2, T4, DType, Stream, hipError_t, get_name_suffix, hipGetLastError
 assert get_name_suffix() != "", ("To run tests, AOTriton must be compiled with suffixes "
                                  "by passing -DAOTRITON_NAME_SUFFIX=SOME_SUFFIX to cmake. "
                                  "Otherwise the AOTriton in-development may have conflicts with "
@@ -249,7 +249,6 @@ def attn_bwd(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, dq_acc, L, delta,
     if AOTRITON_TORCH_ONLY_USE_CPU:
         hipDeviceSynchronize()
     causal_type, window_left, window_right = translate_causal(causal, v3_api=call_operator)
-    # print(f'{b=}')
     if not call_operator:
         err = fa_backward(qview,
                           kview,
@@ -306,7 +305,6 @@ def attn_bwd(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, dq_acc, L, delta,
     if AOTRITON_TORCH_ONLY_USE_CPU:
         _torch_cpu_only_copy_back([dq, dk, dv, db, delta],
                                   [dqdevm, dkdevm, dvdevm, dbdevm, deltadevm])
-    # print(f'{err=}')
     return err
 
 def attn_bwd_fused(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L,

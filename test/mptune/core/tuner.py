@@ -42,6 +42,7 @@ class TunerService(MonadService):
                     item += 1
             except RuntimeError as e:
                 self.print(f'{self.monad.identifier} RuntimeError {e}')
+                raise e
             except StopIteration as e:
                 self.print(f'{self.monad.identifier}')
             except ProfilerEarlyExit as e:

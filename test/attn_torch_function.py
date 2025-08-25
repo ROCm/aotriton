@@ -12,6 +12,7 @@ from aotriton_flash import (
     debug_simulate_encoded_softmax,
     FwdExtraArguments,
     hipError_t,
+    hipGetLastError,
     AOTRITON_TORCH_ONLY_USE_CPU,
     HipMemory,
     attn_options,
@@ -26,6 +27,7 @@ if not IGNORE_BACKWARD_IMPORT:
     )
 from collections import namedtuple
 from dataclasses import dataclass
+from typing import Callable
 
 BWD_IMPL = int(os.getenv('BWD_IMPL', default='0'))
 V3_API = bool(int(os.getenv('V3_API', default='0')))
@@ -42,6 +44,9 @@ else:
 
 FORCE_BWD_BACKEND = V3_API and (os.getenv('BWD_IMPL', default=None) is not None)
 
+def empty_handler():
+    pass
+
 @dataclass
 class AttentionExtraArgs:
     return_encoded_softmax : bool = False
@@ -50,6 +55,7 @@ class AttentionExtraArgs:
     is_testing : bool = True
     fillnan : bool = False
     return_logsumexp : bool = False
+    illaddr_handler : Callable = empty_handler
 
 VERBOSE=False
 DEFAULT_PHILOX_SEED = 0x1BF52
@@ -137,18 +143,30 @@ class _attention(torch.autograd.Function):
         else:
             atomic = torch.empty([0], device=q.device, dtype=torch.int32)
 
+        # print(f'{attn_extra_args=}')
         # Check GPU kernel accepts nullptr for philox_*_output
         if attn_extra_args.is_testing:
-            attn_fwd(q, k, v, b, sm_scale, M, o,
-                     dropout_p, philox_seed, philox_offset1, philox_offset2,
-                     philox_null, philox_null,
-                     encoded_softmax, causal, atomic, call_operator=V3_API)
+            ret = attn_fwd(q, k, v, b, sm_scale, M, o,
+                           dropout_p, philox_seed, philox_offset1, philox_offset2,
+                           philox_null, philox_null,
+                           encoded_softmax, causal, atomic, call_operator=V3_API)
+            assert ret == hipError_t.hipSuccess, ret
 
         ret = attn_fwd(q, k, v, b, sm_scale, M, o,
                        dropout_p, philox_seed, philox_offset1, philox_offset2,
                        philox_seed_output, philox_offset_output,
                        encoded_softmax, causal, atomic, call_operator=V3_API)
-        assert ret == hipError_t.hipSuccess, ret
+        if attn_extra_args.is_testing:
+            try:
+                torch.cuda.synchronize()
+            except:
+                pass
+            last_err = hipGetLastError()
+            if last_err == hipError_t.hipErrorIllegalAddress:
+                attn_extra_args.illaddr_handler()
+            assert last_err == hipError_t.hipSuccess, last_err
+        else:
+            assert ret == hipError_t.hipSuccess, ret
         tuning_result = None
 
         ctx.save_for_backward(q, k, v, b, o, M)
@@ -208,7 +226,9 @@ class _attention(torch.autograd.Function):
         if tuning_result is not None:
             ctx.tuning_result += tuning_result
 
-        if attn_extra_args.is_testing:
+        # fused bwd does not need delta
+        # TODO: Make delta lazy tensor
+        if not V3_API and attn_extra_args.is_testing:
             assert not torch.isnan(delta).any(), f'{delta=}'
         return dq, dk, dv, db, None, None, None, None, None
 

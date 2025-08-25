@@ -71,11 +71,6 @@ class AffineKernelDescription(Interface):
     def perf_cfields(self):
         return self._perf_cfields
 
-    def fallback_compact_dict(self, compact_dict):
-        def fallback(k, v):
-            return self.PARTIALLY_TUNED_FUNCTIONALS.get(k, v)
-        return { k : fallback(k, v) for k, v in compact_dict.items()}
-
     # Overrides Interface.gen_functionals because Affine kernels may not
     # support all arch select to build
     def gen_functionals(self, build_for_target_arch):

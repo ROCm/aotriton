@@ -131,7 +131,7 @@ const std::vector<{infotype}>& {meta_class}::get_{tp.repr_name}_choices()
             pp_function_name = f'{self._iface.NAME}_pp_args_{findex}'
             stmt.append(f'static std::vector<void*>')
             stmt.append(f'{pp_function_name}(const {param_class_name}& params,')
-            stmt.append(' ' * len(pp_function_name) + ' hipDeviceptr_t* global_scratch) {')
+            stmt.append(' ' * len(pp_function_name) + ' const TritonAuxiliaryArguments& aux) {')
             stmt.append(src)
             stmt.append(f'}}')
             array.append(pp_function_name)
