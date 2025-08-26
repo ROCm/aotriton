@@ -45,6 +45,8 @@ if USE_ADIFFS_TXT is not None:
             utname, adiff_str = line.rstrip().split('\t')
             if adiff_str == "OOM":
                 adiffs[utname] = "OOM"
+            elif adiff_str == "NAN":
+                adiffs[utname] = "NAN"
             else:
                 adiffs[utname] = json.loads(adiff_str)
 else:
@@ -208,7 +210,7 @@ Note: In Flash V2 API the ... is denoted as "num_heads", serving as uniformly si
 but in PyTorch API it does not present at all
 '''
 
-def _do_test_op_bwd(args, device_str='cuda'):
+def _do_test_op_bwd(request, args, device_str='cuda'):
     BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type = args
     if sm_scale == 'l1':
         sm_scale = 1.0 / D_HEAD
@@ -232,6 +234,10 @@ def _do_test_op_bwd(args, device_str='cuda'):
     use_adiff_entry = adiffs.get(utname, None)
     if use_adiff_entry == "OOM":
         pytest.skip("[Adiffs] Skip due to known OOM.")
+    if use_adiff_entry == "NAN":
+        mark = pytest.mark.xfail(reason="[Adiffs] XPASS due to known NAN.")
+        request.node.add_marker(mark)
+        return 0
     print(f"{use_adiff_entry=}")
     torch.cuda.empty_cache()
     SKIP_DK_DV = False
@@ -294,13 +300,13 @@ def _do_test_op_bwd(args, device_str='cuda'):
     print(f'{adiff=} {grads_adiff=}')
     return seqlen_q * seqlen_k * D_HEAD
 
-def _test_op_bwd(args, device : int | None = None):
+def _test_op_bwd(request, args, device : int | None = None):
     try:
         if device is None:
-            qkh = _do_test_op_bwd(args, device_str='cuda')
+            qkh = _do_test_op_bwd(request, args, device_str='cuda')
         else:
             with torch.cuda.device(device):
-                qkh = _do_test_op_bwd(args, device_str=f'cuda:{device}')
+                qkh = _do_test_op_bwd(request, args, device_str=f'cuda:{device}')
         if qkh > 2048 * 2048 * 128:
             gc.collect()
             torch.cuda.empty_cache()
@@ -321,10 +327,10 @@ if FOR_RELEASE == 0:
     @pytest.mark.parametrize('sm_scale', ['l1'])
     @pytest.mark.parametrize('storage_flip', [True])
     @pytest.mark.parametrize('BWDOP', BWDOP_ids)
-    def test_fast(torch_gpu, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
+    def test_fast(request, torch_gpu, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
         bias_type = None
         args = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
-        _test_op_bwd(args, device=torch_gpu)
+        _test_op_bwd(request, args, device=torch_gpu)
 
 if FOR_RELEASE > 0:
     @pytest.mark.parametrize('BATCH', [3])
@@ -338,10 +344,10 @@ if FOR_RELEASE > 0:
     @pytest.mark.parametrize('sm_scale', ['l1', 'l2'])
     @pytest.mark.parametrize('storage_flip', [False, True])
     @pytest.mark.parametrize('BWDOP', BWDOP_ids)
-    def test_regular_bwd(torch_gpu, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
+    def test_regular_bwd(request, torch_gpu, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
         bias_type = None
         args = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
-        _test_op_bwd(args, device=torch_gpu)
+        _test_op_bwd(request, args, device=torch_gpu)
 
 if FOR_RELEASE > 0 and BWD_IMPL != 2:  # AITER ASM does not support bias ATM
     @pytest.mark.parametrize('BATCH', [3])
@@ -354,14 +360,14 @@ if FOR_RELEASE > 0 and BWD_IMPL != 2:  # AITER ASM does not support bias ATM
     @pytest.mark.parametrize('sm_scale', ['l1'])
     @pytest.mark.parametrize('storage_flip', [False, True])
     @pytest.mark.parametrize('BWDOP', BWDOP_ids)
-    def test_op_bwd_with_matrix_bias(torch_gpu, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, sm_scale, dropout_p, dtype, storage_flip):
+    def test_op_bwd_with_matrix_bias(request, torch_gpu, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, sm_scale, dropout_p, dtype, storage_flip):
         causal = False
         bias_type = 'matrix'
         '''
         _scaled_dot_product_attention: Explicit attn_mask should not be set when is_causal=True
         '''
         args = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
-        _test_op_bwd(args, device=torch_gpu)
+        _test_op_bwd(request, args, device=torch_gpu)
 
 if FOR_RELEASE > 0:  # Make the loading faster
     @pytest.mark.parametrize('BATCH', [3])
@@ -375,10 +381,10 @@ if FOR_RELEASE > 0:  # Make the loading faster
     @pytest.mark.parametrize('sm_scale', ['l1', 'l2'])
     @pytest.mark.parametrize('storage_flip', [False])
     @pytest.mark.parametrize('BWDOP', BWDOP_ids)
-    def test_gqa(torch_gpu, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
+    def test_gqa(request, torch_gpu, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
         bias_type = None
         args = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
-        _test_op_bwd(args, device=torch_gpu)
+        _test_op_bwd(request, args, device=torch_gpu)
 
 if FOR_RELEASE > 1:  # Make the loading faster
     @pytest.mark.parametrize('BATCH', [3])
@@ -393,11 +399,11 @@ if FOR_RELEASE > 1:  # Make the loading faster
     @pytest.mark.parametrize('storage_flip', [False, True])
     @pytest.mark.parametrize('bias_type', [None, 'matrix'], ids=['BiasOff', 'BiasOn'])
     @pytest.mark.parametrize('BWDOP', BWDOP_ids)
-    def test_irregulars(torch_gpu, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type):
+    def test_irregulars(request, torch_gpu, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type):
         if bias_type is not None and (seqlen_q > 2048 or seqlen_k > 2048):
             pytest.skip("Skip large UT with bias to avoid OOM")
         args = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
-        _test_op_bwd(args, device=torch_gpu)
+        _test_op_bwd(request, args, device=torch_gpu)
 
 @pytest.mark.parametrize('BWDOP', BWDOP_ids)
 def test_large_bf16_nan_values(BWDOP):
