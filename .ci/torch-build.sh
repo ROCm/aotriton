@@ -24,6 +24,7 @@ if [ ! -d "${AOTRITON_INSTALLED_PREFIX}" ]; then
   echo "Cannot find aotriton install directory ${AOTRITON_INSTALLED_PREFIX}" >&2
   exit 1
 fi
+export AOTRITON_INSTALLED_PREFIX
 export PYTORCH_ROCM_ARCH=${native_arch}
 python tools/amd_build/build_amd.py|grep -v skipped || true
 export ROCM_PATH=/opt/rocm
