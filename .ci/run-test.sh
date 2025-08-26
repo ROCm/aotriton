@@ -47,9 +47,11 @@ small_vram=$(amd-smi static -g 0 -v --json| python -c 'import json, sys; j = jso
     -v \
     1>"${fnprefix}${pass}.out" \
     2>"${fnprefix}${pass}.err"
+  grep '^FAILED' "${fnprefix}${pass}.out"|sed 's/^FAILED //' | sed 's/].*/]/' > "sel${pass}.txt"
   pytest --tb=line -n ${ngpus} --max-worker-restart 48 -rfEsx \
     test/test_varlen.py \
     -v \
     1>"${fnprefix}${pass}.varlen.out" \
     2>"${fnprefix}${pass}.varlen.err"
+  grep '^FAILED' "${fnprefix}${pass}.varlen.out"|sed 's/^FAILED //' | sed 's/].*/]/' > "sel${pass}.varlen.txt"
 )
