@@ -31,7 +31,7 @@ def create_select_stmt(table_name, wheres):
     return stmt, params
 
 def format_sql(stmt, params):
-    template = stmt.replace('?', '{}')
+    template = stmt.replace('?', '{!r}')
     return template.format(*params)
 
 class Factory(object):
