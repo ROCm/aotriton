@@ -114,4 +114,6 @@ void CURRENT_ENTRY_PUBLIC([[context_class_name]]& context, int mod_number) {
 
 // [[human_readable_signature]]
 
+// [[sql]]
+
 // vim: set fileencoding=utf-8

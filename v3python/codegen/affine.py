@@ -39,7 +39,7 @@ class AffineGenerator(InterfaceGenerator):
     Hence even if a sub-generator is returned, this sub-generator will not generate dedicated files.
     All code will be consolidated into the affine.<kernel_name>.cc file
     '''
-    def create_sub_generator(self, functional : Functional, df : 'pandas.DataFrame'):
+    def create_sub_generator(self, functional : Functional, df : 'pandas.DataFrame', sql : str):
         akdesc = functional.meta_object
         if akdesc.is_functional_disabled(functional):
             log(lambda : f'Functional {functional.godel_number=} disabled in affine kernel {akdesc.NAME}')

@@ -34,7 +34,7 @@ class OperatorGenerator(InterfaceGenerator):
     IFELSE_LAUNCH_SNIPPET_TEMPLATE = get_template('snippet/metro_launch_kernel_ifelse.cc')
     PFX = 'iface'
 
-    def create_sub_generator(self, functional : Functional, df : 'pandas.DataFrame'):
+    def create_sub_generator(self, functional : Functional, df : 'pandas.DataFrame', sql : str):
         ocg = OptuneCodeGenerator(self._args, functional, df, self._this_repo)
         if not ocg.is_trivial:
             return ocg, True
