@@ -21,6 +21,7 @@ bdir="build-${aotriton_major}.${aotriton_minor}-test-${native_arch}"
 small_vram=$(amd-smi static -g 0 -v --json| python -c 'import json, sys; j = json.load(sys.stdin); print(int(j["gpu_data"][0]["vram"]["size"]["value"] / 1024.0 < 60))')
 
 (
+  ulimit -c 0
   cd ${SCRIPT_DIR}/..;
   export SMALL_VRAM=${small_vram};
   export COLUMNS=400;
