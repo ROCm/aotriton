@@ -26,8 +26,12 @@ export AOTRITON_CI_SUPPLIED_SHA1=${GIT_FULL}
 scl enable gcc-toolset-13 -- bash aotriton/.ci/build-release.sh "${NOIMAGE_MODE}"
 
 if [ ${NOIMAGE_MODE} == "OFF" ]; then
-  tarfile=aotriton-${GIT_SHORT}-images.tar.gz
-  cd /root/build/aotriton/build/installed_dir && tar cz aotriton/lib/aotriton.images > /output/${tarfile}
+  tarbase=aotriton-${GIT_SHORT}-images
+  cd /root/build/aotriton/build/installed_dir
+  for d in $(ls aotriton/lib/aotriton.images/); do
+    tarfile=${tarbase}-$d.tar.gz
+    tar cz "aotriton/lib/aotriton.images/$d" > /output/${tarfile}
+  done
 else
   tarfile=aotriton-${GIT_SHORT}-manylinux_2_28_x86_64-rocm${hipver}-shared.tar.gz
   cd /root/build/aotriton/build/installed_dir && tar cz aotriton > /output/${tarfile}
