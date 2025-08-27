@@ -41,13 +41,17 @@ def process(fn, regfn, hrrfn, irrfn):
             j = json.loads(line)
             seqlen_q = j['seqlen_q']
             seqlen_k = j['seqlen_k']
+            orig_hdim = j['d_head']
             j['seqlen_q'] = reg_map_sq(seqlen_q)
             j['seqlen_k'] = reg_map_sk(seqlen_k)
-            print(json.dumps(j), file=reg)
+
             d_head = reg_map_hdim(j['d_head'])
             j['d_head'] = d_head
-            print(json.dumps(j), file=hrr)
+            print(json.dumps(j), file=reg)
+
             j['d_head'] = hrr_map_hdim(d_head)
+            print(json.dumps(j), file=hrr)
+
             j['seqlen_q'] = irr_map_sq(seqlen_q)
             j['seqlen_k'] = irr_map_sk(seqlen_k)
             print(json.dumps(j), file=irr)
