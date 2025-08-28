@@ -60,9 +60,9 @@ class InterfaceGenerator(ABC):
         # print(f'{iface.__class__=}')
         for functional in iface.gen_functionals(self._target_arch):
             # print(f'{functional=}')
-            df = fac.create_view(functional)
+            df, sql = fac.create_view(functional)
             # print(f'KernelShimGenerator.generate {df=}')
-            subg, use_this_functional = self.create_sub_generator(functional, df)
+            subg, use_this_functional = self.create_sub_generator(functional, df, sql)
             if subg is not None:
                 subg.generate()
                 if subg.cc_file:

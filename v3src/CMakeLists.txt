@@ -28,10 +28,12 @@ message(STATUS "EFFECTIVE_TARGET_GPUS ${EFFECTIVE_TARGET_GPUS}")
 execute_process(COMMAND ${CMAKE_COMMAND} -E tar xf
   "${CMAKE_SOURCE_DIR}/v3python/rules/tuning_database.sqlite3.tar.xz"
   WORKING_DIRECTORY "${AOTRITON_V2_BUILD_DIR}")
+file(SHA256 "${AOTRITON_V2_BUILD_DIR}/tuning_database.sqlite3" DB_SHA256)
 
 execute_process(COMMAND ${CMAKE_COMMAND} -E tar xf
   "${CMAKE_SOURCE_DIR}/v3python/rules/op_database.sqlite3.tar.xz"
   WORKING_DIRECTORY "${AOTRITON_V2_BUILD_DIR}")
+file(SHA256 "${AOTRITON_V2_BUILD_DIR}/op_database.sqlite3" OPDB_SHA256)
 
 get_filename_component(AOTRITON_COMPILER "${CMAKE_CURRENT_LIST_DIR}/../v3python/compile.py" ABSOLUTE)
 message("AOTRITON_COMPILER ${AOTRITON_COMPILER}")
@@ -81,6 +83,15 @@ COMMAND_ERROR_IS_FATAL ANY
 
 # Compile HSACO Kernels
 if(NOT AOTRITON_NOIMAGE_MODE)
+  set(SIGNATURE_FILE "${AOTRITON_V2_BUILD_DIR}/__signature__.json")
+  add_custom_command(OUTPUT "${SIGNATURE_FILE}"
+    COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
+    "${VENV_BIN_PYTHON}"
+    -m v3python.write_image_signature
+    "${AOTRITON_V2_BUILD_DIR}" ${AOTRITON_GIT_SHA1} "${SIGNATURE_FILE}"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
+  )
+
   message("Bare.compile: ${AOTRITON_V2_BUILD_DIR}/Bare.compile")
   message("Bare.cluster: ${AOTRITON_V2_BUILD_DIR}/Bare.cluster")
   set(AOTRITON_HSACO_RECORD "${AOTRITON_V2_BUILD_DIR}/Bare.targets")
@@ -131,6 +142,7 @@ if(NOT AOTRITON_NOIMAGE_MODE)
 
   # Kernel Storage V2
   set(ALL_AKS2 "")
+  set(ALL_ARCH_DIRS "")
   macro(ADD_FROM_CLUSTER_RULES)
     foreach(RULE IN LISTS CLUSTER_RULES)
       list(POP_FRONT RULE DIR_ARCH)
@@ -156,6 +168,20 @@ if(NOT AOTRITON_NOIMAGE_MODE)
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
         COMMAND_EXPAND_LISTS)
       list(APPEND ALL_AKS2 "${AKS2}")
+      # Add signature file as part of build process to avoid race conditions
+      if(NOT "${DIR_ARCH}" IN_LIST ALL_ARCH_DIRS)
+        string(JOIN "/" IMAGE_ARCH_SIGNATURE
+          ${AOTRITON_KERNEL_STORAGE_V2_DIR}
+          ${DIR_ARCH}
+          "__signature__")
+        add_custom_command(OUTPUT "${IMAGE_ARCH_SIGNATURE}"
+          COMMAND ${CMAKE_COMMAND} -E copy "${SIGNATURE_FILE}" "${IMAGE_ARCH_SIGNATURE}"
+          DEPENDS "${AKS2}" "${SIGNATURE_FILE}"
+          VERBATIM
+        )
+        list(APPEND ALL_AKS2 "${IMAGE_ARCH_SIGNATURE}")
+        list(APPEND ALL_ARCH_DIRS "${DIR_ARCH}")
+      endif()
     endforeach(RULE)
   endmacro()
   file(STRINGS "${AOTRITON_V2_BUILD_DIR}/Bare.cluster" CLUSTER_RULES ENCODING UTF-8)

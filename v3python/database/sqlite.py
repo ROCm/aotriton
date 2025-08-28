@@ -30,6 +30,10 @@ def create_select_stmt(table_name, wheres):
     # print('create_select_stmt', stmt)
     return stmt, params
 
+def format_sql(stmt, params):
+    template = stmt.replace('?', '{!r}')
+    return template.format(*params)
+
 class Factory(object):
     SIGNATURE_FILE = 'tuning_database.sqlite3'
     SECONDARY_DATABASES = {
@@ -71,10 +75,11 @@ class Factory(object):
             log(lambda : f'select stmt: {stmt} params {params}')
             df = pd.read_sql_query(stmt, self._conn, params=params)
             if not df.empty:
-                return df
+                return df, format_sql(stmt, params)
             # Downgrade
             stmt, params = build_sql(functional.fallback_choices)
-            return pd.read_sql_query(stmt, self._conn, params=params)
+            df = pd.read_sql_query(stmt, self._conn, params=params)
+            return df, format_sql(stmt, params)
         except pd.errors.DatabaseError:
             log(lambda : f'Table {table_name} may not exist. select stmt: {stmt} params {params}')
-            return None
+            return None, ''

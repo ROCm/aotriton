@@ -17,6 +17,8 @@
 #cmakedefine AOTRITON_VERSION_MAJOR @AOTRITON_VERSION_MAJOR@
 #cmakedefine AOTRITON_VERSION_MINOR @AOTRITON_VERSION_MINOR@
 #cmakedefine AOTRITON_VERSION_PATCH @AOTRITON_VERSION_PATCH@
+// Note the packaged SHA1 string may be different from the github release tag
+// due to chicken-and-egg issue.
 #cmakedefine AOTRITON_GIT_SHA1 @AOTRITON_GIT_SHA1@
 
 #ifdef _MSC_VER

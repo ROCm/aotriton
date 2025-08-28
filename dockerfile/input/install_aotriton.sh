@@ -27,11 +27,16 @@ if [ "$NOIMAGE_MODE" = "OFF" ]; then
 else
   scl enable gcc-toolset-13 "cd aotriton; python -m pip install -r requirements.txt"
 fi
-scl enable gcc-toolset-13 "mkdir -p aotriton/build; cd aotriton/build; cmake .. -DCMAKE_PREFIX_PATH=/opt/rocm -DPYTHON_EXECUTABLE=/usr/bin/python3.11 -DCMAKE_INSTALL_PREFIX=installed_dir/aotriton -DCMAKE_BUILD_TYPE=Release -DAOTRITON_GPU_BUILD_TIMEOUT=0 \"-DAOTRITON_TARGET_ARCH=${AOTRITON_TARGET_ARCH}\" -DAOTRITON_NO_PYTHON=ON -DAOTRITON_NOIMAGE_MODE=${NOIMAGE_MODE} -G Ninja && ninja install/strip"
-rocmver=$(scl enable gcc-toolset-13 "cpp -I/opt/rocm/include /input/print_rocm_version.h"|tail -n 1|sed 's/ //g')
-if [ -z ${AOTRITON_TARBALL_SHARD} ]; then
-  tarfile=aotriton-${AOTRITON_GIT_NAME}-manylinux_2_28_x86_64-rocm${rocmver}-shared.tar.gz
+if [ -f aotriton/.ci/build-release.sh ]; then
+  scl enable gcc-toolset-13 bash aotriton/.ci/build-release.sh "${AOTRITON_TARGET_ARCH}" "${NOIMAGE_MODE}"
 else
-  tarfile=aotriton-${AOTRITON_GIT_NAME}-manylinux_2_28_x86_64-rocm${rocmver}-shared.shard${AOTRITON_TARBALL_SHARD}.tar.gz
+  scl enable gcc-toolset-13 "mkdir -p aotriton/build; cd aotriton/build; cmake .. -DCMAKE_PREFIX_PATH=/opt/rocm -DPYTHON_EXECUTABLE=/usr/bin/python3.11 -DCMAKE_INSTALL_PREFIX=installed_dir/aotriton -DCMAKE_BUILD_TYPE=Release -DAOTRITON_GPU_BUILD_TIMEOUT=0 \"-DAOTRITON_TARGET_ARCH=${AOTRITON_TARGET_ARCH}\" -DAOTRITON_NO_PYTHON=ON -DAOTRITON_NOIMAGE_MODE=${NOIMAGE_MODE} -G Ninja && ninja install/strip"
 fi
-cd /root/build/aotriton/build/installed_dir && tar cz aotriton > /output/${tarfile}
+if [ ${NOIMAGE_MODE} == "OFF" ]; then
+  tarfile=aotriton-${AOTRITON_GIT_NAME}-images.tar.gz
+  cd /root/build/aotriton/build/installed_dir && tar cz aotriton/lib/aotriton.images > /output/${tarfile}
+else
+  hipver=$(scl enable gcc-toolset-13 "cpp -I/opt/rocm/include /input/print_hip_version.h"|tail -n 1|sed 's/ //g')
+  tarfile=aotriton-${AOTRITON_GIT_NAME}-manylinux_2_28_x86_64-rocm${hipver}-shared.tar.gz
+  cd /root/build/aotriton/build/installed_dir && tar cz aotriton > /output/${tarfile}
+fi

@@ -147,6 +147,9 @@ class fp16_t(float_base):
 class bf16_t(float_base):
     TRITON_TYPE_PFX = 'bf'
     NBITS = 16
+    @property
+    def sql_value(self):
+        return f'torch.bfloat{self.NBITS}'
 class fp32_t(float_base):
     NBITS = 32
 class fp16a16_t(fp16_t):

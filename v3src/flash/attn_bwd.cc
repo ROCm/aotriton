@@ -93,6 +93,7 @@ attn_bwd(const attn_bwd_params& in,
     if (head_dim_rounded == 80)
       head_dim_rounded = 96;
   }
+  LazyTensorInternal<2> lazy_delta(in.D);
   LazyTensorInternal<4> lazy_dq_acc(in.DQ_ACC);
   OpAttnBwdParams params = {
     .Q = &in.Q,
@@ -108,7 +109,7 @@ attn_bwd(const attn_bwd_params& in,
     .DB = &in.DB,
     .DQ_ACC = &lazy_dq_acc,
     .L = &in.L,
-    .D = &in.D,
+    .D = &lazy_delta,
     .num_head_q = num_head_q,
     .num_head_k = num_head_k,
     .cu_seqlens_q = &in.cu_seqlens_q,
@@ -153,6 +154,8 @@ attn_bwd(const attn_bwd_params& in,
   std::cerr << "v3::flash::attn_bwd context.backend_index = " << context.backend_index << std::endl;
 #endif
   err = context.launch(gpu, stream);
+  in.D.free();
+  in.DQ_ACC.free();
   return err;
 }
 
@@ -211,11 +214,12 @@ bwd_preprocess(T4 out, T4 dout, T2 delta, AOTRITON_NS::Stream stream_wrap) {
 #endif
     return hipErrorInvalidValue;
   }
+  EagerLazyTensor<2> eager_lazy_delta(delta);
   // Requires C++ 20
   BwdPreprocessParams params = {
     .Out = &out,
     .DO = &dout,
-    .D = &delta,
+    .D = &eager_lazy_delta,
     .max_seqlen_q = static_cast<int32_t>(out.size(2)),
     .head_dim = head_size,
     .BLOCK_DMODEL = int16_t(head_size_rounded),
@@ -267,11 +271,12 @@ bwd_preprocess_varlen(T4 out,
 #endif
     return hipErrorInvalidValue;
   }
+  EagerLazyTensor eager_lazy_delta(delta);
   // Requires C++ 20
   BwdPreprocessVarlenParams params = {
     .Out = &out,
     .DO = &dout,
-    .D = &delta,
+    .D = &eager_lazy_delta,
     .cu_seqlens_q = &cu_seqlens_q,
     .max_seqlen_q = max_seqlen_q,
     .head_dim = head_size,
@@ -345,6 +350,7 @@ bwd_kernel_dk_dv(T4 q,
   if (b) {
     bias_type = 1;
   }
+  EagerLazyTensor eager_lazy_delta(delta);
   BwdKernelDkDvParams params = {
     .Q = &q,
     .K = &k,
@@ -356,7 +362,7 @@ bwd_kernel_dk_dv(T4 q,
     .DK = &dk,
     .DV = &dv,
     .L = &softmax_lse,
-    .D = &delta,
+    .D = &eager_lazy_delta,
     .num_head_q = num_head_q,
     .num_head_k = num_head_k,
     .cu_seqlens_q = &cu_seqlens_q,
@@ -469,6 +475,7 @@ bwd_kernel_dq(T4 q,
   if (b) {
     bias_type = 1;
   }
+  EagerLazyTensor eager_lazy_delta(delta);
   BwdKernelDqParams params = {
     .Q = &q,
     .K = &k,
@@ -480,7 +487,7 @@ bwd_kernel_dq(T4 q,
     .DQ = &dq,
     .DB = &db,
     .L = &softmax_lse,
-    .D = &delta,
+    .D = &eager_lazy_delta,
     .num_head_q = num_head_q,
     .num_head_k = num_head_k,
     .cu_seqlens_q = &cu_seqlens_q,

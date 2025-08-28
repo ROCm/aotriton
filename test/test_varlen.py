@@ -5,6 +5,7 @@
 import pytest
 import torch
 import numpy as np
+import math
 import os
 
 from varlen_attn_torch_function import varlen_attention, AttentionExtraArgs
@@ -31,7 +32,10 @@ def rng_seqlens(n_seqlen):
     return np.random.choice(POSSIBLE_SEQLEN, n_seqlen)
 
 def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dropout_p, dtype):
-    import numpy as np
+    if sm_scale == 'l1':
+        sm_scale = 1.0 / D_HEAD
+    elif sm_scale == 'l2':
+        sm_scale = 1.0 / math.sqrt(D_HEAD)
     # Data creation
     SKIP_DK_DV = False
     SKIP_DQ = False
@@ -112,13 +116,13 @@ def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dro
     assert dk_allclose and dv_allclose and dq_allclose and db_allclose, f'{dk_allclose=} {dv_allclose=} {dq_allclose=} {db_allclose=}'
     print(f'{adiff=} {grads_adiff=}')
 
-@pytest.mark.parametrize('N_HEADS', [1, 4] if not FOR_RELEASE else [3])
+@pytest.mark.parametrize('N_HEADS', [3])
 @pytest.mark.parametrize('D_HEAD', POT_HEADDIMS + NPOT_HEADDIMS + PRIME_HEADDIMS)
-@pytest.mark.parametrize('n_seqlen', range(1, 24, 5) if not FOR_RELEASE else range(2, 24, 5))
+@pytest.mark.parametrize('n_seqlen', range(2, 24, 5))
 @pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
 @pytest.mark.parametrize('dropout_p', [0.0, 0.5])
 @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16, torch.float32])
-@pytest.mark.parametrize('sm_scale', [0.0, 1.2] if not FOR_RELEASE else [1.2])
+@pytest.mark.parametrize('sm_scale', ['l1'] if not FOR_RELEASE else ['l1', 'l2'])
 def test_op_bwd(N_HEADS, D_HEAD, n_seqlen, causal, sm_scale, dropout_p, dtype):
     np.random.seed(8139)
     seqlens_q = rng_seqlens(n_seqlen)

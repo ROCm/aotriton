@@ -45,8 +45,14 @@ if [ -z ${TRITON_LLVM_HASH+x} ]; then
     0.9b)
       TRITON_LLVM_HASH="86b69c31"
       ;;
+    0.9.*b)
+      TRITON_LLVM_HASH="86b69c31"
+      ;;
     0.10b)
       TRITON_LLVM_HASH="3c709802"
+      ;;
+    0.11b)
+      TRITON_LLVM_HASH="57088512"
       ;;
     *)
       echo "Unknown AOTRITON_GIT_NAME ${AOTRITON_GIT_NAME}. Please set TRITON_LLVM_HASH explicitly."

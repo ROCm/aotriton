@@ -243,7 +243,10 @@ def attn_bwd(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, dq_acc, L, delta,
     dvview, dvdevm = mk_aotensor(dv)
     dbview, dbdevm = mk_aotensor(db, if_empty_then_like=q)
     Lview, Ldevm = mk_aotensor(L)
-    deltaview, deltadevm = mk_aotensor(delta)
+    if call_operator:
+        deltaview = delta
+    else:
+        deltaview, deltadevm = mk_aotensor(delta)
     seedview, seeddevm = mk_aotensor(philox_seed)
     offset1view, offset1devm = mk_aotensor(philox_offset1)
     if AOTRITON_TORCH_ONLY_USE_CPU:
@@ -302,7 +305,7 @@ def attn_bwd(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, dq_acc, L, delta,
                              fa_backward_op_params.kVersion,
                              Stream(),
                              extargs)
-    if AOTRITON_TORCH_ONLY_USE_CPU:
+    if AOTRITON_TORCH_ONLY_USE_CPU:  # FIXME: V3+CPU
         _torch_cpu_only_copy_back([dq, dk, dv, db, delta],
                                   [dqdevm, dkdevm, dvdevm, dbdevm, deltadevm])
     return err
@@ -525,7 +528,10 @@ def attn_bwd_compact_varlen(q, k, v,
     dvview, dvdevm = mk_aotensor(dv)
     dbview, dbdevm = mk_aotensor(db, if_empty_then_like=q)
     Lview, Ldevm = mk_aotensor(L)
-    deltaview, deltadevm = mk_aotensor(delta)
+    if call_operator:
+        deltaview = delta
+    else:
+        deltaview, deltadevm = mk_aotensor(delta)
     seedview, seeddevm = mk_aotensor(philox_seed)
     offset1view, offset1devm = mk_aotensor(philox_offset1)
     causal_type, window_left, window_right = translate_causal(causal, v3_api=call_operator)
@@ -594,3 +600,7 @@ def lazy_dq_acc(dq : 'torch.Tensor'):
     dq_view = T4(dq.data_ptr(), tuple(dq.size()), dq.stride(), cast_dtype(dq.dtype))
     return lazy_tensor.dq_acc(dq_view, dq.device.index)
 
+def lazy_delta(L : 'torch.Tensor'):
+    from pyaotriton import lazy_tensor
+    L_view = T2(L.data_ptr(), tuple(L.size()), L.stride(), cast_dtype(L.dtype))
+    return lazy_tensor.delta(L_view, L.device.index)

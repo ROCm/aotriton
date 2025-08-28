@@ -32,8 +32,10 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
                  args,
                  f : Functional,
                  dataframe_for_tuning : 'pandas.DataFrame | None',
+                 sql : str,
                  parent_repo):
         super().__init__(args, f, dataframe_for_tuning, parent_repo)
+        self._sql = sql
         # TODO: support other binning algorithm
         kdesc = self._f.meta_object
         if args.build_for_tuning or self._df is None or self._df.empty:
@@ -107,6 +109,7 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
             'perf_field_assignment' : self.codegen_perf_assignment(),
             'arch_number'           : f.arch_number,
             'human_readable_signature' : f.human_readable_signature,
+            'sql'                   : self._sql,
         }
         print(self.AUTOTUNE_TEMPLATE.format_map(d), file=fout)
 

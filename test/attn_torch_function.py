@@ -37,10 +37,12 @@ else:
     PROBE_UNSUPPORTED = False
 
 if BWD_IMPL == 2 or V3_API:
-    from aotriton_flash import lazy_dq_acc
+    from aotriton_flash import lazy_dq_acc, lazy_delta
 else:
     def lazy_dq_acc(dq):
         return None
+    def lazy_delta(L):
+        return torch.empty_like(L)
 
 FORCE_BWD_BACKEND = V3_API and (os.getenv('BWD_IMPL', default=None) is not None)
 
@@ -206,7 +208,7 @@ class _attention(torch.autograd.Function):
         dk = torch.empty_like(k)
         dv = torch.empty_like(v)
         db = torch.empty_like(b) if b is not None else None
-        delta = torch.empty_like(L)
+        delta = lazy_delta(L)
         seqlen_q = q.shape[2]
         seqlen_k = k.shape[2]
         if FORCE_BWD_BACKEND:
@@ -288,7 +290,7 @@ class _attention(torch.autograd.Function):
         dk = torch.empty_like(k)
         dv = torch.empty_like(v)
         db = torch.empty_like(b) if b is not None else None
-        delta = torch.empty_like(L)
+        delta = lazy_delta(L)
         seqlen_q = q.shape[2]
         seqlen_k = k.shape[2]
 

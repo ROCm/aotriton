@@ -18,16 +18,12 @@ struct LazyTensorInternal {
     : lazy_(lazy) {
   }
 
-  ~LazyTensorInternal() {
-    (*lazy_.dispose)(lazy_.cookie);
-  }
-
   bool activated() const {
     return concrete_;
   }
 
   operator bool() const {
-    return lazy_;
+    return lazy_ || concrete_;
   }
 
 #define LAZY_INIT if (!concrete_) { concrete_ = (*lazy_.acquire)(lazy_.cookie); }
@@ -72,10 +68,25 @@ struct LazyTensorInternal {
     return concrete_.kparam_stride(i);
   }
 
+  TensorView<Rank>& make_concrete() {
+    LAZY_INIT;
+    return concrete_;
+  }
 #undef LAZY_INIT
-private:
-  const LazyTensor<Rank>& lazy_;
+protected:
+  LazyTensor<Rank> lazy_;
   mutable TensorView<Rank> concrete_;
+  LazyTensorInternal() { }
+};
+
+// Pretend to be an lazy tensor
+template<int Rank>
+struct EagerLazyTensor : public LazyTensorInternal<Rank> {
+  EagerLazyTensor(const TensorView<Rank>& concrete) {
+    this->concrete_ = concrete;
+  }
+  // Note: Don't add anything, LazyTensorInternal is not virtual and overriding
+  // won't work
 };
 
 };
