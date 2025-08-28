@@ -9,6 +9,9 @@ rsync -a --exclude='.git' /src/aotriton/ /root/build/aotriton/
 cd /src/aotriton/
 GIT_FULL=$(git rev-parse HEAD)
 GIT_SHORT=$(git rev-parse --short=12 HEAD)
+cd /src/aotriton/third_party/triton
+TRITON_SHORT=$(git rev-parse --short=12 HEAD)
+export TRITON_WHEEL_VERSION_SUFFIX="+git${TRITON_SHORT}"
 hipver=$(scl enable gcc-toolset-13 "cpp -I/opt/rocm/include /input/print_hip_version.h"|tail -n 1|sed 's/ //g')
 
 if [ ${NOIMAGE_MODE} == "OFF" ]; then
