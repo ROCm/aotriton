@@ -83,20 +83,14 @@ COMMAND_ERROR_IS_FATAL ANY
 
 # Compile HSACO Kernels
 if(NOT AOTRITON_NOIMAGE_MODE)
-  execute_process(
-    COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_BIN_PYTHON}" -c "import triton;print(triton.__version__)"
-    OUTPUT_VARIABLE TRITON_VERSION
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-  )
-  string(CONCAT SIGNATURE
-         "{\n"
-         "  \"AOTRITON_GIT_SHA1\": \"${AOTRITON_GIT_SHA1}\",\n"
-         "  \"DB_SHA256\": \"${DB_SHA256}\",\n"
-         "  \"OPDB_SHA256\": \"${OPDB_SHA256}\",\n"
-         "  \"TRITON_VERSION\": \"${TRITON_VERSION}\"\n"
-         "}\n")
   set(SIGNATURE_FILE "${AOTRITON_V2_BUILD_DIR}/__signature__.json")
-  file(WRITE "${SIGNATURE_FILE}" "${SIGNATURE}")
+  add_custom_command(OUTPUT "${SIGNATURE_FILE}"
+    COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
+    "${VENV_BIN_PYTHON}"
+    -m v3python.write_image_signature
+    "${AOTRITON_V2_BUILD_DIR}" ${AOTRITON_GIT_SHA1} "${SIGNATURE_FILE}"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
+  )
 
   message("Bare.compile: ${AOTRITON_V2_BUILD_DIR}/Bare.compile")
   message("Bare.cluster: ${AOTRITON_V2_BUILD_DIR}/Bare.cluster")
