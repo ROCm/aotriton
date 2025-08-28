@@ -528,7 +528,10 @@ def attn_bwd_compact_varlen(q, k, v,
     dvview, dvdevm = mk_aotensor(dv)
     dbview, dbdevm = mk_aotensor(db, if_empty_then_like=q)
     Lview, Ldevm = mk_aotensor(L)
-    deltaview, deltadevm = mk_aotensor(delta)
+    if call_operator:
+        deltaview = delta
+    else:
+        deltaview, deltadevm = mk_aotensor(delta)
     seedview, seeddevm = mk_aotensor(philox_seed)
     offset1view, offset1devm = mk_aotensor(philox_offset1)
     causal_type, window_left, window_right = translate_causal(causal, v3_api=call_operator)
