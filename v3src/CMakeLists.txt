@@ -169,7 +169,9 @@ if(NOT AOTRITON_NOIMAGE_MODE)
           COMMAND ${CMAKE_COMMAND} -E echo
           "AOTRITON_GIT_SHA1=${AOTRITON_GIT_SHA1}\nDB_SHA256=${DB_HASH}\nOPDB_SHA256=${OPDB_HASH}"
           > "${IMAGE_ARCH_SIGNATURE}"
-          DEPENDS "${AKS2}")
+          DEPENDS "${AKS2}"
+          VERBATIM
+        )
         list(APPEND ALL_AKS2 "${IMAGE_ARCH_SIGNATURE}")
         list(APPEND ALL_ARCH_DIRS "${DIR_ARCH}")
       endif()
