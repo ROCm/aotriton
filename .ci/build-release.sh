@@ -13,6 +13,7 @@ fi
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 . "${SCRIPT_DIR}/common-vars.sh"
 
+echo "${TRITON_WHEEL_VERSION_SUFFIX}"
 python_exec="/usr/bin/python3.11"
 noimage="$1"
 
