@@ -7,6 +7,7 @@ from pathlib import Path
 import json
 import triton
 import hashlib
+import importlib.metadata
 from .database import Factories as DatabaseFactories
 
 def parse():
@@ -36,7 +37,7 @@ def main():
             yield k, hashfile(args.build_dir / v)
     db['secondary'] = dict(gen_secondary_db_hash())
     sig['DB_SHA256'] = db
-    sig['TRITON_VERSION'] = str(triton.__version__)
+    sig['TRITON_VERSION'] = str(importlib.metadata.version("triton"))
     with open(args.output_file, 'w') as f:
         json.dump(sig, f, indent=2)
         print('', file=f)
