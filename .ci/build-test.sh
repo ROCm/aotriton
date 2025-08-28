@@ -6,7 +6,7 @@ if [ -z "$BASH_VERSION" ]; then
 fi
 
 if [ "$#" -ne 1 ]; then
-  echo 'Missing arguments. Usage: build-tune.sh <target arch>' >&2
+  echo 'Missing arguments. Usage: build-test.sh <target arch>' >&2
   exit 1
 fi
 
