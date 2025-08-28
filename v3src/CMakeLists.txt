@@ -159,8 +159,20 @@ if(NOT AOTRITON_NOIMAGE_MODE)
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
         COMMAND_EXPAND_LISTS)
       list(APPEND ALL_AKS2 "${AKS2}")
-      list(APPEND ALL_ARCH_DIRS "${DIR_ARCH}")
-      list(REMOVE_DUPLICATES ALL_ARCH_DIRS)
+      # Add signature file as part of build process to avoid race conditions
+      if(NOT "${DIR_ARCH}" IN_LIST ALL_ARCH_DIRS)
+        string(JOIN "/" IMAGE_ARCH_SIGNATURE
+          ${AOTRITON_KERNEL_STORAGE_V2_DIR}
+          ${DIR_ARCH}
+          "__signature__")
+        add_custom_command(OUTPUT "${IMAGE_ARCH_SIGNATURE}"
+          COMMAND ${CMAKE_COMMAND} -E echo
+          "AOTRITON_GIT_SHA1=${AOTRITON_GIT_SHA1}\nDB_SHA256=${DB_HASH}\nOPDB_SHA256=${OPDB_HASH}"
+          > "${IMAGE_ARCH_SIGNATURE}"
+          DEPENDS "${AKS2}")
+        list(APPEND ALL_AKS2 "${IMAGE_ARCH_SIGNATURE}")
+        list(APPEND ALL_ARCH_DIRS "${DIR_ARCH}")
+      endif()
     endforeach(RULE)
   endmacro()
   file(STRINGS "${AOTRITON_V2_BUILD_DIR}/Bare.cluster" CLUSTER_RULES ENCODING UTF-8)
@@ -172,16 +184,6 @@ if(NOT AOTRITON_NOIMAGE_MODE)
     set(AKS2_OPTIONS "--ignore_json")
     ADD_FROM_CLUSTER_RULES()
   endif()
-  # Add signature file
-  foreach(arch in ${ALL_ARCH_DIRS})
-    string(JOIN "/" IMAGE_ARCH_SIGNATURE
-      ${AOTRITON_KERNEL_STORAGE_V2_DIR}
-      ${DIR_ARCH}
-      "__signature__")
-    file(WRITE ${IMAGE_ARCH_SIGNATURE}
-      "AOTRITON_GIT_SHA1=${AOTRITON_GIT_SHA1}\nDB_SHA256=${DB_HASH}\nOPDB_SHA256=${OPDB_HASH}")
-    list(APPEND ALL_AKS2 "${IMAGE_ARCH_SIGNATURE}")
-  endforeach()
   add_custom_target(aotriton_kernel_storage_v3 ALL DEPENDS ${ALL_AKS2})
 endif(NOT AOTRITON_NOIMAGE_MODE)
 
