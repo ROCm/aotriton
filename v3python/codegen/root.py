@@ -23,10 +23,16 @@ from .common import (
     hsaco_filename,
 )
 from ..gpu_targets import AOTRITON_ARCH_TO_DIRECTORY
+import sys
+import os
+
+# DO NOT USE Path.absolute(), which does not resolve '..' in the path
+REL_PYTHON = Path(os.path.abspath(sys.executable)).relative_to(Path(sys.exec_prefix))
 
 class RootGenerator(object):
     def __init__(self, args):
         self._args = args
+        self._register_alt_venvs(args.alt_venvs)
 
     def generate(self):
         args = self._args
@@ -108,7 +114,8 @@ class RootGenerator(object):
     def write_hsaco(self, kdesc, path, functional, ksig, rulefile):
         log(lambda : f'{ksig=}')
         srcfn = kdesc.triton_source_path
-        print(self._absobjfn(path, kdesc, ksig),
+        print(self._venv_python(functional.arch).as_posix(),
+              self._absobjfn(path, kdesc, ksig),
               str(srcfn.absolute()),
               kdesc.triton_kernel_name,
               ksig.num_warps,
@@ -125,6 +132,21 @@ class RootGenerator(object):
     def _absasmfn(self, asm_path):
         full = self._args.root_dir / asm_path
         return str(full.absolute())
+
+    def _register_alt_venvs(self, alt_venvs):
+        d = defaultdict(list)
+        for av in alt_venvs:
+            try:
+                with open(av / 'arch.txt') as f:
+                    for arch in f.read().strip().split():
+                        d[arch] = av / REL_PYTHON
+            except:
+                pass
+        self._alt_venv_python = d
+        self._default_venv_python = (self._args.build_dir.parent / 'venv' / REL_PYTHON).absolute()
+
+    def _venv_python(self, arch):
+        return self._alt_venv_python.get(arch, self._default_venv_python)
 
     # def write_cluster(self, kdesc, path, functional, signatures, clusterfile):
     #     full_filepack_path = functional.full_filepack_path
