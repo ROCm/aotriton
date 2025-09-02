@@ -32,7 +32,7 @@ REL_PYTHON = Path(os.path.abspath(sys.executable)).relative_to(Path(sys.exec_pre
 class RootGenerator(object):
     def __init__(self, args):
         self._args = args
-        self._register_alt_venvs(args.alt_venvs)
+        self._register_alt_venvs(args.alt_venv_config)
 
     def generate(self):
         args = self._args
@@ -133,15 +133,15 @@ class RootGenerator(object):
         full = self._args.root_dir / asm_path
         return str(full.absolute())
 
-    def _register_alt_venvs(self, alt_venvs):
+    def _register_alt_venvs(self, alt_venv_config):
         d = defaultdict(list)
-        for av in alt_venvs:
-            try:
-                with open(av / 'arch.txt') as f:
-                    for arch in f.read().strip().split():
-                        d[arch] = av / REL_PYTHON
-            except:
-                pass
+        with open(alt_venv_config) as cfgfile:
+            for cfg in cfgfile:
+                items = cfg.split(';')
+                _, venv = items[:2]
+                arches = items[2:]
+                for arch in arches:
+                    d[arch] = self._args.build_dir.parent / venv / REL_PYTHON
         self._alt_venv_python = d
         self._default_venv_python = (self._args.build_dir.parent / 'venv' / REL_PYTHON).absolute()
 

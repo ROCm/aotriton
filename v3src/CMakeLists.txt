@@ -61,6 +61,11 @@ if(AOTRITON_NOIMAGE_MODE)
   list(APPEND GENERATE_OPTION "--noimage_mode")
 endif()
 
+if(AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
+  list(APPEND GENERATE_OPTION "--alt_venv_config")
+  list(APPEND GENERATE_OPTION "${AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE}")
+endif()
+
 if(WIN32)
   find_package(dlfcn-win32 REQUIRED)
   set(CMAKE_DL_LIBS dlfcn-win32::dl)

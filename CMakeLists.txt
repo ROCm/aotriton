@@ -79,6 +79,7 @@ option(AOTRITON_TERMINATE_WHEN_GPU_BUILD_TIMEOUT "compile.py will return error w
 set(AOTRITON_TARGET_ARCH "gfx90a;gfx942;gfx950;gfx1100;gfx1101;gfx1102;gfx1151;gfx1150;gfx1201;gfx1200" CACHE STRING "Target GPU Architecture. Select all GPUs within the given list")
 set(TARGET_GPUS "OBSOLETE" CACHE STRING "OBSOLETE. To select only one GPU, use AOTRITON_TARGET_ARCH or AOTRITON_OVERRIDE_TARGET_GPUS.")
 set(AOTRITON_OVERRIDE_TARGET_GPUS "" CACHE STRING "Override AOTRITON_TARGET_ARCH, and only build for GPUs within this list.")
+set(AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE "" CACHE STRING "Specify how to use alternative Triton wheels for different architectures in a config file.")
 
 # Early failure for python binding
 if(NOT AOTRITON_NO_PYTHON)
@@ -149,10 +150,13 @@ endif()
 set(ENV{VIRTUAL_ENV} "${VENV_DIR}")
 message("VENV_DIR ${VENV_DIR}")
 if(WIN32)
-  set(VENV_BIN_PYTHON "${VENV_DIR}/Scripts/python")
+  set(VENV_REL_PYTHON "Scripts/python")
+  set(VENV_REL_TRITON "triton/_C/libtriton.pyd")
 else()
-  set(VENV_BIN_PYTHON "${VENV_DIR}/bin/python")
+  set(VENV_REL_PYTHON "bin/python")
+  set(VENV_REL_TRITON "triton/_C/libtriton.so")
 endif()
+set(VENV_BIN_PYTHON "${VENV_DIR}/${VENV_REL_PYTHON}")
 # set(Python3_FIND_VIRTUALENV FIRST)
 # unset(Python3_EXECUTABLE)
 # find_package(Python3 COMPONENTS Interpreter REQUIRED)
@@ -163,6 +167,7 @@ message("VENV_SITE ${VENV_SITE}")
 
 execute_process(COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_BIN_PYTHON}" -m pip install -r "${CMAKE_CURRENT_LIST_DIR}/requirements.txt")
 
+set(ALL_TRITON_SOS "")
 if(AOTRITON_NOIMAGE_MODE)
   message(STATUS "[AOTriton] Skipping triton due to AOTRITON_NOIMAGE_MODE")
 elseif(AOTRITON_INHERIT_SYSTEM_SITE_TRITON)
@@ -187,11 +192,7 @@ else()
   # set(AOTRITON_TRITON_EGGLINK "${VENV_SITE}/triton.egg-link")
   # message("AOTRITON_TRITON_EGGLINK ${AOTRITON_TRITON_EGGLINK}")
 
-  if(WIN32)
-    set(AOTRITON_TRITON_SO "${VENV_SITE}/triton/_C/libtriton.pyd")
-  else()
-    set(AOTRITON_TRITON_SO "${VENV_SITE}/triton/_C/libtriton.so")
-  endif()
+  set(AOTRITON_TRITON_SO "${VENV_SITE}/${VENV_REL_TRITON}")
 
   if(AOTRITON_USE_LOCAL_TRITON_WHEEL)
     add_custom_command(OUTPUT "${AOTRITON_TRITON_SO}"
@@ -203,8 +204,28 @@ else()
       WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/third_party/triton/"
     )
   endif()
-  add_custom_target(aotriton_venv_triton ALL DEPENDS "${AOTRITON_TRITON_SO}")
+  LIST(APPEND ALL_TRITON_SOS "${AOTRITON_TRITON_SO}")
 endif()
+
+if(NOT AOTRITON_NOIMAGE_MODE AND AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
+  file(STRINGS "${AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE}" ALT_TRITON_RULES ENCODING UTF-8)
+  foreach(RULE IN LISTS ALT_TRITON_RULES)
+    list(POP_FRONT RULE WHEEL)
+    list(POP_FRONT RULE ALT_VENV_DIR)
+    execute_process(COMMAND "${Python3_EXECUTABLE}" -m venv "${ALT_VENV_DIR}")
+    set(ALT_VENV_BIN_PYTHON "${ALT_VENV_DIR}/${VENV_REL_PYTHON}")
+    execute_process(COMMAND "${ALT_VENV_BIN_PYTHON}" -m pip install -r "${CMAKE_CURRENT_LIST_DIR}/requirements.txt")
+    set(AOTRITON_TRITON_SO "${ALT_VENV_DIR}/${VENV_REL_TRITON}")
+    add_custom_command(OUTPUT "${AOTRITON_TRITON_SO}"
+      COMMAND "${ALT_VENV_BIN_PYTHON}" -m pip install ${WHEEL}
+    )
+    LIST(APPEND ALL_TRITON_SOS "${AOTRITON_TRITON_SO}")
+  endforeach(RULE)
+endif(NOT AOTRITON_NOIMAGE_MODE AND AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
+
+if(ALL_TRITON_SOS)
+  add_custom_target(aotriton_venv_triton ALL DEPENDS "${ALL_TRITON_SOS}")
+endif(ALL_TRITON_SOS)
 
 add_subdirectory(v3src)
 
