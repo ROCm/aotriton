@@ -98,7 +98,7 @@ upstream and may support more recent version of AOTriton
 
 |  PyTorch ROCm Fork    |           AOTriton Feature Release              |
 |-----------------------|-------------------------------------------------|
-|        2.9            |                   0.11b (once released)         |
+|        2.9 (upcoming) |                   0.11b                         |
 |        2.8            |                   0.10b (backported)            |
 |        2.7            |                   0.9b (backported)             |
 |        2.6            |                   0.9b (backported)             |
