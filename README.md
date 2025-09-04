@@ -64,8 +64,8 @@ of AOTriton. The compatibility matrix is shown below
 
 |  PyTorch Upstream     |           AOTriton Feature Release              |
 |-----------------------|-------------------------------------------------|
-|        2.9            |    0.11b, 0.10b<sup>(1)</sup>            |
-|        2.8            |    0.10b<sup>(2)</sup>, 0.9b<sup>(2)</sup>             |
+|        2.9 (upcoming) |    0.11b, 0.10b<sup>(1)</sup>                   |
+|        2.8            |    0.10b<sup>(2)</sup>, 0.9b<sup>(2)</sup>      |
 |        2.7            |    0.9b<sup>(4)</sup>, 0.10b<sup>drop-in only(3)</sup>      |
 |        2.6            |                   0.8b<sup>(5)</sup>            |
 |        2.5            |                   0.7b, 0.8b<sup>(6)</sup>      |
