@@ -5,7 +5,7 @@ if [ -z "$BASH_VERSION" ]; then
   exit 1
 fi
 
-if [ "$#" -ne 1 ]; then
+if [ "$#" -ne 2 ]; then
   echo 'Missing arguments. Usage: build-triton-tester.sh <target arch> <triton wheel file>' >&2
   exit 1
 fi
@@ -14,8 +14,7 @@ SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 . "${SCRIPT_DIR}/common-vars.sh"
 
 target_arch="$1"
-triton_short="$2"
-triton_wheel="$3"
+triton_wheel="$2"
 
 bdir="build-triton_tester"
 mkdir -p ${SCRIPT_DIR}/../${bdir}

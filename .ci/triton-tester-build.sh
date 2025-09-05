@@ -6,8 +6,8 @@ if [ -z "$BASH_VERSION" ]; then
 fi
 
 if [ "$#" -lt 4 ]; then
-  echo 'Missing arguments. Usage: triton-tester-build.sh <baseimage> <output dir> <arch> <triton commit>' >&2
-  echo '<rocmver> should not include prefix' >&2
+  echo 'Missing arguments. Usage: triton-tester-build.sh <baseimage> <output dir> <arch> <triton commit> <triton wheel>' >&2
+  echo '<trion wheel> should be obtained through triton-wheel-build.sh <triton commit>' >&2
   exit 1
 fi
 
@@ -17,12 +17,14 @@ BASE_IMAGE="$1"
 OUTPUT_DIR="$2"
 TARGET_ARCH="$3"
 TRITON_COMMIT="$4"
+TRITON_WHEEL="$5"
 TRITON_SHORT=$(echo ${TRITON_COMMIT} | head -c 8)
 
 if [ ! -f "${TRITON_WHEEL}" ]; then
   echo "triton wheel file not exists" >&2
   exit 1
 fi
+GIT_COMMIT=$(git rev-parse HEAD)
 TRITON_WHEEL_BASE=$(basename ${TRITON_WHEEL})
 
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
@@ -33,7 +35,7 @@ cd "${SCRIPT_DIR}"
 
 SOURCE_VOLUME="aotriton-src-shared"
 LOCAL_DIR="aotriton"
-setup_source_volume ${SOURCE_VOLUME} ${GIT_HTTPS_ORIGIN} ${LOCAL_DIR} ${TRITON_COMMIT}
+setup_source_volume ${SOURCE_VOLUME} ${GIT_HTTPS_ORIGIN} ${LOCAL_DIR} ${GIT_COMMIT}
 
 docker run --network=host -it --rm \
   -v ${SOURCE_VOLUME}:/src:ro \
@@ -44,4 +46,4 @@ docker run --network=host -it --rm \
   -w / \
   ${BASE_IMAGE} \
   bash \
-  /input/docker-script-triton-tester-build.sh "${TARGET_ARCH}" ${TRITON_COMMIT}"
+  /input/docker-script-triton-tester-build.sh "${TARGET_ARCH}" "${TRITON_COMMIT}"
