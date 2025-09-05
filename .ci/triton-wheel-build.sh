@@ -17,7 +17,7 @@ SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 . "${SCRIPT_DIR}/common-setup-volume.sh"
 
 PYVER="$1"
-TRITON_COMMIT="$2"
+TRITON_GIT_NAME="$2"
 
 SOURCE_VOLUME="triton-src-shared"
 GIT_HTTPS_ORIGIN='https://github.com/triton-lang/triton.git'
@@ -32,7 +32,7 @@ if [ -z "$(docker images -q ${BASE_DOCKER_IMAGE} 2>/dev/null)" ]; then
   docker build --network=host -t ${BASE_DOCKER_IMAGE} --build-arg PYVER=${PYVER} -f buildenv-triton_tester.Dockerfile .
 fi
 
-setup_source_volume ${SOURCE_VOLUME} ${GIT_HTTPS_ORIGIN} ${LOCAL_DIR} ${TRITON_COMMIT}
+setup_source_volume ${SOURCE_VOLUME} ${GIT_HTTPS_ORIGIN} ${LOCAL_DIR} ${TRITON_GIT_NAME}
 
 INPUT_DIR=${SCRIPT_DIR}/triton-patch
 OUTPUT_DIR=${SCRIPT_DIR}/../dockerfile/input

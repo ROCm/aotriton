@@ -18,5 +18,5 @@ export AOTRITON_CI_SUPPLIED_SHA1=${GIT_FULL}
 python -m pip install /*.whl
 bash .ci/build-triton-tester.sh "${TARGET_ARCH}" "${TRITON_WHEEL}"
 
-cd /root/build/aotriton/build-triton_tester/install_dir/
+cd /root/build/aotriton/build-triton_tester/installed_dir/
 tar c aotriton | gzip --fast > /output/aotriton-triton_tester-${TRITON_SHORT12}.tar.gz
