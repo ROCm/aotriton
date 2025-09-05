@@ -1,7 +1,6 @@
 #!/bin/bash
 
-TRITON_COMMIT="$1"
-TRITON_SHORT=$(echo ${TRITON_COMMIT} | head -c 8)
+TRITON_GIT_NAME="$1"
 TMP_BRANCH="__ci_internal_use/_triton_wheel"
 
 set -ex
@@ -9,7 +8,10 @@ set -ex
 # Note: only copy .git
 rsync -aR /src/./triton/.git /root/build/./
 cd /root/build/triton
+git switch -C ${TMP_BRANCH} ${TRITON_GIT_NAME}
 git reset --hard
+TRITON_COMMIT=$(git rev-parse HEAD)
+TRITON_SHORT=$(echo ${TRITON_COMMIT} | head -c 8)
 TRITON_LLVM_HASH=$(head -c 8 "cmake/llvm-hash.txt")
 
 unset patch_file
@@ -50,7 +52,7 @@ function check_cached_llvm() {
   fi
 }
 
-function cached_llvm() {
+function cache_llvm() {
   dir="$1"
   wget "$url" -O "$dir/$fn"
 }
