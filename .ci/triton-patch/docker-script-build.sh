@@ -1,6 +1,7 @@
 #!/bin/bash
 
 TRITON_COMMIT="$1"
+TRITON_SHORT=$(echo ${TRITON_COMMIT} | head -c 8)
 TMP_BRANCH="__ci_internal_use/_triton_wheel"
 
 set -ex
@@ -22,6 +23,7 @@ do
   set -e  # Can fail
   if [ $RET -eq 0 ]; then
     patch_file=$(basename -s .sh "$f")
+    patch_date=${patch_file#patch-}
     break
   fi
   git reset --hard
@@ -31,6 +33,7 @@ if [[ -z "${patch_file+x}" ]]; then
   echo "All patch-*.sh file failed"
   exit 1
 fi
+export TRITON_WHEEL_VERSION_SUFFIX="_base_${TRITON_SHORT}_patch_${patch_date}"
 
 fn="llvm-${TRITON_LLVM_HASH}-almalinux-x64.tar.gz"
 url="https://oaitriton.blob.core.windows.net/public/llvm-builds/$fn"
@@ -39,7 +42,7 @@ function check_cached_llvm() {
   if [ -f "/$dir/$fn" ]; then
     mkdir -p "$HOME/.triton/llvm"
     cd "$HOME/.triton/llvm"
-    echo "Unpacking $fn" && tar xf "/$dir/$fn"
+    echo "Unpacking $fn" && tar xf "$dir/$fn"
     echo -n "${url}" > "llvm-${TRITON_LLVM_HASH}-almalinux-x64/version.txt"
     return 0
   else
