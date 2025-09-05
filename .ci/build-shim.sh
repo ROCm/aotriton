@@ -13,7 +13,8 @@ fi
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 . "${SCRIPT_DIR}/common-build.sh"
 
-common_build "$1" "test" \
+common_build "$1" "shim" \
+  -DAOTRITON_NOIMAGE_MODE=ON \
   -DAOTRITON_GPU_BUILD_TIMEOUT=0 \
   -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=mold" \
   -DCMAKE_SHARED_LINKER_FLAGS="-fuse-ld=mold"

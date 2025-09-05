@@ -14,26 +14,17 @@ def parse():
     args = p.parse_args()
     return args
 
-def write_linker_script(args):
+def write_assembly(args):
     string = f"AOTriton {args.major}.{args.minor}.{args.patch}"
-    string = string.encode('ascii')
     with open(args.o, 'w') as f:
-        print("""SECTIONS
-{
-  .comment : {
-    KEEP(*(.comment))
-    BYTE(0)""", file=f)
-        for c in string:
-            print(f"    BYTE(0x{c:02x})", file=f)
-        print("""    BYTE(0)
-  }
-}
-INSERT AFTER .comment;
-""", file=f)
+        print(f""".section .comment
+msg: .ascii "{string}\\0"
+len = . - msg""", file=f)
+
 
 def main():
     args = parse()
-    write_linker_script(args)
+    write_assembly(args)
 
 if __name__ == "__main__":
     main()
