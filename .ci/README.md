@@ -12,6 +12,24 @@ NOTE: ALL SCRIPTS REQUIRE **BASH**.
 | torch-build.sh             | Build PyTorch with AOTriton built by build-for-torch.sh   |
 | releasesuite-git-head.sh   | Build AOTriton release tarballs                           |
 
+## Naming Scheme
+
+* `build-*.sh`: script that runs directly, either manually by user inputs, or
+  invoked indirectly by another script.
+* `run-*.sh`: run some task given a success `build-*.sh`, within the same environment.
+* `*-build.sh`: build something inside a docker environment created by this
+  script. The actual build task should be done by `build-*.sh` script
+* `common-*.sh`: a "library" script that could be sourced by other scripts.
+* `docker-script-*`: a script prepare environment inside a docker container for
+  direct scripts like `build-*.sh` or `run-*.sh`
+  - It is intentionally not to call the build commands directly, to decouple
+    from build command changes accross different commits.
+
+`releasesuite-git-head.sh`, as the mono-entry to make AOTriton releases, does
+not fall into any category and consequently does not follow any naming scheme above.
+
+# Example Usages
+
 ## Build for Tuning
 
 tl;dr example to build for target gfx950:
