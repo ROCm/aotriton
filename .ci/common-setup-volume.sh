@@ -1,36 +1,36 @@
 #!/bin/bash
 
 function setup_source_volume() {
-  SOURCE_VOLUME="$1"
-  GIT_REMOTE="$2"
-  LOCAL_DIR="$3"
-  GIT_COMMIT="$4"
+  local source_volume="$1"
+  local git_remote="$2"
+  local local_dir="$3"
+  local git_commit="$4"
   if [ "$#" -ge 5 ]; then
-    BASE_DOCKER_IMAGE="$5"
+    local base_docker_image="$5"
   else
-    BASE_DOCKER_IMAGE="aotriton:base"
+    local base_docker_image="aotriton:base"
   fi
   # Download source code to volume
-  docker volume create --name ${SOURCE_VOLUME}
-  NEED_CLONE=0
-  if docker volume ls -q -f name="${SOURCE_VOLUME}" | grep -q "${SOURCE_VOLUME}"; then
+  docker volume create --name ${source_volume}
+  local need_clone=0
+  if docker volume ls -q -f name="${source_volume}" | grep -q "${source_volume}"; then
     set +e
     docker run --network=host -it --rm \
-      -v ${SOURCE_VOLUME}:/src \
-      -w /src/${LOCAL_DIR} \
-      ${BASE_DOCKER_IMAGE} \
-      bash -c "set -ex; git fetch && git checkout ${GIT_COMMIT} --recurse-submodules"
+      -v ${source_volume}:/src \
+      -w /src/${local_dir} \
+      ${base_docker_image} \
+      bash -c "set -ex; git fetch && git checkout ${git_commit} --recurse-submodules"
     if [ $? -ne 0 ]; then
-      NEED_CLONE=1
+      need_clone=1
     fi
     set -e
   fi
 
-  if [ ${NEED_CLONE} -ne 0 ]; then
+  if [ ${need_clone} -ne 0 ]; then
     docker run --network=host -it --rm \
-      -v ${SOURCE_VOLUME}:/src \
+      -v ${source_volume}:/src \
       -w /src \
-      ${BASE_DOCKER_IMAGE} \
-      bash -c "set -ex; git clone --recursive ${GIT_HTTPS_ORIGIN} && cd ${LOCAL_DIR} && git checkout ${GIT_COMMIT} && git submodule sync && git submodule update --init --recursive --force"
+      ${base_docker_image} \
+      bash -c "set -ex; git clone --recursive ${git_https_origin} && cd ${local_dir} && git checkout ${git_commit} && git submodule sync && git submodule update --init --recursive --force"
   fi
 }
