@@ -11,35 +11,15 @@ if [ "$#" -lt 1 ]; then
 fi
 
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
+. "${SCRIPT_DIR}/common-setup-volume.sh"
 
-GIT_HTTPS_ORIGIN='https://github.com/triton-lang/triton.git'
 TRITON_COMMIT="$1"
 
-BASE_DOCKER_IMAGE="aotriton:base"
 SOURCE_VOLUME="triton-src-shared"
-docker volume create --name ${SOURCE_VOLUME}
-NEED_CLONE=0
-if docker volume ls -q -f name="${SOURCE_VOLUME}" | grep -q "${SOURCE_VOLUME}"; then
-  set +e
-  docker run --network=host -it --rm \
-    -v ${SOURCE_VOLUME}:/src \
-    -w /src/triton \
-    ${BASE_DOCKER_IMAGE} \
-    bash -c "set -ex; git fetch && git checkout ${TRITON_COMMIT} --recurse-submodules"
-  RET=$?
-  set -e
-  if [ $RET -ne 0 ]; then
-    NEED_CLONE=1
-  fi
-fi
+GIT_HTTPS_ORIGIN='https://github.com/triton-lang/triton.git'
+LOCAL_DIR=triton
 
-if [ ${NEED_CLONE} -ne 0 ]; then
-  docker run --network=host -it --rm \
-    -v ${SOURCE_VOLUME}:/src \
-    -w /src \
-    ${BASE_DOCKER_IMAGE} \
-    bash -c "set -ex; git clone --recursive ${GIT_HTTPS_ORIGIN} && cd triton && git checkout ${TRITON_COMMIT} && git submodule sync && git submodule update --init --recursive --force"
-fi
+setup_source_volume ${SOURCE_VOLUME} ${GIT_HTTPS_ORIGIN} ${LOCAL_DIR} ${TRITON_COMMIT}
 
 INPUT_DIR=${SCRIPT_DIR}/triton-patch
 OUTPUT_DIR=${SCRIPT_DIR}/../dockerfile/input

@@ -38,6 +38,11 @@ file(SHA256 "${AOTRITON_V2_BUILD_DIR}/op_database.sqlite3" OPDB_SHA256)
 get_filename_component(AOTRITON_COMPILER "${CMAKE_CURRENT_LIST_DIR}/../v3python/compile.py" ABSOLUTE)
 message("AOTRITON_COMPILER ${AOTRITON_COMPILER}")
 
+set(HSACO_COMPILE_OPTION "")
+if(AOTRITON_TERMINATE_WHEN_GPU_BUILD_TIMEOUT)
+  list(APPEND HSACO_COMPILE_OPTION "--error_when_timeout")
+endif()
+
 if(AOTRITON_BUILD_FOR_TUNING)
   set(GENERATE_OPTION "--build_for_tuning")
 else(AOTRITON_BUILD_FOR_TUNING)
@@ -129,6 +134,7 @@ if(NOT AOTRITON_NOIMAGE_MODE)
       "--target" "${TGTGPU}"
       "--signature" "${SIG}"
       "--timeout" "${AOTRITON_GPU_BUILD_TIMEOUT}"
+      ${HSACO_COMPILE_OPTION}
       DEPENDS aotriton_venv_triton
     )
     # DO NOT USE list(APPEND). It is quadratic growth
