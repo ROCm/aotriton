@@ -3,7 +3,7 @@
 
 cmake_minimum_required(VERSION 3.18 FATAL_ERROR)
 
-project(AOTriton CXX C)
+project(AOTriton CXX C ASM)
 
 # Version numbers
 set(AOTRITON_VERSION_MAJOR_INT 0)
