@@ -6,18 +6,31 @@ if [ -z "$BASH_VERSION" ]; then
 fi
 
 if [ "$#" -lt 1 ]; then
-  echo 'Missing arguments. Usage: triton-wheel-build.sh <triton commit>' >&2
+  echo 'Missing arguments. Usage: triton-wheel-build.sh <python version> <triton commit>' >&2
+  echo '<python version> should be the name suffix of python package from AlmaLinux8' >&2
   exit 1
 fi
+
+set -ex
 
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 . "${SCRIPT_DIR}/common-setup-volume.sh"
 
-TRITON_COMMIT="$1"
+PYVER="$1"
+TRITON_COMMIT="$2"
 
 SOURCE_VOLUME="triton-src-shared"
 GIT_HTTPS_ORIGIN='https://github.com/triton-lang/triton.git'
 LOCAL_DIR=triton
+# TODO: deduplicate with releasesuite-git-head.sh
+BASE_DOCKER_IMAGE="aotriton:base"
+if [ -z "$(docker images -q ${BASE_DOCKER_IMAGE} 2>/dev/null)" ]; then
+  docker build --network=host -t ${BASE_DOCKER_IMAGE} -f base.Dockerfile .
+fi
+BASE_DOCKER_IMAGE="aotriton:buildenv-triton_tester-py${PYVER}"
+if [ -z "$(docker images -q ${BASE_DOCKER_IMAGE} 2>/dev/null)" ]; then
+  docker build --network=host -t ${BASE_DOCKER_IMAGE} --build-arg PYVER=${PYVER} -f buildenv-triton_tester.Dockerfile .
+fi
 
 setup_source_volume ${SOURCE_VOLUME} ${GIT_HTTPS_ORIGIN} ${LOCAL_DIR} ${TRITON_COMMIT}
 
