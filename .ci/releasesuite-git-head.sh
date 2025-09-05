@@ -68,16 +68,10 @@ fi
 
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 . "${SCRIPT_DIR}/common-vars.sh"
+. "${SCRIPT_DIR}/common-setup-volume.sh"
+. "${SCRIPT_DIR}/common-git-https-origin.sh"
 
-GIT_ORIGIN=$(git remote get-url origin)
-if [[ ${GIT_ORIGIN} == "https://"* ]]; then
-  GIT_HTTPS_ORIGIN=${GIT_ORIGIN}
-else
-  git_path=$(echo "${GIT_ORIGIN}"|cut -d ":" -f 2)
-  GIT_HTTPS_ORIGIN="https://github.com/${git_path}"
-fi
-
-GIT_SHORT=$(git rev-parse --short=12 HEAD)
+GIT_COMMIT=$(git rev-parse HEAD)
 
 BASE_DOCKER_IMAGE="aotriton:base"
 
@@ -87,29 +81,8 @@ if [ -z "$(docker images -q ${BASE_DOCKER_IMAGE} 2>/dev/null)" ]; then
 fi
 
 SOURCE_VOLUME="aotriton-src-shared"
-# Download source code to volume
-docker volume create --name ${SOURCE_VOLUME}
-NEED_CLONE=0
-if docker volume ls -q -f name="${SOURCE_VOLUME}" | grep -q "${SOURCE_VOLUME}"; then
-  set +e
-  docker run --network=host -it --rm \
-    -v ${SOURCE_VOLUME}:/src \
-    -w /src/aotriton \
-    ${BASE_DOCKER_IMAGE} \
-    bash -c "set -ex; git fetch && git checkout ${GIT_SHORT} --recurse-submodules"
-  if [ $? -ne 0 ]; then
-    NEED_CLONE=1
-  fi
-  set -e
-fi
-
-if [ ${NEED_CLONE} -ne 0 ]; then
-  docker run --network=host -it --rm \
-    -v ${SOURCE_VOLUME}:/src \
-    -w /src \
-    ${BASE_DOCKER_IMAGE} \
-    bash -c "set -ex; git clone --recursive ${GIT_HTTPS_ORIGIN} && cd aotriton && git checkout ${GIT_SHORT} && git submodule sync && git submodule update --init --recursive --force"
-fi
+LOCAL_DIR="aotriton"
+setup_source_volume ${SOURCE_VOLUME} ${GIT_HTTPS_ORIGIN} ${LOCAL_DIR} ${GIT_COMMIT}
 
 INPUT_DIR=${SCRIPT_DIR}/../dockerfile/input
 OUTPUT_DIR="$1"
