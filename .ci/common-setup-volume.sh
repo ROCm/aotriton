@@ -2,9 +2,9 @@
 
 function setup_source_volume() {
   local source_volume="$1"
-  local git_remote="$2"
+  local git_https_origin="$2"
   local local_dir="$3"
-  local git_commit="$4"
+  local git_name="$4"
   if [ "$#" -ge 5 ]; then
     local base_docker_image="$5"
   else
@@ -19,7 +19,7 @@ function setup_source_volume() {
       -v ${source_volume}:/src \
       -w /src/${local_dir} \
       ${base_docker_image} \
-      bash -c "set -ex; git fetch && git checkout ${git_commit} --recurse-submodules"
+      bash -c "set -ex; git fetch && git checkout ${git_name} --recurse-submodules"
     if [ $? -ne 0 ]; then
       need_clone=1
     fi
@@ -31,6 +31,6 @@ function setup_source_volume() {
       -v ${source_volume}:/src \
       -w /src \
       ${base_docker_image} \
-      bash -c "set -ex; git clone --recursive ${git_https_origin} && cd ${local_dir} && git checkout ${git_commit} && git submodule sync && git submodule update --init --recursive --force"
+      bash -c "set -ex; git clone --recursive ${git_https_origin} && cd ${local_dir} && git checkout ${git_name} && git submodule sync && git submodule update --init --recursive --force"
   fi
 }
