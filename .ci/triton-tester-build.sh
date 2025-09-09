@@ -35,7 +35,7 @@ GIT_COMMIT=$(git rev-parse HEAD)
 
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 INPUT_DIR=${SCRIPT_DIR}/../dockerfile/input
-TRITON_WHEEL=$(ls -1 ${INPUT_DIR}/*.base.${TRITON_SHORT}.patch.-${pyapi}-*.whl |head -n 1)
+TRITON_WHEEL=$(ls -1 ${INPUT_DIR}/*.base.${TRITON_SHORT}.patch.*-${pyapi}-*.whl |head -n 1)
 if [ ! -f "${TRITON_WHEEL}" ]; then
   echo "triton wheel file not exists" >&2
   echo "run 'bash triton-wheel-build.sh ${pyver} ${TRITON_COMMIT}' to create wheel" >&2
