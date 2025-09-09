@@ -18,7 +18,6 @@ from _core_test_backward import (
     fmt_hdim,
     gpufilelock,
     torch_gpu,
-    test_logsumexp_scaling,
     core_test_op_bwd,
     core_test_large_bf16_nan_values,
 )
