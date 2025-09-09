@@ -19,4 +19,4 @@ python -m pip install /*.whl
 bash .ci/build-triton-tester.sh "${TARGET_ARCH}" "${TRITON_WHEEL}"
 
 cd /root/build/aotriton/build-triton_tester/installed_dir/
-tar c aotriton | gzip --fast > /output/aotriton-triton_tester-${TRITON_SHORT12}.tar.gz
+tar c aotriton-build-triton_tester-${TARGET_ARCH} | gzip --fast > /output/aotriton-triton_tester-${TRITON_SHORT12}-${TARGET_ARCH}.tar.gz
