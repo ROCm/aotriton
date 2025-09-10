@@ -172,6 +172,7 @@ Example
 # rocm/pytorch:rocm6.4.3_ubuntu24.04_py3.12_pytorch_release_2.6.0
 git clone https://github.com/ROCm/aotriton.git
 cd aotriton
+pip install -r requirements-dev.txt
 # Suppose the tester package is put under /
 tar xf /aotriton-triton_tester-103aae3ca9da15039785b24070bfeee79bb1fc54-gfx1100.tar.gz
 bash .ci/triton-tester-run.sh 0
