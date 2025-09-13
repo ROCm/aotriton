@@ -1,0 +1,5 @@
+-r requirements.txt
+pyelftools
+msgpack
+filelock
+celery[librabbitmq,sqlalchemy]

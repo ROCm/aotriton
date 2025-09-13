@@ -1,8 +1,5 @@
 -r requirements.txt
 tqdm
-textual==1.0.0
-pyelftools
-msgpack
 pytest-xdist>=1.15  # Need worker_id fixture to identify GPU
 pytest-select
 filelock
