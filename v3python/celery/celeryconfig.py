@@ -15,14 +15,16 @@ class ConfigRC(object):
                     continue
                 k, v = line.split('=')[:2]
                 setattr(args, k, v)
-        self.broker_url = 'amqp://{}:{}@{}:{}//'.format(args.RABBITMQ_DEFAULT_USER,
-                                                         args.RABBITMQ_DEFAULT_PASS,
-                                                         args.CELERY_SERVICE_HOST,
-                                                         args.RABBITMQ_NODE_PORT)
-        self.result_backend = 'db+postgresql://{}:{}@{}:{}'.format(args.POSTGRES_USER,
-                                                                   args.POSTGRES_PASSWORD,
-                                                                   args.CELERY_SERVICE_HOST,
-                                                                   args.POSTGRES_PORT)
+        FMT = 'amqp://{}:{}@{}:{}//'
+        self.broker_url = FMT.format(args.RABBITMQ_DEFAULT_USER,
+                                     args.RABBITMQ_DEFAULT_PASS,
+                                     args.CELERY_SERVICE_HOST,
+                                     args.RABBITMQ_NODE_PORT)
+        FMT = 'db+postgresql+psycopg://{}:{}@{}:{}'
+        self.result_backend = FMT.format(args.POSTGRES_USER,
+                                         args.POSTGRES_PASSWORD,
+                                         args.CELERY_SERVICE_HOST,
+                                         args.POSTGRES_PORT)
 
 
 rc = ConfigRC()

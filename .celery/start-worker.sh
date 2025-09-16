@@ -14,6 +14,7 @@ if [ -z "$BASH_VERSION" ]; then
 fi
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 . "${SCRIPT_DIR}/../.ci/common-vars.sh"
+SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 
 if [ "$#" -ne 1 ]; then
   echo 'Missing arguments. Usage: start-worker.sh <dir>' >&2

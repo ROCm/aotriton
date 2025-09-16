@@ -4,7 +4,7 @@ set -ex
 
 function get_root_cmake() {
   local script_dir="$(dirname "${BASH_SOURCE[0]}")"
-  return "${script_dir}/../CMakeLists.txt"
+  echo "${script_dir}/../CMakeLists.txt"
 }
 root_cmake=$(get_root_cmake)
 
