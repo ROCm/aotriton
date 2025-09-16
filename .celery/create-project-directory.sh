@@ -6,7 +6,7 @@ if [ -z "$BASH_VERSION" ]; then
 fi
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 
-if [ ! -t 0 ]; the
+if [ ! -t 0 ]; then
   echo "This script requires TTY inputs for interactive operations" >&2
   exit 1
 fi
