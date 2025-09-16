@@ -2,5 +2,5 @@
 pyelftools
 msgpack
 filelock
-celery[librabbitmq,sqlalchemy]
+celery[pyamqp,sqlalchemy]
 psycopg  # the more mature psycopg2 needs extra binaries.
