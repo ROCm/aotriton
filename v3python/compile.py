@@ -47,6 +47,7 @@ def parse():
     parser.add_argument("--verbose", "-v", help="Enable vebose output", action='store_true')
     parser.add_argument("--nostrip", help="Keep debugging symbols", action='store_true')
     parser.add_argument("--timeout", type=float, default=0.0, help='Maximal time the compiler can run. Passing 0 for indefinite.')
+    parser.add_argument("--error_when_timeout", help="Exit with error when compile timeout", action='store_true')
     args = parser.parse_args()
     return args
 
@@ -179,6 +180,8 @@ def main():
         print(f'Compiling {args.path=} {args.kernel_name} to {args.out_path=} result with status {status} exitcode {worker.exitcode}')
     # Write an empty file to avoid errors
     if status != 'Complete':
+        if args.error_when_timeout:
+            sys.exit(1)
         with open(args.out_path.with_suffix('.hsaco'), 'bw') as f:
             pass
         with open(args.out_path.with_suffix('.json'), 'w') as f:
