@@ -13,7 +13,7 @@ class ConfigRC(object):
             for line in f:
                 if line.startswith('#'):
                     continue
-                k, v = line.split('#')[:2]
+                k, v = line.split('=')[:2]
                 setattr(args, k, v)
         self.broker_url = 'amqp://{}:{}@{}:{}//'.format(args.RABBITMQ_DEFAULT_USER,
                                                          args.RABBITMQ_DEFAULT_PASS,
