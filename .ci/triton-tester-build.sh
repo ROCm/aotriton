@@ -6,8 +6,8 @@ if [ -z "$BASH_VERSION" ]; then
 fi
 
 if [ "$#" -lt 4 ]; then
-  echo 'Missing arguments. Usage: triton-tester-build.sh <baseimage> <output dir> <arch> <triton commit> <triton wheel>' >&2
-  echo '<trion wheel> should be obtained through triton-wheel-build.sh <triton commit>' >&2
+  echo 'Missing arguments. Usage: triton-tester-build.sh <baseimage> <output dir> <arch> <triton commit>' >&2
+  echo 'This script requires .whl built by triton-wheel-build.sh ' >&2
   exit 1
 fi
 
