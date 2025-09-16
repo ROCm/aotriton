@@ -35,6 +35,6 @@ cd ${SCRIPT_DIR}/..
 export AOTRITON_CELERY_WORKDIR=$dir
 export AOTRITON_CELERY_LQ="$(hostname -s)_localqueue"
 
-celery multi start `seq -s ' ' -f 'gpu%g' 0 $((ngpus -1))` -A v3python.celery -l info --concurrency 1 \
+celery multi start `seq -s ' ' -f 'gpu%g' 0 $((ngpus -1))` -A v3python.celery -l info -c 1 \
   --pidfile=$dir/run/celery/pids/%n.pid \
   --logfile=$dir/run/celery/logs/%n%i.log
