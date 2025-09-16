@@ -13,6 +13,7 @@ class ConfigRC(object):
             for line in f:
                 if line.startswith('#'):
                     continue
+                line = line.strip()
                 k, v = line.split('=')[:2]
                 setattr(args, k, v)
         FMT = 'amqp://{}:{}@{}:{}//'
@@ -25,6 +26,7 @@ class ConfigRC(object):
                                          args.POSTGRES_PASSWORD,
                                          args.CELERY_SERVICE_HOST,
                                          args.POSTGRES_PORT)
+        print(f'{self.result_backend=}')
 
 
 rc = ConfigRC()
