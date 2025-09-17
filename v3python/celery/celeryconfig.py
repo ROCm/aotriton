@@ -32,6 +32,8 @@ class ConfigRC(object):
 rc = ConfigRC()
 broker_url = rc.broker_url
 result_backend = rc.result_backend
+task_serializer = 'json'
+accept_content = ['json']
 result_serializer = 'json'
 worker_concurrency = 16
 # task_routes = ('v3python.celery.tasks.route_task', )
