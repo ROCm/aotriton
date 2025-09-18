@@ -10,11 +10,11 @@ from pathlib import Path
 LOCALQ = socket.gethostname() + '_localqueue'
 
 def _stub_probe_nhsaco(kname):
-    if kname = 'attn_fwd':
+    if kname == 'attn_fwd':
         return 32
-    if kname = 'bwd_kernel_dk_dv':
+    if kname == 'bwd_kernel_dk_dv':
         return 12
-    if kname = 'bwd_kernel_dq':
+    if kname == 'bwd_kernel_dq':
         return 20
     return 7
 
