@@ -12,15 +12,18 @@ if [ -z "$BASH_VERSION" ]; then
   echo "This script requires Bash. Please run it with 'bash script_name.sh' or ensure /bin/sh points to /bin/bash." >&2
   exit 1
 fi
+if [ "$#" -ne 2 ]; then
+  echo 'Missing arguments. Usage: start-worker.sh <action> <dir>' >&2
+  echo '<action> can be start|stop|restart' >&2
+  exit 1
+fi
+action="$1"
+dir="$2"
+
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 . "${SCRIPT_DIR}/../.ci/common-vars.sh"
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 
-if [ "$#" -ne 1 ]; then
-  echo 'Missing arguments. Usage: start-worker.sh <dir>' >&2
-  exit 1
-fi
-dir="$1"
 
 if [ ! -d "$dir" ]; then
   echo 'Not a directory: $dir' >&2
@@ -35,7 +38,7 @@ cd ${SCRIPT_DIR}/..
 export AOTRITON_CELERY_WORKDIR=$dir
 export AOTRITON_CELERY_LQ="$(hostname -s)_localqueue"
 
-celery multi start `seq -s ' ' -f 'gpu%g' 0 $((ngpus -1))` -A v3python.celery -l info -c 1 \
+celery multi ${action} `seq -s ' ' -f 'gpu%g' 0 $((ngpus -1))` -A v3python.celery -l info -c 1 \
   -Q ${AOTRITON_CELERY_LQ} ${native_arch} \
   --pidfile=$dir/run/celery/pids/%n.pid \
   --logfile=$dir/run/celery/logs/%n%i.log
