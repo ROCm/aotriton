@@ -17,7 +17,8 @@ def parse():
 def write_assembly(args):
     string = f"AOTriton {args.major}.{args.minor}.{args.patch}"
     with open(args.o, 'w') as f:
-        print(f""".section .comment
+        print(f""".section .note.GNU-stack,"",@progbits
+.section .comment
 msg: .ascii "{string}\\0"
 len = . - msg""", file=f)
 
