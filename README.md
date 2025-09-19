@@ -1,20 +1,26 @@
 ## Build Instructions
 
-```
-pip install -r requirements.txt
+``` bash
 mkdir build
 cd build
+# Optional. Only needed for Conda environment.
 export PKG_CONFIG_PATH="${PKG_CONFIG_PATH}:${CONDA_PREFIX}/lib/pkgconfig"
-cmake .. -DCMAKE_INSTALL_PREFIX=./install_dir -DCMAKE_BUILD_TYPE=Release -DAOTRITON_GPU_BUILD_TIMEOUT=0 -G Ninja
+cmake .. -DCMAKE_INSTALL_PREFIX=./install_dir \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DAOTRITON_GPU_BUILD_TIMEOUT=0 \
+    -DAOTRITON_NO_PYTHON=ON \
+    -G Ninja
 # Use ccmake to tweak options
 ninja install/strip  # Use `ninja install` to keep symbols
 ```
-
-The library and the header file can be found under `build/install_dir` afterwards.
-You may ignore the `export PKG_CONFIG_PATH` part if you're not building with conda
-
 Note: do not run `ninja` separately, due to the limit of the current build
 system, `ninja install` will run the whole build process unconditionally.
+
+The library and the header file can be found under `build/install_dir` afterwards.
+This build instruction is to build AOTriton as a PyTorch dependency, without
+python binding module `pyaotriton` for running unit tests of AOTriton.
+
+To test AOTriton, check [docs/How To Run Tests.md](docs/How To Run Tests.md).
 
 ### Prerequisites
 
@@ -31,6 +37,11 @@ system, `ninja install` will run the whole build process unconditionally.
   - Common names are `liblzma-dev` or `xz-devel`.
 * [`dlfcn-win32`](https://github.com/dlfcn-win32/dlfcn-win32) (**WINDOWS ONLY**)
   - Windows version of the `dl` library.
+
+### Development
+
+`.ci` directory contains a set of script for development purpose. Check
+[.ci/README.md](.ci/README.md) for more details.
 
 ## Generation
 
