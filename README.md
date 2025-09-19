@@ -20,7 +20,7 @@ The library and the header file can be found under `build/install_dir` afterward
 This build instruction is to build AOTriton as a PyTorch dependency, without
 python binding module `pyaotriton` for running unit tests of AOTriton.
 
-To test AOTriton, check [docs/How To Run Tests.md](docs/How To Run Tests.md).
+To test AOTriton, check [docs/How To Run Tests.md](docs/How%20To%20Run%20Tests.md) .
 
 ### Prerequisites
 
