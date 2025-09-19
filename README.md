@@ -38,10 +38,13 @@ To test AOTriton, check [docs/How To Run Tests.md](docs/How%20To%20Run%20Tests.m
 * [`dlfcn-win32`](https://github.com/dlfcn-win32/dlfcn-win32) (**WINDOWS ONLY**)
   - Windows version of the `dl` library.
 
-### Development
+### Helper Scripts for Developers
 
-`.ci` directory contains a set of script for development purpose. Check
-[.ci/README.md](.ci/README.md) for more details.
+`.ci` directory contains a set of scripts for developers. For example,
+`.ci/build-test.sh` is recommended for developers who want a build to run
+AOTriton's own unit tests.
+
+Check [.ci/README.md](.ci/README.md) for more details.
 
 ## Generation
 
