@@ -35,6 +35,8 @@ To test AOTriton, check [docs/How To Run Tests.md](docs/How%20To%20Run%20Tests.m
   - `ninja >= 1.13.1` on Windows due to https://github.com/ninja-build/ninja/issues/2616
 * `liblzma`
   - Common names are `liblzma-dev` or `xz-devel`.
+* `libtorch` (**Only Required When Build With `-DAOTRITON_NO_PYTHON=OFF`**)
+  - the C++ frontend for PyTorch, shipped with `pip install torch`.
 * [`dlfcn-win32`](https://github.com/dlfcn-win32/dlfcn-win32) (**WINDOWS ONLY**)
   - Windows version of the `dl` library.
 
