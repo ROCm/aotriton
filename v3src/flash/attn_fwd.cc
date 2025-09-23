@@ -268,6 +268,8 @@ _attn_fwd_common(T4 q,
 #if AOTRITON_VERBOSE
     std::cerr << "extargs->peek_kernel_image " << extargs->peek_kernel_image << std::endl;
 #endif
+    if (extargs.peek_kernel_numbers)
+      return hipSuccess;
   }
 #endif
   if (err != hipSuccess) {

@@ -179,6 +179,7 @@ namespace pyaotriton {
       py::class_<aotriton::v2::CppTune>(m, "CppTune")
           .def(py::init<>())
 #if AOTRITON_BUILD_FOR_TUNING
+          .def_readwrite("peek_kernel_numbers", &CppTune::peek_kernel_numbers)
           .def_readwrite("force_kernel_index", &CppTune::force_kernel_index)
           .def_readonly("total_number_of_kernels", &CppTune::total_number_of_kernels)
           .def_readonly("selected_kernel_psels", &CppTune::selected_kernel_psels)
