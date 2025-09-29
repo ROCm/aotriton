@@ -25,11 +25,11 @@ LOCAL_DIR=triton
 # TODO: deduplicate with releasesuite-git-head.sh
 BASE_DOCKER_IMAGE="aotriton:base"
 if [ -z "$(docker images -q ${BASE_DOCKER_IMAGE} 2>/dev/null)" ]; then
-  docker build --network=host -t ${BASE_DOCKER_IMAGE} -f base.Dockerfile .
+  docker build --network=host -t ${BASE_DOCKER_IMAGE} -f base.Dockerfile ${SCRIPT_DIR}
 fi
 BASE_DOCKER_IMAGE="aotriton:buildenv-triton_tester-py${PYVER}"
 if [ -z "$(docker images -q ${BASE_DOCKER_IMAGE} 2>/dev/null)" ]; then
-  docker build --network=host -t ${BASE_DOCKER_IMAGE} --build-arg PYVER=${PYVER} -f buildenv-triton_tester.Dockerfile .
+  docker build --network=host -t ${BASE_DOCKER_IMAGE} --build-arg PYVER=${PYVER} -f buildenv-triton_tester.Dockerfile ${SCRIPT_DIR}
 fi
 
 setup_source_volume ${SOURCE_VOLUME} ${GIT_HTTPS_ORIGIN} ${LOCAL_DIR} ${TRITON_GIT_NAME}
