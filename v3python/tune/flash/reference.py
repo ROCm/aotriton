@@ -5,8 +5,10 @@ from dataclasses import dataclass, astuple
 from ..kftdesc import KernelForTuneDescription as KFTDesc
 import torch
 from torch.backends.cuda import allow_fp16_bf16_reduction_math_sdp
-from torch.ops.aten import _scaled_dot_product_attention_math as sdpa_math
+from torch.ops import aten
 from .utils import *
+
+sdpa_math = aten._scaled_dot_product_attention_math
 
 DEFAULT_PHILOX_SEED = 0x1BF52
 DEFAULT_PHILOX_OFFSET_1 = 0x1D4000
@@ -67,11 +69,15 @@ class SdpaReference(KFTDesc):
     PT_INPUT_CLASS = SdpaBidiInputs
     PT_REF_CLASS = SdpaGoldenOutputs
 
+    @property
+    def device(self):
+        return f'cuda:{torch.cuda.current_device()}'
+
     def create_extargs(self, *, force_kernel_index=None, peek_kernel_numbers=None):
         return None
 
-    def generate_inputs(self, config, *, dry_run=False):
-        BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype_str, storage_flip, bias_type, prng_seed = astuple(config)
+    def generate_inputs(self, im: 'FlashInputMetadata', *, dry_run=False):
+        dtype_str, D_HEAD, seqlen_q, seqlen_k, causal, dropout_p, bias_type, N_HEADS, BATCH, sm_scale, storage_flip, prng_seed = astuple(im)
         dtype = getattr(torch, dtype_str)
         if isinstance(N_HEADS, int):
             Q_HEADS = K_HEADS = N_HEADS
@@ -96,7 +102,7 @@ class SdpaReference(KFTDesc):
             kdims = (kdims[i], kdims[j], kdims[k], kdims[l])
             vdims = (vdims[i], vdims[j], vdims[k], vdims[l])
             bdims = (bdims[i], bdims[j], bdims[k], bdims[l])
-        g = torch.Generator()
+        g = torch.Generator(device=self.device)
         g.manual_seed(prng_seed)
         def rng(dims):
             return torch.rand(*dims, generator=g, dtype=dtype)
@@ -111,10 +117,10 @@ class SdpaReference(KFTDesc):
             b = rng(bdims)
             b = b[:, :, :, :seqlen_k]
             b.requires_grad_()
-        if storage_flip is not None:
-            x, y = storage_flip
+        if storage_flip:
+            x, y = storage_flip if isinstance(storage_flip, tuple) else [1, 2]
             def tt(t):
-                return torch.transpose(q, x, y) if t is not None else None
+                return torch.transpose(t, x, y) if t is not None else None
             q = tt(q)
             k = tt(k)
             v = tt(v)
@@ -175,6 +181,7 @@ class SdpaReference(KFTDesc):
         enable_gqa = q.shape[1] != k.shape[1]
         is_causal = inputs.window_sizes is not None
         hp_dtype = torch.float64 if q.dtype == torch.float32 else torch.float32
+        print(f"{q.shape=} {k.shape=} {v.shape=} {enable_gqa=}")
         def clone_hp(t):
             if t is None:
                 return None
@@ -196,7 +203,7 @@ class SdpaReference(KFTDesc):
                            scale=inputs.sm_scale,
                            is_causal=is_causal,
                            dropout_p=inputs.dropout_p,
-                           dropout_mask=dropout_mask,
+                           dropout_mask=inputs.encoded_softmax,
                            enable_gqa=enable_gqa)
         hpq = clone_hp(q)
         hpk = clone_hp(k)
@@ -209,7 +216,7 @@ class SdpaReference(KFTDesc):
                              scale=inputs.sm_scale,
                              is_causal=is_causal,
                              dropout_p=inputs.dropout_p,
-                             dropout_mask=dropout_mask,
+                             dropout_mask=inputs.encoded_softmax,
                              enable_gqa=enable_gqa)
         logsumexp = sdpa_logsumexp(hpq,
                                    hpk,
@@ -217,15 +224,16 @@ class SdpaReference(KFTDesc):
                                    attn_mask=hpb,
                                    scale=inputs.sm_scale,
                                    is_causal=is_causal,
-                                   dropout_p=inputs.dropout_p,
-                                   dropout_mask=dropout_mask,
                                    enable_gqa=enable_gqa)
         inputs.logsumexp = logsumexp.to(q.dtype)
         out.backward(inputs.dout)
-        hp_out.backward(inputs.dout.to(dtype=hp_out.dtype))
+        hpout.backward(inputs.dout.to(dtype=hpout.dtype))
         outputs = SdpaGoldenOutputs(out=adiff(hpout, out),
-                                    dq=adiff(hpq.grad, q.grad),
-                                    dk=adiff(hpk.grad, k.grad),
-                                    dv=adiff(hpv.grad, v.grad),
-                                    db=adiff(hpb.grad, b.grad))
+                                    dq=grad_l1(hpq, q),
+                                    dk=grad_l1(hpk, k),
+                                    dv=grad_l1(hpv, v),
+                                    db=grad_l1(hpb, b))
         return inputs, outputs
+
+    def compare(self, outputs, refs) -> list[float]:    # L1 error
+        raise RuntimeError("Should not call SdpaReference.compare. Call compare() with attn_fwd/etc. objects")

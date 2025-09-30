@@ -3,7 +3,6 @@
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Generator
 
 class KernelForTuneDescription(ABC):
     '''
@@ -27,7 +26,7 @@ class KernelForTuneDescription(ABC):
         pass
 
     @abstractmethod
-    def generate_inputs(self, config, *, dry_run=False):
+    def generate_inputs(self, entry, *, dry_run=False):
         pass
 
     @abstractmethod
@@ -35,5 +34,5 @@ class KernelForTuneDescription(ABC):
         pass
 
     @abstractmethod
-    def compare(self, outputs, refs) -> tuple['Result', bool]:
+    def compare(self, outputs, refs) -> list[float]:    # L1 error
         pass

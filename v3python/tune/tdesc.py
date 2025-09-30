@@ -1,55 +1,88 @@
 # Copyright © 2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
+import json
 from abc import ABC, abstractmethod
 from argparse import Namespace
 from pathlib import Path
-from typing import Generator
+from dacite import from_dict
+from dataclasses import asdict
 
 '''
 A dual-purpose class
 
-On Celery Controller: generate configs for celery tasks
+On Celery Controller: generate entries for celery tasks
 On Celery Worker: actual perform tasks
 '''
-class TestingDescription(ABC):
+class TuningDescription(ABC):
+    @property
+    @abstractmethod
+    def ENTRY_CLASS(self):
+        pass
+
+    @property
+    @abstractmethod
+    def INPUT_METADATA(self):
+        pass
     '''
-    gen_entry_config:
-        Generate A config object that can uniquely locate a entry in the tuning
+    generate_entries:
+        Generate an entry object that can uniquely locate a entry in the tuning
         table (sans Arch/GPU selection, which is handled in upper layer)
 
     Note:
-        A Config may contain additional fields like unittest settings, which
-        should be handled by the tester and gen_entry_config should only
-        generate one option.
+        An entry will be extended into Input Metadata object, which contains
+        additional fields like batch sizes and PRNG seeds.
+        This step should be handled inside run_test()
     '''
     @abstractmethod
-    def gen_entry_config(self) -> Generator['Config']:
+    def generate_entries(self):
         pass
 
     @abstractmethod
-    def list_kernels(self, entry_config: 'Config') -> list[str]:
+    def list_kernels(self, entry) -> list[str]:
         pass
 
     @abstractmethod
-    def probe_backends(self,
-                       entry_config: 'Config',
-                       kernel_name: str) -> list[dict]:
+    def probe_backends(self, entry, which_kernel: str) -> list[dict]:
         pass
 
     @abstractmethod
-    def gen_ref(self, entry_config: 'Config', root: Path, device: str = None) -> Generator[tuple['Config', Path]]:
+    def _gen_ref(self, entry, root: Path):  # Gen [tname: str, input_metadata, pt: Path]
+        pass
+
+    def prepare_data(self, entry, root: Path):
+        def iterate_test():
+            for tname, im, pt in self._gen_ref(entry, root):
+                yield {'test_name': tname, 'input_metadata' : asdict(im), 'pt_file': pt.as_posix()}
+        with open(root / 'entry.json', 'w') as f:
+            json.dump({'entry' : asdict(entry), 'tests': list(iterate_test()) }, f)
+
+    @abstractmethod
+    def run_single_test(self,
+                        input_metadata,
+                        pt: Path,
+                        which_kernel) -> list[float]:  # L1 error
         pass
 
     @abstractmethod
-    def write_ref(self, config: 'Config', pt: Path) -> tuple['Config', Path]:
+    def run_single_benchmark(self,
+                             input_metadata,
+                             pt: Path,
+                             which_kernel) -> list[float]:  # Time, quantiles=(0.5, 0.2, 0.8)
         pass
 
-    @abstractmethod
-    def run_test(self,
-                 confg: 'Config',
-                 pt: Path,
-                 kernel_name: str,
-                 backend_index: int,
-                 device: str = None):
-        pass
+    def benchmark(self, root: Path, which_kernel:'KernelSelector'):
+        with open(root / 'entry.json') as f:
+            ej = json.load(f)
+        entry = self.ENTRY_CLASS.from_dict(ej['entry'])
+        tests = ej['tests']
+        def gen():
+            for t in tests:
+                im = self.INPUT_METADATA.from_dict(t['input_metadata'])
+                pt = t['pt_file']
+                yield im, pt
+        adiffs = [self.run_single_test(im, pt, which_kernel) for im, pt in gen()]
+        for bim, pt in gen():
+            times = self.run_single_benchmark(bim, pt, which_kernel)
+            break
+        return adiffs, times, bim

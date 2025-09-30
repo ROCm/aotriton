@@ -19,7 +19,17 @@ def adiff(golden: torch.Tensor | None,
         return None
     return (golden, torch.max(torch.abs(golden - lowp)).item())
 
-def sdpa_logsumexp(query, key, value, attn_mask=None, dropout_p=0.0,
+def grad_l1(golden: torch.Tensor | None,
+              lowp: torch.Tensor | None) -> float | None:
+    if golden is None or lowp is None:
+        assert lowp is None
+        return None
+    return adiff(golden.grad, lowp.grad)
+
+'''
+Note: logsumexp tensor is independent of dropout
+'''
+def sdpa_logsumexp(query, key, value, attn_mask=None,
                    is_causal=False, scale=None, enable_gqa=False) -> torch.Tensor:
     L, S = query.size(-2), key.size(-2)
     scale_factor = 1 / math.sqrt(query.size(-1)) if scale is None else scale
@@ -42,8 +52,8 @@ def sdpa_logsumexp(query, key, value, attn_mask=None, dropout_p=0.0,
 
     attn_weight = query @ key.transpose(-2, -1) * scale_factor
     attn_weight += attn_bias
-    m_i = torch.max(attn_weight, dim=-1)
-	return m_i + torch.sum(torch.exp(attn_weight - m_i), dim=-1, keep_dims=True)
+    m_i, _ = torch.max(attn_weight, dim=-1, keepdim=True)
+    return m_i + torch.sum(torch.exp(attn_weight - m_i), dim=-1, keepdim=True)
     # attn_weight = torch.softmax(attn_weight, dim=-1)
     # attn_weight = torch.dropout(attn_weight, dropout_p, train=True)
     # return attn_weight @ value
