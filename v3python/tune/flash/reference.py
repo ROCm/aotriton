@@ -1,12 +1,21 @@
 # Copyright © 2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
+import sys
 from dataclasses import dataclass, astuple
 from ..kftdesc import KernelForTuneDescription as KFTDesc
 import torch
 from torch.backends.cuda import allow_fp16_bf16_reduction_math_sdp
 from torch.ops import aten
-from .utils import *
+from .utils import (
+    round_to_8x,
+    sdpa_logsumexp,
+)
+from ..gpu_utils import (
+    elike,
+    adiff2,
+    strip_grad_l1,
+)
 
 sdpa_math = aten._scaled_dot_product_attention_math
 
@@ -109,14 +118,10 @@ class SdpaReference(KFTDesc):
         q = rng(qdims)
         k = rng(kdims)
         v = rng(vdims)
-        q.requires_grad_()
-        k.requires_grad_()
-        v.requires_grad_()
         b = None
         if bias_type == 'matrix' or bias_type == 1:
             b = rng(bdims)
             b = b[:, :, :, :seqlen_k]
-            b.requires_grad_()
         if storage_flip:
             x, y = storage_flip if isinstance(storage_flip, tuple) else [1, 2]
             def tt(t):
@@ -183,14 +188,19 @@ class SdpaReference(KFTDesc):
         k = inputs.k
         v = inputs.v
         b = inputs.b
-        enable_gqa = q.shape[1] != k.shape[1]
-        is_causal = inputs.window_sizes is not None
         hp_dtype = torch.float64 if q.dtype == torch.float32 else torch.float32
-        print(f"{q.shape=} {k.shape=} {v.shape=} {enable_gqa=}")
         def clone_hp(t):
             if t is None:
                 return None
-            return t.clone().detach().to(dtype=hp_dtype).requires_grad_(t.requires_grad)
+            t.requires_grad_()
+            return t.clone().detach().to(dtype=hp_dtype).requires_grad_()
+        hpq = clone_hp(q)
+        hpk = clone_hp(k)
+        hpv = clone_hp(v)
+        hpb = clone_hp(b)
+        enable_gqa = q.shape[1] != k.shape[1]
+        is_causal = inputs.window_sizes is not None
+        # print(f"{q.shape=} {k.shape=} {v.shape=} {enable_gqa=}")
         if inputs.dropout_p > 0.0:
             from aotriton_flash import (
                 debug_simulate_encoded_softmax,
@@ -210,10 +220,6 @@ class SdpaReference(KFTDesc):
                            dropout_p=inputs.dropout_p,
                            dropout_mask=inputs.encoded_softmax,
                            enable_gqa=enable_gqa)
-        hpq = clone_hp(q)
-        hpk = clone_hp(k)
-        hpv = clone_hp(v)
-        hpb = clone_hp(b)
         hpout, _ = sdpa_math(hpq,
                              hpk,
                              hpv,
@@ -233,11 +239,11 @@ class SdpaReference(KFTDesc):
         inputs.logsumexp = logsumexp.to(torch.float32)
         out.backward(inputs.dout)
         hpout.backward(inputs.dout.to(dtype=hpout.dtype))
-        outputs = SdpaGoldenOutputs(out=adiff(hpout, out),
-                                    dq=grad_l1(hpq, q),
-                                    dk=grad_l1(hpk, k),
-                                    dv=grad_l1(hpv, v),
-                                    db=grad_l1(hpb, b))
+        outputs = SdpaGoldenOutputs(out=adiff2(hpout, out),
+                                    dq=strip_grad_l1(hpq, q),
+                                    dk=strip_grad_l1(hpk, k),
+                                    dv=strip_grad_l1(hpv, v),
+                                    db=strip_grad_l1(hpb, b))
         return inputs, outputs
 
     def compare(self, outputs, refs) -> list[float]:    # L1 error

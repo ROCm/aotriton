@@ -21,7 +21,9 @@ from pyaotriton.v2.flash import (
     FwdExtraArguments,
 )
 from ..gpu_utils import (
+    target_fudge_factor,
     mk_aotensor,
+    create_aotensor_like,
     zero_devm,
     translate_causal,
     Stream,
@@ -49,7 +51,7 @@ class attn_fwd(SdpaCommon):
         view.v, devm.v = mk_aotensor(inputs.v)
         view.b, devm.b = mk_aotensor(inputs.b, if_empty_then_like=inputs.q)
         view.sm_scale = inputs.sm_scale
-        view.logsumexp, devm.logsumexp = mk_aotensor(inputs.logsumexp)
+        view.logsumexp, devm.logsumexp = create_aotensor_like(inputs.logsumexp)
         view.out, devm.out = mk_aotensor(inputs.out)
         view.seed, devm.seed = mk_aotensor(inputs.seed)
         view.offset1, devm.offset1 = mk_aotensor(inputs.offset1)
@@ -88,9 +90,11 @@ class attn_fwd(SdpaCommon):
                          view.atomic,
                          view.stream,
                          extargs)
+        return (devm.out, devm.logsumexp)
 
     def compare(self, outputs, refs: SdpaGoldenOutputs):
-        raise NotImplemented('attn_fwd.compare')
+        out, logsumexp = outputs
+        return {"out": target_fudge_factor(out, refs.out)}
 
 class bwd_kernel_dk_dv(SdpaCommon):
     pass

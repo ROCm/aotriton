@@ -6,6 +6,7 @@ import readline
 from pathlib import Path
 import traceback
 import json
+from dataclasses import asdict
 
 def first(line, sep=" "):
     seps = line.split(sep, maxsplit=1)
@@ -93,14 +94,21 @@ class CommandProcessor(object):
         try:
             data_dir, kernel = first(line)
             data_dir = Path(data_dir)
-            kernel_selector = self._module.KernelSelector(kernel)
+            impl_selector = self._module.ImplSelector.parse_text(kernel)
         except:
             return 'Error when parsing argument ' + tail
         if not (data_dir / 'entry.json').is_file():
             return f'{data_dir} is not valid data director. Missing entry.json file.'
         tune = self._module.TuneDesc()
-        adiffs, times, benchmark_input_metadata = tune.benchmark(data_dir, kernel_selector)
-        return { "adiffs": adiffs, "times": times, "bim": benchmark_input_metadata }
+        entry, impl_desc, adiffs, times, benchmark_input_metadata = tune.benchmark(data_dir, impl_selector)
+        return {
+            "entry": asdict(entry),
+            "impl_selection": asdict(impl_selector),
+            "impl_desc": impl_desc,
+            "adiffs": adiffs,
+            "times": times,
+            "bim": asdict(benchmark_input_metadata),
+        }
 
     def command_cleanup(self, line):
         odir = Path(line)
@@ -149,6 +157,7 @@ def main():
             if ret is None:
                 print('OK', flush=True)
             else:
+                # print(f'{ret=}', file=sys.stderr)
                 print('OK', json.dumps(ret), flush=True)
         def report_error(error):
             print("Error", flush=True)

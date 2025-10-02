@@ -1,6 +1,7 @@
 import sys
 from dataclasses import fields
 import json
+import dacite
 
 def safeload(s):
     return json.loads(s) if s else None
@@ -16,3 +17,5 @@ def parse_python(line: str) -> dict:
 
 def asdict_shallow(obj) -> dict:
     return {field.name: getattr(obj, field.name) for field in fields(obj)}
+
+dacite_tuple = dacite.Config(cast=[tuple])

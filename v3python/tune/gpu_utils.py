@@ -15,6 +15,39 @@ from pyaotriton import (
     hipDeviceSynchronize,
 )
 
+def elike(t: torch.Tensor | None) -> torch.Tensor | None:
+    return torch.empty_like(t) if t is not None else None
+
+def adiff1(golden: torch.Tensor | None,
+           lowp: torch.Tensor | None) -> float | None:
+    if golden is None or lowp is None:
+        assert lowp is None
+        return None
+    return torch.max(torch.abs(golden.detach() - lowp.detach())).item()
+
+def adiff2(golden: torch.Tensor | None,
+           lowp: torch.Tensor | None) -> float | None:
+    if golden is None or lowp is None:
+        assert lowp is None
+        return None
+    return (golden, adiff1(golden, lowp))
+
+def strip_grad_l1(golden: torch.Tensor | None,
+                  lowp: torch.Tensor | None) -> float | None:
+    if golden is None or lowp is None:
+        assert lowp is None
+        return None
+    golden_grad, golden.grad = golden.grad.clone(), None
+    lowp_grad, lowp.grad = lowp.grad.clone(), None
+    return adiff2(golden_grad, lowp_grad)
+
+def target_fudge_factor(out: torch.Tensor,
+                        golden: tuple[torch.Tensor, float]) -> tuple[float, float, float]:
+    golden_out, ref_error = golden
+    adiff = adiff1(out, golden_out)
+    tft = max(1.0, adiff / ref_error)
+    return (tft, adiff, ref_error)
+
 def do_bench(fn,
              *, warmup=25, rep=100,
              grad_to_none=None,
@@ -149,6 +182,10 @@ else:
     mk_aotensor = mk_aotensor_cudatorch
     def zero_devm(devm):
         devm.zero_()
+
+def create_aotensor_like(like_tensor):
+    devm = torch.empty_like(like_tensor)
+    return _do_mk_aotensor(devm), devm
 
 # Note: we don't use Enum class because accessing the integer requires using
 #       `.value` property, which makes the code verbose.

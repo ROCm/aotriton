@@ -9,23 +9,6 @@ def cdiv(x, div):
 def round_to_8x(n):
     return 8 * cdiv(n, 8)
 
-def elike(t: torch.Tensor | None) -> torch.Tensor | None:
-    return torch.empty_like(t) if t is not None else None
-
-def adiff(golden: torch.Tensor | None,
-          lowp: torch.Tensor | None) -> float | None:
-    if golden is None or lowp is None:
-        assert lowp is None
-        return None
-    return (golden, torch.max(torch.abs(golden - lowp)).item())
-
-def grad_l1(golden: torch.Tensor | None,
-              lowp: torch.Tensor | None) -> float | None:
-    if golden is None or lowp is None:
-        assert lowp is None
-        return None
-    return adiff(golden.grad, lowp.grad)
-
 '''
 Note: logsumexp tensor is independent of dropout
 '''

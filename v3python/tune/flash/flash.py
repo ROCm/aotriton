@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 from ..tdesc import TuningDescription
-from ..utils import parse_python, asdict_shallow, safeload
+from ..utils import parse_python, asdict_shallow, safeload, dacite_tuple
 from ..gpu_utils import do_bench
 from dataclasses import dataclass, asdict
 import dataclasses
@@ -39,7 +39,7 @@ class FlashEntry:
 
     @staticmethod
     def from_dict(d: dict) -> "FlashEntry":
-        return from_dict(data_class=FlashEntry, data=d)
+        return from_dict(data_class=FlashEntry, data=d, config=dacite_tuple)
 
 # Field names match mptune/flash/tuner.py and/or _core_test_backward.py
 @dataclass
@@ -52,7 +52,7 @@ class FlashInputMetadata(FlashEntry):
 
     @staticmethod
     def from_dict(d: dict) -> "FlashInputMetadata":
-        return from_dict(data_class=FlashInputMetadata, data=d)
+        return from_dict(data_class=FlashInputMetadata, data=d, config=dacite_tuple)
 
 @dataclass
 class FlashKernelSelector:
@@ -113,8 +113,8 @@ class Flash(TuningDescription):
             kernel = self.get_kernel(which_kernel)
             args = kernel.create_extargs(peek_kernel_numbers=True)
             d = torch.load(pt, map_location=self.device, mmap=True)
-            inputs = from_dict(data_class=kernel.PT_INPUT_CLASS, data=d["bidi_inputs"])
-            print(f'{type(inputs)=}')
+            inputs = from_dict(data_class=kernel.PT_INPUT_CLASS, data=d["bidi_inputs"], config=dacite_tuple)
+            # print(f'{type(inputs)=}')
             _ = kernel(im, inputs, args)
             total_number_of_kernels = int(args.total_number_of_kernels)
             def gen():
@@ -163,7 +163,7 @@ class Flash(TuningDescription):
                    root: Path,
                    tname: str):
         import torch
-        print(f'{im=}')
+        # print(f'{tname=} {im=}')
         from .reference import SdpaReference
         ref_kernel = SdpaReference()
         bidi_inputs = ref_kernel.generate_inputs(im)
@@ -183,15 +183,12 @@ class Flash(TuningDescription):
         import torch
         with torch.device(self.device):
             kernel = self.get_kernel(which_kernel.kernel_name)
-            def gen_test():
-                args = kernel.create_extargs(force_kernel_index=which_kernel.hsaco_index)
-                d = torch.load(pt, map_location=device, mmap=True)
-                inputs = from_dict(data_class=kernel.PT_INPUT_CLASS, data=d["bidi_inputs"])
-                outputs = kernel(inputs, args)
-                refs = from_dict(data_class=kernel.PT_REF_CLASS, data=d["bidi_outputs"])
-                result = kernel.compare(outputs, refs)
-                yield result
-            return gen_test()
+            args = kernel.create_extargs(force_kernel_index=which_kernel.hsaco_index)
+            d = torch.load(pt, map_location=self.device, mmap=True)
+            inputs = from_dict(data_class=kernel.PT_INPUT_CLASS, data=d["bidi_inputs"], config=dacite_tuple)
+            outputs = kernel(im, inputs, args)
+            refs = from_dict(data_class=kernel.PT_REF_CLASS, data=d["bidi_outputs"], config=dacite_tuple)
+            return kernel.compare(outputs, refs)
 
     def run_single_benchmark(self,
                              im: FlashInputMetadata,
@@ -201,13 +198,20 @@ class Flash(TuningDescription):
         with torch.device(self.device):
             kernel = self.get_kernel(which_kernel.kernel_name)
             device = f'cuda:{torch.cuda.current_device()}'
-            d = torch.load(pt, map_location=device, mmap=True)
-            inputs = from_dict(data_class=kernel.PT_INPUT_CLASS, data=d["bidi_inputs"])
-            args = kernel.create_extargs()
+            d = torch.load(pt, map_location=self.device, mmap=True)
+            inputs = from_dict(data_class=kernel.PT_INPUT_CLASS, data=d["bidi_inputs"], config=dacite_tuple)
+            args = kernel.create_extargs(peek_kernel_numbers=True,
+                                         force_kernel_index=which_kernel.hsaco_index)
             direct_inputs = kernel.prepare_directs(im, inputs)
+            kernel.direct_call(direct_inputs, args)
+            impl_desc = {
+                'psels': safeload(args.selected_kernel_psels),
+                'copts': safeload(args.selected_kernel_copts),
+            }
+            args.peek_kernel_numbers = False
             def fn():
                 kernel.direct_call(direct_inputs, args)
-            return do_bench(fn, quantiles=(0.5, 0.2, 0.8))
+            return impl_desc, do_bench(fn, quantiles=(0.5, 0.2, 0.8))
 
     KERNEL_DICT = None
 

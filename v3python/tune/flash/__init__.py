@@ -3,5 +3,5 @@
 
 from .flash import (
     Flash as TuneDesc,
-    FlashKernelSelector as KernelSelector,
+    FlashKernelSelector as ImplSelector,
 )

@@ -77,7 +77,7 @@ class TuningDescription(ABC):
     def run_single_benchmark(self,
                              input_metadata,
                              pt: Path,
-                             which_kernel) -> list[float]:  # Time, quantiles=(0.5, 0.2, 0.8)
+                             which_kernel) -> tuple[dict, list[float]]:
         pass
 
     def benchmark(self, root: Path, which_kernel: 'KernelSelector'):
@@ -89,9 +89,9 @@ class TuningDescription(ABC):
             for t in tests:
                 im = self.INPUT_METADATA.from_dict(t['input_metadata'])
                 pt = t['pt_file']
-                yield im, pt
-        adiffs = [self.run_single_test(im, pt, which_kernel) for im, pt in gen()]
-        for bim, pt in gen():
-            times = self.run_single_benchmark(bim, pt, which_kernel)
+                yield t['test_name'], im, pt
+        adiffs = {tname : self.run_single_test(im, pt, which_kernel) for tname, im, pt in gen()}
+        for _, bim, pt in gen():
+            impl_desc, times = self.run_single_benchmark(bim, pt, which_kernel)
             break
-        return adiffs, times, bim
+        return entry, impl_desc, adiffs, times, bim
