@@ -148,7 +148,7 @@ class SdpaReference(KFTDesc):
             encoded_softmax = torch.zeros((q.shape[0], q.shape[1], q.shape[2], k.shape[2]), dtype=q.dtype)
 
         if causal:
-            window_sizes = (WindowValue.TOP_LEFT_ALIGNED, WindowValue.TOP_LEFT_ALIGNED)
+            window_sizes = (WindowValue.BOTTOM_RIGHT_ALIGNED, WindowValue.BOTTOM_RIGHT_ALIGNED)
             atomic = torch.zeros([1], dtype=torch.int32)
         else:
             window_sizes = None
@@ -173,7 +173,12 @@ class SdpaReference(KFTDesc):
                                 atomic=atomic)
         return inputs
 
-    def __call__(self, inputs):
+    def prepare_directs(self, im, inputs):
+        return im, inputs
+
+    def direct_call(self, direct_inputs, extargs):
+        im, inputs = direct_inputs
+        assert extargs is None
         q = inputs.q
         k = inputs.k
         v = inputs.v
@@ -225,7 +230,7 @@ class SdpaReference(KFTDesc):
                                    scale=inputs.sm_scale,
                                    is_causal=is_causal,
                                    enable_gqa=enable_gqa)
-        inputs.logsumexp = logsumexp.to(q.dtype)
+        inputs.logsumexp = logsumexp.to(torch.float32)
         out.backward(inputs.dout)
         hpout.backward(inputs.dout.to(dtype=hpout.dtype))
         outputs = SdpaGoldenOutputs(out=adiff(hpout, out),

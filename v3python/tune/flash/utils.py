@@ -53,7 +53,8 @@ def sdpa_logsumexp(query, key, value, attn_mask=None,
     attn_weight = query @ key.transpose(-2, -1) * scale_factor
     attn_weight += attn_bias
     m_i, _ = torch.max(attn_weight, dim=-1, keepdim=True)
-    return m_i + torch.sum(torch.exp(attn_weight - m_i), dim=-1, keepdim=True)
+    lse = m_i + torch.sum(torch.exp(attn_weight - m_i), dim=-1, keepdim=True)
+    return lse.reshape((query.shape[0] * query.shape[1], query.shape[2]))
     # attn_weight = torch.softmax(attn_weight, dim=-1)
     # attn_weight = torch.dropout(attn_weight, dropout_p, train=True)
     # return attn_weight @ value

@@ -42,8 +42,17 @@ class TuningDescription(ABC):
     def list_kernels(self, entry) -> list[str]:
         pass
 
+    def probe_backends(self, entry, which_kernel: str, root: Path) -> list[dict]:
+        with open(root / 'entry.json') as f:
+            ej = json.load(f)
+        entry = self.ENTRY_CLASS.from_dict(ej['entry'])
+        test = ej['tests'][0]
+        im = self.INPUT_METADATA.from_dict(test["input_metadata"])
+        pt = Path(test["pt_file"])
+        return self._do_probe_backends(entry, im, which_kernel, pt)
+
     @abstractmethod
-    def probe_backends(self, entry, which_kernel: str) -> list[dict]:
+    def _do_probe_backends(self, entry, im, which_kernel: str, root: Path) -> list[dict]:
         pass
 
     @abstractmethod
@@ -71,7 +80,7 @@ class TuningDescription(ABC):
                              which_kernel) -> list[float]:  # Time, quantiles=(0.5, 0.2, 0.8)
         pass
 
-    def benchmark(self, root: Path, which_kernel:'KernelSelector'):
+    def benchmark(self, root: Path, which_kernel: 'KernelSelector'):
         with open(root / 'entry.json') as f:
             ej = json.load(f)
         entry = self.ENTRY_CLASS.from_dict(ej['entry'])

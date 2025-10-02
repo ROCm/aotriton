@@ -4,6 +4,8 @@ import sys
 import importlib
 import readline
 from pathlib import Path
+import traceback
+import json
 
 def first(line, sep=" "):
     seps = line.split(sep, maxsplit=1)
@@ -36,29 +38,34 @@ class CommandProcessor(object):
 
     def command_module(self, line):
         if line is None:
-            return r'''Syntax Error: no package name. Expect: module <package name>'''
+            return r'''Missing Arguments. Expect: module <package name>'''
         package, _ = first(line)
         try:
             module = importlib.import_module('.' + package, package='v3python.tune')
         except ImportError as e:
+            traceback.print_exc()
             print(e, file=sys.stderr)
             return f'Package Error. Import package {package} error'
         self._module = module
 
     def command_probe(self, line):
         if line is None:
-            return r'''Syntax Error: no package name. Expect: probe  <entry>'''
+            return r'''Missing Arguments. Expect: probe <entry> <data directory>'''
         if self._module is None:
             return r'''Error: Need to run module <package name> first'''
         tune = self._module.TuneDesc()
         try:
-            entry = tune.ENTRY_CLASS.parse_text(line)
-        except:
+            entry, odir = first(line)
+            entry = tune.ENTRY_CLASS.parse_text(entry)
+            odir = Path(odir)
+        except Exception as e:
+            traceback.print_exc()
+            print(e, file=sys.stderr)
             return 'Error when parsing argument ' + line
         def gen():
             kernels = tune.list_kernels(entry)
             for k in kernels:
-                yield k, tune.probe_backends(entry, k)
+                yield k, tune.probe_backends(entry, k, odir)
         return dict(gen())
 
     def command_prepare_data(self, line):
@@ -73,7 +80,7 @@ class CommandProcessor(object):
             odir = Path(odir)
             odir.mkdir(exist_ok=True)
         except Exception as e:
-            import traceback; traceback.print_exc()
+            traceback.print_exc()
             print(e, file=sys.stderr)
             return 'Error when parsing argument ' + line
         tune.prepare_data(entry, odir)

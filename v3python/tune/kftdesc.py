@@ -29,8 +29,17 @@ class KernelForTuneDescription(ABC):
     def generate_inputs(self, entry, *, dry_run=False):
         pass
 
+    def __call__(self, im, inputs, extargs):
+        extargs = self.create_extargs() if extargs is None else extargs
+        direct_inputs = self.prepare_directs(im, inputs)
+        return self.direct_call(direct_inputs, extargs)
+
     @abstractmethod
-    def __call__(self, inputs, extargs=None):
+    def prepare_directs(self, im, inputs):
+        pass
+
+    @abstractmethod
+    def direct_call(self, direct_inputs, extargs):
         pass
 
     @abstractmethod

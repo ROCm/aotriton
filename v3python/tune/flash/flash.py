@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: MIT
 
 from ..tdesc import TuningDescription
-from ..utils import parse_python, do_bench, asdict_shallow
+from ..utils import parse_python, asdict_shallow, safeload
+from ..gpu_utils import do_bench
 from dataclasses import dataclass, asdict
 import dataclasses
 from dacite import from_dict
@@ -21,16 +22,13 @@ Any GPU related imports must be deferred to the related function instead import
 at the beginning of the file.
 '''
 
-def safeload(s):
-    return json.loads(s) if s else None
-
 @dataclass
 class FlashEntry:
     dtype: str = 'float16'
     hdim: int | tuple[int, int] = 16  # tuple[int, int] for hdim_qk != hdim_v
     seqlen_q: int = 16
     seqlen_k: int = 16
-    causal: int | tuple[int, int] = 0
+    causal: bool | tuple[int, int] = 0
     dropout_p: float = 0.0
     bias_type: int = 0
 
@@ -86,7 +84,7 @@ class Flash(TuningDescription):
         a.hdim = [16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256, 512]
         a.seqlen_q = [16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
         a.seqlen_k = [16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
-        a.causal = [0, 1]
+        a.causal = [False, True]
         a.dropout_p = [0.0, 0.5]
         a.bias_type = [0, 1]
         for tup in itertools.product(a.dtype,
@@ -99,24 +97,30 @@ class Flash(TuningDescription):
             yield FlashEntry(*tup)
 
     def list_kernels(self, entry: FlashEntry):
+        return ['attn_fwd']
+
         if entry.hdim > 224:
             return ['attn_fwd', 'bwd_kernel_dk_dv', 'bwd_kernel_dq']
         return ['attn_fwd', 'bwd_kernel_dk_dv', 'bwd_kernel_dq', 'bwd_kernel_fuse']
 
-    def probe_backends(self,
-                       entry: FlashEntry,
-                       kernel_name: str) -> list[dict]:
+    def _do_probe_backends(self,
+                           entry: FlashEntry,
+                           im: FlashInputMetadata,
+                           which_kernel: str,
+                           pt: Path) -> list[dict]:
         import torch
         with torch.device(self.device):
-            kernel = self.get_kernel(kernel_name)
-            inputs = kernel.generate_inputs(entry, dry_run=True)
+            kernel = self.get_kernel(which_kernel)
             args = kernel.create_extargs(peek_kernel_numbers=True)
-            _ = kernel(inputs, args)
+            d = torch.load(pt, map_location=self.device, mmap=True)
+            inputs = from_dict(data_class=kernel.PT_INPUT_CLASS, data=d["bidi_inputs"])
+            print(f'{type(inputs)=}')
+            _ = kernel(im, inputs, args)
             total_number_of_kernels = int(args.total_number_of_kernels)
             def gen():
                 for hi in range(total_number_of_kernels):
                     args.force_kernel_index = hi
-                    _ = kernel(inputs, args)
+                    _ = kernel(im, inputs, args)
                     d = {
                         'psels': safeload(args.selected_kernel_psels),
                         'copts': safeload(args.selected_kernel_copts),
@@ -163,7 +167,7 @@ class Flash(TuningDescription):
         from .reference import SdpaReference
         ref_kernel = SdpaReference()
         bidi_inputs = ref_kernel.generate_inputs(im)
-        bidi_inputs, outputs = ref_kernel(bidi_inputs)
+        bidi_inputs, outputs = ref_kernel(im, bidi_inputs, None)
         d = {
             "bidi_inputs" : asdict_shallow(bidi_inputs),
             "bidi_outputs" : asdict_shallow(outputs),
@@ -199,8 +203,10 @@ class Flash(TuningDescription):
             device = f'cuda:{torch.cuda.current_device()}'
             d = torch.load(pt, map_location=device, mmap=True)
             inputs = from_dict(data_class=kernel.PT_INPUT_CLASS, data=d["bidi_inputs"])
+            args = kernel.create_extargs()
+            direct_inputs = kernel.prepare_directs(im, inputs)
             def fn():
-                kernel(inputs, args)
+                kernel.direct_call(direct_inputs, args)
             return do_bench(fn, quantiles=(0.5, 0.2, 0.8))
 
     KERNEL_DICT = None
@@ -215,8 +221,8 @@ class Flash(TuningDescription):
             )
             self.KERNEL_DICT = {
                 'attn_fwd'          : attn_fwd(),
-                'bwd_kernel_dk_dv'  : bwd_kernel_dk_dv(),
-                'bwd_kernel_dq'     : bwd_kernel_dq(),
-                'bwd_kernel_fuse'   : bwd_kernel_fuse(),
+                # 'bwd_kernel_dk_dv'  : bwd_kernel_dk_dv(),
+                # 'bwd_kernel_dq'     : bwd_kernel_dq(),
+                # 'bwd_kernel_fuse'   : bwd_kernel_fuse(),
             }
         return self.KERNEL_DICT.get(kernel_name)
