@@ -143,7 +143,7 @@ _bwd_kernel_fuse(T4 q,
 #if AOTRITON_VERBOSE
     std::cerr << "extargs->peek_kernel_image " << extargs->peek_kernel_image << std::endl;
 #endif
-    if (extargs.peek_kernel_numbers)
+    if (extargs->peek_kernel_numbers)
       return hipSuccess;
   }
 #endif

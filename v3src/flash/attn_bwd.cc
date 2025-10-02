@@ -401,7 +401,7 @@ bwd_kernel_dk_dv(T4 q,
     extargs->dkdv.selected_kernel_psels = context._preferred_kernel_psels;
     extargs->dkdv.selected_kernel_copts = context._preferred_kernel_copts;
     context.peek_kernel_image = extargs->dkdv.peek_kernel_image;
-    if (extargs.peek_kernel_numbers)
+    if (extargs->dkdv.peek_kernel_numbers)
       return hipSuccess;
   }
 #endif
@@ -529,7 +529,7 @@ bwd_kernel_dq(T4 q,
     extargs->dqdb.selected_kernel_copts = context._preferred_kernel_copts;
     context.peek_kernel_image = extargs->dqdb.peek_kernel_image;
     // std::cerr << "dqdb lookup_optimal = " << err << " EOL" << std::endl;
-    if (extargs.peek_kernel_numbers)
+    if (extargs->dqdb.peek_kernel_numbers)
       return hipSuccess;
   }
 #endif
