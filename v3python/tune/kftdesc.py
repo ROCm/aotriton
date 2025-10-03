@@ -39,6 +39,10 @@ class KernelForTuneDescription(ABC):
         pass
 
     @abstractmethod
+    def fill_nan_to_outputs(self, direct_inputs):
+        pass
+
+    @abstractmethod
     def direct_call(self, direct_inputs, extargs):
         pass
 

@@ -35,6 +35,7 @@ def adiff2(golden: torch.Tensor | None,
 def strip_grad_l1(golden: torch.Tensor | None,
                   lowp: torch.Tensor | None) -> float | None:
     if golden is None or lowp is None:
+        assert golden is None
         assert lowp is None
         return None
     golden_grad, golden.grad = golden.grad.clone(), None
@@ -43,6 +44,10 @@ def strip_grad_l1(golden: torch.Tensor | None,
 
 def target_fudge_factor(out: torch.Tensor,
                         golden: tuple[torch.Tensor, float]) -> tuple[float, float, float]:
+    if golden is None or out is None:
+        assert golden is None
+        assert out is None
+        return None
     golden_out, ref_error = golden
     adiff = adiff1(out, golden_out)
     tft = max(1.0, adiff / ref_error)

@@ -130,6 +130,11 @@ class attn_fwd(SdpaCommon):
         view.stream = Stream()
         return im, view, devm
 
+    def fill_nan_to_outputs(self, direct_inputs):
+        im, view, devm = direct_inputs
+        devm.logsumexp.fill_(float("nan"))
+        devm.out.fill_(float("nan"))
+
     def direct_call(self, direct_inputs, extargs):
         im, view, devm = direct_inputs
         if view.atomic:
@@ -188,6 +193,11 @@ class bwd_kernel_dk_dv(SdpaCommon):
         view.stream = Stream()
         return im, view, devm
 
+    def fill_nan_to_outputs(self, direct_inputs):
+        im, view, devm = direct_inputs
+        devm.dk.fill_(float("nan"))
+        devm.dv.fill_(float("nan"))
+
     def _direct_call(self, direct_inputs, extargs):
         im, view, devm = direct_inputs
         err = fa_backward(view.q,
@@ -215,16 +225,26 @@ class bwd_kernel_dk_dv(SdpaCommon):
     def direct_call(self, direct_inputs, extargs):
         im, view, devm = direct_inputs
         self._direct_call(direct_inputs, extargs)
+        # print(f'{devm=}')
         return (devm.dk, devm.dv)
 
     def compare(self, outputs, refs: SdpaGoldenOutputs):
         dk, dv = outputs
+        # print(f'dk.data_ptr = {dk.data_ptr():x}')
+        # print(f'{dk=}')
+        # print(f'{refs.dk[0]=}')
         return { "dk": target_fudge_factor(dk, refs.dk), "dv": target_fudge_factor(dv, refs.dv) }
 
 class bwd_kernel_dq(SdpaCommon):
     EXT_CLASS = BwdExtraArgumentsDqDb
 
     prepare_directs = bwd_kernel_dk_dv.prepare_directs
+
+    def fill_nan_to_outputs(self, direct_inputs):
+        im, view, devm = direct_inputs
+        devm.dq.fill_(float("nan"))
+        if devm.db is not None:
+            devm.db.fill_(float("nan"))
 
     def direct_call(self, direct_inputs, extargs):
         im, view, devm = direct_inputs
@@ -233,7 +253,10 @@ class bwd_kernel_dq(SdpaCommon):
 
     def compare(self, outputs, refs: SdpaGoldenOutputs):
         dq, db = outputs
-        return { "dq": target_fudge_factor(dq, refs.db), "db": target_fudge_factor(dq, refs.db) }
+        d = {}
+        d["dq"] = target_fudge_factor(dq, refs.dq)
+        d["db"] = target_fudge_factor(db, refs.db)
+        return d
 
 class bwd_kernel_fuse(SdpaCommon):
     EXT_CLASS = FusedBwdExtraArguments

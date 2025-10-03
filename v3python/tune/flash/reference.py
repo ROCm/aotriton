@@ -184,6 +184,9 @@ class SdpaReference(KFTDesc):
     def prepare_directs(self, im, inputs):
         return im, inputs
 
+    def fill_nan_to_outputs(self, direct_inputs):
+        pass
+
     def direct_call(self, direct_inputs, extargs):
         im, inputs = direct_inputs
         assert extargs is None
@@ -239,6 +242,7 @@ class SdpaReference(KFTDesc):
                                    scale=inputs.sm_scale,
                                    is_causal=is_causal,
                                    enable_gqa=enable_gqa)
+        inputs.out = hpout.to(inputs.q.dtype)
         inputs.logsumexp = logsumexp.to(torch.float32)
         out.backward(inputs.dout)
         hpout.backward(inputs.dout.to(dtype=hpout.dtype))

@@ -186,7 +186,9 @@ class Flash(TuningDescription):
             args = kernel.create_extargs(force_kernel_index=which_kernel.hsaco_index)
             d = torch.load(pt, map_location=self.device, mmap=True)
             inputs = from_dict(data_class=kernel.PT_INPUT_CLASS, data=d["bidi_inputs"], config=dacite_tuple)
-            outputs = kernel(im, inputs, args)
+            direct_inputs = kernel.prepare_directs(im, inputs)
+            kernel.fill_nan_to_outputs(direct_inputs)
+            outputs = kernel.direct_call(direct_inputs, args)
             refs = from_dict(data_class=kernel.PT_REF_CLASS, data=d["bidi_outputs"], config=dacite_tuple)
             return kernel.compare(outputs, refs)
 
@@ -200,8 +202,7 @@ class Flash(TuningDescription):
             device = f'cuda:{torch.cuda.current_device()}'
             d = torch.load(pt, map_location=self.device, mmap=True)
             inputs = from_dict(data_class=kernel.PT_INPUT_CLASS, data=d["bidi_inputs"], config=dacite_tuple)
-            args = kernel.create_extargs(peek_kernel_numbers=True,
-                                         force_kernel_index=which_kernel.hsaco_index)
+            args = kernel.create_extargs(force_kernel_index=which_kernel.hsaco_index)
             direct_inputs = kernel.prepare_directs(im, inputs)
             kernel.direct_call(direct_inputs, args)
             impl_desc = {
