@@ -97,7 +97,7 @@ class Flash(TuningDescription):
             yield FlashEntry(*tup)
 
     def list_kernels(self, entry: FlashEntry):
-        return ['attn_fwd']
+        return ['attn_fwd', 'bwd_kernel_dk_dv', 'bwd_kernel_dq']
 
         if entry.hdim > 224:
             return ['attn_fwd', 'bwd_kernel_dk_dv', 'bwd_kernel_dq']
@@ -225,8 +225,8 @@ class Flash(TuningDescription):
             )
             self.KERNEL_DICT = {
                 'attn_fwd'          : attn_fwd(),
-                # 'bwd_kernel_dk_dv'  : bwd_kernel_dk_dv(),
-                # 'bwd_kernel_dq'     : bwd_kernel_dq(),
+                'bwd_kernel_dk_dv'  : bwd_kernel_dk_dv(),
+                'bwd_kernel_dq'     : bwd_kernel_dq(),
                 # 'bwd_kernel_fuse'   : bwd_kernel_fuse(),
             }
         return self.KERNEL_DICT.get(kernel_name)

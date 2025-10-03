@@ -183,7 +183,9 @@ else:
     def zero_devm(devm):
         devm.zero_()
 
-def create_aotensor_like(like_tensor):
+def create_aotensor_like(like_tensor, if_none_then_like=None):
+    if like_tensor is None:
+        return mk_aotensor_cudatorch(like_tensor, if_none_then_like)
     devm = torch.empty_like(like_tensor)
     return _do_mk_aotensor(devm), devm
 

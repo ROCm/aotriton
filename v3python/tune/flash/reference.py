@@ -16,6 +16,9 @@ from ..gpu_utils import (
     adiff2,
     strip_grad_l1,
 )
+from pyaotriton.v2.flash import (
+    debug_simulate_encoded_softmax as fa_debug_simulate_encoded_softmax,
+)
 
 sdpa_math = aten._scaled_dot_product_attention_math
 
@@ -148,8 +151,8 @@ class SdpaReference(KFTDesc):
             philox_seed = torch.tensor([DEFAULT_PHILOX_SEED], dtype=torch.uint64)
             philox_offset1 = torch.tensor([DEFAULT_PHILOX_OFFSET_1], dtype=torch.uint64)
             philox_offset2 = DEFAULT_PHILOX_OFFSET_2
-            philox_seed_output = torch.tensor([0], dtype=torch.uint64)
-            philox_offset_output = torch.tensor([0], dtype=torch.uint64)
+            philox_seed_output = torch.tensor([DEFAULT_PHILOX_SEED], dtype=torch.uint64)
+            philox_offset_output = torch.tensor([DEFAULT_PHILOX_OFFSET], dtype=torch.uint64)
             encoded_softmax = torch.zeros((q.shape[0], q.shape[1], q.shape[2], k.shape[2]), dtype=q.dtype)
 
         if causal:
