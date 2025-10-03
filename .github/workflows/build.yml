@@ -1,0 +1,28 @@
+name: Build AOTriton
+
+on:
+  workflow_run:
+    workflows: ["Label Check"]
+    types:
+      - completed
+
+jobs:
+  build:
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.outputs.build_trigger == 'true' }}
+    runs-on: ubuntu-latest
+    container:
+      image: rocm/pytorch:latest
+    concurrency:
+      group: build-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v3
+      - name: Build AOTriton
+        run: |
+          arch=${{ github.event.workflow_run.outputs.archs }}
+          ./aotriton/.ci/build-test.sh $arch
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: aotriton-${{ github.sha }}
+          path: ./build_output/
