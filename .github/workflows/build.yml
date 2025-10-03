@@ -14,7 +14,7 @@ jobs:
       group: build-${{ github.ref }}
       cancel-in-progress: true
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Build AOTriton
         run: |
           arch=${{ github.event.workflow_run.outputs.archs }}
