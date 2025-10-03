@@ -7,7 +7,6 @@ on:
 
 jobs:
   build:
-    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.outputs.build_trigger == 'true' }}
     runs-on: ubuntu-latest
     container:
       image: rocm/pytorch:latest
