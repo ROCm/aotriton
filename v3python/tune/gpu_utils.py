@@ -14,6 +14,7 @@ from pyaotriton import (
     HipMemory,
     hipDeviceSynchronize,
 )
+from .utils import asdict_shallow
 
 def elike(t: torch.Tensor | None) -> torch.Tensor | None:
     return torch.empty_like(t) if t is not None else None
@@ -52,6 +53,10 @@ def target_fudge_factor(out: torch.Tensor,
     adiff = adiff1(out, golden_out)
     tft = max(1.0, adiff / ref_error)
     return (tft, adiff, ref_error)
+
+def detach_member_tensors(data_object) -> dict:
+    d = asdict_shallow(data_object)
+    return { k: v.detach() if isinstance(v, torch.Tensor) else v for k, v in d.items() }
 
 def do_bench(fn,
              *, warmup=25, rep=100,

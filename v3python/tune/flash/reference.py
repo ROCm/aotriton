@@ -15,6 +15,7 @@ from ..gpu_utils import (
     elike,
     adiff2,
     strip_grad_l1,
+    detach_member_tensors,
 )
 from pyaotriton.v2.flash import (
     debug_simulate_encoded_softmax as fa_debug_simulate_encoded_softmax,
@@ -251,7 +252,7 @@ class SdpaReference(KFTDesc):
                                     dk=strip_grad_l1(hpk, k),
                                     dv=strip_grad_l1(hpv, v),
                                     db=strip_grad_l1(hpb, b))
-        return inputs, outputs
+        return SdpaBidiInputs(**detach_member_tensors(inputs)), SdpaGoldenOutputs(**detach_member_tensors(outputs))
 
     def compare(self, outputs, refs) -> list[float]:    # L1 error
         raise RuntimeError("Should not call SdpaReference.compare. Call compare() with attn_fwd/etc. objects")
