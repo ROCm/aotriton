@@ -17,7 +17,7 @@ from .reference import (
 from pyaotriton.v2 import CppTuneSpecialKernelIndex
 from pyaotriton.v2.flash import (
     attn_fwd as fa_forward,
-    attn_fwd_compact_varlen as fa_forward_compact_varlen,
+    attn_bwd_fused as fa_backward_fused,
     debug_simulate_encoded_softmax as fa_debug_simulate_encoded_softmax,
     attn_bwd as fa_backward,
     FwdExtraArguments,
@@ -32,6 +32,8 @@ from ..gpu_utils import (
     translate_causal,
     Stream,
 )
+
+NAN = float("nan")
 
 class CpptuneAccessor(object):
     FACTORY = None
@@ -102,6 +104,14 @@ class SdpaCommon(SdpaReference):
             ext.peek_kernel_numbers = peek_kernel_numbers
         return ext
 
+    OUTPUT_TNAMES = None
+
+    def compare(self, outputs, refs: SdpaGoldenOutputs):
+        d = {}
+        for tn, t in zip(self.OUTPUT_TNAMES, outputs):
+            d[tn] = target_fudge_factor(t, getattr(refs, tn))
+        return d
+
 class attn_fwd(SdpaCommon):
     EXT_CLASS = FwdExtraArguments
 
@@ -132,8 +142,8 @@ class attn_fwd(SdpaCommon):
 
     def fill_nan_to_outputs(self, direct_inputs):
         im, view, devm = direct_inputs
-        devm.logsumexp.fill_(float("nan"))
-        devm.out.fill_(float("nan"))
+        devm.logsumexp.fill_(NAN)
+        devm.out.fill_(NAN)
 
     def direct_call(self, direct_inputs, extargs):
         im, view, devm = direct_inputs
@@ -159,9 +169,7 @@ class attn_fwd(SdpaCommon):
                          extargs)
         return (devm.out, devm.logsumexp)
 
-    def compare(self, outputs, refs: SdpaGoldenOutputs):
-        out, logsumexp = outputs
-        return {"out": target_fudge_factor(out, refs.out)}
+    OUTPUT_TNAMES = ["out"]
 
 class bwd_kernel_dk_dv(SdpaCommon):
     EXT_CLASS = BwdExtraArgumentsDkDv
@@ -195,8 +203,8 @@ class bwd_kernel_dk_dv(SdpaCommon):
 
     def fill_nan_to_outputs(self, direct_inputs):
         im, view, devm = direct_inputs
-        devm.dk.fill_(float("nan"))
-        devm.dv.fill_(float("nan"))
+        devm.dk.fill_(NAN)
+        devm.dv.fill_(NAN)
 
     def _direct_call(self, direct_inputs, extargs):
         im, view, devm = direct_inputs
@@ -228,12 +236,7 @@ class bwd_kernel_dk_dv(SdpaCommon):
         # print(f'{devm=}')
         return (devm.dk, devm.dv)
 
-    def compare(self, outputs, refs: SdpaGoldenOutputs):
-        dk, dv = outputs
-        # print(f'dk.data_ptr = {dk.data_ptr():x}')
-        # print(f'{dk=}')
-        # print(f'{refs.dk[0]=}')
-        return { "dk": target_fudge_factor(dk, refs.dk), "dv": target_fudge_factor(dv, refs.dv) }
+    OUTPUT_TNAMES = ["dk", "dv"]
 
 class bwd_kernel_dq(SdpaCommon):
     EXT_CLASS = BwdExtraArgumentsDqDb
@@ -242,21 +245,75 @@ class bwd_kernel_dq(SdpaCommon):
 
     def fill_nan_to_outputs(self, direct_inputs):
         im, view, devm = direct_inputs
-        devm.dq.fill_(float("nan"))
+        devm.dq.fill_(NAN)
         if devm.db is not None:
-            devm.db.fill_(float("nan"))
+            devm.db.fill_(NAN)
 
     def direct_call(self, direct_inputs, extargs):
         im, view, devm = direct_inputs
         bwd_kernel_dk_dv._direct_call(self, direct_inputs, extargs)
         return (devm.dq, devm.db)
 
-    def compare(self, outputs, refs: SdpaGoldenOutputs):
-        dq, db = outputs
-        d = {}
-        d["dq"] = target_fudge_factor(dq, refs.dq)
-        d["db"] = target_fudge_factor(db, refs.db)
-        return d
+    OUTPUT_TNAMES = ["dq", "db"]
 
 class bwd_kernel_fuse(SdpaCommon):
     EXT_CLASS = FusedBwdExtraArguments
+
+    def prepare_directs(self, im: FlashInputMetadata, inputs: SdpaBidiInputs):
+        view = Namespace()
+        devm = Namespace()
+        view.q, devm.q = mk_aotensor(inputs.q)
+        view.k, devm.k = mk_aotensor(inputs.k)
+        view.v, devm.v = mk_aotensor(inputs.v)
+        view.b, devm.b = mk_aotensor(inputs.b, if_empty_then_like=inputs.q)
+        view.sm_scale = inputs.sm_scale
+        view.out, devm.out = mk_aotensor(inputs.out)
+        view.dout, devm.dout = mk_aotensor(inputs.dout)
+        # bwd uses LSE as it is
+        view.logsumexp, devm.logsumexp = mk_aotensor(inputs.logsumexp)
+        view.dq, devm.dq = create_aotensor_like(inputs.q)
+        view.dk, devm.dk = create_aotensor_like(inputs.k)
+        view.dv, devm.dv = create_aotensor_like(inputs.v)
+        view.db, devm.db = create_aotensor_like(inputs.b, if_none_then_like=inputs.q)
+        view.seedout, devm.seedout = mk_aotensor(inputs.seedout)
+        view.offset1, devm.offset1 = mk_aotensor(inputs.offsetout)
+        view.offset2 = 0
+        if inputs.window_sizes:
+            view.causal_type = True
+        else:
+            view.causal_type = False
+        view.stream = Stream()
+        return im, view, devm
+
+    def fill_nan_to_outputs(self, direct_inputs):
+        im, view, devm = direct_inputs
+        devm.dk.fill_(NAN)
+        devm.dv.fill_(NAN)
+        devm.dq.fill_(NAN)
+        if devm.db is not None:
+            devm.db.fill_(NAN)
+
+    def direct_call(self, direct_inputs, extargs):
+        im, view, devm = direct_inputs
+        err = fa_backward_fused(view.q,
+                                view.k,
+                                view.v,
+                                view.b,
+                                view.sm_scale,
+                                view.out,
+                                view.dout,
+                                view.dq,
+                                view.dk,
+                                view.dv,
+                                view.db,
+                                view.logsumexp,
+                                im.dropout_p,
+                                view.seedout,
+                                view.offset1,
+                                view.offset2,
+                                view.causal_type,
+                                view.stream,
+                                extargs)
+        return (devm.dk, devm.dv, devm.dq, devm.db)
+
+    OUTPUT_TNAMES = ["dk", "dv", "dq", "db"]
