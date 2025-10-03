@@ -139,7 +139,7 @@ class SdpaReference(KFTDesc):
             sm_scale = 1.0 / math.sqrt(D_HEAD)
         L = torch.empty((q.shape[0], q.shape[1], q.shape[2]), dtype=torch.float32)
         out = torch.empty(odims, dtype=q.dtype)
-        dout = elike(out)
+        dout = rng(odims)
         philox_null = torch.empty([0], dtype=torch.uint64)
         philox_seed = philox_null
         philox_offset1 = philox_null
