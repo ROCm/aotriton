@@ -8,6 +8,45 @@ import traceback
 import json
 from dataclasses import asdict
 
+class MaxIndentEncoder(json.JSONEncoder):
+    MAX_INDENT_LEVEL = 1
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._indent_unit = self.indent if isinstance(self.indent, str) else ' ' * self.indent if self.indent is not None else ''
+
+    def encode(self, obj):
+        return self._recursive_encode(obj, 0)
+
+    def _recursive_encode(self, obj, current_indent_level, max_indent_delta=0):
+        indent_str = self._indent_unit * current_indent_level
+
+        if current_indent_level >= self.MAX_INDENT_LEVEL + max_indent_delta:
+            # If max indent is reached, use compact representation.
+            return json.dumps(obj, separators=(',', ':'))
+
+        if isinstance(obj, dict):
+            if not obj:
+                return '{}'
+            items = []
+            for k, v in obj.items():
+                key_str = self.default(k) if not isinstance(k, str) else json.dumps(k)
+                # Hack
+                max_indent_delta = 1 if k == 'adiffs' else 0
+                value_str = self._recursive_encode(v, current_indent_level + 1, max_indent_delta)
+                items.append(f"{indent_str}{self._indent_unit}{key_str}: {value_str}")
+            return "{\n" + ",\n".join(items) + f"\n{indent_str}}}"
+        elif isinstance(obj, (list, tuple)):
+            if not obj:
+                return '[]'
+            items = []
+            for item in obj:
+                items.append(f"{indent_str}{self._indent_unit}{self._recursive_encode(item, current_indent_level + 1)}")
+            return "[\n" + ",\n".join(items) + f"\n{indent_str}]"
+        else:
+            # Fall back to the default encoder for other types (primitives).
+            return super().encode(obj)
+
 def first(line, sep=" "):
     seps = line.split(sep, maxsplit=1)
     if len(seps) > 1:
@@ -143,7 +182,7 @@ def main():
         def report_ok(ret):
             if ret is None:
                 return
-            print(json.dumps(ret, indent=2))
+            print(json.dumps(ret, indent=2, cls=MaxIndentEncoder))
         def report_error(error):
             print(error)
     else:
