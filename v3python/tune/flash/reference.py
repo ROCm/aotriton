@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 import sys
+from argparse import Namespace
 from dataclasses import dataclass, astuple
 from ..kftdesc import KernelForTuneDescription as KFTDesc
 import torch
@@ -15,7 +16,9 @@ from ..gpu_utils import (
     elike,
     adiff2,
     strip_grad_l1,
+    mk_aotensor,
     detach_member_tensors,
+    Stream,
 )
 from pyaotriton.v2.flash import (
     debug_simulate_encoded_softmax as fa_debug_simulate_encoded_softmax,
@@ -209,15 +212,20 @@ class SdpaReference(KFTDesc):
         is_causal = inputs.window_sizes is not None
         # print(f"{q.shape=} {k.shape=} {v.shape=} {enable_gqa=}")
         if inputs.dropout_p > 0.0:
-            from aotriton_flash import (
-                debug_simulate_encoded_softmax,
-                hipError_t,
-            )
-            debug_simulate_encoded_softmax(inputs.encoded_softmax,
-                                           inputs.dropout_p,
-                                           inputs.seed,
-                                           inputs.offset1,
-                                           inputs.offset2)
+            view = Namespace()
+            devm = Namespace()
+            view.R, devm.R = mk_aotensor(inputs.encoded_softmax)
+            view.seed, devm.seed = mk_aotensor(inputs.seed)
+            view.offset1, devm.offset1 = mk_aotensor(inputs.offset1)
+            fa_debug_simulate_encoded_softmax(view.R,
+                                              inputs.dropout_p,
+                                              view.seed,
+                                              view.offset1,
+                                              inputs.offset2,
+                                              Stream())
+            dropout_mask = inputs.encoded_softmax > 0.0
+        else:
+            dropout_mask = None
         out, _ = sdpa_math(q,
                            k,
                            v,
@@ -225,7 +233,7 @@ class SdpaReference(KFTDesc):
                            scale=inputs.sm_scale,
                            is_causal=is_causal,
                            dropout_p=inputs.dropout_p,
-                           dropout_mask=inputs.encoded_softmax,
+                           dropout_mask=dropout_mask,
                            enable_gqa=enable_gqa)
         hpout, _ = sdpa_math(hpq,
                              hpk,
@@ -234,7 +242,7 @@ class SdpaReference(KFTDesc):
                              scale=inputs.sm_scale,
                              is_causal=is_causal,
                              dropout_p=inputs.dropout_p,
-                             dropout_mask=inputs.encoded_softmax,
+                             dropout_mask=dropout_mask,
                              enable_gqa=enable_gqa)
         logsumexp = sdpa_logsumexp(hpq,
                                    hpk,
