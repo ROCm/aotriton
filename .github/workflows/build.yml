@@ -1,10 +1,9 @@
 name: Build AOTriton
 
 on:
-  workflow_run:
-    workflows: ["Label Check"]
-    types:
-      - completed
+  push:
+    branches:
+      - 'steranoc/*'
 
 jobs:
   build:
