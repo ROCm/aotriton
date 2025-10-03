@@ -20,7 +20,7 @@ jobs:
           arch=${{ github.event.workflow_run.outputs.archs }}
           ./aotriton/.ci/build-test.sh $arch
       - name: Upload Artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: aotriton-${{ github.sha }}
           path: ./build_output/
