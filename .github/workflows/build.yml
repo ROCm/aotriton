@@ -10,9 +10,28 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: rocm/pytorch:latest
+      options: --shm-size=16g --user root
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+          fetch-depth: 0
+
       - name: Build AOTriton
         run: |
-          arch=${{ github.event.workflow_run.outputs.archs }}
-          ./aotriton/.ci/build-test.sh $arch
+          apt-get update && apt-get install -y build-essential mold ca-certificates cmake
+          pip install --upgrade pip ninja
+          pip install --trusted-host developer.download.nvidia.com triton
+
+          CMAKE_LINK="https://github.com/Kitware/CMake/releases/download/v3.30.0/cmake-3.30.0-linux-x86_64.sh"
+          mkdir -p /opt/cmake
+          cd /opt
+          curl -kLO ${CMAKE_LINK}
+          chmod +x /opt/cmake-*.sh
+          bash /opt/cmake-*.sh --skip-license --prefix=/opt/cmake
+          ln -sf /opt/cmake/bin/* /usr/local/bin/
+          cmake --version       
+
+          export PATH=/home/runner/.local/bin:$PATH
+          export PYTORCH_ROCM_ARCH=gfx942
+          bash .ci/build-test.sh gfx942
