@@ -42,7 +42,7 @@ class TuningDescription(ABC):
     def list_kernels(self, entry) -> list[str]:
         pass
 
-    def probe_backends(self, entry, which_kernel: str, root: Path) -> list[dict]:
+    def probe_backends(self, root: Path, which_kernel: str) -> list[dict]:
         with open(root / 'entry.json') as f:
             ej = json.load(f)
         entry = self.ENTRY_CLASS.from_dict(ej['entry'])
@@ -80,10 +80,13 @@ class TuningDescription(ABC):
                              which_kernel) -> tuple[dict, list[float]]:
         pass
 
-    def benchmark(self, root: Path, which_kernel: 'KernelSelector'):
+    def get_entry(self, root: Path):
         with open(root / 'entry.json') as f:
             ej = json.load(f)
-        entry = self.ENTRY_CLASS.from_dict(ej['entry'])
+        return self.ENTRY_CLASS.from_dict(ej['entry'])
+
+    def benchmark(self, root: Path, which_kernel: 'KernelSelector'):
+        entry = self.get_entry(root)
         tests = ej['tests']
         def gen():
             for t in tests:

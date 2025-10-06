@@ -41,6 +41,9 @@ class FlashEntry:
     def from_dict(d: dict) -> "FlashEntry":
         return from_dict(data_class=FlashEntry, data=d, config=dacite_tuple)
 
+    def as_posix(self) -> str:
+        return ','.join([f"{k}={v}" for k, v in asdict(self)])
+
 # Field names match mptune/flash/tuner.py and/or _core_test_backward.py
 @dataclass
 class FlashInputMetadata(FlashEntry):

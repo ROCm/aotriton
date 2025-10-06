@@ -88,26 +88,6 @@ class CommandProcessor(object):
             return f'Package Error. Import package {package} error'
         self._module = module
 
-    def command_probe(self, line):
-        if line is None:
-            return r'''Missing Arguments. Expect: probe <entry> <data directory>'''
-        if self._module is None:
-            return r'''Error: Need to run module <package name> first'''
-        tune = self._module.TuneDesc()
-        try:
-            entry, odir = first(line)
-            entry = tune.ENTRY_CLASS.parse_text(entry)
-            odir = Path(odir)
-        except Exception as e:
-            traceback.print_exc()
-            print(e, file=sys.stderr)
-            return 'Error when parsing argument ' + line
-        def gen():
-            kernels = tune.list_kernels(entry)
-            for k in kernels:
-                yield k, tune.probe_backends(entry, k, odir)
-        return dict(gen())
-
     def command_prepare_data(self, line):
         if line is None:
             return r'''Syntax Error: no package name. Expect: prepare_data <entry> <data directory>'''
@@ -124,6 +104,26 @@ class CommandProcessor(object):
             print(e, file=sys.stderr)
             return 'Error when parsing argument ' + line
         tune.prepare_data(entry, odir)
+
+    def command_probe(self, line):
+        if line is None:
+            return r'''Missing Arguments. Expect: probe <data directory>'''
+        if self._module is None:
+            return r'''Error: Need to run module <package name> first'''
+        tune = self._module.TuneDesc()
+        try:
+            data_dir, kernel = first(line)
+            data_dir = Path(data_dir)
+        except:
+            return 'Error when parsing argument ' + tail
+        if not (data_dir / 'entry.json').is_file():
+            return f'{data_dir} is not valid data director. Missing entry.json file.'
+        def gen():
+            entry = tune.get_entry(data_dir)
+            kernels = tune.list_kernels(entry)
+            for k in kernels:
+                yield k, tune.probe_backends(data_dir, k)
+        return dict(gen())
 
     def command_benchmark(self, line):
         if line is None:
