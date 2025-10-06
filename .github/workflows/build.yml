@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: rocm/pytorch:latest
-      options: --shm-size=16g --user root
+      options: --shm-size=32g --user root
     steps:
       - uses: actions/checkout@v4
         with:
