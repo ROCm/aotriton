@@ -7,6 +7,12 @@ from pathlib import Path
 import traceback
 import json
 from dataclasses import asdict
+import argparse
+
+def parse_args():
+    p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    p.add_argument('module', default=None, nargs='?')
+    return p.parse_args()
 
 class MaxIndentEncoder(json.JSONEncoder):
     MAX_INDENT_LEVEL = 1
@@ -53,11 +59,17 @@ def first(line, sep=" "):
         return seps
     return seps[0], None
 
+def _load_module(module_name):
+    return importlib.import_module('.' + module_name, package='v3python.tune')
+
 class CommandProcessor(object):
 
-    def __init__(self):
+    def __init__(self, module_name):
         self._all_commands = None
-        self._module = None
+        if module_name is not None:
+            self._module = _load_module(module_name)
+        else:
+            self._module = None
 
     def _gen_all_commands(self):
         PFX = 'command_'
@@ -81,7 +93,7 @@ class CommandProcessor(object):
             return r'''Missing Arguments. Expect: module <package name>'''
         package, _ = first(line)
         try:
-            module = importlib.import_module('.' + package, package='v3python.tune')
+            module = _load_module(package)
         except ImportError as e:
             traceback.print_exc()
             print(e, file=sys.stderr)
@@ -167,7 +179,8 @@ class CommandProcessor(object):
         return getattr(self, attr)(tail)
 
 def main():
-    cp = CommandProcessor()
+    args = parse_args()
+    cp = CommandProcessor(args.module)
     if sys.stdin.isatty():
         def gen_line():
             while True:
