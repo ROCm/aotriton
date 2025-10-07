@@ -3,7 +3,6 @@
 
 from ..tdesc import TuningDescription
 from ..utils import parse_python, asdict_shallow, safeload, dacite_tuple
-from ..gpu_utils import do_bench
 from dataclasses import dataclass, asdict
 import dataclasses
 from dacite import from_dict
@@ -198,6 +197,7 @@ class Flash(TuningDescription):
                              pt: Path,
                              which_kernel: FlashKernelSelector):
         import torch
+        from ..gpu_utils import do_bench
         with torch.device(self.device):
             kernel = self.get_kernel(which_kernel.kernel_name)
             device = f'cuda:{torch.cuda.current_device()}'
