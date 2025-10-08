@@ -8,10 +8,12 @@ import traceback
 import json
 from dataclasses import asdict
 import argparse
+from .defaults import set_default_device
 
 def parse_args():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument('module', default=None, nargs='?')
+    p.add_argument('--gpu_id', default=0, type=int)
     return p.parse_args()
 
 class MaxIndentEncoder(json.JSONEncoder):
@@ -180,6 +182,7 @@ class CommandProcessor(object):
 
 def main():
     args = parse_args()
+    set_default_device(args.gpu_id)
     cp = CommandProcessor(args.module)
     if sys.stdin.isatty():
         def gen_line():
@@ -210,7 +213,7 @@ def main():
                 print('OK', flush=True)
             else:
                 # print(f'{ret=}', file=sys.stderr)
-                print('OK', json.dumps(ret), flush=True)
+                print('OK', json.dumps(ret, separators=(',', ':')), flush=True)
         def report_error(error):
             print("Error", flush=True)
             print(error, file=sys.stderr)

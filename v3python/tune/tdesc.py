@@ -24,6 +24,11 @@ class TuningDescription(ABC):
     @abstractmethod
     def INPUT_METADATA(self):
         pass
+
+    @property
+    def device(self):
+        return default_device()
+
     '''
     generate_entries:
         Generate an entry object that can uniquely locate a entry in the tuning

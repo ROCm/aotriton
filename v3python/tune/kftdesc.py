@@ -3,6 +3,7 @@
 
 from abc import ABC, abstractmethod
 from pathlib import Path
+from .defaults import default_device
 
 class KernelForTuneDescription(ABC):
     '''
@@ -18,6 +19,10 @@ class KernelForTuneDescription(ABC):
     def PT_REF_CLASS(self):
         pass
 
+    @property
+    def device(self):
+        return default_device()
+
     def __init__(self):
         pass
 
@@ -26,7 +31,7 @@ class KernelForTuneDescription(ABC):
         pass
 
     @abstractmethod
-    def generate_inputs(self, entry, *, dry_run=False):
+    def generate_inputs(self, entry):
         pass
 
     def __call__(self, im, inputs, extargs):

@@ -85,14 +85,10 @@ class SdpaReference(KFTDesc):
     PT_INPUT_CLASS = SdpaBidiInputs
     PT_REF_CLASS = SdpaGoldenOutputs
 
-    @property
-    def device(self):
-        return f'cuda:{torch.cuda.current_device()}'
-
     def create_extargs(self, *, force_kernel_index=None, peek_kernel_numbers=None):
         return None
 
-    def generate_inputs(self, im: 'FlashInputMetadata', *, dry_run=False):
+    def generate_inputs(self, im: 'FlashInputMetadata'):
         dtype_str, D_HEAD, seqlen_q, seqlen_k, causal, dropout_p, bias_type, N_HEADS, BATCH, sm_scale, storage_flip, prng_seed = astuple(im)
         dtype = getattr(torch, dtype_str)
         if isinstance(N_HEADS, int):

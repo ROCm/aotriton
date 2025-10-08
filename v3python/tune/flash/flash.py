@@ -75,11 +75,6 @@ class Flash(TuningDescription):
     def __init__(self):
         pass
 
-    @property
-    def device(self):
-        import torch
-        return f'cuda:{torch.cuda.current_device()}'
-
     def generate_entries(self):
         a = Namespace()
         a.dtype = ['float16', 'bfloat16', 'float32']
