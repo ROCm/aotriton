@@ -157,7 +157,6 @@ class SdpaReference(KFTDesc):
             philox_offset2 = DEFAULT_PHILOX_OFFSET_2
             philox_seed_output = torch.tensor([DEFAULT_PHILOX_SEED], dtype=torch.uint64)
             philox_offset_output = torch.tensor([DEFAULT_PHILOX_OFFSET], dtype=torch.uint64)
-            encoded_softmax = torch.zeros((q.shape[0], q.shape[1], q.shape[2], k.shape[2]), dtype=q.dtype)
 
         if causal:
             window_sizes = (WindowValue.BOTTOM_RIGHT_ALIGNED, WindowValue.BOTTOM_RIGHT_ALIGNED)
@@ -212,9 +211,10 @@ class SdpaReference(KFTDesc):
         is_causal = inputs.window_sizes is not None
         # print(f"{q.shape=} {k.shape=} {v.shape=} {enable_gqa=}")
         if inputs.dropout_p > 0.0:
+            encoded_softmax = torch.zeros((q.shape[0], q.shape[1], q.shape[2], k.shape[2]), dtype=q.dtype)
             view = Namespace()
             devm = Namespace()
-            view.R, devm.R = mk_aotensor(inputs.encoded_softmax)
+            view.R, devm.R = mk_aotensor(encoded_softmax)
             view.seed, devm.seed = mk_aotensor(inputs.seed)
             view.offset1, devm.offset1 = mk_aotensor(inputs.offset1)
             fa_debug_simulate_encoded_softmax(view.R,
@@ -223,7 +223,7 @@ class SdpaReference(KFTDesc):
                                               view.offset1,
                                               inputs.offset2,
                                               Stream())
-            dropout_mask = inputs.encoded_softmax > 0.0
+            dropout_mask = encoded_softmax > 0.0
         else:
             dropout_mask = None
         out, _ = sdpa_math(q,
