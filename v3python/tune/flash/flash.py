@@ -43,6 +43,13 @@ class FlashEntry:
     def as_posix(self) -> str:
         return ','.join([f"{k}={v}" for k, v in asdict(self)])
 
+    def as_text(self) -> str:
+        def tr(v) -> str:
+            if isinstance(v, str):
+                return "'v'"
+            return str(v)
+        return ';'.join([f"{k}={tr(v)}" for k, v in asdict(self)])
+
 # Field names match mptune/flash/tuner.py and/or _core_test_backward.py
 @dataclass
 class FlashInputMetadata(FlashEntry):
