@@ -10,7 +10,8 @@ from pathlib import Path
 from v3python.tune.exaid import exaid_create, ExaidSubprocessNotOK
 import shutil
 
-LOCALQ = socket.gethostname() + '_localqueue'
+# NOTE: gethostname() may return FQDN
+LOCALQ = socket.gethostname().split('.')[0] + '_localqueue'
 
 def _stub_probe_nhsaco(kname):
     # if kname == 'attn_fwd':
@@ -21,14 +22,13 @@ def _stub_probe_nhsaco(kname):
     #     return 20
     return 3
 
-def get_exaid(task_config):
+def get_exaid(task_config, hostname):
     module = task_config["module"]
-    worker_hostname = current_task.request.hostname
-    _, gpu_id_str = worker_hostname.split('_')
+    _, gpu_id_str = hostname.split('_')
     return exaid_create(module, int(gpu_id_str))
 
-def get_exaid_with_tmpdir(task_config):
-    exaid = get_exaid(task_config)
+def get_exaid_with_tmpdir(task_config, hostname):
+    exaid = get_exaid(task_config, hostname)
     if 'tmpdir' in task_config:
         tmpdir = Path(task_config['tmpdir'])
     else:
@@ -51,7 +51,13 @@ def xsum(numbers):
 
 @app.task
 def preprocess(task_config):
-    exaid, p = get_exaid_with_tmpdir(task_config)
+    print(f'Enter preprocess')
+    print(f'preprocess {type(task_config)=}')
+    print(f'{type(current_task)=}', flush=True)
+    print(f'{type(current_task.request)=}', flush=True)
+    print(f'{type(current_task.request.hostname)=}', flush=True)
+    worker_hostname = current_task.request.hostname
+    exaid, p = get_exaid_with_tmpdir(task_config, worker_hostname)
     try:
         exaid.prepare_data(task_config["entry"], p)
         task_config['tmpdir'] = p.as_posix()
@@ -67,18 +73,22 @@ def preprocess(task_config):
               'stderr:', e.stderr,
               sep='\n')
     # TODO: Celery error handling
+    return task_config
 
 @app.task
 def postprocess(task_config):
+    print(f'postprocess {task_config=}')
     # # Note: Real tuning uses rm -rf not rmdir
     # #       Using rmdir is to confirm all sub tasks complete (otherwise error)
     # p.rmdir()
-    exaid, p = get_exaid_with_tmpdir(task_config)
+    worker_hostname = current_task.request.hostname
+    exaid, p = get_exaid_with_tmpdir(task_config, worker_hostname)
     shutil.rmtree(p)
 
 @app.task
 def tune_hsaco(task_config, kname, hsaco_id):
-    exaid, p = get_exaid_with_tmpdir(task_config)
+    worker_hostname = current_task.request.hostname
+    exaid, p = get_exaid_with_tmpdir(task_config, worker_hostname)
     try:
         result_data = exaid.benchmark(p, kname, hsaco_id)
         task_config['result'] = "OK"
@@ -110,7 +120,8 @@ def tune_hsaco(task_config, kname, hsaco_id):
 
 @app.task
 def do_tune_kernel(task_config):
-    exaid, p = get_exaid_with_tmpdir(task_config)
+    worker_hostname = current_task.request.hostname
+    exaid, p = get_exaid_with_tmpdir(task_config, worker_hostname)
     try:
         kernel_dict = exaid.probe(p)
         def gen():
@@ -134,6 +145,7 @@ def do_tune_kernel(task_config):
 @app.task
 def tune_kernel(task_config):
     # worker_hostname = current_task.request.hostname
+    print(f'tune_kernel {task_config=} {LOCALQ=}')
     res = chain(preprocess.s(task_config).set(queue=LOCALQ),
                 do_tune_kernel.s().set(queue=LOCALQ),
                 postprocess.s().set(queue=LOCALQ))
