@@ -111,7 +111,8 @@ class Flash(TuningDescription):
                            which_kernel: str,
                            pt: Path) -> list[dict]:
         import torch
-        with torch.device(self.device):
+        from ..gpu_utils import device_ctx
+        with device_ctx():
             kernel = self.get_kernel(which_kernel)
             args = kernel.create_extargs(peek_kernel_numbers=True)
             d = torch.load(pt, map_location=self.device, mmap=True)
@@ -132,7 +133,8 @@ class Flash(TuningDescription):
 
     def _gen_ref(self, entry: FlashEntry, data_root: Path):
         import torch
-        with torch.device(self.device):
+        from ..gpu_utils import device_ctx
+        with device_ctx():
             yield from self._do_gen_ref(entry, data_root)
 
     def _do_gen_ref(self, entry: FlashEntry, data_root: Path):
@@ -183,7 +185,8 @@ class Flash(TuningDescription):
                         pt: Path,
                         which_kernel: FlashKernelSelector):
         import torch
-        with torch.device(self.device):
+        from ..gpu_utils import device_ctx
+        with device_ctx():
             kernel = self.get_kernel(which_kernel.kernel_name)
             args = kernel.create_extargs(force_kernel_index=which_kernel.hsaco_index)
             d = torch.load(pt, map_location=self.device, mmap=True)
@@ -199,8 +202,8 @@ class Flash(TuningDescription):
                              pt: Path,
                              which_kernel: FlashKernelSelector):
         import torch
-        from ..gpu_utils import do_bench
-        with torch.device(self.device):
+        from ..gpu_utils import do_bench, device_ctx
+        with device_ctx():
             kernel = self.get_kernel(which_kernel.kernel_name)
             device = f'cuda:{torch.cuda.current_device()}'
             d = torch.load(pt, map_location=self.device, mmap=True)

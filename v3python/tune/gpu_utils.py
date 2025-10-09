@@ -1,5 +1,6 @@
 import sys
 import os
+from contextlib import contextmanager, ExitStack
 import torch
 from pyaotriton import (
     get_name_suffix,
@@ -15,6 +16,11 @@ from pyaotriton import (
     hipDeviceSynchronize,
 )
 from .utils import asdict_shallow
+from .defaults import (
+    default_device_type,
+    default_device_id,
+    default_device_string,
+)
 
 def elike(t: torch.Tensor | None) -> torch.Tensor | None:
     return torch.empty_like(t) if t is not None else None
@@ -57,6 +63,13 @@ def target_fudge_factor(out: torch.Tensor,
 def detach_member_tensors(data_object) -> dict:
     d = asdict_shallow(data_object)
     return { k: v.detach() if isinstance(v, torch.Tensor) else v for k, v in d.items() }
+
+@contextmanager
+def device_ctx():
+    with ExitStack() as stack:
+        r1 = stack.enter_context(torch.device(default_device_string()))
+        r2 = stack.enter_context(getattr(torch, default_device_type()).device(default_device_id()))
+        yield r1, r2
 
 def do_bench(fn,
              *, warmup=25, rep=100,

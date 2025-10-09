@@ -19,6 +19,7 @@ from ..gpu_utils import (
     mk_aotensor,
     detach_member_tensors,
     Stream,
+    default_device_string,
 )
 from pyaotriton.v2.flash import (
     debug_simulate_encoded_softmax as fa_debug_simulate_encoded_softmax,
@@ -114,7 +115,7 @@ class SdpaReference(KFTDesc):
             kdims = (kdims[i], kdims[j], kdims[k], kdims[l])
             vdims = (vdims[i], vdims[j], vdims[k], vdims[l])
             bdims = (bdims[i], bdims[j], bdims[k], bdims[l])
-        g = torch.Generator(device=self.device)
+        g = torch.Generator(device=default_device_string())
         g.manual_seed(prng_seed)
         def rng(dims):
             return torch.rand(*dims, generator=g, dtype=dtype)
