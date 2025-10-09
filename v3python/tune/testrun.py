@@ -13,7 +13,7 @@ from .defaults import set_default_device
 def parse_args():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument('module', default=None, nargs='?')
-    p.add_argument('--gpu_id', default=0, type=int)
+    p.add_argument('--gpu', default=0, type=int)
     return p.parse_args()
 
 class MaxIndentEncoder(json.JSONEncoder):
@@ -112,7 +112,7 @@ class CommandProcessor(object):
             entry, odir = first(line)
             entry = tune.ENTRY_CLASS.parse_text(entry)
             odir = Path(odir)
-            odir.mkdir(exist_ok=True)
+            odir.mkdir(parents=True, exist_ok=True)
         except Exception as e:
             traceback.print_exc()
             print(e, file=sys.stderr)
@@ -182,7 +182,7 @@ class CommandProcessor(object):
 
 def main():
     args = parse_args()
-    set_default_device(args.gpu_id)
+    set_default_device(args.gpu)
     cp = CommandProcessor(args.module)
     if sys.stdin.isatty():
         def gen_line():

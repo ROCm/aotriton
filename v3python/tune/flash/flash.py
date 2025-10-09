@@ -41,14 +41,14 @@ class FlashEntry:
         return from_dict(data_class=FlashEntry, data=d, config=dacite_tuple)
 
     def as_posix(self) -> str:
-        return ','.join([f"{k}={v}" for k, v in asdict(self)])
+        return ','.join([f"{k}={v}" for k, v in asdict(self).items()])
 
     def as_text(self) -> str:
         def tr(v) -> str:
             if isinstance(v, str):
-                return "'v'"
+                return f"'{v}'"
             return str(v)
-        return ';'.join([f"{k}={tr(v)}" for k, v in asdict(self)])
+        return ';'.join([f"{k}={tr(v)}" for k, v in asdict(self).items()])
 
 # Field names match mptune/flash/tuner.py and/or _core_test_backward.py
 @dataclass
@@ -111,11 +111,11 @@ class Flash(TuningDescription):
                            which_kernel: str,
                            pt: Path) -> list[dict]:
         import torch
-        from ..gpu_utils import device_ctx
+        from ..gpu_utils import device_ctx, default_device_string
         with device_ctx():
             kernel = self.get_kernel(which_kernel)
             args = kernel.create_extargs(peek_kernel_numbers=True)
-            d = torch.load(pt, map_location=self.device, mmap=True)
+            d = torch.load(pt, map_location=default_device_string(), mmap=True)
             inputs = from_dict(data_class=kernel.PT_INPUT_CLASS, data=d["bidi_inputs"], config=dacite_tuple)
             # print(f'{type(inputs)=}')
             _ = kernel(im, inputs, args)
@@ -185,11 +185,11 @@ class Flash(TuningDescription):
                         pt: Path,
                         which_kernel: FlashKernelSelector):
         import torch
-        from ..gpu_utils import device_ctx
+        from ..gpu_utils import device_ctx, default_device_string
         with device_ctx():
             kernel = self.get_kernel(which_kernel.kernel_name)
             args = kernel.create_extargs(force_kernel_index=which_kernel.hsaco_index)
-            d = torch.load(pt, map_location=self.device, mmap=True)
+            d = torch.load(pt, map_location=default_device_string(), mmap=True)
             inputs = from_dict(data_class=kernel.PT_INPUT_CLASS, data=d["bidi_inputs"], config=dacite_tuple)
             direct_inputs = kernel.prepare_directs(im, inputs)
             kernel.fill_nan_to_outputs(direct_inputs)
@@ -202,11 +202,10 @@ class Flash(TuningDescription):
                              pt: Path,
                              which_kernel: FlashKernelSelector):
         import torch
-        from ..gpu_utils import do_bench, device_ctx
+        from ..gpu_utils import do_bench, device_ctx, default_device_string
         with device_ctx():
             kernel = self.get_kernel(which_kernel.kernel_name)
-            device = f'cuda:{torch.cuda.current_device()}'
-            d = torch.load(pt, map_location=self.device, mmap=True)
+            d = torch.load(pt, map_location=default_device_string(), mmap=True)
             inputs = from_dict(data_class=kernel.PT_INPUT_CLASS, data=d["bidi_inputs"], config=dacite_tuple)
             args = kernel.create_extargs(force_kernel_index=which_kernel.hsaco_index)
             direct_inputs = kernel.prepare_directs(im, inputs)

@@ -57,7 +57,7 @@ def safe_readline(
         return None
     # First check if process has already crashed
     ret = check_crash()
-    if ret is None:
+    if ret is not None:
         return ret
 
     # Platform-specific reading
@@ -65,7 +65,7 @@ def safe_readline(
         line = _read_line_unix(process, timeout)
         # Check if process crashed during read
         ret = check_crash()
-        if ret is None:
+        if ret is not None:
             return ret
         if line is None:
             return (None, errno.ETIMEDOUT, f"Timeout after {timeout} seconds waiting for output")
