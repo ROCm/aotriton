@@ -39,6 +39,6 @@ export AOTRITON_CELERY_WORKDIR=$dir
 export AOTRITON_CELERY_LQ="$(hostname -s)_localqueue"
 
 celery multi ${action} `seq -s ' ' -f 'gpu_%g' 0 $((ngpus -1))` -A v3python.celery -l info -c 1 \
-  -Q ${AOTRITON_CELERY_LQ} ${native_arch} \
+  -Q ${AOTRITON_CELERY_LQ},${native_arch} \
   --pidfile=$dir/run/celery/pids/%n.pid \
   --logfile=$dir/run/celery/logs/%n%i.log
