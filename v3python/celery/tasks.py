@@ -24,7 +24,7 @@ def _stub_probe_nhsaco(kname):
 
 def get_exaid(task_config, hostname):
     module = task_config["module"]
-    _, gpu_id_str = hostname.split('_')
+    gpu_id_str = hostname.split('@')[0].split('_')[1]
     return exaid_create(module, int(gpu_id_str))
 
 def get_exaid_with_tmpdir(task_config, hostname):
