@@ -140,6 +140,7 @@ def do_tune_kernel(task_config):
               'stdout:', e.stdout,
               'stderr:', e.stderr,
               sep='\n')
+    return task_config
     # TODO: Celery error handling
 
 @app.task
