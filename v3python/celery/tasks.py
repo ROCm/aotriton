@@ -106,7 +106,7 @@ def tune_hsaco(task_config, kname, hsaco_id):
     except ExaidSubprocessNotOK as e:
         task_config['result'] = "NotOK"
         task_config['result'] = {
-            "stdout" : e.errno,
+            "stdout": e.stdout,
             "stderr": e.strerror
         }
     return task_config
