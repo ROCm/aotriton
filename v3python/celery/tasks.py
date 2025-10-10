@@ -1,5 +1,9 @@
 from .celery import app
-from celery.signals import celeryd_after_setup, celeryd_init
+from celery.signals import (
+    celeryd_after_setup,
+    celeryd_init,
+    worker_shutting_down,
+)
 from celery import current_task, chain, group, chord
 import os
 import time
@@ -7,7 +11,11 @@ import logging
 import sys
 import socket
 from pathlib import Path
-from v3python.tune.exaid import exaid_create, ExaidSubprocessNotOK
+from v3python.tune.exaid import (
+    exaid_create,
+    exaid_exitall,
+    ExaidSubprocessNotOK,
+)
 import shutil
 
 # NOTE: gethostname() may return FQDN
@@ -36,6 +44,10 @@ def get_exaid_with_tmpdir(task_config, hostname):
     else:
         tmpdir = exaid.get_tmpfs_for(task_config["entry"])
     return exaid, tmpdir
+
+@worker_shutting_down.connect
+def on_worker_shutting_down(sender, sig, how, exitcode, **kwargs):
+    exaid_exitall()
 
 probe_nhsaco = _stub_probe_nhsaco
 

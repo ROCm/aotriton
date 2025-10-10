@@ -66,6 +66,18 @@ class ExaidProxy(object):
             raise ExaidSubprocessNotOK(line, error_msg)
         return info
 
+    def join(self):
+        if self._process is None:
+            return
+        try:
+            self._process.wait(0.2)
+            print('[exaid][join] waited worker process: ', self._process.pid)
+        except subprocess.TimeoutExpired:
+            self._process.kill()
+            self._process.wait()
+            del self._process
+            self._process = None
+
 class ExaidWorker(object):
     TMPFS_LOCATION = Path('/dev/shm/aotriton-tuner')
     _cache = {}
@@ -112,8 +124,17 @@ class ExaidWorker(object):
         self.proxy.write('benchmark', workdir.as_posix(), f'{kname}={hsaco_id}')
         return json.loads(self.proxy.readinfo())
 
+    def exit(self):
+        self.proxy.write("exit")
+        self.proxy.join()
+
 def exaid_create(module_name, gpu_id):
     key = (module_name, gpu_id)
     if key not in ExaidWorker._cache:
         ExaidWorker._cache[key] = ExaidWorker(module_name, gpu_id)
     return ExaidWorker._cache[key]
+
+def exaid_exitall():
+    for _, exaid in ExaidWorker._cache.items():
+        exaid.exit()
+    ExaidWorker._cache = {}
