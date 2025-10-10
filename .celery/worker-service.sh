@@ -49,9 +49,11 @@ rcfile="$dir/config.rc"
 cd ${SCRIPT_DIR}/..
 
 export AOTRITON_CELERY_WORKDIR=$dir
-export AOTRITON_CELERY_LQ="$(hostname -s)_localqueue"
+export AOTRITON_CELERY_CPUQ="$(hostname -s)_cpuqueue"
+export AOTRITON_CELERY_GPUQ="$(hostname -s)_gpuqueue"
 
-celery multi ${action} `seq -s ' ' -f 'gpu_%g' 0 $((ngpus -1))` -A v3python.celery -l info -c 1 \
-  -Q ${AOTRITON_CELERY_LQ},${native_arch} \
+celery multi ${action} dispatcher `seq -s ' ' -f 'gpu_%g' 0 $((ngpus -1))` -A v3python.celery -l info -c 1 \
+  -Q:1 ${native_arch} \
+  -Q ${AOTRITON_CELERY_GPUQ} \
   --pidfile=$dir/run/celery/pids/%n.pid \
   --logfile=$dir/run/celery/logs/%n%i.log

@@ -11,7 +11,9 @@ from v3python.tune.exaid import exaid_create, ExaidSubprocessNotOK
 import shutil
 
 # NOTE: gethostname() may return FQDN
-LOCALQ = socket.gethostname().split('.')[0] + '_localqueue'
+SHORT_HOSTNAME = socket.gethostname().split('.')[0]
+GPUQ = SHORT_HOSTNAME + '_gpuqueue'
+CPUQ = SHORT_HOSTNAME + '_cpuqueue'
 
 def _stub_probe_nhsaco(kname):
     # if kname == 'attn_fwd':
@@ -115,7 +117,7 @@ def tune_hsaco(task_config, kname, hsaco_id):
 # def tune_subkernel(task_config, kname):
 #     print(f"tune_subkernel {task_config=}")
 #     nhsaco = probe_nhsaco(kname)
-#     res = group([tune_hsaco.s(task_config, kname, hsaco_index).set(queue=LOCALQ) for hsaco_index in range(nhsaco)])
+#     res = group([tune_hsaco.s(task_config, kname, hsaco_index).set(queue=GPUQ) for hsaco_index in range(nhsaco)])
 #     res()
 
 @app.task
@@ -146,14 +148,22 @@ def do_tune_kernel(task_config):
     return task_config
     # TODO: Celery error handling
 
+'''
+This is a dummpy task to block
+'''
+@app.task
+def tune_kernel_done(task_config):
+    pass
+
 @app.task
 def tune_kernel(task_config):
+    arch = task_config['arch']
     # worker_hostname = current_task.request.hostname
-    print(f'tune_kernel {task_config=} {LOCALQ=}')
-    res = chain(preprocess.s(task_config).set(queue=LOCALQ),
-                do_tune_kernel.s().set(queue=LOCALQ),
-                postprocess.s().set(queue=LOCALQ))
-    res()
+    print(f'tune_kernel {task_config=} {GPUQ=}')
+    res = chain(preprocess.s(task_config).set(queue=GPUQ),
+                do_tune_kernel.s().set(queue=GPUQ),
+                postprocess.s().set(queue=GPUQ))
+    res().get()  # TODO: add rule to only route tune_kernel to "gfx*" queues
 
 @app.task
 def get_worker_name_task():
