@@ -21,17 +21,16 @@ fi
 action="$1"
 dir="$2"
 
-# Reserved for final release
-# import torch takes too much time for debugging purpose
-torch_lib=$(python -c "import torch; from pathlib import Path; print((Path(torch.__file__).parent/'lib').as_posix())")
-export LD_LIBRARY_PATH=${torch_lib}:$LD_LIBRARY_PATH
-
 if [ $action != "stop" ]; then
   python -c 'import pyaotriton'
   if [ $? -ne 0 ]; then
     echo "Cannot import pyaotriton in python. Forget to set PYTHONPATH ?" >&2
     exit 1
   fi
+  # Reserved for final release
+  # import torch takes too much time for debugging purpose
+  torch_lib=$(python -c "import torch; from pathlib import Path; print((Path(torch.__file__).parent/'lib').as_posix())")
+  export LD_LIBRARY_PATH=${torch_lib}:$LD_LIBRARY_PATH
 fi
 
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
