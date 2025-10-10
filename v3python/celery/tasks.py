@@ -122,12 +122,15 @@ def tune_hsaco(task_config, kname, hsaco_id):
 def do_tune_kernel(task_config):
     worker_hostname = current_task.request.hostname
     exaid, p = get_exaid_with_tmpdir(task_config, worker_hostname)
+    max_hsaco_dict = task_config.get("max_hsaco", {})
+    max_hsaco_global = max_hsaco_dict.get("*", None)
     try:
         kernel_dict = exaid.probe(p)
         def gen():
             for kname, hsaco_list in kernel_dict.items():
-                for hsaco_index in range(len(hsaco_list)):
-                    yield tune_hsaco.s(task_config, kname, hsaco_index).set(queue=LOCALQ)
+                max_hsaco = max_hsaco_dict.get(kname, max_hsaco_global)
+                for hsaco_index in range(len(hsaco_list[:max_hsaco])):
+                    yield tune_hsaco.s(task_config, kname, hsaco_index).set(queue=GPUQ)
         res = group([sig for sig in gen()])
         res()
     except OSError as e:
