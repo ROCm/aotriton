@@ -121,7 +121,7 @@ def tune_hsaco(task_config, kname, hsaco_id):
         task_config['result'] = "NotOK"
         task_config['result'] = {
             "stdout": e.stdout,
-            "stderr": e.strerror
+            "stderr": e.stderr,
         }
     return task_config
 
