@@ -47,6 +47,7 @@ def get_exaid_with_tmpdir(task_config, hostname):
 
 @worker_shutting_down.connect
 def on_worker_shutting_down(sender, sig, how, exitcode, **kwargs):
+    print("worker_shutting_down")
     exaid_exitall()
 
 probe_nhsaco = _stub_probe_nhsaco
@@ -161,7 +162,7 @@ def do_tune_kernel(task_config):
     # TODO: Celery error handling
 
 '''
-This is a dummpy task to block
+This is a dummpy task to block worker from accessing gfx queue
 '''
 @app.task
 def tune_kernel_done(task_config):
@@ -174,8 +175,9 @@ def tune_kernel(task_config):
     print(f'tune_kernel {task_config=} {GPUQ=}')
     res = chain(preprocess.s(task_config).set(queue=GPUQ),
                 do_tune_kernel.s().set(queue=GPUQ),
-                postprocess.s().set(queue=GPUQ))
-    res().get()  # TODO: add rule to only route tune_kernel to "gfx*" queues
+                postprocess.s().set(queue=GPUQ),
+                tune_kernel_done.s().set(queue=CPUQ).set(priority=0))
+    res()
 
 @app.task
 def get_worker_name_task():
