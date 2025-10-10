@@ -35,5 +35,6 @@ result_backend = rc.result_backend
 task_serializer = 'json'
 accept_content = ['json']
 result_serializer = 'json'
-worker_concurrency = 16
+worker_concurrency = 8
+worker_prefetch_multiplier = 1
 # task_routes = ('v3python.celery.tasks.route_task', )
