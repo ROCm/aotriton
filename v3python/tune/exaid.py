@@ -68,6 +68,7 @@ class ExaidProxy(object):
 
 class ExaidWorker(object):
     TMPFS_LOCATION = Path('/dev/shm/aotriton-tuner')
+    _cache = {}
 
     def __init__(self, module_name: str, gpu_id: int):
         self._module_name = module_name
@@ -112,4 +113,7 @@ class ExaidWorker(object):
         return json.loads(self.proxy.readinfo())
 
 def exaid_create(module_name, gpu_id):
-    return ExaidWorker(module_name, gpu_id)
+    key = (module_name, gpu_id)
+    if key not in ExaidWorker._cache:
+        ExaidWorker._cache[key] = ExaidWorker(module_name, gpu_id)
+    return ExaidWorker._cache[key]

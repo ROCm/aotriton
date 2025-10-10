@@ -94,7 +94,7 @@ def tune_hsaco(task_config, kname, hsaco_id):
         task_config['result'] = "OK"
         task_config['result_data'] = result_data
     except OSError as e:
-        print(f'[exaid][benchmark] {config} {kname}={hsaco_id} subprocess exited with errno:',
+        print(f'[exaid][benchmark] {task_config} {kname}={hsaco_id} subprocess exited with errno:',
               e.errno,
               'stderr:',
               e.strerror)
