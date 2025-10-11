@@ -177,9 +177,9 @@ def tune_kernel(task_config):
     res = chain(preprocess.s(task_config).set(queue=GPUQ),
                 do_tune_kernel.s().set(queue=GPUQ),
                 postprocess.s().set(queue=GPUQ))
-    res()
+    ret = res()
     with allow_join_result():
-        res.get()
+        ret.get()
     return task_config
 
 @app.task
