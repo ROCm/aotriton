@@ -4,6 +4,7 @@ from celery.signals import (
     celeryd_init,
     worker_shutting_down,
 )
+from celery.result import allow_join_result
 from celery import current_task, chain, group, chord
 import os
 import time
@@ -175,9 +176,11 @@ def tune_kernel(task_config):
     print(f'tune_kernel {task_config=} {GPUQ=}')
     res = chain(preprocess.s(task_config).set(queue=GPUQ),
                 do_tune_kernel.s().set(queue=GPUQ),
-                postprocess.s().set(queue=GPUQ),
-                tune_kernel_done.s().set(queue=CPUQ).set(priority=0))
+                postprocess.s().set(queue=GPUQ))
     res()
+    with allow_join_result():
+        res.get()
+    return task_config
 
 @app.task
 def get_worker_name_task():
