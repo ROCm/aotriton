@@ -58,15 +58,17 @@ export AOTRITON_CELERY_GPUQ="$(hostname -s)_gpuqueue"
 # However, if there is only one dispatcher, GPUs will be idle when waiting for
 # the current task to complete, while a new task can be consumed from the queue.
 #
-# To overcome this, the easiest solution is to have multiple dispatchers. 2
-# should be good enough but let's have 4 in case of smaller tasks.
-NDISPATCHERS=4
+# To overcome this, the easiest solution is to have multiple dispatchers.
+# NOTE: DO NOT USE ADVANCED -Q SYNTAX LIKE -Q:1-4 OR -Q:1,2,3,4. IT SEEMS
+# CELERY MULTI HAVING PARSING BUGS
 
 celery multi ${action} \
-  `seq -s ' ' -f 'dispatcher_%g' 0 $((NDISPATCHERS -1))` \
-  `seq -s ' ' -f 'gpu_%g' 0 $((ngpus -1))` \
-  -A v3python.celery -l info -c 1 \
-  -Q:1-${NDISPATCHERS} ${AOTRITON_CELERY_CPUQ},${native_arch} \
+  dispatcher_0 dispatcher_1 dispatcher_2 dispatcher_3 \
+  `seq -s ' ' -f 'gpu_%g' 0 $((ngpus -1))` -A v3python.celery -l info -c 1 \
+  -Q:1 ${native_arch} \
+  -Q:2 ${native_arch} \
+  -Q:3 ${native_arch} \
+  -Q:4 ${native_arch} \
   -Q ${AOTRITON_CELERY_GPUQ} \
   --pidfile=$dir/run/celery/pids/%n.pid \
   --logfile=$dir/run/celery/logs/%n%i.log
