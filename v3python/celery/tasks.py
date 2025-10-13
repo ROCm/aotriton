@@ -175,11 +175,14 @@ def tune_kernel(task_config):
     # worker_hostname = current_task.request.hostname
     print(f'tune_kernel {task_config=} {GPUQ=}')
     res = chain(preprocess.s(task_config).set(queue=GPUQ),
-                do_tune_kernel.s().set(queue=GPUQ),
-                postprocess.s().set(queue=GPUQ))
+                do_tune_kernel.s().set(queue=GPUQ))
     ret = res()
     with allow_join_result():
         ret.get()
+    # Have to do it here, do_tune_kernel is also asynchronous
+    worker_hostname = current_task.request.hostname
+    exaid, p = get_exaid_with_tmpdir(task_config, worker_hostname)
+    shutil.rmtree(p)
     return task_config
 
 @app.task
