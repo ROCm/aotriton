@@ -52,8 +52,21 @@ export AOTRITON_CELERY_WORKDIR=$dir
 export AOTRITON_CELERY_CPUQ="$(hostname -s)_cpuqueue"
 export AOTRITON_CELERY_GPUQ="$(hostname -s)_gpuqueue"
 
-celery multi ${action} dispatcher `seq -s ' ' -f 'gpu_%g' 0 $((ngpus -1))` -A v3python.celery -l info -c 1 \
-  -Q:1 ${AOTRITON_CELERY_CPUQ},${native_arch} \
+# Multiple dispatchers are needed to saturate the GPU
+# To ensure load balance, dispatchers must run in blocking manner to avoid all
+# tasks being dispatched into the same worker node.
+# However, if there is only one dispatcher, GPUs will be idle when waiting for
+# the current task to complete, while a new task can be consumed from the queue.
+#
+# To overcome this, the easiest solution is to have multiple dispatchers. 2
+# should be good enough but let's have 4 in case of smaller tasks.
+NDISPATCHERS=4
+
+celery multi ${action} \
+  `seq -s ' ' -f 'dispatcher_%g' 0 $((NDISPATCHERS -1))` \
+  `seq -s ' ' -f 'gpu_%g' 0 $((ngpus -1))` \
+  -A v3python.celery -l info -c 1 \
+  -Q:$NDISPATCHERS ${AOTRITON_CELERY_CPUQ},${native_arch} \
   -Q ${AOTRITON_CELERY_GPUQ} \
   --pidfile=$dir/run/celery/pids/%n.pid \
   --logfile=$dir/run/celery/logs/%n%i.log
