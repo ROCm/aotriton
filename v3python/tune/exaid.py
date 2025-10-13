@@ -58,9 +58,11 @@ class ExaidProxy(object):
             if eno == errno.ETIMEDOUT:
                 self._process.kill()
             self._process.wait()
+            stdout = self._process.stdout.read()
+            stderr = self._process.stderr.read()
             del self._process
             self._process = None
-            raise OSError(eno, error_msg)
+            raise OSError(eno, error_msg + "\nSTDOUT:\n" + stdout + "\nSTDERR:\n" + stderr)
         ret, info = first(line)
         if ret != "OK":
             raise ExaidSubprocessNotOK(line, error_msg)
