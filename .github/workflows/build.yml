@@ -9,8 +9,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     container:
-      image: rocm/pytorch:latest
-      options: --shm-size=32g --user root
+      image: rocm/pytorch:rocm7.0_ubuntu24.04_py3.12_pytorch_release_2.8.0
+      options: --shm-size=16g --user root
     steps:
       - uses: actions/checkout@v4
         with:
@@ -19,9 +19,8 @@ jobs:
 
       - name: Build AOTriton
         run: |
-          apt-get update && apt-get install -y mold
-          pip install -r ${AOTRITON}/requirements-dev.txt
-          pip install --upgrade pip ninja
+          apt-get update && apt-get install -y mold ninja-build cmake
+          pip install -r requirements-dev.txt
 
           export PYTORCH_ROCM_ARCH=gfx942
           bash .ci/build-test.sh gfx942
