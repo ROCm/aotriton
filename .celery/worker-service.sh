@@ -66,7 +66,7 @@ celery multi ${action} \
   `seq -s ' ' -f 'dispatcher_%g' 0 $((NDISPATCHERS -1))` \
   `seq -s ' ' -f 'gpu_%g' 0 $((ngpus -1))` \
   -A v3python.celery -l info -c 1 \
-  -Q:$NDISPATCHERS ${AOTRITON_CELERY_CPUQ},${native_arch} \
+  -Q:1-${NDISPATCHERS} ${AOTRITON_CELERY_CPUQ},${native_arch} \
   -Q ${AOTRITON_CELERY_GPUQ} \
   --pidfile=$dir/run/celery/pids/%n.pid \
   --logfile=$dir/run/celery/logs/%n%i.log
