@@ -30,11 +30,11 @@ def test_exaid(module, gpu_id):
     KNAMES = [ 'attn_fwd', 'bwd_kernel_dk_dv', 'bwd_kernel_dq', 'bwd_kernel_fuse' ]
     for kname in KNAMES:
         assert kname in kernel_dict.keys()
-        hsaco_id = 0
-        result_data = exaid.benchmark(tmpdir, kname, hsaco_id)
+        hsaco_index = 0
+        result_data = exaid.benchmark(tmpdir, kname, hsaco_index)
         assert result_data
         assert result_data['impl_selection']['kernel_name'] == kname
-        assert result_data['impl_selection']['hsaco_index'] == hsaco_id
+        assert result_data['impl_selection']['hsaco_index'] == hsaco_index
         assert "adiffs" in result_data
     shutil.rmtree(tmpdir)
 

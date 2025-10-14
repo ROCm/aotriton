@@ -122,8 +122,8 @@ class ExaidWorker(object):
         self.proxy.write('probe', workdir.as_posix())
         return json.loads(self.proxy.readinfo())
 
-    def benchmark(self, workdir: Path, kname: str, hsaco_id: int):
-        self.proxy.write('benchmark', workdir.as_posix(), f'{kname}={hsaco_id}')
+    def benchmark(self, workdir: Path, kname: str, hsaco_index: int):
+        self.proxy.write('benchmark', workdir.as_posix(), f'{kname}={hsaco_index}')
         return json.loads(self.proxy.readinfo())
 
     def exit(self):
