@@ -11,6 +11,14 @@ on:
 jobs:
   build:
     runs-on: build-only
+    outputs:
+      result: ${{ steps.set-output.outputs.result }}
+    steps:
+    - name: set output
+      id: set-output
+      run: runc --version
+
+    runs-on: build-only
     container:
       image: rocm/pytorch:rocm7.0_ubuntu24.04_py3.12_pytorch_release_2.8.0
       options: --shm-size=16g --user root
@@ -18,7 +26,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: 'recursive'
-          fetch-depth: 0
+          fetch-depth: 1
 
       - name: Build AOTriton
         run: |
