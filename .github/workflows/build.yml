@@ -16,9 +16,7 @@ jobs:
       options: --shm-size=16g --user root
     steps:
       - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
+        run: apt-get install nodejs
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
