@@ -9,7 +9,7 @@ on:
       - 'steranoc/*'
 
 jobs:
-  build:
+  prep:
     runs-on: build-only
     outputs:
       result: ${{ steps.set-output.outputs.result }}
@@ -18,7 +18,9 @@ jobs:
       id: set-output
       run: runc --version
 
+  build:
     runs-on: build-only
+    needs: prep
     container:
       image: rocm/pytorch:rocm7.0_ubuntu24.04_py3.12_pytorch_release_2.8.0
       options: --shm-size=16g --user root
