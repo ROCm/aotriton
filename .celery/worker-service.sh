@@ -48,27 +48,51 @@ rcfile="$dir/config.rc"
 
 cd ${SCRIPT_DIR}/..
 
-export AOTRITON_CELERY_WORKDIR=$dir
-export AOTRITON_CELERY_CPUQ="$(hostname -s)_cpuqueue"
-export AOTRITON_CELERY_GPUQ="$(hostname -s)_gpuqueue"
+CPUQ="$(hostname -s)_cpuqueue"
+GPUQ="$(hostname -s)_gpuqueue"
 
-# Multiple dispatchers are needed to saturate the GPU
-# To ensure load balance, dispatchers must run in blocking manner to avoid all
-# tasks being dispatched into the same worker node.
-# However, if there is only one dispatcher, GPUs will be idle when waiting for
-# the current task to complete, while a new task can be consumed from the queue.
+# Here we propose a triple queue design to address shortcomings of Celery
 #
-# To overcome this, the easiest solution is to have multiple dispatchers.
+# 1. We want to saturate the GPU
+# 2. We want load balancing among GPU nodes
+# 3. We need a pre-processing step to prepare testing data on /dev/shm/
+# 4. We do not know the number of sub-tasks for a given tuning task, until the
+#    compiled hsaco kernels are "probed"
+# 5. We need a post-processing step to clean up testing data
+#
+# Load balancing requires blocking fetching tasks, otherwise a single node can
+# consume all tasks in the broker. GPU saturation requires multiple fetching
+# workers, otherwise GPU will be idle
+# when the single fetcher is waiting for the current task to complete.
+# Here 4 fetcher_* workers are created.
+#
+# 3-5 requires a two-level celery task, the first level (tune_kernel) prepares
+# the data, and the second level (do_tune_kernel) creates actual hsaco tuning
+# tasks from the prepared data.  The "probing" is the first step in the second
+# level, running on GPU, and its output will be used to create a chord to tune
+# hsaco kernels, with post-processing as the callback.
+#
+# However, since it seems impossible to return chord's AsyncResult as the
+# result of do_tune_kernel, it is then necessary to wait the chord's complete.
+# The waiting requires another queue and a set of dedicated workers here
+# referred as dispatchers.
+#
 # NOTE: DO NOT USE ADVANCED -Q SYNTAX LIKE -Q:1-4 OR -Q:1,2,3,4. IT SEEMS
-# CELERY MULTI HAVING PARSING BUGS
+# CELERY MULTI HAS PARSING BUGS
 
+AOTRITON_CELERY_WORKDIR=$dir \
 celery multi ${action} \
+  fetcher_0 fetcher_1 fetcher_2 fetcher_3 \
   dispatcher_0 dispatcher_1 dispatcher_2 dispatcher_3 \
   `seq -s ' ' -f 'gpu_%g' 0 $((ngpus -1))` -A v3python.celery -l info -c 1 \
   -Q:1 ${native_arch} \
   -Q:2 ${native_arch} \
   -Q:3 ${native_arch} \
   -Q:4 ${native_arch} \
-  -Q ${AOTRITON_CELERY_GPUQ} \
+  -Q:5 ${CPUQ} \
+  -Q:6 ${CPUQ} \
+  -Q:7 ${CPUQ} \
+  -Q:8 ${CPUQ} \
+  -Q ${GPUQ} \
   --pidfile=$dir/run/celery/pids/%n.pid \
-  --logfile=$dir/run/celery/logs/%n%i.log
+  --logfile=$dir/run/celery/logs/%n__%i.log
