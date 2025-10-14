@@ -1,5 +1,8 @@
 name: Build AOTriton
 
+env:
+  PYTORCH_ROCM_ARCH: "gfx942"
+
 on:
   push:
     branches:
@@ -19,8 +22,14 @@ jobs:
 
       - name: Build AOTriton
         run: |
-          apt-get update && apt-get install -y mold ninja-build cmake
+          apt-get update && \
+          apt-get install -y --no-install-recommends \
+          mold \
+          ninja-build \
+          cmake && \
+          apt-get clean && \
+          rm -rf /var/lib/apt/lists/*
+          
           pip install -r requirements-dev.txt
 
-          export PYTORCH_ROCM_ARCH=gfx942
-          bash .ci/build-test.sh gfx942
+          bash .ci/build-test.sh ${{ env.PYTORCH_ROCM_ARCH }}
