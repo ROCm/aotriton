@@ -9,23 +9,18 @@ on:
       - 'steranoc/*'
 
 jobs:
-  prep:
-    runs-on: build-only
-    outputs:
-      result: ${{ steps.set-output.outputs.result }}
-    steps:
-    - name: set output
-      id: set-output
-      run: runc --version
-
   build:
     runs-on: build-only
-    needs: prep
     container:
       image: rocm/pytorch:rocm7.0_ubuntu24.04_py3.12_pytorch_release_2.8.0
       options: --shm-size=16g --user root
     steps:
-      - uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Checkout repo
+        uses: actions/checkout@v4
         with:
           submodules: 'recursive'
           fetch-depth: 1
