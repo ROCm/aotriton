@@ -24,15 +24,6 @@ SHORT_HOSTNAME = socket.gethostname().split('.')[0]
 GPUQ = SHORT_HOSTNAME + '_gpuqueue'
 CPUQ = SHORT_HOSTNAME + '_cpuqueue'
 
-def _stub_probe_nhsaco(kname):
-    # if kname == 'attn_fwd':
-    #     return 32
-    # if kname == 'bwd_kernel_dk_dv':
-    #     return 12
-    # if kname == 'bwd_kernel_dq':
-    #     return 20
-    return 3
-
 def get_exaid(task_config, hostname):
     module = task_config["module"]
     gpu_id_str = hostname.split('@')[0].split('_')[1]
@@ -51,27 +42,8 @@ def on_worker_shutting_down(sender, sig, how, exitcode, **kwargs):
     print("worker_shutting_down")
     exaid_exitall()
 
-probe_nhsaco = _stub_probe_nhsaco
-
-@app.task
-def add(x, y):
-    return x + y
-
-@app.task
-def mul(x, y):
-    return x * y
-
-@app.task
-def xsum(numbers):
-    return sum(numbers)
-
 @app.task
 def preprocess(task_config):
-    print(f'Enter preprocess')
-    print(f'preprocess {type(task_config)=}')
-    print(f'{type(current_task)=}', flush=True)
-    print(f'{type(current_task.request)=}', flush=True)
-    print(f'{type(current_task.request.hostname)=}', flush=True)
     worker_hostname = current_task.request.hostname
     exaid, p = get_exaid_with_tmpdir(task_config, worker_hostname)
     try:
@@ -93,10 +65,6 @@ def preprocess(task_config):
 
 @app.task
 def postprocess(reports):
-    # print(f'postprocess {task_config=}')
-    # # Note: Real tuning uses rm -rf not rmdir
-    # #       Using rmdir is to confirm all sub tasks complete (otherwise error)
-    # p.rmdir()
     brief = {}
     for r in reports:
         kname = r["kernel_name"]
@@ -148,13 +116,6 @@ def tune_hsaco(task_config, kname, hsaco_index):
         }
     return report
 
-# @app.task
-# def tune_subkernel(task_config, kname):
-#     print(f"tune_subkernel {task_config=}")
-#     nhsaco = probe_nhsaco(kname)
-#     res = group([tune_hsaco.s(task_config, kname, hsaco_index).set(queue=GPUQ) for hsaco_index in range(nhsaco)])
-#     res()
-
 @app.task
 def do_tune_kernel(task_config):
     worker_hostname = current_task.request.hostname
@@ -188,28 +149,15 @@ def do_tune_kernel(task_config):
     }
     return aggregation
 
-'''
-This is a dummpy task to block worker from accessing gfx queue
-'''
-@app.task
-def tune_kernel_done(task_config):
-    pass
-
 @app.task
 def tune_kernel(task_config):
     arch = task_config['arch']
-    # worker_hostname = current_task.request.hostname
-    print(f'tune_kernel {task_config=} {GPUQ=}')
+    # print(f'tune_kernel {task_config=} {GPUQ=}')
     res = chain(preprocess.s(task_config).set(queue=GPUQ),
                 do_tune_kernel.s().set(queue=CPUQ))
     ret = res()
     with allow_join_result():
         return ret.get()
-
-@app.task
-def get_worker_name_task():
-    worker_hostname = current_task.request.hostname
-    return worker_hostname
 
 def route_task(name, args, kwargs, options, task=None, **kw):
     arch = kwargs['arch']
