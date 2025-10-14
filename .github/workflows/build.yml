@@ -16,7 +16,25 @@ jobs:
       options: --shm-size=16g --user root
     steps:
       - name: Setup Node
-        run: apt-get install nodejs
+        run: |
+          apt-get update && \
+          apt-get install -y \
+          nodejs \
+          libcares2 \
+          libnode109 \
+          libuv1t64 \
+          node-acorn \
+          node-busboy \
+          node-cjs-module-lexer \
+          node-undici \
+          node-xtend \
+          nodejs-doc \
+          mold \
+          ninja-build \
+          cmake && \
+          apt-get clean && \
+          rm -rf /var/lib/apt/lists/*
+          npm
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
@@ -25,14 +43,6 @@ jobs:
 
       - name: Build AOTriton
         run: |
-          apt-get update && \
-          apt-get install -y --no-install-recommends \
-          mold \
-          ninja-build \
-          cmake && \
-          apt-get clean && \
-          rm -rf /var/lib/apt/lists/*
-
           pip install -r requirements-dev.txt
 
           bash .ci/build-test.sh ${{ env.PYTORCH_ROCM_ARCH }}
