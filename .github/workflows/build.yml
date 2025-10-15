@@ -20,15 +20,6 @@ jobs:
           apt-get update && \
           apt-get install -y \
           nodejs \
-          libcares2 \
-          libnode109 \
-          libuv1t64 \
-          node-acorn \
-          node-busboy \
-          node-cjs-module-lexer \
-          node-undici \
-          node-xtend \
-          nodejs-doc \
           npm \
           mold \
           ninja-build \
@@ -36,7 +27,7 @@ jobs:
           apt-get clean && \
           rm -rf /var/lib/apt/lists/*
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
         with:
           submodules: 'recursive'
           fetch-depth: 1
