@@ -10,6 +10,8 @@ on:
 
 jobs:
   build:
+    env:
+      ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: 'true'
     runs-on: build-only
     container:
       image: rocm/pytorch:rocm7.0_ubuntu24.04_py3.12_pytorch_release_2.8.0
