@@ -3,6 +3,7 @@ name: Build AOTriton
 env:
   PYTORCH_ROCM_ARCH: "gfx942"
   NVM_DIR: "$HOME/.nvm"
+  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: 'true'
 
 on:
   push:
@@ -11,8 +12,6 @@ on:
 
 jobs:
   build:
-    env:
-      ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: 'true'
     runs-on: build-only
     container:
       image: rocm/pytorch:rocm7.0_ubuntu24.04_py3.12_pytorch_release_2.8.0
@@ -22,6 +21,7 @@ jobs:
         run: |
           apt-get update && \
           apt-get install -y --no-install-recommends \
+          nodejs \
           mold \
           ninja-build \
           cmake && \
@@ -31,12 +31,10 @@ jobs:
           curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.1/install.sh | bash
           [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
           nvm install 16
+          node -v
+          ldd --version
       - name: Checkout repo
         uses: actions/checkout@v3
-        with:
-          submodules: 'recursive'
-          fetch-depth: 1
-
       - name: Build AOTriton
         run: |
           pip install -r requirements-dev.txt
