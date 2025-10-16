@@ -83,7 +83,14 @@ option(AOTRITON_TERMINATE_WHEN_GPU_BUILD_TIMEOUT "compile.py will return error w
 set(AOTRITON_TARGET_ARCH "gfx90a;gfx942;gfx950;gfx1100;gfx1101;gfx1102;gfx1151;gfx1150;gfx1201;gfx1200" CACHE STRING "Target GPU Architecture. Select all GPUs within the given list")
 set(TARGET_GPUS "OBSOLETE" CACHE STRING "OBSOLETE. To select only one GPU, use AOTRITON_TARGET_ARCH or AOTRITON_OVERRIDE_TARGET_GPUS.")
 set(AOTRITON_OVERRIDE_TARGET_GPUS "" CACHE STRING "Override AOTRITON_TARGET_ARCH, and only build for GPUs within this list.")
-set(AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE "" CACHE STRING "Specify how to use alternative Triton wheels for different architectures in a config file.")
+set(AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE "" CACHE STRING "Specify how to use alternative Triton wheels for different architectures in a YAML config file.")
+
+if(AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
+  cmake_path(IS_ABSOLUTE AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE altwheel_yaml_is_absolute)
+  if(NOT ${altwheel_yaml_is_absolute})
+    message(FATAL_ERROR "AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE must be absolute path, but configured as ${AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE}")
+  endif()
+endif()
 
 # Early failure for python binding
 if(NOT AOTRITON_NO_PYTHON)
@@ -212,10 +219,20 @@ else()
 endif()
 
 if(NOT AOTRITON_NOIMAGE_MODE AND AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
-  file(STRINGS "${AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE}" ALT_TRITON_RULES ENCODING UTF-8)
-  foreach(RULE IN LISTS ALT_TRITON_RULES)
-    list(POP_FRONT RULE WHEEL)
-    list(POP_FRONT RULE ALT_VENV_DIR)
+  execute_process(
+    COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_BIN_PYTHON}" -c
+    "import yaml,sys; f = open(sys.argv[1]); d = yaml.load(f, Loader=yaml.Loader); print(';'.join([f'{k};{v}' for k, v in d['venvs'].items()]))"
+    "${AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE}"
+    OUTPUT_VARIABLE ALT_VENVS
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+  )
+  while(ALT_VENVS)
+    list(POP_FRONT ALT_VENVS ALT_VENV_NAME)
+    list(POP_FRONT ALT_VENVS WHEEL)
+    # FIXME: altvenvs is separately defined here and codegen/root.py. Find a way to unify?
+    set(ALT_VENV_DIR "altvenvs/${ALT_VENV_NAME}")
+    message(STATUS "ALT_VENV_DIR ${ALT_VENV_DIR}")
+    message(STATUS "WHEEL ${WHEEL}")
     execute_process(COMMAND "${Python3_EXECUTABLE}" -m venv "${ALT_VENV_DIR}")
     set(ALT_VENV_BIN_PYTHON "${ALT_VENV_DIR}/${VENV_REL_PYTHON}")
     execute_process(COMMAND "${ALT_VENV_BIN_PYTHON}" -m pip install -r "${CMAKE_CURRENT_LIST_DIR}/requirements.txt")
@@ -224,7 +241,7 @@ if(NOT AOTRITON_NOIMAGE_MODE AND AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
       COMMAND "${ALT_VENV_BIN_PYTHON}" -m pip install ${WHEEL}
     )
     LIST(APPEND ALL_TRITON_SOS "${AOTRITON_TRITON_SO}")
-  endforeach(RULE)
+  endwhile(ALT_VENVS)
 endif(NOT AOTRITON_NOIMAGE_MODE AND AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
 
 if(ALL_TRITON_SOS)

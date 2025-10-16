@@ -1,0 +1,14 @@
+venvs:
+  # default: build from source with third_party/triton
+  navi3x: triton-3.3.0+git4280ed11-cp310-cp310-linux_x86_64.whl
+  vllm: triton-3.4.0+git6b70e716-cp310-cp310-linux_x86_64.whl
+rules:
+  - gmatches:  # glob matches
+      family: sparse_*
+    venv: vllm
+  - matches:  # String matches (identical)
+      arch: gfx1100
+    venv: navi3x
+  - rmatches:  # Regex Matching
+      arch: gfx110.
+    venv: navi3x
