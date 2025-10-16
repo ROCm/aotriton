@@ -3,6 +3,7 @@ name: Build AOTriton
 env:
   PYTORCH_ROCM_ARCH: "gfx942"
   DOCKER_IMAGE: "rocm/pytorch:rocm7.0_ubuntu24.04_py3.12_pytorch_release_2.8.0"
+  AOTRITON_CI_SUPPLIED_SHA1: "${{ github.sha }}"
 
 on:
   push:
@@ -31,7 +32,7 @@ jobs:
         run: |
           docker exec aotriton-builder bash -c "$(cat <<'EOF'
           set -ex
-
+          
           apt-get update && \
           apt-get install -y --no-install-recommends \
           mold \
