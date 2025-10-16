@@ -2,9 +2,7 @@ name: Build AOTriton
 
 env:
   PYTORCH_ROCM_ARCH: "gfx942"
-  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: 'true'
-  ACTIONS_RUNNER_FORCED_INTERNAL_NODE_VERSION: 'node20'
-  ACTIONS_RUNNER_FORCE_ACTIONS_NODE_VERSION: 'node20'
+  DOCKER_IMAGE: "rocm/pytorch:rocm7.0_ubuntu24.04_py3.12_pytorch_release_2.8.0"
 
 on:
   push:
@@ -17,18 +15,32 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
-      - name: Setup Node
+        with:
+          submodules: 'recursive'
+          fetch-depth: 0
+
+      - name: 🚀 Run Build Container
         run: |
+          docker run -dt \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            --name aotriton-builder \
+            ${{ env.DOCKER_IMAGE }}
+
+      - name: 📦 Build wheel inside container
+        run: |
+          docker exec aotriton-builder bash -c "$(cat <<'EOF'
+          set -ex
+
           apt-get update && \
           apt-get install -y --no-install-recommends \
-          nodejs \
           mold \
           ninja-build \
           cmake && \
           apt-get clean && \
           rm -rf /var/lib/apt/lists/*
-      - name: Build AOTriton
-        run: |
           pip install -r requirements-dev.txt
 
+      - name: Build AOTriton
+        run: |
           bash .ci/build-test.sh ${{ env.PYTORCH_ROCM_ARCH }}
