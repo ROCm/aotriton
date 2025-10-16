@@ -14,7 +14,7 @@ jobs:
   build:
     runs-on: build-only
     container:
-      image: ubuntu:22.04
+      image: ubuntu:20.04
       options: --shm-size=16g --user root
     steps:
       - name: Setup Node
