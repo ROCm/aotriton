@@ -40,7 +40,6 @@ jobs:
           apt-get clean && \
           rm -rf /var/lib/apt/lists/*
           pip install -r requirements-dev.txt
-
-      - name: Build AOTriton
-        run: |
           bash .ci/build-test.sh ${{ env.PYTORCH_ROCM_ARCH }}
+          EOF
+          )"
