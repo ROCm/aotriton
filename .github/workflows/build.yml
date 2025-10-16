@@ -30,7 +30,7 @@ jobs:
           apt-get clean && \
           rm -rf /var/lib/apt/lists/*
       - name: Checkout repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v2
       - name: Build AOTriton
         run: |
           pip install -r requirements-dev.txt
