@@ -14,8 +14,6 @@ on:
 jobs:
   build:
     runs-on: build-only
-    container:
-      image: ubuntu:20.04
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
