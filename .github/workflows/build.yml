@@ -3,6 +3,7 @@ name: Build AOTriton
 env:
   PYTORCH_ROCM_ARCH: "gfx942"
   DOCKER_IMAGE: "rocm/pytorch:rocm7.0_ubuntu24.04_py3.12_pytorch_release_2.8.0"
+  CONTAINER_NAME: "aotriton-builder-${{ github.run_id }}-${{ github.run_attempt }}"
   AOTRITON_CI_SUPPLIED_SHA1: "${{ github.sha }}"
 
 on:
@@ -10,8 +11,13 @@ on:
     branches:
       - 'steranoc/*'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
+    timeout-minutes: 120
     runs-on: build-only
     steps:
       - name: Checkout repo
@@ -22,19 +28,21 @@ jobs:
 
       - name: 🚀 Run Build Container
         run: |
+          docker pull ${{ env.DOCKER_IMAGE }}
           docker run -dt \
             -v "${{ github.workspace }}:/workspace" \
             -w /workspace \
-            --name aotriton-builder \
+            --name ${{ env.CONTAINER_NAME }} \
             ${{ env.DOCKER_IMAGE }}
 
       - name: 📦 Build wheel inside container
         run: |
-          docker exec aotriton-builder bash -c "$(cat <<'EOF'
-          set -ex
+          docker exec ${{ env.CONTAINER_NAME }} bash -c "$(cat <<'SCRIPT'
+          set -Eeuo pipefail
 
           export PYTORCH_ROCM_ARCH=${{ env.PYTORCH_ROCM_ARCH }}
           export AOTRITON_CI_SUPPLIED_SHA1=${{ env.AOTRITON_CI_SUPPLIED_SHA1 }}
+          export DEBIAN_FRONTEND=noninteractive
           apt-get update && \
           apt-get install -y --no-install-recommends \
           mold \
@@ -43,17 +51,18 @@ jobs:
           apt-get clean && \
           rm -rf /var/lib/apt/lists/*
           pip install -r requirements-dev.txt
-          bash .ci/build-test.sh ${{ env.PYTORCH_ROCM_ARCH }}
-          EOF
+          bash .ci/build-test.sh ${PYTORCH_ROCM_ARCH}
+          SCRIPT
           )"
 
       - name: ⬆️ Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: aotriton-build
+          name: aotriton-build-${{ env.PYTORCH_ROCM_ARCH }}-${{ github.sha }}
           path: build-*-${{ env.PYTORCH_ROCM_ARCH }}/*
           if-no-files-found: error
+          retention-days: 7
 
       - name: 🧹 Cleanup container
         if: always()
-        run: docker rm -f aotriton-builder || true
+        run: docker rm -f ${{ env.CONTAINER_NAME }} || true
