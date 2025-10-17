@@ -1,15 +1,22 @@
-name: Build AOTriton
+name: AOTriton CI
 
-env:
-  PYTORCH_ROCM_ARCH: "gfx942"
-  DOCKER_IMAGE: "rocm/pytorch:rocm7.0_ubuntu24.04_py3.12_pytorch_release_2.8.0"
-  CONTAINER_NAME: "aotriton-builder-${{ github.run_id }}-${{ github.run_attempt }}"
-  AOTRITON_CI_SUPPLIED_SHA1: "${{ github.sha }}"
+permissions:
+  contents: read
 
 on:
   push:
     branches:
       - 'steranoc/*'
+  workflow_dispatch:
+    inputs:
+      DOCKER_IMAGE:
+        description: 'Docker Image for build'
+        required: true
+        default: "rocm/pytorch:rocm7.0_ubuntu24.04_py3.12_pytorch_release_2.8.0"
+      PYTORCH_ROCM_ARCH:
+        description: 'GPU architecture'
+        required: true
+        default: 'gfx942'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -17,6 +24,10 @@ concurrency:
 
 jobs:
   build:
+    name: aotriton-build-${{ github.run_id }}-${{ github.run_attempt }}
+    env:
+      BUILD_CONTAINER: "aotriton-builder-${{ github.run_id }}-${{ github.run_attempt }}"
+      AOTRITON_CI_SUPPLIED_SHA1: "${{ github.sha }}"
     timeout-minutes: 120
     runs-on: build-only
     steps:
@@ -24,23 +35,22 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: 'recursive'
-          fetch-depth: 0
+          fetch-depth: 3
 
       - name: 🚀 Run Build Container
         run: |
-          docker pull ${{ env.DOCKER_IMAGE }}
+          docker pull ${{ inputs.DOCKER_IMAGE }}
           docker run -dt \
             -v "${{ github.workspace }}:/workspace" \
             -w /workspace \
-            --name ${{ env.CONTAINER_NAME }} \
-            ${{ env.DOCKER_IMAGE }}
+            --name ${{ env.BUILD_CONTAINER }} \
+            ${{ inputs.DOCKER_IMAGE }}
 
       - name: 📦 Build wheel inside container
         run: |
-          docker exec ${{ env.CONTAINER_NAME }} bash -c "$(cat <<'SCRIPT'
+          docker exec -i ${{ env.BUILD_CONTAINER }} bash -se <<'SCRIPT'
           set -Eeuo pipefail
-
-          export PYTORCH_ROCM_ARCH=${{ env.PYTORCH_ROCM_ARCH }}
+          export PYTORCH_ROCM_ARCH=${{ inputs.PYTORCH_ROCM_ARCH }}
           export AOTRITON_CI_SUPPLIED_SHA1=${{ env.AOTRITON_CI_SUPPLIED_SHA1 }}
           export DEBIAN_FRONTEND=noninteractive
           apt-get update && \
@@ -53,16 +63,75 @@ jobs:
           pip install -r requirements-dev.txt
           bash .ci/build-test.sh ${PYTORCH_ROCM_ARCH}
           SCRIPT
-          )"
 
       - name: ⬆️ Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: aotriton-build-${{ env.PYTORCH_ROCM_ARCH }}-${{ github.sha }}
-          path: build-*-${{ env.PYTORCH_ROCM_ARCH }}/*
+          name: aotriton-build-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build-*/install_dir
           if-no-files-found: error
           retention-days: 7
 
       - name: 🧹 Cleanup container
         if: always()
-        run: docker rm -f ${{ env.CONTAINER_NAME }} || true
+        run: docker rm -f ${{ env.BUILD_CONTAINER }} || true
+
+  test:
+    name: aotriton-test-${{ github.run_id }}-${{ github.run_attempt }}
+    needs: build
+    env:
+      TEST_CONTAINER: "aotriton-tester-${{ github.run_id }}-${{ github.run_attempt }}"
+    timeout-minutes: 120
+    runs-on: test-gpu
+    continue-on-error: true
+    steps:
+      - name: 📜 Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+          fetch-depth: 3
+      - name: ⬇️ Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: aotriton-build-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ github.workspace }}/aotriton
+      - name: 🚀 Run Test Container
+        run: |
+          docker run -dt \
+            --device=/dev/dri \
+            --device=/dev/kfd \
+            --shm-size=16G \
+            --group-add $(getent group render | cut -d: -f3) \
+            --group-add $(getent group video | cut -d: -f3) \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            --name ${{ env.TEST_CONTAINER }} \
+            ${{ inputs.DOCKER_IMAGE }}
+      - name: 🧪 Run tests
+        run: |
+          docker exec -i ${{ env.TEST_CONTAINER }} bash -se <<'SCRIPT'
+          set -Eeuo pipefail
+          export PYTORCH_ROCM_ARCH=${{ inputs.PYTORCH_ROCM_ARCH }}
+          export AOTRITON_CI_SUPPLIED_SHA1=${{ env.AOTRITON_CI_SUPPLIED_SHA1 }}
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update && \
+          apt-get install -y --no-install-recommends \
+          mold \
+          ninja-build \
+          cmake && \
+          apt-get clean && \
+          rm -rf /var/lib/apt/lists/*
+          pip install -r requirements-dev.txt
+          bash .ci/run-ci-test.sh 0 0 v3
+          SCRIPT
+      - name: ⬆️ Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.PYTORCH_ROCM_ARCH }}-${{ github.run_id }}-${{ github.run_attempt }}-logs
+          path: "*.log"
+          if-no-files-found: ignore
+
+      - name: 🧹 Cleanup container
+        if: always()
+        run: docker rm -f ${{ env.TEST_CONTAINER }} || true
