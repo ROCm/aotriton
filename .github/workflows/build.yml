@@ -39,18 +39,18 @@ jobs:
 
       - name: 🚀 Run Build Container
         run: |
-          docker pull ${{ inputs.DOCKER_IMAGE }}
+          docker pull ${{ github.events.inputs.DOCKER_IMAGE }}
           docker run -dt \
             -v "${{ github.workspace }}:/workspace" \
             -w /workspace \
             --name ${{ env.BUILD_CONTAINER }} \
-            ${{ inputs.DOCKER_IMAGE }}
+            ${{ github.events.inputs.DOCKER_IMAGE }}
 
       - name: 📦 Build wheel inside container
         run: |
           docker exec -i ${{ env.BUILD_CONTAINER }} bash -se <<'SCRIPT'
           set -Eeuo pipefail
-          export PYTORCH_ROCM_ARCH=${{ inputs.PYTORCH_ROCM_ARCH }}
+          export PYTORCH_ROCM_ARCH=${{ github.events.inputs.PYTORCH_ROCM_ARCH }}
           export AOTRITON_CI_SUPPLIED_SHA1=${{ env.AOTRITON_CI_SUPPLIED_SHA1 }}
           export DEBIAN_FRONTEND=noninteractive
           apt-get update && \
@@ -97,6 +97,7 @@ jobs:
           path: ${{ github.workspace }}/aotriton
       - name: 🚀 Run Test Container
         run: |
+          docker pull ${{ github.events.inputs.DOCKER_IMAGE }}
           docker run -dt \
             --device=/dev/dri \
             --device=/dev/kfd \
@@ -106,12 +107,12 @@ jobs:
             -v "${{ github.workspace }}:/workspace" \
             -w /workspace \
             --name ${{ env.TEST_CONTAINER }} \
-            ${{ inputs.DOCKER_IMAGE }}
+            ${{ github.events.inputs.DOCKER_IMAGE }}
       - name: 🧪 Run tests
         run: |
           docker exec -i ${{ env.TEST_CONTAINER }} bash -se <<'SCRIPT'
           set -Eeuo pipefail
-          export PYTORCH_ROCM_ARCH=${{ inputs.PYTORCH_ROCM_ARCH }}
+          export PYTORCH_ROCM_ARCH=${{ github.events.inputs.PYTORCH_ROCM_ARCH }}
           export AOTRITON_CI_SUPPLIED_SHA1=${{ env.AOTRITON_CI_SUPPLIED_SHA1 }}
           export DEBIAN_FRONTEND=noninteractive
           apt-get update && \
@@ -128,7 +129,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ inputs.PYTORCH_ROCM_ARCH }}-${{ github.run_id }}-${{ github.run_attempt }}-logs
+          name: ${{ github.events.inputs.PYTORCH_ROCM_ARCH }}-${{ github.run_id }}-${{ github.run_attempt }}-logs
           path: "*.log"
           if-no-files-found: ignore
 
