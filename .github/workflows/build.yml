@@ -46,3 +46,14 @@ jobs:
           bash .ci/build-test.sh ${{ env.PYTORCH_ROCM_ARCH }}
           EOF
           )"
+
+      - name: ⬆️ Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aotriton-build
+          path: build-*-${{ env.PYTORCH_ROCM_ARCH }}/*
+          if-no-files-found: error
+
+      - name: 🧹 Cleanup container
+        if: always()
+        run: docker rm -f aotriton-builder || true
