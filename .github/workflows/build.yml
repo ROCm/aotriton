@@ -39,8 +39,8 @@ jobs:
             -v "${{ github.workspace }}:/workspace" \
             -w /workspace \
             --name ${{ env.BUILD_CONTAINER }} \
-            -e PYTORCH_ROCM_ARCH=${{ env.PYTORCH_ROCM_ARCH }}
-            -e AOTRITON_CI_SUPPLIED_SHA1=${{ env.AOTRITON_CI_SUPPLIED_SHA1 }}
+            -e PYTORCH_ROCM_ARCH=${{ env.PYTORCH_ROCM_ARCH }} \
+            -e AOTRITON_CI_SUPPLIED_SHA1=${{ env.AOTRITON_CI_SUPPLIED_SHA1 }} \
             ${{ env.DOCKER_IMAGE }}
 
       - name: 📦 Build aotriton inside container
