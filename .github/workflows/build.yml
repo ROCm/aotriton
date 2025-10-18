@@ -25,7 +25,7 @@ jobs:
     timeout-minutes: 120
     runs-on: build-only
     steps:
-      - name: Checkout repo
+      - name: 📜 Checkout repository
         uses: actions/checkout@v4
         with:
           submodules: 'recursive'
@@ -34,29 +34,23 @@ jobs:
       - name: 🚀 Run Build Container
         run: |
           docker pull ${{ env.DOCKER_IMAGE }}
+          echo "Starting build Container..."
           docker run -dt \
             -v "${{ github.workspace }}:/workspace" \
             -w /workspace \
             --name ${{ env.BUILD_CONTAINER }} \
+            -e PYTORCH_ROCM_ARCH=${{ env.PYTORCH_ROCM_ARCH }}
+            -e AOTRITON_CI_SUPPLIED_SHA1=${{ env.AOTRITON_CI_SUPPLIED_SHA1 }}
             ${{ env.DOCKER_IMAGE }}
 
-      - name: 📦 Build wheel inside container
+      - name: 📦 Build aotriton inside container
         run: |
-          docker exec -i ${{ env.BUILD_CONTAINER }} bash -se <<'SCRIPT'
-          set -Eeuo pipefail
-          export PYTORCH_ROCM_ARCH=${{ env.PYTORCH_ROCM_ARCH }}
-          export AOTRITON_CI_SUPPLIED_SHA1=${{ env.AOTRITON_CI_SUPPLIED_SHA1 }}
-          export DEBIAN_FRONTEND=noninteractive
-          apt-get update && \
-          apt-get install -y --no-install-recommends \
-          mold \
-          ninja-build \
-          cmake && \
-          apt-get clean && \
-          rm -rf /var/lib/apt/lists/*
-          pip install -r requirements-dev.txt
-          bash .ci/build-test.sh ${PYTORCH_ROCM_ARCH}
-          SCRIPT
+          set -ex
+          echo "Setting up AOTriton..."
+          docker exec \
+            -w /workspace \
+            ${{ env.BUILD_CONTAINER }} \
+            ./.github/scripts/build_aotriton.sh
 
       - name: ⬆️ Upload artifact
         uses: actions/upload-artifact@v4
