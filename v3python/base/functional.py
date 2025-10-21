@@ -86,6 +86,10 @@ class Functional(object):
         return self._meta.FAMILY
 
     @property
+    def name(self):
+        return self._meta.NAME
+
+    @property
     def godel_number(self):
         return sum([s.godel_number for s in self._binds])
 
