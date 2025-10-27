@@ -3,11 +3,10 @@
 
 import sqlite3
 import pandas as pd
-from pathlib import Path, PurePath
 from ..base import typed_choice as TC
 from ..op import Operator
 from ..utils import log
-from ..gpu_targets import AOTRITON_TUNING_DATABASE_REUSE, gpu2arch
+from ..gpu_targets import AOTRITON_TUNING_DATABASE_REUSE
 
 '''
 We don't really need a LazyTableView, if Lazy evaluation is needed, a
@@ -36,33 +35,22 @@ def format_sql(stmt, params):
     return template.format(*params)
 
 class Factory(object):
-    SIGNATURE_FILE = 'database/tuning_database.sqlite3'
+    SIGNATURE_FILE = 'tuning_database.sqlite3'
     SECONDARY_DATABASES = {
-        'op': 'database/op_database.sqlite3',
+        'op': 'op_database.sqlite3',
     }
 
-    def __init__(self, build_dir: Path):
-        log(lambda : f'sqlite3.connect({build_dir / self.SIGNATURE_FILE})')
-        self._conn = sqlite3.connect(build_dir / self.SIGNATURE_FILE)
+    def __init__(self, path):
+        log(lambda : f'sqlite3.connect({path / self.SIGNATURE_FILE})')
+        self._conn = sqlite3.connect(path / self.SIGNATURE_FILE)
         self._conn.set_trace_callback(log) # Debug
-        def gen():
-            database_dir = build_dir / 'database'
-            for fn in database_dir.glob('*/*/*.sqlite3'):
-                rfn = fn.relative_to(database_dir)
-                # print(f'{rfn.parts=}')
-                arch, family, fname = rfn.parts
-                kernel = PurePath(fname).stem
-                schema = f'{family}${kernel}@{arch}'
-                yield schema, fn
-            yield from self.SECONDARY_DATABASES
-        for schema, bn in gen():
-            fn = build_dir / bn
+        for schema, bn in self.SECONDARY_DATABASES.items():
+            fn = path / bn
             if fn.is_file():
-                stmt = f"ATTACH DATABASE '{fn.as_posix()}' AS '{schema}';"
-                # print(f'{stmt=}')
-                self._conn.execute(stmt)
+                log(lambda : f"ATTACH DATABASE '{fn.as_posix()}' AS {schema};")
+                self._conn.execute(f"ATTACH DATABASE '{fn.as_posix()}' AS {schema};")
             else:
-                assert False, f'{fn} is not a file, {build_dir=}'
+                assert False, f'{fn} is not a file, {path}'
 
     def create_view(self, functional):
         log(lambda : f'{functional=}')
@@ -76,19 +64,12 @@ class Factory(object):
             wheres = {
                 'gpu' : functional.database_gpus,
             }
-            database_arch = gpu2arch(functional.database_gpus[0])
             for key, value in choice_dict.items():
                 if isinstance(value, TC.TypedChoice) and value.is_tensor:
                     wheres[f'inputs${key}_dtype'] = value
                 else:
                     wheres[f'inputs${key}'] = value
-            if not pfx:
-                schema = f'{functional.family}${functional.name}@{database_arch}'
-                # Both schema name and table name must be single quoted
-                full_table_name = f"'{schema}'.'{table_name}@{database_arch}'"
-            else:
-                full_table_name = table_name
-            return create_select_stmt(full_table_name, wheres)
+            return create_select_stmt(table_name, wheres)
         stmt, params = build_sql(functional.compact_choices)
         try:
             log(lambda : f'select stmt: {stmt} params {params}')
