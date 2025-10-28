@@ -35,9 +35,9 @@ def format_sql(stmt, params):
     return template.format(*params)
 
 class Factory(object):
-    SIGNATURE_FILE = 'tuning_database.sqlite3'
+    SIGNATURE_FILE = 'database/tuning_database.sqlite3'
     SECONDARY_DATABASES = {
-        'op': 'op_database.sqlite3',
+        'op': 'database/op_database.sqlite3',
     }
 
     def __init__(self, path):
