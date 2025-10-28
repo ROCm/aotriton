@@ -1,4 +1,6 @@
 #!/bin/bash
+# Copyright © 2025 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
 
 # Prerequisite:
 #   1. Launch a container with ${CELERY_WORKER_IMAGE}. Ideally with --network host

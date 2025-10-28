@@ -1,4 +1,6 @@
 #!/usr/bin/env
+# Copyright © 2025 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
 
 if [ -z "$BASH_VERSION" ]; then
   echo "This script requires Bash. Please run it with 'bash script_name.sh' or ensure /bin/sh points to /bin/bash." >&2

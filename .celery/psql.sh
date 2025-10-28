@@ -1,4 +1,6 @@
 #!/bin/bash
+# Copyright © 2025 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
 
 if [ "$#" -ne 1 ]; then
   echo 'Missing arguments. Usage: psql.sh <dir>' >&2
