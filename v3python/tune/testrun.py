@@ -1,4 +1,6 @@
 #!/usr/bin/env python
+# Copyright © 2023-2025 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
 
 import sys
 import importlib

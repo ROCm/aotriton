@@ -1,3 +1,6 @@
+# Copyright © 2025 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
 import sys
 import os
 from contextlib import contextmanager, ExitStack
