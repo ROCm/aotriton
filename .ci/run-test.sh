@@ -16,7 +16,12 @@ SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 pass=$1
 test_level="$2"
 backend="$3"
-bdir="build-${aotriton_major}.${aotriton_minor}-test-${native_arch}"
+mapfile -d '' bdir_cans < <(find . -maxdepth 1 -type d -name "build-${aotriton_major}.${aotriton_minor}-test-*${native_arch}*" -print0)
+if [ ${#bdir_cans[@]} -gt 1 ]; then
+  echo "There are multiple build directory candidates matching pattern 'build-${aotriton_major}.${aotriton_minor}-test-*${native_arch}*' for testing: ${bdir_cans[@]}. Please keep one only"
+  exit 1
+fi
+bdir="${bdir_cans[0]}"
 
 small_vram=$(amd-smi static -g 0 -v --json|grep -v '^WARNING:'| python -c 'import json, sys; j = json.load(sys.stdin); print(int(j["gpu_data"][0]["vram"]["size"]["value"] / 1024.0 < 60))')
 
