@@ -50,8 +50,9 @@ class RegexMatcher(object):
         return self._pattern.match(value) is not None
 
 class RuleMatcher(object):
-    def __init__(self, goal, matchers):
+    def __init__(self, name, goal, matchers):
         self._matchers = matchers
+        self._name = name
         self._goal = goal
 
     def match(self, f: "Functional"):
@@ -60,7 +61,7 @@ class RuleMatcher(object):
             matched = matcher.match(value)
             if not matched:
                 return None
-        return self._goal
+        return self._name, self._goal
 
 class RootGenerator(object):
     def __init__(self, args):
@@ -152,7 +153,9 @@ class RootGenerator(object):
     def write_hsaco(self, kdesc, path, functional, ksig, rulefile):
         log(lambda : f'{ksig=}')
         srcfn = kdesc.triton_source_path
-        print(self._get_venv_python(functional).as_posix(),
+        venv, python = self._get_venv_and_python(functional)
+        print(venv,
+              python.as_posix(),
               self._absobjfn(path, kdesc, ksig),
               str(srcfn.absolute()),
               kdesc.triton_kernel_name,
@@ -188,16 +191,17 @@ class RootGenerator(object):
                                             [StrMatcher, RegexMatcher, GlobMatcher]):
                 for attr, pattern in rule.get(key, {}).items():
                     yield (attr, matcher_factory(pattern))
-        venvpython = self._venvpython[rule['venv']]
-        return RuleMatcher(venvpython, list(gen_matcher()))
+        venv_name = rule['venv']
+        venvpython = self._venvpython[venv_name]
+        return RuleMatcher(venv_name, venvpython, list(gen_matcher()))
 
-    def _get_venv_python(self, f: 'Interface'):
+    def _get_venv_and_python(self, f: 'Interface'):
         for rule in self._altrules:
             matched = rule.match(f)
             if matched is not None:
                 return matched
         # We can add an always-true matcher to self._altrules but let's be explicit
-        return self._venvpython["default"]
+        return "default", self._venvpython["default"]
 
     # def write_cluster(self, kdesc, path, functional, signatures, clusterfile):
     #     full_filepack_path = functional.full_filepack_path

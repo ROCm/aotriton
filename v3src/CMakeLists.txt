@@ -114,6 +114,7 @@ if(NOT AOTRITON_NOIMAGE_MODE)
   set(I "0")  # Progress
   foreach(RULE IN LISTS HSACO_RULES)
     # message("${RULE}")
+    list(POP_FRONT RULE ALTNAME)
     list(POP_FRONT RULE COMPILER_PYTHON)
     list(POP_FRONT RULE HSACO)
     list(POP_FRONT RULE SRC)
@@ -125,7 +126,7 @@ if(NOT AOTRITON_NOIMAGE_MODE)
     list(POP_FRONT RULE SIG)
     add_custom_command(OUTPUT "${HSACO}"
       COMMAND ${CMAKE_COMMAND} -E env
-      TRITON_CACHE_DIR=${CMAKE_BINARY_DIR}/triton-cache.${TGTGPU}
+      TRITON_CACHE_DIR=${CMAKE_BINARY_DIR}/triton-cache.${ALTNAME}
       TRITON_F32_DEFAULT="ieee"
       TRITON_STORE_BINARY_ONLY=1
       "${COMPILER_PYTHON}"
