@@ -22,6 +22,7 @@ using LT4 = AOTRITON_NS::LazyTensor<4>;
 // For debugging and profiling purpose
 struct AOTRITON_API attn_options {
   int force_backend_index = -1;
+  bool deterministic = false;
 };
 
 // Note: DO NOT declare enums as enum class : int8_t. Enum class cannot be cased to
@@ -123,7 +124,7 @@ struct AOTRITON_API attn_bwd_params {
   int32_t   window_right;
   mutable LT4       DQ_ACC;          // fp32 accumulator of dq
 
-  static constexpr int32_t kVersion = 3;
+  static constexpr int32_t kVersion = 4;
   attn_bwd_params();
 };
 
