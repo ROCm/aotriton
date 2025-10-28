@@ -1,3 +1,6 @@
+# Copyright © 2025 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
 class ConfigRC(object):
     def __init__(self):
         self.broker_url = 'amqp://guest:guest@localhost:5672'
