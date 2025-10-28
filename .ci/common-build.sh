@@ -9,7 +9,7 @@ function _common_build() {
   target_arch="$3"
   build_for="$4"
   shift 4
-  bdir="build-${aotriton_major}.${aotriton_minor}-${build_for}-${target_arch}"
+  bdir="build-${aotriton_major}.${aotriton_minor}-${build_for}-${target_arch/;/_}"
   mkdir -p ${SCRIPT_DIR}/../${bdir}
   (
     cd ${SCRIPT_DIR}/../${bdir};
