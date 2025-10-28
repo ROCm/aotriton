@@ -35,6 +35,15 @@ foreach(DBXZ IN LISTS DB_TARS)
   message(STATUS "Extracting ${DBXZ} to ${AOTRITON_V2_BUILD_DIR}/${REL_DBXZ}")
 endforeach(DBXZ)
 
+message(STATUS "Assembling Central Database...")
+execute_process(
+    COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
+    "${VENV_BIN_PYTHON}" -m v3python.database_compose
+    --database_file "${AOTRITON_V2_BUILD_DIR}/database/tuning_database.sqlite3"
+    --decomposed "${AOTRITON_V2_BUILD_DIR}/database"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
+    COMMAND_ERROR_IS_FATAL ANY)
+
 file(ARCHIVE_EXTRACT INPUT
   "${CMAKE_SOURCE_DIR}/v3python/rules/op_database.sqlite3.tar.xz"
   DESTINATION "${AOTRITON_V2_BUILD_DIR}/database")
