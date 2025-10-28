@@ -2,7 +2,7 @@
 
 set -ex
 
-function get_root_cmake() {
+get_root_cmake() {
   local script_dir="$(dirname "${BASH_SOURCE[0]}")"
   echo "${script_dir}/../CMakeLists.txt"
 }
@@ -14,9 +14,19 @@ default_target_arch=$(grep 'set(AOTRITON_TARGET_ARCH' "${root_cmake}"|cut -d ' '
 native_arch=$(rocm_agent_enumerator|grep -v gfx000|head -n 1)
 ngpus=$(rocm_agent_enumerator|grep -v gfx000|wc -l)
 
-if [ -f "${script_dir}/../third_party/triton/cmake/llvm-hash.txt" ]; then
-  llvm_hash_sha1=$(cat "${script_dir}/../third_party/triton/cmake/llvm-hash.txt")
-  llvm_hash_url=$(echo ${llvm_hash_sha1}|head -c 8)
-else
+get_llvm_hash() {
+  local script_dir="$(dirname "${BASH_SOURCE[0]}")"
+  if [ -f "${script_dir}/../third_party/triton/cmake/llvm-hash.txt" ]; then
+    cat "${script_dir}/../third_party/triton/cmake/llvm-hash.txt"
+  else
+    echo ""
+  fi
+}
+
+llvm_hash_sha1=$(get_llvm_hash)
+if [ -z "${llvm_hash_sha1}" ]; then
   echo "common-vars: llvm_hash is unset due to missing third_party/triton/cmake/llvm-hash.txt. Need git clone --recursive" >&2
+  unset llvm_hash_sha1
+else
+  llvm_hash_url=$(echo ${llvm_hash_sha1}|head -c 8)
 fi
