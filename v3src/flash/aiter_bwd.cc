@@ -77,7 +77,9 @@ const char* BwdDqDkDvV3Context::check_inputs_are_supported() {
   RETURN_IF(args.cu_seqlens_q && *args.cu_seqlens_q);
   RETURN_IF(args.cu_seqlens_k && *args.cu_seqlens_k);
   // Only support hdim <= 192
-  RETURN_IF(args.head_dim > 192);
+  RETURN_IF(args.hdim_qk > 192 || args.hdim_vo > 192);
+  // Only support hdim_qk == hdim_vo
+  RETURN_IF(args.hdim_qk != args.hdim_vo);
   // TODO: support dropout kernel. fwd and bwd should have identical PRNG
   RETURN_IF(args.ENABLE_DROPOUT);
   RETURN_IF(args.num_head_q != args.num_head_k);

@@ -70,7 +70,9 @@ attn_bwd(const attn_bwd_params& in,
   auto stream = stream_wrap.native();
   auto gpu = getGpuFromStream(stream);
   int batch = in.Q.size(0);
-  int head_dim = in.Q.size(3);
+  int hdim_qk = in.Q.size(3);
+  int hdim_vo = in.V.size(3);
+  int hdim_max = std::max(hdim_qk, hdim_vo);
   int num_head_q = in.Q.size(1);
   int num_head_k = in.K.size(1);
   int max_seqlen_q = in.Q.size(2);
@@ -85,13 +87,13 @@ attn_bwd(const attn_bwd_params& in,
     max_seqlen_k = in.Max_seqlen_k;
   }
   const auto& compiled_head_dims = BwdKernelDkDvMetadata::get_BLOCK_DMODEL_choices();
-  int16_t head_dim_rounded = round_value(head_dim, compiled_head_dims);
+  int16_t hdim_rounded = round_value(hdim_max, compiled_head_dims);
   // FIXME: Remove when compiler bug fixed
   if (Gpu2VendorArch(gpu) == CAT32(GpuVendor::kAMD, 0x950)) {
-    if (head_dim_rounded == 48)
-      head_dim_rounded = 64;
-    if (head_dim_rounded == 80)
-      head_dim_rounded = 96;
+    if (hdim_rounded == 48)
+      hdim_rounded = 64;
+    if (hdim_rounded == 80)
+      hdim_rounded = 96;
   }
   LazyTensorInternal<2> lazy_delta(in.D);
   LazyTensorInternal<4> lazy_dq_acc(in.DQ_ACC);
@@ -117,17 +119,18 @@ attn_bwd(const attn_bwd_params& in,
     .num_seqlens = num_seqlens,
     .max_seqlen_q = max_seqlen_q,
     .max_seqlen_k = max_seqlen_k,
-    .head_dim = head_dim,
+    .hdim_qk = hdim_qk,
+    .hdim_vo = hdim_vo,
     .dropout_p = in.dropout_p,
     .philox_seed_ptr  = &in.philox_seed_ptr,
     .philox_offset1   = &in.philox_offset1,
     .philox_offset2   = in.philox_offset2,
     .Window_left = in.window_left,
     .Window_right = in.window_left,
-    .BLOCK_DMODEL = head_dim_rounded,
+    .BLOCK_DMODEL = hdim_rounded,
     .CAUSAL_TYPE = in.causal_type,
     .ENABLE_DROPOUT = in.dropout_p > 0.0,
-    .PADDED_HEAD = head_dim != head_dim_rounded,
+    .PADDED_HEAD = (hdim_qk != hdim_rounded || hdim_vo != hdim_rounded),
     .BIAS_TYPE = static_cast<int8_t>(bool(in.B) ? 1 : 0),
   };
   OpAttnBwdContext context;
@@ -197,19 +200,19 @@ bwd_preprocess(T4 out, T4 dout, T2 delta, AOTRITON_NS::Stream stream_wrap) {
   // Note: do not unify this constexpr.
   //       Different kernels may have different rules.
   constexpr int kMinHeadDimCompiled = 16;
-  int head_size = out.size(3);
+  int hdim_o = out.size(3);
   const auto& compiled_head_dims = BwdPreprocessMetadata::get_BLOCK_DMODEL_choices();
-  int head_size_rounded = round_value(head_size, compiled_head_dims);
+  int hdim_rounded = round_value(hdim_o, compiled_head_dims);
   // FIXME: Remove when compiler bug fixed
   if (Gpu2VendorArch(gpu) == CAT32(GpuVendor::kAMD, 0x950)) {
-    if (head_size_rounded == 48)
-      head_size_rounded = 64;
-    if (head_size_rounded == 80)
-      head_size_rounded = 96;
+    if (hdim_rounded == 48)
+      hdim_rounded = 64;
+    if (hdim_rounded == 80)
+      hdim_rounded = 96;
   }
-  if (head_size_rounded < 0) {
+  if (hdim_rounded < 0) {
 #if AOTRITON_VERBOSE
-    std::cerr << "Head dimension " << head_size << " unsupported. ";
+    std::cerr << "Head dimension " << hdim_o << " unsupported. ";
     if (compiled_head_dims.empty()) {
       std::cerr << "No head dimension (BLOCK_DMODEL) compiled into the binary." << std::endl;
     } else {
@@ -227,9 +230,9 @@ bwd_preprocess(T4 out, T4 dout, T2 delta, AOTRITON_NS::Stream stream_wrap) {
     .DO = &dout,
     .D = &eager_lazy_delta,
     .max_seqlen_q = static_cast<int32_t>(out.size(2)),
-    .head_dim = head_size,
-    .BLOCK_DMODEL = int16_t(head_size_rounded),
-    .PADDED_HEAD = head_size_rounded != head_size,
+    .hdim_vo = hdim_o,
+    .BLOCK_DMODEL = int16_t(hdim_rounded),
+    .PADDED_HEAD = hdim_rounded != hdim_o,
   };
   BwdPreprocessContext context;
   context.params = &params;
@@ -254,19 +257,19 @@ bwd_preprocess_varlen(T4 out,
   // Note: do not unify this constexpr.
   //       Different kernels may have different rules.
   constexpr int kMinHeadDimCompiled = 16;
-  int head_size = out.size(3);
+  int hdim_o = out.size(3);
   const auto& compiled_head_dims = BwdPreprocessVarlenMetadata::get_BLOCK_DMODEL_choices();
-  int head_size_rounded = round_value(head_size, compiled_head_dims);
+  int hdim_rounded = round_value(hdim_o, compiled_head_dims);
   // FIXME: Remove when compiler bug fixed
   if (Gpu2VendorArch(gpu) == CAT32(GpuVendor::kAMD, 0x950)) {
-    if (head_size_rounded == 48)
-      head_size_rounded = 64;
-    if (head_size_rounded == 80)
-      head_size_rounded = 96;
+    if (hdim_rounded == 48)
+      hdim_rounded = 64;
+    if (hdim_rounded == 80)
+      hdim_rounded = 96;
   }
-  if (head_size_rounded < 0) {
+  if (hdim_rounded < 0) {
 #if AOTRITON_VERBOSE
-    std::cerr << "Head dimension " << head_size << " unsupported. ";
+    std::cerr << "Head dimension " << hdim_o << " unsupported. ";
     if (compiled_head_dims.empty()) {
       std::cerr << "No head dimension (BLOCK_DMODEL) compiled into the binary." << std::endl;
     } else {
@@ -285,9 +288,9 @@ bwd_preprocess_varlen(T4 out,
     .D = &eager_lazy_delta,
     .cu_seqlens_q = &cu_seqlens_q,
     .max_seqlen_q = max_seqlen_q,
-    .head_dim = head_size,
-    .BLOCK_DMODEL = int16_t(head_size_rounded),
-    .PADDED_HEAD = head_size_rounded != head_size,
+    .hdim_vo = hdim_o,
+    .BLOCK_DMODEL = int16_t(hdim_rounded),
+    .PADDED_HEAD = hdim_rounded != hdim_o,
   };
   BwdPreprocessVarlenContext context;
   context.params = &params;
@@ -327,21 +330,23 @@ bwd_kernel_dk_dv(T4 q,
   auto stream = stream_wrap.native();
   auto gpu = getGpuFromStream(stream);
   constexpr int kMinHeadDimCompiled = 16;
-  int head_size = q.size(3);
+  int hdim_qk = q.size(3);
+  int hdim_vo = v.size(3);
+  int hdim_max = std::max(hdim_qk, hdim_vo);
   int num_head_q = q.size(1);
   int num_head_k = k.size(1);
   const auto& compiled_head_dims = BwdKernelDkDvMetadata::get_BLOCK_DMODEL_choices();
-  int head_size_rounded = round_value(head_size, compiled_head_dims);
+  int hdim_rounded = round_value(hdim_max, compiled_head_dims);
   // FIXME: Remove when compiler bug fixed
   if (Gpu2VendorArch(gpu) == CAT32(GpuVendor::kAMD, 0x950)) {
-    if (head_size_rounded == 48)
-      head_size_rounded = 64;
-    if (head_size_rounded == 80)
-      head_size_rounded = 96;
+    if (hdim_rounded == 48)
+      hdim_rounded = 64;
+    if (hdim_rounded == 80)
+      hdim_rounded = 96;
   }
-  if (head_size_rounded < 0) {
+  if (hdim_rounded < 0) {
 #if AOTRITON_VERBOSE
-    std::cerr << "Head dimension " << head_size << " unsupported. ";
+    std::cerr << "Head dimension " << hdim_max << " unsupported. ";
     if (compiled_head_dims.empty()) {
       std::cerr << "No head dimension (BLOCK_DMODEL) compiled into the binary." << std::endl;
     } else {
@@ -376,17 +381,18 @@ bwd_kernel_dk_dv(T4 q,
     .num_seqlens = num_seqlens,
     .max_seqlen_q = max_seqlen_q,
     .max_seqlen_k = max_seqlen_k,
-    .head_dim = head_size,
+    .hdim_qk = hdim_qk,
+    .hdim_vo = hdim_vo,
     .dropout_p = dropout_p,
     .philox_seed_ptr = &philox_seed,
     .philox_offset1 = &philox_offset1,
     .philox_offset2 = static_cast<uint64_t>(philox_offset2),
     .Window_left = WindowValue::TopLeftAligned,
     .Window_right = WindowValue::TopLeftAligned,
-    .BLOCK_DMODEL = int16_t(head_size_rounded),
+    .BLOCK_DMODEL = int16_t(hdim_rounded),
     .CAUSAL_TYPE = is_causal ? CausalType::WindowedAttention : CausalType::None,
     .ENABLE_DROPOUT = dropout_p > 0.0,
-    .PADDED_HEAD = head_size_rounded != head_size,
+    .PADDED_HEAD = (hdim_qk != hdim_rounded || hdim_vo != hdim_rounded),
     .BIAS_TYPE = bias_type,
   };
   BwdKernelDkDvContext context;
@@ -453,22 +459,24 @@ bwd_kernel_dq(T4 q,
   auto stream = stream_wrap.native();
   auto gpu = getGpuFromStream(stream);
   constexpr int kMinHeadDimCompiled = 16;
-  int head_size = q.size(3);
+  int hdim_qk = in.Q.size(3);
+  int hdim_vo = in.V.size(3);
+  int hdim_max = std::max(hdim_qk, hdim_vo);
   int num_head_q = q.size(1);
   int num_head_k = k.size(1);
   // TODO: Add metadata to operators
   const auto& compiled_head_dims = BwdKernelDqMetadata::get_BLOCK_DMODEL_choices();
-  int head_size_rounded = round_value(head_size, compiled_head_dims);
+  int hdim_rounded = round_value(hdim_max, compiled_head_dims);
   // FIXME: Remove when compiler bug fixed
   if (Gpu2VendorArch(gpu) == CAT32(GpuVendor::kAMD, 0x950)) {
-    if (head_size_rounded == 48)
-      head_size_rounded = 64;
-    if (head_size_rounded == 80)
-      head_size_rounded = 96;
+    if (hdim_rounded == 48)
+      hdim_rounded = 64;
+    if (hdim_rounded == 80)
+      hdim_rounded = 96;
   }
-  if (head_size_rounded < 0) {
+  if (hdim_rounded < 0) {
 #if AOTRITON_VERBOSE
-    std::cerr << "Head dimension " << head_size << " unsupported. ";
+    std::cerr << "Head dimension " << hdim_max << " unsupported. ";
     if (compiled_head_dims.empty()) {
       std::cerr << "No head dimension (BLOCK_DMODEL) compiled into the binary." << std::endl;
     } else {
@@ -503,17 +511,18 @@ bwd_kernel_dq(T4 q,
     .num_seqlens = num_seqlens,
     .max_seqlen_q = max_seqlen_q,
     .max_seqlen_k = max_seqlen_k,
-    .head_dim = head_size,
+    .hdim_qk = hdim_qk,
+    .hdim_vo = hdim_vo,
     .dropout_p = dropout_p,
     .philox_seed_ptr = &philox_seed,
     .philox_offset1 = &philox_offset1,
     .philox_offset2 = static_cast<uint64_t>(philox_offset2),
     .Window_left = WindowValue::TopLeftAligned,
     .Window_right = WindowValue::TopLeftAligned,
-    .BLOCK_DMODEL = int16_t(head_size_rounded),
+    .BLOCK_DMODEL = int16_t(hdim_rounded),
     .CAUSAL_TYPE = is_causal ? CausalType::WindowedAttention : CausalType::None,
     .ENABLE_DROPOUT = dropout_p > 0.0,
-    .PADDED_HEAD = head_size_rounded != head_size,
+    .PADDED_HEAD = (hdim_qk != hdim_rounded || hdim_vo != hdim_rounded),
     .BIAS_TYPE = bias_type,
   };
   BwdKernelDqContext context;
@@ -688,20 +697,20 @@ attn_bwd(T4 q,
 }
 
 hipError_t
-attn_bwd_compact_varlen(T4 q,            // 1 x num_heads x total_q x head_size, total_q := \sum_{i=0}^{b}
-                        T4 k,            // 1 x num_heads x total_k x head_size, total_k := \sum_{i=0}^{b}
-                        T4 v,            // 1 x num_heads x total_v x head_size, total_, := \sum_{i=0}^{b}
+attn_bwd_compact_varlen(T4 q,            // 1 x num_heads x total_q x hdim_qk, total_q := \sum_{i=0}^{b}
+                        T4 k,            // 1 x num_heads x total_k x hdim_qk, total_k := \sum_{i=0}^{b}
+                        T4 v,            // 1 x num_heads x total_v x hdim_vo, total_, := \sum_{i=0}^{b}
                         T1 cu_seqlens_q, // b+1, i64
                         T1 cu_seqlens_k, // b+1, i64
                         int32_t max_seqlen_q,
                         int32_t max_seqlen_k,
                         T4 b, // reserved
                         float sm_scale,
-                        T4 out,  // batch_size x num_heads x seqlen_q x head_size
-                        T4 dout, // batch_size x num_heads x seqlen_q x head_size
-                        T4 dq,   // batch_size x num_heads x seqlen_q x head_size
-                        T4 dk,   // batch_size x num_heads x seqlen_k x head_size
-                        T4 dv,   // batch_size x num_heads x seqlen_k x head_size
+                        T4 out,  // batch_size x num_heads x seqlen_q x hdim_vo
+                        T4 dout, // batch_size x num_heads x seqlen_q x hdim_vo
+                        T4 dq,   // batch_size x num_heads x seqlen_q x hdim_qk
+                        T4 dk,   // batch_size x num_heads x seqlen_k x hdim_qk
+                        T4 dv,   // batch_size x num_heads x seqlen_k x hdim_vo
                         T4 db,   // batch_size x num_heads x seqlen_q x seqlen_k
                         T2 softmax_lse,
                         T2 delta, // buffer, empty_like(softmax_lse)
