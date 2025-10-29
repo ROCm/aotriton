@@ -39,7 +39,7 @@ class bwd_kernel_dq(FlashBwdKernel):
         'max_seqlen_q',
         'max_seqlen_k',
         'hdim_qk',
-        'hdim_v',
+        'hdim_vo',
         'dropout_p',
         'philox_seed_ptr',
         'philox_offset1',

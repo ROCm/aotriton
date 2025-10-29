@@ -399,7 +399,7 @@ def attn_fwd(
                             B_ptrs, stride_bn,
                             # Task positions
                             start_M, nblocks_1, 0, fb_lo, None,
-                            seqlen_k, seqlen_q, Hdim_qk, Hdim_v,
+                            seqlen_k, seqlen_q, Hdim_qk, Hdim_vo,
                             # Dropout
                             idropout_p, philox_seed, batch_philox_offset, philox_offset_stride,
                             encoded_sm_base, Max_seqlen_k,
@@ -459,7 +459,7 @@ def attn_fwd(
                             B_ptrs, stride_bn,
                             # Task positions
                             start_M, nblocks_1, nblocks_2, lb_lo, rb_lo,
-                            seqlen_k, seqlen_q, Hdim_qk, Hdim_v,
+                            seqlen_k, seqlen_q, Hdim_qk, Hdim_vo,
                             # Dropout
                             idropout_p, philox_seed, batch_philox_offset, philox_offset_stride,
                             encoded_sm_base, Max_seqlen_k,
@@ -550,7 +550,7 @@ def attn_fwd(
                                o_start_row=start_m * BLOCK_M,
                                o_start_col=0,
                                o_rows=seqlen_q,
-                               o_cols=Hdim_v,
+                               o_cols=Hdim_vo,
                                stride_row=stride_om,
                                stride_col=stride_on)
 
