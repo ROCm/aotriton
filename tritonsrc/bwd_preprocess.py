@@ -30,7 +30,7 @@ def bwd_preprocess(
     stride_oz, stride_oh, stride_om, stride_on,
     stride_doz, stride_doh, stride_dom, stride_don,
     seqlen_q,
-    head_dim,
+    hdim_v,
     BLOCK_M: tl.constexpr,
     D_HEAD: tl.constexpr,
     PADDED_HEAD: tl.constexpr,
@@ -58,7 +58,7 @@ def bwd_preprocess(
     # o_offset = off_h * stride_oh + off_z * stride_oz
     # O_block_ptr = tl.make_block_ptr(
     #     base=Out + o_offset,
-    #     shape=(seqlen_q, head_dim),
+    #     shape=(seqlen_q, hdim_v),
     #     strides=(stride_om, stride_on),
     #     offsets=(off_m, 0),
     #     block_shape=(BLOCK_M, D_HEAD),
@@ -71,7 +71,7 @@ def bwd_preprocess(
     # do_offset = off_h * stride_doh + off_z * stride_doz
     # DO_block_ptr = tl.make_block_ptr(
     #     base=DO + do_offset,
-    #     shape=(seqlen_q, head_dim),
+    #     shape=(seqlen_q, hdim_v),
     #     strides=(stride_dom, stride_don),
     #     offsets=(off_m, 0),
     #     block_shape=(BLOCK_M, D_HEAD),
@@ -85,7 +85,7 @@ def bwd_preprocess(
     o0, o1, o2 = composed_load(o_ptrs0, o_ptrs1, o_ptrs2,
                                offs_m,
                                D_HEAD0, D_HEAD1, D_HEAD2,
-                               seqlen_q, head_dim,
+                               seqlen_q, hdim_v,
                                other=0.0,
                                PADDED_ROW=True,
                                PADDED_COL=PADDED_HEAD,
@@ -93,7 +93,7 @@ def bwd_preprocess(
     do0, do1, do2 = composed_load(do_ptrs0, do_ptrs1, do_ptrs2,
                                   offs_m,
                                   D_HEAD0, D_HEAD1, D_HEAD2,
-                                  seqlen_q, head_dim,
+                                  seqlen_q, hdim_v,
                                   other=0.0,
                                   PADDED_ROW=True,
                                   PADDED_COL=PADDED_HEAD,
@@ -131,7 +131,7 @@ def bwd_preprocess_varlen(
     stride_doz, stride_doh, stride_dom, stride_don,
     cu_seqlens_q,
     max_seqlen_q,
-    head_dim,
+    hdim_v,
     BLOCK_M: tl.constexpr,
     D_HEAD: tl.constexpr,
     PADDED_HEAD: tl.constexpr,
@@ -164,7 +164,7 @@ def bwd_preprocess_varlen(
     # o_offset = off_h * stride_oh + cu_seqlens_q_start * stride_om
     # O_block_ptr = tl.make_block_ptr(
     #     base=Out + o_offset,
-    #     shape=(seqlen_q, head_dim),
+    #     shape=(seqlen_q, hdim_v),
     #     strides=(stride_om, stride_on),
     #     offsets=(off_m, 0),
     #     block_shape=(BLOCK_M, D_HEAD),
@@ -178,7 +178,7 @@ def bwd_preprocess_varlen(
     # do_offset = off_h * stride_doh + cu_seqlens_q_start * stride_dom
     # DO_block_ptr = tl.make_block_ptr(
     #     base=DO + do_offset,
-    #     shape=(seqlen_q, head_dim),
+    #     shape=(seqlen_q, hdim_v),
     #     strides=(stride_dom, stride_don),
     #     offsets=(off_m, 0),
     #     block_shape=(BLOCK_M, D_HEAD),
@@ -197,7 +197,7 @@ def bwd_preprocess_varlen(
     o0, o1, o2 = composed_load(o_ptrs0, o_ptrs1, o_ptrs2,
                                offs_m,
                                D_HEAD0, D_HEAD1, D_HEAD2,
-                               seqlen_q, head_dim,
+                               seqlen_q, hdim_v,
                                other=0.0,
                                PADDED_ROW=True,
                                PADDED_COL=PADDED_HEAD,
@@ -205,7 +205,7 @@ def bwd_preprocess_varlen(
     do0, do1, do2 = composed_load(do_ptrs0, do_ptrs1, do_ptrs2,
                                   offs_m,
                                   D_HEAD0, D_HEAD1, D_HEAD2,
-                                  seqlen_q, head_dim,
+                                  seqlen_q, hdim_v,
                                   other=0.0,
                                   PADDED_ROW=True,
                                   PADDED_COL=PADDED_HEAD,
