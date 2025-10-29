@@ -16,7 +16,7 @@ class bwd_preprocess(FlashKernel):
         'stride_oz', 'stride_oh', 'stride_om', 'stride_ok',
         'stride_doz', 'stride_doh', 'stride_dom', 'stride_dok',
         'max_seqlen_q',
-        'head_dim',
+        'hdim_v',
         'BLOCK_M', # tl.constexpr starts here
         'BLOCK_DMODEL',  # TODO: Rename the triton kernel
         'PADDED_HEAD',
@@ -43,7 +43,7 @@ class bwd_preprocess_varlen(FlashKernel):
         'stride_doz', 'stride_doh', 'stride_dom', 'stride_dok',
         'cu_seqlens_q',
         'max_seqlen_q',
-        'head_dim',
+        'hdim_v',
         'BLOCK_M', # tl.constexpr starts here
         'BLOCK_DMODEL',
         'PADDED_HEAD',

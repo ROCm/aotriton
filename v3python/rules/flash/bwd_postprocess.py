@@ -11,7 +11,7 @@ class bwd_postprocess(FlashKernel):
         'stride_accz', 'stride_acch', 'stride_accm', 'stride_acck',
         'stride_dqz', 'stride_dqh', 'stride_dqm', 'stride_dqk',
         'max_seqlen_q',
-        'head_dim',
+        'head_qk',
         'BLOCK_M',          # tl.constexpr starts here
         'BLOCK_DMODEL',     # TODO: Rename the triton kernel
         'PADDED_HEAD',
