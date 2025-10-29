@@ -374,6 +374,6 @@ def bwd_kernel_dq(
                    o_start_row=start_q,
                    o_start_col=0,
                    o_rows=seqlen_q,
-                   o_cols=head_qk,
+                   o_cols=hdim_qk,
                    stride_row=stride_dqm,
                    stride_col=stride_dqk)

@@ -459,8 +459,8 @@ bwd_kernel_dq(T4 q,
   auto stream = stream_wrap.native();
   auto gpu = getGpuFromStream(stream);
   constexpr int kMinHeadDimCompiled = 16;
-  int hdim_qk = in.Q.size(3);
-  int hdim_vo = in.V.size(3);
+  int hdim_qk = q.size(3);
+  int hdim_vo = v.size(3);
   int hdim_max = std::max(hdim_qk, hdim_vo);
   int num_head_q = q.size(1);
   int num_head_k = k.size(1);

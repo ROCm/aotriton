@@ -184,7 +184,7 @@ _attn_fwd_common(T4 q,
   auto gpu = getGpuFromStream(stream);
   int hdim_qk = q.size(3);
   int hdim_vo = v.size(3);
-  int hdim_max = std::max(hdim_qk, hdim_v);
+  int hdim_max = std::max(hdim_qk, hdim_vo);
   int num_head_q = q.size(1);
   int num_head_k = k.size(1);
   const auto& compiled_head_dims = AttnFwdMetadata::get_BLOCK_DMODEL_choices();
