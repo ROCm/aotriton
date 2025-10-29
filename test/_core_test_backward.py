@@ -218,23 +218,28 @@ but in PyTorch API it does not present at all
 
 def _do_test_op_bwd(request, args, device_str='cuda'):
     BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type = args
+    if isinstance(D_HEAD, int):
+        HDIM_QK = HDIM_VO = D_HEAD
+    else:
+        HDIM_QK, HDIM_VO = D_HEAD
+    HDIM_MAX = max(HDIM_QK, HDIM_VO)
     if sm_scale == 'l1':
-        sm_scale = 1.0 / D_HEAD
+        sm_scale = 1.0 / HDIM_QK
     elif sm_scale == 'l2':
-        sm_scale = 1.0 / math.sqrt(D_HEAD)
+        sm_scale = 1.0 / math.sqrt(HDIM_QK)
     if BWD_IMPL == 2:  # AITER ASM
         if dropout_p > 0.0:
             pytest.skip("Dropout unsupported in AITER ASM backend for now. Need adjust FWD PRNG function")
-        if D_HEAD < 64:
+        if HDIM_MAX < 64:
             pytest.skip("hdim < 64 AITER ASM kernel does not exist.")
-        if D_HEAD > 192:
+        if HDIM_MAX > 192:
             pytest.skip("hdim > 192 AITER ASM kernel does not exist.")
     if causal and bias_type is not None:
         pytest.skip("_scaled_dot_product_attention: Explicit attn_mask should not be set when is_causal=True")
-    if SMALL_VRAM and seqlen_q * seqlen_k * D_HEAD > 4096 * 8192 * 256:
+    if SMALL_VRAM and seqlen_q * seqlen_k * HDIM_MAX > 4096 * 8192 * 256:
         pytest.skip("Skip large tests (qkd > 4096 * 8192 * 256) due to low VRAM.")
     if 'gfx11' in torch.cuda.get_device_properties(0).gcnArchName:
-        if D_HEAD > 256:
+        if HDIM_MAX > 256:
             pytest.skip("Skip hdim > 256 on gfx11 arch due to register pressure.")
     utname = os.environ.get('PYTEST_CURRENT_TEST')
     use_adiff_entry = adiffs.get(utname, None)
@@ -274,6 +279,10 @@ def _do_test_op_bwd(request, args, device_str='cuda'):
     ref_out, _ = ctx.compute_ref_forward(sdpa_params)
 
     dout = torch.rand_like(tri_out)
+    print(f'{q.shape=}')
+    print(f'{k.shape=}')
+    print(f'{v.shape=}')
+    print(f'{tri_out.shape=}')
     if PROBE_UNSUPPORTED:
         try:
             ctx.compute_backward(tri_out, dout)
@@ -307,7 +316,7 @@ def _do_test_op_bwd(request, args, device_str='cuda'):
     assert dk_allclose and dv_allclose and dq_allclose and db_allclose, f'{dk_allclose=} {dv_allclose=} {dq_allclose=} {db_allclose=} {tfts=}'
     print(f'{tri_out=}')
     print(f'{adiff=} {grads_adiff=}')
-    return seqlen_q * seqlen_k * D_HEAD
+    return seqlen_q * seqlen_k * HDIM_MAX
 
 def core_test_op_bwd(request, args, device : int | None = None):
     try:

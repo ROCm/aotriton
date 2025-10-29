@@ -30,7 +30,7 @@ from _core_test_backward import (
 if FOR_RELEASE == 0:
     @pytest.mark.parametrize('BATCH', [3])
     @pytest.mark.parametrize('N_HEADS', [5, (10, 2)], ids=fmt_nheads)
-    @pytest.mark.parametrize('D_HEAD', [8, 64, 184], ids=fmt_hdim)
+    @pytest.mark.parametrize('D_HEAD', [8, 64, 184, (24, 152), (120, 8)], ids=fmt_hdim)
     @pytest.mark.parametrize('seqlen_q', [11, 523, 2048])
     @pytest.mark.parametrize('seqlen_k', [31, 337, 1063])
     @pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
