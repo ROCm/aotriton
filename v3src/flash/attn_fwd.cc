@@ -70,7 +70,9 @@ attn_fwd(const attn_fwd_params& in,
   auto stream = stream_wrap.native();
   auto gpu = getGpuFromStream(stream);
   int batch = in.Q.size(0);
-  int head_dim = in.Q.size(3);
+  int hdim_qk = in.Q.size(3);
+  int hdim_vo = in.V.size(3);
+  int hdim_max = std::max(hdim_qk, hdim_vo);
   int num_head_q = in.Q.size(1);
   int num_head_k = in.K.size(1);
   int num_seqlens = 0;
@@ -85,7 +87,7 @@ attn_fwd(const attn_fwd_params& in,
     max_seqlen_k = in.Max_seqlen_k;
   }
   const auto& compiled_head_dims = AttnFwdMetadata::get_BLOCK_DMODEL_choices();
-  int16_t head_dim_rounded = round_value(head_dim, compiled_head_dims);
+  int16_t hdim_rounded = round_value(hdim_max, compiled_head_dims);
   OpAttnFwdParams params = {
     .Q = &in.Q,
     .K = &in.K,
@@ -107,9 +109,10 @@ attn_fwd(const attn_fwd_params& in,
     .cu_seqlens_k = &in.cu_seqlens_k,
     .Max_seqlen_q = max_seqlen_q,
     .Max_seqlen_k = max_seqlen_k,
-    .BLOCK_DMODEL = head_dim_rounded,
-    .Head_dim = head_dim,
-    .PADDED_HEAD = head_dim_rounded != head_dim,
+    .BLOCK_DMODEL = hdim_rounded,
+    .Hdim_qk = static_cast<int32_t>(hdim_qk),
+    .Hdim_vo = static_cast<int32_t>(hdim_vo),
+    .PADDED_HEAD = (hdim_rounded != hdim_qk || hdim_rounded != hdim_vo),
     .ENABLE_DROPOUT = in.dropout_p > 0.0,
     .dropout_p = in.dropout_p,
     .philox_seed_ptr  = &in.philox_seed_ptr,
@@ -179,14 +182,16 @@ _attn_fwd_common(T4 q,
   hipError_t err;
   auto stream = stream_wrap.native();
   auto gpu = getGpuFromStream(stream);
-  int head_size = q.size(3);
+  int hdim_qk = q.size(3);
+  int hdim_vo = v.size(3);
+  int hdim_max = std::max(hdim_qk, hdim_v);
   int num_head_q = q.size(1);
   int num_head_k = k.size(1);
   const auto& compiled_head_dims = AttnFwdMetadata::get_BLOCK_DMODEL_choices();
-  int16_t head_size_rounded = round_value(head_size, compiled_head_dims);
-  if (head_size_rounded < 0) {
+  int16_t hdim_rounded = round_value(hdim_max, compiled_head_dims);
+  if (hdim_rounded < 0) {
 #if AOTRITON_VERBOSE
-    std::cerr << "Head dimension " << head_size << " unsupported. ";
+    std::cerr << "Head dimension " << hdim_max << " unsupported. ";
     if (compiled_head_dims.empty()) {
       std::cerr << "No head dimension (BLOCK_DMODEL) compiled into the binary." << std::endl;
     } else {
@@ -219,9 +224,10 @@ _attn_fwd_common(T4 q,
     .cu_seqlens_k = &cu_seqlens_k,
     .Max_seqlen_q = max_seqlen_q,
     .Max_seqlen_k = max_seqlen_k,
-    .BLOCK_DMODEL = head_size_rounded,
-    .Head_dim = static_cast<int32_t>(head_size),
-    .PADDED_HEAD = (head_size_rounded != head_size),
+    .BLOCK_DMODEL = hdim_rounded,
+    .Hdim_qk = static_cast<int32_t>(hdim_qk),
+    .Hdim_vo = static_cast<int32_t>(hdim_vo),
+    .PADDED_HEAD = (hdim_rounded != hdim_qk || hdim_rounded != hdim_vo),
     .ENABLE_DROPOUT = dropout_p > 0.0,
     .dropout_p = dropout_p,
     .philox_seed_ptr = &philox_seed,
@@ -349,9 +355,9 @@ attn_fwd(T4 q,
 }
 
 hipError_t
-attn_fwd_compact_varlen(T4 q,            // 1 x num_heads x total_q x head_size, total_q := \sum_{i=0}^{b} s_i
-                        T4 k,            // 1 x num_heads x total_k x head_size, total_k := \sum_{i=0}^{b} s_i
-                        T4 v,            // 1 x num_heads x total_v x head_size, total_, := \sum_{i=0}^{b} s_i
+attn_fwd_compact_varlen(T4 q,            // 1 x num_heads x total_q x hdim_qk, total_q := \sum_{i=0}^{b} s_i
+                        T4 k,            // 1 x num_heads x total_k x hdim_qk, total_k := \sum_{i=0}^{b} s_i
+                        T4 v,            // 1 x num_heads x total_v x hdim_vo, total_, := \sum_{i=0}^{b} s_i
                         T4 b,            // reserved, note this b is "bias", not "batch"
                         T1 cu_seqlens_q, // b+1, i64
                         T1 cu_seqlens_k, // b+1, i64
@@ -359,7 +365,7 @@ attn_fwd_compact_varlen(T4 q,            // 1 x num_heads x total_q x head_size,
                         int32_t max_seqlen_k,
                         float sm_scale,
                         T2 softmax_lse,
-                        T4 out, // 1 x num_heads x total_q x head_size
+                        T4 out, // 1 x num_heads x total_q x hdim_vo
                         float dropout_p,
                         T0 philox_seed,
                         T0 philox_offset1,

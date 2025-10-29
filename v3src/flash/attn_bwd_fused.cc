@@ -62,17 +62,19 @@ _bwd_kernel_fuse(T4 q,
   auto gpu = getGpuFromStream(stream);
   int num_head_q = q.size(1);
   int num_head_k = k.size(1);
-  int head_size = q.size(3);
+  int hdim_qk = q.size(3);
+  int hdim_vo = v.size(3);
+  int hdim_max = std::max(hdim_qk, hdim_vo);
   const auto& compiled_head_dims = BwdKernelFuseMetadata::get_BLOCK_DMODEL_choices();
-  int head_size_rounded = round_value(head_size, compiled_head_dims);
+  int hdim_rounded = round_value(hdim_max, compiled_head_dims);
   // FIXME: Remove when compiler bug fixed
   if (Gpu2VendorArch(gpu) == CAT32(GpuVendor::kAMD, 0x950)) {
-    if (head_size_rounded == 48)
-      head_size_rounded = 64;
-    if (head_size_rounded == 80)
-      head_size_rounded = 96;
+    if (hdim_rounded == 48)
+      hdim_rounded = 64;
+    if (hdim_rounded == 80)
+      hdim_rounded = 96;
   }
-  if (head_size_rounded < 0) {
+  if (hdim_rounded < 0) {
 #if AOTRITON_VERBOSE
     std::cerr << "Head dimension " << head_size << " unsupported. ";
     if (compiled_head_dims.empty()) {
@@ -109,17 +111,18 @@ _bwd_kernel_fuse(T4 q,
     .num_seqlens = num_seqlens,
     .max_seqlen_q = max_seqlen_q,
     .max_seqlen_k = max_seqlen_k,
-    .head_dim = head_size,
+    .hdim_qk = hdim_qk,
+    .hdim_vo = hdim_vo,
     .dropout_p = dropout_p,
     .philox_seed_ptr = &philox_seed,
     .philox_offset1 = &philox_offset1,
     .philox_offset2 = static_cast<uint64_t>(philox_offset2),
     .Window_left = WindowValue::TopLeftAligned,
     .Window_right = WindowValue::TopLeftAligned,
-    .BLOCK_DMODEL = static_cast<int8_t>(head_size_rounded),
+    .BLOCK_DMODEL = static_cast<int8_t>(hdim_rounded),
     .CAUSAL_TYPE = is_causal ? CausalType::WindowedAttention : CausalType::None,
     .ENABLE_DROPOUT = dropout_p > 0.0,
-    .PADDED_HEAD = head_size_rounded != head_size,
+    .PADDED_HEAD = (hdim_qk != hdim_rounded || hdim_vo != hdim_rounded),
     .BIAS_TYPE = static_cast<int8_t>(bias_type),
   };
   BwdKernelFuseContext context;
