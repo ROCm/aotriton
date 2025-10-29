@@ -100,7 +100,7 @@ def bwd_inner_dq(
         kt0, kt1, kt2 = composed_load_with_offset(kt_ptrs0, kt_ptrs1, kt_ptrs2,
                                                   start_k, k_stride, offs_k,
                                                   BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
-                                                  seqlen_k, head_qk,
+                                                  seqlen_k, hdim_qk,
                                                   other=0.0,
                                                   PADDED_ROW=PADDED_SEQ,
                                                   PADDED_COL=PADDED_HEAD,

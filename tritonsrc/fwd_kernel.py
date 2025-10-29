@@ -71,6 +71,7 @@ def attn_fwd(
         # Head Dimensions
         BLOCK_DMODEL: tl.constexpr,
         Hdim_qk : constexpr_or_i32,
+        Hdim_vo : constexpr_or_i32,
         PADDED_HEAD: tl.constexpr,
         # dropout and PRNG
         ENABLE_DROPOUT: tl.constexpr,
