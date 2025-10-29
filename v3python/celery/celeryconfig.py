@@ -1,0 +1,43 @@
+# Copyright © 2025 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+class ConfigRC(object):
+    def __init__(self):
+        self.broker_url = 'amqp://guest:guest@localhost:5672'
+        self.result_backend = 'rpc://'
+        import os
+        workdir = os.getenv('AOTRITON_CELERY_WORKDIR', None)
+        if workdir is None:
+            return
+        from argparse import Namespace
+        args = Namespace()
+        from pathlib import Path
+        with open(Path(workdir) / 'config.rc') as f:
+            for line in f:
+                if line.startswith('#'):
+                    continue
+                line = line.strip()
+                k, v = line.split('=')[:2]
+                setattr(args, k, v)
+        FMT = 'amqp://{}:{}@{}:{}//'
+        self.broker_url = FMT.format(args.RABBITMQ_DEFAULT_USER,
+                                     args.RABBITMQ_DEFAULT_PASS,
+                                     args.CELERY_SERVICE_HOST,
+                                     args.RABBITMQ_NODE_PORT)
+        FMT = 'db+postgresql+psycopg://{}:{}@{}:{}'
+        self.result_backend = FMT.format(args.POSTGRES_USER,
+                                         args.POSTGRES_PASSWORD,
+                                         args.CELERY_SERVICE_HOST,
+                                         args.POSTGRES_PORT)
+        print(f'{self.result_backend=}')
+
+
+rc = ConfigRC()
+broker_url = rc.broker_url
+result_backend = rc.result_backend
+task_serializer = 'json'
+accept_content = ['json']
+result_serializer = 'json'
+worker_concurrency = 8
+worker_prefetch_multiplier = 1
+# task_routes = ('v3python.celery.tasks.route_task', )

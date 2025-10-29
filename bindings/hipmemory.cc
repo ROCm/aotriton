@@ -47,6 +47,9 @@ namespace pyaotriton {
       }
     }
     hipError_t last_state() const { return last_state_; }
+    void zero_memory() {
+      last_state_ = hipMemset(memory_, 0, memory_size_);
+    }
   private:
     void* memory_ = nullptr;
     size_t memory_size_ = 0;
@@ -61,6 +64,7 @@ namespace pyaotriton {
       .def("last_state", &HipMemory::last_state)
       .def("load_from_host", &HipMemory::load_from_host)
       .def("store_to_host", &HipMemory::store_to_host)
+      .def("zero_memory", &HipMemory::zero_memory)
     ;
   }
 }

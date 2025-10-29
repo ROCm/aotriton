@@ -11,6 +11,7 @@ namespace AOTRITON_NS::v2 {
 struct AOTRITON_API CppTune {
 #if AOTRITON_BUILD_FOR_TUNING
   // TODO: Move them into a base class since they are common to all kernels
+  bool peek_kernel_numbers = false;
   int force_kernel_index = -1;
   int total_number_of_kernels = -1;
   const char* selected_kernel_psels = nullptr;

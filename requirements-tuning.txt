@@ -1,0 +1,7 @@
+-r requirements.txt
+pyelftools
+msgpack
+filelock
+celery[pyamqp,sqlalchemy]
+psycopg  # the more mature psycopg2 needs extra binaries.
+dacite
