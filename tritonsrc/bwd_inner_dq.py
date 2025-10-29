@@ -40,7 +40,7 @@ def bwd_inner_dq(
     stride_bn, stride_bm, stride_dbn, stride_dbm,
     do0, do1, do2,
     Di, l_i,
-    seqlen_q, seqlen_k, hdim_qk, hdim_v,
+    seqlen_q, seqlen_k, hdim_qk, hdim_vo,
     # Sub-problem range, (lo, hi) specify the range for seqlen_q
     # start_q, lo, hi,
     start_q, nblocks_1, nblocks_2, Block_range_1, Block_range_2,
@@ -157,7 +157,7 @@ def bwd_inner_dq(
         vt0, vt1, vt2 = composed_load_with_offset(vt_ptrs0, vt_ptrs1, vt_ptrs2,
                                                   start_k, v_stride, offs_k,
                                                   BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
-                                                  seqlen_k, hdim_v,
+                                                  seqlen_k, hdim_vo,
                                                   other=0.0,
                                                   PADDED_ROW=PADDED_SEQ,
                                                   PADDED_COL=PADDED_HEAD,

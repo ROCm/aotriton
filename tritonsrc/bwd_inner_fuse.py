@@ -42,7 +42,7 @@ def bwd_inner_dk_dv_fuse(
     o_ptrs0, o_ptrs1, o_ptrs2,
     o_stride,
     l_ptrs,
-    seqlen_q, seqlen_k, hdim_qk, hdim_v,
+    seqlen_q, seqlen_k, hdim_qk, hdim_vo,
     # Sub-problem range, (lo, hi) specify the range for seqlen_q
     start_k, nblocks_1, nblocks_2, Block_range_1, Block_range_2,
     ## Dropout
@@ -124,7 +124,7 @@ def bwd_inner_dk_dv_fuse(
         do0, do1, do2 = composed_load_with_offset(do_ptrs0, do_ptrs1, do_ptrs2,
                                                   start_q, do_stride, offs_q,
                                                   BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
-                                                  seqlen_q, hdim_v,
+                                                  seqlen_q, hdim_vo,
                                                   other=0.0,
                                                   PADDED_ROW=PADDED_SEQ,
                                                   PADDED_COL=PADDED_HEAD,
@@ -132,7 +132,7 @@ def bwd_inner_dk_dv_fuse(
         o0, o1, o2 = composed_load_with_offset(o_ptrs0, o_ptrs1, o_ptrs2,
                                                start_q, o_stride, offs_q,
                                                BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
-                                               seqlen_q, hdim_v,
+                                               seqlen_q, hdim_vo,
                                                other=0.0,
                                                PADDED_ROW=PADDED_SEQ,
                                                PADDED_COL=PADDED_HEAD,
