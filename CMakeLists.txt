@@ -19,13 +19,17 @@ if(DEFINED ENV{AOTRITON_CI_SUPPLIED_SHA1})
   set(AOTRITON_GIT_SHA1 $ENV{AOTRITON_CI_SUPPLIED_SHA1})
 else()
   execute_process(
-    COMMAND git log -1 --format=%H
+    COMMAND git rev-parse HEAD
     WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
     OUTPUT_VARIABLE AOTRITON_GIT_SHA1
     OUTPUT_STRIP_TRAILING_WHITESPACE
   )
 endif()
-message(STATUS "[AOTriton] Use SHA1 ${AOTRITON_GIT_SHA1}.")
+if(AOTRITON_GIT_SHA1)
+  message(STATUS "[AOTriton] Use SHA1 ${AOTRITON_GIT_SHA1}.")
+else()
+  message(FATAL_ERROR "[AOTriton] Cannot idenfity Git Commit SHA1 from command `git rev-parse HEAD`.\nIf you are building AOTriton without git clone, define AOTRITON_CI_SUPPLIED_SHA1.")
+endif()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_C_USE_RESPONSE_FILE_FOR_OBJECTS   ON)
@@ -78,6 +82,14 @@ set(AOTRITON_GPU_BUILD_TIMEOUT "8.0" CACHE STRING "GPU kernel compiler times out
 set(AOTRITON_TARGET_ARCH "gfx90a;gfx942;gfx950;gfx1100;gfx1101;gfx1102;gfx1151;gfx1150;gfx1201;gfx1200" CACHE STRING "Target GPU Architecture. Select all GPUs within the given list")
 set(TARGET_GPUS "OBSOLETE" CACHE STRING "OBSOLETE. To select only one GPU, use AOTRITON_TARGET_ARCH or AOTRITON_OVERRIDE_TARGET_GPUS.")
 set(AOTRITON_OVERRIDE_TARGET_GPUS "" CACHE STRING "Override AOTRITON_TARGET_ARCH, and only build for GPUs within this list.")
+set(AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE "" CACHE STRING "Specify how to use alternative Triton wheels for different architectures in a YAML config file.")
+
+if(AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
+  cmake_path(IS_ABSOLUTE AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE altwheel_yaml_is_absolute)
+  if(NOT ${altwheel_yaml_is_absolute})
+    message(FATAL_ERROR "AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE must be absolute path, but configured as ${AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE}")
+  endif()
+endif()
 
 # Early failure for python binding
 if(NOT AOTRITON_NO_PYTHON)
@@ -148,10 +160,13 @@ endif()
 set(ENV{VIRTUAL_ENV} "${VENV_DIR}")
 message("VENV_DIR ${VENV_DIR}")
 if(WIN32)
-  set(VENV_BIN_PYTHON "${VENV_DIR}/Scripts/python")
+  set(VENV_REL_PYTHON "Scripts/python")
+  set(VENV_REL_TRITON "triton/_C/libtriton.pyd")
 else()
-  set(VENV_BIN_PYTHON "${VENV_DIR}/bin/python")
+  set(VENV_REL_PYTHON "bin/python")
+  set(VENV_REL_TRITON "triton/_C/libtriton.so")
 endif()
+set(VENV_BIN_PYTHON "${VENV_DIR}/${VENV_REL_PYTHON}")
 # set(Python3_FIND_VIRTUALENV FIRST)
 # unset(Python3_EXECUTABLE)
 # find_package(Python3 COMPONENTS Interpreter REQUIRED)
@@ -162,6 +177,7 @@ message("VENV_SITE ${VENV_SITE}")
 
 execute_process(COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_BIN_PYTHON}" -m pip install -r "${CMAKE_CURRENT_LIST_DIR}/requirements.txt")
 
+set(ALL_TRITON_SOS "")
 if(AOTRITON_NOIMAGE_MODE)
   message(STATUS "[AOTriton] Skipping triton due to AOTRITON_NOIMAGE_MODE")
 elseif(AOTRITON_INHERIT_SYSTEM_SITE_TRITON)
@@ -186,11 +202,7 @@ else()
   # set(AOTRITON_TRITON_EGGLINK "${VENV_SITE}/triton.egg-link")
   # message("AOTRITON_TRITON_EGGLINK ${AOTRITON_TRITON_EGGLINK}")
 
-  if(WIN32)
-    set(AOTRITON_TRITON_SO "${VENV_SITE}/triton/_C/libtriton.pyd")
-  else()
-    set(AOTRITON_TRITON_SO "${VENV_SITE}/triton/_C/libtriton.so")
-  endif()
+  set(AOTRITON_TRITON_SO "${VENV_SITE}/${VENV_REL_TRITON}")
 
   if(AOTRITON_USE_LOCAL_TRITON_WHEEL)
     add_custom_command(OUTPUT "${AOTRITON_TRITON_SO}"
@@ -202,8 +214,38 @@ else()
       WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/third_party/triton/"
     )
   endif()
-  add_custom_target(aotriton_venv_triton ALL DEPENDS "${AOTRITON_TRITON_SO}")
+  LIST(APPEND ALL_TRITON_SOS "${AOTRITON_TRITON_SO}")
 endif()
+
+if(NOT AOTRITON_NOIMAGE_MODE AND AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
+  execute_process(
+    COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_BIN_PYTHON}" -c
+    "import yaml,sys; f = open(sys.argv[1]); d = yaml.load(f, Loader=yaml.Loader); print(';'.join([f'{k};{v}' for k, v in d['venvs'].items()]))"
+    "${AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE}"
+    OUTPUT_VARIABLE ALT_VENVS
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+  )
+  while(ALT_VENVS)
+    list(POP_FRONT ALT_VENVS ALT_VENV_NAME)
+    list(POP_FRONT ALT_VENVS WHEEL)
+    # FIXME: altvenvs is separately defined here and codegen/root.py. Find a way to unify?
+    set(ALT_VENV_DIR "altvenvs/${ALT_VENV_NAME}")
+    message(STATUS "ALT_VENV_DIR ${ALT_VENV_DIR}")
+    message(STATUS "WHEEL ${WHEEL}")
+    execute_process(COMMAND "${Python3_EXECUTABLE}" -m venv "${ALT_VENV_DIR}")
+    set(ALT_VENV_BIN_PYTHON "${ALT_VENV_DIR}/${VENV_REL_PYTHON}")
+    execute_process(COMMAND "${ALT_VENV_BIN_PYTHON}" -m pip install -r "${CMAKE_CURRENT_LIST_DIR}/requirements.txt")
+    set(AOTRITON_TRITON_SO "${ALT_VENV_DIR}/${VENV_REL_TRITON}")
+    add_custom_command(OUTPUT "${AOTRITON_TRITON_SO}"
+      COMMAND "${ALT_VENV_BIN_PYTHON}" -m pip install ${WHEEL}
+    )
+    LIST(APPEND ALL_TRITON_SOS "${AOTRITON_TRITON_SO}")
+  endwhile(ALT_VENVS)
+endif(NOT AOTRITON_NOIMAGE_MODE AND AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
+
+if(ALL_TRITON_SOS)
+  add_custom_target(aotriton_venv_triton ALL DEPENDS "${ALL_TRITON_SOS}")
+endif(ALL_TRITON_SOS)
 
 add_subdirectory(v3src)
 
