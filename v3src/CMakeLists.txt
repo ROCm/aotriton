@@ -61,6 +61,11 @@ if(AOTRITON_NOIMAGE_MODE)
   list(APPEND GENERATE_OPTION "--noimage_mode")
 endif()
 
+if(AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
+  list(APPEND GENERATE_OPTION "--alt_venv_config")
+  list(APPEND GENERATE_OPTION "${AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE}")
+endif()
+
 if(WIN32)
   find_package(dlfcn-win32 REQUIRED)
   set(CMAKE_DL_LIBS dlfcn-win32::dl)
@@ -109,6 +114,8 @@ if(NOT AOTRITON_NOIMAGE_MODE)
   set(I "0")  # Progress
   foreach(RULE IN LISTS HSACO_RULES)
     # message("${RULE}")
+    list(POP_FRONT RULE ALTNAME)
+    list(POP_FRONT RULE COMPILER_PYTHON)
     list(POP_FRONT RULE HSACO)
     list(POP_FRONT RULE SRC)
     list(POP_FRONT RULE KNAME)
@@ -118,11 +125,11 @@ if(NOT AOTRITON_NOIMAGE_MODE)
     list(POP_FRONT RULE TGTGPU)
     list(POP_FRONT RULE SIG)
     add_custom_command(OUTPUT "${HSACO}"
-      COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
-      TRITON_CACHE_DIR=${CMAKE_BINARY_DIR}/triton-cache
+      COMMAND ${CMAKE_COMMAND} -E env
+      TRITON_CACHE_DIR=${CMAKE_BINARY_DIR}/triton-cache.${ALTNAME}
       TRITON_F32_DEFAULT="ieee"
       TRITON_STORE_BINARY_ONLY=1
-      "${VENV_BIN_PYTHON}"
+      "${COMPILER_PYTHON}"
       "${AOTRITON_COMPILER}"
       "${SRC}"
       "--kernel_name" "${KNAME}"
