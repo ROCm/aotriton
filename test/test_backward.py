@@ -9,11 +9,14 @@ assert get_name_suffix() != "tRiToN_tEsTeR", ("AOTriton is compiled with suffix 
                                               "and should not be used for general tests.")
 import pytest
 from _core_test_backward import (
-    ALL_HEADDIMS,
+    ALL_INT_HEADDIMS,
+    ALL_TUP_HEADDIMS,
     REGULAR_SEQLEN,
     REGULAR_SEQLEN_2K,
     PRIME_SEQLEN_Q,
     PRIME_SEQLEN_K,
+    PRIME_SEQLEN_Q_1K,
+    PRIME_SEQLEN_K_1K,
     FOR_RELEASE,
     BWD_IMPL,
     DTYPES,
@@ -27,7 +30,7 @@ from _core_test_backward import (
     core_test_large_bf16_nan_values,
 )
 
-if FOR_RELEASE == 0:
+if FOR_RELEASE >= 0:
     @pytest.mark.parametrize('BATCH', [3])
     @pytest.mark.parametrize('N_HEADS', [5, (10, 2)], ids=fmt_nheads)
     @pytest.mark.parametrize('D_HEAD', [8, 64, 184, (24, 152), (120, 8)], ids=fmt_hdim)
@@ -47,7 +50,7 @@ if FOR_RELEASE == 0:
 if FOR_RELEASE > 0:
     @pytest.mark.parametrize('BATCH', [3])
     @pytest.mark.parametrize('N_HEADS', [5])
-    @pytest.mark.parametrize('D_HEAD', ALL_HEADDIMS, ids=fmt_hdim)
+    @pytest.mark.parametrize('D_HEAD', ALL_INT_HEADDIMS, ids=fmt_hdim)
     @pytest.mark.parametrize('seqlen_q', REGULAR_SEQLEN)
     @pytest.mark.parametrize('seqlen_k', REGULAR_SEQLEN)
     @pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
@@ -64,7 +67,7 @@ if FOR_RELEASE > 0:
 if FOR_RELEASE > 0 and BWD_IMPL != 2:  # AITER ASM does not support bias ATM
     @pytest.mark.parametrize('BATCH', [3])
     @pytest.mark.parametrize('N_HEADS', [5])
-    @pytest.mark.parametrize('D_HEAD', ALL_HEADDIMS, ids=fmt_hdim)
+    @pytest.mark.parametrize('D_HEAD', ALL_INT_HEADDIMS, ids=fmt_hdim)
     @pytest.mark.parametrize('seqlen_q', REGULAR_SEQLEN_2K)
     @pytest.mark.parametrize('seqlen_k', REGULAR_SEQLEN_2K)
     @pytest.mark.parametrize('dropout_p', [0.0, 0.5] if BWD_IMPL != 2 else [0.0])
@@ -84,7 +87,7 @@ if FOR_RELEASE > 0 and BWD_IMPL != 2:  # AITER ASM does not support bias ATM
 if FOR_RELEASE > 0:  # Make the loading faster
     @pytest.mark.parametrize('BATCH', [3])
     @pytest.mark.parametrize('N_HEADS', [(16, 8), (10, 2)])
-    @pytest.mark.parametrize('D_HEAD', ALL_HEADDIMS, ids=fmt_hdim)
+    @pytest.mark.parametrize('D_HEAD', ALL_INT_HEADDIMS, ids=fmt_hdim)
     @pytest.mark.parametrize('seqlen_q', [4, 143, 2048])
     @pytest.mark.parametrize('seqlen_k', [4, 127, 579, 2048])
     @pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
@@ -101,7 +104,7 @@ if FOR_RELEASE > 0:  # Make the loading faster
 if FOR_RELEASE > 1:  # Make the loading faster
     @pytest.mark.parametrize('BATCH', [3])
     @pytest.mark.parametrize('N_HEADS', [5])
-    @pytest.mark.parametrize('D_HEAD', ALL_HEADDIMS, ids=fmt_hdim)
+    @pytest.mark.parametrize('D_HEAD', ALL_INT_HEADDIMS, ids=fmt_hdim)
     @pytest.mark.parametrize('seqlen_q', PRIME_SEQLEN_Q)
     @pytest.mark.parametrize('seqlen_k', PRIME_SEQLEN_K)
     @pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
@@ -112,6 +115,25 @@ if FOR_RELEASE > 1:  # Make the loading faster
     @pytest.mark.parametrize('bias_type', [None, 'matrix'], ids=['BiasOff', 'BiasOn'])
     @pytest.mark.parametrize('BWDOP', BWDOP_ids)
     def test_irregulars(request, torch_gpu, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type):
+        if bias_type is not None and (seqlen_q > 2048 or seqlen_k > 2048):
+            pytest.skip("Skip large UT with bias to avoid OOM")
+        args = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
+        core_test_op_bwd(request, args, device=torch_gpu)
+
+if FOR_RELEASE > 2:  # Testing hdim_qk != hdim_vo
+    @pytest.mark.parametrize('BATCH', [3])
+    @pytest.mark.parametrize('N_HEADS', [5])
+    @pytest.mark.parametrize('D_HEAD', ALL_TUP_HEADDIMS, ids=fmt_hdim)
+    @pytest.mark.parametrize('seqlen_q', PRIME_SEQLEN_Q_1K)
+    @pytest.mark.parametrize('seqlen_k', PRIME_SEQLEN_K_1K)
+    @pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
+    @pytest.mark.parametrize('dropout_p', [0.0, 0.5])
+    @pytest.mark.parametrize('dtype', DTYPES)
+    @pytest.mark.parametrize('sm_scale', ['l1'])
+    @pytest.mark.parametrize('storage_flip', [False])
+    @pytest.mark.parametrize('bias_type', [None, 'matrix'], ids=['BiasOff', 'BiasOn'])
+    @pytest.mark.parametrize('BWDOP', BWDOP_ids)
+    def test_hdim_qk_ne_vo(request, torch_gpu, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type):
         if bias_type is not None and (seqlen_q > 2048 or seqlen_k > 2048):
             pytest.skip("Skip large UT with bias to avoid OOM")
         args = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)

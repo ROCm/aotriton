@@ -6,6 +6,7 @@ import pytest
 import torch
 import os
 import sys
+import bisect
 import math
 import pathlib
 import fcntl
@@ -134,6 +135,8 @@ REGULAR_SEQLEN = [8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
 REGULAR_SEQLEN_2K = [8, 16, 32, 64, 128, 256, 512, 1024, 2048]  # OOM when test with bias
 PRIME_SEQLEN_Q = [11, 17, 37, 67, 157, 257, 523, 1033, 2063, 4919]
 PRIME_SEQLEN_K = [13, 31, 41, 71, 223, 337, 571, 1063, 2081, 5237]
+PRIME_SEQLEN_Q_1K = [11, 17, 37, 67, 157, 257, 523]
+PRIME_SEQLEN_K_1K = [13, 31, 41, 71, 223, 337, 571]
 
 SMALL_HEADDIM_ONLY = bool(int(os.getenv('SMALL_HEADDIM_ONLY', default='0')))
 LARGE_HEADDIM_ONLY = bool(int(os.getenv('LARGE_HEADDIM_ONLY', default='0')))
@@ -162,10 +165,48 @@ if LARGE_HEADDIM_ONLY:
     # PRIME_HEADDIMS = remove_not_larger_than(PRIME_HEADDIMS, 192)
     M8_HEADDIMS = remove_not_larger_than(M8_HEADDIMS, 192)
 
-ALL_HEADDIMS = POT_HEADDIMS + NPOT_HEADDIMS + M8_HEADDIMS
+ALL_INT_HEADDIMS = POT_HEADDIMS + NPOT_HEADDIMS + M8_HEADDIMS
+ALL_INT_HEADDIMS = sorted(list(set(ALL_INT_HEADDIMS)))
+
+# Goal: for each hdim_1, find its POT decomposed hdims, and for each POT hdim
+#       tensor block, test the loading the half of the block.
+# For example, when testing hdim_1 = 216, the input will be padded as hdim = 224 = 32 + 64 + 128
+# Then we should test
+#   - 216, 64 = 128 / 2                 (padding load block_0)
+#   - 216, 160 = 128 + 64 / 2           (full load block_0, padding load block_1)
+#   - 216, 208 = 128 + 64 + 32 / 2      (full load block_0, padding load block_1)
+#   - and the flipped combination
+#
+# The whole process will force us to test ~3x more tests:
+#   len(ALL_INT_HEADDIMS)=24
+#   len(ALL_TUP_HEADDIMS)=73
+def _generate_inequal_hdims():
+    ALL_COMPILED_HDIMS = sorted(POT_HEADDIMS + NPOT_HEADDIMS)
+    def decompose(hdim_1):
+        compiled_hdim = ALL_COMPILED_HDIMS[bisect.bisect_left(ALL_COMPILED_HDIMS, hdim_1)]
+        tmp = compiled_hdim
+        block_0 = 2 ** (tmp.bit_length() - 1)
+        tmp -= block_0
+        block_1 = 2 ** (tmp.bit_length() - 1) if tmp > 0 else 0
+        tmp -= block_1
+        block_2 = 2 ** (tmp.bit_length() - 1) if tmp > 0 else 0
+        tmp -= block_2
+        assert tmp == 0
+        blocks = [item for item in [block_0, block_1, block_2] if item != 0]
+        solid = 0
+        for b in blocks:
+            yield hdim_1, solid + b // 2
+            yield solid + b // 2, hdim_1
+            solid += b
+
+    for hdim_1 in ALL_INT_HEADDIMS:
+        yield from decompose(hdim_1)
+
+ALL_TUP_HEADDIMS = sorted(list(set(_generate_inequal_hdims())))
+
+ALL_HEADDIMS = ALL_INT_HEADDIMS + ALL_TUP_HEADDIMS
 
 # Deduplication
-ALL_HEADDIMS = sorted(list(set(ALL_HEADDIMS)))
 
 '''
 Note: for now we cannot really test both fused and split kernel at the same
