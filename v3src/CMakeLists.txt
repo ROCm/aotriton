@@ -24,16 +24,23 @@ message(STATUS "AOTRITON_TARGET_ARCH ${AOTRITON_TARGET_ARCH}")
 message(STATUS "AOTRITON_OVERRIDE_TARGET_GPUS ${AOTRITON_OVERRIDE_TARGET_GPUS}")
 message(STATUS "EFFECTIVE_TARGET_GPUS ${EFFECTIVE_TARGET_GPUS}")
 
-# Decompress tuning_database.sqlite.xz
-execute_process(COMMAND ${CMAKE_COMMAND} -E tar xf
-  "${CMAKE_SOURCE_DIR}/v3python/rules/tuning_database.sqlite3.tar.xz"
-  WORKING_DIRECTORY "${AOTRITON_V2_BUILD_DIR}")
-file(SHA256 "${AOTRITON_V2_BUILD_DIR}/tuning_database.sqlite3" DB_SHA256)
+set(DBXZ_BASE "${CMAKE_SOURCE_DIR}/v3python")
+file(GLOB_RECURSE DB_TARS CONFIGURE_DEPENDS "${DBXZ_BASE}/database/*.sqlite3.tar.xz")
+foreach(DBXZ IN LISTS DB_TARS)
+  cmake_path(RELATIVE_PATH DBXZ BASE_DIRECTORY "${DBXZ_BASE}" OUTPUT_VARIABLE REL_DBXZ)
+  cmake_path(REMOVE_FILENAME REL_DBXZ)
+  file(ARCHIVE_EXTRACT INPUT "${DBXZ}" DESTINATION "${AOTRITON_V2_BUILD_DIR}/${REL_DBXZ}")
+  message(STATUS "Extracting ${DBXZ} to ${AOTRITON_V2_BUILD_DIR}/${REL_DBXZ}")
+endforeach(DBXZ)
 
-execute_process(COMMAND ${CMAKE_COMMAND} -E tar xf
-  "${CMAKE_SOURCE_DIR}/v3python/rules/op_database.sqlite3.tar.xz"
-  WORKING_DIRECTORY "${AOTRITON_V2_BUILD_DIR}")
-file(SHA256 "${AOTRITON_V2_BUILD_DIR}/op_database.sqlite3" OPDB_SHA256)
+message(STATUS "Assembling Central Database...")
+execute_process(
+    COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
+    "${VENV_BIN_PYTHON}" -m v3python.database_compose
+    --database_file "${AOTRITON_V2_BUILD_DIR}/database/tuning_database.sqlite3"
+    --decomposed "${AOTRITON_V2_BUILD_DIR}/database"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
+    COMMAND_ERROR_IS_FATAL ANY)
 
 get_filename_component(AOTRITON_COMPILER "${CMAKE_CURRENT_LIST_DIR}/../v3python/compile.py" ABSOLUTE)
 message("AOTRITON_COMPILER ${AOTRITON_COMPILER}")
@@ -59,6 +66,11 @@ endif()
 
 if(AOTRITON_NOIMAGE_MODE)
   list(APPEND GENERATE_OPTION "--noimage_mode")
+endif()
+
+if(AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
+  list(APPEND GENERATE_OPTION "--alt_venv_config")
+  list(APPEND GENERATE_OPTION "${AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE}")
 endif()
 
 if(WIN32)
@@ -93,7 +105,10 @@ if(NOT AOTRITON_NOIMAGE_MODE)
     COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
     "${VENV_BIN_PYTHON}"
     -m v3python.write_image_signature
-    "${AOTRITON_V2_BUILD_DIR}" ${AOTRITON_GIT_SHA1} "${SIGNATURE_FILE}"
+    --build_dir "${AOTRITON_V2_BUILD_DIR}"
+    --git_sha1 ${AOTRITON_GIT_SHA1}
+    --target_arch ${AOTRITON_TARGET_ARCH}
+    --output_file "${SIGNATURE_FILE}"
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
   )
 
@@ -109,6 +124,8 @@ if(NOT AOTRITON_NOIMAGE_MODE)
   set(I "0")  # Progress
   foreach(RULE IN LISTS HSACO_RULES)
     # message("${RULE}")
+    list(POP_FRONT RULE ALTNAME)
+    list(POP_FRONT RULE COMPILER_PYTHON)
     list(POP_FRONT RULE HSACO)
     list(POP_FRONT RULE SRC)
     list(POP_FRONT RULE KNAME)
@@ -118,11 +135,11 @@ if(NOT AOTRITON_NOIMAGE_MODE)
     list(POP_FRONT RULE TGTGPU)
     list(POP_FRONT RULE SIG)
     add_custom_command(OUTPUT "${HSACO}"
-      COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
-      TRITON_CACHE_DIR=${CMAKE_BINARY_DIR}/triton-cache
+      COMMAND ${CMAKE_COMMAND} -E env
+      TRITON_CACHE_DIR=${CMAKE_BINARY_DIR}/triton-cache.${ALTNAME}
       TRITON_F32_DEFAULT="ieee"
       TRITON_STORE_BINARY_ONLY=1
-      "${VENV_BIN_PYTHON}"
+      "${COMPILER_PYTHON}"
       "${AOTRITON_COMPILER}"
       "${SRC}"
       "--kernel_name" "${KNAME}"

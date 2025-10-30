@@ -7,14 +7,18 @@ from pathlib import Path
 import json
 import triton
 import hashlib
+import itertools
 import importlib.metadata
 from .database import Factories as DatabaseFactories
+from .rules import kernels
 
 def parse():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    p.add_argument('build_dir', type=Path)
-    p.add_argument('git_sha1')
-    p.add_argument('output_file')
+    p.add_argument('--build_dir', type=Path, required=True)
+    p.add_argument('--git_sha1', required=True)
+    p.add_argument('--target_arch', nargs='+')
+    p.add_argument('--vendors', nargs='*', default=['amd'])
+    p.add_argument('--output_file', required=True)
     args = p.parse_args()
     return args
 
@@ -26,12 +30,33 @@ def hashfile(fn):
             m.update(chunk)
     return m.hexdigest()
 
+'''
+Note: here we hash the uncompressed sqlite3 file, because hash of tar file is
+affected by metadata like owner/mdate
+'''
+def hash_primary(args, vendor, arch, k):
+    fn = args.build_dir / 'database' / vendor / arch / k.FAMILY / f'{k.NAME}.sqlite3'
+    if fn.is_file():
+        return hashfile(fn)
+    return None
+
 def main():
     args = parse()
     sig = {}
     sig['AOTRITON_GIT_SHA1'] = args.git_sha1
     fac = DatabaseFactories.create_factory(args.build_dir)
-    db = { 'primary' : hashfile(args.build_dir / fac.SIGNATURE_FILE) }
+    db = {}
+    def gen_primary_db_hash():
+        for vendor, arch in itertools.product(args.vendors, args.target_arch):
+            d = {}
+            for k in kernels:
+                if k.FAMILY not in d:
+                    d[k.FAMILY] = {}
+                dbhash = hash_primary(args, vendor, arch, k)
+                if dbhash is not None:
+                    d[k.FAMILY][k.NAME] = dbhash
+            yield arch, d
+    db['primary'] = dict(gen_primary_db_hash())
     def gen_secondary_db_hash():
         for k, v in fac.SECONDARY_DATABASES.items():
             yield k, hashfile(args.build_dir / v)

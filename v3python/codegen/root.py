@@ -3,7 +3,7 @@
 
 # Root of the Generation process
 
-from pathlib import Path
+from pathlib import Path, PurePath
 from collections import defaultdict
 from ..rules import (
     kernels as triton_kernels,
@@ -23,10 +23,55 @@ from .common import (
     hsaco_filename,
 )
 from ..gpu_targets import AOTRITON_ARCH_TO_DIRECTORY
+import sys
+import os
+import re
+import yaml
+
+# DO NOT USE Path.absolute(), which does not resolve '..' in the path
+REL_PYTHON = Path(os.path.abspath(sys.executable)).relative_to(Path(sys.exec_prefix))
+
+class StrMatcher(object):
+    def __init__(self, pattern):
+        self._pattern = pattern
+
+    def match(self, value) -> bool:
+        return value == self._pattern
+
+class GlobMatcher(StrMatcher):
+    def match(self, value) -> bool:
+        return PurePath(value).match(self._pattern)
+
+class RegexMatcher(object):
+    def __init__(self, pattern):
+        self._pattern = re.compile(pattern)
+
+    def match(self, value) -> bool:
+        return self._pattern.match(value) is not None
+
+class RuleMatcher(object):
+    def __init__(self, name, goal, matchers):
+        self._matchers = matchers
+        self._name = name
+        self._goal = goal
+
+    def match(self, f: "Functional"):
+        for attr, matcher in self._matchers:
+            value = getattr(f, attr)
+            matched = matcher.match(value)
+            if not matched:
+                return None
+        return self._name, self._goal
 
 class RootGenerator(object):
     def __init__(self, args):
         self._args = args
+        if args.alt_venv_config:
+            with open(args.alt_venv_config) as yamlfile:
+                self._altrules_dict = yaml.load(yamlfile, Loader=yaml.Loader)
+        else:
+            self._altrules_dict = {}
+        self._load_altwheel_config(self._altrules_dict)
 
     def generate(self):
         args = self._args
@@ -108,7 +153,10 @@ class RootGenerator(object):
     def write_hsaco(self, kdesc, path, functional, ksig, rulefile):
         log(lambda : f'{ksig=}')
         srcfn = kdesc.triton_source_path
-        print(self._absobjfn(path, kdesc, ksig),
+        venv, python = self._get_venv_and_python(functional)
+        print(venv,
+              python.as_posix(),
+              self._absobjfn(path, kdesc, ksig),
               str(srcfn.absolute()),
               kdesc.triton_kernel_name,
               ksig.num_warps,
@@ -125,6 +173,35 @@ class RootGenerator(object):
     def _absasmfn(self, asm_path):
         full = self._args.root_dir / asm_path
         return str(full.absolute())
+
+    def _load_altwheel_config(self, d: dict):
+        venvs = d.get("venvs", {})
+        rules = d.get("rules", [])
+        self._altwheels = { name: Path(wheel) for name, wheel in venvs.items() }
+        def get_altvenv_python(name) -> Path:
+            return (self._args.build_dir.parent / "altvenvs" / name / REL_PYTHON).absolute()
+        self._venvpython = { name: get_altvenv_python(name) for name in self._altwheels.keys() }
+        if "default" not in self._venvpython:
+            self._venvpython['default'] = (self._args.build_dir.parent / 'venv' / REL_PYTHON).absolute()
+        self._altrules = [ self._create_rule_function(rule) for rule in rules ]
+
+    def _create_rule_function(self, rule):
+        def gen_matcher():
+            for key, matcher_factory in zip(["matches", "rmatches", "gmatches"],
+                                            [StrMatcher, RegexMatcher, GlobMatcher]):
+                for attr, pattern in rule.get(key, {}).items():
+                    yield (attr, matcher_factory(pattern))
+        venv_name = rule['venv']
+        venvpython = self._venvpython[venv_name]
+        return RuleMatcher(venv_name, venvpython, list(gen_matcher()))
+
+    def _get_venv_and_python(self, f: 'Interface'):
+        for rule in self._altrules:
+            matched = rule.match(f)
+            if matched is not None:
+                return matched
+        # We can add an always-true matcher to self._altrules but let's be explicit
+        return "default", self._venvpython["default"]
 
     # def write_cluster(self, kdesc, path, functional, signatures, clusterfile):
     #     full_filepack_path = functional.full_filepack_path

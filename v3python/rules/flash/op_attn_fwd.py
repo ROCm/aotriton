@@ -47,7 +47,8 @@ class OpAttnFwd(OpAttn):
         "Max_seqlen_k",
         # Head Dimensions
         "BLOCK_DMODEL",
-        "Head_dim",
+        "Hdim_qk",
+        "Hdim_vo",
         "PADDED_HEAD",
         # dropout and PRNG
         "ENABLE_DROPOUT",
@@ -111,7 +112,7 @@ class OpAttnFwd(OpAttn):
         frozenset(['L']) : ['*fp32:16'],
         frozenset(['cu_seqlens_q', 'cu_seqlens_k']) : ['*i32:16'],
         frozenset(['Num_head_q', 'Num_head_k', 'Num_seqlens', 'Max_seqlen_q', 'Max_seqlen_k']) : ['i32'],
-        frozenset(['Head_dim']) : [CDC('PADDED_HEAD', False, 'BLOCK_DMODEL', 'i32')],
+        frozenset(['Hdim_qk', 'Hdim_vo']) : [CDC('PADDED_HEAD', False, 'BLOCK_DMODEL', 'i32')],
         frozenset(['dropout_p']) : _IF_DROPOUT('fp32'),
         frozenset(['philox_seed_ptr', 'philox_seed_output', 'philox_offset_output']) : _IF_DROPOUT('*u64'),
         frozenset(['philox_offset1']) : _IF_DROPOUT('*u64'),

@@ -19,4 +19,5 @@ class Factories(object):
         for fac in FACTORIES:
             if (path / fac.SIGNATURE_FILE).exists():
                 return fac(path)
+            print(f'Cannot find {path/fac.SIGNATURE_FILE}')
         assert False, 'database.Factories.create_factory failed. Database file missing?'
