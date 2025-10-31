@@ -25,6 +25,7 @@ namespace pyaotriton::v3 {
         py::class_<attn_options>(m, "attn_options")
           .def(py::init<>())
           .def_readwrite("force_backend_index", &attn_options::force_backend_index)
+          .def_readwrite("deterministic", &attn_options::deterministic)
         ;
         py::class_<attn_fwd_params>(m, "attn_fwd_params")
           .def(py::init<>())

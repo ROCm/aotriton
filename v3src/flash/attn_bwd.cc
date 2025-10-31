@@ -141,9 +141,15 @@ attn_bwd(const attn_bwd_params& in,
               << std::endl;
   }
 #endif
+  bool deterministic = false;
+  if (params_version >= 4 && options) {
+    deterministic = options->deterministic;
+  }
   if (options && options->force_backend_index >= 0) {
     context.backend_index = static_cast<OpAttnBwdContext::BackendEnum>(options->force_backend_index);
     context.disable_fallback = true;
+  } else if (deterministic) {
+    context.backend_index = OpAttnBwdContext::BackendEnum::kMetro_TritonSplit;
   } else {
     err = context.lookup_optimal(gpu);
     if (err != hipSuccess) {
