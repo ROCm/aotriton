@@ -85,6 +85,7 @@ def _attn_fwd_inner(
     # For MASK_STEPS, disable pipelining with num_stages=1
     # To Enable pipelining, must use BLOCK_M': 256, 'BLOCK_N': 64, num_stages=4, num_warps=8
     NUM_STAGES: tl.constexpr = 1 if MASK_STEPS else None
+
     # loop over k, v, and update accumulator
     # To overcome the challenge that we cannot loop over disjoint ranges in Triton like:
     #   for i in range(s0, e0) + range(s1, e1):
