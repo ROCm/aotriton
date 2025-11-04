@@ -424,10 +424,6 @@ class SdpaContext(object):
                                       scale=p.sm_scale,
                                       dropout_mask=dropout_mask,
                                       enable_gqa=enable_gqa)
-        print(f'{ref_q.shape=}')
-        print(f'{ref_k.shape=}')
-        print(f'{ref_v.shape=}')
-        print(f'{ref_out.shape=}')
         return (ref_out, ref_mask)
 
     def compute_ref_forward(self, p : SdpaParams):

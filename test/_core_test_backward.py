@@ -320,10 +320,6 @@ def _do_test_op_bwd(request, args, device_str='cuda'):
     ref_out, _ = ctx.compute_ref_forward(sdpa_params)
 
     dout = torch.rand_like(tri_out)
-    print(f'{q.shape=}')
-    print(f'{k.shape=}')
-    print(f'{v.shape=}')
-    print(f'{tri_out.shape=}')
     if PROBE_UNSUPPORTED:
         try:
             ctx.compute_backward(tri_out, dout)
