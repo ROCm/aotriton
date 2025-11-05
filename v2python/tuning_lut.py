@@ -13,6 +13,7 @@ import os
 SKIPPED_LUT_CHECK = os.getenv('AOTRITON_SKIP_LUT_CHECK', default='').split(',')
 
 ARCH_TO_DIRECTORY = {
+    'gfx908'  : 'amd-gfx908',
     'gfx90a'  : 'amd-gfx90a',
     'gfx942' : 'amd-gfx942',
     'gfx1100' : 'amd-gfx110x',
