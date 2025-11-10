@@ -50,7 +50,7 @@ function build_wheel() {
     -w / \
     ${BASE_DOCKER_IMAGE} \
     bash \
-    /input/docker-script-build-altwheel.sh ${TRITON_COMMIT}
+    /input/docker-script-build-altwheel.sh
 }
 
 for althash in "$@"; do

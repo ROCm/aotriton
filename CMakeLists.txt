@@ -28,7 +28,7 @@ endif()
 if(AOTRITON_GIT_SHA1)
   message(STATUS "[AOTriton] Use SHA1 ${AOTRITON_GIT_SHA1}.")
 else()
-  message(FATAL_ERROR "[AOTriton] Cannot idenfity Git Commit SHA1 from command `git rev-parse HEAD`.\nIf you are building AOTriton without git clone, define AOTRITON_CI_SUPPLIED_SHA1.")
+  message(FATAL_ERROR "[AOTriton] Cannot identify Git Commit SHA1 from command `git rev-parse HEAD`.\nIf you are building AOTriton without git clone, define AOTRITON_CI_SUPPLIED_SHA1.")
 endif()
 
 set(CMAKE_CXX_STANDARD 20)

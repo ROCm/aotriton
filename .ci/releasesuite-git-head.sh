@@ -7,7 +7,7 @@ fi
 
 if ! command -v yq &> /dev/null; then
   cat <<EOF
-Command 'yq' is not found. Install it with
+Command 'yq' could not be found. Install it with
 dnf install yq
 or
 snap install yq
@@ -30,7 +30,7 @@ If either --image or --runtime is specified, the missing one will not be built.
 The YAML configuration file follows the format shown in docs/AltWheelExample.yaml.
 However it accepts GIT SHA1 for Triton wheels instead.
 The build process will
-1. Built Triton wheels from the SHA1
+1. Build Triton wheels from the SHA1
 2. Replace SHA1 with actual wheel path and use the replaced yaml file to build
    AOTriton
 EOF
@@ -104,13 +104,6 @@ if [ ${SUITE_SELECT_RUNTIME} -lt 0 ]; then
 fi
 
 echo "SUITE_RUNTIME_LIST ${SUITE_RUNTIME_LIST[@]}"
-
-function build_triton_wheels() {
-  local althash
-  for althash in "${TRITON_ALTHASH[@]}"; do
-    build_triton_wheels $althash
-  done
-}
 
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 . "${SCRIPT_DIR}/common-vars.sh"
