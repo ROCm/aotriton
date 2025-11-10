@@ -75,16 +75,18 @@ def composed_load(
     COLS0, COLS1, COLS2 = composed_offs_1d(D0, D1, D2)
     if TRANSPOSED:
         ptrs_mask = ROWS[None, :] < i_rows if PADDED_ROW or PADDED_COL else None
-        # x_mask is only needed when D0 > 0 and D1 == 0 and D2 == 0
-        x_mask = ptrs_mask & (COLS0[:, None] < i_cols) if PADDED_COL and D1 == 0 else ptrs_mask
-        y_mask = ptrs_mask & (COLS1[:, None] < i_cols) if PADDED_COL and D2 == 0 else ptrs_mask
-        z_mask = ptrs_mask & (COLS2[:, None] < i_cols) if PADDED_COL and True    else ptrs_mask
+        # x_mask **WAS** only needed when D0 > 0 and D1 == 0 and D2 == 0
+        # because the rounding algorithm ensures only last block is padded
+        # However, with hdim_qk != hdim_vo support, this is not true anymore.
+        x_mask = ptrs_mask & (COLS0[:, None] < i_cols) if PADDED_COL else ptrs_mask
+        y_mask = ptrs_mask & (COLS1[:, None] < i_cols) if PADDED_COL else ptrs_mask
+        z_mask = ptrs_mask & (COLS2[:, None] < i_cols) if PADDED_COL else ptrs_mask
     else:
         ptrs_mask = ROWS[:, None] < i_rows if PADDED_ROW or PADDED_COL else None
-        # x_mask is only needed when D0 > 0 and D1 == 0 and D2 == 0
-        x_mask = ptrs_mask & (COLS0[None, :] < i_cols) if PADDED_COL and D1 == 0 else ptrs_mask
-        y_mask = ptrs_mask & (COLS1[None, :] < i_cols) if PADDED_COL and D2 == 0 else ptrs_mask
-        z_mask = ptrs_mask & (COLS2[None, :] < i_cols) if PADDED_COL and True    else ptrs_mask
+        # See x_mask documentation above
+        x_mask = ptrs_mask & (COLS0[None, :] < i_cols) if PADDED_COL else ptrs_mask
+        y_mask = ptrs_mask & (COLS1[None, :] < i_cols) if PADDED_COL else ptrs_mask
+        z_mask = ptrs_mask & (COLS2[None, :] < i_cols) if PADDED_COL else ptrs_mask
     x = tl.load(x) if x_mask is None else tl.load(x, mask=x_mask, other=other)
     y = tl.load(y) if y_mask is None else tl.load(y, mask=y_mask, other=other)
     z = tl.load(z) if z_mask is None else tl.load(z, mask=z_mask, other=other)

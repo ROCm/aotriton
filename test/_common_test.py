@@ -20,9 +20,18 @@ AOTRITON_TORCH_ONLY_USE_CPU = bool(int(os.getenv('AOTRITON_TORCH_ONLY_USE_CPU', 
 # Overrides by AOTRITON_TORCH_ONLY_USE_CPU=1
 AOTRITON_REF_DEVICE_OPTION = os.getenv('AOTRITON_REF_DEVICE_OPTION', default='default')
 
-TORCH_GE_2_7 = (str(torch.__version__) >= '2.7.0')
+def _get_torch_version():
+    strver = str(torch .__version__).split('.')[:2]
+    intver = [int(e) for e in strver]
+    return tuple(intver)
+
+TORCH_VERSION_TUPLE = _get_torch_version()
+
+TORCH_GE_2_7 = (TORCH_VERSION_TUPLE >= (2, 7))
 
 def fmt_hdim(val):
+    if isinstance(val, tuple):
+        return 'hdim(' + ','.join([str(e) for e in val]) + ')'
     return f'hdim{val}'
 
 def fmt_nheads(val):
@@ -50,7 +59,7 @@ def allow_fp16_bf16_reduction_math_sdp(v : bool):
         torch.backends.cuda.allow_fp16_bf16_reduction_math_sdp(v)
 
 def sdpa_math(query, key, value, attn_mask=None, dropout_p=0.0, dropout_mask=None, is_causal=False, scale=None, enable_gqa=False):
-    if str(torch.__version__) >= '2.5.0':
+    if TORCH_VERSION_TUPLE >= (2, 5):
         allow_fp16_bf16_reduction_math_sdp(True)
         retv = torch.ops.aten._scaled_dot_product_attention_math(query, key, value,
                                                                  dropout_p=dropout_p,
@@ -177,9 +186,14 @@ class SdpaContext(object):
             Q_HEADS = K_HEADS = N_HEADS
         else:
             Q_HEADS, K_HEADS = N_HEADS
-        qdims = (BATCH, Q_HEADS, seqlen_q, D_HEAD)
-        kdims = (BATCH, K_HEADS, seqlen_k, D_HEAD)
-        vdims = (BATCH, K_HEADS, seqlen_k, D_HEAD)
+        if isinstance(D_HEAD, int):
+            HDIM_QK = HDIM_VO = D_HEAD
+        else:
+            HDIM_QK, HDIM_VO = D_HEAD
+        qdims = (BATCH, Q_HEADS, seqlen_q, HDIM_QK)
+        kdims = (BATCH, K_HEADS, seqlen_k, HDIM_QK)
+        vdims = (BATCH, K_HEADS, seqlen_k, HDIM_VO)
+        odims = (BATCH, Q_HEADS, seqlen_q, HDIM_VO)
         def round_to_8x(n):
             return 8 * cdiv(n, 8)
         bdims = (BATCH, Q_HEADS, seqlen_q, round_to_8x(seqlen_k))
@@ -223,7 +237,7 @@ class SdpaContext(object):
             v = torch.transpose(v, x, y)
             if b is not None:
                 b = torch.transpose(b, x, y)
-        dout = rng(q.shape) if with_backward else None
+        dout = rng(odims) if with_backward else None
         self.dev_tensors = ( q, k, v, b )
         self.ddev_tensors = tuple([dout])
 
@@ -232,7 +246,7 @@ class SdpaContext(object):
     '''
     def create_ctx_tensors(self):
         q, k, v, b = self.dev_tensors
-        o = torch.empty_like(q)
+        o = torch.empty((q.shape[0], q.shape[1], q.shape[2], v.shape[3]), device=q.device, dtype=q.dtype)
         M = torch.empty((q.shape[0] * q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)
         self.ctx_tensors = (o, M)
 
@@ -667,9 +681,13 @@ class VarlenSdpaContext(SdpaContext):
         '''
 
     def __init__(self, N_HEADS, D_HEAD, seqlens_q, seqlens_k, dtype, device='cuda'):
-        q  = self._rng_varlen_tensor(N_HEADS, seqlens_q, D_HEAD, dtype, device)
-        k  = self._rng_varlen_tensor(N_HEADS, seqlens_k, D_HEAD, dtype, device)
-        v  = self._rng_varlen_tensor(N_HEADS, seqlens_k, D_HEAD, dtype, device)
+        if isinstance(D_HEAD, int):
+            HDIM_QK = HDIM_VO = D_HEAD
+        else:
+            HDIM_QK, HDIM_VO = D_HEAD
+        q  = self._rng_varlen_tensor(N_HEADS, seqlens_q, HDIM_QK, dtype, device)
+        k  = self._rng_varlen_tensor(N_HEADS, seqlens_k, HDIM_QK, dtype, device)
+        v  = self._rng_varlen_tensor(N_HEADS, seqlens_k, HDIM_VO, dtype, device)
         b = None
         self.dev_tensors = (q, k, v, b)
         self.OUT_FUDGE_FACTOR = 3

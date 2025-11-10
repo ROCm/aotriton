@@ -86,11 +86,11 @@ class _attention(torch.autograd.Function):
             assert False, 'Cannot set return_autotune and return_logsumexp at the same time. Both are returned as 3rd value'
         # shape constraints
         Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
-        assert Lq == Lk and Lk == Lv
+        assert Lq == Lk
         # assert Lk in {16, 32, 64, 128}
         seqlen_q = q.shape[2]
         seqlen_k = k.shape[2]
-        o = torch.empty_like(q)
+        o = torch.empty((q.shape[0], q.shape[1], q.shape[2], v.shape[3]), device=q.device, dtype=q.dtype)
 
         # def round_to_16x(x):
         #     return ((x + 15) // 16) * 16

@@ -70,7 +70,8 @@ def attn_fwd(
         Max_seqlen_k : constexpr_or_i32,
         # Head Dimensions
         BLOCK_DMODEL: tl.constexpr,
-        Head_dim : constexpr_or_i32,
+        Hdim_qk : constexpr_or_i32,
+        Hdim_vo : constexpr_or_i32,
         PADDED_HEAD: tl.constexpr,
         # dropout and PRNG
         ENABLE_DROPOUT: tl.constexpr,
@@ -350,7 +351,7 @@ def attn_fwd(
                     q0, q1, q2 = composed_load(q_ptrs0, q_ptrs1, q_ptrs2,
                                                offs_m,
                                                BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
-                                               seqlen_q, Head_dim,
+                                               seqlen_q, Hdim_qk,
                                                other=0.0,
                                                PADDED_ROW=True,
                                                PADDED_COL=PADDED_HEAD,
@@ -359,7 +360,7 @@ def attn_fwd(
                     q0, q1, q2 = composed_load(q_ptrs0, q_ptrs1, q_ptrs2,
                                                offs_m,
                                                BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
-                                               seqlen_q, Head_dim,
+                                               seqlen_q, Hdim_qk,
                                                other=0.0,
                                                PADDED_ROW=False,
                                                PADDED_COL=PADDED_HEAD,
@@ -399,7 +400,7 @@ def attn_fwd(
                             B_ptrs, stride_bn,
                             # Task positions
                             start_M, nblocks_1, 0, fb_lo, None,
-                            seqlen_k, seqlen_q, Head_dim,
+                            seqlen_k, seqlen_q, Hdim_qk, Hdim_vo,
                             # Dropout
                             idropout_p, philox_seed, batch_philox_offset, philox_offset_stride,
                             encoded_sm_base, Max_seqlen_k,
@@ -459,7 +460,7 @@ def attn_fwd(
                             B_ptrs, stride_bn,
                             # Task positions
                             start_M, nblocks_1, nblocks_2, lb_lo, rb_lo,
-                            seqlen_k, seqlen_q, Head_dim,
+                            seqlen_k, seqlen_q, Hdim_qk, Hdim_vo,
                             # Dropout
                             idropout_p, philox_seed, batch_philox_offset, philox_offset_stride,
                             encoded_sm_base, Max_seqlen_k,
@@ -550,7 +551,7 @@ def attn_fwd(
                                o_start_row=start_m * BLOCK_M,
                                o_start_col=0,
                                o_rows=seqlen_q,
-                               o_cols=Head_dim,
+                               o_cols=Hdim_vo,
                                stride_row=stride_om,
                                stride_col=stride_on)
 
