@@ -5,20 +5,40 @@ if [ -z "$BASH_VERSION" ]; then
   exit 1
 fi
 
+if ! command -v yq &> /dev/null; then
+  cat <<EOF
+Command 'yq' is not found. Install it with
+dnf install yq
+or
+snap install yq
+EOF
+>&2
+  exit 1
+fi
+
 function help() {
   cat <<EOF
-Usage releasesuite-git-head.sh [-h] [--image] [--runtime] <output directory>.
-          -h: show help and exit.
-     --image: build GPU images.
-   --runtime: build C++ runtimes.
+Usage releasesuite-git-head.sh [-h] [-r <ROCM ver>] [--image] [--runtime] [--yaml <yaml config file>] <output directory>.
+                    -h: show help and exit.
+         -r <ROCM ver>: build ROCM runtime image
+               --image: build GPU images.
+             --runtime: build all C++ runtimes.
+  --yaml_config <.yml>: Use yml config file to build the release
 By default both GPU images and runtimes are built.
 If either --image or --runtime is specified, the missing one will not be built.
+
+The YAML configuration file follows the format shown in docs/AltWheelExample.yaml.
+However it accepts GIT SHA1 for Triton wheels instead.
+The build process will
+1. Built Triton wheels from the SHA1
+2. Replace SHA1 with actual wheel path and use the replaced yaml file to build
+   AOTriton
 EOF
 >&2
   exit $1
 }
 
-TEMP=$(getopt -o h --longoptions image,runtime -- "$@")
+TEMP=$(getopt -o h,r: --longoptions image,runtime,yaml: -- "$@")
 
 if [ $? -ne 0 ]; then
   echo "Error: Invalid option." >&2
@@ -29,7 +49,10 @@ eval set -- "$TEMP"
 
 SUITE_SELECT_IMAGE=-1
 SUITE_SELECT_RUNTIME=-1
+SUITE_RUNTIME_LIST=(6.2.4 6.3.4 6.4.3 7.0.2 7.1)
+CMDLIST=()
 SUITE_DEFAULT_SELECTION=1
+SUITE_YAML=""
 
 while true; do
   case "$1" in
@@ -44,6 +67,16 @@ while true; do
       SUITE_SELECT_RUNTIME=1
       SUITE_DEFAULT_SELECTION=0
       ;;
+    -r)
+      SUITE_SELECT_RUNTIME=1
+      SUITE_DEFAULT_SELECTION=0
+      shift
+      CMDLIST+=("$1")
+      ;;
+    --yaml)
+      shift
+      SUITE_YAML="$1"
+      ;;
     '--')
       shift
       break
@@ -51,6 +84,10 @@ while true; do
   esac
   shift
 done
+
+if [[ ${#CMDLIST[@]} -ne 0 ]]; then
+  SUITE_RUNTIME_LIST=("${CMDLIST[@]}")
+fi
 
 if [ "$#" -ne 1 ]; then
   echo "$@"
@@ -66,10 +103,20 @@ if [ ${SUITE_SELECT_RUNTIME} -lt 0 ]; then
   SUITE_SELECT_RUNTIME=${SUITE_DEFAULT_SELECTION}
 fi
 
+echo "SUITE_RUNTIME_LIST ${SUITE_RUNTIME_LIST[@]}"
+
+function build_triton_wheels() {
+  local althash
+  for althash in "${TRITON_ALTHASH[@]}"; do
+    build_triton_wheels $althash
+  done
+}
+
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 . "${SCRIPT_DIR}/common-vars.sh"
 . "${SCRIPT_DIR}/common-setup-volume.sh"
 . "${SCRIPT_DIR}/common-git-https-origin.sh"
+. "${SCRIPT_DIR}/include-altwheel.sh"
 
 GIT_COMMIT=$(git rev-parse HEAD)
 
@@ -86,6 +133,18 @@ setup_source_volume ${SOURCE_VOLUME} ${GIT_HTTPS_ORIGIN} ${LOCAL_DIR} ${GIT_COMM
 
 INPUT_DIR=${SCRIPT_DIR}/../dockerfile/input
 OUTPUT_DIR="$1"
+
+if [[ -n "${SUITE_YAML}" && ${SUITE_SELECT_IMAGE} -gt 0 ]]; then
+  readarray -t TRITON_ALTHASH < <(yq -r '.venvs|.[]' "${SUITE_YAML}")
+  mkdir -p "${INPUT_DIR}/altwheels"
+  cp "${SUITE_YAML}" "${INPUT_DIR}/altwheels/tmpconfig.yaml"
+  bash "${SCRIPT_DIR}/build-altwheels.sh" "${INPUT_DIR}/altwheels" "${TRITON_ALTHASH[@]}"
+  replace_hash \
+    "${INPUT_DIR}/altwheels/tmpconfig.yaml" \
+    "${INPUT_DIR}/altwheels" \
+    "/input/altwheels" \
+    "${TRITON_ALTHASH[@]}"
+fi
 
 function build_inside() {
   rocmver="$1"
@@ -109,13 +168,13 @@ function build_inside() {
 
 if [ ${SUITE_SELECT_RUNTIME} -gt 0 ]; then
   # build ROCM runtime image
-  for rocmver in 6.2.4 6.3.4 6.4.3 7.0_rc1
+  for rocmver in "${SUITE_RUNTIME_LIST[@]}"
   do
     build_inside ${rocmver} ON
   done
 fi
 
 if [ ${SUITE_SELECT_IMAGE} -gt 0 ]; then
-  rocmver=7.0_rc1
+  rocmver=7.1
   build_inside ${rocmver} OFF
 fi
