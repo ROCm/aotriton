@@ -23,7 +23,7 @@ Usage releasesuite-git-head.sh [-h] [-r <ROCM ver>] [--image] [--runtime] [--yam
          -r <ROCM ver>: build ROCM runtime image
                --image: build GPU images.
              --runtime: build all C++ runtimes.
-  --yaml_config <.yml>: Use yml config file to build the release
+         --yaml <.yml>: Use yml config file to build the release
 By default both GPU images and runtimes are built.
 If either --image or --runtime is specified, the missing one will not be built.
 
@@ -137,6 +137,9 @@ if [[ -n "${SUITE_YAML}" && ${SUITE_SELECT_IMAGE} -gt 0 ]]; then
     "${INPUT_DIR}/altwheels" \
     "/input/altwheels" \
     "${TRITON_ALTHASH[@]}"
+  ALTWHEEL_CFG="/input/altwheels/tmpconfig.yaml"
+else
+  ALTWHEEL_CFG=""
 fi
 
 function build_inside() {
@@ -156,7 +159,7 @@ function build_inside() {
     -w / \
     ${DOCKER_IMAGE} \
     bash \
-    /input/docker-script-build.sh ${llvm_hash_url} ${NOIMAGE_MODE}
+    /input/docker-script-build.sh ${llvm_hash_url} ${NOIMAGE_MODE} "${ALTWHEEL_CFG}"
 }
 
 if [ ${SUITE_SELECT_RUNTIME} -gt 0 ]; then

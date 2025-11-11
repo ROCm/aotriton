@@ -4,6 +4,7 @@ set -ex
 
 TRITON_LLVM_HASH="$1"
 NOIMAGE_MODE="$2"
+ALTWHEEL_CFG="$3"
 
 rsync -a --exclude='.git' /src/aotriton/ /root/build/aotriton/
 cd /src/aotriton/
@@ -26,7 +27,12 @@ fi
 
 cd /root/build/
 export AOTRITON_CI_SUPPLIED_SHA1=${GIT_FULL}
-scl enable gcc-toolset-13 -- bash aotriton/.ci/build-release.sh "${NOIMAGE_MODE}"
+if [ -z "${ALTWHEEL_CFG}" ]; then
+  scl enable gcc-toolset-13 -- bash aotriton/.ci/build-release.sh "${NOIMAGE_MODE}" 
+else
+  scl enable gcc-toolset-13 -- bash aotriton/.ci/build-release.sh "${NOIMAGE_MODE}" "ALL" \
+    "-DAOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE=${ALTWHEEL_CFG}"
+fi
 
 if [ ${NOIMAGE_MODE} == "OFF" ]; then
   tarbase=aotriton-${GIT_SHORT}-images

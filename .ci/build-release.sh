@@ -6,7 +6,8 @@ if [ -z "$BASH_VERSION" ]; then
 fi
 
 if [ "$#" -lt 1 ]; then
-  echo 'Missing arguments. Usage: build-release.sh <noimage mode> [list of arches]' >&2
+  echo 'Missing arguments. Usage: build-release.sh <noimage mode> [list of arches] [cmake options ...]' >&2
+  echo 'Put "ALL" to [list of arches] to build all architectures'
   exit 1
 fi
 
@@ -19,7 +20,11 @@ noimage="$1"
 
 if [ "$#" -ge 2 ]; then
   target_arch="$2"
+  shift 2
 else
+  target_arch="${default_target_arch}"
+fi
+if [ "${target_arch}" = "ALL" ]; then
   target_arch="${default_target_arch}"
 fi
 
@@ -35,4 +40,6 @@ cmake .. -DCMAKE_PREFIX_PATH=/opt/rocm \
   "-DAOTRITON_TARGET_ARCH=${target_arch}" \
   -DAOTRITON_NO_PYTHON=ON \
   -DAOTRITON_NOIMAGE_MODE=${noimage} \
-  -G Ninja && ninja install/strip
+  -G Ninja \
+  "$@" \
+  && ninja install/strip
