@@ -46,6 +46,7 @@ private:
 };
 
 std::unordered_map<std::string, GpuClassifier> LazyGpu::string_to_classifier = {
+  { "gfx908", DummyClassifier<GPU_AMD_ARCH_GFX908_MOD0 >() },
   { "gfx90a", DummyClassifier<GPU_AMD_ARCH_GFX90A_MOD0 >() },
   { "gfx942", DummyClassifier<GPU_AMD_ARCH_GFX942_MOD0 >() },
   {"gfx1100", DummyClassifier<GPU_AMD_ARCH_GFX1100_MOD0>() },
@@ -74,7 +75,8 @@ getGpuFromStream(hipStream_t stream) {
 bool isArchExperimentallySupported(hipStream_t stream) {
   auto gpu = getGpuFromStream(stream);
   uint32_t vendor_arch = Gpu2VendorArch(gpu);
-  return (vendor_arch == CAT32(GpuVendor::kAMD, 0x1150) ||
+  return (vendor_arch == CAT32(GpuVendor::kAMD, 0x908) ||
+          vendor_arch == CAT32(GpuVendor::kAMD, 0x1150) ||
           vendor_arch == CAT32(GpuVendor::kAMD, 0x1151) ||
           vendor_arch == CAT32(GpuVendor::kAMD, 0x1100) ||
           vendor_arch == CAT32(GpuVendor::kAMD, 0x1101) ||
