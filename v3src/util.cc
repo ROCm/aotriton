@@ -74,7 +74,8 @@ getGpuFromStream(hipStream_t stream) {
 bool isArchExperimentallySupported(hipStream_t stream) {
   auto gpu = getGpuFromStream(stream);
   uint32_t vendor_arch = Gpu2VendorArch(gpu);
-  return (vendor_arch == CAT32(GpuVendor::kAMD, 0x1150) ||
+  return (vendor_arch == CAT32(GpuVendor::kAMD, 0x908) ||
+          vendor_arch == CAT32(GpuVendor::kAMD, 0x1150) ||
           vendor_arch == CAT32(GpuVendor::kAMD, 0x1151) ||
           vendor_arch == CAT32(GpuVendor::kAMD, 0x1100) ||
           vendor_arch == CAT32(GpuVendor::kAMD, 0x1101) ||
