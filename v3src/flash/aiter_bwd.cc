@@ -77,7 +77,9 @@ const char* BwdDqDkDvV3Context::check_inputs_are_supported() {
   RETURN_IF(args.cu_seqlens_q && *args.cu_seqlens_q);
   RETURN_IF(args.cu_seqlens_k && *args.cu_seqlens_k);
   // Only support hdim <= 192
-  RETURN_IF(args.head_dim > 192);
+  RETURN_IF(args.hdim_qk > 192 || args.hdim_vo > 192);
+  // Only support hdim_qk == hdim_vo
+  RETURN_IF(args.hdim_qk != args.hdim_vo);
   // TODO: support dropout kernel. fwd and bwd should have identical PRNG
   RETURN_IF(args.ENABLE_DROPOUT);
   RETURN_IF(args.num_head_q != args.num_head_k);
@@ -648,7 +650,9 @@ aiter_bwd(const attn_bwd_params& in,
   auto stream = stream_wrap.native();
   auto gpu = getGpuFromStream(stream);
   int batch = in.Q.size(0);
-  int head_dim = in.Q.size(3);
+  int hdim_qk = in.Q.size(3);
+  int hdim_vo = in.V.size(3);
+  int hdim_max = std::max(hdim_qk, hdim_vo);
   int num_head_q = in.Q.size(1);
   int num_head_k = in.K.size(1);
   int max_seqlen_q = in.Q.size(2);
@@ -664,7 +668,7 @@ aiter_bwd(const attn_bwd_params& in,
   }
   static std::vector<int> compiled_head_dims {64, 128, 192};
   // const auto& compiled_head_dims = BwdKernelDkDvMetadata::get_BLOCK_DMODEL_choices();
-  int16_t head_dim_rounded = round_value(head_dim, compiled_head_dims);
+  int16_t hdim_rounded = round_value(hdim_max, compiled_head_dims);
   LazyTensorInternal<2> lazy_delta(in.D);
   LazyTensorInternal<4> lazy_dq_acc(in.DQ_ACC);
   OpAttnBwdParams params = {
@@ -689,17 +693,18 @@ aiter_bwd(const attn_bwd_params& in,
     .num_seqlens = num_seqlens,
     .max_seqlen_q = max_seqlen_q,
     .max_seqlen_k = max_seqlen_k,
-    .head_dim = head_dim,
+    .hdim_qk = hdim_qk,
+    .hdim_vo = hdim_vo,
     .dropout_p = in.dropout_p,
     .philox_seed_ptr  = &in.philox_seed_ptr,
     .philox_offset1   = &in.philox_offset1,
     .philox_offset2   = in.philox_offset2,
     .Window_left = in.window_left,
     .Window_right = in.window_left,
-    .BLOCK_DMODEL = head_dim_rounded,
+    .BLOCK_DMODEL = hdim_rounded,
     .CAUSAL_TYPE = in.causal_type,
     .ENABLE_DROPOUT = in.dropout_p > 0.0,
-    .PADDED_HEAD = head_dim != head_dim_rounded,
+    .PADDED_HEAD = (hdim_rounded != hdim_qk || hdim_rounded != hdim_vo),
     .BIAS_TYPE = int8_t(bool(in.B) ? 1 : 0),
   };
   // Invoke context.lookup_optimal to confirm the input works
