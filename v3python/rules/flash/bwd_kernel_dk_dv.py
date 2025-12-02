@@ -83,6 +83,9 @@ class bwd_kernel_dk_dv(FlashBwdKernel):
         WAVES_PER_EU = [1, 2, 3, 4]
         NUM_WARPS = [4, 8] if HEAD_DIM >= 512 and RDNA else [2, 4]
         NUM_STAGES = [1]
+        if arch == 'gfx1250':
+            kw = {'BLOCK_M': 64, 'BLOCK_N': 64, 'waves_per_eu': 1}
+            yield Config(kw, num_stages=1, num_warps=8)
         for M, N, waves, warps, stages in itertools.product(BLOCK_SIZES,
                                                             BLOCK_SIZES,
                                                             WAVES_PER_EU,

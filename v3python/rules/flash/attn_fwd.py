@@ -94,6 +94,17 @@ class attn_fwd(FlashKernel):
         NUM_WARPS = [2, 4]
         PRE_LOAD_V = PRE_LOAD_OPTIONS
         NUM_STAGES = [1]
+        if arch == 'gfx1250':
+            persistent_type = 2 if CAUSAL_TYPE != 0 else 0
+            kw = { 'PERSISTENT_TYPE' : persistent_type,
+                   'GRID_CU_MULTIP': 2,
+                   'BLOCK_M': 64,
+                   'BLOCK_N': 64,
+                   'waves_per_eu': 1,
+                   'PRE_LOAD_V': False,
+                 }
+            yield Config(kw, num_stages=1, num_warps=8)
+            return
         for (M, N), waves, warps, stages, pre in itertools.product(BLOCK_SIZES,
                                                                    WAVES_PER_EU,
                                                                    NUM_WARPS,

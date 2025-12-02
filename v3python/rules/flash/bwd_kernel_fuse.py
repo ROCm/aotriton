@@ -88,6 +88,10 @@ class bwd_kernel_fuse(FlashBwdKernel):
         WAVES_PER_EU = [1, 2, 3, 4]
         NUM_WARPS = [2, 4]
         NUM_STAGES = [1]
+        if arch == 'gfx1250':
+            kw = {'BLOCK_M': 64, 'BLOCK_N': 64, 'waves_per_eu': 1}
+            yield Config(kw, num_stages=1, num_warps=8)
+            return
         for M, N, waves, warps, stages in itertools.product(BLOCK_SIZES,
                                                             BLOCK_SIZES,
                                                             WAVES_PER_EU,
