@@ -34,7 +34,7 @@ def evaluate_gfx_arch_within(arch_list):
     return any(arch in gcn_arch_name for arch in arch_list)
 
 def is_rdna():
-    return evaluate_gfx_arch_within(['gfx1100', 'gfx1101', 'gfx1102', 'gfx1103', 'gfx1150', 'gfx1151', 'gfx1200', 'gfx1201'])
+    return evaluate_gfx_arch_within(['gfx1100', 'gfx1101', 'gfx1102', 'gfx1103', 'gfx1150', 'gfx1151', 'gfx1152', 'gfx1153', 'gfx1200', 'gfx1201'])
 
 IS_RDNA = is_rdna()
 
