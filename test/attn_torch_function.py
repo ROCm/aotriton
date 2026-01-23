@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 BWD_IMPL = int(os.getenv('BWD_IMPL', default='0'))
-V3_API = bool(int(os.getenv('V3_API', default='0')))
+V3_API = 1
 if BWD_IMPL == 2:
     PROBE_UNSUPPORTED = bool(int(os.getenv('PROBE_UNSUPPORTED', default='0')))
 else:
@@ -54,7 +54,7 @@ class AttentionExtraArgs:
     return_encoded_softmax : bool = False
     autotune : bool = False
     return_autotune : bool = False
-    is_testing : bool = True
+    is_testing : bool = False
     fillnan : bool = False
     return_logsumexp : bool = False
     illaddr_handler : Callable = empty_handler
