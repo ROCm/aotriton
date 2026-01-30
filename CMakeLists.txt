@@ -67,7 +67,18 @@ find_package(Python3 ${AOTRITON_MIN_PYTHON} COMPONENTS Interpreter REQUIRED)
 list(APPEND CMAKE_PREFIX_PATH "/opt/rocm")
 find_package(hip REQUIRED)
 
-set(VENV_DIR "${CMAKE_CURRENT_BINARY_DIR}/venv" CACHE STRING "Virtual Environment Directory")
+# Allow manual override of VENV_DIR, otherwise auto-derive from Python3_EXECUTABLE
+# This supports both traditional builds and build isolation environments
+if(NOT DEFINED VENV_DIR OR VENV_DIR STREQUAL "")
+    get_filename_component(PYTHON_BIN_DIR "${Python3_EXECUTABLE}" DIRECTORY)
+    get_filename_component(VENV_DIR "${PYTHON_BIN_DIR}" DIRECTORY)
+    message(STATUS "Auto-detected VENV_DIR from Python3_EXECUTABLE: ${VENV_DIR}")
+    set(VENV_DIR_AUTO_DETECTED TRUE)
+else()
+    message(STATUS "Using manually specified VENV_DIR: ${VENV_DIR}")
+    set(VENV_DIR_AUTO_DETECTED FALSE)
+endif()
+set(VENV_DIR "${VENV_DIR}" CACHE PATH "Virtual Environment Directory (auto-detected or manually set)")
 option(AOTRITON_NO_PYTHON "Disable python binding build" OFF)
 option(AOTRITON_USE_TORCH "Enable functions in python binding that requires libtorch" ON)
 option(AOTRITON_ENABLE_ASAN "Enable Address Sanitizer. Implies -g" OFF)
@@ -151,12 +162,17 @@ endif()
 
 set(Python_ARTIFACTS_INTERACTIVE TRUE)
 
-# Not a target, we need to override Python3_EXECUTABLE later
-if(AOTRITON_INHERIT_SYSTEM_SITE_TRITON)
-  execute_process(COMMAND "${Python3_EXECUTABLE}" -m venv --system-site-packages "${VENV_DIR}")
-else()
-  execute_process(COMMAND "${Python3_EXECUTABLE}" -m venv "${VENV_DIR}")
+# Skip venv creation if auto-detected (build isolation) or if venv already exists
+if(NOT VENV_DIR_AUTO_DETECTED AND NOT EXISTS "${VENV_DIR}/bin/python" AND NOT EXISTS "${VENV_DIR}/Scripts/python.exe")
+    message(STATUS "Creating virtual environment at ${VENV_DIR}")
+    # Not a target, we need to override Python3_EXECUTABLE later
+    if(AOTRITON_INHERIT_SYSTEM_SITE_TRITON)
+        execute_process(COMMAND "${Python3_EXECUTABLE}" -m venv --system-site-packages "${VENV_DIR}")
+    else()
+        execute_process(COMMAND "${Python3_EXECUTABLE}" -m venv "${VENV_DIR}")
+    endif()
 endif()
+
 
 set(ENV{VIRTUAL_ENV} "${VENV_DIR}")
 message("VENV_DIR ${VENV_DIR}")
