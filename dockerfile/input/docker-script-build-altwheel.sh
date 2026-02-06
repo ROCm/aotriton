@@ -31,10 +31,10 @@ function check_cached_llvm() {
 
 function cache_llvm() {
   local d="$1"
-  wget "$url" -O "$d/$fn"
+  wget "$URL" -O "$d/$FN"
 }
 
-check_cached_llvm /input || check_cached_llvm /output || cache_llvm /output || check_cached_llvm
+check_cached_llvm /input || check_cached_llvm /output || cache_llvm /output || check_cached_llvm /output
 
 cd /root/build/triton
 scl enable gcc-toolset-13 -- python -m pip wheel .
