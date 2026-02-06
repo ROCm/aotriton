@@ -6,8 +6,8 @@ if [ -z "$BASH_VERSION" ]; then
 fi
 
 if [ "$#" -lt 1 ]; then
-  echo 'Missing arguments. Usage: build-release.sh <noimage mode> [list of arches] [cmake options ...]' >&2
-  echo 'Put "ALL" to [list of arches] to build all architectures'
+  echo 'Missing arguments. Usage: build-release.sh <noimage mode> [arch list string] [cmake options ...]' >&2
+  echo 'Put "ALL" to [arch list string] to build all architectures'
   exit 1
 fi
 
@@ -17,10 +17,11 @@ SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 echo "${TRITON_WHEEL_VERSION_SUFFIX}"
 python_exec="/usr/bin/python3.11"
 noimage="$1"
+shift
 
-if [ "$#" -ge 2 ]; then
-  target_arch="$2"
-  shift 2
+if [ "$#" -ge 1 ]; then
+  target_arch="$1"
+  shift
 else
   target_arch="${default_target_arch}"
 fi
