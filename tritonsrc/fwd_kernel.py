@@ -195,7 +195,8 @@ def attn_fwd(
             cu_seqlens_k_end = tl.load(cu_seqlens_k + off_z + 1)
             seqlen_k = cu_seqlens_k_end - cu_seqlens_k_start
             batch_index = 0  # FILEPR
-        elif Num_seqlens < 0: # FILEPR
+            lse_stride = Max_seqlen_q
+        elif Num_seqlens < 0: # Varlen, BHSD layout, S is padded to Max_seqlen_q
             cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
             cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
             seqlen_q = cu_seqlens_q_end - cu_seqlens_q_start
@@ -208,12 +209,13 @@ def attn_fwd(
             cu_seqlens_q_start = 0
             cu_seqlens_k_start = 0
             batch_index = off_z
-        else:
+        else:   # Non-varlen
             cu_seqlens_q_start = 0
             cu_seqlens_k_start = 0
             seqlen_q = Max_seqlen_q
             seqlen_k = Max_seqlen_k
             batch_index = off_z
+            lse_stride = Max_seqlen_q
 
         if continue_condition:
             # Now we compute whether we need to exit early due to causal masking.
@@ -526,7 +528,13 @@ def attn_fwd(
                 overflow_size = end_M - seqlen_q
                 if L_not_null:
                     # write back LSE
-                    l_ptrs = L + off_z * Num_head_q * Max_seqlen_q + off_h_q * Max_seqlen_q + offs_m
+                    # Non-Varlen layout: (B * H, S)
+                    # Old Varlen layout: (B * H, Max_seqlen_q), i.e., padding all to Max_seqlen_q
+                    #   l_ptrs = L + off_z * Num_head_q * Max_seqlen_q + off_h_q * Max_seqlen_q + offs_m
+                    # New Varlen layout: (H, Total_Seqlen)
+                    l_ptrs = L + batch_index  * Num_head_q * Max_seqlen_q   # Batch, batch_index == 0 for varlen
+                    l_ptrs += off_h_q * lse_stride          # Head, lse_stride = Max_seqlen_q/Total_Seqlen
+                    l_ptrs += cu_seqlens_q_start + offs_m   # Seqlen, cu_seqlens_q_start == 0 for non-varlen
                     LN2: tl.constexpr = 0.6931471824645996
                     logsumexp = m_i + tl.math.log2(l_i)
                     logsumexp *= 0.6931471824645996
