@@ -38,7 +38,7 @@ EOF
   exit $1
 }
 
-TEMP=$(getopt -o h,r: --longoptions image,runtime,yaml: -- "$@")
+TEMP=$(getopt -o hr: --longoptions image,runtime,yaml: -- "$@")
 
 if [ $? -ne 0 ]; then
   echo "Error: Invalid option." >&2
