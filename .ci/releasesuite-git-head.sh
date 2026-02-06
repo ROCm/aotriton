@@ -6,13 +6,12 @@ if [ -z "$BASH_VERSION" ]; then
 fi
 
 if ! command -v yq &> /dev/null; then
-  cat <<EOF
+  cat <<EOF >&2
 Command 'yq' could not be found. Install it with
 dnf install yq
 or
 snap install yq
 EOF
->&2
   exit 1
 fi
 
