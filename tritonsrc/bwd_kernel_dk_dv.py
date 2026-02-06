@@ -110,6 +110,7 @@ def bwd_kernel_dk_dv(
     seqlen_q = max_seqlen_q
     seqlen_k = max_seqlen_k
     batch_index = off_z
+    lse_stride = max_seqlen_q
 
     if num_seqlens > 0:
         cu_seqlens_k_start = tl.load(cu_seqlens_k + off_z)
@@ -121,6 +122,7 @@ def bwd_kernel_dk_dv(
         cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
         seqlen_q = cu_seqlens_q_end - cu_seqlens_q_start
         batch_index = 0
+        lse_stride = tl.load(cu_seqlens_q + num_seqlens)
 
     if num_seqlens < 0:  # for padded seqlen
         cu_seqlens_k_start = tl.load(cu_seqlens_k + off_z)
@@ -289,8 +291,12 @@ def bwd_kernel_dk_dv(
         # Shape (batch, num_heads, max_seqlen_q)
         # In varlen cases, batch == len(cu_seqlens_q) - 1).
         # Hence off_z plays the same role in varlen/non-varlen
-        D_ptrs = D + off_zh * max_seqlen_q
-        l_ptrs = L + off_zh * max_seqlen_q
+        lse_offset = batch_index * num_head_q
+        lse_offset = lse_offset * tl.case(lse_stride, tl.int64)
+        lse_offset += off_h_q * lse_stride
+        lse_offset += cu_seqlens_q_start
+        D_ptrs = D + lse_offset
+        l_ptrs = L + lse_offset
 
         q_ptrs0, q_ptrs1, q_ptrs2 = composed_ptrs(Q,
                                                   stride_qz, stride_qh, stride_qm, stride_qk,

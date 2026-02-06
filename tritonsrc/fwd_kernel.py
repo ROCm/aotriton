@@ -195,7 +195,7 @@ def attn_fwd(
             cu_seqlens_k_end = tl.load(cu_seqlens_k + off_z + 1)
             seqlen_k = cu_seqlens_k_end - cu_seqlens_k_start
             batch_index = 0  # FILEPR
-            lse_stride = Max_seqlen_q
+            lse_stride = tl.load(cu_seqlens_q + Num_seqlens)
         elif Num_seqlens < 0: # Varlen, BHSD layout, S is padded to Max_seqlen_q
             cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
             cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
@@ -209,6 +209,7 @@ def attn_fwd(
             cu_seqlens_q_start = 0
             cu_seqlens_k_start = 0
             batch_index = off_z
+            lse_stride = Max_seqlen_q
         else:   # Non-varlen
             cu_seqlens_q_start = 0
             cu_seqlens_k_start = 0
@@ -528,13 +529,15 @@ def attn_fwd(
                 overflow_size = end_M - seqlen_q
                 if L_not_null:
                     # write back LSE
-                    # Non-Varlen layout: (B * H, S)
+                    # Non-Varlen layout: (B * H, S). or Compact (B, H, S)
                     # Old Varlen layout: (B * H, Max_seqlen_q), i.e., padding all to Max_seqlen_q
                     #   l_ptrs = L + off_z * Num_head_q * Max_seqlen_q + off_h_q * Max_seqlen_q + offs_m
                     # New Varlen layout: (H, Total_Seqlen)
-                    l_ptrs = L + batch_index  * Num_head_q * Max_seqlen_q   # Batch, batch_index == 0 for varlen
-                    l_ptrs += off_h_q * lse_stride          # Head, lse_stride = Max_seqlen_q/Total_Seqlen
-                    l_ptrs += cu_seqlens_q_start + offs_m   # Seqlen, cu_seqlens_q_start == 0 for non-varlen
+                    lse_offset = batch_index * Num_head_q
+                    lse_offset = lse_offset * tl.case(lse_stride, tl.int64)   # Batch, batch_index == 0 for varlen
+                    lse_offset += off_h_q * lse_stride          # Head, lse_stride = Max_seqlen_q/Total_Seqlen
+                    lse_offset += cu_seqlens_q_start            # Seqlen, cu_seqlens_q_start == 0 for non-varlen
+                    l_ptrs += L + lse_offset + offs_m
                     LN2: tl.constexpr = 0.6931471824645996
                     logsumexp = m_i + tl.math.log2(l_i)
                     logsumexp *= 0.6931471824645996

@@ -131,6 +131,7 @@ def bwd_kernel_fuse(
         seqlen_q = max_seqlen_q
         seqlen_k = max_seqlen_k
         batch_index = off_z
+        lse_stride = max_seqlen_q
 
         if num_seqlens > 0:
             cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
@@ -142,6 +143,7 @@ def bwd_kernel_fuse(
             cu_seqlens_k_end = tl.load(cu_seqlens_k + off_z + 1)
             seqlen_k = cu_seqlens_k_end - cu_seqlens_k_start
             batch_index = 0
+            lse_stride = tl.load(cu_seqlens_q + num_seqlens)
 
         if num_seqlens < 0:  # for padded seqlen
             cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
@@ -243,7 +245,11 @@ def bwd_kernel_fuse(
                                        PADDED_COL=PADDED_HEAD,
                                        TRANSPOSED=False)
         # pointer to row-wise quantities in value-like data
-        l_ptrs = L + off_zh * max_seqlen_q
+        lse_offset = batch_index * num_head_q
+        lse_offset = lse_offset * tl.case(lse_stride, tl.int64)
+        lse_offset += off_h_q * lse_stride
+        lse_offset += cu_seqlens_q_start
+        l_ptrs = L + lse_offset
         if ENABLE_DROPOUT:
             batch_philox_offset = philox_offset_base + off_zh * max_seqlen_q * philox_offset_stride
         else:
@@ -400,6 +406,7 @@ def bwd_kernel_fuse(
         seqlen_q = max_seqlen_q
         seqlen_k = max_seqlen_k
         batch_index = off_z
+        lse_stride = max_seqlen_q
 
         if num_seqlens > 0:
             cu_seqlens_k_start = tl.load(cu_seqlens_k + off_z)
@@ -411,6 +418,7 @@ def bwd_kernel_fuse(
             cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
             seqlen_q = cu_seqlens_q_end - cu_seqlens_q_start
             batch_index = 0
+            lse_stride = tl.load(cu_seqlens_q + num_seqlens)
 
         if num_seqlens < 0:  # for padded seqlen
             cu_seqlens_k_start = tl.load(cu_seqlens_k + off_z)
@@ -536,7 +544,11 @@ def bwd_kernel_fuse(
             # Shape (batch, num_heads, max_seqlen_q)
             # In varlen cases, batch == len(cu_seqlens_q) - 1).
             # Hence off_z plays the same role in varlen/non-varlen
-            l_ptrs = L + off_zh * max_seqlen_q
+            lse_offset = batch_index * num_head_q
+            lse_offset = lse_offset * tl.case(lse_stride, tl.int64)
+            lse_offset += off_h_q * lse_stride
+            lse_offset += cu_seqlens_q_start
+            l_ptrs = L + lse_offset
 
             q_ptrs0, q_ptrs1, q_ptrs2 = composed_ptrs(Q,
                                                       stride_qz, stride_qh, stride_qm, stride_qk,
