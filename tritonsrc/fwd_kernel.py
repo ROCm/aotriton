@@ -534,7 +534,7 @@ def attn_fwd(
                     #   l_ptrs = L + off_z * Num_head_q * Max_seqlen_q + off_h_q * Max_seqlen_q + offs_m
                     # New Varlen layout: (H, Total_Seqlen)
                     lse_offset = batch_index * Num_head_q
-                    lse_offset = lse_offset * tl.case(lse_stride, tl.int64)   # Batch, batch_index == 0 for varlen
+                    lse_offset = lse_offset * tl.cast(lse_stride, tl.int64)   # Batch, batch_index == 0 for varlen
                     lse_offset += off_h_q * lse_stride          # Head, lse_stride = Max_seqlen_q/Total_Seqlen
                     lse_offset += cu_seqlens_q_start            # Seqlen, cu_seqlens_q_start == 0 for non-varlen
                     l_ptrs += L + lse_offset + offs_m

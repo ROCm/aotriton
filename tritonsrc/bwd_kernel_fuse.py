@@ -246,7 +246,7 @@ def bwd_kernel_fuse(
                                        TRANSPOSED=False)
         # pointer to row-wise quantities in value-like data
         lse_offset = batch_index * num_head_q
-        lse_offset = lse_offset * tl.case(lse_stride, tl.int64)
+        lse_offset = lse_offset * tl.cast(lse_stride, tl.int64)
         lse_offset += off_h_q * lse_stride
         lse_offset += cu_seqlens_q_start
         l_ptrs = L + lse_offset
@@ -545,7 +545,7 @@ def bwd_kernel_fuse(
             # In varlen cases, batch == len(cu_seqlens_q) - 1).
             # Hence off_z plays the same role in varlen/non-varlen
             lse_offset = batch_index * num_head_q
-            lse_offset = lse_offset * tl.case(lse_stride, tl.int64)
+            lse_offset = lse_offset * tl.cast(lse_stride, tl.int64)
             lse_offset += off_h_q * lse_stride
             lse_offset += cu_seqlens_q_start
             l_ptrs = L + lse_offset

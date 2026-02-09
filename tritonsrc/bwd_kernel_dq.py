@@ -222,7 +222,7 @@ def bwd_kernel_dq(
                                       PADDED_COL=PADDED_HEAD,
                                       TRANSPOSED=False)
     lse_offset = batch_index * num_head_q
-    lse_offset = lse_offset * tl.case(lse_stride, tl.int64)
+    lse_offset = lse_offset * tl.cast(lse_stride, tl.int64)
     lse_offset += off_h_q * lse_stride
     lse_offset += cu_seqlens_q_start
     D_ptrs = D + lse_offset

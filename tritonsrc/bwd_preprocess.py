@@ -224,7 +224,7 @@ def bwd_preprocess_varlen(
     # old shape (varlen_batch, num_heads, max_seqlen_q)
     # New Varlen layout: (H, Total_Seqlen)
     # batch_index == 0 for varlen
-    lse_offset = off_h * tl.case(lse_stride, tl.int64)
+    lse_offset = off_h * tl.cast(lse_stride, tl.int64)
     lse_offset += cu_seqlens_q_start
     # Check for OOB accesses
     delta_ptrs = Delta + lse_offset + off_m + tl.arange(0, BLOCK_M)
