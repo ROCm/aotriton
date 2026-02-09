@@ -40,16 +40,16 @@ class _attention_varlen(torch.autograd.Function):
         return_autotune = attn_extra_args.return_autotune
         # shape constraints
         Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
-        assert Lq == Lk and Lk == Lv
+        assert Lq == Lk
         # assert Lk in {16, 32, 64, 128}
         batch = len(seqlens_q)
         num_heads = q.shape[1]
         max_seqlen_q = int(np.max(seqlens_q))
         max_seqlen_k = int(np.max(seqlens_k))
-        total_seqlen_q = int(seqlens_q[-1])
+        total_seqlen_q = int(np.sum(seqlens_q))
         cu_seqlens_q = torch.tensor([0] + np.cumsum(seqlens_q).tolist(), dtype=torch.int32, device=q.device)
         cu_seqlens_k = torch.tensor([0] + np.cumsum(seqlens_k).tolist(), dtype=torch.int32, device=q.device)
-        o = torch.zeros_like(q)
+        o = torch.empty((q.shape[0], q.shape[1], q.shape[2], v.shape[3]), device=q.device, dtype=q.dtype)
         b = torch.empty((0,0,0,0), device=q.device, dtype=q.dtype)
 
         # M = torch.zeros((batch * num_heads, max_seqlen_q), device=q.device, dtype=torch.float32)

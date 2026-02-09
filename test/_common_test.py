@@ -706,6 +706,12 @@ class VarlenSdpaContext(SdpaContext):
     def seqlen_k(self):
         return np.max(self._seqlens_q)
 
+    def create_ctx_tensors(self):
+        q, k, v, b = self.dev_tensors
+        o = torch.empty((q.shape[0], q.shape[1], q.shape[2], v.shape[3]), device=q.device, dtype=q.dtype)
+        M = torch.empty((q.shape[1], np.sum(self._seqlens_q)), device=q.device, dtype=torch.float32)
+        self.ctx_tensors = (o, M)
+
     @staticmethod
     def _compute_ref_forward_varlen(ref_tensors, seqlens_q, seqlens_k, p : SdpaParams):
         packed_ref_q, packed_ref_k, packed_ref_v, _ = ref_tensors
@@ -714,6 +720,7 @@ class VarlenSdpaContext(SdpaContext):
         ref_mask_array = []
         seqlen_q_start = 0
         seqlen_k_start = 0
+        print(f'REF {seqlens_q=} {seqlens_k=}')
         for i, (seqlen_q, seqlen_k) in enumerate(zip(seqlens_q, seqlens_k)):
             ref_q = packed_ref_q[0, :, seqlen_q_start:seqlen_q_start+seqlen_q, :]
             ref_k = packed_ref_k[0, :, seqlen_k_start:seqlen_k_start+seqlen_k, :]
