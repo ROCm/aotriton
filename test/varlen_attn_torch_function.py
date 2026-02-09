@@ -46,12 +46,14 @@ class _attention_varlen(torch.autograd.Function):
         num_heads = q.shape[1]
         max_seqlen_q = int(np.max(seqlens_q))
         max_seqlen_k = int(np.max(seqlens_k))
+        total_seqlen_q = int(seqlens_q[-1])
         cu_seqlens_q = torch.tensor([0] + np.cumsum(seqlens_q).tolist(), dtype=torch.int32, device=q.device)
         cu_seqlens_k = torch.tensor([0] + np.cumsum(seqlens_k).tolist(), dtype=torch.int32, device=q.device)
         o = torch.zeros_like(q)
         b = torch.empty((0,0,0,0), device=q.device, dtype=q.dtype)
 
-        M = torch.zeros((batch * num_heads, max_seqlen_q), device=q.device, dtype=torch.float32)
+        # M = torch.zeros((batch * num_heads, max_seqlen_q), device=q.device, dtype=torch.float32)
+        M = torch.empty((num_heads, total_seqlen_q), device=q.device, dtype=torch.float32)
         if attn_extra_args.fillnan:
             for t in (o, M):
                 t.fill_(float('nan'))
