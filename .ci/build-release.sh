@@ -6,7 +6,8 @@ if [ -z "$BASH_VERSION" ]; then
 fi
 
 if [ "$#" -lt 1 ]; then
-  echo 'Missing arguments. Usage: build-release.sh <noimage mode> [list of arches]' >&2
+  echo 'Missing arguments. Usage: build-release.sh <noimage mode> [arch list string] [cmake options ...]' >&2
+  echo 'Put "ALL" to [arch list string] to build all architectures'
   exit 1
 fi
 
@@ -16,10 +17,15 @@ SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 echo "${TRITON_WHEEL_VERSION_SUFFIX}"
 python_exec="/usr/bin/python3.11"
 noimage="$1"
+shift
 
-if [ "$#" -ge 2 ]; then
-  target_arch="$2"
+if [ "$#" -ge 1 ]; then
+  target_arch="$1"
+  shift
 else
+  target_arch="${default_target_arch}"
+fi
+if [ "${target_arch}" = "ALL" ]; then
   target_arch="${default_target_arch}"
 fi
 
@@ -35,4 +41,6 @@ cmake .. -DCMAKE_PREFIX_PATH=/opt/rocm \
   "-DAOTRITON_TARGET_ARCH=${target_arch}" \
   -DAOTRITON_NO_PYTHON=ON \
   -DAOTRITON_NOIMAGE_MODE=${noimage} \
-  -G Ninja && ninja install/strip
+  -G Ninja \
+  "$@" \
+  && ninja install/strip
