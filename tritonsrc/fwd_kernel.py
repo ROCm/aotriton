@@ -274,7 +274,12 @@ def attn_fwd(
                     # The tensor allocated for L is based on Max_seqlen_q as that is
                     # statically known.
                     if L_not_null:
-                        l_ptrs = L + off_z * Num_head_q * Max_seqlen_q + off_h_q * Max_seqlen_q + offs_m
+                        # l_ptrs = L + off_z * Num_head_q * Max_seqlen_q + off_h_q * Max_seqlen_q + offs_m
+                        lse_offset = batch_index * Num_head_q
+                        lse_offset = lse_offset * tl.cast(lse_stride, tl.int64)   # Batch, batch_index == 0 for varlen
+                        lse_offset += off_h_q * lse_stride          # Head, lse_stride = Max_seqlen_q/Total_Seqlen
+                        lse_offset += cu_seqlens_q_start            # Seqlen, cu_seqlens_q_start == 0 for non-varlen
+                        l_ptrs = L + lse_offset + offs_m
                         # We store inf to LSE, not -inf because in the bwd pass, we subtract this
                         # from qk which makes it -inf, such that exp(qk - inf) = 0 for these masked blocks.
                         l = tl.full([BLOCK_M], value=float("inf"), dtype=tl.float32)
@@ -537,7 +542,7 @@ def attn_fwd(
                     lse_offset = lse_offset * tl.cast(lse_stride, tl.int64)   # Batch, batch_index == 0 for varlen
                     lse_offset += off_h_q * lse_stride          # Head, lse_stride = Max_seqlen_q/Total_Seqlen
                     lse_offset += cu_seqlens_q_start            # Seqlen, cu_seqlens_q_start == 0 for non-varlen
-                    l_ptrs += L + lse_offset + offs_m
+                    l_ptrs = L + lse_offset + offs_m
                     LN2: tl.constexpr = 0.6931471824645996
                     logsumexp = m_i + tl.math.log2(l_i)
                     logsumexp *= 0.6931471824645996
