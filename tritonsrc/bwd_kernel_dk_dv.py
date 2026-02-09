@@ -19,6 +19,7 @@ import triton
 import triton.language as tl
 from bwd_inner_dk_dv import bwd_inner_dk_dv
 from dropout import PHILOX_RN_PER_OFFSET
+from fwd_kernel_inner import _lse_offset
 from masked_load_store import (
     load_fn,
     mstore2d,
@@ -291,10 +292,8 @@ def bwd_kernel_dk_dv(
         # Shape (batch, num_heads, max_seqlen_q)
         # In varlen cases, batch == len(cu_seqlens_q) - 1).
         # Hence off_z plays the same role in varlen/non-varlen
-        lse_offset = batch_index * num_head_q
-        lse_offset = lse_offset * tl.cast(lse_stride, tl.int64)
-        lse_offset += off_h_q * lse_stride
-        lse_offset += cu_seqlens_q_start
+        lse_offset = _lse_offset(batch_index, off_h_q, cu_seqlens_q_start,
+                                 num_head_q, lse_stride)
         D_ptrs = D + lse_offset
         l_ptrs = L + lse_offset
 

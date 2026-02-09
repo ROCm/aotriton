@@ -17,6 +17,7 @@ Extra Credits:
 
 import triton
 import triton.language as tl
+from fwd_kernel_inner import _lse_offset
 from bwd_inner_fuse import bwd_inner_dk_dv_fuse
 from bwd_inner_dq import bwd_inner_dq
 from dropout import PHILOX_RN_PER_OFFSET
@@ -245,10 +246,8 @@ def bwd_kernel_fuse(
                                        PADDED_COL=PADDED_HEAD,
                                        TRANSPOSED=False)
         # pointer to row-wise quantities in value-like data
-        lse_offset = batch_index * num_head_q
-        lse_offset = lse_offset * tl.cast(lse_stride, tl.int64)
-        lse_offset += off_h_q * lse_stride
-        lse_offset += cu_seqlens_q_start
+        lse_offset = _lse_offset(batch_index, off_h_q, cu_seqlens_q_start,
+                                 num_head_q, lse_stride)
         l_ptrs = L + lse_offset
         if ENABLE_DROPOUT:
             batch_philox_offset = philox_offset_base + off_zh * max_seqlen_q * philox_offset_stride

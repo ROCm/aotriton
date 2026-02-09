@@ -21,6 +21,7 @@ from fwd_kernel_inner import (
     IS_JIT_COMPILING,
     constexpr_or_f32,
     constexpr_or_i32,
+    _lse_offset,
 )
 from dropout import PHILOX_RN_PER_OFFSET
 from masked_load_store import (
@@ -42,7 +43,6 @@ from composed_tensors import (
     composed_mul_lhs,
     composed_casual_mask,
 )
-import os
 
 @triton.jit
 def cdiv_fn(x, y):
@@ -275,10 +275,8 @@ def attn_fwd(
                     # statically known.
                     if L_not_null:
                         # l_ptrs = L + off_z * Num_head_q * Max_seqlen_q + off_h_q * Max_seqlen_q + offs_m
-                        lse_offset = batch_index * Num_head_q
-                        lse_offset = lse_offset * tl.cast(lse_stride, tl.int64)   # Batch, batch_index == 0 for varlen
-                        lse_offset += off_h_q * lse_stride          # Head, lse_stride = Max_seqlen_q/Total_Seqlen
-                        lse_offset += cu_seqlens_q_start            # Seqlen, cu_seqlens_q_start == 0 for non-varlen
+                        lse_offset = _lse_offset(batch_index, off_h_q, cu_seqlens_q_start,
+                                                 Num_head_q, lse_stride)
                         l_ptrs = L + lse_offset + offs_m
                         # We store inf to LSE, not -inf because in the bwd pass, we subtract this
                         # from qk which makes it -inf, such that exp(qk - inf) = 0 for these masked blocks.
@@ -538,10 +536,8 @@ def attn_fwd(
                     # Old Varlen layout: (B * H, Max_seqlen_q), i.e., padding all to Max_seqlen_q
                     #   l_ptrs = L + off_z * Num_head_q * Max_seqlen_q + off_h_q * Max_seqlen_q + offs_m
                     # New Varlen layout: (H, Total_Seqlen)
-                    lse_offset = batch_index * Num_head_q
-                    lse_offset = lse_offset * tl.cast(lse_stride, tl.int64)   # Batch, batch_index == 0 for varlen
-                    lse_offset += off_h_q * lse_stride          # Head, lse_stride = Max_seqlen_q/Total_Seqlen
-                    lse_offset += cu_seqlens_q_start            # Seqlen, cu_seqlens_q_start == 0 for non-varlen
+                    lse_offset = _lse_offset(batch_index, off_h_q, cu_seqlens_q_start,
+                                             Num_head_q, lse_stride)
                     l_ptrs = L + lse_offset + offs_m
                     LN2: tl.constexpr = 0.6931471824645996
                     logsumexp = m_i + tl.math.log2(l_i)

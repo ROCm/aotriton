@@ -16,6 +16,7 @@ Extra Credits:
 """
 import triton
 import triton.language as tl
+from fwd_kernel_inner import _lse_offset
 from composed_tensors import (
     composed_ptrs,
     composed_load,
@@ -224,8 +225,7 @@ def bwd_preprocess_varlen(
     # old shape (varlen_batch, num_heads, max_seqlen_q)
     # New Varlen layout: (H, Total_Seqlen)
     # batch_index == 0 for varlen
-    lse_offset = off_h * tl.cast(lse_stride, tl.int64)
-    lse_offset += cu_seqlens_q_start
+    lse_offset = _lse_offset(0, off_h, cu_seqlens_q_start, num_h, lse_stride)
     # Check for OOB accesses
     delta_ptrs = Delta + lse_offset + off_m + tl.arange(0, BLOCK_M)
     overflow = off_m + BLOCK_M - seqlen_q

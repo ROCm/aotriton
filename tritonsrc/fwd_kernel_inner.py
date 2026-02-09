@@ -26,6 +26,23 @@ else:
     from triton.language import int1 as constexpr_or_bool
 
 
+# 
+# Return offset of LSE tensor
+# Regular: (B*H, S)
+# Varlen: (H, TotalS)
+#
+# Parameters:
+#   Lowercases are for index
+#   In varlen, S/s are Total S/Cumulative S respectively;
+#   b is always 0
+@triton.jit
+def _lse_offset(b, h, s, H, S):
+    lse_offset = b * H + h
+    lse_offset = lse_offset * tl.cast(S, tl.int64)
+    lse_offset += s
+    return lse_offset
+
+
 @triton.jit
 def _attn_fwd_inner(
         # Inputs
