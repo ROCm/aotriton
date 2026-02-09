@@ -709,7 +709,7 @@ class VarlenSdpaContext(SdpaContext):
     def create_ctx_tensors(self):
         q, k, v, b = self.dev_tensors
         o = torch.empty((q.shape[0], q.shape[1], q.shape[2], v.shape[3]), device=q.device, dtype=q.dtype)
-        M = torch.empty((q.shape[1], np.sum(self._seqlens_q)), device=q.device, dtype=torch.float32)
+        M = torch.empty((q.shape[1], int(np.sum(self._seqlens_q))), device=q.device, dtype=torch.float32)
         self.ctx_tensors = (o, M)
 
     @staticmethod
