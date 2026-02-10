@@ -116,7 +116,7 @@ attn_bwd(const attn_bwd_params& in,
     .num_head_k = num_head_k,
     .cu_seqlens_q = &in.cu_seqlens_q,
     .cu_seqlens_k = &in.cu_seqlens_k,
-    .num_seqlens = -num_seqlens if in.varlen_type == VarlenType::PaddedVarlen else num_seqlens,
+    .num_seqlens = in.varlen_type == VarlenType::PaddedVarlen ? -num_seqlens : num_seqlens,
     .max_seqlen_q = max_seqlen_q,
     .max_seqlen_k = max_seqlen_k,
     .seq_strides_q = &in.seq_strides_q,
@@ -232,8 +232,8 @@ bwd_preprocess(T4 out, T4 dout, T2 delta, AOTRITON_NS::Stream stream_wrap) {
     .Out = &out,
     .DO = &dout,
     .D = &eager_lazy_delta,
-    .num_seqlens = 0,   // Note: V2 API does not support padded varlen
     .cu_seqlens_q = &cu_seqlens_placeholder,
+    .num_seqlens = 0,   // Note: V2 API does not support padded varlen
     .max_seqlen_q = static_cast<int32_t>(out.size(2)),
     .hdim_vo = hdim_o,
     .BLOCK_DMODEL = int16_t(hdim_rounded),
@@ -291,8 +291,8 @@ bwd_preprocess_varlen(T4 out,
     .Out = &out,
     .DO = &dout,
     .D = &eager_lazy_delta,
-    .num_seqlens = cu_seqlens_q.size(0) - 1,  // Note: V2 API does not support strided varlen
     .cu_seqlens_q = &cu_seqlens_q,
+    .num_seqlens = static_cast<int32_t>(cu_seqlens_q.size(0) - 1),  // Note: V2 API does not support strided varlen
     .max_seqlen_q = max_seqlen_q,
     .hdim_vo = hdim_o,
     .BLOCK_DMODEL = int16_t(hdim_rounded),
