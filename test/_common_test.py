@@ -717,7 +717,7 @@ class VarlenSdpaContext(SdpaContext):
         seqlen_q_start = 0
         seqlen_k_start = 0
         for i, (seqlen_q, seqlen_k) in enumerate(zip(seqlens_q, seqlens_k)):
-            yield i, (seqlens_q, seqlens_k), (seqlen_q_start, seqlen_k_start)
+            yield i, (seqlen_q, seqlen_k), (seqlen_q_start, seqlen_k_start)
             seqlen_q_start += seqlen_q
             seqlen_k_start += seqlen_k
 
@@ -813,7 +813,7 @@ class StridedVarlenSdpaContext(VarlenSdpaContext):
         seqlen_q_start = 0
         seqlen_k_start = 0
         for i, (seqlen_q, seqlen_k, padlen_q, padlen_k) in enumerate(zip(seqlens_q, seqlens_k, padlens_q, padlens_k)):
-            yield i, (seqlens_q, seqlens_k), (seqlen_q_start, seqlen_k_start)
+            yield i, (seqlen_q, seqlen_k), (seqlen_q_start, seqlen_k_start)
             seqlen_q_start += seqlen_q + padlen_q
             seqlen_k_start += seqlen_k + padlen_k
 

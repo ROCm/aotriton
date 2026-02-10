@@ -5,8 +5,8 @@
 import torch
 import numpy as np
 from aotriton_flash import (
-    attn_fwd_compact_varlen,
-    attn_bwd_compact_varlen,
+    attn_fwd_varlen,
+    attn_bwd_varlen,
 )
 from attn_torch_function import AttentionExtraArgs, BWD_IMPL, V3_API
 
@@ -16,13 +16,8 @@ DEFAULT_PHILOX_OFFSET_1 = 0x1D4000
 DEFAULT_PHILOX_OFFSET_2 = 0x000B42
 DEFAULT_PHILOX_OFFSET = DEFAULT_PHILOX_OFFSET_1 + DEFAULT_PHILOX_OFFSET_2
 
-if BWD_IMPL == 2 or V3_API:
-    from aotriton_flash import lazy_dq_acc, lazy_delta
-else:
-    def lazy_dq_acc(dq):
-        return None
-    def lazy_delta(L):
-        return torch.empty_like(L)
+# Varlen now always use V3_API for full feature coverage
+from aotriton_flash import lazy_dq_acc, lazy_delta
 
 def is_power_of_two(n: int) -> bool:
     return (n & (n - 1) == 0) and n != 0
@@ -37,8 +32,8 @@ class _attention_varlen(torch.autograd.Function):
 
     @staticmethod
     def forward(ctx, q, k, v, seqlens_q, seqlens_k, causal, sm_scale, dropout_p,
-                attn_extra_args=AttentionExtraArgs(),
-                varlen_type='compact'):
+                varlen_type,
+                attn_extra_args=AttentionExtraArgs()):
         return_encoded_softmax = attn_extra_args.return_encoded_softmax
         autotune = attn_extra_args.autotune
         return_autotune = attn_extra_args.return_autotune
@@ -122,7 +117,7 @@ class _attention_varlen(torch.autograd.Function):
                         b, sm_scale, M, o,
                         dropout_p, philox_seed, philox_offset1, philox_offset2,
                         philox_seed_output, philox_offset_output,
-                        encoded_softmax, causal, atomic, ivarlen_type, call_operator=V3_API);
+                        encoded_softmax, causal, atomic, varlen_type)
 
         ctx.save_for_backward(q, k, v, b, o, M)
         ctx.seqlens_q = seqlens_q
@@ -143,7 +138,7 @@ class _attention_varlen(torch.autograd.Function):
         ctx.philox_offset2 = philox_offset2
         ctx.encoded_softmax = encoded_softmax # FIXME: for debugging only
         ctx.varlen_type = varlen_type
-        return o, encoded_softmax, None, None
+        return o, encoded_softmax, None
 
     @staticmethod
     def backward(ctx, do, _, __):
@@ -170,9 +165,9 @@ class _attention_varlen(torch.autograd.Function):
         delta = lazy_delta(L)
         attn_bwd_varlen(q, k, v,
                         cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
-                        seq_strides_q, seq_strides_k,
+                        ctx.seq_strides_q, ctx.seq_strides_k,
                         b, sm_scale, o, do, dq, dk, dv, db, L, delta,
-                        dropout_p, philox_seed, philox_offset, 0, causal, varlen_type);
+                        dropout_p, philox_seed, philox_offset, 0, causal, ctx.varlen_type);
         return dq, dk, dv, None, None, None, None, None, None, None, None
 
 varlen_attention = _attention_varlen.apply

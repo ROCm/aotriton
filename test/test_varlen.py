@@ -69,7 +69,7 @@ def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dro
                              autotune=USE_AUTOTUNE,
                              return_autotune=False,
                              fillnan=True)
-    tri_out, encoded_softmax, _ = varlen_attention(q, k, v, seqlens_q, seqlens_k, causal, sm_scale, dropout_p, ext, varlen_type=varlen_type)
+    tri_out, encoded_softmax, _ = varlen_attention(q, k, v, seqlens_q, seqlens_k, causal, sm_scale, dropout_p, varlen_type, ext)
     dropout_mask = encoded_softmax >= 0 if dropout_p > 0.0 else None
     sdpa_params = SdpaParams(causal=causal, sm_scale=sm_scale, dropout_p=dropout_p, dropout_mask=dropout_mask)
     ref_out, _ = ctx.compute_ref_forward(sdpa_params)
@@ -143,7 +143,7 @@ def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dro
 @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16, torch.float32])
 @pytest.mark.parametrize('sm_scale', ['l1'] if not FOR_RELEASE else ['l1', 'l2'])
 @pytest.mark.parametrize('varlen_type', ['compact', 'padded', 'strided'])
-def test_op_bwd(N_HEADS, D_HEAD, n_seqlen, causal, sm_scale, dropout_p, dtype):
+def test_op_bwd(N_HEADS, D_HEAD, n_seqlen, causal, sm_scale, dropout_p, dtype, varlen_type):
     np.random.seed(8139)
     if varlen_type in ['padded', 'compact']:
         seqlens_q = rng_seqlens(n_seqlen)
