@@ -704,7 +704,7 @@ class VarlenSdpaContext(SdpaContext):
     # Not perfect but fits our needs.
     @property
     def seqlen_k(self):
-        return np.max(self._seqlens_q)
+        return np.max(self._seqlens_k)
 
     def create_ctx_tensors(self):
         q, k, v, b = self.dev_tensors
@@ -713,15 +713,21 @@ class VarlenSdpaContext(SdpaContext):
         self.ctx_tensors = (o, M)
 
     @staticmethod
-    def _compute_ref_forward_varlen(ref_tensors, seqlens_q, seqlens_k, p : SdpaParams):
+    def _gen_seqaccess(seqlens_q, seqlens_k):
+        seqlen_q_start = 0
+        seqlen_k_start = 0
+        for i, (seqlen_q, seqlen_k) in enumerate(zip(seqlens_q, seqlens_k)):
+            yield i, (seqlens_q, seqlens_k), (seqlen_q_start, seqlen_k_start)
+            seqlen_q_start += seqlen_q
+            seqlen_k_start += seqlen_k
+
+    def _compute_ref_forward_varlen(self, ref_tensors, seqlens_q, seqlens_k, p : SdpaParams):
         packed_ref_q, packed_ref_k, packed_ref_v, _ = ref_tensors
         packed_dropout_mask = p.dropout_mask if p.dropout_mask is None else p.dropout_mask.to(device=packed_ref_q.device)
         ref_out_array = []
         ref_mask_array = []
-        seqlen_q_start = 0
-        seqlen_k_start = 0
         print(f'REF {seqlens_q=} {seqlens_k=}')
-        for i, (seqlen_q, seqlen_k) in enumerate(zip(seqlens_q, seqlens_k)):
+        for i, (seqlen_q, seqlen_k), (seqlen_q_start, seqlen_k_start) in self._gen_seqaccess(seqlens_q, seqlens_k):
             ref_q = packed_ref_q[0, :, seqlen_q_start:seqlen_q_start+seqlen_q, :]
             ref_k = packed_ref_k[0, :, seqlen_k_start:seqlen_k_start+seqlen_k, :]
             ref_v = packed_ref_v[0, :, seqlen_k_start:seqlen_k_start+seqlen_k, :]
@@ -741,8 +747,6 @@ class VarlenSdpaContext(SdpaContext):
                                                                         dropout_mask=dropout_mask)
             ref_out_array.append(ref_out)
             ref_mask_array.append(ref_mask)
-            seqlen_q_start += seqlen_q
-            seqlen_k_start += seqlen_k
         ref_out = torch.cat(ref_out_array, dim=1).unsqueeze(dim=0)
         return ref_out, None
 
@@ -751,6 +755,67 @@ class VarlenSdpaContext(SdpaContext):
         self.refout_tensors = self._compute_ref_forward_varlen(self.ref_tensors, self._seqlens_q, self._seqlens_k, p)
         self.lp_refout_tensors = self._compute_ref_forward_varlen(self.lp_ref_tensors, self._seqlens_q, self._seqlens_k, p)
         return self.lp_refout_tensors
+
+class PaddedVarlenSdpaContext(VarlenSdpaContext):
+    '''
+    PaddedVarlenSdpaContext uses regular BHSD shape, where S is max(seqlens) and data are padded.
+    '''
+    @staticmethod
+    def _rng_varlen_tensor(num_heads, seqlens, head_dim, dtype, device, packed=False):
+        B = len(seqlens)
+        S = int(np.max(seqlens))
+        dims = (B, num_heads, S, head_dim)
+        # TODO: fill nan to padded sequences
+        return torch.rand(*dims, dtype=dtype, device=device)
+
+    def create_ctx_tensors(self):
+        q, k, v, b = self.dev_tensors
+        o = torch.empty((q.shape[0], q.shape[1], q.shape[2], v.shape[3]), device=q.device, dtype=q.dtype)
+        M = torch.empty((q.shape[0] * q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)
+        self.ctx_tensors = (o, M)
+
+    def _compute_ref_forward_varlen(ref_tensors, seqlens_q, seqlens_k, p : SdpaParams):
+        packed_ref_q, packed_ref_k, packed_ref_v, _ = ref_tensors
+        packed_dropout_mask = p.dropout_mask if p.dropout_mask is None else p.dropout_mask.to(device=packed_ref_q.device)
+        ref_out = torch.empty((q.shape[0], q.shape[1], q.shape[2], v.shape[3]), device=q.device, dtype=q.dtype)
+        ref_mask_array = []
+        print(f'REF {seqlens_q=} {seqlens_k=}')
+        for i, (seqlen_q, seqlen_k) in enumerate(zip(seqlens_q, seqlens_k)):
+            ref_q = packed_ref_q[i, :, :seqlen_q, :]
+            ref_k = packed_ref_k[i, :, :seqlen_k, :]
+            ref_v = packed_ref_v[i, :, :seqlen_k, :]
+            dropout_mask = packed_dropout_mask[i, :, :, :] if packed_dropout_mask is not None else None
+            if dropout_mask is not None:
+                dropout_mask = dropout_mask[:, :seqlen_q, :seqlen_k]  # Trim to actual seqlen
+                # print(f'REF {dropout_mask=}')
+            ref_out, ref_mask = torch.ops.aten._scaled_dot_product_attention_math(ref_q, ref_k, ref_v,
+                                                                        dropout_p=p.dropout_p,
+                                                                        is_causal=p.causal,
+                                                                        scale=p.sm_scale,
+                                                                        dropout_mask=dropout_mask)
+            ref_out[i, :, :seqlen_q, :] = ref_out
+        return ref_out, None
+
+class StridedVarlenSdpaContext(VarlenSdpaContext):
+    '''
+    seqlens_q/k passed to StridedVarlenSdpaContext.__init__() are tuples (seqlens_q/k, padlens_q/k)
+    Hence _rng_varlen_tensor and _compute_ref_forward_varlen should be able to handle them
+    However, fortunately np.sum works well for _rng_varlen_tensor and create_ctx_tensors
+    '''
+    @property
+    def seqlen_k(self):
+        return np.max(self._seqlens_k[0])
+
+    @staticmethod
+    def _gen_seqaccess(seqlens_q, seqlens_k):
+        seqlens_q, padlens_q = seqlens_q
+        seqlens_k, padlens_k = seqlens_k
+        seqlen_q_start = 0
+        seqlen_k_start = 0
+        for i, (seqlen_q, seqlen_k, padlen_q, padlen_k) in enumerate(zip(seqlens_q, seqlens_k, padlens_q, padlens_k)):
+            yield i, (seqlens_q, seqlens_k), (seqlen_q_start, seqlen_k_start)
+            seqlen_q_start += seqlen_q + padlen_q
+            seqlen_k_start += seqlen_k + padlen_k
 
 class SdpaContextFromNPZ(SdpaContext):
     def __init__(self, fn, dtype, device='cuda'):

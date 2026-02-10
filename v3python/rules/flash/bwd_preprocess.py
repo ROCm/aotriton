@@ -15,6 +15,8 @@ class bwd_preprocess(FlashKernel):
         'D',
         'stride_oz', 'stride_oh', 'stride_om', 'stride_ok',
         'stride_doz', 'stride_doh', 'stride_dom', 'stride_dok',
+        'num_seqlens',
+        'cu_seqlens_q',
         'max_seqlen_q',
         'hdim_vo',
         'BLOCK_M', # tl.constexpr starts here
@@ -41,6 +43,7 @@ class bwd_preprocess_varlen(FlashKernel):
         'D',
         'stride_oz', 'stride_oh', 'stride_om', 'stride_ok',
         'stride_doz', 'stride_doh', 'stride_dom', 'stride_dok',
+        'num_seqlens',
         'cu_seqlens_q',
         'max_seqlen_q',
         'hdim_vo',

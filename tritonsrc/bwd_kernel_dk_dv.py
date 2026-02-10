@@ -63,6 +63,8 @@ def bwd_kernel_dk_dv(
     num_seqlens : 'i32',   # set num_seqlens to zero to ignore cu_seqlens_q/k
     max_seqlen_q : 'i32', # and use max_seqlen_q/k for all seqlen_q/k
     max_seqlen_k : 'i32',
+    seq_strides_q,
+    seq_strides_k,
     hdim_qk : 'i32',
     hdim_vo : 'i32',
     dropout_p : tl.float32,
@@ -124,6 +126,10 @@ def bwd_kernel_dk_dv(
         seqlen_q = cu_seqlens_q_end - cu_seqlens_q_start
         batch_index = 0
         lse_stride = tl.load(cu_seqlens_q + num_seqlens)
+        if seq_strides_q.cast(dtype=tl.uint64, bitcast=True) != 0:
+            # THD layout + padding, use seq_strides_q/k as offset
+            cu_seqlens_q_start = tl.load(seq_strides_q + off_z)
+            cu_seqlens_k_start = tl.load(seq_strides_k + off_z)
 
     if num_seqlens < 0:  # for padded seqlen
         cu_seqlens_k_start = tl.load(cu_seqlens_k + off_z)

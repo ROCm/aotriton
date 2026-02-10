@@ -9,7 +9,13 @@ import math
 import os
 
 from varlen_attn_torch_function import varlen_attention, AttentionExtraArgs
-from _common_test import VarlenSdpaContext, SdpaParams, fmt_hdim
+from _common_test import (
+    VarlenSdpaContext,
+    PaddedVarlenSdpaContext,
+    StridedVarlenSdpaContext,
+    SdpaParams,
+    fmt_hdim,
+)
 
 FOR_RELEASE = bool(int(os.getenv('FOR_RELEASE', default='0')))
 
@@ -31,7 +37,14 @@ POSSIBLE_SEQLEN = sorted(set(SEQLEN_Q + SEQLEN_K))
 def rng_seqlens(n_seqlen):
     return np.random.choice(POSSIBLE_SEQLEN, n_seqlen)
 
-def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dropout_p, dtype):
+VARLEN_FACTORY = {
+    "compact": VarlenSdpaContext,
+    "padded": PaddedVarlenSdpaContext,
+    "strided": StridedVarlenSdpaContext,
+}
+
+def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dropout_p, dtype, varlen_type):
+    assert varlen_type in VARLEN_FACTORY.keys(), f"_do_test_varlen: unknown varlen_type {varlen_type}"
     if isinstance(D_HEAD, int):
         HDIM_QK = HDIM_VO = D_HEAD
     else:
@@ -46,7 +59,8 @@ def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dro
     SKIP_DQ = False
     USE_AUTOTUNE = False
     torch.manual_seed(20)
-    ctx = VarlenSdpaContext(N_HEADS, D_HEAD, seqlens_q, seqlens_k, dtype, device='cuda')
+    factory = VARLEN_FACTORY[varlen_type]
+    ctx = factory(N_HEADS, D_HEAD, seqlens_q, seqlens_k, dtype, device='cuda')
     ctx.create_ref_inputs()
     ctx.set_require_grads(skip_dq=SKIP_DQ, skip_dk_dv=SKIP_DK_DV, skip_db=True)
     q, k, v, b = ctx.dev_tensors
@@ -55,7 +69,7 @@ def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dro
                              autotune=USE_AUTOTUNE,
                              return_autotune=False,
                              fillnan=True)
-    tri_out, encoded_softmax, _ = varlen_attention(q, k, v, seqlens_q, seqlens_k, causal, sm_scale, dropout_p, ext)
+    tri_out, encoded_softmax, _ = varlen_attention(q, k, v, seqlens_q, seqlens_k, causal, sm_scale, dropout_p, ext, varlen_type=varlen_type)
     dropout_mask = encoded_softmax >= 0 if dropout_p > 0.0 else None
     sdpa_params = SdpaParams(causal=causal, sm_scale=sm_scale, dropout_p=dropout_p, dropout_mask=dropout_mask)
     ref_out, _ = ctx.compute_ref_forward(sdpa_params)
@@ -128,11 +142,20 @@ def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dro
 @pytest.mark.parametrize('dropout_p', [0.0, 0.5])
 @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16, torch.float32])
 @pytest.mark.parametrize('sm_scale', ['l1'] if not FOR_RELEASE else ['l1', 'l2'])
+@pytest.mark.parametrize('varlen_type', ['compact', 'padded', 'strided'])
 def test_op_bwd(N_HEADS, D_HEAD, n_seqlen, causal, sm_scale, dropout_p, dtype):
     np.random.seed(8139)
-    seqlens_q = rng_seqlens(n_seqlen)
-    seqlens_k = seqlens_q if causal else rng_seqlens(n_seqlen)
-    _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dropout_p, dtype)
+    if varlen_type in ['padded', 'compact']:
+        seqlens_q = rng_seqlens(n_seqlen)
+        seqlens_k = seqlens_q if causal else rng_seqlens(n_seqlen)
+    elif varlen_type == 'strided':
+        padlens_q = rng_seqlens(n_seqlen)
+        padlens_k = padlens_q if causal else rng_seqlens(n_seqlen)
+        seqlens_q = np.array([seqlens_q, padlens_q])
+        seqlens_k = np.array([seqlens_k, padlens_k])
+    _do_test_varlen(N_HEADS, D_HEAD,
+                    seqlens_q, seqlens_k,
+                    causal, sm_scale, dropout_p, dtype, varlen_type)
 
 def main():
     N_HEADS = 3
@@ -143,7 +166,8 @@ def main():
     sm_scale = 1.2
     dropout_p = 0.5
     dtype = torch.float16
-    _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dropout_p, dtype)
+    varlen_type = 'compact'
+    _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dropout_p, dtype, varlen_type)
 
 if __name__ == '__main__':
     main()

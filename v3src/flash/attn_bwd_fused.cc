@@ -91,6 +91,7 @@ _bwd_kernel_fuse(T4 q,
   if (b) {
     bias_type = 1;
   }
+  auto seq_strides_placeholder = T1::get_null_tensor(DType::kInt32);
   BwdKernelFuseParams params = {
     .Q = &q,
     .K = &k,
@@ -111,6 +112,8 @@ _bwd_kernel_fuse(T4 q,
     .num_seqlens = num_seqlens,
     .max_seqlen_q = max_seqlen_q,
     .max_seqlen_k = max_seqlen_k,
+    .seq_strides_q = &seq_strides_placeholder,
+    .seq_strides_k = &seq_strides_placeholder,
     .hdim_qk = hdim_qk,
     .hdim_vo = hdim_vo,
     .dropout_p = dropout_p,

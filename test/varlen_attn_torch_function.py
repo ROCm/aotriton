@@ -4,7 +4,10 @@
 
 import torch
 import numpy as np
-from aotriton_flash import attn_fwd_compact_varlen, attn_bwd_compact_varlen
+from aotriton_flash import (
+    attn_fwd_compact_varlen,
+    attn_bwd_compact_varlen,
+)
 from attn_torch_function import AttentionExtraArgs, BWD_IMPL, V3_API
 
 VERBOSE=False
@@ -34,7 +37,8 @@ class _attention_varlen(torch.autograd.Function):
 
     @staticmethod
     def forward(ctx, q, k, v, seqlens_q, seqlens_k, causal, sm_scale, dropout_p,
-                attn_extra_args=AttentionExtraArgs()):
+                attn_extra_args=AttentionExtraArgs(),
+                varlen_type='compact'):
         return_encoded_softmax = attn_extra_args.return_encoded_softmax
         autotune = attn_extra_args.autotune
         return_autotune = attn_extra_args.return_autotune
@@ -42,13 +46,28 @@ class _attention_varlen(torch.autograd.Function):
         Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
         assert Lq == Lk
         # assert Lk in {16, 32, 64, 128}
+        if varlen_type == 'strided':
+            seqlens_q, padlens_q = seqlens_q
+            seqlens_k, padlens_k = seqlens_k
         batch = len(seqlens_q)
         num_heads = q.shape[1]
         max_seqlen_q = int(np.max(seqlens_q))
         max_seqlen_k = int(np.max(seqlens_k))
         total_seqlen_q = int(np.sum(seqlens_q))
-        cu_seqlens_q = torch.tensor([0] + np.cumsum(seqlens_q).tolist(), dtype=torch.int32, device=q.device)
-        cu_seqlens_k = torch.tensor([0] + np.cumsum(seqlens_k).tolist(), dtype=torch.int32, device=q.device)
+        if varlen_type in ['compact', 'padded']:
+            cu_seqlens_q = np.cumsum(seqlens_q)
+            cu_seqlens_k = np.cumsum(seqlens_k)
+            seq_strides_q = None
+            seq_strides_k = None
+        elif varlen_type == 'strided':
+            seq_strides_q = np.cumsum(seqlens_q + padlens_q)
+            seq_strides_k = np.cumsum(seqlens_k + padlens_k)
+            seq_strides_q = torch.tensor([0] + seq_strides_q.tolist(), dtype=torch.int32, device=q.device)
+            seq_strides_k = torch.tensor([0] + seq_strides_k.tolist(), dtype=torch.int32, device=q.device)
+        else:
+            assert False
+        cu_seqlens_q = torch.tensor([0] + cu_seqlens_q.tolist(), dtype=torch.int32, device=q.device)
+        cu_seqlens_k = torch.tensor([0] + cu_seqlens_k.tolist(), dtype=torch.int32, device=q.device)
         o = torch.empty((q.shape[0], q.shape[1], q.shape[2], v.shape[3]), device=q.device, dtype=q.dtype)
         b = torch.empty((0,0,0,0), device=q.device, dtype=q.dtype)
 
@@ -97,12 +116,13 @@ class _attention_varlen(torch.autograd.Function):
         else:
             atomic = torch.empty([0], device=q.device, dtype=torch.int32)
 
-        attn_fwd_compact_varlen(q, k, v,
-                                cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
-                                b, sm_scale, M, o,
-                                dropout_p, philox_seed, philox_offset1, philox_offset2,
-                                philox_seed_output, philox_offset_output,
-                                encoded_softmax, causal, atomic, call_operator=V3_API);
+        attn_fwd_varlen(q, k, v,
+                        cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
+                        seq_strides_q, seq_strides_k,
+                        b, sm_scale, M, o,
+                        dropout_p, philox_seed, philox_offset1, philox_offset2,
+                        philox_seed_output, philox_offset_output,
+                        encoded_softmax, causal, atomic, ivarlen_type, call_operator=V3_API);
 
         ctx.save_for_backward(q, k, v, b, o, M)
         ctx.seqlens_q = seqlens_q
@@ -111,6 +131,8 @@ class _attention_varlen(torch.autograd.Function):
         ctx.cu_seqlens_k = cu_seqlens_k
         ctx.max_seqlen_q = max_seqlen_q
         ctx.max_seqlen_k = max_seqlen_k
+        ctx.seq_strides_q = seq_strides_q
+        ctx.seq_strides_k = seq_strides_k
         ctx.sm_scale = sm_scale
         ctx.BLOCK_DMODEL = Lk
         ctx.causal = causal
@@ -120,7 +142,8 @@ class _attention_varlen(torch.autograd.Function):
         ctx.philox_offset1 = philox_offset1
         ctx.philox_offset2 = philox_offset2
         ctx.encoded_softmax = encoded_softmax # FIXME: for debugging only
-        return o, encoded_softmax, None
+        ctx.varlen_type = varlen_type
+        return o, encoded_softmax, None, None
 
     @staticmethod
     def backward(ctx, do, _, __):
@@ -145,10 +168,11 @@ class _attention_varlen(torch.autograd.Function):
         dv = torch.empty_like(v)
         db = torch.empty_like(b) if b is not None else None
         delta = lazy_delta(L)
-        attn_bwd_compact_varlen(q, k, v,
-                                cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
-                                b, sm_scale, o, do, dq, dk, dv, db, L, delta,
-                                dropout_p, philox_seed, philox_offset, 0, causal, call_operator=V3_API);
+        attn_bwd_varlen(q, k, v,
+                        cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
+                        seq_strides_q, seq_strides_k,
+                        b, sm_scale, o, do, dq, dk, dv, db, L, delta,
+                        dropout_p, philox_seed, philox_offset, 0, causal, varlen_type);
         return dq, dk, dv, None, None, None, None, None, None, None, None
 
 varlen_attention = _attention_varlen.apply

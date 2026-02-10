@@ -50,6 +50,7 @@ struct AOTRITON_API VarlenType {
   static constexpr int8_t None = 0;
   static constexpr int8_t CompactVarlen = 1;
   static constexpr int8_t PaddedVarlen = 2;
+  static constexpr int8_t StridedVarlen = 2;
 };
 
 struct AOTRITON_API attn_fwd_params {
@@ -68,6 +69,8 @@ struct AOTRITON_API attn_fwd_params {
   T1       cu_seqlens_k;
   int32_t  Max_seqlen_q = 0;    // Unused if cu_seqlens_q is empty
   int32_t  Max_seqlen_k = 0;    // Unused if cu_seqlens_k is empty
+  T1       seq_strides_q;       // See cu_seqlens_padded parameter in
+  T1       seq_strides_k;       // Transformer Engine API nvte_fused_attn_fwd_qkvpacked
   // int32_t  Head_dim;
   float    dropout_p;
   T0       philox_seed_ptr;
@@ -82,7 +85,7 @@ struct AOTRITON_API attn_fwd_params {
   int32_t  window_left;
   int32_t  window_right;
 
-  static constexpr int32_t kVersion = 1;
+  static constexpr int32_t kVersion = 2;
   attn_fwd_params();
 };
 
@@ -113,6 +116,8 @@ struct AOTRITON_API attn_bwd_params {
   T1        cu_seqlens_k;
   int32_t   Max_seqlen_q = 0;       // Unused if cu_seqlens_q is empty
   int32_t   Max_seqlen_k = 0;       // Unused if cu_seqlens_k is empty
+  T1        seq_strides_q;          // See cu_seqlens_padded parameter in
+  T1        seq_strides_k;          // Transformer Engine API nvte_fused_attn_fwd_qkvpacked
   // int32_t   Head_dim;            // Inferred from Q.size()
   float     dropout_p;
   T0        philox_seed_ptr;
@@ -124,7 +129,7 @@ struct AOTRITON_API attn_bwd_params {
   int32_t   window_right;
   mutable LT4       DQ_ACC;          // fp32 accumulator of dq
 
-  static constexpr int32_t kVersion = 4;
+  static constexpr int32_t kVersion = 5;
   attn_bwd_params();
 };
 
