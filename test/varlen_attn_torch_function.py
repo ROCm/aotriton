@@ -10,7 +10,7 @@ from aotriton_flash import (
 )
 from attn_torch_function import AttentionExtraArgs, BWD_IMPL, V3_API
 
-VERBOSE=False
+VERBOSE=True
 DEFAULT_PHILOX_SEED = 0x1BF52
 DEFAULT_PHILOX_OFFSET_1 = 0x1D4000
 DEFAULT_PHILOX_OFFSET_2 = 0x000B42
@@ -49,9 +49,11 @@ class _attention_varlen(torch.autograd.Function):
         max_seqlen_q = int(np.max(seqlens_q))
         max_seqlen_k = int(np.max(seqlens_k))
         total_seqlen_q = int(np.sum(seqlens_q))
+        cu_seqlens_q = np.cumsum(seqlens_q)
+        cu_seqlens_k = np.cumsum(seqlens_k)
+        cu_seqlens_q = torch.tensor([0] + cu_seqlens_q.tolist(), dtype=torch.int32, device=q.device)
+        cu_seqlens_k = torch.tensor([0] + cu_seqlens_k.tolist(), dtype=torch.int32, device=q.device)
         if varlen_type in ['compact', 'padded']:
-            cu_seqlens_q = np.cumsum(seqlens_q)
-            cu_seqlens_k = np.cumsum(seqlens_k)
             seq_strides_q = None
             seq_strides_k = None
         elif varlen_type == 'strided':
@@ -61,13 +63,13 @@ class _attention_varlen(torch.autograd.Function):
             seq_strides_k = torch.tensor([0] + seq_strides_k.tolist(), dtype=torch.int32, device=q.device)
         else:
             assert False
-        cu_seqlens_q = torch.tensor([0] + cu_seqlens_q.tolist(), dtype=torch.int32, device=q.device)
-        cu_seqlens_k = torch.tensor([0] + cu_seqlens_k.tolist(), dtype=torch.int32, device=q.device)
         o = torch.empty((q.shape[0], q.shape[1], q.shape[2], v.shape[3]), device=q.device, dtype=q.dtype)
         b = torch.empty((0,0,0,0), device=q.device, dtype=q.dtype)
 
-        # M = torch.zeros((batch * num_heads, max_seqlen_q), device=q.device, dtype=torch.float32)
-        M = torch.empty((num_heads, total_seqlen_q), device=q.device, dtype=torch.float32)
+        if varlen_type == 'padded':
+            M = torch.zeros((batch * num_heads, max_seqlen_q), device=q.device, dtype=torch.float32)
+        else:
+            M = torch.empty((num_heads, total_seqlen_q), device=q.device, dtype=torch.float32)
         if attn_extra_args.fillnan:
             for t in (o, M):
                 t.fill_(float('nan'))
@@ -85,7 +87,6 @@ class _attention_varlen(torch.autograd.Function):
             print(f'{v.data_ptr()=:x}')
             print(f'{M.data_ptr()=:x}')
             print(f'{o.data_ptr()=:x}')
-            print(f'{stage=}')
             print(f'{v.data_ptr()=:x}')
             print(f'{v.stride(1)=:x}')
             print(f'{v.data_ptr() + q.shape[0] * q.shape[1] * v.stride(1)=:x}')
@@ -138,6 +139,7 @@ class _attention_varlen(torch.autograd.Function):
         ctx.philox_offset2 = philox_offset2
         ctx.encoded_softmax = encoded_softmax # FIXME: for debugging only
         ctx.varlen_type = varlen_type
+        ctx.attn_extra_args = attn_extra_args
         return o, encoded_softmax, None
 
     @staticmethod
@@ -158,10 +160,15 @@ class _attention_varlen(torch.autograd.Function):
         causal = ctx.causal
         # if q.shape[-1] <= 32:
         # do = do.contiguous()
-        dq = torch.zeros_like(q)
+        dq = torch.empty_like(q)
         dk = torch.empty_like(k)
         dv = torch.empty_like(v)
         db = torch.empty_like(b) if b is not None else None
+        if ctx.attn_extra_args.fillnan:
+            for t in (dq, dk, dv, db):
+                if t is not None:
+                    t.fill_(float('nan'))
+        print(f'{cu_seqlens_q=} {max_seqlen_q=}' )
         delta = lazy_delta(L)
         attn_bwd_varlen(q, k, v,
                         cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
