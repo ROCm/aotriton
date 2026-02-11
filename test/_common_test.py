@@ -460,8 +460,7 @@ class SdpaContext(object):
     def _validate(out, ref, lp_ref, fudge_factor, tname,
                   *,
                   return_target_fudge_factors=False,
-                  adiff=None,
-                  valid_seqlens=None):
+                  adiff=None):
         if out is None and ref is None:
             return True, 0.0, 1.0
         # atol, rtol, raw_atol, raw_rtol = get_tolerances(ref, lp_ref, fudge_factor)
