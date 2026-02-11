@@ -50,7 +50,7 @@ struct AOTRITON_API VarlenType {
   static constexpr int8_t None = 0;
   static constexpr int8_t CompactVarlen = 1;
   static constexpr int8_t PaddedVarlen = 2;
-  static constexpr int8_t StridedVarlen = 2;
+  static constexpr int8_t StridedVarlen = 3;
 };
 
 struct AOTRITON_API attn_fwd_params {
