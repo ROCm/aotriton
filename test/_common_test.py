@@ -823,6 +823,8 @@ class PaddedVarlenSdpaContext(VarlenSdpaContext):
 
     def _mask_tensor(self, out, ref, lp_ref, tname: str):
         valid_seqlens = self._get_valid_seqlens(tname)
+        if valid_seqlens is None:
+            return
         for b, seqlen in enumerate(valid_seqlens):
             out[b, :, seqlen:, :].fill_(0)
             ref[b, :, seqlen:, :].fill_(0)
