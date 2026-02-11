@@ -722,6 +722,9 @@ class VarlenSdpaContext(SdpaContext):
             seqlen_k_start += seqlen_k
 
     def _compute_ref_forward_varlen(self, ref_tensors, seqlens_q, seqlens_k, p : SdpaParams):
+        num_head_q = ref_q.shape[1]
+        num_head_k = ref_k.shape[1]
+        num_head_v = ref_v.shape[1]
         packed_ref_q, packed_ref_k, packed_ref_v, _ = ref_tensors
         packed_dropout_mask = p.dropout_mask if p.dropout_mask is None else p.dropout_mask.to(device=packed_ref_q.device)
         ref_out_array = []
@@ -774,10 +777,15 @@ class PaddedVarlenSdpaContext(VarlenSdpaContext):
         M = torch.empty((q.shape[0] * q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)
         self.ctx_tensors = (o, M)
 
-    def _compute_ref_forward_varlen(ref_tensors, seqlens_q, seqlens_k, p : SdpaParams):
+    def _compute_ref_forward_varlen(self, ref_tensors, seqlens_q, seqlens_k, p : SdpaParams):
+        q, k, v, b = self.dev_tensors
         packed_ref_q, packed_ref_k, packed_ref_v, _ = ref_tensors
         packed_dropout_mask = p.dropout_mask if p.dropout_mask is None else p.dropout_mask.to(device=packed_ref_q.device)
-        ref_out = torch.empty((q.shape[0], q.shape[1], q.shape[2], v.shape[3]), device=q.device, dtype=q.dtype)
+        num_head_q = packed_ref_q.shape[1]
+        num_head_k = packed_ref_k.shape[1]
+        num_head_v = packed_ref_v.shape[1]
+        enable_gqa = num_head_q != num_head_k
+        ref_out_array = torch.zeros((q.shape[0], q.shape[1], q.shape[2], v.shape[3]), device=q.device, dtype=q.dtype)
         ref_mask_array = []
         print(f'REF {seqlens_q=} {seqlens_k=}')
         for i, (seqlen_q, seqlen_k) in enumerate(zip(seqlens_q, seqlens_k)):
@@ -788,13 +796,15 @@ class PaddedVarlenSdpaContext(VarlenSdpaContext):
             if dropout_mask is not None:
                 dropout_mask = dropout_mask[:, :seqlen_q, :seqlen_k]  # Trim to actual seqlen
                 # print(f'REF {dropout_mask=}')
-            ref_out, ref_mask = torch.ops.aten._scaled_dot_product_attention_math(ref_q, ref_k, ref_v,
-                                                                        dropout_p=p.dropout_p,
-                                                                        is_causal=p.causal,
-                                                                        scale=p.sm_scale,
-                                                                        dropout_mask=dropout_mask)
-            ref_out[i, :, :seqlen_q, :] = ref_out
-        return ref_out, None
+            ref_out, ref_mask = sdpa_math(ref_q, ref_k, ref_v,
+                                          dropout_p=p.dropout_p,
+                                          is_causal=p.causal,
+                                          scale=p.sm_scale,
+                                          dropout_mask=dropout_mask,
+                                          enable_gqa=enable_gqa)
+            print(f'REF {seqlen_q=} {ref_out.shape=}')
+            ref_out_array[i, :, :seqlen_q, :] = ref_out
+        return ref_out_array, None
 
 class StridedVarlenSdpaContext(VarlenSdpaContext):
     '''
