@@ -167,12 +167,14 @@ def bwd_preprocess_varlen(
     num_seq = tl.num_programs(2)
     cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
     cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
-    lse_stride = tl.load(cu_seqlens_q + num_seq)
     seqlen_q = cu_seqlens_q_end - cu_seqlens_q_start
     if off_m >= seqlen_q:
         return
     if seq_strides_q.cast(dtype=tl.uint64, bitcast=True) != 0:
         cu_seqlens_q_start = tl.load(seq_strides_q + off_z)
+        lse_stride = tl.load(seq_strides_q + num_seq)
+    else:
+        lse_stride = tl.load(cu_seqlens_q + num_seq)
 
     # BLOCK POINTERS ARE KEPT FOR DOCUMENTATION PURPOSE
     # o_offset = off_h * stride_oh + cu_seqlens_q_start * stride_om

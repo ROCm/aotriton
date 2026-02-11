@@ -44,11 +44,13 @@ class _attention_varlen(torch.autograd.Function):
         if varlen_type == 'strided':
             seqlens_q, padlens_q = seqlens_q
             seqlens_k, padlens_k = seqlens_k
+            total_seqlen_q = int(np.sum(seqlens_q + padlens_q))  # Be explicit
+        else:
+            total_seqlen_q = int(np.sum(seqlens_q))
         batch = len(seqlens_q)
         num_heads = q.shape[1]
         max_seqlen_q = int(np.max(seqlens_q))
         max_seqlen_k = int(np.max(seqlens_k))
-        total_seqlen_q = int(np.sum(seqlens_q))
         cu_seqlens_q = np.cumsum(seqlens_q)
         cu_seqlens_k = np.cumsum(seqlens_k)
         cu_seqlens_q = torch.tensor([0] + cu_seqlens_q.tolist(), dtype=torch.int32, device=q.device)
@@ -61,6 +63,8 @@ class _attention_varlen(torch.autograd.Function):
             seq_strides_k = np.cumsum(seqlens_k + padlens_k)
             seq_strides_q = torch.tensor([0] + seq_strides_q.tolist(), dtype=torch.int32, device=q.device)
             seq_strides_k = torch.tensor([0] + seq_strides_k.tolist(), dtype=torch.int32, device=q.device)
+            print(f'{seq_strides_q=}')
+            print(f'{seq_strides_k=}')
         else:
             assert False
         o = torch.empty((q.shape[0], q.shape[1], q.shape[2], v.shape[3]), device=q.device, dtype=q.dtype)

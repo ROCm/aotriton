@@ -33,9 +33,13 @@ SEQLEN_K = [4, 8, 63, 128]
 # SEQLEN_K = [4]
 
 POSSIBLE_SEQLEN = sorted(set(SEQLEN_Q + SEQLEN_K))
+POSSIBLE_PADLEN = [0, 4, 7]
 
 def rng_seqlens(n_seqlen):
     return np.random.choice(POSSIBLE_SEQLEN, n_seqlen)
+
+def rng_padlens(n_seqlen):
+    return np.random.choice(POSSIBLE_PADLEN, n_seqlen)
 
 VARLEN_FACTORY = {
     "compact": VarlenSdpaContext,
@@ -91,9 +95,6 @@ def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dro
         print(f'{err_idx=}')
         print(f'{tri_out[err_idx]=}')
         print(f'{ref_out[err_idx]=}')
-        for seqlen in cu_seqlens_q[:-1]:
-            print(f'{seqlen=} {tri_out[0,0,seqlen,0]=}')
-            print(f'{seqlen=} {ref_out[0,0,seqlen,0]=}')
         # print(f'{tri_out=}')
         # print(f'{ref_out=}')
     assert is_allclose, f'Forward pass {is_allclose=} {tfts=}'
@@ -145,29 +146,53 @@ def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dro
 @pytest.mark.parametrize('varlen_type', ['compact', 'padded', 'strided'])
 def test_op_bwd(N_HEADS, D_HEAD, n_seqlen, causal, sm_scale, dropout_p, dtype, varlen_type):
     np.random.seed(8139)
-    if varlen_type in ['padded', 'compact']:
-        seqlens_q = rng_seqlens(n_seqlen)
-        seqlens_k = seqlens_q if causal else rng_seqlens(n_seqlen)
-    elif varlen_type == 'strided':
-        padlens_q = rng_seqlens(n_seqlen)
-        padlens_k = padlens_q if causal else rng_seqlens(n_seqlen)
+    seqlens_q = rng_seqlens(n_seqlen)
+    seqlens_k = seqlens_q if causal else rng_seqlens(n_seqlen)
+    if varlen_type == 'strided':
+        padlens_q = rng_padlens(n_seqlen)
+        padlens_k = padlens_q if causal else rng_padlens(n_seqlen)
         seqlens_q = np.array([seqlens_q, padlens_q])
         seqlens_k = np.array([seqlens_k, padlens_k])
     _do_test_varlen(N_HEADS, D_HEAD,
                     seqlens_q, seqlens_k,
                     causal, sm_scale, dropout_p, dtype, varlen_type)
 
-def main():
+def main1():
     N_HEADS = 3
-    D_HEAD = 7
-    seqlens_q = np.array([4, 8])
-    seqlens_k = seqlens_q
+    D_HEAD = 8
+    seqlens_q = np.array([ 4, 143, 128, 143, 143,])
+    seqlens_k = np.array([ 8,  63,   8,  63,  63,])
+    # seqlens_q = np.array([4, 8])
+    # seqlens_k = seqlens_q
     causal = False
-    sm_scale = 1.2
-    dropout_p = 0.5
+    sm_scale = 1.0 / 8.0
+    # dropout_p = 0.5
+    dropout_p = 0.0
     dtype = torch.float16
-    varlen_type = 'compact'
+    # varlen_type = 'compact'
+    varlen_type = 'padded'
     _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dropout_p, dtype, varlen_type)
 
+def main2():
+    N_HEADS = 3
+    D_HEAD = 8
+    # seqlens_q = np.array([ 4,  31, 8])
+    # seqlens_k = np.array([ 8,  63, 8])
+    # padlens_q = np.array([ 2,   3, 0])
+    # padlens_k = np.array([ 5,   7, 0])
+    seqlens_q = np.array([ 8, 8, 8])
+    seqlens_k = np.array([ 8, 8, 8])
+    padlens_q = np.array([ 0, 32, 0])
+    padlens_k = np.array([ 0, 32, 0])
+    causal = False
+    seqlens_q = np.array([seqlens_q, padlens_q])
+    seqlens_k = np.array([seqlens_k, padlens_k])
+    sm_scale = 1.0 / 8.0
+    dropout_p = 0.0
+    dtype = torch.float16
+    varlen_type = 'strided'
+    _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dropout_p, dtype, varlen_type)
+
+
 if __name__ == '__main__':
-    main()
+    main2()

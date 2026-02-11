@@ -125,11 +125,13 @@ def bwd_kernel_dk_dv(
         cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
         seqlen_q = cu_seqlens_q_end - cu_seqlens_q_start
         batch_index = 0
-        lse_stride = tl.load(cu_seqlens_q + num_seqlens)
         if seq_strides_q.cast(dtype=tl.uint64, bitcast=True) != 0:
             # THD layout + padding, use seq_strides_q/k as offset
             cu_seqlens_q_start = tl.load(seq_strides_q + off_z)
             cu_seqlens_k_start = tl.load(seq_strides_k + off_z)
+            lse_stride = tl.load(seq_strides_q + num_seqlens)
+        else:
+            lse_stride = tl.load(cu_seqlens_q + num_seqlens)
     elif num_seqlens < 0:  # for padded seqlen
         # Varlen, but padded to Rank 4 tensor
         seqlen_k = tl.load(cu_seqlens_k + off_z + 1) - tl.load(cu_seqlens_k + off_z)

@@ -197,11 +197,13 @@ def attn_fwd(
             cu_seqlens_k_end = tl.load(cu_seqlens_k + off_z + 1)
             seqlen_k = cu_seqlens_k_end - cu_seqlens_k_start
             batch_index = 0  # FILEPR
-            lse_stride = tl.load(cu_seqlens_q + Num_seqlens)
             if seq_strides_q.cast(dtype=tl.uint64, bitcast=True) != 0:
                 # THD layout + padding, use seq_strides_q/k as offset
                 cu_seqlens_q_start = tl.load(seq_strides_q + off_z)
                 cu_seqlens_k_start = tl.load(seq_strides_k + off_z)
+                lse_stride = tl.load(seq_strides_q + Num_seqlens)
+            else:
+                lse_stride = tl.load(cu_seqlens_q + Num_seqlens)
         elif Num_seqlens < 0: # Varlen, BHSD layout, S is padded to Max_seqlen_q
             cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
             cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
