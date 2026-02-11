@@ -10,7 +10,7 @@ from aotriton_flash import (
 )
 from attn_torch_function import AttentionExtraArgs, BWD_IMPL, V3_API
 
-VERBOSE=True
+VERBOSE=False
 DEFAULT_PHILOX_SEED = 0x1BF52
 DEFAULT_PHILOX_OFFSET_1 = 0x1D4000
 DEFAULT_PHILOX_OFFSET_2 = 0x000B42
@@ -63,8 +63,6 @@ class _attention_varlen(torch.autograd.Function):
             seq_strides_k = np.cumsum(seqlens_k + padlens_k)
             seq_strides_q = torch.tensor([0] + seq_strides_q.tolist(), dtype=torch.int32, device=q.device)
             seq_strides_k = torch.tensor([0] + seq_strides_k.tolist(), dtype=torch.int32, device=q.device)
-            print(f'{seq_strides_q=}')
-            print(f'{seq_strides_k=}')
         else:
             assert False
         o = torch.empty((q.shape[0], q.shape[1], q.shape[2], v.shape[3]), device=q.device, dtype=q.dtype)
@@ -172,7 +170,6 @@ class _attention_varlen(torch.autograd.Function):
             for t in (dq, dk, dv, db):
                 if t is not None:
                     t.fill_(float('nan'))
-        print(f'{cu_seqlens_q=} {max_seqlen_q=}' )
         delta = lazy_delta(L)
         attn_bwd_varlen(q, k, v,
                         cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
