@@ -40,6 +40,8 @@ class bwd_kernel_fuse(FlashBwdKernel):
         'num_seqlens',
         'max_seqlen_q',
         'max_seqlen_k',
+        'seq_strides_q',
+        'seq_strides_k',
         'hdim_qk',
         'hdim_vo',
         'dropout_p',

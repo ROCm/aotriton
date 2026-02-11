@@ -30,7 +30,9 @@ def bwd_preprocess(
     Delta,
     stride_oz, stride_oh, stride_om, stride_on,
     stride_doz, stride_doh, stride_dom, stride_don,
-    seqlen_q,
+    cu_seqlens_q,
+    num_seqlens,
+    max_seqlen_q,
     hdim_vo,
     BLOCK_M: tl.constexpr,
     D_HEAD: tl.constexpr,
@@ -69,6 +71,12 @@ def bwd_preprocess(
                                               stride_oz, stride_oh, stride_om, stride_on,
                                               off_z, off_h, offs_m,
                                               D_HEAD0, D_HEAD1, D_HEAD2)
+    if num_seqlens == 0:
+        seqlen_q = max_seqlen_q
+    else:
+        cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
+        cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
+        seqlen_q = cu_seqlens_q_end - cu_seqlens_q_start
     # do_offset = off_h * stride_doh + off_z * stride_doz
     # DO_block_ptr = tl.make_block_ptr(
     #     base=DO + do_offset,
@@ -115,7 +123,7 @@ def bwd_preprocess(
     # write-back, shape (q.shape[0] * q.shape[1], q.shape[2])
     off_zh = off_z * num_h + off_h * 1
     # Check for OOB accesses
-    delta_ptrs = Delta + off_zh * seqlen_q + off_m + tl.arange(0, BLOCK_M)
+    delta_ptrs = Delta + off_zh * max_seqlen_q + off_m + tl.arange(0, BLOCK_M)
     overflow = off_m + BLOCK_M - seqlen_q
     if overflow > 0:
         boundary = tl.full((BLOCK_M, ), BLOCK_M - overflow, dtype=tl.int32)
@@ -132,6 +140,7 @@ def bwd_preprocess_varlen(
     stride_doz, stride_doh, stride_dom, stride_don,
     cu_seqlens_q,
     max_seqlen_q,
+    seq_strides_q,
     hdim_vo,
     BLOCK_M: tl.constexpr,
     D_HEAD: tl.constexpr,
@@ -158,10 +167,14 @@ def bwd_preprocess_varlen(
     num_seq = tl.num_programs(2)
     cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
     cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
-    lse_stride = tl.load(cu_seqlens_q + num_seq)
     seqlen_q = cu_seqlens_q_end - cu_seqlens_q_start
     if off_m >= seqlen_q:
         return
+    if seq_strides_q.cast(dtype=tl.uint64, bitcast=True) != 0:
+        cu_seqlens_q_start = tl.load(seq_strides_q + off_z)
+        lse_stride = tl.load(seq_strides_q + num_seq)
+    else:
+        lse_stride = tl.load(cu_seqlens_q + num_seq)
 
     # BLOCK POINTERS ARE KEPT FOR DOCUMENTATION PURPOSE
     # o_offset = off_h * stride_oh + cu_seqlens_q_start * stride_om
