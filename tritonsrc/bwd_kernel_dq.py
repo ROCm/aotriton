@@ -129,20 +129,12 @@ def bwd_kernel_dq(
             # THD layout + padding, use seq_strides_q/k as offset
             cu_seqlens_q_start = tl.load(seq_strides_q + off_z)
             cu_seqlens_k_start = tl.load(seq_strides_k + off_z)
-
-    if num_seqlens < 0:  # for padded seqlen
-        cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
-        cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
-        seqlen_q = cu_seqlens_q_end - cu_seqlens_q_start
+    elif num_seqlens < 0:  # for padded seqlen
+        # Varlen, but padded to Rank 4 tensor
+        seqlen_q = tl.load(cu_seqlens_q + off_z + 1) - tl.load(cu_seqlens_q + off_z)
         if start_q >= seqlen_q:
             return
-        cu_seqlens_k_start = tl.load(cu_seqlens_k + off_z)
-        cu_seqlens_k_end = tl.load(cu_seqlens_k + off_z + 1)
-        seqlen_k = cu_seqlens_k_end - cu_seqlens_k_start
-        # Varlen, but padded to Rank 4 tensor
-        cu_seqlens_q_start = 0
-        cu_seqlens_k_start = 0
-        batch_index = off_z
+        seqlen_k = tl.load(cu_seqlens_k + off_z + 1) - tl.load(cu_seqlens_k + off_z)
 
     # Initialize pointers to Q, K, V
     # Q_block_ptr = tl.make_block_ptr(

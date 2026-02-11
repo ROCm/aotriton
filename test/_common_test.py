@@ -453,13 +453,22 @@ class SdpaContext(object):
         if not ref_only:
             self.dout_tensors = self._compute_backward(self.dev_tensors, out, dout)
 
+    def _get_valid_seqlens(self, tname: str):
+        return None
+
     @staticmethod
     def _validate(out, ref, lp_ref, fudge_factor, tname,
                   *,
                   return_target_fudge_factors=False,
-                  adiff=None):
+                  adiff=None,
+                  valid_seqlens=None):
         if out is None and ref is None:
             return True, 0.0, 1.0
+        if valid_seqlens is not None:
+            for b, seqlen in enumerate(valid_seqlens):
+                out[b, :, seqlen:, :].fill_(0)
+                ref[b, :, seqlen:, :].fill_(0)
+                lp_ref[b, :, seqlen:, :].fill_(0)
         # atol, rtol, raw_atol, raw_rtol = get_tolerances(ref, lp_ref, fudge_factor)
         assert out is not None, f'd{tname} is none'
         assert ref is not None, f'd{tname}_ref is none'
@@ -507,7 +516,8 @@ class SdpaContext(object):
                                                           self.OUT_FUDGE_FACTOR,
                                                           'out',
                                                           return_target_fudge_factors=return_target_fudge_factors,
-                                                          adiff=use_adiff)
+                                                          adiff=use_adiff,
+                                                          valid_seqlens=self._get_valid_seqlens('out'))
         target_fudge_factors = {'out' : tft}
         if no_backward:
             if return_target_fudge_factors:
@@ -525,7 +535,8 @@ class SdpaContext(object):
                                                   fudge_factor,
                                                   tname,
                                                   return_target_fudge_factors=return_target_fudge_factors,
-                                                  adiff=adiff)
+                                                  adiff=adiff,
+                                                  valid_seqlens=self._get_valid_seqlens(tname))
             grads_allclose.append(allclose)
             grads_adiff.append(adiff)
             # if math.isnan(adiff):
@@ -805,6 +816,15 @@ class PaddedVarlenSdpaContext(VarlenSdpaContext):
             print(f'REF {seqlen_q=} {ref_out.shape=}')
             ref_out_array[i, :, :seqlen_q, :] = ref_out
         return ref_out_array, None
+
+    def _get_valid_seqlens(self, tname: str):
+        if tname in ['out', 'q']:
+            return self._seqlens_q
+        if tname in ['k', 'v']:
+            return self._seqlens_k
+        if tname == 'b':
+            return None
+        assert False, f'Unknown tensor name {tname}'
 
 class StridedVarlenSdpaContext(VarlenSdpaContext):
     '''
