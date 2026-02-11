@@ -16,6 +16,7 @@ Extra Credits:
 """
 import triton
 import triton.language as tl
+from fwd_kernel_inner import _lse_offset
 from composed_tensors import (
     composed_ptrs,
     composed_load,
@@ -154,8 +155,10 @@ def bwd_preprocess_varlen(
     off_h = tl.program_id(1) # head index
     off_z = tl.program_id(2) # batch index
     num_h = tl.num_programs(1)
+    num_seq = tl.num_programs(2)
     cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
     cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
+    lse_stride = tl.load(cu_seqlens_q + num_seq)
     seqlen_q = cu_seqlens_q_end - cu_seqlens_q_start
     if off_m >= seqlen_q:
         return
@@ -218,10 +221,13 @@ def bwd_preprocess_varlen(
                                         D_HEAD0, D_HEAD1, D_HEAD2,
                                         axis=1)
 
-    # write-back, shape (varlen_batch, num_heads, max_seqlen_q)
-    off_zh = off_z * num_h + off_h * 1
+    # write-back
+    # old shape (varlen_batch, num_heads, max_seqlen_q)
+    # New Varlen layout: (H, Total_Seqlen)
+    # batch_index == 0 for varlen
+    lse_offset = _lse_offset(0, off_h, cu_seqlens_q_start, num_h, lse_stride)
     # Check for OOB accesses
-    delta_ptrs = Delta + off_zh * max_seqlen_q + off_m + tl.arange(0, BLOCK_M)
+    delta_ptrs = Delta + lse_offset + off_m + tl.arange(0, BLOCK_M)
     overflow = off_m + BLOCK_M - seqlen_q
     if overflow > 0:
         boundary = tl.full((BLOCK_M, ), BLOCK_M - overflow, dtype=tl.int32)

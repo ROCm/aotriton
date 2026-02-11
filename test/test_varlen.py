@@ -9,7 +9,7 @@ import math
 import os
 
 from varlen_attn_torch_function import varlen_attention, AttentionExtraArgs
-from _common_test import VarlenSdpaContext, SdpaParams
+from _common_test import VarlenSdpaContext, SdpaParams, fmt_hdim
 
 FOR_RELEASE = bool(int(os.getenv('FOR_RELEASE', default='0')))
 
@@ -32,10 +32,15 @@ def rng_seqlens(n_seqlen):
     return np.random.choice(POSSIBLE_SEQLEN, n_seqlen)
 
 def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dropout_p, dtype):
+    if isinstance(D_HEAD, int):
+        HDIM_QK = HDIM_VO = D_HEAD
+    else:
+        HDIM_QK, HDIM_VO = D_HEAD
+    HDIM_MAX = max(HDIM_QK, HDIM_VO)
     if sm_scale == 'l1':
-        sm_scale = 1.0 / D_HEAD
+        sm_scale = 1.0 / HDIM_QK
     elif sm_scale == 'l2':
-        sm_scale = 1.0 / math.sqrt(D_HEAD)
+        sm_scale = 1.0 / math.sqrt(HDIM_QK)
     # Data creation
     SKIP_DK_DV = False
     SKIP_DQ = False
@@ -117,7 +122,7 @@ def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dro
     print(f'{adiff=} {grads_adiff=}')
 
 @pytest.mark.parametrize('N_HEADS', [3])
-@pytest.mark.parametrize('D_HEAD', POT_HEADDIMS + NPOT_HEADDIMS + PRIME_HEADDIMS)
+@pytest.mark.parametrize('D_HEAD', [8, 64, 184, (24, 152), (120, 8)], ids=fmt_hdim)
 @pytest.mark.parametrize('n_seqlen', range(2, 24, 5))
 @pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
 @pytest.mark.parametrize('dropout_p', [0.0, 0.5])
@@ -130,8 +135,8 @@ def test_op_bwd(N_HEADS, D_HEAD, n_seqlen, causal, sm_scale, dropout_p, dtype):
     _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dropout_p, dtype)
 
 def main():
-    N_HEADS = 2
-    D_HEAD = 4
+    N_HEADS = 3
+    D_HEAD = 7
     seqlens_q = np.array([4, 8])
     seqlens_k = seqlens_q
     causal = False
