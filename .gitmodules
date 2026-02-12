@@ -2,6 +2,3 @@
 	path = third_party/triton
 	url = https://github.com/ROCmSoftwarePlatform/triton.git
 	branch = aotriton-hyperjump
-[submodule "third_party/aiter"]
-	path = third_party/aiter
-	url = https://github.com/ROCm/aiter.git

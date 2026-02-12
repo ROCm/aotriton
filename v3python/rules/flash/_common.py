@@ -32,8 +32,8 @@ class FlashAffine(AffineKernelDescription):
     AFFINE_KERNEL_ROOT = Path('third_party/aiter/hsa')
     CO_DIR = None           # Required by subclass
 
-    def co_dir(self, functional):
-        return self.AFFINE_KERNEL_ROOT / functional.arch / self.CO_DIR
+    def co_dir(self, build_dir: Path, functional):
+        return build_dir / self.AFFINE_KERNEL_ROOT / functional.arch / self.CO_DIR
 
 def check_value(functional, repr_name):
     if not isinstance(repr_name, list):
