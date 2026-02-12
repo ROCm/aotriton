@@ -65,7 +65,7 @@ operators = [
     ]),
     OpAttnBwd([
         MetroBwdKernel('triton_split',
-                       [ConditionalKernel('num_seqlens', '> 0', __bwd_preprocess_varlen, __bwd_preprocess),
+                       [ConditionalKernel('num_seqlens', '> 0', __bwd_preprocess_varlen, __bwd_preprocess),  # padded varlen (num_seqlens < 0) should call bwd_preprocess
                         __bwd_kernel_dk_dv,
                         __bwd_kernel_dq]),
         __bwd_kernel_fuse,

@@ -53,7 +53,7 @@ class AffineCapabilityGenerator(BaseTuneCodeGenerator):
         package_path = str(f.full_filepack_dir / 'affine_kernels')
         base_kernel_co = self._df['CoName'].iat[0]
         # put co filename to asms, so it can be propogated to Bare.cluster
-        kernel_co = akdesc.co_dir(f) / base_kernel_co
+        kernel_co = akdesc.co_dir(self._args.build_dir, f) / base_kernel_co
         asm_registry = self._parent_repo.get_hsaco_registry('asms')
         asm_registry.register(package_path, str(kernel_co), append=True)
         stem_co_name = remove_dot_co(base_kernel_co)

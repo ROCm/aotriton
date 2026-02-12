@@ -84,6 +84,40 @@ else()
   set(AOTRITON_ENABLE_FP32 0)
 endif()
 
+if(NOT AOTRITON_NOIMAGE_MODE)
+  find_package(Git REQUIRED)
+  ## Handle aiter.txt
+  # CAVEAT: MUST USE GIT TAG OTHERWISE GIT_SHALLOW WILL NOT WORK
+  execute_process(
+    COMMAND ${CMAKE_COMMAND} -E cat "${CMAKE_CURRENT_SOURCE_PARENT_DIR}/third_party/aiter.txt"
+    OUTPUT_VARIABLE AITER_GIT_TAG
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+  )
+  # CAVEAT: FetchContent_Declare is buggy and unsuitable for our needs
+  #         See https://stackoverflow.com/questions/78237952
+  set(AITER_DIR "${AOTRITON_V2_BUILD_DIR}/aiter")
+  if(NOT EXISTS "${AITER_DIR}/.git")
+    execute_process(
+      COMMAND ${GIT_EXECUTABLE} clone --depth 1 --branch ${AITER_GIT_TAG}
+      https://github.com/ROCm/aiter.git
+      WORKING_DIRECTORY "${AOTRITON_V2_BUILD_DIR}"
+      COMMAND_ERROR_IS_FATAL ANY
+    )
+  endif()
+  execute_process(
+    COMMAND ${GIT_EXECUTABLE} fetch origin --depth 1 "${AITER_GIT_TAG}:${AITER_GIT_TAG}"
+    WORKING_DIRECTORY "${AITER_DIR}"
+    COMMAND_ERROR_IS_FATAL ANY
+  )
+  # cmake doc: "For sequential execution of multiple commands use multiple
+  # execute_process calls each with a single COMMAND argument."
+  execute_process(
+    COMMAND ${GIT_EXECUTABLE} checkout ${AITER_GIT_TAG}
+    WORKING_DIRECTORY "${AITER_DIR}"
+    COMMAND_ERROR_IS_FATAL ANY
+  )
+endif()
+
 ## Generate Bare.* files and shim files
 execute_process(
 COMMAND ${CMAKE_COMMAND}

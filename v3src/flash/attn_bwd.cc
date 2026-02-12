@@ -38,7 +38,7 @@ dim3 BwdKernelDkDvContext::grid_calculator() const {
   dim3 grid {
     AOTRITON_NS::cdiv<uint32_t>(params->max_seqlen_k, this->BLOCK_N),
     uint32_t(params->K->size(1)),
-    params->num_seqlens == 0 ? uint32_t(params->Q->size(0)) : params->num_seqlens,
+    params->num_seqlens == 0 ? uint32_t(params->Q->size(0)) : std::abs(params->num_seqlens),
   };
   // std::cerr << "bwd_kernel_dk_dv grid conf " << grid.x << " " << grid.y << " " << grid.z << std::endl;
   return grid;
@@ -48,7 +48,7 @@ dim3 BwdKernelDqContext::grid_calculator() const {
   dim3 grid {
     AOTRITON_NS::cdiv<uint32_t>(params->max_seqlen_q, this->BLOCK_M),
     uint32_t(params->Q->size(1)),
-    params->num_seqlens == 0 ? uint32_t(params->Q->size(0)) : params->num_seqlens,
+    params->num_seqlens == 0 ? uint32_t(params->Q->size(0)) : std::abs(params->num_seqlens),
   };
   // std::cerr << "bwd_kernel_dq grid conf " << grid.x << " " << grid.y << " " << grid.z << std::endl;
   return grid;
@@ -116,9 +116,11 @@ attn_bwd(const attn_bwd_params& in,
     .num_head_k = num_head_k,
     .cu_seqlens_q = &in.cu_seqlens_q,
     .cu_seqlens_k = &in.cu_seqlens_k,
-    .num_seqlens = num_seqlens,
+    .num_seqlens = in.varlen_type == VarlenType::PaddedVarlen ? -num_seqlens : num_seqlens,
     .max_seqlen_q = max_seqlen_q,
     .max_seqlen_k = max_seqlen_k,
+    .seq_strides_q = &in.seq_strides_q,
+    .seq_strides_k = &in.seq_strides_k,
     .hdim_qk = hdim_qk,
     .hdim_vo = hdim_vo,
     .dropout_p = in.dropout_p,
@@ -224,11 +226,14 @@ bwd_preprocess(T4 out, T4 dout, T2 delta, AOTRITON_NS::Stream stream_wrap) {
     return hipErrorInvalidValue;
   }
   EagerLazyTensor<2> eager_lazy_delta(delta);
+  auto cu_seqlens_placeholder = T1::get_null_tensor(DType::kInt32);
   // Requires C++ 20
   BwdPreprocessParams params = {
     .Out = &out,
     .DO = &dout,
     .D = &eager_lazy_delta,
+    .cu_seqlens_q = &cu_seqlens_placeholder,
+    .num_seqlens = 0,   // Note: V2 API does not support padded varlen
     .max_seqlen_q = static_cast<int32_t>(out.size(2)),
     .hdim_vo = hdim_o,
     .BLOCK_DMODEL = int16_t(hdim_rounded),
@@ -287,6 +292,7 @@ bwd_preprocess_varlen(T4 out,
     .DO = &dout,
     .D = &eager_lazy_delta,
     .cu_seqlens_q = &cu_seqlens_q,
+    .num_seqlens = static_cast<int32_t>(cu_seqlens_q.size(0) - 1),  // Note: V2 API does not support strided varlen
     .max_seqlen_q = max_seqlen_q,
     .hdim_vo = hdim_o,
     .BLOCK_DMODEL = int16_t(hdim_rounded),
@@ -362,6 +368,7 @@ bwd_kernel_dk_dv(T4 q,
     bias_type = 1;
   }
   EagerLazyTensor eager_lazy_delta(delta);
+  auto seq_strides_placeholder = T1::get_null_tensor(DType::kInt32);
   BwdKernelDkDvParams params = {
     .Q = &q,
     .K = &k,
@@ -381,6 +388,8 @@ bwd_kernel_dk_dv(T4 q,
     .num_seqlens = num_seqlens,
     .max_seqlen_q = max_seqlen_q,
     .max_seqlen_k = max_seqlen_k,
+    .seq_strides_q = &seq_strides_placeholder,
+    .seq_strides_k = &seq_strides_placeholder,
     .hdim_qk = hdim_qk,
     .hdim_vo = hdim_vo,
     .dropout_p = dropout_p,
@@ -492,6 +501,7 @@ bwd_kernel_dq(T4 q,
     bias_type = 1;
   }
   EagerLazyTensor eager_lazy_delta(delta);
+  auto seq_strides_placeholder = T1::get_null_tensor(DType::kInt32);
   BwdKernelDqParams params = {
     .Q = &q,
     .K = &k,
@@ -511,6 +521,8 @@ bwd_kernel_dq(T4 q,
     .num_seqlens = num_seqlens,
     .max_seqlen_q = max_seqlen_q,
     .max_seqlen_k = max_seqlen_k,
+    .seq_strides_q = &seq_strides_placeholder,
+    .seq_strides_k = &seq_strides_placeholder,
     .hdim_qk = hdim_qk,
     .hdim_vo = hdim_vo,
     .dropout_p = dropout_p,
