@@ -29,7 +29,7 @@ class OpAttn(Operator):
 class FlashAffine(AffineKernelDescription):
     FAMILY = 'flash'
     MODULE_FILE = __file__
-    AFFINE_KERNEL_ROOT = Path('third_party/aiter/hsa')
+    AFFINE_KERNEL_ROOT = Path('aiter/hsa')
     CO_DIR = None           # Required by subclass
 
     def co_dir(self, build_dir: Path, functional):
