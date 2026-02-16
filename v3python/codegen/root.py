@@ -177,12 +177,24 @@ class RootGenerator(object):
     def _load_altwheel_config(self, d: dict):
         venvs = d.get("venvs", {})
         rules = d.get("rules", [])
-        self._altwheels = { name: Path(wheel) for name, wheel in venvs.items() }
-        def get_altvenv_python(name) -> Path:
-            return (self._args.build_dir.parent / "altvenvs" / name / REL_PYTHON).absolute()
-        self._venvpython = { name: get_altvenv_python(name) for name in self._altwheels.keys() }
+        self._altwheels = {}
+        self._venvpython = {}
+        for name, value in venvs.items():
+            if value.startswith("python:"):
+                # Use the provided Python executable directly
+                python_path = value[len("python:"):]
+                self._venvpython[name] = Path(python_path).absolute()
+            else:
+                self._altwheels[name] = Path(value)
+                self._venvpython[name] = (self._args.build_dir.parent / "altvenvs" / name / REL_PYTHON).absolute()
         if "default" not in self._venvpython:
-            self._venvpython['default'] = (self._args.build_dir.parent / 'venv' / REL_PYTHON).absolute()
+            # Use VIRTUAL_ENV environment variable if set (by CMake in v3src/CMakeLists.txt)
+            # This ensures we use an existing build environment before falling back to venv
+            venv_dir = os.getenv('VIRTUAL_ENV')
+            if venv_dir:
+                self._venvpython['default'] = (Path(venv_dir) / REL_PYTHON).absolute()
+            else:
+                self._venvpython['default'] = (self._args.build_dir.parent / 'venv' / REL_PYTHON).absolute()
         self._altrules = [ self._create_rule_function(rule) for rule in rules ]
 
     def _create_rule_function(self, rule):
