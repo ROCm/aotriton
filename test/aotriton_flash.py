@@ -376,7 +376,8 @@ def attn_bwd_aiter(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, dq_acc, L, del
     dvview, dvdevm = mk_aotensor(dv)
     dbview, dbdevm = mk_aotensor(db, if_empty_then_like=q)
     Lview, Ldevm = mk_aotensor(L)
-    deltaview, deltadevm = mk_aotensor(delta)
+    # deltaview, deltadevm = mk_aotensor(delta)
+    deltaview = delta
     seedview, seeddevm = mk_aotensor(philox_seed)
     offset1view, offset1devm = mk_aotensor(philox_offset1)
     if AOTRITON_TORCH_ONLY_USE_CPU:
