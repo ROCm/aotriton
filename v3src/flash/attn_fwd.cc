@@ -104,11 +104,13 @@ attn_fwd(const attn_fwd_params& in,
     .V_descale = false,
     .Num_head_q = num_head_q,
     .Num_head_k = num_head_k,
-    .Num_seqlens = num_seqlens,
+    .Num_seqlens = in.varlen_type == VarlenType::PaddedVarlen ? -num_seqlens : num_seqlens,
     .cu_seqlens_q = &in.cu_seqlens_q,
     .cu_seqlens_k = &in.cu_seqlens_k,
     .Max_seqlen_q = max_seqlen_q,
     .Max_seqlen_k = max_seqlen_k,
+    .seq_strides_q = &in.seq_strides_q,
+    .seq_strides_k = &in.seq_strides_k,
     .BLOCK_DMODEL = hdim_rounded,
     .Hdim_qk = static_cast<int32_t>(hdim_qk),
     .Hdim_vo = static_cast<int32_t>(hdim_vo),
@@ -207,6 +209,7 @@ _attn_fwd_common(T4 q,
   if (b) {
     bias_type = 1;
   }
+  auto seq_strides_placeholder = T1::get_null_tensor(DType::kInt32);
   // Requires C++ 20
   AttnFwdParams params = {
     .Q = &q,
@@ -224,6 +227,8 @@ _attn_fwd_common(T4 q,
     .cu_seqlens_k = &cu_seqlens_k,
     .Max_seqlen_q = max_seqlen_q,
     .Max_seqlen_k = max_seqlen_k,
+    .seq_strides_q = &seq_strides_placeholder,
+    .seq_strides_k = &seq_strides_placeholder,
     .BLOCK_DMODEL = hdim_rounded,
     .Hdim_qk = static_cast<int32_t>(hdim_qk),
     .Hdim_vo = static_cast<int32_t>(hdim_vo),

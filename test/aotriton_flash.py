@@ -43,6 +43,12 @@ class WindowValue:
     TOP_LEFT_ALIGNED = -2147483647       # 0x80000001. Special value for varlen
     BOTTOM_RIGHT_ALIGNED = -2147483646   # 0x80000002. Special value for varlen
 
+IVARLEN_TYPE = {
+    'compact': 1,
+    'padded': 2,
+    'strided': 3,
+}
+
 def translate_causal(causal, v3_api):
     window_left, window_right = 0, 0
     if isinstance(causal, tuple):
@@ -370,7 +376,8 @@ def attn_bwd_aiter(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, dq_acc, L, del
     dvview, dvdevm = mk_aotensor(dv)
     dbview, dbdevm = mk_aotensor(db, if_empty_then_like=q)
     Lview, Ldevm = mk_aotensor(L)
-    deltaview, deltadevm = mk_aotensor(delta)
+    # deltaview, deltadevm = mk_aotensor(delta)
+    deltaview = delta
     seedview, seeddevm = mk_aotensor(philox_seed)
     offset1view, offset1devm = mk_aotensor(philox_offset1)
     if AOTRITON_TORCH_ONLY_USE_CPU:
@@ -435,17 +442,20 @@ def debug_simulate_encoded_softmax(R, dropout_p, philox_seed, philox_offset1, ph
                                             Stream())
     return err
 
-def attn_fwd_compact_varlen(q, k, v,
+def attn_fwd_varlen(q, k, v,
         cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
+        seq_strides_q, seq_strides_k,
         b, sm_scale, M, o,
         dropout_p, philox_seed, philox_offset1, philox_offset2,
         philox_seed_output, philox_offset_output,
-        encoded_softmax, causal, atomic, call_operator=False):
+        encoded_softmax, causal, atomic, varlen_type):
     qview, qdevm = mk_aotensor(q)
     kview, kdevm = mk_aotensor(k)
     vview, vdevm = mk_aotensor(v)
     cuqview, cuqdevm = mk_aotensor(cu_seqlens_q)
     cukview, cukdevm = mk_aotensor(cu_seqlens_k)
+    ssqview, ssqdevm = mk_aotensor(seq_strides_q, if_empty_then_like=cu_seqlens_q)
+    sskview, sskdevm = mk_aotensor(seq_strides_k, if_empty_then_like=cu_seqlens_k)
     bview, bdevm = mk_aotensor(b, if_empty_then_like=q)
     Mview, Mdevm = mk_aotensor(M)
     oview, odevm = mk_aotensor(o)
@@ -455,71 +465,53 @@ def attn_fwd_compact_varlen(q, k, v,
     offsetoutview, offsetoutdevm = mk_aotensor(philox_offset_output)
     esmview, esmdevm = mk_aotensor(encoded_softmax, if_empty_then_like=q)
     atomicview, atomicdevm = mk_aotensor(atomic)
-    causal_type, window_left, window_right = translate_causal(causal, v3_api=call_operator)
-    if not call_operator:
-        err = fa_forward_compact_varlen(qview,
-                                        kview,
-                                        vview,
-                                        bview,
-                                        cuqview,
-                                        cukview,
-                                        max_seqlen_q,
-                                        max_seqlen_k,
-                                        float(sm_scale),
-                                        Mview,
-                                        oview,
-                                        float(dropout_p),
-                                        seedview,
-                                        offset1view,
-                                        philox_offset2,
-                                        seedoutview,
-                                        offsetoutview,
-                                        esmview,
-                                        causal_type,
-                                        atomicview,
-                                        Stream())
-    else:
-        params = fa_forward_op_params()
-        params.Q = qview
-        params.K = kview
-        params.V = vview
-        params.B = bview
-        params.Sm_scale = float(sm_scale)
-        params.L = Mview
-        params.Out = oview
-        params.cu_seqlens_q = cuqview
-        params.cu_seqlens_k = cukview
-        params.Max_seqlen_q = max_seqlen_q
-        params.Max_seqlen_k = max_seqlen_k
-        params.dropout_p = float(dropout_p)
-        params.philox_seed_ptr = seedview
-        params.philox_offset1 = offset1view
-        params.philox_offset2 = philox_offset2
-        params.philox_seed_output = seedoutview
-        params.philox_offset_output = offsetoutview
-        params.encoded_softmax = esmview
-        params.persistent_atomic_counter = atomicview
-        params.causal_type = causal_type
-        params.window_left = window_left
-        params.window_right = window_right
-        params.varlen_type = 1
-        err = fa_forward_op(params,
-                            fa_forward_op_params.kVersion,
-                            Stream(),
-                            attn_options()
-                            )
+    causal_type, window_left, window_right = translate_causal(causal, v3_api=True)
+    params = fa_forward_op_params()
+    params.Q = qview
+    params.K = kview
+    params.V = vview
+    params.B = bview
+    params.Sm_scale = float(sm_scale)
+    params.L = Mview
+    params.Out = oview
+    params.cu_seqlens_q = cuqview
+    params.cu_seqlens_k = cukview
+    params.Max_seqlen_q = max_seqlen_q
+    params.Max_seqlen_k = max_seqlen_k
+    params.seq_strides_q = ssqview
+    params.seq_strides_k = sskview
+    params.dropout_p = float(dropout_p)
+    params.philox_seed_ptr = seedview
+    params.philox_offset1 = offset1view
+    params.philox_offset2 = philox_offset2
+    params.philox_seed_output = seedoutview
+    params.philox_offset_output = offsetoutview
+    params.encoded_softmax = esmview
+    params.persistent_atomic_counter = atomicview
+    params.causal_type = causal_type
+    params.window_left = window_left
+    params.window_right = window_right
+    params.varlen_type = IVARLEN_TYPE[varlen_type]
+    err = fa_forward_op(params,
+                        fa_forward_op_params.kVersion,
+                        Stream(),
+                        attn_options()
+                        )
     # print(f'{err=}')
     return err
 
-def attn_bwd_compact_varlen(q, k, v,
+def attn_bwd_varlen(q, k, v,
         cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
+        seq_strides_q, seq_strides_k,
         b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
-        dropout_p, philox_seed, philox_offset1, philox_offset2, causal, call_operator=False):
+        dropout_p, philox_seed, philox_offset1, philox_offset2, causal, varlen_type):
     qview, qdevm = mk_aotensor(q)
     kview, kdevm = mk_aotensor(k)
     vview, vdevm = mk_aotensor(v)
     cuqview, cuqdevm = mk_aotensor(cu_seqlens_q)
     cukview, cukdevm = mk_aotensor(cu_seqlens_k)
+    ssqview, ssqdevm = mk_aotensor(seq_strides_q, if_empty_then_like=cu_seqlens_q)
+    sskview, sskdevm = mk_aotensor(seq_strides_k, if_empty_then_like=cu_seqlens_k)
     bview, bdevm = mk_aotensor(b, if_empty_then_like=q)
     oview, odevm = mk_aotensor(o)
     doutview, doutdevm = mk_aotensor(dout)
@@ -528,70 +520,44 @@ def attn_bwd_compact_varlen(q, k, v,
     dvview, dvdevm = mk_aotensor(dv)
     dbview, dbdevm = mk_aotensor(db, if_empty_then_like=q)
     Lview, Ldevm = mk_aotensor(L)
-    if call_operator:
-        deltaview = delta
-    else:
-        deltaview, deltadevm = mk_aotensor(delta)
+    deltaview = delta
     seedview, seeddevm = mk_aotensor(philox_seed)
     offset1view, offset1devm = mk_aotensor(philox_offset1)
-    causal_type, window_left, window_right = translate_causal(causal, v3_api=call_operator)
+    causal_type, window_left, window_right = translate_causal(causal, v3_api=True)
     # print(f'{b=}')
-    if not call_operator:
-        err = fa_backward_compact_varlen(qview,
-                                         kview,
-                                         vview,
-                                         cuqview,
-                                         cukview,
-                                         max_seqlen_q,
-                                         max_seqlen_k,
-                                         bview,
-                                         float(sm_scale),
-                                         oview,
-                                         doutview,
-                                         dqview,
-                                         dkview,
-                                         dvview,
-                                         dbview,
-                                         Lview,
-                                         deltaview,
-                                         float(dropout_p),
-                                         seedview,
-                                         offset1view,
-                                         philox_offset2,
-                                         causal_type,
-                                         Stream())
-    else:
-        params = fa_backward_op_params()
-        params.Q = qview;
-        params.K = kview;
-        params.V = vview;
-        params.B = bview;
-        params.Sm_scale = float(sm_scale);
-        params.Out = oview;
-        params.DO = doutview;
-        params.DK = dkview;
-        params.DV = dvview;
-        params.DQ = dqview;
-        params.DB = dbview;
-        params.L = Lview;
-        params.D = deltaview;
-        params.cu_seqlens_q = cuqview
-        params.cu_seqlens_k = cukview
-        params.Max_seqlen_q = max_seqlen_q
-        params.Max_seqlen_k = max_seqlen_k
-        params.dropout_p = float(dropout_p);
-        params.philox_seed_ptr = seedview;
-        params.philox_offset1 = offset1view;
-        params.philox_offset2 = philox_offset2;
-        params.causal_type = causal_type
-        params.window_left = window_left
-        params.window_right = window_right
-        params.varlen_type = 1
-        err = fa_backward_op(params,
-                             fa_backward_op_params.kVersion,
-                             Stream(),
-                             attn_options()
-                             )
+    params = fa_backward_op_params()
+    params.Q = qview;
+    params.K = kview;
+    params.V = vview;
+    params.B = bview;
+    params.Sm_scale = float(sm_scale);
+    params.Out = oview;
+    params.DO = doutview;
+    params.DK = dkview;
+    params.DV = dvview;
+    params.DQ = dqview;
+    params.DB = dbview;
+    params.L = Lview;
+    params.D = deltaview;
+    params.cu_seqlens_q = cuqview
+    params.cu_seqlens_k = cukview
+    params.Max_seqlen_q = max_seqlen_q
+    params.Max_seqlen_k = max_seqlen_k
+    params.seq_strides_q = ssqview
+    params.seq_strides_k = sskview
+    params.dropout_p = float(dropout_p);
+    params.philox_seed_ptr = seedview;
+    params.philox_offset1 = offset1view;
+    params.philox_offset2 = philox_offset2;
+    params.causal_type = causal_type
+    params.window_left = window_left
+    params.window_right = window_right
+    params.varlen_type = IVARLEN_TYPE[varlen_type]
+    err = fa_backward_op(params,
+                         fa_backward_op_params.kVersion,
+                         Stream(),
+                         attn_options()
+                         )
     # print(f'{err=}')
     return err
 

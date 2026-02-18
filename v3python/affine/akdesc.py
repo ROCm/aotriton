@@ -39,7 +39,7 @@ class AffineKernelDescription(Interface):
         return f'kAffine_{self.class_name_base}'
 
     @abstractmethod
-    def co_dir(self, functional):
+    def co_dir(self, build_dir: Path, functional):
         pass
 
     def __init__(self):
