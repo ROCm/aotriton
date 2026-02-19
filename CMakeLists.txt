@@ -84,6 +84,7 @@ set(AOTRITON_TARGET_ARCH "gfx90a;gfx942;gfx950;gfx1100;gfx1101;gfx1102;gfx1103;g
 set(TARGET_GPUS "OBSOLETE" CACHE STRING "OBSOLETE. To select only one GPU, use AOTRITON_TARGET_ARCH or AOTRITON_OVERRIDE_TARGET_GPUS.")
 set(AOTRITON_OVERRIDE_TARGET_GPUS "" CACHE STRING "Override AOTRITON_TARGET_ARCH, and only build for GPUs within this list.")
 set(AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE "" CACHE STRING "Specify how to use alternative Triton wheels for different architectures in a YAML config file.")
+set(AOTRITON_ALTERNATIVE_PYTHON "" CACHE STRING "Use an external Python executable instead of creating a virtual environment. Skips venv creation, pip install, and triton installation.")
 
 if(AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
   cmake_path(IS_ABSOLUTE AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE altwheel_yaml_is_absolute)
@@ -151,6 +152,41 @@ endif()
 
 set(Python_ARTIFACTS_INTERACTIVE TRUE)
 
+# Detect alternative Python executable
+# Priority: CMake variable > AOTRITON_ALTERNATIVE_PYTHON env > AOTRITON_PYTHON env
+set(USE_ALTERNATIVE_PYTHON FALSE)
+if(AOTRITON_ALTERNATIVE_PYTHON)
+  set(_ALT_PYTHON "${AOTRITON_ALTERNATIVE_PYTHON}")
+elseif(DEFINED ENV{AOTRITON_ALTERNATIVE_PYTHON})
+  set(_ALT_PYTHON "$ENV{AOTRITON_ALTERNATIVE_PYTHON}")
+elseif(DEFINED ENV{AOTRITON_PYTHON})
+  set(_ALT_PYTHON "$ENV{AOTRITON_PYTHON}")
+endif()
+
+if(_ALT_PYTHON)
+  if(NOT EXISTS "${_ALT_PYTHON}")
+    message(FATAL_ERROR "[AOTriton] Alternative Python executable not found: ${_ALT_PYTHON}")
+  endif()
+
+  set(USE_ALTERNATIVE_PYTHON TRUE)
+  set(VENV_BIN_PYTHON "${_ALT_PYTHON}")
+  message(STATUS "[AOTriton] Using alternative Python: ${VENV_BIN_PYTHON}")
+
+  # Get site-packages from alternative Python
+  execute_process(
+    COMMAND "${VENV_BIN_PYTHON}" -c "import site; print(site.getsitepackages()[0], end='')"
+    OUTPUT_VARIABLE VENV_SITE
+  )
+  message(STATUS "[AOTriton] Alternative Python site-packages: ${VENV_SITE}")
+
+  if(WIN32)
+    set(VENV_REL_TRITON "triton/_C/libtriton.pyd")
+  else()
+    set(VENV_REL_TRITON "triton/_C/libtriton.so")
+  endif()
+else()
+  # Original venv creation logic
+
 # Not a target, we need to override Python3_EXECUTABLE later
 if(AOTRITON_INHERIT_SYSTEM_SITE_TRITON)
   execute_process(COMMAND "${Python3_EXECUTABLE}" -m venv --system-site-packages "${VENV_DIR}")
@@ -210,10 +246,24 @@ else()
       COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_BIN_PYTHON}" -m pip install ${AOTRITON_USE_LOCAL_TRITON_WHEEL}
     )
   else()
-    add_custom_command(OUTPUT "${AOTRITON_TRITON_SO}"
-      COMMAND ${CMAKE_COMMAND} -E env TRITON_BUILD_PROTON=OFF VIRTUAL_ENV=${VENV_DIR} TRITON_BUILD_DIR=${TRITON_BUILD_DIR} "${VENV_BIN_PYTHON}" -m pip install .
-      WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/third_party/triton/"
+    # Check if pip is available at configure time
+    execute_process(
+      COMMAND "${VENV_BIN_PYTHON}" -m pip --version
+      RESULT_VARIABLE _PIP_RESULT
+      OUTPUT_QUIET ERROR_QUIET
     )
+    if(_PIP_RESULT EQUAL 0)
+      add_custom_command(OUTPUT "${AOTRITON_TRITON_SO}"
+        COMMAND ${CMAKE_COMMAND} -E env TRITON_BUILD_PROTON=OFF VIRTUAL_ENV=${VENV_DIR} TRITON_BUILD_DIR=${TRITON_BUILD_DIR} "${VENV_BIN_PYTHON}" -m pip install .
+        WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/third_party/triton/"
+      )
+    else()
+      message(STATUS "[AOTriton] pip not available, falling back to setup.py develop for triton")
+      add_custom_command(OUTPUT "${AOTRITON_TRITON_SO}"
+        COMMAND ${CMAKE_COMMAND} -E env TRITON_BUILD_PROTON=OFF VIRTUAL_ENV=${VENV_DIR} TRITON_BUILD_DIR=${TRITON_BUILD_DIR} "${VENV_BIN_PYTHON}" setup.py develop
+        WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/third_party/triton/"
+      )
+    endif()
   endif()
   LIST(APPEND ALL_TRITON_SOS "${AOTRITON_TRITON_SO}")
 endif()
@@ -247,6 +297,8 @@ endif(NOT AOTRITON_NOIMAGE_MODE AND AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
 if(ALL_TRITON_SOS)
   add_custom_target(aotriton_venv_triton ALL DEPENDS "${ALL_TRITON_SOS}")
 endif(ALL_TRITON_SOS)
+
+endif() # USE_ALTERNATIVE_PYTHON
 
 add_subdirectory(v3src)
 
