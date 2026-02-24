@@ -5,3 +5,4 @@ filelock
 celery[pyamqp,sqlalchemy]
 psycopg  # the more mature psycopg2 needs extra binaries.
 dacite
+textual
