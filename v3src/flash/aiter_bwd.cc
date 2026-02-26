@@ -18,9 +18,6 @@
 #include <stdio.h>
 #endif
 
-#define STRINGIFICATION(s) STRINGIFICATION_I(s)
-#define STRINGIFICATION_I(s) #s
-
 namespace AOTRITON_NS::v2::flash {
 
 extern hipError_t

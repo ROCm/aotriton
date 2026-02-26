@@ -1,4 +1,4 @@
-// Copyright © 2023-2025 Advanced Micro Devices, Inc.
+// Copyright © 2023-2026 Advanced Micro Devices, Inc.
 // SPDX-License-Identifier: MIT
 
 #ifndef AOTRITON_V2_API_TRITON_KERNEL_H
@@ -7,7 +7,6 @@
 #include "../runtime.h"
 #include "on_device_kernel.h"
 #include <memory>
-#include <tuple>
 #include <vector>
 
 namespace AOTRITON_NS {
@@ -59,13 +58,6 @@ struct TritonKernelCompactMeta {
 
 class TritonKernel : public OnDeviceKernel {
 public:
-  struct Essentials {
-    const void* image = nullptr;
-    size_t size = 0;
-    int shared_memory_size = 0;
-    dim3 block { 0, 0, 0 };
-  };
-
   TritonKernel() {
   }
 

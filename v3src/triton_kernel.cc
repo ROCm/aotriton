@@ -18,9 +18,6 @@
 #include <stdio.h>
 #endif
 
-#define STRINGIFICATION(s) STRINGIFICATION_I(s)
-#define STRINGIFICATION_I(s) #s
-
 namespace AOTRITON_NS {
 
 constexpr std::string_view INTER_KERNEL_FUNC { "-Sig-F__" };
@@ -86,7 +83,7 @@ TritonKernel::invoke(std::string_view kernel_name,
     stem_name = construct_stem_name(kernel_name, func_name, ksig_psel_, ksig_copt_, arch_name);
     return { package_path, stem_name, kernel_name };
   };
-  hipFunction_t func = get_kernel(device_id, lazy);
+  auto [func, essentials] = get_kernel(device_id, lazy);
 #if AOTRITON_BUILD_FOR_TUNING
   if (peek_kernel_image)
     return hipSuccess;
@@ -95,10 +92,10 @@ TritonKernel::invoke(std::string_view kernel_name,
                                grid.x,
                                grid.y,
                                grid.z,
-                               essentials_.block.x,
-                               essentials_.block.y,
-                               essentials_.block.z,
-                               essentials_.shared_memory_size,
+                               essentials.block.x,
+                               essentials.block.y,
+                               essentials.block.z,
+                               essentials.shared_memory_size,
                                stream,
                                args.data(),
                                0);
@@ -128,7 +125,7 @@ TritonKernel::direct_invoke(std::string_view mangled_kernel_function_name,
              ksig_copt_,  // Affine use ksig_psel_ as arch, ksig_copt_ as file name
              mangled_kernel_function_name };
   };
-  hipFunction_t func = get_kernel(device_id, lazy);
+  auto [func, essentials] = get_kernel(device_id, lazy);
   void* config[] = {HIP_LAUNCH_PARAM_BUFFER_POINTER,
                     struct_of_args,
                     HIP_LAUNCH_PARAM_BUFFER_SIZE,

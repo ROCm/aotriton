@@ -3,6 +3,7 @@
 
 #include <aotriton/_internal/packed_kernel.h>
 #include <aotriton/_internal/util.h>
+#include <aotriton/_internal/on_device_kernel.h>
 #include <aotriton/runtime.h>
 #include <iostream>
 #include <string>
@@ -18,13 +19,16 @@
 #include <stdio.h>
 #endif
 
+namespace AOTRITON_NS {
+
 OnDeviceKernel::~OnDeviceKernel() {
   clear_device_kernel();
   clear_decompressed_image();
 }
 
-hipFunction_t
-OnDeviceKernel::get_kernel(int device_id, std::function<OnDiskKernelInfo()> lazy) {
+std::tuple<hipFunction_t, const OnDeviceKernel::Essentials&>
+OnDeviceKernel::get_kernel(int device_id,
+                           std::function<OnDiskKernelInfo()> lazy) {
   hipFunction_t func = nullptr;
   // Use reader lock to peek the state
   {
@@ -43,6 +47,7 @@ OnDeviceKernel::get_kernel(int device_id, std::function<OnDiskKernelInfo()> lazy
                                             lazy());
     }
   }
+  return {func, essentials_};
 }
 
 
@@ -91,7 +96,7 @@ OnDeviceKernel::load_for_device(int device_id,
   hipModule_t mod;
   hipFunction_t func;
   AOTRITON_HIP_CHECK_RETURN(hipModuleLoadDataEx(&mod, essentials_.image, 5, opt, optval));
-  AOTRITON_HIP_CHECK_RETURN(hipModuleGetFunction(&func, mod, info.kernel_function_name.data()));
+  AOTRITON_HIP_CHECK_RETURN(hipModuleGetFunction(&func, mod, info.function_name.data()));
   funcache_.emplace(std::piecewise_construct,
                     std::forward_as_tuple(device_id),
                     std::forward_as_tuple(device_id, mod, func));
@@ -156,3 +161,4 @@ OnDeviceKernel::DeviceFunction::~DeviceFunction() {
   }
 }
 
+} // namespace AOTRITON_NS
