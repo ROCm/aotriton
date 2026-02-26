@@ -18,11 +18,11 @@
 #include <stdio.h>
 #endif
 
-DecompressedKernel::~DecompressedKernel() {
+OnDeviceKernel::~OnDeviceKernel() {
 }
 
 hipFunction_t
-DecompressedKernel::cfind_function(int device_id) const {
+OnDeviceKernel::cfind_function(int device_id) const {
   auto iter = funcache_.find(device_id);
   if (iter == funcache_.end())
     return nullptr;
@@ -31,7 +31,7 @@ DecompressedKernel::cfind_function(int device_id) const {
 
 
 std::tuple<hipFunction_t, hipError_t>
-DecompressedKernel::load_for_device(int device_id,
+OnDeviceKernel::load_for_device(int device_id,
                               std::string_view kernel_function_name,
                               std::string_view stem_name,
                               pstring_view package_path) {
@@ -80,8 +80,8 @@ DecompressedKernel::load_for_device(int device_id,
 // tell if a kernel is loaded, or the kernel image failed to compile and thus
 // does not exists from beginning by testing essentials_.image == nullptr
 void
-DecompressedKernel::decompress_kernel(pstring_view package_path,
-                                std::string_view stem_name) {
+OnDeviceKernel::decompress_kernel(pstring_view package_path,
+                                      std::string_view stem_name) {
   if (kernel_loaded_) {
     return ;
   }
@@ -108,7 +108,7 @@ DecompressedKernel::decompress_kernel(pstring_view package_path,
 
 
 void
-DecompressedKernel::clear_decompressed_image() {
+OnDeviceKernel::clear_decompressed_image() {
   std::unique_lock lock(packedkernel_mutex_);
   essentials_.image = nullptr;
   packed_kernel_.reset();

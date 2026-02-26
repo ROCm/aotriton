@@ -17,11 +17,11 @@ namespace AOTRITON_NS {
 
 class PackedKernel;
 
-class DecompressedKernel {
+class OnDeviceKernel {
 public:
-  DecompressedKernel() {
+  OnDeviceKernel() {
   }
-  ~DecompressedKernel();
+  ~OnDeviceKernel();
 
   void clear_decompressed_image();
 protected:
