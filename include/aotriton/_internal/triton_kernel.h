@@ -57,7 +57,7 @@ struct TritonKernelCompactMeta {
 //                        objects.
 //
 
-class TritonKernel : public DecompressedKernel {
+class TritonKernel : public OnDeviceKernel {
 public:
   struct Essentials {
     const void* image = nullptr;
