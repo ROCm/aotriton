@@ -5,7 +5,7 @@
 #define AOTRITON_V2_API_TRITON_KERNEL_H
 
 #include "../runtime.h"
-#include "binary_kernel.h"
+#include "on_device_kernel.h"
 #include <memory>
 #include <tuple>
 #include <vector>

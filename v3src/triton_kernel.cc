@@ -1,4 +1,4 @@
-// Copyright © 2023-2025 Advanced Micro Devices, Inc.
+// Copyright © 2023-2026 Advanced Micro Devices, Inc.
 // SPDX-License-Identifier: MIT
 
 #include <aotriton/_internal/triton_kernel.h>
@@ -55,18 +55,6 @@ std::string construct_stem_name(std::string_view kernel_name,
   return ret;
 }
 
-TritonKernel::DeviceFunction::DeviceFunction(int device_id_, hipModule_t mod_, hipFunction_t func_)
-  : device_id(device_id_)
-  , mod(mod_)
-  , func(func_) {
-}
-
-TritonKernel::DeviceFunction::~DeviceFunction() {
-  if (mod != nullptr) {
-    (void)hipModuleUnload(mod);
-  }
-}
-
 void TritonKernel::delayed_init(uint32_t blake2b_lo,
                                 uint32_t blake2b_hi,
                                 const char* psel,
@@ -93,27 +81,12 @@ TritonKernel::invoke(std::string_view kernel_name,
 #endif
   int device_id;
   AOTRITON_HIP_CHECK_RETURN(hipGetDevice(&device_id));
-  // Use reader lock to peek the state
-  hipFunction_t func = nullptr;
-  {
-    std::shared_lock lock(funcache_mutex_);
-    func = cfind_function(device_id);
-  }
-
-  if (!func) {
-    // Use writer lock to initialize the module for device
-    std::unique_lock lock(funcache_mutex_);
-    // Check again, in case another waiter has initialized the device
-    func = cfind_function(device_id);
-    if (!func) {
-      hipError_t err;
-      std::string stem_name = construct_stem_name(kernel_name, func_name, ksig_psel_, ksig_copt_, arch_name);
-      std::tie(func, err) = load_for_device(device_id,
-                                            kernel_name,
-                                            stem_name,
-                                            package_path);
-    }
-  }
+  std::string stem_name;
+  auto lazy = [&]() -> OnDeviceKernel::OnDiskKernelInfo {
+    stem_name = construct_stem_name(kernel_name, func_name, ksig_psel_, ksig_copt_, arch_name);
+    return { package_path, stem_name, kernel_name };
+  };
+  hipFunction_t func = get_kernel(device_id, lazy);
 #if AOTRITON_BUILD_FOR_TUNING
   if (peek_kernel_image)
     return hipSuccess;
@@ -150,26 +123,12 @@ TritonKernel::direct_invoke(std::string_view mangled_kernel_function_name,
 #endif
   int device_id;
   AOTRITON_HIP_CHECK_RETURN(hipGetDevice(&device_id));
-  // Use reader lock to peek the state
-  hipFunction_t func = nullptr;
-  {
-    std::shared_lock lock(funcache_mutex_);
-    func = cfind_function(device_id);
-  }
-
-  if (!func) {
-    // Use writer lock to initialize the module for device
-    std::unique_lock lock(funcache_mutex_);
-    // Check again, in case another waiter has initialized the device
-    func = cfind_function(device_id);
-    if (!func) {
-      hipError_t err;
-      std::tie(func, err) = load_for_device(device_id,
-                                            mangled_kernel_function_name,
-                                            ksig_copt_,  // Affine use ksig_psel_ as arch, ksig_copt_ as file name
-                                            package_path);
-    }
-  }
+  auto lazy = [&]() -> OnDeviceKernel::OnDiskKernelInfo {
+    return { package_path,
+             ksig_copt_,  // Affine use ksig_psel_ as arch, ksig_copt_ as file name
+             mangled_kernel_function_name };
+  };
+  hipFunction_t func = get_kernel(device_id, lazy);
   void* config[] = {HIP_LAUNCH_PARAM_BUFFER_POINTER,
                     struct_of_args,
                     HIP_LAUNCH_PARAM_BUFFER_SIZE,
