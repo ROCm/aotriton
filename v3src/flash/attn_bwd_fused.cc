@@ -16,7 +16,7 @@ dim3 BwdKernelFuseContext::grid_calculator() const {
     AOTRITON_NS::cdiv<uint32_t>(params->max_seqlen_k, this->BLOCK_N) +
     AOTRITON_NS::cdiv<uint32_t>(params->max_seqlen_q, this->BLOCK_N) * (params->num_head_q / params->num_head_k),
     uint32_t(params->K->size(1)),
-    params->num_seqlens == 0 ? uint32_t(params->Q->size(0)) : params->num_seqlens,
+    params->num_seqlens == 0 ? uint32_t(params->Q->size(0)) : std::abs(params->num_seqlens),
   };
   // std::cerr << "bwd_kernel_dk_dv grid conf " << grid.x << " " << grid.y << " " << grid.z << std::endl;
   return grid;
@@ -91,6 +91,7 @@ _bwd_kernel_fuse(T4 q,
   if (b) {
     bias_type = 1;
   }
+  auto seq_strides_placeholder = T1::get_null_tensor(DType::kInt32);
   BwdKernelFuseParams params = {
     .Q = &q,
     .K = &k,
@@ -111,6 +112,8 @@ _bwd_kernel_fuse(T4 q,
     .num_seqlens = num_seqlens,
     .max_seqlen_q = max_seqlen_q,
     .max_seqlen_k = max_seqlen_k,
+    .seq_strides_q = &seq_strides_placeholder,
+    .seq_strides_k = &seq_strides_placeholder,
     .hdim_qk = hdim_qk,
     .hdim_vo = hdim_vo,
     .dropout_p = dropout_p,
