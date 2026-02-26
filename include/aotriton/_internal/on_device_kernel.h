@@ -9,6 +9,7 @@
 #include <shared_mutex>
 #include <unordered_map>
 #include <functional>
+#include <tuple>
 #include <aotriton/config.h>
 
 using pstring_type = std::filesystem::path::string_type;
@@ -38,7 +39,8 @@ public:
   ~OnDeviceKernel();
 
   // TODO: Make it const and add mutable to members
-  hipFunction_t get_kernel(int device_id, std::function<OnDiskKernelInfo()> lazy);
+  std::tuple<hipFunction_t, const Essentials&> get_kernel(int device_id,
+                                                          std::function<OnDiskKernelInfo()> lazy);
   void clear_device_kernel();
   void clear_decompressed_image();
 private:

@@ -13,9 +13,6 @@
 #include <flash/shim.bwd_preprocess_varlen.h>
 #include <iostream>
 
-#define STRINGIFICATION(s) STRINGIFICATION_I(s)
-#define STRINGIFICATION_I(s) #s
-
 namespace AOTRITON_NS::v2::flash {
 
 using AttnFwdContext              = AOTRITON_NS::v3::flash::AttnFwdContext;
