@@ -19,7 +19,32 @@
 #endif
 
 OnDeviceKernel::~OnDeviceKernel() {
+  clear_device_kernel();
+  clear_decompressed_image();
 }
+
+hipFunction_t
+OnDeviceKernel::get_kernel(int device_id, std::function<OnDiskKernelInfo()> lazy) {
+  hipFunction_t func = nullptr;
+  // Use reader lock to peek the state
+  {
+    std::shared_lock lock(funcache_mutex_);
+    func = cfind_function(device_id);
+  }
+
+  if (!func) {
+    // Use writer lock to initialize the module for device
+    std::unique_lock lock(funcache_mutex_);
+    // Check again, in case another waiter has initialized the device
+    func = cfind_function(device_id);
+    if (!func) {
+      hipError_t err;
+      std::tie(func, err) = load_for_device(device_id,
+                                            lazy());
+    }
+  }
+}
+
 
 hipFunction_t
 OnDeviceKernel::cfind_function(int device_id) const {
@@ -32,9 +57,7 @@ OnDeviceKernel::cfind_function(int device_id) const {
 
 std::tuple<hipFunction_t, hipError_t>
 OnDeviceKernel::load_for_device(int device_id,
-                              std::string_view kernel_function_name,
-                              std::string_view stem_name,
-                              pstring_view package_path) {
+                                const OnDeviceKernel::OnDiskKernelInfo& info) {
   hipJitOption opt[] = { hipJitOptionErrorLogBufferSizeBytes,
                          hipJitOptionErrorLogBuffer,
                          hipJitOptionInfoLogBufferSizeBytes,
@@ -52,13 +75,13 @@ OnDeviceKernel::load_for_device(int device_id,
 
 #if AOTRITON_KERNEL_VERBOSE
 #if defined(_WIN32)
-  std::wcerr << L"Trying to decompress kernel " << package_path;
-  std::cerr << " " << stem_name << std::endl;
+  std::wcerr << L"Trying to decompress kernel " << info.package_path;
+  std::cerr << " " << info.stem_name << std::endl;
 #else
-  std::cerr << "Trying to decompress kernel " << package_path << " " << stem_name << std::endl;
+  std::cerr << "Trying to decompress kernel " << info.package_path << " " << info.stem_name << std::endl;
 #endif
 #endif
-  decompress_kernel(package_path, stem_name);
+  decompress_kernel(info.package_path, info.stem_name);
 #if AOTRITON_KERNEL_VERBOSE
   std::cerr << "Decompress kernel to " << essentials_.image << std::endl;
 #endif
@@ -68,7 +91,7 @@ OnDeviceKernel::load_for_device(int device_id,
   hipModule_t mod;
   hipFunction_t func;
   AOTRITON_HIP_CHECK_RETURN(hipModuleLoadDataEx(&mod, essentials_.image, 5, opt, optval));
-  AOTRITON_HIP_CHECK_RETURN(hipModuleGetFunction(&func, mod, kernel_function_name.data()));
+  AOTRITON_HIP_CHECK_RETURN(hipModuleGetFunction(&func, mod, info.kernel_function_name.data()));
   funcache_.emplace(std::piecewise_construct,
                     std::forward_as_tuple(device_id),
                     std::forward_as_tuple(device_id, mod, func));
@@ -108,9 +131,28 @@ OnDeviceKernel::decompress_kernel(pstring_view package_path,
 
 
 void
+OnDeviceKernel::clear_device_kernel() {
+  std::unique_lock lock(funcache_mutex_);
+  funcache_.clear();
+}
+
+void
 OnDeviceKernel::clear_decompressed_image() {
   std::unique_lock lock(packedkernel_mutex_);
   essentials_.image = nullptr;
   packed_kernel_.reset();
+}
+
+
+OnDeviceKernel::DeviceFunction::DeviceFunction(int device_id_, hipModule_t mod_, hipFunction_t func_)
+  : device_id(device_id_)
+  , mod(mod_)
+  , func(func_) {
+}
+
+OnDeviceKernel::DeviceFunction::~DeviceFunction() {
+  if (mod != nullptr) {
+    (void)hipModuleUnload(mod);
+  }
 }
 
