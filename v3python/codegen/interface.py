@@ -92,7 +92,7 @@ class InterfaceGenerator(ABC):
         self._shim_files.append(fullfn.with_suffix('.cc'))
 
     @abstractmethod
-    def create_sub_generator(self, functional : Functional):
+    def create_sub_generator(self, functional : Functional, df : 'pandas.DataFrame', sql : str):
         pass
 
     @abstractmethod

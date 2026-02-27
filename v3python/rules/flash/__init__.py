@@ -17,7 +17,7 @@ from .bwd_kernel_dq import bwd_kernel_dq
 from .bwd_kernel_fuse import bwd_kernel_fuse
 # from .debug_fill_dropout_rng import debug_fill_dropout_rng, debug_fill_dropout_rng_tensor
 from .debug_simulate_encoded_softmax import debug_simulate_encoded_softmax
-from .aiter_bwd import bwd_dq_dk_dv_v3
+from .aiter_bwd import aiter_fmha_v3_bwd
 
 SOURCE_FILE = 'tritonsrc/flash.py'
 
@@ -28,7 +28,7 @@ __attn_fwd = attn_fwd('attn_fwd', SOURCE_FILE)
 __bwd_kernel_dk_dv = bwd_kernel_dk_dv('bwd_kernel_dk_dv', SOURCE_FILE)
 __bwd_kernel_dq = bwd_kernel_dq('bwd_kernel_dq', SOURCE_FILE)
 __bwd_kernel_fuse = bwd_kernel_fuse('bwd_kernel_fuse', SOURCE_FILE)
-__bwd_aiter = bwd_dq_dk_dv_v3()
+__bwd_aiter = aiter_fmha_v3_bwd()
 # # TODO: Re-implement this as part of kernel(?)
 __debug_simulate_encoded_softmax = debug_simulate_encoded_softmax('debug_simulate_encoded_softmax', SOURCE_FILE)
 
