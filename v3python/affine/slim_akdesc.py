@@ -24,6 +24,7 @@ class SlimAffineKernelDescription(Interface):
     FILE_PFX = 'affine'
     NAME = None
     SUPPORTED_ARCH = None
+    COOKIE_CLASS = None
 
     @property
     def enum_name(self):
@@ -42,12 +43,21 @@ class SlimAffineKernelDescription(Interface):
     def perf_cfields(self):
         return []
 
-    # Overrides Interface.gen_functionals to empty
+    # Overrides Interface.gen_functionals to empty generator
     # because Slim Affine kernels have C++ dispatchers
     def gen_functionals(self, build_for_target_arch):
         return
+        yield
 
     @property
     def is_tunable(self):
         return False
 
+    def list_non_functional_params(self):
+        pass
+
+    def translate_dataframe(self, f : Functional, df : 'pandas.DataFrame'):
+        pass
+
+    def translate_empty_dataframe(self, f : Functional):
+        pass

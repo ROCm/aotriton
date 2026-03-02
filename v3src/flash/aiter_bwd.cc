@@ -3,35 +3,18 @@
 
 #include <aotriton/config.h>
 #include <aotriton/_internal/util.h>
+#include <aotriton/_internal/flash/aiter.h>
 #include <aotriton/flash.h>
 #include <aotriton/util.h>
 #include <aotriton/_internal/lazy_tensor_internal.h>
 #include <flash/iface.op_attn_bwd.h>
-#include <flash/affine.bwd_dq_dk_dv_v3.h>
-#include <flash/shim.bwd_preprocess.h>
-#include <flash/shim.bwd_preprocess_varlen.h>
-#include <flash/shim.bwd_postprocess.h>
+#include <flash/affine.aiter_fmha_v3.h>
 #include <algorithm>
 #include <limits>
 #ifndef NDEBUG
 #include <iostream>
 #include <stdio.h>
 #endif
-
-namespace AOTRITON_NS::v2::flash {
-
-extern hipError_t
-bwd_preprocess(T4 out, T4 dout, T2 delta, AOTRITON_NS::Stream stream_wrap);
-
-extern hipError_t
-bwd_preprocess_varlen(T4 out,
-                      T4 dout,
-                      T2 delta,
-                      T1 cu_seqlens_q,
-                      int32_t max_seqlen_q,
-                      AOTRITON_NS::Stream stream_wrap);
-
-}
 
 namespace AOTRITON_NS::v3::flash {
 
@@ -103,11 +86,13 @@ AiterFmhaV3Context::check_inputs_are_supported() {
 #pragma GCC diagnostic ignored "-Wnarrowing"
 
 aiter::mha_bwd_args
-construct_mha_bwd_args(const BwdDqDkDvV3Context& ctx) {
+construct_mha_bwd_args(const AiterFmhaV3Context& ctx) {
   const auto& args = *ctx.params;
   auto batch = args.Q->size(0);
-  auto hdim_qk = args.Q.size(3);
-  auto hdim_vo = args.V.size(3);
+  auto nhead_q = args.Q->size(1);
+  auto nhead_k = args.K->size(1);
+  auto hdim_qk = args.Q->size(3);
+  auto hdim_vo = args.V->size(3);
   auto scale = args.sm_scale;
   auto stride_q = args.Q->stride(2);
   auto stride_k = args.K->stride(2);
@@ -141,12 +126,12 @@ construct_mha_bwd_args(const BwdDqDkDvV3Context& ctx) {
   auto batch_stride_dv = args.DV->stride(0);
   auto batch_stride_lsed = args.L->stride(0);
 
-  auto data_type = []() {
-    if (args.Q.dtype() == DType::kFloat16)
+  auto data_type = [&args]() {
+    if (args.Q->dtype() == DType::kFloat16)
       return "fp16";
     return "bf16";
   };
-  auto mask_type = []() {
+  auto mask_type = [&args]() {
     if (args.CAUSAL_TYPE == CausalType::None)
       return 0;
     if (args.Window_left == WindowValue::TopLeftAligned)
@@ -254,9 +239,13 @@ construct_mha_bwd_args(const BwdDqDkDvV3Context& ctx) {
 #pragma GCC diagnostic pop
 
 hipError_t
-AiterFmhaV3::launch(hipStream_t stream) const {
+AiterFmhaV3Context::launch(hipStream_t stream) const {
   auto a = construct_mha_bwd_args(*this);
-  return fmha_v3_bwd(a, stream);
+  AOTRITON_NS::v3::aiter::ck_tile::stream_config sc {
+    .stream_id_ = stream,
+  };
+  // FIXME: hipErrorPeerAccessUnsupported
+  return fmha_v3_bwd(a, sc) == 0 ? hipSuccess : hipErrorPeerAccessUnsupported;
 }
 
 }

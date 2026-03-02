@@ -71,7 +71,7 @@ namespace ck_tile {
   float launch_kernel(const stream_config& sc, Callables&&... callables)
   {
     if (!((static_cast<void>(callables(sc)), hipPeekAtLastError() == hipSuccess) && ...)) {
-      return -1.0
+      return -1.0;
     }
     return 0;
   }
@@ -81,10 +81,12 @@ class AiterAsmKernel : public OnDeviceKernel {
 private:
   const char* mangled_kernel_function_name_;
   const char* hsaco_;
+  mutable std::filesystem::path path_cache_;
 public:
   AiterAsmKernel(const char* name, const char* hsaco);
-  ~AiterAsmKernel()
+  ~AiterAsmKernel();
   void launch_kernel(const AiterAsmKernelArgs& kargs);
+  std::string_view get_package_path(hipStream_t stream, std::string& persistant_storage) const;
 };
 
 } // namespace AOTRITON_NS::v3::aiter
