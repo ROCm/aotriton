@@ -122,7 +122,8 @@ def main():
     p.add_argument("--target_gpus", type=str, default=None, nargs='*', choices=AOTRITON_SUPPORTED_GPUS,
                    help="Select specific list of GPUs. Overrides --target_arch.")
     args = p.parse_args()
-    gpus = select_gpus(args.target_arch, args.target_gpus)
+    target_arch = [ arch.strip() for arch in args.target_arch ]  # Remove surprises.
+    gpus = select_gpus(target_arch, args.target_gpus)
     print(";".join(gpus))
 
 if __name__ == '__main__':
