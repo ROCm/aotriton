@@ -1,5 +1,10 @@
 from pathlib import Path
 from argparse import Namespace
+
+from ..base import (
+    Interface,
+    Functional,
+)
 from ..utils import (
     RegistryRepository,
     log,

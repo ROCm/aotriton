@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 from ..base import (
     Interface,
+    Functional,
 )
 from ..gpu_targets import AOTRITON_SUPPORTED_GPUS, cluster_gpus
 from ..utils import log
