@@ -96,9 +96,14 @@ endif()
 if(NOT AOTRITON_NO_PYTHON)
   cmake_policy(SET CMP0148 NEW)  # Disable outdated FindPythonInterp/FindPythonLibs
   find_package(Python3 ${AOTRITON_MIN_PYTHON} COMPONENTS Development REQUIRED)
+  # heurisitics to find pybind11 from python site
   execute_process(COMMAND "${Python3_EXECUTABLE}" -c "import pybind11; from pathlib import Path; print(str(Path(pybind11.__file__).parent / 'share' / 'cmake' / 'pybind11'))"
                   OUTPUT_STRIP_TRAILING_WHITESPACE
-                  OUTPUT_VARIABLE pybind11_DIR)
+                  OUTPUT_VARIABLE pybind11_DIR
+                  COMMAND_ERROR_IS_FATAL NONE)  # Be explicit: failed to import pybind11 is NOT fatal.
+
+  # The build system should work when pybind11 is available as system package,
+  # or any other location findable by find_package(pybind11)
   find_package(pybind11 CONFIG REQUIRED)
   if(AOTRITON_USE_TORCH)
     message(STATUS "Python3_EXECUTABLE: ${Python3_EXECUTABLE}")
