@@ -4,10 +4,12 @@ from ..utils import (
     log,
 )
 from .template import get_template
+from .interface import InterfaceGenerator
+from .common import codegen_includes
 
 class SlimAffineGenerator(InterfaceGenerator):
     HEADER_TEMPLATE = get_template('slim_affine.h')
-    SOURCE_TEMPLATE = get_template('affine.cc')
+    SOURCE_TEMPLATE = get_template('slim_affine.cc')
     PFX = 'affine'
 
     def __init__(self, args, iface : Interface, parent_repo : RegistryRepository):
@@ -25,9 +27,12 @@ class SlimAffineGenerator(InterfaceGenerator):
     def write_shim_header(self, functionals, fout):
         akdesc = self._iface
         shared_iface = akdesc.SHARED_IFACE is not None
+        assert shared_iface, 'Slim affine kernel class {akdesc} must define SHARED_IFACE field.'
         shared_iface_family = akdesc.SHARED_IFACE.FAMILY if shared_iface else akdesc.FAMILY
         if shared_iface:
             self._add_iface_for_source(akdesc.SHARED_IFACE)
+        has_cookie_object = akdesc.COOKIE_CLASS is not None
+        cookie_class = '// optional cooke class' if not has_cookie_object else akdesc.cookie_class
         d = {
             'shared_iface_family'   : shared_iface_family,
             'shared_iface'          : 1 if shared_iface else 0,
@@ -35,6 +40,8 @@ class SlimAffineGenerator(InterfaceGenerator):
             'affine_kernel_name'      : akdesc.NAME,
             'param_class_name'      : akdesc.param_class_name,
             'context_class_name'    : akdesc.context_class_name,
+            'has_cookie_object'     : has_cookie_object,
+            'cookie_class'          : cookie_class,
         }
         d['includes'] = codegen_includes(self._hdr_include_repo.get_data())
         print(self.HEADER_TEMPLATE.format_map(d), file=fout)

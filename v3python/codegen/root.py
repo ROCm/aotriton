@@ -10,8 +10,13 @@ from ..rules import (
     operators as dispatcher_operators,
     affine_kernels,
 )
+from ..affine import (
+    AffineKernelDescription,
+    SlimAffineKernelDescription,
+)
 from .kernel import KernelShimGenerator
 from .affine import AffineGenerator
+from .slim_affine import SlimAffineGenerator
 from .operator import OperatorGenerator
 from ..utils import (
     LazyFile,
@@ -94,7 +99,10 @@ class RootGenerator(object):
         # print(f'{affine_kernels=}')
         for ak in affine_kernels:
             log(lambda : f'{ak.__class__=}')
-            aksg = AffineGenerator(self._args, ak, parent_repo=None)
+            if isinstance(ak, AffineKernelDescription):
+                aksg = AffineGenerator(self._args, ak, parent_repo=None)
+            elif isinstance(ak, SlimAffineKernelDescription):
+                aksg = SlimAffineGenerator(self._args, ak, parent_repo=None)
             aksg.generate()
             asms = aksg.this_repo.get_data('asms', return_none=True)
             if asms is not None:

@@ -14,12 +14,6 @@ namespace AOTRITON_NS::v3::[[kernel_family_name]] {
 using AOTRITON_NS::v3::[[shared_iface_family]]::[[param_class_name]];
 #endif
 
-int64_t [[context_class_name]]::godel_number() const
-{
-    // Slim Affine Kernel does not use Godel Numbered Functional system
-    return -1;
-}
-
 std::tuple<int, int>
 [[context_class_name]]::get_archmod_number(Gpu gpu) {
     [[get_archmod_number_body]];
