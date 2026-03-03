@@ -12,6 +12,7 @@ fi
 
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 . "${SCRIPT_DIR}/common-vars.sh"
+add_torch_ldconfig
 
 pass=$1
 test_level="$2"
