@@ -37,7 +37,16 @@ _AKS2_DirectoryEntry_BaseSize = (len(fields(AKS2_DirectoryEntry)) - 1) * 4
 def directory_entry_size(entry):
     return entry.filename_length + _AKS2_DirectoryEntry_BaseSize
 
-def load_hsaco(hsaco : Path, offset, ignore_json):
+def load_hsaco(hsaco_rule : str, offset, ignore_json):
+    # Rule syntax
+    # :<aks2 filename>:<.hsaco path>
+    # aks2 filename may contain '/'
+    if hsaco_rule.startswith(':'):
+        _, filename, hsaco = hsaco_rule.split(':', 2)
+        hsaco = Path(hsaco)
+    else:
+        hsaco = Path(hsaco_rule)
+        filename = str(hsaco.stem).encode('utf-8')
     with open(hsaco, 'rb') as f:
         blob = f.read()
         if ignore_json:
@@ -53,7 +62,6 @@ def load_hsaco(hsaco : Path, offset, ignore_json):
                     shared_memory_size = 0
                     block_threads = 0
                     assert j['compile_status'] != 'Complete'
-        filename = str(hsaco.stem).encode('utf-8')
         entry = AKS2_DirectoryEntry(shared_memory_size=shared_memory_size,
                                     block_threads=block_threads,
                                     offset=offset,
@@ -90,8 +98,8 @@ class AKS2(object):
 
     def load(self, args):
         self.number_of_kernels = len(args.hsaco_files)
-        for hsaco in args.hsaco_files:
-            entry, blob = load_hsaco(Path(hsaco), self.current_offset, args.ignore_json)
+        for hsaco_rule in args.hsaco_files:
+            entry, blob = load_hsaco(hsaco_rule, self.current_offset, args.ignore_json)
             self.current_offset += len(blob)
             self.directory.append(entry)
             self.hsaco_blobs.append(blob)

@@ -1,4 +1,5 @@
-
+from pathlib import Path
+from argparse import Namespace
 from ..utils import (
     RegistryRepository,
     log,
@@ -6,6 +7,7 @@ from ..utils import (
 from .template import get_template
 from .interface import InterfaceGenerator
 from .common import codegen_includes
+from ..gpu_targets import AOTRITON_ARCH_TO_PACK
 
 class SlimAffineGenerator(InterfaceGenerator):
     HEADER_TEMPLATE = get_template('slim_affine.h')
@@ -23,6 +25,37 @@ class SlimAffineGenerator(InterfaceGenerator):
     def create_sub_generator(self, functional : Functional, df : 'pandas.DataFrame', sql : str):
         yield RuntimeError("There should be no calls to SlimAffineGenerator.create_sub_generator"
                            " since slim affine kernel has vendored dispatcher.")
+
+    # TODO: generate rules to package .co files into .aks2 files
+    # gfx950/fmha_v3_bwd/*.co -> amd-gfx950/flash/fmha_v3_bwd.aks2
+    def generate(self):
+        super().generate()
+        asm_registry = self.this_repo.get_hsaco_registry('asms')
+        for aks2_path, kernel_co in self.gen_kernel_co():
+            asm_registry.register(aks2_path, kernel_co.as_posix(), append=True)
+
+    def gen_kernel_co(self):
+        akdesc = self._iface
+        target_arch = {}
+        # Filter out unsupported arch
+        for arch, gpus in self._target_arch.items():
+            if arch in akdesc.SUPPORTED_ARCH:
+                target_arch[arch] = gpus
+        # "Transpose" the path, example:
+        # aiter/hsa/gfx942/fmha_v3_fwd/MI300/fwd_hd128_bf16_rtne.co
+        #   to
+        # aotriton.images/amd-gfx942/flash/affine_kernels/fmha_v3_bwd.aks2:fmha_v3_bwd/MI300.fwd_hd128_bf16_rtne.co
+        archless_package_path = Path(akdesc.FAMILY) / "affine_kernels" / akdesc.NAME
+        f = Namespace()
+        for arch in target_arch:
+            aks2_path = Path(f"amd-{AOTRITON_ARCH_TO_PACK[arch]}") / archless_package_path
+            f.arch = arch
+            aiter_arch = self._args.build_dir / akdesc.AFFINE_KERNEL_ROOT / arch
+            aiter_arch_module = aiter_arch / akdesc.NAME
+            for kernel_co in aiter_arch_module.glob("**/*.co"):
+                inarchive_path = kernel_co.relative_to(aiter_arch).as_posix()
+                relocate_rule = ':' + inarchive_path + ':' + kernel_co.as_posix()
+                yield (aks2_path, relocate_rule)
 
     def write_shim_header(self, functionals, fout):
         akdesc = self._iface
