@@ -7,6 +7,12 @@
 #include <aotriton/config.h>
 #include <aotriton/_internal/aiter_hip_common.h>
 #include <variant>
+#include <tuple>
+
+// Namespace organizations
+// AOTRITON_NS::v3::aiter - Common AITER symbols
+// AOTRITON_NS::v3::flash - (AO)Triton flash symbols
+// AOTRITON_NS::v3::flash::aiter - AITER flash symbols
 
 namespace AOTRITON_NS::v3::flash::aiter {
 
@@ -383,6 +389,43 @@ struct fmha_bwd_v3_traits
     int ts_kv;
     int ts_dq = 64;
 };
+
+enum mask_enum {
+  no_mask = 0,
+  mask_top_left = 1,
+  mask_bottom_right = 2,
+  window_generic = 3,
+};
+
+namespace ck_tile {
+
+using namespace AOTRITON_NS::v3::aiter::ck_tile;
+
+constexpr auto
+make_generic_attention_mask_coordinates_from_lr_window(index_t left_size,
+                                                       index_t right_size,
+                                                       index_t sink_size,
+                                                       index_t y_total,
+                                                       index_t x_total,
+                                                       bool is_top_left = true)
+{
+    // TODO: below should all use sgpr arithmetic
+    index_t left_size_tmp  = is_top_left ? y_total - 1 : x_total - 1;
+    index_t right_size_tmp = is_top_left ? x_total - 1 : y_total - 1;
+
+    left_size  = left_size < 0 ? left_size_tmp : left_size;
+    right_size = right_size < 0 ? right_size_tmp : right_size;
+
+    index_t x_tmp = is_top_left ? 0 : x_total - y_total;
+    index_t y_tmp = is_top_left ? 0 : y_total - x_total;
+
+    index_t x = 1 + right_size + x_tmp;
+    index_t y = 1 + left_size + y_tmp;
+
+    return std::make_tuple(y, x, sink_size, y_total, x_total);
+}
+
+}
 
 } // AOTRITON_NS::v3::flash::aiter
 

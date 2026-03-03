@@ -1,13 +1,17 @@
-#include "asm_fmha_v3_bwd_configs.hpp"
 #include <aotriton/_internal/aiter_hip_common.h>
+#include <aotriton/_internal/flash/aiter.h>
+#include <aotriton/util.h>
 #include <memory>
 #include <string>
+#include "asm_fmha_v3_bwd_configs.hpp"
 
 // Copied from AITER
 
-namespace AOTRITON_NS::v3::aiter {
+namespace AOTRITON_NS::v3::flash::aiter {
 
-std::tuple<int, int> get_padded_hdim(int hdim_q, int hdim_v, std::string arch_id)
+using namespace AOTRITON_NS::v3::aiter;
+
+std::tuple<int, int> get_padded_hdim(int hdim_q, int hdim_v, std::string_view arch_id)
 {
     if(hdim_q == 192 && hdim_v == 128 && arch_id == "gfx950")
         return std::make_tuple(hdim_q, hdim_v);
@@ -31,8 +35,8 @@ std::tuple<int, int> get_padded_hdim(int hdim_q, int hdim_v, std::string arch_id
     return std::make_tuple(hdim_q, hdim_v);
 }
 
-std::tuple<std::string, std::string, std::string> get_heuristic_kernel(std::string data_type,
-                                                                       std::string arch_id,
+std::tuple<std::string, std::string, std::string> get_heuristic_kernel(std::string_view data_type,
+                                                                       std::string_view arch_id,
                                                                        int seqlen_q,
                                                                        int seqlen_k,
                                                                        int hdim_q,
@@ -142,7 +146,16 @@ float fmha_v3_bwd(mha_bwd_args a, const ck_tile::stream_config& s)
         return -1;  // dq_acc only support BHSD layout
     }
 
-    std::string arch_id = get_gpu_arch();
+    auto gpu = AOTRITON_NS::getGpuFromStream(s.stream_id_);
+    auto get_gpu_arch = [gpu]() -> std::string_view {
+      uint32_t vendor_arch = Gpu2VendorArch(gpu);
+      if (vendor_arch == CAT32(GpuVendor::kAMD, 0x950))
+          return "gfx950";
+      if (vendor_arch == CAT32(GpuVendor::kAMD, 0x942))
+          return "gfx942";
+      return "";
+    };
+    auto arch_id = get_gpu_arch();
     if((!a.use_asm_v3) || (a.hdim_q % 8 != 0) || (a.hdim_v % 8 != 0) || (a.has_dbias) ||
        (a.bias_type != 0) || (a.has_dropout) || (a.is_deterministic) ||
        ((arch_id != "gfx942") && (arch_id != "gfx950")))
@@ -219,7 +232,7 @@ float fmha_v3_bwd(mha_bwd_args a, const ck_tile::stream_config& s)
 
     if (mt == -1)
     {
-        std::cout << "fmha_v3_bwd: unsupported mask type for asm kernels." << std::endl;
+        // std::cout << "fmha_v3_bwd: unsupported mask type for asm kernels." << std::endl;
         return -1;
     }
     // On gfx942, a16 (atomic32=0) has no mask_type=2 (bottom-right causal) kernels,
@@ -432,8 +445,8 @@ float fmha_v3_bwd(mha_bwd_args a, const ck_tile::stream_config& s)
             a.seqlen_k,
             (a.mask_type == static_cast<ck_tile::index_t>(mask_enum::mask_top_left) ||
              a.mask_type == static_cast<ck_tile::index_t>(mask_enum::window_generic)));
-        dqdkdv_args.mask_y = generic_mask.at(ck_tile::number<0>{});
-        dqdkdv_args.mask_x = generic_mask.at(ck_tile::number<1>{});
+        dqdkdv_args.mask_y = std::get<0>(generic_mask);
+        dqdkdv_args.mask_x = std::get<1>(generic_mask);
     }
 
     auto dqdkdv_kernel_launch = [&]() {
@@ -494,4 +507,4 @@ float fmha_v3_bwd(mha_bwd_args a, const ck_tile::stream_config& s)
         [=](const ck_tile::stream_config& s_) { post_kernel_launch(); });
 }
 
-} // namespace AOTRITON_NS::v3::aiter
+} // namespace AOTRITON_NS::v3::aiter::flash
