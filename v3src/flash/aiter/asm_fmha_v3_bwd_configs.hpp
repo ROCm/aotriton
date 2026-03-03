@@ -8,7 +8,7 @@
         arch knl_name, { knl_name, path co_name, arch, dtype, hdim_q, hdim_v, mask, atomic32, pssk, pddv, mode, bf16_cvt, ts_qo, ts }         \
     }
 
-namespace AOTRITON_NS::v3::aiter::flash {
+namespace AOTRITON_NS::v3::flash::aiter {
 
 struct fmha_v3_bwdConfig
 {
