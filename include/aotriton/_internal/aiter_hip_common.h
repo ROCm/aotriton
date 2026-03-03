@@ -3,6 +3,7 @@
 
 #include <aotriton/config.h>
 #include <aotriton/runtime.h>
+#include <aotriton/util.h>
 #include "on_device_kernel.h"
 
 //
@@ -88,6 +89,9 @@ public:
   void launch_kernel(const AiterAsmKernelArgs& kargs);
   std::string_view get_package_path(hipStream_t stream, std::string& persistant_storage) const;
 };
+
+std::tuple<Gpu, std::string_view>
+get_gpu_arch(hipStream_t);
 
 } // namespace AOTRITON_NS::v3::aiter
 

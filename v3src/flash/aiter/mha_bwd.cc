@@ -146,16 +146,7 @@ float fmha_v3_bwd(mha_bwd_args a, const ck_tile::stream_config& s)
         return -1;  // dq_acc only support BHSD layout
     }
 
-    auto gpu = AOTRITON_NS::getGpuFromStream(s.stream_id_);
-    auto get_gpu_arch = [gpu]() -> std::string_view {
-      uint32_t vendor_arch = Gpu2VendorArch(gpu);
-      if (vendor_arch == CAT32(GpuVendor::kAMD, 0x950))
-          return "gfx950";
-      if (vendor_arch == CAT32(GpuVendor::kAMD, 0x942))
-          return "gfx942";
-      return "";
-    };
-    auto arch_id = get_gpu_arch();
+    auto [gpu, arch_id] = get_gpu_arch();
     if((!a.use_asm_v3) || (a.hdim_q % 8 != 0) || (a.hdim_v % 8 != 0) || (a.has_dbias) ||
        (a.bias_type != 0) || (a.has_dropout) || (a.is_deterministic) ||
        ((arch_id != "gfx942") && (arch_id != "gfx950")))
