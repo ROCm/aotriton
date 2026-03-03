@@ -96,7 +96,7 @@ endif()
 if(NOT AOTRITON_NO_PYTHON)
   cmake_policy(SET CMP0148 NEW)  # Disable outdated FindPythonInterp/FindPythonLibs
   find_package(Python3 ${AOTRITON_MIN_PYTHON} COMPONENTS Development REQUIRED)
-  # heurisitics to find pybind11 from python site
+  # heuristics to find pybind11 from python site
   execute_process(COMMAND "${Python3_EXECUTABLE}" -c "import pybind11; from pathlib import Path; print(str(Path(pybind11.__file__).parent / 'share' / 'cmake' / 'pybind11'))"
                   OUTPUT_STRIP_TRAILING_WHITESPACE
                   OUTPUT_VARIABLE pybind11_DIR
