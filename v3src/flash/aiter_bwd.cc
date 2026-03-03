@@ -113,7 +113,12 @@ construct_mha_bwd_args(const AiterFmhaV3Context& ctx) {
   auto nhead_stride_dq = args.DQ->stride(1);
   auto nhead_stride_dk = args.DK->stride(1);
   auto nhead_stride_dv = args.DV->stride(1);
-  auto nhead_stride_lsed = args.L->stride(1);
+  // FIXME: Use Rank-3 tensor for LSE
+  // then:
+  // nhead_stride_lsed = args.L->stride(1);
+  // batch_stride_lsed = args.L->stride(0);
+  auto seqlen_q = args.Q->size(2);
+  auto nhead_stride_lsed = seqlen_q;
 
   auto batch_stride_q = args.Q->stride(0);
   auto batch_stride_k = args.K->stride(0);
@@ -124,7 +129,7 @@ construct_mha_bwd_args(const AiterFmhaV3Context& ctx) {
   auto batch_stride_dq = args.DQ->stride(0);
   auto batch_stride_dk = args.DK->stride(0);
   auto batch_stride_dv = args.DV->stride(0);
-  auto batch_stride_lsed = args.L->stride(0);
+  auto batch_stride_lsed = nhead_q * seqlen_q;
 
   auto data_type = [&args]() {
     if (args.Q->dtype() == DType::kFloat16)
