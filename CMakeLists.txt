@@ -99,8 +99,7 @@ if(NOT AOTRITON_NO_PYTHON)
   # heuristics to find pybind11 from python site
   execute_process(COMMAND "${Python3_EXECUTABLE}" -c "import pybind11; from pathlib import Path; print(str(Path(pybind11.__file__).parent / 'share' / 'cmake' / 'pybind11'))"
                   OUTPUT_STRIP_TRAILING_WHITESPACE
-                  OUTPUT_VARIABLE pybind11_DIR
-                  COMMAND_ERROR_IS_FATAL NONE)  # Be explicit: failed to import pybind11 is NOT fatal.
+                  OUTPUT_VARIABLE pybind11_DIR)
 
   # The build system should work when pybind11 is available as system package,
   # or any other location findable by find_package(pybind11)
@@ -273,3 +272,4 @@ add_subdirectory(v3src)
 if(NOT AOTRITON_NO_PYTHON)
   add_subdirectory(bindings) # FIXME: compile python binding
 endif()
+pick cb6a160 # aiter: change pin
