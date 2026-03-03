@@ -139,20 +139,6 @@ attn_bwd(const attn_bwd_params& params,
          AOTRITON_NS::Stream stream,
          const attn_options* options = nullptr);
 
-// NOTE: DEFERRED TO NEXT RELEASE
-//
-// hipError_t AOTRITON_API
-// aiter_fwd(const attn_fwd_params& params,
-//           int32_t params_version,
-//           AOTRITON_NS::Stream stream,
-//           const attn_options* options = nullptr);
-
-hipError_t AOTRITON_API
-aiter_bwd(const attn_bwd_params& params,
-          int32_t params_version,
-          AOTRITON_NS::Stream stream,
-          const attn_options* options = nullptr);
-
 } // AOTRITON_NS::v3::flash
 
 #endif // AOTRITON_V3_API_FLASH_ATTN_H

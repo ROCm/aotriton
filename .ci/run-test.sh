@@ -37,10 +37,12 @@ small_vram=$(amd-smi static -g 0 -v --json|grep -v '^WARNING:'| python -c 'impor
     fnprefix="ut_pass"
   fi
   if [[ "$backend" == "fused" ]]; then
+    export V3_API=1
     export BWD_IMPL=1
     fnprefix="fused_pass"
   fi
   if [[ "$backend" == "aiter" ]]; then
+    export V3_API=1
     export BWD_IMPL=2
     fnprefix="aiter_pass"
   fi
