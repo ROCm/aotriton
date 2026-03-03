@@ -14,6 +14,7 @@ from ..base import (
 )
 from ..gpu_targets import AOTRITON_SUPPORTED_GPUS, cluster_gpus
 from ..utils import log
+from ..gpu_targets import AOTRITON_ARCH_TO_PACK
 
 '''
 "Slim" version of Affine kernels. The corresponding affine kernel has mature
@@ -22,7 +23,8 @@ C++ dispather and does not need to generate one.
 class SlimAffineKernelDescription(Interface):
     TUNE_NAME = None
     FILE_PFX = 'affine'
-    NAME = None
+    NAME = None     # Name for AOTriton shim code
+    CO_DIR = None   # Name in the Affine kernel repository
     SUPPORTED_ARCH = None
     COOKIE_CLASS = None
 
@@ -30,14 +32,20 @@ class SlimAffineKernelDescription(Interface):
     def enum_name(self):
         return f'kSlimAffine_{self.class_name_base}'
 
-    # FIXME: replace with co_path_gen. gfx942/fmha_v3_fwd/ has more complicated structure
-    #        Generator should yield (co file path, aks2 filename)
-    #        Note: aks2 "filename" can be any valid C-string, hence it should
-    #              yield the relative path that being returned by
-    #              get_heuristic_kernel (in mha_bwd.cc)
-    @abstractmethod
-    def co_dir(self, build_dir: Path, functional):
-        pass
+    def co_gen(self, build_dir: Path, build_for_target_arch: dict[str, list[str]]):
+        target_arch = {}
+        # Filter out unsupported arch
+        for arch, gpus in build_for_target_arch.items():
+            if arch in self.SUPPORTED_ARCH:
+                target_arch[arch] = gpus
+        archless_package_path = Path(self.FAMILY) / "affine_kernels" / self.CO_DIR
+        for arch in target_arch.keys():
+            aks2_path = Path(f"amd-{AOTRITON_ARCH_TO_PACK[arch]}") / archless_package_path
+            aiter_arch = build_dir / self.AFFINE_KERNEL_ROOT / arch
+            aiter_arch_module = aiter_arch / self.CO_DIR
+            for kernel_co in aiter_arch_module.glob("**/*.co"):
+                inarchive_path = kernel_co.relative_to(aiter_arch).as_posix()
+                yield (aks2_path, inarchive_path, kernel_co)
 
     @property
     def perf_cfields(self):

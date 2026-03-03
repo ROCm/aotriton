@@ -96,13 +96,12 @@ class RootGenerator(object):
         # TODO: Fix this for Windows
         # On Windows, you get "KeyError: 'validator_function'"
         # See discussion in https://discord.com/channels/1239631572886491286/1401853302139912222/1401862203845378201
-        # print(f'{affine_kernels=}')
         for ak in affine_kernels:
             log(lambda : f'{ak.__class__=}')
-            if isinstance(ak, AffineKernelDescription):
-                aksg = AffineGenerator(self._args, ak, parent_repo=None)
-            elif isinstance(ak, SlimAffineKernelDescription):
+            if isinstance(ak, SlimAffineKernelDescription):
                 aksg = SlimAffineGenerator(self._args, ak, parent_repo=None)
+            elif isinstance(ak, AffineKernelDescription):
+                aksg = AffineGenerator(self._args, ak, parent_repo=None)
             aksg.generate()
             asms = aksg.this_repo.get_data('asms', return_none=True)
             if asms is not None:
@@ -149,7 +148,7 @@ class RootGenerator(object):
         affine_dict = defaultdict(list)
         for akdesc, asm_registry in asms_for_kernels:
             for package_path, asms in asm_registry.items():
-                affine_dict[Path(package_path)] += [ self._absasmfn(asm) for asm in asms ]
+                affine_dict[Path(package_path)] += [ self._absasmfn(asm_rule) for asm_rule in asms ]
         with LazyFile(args.build_dir / 'Affine.cluster') as clusterfile:
             for ffp, aol in affine_dict.items():
                 self.write_cluster(ffp, list(set(aol)), clusterfile)
@@ -178,7 +177,10 @@ class RootGenerator(object):
         print(*ffp.parts, end=';', sep=';', file=clusterfile)
         print(*aol, sep=';', file=clusterfile)
 
-    def _absasmfn(self, asm_path):
+    # TODO: deprecate this, the generator should return the full path directly
+    def _absasmfn(self, asm_rule):
+        if asm_rule.startswith(':'):
+            return asm_rule
         full = self._args.root_dir / asm_path
         return str(full.absolute())
 

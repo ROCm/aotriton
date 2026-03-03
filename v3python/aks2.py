@@ -44,6 +44,7 @@ def load_hsaco(hsaco_rule : str, offset, ignore_json):
     if hsaco_rule.startswith(':'):
         _, filename, hsaco = hsaco_rule.split(':', 2)
         hsaco = Path(hsaco)
+        filename = filename.encode('utf-8')
     else:
         hsaco = Path(hsaco_rule)
         filename = str(hsaco.stem).encode('utf-8')
