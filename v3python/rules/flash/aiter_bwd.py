@@ -15,44 +15,8 @@ from ._common import (
 from .attn_fwd import attn_fwd
 from .op_attn_bwd import OpAttnBwd
 from v3python.gpu_targets import AOTRITON_ARCH_PRODUCTION_LINE
-from v3python.affine import CSVTranslator, DirectKernelArguments
 from v3python.utils import log
 match_fwd = lambda aname : get_possible_choices(attn_fwd, aname)
-
-def translate_csv_hdim(hdim):
-    if hdim <= 64:
-        return 64
-    if hdim <= 128:
-        return 128
-    if hdim <= 192:
-        return 192
-    assert False, f'Should not call translate_csv_hdim with hdim > 192, but got {hdim}. Need to remove such functional defensively with CHOICE_FILTERS or is_functional_disabled'
-
-def translate_csv_datatype(value):
-    if value == '*bf16:16':
-        return 'FmhaBwdBf16'
-    if value == '*fp16:16':
-        return 'FmhaBwdFp16'
-    assert False, f'Should only call translate_csv_datatype with fp16/bf16, but got {value}. Need to remove such functional defensively with CHOICE_FILTERS or is_functional_disabled'
-    return None
-
-def translate_regular_to_bothpad(is_regular):
-    if is_regular:
-        return False
-    return True
-
-def translate_csv_tskv(f, value):
-    if value > 0:
-        return value
-    assert f.arch in ["gfx942", "gfx950"]
-    # Arch depedent ts_kv
-    ts_kv = 192 if f.arch == "gfx942" else 256
-    return ts_kv
-
-class fmha_bwd_v3_args(DirectKernelArguments):
-    NAME = 'fmha_bwd_v3_args'
-    INCLUDE = 'aotriton/_internal/flash/aiter.h'
-    NAMESPACE = 'AOTRITON_NS::v3::flash::aiter'
 
 class aiter_fmha_v3_bwd(FlashAffine):
     CO_DIR = 'fmha_v3_bwd'
