@@ -18,6 +18,77 @@ namespace AOTRITON_NS::v3::flash::aiter {
 
 using namespace AOTRITON_NS::v3::aiter;
 
+struct __attribute__((packed)) fmha_fwd_v3_args
+{
+    void* ptr_o;
+    p2 _p0;
+    const void* ptr_q;
+    p2 _p1;
+    const void* ptr_k;
+    p2 _p2;
+    const void* ptr_v;
+    p2 _p3;
+    void* ptr_lse;
+    p2 _p4;
+    float scalar;
+    p3 _p5;
+    unsigned int s_seq_len;
+    p3 _p6;
+    unsigned int s_Seqs;
+    p3 _p7;
+    unsigned int s_Ts;
+    p3 _p8;
+    unsigned int s_Hs;
+    p3 _p9;
+    unsigned int s_Bs;
+    p3 _p10;
+    unsigned int s_gqa;
+    p3 _p11;
+    unsigned int s_k_Seqs;
+    p3 _p12;
+    unsigned int s_k_Hs;
+    p3 _p13;
+    unsigned int s_k_Bs;
+    p3 _p14;
+    unsigned int s_opt;
+    p3 _p15;
+    unsigned int s_lse;
+    p3 _p16;
+    unsigned int s_kv_seq_len;
+    p3 _p17;
+    unsigned int s_qk_head_dim;
+    p3 _p18;
+    unsigned int s_v_head_dim;
+    p3 _p19;
+    unsigned int s_q_head_num;
+    p3 _p20;
+    unsigned int s_v_Seqs;
+    p3 _p21;
+    unsigned int s_v_Hs;
+    p3 _p22;
+    unsigned int s_v_Bs;
+    p3 _p23;
+    unsigned int s_o_Seqs;
+    p3 _p24;
+    unsigned int s_o_Hs;
+    p3 _p25;
+    unsigned int s_o_Bs;
+    p3 _p26;
+    const void* ptr_qseq;
+    p2 _p27;
+    const void* ptr_kseq;
+    p2 _p28;
+    unsigned int s_lse_Hs;
+    p3 _p29;
+    const void* ptr_qseq_padding;
+    p2 _p30;
+    const void* ptr_kseq_padding;
+    p2 _p31;
+};
+
+float mha_fwd(mha_fwd_args args,
+              const ck_tile::stream_config& s);
+
 //
 // Content from https://github.com/ROCm/aiter csrc/include/mha_bwd.h
 //

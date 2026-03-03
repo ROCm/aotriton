@@ -89,6 +89,9 @@ public:
   std::string_view get_package_path(hipStream_t stream, std::string& persistant_storage) const;
 };
 
+std::tuple<uint64_t, std::string_view>
+get_gpu_arch(hipStream_t);
+
 } // namespace AOTRITON_NS::v3::aiter
 
 #endif

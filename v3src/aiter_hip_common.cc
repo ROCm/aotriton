@@ -84,4 +84,18 @@ AiterAsmKernel::get_package_path(hipStream_t stream, std::string& persistant_sto
   return persistant_storage;
 }
 
+std::tuple<uint64_t, std::string_view>
+get_gpu_arch(hipStream_t stream) {
+  auto gpu = AOTRITON_NS::getGpuFromStream(s.stream_id_);
+  auto get_gpu_arch = [gpu]() -> std::string_view {
+    uint32_t vendor_arch = Gpu2VendorArch(gpu);
+    if (vendor_arch == CAT32(GpuVendor::kAMD, 0x950))
+      return "gfx950";
+    if (vendor_arch == CAT32(GpuVendor::kAMD, 0x942))
+      return "gfx942";
+    return "";
+  };
+  return {gpu, get_gpu_arch()}
+}
+
 }
