@@ -103,19 +103,31 @@ if(NOT AOTRITON_NOIMAGE_MODE)
       WORKING_DIRECTORY "${AOTRITON_V2_BUILD_DIR}"
       COMMAND_ERROR_IS_FATAL ANY
     )
+  else()
+    # Check current HEAD tag to avoid unnecessary network fetches on every configure
+    execute_process(
+      COMMAND ${GIT_EXECUTABLE} describe --tags --exact-match HEAD
+      WORKING_DIRECTORY "${AITER_DIR}"
+      RESULT_VARIABLE AITER_DESCRIBE_RESULT
+      OUTPUT_VARIABLE AITER_CURRENT_TAG
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+      ERROR_QUIET
+    )
+    if(NOT AITER_DESCRIBE_RESULT EQUAL 0 OR NOT AITER_CURRENT_TAG STREQUAL "${AITER_GIT_TAG}")
+      execute_process(
+        COMMAND ${GIT_EXECUTABLE} fetch origin --depth 1 "tag" "${AITER_GIT_TAG}"
+        WORKING_DIRECTORY "${AITER_DIR}"
+        COMMAND_ERROR_IS_FATAL ANY
+      )
+      # cmake doc: "For sequential execution of multiple commands use multiple
+      # execute_process calls each with a single COMMAND argument."
+      execute_process(
+        COMMAND ${GIT_EXECUTABLE} checkout ${AITER_GIT_TAG}
+        WORKING_DIRECTORY "${AITER_DIR}"
+        COMMAND_ERROR_IS_FATAL ANY
+      )
+    endif()
   endif()
-  execute_process(
-    COMMAND ${GIT_EXECUTABLE} fetch origin --depth 1 "tag" "${AITER_GIT_TAG}"
-    WORKING_DIRECTORY "${AITER_DIR}"
-    COMMAND_ERROR_IS_FATAL ANY
-  )
-  # cmake doc: "For sequential execution of multiple commands use multiple
-  # execute_process calls each with a single COMMAND argument."
-  execute_process(
-    COMMAND ${GIT_EXECUTABLE} checkout ${AITER_GIT_TAG}
-    WORKING_DIRECTORY "${AITER_DIR}"
-    COMMAND_ERROR_IS_FATAL ANY
-  )
 endif()
 
 ## Generate Bare.* files and shim files
