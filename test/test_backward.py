@@ -32,7 +32,7 @@ from _core_test_backward import (
 
 if FOR_RELEASE >= 0:
     @pytest.mark.parametrize('BATCH', [3])
-    @pytest.mark.parametrize('N_HEADS', [5, (10, 2)], ids=fmt_nheads)
+    @pytest.mark.parametrize('N_HEADS', [5, (10, 2)] if BWD_IMPL != 2 else [5], ids=fmt_nheads)
     @pytest.mark.parametrize('D_HEAD', [8, 64, 184, (24, 152), (120, 8)], ids=fmt_hdim)
     @pytest.mark.parametrize('seqlen_q', [11, 523, 2048])
     @pytest.mark.parametrize('seqlen_k', [31, 337, 1063])
@@ -84,7 +84,7 @@ if FOR_RELEASE > 0 and BWD_IMPL != 2:  # AITER ASM does not support bias ATM
         args = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
         core_test_op_bwd(request, args, device=torch_gpu)
 
-if FOR_RELEASE > 0:  # Make the loading faster
+if FOR_RELEASE > 0 and BWD_IMPL != 2:  # AITER ASM does not expose GQA
     @pytest.mark.parametrize('BATCH', [3])
     @pytest.mark.parametrize('N_HEADS', [(16, 8), (10, 2)])
     @pytest.mark.parametrize('D_HEAD', ALL_INT_HEADDIMS, ids=fmt_hdim)
@@ -115,6 +115,8 @@ if FOR_RELEASE > 1:  # Make the loading faster
     @pytest.mark.parametrize('bias_type', [None, 'matrix'], ids=['BiasOff', 'BiasOn'])
     @pytest.mark.parametrize('BWDOP', BWDOP_ids)
     def test_irregulars(request, torch_gpu, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type):
+        if bias_type is not None and BWD_IMPL == 2:
+            pytest.skip("Bias is not supported in AITER ASM backend")
         if bias_type is not None and (seqlen_q > 2048 or seqlen_k > 2048):
             pytest.skip("Skip large UT with bias to avoid OOM")
         args = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)

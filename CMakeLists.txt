@@ -94,11 +94,16 @@ endif()
 
 # Early failure for python binding
 if(NOT AOTRITON_NO_PYTHON)
+  cmake_policy(SET CMP0148 NEW)  # Disable outdated FindPythonInterp/FindPythonLibs
   find_package(Python3 ${AOTRITON_MIN_PYTHON} COMPONENTS Development REQUIRED)
-  add_subdirectory(third_party/pybind11)
-  if(NOT EXISTS ${CMAKE_SOURCE_DIR}/third_party/pybind11/CMakeLists.txt)
-    message(FATAL_ERROR "third_party/pybind11 is not initialized\nRun `git submodule sync && git submodule update --init --recursive --force` to fix it.")
-  endif()
+  # heuristics to find pybind11 from python site
+  execute_process(COMMAND "${Python3_EXECUTABLE}" -c "import pybind11; from pathlib import Path; print(str(Path(pybind11.__file__).parent / 'share' / 'cmake' / 'pybind11'))"
+                  OUTPUT_STRIP_TRAILING_WHITESPACE
+                  OUTPUT_VARIABLE pybind11_DIR)
+
+  # The build system should work when pybind11 is available as system package,
+  # or any other location findable by find_package(pybind11)
+  find_package(pybind11 CONFIG REQUIRED)
   if(AOTRITON_USE_TORCH)
     message(STATUS "Python3_EXECUTABLE: ${Python3_EXECUTABLE}")
     execute_process(COMMAND "${Python3_EXECUTABLE}" -c "import torch; from pathlib import Path; print(str(Path(torch.__file__).parent))"
@@ -267,3 +272,4 @@ add_subdirectory(v3src)
 if(NOT AOTRITON_NO_PYTHON)
   add_subdirectory(bindings) # FIXME: compile python binding
 endif()
+pick cb6a160 # aiter: change pin
