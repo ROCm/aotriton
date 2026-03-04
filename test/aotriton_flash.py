@@ -159,7 +159,7 @@ def attn_fwd(q, k, v, b, sm_scale, M, o,
              philox_seed_output, philox_offset_output,
              encoded_softmax, causal, atomic,
              extargs=None, call_operator=True):
-    extargs = FwdExtraArguments() if extargs is None else extargs
+    extargs = attn_options() if extargs is None else extargs
     qview, qdevm = mk_aotensor(q)
     kview, kdevm = mk_aotensor(k)
     vview, vdevm = mk_aotensor(v)
@@ -203,7 +203,7 @@ def attn_fwd(q, k, v, b, sm_scale, M, o,
     err = fa_forward_op(params,
                         fa_forward_op_params.kVersion,
                         Stream(),
-                        attn_options()
+                        extargs
                         )
     if AOTRITON_TORCH_ONLY_USE_CPU:
         _torch_cpu_only_copy_back([M, o, philox_seed_output, philox_offset_output, encoded_softmax],

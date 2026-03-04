@@ -146,7 +146,7 @@ class _attention(torch.autograd.Function):
         else:
             atomic = torch.empty([0], device=q.device, dtype=torch.int32)
 
-        if FORCE_BWD_BACKEND:
+        if FORCE_FWD_BACKEND:
             extargs = attn_options()
             extargs.force_backend_index = FWD_IMPL
         else:
@@ -164,7 +164,7 @@ class _attention(torch.autograd.Function):
         ret = attn_fwd(q, k, v, b, sm_scale, M, o,
                        dropout_p, philox_seed, philox_offset1, philox_offset2,
                        philox_seed_output, philox_offset_output,
-                       encoded_softmax, causal, atomic, call_operator=V3_API)
+                       encoded_softmax, causal, atomic, extargs=extargs, call_operator=V3_API)
         if attn_extra_args.is_testing:
             try:
                 torch.cuda.synchronize()
