@@ -160,11 +160,15 @@ class _attention(torch.autograd.Function):
                            philox_null, philox_null,
                            encoded_softmax, causal, atomic, extargs=extargs, call_operator=V3_API)
             assert ret == hipError_t.hipSuccess, ret
+            if PROBE_UNSUPPORTED and ret == hipError_t.hipErrorPeerAccessUnsupported:
+                raise NotImplementedError()
 
         ret = attn_fwd(q, k, v, b, sm_scale, M, o,
                        dropout_p, philox_seed, philox_offset1, philox_offset2,
                        philox_seed_output, philox_offset_output,
                        encoded_softmax, causal, atomic, extargs=extargs, call_operator=V3_API)
+        if PROBE_UNSUPPORTED and ret == hipError_t.hipErrorPeerAccessUnsupported:
+            raise NotImplementedError()
         if attn_extra_args.is_testing:
             try:
                 torch.cuda.synchronize()
