@@ -80,7 +80,7 @@ std::string get_kernel_co_name(const std::string& cfg_co_name,
 void init_fmha_fwd_v3_args(fmha_fwd_v3_args& args,
                            const mha_fwd_args& a,
                            int ts_qo,
-                           const std::string& arch_id)
+                           std::string_view arch_id)
 {
     int tune_opt = 5;
     // if num_head is not 8N, or seqlen is bigger than 16K, downgrade to 2and3
@@ -149,7 +149,7 @@ void init_fmha_fwd_v3_args(fmha_fwd_v3_args& args,
     }
 }
 
-std::tuple<int, int, int> get_grid_dim(const mha_fwd_args& a, int ts_qo, const std::string& arch_id)
+std::tuple<int, int, int> get_grid_dim(const mha_fwd_args& a, int ts_qo, std::string_view arch_id)
 {
 
     int tg_div = (a.mask_type != 0) ? 2 : 1;
@@ -181,13 +181,13 @@ std::tuple<int, int, int> get_grid_dim(const mha_fwd_args& a, int ts_qo, const s
 
 float fmha_fwd_v3(mha_fwd_args a, const ck_tile::stream_config& s)
 {
-    auto [gpu, arch_id] = get_gpu_arch();
+    auto [gpu, arch_id] = get_gpu_arch(s.stream_id_);
 
     if((!a.use_asm_v3) || (a.hdim_q != 192 && a.hdim_q != 128) || (a.hdim_v != 128) ||
        (a.data_type != "bf16") || (a.bias_type != 0) || (a.p_drop > 0.f) ||
        ((arch_id != "gfx942") && (arch_id != "gfx950")))
     {
-        std::cout << "[Warning]unsupported condition in fwd_v3!!!" << std::endl;
+        // std::cout << "[Warning]unsupported condition in fwd_v3!!!" << std::endl;
         return -1;
     }
 
@@ -241,13 +241,6 @@ float fmha_fwd_v3(mha_fwd_args a, const ck_tile::stream_config& s)
         void* arg_size_ptr = &arg_size;
         impl_ptr->launch_kernel({args_ptr, arg_size_ptr, gdx, gdy, gdz, bdx, 1, 1, s_.stream_id_});
     });
-}
-
-float mha_fwd(mha_fwd_args args, const ck_tile::stream_config& s)
-{
-    float ret = -1;
-    ret = fmha_fwd_v3(args, s);
-    return ret;
 }
 
 } // namespace aiter

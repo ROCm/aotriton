@@ -18,6 +18,140 @@ namespace AOTRITON_NS::v3::flash::aiter {
 
 using namespace AOTRITON_NS::v3::aiter;
 
+//
+// Content from https://github.com/ROCm/aiter csrc/include/mha_fwd.h
+//
+struct mha_fwd_args
+{
+    // aiter
+    bool use_asm_v3;
+    bool v3_api_check;
+    int how_v3_bf16_cvt;
+
+    // from ck fmha_fwd_traits
+    std::string data_type;
+    bool is_group_mode;
+    int bias_type; // 0:no bias, 1:elementwise bias, 2:alibi. sync with BlockAttentionBiasEnum
+    bool has_lse;
+    int qscale_type;
+    bool has_sink = false;
+
+    // from ck fmha_fwd_args
+    const void* q_ptr;
+    const void* k_ptr;
+    const void* v_ptr;
+    const void* bias_ptr; // bias or alibi_slope pointer
+    const void* q_descale_ptr;
+    const void* k_descale_ptr;
+    const void* v_descale_ptr;
+    void* rand_val_ptr;
+    void* lse_ptr;
+    void* o_ptr;
+
+    // Usage notes for sequence length pointer parameters:
+    //
+    // [Note: Define "Group mode" vs "Batch mode" here if possible, e.g., "Group mode handles
+    // MQA/GQA..."]
+    //
+    // With padding:
+    //   Group mode:
+    //     - seqstart_q_ptr, seqstart_k_ptr: Record cumulative physical (including padding) sequence
+    //     lengths. [array size: batch + 1]
+    //     - seqlen_q_ptr/seqlen_k_ptr: Records logical (excluding padding) length for each
+    //     sequence. [array size: batch]
+    //     - cu_seqlen_q_ptr/cu_seqlen_k_ptr: Records cumulative logical (excluding padding)
+    //     sequence lengths. [array size: batch + 1]
+    //     - seqlen_q_ptr (per-sequence) and cu_seqlen_q_ptr (cumulative logical) are mutually
+    //     exclusive. Use one set, not both.
+    //
+    //   Batch mode:
+    //     - cu_seqlen_q_ptr/cu_seqlen_k_ptr: Records cumulative logical (excluding padding)
+    //     sequence lengths. [array size: batch + 1]
+    //     - seqstart_* and seqlen_* pointers must be nullptr.
+    //
+    // Without padding:
+    //   (Note: Physical length equals logical length)
+    //
+    //   Group mode:
+    //     - seqstart_q_ptr, seqstart_k_ptr: Record cumulative physical sequence lengths. [array
+    //     size: batch + 1]
+    //     - seqlen_q_ptr/seqlen_k_ptr and cu_seqlen_q_ptr/cu_seqlen_k_ptr must be nullptr.
+    //
+    //   Batch mode:
+    //     - All sequence length pointers (seqstart_*, seqlen_*, cu_seqlen_*) must be nullptr.
+    //
+    const void* seqstart_q_ptr =
+        nullptr; // Cumulative physical sequence length array [batch + 1]. (Used in Group mode)
+    const void* seqstart_k_ptr =
+        nullptr; // Cumulative physical sequence length array [batch + 1]. (Used in Group mode)
+    const void* seqlen_q_ptr = nullptr;    // Per-sequence logical (excluding padding) length array
+                                           // [batch]. (Used in Group mode with padding)
+    const void* seqlen_k_ptr = nullptr;    // Per-sequence logical (excluding padding) length array
+                                           // [batch]. (Used in Group mode with padding)
+    const void* cu_seqlen_q_ptr = nullptr; // Cumulative logical (excluding padding) sequence length
+                                           // array [batch + 1]. (Used with padding)
+    const void* cu_seqlen_k_ptr = nullptr; // Cumulative logical (excluding padding) sequence length
+                                           // array [batch + 1]. (Used with padding)
+    const void* block_scale_seqstart_q_ptr;
+    const void* block_scale_seqstart_k_ptr;
+    const void* sink_ptr;
+
+    ck_tile::index_t seqlen_q;
+    ck_tile::index_t seqlen_k;
+    ck_tile::index_t batch;
+    ck_tile::index_t max_seqlen_q;
+    ck_tile::index_t hdim_q;
+    ck_tile::index_t hdim_v;
+    ck_tile::index_t nhead_q;
+    ck_tile::index_t nhead_k;
+
+    float scale_s;
+    float logits_soft_cap;
+
+    ck_tile::index_t stride_q;
+    ck_tile::index_t stride_k;
+    ck_tile::index_t stride_v;
+    ck_tile::index_t stride_bias; // if alibi, b*h need set this to h, 1*h need set this to 0
+    ck_tile::index_t stride_randval;
+    ck_tile::index_t stride_o;
+    ck_tile::index_t nhead_stride_q;
+    ck_tile::index_t nhead_stride_k;
+    ck_tile::index_t nhead_stride_v;
+    ck_tile::index_t nhead_stride_bias;
+    ck_tile::index_t nhead_stride_randval;
+    ck_tile::index_t nhead_stride_lse;
+    ck_tile::index_t nhead_stride_o;
+    ck_tile::index_t nhead_stride_q_descale;
+    ck_tile::index_t nhead_stride_k_descale;
+    ck_tile::index_t nhead_stride_v_descale;
+    ck_tile::index_t batch_stride_q;
+    ck_tile::index_t batch_stride_k;
+    ck_tile::index_t batch_stride_v;
+    ck_tile::index_t batch_stride_bias;
+    ck_tile::index_t batch_stride_randval;
+    ck_tile::index_t batch_stride_lse;
+    ck_tile::index_t batch_stride_o;
+    ck_tile::index_t batch_stride_q_descale;
+    ck_tile::index_t batch_stride_k_descale;
+    ck_tile::index_t batch_stride_v_descale;
+
+    ck_tile::index_t window_size_left;
+    ck_tile::index_t window_size_right;
+    ck_tile::index_t sink_size;
+    ck_tile::index_t
+        mask_type; // 0: no mask   1: top_left_causal   2: bottom_right_causal   3: window_generic
+    ck_tile::index_t min_seqlen_q;
+
+    float p_drop;
+    bool s_randval;
+
+    std::variant<std::pair<uint64_t, uint64_t>, std::pair<const void*, const void*>>
+        drop_seed_offset;
+
+    ck_tile::index_t block_scale_size_q;
+    ck_tile::index_t block_scale_size_kv;
+};
+
 struct __attribute__((packed)) fmha_fwd_v3_args
 {
     void* ptr_o;
@@ -86,8 +220,7 @@ struct __attribute__((packed)) fmha_fwd_v3_args
     p2 _p31;
 };
 
-float mha_fwd(mha_fwd_args args,
-              const ck_tile::stream_config& s);
+float fmha_fwd_v3(mha_fwd_args args, const ck_tile::stream_config& s);
 
 //
 // Content from https://github.com/ROCm/aiter csrc/include/mha_bwd.h
