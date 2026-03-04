@@ -136,15 +136,21 @@ construct_mha_bwd_args(const AiterFmhaV3BwdContext& ctx) {
       return "fp16";
     return "bf16";
   };
-  auto mask_type = [&args]() {
+  // AITER ASM TopLeftAligned/BottomRightAligned logic:
+  // 1. a.mask_type == None: fast accept
+  // 2. a.mask_type == Window: fast reject
+  // 3. Check window_size == (-1, 0), then use a.mask_type to tell TL/BR
+  // 4. Return none when window_size == (-1, -1)
+  // 4. Return 3 elsewhere
+  auto [mask_type, window_size_left, window_size_right] = [&args]() -> std::tuple<int, int, int> {
     if (args.CAUSAL_TYPE == CausalType::None)
-      return 0;
+      return {0, -1, -1};
     if (args.Window_left == WindowValue::TopLeftAligned)
-      return 1;
+      return {1, -1, 0};
     if (args.Window_left == WindowValue::BottomRightAligned)
-      return 2;
-    return 3;
-  };
+      return {2, -1, 0};
+    return {3, args.Window_left, args.Window_right};
+  }();
 
   // TODO: use .v3_api_check for lookup_optimal
   aiter::mha_bwd_args ret = {
@@ -158,7 +164,7 @@ construct_mha_bwd_args(const AiterFmhaV3BwdContext& ctx) {
     .hdim_v               = hdim_vo,                                            // int
     .data_type            = data_type(),                                        // std::string
     .is_group_mode        = nhead_q != nhead_k,                                 // bool
-    .mask_type            = mask_type(),                                        // int
+    .mask_type            = mask_type,                                          // int
     .bias_type            = args.BIAS_TYPE,                                     // int
     .has_dbias            = 0,                                                  // bool
     .has_dropout          = args.ENABLE_DROPOUT,                                // bool
@@ -232,8 +238,8 @@ construct_mha_bwd_args(const AiterFmhaV3BwdContext& ctx) {
     .batch_stride_dv      = batch_stride_dv,                                    // int
     .batch_stride_dbias   = 0,                                                  // int
     .split_stride_dq_acc  = 0,                                                  // int
-    .window_size_left     = args.Window_left,                                   // int
-    .window_size_right    = args.Window_right,                                  // int
+    .window_size_left     = window_size_left,                                   // int
+    .window_size_right    = window_size_right,                                  // int
     .p_drop               = 0.0,                                                // float
     .p_undrop             = 0.0,                                                // float
     .drop_seed_offset     = std::make_pair<uint64_t, uint64_t>(0, 0),

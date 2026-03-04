@@ -117,15 +117,15 @@ construct_mha_fwd_args(const AiterFmhaV3FwdContext& ctx) {
       return "fp16";
     return "bf16";
   };
-  auto mask_type = [&args]() {
+  auto [mask_type, window_size_left, window_size_right] = [&args]() -> std::tuple<int, int, int> {
     if (args.CAUSAL_TYPE == CausalType::None)
-      return 0;
+      return {0, -1, -1};
     if (args.Window_left == WindowValue::TopLeftAligned)
-      return 1;
+      return {1, -1, 0};
     if (args.Window_left == WindowValue::BottomRightAligned)
-      return 2;
-    return 3;
-  };
+      return {2, -1, 0};
+    return {3, args.Window_left, args.Window_right};
+  }();
 
   // TODO: use .v3_api_check for lookup_optimal
   aiter::mha_fwd_args ret = {
@@ -193,9 +193,9 @@ construct_mha_fwd_args(const AiterFmhaV3FwdContext& ctx) {
     .batch_stride_q_descale = 0,                                                // int
     .batch_stride_k_descale = 0,                                                // int
     .batch_stride_v_descale = 0,                                                // int
-    .window_size_left     = args.Window_left,                                   // int
-    .window_size_right    = args.Window_right,                                  // int
-    .mask_type            = mask_type(),                                        // int
+    .window_size_left     = window_size_left,                                   // int
+    .window_size_right    = window_size_right,                                  // int
+    .mask_type            = mask_type,                                          // int
     .min_seqlen_q         = 0,                                                  // int
     .p_drop               = 0.0,                                                // float
     .s_randval            = false,                                              // bool
