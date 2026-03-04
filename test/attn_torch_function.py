@@ -28,8 +28,9 @@ from collections import namedtuple
 from dataclasses import dataclass
 from typing import Callable
 
+FWD_IMPL = int(os.getenv('FWD_IMPL', default='0'))
 BWD_IMPL = int(os.getenv('BWD_IMPL', default='0'))
-V3_API = bool(int(os.getenv('V3_API', default='0')))
+V3_API = bool(int(os.getenv('V3_API', default='1')))
 if BWD_IMPL == 2:
     PROBE_UNSUPPORTED = bool(int(os.getenv('PROBE_UNSUPPORTED', default='0')))
 else:
@@ -43,6 +44,7 @@ else:
     def lazy_delta(L):
         return torch.empty_like(L)
 
+FORCE_FWD_BACKEND = V3_API and (os.getenv('FWD_IMPL', default=None) is not None)
 FORCE_BWD_BACKEND = V3_API and (os.getenv('BWD_IMPL', default=None) is not None)
 
 def empty_handler():
@@ -144,13 +146,19 @@ class _attention(torch.autograd.Function):
         else:
             atomic = torch.empty([0], device=q.device, dtype=torch.int32)
 
+        if FORCE_BWD_BACKEND:
+            extargs = attn_options()
+            extargs.force_backend_index = FWD_IMPL
+        else:
+            extargs = None
+
         # print(f'{attn_extra_args=}')
         # Check GPU kernel accepts nullptr for philox_*_output
         if attn_extra_args.is_testing:
             ret = attn_fwd(q, k, v, b, sm_scale, M, o,
                            dropout_p, philox_seed, philox_offset1, philox_offset2,
                            philox_null, philox_null,
-                           encoded_softmax, causal, atomic, call_operator=V3_API)
+                           encoded_softmax, causal, atomic, extargs=extargs, call_operator=V3_API)
             assert ret == hipError_t.hipSuccess, ret
 
         ret = attn_fwd(q, k, v, b, sm_scale, M, o,
