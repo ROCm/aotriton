@@ -223,7 +223,7 @@ AiterFmhaV3BwdContext::check_inputs_are_supported(Gpu gpu) {
   // Only support hdim <= 192
   RETURN_IF(args.hdim_qk > 192 || args.hdim_vo > 192);
   // Always use A32 kernel for accuracy.
-  RETURN_IF(!args.DQ_ACC);
+  RETURN_IF(!args.DQ_ACC || !*args.DQ_ACC);
   // ASM BWD does not support SWA
   if (args.CAUSAL_TYPE != CausalType::None) {
     // Invalid assignment

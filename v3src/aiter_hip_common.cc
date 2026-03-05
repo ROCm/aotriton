@@ -85,7 +85,7 @@ AiterAsmKernel::get_package_path(hipStream_t stream, std::string& persistant_sto
 }
 
 std::tuple<Gpu, std::string_view>
-get_gpu_arch(ck_tile::stream_config& sc) {
+get_gpu_arch(const ck_tile::stream_config& sc) {
   auto gpu = sc.gpu_;
   if (gpu == GPU_ARCH_UNKNOWN) {
     gpu = AOTRITON_NS::getGpuFromStream(sc.stream_id_);

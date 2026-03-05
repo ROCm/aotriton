@@ -5,6 +5,7 @@
 #include <aotriton/flash.h>
 #include <aotriton/runtime.h>
 #include <aotriton/util.h>
+#include <aotriton/_internal/util.h>
 #include <flash/shim.attn_fwd.h>
 #include <flash/shim.bwd_kernel_dk_dv.h>
 #include <flash/shim.bwd_kernel_fuse.h>

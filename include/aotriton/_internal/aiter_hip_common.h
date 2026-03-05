@@ -92,7 +92,7 @@ public:
 };
 
 std::tuple<Gpu, std::string_view>
-get_gpu_arch(ck_tile::stream_config);
+get_gpu_arch(const ck_tile::stream_config&);
 
 } // namespace AOTRITON_NS::v3::aiter
 
