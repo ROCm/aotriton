@@ -27,32 +27,37 @@ AiterFmhaV3FwdContext::check_inputs_are_supported() {
       return "Input unsupported due to " STRINGIFICATION(COND);       \
     }                                                                 \
   } while(0)
+  // AITER ASM does not support dropout
+  RETURN_IF(args.ENABLE_DROPOUT);
   // No bias support
   RETURN_IF(args.BIAS_TYPE);
-  // No Varlen support
-  RETURN_IF(args.cu_seqlens_q && *args.cu_seqlens_q);
-  RETURN_IF(args.cu_seqlens_k && *args.cu_seqlens_k);
-  // Only support hdim <= 192
-  RETURN_IF(args.Hdim_qk > 192 || args.Hdim_vo > 192);
-  // Only support hdim_qk == hdim_vo
-  RETURN_IF(args.Hdim_qk != args.Hdim_vo);
-  // TODO: support dropout kernel. fwd and bwd should have identical PRNG
-  RETURN_IF(args.ENABLE_DROPOUT);
-  RETURN_IF(args.Num_head_q != args.Num_head_k);
-#undef RETURN_IF
-  // We do not have test suite to validate SWA at the moment.
-  if (args.CAUSAL_TYPE != CausalType::None) {
-      if (args.Window_left != WindowValue::TopLeftAligned ||
-          args.Window_right != WindowValue::TopLeftAligned) {
-#ifndef NDEBUG
-        std::cerr << "Input unsupported due to args.CAUSAL_TYPE = " << int(args.CAUSAL_TYPE) << " and "
-                  << " args.Window_left = " << args.Window_left
-                  << " args.Window_right = " << args.Window_right
-                  << std::endl;
-#endif
-        return "Input unsupported due to SWA";
-      }
+  // GQA only supported in varlen (aka. group mode)
+  if (args.Num_head_q != args.Num_head_k) {
+    RETURN_IF(!args.cu_seqlens_q || !*args.cu_seqlens_q);
+    RETURN_IF(!args.cu_seqlens_k || !*args.cu_seqlens_k);
   }
+  // Must provide cu_seqlens_q/k at the same time
+  if (args.cu_seqlens_q && *args.cu_seqlens_q) {
+    RETURN_IF(!args.cu_seqlens_k || !*args.cu_seqlens_k);
+  }
+  // Only support unpadded (192, 128) and (128, 128)
+  RETURN_IF(args.Hdim_qk != 128 && args.Hdim_qk != 192);
+  RETURN_IF(args.Hdim_vo != 128);
+  // ASM FWD only support TopLeftAligned
+  if (args.CAUSAL_TYPE != CausalType::None) {
+    // Invalid assignment
+    RETURN_IF(args.Window_left != args.Window_right);
+    if (args.Window_left != WindowValue::TopLeftAligned) {
+#ifndef NDEBUG
+      std::cerr << "Input unsupported due to args.CAUSAL_TYPE = " << int(args.CAUSAL_TYPE) << " and "
+                << " args.Window_left = " << args.Window_left
+                << " args.Window_right = " << args.Window_right
+                << std::endl;
+#endif
+      return "Input unsupported due to BottomRightAligned/SWA";
+    }
+  }
+#undef RETURN_IF
   // AITER ASM kernel only reads u32 strides.
 #define CHECK_STRIDE(T)                                               \
   do {                                                                \
@@ -127,6 +132,12 @@ construct_mha_fwd_args(const AiterFmhaV3FwdContext& ctx) {
     return {3, args.Window_left, args.Window_right};
   }();
 
+  auto pointer_with_default = [](const void* pref, const void* def) {
+    return pref ? pref : def;
+  };
+  auto seqstart_q_ptr = pointer_with_default(args.seq_strides_q->data_ptr(), args.cu_seqlens_q->data_ptr());
+  auto seqstart_k_ptr = pointer_with_default(args.seq_strides_k->data_ptr(), args.cu_seqlens_k->data_ptr());
+
   // TODO: use .v3_api_check for lookup_optimal
   aiter::mha_fwd_args ret = {
     // aiter args
@@ -135,7 +146,7 @@ construct_mha_fwd_args(const AiterFmhaV3FwdContext& ctx) {
     .how_v3_bf16_cvt      = 0,                                                  // int, 0/1/2: rtne/rtna/rtz
     // from ck fmha_fwd_traits
     .data_type            = data_type(),                                        // std::string
-    .is_group_mode        = nhead_q != nhead_k,                                 // bool
+    .is_group_mode        = args.cu_seqlens_q->data_ptr(),                      // bool
     .bias_type            = args.BIAS_TYPE,                                     // int
     .has_lse              = has_lse,                                            // bool
     .qscale_type          = 0,                                                  // bool
@@ -151,12 +162,17 @@ construct_mha_fwd_args(const AiterFmhaV3FwdContext& ctx) {
     .rand_val_ptr         = nullptr,                                            // void*
     .lse_ptr              = args.L->data_ptr(),                                 // const void*
     .o_ptr                = args.Out->data_ptr(),                               // const void*
-    .seqstart_q_ptr       = args.seq_strides_q->data_ptr(),                     // const void*
-    .seqstart_k_ptr       = args.seq_strides_k->data_ptr(),                     // const void*
-    .seqlen_q_ptr         = nullptr,                                            // const void*
-    .seqlen_k_ptr         = nullptr,                                            // const void*
-    .cu_seqlen_q_ptr      = args.cu_seqlens_q->data_ptr(),                      // const void*
-    .cu_seqlen_k_ptr      = args.cu_seqlens_k->data_ptr(),                      // const void*
+    // Key precedence difference from triton kernel:
+    // Triton:
+    //   logical cu_seqlen -> physical cu_seqlen if supplied
+    // ASM:
+    //   physical cu_seqlen -> logical cu_seqlen if supplied
+    .seqstart_q_ptr       = seqstart_q_ptr,                                     // const void*  // "Physical" cu_seqlen
+    .seqstart_k_ptr       = seqstart_k_ptr,                                     // const void*  // "Physical" cu_seqlen
+    .seqlen_q_ptr         = nullptr,                                            // const void*  // unused in ASM
+    .seqlen_k_ptr         = nullptr,                                            // const void*  // unused in ASM
+    .cu_seqlen_q_ptr      = args.cu_seqlens_q->data_ptr(),                      // const void*  // "Logical" cu_seqlen
+    .cu_seqlen_k_ptr      = args.cu_seqlens_k->data_ptr(),                      // const void*  // "Logical" cu_seqlen
     // .block_scale_seqstart_q_ptr     = nullptr,                               // const void*
     // .block_scale_seqstart_k_ptr     = nullptr,                               // const void*
     // .sink_ptr          = nullptr,                                            // const void*

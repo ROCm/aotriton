@@ -25,7 +25,7 @@ class aiter_fmha_v3_fwd(FlashAffine):
     ARGUMENTS = OpAttnFwd.ARGUMENTS
     CHOICE_FILTERS = {
         'Q' : lambda dtype : 'fp16' in dtype or 'bf16' in dtype,
-        'BLOCK_DMODEL' : lambda x : x >= 64 and x <= 192,       # Note: asm kernel only have [64, 128, 192] hdim variants but others in between may be padded.
+        'BLOCK_DMODEL' : lambda x : x in [128, 192],
         'BIAS_TYPE' : lambda b : b == 0,
         'ENABLE_DROPOUT' : lambda dropout : dropout == False,   # TODO: support dropout = True with validated PRNG
     }

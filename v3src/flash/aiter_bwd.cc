@@ -27,33 +27,39 @@ AiterFmhaV3BwdContext::check_inputs_are_supported() {
       return "Input unsupported due to " STRINGIFICATION(COND);       \
     }                                                                 \
   } while(0)
+  // AITER ASM does not support dropout
+  RETURN_IF(args.ENABLE_DROPOUT);
   // No bias support
   RETURN_IF(args.BIAS_TYPE);
-  // No Varlen support
-  RETURN_IF(args.cu_seqlens_q && *args.cu_seqlens_q);
-  RETURN_IF(args.cu_seqlens_k && *args.cu_seqlens_k);
+  // GQA only supported in varlen (aka. group mode)
+  if (args.num_head_q != args.num_head_k) {
+    RETURN_IF(!args.cu_seqlens_q || !*args.cu_seqlens_q);
+    RETURN_IF(!args.cu_seqlens_k || !*args.cu_seqlens_k);
+  }
+  // Must provide cu_seqlens_q/k at the same time
+  if (args.cu_seqlens_q && *args.cu_seqlens_q) {
+    RETURN_IF(!args.cu_seqlens_k || !*args.cu_seqlens_k);
+  }
   // Only support hdim <= 192
   RETURN_IF(args.hdim_qk > 192 || args.hdim_vo > 192);
-  // Only support hdim_qk == hdim_vo
-  RETURN_IF(args.hdim_qk != args.hdim_vo);
-  // TODO: support dropout kernel. fwd and bwd should have identical PRNG
-  RETURN_IF(args.ENABLE_DROPOUT);
-  RETURN_IF(args.num_head_q != args.num_head_k);
+  // Always use A32 kernel for accuracy.
   RETURN_IF(!args.DQ_ACC);
-#undef RETURN_IF
-  // We do not have test suite to validate SWA at the moment.
+  // ASM BWD does not support SWA
   if (args.CAUSAL_TYPE != CausalType::None) {
-      if (args.Window_left != WindowValue::TopLeftAligned ||
-          args.Window_right != WindowValue::TopLeftAligned) {
+    // Invalid assignment
+    RETURN_IF(args.Window_left != args.Window_right);
+    if (args.Window_left != WindowValue::TopLeftAligned &&
+        args.Window_left != WindowValue::BottomRightAligned) {
 #ifndef NDEBUG
-        std::cerr << "Input unsupported due to args.CAUSAL_TYPE = " << int(args.CAUSAL_TYPE) << " and "
-                  << " args.Window_left = " << args.Window_left
-                  << " args.Window_right = " << args.Window_right
-                  << std::endl;
+      std::cerr << "Input unsupported due to args.CAUSAL_TYPE = " << int(args.CAUSAL_TYPE) << " and "
+                << " args.Window_left = " << args.Window_left
+                << " args.Window_right = " << args.Window_right
+                << std::endl;
 #endif
-        return "Input unsupported due to SWA";
-      }
+      return "Input unsupported due to SWA";
+    }
   }
+#undef RETURN_IF
   // AITER ASM kernel only reads u32 strides.
 #define CHECK_STRIDE(T)                                               \
   do {                                                                \
@@ -152,6 +158,12 @@ construct_mha_bwd_args(const AiterFmhaV3BwdContext& ctx) {
     return {3, args.Window_left, args.Window_right};
   }();
 
+  auto pointer_with_default = [](const void* pref, const void* def) {
+    return pref ? pref : def;
+  };
+  auto seqstart_q_ptr = pointer_with_default(args.seq_strides_q->data_ptr(), args.cu_seqlens_q->data_ptr());
+  auto seqstart_k_ptr = pointer_with_default(args.seq_strides_k->data_ptr(), args.cu_seqlens_k->data_ptr());
+
   // TODO: use .v3_api_check for lookup_optimal
   aiter::mha_bwd_args ret = {
     // aiter args
@@ -163,7 +175,7 @@ construct_mha_bwd_args(const AiterFmhaV3BwdContext& ctx) {
     .hdim_q               = hdim_qk,                                            // int
     .hdim_v               = hdim_vo,                                            // int
     .data_type            = data_type(),                                        // std::string
-    .is_group_mode        = nhead_q != nhead_k,                                 // bool
+    .is_group_mode        = args.cu_seqlens_q->data_ptr(),                      // bool
     .mask_type            = mask_type,                                          // int
     .bias_type            = args.BIAS_TYPE,                                     // int
     .has_dbias            = 0,                                                  // bool
@@ -185,12 +197,17 @@ construct_mha_bwd_args(const AiterFmhaV3BwdContext& ctx) {
     .dv_ptr               = args.DV->data_ptr(),                                // void*
     .dbias_ptr            = nullptr,                                            // void*
     .dq_acc_ptr           = args.DQ_ACC->data_ptr(),                            // void*
-    .seqstart_q_ptr       = args.seq_strides_q->data_ptr(),                     // const void*
-    .seqstart_k_ptr       = args.seq_strides_k->data_ptr(),                     // const void*
-    .seqlen_q_ptr         = nullptr,                                            // const void*
-    .seqlen_k_ptr         = nullptr,                                            // const void*
-    .cu_seqlen_q_ptr      = args.cu_seqlens_q->data_ptr(),                      // const void*
-    .cu_seqlen_k_ptr      = args.cu_seqlens_k->data_ptr(),                      // const void*
+    // Key precedence difference from triton kernel:
+    // Triton:
+    //   logical cu_seqlen -> physical cu_seqlen if supplied
+    // ASM:
+    //   physical cu_seqlen -> logical cu_seqlen if supplied
+    .seqstart_q_ptr       = seqstart_q_ptr,                                     // const void*  // "Physical" cu_seqlen
+    .seqstart_k_ptr       = seqstart_k_ptr,                                     // const void*  // "Physical" cu_seqlen
+    .seqlen_q_ptr         = nullptr,                                            // const void*  // unused in ASM
+    .seqlen_k_ptr         = nullptr,                                            // const void*  // unused in ASM
+    .cu_seqlen_q_ptr      = args.cu_seqlens_q->data_ptr(),                      // const void*  // "Logical" cu_seqlen
+    .cu_seqlen_k_ptr      = args.cu_seqlens_k->data_ptr(),                      // const void*  // "Logical" cu_seqlen
     .seqlen_q             = args.max_seqlen_q,                                  // int
     .seqlen_k             = args.max_seqlen_k,                                  // int
     .batch                = batch,                                              // int
