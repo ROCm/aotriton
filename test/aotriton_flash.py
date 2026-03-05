@@ -341,7 +341,8 @@ def attn_fwd_varlen(q, k, v,
         b, sm_scale, M, o,
         dropout_p, philox_seed, philox_offset1, philox_offset2,
         philox_seed_output, philox_offset_output,
-        encoded_softmax, causal, atomic, varlen_type):
+        encoded_softmax, causal, atomic, varlen_type, extargs=None):
+    extargs = attn_options() if extargs is None else extargs
     qview, qdevm = mk_aotensor(q)
     kview, kdevm = mk_aotensor(k)
     vview, vdevm = mk_aotensor(v)
@@ -388,7 +389,7 @@ def attn_fwd_varlen(q, k, v,
     err = fa_forward_op(params,
                         fa_forward_op_params.kVersion,
                         Stream(),
-                        attn_options()
+                        extargs
                         )
     # print(f'{err=}')
     return err
@@ -397,7 +398,9 @@ def attn_bwd_varlen(q, k, v,
         cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
         seq_strides_q, seq_strides_k,
         b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
-        dropout_p, philox_seed, philox_offset1, philox_offset2, causal, varlen_type):
+        dropout_p, philox_seed, philox_offset1, philox_offset2,
+        causal, varlen_type, extargs=None):
+    extargs = attn_options() if extargs is None else extargs
     qview, qdevm = mk_aotensor(q)
     kview, kdevm = mk_aotensor(k)
     vview, vdevm = mk_aotensor(v)
@@ -449,7 +452,7 @@ def attn_bwd_varlen(q, k, v,
     err = fa_backward_op(params,
                          fa_backward_op_params.kVersion,
                          Stream(),
-                         attn_options()
+                         extargs
                          )
     # print(f'{err=}')
     return err
