@@ -5,6 +5,9 @@
 #include <aotriton/_internal/util.h>
 #include <aotriton/runtime.h>
 #include <aotriton/util.h>
+#if defined(_WIN32)
+#include "utf8_to_wide.hh"
+#endif
 
 namespace AOTRITON_NS::v3::aiter {
 
@@ -41,7 +44,7 @@ AiterAsmKernel::launch_kernel(const AiterAsmKernelArgs& kargs) {
                      HIP_LAUNCH_PARAM_END };
   int device_id;
   AOTRITON_HIP_CHECK_RETURN(hipGetDevice(&device_id));
-  std::string persistant_storage;
+  pstring_type persistant_storage;
   auto lazy = [&]() -> OnDeviceKernel::OnDiskKernelInfo {
     return { get_package_path(kargs.stream, persistant_storage), hsaco_, mangled_kernel_function_name_ };
   };
@@ -60,8 +63,8 @@ AiterAsmKernel::launch_kernel(const AiterAsmKernelArgs& kargs) {
                                                   (void**)&config));
 }
 
-std::string_view
-AiterAsmKernel::get_package_path(hipStream_t stream, std::string& persistant_storage) const {
+pstring_view
+AiterAsmKernel::get_package_path(hipStream_t stream, pstring_type& persistant_storage) const {
   if (path_cache_.empty()) {
     path_cache_ = hsaco_;
   }
@@ -76,7 +79,11 @@ AiterAsmKernel::get_package_path(hipStream_t stream, std::string& persistant_sto
     auto aks2_family = AITER_KERNEL_MODULE_TO_STORAGE.at(*it);
     // AKS2 path Example
     //   amd-gfx942/flash/affine_kernels/fmha_v3_bwd.aks2
+#if !defined(_WIN32)
     persistant_storage = aks2_arch + "/" + aks2_family + "/affine_kernels/" + aiter_module;
+#else
+    persistant_storage = utf8_to_wide(u8aks2_arch + "/" + aks2_family + "/affine_kernels/" + aiter_module);
+#endif
   } catch (std::out_of_range&) {
     // TODO: return error?
   }

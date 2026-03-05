@@ -30,7 +30,7 @@ public:
     dim3 block { 0, 0, 0 };  // For Kernel who has compile-time determined block size
   };
   struct OnDiskKernelInfo {
-    std::string_view package_path;
+    pstring_view package_path;
     std::string_view stem_name;
     std::string_view function_name;
   };

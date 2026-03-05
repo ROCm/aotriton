@@ -48,7 +48,7 @@ class SlimAffineGenerator(InterfaceGenerator):
         if shared_iface:
             self._add_iface_for_source(akdesc.SHARED_IFACE)
         has_cookie_object = 1 if akdesc.COOKIE_CLASS is not None else 0
-        cookie_class = '// optional cooke class' if not has_cookie_object else akdesc.COOKIE_CLASS
+        cookie_class = '// optional cookie class' if not has_cookie_object else akdesc.COOKIE_CLASS
         d = {
             'shared_iface_family'   : shared_iface_family,
             'shared_iface'          : 1 if shared_iface else 0,

@@ -71,7 +71,7 @@ OnDeviceKernel::load_for_device(int device_id,
   const unsigned int errbufsize = 8192;
   const unsigned int logbufsize = 8192;
   std::vector<char> err(errbufsize, 0);
-  std::vector<char> log(errbufsize, 0);
+  std::vector<char> log(logbufsize, 0);
   void* optval[] = { (void*)(uintptr_t)err.size(),
                      err.data(),
                      (void*)(uintptr_t)log.size(),
@@ -139,6 +139,7 @@ void
 OnDeviceKernel::clear_device_kernel() {
   std::unique_lock lock(funcache_mutex_);
   funcache_.clear();
+  kernel_loaded_ = false;
 }
 
 void

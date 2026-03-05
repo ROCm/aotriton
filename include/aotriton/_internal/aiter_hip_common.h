@@ -88,7 +88,7 @@ public:
   AiterAsmKernel(const char* name, const char* hsaco);
   ~AiterAsmKernel();
   void launch_kernel(const AiterAsmKernelArgs& kargs);
-  std::string_view get_package_path(hipStream_t stream, std::string& persistant_storage) const;
+  pstring_view get_package_path(hipStream_t stream, pstring_type& persistant_storage) const;
 };
 
 std::tuple<Gpu, std::string_view>

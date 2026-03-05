@@ -44,7 +44,7 @@ class aiter_fmha_v3_fwd(FlashAffine):
         if hdim > 192:
             return True
         # Unnecessary since CHOICE_FILTERS ensures BIAS_TYPE == 0
-        # Kept in case furture ASM kernel supports BIAS_TYPE == 1
+        # Kept in case future ASM kernel supports BIAS_TYPE == 1
         # is_causal = check_value(functional, ['CAUSAL', 'CAUSAL_TYPE'])
         # bias_type = check_value(functional, 'BIAS_TYPE')
         # if is_causal and bias_type != 0:
