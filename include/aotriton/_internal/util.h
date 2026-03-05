@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <algorithm>
 #include <vector>
+#include <stdexcept>
 
 #define STRINGIFICATION(s) STRINGIFICATION_I(s)
 #define STRINGIFICATION_I(s) #s

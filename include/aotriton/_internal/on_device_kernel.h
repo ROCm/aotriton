@@ -4,6 +4,7 @@
 #ifndef AOTRITON_V3_API_BINARY_KERNEL_H
 #define AOTRITON_V3_API_BINARY_KERNEL_H
 
+#include <memory>
 #include <filesystem>
 #include <string_view>
 #include <shared_mutex>

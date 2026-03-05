@@ -27,7 +27,7 @@ class SlimAffineGenerator(InterfaceGenerator):
         self._target_arch_keys = list(self._target_arch.keys())
 
     def create_sub_generator(self, functional : Functional, df : 'pandas.DataFrame', sql : str):
-        yield RuntimeError("There should be no calls to SlimAffineGenerator.create_sub_generator"
+        raise RuntimeError("There should be no calls to SlimAffineGenerator.create_sub_generator"
                            " since slim affine kernel has vendored dispatcher.")
 
     # TODO: generate rules to package .co files into .aks2 files

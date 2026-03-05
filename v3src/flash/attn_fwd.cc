@@ -142,7 +142,7 @@ attn_fwd(const attn_fwd_params& in,
 #ifndef NDEBUG
   std::cerr << "v3::flash::attn_fwd options = " << options << std::endl;
   if (options) {
-    std::cerr << "v3::flash::attn_bwd options->force_backend_index = "
+    std::cerr << "v3::flash::attn_fwd options->force_backend_index = "
               << options->force_backend_index
               << std::endl;
   }

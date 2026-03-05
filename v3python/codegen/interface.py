@@ -41,7 +41,7 @@ class InterfaceGenerator(ABC):
         for hdr in iface.HEADER_EXTRA_INCLUDES:
             self._add_include_to_header(hdr)
         for hdr in iface.SOURCE_EXTRA_INCLUDES:
-            self._src_include_repo.register(fn)
+            self._src_include_repo.register(hdr)
 
     @property
     def this_repo(self):
