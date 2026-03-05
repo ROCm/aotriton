@@ -397,7 +397,7 @@ def attn_fwd_varlen(q, k, v,
 def attn_bwd_varlen(q, k, v,
         cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
         seq_strides_q, seq_strides_k,
-        b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
+        b, sm_scale, o, dout, dq, dk, dv, db, dq_acc, L, delta,
         dropout_p, philox_seed, philox_offset1, philox_offset2,
         causal, varlen_type, extargs=None):
     extargs = attn_options() if extargs is None else extargs
@@ -433,6 +433,7 @@ def attn_bwd_varlen(q, k, v,
     params.DV = dvview;
     params.DQ = dqview;
     params.DB = dbview;
+    params.DQ_ACC = dq_acc;
     params.L = Lview;
     params.D = deltaview;
     params.cu_seqlens_q = cuqview

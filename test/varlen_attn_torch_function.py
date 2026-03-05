@@ -7,12 +7,15 @@ import numpy as np
 from aotriton_flash import (
     attn_fwd_varlen,
     attn_bwd_varlen,
+    attn_options,
+    hipError_t,
 )
 from attn_torch_function import (
     AttentionExtraArgs,
     FWD_IMPL,
     BWD_IMPL,
     V3_API,
+    PROBE_UNSUPPORTED,
     FORCE_FWD_BACKEND,
     FORCE_BWD_BACKEND,
 )
@@ -176,6 +179,7 @@ class _attention_varlen(torch.autograd.Function):
         # if q.shape[-1] <= 32:
         # do = do.contiguous()
         dq = torch.empty_like(q)
+        dq_acc = lazy_dq_acc(q)
         dk = torch.empty_like(k)
         dv = torch.empty_like(v)
         db = torch.empty_like(b) if b is not None else None
@@ -189,11 +193,14 @@ class _attention_varlen(torch.autograd.Function):
             extargs.force_backend_index = BWD_IMPL
         else:
             extargs = None
-        attn_bwd_varlen(q, k, v,
-                        cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
-                        ctx.seq_strides_q, ctx.seq_strides_k,
-                        b, sm_scale, o, do, dq, dk, dv, db, L, delta,
-                        dropout_p, philox_seed, philox_offset, 0, causal, ctx.varlen_type, extargs);
+        ret = attn_bwd_varlen(q, k, v,
+                              cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
+                              ctx.seq_strides_q, ctx.seq_strides_k,
+                              b, sm_scale, o, do, dq, dk, dv, db, dq_acc, L, delta,
+                              dropout_p, philox_seed, philox_offset, 0, causal, ctx.varlen_type, extargs);
+        if PROBE_UNSUPPORTED and ret == hipError_t.hipErrorPeerAccessUnsupported:
+            raise NotImplementedError()
+        assert ret == hipError_t.hipSuccess, ret
         return dq, dk, dv, None, None, None, None, None, None, None, None
 
 varlen_attention = _attention_varlen.apply
