@@ -181,7 +181,7 @@ class RootGenerator(object):
     def _absasmfn(self, asm_rule):
         if asm_rule.startswith(':'):
             return asm_rule
-        full = self._args.root_dir / asm_path
+        full = self._args.root_dir / asm_rule
         return str(full.absolute())
 
     def _load_altwheel_config(self, d: dict):
