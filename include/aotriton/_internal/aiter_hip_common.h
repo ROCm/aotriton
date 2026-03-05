@@ -66,6 +66,7 @@ namespace ck_tile {
 
   struct stream_config {
     hipStream_t stream_id_;
+    Gpu gpu_ = GPU_ARCH_UNKNOWN;  // Set it to avoid duplicated query from stream_id_ in get_gpu_arch()
   };
   // Simplified from include/ck_tile/host/kernel_launch.hpp
   template <typename... Callables>
@@ -91,7 +92,7 @@ public:
 };
 
 std::tuple<Gpu, std::string_view>
-get_gpu_arch(hipStream_t);
+get_gpu_arch(ck_tile::stream_config);
 
 } // namespace AOTRITON_NS::v3::aiter
 

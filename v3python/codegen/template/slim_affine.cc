@@ -30,7 +30,7 @@ hipError_t
     if (arch_number < 0) {
         return hipErrorNoBinaryForGpu;
     }
-    const char* reject_reason = check_inputs_are_supported();
+    const char* reject_reason = check_inputs_are_supported(gpu);
     if (reject_reason) {
 #ifndef NDEBUG
         std::cerr << "Unsupported inputs for backend "

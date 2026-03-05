@@ -181,7 +181,7 @@ std::tuple<int, int, int> get_grid_dim(const mha_fwd_args& a, int ts_qo, std::st
 
 float fmha_fwd_v3(mha_fwd_args a, const ck_tile::stream_config& s)
 {
-    auto [gpu, arch_id] = get_gpu_arch(s.stream_id_);
+    auto [gpu, arch_id] = get_gpu_arch(s);
 
     if((!a.use_asm_v3) || (a.hdim_q != 192 && a.hdim_q != 128) || (a.hdim_v != 128) ||
        (a.data_type != "bf16") || (a.bias_type != 0) || (a.p_drop > 0.f) ||

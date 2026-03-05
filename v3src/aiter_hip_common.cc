@@ -85,8 +85,11 @@ AiterAsmKernel::get_package_path(hipStream_t stream, std::string& persistant_sto
 }
 
 std::tuple<Gpu, std::string_view>
-get_gpu_arch(hipStream_t stream) {
-  auto gpu = AOTRITON_NS::getGpuFromStream(stream);
+get_gpu_arch(ck_tile::stream_config& sc) {
+  auto gpu = sc.gpu_;
+  if (gpu == GPU_ARCH_UNKNOWN) {
+    gpu = AOTRITON_NS::getGpuFromStream(sc.stream_id_);
+  }
   auto get_gpu_arch = [gpu]() -> std::string_view {
     uint32_t vendor_arch = Gpu2VendorArch(gpu);
     if (vendor_arch == CAT32(GpuVendor::kAMD, 0x950))

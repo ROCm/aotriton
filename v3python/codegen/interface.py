@@ -38,6 +38,10 @@ class InterfaceGenerator(ABC):
         self._hdr_include_repo = self._this_repo.get_list_registry('headers_needed_in_header_file')
         self._src_include_repo = self._this_repo.get_list_registry('headers_needed_in_source_file')
         self._shim_files = []
+        for hdr in iface.HEADER_EXTRA_INCLUDES:
+            self._add_include_to_header(hdr)
+        for hdr in iface.SOURCE_EXTRA_INCLUDES:
+            self._src_include_repo.register(fn)
 
     @property
     def this_repo(self):

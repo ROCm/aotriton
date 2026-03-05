@@ -20,6 +20,8 @@ from v3python.utils import log
 
 class aiter_fmha_v3_bwd(aiter_fmha_v3_fwd):
     CO_DIR = 'fmha_v3_bwd'
+    HEADER_EXTRA_INCLUDES = ['aotriton/_internal/flash/aiter.h']
+    COOKIE_CLASS = 'aiter::mha_bwd_args'
 
     SHARED_IFACE = OpAttnBwd
     NAME = 'aiter_fmha_v3_bwd'

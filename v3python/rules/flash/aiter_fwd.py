@@ -19,6 +19,8 @@ from v3python.utils import log
 
 class aiter_fmha_v3_fwd(FlashAffine):
     CO_DIR = 'fmha_v3_fwd'
+    HEADER_EXTRA_INCLUDES = ['aotriton/_internal/flash/aiter.h']
+    COOKIE_CLASS = 'aiter::mha_fwd_args'
 
     SHARED_IFACE = OpAttnFwd
     NAME = 'aiter_fmha_v3_fwd'

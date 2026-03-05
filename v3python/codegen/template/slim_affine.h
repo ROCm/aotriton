@@ -24,9 +24,9 @@ using AOTRITON_NS::v3::[[shared_iface_family]]::[[param_class_name]];
 
 struct [[context_class_name]] {
     const [[param_class_name]] *params = nullptr;
-    const char* check_inputs_are_supported();
+    const char* check_inputs_are_supported(Gpu);
 #if [[has_cookie_object]]
-    [[cookie_class]] cookie;
+    mutable [[cookie_class]] cookie;
 #endif
 
     hipError_t lookup_optimal(Gpu gpu);
