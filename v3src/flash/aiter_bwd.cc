@@ -211,6 +211,8 @@ AiterFmhaV3BwdContext::check_inputs_are_supported(Gpu gpu) {
   RETURN_IF(args.ENABLE_DROPOUT);
   // No bias support
   RETURN_IF(args.BIAS_TYPE);
+  // FIXME: Varlen support disabled for now
+  RETURN_IF(args.num_seqlens != 0);
   // GQA only supported in varlen (aka. group mode)
   if (args.num_head_q != args.num_head_k) {
     RETURN_IF(!args.cu_seqlens_q || !*args.cu_seqlens_q);

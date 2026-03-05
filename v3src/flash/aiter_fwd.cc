@@ -26,6 +26,7 @@ aiter::mha_fwd_args
 construct_mha_fwd_args(const AiterFmhaV3FwdContext& ctx) {
   const auto& args = *ctx.params;
   bool has_lse = *args.L;
+  bool is_group_mode = args.cu_seqlens_q->data_ptr();
   auto batch = args.Q->size(0);
   auto nhead_q = args.Q->size(1);
   auto nhead_k = args.K->size(1);
@@ -83,7 +84,7 @@ construct_mha_fwd_args(const AiterFmhaV3FwdContext& ctx) {
     .how_v3_bf16_cvt      = 0,                                                  // int, 0/1/2: rtne/rtna/rtz
     // from ck fmha_fwd_traits
     .data_type            = data_type(),                                        // std::string
-    .is_group_mode        = args.cu_seqlens_q->data_ptr(),                      // bool
+    .is_group_mode        = is_group_mode,                                      // bool
     .bias_type            = args.BIAS_TYPE,                                     // int
     .has_lse              = has_lse,                                            // bool
     .qscale_type          = 0,                                                  // bool
@@ -174,6 +175,8 @@ AiterFmhaV3FwdContext::check_inputs_are_supported(Gpu gpu) {
   RETURN_IF(args.ENABLE_DROPOUT);
   // No bias support
   RETURN_IF(args.BIAS_TYPE);
+  // FIXME: Varlen support disabled for now
+  RETURN_IF(args.Num_seqlens != 0);
   // GQA only supported in varlen (aka. group mode)
   if (args.Num_head_q != args.Num_head_k) {
     RETURN_IF(!args.cu_seqlens_q || !*args.cu_seqlens_q);
