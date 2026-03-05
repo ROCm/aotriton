@@ -178,6 +178,8 @@ AiterFmhaV3FwdContext::check_inputs_are_supported(Gpu gpu) {
   // FIXME: Varlen support disabled for now
   RETURN_IF(args.Num_seqlens != 0);
   // GQA only supported in varlen (aka. group mode)
+  RETURN_IF(args.Num_head_q != args.Num_head_k);
+  // GQA only supported in varlen (aka. group mode)
   if (args.Num_head_q != args.Num_head_k) {
     RETURN_IF(!args.cu_seqlens_q || !*args.cu_seqlens_q);
     RETURN_IF(!args.cu_seqlens_k || !*args.cu_seqlens_k);
