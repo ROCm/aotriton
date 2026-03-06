@@ -18,12 +18,95 @@
 
 namespace AOTRITON_NS::v3::flash {
 
+static aiter::mha_bwd_args
+construct_mha_bwd_args(const AiterFmhaV3BwdContext& ctx);
+
+const char*
+AiterFmhaV3BwdContext::check_inputs_are_supported(Gpu gpu) {
+  const auto& args = *params;
+#define RETURN_IF(COND)                                               \
+  do {                                                                \
+    if (COND) {                                                       \
+      return "Input unsupported due to " STRINGIFICATION(COND);       \
+    }                                                                 \
+  } while(0)
+  // AITER ASM does not support dropout
+  RETURN_IF(args.ENABLE_DROPOUT);
+  // No bias support
+  RETURN_IF(args.BIAS_TYPE);
+  // FIXME: Varlen support disabled for now
+  RETURN_IF(args.num_seqlens != 0);
+  // FIXME: Disable MQA/GQA
+  RETURN_IF(args.num_head_q != args.num_head_k);
+  // GQA only supported in varlen (aka. group mode)
+  if (args.num_head_q != args.num_head_k) {
+    RETURN_IF(!args.cu_seqlens_q || !*args.cu_seqlens_q);
+    RETURN_IF(!args.cu_seqlens_k || !*args.cu_seqlens_k);
+  }
+  // Must provide cu_seqlens_q/k at the same time
+  if (args.cu_seqlens_q && *args.cu_seqlens_q) {
+    RETURN_IF(!args.cu_seqlens_k || !*args.cu_seqlens_k);
+  }
+  // Only support hdim <= 192
+  RETURN_IF(args.hdim_qk > 192 || args.hdim_vo > 192);
+  // Always use A32 kernel for accuracy.
+  RETURN_IF(!args.DQ_ACC || !*args.DQ_ACC);
+  // ASM BWD does not support SWA
+  if (args.CAUSAL_TYPE != CausalType::None) {
+    // Invalid assignment
+    RETURN_IF(args.Window_left != args.Window_right);
+    if (args.Window_left != WindowValue::TopLeftAligned &&
+        args.Window_left != WindowValue::BottomRightAligned) {
+#ifndef NDEBUG
+      std::cerr << "Input unsupported due to args.CAUSAL_TYPE = " << int(args.CAUSAL_TYPE) << " and "
+                << " args.Window_left = " << args.Window_left
+                << " args.Window_right = " << args.Window_right
+                << std::endl;
+#endif
+      return "Input unsupported due to SWA";
+    }
+  }
+#undef RETURN_IF
+  // AITER ASM kernel only reads u32 strides.
+#define CHECK_STRIDE(T)                                               \
+  do {                                                                \
+    auto strides = T->strides();                                      \
+    size_t max_e = *std::max_element(strides.begin(), strides.end()); \
+    if (max_e * 2 > std::numeric_limits<uint32_t>::max()) {           \
+      return "Input unsupported due to large tensor " STRINGIFICATION(T);           \
+    }                                                                 \
+  } while(0)
+#if 0
+      std::cerr << "Input unsupported due to large tensor " << #T << std::endl;
+      std::cerr << "strides: "; for (auto s : strides) std::cerr << s << " "; std::cerr << std::endl;
+      std::cerr << "max_e * 2: " << max_e * 2 << std::endl;
+#endif
+  CHECK_STRIDE(args.Q);
+  CHECK_STRIDE(args.K);
+  CHECK_STRIDE(args.V);
+  CHECK_STRIDE(args.Out);
+  CHECK_STRIDE(args.DO);
+  CHECK_STRIDE(args.DK);
+  CHECK_STRIDE(args.DV);
+  CHECK_STRIDE(args.DB);
+#undef CHECK_STRIDE
+  cookie = construct_mha_bwd_args(*this);
+  cookie.v3_api_check = true;
+  AOTRITON_NS::v3::aiter::ck_tile::stream_config sc {
+    .gpu_ = gpu,
+  };
+  if (fmha_v3_bwd(cookie, sc) != 0)
+    return "v3_api_check report failure";
+
+  return nullptr;
+}
+
 // Too many narrowing warning here.
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wnarrowing"
 
 aiter::mha_bwd_args
-construct_mha_bwd_args(const AiterFmhaV3BwdContext& ctx) {
+static construct_mha_bwd_args(const AiterFmhaV3BwdContext& ctx) {
   const auto& args = *ctx.params;
   auto batch = args.Q->size(0);
   auto nhead_q = args.Q->size(1);
@@ -196,87 +279,6 @@ construct_mha_bwd_args(const AiterFmhaV3BwdContext& ctx) {
   return ret;
 }
 #pragma GCC diagnostic pop
-
-
-const char*
-AiterFmhaV3BwdContext::check_inputs_are_supported(Gpu gpu) {
-  const auto& args = *params;
-#define RETURN_IF(COND)                                               \
-  do {                                                                \
-    if (COND) {                                                       \
-      return "Input unsupported due to " STRINGIFICATION(COND);       \
-    }                                                                 \
-  } while(0)
-  // AITER ASM does not support dropout
-  RETURN_IF(args.ENABLE_DROPOUT);
-  // No bias support
-  RETURN_IF(args.BIAS_TYPE);
-  // FIXME: Varlen support disabled for now
-  RETURN_IF(args.num_seqlens != 0);
-  // FIXME: Disable MQA/GQA
-  RETURN_IF(args.num_head_q != args.num_head_k);
-  // GQA only supported in varlen (aka. group mode)
-  if (args.num_head_q != args.num_head_k) {
-    RETURN_IF(!args.cu_seqlens_q || !*args.cu_seqlens_q);
-    RETURN_IF(!args.cu_seqlens_k || !*args.cu_seqlens_k);
-  }
-  // Must provide cu_seqlens_q/k at the same time
-  if (args.cu_seqlens_q && *args.cu_seqlens_q) {
-    RETURN_IF(!args.cu_seqlens_k || !*args.cu_seqlens_k);
-  }
-  // Only support hdim <= 192
-  RETURN_IF(args.hdim_qk > 192 || args.hdim_vo > 192);
-  // Always use A32 kernel for accuracy.
-  RETURN_IF(!args.DQ_ACC || !*args.DQ_ACC);
-  // ASM BWD does not support SWA
-  if (args.CAUSAL_TYPE != CausalType::None) {
-    // Invalid assignment
-    RETURN_IF(args.Window_left != args.Window_right);
-    if (args.Window_left != WindowValue::TopLeftAligned &&
-        args.Window_left != WindowValue::BottomRightAligned) {
-#ifndef NDEBUG
-      std::cerr << "Input unsupported due to args.CAUSAL_TYPE = " << int(args.CAUSAL_TYPE) << " and "
-                << " args.Window_left = " << args.Window_left
-                << " args.Window_right = " << args.Window_right
-                << std::endl;
-#endif
-      return "Input unsupported due to SWA";
-    }
-  }
-#undef RETURN_IF
-  // AITER ASM kernel only reads u32 strides.
-#define CHECK_STRIDE(T)                                               \
-  do {                                                                \
-    auto strides = T->strides();                                      \
-    size_t max_e = *std::max_element(strides.begin(), strides.end()); \
-    if (max_e * 2 > std::numeric_limits<uint32_t>::max()) {           \
-      return "Input unsupported due to large tensor " STRINGIFICATION(T);           \
-    }                                                                 \
-  } while(0)
-#if 0
-      std::cerr << "Input unsupported due to large tensor " << #T << std::endl;
-      std::cerr << "strides: "; for (auto s : strides) std::cerr << s << " "; std::cerr << std::endl;
-      std::cerr << "max_e * 2: " << max_e * 2 << std::endl;
-#endif
-  CHECK_STRIDE(args.Q);
-  CHECK_STRIDE(args.K);
-  CHECK_STRIDE(args.V);
-  CHECK_STRIDE(args.Out);
-  CHECK_STRIDE(args.DO);
-  CHECK_STRIDE(args.DK);
-  CHECK_STRIDE(args.DV);
-  CHECK_STRIDE(args.DB);
-#undef CHECK_STRIDE
-  cookie = construct_mha_bwd_args(*this);
-  cookie.v3_api_check = true;
-  AOTRITON_NS::v3::aiter::ck_tile::stream_config sc {
-    .gpu_ = gpu,
-  };
-  if (fmha_v3_bwd(cookie, sc) == 0)
-    return "v3_api_check report failure";
-
-  return nullptr;
-}
 
 hipError_t
 AiterFmhaV3BwdContext::launch(hipStream_t stream) const {
