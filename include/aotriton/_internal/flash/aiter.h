@@ -8,6 +8,7 @@
 #include <aotriton/_internal/aiter_hip_common.h>
 #include <variant>
 #include <tuple>
+#include <string>
 
 // Namespace organizations
 // AOTRITON_NS::v3::aiter - Common AITER symbols

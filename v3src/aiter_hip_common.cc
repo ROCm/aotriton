@@ -66,7 +66,11 @@ AiterAsmKernel::launch_kernel(const AiterAsmKernelArgs& kargs) {
 pstring_view
 AiterAsmKernel::get_package_path(hipStream_t stream, pstring_type& persistant_storage) const {
   if (path_cache_.empty()) {
+#if !defined(_WIN32)
     path_cache_ = hsaco_;
+#else
+    path_cache_ = utf8_to_wide(hsaco_);
+#endif
   }
   auto gpu = getGpuFromStream(stream);
   auto arch = Gpu2VendorArch(gpu);
@@ -82,7 +86,7 @@ AiterAsmKernel::get_package_path(hipStream_t stream, pstring_type& persistant_st
 #if !defined(_WIN32)
     persistant_storage = aks2_arch + "/" + aks2_family + "/affine_kernels/" + aiter_module;
 #else
-    persistant_storage = utf8_to_wide(u8aks2_arch + "/" + aks2_family + "/affine_kernels/" + aiter_module);
+    persistant_storage = utf8_to_wide(aks2_arch) + L"/" + aks2_family + L"/affine_kernels/" + aiter_module;
 #endif
   } catch (std::out_of_range&) {
     // TODO: return error?
