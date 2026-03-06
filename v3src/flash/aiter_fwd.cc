@@ -89,7 +89,7 @@ AiterFmhaV3FwdContext::check_inputs_are_supported(Gpu gpu) {
   AOTRITON_NS::v3::aiter::ck_tile::stream_config sc {
     .gpu_ = gpu,
   };
-  if (fmha_fwd_v3(cookie, sc) != 0)
+  if (fmha_fwd_v3(cookie, sc) != 1)
     return "v3_api_check report failure";
 
   return nullptr;
