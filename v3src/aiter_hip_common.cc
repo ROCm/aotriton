@@ -79,14 +79,14 @@ AiterAsmKernel::get_package_path(hipStream_t stream, pstring_type& persistant_st
     // Example hsaco value
     //   fmha_v3_bwd/bwd_hd64_dq_convert_fp16.co
     auto it = path_cache_.begin();
-    std::string aiter_module = *it;
-    auto aks2_family = AITER_KERNEL_MODULE_TO_STORAGE.at(*it);
+    std::string aiter_module = it->string();
+    auto aks2_family = AITER_KERNEL_MODULE_TO_STORAGE.at(aiter_module);
     // AKS2 path Example
     //   amd-gfx942/flash/affine_kernels/fmha_v3_bwd.aks2
 #if !defined(_WIN32)
     persistant_storage = aks2_arch + "/" + aks2_family + "/affine_kernels/" + aiter_module;
 #else
-    persistant_storage = utf8_to_wide(aks2_arch) + L"/" + aks2_family + L"/affine_kernels/" + aiter_module;
+    persistant_storage = utf8_to_wide(aks2_arch) + L"/" + utf8_to_wide(aks2_family) + L"/affine_kernels/" + utf8_to_wide(aiter_module);
 #endif
   } catch (std::out_of_range&) {
     // TODO: return error?
