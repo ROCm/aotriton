@@ -82,7 +82,7 @@ namespace ck_tile {
 class AiterAsmKernel : public OnDeviceKernel {
 private:
   const char* mangled_kernel_function_name_;
-  const char* hsaco_;
+  std::string hsaco_;  // CAVEAT: the hsaco passed-in by constructor may be temporary
   mutable std::filesystem::path path_cache_;
 public:
   AiterAsmKernel(const char* name, const char* hsaco);
