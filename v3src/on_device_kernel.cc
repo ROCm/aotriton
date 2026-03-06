@@ -130,7 +130,6 @@ OnDeviceKernel::decompress_kernel(pstring_view package_path,
 #endif
     essentials_ = packed_kernel_->filter(stem_name);
   }
-  // FIXME: There should be a memory barrier here for non-X86 CPUs.
   kernel_loaded_ = true;
 }
 

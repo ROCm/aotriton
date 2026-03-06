@@ -4,6 +4,7 @@
 #ifndef AOTRITON_V3_API_BINARY_KERNEL_H
 #define AOTRITON_V3_API_BINARY_KERNEL_H
 
+#include <atomic>
 #include <memory>
 #include <filesystem>
 #include <string_view>
@@ -12,6 +13,7 @@
 #include <functional>
 #include <tuple>
 #include <aotriton/config.h>
+#include <aotriton/runtime.h>
 
 using pstring_type = std::filesystem::path::string_type;
 using pstring_view = std::basic_string_view<std::filesystem::path::value_type>;
@@ -45,7 +47,7 @@ public:
   void clear_device_kernel();
   void clear_decompressed_image();
 private:
-  bool kernel_loaded_ = false;
+  std::atomic<bool> kernel_loaded_ = false;
 
   hipFunction_t cfind_function(int device_id) const;
   // AKS2 kernel (-> In-Memory kernel image) -> hipFunction_t on certain given device
