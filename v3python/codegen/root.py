@@ -179,7 +179,7 @@ class RootGenerator(object):
 
     # TODO: deprecate this, the generator should return the full path directly
     def _absasmfn(self, asm_rule):
-        if asm_rule.startswith(':'):
+        if asm_rule.startswith('|'):
             return asm_rule
         full = self._args.root_dir / asm_rule
         return str(full.absolute())

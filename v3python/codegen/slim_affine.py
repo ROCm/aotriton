@@ -37,7 +37,7 @@ class SlimAffineGenerator(InterfaceGenerator):
         asm_registry = self.this_repo.get_hsaco_registry('asms')
         akdesc = self._iface
         for aks2_path, inarchive_path, kernel_co in akdesc.co_gen(self._args.build_dir, self._target_arch):
-            relocate_rule = ':' + inarchive_path + ':' + kernel_co.absolute().as_posix()
+            relocate_rule = '|' + inarchive_path + '|' + kernel_co.absolute().as_posix()
             asm_registry.register(aks2_path, relocate_rule, append=True)
 
     def write_shim_header(self, functionals, fout):
