@@ -38,6 +38,10 @@ class InterfaceGenerator(ABC):
         self._hdr_include_repo = self._this_repo.get_list_registry('headers_needed_in_header_file')
         self._src_include_repo = self._this_repo.get_list_registry('headers_needed_in_source_file')
         self._shim_files = []
+        for hdr in iface.HEADER_EXTRA_INCLUDES:
+            self._add_include_to_header(hdr)
+        for hdr in iface.SOURCE_EXTRA_INCLUDES:
+            self._src_include_repo.register(hdr)
 
     @property
     def this_repo(self):
@@ -92,7 +96,7 @@ class InterfaceGenerator(ABC):
         self._shim_files.append(fullfn.with_suffix('.cc'))
 
     @abstractmethod
-    def create_sub_generator(self, functional : Functional):
+    def create_sub_generator(self, functional : Functional, df : 'pandas.DataFrame', sql : str):
         pass
 
     @abstractmethod

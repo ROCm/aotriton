@@ -7,11 +7,11 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-static int fd_close(int fd) {
+inline static int fd_close(int fd) {
     return close(fd);
 }
 
-static ssize_t fd_read(int fd, void *buf, size_t count) {
+inline static ssize_t fd_read(int fd, void *buf, size_t count) {
     return ::read(fd, buf, count);
 }
 

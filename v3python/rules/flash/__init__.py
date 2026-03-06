@@ -17,25 +17,25 @@ from .bwd_kernel_dq import bwd_kernel_dq
 from .bwd_kernel_fuse import bwd_kernel_fuse
 # from .debug_fill_dropout_rng import debug_fill_dropout_rng, debug_fill_dropout_rng_tensor
 from .debug_simulate_encoded_softmax import debug_simulate_encoded_softmax
-from .aiter_bwd import bwd_dq_dk_dv_v3
+from .aiter_fwd import aiter_fmha_v3_fwd
+from .aiter_bwd import aiter_fmha_v3_bwd
 
 SOURCE_FILE = 'tritonsrc/flash.py'
 
 __bwd_preprocess = bwd_preprocess('bwd_preprocess', SOURCE_FILE)
 __bwd_preprocess_varlen = bwd_preprocess_varlen('bwd_preprocess_varlen', SOURCE_FILE)
-__bwd_postprocess = bwd_postprocess('bwd_postprocess', SOURCE_FILE)
 __attn_fwd = attn_fwd('attn_fwd', SOURCE_FILE)
 __bwd_kernel_dk_dv = bwd_kernel_dk_dv('bwd_kernel_dk_dv', SOURCE_FILE)
 __bwd_kernel_dq = bwd_kernel_dq('bwd_kernel_dq', SOURCE_FILE)
 __bwd_kernel_fuse = bwd_kernel_fuse('bwd_kernel_fuse', SOURCE_FILE)
-__bwd_aiter = bwd_dq_dk_dv_v3()
+__fwd_aiter = aiter_fmha_v3_fwd()
+__bwd_aiter = aiter_fmha_v3_bwd()
 # # TODO: Re-implement this as part of kernel(?)
 __debug_simulate_encoded_softmax = debug_simulate_encoded_softmax('debug_simulate_encoded_softmax', SOURCE_FILE)
 
 kernels = [
     __bwd_preprocess,
     __bwd_preprocess_varlen,
-    __bwd_postprocess,
     __attn_fwd,
     __bwd_kernel_dk_dv,
     __bwd_kernel_dq,
@@ -44,6 +44,7 @@ kernels = [
 ]
 
 affine_kernels = [
+    __fwd_aiter,
     __bwd_aiter,
 ]
 
@@ -62,6 +63,7 @@ operators = [
         MetroFwdKernel('triton',
                        [__attn_fwd,
                         ConditionalKernel('encoded_softmax', '->data_ptr() != nullptr', __debug_simulate_encoded_softmax)]),
+        __fwd_aiter,  # No need to provide encoded_softmax because no dropout support 
     ]),
     OpAttnBwd([
         MetroBwdKernel('triton_split',
@@ -69,10 +71,7 @@ operators = [
                         __bwd_kernel_dk_dv,
                         __bwd_kernel_dq]),
         __bwd_kernel_fuse,
-        MetroBwdKernel('aiter_asm',
-                       [ConditionalKernel('num_seqlens', '> 0', __bwd_preprocess_varlen, __bwd_preprocess),
-                        __bwd_aiter,
-                        __bwd_postprocess]),
+        __bwd_aiter,
     ]),
 ]
 
