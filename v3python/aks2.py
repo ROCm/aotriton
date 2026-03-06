@@ -42,7 +42,7 @@ def load_hsaco(hsaco_rule : str, offset, ignore_json):
     # :<aks2 filename>:<.hsaco path>
     # aks2 filename may contain '/'
     if hsaco_rule.startswith(':'):
-        _, filename, hsaco = hsaco_rule.split('|', 2)
+        _, filename, hsaco = hsaco_rule.split(':', 2)
         hsaco = Path(hsaco)
         filename = filename.encode('utf-8')
     else:
