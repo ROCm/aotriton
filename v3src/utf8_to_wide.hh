@@ -5,6 +5,7 @@
 // SPDX-License-Identifier: MIT
 
 #include <windows.h>
+#include <string>
 
 // Helper function to convert UTF-8 string to wide string
 inline static std::wstring utf8_to_wide(const std::string& utf8_str) {
