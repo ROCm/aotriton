@@ -34,7 +34,7 @@ system, `ninja install` will run the whole build process unconditionally.
 * `pkg-config`
   - Required by the build system to find `liblzma`.
   - On RHEL and its derivatives this dependency is ensured by `xz-devel`.
-  - On Debian and its derivatives this dependeny is met by installing `pkgconf`
+  - On Debian and its derivatives this dependency is met by installing `pkgconf`
     or `pkg-config` in older releases.
 * [`dlfcn-win32`](https://github.com/dlfcn-win32/dlfcn-win32) (**WINDOWS ONLY**)
   - Windows version of the `dl` library.
