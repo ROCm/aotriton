@@ -11,6 +11,7 @@ from ..base import (
 )
 from .interface import InterfaceGenerator
 from ..affine import AffineKernelDescription
+from .slim_affine import SlimAffineGenerator
 from .affine_cap import AffineCapabilityGenerator
 from ..utils import (
     LazyFile,
@@ -21,18 +22,10 @@ from .template import get_template
 from .common import codegen_struct_cfields, codegen_includes
 import hashlib
 
-class AffineGenerator(InterfaceGenerator):
+class AffineGenerator(SlimAffineGenerator):
     HEADER_TEMPLATE = get_template('affine.h')
     SOURCE_TEMPLATE = get_template('affine.cc')
     PFX = 'affine'
-
-    def __init__(self, args, iface : Interface, parent_repo : RegistryRepository):
-        super().__init__(args, iface, parent_repo)
-        akdesc = iface
-        # Patch _target_arch since affine kernel may not support all arches.
-        self._target_arch = { arch: gpus for arch, gpus in self._target_arch.items() if arch in akdesc.SUPPORTED_ARCH }
-        del self._target_gpus  # For safety
-        self._target_arch_keys = list(self._target_arch.keys())
 
     '''
     Unlike Triton kernel. Affine kernel does not need an autotune table.

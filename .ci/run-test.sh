@@ -12,6 +12,7 @@ fi
 
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 . "${SCRIPT_DIR}/common-vars.sh"
+add_torch_ldconfig
 
 pass=$1
 test_level="$2"
@@ -36,10 +37,12 @@ small_vram=$(amd-smi static -g 0 -v --json|grep -v '^WARNING:'| python -c 'impor
     fnprefix="ut_pass"
   fi
   if [[ "$backend" == "fused" ]]; then
+    export V3_API=1
     export BWD_IMPL=1
     fnprefix="fused_pass"
   fi
   if [[ "$backend" == "aiter" ]]; then
+    export V3_API=1
     export BWD_IMPL=2
     fnprefix="aiter_pass"
   fi

@@ -218,14 +218,14 @@ Note: for now we cannot really test both fused and split kernel at the same
 #TODO: Let BWDOP determine the real backward op at runtime
 
 def _get_BWDOP_id():
-    if V3_API:
-        return 'V3'
     if BWD_IMPL == 2:
         return 'AITERASM'
     if BWD_IMPL == 1:
         return 'Fused'
     if BWD_IMPL == 0:
         return 'Split'
+    if V3_API:
+        return 'V3'
     assert False, f'Unsupported BWD_IMPL {BWD_IMPL}'
 
 BWDOP_ids = [_get_BWDOP_id()]

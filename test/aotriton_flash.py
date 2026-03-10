@@ -27,7 +27,6 @@ if not IGNORE_BACKWARD_IMPORT:
     from pyaotriton.v3.flash import (
         attn_bwd as fa_backward_op,
         attn_bwd_params as fa_backward_op_params,
-        aiter_bwd as fa_aiter_bwd,
     )
 
 # Note: we don't use Enum class because accessing the integer requires using
@@ -159,8 +158,8 @@ def attn_fwd(q, k, v, b, sm_scale, M, o,
              dropout_p, philox_seed, philox_offset1, philox_offset2,
              philox_seed_output, philox_offset_output,
              encoded_softmax, causal, atomic,
-             extargs=None, call_operator=False):
-    extargs = FwdExtraArguments() if extargs is None else extargs
+             extargs=None, call_operator=True):
+    extargs = attn_options() if extargs is None else extargs
     qview, qdevm = mk_aotensor(q)
     kview, kdevm = mk_aotensor(k)
     vview, vdevm = mk_aotensor(v)
@@ -176,55 +175,36 @@ def attn_fwd(q, k, v, b, sm_scale, M, o,
     causal_type, window_left, window_right = translate_causal(causal, v3_api=call_operator)
     if AOTRITON_TORCH_ONLY_USE_CPU:
         hipDeviceSynchronize()
-    if not call_operator:
-        err = fa_forward(qview,
-                         kview,
-                         vview,
-                         bview,
-                         float(sm_scale),
-                         Mview,
-                         oview,
-                         float(dropout_p),
-                         seedview,
-                         offset1view,
-                         philox_offset2,
-                         seedoutview,
-                         offsetoutview,
-                         esmview,
-                         causal_type,
-                         atomicview,
-                         Stream(),
-                         extargs)
-    else:
-        params = fa_forward_op_params()
-        params.Q = qview
-        params.K = kview
-        params.V = vview
-        params.B = bview
-        params.Sm_scale = float(sm_scale)
-        params.L = Mview
-        params.Out = oview
-        # params.cu_seqlens_q
-        # params.cu_seqlens_k
-        # params.Max_seqlen_q
-        # params.Max_seqlen_k
-        params.dropout_p = float(dropout_p)
-        params.philox_seed_ptr = seedview
-        params.philox_offset1 = offset1view
-        params.philox_offset2 = philox_offset2
-        params.philox_seed_output = seedoutview
-        params.philox_offset_output = offsetoutview
-        params.encoded_softmax = esmview
-        params.persistent_atomic_counter = atomicview
-        params.causal_type = causal_type
-        params.window_left = window_left
-        params.window_right = window_right
-        params.varlen_type = 0
-        err = fa_forward_op(params,
-                            fa_forward_op_params.kVersion,
-                            Stream(),
-                            attn_options()
-                            )
+    assert call_operator
+    params = fa_forward_op_params()
+    params.Q = qview
+    params.K = kview
+    params.V = vview
+    params.B = bview
+    params.Sm_scale = float(sm_scale)
+    params.L = Mview
+    params.Out = oview
+    # params.cu_seqlens_q
+    # params.cu_seqlens_k
+    # params.Max_seqlen_q
+    # params.Max_seqlen_k
+    params.dropout_p = float(dropout_p)
+    params.philox_seed_ptr = seedview
+    params.philox_offset1 = offset1view
+    params.philox_offset2 = philox_offset2
+    params.philox_seed_output = seedoutview
+    params.philox_offset_output = offsetoutview
+    params.encoded_softmax = esmview
+    params.persistent_atomic_counter = atomicview
+    params.causal_type = causal_type
+    params.window_left = window_left
+    params.window_right = window_right
+    params.varlen_type = 0
+    err = fa_forward_op(params,
+                        fa_forward_op_params.kVersion,
+                        Stream(),
+                        extargs
+                        )
     if AOTRITON_TORCH_ONLY_USE_CPU:
         _torch_cpu_only_copy_back([M, o, philox_seed_output, philox_offset_output, encoded_softmax],
                                   [Mdevm, odevm, seedoutdevm, offsetoutdevm, esmdevm])
@@ -233,11 +213,9 @@ def attn_fwd(q, k, v, b, sm_scale, M, o,
 
 def attn_bwd(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, dq_acc, L, delta,
              dropout_p, philox_seed, philox_offset1, philox_offset2, causal,
-             extargs=None, call_operator=False):
-    if call_operator:
-        extargs = attn_options() if extargs is None else extargs
-    else:
-        extargs = BwdExtraArguments() if extargs is None else extargs
+             extargs=None, call_operator=True):
+    assert call_operator
+    extargs = attn_options() if extargs is None else extargs
     qview, qdevm = mk_aotensor(q)
     kview, kdevm = mk_aotensor(k)
     vview, vdevm = mk_aotensor(v)
@@ -249,68 +227,43 @@ def attn_bwd(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, dq_acc, L, delta,
     dvview, dvdevm = mk_aotensor(dv)
     dbview, dbdevm = mk_aotensor(db, if_empty_then_like=q)
     Lview, Ldevm = mk_aotensor(L)
-    if call_operator:
-        deltaview = delta
-    else:
-        deltaview, deltadevm = mk_aotensor(delta)
+    deltaview = delta
     seedview, seeddevm = mk_aotensor(philox_seed)
     offset1view, offset1devm = mk_aotensor(philox_offset1)
     if AOTRITON_TORCH_ONLY_USE_CPU:
         hipDeviceSynchronize()
     causal_type, window_left, window_right = translate_causal(causal, v3_api=call_operator)
-    if not call_operator:
-        err = fa_backward(qview,
-                          kview,
-                          vview,
-                          bview,
-                          float(sm_scale),
-                          oview,
-                          doutview,
-                          dqview,
-                          dkview,
-                          dvview,
-                          dbview,
-                          Lview,
-                          deltaview,
-                          float(dropout_p),
-                          seedview,
-                          offset1view,
-                          philox_offset2,
-                          causal,
-                          Stream(),
-                          extargs)
-    else:
-        params = fa_backward_op_params()
-        params.Q = qview;
-        params.K = kview;
-        params.V = vview;
-        params.B = bview;
-        params.Sm_scale = float(sm_scale);
-        params.Out = oview;
-        params.DO = doutview;
-        params.DK = dkview;
-        params.DV = dvview;
-        params.DQ = dqview;
-        params.DB = dbview;
-        params.DQ_ACC = dq_acc;
-        params.L = Lview;
-        params.D = deltaview;
-        # params.cu_seqlens_q
-        # params.cu_seqlens_k
-        # params.Max_seqlen_q
-        # params.Max_seqlen_k
-        params.dropout_p = float(dropout_p);
-        params.philox_seed_ptr = seedview;
-        params.philox_offset1 = offset1view;
-        params.philox_offset2 = philox_offset2;
-        params.causal_type = causal_type
-        params.window_left = window_left
-        params.window_right = window_right
-        params.varlen_type = 0
-        err = fa_backward_op(params,
-                             fa_backward_op_params.kVersion,
-                             Stream(),
-                             extargs)
+    params = fa_backward_op_params()
+    params.Q = qview;
+    params.K = kview;
+    params.V = vview;
+    params.B = bview;
+    params.Sm_scale = float(sm_scale);
+    params.Out = oview;
+    params.DO = doutview;
+    params.DK = dkview;
+    params.DV = dvview;
+    params.DQ = dqview;
+    params.DB = dbview;
+    params.DQ_ACC = dq_acc;
+    params.L = Lview;
+    params.D = deltaview;
+    # params.cu_seqlens_q
+    # params.cu_seqlens_k
+    # params.Max_seqlen_q
+    # params.Max_seqlen_k
+    params.dropout_p = float(dropout_p);
+    params.philox_seed_ptr = seedview;
+    params.philox_offset1 = offset1view;
+    params.philox_offset2 = philox_offset2;
+    params.causal_type = causal_type
+    params.window_left = window_left
+    params.window_right = window_right
+    params.varlen_type = 0
+    err = fa_backward_op(params,
+                         fa_backward_op_params.kVersion,
+                         Stream(),
+                         extargs)
     if AOTRITON_TORCH_ONLY_USE_CPU:  # FIXME: V3+CPU
         _torch_cpu_only_copy_back([dq, dk, dv, db, delta],
                                   [dqdevm, dkdevm, dvdevm, dbdevm, deltadevm])
@@ -361,66 +314,6 @@ def attn_bwd_fused(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L,
     # print(f'{err=}')
     return err
 
-def attn_bwd_aiter(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, dq_acc, L, delta,
-                   dropout_p, philox_seed, philox_offset1, philox_offset2, causal, extargs=None):
-    extargs = BwdExtraArguments() if extargs is None else extargs
-    qview, qdevm = mk_aotensor(q)
-    kview, kdevm = mk_aotensor(k)
-    vview, vdevm = mk_aotensor(v)
-    bview, bdevm = mk_aotensor(b, if_empty_then_like=q)
-    oview, odevm = mk_aotensor(o)
-    doutview, doutdevm = mk_aotensor(dout)
-    # dqaccview, dqaccdevm = mk_aotensor(dq_acc)
-    dqview, dqdevm = mk_aotensor(dq)
-    dkview, dkdevm = mk_aotensor(dk)
-    dvview, dvdevm = mk_aotensor(dv)
-    dbview, dbdevm = mk_aotensor(db, if_empty_then_like=q)
-    Lview, Ldevm = mk_aotensor(L)
-    # deltaview, deltadevm = mk_aotensor(delta)
-    deltaview = delta
-    seedview, seeddevm = mk_aotensor(philox_seed)
-    offset1view, offset1devm = mk_aotensor(philox_offset1)
-    if AOTRITON_TORCH_ONLY_USE_CPU:
-        hipDeviceSynchronize()
-    # Keep using v3_api=False since we are not exposing Windowed Attention ATM
-    causal_type, window_left, window_right = translate_causal(causal, v3_api=False)
-    params = fa_backward_op_params()
-    params.Q = qview
-    params.K = kview
-    params.V = vview
-    params.B = bview
-    params.Sm_scale = float(sm_scale)
-    params.Out = oview
-    params.DO = doutview
-    params.DQ = dqview
-    params.DK = dkview
-    params.DV = dvview
-    params.DQ_ACC = dq_acc
-    params.DB = dbview
-    params.L = Lview
-    params.D = deltaview
-    # params.cu_seqlens_q
-    # params.cu_seqlens_k
-    # params.Max_seqlen_q
-    # params.Max_seqlen_k
-    params.dropout_p = float(dropout_p)
-    params.philox_seed_ptr = seedview
-    params.philox_offset1 = offset1view
-    params.philox_offset2 = philox_offset2
-    params.causal_type = causal_type
-    params.window_left = window_left
-    params.window_right = window_right
-    params.varlen_type = 0
-    err = fa_aiter_bwd(params,
-                       fa_backward_op_params.kVersion,
-                       Stream(),
-                       attn_options()
-                       )
-    if AOTRITON_TORCH_ONLY_USE_CPU:
-        _torch_cpu_only_copy_back([dq_acc, dk, dv, db, delta],
-                                  [dqaccdevm, dkdevm, dvdevm, dbdevm, deltadevm])
-    return err
-
 # def debug_fill_dropout_rng(R, philox_seed, philox_offset):
 #     Rview, Rdevm = mk_aotensor(R)
 #     err = fa_debug_fill_dropout_rng(Rview,
@@ -448,7 +341,8 @@ def attn_fwd_varlen(q, k, v,
         b, sm_scale, M, o,
         dropout_p, philox_seed, philox_offset1, philox_offset2,
         philox_seed_output, philox_offset_output,
-        encoded_softmax, causal, atomic, varlen_type):
+        encoded_softmax, causal, atomic, varlen_type, extargs=None):
+    extargs = attn_options() if extargs is None else extargs
     qview, qdevm = mk_aotensor(q)
     kview, kdevm = mk_aotensor(k)
     vview, vdevm = mk_aotensor(v)
@@ -495,7 +389,7 @@ def attn_fwd_varlen(q, k, v,
     err = fa_forward_op(params,
                         fa_forward_op_params.kVersion,
                         Stream(),
-                        attn_options()
+                        extargs
                         )
     # print(f'{err=}')
     return err
@@ -503,8 +397,10 @@ def attn_fwd_varlen(q, k, v,
 def attn_bwd_varlen(q, k, v,
         cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
         seq_strides_q, seq_strides_k,
-        b, sm_scale, o, dout, dq, dk, dv, db, L, delta,
-        dropout_p, philox_seed, philox_offset1, philox_offset2, causal, varlen_type):
+        b, sm_scale, o, dout, dq, dk, dv, db, dq_acc, L, delta,
+        dropout_p, philox_seed, philox_offset1, philox_offset2,
+        causal, varlen_type, extargs=None):
+    extargs = attn_options() if extargs is None else extargs
     qview, qdevm = mk_aotensor(q)
     kview, kdevm = mk_aotensor(k)
     vview, vdevm = mk_aotensor(v)
@@ -537,6 +433,7 @@ def attn_bwd_varlen(q, k, v,
     params.DV = dvview;
     params.DQ = dqview;
     params.DB = dbview;
+    params.DQ_ACC = dq_acc;
     params.L = Lview;
     params.D = deltaview;
     params.cu_seqlens_q = cuqview
@@ -556,7 +453,7 @@ def attn_bwd_varlen(q, k, v,
     err = fa_backward_op(params,
                          fa_backward_op_params.kVersion,
                          Stream(),
-                         attn_options()
+                         extargs
                          )
     # print(f'{err=}')
     return err

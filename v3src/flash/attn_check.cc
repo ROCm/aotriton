@@ -5,6 +5,7 @@
 #include <aotriton/flash.h>
 #include <aotriton/runtime.h>
 #include <aotriton/util.h>
+#include <aotriton/_internal/util.h>
 #include <flash/shim.attn_fwd.h>
 #include <flash/shim.bwd_kernel_dk_dv.h>
 #include <flash/shim.bwd_kernel_fuse.h>
@@ -12,9 +13,6 @@
 #include <flash/shim.bwd_preprocess.h>
 #include <flash/shim.bwd_preprocess_varlen.h>
 #include <iostream>
-
-#define STRINGIFICATION(s) STRINGIFICATION_I(s)
-#define STRINGIFICATION_I(s) #s
 
 namespace AOTRITON_NS::v2::flash {
 
