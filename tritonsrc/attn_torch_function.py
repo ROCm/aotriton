@@ -5,6 +5,7 @@
 import os
 from collections import namedtuple
 from dataclasses import dataclass
+import itertools
 import copy
 import torch
 import triton
@@ -155,31 +156,12 @@ def is_power_of_two(n: int) -> bool:
 def is_supported_by_tl_dot(n: int) -> bool:
     return is_power_of_two(n) and n >= 16
 
-TRITON_CONFIG_LIST_FWD = [
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 0, 'PRE_LOAD_V': True}, num_stages=1, num_warps=4),
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 1, 'PRE_LOAD_V': True}, num_stages=1, num_warps=4),
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 2, 'PRE_LOAD_V': True}, num_stages=1, num_warps=4),
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'PRE_LOAD_V': True}, num_stages=1, num_warps=4),
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 4, 'PRE_LOAD_V': True}, num_stages=1, num_warps=4),
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 0, 'PRE_LOAD_V': False}, num_stages=1, num_warps=4),
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 1, 'PRE_LOAD_V': False}, num_stages=1, num_warps=4),
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 2, 'PRE_LOAD_V': False}, num_stages=1, num_warps=4),
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'PRE_LOAD_V': False}, num_stages=1, num_warps=4),
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 4, 'PRE_LOAD_V': False}, num_stages=1, num_warps=4),
-   ]
+def gen_config_fwd(BLOCK_M=128, BLOCK_N=64, num_stages=1, num_warps=4):
+    for waves_per_eu, PRE_LOAD_V in itertools.product(range(4), [True, False]):
+        yield triton.Config({'BLOCK_M': BLOCK_M, 'BLOCK_N': BLOCK_N, 'waves_per_eu': waves_per_eu, 'PRE_LOAD_V': PRE_LOAD_V}, num_stages=num_stages, num_warps=num_warps)
 
-TRITON_CONFIG_LIST_FWD_PIPELINING = [
-       triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 0, 'PRE_LOAD_V': True}, num_stages=1, num_warps=8),
-       triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 1, 'PRE_LOAD_V': True}, num_stages=1, num_warps=8),
-       triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 2, 'PRE_LOAD_V': True}, num_stages=1, num_warps=8),
-       triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 3, 'PRE_LOAD_V': True}, num_stages=1, num_warps=8),
-       triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 4, 'PRE_LOAD_V': True}, num_stages=1, num_warps=8),
-       triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 0, 'PRE_LOAD_V': False}, num_stages=1, num_warps=8),
-       triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 1, 'PRE_LOAD_V': False}, num_stages=1, num_warps=8),
-       triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 2, 'PRE_LOAD_V': False}, num_stages=1, num_warps=8),
-       triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 3, 'PRE_LOAD_V': False}, num_stages=1, num_warps=8),
-       triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 4, 'PRE_LOAD_V': False}, num_stages=1, num_warps=8),
-   ]
+TRITON_CONFIG_LIST_FWD = list(gen_config_fwd())
+TRITON_CONFIG_LIST_FWD_PIPELINING = list(gen_config_fwd(BLOCK_M=256, num_stages=4, num_warps=8))
 
 '''
 # For faster debugging of backward autotune
@@ -214,83 +196,6 @@ for BLOCK_M1 in [16, 32, 64]:
                         for num_warps in [1,2,4,8]:
                             cfg = triton.Config(dic, num_stages=num_stages, num_warps=num_warps)
                             TRITON_CONFIG_LIST_BWD_FUSED.append(cfg)
-
-@triton.autotune(
-   configs=TRITON_CONFIG_LIST_BWD_FUSED,
-   key=['max_seqlen_q', 'max_seqlen_k', 'head_dim'],
-)
-@triton.jit
-def tuned_attn_bwd(
-    Q, K, V, B, sm_scale, Out, DO,
-    DK, DV, DQ, DB,
-    L, D,
-    stride_qz, stride_qh, stride_qm, stride_qk,
-    stride_kz, stride_kh, stride_kn, stride_kk,
-    stride_vz, stride_vh, stride_vk, stride_vn,
-    stride_bz, stride_bh, stride_bm, stride_bn,
-    stride_oz, stride_oh, stride_om, stride_ok,
-    stride_dkz, stride_dkh, stride_dkn, stride_dkk,
-    stride_dvz, stride_dvh, stride_dvk, stride_dvn,
-    stride_dqz, stride_dqh, stride_dqm, stride_dqk,
-    stride_dbz, stride_dbh, stride_dbm, stride_dbn,
-    num_head_q,
-    num_head_k,
-    cu_seqlens_q,
-    cu_seqlens_k,
-    num_seqlens,
-    max_seqlen_q, # and use max_seqlen_q/k for all seqlen_q/k
-    max_seqlen_k,
-    head_dim,
-    dropout_p,
-    philox_seed_ptr,
-    philox_offset1,
-    philox_offset2,
-    BLOCK_DMODEL: tl.constexpr,
-    CAUSAL: tl.constexpr,
-    ENABLE_DROPOUT: tl.constexpr,
-    PADDED_HEAD: tl.constexpr,
-    BIAS_TYPE: tl.constexpr,
-    BLOCK_M1: tl.constexpr,
-    BLOCK_N1: tl.constexpr,
-    BLOCK_M2: tl.constexpr,
-    BLOCK_N2: tl.constexpr,
-    BLK_SLICE_FACTOR: tl.constexpr,
-):
-    bare_attn_bwd(
-            Q, K, V, B, sm_scale, Out, DO,
-            DK, DV, DQ, DB,
-            L, D,
-            stride_qz, stride_qh, stride_qm, stride_qk,
-            stride_kz, stride_kh, stride_kn, stride_kk,
-            stride_vz, stride_vh, stride_vk, stride_vn,
-            stride_bz, stride_bh, stride_bm, stride_bn,
-            stride_oz, stride_oh, stride_om, stride_ok,
-            stride_dkz, stride_dkh, stride_dkn, stride_dkk,
-            stride_dvz, stride_dvh, stride_dvk, stride_dvn,
-            stride_dqz, stride_dqh, stride_dqm, stride_dqk,
-            stride_dbz, stride_dbh, stride_dbm, stride_dbn,
-            num_head_q,
-            num_head_k,
-            cu_seqlens_q,
-            cu_seqlens_k,
-            num_seqlens,
-            max_seqlen_q, # and use max_seqlen_q/k for all seqlen_q/k
-            max_seqlen_k,
-            head_dim,
-            dropout_p,
-            philox_seed_ptr,
-            philox_offset_base,
-            BLOCK_DMODEL,
-            CAUSAL,
-            ENABLE_DROPOUT,
-            PADDED_HEAD,
-            BIAS_TYPE,
-            BLOCK_M1,
-            BLOCK_N1,
-            BLOCK_M2,
-            BLOCK_N2,
-            BLK_SLICE_FACTOR,
-            )
 
 class _attention(torch.autograd.Function):
 
@@ -415,7 +320,6 @@ class _attention(torch.autograd.Function):
         NUM_STAGES = 1
 
         if autotune:
-            # assert False, 'Autotune is broken, set USE_AUTOTUNE=0 and AOTRITON_USE_PRINT_AUTOTUNING to re-use tuning results from AITER/main_perf'
             tuned_attn_fwd[grid](
                 # Basic SDPA
                 q, k, v, b, alibi_slopes, sm_scale, M, o,
@@ -680,10 +584,12 @@ class _attention(torch.autograd.Function):
         grid_prep = (triton.cdiv(do.shape[2], BLOCK), do.shape[1], do.shape[0])
         bare_bwd_preprocess[grid_prep](
             o, do, delta,
-            o.stride(0), o.stride(1), o.stride(2), o.stride(3),
-            do.stride(0), do.stride(1), do.stride(2), do.stride(3),
-            max_seqlen_q,
-            Lk,
+            *o.stride(),
+            *do.stride(),
+            cu_seqlens_q=null_tensor,
+            num_seqlens=0,
+            max_seqlen_q=max_seqlen_q,
+            hdim_vo=Lv,
             BLOCK_M=BLOCK, D_HEAD=head_dim_rounded,
             PADDED_HEAD=padded_head, # FIXME: irregular head dimension
         )
@@ -730,21 +636,20 @@ class _attention(torch.autograd.Function):
             stride_dbz, stride_dbh, stride_dbm, stride_dbn = 0,0,0,0
         else:
             db.fill_(float('nan'))
-        print(f'backward {ctx.bias_type=} {ctx.autotune=} {BLOCK_M=} {BLOCK_N=} {stride_dbz=} {stride_dbh=} {stride_dbm=} {stride_dbn=}')
+        # print(f'backward {ctx.bias_type=} {ctx.autotune=} {BLOCK_M=} {BLOCK_N=} {stride_dbz=} {stride_dbh=} {stride_dbm=} {stride_dbn=}')
         if k.requires_grad and v.requires_grad:
             if ctx.autotune:
                 tuned_bwd_kernel_dk_dv[grid_dk_dv](
-                    q, k, v, b, ctx.sm_scale,
-                    o, do,
+                    q, k, v, b, ctx.sm_scale, do,
                     dk, dv,
                     L, delta,
-                    q.stride(0), q.stride(1), q.stride(2), q.stride(3),
-                    k.stride(0), k.stride(1), k.stride(2), k.stride(3),
-                    v.stride(0), v.stride(1), v.stride(2), v.stride(3),
-                    b.stride(0), b.stride(1), b.stride(2), b.stride(3),
-                    do.stride(0), do.stride(1), do.stride(2), do.stride(3),
-                    dk.stride(0), dk.stride(1), dk.stride(2), dk.stride(3),
-                    dv.stride(0), dv.stride(1), dv.stride(2), dv.stride(3),
+                    *q.stride(),
+                    *k.stride(),
+                    *v.stride(),
+                    *b.stride(),
+                    *do.stride(),
+                    *dk.stride(),
+                    *dv.stride(),
                     num_head_q=num_head_q,
                     num_head_k=num_head_k,
                     cu_seqlens_q=null_tensor,
@@ -752,11 +657,17 @@ class _attention(torch.autograd.Function):
                     num_seqlens=0,
                     max_seqlen_q=max_seqlen_q,
                     max_seqlen_k=max_seqlen_k,
-                    head_dim=Lk,
+                    seq_strides_q=null_tensor,
+                    seq_strides_k=null_tensor,
+                    hdim_qk=Lk,
+                    hdim_vo=Lv,
                     dropout_p=ctx.dropout_p,
                     philox_seed_ptr=philox_seed,
                     philox_offset1=philox_offset,
                     philox_offset2=0,
+                    Window_left=window_left,
+                    Window_right=window_right,
+                    # debug_mask=debug_mask,
                     BLOCK_DMODEL=head_dim_rounded,
                     CAUSAL_TYPE=causal_type,
                     ENABLE_DROPOUT=ctx.dropout_p > 0.0,
@@ -805,13 +716,13 @@ class _attention(torch.autograd.Function):
                     q, k, v, b, ctx.sm_scale, do,
                     dk, dv,
                     L, delta,
-                    q.stride(0), q.stride(1), q.stride(2), q.stride(3),
-                    k.stride(0), k.stride(1), k.stride(2), k.stride(3),
-                    v.stride(0), v.stride(1), v.stride(2), v.stride(3),
-                    b.stride(0), b.stride(1), b.stride(2), b.stride(3),
-                    do.stride(0), do.stride(1), do.stride(2), do.stride(3),
-                    dk.stride(0), dk.stride(1), dk.stride(2), dk.stride(3),
-                    dv.stride(0), dv.stride(1), dv.stride(2), dv.stride(3),
+                    *q.stride(),
+                    *k.stride(),
+                    *v.stride(),
+                    *b.stride(),
+                    *do.stride(),
+                    *dk.stride(),
+                    *dv.stride(),
                     num_head_q=num_head_q,
                     num_head_k=num_head_k,
                     cu_seqlens_q=null_tensor,
@@ -819,7 +730,10 @@ class _attention(torch.autograd.Function):
                     num_seqlens=0,
                     max_seqlen_q=max_seqlen_q,
                     max_seqlen_k=max_seqlen_k,
-                    head_dim=Lk,
+                    seq_strides_q=null_tensor,
+                    seq_strides_k=null_tensor,
+                    hdim_qk=Lk,
+                    hdim_vo=Lv,
                     dropout_p=ctx.dropout_p,
                     philox_seed_ptr=philox_seed,
                     philox_offset1=philox_offset,
@@ -866,16 +780,15 @@ class _attention(torch.autograd.Function):
         if q.requires_grad:
             if ctx.autotune:
                 tuned_bwd_kernel_dq[grid_dq](
-                    q, k, v, b, ctx.sm_scale,
-                    o, do,
+                    q, k, v, b, ctx.sm_scale, do,
                     dq, db,
                     L, delta,
-                    q.stride(0), q.stride(1), q.stride(2), q.stride(3),
-                    k.stride(0), k.stride(1), k.stride(2), k.stride(3),
-                    v.stride(0), v.stride(1), v.stride(2), v.stride(3),
-                    b.stride(0), b.stride(1), b.stride(2), b.stride(3),
-                    do.stride(0), do.stride(1), do.stride(2), do.stride(3),
-                    dq.stride(0), dq.stride(1), dq.stride(2), dq.stride(3),
+                    *q.stride(),
+                    *k.stride(),
+                    *v.stride(),
+                    *b.stride(),
+                    *do.stride(),
+                    *dq.stride(),
                     stride_dbz, stride_dbh, stride_dbm, stride_dbn,
                     num_head_q=num_head_q,
                     num_head_k=num_head_k,
@@ -884,11 +797,16 @@ class _attention(torch.autograd.Function):
                     num_seqlens=0,
                     max_seqlen_q=max_seqlen_q,
                     max_seqlen_k=max_seqlen_k,
-                    head_dim=Lk,
+                    seq_strides_q=null_tensor,
+                    seq_strides_k=null_tensor,
+                    hdim_qk=Lk,
+                    hdim_vo=Lv,
                     dropout_p=ctx.dropout_p,
                     philox_seed_ptr=philox_seed,
                     philox_offset1=philox_offset,
                     philox_offset2=0,
+                    Window_left=window_left,
+                    Window_right=window_right,
                     BLOCK_DMODEL=head_dim_rounded,
                     CAUSAL_TYPE=causal_type,
                     ENABLE_DROPOUT=ctx.dropout_p > 0.0,
@@ -978,7 +896,7 @@ class _attention(torch.autograd.Function):
         q, k, v, b, o, L = ctx.saved_tensors
         # if q.shape[-1] <= 32:
         Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
-        assert Lq == Lk and Lk == Lv and Lk == ctx.head_dim
+        assert Lq == Lk
         head_dim_factors = factor_head_dim(ctx.head_dim)
         head_dim_rounded = sum(head_dim_factors)
         padded_head = head_dim_rounded != ctx.head_dim
