@@ -22,6 +22,10 @@ get_llvm_hash() {
     echo ""
   fi
 }
+add_torch_ldconfig() {
+  local torch_lib=$(python -c "import torch; from pathlib import Path; print((Path(torch.__file__).parent/'lib').as_posix())")
+  export LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:${torch_lib}
+}
 
 llvm_hash_sha1=$(get_llvm_hash)
 if [ -z "${llvm_hash_sha1}" ]; then

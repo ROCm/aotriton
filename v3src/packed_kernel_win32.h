@@ -8,6 +8,7 @@
 #include <iostream>
 #include <string>
 #include <windows.h>
+#include "utf8_to_wide.hh"
 
 #if !defined(ssize_t)
     #include <BaseTsd.h> // For SSIZE_T
@@ -16,27 +17,6 @@
 
 // Invalid handle value that can be returned as int
 constexpr int INVALID_FD = -1;
-
-// Helper function to convert UTF-8 string to wide string
-static std::wstring utf8_to_wide(const std::string& utf8_str) {
-    if (utf8_str.empty()) {
-        return std::wstring();
-    }
-    
-    // Calculate required buffer size
-    int wpath_len = MultiByteToWideChar(CP_UTF8, 0, utf8_str.c_str(), -1, nullptr, 0);
-    if (wpath_len == 0) {
-        return std::wstring();
-    }
-    
-    // Allocate and convert
-    std::wstring wide_str(wpath_len - 1, L'\0'); // -1 because MultiByteToWideChar includes null terminator
-    if (MultiByteToWideChar(CP_UTF8, 0, utf8_str.c_str(), -1, &wide_str[0], wpath_len) == 0) {
-        return std::wstring();
-    }
-    
-    return wide_str;
-}
 
 // Helper function to add long path prefix for Windows
 static std::wstring add_long_path_prefix(const std::wstring& path) {

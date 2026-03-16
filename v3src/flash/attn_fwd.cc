@@ -138,9 +138,23 @@ attn_fwd(const attn_fwd_params& in,
   };
   OpAttnFwdContext context;
   context.params = &params;
-  err = context.lookup_optimal(gpu);
-  if (err != hipSuccess) {
-    return err;
+  context.call_options = options;
+#ifndef NDEBUG
+  std::cerr << "v3::flash::attn_fwd options = " << options << std::endl;
+  if (options) {
+    std::cerr << "v3::flash::attn_fwd options->force_backend_index = "
+              << options->force_backend_index
+              << std::endl;
+  }
+#endif
+  if (options && options->force_backend_index >= 0) {
+    context.backend_index = static_cast<OpAttnFwdContext::BackendEnum>(options->force_backend_index);
+    context.disable_fallback = true;
+  } else {
+    err = context.lookup_optimal(gpu);
+    if (err != hipSuccess) {
+      return err;
+    }
   }
   return context.launch(gpu, stream);
 }

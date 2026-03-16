@@ -16,6 +16,7 @@ from ..op import (
     ConditionalKernel,
 )
 from ..kernel import KernelDescription
+from ..affine import SlimAffineKernelDescription
 from .template import get_template
 from ..utils import (
     LazyFile,
@@ -103,7 +104,7 @@ class OperatorGenerator(InterfaceGenerator):
         return ALIGN.join(stmt)
 
     def codegen_single_launcher(self, backend : Interface, nalign):
-        if isinstance(backend, KernelDescription):
+        if isinstance(backend, KernelDescription) or isinstance(backend, SlimAffineKernelDescription):
             return self.codegen_kshim_launcher(backend, nalign)
         if isinstance(backend, MetroKernel):
             return self.codegen_metro_launcher(backend, nalign)

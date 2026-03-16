@@ -19,14 +19,14 @@ from v3python.autotune import (
     BinningExact,
 )
 from v3python.utils import log
-from v3python.affine import AffineKernelDescription
+from v3python.affine import SlimAffineKernelDescription
 
 class OpAttn(Operator):
     FAMILY = 'flash'
     MAIN_DATATYPES = ['*fp16:16', '*bf16:16', '*fp32:16'] if AOTRITON_ENABLE_FP32 else ['*fp16:16', '*bf16:16']
     CALL_OPTIONS_NAME = 'attn_options'
 
-class FlashAffine(AffineKernelDescription):
+class FlashAffine(SlimAffineKernelDescription):
     FAMILY = 'flash'
     MODULE_FILE = __file__
     AFFINE_KERNEL_ROOT = Path('aiter/hsa')

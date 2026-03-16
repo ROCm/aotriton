@@ -21,26 +21,19 @@ from ..base import (
 )
 from ..gpu_targets import AOTRITON_SUPPORTED_GPUS, cluster_gpus
 from ..utils import log
+from .slim_akdesc import SlimAffineKernelDescription
 import pandas as pd
 
 # TODO: Support Affine kernels that do not use direct arguments
-class AffineKernelDescription(Interface):
-    TUNE_NAME = None
-    FILE_PFX = 'affine'
-    NAME = None
+class AffineKernelDescription(SlimAffineKernelDescription):
     CO_CSV = None
-    SUPPORTED_ARCH = None
     RESIDUAL_CHOICES = None     # Affine kernel may have finer requirements
     DIRECT_KERNEL_ARGS = None
     CSV_PROPERTIES = None
 
     @property
     def enum_name(self):
-        return f'kAffine_{self.class_name_base}'
-
-    @abstractmethod
-    def co_dir(self, build_dir: Path, functional):
-        pass
+        return f'kSlimAffine_{self.class_name_base}'
 
     def __init__(self):
         super().__init__()
@@ -95,10 +88,6 @@ class AffineKernelDescription(Interface):
 
     # Very kernel specific logic, leave for concrete class
     # def translate_empty_dataframe(self, f : Functional):
-
-    @property
-    def is_tunable(self):
-        return False
 
     @property
     def residual_func_cfields(self):

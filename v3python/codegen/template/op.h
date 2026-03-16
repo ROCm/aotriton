@@ -45,6 +45,10 @@ struct [[context_class_name]] {
     // 3. Even metro kernel only has one kernel, another set LUT is need to
     //    determine which metro kernel (or backend) need to be used
     int64_t godel_number() const;
+    // get_archmod_number must be implemented in per-kernel/op basis
+    // because different kernel/op may have different sets of GPU supported,
+    // e.g., vector_add can be supported by all GPUs but SDPA can only be
+    // supported on GPUs with WGMMA/MFMA/WMMA
     static std::tuple<int, int> get_archmod_number(Gpu gpu);
     static constexpr int kMaxGodelNumber = [[number_of_functionals]];
 

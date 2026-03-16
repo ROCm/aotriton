@@ -8,7 +8,12 @@ import numpy as np
 import math
 import os
 
-from varlen_attn_torch_function import varlen_attention, AttentionExtraArgs
+from varlen_attn_torch_function import (
+    varlen_attention,
+    AttentionExtraArgs,
+    PROBE_UNSUPPORTED,
+    BWD_IMPL,
+)
 from _common_test import (
     VarlenSdpaContext,
     PaddedVarlenSdpaContext,
@@ -80,7 +85,13 @@ def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dro
 
     # # Backward
     dout = torch.rand_like(tri_out)
-    ctx.compute_backward(tri_out, dout)
+    if PROBE_UNSUPPORTED:
+        try:
+            ctx.compute_backward(tri_out, dout)
+        except NotImplementedError as e:
+            pytest.xfail("Unsupported Config in AITER")
+    else:
+        ctx.compute_backward(tri_out, dout)
     is_allclose, adiff, grads_allclose, grads_adiff, tfts = ctx.validate_with_reference(tri_out, ctx.dout_tensors, return_target_fudge_factors=True)
     torch.set_printoptions(threshold=114514, linewidth=200)
 
@@ -137,11 +148,11 @@ def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dro
     print(f'{adiff=} {grads_adiff=}')
 
 @pytest.mark.parametrize('N_HEADS', [3])
-@pytest.mark.parametrize('D_HEAD', [8, 64, 184, (24, 152), (120, 8)], ids=fmt_hdim)
+@pytest.mark.parametrize('D_HEAD', [64, 128, 192] if BWD_IMPL == 2 else [8, 64, 184, (24, 152), (120, 8)], ids=fmt_hdim)
 @pytest.mark.parametrize('n_seqlen', range(2, 24, 5))
 @pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
-@pytest.mark.parametrize('dropout_p', [0.0, 0.5])
-@pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16, torch.float32])
+@pytest.mark.parametrize('dropout_p', [0.0] if BWD_IMPL == 2 else [0.0, 0.5])
+@pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16] if BWD_IMPL == 2 else [torch.float16, torch.bfloat16, torch.float32])
 @pytest.mark.parametrize('sm_scale', ['l1'] if not FOR_RELEASE else ['l1', 'l2'])
 @pytest.mark.parametrize('varlen_type', ['compact', 'padded', 'strided'])
 def test_op_bwd(N_HEADS, D_HEAD, n_seqlen, causal, sm_scale, dropout_p, dtype, varlen_type):

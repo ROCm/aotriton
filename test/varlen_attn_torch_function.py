@@ -7,8 +7,18 @@ import numpy as np
 from aotriton_flash import (
     attn_fwd_varlen,
     attn_bwd_varlen,
+    attn_options,
+    hipError_t,
 )
-from attn_torch_function import AttentionExtraArgs, BWD_IMPL, V3_API
+from attn_torch_function import (
+    AttentionExtraArgs,
+    FWD_IMPL,
+    BWD_IMPL,
+    V3_API,
+    PROBE_UNSUPPORTED,
+    FORCE_FWD_BACKEND,
+    FORCE_BWD_BACKEND,
+)
 
 VERBOSE=False
 DEFAULT_PHILOX_SEED = 0x1BF52
@@ -114,13 +124,19 @@ class _attention_varlen(torch.autograd.Function):
         else:
             atomic = torch.empty([0], device=q.device, dtype=torch.int32)
 
+        if FORCE_FWD_BACKEND:
+            extargs = attn_options()
+            extargs.force_backend_index = FWD_IMPL
+        else:
+            extargs = None
+
         attn_fwd_varlen(q, k, v,
                         cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
                         seq_strides_q, seq_strides_k,
                         b, sm_scale, M, o,
                         dropout_p, philox_seed, philox_offset1, philox_offset2,
                         philox_seed_output, philox_offset_output,
-                        encoded_softmax, causal, atomic, varlen_type)
+                        encoded_softmax, causal, atomic, varlen_type, extargs)
 
         ctx.save_for_backward(q, k, v, b, o, M)
         ctx.seqlens_q = seqlens_q
@@ -163,6 +179,7 @@ class _attention_varlen(torch.autograd.Function):
         # if q.shape[-1] <= 32:
         # do = do.contiguous()
         dq = torch.empty_like(q)
+        dq_acc = lazy_dq_acc(q)
         dk = torch.empty_like(k)
         dv = torch.empty_like(v)
         db = torch.empty_like(b) if b is not None else None
@@ -171,11 +188,19 @@ class _attention_varlen(torch.autograd.Function):
                 if t is not None:
                     t.fill_(float('nan'))
         delta = lazy_delta(L)
-        attn_bwd_varlen(q, k, v,
-                        cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
-                        ctx.seq_strides_q, ctx.seq_strides_k,
-                        b, sm_scale, o, do, dq, dk, dv, db, L, delta,
-                        dropout_p, philox_seed, philox_offset, 0, causal, ctx.varlen_type);
+        if FORCE_BWD_BACKEND:
+            extargs = attn_options()
+            extargs.force_backend_index = BWD_IMPL
+        else:
+            extargs = None
+        ret = attn_bwd_varlen(q, k, v,
+                              cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
+                              ctx.seq_strides_q, ctx.seq_strides_k,
+                              b, sm_scale, o, do, dq, dk, dv, db, dq_acc, L, delta,
+                              dropout_p, philox_seed, philox_offset, 0, causal, ctx.varlen_type, extargs);
+        if PROBE_UNSUPPORTED and ret == hipError_t.hipErrorPeerAccessUnsupported:
+            raise NotImplementedError()
+        assert ret == hipError_t.hipSuccess, ret
         return dq, dk, dv, None, None, None, None, None, None, None, None
 
 varlen_attention = _attention_varlen.apply

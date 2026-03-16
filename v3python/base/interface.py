@@ -33,6 +33,8 @@ class Interface(ABC):
     TENSOR_RANKS = None         # Operator, Required if Interface has Tensor Inputs
     TENSOR_STRIDE_INPUTS = None # Operator, Required if Interface has Tensor Inputs
     PARTIALLY_TUNED_FUNCTIONALS = {}    # Optional but usually needed
+    HEADER_EXTRA_INCLUDES = []
+    SOURCE_EXTRA_INCLUDES = []
 
     @property
     def UNTYPED_FULL_NAME(self):
