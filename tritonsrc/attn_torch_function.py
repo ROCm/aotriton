@@ -156,16 +156,29 @@ def is_supported_by_tl_dot(n: int) -> bool:
     return is_power_of_two(n) and n >= 16
 
 TRITON_CONFIG_LIST_FWD = [
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 0, 'pre_load_v': True}, num_stages=1, num_warps=4),
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 1, 'pre_load_v': True}, num_stages=1, num_warps=4),
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 2, 'pre_load_v': True}, num_stages=1, num_warps=4),
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'pre_load_v': True}, num_stages=1, num_warps=4),
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 4, 'pre_load_v': True}, num_stages=1, num_warps=4),
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 0, 'pre_load_v': False}, num_stages=1, num_warps=4),
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 1, 'pre_load_v': False}, num_stages=1, num_warps=4),
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 2, 'pre_load_v': False}, num_stages=1, num_warps=4),
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'pre_load_v': False}, num_stages=1, num_warps=4),
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 4, 'pre_load_v': False}, num_stages=1, num_warps=4),
+       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 0, 'PRE_LOAD_V': True}, num_stages=1, num_warps=4),
+       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 1, 'PRE_LOAD_V': True}, num_stages=1, num_warps=4),
+       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 2, 'PRE_LOAD_V': True}, num_stages=1, num_warps=4),
+       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'PRE_LOAD_V': True}, num_stages=1, num_warps=4),
+       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 4, 'PRE_LOAD_V': True}, num_stages=1, num_warps=4),
+       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 0, 'PRE_LOAD_V': False}, num_stages=1, num_warps=4),
+       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 1, 'PRE_LOAD_V': False}, num_stages=1, num_warps=4),
+       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 2, 'PRE_LOAD_V': False}, num_stages=1, num_warps=4),
+       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 3, 'PRE_LOAD_V': False}, num_stages=1, num_warps=4),
+       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 4, 'PRE_LOAD_V': False}, num_stages=1, num_warps=4),
+   ]
+
+TRITON_CONFIG_LIST_FWD_PIPELINING = [
+       triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 0, 'PRE_LOAD_V': True}, num_stages=1, num_warps=8),
+       triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 1, 'PRE_LOAD_V': True}, num_stages=1, num_warps=8),
+       triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 2, 'PRE_LOAD_V': True}, num_stages=1, num_warps=8),
+       triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 3, 'PRE_LOAD_V': True}, num_stages=1, num_warps=8),
+       triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 4, 'PRE_LOAD_V': True}, num_stages=1, num_warps=8),
+       triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 0, 'PRE_LOAD_V': False}, num_stages=1, num_warps=8),
+       triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 1, 'PRE_LOAD_V': False}, num_stages=1, num_warps=8),
+       triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 2, 'PRE_LOAD_V': False}, num_stages=1, num_warps=8),
+       triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 3, 'PRE_LOAD_V': False}, num_stages=1, num_warps=8),
+       triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 4, 'PRE_LOAD_V': False}, num_stages=1, num_warps=8),
    ]
 
 '''
@@ -175,80 +188,12 @@ TRITON_CONFIG_LIST_FWD = [
    ]
 '''
 
-@triton.autotune(
+fwd_tuner = triton.autotune(
    configs=TRITON_CONFIG_LIST_FWD,
-   key=['max_seqlen_q', 'max_seqlen_k', 'CAUSAL'],
+   key=['Max_seqlen_q', 'Max_seqlen_k', 'CAUSAL'],
 )
-@triton.jit
-def tuned_attn_fwd(
-    Q, K, V, B, sm_scale, M, Out,
-    stride_qz, stride_qh, stride_qm, stride_qk,
-    stride_kz, stride_kh, stride_kn, stride_kk,
-    stride_vz, stride_vh, stride_vk, stride_vn,
-    stride_bz, stride_bh, stride_bm, stride_bn,
-    stride_oz, stride_oh, stride_om, stride_on,
-    num_head_q,
-    num_head_k,
-    cu_seqlens_q,
-    cu_seqlens_k,
-    num_seqlens,
-    max_seqlen_q,
-    max_seqlen_k,
-    head_dim,
-    dropout_p,
-    philox_seed_ptr,
-    philox_offset1,
-    philox_offset2,
-    philox_seed_output,
-    philox_offset_output,
-    encoded_softmax,
-    CAUSAL_TYPE: tl.constexpr,
-    Window_left,
-    Window_right,
-    BLOCK_M: tl.constexpr,
-    BLOCK_DMODEL: tl.constexpr,
-    BLOCK_N: tl.constexpr,
-    pre_load_v: tl.constexpr,
-    ENABLE_DROPOUT: tl.constexpr,
-    RETURN_ENCODED_SOFTMAX: tl.constexpr,
-    PADDED_HEAD: tl.constexpr,
-    BIAS_TYPE: tl.constexpr,
-):
-    bare_attn_fwd(
-            Q, K, V, B, sm_scale, M, Out,
-            stride_qz, stride_qh, stride_qm, stride_qk,
-            stride_kz, stride_kh, stride_kn, stride_kk,
-            stride_vz, stride_vh, stride_vk, stride_vn,
-            stride_bz, stride_bh, stride_bm, stride_bn,
-            stride_oz, stride_oh, stride_om, stride_on,
-            num_head_q,
-            num_head_k,
-            cu_seqlens_q,
-            cu_seqlens_k,
-            num_seqlens,
-            max_seqlen_q,
-            max_seqlen_k,
-            head_dim,
-            dropout_p,
-            philox_seed_ptr,
-            philox_offset1,
-            philox_offset2,
-            philox_seed_output,
-            philox_offset_output,
-            encoded_softmax,
-            CAUSAL_TYPE,
-            Window_left,
-            Window_right,
-            BLOCK_M,
-            BLOCK_DMODEL,
-            BLOCK_N,
-            pre_load_v,
-            ENABLE_DROPOUT,
-            RETURN_ENCODED_SOFTMAX,
-            PADDED_HEAD,
-            BIAS_TYPE=BIAS_TYPE,
-            )
 
+tuned_attn_fwd = fwd_tuner(bare_attn_fwd)
 
 TRITON_CONFIG_LIST_BWD_FUSED = []
 for BLOCK_M1 in [16, 32, 64]:
@@ -361,7 +306,7 @@ class _attention(torch.autograd.Function):
         dtype = q.dtype
         # shape constraints
         Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
-        assert Lq == Lk and Lk == Lv
+        assert Lq == Lk
         head_dim_factors = factor_head_dim(Lk)
         head_dim_rounded = sum(head_dim_factors)
         padded_head = head_dim_rounded != Lk
@@ -470,35 +415,61 @@ class _attention(torch.autograd.Function):
         NUM_STAGES = 1
 
         if autotune:
-            assert False, 'Autotune is broken, set USE_AUTOTUNE=0 and AOTRITON_USE_PRINT_AUTOTUNING to re-use tuning results from AITER/main_perf'
+            # assert False, 'Autotune is broken, set USE_AUTOTUNE=0 and AOTRITON_USE_PRINT_AUTOTUNING to re-use tuning results from AITER/main_perf'
             tuned_attn_fwd[grid](
+                # Basic SDPA
                 q, k, v, b, alibi_slopes, sm_scale, M, o,
-                q.stride(0), q.stride(1), q.stride(2), q.stride(3),
-                k.stride(0), k.stride(1), k.stride(2), k.stride(3),
-                v.stride(0), v.stride(1), v.stride(2), v.stride(3),
-                b.stride(0), b.stride(1), b.stride(2), b.stride(3),
-                o.stride(0), o.stride(1), o.stride(2), o.stride(3),
-                num_head_q=num_head_q,
-                num_head_k=num_head_k,
+                q_descale, k_descale, p_scale, p_descale, v_descale,
+                *q.stride(),
+                *k.stride(),
+                *v.stride(),
+                *o.stride(),
+                *b.stride(),
+                *alibi_slopes.stride(),
+                # MQA/GQA
+                Num_head_q=num_head_q,
+                Num_head_k=num_head_k,
+                # Varlen
+                Num_seqlens=0,
                 cu_seqlens_q=null_tensor,
                 cu_seqlens_k=null_tensor,
-                num_seqlens=0,
-                max_seqlen_q=q.shape[2],
-                max_seqlen_k=k.shape[2],
-                head_dim=Lk,
+                Max_seqlen_q=q.shape[2],
+                Max_seqlen_k=k.shape[2],
+                seq_strides_q=null_tensor,
+                seq_strides_k=null_tensor,
+                # Head Dimensions
+                BLOCK_DMODEL=head_dim_rounded,
+                Hdim_qk=Lk,
+                Hdim_vo=Lv,
+                PADDED_HEAD=padded_head,
+                # droput and PRNG
+                ENABLE_DROPOUT=dropout_p > 0.0,
                 dropout_p=dropout_p,
                 philox_seed_ptr=philox_seed,
                 philox_offset1=philox_offset1,
                 philox_offset2=philox_offset2,
                 philox_seed_output=philox_seed_output,
                 philox_offset_output=philox_offset_output,
-                encoded_softmax=None,
-                CAUSAL_TYPE=causal_type,
-                BLOCK_DMODEL=head_dim_rounded,
-                ENABLE_DROPOUT=dropout_p > 0.0,
                 RETURN_ENCODED_SOFTMAX=False,
-                PADDED_HEAD=padded_head,
+                encoded_softmax=None,
+                # Causal
+                CAUSAL_TYPE=causal_type,
+                Window_left=window_left,
+                Window_right=window_right,
+                # bias
                 BIAS_TYPE=BIAS_TYPE,
+                # INT8
+                INT8=False,
+                INT8_KV=False,
+                USE_P_SCALE=False,
+                # Alibi
+                USE_ALIBI=False,
+                # Persistent related arguments
+                PERSISTENT_TYPE=persistent_type,
+                persistent_atomic_counter=persistent_atomic_counter,
+                Num_CU=Num_CU,
+                GRID_CU_MULTIP=2,
+                Batch=batch,
             )
         else:
             RETURN_ENCODED_SOFTMAX=encoded_softmax is not None
