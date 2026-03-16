@@ -272,4 +272,3 @@ add_subdirectory(v3src)
 if(NOT AOTRITON_NO_PYTHON)
   add_subdirectory(bindings) # FIXME: compile python binding
 endif()
-pick cb6a160 # aiter: change pin
