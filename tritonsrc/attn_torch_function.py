@@ -162,6 +162,7 @@ def gen_config_fwd(BLOCK_M=128, BLOCK_N=64, num_stages=1, num_warps=4):
 
 TRITON_CONFIG_LIST_FWD = list(gen_config_fwd())
 TRITON_CONFIG_LIST_FWD_PIPELINING = list(gen_config_fwd(BLOCK_M=256, num_stages=4, num_warps=8))
+TRITON_CONFIG_LIST_FWD_PLUS_PIPELINING = TRITON_CONFIG_LIST_FWD + TRITON_CONFIG_LIST_FWD_PIPELINING
 
 '''
 # For faster debugging of backward autotune
@@ -170,8 +171,12 @@ TRITON_CONFIG_LIST_FWD = [
    ]
 '''
 
+TRITON_CONFIG_LIST_FWD_PICKED_PIPELINING = [
+    triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 2, 'PRE_LOAD_V': False}, num_stages=4, num_warps=8),
+]
+
 fwd_tuner = triton.autotune(
-   configs=TRITON_CONFIG_LIST_FWD,
+   configs=TRITON_CONFIG_LIST_FWD_PICKED_PIPELINING,
    key=['Max_seqlen_q', 'Max_seqlen_k', 'CAUSAL'],
 )
 
@@ -237,8 +242,8 @@ class _attention(torch.autograd.Function):
 
         if persistent_type == PersistentType.NONE:
             grid = lambda META: (
-                triton.cdiv(max_seqlen_q, META['BLOCK_M']),
                 num_head_q,
+                triton.cdiv(max_seqlen_q, META['BLOCK_M']),
                 batch,
             )
             Num_CU = 0
