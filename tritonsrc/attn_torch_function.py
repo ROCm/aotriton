@@ -161,10 +161,6 @@ TRITON_CONFIG_LIST_FWD_FAST = [
        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 2, 'PRE_LOAD_V': True}, num_stages=1, num_warps=8 if IS_RDNA else 4),
 ]
 
-TRITON_CONFIG_LIST_FWD_FAST_PIPELINING = [
-    triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 2, 'PRE_LOAD_V': False}, num_stages=4, num_warps=8),
-]
-
 fwd_tuner = triton.autotune(
     # For faster debugging of backward autotune
     configs=TRITON_CONFIG_LIST_FWD_FAST,
@@ -415,9 +411,12 @@ class _attention(torch.autograd.Function):
                 cu_seqlens_k=null_tensor,
                 Max_seqlen_q=q.shape[2],
                 Max_seqlen_k=k.shape[2],
+                seq_strides_q=null_tensor,
+                seq_strides_k=null_tensor,
                 # Head Dimensions
                 BLOCK_DMODEL=head_dim_rounded,
-                Head_dim=Lk,
+                Hdim_qk=Lk,
+                Hdim_vo=Lv,
                 PADDED_HEAD=padded_head,
                 # droput and PRNG
                 ENABLE_DROPOUT=dropout_p > 0.0,
@@ -872,7 +871,10 @@ class _attention(torch.autograd.Function):
                     num_seqlens=0,
                     max_seqlen_q=max_seqlen_q,
                     max_seqlen_k=max_seqlen_k,
-                    head_dim=Lk,
+                    seq_strides_q=null_tensor,
+                    seq_strides_k=null_tensor,
+                    hdim_qk=Lk,
+                    hdim_vo=Lv,
                     dropout_p=ctx.dropout_p,
                     philox_seed_ptr=philox_seed,
                     philox_offset1=philox_offset,
