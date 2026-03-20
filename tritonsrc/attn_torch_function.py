@@ -626,8 +626,8 @@ class _attention(torch.autograd.Function):
         #     BLOCK_N = max(16, BLOCK_N // 2)
         # debug_mask = torch.zeros((q.shape[0], q.shape[1], max_seqlen_q, max_seqlen_k), device=q.device, dtype=ctx.encoded_softmax.dtype)
         grid_dk_dv = lambda META: (
-            num_head_k,
             triton.cdiv(max_seqlen_k, META['BLOCK_N']),
+            num_head_k,
             q.shape[0],
         )
         stride_dbz, stride_dbh, stride_dbm, stride_dbn = db.stride()
@@ -775,8 +775,8 @@ class _attention(torch.autograd.Function):
             # print(f'Full q: {q}', file=sys.stderr)
             # assert mask_allclose
         grid_dq = lambda META: (
-            num_head_q,
             triton.cdiv(max_seqlen_q, META['BLOCK_M']),
+            num_head_q,
             q.shape[0],
         )
         if q.requires_grad:

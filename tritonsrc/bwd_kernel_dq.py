@@ -101,9 +101,10 @@ def bwd_kernel_dq(
     if ENABLE_DROPOUT:
         philox_seed = tl.load(philox_seed_ptr)
         philox_offset_base += tl.load(philox_offset1)
-    off_h_q = tl.program_id(0) # head index
-    off_h_q = remap_xcd(off_h_q, num_head_q, NUM_XCDS=NUM_XCDS)
-    start_q = tl.program_id(1) * BLOCK_M
+    # off_h_q = remap_xcd(tl.program_id(0), num_head_q, NUM_XCDS=NUM_XCDS)
+    # start_q = tl.program_id(1) * BLOCK_M
+    start_q = tl.program_id(0) * BLOCK_M
+    off_h_q = tl.program_id(1)
     off_h_k = off_h_q if num_head_q == num_head_k else off_h_q // (num_head_q // num_head_k)
     off_z = tl.program_id(2) # batch index
     num_z = tl.num_programs(2)
