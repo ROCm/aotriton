@@ -14,7 +14,7 @@ from ._common import (
 )
 from .attn_fwd import attn_fwd
 from .op_attn_bwd import OpAttnBwd
-from v3python.gpu_targets import AOTRITON_ARCH_PRODUCTION_LINE
+from v3python.gpu_targets import AOTRITON_ARCH_WARPSIZE
 match_fwd = lambda aname : get_possible_choices(attn_fwd, aname)
 
 class bwd_kernel_fuse(FlashBwdKernel):
@@ -84,12 +84,12 @@ class bwd_kernel_fuse(FlashBwdKernel):
         dtype = check_value(f, ['Q'])
         HEAD_DIM = check_value(f, ['BLOCK_DMODEL'])
         ret = []
-        CDNA = AOTRITON_ARCH_PRODUCTION_LINE[arch] == 'CDNA'
-        RDNA = AOTRITON_ARCH_PRODUCTION_LINE[arch] == 'RDNA'
+        WAVE64 = AOTRITON_ARCH_WARPSIZE[arch] == 64
+        WAVE32 = AOTRITON_ARCH_WARPSIZE[arch] == 32
         # TODO: right sizes for fp32?
         BLOCK_SIZES = [16, 32, 64] if dtype != '*fp32:16' else [16, 32]
         WAVES_PER_EU = [1, 2, 3, 4]
-        NUM_WARPS = [2, 4]
+        NUM_WARPS = [4, 8] if WAVE32 else [2, 4]
         NUM_STAGES = [1]
         for M, N, waves, warps, stages in itertools.product(BLOCK_SIZES,
                                                             BLOCK_SIZES,
@@ -98,13 +98,9 @@ class bwd_kernel_fuse(FlashBwdKernel):
                                                             NUM_STAGES):
             if M < N:
                 continue  # deduplicate
-            if CDNA and M == 64 and N == 64 and warps == 4:
+            if WAVE64 and M == 64 and N == 64 and warps == 4:
                 continue  # No optimal kernel according to 0.8b tuning db
-            if RDNA and M > 32 and warps == 1:
-                continue  # No optimal kernel according to 0.8b tuning db
-            if RDNA and M == 32  and N == 32 and warps != 4:
-                continue  # Timeout
-            if HEAD_DIM > 256 and M == 64 and N == 64 and warps == 1:
+            if WAVE32 and M == 32  and N == 32 and warps != 4:
                 continue  # Timeout
             kw = {'BLOCK_M': M, 'BLOCK_N': N, 'waves_per_eu': waves}
             yield Config(kw, num_stages=stages, num_warps=warps)

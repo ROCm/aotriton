@@ -14,7 +14,7 @@ from ._common import (
 )
 from .bwd_kernel_dk_dv import bwd_kernel_dk_dv
 from .op_attn_bwd import OpAttnBwd
-from v3python.gpu_targets import AOTRITON_ARCH_PRODUCTION_LINE
+from v3python.gpu_targets import AOTRITON_ARCH_WARPSIZE
 match_op = lambda aname : get_possible_choices(OpAttnBwd, aname)
 match_kv = lambda aname : get_possible_choices(bwd_kernel_dk_dv, aname)
 
@@ -79,12 +79,12 @@ class bwd_kernel_dq(FlashBwdKernel):
         arch = f.arch
         dtype = check_value(f, ['Q'])
         ret = []
-        CDNA = AOTRITON_ARCH_PRODUCTION_LINE[arch] == 'CDNA'
-        RDNA = AOTRITON_ARCH_PRODUCTION_LINE[arch] == 'RDNA'
+        WAVE64 = AOTRITON_ARCH_WARPSIZE[arch] == 64
+        WAVE32 = AOTRITON_ARCH_WARPSIZE[arch] == 32
         # TODO: right sizes for fp32?
         BLOCK_SIZES = [16, 32, 64] if dtype != '*fp32:16' else [16, 32]
         WAVES_PER_EU = [1, 2, 3, 4]
-        NUM_WARPS = [2, 4]
+        NUM_WARPS = [4, 8] if WAVE32 else [2, 4]
         NUM_STAGES = [1]
         for M, N, waves, warps, stages in itertools.product(BLOCK_SIZES,
                                                             BLOCK_SIZES,
@@ -94,10 +94,4 @@ class bwd_kernel_dq(FlashBwdKernel):
             if M < N:
                 continue  # deduplicate
             kw = {'BLOCK_M': M, 'BLOCK_N': N, 'waves_per_eu': waves}
-            if RDNA and M == 64  and N == 64 and stages == 2:
-                continue  # No optimal kernel according to 0.8b tuning db
-            if RDNA and M * N >= 32 * 32 and warps < 4:
-                continue  # Timeout
-            if RDNA and M * N >= 32 * 16 and warps < 2:
-                continue  # Timeout
             yield Config(kw, num_stages=stages, num_warps=warps)

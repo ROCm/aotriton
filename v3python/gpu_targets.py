@@ -72,23 +72,7 @@ AOTRITON_ARCH_WARPSIZE = {
     'gfx1201'    : 32,
     'gfx1200'    : 32,
     'gfx1250'    : 32,
-}
-
-AOTRITON_ARCH_PRODUCTION_LINE = {
-    'gfx90a'     : 'CDNA',
-    'gfx942'     : 'CDNA',
-    'gfx950'     : 'CDNA',
-    'gfx1100'    : 'RDNA',
-    'gfx1101'    : 'RDNA',
-    'gfx1102'    : 'RDNA',
-    'gfx1103'    : 'RDNA',
-    'gfx1150'    : 'RDNA',
-    'gfx1151'    : 'RDNA',
-    'gfx1152'    : 'RDNA',
-    'gfx1153'    : 'RDNA',
-    'gfx1201'    : 'RDNA',
-    'gfx1200'    : 'RDNA',
-    'gfx1250'    : 'CDNA',
+    'gfx1251'    : 32,
 }
 
 def gpu2arch(gpu : str) -> str:
