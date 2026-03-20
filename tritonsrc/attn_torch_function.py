@@ -20,6 +20,8 @@ from flash import (
     bwd_kernel_fuse as bare_bwd_kernel_fuse,
 )
 from tuned_bwd import (
+    IS_RDNA,
+    NUM_XCDS,
     tuned_bwd_kernel_dk_dv,
     tuned_bwd_kernel_dq,
 )
@@ -27,17 +29,6 @@ from sized_tuned_bwd import (
     sized_tuned_bwd_kernel_dk_dv,
     sized_tuned_bwd_kernel_dq,
 )
-
-def evaluate_gfx_arch_within(arch_list):
-    if not torch.cuda.is_available():
-        return False
-    gcn_arch_name = torch.cuda.get_device_properties('cuda').gcnArchName
-    return any(arch in gcn_arch_name for arch in arch_list)
-
-def is_rdna():
-    return evaluate_gfx_arch_within(['gfx1100', 'gfx1101', 'gfx1102', 'gfx1103', 'gfx1150', 'gfx1151', 'gfx1152', 'gfx1153', 'gfx1200', 'gfx1201'])
-
-IS_RDNA = is_rdna()
 
 '''
 Parse TRITON_PRINT_AUTOTUNING=1 output
@@ -160,24 +151,25 @@ def gen_config_fwd(BLOCK_M=128, BLOCK_N=64, num_stages=1, num_warps=4):
     for waves_per_eu, PRE_LOAD_V in itertools.product(range(4), [True, False]):
         yield triton.Config({'BLOCK_M': BLOCK_M, 'BLOCK_N': BLOCK_N, 'waves_per_eu': waves_per_eu, 'PRE_LOAD_V': PRE_LOAD_V}, num_stages=num_stages, num_warps=num_warps)
 
-TRITON_CONFIG_LIST_FWD = list(gen_config_fwd())
+TRITON_CONFIG_LIST_FWD_WAVE64 = list(gen_config_fwd())
 TRITON_CONFIG_LIST_FWD_PIPELINING = list(gen_config_fwd(BLOCK_M=256, num_stages=4, num_warps=8))
-TRITON_CONFIG_LIST_FWD_PLUS_PIPELINING = TRITON_CONFIG_LIST_FWD + TRITON_CONFIG_LIST_FWD_PIPELINING
+TRITON_CONFIG_LIST_FWD_PLUS_PIPELINING = TRITON_CONFIG_LIST_FWD_WAVE64 + TRITON_CONFIG_LIST_FWD_PIPELINING
+TRITON_CONFIG_LIST_FWD_WAVE32 = TRITON_CONFIG_LIST_FWD_WAVE64 + list(gen_config_fwd(num_warps=8))
 
-'''
 # For faster debugging of backward autotune
-TRITON_CONFIG_LIST_FWD = [
-       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 2, 'pre_load_v': True}, num_stages=1, num_warps=4),
-   ]
-'''
+TRITON_CONFIG_LIST_FWD_FAST = [
+       triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 2, 'PRE_LOAD_V': True}, num_stages=1, num_warps=8 if IS_RDNA else 4),
+]
 
-TRITON_CONFIG_LIST_FWD_PICKED_PIPELINING = [
+TRITON_CONFIG_LIST_FWD_FAST_PIPELINING = [
     triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 2, 'PRE_LOAD_V': False}, num_stages=4, num_warps=8),
 ]
 
 fwd_tuner = triton.autotune(
-   configs=TRITON_CONFIG_LIST_FWD_PICKED_PIPELINING,
-   key=['Max_seqlen_q', 'Max_seqlen_k', 'CAUSAL'],
+    # For faster debugging of backward autotune
+    configs=TRITON_CONFIG_LIST_FWD_FAST,
+    # configs=TRITON_CONFIG_LIST_FWD_WAVE32 if IS_RDNA else TRITON_CONFIG_LIST_FWD_PLUS_PIPELINING,
+    key=['Max_seqlen_q', 'Max_seqlen_k', 'CAUSAL'],
 )
 
 tuned_attn_fwd = fwd_tuner(bare_attn_fwd)
@@ -379,6 +371,8 @@ class _attention(torch.autograd.Function):
                 Num_CU=Num_CU,
                 GRID_CU_MULTIP=2,
                 Batch=batch,
+                # Performance related, but fixed for arch
+                NUM_XCDS=NUM_XCDS,
             )
         else:
             RETURN_ENCODED_SOFTMAX=encoded_softmax is not None
@@ -457,6 +451,7 @@ class _attention(torch.autograd.Function):
                 BLOCK_M=BLOCK_M,
                 BLOCK_N=BLOCK_N,
                 PRE_LOAD_V=PRE_LOAD_V,
+                NUM_XCDS=NUM_XCDS,
                 num_stages=NUM_STAGES,
                 num_warps=NUM_WARPS,
                 waves_per_eu=WAVES_PER_EU,
@@ -631,8 +626,8 @@ class _attention(torch.autograd.Function):
         #     BLOCK_N = max(16, BLOCK_N // 2)
         # debug_mask = torch.zeros((q.shape[0], q.shape[1], max_seqlen_q, max_seqlen_k), device=q.device, dtype=ctx.encoded_softmax.dtype)
         grid_dk_dv = lambda META: (
-            triton.cdiv(max_seqlen_k, META['BLOCK_N']),
             num_head_k,
+            triton.cdiv(max_seqlen_k, META['BLOCK_N']),
             q.shape[0],
         )
         stride_dbz, stride_dbh, stride_dbm, stride_dbn = db.stride()
@@ -678,6 +673,7 @@ class _attention(torch.autograd.Function):
                     ENABLE_DROPOUT=ctx.dropout_p > 0.0,
                     PADDED_HEAD=padded_head,
                     BIAS_TYPE=ctx.bias_type,
+                    NUM_XCDS=NUM_XCDS,
                 )
                 report = attn_extra_args.report_best_config
                 if report:
@@ -754,6 +750,7 @@ class _attention(torch.autograd.Function):
                     ENABLE_DROPOUT=ctx.dropout_p > 0.0,
                     PADDED_HEAD=padded_head,
                     BIAS_TYPE=ctx.bias_type,
+                    NUM_XCDS=NUM_XCDS,
                 )
                 print('bare_bwd_kernel_dk_dv Done')
         # print(f"{dq.stride()=}", flush=True)
@@ -778,8 +775,8 @@ class _attention(torch.autograd.Function):
             # print(f'Full q: {q}', file=sys.stderr)
             # assert mask_allclose
         grid_dq = lambda META: (
-            triton.cdiv(max_seqlen_q, META['BLOCK_M']),
             num_head_q,
+            triton.cdiv(max_seqlen_q, META['BLOCK_M']),
             q.shape[0],
         )
         if q.requires_grad:
@@ -817,6 +814,7 @@ class _attention(torch.autograd.Function):
                     ENABLE_DROPOUT=ctx.dropout_p > 0.0,
                     PADDED_HEAD=padded_head,
                     BIAS_TYPE=ctx.bias_type,
+                    NUM_XCDS=NUM_XCDS,
                 )
                 report = attn_extra_args.report_best_config
                 if report:
@@ -889,6 +887,7 @@ class _attention(torch.autograd.Function):
                     ENABLE_DROPOUT=ctx.dropout_p > 0.0,
                     PADDED_HEAD=padded_head,
                     BIAS_TYPE=ctx.bias_type,
+                    NUM_XCDS=NUM_XCDS,
                 )
                 print('bare_bwd_kernel_dq Done')
         if attn_extra_args.is_testing:

@@ -20,6 +20,7 @@ import triton.language as tl
 from bwd_inner_dq import bwd_inner_dq
 from dropout import PHILOX_RN_PER_OFFSET
 from fwd_kernel_inner import _lse_offset
+from fwd_kernel import remap_xcd
 from masked_load_store import (
     load_fn,
     mstore2d,
@@ -78,6 +79,7 @@ def bwd_kernel_dq(
     ENABLE_DROPOUT: tl.constexpr,
     PADDED_HEAD: tl.constexpr,
     BIAS_TYPE: tl.constexpr,
+    NUM_XCDS: tl.constexpr,
 ):
     RCP_LN2: tl.constexpr = 1.4426950408889634
     tl.static_assert(BLOCK_DMODEL > 0, 'BLOCK_DMODEL must be greater than 0')
@@ -99,8 +101,9 @@ def bwd_kernel_dq(
     if ENABLE_DROPOUT:
         philox_seed = tl.load(philox_seed_ptr)
         philox_offset_base += tl.load(philox_offset1)
-    start_q = tl.program_id(0) * BLOCK_M
-    off_h_q = tl.program_id(1) # head index
+    off_h_q = tl.program_id(0) # head index
+    off_h_q = remap_xcd(off_h_q, num_head_q, NUM_XCDS=NUM_XCDS)
+    start_q = tl.program_id(1) * BLOCK_M
     off_h_k = off_h_q if num_head_q == num_head_k else off_h_q // (num_head_q // num_head_k)
     off_z = tl.program_id(2) # batch index
     num_z = tl.num_programs(2)

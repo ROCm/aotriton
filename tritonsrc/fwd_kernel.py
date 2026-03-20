@@ -50,6 +50,8 @@ def cdiv_fn(x, y):
 
 @triton.jit
 def remap_xcd(pid, GRID_MN, NUM_XCDS: tl.constexpr = 8):
+    if NUM_XCDS == 1:
+        return pid
     ## pid remapping on xcds
     # Number of pids per XCD in the new arrangement
     pids_per_xcd = (GRID_MN + NUM_XCDS - 1) // NUM_XCDS
@@ -136,6 +138,7 @@ def attn_fwd(
         BLOCK_M: tl.constexpr,
         BLOCK_N: tl.constexpr,
         PRE_LOAD_V: tl.constexpr,
+        NUM_XCDS: tl.constexpr,
         ):
     # Stride assumptions for compiler optimization
     tl.assume(stride_qz >= 0)
@@ -230,7 +233,7 @@ def attn_fwd(
             start_m = tile_id % num_tiles_per_sample % num_tiles_per_head  # at which tile are we inside the head
         else:
             off_h_q = tl.program_id(0)
-            off_h_q = remap_xcd(off_h_q, Num_head_q)
+            off_h_q = remap_xcd(off_h_q, Num_head_q, NUM_XCDS=NUM_XCDS)
             start_m = tl.program_id(1)
             off_z = tl.program_id(2)
 
