@@ -18,7 +18,7 @@ from v3python.base import typed_choice as TC
 from v3python.gpu_targets import AOTRITON_ARCH_WARPSIZE
 
 def _parse_preload_options():
-    val = int(os.getenv('AOTRITON_PRE_LOAD_OPTIONS', default='0'))
+    val = int(os.getenv('AOTRITON_PRE_LOAD_OPTIONS', default='2'))
     if val == 0:
         return [False]
     elif val == 1:
