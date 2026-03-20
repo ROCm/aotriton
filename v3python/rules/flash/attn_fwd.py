@@ -39,6 +39,7 @@ class attn_fwd(FlashKernel):
         frozenset(['BLOCK_M']) : np.array([16], dtype=np.int16),
         frozenset(['BLOCK_N']) : np.array([16], dtype=np.int16),
         frozenset(['PRE_LOAD_V']) : [False], # [False, True],
+        frozenset(['NUM_XCDS']) : [8],
     }
     EXPECTED_IDENTICAL_TENSOR_STRIDES = [
         # Not needed stride_o* exist

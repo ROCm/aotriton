@@ -54,6 +54,7 @@ class KernelDescription(Interface):
     ARGUMENTS = []
     NAME = None
     _ARGUMENT_CHOICES = None
+    PROGRAMMATIC_PERFS = {}
 
     @property
     def enum_name(self):
@@ -145,6 +146,8 @@ class KernelDescription(Interface):
             return np.unique(df[key].to_numpy()).tolist()
         sparse_key_possible_values = { key : sorted_unique_key(key) for key in sparse_keys }
         binning_dict = { key : algo(sparse_key_possible_values[spk]) for spk, (key, algo) in zip(sparse_keys, self.AUTOTUNE_KEYS_VALIDATED) }
+        for perf_name, program in self.PROGRAMMATIC_PERFS.items():
+            df[f'tuned_kernel${perf_name}'] = program(f)
         # sparse_shape is not used because lut is compact
         lut_shape = [f.noptimized_for] + [ len(sparse_key_possible_values[key]) for key in sparse_keys ]
         # lut starts with a large enough dtype

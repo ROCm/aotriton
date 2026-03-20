@@ -54,6 +54,7 @@ class bwd_kernel_dk_dv(FlashBwdKernel):
         'ENABLE_DROPOUT',
         'PADDED_HEAD',
         'BIAS_TYPE',
+        'NUM_XCDS',
     ]
     DEFAULT_NUM_WARPS=4
     DEFAULT_NUM_STAGES=1
@@ -66,6 +67,7 @@ class bwd_kernel_dk_dv(FlashBwdKernel):
     PERF_CHOICES = {
         frozenset(['BLOCK_M']) : match_fwd('BLOCK_M'),
         frozenset(['BLOCK_N']) : match_fwd('BLOCK_N'),
+        frozenset(['NUM_XCDS']): match_fwd('NUM_XCDS'),
     }
 
     PARTIALLY_TUNED_FUNCTIONALS = {

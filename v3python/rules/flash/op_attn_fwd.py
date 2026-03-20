@@ -84,6 +84,7 @@ class OpAttnFwd(OpAttn):
         "BLOCK_M",
         "BLOCK_N",
         "PRE_LOAD_V",
+        'NUM_XCDS',
     ]
     TENSOR_STRIDE_INPUTS = {
         'Q' : select_pattern(ARGUMENTS, 'stride_q'),
