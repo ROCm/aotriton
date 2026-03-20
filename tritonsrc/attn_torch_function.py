@@ -233,11 +233,11 @@ class _attention(torch.autograd.Function):
             persistent_atomic_counter = null_tensor
 
         if persistent_type == PersistentType.NONE:
-            grid = lambda META: (
-                num_head_q,
-                triton.cdiv(max_seqlen_q, META['BLOCK_M']),
-                batch,
-            )
+            def grid(META):
+                S = triton.cdiv(max_seqlen_q, META['BLOCK_M'])
+                H = num_head_q
+                B = batch
+                return (S, H, B) if META['NUM_XCDS'] == 1 else (H, S, B)
             Num_CU = 0
         else:
             Num_CU = torch.cuda.get_device_properties(q.device).multi_processor_count
@@ -625,11 +625,11 @@ class _attention(torch.autograd.Function):
         #     BLOCK_M = max(16, BLOCK_M // 2)
         #     BLOCK_N = max(16, BLOCK_N // 2)
         # debug_mask = torch.zeros((q.shape[0], q.shape[1], max_seqlen_q, max_seqlen_k), device=q.device, dtype=ctx.encoded_softmax.dtype)
-        grid_dk_dv = lambda META: (
-            triton.cdiv(max_seqlen_k, META['BLOCK_N']),
-            num_head_k,
-            q.shape[0],
-        )
+        def grid_dk_dv(META):
+            S = triton.cdiv(max_seqlen_k, META['BLOCK_N'])
+            H = num_head_k
+            B = q.shape[0]
+            return (S, H, B) if META['NUM_XCDS'] == 1 else (H, S, B)
         stride_dbz, stride_dbh, stride_dbm, stride_dbn = db.stride()
         if db.numel() == 0 or not b.requires_grad:
             # Passing all zeros to indicate no elements
@@ -774,11 +774,11 @@ class _attention(torch.autograd.Function):
                     print(f'2nd block fwd mask: {ctx.encoded_softmax[0,0, 16:]}')
             # print(f'Full q: {q}', file=sys.stderr)
             # assert mask_allclose
-        grid_dq = lambda META: (
-            triton.cdiv(max_seqlen_q, META['BLOCK_M']),
-            num_head_q,
-            q.shape[0],
-        )
+        def grid_dq(META):
+            S = triton.cdiv(max_seqlen_q, META['BLOCK_M'])
+            H = num_head_q
+            B = q.shape[0]
+            return (S, H, B) if META['NUM_XCDS'] == 1 else (H, S, B)
         if q.requires_grad:
             if ctx.autotune:
                 tuned_bwd_kernel_dq[grid_dq](

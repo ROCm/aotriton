@@ -31,7 +31,7 @@ TRITON_CONFIG_LIST_BWD = []
 # NUM_WARPS = [4]
 # WAVES_PER_EU = [0,1,2,3,4]
 BLOCK_SIZES = [(64, 16), (32, 16)]
-NUM_WARPS = [4]
+NUM_WARPS = [4, 8]
 WAVES_PER_EU = [2, 3]
 # NUM_WARPS = [2, 4, 8]
 # BLOCK_SIZES = [(64, 16), (16, 64)]
@@ -55,7 +55,7 @@ for BLOCK_M, BLOCK_N in BLOCK_SIZES:
                 TRITON_CONFIG_LIST_BWD.append(cfg)
 
 FAST_DKDV = [
-    triton.Config({'BLOCK_M': 32, 'BLOCK_N': 16, 'waves_per_eu': 3}, num_stages=1, num_warps=4)
+    triton.Config({'BLOCK_M': 64, 'BLOCK_N': 16, 'waves_per_eu': 3}, num_stages=1, num_warps=4)
 ]
 
 FAST_DQDB = [
@@ -65,15 +65,15 @@ FAST_DQDB = [
 print(TRITON_CONFIG_LIST_BWD)
 
 bwd_dkdv_tuner = triton.autotune(
-   # configs=TRITON_CONFIG_LIST_BWD,
-   configs=FAST_DKDV,
+   configs=TRITON_CONFIG_LIST_BWD,
+   # configs=FAST_DKDV,
    key=['BLOCK_DMODEL', 'max_seqlen_q', 'max_seqlen_k'],
 )
 tuned_bwd_kernel_dk_dv = bwd_dkdv_tuner(bare_bwd_kernel_dk_dv)
 
 bwd_dqdb_tuner = triton.autotune(
-   # configs=TRITON_CONFIG_LIST_BWD,
-   configs=FAST_DQDB,
+   configs=TRITON_CONFIG_LIST_BWD,
+   # configs=FAST_DQDB,
    key=['BLOCK_DMODEL', 'max_seqlen_q', 'max_seqlen_k'],
 )
 tuned_bwd_kernel_dq = bwd_dqdb_tuner(bare_bwd_kernel_dq)
