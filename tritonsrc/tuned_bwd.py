@@ -62,8 +62,6 @@ FAST_DQDB = [
     triton.Config({'BLOCK_M': 64, 'BLOCK_N': 16, 'waves_per_eu': 3}, num_stages=1, num_warps=4)
 ]
 
-print(TRITON_CONFIG_LIST_BWD)
-
 bwd_dkdv_tuner = triton.autotune(
    configs=TRITON_CONFIG_LIST_BWD,
    # configs=FAST_DKDV,
