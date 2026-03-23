@@ -96,7 +96,7 @@ class _varlen_attention(torch.autograd.Function):
         dtype = q.dtype
         # shape constraints
         Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
-        assert Lq == Lk and Lk == Lv
+        assert Lq == Lk and Lv == Lo
         head_dim_factors = factor_head_dim(Lk)
         head_dim_rounded = sum(head_dim_factors)
         padded_head = head_dim_rounded != Lk
@@ -340,8 +340,8 @@ class _varlen_attention(torch.autograd.Function):
     def backward(ctx, do, _, fwd_tuning_result):
         q, k, v, b, o, L = ctx.saved_tensors
         # if q.shape[-1] <= 32:
-        Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
-        assert Lq == Lk and Lk == Lv and Lk == ctx.head_dim
+        Lq, Lk, Lv, Lo = q.shape[-1], k.shape[-1], v.shape[-1], v.shape[-1]
+        assert Lq == Lk and Lv == Lo
         head_dim_factors = factor_head_dim(Lk)
         head_dim_rounded = sum(head_dim_factors)
         padded_head = head_dim_rounded != ctx.head_dim

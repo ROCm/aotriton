@@ -171,7 +171,7 @@ TRITON_CONFIG_LIST_FWD = TRITON_CONFIG_LIST_FWD_WAVE32 if IS_RDNA else TRITON_CO
 fwd_tuner = triton.autotune(
     # For faster debugging of backward autotune
     configs=TRITON_CONFIG_LIST_FWD,
-    key=['Max_seqlen_q', 'Max_seqlen_k', 'CAUSAL'],
+    key=['Max_seqlen_q', 'Max_seqlen_k', 'CAUSAL_TYPE'],
 )
 
 tuned_attn_fwd = fwd_tuner(bare_attn_fwd)
@@ -327,7 +327,7 @@ class _attention(torch.autograd.Function):
                                  'PRE_LOAD_V': PRE_LOAD_V},
                                 num_stages=NUM_STAGES, num_warps=NUM_WARPS)
             fwd_notuner = triton.autotune(configs=[cfg],
-                                          key=['Max_seqlen_q', 'Max_seqlen_k', 'CAUSAL'])
+                                          key=['Max_seqlen_q', 'Max_seqlen_k', 'CAUSAL_TYPE'])
             attn_fwd = fwd_notuner(bare_attn_fwd)
         attn_fwd[grid](
             # Basic SDPA
@@ -441,8 +441,8 @@ class _attention(torch.autograd.Function):
     def backward_split(ctx, do, _, fwd_tuning_result):
         q, k, v, b, o, L = ctx.saved_tensors
         # if q.shape[-1] <= 32:
-        Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
-        assert Lq == Lk and Lk == Lv and Lk == ctx.head_dim
+        Lq, Lk, Lv, Lo = q.shape[-1], k.shape[-1], v.shape[-1], v.shape[-1]
+        assert Lq == Lk and Lv == Lo
         head_dim_factors = factor_head_dim(Lk)
         head_dim_rounded = sum(head_dim_factors)
         padded_head = head_dim_rounded != ctx.head_dim
