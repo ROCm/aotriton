@@ -26,7 +26,7 @@ else:
     from triton.language import int1 as constexpr_or_bool
 
 
-# 
+#
 # Return offset of LSE tensor
 # Regular: (B*H, S)
 # Varlen: (H, TotalS)

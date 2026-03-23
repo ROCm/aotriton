@@ -161,10 +161,16 @@ TRITON_CONFIG_LIST_FWD_FAST = [
        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64, 'waves_per_eu': 2, 'PRE_LOAD_V': True}, num_stages=1, num_warps=8 if IS_RDNA else 4),
 ]
 
+TRITON_CONFIG_LIST_FWD_FAST_PIPELINING = [
+       triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 2, 'PRE_LOAD_V': False}, num_stages=4, num_warps=8),
+       triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64, 'waves_per_eu': 2, 'PRE_LOAD_V': True}, num_stages=4, num_warps=8),
+]
+
+TRITON_CONFIG_LIST_FWD = TRITON_CONFIG_LIST_FWD_WAVE32 if IS_RDNA else TRITON_CONFIG_LIST_FWD_PLUS_PIPELINING
+
 fwd_tuner = triton.autotune(
     # For faster debugging of backward autotune
-    configs=TRITON_CONFIG_LIST_FWD_FAST,
-    # configs=TRITON_CONFIG_LIST_FWD_WAVE32 if IS_RDNA else TRITON_CONFIG_LIST_FWD_PLUS_PIPELINING,
+    configs=TRITON_CONFIG_LIST_FWD,
     key=['Max_seqlen_q', 'Max_seqlen_k', 'CAUSAL'],
 )
 
