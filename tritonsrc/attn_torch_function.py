@@ -319,148 +319,73 @@ class _attention(torch.autograd.Function):
         NUM_STAGES = 1
 
         if autotune:
-            tuned_attn_fwd[grid](
-                # Basic SDPA
-                q, k, v, b, alibi_slopes, sm_scale, M, o,
-                q_descale, k_descale, p_scale, p_descale, v_descale,
-                *q.stride(),
-                *k.stride(),
-                *v.stride(),
-                *o.stride(),
-                *b.stride(),
-                *alibi_slopes.stride(),
-                # MQA/GQA
-                Num_head_q=num_head_q,
-                Num_head_k=num_head_k,
-                # Varlen
-                Num_seqlens=0,
-                cu_seqlens_q=null_tensor,
-                cu_seqlens_k=null_tensor,
-                Max_seqlen_q=q.shape[2],
-                Max_seqlen_k=k.shape[2],
-                seq_strides_q=null_tensor,
-                seq_strides_k=null_tensor,
-                # Head Dimensions
-                BLOCK_DMODEL=head_dim_rounded,
-                Hdim_qk=Lk,
-                Hdim_vo=Lv,
-                PADDED_HEAD=padded_head,
-                # droput and PRNG
-                ENABLE_DROPOUT=dropout_p > 0.0,
-                dropout_p=dropout_p,
-                philox_seed_ptr=philox_seed,
-                philox_offset1=philox_offset1,
-                philox_offset2=philox_offset2,
-                philox_seed_output=philox_seed_output,
-                philox_offset_output=philox_offset_output,
-                RETURN_ENCODED_SOFTMAX=False,
-                encoded_softmax=None,
-                # Causal
-                CAUSAL_TYPE=causal_type,
-                Window_left=window_left,
-                Window_right=window_right,
-                # bias
-                BIAS_TYPE=BIAS_TYPE,
-                # INT8
-                INT8=False,
-                INT8_KV=False,
-                USE_P_SCALE=False,
-                # Alibi
-                USE_ALIBI=False,
-                # Persistent related arguments
-                PERSISTENT_TYPE=persistent_type,
-                persistent_atomic_counter=persistent_atomic_counter,
-                Num_CU=Num_CU,
-                GRID_CU_MULTIP=2,
-                Batch=batch,
-                # Performance related, but fixed for arch
-                NUM_XCDS=NUM_XCDS,
-            )
+            attn_fwd = tuned_attn_fwd
         else:
-            RETURN_ENCODED_SOFTMAX=encoded_softmax is not None
-            if AOTRITON_USE_PRINT_AUTOTUNING is not None:
-                dic = AOTRITON_USE_PRINT_AUTOTUNING
-                BLOCK_M = dic['BLOCK_M']
-                BLOCK_N = dic['BLOCK_N']
-                WAVES_PER_EU = dic['waves_per_eu']
-                PRE_LOAD_V = dic['PRE_LOAD_V']
-                NUM_WARPS = dic['num_warps']
-                NUM_STAGES = dic['num_stages']
-                assert dic['GRID_CU_MULTIP'] == 2
-                assert dic['num_ctas'] == 1
-                # print(dic)
-            else:
-                print(f'{BLOCK_M=} {BLOCK_N=} {RETURN_ENCODED_SOFTMAX=} seqlen_q={q.shape[2]} seqlen_k={k.shape[2]}',
-                        flush=True)
-                print(f'{q.data_ptr()=:x} {k.data_ptr()=:x} {v.data_ptr()=:x} {b.data_ptr()=:x} {M.data_ptr()=:x} {o.data_ptr()=:x}', flush=True)
-                if RETURN_ENCODED_SOFTMAX:
-                    print(f'{encoded_softmax.data_ptr()=:x}', flush=True)
-                print(f'{q.shape=} {k.shape=} {v.shape=} {b.shape=} {M.shape=} {o.shape=}', flush=True)
-                print(f'{q.stride()=} {k.stride()=} {v.stride()=} {b.stride()=} {M.stride()=} {o.stride()=}', flush=True)
-                print(f'{causal_type=} {window_left=} {window_right=}', flush=True)
-            bare_attn_fwd[grid](
-                # Basic SDPA
-                q, k, v, b, alibi_slopes, sm_scale, M, o,
-                q_descale, k_descale, p_scale, p_descale, v_descale,
-                *q.stride(),
-                *k.stride(),
-                *v.stride(),
-                *o.stride(),
-                *b.stride(),
-                *alibi_slopes.stride(),
-                # MQA/GQA
-                Num_head_q=num_head_q,
-                Num_head_k=num_head_k,
-                # Varlen
-                Num_seqlens=0,
-                cu_seqlens_q=null_tensor,
-                cu_seqlens_k=null_tensor,
-                Max_seqlen_q=q.shape[2],
-                Max_seqlen_k=k.shape[2],
-                seq_strides_q=null_tensor,
-                seq_strides_k=null_tensor,
-                # Head Dimensions
-                BLOCK_DMODEL=head_dim_rounded,
-                Hdim_qk=Lk,
-                Hdim_vo=Lv,
-                PADDED_HEAD=padded_head,
-                # droput and PRNG
-                ENABLE_DROPOUT=dropout_p > 0.0,
-                dropout_p=dropout_p,
-                philox_seed_ptr=philox_seed,
-                philox_offset1=philox_offset1,
-                philox_offset2=philox_offset2,
-                philox_seed_output=philox_seed_output,
-                philox_offset_output=philox_offset_output,
-                RETURN_ENCODED_SOFTMAX=False,
-                encoded_softmax=None,
-                # Causal
-                CAUSAL_TYPE=causal_type,
-                Window_left=window_left,
-                Window_right=window_right,
-                # bias
-                BIAS_TYPE=BIAS_TYPE,
-                # INT8
-                INT8=False,
-                INT8_KV=False,
-                USE_P_SCALE=False,
-                # Alibi
-                USE_ALIBI=False,
-                # Persistent related arguments
-                PERSISTENT_TYPE=persistent_type,
-                persistent_atomic_counter=persistent_atomic_counter,
-                Num_CU=Num_CU,
-                GRID_CU_MULTIP=2,
-                Batch=batch,
-                # Performance
-                BLOCK_M=BLOCK_M,
-                BLOCK_N=BLOCK_N,
-                PRE_LOAD_V=PRE_LOAD_V,
-                NUM_XCDS=NUM_XCDS,
-                num_stages=NUM_STAGES,
-                num_warps=NUM_WARPS,
-                waves_per_eu=WAVES_PER_EU,
-            )
+            cfg = triton.Config({'BLOCK_M': BLOCK_M,
+                                 'BLOCK_N': BLOCK_N,
+                                 'waves_per_eu': WAVES_PER_EU,
+                                 'PRE_LOAD_V': PRE_LOAD_V},
+                                num_stages=NUM_STAGES, num_warps=NUM_WARPS)
+            fwd_notuner = triton.autotune(configs=[cfg],
+                                          key=['Max_seqlen_q', 'Max_seqlen_k', 'CAUSAL'])
+            attn_fwd = fwd_notuner(bare_attn_fwd)
+        attn_fwd[grid](
+            # Basic SDPA
+            q, k, v, b, alibi_slopes, sm_scale, M, o,
+            q_descale, k_descale, p_scale, p_descale, v_descale,
+            *q.stride(),
+            *k.stride(),
+            *v.stride(),
+            *o.stride(),
+            *b.stride(),
+            *alibi_slopes.stride(),
+            # MQA/GQA
+            Num_head_q=num_head_q,
+            Num_head_k=num_head_k,
+            # Varlen
+            Num_seqlens=0,
+            cu_seqlens_q=null_tensor,
+            cu_seqlens_k=null_tensor,
+            Max_seqlen_q=q.shape[2],
+            Max_seqlen_k=k.shape[2],
+            seq_strides_q=null_tensor,
+            seq_strides_k=null_tensor,
+            # Head Dimensions
+            BLOCK_DMODEL=head_dim_rounded,
+            Hdim_qk=Lk,
+            Hdim_vo=Lv,
+            PADDED_HEAD=padded_head,
+            # droput and PRNG
+            ENABLE_DROPOUT=dropout_p > 0.0,
+            dropout_p=dropout_p,
+            philox_seed_ptr=philox_seed,
+            philox_offset1=philox_offset1,
+            philox_offset2=philox_offset2,
+            philox_seed_output=philox_seed_output,
+            philox_offset_output=philox_offset_output,
+            RETURN_ENCODED_SOFTMAX=False,
+            encoded_softmax=None,
+            # Causal
+            CAUSAL_TYPE=causal_type,
+            Window_left=window_left,
+            Window_right=window_right,
+            # bias
+            BIAS_TYPE=BIAS_TYPE,
+            # INT8
+            INT8=False,
+            INT8_KV=False,
+            USE_P_SCALE=False,
+            # Alibi
+            USE_ALIBI=False,
+            # Persistent related arguments
+            PERSISTENT_TYPE=persistent_type,
+            persistent_atomic_counter=persistent_atomic_counter,
+            Num_CU=Num_CU,
+            GRID_CU_MULTIP=2,
+            Batch=batch,
+            # Performance related, but fixed for arch
+            NUM_XCDS=NUM_XCDS,
+        )
         if return_encoded_softmax:
             grid = lambda META: (
                 triton.cdiv(encoded_softmax.shape[2], META['BLOCK_M']),
