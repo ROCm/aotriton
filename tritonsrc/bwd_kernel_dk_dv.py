@@ -105,7 +105,7 @@ def bwd_kernel_dk_dv(
         philox_seed = tl.load(philox_seed_ptr)
         philox_offset_base += tl.load(philox_offset1)
     if NUM_XCDS > 1:
-        off_h_k = remap_xcd(tl.program_id(0), num_head_k, NUM_XCDS) # head index
+        off_h_k = remap_xcd(tl.program_id(0), num_head_k, NUM_XCDS=NUM_XCDS) # head index
         start_k = tl.program_id(1) * BLOCK_N  # start_k partitions seqlen_k
     else:
         start_k = tl.program_id(0) * BLOCK_N  # start_k partitions seqlen_k

@@ -587,7 +587,6 @@ class _attention(torch.autograd.Function):
                     dkdv_best_config.kwargs['BLOCK_N'] = BLOCK_N
                     tuning_result = copy.deepcopy(dkdv_best_config)
                     ctx.tuning_result.append(('bwd_kernel_dk_dv', tuning_result))
-                    print(f'{id(ctx.tuning_result)=}')
         # print(f"{dq.stride()=}", flush=True)
         # print(f"{dq.data_ptr()=:x}", flush=True)
         # print(f"{dk.stride()=}", flush=True)
