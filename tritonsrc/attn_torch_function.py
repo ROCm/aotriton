@@ -443,9 +443,18 @@ class _attention(torch.autograd.Function):
         # if q.shape[-1] <= 32:
         Lq, Lk, Lv, Lo = q.shape[-1], k.shape[-1], v.shape[-1], o.shape[-1]
         assert Lq == Lk and Lv == Lo
-        head_dim_factors = factor_head_dim(Lk)
+        # Backward kernels use a single BLOCK_DMODEL for Q/K and V/O paths;
+        # derive it from the maximum head dimension across K and V.
+        Ld = max(Lk, Lv)
+        head_dim_factors = factor_head_dim(Ld)
         head_dim_rounded = sum(head_dim_factors)
-        padded_head = head_dim_rounded != ctx.head_dim
+        # Padding is required if the rounded dim does not match any of the
+        # participating head dimensions or the original ctx.head_dim.
+        padded_head = (
+            head_dim_rounded != Lk
+            or head_dim_rounded != Lv
+            or head_dim_rounded != ctx.head_dim
+        )
         attn_extra_args = ctx.attn_extra_args
         philox_seed = ctx.philox_seed
         philox_offset = ctx.philox_offset
