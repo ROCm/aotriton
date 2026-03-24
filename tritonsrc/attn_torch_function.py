@@ -148,7 +148,7 @@ def is_supported_by_tl_dot(n: int) -> bool:
     return is_power_of_two(n) and n >= 16
 
 def gen_config_fwd(BLOCK_M=128, BLOCK_N=64, num_stages=1, num_warps=4):
-    for waves_per_eu, PRE_LOAD_V in itertools.product(range(4), [True, False]):
+    for waves_per_eu, PRE_LOAD_V in itertools.product(range(4+1), [True, False]):
         yield triton.Config({'BLOCK_M': BLOCK_M, 'BLOCK_N': BLOCK_N, 'waves_per_eu': waves_per_eu, 'PRE_LOAD_V': PRE_LOAD_V}, num_stages=num_stages, num_warps=num_warps)
 
 TRITON_CONFIG_LIST_FWD_WAVE64 = list(gen_config_fwd())
@@ -220,7 +220,7 @@ class _attention(torch.autograd.Function):
         num_head_k = k.shape[1]
         max_seqlen_q = q.shape[2]
         max_seqlen_k = k.shape[2]
-        o = torch.empty_like(q)
+        o = torch.empty((q.shape[0], q.shape[1], q.shape[2], v.shape[3]), device=q.device, dtype=q.dtype)
 
         causal_type, window_left, window_right = translate_causal(causal, max_seqlen_q, max_seqlen_k)
 
@@ -441,7 +441,7 @@ class _attention(torch.autograd.Function):
     def backward_split(ctx, do, _, fwd_tuning_result):
         q, k, v, b, o, L = ctx.saved_tensors
         # if q.shape[-1] <= 32:
-        Lq, Lk, Lv, Lo = q.shape[-1], k.shape[-1], v.shape[-1], v.shape[-1]
+        Lq, Lk, Lv, Lo = q.shape[-1], k.shape[-1], v.shape[-1], o.shape[-1]
         assert Lq == Lk and Lv == Lo
         head_dim_factors = factor_head_dim(Lk)
         head_dim_rounded = sum(head_dim_factors)
