@@ -75,8 +75,7 @@ class bwd_kernel_dk_dv(FlashBwdKernel):
     }
     DOWNGRADER = []
 
-    @staticmethod
-    def gen_autotune_configs(f : 'Functional'):
+    def gen_autotune_configs(self, f : 'Functional'):
         arch = f.arch
         dtype = check_value(f, ['Q'])
         HEAD_DIM = check_value(f, ['BLOCK_DMODEL'])
@@ -102,4 +101,5 @@ class bwd_kernel_dk_dv(FlashBwdKernel):
             if WAVE32 and M * N >= 32 * 16 and warps < 2:
                 continue  # Timeout
             kw = {'BLOCK_M': M, 'BLOCK_N': N, 'waves_per_eu': waves}
+            kw = self.update_programmatic_perfs(kw, f)
             yield Config(kw, num_stages=stages, num_warps=warps)

@@ -39,7 +39,7 @@ class attn_fwd(FlashKernel):
         frozenset(['BLOCK_M']) : np.array([16], dtype=np.int16),
         frozenset(['BLOCK_N']) : np.array([16], dtype=np.int16),
         frozenset(['PRE_LOAD_V']) : [False], # [False, True],
-        frozenset(['NUM_XCDS']) : [8],
+        frozenset(['NUM_XCDS']) : np.array([8], dtype=np.int8),
     }
     EXPECTED_IDENTICAL_TENSOR_STRIDES = [
         # Not needed stride_o* exist
@@ -56,8 +56,7 @@ class attn_fwd(FlashKernel):
         'PADDED_HEAD': False,
     }
 
-    @staticmethod
-    def gen_autotune_configs(f : 'Functional'):
+    def gen_autotune_configs(self, f : 'Functional'):
         arch = f.arch
         dtype = check_value(f, ['Q'])
         HEAD_DIM = check_value(f, ['BLOCK_DMODEL'])
@@ -97,5 +96,6 @@ class attn_fwd(FlashKernel):
                    'waves_per_eu': waves,
                    'PRE_LOAD_V': pre,
                  }
+            kw = self.update_programmatic_perfs(kw, f)
             # TODO: Add Dyamic PERSISTENT_TYPE IFF causal is enabled to tuning database
             yield Config(kw, num_stages=stages, num_warps=warps)

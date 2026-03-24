@@ -223,3 +223,8 @@ class KernelDescription(Interface):
     @property
     def is_tunable(self):
         return hasattr(self, 'gen_autotune_configs')
+
+    def update_programmatic_perfs(self, kw : dict, f : Functional):
+        for perf_name, program in self.PROGRAMMATIC_PERFS.items():
+            kw[perf_name] = program(f)
+        return kw

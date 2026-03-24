@@ -76,8 +76,7 @@ class bwd_kernel_dq(FlashBwdKernel):
     }
     DOWNGRADER = []
 
-    @staticmethod
-    def gen_autotune_configs(f : 'Functional'):
+    def gen_autotune_configs(self, f : 'Functional'):
         arch = f.arch
         dtype = check_value(f, ['Q'])
         ret = []
@@ -96,4 +95,5 @@ class bwd_kernel_dq(FlashBwdKernel):
             if M < N:
                 continue  # deduplicate
             kw = {'BLOCK_M': M, 'BLOCK_N': N, 'waves_per_eu': waves}
+            kw = self.update_programmatic_perfs(kw, f)
             yield Config(kw, num_stages=stages, num_warps=warps)
