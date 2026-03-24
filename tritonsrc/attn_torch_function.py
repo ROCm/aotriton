@@ -421,7 +421,7 @@ class _attention(torch.autograd.Function):
         ctx.save_for_backward(q, k, v, b, o, M)
         ctx.grid = grid
         ctx.sm_scale = sm_scale
-        ctx.head_dim = Lk
+        ctx.head_dim = max(Lk, Lv)
         ctx.causal = causal
         ctx.dropout_p = dropout_p
         ctx.philox_seed = philox_seed_output
@@ -445,16 +445,11 @@ class _attention(torch.autograd.Function):
         assert Lq == Lk and Lv == Lo
         # Backward kernels use a single BLOCK_DMODEL for Q/K and V/O paths;
         # derive it from the maximum head dimension across K and V.
-        Ld = max(Lk, Lv)
-        head_dim_factors = factor_head_dim(Ld)
+        head_dim_factors = factor_head_dim(ctx.head_dim)
         head_dim_rounded = sum(head_dim_factors)
         # Padding is required if the rounded dim does not match any of the
         # participating head dimensions or the original ctx.head_dim.
-        padded_head = (
-            head_dim_rounded != Lk
-            or head_dim_rounded != Lv
-            or head_dim_rounded != ctx.head_dim
-        )
+        padded_head = head_dim_rounded != min(Lk, Lv)
         attn_extra_args = ctx.attn_extra_args
         philox_seed = ctx.philox_seed
         philox_offset = ctx.philox_offset
