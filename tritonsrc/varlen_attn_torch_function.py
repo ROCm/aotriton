@@ -96,7 +96,7 @@ class _varlen_attention(torch.autograd.Function):
         dtype = q.dtype
         # shape constraints
         Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
-        assert Lq == Lk
+        assert Lq == Lk and Lk == Lv
         head_dim_factors = factor_head_dim(Lk)
         head_dim_rounded = sum(head_dim_factors)
         padded_head = head_dim_rounded != Lk
@@ -109,7 +109,7 @@ class _varlen_attention(torch.autograd.Function):
         max_seqlen_k = int(np.max(seqlen_k))
         cu_seqlens_q = torch.tensor([0] + np.cumsum(seqlen_q).tolist(), dtype=torch.int32, device=q.device)
         cu_seqlens_k = torch.tensor([0] + np.cumsum(seqlen_k).tolist(), dtype=torch.int32, device=q.device)
-        o = torch.empty((q.shape[0], q.shape[1], q.shape[2], v.shape[3]), device=q.device, dtype=q.dtype)
+        o = torch.zeros_like(q)
 
         causal_type, window_left, window_right = translate_causal_varlen(causal)
 
@@ -340,12 +340,11 @@ class _varlen_attention(torch.autograd.Function):
     def backward(ctx, do, _, fwd_tuning_result):
         q, k, v, b, o, L = ctx.saved_tensors
         # if q.shape[-1] <= 32:
-        Lq, Lk, Lv, Lo = q.shape[-1], k.shape[-1], v.shape[-1], o.shape[-1]
-        assert Lq == Lk and Lv == Lo
-        max_head_dim = max(Lk, Lv)
-        head_dim_factors = factor_head_dim(max_head_dim)
+        Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
+        assert Lq == Lk and Lk == Lv and Lk == ctx.head_dim
+        head_dim_factors = factor_head_dim(Lk)
         head_dim_rounded = sum(head_dim_factors)
-        padded_head = head_dim_rounded != max_head_dim
+        padded_head = head_dim_rounded != ctx.head_dim
         attn_extra_args = ctx.attn_extra_args
         philox_seed = ctx.philox_seed
         philox_offset = ctx.philox_offset
