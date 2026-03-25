@@ -48,20 +48,22 @@ def lazy_delta(L):
 class SdpaCommon(SdpaReference):
     EXT_CLASS = attn_options
 
-    def create_extargs(self, extargs, **kernel_slots):
-        """Create a copy of extargs with selective kernel execution.
+    def create_extargs(self, extargs=None, *, force_kernel_index=None, peek_kernel_numbers=None, **kernel_slots):
+        """Create or copy attn_options for V3 API.
 
         Args:
-            extargs: Source attn_options to copy from
-            **kernel_slots: Keyword arguments like bwd_kernel_dq=-2 to skip specific kernels
+            extargs: Optional source attn_options to copy from. If None, creates new instance.
+            force_kernel_index: Legacy V2 API parameter (ignored in V3)
+            peek_kernel_numbers: Legacy V2 API parameter (ignored in V3)
+            **kernel_slots: Keyword arguments like bwd_kernel_dq=-2 to control specific kernels
                            Uses attn_options.KernelSlot enum names (snake_case kernel NAMEs)
         """
         ext = self.EXT_CLASS()
-        ext.force_backend_index = extargs.force_backend_index
-        ext.peek_kernel_numbers = extargs.peek_kernel_numbers
-        # Copy kernel_fine_control array
-        for i in range(len(extargs.kernel_fine_control)):
-            ext.kernel_fine_control[i] = extargs.kernel_fine_control[i]
+        if extargs is not None:
+            ext.force_backend_index = extargs.force_backend_index
+            # Copy kernel_fine_control array
+            for i in range(len(extargs.kernel_fine_control)):
+                ext.kernel_fine_control[i] = extargs.kernel_fine_control[i]
         # Apply kernel slot overrides
         for slot_name, value in kernel_slots.items():
             slot_index = getattr(self.EXT_CLASS.KernelSlot, slot_name)

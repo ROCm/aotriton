@@ -45,6 +45,7 @@ class KernelShimGenerator(InterfaceGenerator):
             'param_class_name'      : kdesc.param_class_name,
             'shared_iface_family'   : shared_iface_family,
             'shared_iface'          : 1 if shared_iface else 0,
+            'call_options_struct'   : kdesc.SHARED_IFACE.CALL_OPTIONS_NAME if shared_iface else 'void',
             'context_class_name'    : kdesc.context_class_name,
             'metadata_class_name'   : kdesc.metadata_class_name,
             'func_fields'           : codegen_struct_cfields(kdesc.func_cfields, nalign=4),
@@ -65,6 +66,7 @@ class KernelShimGenerator(InterfaceGenerator):
         d = {
             'shared_iface'        : 1 if shared_iface else 0,
             'shared_iface_family' : shared_iface_family,
+            'call_options_struct' : kdesc.SHARED_IFACE.CALL_OPTIONS_NAME if shared_iface else 'void',
             'kernel_family_name'  : kdesc.FAMILY,
             'triton_kernel_name'  : kdesc.NAME,  # TODO: use signature so AMD_LOG_LEVEL=3 is more meaningful
             'shim_kernel_name'    : kdesc.NAME,

@@ -4,6 +4,8 @@
 #ifndef AOTRITON_V2_API_FLASH_ATTN_H
 #define AOTRITON_V2_API_FLASH_ATTN_H
 
+#include <aotriton/v2/cpp_tune.h>
+
 namespace AOTRITON_NS::v2::flash {
 
 hipError_t AOTRITON_API

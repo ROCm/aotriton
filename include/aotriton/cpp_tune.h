@@ -1,31 +1,46 @@
-// Copyright © 2024-2025 Advanced Micro Devices, Inc.
+// Copyright © 2026 Advanced Micro Devices, Inc.
 // SPDX-License-Identifier: MIT
 
-#ifndef AOTRITON_V2_API_CPP_TUNE_H
-#define AOTRITON_V2_API_CPP_TUNE_H
+#ifndef AOTRITON_V3_API_CPP_TUNE_H
+#define AOTRITON_V3_API_CPP_TUNE_H
 
 #include <aotriton/config.h>
+#include <stdint.h>
 
-namespace AOTRITON_NS::v2 {
+namespace AOTRITON_NS::v3 {
 
-struct AOTRITON_API CppTune {
-#if AOTRITON_BUILD_FOR_TUNING
-  // TODO: Move them into a base class since they are common to all kernels
-  bool peek_kernel_numbers = false;
-  int force_kernel_index = -1;
-  int total_number_of_kernels = -1;
-  const char* selected_kernel_psels = nullptr;
-  const char* selected_kernel_copts = nullptr;
-  // Fields to extract kernel image
-  bool peek_kernel_image = false;  // Set true to examine the image without launching it
-  const void* kernel_image = nullptr;
-  size_t image_size = 0;
-#endif
-};
+struct KernelControl {
+  // Constants
+  enum KernelControlBits {
+    ManualBit = 0,
+    SkipBit = 1,
+    ProbeBit = 2,
+    ExtractImageBit = 3
+  };
+#define AOTRITON_U16_FROM_BIT_ENUM(x) static constexpr uint16_t x = (1 << x ## Bit)
+  AOTRITON_U16_FROM_BIT_ENUM(Manual);
+  AOTRITON_U16_FROM_BIT_ENUM(Skip);
+  AOTRITON_U16_FROM_BIT_ENUM(Probe);
+  AOTRITON_U16_FROM_BIT_ENUM(ExtractImage);
+#undef AOTRITON_U16_FROM_BIT_ENUM
 
-enum AOTRITON_API CppTuneSpecialKernelIndex : int {
-  kDefault = -1,
-  kSkipGPUCall = -2,
+  // Control bits (input)
+  uint16_t control_bits = 0;  // Flags controlling kernel behavior:
+                              // - Manual: Use hsaco_index (otherwise hsaco_index is ignored)
+                              // - Skip: Completely skip lookup optimal kernel
+                              //         and consequently the execution
+                              // - Probe: Query kernel metadata
+                              // - ExtractImage: Extract kernel binary image.
+                              //                 This flag will suppress kernel
+                              //                 launching.
+  uint16_t hsaco_index = 0;   // Kernel index to use (only if Manual is set in control_bits)
+
+  // Information bits (output, written by backend)
+  mutable int32_t total_hsacos = -1;      // Total number of kernels (written if Probe is set)
+  mutable const char* kernel_psels = nullptr;  // Kernel psels string (written if Probe & Manual are set)
+  mutable const char* kernel_copts = nullptr;  // Kernel copts string (written if Probe & Manual are set)
+  mutable const void* kernel_image = nullptr;  // Kernel binary image (written if Manual & ExtractImage are set)
+  mutable size_t image_size = 0;          // Size of kernel binary (written if Manual & ExtractImage are set)
 };
 
 }

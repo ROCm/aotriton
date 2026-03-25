@@ -28,6 +28,11 @@ struct [[context_class_name]] {
 #if [[has_cookie_object]]
     mutable [[cookie_class]] cookie;
 #endif
+    // As a thin wrapper, SlimAffine kernels does not understand opeartor
+    // (ParentContext) or Conditional Kernel (condition).
+    template <typename ParentContext>
+    [[context_class_name]](const ParentContext& pcontext, bool condition) {
+    }
 
     hipError_t lookup_optimal(Gpu gpu);
     hipError_t launch(hipStream_t stream) const;
