@@ -33,37 +33,34 @@ struct AOTRITON_API attn_options {
   };
 
   // Kernel slot assignments in force_kernel_indices array
-  // Shared across forward and backward operators
+  // Automatically generated from kernel NAMEs
+  // See v3python/rules/flash/__init__.py for kernel definitions
   enum KernelSlot {
-    // Forward pass kernels
-    FwdMain = 0,
+    // Forward pass kernels (from attn_fwd, etc.)
+    attn_fwd = 0,
+    debug_simulate_encoded_softmax = 1,
 
-    // Backward pass kernels
-    BwdPreprocess = 1,
-    BwdDkDv = 2,
-    BwdDq = 3,
+    // Backward pass kernels (from bwd_preprocess, bwd_kernel_*, etc.)
+    bwd_preprocess = 2,
+    bwd_preprocess_varlen = 3,
+    bwd_kernel_dk_dv = 4,
+    bwd_kernel_dq = 5,
+    bwd_kernel_fuse = 6,
 
-    // Reserved for future extensions
-    Reserved4 = 4,
-    Reserved5 = 5,
-    Reserved6 = 6,
-    Reserved7 = 7,
-
-    MaxKernels = 8
+    MaxKernels = 7
   };
 
   // Selective kernel execution within Metro backends
   // Use KernelSlot enum to index into this array
   // Use KernelIndexValue constants for special values
   std::array<int, KernelSlot::MaxKernels> force_kernel_indices = {
-    KernelIndexValue::Auto,  // FwdMain
-    KernelIndexValue::Auto,  // BwdPreprocess
-    KernelIndexValue::Auto,  // BwdDkDv
-    KernelIndexValue::Auto,  // BwdDq
-    KernelIndexValue::Auto,  // Reserved4
-    KernelIndexValue::Auto,  // Reserved5
-    KernelIndexValue::Auto,  // Reserved6
-    KernelIndexValue::Auto   // Reserved7
+    KernelIndexValue::Auto,  // attn_fwd
+    KernelIndexValue::Auto,  // debug_simulate_encoded_softmax
+    KernelIndexValue::Auto,  // bwd_preprocess
+    KernelIndexValue::Auto,  // bwd_preprocess_varlen
+    KernelIndexValue::Auto,  // bwd_kernel_dk_dv
+    KernelIndexValue::Auto,  // bwd_kernel_dq
+    KernelIndexValue::Auto   // bwd_kernel_fuse
   };
 #endif
 };
@@ -128,7 +125,7 @@ struct AOTRITON_API attn_fwd_params {
   int32_t  window_left;
   int32_t  window_right;
 
-  static constexpr int32_t kVersion = 2;
+  static constexpr int32_t kVersion = 3;
   attn_fwd_params();
 };
 
@@ -172,7 +169,7 @@ struct AOTRITON_API attn_bwd_params {
   int32_t   window_right;
   mutable LT4       DQ_ACC;          // fp32 accumulator of dq
 
-  static constexpr int32_t kVersion = 5;
+  static constexpr int32_t kVersion = 6;
   attn_bwd_params();
 };
 

@@ -51,6 +51,12 @@ class ConditionalKernel(Interface):
     def else_kernel(self):
         return self._else_kenrel
 
+    def iter_kernel_slot_names(self):
+        """Yield kernel slot names for both if and else branches."""
+        yield from self._if_kenrel.iter_kernel_slot_names()
+        if self._else_kenrel is not None:
+            yield from self._else_kenrel.iter_kernel_slot_names()
+
     def translate_dataframe(self, f : Functional, df : 'pandas.DataFrame'):
         raise RuntimeError(f'translate_dataframe should not be calle over any ConditionalKernel {self.NAME=}')
 

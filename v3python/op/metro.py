@@ -39,3 +39,11 @@ class MetroKernel(Interface):
 
     def list_kernels(self):
         return self._kernels
+
+    def iter_kernel_slot_names(self):
+        """Generator that yields KernelSlot enum names for all kernels.
+
+        Delegates to each kernel's iter_kernel_slot_names() method.
+        """
+        for kdesc in self._kernels:
+            yield from kdesc.iter_kernel_slot_names()

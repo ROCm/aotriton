@@ -127,20 +127,15 @@ class OperatorGenerator(InterfaceGenerator):
         lookup_stmt = []
         launch_stmt = []
 
-        # Get kernel slot indices from metro definition
-        # Maps kernel nth -> KernelSlot index in attn_options::force_kernel_indices
-        kernel_slot_indices = getattr(metro, 'KERNEL_SLOT_INDICES', [])
-
         # FIXME: lookup all and then launch, in case any sub-kernel failed
         for nth, kdesc in enumerate(metro.list_kernels()):
-            # Determine kernel slot index for selective execution
-            if nth < len(kernel_slot_indices):
-                kernel_slot_index = kernel_slot_indices[nth]
-            else:
-                kernel_slot_index = -1  # Not mapped, selective execution disabled
+            # Get kernel slot name(s) directly from this kdesc
+            slot_names = list(kdesc.iter_kernel_slot_names())
 
             if isinstance(kdesc, ConditionalKernel):
                 self._add_iface_for_source(kdesc.if_kernel)
+                # Use if_kernel's slot name (first in the list)
+                kernel_slot_index = f'attn_options::KernelSlot::{slot_names[0]}'
                 d = {
                     'condition'             : f'context.params->{kdesc.if_parameter} {kdesc.if_expr}',
                     'backend_context_name'  : kdesc.if_kernel.context_class_name,
@@ -152,11 +147,15 @@ class OperatorGenerator(InterfaceGenerator):
                     launch_snippet = self.METRO_LAUNCH_SNIPPET_TEMPLATE.format_map(d)
                 else:
                     self._add_iface_for_source(kdesc.else_kernel)
+                    # Use else_kernel's slot name (second in the list)
                     d['else_context_name'] = kdesc.else_kernel.context_class_name
+                    d['else_kernel_slot_index'] = f'attn_options::KernelSlot::{slot_names[1]}'
                     snippet = self.IFELSE_SNIPPET_TEMPLATE.format_map(d)
                     launch_snippet = self.IFELSE_LAUNCH_SNIPPET_TEMPLATE.format_map(d)
             else:
                 self._add_iface_for_source(kdesc)
+                # Regular kernel has one slot name
+                kernel_slot_index = f'attn_options::KernelSlot::{slot_names[0]}'
                 d = {
                     'condition'             : 'true',
                     'backend_context_name'  : kdesc.context_class_name,
