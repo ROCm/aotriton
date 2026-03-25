@@ -1,6 +1,7 @@
 # Copyright © 2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
+import math
 import torch
 
 def cdiv(x, div):

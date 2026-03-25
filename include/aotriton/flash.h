@@ -23,6 +23,49 @@ using LT4 = AOTRITON_NS::LazyTensor<4>;
 struct AOTRITON_API attn_options {
   int force_backend_index = -1;
   bool deterministic = false;
+
+#if AOTRITON_BUILD_FOR_TUNING
+  // Special kernel index values for selective execution
+  struct KernelIndexValue {
+    static constexpr int Auto = -1;      // Use autotuned kernel (default)
+    static constexpr int Skip = -2;      // Skip this kernel (equivalent to kSkipGPUCall)
+    // Values >= 0 mean force specific kernel index
+  };
+
+  // Kernel slot assignments in force_kernel_indices array
+  // Shared across forward and backward operators
+  enum KernelSlot {
+    // Forward pass kernels
+    FwdMain = 0,
+
+    // Backward pass kernels
+    BwdPreprocess = 1,
+    BwdDkDv = 2,
+    BwdDq = 3,
+
+    // Reserved for future extensions
+    Reserved4 = 4,
+    Reserved5 = 5,
+    Reserved6 = 6,
+    Reserved7 = 7,
+
+    MaxKernels = 8
+  };
+
+  // Selective kernel execution within Metro backends
+  // Use KernelSlot enum to index into this array
+  // Use KernelIndexValue constants for special values
+  std::array<int, KernelSlot::MaxKernels> force_kernel_indices = {
+    KernelIndexValue::Auto,  // FwdMain
+    KernelIndexValue::Auto,  // BwdPreprocess
+    KernelIndexValue::Auto,  // BwdDkDv
+    KernelIndexValue::Auto,  // BwdDq
+    KernelIndexValue::Auto,  // Reserved4
+    KernelIndexValue::Auto,  // Reserved5
+    KernelIndexValue::Auto,  // Reserved6
+    KernelIndexValue::Auto   // Reserved7
+  };
+#endif
 };
 
 // Note: DO NOT declare enums as enum class : int8_t. Enum class cannot be cased to
@@ -60,7 +103,7 @@ struct AOTRITON_API attn_fwd_params {
   T4       B;
   T2       A;
   float    Sm_scale;
-  T2       L;
+  T2       L;                   // Can be T2::get_null_tensor()
   T4       Out;
   // int32_t  Num_head_q;       // Inferred from Q.size()
   // int32_t  Num_head_k;       // Inferred from Q.size()

@@ -126,14 +126,26 @@ class OperatorGenerator(InterfaceGenerator):
         context_class_name = iface.context_class_name
         lookup_stmt = []
         launch_stmt = []
+
+        # Get kernel slot indices from metro definition
+        # Maps kernel nth -> KernelSlot index in attn_options::force_kernel_indices
+        kernel_slot_indices = getattr(metro, 'KERNEL_SLOT_INDICES', [])
+
         # FIXME: lookup all and then launch, in case any sub-kernel failed
         for nth, kdesc in enumerate(metro.list_kernels()):
+            # Determine kernel slot index for selective execution
+            if nth < len(kernel_slot_indices):
+                kernel_slot_index = kernel_slot_indices[nth]
+            else:
+                kernel_slot_index = -1  # Not mapped, selective execution disabled
+
             if isinstance(kdesc, ConditionalKernel):
                 self._add_iface_for_source(kdesc.if_kernel)
                 d = {
                     'condition'             : f'context.params->{kdesc.if_parameter} {kdesc.if_expr}',
                     'backend_context_name'  : kdesc.if_kernel.context_class_name,
                     'nth_kernel'            : nth,
+                    'kernel_slot_index'     : kernel_slot_index,
                 }
                 if kdesc.else_kernel is None:
                     snippet = self.METRO_SNIPPET_TEMPLATE.format_map(d)
@@ -149,6 +161,7 @@ class OperatorGenerator(InterfaceGenerator):
                     'condition'             : 'true',
                     'backend_context_name'  : kdesc.context_class_name,
                     'nth_kernel'            : nth,
+                    'kernel_slot_index'     : kernel_slot_index,
                 }
                 snippet = self.METRO_SNIPPET_TEMPLATE.format_map(d)
                 launch_snippet = self.METRO_LAUNCH_SNIPPET_TEMPLATE.format_map(d)
