@@ -8,7 +8,7 @@
 
 namespace AOTRITON_NS::v2 {
 
-struct AOTRITON_API CppTune {
+struct [[deprecated("V2 API is deprecated, use V3 API instead")]] AOTRITON_API CppTune {
 #if AOTRITON_BUILD_FOR_TUNING
   // TODO: Move them into a base class since they are common to all kernels
   bool peek_kernel_numbers = false;
@@ -23,7 +23,7 @@ struct AOTRITON_API CppTune {
 #endif
 };
 
-enum AOTRITON_API CppTuneSpecialKernelIndex : int {
+enum [[deprecated("V2 API is deprecated, use V3 API instead")]] AOTRITON_API CppTuneSpecialKernelIndex : int {
   kDefault = -1,
   kSkipGPUCall = -2,
 };
