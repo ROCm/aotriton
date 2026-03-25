@@ -5,8 +5,35 @@ if [ -z "$BASH_VERSION" ]; then
   exit 1
 fi
 
+# Parse options using getopt
+shim_only=false
+TEMP=$(getopt -o '' --long shim -n 'build-tune.sh' -- "$@")
+if [ $? != 0 ]; then
+  echo 'Usage: build-tune.sh [--shim] <target arch> [optional pre-compiled triton wheel]' >&2
+  exit 1
+fi
+
+eval set -- "$TEMP"
+
+while true; do
+  case "$1" in
+    --shim)
+      shim_only=true
+      shift
+      ;;
+    --)
+      shift
+      break
+      ;;
+    *)
+      echo "Internal error!" >&2
+      exit 1
+      ;;
+  esac
+done
+
 if [ "$#" -lt 1 ]; then
-  echo 'Missing arguments. Usage: build-tune.sh <target arch> [optional pre-compiled triton wheel]' >&2
+  echo 'Missing arguments. Usage: build-tune.sh [--shim] <target arch> [optional pre-compiled triton wheel]' >&2
   exit 1
 fi
 
@@ -17,7 +44,11 @@ target_arch="$1"
 shift
 
 # Prepare arguments for common_build
-build_args=("${target_arch}" "tune" "-DAOTRITON_BUILD_FOR_TUNING=ON")
+if [ "$shim_only" = true ]; then
+  build_args=("${target_arch}" "tune_shim_only" "-DAOTRITON_BUILD_FOR_TUNING=ON" "-DAOTRITON_NOIMAGE_MODE=ON")
+else
+  build_args=("${target_arch}" "tune" "-DAOTRITON_BUILD_FOR_TUNING=ON")
+fi
 
 # Add optional triton wheel argument if provided
 if [ "$#" -ge 1 ]; then
