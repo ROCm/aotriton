@@ -48,15 +48,7 @@ def lazy_delta(L):
 class SdpaCommon(SdpaReference):
     EXT_CLASS = attn_options
 
-    def create_extargs(self, *, force_kernel_index=None, peek_kernel_numbers=None):
-        ext = self.EXT_CLASS()
-        if force_kernel_index is not None:
-            ext.force_backend_index = force_kernel_index
-        if peek_kernel_numbers is not None:
-            ext.peek_kernel_numbers = peek_kernel_numbers
-        return ext
-
-    def create_extargs_copy(self, extargs, **kernel_slots):
+    def create_extargs(self, extargs, **kernel_slots):
         """Create a copy of extargs with selective kernel execution.
 
         Args:
@@ -214,7 +206,7 @@ class bwd_kernel_dk_dv(SdpaCommon):
         params.window_right = view.window_right
         params.varlen_type = 0
         # V3 API: force DQ kernel to be skipped for dk_dv kernel
-        extargs_copy = self.create_extargs_copy(extargs, bwd_kernel_dq=attn_options.KernelIndexValue.Skip)
+        extargs_copy = self.create_extargs(extargs, bwd_kernel_dq=attn_options.KernelIndexValue.Skip)
         err = fa_backward_op(params,
                              fa_backward_op_params.kVersion,
                              view.stream,
@@ -266,7 +258,7 @@ class bwd_kernel_dq(SdpaCommon):
         params.window_right = view.window_right
         params.varlen_type = 0
         # V3 API: force DK/DV kernel to be skipped for dq kernel
-        extargs_copy = self.create_extargs_copy(extargs, bwd_kernel_dk_dv=attn_options.KernelIndexValue.Skip)
+        extargs_copy = self.create_extargs(extargs, bwd_kernel_dk_dv=attn_options.KernelIndexValue.Skip)
         err = fa_backward_op(params,
                              fa_backward_op_params.kVersion,
                              view.stream,
