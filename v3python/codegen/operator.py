@@ -148,8 +148,9 @@ class OperatorGenerator(InterfaceGenerator):
                 else:
                     self._add_iface_for_source(kdesc.else_kernel)
                     # Use else_kernel's slot name (second in the list)
+                    d['kernel_slot_index'] = kernel_slot_index
                     d['else_context_name'] = kdesc.else_kernel.context_class_name
-                    d['else_kernel_slot_index'] = f'attn_options::KernelSlot::{slot_names[1]}'
+                    d['kernel_slot_index_else'] = f'attn_options::KernelSlot::{slot_names[1]}'
                     snippet = self.IFELSE_SNIPPET_TEMPLATE.format_map(d)
                     launch_snippet = self.IFELSE_LAUNCH_SNIPPET_TEMPLATE.format_map(d)
             else:

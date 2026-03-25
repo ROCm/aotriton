@@ -1,5 +1,5 @@
-  if (launch_condition[[nth_kernel]]_if) {
-    err = bcontext[[nth_kernel]]_if.launch(stream);
+  if (launch_condition[[nth_kernel]]) {
+    err = bcontext[[nth_kernel]].launch(stream);
     if (err != hipSuccess)
       return err;
   }

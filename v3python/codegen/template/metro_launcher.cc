@@ -1,8 +1,10 @@
-template<typename ContextClass>
-hipError_t context_lookup_helper(const attn_options* options,
+template<typename ContextClass, typename BackendContextClass>
+hipError_t context_lookup_helper(ContextClass& context,
+                                 const attn_options* options,
                                  bool& launch_condition,
-                                 ContextClass& bcontext,
-                                 int kernel_slot_index) {
+                                 BackendContextClass& bcontext,
+                                 int kernel_slot_index,
+                                 Gpu gpu) {
 #if AOTRITON_BUILD_FOR_TUNING
   using KCV = attn_options::KernelControlValue;
   int control_value = KCV::Auto;
@@ -12,12 +14,12 @@ hipError_t context_lookup_helper(const attn_options* options,
     if (control_value == KCV::SkipAndQueryKernelNumber) {
       launch_condition = false;
     } else if (control_value >= 0) {
-      bcontext.force_kernel_index = control_value;
+      bcontext._has_preferred_kernel = control_value;
     }
   }
 #endif
   bcontext.params = context.params;
-  err = bcontext.lookup_optimal(gpu);
+  auto err = bcontext.lookup_optimal(gpu);
   if (err != hipSuccess)
     return err;
 #if AOTRITON_BUILD_FOR_TUNING
@@ -26,6 +28,7 @@ hipError_t context_lookup_helper(const attn_options* options,
     options->kernel_fine_control[kernel_slot_index] = bcontext._total_number_of_kernels;
   }
 #endif
+  return hipSuccess;
 }
 
 hipError_t [[launcher_func_name]](const [[context_class_name]]& context,

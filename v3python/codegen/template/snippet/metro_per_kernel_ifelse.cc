@@ -1,23 +1,27 @@
   // TODO: Replace with std::variant
-  [[backend_context_name]] bcontext[[nth_kernel]]_if;
+  [[backend_context_name]] bcontext[[nth_kernel]];
   [[else_context_name]] bcontext[[nth_kernel]]_else;
   // It is possible to launch neither according to SkipAndQueryKernelNumber
-  bool launch_condition[[nth_kernel]]_if = condition[[nth_kernel]];
+  // hence we need launch_condition* variables.
+  bool condition[[nth_kernel]] = ([[condition]]);
+  bool launch_condition[[nth_kernel]] = condition[[nth_kernel]];
   bool launch_condition[[nth_kernel]]_else = !condition[[nth_kernel]];
   if (condition[[nth_kernel]]) {
-    bcontext[[nth_kernel]]_if.params = context.params;
-    err = context_lookup_helper(options,
-                                launch_condition[[nth_kernel]]_if,
-                                bcontext[[nth_kernel]]_if,
-                                [[kernel_slot_index_if]]);
+    err = context_lookup_helper(context,
+                                options,
+                                launch_condition[[nth_kernel]],
+                                bcontext[[nth_kernel]],
+                                [[kernel_slot_index]],
+                                gpu);
     if (err != hipSuccess)
       return err;
   } else {
-    bcontext[[nth_kernel]]_else.params = context.params;
-    err = context_lookup_helper(options,
+    err = context_lookup_helper(context,
+                                options,
                                 launch_condition[[nth_kernel]]_else,
                                 bcontext[[nth_kernel]]_else,
-                                [[kernel_slot_index_else]]);
+                                [[kernel_slot_index_else]],
+                                gpu);
     if (err != hipSuccess)
       return err;
   }
