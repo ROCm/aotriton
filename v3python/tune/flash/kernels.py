@@ -59,13 +59,13 @@ class SdpaCommon(SdpaReference):
         ext = self.EXT_CLASS()
         ext.force_backend_index = extargs.force_backend_index
         ext.peek_kernel_numbers = extargs.peek_kernel_numbers
-        # Copy force_kernel_indices array
-        for i in range(len(extargs.force_kernel_indices)):
-            ext.force_kernel_indices[i] = extargs.force_kernel_indices[i]
+        # Copy kernel_fine_control array
+        for i in range(len(extargs.kernel_fine_control)):
+            ext.kernel_fine_control[i] = extargs.kernel_fine_control[i]
         # Apply kernel slot overrides
         for slot_name, value in kernel_slots.items():
             slot_index = getattr(self.EXT_CLASS.KernelSlot, slot_name)
-            ext.force_kernel_indices[slot_index] = value
+            ext.kernel_fine_control[slot_index] = value
         return ext
 
     OUTPUT_TNAMES = None
@@ -206,7 +206,7 @@ class bwd_kernel_dk_dv(SdpaCommon):
         params.window_right = view.window_right
         params.varlen_type = 0
         # V3 API: force DQ kernel to be skipped for dk_dv kernel
-        extargs_copy = self.create_extargs(extargs, bwd_kernel_dq=attn_options.KernelIndexValue.Skip)
+        extargs_copy = self.create_extargs(extargs, bwd_kernel_dq=attn_options.KernelControlValue.SkipAndQueryKernelNumber)
         err = fa_backward_op(params,
                              fa_backward_op_params.kVersion,
                              view.stream,
@@ -258,7 +258,7 @@ class bwd_kernel_dq(SdpaCommon):
         params.window_right = view.window_right
         params.varlen_type = 0
         # V3 API: force DK/DV kernel to be skipped for dq kernel
-        extargs_copy = self.create_extargs(extargs, bwd_kernel_dk_dv=attn_options.KernelIndexValue.Skip)
+        extargs_copy = self.create_extargs(extargs, bwd_kernel_dk_dv=attn_options.KernelControlValue.SkipAndQueryKernelNumber)
         err = fa_backward_op(params,
                              fa_backward_op_params.kVersion,
                              view.stream,

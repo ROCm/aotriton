@@ -25,14 +25,14 @@ struct AOTRITON_API attn_options {
   bool deterministic = false;
 
 #if AOTRITON_BUILD_FOR_TUNING
-  // Special kernel index values for selective execution
-  struct KernelIndexValue {
-    static constexpr int Auto = -1;      // Use autotuned kernel (default)
-    static constexpr int Skip = -2;      // Skip this kernel (equivalent to kSkipGPUCall)
+  // Special kernel control values for selective execution and querying
+  struct KernelControlValue {
+    static constexpr int Auto = -1;                    // Use autotuned kernel (default)
+    static constexpr int SkipAndQueryKernelNumber = -2;  // Skip kernel and query total count (writes back to array)
     // Values >= 0 mean force specific kernel index
   };
 
-  // Kernel slot assignments in force_kernel_indices array
+  // Kernel slot assignments in kernel_fine_control array
   // Automatically generated from kernel NAMEs
   // See v3python/rules/flash/__init__.py for kernel definitions
   enum KernelSlot {
@@ -50,17 +50,18 @@ struct AOTRITON_API attn_options {
     MaxKernels = 7
   };
 
-  // Selective kernel execution within Metro backends
+  // Fine-grained kernel control within Metro backends
   // Use KernelSlot enum to index into this array
-  // Use KernelIndexValue constants for special values
-  std::array<int, KernelSlot::MaxKernels> force_kernel_indices = {
-    KernelIndexValue::Auto,  // attn_fwd
-    KernelIndexValue::Auto,  // debug_simulate_encoded_softmax
-    KernelIndexValue::Auto,  // bwd_preprocess
-    KernelIndexValue::Auto,  // bwd_preprocess_varlen
-    KernelIndexValue::Auto,  // bwd_kernel_dk_dv
-    KernelIndexValue::Auto,  // bwd_kernel_dq
-    KernelIndexValue::Auto   // bwd_kernel_fuse
+  // Use KernelControlValue constants for special values
+  // Mutable to support querying kernel numbers via QueryKernelNumber
+  mutable std::array<int, KernelSlot::MaxKernels> kernel_fine_control = {
+    KernelControlValue::Auto,  // attn_fwd
+    KernelControlValue::Auto,  // debug_simulate_encoded_softmax
+    KernelControlValue::Auto,  // bwd_preprocess
+    KernelControlValue::Auto,  // bwd_preprocess_varlen
+    KernelControlValue::Auto,  // bwd_kernel_dk_dv
+    KernelControlValue::Auto,  // bwd_kernel_dq
+    KernelControlValue::Auto   // bwd_kernel_fuse
   };
 #endif
 };
