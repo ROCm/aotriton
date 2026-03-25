@@ -46,6 +46,10 @@ public:
                                                           std::function<OnDiskKernelInfo()> lazy);
   void clear_device_kernel();
   void clear_decompressed_image();
+#if AOTRITON_BUILD_FOR_TUNING
+  // Will not work unless invoke is called at least once, i.e., If-and-only-iF decompressed
+  Essentials get_image_info_iff_decompressed() const;
+#endif
 private:
   std::atomic<bool> kernel_loaded_ = false;
 
