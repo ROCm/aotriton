@@ -142,7 +142,7 @@ namespace pyaotriton::v3 {
       .def_readonly("kernel_image", &aotriton::v3::KernelControl::kernel_image)
       .def_readonly("image_size", &aotriton::v3::KernelControl::image_size)
       .def_readonly_static("Default", &aotriton::v3::KernelControl::Default)
-      .def_readonly_static("Ignore", &aotriton::v3::KernelControl::Manual)
+      .def_readonly_static("Ignore", &aotriton::v3::KernelControl::Ignore)
       .def_readonly_static("Manual", &aotriton::v3::KernelControl::Manual)
       .def_readonly_static("Skip", &aotriton::v3::KernelControl::Skip)
       .def_readonly_static("Probe", &aotriton::v3::KernelControl::Probe)

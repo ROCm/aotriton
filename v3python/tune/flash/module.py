@@ -214,7 +214,7 @@ class Flash(TuningDescription):
                 'psels': safeload(args.selected_hsaco_psels),
                 'copts': safeload(args.selected_hsaco_copts),
             }
-            args.select_hsaco(probe=False)
+            args.update_hsaco(probe=False)
             def fn():
                 kernel.direct_call(direct_inputs, args)
             return impl_desc, do_bench(fn, quantiles=(0.5, 0.2, 0.8))

@@ -14,9 +14,9 @@ struct KernelControl {
   enum KernelControlBits {
     IgnoreBit = 0,
     ManualBit = 1,
-    SkipBit = 1,
-    ProbeBit = 2,
-    ExtractImageBit = 3
+    SkipBit = 2,
+    ProbeBit = 3,
+    ExtractImageBit = 4
   };
   static constexpr uint16_t Default = 0;
 #define AOTRITON_U16_FROM_BIT_ENUM(x) static constexpr uint16_t x = (1 << x ## Bit)
