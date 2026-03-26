@@ -1,0 +1,1 @@
+prepare_data dtype='float16';hdim=32;seqlen_q=256;seqlen_k=128;causal=False;dropout_p=0.5;bias_type=0 /dev/shm/aotriton-tuner/dtype=float16,hdim=32,seqlen_q=256,seqlen_k=128,causal=False,dropout_p=0.5,bias_type=0

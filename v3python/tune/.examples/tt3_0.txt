@@ -1,0 +1,4 @@
+module flash
+prepare_data dtype='float16';hdim=32;seqlen_q=256;seqlen_k=128;causal=False;dropout_p=0.0;bias_type=0 /dev/shm/tt3
+exit
+prepare_data dtype='float32';hdim=64;seqlen_q=64;seqlen_k=1024;causal=True;dropout_p=0.5;bias_type=1 /dev/shm/tt4
