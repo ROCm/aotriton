@@ -42,8 +42,8 @@ struct KernelControl {
 
   // Information bits (output, written by backend)
   mutable int32_t total_hsacos = -1;      // Total number of kernels (written if Probe is set)
-  mutable const char* kernel_psels = nullptr;  // Kernel psels string (written if Probe & Manual are set)
-  mutable const char* kernel_copts = nullptr;  // Kernel copts string (written if Probe & Manual are set)
+  mutable const char* kernel_psels = nullptr;  // Kernel psels string (written if Probe; for Manual kernel or autotuned kernel)
+  mutable const char* kernel_copts = nullptr;  // Kernel copts string (written if Probe; for Manual kernel or autotuned kernel)
   mutable const void* kernel_image = nullptr;  // Kernel binary image (written if Manual & ExtractImage are set)
   mutable size_t image_size = 0;          // Size of kernel binary (written if Manual & ExtractImage are set)
 };
