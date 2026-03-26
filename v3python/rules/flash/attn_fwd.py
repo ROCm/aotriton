@@ -84,14 +84,14 @@ class attn_fwd(FlashKernel):
         if CDNA:
             BLOCK_SIZES = [(32, 16), (128, 64), (64, 64), (64, 32), (128, 128)]
         elif RDNA:
-            BLOCK_SIZES = [(64, 32), (32, 32), (32, 16)]
+            BLOCK_SIZES = [(128,64), (64, 32), (32, 32), (32, 16)]
             if '*fp32' not in dtype:
                 BLOCK_SIZES += [(16, 16)]
             else:
                 # M //= 2 will effectively yield (16,32), (16,16)
                 pass
         WAVES_PER_EU = [1, 2, 3, 4]
-        NUM_WARPS = [2, 4]
+        NUM_WARPS = [2, 4, 8]
         PRE_LOAD_V = PRE_LOAD_OPTIONS
         NUM_STAGES = [1]
         for (M, N), waves, warps, stages, pre in itertools.product(BLOCK_SIZES,
