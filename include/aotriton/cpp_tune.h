@@ -12,12 +12,15 @@ namespace AOTRITON_NS::v3 {
 struct KernelControl {
   // Constants
   enum KernelControlBits {
-    ManualBit = 0,
+    IgnoreBit = 0,
+    ManualBit = 1,
     SkipBit = 1,
     ProbeBit = 2,
     ExtractImageBit = 3
   };
+  static constexpr uint16_t Default = 0;
 #define AOTRITON_U16_FROM_BIT_ENUM(x) static constexpr uint16_t x = (1 << x ## Bit)
+  AOTRITON_U16_FROM_BIT_ENUM(Ignore);
   AOTRITON_U16_FROM_BIT_ENUM(Manual);
   AOTRITON_U16_FROM_BIT_ENUM(Skip);
   AOTRITON_U16_FROM_BIT_ENUM(Probe);
@@ -26,9 +29,11 @@ struct KernelControl {
 
   // Control bits (input)
   uint16_t control_bits = 0;  // Flags controlling kernel behavior:
+                              // - Ignore: Completely skip lookup optimal kernel
+                              //           and consequently the execution
                               // - Manual: Use hsaco_index (otherwise hsaco_index is ignored)
-                              // - Skip: Completely skip lookup optimal kernel
-                              //         and consequently the execution
+                              // - Skip: Lookup optimal kernel but
+                              //         skip the execution
                               // - Probe: Query kernel metadata
                               // - ExtractImage: Extract kernel binary image.
                               //                 This flag will suppress kernel

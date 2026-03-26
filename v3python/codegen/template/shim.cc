@@ -40,10 +40,15 @@ hipError_t
         auto& kctl = call_options->kernel_fine_control[KERNEL_SLOT_INDEX];
         uint16_t ctrl = kctl.control_bits;
 
-        // Check Skip flag - skip execution if set
-        if (ctrl & KernelControl::Skip) {
+        // Check Ignore flag - skip lookup/execution if set
+        if (ctrl & KernelControl::Ignore) {
             launch_condition = false;
             return hipSuccess;
+        }
+
+        // Check Skip flag - lookup but skip execution
+        if (ctrl & KernelControl::Skip) {
+            launch_condition = false;
         }
 
         // Check Manual flag - use hsaco_index if set

@@ -22,23 +22,6 @@ namespace pyaotriton::v3 {
       using aotriton::v3::flash::attn_bwd_params;
       using aotriton::v3::flash::attn_options;
       void setup_module(py::module_& m) {
-#if AOTRITON_BUILD_FOR_TUNING
-        // Expose KernelControl struct
-        py::class_<aotriton::v3::KernelControl>(m, "KernelControl")
-          .def(py::init<>())
-          .def_readwrite("control_bits", &aotriton::v3::KernelControl::control_bits)
-          .def_readwrite("hsaco_index", &aotriton::v3::KernelControl::hsaco_index)
-          .def_readonly("total_hsacos", &aotriton::v3::KernelControl::total_hsacos)
-          .def_readonly("kernel_psels", &aotriton::v3::KernelControl::kernel_psels)
-          .def_readonly("kernel_copts", &aotriton::v3::KernelControl::kernel_copts)
-          .def_readonly("kernel_image", &aotriton::v3::KernelControl::kernel_image)
-          .def_readonly("image_size", &aotriton::v3::KernelControl::image_size)
-          .def_readonly_static("Manual", &aotriton::v3::KernelControl::Manual)
-          .def_readonly_static("Skip", &aotriton::v3::KernelControl::Skip)
-          .def_readonly_static("Probe", &aotriton::v3::KernelControl::Probe)
-          .def_readonly_static("ExtractImage", &aotriton::v3::KernelControl::ExtractImage)
-        ;
-#endif
         auto attn_options_class = py::class_<attn_options>(m, "attn_options")
           .def(py::init<>())
           .def_readwrite("force_backend_index", &attn_options::force_backend_index)
@@ -144,9 +127,30 @@ namespace pyaotriton::v3 {
               py::arg("options") = nullptr);
       }
   } // namespace pyaotriton::v3::flash
+
+  // pyaotriton::v3 -> pyaotriton.v3
   void setup_module(py::module_& m) {
-    // TODO: Optune
+#if AOTRITON_BUILD_FOR_TUNING
+    // Expose KernelControl struct
+    py::class_<aotriton::v3::KernelControl>(m, "KernelControl")
+      .def(py::init<>())
+      .def_readwrite("control_bits", &aotriton::v3::KernelControl::control_bits)
+      .def_readwrite("hsaco_index", &aotriton::v3::KernelControl::hsaco_index)
+      .def_readonly("total_hsacos", &aotriton::v3::KernelControl::total_hsacos)
+      .def_readonly("kernel_psels", &aotriton::v3::KernelControl::kernel_psels)
+      .def_readonly("kernel_copts", &aotriton::v3::KernelControl::kernel_copts)
+      .def_readonly("kernel_image", &aotriton::v3::KernelControl::kernel_image)
+      .def_readonly("image_size", &aotriton::v3::KernelControl::image_size)
+      .def_readonly_static("Default", &aotriton::v3::KernelControl::Default)
+      .def_readonly_static("Ignore", &aotriton::v3::KernelControl::Manual)
+      .def_readonly_static("Manual", &aotriton::v3::KernelControl::Manual)
+      .def_readonly_static("Skip", &aotriton::v3::KernelControl::Skip)
+      .def_readonly_static("Probe", &aotriton::v3::KernelControl::Probe)
+      .def_readonly_static("ExtractImage", &aotriton::v3::KernelControl::ExtractImage)
+      ;
+#endif
     py::module_ mod_flash = m.def_submodule("flash", "Flash Attention Operators");
     flash::setup_module(mod_flash);
   }
+
 } // namespace pyaotriton::v3

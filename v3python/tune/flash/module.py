@@ -114,19 +114,19 @@ class Flash(TuningDescription):
         from ..gpu_utils import device_ctx, default_device_string
         with device_ctx():
             kernel = self.get_kernel(which_kernel)
-            args = kernel.create_extargs(peek_kernel_numbers=True)
+            args = kernel.create_extargs(hsaco_index=None, probe=True)
             d = torch.load(pt, map_location=default_device_string(), mmap=True)
             inputs = from_dict(data_class=kernel.PT_INPUT_CLASS, data=d["bidi_inputs"], config=dacite_tuple)
             # print(f'{type(inputs)=}')
             _ = kernel(im, inputs, args)
-            total_number_of_kernels = int(args.total_number_of_kernels)
+            total_number_of_kernels = int(args.selected_kernel_total_hsacos)
             def gen():
                 for hi in range(total_number_of_kernels):
-                    args.force_kernel_index = hi
+                    args.set_hsaco(hsaco=hi, probe=True)
                     _ = kernel(im, inputs, args)
                     d = {
-                        'psels': safeload(args.selected_kernel_psels),
-                        'copts': safeload(args.selected_kernel_copts),
+                        'psels': safeload(args.selected_hsaco_psels),
+                        'copts': safeload(args.selected_hsaco_copts),
                     }
                     yield d
             return list(gen())
@@ -188,7 +188,7 @@ class Flash(TuningDescription):
         from ..gpu_utils import device_ctx, default_device_string
         with device_ctx():
             kernel = self.get_kernel(which_kernel.kernel_name)
-            args = kernel.create_extargs(force_kernel_index=which_kernel.hsaco_index)
+            args = kernel.create_extargs(hsaco_index=which_kernel.hsaco_index)
             d = torch.load(pt, map_location=default_device_string(), mmap=True)
             inputs = from_dict(data_class=kernel.PT_INPUT_CLASS, data=d["bidi_inputs"], config=dacite_tuple)
             direct_inputs = kernel.prepare_directs(im, inputs)
@@ -207,14 +207,14 @@ class Flash(TuningDescription):
             kernel = self.get_kernel(which_kernel.kernel_name)
             d = torch.load(pt, map_location=default_device_string(), mmap=True)
             inputs = from_dict(data_class=kernel.PT_INPUT_CLASS, data=d["bidi_inputs"], config=dacite_tuple)
-            args = kernel.create_extargs(force_kernel_index=which_kernel.hsaco_index)
+            args = kernel.create_extargs(hsaco_index=which_kernel.hsaco_index, probe=True)
             direct_inputs = kernel.prepare_directs(im, inputs)
             kernel.direct_call(direct_inputs, args)
             impl_desc = {
-                'psels': safeload(args.selected_kernel_psels),
-                'copts': safeload(args.selected_kernel_copts),
+                'psels': safeload(args.selected_hsaco_psels),
+                'copts': safeload(args.selected_hsaco_copts),
             }
-            args.peek_kernel_numbers = False
+            args.select_hsaco(probe=False)
             def fn():
                 kernel.direct_call(direct_inputs, args)
             return impl_desc, do_bench(fn, quantiles=(0.5, 0.2, 0.8))

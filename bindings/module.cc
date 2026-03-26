@@ -252,6 +252,7 @@ namespace pyaotriton {
       .def_property_readonly("dtype", &aotriton::TensorView<Rank>::dtype);
   }
 
+  // aotriton -> pyaotriton
   void setup_module(py::module_& m) {
     m.doc() = "AOTriton Python binding";
     def_stream(m);

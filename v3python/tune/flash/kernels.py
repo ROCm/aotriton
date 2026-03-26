@@ -4,17 +4,16 @@
 from dataclasses import dataclass, astuple
 from argparse import Namespace
 from ..kftdesc import KernelForTuneDescription as KFTDesc
-from .flash import (
+from .module import (
     FlashEntry,
     FlashInputMetadata,
-    FlashKernelSelector,
 )
 from .reference import (
     SdpaReference,
     SdpaBidiInputs,
     SdpaGoldenOutputs,
 )
-from pyaotriton.v2 import CppTuneSpecialKernelIndex
+from pyaotriton.v3 import KernelControl
 from pyaotriton.v3.flash import (
     attn_fwd as fa_forward_op,
     attn_fwd_params as fa_forward_op_params,
@@ -45,30 +44,85 @@ def lazy_delta(L):
     L_view = T2(L.data_ptr(), tuple(L.size()), L.stride(), cast_dtype(L.dtype))
     return lazy_tensor.delta(L_view, L.device.index)
 
+class AttnOptionsWrapper:
+    C_CLASS = attn_options
+
+    def __init__(self, backend: int, slot: int):
+        self._c = self.C_CLASS()
+        self._backend = backend
+        self._c.force_backend_index = self._backend
+        self._slot = slot
+        self.ignore_all_kernels()
+
+    @property
+    def c_object(self):
+        return self._c
+
+    '''
+    |            | peek=True                     | peek=False           |
+    | ---------- | ----------------------------- | -------------------- |
+    | hsaco=int  | Run hsaco, return psel/copt   | Run selected hsaco   |
+    | hsaco=None | Return total number of hsacos | Run auto tune kernel |
+    '''
+    def set_hsaco(self, hsaco: int|None = None, probe: bool = False):
+        c = self._c
+        slot = self._slot
+        ctrl = KernelControl.Default
+        if hsaco is not None:
+            ctrl = ctrl | KernelControl.Manual
+            c.kernel_fine_control[slot].hsaco_index = hsaco
+        if probe:
+            ctrl = ctrl | KernelControl.Probe
+        c.kernel_fine_control[slot].control_bits = ctrl
+
+    '''
+    Unlike set_hsaco, None means "don't change"
+    '''
+    def update_hsaco(self, hsaco: int|None = None, probe: bool|None = None):
+        c = self._c
+        slot = self._slot
+        kfc = c.kernel_fine_control[slot]
+        current_hsaco = kfc.hsaco_index
+        current_probe = kfc.control_bits & KernelControl.Probe
+        update_hsaco = current_hsaco if hsaco is None else hsaco
+        update_probe = current_probe if probe is None else probe
+        self.set_hsaco(update_hsaco, update_probe)
+
+    def ignore_all_kernels(self):
+        c = self._c
+        for slot in range(c.KernelSlot.MaxKernels):
+            c.kernel_fine_control[slot].control_bits = KernelControl.Ignore
+
+    @property
+    def selected_kernel_total_hsacos(self):
+        return self._c.kernel_fine_control[self._slot].total_hsacos
+
+    @property
+    def selected_hsaco_psels(self):
+        return self._c.kernel_fine_control[self._slot].kernel_psels
+
+    @property
+    def selected_hsaco_copts(self):
+        return self._c.kernel_fine_control[self._slot].kernel_copts
+
+'''
+Common code for All SDPA kernels
+
+PRE-CONDITION
+    * KernelDescription.NAME == attn_options.KernelSlot.<name> == class_name(SdpaCommon)
+'''
 class SdpaCommon(SdpaReference):
-    EXT_CLASS = attn_options
+    EXT_CLASS = AttnOptionsWrapper
+    BACKEND_INDEX = None  # Must define in subclass
 
-    def create_extargs(self, extargs=None, *, force_kernel_index=None, peek_kernel_numbers=None, **kernel_slots):
-        """Create or copy attn_options for V3 API.
-
-        Args:
-            extargs: Optional source attn_options to copy from. If None, creates new instance.
-            force_kernel_index: Legacy V2 API parameter (ignored in V3)
-            peek_kernel_numbers: Legacy V2 API parameter (ignored in V3)
-            **kernel_slots: Keyword arguments like bwd_kernel_dq=-2 to control specific kernels
-                           Uses attn_options.KernelSlot enum names (snake_case kernel NAMEs)
-        """
-        ext = self.EXT_CLASS()
-        if extargs is not None:
-            ext.force_backend_index = extargs.force_backend_index
-            # Copy kernel_fine_control array
-            for i in range(len(extargs.kernel_fine_control)):
-                ext.kernel_fine_control[i] = extargs.kernel_fine_control[i]
-        # Apply kernel slot overrides
-        for slot_name, value in kernel_slots.items():
-            slot_index = getattr(self.EXT_CLASS.KernelSlot, slot_name)
-            ext.kernel_fine_control[slot_index] = value
+    def create_extargs(self, *, hsaco_index=None, probe=False):
+        ext = self.EXT_CLASS(self.BACKEND_INDEX, self.KERNEL_SLOT)
+        ext.set_hsaco(hsaco=hsaco_index, probe=probe)
         return ext
+
+    @property
+    def KERNEL_SLOT(self):
+        return getattr(self.EXT_CLASS.C_CLASS, self.__class__.__name__)
 
     OUTPUT_TNAMES = None
 
@@ -79,7 +133,8 @@ class SdpaCommon(SdpaReference):
         return d
 
 class attn_fwd(SdpaCommon):
-    EXT_CLASS = attn_options
+    EXT_CLASS = AttnOptionsWrapper
+    BACKEND_INDEX = 0
 
     def prepare_directs(self, im: FlashInputMetadata, inputs: SdpaBidiInputs):
         view = Namespace()
@@ -138,13 +193,14 @@ class attn_fwd(SdpaCommon):
         err = fa_forward_op(params,
                             fa_forward_op_params.kVersion,
                             view.stream,
-                            extargs)
+                            extargs.c_object)
         return (devm.out, devm.logsumexp)
 
     OUTPUT_TNAMES = ["out"]
 
 class bwd_kernel_dk_dv(SdpaCommon):
-    EXT_CLASS = attn_options
+    EXT_CLASS = AttnOptionsWrapper
+    BACKEND_INDEX = 0
 
     def prepare_directs(self, im: FlashInputMetadata, inputs: SdpaBidiInputs):
         view = Namespace()
@@ -207,12 +263,10 @@ class bwd_kernel_dk_dv(SdpaCommon):
         params.window_left = view.window_left
         params.window_right = view.window_right
         params.varlen_type = 0
-        # V3 API: force DQ kernel to be skipped for dk_dv kernel
-        extargs_copy = self.create_extargs(extargs, bwd_kernel_dq=attn_options.KernelControlValue.SkipAndQueryKernelNumber)
         err = fa_backward_op(params,
                              fa_backward_op_params.kVersion,
                              view.stream,
-                             extargs_copy)
+                             extargs.c_object)
         return err
 
     def direct_call(self, direct_inputs, extargs):
@@ -224,7 +278,8 @@ class bwd_kernel_dk_dv(SdpaCommon):
     OUTPUT_TNAMES = ["dk", "dv"]
 
 class bwd_kernel_dq(SdpaCommon):
-    EXT_CLASS = attn_options
+    EXT_CLASS = AttnOptionsWrapper
+    BACKEND_INDEX = 0
 
     prepare_directs = bwd_kernel_dk_dv.prepare_directs
 
@@ -259,18 +314,17 @@ class bwd_kernel_dq(SdpaCommon):
         params.window_left = view.window_left
         params.window_right = view.window_right
         params.varlen_type = 0
-        # V3 API: force DK/DV kernel to be skipped for dq kernel
-        extargs_copy = self.create_extargs(extargs, bwd_kernel_dk_dv=attn_options.KernelControlValue.SkipAndQueryKernelNumber)
         err = fa_backward_op(params,
                              fa_backward_op_params.kVersion,
                              view.stream,
-                             extargs_copy)
+                             extargs.c_object)
         return (devm.dq, devm.db)
 
     OUTPUT_TNAMES = ["dq", "db"]
 
 class bwd_kernel_fuse(SdpaCommon):
-    EXT_CLASS = attn_options
+    EXT_CLASS = AttnOptionsWrapper
+    BACKEND_INDEX = 1
 
     def prepare_directs(self, im: FlashInputMetadata, inputs: SdpaBidiInputs):
         view = Namespace()
@@ -339,7 +393,7 @@ class bwd_kernel_fuse(SdpaCommon):
         err = fa_backward_op(params,
                              fa_backward_op_params.kVersion,
                              view.stream,
-                             extargs)
+                             extargs.c_object)
         return (devm.dk, devm.dv, devm.dq, devm.db)
 
     OUTPUT_TNAMES = ["dk", "dv", "dq", "db"]
