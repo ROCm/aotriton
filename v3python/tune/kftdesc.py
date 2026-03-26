@@ -8,11 +8,19 @@ class KernelForTuneDescription(ABC):
     '''
     PT_* can be class variable when subclassing
     '''
+
+    '''
+    (data)class to supply input/output tensors/parameters
+    Some kernel's output tensor may become input tensor of other kernels.
+    '''
     @property
     @abstractmethod
     def PT_INPUT_CLASS(self):
         pass
 
+    '''
+    Class to generate reference outputs
+    '''
     @property
     @abstractmethod
     def PT_REF_CLASS(self):
@@ -25,6 +33,10 @@ class KernelForTuneDescription(ABC):
     def create_extargs(self, *, force_kernel_index=None, peek_kernel_numbers=None):
         pass
 
+    '''
+    Pre-condition: called with device_ctx()
+    Post-condition: a custom object that contains tensors/parameters is returned
+    '''
     @abstractmethod
     def generate_inputs(self, entry):
         pass
@@ -34,6 +46,9 @@ class KernelForTuneDescription(ABC):
         direct_inputs = self.prepare_directs(im, inputs)
         return self.direct_call(direct_inputs, extargs)
 
+    '''
+    Pre-condition:
+    '''
     @abstractmethod
     def prepare_directs(self, im, inputs):
         pass

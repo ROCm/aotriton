@@ -44,6 +44,11 @@ def lazy_delta(L):
     L_view = T2(L.data_ptr(), tuple(L.size()), L.stride(), cast_dtype(L.dtype))
     return lazy_tensor.delta(L_view, L.device.index)
 
+def eager_delta(L):
+    from pyaotriton import lazy_tensor
+    L_view = T2(L.data_ptr(), tuple(L.size()), L.stride(), cast_dtype(L.dtype))
+    return lazy_tensor.eager_delta(L_view)
+
 class AttnOptionsWrapper:
     C_CLASS = attn_options
 
@@ -214,8 +219,8 @@ class bwd_kernel_dk_dv(SdpaCommon):
         view.dout, devm.dout = mk_aotensor(inputs.dout)
         # bwd uses LSE as it is
         view.logsumexp, devm.logsumexp = mk_aotensor(inputs.logsumexp)
-        # V3 API: delta is a lazy tensor
-        view.delta = lazy_delta(devm.logsumexp)
+        # V3 API: delta is an eager lazy tensor (no allocation overhead)
+        view.delta = eager_delta(devm.logsumexp)
         # V3 API: dq_acc is a lazy tensor
         view.dq, devm.dq = create_aotensor_like(inputs.q)
         view.dq_acc = lazy_dq_acc(devm.dq)
@@ -338,8 +343,9 @@ class bwd_kernel_fuse(SdpaCommon):
         view.dout, devm.dout = mk_aotensor(inputs.dout)
         # bwd uses LSE as it is
         view.logsumexp, devm.logsumexp = mk_aotensor(inputs.logsumexp)
-        # V3 API: delta is a lazy tensor
-        view.delta = lazy_delta(devm.logsumexp)
+        # V3 API: delta is an eager lazy tensor (no allocation overhead)
+        view.delta, devm.delta = mk_aotensor(inputs.delta)
+        view.delta = eager_delta(view.delta)
         # V3 API: dq_acc is a lazy tensor
         view.dq, devm.dq = create_aotensor_like(inputs.q)
         view.dq_acc = lazy_dq_acc(devm.dq)

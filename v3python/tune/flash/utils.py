@@ -43,3 +43,5 @@ def sdpa_logsumexp(query, key, value, attn_mask=None,
     # attn_weight = torch.dropout(attn_weight, dropout_p, train=True)
     # return attn_weight @ value
 
+def sdpa_odo(out, dout):
+    return torch.sum(out * dout, dim=-1)

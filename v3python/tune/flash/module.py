@@ -138,6 +138,9 @@ class Flash(TuningDescription):
             yield from self._do_gen_ref(entry, data_root)
 
     def _do_gen_ref(self, entry: FlashEntry, data_root: Path):
+        '''
+        Pre-condition: called with device_ctx()
+        '''
         im = FlashInputMetadata(**asdict(entry))
         # TODO: cut BH sizes to fit in VRAM
         yield self._write_ref(im, data_root, '00_benchmark')
@@ -166,6 +169,9 @@ class Flash(TuningDescription):
                    im: FlashInputMetadata,
                    root: Path,
                    tname: str):
+        '''
+        Pre-condition: called with device_ctx()
+        '''
         import torch
         # print(f'{tname=} {im=}')
         from .reference import SdpaReference

@@ -54,6 +54,19 @@ class TuningDescription(ABC):
     def _do_probe_backends(self, entry, im, which_kernel: str, root: Path) -> list[dict]:
         pass
 
+    '''
+    Inputs:
+        entry: an object to describe an entry in tuning database.
+        root: the root path to store tensors of testing cases (PLURAL).
+    Outputs:
+        tname: testing case name, ideally should be consistent with the .pt file name
+        input_metadata: the entry object, with extra/translated arguments that's necessary to launch the kernel.
+            e.g. batch/nheads will be filled to a reasonable number.
+        pt: the actual .pt tensor path.
+    Note:
+        input_metadata may still contain fields to be translated for kernel use, e.g., .sm_scale = 'l1'.
+        The .pt file must only contain arguments for kernel use directly.
+    '''
     @abstractmethod
     def _gen_ref(self, entry, root: Path):  # Gen [tname: str, input_metadata, pt: Path]
         pass

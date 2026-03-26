@@ -228,9 +228,12 @@ struct LazyTensor {
   // Note for user: Remeber put necessary information to dispose this tensor to
   //                "cookie" object in acquire.
   void  (*dispose)(void* cookie) = nullptr;
+  // When eager is set (non-null base pointer), it contains an externally managed
+  // TensorView that should be used directly instead of calling acquire()
+  TensorView<Rank> eager;
 
   operator bool() const {
-    return cookie != nullptr || acquire != nullptr || dispose != nullptr;
+    return eager || cookie != nullptr || acquire != nullptr || dispose != nullptr;
   }
 
   // FIXME: This design is prone to memory leaks.

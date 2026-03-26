@@ -82,6 +82,17 @@ lazy_tensor_creator(const aotriton::TensorView<kRank>& like_tensor, int device_i
   };
 }
 
+template<int kRank>
+static auto
+eager_lazy_tensor_creator(const aotriton::TensorView<kRank>& tensor_view) {
+  return aotriton::LazyTensor<kRank> {
+    .cookie = nullptr,
+    .acquire = nullptr,
+    .dispose = nullptr,
+    .eager = tensor_view
+  };
+}
+
 } // namespace pyaotriton::lazy_tensor
 
 #endif
