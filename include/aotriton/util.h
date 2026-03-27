@@ -224,10 +224,10 @@ extern template class TensorView<4>;
 template<int Rank>
 struct LazyTensor {
   void* cookie = nullptr;
-  TensorView<Rank> (*acquire)(void* cookie) = nullptr;
+  TensorView<Rank> (*acquire)(LazyTensor<Rank>* self) = nullptr;
   // Note for user: Remeber put necessary information to dispose this tensor to
   //                "cookie" object in acquire.
-  void  (*dispose)(void* cookie) = nullptr;
+  void  (*dispose)(LazyTensor<Rank>* self) = nullptr;
   // When eager is set (non-null base pointer), it contains an externally managed
   // TensorView that should be used directly instead of calling acquire()
   TensorView<Rank> eager;
@@ -238,8 +238,8 @@ struct LazyTensor {
 
   // FIXME: This design is prone to memory leaks.
   void free() {
-    if (dispose && cookie) {
-      (*dispose)(cookie);
+    if (!eager && dispose && cookie) {
+      (*dispose)(this);
       cookie = nullptr;
     }
   }

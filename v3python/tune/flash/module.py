@@ -213,6 +213,7 @@ class Flash(TuningDescription):
             kernel = self.get_kernel(which_kernel.kernel_name)
             d = torch.load(pt, map_location=default_device_string(), mmap=True)
             inputs = from_dict(data_class=kernel.PT_INPUT_CLASS, data=d["bidi_inputs"], config=dacite_tuple)
+            print(f"{inputs.delta.data_ptr()=}")
             args = kernel.create_extargs(hsaco_index=which_kernel.hsaco_index, probe=True)
             direct_inputs = kernel.prepare_directs(im, inputs)
             kernel.direct_call(direct_inputs, args)
