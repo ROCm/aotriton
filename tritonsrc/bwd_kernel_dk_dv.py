@@ -20,6 +20,7 @@ import triton.language as tl
 from bwd_inner_dk_dv import bwd_inner_dk_dv
 from dropout import PHILOX_RN_PER_OFFSET
 from fwd_kernel_inner import _lse_offset
+from fwd_kernel import remap_xcd
 from masked_load_store import (
     load_fn,
     mstore2d,
@@ -81,6 +82,7 @@ def bwd_kernel_dk_dv(
     ENABLE_DROPOUT: tl.constexpr,
     PADDED_HEAD: tl.constexpr,
     BIAS_TYPE: tl.constexpr,
+    NUM_XCDS: tl.constexpr,
 ):
     tl.static_assert(BLOCK_DMODEL > 0, 'BLOCK_DMODEL must be greater than 0')
     BLOCK_DMODEL_R0 : tl.constexpr = BLOCK_DMODEL
@@ -102,8 +104,12 @@ def bwd_kernel_dk_dv(
     if ENABLE_DROPOUT:
         philox_seed = tl.load(philox_seed_ptr)
         philox_offset_base += tl.load(philox_offset1)
-    start_k = tl.program_id(0) * BLOCK_N  # start_k partitions seqlen_k
-    off_h_k = tl.program_id(1) # head index
+    if NUM_XCDS > 1:
+        off_h_k = remap_xcd(tl.program_id(0), num_head_k, NUM_XCDS=NUM_XCDS) # head index
+        start_k = tl.program_id(1) * BLOCK_N  # start_k partitions seqlen_k
+    else:
+        start_k = tl.program_id(0) * BLOCK_N  # start_k partitions seqlen_k
+        off_h_k = tl.program_id(1)
     off_z = tl.program_id(2) # batch index, for varlen it indicates index in cu_seqlens_q/k
     num_z = tl.num_programs(2)
     offs_m = tl.arange(0, BLOCK_M)

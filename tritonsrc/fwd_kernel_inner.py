@@ -26,7 +26,7 @@ else:
     from triton.language import int1 as constexpr_or_bool
 
 
-# 
+#
 # Return offset of LSE tensor
 # Regular: (B*H, S)
 # Varlen: (H, TotalS)
@@ -80,12 +80,17 @@ def _attn_fwd_inner(
         PADDED_HEAD: tl.constexpr,
         INT8_GEMM: tl.constexpr,
         INT8_KV: tl.constexpr,
-        USE_P_SCALE: tl.constexpr):
+        USE_P_SCALE: tl.constexpr,
+        ):
+    # For MASK_STEPS, disable pipelining with num_stages=1
+    # To Enable pipelining, must use BLOCK_M': 256, 'BLOCK_N': 64, num_stages=4, num_warps=8
+    NUM_STAGES: tl.constexpr = 1 if MASK_STEPS else None
+
     # loop over k, v, and update accumulator
     # To overcome the challenge that we cannot loop over disjoint ranges in Triton like:
     #   for i in range(s0, e0) + range(s1, e1):
     #       pass
-    for block_index in range(nblocks_1+nblocks_2):
+    for block_index in tl.range(nblocks_1+nblocks_2, num_stages=NUM_STAGES):
         # Seccond Range is invalid (constexpr "None" defined in Full block path)
         if Block_range_2 is None:
             start_n = block_index + Block_range_1

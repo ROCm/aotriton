@@ -15,7 +15,6 @@ from ._common import (
 from .attn_fwd import attn_fwd
 from .op_attn_bwd import OpAttnBwd
 from .aiter_fwd import aiter_fmha_v3_fwd
-from v3python.gpu_targets import AOTRITON_ARCH_PRODUCTION_LINE
 from v3python.utils import log
 
 class aiter_fmha_v3_bwd(aiter_fmha_v3_fwd):

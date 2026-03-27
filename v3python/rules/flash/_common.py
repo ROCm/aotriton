@@ -50,6 +50,10 @@ class FlashKernel(KernelDescription):
     LUT_FULL_SEQLEN_K = [16,32,64,128,256,512,1024,2048,4096,8192]
     LUT_FULL_SEQLEN_NAVI = [16,32,64,128,256,512,1024]
 
+    PROGRAMMATIC_PERFS = {
+        "NUM_XCDS": lambda f: 8 if f.arch in ['gfx942', 'gfx950'] else 1
+    }
+
     def is_functional_disabled(self, functional):
         if not hasattr(self, 'gen_autotune_configs'):  # only check acutal FA kernels
             return False

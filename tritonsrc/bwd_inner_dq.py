@@ -62,6 +62,9 @@ def bwd_inner_dq(
     PADDED_HEAD: tl.constexpr,
     BIAS_TYPE: tl.constexpr,
 ):
+    # To Enable pipelining, must use 'BLOCK_M': 256, 'BLOCK_N': 64, num_stages=4, num_warps=8
+    NUM_STAGES: tl.constexpr = None if FULL_BLOCKS else 1
+
     # initialize offsets
     offs_q = start_q + tl.arange(0, BLOCK_M)
     offs_k = tl.arange(0, BLOCK_N)
@@ -82,7 +85,7 @@ def bwd_inner_dq(
     dV: (seqlen_k, hdim)
     '''
     # for start_k in range(lo, hi, BLOCK_N):
-    for block_index in range(nblocks_1+nblocks_2):
+    for block_index in range(nblocks_1+nblocks_2, num_stages=NUM_STAGES):
         # Seccond Range is invalid (constexpr "None" defined in Full block path)
         if Block_range_2 is None:
             start_ki = block_index + Block_range_1

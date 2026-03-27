@@ -31,15 +31,10 @@ dim3 AttnFwdContext::grid_calculator() const {
     //
     // Note: This fallback behavior is determined by GPU kernel at runtime.
     if (this->PERSISTENT_TYPE == 0 || unsupported_by_persistent) {
-      dim3 grid {
-        nblocks,
-        uint32_t(params->Q->size(1)),
-        uint32_t(params->Batch),
-      };
-#if AOTRITON_VERBOSE
-      std::cerr << "Grid conf " << grid.x << " " << grid.y << " " << grid.z << std::endl;
-#endif
-      return grid;
+      auto S = nblocks;
+      auto H = uint32_t(params->Q->size(1));
+      auto B = uint32_t(params->Batch);
+      return NUM_XCDS > 1 ? dim3 { H, S, B } : dim3 { S, H, B };
     }
     // PERSISTENT or PERSISTENT_DYNAMIC
     // grid = lambda META: (min(NUM_CU * META['GRID_CU_MULTIP'],

@@ -49,6 +49,37 @@ def cdiv_fn(x, y):
     return (x + y - 1) // y
 
 @triton.jit
+def remap_xcd(pid, GRID_MN, NUM_XCDS: tl.constexpr = 8):
+    if NUM_XCDS == 1:
+        return pid
+    ## pid remapping on xcds
+    # Number of pids per XCD in the new arrangement
+    pids_per_xcd = (GRID_MN + NUM_XCDS - 1) // NUM_XCDS
+    # When GRID_MN cannot divide NUM_XCDS, some xcds will have
+    # pids_per_xcd pids, the other will have pids_per_xcd - 1 pids.
+    # We calculate the number of xcds that have pids_per_xcd pids as
+    # tall_xcds
+    tall_xcds = GRID_MN % NUM_XCDS
+    tall_xcds = NUM_XCDS if tall_xcds == 0 else tall_xcds
+    # Compute current XCD and local pid within the XCD
+    xcd = pid % NUM_XCDS
+    local_pid = pid // NUM_XCDS
+    # Calculate new pid based on the new grouping
+    # Note that we need to consider the following two cases:
+    # 1. the current pid is on a tall xcd
+    # 2. the current pid is on a short xcd
+    if xcd < tall_xcds:
+        pid = xcd * pids_per_xcd + local_pid
+    else:
+        pid = (
+            tall_xcds * pids_per_xcd
+            + (xcd - tall_xcds) * (pids_per_xcd - 1)
+            + local_pid
+        )
+
+    return pid
+
+@triton.jit
 def attn_fwd(
         # Basic SDPA
         Q, K, V, B, A, Sm_scale : constexpr_or_f32, L, Out,
@@ -107,7 +138,32 @@ def attn_fwd(
         BLOCK_M: tl.constexpr,
         BLOCK_N: tl.constexpr,
         PRE_LOAD_V: tl.constexpr,
+        NUM_XCDS: tl.constexpr,
         ):
+    # Stride assumptions for compiler optimization
+    tl.assume(stride_qz >= 0)
+    tl.assume(stride_qh >= 0)
+    tl.assume(stride_qm >= 0)
+    tl.assume(stride_qk == 1)
+    tl.assume(stride_kz >= 0)
+    tl.assume(stride_kh >= 0)
+    tl.assume(stride_kn >= 0)
+    tl.assume(stride_kk == 1)
+    tl.assume(stride_vz >= 0)
+    tl.assume(stride_vh >= 0)
+    tl.assume(stride_vk >= 0)
+    tl.assume(stride_vn == 1)
+    tl.assume(stride_oz >= 0)
+    tl.assume(stride_oh >= 0)
+    tl.assume(stride_om >= 0)
+    tl.assume(stride_on == 1)
+    tl.assume(stride_bz >= 0)
+    tl.assume(stride_bh >= 0)
+    tl.assume(stride_bm >= 0)
+    tl.assume(stride_bn >= 0)
+    tl.assume(stride_az >= 0)
+    tl.assume(stride_ah >= 0)
+
     # TODO: Put this decomposition into a @triton.jit function when tuple support is more complete
     tl.static_assert(BLOCK_DMODEL > 0, 'BLOCK_DMODEL must be greater than 0')
     BLOCK_DMODEL_R0 : tl.constexpr = BLOCK_DMODEL
@@ -176,11 +232,15 @@ def attn_fwd(
             off_h_q = tile_id % num_tiles_per_sample // num_tiles_per_head  # at which head are we inside the sample
             start_m = tile_id % num_tiles_per_sample % num_tiles_per_head  # at which tile are we inside the head
         else:
-            start_m = tl.program_id(0)
-            off_h_q = tl.program_id(1)
+            if NUM_XCDS > 1:
+                off_h_q = remap_xcd(tl.program_id(0), Num_head_q, NUM_XCDS=NUM_XCDS)
+                start_m = tl.program_id(1)
+            else:
+                start_m = tl.program_id(0)
+                off_h_q = tl.program_id(1)
             off_z = tl.program_id(2)
-        start_M = start_m * BLOCK_M
 
+        start_M = start_m * BLOCK_M
         offs_m = start_M + tl.arange(0, BLOCK_M)
         offs_n = tl.arange(0, BLOCK_N)
 
