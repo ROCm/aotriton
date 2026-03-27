@@ -26,6 +26,9 @@ dim3 BwdKernelFuseContext::grid_calculator() const {
 
 namespace AOTRITON_NS::v2::flash {
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+
 using BwdKernelFuseParams = AOTRITON_NS::v3::flash::OpAttnBwdParams;
 using BwdKernelFuseContext = AOTRITON_NS::v3::flash::BwdKernelFuseContext;
 using BwdKernelFuseMetadata = AOTRITON_NS::v3::flash::BwdKernelFuseMetadata;
@@ -212,5 +215,7 @@ attn_bwd_fused(T4 q,
                           extargs);
     return ret;
 }
+
+#pragma GCC diagnostic pop
 
 }

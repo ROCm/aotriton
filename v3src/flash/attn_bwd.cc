@@ -163,6 +163,9 @@ attn_bwd(const attn_bwd_params& in,
 
 namespace AOTRITON_NS::v2::flash {
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+
 using BwdPreprocessParams = AOTRITON_NS::v3::flash::OpAttnBwdParams;
 using BwdPreprocessVarlenParams = AOTRITON_NS::v3::flash::OpAttnBwdParams;
 using BwdKernelDkDvParams = AOTRITON_NS::v3::flash::OpAttnBwdParams;
@@ -718,5 +721,7 @@ attn_bwd_compact_varlen(T4 q,            // 1 x num_heads x total_q x hdim_qk, t
                           stream,
                           extargs);
 }
+
+#pragma GCC diagnostic pop
 
 }

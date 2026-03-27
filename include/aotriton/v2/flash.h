@@ -8,6 +8,9 @@
 
 namespace AOTRITON_NS::v2::flash {
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+
 [[deprecated("V2 API is deprecated, use V3 API instead")]]
 hipError_t AOTRITON_API
 check_gpu(AOTRITON_NS::Stream stream);
@@ -156,6 +159,8 @@ debug_simulate_encoded_softmax(T4 r,  // batch_size x num_heads x max_seqlen_q x
                                T0 philox_offset1,
                                uint64_t philox_offset2,
                                AOTRITON_NS::Stream stream);
+
+#pragma GCC diagnostic pop
 
 } // AOTRITON_NS::v2::flash
 
