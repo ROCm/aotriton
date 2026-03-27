@@ -220,7 +220,8 @@ class bwd_kernel_dk_dv(SdpaCommon):
         # bwd uses LSE as it is
         view.logsumexp, devm.logsumexp = mk_aotensor(inputs.logsumexp)
         # V3 API: delta is an eager lazy tensor (no allocation overhead)
-        view.delta = eager_delta(devm.logsumexp)
+        view.delta, devm.delta = mk_aotensor(inputs.delta)
+        view.delta = eager_delta(devm.delta)
         # V3 API: dq_acc is a lazy tensor
         view.dq, devm.dq = create_aotensor_like(inputs.q)
         view.dq_acc = lazy_dq_acc(devm.dq)
@@ -345,7 +346,7 @@ class bwd_kernel_fuse(SdpaCommon):
         view.logsumexp, devm.logsumexp = mk_aotensor(inputs.logsumexp)
         # V3 API: delta is an eager lazy tensor (no allocation overhead)
         view.delta, devm.delta = mk_aotensor(inputs.delta)
-        view.delta = eager_delta(view.delta)
+        view.delta = eager_delta(devm.delta)
         # V3 API: dq_acc is a lazy tensor
         view.dq, devm.dq = create_aotensor_like(inputs.q)
         view.dq_acc = lazy_dq_acc(devm.dq)

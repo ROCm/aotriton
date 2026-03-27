@@ -101,6 +101,14 @@ class TuningDescription(ABC):
         else:
             return entry
 
+    '''
+    Output:
+        entry: ENTRY_CLASS, describes an entry in tuning table
+        impl_desc: json { .psels, .copts }
+        adiffs: (tft, adiff, ref_error) from gpu_utils.target_fudge_factor()
+        times: float[3], from do_bench(fn, quantiles=(0.5, 0.2, 0.8))
+        bim: INPUT_METADATA, "benchmark_input_metadata"
+    '''
     def benchmark(self, root: Path, which_kernel: 'KernelSelector'):
         entry, tests = self.get_entry(root, and_tests=True)
         def gen():

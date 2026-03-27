@@ -172,6 +172,7 @@ class SdpaReference(KFTDesc):
                                 out=out,
                                 logsumexp=L,
                                 dout=dout,
+                                delta=delta,
                                 b=b,
                                 dropout_p=dropout_p,
                                 seed=philox_seed,
@@ -251,7 +252,9 @@ class SdpaReference(KFTDesc):
                                    scale=inputs.sm_scale,
                                    is_causal=is_causal,
                                    enable_gqa=enable_gqa)
-        inputs.delta = sdpa_odo(hpout.to(torch.float32), inputs.dout.to(torch.float32))
+        # print(f"{logsumexp.shape=}")
+        delta = sdpa_odo(hpout.to(torch.float32), inputs.dout.to(torch.float32))
+        inputs.delta = delta.reshape(delta.shape[0] * delta.shape[1], delta.shape[2])
         inputs.out = hpout.to(inputs.q.dtype)
         inputs.logsumexp = logsumexp.to(torch.float32)
         out.backward(inputs.dout)
