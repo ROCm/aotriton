@@ -28,5 +28,6 @@ namespace pyaotriton::lazy_tensor {
     m.def("dq_acc", &lazy_tensor_creator<4, true>);
     m.def("delta", &lazy_tensor_creator<2, false>);
     m.def("eager_delta", &eager_lazy_tensor_creator<2>);
+    m.def("eager_null_dq_acc", &eager_lazy_tensor_creator<4>);
   }
 }

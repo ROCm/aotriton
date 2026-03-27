@@ -236,9 +236,9 @@ struct LazyTensor {
     return eager || cookie != nullptr || acquire != nullptr || dispose != nullptr;
   }
 
-  // FIXME: This design is prone to memory leaks.
+  // FIXME: This design is prone to memory leaks and double-free
   void free() {
-    if (!eager && dispose && cookie) {
+    if (dispose && cookie) {
       (*dispose)(this);
       cookie = nullptr;
     }

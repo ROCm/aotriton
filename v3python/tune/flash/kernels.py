@@ -34,15 +34,11 @@ from pyaotriton import T2, T4
 
 NAN = float("nan")
 
-def lazy_dq_acc(dq):
+# Triton kernel does not use dq_acc tensor so it is safe to create an empty one
+def eager_null_dq_acc(dq):
     from pyaotriton import lazy_tensor
-    dq_view = T4(dq.data_ptr(), tuple(dq.size()), dq.stride(), cast_dtype(dq.dtype))
-    return lazy_tensor.dq_acc(dq_view, dq.device.index)
-
-def lazy_delta(L):
-    from pyaotriton import lazy_tensor
-    L_view = T2(L.data_ptr(), tuple(L.size()), L.stride(), cast_dtype(L.dtype))
-    return lazy_tensor.delta(L_view, L.device.index)
+    dq_view = T4(0, tuple(dq.size()), dq.stride(), cast_dtype(dq.dtype))
+    return lazy_tensor.eager_null_dq_acc(dq_view)
 
 def eager_delta(L):
     from pyaotriton import lazy_tensor
@@ -224,7 +220,7 @@ class bwd_kernel_dk_dv(SdpaCommon):
         view.delta = eager_delta(devm.delta)
         # V3 API: dq_acc is a lazy tensor
         view.dq, devm.dq = create_aotensor_like(inputs.q)
-        view.dq_acc = lazy_dq_acc(devm.dq)
+        view.dq_acc = eager_null_dq_acc(devm.dq)
         view.dk, devm.dk = create_aotensor_like(inputs.k)
         view.dv, devm.dv = create_aotensor_like(inputs.v)
         view.db, devm.db = create_aotensor_like(inputs.b, if_none_then_like=inputs.q)
@@ -349,7 +345,7 @@ class bwd_kernel_fuse(SdpaCommon):
         view.delta = eager_delta(devm.delta)
         # V3 API: dq_acc is a lazy tensor
         view.dq, devm.dq = create_aotensor_like(inputs.q)
-        view.dq_acc = lazy_dq_acc(devm.dq)
+        view.dq_acc = eager_null_dq_acc(devm.dq)
         view.dk, devm.dk = create_aotensor_like(inputs.k)
         view.dv, devm.dv = create_aotensor_like(inputs.v)
         view.db, devm.db = create_aotensor_like(inputs.b, if_none_then_like=inputs.q)
