@@ -35,6 +35,16 @@ int64_t [[context_class_name]]::godel_number() const
 
 hipError_t
 [[context_class_name]]::lookup_optimal(Gpu gpu) {
+    // Note:
+    // context object must be called in this order
+    //  ctor -> lookup_optimal -> launch
+    // Here launch_condition is re-used as initial value from ctor, which is
+    // the condition set by metro kernel to completely disable a specific
+    // kernel (e.g. debug_simulate_encoded_softmax).
+    // Hence, launch_condition must be checked at the beginning of
+    // lookup_optimal() as well.
+    if (!launch_condition)
+      return hipSuccess;
 #if AOTRITON_BUILD_FOR_TUNING && [[shared_iface]]
     if (call_options) {
         auto& kctl = call_options->kernel_fine_control[KERNEL_SLOT_INDEX];
