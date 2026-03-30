@@ -60,9 +60,9 @@ class AttnOptionsWrapper:
         return self._c
 
     '''
-    |            | peek=True                     | peek=False           |
+    |            | probe=True                    | probe=False          |
     | ---------- | ----------------------------- | -------------------- |
-    | hsaco=int  | Run hsaco, return psel/copt   | Run selected hsaco   |
+    | hsaco=int  | Skip hsaco, return psel/copt  | Run selected hsaco   |
     | hsaco=None | Return total number of hsacos | Run auto tune kernel |
     '''
     def set_hsaco(self, hsaco: int|None = None, probe: bool = False):
@@ -73,7 +73,7 @@ class AttnOptionsWrapper:
             ctrl = ctrl | KernelControl.Manual
             c.kernel_fine_control[slot].hsaco_index = hsaco
         if probe:
-            ctrl = ctrl | KernelControl.Probe
+            ctrl = ctrl | KernelControl.Query | KernelControl.Skip
         c.kernel_fine_control[slot].control_bits = ctrl
 
     '''
@@ -84,7 +84,7 @@ class AttnOptionsWrapper:
         slot = self._slot
         kfc = c.kernel_fine_control[slot]
         current_hsaco = kfc.hsaco_index
-        current_probe = kfc.control_bits & KernelControl.Probe
+        current_probe = kfc.control_bits & KernelControl.Query
         update_hsaco = current_hsaco if hsaco is None else hsaco
         update_probe = current_probe if probe is None else probe
         self.set_hsaco(update_hsaco, update_probe)

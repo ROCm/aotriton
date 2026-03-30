@@ -89,8 +89,8 @@ hipError_t
         auto& kctl = call_options->kernel_fine_control[KERNEL_SLOT_INDEX];
         uint16_t ctrl = kctl.control_bits;
 
-        // Write total_hsacos if Probe is set
-        if (ctrl & KernelControl::Probe) {
+        // Write total_hsacos if Query is set
+        if (ctrl & KernelControl::Query) {
             kctl.total_hsacos = _total_number_of_kernels;
             if (ctrl & KernelControl::Manual) {
                 kctl.kernel_psels = _preferred_kernel_psels;

@@ -16,7 +16,7 @@ struct KernelControl {
     IgnoreBit = 0,
     ManualBit = 1,
     SkipBit = 2,
-    ProbeBit = 3,
+    QueryBit = 3,
     ExtractImageBit = 4
   };
   static constexpr uint16_t Default = 0;
@@ -24,7 +24,7 @@ struct KernelControl {
   AOTRITON_U16_FROM_BIT_ENUM(Ignore);
   AOTRITON_U16_FROM_BIT_ENUM(Manual);
   AOTRITON_U16_FROM_BIT_ENUM(Skip);
-  AOTRITON_U16_FROM_BIT_ENUM(Probe);
+  AOTRITON_U16_FROM_BIT_ENUM(Query);
   AOTRITON_U16_FROM_BIT_ENUM(ExtractImage);
 #undef AOTRITON_U16_FROM_BIT_ENUM
 
@@ -35,16 +35,16 @@ struct KernelControl {
                               // - Manual: Use hsaco_index (otherwise hsaco_index is ignored)
                               // - Skip: Lookup optimal kernel but
                               //         skip the execution
-                              // - Probe: Query kernel metadata
+                              // - Query: Query kernel metadata (does not control skip)
                               // - ExtractImage: Extract kernel binary image.
                               //                 This flag will suppress kernel
                               //                 launching.
   uint16_t hsaco_index = 0;   // Kernel index to use (only if Manual is set in control_bits)
 
   // Information bits (output, written by backend)
-  mutable int32_t total_hsacos = -1;      // Total number of kernels (written if Probe is set)
-  mutable const char* kernel_psels = nullptr;  // Kernel psels string (written if Probe; for Manual kernel or autotuned kernel)
-  mutable const char* kernel_copts = nullptr;  // Kernel copts string (written if Probe; for Manual kernel or autotuned kernel)
+  mutable int32_t total_hsacos = -1;      // Total number of kernels (written if Query is set)
+  mutable const char* kernel_psels = nullptr;  // Kernel psels string (written if Query; for Manual kernel or autotuned kernel)
+  mutable const char* kernel_copts = nullptr;  // Kernel copts string (written if Query; for Manual kernel or autotuned kernel)
   mutable const void* kernel_image = nullptr;  // Kernel binary image (written if Manual & ExtractImage are set)
   mutable size_t image_size = 0;          // Size of kernel binary (written if Manual & ExtractImage are set)
 };

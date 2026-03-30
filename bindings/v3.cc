@@ -145,7 +145,7 @@ namespace pyaotriton::v3 {
       .def_readonly_static("Ignore", &aotriton::v3::KernelControl::Ignore)
       .def_readonly_static("Manual", &aotriton::v3::KernelControl::Manual)
       .def_readonly_static("Skip", &aotriton::v3::KernelControl::Skip)
-      .def_readonly_static("Probe", &aotriton::v3::KernelControl::Probe)
+      .def_readonly_static("Query", &aotriton::v3::KernelControl::Query)
       .def_readonly_static("ExtractImage", &aotriton::v3::KernelControl::ExtractImage)
       ;
 #endif
