@@ -35,8 +35,7 @@ class SlimAffineKernelDescription(Interface):
 
     def iter_kernel_slot_names(self):
         """SlimAffine kernels (AITER ASM) don't support selective execution."""
-        return
-        yield  # Empty generator
+        yield from ()
 
     def co_gen(self, build_dir: Path, build_for_target_arch: dict[str, list[str]]):
         target_arch = {}

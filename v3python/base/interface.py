@@ -168,8 +168,7 @@ class Interface(ABC):
         For kernels that don't support selective execution (e.g., AITER ASM),
         return an empty generator.
         """
-        return
-        yield  # Make this an empty generator
+        yield from ()
 
     def _collect_functionals_from_shared(self):
         mklass = self.SHARED_IFACE

@@ -106,12 +106,11 @@ class AttnOptionsWrapper:
     def selected_hsaco_copts(self):
         return self._c.kernel_fine_control[self._slot].kernel_copts
 
-'''
-Common code for All SDPA kernels
 
-PRE-CONDITION
-    * KernelDescription.NAME == attn_options.KernelSlot.<name> == class_name(SdpaCommon)
-'''
+# Common code for All SDPA kernels
+#
+# PRE-CONDITION
+#     * KernelDescription.NAME == attn_options.KernelSlot.<name> == class_name(SdpaCommon)
 class SdpaCommon(SdpaReference):
     EXT_CLASS = AttnOptionsWrapper
     BACKEND_INDEX = None  # Must define in subclass

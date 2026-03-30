@@ -5,6 +5,7 @@
 #define AOTRITON_V3_API_CPP_TUNE_H
 
 #include <aotriton/config.h>
+#include <cstddef>
 #include <stdint.h>
 
 namespace AOTRITON_NS::v3 {
