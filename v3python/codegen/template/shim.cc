@@ -6,7 +6,7 @@
 #include <aotriton/util.h>
 #include <tuple>
 #include <iostream>
-#ifdef AOTRITON_BUILD_FOR_TUNING
+#if AOTRITON_BUILD_FOR_TUNING
 #include <aotriton/cpp_tune.h>
 #endif
 [[includes]]

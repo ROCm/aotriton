@@ -88,7 +88,7 @@ class SdpaReference(KFTDesc):
     PT_INPUT_CLASS = SdpaBidiInputs
     PT_REF_CLASS = SdpaGoldenOutputs
 
-    def create_extargs(self, *, force_kernel_index=None, peek_kernel_numbers=None):
+    def create_extargs(self, *, hsaco_index=None, probe=False):
         return None
 
     def generate_inputs(self, im: 'FlashInputMetadata'):

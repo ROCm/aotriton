@@ -51,24 +51,24 @@ class TuningDescription(ABC):
         return self._do_probe_backends(entry, im, which_kernel, pt)
 
     @abstractmethod
-    def _do_probe_backends(self, entry, im, which_kernel: str, root: Path) -> list[dict]:
+    def _do_probe_backends(self, entry, im, which_kernel: str, pt: Path) -> list[dict]:
         pass
 
-    '''
-    Inputs:
-        entry: an object to describe an entry in tuning database.
-        root: the root path to store tensors of testing cases (PLURAL).
-    Outputs:
-        tname: testing case name, ideally should be consistent with the .pt file name
-        input_metadata: the entry object, with extra/translated arguments that's necessary to launch the kernel.
-            e.g. batch/nheads will be filled to a reasonable number.
-        pt: the actual .pt tensor path.
-    Note:
-        input_metadata may still contain fields to be translated for kernel use, e.g., .sm_scale = 'l1'.
-        The .pt file must only contain arguments for kernel use directly.
-    '''
     @abstractmethod
     def _gen_ref(self, entry, root: Path):  # Gen [tname: str, input_metadata, pt: Path]
+        """
+        Inputs:
+            entry: an object to describe an entry in tuning database.
+            root: the root path to store tensors of testing cases (PLURAL).
+        Outputs:
+            tname: testing case name, ideally should be consistent with the .pt file name
+            input_metadata: the entry object, with extra/translated arguments that's necessary to launch the kernel.
+                e.g. batch/nheads will be filled to a reasonable number.
+            pt: the actual .pt tensor path.
+        Note:
+            input_metadata may still contain fields to be translated for kernel use, e.g., .sm_scale = 'l1'.
+            The .pt file must only contain arguments for kernel use directly.
+        """
         pass
 
     def prepare_data(self, entry, root: Path):
@@ -101,15 +101,15 @@ class TuningDescription(ABC):
         else:
             return entry
 
-    '''
-    Output:
-        entry: ENTRY_CLASS, describes an entry in tuning table
-        impl_desc: json { .psels, .copts }
-        adiffs: (tft, adiff, ref_error) from gpu_utils.target_fudge_factor()
-        times: float[3], from do_bench(fn, quantiles=(0.5, 0.2, 0.8))
-        bim: INPUT_METADATA, "benchmark_input_metadata"
-    '''
     def benchmark(self, root: Path, which_kernel: 'KernelSelector'):
+        """
+        Output:
+            entry: ENTRY_CLASS, describes an entry in tuning table
+            impl_desc: json { .psels, .copts }
+            adiffs: (tft, adiff, ref_error) from gpu_utils.target_fudge_factor()
+            times: float[3], from do_bench(fn, quantiles=(0.5, 0.2, 0.8))
+            bim: INPUT_METADATA, "benchmark_input_metadata"
+        """
         entry, tests = self.get_entry(root, and_tests=True)
         def gen():
             for t in tests:
