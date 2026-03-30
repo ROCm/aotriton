@@ -129,39 +129,27 @@ class OperatorGenerator(InterfaceGenerator):
 
         # FIXME: lookup all and then launch, in case any sub-kernel failed
         for nth, kdesc in enumerate(metro.list_kernels()):
-            # Get kernel slot name(s) directly from this kdesc
-            slot_names = list(kdesc.iter_kernel_slot_names())
-
             if isinstance(kdesc, ConditionalKernel):
                 self._add_iface_for_source(kdesc.if_kernel)
-                # Use if_kernel's slot name (first in the list)
-                kernel_slot_index = f'attn_options::KernelSlot::{slot_names[0]}'
                 d = {
                     'condition'             : f'context.params->{kdesc.if_parameter} {kdesc.if_expr}',
                     'backend_context_name'  : kdesc.if_kernel.context_class_name,
                     'nth_kernel'            : nth,
-                    'kernel_slot_index'     : kernel_slot_index,
                 }
                 if kdesc.else_kernel is None:
                     snippet = self.METRO_SNIPPET_TEMPLATE.format_map(d)
                     launch_snippet = self.METRO_LAUNCH_SNIPPET_TEMPLATE.format_map(d)
                 else:
                     self._add_iface_for_source(kdesc.else_kernel)
-                    # Use else_kernel's slot name (second in the list)
-                    d['kernel_slot_index'] = kernel_slot_index
                     d['else_context_name'] = kdesc.else_kernel.context_class_name
-                    d['kernel_slot_index_else'] = f'attn_options::KernelSlot::{slot_names[1]}'
                     snippet = self.IFELSE_SNIPPET_TEMPLATE.format_map(d)
                     launch_snippet = self.IFELSE_LAUNCH_SNIPPET_TEMPLATE.format_map(d)
             else:
                 self._add_iface_for_source(kdesc)
-                # Regular kernel has one slot name
-                kernel_slot_index = f'attn_options::KernelSlot::{slot_names[0]}'
                 d = {
                     'condition'             : 'true',
                     'backend_context_name'  : kdesc.context_class_name,
                     'nth_kernel'            : nth,
-                    'kernel_slot_index'     : kernel_slot_index,
                 }
                 snippet = self.METRO_SNIPPET_TEMPLATE.format_map(d)
                 launch_snippet = self.METRO_LAUNCH_SNIPPET_TEMPLATE.format_map(d)
