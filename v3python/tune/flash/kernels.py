@@ -91,7 +91,7 @@ class AttnOptionsWrapper:
 
     def ignore_all_kernels(self):
         c = self._c
-        for slot in range(c.KernelSlot.MaxKernels):
+        for slot in range(int(c.KernelSlot.MaxKernels)):
             c.kernel_fine_control[slot].control_bits = KernelControl.Ignore
 
     @property
@@ -123,7 +123,7 @@ class SdpaCommon(SdpaReference):
 
     @property
     def KERNEL_SLOT(self):
-        return getattr(self.EXT_CLASS.C_CLASS, self.__class__.__name__)
+        return int(getattr(self.EXT_CLASS.C_CLASS, self.__class__.__name__))
 
     OUTPUT_TNAMES = None
 

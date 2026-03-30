@@ -58,7 +58,7 @@ class ConditionalKernel(Interface):
             yield from self._else_kenrel.iter_kernel_slot_names()
 
     def translate_dataframe(self, f : Functional, df : 'pandas.DataFrame'):
-        raise RuntimeError(f'translate_dataframe should not be calle over any ConditionalKernel {self.NAME=}')
+        raise RuntimeError(f'translate_dataframe should not be called over any ConditionalKernel {self.NAME=}')
 
     def translate_empty_dataframe(self, f : Functional):
-        raise RuntimeError(f'translate_empty_dataframe should not be calle over any ConditionalKernel {self.NAME=}')
+        raise RuntimeError(f'translate_empty_dataframe should not be called over any ConditionalKernel {self.NAME=}')

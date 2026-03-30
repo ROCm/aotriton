@@ -225,7 +225,7 @@ template<int Rank>
 struct LazyTensor {
   void* cookie = nullptr;
   TensorView<Rank> (*acquire)(LazyTensor<Rank>* self) = nullptr;
-  // Note for user: Remeber put necessary information to dispose this tensor to
+  // Note for user: Remember put necessary information to dispose this tensor to
   //                "cookie" object in acquire.
   void  (*dispose)(LazyTensor<Rank>* self) = nullptr;
   // When eager is set (non-null base pointer), it contains an externally managed

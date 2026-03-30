@@ -111,7 +111,7 @@ Some TP (tp2) is not settled but it is okay. ConditionalValue can only be settle
 
 ### Settle ConditionalValue
 
-Let's demostrate with a more complicated scenario:
+Let's demonstrate with a more complicated scenario:
 
 ``` python
 TYPE_CHOICES = {

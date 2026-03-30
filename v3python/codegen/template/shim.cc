@@ -116,12 +116,14 @@ hipError_t
                                         stream);
     if (ret != hipSuccess)
          return ret;
-    auto& kctl = call_options->kernel_fine_control[KERNEL_SLOT_INDEX];
-    uint16_t ctrl = kctl.control_bits;
-    if (ctrl & KernelControl::Manual && ctrl & KernelControl::ExtractImage) {
-        auto essentials = kernel_on_device->get_image_info_iff_decompressed();
-        kctl.kernel_image = essentials.image;
-        kctl.image_size = essentials.size;
+    if (call_options) {
+        auto& kctl = call_options->kernel_fine_control[KERNEL_SLOT_INDEX];
+        uint16_t ctrl = kctl.control_bits;
+        if (ctrl & KernelControl::Manual && ctrl & KernelControl::ExtractImage) {
+            auto essentials = kernel_on_device->get_image_info_iff_decompressed();
+            kctl.kernel_image = essentials.image;
+            kctl.image_size = essentials.size;
+        }
     }
     return ret;
 #else
