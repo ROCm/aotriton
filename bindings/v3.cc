@@ -139,8 +139,25 @@ namespace pyaotriton::v3 {
       .def_readonly("total_hsacos", &aotriton::v3::KernelControl::total_hsacos)
       .def_readonly("kernel_psels", &aotriton::v3::KernelControl::kernel_psels)
       .def_readonly("kernel_copts", &aotriton::v3::KernelControl::kernel_copts)
+      // Note: kernel_image is a raw pointer, typically exposed to Python as an integer
+      // address. Its lifetime is tied to the underlying AOTRITON objects. Prefer using
+      // get_kernel_image() to obtain a safe copy of the image as bytes.
       .def_readonly("kernel_image", &aotriton::v3::KernelControl::kernel_image)
       .def_readonly("image_size", &aotriton::v3::KernelControl::image_size)
+      .def("get_kernel_image",
+           [](const aotriton::v3::KernelControl &self) {
+             if (self.kernel_image == nullptr || self.image_size == 0) {
+               return py::bytes();
+             }
+             return py::bytes(
+                 static_cast<const char *>(self.kernel_image),
+                 static_cast<std::size_t>(self.image_size));
+           },
+           R"(Return a copy of the kernel image as a Python bytes object.
+
+This function copies `image_size` bytes from the underlying kernel_image buffer
+into a new Python-owned bytes object. The returned data remains valid even if
+the original KernelControl instance or its backing resources are destroyed.)")
       .def_readonly_static("Default", &aotriton::v3::KernelControl::Default)
       .def_readonly_static("Ignore", &aotriton::v3::KernelControl::Ignore)
       .def_readonly_static("Manual", &aotriton::v3::KernelControl::Manual)
