@@ -84,7 +84,7 @@ class AttnOptionsWrapper:
         slot = self._slot
         kfc = c.kernel_fine_control[slot]
         current_hsaco = kfc.hsaco_index
-        current_probe = kfc.control_bits & KernelControl.Query
+        current_probe = bool(kfc.control_bits & KernelControl.Query)
         update_hsaco = current_hsaco if hsaco is None else hsaco
         update_probe = current_probe if probe is None else probe
         self.set_hsaco(update_hsaco, update_probe)
