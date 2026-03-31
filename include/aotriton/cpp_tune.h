@@ -13,7 +13,7 @@
 
 namespace AOTRITON_NS::v3 {
 
-struct KernelControl {
+struct AOTRITON_API KernelControl {
   // Constants
   enum KernelControlBits {
     IgnoreBit = 0,
@@ -52,7 +52,7 @@ struct KernelControl {
   mutable size_t image_size = 0;          // Size of kernel binary (written if Manual & ExtractImage are set)
 };
 
-class KernelFineControl {
+class AOTRITON_API KernelFineControl {
 private:
   mutable std::vector<std::shared_ptr<KernelControl>> controls_;
   void ensure_initialized(size_t index) const;
