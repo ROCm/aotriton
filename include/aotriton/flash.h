@@ -44,10 +44,9 @@ struct AOTRITON_API attn_options {
   };
 
   // Fine-grained kernel control within Metro backends
-  // Use KernelSlot enum to index into this array
-  // Use KernelControl bit constants for special values
-  // Mutable to support querying kernel numbers via QueryKernelNumber
-  mutable std::array<KernelControl, KernelSlot::MaxKernels> kernel_fine_control;
+  // Use KernelSlot enum to index into this array-like container
+  // Returns shared_ptr<KernelControl> for reference semantics in Python
+  mutable KernelFineControl kernel_fine_control{KernelSlot::MaxKernels};
 #endif
 };
 

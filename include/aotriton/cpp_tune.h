@@ -7,6 +7,9 @@
 #include <aotriton/config.h>
 #include <cstddef>
 #include <stdint.h>
+#include <memory>
+#include <vector>
+#include <stdexcept>
 
 namespace AOTRITON_NS::v3 {
 
@@ -47,6 +50,23 @@ struct KernelControl {
   mutable const char* kernel_copts = nullptr;  // Kernel copts string (written if Query; for Manual kernel or autotuned kernel)
   mutable const void* kernel_image = nullptr;  // Kernel binary image (written if Manual & ExtractImage are set)
   mutable size_t image_size = 0;          // Size of kernel binary (written if Manual & ExtractImage are set)
+};
+
+class KernelFineControl {
+private:
+  mutable std::vector<std::shared_ptr<KernelControl>> controls_;
+  void ensure_initialized(size_t index) const;
+
+public:
+  explicit KernelFineControl(size_t size);
+
+  // C++ access - returns nullptr for OOB (segfaults on dereference)
+  std::shared_ptr<KernelControl> operator[](size_t index) const;
+
+  // Python access - throws exception for OOB
+  std::shared_ptr<KernelControl> at(size_t index) const;
+
+  size_t size() const;
 };
 
 }

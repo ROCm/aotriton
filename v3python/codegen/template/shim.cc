@@ -47,7 +47,7 @@ hipError_t
       return hipSuccess;
 #if AOTRITON_BUILD_FOR_TUNING && [[shared_iface]]
     if (call_options) {
-        auto& kctl = call_options->kernel_fine_control[KERNEL_SLOT_INDEX];
+        auto& kctl = *call_options->kernel_fine_control[KERNEL_SLOT_INDEX];
         uint16_t ctrl = kctl.control_bits;
 
         // Check Ignore flag - skip lookup/execution if set
@@ -86,7 +86,7 @@ hipError_t
 
 #if AOTRITON_BUILD_FOR_TUNING && [[shared_iface]]
     if (call_options) {
-        auto& kctl = call_options->kernel_fine_control[KERNEL_SLOT_INDEX];
+        auto& kctl = *call_options->kernel_fine_control[KERNEL_SLOT_INDEX];
         uint16_t ctrl = kctl.control_bits;
 
         // Write total_hsacos if Query is set
@@ -127,7 +127,7 @@ hipError_t
     if (ret != hipSuccess)
          return ret;
     if (call_options) {
-        auto& kctl = call_options->kernel_fine_control[KERNEL_SLOT_INDEX];
+        auto& kctl = *call_options->kernel_fine_control[KERNEL_SLOT_INDEX];
         uint16_t ctrl = kctl.control_bits;
         if (ctrl & KernelControl::Manual && ctrl & KernelControl::ExtractImage) {
             auto essentials = kernel_on_device->get_image_info_iff_decompressed();

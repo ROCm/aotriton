@@ -131,8 +131,8 @@ namespace pyaotriton::v3 {
   // pyaotriton::v3 -> pyaotriton.v3
   void setup_module(py::module_& m) {
 #if AOTRITON_BUILD_FOR_TUNING
-    // Expose KernelControl struct
-    py::class_<aotriton::v3::KernelControl>(m, "KernelControl")
+    // Expose KernelControl struct with shared_ptr holder for reference semantics
+    py::class_<aotriton::v3::KernelControl, std::shared_ptr<aotriton::v3::KernelControl>>(m, "KernelControl")
       .def(py::init<>())
       .def_readwrite("control_bits", &aotriton::v3::KernelControl::control_bits)
       .def_readwrite("hsaco_index", &aotriton::v3::KernelControl::hsaco_index)
@@ -147,6 +147,12 @@ namespace pyaotriton::v3 {
       .def_readonly_static("Skip", &aotriton::v3::KernelControl::Skip)
       .def_readonly_static("Query", &aotriton::v3::KernelControl::Query)
       .def_readonly_static("ExtractImage", &aotriton::v3::KernelControl::ExtractImage)
+      ;
+
+    // Expose KernelFineControl with array-like interface
+    py::class_<aotriton::v3::KernelFineControl>(m, "KernelFineControl")
+      .def("__getitem__", &aotriton::v3::KernelFineControl::at)
+      .def("__len__", &aotriton::v3::KernelFineControl::size)
       ;
 #endif
     py::module_ mod_flash = m.def_submodule("flash", "Flash Attention Operators");
