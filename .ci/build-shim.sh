@@ -6,7 +6,8 @@ if [ -z "$BASH_VERSION" ]; then
 fi
 
 if [ "$#" -ne 1 ]; then
-  echo 'Missing arguments. Usage: build-test.sh <target arch>' >&2
+  echo 'Missing arguments. Usage: build-shim.sh <target arch>' >&2
+  echo '<target arch> can be semicolon separated list of arches.'
   exit 1
 fi
 

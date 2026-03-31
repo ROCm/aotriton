@@ -35,23 +35,17 @@ dim3 BwdPreprocessVarlenContext::grid_calculator() const {
 }
 
 dim3 BwdKernelDkDvContext::grid_calculator() const {
-  dim3 grid {
-    AOTRITON_NS::cdiv<uint32_t>(params->max_seqlen_k, this->BLOCK_N),
-    uint32_t(params->K->size(1)),
-    params->num_seqlens == 0 ? uint32_t(params->Q->size(0)) : std::abs(params->num_seqlens),
-  };
-  // std::cerr << "bwd_kernel_dk_dv grid conf " << grid.x << " " << grid.y << " " << grid.z << std::endl;
-  return grid;
+  auto S = AOTRITON_NS::cdiv<uint32_t>(params->max_seqlen_k, this->BLOCK_N);
+  auto H = uint32_t(params->K->size(1));
+  auto B = params->num_seqlens == 0 ? uint32_t(params->Q->size(0)) : std::abs(params->num_seqlens);
+  return NUM_XCDS > 1 ? dim3 { H, S, B } : dim3 { S, H, B };
 }
 
 dim3 BwdKernelDqContext::grid_calculator() const {
-  dim3 grid {
-    AOTRITON_NS::cdiv<uint32_t>(params->max_seqlen_q, this->BLOCK_M),
-    uint32_t(params->Q->size(1)),
-    params->num_seqlens == 0 ? uint32_t(params->Q->size(0)) : std::abs(params->num_seqlens),
-  };
-  // std::cerr << "bwd_kernel_dq grid conf " << grid.x << " " << grid.y << " " << grid.z << std::endl;
-  return grid;
+  auto S = AOTRITON_NS::cdiv<uint32_t>(params->max_seqlen_q, this->BLOCK_M);
+  auto H = uint32_t(params->Q->size(1));
+  auto B = params->num_seqlens == 0 ? uint32_t(params->Q->size(0)) : std::abs(params->num_seqlens);
+  return NUM_XCDS > 1 ? dim3 { H, S, B } : dim3 { S, H, B };
 }
 
 attn_bwd_params::attn_bwd_params()

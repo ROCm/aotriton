@@ -62,6 +62,9 @@ def bwd_inner_dk_dv_fuse(
     PADDED_HEAD: tl.constexpr,
     BIAS_TYPE: tl.constexpr,
 ):
+    # To Enable pipelining, must use 'BLOCK_M': 256, 'BLOCK_N': 64, num_stages=4, num_warps=8
+    NUM_STAGES: tl.constexpr = None if FULL_BLOCKS else 1
+
     # initialize offsets
     offs_k = start_k + tl.arange(0, BLOCK_N)
     offs_q = tl.arange(0, BLOCK_M)

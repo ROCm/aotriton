@@ -60,6 +60,9 @@ def bwd_inner_dk_dv(
     PADDED_HEAD: tl.constexpr,
     BIAS_TYPE: tl.constexpr,
 ):
+    # To Enable pipelining, must use 'BLOCK_M': 256, 'BLOCK_N': 64, num_stages=4, num_warps=8
+    NUM_STAGES: tl.constexpr = None if FULL_BLOCKS else 1
+
     # initialize offsets
     offs_k = start_k + tl.arange(0, BLOCK_N)
     offs_q = tl.arange(0, BLOCK_M)
@@ -88,7 +91,7 @@ def bwd_inner_dk_dv(
     start_k: select k and dV
     start_q: select q and dO
     '''
-    for block_index in range(nblocks_1+nblocks_2):
+    for block_index in range(nblocks_1+nblocks_2, num_stages=NUM_STAGES):
         # Seccond Range is invalid (constexpr "None" defined in Full block path)
         if Block_range_2 is None:
             start_qi = block_index + Block_range_1

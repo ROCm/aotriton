@@ -82,7 +82,7 @@ def bench_flash_attention(BATCH, H, N_CTX, D_HEAD, causal, mode, provider, dtype
         k = torch.randn((BATCH, H, N_CTX, D_HEAD), dtype=dtype, device="cuda", requires_grad=True)
         v = torch.randn((BATCH, H, N_CTX, D_HEAD), dtype=dtype, device="cuda", requires_grad=True)
         b = None
-        sm_scale = 1.3
+        sm_scale = D_HEAD**-0.5
         dropout_p = 0.0
         ext = AttentionExtraArgs(return_encoded_softmax=False,
                                  autotune=USE_AUTOTUNE,
