@@ -69,39 +69,34 @@ namespace AOTRITON_NS::v3::[[kernel_family_name]]::autotune {
 // using AOTRITON_NS::v2::[[kernel_family_name]]::[[context_class_name]];
 
 void CURRENT_ENTRY_PUBLIC([[context_class_name]]& context, int mod_number) {
+    int kernel_index = -1;
 #if AOTRITON_BUILD_FOR_TUNING
     int preferred_index = context._has_preferred_kernel;
-    context._total_number_of_kernels = kTotalNumKernels;
-#ifndef NDEBUG
     std::cerr << "Autotune_[[shim_kernel_name]]__A[[arch_number]]__F[[godel_number]] "
               << "kTotalNumKernels = " << kTotalNumKernels << " "
               << "_has_preferred_kernel = " << preferred_index << " "
               << std::endl;
+#else
+    constexpr int preferred_index = -1;
 #endif
-    if (preferred_index != -1) {
-        if (preferred_index >= kTotalNumKernels)
-            return ;
-        context.kernel_on_device = kernel_cluster.get(preferred_index);
-        context.pp_args_index = [[deduplicated_pp_args_function_index]];
-        context.package_path = PACKAGE_PATH;
-        context.func_name = FUNC_NAME;
-        context.arch_name = ARCH_NAME;
-        context._preferred_kernel_psels = kernel_psels[preferred_index];
-        context._preferred_kernel_copts = kernel_copts[preferred_index];
-        const auto& perf = image_perf_list[preferred_index];
-        [[perf_field_assignment]];
-        return ;
+    if (preferred_index < 0) {
+        kernel_index = [[deduplicated_lut_function]](*context.params, mod_number, lut);
+    } else {
+        kernel_index = preferred_index;
     }
-#endif
-    auto kernel_index = [[deduplicated_lut_function]](*context.params, mod_number, lut);
     if (kernel_index < 0) {
-      return ;
+        return ;
     }
     context.kernel_on_device = kernel_cluster.get(kernel_index);
     context.pp_args_index = [[deduplicated_pp_args_function_index]];
     context.package_path = PACKAGE_PATH;
     context.func_name = FUNC_NAME;
     context.arch_name = ARCH_NAME;
+#if AOTRITON_BUILD_FOR_TUNING
+    context._total_number_of_kernels = kTotalNumKernels;
+    context._preferred_kernel_psels = kernel_psels[kernel_index];
+    context._preferred_kernel_copts = kernel_copts[kernel_index];
+#endif
 #ifndef NDEBUG
     std::cerr << __FILE__ << " kernel_index = " << int(kernel_index) << std::endl;
 #endif

@@ -92,10 +92,8 @@ hipError_t
         // Write total_hsacos if Query is set
         if (ctrl & KernelControl::Query) {
             kctl.total_hsacos = _total_number_of_kernels;
-            if (ctrl & KernelControl::Manual) {
-                kctl.kernel_psels = _preferred_kernel_psels;
-                kctl.kernel_copts = _preferred_kernel_copts;
-            }
+            kctl.kernel_psels = _preferred_kernel_psels;
+            kctl.kernel_copts = _preferred_kernel_copts;
         }
     }
 #endif
