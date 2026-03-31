@@ -8,6 +8,7 @@
 #include <string_view>
 #ifndef NDEBUG
 #include <iostream>
+#include <assert.h>
 #endif
 
 #define CURRENT_ENTRY_PUBLIC Autotune_[[shim_kernel_name]]__A[[arch_number]]__F[[godel_number]]
@@ -69,22 +70,21 @@ namespace AOTRITON_NS::v3::[[kernel_family_name]]::autotune {
 // using AOTRITON_NS::v2::[[kernel_family_name]]::[[context_class_name]];
 
 void CURRENT_ENTRY_PUBLIC([[context_class_name]]& context, int mod_number) {
-    int kernel_index = -1;
 #if AOTRITON_BUILD_FOR_TUNING
-    int preferred_index = context._has_preferred_kernel;
+    constexpr int kLutInTuningModeAlwaysReturnZero = 0;
+#ifndef NDEBUG
     std::cerr << "Autotune_[[shim_kernel_name]]__A[[arch_number]]__F[[godel_number]] "
               << "kTotalNumKernels = " << kTotalNumKernels << " "
-              << "_has_preferred_kernel = " << preferred_index << " "
+              << "_has_preferred_kernel = " << context._has_preferred_kernel << " "
               << std::endl;
-#else
-    constexpr int preferred_index = -1;
+    assert([[deduplicated_lut_function]](*context.params, mod_number, lut) == kLutInTuningModeAlwaysReturnZero);
 #endif
-    if (preferred_index < 0) {
-        kernel_index = [[deduplicated_lut_function]](*context.params, mod_number, lut);
-    } else {
-        kernel_index = preferred_index;
-    }
-    if (kernel_index < 0) {
+    int preferred = context._has_preferred_kernel;
+    int kernel_index = preferred < 0 ? kLutInTuningModeAlwaysReturnZero : preferred;
+#else
+    auto kernel_index = [[deduplicated_lut_function]](*context.params, mod_number, lut);
+#endif
+    if (kernel_index < 0 || kernel_index >= kTotalNumKernels) {
         return ;
     }
     context.kernel_on_device = kernel_cluster.get(kernel_index);
