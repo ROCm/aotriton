@@ -37,6 +37,16 @@ if [[ -z "$secret" ]]; then
 fi
 read -p "Docker Image to Run Worker: " image
 read -e -p "Docker Volume Name for PostgreSQL Database: " -i "aotriton_pgdata"  pgvolume
+while true; do
+	read -r -p "Docker Container Suffix (only allows a-zA-Z0-9_-): " suffix
+  # Check if the input contains ONLY a-z, A-Z, and 0-9
+  if [[ "$suffix" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+    echo "Valid input received: $suffix"
+    break # Exit the loop if validation passes
+  else
+    echo "Invalid input. Only a-zA-Z0-9_- characters are allowed."
+  fi
+done
 
 cat << EOF > "$rcfile"
 RABBITMQ_DEFAULT_USER=aotriton
@@ -47,6 +57,7 @@ POSTGRES_PASSWORD=$secret
 POSTGRES_PORT=5432
 POSTGRES_DOCKER_IMAGE=postgres:17.6
 POSTGRES_DOCKER_VOLUME=$pgvolume
+CONTAINER_SUFFIX=$suffix
 CELERY_SERVICE_HOST=$(hostname -f)
 CELERY_WORKER_IMAGE=$image
 EOF

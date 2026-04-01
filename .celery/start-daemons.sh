@@ -30,7 +30,7 @@ docker run --ipc=host \
     --rm \
     -e RABBITMQ_DEFAULT_USER=${RABBITMQ_DEFAULT_USER} \
     -e RABBITMQ_DEFAULT_PASS=${RABBITMQ_DEFAULT_PASS} \
-    --name aotriton_rabbitmq \
+    --name aotriton_rabbitmq.${CONTAINER_SUFFIX} \
     rabbitmq:4-management >> "$dir/run/container.pids"
 
 # FIXME: /var/lib/postgresql/18/docker is used for PostgreSQL 18 and higher
@@ -42,6 +42,6 @@ docker run --ipc=host \
     -e POSTGRES_USER=${POSTGRES_USER} \
     -e POSTGRES_PASSWORD=${POSTGRES_PASSWORD} \
     -v ${POSTGRES_DOCKER_VOLUME}:/var/lib/postgresql/data \
-    --name aotriton_pgsql \
+    --name aotriton_pgsql.${CONTAINER_SUFFIX} \
     ${POSTGRES_DOCKER_IMAGE} >> "$dir/run/container.pids"
 
