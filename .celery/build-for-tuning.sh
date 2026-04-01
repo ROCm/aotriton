@@ -38,14 +38,41 @@ fi
 TRITON_DIR="$WORKDIR/scratch/triton"
 mkdir -p "$TRITON_DIR"
 
-# Step 1: Build triton wheel
-cd "$AOTRITON_ROOT/third_party/triton/python"
-pip wheel . -w "$TRITON_DIR"
+# Check if triton wheel already exists for current version and python
+has_triton_wheel() {
+  local triton_dir="$1"
+  local triton_src="$2"
 
-TRITON_WHEEL=$(ls "$TRITON_DIR"/triton-*.whl | head -n 1)
-if [ ! -f "$TRITON_WHEEL" ]; then
-  echo "Error: Triton wheel not found" >&2
-  exit 1
+  # Get current triton version and python version
+  local triton_version=$(cd "$triton_src" && git describe --tags --always 2>/dev/null || echo "unknown")
+  local python_version=$(python --version 2>&1 | cut -d' ' -f2 | cut -d'.' -f1,2)
+
+  # Check if matching wheel exists
+  local wheel=$(ls "$triton_dir"/triton-*cp${python_version/./}*.whl 2>/dev/null | head -n 1)
+
+  if [ -f "$wheel" ]; then
+    # Check if wheel name contains the triton version
+    if [[ "$wheel" == *"$triton_version"* ]] || [[ "$triton_version" == "unknown" ]]; then
+      echo "$wheel"
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+# Step 1: Build triton wheel
+if TRITON_WHEEL=$(has_triton_wheel "$TRITON_DIR" "$AOTRITON_ROOT/third_party/triton"); then
+  echo "Using existing triton wheel: $TRITON_WHEEL"
+else
+  cd "$AOTRITON_ROOT/third_party/triton/python"
+  pip wheel . -w "$TRITON_DIR"
+
+  TRITON_WHEEL=$(ls "$TRITON_DIR"/triton-*.whl | head -n 1)
+  if [ ! -f "$TRITON_WHEEL" ]; then
+    echo "Error: Triton wheel not found" >&2
+    exit 1
+  fi
 fi
 
 # Step 2: Build AOTriton for each architecture
