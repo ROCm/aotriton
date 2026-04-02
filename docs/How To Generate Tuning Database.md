@@ -21,8 +21,12 @@ Linux is assumed for all nodes.
 
 * ssh
 * docker
-* A common docker image serve as the runtime environment
-* patched celery wheel (see section below to build)
+* A common docker image serve as the runtime environment, which should contain
+  - python >= 3.10
+  - git
+  - bash
+
+Other packages needed by the host OS on the nodes can be installed with `.celery/install-hostos-packges.sh`
 
 # Steps
 
@@ -106,7 +110,7 @@ This script will:
 
 The script is idempotent - it will skip rebuilding the Triton wheel if a compatible one already exists.
 
-## Prepare and Deploy the working directory
+## Prepare and deploy the working directory
 
 ```bash
 .celery/deploy-workdir.sh <working directory>
@@ -115,19 +119,35 @@ The script is idempotent - it will skip rebuilding the Triton wheel if a compati
 This script will:
 
 1. Clone or update AOTriton source to `<working directory>/aotriton.src`
-   - Performs a shallow clone from the `upstream/main` branch
-   - If already cloned, performs `git pull` to update
+  - Performs a shallow clone from the `upstream/main` branch
+  - If already cloned, performs `git pull` to update
 
-2. Deploy the working directory to each registered GPU worker via rsync
-   - Syncs all files except build directories
-   - Only syncs `build/<arch>` matching the worker's registered architecture
-   - Uses each worker's configured working directory (default or custom override)
+2. Create `<working directory>/image.build/Dockerfile` from `config.rc`, which
+  - Start from the `${CELERY_WORKER_IMAGE_BASE}`
+  - Create venv according to `${CELERY_WORKER_PYTHON}` if the python file doesn't exist
+  - Install requirements-tuning.txt
+  - Run all scripts starting with "two digits+dash" under ``<working directory>/image.scripts`
+
+3. Deploy the working directory to each registered GPU worker via rsync
+  + Syncs all files except
+    - build
+    - scratch
+  + Only syncs `build/<arch>` matching the worker's registered architecture
+  + Uses each worker's configured working directory (default or custom override)
+
+## Prepare the worker image from base worker image on each system
+
+```bash
+.celery/build-worker-image.sh <working directory>
+```
+
+In each GPU worker node:
+* Run `docker build -f <working directory>/image.build/Dockerfile -t ${CELERY_WORKER_IMAGE} $WORKDIR`
+  + The easiest practice is to prepare the image at dev node, but a writable docker registry may not be available
+* This process is done through ssh+tsp to maximize parallism and avoid fragile ssh connections
+  + tsp can be installed from package `task-spooler`, which is automated with `.celery/install-hostos-packges.sh`
 
 ## Configure the venv in GPU worker
-
-**IMPORTANT: This step assume `triton-*.whl` and `torch-*.whl` are available at /
-of the container image. Either add them to the container image, or add <working
-directory>/hooks/pre-venv.sh to copy them to root**
 
 In each GPU worker node:
 * Launch the container with image specified by `${CELERY_WORKER_IMAGE}` with mounting the `<working directory>` to `/wkdir`
