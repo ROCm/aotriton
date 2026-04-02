@@ -132,10 +132,11 @@ directory>/hooks/pre-venv.sh to copy them to root**
 In each GPU worker node:
 * Launch the container with image specified by `${CELERY_WORKER_IMAGE}` with mounting the `<working directory>` to `/wkdir`
 * Inside the container
-  - Create venv at `/wkdir/venv`
-  - Run script `/wkdir/inpod.create_venv.sh` if exists.
-  - Install triton and torch from `/triton-*.whl` and `/torch-*.whl`
-  - Install other dependencies from `/wkdir/aotriton.src/requirements-tuning.txt`
+  + Create venv at `/wkdir/venv`
+  + Run script `/wkdir/inpod.create_venv.sh`
+    - This script should install torch and other dependencies from `/wkdir/aotriton.src/requirements-tuning.txt`
+    - This script will optionally create venv under `/wkdir/venv`, depending on
+      the choices made when calling `.celery/create-project-directory.sh`
 
 ## Start Server and GPU Worker
 
