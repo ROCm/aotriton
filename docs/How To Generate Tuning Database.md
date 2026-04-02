@@ -93,6 +93,8 @@ For more options and supported architectures, run:
 
 ## Build AOTriton for all Target Architectures
 
+**This step must be done within environment that is compatible with the CELERY_WORKER_IMAGE_BASE**
+
 *Can be done in any node (including GPU Workers), but ideally on dev node
 since this is the only node that are guaranteed having access all worker nodes,
 per prerequisites.*
@@ -125,7 +127,7 @@ This script will:
   - Performs a shallow clone from the `upstream/main` branch
   - If already cloned, performs `git pull` to update
 
-2. Copy the following directory `.celery` to `<working directory>`
+2. Copy the following directory from `.celery` to `<working directory>`
   - `image.scripts`
 
 3. Create `<working directory>/image.build/Dockerfile` from `config.rc`, which
