@@ -35,8 +35,9 @@ if [[ -z "$secret" ]]; then
   secret=$(head -c 16 /dev/urandom | xxd -p)
   echo "Using secret $secret from /dev/urandom"
 fi
-read -p "Docker Image to Run Worker: " image
-read -e -p "Docker Volume Name for PostgreSQL Database: " -i "aotriton_pgdata"  pgvolume
+read -p "Base Docker Image to Run Worker: " baseimage
+read -p "Docker Image Commited to Run Worker: " -i "aotriton:celery-gpuworker" image
+read -e -p "Docker Volume Name for PostgreSQL Database: " -i "aotriton_pgdata" pgvolume
 while true; do
 	read -r -p "Docker Container Suffix (only allows a-zA-Z0-9_-): " suffix
   # Check if the input contains ONLY a-z, A-Z, and 0-9
@@ -103,6 +104,7 @@ POSTGRES_DOCKER_IMAGE=postgres:17.6
 POSTGRES_DOCKER_VOLUME=$pgvolume
 CONTAINER_SUFFIX=$suffix
 CELERY_SERVICE_HOST=$(hostname -f)
-CELERY_WORKER_IMAGE=$image
+CELERY_WORKER_IMAGE_BASE=$baseimage
+CELERY_WORKER_IMAGE_BASE=$image
 CELERY_WORKER_PYTHON=$worker_python
 EOF
