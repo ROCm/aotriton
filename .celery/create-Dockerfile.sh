@@ -58,9 +58,10 @@ FROM ${CELERY_WORKER_IMAGE_BASE}
 # Copy scripts
 COPY image.scripts /image.scripts
 
-# Create venv if CELERY_WORKER_PYTHON doesn't exist
+# Create venv if CELERY_WORKER_PYTHON doesn't exist and install wheels
 RUN if [ ! -f ${CELERY_WORKER_PYTHON} ]; then \\
       python3 -m venv \$(dirname \$(dirname ${CELERY_WORKER_PYTHON})); \\
+      ${CELERY_WORKER_PYTHON} -m pip install /torch-*.whl /triton-*.whl; \\
     fi
 
 # Install requirements-tuning.txt

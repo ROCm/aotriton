@@ -22,11 +22,18 @@ Linux is assumed for all nodes.
 * ssh
 * docker
 * A common docker image serve as the runtime environment, which should contain
-  - python >= 3.10
-  - git
-  - bash
+  + python >= 3.10
+  + git
+  + bash
+  + A venv with torch pre-installed, or its wheel file `torch-*.whl` available at `/`
+    - For the latter case, although the tuning process does not need Triton,
+      but `/triton-*.whl` should be available as well since it's  a dependency
+    - Please be advised PEP-668 prohibits installing pip packages to system
+      managed sites (e.g., `/usr/lib/python3.11/`). A venv is recommended
+      regardless the usage of container.
 
-Other packages needed by the host OS on the nodes can be installed with `.celery/install-hostos-packges.sh`
+
+Other packages needed by the host OS on the nodes can be installed with `.celery/install-hostos-packages.sh`
 
 # Steps
 
@@ -84,10 +91,6 @@ For more options and supported architectures, run:
 .celery/manage-workers.py --help
 ```
 
-## Configure Server and GPU Workers
-
-TODO
-
 ## Build AOTriton for all Target Architectures
 
 *Can be done in any node (including GPU Workers), but ideally on dev node
@@ -110,10 +113,10 @@ This script will:
 
 The script is idempotent - it will skip rebuilding the Triton wheel if a compatible one already exists.
 
-## Prepare and deploy the working directory
+## Prepare the working directory on dev node
 
 ```bash
-.celery/deploy-workdir.sh <working directory>
+.celery/prepare-workdir.sh <working directory>
 ```
 
 This script will:
@@ -122,13 +125,35 @@ This script will:
   - Performs a shallow clone from the `upstream/main` branch
   - If already cloned, performs `git pull` to update
 
-2. Create `<working directory>/image.build/Dockerfile` from `config.rc`, which
+2. Copy the following directory `.celery` to `<working directory>`
+  - `image.scripts`
+
+3. Create `<working directory>/image.build/Dockerfile` from `config.rc`, which
   - Start from the `${CELERY_WORKER_IMAGE_BASE}`
   - Create venv according to `${CELERY_WORKER_PYTHON}` if the python file doesn't exist
   - Install requirements-tuning.txt
-  - Run all scripts starting with "two digits+dash" under ``<working directory>/image.scripts`
+  - Run all scripts starting with "two digits+dash" under `<working directory>/image.scripts`
 
-3. Deploy the working directory to each registered GPU worker via rsync
+### Customization for different scenarios
+
+The `Dockerfile` will run all scripts matching `[0-9][0-9]-*.sh` under
+image.scripts. Here you have the flexibility to customize the image creation.
+
+For example, if the base image has venv at `/root/venv` but the venv does not
+have torch installed, the torch installation can be completed by adding the
+following script as `<working directory>/image.scripts/90-install_torch.sh`
+
+```bash
+/root/venv/bin/pip install torch torchvision --index-url https://download.pytorch.org/whl/rocm7.2
+```
+
+## Deploy the working directory to worker nodes
+
+```bash
+.celery/deploy-workdir.sh <working directory>
+```
+
+This script will deploy the working directory to each registered GPU worker via rsync:
   + Syncs all files except
     - build
     - scratch
@@ -145,18 +170,7 @@ In each GPU worker node:
 * Run `docker build -f <working directory>/image.build/Dockerfile -t ${CELERY_WORKER_IMAGE} $WORKDIR`
   + The easiest practice is to prepare the image at dev node, but a writable docker registry may not be available
 * This process is done through ssh+tsp to maximize parallism and avoid fragile ssh connections
-  + tsp can be installed from package `task-spooler`, which is automated with `.celery/install-hostos-packges.sh`
-
-## Configure the venv in GPU worker
-
-In each GPU worker node:
-* Launch the container with image specified by `${CELERY_WORKER_IMAGE}` with mounting the `<working directory>` to `/wkdir`
-* Inside the container
-  + Create venv at `/wkdir/venv`
-  + Run script `/wkdir/inpod.create_venv.sh`
-    - This script should install torch and other dependencies from `/wkdir/aotriton.src/requirements-tuning.txt`
-    - This script will optionally create venv under `/wkdir/venv`, depending on
-      the choices made when calling `.celery/create-project-directory.sh`
+  + tsp can be installed from package `task-spooler`, which is automated with `.celery/install-hostos-packages.sh`
 
 ## Start Server and GPU Worker
 
