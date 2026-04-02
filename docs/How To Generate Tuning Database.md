@@ -90,18 +90,52 @@ TODO
 since this is the only node that are guaranteed having access all worker nodes,
 per prerequisites.*
 
-TODO
+```bash
+.celery/build-for-tuning.sh <working directory>
+```
 
-## Deploy Tuning Environment to Server and All GPU Workers
+This script will:
 
-The deploy includes:
+1. Build a Triton wheel from `third_party/triton/` and store it in `<working directory>/scratch/triton/`
+   - The wheel is cached and reused on subsequent runs if the Triton version and Python version match
+   - If either version changes, the wheel is rebuilt automatically
 
-* The working directory
-* AOTriton source tree (for various scripts)
-* AOTriton binary (only on GPU Workers)
-* A venv for
+2. Query the worker database and build a tuning version of AOTriton for each registered architecture
+   - Builds are stored in `<working directory>/build/<arch>/`
+   - Each architecture uses the same Triton wheel from step 1
 
-TODO
+The script is idempotent - it will skip rebuilding the Triton wheel if a compatible one already exists.
+
+## Prepare and Deploy the working directory
+
+```bash
+.celery/deploy-workdir.sh <working directory>
+```
+
+This script will:
+
+1. Clone or update AOTriton source to `<working directory>/aotriton.src`
+   - Performs a shallow clone from the `upstream/main` branch
+   - If already cloned, performs `git pull` to update
+
+2. Deploy the working directory to each registered GPU worker via rsync
+   - Syncs all files except build directories
+   - Only syncs `build/<arch>` matching the worker's registered architecture
+   - Uses each worker's configured working directory (default or custom override)
+
+## Configure the venv in GPU worker
+
+**IMPORTANT: This step assume `triton-*.whl` and `torch-*.whl` are available at /
+of the container image. Either add them to the container image, or add <working
+directory>/hooks/pre-venv.sh to copy them to root**
+
+In each GPU worker node:
+* Launch the container with image specified by `${CELERY_WORKER_IMAGE}` with mounting the `<working directory>` to `/wkdir`
+* Inside the container
+  - Create venv at `/wkdir/venv`
+  - Run script `/wkdir/inpod.create_venv.sh` if exists.
+  - Install triton and torch from `/triton-*.whl` and `/torch-*.whl`
+  - Install other dependencies from `/wkdir/aotriton.src/requirements-tuning.txt`
 
 ## Start Server and GPU Worker
 
