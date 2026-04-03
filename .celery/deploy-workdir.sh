@@ -43,28 +43,41 @@ if [ -z "$REMOTE_WORKDIR" ]; then
   exit 1
 fi
 
-# Deploy to each worker
-sqlite3 "$WORKDIR/workers.db" "SELECT hostname, arch, COALESCE(workdir_override, '') FROM workers ORDER BY hostname;" | while IFS='|' read -r hostname arch workdir_override; do
+deploy() {
+  local hostname="$1"
+  local arch="$2"
+  local workdir_override="$3"
   # Determine remote workdir for this worker
   if [ -n "$workdir_override" ]; then
-    WORKER_WORKDIR="$workdir_override"
+    local WORKER_WORKDIR="$workdir_override"
   else
-    WORKER_WORKDIR="$REMOTE_WORKDIR"
+    local WORKER_WORKDIR="$REMOTE_WORKDIR"
   fi
-
   echo "Deploying to $hostname ($arch) -> $WORKER_WORKDIR"
-
   # Create remote workdir
-  ssh "$hostname" "mkdir -p $WORKER_WORKDIR"
+  # CAVEAT: MUST PASS -n otherwise stdin will be consumed
+  # (ssh -n "$hostname" "mkdir -p $WORKER_WORKDIR")
 
   # Rsync everything except build and scratch directories
-  rsync -az --info=progress2 --exclude 'build/' --exclude 'scratch/' --exclude '.git/' \
+  rsync -az \
+    --info=progress2 \
+    --exclude 'build/' \
+    --exclude 'scratch/' \
+    --exclude '.git/' \
+    --mkpath \
     "$WORKDIR/" "$hostname:$WORKER_WORKDIR/"
+
+  echo $?
 
   # Rsync only the specific architecture build directory
   if [ -d "$WORKDIR/build/$arch" ]; then
-    rsync -az --info=progress2 "$WORKDIR/build/$arch/" "$hostname:$WORKER_WORKDIR/build/$arch/"
+    rsync -azR --info=progress2 "$WORKDIR/./build/$arch/install_dir" "$hostname:$WORKER_WORKDIR/./"
   fi
+  echo "Deployed to $hostname ($arch) -> $WORKER_WORKDIR"
+}
+
+sqlite3 "$WORKDIR/workers.db" "SELECT hostname, arch, COALESCE(workdir_override, '') FROM workers ORDER BY hostname;" | while IFS='|' read h a w; do
+  deploy "$h" "$a" "$w"
 done
 
 echo "Deployment completed"
