@@ -106,10 +106,10 @@ WORKER_CONTAINER_ID=$(docker run -d \
   --security-opt seccomp=unconfined \
   --ipc=host \
   --network=host \
-  -e PYTHONPATH=/wkdir/build/$ARCH/ \
+  -e PYTHONPATH=/wkdir/build/$ARCH/install_dir/lib \
   --mount type=bind,source=$(realpath $WORKER_WORKDIR),target=/wkdir \
   "$CELERY_WORKER_IMAGE" \
-  bash -c '/wkdir/aotriton.src/.celery/worker-service.sh start /wkdir && exec sleep infinity')
+  bash -c 'source /wkdir/config.rc && source $(dirname $CELERY_WORKER_PYTHON)/activate && bash /wkdir/aotriton.src/.celery/worker-service.sh start /wkdir && exec sleep infinity')
 
 if [ -z "$WORKER_CONTAINER_ID" ]; then
   echo "Failed to start container" >&2
@@ -134,7 +134,7 @@ fi
 WORKER_CONTAINER_ID=$(cat "$RUNFILE")
 
 echo "Stopping worker service in container: $WORKER_CONTAINER_ID"
-docker exec "$WORKER_CONTAINER_ID" bash /wkdir/aotriton.src/.celery/worker-service.sh stop /wkdir
+docker exec "$WORKER_CONTAINER_ID" bash -c 'source /wkdir/config.rc && source $(dirname $CELERY_WORKER_PYTHON)/activate && bash /wkdir/aotriton.src/.celery/worker-service.sh stop /wkdir'
 
 echo "Stopping and removing container: $WORKER_CONTAINER_ID"
 docker stop "$WORKER_CONTAINER_ID"
@@ -158,7 +158,7 @@ fi
 WORKER_CONTAINER_ID=$(cat "$RUNFILE")
 
 echo "Restarting worker service in container: $WORKER_CONTAINER_ID"
-docker exec "$WORKER_CONTAINER_ID" bash /wkdir/aotriton.src/.celery/worker-service.sh restart /wkdir
+docker exec "$WORKER_CONTAINER_ID" bash -c 'source /wkdir/config.rc && source $(dirname $CELERY_WORKER_PYTHON)/activate && bash /wkdir/aotriton.src/.celery/worker-service.sh restart /wkdir'
 echo "Worker restarted"
 EOF
 
