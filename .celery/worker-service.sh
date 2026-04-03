@@ -3,12 +3,9 @@
 # SPDX-License-Identifier: MIT
 
 # Prerequisite:
-#   1. Launch a container with ${CELERY_WORKER_IMAGE}. Ideally with --network host
-#   2. Clone aotriton into the container
-#   3. Copy the workdir from controller node to the container
-#   4. Run this script inside the container with workdir
-# 2/3 can be prepared without docker cp by binding a working directory to
-# container
+#   1. Launch a container with ${CELERY_WORKER_IMAGE} with `--network host`
+#     - --network host is required to identify node itself.
+#   2. Run this script inside the container with workdir
 
 if [ -z "$BASH_VERSION" ]; then
   echo "This script requires Bash. Please run it with 'bash script_name.sh' or ensure /bin/sh points to /bin/bash." >&2
