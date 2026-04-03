@@ -54,8 +54,8 @@ deploy() {
     local WORKER_WORKDIR="$REMOTE_WORKDIR"
   fi
   echo "Deploying to $hostname ($arch) -> $WORKER_WORKDIR"
-  # Create remote workdir
-  # CAVEAT: MUST PASS -n otherwise stdin will be consumed
+  # CAVEAT FOR ADDING SSH COMMAND:
+  #   MUST PASS -n otherwise stdin will be consumed
   # (ssh -n "$hostname" "mkdir -p $WORKER_WORKDIR")
 
   # Rsync everything except build and scratch directories

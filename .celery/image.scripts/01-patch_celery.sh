@@ -2,13 +2,7 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-if [ "$#" -ne 1 ]; then
-  echo "Usage: $0 <workdir>" >&2
-  exit 1
-fi
-
-WORKDIR="$1"
-CONFIG_RC="$WORKDIR/config.rc"
+CONFIG_RC="/config.rc"
 
 if [ ! -f "$CONFIG_RC" ]; then
   echo "Error: config.rc not found at $CONFIG_RC" >&2

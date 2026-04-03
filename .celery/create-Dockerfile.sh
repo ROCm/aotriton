@@ -57,6 +57,7 @@ cat > "$IMAGE_BUILD_DIR/Dockerfile" <<EOF
 #          Do not manually edit. Customize via config.rc or image.scripts/ instead.
 FROM ${CELERY_WORKER_IMAGE_BASE}
 
+COPY config.rc /config.rc
 # Copy scripts
 COPY image.scripts /image.scripts
 
@@ -81,6 +82,7 @@ RUN for script in /image.scripts/[0-9][0-9]-*.sh; do \\
 
 # Cleanup
 RUN rm -rf /image.scripts
+RUN rm -f /config.rc
 EOF
 
 echo "Generated Dockerfile at: $IMAGE_BUILD_DIR/Dockerfile"
