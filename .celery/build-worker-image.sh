@@ -65,7 +65,8 @@ sqlite3 "$WORKDIR/workers.db" "SELECT hostname, COALESCE(workdir_override, '') F
 
   echo "Queuing docker build on $hostname (workdir: $WORKER_WORKDIR)"
 
-  ssh -n "$hostname" "tsp docker build -f $WORKER_WORKDIR/image.build/Dockerfile -t $CELERY_WORKER_IMAGE $WORKER_WORKDIR"
+  # Certain nodes need --network=host to access internet
+  ssh -n "$hostname" "tsp docker build --network=host -f $WORKER_WORKDIR/image.build/Dockerfile -t $CELERY_WORKER_IMAGE $WORKER_WORKDIR"
 done
 
 echo "All docker build jobs queued. Monitor with: ssh <hostname> tsp"
