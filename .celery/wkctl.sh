@@ -28,7 +28,6 @@ This script will:
 Prerequisites:
   - Working directory deployed via deploy-workdir.sh
   - Worker images built via build-worker-image.sh
-  - direct_run_docker.sh available at ~/dockerhome/direct_run_docker.sh on each worker
 EOF
   exit 1
 fi
@@ -86,7 +85,7 @@ control_worker() {
 
   if [ "$ACTION" = "start" ]; then
     # Start: Launch container and record container ID
-    ssh -n "$hostname" bash -s "$WORKER_WORKDIR" "$arch" "$CELERY_WORKER_IMAGE" <<'EOF'
+    ssh "$hostname" bash -s "$WORKER_WORKDIR" "$arch" "$CELERY_WORKER_IMAGE" <<'EOF'
 WORKER_WORKDIR="$1"
 ARCH="$2"
 CELERY_WORKER_IMAGE="$3"
@@ -123,7 +122,7 @@ EOF
 
   elif [ "$ACTION" = "stop" ]; then
     # Stop: Stop service, then stop/remove container
-    ssh -n "$hostname" bash -s "$WORKER_WORKDIR" <<'EOF'
+    ssh "$hostname" bash -s "$WORKER_WORKDIR" <<'EOF'
 WORKER_WORKDIR="$1"
 RUNFILE="$WORKER_WORKDIR/run/worker.containerid"
 
@@ -147,7 +146,7 @@ EOF
 
   elif [ "$ACTION" = "restart" ]; then
     # Restart: Execute restart inside existing container
-    ssh -n "$hostname" bash -s "$WORKER_WORKDIR" <<'EOF'
+    ssh "$hostname" bash -s "$WORKER_WORKDIR" <<'EOF'
 WORKER_WORKDIR="$1"
 RUNFILE="$WORKER_WORKDIR/run/worker.containerid"
 
