@@ -18,7 +18,7 @@ Arguments:
 
 This script will:
   - Rsync working directory to each registered worker
-  - Exclude build/ and scratch/ directories
+  - Exclude build/, scratch/, and run/ directories
   - Only sync build/<arch> matching worker's architecture
 
 Requirements:
@@ -58,12 +58,13 @@ deploy() {
   #   MUST PASS -n otherwise stdin will be consumed
   # (ssh -n "$hostname" "mkdir -p $WORKER_WORKDIR")
 
-  # Rsync everything except build and scratch directories
+  # Rsync everything except top-level build, scratch, and run directories
+  # Note need to keep .git so git can work in wkdir/aotriton.src
   rsync -az \
     --info=progress2 \
-    --exclude 'build/' \
-    --exclude 'scratch/' \
-    --exclude '.git/' \
+    --exclude '/build/' \
+    --exclude '/scratch/' \
+    --exclude '/run/' \
     --mkpath \
     "$WORKDIR/" "$hostname:$WORKER_WORKDIR/"
 
