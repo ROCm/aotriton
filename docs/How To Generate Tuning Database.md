@@ -19,8 +19,12 @@ Linux is assumed for all nodes.
 
 ## Software
 
-* ssh
-* docker
+* For all nodes
+  + ssh
+  + docker
+    - `podman` may work, but untested.
+* Dev node software:
+  + `sqlite3`
 * A common docker image serve as the runtime environment, which should contain
   + python >= 3.10
   + git

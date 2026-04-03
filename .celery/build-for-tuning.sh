@@ -7,6 +7,15 @@ if [ -z "$BASH_VERSION" ]; then
   exit 1
 fi
 
+if ! command -v sqlite3 &> /dev/null; then
+  cat <<EOF >&2
+Command 'sqlite3' could not be found. Install it with
+dnf install sqlite3
+or
+snap install sqlite3
+EOF
+fi
+
 if [ "$#" -ne 1 ]; then
   cat >&2 <<EOF
 Usage: $0 <workdir>
@@ -24,6 +33,8 @@ EOF
   exit 1
 fi
 
+# set -x
+
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 AOTRITON_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 WORKDIR="$1"
@@ -37,22 +48,27 @@ fi
 # Setup
 TRITON_DIR="$WORKDIR/scratch/triton"
 mkdir -p "$TRITON_DIR"
+TRITON_DIR=$(realpath $WORKDIR/scratch/triton)
+set -e # MUST NOT FAIL
+TRITON_GIT12=$(cd "$TRITON_DIR" && git rev-parse --short=12 HEAD 2>/dev/null || echo "unknown")
+set +e
+TRITON_WHEEL_VERSION_SUFFIX="+tunerwheel.$TRITON_GIT12"
 
 # Check if triton wheel already exists for current version and python
 has_triton_wheel() {
   local triton_dir="$1"
-  local triton_src="$2"
+  local triton_signature="$2"
 
   # Get current triton version and python version
-  local triton_version=$(cd "$triton_src" && git describe --tags --always 2>/dev/null || echo "unknown")
   local python_version=$(python --version 2>&1 | cut -d' ' -f2 | cut -d'.' -f1,2)
 
   # Check if matching wheel exists
   local wheel=$(ls "$triton_dir"/triton-*cp${python_version/./}*.whl 2>/dev/null | head -n 1)
+  echo $wheel >&2
 
   if [ -f "$wheel" ]; then
     # Check if wheel name contains the triton version
-    if [[ "$wheel" == *"$triton_version"* ]] || [[ "$triton_version" == "unknown" ]]; then
+    if [[ "$wheel" == *"$triton_signature"* ]]; then
       echo "$wheel"
       return 0
     fi
@@ -61,15 +77,18 @@ has_triton_wheel() {
   return 1
 }
 
-# Step 1: Build triton wheel
-if TRITON_WHEEL=$(has_triton_wheel "$TRITON_DIR" "$AOTRITON_ROOT/third_party/triton"); then
-  echo "Using existing triton wheel: $TRITON_WHEEL"
-else
-  cd "$AOTRITON_ROOT/third_party/triton/python"
-  pip wheel . -w "$TRITON_DIR"
+TRITON_WHEEL=$(has_triton_wheel "$TRITON_DIR" "${TRITON_WHEEL_VERSION_SUFFIX}")
+echo "TRITON_WHEEL detected: $TRITON_WHEEL"
 
-  TRITON_WHEEL=$(ls "$TRITON_DIR"/triton-*.whl | head -n 1)
-  if [ ! -f "$TRITON_WHEEL" ]; then
+# Step 1: Build triton wheel
+if [ -z "$TRITON_WHEEL" ]; then
+  echo "Building triton wheel: $TRITON_WHEEL"
+  # Must set TRITON_WHEEL_VERSION_SUFFIX triton's setup.py use .is_dir() to
+  # detect .git and thus cannot append +git<hash8> when being built as a submodule.
+  (cd "$AOTRITON_ROOT/third_party/triton"; TRITON_WHEEL_VERSION_SUFFIX=${TRITON_WHEEL_VERSION_SUFFIX} pip wheel . -w "$TRITON_DIR")
+
+  TRITON_WHEEL=$(ls "$TRITON_DIR"/triton-*.whl 2>/dev/null | head -n 1)
+  if [ -z "$TRITON_WHEEL" ] || [ ! -f "$TRITON_WHEEL" ]; then
     echo "Error: Triton wheel not found" >&2
     exit 1
   fi
@@ -79,6 +98,7 @@ fi
 . "$AOTRITON_ROOT/.ci/common-vars.sh"
 
 ARCHS=($(sqlite3 "$WORKDIR/workers.db" "SELECT DISTINCT arch FROM workers ORDER BY arch;"))
+echo "ARCHS detected: ${ARCHS[@]}"
 
 for arch in "${ARCHS[@]}"; do
   BUILD_DIR="$WORKDIR/build/$arch"
