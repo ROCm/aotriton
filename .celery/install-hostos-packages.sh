@@ -35,7 +35,7 @@ DEBIAN_PACKAGES=(task-spooler)
 sqlite3 "$WORKDIR/workers.db" "SELECT DISTINCT hostname FROM workers ORDER BY hostname;" | while read -r hostname; do
   echo "Installing packages on $hostname"
 
-  ssh "$hostname" bash -s "${RHEL_PACKAGES[@]}" -- "${DEBIAN_PACKAGES[@]}" <<'EOF'
+  ssh -n "$hostname" bash -s "${RHEL_PACKAGES[@]}" -- "${DEBIAN_PACKAGES[@]}" <<'EOF'
 # Split arguments into RHEL and Debian package arrays
 RHEL_PACKAGES=()
 DEBIAN_PACKAGES=()
