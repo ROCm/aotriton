@@ -107,9 +107,9 @@ WORKER_CONTAINER_ID=$(docker run -d \
   --ipc=host \
   --network=host \
   -e PYTHONPATH=/wkdir/build/$ARCH/ \
-  -v "$WORKER_WORKDIR:/wkdir" \
+  --mount type=bind,source=$(realpath $WORKER_WORKDIR),target=/wkdir \
   "$CELERY_WORKER_IMAGE" \
-  bash /wkdir/aotriton.src/.celery/worker-service.sh start /wkdir)
+  bash -c '/wkdir/aotriton.src/.celery/worker-service.sh start /wkdir && exec sleep infinity')
 
 if [ -z "$WORKER_CONTAINER_ID" ]; then
   echo "Failed to start container" >&2
