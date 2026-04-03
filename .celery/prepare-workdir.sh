@@ -24,9 +24,11 @@ EOF
   exit 1
 fi
 
+set -x
+
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 AOTRITON_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-WORKDIR="$1"
+WORKDIR=$(realpath "$1")
 
 # Validate
 if [ ! -d "$WORKDIR" ] || [ ! -f "$WORKDIR/workers.db" ]; then
