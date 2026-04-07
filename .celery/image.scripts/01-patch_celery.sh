@@ -2,7 +2,41 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-CONFIG_RC="/config.rc"
+# Apply patch to Celery to use JSON instead of PickleType for database storage.
+#
+# This script patches the installed Celery package to use SQLAlchemy's JSON type
+# instead of PickleType for storing task results and tasksets in the database.
+# This is necessary to use PostgreSQL as a schemaless database.
+#
+# Usage:
+#   bash 01-patch_celery.sh
+#   CONFIG_RC=/path/to/config.rc bash 01-patch_celery.sh
+#   CELERY_TO_PATCH_PYTHON=/path/to/python bash 01-patch_celery.sh
+#
+# Environment Variables:
+#   CONFIG_RC (optional):
+#     Path to config.rc file. Defaults to /config.rc.
+#     The config.rc should define CELERY_WORKER_PYTHON.
+#
+#   CELERY_TO_PATCH_PYTHON (optional):
+#     Python executable path whose celery installation should be patched.
+#     If not set, uses CELERY_WORKER_PYTHON from config.rc.
+#     This allows overriding the python path without modifying config.rc.
+#
+# Examples:
+#   # Use default config.rc at /config.rc
+#   bash 01-patch_celery.sh
+#
+#   # Use custom config.rc
+#   CONFIG_RC=/workdir/config.rc bash 01-patch_celery.sh
+#
+#   # Patch a specific python's celery installation
+#   CELERY_TO_PATCH_PYTHON=/venv/bin/python bash 01-patch_celery.sh
+#
+#   # Use custom config but override the python to patch
+#   CONFIG_RC=/workdir/config.rc CELERY_TO_PATCH_PYTHON=/custom/venv/bin/python bash 01-patch_celery.sh
+
+CONFIG_RC="${CONFIG_RC:-/config.rc}"
 
 if [ ! -f "$CONFIG_RC" ]; then
   echo "Error: config.rc not found at $CONFIG_RC" >&2
@@ -12,13 +46,16 @@ fi
 # Source config to get CELERY_WORKER_PYTHON
 . "$CONFIG_RC"
 
-if [ -z "$CELERY_WORKER_PYTHON" ]; then
-  echo "Error: CELERY_WORKER_PYTHON not set in config.rc" >&2
+# CELERY_TO_PATCH_PYTHON can override CELERY_WORKER_PYTHON
+CELERY_TO_PATCH_PYTHON="${CELERY_TO_PATCH_PYTHON:-$CELERY_WORKER_PYTHON}"
+
+if [ -z "$CELERY_TO_PATCH_PYTHON" ]; then
+  echo "Error: CELERY_TO_PATCH_PYTHON not set" >&2
   exit 1
 fi
 
 # Get celery installation location
-CELERY_LOCATION=$($CELERY_WORKER_PYTHON -c 'import celery; from pathlib import Path; print((Path(celery.__file__).parent.parent).as_posix())')
+CELERY_LOCATION=$($CELERY_TO_PATCH_PYTHON -c 'import celery; from pathlib import Path; print((Path(celery.__file__).parent.parent).as_posix())')
 
 if [ -z "$CELERY_LOCATION" ]; then
   echo "Error: Could not find celery installation location" >&2
