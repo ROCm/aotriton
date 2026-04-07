@@ -7,13 +7,16 @@ tuning framework based on [celery](https://github.com/celery/celery).
 
 ## System
 
-* A group GPU workers
+* A group of GPU workers
 * A host that are accessible to all GPU workers
   - TBD: Required ports for potential firewall configurations.
   - This host will be referred as the "Server" in the following text.
 * A host that can access all GPU workers with `ssh`
   - This host will be referred as the "Dev Node" in the following text.
-  - Dev Node and Server can be the same host.
+
+For simplicity, instructions in the following text and scripts created under
+.celery all assume dev node and server are the same host. If they are different
+ones, please perform instructions below and `rsync` accordingly.
 
 Linux is assumed for all nodes.
 
@@ -35,9 +38,6 @@ Linux is assumed for all nodes.
     - Please be advised PEP-668 prohibits installing pip packages to system
       managed sites (e.g., `/usr/lib/python3.11/`). A venv is recommended
       regardless the usage of container.
-
-
-Other packages needed by the host OS on the nodes can be installed with `.celery/install-hostos-packages.sh`
 
 # Steps
 
@@ -95,6 +95,13 @@ For more options and supported architectures, run:
 .celery/manage-workers.py --help
 ```
 
+## Install packages needed by host OS
+
+```bash
+.celery/install-hostos-packages.sh <working directory>
+```
+
+
 ## Build AOTriton for all Target Architectures
 
 **This step must be done within environment that is compatible with the CELERY_WORKER_IMAGE_BASE**
@@ -143,7 +150,7 @@ This script will:
 ### Customization for different scenarios
 
 The `Dockerfile` will run all scripts matching `[0-9][0-9]-*.sh` under
-image.scripts. Here you have the flexibility to customize the image creation.
+`image.scripts`. Here you have the flexibility to customize the image creation.
 
 For example, if the base image has venv at `/root/venv` but the venv does not
 have torch installed, the torch installation can be completed by adding the
@@ -180,11 +187,126 @@ In each GPU worker node:
 
 ## Start Server and GPU Worker
 
-TODO
+### Start Server
+
+On the server node (or dev node if they are the same), start the RabbitMQ and PostgreSQL services:
+
+```bash
+.celery/srvctl.sh <working directory> start
+```
+
+This will start:
+- RabbitMQ message broker (for task queue)
+- PostgreSQL database (for result backend)
+
+Both services run as Docker containers in detached mode with `--network=host`.
+
+To stop the server services:
+
+```bash
+.celery/srvctl.sh <working directory> stop
+```
+
+To restart the server services:
+
+```bash
+.celery/srvctl.sh <working directory> restart
+```
+
+### Start GPU Workers
+
+On the dev node, start all GPU workers:
+
+```bash
+.celery/wkctl.sh <working directory> start
+```
+
+This script will:
+- SSH to each registered GPU worker
+- Launch a Docker container with the worker image
+- Start the Celery worker service inside the container
+- Record the container ID in `<workdir>/run/worker.containerid`
+
+### Stop GPU Workers
+
+To stop all workers:
+
+```bash
+.celery/wkctl.sh <working directory> stop
+```
+
+This will stop the Celery worker service and remove the containers.
+
+### Restart GPU Workers
+
+To restart the Celery worker service without recreating containers:
+
+```bash
+.celery/wkctl.sh <working directory> restart
+```
 
 ## Add Tuning Tasks to the Message Queue
 
-TODO
+After the server and workers are running, you can dispatch tuning tasks using the `dispatch-tasks.sh` script:
+
+```bash
+.celery/dispatch-tasks.sh <working directory> [options] <module> [module-options]
+```
+
+### Common Options
+
+- `--arch ARCH [ARCH ...]`: Target architecture(s). If not specified, uses all registered workers.
+- `--max_hsaco N`: Maximum number of hsaco kernels to tune per entry (default: all)
+- `--wait`: Wait for all tasks to complete
+- `--verbose`, `-v`: Verbose output
+
+### Module-Specific Options
+
+Each tuning module (e.g., `flash`) has its own parameter choices. To see available options for a module:
+
+```bash
+.celery/dispatch-tasks.sh <working directory> flash -h
+```
+
+This will show all parameter choices for the flash module, such as:
+- `--dtype`: Filter by dtype. Choices: ['float16', 'bfloat16', 'float32']
+- `--hdim`: Filter by hdim. Choices: [16, 32, 48, 64, ...]
+- `--seqlen_q`: Filter by seqlen_q. Choices: [16, 32, 64, 128, ...]
+- `--seqlen_k`: Filter by seqlen_k. Choices: [16, 32, 64, 128, ...]
+- `--causal`: Filter by causal. Choices: [0, 1]
+- `--dropout_p`: Filter by dropout_p. Choices: [0.0, 0.5]
+- `--bias_type`: Filter by bias_type. Choices: [0, 1]
+
+### Examples
+
+Dispatch all flash tasks for gfx942:
+```bash
+.celery/dispatch-tasks.sh /path/to/workdir --arch gfx942 flash
+```
+
+Dispatch only float16 tasks with specific sequence lengths:
+```bash
+.celery/dispatch-tasks.sh /path/to/workdir --arch gfx942 flash \
+  --dtype float16 --seqlen_q 128 256 --seqlen_k 128 256
+```
+
+Dispatch to multiple architectures:
+```bash
+.celery/dispatch-tasks.sh /path/to/workdir --arch gfx942 gfx90a flash
+```
+
+Limit number of hsaco kernels to tune per entry:
+```bash
+.celery/dispatch-tasks.sh /path/to/workdir --max_hsaco 5 flash --dtype float16
+```
+
+Wait for all tasks to complete with verbose output:
+```bash
+.celery/dispatch-tasks.sh /path/to/workdir --arch gfx942 --wait --verbose flash \
+  --dtype float16 --hdim 64
+```
+
+If `--arch` is not specified, the script will dispatch tasks to all registered architectures in the workers database.
 
 ## Analysis the code
 

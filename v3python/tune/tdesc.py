@@ -2,11 +2,12 @@
 # SPDX-License-Identifier: MIT
 
 import json
+import itertools
 from abc import ABC, abstractmethod
 from argparse import Namespace
 from pathlib import Path
 from dacite import from_dict
-from dataclasses import asdict
+from dataclasses import asdict, fields
 
 '''
 A dual-purpose class
@@ -26,18 +27,69 @@ class TuningDescription(ABC):
         pass
 
     '''
+    get_entry_choices:
+        Return an ENTRY_CLASS instance where each field contains a list of possible choices.
+
+        Returns:
+            An instance of ENTRY_CLASS where each field is a list of values rather than a single value.
+
+        Example:
+            For FlashEntry, instead of:
+                FlashEntry(dtype='float16', hdim=32, ...)
+            Return:
+                FlashEntry(dtype=['float16', 'bfloat16', 'float32'],
+                          hdim=[16, 32, 48, 64, ...], ...)
+
+        Note:
+            This violates the type hints of ENTRY_CLASS (e.g., dtype: str becomes list[str]),
+            but it's only used for parameter space definition, not actual entry instances.
+    '''
+    @abstractmethod
+    def get_entry_choices(self):
+        pass
+
+    '''
+    generate_entries_from_choices:
+        Generate entry instances from choices.
+
+        Args:
+            choices: An ENTRY_CLASS instance where each field is a list of allowed values.
+                    If None, uses get_entry_choices().
+
+        Yields:
+            ENTRY_CLASS instances with single values (proper type-conforming instances)
+
+        This method can be implemented generically in the base class since it just
+        does cartesian product of all choice lists.
+    '''
+    def generate_entries_from_choices(self, choices=None):
+        if choices is None:
+            choices = self.get_entry_choices()
+
+        # Get field names and their choice lists
+        field_names = [f.name for f in fields(choices)]
+        choice_lists = [getattr(choices, f.name) for f in fields(choices)]
+
+        # Generate cartesian product
+        for value_tuple in itertools.product(*choice_lists):
+            yield self.ENTRY_CLASS(*value_tuple)
+
+    '''
     generate_entries:
         Generate an entry object that can uniquely locate a entry in the tuning
         table (sans Arch/GPU selection, which is handled in upper layer)
+
+        This is now implemented as a convenience wrapper around the two-step process.
+        Subclasses can override this if they need custom logic, but typically should
+        just implement get_entry_choices() instead.
 
     Note:
         An entry will be extended into Input Metadata object, which contains
         additional fields like batch sizes and PRNG seeds.
         This step should be handled inside run_test()
     '''
-    @abstractmethod
     def generate_entries(self):
-        pass
+        return self.generate_entries_from_choices()
 
     @abstractmethod
     def list_kernels(self, entry) -> list[str]:

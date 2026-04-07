@@ -82,23 +82,16 @@ class Flash(TuningDescription):
     def __init__(self):
         pass
 
-    def generate_entries(self):
-        a = Namespace()
-        a.dtype = ['float16', 'bfloat16', 'float32']
-        a.hdim = [16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256, 512]
-        a.seqlen_q = [16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
-        a.seqlen_k = [16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
-        a.causal = [False, True]
-        a.dropout_p = [0.0, 0.5]
-        a.bias_type = [0, 1]
-        for tup in itertools.product(a.dtype,
-                                     a.hdim,
-                                     a.seqlen_q,
-                                     a.seqlen_k,
-                                     a.causal,
-                                     a.dropout_p,
-                                     a.bias_type):
-            yield FlashEntry(*tup)
+    def get_entry_choices(self):
+        return FlashEntry(
+            dtype=['float16', 'bfloat16', 'float32'],
+            hdim=[16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256, 512],
+            seqlen_q=[16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192],
+            seqlen_k=[16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192],
+            causal=[False, True],
+            dropout_p=[0.0, 0.5],
+            bias_type=[0, 1]
+        )
 
     def list_kernels(self, entry: FlashEntry):
         if entry.hdim > 224:
