@@ -67,17 +67,19 @@ echo "Found celery at: $CELERY_LOCATION"
 # Apply patch
 apply_patch() {
 git apply "$@" - 2>/dev/null << 'EOF'
-From 64ae6737ef4ec49d02f62e55545e491264df367b Mon Sep 17 00:00:00 2001
+From 7849070ce374321810be855a17d08418a69d110c Mon Sep 17 00:00:00 2001
 From: Xinya Zhang <Xinya.Zhang@amd.com>
 Date: Tue, 31 Mar 2026 22:09:37 +0000
-Subject: [PATCH] db: use sa.JSON as database type for result
+Subject: [PATCH] db: use sqlalchemy.dialects.postgresql.JSONB as database type
+ for result
 
+This hack breaks compatibility with non-pg databases
 ---
  celery/backends/database/models.py | 6 +++---
  1 file changed, 3 insertions(+), 3 deletions(-)
 
 diff --git a/celery/backends/database/models.py b/celery/backends/database/models.py
-index f8ee62393..6e8470da8 100644
+index f8ee62393..8237a77ff 100644
 --- a/celery/backends/database/models.py
 +++ b/celery/backends/database/models.py
 @@ -2,7 +2,7 @@
@@ -85,7 +87,7 @@ index f8ee62393..6e8470da8 100644
 
  import sqlalchemy as sa
 -from sqlalchemy.types import PickleType
-+from sqlalchemy.types import JSON
++from sqlalchemy.dialects.postgresql import JSONB
 
  from celery import states
 
@@ -94,7 +96,7 @@ index f8ee62393..6e8470da8 100644
      task_id = sa.Column(sa.String(155), unique=True)
      status = sa.Column(sa.String(50), default=states.PENDING)
 -    result = sa.Column(PickleType, nullable=True)
-+    result = sa.Column(JSON, nullable=True)
++    result = sa.Column(JSONB, nullable=True)
      date_done = sa.Column(sa.DateTime, default=_get_utc_now,
                            onupdate=_get_utc_now, nullable=True, index=True)
      traceback = sa.Column(sa.Text, nullable=True)
@@ -103,7 +105,7 @@ index f8ee62393..6e8470da8 100644
                     autoincrement=True, primary_key=True)
      taskset_id = sa.Column(sa.String(155), unique=True)
 -    result = sa.Column(PickleType, nullable=True)
-+    result = sa.Column(JSON, nullable=True)
++    result = sa.Column(JSONB, nullable=True)
      date_done = sa.Column(sa.DateTime, default=_get_utc_now,
                            nullable=True, index=True)
 
