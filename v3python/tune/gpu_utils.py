@@ -3,6 +3,7 @@
 
 import sys
 import os
+import time
 from contextlib import contextmanager, ExitStack
 import torch
 from pyaotriton import (
@@ -67,11 +68,33 @@ def detach_member_tensors(data_object) -> dict:
     d = asdict_shallow(data_object)
     return { k: v.detach() if isinstance(v, torch.Tensor) else v for k, v in d.items() }
 
+def wait_gpu_temperature(device_id=None, threshold=85.0):
+    """Wait until GPU temperature drops below threshold. Only prints if waiting > 5 minutes."""
+    try:
+        temp = torch.cuda.temperature(device_id)
+    except (AttributeError, RuntimeError):
+        return
+
+    if temp <= threshold:
+        return
+
+    start_time = time.time()
+    while temp > threshold:
+        elapsed = time.time() - start_time
+        if elapsed > 300:  # 5 minutes
+            print(f"GPU temperature ({temp}°C) exceeds {threshold}°C. Waiting for cooldown (elapsed: {int(elapsed)}s)...", flush=True)
+        time.sleep(5)
+        try:
+            temp = torch.cuda.temperature(device_id)
+        except (AttributeError, RuntimeError):
+            break
+
 @contextmanager
 def device_ctx():
     with ExitStack() as stack:
         r1 = stack.enter_context(torch.device(default_device_string()))
         r2 = stack.enter_context(getattr(torch, default_device_type()).device(default_device_id()))
+        wait_gpu_temperature()
         yield r1, r2
 
 def do_bench(fn,
