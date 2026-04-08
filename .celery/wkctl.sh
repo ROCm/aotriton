@@ -106,7 +106,7 @@ WORKER_CONTAINER_ID=$(docker run -d \
   --security-opt seccomp=unconfined \
   --ipc=host \
   --network=host \
-  -e PYTHONPATH=/wkdir/build/$ARCH/install_dir/lib \
+  -e PYTHONPATH=/wkdir/installed/$ARCH/lib \
   --mount type=bind,source=$(realpath $WORKER_WORKDIR),target=/wkdir \
   "$CELERY_WORKER_IMAGE" \
   bash -c 'source /wkdir/config.rc && source $(dirname $CELERY_WORKER_PYTHON)/activate && bash /wkdir/aotriton.src/.celery/worker-service.sh start /wkdir && exec sleep infinity')

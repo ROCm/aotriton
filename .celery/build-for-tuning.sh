@@ -100,14 +100,17 @@ fi
 ARCHS=($(sqlite3 "$WORKDIR/workers.db" "SELECT DISTINCT arch FROM workers ORDER BY arch;"))
 echo "ARCHS detected: ${ARCHS[@]}"
 
+ABSWORKDIR=$(realpath "$WORKDIR")
+
 for arch in "${ARCHS[@]}"; do
-  BUILD_DIR="$WORKDIR/build/$arch"
+  BUILD_DIR="$ABSWORKDIR/build/$arch"
+  INSTALL_DIR="$ABSWORKDIR/installed/$arch"
   mkdir -p "$BUILD_DIR"
 
   (
     cd "$BUILD_DIR"
     cmake "$AOTRITON_ROOT" \
-      -DCMAKE_INSTALL_PREFIX=./install_dir \
+      -DCMAKE_INSTALL_PREFIX="$INSTALL_DIR" \
       -DCMAKE_BUILD_TYPE=Release \
       -DAOTRITON_TARGET_ARCH="$arch" \
       -DAOTRITON_NAME_SUFFIX=123 \

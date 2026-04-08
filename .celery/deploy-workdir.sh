@@ -60,11 +60,13 @@ deploy() {
 
   # Rsync everything except top-level build, scratch, and run directories
   # Note need to keep .git so git can work in wkdir/aotriton.src
+  set +x
   rsync -az \
     --info=progress2 \
     --exclude '/build/' \
     --exclude '/scratch/' \
     --exclude '/run/' \
+    --exclude '/installed/' \
     --mkpath \
     "$WORKDIR/" "$hostname:$WORKER_WORKDIR/"
 
@@ -72,7 +74,7 @@ deploy() {
 
   # Rsync only the specific architecture build directory
   if [ -d "$WORKDIR/build/$arch" ]; then
-    rsync -azR --info=progress2 "$WORKDIR/./build/$arch/install_dir" "$hostname:$WORKER_WORKDIR/./"
+    rsync -azR --info=progress2 "$WORKDIR/./installed/$arch" "$hostname:$WORKER_WORKDIR/./"
   fi
   echo "Deployed to $hostname ($arch) -> $WORKER_WORKDIR"
 }

@@ -121,7 +121,8 @@ This script will:
    - If either version changes, the wheel is rebuilt automatically
 
 2. Query the worker database and build a tuning version of AOTriton for each registered architecture
-   - Builds are stored in `<working directory>/build/<arch>/`
+   - Builds are stored in `<working directory>/build/<arch>/` (not synced to workers)
+   - Installed files are stored in `<working directory>/installed/<arch>/` (synced to workers)
    - Each architecture uses the same Triton wheel from step 1
 
 The script is idempotent - it will skip rebuilding the Triton wheel if a compatible one already exists.
@@ -168,9 +169,11 @@ following script as `<working directory>/image.scripts/90-install_torch.sh`
 
 This script will deploy the working directory to each registered GPU worker via rsync:
   + Syncs all files except
-    - build
-    - scratch
-  + Only syncs `build/<arch>` matching the worker's registered architecture
+    - build (build artifacts are not synced)
+    - scratch (temporary files)
+    - run (runtime state)
+    - installed (synced separately per architecture)
+  + Only syncs `installed/<arch>` matching the worker's registered architecture
   + Uses each worker's configured working directory (default or custom override)
 
 ## Prepare the worker image from base worker image on each system
