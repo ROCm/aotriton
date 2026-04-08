@@ -66,7 +66,7 @@ echo "Found celery at: $CELERY_LOCATION"
 
 # Apply patch
 apply_patch() {
-git apply "$@" - 2>/dev/null << 'EOF'
+patch -p1 "$@" 2>/dev/null << 'EOF'
 From 7849070ce374321810be855a17d08418a69d110c Mon Sep 17 00:00:00 2001
 From: Xinya Zhang <Xinya.Zhang@amd.com>
 Date: Tue, 31 Mar 2026 22:09:37 +0000
@@ -116,10 +116,10 @@ EOF
 }
 
 cd "$CELERY_LOCATION"
-if apply_patch --check; then
-  apply_patch
+if apply_patch --dry-run --silent --force; then
+  apply_patch --silent --force
   echo "Patch applied successfully"
-elif apply_patch --reverse --check; then
+elif apply_patch --reverse --dry-run --silent --force; then
   echo "Patch already applied, skipping"
 else
   echo "Error: Patch cannot be applied (conflicts or already modified)" >&2
