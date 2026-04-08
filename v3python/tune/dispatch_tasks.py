@@ -166,10 +166,10 @@ def dispatch_tasks(workdir: Path, module_name: str, args):
             completed = 0
             for res in results:
                 try:
-                    res.get()
+                    result = res.get()
                     completed += 1
                     if args.verbose:
-                        print(f"Task {completed}/{len(results)} completed")
+                        print(f"Task {completed}/{len(results)} completed. result:\n{result=}")
                 except Exception as e:
                     print(f"Task failed: {e}", file=sys.stderr)
         print(f"Completed {completed}/{len(results)} tasks")
