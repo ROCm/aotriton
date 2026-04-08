@@ -15,13 +15,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AOTRITON_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Get workdir from first argument
-if [ "$#" -lt 1 ]; then
+if [ "$#" -lt 2 ]; then
   echo "Error: Missing workdir argument" >&2
-  echo "Usage: $0 <workdir> [options] <module> [module-options]" >&2
+  echo "Usage: $0 <module> <workdir> [module-options]" >&2
   exit 1
 fi
 
-WORKDIR="$1"
+WORKDIR="$2"
 
 # Validate workdir
 if [ ! -d "$WORKDIR" ]; then

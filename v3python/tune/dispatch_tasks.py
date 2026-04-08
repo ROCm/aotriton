@@ -193,6 +193,21 @@ def get_available_modules():
     # TODO: Auto-discover by scanning v3python/tune/
     return ['flash']
 
+def add_common_arguments(parser):
+    """Add common arguments (workdir, arch, etc.) to a parser."""
+    parser.add_argument('workdir', type=Path,
+                        help='Project working directory')
+    parser.add_argument('--arch', type=str, nargs='+',
+                        help='Target architecture(s). If not specified, uses all registered workers.')
+    parser.add_argument('--max_hsaco', type=int, metavar='N',
+                        help='Maximum number of hsaco kernels to tune per entry (default: all)')
+    parser.add_argument('--wait', action='store_true',
+                        help='Wait for all tasks to complete')
+    parser.add_argument('--verbose', '-v', action='store_true',
+                        help='Verbose output')
+    parser.add_argument('--dry_run', action='store_true',
+                        help='Print parsed options and exit without dispatching tasks')
+
 def add_module_subparser(subparsers, module_name, load_params=True):
     """
     Add a subparser for a specific tuning module with its parameter choices.
@@ -211,6 +226,9 @@ def add_module_subparser(subparsers, module_name, load_params=True):
         help=f'{module_name.capitalize()} tuning module',
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
+
+    # Add common arguments to this subparser
+    add_common_arguments(module_parser)
 
     if not load_params:
         return module_parser
@@ -285,33 +303,20 @@ Actual prefix: {venv_path}
         epilog='''
 Examples:
   # Dispatch all flash tasks for gfx942
-  %(prog)s /path/to/workdir --arch gfx942 flash
+  %(prog)s flash /path/to/workdir --arch gfx942
 
   # Dispatch only float16 tasks with specific sequence lengths
-  %(prog)s /path/to/workdir --arch gfx942 flash --dtype float16 --seqlen_q 128 256 --seqlen_k 128 256
+  %(prog)s flash /path/to/workdir --arch gfx942 --dtype float16 --seqlen_q 128 256 --seqlen_k 128 256
 
   # Dispatch to multiple architectures
-  %(prog)s /path/to/workdir --arch gfx942 gfx90a flash
+  %(prog)s flash /path/to/workdir --arch gfx942 gfx90a
 
   # Limit number of hsaco kernels to tune per entry
-  %(prog)s /path/to/workdir --max_hsaco 5 flash --dtype float16
+  %(prog)s flash /path/to/workdir --max_hsaco 5 --dtype float16
 ''')
 
-    parser.add_argument('workdir', type=Path,
-                        help='Project working directory')
-    parser.add_argument('--arch', type=str, nargs='+',
-                        help='Target architecture(s). If not specified, uses all registered workers.')
-    parser.add_argument('--max_hsaco', type=int, metavar='N',
-                        help='Maximum number of hsaco kernels to tune per entry (default: all)')
-    parser.add_argument('--wait', action='store_true',
-                        help='Wait for all tasks to complete')
-    parser.add_argument('--verbose', '-v', action='store_true',
-                        help='Verbose output')
-    parser.add_argument('--dry_run', action='store_true',
-                        help='Print parsed options and exit without dispatching tasks')
-
     # Create subparsers for each module BEFORE parsing
-    # This allows -h to work for subcommands
+    # Module comes first as a positional argument
     subparsers = parser.add_subparsers(dest='module', required=True,
                                        help='Tuning module')
 
