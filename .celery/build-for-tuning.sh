@@ -46,11 +46,11 @@ if [ ! -d "$WORKDIR" ] || [ ! -f "$WORKDIR/workers.db" ]; then
 fi
 
 # Setup
-TRITON_DIR="$WORKDIR/scratch/triton"
-mkdir -p "$TRITON_DIR"
-TRITON_DIR=$(realpath $WORKDIR/scratch/triton)
+TRITON_SRC_DIR="$AOTRITON_ROOT/third_party/triton"
+TRITON_WHEEL_OUTPUT_DIR="$WORKDIR/scratch/triton"
+mkdir -p "$TRITON_WHEEL_OUTPUT_DIR"
 set -e # MUST NOT FAIL
-TRITON_GIT12=$(cd "$TRITON_DIR" && git rev-parse --short=12 HEAD 2>/dev/null || echo "unknown")
+TRITON_GIT12=$(cd "$TRITON_SRC_DIR" && git rev-parse --short=12 HEAD 2>/dev/null || echo "unknown")
 set +e
 TRITON_WHEEL_VERSION_SUFFIX="+tunerwheel.$TRITON_GIT12"
 
@@ -77,7 +77,7 @@ has_triton_wheel() {
   return 1
 }
 
-TRITON_WHEEL=$(has_triton_wheel "$TRITON_DIR" "${TRITON_WHEEL_VERSION_SUFFIX}")
+TRITON_WHEEL=$(has_triton_wheel "$TRITON_WHEEL_OUTPUT_DIR" "${TRITON_WHEEL_VERSION_SUFFIX}")
 echo "TRITON_WHEEL detected: $TRITON_WHEEL"
 
 # Step 1: Build triton wheel
@@ -85,9 +85,9 @@ if [ -z "$TRITON_WHEEL" ]; then
   echo "Building triton wheel: $TRITON_WHEEL"
   # Must set TRITON_WHEEL_VERSION_SUFFIX triton's setup.py use .is_dir() to
   # detect .git and thus cannot append +git<hash8> when being built as a submodule.
-  (cd "$AOTRITON_ROOT/third_party/triton"; TRITON_WHEEL_VERSION_SUFFIX=${TRITON_WHEEL_VERSION_SUFFIX} pip wheel . -w "$TRITON_DIR")
+  (cd "$TRITON_SRC_DIR"; TRITON_WHEEL_VERSION_SUFFIX=${TRITON_WHEEL_VERSION_SUFFIX} pip wheel . -w "$TRITON_WHEEL_OUTPUT_DIR")
 
-  TRITON_WHEEL=$(ls "$TRITON_DIR"/triton-*.whl 2>/dev/null | head -n 1)
+  TRITON_WHEEL=$(ls "$TRITON_WHEEL_OUTPUT_DIR"/triton-*.whl 2>/dev/null | head -n 1)
   if [ -z "$TRITON_WHEEL" ] || [ ! -f "$TRITON_WHEEL" ]; then
     echo "Error: Triton wheel not found" >&2
     exit 1
