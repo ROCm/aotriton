@@ -84,7 +84,7 @@ class AffineKernelDescription(SlimAffineKernelDescription):
                 yield Functional(self, arch, arch_number, binds, optimized_for=gpus)
 
     def translate_dataframe(self, f : Functional, df : 'pandas.DataFrame'):
-        raise RuntimeError(f'translate_dataframe should not be calle over any AffineDescription {self.NAME=}')
+        raise RuntimeError(f'translate_dataframe should not be called over any AffineDescription {self.NAME=}')
 
     # Very kernel specific logic, leave for concrete class
     # def translate_empty_dataframe(self, f : Functional):

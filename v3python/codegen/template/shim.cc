@@ -6,12 +6,16 @@
 #include <aotriton/util.h>
 #include <tuple>
 #include <iostream>
+#if AOTRITON_BUILD_FOR_TUNING
+#include <aotriton/cpp_tune.h>
+#endif
 [[includes]]
 
 namespace AOTRITON_NS::v3::[[kernel_family_name]] {
 
 #if [[shared_iface]]
 using AOTRITON_NS::v3::[[shared_iface_family]]::[[param_class_name]];
+#define KERNEL_SLOT_INDEX ([[call_options_struct]]::KernelSlot::[[triton_kernel_name]])
 #endif
 
 #define CAST(x) const_cast<void*>(static_cast<const void*>(x))
@@ -31,6 +35,40 @@ int64_t [[context_class_name]]::godel_number() const
 
 hipError_t
 [[context_class_name]]::lookup_optimal(Gpu gpu) {
+    // Note:
+    // context object must be called in this order
+    //  ctor -> lookup_optimal -> launch
+    // Here launch_condition is re-used as initial value from ctor, which is
+    // the condition set by metro kernel to completely disable a specific
+    // kernel (e.g. debug_simulate_encoded_softmax).
+    // Hence, launch_condition must be checked at the beginning of
+    // lookup_optimal() as well.
+    if (!launch_condition)
+      return hipSuccess;
+#if AOTRITON_BUILD_FOR_TUNING && [[shared_iface]]
+    if (call_options) {
+        auto& kctl = *call_options->kernel_fine_control[KERNEL_SLOT_INDEX];
+        uint16_t ctrl = kctl.control_bits;
+
+        // Check Ignore flag - skip lookup/execution if set
+        if (ctrl & KernelControl::Ignore) {
+            launch_condition = false;
+            return hipSuccess;
+        }
+
+        // Check Skip flag - lookup but skip execution
+        if (ctrl & KernelControl::Skip) {
+            launch_condition = false;
+        }
+
+        // Check Manual flag - use hsaco_index if set
+        if (ctrl & KernelControl::Manual) {
+            _has_preferred_kernel = kctl.hsaco_index;
+            peek_kernel_image = (ctrl & KernelControl::ExtractImage);
+        }
+    }
+#endif
+
     auto [arch_number, mod_number] = get_archmod_number(gpu);
     if (arch_number < 0) {
         return hipErrorNoBinaryForGpu;
@@ -45,11 +83,27 @@ hipError_t
     tune_func(*this, mod_number);
     if (!kernel_on_device)
         return hipErrorSharedObjectSymbolNotFound;
+
+#if AOTRITON_BUILD_FOR_TUNING && [[shared_iface]]
+    if (call_options) {
+        auto& kctl = *call_options->kernel_fine_control[KERNEL_SLOT_INDEX];
+        uint16_t ctrl = kctl.control_bits;
+
+        // Write total_hsacos if Query is set
+        if (ctrl & KernelControl::Query) {
+            kctl.total_hsacos = _total_number_of_kernels;
+            kctl.kernel_psels = _preferred_kernel_psels;
+            kctl.kernel_copts = _preferred_kernel_copts;
+        }
+    }
+#endif
     return hipSuccess;
 }
 
 hipError_t
 [[context_class_name]]::launch(hipStream_t stream) const {
+    if (!launch_condition)
+      return hipSuccess;
     constexpr std::string_view triton_kernel_name { "[[triton_kernel_name]]" };
     TritonAuxiliaryArguments aux;
     auto args = prepare_arguments[pp_args_index](*this->params, aux);
@@ -59,15 +113,27 @@ hipError_t
     } else {
         grid = grid_calculator();
     }
-#if AOTRITON_BUILD_FOR_TUNING
-    return kernel_on_device->invoke(triton_kernel_name,
-                                    package_path,
-                                    func_name,
-                                    arch_name,
-                                    grid,
-                                    args,
-                                    peek_kernel_image,
-                                    stream);
+#if AOTRITON_BUILD_FOR_TUNING && [[shared_iface]]
+    auto ret = kernel_on_device->invoke(triton_kernel_name,
+                                        package_path,
+                                        func_name,
+                                        arch_name,
+                                        grid,
+                                        args,
+                                        peek_kernel_image,
+                                        stream);
+    if (ret != hipSuccess)
+         return ret;
+    if (call_options) {
+        auto& kctl = *call_options->kernel_fine_control[KERNEL_SLOT_INDEX];
+        uint16_t ctrl = kctl.control_bits;
+        if (ctrl & KernelControl::Manual && ctrl & KernelControl::ExtractImage) {
+            auto essentials = kernel_on_device->get_image_info_iff_decompressed();
+            kctl.kernel_image = essentials.image;
+            kctl.image_size = essentials.size;
+        }
+    }
+    return ret;
 #else
     return kernel_on_device->invoke(triton_kernel_name,
                                     package_path,

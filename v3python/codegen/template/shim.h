@@ -17,6 +17,7 @@
 #if [[shared_iface]]
 namespace AOTRITON_NS::v3::[[shared_iface_family]] {
     struct [[param_class_name]];
+    struct [[call_options_struct]];
 }
 #endif
 
@@ -34,6 +35,22 @@ struct [[param_class_name]] {
 
 struct [[context_class_name]] {
     const [[param_class_name]] *params = nullptr;
+#if [[shared_iface]]
+    const [[call_options_struct]] *call_options = nullptr;
+#endif
+    // FIXME: this is for V2 API and will be removed after 0.12
+#if AOTRITON_VERSION_MAJOR == 0 && AOTRITON_VERSION_MINOR == 12
+    [[context_class_name]]() {}
+#endif
+    template <typename ParentContext>
+    [[context_class_name]](const ParentContext& pcontext, bool condition)
+      : launch_condition(condition)
+    {
+        params = pcontext.params;
+#if [[shared_iface]]
+        call_options = pcontext.call_options;
+#endif
+    }
     // Performance related arguments for current selection
     [[perf_fields]];
 
@@ -51,6 +68,7 @@ struct [[context_class_name]] {
     const char* _preferred_kernel_copts = nullptr;
     bool peek_kernel_image = false;
 #endif
+    bool launch_condition = true;
 
     hipError_t lookup_optimal(Gpu gpu);
     hipError_t launch(hipStream_t stream) const;

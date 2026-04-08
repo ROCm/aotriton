@@ -81,6 +81,10 @@ class KernelDescription(Interface):
     def is_functional_disabled(self, functional):
         return False
 
+    def iter_kernel_slot_names(self):
+        """Yield this kernel's NAME for selective kernel execution."""
+        yield self.NAME
+
     def __init__(self, triton_kernel_name, triton_source_path):
         super().__init__()
         self._DATA_ARGUMENTS = None

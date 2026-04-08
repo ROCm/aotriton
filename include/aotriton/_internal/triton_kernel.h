@@ -87,10 +87,6 @@ public:
                            hipStream_t stream);
 
 
-#if AOTRITON_BUILD_FOR_TUNING
-  // Will not work unless invoke is called at least once, i.e., If-and-only-iF decompressed
-  Essentials get_image_info_iff_decompressed() const;
-#endif
 private:
 
   uint64_t blake2b_; // TODO: sanity check of assemblied stem name

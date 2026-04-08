@@ -82,13 +82,6 @@ attn_bwd(const attn_bwd_params& in,
   }
   const auto& compiled_head_dims = BwdKernelDkDvMetadata::get_BLOCK_DMODEL_choices();
   int16_t hdim_rounded = round_value(hdim_max, compiled_head_dims);
-  // FIXME: Remove when compiler bug fixed
-  if (Gpu2VendorArch(gpu) == CAT32(GpuVendor::kAMD, 0x950)) {
-    if (hdim_rounded == 48)
-      hdim_rounded = 64;
-    if (hdim_rounded == 80)
-      hdim_rounded = 96;
-  }
   LazyTensorInternal<2> lazy_delta(in.D);
   LazyTensorInternal<4> lazy_dq_acc(in.DQ_ACC);
   OpAttnBwdParams params = {
@@ -170,6 +163,9 @@ attn_bwd(const attn_bwd_params& in,
 
 namespace AOTRITON_NS::v2::flash {
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+
 using BwdPreprocessParams = AOTRITON_NS::v3::flash::OpAttnBwdParams;
 using BwdPreprocessVarlenParams = AOTRITON_NS::v3::flash::OpAttnBwdParams;
 using BwdKernelDkDvParams = AOTRITON_NS::v3::flash::OpAttnBwdParams;
@@ -199,13 +195,6 @@ bwd_preprocess(T4 out, T4 dout, T2 delta, AOTRITON_NS::Stream stream_wrap) {
   int hdim_o = out.size(3);
   const auto& compiled_head_dims = BwdPreprocessMetadata::get_BLOCK_DMODEL_choices();
   int hdim_rounded = round_value(hdim_o, compiled_head_dims);
-  // FIXME: Remove when compiler bug fixed
-  if (Gpu2VendorArch(gpu) == CAT32(GpuVendor::kAMD, 0x950)) {
-    if (hdim_rounded == 48)
-      hdim_rounded = 64;
-    if (hdim_rounded == 80)
-      hdim_rounded = 96;
-  }
   if (hdim_rounded < 0) {
 #if AOTRITON_VERBOSE
     std::cerr << "Head dimension " << hdim_o << " unsupported. ";
@@ -259,13 +248,6 @@ bwd_preprocess_varlen(T4 out,
   int hdim_o = out.size(3);
   const auto& compiled_head_dims = BwdPreprocessVarlenMetadata::get_BLOCK_DMODEL_choices();
   int hdim_rounded = round_value(hdim_o, compiled_head_dims);
-  // FIXME: Remove when compiler bug fixed
-  if (Gpu2VendorArch(gpu) == CAT32(GpuVendor::kAMD, 0x950)) {
-    if (hdim_rounded == 48)
-      hdim_rounded = 64;
-    if (hdim_rounded == 80)
-      hdim_rounded = 96;
-  }
   if (hdim_rounded < 0) {
 #if AOTRITON_VERBOSE
     std::cerr << "Head dimension " << hdim_o << " unsupported. ";
@@ -337,13 +319,6 @@ bwd_kernel_dk_dv(T4 q,
   int num_head_k = k.size(1);
   const auto& compiled_head_dims = BwdKernelDkDvMetadata::get_BLOCK_DMODEL_choices();
   int hdim_rounded = round_value(hdim_max, compiled_head_dims);
-  // FIXME: Remove when compiler bug fixed
-  if (Gpu2VendorArch(gpu) == CAT32(GpuVendor::kAMD, 0x950)) {
-    if (hdim_rounded == 48)
-      hdim_rounded = 64;
-    if (hdim_rounded == 80)
-      hdim_rounded = 96;
-  }
   if (hdim_rounded < 0) {
 #if AOTRITON_VERBOSE
     std::cerr << "Head dimension " << hdim_max << " unsupported. ";
@@ -470,13 +445,6 @@ bwd_kernel_dq(T4 q,
   // TODO: Add metadata to operators
   const auto& compiled_head_dims = BwdKernelDqMetadata::get_BLOCK_DMODEL_choices();
   int hdim_rounded = round_value(hdim_max, compiled_head_dims);
-  // FIXME: Remove when compiler bug fixed
-  if (Gpu2VendorArch(gpu) == CAT32(GpuVendor::kAMD, 0x950)) {
-    if (hdim_rounded == 48)
-      hdim_rounded = 64;
-    if (hdim_rounded == 80)
-      hdim_rounded = 96;
-  }
   if (hdim_rounded < 0) {
 #if AOTRITON_VERBOSE
     std::cerr << "Head dimension " << hdim_max << " unsupported. ";
@@ -753,5 +721,7 @@ attn_bwd_compact_varlen(T4 q,            // 1 x num_heads x total_q x hdim_qk, t
                           stream,
                           extargs);
 }
+
+#pragma GCC diagnostic pop
 
 }

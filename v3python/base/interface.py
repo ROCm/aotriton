@@ -161,6 +161,15 @@ class Interface(ABC):
     def translate_empty_dataframe(self, f : Functional):
         pass
 
+    def iter_kernel_slot_names(self):
+        """Generator that yields KernelSlot enum names for selective kernel execution.
+
+        Override in subclasses to provide kernel-specific slot names.
+        For kernels that don't support selective execution (e.g., AITER ASM),
+        return an empty generator.
+        """
+        yield from ()
+
     def _collect_functionals_from_shared(self):
         mklass = self.SHARED_IFACE
         if mklass is None:

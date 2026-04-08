@@ -33,6 +33,10 @@ class SlimAffineKernelDescription(Interface):
     def enum_name(self):
         return f'kSlimAffine_{self.class_name_base}'
 
+    def iter_kernel_slot_names(self):
+        """SlimAffine kernels (AITER ASM) don't support selective execution."""
+        yield from ()
+
     def co_gen(self, build_dir: Path, build_for_target_arch: dict[str, list[str]]):
         target_arch = {}
         # Filter out unsupported arch

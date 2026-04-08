@@ -23,6 +23,31 @@ using LT4 = AOTRITON_NS::LazyTensor<4>;
 struct AOTRITON_API attn_options {
   int force_backend_index = -1;
   bool deterministic = false;
+
+#if AOTRITON_BUILD_FOR_TUNING
+  // Kernel slot assignments in kernel_fine_control array
+  // Automatically generated from kernel NAMEs
+  // See v3python/rules/flash/__init__.py for kernel definitions
+  enum KernelSlot {
+    // Forward pass kernels (from attn_fwd, etc.)
+    attn_fwd = 0,
+    debug_simulate_encoded_softmax = 1,
+
+    // Backward pass kernels (from bwd_preprocess, bwd_kernel_*, etc.)
+    bwd_preprocess = 2,
+    bwd_preprocess_varlen = 3,
+    bwd_kernel_dk_dv = 4,
+    bwd_kernel_dq = 5,
+    bwd_kernel_fuse = 6,
+
+    MaxKernels = 7
+  };
+
+  // Fine-grained kernel control within Metro backends
+  // Use KernelSlot enum to index into this array-like container
+  // Returns shared_ptr<KernelControl> for reference semantics in Python
+  mutable KernelFineControl kernel_fine_control{KernelSlot::MaxKernels};
+#endif
 };
 
 // Note: DO NOT declare enums as enum class : int8_t. Enum class cannot be cased to
@@ -60,7 +85,7 @@ struct AOTRITON_API attn_fwd_params {
   T4       B;
   T2       A;
   float    Sm_scale;
-  T2       L;
+  T2       L;                   // Can be T2::get_null_tensor()
   T4       Out;
   // int32_t  Num_head_q;       // Inferred from Q.size()
   // int32_t  Num_head_k;       // Inferred from Q.size()
@@ -85,7 +110,7 @@ struct AOTRITON_API attn_fwd_params {
   int32_t  window_left;
   int32_t  window_right;
 
-  static constexpr int32_t kVersion = 2;
+  static constexpr int32_t kVersion = 3;
   attn_fwd_params();
 };
 
@@ -129,7 +154,7 @@ struct AOTRITON_API attn_bwd_params {
   int32_t   window_right;
   mutable LT4       DQ_ACC;          // fp32 accumulator of dq
 
-  static constexpr int32_t kVersion = 5;
+  static constexpr int32_t kVersion = 6;
   attn_bwd_params();
 };
 

@@ -32,10 +32,18 @@ class MetroKernel(Interface):
         return []
 
     def translate_dataframe(self, f : Functional, df : 'pandas.DataFrame'):
-        raise RuntimeError(f'translate_dataframe should not be calle over any MetroKernel {self.NAME=}')
+        raise RuntimeError(f'translate_dataframe should not be called over any MetroKernel {self.NAME=}')
 
     def translate_empty_dataframe(self, f : Functional):
-        raise RuntimeError(f'translate_empty_dataframe should not be calle over any MetroKernel {self.NAME=}')
+        raise RuntimeError(f'translate_empty_dataframe should not be called over any MetroKernel {self.NAME=}')
 
     def list_kernels(self):
         return self._kernels
+
+    def iter_kernel_slot_names(self):
+        """Generator that yields KernelSlot enum names for all kernels.
+
+        Delegates to each kernel's iter_kernel_slot_names() method.
+        """
+        for kdesc in self._kernels:
+            yield from kdesc.iter_kernel_slot_names()

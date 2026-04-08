@@ -159,6 +159,9 @@ attn_fwd(const attn_fwd_params& in,
 
 namespace AOTRITON_NS::v2::flash {
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+
 using AttnFwdParams = AOTRITON_NS::v3::flash::OpAttnFwdParams;
 using AttnFwdContext = AOTRITON_NS::v3::flash::AttnFwdContext;
 using AttnFwdMetadata = AOTRITON_NS::v3::flash::AttnFwdMetadata;
@@ -417,5 +420,7 @@ attn_fwd_compact_varlen(T4 q,            // 1 x num_heads x total_q x hdim_qk, t
                           stream_wrap,
                           extargs);
 }
+
+#pragma GCC diagnostic pop
 
 } // AOTRITON_NS::v2::flash

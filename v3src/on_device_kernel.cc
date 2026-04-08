@@ -161,4 +161,11 @@ OnDeviceKernel::DeviceFunction::~DeviceFunction() {
   }
 }
 
+#if AOTRITON_BUILD_FOR_TUNING
+OnDeviceKernel::Essentials
+OnDeviceKernel::get_image_info_iff_decompressed() const {
+  return essentials_;
+}
+#endif
+
 } // namespace AOTRITON_NS

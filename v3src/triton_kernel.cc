@@ -165,11 +165,4 @@ TritonKernel::direct_invoke(std::string_view mangled_kernel_function_name,
                                reinterpret_cast<void**>(&config));
 }
 
-#if AOTRITON_BUILD_FOR_TUNING
-TritonKernel::Essentials
-TritonKernel::get_image_info_iff_decompressed() const {
-  return essentials_;
-}
-#endif
-
 }

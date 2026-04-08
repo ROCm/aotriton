@@ -4,8 +4,14 @@
 #ifndef AOTRITON_V2_API_FLASH_ATTN_H
 #define AOTRITON_V2_API_FLASH_ATTN_H
 
+#include <aotriton/v2/cpp_tune.h>
+
 namespace AOTRITON_NS::v2::flash {
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+
+[[deprecated("V2 API is deprecated, use V3 API instead")]]
 hipError_t AOTRITON_API
 check_gpu(AOTRITON_NS::Stream stream);
 
@@ -14,18 +20,19 @@ using T2 = AOTRITON_NS::TensorView<2>;
 using T1 = AOTRITON_NS::TensorView<1>;
 using T0 = AOTRITON_NS::TensorView<0>;
 
-struct AOTRITON_API FwdExtraArguments : public CppTune {
+struct [[deprecated("V2 API is deprecated, use V3 API instead")]] AOTRITON_API FwdExtraArguments : public CppTune {
 };
 
-struct AOTRITON_API BwdExtraArguments {
+struct [[deprecated("V2 API is deprecated, use V3 API instead")]] AOTRITON_API BwdExtraArguments {
 #if AOTRITON_BUILD_FOR_TUNING
   FwdExtraArguments dkdv, dqdb;
 #endif
 };
 
-struct AOTRITON_API FusedBwdExtraArguments : public CppTune {
+struct [[deprecated("V2 API is deprecated, use V3 API instead")]] AOTRITON_API FusedBwdExtraArguments : public CppTune {
 };
 
+[[deprecated("V2 API is deprecated, use V3 API instead")]]
 hipError_t AOTRITON_API
 attn_fwd(T4 q, // batch_size x num_heads x seqlen_q x hdim_qk
          T4 k, // batch_size x num_heads x seqlen_k x hdim_qk
@@ -46,6 +53,7 @@ attn_fwd(T4 q, // batch_size x num_heads x seqlen_q x hdim_qk
          AOTRITON_NS::Stream stream,
          FwdExtraArguments* extargs = nullptr);
 
+[[deprecated("V2 API is deprecated, use V3 API instead")]]
 hipError_t AOTRITON_API
 attn_fwd_compact_varlen(T4 q, // 1 x num_heads x total_q x hdim_qk, total_q := \sum_{i=0}^{b} s_i
                         T4 k, // 1 x num_heads x total_k x hdim_qk, total_k := \sum_{i=0}^{b} s_i
@@ -70,6 +78,7 @@ attn_fwd_compact_varlen(T4 q, // 1 x num_heads x total_q x hdim_qk, total_q := \
                         AOTRITON_NS::Stream stream,
                         FwdExtraArguments* extargs = nullptr);
 
+[[deprecated("V2 API is deprecated, use V3 API instead")]]
 hipError_t AOTRITON_API
 attn_bwd(T4 q, // batch_size x num_heads x seqlen_q x hdim_qk
          T4 k, // batch_size x num_heads x seqlen_k x hdim_qk
@@ -92,6 +101,7 @@ attn_bwd(T4 q, // batch_size x num_heads x seqlen_q x hdim_qk
          AOTRITON_NS::Stream stream,
          BwdExtraArguments* extargs = nullptr);
 
+[[deprecated("V2 API is deprecated, use V3 API instead")]]
 hipError_t AOTRITON_API
 attn_bwd_fused(T4 q, // batch_size x num_heads x seqlen_q x hdim_qk
                T4 k, // batch_size x num_heads x seqlen_k x hdim_qk
@@ -113,6 +123,7 @@ attn_bwd_fused(T4 q, // batch_size x num_heads x seqlen_q x hdim_qk
                AOTRITON_NS::Stream stream,
                FusedBwdExtraArguments* extargs = nullptr);
 
+[[deprecated("V2 API is deprecated, use V3 API instead")]]
 hipError_t AOTRITON_API
 attn_bwd_compact_varlen(T4 q, // 1 x num_heads x total_q x hdim_qk, total_q := \sum_{i=0}^{b}
                         T4 k, // 1 x num_heads x total_k x hdim_qk, total_k := \sum_{i=0}^{b}
@@ -140,6 +151,7 @@ attn_bwd_compact_varlen(T4 q, // 1 x num_heads x total_q x hdim_qk, total_q := \
                         BwdExtraArguments* extargs = nullptr);
 
 // varlen should use len(cu_seqlens_q) - 1 for the batch size
+[[deprecated("V2 API is deprecated, use V3 API instead")]]
 hipError_t AOTRITON_API
 debug_simulate_encoded_softmax(T4 r,  // batch_size x num_heads x max_seqlen_q x max_seqlen_k
                                float dropout_p,
@@ -147,6 +159,8 @@ debug_simulate_encoded_softmax(T4 r,  // batch_size x num_heads x max_seqlen_q x
                                T0 philox_offset1,
                                uint64_t philox_offset2,
                                AOTRITON_NS::Stream stream);
+
+#pragma GCC diagnostic pop
 
 } // AOTRITON_NS::v2::flash
 

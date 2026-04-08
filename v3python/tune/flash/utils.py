@@ -1,6 +1,7 @@
 # Copyright © 2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
+import math
 import torch
 
 def cdiv(x, div):
@@ -42,3 +43,5 @@ def sdpa_logsumexp(query, key, value, attn_mask=None,
     # attn_weight = torch.dropout(attn_weight, dropout_p, train=True)
     # return attn_weight @ value
 
+def sdpa_odo(out, dout):
+    return torch.sum(out * dout, dim=-1)

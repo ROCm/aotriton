@@ -1,0 +1,2 @@
+module flash
+benchmark /dev/shm/tt4 attn_fwd=0

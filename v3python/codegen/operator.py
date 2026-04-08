@@ -126,6 +126,7 @@ class OperatorGenerator(InterfaceGenerator):
         context_class_name = iface.context_class_name
         lookup_stmt = []
         launch_stmt = []
+
         # FIXME: lookup all and then launch, in case any sub-kernel failed
         for nth, kdesc in enumerate(metro.list_kernels()):
             if isinstance(kdesc, ConditionalKernel):

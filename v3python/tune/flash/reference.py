@@ -11,6 +11,7 @@ from torch.ops import aten
 from .utils import (
     round_to_8x,
     sdpa_logsumexp,
+    sdpa_odo,
 )
 from ..gpu_utils import (
     elike,
@@ -51,6 +52,7 @@ class SdpaBidiInputs:
     out: torch.Tensor
     logsumexp: torch.Tensor
     dout: torch.Tensor
+    delta: torch.Tensor | None = None
     b: torch.Tensor | None = None
     dropout_p: float = 0.0
     seed: torch.Tensor | None = None
@@ -86,7 +88,7 @@ class SdpaReference(KFTDesc):
     PT_INPUT_CLASS = SdpaBidiInputs
     PT_REF_CLASS = SdpaGoldenOutputs
 
-    def create_extargs(self, *, force_kernel_index=None, peek_kernel_numbers=None):
+    def create_extargs(self, *, hsaco_index=None, probe=False):
         return None
 
     def generate_inputs(self, im: 'FlashInputMetadata'):
@@ -140,6 +142,7 @@ class SdpaReference(KFTDesc):
             sm_scale = 1.0 / math.sqrt(D_HEAD)
         L = torch.empty((q.shape[0], q.shape[1], q.shape[2]), dtype=torch.float32)
         out = torch.empty(odims, dtype=q.dtype)
+        delta = torch.empty_like(L)
         dout = rng(odims)
         philox_null = torch.empty([0], dtype=torch.uint64)
         philox_seed = philox_null
@@ -169,6 +172,7 @@ class SdpaReference(KFTDesc):
                                 out=out,
                                 logsumexp=L,
                                 dout=dout,
+                                delta=delta,
                                 b=b,
                                 dropout_p=dropout_p,
                                 seed=philox_seed,
@@ -248,6 +252,9 @@ class SdpaReference(KFTDesc):
                                    scale=inputs.sm_scale,
                                    is_causal=is_causal,
                                    enable_gqa=enable_gqa)
+        # print(f"{logsumexp.shape=}")
+        delta = sdpa_odo(hpout.to(torch.float32), inputs.dout.to(torch.float32))
+        inputs.delta = delta.reshape(delta.shape[0] * delta.shape[1], delta.shape[2])
         inputs.out = hpout.to(inputs.q.dtype)
         inputs.logsumexp = logsumexp.to(torch.float32)
         out.backward(inputs.dout)
