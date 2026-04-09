@@ -45,8 +45,11 @@ if [ ${#HOSTNAMES[@]} -eq 0 ]; then
 fi
 
 # Run command on each host
+# Build properly escaped command string
+CMD=$(printf '%q ' "$@")
+
 for hostname in "${HOSTNAMES[@]}"; do
   echo "=== $hostname ==="
-  ssh "$hostname" "$@"
+  ssh "$hostname" "$CMD"
   echo
 done
