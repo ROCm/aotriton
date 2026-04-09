@@ -140,6 +140,7 @@ echo "Stopping and removing container: $WORKER_CONTAINER_ID"
 docker stop "$WORKER_CONTAINER_ID"
 docker rm "$WORKER_CONTAINER_ID"
 
+rm -rf /dev/shm/aotriton-tuner
 rm "$RUNFILE"
 echo "Worker stopped and container removed"
 EOF
