@@ -93,6 +93,12 @@ class Flash(TuningDescription):
             bias_type=[0, 1]
         )
 
+    def validate_entry(self, entry: FlashEntry) -> bool:
+        # Skip combinations where causal=True and bias_type != 0
+        if entry.causal and entry.bias_type != 0:
+            return False
+        return True
+
     def list_kernels(self, entry: FlashEntry):
         if entry.hdim > 224:
             return ['attn_fwd', 'bwd_kernel_dk_dv', 'bwd_kernel_dq']

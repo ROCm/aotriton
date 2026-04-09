@@ -49,6 +49,21 @@ class TuningDescription(ABC):
         pass
 
     '''
+    validate_entry:
+        Validate if an entry combination is valid.
+
+        Args:
+            entry: An ENTRY_CLASS instance to validate
+
+        Returns:
+            True if the entry is valid, False otherwise
+
+        Subclasses can override this to skip invalid parameter combinations.
+    '''
+    def validate_entry(self, entry) -> bool:
+        return True
+
+    '''
     generate_entries_from_choices:
         Generate entry instances from choices.
 
@@ -72,7 +87,9 @@ class TuningDescription(ABC):
 
         # Generate cartesian product
         for value_tuple in itertools.product(*choice_lists):
-            yield self.ENTRY_CLASS(*value_tuple)
+            entry = self.ENTRY_CLASS(*value_tuple)
+            if self.validate_entry(entry):
+                yield entry
 
     '''
     generate_entries:
@@ -130,6 +147,7 @@ class TuningDescription(ABC):
         with open(root / 'entry.json', 'w') as f:
             json.dump({'entry' : asdict(entry), 'tests': list(iterate_test()) }, f)
 
+    # TODO: Move certain backend neutral logic here
     @abstractmethod
     def run_single_test(self,
                         input_metadata,
