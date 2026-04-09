@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 from ..tdesc import TuningDescription
-from ..utils import parse_python, asdict_shallow, safeload, dacite_tuple
+from ..utils import parse_python, asdict_shallow, safeload, dacite_tuple, sanitize_value
 from dataclasses import dataclass, asdict
 import dataclasses
 from dacite import from_dict
@@ -251,7 +251,8 @@ class Flash(TuningDescription):
             kernel.fill_nan_to_outputs(direct_inputs)
             outputs = kernel.direct_call(direct_inputs, args)
             refs = from_dict(data_class=kernel.PT_REF_CLASS, data=d["bidi_outputs"], config=dacite_tuple)
-            return kernel.compare(outputs, refs)
+            result = kernel.compare(outputs, refs)
+            return sanitize_value(result)
 
     def run_single_benchmark(self,
                              im: FlashInputMetadata,
@@ -273,7 +274,8 @@ class Flash(TuningDescription):
             args.update_hsaco(probe=False)
             def fn():
                 kernel.direct_call(direct_inputs, args)
-            return impl_desc, do_bench(fn, quantiles=(0.5, 0.2, 0.8))
+            times = do_bench(fn, quantiles=(0.5, 0.2, 0.8))
+            return sanitize_value(impl_desc), sanitize_value(times)
 
     KERNEL_DICT = None
 

@@ -4,6 +4,7 @@
 import sys
 from dataclasses import fields
 import json
+import math
 import dacite
 import subprocess
 import select
@@ -25,6 +26,35 @@ def asdict_shallow(obj) -> dict:
     return {field.name: getattr(obj, field.name) for field in fields(obj)}
 
 dacite_tuple = dacite.Config(cast=[tuple])
+
+def sanitize_float(value):
+    """
+    Sanitize float values for PostgreSQL JSONB compatibility.
+    - NaN -> None (becomes JSON null)
+    - +Inf -> max float32
+    - -Inf -> min float32
+    """
+    if isinstance(value, float):
+        if math.isnan(value):
+            return None
+        elif math.isinf(value):
+            if value > 0:
+                return float(sys.float_info.max)
+            else:
+                return float(-sys.float_info.max)
+    return value
+
+def sanitize_value(obj):
+    """Recursively sanitize an object to replace NaN/Inf values."""
+    if isinstance(obj, dict):
+        return {k: sanitize_value(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        result = [sanitize_value(item) for item in obj]
+        return tuple(result) if isinstance(obj, tuple) else result
+    elif isinstance(obj, float):
+        return sanitize_float(obj)
+    else:
+        return obj
 
 def safe_readline(
     process: subprocess.Popen,
