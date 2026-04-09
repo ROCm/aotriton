@@ -46,6 +46,7 @@ class ExaidProxy(object):
             self._process = subprocess.Popen(args,
                                              stdin=subprocess.PIPE,
                                              stdout=subprocess.PIPE,
+                                             stderr=subprocess.PIPE,
                                              cwd=self.get_base_dir(),
                                              text=True)
         return self._process
