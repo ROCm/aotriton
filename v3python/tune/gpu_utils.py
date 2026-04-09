@@ -80,6 +80,28 @@ def detach_member_tensors(data_object) -> dict:
 
 _amdsmi_initialized = False
 _hip_to_amdsmi = {}
+_total_memory_gb = None
+
+def get_total_memory_from_amdsmi():
+    """Get total GPU memory in GB from AMD-SMI."""
+    global _total_memory_gb
+    if _total_memory_gb is not None:
+        return _total_memory_gb
+
+    if not _init_amdsmi():
+        return None
+
+    try:
+        devices = amdsmi.amdsmi_get_processor_handles()
+        vram_cap = -1
+        for device in devices:
+            vram_usage = amdsmi.amdsmi_get_gpu_vram_usage(device)
+            total_memory = vram_usage['vram_total'] / (1024 ** 3)  # Bytes -> GB
+            vram_cap = min(vram_cap, total_memory) if vram_cap > 0 else total_memory
+        _total_memory_gb = vram_cap
+        return vram_cap
+    except Exception:
+        return None
 
 def _init_amdsmi():
     """Initialize AMD-SMI and build HIP to AMD-SMI device mapping."""

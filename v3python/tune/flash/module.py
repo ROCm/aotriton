@@ -136,12 +136,63 @@ class Flash(TuningDescription):
         with device_ctx():
             yield from self._do_gen_ref(entry, data_root)
 
+    def _clamp_memory_usage(self, im: FlashInputMetadata) -> FlashInputMetadata:
+        '''
+        Clamp batch size and number of heads to avoid OOM.
+        Based on clamp_memory_usage from test/tune_flash.py.
+        '''
+        from ..gpu_utils import get_total_memory_from_amdsmi
+        import math
+
+        vram_cap_gb = get_total_memory_from_amdsmi()
+        if vram_cap_gb is None:
+            # Cannot determine VRAM, return unchanged
+            return im
+
+        # Extract values
+        batch = im.BATCH if isinstance(im.BATCH, int) else 3
+        n_heads = im.N_HEADS if isinstance(im.N_HEADS, int) else im.N_HEADS[0]
+        d_head = im.hdim if isinstance(im.hdim, int) else im.hdim[0]
+        seqlen_q = im.seqlen_q
+        seqlen_k = im.seqlen_k
+        causal = im.causal
+        dropout_p = im.dropout_p
+        dtype = im.dtype
+        bias_type = im.bias_type
+
+        # Empirical for FWD+BWD (assuming all kernels are tuned)
+        # Forward-only would use different formula, but we assume backward is enabled
+        def current_cost():
+            base_cost = 0.11 * batch * n_heads * d_head * seqlen_q * seqlen_k / (1024 ** 3)
+            factor = 1.0
+            if dropout_p > 0.0:
+                factor += 0.25
+            if bias_type != 0:
+                factor += 0.33
+            if dtype == 'float32':
+                factor *= 2.0
+            return 2.0 * factor * base_cost  # Mul by 2 to ensure only use 50% of VRAM
+
+        # Old empirical algorithm that (mostly) works with bwd
+        if seqlen_q * seqlen_k * d_head >= 2048 * 2048 * vram_cap_gb:
+            batch = min(batch, 3)
+            n_heads = min(n_heads, 4)
+        if (causal or bias_type != 0) and seqlen_q * seqlen_k * d_head >= 2048 * 2048 * vram_cap_gb:
+            # Prevent OOM, causal=True needs more memory
+            batch = min(batch, 2)
+            n_heads = min(n_heads, 2)
+
+        # Update im if values changed
+        if batch != im.BATCH or n_heads != im.N_HEADS:
+            return dataclasses.replace(im, BATCH=batch, N_HEADS=n_heads)
+        return im
+
     def _do_gen_ref(self, entry: FlashEntry, data_root: Path):
         '''
         Pre-condition: called with device_ctx()
         '''
         im = FlashInputMetadata(**asdict(entry))
-        # TODO: cut BH sizes to fit in VRAM
+        im = self._clamp_memory_usage(im)
         yield self._write_ref(im, data_root, '00_benchmark')
 
         gqa = dataclasses.replace(im, N_HEADS=(10, 2))
