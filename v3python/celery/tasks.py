@@ -92,6 +92,7 @@ def tune_hsaco(task_config, kname, hsaco_index):
     exaid, p = get_exaid_with_tmpdir(task_config, worker_hostname)
     report = {
         "task_config": task_config,
+        "complete_on_host": worker_hostname,
         "kernel_name": kname,
         "hsaco_index": hsaco_index,
     }
