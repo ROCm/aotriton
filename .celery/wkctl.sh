@@ -17,12 +17,13 @@ Control all remote GPU workers.
 
 Arguments:
   <workdir>  Project working directory
-  <action>   start|stop|restart
+  <action>   start|stop|restart|stopwait
 
 This script will:
   - SSH to each registered GPU worker
   - For start: Launch docker container and record container ID
   - For stop: Stop worker service, then stop/remove container
+  - For stopwait: Gracefully stop workers (finish current tasks), then stop/remove container
   - For restart: Execute restart inside existing container
 
 Prerequisites:
@@ -36,8 +37,8 @@ WORKDIR="$1"
 ACTION="$2"
 
 # Validate action
-if [[ "$ACTION" != "start" && "$ACTION" != "stop" && "$ACTION" != "restart" ]]; then
-  echo "Error: Invalid action '$ACTION'. Must be start|stop|restart" >&2
+if [[ "$ACTION" != "start" && "$ACTION" != "stop" && "$ACTION" != "restart" && "$ACTION" != "stopwait" ]]; then
+  echo "Error: Invalid action '$ACTION'. Must be start|stop|restart|stopwait" >&2
   exit 1
 fi
 
@@ -68,24 +69,14 @@ if [ -z "$REMOTE_WORKDIR" ]; then
   exit 1
 fi
 
-# Control worker on each GPU node
-control_worker() {
+# Action-specific worker functions
+
+start_worker() {
   local hostname="$1"
   local arch="$2"
-  local workdir_override="$3"
+  local worker_workdir="$3"
 
-  # Determine remote workdir for this worker
-  if [ -n "$workdir_override" ]; then
-    local WORKER_WORKDIR="$workdir_override"
-  else
-    local WORKER_WORKDIR="$REMOTE_WORKDIR"
-  fi
-
-  echo "[$hostname] ${ACTION}ing worker (arch: $arch, workdir: $WORKER_WORKDIR)"
-
-  if [ "$ACTION" = "start" ]; then
-    # Start: Launch container and record container ID
-    ssh "$hostname" bash -s "$WORKER_WORKDIR" "$arch" "$CELERY_WORKER_IMAGE" <<'EOF'
+  ssh "$hostname" bash -s "$worker_workdir" "$arch" "$CELERY_WORKER_IMAGE" <<'EOF'
 WORKER_WORKDIR="$1"
 ARCH="$2"
 CELERY_WORKER_IMAGE="$3"
@@ -119,10 +110,13 @@ fi
 echo "$WORKER_CONTAINER_ID" > "$RUNFILE"
 echo "Started container: $WORKER_CONTAINER_ID"
 EOF
+}
 
-  elif [ "$ACTION" = "stop" ]; then
-    # Stop: Stop service, then stop/remove container
-    ssh "$hostname" bash -s "$WORKER_WORKDIR" <<'EOF'
+stop_worker() {
+  local hostname="$1"
+  local worker_workdir="$2"
+
+  ssh "$hostname" bash -s "$worker_workdir" <<'EOF'
 WORKER_WORKDIR="$1"
 RUNFILE="$WORKER_WORKDIR/run/worker.containerid"
 
@@ -134,7 +128,7 @@ fi
 WORKER_CONTAINER_ID=$(cat "$RUNFILE")
 
 echo "Stopping worker service in container: $WORKER_CONTAINER_ID"
-docker exec "$WORKER_CONTAINER_ID" bash -c 'source /wkdir/config.rc && source $(dirname $CELERY_WORKER_PYTHON)/activate && bash /wkdir/aotriton.src/.celery/worker-service.sh stop /wkdir'
+docker exec "$WORKER_CONTAINER_ID" bash -c "source /wkdir/config.rc && source \$(dirname \$CELERY_WORKER_PYTHON)/activate && bash /wkdir/aotriton.src/.celery/worker-service.sh stop /wkdir"
 
 echo "Stopping and removing container: $WORKER_CONTAINER_ID"
 docker stop "$WORKER_CONTAINER_ID"
@@ -144,10 +138,60 @@ rm -rf /dev/shm/aotriton-tuner
 rm "$RUNFILE"
 echo "Worker stopped and container removed"
 EOF
+}
 
-  elif [ "$ACTION" = "restart" ]; then
-    # Restart: Execute restart inside existing container
-    ssh "$hostname" bash -s "$WORKER_WORKDIR" <<'EOF'
+stopwait_worker() {
+  local hostname="$1"
+  local arch="$2"
+  local worker_workdir="$3"
+
+  ssh "$hostname" bash -s "$worker_workdir" "$arch" <<'EOF'
+WORKER_WORKDIR="$1"
+ARCH="$2"
+RUNFILE="$WORKER_WORKDIR/run/worker.containerid"
+
+if [ ! -f "$RUNFILE" ]; then
+  echo "Worker not running or run file missing" >&2
+  exit 1
+fi
+
+WORKER_CONTAINER_ID=$(cat "$RUNFILE")
+HOSTNAME=$(hostname -s)
+
+echo "Gracefully stopping workers in container: $WORKER_CONTAINER_ID"
+docker exec "$WORKER_CONTAINER_ID" bash -c "
+source /wkdir/config.rc && source \$(dirname \$CELERY_WORKER_PYTHON)/activate
+cd /wkdir/aotriton.src
+
+echo 'Step 1: Cancel broker consumers on fetcher workers...'
+celery -A v3python.celery control cancel_consumer $ARCH \
+  -d fetcher_0@$HOSTNAME \
+  -d fetcher_1@$HOSTNAME \
+  -d fetcher_2@$HOSTNAME \
+  -d fetcher_3@$HOSTNAME
+
+echo 'Step 2: Waiting for local queues to drain (max 10 min)...'
+timeout 600 bash -c 'while celery -A v3python.celery inspect active | grep -q \"task\"; do sleep 10; done' || true
+
+echo 'Step 3: Stopping all workers gracefully...'
+bash /wkdir/aotriton.src/.celery/worker-service.sh stopwait /wkdir
+"
+
+echo "Stopping and removing container: $WORKER_CONTAINER_ID"
+docker stop "$WORKER_CONTAINER_ID"
+docker rm "$WORKER_CONTAINER_ID"
+
+rm -rf /dev/shm/aotriton-tuner
+rm "$RUNFILE"
+echo "Worker stopped and container removed"
+EOF
+}
+
+restart_worker() {
+  local hostname="$1"
+  local worker_workdir="$2"
+
+  ssh "$hostname" bash -s "$worker_workdir" <<'EOF'
 WORKER_WORKDIR="$1"
 RUNFILE="$WORKER_WORKDIR/run/worker.containerid"
 
@@ -162,8 +206,26 @@ echo "Restarting worker service in container: $WORKER_CONTAINER_ID"
 docker exec "$WORKER_CONTAINER_ID" bash -c 'source /wkdir/config.rc && source $(dirname $CELERY_WORKER_PYTHON)/activate && bash /wkdir/aotriton.src/.celery/worker-service.sh restart /wkdir'
 echo "Worker restarted"
 EOF
+}
 
-  fi
+# Main dispatcher
+control_worker() {
+  local hostname="$1"
+  local arch="$2"
+  local workdir_override="$3"
+
+  # Determine remote workdir for this worker
+  local WORKER_WORKDIR="${workdir_override:-$REMOTE_WORKDIR}"
+
+  echo "[$hostname] ${ACTION}ing worker (arch: $arch, workdir: $WORKER_WORKDIR)"
+
+  # Dispatch to appropriate function
+  case "$ACTION" in
+    start)    start_worker "$hostname" "$arch" "$WORKER_WORKDIR" ;;
+    stop)     stop_worker "$hostname" "$WORKER_WORKDIR" ;;
+    stopwait) stopwait_worker "$hostname" "$arch" "$WORKER_WORKDIR" ;;
+    restart)  restart_worker "$hostname" "$WORKER_WORKDIR" ;;
+  esac
 
   if [ $? -eq 0 ]; then
     echo "[$hostname] Worker ${ACTION}ed successfully"
