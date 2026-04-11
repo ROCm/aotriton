@@ -435,24 +435,6 @@ Same as the Docker workflow:
 .celery/prepare-workdir.sh <working directory>
 ```
 
-## Build SLURM Python Virtual Environment
-
-Instead of building a Docker image, create a Python virtual environment on the SLURM login node:
-
-```bash
-.celery/build-slurm-venv.sh <working directory>
-```
-
-This script will:
-1. SSH to the SLURM login node
-2. Create a venv at `$SLURM_WORKER_DIR/installed/venv`
-3. Install PyTorch from the official ROCm repository
-4. Install the Triton wheel from `<working directory>/scratch/triton/`
-5. Install requirements from `requirements-tuning.txt`
-6. Apply Celery patches and install amdsmi
-
-**Note:** The venv is shared across all SLURM compute nodes via the shared filesystem.
-
 ## Deploy the working directory to SLURM
 
 ```bash
@@ -464,6 +446,24 @@ This script will:
 - Deploy **all** AOTriton-supported architectures (not just registered SLURM configs)
 - Exclude build/, scratch/, and run/ directories from the common sync
 - Sync all architecture builds from `installed/` to the SLURM worker directory
+
+## Build SLURM Python Virtual Environment
+
+Instead of building a Docker image, create a Python virtual environment on the SLURM login node:
+
+```bash
+.celery/build-slurm-venv.sh <working directory>
+```
+
+This script will:
+1. SSH to the SLURM login node
+2. Create a venv at `$SLURM_WORKER_DIR/installed/venv`
+3. ~~Install PyTorch from the official ROCm repository~~ FIXME: this doesn't work. Must use the same wheel from docker image.
+4. Install the Triton wheel from `<working directory>/scratch/triton/`
+5. Install requirements from `requirements-tuning.txt`
+6. Apply Celery patches and install amdsmi
+
+**Note:** The venv is shared across all SLURM compute nodes via the shared filesystem.
 
 ## Start Server
 

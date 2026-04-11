@@ -50,12 +50,19 @@ if [ -d "/opt/rocm" ]; then
   fi
 
   echo "Installing amdsmi from $AMDSMI_DIR"
+  # FIXME: This does not work on certain SLURM configurations where
+  #        amdsmi.egg-info already exists under $AMDSMI_DIR.
+  #        Can be fixed with
+  #           TGT=$SLURM_WORKER_DIR/scratch/amd_smi
+  #           cp -r $AMDSMI_DIR $TGT
+  #           (cd $TGT; # pip install .)
   (cd "$AMDSMI_DIR" && pip install .)
 else
   # theRock installation (ROCm >= 7.10)
   echo "Detected theRock installation (ROCm >= 7.10)"
 
   # Locate amdsmi via rocm_sdk_core package
+  # FIXME: AMDSMI_DIR=$(hipconfig --rocmpath)/share/amd_smi also works
   AMDSMI_DIR=$(python -c "
 import rocm_sdk_core
 from pathlib import Path

@@ -66,13 +66,15 @@ fi
 
 source "$VENV_ACTIVATE"
 
-# Build PYTHONPATH with all installed architecture libraries and AOTriton source
 PYTHONPATH="$AOTRITON_SRC"
-for arch_dir in "$WORKDIR"/installed/*/lib; do
-  if [ -d "$arch_dir" ]; then
-    PYTHONPATH="$arch_dir:$PYTHONPATH"
-  fi
-done
+native_arch=$(rocm_agent_enumerator|grep -v gfx000|head -n 1)
+arch_dir="$WORKDIR"/installed/${native_arch}/lib
+if [ -d "$arch_dir" ]; then
+  PYTHONPATH="$arch_dir:$PYTHONPATH"
+else
+  echo "Error: arch_dir ${arch_dir} does not exists"
+  exit 1
+fi
 export PYTHONPATH
 
 # Set AOTRITON_CELERY_WORKDIR for tasks
@@ -96,7 +98,7 @@ trap cleanup SIGTERM
 echo "$(date): Starting AOTriton Celery workers on $(hostname)"
 echo "Workdir: $WORKDIR"
 echo "AOTriton source: $AOTRITON_SRC"
-echo "Python: $CELERY_WORKER_PYTHON"
+echo "VENV: $VENV_ACTIVATE"
 
 # Start workers
 bash "$AOTRITON_SRC/.celery/worker-service.sh" start "$WORKDIR"
