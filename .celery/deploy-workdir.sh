@@ -36,6 +36,12 @@ if [ ! -d "$WORKDIR" ] || [ ! -f "$WORKDIR/workers.db" ]; then
   exit 1
 fi
 
+# Load config for SLURM deployment
+CONFIG_RC="$WORKDIR/config.rc"
+if [ -f "$CONFIG_RC" ]; then
+  . "$CONFIG_RC"
+fi
+
 # Get default working directory for workers
 REMOTE_WORKDIR=$(sqlite3 "$WORKDIR/workers.db" "SELECT value FROM config WHERE key = 'default_workdir';" 2>/dev/null)
 if [ -z "$REMOTE_WORKDIR" ]; then
@@ -72,9 +78,13 @@ deploy() {
 
   echo $?
 
-  # Rsync only the specific architecture build directory
-  if [ -d "$WORKDIR/build/$arch" ]; then
-    rsync -azR --info=progress2 "$WORKDIR/./installed/$arch" "$hostname:$WORKER_WORKDIR/./"
+  # Rsync architecture-specific build directories
+  local subdir=""
+  if [ "$arch" != "ALL" ]; then
+    subdir="/$arch"
+  fi
+  if [ -d "$WORKDIR/installed$subdir" ]; then
+    rsync -azR --info=progress2 "$WORKDIR/./installed$subdir" "$hostname:$WORKER_WORKDIR/./"
   fi
   echo "Deployed to $hostname ($arch) -> $WORKER_WORKDIR"
 }
@@ -82,5 +92,10 @@ deploy() {
 sqlite3 "$WORKDIR/workers.db" "SELECT hostname, arch, COALESCE(workdir_override, '') FROM workers ORDER BY hostname;" | while IFS='|' read h a w; do
   deploy "$h" "$a" "$w"
 done
+
+# Deploy to SLURM if configured
+if [ -n "$SLURM_LOGIN_NODE" ]; then
+  deploy "$SLURM_LOGIN_NODE" "ALL" "$SLURM_WORKER_DIR"
+fi
 
 echo "Deployment completed"
