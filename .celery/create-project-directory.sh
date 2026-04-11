@@ -65,6 +65,24 @@ else
   worker_python="$python_path"
 fi
 
+# SLURM configuration (optional)
+echo ""
+read -p "Enable SLURM support? (y/N): " enable_slurm
+slurm_login_node=""
+slurm_worker_dir=""
+
+if [[ "$enable_slurm" == [yY] ]]; then
+  read -p "SLURM login node hostname: " slurm_login_node
+  while true; do
+    read -p "SLURM worker directory (absolute path, accessible to all SLURM nodes): " slurm_worker_dir
+    if [[ "$slurm_worker_dir" == /* ]]; then
+      break
+    else
+      echo "Error: Path must be absolute (start with /)"
+    fi
+  done
+fi
+
 cat << EOF > "$rcfile"
 RABBITMQ_DEFAULT_USER=aotriton
 RABBITMQ_DEFAULT_PASS=$secret
@@ -79,4 +97,6 @@ CELERY_SERVICE_HOST=$(hostname -f)
 CELERY_WORKER_IMAGE_BASE=$baseimage
 CELERY_WORKER_IMAGE=$image
 CELERY_WORKER_PYTHON=$worker_python
+SLURM_LOGIN_NODE=$slurm_login_node
+SLURM_WORKER_DIR=$slurm_worker_dir
 EOF
