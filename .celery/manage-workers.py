@@ -60,6 +60,20 @@ class WorkerManager:
                 BEGIN
                     UPDATE config SET updated_at = CURRENT_TIMESTAMP WHERE key = OLD.key;
                 END;
+
+                CREATE TABLE IF NOT EXISTS slurm_batch (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    arch TEXT NOT NULL UNIQUE,
+                    gres TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TRIGGER IF NOT EXISTS update_slurm_batch_timestamp
+                AFTER UPDATE ON slurm_batch FOR EACH ROW
+                BEGIN
+                    UPDATE slurm_batch SET updated_at = CURRENT_TIMESTAMP WHERE id = OLD.id;
+                END;
             """)
 
     def add_workers(self, arch, hostnames, workdir_override=None):
@@ -148,6 +162,47 @@ class WorkerManager:
                 sys.exit("Error: Default working directory not set. Use 'set-default-workdir' command.")
             print(row[0])
 
+    def slurm_add(self, arch, gres):
+        """Add SLURM batch configuration for an architecture."""
+        if arch not in SUPPORTED_ARCHS:
+            sys.exit(f"Error: Unsupported architecture '{arch}'. Supported: {', '.join(sorted(SUPPORTED_ARCHS))}")
+
+        try:
+            with sqlite3.connect(self.db_file) as conn:
+                conn.execute("INSERT INTO slurm_batch (arch, gres) VALUES (?, ?)", (arch, gres))
+            print(f"Successfully added SLURM configuration for arch '{arch}' with gres '{gres}'")
+        except sqlite3.IntegrityError:
+            sys.exit(f"Error: SLURM configuration for arch '{arch}' already exists. Use slurm-remove first.")
+
+    def slurm_list(self):
+        """List all SLURM batch configurations."""
+        with sqlite3.connect(self.db_file) as conn:
+            cursor = conn.execute("""
+                SELECT arch, gres, created_at
+                FROM slurm_batch ORDER BY arch
+            """)
+            configs = cursor.fetchall()
+
+            if not configs:
+                print("No SLURM batch configurations registered")
+                return
+
+            print("=== SLURM Batch Configurations ===\n")
+            print("-" * 70)
+            print(f"{'Arch':<12} {'GRES':<30} {'Created':<20}")
+            print("-" * 70)
+            for arch, gres, created in configs:
+                print(f"{arch:<12} {gres:<30} {created:<20}")
+            print(f"\nTotal: {len(configs)} configuration(s)")
+
+    def slurm_remove(self, arch):
+        """Remove SLURM batch configuration for an architecture."""
+        with sqlite3.connect(self.db_file) as conn:
+            cursor = conn.execute("DELETE FROM slurm_batch WHERE arch = ?", (arch,))
+            if cursor.rowcount == 0:
+                sys.exit(f"Error: SLURM configuration for arch '{arch}' not found")
+            print(f"Successfully removed SLURM configuration for arch '{arch}'")
+
 
 def main():
     arch_choices = sorted(SUPPORTED_ARCHS)
@@ -229,6 +284,16 @@ Notes:
     # Get default workdir
     subparsers.add_parser("get-default-workdir", help="Get default working directory")
 
+    # SLURM commands
+    slurm_add_parser = subparsers.add_parser("slurm-add", help="Add SLURM batch configuration")
+    slurm_add_parser.add_argument("arch", choices=arch_choices, help="GPU architecture")
+    slurm_add_parser.add_argument("gres", help="SLURM gres constraint (e.g., gpu:8 or gpu:mi250:8)")
+
+    subparsers.add_parser("slurm-list", help="List all SLURM batch configurations")
+
+    slurm_remove_parser = subparsers.add_parser("slurm-remove", help="Remove SLURM batch configuration")
+    slurm_remove_parser.add_argument("arch", help="GPU architecture to remove")
+
     args = parser.parse_args()
 
     manager = WorkerManager(args.workdir)
@@ -243,6 +308,12 @@ Notes:
         manager.set_default_workdir(args.path)
     elif args.command == "get-default-workdir":
         manager.get_default_workdir()
+    elif args.command == "slurm-add":
+        manager.slurm_add(args.arch, args.gres)
+    elif args.command == "slurm-list":
+        manager.slurm_list()
+    elif args.command == "slurm-remove":
+        manager.slurm_remove(args.arch)
 
 
 if __name__ == "__main__":
