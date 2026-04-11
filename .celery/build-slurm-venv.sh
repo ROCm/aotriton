@@ -63,7 +63,15 @@ ssh "$SLURM_LOGIN_NODE" bash -s "$SLURM_WORKER_DIR" <<'EOF'
 SLURM_WORKER_DIR="$1"
 VENV_DIR="$SLURM_WORKER_DIR/installed/venv"
 
+export CONFIG_RC="$SLURM_WORKER_DIR/config.rc"
+source "$CONFIG_RC"
+
 set -e
+
+# Load SLURM modules
+for module in "${SLURM_MODULES[@]}"; do
+  module load "$module"
+done
 
 # Create venv
 echo "Creating venv at $VENV_DIR"
@@ -94,6 +102,9 @@ export CONFIG_RC="$SLURM_WORKER_DIR/config.rc"
 # Run patch scripts
 echo "Patching Celery..."
 bash "$SLURM_WORKER_DIR/image.scripts/01-patch_celery.sh"
+
+echo "Uninstalling old amdsmi..."
+pip uninstall amdsmi || true
 
 echo "Installing amdsmi..."
 bash "$SLURM_WORKER_DIR/image.scripts/02-install_amdsmi.sh"

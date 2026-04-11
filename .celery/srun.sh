@@ -94,6 +94,14 @@ TIME_LIMIT="$2"
 
 cd "$SLURM_WORKER_DIR"
 
+# Load config to get SLURM modules
+source "$SLURM_WORKER_DIR/config.rc"
+
+# Load SLURM modules
+for module in "${SLURM_MODULES[@]}"; do
+  module load "$module"
+done
+
 # Create directory for job tracking
 mkdir -p "$SLURM_WORKER_DIR/run/slurm"
 JOBID_FILE="$SLURM_WORKER_DIR/run/slurm/jobs-$(date +%Y%m%d-%H%M%S).txt"

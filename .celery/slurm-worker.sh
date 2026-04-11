@@ -39,6 +39,11 @@ fi
 # Source config
 . "$CONFIG_RC"
 
+# Load SLURM modules
+for module in "${SLURM_MODULES[@]}"; do
+  module load "$module"
+done
+
 # Find AOTriton source directory
 # Assumes this script is in .celery/ subdirectory of AOTriton
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

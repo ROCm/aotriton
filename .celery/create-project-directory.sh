@@ -81,6 +81,19 @@ if [[ "$enable_slurm" == [yY] ]]; then
       echo "Error: Path must be absolute (start with /)"
     fi
   done
+
+  echo ""
+  echo "SLURM modules to load (optional):"
+  echo "Enter module names one per line. Leave empty to finish."
+  slurm_modules=()
+  while true; do
+    read -p "Module name (or press Enter to finish): " module_name
+    if [[ -z "$module_name" ]]; then
+      break
+    fi
+    slurm_modules+=("$module_name")
+    echo "  Added: $module_name"
+  done
 fi
 
 cat << EOF > "$rcfile"
@@ -100,3 +113,14 @@ CELERY_WORKER_PYTHON=$worker_python
 SLURM_LOGIN_NODE=$slurm_login_node
 SLURM_WORKER_DIR=$slurm_worker_dir
 EOF
+
+# Append SLURM modules as bash array
+if [[ ${#slurm_modules[@]} -gt 0 ]]; then
+  echo -n "SLURM_MODULES=(" >> "$rcfile"
+  for module in "${slurm_modules[@]}"; do
+    echo -n "\"$module\" " >> "$rcfile"
+  done
+  echo ")" >> "$rcfile"
+else
+  echo "SLURM_MODULES=()" >> "$rcfile"
+fi
