@@ -63,7 +63,7 @@ class WorkerManager:
 
                 CREATE TABLE IF NOT EXISTS slurm_batch (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    gres TEXT NOT NULL UNIQUE,
+                    gres TEXT NOT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
@@ -168,21 +168,23 @@ class WorkerManager:
                 sys.exit("Error: Default working directory not set. Use 'set-default-workdir' command.")
             print(row[0])
 
-    def slurm_add(self, gres):
-        """Add SLURM batch configuration."""
-        try:
-            with sqlite3.connect(self.db_file) as conn:
+    def slurm_add(self, gres, count=1):
+        """Add SLURM batch configuration(s). Can add same GRES multiple times."""
+        with sqlite3.connect(self.db_file) as conn:
+            for _ in range(count):
                 conn.execute("INSERT INTO slurm_batch (gres) VALUES (?)", (gres,))
+
+        if count == 1:
             print(f"Successfully added SLURM configuration with gres '{gres}'")
-        except sqlite3.IntegrityError:
-            sys.exit(f"Error: SLURM configuration with gres '{gres}' already exists. Use slurm-remove first.")
+        else:
+            print(f"Successfully added {count} SLURM configurations with gres '{gres}'")
 
     def slurm_list(self):
         """List all SLURM batch configurations."""
         with sqlite3.connect(self.db_file) as conn:
             cursor = conn.execute("""
-                SELECT gres, created_at
-                FROM slurm_batch ORDER BY gres
+                SELECT id, gres, created_at
+                FROM slurm_batch ORDER BY id
             """)
             configs = cursor.fetchall()
 
@@ -191,20 +193,37 @@ class WorkerManager:
                 return
 
             print("=== SLURM Batch Configurations ===\n")
-            print("-" * 60)
-            print(f"{'GRES':<40} {'Created':<20}")
-            print("-" * 60)
-            for gres, created in configs:
-                print(f"{gres:<40} {created:<20}")
+            print("-" * 70)
+            print(f"{'ID':<6} {'GRES':<40} {'Created':<20}")
+            print("-" * 70)
+            for id, gres, created in configs:
+                print(f"{id:<6} {gres:<40} {created:<20}")
             print(f"\nTotal: {len(configs)} configuration(s)")
 
-    def slurm_remove(self, gres):
-        """Remove SLURM batch configuration."""
+    def slurm_remove(self, ids):
+        """Remove SLURM batch configuration(s) by ID."""
+        removed = []
+        not_found = []
+
         with sqlite3.connect(self.db_file) as conn:
-            cursor = conn.execute("DELETE FROM slurm_batch WHERE gres = ?", (gres,))
-            if cursor.rowcount == 0:
-                sys.exit(f"Error: SLURM configuration with gres '{gres}' not found")
-            print(f"Successfully removed SLURM configuration with gres '{gres}'")
+            for id in ids:
+                cursor = conn.execute("DELETE FROM slurm_batch WHERE id = ?", (id,))
+                if cursor.rowcount > 0:
+                    removed.append(id)
+                else:
+                    not_found.append(id)
+
+        if removed:
+            print(f"Successfully removed {len(removed)} SLURM configuration(s):")
+            for id in removed:
+                print(f"  - ID {id}")
+
+        if not_found:
+            print("\nNot found:", file=sys.stderr)
+            for id in not_found:
+                print(f"  - ID {id}", file=sys.stderr)
+            if not removed:
+                sys.exit(1)
 
     def slurm_bad_add(self, hostnames, reason=None):
         """Mark SLURM nodes as bad (to be excluded from job submissions)."""
@@ -362,13 +381,14 @@ Notes:
     subparsers.add_parser("get-default-workdir", help="Get default working directory")
 
     # SLURM commands
-    slurm_add_parser = subparsers.add_parser("slurm-add", help="Add SLURM batch configuration")
+    slurm_add_parser = subparsers.add_parser("slurm-add", help="Add SLURM batch configuration(s)")
     slurm_add_parser.add_argument("gres", help="SLURM gres constraint (e.g., gpu:gfx942-mi300x:8 or gpu:gfx1100w:4)")
+    slurm_add_parser.add_argument("--count", type=int, default=1, help="Number of configurations to add with same GRES (default: 1)")
 
     subparsers.add_parser("slurm-list", help="List all SLURM batch configurations")
 
-    slurm_remove_parser = subparsers.add_parser("slurm-remove", help="Remove SLURM batch configuration")
-    slurm_remove_parser.add_argument("gres", help="SLURM gres constraint to remove")
+    slurm_remove_parser = subparsers.add_parser("slurm-remove", help="Remove SLURM batch configuration(s) by ID")
+    slurm_remove_parser.add_argument("ids", type=int, nargs="+", help="One or more configuration IDs to remove")
 
     # SLURM bad node commands
     slurm_bad_add_parser = subparsers.add_parser("slurm-bad-add", help="Mark SLURM nodes as bad (exclude from jobs)")
@@ -395,11 +415,11 @@ Notes:
     elif args.command == "get-default-workdir":
         manager.get_default_workdir()
     elif args.command == "slurm-add":
-        manager.slurm_add(args.gres)
+        manager.slurm_add(args.gres, args.count)
     elif args.command == "slurm-list":
         manager.slurm_list()
     elif args.command == "slurm-remove":
-        manager.slurm_remove(args.gres)
+        manager.slurm_remove(args.ids)
     elif args.command == "slurm-bad-add":
         manager.slurm_bad_add(args.hostnames, getattr(args, 'reason', None))
     elif args.command == "slurm-bad-list":
