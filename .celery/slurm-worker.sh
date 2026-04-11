@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -l
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 #
@@ -39,7 +39,7 @@ fi
 # Source config
 . "$CONFIG_RC"
 
-# Load SLURM modules
+# Load SLURM modules (module command available in login shell)
 for module in "${SLURM_MODULES[@]}"; do
   module load "$module"
 done

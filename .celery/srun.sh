@@ -88,7 +88,7 @@ fi
 echo "Submitting SLURM jobs via $SLURM_LOGIN_NODE (time limit: $TIME_LIMIT)"
 
 # SSH to login node and submit jobs
-ssh "$SLURM_LOGIN_NODE" bash -s "$SLURM_WORKER_DIR" "$TIME_LIMIT" <<'OUTER_EOF'
+ssh "$SLURM_LOGIN_NODE" bash -l -s "$SLURM_WORKER_DIR" "$TIME_LIMIT" <<'OUTER_EOF'
 SLURM_WORKER_DIR="$1"
 TIME_LIMIT="$2"
 

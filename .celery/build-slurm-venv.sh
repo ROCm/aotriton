@@ -59,7 +59,7 @@ fi
 
 # Build venv on SLURM login node
 echo "Building venv on $SLURM_LOGIN_NODE:$SLURM_WORKER_DIR/installed/venv ..."
-ssh "$SLURM_LOGIN_NODE" bash -s "$SLURM_WORKER_DIR" <<'EOF'
+ssh "$SLURM_LOGIN_NODE" bash -l -s "$SLURM_WORKER_DIR" <<'EOF'
 SLURM_WORKER_DIR="$1"
 VENV_DIR="$SLURM_WORKER_DIR/installed/venv"
 
