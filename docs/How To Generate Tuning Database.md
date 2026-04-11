@@ -311,3 +311,286 @@ Wait for all tasks to complete with verbose output:
 
 If `--arch` is not specified, the script will dispatch tasks to all registered architectures in the workers database.
 
+# Steps (SLURM)
+
+For HPC environments using SLURM job scheduling, AOTriton provides native SLURM support as an alternative to the Docker-based worker deployment described above.
+
+## Prerequisites
+
+* A SLURM cluster with GPU nodes
+* SSH access to the SLURM login node
+* A shared filesystem accessible from all SLURM compute nodes (e.g., NFS, Lustre)
+* Python 3.10+ available on SLURM nodes
+* The dev node should have SSH access to the SLURM login node
+
+## Create a working directory on the Dev Node
+
+```bash
+bash .celery/create-project-directory.sh <working directory>
+```
+
+During the interactive setup:
+- When prompted "Enable SLURM support? (y/N):", answer `y`
+- Provide the SLURM login node hostname (e.g., `slurm-login.hpc.example.com`)
+- Provide the SLURM worker directory path (must be absolute and accessible to all compute nodes, e.g., `/home/username/aotriton-workdir`)
+
+This will configure `config.rc` with:
+```bash
+SLURM_LOGIN_NODE="slurm-login.hpc.example.com"
+SLURM_WORKER_DIR="/home/username/aotriton-workdir"
+```
+
+## Register SLURM Batch Configurations
+
+Instead of registering individual GPU workers, register SLURM GRES (Generic RESource) constraints that will be used for job submission. Each registered entry will result in one SLURM job being submitted.
+
+Add a single GRES configuration:
+
+```bash
+.celery/manage-workers.py <working directory> slurm-add "gpu:gfx942-mi300x:8"
+```
+
+Add multiple identical configurations (useful for launching multiple jobs with the same GRES):
+
+```bash
+.celery/manage-workers.py <working directory> slurm-add "gpu:gfx942-mi300x:8" --count 3
+```
+
+This will register 3 entries, resulting in 3 SLURM jobs being submitted with the same GRES constraint.
+
+The GRES constraint should match your SLURM cluster's GPU configuration. Common formats:
+- `gpu:8` - Request 8 GPUs of any type
+- `gpu:mi300x:8` - Request 8 MI300X GPUs specifically
+- `gpu:gfx942-mi300x:4` - Request 4 GPUs with specific architecture label
+
+To list registered configurations:
+
+```bash
+.celery/manage-workers.py <working directory> slurm-list
+```
+
+Example output:
+```
+=== SLURM Batch Configurations ===
+
+ID     GRES                                     Created
+----------------------------------------------------------------------
+1      gpu:gfx942-mi300x:8                      2026-04-10 12:00:00
+2      gpu:gfx942-mi300x:8                      2026-04-10 12:00:00
+3      gpu:gfx942-mi300x:8                      2026-04-10 12:00:00
+4      gpu:gfx1100w:4                           2026-04-10 12:01:00
+
+Total: 4 configuration(s)
+```
+
+To remove configurations by ID:
+
+```bash
+# Remove a single configuration
+.celery/manage-workers.py <working directory> slurm-remove 1
+
+# Remove multiple configurations
+.celery/manage-workers.py <working directory> slurm-remove 2 3 4
+```
+
+## Mark Bad Nodes (Optional)
+
+If certain SLURM nodes are experiencing issues, you can mark them as bad to exclude them from job submissions:
+
+```bash
+.celery/manage-workers.py <working directory> slurm-bad-add node-05 node-12 --reason "hardware failure"
+```
+
+Bad nodes will be automatically excluded using `sbatch --exclude` when submitting jobs.
+
+To list bad nodes:
+
+```bash
+.celery/manage-workers.py <working directory> slurm-bad-list
+```
+
+To unmark nodes:
+
+```bash
+.celery/manage-workers.py <working directory> slurm-bad-remove node-05 node-12
+```
+
+## Build AOTriton for all Target Architectures
+
+Same as the Docker workflow:
+
+```bash
+.celery/build-for-tuning.sh <working directory>
+```
+
+This builds:
+1. A Triton wheel in `<working directory>/scratch/triton/`
+2. AOTriton for all supported architectures (not just registered SLURM configs)
+
+## Prepare the working directory on dev node
+
+Same as the Docker workflow:
+
+```bash
+.celery/prepare-workdir.sh <working directory>
+```
+
+## Build SLURM Python Virtual Environment
+
+Instead of building a Docker image, create a Python virtual environment on the SLURM login node:
+
+```bash
+.celery/build-slurm-venv.sh <working directory>
+```
+
+This script will:
+1. SSH to the SLURM login node
+2. Create a venv at `$SLURM_WORKER_DIR/installed/venv`
+3. Install PyTorch from the official ROCm repository
+4. Install the Triton wheel from `<working directory>/scratch/triton/`
+5. Install requirements from `requirements-tuning.txt`
+6. Apply Celery patches and install amdsmi
+
+**Note:** The venv is shared across all SLURM compute nodes via the shared filesystem.
+
+## Deploy the working directory to SLURM
+
+```bash
+.celery/deploy-workdir.sh <working directory>
+```
+
+This script will:
+- Rsync the working directory to `$SLURM_LOGIN_NODE:$SLURM_WORKER_DIR`
+- Deploy **all** AOTriton-supported architectures (not just registered SLURM configs)
+- Exclude build/, scratch/, and run/ directories from the common sync
+- Sync all architecture builds from `installed/` to the SLURM worker directory
+
+## Start Server
+
+On the server node (or dev node), start RabbitMQ and PostgreSQL services:
+
+```bash
+.celery/srvctl.sh <working directory> start
+```
+
+## Submit SLURM Jobs
+
+Submit SLURM jobs for all registered GRES configurations:
+
+```bash
+.celery/srun.sh <working directory>
+```
+
+Or with a custom time limit:
+
+```bash
+.celery/srun.sh --time 08:00:00 <working directory>
+.celery/srun.sh --time 2-00:00:00 <working directory>  # 2 days
+```
+
+Default time limit is 24 hours.
+
+This script will:
+1. SSH to the SLURM login node
+2. Query the `slurm_batch` table for registered GRES constraints
+3. Submit one `sbatch` job per GRES configuration
+4. Automatically exclude bad nodes using `--exclude`
+5. Record job IDs to `$SLURM_WORKER_DIR/run/slurm/jobs-<timestamp>.txt`
+
+**Job Configuration:**
+- Time limit: Configurable via `--time` (default: 24:00:00)
+- Signal: SIGTERM sent 30 minutes before timeout for graceful shutdown
+- Logs: `$SLURM_WORKER_DIR/run/celery-<hostname>/logs/`
+- PIDs: `$SLURM_WORKER_DIR/run/celery-<hostname>/pids/`
+
+**Note:** The hostname-specific directory structure avoids conflicts when multiple compute nodes write to the shared filesystem.
+
+## Monitor and Manage Jobs
+
+View running jobs:
+
+```bash
+ssh <SLURM_LOGIN_NODE> squeue -u $USER
+```
+
+View job details:
+
+```bash
+ssh <SLURM_LOGIN_NODE> scontrol show job <job_id>
+```
+
+Cancel jobs:
+
+```bash
+# Cancel a specific job
+ssh <SLURM_LOGIN_NODE> scancel <job_id>
+
+# Cancel all aotriton jobs
+ssh <SLURM_LOGIN_NODE> scancel -u $USER -n aotriton
+```
+
+Cancel jobs from recorded job IDs file:
+
+```bash
+ssh <SLURM_LOGIN_NODE> "cd $SLURM_WORKER_DIR && scancel \$(cut -d'|' -f1 < run/slurm/jobs-<timestamp>.txt)"
+```
+
+## Add Tuning Tasks to the Message Queue
+
+Same as the Docker workflow:
+
+```bash
+.celery/dispatch-tasks.sh <working directory> [options] <module> [module-options]
+```
+
+Example:
+
+```bash
+.celery/dispatch-tasks.sh /path/to/workdir --arch gfx942 flash --dtype float16
+```
+
+## Key Differences from Docker Workflow
+
+| Aspect | Docker Workflow | SLURM Workflow |
+|--------|----------------|----------------|
+| Worker Management | Individual GPU nodes registered | GRES constraints registered |
+| Deployment | Docker image per node | Shared Python venv on NFS |
+| Worker Start | `wkctl.sh start` | `srun.sh [--time <time>]` |
+| Worker Stop | `wkctl.sh stop` | `scancel <job_id>` |
+| Logs/PIDs | Shared directory | Hostname-specific directories |
+| Bad Node Handling | Manual exclusion | Automatic via `slurm_bad_nodes` table |
+| Time Limits | Container lifetime | SLURM job time allocation |
+| Architecture Support | Only registered workers | All AOTriton architectures deployed |
+
+## Workflow Summary
+
+For quick reference, the complete SLURM workflow is:
+
+```bash
+# Setup
+.celery/create-project-directory.sh <workdir>  # Enable SLURM when prompted
+.celery/manage-workers.py <workdir> slurm-add "gpu:gfx942-mi300x:8" --count 2
+.celery/build-for-tuning.sh <workdir>
+.celery/prepare-workdir.sh <workdir>
+.celery/build-slurm-venv.sh <workdir>
+.celery/deploy-workdir.sh <workdir>
+
+# Start services
+.celery/srvctl.sh <workdir> start
+.celery/srun.sh --time 24:00:00 <workdir>
+
+# Dispatch tasks
+.celery/dispatch-tasks.sh <workdir> --arch gfx942 flash
+
+# Monitor
+ssh <SLURM_LOGIN_NODE> squeue -u $USER
+
+# List and remove SLURM configurations
+.celery/manage-workers.py <workdir> slurm-list
+.celery/manage-workers.py <workdir> slurm-remove 1 2
+
+# Cleanup
+ssh <SLURM_LOGIN_NODE> scancel -u $USER
+.celery/srvctl.sh <workdir> stop
+```
+
