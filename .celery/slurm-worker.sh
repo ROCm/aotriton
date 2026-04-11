@@ -19,6 +19,7 @@
 #SBATCH --error=logs/slurm-%j.err
 # Send SIGTERM 30 minutes (1800 seconds) before SLURM timeout
 #SBATCH --signal=TERM@1800
+#SBATCH --exclusive
 
 if [ "$#" -ne 1 ]; then
   echo "Error: Missing workdir argument" >&2
