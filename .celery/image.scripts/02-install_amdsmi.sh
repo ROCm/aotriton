@@ -42,7 +42,7 @@ source "$VENV_ACTIVATE"
 if [ -d "/opt/rocm" ]; then
   # Classical ROCm installation
   echo "Detected classical ROCm installation"
-  AMDSMI_DIR="/opt/rocm/share/amd_smi"
+  AMDSMI_DIR=$(hipconfig --rocmpath)/share/amd_smi
 
   if [ ! -d "$AMDSMI_DIR" ]; then
     echo "Error: amdsmi directory not found at $AMDSMI_DIR" >&2
