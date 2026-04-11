@@ -63,8 +63,7 @@ class WorkerManager:
 
                 CREATE TABLE IF NOT EXISTS slurm_batch (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    arch TEXT NOT NULL UNIQUE,
-                    gres TEXT NOT NULL,
+                    gres TEXT NOT NULL UNIQUE,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
@@ -74,6 +73,13 @@ class WorkerManager:
                 BEGIN
                     UPDATE slurm_batch SET updated_at = CURRENT_TIMESTAMP WHERE id = OLD.id;
                 END;
+
+                CREATE TABLE IF NOT EXISTS slurm_bad_nodes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    hostname TEXT NOT NULL UNIQUE,
+                    reason TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
             """)
 
     def add_workers(self, arch, hostnames, workdir_override=None):
@@ -162,24 +168,21 @@ class WorkerManager:
                 sys.exit("Error: Default working directory not set. Use 'set-default-workdir' command.")
             print(row[0])
 
-    def slurm_add(self, arch, gres):
-        """Add SLURM batch configuration for an architecture."""
-        if arch not in SUPPORTED_ARCHS:
-            sys.exit(f"Error: Unsupported architecture '{arch}'. Supported: {', '.join(sorted(SUPPORTED_ARCHS))}")
-
+    def slurm_add(self, gres):
+        """Add SLURM batch configuration."""
         try:
             with sqlite3.connect(self.db_file) as conn:
-                conn.execute("INSERT INTO slurm_batch (arch, gres) VALUES (?, ?)", (arch, gres))
-            print(f"Successfully added SLURM configuration for arch '{arch}' with gres '{gres}'")
+                conn.execute("INSERT INTO slurm_batch (gres) VALUES (?)", (gres,))
+            print(f"Successfully added SLURM configuration with gres '{gres}'")
         except sqlite3.IntegrityError:
-            sys.exit(f"Error: SLURM configuration for arch '{arch}' already exists. Use slurm-remove first.")
+            sys.exit(f"Error: SLURM configuration with gres '{gres}' already exists. Use slurm-remove first.")
 
     def slurm_list(self):
         """List all SLURM batch configurations."""
         with sqlite3.connect(self.db_file) as conn:
             cursor = conn.execute("""
-                SELECT arch, gres, created_at
-                FROM slurm_batch ORDER BY arch
+                SELECT gres, created_at
+                FROM slurm_batch ORDER BY gres
             """)
             configs = cursor.fetchall()
 
@@ -188,20 +191,94 @@ class WorkerManager:
                 return
 
             print("=== SLURM Batch Configurations ===\n")
-            print("-" * 70)
-            print(f"{'Arch':<12} {'GRES':<30} {'Created':<20}")
-            print("-" * 70)
-            for arch, gres, created in configs:
-                print(f"{arch:<12} {gres:<30} {created:<20}")
+            print("-" * 60)
+            print(f"{'GRES':<40} {'Created':<20}")
+            print("-" * 60)
+            for gres, created in configs:
+                print(f"{gres:<40} {created:<20}")
             print(f"\nTotal: {len(configs)} configuration(s)")
 
-    def slurm_remove(self, arch):
-        """Remove SLURM batch configuration for an architecture."""
+    def slurm_remove(self, gres):
+        """Remove SLURM batch configuration."""
         with sqlite3.connect(self.db_file) as conn:
-            cursor = conn.execute("DELETE FROM slurm_batch WHERE arch = ?", (arch,))
+            cursor = conn.execute("DELETE FROM slurm_batch WHERE gres = ?", (gres,))
             if cursor.rowcount == 0:
-                sys.exit(f"Error: SLURM configuration for arch '{arch}' not found")
-            print(f"Successfully removed SLURM configuration for arch '{arch}'")
+                sys.exit(f"Error: SLURM configuration with gres '{gres}' not found")
+            print(f"Successfully removed SLURM configuration with gres '{gres}'")
+
+    def slurm_bad_add(self, hostnames, reason=None):
+        """Mark SLURM nodes as bad (to be excluded from job submissions)."""
+        added = []
+        errors = []
+
+        for hostname in hostnames:
+            try:
+                with sqlite3.connect(self.db_file) as conn:
+                    conn.execute("INSERT INTO slurm_bad_nodes (hostname, reason) VALUES (?, ?)",
+                               (hostname, reason))
+                added.append(hostname)
+            except sqlite3.IntegrityError:
+                errors.append(f"Node '{hostname}' already marked as bad")
+
+        if added:
+            reason_msg = f" (reason: {reason})" if reason else ""
+            print(f"Successfully marked {len(added)} node(s) as bad{reason_msg}:")
+            for hostname in added:
+                print(f"  - {hostname}")
+
+        if errors:
+            print("\nErrors:", file=sys.stderr)
+            for error in errors:
+                print(f"  - {error}", file=sys.stderr)
+            if not added:
+                sys.exit(1)
+
+    def slurm_bad_list(self):
+        """List all bad SLURM nodes."""
+        with sqlite3.connect(self.db_file) as conn:
+            cursor = conn.execute("""
+                SELECT hostname, reason, created_at
+                FROM slurm_bad_nodes ORDER BY hostname
+            """)
+            bad_nodes = cursor.fetchall()
+
+            if not bad_nodes:
+                print("No bad nodes registered")
+                return
+
+            print("=== Bad SLURM Nodes (Excluded from Jobs) ===\n")
+            print("-" * 80)
+            print(f"{'Hostname':<35} {'Reason':<25} {'Created':<20}")
+            print("-" * 80)
+            for hostname, reason, created in bad_nodes:
+                reason_str = reason if reason else "<no reason>"
+                print(f"{hostname:<35} {reason_str:<25} {created:<20}")
+            print(f"\nTotal: {len(bad_nodes)} bad node(s)")
+
+    def slurm_bad_remove(self, hostnames):
+        """Remove nodes from bad node list (unmark as bad)."""
+        removed = []
+        not_found = []
+
+        for hostname in hostnames:
+            with sqlite3.connect(self.db_file) as conn:
+                cursor = conn.execute("DELETE FROM slurm_bad_nodes WHERE hostname = ?", (hostname,))
+                if cursor.rowcount > 0:
+                    removed.append(hostname)
+                else:
+                    not_found.append(hostname)
+
+        if removed:
+            print(f"Successfully removed {len(removed)} node(s) from bad node list:")
+            for hostname in removed:
+                print(f"  - {hostname}")
+
+        if not_found:
+            print("\nNot found:", file=sys.stderr)
+            for hostname in not_found:
+                print(f"  - {hostname}", file=sys.stderr)
+            if not removed:
+                sys.exit(1)
 
 
 def main():
@@ -286,13 +363,22 @@ Notes:
 
     # SLURM commands
     slurm_add_parser = subparsers.add_parser("slurm-add", help="Add SLURM batch configuration")
-    slurm_add_parser.add_argument("arch", choices=arch_choices, help="GPU architecture")
-    slurm_add_parser.add_argument("gres", help="SLURM gres constraint (e.g., gpu:8 or gpu:mi250:8)")
+    slurm_add_parser.add_argument("gres", help="SLURM gres constraint (e.g., gpu:gfx942-mi300x:8 or gpu:gfx1100w:4)")
 
     subparsers.add_parser("slurm-list", help="List all SLURM batch configurations")
 
     slurm_remove_parser = subparsers.add_parser("slurm-remove", help="Remove SLURM batch configuration")
-    slurm_remove_parser.add_argument("arch", help="GPU architecture to remove")
+    slurm_remove_parser.add_argument("gres", help="SLURM gres constraint to remove")
+
+    # SLURM bad node commands
+    slurm_bad_add_parser = subparsers.add_parser("slurm-bad-add", help="Mark SLURM nodes as bad (exclude from jobs)")
+    slurm_bad_add_parser.add_argument("hostnames", nargs="+", help="One or more hostnames to mark as bad")
+    slurm_bad_add_parser.add_argument("--reason", help="Reason for marking nodes as bad")
+
+    subparsers.add_parser("slurm-bad-list", help="List all bad SLURM nodes")
+
+    slurm_bad_remove_parser = subparsers.add_parser("slurm-bad-remove", help="Remove nodes from bad node list")
+    slurm_bad_remove_parser.add_argument("hostnames", nargs="+", help="One or more hostnames to unmark as bad")
 
     args = parser.parse_args()
 
@@ -309,11 +395,17 @@ Notes:
     elif args.command == "get-default-workdir":
         manager.get_default_workdir()
     elif args.command == "slurm-add":
-        manager.slurm_add(args.arch, args.gres)
+        manager.slurm_add(args.gres)
     elif args.command == "slurm-list":
         manager.slurm_list()
     elif args.command == "slurm-remove":
-        manager.slurm_remove(args.arch)
+        manager.slurm_remove(args.gres)
+    elif args.command == "slurm-bad-add":
+        manager.slurm_bad_add(args.hostnames, getattr(args, 'reason', None))
+    elif args.command == "slurm-bad-list":
+        manager.slurm_bad_list()
+    elif args.command == "slurm-bad-remove":
+        manager.slurm_bad_remove(args.hostnames)
 
 
 if __name__ == "__main__":

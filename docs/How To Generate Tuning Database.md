@@ -311,5 +311,3 @@ Wait for all tasks to complete with verbose output:
 
 If `--arch` is not specified, the script will dispatch tasks to all registered architectures in the workers database.
 
-## Analysis the code
-

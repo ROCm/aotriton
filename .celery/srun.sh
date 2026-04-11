@@ -102,27 +102,37 @@ JOBID_FILE="$SLURM_WORKER_DIR/run/slurm/jobs-$(date +%Y%m%d-%H%M%S).txt"
 COUNT=$(sqlite3 workers.db "SELECT COUNT(*) FROM slurm_batch;")
 if [ "$COUNT" -eq 0 ]; then
   echo "Error: No SLURM batch configurations registered" >&2
-  echo "Use manage-workers.py slurm-add to register architectures" >&2
+  echo "Use manage-workers.py slurm-add to register gres configurations" >&2
   exit 1
 fi
 
 echo "Found $COUNT SLURM batch configuration(s)"
 
-# Query slurm_batch table for architectures and constraints
-sqlite3 workers.db "SELECT arch, gres FROM slurm_batch;" | while IFS='|' read -r arch gres; do
-  echo "Submitting SLURM job for arch=$arch gres=$gres"
+# Get list of bad nodes to exclude
+BAD_NODES=$(sqlite3 workers.db "SELECT GROUP_CONCAT(hostname, ',') FROM slurm_bad_nodes;")
+if [ -n "$BAD_NODES" ]; then
+  echo "Excluding bad nodes: $BAD_NODES"
+  EXCLUDE_OPT="--exclude=$BAD_NODES"
+else
+  EXCLUDE_OPT=""
+fi
+
+# Query slurm_batch table for gres constraints
+sqlite3 workers.db "SELECT gres FROM slurm_batch;" | while IFS='|' read -r gres; do
+  echo "Submitting SLURM job for gres=$gres"
 
   JOB_ID=$(sbatch \
     --parsable \
-    --job-name="aotriton-$arch" \
+    --job-name="aotriton-${gres//:/--}" \
     --time="$TIME_LIMIT" \
     --gres="$gres" \
+    $EXCLUDE_OPT \
     "$SLURM_WORKER_DIR/aotriton.src/.celery/slurm-worker.sh" \
     "$SLURM_WORKER_DIR")
 
   if [ -n "$JOB_ID" ]; then
     echo "  Job submitted: $JOB_ID"
-    echo "$JOB_ID|$arch|$gres" >> "$JOBID_FILE"
+    echo "$JOB_ID|$gres" >> "$JOBID_FILE"
   else
     echo "  Failed to submit job" >&2
   fi
