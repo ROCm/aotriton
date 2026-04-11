@@ -3,5 +3,5 @@ pyelftools
 msgpack
 filelock
 celery[pyamqp,sqlalchemy]==5.6.3
-psycopg  # the more mature psycopg2 needs extra binaries.
+psycopg[binary,pool]  # the more mature psycopg2 needs extra binaries.
 dacite
