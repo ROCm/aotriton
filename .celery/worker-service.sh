@@ -12,8 +12,8 @@ if [ -z "$BASH_VERSION" ]; then
   exit 1
 fi
 if [ "$#" -ne 2 ]; then
-  echo 'Missing arguments. Usage: start-worker.sh <action> <dir>' >&2
-  echo '<action> can be start|stop|restart' >&2
+  echo 'Missing arguments. Usage: worker-service.sh <action> <dir>' >&2
+  echo '<action> can be start|stop|restart|stopwait' >&2
   exit 1
 fi
 
@@ -44,6 +44,19 @@ fi
 rcfile="$dir/config.rc"
 
 . "$rcfile"
+
+# Determine celery paths based on execution environment
+if [ -n "$CELERY_FROM_SLURM" ]; then
+  # SLURM mode: use hostname-specific subdirectories to avoid conflicts
+  HOSTNAME=$(hostname -s)
+  CELERY_PID_DIR="$dir/run/celery-$HOSTNAME/pids"
+  CELERY_LOG_DIR="$dir/run/celery-$HOSTNAME/logs"
+  mkdir -p "$CELERY_PID_DIR" "$CELERY_LOG_DIR"
+else
+  # Container mode: use shared directories
+  CELERY_PID_DIR="$dir/run/celery/pids"
+  CELERY_LOG_DIR="$dir/run/celery/logs"
+fi
 
 cd ${SCRIPT_DIR}/..
 
@@ -93,5 +106,5 @@ celery multi ${action} \
   -Q:7 ${CPUQ} \
   -Q:8 ${CPUQ} \
   -Q ${GPUQ} \
-  --pidfile=$dir/run/celery/pids/%n.pid \
-  --logfile=$dir/run/celery/logs/%n__%i.log
+  --pidfile=$CELERY_PID_DIR/%n.pid \
+  --logfile=$CELERY_LOG_DIR/%n__%i.log
