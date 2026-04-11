@@ -21,13 +21,16 @@ fi
 # Source config to get CELERY_WORKER_PYTHON
 . "$CONFIG_RC"
 
-if [ -z "$CELERY_WORKER_PYTHON" ]; then
-  echo "Error: CELERY_WORKER_PYTHON not set in config.rc" >&2
+# CELERY_TO_PATCH_PYTHON can override CELERY_WORKER_PYTHON
+CELERY_TO_PATCH_PYTHON="${CELERY_TO_PATCH_PYTHON:-$CELERY_WORKER_PYTHON}"
+
+if [ -z "$CELERY_TO_PATCH_PYTHON" ]; then
+  echo "Error: CELERY_TO_PATCH_PYTHON not set" >&2
   exit 1
 fi
 
 # Activate venv
-VENV_ACTIVATE="$(dirname "$CELERY_WORKER_PYTHON")/activate"
+VENV_ACTIVATE="$(dirname "$CELERY_TO_PATCH_PYTHON")/activate"
 if [ ! -f "$VENV_ACTIVATE" ]; then
   echo "Error: Virtual environment activate script not found at $VENV_ACTIVATE" >&2
   exit 1

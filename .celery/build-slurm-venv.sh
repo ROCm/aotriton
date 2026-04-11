@@ -83,12 +83,12 @@ pip install torch torchvision --index-url https://download.pytorch.org/whl/rocm7
 
 # Install requirements
 echo "Installing requirements-tuning.txt..."
-pip install -r "$SLURM_WORKER_DIR/requirements-tuning.txt"
+pip install -r "$SLURM_WORKER_DIR/aotriton.src/requirements-tuning.txt"
 
 echo "Venv built successfully at $VENV_DIR"
 
 # Set CELERY_WORKER_PYTHON for patch scripts
-export CELERY_WORKER_PYTHON="$VENV_DIR/bin/python"
+export CELERY_TO_PATCH_PYTHON="$VENV_DIR/bin/python"
 export CONFIG_RC="$SLURM_WORKER_DIR/config.rc"
 
 # Run patch scripts
