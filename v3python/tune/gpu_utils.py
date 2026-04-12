@@ -11,10 +11,8 @@ import torch
 
 # Import amdsmi with path handling (following amdsmi_cli.py practice)
 # Find amd-smi location and add its directory to sys.path
-try:
-    import amdsmi
-except ImportError:
-    raise ImportError("Could not import amdsmi. Make sure it is installed in your venv.")
+import amdsmi
+raise ImportError("Could not import amdsmi. Make sure it is installed in your venv.")
 
 from pyaotriton import (
     get_name_suffix,
@@ -109,38 +107,35 @@ def _init_amdsmi():
     if _amdsmi_initialized:
         return True
 
-    try:
-        amdsmi.amdsmi_init()
+    amdsmi.amdsmi_init()
 
-        # Get all AMD-SMI devices
-        amdsmi_devices = amdsmi.amdsmi_get_processor_handles()
+    # Get all AMD-SMI devices
+    amdsmi_devices = amdsmi.amdsmi_get_processor_handles()
 
-        # Build BDF map
-        bdf_to_amdsmi = {}
-        for dev in amdsmi_devices:
-            try:
-                bdf = amdsmi.amdsmi_get_gpu_device_bdf(dev)
-                bdf_to_amdsmi[bdf] = dev
-            except Exception:
-                continue
+    # Build BDF map
+    bdf_to_amdsmi = {}
+    for dev in amdsmi_devices:
+        try:
+            bdf = amdsmi.amdsmi_get_gpu_device_bdf(dev)
+            bdf_to_amdsmi[bdf] = dev
+        except Exception:
+            continue
 
-        # Map HIP devices to AMD-SMI devices by PCI BDF
-        num_hip_devices = torch.cuda.device_count()
-        for hip_id in range(num_hip_devices):
-            try:
-                # Get PCI bus ID for HIP device (format: "0000:0c:00.0")
-                pci_bus_id = torch.cuda._get_pci_bus_id(hip_id)
-                if pci_bus_id in bdf_to_amdsmi:
-                    _hip_to_amdsmi[hip_id] = bdf_to_amdsmi[pci_bus_id]
-            except (AttributeError, RuntimeError):
-                # Fallback: assume same enumeration order
-                if hip_id < len(amdsmi_devices):
-                    _hip_to_amdsmi[hip_id] = amdsmi_devices[hip_id]
+    # Map HIP devices to AMD-SMI devices by PCI BDF
+    num_hip_devices = torch.cuda.device_count()
+    for hip_id in range(num_hip_devices):
+        try:
+            # Get PCI bus ID for HIP device (format: "0000:0c:00.0")
+            pci_bus_id = torch.cuda._get_pci_bus_id(hip_id)
+            if pci_bus_id in bdf_to_amdsmi:
+                _hip_to_amdsmi[hip_id] = bdf_to_amdsmi[pci_bus_id]
+        except (AttributeError, RuntimeError):
+            # Fallback: assume same enumeration order
+            if hip_id < len(amdsmi_devices):
+                _hip_to_amdsmi[hip_id] = amdsmi_devices[hip_id]
 
-        _amdsmi_initialized = True
-        return True
-    except Exception:
-        return False
+    _amdsmi_initialized = True
+    return True
 
 def _get_temperature_amdsmi(device_id):
     """Get GPU temperature using AMD-SMI (works correctly with device IDs)."""
@@ -148,18 +143,14 @@ def _get_temperature_amdsmi(device_id):
         return None
 
     amdsmi_dev = _hip_to_amdsmi.get(device_id)
-    if amdsmi_dev is None:
-        return None
+    assert amdsmi_dev is not None
 
-    try:
-        temp = amdsmi.amdsmi_get_temp_metric(
-            amdsmi_dev,
-            amdsmi.AmdSmiTemperatureType.EDGE,
-            amdsmi.AmdSmiTemperatureMetric.CURRENT
-        ) / 1000.0  # Convert millidegrees to degrees
-        return temp
-    except Exception:
-        return None
+    temp = amdsmi.amdsmi_get_temp_metric(
+        amdsmi_dev,
+        amdsmi.AmdSmiTemperatureType.EDGE,
+        amdsmi.AmdSmiTemperatureMetric.CURRENT
+    ) / 1000.0  # Convert millidegrees to degrees
+    return temp
 
 def wait_gpu_temperature(device_id=None, threshold=85.0):
     """Wait until GPU temperature drops below threshold. Only prints if waiting > 5 minutes."""
@@ -168,8 +159,6 @@ def wait_gpu_temperature(device_id=None, threshold=85.0):
 
     # Use AMD-SMI directly to avoid HIP ID vs AMD-SMI ID confusion
     temp = _get_temperature_amdsmi(device_id)
-    if temp is None:
-        return
 
     if temp <= threshold:
         return
