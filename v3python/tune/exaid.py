@@ -56,19 +56,24 @@ class ExaidProxy(object):
         print('[exaid] sending command to worker process: ', *objects, sep=sep, flush=True)
 
     def readinfo(self, *, timeout=10):
-        (line, eno, error_msg) = safe_readline(self.process, timeout=timeout)
-        if eno != 0:
-            if eno == errno.ETIMEDOUT:
-                self._process.kill()
-            self._process.wait()
-            stdout = self._process.stdout.read()
-            stderr = self._process.stderr.read()
-            del self._process
-            self._process = None
-            raise OSError(eno, error_msg + "\nSTDOUT:\n" + stdout + "\nSTDERR:\n" + stderr)
-        ret, info = first(line)
-        if ret != "OK":
-            raise ExaidSubprocessNotOK(line, error_msg)
+        while True:
+            (line, eno, error_msg) = safe_readline(self.process, timeout=timeout)
+            if eno != 0:
+                if eno == errno.ETIMEDOUT:
+                    self._process.kill()
+                self._process.wait()
+                stdout = self._process.stdout.read()
+                stderr = self._process.stderr.read()
+                del self._process
+                self._process = None
+                raise OSError(eno, error_msg + "\nSTDOUT:\n" + stdout + "\nSTDERR:\n" + stderr)
+            ret, info = first(line)
+            if ret == "OVERHEATING:":
+                print("[exaid]", line)
+                continue
+            if ret != "OK":
+                raise ExaidSubprocessNotOK(line, error_msg)
+            break
         return info
 
     def join(self):

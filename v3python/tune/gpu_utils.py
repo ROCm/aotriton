@@ -165,12 +165,12 @@ def wait_gpu_temperature(device_id=None, threshold=85.0):
     start_time = time.time()
     while temp > threshold:
         elapsed = time.time() - start_time
-        if elapsed > 300:  # 5 minutes
-            print(f"GPU temperature ({temp}°C) exceeds {threshold}°C. Waiting for cooldown (elapsed: {int(elapsed)}s)...", flush=True)
+        print(f"OVERHEATING: GPU HIP ID {device_id} TEMP. {temp}", flush=True)
         time.sleep(5)
         temp = _get_temperature_amdsmi(device_id)
         if temp is None:
             break
+    print(f"OVERHEATING: EXIT GPU HIP ID {device_id} TEMP. {temp}", flush=True)
 
 @contextmanager
 def device_ctx():
