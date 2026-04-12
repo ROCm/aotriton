@@ -149,7 +149,7 @@ def _get_temperature_amdsmi(device_id):
         amdsmi_dev,
         amdsmi.AmdSmiTemperatureType.EDGE,
         amdsmi.AmdSmiTemperatureMetric.CURRENT
-    ) / 1000.0  # Convert millidegrees to degrees
+    )
     return temp
 
 def wait_gpu_temperature(device_id=None, threshold=85.0):
