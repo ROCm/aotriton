@@ -9,18 +9,22 @@ if [ -z "$BASH_VERSION" ]; then
   exit 1
 fi
 
-if [ "$#" -ne 2 ]; then
+usage() {
   cat >&2 <<EOF
-Usage: $0 <workdir> <action>
+Usage: $0 [--host <hostname>...] <workdir> <action>
 
-Control all remote GPU workers.
+Control remote GPU workers.
 
 Arguments:
   <workdir>  Project working directory
   <action>   start|stop|restart|stopwait
 
+Options:
+  --host <hostname>  Control only specified host(s). Can be specified multiple times.
+                     If not specified, controls all registered workers.
+
 This script will:
-  - SSH to each registered GPU worker
+  - SSH to each registered GPU worker (or only specified hosts)
   - For start: Launch docker container and record container ID
   - For stop: Stop worker service, then stop/remove container
   - For stopwait: Gracefully stop workers (finish current tasks), then stop/remove container
@@ -29,12 +33,52 @@ This script will:
 Prerequisites:
   - Working directory deployed via deploy-workdir.sh
   - Worker images built via build-worker-image.sh
+
+Examples:
+  # Control all registered workers
+  $0 /path/to/workdir start
+  $0 /path/to/workdir stop
+
+  # Control only specific hosts
+  $0 --host gpu-01.example.com /path/to/workdir start
+  $0 --host gpu-01.example.com --host gpu-02.example.com /path/to/workdir restart
 EOF
   exit 1
-fi
+}
 
-WORKDIR="$1"
-ACTION="$2"
+# Parse arguments
+TARGET_HOSTS=()
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --host)
+      TARGET_HOSTS+=("$2")
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      ;;
+    -*)
+      echo "Error: Unknown option: $1" >&2
+      usage
+      ;;
+    *)
+      if [ -z "$WORKDIR" ]; then
+        WORKDIR="$1"
+      elif [ -z "$ACTION" ]; then
+        ACTION="$1"
+      else
+        echo "Error: Too many arguments" >&2
+        usage
+      fi
+      shift
+      ;;
+  esac
+done
+
+if [ -z "$WORKDIR" ] || [ -z "$ACTION" ]; then
+  echo "Error: Missing required arguments" >&2
+  usage
+fi
 
 # Validate action
 if [[ "$ACTION" != "start" && "$ACTION" != "stop" && "$ACTION" != "restart" && "$ACTION" != "stopwait" ]]; then
@@ -134,7 +178,7 @@ echo "Stopping and removing container: $WORKER_CONTAINER_ID"
 docker stop "$WORKER_CONTAINER_ID"
 docker rm "$WORKER_CONTAINER_ID"
 
-rm -rf /dev/shm/aotriton-tuner
+sudo rm -rf /dev/shm/aotriton-tuner
 rm "$RUNFILE"
 echo "Worker stopped and container removed"
 EOF
@@ -234,9 +278,37 @@ control_worker() {
   fi
 }
 
-# Process each worker
-sqlite3 "$WORKDIR/workers.db" "SELECT hostname, arch, COALESCE(workdir_override, '') FROM workers ORDER BY hostname;" | while IFS='|' read -r hostname arch workdir_override; do
-  control_worker "$hostname" "$arch" "$workdir_override"
-done
+# Function to check if hostname should be processed
+should_control() {
+  local hostname="$1"
+  # If no target hosts specified, control all
+  if [ ${#TARGET_HOSTS[@]} -eq 0 ]; then
+    return 0
+  fi
+  # Otherwise, check if hostname is in target list
+  for target in "${TARGET_HOSTS[@]}"; do
+    if [ "$hostname" = "$target" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
 
-echo "Worker control completed: $ACTION"
+# Process selected workers
+CONTROL_COUNT=0
+while IFS='|' read -r hostname arch workdir_override; do
+  # Skip if not in target hosts
+  if ! should_control "$hostname"; then
+    continue
+  fi
+
+  control_worker "$hostname" "$arch" "$workdir_override"
+  CONTROL_COUNT=$((CONTROL_COUNT + 1))
+done < <(sqlite3 "$WORKDIR/workers.db" "SELECT hostname, arch, COALESCE(workdir_override, '') FROM workers ORDER BY hostname;")
+
+if [ "$CONTROL_COUNT" -eq 0 ]; then
+  echo "Warning: No workers matched the specified criteria" >&2
+  exit 1
+fi
+
+echo "Worker control completed: $ACTION on $CONTROL_COUNT worker(s)"
