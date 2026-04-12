@@ -158,7 +158,6 @@ def wait_gpu_temperature(device_id=None, threshold=85.0):
 
     # Use AMD-SMI directly to avoid HIP ID vs AMD-SMI ID confusion
     temp = _get_temperature_amdsmi(device_id)
-    print(f"device {device_id} GPU temperature ({temp}°C)", flush=True)
 
     if temp <= threshold:
         return
@@ -166,7 +165,8 @@ def wait_gpu_temperature(device_id=None, threshold=85.0):
     start_time = time.time()
     while temp > threshold:
         elapsed = time.time() - start_time
-        print(f"GPU temperature ({temp}°C) exceeds {threshold}°C. Waiting for cooldown (elapsed: {int(elapsed)}s)...", flush=True)
+        if elapsed > 300:  # 5 minutes
+            print(f"GPU temperature ({temp}°C) exceeds {threshold}°C. Waiting for cooldown (elapsed: {int(elapsed)}s)...", flush=True)
         time.sleep(5)
         temp = _get_temperature_amdsmi(device_id)
         if temp is None:
