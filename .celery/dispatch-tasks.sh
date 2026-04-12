@@ -83,6 +83,12 @@ fi
 # Add aotriton root to PYTHONPATH so v3python can be imported
 export PYTHONPATH="${AOTRITON_ROOT}:${PYTHONPATH}"
 
+# Source config.rc and export PostgreSQL credentials for --skip_completed
+if [ -f "$WORKDIR/config.rc" ]; then
+  . "$WORKDIR/config.rc"
+  export POSTGRES_USER POSTGRES_PASSWORD CELERY_SERVICE_HOST POSTGRES_PORT
+fi
+
 # Execute the actual dispatch script as a module with the venv python
 cd "$AOTRITON_ROOT"
 exec "$VENV_PYTHON" -m v3python.tune.dispatch_tasks "$@"
