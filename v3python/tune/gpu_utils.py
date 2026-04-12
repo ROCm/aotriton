@@ -12,7 +12,6 @@ import torch
 # Import amdsmi with path handling (following amdsmi_cli.py practice)
 # Find amd-smi location and add its directory to sys.path
 import amdsmi
-raise ImportError("Could not import amdsmi. Make sure it is installed in your venv.")
 
 from pyaotriton import (
     get_name_suffix,
