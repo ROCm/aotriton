@@ -142,13 +142,14 @@ def _get_temperature_amdsmi(device_id):
     if not _init_amdsmi():
         return None
 
-    amdsmi_dev = amdsmi.amdsmi_get_processor_handles()[device_id]
+    amdsmi_dev = _hip_to_amdsmi.get(device_id)
+    assert amdsmi_dev is not None
 
     temp = amdsmi.amdsmi_get_temp_metric(
         amdsmi_dev,
         amdsmi.AmdSmiTemperatureType.EDGE,
         amdsmi.AmdSmiTemperatureMetric.CURRENT
-    )
+    ) / 1000.0  # Convert millidegrees to degrees
     return temp
 
 def wait_gpu_temperature(device_id=None, threshold=85.0):
