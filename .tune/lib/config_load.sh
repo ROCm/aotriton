@@ -11,4 +11,11 @@ load_config() {
         return 1
     fi
     . "$workdir/config.rc"
+
+    # Load default workdir from database
+    DEFAULT_WORKDIR=$(sqlite3 "$workdir/workers.db" "SELECT value FROM config WHERE key = 'default_workdir';" 2>/dev/null)
+    if [ -z "$DEFAULT_WORKDIR" ]; then
+        echo "Error: Default working directory not set. Use manage-workers.py set-default-workdir" >&2
+        return 1
+    fi
 }

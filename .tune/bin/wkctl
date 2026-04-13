@@ -56,24 +56,20 @@ while IFS='|' read -r hostname arch workdir_override; do
 
     WORKER_WORKDIR="${workdir_override:-$DEFAULT_WORKDIR}"
 
-    echo "[$ACTION] $hostname ($arch) at $WORKER_WORKDIR"
+    echo "[$hostname] ${ACTION}ing worker (arch: $arch, workdir: $WORKER_WORKDIR)"
 
     case "$ACTION" in
         start)
-            "$TUNE_ROOT/single/start_worker.sh" \
-                "$hostname" "$arch" "$WORKER_WORKDIR" "$CELERY_WORKER_IMAGE"
+            "$TUNE_ROOT/single/start_worker.sh" "$WORKDIR" "$hostname"
             ;;
         stop)
-            "$TUNE_ROOT/single/stop_worker.sh" \
-                "$hostname" "$arch" "$WORKER_WORKDIR"
+            "$TUNE_ROOT/single/stop_worker.sh" "$WORKDIR" "$hostname"
             ;;
         restart)
-            "$TUNE_ROOT/single/restart_worker.sh" \
-                "$hostname" "$arch" "$WORKER_WORKDIR" "$CELERY_WORKER_IMAGE"
+            "$TUNE_ROOT/single/restart_worker.sh" "$WORKDIR" "$hostname"
             ;;
         stopwait)
-            "$TUNE_ROOT/single/stopwait_worker.sh" \
-                "$hostname" "$arch" "$WORKER_WORKDIR"
+            "$TUNE_ROOT/single/stopwait_worker.sh" "$WORKDIR" "$hostname"
             ;;
         *)
             echo "Unknown action: $ACTION" >&2
@@ -81,7 +77,18 @@ while IFS='|' read -r hostname arch workdir_override; do
             ;;
     esac
 
+    if [ $? -eq 0 ]; then
+        echo "[$hostname] Worker ${ACTION}ed successfully"
+    else
+        echo "[$hostname] Failed to ${ACTION} worker" >&2
+    fi
+
     COUNT=$((COUNT + 1))
 done < <(get_workers "$WORKDIR")
 
-echo "Processed $COUNT workers"
+if [ "$COUNT" -eq 0 ]; then
+    echo "Warning: No workers matched the specified criteria" >&2
+    exit 1
+fi
+
+echo "Worker control completed: $ACTION on $COUNT worker(s)"

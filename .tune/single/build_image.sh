@@ -3,18 +3,31 @@
 # SPDX-License-Identifier: MIT
 
 # Build Docker image on one host
-# Usage: build_image.sh <hostname> <workdir> <image_name>
+# Usage: build_image.sh <workdir> <hostname>
 
 set -e
 
-HOSTNAME="$1"
-WORKER_WORKDIR="$2"
-CELERY_WORKER_IMAGE="$3"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-ssh "$HOSTNAME" bash -s "$WORKER_WORKDIR" "$CELERY_WORKER_IMAGE" <<'EOF'
-WORKER_WORKDIR="$1"
-CELERY_WORKER_IMAGE="$2"
+. "$TUNE_ROOT/lib/config_load.sh"
+. "$TUNE_ROOT/lib/db_query.sh"
 
-cd "$WORKER_WORKDIR"
-tsp docker build -f Dockerfile -t "$CELERY_WORKER_IMAGE" .
-EOF
+WORKDIR="$1"
+HOSTNAME="$2"
+
+if [ -z "$WORKDIR" ] || [ -z "$HOSTNAME" ]; then
+  echo "Usage: $0 <workdir> <hostname>" >&2
+  exit 1
+fi
+
+load_config "$WORKDIR"
+
+# Get workdir_override for this hostname
+WORKER_INFO=$(get_worker_by_hostname "$WORKDIR" "$HOSTNAME")
+IFS='|' read -r arch workdir_override <<< "$WORKER_INFO"
+
+WORKER_WORKDIR="${workdir_override:-$DEFAULT_WORKDIR}"
+
+# Certain nodes need --network=host to access internet
+ssh -n "$HOSTNAME" "tsp docker build --network=host -f $WORKER_WORKDIR/image.build/Dockerfile -t $CELERY_WORKER_IMAGE $WORKER_WORKDIR"

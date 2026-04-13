@@ -3,34 +3,63 @@
 # SPDX-License-Identifier: MIT
 
 # Start worker on one host
-# Usage: start_worker.sh <hostname> <arch> <workdir> <image>
+# Usage: start_worker.sh <workdir> <hostname>
 
 set -e
 
-HOSTNAME="$1"
-ARCH="$2"
-WORKER_WORKDIR="$3"
-CELERY_WORKER_IMAGE="$4"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-CONTAINER_NAME="aotriton_celeryworker.${ARCH}"
+. "$TUNE_ROOT/lib/config_load.sh"
+. "$TUNE_ROOT/lib/db_query.sh"
 
-ssh "$HOSTNAME" bash -s "$WORKER_WORKDIR" "$CELERY_WORKER_IMAGE" "$CONTAINER_NAME" "$ARCH" <<'EOF'
+WORKDIR="$1"
+HOSTNAME="$2"
+
+if [ -z "$WORKDIR" ] || [ -z "$HOSTNAME" ]; then
+  echo "Usage: $0 <workdir> <hostname>" >&2
+  exit 1
+fi
+
+load_config "$WORKDIR"
+
+# Get arch and workdir_override for this hostname
+WORKER_INFO=$(get_worker_by_hostname "$WORKDIR" "$HOSTNAME")
+IFS='|' read -r arch workdir_override <<< "$WORKER_INFO"
+
+WORKER_WORKDIR="${workdir_override:-$DEFAULT_WORKDIR}"
+
+ssh "$HOSTNAME" bash -s "$WORKER_WORKDIR" "$arch" "$CELERY_WORKER_IMAGE" <<'EOF'
 WORKER_WORKDIR="$1"
-CELERY_WORKER_IMAGE="$2"
-CONTAINER_NAME="$3"
-ARCH="$4"
+ARCH="$2"
+CELERY_WORKER_IMAGE="$3"
+RUNFILE="$WORKER_WORKDIR/run/worker.containerid"
 
-# Load config
-. "$WORKER_WORKDIR/config.rc"
+mkdir -p "$WORKER_WORKDIR/run"
 
-# Start container
-docker run -d --rm \
-  --network=host \
-  --name "$CONTAINER_NAME" \
-  --ipc=host \
-  --device=/dev/kfd --device=/dev/dri \
+if [ -f "$RUNFILE" ]; then
+  echo "Worker already running or stale run file exists. Run stop first." >&2
+  exit 1
+fi
+
+WORKER_CONTAINER_ID=$(docker run -d \
+  --device=/dev/kfd \
+  --device=/dev/dri \
+  --group-add video \
+  --cap-add=SYS_PTRACE \
   --security-opt seccomp=unconfined \
-  -e AOTRITON_ARCH="$ARCH" \
-  -v "$WORKER_WORKDIR:/wkdir" \
-  "$CELERY_WORKER_IMAGE"
+  --ipc=host \
+  --network=host \
+  -e PYTHONPATH=/wkdir/installed/$ARCH/lib \
+  --mount type=bind,source=$(realpath $WORKER_WORKDIR),target=/wkdir \
+  "$CELERY_WORKER_IMAGE" \
+  bash -c 'source /wkdir/config.rc && source $(dirname $CELERY_WORKER_PYTHON)/activate && bash /wkdir/aotriton.src/.celery/worker-service.sh start /wkdir && exec sleep infinity')
+
+if [ -z "$WORKER_CONTAINER_ID" ]; then
+  echo "Failed to start container" >&2
+  exit 1
+fi
+
+echo "$WORKER_CONTAINER_ID" > "$RUNFILE"
+echo "Started container: $WORKER_CONTAINER_ID"
 EOF

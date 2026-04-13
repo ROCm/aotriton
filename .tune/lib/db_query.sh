@@ -28,6 +28,19 @@ get_slurm_batch() {
         "SELECT id, gres FROM slurm_batch"
 }
 
+get_worker_by_hostname() {
+    local workdir="$1"
+    local hostname="$2"
+    sqlite3 "$workdir/workers.db" \
+        "SELECT arch, COALESCE(workdir_override, '') FROM workers WHERE hostname = '$hostname' LIMIT 1"
+}
+
+get_default_workdir() {
+    local workdir="$1"
+    sqlite3 "$workdir/workers.db" \
+        "SELECT value FROM config WHERE key = 'default_workdir'"
+}
+
 get_slurm_bad_nodes() {
     local workdir="$1"
     sqlite3 "$workdir/workers.db" \

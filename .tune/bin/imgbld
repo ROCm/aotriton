@@ -42,20 +42,27 @@ fi
 
 load_config "$WORKDIR"
 
-COUNT=0
-mapfile -t HOSTNAMES < <(get_hostnames "$WORKDIR")
-
-for hostname in "${HOSTNAMES[@]}"; do
+BUILD_COUNT=0
+while IFS= read -r hostname; do
     if ! should_process_host "$hostname"; then
         continue
     fi
 
-    echo "Building image on $hostname"
+    # Determine remote workdir for this worker
+    WORKER_INFO=$(get_worker_by_hostname "$WORKDIR" "$hostname")
+    IFS='|' read -r arch workdir_override <<< "$WORKER_INFO"
+    WORKER_WORKDIR="${workdir_override:-$DEFAULT_WORKDIR}"
 
-    "$TUNE_ROOT/single/build_image.sh" \
-        "$hostname" "$DEFAULT_WORKDIR" "$CELERY_WORKER_IMAGE"
+    echo "Queuing docker build on $hostname (workdir: $WORKER_WORKDIR)"
 
-    COUNT=$((COUNT + 1))
-done
+    "$TUNE_ROOT/single/build_image.sh" "$WORKDIR" "$hostname"
 
-echo "Built images on $COUNT hosts"
+    BUILD_COUNT=$((BUILD_COUNT + 1))
+done < <(get_hostnames "$WORKDIR")
+
+if [ "$BUILD_COUNT" -eq 0 ]; then
+    echo "Warning: No workers matched the specified criteria" >&2
+    exit 1
+fi
+
+echo "Docker build jobs queued on $BUILD_COUNT worker(s). Monitor with: ssh <hostname> tsp"
