@@ -48,8 +48,12 @@ fi
 load_config "$WORKDIR"
 
 # Get workers and iterate
+mapfile -t WORKERS < <(get_workers "$WORKDIR")
+
 COUNT=0
-while IFS='|' read -r hostname arch workdir_override; do
+for worker in "${WORKERS[@]}"; do
+    IFS='|' read -r hostname arch workdir_override <<< "$worker"
+
     if ! should_process_host "$hostname"; then
         continue
     fi
@@ -84,7 +88,7 @@ while IFS='|' read -r hostname arch workdir_override; do
     fi
 
     COUNT=$((COUNT + 1))
-done < <(get_workers "$WORKDIR")
+done
 
 if [ "$COUNT" -eq 0 ]; then
     echo "Warning: No workers matched the specified criteria" >&2
