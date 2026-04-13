@@ -32,12 +32,13 @@ WORKER_WORKDIR="${workdir_override:-$DEFAULT_WORKDIR}"
 # Create directory structure
 ssh "$HOSTNAME" mkdir -p "$WORKER_WORKDIR"
 
-# Sync main directories (exclude build, installed, run, scratch)
+# Sync main directories (exclude build, installed, run, scratch, secrets)
 rsync -az --info=progress2 \
   --exclude '/build/' \
   --exclude '/installed/' \
   --exclude '/run/' \
   --exclude '/scratch/' \
+  --exclude '/secrets/' \
     --mkpath \
   "$WORKDIR/" "$HOSTNAME:$WORKER_WORKDIR/"
 
