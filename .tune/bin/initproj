@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# Initialize a new project directory with configuration
+# Usage: projinit <dir>
+
+if [ -z "$BASH_VERSION" ]; then
+  echo "This script requires Bash. Please run it with 'bash script_name.sh' or ensure /bin/sh points to /bin/bash." >&2
+  exit 1
+fi
+
+if [ ! -t 0 ]; then
+  echo "This script requires TTY inputs for interactive operations" >&2
+  exit 1
+fi
+
+if [ "$#" -ne 1 ]; then
+  echo 'Missing arguments. Usage: projinit <dir>' >&2
+  exit 1
+fi
+
+dir="$1"
+
+mkdir "$dir"
+
+if [ ! -d "$dir" ]; then
+  echo 'Cannot create directory $dir' >&2
+  exit 1
+fi
+
+rcfile="$dir/config.rc"
+
+echo "Enter secret for services."
+echo "This secret will be the common passwords for all services like rabbitmq/postgresql."
+echo "random passwords will be used if empty"
+read -p "Secret: " secret
+if [[ -z "$secret" ]]; then
+  secret=$(head -c 16 /dev/urandom | xxd -p)
+  echo "Using secret $secret from /dev/urandom"
+fi
+read -p "Base Docker Image to Run Worker: " baseimage
+read -p "Docker Image Commited to Run Worker: " -i "aotriton:celery-gpuworker" image
+read -e -p "Docker Volume Name for PostgreSQL Database: " -i "aotriton_pgdata" pgvolume
+while true; do
+	read -r -p "Docker Container Suffix (only allows a-zA-Z0-9_-): " suffix
+  # Check if the input contains ONLY a-z, A-Z, and 0-9
+  if [[ "$suffix" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+    echo "Valid input received: $suffix"
+    break # Exit the loop if validation passes
+  else
+    echo "Invalid input. Only a-zA-Z0-9_- characters are allowed."
+  fi
+done
+
+echo ""
+echo "Python configuration for worker:"
+echo "1) Use existing python (provide path, e.g., /opt/venv/bin/python)"
+echo "2) Create venv at /venv (will install torch and triton wheels)"
+read -p "Choose option [1/2]: " python_option
+
+if [[ "$python_option" == "2" ]]; then
+  worker_python="/venv/bin/python"
+else
+  if [[ "$python_option" != "1" ]]; then
+    echo "Invalid option. Defaulting to option 1."
+  fi
+  read -p "Python path: " -i "/opt/venv/bin/python" python_path
+  worker_python="$python_path"
+fi
+
+# SLURM configuration (optional)
+echo ""
+read -p "Enable SLURM support? (y/N): " enable_slurm
+slurm_login_node=""
+slurm_worker_dir=""
+
+if [[ "$enable_slurm" == [yY] ]]; then
+  read -p "SLURM login node hostname: " slurm_login_node
+  while true; do
+    read -p "SLURM worker directory (absolute path, accessible to all SLURM nodes): " slurm_worker_dir
+    if [[ "$slurm_worker_dir" == /* ]]; then
+      break
+    else
+      echo "Error: Path must be absolute (start with /)"
+    fi
+  done
+
+  echo ""
+  echo "SLURM modules to load (optional):"
+  echo "Enter module names one per line. Leave empty to finish."
+  slurm_modules=()
+  while true; do
+    read -p "Module name (or press Enter to finish): " module_name
+    if [[ -z "$module_name" ]]; then
+      break
+    fi
+    slurm_modules+=("$module_name")
+    echo "  Added: $module_name"
+  done
+fi
+
+cat << EOF > "$rcfile"
+RABBITMQ_DEFAULT_USER=aotriton
+RABBITMQ_DEFAULT_PASS=$secret
+RABBITMQ_NODE_PORT=5672
+POSTGRES_USER=aotriton
+POSTGRES_PASSWORD=$secret
+POSTGRES_PORT=5432
+POSTGRES_DOCKER_IMAGE=postgres:17.6
+POSTGRES_DOCKER_VOLUME=$pgvolume
+CONTAINER_SUFFIX=$suffix
+CELERY_SERVICE_HOST=$(hostname -f)
+CELERY_WORKER_IMAGE_BASE=$baseimage
+CELERY_WORKER_IMAGE=$image
+CELERY_WORKER_PYTHON=$worker_python
+SLURM_LOGIN_NODE=$slurm_login_node
+SLURM_WORKER_DIR=$slurm_worker_dir
+EOF
+
+# Append SLURM modules as bash array
+if [[ ${#slurm_modules[@]} -gt 0 ]]; then
+  echo -n "SLURM_MODULES=(" >> "$rcfile"
+  for module in "${slurm_modules[@]}"; do
+    echo -n "\"$module\" " >> "$rcfile"
+  done
+  echo ")" >> "$rcfile"
+else
+  echo "SLURM_MODULES=()" >> "$rcfile"
+fi
+
+echo ""
+echo "Project directory created at: $dir"
+echo "Configuration written to: $rcfile"
