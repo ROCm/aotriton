@@ -3,6 +3,10 @@
 The tuning tool `test/tune_flash.py` was deprecated in favor of a distributed
 tuning framework based on [celery](https://github.com/celery/celery).
 
+**Note:** The scripts have been refactored from `.celery/` to `.tune/` with improved
+separation of concerns. This documentation has been updated to use the new `.tune/`
+commands. The `.celery/` directory remains as reference but may be removed in the future.
+
 # Prerequisites
 
 ## System
@@ -15,7 +19,7 @@ tuning framework based on [celery](https://github.com/celery/celery).
   - This host will be referred as the "Dev Node" in the following text.
 
 For simplicity, instructions in the following text and scripts created under
-.celery all assume dev node and server are the same host. If they are different
+.tune all assume dev node and server are the same host. If they are different
 ones, please perform instructions below and `rsync` accordingly.
 
 Linux is assumed for all nodes.
@@ -59,11 +63,13 @@ the newly cloned aotriton/ directory.**
 
 ## Create a working directory on the Dev Node
 
-`bash .celery/create-project-directory.sh <working directory>`
+`.tune/bin/initproj <working directory>`
 
 This is an interactive process. Just follow the prompt.
 
 ## Add GPU worker to working directory configuration
+
+**\*TO PORT\*** - `manage-workers.py` not yet ported to `.tune`
 
 First, set the default working directory that will be used on GPU workers:
 
@@ -97,6 +103,8 @@ For more options and supported architectures, run:
 
 ## Install packages needed by host OS
 
+**\*TO PORT\*** - `install-hostos-packages.sh` not yet ported to `.tune`
+
 ```bash
 .celery/install-hostos-packages.sh <working directory>
 ```
@@ -111,7 +119,7 @@ since this is the only node that are guaranteed having access all worker nodes,
 per prerequisites.*
 
 ```bash
-.celery/build-for-tuning.sh <working directory>
+.tune/bin/libbld <working directory>
 ```
 
 This script will:
@@ -128,6 +136,8 @@ This script will:
 The script is idempotent - it will skip rebuilding the Triton wheel if a compatible one already exists.
 
 ## Prepare the working directory on dev node
+
+**\*TO PORT\*** - `prepare-workdir.sh` not yet ported to `.tune`
 
 ```bash
 .celery/prepare-workdir.sh <working directory>
@@ -164,7 +174,7 @@ following script as `<working directory>/image.scripts/90-install_torch.sh`
 ## Deploy the working directory to worker nodes
 
 ```bash
-.celery/deploy-workdir.sh <working directory>
+.tune/bin/deploy <working directory>
 ```
 
 This script will deploy the working directory to each registered GPU worker via rsync:
@@ -179,7 +189,7 @@ This script will deploy the working directory to each registered GPU worker via 
 ## Prepare the worker image from base worker image on each system
 
 ```bash
-.celery/build-worker-image.sh <working directory>
+.tune/bin/imgbld <working directory>
 ```
 
 In each GPU worker node:
@@ -195,7 +205,7 @@ In each GPU worker node:
 On the server node (or dev node if they are the same), start the RabbitMQ and PostgreSQL services:
 
 ```bash
-.celery/srvctl.sh <working directory> start
+.tune/bin/srvctl <working directory> start
 ```
 
 This will start:
@@ -207,13 +217,13 @@ Both services run as Docker containers in detached mode with `--network=host`.
 To stop the server services:
 
 ```bash
-.celery/srvctl.sh <working directory> stop
+.tune/bin/srvctl <working directory> stop
 ```
 
 To restart the server services:
 
 ```bash
-.celery/srvctl.sh <working directory> restart
+.tune/bin/srvctl <working directory> restart
 ```
 
 ### Start GPU Workers
@@ -221,7 +231,7 @@ To restart the server services:
 On the dev node, start all GPU workers:
 
 ```bash
-.celery/wkctl.sh <working directory> start
+.tune/bin/wkctl <working directory> start
 ```
 
 This script will:
@@ -230,12 +240,18 @@ This script will:
 - Start the Celery worker service inside the container
 - Record the container ID in `<workdir>/run/worker.containerid`
 
+To start workers on specific hosts only:
+
+```bash
+.tune/bin/wkctl --host gpu-01.example.com --host gpu-02.example.com <working directory> start
+```
+
 ### Stop GPU Workers
 
 To stop all workers:
 
 ```bash
-.celery/wkctl.sh <working directory> stop
+.tune/bin/wkctl <working directory> stop
 ```
 
 This will stop the Celery worker service and remove the containers.
@@ -245,10 +261,12 @@ This will stop the Celery worker service and remove the containers.
 To restart the Celery worker service without recreating containers:
 
 ```bash
-.celery/wkctl.sh <working directory> restart
+.tune/bin/wkctl <working directory> restart
 ```
 
 ## Add Tuning Tasks to the Message Queue
+
+**\*TO PORT\*** - `dispatch-tasks.sh` not yet ported to `.tune`
 
 After the server and workers are running, you can dispatch tuning tasks using the `dispatch-tasks.sh` script:
 
@@ -326,7 +344,7 @@ For HPC environments using SLURM job scheduling, AOTriton provides native SLURM 
 ## Create a working directory on the Dev Node
 
 ```bash
-bash .celery/create-project-directory.sh <working directory>
+.tune/bin/initproj <working directory>
 ```
 
 During the interactive setup:
@@ -341,6 +359,8 @@ SLURM_WORKER_DIR="/home/username/aotriton-workdir"
 ```
 
 ## Register SLURM Batch Configurations
+
+**\*TO PORT\*** - `manage-workers.py` not yet ported to `.tune`
 
 Instead of registering individual GPU workers, register SLURM GRES (Generic RESource) constraints that will be used for job submission. Each registered entry will result in one SLURM job being submitted.
 
@@ -420,7 +440,7 @@ To unmark nodes:
 Same as the Docker workflow:
 
 ```bash
-.celery/build-for-tuning.sh <working directory>
+.tune/bin/libbld <working directory>
 ```
 
 This builds:
@@ -428,6 +448,8 @@ This builds:
 2. AOTriton for all supported architectures (not just registered SLURM configs)
 
 ## Prepare the working directory on dev node
+
+**\*TO PORT\*** - `prepare-workdir.sh` not yet ported to `.tune`
 
 Same as the Docker workflow:
 
@@ -438,7 +460,7 @@ Same as the Docker workflow:
 ## Deploy the working directory to SLURM
 
 ```bash
-.celery/deploy-workdir.sh <working directory>
+.tune/bin/deploy <working directory>
 ```
 
 This script will:
@@ -448,6 +470,8 @@ This script will:
 - Sync all architecture builds from `installed/` to the SLURM worker directory
 
 ## Build SLURM Python Virtual Environment
+
+**\*TO PORT\*** - `build-slurm-venv.sh` not yet ported to `.tune`
 
 Instead of building a Docker image, create a Python virtual environment on the SLURM login node:
 
@@ -470,7 +494,7 @@ This script will:
 On the server node (or dev node), start RabbitMQ and PostgreSQL services:
 
 ```bash
-.celery/srvctl.sh <working directory> start
+.tune/bin/srvctl <working directory> start
 ```
 
 ## Submit SLURM Jobs
@@ -478,14 +502,20 @@ On the server node (or dev node), start RabbitMQ and PostgreSQL services:
 Submit SLURM jobs for all registered GRES configurations:
 
 ```bash
-.celery/srun.sh <working directory>
+.tune/bin/srun <working directory>
 ```
 
 Or with a custom time limit:
 
 ```bash
-.celery/srun.sh --time 08:00:00 <working directory>
-.celery/srun.sh --time 2-00:00:00 <working directory>  # 2 days
+.tune/bin/srun --time 08:00:00 <working directory>
+.tune/bin/srun --time 2-00:00:00 <working directory>  # 2 days
+```
+
+Or submit specific GRES configurations:
+
+```bash
+.tune/bin/srun --gres "gpu:gfx942-mi300x:8" "gpu:gfx90a:4" <working directory>
 ```
 
 Default time limit is 24 hours.
@@ -568,29 +598,29 @@ For quick reference, the complete SLURM workflow is:
 
 ```bash
 # Setup
-.celery/create-project-directory.sh <workdir>  # Enable SLURM when prompted
-.celery/manage-workers.py <workdir> slurm-add "gpu:gfx942-mi300x:8" --count 2
-.celery/build-for-tuning.sh <workdir>
-.celery/prepare-workdir.sh <workdir>
-.celery/build-slurm-venv.sh <workdir>
-.celery/deploy-workdir.sh <workdir>
+.tune/bin/initproj <workdir>  # Enable SLURM when prompted
+.celery/manage-workers.py <workdir> slurm-add "gpu:gfx942-mi300x:8" --count 2  # *TO PORT*
+.tune/bin/libbld <workdir>
+.celery/prepare-workdir.sh <workdir>  # *TO PORT*
+.celery/build-slurm-venv.sh <workdir>  # *TO PORT*
+.tune/bin/deploy <workdir>
 
 # Start services
-.celery/srvctl.sh <workdir> start
-.celery/srun.sh --time 24:00:00 <workdir>
+.tune/bin/srvctl <workdir> start
+.tune/bin/srun --time 24:00:00 <workdir>
 
 # Dispatch tasks
-.celery/dispatch-tasks.sh <workdir> --arch gfx942 flash
+.celery/dispatch-tasks.sh <workdir> --arch gfx942 flash  # *TO PORT*
 
 # Monitor
 ssh <SLURM_LOGIN_NODE> squeue -u $USER
 
 # List and remove SLURM configurations
-.celery/manage-workers.py <workdir> slurm-list
-.celery/manage-workers.py <workdir> slurm-remove 1 2
+.celery/manage-workers.py <workdir> slurm-list  # *TO PORT*
+.celery/manage-workers.py <workdir> slurm-remove 1 2  # *TO PORT*
 
 # Cleanup
 ssh <SLURM_LOGIN_NODE> scancel -u $USER
-.celery/srvctl.sh <workdir> stop
+.tune/bin/srvctl <workdir> stop
 ```
 
