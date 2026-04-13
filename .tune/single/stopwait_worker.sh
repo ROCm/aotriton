@@ -58,7 +58,7 @@ echo 'Step 2: Waiting for local queues to drain (max 10 min)...'
 timeout 600 bash -c 'while celery -A v3python.celery inspect active | grep -q \"task\"; do sleep 10; done' || true
 
 echo 'Step 3: Stopping all workers gracefully...'
-bash /wkdir/aotriton.src/.celery/worker-service.sh stopwait /wkdir
+bash /wkdir/aotriton.src/.tune/remote/worker_service.sh stopwait /wkdir
 "
 
 echo "Stopping and removing container: $WORKER_CONTAINER_ID"

@@ -41,7 +41,7 @@ fi
 WORKER_CONTAINER_ID=$(cat "$RUNFILE")
 
 echo "Stopping worker service in container: $WORKER_CONTAINER_ID"
-docker exec "$WORKER_CONTAINER_ID" bash -c "source /wkdir/config.rc && source \$(dirname \$CELERY_WORKER_PYTHON)/activate && bash /wkdir/aotriton.src/.celery/worker-service.sh stop /wkdir"
+docker exec "$WORKER_CONTAINER_ID" bash -c "source /wkdir/config.rc && source \$(dirname \$CELERY_WORKER_PYTHON)/activate && bash /wkdir/aotriton.src/.tune/remote/worker_service.sh stop /wkdir"
 
 echo "Stopping and removing container: $WORKER_CONTAINER_ID"
 docker stop "$WORKER_CONTAINER_ID"

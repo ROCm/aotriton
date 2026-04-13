@@ -83,7 +83,7 @@ export AOTRITON_CELERY_WORKDIR="$WORKDIR"
 # Graceful shutdown handler
 cleanup() {
   echo "$(date): SLURM timeout approaching, stopping workers gracefully..."
-  bash "$AOTRITON_SRC/.celery/worker-service.sh" stopwait "$WORKDIR"
+  bash "$AOTRITON_SRC/.tune/remote/worker_service.sh" stopwait "$WORKDIR"
   echo "$(date): Workers stopped gracefully"
 
   # Clean up tmpfs
@@ -101,7 +101,7 @@ echo "AOTriton source: $AOTRITON_SRC"
 echo "VENV: $VENV_ACTIVATE"
 
 # Start workers
-bash "$AOTRITON_SRC/.celery/worker-service.sh" start "$WORKDIR"
+bash "$AOTRITON_SRC/.tune/remote/worker_service.sh" start "$WORKDIR"
 
 if [ $? -ne 0 ]; then
   echo "Error: Failed to start workers" >&2

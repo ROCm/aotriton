@@ -38,6 +38,7 @@ rsync -az --info=progress2 \
   --exclude '/installed/' \
   --exclude '/run/' \
   --exclude '/scratch/' \
+    --mkpath \
   "$WORKDIR/" "$HOSTNAME:$WORKER_WORKDIR/"
 
 # Sync architecture-specific files
