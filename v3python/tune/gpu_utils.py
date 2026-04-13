@@ -146,7 +146,7 @@ def _get_temperature_amdsmi(device_id):
 
     temp = amdsmi.amdsmi_get_temp_metric(
         amdsmi_dev,
-        amdsmi.AmdSmiTemperatureType.EDGE,
+        amdsmi.AmdSmiTemperatureType.JUNCTION,
         amdsmi.AmdSmiTemperatureMetric.CURRENT
     )
     return temp
