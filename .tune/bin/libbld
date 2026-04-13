@@ -2,8 +2,41 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-# Build AOTriton libraries for all architectures
+# Build Triton wheel and AOTriton libraries for all architectures
 # Usage: libbld <workdir>
+
+if [ -z "$BASH_VERSION" ]; then
+  echo "This script requires Bash. Please run it with 'bash script_name.sh' or ensure /bin/sh points to /bin/bash." >&2
+  exit 1
+fi
+
+if ! command -v sqlite3 &> /dev/null; then
+  cat <<EOF >&2
+Command 'sqlite3' could not be found. Install it with
+dnf install sqlite3
+or
+snap install sqlite3
+EOF
+  exit 1
+fi
+
+if [ "$#" -ne 1 ]; then
+  cat >&2 <<EOF
+Usage: $0 <workdir>
+
+Build triton wheel and AOTriton tuning binaries for all registered
+architectures by manage-workers.py.
+
+Arguments:
+  <workdir>  Project working directory (created by initproj)
+
+Output:
+  - Triton wheel: <workdir>/scratch/triton/
+  - AOTriton builds: <workdir>/build/<arch>/
+  - AOTriton installs: <workdir>/installed/<arch>/
+EOF
+  exit 1
+fi
 
 set -e
 
@@ -15,20 +48,30 @@ TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 WORKDIR="$1"
 
-if [ -z "$WORKDIR" ]; then
-    echo "Usage: $0 <workdir>" >&2
-    exit 1
+# Validate
+if [ ! -d "$WORKDIR" ] || [ ! -f "$WORKDIR/workers.db" ]; then
+  echo "Error: Invalid workdir or workers.db not found" >&2
+  exit 1
 fi
 
 load_config "$WORKDIR"
 
+# Step 1: Build Triton wheel (cached)
+echo "Step 1: Building Triton wheel..."
+TRITON_WHEEL=$("$TUNE_ROOT/single/build_triton_wheel.sh" "$WORKDIR")
+echo "Using Triton wheel: $TRITON_WHEEL"
+
+# Step 2: Build AOTriton for each architecture
+echo "Step 2: Building AOTriton for all architectures..."
 mapfile -t ARCHS < <(get_architectures "$WORKDIR")
 
-echo "Building for architectures: ${ARCHS[*]}"
+echo "Architectures detected: ${ARCHS[*]}"
+
+ABSWORKDIR=$(realpath "$WORKDIR")
 
 for arch in "${ARCHS[@]}"; do
     echo "Building $arch..."
-    "$TUNE_ROOT/single/build_arch.sh" "$WORKDIR" "$arch"
+    "$TUNE_ROOT/single/build_arch.sh" "$ABSWORKDIR" "$arch" "$TRITON_WHEEL"
 done
 
 echo "Build complete"
