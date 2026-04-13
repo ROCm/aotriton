@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+
+{% block title %}Builds{% endblock %}
+
+{% block content %}
+<h2>Build Management</h2>
+
+<section>
+    <h3>Build AOTriton Libraries</h3>
+    <p>Build libraries for all registered architectures: <strong>{{ archs|join(', ') }}</strong></p>
+    <button hx-post="/api/builds/libraries"
+            hx-swap="none"
+            hx-indicator="#build-spinner">Build Libraries</button>
+    <span id="build-spinner" class="htmx-indicator">⏳ Building...</span>
+</section>
+
+<section>
+    <h3>Build Docker Images</h3>
+    <p>Build worker Docker images on all registered hosts.</p>
+    <p><strong>Hosts:</strong> {{ hostnames|join(', ') }}</p>
+    <button hx-post="/api/builds/images"
+            hx-swap="none"
+            hx-indicator="#image-spinner">Build All Images</button>
+    <span id="image-spinner" class="htmx-indicator">⏳ Building...</span>
+</section>
+
+<section>
+    <h3>Per-Host Image Build</h3>
+    <p>Build Docker image on a specific host.</p>
+    <form hx-post="/api/builds/images/single"
+          hx-swap="none"
+          hx-indicator="#single-image-spinner">
+        <label for="hostname-select">Select Host:</label>
+        <select name="hostname" id="hostname-select">
+            {% for hostname in hostnames %}
+            <option value="{{ hostname }}">{{ hostname }}</option>
+            {% endfor %}
+        </select>
+        <button type="submit">Build Image</button>
+        <span id="single-image-spinner" class="htmx-indicator">⏳ Building...</span>
+    </form>
+</section>
+
+<section>
+    <h3>Build Information</h3>
+    <table>
+        <tr>
+            <th>Item</th>
+            <th>Value</th>
+        </tr>
+        <tr>
+            <td>Architectures</td>
+            <td><strong>{{ archs|length }}</strong> ({{ archs|join(', ') }})</td>
+        </tr>
+        <tr>
+            <td>Build Hosts</td>
+            <td><strong>{{ hostnames|length }}</strong> ({{ hostnames|join(', ') }})</td>
+        </tr>
+        <tr>
+            <td>Worker Image</td>
+            <td><code>{{ config.CELERY_WORKER_IMAGE }}</code></td>
+        </tr>
+        <tr>
+            <td>Workdir</td>
+            <td><code>{{ config.WORKDIR }}</code></td>
+        </tr>
+    </table>
+</section>
+{% endblock %}

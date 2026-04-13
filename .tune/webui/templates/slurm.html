@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+
+{% block title %}SLURM{% endblock %}
+
+{% block content %}
+<h2>SLURM Job Management</h2>
+
+{% if config.SLURM_LOGIN_NODE %}
+
+<section>
+    <h3>Submit Jobs</h3>
+    <p>Submit tuning jobs to the SLURM cluster.</p>
+
+    <form hx-post="/api/slurm/submit"
+          hx-swap="none"
+          hx-indicator="#submit-spinner">
+        <label for="time-limit">Time Limit:</label>
+        <input type="text" name="time_limit" id="time-limit" value="24:00:00" placeholder="HH:MM:SS">
+
+        <label for="gres-override">GRES Override (optional, comma-separated):</label>
+        <input type="text" name="gres" id="gres-override" placeholder="gpu:mi200:1,gpu:mi300:2">
+
+        <button type="submit">Submit Jobs</button>
+        <span id="submit-spinner" class="htmx-indicator">⏳ Submitting...</span>
+    </form>
+</section>
+
+<section>
+    <h3>Job Status</h3>
+    <button hx-get="/api/slurm/queue"
+            hx-target="#queue-display"
+            hx-swap="innerHTML">Refresh Queue</button>
+
+    <div id="queue-display" style="margin-top: 1rem;">
+        <span hx-get="/api/slurm/queue"
+              hx-trigger="load"
+              hx-swap="innerHTML">
+            <em>Loading queue status...</em>
+        </span>
+    </div>
+</section>
+
+<section>
+    <h3>SLURM Configuration</h3>
+    <table>
+        <tr>
+            <th>Setting</th>
+            <th>Value</th>
+        </tr>
+        <tr>
+            <td>Login Node</td>
+            <td><code>{{ config.SLURM_LOGIN_NODE }}</code></td>
+        </tr>
+        <tr>
+            <td>Worker Directory</td>
+            <td><code>{{ config.SLURM_WORKER_DIR }}</code></td>
+        </tr>
+        <tr>
+            <td>Default Time Limit</td>
+            <td><code>24:00:00</code></td>
+        </tr>
+    </table>
+</section>
+
+<section>
+    <h3>GRES Batch Configurations</h3>
+    <p>Jobs will be submitted for each GRES configuration in the database unless overridden.</p>
+    <button hx-get="/api/slurm/gres"
+            hx-target="#gres-display"
+            hx-swap="innerHTML">Load GRES List</button>
+
+    <div id="gres-display" style="margin-top: 1rem;">
+        <span hx-get="/api/slurm/gres"
+              hx-trigger="load"
+              hx-swap="innerHTML">
+            <em>Loading GRES configurations...</em>
+        </span>
+    </div>
+</section>
+
+<section>
+    <h3>Bad Nodes</h3>
+    <p>Nodes excluded from job submission (from <code>slurm_bad_nodes</code> table).</p>
+    <button hx-get="/api/slurm/bad-nodes"
+            hx-target="#bad-nodes-display"
+            hx-swap="innerHTML">Load Bad Nodes</button>
+
+    <div id="bad-nodes-display" style="margin-top: 1rem;">
+        <span hx-get="/api/slurm/bad-nodes"
+              hx-trigger="load"
+              hx-swap="innerHTML">
+            <em>Loading bad nodes list...</em>
+        </span>
+    </div>
+</section>
+
+{% else %}
+
+<section>
+    <p><strong>SLURM is not configured for this workdir.</strong></p>
+    <p>To enable SLURM support, set <code>SLURM_LOGIN_NODE</code> and <code>SLURM_WORKER_DIR</code> in <code>config.rc</code>.</p>
+</section>
+
+{% endif %}
+
+{% endblock %}

@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+
+{% block title %}Overview{% endblock %}
+
+{% block content %}
+<h2>Dashboard Overview</h2>
+
+<section>
+    <h3>Status Summary</h3>
+    <table>
+        <tr>
+            <th>Metric</th>
+            <th>Value</th>
+        </tr>
+        <tr>
+            <td>Total Workers</td>
+            <td><strong>{{ status.worker_count }}</strong></td>
+        </tr>
+        <tr>
+            <td>Architectures</td>
+            <td><strong>{{ status.architecture_count }}</strong> ({{ status.architectures|join(', ') }})</td>
+        </tr>
+        <tr>
+            <td>RabbitMQ</td>
+            <td><span class="status-badge status-{{ status.rabbitmq_status }}">{{ status.rabbitmq_status }}</span></td>
+        </tr>
+        <tr>
+            <td>PostgreSQL</td>
+            <td><span class="status-badge status-{{ status.postgres_status }}">{{ status.postgres_status }}</span></td>
+        </tr>
+    </table>
+</section>
+
+<section>
+    <h3>Quick Actions</h3>
+    <button hx-post="/api/workers/all/start"
+            hx-swap="none"
+            hx-indicator="#spinner">Start All Workers</button>
+    <button hx-post="/api/workers/all/stop"
+            hx-swap="none"
+            hx-indicator="#spinner">Stop All Workers</button>
+    <button hx-post="/api/servers/start"
+            hx-swap="none"
+            hx-indicator="#spinner">Start Servers</button>
+    <button hx-post="/api/servers/stop"
+            hx-swap="none"
+            hx-indicator="#spinner">Stop Servers</button>
+    <span id="spinner" class="htmx-indicator">⏳ Processing...</span>
+</section>
+
+<section>
+    <h3>Getting Started</h3>
+    <ol>
+        <li><a href="/workers">Manage Workers</a> - Start/stop GPU workers</li>
+        <li><a href="/servers">Control Servers</a> - Manage RabbitMQ and PostgreSQL</li>
+        <li><a href="/builds">Build</a> - Build libraries and Docker images</li>
+        <li><a href="/deploy">Deploy</a> - Deploy to worker nodes</li>
+        <li><a href="/slurm">SLURM</a> - Submit and monitor jobs</li>
+    </ol>
+</section>
+{% endblock %}

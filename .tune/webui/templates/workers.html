@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+
+{% block title %}Workers{% endblock %}
+
+{% block content %}
+<h2>Worker Management</h2>
+
+<section>
+    <h3>Bulk Actions</h3>
+    <button hx-post="/api/workers/all/start" hx-swap="none">Start All</button>
+    <button hx-post="/api/workers/all/stop" hx-swap="none">Stop All</button>
+    <button hx-post="/api/workers/all/restart" hx-swap="none">Restart All</button>
+</section>
+
+<section>
+    <h3>Workers ({{ workers|length }})</h3>
+    {% if workers %}
+    <table>
+        <thead>
+            <tr>
+                <th>Hostname</th>
+                <th>Architecture</th>
+                <th>Workdir</th>
+                <th>Status</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for worker in workers %}
+            <tr>
+                <td><code>{{ worker[0] }}</code></td>
+                <td><strong>{{ worker[1] }}</strong></td>
+                <td><code>{{ worker[2] or 'default' }}</code></td>
+                <td id="status-{{ worker[0] }}">
+                    <span hx-get="/api/workers/{{ worker[0] }}/status"
+                          hx-trigger="load, every 10s"
+                          hx-swap="innerHTML">
+                        <span class="status-badge status-unknown">Checking...</span>
+                    </span>
+                </td>
+                <td>
+                    <button hx-post="/api/workers/{{ worker[0] }}/start"
+                            hx-swap="none"
+                            style="font-size: 0.8em;">Start</button>
+                    <button hx-post="/api/workers/{{ worker[0] }}/stop"
+                            hx-swap="none"
+                            style="font-size: 0.8em;">Stop</button>
+                    <button hx-post="/api/workers/{{ worker[0] }}/restart"
+                            hx-swap="none"
+                            style="font-size: 0.8em;">Restart</button>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>No workers registered. Use <code>manage-workers.py</code> to add workers.</p>
+    {% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+
+{% block title %}Servers{% endblock %}
+
+{% block content %}
+<h2>Server Management</h2>
+
+<section>
+    <h3>RabbitMQ &amp; PostgreSQL</h3>
+    <p>Control the backend services required for distributed tuning.</p>
+
+    <button hx-post="/api/servers/start"
+            hx-swap="none"
+            hx-indicator="#server-spinner">Start Servers</button>
+    <button hx-post="/api/servers/stop"
+            hx-swap="none"
+            hx-indicator="#server-spinner">Stop Servers</button>
+    <button hx-post="/api/servers/restart"
+            hx-swap="none"
+            hx-indicator="#server-spinner">Restart Servers</button>
+    <span id="server-spinner" class="htmx-indicator">⏳ Processing...</span>
+</section>
+
+<section>
+    <h3>Service Status</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>Service</th>
+                <th>Container Name</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><strong>RabbitMQ</strong></td>
+                <td><code>{{ config.RABBITMQ_CONTAINER }}</code></td>
+                <td>
+                    <span hx-get="/api/servers/rabbitmq/status"
+                          hx-trigger="load, every 10s"
+                          hx-swap="innerHTML">
+                        <span class="status-badge status-unknown">Checking...</span>
+                    </span>
+                </td>
+            </tr>
+            <tr>
+                <td><strong>PostgreSQL</strong></td>
+                <td><code>{{ config.POSTGRES_CONTAINER }}</code></td>
+                <td>
+                    <span hx-get="/api/servers/postgres/status"
+                          hx-trigger="load, every 10s"
+                          hx-swap="innerHTML">
+                        <span class="status-badge status-unknown">Checking...</span>
+                    </span>
+                </td>
+            </tr>
+        </tbody>
+    </table>
+</section>
+
+<section>
+    <h3>Configuration</h3>
+    <table>
+        <tr>
+            <th>Setting</th>
+            <th>Value</th>
+        </tr>
+        <tr>
+            <td>Service Host</td>
+            <td><code>{{ config.CELERY_SERVICE_HOST }}</code></td>
+        </tr>
+        <tr>
+            <td>RabbitMQ Image</td>
+            <td><code>{{ config.RABBITMQ_DOCKER_IMAGE }}</code></td>
+        </tr>
+        <tr>
+            <td>PostgreSQL Image</td>
+            <td><code>{{ config.POSTGRES_DOCKER_IMAGE }}</code></td>
+        </tr>
+        <tr>
+            <td>PostgreSQL Volume</td>
+            <td><code>{{ config.POSTGRES_DOCKER_VOLUME }}</code></td>
+        </tr>
+    </table>
+</section>
+{% endblock %}
