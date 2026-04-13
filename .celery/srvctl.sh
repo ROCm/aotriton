@@ -84,6 +84,7 @@ start_services() {
     --network=host \
     -d \
     --rm \
+    --ulimit nofile=65536:65536 \
     -e RABBITMQ_DEFAULT_USER="${RABBITMQ_DEFAULT_USER}" \
     -e RABBITMQ_DEFAULT_PASS="${RABBITMQ_DEFAULT_PASS}" \
     --name "${RABBITMQ_CONTAINER}" \
@@ -102,11 +103,13 @@ start_services() {
     --network=host \
     -d \
     --rm \
+    --ulimit nofile=65536:65536 \
     -e POSTGRES_USER="${POSTGRES_USER}" \
     -e POSTGRES_PASSWORD="${POSTGRES_PASSWORD}" \
     -v "${POSTGRES_DOCKER_VOLUME}:/var/lib/postgresql/data" \
     --name "${POSTGRES_CONTAINER}" \
-    "${POSTGRES_DOCKER_IMAGE}")
+    "${POSTGRES_DOCKER_IMAGE}" \
+    postgres -c max_connections=500 -c shared_buffers=2GB)
 
   if [ -z "$POSTGRES_ID" ]; then
     echo "Error: Failed to start PostgreSQL" >&2
