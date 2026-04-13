@@ -56,23 +56,18 @@ else
     mapfile -t GRES_ARRAY < <(get_slurm_batch "$WORKDIR" | cut -d'|' -f2)
 fi
 
-# Get bad nodes
-BAD_NODES_STR=$(get_slurm_bad_nodes "$WORKDIR" | tr '\n' ',' | sed 's/,$//')
+# Export time limit for submit_slurm_job.sh
+export SLURM_TIME_LIMIT="$TIME_LIMIT"
 
 # Record job IDs
 mkdir -p "$WORKDIR/run/slurm"
 JOB_LOG="$WORKDIR/run/slurm/jobs-$(date +%Y%m%d_%H%M%S).txt"
 
-# Submit jobs
+# Submit jobs (treat GRES like hostname - one call per GRES)
 for gres in "${GRES_ARRAY[@]}"; do
     echo "Submitting job with --gres=$gres"
 
-    JOB_ID=$("$TUNE_ROOT/single/submit_slurm_job.sh" \
-        "$SLURM_LOGIN_NODE" \
-        "$SLURM_WORKER_DIR" \
-        "$gres" \
-        "$TIME_LIMIT" \
-        "$BAD_NODES_STR")
+    JOB_ID=$("$TUNE_ROOT/single/submit_slurm_job.sh" "$WORKDIR" "$gres")
 
     echo "  Job ID: $JOB_ID"
     echo "$JOB_ID" >> "$JOB_LOG"

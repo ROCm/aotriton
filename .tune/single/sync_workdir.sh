@@ -2,17 +2,35 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-# Sync main workdir to one host
-# Usage: sync_workdir.sh <hostname> <src_workdir> <dest_workdir>
+# Sync workdir to one host (main files + architecture-specific files)
+# Usage: sync_workdir.sh <workdir> <hostname>
 
 set -e
 
-HOSTNAME="$1"
-SRC_WORKDIR="$2"
-DEST_WORKDIR="$3"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+. "$TUNE_ROOT/lib/config_load.sh"
+. "$TUNE_ROOT/lib/db_query.sh"
+
+WORKDIR="$1"
+HOSTNAME="$2"
+
+if [ -z "$WORKDIR" ] || [ -z "$HOSTNAME" ]; then
+  echo "Usage: $0 <workdir> <hostname>" >&2
+  exit 1
+fi
+
+load_config "$WORKDIR"
+
+# Get arch and workdir_override for this hostname
+WORKER_INFO=$(get_worker_by_hostname "$WORKDIR" "$HOSTNAME")
+IFS='|' read -r arch workdir_override <<< "$WORKER_INFO"
+
+WORKER_WORKDIR="${workdir_override:-$DEFAULT_WORKDIR}"
 
 # Create directory structure
-ssh "$HOSTNAME" mkdir -p "$DEST_WORKDIR"
+ssh "$HOSTNAME" mkdir -p "$WORKER_WORKDIR"
 
 # Sync main directories (exclude build, installed, run, scratch)
 rsync -az --info=progress2 \
@@ -20,4 +38,17 @@ rsync -az --info=progress2 \
   --exclude '/installed/' \
   --exclude '/run/' \
   --exclude '/scratch/' \
-  "$SRC_WORKDIR/" "$HOSTNAME:$DEST_WORKDIR/"
+  "$WORKDIR/" "$HOSTNAME:$WORKER_WORKDIR/"
+
+# Sync architecture-specific files
+if [ "$arch" = "ALL" ]; then
+  SUBDIR=""
+else
+  SUBDIR="/$arch"
+fi
+
+if [ -d "$WORKDIR/installed$SUBDIR" ]; then
+  rsync -azR --info=progress2 \
+    "$WORKDIR/./installed$SUBDIR" \
+    "$HOSTNAME:$WORKER_WORKDIR/./"
+fi

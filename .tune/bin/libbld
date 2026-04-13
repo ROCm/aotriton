@@ -28,7 +28,7 @@ echo "Building for architectures: ${ARCHS[*]}"
 
 for arch in "${ARCHS[@]}"; do
     echo "Building $arch..."
-    "$TUNE_ROOT/single/build_arch.sh" "$arch" "$WORKDIR"
+    "$TUNE_ROOT/single/build_arch.sh" "$WORKDIR" "$arch"
 done
 
 echo "Build complete"

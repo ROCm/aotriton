@@ -2,8 +2,8 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-# Start PostgreSQL container
-# Usage: start_postgres.sh <workdir>
+# Start RabbitMQ and PostgreSQL containers
+# Usage: start_services.sh <workdir>
 
 set -e
 
@@ -21,13 +21,41 @@ fi
 
 load_config "$WORKDIR"
 
-# Container name with suffix
+# Container names with suffix
+RABBITMQ_CONTAINER="aotriton_rabbitmq.${CONTAINER_SUFFIX}"
 POSTGRES_CONTAINER="aotriton_pgsql.${CONTAINER_SUFFIX}"
 
 # PID file
 mkdir -p "$WORKDIR/run"
 PIDF="$WORKDIR/run/container.pids"
 
+if [ -f "$PIDF" ]; then
+  echo "Error: Services already running or stale PID file exists. Run stop first." >&2
+  exit 1
+fi
+
+echo "Starting server services..."
+
+# Start RabbitMQ
+echo "Starting RabbitMQ..."
+RABBITMQ_ID=$(docker run --ipc=host \
+  --network=host \
+  -d \
+  --rm \
+  --ulimit nofile=65536:65536 \
+  -e RABBITMQ_DEFAULT_USER="${RABBITMQ_DEFAULT_USER}" \
+  -e RABBITMQ_DEFAULT_PASS="${RABBITMQ_DEFAULT_PASS}" \
+  --name "${RABBITMQ_CONTAINER}" \
+  rabbitmq:4-management)
+
+if [ -z "$RABBITMQ_ID" ]; then
+  echo "Error: Failed to start RabbitMQ" >&2
+  exit 1
+fi
+echo "$RABBITMQ_ID" >> "$PIDF"
+echo "Started RabbitMQ: $RABBITMQ_ID"
+
+# Start PostgreSQL
 echo "Starting PostgreSQL..."
 POSTGRES_ID=$(docker run --ipc=host \
   --network=host \
@@ -43,7 +71,12 @@ POSTGRES_ID=$(docker run --ipc=host \
 
 if [ -z "$POSTGRES_ID" ]; then
   echo "Error: Failed to start PostgreSQL" >&2
+  echo "Cleaning up RabbitMQ..."
+  docker stop "$RABBITMQ_ID"
+  rm -f "$PIDF"
   exit 1
 fi
 echo "$POSTGRES_ID" >> "$PIDF"
 echo "Started PostgreSQL: $POSTGRES_ID"
+
+echo "Server services started successfully"

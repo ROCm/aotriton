@@ -25,8 +25,7 @@ load_config "$WORKDIR"
 
 case "$ACTION" in
     start)
-        "$TUNE_ROOT/single/start_rabbitmq.sh" "$WORKDIR"
-        "$TUNE_ROOT/single/start_postgres.sh" "$WORKDIR"
+        "$TUNE_ROOT/single/start_services.sh" "$WORKDIR"
         ;;
     stop)
         "$TUNE_ROOT/single/stop_services.sh" "$WORKDIR"
@@ -34,8 +33,7 @@ case "$ACTION" in
     restart)
         "$TUNE_ROOT/single/stop_services.sh" "$WORKDIR"
         sleep 2
-        "$TUNE_ROOT/single/start_rabbitmq.sh" "$WORKDIR"
-        "$TUNE_ROOT/single/start_postgres.sh" "$WORKDIR"
+        "$TUNE_ROOT/single/start_services.sh" "$WORKDIR"
         ;;
     *)
         echo "Unknown action: $ACTION" >&2

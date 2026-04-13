@@ -2,13 +2,18 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-# Build AOTriton libraries for one architecture
-# Usage: build_arch.sh <arch> <workdir>
+# Build AOTriton libraries for one architecture (local execution)
+# Usage: build_arch.sh <workdir> <arch>
 
 set -e
 
-ARCH="$1"
-WORKDIR="$2"
+WORKDIR="$1"
+ARCH="$2"
+
+if [ -z "$WORKDIR" ] || [ -z "$ARCH" ]; then
+  echo "Usage: $0 <workdir> <arch>" >&2
+  exit 1
+fi
 
 BUILD_DIR="$WORKDIR/build/$ARCH"
 INSTALL_DIR="$WORKDIR/installed/$ARCH"

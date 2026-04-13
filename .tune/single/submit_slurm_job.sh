@@ -2,21 +2,42 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-# Submit one SLURM job
-# Usage: submit_slurm_job.sh <login_node> <workdir> <gres> <time_limit> [exclude_nodes]
+# Submit one SLURM job for a specific GRES configuration
+# Usage: submit_slurm_job.sh <workdir> <gres>
 
 set -e
 
-SLURM_LOGIN_NODE="$1"
-SLURM_WORKER_DIR="$2"
-GRES="$3"
-TIME_LIMIT="$4"
-EXCLUDE_NODES="${5:-}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+. "$TUNE_ROOT/lib/config_load.sh"
+. "$TUNE_ROOT/lib/db_query.sh"
+
+WORKDIR="$1"
+GRES="$2"
+
+if [ -z "$WORKDIR" ] || [ -z "$GRES" ]; then
+  echo "Usage: $0 <workdir> <gres>" >&2
+  exit 1
+fi
+
+load_config "$WORKDIR"
+
+if [ -z "$SLURM_LOGIN_NODE" ]; then
+  echo "Error: SLURM not configured" >&2
+  exit 1
+fi
+
+# Get bad nodes for exclusion
+BAD_NODES_STR=$(get_slurm_bad_nodes "$WORKDIR" | tr '\n' ',' | sed 's/,$//')
 
 EXCLUDE_OPT=""
-if [ -n "$EXCLUDE_NODES" ]; then
-    EXCLUDE_OPT="--exclude=$EXCLUDE_NODES"
+if [ -n "$BAD_NODES_STR" ]; then
+  EXCLUDE_OPT="--exclude=$BAD_NODES_STR"
 fi
+
+# Get time limit from environment or use default
+TIME_LIMIT="${SLURM_TIME_LIMIT:-24:00:00}"
 
 ssh "$SLURM_LOGIN_NODE" bash -s "$SLURM_WORKER_DIR" "$GRES" "$TIME_LIMIT" "$EXCLUDE_OPT" <<'EOF'
 SLURM_WORKER_DIR="$1"
