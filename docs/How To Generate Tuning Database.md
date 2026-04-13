@@ -137,10 +137,8 @@ The script is idempotent - it will skip rebuilding the Triton wheel if a compati
 
 ## Prepare the working directory on dev node
 
-**\*TO PORT\*** - `prepare-workdir.sh` not yet ported to `.tune`
-
 ```bash
-.celery/prepare-workdir.sh <working directory>
+.tune/bin/prepwkdir <working directory>
 ```
 
 This script will:
@@ -449,12 +447,10 @@ This builds:
 
 ## Prepare the working directory on dev node
 
-**\*TO PORT\*** - `prepare-workdir.sh` not yet ported to `.tune`
-
 Same as the Docker workflow:
 
 ```bash
-.celery/prepare-workdir.sh <working directory>
+.tune/bin/prepwkdir <working directory>
 ```
 
 ## Deploy the working directory to SLURM
@@ -601,7 +597,7 @@ For quick reference, the complete SLURM workflow is:
 .tune/bin/initproj <workdir>  # Enable SLURM when prompted
 .celery/manage-workers.py <workdir> slurm-add "gpu:gfx942-mi300x:8" --count 2  # *TO PORT*
 .tune/bin/libbld <workdir>
-.celery/prepare-workdir.sh <workdir>  # *TO PORT*
+.tune/bin/prepwkdir <workdir>
 .celery/build-slurm-venv.sh <workdir>  # *TO PORT*
 .tune/bin/deploy <workdir>
 
