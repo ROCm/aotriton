@@ -230,10 +230,6 @@ def dispatch_tasks(workdir: Path, module_name: str, args):
             print(f"{len(completed_configs)=}")
             if completed_configs:
                 print(f"Example: {next(iter(completed_configs))}")
-            return
-
-    if args.dry_run:
-        return
 
     # Extract entry field names once for make_hashable (avoid repeated metadata access)
     entry_class = module_instance.ENTRY_CLASS
@@ -277,7 +273,7 @@ def dispatch_tasks(workdir: Path, module_name: str, args):
         arch = task_config['arch']
         if not args.dry_run:
             res = tune_kernel.apply_async(args=(task_config,), queue=arch)
-        results.append(res)
+            results.append(res)
         task_count += 1
         if args.verbose:
             print(f"Dispatched task for {arch}: {task_config['entry']}")
