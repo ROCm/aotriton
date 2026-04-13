@@ -31,8 +31,11 @@ fi
 RHEL_PACKAGES=(task-spooler)
 DEBIAN_PACKAGES=(task-spooler)
 
+# Load unique hostnames into array
+mapfile -t HOSTNAMES < <(sqlite3 "$WORKDIR/workers.db" "SELECT DISTINCT hostname FROM workers ORDER BY hostname;")
+
 # Install packages on each worker
-sqlite3 "$WORKDIR/workers.db" "SELECT DISTINCT hostname FROM workers ORDER BY hostname;" | while read -r hostname; do
+for hostname in "${HOSTNAMES[@]}"; do
   echo "Installing packages on $hostname"
 
   ssh "$hostname" bash -s "${RHEL_PACKAGES[@]}" -- "${DEBIAN_PACKAGES[@]}" <<'EOF'
@@ -75,7 +78,6 @@ else
   exit 1
 fi
 EOF
-
 done
 
 echo "Package installation completed on all workers"

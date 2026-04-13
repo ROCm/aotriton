@@ -89,7 +89,12 @@ deploy() {
   echo "Deployed to $hostname ($arch) -> $WORKER_WORKDIR"
 }
 
-sqlite3 "$WORKDIR/workers.db" "SELECT hostname, arch, COALESCE(workdir_override, '') FROM workers ORDER BY hostname;" | while IFS='|' read h a w; do
+# Load workers into arrays
+mapfile -t WORKER_DATA < <(sqlite3 "$WORKDIR/workers.db" "SELECT hostname, arch, COALESCE(workdir_override, '') FROM workers ORDER BY hostname;")
+
+# Deploy to each worker
+for worker in "${WORKER_DATA[@]}"; do
+  IFS='|' read -r h a w <<< "$worker"
   deploy "$h" "$a" "$w"
 done
 
