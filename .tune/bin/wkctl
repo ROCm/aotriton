@@ -1,0 +1,87 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# Worker control orchestration
+# Usage: worker_control [--host <hostname>...] <workdir> <action>
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Load utilities
+. "$TUNE_ROOT/lib/config_load.sh"
+. "$TUNE_ROOT/lib/db_query.sh"
+. "$TUNE_ROOT/lib/host_filter.sh"
+
+# Parse arguments
+parse_host_filter "$@"
+
+# Remove --host options from args
+ARGS=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --host)
+            shift
+            while [[ $# -gt 0 ]] && [[ ! "$1" =~ ^-- ]]; do
+                shift
+            done
+            ;;
+        *)
+            ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
+
+WORKDIR="${ARGS[0]}"
+ACTION="${ARGS[1]}"
+
+if [ -z "$WORKDIR" ] || [ -z "$ACTION" ]; then
+    echo "Usage: $0 [--host <hostname>...] <workdir> <action>" >&2
+    echo "Actions: start|stop|restart|stopwait" >&2
+    exit 1
+fi
+
+# Load config
+load_config "$WORKDIR"
+
+# Get workers and iterate
+COUNT=0
+while IFS='|' read -r hostname arch workdir_override; do
+    if ! should_process_host "$hostname"; then
+        continue
+    fi
+
+    WORKER_WORKDIR="${workdir_override:-$DEFAULT_WORKDIR}"
+
+    echo "[$ACTION] $hostname ($arch) at $WORKER_WORKDIR"
+
+    case "$ACTION" in
+        start)
+            "$TUNE_ROOT/single/start_worker.sh" \
+                "$hostname" "$arch" "$WORKER_WORKDIR" "$CELERY_WORKER_IMAGE"
+            ;;
+        stop)
+            "$TUNE_ROOT/single/stop_worker.sh" \
+                "$hostname" "$arch" "$WORKER_WORKDIR"
+            ;;
+        restart)
+            "$TUNE_ROOT/single/restart_worker.sh" \
+                "$hostname" "$arch" "$WORKER_WORKDIR" "$CELERY_WORKER_IMAGE"
+            ;;
+        stopwait)
+            "$TUNE_ROOT/single/stopwait_worker.sh" \
+                "$hostname" "$arch" "$WORKER_WORKDIR"
+            ;;
+        *)
+            echo "Unknown action: $ACTION" >&2
+            exit 1
+            ;;
+    esac
+
+    COUNT=$((COUNT + 1))
+done < <(get_workers "$WORKDIR")
+
+echo "Processed $COUNT workers"

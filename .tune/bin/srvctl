@@ -1,0 +1,44 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# Control server services (RabbitMQ, PostgreSQL)
+# Usage: srvctl <workdir> <action>
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+. "$TUNE_ROOT/lib/config_load.sh"
+
+WORKDIR="$1"
+ACTION="$2"
+
+if [ -z "$WORKDIR" ] || [ -z "$ACTION" ]; then
+    echo "Usage: $0 <workdir> <action>" >&2
+    echo "Actions: start|stop|restart" >&2
+    exit 1
+fi
+
+load_config "$WORKDIR"
+
+case "$ACTION" in
+    start)
+        "$TUNE_ROOT/single/start_rabbitmq.sh" "$WORKDIR"
+        "$TUNE_ROOT/single/start_postgres.sh" "$WORKDIR"
+        ;;
+    stop)
+        "$TUNE_ROOT/single/stop_services.sh" "$WORKDIR"
+        ;;
+    restart)
+        "$TUNE_ROOT/single/stop_services.sh" "$WORKDIR"
+        sleep 2
+        "$TUNE_ROOT/single/start_rabbitmq.sh" "$WORKDIR"
+        "$TUNE_ROOT/single/start_postgres.sh" "$WORKDIR"
+        ;;
+    *)
+        echo "Unknown action: $ACTION" >&2
+        exit 1
+        ;;
+esac

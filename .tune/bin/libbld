@@ -1,0 +1,34 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# Build AOTriton libraries for all architectures
+# Usage: libbld <workdir>
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+. "$TUNE_ROOT/lib/config_load.sh"
+. "$TUNE_ROOT/lib/db_query.sh"
+
+WORKDIR="$1"
+
+if [ -z "$WORKDIR" ]; then
+    echo "Usage: $0 <workdir>" >&2
+    exit 1
+fi
+
+load_config "$WORKDIR"
+
+mapfile -t ARCHS < <(get_architectures "$WORKDIR")
+
+echo "Building for architectures: ${ARCHS[*]}"
+
+for arch in "${ARCHS[@]}"; do
+    echo "Building $arch..."
+    "$TUNE_ROOT/single/build_arch.sh" "$arch" "$WORKDIR"
+done
+
+echo "Build complete"

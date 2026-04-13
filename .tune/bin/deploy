@@ -1,0 +1,57 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# Deploy workdir to all workers
+# Usage: deploy <workdir>
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+. "$TUNE_ROOT/lib/config_load.sh"
+. "$TUNE_ROOT/lib/db_query.sh"
+
+WORKDIR="$1"
+
+if [ -z "$WORKDIR" ]; then
+    echo "Usage: $0 <workdir>" >&2
+    exit 1
+fi
+
+load_config "$WORKDIR"
+
+echo "Deploying from $WORKDIR"
+
+# Collect all worker data
+mapfile -t WORKER_DATA < <(get_workers "$WORKDIR")
+
+for worker in "${WORKER_DATA[@]}"; do
+    IFS='|' read -r hostname arch workdir_override <<< "$worker"
+    WORKER_WORKDIR="${workdir_override:-$DEFAULT_WORKDIR}"
+
+    echo "Deploying to $hostname ($arch) at $WORKER_WORKDIR"
+
+    # Sync main workdir
+    "$TUNE_ROOT/single/sync_workdir.sh" \
+        "$hostname" "$WORKDIR" "$WORKER_WORKDIR"
+
+    # Sync architecture-specific files
+    "$TUNE_ROOT/single/sync_arch.sh" \
+        "$hostname" "$arch" "$WORKDIR" "$WORKER_WORKDIR"
+done
+
+# SLURM deployment if configured
+if [ -n "$SLURM_LOGIN_NODE" ]; then
+    echo "Deploying to SLURM: $SLURM_LOGIN_NODE at $SLURM_WORKER_DIR"
+
+    "$TUNE_ROOT/single/sync_workdir.sh" \
+        "$SLURM_LOGIN_NODE" "$WORKDIR" "$SLURM_WORKER_DIR"
+
+    # Deploy ALL architectures to SLURM
+    "$TUNE_ROOT/single/sync_arch.sh" \
+        "$SLURM_LOGIN_NODE" "ALL" "$WORKDIR" "$SLURM_WORKER_DIR"
+fi
+
+echo "Deployment complete"

@@ -1,0 +1,61 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# Build worker Docker images
+# Usage: imgbld [--host <hostname>...] <workdir>
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+. "$TUNE_ROOT/lib/config_load.sh"
+. "$TUNE_ROOT/lib/db_query.sh"
+. "$TUNE_ROOT/lib/host_filter.sh"
+
+parse_host_filter "$@"
+
+# Remove --host from args
+ARGS=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --host)
+            shift
+            while [[ $# -gt 0 ]] && [[ ! "$1" =~ ^-- ]]; do
+                shift
+            done
+            ;;
+        *)
+            ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
+
+WORKDIR="${ARGS[0]}"
+
+if [ -z "$WORKDIR" ]; then
+    echo "Usage: $0 [--host <hostname>...] <workdir>" >&2
+    exit 1
+fi
+
+load_config "$WORKDIR"
+
+COUNT=0
+mapfile -t HOSTNAMES < <(get_hostnames "$WORKDIR")
+
+for hostname in "${HOSTNAMES[@]}"; do
+    if ! should_process_host "$hostname"; then
+        continue
+    fi
+
+    echo "Building image on $hostname"
+
+    "$TUNE_ROOT/single/build_image.sh" \
+        "$hostname" "$DEFAULT_WORKDIR" "$CELERY_WORKER_IMAGE"
+
+    COUNT=$((COUNT + 1))
+done
+
+echo "Built images on $COUNT hosts"
