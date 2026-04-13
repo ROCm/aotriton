@@ -11,6 +11,7 @@ from pathlib import Path
 import json
 import itertools
 from enum import Enum
+import gc
 
 '''
 CAVEAT about imports
@@ -49,6 +50,10 @@ class FlashEntry:
                 return f"'{v}'"
             return str(v)
         return ';'.join([f"{k}={tr(v)}" for k, v in asdict(self).items()])
+
+    @property
+    def qkh(self):
+        return self.seqlen_q * self.seqlen_k * self.hdim
 
 # Field names match mptune/flash/tuner.py and/or _core_test_backward.py
 @dataclass
@@ -252,6 +257,9 @@ class Flash(TuningDescription):
             outputs = kernel.direct_call(direct_inputs, args)
             refs = from_dict(data_class=kernel.PT_REF_CLASS, data=d["bidi_outputs"], config=dacite_tuple)
             result = kernel.compare(outputs, refs)
+            if im.qkh > 2048 * 2048 * 128:
+                gc.collect()
+                torch.cuda.empty_cache()
             return sanitize_value(result)
 
     def run_single_benchmark(self,
@@ -275,6 +283,9 @@ class Flash(TuningDescription):
             def fn():
                 kernel.direct_call(direct_inputs, args)
             times = do_bench(fn, quantiles=(0.5, 0.2, 0.8))
+            if im.qkh > 2048 * 2048 * 128:
+                gc.collect()
+                torch.cuda.empty_cache()
             return sanitize_value(impl_desc), sanitize_value(times)
 
     KERNEL_DICT = None
