@@ -7,12 +7,37 @@
                 style="font-size: 0.8em; float: right; background-color: #dc3545; color: white;">Clear All</button>
     </h3>
 
-    <div id="command-list" hx-get="/api/actions" hx-trigger="load, refreshCommandList from:body" hx-swap="none">
-        <p style="color: gray;">No active commands</p>
+    <div class="command-list-container">
+        <div id="command-list" hx-get="/api/actions" hx-trigger="load, refreshCommandList from:body" hx-swap="none">
+            <p style="color: gray;">No active commands</p>
+        </div>
     </div>
 </section>
 
 <style>
+    .command-list-container {
+        width: 100%;
+        max-height: 80vh;
+        overflow-y: scroll;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        padding: 0.5rem;
+        scrollbar-width: auto;
+    }
+    .command-list-container::-webkit-scrollbar {
+        width: 14px;
+    }
+    .command-list-container::-webkit-scrollbar-track {
+        background: #f1f1f1;
+        border-radius: 4px;
+    }
+    .command-list-container::-webkit-scrollbar-thumb {
+        background: #888;
+        border-radius: 4px;
+    }
+    .command-list-container::-webkit-scrollbar-thumb:hover {
+        background: #555;
+    }
     .command-panel {
         border: 1px solid #ddd;
         border-radius: 4px;
