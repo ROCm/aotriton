@@ -19,6 +19,9 @@ from gpu_targets import AOTRITON_ARCH_TO_PACK
 # Import tuning architectures configuration
 from .config import TUNING_ARCHITECTURES
 
+# Global constant for aotriton root directory
+AOTRITON_ROOT = Path(__file__).parent.parent.parent.resolve()
+
 
 def run_command(cmd, cwd, workdir, description=None):
     """
@@ -141,13 +144,10 @@ def get_status_summary(workdir):
 class CommandBuilder:
     """Base class for building commands"""
 
-    def __init__(self):
-        self.aotriton_root = Path(__file__).parent.parent.parent.resolve()
-
-    def _run(self, script_path, args, workdir, description):
+    def _run(self, script_relative_path, args, workdir, description):
         """Execute command with proper paths"""
-        cmd = [script_path] + list(args)
-        return run_command(cmd, cwd=self.aotriton_root, workdir=workdir, description=description)
+        cmd = [script_relative_path] + list(args)
+        return run_command(cmd, cwd=AOTRITON_ROOT, workdir=workdir, description=description)
 
 
 class SingleWorkerCommand(CommandBuilder):
@@ -157,8 +157,7 @@ class SingleWorkerCommand(CommandBuilder):
 
     def exec(self, workdir, hostname):
         """Execute command with script at RELATIVE path"""
-        script = self.aotriton_root / self.RELATIVE
-        return self._run(script, [workdir, hostname], workdir, f'{self.ACTION_NAME} worker {hostname}')
+        return self._run(self.RELATIVE, [workdir, hostname], workdir, f'{self.ACTION_NAME} worker {hostname}')
 
 
 class StartWorkerCommand(SingleWorkerCommand):
@@ -188,8 +187,7 @@ class BulkWorkerCommand(CommandBuilder):
 
     def exec(self, workdir):
         """Execute wkctl with action"""
-        script = self.aotriton_root / self.RELATIVE
-        return self._run(script, [workdir, self.ACTION], workdir, f'{self.ACTION.capitalize()} all workers')
+        return self._run(self.RELATIVE, [workdir, self.ACTION], workdir, f'{self.ACTION.capitalize()} all workers')
 
 
 class StartAllWorkersCommand(BulkWorkerCommand):
@@ -211,8 +209,7 @@ class ServerCommand(CommandBuilder):
 
     def exec(self, workdir):
         """Execute srvctl with action"""
-        script = self.aotriton_root / self.RELATIVE
-        return self._run(script, [workdir, self.ACTION], workdir, f'{self.ACTION.capitalize()} servers')
+        return self._run(self.RELATIVE, [workdir, self.ACTION], workdir, f'{self.ACTION.capitalize()} servers')
 
 
 class StartServersCommand(ServerCommand):
@@ -234,8 +231,7 @@ class BuildCommand(CommandBuilder):
 
     def exec(self, workdir):
         """Execute build script"""
-        script = self.aotriton_root / self.RELATIVE
-        return self._run(script, [workdir], workdir, self.DESCRIPTION)
+        return self._run(self.RELATIVE, [workdir], workdir, self.DESCRIPTION)
 
 
 class BuildLibrariesCommand(BuildCommand):
@@ -255,8 +251,7 @@ class DeployCommand(CommandBuilder):
 
     def exec(self, workdir):
         """Execute deployment script"""
-        script = self.aotriton_root / self.RELATIVE
-        return self._run(script, [workdir], workdir, self.DESCRIPTION)
+        return self._run(self.RELATIVE, [workdir], workdir, self.DESCRIPTION)
 
 
 class DeployAllCommand(DeployCommand):
@@ -317,11 +312,10 @@ def restart_worker_single(workdir, hostname):
 def stop_start_worker_single(workdir, hostname):
     """Stop then start single worker (using shell ; operator)"""
     # Special case: need sequential execution with ; operator
-    aotriton_root = Path(__file__).parent.parent.parent.resolve()
-    stop_script = aotriton_root / '.tune' / 'single' / 'stop_worker.sh'
-    start_script = aotriton_root / '.tune' / 'single' / 'start_worker.sh'
+    stop_script = '.tune/single/stop_worker.sh'
+    start_script = '.tune/single/start_worker.sh'
     cmd = ['/bin/bash', '-c', f'{stop_script} {workdir} {hostname} ; {start_script} {workdir} {hostname}']
-    return run_command(cmd, cwd=aotriton_root, workdir=workdir, description=f'Stop & start worker {hostname}')
+    return run_command(cmd, cwd=AOTRITON_ROOT, workdir=workdir, description=f'Stop & start worker {hostname}')
 
 
 def start_all_workers(workdir):
@@ -342,10 +336,9 @@ def restart_all_workers(workdir):
 def stop_start_all_workers(workdir):
     """Stop then start all workers (using shell ; operator)"""
     # Special case: need sequential execution with ; operator
-    aotriton_root = Path(__file__).parent.parent.parent.resolve()
-    wkctl = aotriton_root / '.tune' / 'bin' / 'wkctl'
+    wkctl = '.tune/bin/wkctl'
     cmd = ['/bin/bash', '-c', f'{wkctl} {workdir} stop ; {wkctl} {workdir} start']
-    return run_command(cmd, cwd=aotriton_root, workdir=workdir, description='Stop & start all workers')
+    return run_command(cmd, cwd=AOTRITON_ROOT, workdir=workdir, description='Stop & start all workers')
 
 
 # Server control functions
