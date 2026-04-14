@@ -23,8 +23,13 @@ def dashboard():
 def workers():
     """Worker management page"""
     workdir = current_app.config['WORKDIR']
-    workers = tasks.get_workers(workdir)
-    return render_template('workers.html', workers=workers)
+    workers_by_arch = tasks.get_workers_by_architecture(workdir)
+    supported_archs = tasks.get_supported_architectures()
+    default_workdir = tasks.get_default_workdir(workdir) or '<not set>'
+    return render_template('workers.html',
+                          workers_by_arch=workers_by_arch,
+                          supported_archs=supported_archs,
+                          default_workdir=default_workdir)
 
 
 @bp.route('/servers')
@@ -81,6 +86,14 @@ def api_restart_all_workers():
     return jsonify(result)
 
 
+@bp.route('/api/workers/all/stop-start', methods=['POST'])
+def api_stop_start_all_workers():
+    """Stop then start all workers"""
+    workdir = current_app.config['WORKDIR']
+    result = tasks.stop_start_all_workers(workdir)
+    return jsonify(result)
+
+
 @bp.route('/api/workers/<hostname>/start', methods=['POST'])
 def api_start_worker(hostname):
     """Start single worker"""
@@ -102,6 +115,14 @@ def api_restart_worker(hostname):
     """Restart single worker"""
     workdir = current_app.config['WORKDIR']
     result = tasks.restart_worker_single(workdir, hostname)
+    return jsonify(result)
+
+
+@bp.route('/api/workers/<hostname>/stop-start', methods=['POST'])
+def api_stop_start_worker(hostname):
+    """Stop then start single worker"""
+    workdir = current_app.config['WORKDIR']
+    result = tasks.stop_start_worker_single(workdir, hostname)
     return jsonify(result)
 
 
@@ -169,9 +190,76 @@ def api_deploy_workdir():
     return jsonify(result)
 
 
+@bp.route('/api/deploy/<hostname>', methods=['POST'])
+def api_deploy_single(hostname):
+    """Deploy workdir to a single worker"""
+    workdir = current_app.config['WORKDIR']
+    result = tasks.deploy_workdir_single(workdir, hostname)
+    return jsonify(result)
+
+
 @bp.route('/api/deploy/prepare', methods=['POST'])
 def api_prepare_workdir():
     """Prepare workdir"""
     workdir = current_app.config['WORKDIR']
     result = tasks.prepare_workdir(workdir)
     return jsonify(result)
+
+
+# API endpoints for worker management
+
+@bp.route('/api/workers/add', methods=['POST'])
+def api_add_worker():
+    """Add a new worker"""
+    workdir = current_app.config['WORKDIR']
+    hostname = request.form.get('hostname', '').strip()
+    arch = request.form.get('arch', '').strip()
+    workdir_override = request.form.get('workdir_override', '').strip() or None
+
+    if not hostname or not arch:
+        return jsonify({'success': False, 'error': 'Hostname and architecture are required'}), 400
+
+    result = tasks.add_worker(workdir, hostname, arch, workdir_override)
+    return jsonify(result)
+
+
+@bp.route('/api/workers/<hostname>/remove', methods=['POST'])
+def api_remove_worker(hostname):
+    """Remove a worker"""
+    workdir = current_app.config['WORKDIR']
+    result = tasks.remove_worker(workdir, hostname)
+    return jsonify(result)
+
+
+@bp.route('/api/workers/<hostname>/workdir', methods=['POST'])
+def api_update_worker_workdir(hostname):
+    """Update worker's custom workdir"""
+    workdir = current_app.config['WORKDIR']
+    workdir_override = request.form.get('workdir_override', '').strip() or None
+    result = tasks.update_worker_workdir(workdir, hostname, workdir_override)
+    return jsonify(result)
+
+
+@bp.route('/api/config/default-workdir', methods=['GET', 'POST'])
+def api_default_workdir():
+    """Get or set default working directory"""
+    workdir = current_app.config['WORKDIR']
+
+    if request.method == 'GET':
+        default_wd = tasks.get_default_workdir(workdir)
+        return jsonify({'default_workdir': default_wd})
+
+    # POST - update default workdir
+    path = request.form.get('path', '').strip()
+    if not path:
+        return jsonify({'success': False, 'error': 'Path is required'}), 400
+
+    result = tasks.set_default_workdir(workdir, path)
+    return jsonify(result)
+
+
+@bp.route('/api/architectures', methods=['GET'])
+def api_get_architectures():
+    """Get list of supported GPU architectures"""
+    archs = tasks.get_supported_architectures()
+    return jsonify(archs)

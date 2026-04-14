@@ -7,6 +7,9 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/water.min.css') }}">
     <script src="{{ url_for('static', filename='js/htmx.min.js') }}"></script>
     <style>
+        /* Increase max width for better table display */
+        body { max-width: 1400px !important; }
+
         nav { display: flex; gap: 1rem; padding: 1rem; background: #f0f0f0; }
         nav a { text-decoration: none; }
         nav a:hover { text-decoration: underline; }
@@ -15,6 +18,10 @@
         .status-running { background: #28a745; color: white; }
         .status-stopped { background: #dc3545; color: white; }
         footer { margin-top: 2rem; padding: 1rem; text-align: center; border-top: 1px solid #ccc; font-size: 0.9em; color: #666; }
+
+        /* Better table styling */
+        table { table-layout: auto; }
+        table th, table td { padding: 0.5rem; }
     </style>
 </head>
 <body>
@@ -25,7 +32,6 @@
             <a href="/workers">Workers</a>
             <a href="/servers">Servers</a>
             <a href="/builds">Builds</a>
-            <a href="/deploy">Deploy</a>
             <a href="/slurm">SLURM</a>
         </nav>
     </header>

@@ -6,55 +6,146 @@
 <h2>Worker Management</h2>
 
 <section>
+    <details {% if default_workdir == '<not set>' %}open{% endif %}>
+        <summary><h3 style="display: inline;">Basic Configuration</h3></summary>
+        <form hx-post="/api/config/default-workdir"
+              hx-swap="none"
+              hx-confirm="Are you sure you want to update the default working directory? This will affect all workers without a custom workdir."
+              hx-on::after-request="location.reload()"
+              hx-on::htmx:confirm="if (event.detail.issueRequest === false) { var input = document.getElementById('default-workdir-input'); input.value = input.getAttribute('data-original'); }"
+              style="margin-top: 1rem;">
+            <label>Default Working Directory:
+                <input type="text" name="path" id="default-workdir-input" value="{{ default_workdir }}"
+                       data-original="{{ default_workdir }}"
+                       placeholder="/opt/aotriton/workdir" required style="width: 500px;">
+            </label>
+            <button type="submit"
+                    style="background-color: #dc3545; color: white;">Update Default Workdir</button>
+            <button type="button"
+                    onclick="document.getElementById('default-workdir-input').value = document.getElementById('default-workdir-input').getAttribute('data-original')"
+                    style="background-color: #6c757d; color: white;">Reset</button>
+        </form>
+        <p style="font-size: 0.9em; color: gray;">
+            Workers without a custom workdir will use this default directory. <strong>Warning:</strong> Changing this is a rare operation.
+        </p>
+    </details>
+</section>
+
+<section>
+    <h3>Deployment</h3>
+    <button hx-post="/api/deploy/prepare"
+            hx-swap="none"
+            hx-indicator="#prepare-spinner">Prepare Workdir</button>
+    <span id="prepare-spinner" class="htmx-indicator">⏳ Preparing...</span>
+    <p style="font-size: 0.9em; color: gray; margin-top: 0.5rem;">
+        Initialize the working directory structure and copy configuration templates.
+    </p>
+</section>
+
+<section>
     <h3>Bulk Actions</h3>
     <button hx-post="/api/workers/all/start" hx-swap="none">Start All</button>
     <button hx-post="/api/workers/all/stop" hx-swap="none">Stop All</button>
     <button hx-post="/api/workers/all/restart" hx-swap="none">Restart All</button>
+    <button hx-post="/api/workers/all/stop-start" hx-swap="none">Stop All & Start All</button>
+    <button hx-post="/api/deploy/workdir"
+            hx-swap="none"
+            hx-indicator="#deploy-all-spinner">Deploy to All Workers</button>
+    <span id="deploy-all-spinner" class="htmx-indicator">⏳ Deploying...</span>
 </section>
 
+{% for arch in supported_archs %}
 <section>
-    <h3>Workers ({{ workers|length }})</h3>
-    {% if workers %}
-    <table>
+    <h3>{{ arch }} Workers ({{ workers_by_arch[arch]|length }})</h3>
+    <table style="width: 100%;">
         <thead>
             <tr>
-                <th>Hostname</th>
-                <th>Architecture</th>
-                <th>Workdir</th>
-                <th>Status</th>
-                <th>Actions</th>
+                <th style="width: 30%;">Hostname</th>
+                <th style="width: 20%;">Custom Workdir</th>
+                <th style="width: 40%;">Status & Actions</th>
+                <th style="width: 10%;">Remove</th>
             </tr>
         </thead>
         <tbody>
-            {% for worker in workers %}
+            {% for worker in workers_by_arch[arch] %}
             <tr>
-                <td><code>{{ worker[0] }}</code></td>
-                <td><strong>{{ worker[1] }}</strong></td>
-                <td><code>{{ worker[2] or 'default' }}</code></td>
-                <td id="status-{{ worker[0] }}">
-                    <span hx-get="/api/workers/{{ worker[0] }}/status"
-                          hx-trigger="load, every 10s"
-                          hx-swap="innerHTML">
-                        <span class="status-badge status-unknown">Checking...</span>
-                    </span>
+                <td><code style="font-size: 1em;">{{ worker.hostname }}</code></td>
+                <td>
+                    <form hx-post="/api/workers/{{ worker.hostname }}/workdir"
+                          hx-swap="none"
+                          hx-confirm="Are you sure you want to update the custom workdir for {{ worker.hostname }}?"
+                          hx-on::after-request="location.reload()"
+                          hx-on::htmx:confirm="if (event.detail.issueRequest === false) { var input = document.getElementById('workdir-{{ worker.hostname }}'); input.value = input.getAttribute('data-original'); }"
+                          style="display: flex; gap: 0.3rem; align-items: center; margin: 0;">
+                        <input type="text"
+                               id="workdir-{{ worker.hostname }}"
+                               name="workdir_override"
+                               value="{{ worker.workdir }}"
+                               data-original="{{ worker.workdir }}"
+                               placeholder="default"
+                               style="flex: 1; margin: 0; font-family: monospace; font-size: 1em;">
+                        <button type="submit"
+                                style="font-size: 0.75em; padding: 0.2rem 0.4rem; white-space: nowrap;">Update</button>
+                        <button type="button"
+                                onclick="document.getElementById('workdir-{{ worker.hostname }}').value = document.getElementById('workdir-{{ worker.hostname }}').getAttribute('data-original')"
+                                style="font-size: 0.75em; padding: 0.2rem 0.4rem; white-space: nowrap;">Reset</button>
+                    </form>
                 </td>
                 <td>
-                    <button hx-post="/api/workers/{{ worker[0] }}/start"
+                    <span id="status-{{ worker.hostname }}" style="display: inline-block; min-width: 80px;">
+                        <span hx-get="/api/workers/{{ worker.hostname }}/status"
+                              hx-trigger="load, every 10s"
+                              hx-swap="innerHTML">
+                            <span class="status-badge status-unknown">Checking...</span>
+                        </span>
+                    </span>
+                    <button hx-post="/api/workers/{{ worker.hostname }}/start"
                             hx-swap="none"
-                            style="font-size: 0.8em;">Start</button>
-                    <button hx-post="/api/workers/{{ worker[0] }}/stop"
+                            style="font-size: 0.8em; padding: 0.3rem 0.5rem;">Start</button>
+                    <button hx-post="/api/workers/{{ worker.hostname }}/stop"
                             hx-swap="none"
-                            style="font-size: 0.8em;">Stop</button>
-                    <button hx-post="/api/workers/{{ worker[0] }}/restart"
+                            style="font-size: 0.8em; padding: 0.3rem 0.5rem;">Stop</button>
+                    <button hx-post="/api/workers/{{ worker.hostname }}/restart"
                             hx-swap="none"
-                            style="font-size: 0.8em;">Restart</button>
+                            style="font-size: 0.8em; padding: 0.3rem 0.5rem;">Restart</button>
+                    <button hx-post="/api/workers/{{ worker.hostname }}/stop-start"
+                            hx-swap="none"
+                            style="font-size: 0.8em; padding: 0.3rem 0.5rem;">Stop & Start</button>
+                    <button hx-post="/api/deploy/{{ worker.hostname }}"
+                            hx-swap="none"
+                            style="font-size: 0.8em; padding: 0.3rem 0.5rem;">Deploy</button>
+                </td>
+                <td>
+                    <button hx-post="/api/workers/{{ worker.hostname }}/remove"
+                            hx-swap="none"
+                            hx-confirm="Are you sure you want to remove worker {{ worker.hostname }}?"
+                            hx-on::after-request="location.reload()"
+                            style="font-size: 0.8em; padding: 0.3rem 0.5rem; background-color: #dc3545; color: white;">Remove</button>
                 </td>
             </tr>
             {% endfor %}
+
+            {# Add new worker form row #}
+            <tr style="background-color: #f0f0f0;">
+                <td colspan="4">
+                    <form hx-post="/api/workers/add" hx-swap="none" hx-on::after-request="location.reload()" style="display: flex; gap: 0.5rem; align-items: center; margin: 0;">
+                        <input type="hidden" name="arch" value="{{ arch }}">
+                        <input type="text" name="hostname" placeholder="gpu-node.example.com" required style="width: 30%; margin: 0;">
+                        <input type="text" name="workdir_override" placeholder="Custom workdir (optional)" style="width: 20%; margin: 0;">
+                        <div style="width: 40%;"></div>
+                        <button type="submit" style="white-space: nowrap; margin: 0; width: auto;">+ Add Worker</button>
+                    </form>
+                </td>
+            </tr>
         </tbody>
     </table>
-    {% else %}
-    <p>No workers registered. Use <code>manage-workers.py</code> to add workers.</p>
+
+    {% if workers_by_arch[arch]|length == 0 %}
+    <p style="font-size: 0.9em; color: gray; margin-top: 0.5rem;">
+        No workers registered for {{ arch }}. Use the form above to add workers.
+    </p>
     {% endif %}
 </section>
+{% endfor %}
+
 {% endblock %}
