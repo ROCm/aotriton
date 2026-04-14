@@ -19,40 +19,44 @@ from gpu_targets import AOTRITON_ARCH_TO_PACK
 # Import tuning architectures configuration
 from .config import TUNING_ARCHITECTURES
 
-# Import command tracker
-from .command_tracker import get_tracker
 
-
-def run_command(cmd, workdir=None, description=None):
+def run_command(cmd, cwd, workdir, description=None):
     """
     Execute shell command with per-action tracker
-    Returns action_id for tracking
+
+    Args:
+        cmd: Command as list of Path/str objects (e.g., [script_path, arg1, arg2])
+        cwd: Current working directory for command execution (Path object)
+        workdir: Workdir path where logs should be stored (str)
+        description: Human-readable description
+
+    Returns:
+        dict with action_id, status, message
     """
     from flask import current_app
 
+    # Convert cmd list to strings
+    cmd_parts = [str(p) for p in cmd]
+    cmd_str = ' '.join(cmd_parts)
+
     # Get log directory from workdir
-    workdir_path = Path(workdir) if workdir else Path.cwd()
-    log_dir = workdir_path / 'logs' / 'commands'
+    log_dir = Path(workdir) / 'logs' / 'commands'
 
     # Create tracker
     tracker = current_app.tracker_registry.create(
-        command=cmd,
-        description=description or cmd,
-        workdir=workdir,
+        command=cmd_parts,  # Pass as list for subprocess
+        description=description or cmd_str,
+        cwd=Path(cwd).as_posix(),
         log_dir=log_dir.as_posix()
     )
 
     # Start execution in background
     tracker.start()
 
-    # Also log to global tracker (backup)
-    global_tracker = get_tracker()
-    global_tracker.record_action(tracker)
-
     return {
         'action_id': tracker.action_id,
         'status': 'running',
-        'message': f'Command started: {description or cmd}'
+        'message': f'Command started: {description or cmd_str}'
     }
 
 
@@ -132,146 +136,262 @@ def get_status_summary(workdir):
     }
 
 
-# Worker control functions (DEBUG mode - just return messages)
+# Command execution helpers
+
+class CommandBuilder:
+    """Base class for building commands"""
+
+    def __init__(self):
+        self.aotriton_root = Path(__file__).parent.parent.parent.resolve()
+
+    def _run(self, script_path, args, workdir, description):
+        """Execute command with proper paths"""
+        cmd = [script_path] + list(args)
+        return run_command(cmd, cwd=self.aotriton_root, workdir=workdir, description=description)
+
+
+class SingleWorkerCommand(CommandBuilder):
+    """Base class for single worker operations"""
+    RELATIVE = None  # Subclass must define
+    ACTION_NAME = None  # Subclass must define
+
+    def exec(self, workdir, hostname):
+        """Execute command with script at RELATIVE path"""
+        script = self.aotriton_root / self.RELATIVE
+        return self._run(script, [workdir, hostname], workdir, f'{self.ACTION_NAME} worker {hostname}')
+
+
+class StartWorkerCommand(SingleWorkerCommand):
+    RELATIVE = '.tune/single/start_worker.sh'
+    ACTION_NAME = 'Start'
+
+
+class StopWorkerCommand(SingleWorkerCommand):
+    RELATIVE = '.tune/single/stop_worker.sh'
+    ACTION_NAME = 'Stop'
+
+
+class RestartWorkerCommand(SingleWorkerCommand):
+    RELATIVE = '.tune/single/restart_worker.sh'
+    ACTION_NAME = 'Restart'
+
+
+class DeployWorkerCommand(SingleWorkerCommand):
+    RELATIVE = '.tune/single/sync_workdir.sh'
+    ACTION_NAME = 'Deploy to'
+
+
+class BulkWorkerCommand(CommandBuilder):
+    """Base class for bulk worker operations"""
+    RELATIVE = '.tune/bin/wkctl'
+    ACTION = None  # Subclass must define
+
+    def exec(self, workdir):
+        """Execute wkctl with action"""
+        script = self.aotriton_root / self.RELATIVE
+        return self._run(script, [workdir, self.ACTION], workdir, f'{self.ACTION.capitalize()} all workers')
+
+
+class StartAllWorkersCommand(BulkWorkerCommand):
+    ACTION = 'start'
+
+
+class StopAllWorkersCommand(BulkWorkerCommand):
+    ACTION = 'stop'
+
+
+class RestartAllWorkersCommand(BulkWorkerCommand):
+    ACTION = 'restart'
+
+
+class ServerCommand(CommandBuilder):
+    """Base class for server operations"""
+    RELATIVE = '.tune/bin/srvctl'
+    ACTION = None  # Subclass must define
+
+    def exec(self, workdir):
+        """Execute srvctl with action"""
+        script = self.aotriton_root / self.RELATIVE
+        return self._run(script, [workdir, self.ACTION], workdir, f'{self.ACTION.capitalize()} servers')
+
+
+class StartServersCommand(ServerCommand):
+    ACTION = 'start'
+
+
+class StopServersCommand(ServerCommand):
+    ACTION = 'stop'
+
+
+class RestartServersCommand(ServerCommand):
+    ACTION = 'restart'
+
+
+class BuildCommand(CommandBuilder):
+    """Base class for build operations"""
+    RELATIVE = None  # Subclass must define
+    DESCRIPTION = None  # Subclass must define
+
+    def exec(self, workdir):
+        """Execute build script"""
+        script = self.aotriton_root / self.RELATIVE
+        return self._run(script, [workdir], workdir, self.DESCRIPTION)
+
+
+class BuildLibrariesCommand(BuildCommand):
+    RELATIVE = '.tune/bin/libbld'
+    DESCRIPTION = 'Build libraries'
+
+
+class BuildImagesCommand(BuildCommand):
+    RELATIVE = '.tune/bin/imgbld'
+    DESCRIPTION = 'Build Docker images'
+
+
+class DeployCommand(CommandBuilder):
+    """Base class for deployment operations"""
+    RELATIVE = None  # Subclass must define
+    DESCRIPTION = None  # Subclass must define
+
+    def exec(self, workdir):
+        """Execute deployment script"""
+        script = self.aotriton_root / self.RELATIVE
+        return self._run(script, [workdir], workdir, self.DESCRIPTION)
+
+
+class DeployAllCommand(DeployCommand):
+    RELATIVE = '.tune/bin/deploy'
+    DESCRIPTION = 'Deploy to all workers'
+
+
+class PrepareWorkdirCommand(DeployCommand):
+    RELATIVE = '.tune/bin/prepwkdir'
+    DESCRIPTION = 'Prepare workdir'
+
+    def exec(self, workdir):
+        # Ensure logs directory exists
+        log_dir = Path(workdir) / 'logs' / 'commands'
+        log_dir.mkdir(parents=True, exist_ok=True)
+
+        return super().exec(workdir)
+
+
+# Global command instances
+_start_worker = StartWorkerCommand()
+_stop_worker = StopWorkerCommand()
+_restart_worker = RestartWorkerCommand()
+_deploy_worker = DeployWorkerCommand()
+
+_start_all_workers = StartAllWorkersCommand()
+_stop_all_workers = StopAllWorkersCommand()
+_restart_all_workers = RestartAllWorkersCommand()
+
+_start_servers = StartServersCommand()
+_stop_servers = StopServersCommand()
+_restart_servers = RestartServersCommand()
+
+_build_libraries = BuildLibrariesCommand()
+_build_images = BuildImagesCommand()
+
+_deploy_all = DeployAllCommand()
+_prepare_workdir = PrepareWorkdirCommand()
+
+
+# Worker control functions
 
 def start_worker_single(workdir, hostname):
-    """Start single worker via .tune/single/start_worker.sh"""
-    tune_root = Path(__file__).parent.parent.resolve()
-    script = tune_root / 'single' / 'start_worker.sh'
-    cmd = f"{script.as_posix()} {workdir} {hostname}"
-    return run_command(cmd)
+    """Start single worker"""
+    return _start_worker.exec(workdir, hostname)
 
 
 def stop_worker_single(workdir, hostname):
-    """Stop single worker via .tune/single/stop_worker.sh"""
-    tune_root = Path(__file__).parent.parent.resolve()
-    script = tune_root / 'single' / 'stop_worker.sh'
-    cmd = f"{script.as_posix()} {workdir} {hostname}"
-    return run_command(cmd)
+    """Stop single worker"""
+    return _stop_worker.exec(workdir, hostname)
 
 
 def restart_worker_single(workdir, hostname):
-    """Restart single worker via .tune/single/restart_worker.sh"""
-    tune_root = Path(__file__).parent.parent.resolve()
-    script = tune_root / 'single' / 'restart_worker.sh'
-    cmd = f"{script.as_posix()} {workdir} {hostname}"
-    return run_command(cmd)
+    """Restart single worker"""
+    return _restart_worker.exec(workdir, hostname)
 
 
 def stop_start_worker_single(workdir, hostname):
-    """Stop then start single worker"""
-    tune_root = Path(__file__).parent.parent.resolve()
-    start_script = tune_root / 'single' / 'start_worker.sh'
-    stop_script = tune_root / 'single' / 'stop_worker.sh'
-    cmd = f"{stop_script.as_posix()} {workdir} {hostname} ; {start_script.as_posix()} {workdir} {hostname}"
-    return run_command(cmd)
+    """Stop then start single worker (using shell ; operator)"""
+    # Special case: need sequential execution with ; operator
+    aotriton_root = Path(__file__).parent.parent.parent.resolve()
+    stop_script = aotriton_root / '.tune' / 'single' / 'stop_worker.sh'
+    start_script = aotriton_root / '.tune' / 'single' / 'start_worker.sh'
+    cmd = ['/bin/bash', '-c', f'{stop_script} {workdir} {hostname} ; {start_script} {workdir} {hostname}']
+    return run_command(cmd, cwd=aotriton_root, workdir=workdir, description=f'Stop & start worker {hostname}')
 
 
 def start_all_workers(workdir):
-    """Start all workers via .tune/bin/wkctl"""
-    tune_root = Path(__file__).parent.parent.resolve()
-    script = tune_root / 'bin' / 'wkctl'
-    cmd = f"{script.as_posix()} {workdir} start"
-    return run_command(cmd)
+    """Start all workers"""
+    return _start_all_workers.exec(workdir)
 
 
 def stop_all_workers(workdir):
-    """Stop all workers via .tune/bin/wkctl"""
-    tune_root = Path(__file__).parent.parent.resolve()
-    script = tune_root / 'bin' / 'wkctl'
-    cmd = f"{script.as_posix()} {workdir} stop"
-    return run_command(cmd)
+    """Stop all workers"""
+    return _stop_all_workers.exec(workdir)
 
 
 def restart_all_workers(workdir):
-    """Restart all workers via .tune/bin/wkctl"""
-    tune_root = Path(__file__).parent.parent.resolve()
-    script = tune_root / 'bin' / 'wkctl'
-    cmd = f"{script.as_posix()} {workdir} restart"
-    return run_command(cmd)
+    """Restart all workers"""
+    return _restart_all_workers.exec(workdir)
 
 
 def stop_start_all_workers(workdir):
-    """Stop then start all workers via .tune/bin/wkctl"""
-    tune_root = Path(__file__).parent.parent.resolve()
-    script = tune_root / 'bin' / 'wkctl'
-    cmd = f"{script.as_posix()} {workdir} stop ; {script.as_posix()} {workdir} start"
-    return run_command(cmd)
+    """Stop then start all workers (using shell ; operator)"""
+    # Special case: need sequential execution with ; operator
+    aotriton_root = Path(__file__).parent.parent.parent.resolve()
+    wkctl = aotriton_root / '.tune' / 'bin' / 'wkctl'
+    cmd = ['/bin/bash', '-c', f'{wkctl} {workdir} stop ; {wkctl} {workdir} start']
+    return run_command(cmd, cwd=aotriton_root, workdir=workdir, description='Stop & start all workers')
 
 
 # Server control functions
 
 def start_servers(workdir):
-    """Start RabbitMQ and PostgreSQL via .tune/bin/srvctl"""
-    tune_root = Path(__file__).parent.parent.resolve()
-    script = tune_root / 'bin' / 'srvctl'
-    cmd = f"{script.as_posix()} {workdir} start"
-    return run_command(cmd)
+    """Start servers"""
+    return _start_servers.exec(workdir)
 
 
 def stop_servers(workdir):
-    """Stop RabbitMQ and PostgreSQL via .tune/bin/srvctl"""
-    tune_root = Path(__file__).parent.parent.resolve()
-    script = tune_root / 'bin' / 'srvctl'
-    cmd = f"{script.as_posix()} {workdir} stop"
-    return run_command(cmd)
+    """Stop servers"""
+    return _stop_servers.exec(workdir)
 
 
 def restart_servers(workdir):
-    """Restart RabbitMQ and PostgreSQL via .tune/bin/srvctl"""
-    tune_root = Path(__file__).parent.parent.resolve()
-    script = tune_root / 'bin' / 'srvctl'
-    cmd = f"{script.as_posix()} {workdir} restart"
-    return run_command(cmd)
+    """Restart servers"""
+    return _restart_servers.exec(workdir)
 
 
 # Build functions
 
 def build_libraries(workdir):
-    """Build AOTriton libraries for all architectures via .tune/bin/libbld"""
-    tune_root = Path(__file__).parent.parent.resolve()
-    script = tune_root / 'bin' / 'libbld'
-    cmd = f"{script.as_posix()} {workdir}"
-    return run_command(cmd)
+    """Build libraries"""
+    return _build_libraries.exec(workdir)
 
 
 def build_images(workdir):
-    """Build Docker images on all workers via .tune/bin/imgbld"""
-    tune_root = Path(__file__).parent.parent.resolve()
-    script = tune_root / 'bin' / 'imgbld'
-    cmd = f"{script.as_posix()} {workdir}"
-    return run_command(cmd)
+    """Build Docker images"""
+    return _build_images.exec(workdir)
 
 
 # Deploy functions
 
 def deploy_workdir(workdir):
-    """Deploy workdir to all workers via .tune/bin/deploy"""
-    tune_root = Path(__file__).parent.parent.resolve()
-    script = tune_root / 'bin' / 'deploy'
-    cmd = f"{script.as_posix()} {workdir}"
-    return run_command(cmd)
+    """Deploy to all workers"""
+    return _deploy_all.exec(workdir)
 
 
 def deploy_workdir_single(workdir, hostname):
-    """Deploy workdir to a single worker via .tune/single/sync_workdir.sh"""
-    tune_root = Path(__file__).parent.parent.resolve()
-    script = tune_root / 'single' / 'sync_workdir.sh'
-    cmd = f"{script.as_posix()} {workdir} {hostname}"
-    return run_command(cmd)
+    """Deploy to single worker"""
+    return _deploy_worker.exec(workdir, hostname)
 
 
 def prepare_workdir(workdir):
-    """Prepare workdir via .tune/bin/prepwkdir"""
-    tune_root = Path(__file__).parent.parent.resolve()
-    script = tune_root / 'bin' / 'prepwkdir'
-    cmd = f"{script.as_posix()} {workdir}"
-
-    # Ensure logs directory exists
-    log_dir = Path(workdir) / 'logs' / 'commands'
-    log_dir.mkdir(parents=True, exist_ok=True)
-
-    return run_command(cmd)
+    """Prepare workdir"""
+    return _prepare_workdir.exec(workdir)
 
 
 # Worker management functions

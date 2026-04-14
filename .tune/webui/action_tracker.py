@@ -16,11 +16,13 @@ from pathlib import Path
 class ActionTracker:
     """Tracks single command execution with real-time output capture"""
 
-    def __init__(self, action_id, command, description, workdir, log_dir):
+    def __init__(self, action_id, command, description, cwd, log_dir):
         self.action_id = action_id
-        self.command = command
+        # Command can be string or list
+        self.command = command if isinstance(command, list) else command
+        self.command_str = ' '.join(str(c) for c in command) if isinstance(command, list) else command
         self.description = description
-        self.workdir = workdir
+        self.cwd = cwd
         self.log_dir = Path(log_dir)
 
         # Process state
@@ -58,15 +60,26 @@ class ActionTracker:
             self.log_dir.mkdir(parents=True, exist_ok=True)
 
             # Spawn subprocess
-            self.process = subprocess.Popen(
-                self.command,
-                shell=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                bufsize=1,  # Line-buffered
-                cwd=self.workdir
-            )
+            # If command is a list, use it directly; if string, use shell=True
+            if isinstance(self.command, list):
+                self.process = subprocess.Popen(
+                    self.command,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    bufsize=1,  # Line-buffered
+                    cwd=self.cwd
+                )
+            else:
+                self.process = subprocess.Popen(
+                    self.command,
+                    shell=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    bufsize=1,  # Line-buffered
+                    cwd=self.cwd
+                )
 
             # Spawn capture threads
             stdout_thread = threading.Thread(
@@ -139,9 +152,9 @@ class ActionTracker:
         with self._lock:
             return {
                 'action_id': self.action_id,
-                'command': self.command,
+                'command': self.command_str,  # Always return string representation
                 'description': self.description,
-                'workdir': self.workdir,
+                'cwd': self.cwd,
                 'status': self.status,
                 'returncode': self.returncode,
                 'created_at': self.created_at.isoformat(),
@@ -159,10 +172,10 @@ class TrackerRegistry:
         self._trackers = {}
         self._lock = threading.Lock()
 
-    def create(self, command, description, workdir, log_dir):
+    def create(self, command, description, cwd, log_dir):
         """Create new tracker with unique action_id"""
         action_id = str(uuid.uuid4())
-        tracker = ActionTracker(action_id, command, description, workdir, log_dir)
+        tracker = ActionTracker(action_id, command, description, cwd, log_dir)
 
         with self._lock:
             self._trackers[action_id] = tracker

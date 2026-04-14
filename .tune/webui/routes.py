@@ -279,54 +279,136 @@ def api_get_architectures():
 @bp.route('/api/stream/<action_id>')
 def stream_output(action_id):
     """Server-Sent Events endpoint for real-time output streaming"""
+    # Get tracker registry before entering generator (to avoid app context issues)
+    tracker_registry = current_app.tracker_registry
+
     def generate():
+        try:
+            tracker = tracker_registry.get(action_id)
+            if not tracker:
+                yield 'event: error\ndata: {"error": "Tracker not found"}\n\n'
+                return
+
+            sent_stdout = 0
+            sent_stderr = 0
+
+            # Send initial connection message
+            yield ':ping\n\n'
+
+            while True:
+                try:
+                    output = tracker.get_output(from_line=0)  # Get all lines
+
+                    # Send new stdout lines (only what we haven't sent yet)
+                    stdout_list = output['stdout']
+                    for i in range(sent_stdout, len(stdout_list)):
+                        line = stdout_list[i]
+                        data = json.dumps({"line": line})
+                        yield f'event: stdout\ndata: {data}\n\n'
+                    sent_stdout = len(stdout_list)
+
+                    # Send new stderr lines (only what we haven't sent yet)
+                    stderr_list = output['stderr']
+                    for i in range(sent_stderr, len(stderr_list)):
+                        line = stderr_list[i]
+                        data = json.dumps({"line": line})
+                        yield f'event: stderr\ndata: {data}\n\n'
+                    sent_stderr = len(stderr_list)
+
+                    # Send status update
+                    status_data = json.dumps({"status": output["status"], "returncode": output["returncode"]})
+                    yield f'event: status\ndata: {status_data}\n\n'
+
+                    # If completed, send final event and close
+                    if output['status'] in ['completed', 'failed']:
+                        complete_data = json.dumps({"status": output["status"], "returncode": output["returncode"]})
+                        yield f'event: complete\ndata: {complete_data}\n\n'
+                        break
+
+                    time.sleep(0.1)  # Poll every 100ms
+                except Exception as e:
+                    import traceback
+                    error_msg = f'{str(e)}\n{traceback.format_exc()}'
+                    yield f'event: error\ndata: {json.dumps({"error": error_msg})}\n\n'
+                    break
+        except Exception as e:
+            import traceback
+            error_msg = f'{str(e)}\n{traceback.format_exc()}'
+            yield f'event: error\ndata: {json.dumps({"error": error_msg})}\n\n'
+
+    response = Response(generate(), mimetype='text/event-stream')
+    response.headers['Cache-Control'] = 'no-cache'
+    response.headers['X-Accel-Buffering'] = 'no'
+    return response
+
+
+@bp.route('/api/actions/<action_id>/output', methods=['GET'])
+def get_action_output(action_id):
+    """Get action output as HTML for polling (incremental)"""
+    try:
         tracker = current_app.tracker_registry.get(action_id)
         if not tracker:
-            yield 'event: error\ndata: {"error": "Tracker not found"}\n\n'
-            return
+            return '(tracker not found)', 404
 
-        sent = 0
-        while True:
-            output = tracker.get_output(from_line=sent)
+        # Get offset from query parameter
+        offset = int(request.args.get('offset', 0))
 
-            # Send new stdout lines
-            for line in output['stdout']:
-                yield f'event: stdout\ndata: {json.dumps({"line": line})}\n\n'
+        output = tracker.get_output()
 
-            # Send new stderr lines
-            for line in output['stderr']:
-                yield f'event: stderr\ndata: {json.dumps({"line": line})}\n\n'
+        # Combine stdout and stderr with line numbers to maintain order
+        all_lines = []
+        for i, line in enumerate(output['stdout']):
+            all_lines.append((i, 'stdout', line))
+        for i, line in enumerate(output['stderr']):
+            all_lines.append((i, 'stderr', line))
 
-            sent = output['total_stdout']
+        # Get only new lines starting from offset
+        new_lines = all_lines[offset:]
 
-            # Send status update
-            yield f'event: status\ndata: {json.dumps({"status": output["status"], "returncode": output["returncode"]})}\n\n'
+        # If no new lines
+        if not new_lines:
+            if offset == 0 and output['status'] in ['completed', 'failed']:
+                return '(no output)\n'
+            return ''  # No new content
 
-            # If completed, send final event and close
-            if output['status'] in ['completed', 'failed']:
-                yield f'event: complete\ndata: {json.dumps({"status": output["status"], "returncode": output["returncode"]})}\n\n'
-                break
+        # Build plain text for new lines only
+        lines_text = []
+        for idx, line_type, line in new_lines:
+            lines_text.append(line)
 
-            time.sleep(0.1)  # Poll every 100ms
+        # Return new lines with updated offset in response header
+        response = '\n'.join(lines_text) + '\n'
+        return response, 200, {'X-Output-Offset': str(len(all_lines))}
 
-    return Response(generate(), mimetype='text/event-stream')
+    except Exception as e:
+        import traceback
+        return f'<div style="color: red;">Error: {str(e)}<br><pre>{traceback.format_exc()}</pre></div>', 500
 
 
 @bp.route('/api/actions/<action_id>/status', methods=['GET'])
 def get_action_status(action_id):
     """Get current status and output of an action"""
-    tracker = current_app.tracker_registry.get(action_id)
-    if not tracker:
-        return jsonify({'error': 'Action not found'}), 404
+    try:
+        tracker = current_app.tracker_registry.get(action_id)
+        if not tracker:
+            return jsonify({'error': 'Action not found'}), 404
 
-    output = tracker.get_output()
-    info = tracker.to_dict()
+        output = tracker.get_output()
+        info = tracker.to_dict()
 
-    return jsonify({
-        **info,
-        'stdout_lines': output['stdout'],
-        'stderr_lines': output['stderr']
-    })
+        return jsonify({
+            **info,
+            'stdout_lines': output['stdout'],
+            'stderr_lines': output['stderr'],
+            'total_stdout': len(output['stdout']),
+            'total_stderr': len(output['stderr'])
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
 
 
 @bp.route('/api/actions', methods=['GET'])

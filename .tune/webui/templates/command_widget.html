@@ -7,59 +7,219 @@
                 style="font-size: 0.8em; float: right; background-color: #dc3545; color: white;">Clear All</button>
     </h3>
 
-    <div id="command-list" hx-get="/api/actions" hx-trigger="load, every 2s" hx-swap="innerHTML">
+    <div id="command-list" hx-get="/api/actions" hx-trigger="load, refreshCommandList from:body" hx-swap="none">
         <p style="color: gray;">No active commands</p>
-    </div>
-
-    <div id="command-outputs">
-        <!-- Individual command output panels populated by SSE -->
     </div>
 </section>
 
+<style>
+    .command-panel {
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        margin-bottom: 1rem;
+        background: white;
+    }
+    .command-header {
+        padding: 0.5rem;
+        background: #f8f9fa;
+        border-bottom: 1px solid #ddd;
+        display: flex;
+        align-items: flex-start;
+        gap: 0.5rem;
+    }
+    .command-header button {
+        flex-shrink: 0;
+        font-size: 0.75em;
+        padding: 0.2rem 0.4rem;
+        background-color: #6c757d;
+        color: white;
+        border: none;
+        border-radius: 3px;
+        cursor: pointer;
+    }
+    .command-header button:hover {
+        background-color: #5a6268;
+    }
+    .command-text {
+        flex: 1;
+        font-family: monospace;
+        font-size: max(12pt, 1em);
+        white-space: pre-wrap;
+        word-break: break-all;
+    }
+    .command-status {
+        padding: 0.3rem 0.5rem;
+        font-size: 0.85em;
+        background: #e9ecef;
+        border-bottom: 1px solid #ddd;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .command-status .status-text {
+        flex: 1;
+    }
+    .command-status .autoscroll-control {
+        font-size: 0.9em;
+    }
+    .command-status .autoscroll-control label {
+        display: flex;
+        align-items: center;
+        gap: 0.3rem;
+        margin: 0;
+        cursor: pointer;
+    }
+    .command-output {
+        width: 100%;
+        padding: 0.5rem;
+        margin: 0;
+        background: #1e1e1e;
+        color: #d4d4d4;
+        border: 1px solid #444;
+        max-height: 400px;
+        min-height: 100px;
+        resize: vertical;
+        font-family: monospace;
+        font-size: max(12pt, 1em);
+        white-space: pre;
+        overflow-wrap: normal;
+    }
+</style>
+
 <script>
-// Template for rendering action list
+// Refresh command list after any API action that creates a command
+document.body.addEventListener('htmx:afterRequest', function(event) {
+    const path = event.detail.pathInfo.requestPath;
+    // Only refresh on action-triggering endpoints, not status/output polling
+    const isActionTrigger = path.startsWith('/api/workers/') ||
+                           path.startsWith('/api/servers/') ||
+                           path.startsWith('/api/builds/') ||
+                           path.startsWith('/api/deploy/');
+
+    if (isActionTrigger && event.detail.successful) {
+        // Trigger refresh of command list
+        htmx.trigger('#command-list', 'refreshCommandList');
+    }
+});
+
+// Template for rendering action list - incremental updates only
 document.body.addEventListener('htmx:afterRequest', function(event) {
     if (event.detail.target.id === 'command-list') {
         const data = JSON.parse(event.detail.xhr.response);
         if (data.actions && data.actions.length > 0) {
-            const html = data.actions.map(action => `
-                <details>
-                    <summary>
-                        <span class="status-badge status-${action.status}">${action.status}</span>
-                        ${action.description}
-                        <button hx-delete="/api/actions/${action.action_id}"
-                                hx-swap="none"
-                                hx-confirm="Remove this command from history?"
-                                hx-on::after-request="location.reload()"
-                                onclick="event.stopPropagation()"
-                                style="font-size: 0.7em; float: right; background-color: #6c757d; color: white; margin-left: 0.5rem;">Remove</button>
-                    </summary>
-                    <div id="output-${action.action_id}"
-                         hx-sse="connect:/api/stream/${action.action_id}"
-                         hx-sse-swap="beforeend">
-                        <pre style="background: #f5f5f5; padding: 1rem; overflow-x: auto;"></pre>
+            // Only add new panels that don't exist yet
+            data.actions.forEach(action => {
+                const existingPanel = document.getElementById('panel-' + action.action_id);
+                if (!existingPanel) {
+                    // New action - create panel
+                    const statusColor = action.status === 'completed' ? '#28a745' :
+                                      action.status === 'failed' ? '#dc3545' : '#ffc107';
+
+                    const html = `
+                    <div class="command-panel" id="panel-${action.action_id}">
+                        <div class="command-header">
+                            <button hx-delete="/api/actions/${action.action_id}"
+                                    hx-swap="none"
+                                    hx-confirm="Remove this command from history?"
+                                    hx-on::after-request="location.reload()">Remove</button>
+                            <code class="command-text">${action.command}</code>
+                        </div>
+                        <div class="command-status" style="color: ${statusColor};">
+                            <span class="status-text">
+                                Status: <strong>${action.status}</strong>
+                                ${action.returncode !== null ? ' | Exit code: ' + action.returncode : ''}
+                            </span>
+                            <div class="autoscroll-control">
+                                <label>
+                                    <input type="checkbox" id="autoscroll-${action.action_id}" checked>
+                                    Auto-scroll
+                                </label>
+                            </div>
+                        </div>
+                        <textarea readonly class="command-output" id="output-${action.action_id}"
+                                  data-offset="0"
+                                  data-action-id="${action.action_id}"
+                                  data-status="${action.status}"></textarea>
                     </div>
-                </details>
-            `).join('');
-            event.detail.target.innerHTML = html;
+                    `;
+
+                    // Remove "No active commands" message if it exists
+                    const noCommandsMsg = event.detail.target.querySelector('p');
+                    if (noCommandsMsg) {
+                        noCommandsMsg.remove();
+                    }
+
+                    // Append new panel
+                    event.detail.target.insertAdjacentHTML('beforeend', html);
+
+                    // Process HTMX attributes on new panel
+                    const newPanel = document.getElementById('panel-' + action.action_id);
+                    htmx.process(newPanel);
+
+                    // Start polling for this new action
+                    pollOutput(action.action_id);
+                }
+            });
         }
     }
 });
 
-// Handle SSE events for output
-document.body.addEventListener('htmx:sseMessage', function(event) {
-    const pre = event.detail.target.querySelector('pre');
-    const data = JSON.parse(event.detail.data);
+// Poll output for a specific action
+function pollOutput(actionId) {
+    const textarea = document.getElementById('output-' + actionId);
+    if (!textarea) return;
 
-    if (event.detail.type === 'stdout') {
-        const line = document.createElement('div');
-        line.textContent = data.line;
-        pre.appendChild(line);
-    } else if (event.detail.type === 'stderr') {
-        const line = document.createElement('div');
-        line.style.color = 'red';
-        line.textContent = data.line;
-        pre.appendChild(line);
+    const offset = textarea.getAttribute('data-offset') || '0';
+    const status = textarea.getAttribute('data-status');
+
+    // Stop polling if completed or failed
+    if (status === 'completed' || status === 'failed') {
+        return;
     }
-});
+
+    fetch(`/api/actions/${actionId}/output?offset=${offset}`)
+        .then(response => {
+            const newOffset = response.headers.get('X-Output-Offset');
+            if (newOffset) {
+                textarea.setAttribute('data-offset', newOffset);
+            }
+            return response.text();
+        })
+        .then(text => {
+            if (text) {
+                textarea.value += text;
+
+                // Auto-scroll if checkbox is checked
+                const checkbox = document.getElementById('autoscroll-' + actionId);
+                if (checkbox && checkbox.checked) {
+                    textarea.scrollTop = textarea.scrollHeight;
+                }
+            }
+
+            // Check if status changed
+            fetch(`/api/actions/${actionId}/status`)
+                .then(r => r.json())
+                .then(data => {
+                    textarea.setAttribute('data-status', data.status);
+
+                    // Update status badge in UI
+                    const panel = document.getElementById('panel-' + actionId);
+                    if (panel) {
+                        const statusText = panel.querySelector('.status-text');
+                        const statusColor = data.status === 'completed' ? '#28a745' :
+                                          data.status === 'failed' ? '#dc3545' : '#ffc107';
+                        if (statusText) {
+                            statusText.innerHTML = `Status: <strong>${data.status}</strong>${data.returncode !== null ? ' | Exit code: ' + data.returncode : ''}`;
+                            statusText.parentElement.style.color = statusColor;
+                        }
+                    }
+
+                    // Continue polling if still running
+                    if (data.status === 'running' || data.status === 'queued') {
+                        setTimeout(() => pollOutput(actionId), 1000);
+                    }
+                });
+        })
+        .catch(err => console.error('Poll error:', err));
+}
 </script>
