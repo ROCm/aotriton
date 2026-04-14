@@ -39,7 +39,14 @@ if [[ -z "$secret" ]]; then
   secret=$(head -c 16 /dev/urandom | xxd -p)
   echo "Using secret $secret from /dev/urandom"
 fi
-read -p "Base Docker Image to Run Worker: " baseimage
+while true; do
+  read -p "Base Docker Image to Run Worker: " baseimage
+  if [[ -n "$baseimage" ]]; then
+    break
+  else
+    echo "Error: Base Docker Image cannot be empty."
+  fi
+done
 read -p "Docker Image Commited to Run Worker: " -i "aotriton:celery-gpuworker" image
 read -e -p "Docker Volume Name for PostgreSQL Database: " -i "aotriton_pgdata" pgvolume
 while true; do
