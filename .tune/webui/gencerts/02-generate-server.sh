@@ -24,8 +24,8 @@ if [ ! -f "$CA_CRT" ] || [ ! -f "$CA_KEY" ]; then
   exit 1
 fi
 
-echo "[2/4] Generating server certificate for $HOSTNAME with Ed25519 (valid 2 years)..."
-openssl genpkey -algorithm ED25519 -out "$SERVER_KEY"
+echo "[2/4] Generating server certificate for $HOSTNAME with RSA 2048 (valid 2 years)..."
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$SERVER_KEY"
 openssl req -new -key "$SERVER_KEY" \
   -out "$SECRETS_DIR/server.csr" \
   -subj "/CN=$HOSTNAME/O=AOTriton-Tuning"
@@ -41,4 +41,4 @@ EOF
 
 rm "$SECRETS_DIR/server.csr"
 chmod 600 "$SERVER_KEY" "$SERVER_CRT"
-echo "       ✓ Server certificate generated (Ed25519)"
+echo "       ✓ Server certificate generated (RSA 2048)"

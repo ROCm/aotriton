@@ -16,6 +16,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from webui import create_app, create_ssl_context
 
+try:
+    from cheroot.wsgi import Server as WSGIServer
+    from cheroot.ssl.builtin import BuiltinSSLAdapter
+except ImportError:
+    print("Error: cheroot not installed. Install with: pip install cheroot", file=sys.stderr)
+    sys.exit(1)
+import ssl
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='AOTriton Tuning Dashboard')
@@ -42,7 +50,11 @@ if __name__ == '__main__':
         sys.exit(1)
 
     app = create_app(args.workdir)
-    ssl_ctx = create_ssl_context(app)
+
+    # Get SSL certificate paths
+    server_cert = os.path.join(secrets_dir, 'server.crt')
+    server_key = os.path.join(secrets_dir, 'server.key')
+    ca_cert = os.path.join(secrets_dir, 'ca.crt')
 
     print(f"=" * 70)
     print(f"AOTriton Tuning Dashboard")
@@ -55,4 +67,19 @@ if __name__ == '__main__':
     print(f"Import client.p12 into your browser to access the dashboard.")
     print(f"=" * 70)
 
-    app.run(host=args.host, port=args.port, ssl_context=ssl_ctx, debug=True)
+    # Configure Cheroot WSGI server with mTLS
+    server = WSGIServer(
+        (args.host, args.port),
+        app,
+        numthreads=10
+    )
+
+    # Setup SSL with client certificate verification
+    ssl_adapter = BuiltinSSLAdapter(server_cert, server_key, ca_cert)
+    ssl_adapter.context.verify_mode = ssl.CERT_REQUIRED
+    server.ssl_adapter = ssl_adapter
+
+    try:
+        server.start()
+    except KeyboardInterrupt:
+        server.stop()
