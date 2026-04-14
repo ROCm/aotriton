@@ -28,7 +28,8 @@ openssl pkcs12 -export -out "$CLIENT_P12" \
   -inkey "$CLIENT_KEY" \
   -in "$CLIENT_CRT" \
   -certfile "$CA_CRT" \
-  -passout pass:
+  -name "AOTriton Client Certificate" \
+  -passout pass:""
 
 chmod 600 "$CLIENT_P12"
 echo "       ✓ PKCS12 bundle generated"

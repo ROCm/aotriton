@@ -23,8 +23,8 @@ if [ ! -f "$CA_CRT" ] || [ ! -f "$CA_KEY" ]; then
   exit 1
 fi
 
-echo "[3/4] Generating client certificate with Ed25519 (valid 1 year)..."
-openssl genpkey -algorithm ED25519 -out "$CLIENT_KEY"
+echo "[3/4] Generating client certificate with RSA 2048 (valid 1 year)..."
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$CLIENT_KEY"
 openssl req -new -key "$CLIENT_KEY" \
   -out "$SECRETS_DIR/client.csr" \
   -subj "/CN=admin/O=AOTriton-Tuning"
@@ -35,4 +35,4 @@ openssl x509 -req -days 365 -in "$SECRETS_DIR/client.csr" \
 
 rm "$SECRETS_DIR/client.csr"
 chmod 600 "$CLIENT_KEY" "$CLIENT_CRT"
-echo "       ✓ Client certificate generated (Ed25519)"
+echo "       ✓ Client certificate generated (RSA 2048)"
