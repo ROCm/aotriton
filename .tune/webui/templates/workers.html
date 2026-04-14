@@ -69,7 +69,7 @@
         <tbody>
             {% for worker in workers_by_arch[arch] %}
             <tr>
-                <td><code style="font-size: 1em;">{{ worker.hostname }}</code></td>
+                <td><code>{{ worker.hostname }}</code></td>
                 <td>
                     <form hx-post="/api/workers/{{ worker.hostname }}/workdir"
                           hx-swap="none"
@@ -83,7 +83,7 @@
                                value="{{ worker.workdir }}"
                                data-original="{{ worker.workdir }}"
                                placeholder="default"
-                               style="flex: 1; margin: 0; font-family: monospace; font-size: 1em;">
+                               style="flex: 1; margin: 0; font-family: monospace;">
                         <button type="submit"
                                 style="font-size: 0.75em; padding: 0.2rem 0.4rem; white-space: nowrap;">Update</button>
                         <button type="button"
