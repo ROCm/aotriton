@@ -1,0 +1,65 @@
+<section>
+    <h3>Command Output
+        <button hx-post="/api/actions/clear"
+                hx-swap="none"
+                hx-confirm="Clear all command history?"
+                hx-on::after-request="location.reload()"
+                style="font-size: 0.8em; float: right; background-color: #dc3545; color: white;">Clear All</button>
+    </h3>
+
+    <div id="command-list" hx-get="/api/actions" hx-trigger="load, every 2s" hx-swap="innerHTML">
+        <p style="color: gray;">No active commands</p>
+    </div>
+
+    <div id="command-outputs">
+        <!-- Individual command output panels populated by SSE -->
+    </div>
+</section>
+
+<script>
+// Template for rendering action list
+document.body.addEventListener('htmx:afterRequest', function(event) {
+    if (event.detail.target.id === 'command-list') {
+        const data = JSON.parse(event.detail.xhr.response);
+        if (data.actions && data.actions.length > 0) {
+            const html = data.actions.map(action => `
+                <details>
+                    <summary>
+                        <span class="status-badge status-${action.status}">${action.status}</span>
+                        ${action.description}
+                        <button hx-delete="/api/actions/${action.action_id}"
+                                hx-swap="none"
+                                hx-confirm="Remove this command from history?"
+                                hx-on::after-request="location.reload()"
+                                onclick="event.stopPropagation()"
+                                style="font-size: 0.7em; float: right; background-color: #6c757d; color: white; margin-left: 0.5rem;">Remove</button>
+                    </summary>
+                    <div id="output-${action.action_id}"
+                         hx-sse="connect:/api/stream/${action.action_id}"
+                         hx-sse-swap="beforeend">
+                        <pre style="background: #f5f5f5; padding: 1rem; overflow-x: auto;"></pre>
+                    </div>
+                </details>
+            `).join('');
+            event.detail.target.innerHTML = html;
+        }
+    }
+});
+
+// Handle SSE events for output
+document.body.addEventListener('htmx:sseMessage', function(event) {
+    const pre = event.detail.target.querySelector('pre');
+    const data = JSON.parse(event.detail.data);
+
+    if (event.detail.type === 'stdout') {
+        const line = document.createElement('div');
+        line.textContent = data.line;
+        pre.appendChild(line);
+    } else if (event.detail.type === 'stderr') {
+        const line = document.createElement('div');
+        line.style.color = 'red';
+        line.textContent = data.line;
+        pre.appendChild(line);
+    }
+});
+</script>

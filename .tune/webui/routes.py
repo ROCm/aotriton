@@ -5,7 +5,10 @@
 URL routes and handlers for the web dashboard
 """
 
-from flask import Blueprint, render_template, request, jsonify, current_app
+from flask import Blueprint, render_template, request, jsonify, current_app, Response
+import time
+import json
+
 from . import tasks
 
 bp = Blueprint('main', __name__)
@@ -58,6 +61,12 @@ def deploy():
 def slurm():
     """SLURM management page"""
     return render_template('slurm.html')
+
+
+@bp.route('/commands')
+def commands():
+    """Commands page (mobile)"""
+    return render_template('commands.html')
 
 
 # API endpoints for worker actions
@@ -263,3 +272,81 @@ def api_get_architectures():
     """Get list of supported GPU architectures"""
     archs = tasks.get_supported_architectures()
     return jsonify(archs)
+
+
+# API endpoints for command output tracking
+
+@bp.route('/api/stream/<action_id>')
+def stream_output(action_id):
+    """Server-Sent Events endpoint for real-time output streaming"""
+    def generate():
+        tracker = current_app.tracker_registry.get(action_id)
+        if not tracker:
+            yield 'event: error\ndata: {"error": "Tracker not found"}\n\n'
+            return
+
+        sent = 0
+        while True:
+            output = tracker.get_output(from_line=sent)
+
+            # Send new stdout lines
+            for line in output['stdout']:
+                yield f'event: stdout\ndata: {json.dumps({"line": line})}\n\n'
+
+            # Send new stderr lines
+            for line in output['stderr']:
+                yield f'event: stderr\ndata: {json.dumps({"line": line})}\n\n'
+
+            sent = output['total_stdout']
+
+            # Send status update
+            yield f'event: status\ndata: {json.dumps({"status": output["status"], "returncode": output["returncode"]})}\n\n'
+
+            # If completed, send final event and close
+            if output['status'] in ['completed', 'failed']:
+                yield f'event: complete\ndata: {json.dumps({"status": output["status"], "returncode": output["returncode"]})}\n\n'
+                break
+
+            time.sleep(0.1)  # Poll every 100ms
+
+    return Response(generate(), mimetype='text/event-stream')
+
+
+@bp.route('/api/actions/<action_id>/status', methods=['GET'])
+def get_action_status(action_id):
+    """Get current status and output of an action"""
+    tracker = current_app.tracker_registry.get(action_id)
+    if not tracker:
+        return jsonify({'error': 'Action not found'}), 404
+
+    output = tracker.get_output()
+    info = tracker.to_dict()
+
+    return jsonify({
+        **info,
+        'stdout_lines': output['stdout'],
+        'stderr_lines': output['stderr']
+    })
+
+
+@bp.route('/api/actions', methods=['GET'])
+def list_actions():
+    """List all active action trackers"""
+    trackers = current_app.tracker_registry.get_all()
+    return jsonify({
+        'actions': [t.to_dict() for t in trackers]
+    })
+
+
+@bp.route('/api/actions/<action_id>', methods=['DELETE'])
+def remove_action(action_id):
+    """Remove a specific action tracker"""
+    current_app.tracker_registry.remove(action_id)
+    return jsonify({'success': True})
+
+
+@bp.route('/api/actions/clear', methods=['POST'])
+def clear_all_actions():
+    """Clear all action trackers"""
+    current_app.tracker_registry.clear_all()
+    return jsonify({'success': True})

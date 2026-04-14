@@ -7,8 +7,8 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/water.min.css') }}">
     <script src="{{ url_for('static', filename='js/htmx.min.js') }}"></script>
     <style>
-        /* Increase max width for better table display */
-        body { max-width: 1400px !important; }
+        /* Use full horizontal space available */
+        body { max-width: none !important; }
 
         nav { display: flex; gap: 1rem; padding: 1rem; background: #f0f0f0; }
         nav a { text-decoration: none; }
@@ -25,6 +25,29 @@
 
         /* Larger font for hostname/workdir in worker tables */
         table td code { font-size: 2.0em !important; }
+
+        /* Desktop: show both content and command widget in grid */
+        @media (min-width: 1024px) {
+            .layout-container {
+                display: grid;
+                grid-template-columns: 7fr 3fr;
+                gap: 2rem;
+            }
+            .layout-container.hide-sidebar {
+                display: block;
+            }
+            .desktop-only { display: block; }
+            .mobile-only { display: none; }
+        }
+
+        /* Mobile: hide desktop widget completely */
+        @media (max-width: 1023px) {
+            .desktop-only { display: none; }
+            .mobile-only { display: block; }
+        }
+
+        /* Force hide sidebar when requested */
+        .force-hide { display: none !important; }
     </style>
 </head>
 <body>
@@ -36,11 +59,19 @@
             <a href="/servers">Servers</a>
             <a href="/builds">Builds</a>
             <a href="/slurm">SLURM</a>
+            <a href="/commands">Commands</a>
         </nav>
     </header>
 
     <main style="padding: 2rem;">
-        {% block content %}{% endblock %}
+        <div class="layout-container {% if hide_sidebar %}hide-sidebar{% endif %}">
+            <div class="content-pane">
+                {% block content %}{% endblock %}
+            </div>
+            <div class="command-widget desktop-only {% if hide_sidebar %}force-hide{% endif %}">
+                {% include 'command_widget.html' %}
+            </div>
+        </div>
     </main>
 
     <footer>

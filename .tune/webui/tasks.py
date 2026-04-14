@@ -19,17 +19,40 @@ from gpu_targets import AOTRITON_ARCH_TO_PACK
 # Import tuning architectures configuration
 from .config import TUNING_ARCHITECTURES
 
+# Import command tracker
+from .command_tracker import get_tracker
 
-def run_command(cmd, workdir=None):
+
+def run_command(cmd, workdir=None, description=None):
     """
-    Execute shell command, return (stdout, stderr, returncode)
-    For MVP: just return debug message instead of executing
+    Execute shell command with per-action tracker
+    Returns action_id for tracking
     """
-    # DEBUG: Not executing command yet
+    from flask import current_app
+
+    # Get log directory from workdir
+    workdir_path = Path(workdir) if workdir else Path.cwd()
+    log_dir = workdir_path / 'logs' / 'commands'
+
+    # Create tracker
+    tracker = current_app.tracker_registry.create(
+        command=cmd,
+        description=description or cmd,
+        workdir=workdir,
+        log_dir=log_dir.as_posix()
+    )
+
+    # Start execution in background
+    tracker.start()
+
+    # Also log to global tracker (backup)
+    global_tracker = get_tracker()
+    global_tracker.record_action(tracker)
+
     return {
-        'stdout': f'[DEBUG] Would execute: {cmd}',
-        'stderr': '',
-        'returncode': 0
+        'action_id': tracker.action_id,
+        'status': 'running',
+        'message': f'Command started: {description or cmd}'
     }
 
 
@@ -243,6 +266,11 @@ def prepare_workdir(workdir):
     tune_root = Path(__file__).parent.parent.resolve()
     script = tune_root / 'bin' / 'prepwkdir'
     cmd = f"{script.as_posix()} {workdir}"
+
+    # Ensure logs directory exists
+    log_dir = Path(workdir) / 'logs' / 'commands'
+    log_dir.mkdir(parents=True, exist_ok=True)
+
     return run_command(cmd)
 
 

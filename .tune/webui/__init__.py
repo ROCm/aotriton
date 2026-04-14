@@ -19,6 +19,10 @@ def create_app(workdir):
     app.config['SSL_KEY'] = (secrets_dir / 'server.key').as_posix()
     app.config['SSL_CA'] = (secrets_dir / 'ca.crt').as_posix()
 
+    # Initialize tracker registry
+    from .action_tracker import TrackerRegistry
+    app.tracker_registry = TrackerRegistry()
+
     from . import routes
     app.register_blueprint(routes.bp)
 
