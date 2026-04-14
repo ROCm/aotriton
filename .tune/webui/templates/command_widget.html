@@ -51,7 +51,8 @@
         border-radius: 3px;
         padding: 0.3rem;
         resize: vertical;
-        min-height: 2em;
+        min-height: 1.2em;
+        max-height: 4em;
     }
     .command-status {
         padding: 0.3rem 0.5rem;
@@ -76,13 +77,12 @@
     }
     .command-output {
         width: 100%;
+        height: 400px !important;
         padding: 0.5rem;
         margin: 0;
         background: #1e1e1e;
         color: #d4d4d4;
         border: 1px solid #444;
-        max-height: 400px;
-        min-height: 100px;
         resize: vertical;
         font-family: monospace;
         font-size: max(12pt, 1em);
