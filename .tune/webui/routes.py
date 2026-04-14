@@ -424,7 +424,7 @@ def list_actions():
 def remove_action(action_id):
     """Remove a specific action tracker"""
     current_app.tracker_registry.remove(action_id)
-    return jsonify({'success': True})
+    return '', 200
 
 
 @bp.route('/api/actions/clear', methods=['POST'])

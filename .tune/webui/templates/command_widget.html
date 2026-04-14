@@ -149,9 +149,9 @@ document.body.addEventListener('htmx:afterRequest', function(event) {
                     <div class="command-panel" id="panel-${action.action_id}">
                         <button class="command-remove-btn"
                                 hx-delete="/api/actions/${action.action_id}"
-                                hx-swap="none"
+                                hx-target="#panel-${action.action_id}"
+                                hx-swap="outerHTML"
                                 hx-confirm="Remove this command from history?"
-                                hx-on::after-request="location.reload()"
                                 title="Remove">×</button>
                         <div class="command-header">
                             <textarea readonly class="command-text">${action.command}</textarea>
