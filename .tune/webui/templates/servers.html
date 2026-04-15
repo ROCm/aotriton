@@ -22,6 +22,21 @@
 </section>
 
 <section>
+    <h3>Database Schema</h3>
+    <p>Initialize or update the PostgreSQL database schema for Tuner v3.5.</p>
+
+    <button hx-post="/api/servers/initdb"
+            hx-swap="none"
+            hx-confirm="This will create/update database tables. Existing data will be preserved. Continue?"
+            hx-indicator="#initdb-spinner">Initialize Schema</button>
+    <span id="initdb-spinner" class="htmx-indicator">⏳ Initializing...</span>
+
+    <p style="font-size: 0.9em; color: gray; margin-top: 0.5rem;">
+        Creates tables: task_queue, worker_heartbeat, tuning_results. Safe to run multiple times (uses CREATE IF NOT EXISTS).
+    </p>
+</section>
+
+<section>
     <h3>Service Status</h3>
     <table>
         <thead>

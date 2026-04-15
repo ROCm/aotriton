@@ -1,0 +1,50 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# Initialize PostgreSQL database schema for Tuner v3.5
+# Usage: initdb <workdir>
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+AOTRITON_ROOT="$(cd "$TUNE_ROOT/.." && pwd)"
+
+. "$TUNE_ROOT/lib/config_load.sh"
+
+WORKDIR="$1"
+
+if [ -z "$WORKDIR" ]; then
+    echo "Usage: $0 <workdir>" >&2
+    exit 1
+fi
+
+load_config "$WORKDIR"
+
+# Path to schema SQL file
+SCHEMA_SQL="$AOTRITON_ROOT/v3python/pq/schema.sql"
+
+if [ ! -f "$SCHEMA_SQL" ]; then
+    echo "Error: Schema file not found: $SCHEMA_SQL" >&2
+    exit 1
+fi
+
+echo "Initializing database schema..."
+echo "Host: $CELERY_SERVICE_HOST"
+echo "Port: $POSTGRES_PORT"
+echo "User: $POSTGRES_USER"
+
+# Execute schema SQL
+PGPASSWORD="$POSTGRES_PASSWORD" psql \
+    -h "$CELERY_SERVICE_HOST" \
+    -p "$POSTGRES_PORT" \
+    -U "$POSTGRES_USER" \
+    -f "$SCHEMA_SQL"
+
+if [ $? -eq 0 ]; then
+    echo "Database schema initialized successfully"
+else
+    echo "Error: Failed to initialize database schema" >&2
+    exit 1
+fi

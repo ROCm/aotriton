@@ -223,6 +223,15 @@ class RestartServersCommand(ServerCommand):
     ACTION = 'restart'
 
 
+class InitDatabaseCommand(CommandBuilder):
+    """Initialize database schema"""
+    RELATIVE = '.tune/bin/initdb'
+
+    def exec(self, workdir):
+        """Execute initdb script"""
+        return self._run(self.RELATIVE, [workdir], workdir, 'Initialize database schema')
+
+
 class BuildCommand(CommandBuilder):
     """Base class for build operations"""
     RELATIVE = None  # Subclass must define
@@ -283,6 +292,7 @@ _restart_all_workers = RestartAllWorkersCommand()
 _start_servers = StartServersCommand()
 _stop_servers = StopServersCommand()
 _restart_servers = RestartServersCommand()
+_init_database = InitDatabaseCommand()
 
 _build_libraries = BuildLibrariesCommand()
 _build_images = BuildImagesCommand()
@@ -355,6 +365,11 @@ def stop_servers(workdir):
 def restart_servers(workdir):
     """Restart servers"""
     return _restart_servers.exec(workdir)
+
+
+def init_database(workdir):
+    """Initialize database schema"""
+    return _init_database.exec(workdir)
 
 
 # Build functions

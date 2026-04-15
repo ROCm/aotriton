@@ -171,6 +171,14 @@ def api_restart_servers():
     return jsonify(result)
 
 
+@bp.route('/api/servers/initdb', methods=['POST'])
+def api_init_database():
+    """Initialize database schema"""
+    workdir = current_app.config['WORKDIR']
+    result = tasks.init_database(workdir)
+    return jsonify(result)
+
+
 # API endpoints for build actions
 
 @bp.route('/api/builds/libraries', methods=['POST'])
