@@ -88,25 +88,25 @@ def execute_tuning_dag(task_id: str, task_config: Dict[str, Any]) -> Dict[str, A
     # Get GPU worker pool (shared across all modules, 1:1 GPU mapping)
     gpu_workers = get_gpu_worker_pool(num_gpus)
 
-    # Use GPU 0 as coordinator for preprocess/probe
-    # (they need consistent GPU for tmpdir setup)
-    coordinator_worker = gpu_workers[0]
+    # ========================================================================
+    # Step 1 & 2: Preprocess and Probe - dispatch to any available GPU
+    # ========================================================================
+    # Use ActorPool for automatic load balancing - it selects least-loaded worker
+    from ray.util import ActorPool
 
-    # ========================================================================
-    # Step 1: Preprocess on GPU 0 (exclusive)
-    # ========================================================================
-    logger.debug(f'Step 1: Preprocess on GPU 0')
-    task_config_ref = coordinator_worker.preprocess.remote(task_config)
+    pool = ActorPool(gpu_workers)
 
-    # ========================================================================
-    # Step 2: Probe on GPU 0 (exclusive, depends on preprocess)
-    # ========================================================================
-    logger.debug(f'Step 2: Probe on GPU 0')
-    hsaco_tasks_ref = coordinator_worker.probe.remote(task_config_ref)
+    # Submit preprocess task - ActorPool automatically selects least-loaded worker
+    pool.submit(lambda worker, cfg: worker.preprocess.remote(cfg), task_config)
+    task_config_updated = pool.get_next()
 
-    # Wait for probe to complete before distributing GPU tasks
-    task_config_updated = ray.get(task_config_ref)
-    hsaco_tasks = ray.get(hsaco_tasks_ref)
+    logger.debug(f'Step 1: Preprocess completed (ActorPool auto-selected GPU)')
+
+    # Submit probe task - will run on whichever worker becomes available first
+    pool.submit(lambda worker, cfg: worker.probe.remote(cfg), task_config_updated)
+    hsaco_tasks = pool.get_next()
+
+    logger.debug(f'Step 2: Probe completed (ActorPool auto-selected GPU)')
 
     logger.info(f'Probed {len(hsaco_tasks)} hsaco kernels')
 

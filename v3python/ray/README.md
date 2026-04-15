@@ -28,9 +28,9 @@ This framework handles the full tuning workflow with a **shared Ray cluster**:
                     PostgreSQL Queue (central)
     
 Each task execution:
-    1. Preprocess (GPU 0, exclusive)
+    1. Preprocess (any GPU, Ray ActorPool auto-selects least-loaded, exclusive)
          ↓
-    2. Probe (GPU 0, exclusive) → discovers N hsaco kernels
+    2. Probe (any GPU, ActorPool auto-selects, exclusive) → discovers N hsaco kernels
          ↓
     3. Distribute tune_hsaco tasks across all GPUs (round-robin)
          ├→ GPU 0: tune_hsaco[0] (exclusive)
@@ -70,13 +70,23 @@ class GPUWorker:
         ...
 ```
 
-**Timeline Example**:
+**Timeline Example (single task)**:
 ```
-GPU 0: preprocess (0-10s) → probe (10-15s) → tune_hsaco[0] (15-20s) → tune_hsaco[8] (20-25s)
+GPU 2: preprocess (0-10s) → probe (10-15s) → tune_hsaco[2] (15-20s) → tune_hsaco[10] (20-25s)
+GPU 0: [idle]             → [idle]         → tune_hsaco[0] (15-20s) → tune_hsaco[8] (20-25s)
 GPU 1: [idle]             → [idle]         → tune_hsaco[1] (15-20s) → tune_hsaco[9] (20-25s)
-GPU 2: [idle]             → [idle]         → tune_hsaco[2] (15-20s) → tune_hsaco[10] (20-25s)
 CPU:   [idle]             → [idle]         → [idle]                 → db_writers + postprocess
 ```
+
+**Timeline Example (3 concurrent tasks)**:
+```
+Task A uses GPU 0 for preprocess/probe, Task B uses GPU 1, Task C uses GPU 2
+GPU 0: Task A preprocess → Task A probe → tune_hsaco (A, B, C tasks interleaved)
+GPU 1: Task B preprocess → Task B probe → tune_hsaco (A, B, C tasks interleaved)
+GPU 2: Task C preprocess → Task C probe → tune_hsaco (A, B, C tasks interleaved)
+```
+
+This avoids bottlenecking all preprocess/probe operations on GPU 0.
 
 ### Offloaded Database Writes
 
@@ -134,12 +144,12 @@ Workers can handle any module because `exaid_create()` is cached by (module, gpu
 
 ### Data Flow
 
-1. **Preprocess** (GPU 0):
-   - Prepares test data in `/dev/shm/`
+1. **Preprocess** (any GPU, Ray ActorPool auto-selects least-loaded):
+   - Prepares test data in `/dev/shm/` (shared tmpfs accessible by all GPUs)
    - Returns updated config with tmpdir path
 
-2. **Probe** (GPU 0, depends on preprocess):
-   - Discovers hsaco kernel variants
+2. **Probe** (any GPU, ActorPool auto-selects, depends on preprocess):
+   - Discovers hsaco kernel variants by reading from shared tmpdir
    - Returns list of (kernel_name, hsaco_index) tuples
 
 3. **Tune HSACO** (distributed across GPUs):
@@ -264,7 +274,10 @@ Ray provides **two levels of exclusivity**:
 
 ### Parallelism
 
-- **Preprocessing/Probing**: GPU 0 only (sequential setup phase)
+- **Preprocessing/Probing**: Distributed across all GPUs (Ray ActorPool load balancing)
+  - Multiple concurrent tasks can preprocess/probe in parallel on different GPUs
+  - ActorPool automatically selects least-loaded GPU for each operation
+  - No bottleneck on GPU 0
 - **HSACO Tuning**: All GPUs in parallel (main workload)
 - **Database Writes**: CPU tasks in parallel (don't block GPUs)
 - **Postprocessing**: Single CPU task (cleanup)
