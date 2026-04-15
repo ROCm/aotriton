@@ -25,31 +25,29 @@ from .cpu_tasks import db_writer_task, postprocess_task
 logger = logging.getLogger(__name__)
 
 
-def init_ray(num_gpus: int = None, address: str = 'local') -> None:
+def init_ray(address: str = 'auto') -> None:
     """
-    Initialize Ray runtime.
+    Connect to existing Ray cluster.
+
+    Workers should connect to a shared Ray cluster started by rayctl.
+    Multiple worker_main.py instances share the same GPU worker pool.
 
     Args:
-        num_gpus: Number of GPUs (default: from NUM_GPUS env var or 4)
-        address: Ray cluster address ('local' for single-node)
+        address: Ray cluster address ('auto' to auto-discover)
     """
     if ray.is_initialized():
-        print('[Ray] Already initialized')
+        logger.debug('Already connected to Ray cluster')
         return
 
-    if num_gpus is None:
-        num_gpus = int(os.environ.get('NUM_GPUS', 4))
-
-    print(f'[Ray] Initializing with num_gpus={num_gpus}, address={address}')
+    logger.info(f'Connecting to Ray cluster at {address}')
 
     ray.init(
         address=address,
-        num_gpus=num_gpus,
         ignore_reinit_error=True,
         logging_level='warning'  # Reduce Ray verbosity
     )
 
-    print(f'[Ray] Initialized successfully')
+    logger.info(f'Connected to Ray cluster successfully')
 
 
 def execute_tuning_dag(task_id: str, task_config: Dict[str, Any]) -> Dict[str, Any]:

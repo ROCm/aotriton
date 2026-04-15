@@ -220,6 +220,13 @@ worker_status() {
 # Main command handlers
 
 cmd_start() {
+    # Start Ray cluster first (shared by all workers)
+    echo "Starting Ray cluster..."
+    "$SCRIPT_DIR/rayctl" "$WORKDIR" start || {
+        echo "Error: Failed to start Ray cluster"
+        exit 1
+    }
+
     echo "Starting $NUM_WORKERS workers for $ARCH..."
 
     local failed=0
@@ -246,18 +253,20 @@ cmd_stop() {
 
     if [ -z "$pidfiles" ]; then
         echo "No workers running for $ARCH"
-        return 0
+    else
+        local count=0
+        for pidfile in $pidfiles; do
+            local worker_id
+            worker_id=$(basename "$pidfile" | sed "s/worker-$ARCH-//;s/\.pid//")
+            stop_worker "$worker_id"
+            count=$((count + 1))
+        done
+        echo "Stopped $count workers"
     fi
 
-    local count=0
-    for pidfile in $pidfiles; do
-        local worker_id
-        worker_id=$(basename "$pidfile" | sed "s/worker-$ARCH-//;s/\.pid//")
-        stop_worker "$worker_id"
-        count=$((count + 1))
-    done
-
-    echo "Stopped $count workers"
+    # Stop Ray cluster (shared by all workers)
+    echo "Stopping Ray cluster..."
+    "$SCRIPT_DIR/rayctl" "$WORKDIR" stop || true
 }
 
 cmd_force_stop() {

@@ -5,15 +5,29 @@ Replaces local Celery queues (CPUQ, GPUQ) with Ray actors.
 
 ## Overview
 
-This framework handles the full tuning workflow:
+This framework handles the full tuning workflow with a **shared Ray cluster**:
 
 ```
-PostgreSQL Queue (central)
-        ↓
-    Worker fetches task
-        ↓
-    Ray DAG Execution:
+                    Ray Cluster (shared, 1:1 GPU mapping)
+                    ┌─────────────────────────────────────┐
+                    │  GPU Worker Pool (N workers)        │
+                    │  ├─ GPU 0 Worker (exclusive)        │
+                    │  ├─ GPU 1 Worker (exclusive)        │
+                    │  └─ GPU N Worker (exclusive)        │
+                    └─────────────────────────────────────┘
+                              ↑       ↑       ↑
+                              │       │       │
+        ┌─────────────────────┴───────┴───────┴──────────────┐
+        │  Multiple worker_main.py instances (share cluster) │
+        │  ├─ Worker 0: fetch task → submit to Ray           │
+        │  ├─ Worker 1: fetch task → submit to Ray           │
+        │  └─ Worker N: fetch task → submit to Ray           │
+        └─────────────────────────────────────────────────────┘
+                              ↑
+                              │
+                    PostgreSQL Queue (central)
     
+Each task execution:
     1. Preprocess (GPU 0, exclusive)
          ↓
     2. Probe (GPU 0, exclusive) → discovers N hsaco kernels
@@ -143,20 +157,39 @@ Workers can handle any module because `exaid_create()` is cached by (module, gpu
 
 ## Usage
 
+### Starting the Ray Cluster
+
+Before starting workers, start the shared Ray cluster:
+
+```bash
+# Start Ray cluster (one per node, shared by all workers)
+.tune/bin/rayctl <workdir> start
+
+# Check status
+.tune/bin/rayctl <workdir> status
+
+# Stop cluster
+.tune/bin/rayctl <workdir> stop
+```
+
+The Ray cluster uses NUM_GPUS from config.rc (default: 4) to create GPU worker pool.
+
 ### From Worker Process
 
-The worker process automatically uses Ray execution:
+Worker processes connect to the shared Ray cluster:
 
 ```python
 # v3python/tune/worker_main.py
 
 from v3python.ray import execute_tuning_dag, init_ray
 
-init_ray()  # Initialize once
+init_ray()  # Connect to existing Ray cluster (address='auto')
 
 # Execute task
 result = execute_tuning_dag(task_id, task_config)
 ```
+
+Multiple worker_main.py instances share the same GPU worker pool.
 
 ### Direct Usage
 

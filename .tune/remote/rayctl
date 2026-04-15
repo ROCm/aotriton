@@ -1,0 +1,55 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# Control Ray cluster
+# Usage: rayctl <workdir> <action>
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+. "$TUNE_ROOT/lib/config_load.sh"
+
+WORKDIR="$1"
+ACTION="$2"
+
+if [ -z "$WORKDIR" ] || [ -z "$ACTION" ]; then
+    echo "Usage: $0 <workdir> <action>" >&2
+    echo "Actions: start|stop|status" >&2
+    exit 1
+fi
+
+load_config "$WORKDIR"
+
+# Ray temp directory
+RAY_TMPDIR="$WORKDIR/ray"
+mkdir -p "$RAY_TMPDIR"
+
+case "$ACTION" in
+    start)
+        echo "Starting Ray cluster..."
+        NUM_GPUS="${NUM_GPUS:-4}"
+
+        ray start --head \
+            --num-gpus="$NUM_GPUS" \
+            --temp-dir="$RAY_TMPDIR" \
+            --include-dashboard=false \
+            --disable-usage-stats
+
+        echo "Ray cluster started with $NUM_GPUS GPUs"
+        ;;
+    stop)
+        echo "Stopping Ray cluster..."
+        ray stop
+        echo "Ray cluster stopped"
+        ;;
+    status)
+        ray status || echo "Ray cluster not running"
+        ;;
+    *)
+        echo "Unknown action: $ACTION" >&2
+        exit 1
+        ;;
+esac
