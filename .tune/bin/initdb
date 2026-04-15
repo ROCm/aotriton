@@ -30,17 +30,43 @@ if [ ! -f "$SCHEMA_SQL" ]; then
     exit 1
 fi
 
+# Validate required config variables
+if [ -z "$POSTGRES_USER" ] || [ -z "$POSTGRES_PASSWORD" ]; then
+    echo "Error: POSTGRES_USER or POSTGRES_PASSWORD not set in config.rc" >&2
+    exit 1
+fi
+
+if [ -z "$POSTGRES_DOCKER_IMAGE" ]; then
+    echo "Error: POSTGRES_DOCKER_IMAGE not set in config.rc" >&2
+    exit 1
+fi
+
+# Extract PostgreSQL version from POSTGRES_DOCKER_IMAGE (e.g., postgres:17.6 -> 17.6)
+POSTGRES_VERSION=$(echo "$POSTGRES_DOCKER_IMAGE" | cut -d: -f2)
+
+# Use matching psql docker image version
+PSQL_IMAGE="alpine/psql:${POSTGRES_VERSION}"
+
+# PostgreSQL connection parameters
+# Default to localhost and standard port since containers use --network=host
+POSTGRES_HOST="${CELERY_SERVICE_HOST:-localhost}"
+POSTGRES_PORT="${POSTGRES_PORT:-5432}"
+
 echo "Initializing database schema..."
-echo "Host: $CELERY_SERVICE_HOST"
+echo "Host: $POSTGRES_HOST"
 echo "Port: $POSTGRES_PORT"
 echo "User: $POSTGRES_USER"
+echo "Using psql: $PSQL_IMAGE"
 
-# Execute schema SQL
-PGPASSWORD="$POSTGRES_PASSWORD" psql \
-    -h "$CELERY_SERVICE_HOST" \
-    -p "$POSTGRES_PORT" \
-    -U "$POSTGRES_USER" \
-    -f "$SCHEMA_SQL"
+# Execute schema SQL via containerized psql
+# Mount schema file into container and execute it
+docker run --rm \
+    --network=host \
+    -v "$SCHEMA_SQL:/schema.sql:ro" \
+    -e PGPASSWORD="$POSTGRES_PASSWORD" \
+    "$PSQL_IMAGE" \
+    postgresql://"$POSTGRES_USER"@"$POSTGRES_HOST":"$POSTGRES_PORT" \
+    -f /schema.sql
 
 if [ $? -eq 0 ]; then
     echo "Database schema initialized successfully"
