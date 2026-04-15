@@ -14,6 +14,10 @@ cd /src/aotriton/third_party/triton
 TRITON_SHORT=$(git rev-parse --short=12 HEAD)
 export TRITON_WHEEL_VERSION_SUFFIX="+git${TRITON_SHORT}"
 export ROCM_PATH=$(hipconfig --rocmpath)
+if [ -z "${ROCM_PATH}" ]; then
+  echo "Error: ROCM_PATH is empty. hipconfig --rocmpath failed." >&2
+  exit 1
+fi
 hipver=$(scl enable gcc-toolset-13 "cpp -I${ROCM_PATH}/include /input/print_hip_version.h"|tail -n 1|sed 's/ //g')
 
 if [ ${NOIMAGE_MODE} == "OFF" ]; then
