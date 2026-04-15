@@ -35,6 +35,10 @@ fi
 
 echo "Starting server services..."
 
+# Pull PostgreSQL image if not present
+echo "Pulling PostgreSQL image: ${POSTGRES_DOCKER_IMAGE}"
+docker pull "${POSTGRES_DOCKER_IMAGE}"
+
 # Start PostgreSQL
 echo "Starting PostgreSQL..."
 POSTGRES_ID=$(docker run --ipc=host \

@@ -58,6 +58,10 @@ echo "Port: $POSTGRES_PORT"
 echo "User: $POSTGRES_USER"
 echo "Using psql: $PSQL_IMAGE"
 
+# Pull psql image if not present
+echo "Pulling psql image: $PSQL_IMAGE"
+docker pull "$PSQL_IMAGE"
+
 # Execute schema SQL via containerized psql
 # Mount schema file into container and execute it
 docker run --rm \
