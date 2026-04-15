@@ -28,8 +28,7 @@ def get_conn_params():
         'host': os.environ.get('CELERY_SERVICE_HOST', 'localhost'),
         'port': int(os.environ.get('POSTGRES_PORT', 5432)),
         'user': os.environ.get('POSTGRES_USER', 'aotriton'),
-        'password': os.environ.get('POSTGRES_PASSWORD'),
-        'dbname': os.environ.get('POSTGRES_DB', 'aotriton')
+        'password': os.environ.get('POSTGRES_PASSWORD')
     }
 
 

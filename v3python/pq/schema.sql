@@ -35,6 +35,25 @@ CREATE INDEX IF NOT EXISTS idx_worker_heartbeat_alive
     ON worker_heartbeat (last_heartbeat DESC)
     WHERE status = 'active';
 
+-- Tuning results table (stores individual hsaco benchmark results)
+CREATE TABLE IF NOT EXISTS tuning_results (
+    id BIGSERIAL PRIMARY KEY,
+    task_id BIGINT NOT NULL,
+    kernel_name TEXT NOT NULL,
+    hsaco_index INT NOT NULL,
+    result TEXT NOT NULL,  -- OK/NotOK/crash/ERROR
+    result_data JSONB,
+    error JSONB,
+    gpu_id INT,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_tuning_results_task
+    ON tuning_results (task_id, kernel_name, hsaco_index);
+
+CREATE INDEX IF NOT EXISTS idx_tuning_results_kernel
+    ON tuning_results (kernel_name, result);
+
 -- Utility views for monitoring
 CREATE OR REPLACE VIEW queue_progress AS
 SELECT

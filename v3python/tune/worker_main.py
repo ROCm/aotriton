@@ -87,8 +87,7 @@ def get_db_connection_params(workdir: Path) -> Dict[str, Any]:
         'host': env.get('CELERY_SERVICE_HOST', 'localhost'),
         'port': int(env.get('POSTGRES_PORT', 5432)),
         'user': env.get('POSTGRES_USER', 'aotriton'),
-        'password': env.get('POSTGRES_PASSWORD'),
-        'dbname': env.get('POSTGRES_DB', 'aotriton')
+        'password': env.get('POSTGRES_PASSWORD')
     }
 
 
@@ -103,8 +102,10 @@ def create_task_executor(workdir: Path, arch: str):
     Returns:
         Executor function
     """
-    # TODO: Import actual Ray execution framework when available
-    # For now, return a placeholder executor
+    from v3python.ray import execute_tuning_dag, init_ray
+
+    # Initialize Ray once
+    init_ray()
 
     def executor(task: Task) -> Any:
         """
@@ -120,17 +121,15 @@ def create_task_executor(workdir: Path, arch: str):
         logger.info(f"Executing task {task.id}: module={task.module}, arch={task.arch}")
         logger.debug(f"Task config: {task.task_config}")
 
-        # TODO: Replace with actual Ray execution
-        # Example:
-        # from ray_executor import execute_tuning_dag
-        # result = execute_tuning_dag(task.task_config, workdir, arch)
+        try:
+            # Execute full tuning DAG via Ray
+            result = execute_tuning_dag(str(task.id), task.task_config)
+            logger.info(f"Task {task.id} completed successfully")
+            return result
 
-        # Placeholder - simulate work
-        import time
-        time.sleep(0.1)
-
-        logger.info(f"Task {task.id} completed successfully")
-        return {'status': 'success'}
+        except Exception as e:
+            logger.error(f"Task {task.id} failed: {e}", exc_info=True)
+            raise
 
     return executor
 
@@ -195,7 +194,7 @@ def main():
                         help='Path to workdir containing config.rc')
     parser.add_argument('arch', type=str,
                         help='GPU architecture (e.g., gfx942, gfx90a)')
-    parser.add_argument('--worker-id', type=int, default=0,
+    parser.add_argument('--worker_id', type=int, default=0,
                         help='Worker ID number (for multiple workers on same node)')
     parser.add_argument('--daemonize', action='store_true',
                         help='Run as daemon process')
@@ -203,14 +202,14 @@ def main():
                         help='PID file path (required with --daemonize)')
     parser.add_argument('--logfile', type=Path,
                         help='Log file path')
-    parser.add_argument('--log-level', type=str, default='INFO',
+    parser.add_argument('--log_level', type=str, default='INFO',
                         choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
                         help='Log level')
-    parser.add_argument('--batch-size', type=int, default=10,
+    parser.add_argument('--batch_size', type=int, default=10,
                         help='Number of tasks to fetch per poll')
-    parser.add_argument('--poll-interval', type=float, default=1.0,
+    parser.add_argument('--poll_interval', type=float, default=1.0,
                         help='Initial poll interval in seconds')
-    parser.add_argument('--max-poll-interval', type=float, default=30.0,
+    parser.add_argument('--max_poll_interval', type=float, default=30.0,
                         help='Maximum poll interval (backoff cap)')
 
     args = parser.parse_args()

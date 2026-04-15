@@ -43,7 +43,7 @@ class TaskQueue:
         Initialize task queue.
 
         Args:
-            conn_params: PostgreSQL connection parameters (host, port, user, password, dbname)
+            conn_params: PostgreSQL connection parameters (host, port, user, password)
         """
         self.conn_params = conn_params
         self.worker_id = f"{socket.gethostname()}-{os.getpid()}"
