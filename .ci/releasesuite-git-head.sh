@@ -148,7 +148,7 @@ if [ ${NEED_CLONE} -ne 0 ]; then
     -v ${SOURCE_VOLUME}:/src \
     -w /src \
     ${BASE_DOCKER_IMAGE} \
-    bash -c "set -ex; git clone --recursive ${GIT_HTTPS_ORIGIN} && cd aotriton && git checkout ${GIT_SHORT} && git submodule sync && git submodule update --init --recursive --force"
+    bash -c "set -ex; mv aotriton aotriton.tmp 2>/dev/null || true; git clone --recursive --reference-if-able aotriton.tmp ${GIT_HTTPS_ORIGIN} && cd aotriton && git checkout ${GIT_SHORT} && git submodule sync && git submodule update --init --recursive --force; rm -rf ../aotriton.tmp"
 fi
 
 INPUT_DIR=${SCRIPT_DIR}/../dockerfile/input
