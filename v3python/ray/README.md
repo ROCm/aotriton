@@ -79,30 +79,30 @@ db_writer_task.remote(task_id, report)
 
 GPU workers can immediately start next benchmark while CPU tasks handle I/O.
 
-### Persistent Worker Pools
+### Persistent Worker Pool with 1:1 GPU Mapping
 
 **Problem**: Creating exaid instances is expensive (seconds per GPU).
 
-**Solution**: Worker pools persist across tasks:
+**Solution**: Single persistent worker pool with 1:1 GPU mapping:
 ```python
-# Pool created once per module
-gpu_workers = get_gpu_worker_pool('attn_fwd', num_gpus=8)
+# Pool created once (1 worker per GPU)
+gpu_workers = get_gpu_worker_pool(num_gpus=4)
 
-# Workers reused across tasks
+# Workers reused across all tasks and modules
 result1 = execute_tuning_dag(task1_id, task1_config)  # Uses existing pool
 result2 = execute_tuning_dag(task2_id, task2_config)  # Reuses same pool
 ```
 
-Each module gets its own pool because workers maintain module-specific exaid instances.
+Workers can handle any module because `exaid_create()` is cached by (module, gpu_id) internally.
 
 ## Architecture
 
 ### Components
 
 **`gpu_worker.py`** - GPUWorker Actor
-- Owns one GPU exclusively (`num_gpus=1`)
-- Handles all GPU task types (preprocess, probe, tune_hsaco)
-- Maintains persistent exaid instance
+- Owns one GPU exclusively (`num_gpus=1`, 1:1 mapping)
+- Handles all GPU task types (preprocess, probe, tune_hsaco) for ANY module
+- Calls `exaid_create(module, gpu_id)` per task (cached internally)
 - Ray ensures methods run serially
 
 **`cpu_tasks.py`** - CPU Tasks
@@ -110,9 +110,9 @@ Each module gets its own pool because workers maintain module-specific exaid ins
 - `postprocess_task` - Aggregate results and cleanup tmpdir
 
 **`worker_pool.py`** - Worker Pool Management
-- Manages persistent GPU worker pools per module
-- One pool per module (each module has different exaid setup)
-- Workers reused across tasks
+- Manages single persistent GPU worker pool (1:1 GPU mapping)
+- Workers handle any module (exaid caching is per (module, gpu_id))
+- Pool reused across all tasks and modules
 
 **`orchestrator.py`** - DAG Orchestration
 - `init_ray()` - Initialize Ray runtime
@@ -200,17 +200,14 @@ from v3python.ray.worker_pool import (
     get_worker_pool_stats
 )
 
-# Get or create worker pool
-workers = get_gpu_worker_pool('attn_fwd', num_gpus=8)
+# Get or create worker pool (1:1 GPU mapping, handles all modules)
+workers = get_gpu_worker_pool(num_gpus=4)
 
 # Get statistics
 stats = get_worker_pool_stats()
-# {'num_pools': 2, 'modules': ['attn_fwd', 'attn_bwd'], 'total_workers': 16}
+# {'num_workers': 4, 'active': True}
 
-# Shutdown specific pool
-shutdown_worker_pool('attn_fwd')
-
-# Shutdown all pools
+# Shutdown pool
 shutdown_worker_pool()
 ```
 

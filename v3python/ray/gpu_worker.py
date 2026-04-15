@@ -17,32 +17,26 @@ from typing import Dict, Any, List, Tuple
 @ray.remote(num_gpus=1)
 class GPUWorker:
     """
-    Persistent GPU worker that handles multiple task types.
-    Owns one GPU exclusively and maintains exaid instance.
+    Persistent GPU worker that handles any tuning module.
+    Owns one GPU exclusively (1:1 mapping).
 
     Ray guarantees:
     - Methods on same actor run serially (exclusive GPU access)
     - num_gpus=1 reserves GPU resources
     - Different actors (different GPUs) run in parallel
+
+    exaid instances are cached by (module, gpu_id), so we call
+    exaid_create() in each method rather than storing a reference.
     """
 
-    def __init__(self, gpu_id: int, module: str):
+    def __init__(self, gpu_id: int):
         """
         Initialize GPU worker.
 
         Args:
-            gpu_id: GPU device ID
-            module: Tuning module name (e.g., 'attn_fwd', 'attn_bwd')
+            gpu_id: GPU device ID (0-based)
         """
         self.gpu_id = gpu_id
-        self.module = module
-
-        # Import here to avoid dependency issues at module load
-        from v3python.tune.exaid import exaid_create
-
-        # Create persistent exaid instance
-        # exaid handles GPU visibility via torch context manager
-        self.exaid = exaid_create(module, gpu_id)
 
     def preprocess(self, task_config: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -50,7 +44,7 @@ class GPUWorker:
         Runs exclusively on this GPU.
 
         Args:
-            task_config: Task configuration dictionary
+            task_config: Task configuration dictionary with 'module' key
 
         Returns:
             Updated task_config with tmpdir path
@@ -59,21 +53,24 @@ class GPUWorker:
             OSError: Filesystem errors
             ExaidSubprocessNotOK: Subprocess execution failures
         """
-        from v3python.tune.exaid import ExaidSubprocessNotOK
+        from v3python.tune.exaid import exaid_create, ExaidSubprocessNotOK
+
+        module = task_config['module']
+        exaid = exaid_create(module, self.gpu_id)
 
         if 'tmpdir' in task_config:
             tmpdir = Path(task_config['tmpdir'])
         else:
-            tmpdir = self.exaid.get_tmpfs_for(task_config["entry"])
+            tmpdir = exaid.get_tmpfs_for(task_config["entry"])
 
         try:
-            self.exaid.prepare_data(task_config["entry"], tmpdir)
+            exaid.prepare_data(task_config["entry"], tmpdir)
             task_config['tmpdir'] = tmpdir.as_posix()
-            print(f'[exaid][GPU{self.gpu_id}][preprocess] Data prepared in {tmpdir}')
+            print(f'[exaid][GPU{self.gpu_id}][preprocess][{module}] Data prepared in {tmpdir}')
             return task_config
 
         except (OSError, ExaidSubprocessNotOK) as e:
-            print(f'[exaid][GPU{self.gpu_id}][preprocess] ERROR: {e}')
+            print(f'[exaid][GPU{self.gpu_id}][preprocess][{module}] ERROR: {e}')
             raise
 
     def probe(self, task_config: Dict[str, Any]) -> List[Tuple[str, int]]:
@@ -82,7 +79,7 @@ class GPUWorker:
         Runs exclusively on this GPU.
 
         Args:
-            task_config: Task configuration with tmpdir
+            task_config: Task configuration with tmpdir and 'module' key
 
         Returns:
             List of (kernel_name, hsaco_index) tuples
@@ -91,12 +88,14 @@ class GPUWorker:
             OSError: Filesystem errors
             ExaidSubprocessNotOK: Subprocess execution failures
         """
-        from v3python.tune.exaid import ExaidSubprocessNotOK
+        from v3python.tune.exaid import exaid_create, ExaidSubprocessNotOK
 
+        module = task_config['module']
+        exaid = exaid_create(module, self.gpu_id)
         tmpdir = Path(task_config['tmpdir'])
 
         try:
-            kernel_dict = self.exaid.probe(tmpdir)
+            kernel_dict = exaid.probe(tmpdir)
 
             # Flatten to list of (kname, hsaco_index) tuples
             hsaco_tasks = []
@@ -111,11 +110,11 @@ class GPUWorker:
                 for hsaco_index in range(len(limited_hsaco)):
                     hsaco_tasks.append((kname, hsaco_index))
 
-            print(f'[exaid][GPU{self.gpu_id}][probe] Found {len(hsaco_tasks)} hsaco kernels')
+            print(f'[exaid][GPU{self.gpu_id}][probe][{module}] Found {len(hsaco_tasks)} hsaco kernels')
             return hsaco_tasks
 
         except (OSError, ExaidSubprocessNotOK) as e:
-            print(f'[exaid][GPU{self.gpu_id}][probe] ERROR: {e}')
+            print(f'[exaid][GPU{self.gpu_id}][probe][{module}] ERROR: {e}')
             raise
 
     def tune_hsaco(
@@ -131,7 +130,7 @@ class GPUWorker:
         Returns report WITHOUT writing to DB (offloaded to CPU task).
 
         Args:
-            task_config: Task configuration
+            task_config: Task configuration with 'module' key
             kname: Kernel name
             hsaco_index: HSACO variant index
             task_id: Task ID for tracking
@@ -139,8 +138,10 @@ class GPUWorker:
         Returns:
             Report dictionary with benchmark results or error
         """
-        from v3python.tune.exaid import ExaidSubprocessNotOK
+        from v3python.tune.exaid import exaid_create, ExaidSubprocessNotOK
 
+        module = task_config['module']
+        exaid = exaid_create(module, self.gpu_id)
         tmpdir = Path(task_config['tmpdir'])
 
         report = {
@@ -151,23 +152,23 @@ class GPUWorker:
         }
 
         try:
-            result_data = self.exaid.benchmark(tmpdir, kname, hsaco_index)
+            result_data = exaid.benchmark(tmpdir, kname, hsaco_index)
             report['result'] = "OK"
             report['result_data'] = result_data
-            print(f'[exaid][GPU{self.gpu_id}][tune_hsaco] {kname}[{hsaco_index}] OK')
+            print(f'[exaid][GPU{self.gpu_id}][tune_hsaco][{module}] {kname}[{hsaco_index}] OK')
 
         except OSError as e:
-            print(f'[exaid][GPU{self.gpu_id}][tune_hsaco] {kname}[{hsaco_index}] OSError')
+            print(f'[exaid][GPU{self.gpu_id}][tune_hsaco][{module}] {kname}[{hsaco_index}] OSError')
             report['result'] = "crash"
             report['error'] = {"errno": e.errno, "stderr": e.strerror}
 
         except ExaidSubprocessNotOK as e:
-            print(f'[exaid][GPU{self.gpu_id}][tune_hsaco] {kname}[{hsaco_index}] NotOK')
+            print(f'[exaid][GPU{self.gpu_id}][tune_hsaco][{module}] {kname}[{hsaco_index}] NotOK')
             report['result'] = "NotOK"
             report['error'] = {"stdout": e.stdout, "stderr": e.stderr}
 
         except Exception as e:
-            print(f'[exaid][GPU{self.gpu_id}][tune_hsaco] {kname}[{hsaco_index}] Unexpected error: {e}')
+            print(f'[exaid][GPU{self.gpu_id}][tune_hsaco][{module}] {kname}[{hsaco_index}] Unexpected error: {e}')
             report['result'] = "ERROR"
             report['error'] = str(e)
 

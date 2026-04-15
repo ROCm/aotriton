@@ -4,79 +4,67 @@
 """
 GPU Worker Pool Management
 
-Manages persistent GPU worker pools per module.
-Each pool contains one worker per GPU.
+Manages a single persistent GPU worker pool with 1:1 GPU mapping.
+Each worker can handle any tuning module (exaid is cached by module, gpu_id).
 """
 
 from typing import List
 from .gpu_worker import GPUWorker
 
 
-# Global worker pools: module -> [GPUWorker actors]
-GPU_WORKER_POOLS = {}
+# Global worker pool: single pool with 1 worker per GPU
+GPU_WORKER_POOL = None
 
 
-def get_gpu_worker_pool(module: str, num_gpus: int = 8) -> List:
+def get_gpu_worker_pool(num_gpus: int = 4) -> List:
     """
-    Get or create GPU worker pool for a module.
+    Get or create the GPU worker pool.
 
-    Worker pools are persistent and reused across tasks. Each module
-    gets its own pool because workers maintain module-specific exaid instances.
+    Worker pool is persistent and reused across all tasks and modules.
+    Each GPU gets exactly one worker (1:1 mapping).
 
     Args:
-        module: Tuning module name (e.g., 'attn_fwd')
-        num_gpus: Number of GPUs (workers per pool)
+        num_gpus: Number of GPUs (workers in pool)
 
     Returns:
         List of GPUWorker actor handles
     """
-    if module not in GPU_WORKER_POOLS:
-        print(f'[WorkerPool] Creating pool for module={module} with {num_gpus} GPUs')
+    global GPU_WORKER_POOL
 
-        GPU_WORKER_POOLS[module] = [
-            GPUWorker.remote(gpu_id, module)
+    if GPU_WORKER_POOL is None:
+        print(f'[WorkerPool] Creating pool with {num_gpus} GPUs (1:1 mapping)')
+
+        GPU_WORKER_POOL = [
+            GPUWorker.remote(gpu_id)
             for gpu_id in range(num_gpus)
         ]
 
-    return GPU_WORKER_POOLS[module]
+    return GPU_WORKER_POOL
 
 
-def shutdown_worker_pool(module: str = None) -> None:
+def shutdown_worker_pool() -> None:
     """
-    Shutdown worker pool(s).
-
-    Args:
-        module: Optional module name. If None, shutdown all pools.
+    Shutdown the GPU worker pool.
     """
     import ray
+    global GPU_WORKER_POOL
 
-    if module is None:
-        # Shutdown all pools
-        for mod, workers in GPU_WORKER_POOLS.items():
-            print(f'[WorkerPool] Shutting down pool for module={mod}')
-            for worker in workers:
-                ray.kill(worker)
-
-        GPU_WORKER_POOLS.clear()
-
-    elif module in GPU_WORKER_POOLS:
-        # Shutdown specific pool
-        print(f'[WorkerPool] Shutting down pool for module={module}')
-        workers = GPU_WORKER_POOLS.pop(module)
-
-        for worker in workers:
+    if GPU_WORKER_POOL is not None:
+        print(f'[WorkerPool] Shutting down pool with {len(GPU_WORKER_POOL)} workers')
+        for worker in GPU_WORKER_POOL:
             ray.kill(worker)
+
+        GPU_WORKER_POOL = None
 
 
 def get_worker_pool_stats() -> dict:
     """
-    Get statistics about active worker pools.
+    Get statistics about the active worker pool.
 
     Returns:
         Dictionary with pool statistics
     """
     return {
-        'num_pools': len(GPU_WORKER_POOLS),
-        'modules': list(GPU_WORKER_POOLS.keys()),
-        'total_workers': sum(len(workers) for workers in GPU_WORKER_POOLS.values())
+        'num_workers': len(GPU_WORKER_POOL) if GPU_WORKER_POOL else 0,
+        'active': GPU_WORKER_POOL is not None
     }

@@ -87,8 +87,8 @@ def execute_tuning_dag(task_id: str, task_config: Dict[str, Any]) -> Dict[str, A
 
     logger.info(f'Starting DAG execution for task_id={task_id}, module={module}')
 
-    # Get GPU worker pool for this module
-    gpu_workers = get_gpu_worker_pool(module, num_gpus)
+    # Get GPU worker pool (shared across all modules, 1:1 GPU mapping)
+    gpu_workers = get_gpu_worker_pool(num_gpus)
 
     # Use GPU 0 as coordinator for preprocess/probe
     # (they need consistent GPU for tmpdir setup)
