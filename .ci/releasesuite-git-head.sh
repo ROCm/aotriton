@@ -174,9 +174,18 @@ function build_inside() {
   NOIMAGE_MODE="$2"
   DOCKER_IMAGE="aotriton:buildenv-rocm${rocmver}"
   if [ -z "$(docker images -q ${DOCKER_IMAGE} 2>/dev/null)" ]; then
+    # Use theRock.Dockerfile for ROCm >= 7.10
+    if awk "BEGIN {exit !($rocmver >= 7.10)}"; then
+      # TODO: We cannot have theRock.Dockerfile without internal URL until
+      #       gfx1250 wheel goes GA.
+      #       For now, create the docker with git commit.
+      DOCKERFILE="theRock.Dockerfile"
+    else
+      DOCKERFILE="rocm.Dockerfile"
+    fi
     docker build --network=host -t ${DOCKER_IMAGE} \
       --build-arg ROCM_VERSION_IN_URL=${rocmver} \
-      -f rocm.Dockerfile .
+      -f ${DOCKERFILE} .
   fi
   docker run --network=host -it --rm \
     -v ${SOURCE_VOLUME}:/src:ro \
