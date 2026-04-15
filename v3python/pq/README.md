@@ -119,6 +119,10 @@ print(f"Dispatched {count} tasks")
 
 ### Run Worker
 
+**Important**: Each Worker process executes tasks **sequentially**. For parallel execution, launch **multiple Worker processes** per node (similar to Celery worker design).
+
+#### Single Worker (for testing)
+
 ```python
 from pq import Worker
 
@@ -139,6 +143,36 @@ worker = Worker(
 
 worker.start()  # Runs until SIGINT/SIGTERM
 ```
+
+#### Production: Multiple Workers
+
+For production deployments with multiple GPUs, launch **4-8 workers per node**:
+
+```bash
+# Using the worker management script
+.tune/remote/worker_service.sh start <workdir> <arch> <num_workers>
+
+# Example: Start 8 workers for gfx942
+.tune/remote/worker_service.sh start /path/to/workdir gfx942 8
+
+# Stop workers
+.tune/remote/worker_service.sh stop /path/to/workdir gfx942
+
+# Restart workers
+.tune/remote/worker_service.sh restart /path/to/workdir gfx942 8
+
+# Check status
+.tune/remote/worker_service.sh status /path/to/workdir gfx942
+
+# Force stop (SIGKILL)
+.tune/remote/worker_service.sh force-stop /path/to/workdir gfx942
+```
+
+**Why multiple workers?**
+- Each Worker executes tasks sequentially (blocking)
+- Multiple workers = parallel task execution
+- Recommended: 1-2 workers per GPU (e.g., 8 GPUs = 8-16 workers)
+- Each worker fetches batches independently from the queue
 
 ### Query Statistics
 
