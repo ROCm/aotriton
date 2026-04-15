@@ -1,0 +1,148 @@
+-- Tuner v3.5 PostgreSQL Queue Schema
+-- Copyright © 2026 Advanced Micro Devices, Inc.
+-- SPDX-License-Identifier: MIT
+
+-- Parent table (partitioned by architecture)
+CREATE TABLE IF NOT EXISTS task_queue (
+    id BIGSERIAL,
+    arch TEXT NOT NULL,
+    module TEXT NOT NULL,
+    task_config JSONB NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',  -- pending/running/completed/failed
+    priority INT DEFAULT 5,
+    worker_id TEXT,
+    node_hostname TEXT,
+    created_at TIMESTAMP DEFAULT NOW(),
+    started_at TIMESTAMP,
+    completed_at TIMESTAMP,
+    error TEXT,
+    retry_count INT DEFAULT 0,
+    PRIMARY KEY (id, arch)
+) PARTITION BY LIST (arch);
+
+-- Worker heartbeat table (for monitoring and health checks)
+CREATE TABLE IF NOT EXISTS worker_heartbeat (
+    worker_id TEXT PRIMARY KEY,
+    node_hostname TEXT NOT NULL,
+    arch TEXT NOT NULL,
+    last_heartbeat TIMESTAMP NOT NULL DEFAULT NOW(),
+    status TEXT NOT NULL DEFAULT 'active',  -- active/idle/dead
+    tasks_completed INT DEFAULT 0,
+    tasks_failed INT DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_worker_heartbeat_alive
+    ON worker_heartbeat (last_heartbeat DESC)
+    WHERE status = 'active';
+
+-- Utility views for monitoring
+CREATE OR REPLACE VIEW queue_progress AS
+SELECT
+    arch,
+    COUNT(*) FILTER (WHERE status = 'pending') as pending,
+    COUNT(*) FILTER (WHERE status = 'running') as running,
+    COUNT(*) FILTER (WHERE status = 'completed') as completed,
+    COUNT(*) FILTER (WHERE status = 'failed') as failed,
+    COUNT(*) as total,
+    ROUND(100.0 * COUNT(*) FILTER (WHERE status = 'completed') / NULLIF(COUNT(*), 0), 2) as pct_complete
+FROM task_queue
+GROUP BY arch
+ORDER BY arch;
+
+CREATE OR REPLACE VIEW worker_health AS
+SELECT
+    worker_id,
+    node_hostname,
+    arch,
+    status,
+    tasks_completed,
+    tasks_failed,
+    EXTRACT(EPOCH FROM (NOW() - last_heartbeat)) as seconds_since_heartbeat,
+    CASE
+        WHEN EXTRACT(EPOCH FROM (NOW() - last_heartbeat)) < 60 THEN 'healthy'
+        WHEN EXTRACT(EPOCH FROM (NOW() - last_heartbeat)) < 300 THEN 'stale'
+        ELSE 'dead'
+    END as health_status
+FROM worker_heartbeat
+ORDER BY last_heartbeat DESC;
+
+CREATE OR REPLACE VIEW task_timing_stats AS
+SELECT
+    arch,
+    module,
+    COUNT(*) as completed_tasks,
+    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (completed_at - started_at))) as median_duration_sec,
+    PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (completed_at - started_at))) as p95_duration_sec,
+    AVG(EXTRACT(EPOCH FROM (completed_at - started_at))) as avg_duration_sec
+FROM task_queue
+WHERE status = 'completed' AND completed_at IS NOT NULL
+GROUP BY arch, module;
+
+CREATE OR REPLACE VIEW stale_tasks AS
+SELECT
+    id,
+    arch,
+    worker_id,
+    node_hostname,
+    EXTRACT(EPOCH FROM (NOW() - started_at)) / 3600 as hours_running
+FROM task_queue
+WHERE status = 'running'
+  AND EXTRACT(EPOCH FROM (NOW() - started_at)) > 7200  -- Running > 2 hours
+ORDER BY started_at ASC;
+
+CREATE OR REPLACE VIEW completion_eta AS
+WITH stats AS (
+    SELECT
+        arch,
+        COUNT(*) FILTER (WHERE status = 'pending') as remaining,
+        COUNT(*) FILTER (WHERE status = 'running') as active_workers,
+        AVG(EXTRACT(EPOCH FROM (completed_at - started_at)))
+            FILTER (WHERE status = 'completed' AND completed_at > NOW() - INTERVAL '1 hour')
+            as avg_task_duration_sec
+    FROM task_queue
+    GROUP BY arch
+)
+SELECT
+    arch,
+    remaining,
+    active_workers,
+    avg_task_duration_sec,
+    CASE
+        WHEN active_workers > 0 AND avg_task_duration_sec IS NOT NULL THEN
+            ROUND((remaining * avg_task_duration_sec / active_workers) / 3600, 2)
+        ELSE NULL
+    END as eta_hours
+FROM stats
+WHERE remaining > 0;
+
+-- Function to create partition for an architecture
+CREATE OR REPLACE FUNCTION create_arch_partition(arch_name TEXT)
+RETURNS VOID AS $$
+DECLARE
+    partition_name TEXT;
+BEGIN
+    partition_name := 'task_queue_' || arch_name;
+
+    -- Create partition if it doesn't exist
+    EXECUTE format(
+        'CREATE TABLE IF NOT EXISTS %I PARTITION OF task_queue FOR VALUES IN (%L)',
+        partition_name, arch_name
+    );
+
+    -- Create indexes on the partition
+    EXECUTE format(
+        'CREATE INDEX IF NOT EXISTS %I ON %I (status, priority DESC, id ASC) WHERE status = %L',
+        partition_name || '_fetch', partition_name, 'pending'
+    );
+
+    EXECUTE format(
+        'CREATE INDEX IF NOT EXISTS %I ON %I (worker_id, status)',
+        partition_name || '_worker', partition_name
+    );
+
+    EXECUTE format(
+        'CREATE INDEX IF NOT EXISTS %I ON %I (created_at DESC)',
+        partition_name || '_created', partition_name
+    );
+END;
+$$ LANGUAGE plpgsql;
