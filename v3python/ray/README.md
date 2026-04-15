@@ -107,14 +107,14 @@ GPU workers can immediately start next benchmark while CPU tasks handle I/O.
 
 **Problem**: Creating exaid instances is expensive (seconds per GPU).
 
-**Solution**: Single persistent worker pool with 1:1 GPU mapping:
+**Solution**: TuningOrchestrator wraps persistent worker pool with 1:1 GPU mapping:
 ```python
-# Pool created once (1 worker per GPU)
-gpu_workers = get_gpu_worker_pool(num_gpus=4)
+# Create orchestrator once (initializes ActorPool)
+orchestrator = TuningOrchestrator(num_gpus=4)
 
-# Workers reused across all tasks and modules
-result1 = execute_tuning_dag(task1_id, task1_config)  # Uses existing pool
-result2 = execute_tuning_dag(task2_id, task2_config)  # Reuses same pool
+# Reuse orchestrator across all tasks and modules
+result1 = orchestrator.execute_tuning_dag(task1_id, task1_config)
+result2 = orchestrator.execute_tuning_dag(task2_id, task2_config)
 ```
 
 Workers can handle any module because `exaid_create()` is cached by (module, gpu_id) internally.
@@ -139,8 +139,9 @@ Workers can handle any module because `exaid_create()` is cached by (module, gpu
 - Pool reused across all tasks and modules
 
 **`orchestrator.py`** - DAG Orchestration
-- `init_ray()` - Initialize Ray runtime
-- `execute_tuning_dag()` - Execute full workflow with dependencies
+- `init_ray()` - Connect to Ray cluster
+- `TuningOrchestrator` - Class wrapping ActorPool for efficient task execution
+  - `execute_tuning_dag()` - Execute full workflow with dependencies
 
 ### Data Flow
 
@@ -186,17 +187,20 @@ The Ray cluster uses NUM_GPUS from config.rc (default: 4) to create GPU worker p
 
 ### From Worker Process
 
-Worker processes connect to the shared Ray cluster:
+Worker processes connect to the shared Ray cluster and create orchestrator:
 
 ```python
 # v3python/tune/worker_main.py
 
-from v3python.ray import execute_tuning_dag, init_ray
+from v3python.ray import init_ray, TuningOrchestrator
 
 init_ray()  # Connect to existing Ray cluster (address='auto')
 
-# Execute task
-result = execute_tuning_dag(task_id, task_config)
+# Create orchestrator once per worker process
+orchestrator = TuningOrchestrator()
+
+# Execute tasks (reuses ActorPool)
+result = orchestrator.execute_tuning_dag(task_id, task_config)
 ```
 
 Multiple worker_main.py instances share the same GPU worker pool.
@@ -204,10 +208,13 @@ Multiple worker_main.py instances share the same GPU worker pool.
 ### Direct Usage
 
 ```python
-from v3python.ray import init_ray, execute_tuning_dag
+from v3python.ray import init_ray, TuningOrchestrator
 
 # Initialize Ray (once per process)
-init_ray(num_gpus=8)
+init_ray()
+
+# Create orchestrator (once per process)
+orchestrator = TuningOrchestrator(num_gpus=8)
 
 # Execute tuning DAG
 task_config = {
@@ -222,7 +229,7 @@ task_config = {
     "max_hsaco": {"*": 10}  # Limit to 10 hsaco variants per kernel
 }
 
-result = execute_tuning_dag(task_id="test-001", task_config=task_config)
+result = orchestrator.execute_tuning_dag(task_id="test-001", task_config=task_config)
 
 # Result contains:
 # {

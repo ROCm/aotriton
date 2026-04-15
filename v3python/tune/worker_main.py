@@ -102,10 +102,13 @@ def create_task_executor(workdir: Path, arch: str):
     Returns:
         Executor function
     """
-    from v3python.ray import execute_tuning_dag, init_ray
+    from v3python.ray import init_ray, TuningOrchestrator
 
     # Initialize Ray once
     init_ray()
+
+    # Create orchestrator instance (reused for all tasks)
+    orchestrator = TuningOrchestrator()
 
     def executor(task: Task) -> Any:
         """
@@ -122,8 +125,8 @@ def create_task_executor(workdir: Path, arch: str):
         logger.debug(f"Task config: {task.task_config}")
 
         try:
-            # Execute full tuning DAG via Ray
-            result = execute_tuning_dag(str(task.id), task.task_config)
+            # Execute full tuning DAG via orchestrator
+            result = orchestrator.execute_tuning_dag(str(task.id), task.task_config)
             logger.info(f"Task {task.id} completed successfully")
             return result
 

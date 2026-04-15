@@ -8,8 +8,8 @@ Provides GPU-exclusive task execution with proper DAG orchestration.
 Replaces local Celery queues (CPUQ, GPUQ) with Ray actors.
 """
 
-from .orchestrator import execute_tuning_dag, init_ray
+from .orchestrator import init_ray, TuningOrchestrator
 
-__all__ = ['execute_tuning_dag', 'init_ray']
+__all__ = ['init_ray', 'TuningOrchestrator']
 
 __version__ = '3.5.0'
