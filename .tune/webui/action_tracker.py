@@ -61,9 +61,11 @@ class ActionTracker:
 
             # Spawn subprocess
             # If command is a list, use it directly; if string, use shell=True
+            # Redirect stdin from /dev/null to prevent interactive prompts
             if isinstance(self.command, list):
                 self.process = subprocess.Popen(
                     self.command,
+                    stdin=subprocess.DEVNULL,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
@@ -74,6 +76,7 @@ class ActionTracker:
                 self.process = subprocess.Popen(
                     self.command,
                     shell=True,
+                    stdin=subprocess.DEVNULL,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
@@ -132,6 +135,20 @@ class ActionTracker:
         """Check if process is still running"""
         with self._lock:
             return self.status == 'running'
+
+    def kill(self):
+        """Kill the running process"""
+        with self._lock:
+            if self.process and self.status == 'running':
+                try:
+                    self.process.kill()
+                    self.status = 'killed'
+                    self.completed_at = datetime.now()
+                    self.returncode = -9
+                    return True
+                except Exception:
+                    return False
+            return False
 
     def get_output(self, from_line=0):
         """Get output lines starting from from_line"""

@@ -435,6 +435,20 @@ def remove_action(action_id):
     return '', 200
 
 
+@bp.route('/api/actions/<action_id>/kill', methods=['POST'])
+def kill_action(action_id):
+    """Kill a running action"""
+    tracker = current_app.tracker_registry.get(action_id)
+    if not tracker:
+        return jsonify({'success': False, 'error': 'Action not found'}), 404
+
+    success = tracker.kill()
+    if success:
+        return jsonify({'success': True, 'message': 'Process killed'})
+    else:
+        return jsonify({'success': False, 'error': 'Process not running or already terminated'}), 400
+
+
 @bp.route('/api/actions/clear', methods=['POST'])
 def clear_all_actions():
     """Clear all action trackers"""
