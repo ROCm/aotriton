@@ -32,7 +32,15 @@ bdir="build"
 mkdir -p "${SCRIPT_DIR}/../${bdir}"
 cd "${SCRIPT_DIR}/../${bdir}"
 
-cmake .. -DCMAKE_PREFIX_PATH=/opt/rocm \
+if [ -z "${ROCM_PATH}" ]; then
+  export ROCM_PATH=$(hipconfig --rocmpath 2>/dev/null)
+  if [ -z "${ROCM_PATH}" ]; then
+    echo "Error: ROCM_PATH is empty. hipconfig --rocmpath failed." >&2
+    exit 1
+  fi
+fi
+
+cmake .. -DCMAKE_PREFIX_PATH="${ROCM_PATH}" \
   -DPYTHON_EXECUTABLE="${python_exec}" \
   -DCMAKE_INSTALL_PREFIX=installed_dir/aotriton \
   -DCMAKE_BUILD_TYPE=Release \
