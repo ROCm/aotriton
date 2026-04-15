@@ -134,7 +134,6 @@ def get_status_summary(workdir):
         'worker_count': len(workers),
         'architecture_count': len(archs),
         'architectures': archs,
-        'rabbitmq_status': 'unknown',
         'postgres_status': 'unknown',
     }
 

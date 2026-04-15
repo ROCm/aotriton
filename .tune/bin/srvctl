@@ -2,7 +2,7 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-# Control server services (RabbitMQ, PostgreSQL)
+# Control server services (PostgreSQL)
 # Usage: srvctl <workdir> <action>
 
 set -e

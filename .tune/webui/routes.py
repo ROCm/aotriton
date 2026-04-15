@@ -149,7 +149,7 @@ def api_worker_status(hostname):
 
 @bp.route('/api/servers/start', methods=['POST'])
 def api_start_servers():
-    """Start RabbitMQ and PostgreSQL"""
+    """Start PostgreSQL"""
     workdir = current_app.config['WORKDIR']
     result = tasks.start_servers(workdir)
     return jsonify(result)
@@ -157,7 +157,7 @@ def api_start_servers():
 
 @bp.route('/api/servers/stop', methods=['POST'])
 def api_stop_servers():
-    """Stop RabbitMQ and PostgreSQL"""
+    """Stop PostgreSQL"""
     workdir = current_app.config['WORKDIR']
     result = tasks.stop_servers(workdir)
     return jsonify(result)
@@ -165,7 +165,7 @@ def api_stop_servers():
 
 @bp.route('/api/servers/restart', methods=['POST'])
 def api_restart_servers():
-    """Restart RabbitMQ and PostgreSQL"""
+    """Restart PostgreSQL"""
     workdir = current_app.config['WORKDIR']
     result = tasks.restart_servers(workdir)
     return jsonify(result)

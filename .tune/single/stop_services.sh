@@ -2,7 +2,7 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-# Stop RabbitMQ and PostgreSQL
+# Stop PostgreSQL
 # Usage: stop_services.sh <workdir>
 
 set -e
@@ -22,7 +22,6 @@ fi
 load_config "$WORKDIR"
 
 # Container names with suffix
-RABBITMQ_CONTAINER="aotriton_rabbitmq.${CONTAINER_SUFFIX}"
 POSTGRES_CONTAINER="aotriton_pgsql.${CONTAINER_SUFFIX}"
 
 # PID file
@@ -44,7 +43,7 @@ if [ -f "$PIDF" ]; then
 else
   # Try to stop by container name
   echo "No PID file found. Attempting to stop by container name..."
-  docker stop "${RABBITMQ_CONTAINER}" "${POSTGRES_CONTAINER}" 2>/dev/null || true
-  docker rm "${RABBITMQ_CONTAINER}" "${POSTGRES_CONTAINER}" 2>/dev/null || true
+  docker stop "${POSTGRES_CONTAINER}" 2>/dev/null || true
+  docker rm "${POSTGRES_CONTAINER}" 2>/dev/null || true
   echo "Server services stopped (if they were running)"
 fi

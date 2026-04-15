@@ -21,10 +21,6 @@
             <td><strong>{{ status.architecture_count }}</strong> ({{ status.architectures|join(', ') }})</td>
         </tr>
         <tr>
-            <td>RabbitMQ</td>
-            <td><span class="status-badge status-{{ status.rabbitmq_status }}">{{ status.rabbitmq_status }}</span></td>
-        </tr>
-        <tr>
             <td>PostgreSQL</td>
             <td><span class="status-badge status-{{ status.postgres_status }}">{{ status.postgres_status }}</span></td>
         </tr>
@@ -52,7 +48,7 @@
     <h3>Getting Started</h3>
     <ol>
         <li><a href="/workers">Manage Workers</a> - Start/stop GPU workers</li>
-        <li><a href="/servers">Control Servers</a> - Manage RabbitMQ and PostgreSQL</li>
+        <li><a href="/servers">Control Servers</a> - Manage PostgreSQL database</li>
         <li><a href="/builds">Build</a> - Build libraries and Docker images</li>
         <li><a href="/deploy">Deploy</a> - Deploy to worker nodes</li>
         <li><a href="/slurm">SLURM</a> - Submit and monitor jobs</li>
