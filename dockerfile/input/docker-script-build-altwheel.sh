@@ -11,7 +11,7 @@ TRITON_LLVM_SHORT=$(head -c 8 "cmake/llvm-hash.txt")
 # Note: only copy .git
 rsync -aR /src/./triton/.git /root/build/./
 cd /root/build/triton
-git checkout ${TRITON_COMMIT}
+git checkout --quiet ${TRITON_COMMIT}
 git reset --hard
 
 FN="llvm-${TRITON_LLVM_SHORT}-almalinux-x64.tar.gz"
@@ -31,7 +31,7 @@ function check_cached_llvm() {
 
 function cache_llvm() {
   local d="$1"
-  wget "$url" -O "$d/$fn"
+  wget "$URL" -O "$d/$FN"
 }
 
 check_cached_llvm /input || check_cached_llvm /output || cache_llvm /output || check_cached_llvm
