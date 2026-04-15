@@ -194,7 +194,7 @@ function build_inside() {
     --tmpfs "/root/build:exec" \
     -w / \
     ${DOCKER_IMAGE} \
-    bash \
+    bash -l \
     /input/docker-script-build.sh ${llvm_hash_url} ${NOIMAGE_MODE} "${ALTWHEEL_CFG}"
 }
 
