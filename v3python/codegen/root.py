@@ -179,6 +179,8 @@ class RootGenerator(object):
         rules = d.get("rules", [])
         self._altwheels = { name: Path(wheel) for name, wheel in venvs.items() }
         def get_altvenv_python(name) -> Path:
+            if name == "default":
+                return (self._args.build_dir.parent / "venv" / REL_PYTHON).absolute()
             return (self._args.build_dir.parent / "altvenvs" / name / REL_PYTHON).absolute()
         self._venvpython = { name: get_altvenv_python(name) for name in self._altwheels.keys() }
         if "default" not in self._venvpython:
