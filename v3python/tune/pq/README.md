@@ -81,7 +81,7 @@ Administrative operations:
 ### Initialize Schema
 
 ```python
-from pq.admin import QueueAdmin
+from v3python.tune.pq.admin import QueueAdmin
 
 conn_params = {
     'host': 'localhost',
@@ -99,7 +99,7 @@ admin.create_partitions(['gfx942', 'gfx90a', 'gfx1100'])
 ### Dispatch Tasks
 
 ```python
-from pq import TaskDispatcher
+from v3python.tune.pq import TaskDispatcher
 
 dispatcher = TaskDispatcher(conn_params)
 
@@ -124,7 +124,7 @@ print(f"Dispatched {count} tasks")
 #### Single Worker (for testing)
 
 ```python
-from pq import Worker
+from v3python.tune.pq import Worker
 
 def my_task_executor(task):
     """Execute tuning task"""
@@ -177,7 +177,7 @@ For production deployments with multiple GPUs, launch **4-8 workers per node**:
 ### Query Statistics
 
 ```python
-from pq import TaskQueue
+from v3python.tune.pq import TaskQueue
 
 queue = TaskQueue(conn_params)
 
@@ -328,7 +328,7 @@ Integrate with `.tune/webui` - see `docs/Tuner v3.5 WebUI Integration Plan.md`.
 
 ### Cleanup Dead Workers
 ```python
-from pq.admin import QueueAdmin
+from v3python.tune.pq.admin import QueueAdmin
 
 admin = QueueAdmin(conn_params)
 count = admin.cleanup_dead_workers(threshold_seconds=300)

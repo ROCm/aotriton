@@ -20,8 +20,8 @@ from typing import Dict, Any
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from pq import Worker
-from pq.queue import Task
+from .pq import Worker
+from .pq.queue import Task
 
 
 def setup_logging(log_file: Path = None, log_level: str = 'INFO'):
@@ -102,7 +102,7 @@ def create_task_executor(workdir: Path, arch: str):
     Returns:
         Executor function
     """
-    from v3python.ray import init_ray, TuningOrchestrator
+    from .localq import init_ray, TuningOrchestrator
 
     # Initialize Ray once
     init_ray()

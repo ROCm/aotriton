@@ -11,8 +11,8 @@ Demonstrates initialization, task dispatch, and worker execution.
 import os
 import time
 import logging
-from pq import TaskQueue, TaskDispatcher, Worker, HeartbeatManager
-from pq.admin import QueueAdmin
+from v3python.tune.pq import TaskQueue, TaskDispatcher, Worker, HeartbeatManager
+from v3python.tune.pq.admin import QueueAdmin
 
 logging.basicConfig(
     level=logging.INFO,

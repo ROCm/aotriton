@@ -23,7 +23,7 @@ fi
 load_config "$WORKDIR"
 
 # Path to schema SQL file
-SCHEMA_SQL="$AOTRITON_ROOT/v3python/pq/schema.sql"
+SCHEMA_SQL="$AOTRITON_ROOT/v3python/tune/pq/schema.sql"
 
 if [ ! -f "$SCHEMA_SQL" ]; then
     echo "Error: Schema file not found: $SCHEMA_SQL" >&2

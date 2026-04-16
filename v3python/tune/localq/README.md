@@ -192,7 +192,7 @@ Worker processes connect to the shared Ray cluster and create orchestrator:
 ```python
 # v3python/tune/worker_main.py
 
-from v3python.ray import init_ray, TuningOrchestrator
+from v3python.tune.localq import init_ray, TuningOrchestrator
 
 init_ray()  # Connect to existing Ray cluster (address='auto')
 
@@ -208,7 +208,7 @@ Multiple worker_main.py instances share the same GPU worker pool.
 ### Direct Usage
 
 ```python
-from v3python.ray import init_ray, TuningOrchestrator
+from v3python.tune.localq import init_ray, TuningOrchestrator
 
 # Initialize Ray (once per process)
 init_ray()

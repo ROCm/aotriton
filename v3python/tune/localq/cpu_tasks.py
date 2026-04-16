@@ -39,7 +39,7 @@ def db_writer_task(task_id: str, report: Dict[str, Any]) -> bool:
     Raises:
         Exception: Database errors
     """
-    from v3python.pq import save_tuning_result
+    from ..pq import save_tuning_result
 
     try:
         save_tuning_result(task_id, report, CONN_PARAMS)
@@ -70,7 +70,7 @@ def postprocess_task(task_id: str, reports: List[Dict[str, Any]], task_config: D
     Returns:
         Aggregation dictionary with brief summary
     """
-    from v3python.pq import complete_task
+    from ..pq import complete_task
 
     # Aggregate results into brief summary
     brief = {}
