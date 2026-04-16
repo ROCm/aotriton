@@ -15,33 +15,6 @@
 </section>
 
 <section>
-    <h3>Build Docker Images</h3>
-    <p>Build worker Docker images on all registered hosts.</p>
-    <p><strong>Hosts:</strong> {{ hostnames|join(', ') }}</p>
-    <button hx-post="/api/builds/images"
-            hx-swap="none"
-            hx-indicator="#image-spinner">Build All Images</button>
-    <span id="image-spinner" class="htmx-indicator">⏳ Building...</span>
-</section>
-
-<section>
-    <h3>Per-Host Image Build</h3>
-    <p>Build Docker image on a specific host.</p>
-    <form hx-post="/api/builds/images/single"
-          hx-swap="none"
-          hx-indicator="#single-image-spinner">
-        <label for="hostname-select">Select Host:</label>
-        <select name="hostname" id="hostname-select">
-            {% for hostname in hostnames %}
-            <option value="{{ hostname }}">{{ hostname }}</option>
-            {% endfor %}
-        </select>
-        <button type="submit">Build Image</button>
-        <span id="single-image-spinner" class="htmx-indicator">⏳ Building...</span>
-    </form>
-</section>
-
-<section>
     <h3>Build Information</h3>
     <table>
         <tr>
