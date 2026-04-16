@@ -17,7 +17,7 @@ ACTION="$2"
 
 if [ -z "$WORKDIR" ] || [ -z "$ACTION" ]; then
     echo "Usage: $0 <workdir> <action>" >&2
-    echo "Actions: start|stop|restart" >&2
+    echo "Actions: start|stop|restart|status" >&2
     exit 1
 fi
 
@@ -34,6 +34,31 @@ case "$ACTION" in
         "$TUNE_ROOT/single/stop_services.sh" "$WORKDIR"
         sleep 2
         "$TUNE_ROOT/single/start_services.sh" "$WORKDIR"
+        ;;
+    status)
+        PIDF="$WORKDIR/run/container.pids"
+
+        if [ ! -f "$PIDF" ]; then
+            echo "stopped"
+            exit 1
+        fi
+
+        POSTGRES_ID=$(cat "$PIDF")
+
+        if [ -z "$POSTGRES_ID" ]; then
+            echo "stopped"
+            exit 1
+        fi
+
+        # Fast check: docker ps --filter returns empty if not running
+        if docker ps --no-trunc --quiet --filter id="$POSTGRES_ID" | grep -q .; then
+            echo "running"
+            exit 0
+        else
+            echo "stopped"
+            rm -f "$PIDF"
+            exit 1
+        fi
         ;;
     *)
         echo "Unknown action: $ACTION" >&2
