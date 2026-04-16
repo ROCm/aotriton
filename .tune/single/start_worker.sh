@@ -42,6 +42,7 @@ if [ -f "$RUNFILE" ]; then
   exit 1
 fi
 
+set -x
 WORKER_CONTAINER_ID=$(docker run -d \
   --device=/dev/kfd \
   --device=/dev/dri \
@@ -53,7 +54,7 @@ WORKER_CONTAINER_ID=$(docker run -d \
   -e PYTHONPATH=/wkdir/installed/$ARCH/lib \
   --mount type=bind,source=$(realpath $WORKER_WORKDIR),target=/wkdir \
   "$CELERY_WORKER_IMAGE" \
-  bash -c 'source /wkdir/config.rc && source $(dirname $CELERY_WORKER_PYTHON)/activate && bash /wkdir/aotriton.src/.tune/remote/worker_service.sh start /wkdir && exec sleep infinity')
+  bash -c "source /wkdir/config.rc && source \$(dirname \$CELERY_WORKER_PYTHON)/activate && bash /wkdir/aotriton.src/.tune/remote/worker_service.sh start /wkdir $ARCH && exec sleep infinity")
 
 if [ -z "$WORKER_CONTAINER_ID" ]; then
   echo "Failed to start container" >&2

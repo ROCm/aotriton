@@ -29,8 +29,9 @@ IFS='|' read -r arch workdir_override <<< "$WORKER_INFO"
 
 WORKER_WORKDIR="${workdir_override:-$DEFAULT_WORKDIR}"
 
-ssh "$HOSTNAME" bash -s "$WORKER_WORKDIR" <<'EOF'
+ssh "$HOSTNAME" bash -s "$WORKER_WORKDIR" "$arch" <<'EOF'
 WORKER_WORKDIR="$1"
+ARCH="$2"
 RUNFILE="$WORKER_WORKDIR/run/worker.containerid"
 
 if [ ! -f "$RUNFILE" ]; then
@@ -41,7 +42,7 @@ fi
 WORKER_CONTAINER_ID=$(cat "$RUNFILE")
 
 echo "Stopping worker service in container: $WORKER_CONTAINER_ID"
-docker exec "$WORKER_CONTAINER_ID" bash -c "source /wkdir/config.rc && source \$(dirname \$CELERY_WORKER_PYTHON)/activate && bash /wkdir/aotriton.src/.tune/remote/worker_service.sh stop /wkdir"
+docker exec "$WORKER_CONTAINER_ID" bash -c "source /wkdir/config.rc && source \$(dirname \$CELERY_WORKER_PYTHON)/activate && bash /wkdir/aotriton.src/.tune/remote/worker_service.sh stop /wkdir $ARCH"
 
 echo "Stopping and removing container: $WORKER_CONTAINER_ID"
 docker stop "$WORKER_CONTAINER_ID"
