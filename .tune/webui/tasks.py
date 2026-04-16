@@ -382,6 +382,33 @@ def init_database(workdir):
     return _init_database.exec(workdir)
 
 
+def get_git_status(workdir):
+    """Get git status for workdir/aotriton.src and current directory"""
+    aotriton_src = Path(workdir) / 'aotriton.src'
+    cwd = Path.cwd()
+
+    script = f'''
+    # aotriton.src HEAD commit
+    echo $(cd {aotriton_src} && git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
+    # current directory HEAD commit
+    echo $(cd {cwd} && git rev-parse --short=12 HEAD 2>/dev/null || echo not-a-git-repo)
+    # check if working tree is dirty (1=dirty, 0=clean)
+    cd {cwd} && git diff --quiet HEAD && git diff --cached --quiet 2>/dev/null; echo $?
+    # check if any remote URL ends with aotriton or aotriton.git (0=yes, 1=no)
+    cd {cwd} && git config --get-regexp 'remote\..*\.url' 2>/dev/null | cut -d' ' -f2- | grep -qE 'aotriton(\.git)?$'; echo $?
+    '''
+
+    result = subprocess.run(script, shell=True, capture_output=True, text=True, executable='/bin/bash')
+    lines = result.stdout.strip().split('\n')
+
+    return {
+        'aotriton_src_head': lines[0],
+        'cwd_head': lines[1],
+        'cwd_dirty': lines[2] == '1',
+        'cwd_is_aotriton': lines[3] == '0'
+    }
+
+
 def get_config_vars(workdir):
     """Parse all variables from config.rc"""
     import re

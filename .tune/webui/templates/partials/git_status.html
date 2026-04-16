@@ -1,0 +1,25 @@
+<div style="display: inline-block; margin-bottom: 0.5rem;">
+    <table style="border-collapse: collapse;">
+        <tr>
+            <td style="padding: 0.2rem 1rem 0.2rem 0; white-space: nowrap;">Workdir/aotriton.src</td>
+            <td style="padding: 0.2rem 1rem 0.2rem 0; white-space: nowrap;">Web Server CWD</td>
+            <td style="padding: 0.2rem 0;"></td>
+        </tr>
+        <tr>
+            <td style="padding: 0.2rem 1rem 0.2rem 0;"><code>{{ git_status.aotriton_src_head }}</code></td>
+            <td style="padding: 0.2rem 1rem 0.2rem 0;">
+                {% if git_status.cwd_is_aotriton %}
+                    <code>{{ git_status.cwd_head }}{% if git_status.cwd_dirty %}-dirty{% endif %}</code>
+                {% else %}
+                    <span style="color: #dc3545;">not cloned from aotriton</span>
+                {% endif %}
+            </td>
+            <td style="padding: 0.2rem 0;">
+                <button hx-get="/api/workers/git-status"
+                        hx-target="#git-status"
+                        hx-swap="innerHTML"
+                        style="padding: 0.4rem 0.8rem; font-size: 1.2em;">⟳</button>
+            </td>
+        </tr>
+    </table>
+</div>

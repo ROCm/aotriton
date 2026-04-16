@@ -29,10 +29,12 @@ def workers():
     workers_by_arch = tasks.get_workers_by_architecture(workdir)
     supported_archs = tasks.get_supported_architectures()
     default_workdir = tasks.get_default_workdir(workdir) or '<not set>'
+    git_status = tasks.get_git_status(workdir)
     return render_template('workers.html',
                           workers_by_arch=workers_by_arch,
                           supported_archs=supported_archs,
-                          default_workdir=default_workdir)
+                          default_workdir=default_workdir,
+                          git_status=git_status)
 
 
 @bp.route('/servers')
@@ -194,6 +196,14 @@ def api_server_status():
     workdir = current_app.config['WORKDIR']
     result = tasks.get_server_status(workdir)
     return render_template('partials/server_status.html', **result)
+
+
+@bp.route('/api/workers/git-status', methods=['GET'])
+def api_git_status():
+    """Get git status (returns HTML for HTMX)"""
+    workdir = current_app.config['WORKDIR']
+    git_status = tasks.get_git_status(workdir)
+    return render_template('partials/git_status.html', git_status=git_status)
 
 
 # API endpoints for build actions

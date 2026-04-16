@@ -33,6 +33,9 @@
 
 <section>
     <h3>Deployment</h3>
+    <div id="git-status">
+        {% include 'partials/git_status.html' %}
+    </div>
     <button hx-post="/api/deploy/prepare"
             hx-swap="none"
             hx-indicator="#prepare-spinner">Prepare Workdir</button>
