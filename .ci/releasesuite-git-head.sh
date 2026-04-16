@@ -158,7 +158,7 @@ if [[ -n "${SUITE_YAML}" && ${SUITE_SELECT_IMAGE} -gt 0 ]]; then
   readarray -t TRITON_ALTHASH < <(yq -r '.venvs|.[]' "${SUITE_YAML}")
   mkdir -p "${INPUT_DIR}/altwheels"
   cp "${SUITE_YAML}" "${INPUT_DIR}/altwheels/tmpconfig.yaml"
-  bash "${SCRIPT_DIR}/build-altwheels.sh" "${INPUT_DIR}/altwheels" "${TRITON_ALTHASH[@]}"
+  # bash "${SCRIPT_DIR}/build-altwheels.sh" "${INPUT_DIR}/altwheels" "${TRITON_ALTHASH[@]}"
   replace_hash \
     "${INPUT_DIR}/altwheels/tmpconfig.yaml" \
     "${INPUT_DIR}/altwheels" \
@@ -167,6 +167,7 @@ if [[ -n "${SUITE_YAML}" && ${SUITE_SELECT_IMAGE} -gt 0 ]]; then
   ALTWHEEL_CFG="/input/altwheels/tmpconfig.yaml"
 else
   ALTWHEEL_CFG=""
+  exit 1
 fi
 
 function build_inside() {
@@ -187,6 +188,7 @@ function build_inside() {
       --build-arg ROCM_VERSION_IN_URL=${rocmver} \
       -f ${DOCKERFILE} .
   fi
+  set -x
   docker run --network=host -it --rm \
     -v ${SOURCE_VOLUME}:/src:ro \
     --mount "type=bind,source=$(realpath ${INPUT_DIR}),target=/input" \
@@ -207,6 +209,6 @@ if [ ${SUITE_SELECT_RUNTIME} -gt 0 ]; then
 fi
 
 if [ ${SUITE_SELECT_IMAGE} -gt 0 ]; then
-  rocmver=7.1
+  rocmver=7.13
   build_inside ${rocmver} OFF
 fi
