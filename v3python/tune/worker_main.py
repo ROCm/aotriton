@@ -156,7 +156,8 @@ def daemonize(pidfile: Path, log_file: Path):
         sys.exit(1)
 
     # Decouple from parent environment
-    os.chdir('/')
+    # Keep CWD (aotriton root) instead of chdir('/') so Python can import v3python
+    # Safe in container environment where workdir is always mounted
     os.setsid()
     os.umask(0)
 
