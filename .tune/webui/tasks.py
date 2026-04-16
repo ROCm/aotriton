@@ -382,6 +382,52 @@ def init_database(workdir):
     return _init_database.exec(workdir)
 
 
+def get_server_status(workdir):
+    """Get server status (cheap, suitable for polling)"""
+    pidf = Path(workdir) / 'run' / 'container.pids'
+
+    if not pidf.exists():
+        return {
+            'status': 'stopped',
+            'running': False,
+            'container_name': None
+        }
+
+    container_id = pidf.read_text().strip()
+
+    if not container_id:
+        return {
+            'status': 'stopped',
+            'running': False,
+            'container_name': None
+        }
+
+    # Fast check using docker ps --filter (cheap for polling)
+    result = subprocess.run(
+        ['docker', 'ps', '--no-trunc', '--quiet', '--filter', f'id={container_id}'],
+        capture_output=True,
+        text=True
+    )
+
+    running = bool(result.stdout.strip())
+
+    # Get container name (only if running)
+    container_name = None
+    if running:
+        name_result = subprocess.run(
+            ['docker', 'ps', '--no-trunc', '--filter', f'id={container_id}', '--format', '{{.Names}}'],
+            capture_output=True,
+            text=True
+        )
+        container_name = name_result.stdout.strip()
+
+    return {
+        'status': 'running' if running else 'stopped',
+        'running': running,
+        'container_name': container_name
+    }
+
+
 # Build functions
 
 def build_libraries(workdir):

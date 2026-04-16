@@ -42,17 +42,15 @@
         <thead>
             <tr>
                 <th>Service</th>
-                <th>Container Name</th>
                 <th>Status</th>
             </tr>
         </thead>
         <tbody>
             <tr>
                 <td><strong>PostgreSQL</strong></td>
-                <td><code>{{ config.POSTGRES_CONTAINER }}</code></td>
                 <td>
-                    <span hx-get="/api/servers/postgres/status"
-                          hx-trigger="load, every 10s"
+                    <span hx-get="/api/servers/status"
+                          hx-trigger="load, every 5s"
                           hx-swap="innerHTML">
                         <span class="status-badge status-unknown">Checking...</span>
                     </span>

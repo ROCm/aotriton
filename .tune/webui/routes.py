@@ -187,6 +187,14 @@ def api_init_database():
     return jsonify(result)
 
 
+@bp.route('/api/servers/status', methods=['GET'])
+def api_server_status():
+    """Get server status (returns HTML for HTMX)"""
+    workdir = current_app.config['WORKDIR']
+    result = tasks.get_server_status(workdir)
+    return render_template('partials/server_status.html', **result)
+
+
 # API endpoints for build actions
 
 @bp.route('/api/builds/libraries', methods=['POST'])
