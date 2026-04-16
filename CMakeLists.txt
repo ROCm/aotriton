@@ -212,10 +212,7 @@ else()
       COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_BIN_PYTHON}" -m pip install ${AOTRITON_USE_LOCAL_TRITON_WHEEL}
     )
   else()
-    add_custom_command(OUTPUT "${AOTRITON_TRITON_SO}"
-      COMMAND ${CMAKE_COMMAND} -E env TRITON_BUILD_PROTON=OFF VIRTUAL_ENV=${VENV_DIR} TRITON_BUILD_DIR=${TRITON_BUILD_DIR} "${VENV_BIN_PYTHON}" -m pip install .
-      WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/third_party/triton/"
-    )
+    message(WARNING "Triton should not be built as a subproject of AOTriton on theRock. See https://github.com/ROCm/aotriton/issues/166 for more details")
   endif()
   LIST(APPEND ALL_TRITON_SOS "${AOTRITON_TRITON_SO}")
 endif()
