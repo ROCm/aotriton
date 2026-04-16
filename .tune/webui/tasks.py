@@ -257,8 +257,8 @@ class BuildImageOnWorkerCommand(CommandBuilder):
     RELATIVE = '.tune/single/build_image.sh'
 
     def exec(self, workdir, hostname):
-        """Execute build_image.sh for a specific worker"""
-        return self._run(self.RELATIVE, [workdir, hostname], workdir, f'Build image on {hostname}')
+        """Execute build_image.sh for a specific worker with --follow for web UI"""
+        return self._run(self.RELATIVE, [workdir, hostname, '--follow'], workdir, f'Build image on {hostname}')
 
 
 class DeployCommand(CommandBuilder):

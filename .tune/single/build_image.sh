@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 
 # Build Docker image on one host
-# Usage: build_image.sh <workdir> <hostname>
+# Usage: build_image.sh <workdir> <hostname> [--follow]
 
 set -e
 
@@ -15,9 +15,15 @@ TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 WORKDIR="$1"
 HOSTNAME="$2"
+FOLLOW=""
+
+# Parse optional --follow flag
+if [ "$3" = "--follow" ]; then
+  FOLLOW="true"
+fi
 
 if [ -z "$WORKDIR" ] || [ -z "$HOSTNAME" ]; then
-  echo "Usage: $0 <workdir> <hostname>" >&2
+  echo "Usage: $0 <workdir> <hostname> [--follow]" >&2
   exit 1
 fi
 
@@ -30,4 +36,8 @@ IFS='|' read -r arch workdir_override <<< "$WORKER_INFO"
 WORKER_WORKDIR="${workdir_override:-$DEFAULT_WORKDIR}"
 
 # Certain nodes need --network=host to access internet
-ssh -n "$HOSTNAME" "tsp docker build --network=host -f $WORKER_WORKDIR/image.build/Dockerfile -t $CELERY_WORKER_IMAGE $WORKER_WORKDIR"
+if [ -n "$FOLLOW" ]; then
+  ssh "$HOSTNAME" "jobid=\$(tsp docker build --network=host -f $WORKER_WORKDIR/image.build/Dockerfile -t $CELERY_WORKER_IMAGE $WORKER_WORKDIR) && tsp -c \$jobid"
+else
+  ssh -n "$HOSTNAME" "tsp docker build --network=host -f $WORKER_WORKDIR/image.build/Dockerfile -t $CELERY_WORKER_IMAGE $WORKER_WORKDIR"
+fi
