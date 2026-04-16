@@ -145,6 +145,14 @@ def api_worker_status(hostname):
     return '<span style="color: red">Not Found</span>'
 
 
+@bp.route('/api/workers/<hostname>/build-image', methods=['POST'])
+def api_build_image_on_worker(hostname):
+    """Build Docker image on specific worker"""
+    workdir = current_app.config['WORKDIR']
+    result = tasks.build_image_on_worker(workdir, hostname)
+    return jsonify(result)
+
+
 # API endpoints for server actions
 
 @bp.route('/api/servers/start', methods=['POST'])

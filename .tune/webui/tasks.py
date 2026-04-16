@@ -252,6 +252,15 @@ class BuildImagesCommand(BuildCommand):
     DESCRIPTION = 'Build Docker images'
 
 
+class BuildImageOnWorkerCommand(CommandBuilder):
+    """Build Docker image on a single worker"""
+    RELATIVE = '.tune/single/build_image.sh'
+
+    def exec(self, workdir, hostname):
+        """Execute build_image.sh for a specific worker"""
+        return self._run(self.RELATIVE, [workdir, hostname], workdir, f'Build image on {hostname}')
+
+
 class DeployCommand(CommandBuilder):
     """Base class for deployment operations"""
     RELATIVE = None  # Subclass must define
@@ -296,6 +305,7 @@ _init_database = InitDatabaseCommand()
 
 _build_libraries = BuildLibrariesCommand()
 _build_images = BuildImagesCommand()
+_build_image_on_worker = BuildImageOnWorkerCommand()
 
 _deploy_all = DeployAllCommand()
 _prepare_workdir = PrepareWorkdirCommand()
@@ -382,6 +392,11 @@ def build_libraries(workdir):
 def build_images(workdir):
     """Build Docker images"""
     return _build_images.exec(workdir)
+
+
+def build_image_on_worker(workdir, hostname):
+    """Build Docker image on specific worker"""
+    return _build_image_on_worker.exec(workdir, hostname)
 
 
 # Deploy functions
