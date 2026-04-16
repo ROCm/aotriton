@@ -49,6 +49,7 @@ case "$ACTION" in
         fi
 
         "$RAY_BIN" start --head \
+            --node-ip-address=127.0.0.1 \
             --num-gpus="$NUM_GPUS" \
             --temp-dir="$RAY_TMPDIR" \
             --include-dashboard=false \
