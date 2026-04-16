@@ -11,7 +11,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AOTRITON_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-WORKER_MAIN="$AOTRITON_ROOT/v3python/tune/worker_main.py"
+
+# Change to aotriton root so Python can find v3python module
+cd "$AOTRITON_ROOT"
+
+WORKER_MODULE="v3python.tune.worker_main"
 
 # Load config utilities
 . "$TUNE_ROOT/lib/config_load.sh"
@@ -64,9 +68,9 @@ fi
 
 load_config_container "$WORKDIR" || exit 1
 
-# Validate worker_main.py exists
-if [ ! -f "$WORKER_MAIN" ]; then
-    echo "Error: worker_main.py not found: $WORKER_MAIN"
+# Validate worker_main module exists
+if [ ! -f "v3python/tune/worker_main.py" ]; then
+    echo "Error: worker_main.py not found in v3python/tune/"
     exit 1
 fi
 
@@ -132,8 +136,8 @@ start_worker() {
     # Set Ray temp directory so worker_main.py can find the Ray cluster
     export RAY_TMPDIR="$WORKDIR/run/ray"
 
-    # Use Python from config
-    "$CELERY_WORKER_PYTHON" "$WORKER_MAIN" \
+    # Use Python from config with -m flag for proper module import
+    "$CELERY_WORKER_PYTHON" -m "$WORKER_MODULE" \
         "$WORKDIR" \
         "$ARCH" \
         --worker_id "$worker_id" \
