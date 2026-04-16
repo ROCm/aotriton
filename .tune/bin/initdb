@@ -72,9 +72,35 @@ docker run --rm \
     postgresql://"$POSTGRES_USER"@"$POSTGRES_HOST":"$POSTGRES_PORT" \
     -f /schema.sql
 
-if [ $? -eq 0 ]; then
-    echo "Database schema initialized successfully"
-else
+if [ $? -ne 0 ]; then
     echo "Error: Failed to initialize database schema" >&2
     exit 1
+fi
+
+echo "Database schema initialized successfully"
+
+# Create partitions for all architectures in workers.db
+echo "Creating partitions for architectures in workers.db..."
+ARCHS=$(sqlite3 "$WORKDIR/workers.db" "SELECT DISTINCT arch FROM workers;" 2>/dev/null)
+
+if [ -z "$ARCHS" ]; then
+    echo "Warning: No workers found in workers.db, no partitions created"
+else
+    for ARCH in $ARCHS; do
+        echo "Creating partition for architecture: $ARCH"
+        docker run --rm \
+            --network=host \
+            -e PGPASSWORD="$POSTGRES_PASSWORD" \
+            "$PSQL_IMAGE" \
+            postgresql://"$POSTGRES_USER"@"$POSTGRES_HOST":"$POSTGRES_PORT" \
+            -c "SELECT create_arch_partition('$ARCH');"
+
+        if [ $? -eq 0 ]; then
+            echo "  ✓ Partition task_queue_$ARCH created"
+        else
+            echo "  ✗ Failed to create partition for $ARCH" >&2
+            exit 1
+        fi
+    done
+    echo "All partitions created successfully"
 fi
