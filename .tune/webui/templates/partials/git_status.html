@@ -1,9 +1,8 @@
-<div style="display: inline-block; margin-bottom: 0.5rem;">
-    <table style="border-collapse: collapse;">
+<div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem;">
+    <table style="border-collapse: collapse; width: auto;">
         <tr>
-            <td style="padding: 0.2rem 1rem 0.2rem 0; white-space: nowrap;">Workdir/aotriton.src</td>
-            <td style="padding: 0.2rem 1rem 0.2rem 0; white-space: nowrap;">Web Server CWD</td>
-            <td style="padding: 0.2rem 0;"></td>
+            <td style="padding: 0.2rem 1rem 0.2rem 0; white-space: nowrap; font-weight: bold;">Workdir/aotriton.src</td>
+            <td style="padding: 0.2rem 1rem 0.2rem 0; white-space: nowrap; font-weight: bold;">Web Server CWD</td>
         </tr>
         <tr>
             <td style="padding: 0.2rem 1rem 0.2rem 0;"><code>{{ git_status.aotriton_src_head }}</code></td>
@@ -14,12 +13,10 @@
                     <span style="color: #dc3545;">not cloned from aotriton</span>
                 {% endif %}
             </td>
-            <td style="padding: 0.2rem 0;">
-                <button hx-get="/api/workers/git-status"
-                        hx-target="#git-status"
-                        hx-swap="innerHTML"
-                        style="padding: 0.4rem 0.8rem; font-size: 1.2em;">⟳</button>
-            </td>
         </tr>
     </table>
+    <button hx-get="/api/workers/git-status"
+            hx-target="#git-status"
+            hx-swap="innerHTML"
+            style="padding: 0.8rem 1.2rem; font-size: 1.8em;">⟳</button>
 </div>
