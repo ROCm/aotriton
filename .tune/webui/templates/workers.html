@@ -52,6 +52,12 @@
             hx-swap="none"
             hx-indicator="#deploy-all-spinner">Deploy to All Workers</button>
     <span id="deploy-all-spinner" class="htmx-indicator">⏳ Deploying...</span>
+    <br>
+    <button hx-post="/api/builds/images"
+            hx-swap="none"
+            hx-indicator="#build-images-spinner"
+            style="margin-top: 0.5rem; background-color: #17a2b8; color: white;">Build Images on All Workers</button>
+    <span id="build-images-spinner" class="htmx-indicator">⏳ Building...</span>
 </section>
 
 {% for arch in supported_archs %}
