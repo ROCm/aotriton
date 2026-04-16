@@ -42,8 +42,8 @@ def run_command(cmd, cwd, workdir, description=None):
     cmd_parts = [str(p) for p in cmd]
     cmd_str = ' '.join(cmd_parts)
 
-    # Get log directory from workdir
-    log_dir = Path(workdir) / 'logs' / 'commands'
+    # Get log directory from workdir (use /scratch which is excluded from sync)
+    log_dir = Path(workdir) / 'scratch' / 'webui-commands'
 
     # Create tracker
     tracker = current_app.tracker_registry.create(
@@ -281,8 +281,8 @@ class PrepareWorkdirCommand(DeployCommand):
     DESCRIPTION = 'Prepare workdir'
 
     def exec(self, workdir):
-        # Ensure logs directory exists
-        log_dir = Path(workdir) / 'logs' / 'commands'
+        # Ensure log directory exists (use /scratch which is excluded from sync)
+        log_dir = Path(workdir) / 'scratch' / 'webui-commands'
         log_dir.mkdir(parents=True, exist_ok=True)
 
         return super().exec(workdir)
