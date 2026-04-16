@@ -64,9 +64,10 @@ def get_db_connection_params(workdir: Path) -> Dict[str, Any]:
     if not config_rc.exists():
         raise FileNotFoundError(f"Config file not found: {config_rc}")
 
-    # Source the config file and print environment variables
+    # Source the config file and print specific variables
+    # Note: config.rc sets variables but doesn't export them, so we can't use 'env'
     result = subprocess.run(
-        f'. {config_rc} && env',
+        f'. {config_rc} && echo "$CELERY_SERVICE_HOST" && echo "$POSTGRES_PORT" && echo "$POSTGRES_USER" && echo "$POSTGRES_PASSWORD"',
         shell=True,
         capture_output=True,
         text=True,
@@ -76,18 +77,16 @@ def get_db_connection_params(workdir: Path) -> Dict[str, Any]:
     if result.returncode != 0:
         raise RuntimeError(f"Failed to source config.rc: {result.stderr}")
 
-    # Parse environment variables
-    env = {}
-    for line in result.stdout.splitlines():
-        if '=' in line:
-            key, value = line.split('=', 1)
-            env[key] = value
+    # Parse output lines
+    lines = result.stdout.strip().split('\n')
+    if len(lines) < 4:
+        raise RuntimeError(f"Incomplete config.rc output: {result.stdout}")
 
     return {
-        'host': env.get('CELERY_SERVICE_HOST', 'localhost'),
-        'port': int(env.get('POSTGRES_PORT', 5432)),
-        'user': env.get('POSTGRES_USER', 'aotriton'),
-        'password': env.get('POSTGRES_PASSWORD')
+        'host': lines[0] or 'localhost',
+        'port': int(lines[1]) if lines[1] else 5432,
+        'user': lines[2] or 'aotriton',
+        'password': lines[3] or None
     }
 
 
