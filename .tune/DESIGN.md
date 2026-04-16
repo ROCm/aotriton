@@ -16,16 +16,18 @@
 │   ├── gfx942/
 │   └── ...
 ├── build/                   # Build artifacts (EXCLUDED from sync)
-├── run/                     # Runtime state (PID files, etc.) (EXCLUDED from sync)
+├── run/                     # Runtime state (PID files, logs) (EXCLUDED from sync)
+│   ├── pids/                # Worker PID files
+│   │   └── worker-<arch>-<id>.pid
+│   ├── logs/                # Worker log files
+│   │   └── worker-<arch>-<id>.log
+│   └── worker.containerid   # Docker container ID (used by single/ scripts)
 ├── scratch/                 # Temporary/local-only data (EXCLUDED from sync)
 │   └── webui-commands/      # Web UI command logs
-├── secrets/                 # Secrets (certificates, keys) (EXCLUDED from sync)
-│   ├── ca-cert.pem
-│   ├── server-cert.pem
-│   └── server-key.pem
-└── logs/                    # Logs (synced to workers)
-    ├── worker-<arch>-<id>.log
-    └── ...
+└── secrets/                 # Secrets (certificates, keys) (EXCLUDED from sync)
+    ├── ca-cert.pem
+    ├── server-cert.pem
+    └── server-key.pem
 ```
 
 ### Sync Exclusions
@@ -323,6 +325,8 @@ docker run "$IMAGE" ...
 
 ### config.rc Variables
 
+**Important**: config.rc contains **only** machine-independent configuration. Node-specific values (like NUM_GPUS) are auto-detected at runtime.
+
 ```bash
 # PostgreSQL
 CELERY_SERVICE_HOST=localhost
@@ -334,12 +338,16 @@ POSTGRES_DOCKER_VOLUME=<path>
 
 # Workers
 DEFAULT_WORKDIR=/opt/aotriton/workdir
-NUM_GPUS=4
 CONTAINER_SUFFIX=<unique-id>
 
 # Docker Images
 CELERY_WORKER_IMAGE=aotriton-worker:latest
 ```
+
+**Node-Specific Values** (NOT in config.rc):
+- **NUM_GPUS**: Auto-detected via `rocm_agent_enumerator | grep -v gfx000 | wc -l` in:
+  - rayctl (Ray cluster initialization)
+  - worker_service.sh (exported to Python worker processes)
 
 **Loading Pattern**:
 ```bash
@@ -373,7 +381,7 @@ ssh <worker> "cd <workdir> && .tune/remote/worker_service.sh <workdir> <arch> st
 
 **View logs**:
 ```bash
-ssh <worker> "tail -f <workdir>/logs/worker-<arch>-<id>.log"
+ssh <worker> "tail -f <workdir>/run/logs/worker-<arch>-<id>.log"
 ```
 
 **Web UI command logs**:

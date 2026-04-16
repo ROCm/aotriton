@@ -19,3 +19,14 @@ load_config() {
         return 1
     fi
 }
+
+# Simple config loader for scripts running inside containers
+# Does not query database - workdir is always /wkdir in container
+load_config_container() {
+    local workdir="$1"
+    if [ ! -f "$workdir/config.rc" ]; then
+        echo "Error: config.rc not found in $workdir" >&2
+        return 1
+    fi
+    . "$workdir/config.rc"
+}

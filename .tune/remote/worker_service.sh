@@ -10,7 +10,11 @@ set -euo pipefail
 # Get script directory and aotriton root
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AOTRITON_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 WORKER_MAIN="$AOTRITON_ROOT/v3python/tune/worker_main.py"
+
+# Load config utilities
+. "$TUNE_ROOT/lib/config_load.sh"
 
 usage() {
     cat <<EOF
@@ -36,8 +40,8 @@ Examples:
     $0 restart /path/to/workdir gfx942 8
     $0 status /path/to/workdir gfx942
 
-PID files location: <workdir>/pids/worker-<arch>-<id>.pid
-Log files location: <workdir>/logs/worker-<arch>-<id>.log
+PID files location: <workdir>/run/pids/worker-<arch>-<id>.pid
+Log files location: <workdir>/run/logs/worker-<arch>-<id>.log
 EOF
     exit 1
 }
@@ -58,10 +62,7 @@ if [ ! -d "$WORKDIR" ]; then
     exit 1
 fi
 
-if [ ! -f "$WORKDIR/config.rc" ]; then
-    echo "Error: config.rc not found in workdir: $WORKDIR"
-    exit 1
-fi
+load_config_container "$WORKDIR" || exit 1
 
 # Validate worker_main.py exists
 if [ ! -f "$WORKER_MAIN" ]; then
@@ -70,8 +71,8 @@ if [ ! -f "$WORKER_MAIN" ]; then
 fi
 
 # Directories
-PID_DIR="$WORKDIR/pids"
-LOG_DIR="$WORKDIR/logs"
+PID_DIR="$WORKDIR/run/pids"
+LOG_DIR="$WORKDIR/run/logs"
 
 mkdir -p "$PID_DIR" "$LOG_DIR"
 
@@ -121,14 +122,22 @@ start_worker() {
 
     echo "Starting worker $ARCH-$worker_id..."
 
-    python3 "$WORKER_MAIN" \
+    # Auto-detect NUM_GPUS if not set (node-specific)
+    if [ -z "${NUM_GPUS:-}" ]; then
+        NUM_GPUS=$(rocm_agent_enumerator | grep -v gfx000 | wc -l)
+        echo "Auto-detected $NUM_GPUS GPUs for worker $ARCH-$worker_id"
+    fi
+    export NUM_GPUS
+
+    # Use Python from config
+    "$CELERY_WORKER_PYTHON" "$WORKER_MAIN" \
         "$WORKDIR" \
         "$ARCH" \
-        --worker-id "$worker_id" \
+        --worker_id "$worker_id" \
         --daemonize \
         --pidfile "$pidfile" \
         --logfile "$logfile" \
-        --log-level INFO
+        --log_level INFO
 
     # Wait a moment and verify it started
     sleep 1

@@ -21,18 +21,34 @@ if [ -z "$WORKDIR" ] || [ -z "$ACTION" ]; then
     exit 1
 fi
 
-load_config "$WORKDIR"
+load_config_container "$WORKDIR"
+
+# Derive ray binary path from CELERY_WORKER_PYTHON
+if [ -z "$CELERY_WORKER_PYTHON" ]; then
+    echo "Error: CELERY_WORKER_PYTHON not set in config.rc" >&2
+    exit 1
+fi
+RAY_BIN="$(dirname "$CELERY_WORKER_PYTHON")/ray"
+
+if [ ! -x "$RAY_BIN" ]; then
+    echo "Error: Ray not found at $RAY_BIN" >&2
+    exit 1
+fi
 
 # Ray temp directory
-RAY_TMPDIR="$WORKDIR/ray"
+RAY_TMPDIR="$WORKDIR/run/ray"
 mkdir -p "$RAY_TMPDIR"
 
 case "$ACTION" in
     start)
         echo "Starting Ray cluster..."
-        NUM_GPUS="${NUM_GPUS:-4}"
+        # Auto-detect GPU count if not specified
+        if [ -z "$NUM_GPUS" ]; then
+            NUM_GPUS=$(rocm_agent_enumerator | grep -v gfx000 | wc -l)
+            echo "Auto-detected $NUM_GPUS GPUs"
+        fi
 
-        ray start --head \
+        "$RAY_BIN" start --head \
             --num-gpus="$NUM_GPUS" \
             --temp-dir="$RAY_TMPDIR" \
             --include-dashboard=false \
@@ -42,11 +58,11 @@ case "$ACTION" in
         ;;
     stop)
         echo "Stopping Ray cluster..."
-        ray stop
+        "$RAY_BIN" stop
         echo "Ray cluster stopped"
         ;;
     status)
-        ray status || echo "Ray cluster not running"
+        "$RAY_BIN" status || echo "Ray cluster not running"
         ;;
     *)
         echo "Unknown action: $ACTION" >&2
