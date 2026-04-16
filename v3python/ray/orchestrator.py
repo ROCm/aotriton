@@ -35,6 +35,12 @@ def init_ray(address: str = 'auto') -> None:
 
     Args:
         address: Ray cluster address ('auto' to auto-discover)
+
+    Connection mechanism:
+        - rayctl starts Ray with --temp-dir=$WORKDIR/run/ray --node-ip-address=127.0.0.1
+        - worker_service.sh exports RAY_TMPDIR=$WORKDIR/run/ray before starting worker_main.py
+        - ray.init(address='auto') reads $RAY_TMPDIR and finds cluster at 127.0.0.1:6379
+        - All workers share same Ray cluster (single node, localhost-only)
     """
     if ray.is_initialized():
         logger.debug('Already connected to Ray cluster')
@@ -42,6 +48,7 @@ def init_ray(address: str = 'auto') -> None:
 
     logger.info(f'Connecting to Ray cluster at {address}')
 
+    # Ray uses RAY_TMPDIR env var (set by worker_service.sh) to locate cluster
     ray.init(
         address=address,
         ignore_reinit_error=True,

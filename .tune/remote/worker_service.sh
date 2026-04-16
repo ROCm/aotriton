@@ -129,6 +129,9 @@ start_worker() {
     fi
     export NUM_GPUS
 
+    # Set Ray temp directory so worker_main.py can find the Ray cluster
+    export RAY_TMPDIR="$WORKDIR/run/ray"
+
     # Use Python from config
     "$CELERY_WORKER_PYTHON" "$WORKER_MAIN" \
         "$WORKDIR" \
