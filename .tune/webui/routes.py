@@ -39,7 +39,8 @@ def workers():
 def servers():
     """Server control page"""
     workdir = current_app.config['WORKDIR']
-    return render_template('servers.html')
+    config_vars = tasks.get_config_vars(workdir)
+    return render_template('servers.html', config_vars=config_vars)
 
 
 @bp.route('/builds')

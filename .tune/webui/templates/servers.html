@@ -61,24 +61,22 @@
 </section>
 
 <section>
-    <h3>Configuration</h3>
+    <h3>Configuration (config.rc)</h3>
     <table>
-        <tr>
-            <th>Setting</th>
-            <th>Value</th>
-        </tr>
-        <tr>
-            <td>Service Host</td>
-            <td><code>{{ config.CELERY_SERVICE_HOST }}</code></td>
-        </tr>
-        <tr>
-            <td>PostgreSQL Image</td>
-            <td><code>{{ config.POSTGRES_DOCKER_IMAGE }}</code></td>
-        </tr>
-        <tr>
-            <td>PostgreSQL Volume</td>
-            <td><code>{{ config.POSTGRES_DOCKER_VOLUME }}</code></td>
-        </tr>
+        <thead>
+            <tr>
+                <th>Variable</th>
+                <th>Value</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for key, value in config_vars.items() %}
+            <tr>
+                <td><strong>{{ key }}</strong></td>
+                <td><code>{{ value }}</code></td>
+            </tr>
+            {% endfor %}
+        </tbody>
     </table>
 </section>
 {% endblock %}

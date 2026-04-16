@@ -382,6 +382,48 @@ def init_database(workdir):
     return _init_database.exec(workdir)
 
 
+def get_config_vars(workdir):
+    """Parse all variables from config.rc"""
+    import re
+    config_rc = Path(workdir) / 'config.rc'
+
+    if not config_rc.exists():
+        return {}
+
+    # Parse keys from config.rc using pattern ^\w+=
+    keys = []
+    for line in config_rc.read_text().splitlines():
+        line = line.strip()
+        # Match lines like VAR= or VAR_NAME=
+        match = re.match(r'^(\w+)=', line)
+        if match:
+            keys.append(match.group(1))
+
+    if not keys:
+        return {}
+
+    # Source config.rc and echo all found keys
+    echo_cmds = ' && '.join([f'echo "${key}"' for key in keys])
+    result = subprocess.run(
+        f'. {config_rc} && {echo_cmds}',
+        shell=True,
+        capture_output=True,
+        text=True,
+        executable='/bin/bash'
+    )
+
+    if result.returncode != 0:
+        return {}
+
+    # Pair keys with values
+    values = result.stdout.strip().split('\n')
+    config_vars = {}
+    for key, value in zip(keys, values):
+        config_vars[key] = value
+
+    return dict(sorted(config_vars.items()))
+
+
 def get_server_status(workdir):
     """Get server status (cheap, suitable for polling)"""
     pidf = Path(workdir) / 'run' / 'container.pids'
