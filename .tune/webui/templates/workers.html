@@ -117,10 +117,10 @@
                     <button hx-post="/api/workers/{{ worker.hostname }}/stop-start"
                             hx-swap="none"
                             style="font-size: 0.8em; padding: 0.3rem 0.5rem;">Stop & Start</button>
+                    <br style="margin: 0.2rem 0;">
                     <button hx-post="/api/deploy/{{ worker.hostname }}"
                             hx-swap="none"
-                            style="font-size: 0.8em; padding: 0.3rem 0.5rem;">Deploy</button>
-                    <br style="margin: 0.2rem 0;">
+                            style="font-size: 0.8em; padding: 0.3rem 0.5rem; background-color: #17a2b8; color: white;">Deploy</button>
                     <button hx-post="/api/workers/{{ worker.hostname }}/build-image"
                             hx-swap="none"
                             style="font-size: 0.8em; padding: 0.3rem 0.5rem; background-color: #17a2b8; color: white;">Build Image</button>
