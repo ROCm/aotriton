@@ -48,6 +48,9 @@ case "$ACTION" in
             echo "Auto-detected $NUM_GPUS GPUs"
         fi
 
+        # Force Ray to bind to localhost
+        export RAY_NODE_IP_ADDRESS=127.0.0.1
+
         "$RAY_BIN" start --head \
             --node-ip-address=127.0.0.1 \
             --num-gpus="$NUM_GPUS" \
