@@ -9,6 +9,10 @@ project(AOTriton CXX C ASM)
 set(AOTRITON_VERSION_MAJOR_INT 0)
 set(AOTRITON_VERSION_MINOR_INT 11)
 set(AOTRITON_VERSION_PATCH_INT 2)
+if(DEFINED ENV{USE_ASAN} AND "$ENV{USE_ASAN}" STREQUAL "1")
+  # D is for debugging
+  math(EXPR AOTRITON_VERSION_PATCH_INT "${AOTRITON_VERSION_PATCH_INT} + 0xd0")
+endif()
 # Must have integer-suffix, other 0 generates
 # /* #undef AOTRITON_VERSION_MAJOR */
 # in config.h
