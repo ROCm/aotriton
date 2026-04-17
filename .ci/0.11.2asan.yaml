@@ -1,0 +1,4 @@
+venvs:
+  # default: build from source with third_party/triton
+  default: 0b580fb679b1ed86a65bc7a43596ab080345d501
+rules: []
