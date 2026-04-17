@@ -1,0 +1,75 @@
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+"""
+CPU Worker for Unix socket-based local queue.
+
+Pulls tasks from cpu_queue and executes CPU operations (write results, postprocess).
+"""
+
+import sys
+import os
+import logging
+import argparse
+
+from .generic_worker import GenericWorker
+from .handlers import WriteHsacoResultHandler, PostprocessHandler
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
+logger = logging.getLogger(__name__)
+
+
+def get_db_connection_params():
+    """Get PostgreSQL connection parameters from environment"""
+    return {
+        'host': os.environ.get('CELERY_SERVICE_HOST', 'localhost'),
+        'port': int(os.environ.get('POSTGRES_PORT', 5432)),
+        'user': os.environ.get('POSTGRES_USER'),
+        'password': os.environ.get('POSTGRES_PASSWORD'),
+    }
+
+
+def main():
+    """CPU worker main entry point"""
+    parser = argparse.ArgumentParser(description='CPU worker for local queue')
+    parser.add_argument('--worker-id', type=str, default='cpu-0',
+                       help='Worker identifier')
+    parser.add_argument('--broker-socket', type=str,
+                       default='/tmp/aotriton-broker.sock',
+                       help='Path to broker Unix socket')
+    args = parser.parse_args()
+
+    # Get database connection parameters
+    conn_params = get_db_connection_params()
+
+    # Create handlers for CPU tasks
+    handlers = [
+        WriteHsacoResultHandler(conn_params),
+        PostprocessHandler(conn_params),
+    ]
+
+    # Create and run worker
+    worker = GenericWorker(
+        worker_id=args.worker_id,
+        queue_name='cpu_queue',
+        handlers=handlers,
+        broker_socket=args.broker_socket
+    )
+
+    logger.info(f"Starting CPU worker {args.worker_id}")
+
+    try:
+        worker.run()
+    except KeyboardInterrupt:
+        logger.info(f"CPU worker {args.worker_id} interrupted")
+    except Exception as e:
+        logger.error(f"CPU worker {args.worker_id} failed: {e}", exc_info=True)
+        sys.exit(1)
+
+
+if __name__ == '__main__':
+    main()

@@ -3,13 +3,13 @@
 # SPDX-License-Identifier: MIT
 
 """
-Dispatch tuning tasks to Celery distributed framework.
+Dispatch tuning tasks to PostgreSQL queue (Tuner v3.5).
 
 This script:
 1. Loads a tuning module (e.g., 'flash')
 2. Queries the module's parameter choices
 3. Allows filtering via command-line arguments
-4. Dispatches tasks to Celery workers
+4. Dispatches tasks to PostgreSQL queue using bulk INSERT
 """
 
 import sys
@@ -33,6 +33,9 @@ def load_config(workdir: Path):
             line = line.strip()
             if not line or line.startswith('#'):
                 continue
+            # Remove inline comments
+            if '#' in line:
+                line = line[:line.index('#')].strip()
             if '=' in line:
                 # Simple parsing: KEY=VALUE
                 key, value = line.split('=', 1)
@@ -40,8 +43,23 @@ def load_config(workdir: Path):
                 value = value.strip().strip('"').strip("'")
                 os.environ[key] = value
 
-    # Set AOTRITON_CELERY_WORKDIR for tasks.py
-    os.environ['AOTRITON_CELERY_WORKDIR'] = str(workdir.resolve())
+def get_db_connection_params():
+    """Get PostgreSQL connection parameters from environment."""
+    postgres_user = os.environ.get('POSTGRES_USER')
+    postgres_password = os.environ.get('POSTGRES_PASSWORD')
+    celery_service_host = os.environ.get('CELERY_SERVICE_HOST')
+    postgres_port = os.environ.get('POSTGRES_PORT')
+
+    if not all([postgres_user, postgres_password, celery_service_host, postgres_port]):
+        sys.exit("Error: Missing PostgreSQL credentials in config.rc. "
+                 "Required: POSTGRES_USER, POSTGRES_PASSWORD, CELERY_SERVICE_HOST, POSTGRES_PORT")
+
+    return {
+        'host': celery_service_host,
+        'port': int(postgres_port),
+        'user': postgres_user,
+        'password': postgres_password,
+    }
 
 def load_module(module_name: str):
     """Load tuning module and return the module class instance."""
@@ -121,34 +139,23 @@ def get_registered_archs(workdir: Path) -> list[str]:
 
 def get_completed_tasks(module_name: str, module_instance, verbose: bool = False):
     """
-    Query PostgreSQL for completed tasks.
+    Query PostgreSQL for completed tasks from task_queue.
 
     Returns a set of task_config tuples (hashable form) that have
-    successfully completed (result.brief is an object, not a string).
-
-    Uses JSONB operators to query the hacked Celery result backend where
-    result column is JSONB instead of bytea.
+    successfully completed (status = 'completed').
 
     Args:
         module_name: Name of the tuning module (e.g., 'flash')
         module_instance: Module instance with ENTRY_CLASS defining field structure
         verbose: Print debug info
 
-    Requires load_config() to be called first to set environment variables.
     Raises exception if connection fails - caller should handle errors.
     """
     import psycopg
     from psycopg.rows import dict_row
 
-    # Get PostgreSQL connection from environment (set by load_config from config.rc)
-    # Database name defaults to username if not specified
-    postgres_user = os.environ.get('POSTGRES_USER')
-    postgres_password = os.environ.get('POSTGRES_PASSWORD')
-    celery_service_host = os.environ.get('CELERY_SERVICE_HOST')
-    postgres_port = os.environ.get('POSTGRES_PORT')
-
-    if not all([postgres_user, postgres_password, celery_service_host, postgres_port]):
-        raise RuntimeError("Missing PostgreSQL credentials in config.rc. Required: POSTGRES_USER, POSTGRES_PASSWORD, CELERY_SERVICE_HOST, POSTGRES_PORT")
+    # Get PostgreSQL connection parameters
+    conn_params = get_db_connection_params()
 
     # Extract field names once for reuse (avoid repeated metadata access)
     entry_class = module_instance.ENTRY_CLASS
@@ -162,38 +169,23 @@ def get_completed_tasks(module_name: str, module_instance, verbose: bool = False
         return (arch,) + field_values
 
     # Connect to PostgreSQL - let exceptions propagate
-    conn = psycopg.connect(
-        host=celery_service_host,
-        port=int(postgres_port),
-        user=postgres_user,
-        password=postgres_password,
-        # Database defaults to username (PostgreSQL convention)
-        row_factory=dict_row
-    )
+    conn = psycopg.connect(**conn_params, row_factory=dict_row)
 
     try:
         with conn.cursor() as cur:
-            # Query celery_taskmeta for results with brief field
-            # The result column is JSONB
-            # Success: brief is an object/dict
-            # Failure: brief is a string "Exception raised"
-            # Filter by module name in SQL for efficiency
+            # Query task_queue for completed tasks for this module
             cur.execute("""
-                SELECT result
-                FROM celery_taskmeta
-                WHERE result IS NOT NULL
-                  AND result ? 'brief'
-                  AND jsonb_typeof(result->'brief') = 'object'
-                  AND result->'task_config'->>'module' = %s
+                SELECT task_config
+                FROM task_queue
+                WHERE status = 'completed'
+                  AND module = %s
             """, (module_name,))
 
             # Extract task_config from each row and convert to hashable tuple
             def extract_config(row):
-                result_data = row['result']
-                result_obj = json.loads(result_data) if isinstance(result_data, str) else result_data
-
-                if isinstance(result_obj, dict) and 'task_config' in result_obj:
-                    task_config = result_obj['task_config']
+                task_config = row['task_config']
+                # task_config is already a dict from JSONB
+                if isinstance(task_config, dict):
                     return make_hashable(task_config)
                 return None
 
@@ -208,10 +200,12 @@ def get_completed_tasks(module_name: str, module_instance, verbose: bool = False
         conn.close()
 
 def dispatch_tasks(workdir: Path, module_name: str, args):
-    """Dispatch tuning tasks to Celery."""
-    from v3python.celery.tasks import tune_kernel
-    from celery.result import allow_join_result
+    """Dispatch tuning tasks to PostgreSQL queue."""
+    from .pq.dispatcher import TaskDispatcher
     from dataclasses import asdict
+
+    # Get database connection parameters
+    conn_params = get_db_connection_params()
 
     # Load module
     module_instance = load_module(module_name)
@@ -256,10 +250,10 @@ def dispatch_tasks(workdir: Path, module_name: str, args):
                     task_config["max_hsaco"] = {"*": args.max_hsaco}
                 yield task_config
 
-    # Dispatch tasks
-    results = []
-    task_count = 0
+    # Collect tasks to dispatch (filter out completed ones)
+    tasks_to_dispatch = []
     skipped_count = 0
+
     for task_config in task_config_gen():
         # Check if this task is already completed
         if args.skip_completed:
@@ -270,32 +264,38 @@ def dispatch_tasks(workdir: Path, module_name: str, args):
                     print(f"Skipping completed task: {task_config['entry']}")
                 continue
 
-        arch = task_config['arch']
-        if not args.dry_run:
-            res = tune_kernel.apply_async(args=(task_config,), queue=arch)
-            results.append(res)
-        task_count += 1
-        if args.verbose:
-            print(f"Dispatched task for {arch}: {task_config['entry']}")
+        # Prepare task for dispatcher
+        tasks_to_dispatch.append({
+            'arch': task_config['arch'],
+            'module': task_config['module'],
+            'task_config': task_config,
+            'priority': 5  # Default priority
+        })
 
-    print(f"Dispatched {task_count} tasks")
+        if args.verbose:
+            print(f"Prepared task for {task_config['arch']}: {task_config['entry']}")
+
+    print(f"Prepared {len(tasks_to_dispatch)} tasks for dispatch")
     if args.skip_completed and skipped_count > 0:
         print(f"Skipped {skipped_count} already-completed tasks")
 
-    # Wait for results if requested
-    if args.wait:
-        print("Waiting for tasks to complete...")
-        with allow_join_result():
-            completed = 0
-            for res in results:
-                try:
-                    result = res.get()
-                    completed += 1
-                    if args.verbose:
-                        print(f"Task {completed}/{len(results)} completed. result:\n{result=}")
-                except Exception as e:
-                    print(f"Task failed: {e}", file=sys.stderr)
-        print(f"Completed {completed}/{len(results)} tasks")
+    if args.dry_run:
+        print("Dry run mode - tasks not dispatched")
+        return
+
+    # Dispatch tasks using bulk INSERT
+    dispatcher = TaskDispatcher(conn_params)
+
+    # Ensure partitions exist for all architectures
+    for arch in args.arch:
+        try:
+            dispatcher.ensure_partition(arch)
+        except Exception as e:
+            print(f"Warning: Failed to ensure partition for {arch}: {e}", file=sys.stderr)
+
+    # Dispatch tasks
+    dispatched = dispatcher.dispatch_bulk(tasks_to_dispatch, batch_size=1000)
+    print(f"Dispatched {dispatched} tasks to PostgreSQL queue")
 
 def str_to_bool(s):
     """Convert '0' or '1' string to boolean for argparse."""
@@ -326,8 +326,6 @@ def add_common_arguments(parser):
                         help='Maximum number of hsaco kernels to tune per entry (default: all)')
     parser.add_argument('--skip_completed', action='store_true',
                         help='Query PostgreSQL and skip tasks that have already completed successfully')
-    parser.add_argument('--wait', action='store_true',
-                        help='Wait for all tasks to complete')
     parser.add_argument('--verbose', '-v', action='store_true',
                         help='Verbose output')
     parser.add_argument('--dry_run', action='store_true',
@@ -402,28 +400,8 @@ def add_module_subparser(subparsers, module_name, load_params=True):
     return module_parser
 
 def main():
-    # Defensive check: This script should be launched via .celery/dispatch-tasks.sh
-    # which sets up venv at scratch/venv.devnode
-    venv_path = sys.prefix
-    if not venv_path.endswith('scratch/venv.devnode'):
-        sys.stderr.write(f"""ERROR: Do not run this script directly.
-
-This script requires a patched celery installation and proper environment setup.
-Please use the wrapper script instead:
-
-  .celery/dispatch-tasks.sh <workdir> [options] <module> [module-options]
-
-Example:
-  .celery/dispatch-tasks.sh /path/to/workdir flash --dtype float16
-
-Current Python: {sys.executable}
-Expected venv suffix: scratch/venv.devnode
-Actual prefix: {venv_path}
-""")
-        sys.exit(1)
-
     parser = argparse.ArgumentParser(
-        description='Dispatch tuning tasks to Celery distributed framework',
+        description='Dispatch tuning tasks to PostgreSQL queue (Tuner v3.5)',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''
 Examples:
