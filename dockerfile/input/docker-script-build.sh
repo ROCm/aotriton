@@ -18,7 +18,18 @@ if [ -z "${ROCM_PATH}" ]; then
   echo "Error: ROCM_PATH is empty. hipconfig --rocmpath failed." >&2
   exit 1
 fi
+
 hipver=$(scl enable gcc-toolset-13 "cpp -I${ROCM_PATH}/include /input/print_hip_version.h"|tail -n 1|sed 's/ //g')
+
+if [ "${USE_ASAN}" = "1" ]; then
+  export TRITON_ENABLE_ASAN=1
+  export CC="${ROCM_PATH}/llvm/bin/clang"
+  export CXX="${ROCM_PATH}/llvm/bin/clang++"
+  export LDSHARED="${ROCM_PATH}/llvm/bin/clang --shared -fuse-ld=lld"
+  export LDFLAGS="-fuse-ld=lld -fsanitize=address -shared-libasan -g"
+  export CFLAGS="-g -fsanitize=address -shared-libasan -Wno-cast-function-type-strict -fclang-abi-compat=17 -mllvm -asan-use-private-alias=1"
+  export CXXFLAGS="-g -fsanitize=address -shared-libasan -Wno-cast-function-type-strict -fclang-abi-compat=17 -mllvm -asan-use-private-alias=1"
+fi
 
 if [ ${NOIMAGE_MODE} == "OFF" ]; then
   fn="llvm-${TRITON_LLVM_HASH}-almalinux-x64.tar.gz"
@@ -32,11 +43,18 @@ fi
 
 cd /root/build/
 export AOTRITON_CI_SUPPLIED_SHA1=${GIT_FULL}
-if [ -z "${ALTWHEEL_CFG}" ]; then
-  scl enable gcc-toolset-13 -- bash aotriton/.ci/build-release.sh "${NOIMAGE_MODE}" 
+
+# Build arguments based on ALTWHEEL_CFG
+BUILD_ARGS=("${NOIMAGE_MODE}")
+if [ -n "${ALTWHEEL_CFG}" ]; then
+  BUILD_ARGS+=("ALL" "-DAOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE=${ALTWHEEL_CFG}")
+fi
+
+# Call with or without scl based on USE_ASAN
+if [ "${USE_ASAN}" = "1" ]; then
+  bash aotriton/.ci/build-release.sh "${BUILD_ARGS[@]}"
 else
-  scl enable gcc-toolset-13 -- bash aotriton/.ci/build-release.sh "${NOIMAGE_MODE}" "ALL" \
-    "-DAOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE=${ALTWHEEL_CFG}"
+  scl enable gcc-toolset-13 -- bash aotriton/.ci/build-release.sh "${BUILD_ARGS[@]}"
 fi
 
 if [ ${NOIMAGE_MODE} == "OFF" ]; then

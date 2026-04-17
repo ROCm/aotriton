@@ -54,6 +54,12 @@ function build_wheel() {
 }
 
 for althash in "$@"; do
+  # Skip if wheel already exists
+  git_short=$(echo ${althash}|head -c 8)
+  if ls "${WHEEL_OUTPUT_DIR}"/triton-*+git${git_short}*.whl 1>/dev/null 2>&1; then
+    echo "Skipping ${althash}: wheel already exists"
+    continue
+  fi
   ensure_triton ${althash}
   build_wheel "${INPUT_DIR}" "${WHEEL_OUTPUT_DIR}" "${althash}"
 done

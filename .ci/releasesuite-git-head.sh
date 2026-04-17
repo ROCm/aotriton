@@ -18,12 +18,13 @@ fi
 
 function help() {
   cat <<EOF
-Usage releasesuite-git-head.sh [-h] [-r <ROCM ver>] [--image] [--runtime] [--yaml <yaml config file>] <output directory>.
+Usage releasesuite-git-head.sh [options...] <output directory>.
                     -h: show help and exit.
          -r <ROCM ver>: build ROCM runtime image
                --image: build GPU images.
              --runtime: build all C++ runtimes.
          --yaml <.yml>: Use yml config file to build the release
+               --asan: Enable ASAN build (sets USE_ASAN=1)
 By default both GPU images and runtimes are built.
 If either --image or --runtime is specified, the missing one will not be built.
 
@@ -38,7 +39,7 @@ EOF
   exit $1
 }
 
-TEMP=$(getopt -o h,r: --longoptions image,runtime,yaml: -- "$@")
+TEMP=$(getopt -o h,r: --longoptions image,runtime,yaml:,asan -- "$@")
 
 if [ $? -ne 0 ]; then
   echo "Error: Invalid option." >&2
@@ -76,6 +77,9 @@ while true; do
     --yaml)
       shift
       SUITE_YAML="$1"
+      ;;
+    --asan)
+      export USE_ASAN=1
       ;;
     '--')
       shift
@@ -154,29 +158,40 @@ fi
 INPUT_DIR=${SCRIPT_DIR}/../dockerfile/input
 OUTPUT_DIR="$1"
 
-if [[ -n "${SUITE_YAML}" && ${SUITE_SELECT_IMAGE} -gt 0 ]]; then
-  readarray -t TRITON_ALTHASH < <(yq -r '.venvs|.[]' "${SUITE_YAML}")
-  mkdir -p "${INPUT_DIR}/altwheels"
-  cp "${SUITE_YAML}" "${INPUT_DIR}/altwheels/tmpconfig.yaml"
-  # bash "${SCRIPT_DIR}/build-altwheels.sh" "${INPUT_DIR}/altwheels" "${TRITON_ALTHASH[@]}"
-  replace_hash \
-    "${INPUT_DIR}/altwheels/tmpconfig.yaml" \
-    "${INPUT_DIR}/altwheels" \
-    "/input/altwheels" \
-    "${TRITON_ALTHASH[@]}"
-  ALTWHEEL_CFG="/input/altwheels/tmpconfig.yaml"
+if [ ${SUITE_SELECT_IMAGE} -gt 0 ]; then
+  if [ -n "${SUITE_YAML}" ]; then
+    readarray -t TRITON_ALTHASH < <(yq -r '.venvs|.[]' "${SUITE_YAML}")
+    mkdir -p "${INPUT_DIR}/altwheels"
+    cp "${SUITE_YAML}" "${INPUT_DIR}/altwheels/tmpconfig.yaml"
+    bash "${SCRIPT_DIR}/build-altwheels.sh" "${INPUT_DIR}/altwheels" "${TRITON_ALTHASH[@]}"
+    replace_hash \
+      "${INPUT_DIR}/altwheels/tmpconfig.yaml" \
+      "${INPUT_DIR}/altwheels" \
+      "/input/altwheels" \
+      "${TRITON_ALTHASH[@]}"
+    ALTWHEEL_CFG="/input/altwheels/tmpconfig.yaml"
+  else
+    echo "Error: --yaml is required when building images with theRock" >&2
+    exit 1
+  fi
 else
   ALTWHEEL_CFG=""
-  exit 1
 fi
 
 function build_inside() {
   rocmver="$1"
   NOIMAGE_MODE="$2"
-  DOCKER_IMAGE="aotriton:buildenv-rocm${rocmver}"
+  USE_ASAN=${USE_ASAN:-0}
+  if [ "${USE_ASAN}" = "1" ]; then
+    DOCKER_IMAGE="aotriton:buildenv-rocm${rocmver}-asan"
+  else
+    DOCKER_IMAGE="aotriton:buildenv-rocm${rocmver}"
+  fi
   if [ -z "$(docker images -q ${DOCKER_IMAGE} 2>/dev/null)" ]; then
-    # Use theRock.Dockerfile for ROCm >= 7.10
-    if awk "BEGIN {exit !($rocmver >= 7.10)}"; then
+    # Use theRock.Dockerfile for ROCm >= 7.10, theRockAsan.Dockerfile for ASAN builds
+    if [ "${USE_ASAN}" = "1" ]; then
+      DOCKERFILE="theRockAsan.Dockerfile"
+    elif awk "BEGIN {exit !($rocmver >= 7.10)}"; then
       # TODO: We cannot have theRock.Dockerfile without internal URL until
       #       gfx1250 wheel goes GA.
       #       For now, create the docker with git commit.
@@ -190,6 +205,7 @@ function build_inside() {
   fi
   set -x
   docker run --network=host -it --rm \
+    -e USE_ASAN=${USE_ASAN} \
     -v ${SOURCE_VOLUME}:/src:ro \
     --mount "type=bind,source=$(realpath ${INPUT_DIR}),target=/input" \
     --mount "type=bind,source=$(realpath ${OUTPUT_DIR}),target=/output" \
