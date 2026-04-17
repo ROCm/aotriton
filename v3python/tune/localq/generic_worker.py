@@ -47,6 +47,7 @@ class GenericWorker:
 
         # Socket connection to broker
         self.sock = None
+        self.running = False
 
     def run(self):
         """Main worker loop"""
@@ -54,8 +55,9 @@ class GenericWorker:
         self._connect_to_broker()
 
         logger.info(f"Worker {self.worker_id} started, pulling from {self.queue_name}")
+        self.running = True
 
-        while True:
+        while self.running:
             try:
                 # Get task from queue
                 send_message(self.sock, {
@@ -92,6 +94,15 @@ class GenericWorker:
             except Exception as e:
                 logger.error(f"Worker {self.worker_id} error: {e}", exc_info=True)
                 time.sleep(1)  # Backoff on error
+
+        # Cleanup
+        if self.sock:
+            self.sock.close()
+
+    def shutdown(self):
+        """Graceful shutdown"""
+        logger.info(f"Worker {self.worker_id} shutting down")
+        self.running = False
 
     def _connect_to_broker(self):
         """Connect to broker socket"""

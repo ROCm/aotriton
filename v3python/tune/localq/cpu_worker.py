@@ -11,6 +11,7 @@ import sys
 import os
 import logging
 import argparse
+import signal
 
 from .generic_worker import GenericWorker
 from .handlers import WriteHsacoResultHandler, PostprocessHandler
@@ -36,10 +37,10 @@ def get_db_connection_params():
 def main():
     """CPU worker main entry point"""
     parser = argparse.ArgumentParser(description='CPU worker for local queue')
-    parser.add_argument('--worker-id', type=str, default='cpu-0',
+    parser.add_argument('--worker_id', type=str, default='cpu-0',
                        help='Worker identifier')
-    parser.add_argument('--broker-socket', type=str,
-                       default='/tmp/aotriton-broker.sock',
+    parser.add_argument('--broker_socket', type=str,
+                       default=os.environ.get('AOTRITON_TUNER_BROKER_SOCKET', '/tmp/aotriton-broker.sock'),
                        help='Path to broker Unix socket')
     args = parser.parse_args()
 
@@ -62,12 +63,22 @@ def main():
 
     logger.info(f"Starting CPU worker {args.worker_id}")
 
+    # Setup signal handlers for graceful shutdown
+    def signal_handler(signum, frame):
+        logger.info(f"Received signal {signum}, shutting down gracefully")
+        worker.shutdown()
+
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+
     try:
         worker.run()
     except KeyboardInterrupt:
         logger.info(f"CPU worker {args.worker_id} interrupted")
+        worker.shutdown()
     except Exception as e:
         logger.error(f"CPU worker {args.worker_id} failed: {e}", exc_info=True)
+        worker.shutdown()
         sys.exit(1)
 
 

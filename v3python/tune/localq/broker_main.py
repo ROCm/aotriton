@@ -6,8 +6,10 @@ Broker main entry point.
 """
 
 import sys
+import os
 import logging
 import argparse
+import signal
 
 from .broker import LocalBroker
 
@@ -22,12 +24,21 @@ logger = logging.getLogger(__name__)
 def main():
     """Broker main entry point"""
     parser = argparse.ArgumentParser(description='Local queue broker')
-    parser.add_argument('--socket', type=str,
-                       default='/tmp/aotriton-broker.sock',
+    parser.add_argument('--socket_path', type=str,
+                       default=os.environ.get('AOTRITON_TUNER_BROKER_SOCKET', '/tmp/aotriton-broker.sock'),
                        help='Path to broker Unix socket')
     args = parser.parse_args()
 
-    broker = LocalBroker(socket_path=args.socket)
+    broker = LocalBroker(socket_path=args.socket_path)
+
+    # Setup signal handlers for graceful shutdown
+    def signal_handler(signum, frame):
+        logger.info(f"Received signal {signum}, shutting down gracefully")
+        broker.shutdown()
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
 
     logger.info("Starting LocalBroker")
 
@@ -36,8 +47,10 @@ def main():
         broker.run()
     except KeyboardInterrupt:
         logger.info("Broker interrupted")
+        broker.shutdown()
     except Exception as e:
         logger.error(f"Broker failed: {e}", exc_info=True)
+        broker.shutdown()
         sys.exit(1)
 
 

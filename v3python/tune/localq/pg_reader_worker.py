@@ -14,6 +14,7 @@ import time
 import logging
 import argparse
 import socket
+import signal
 import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
@@ -49,6 +50,7 @@ class PGReaderWorker:
         self.broker_socket = broker_socket
         self.conn_params = conn_params
         self.sock = None
+        self.running = False
 
     def run(self):
         """Main PG reader loop"""
@@ -56,8 +58,9 @@ class PGReaderWorker:
         self._connect_to_broker()
 
         logger.info(f"PG Reader {self.worker_id} started for arch={self.arch}")
+        self.running = True
 
-        while True:
+        while self.running:
             try:
                 # Fetch task from PostgreSQL
                 task = self._fetch_pg_task()
@@ -113,6 +116,15 @@ class PGReaderWorker:
             except Exception as e:
                 logger.error(f"PG Reader {self.worker_id} error: {e}", exc_info=True)
                 time.sleep(5)  # Backoff on error
+
+        # Cleanup
+        if self.sock:
+            self.sock.close()
+
+    def shutdown(self):
+        """Graceful shutdown"""
+        logger.info(f"PG Reader {self.worker_id} shutting down")
+        self.running = False
 
     def _connect_to_broker(self):
         """Connect to broker socket"""
@@ -182,12 +194,12 @@ def get_db_connection_params():
 def main():
     """PG reader worker main entry point"""
     parser = argparse.ArgumentParser(description='PostgreSQL reader worker')
-    parser.add_argument('--worker-id', type=str, required=True,
+    parser.add_argument('--worker_id', type=str, required=True,
                        help='Worker identifier (e.g., pg-reader-0)')
     parser.add_argument('--arch', type=str, required=True,
                        help='GPU architecture to fetch tasks for')
-    parser.add_argument('--broker-socket', type=str,
-                       default='/tmp/aotriton-broker.sock',
+    parser.add_argument('--broker_socket', type=str,
+                       default=os.environ.get('AOTRITON_TUNER_BROKER_SOCKET', '/tmp/aotriton-broker.sock'),
                        help='Path to broker Unix socket')
     args = parser.parse_args()
 
@@ -202,12 +214,22 @@ def main():
         conn_params=conn_params
     )
 
+    # Setup signal handlers for graceful shutdown
+    def signal_handler(signum, frame):
+        logger.info(f"Received signal {signum}, shutting down gracefully")
+        worker.shutdown()
+
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+
     try:
         worker.run()
     except KeyboardInterrupt:
         logger.info(f"PG Reader {args.worker_id} interrupted")
+        worker.shutdown()
     except Exception as e:
         logger.error(f"PG Reader {args.worker_id} failed: {e}", exc_info=True)
+        worker.shutdown()
         sys.exit(1)
 
 

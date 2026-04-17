@@ -8,6 +8,7 @@ LocalBroker: Message router with dependency tracking for local queue.
 import logging
 import select
 import socket
+import os
 from collections import deque, defaultdict
 from pathlib import Path
 from typing import Dict, List
@@ -38,6 +39,7 @@ class LocalBroker:
 
     def __init__(self, socket_path: str = '/tmp/aotriton-broker.sock'):
         self.socket_path = socket_path
+        self.running = False
 
         # Named queues
         self.queues = {
@@ -81,9 +83,25 @@ class LocalBroker:
 
         logger.info(f"Broker listening on {self.socket_path}")
 
+    def shutdown(self):
+        """Graceful shutdown"""
+        logger.info("Shutting down broker")
+        self.running = False
+
+        if self.epoll:
+            self.epoll.close()
+
+        if self.sock:
+            self.sock.close()
+
+        # Clean up socket file
+        if os.path.exists(self.socket_path):
+            os.unlink(self.socket_path)
+
     def run(self):
         """Main broker event loop"""
-        while True:
+        self.running = True
+        while self.running:
             # Wait for socket events (timeout 0.1s for periodic tasks)
             events = self.epoll.poll(timeout=0.1)
 

@@ -8,8 +8,10 @@ Pulls tasks from gpu_queue and executes GPU operations.
 """
 
 import sys
+import os
 import logging
 import argparse
+import signal
 
 from .generic_worker import GenericWorker
 from .handlers import PreprocessHandler, ProbeHandler, TuneHsacoHandler
@@ -25,10 +27,10 @@ logger = logging.getLogger(__name__)
 def main():
     """GPU worker main entry point"""
     parser = argparse.ArgumentParser(description='GPU worker for local queue')
-    parser.add_argument('--gpu-id', type=int, required=True,
+    parser.add_argument('--gpu_id', type=int, required=True,
                        help='GPU device ID')
-    parser.add_argument('--broker-socket', type=str,
-                       default='/tmp/aotriton-broker.sock',
+    parser.add_argument('--broker_socket', type=str,
+                       default=os.environ.get('AOTRITON_TUNER_BROKER_SOCKET', '/tmp/aotriton-broker.sock'),
                        help='Path to broker Unix socket')
     args = parser.parse_args()
 
@@ -52,12 +54,22 @@ def main():
 
     logger.info(f"Starting GPU worker {worker_id}")
 
+    # Setup signal handlers for graceful shutdown
+    def signal_handler(signum, frame):
+        logger.info(f"Received signal {signum}, shutting down gracefully")
+        worker.shutdown()
+
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+
     try:
         worker.run()
     except KeyboardInterrupt:
         logger.info(f"GPU worker {worker_id} interrupted")
+        worker.shutdown()
     except Exception as e:
         logger.error(f"GPU worker {worker_id} failed: {e}", exc_info=True)
+        worker.shutdown()
         sys.exit(1)
 
 

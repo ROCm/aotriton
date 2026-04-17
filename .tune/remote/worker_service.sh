@@ -15,37 +15,45 @@ TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Change to aotriton root so Python can find v3python module
 cd "$AOTRITON_ROOT"
 
-WORKER_MODULE="v3python.tune.worker_main"
+BROKER_MODULE="v3python.tune.localq.broker_main"
+GPU_WORKER_MODULE="v3python.tune.localq.gpu_worker_socket"
+PG_READER_MODULE="v3python.tune.localq.pg_reader_worker"
+CPU_WORKER_MODULE="v3python.tune.localq.cpu_worker"
 
 # Load config utilities
 . "$TUNE_ROOT/lib/config_load.sh"
 
 usage() {
     cat <<EOF
-Usage: $0 <command> <workdir> <arch> [num_workers]
+Usage: $0 <command> <workdir> <arch>
 
-Manage Tuner v3.5 worker processes (SysV-style init script)
+Manage Tuner v3.5 local queue processes (SysV-style init script)
 
 Commands:
-    start       Start workers
-    stop        Stop workers
-    restart     Restart workers (stop then start)
-    status      Show worker status
-    force-stop  Force kill workers (SIGKILL)
+    start       Start broker and all workers
+    stop        Stop all processes
+    restart     Restart all processes (stop then start)
+    status      Show process status
+    force-stop  Force kill all processes (SIGKILL)
 
 Arguments:
     workdir       Path to workdir containing config.rc
     arch          GPU architecture (e.g., gfx942, gfx90a)
-    num_workers   Number of worker processes (default: 4)
+
+Components started:
+    - 1 broker (message router)
+    - NUM_GPUS GPU workers (auto-detected)
+    - 4 PG reader workers (fetch tasks from PostgreSQL)
+    - 4 CPU workers (postprocess, write results)
 
 Examples:
-    $0 start /path/to/workdir gfx942 8
+    $0 start /path/to/workdir gfx942
     $0 stop /path/to/workdir gfx942
-    $0 restart /path/to/workdir gfx942 8
+    $0 restart /path/to/workdir gfx942
     $0 status /path/to/workdir gfx942
 
-PID files location: <workdir>/run/pids/worker-<arch>-<id>.pid
-Log files location: <workdir>/run/logs/worker-<arch>-<id>.log
+PID files location: <workdir>/run/pids/
+Log files location: <workdir>/run/logs/
 EOF
     exit 1
 }
@@ -54,7 +62,6 @@ EOF
 COMMAND="${1:-}"
 WORKDIR="${2:-}"
 ARCH="${3:-}"
-NUM_WORKERS="${4:-4}"
 
 if [ -z "$COMMAND" ] || [ -z "$WORKDIR" ] || [ -z "$ARCH" ]; then
     usage
@@ -68,9 +75,13 @@ fi
 
 load_config_container "$WORKDIR" || exit 1
 
-# Validate worker_main module exists
-if [ ! -f "v3python/tune/worker_main.py" ]; then
-    echo "Error: worker_main.py not found in v3python/tune/"
+# Auto-detect NUM_GPUS
+NUM_GPUS=$(rocm_agent_enumerator | grep -v gfx000 | wc -l)
+echo "Auto-detected $NUM_GPUS GPUs"
+
+# Validate localq modules exist
+if [ ! -f "v3python/tune/localq/broker_main.py" ]; then
+    echo "Error: localq modules not found in v3python/tune/localq/"
     exit 1
 fi
 
@@ -80,16 +91,51 @@ LOG_DIR="$WORKDIR/run/logs"
 
 mkdir -p "$PID_DIR" "$LOG_DIR"
 
+# Set broker socket path (used by all localq components)
+# All entry points (broker_main, gpu_worker_socket, pg_reader_worker, cpu_worker)
+# default --broker_socket to this env var, so we don't need to pass it explicitly
+export AOTRITON_TUNER_BROKER_SOCKET="$WORKDIR/run/broker.sock"
+
 # Helper functions
 
 get_pidfile() {
-    local worker_id="$1"
-    echo "$PID_DIR/worker-$ARCH-$worker_id.pid"
+    echo "$PID_DIR/$1.pid"
 }
 
 get_logfile() {
-    local worker_id="$1"
-    echo "$LOG_DIR/worker-$ARCH-$worker_id.log"
+    echo "$LOG_DIR/$1.log"
+}
+
+daemonize() {
+    local logfile="$1"
+    local pidfile="$2"
+    shift 2
+    local cmd=("$@")
+
+    # Fork and run in background, redirect I/O
+    # Do NOT chdir to / - stay in current directory
+    (
+        # Close stdin
+        exec 0</dev/null
+
+        # Redirect stdout and stderr to logfile
+        exec 1>>"$logfile"
+        exec 2>&1
+
+        # Run command
+        "${cmd[@]}" &
+
+        # Save PID
+        echo $! > "$pidfile"
+    ) &
+
+    # Wait for PID file to be written
+    local timeout=5
+    local elapsed=0
+    while [ ! -f "$pidfile" ] && [ $elapsed -lt $timeout ]; do
+        sleep 0.1
+        elapsed=$((elapsed + 1))
+    done
 }
 
 is_running() {
@@ -111,124 +157,177 @@ is_running() {
     fi
 }
 
-start_worker() {
-    local worker_id="$1"
-    local pidfile
-    local logfile
+start_single_process() {
+    local display_name="$1"
+    local name="$2"  # for pidfile/logfile
+    shift 2
+    local cmd_args=("$@")  # rest are command args
 
-    pidfile=$(get_pidfile "$worker_id")
-    logfile=$(get_logfile "$worker_id")
+    local pidfile=$(get_pidfile "$name")
+    local logfile=$(get_logfile "$name")
 
     if is_running "$pidfile"; then
-        echo "Worker $ARCH-$worker_id already running (PID: $(cat "$pidfile"))"
+        echo "$display_name already running (PID: $(cat "$pidfile"))"
         return 0
     fi
 
-    echo "Starting worker $ARCH-$worker_id..."
+    echo "Starting $display_name..."
+    daemonize "$logfile" "$pidfile" "${cmd_args[@]}"
 
-    # Auto-detect NUM_GPUS if not set (node-specific)
-    if [ -z "${NUM_GPUS:-}" ]; then
-        NUM_GPUS=$(rocm_agent_enumerator | grep -v gfx000 | wc -l)
-        echo "Auto-detected $NUM_GPUS GPUs for worker $ARCH-$worker_id"
-    fi
-    export NUM_GPUS
-
-    # Set Ray temp directory so worker_main.py can find the Ray cluster
-    export RAY_TMPDIR="$WORKDIR/run/ray"
-
-    # Use Python from config with -m flag for proper module import
-    "$CELERY_WORKER_PYTHON" -m "$WORKER_MODULE" \
-        "$WORKDIR" \
-        "$ARCH" \
-        --worker_id "$worker_id" \
-        --daemonize \
-        --pidfile "$pidfile" \
-        --logfile "$logfile" \
-        --log_level INFO
-
-    # Wait a moment and verify it started
-    sleep 1
+    sleep 0.5
 
     if is_running "$pidfile"; then
-        echo "Worker $ARCH-$worker_id started (PID: $(cat "$pidfile"))"
+        echo "$display_name started (PID: $(cat "$pidfile"))"
     else
-        echo "Failed to start worker $ARCH-$worker_id (check logs: $logfile)"
+        echo "Failed to start $display_name (check logs: $logfile)"
         return 1
     fi
 }
 
-stop_worker() {
-    local worker_id="$1"
-    local pidfile
-    local pid
+start_process_group() {
+    local group_name="$1"
+    local name_prefix="$2"
+    local module="$3"
+    local arg_type="$4"  # "gpu" | "pg" | "cpu"
+    local count="$5"     # number of processes (0 to count-1)
 
-    pidfile=$(get_pidfile "$worker_id")
+    local failed=0
 
-    if ! is_running "$pidfile"; then
-        echo "Worker $ARCH-$worker_id not running"
-        return 0
-    fi
+    for id in $(seq 0 $((count - 1))); do
+        local name="$name_prefix-$id"
+        local display="$group_name $id"
+        local extra_args=()
 
-    pid=$(cat "$pidfile")
-    echo "Stopping worker $ARCH-$worker_id (PID: $pid)..."
+        case "$arg_type" in
+            gpu)
+                extra_args=("--gpu_id" "$id")
+                ;;
+            pg)
+                extra_args=("--worker_id" "$name" "--arch" "$ARCH")
+                ;;
+            cpu)
+                extra_args=("--worker_id" "$name")
+                ;;
+        esac
 
-    # Send SIGTERM for graceful shutdown
-    kill -TERM "$pid"
-
-    # Wait up to 30 seconds for graceful shutdown
-    local timeout=30
-    local elapsed=0
-
-    while [ $elapsed -lt $timeout ]; do
-        if ! kill -0 "$pid" 2>/dev/null; then
-            echo "Worker $ARCH-$worker_id stopped"
-            rm -f "$pidfile"
-            return 0
+        if ! start_single_process "$display" "$name" \
+            "$CELERY_WORKER_PYTHON" -m "$module" "${extra_args[@]}"; then
+            failed=$((failed + 1))
         fi
-        sleep 1
-        elapsed=$((elapsed + 1))
     done
 
-    # Force kill if still running
-    echo "Worker $ARCH-$worker_id did not stop gracefully, force killing..."
-    kill -KILL "$pid" 2>/dev/null || true
-    rm -f "$pidfile"
-    echo "Worker $ARCH-$worker_id force stopped"
+    return $failed
 }
 
-force_stop_worker() {
-    local worker_id="$1"
-    local pidfile
+stop_process_group() {
+    local group_name="$1"
+    local name_prefix="$2"
+    local count="${3:-0}"  # number of processes (default 0 for single process like broker)
+
+    # Build pidfile list
+    local pidfiles=()
+    if [ "$count" -eq 0 ]; then
+        # Single process (e.g., broker)
+        pidfiles+=("$(get_pidfile "$name_prefix")")
+    else
+        # Multiple processes with ID suffix (0 to count-1)
+        for id in $(seq 0 $((count - 1))); do
+            pidfiles+=("$(get_pidfile "$name_prefix-$id")")
+        done
+    fi
+
+    # Collect running PIDs
+    local pids=()
+    local pid_to_file=()
+
+    for pidfile in "${pidfiles[@]}"; do
+        if is_running "$pidfile"; then
+            local pid
+            pid=$(cat "$pidfile")
+            pids+=("$pid")
+            pid_to_file["$pid"]="$pidfile"
+        fi
+    done
+
+    if [ ${#pids[@]} -eq 0 ]; then
+        echo "No $group_name processes running"
+        return 0
+    fi
+
+    echo "Stopping ${#pids[@]} $group_name processes (PIDs: ${pids[*]})..."
+
+    # 1. Send SIGTERM to all
+    for pid in "${pids[@]}"; do
+        kill -TERM "$pid" 2>/dev/null || true
+    done
+
+    # 2. Wait up to 30 seconds for graceful shutdown
+    local timeout=30
+    local elapsed=0
+    local remaining=("${pids[@]}")
+
+    while [ $elapsed -lt $timeout ] && [ ${#remaining[@]} -gt 0 ]; do
+        local new_remaining=()
+        for pid in "${remaining[@]}"; do
+            if kill -0 "$pid" 2>/dev/null; then
+                new_remaining+=("$pid")
+            else
+                # Process stopped, clean up pidfile
+                local pidfile="${pid_to_file[$pid]}"
+                rm -f "$pidfile"
+            fi
+        done
+        remaining=("${new_remaining[@]}")
+
+        if [ ${#remaining[@]} -gt 0 ]; then
+            sleep 1
+            elapsed=$((elapsed + 1))
+        fi
+    done
+
+    # 3. Force kill any remaining processes
+    if [ ${#remaining[@]} -gt 0 ]; then
+        echo "$group_name: ${#remaining[@]} processes did not stop gracefully, force killing (PIDs: ${remaining[*]})..."
+        for pid in "${remaining[@]}"; do
+            kill -KILL "$pid" 2>/dev/null || true
+            local pidfile="${pid_to_file[$pid]}"
+            rm -f "$pidfile"
+        done
+        echo "$group_name: force stopped ${#remaining[@]} processes"
+    else
+        echo "$group_name: all processes stopped gracefully"
+    fi
+}
+
+force_stop_process() {
+    local name="$1"
+    local pidfile="$2"
     local pid
 
-    pidfile=$(get_pidfile "$worker_id")
-
     if ! is_running "$pidfile"; then
-        echo "Worker $ARCH-$worker_id not running"
+        echo "$name not running"
         return 0
     fi
 
     pid=$(cat "$pidfile")
-    echo "Force stopping worker $ARCH-$worker_id (PID: $pid)..."
+    echo "Force stopping $name (PID: $pid)..."
 
     kill -KILL "$pid" 2>/dev/null || true
     rm -f "$pidfile"
-    echo "Worker $ARCH-$worker_id force stopped"
+    echo "$name force stopped"
 }
 
-worker_status() {
-    local worker_id="$1"
-    local pidfile
+process_status() {
+    local name="$1"
+    local pidfile="$2"
     local pid
-
-    pidfile=$(get_pidfile "$worker_id")
 
     if is_running "$pidfile"; then
         pid=$(cat "$pidfile")
-        echo "Worker $ARCH-$worker_id: RUNNING (PID: $pid)"
+        echo "$name: RUNNING (PID: $pid)"
         return 0
     else
-        echo "Worker $ARCH-$worker_id: STOPPED"
+        echo "$name: STOPPED"
         return 1
     fi
 }
@@ -236,76 +335,147 @@ worker_status() {
 # Main command handlers
 
 cmd_start() {
-    # Start Ray cluster first (shared by all workers)
-    echo "Starting Ray cluster..."
-    "$SCRIPT_DIR/rayctl" "$WORKDIR" start || {
-        echo "Error: Failed to start Ray cluster"
-        exit 1
-    }
-
-    echo "Starting $NUM_WORKERS workers for $ARCH..."
+    echo "Starting local queue system for $ARCH..."
+    echo ""
 
     local failed=0
-    for i in $(seq 0 $((NUM_WORKERS - 1))); do
-        if ! start_worker "$i"; then
-            failed=$((failed + 1))
-        fi
-    done
+
+    # 1. Start broker
+    if ! start_single_process "Broker" "broker" \
+        "$CELERY_WORKER_PYTHON" -m "$BROKER_MODULE"; then
+        echo "Error: Failed to start broker"
+        exit 1
+    fi
+    echo ""
+
+    # Wait for broker socket to be ready
+    sleep 1
+
+    # 2. Start GPU workers
+    echo "Starting $NUM_GPUS GPU workers..."
+    start_process_group "GPU worker" "gpu-worker" "$GPU_WORKER_MODULE" "gpu" $NUM_GPUS
+    failed=$?
+    echo ""
+
+    # 3. Start PG readers (4 workers)
+    echo "Starting 4 PG reader workers for arch=$ARCH..."
+    start_process_group "PG reader" "pg-reader-$ARCH" "$PG_READER_MODULE" "pg" 4
+    failed=$((failed + $?))
+    echo ""
+
+    # 4. Start CPU workers (4 workers)
+    echo "Starting 4 CPU workers..."
+    start_process_group "CPU worker" "cpu-worker" "$CPU_WORKER_MODULE" "cpu" 4
+    failed=$((failed + $?))
+    echo ""
 
     if [ $failed -eq 0 ]; then
-        echo "All workers started successfully"
+        echo "All processes started successfully"
     else
-        echo "Warning: $failed workers failed to start"
+        echo "Warning: $failed processes failed to start"
         exit 1
     fi
 }
 
 cmd_stop() {
-    echo "Stopping all workers for $ARCH..."
+    echo "Stopping all processes..."
+    echo ""
 
-    # Find all pidfiles for this arch
-    local pidfiles
-    pidfiles=$(find "$PID_DIR" -name "worker-$ARCH-*.pid" 2>/dev/null || true)
+    # Stop in order: PG readers → GPU workers → CPU workers → broker
 
-    if [ -z "$pidfiles" ]; then
-        echo "No workers running for $ARCH"
-    else
-        local count=0
-        for pidfile in $pidfiles; do
-            local worker_id
-            worker_id=$(basename "$pidfile" | sed "s/worker-$ARCH-//;s/\.pid//")
-            stop_worker "$worker_id"
-            count=$((count + 1))
-        done
-        echo "Stopped $count workers"
-    fi
+    # 1. Stop PG readers first (halt incoming tasks)
+    stop_process_group "PG readers" "pg-reader-$ARCH" 4
+    echo ""
 
-    # Stop Ray cluster (shared by all workers)
-    echo "Stopping Ray cluster..."
-    "$SCRIPT_DIR/rayctl" "$WORKDIR" stop || true
+    # 2. Stop GPU workers (no more outgoing hsaco results)
+    stop_process_group "GPU workers" "gpu-worker" $NUM_GPUS
+    echo ""
+
+    # 3. Stop CPU workers (finish processing remaining results)
+    stop_process_group "CPU workers" "cpu-worker" 4
+    echo ""
+
+    # 4. Stop broker last (stop message router)
+    stop_process_group "Broker" "broker"
+    echo ""
+
+    # Clean up socket file
+    rm -f "$AOTRITON_TUNER_BROKER_SOCKET"
+
+    echo "All processes stopped"
 }
 
-cmd_force_stop() {
-    echo "Force stopping all workers for $ARCH..."
+force_stop_process_group() {
+    local group_name="$1"
+    local name_prefix="$2"
+    local count="${3:-0}"  # number of processes (default 0 for single process like broker)
 
-    # Find all pidfiles for this arch
-    local pidfiles
-    pidfiles=$(find "$PID_DIR" -name "worker-$ARCH-*.pid" 2>/dev/null || true)
+    # Build pidfile list
+    local pidfiles=()
+    if [ "$count" -eq 0 ]; then
+        # Single process (e.g., broker)
+        pidfiles+=("$(get_pidfile "$name_prefix")")
+    else
+        # Multiple processes with ID suffix (0 to count-1)
+        for id in $(seq 0 $((count - 1))); do
+            pidfiles+=("$(get_pidfile "$name_prefix-$id")")
+        done
+    fi
 
-    if [ -z "$pidfiles" ]; then
-        echo "No workers running for $ARCH"
+    # Collect running PIDs
+    local pids=()
+
+    for pidfile in "${pidfiles[@]}"; do
+        if is_running "$pidfile"; then
+            local pid
+            pid=$(cat "$pidfile")
+            pids+=("$pid")
+        fi
+    done
+
+    if [ ${#pids[@]} -eq 0 ]; then
+        echo "No $group_name processes running"
         return 0
     fi
 
-    local count=0
-    for pidfile in $pidfiles; do
-        local worker_id
-        worker_id=$(basename "$pidfile" | sed "s/worker-$ARCH-//;s/\.pid//")
-        force_stop_worker "$worker_id"
-        count=$((count + 1))
+    echo "Force stopping ${#pids[@]} $group_name processes (PIDs: ${pids[*]})..."
+
+    # Send SIGKILL to all
+    for pid in "${pids[@]}"; do
+        kill -KILL "$pid" 2>/dev/null || true
     done
 
-    echo "Force stopped $count workers"
+    # Clean up pidfiles
+    for pidfile in "${pidfiles[@]}"; do
+        rm -f "$pidfile"
+    done
+
+    echo "$group_name: force stopped ${#pids[@]} processes"
+}
+
+cmd_force_stop() {
+    echo "Force stopping all processes..."
+    echo ""
+
+    # Force stop in order: PG readers → GPU workers → CPU workers → broker
+
+    # 1. PG readers
+    force_stop_process_group "PG readers" "pg-reader-$ARCH" 4
+
+    # 2. GPU workers
+    force_stop_process_group "GPU workers" "gpu-worker" $NUM_GPUS
+
+    # 3. CPU workers
+    force_stop_process_group "CPU workers" "cpu-worker" 4
+
+    # 4. Broker
+    force_stop_process_group "Broker" "broker"
+
+    # Clean up socket file
+    rm -f "$AOTRITON_TUNER_BROKER_SOCKET"
+
+    echo ""
+    echo "All processes force stopped"
 }
 
 cmd_restart() {
@@ -316,32 +486,54 @@ cmd_restart() {
 }
 
 cmd_status() {
-    echo "Worker status for $ARCH:"
-
-    # Find all pidfiles for this arch
-    local pidfiles
-    pidfiles=$(find "$PID_DIR" -name "worker-$ARCH-*.pid" 2>/dev/null | sort || true)
-
-    if [ -z "$pidfiles" ]; then
-        echo "No workers configured for $ARCH"
-        return 0
-    fi
+    echo "Process status for arch=$ARCH:"
+    echo ""
 
     local running=0
     local stopped=0
 
-    for pidfile in $pidfiles; do
-        local worker_id
-        worker_id=$(basename "$pidfile" | sed "s/worker-$ARCH-//;s/\.pid//")
+    # 1. Broker
+    echo "=== Broker ==="
+    if process_status "Broker" "$(get_pidfile "broker")"; then
+        running=$((running + 1))
+    else
+        stopped=$((stopped + 1))
+    fi
+    echo ""
 
-        if worker_status "$worker_id"; then
+    # 2. GPU workers
+    echo "=== GPU Workers ==="
+    for i in $(seq 0 $((NUM_GPUS - 1))); do
+        if process_status "GPU worker $i" "$(get_pidfile "gpu-worker-$i")"; then
             running=$((running + 1))
         else
             stopped=$((stopped + 1))
         fi
     done
-
     echo ""
+
+    # 3. PG readers
+    echo "=== PG Readers ==="
+    for i in $(seq 0 3); do
+        if process_status "PG reader $i" "$(get_pidfile "pg-reader-$ARCH-$i")"; then
+            running=$((running + 1))
+        else
+            stopped=$((stopped + 1))
+        fi
+    done
+    echo ""
+
+    # 4. CPU workers
+    echo "=== CPU Workers ==="
+    for i in $(seq 0 3); do
+        if process_status "CPU worker $i" "$(get_pidfile "cpu-worker-$i")"; then
+            running=$((running + 1))
+        else
+            stopped=$((stopped + 1))
+        fi
+    done
+    echo ""
+
     echo "Summary: $running running, $stopped stopped"
 
     if [ $running -gt 0 ]; then
