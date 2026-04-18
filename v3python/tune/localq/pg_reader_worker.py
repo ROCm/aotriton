@@ -113,6 +113,10 @@ class PGReaderWorker:
                 logger.info(f"PG Reader {self.worker_id} interrupted")
                 break
 
+            except (ConnectionResetError, BrokenPipeError, OSError) as e:
+                logger.error(f"PG Reader {self.worker_id} lost broker connection: {e}")
+                break
+
             except Exception as e:
                 logger.error(f"PG Reader {self.worker_id} error: {e}", exc_info=True)
                 time.sleep(5)  # Backoff on error

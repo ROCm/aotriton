@@ -13,18 +13,9 @@ from collections import deque, defaultdict
 from pathlib import Path
 from typing import Dict, List
 
-from .protocol import send_message, recv_message
+from .buffered_socket import BufferedSocket
 
 logger = logging.getLogger(__name__)
-
-
-class WorkerConnection:
-    """Represents connection to a worker"""
-
-    def __init__(self, worker_id: str, sock: socket.socket):
-        self.worker_id = worker_id
-        self.sock = sock
-        self.fd = sock.fileno()
 
 
 class LocalBroker:
@@ -57,7 +48,7 @@ class LocalBroker:
         self.pending_acks = defaultdict(list)
 
         # Worker connections
-        self.workers = {}  # fd → WorkerConnection
+        self.workers = {}  # fd → BufferedSocket
 
         # epoll for efficient socket polling
         self.epoll = select.epoll()
@@ -120,15 +111,16 @@ class LocalBroker:
         """Accept new worker connection"""
         try:
             conn, _ = self.server_sock.accept()
+            # Set to non-blocking mode for multiplexed I/O with buffering
             conn.setblocking(False)
 
             # Register with epoll
             fd = conn.fileno()
             self.epoll.register(fd, select.EPOLLIN)
 
-            # Create worker connection (worker_id set on first message)
-            worker = WorkerConnection(None, conn)
-            self.workers[fd] = worker
+            # Create buffered socket (worker_id set on first message)
+            buffered_sock = BufferedSocket(conn, worker_id=None)
+            self.workers[fd] = buffered_sock
 
             logger.debug(f"Accepted worker connection (fd={fd})")
 
@@ -136,54 +128,57 @@ class LocalBroker:
             logger.error(f"Error accepting worker: {e}")
 
     def _handle_worker_message(self, fd: int):
-        """Handle message from worker"""
-        worker = self.workers.get(fd)
-        if not worker:
+        """Handle messages from worker"""
+        buffered_sock = self.workers.get(fd)
+        if not buffered_sock:
             return
 
         try:
-            msg = recv_message(worker.sock)
+            # Receive and parse messages (may return multiple complete messages)
+            messages = buffered_sock.recv_messages()
 
-            if msg is None:
+            if messages is None:
                 # Connection closed
                 self._remove_worker(fd)
                 return
 
-            msg_type = msg['type']
+            # Process each complete message
+            for msg in messages:
+                msg_type = msg['type']
 
-            if msg_type == 'get_task':
-                self._handle_get_task(worker, msg)
+                if msg_type == 'get_task':
+                    self._handle_get_task(buffered_sock, msg)
 
-            elif msg_type == 'forward':
-                self._handle_forward(msg)
+                elif msg_type == 'forward':
+                    self._handle_forward(msg)
 
-            elif msg_type == 'register_ack':
-                self._handle_register_ack(msg)
+                elif msg_type == 'register_ack':
+                    self._handle_register_ack(msg)
 
         except Exception as e:
             logger.error(f"Error handling worker message: {e}", exc_info=True)
             self._remove_worker(fd)
 
-    def _handle_get_task(self, worker: WorkerConnection, msg: dict):
+    def _handle_get_task(self, buffered_sock: BufferedSocket, msg: dict):
         """Worker requesting task from queue"""
         queue_name = msg['queue_name']
         worker_id = msg['worker_id']
 
         # Update worker_id if not set
-        if worker.worker_id is None:
-            worker.worker_id = worker_id
-            logger.info(f"Worker {worker_id} connected (fd={worker.fd})")
+        if buffered_sock.worker_id is None:
+            buffered_sock.worker_id = worker_id
+            logger.info(f"Worker {worker_id} connected (fd={buffered_sock.fileno})")
 
         # Dequeue task
         task_msg = self._dequeue_task(queue_name)
 
         if task_msg:
-            send_message(worker.sock, {
+            buffered_sock.send_message({
                 'type': 'task',
                 'message': task_msg
             })
         else:
-            send_message(worker.sock, {'type': 'no_task'})
+            buffered_sock.send_message({'type': 'no_task'})
 
     def _handle_forward(self, msg: dict):
         """Worker forwarding result message"""
@@ -199,12 +194,12 @@ class LocalBroker:
 
     def _remove_worker(self, fd: int):
         """Remove disconnected worker"""
-        worker = self.workers.pop(fd, None)
-        if worker:
-            logger.info(f"Worker {worker.worker_id} disconnected (fd={fd})")
+        buffered_sock = self.workers.pop(fd, None)
+        if buffered_sock:
+            logger.info(f"Worker {buffered_sock.worker_id} disconnected (fd={fd})")
             try:
                 self.epoll.unregister(fd)
-                worker.sock.close()
+                buffered_sock.sock.close()
             except Exception:
                 pass
 
@@ -367,9 +362,9 @@ class LocalBroker:
 
         # Send ack to waiting PG reader workers
         for worker_id in self.pending_acks[task_id]:
-            worker = self._find_worker_by_id(worker_id)
-            if worker:
-                send_message(worker.sock, {
+            buffered_sock = self._find_worker_by_id(worker_id)
+            if buffered_sock:
+                buffered_sock.send_message({
                     'type': 'ack',
                     'task_id': task_id
                 })
@@ -377,7 +372,7 @@ class LocalBroker:
 
         del self.pending_acks[task_id]
 
-    def _find_worker_by_id(self, worker_id: str) -> WorkerConnection | None:
+    def _find_worker_by_id(self, worker_id: str) -> BufferedSocket | None:
         """
         Find worker by ID.
 
@@ -385,9 +380,9 @@ class LocalBroker:
             worker_id: Worker identifier
 
         Returns:
-            WorkerConnection or None
+            BufferedSocket or None
         """
-        for worker in self.workers.values():
-            if worker.worker_id == worker_id:
-                return worker
+        for buffered_sock in self.workers.values():
+            if buffered_sock.worker_id == worker_id:
+                return buffered_sock
         return None

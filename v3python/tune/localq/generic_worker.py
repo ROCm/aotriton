@@ -91,6 +91,10 @@ class GenericWorker:
                 logger.info(f"Worker {self.worker_id} interrupted")
                 break
 
+            except (ConnectionResetError, BrokenPipeError, OSError) as e:
+                logger.error(f"Worker {self.worker_id} lost broker connection: {e}")
+                break
+
             except Exception as e:
                 logger.error(f"Worker {self.worker_id} error: {e}", exc_info=True)
                 time.sleep(1)  # Backoff on error
