@@ -45,8 +45,7 @@ echo "Stopping worker service in container: $WORKER_CONTAINER_ID"
 docker exec "$WORKER_CONTAINER_ID" bash -c "source /wkdir/config.rc && source \$(dirname \$CELERY_WORKER_PYTHON)/activate && cd /wkdir/aotriton.src && bash .tune/remote/worker_service.sh stop /wkdir $ARCH"
 
 echo "Stopping and removing container: $WORKER_CONTAINER_ID"
-docker stop "$WORKER_CONTAINER_ID"
-docker rm "$WORKER_CONTAINER_ID"
+docker rm -f "$WORKER_CONTAINER_ID"
 
 sudo rm -rf /dev/shm/aotriton-tuner
 rm "$RUNFILE"
