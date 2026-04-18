@@ -82,8 +82,8 @@ class LocalBroker:
         if self.epoll:
             self.epoll.close()
 
-        if self.sock:
-            self.sock.close()
+        if self.server_sock:
+            self.server_sock.close()
 
         # Clean up socket file
         if os.path.exists(self.socket_path):
