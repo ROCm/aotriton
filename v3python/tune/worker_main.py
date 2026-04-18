@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from .pq import Worker
 from .pq.queue import Task
+from .utils import get_db_connection_params
 
 
 def setup_logging(log_file: Path = None, log_level: str = 'INFO'):
@@ -45,49 +46,6 @@ def setup_logging(log_file: Path = None, log_level: str = 'INFO'):
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         handlers=handlers
     )
-
-
-def get_db_connection_params(workdir: Path) -> Dict[str, Any]:
-    """
-    Get PostgreSQL connection parameters from workdir config.
-
-    Args:
-        workdir: Path to workdir containing config.rc
-
-    Returns:
-        Connection parameters dictionary
-    """
-    import subprocess
-
-    # Source config.rc and extract environment variables
-    config_rc = workdir / 'config.rc'
-    if not config_rc.exists():
-        raise FileNotFoundError(f"Config file not found: {config_rc}")
-
-    # Source the config file and print specific variables
-    # Note: config.rc sets variables but doesn't export them, so we can't use 'env'
-    result = subprocess.run(
-        f'. {config_rc} && echo "$CELERY_SERVICE_HOST" && echo "$POSTGRES_PORT" && echo "$POSTGRES_USER" && echo "$POSTGRES_PASSWORD"',
-        shell=True,
-        capture_output=True,
-        text=True,
-        executable='/bin/bash'
-    )
-
-    if result.returncode != 0:
-        raise RuntimeError(f"Failed to source config.rc: {result.stderr}")
-
-    # Parse output lines
-    lines = result.stdout.strip().split('\n')
-    if len(lines) < 4:
-        raise RuntimeError(f"Incomplete config.rc output: {result.stdout}")
-
-    return {
-        'host': lines[0] or 'localhost',
-        'port': int(lines[1]) if lines[1] else 5432,
-        'user': lines[2] or 'aotriton',
-        'password': lines[3] or None
-    }
 
 
 def create_task_executor(workdir: Path, arch: str):
