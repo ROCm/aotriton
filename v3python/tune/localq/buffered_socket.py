@@ -23,6 +23,12 @@ class RecvState(Enum):
     READING_PAYLOAD = 2  # Reading N-byte JSON payload
 
 
+class SendState(Enum):
+    """State machine for sending buffered messages"""
+    IDLE = 1  # No pending sends
+    SENDING = 2  # Currently sending data
+
+
 class BufferedSocket:
     """
     Wrapper for non-blocking socket with message buffering.
@@ -41,77 +47,142 @@ class BufferedSocket:
         """
         self.sock = sock
         self.worker_id = worker_id
-        self.recv_buffer = b''
-        self.state = RecvState.READING_LENGTH
+
+        # Receive buffering state
+        self.recv_buffer = bytearray()  # Current partial message being received
+        self.recv_state = RecvState.READING_LENGTH
         self.expected_length = None  # Set after reading length prefix
+
+        # Send buffering state
+        self.send_buffer = b''
+        self.send_state = SendState.IDLE
+        self.send_offset = 0  # How many bytes of send_buffer have been sent
 
     @property
     def fileno(self) -> int:
         """Get socket file descriptor"""
         return self.sock.fileno()
 
-    def recv_messages(self) -> Optional[List[dict]]:
+    @property
+    def wants_write(self) -> bool:
+        """Check if socket wants to write (has pending data)"""
+        return len(self.send_buffer) > 0
+
+    def _recv_length(self) -> Optional[bool]:
         """
-        Read available data and parse complete messages.
+        Receive 4-byte length prefix.
 
         Returns:
-            List of complete messages, or None if connection closed
+            True if complete, False if need more data, None if connection closed
         """
-        # Read available data from socket
-        try:
-            chunk = self.sock.recv(65536)  # Read up to 64KB
-            if not chunk:
-                # Connection closed
-                return None
-            self.recv_buffer += chunk
-        except BlockingIOError:
-            # No data available (shouldn't happen after epoll signals EPOLLIN)
-            pass
+        needed = 4 - len(self.recv_buffer)
+        if needed > 0:
+            try:
+                chunk = self.sock.recv(needed)
+                if not chunk:
+                    # Connection closed
+                    return None
+                self.recv_buffer.extend(chunk)
+            except BlockingIOError:
+                # No more data available
+                return False
 
-        # Parse complete messages from buffer
-        messages = []
+        # Check if we have complete length prefix
+        if len(self.recv_buffer) < 4:
+            return False  # Need more data
 
+        # Parse length prefix
+        self.expected_length = struct.unpack('>I', self.recv_buffer)[0]
+
+        # Sanity check (prevent DoS)
+        if self.expected_length > 100 * 1024 * 1024:  # 100MB max
+            raise ValueError(f"Message too large: {self.expected_length} bytes")
+
+        # Pre-allocate buffer for payload
+        self.recv_buffer = bytearray(self.expected_length)
+        self.recv_state = RecvState.READING_PAYLOAD
+        return True
+
+    def _recv_payload(self) -> Optional[dict]:
+        """
+        Receive payload bytes.
+
+        Returns:
+            Message dict if complete, False if need more data, None if connection closed
+        """
+        received = len(self.recv_buffer)
+        needed = self.expected_length - received
+
+        if needed > 0:
+            try:
+                # Receive into pre-allocated buffer
+                view = memoryview(self.recv_buffer)[received:]
+                nbytes = self.sock.recv_into(view, needed)
+                if nbytes == 0:
+                    # Connection closed mid-message
+                    return None
+                # Buffer is already updated by recv_into
+            except BlockingIOError:
+                # No more data available
+                return False
+
+        # Check if we have complete payload
+        if len(self.recv_buffer) < self.expected_length:
+            return False  # Need more data
+
+        # Parse complete message
+        msg = json.loads(bytes(self.recv_buffer).decode('utf-8'))
+
+        logger.debug(f"← RECV ({self.expected_length} bytes): {json.dumps(msg)}")
+
+        # Reset for next message
+        self.recv_buffer = bytearray()
+        self.recv_state = RecvState.READING_LENGTH
+        self.expected_length = None
+
+        return msg
+
+    def recv_messages(self):
+        """
+        Generator that yields complete messages as they arrive.
+
+        Yields:
+            dict: Complete messages
+
+        Raises:
+            ConnectionError: If connection is closed
+        """
         while True:
-            if self.state == RecvState.READING_LENGTH:
-                # Need 4 bytes for length prefix
-                if len(self.recv_buffer) < 4:
-                    break  # Not enough data yet
+            if self.recv_state == RecvState.READING_LENGTH:
+                result = self._recv_length()
+                if result is None:
+                    # Connection closed
+                    raise ConnectionError("Connection closed")
+                elif result is False:
+                    # Need more data, stop iteration
+                    return
+                # else: length received, continue to read payload
 
-                # Parse length prefix
-                self.expected_length = struct.unpack('>I', self.recv_buffer[:4])[0]
+            elif self.recv_state == RecvState.READING_PAYLOAD:
+                result = self._recv_payload()
+                if result is None:
+                    # Connection closed
+                    raise ConnectionError("Connection closed")
+                elif result is False:
+                    # Need more data, stop iteration
+                    return
+                else:
+                    # Complete message received
+                    yield result
 
-                # Sanity check (prevent DoS)
-                if self.expected_length > 100 * 1024 * 1024:  # 100MB max
-                    raise ValueError(f"Message too large: {self.expected_length} bytes")
-
-                # Remove length prefix from buffer
-                self.recv_buffer = self.recv_buffer[4:]
-                self.state = RecvState.READING_PAYLOAD
-
-            elif self.state == RecvState.READING_PAYLOAD:
-                # Need expected_length bytes for payload
-                if len(self.recv_buffer) < self.expected_length:
-                    break  # Not enough data yet
-
-                # Extract JSON payload
-                json_bytes = self.recv_buffer[:self.expected_length]
-                msg = json.loads(json_bytes.decode('utf-8'))
-                messages.append(msg)
-
-                logger.debug(f"← RECV ({self.expected_length} bytes): {json.dumps(msg)}")
-
-                # Remove payload from buffer
-                self.recv_buffer = self.recv_buffer[self.expected_length:]
-
-                # Reset state for next message
-                self.state = RecvState.READING_LENGTH
-                self.expected_length = None
-
-        return messages
-
-    def send_message(self, msg: dict):
+    def queue_message(self, msg: dict):
         """
-        Send length-prefixed JSON message.
+        Queue message for sending (non-blocking).
+
+        For non-blocking sockets, we can't use sendall(). Instead:
+        1. Serialize message to bytes
+        2. Append to send buffer
+        3. Caller must register for EPOLLOUT and call flush_send()
 
         Args:
             msg: Message dictionary
@@ -119,10 +190,39 @@ class BufferedSocket:
         json_bytes = json.dumps(msg).encode('utf-8')
         length = len(json_bytes)
 
-        # Send 4-byte length prefix (big-endian)
-        self.sock.sendall(struct.pack('>I', length))
+        # Create length-prefixed message
+        message_bytes = struct.pack('>I', length) + json_bytes
 
-        # Send JSON payload
-        self.sock.sendall(json_bytes)
+        # Append to send buffer
+        self.send_buffer += message_bytes
 
-        logger.debug(f"→ SEND ({length} bytes): {json.dumps(msg)}")
+        logger.debug(f"→ QUEUE ({length} bytes): {json.dumps(msg)}")
+
+    def flush_send(self) -> bool:
+        """
+        Flush send buffer (call when EPOLLOUT signals socket is ready).
+
+        Returns:
+            True if all data sent, False if more data remains
+        """
+        if not self.send_buffer:
+            return True  # Nothing to send
+
+        try:
+            # Send as much as possible
+            sent = self.sock.send(self.send_buffer[self.send_offset:])
+            self.send_offset += sent
+
+            # Check if everything sent
+            if self.send_offset >= len(self.send_buffer):
+                # All sent, reset buffer
+                self.send_buffer = b''
+                self.send_offset = 0
+                return True
+            else:
+                # More data remains
+                return False
+
+        except BlockingIOError:
+            # Socket buffer full, try again later
+            return False

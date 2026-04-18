@@ -101,8 +101,11 @@ class LocalBroker:
                     # New worker connection
                     self._accept_worker()
                 elif event & select.EPOLLIN:
-                    # Worker has data
+                    # Worker has data to read
                     self._handle_worker_message(fd)
+                elif event & select.EPOLLOUT:
+                    # Worker ready for writing
+                    self._handle_worker_write(fd)
                 elif event & (select.EPOLLHUP | select.EPOLLERR):
                     # Worker disconnected
                     self._remove_worker(fd)
@@ -134,16 +137,8 @@ class LocalBroker:
             return
 
         try:
-            # Receive and parse messages (may return multiple complete messages)
-            messages = buffered_sock.recv_messages()
-
-            if messages is None:
-                # Connection closed
-                self._remove_worker(fd)
-                return
-
-            # Process each complete message
-            for msg in messages:
+            # Receive and parse messages (generator yields complete messages)
+            for msg in buffered_sock.recv_messages():
                 msg_type = msg['type']
 
                 if msg_type == 'get_task':
@@ -155,8 +150,31 @@ class LocalBroker:
                 elif msg_type == 'register_ack':
                     self._handle_register_ack(msg)
 
+        except ConnectionError:
+            # Connection closed
+            logger.info(f"Worker {buffered_sock.worker_id} connection closed")
+            self._remove_worker(fd)
+
         except Exception as e:
             logger.error(f"Error handling worker message: {e}", exc_info=True)
+            self._remove_worker(fd)
+
+    def _handle_worker_write(self, fd: int):
+        """Handle worker ready for writing (EPOLLOUT)"""
+        buffered_sock = self.workers.get(fd)
+        if not buffered_sock:
+            return
+
+        try:
+            # Flush send buffer
+            all_sent = buffered_sock.flush_send()
+
+            if all_sent:
+                # All data sent, unregister EPOLLOUT
+                self.epoll.modify(fd, select.EPOLLIN)
+
+        except Exception as e:
+            logger.error(f"Error handling worker write: {e}", exc_info=True)
             self._remove_worker(fd)
 
     def _handle_get_task(self, buffered_sock: BufferedSocket, msg: dict):
@@ -173,12 +191,12 @@ class LocalBroker:
         task_msg = self._dequeue_task(queue_name)
 
         if task_msg:
-            buffered_sock.send_message({
+            self._send_to_worker(buffered_sock,{
                 'type': 'task',
                 'message': task_msg
             })
         else:
-            buffered_sock.send_message({'type': 'no_task'})
+            self._send_to_worker(buffered_sock,{'type': 'no_task'})
 
     def _handle_forward(self, msg: dict):
         """Worker forwarding result message"""
@@ -191,6 +209,25 @@ class LocalBroker:
         worker_id = msg['worker_id']
         self.pending_acks[task_id].append(worker_id)
         logger.debug(f"Registered ack for task_id={task_id} from {worker_id}")
+
+    def _send_to_worker(self, buffered_sock: BufferedSocket, msg: dict):
+        """
+        Send message to worker (non-blocking with buffering).
+
+        Args:
+            buffered_sock: Worker's buffered socket
+            msg: Message to send
+        """
+        # Queue message for sending
+        buffered_sock.queue_message(msg)
+
+        # Register for EPOLLOUT if not already
+        fd = buffered_sock.fileno
+        try:
+            self.epoll.modify(fd, select.EPOLLIN | select.EPOLLOUT)
+        except Exception:
+            # Socket may not be registered yet, ignore
+            pass
 
     def _remove_worker(self, fd: int):
         """Remove disconnected worker"""
@@ -364,7 +401,7 @@ class LocalBroker:
         for worker_id in self.pending_acks[task_id]:
             buffered_sock = self._find_worker_by_id(worker_id)
             if buffered_sock:
-                buffered_sock.send_message({
+                self._send_to_worker(buffered_sock,{
                     'type': 'ack',
                     'task_id': task_id
                 })
