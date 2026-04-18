@@ -193,13 +193,16 @@ def main():
                        help='Worker identifier (e.g., pg-reader-0)')
     parser.add_argument('--arch', type=str, required=True,
                        help='GPU architecture to fetch tasks for')
+    parser.add_argument('--workdir', type=str, required=True,
+                       help='Path to workdir containing config.rc')
     parser.add_argument('--broker_socket', type=str,
                        default=os.environ.get('AOTRITON_TUNER_BROKER_SOCKET', '/tmp/aotriton-broker.sock'),
                        help='Path to broker Unix socket')
     args = parser.parse_args()
 
     # Get database connection parameters
-    conn_params = get_db_connection_params()
+    from pathlib import Path
+    conn_params = get_db_connection_params(Path(args.workdir))
 
     # Create and run worker
     worker = PGReaderWorker(

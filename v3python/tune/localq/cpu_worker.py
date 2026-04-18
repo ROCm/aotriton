@@ -30,13 +30,16 @@ def main():
     parser = argparse.ArgumentParser(description='CPU worker for local queue')
     parser.add_argument('--worker_id', type=str, default='cpu-0',
                        help='Worker identifier')
+    parser.add_argument('--workdir', type=str, required=True,
+                       help='Path to workdir containing config.rc')
     parser.add_argument('--broker_socket', type=str,
                        default=os.environ.get('AOTRITON_TUNER_BROKER_SOCKET', '/tmp/aotriton-broker.sock'),
                        help='Path to broker Unix socket')
     args = parser.parse_args()
 
     # Get database connection parameters
-    conn_params = get_db_connection_params()
+    from pathlib import Path
+    conn_params = get_db_connection_params(Path(args.workdir))
 
     # Create handlers for CPU tasks
     handlers = [

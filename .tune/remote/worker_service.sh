@@ -203,10 +203,10 @@ start_process_group() {
                 extra_args=("--gpu_id" "$id")
                 ;;
             pg)
-                extra_args=("--worker_id" "$name" "--arch" "$ARCH")
+                extra_args=("--worker_id" "$name" "--arch" "$ARCH" "--workdir" "$WORKDIR")
                 ;;
             cpu)
-                extra_args=("--worker_id" "$name")
+                extra_args=("--worker_id" "$name" "--workdir" "$WORKDIR")
                 ;;
         esac
 
