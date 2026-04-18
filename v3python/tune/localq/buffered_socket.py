@@ -52,6 +52,7 @@ class BufferedSocket:
         self.recv_buffer = bytearray()  # Current partial message being received
         self.recv_state = RecvState.READING_LENGTH
         self.expected_length = None  # Set after reading length prefix
+        self.payload_received = 0  # Track how many payload bytes received
 
         # Send buffering state
         self.send_buffer = b''
@@ -100,6 +101,7 @@ class BufferedSocket:
 
         # Pre-allocate buffer for payload
         self.recv_buffer = bytearray(self.expected_length)
+        self.payload_received = 0  # Reset payload byte counter
         self.recv_state = RecvState.READING_PAYLOAD
         return True
 
@@ -110,24 +112,23 @@ class BufferedSocket:
         Returns:
             Message dict if complete, False if need more data, None if connection closed
         """
-        received = len(self.recv_buffer)
-        needed = self.expected_length - received
+        needed = self.expected_length - self.payload_received
 
         if needed > 0:
             try:
                 # Receive into pre-allocated buffer
-                view = memoryview(self.recv_buffer)[received:]
+                view = memoryview(self.recv_buffer)[self.payload_received:]
                 nbytes = self.sock.recv_into(view, needed)
                 if nbytes == 0:
                     # Connection closed mid-message
                     return None
-                # Buffer is already updated by recv_into
+                self.payload_received += nbytes
             except BlockingIOError:
                 # No more data available
                 return False
 
         # Check if we have complete payload
-        if len(self.recv_buffer) < self.expected_length:
+        if self.payload_received < self.expected_length:
             return False  # Need more data
 
         # Parse complete message
