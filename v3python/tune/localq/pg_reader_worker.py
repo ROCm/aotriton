@@ -20,6 +20,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from .protocol import send_message, recv_message
+from ..utils import get_db_connection_params
 
 logging.basicConfig(
     level=logging.INFO,
@@ -183,16 +184,6 @@ class PGReaderWorker:
                     return dict(row)
                 else:
                     return None
-
-
-def get_db_connection_params():
-    """Get PostgreSQL connection parameters from environment"""
-    return {
-        'host': os.environ.get('CELERY_SERVICE_HOST', 'localhost'),
-        'port': int(os.environ.get('POSTGRES_PORT', 5432)),
-        'user': os.environ.get('POSTGRES_USER'),
-        'password': os.environ.get('POSTGRES_PASSWORD'),
-    }
 
 
 def main():

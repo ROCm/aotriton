@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 import sys
+import os
 from dataclasses import fields
 import json
 import math
@@ -9,6 +10,8 @@ import dacite
 import subprocess
 import select
 import errno
+from pathlib import Path
+from typing import Dict, Any
 
 def safeload(s):
     return json.loads(s) if s else None
@@ -124,5 +127,46 @@ def _read_line_unix(process: subprocess.Popen, timeout: float) -> str|None:
         return line if line else None
 
     return None  # Timeout
+
+
+def get_db_connection_params(workdir: Path) -> Dict[str, Any]:
+    """
+    Get PostgreSQL connection parameters from workdir config.
+
+    Args:
+        workdir: Path to workdir containing config.rc
+
+    Returns:
+        Connection parameters dictionary with keys: host, port, user, password, dbname
+    """
+    # Source config.rc and extract environment variables
+    config_rc = workdir / 'config.rc'
+    if not config_rc.exists():
+        raise FileNotFoundError(f"Config file not found: {config_rc}")
+
+    # Source the config file and print specific variables
+    # Note: config.rc sets variables but doesn't export them, so we can't use 'env'
+    result = subprocess.run(
+        f'. {config_rc} && echo "$CELERY_SERVICE_HOST" && echo "$POSTGRES_PORT" && echo "$POSTGRES_USER" && echo "$POSTGRES_PASSWORD"',
+        shell=True,
+        capture_output=True,
+        text=True,
+        executable='/bin/bash'
+    )
+
+    if result.returncode != 0:
+        raise RuntimeError(f"Failed to source config.rc: {result.stderr}")
+
+    # Parse output lines
+    lines = result.stdout.strip().split('\n')
+    if len(lines) < 4:
+        raise RuntimeError(f"Incomplete config.rc output: {result.stdout}")
+
+    return {
+        'host': lines[0] or 'localhost',
+        'port': int(lines[1]) if lines[1] else 5432,
+        'user': lines[2] or 'aotriton',
+        'password': lines[3] or None
+    }
 
 

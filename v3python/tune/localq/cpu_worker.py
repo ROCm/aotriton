@@ -15,6 +15,7 @@ import signal
 
 from .generic_worker import GenericWorker
 from .handlers import WriteHsacoResultHandler, PostprocessHandler
+from ..utils import get_db_connection_params
 
 logging.basicConfig(
     level=logging.INFO,
@@ -22,16 +23,6 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
-
-
-def get_db_connection_params():
-    """Get PostgreSQL connection parameters from environment"""
-    return {
-        'host': os.environ.get('CELERY_SERVICE_HOST', 'localhost'),
-        'port': int(os.environ.get('POSTGRES_PORT', 5432)),
-        'user': os.environ.get('POSTGRES_USER'),
-        'password': os.environ.get('POSTGRES_PASSWORD'),
-    }
 
 
 def main():
