@@ -10,6 +10,8 @@ import dacite
 import subprocess
 import select
 import errno
+import time
+import fcntl
 from pathlib import Path
 from typing import Dict, Any
 
@@ -59,6 +61,136 @@ def sanitize_value(obj):
     else:
         return obj
 
+
+class SafeLineReader:
+    """
+    Non-blocking line reader for subprocess stdout with timeout support.
+
+    Maintains buffer state across multiple readline calls to preserve
+    partial line data.
+    """
+
+    def __init__(self, process: subprocess.Popen):
+        """
+        Initialize reader for a subprocess.
+
+        Args:
+            process: subprocess.Popen instance with stdout=subprocess.PIPE
+        """
+        self.process = process
+        self.buffer = bytearray()
+        self.fd = None
+        self.original_flags = None
+
+    def _setup_nonblocking(self):
+        """Set stdout to non-blocking mode."""
+        if self.fd is None and self.process.stdout:
+            self.fd = self.process.stdout.fileno()
+            self.original_flags = fcntl.fcntl(self.fd, fcntl.F_GETFL)
+            fcntl.fcntl(self.fd, fcntl.F_SETFL, self.original_flags | os.O_NONBLOCK)
+
+    def _restore_blocking(self):
+        """Restore stdout to blocking mode."""
+        if self.fd is not None and self.original_flags is not None:
+            fcntl.fcntl(self.fd, fcntl.F_SETFL, self.original_flags)
+
+    def readline(self, timeout: float) -> tuple[str|None, int, str|None]:
+        """
+        Read one line from subprocess stdout with timeout.
+
+        Args:
+            timeout: Maximum time to wait for a line (seconds)
+
+        Returns:
+            Tuple of (line, exitcode, error_msg) where:
+            - line: The output line if successfully read, None otherwise
+            - exitcode: Process exitcode if crashed, errno.ETIMEDOUT if timeout, 0 otherwise
+            - error_msg: stderr if any problem occurred, None if successful
+        """
+        if not self.process.stdout:
+            raise ValueError("Process stdout is None")
+
+        def check_crash():
+            return_code = self.process.poll()
+            if return_code is not None and return_code != 0:
+                try:
+                    error_msg = self.process.stderr.read() if self.process.stderr else ""
+                except Exception as e:
+                    error_msg = f"Could not read stderr: {e}"
+                return (None, return_code, error_msg)
+            return None
+
+        # First check if process has already crashed
+        ret = check_crash()
+        if ret is not None:
+            return ret
+
+        # Check if we already have a complete line in buffer
+        if b'\n' in self.buffer:
+            line_end = self.buffer.index(b'\n')
+            line = self.buffer[:line_end + 1].decode('utf-8', errors='replace')
+            # Remove line from buffer, keep rest
+            self.buffer = self.buffer[line_end + 1:]
+            return (line.rstrip('\n\r'), 0, None)
+
+        # Setup non-blocking I/O
+        self._setup_nonblocking()
+
+        try:
+            deadline = time.time() + timeout
+
+            while True:
+                remaining = deadline - time.time()
+                if remaining <= 0:
+                    return (None, errno.ETIMEDOUT, f"Timeout after {timeout} seconds waiting for output")
+
+                ready, _, _ = select.select([self.process.stdout], [], [], remaining)
+
+                if not ready:
+                    return (None, errno.ETIMEDOUT, f"Timeout after {timeout} seconds waiting for output")
+
+                # Read available data (non-blocking)
+                try:
+                    chunk = self.process.stdout.read(8192)
+                    if not chunk:
+                        # EOF - return any remaining buffer as final line
+                        if self.buffer:
+                            line = self.buffer.decode('utf-8', errors='replace')
+                            self.buffer = bytearray()
+                            return (line.rstrip('\n\r'), 0, None)
+                        return (None, 0, "EOF")
+
+                    self.buffer.extend(chunk)
+
+                    # Check if we have a complete line
+                    if b'\n' in self.buffer:
+                        line_end = self.buffer.index(b'\n')
+                        line = self.buffer[:line_end + 1].decode('utf-8', errors='replace')
+                        # Remove line from buffer, keep rest
+                        self.buffer = self.buffer[line_end + 1:]
+
+                        # Check if process crashed during read
+                        ret = check_crash()
+                        if ret is not None:
+                            return ret
+
+                        return (line.rstrip('\n\r'), 0, None)
+
+                except BlockingIOError:
+                    # No data available right now, continue waiting
+                    continue
+
+        except Exception as e:
+            return (None, -1, f"Unexpected error reading from subprocess: {e}")
+
+        finally:
+            # Note: Don't restore blocking mode here as we may call readline multiple times
+            pass
+
+    def close(self):
+        """Clean up and restore blocking mode."""
+        self._restore_blocking()
+
 def safe_readline(
     process: subprocess.Popen,
     timeout: float = 5.0
@@ -76,57 +208,73 @@ def safe_readline(
         - exitcode: Process exitcode if crashed, errno.ETIMEDOUT if timedout, 0 otherwise
         - error_msg: stderr if any problem occurred, None if successful
 
-    CAVEAT: This function still blocks with partial lines.
-            Although it is good enough for our use.
-
-    Note: do not support Win32
+    Note: Uses SafeLineReader to maintain buffer state across multiple calls.
+          Reader instance is cached on the process object.
     """
     assert sys.platform != 'win32'
-    def check_crash():
-        return_code = process.poll()
-        if return_code is not None and return_code != 0:
-            try:
-                error_msg = process.stderr.read() if process.stderr else ""
-            except Exception as e:
-                error_msg = "Could not read stderr: {e}"
-            return (None, return_code, error_msg)
-        return None
-    # First check if process has already crashed
-    ret = check_crash()
-    if ret is not None:
-        return ret
 
-    # Platform-specific reading
-    try:
-        line = _read_line_unix(process, timeout)
-        # Check if process crashed during read
-        ret = check_crash()
-        if ret is not None:
-            return ret
-        if line is None:
-            return (None, errno.ETIMEDOUT, f"Timeout after {timeout} seconds waiting for output")
-        return (line.rstrip('\n\r'), 0, None)
-    except Exception as e:
-        return (None, -1,  f"Unexpected error reading from subprocess: {e}")
+    # Get or create reader for this process
+    if not hasattr(process, '_stdout_reader'):
+        process._stdout_reader = SafeLineReader(process)
+
+    return process._stdout_reader.readline(timeout)
 
 
 def _read_line_unix(process: subprocess.Popen, timeout: float) -> str|None:
     """
     Read one line with timeout on Unix systems using select.
 
-    CAVEAT: This function still blocks with partial lines.
-            Although it is good enough for our use.
+    Uses select in a loop to accumulate characters until newline or timeout.
+    This avoids blocking on readline() when subprocess hasn't written a newline.
     """
     if not process.stdout:
         raise ValueError("Process stdout is None")
 
-    ready, _, _ = select.select([process.stdout], [], [], timeout)
+    import time
+    import fcntl
 
-    if ready:
-        line = process.stdout.readline()
-        return line if line else None
+    # Set stdout to non-blocking mode
+    fd = process.stdout.fileno()
+    flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+    fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
 
-    return None  # Timeout
+    try:
+        buffer = bytearray()
+        deadline = time.time() + timeout
+
+        while True:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                return None  # Timeout
+
+            ready, _, _ = select.select([process.stdout], [], [], remaining)
+
+            if not ready:
+                return None  # Timeout
+
+            # Read available data (non-blocking)
+            try:
+                chunk = process.stdout.read(8192)
+                if not chunk:
+                    # EOF
+                    return buffer.decode('utf-8', errors='replace') if buffer else None
+
+                buffer.extend(chunk)
+
+                # Check if we have a complete line
+                if b'\n' in buffer:
+                    line_end = buffer.index(b'\n')
+                    line = buffer[:line_end + 1].decode('utf-8', errors='replace')
+                    # Keep remaining data for next read (though we don't use it here)
+                    return line
+
+            except BlockingIOError:
+                # No data available right now, continue waiting
+                continue
+
+    finally:
+        # Restore blocking mode
+        fcntl.fcntl(fd, fcntl.F_SETFL, flags)
 
 
 def get_db_connection_params(workdir: Path) -> Dict[str, Any]:
