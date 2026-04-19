@@ -252,6 +252,15 @@ class InitDatabaseCommand(CommandBuilder):
         return self._run(self.RELATIVE, [workdir], workdir, 'Initialize database schema')
 
 
+class RecreateSchemaCommand(CommandBuilder):
+    """Recreate database schema (drop all tables first)"""
+    RELATIVE = '.tune/bin/initdb'
+
+    def exec(self, workdir):
+        """Execute initdb script with --recreate flag"""
+        return self._run(self.RELATIVE, [workdir, '--recreate'], workdir, 'Recreate database schema')
+
+
 class BuildCommand(CommandBuilder):
     """Base class for build operations"""
     RELATIVE = None  # Subclass must define
@@ -323,6 +332,7 @@ _start_servers = StartServersCommand()
 _stop_servers = StopServersCommand()
 _restart_servers = RestartServersCommand()
 _init_database = InitDatabaseCommand()
+_recreate_schema = RecreateSchemaCommand()
 
 _build_libraries = BuildLibrariesCommand()
 _build_images = BuildImagesCommand()
@@ -397,6 +407,11 @@ def restart_servers(workdir):
 def init_database(workdir):
     """Initialize database schema"""
     return _init_database.exec(workdir)
+
+
+def recreate_schema(workdir):
+    """Recreate database schema (drop all tables first)"""
+    return _recreate_schema.exec(workdir)
 
 
 def get_git_status(workdir):

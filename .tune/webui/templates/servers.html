@@ -31,8 +31,16 @@
             hx-indicator="#initdb-spinner">Initialize Schema</button>
     <span id="initdb-spinner" class="htmx-indicator">⏳ Initializing...</span>
 
+    <button hx-post="/api/servers/recreate-schema"
+            hx-swap="none"
+            hx-confirm="WARNING: This will DROP ALL TABLES and recreate the schema from scratch. ALL DATA WILL BE LOST. Are you absolutely sure?"
+            hx-indicator="#recreate-spinner"
+            style="margin-left: 1rem; background-color: #dc3545; color: white;">Recreate Schema (Danger)</button>
+    <span id="recreate-spinner" class="htmx-indicator">⏳ Recreating...</span>
+
     <p style="font-size: 0.9em; color: gray; margin-top: 0.5rem;">
-        Creates tables: task_queue, worker_heartbeat, tuning_results. Safe to run multiple times (uses CREATE IF NOT EXISTS).
+        <strong>Initialize Schema:</strong> Creates tables if they don't exist (safe, preserves data).<br>
+        <strong>Recreate Schema:</strong> Drops all tables and recreates from scratch (destructive, clears all tasks and results).
     </p>
 </section>
 

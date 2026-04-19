@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 
 # Initialize PostgreSQL database schema for Tuner v3.5
-# Usage: initdb <workdir>
+# Usage: initdb <workdir> [--recreate]
 
 set -e
 
@@ -14,9 +14,10 @@ AOTRITON_ROOT="$(cd "$TUNE_ROOT/.." && pwd)"
 . "$TUNE_ROOT/lib/config_load.sh"
 
 WORKDIR="$1"
+RECREATE_FLAG="${2:-}"
 
 if [ -z "$WORKDIR" ]; then
-    echo "Usage: $0 <workdir>" >&2
+    echo "Usage: $0 <workdir> [--recreate]" >&2
     exit 1
 fi
 
@@ -51,6 +52,26 @@ PSQL_IMAGE="alpine/psql:${POSTGRES_VERSION}"
 # Default to localhost and standard port since containers use --network=host
 POSTGRES_HOST="${CELERY_SERVICE_HOST:-localhost}"
 POSTGRES_PORT="${POSTGRES_PORT:-5432}"
+
+# Drop all tables if --recreate flag is set
+if [ "$RECREATE_FLAG" = "--recreate" ]; then
+    echo "WARNING: Recreating schema - dropping all tables first..."
+
+    # Drop all tables in public schema
+    docker run --rm \
+        --network=host \
+        -e PGPASSWORD="$POSTGRES_PASSWORD" \
+        "$PSQL_IMAGE" \
+        postgresql://"$POSTGRES_USER"@"$POSTGRES_HOST":"$POSTGRES_PORT" \
+        -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO $POSTGRES_USER; GRANT ALL ON SCHEMA public TO public;"
+
+    if [ $? -ne 0 ]; then
+        echo "Error: Failed to drop existing schema" >&2
+        exit 1
+    fi
+
+    echo "All tables dropped successfully"
+fi
 
 echo "Initializing database schema..."
 echo "Host: $POSTGRES_HOST"
