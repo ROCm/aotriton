@@ -145,6 +145,9 @@ class LocalBroker:
             # Receive and parse messages (generator yields complete messages)
             for msg in buffered_sock.recv_messages():
                 msg_type = msg['type']
+                worker_id = buffered_sock.worker_id or f"fd={fd}"
+
+                logger.debug(f"Broker received message from {worker_id}: type={msg_type}")
 
                 if msg_type == 'get_task':
                     self._handle_get_task(buffered_sock, msg)
@@ -206,6 +209,7 @@ class LocalBroker:
     def _handle_forward(self, msg: dict):
         """Worker forwarding result message"""
         message = msg['message']
+        logger.info(f"Broker handling forward: class={message['class']}, task_id={message.get('task_id')}")
         self.forward(message)
 
     def _handle_register_ack(self, msg: dict):
