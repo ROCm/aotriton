@@ -52,6 +52,7 @@ class PGReaderWorker:
         self.broker_socket = broker_socket
         self.conn_params = conn_params
         self.sock = None
+        self.db_conn = None
         self.running = False
 
         # Create wakeup pipe for signal handling
@@ -63,6 +64,9 @@ class PGReaderWorker:
         """Main PG reader loop"""
         # Connect to broker
         self._connect_to_broker()
+
+        # Connect to database (reuse connection)
+        self._connect_to_database()
 
         logger.info(f"PG Reader {self.worker_id} started for arch={self.arch}")
         self.running = True
@@ -138,6 +142,8 @@ class PGReaderWorker:
 
         # Cleanup
         logger.info(f"PG Reader {self.worker_id} cleanup starting")
+        if self.db_conn:
+            self.db_conn.close()
         if self.sock:
             self.sock.close()
         logger.info(f"PG Reader {self.worker_id} cleanup complete, exiting run()")
@@ -185,6 +191,18 @@ class PGReaderWorker:
                 else:
                     raise
 
+    def _connect_to_database(self):
+        """Connect to PostgreSQL database (persistent connection)"""
+        # Set statement_timeout to 1 second to prevent blocking queries
+        options = f"-c statement_timeout=1000"  # 1000ms = 1s
+        self.db_conn = psycopg.connect(
+            **self.conn_params,
+            row_factory=dict_row,
+            options=options,
+            autocommit=True  # Auto-commit mode for simpler transaction handling
+        )
+        logger.info(f"PG Reader {self.worker_id} connected to database")
+
     def _fetch_pg_task(self):
         """
         Fetch and claim task from PostgreSQL task_queue.
@@ -194,9 +212,10 @@ class PGReaderWorker:
         """
         partition_table = f"task_queue_{self.arch}"
 
-        with psycopg.connect(**self.conn_params, row_factory=dict_row) as conn:
-            with conn.cursor() as cur:
+        try:
+            with self.db_conn.cursor() as cur:
                 # Atomic task claiming using UPDATE ... RETURNING
+                # statement_timeout is set on connection, so this won't block forever
                 cur.execute(f"""
                     UPDATE {partition_table}
                     SET status = 'running',
@@ -213,12 +232,16 @@ class PGReaderWorker:
                 """, (self.worker_id,))
 
                 row = cur.fetchone()
-                conn.commit()
+                # No commit needed - using autocommit mode
 
                 if row:
                     return dict(row)
                 else:
                     return None
+
+        except psycopg.errors.QueryCanceled:
+            # Statement timeout - no tasks available
+            return None
 
 
 def main():

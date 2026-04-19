@@ -35,7 +35,6 @@ def main():
     def signal_handler(signum, frame):
         logger.info(f"Received signal {signum}, shutting down gracefully")
         broker.shutdown()
-        sys.exit(0)
 
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
@@ -45,6 +44,7 @@ def main():
     try:
         broker.start()
         broker.run()
+        logger.info("Broker run() returned, main() exiting")
     except KeyboardInterrupt:
         logger.info("Broker interrupted")
         broker.shutdown()
@@ -52,6 +52,8 @@ def main():
         logger.error(f"Broker failed: {e}", exc_info=True)
         broker.shutdown()
         sys.exit(1)
+
+    logger.info("Broker main() complete")
 
 
 if __name__ == '__main__':

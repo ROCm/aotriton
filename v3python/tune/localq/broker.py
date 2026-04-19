@@ -110,6 +110,10 @@ class LocalBroker:
                     # Worker disconnected
                     self._remove_worker(fd)
 
+        logger.info("Broker run loop exited, cleanup starting")
+        # Cleanup happens in shutdown()
+        logger.info("Broker run() complete")
+
     def _accept_worker(self):
         """Accept new worker connection"""
         try:
