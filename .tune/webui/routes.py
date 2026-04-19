@@ -110,7 +110,8 @@ def api_stop_start_all_workers():
 def api_start_worker(hostname):
     """Start single worker"""
     workdir = current_app.config['WORKDIR']
-    result = tasks.start_worker_single(workdir, hostname)
+    options = request.get_json() or {}
+    result = tasks.start_worker_single(workdir, hostname, options=options)
     return jsonify(result)
 
 
@@ -126,7 +127,8 @@ def api_stop_worker(hostname):
 def api_restart_worker(hostname):
     """Restart single worker"""
     workdir = current_app.config['WORKDIR']
-    result = tasks.restart_worker_single(workdir, hostname)
+    options = request.get_json() or {}
+    result = tasks.restart_worker_single(workdir, hostname, options=options)
     return jsonify(result)
 
 
@@ -134,7 +136,8 @@ def api_restart_worker(hostname):
 def api_stop_start_worker(hostname):
     """Stop then start single worker"""
     workdir = current_app.config['WORKDIR']
-    result = tasks.stop_start_worker_single(workdir, hostname)
+    options = request.get_json() or {}
+    result = tasks.stop_start_worker_single(workdir, hostname, options=options)
     return jsonify(result)
 
 

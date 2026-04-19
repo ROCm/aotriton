@@ -25,7 +25,7 @@ CPU_WORKER_MODULE="v3python.tune.localq.cpu_worker"
 
 usage() {
     cat <<EOF
-Usage: $0 <command> <workdir> <arch>
+Usage: $0 <command> <workdir> <arch> [--multi_gpu <ids...>]
 
 Manage Tuner v3.5 local queue processes (SysV-style init script)
 
@@ -37,20 +37,36 @@ Commands:
     force-stop  Force kill all processes (SIGKILL)
 
 Arguments:
+    command       Command to execute
     workdir       Path to workdir containing config.rc
     arch          GPU architecture (e.g., gfx942, gfx90a)
 
+Options:
+    --multi_gpu <id> [<id>...]    GPU IDs to use (space-separated)
+                                  Use -1 for all GPUs (default: all auto-detected)
+
 Components started:
     - 1 broker (message router)
-    - NUM_GPUS GPU workers (auto-detected)
+    - GPU workers (auto-detected or selected via --multi_gpu)
     - 4 PG reader workers (fetch tasks from PostgreSQL)
     - 4 CPU workers (postprocess, write results)
 
 Examples:
+    # Start all GPU workers (auto-detected)
     $0 start /path/to/workdir gfx942
+
+    # Start specific GPU workers
+    $0 start /path/to/workdir gfx942 --multi_gpu 0 1
+    $0 start /path/to/workdir gfx942 --multi_gpu 1 2 3 4 5 6
+
+    # Start all GPUs explicitly
+    $0 start /path/to/workdir gfx942 --multi_gpu -1
+
+    # Stop always stops all processes regardless of which were started
     $0 stop /path/to/workdir gfx942
-    $0 restart /path/to/workdir gfx942
-    $0 status /path/to/workdir gfx942
+
+    # Restart with selected GPUs
+    $0 restart /path/to/workdir gfx942 --multi_gpu 2 3
 
 PID files location: <workdir>/run/pids/
 Log files location: <workdir>/run/logs/
@@ -58,10 +74,38 @@ EOF
     exit 1
 }
 
-# Parse arguments
+# Extract positional arguments first
 COMMAND="${1:-}"
 WORKDIR="${2:-}"
 ARCH="${3:-}"
+shift 3
+
+# Parse optional --multi_gpu (must come after positionals)
+GPU_IDS=()
+USE_ALL_GPUS=false
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --multi_gpu)
+            shift
+            # Collect all following numeric arguments (or -1)
+            while [ $# -gt 0 ] && [[ "$1" =~ ^-?[0-9]+$ ]]; do
+                if [ "$1" = "-1" ]; then
+                    USE_ALL_GPUS=true
+                    shift
+                    break
+                else
+                    GPU_IDS+=("$1")
+                    shift
+                fi
+            done
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            usage
+            ;;
+    esac
+done
 
 if [ -z "$COMMAND" ] || [ -z "$WORKDIR" ] || [ -z "$ARCH" ]; then
     usage
@@ -75,9 +119,14 @@ fi
 
 load_config_container "$WORKDIR" || exit 1
 
-# Auto-detect NUM_GPUS
-NUM_GPUS=$(rocm_agent_enumerator | grep -v gfx000 | wc -l)
-echo "Auto-detected $NUM_GPUS GPUs"
+# Determine final GPU IDs list
+if [ "$USE_ALL_GPUS" = true ] || [ ${#GPU_IDS[@]} -eq 0 ]; then
+    # Auto-detect all GPUs
+    NUM_GPUS=$(rocm_agent_enumerator | grep -v gfx000 | wc -l)
+    GPU_IDS=($(seq 0 $((NUM_GPUS - 1))))
+fi
+
+echo "Using GPU IDs: ${GPU_IDS[*]}"
 
 # Validate localq modules exist
 if [ ! -f "v3python/tune/localq/broker_main.py" ]; then
@@ -189,29 +238,30 @@ start_process_group() {
     local name_prefix="$2"
     local module="$3"
     local arg_type="$4"  # "gpu" | "pg" | "cpu"
-    local count="$5"     # number of processes (0 to count-1)
+    shift 4
+    local ids=("$@")     # sequence of IDs to start
 
     local failed=0
 
-    for id in $(seq 0 $((count - 1))); do
+    for id in "${ids[@]}"; do
         local name="$name_prefix-$id"
         local display="$group_name $id"
-        local extra_args=()
+        local module_args=()
 
         case "$arg_type" in
             gpu)
-                extra_args=("--gpu_id" "$id")
+                module_args=("--gpu_id" "$id")
                 ;;
             pg)
-                extra_args=("--worker_id" "$name" "--arch" "$ARCH" "--workdir" "$WORKDIR")
+                module_args=("--worker_id" "$name" "--arch" "$ARCH" "--workdir" "$WORKDIR")
                 ;;
             cpu)
-                extra_args=("--worker_id" "$name" "--workdir" "$WORKDIR")
+                module_args=("--worker_id" "$name" "--workdir" "$WORKDIR")
                 ;;
         esac
 
         if ! start_single_process "$display" "$name" \
-            "$CELERY_WORKER_PYTHON" -m "$module" "${extra_args[@]}"; then
+            "$CELERY_WORKER_PYTHON" -m "$module" "${module_args[@]}"; then
             failed=$((failed + 1))
         fi
     done
@@ -232,7 +282,11 @@ stop_process_group() {
     else
         # Multiple processes with ID suffix (0 to count-1)
         for id in $(seq 0 $((count - 1))); do
-            pidfiles+=("$(get_pidfile "$name_prefix-$id")")
+            local pidfile="$(get_pidfile "$name_prefix-$id")"
+            # Only add if file exists (tolerate non-existing processes)
+            if [ -f "$pidfile" ]; then
+                pidfiles+=("$pidfile")
+            fi
         done
     fi
 
@@ -352,20 +406,20 @@ cmd_start() {
     sleep 1
 
     # 2. Start GPU workers
-    echo "Starting $NUM_GPUS GPU workers..."
-    start_process_group "GPU worker" "gpu-worker" "$GPU_WORKER_MODULE" "gpu" $NUM_GPUS
+    echo "Starting ${#GPU_IDS[@]} GPU workers for GPUs: ${GPU_IDS[*]}..."
+    start_process_group "GPU worker" "gpu-worker" "$GPU_WORKER_MODULE" "gpu" "${GPU_IDS[@]}"
     failed=$?
     echo ""
 
     # 3. Start PG readers (4 workers)
     echo "Starting 4 PG reader workers for arch=$ARCH..."
-    start_process_group "PG reader" "pg-reader-$ARCH" "$PG_READER_MODULE" "pg" 4
+    start_process_group "PG reader" "pg-reader-$ARCH" "$PG_READER_MODULE" "pg" 0 1 2 3
     failed=$((failed + $?))
     echo ""
 
     # 4. Start CPU workers (4 workers)
     echo "Starting 4 CPU workers..."
-    start_process_group "CPU worker" "cpu-worker" "$CPU_WORKER_MODULE" "cpu" 4
+    start_process_group "CPU worker" "cpu-worker" "$CPU_WORKER_MODULE" "cpu" 0 1 2 3
     failed=$((failed + $?))
     echo ""
 
@@ -381,6 +435,9 @@ cmd_stop() {
     echo "Stopping all processes..."
     echo ""
 
+    # Auto-detect NUM_GPUS for stop (may differ from start if GPUs were selected)
+    local NUM_GPUS_ALL=$(rocm_agent_enumerator | grep -v gfx000 | wc -l)
+
     # Stop in order: PG readers → GPU workers → CPU workers → broker
 
     # 1. Stop PG readers first (halt incoming tasks)
@@ -388,7 +445,8 @@ cmd_stop() {
     echo ""
 
     # 2. Stop GPU workers (no more outgoing hsaco results)
-    stop_process_group "GPU workers" "gpu-worker" $NUM_GPUS
+    # Try to stop all possible GPU workers (0 to NUM_GPUS_ALL-1)
+    stop_process_group "GPU workers" "gpu-worker" $NUM_GPUS_ALL
     echo ""
 
     # 3. Stop CPU workers (finish processing remaining results)
@@ -418,7 +476,11 @@ force_stop_process_group() {
     else
         # Multiple processes with ID suffix (0 to count-1)
         for id in $(seq 0 $((count - 1))); do
-            pidfiles+=("$(get_pidfile "$name_prefix-$id")")
+            local pidfile="$(get_pidfile "$name_prefix-$id")"
+            # Only add if file exists (tolerate non-existing processes)
+            if [ -f "$pidfile" ]; then
+                pidfiles+=("$pidfile")
+            fi
         done
     fi
 
@@ -457,13 +519,16 @@ cmd_force_stop() {
     echo "Force stopping all processes..."
     echo ""
 
+    # Auto-detect NUM_GPUS for force-stop
+    local NUM_GPUS_ALL=$(rocm_agent_enumerator | grep -v gfx000 | wc -l)
+
     # Force stop in order: PG readers → GPU workers → CPU workers → broker
 
     # 1. PG readers
     force_stop_process_group "PG readers" "pg-reader-$ARCH" 4
 
     # 2. GPU workers
-    force_stop_process_group "GPU workers" "gpu-worker" $NUM_GPUS
+    force_stop_process_group "GPU workers" "gpu-worker" $NUM_GPUS_ALL
 
     # 3. CPU workers
     force_stop_process_group "CPU workers" "cpu-worker" 4
@@ -489,6 +554,9 @@ cmd_status() {
     echo "Process status for arch=$ARCH:"
     echo ""
 
+    # Auto-detect NUM_GPUS for status
+    local NUM_GPUS_ALL=$(rocm_agent_enumerator | grep -v gfx000 | wc -l)
+
     local running=0
     local stopped=0
 
@@ -503,11 +571,14 @@ cmd_status() {
 
     # 2. GPU workers
     echo "=== GPU Workers ==="
-    for i in $(seq 0 $((NUM_GPUS - 1))); do
-        if process_status "GPU worker $i" "$(get_pidfile "gpu-worker-$i")"; then
-            running=$((running + 1))
-        else
-            stopped=$((stopped + 1))
+    for i in $(seq 0 $((NUM_GPUS_ALL - 1))); do
+        local pidfile="$(get_pidfile "gpu-worker-$i")"
+        if [ -f "$pidfile" ]; then
+            if process_status "GPU worker $i" "$pidfile"; then
+                running=$((running + 1))
+            else
+                stopped=$((stopped + 1))
+            fi
         fi
     done
     echo ""

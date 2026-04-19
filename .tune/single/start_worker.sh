@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 
 # Start worker on one host
-# Usage: start_worker.sh <workdir> <hostname>
+# Usage: start_worker.sh <workdir> <hostname> [-- <extra args>]
 
 set -e
 
@@ -15,9 +15,17 @@ TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 WORKDIR="$1"
 HOSTNAME="$2"
+shift 2
+
+# Collect extra args after '--'
+EXTRA_ARGS=()
+if [ "$1" = "--" ]; then
+  shift
+  EXTRA_ARGS=("$@")
+fi
 
 if [ -z "$WORKDIR" ] || [ -z "$HOSTNAME" ]; then
-  echo "Usage: $0 <workdir> <hostname>" >&2
+  echo "Usage: $0 <workdir> <hostname> [-- <extra args>]" >&2
   exit 1
 fi
 
@@ -29,10 +37,13 @@ IFS='|' read -r arch workdir_override <<< "$WORKER_INFO"
 
 WORKER_WORKDIR="${workdir_override:-$DEFAULT_WORKDIR}"
 
-ssh "$HOSTNAME" bash -s "$WORKER_WORKDIR" "$arch" "$CELERY_WORKER_IMAGE" <<'EOF'
+ssh "$HOSTNAME" bash -s "$WORKER_WORKDIR" "$arch" "$CELERY_WORKER_IMAGE" "${EXTRA_ARGS[@]}" <<'EOF'
 WORKER_WORKDIR="$1"
 ARCH="$2"
 CELERY_WORKER_IMAGE="$3"
+shift 3
+EXTRA_ARGS=("$@")
+
 RUNFILE="$WORKER_WORKDIR/run/worker.containerid"
 
 mkdir -p "$WORKER_WORKDIR/run"
@@ -54,7 +65,7 @@ WORKER_CONTAINER_ID=$(docker run -d \
   -e PYTHONPATH=/wkdir/installed/$ARCH/lib \
   --mount type=bind,source=$(realpath $WORKER_WORKDIR),target=/wkdir \
   "$CELERY_WORKER_IMAGE" \
-  bash -c "source /wkdir/config.rc && source \$(dirname \$CELERY_WORKER_PYTHON)/activate && cd /wkdir/aotriton.src && bash .tune/remote/worker_service.sh start /wkdir $ARCH && exec sleep infinity")
+  bash -c "source /wkdir/config.rc && source \$(dirname \$CELERY_WORKER_PYTHON)/activate && cd /wkdir/aotriton.src && bash .tune/remote/worker_service.sh start /wkdir $ARCH ${EXTRA_ARGS[*]} && exec sleep infinity")
 
 if [ -z "$WORKER_CONTAINER_ID" ]; then
   echo "Failed to start container" >&2

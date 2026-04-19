@@ -149,14 +149,29 @@ class CommandBuilder:
         return run_command(cmd, cwd=AOTRITON_ROOT, workdir=workdir, description=description)
 
 
+def _build_worker_args(workdir, hostname, options=None):
+    """Build argument list for worker commands with optional multi_gpu"""
+    extargs = []
+    if options and 'multi_gpu' in options:
+        multi_gpu = options['multi_gpu']
+        extargs.append('--multi_gpu')
+        extargs.extend([str(gpu) for gpu in multi_gpu])
+
+    if extargs:
+        return [workdir, hostname, '--'] + extargs
+    else:
+        return [workdir, hostname]
+
+
 class SingleWorkerCommand(CommandBuilder):
     """Base class for single worker operations"""
     RELATIVE = None  # Subclass must define
     ACTION_NAME = None  # Subclass must define
 
-    def exec(self, workdir, hostname):
+    def exec(self, workdir, hostname, options=None):
         """Execute command with script at RELATIVE path"""
-        return self._run(self.RELATIVE, [workdir, hostname], workdir, f'{self.ACTION_NAME} worker {hostname}')
+        args = _build_worker_args(workdir, hostname, options)
+        return self._run(self.RELATIVE, args, workdir, f'{self.ACTION_NAME} worker {hostname}')
 
 
 class StartWorkerCommand(SingleWorkerCommand):
@@ -172,6 +187,11 @@ class StopWorkerCommand(SingleWorkerCommand):
 class RestartWorkerCommand(SingleWorkerCommand):
     RELATIVE = '.tune/single/restart_worker.sh'
     ACTION_NAME = 'Restart'
+
+
+class StopStartWorkerCommand(SingleWorkerCommand):
+    RELATIVE = '.tune/single/stopstart_worker.sh'
+    ACTION_NAME = 'Stop & start'
 
 
 class DeployWorkerCommand(SingleWorkerCommand):
@@ -292,6 +312,7 @@ class PrepareWorkdirCommand(DeployCommand):
 _start_worker = StartWorkerCommand()
 _stop_worker = StopWorkerCommand()
 _restart_worker = RestartWorkerCommand()
+_stopstart_worker = StopStartWorkerCommand()
 _deploy_worker = DeployWorkerCommand()
 
 _start_all_workers = StartAllWorkersCommand()
@@ -313,9 +334,9 @@ _prepare_workdir = PrepareWorkdirCommand()
 
 # Worker control functions
 
-def start_worker_single(workdir, hostname):
+def start_worker_single(workdir, hostname, options=None):
     """Start single worker"""
-    return _start_worker.exec(workdir, hostname)
+    return _start_worker.exec(workdir, hostname, options)
 
 
 def stop_worker_single(workdir, hostname):
@@ -323,18 +344,14 @@ def stop_worker_single(workdir, hostname):
     return _stop_worker.exec(workdir, hostname)
 
 
-def restart_worker_single(workdir, hostname):
+def restart_worker_single(workdir, hostname, options=None):
     """Restart single worker"""
-    return _restart_worker.exec(workdir, hostname)
+    return _restart_worker.exec(workdir, hostname, options)
 
 
-def stop_start_worker_single(workdir, hostname):
-    """Stop then start single worker (using shell ; operator)"""
-    # Special case: need sequential execution with ; operator
-    stop_script = '.tune/single/stop_worker.sh'
-    start_script = '.tune/single/start_worker.sh'
-    cmd = ['/bin/bash', '-c', f'{stop_script} {workdir} {hostname} ; {start_script} {workdir} {hostname}']
-    return run_command(cmd, cwd=AOTRITON_ROOT, workdir=workdir, description=f'Stop & start worker {hostname}')
+def stop_start_worker_single(workdir, hostname, options=None):
+    """Stop then start single worker"""
+    return _stopstart_worker.exec(workdir, hostname, options)
 
 
 def start_all_workers(workdir):

@@ -70,9 +70,9 @@
         <thead>
             <tr>
                 <th style="width: 30%;">Hostname</th>
-                <th style="width: 20%;">Custom Workdir</th>
+                <th style="width: 25%;">Custom Workdir & GPUs</th>
                 <th style="width: 40%;">Status & Actions</th>
-                <th style="width: 10%;">Remove</th>
+                <th style="width: 5%;">Remove</th>
             </tr>
         </thead>
         <tbody>
@@ -99,6 +99,30 @@
                                 onclick="document.getElementById('workdir-{{ worker.hostname }}').value = document.getElementById('workdir-{{ worker.hostname }}').getAttribute('data-original')"
                                 style="font-size: 0.75em; padding: 0.2rem 0.4rem; white-space: nowrap;">Reset</button>
                     </form>
+                    <div style="margin-top: 0.5rem; padding: 0.3rem; border-top: 1px solid #ddd;">
+                        <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                            <label style="font-size: 0.85em; margin: 0; display: flex; align-items: center; gap: 0.3rem;">
+                                <input type="checkbox"
+                                       data-hostname="{{ worker.hostname }}"
+                                       data-gpu-all="true"
+                                       onchange="toggleAllGPUs('{{ worker.hostname }}', this.checked)"
+                                       checked
+                                       style="margin: 0;">
+                                <strong>All</strong>
+                            </label>
+                            {% for gpu_id in range(8) %}
+                            <label style="font-size: 0.85em; margin: 0; display: flex; align-items: center; gap: 0.3rem;">
+                                <input type="checkbox"
+                                       data-hostname="{{ worker.hostname }}"
+                                       data-gpu-id="{{ gpu_id }}"
+                                       onchange="updateGPUAllCheckbox('{{ worker.hostname }}')"
+                                       checked
+                                       style="margin: 0;">
+                                {{ gpu_id }}
+                            </label>
+                            {% endfor %}
+                        </div>
+                    </div>
                 </td>
                 <td>
                     <span id="status-{{ worker.hostname }}" style="display: inline-block; min-width: 80px;">
@@ -108,17 +132,14 @@
                             <span class="status-badge status-unknown">Checking...</span>
                         </span>
                     </span>
-                    <button hx-post="/api/workers/{{ worker.hostname }}/start"
-                            hx-swap="none"
+                    <button onclick="sendWorkerAction('{{ worker.hostname }}', '/api/workers/{{ worker.hostname }}/start')"
                             style="font-size: 0.8em; padding: 0.3rem 0.5rem;">Start</button>
                     <button hx-post="/api/workers/{{ worker.hostname }}/stop"
                             hx-swap="none"
                             style="font-size: 0.8em; padding: 0.3rem 0.5rem;">Stop</button>
-                    <button hx-post="/api/workers/{{ worker.hostname }}/restart"
-                            hx-swap="none"
+                    <button onclick="sendWorkerAction('{{ worker.hostname }}', '/api/workers/{{ worker.hostname }}/restart')"
                             style="font-size: 0.8em; padding: 0.3rem 0.5rem;">Restart</button>
-                    <button hx-post="/api/workers/{{ worker.hostname }}/stop-start"
-                            hx-swap="none"
+                    <button onclick="sendWorkerAction('{{ worker.hostname }}', '/api/workers/{{ worker.hostname }}/stop-start')"
                             style="font-size: 0.8em; padding: 0.3rem 0.5rem;">Stop & Start</button>
                     <br style="margin: 0.2rem 0;">
                     <button hx-post="/api/deploy/{{ worker.hostname }}"
@@ -160,5 +181,65 @@
     {% endif %}
 </section>
 {% endfor %}
+
+<script>
+// Toggle all GPU checkboxes for a worker
+function toggleAllGPUs(hostname, checked) {
+    const checkboxes = document.querySelectorAll(`input[data-hostname="${hostname}"][data-gpu-id]`);
+    checkboxes.forEach(checkbox => {
+        checkbox.checked = checked;
+    });
+}
+
+// Update the "All" checkbox state based on individual GPU checkboxes
+function updateGPUAllCheckbox(hostname) {
+    const allCheckbox = document.querySelector(`input[data-hostname="${hostname}"][data-gpu-all="true"]`);
+    const checkboxes = document.querySelectorAll(`input[data-hostname="${hostname}"][data-gpu-id]`);
+
+    // Check if all individual checkboxes are checked
+    const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+    allCheckbox.checked = allChecked;
+}
+
+// Get selected GPU IDs for a worker
+function getSelectedGPUs(hostname) {
+    const checkboxes = document.querySelectorAll(`input[data-hostname="${hostname}"][data-gpu-id]`);
+    const selectedGPUs = [];
+
+    checkboxes.forEach((cb) => {
+        if (cb.checked) {
+            selectedGPUs.push(parseInt(cb.dataset.gpuId));
+        }
+    });
+
+    // If all 8 GPUs are selected, return [-1]
+    if (selectedGPUs.length === 8) {
+        return [-1];
+    }
+
+    return selectedGPUs;
+}
+
+// Send worker action with GPU selection
+function sendWorkerAction(hostname, url) {
+    const multiGpu = getSelectedGPUs(hostname);
+
+    fetch(url, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ multi_gpu: multiGpu })
+    })
+    .then(response => {
+        if (!response.ok) {
+            throw new Error('Request failed');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+    });
+}
+</script>
 
 {% endblock %}

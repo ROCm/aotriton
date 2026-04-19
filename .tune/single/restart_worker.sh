@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 
 # Restart worker on one host
-# Usage: restart_worker.sh <workdir> <hostname>
+# Usage: restart_worker.sh <workdir> <hostname> [-- <extra args>]
 
 set -e
 
@@ -15,9 +15,17 @@ TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 WORKDIR="$1"
 HOSTNAME="$2"
+shift 2
+
+# Collect extra args after '--'
+EXTRA_ARGS=()
+if [ "$1" = "--" ]; then
+  shift
+  EXTRA_ARGS=("$@")
+fi
 
 if [ -z "$WORKDIR" ] || [ -z "$HOSTNAME" ]; then
-  echo "Usage: $0 <workdir> <hostname>" >&2
+  echo "Usage: $0 <workdir> <hostname> [-- <extra args>]" >&2
   exit 1
 fi
 
@@ -29,9 +37,12 @@ IFS='|' read -r arch workdir_override <<< "$WORKER_INFO"
 
 WORKER_WORKDIR="${workdir_override:-$DEFAULT_WORKDIR}"
 
-ssh "$HOSTNAME" bash -s "$WORKER_WORKDIR" "$arch" <<'EOF'
+ssh "$HOSTNAME" bash -s "$WORKER_WORKDIR" "$arch" "${EXTRA_ARGS[@]}" <<'EOF'
 WORKER_WORKDIR="$1"
 ARCH="$2"
+shift 2
+EXTRA_ARGS=("$@")
+
 RUNFILE="$WORKER_WORKDIR/run/worker.containerid"
 
 if [ ! -f "$RUNFILE" ]; then
@@ -42,6 +53,6 @@ fi
 WORKER_CONTAINER_ID=$(cat "$RUNFILE")
 
 echo "Restarting worker service in container: $WORKER_CONTAINER_ID"
-docker exec "$WORKER_CONTAINER_ID" bash -c "source /wkdir/config.rc && source \$(dirname \$CELERY_WORKER_PYTHON)/activate && cd /wkdir/aotriton.src && bash .tune/remote/worker_service.sh restart /wkdir $ARCH"
+docker exec "$WORKER_CONTAINER_ID" bash -c "source /wkdir/config.rc && source \$(dirname \$CELERY_WORKER_PYTHON)/activate && cd /wkdir/aotriton.src && bash .tune/remote/worker_service.sh restart /wkdir $ARCH ${EXTRA_ARGS[*]}"
 echo "Worker restarted"
 EOF
