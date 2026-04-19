@@ -15,6 +15,7 @@ import logging
 import argparse
 import socket
 import signal
+import select
 import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
@@ -52,6 +53,11 @@ class PGReaderWorker:
         self.conn_params = conn_params
         self.sock = None
         self.running = False
+
+        # Create wakeup pipe for signal handling
+        self.wakeup_read_fd, self.wakeup_write_fd = os.pipe()
+        os.set_blocking(self.wakeup_read_fd, False)
+        os.set_blocking(self.wakeup_write_fd, False)
 
     def run(self):
         """Main PG reader loop"""
@@ -99,7 +105,15 @@ class PGReaderWorker:
                 logger.debug(f"Forwarded tune_kernel for task_id={task_id}")
 
                 # Wait for ack (BLOCKING - this throttles PG fetching)
-                while True:
+                while self.running:
+                    # Wait for socket with signal interruption support
+                    if not self._wait_for_socket():
+                        # Signal received, check running flag
+                        if not self.running:
+                            logger.info("Shutdown signal received during ack wait")
+                            return
+                        continue
+
                     response = recv_message(self.sock)
 
                     if response is None:
@@ -130,6 +144,25 @@ class PGReaderWorker:
         """Graceful shutdown"""
         logger.info(f"PG Reader {self.worker_id} shutting down")
         self.running = False
+
+    def _wait_for_socket(self, timeout=None):
+        """
+        Wait for socket to be readable, with signal interruption support.
+
+        Returns:
+            True if socket is readable, False if signal received or timeout
+        """
+        ready, _, _ = select.select([self.sock.fileno(), self.wakeup_read_fd], [], [], timeout)
+
+        if self.wakeup_read_fd in ready:
+            # Signal received, drain the wakeup pipe
+            try:
+                os.read(self.wakeup_read_fd, 1024)
+            except BlockingIOError:
+                pass
+            return False
+
+        return self.sock.fileno() in ready
 
     def _connect_to_broker(self):
         """Connect to broker socket"""
@@ -219,6 +252,9 @@ def main():
 
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
+
+    # Set wakeup fd to interrupt blocking I/O on signals
+    signal.set_wakeup_fd(worker.wakeup_write_fd)
 
     try:
         worker.run()

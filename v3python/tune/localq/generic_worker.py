@@ -6,6 +6,8 @@ Generic worker that pulls from queue, handles messages, and forwards results.
 """
 
 import logging
+import os
+import select
 import socket
 import time
 from pathlib import Path
@@ -49,6 +51,11 @@ class GenericWorker:
         self.sock = None
         self.running = False
 
+        # Create wakeup pipe for signal handling
+        self.wakeup_read_fd, self.wakeup_write_fd = os.pipe()
+        os.set_blocking(self.wakeup_read_fd, False)
+        os.set_blocking(self.wakeup_write_fd, False)
+
     def run(self):
         """Main worker loop"""
         # Connect to broker
@@ -65,6 +72,14 @@ class GenericWorker:
                     'queue_name': self.queue_name,
                     'worker_id': self.worker_id
                 })
+
+                # Wait for socket with signal interruption support
+                if not self._wait_for_socket():
+                    # Signal received, check running flag
+                    if not self.running:
+                        logger.info("Shutdown signal received")
+                        break
+                    continue
 
                 task = recv_message(self.sock)
 
@@ -107,6 +122,25 @@ class GenericWorker:
         """Graceful shutdown"""
         logger.info(f"Worker {self.worker_id} shutting down")
         self.running = False
+
+    def _wait_for_socket(self, timeout=None):
+        """
+        Wait for socket to be readable, with signal interruption support.
+
+        Returns:
+            True if socket is readable, False if signal received or timeout
+        """
+        ready, _, _ = select.select([self.sock.fileno(), self.wakeup_read_fd], [], [], timeout)
+
+        if self.wakeup_read_fd in ready:
+            # Signal received, drain the wakeup pipe
+            try:
+                os.read(self.wakeup_read_fd, 1024)
+            except BlockingIOError:
+                pass
+            return False
+
+        return self.sock.fileno() in ready
 
     def _connect_to_broker(self):
         """Connect to broker socket"""

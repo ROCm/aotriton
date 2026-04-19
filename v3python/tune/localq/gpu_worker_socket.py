@@ -63,6 +63,9 @@ def main():
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
 
+    # Set wakeup fd to interrupt blocking I/O on signals
+    signal.set_wakeup_fd(worker.wakeup_write_fd)
+
     try:
         worker.run()
     except KeyboardInterrupt:
