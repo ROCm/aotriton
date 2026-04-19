@@ -68,6 +68,8 @@ class SafeLineReader:
 
     Maintains buffer state across multiple readline calls to preserve
     partial line data.
+
+    Designed for text mode (text=True) subprocesses.
     """
 
     def __init__(self, process: subprocess.Popen):
@@ -75,10 +77,10 @@ class SafeLineReader:
         Initialize reader for a subprocess.
 
         Args:
-            process: subprocess.Popen instance with stdout=subprocess.PIPE
+            process: subprocess.Popen instance with stdout=subprocess.PIPE, text=True
         """
         self.process = process
-        self.buffer = bytearray()
+        self.buffer = ""  # String buffer for text mode
         self.fd = None
         self.original_flags = None
 
@@ -126,9 +128,9 @@ class SafeLineReader:
             return ret
 
         # Check if we already have a complete line in buffer
-        if b'\n' in self.buffer:
-            line_end = self.buffer.index(b'\n')
-            line = self.buffer[:line_end + 1].decode('utf-8', errors='replace')
+        if '\n' in self.buffer:
+            line_end = self.buffer.index('\n')
+            line = self.buffer[:line_end + 1]
             # Remove line from buffer, keep rest
             self.buffer = self.buffer[line_end + 1:]
             return (line.rstrip('\n\r'), 0, None)
@@ -155,17 +157,17 @@ class SafeLineReader:
                     if not chunk:
                         # EOF - return any remaining buffer as final line
                         if self.buffer:
-                            line = self.buffer.decode('utf-8', errors='replace')
-                            self.buffer = bytearray()
+                            line = self.buffer
+                            self.buffer = ""
                             return (line.rstrip('\n\r'), 0, None)
                         return (None, 0, "EOF")
 
-                    self.buffer.extend(chunk)
+                    self.buffer += chunk
 
                     # Check if we have a complete line
-                    if b'\n' in self.buffer:
-                        line_end = self.buffer.index(b'\n')
-                        line = self.buffer[:line_end + 1].decode('utf-8', errors='replace')
+                    if '\n' in self.buffer:
+                        line_end = self.buffer.index('\n')
+                        line = self.buffer[:line_end + 1]
                         # Remove line from buffer, keep rest
                         self.buffer = self.buffer[line_end + 1:]
 

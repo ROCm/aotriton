@@ -137,8 +137,10 @@ class PGReaderWorker:
                 time.sleep(5)  # Backoff on error
 
         # Cleanup
+        logger.info(f"PG Reader {self.worker_id} cleanup starting")
         if self.sock:
             self.sock.close()
+        logger.info(f"PG Reader {self.worker_id} cleanup complete, exiting run()")
 
     def shutdown(self):
         """Graceful shutdown"""
@@ -258,6 +260,7 @@ def main():
 
     try:
         worker.run()
+        logger.info(f"PG Reader {args.worker_id} run() returned, main() exiting")
     except KeyboardInterrupt:
         logger.info(f"PG Reader {args.worker_id} interrupted")
         worker.shutdown()
@@ -265,6 +268,8 @@ def main():
         logger.error(f"PG Reader {args.worker_id} failed: {e}", exc_info=True)
         worker.shutdown()
         sys.exit(1)
+
+    logger.info(f"PG Reader {args.worker_id} main() complete")
 
 
 if __name__ == '__main__':

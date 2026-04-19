@@ -68,6 +68,7 @@ def main():
 
     try:
         worker.run()
+        logger.info(f"GPU worker {worker_id} run() returned, main() exiting")
     except KeyboardInterrupt:
         logger.info(f"GPU worker {worker_id} interrupted")
         worker.shutdown()
@@ -75,6 +76,8 @@ def main():
         logger.error(f"GPU worker {worker_id} failed: {e}", exc_info=True)
         worker.shutdown()
         sys.exit(1)
+
+    logger.info(f"GPU worker {worker_id} main() complete")
 
 
 if __name__ == '__main__':

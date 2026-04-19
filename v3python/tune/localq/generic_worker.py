@@ -115,8 +115,10 @@ class GenericWorker:
                 time.sleep(1)  # Backoff on error
 
         # Cleanup
+        logger.info(f"Worker {self.worker_id} cleanup starting")
         if self.sock:
             self.sock.close()
+        logger.info(f"Worker {self.worker_id} cleanup complete, exiting run()")
 
     def shutdown(self):
         """Graceful shutdown"""
