@@ -405,7 +405,9 @@ class PostprocessHandler(MessageHandler):
             logger.warning(f"Failed to cleanup tmpdir {tmpdir}: {e}")
 
         # Return ack message to unblock PG reader
-        return {
+        ack_msg = {
             'class': 'tune_kernel_ack',
             'task_id': task_id
         }
+        logger.info(f"Postprocess returning ack message for task_id={task_id}")
+        return ack_msg

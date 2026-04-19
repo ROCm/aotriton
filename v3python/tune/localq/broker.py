@@ -398,6 +398,8 @@ class LocalBroker:
         """
         task_id = ack_msg['task_id']
 
+        logger.info(f"Broker received tune_kernel_ack for task_id={task_id}")
+
         if task_id not in self.pending_acks:
             logger.warning(f"Received ack for task_id={task_id} but no pending acks")
             return
@@ -410,7 +412,9 @@ class LocalBroker:
                     'type': 'ack',
                     'task_id': task_id
                 })
-                logger.debug(f"Sent ack to {worker_id} for task_id={task_id}")
+                logger.info(f"Sent ack to {worker_id} for task_id={task_id}")
+            else:
+                logger.warning(f"Could not find worker {worker_id} to send ack for task_id={task_id}")
 
         del self.pending_acks[task_id]
 
