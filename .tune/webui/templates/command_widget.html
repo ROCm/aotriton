@@ -249,6 +249,11 @@ document.body.addEventListener('htmx:afterRequest', function(event) {
                     const newPanel = document.getElementById('panel-' + action.action_id);
                     htmx.process(newPanel);
 
+                    // Auto-minimize if completed successfully
+                    if (action.status === 'completed' && action.returncode === 0) {
+                        toggleMinimize(action.action_id);
+                    }
+
                     // Start polling for this new action
                     pollOutput(action.action_id);
                 }
