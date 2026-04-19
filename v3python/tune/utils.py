@@ -12,8 +12,11 @@ import select
 import errno
 import time
 import fcntl
+import logging
 from pathlib import Path
 from typing import Dict, Any
+
+logger = logging.getLogger(__name__)
 
 def safeload(s):
     return json.loads(s) if s else None
@@ -77,10 +80,10 @@ class SafeLineReader:
         Initialize reader for a subprocess.
 
         Args:
-            process: subprocess.Popen instance with stdout=subprocess.PIPE, text=True
+            process: subprocess.Popen instance with stdout=subprocess.PIPE in binary mode
         """
         self.process = process
-        self.buffer = ""  # String buffer for text mode
+        self.buffer = b""  # Bytes buffer for binary mode
         self.fd = None
         self.original_flags = None
 
@@ -116,7 +119,7 @@ class SafeLineReader:
             return_code = self.process.poll()
             if return_code is not None and return_code != 0:
                 try:
-                    error_msg = self.process.stderr.read() if self.process.stderr else ""
+                    error_msg = self.process.stderr.read().decode('utf-8', errors='replace') if self.process.stderr else ""
                 except Exception as e:
                     error_msg = f"Could not read stderr: {e}"
                 return (None, return_code, error_msg)
@@ -128,12 +131,12 @@ class SafeLineReader:
             return ret
 
         # Check if we already have a complete line in buffer
-        if '\n' in self.buffer:
-            line_end = self.buffer.index('\n')
+        if b'\n' in self.buffer:
+            line_end = self.buffer.index(b'\n')
             line = self.buffer[:line_end + 1]
             # Remove line from buffer, keep rest
             self.buffer = self.buffer[line_end + 1:]
-            return (line.rstrip('\n\r'), 0, None)
+            return (line.rstrip(b'\n\r').decode('utf-8', errors='replace'), 0, None)
 
         # Setup non-blocking I/O
         self._setup_nonblocking()
@@ -151,22 +154,26 @@ class SafeLineReader:
                 if not ready:
                     return (None, errno.ETIMEDOUT, f"Timeout after {timeout} seconds waiting for output")
 
-                # Read available data (non-blocking)
+                # Read available data (non-blocking, binary mode)
                 try:
                     chunk = self.process.stdout.read(8192)
                     if not chunk:
                         # EOF - return any remaining buffer as final line
                         if self.buffer:
                             line = self.buffer
-                            self.buffer = ""
-                            return (line.rstrip('\n\r'), 0, None)
+                            self.buffer = b""
+                            return (line.rstrip(b'\n\r').decode('utf-8', errors='replace'), 0, None)
                         return (None, 0, "EOF")
+
+                    # Debug logging: show chunk received (ASCII-safe)
+                    chunk_preview = chunk.decode('ascii', errors='replace').replace('\n', '\\n')
+                    logger.info(f"SafeLineReader received {len(chunk)} bytes: {chunk_preview}")
 
                     self.buffer += chunk
 
                     # Check if we have a complete line
-                    if '\n' in self.buffer:
-                        line_end = self.buffer.index('\n')
+                    if b'\n' in self.buffer:
+                        line_end = self.buffer.index(b'\n')
                         line = self.buffer[:line_end + 1]
                         # Remove line from buffer, keep rest
                         self.buffer = self.buffer[line_end + 1:]
@@ -176,7 +183,7 @@ class SafeLineReader:
                         if ret is not None:
                             return ret
 
-                        return (line.rstrip('\n\r'), 0, None)
+                        return (line.rstrip(b'\n\r').decode('utf-8', errors='replace'), 0, None)
 
                 except BlockingIOError:
                     # No data available right now, continue waiting

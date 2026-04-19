@@ -51,15 +51,16 @@ class ExaidProxy(object):
                                              stdin=subprocess.PIPE,
                                              stdout=subprocess.PIPE,
                                              stderr=subprocess.PIPE,
-                                             cwd=self.get_base_dir(),
-                                             text=True)
+                                             cwd=self.get_base_dir())
             logger.info(f"Exaid worker process started: pid={self._process.pid}")
         return self._process
 
     def write(self, *objects, sep=' '):
         cmd = sep.join(str(o) for o in objects)
         logger.info(f"Sending command to worker (pid={self.process.pid}): {cmd}")
-        print(*objects, sep=sep, file=self.process.stdin, flush=True)
+        line = cmd + '\n'
+        self.process.stdin.write(line.encode('utf-8'))
+        self.process.stdin.flush()
 
     def readinfo(self, *, timeout: int | float = 10):
         logger.info(f"Waiting for response from worker (pid={self.process.pid}, timeout={timeout}s)")
@@ -72,8 +73,8 @@ class ExaidProxy(object):
                 else:
                     logger.error(f"Worker error (pid={self._process.pid}, errno={eno}): {error_msg}")
                 self._process.wait()
-                stdout = self._process.stdout.read()
-                stderr = self._process.stderr.read()
+                stdout = self._process.stdout.read().decode('utf-8', errors='replace')
+                stderr = self._process.stderr.read().decode('utf-8', errors='replace')
                 logger.error(f"Worker stdout: {stdout}")
                 logger.error(f"Worker stderr: {stderr}")
                 del self._process
