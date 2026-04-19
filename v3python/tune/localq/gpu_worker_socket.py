@@ -14,7 +14,7 @@ import argparse
 import signal
 
 from .generic_worker import GenericWorker
-from .handlers import PreprocessHandler, ProbeHandler, TuneHsacoHandler
+from .handlers import TuneKernelHandler, PreprocessHandler, ProbeHandler, TuneHsacoHandler
 
 logging.basicConfig(
     level=logging.INFO,
@@ -39,6 +39,7 @@ def main():
 
     # Create handlers for GPU tasks
     handlers = [
+        TuneKernelHandler(),
         PreprocessHandler(gpu_id),
         ProbeHandler(gpu_id),
         TuneHsacoHandler(gpu_id),
