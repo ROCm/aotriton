@@ -21,12 +21,9 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from .protocol import send_message, recv_message
-from ..utils import get_db_connection_params
+from ..utils import get_db_connection_params, configure_logging_with_flush
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+configure_logging_with_flush()
 
 logger = logging.getLogger(__name__)
 

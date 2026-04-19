@@ -18,6 +18,25 @@ from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
 
+
+def configure_logging_with_flush():
+    """
+    Configure logging with line-buffered output to ensure logs are written immediately.
+    Critical for debugging blocking issues where buffered logs might never appear.
+    """
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        force=True
+    )
+
+    # Force line-buffered output for all handlers
+    for handler in logging.root.handlers:
+        handler.setStream(sys.stderr)
+        if hasattr(handler.stream, 'reconfigure'):
+            handler.stream.reconfigure(line_buffering=True)
+
+
 def safeload(s):
     return json.loads(s) if s else None
 

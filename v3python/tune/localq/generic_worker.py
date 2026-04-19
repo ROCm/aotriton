@@ -67,11 +67,13 @@ class GenericWorker:
         while self.running:
             try:
                 # Get task from queue
+                logger.info(f"Worker {self.worker_id} requesting next task from broker")
                 send_message(self.sock, {
                     'type': 'get_task',
                     'queue_name': self.queue_name,
                     'worker_id': self.worker_id
                 })
+                logger.info(f"Worker {self.worker_id} sent get_task request")
 
                 # Wait for socket with signal interruption support
                 if not self._wait_for_socket():

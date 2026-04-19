@@ -15,11 +15,9 @@ import signal
 
 from .generic_worker import GenericWorker
 from .handlers import TuneKernelHandler, PreprocessHandler, ProbeHandler, TuneHsacoHandler
+from ..utils import configure_logging_with_flush
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+configure_logging_with_flush()
 
 logger = logging.getLogger(__name__)
 

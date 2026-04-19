@@ -12,11 +12,9 @@ import argparse
 import signal
 
 from .broker import LocalBroker
+from ..utils import configure_logging_with_flush
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+configure_logging_with_flush()
 
 logger = logging.getLogger(__name__)
 
