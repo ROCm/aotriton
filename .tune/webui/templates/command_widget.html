@@ -88,6 +88,26 @@
     .command-kill-btn.visible {
         display: inline-block;
     }
+    .command-minimize-btn {
+        position: absolute;
+        top: 3.7rem;
+        left: 0.3rem;
+        width: 1.5rem;
+        height: 1.5rem;
+        background-color: #6c757d;
+        color: white;
+        border: none;
+        border-radius: 3px;
+        cursor: pointer;
+        font-size: 0.8em;
+        font-weight: bold;
+        line-height: 1;
+        padding: 0;
+        z-index: 10;
+    }
+    .command-minimize-btn:hover {
+        background-color: #5a6268;
+    }
     .command-header {
         padding: 0.5rem 0.5rem 0.5rem 2.2rem;
         border-bottom: 1px solid #ddd;
@@ -137,6 +157,13 @@
         font-size: max(12pt, 1em);
         white-space: pre;
         overflow-wrap: normal;
+        transition: height 0.3s ease;
+    }
+    .command-output.minimized {
+        height: 0px !important;
+        padding: 0;
+        border: none;
+        overflow: hidden;
     }
 </style>
 
@@ -183,6 +210,10 @@ document.body.addEventListener('htmx:afterRequest', function(event) {
                                 hx-swap="none"
                                 hx-confirm="Kill this running process?"
                                 title="Kill process">🛑</button>
+                        <button class="command-minimize-btn"
+                                id="minimize-${action.action_id}"
+                                onclick="toggleMinimize('${action.action_id}')"
+                                title="Minimize output">▼</button>
                         <div class="command-header">
                             <textarea readonly class="command-text">${action.command}</textarea>
                         </div>
@@ -282,9 +313,9 @@ function pollOutput(actionId) {
                             killBtn.classList.remove('visible');
                         }
 
-                        // Collapse output to 2 lines if completed successfully (exit code 0)
+                        // Auto-minimize if completed successfully (exit code 0)
                         if (data.status === 'completed' && data.returncode === 0) {
-                            textarea.style.height = '3em';
+                            toggleMinimize(actionId);
                         }
                     }
 
@@ -295,5 +326,25 @@ function pollOutput(actionId) {
                 });
         })
         .catch(err => console.error('Poll error:', err));
+}
+
+// Toggle minimize state for output textarea
+function toggleMinimize(actionId) {
+    const textarea = document.getElementById('output-' + actionId);
+    const minimizeBtn = document.getElementById('minimize-' + actionId);
+
+    if (!textarea || !minimizeBtn) return;
+
+    if (textarea.classList.contains('minimized')) {
+        // Expand
+        textarea.classList.remove('minimized');
+        minimizeBtn.textContent = '▼';
+        minimizeBtn.title = 'Minimize output';
+    } else {
+        // Minimize
+        textarea.classList.add('minimized');
+        minimizeBtn.textContent = '▶';
+        minimizeBtn.title = 'Expand output';
+    }
 }
 </script>
