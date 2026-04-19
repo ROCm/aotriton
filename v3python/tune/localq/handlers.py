@@ -232,17 +232,20 @@ class TuneHsacoHandler(MessageHandler):
             result_data = exaid.benchmark(tmpdir, kname, hsaco_index)
             report['result'] = "OK"
             report['result_data'] = result_data
+            report['error'] = None
         except OSError as e:
             logger.error(f"Benchmark crashed for {kname}[{hsaco_index}]: {e}")
             report['result'] = "crash"
-            report['result_data'] = {
+            report['result_data'] = None
+            report['error'] = {
                 "errno": e.errno,
                 "stderr": e.strerror
             }
         except ExaidSubprocessNotOK as e:
             logger.error(f"Benchmark NotOK for {kname}[{hsaco_index}]: {e}")
             report['result'] = "NotOK"
-            report['result_data'] = {
+            report['result_data'] = None
+            report['error'] = {
                 "stdout": e.stdout,
                 "stderr": e.stderr,
             }
@@ -282,14 +285,15 @@ class WriteHsacoResultHandler(MessageHandler):
             with conn.cursor() as cur:
                 cur.execute("""
                     INSERT INTO tuning_results
-                    (task_id, kernel_name, hsaco_index, result, result_data, gpu_id)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                    (task_id, kernel_name, hsaco_index, result, result_data, error, gpu_id)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                 """, (
                     task_id,
                     report['kernel_name'],
                     report['hsaco_index'],
                     report['result'],
                     Jsonb(report.get('result_data')),
+                    Jsonb(report.get('error')),
                     message.get('gpu_id')
                 ))
                 conn.commit()
