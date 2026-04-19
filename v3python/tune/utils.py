@@ -181,7 +181,9 @@ class SafeLineReader:
                     continue
 
         except Exception as e:
-            return (None, -1, f"Unexpected error reading from subprocess: {e}")
+            import traceback
+            tb = traceback.format_exc()
+            return (None, -1, f"Unexpected error reading from subprocess: {e}\nTraceback:\n{tb}")
 
         finally:
             # Note: Don't restore blocking mode here as we may call readline multiple times

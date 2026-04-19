@@ -61,7 +61,7 @@ class ExaidProxy(object):
         logger.info(f"Sending command to worker (pid={self.process.pid}): {cmd}")
         print(*objects, sep=sep, file=self.process.stdin, flush=True)
 
-    def readinfo(self, *, timeout=10):
+    def readinfo(self, *, timeout: int | float = 10):
         logger.info(f"Waiting for response from worker (pid={self.process.pid}, timeout={timeout}s)")
         while True:
             (line, eno, error_msg) = safe_readline(self.process, timeout=timeout)
