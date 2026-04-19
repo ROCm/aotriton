@@ -156,7 +156,7 @@ class LocalBroker:
                     self._handle_forward(msg)
 
                 elif msg_type == 'register_ack':
-                    self._handle_register_ack(msg)
+                    self._handle_register_ack(buffered_sock, msg)
 
         except ConnectionError:
             # Connection closed
@@ -212,10 +212,16 @@ class LocalBroker:
         logger.info(f"Broker handling forward: class={message['class']}, task_id={message.get('task_id')}")
         self.forward(message)
 
-    def _handle_register_ack(self, msg: dict):
+    def _handle_register_ack(self, buffered_sock: BufferedSocket, msg: dict):
         """PG reader registering for ack"""
         task_id = msg['task_id']
         worker_id = msg['worker_id']
+
+        # Set worker_id on socket if not already set (PG readers don't call get_task)
+        if buffered_sock.worker_id is None:
+            buffered_sock.worker_id = worker_id
+            logger.info(f"PG Reader {worker_id} connected (fd={buffered_sock.fileno})")
+
         self.pending_acks[task_id].append(worker_id)
         logger.debug(f"Registered ack for task_id={task_id} from {worker_id}")
 
