@@ -152,6 +152,11 @@ class GenericWorker:
         for attempt in range(max_retries):
             try:
                 self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+
+                # Increase socket buffer sizes to reduce blocking on send
+                self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 1024 * 1024)  # 1MB send buffer
+                self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024 * 1024)  # 1MB recv buffer
+
                 self.sock.connect(self.broker_socket)
                 logger.info(f"Worker {self.worker_id} connected to broker")
                 return
@@ -181,21 +186,26 @@ class GenericWorker:
 
         try:
             # Execute handler
-            logger.debug(f"Handling {msg_class} (task_id={message.get('task_id')})")
+            logger.info(f"Handling {msg_class} (task_id={message.get('task_id')})")
             result = handler.handle(message)
+
+            logger.info(f"Handler returned for {msg_class} (task_id={message.get('task_id')})")
 
             # Forward result(s)
             if isinstance(result, list):
                 # Multiple results (e.g., probe returns many messages)
-                for r in result:
+                for i, r in enumerate(result):
                     if r:
+                        logger.info(f"Forwarding result {i+1}/{len(result)} for {msg_class}")
                         self._forward_message(r)
             elif result:
                 # Single result
+                logger.info(f"Forwarding result for {msg_class}")
                 self._forward_message(result)
+                logger.info(f"Forward completed for {msg_class}")
             # else: result is None, no forwarding
 
-            logger.debug(f"Completed {msg_class} (task_id={message.get('task_id')})")
+            logger.info(f"Completed {msg_class} (task_id={message.get('task_id')})")
 
         except Exception as e:
             logger.error(f"Handler error for {msg_class}: {e}", exc_info=True)
