@@ -279,6 +279,19 @@ def dispatch_tasks(workdir: Path, module_name: str, args):
     if args.skip_completed and skipped_count > 0:
         print(f"Skipped {skipped_count} already-completed tasks")
 
+    # Confirmation prompt (skip if -y flag or stdin is not a tty)
+    if not args.yes and sys.stdin.isatty():
+        for key, value in vars(args).items():
+            print(f"  {key}: {value}")
+        try:
+            response = input(f"Proceed with dispatch? [y/N]: ")
+            if response.lower() not in ('y', 'yes'):
+                print("Dispatch cancelled")
+                return
+        except (KeyboardInterrupt, EOFError):
+            print("\nDispatch cancelled")
+            return
+
     if args.dry_run:
         print("Dry run mode - tasks not dispatched")
         return
@@ -330,6 +343,8 @@ def add_common_arguments(parser):
                         help='Verbose output')
     parser.add_argument('--dry_run', action='store_true',
                         help='Print parsed options and exit without dispatching tasks')
+    parser.add_argument('-y', '--yes', action='store_true',
+                        help='Skip confirmation prompt and proceed with dispatch')
 
 def add_module_subparser(subparsers, module_name, load_params=True):
     """
@@ -446,12 +461,6 @@ Examples:
         if not args.arch:
             parser.error(f"No workers registered in {args.workdir}/workers.db")
         print(f"No --arch specified, using all registered: {', '.join(args.arch)}")
-
-    # Dry run: print options and exit
-    if args.dry_run:
-        print("Dry run mode - parsed options:")
-        for key, value in vars(args).items():
-            print(f"  {key}: {value}")
 
     # Dispatch tasks
     dispatch_tasks(args.workdir, args.module, args)
