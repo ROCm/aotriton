@@ -75,19 +75,9 @@ class LocalBroker:
         logger.info(f"Broker listening on {self.socket_path}")
 
     def shutdown(self):
-        """Graceful shutdown"""
+        """Graceful shutdown - just set running flag, cleanup happens in run()"""
         logger.info("Shutting down broker")
         self.running = False
-
-        if self.epoll:
-            self.epoll.close()
-
-        if self.server_sock:
-            self.server_sock.close()
-
-        # Clean up socket file
-        if os.path.exists(self.socket_path):
-            os.unlink(self.socket_path)
 
     def run(self):
         """Main broker event loop"""
@@ -111,7 +101,18 @@ class LocalBroker:
                     self._remove_worker(fd)
 
         logger.info("Broker run loop exited, cleanup starting")
-        # Cleanup happens in shutdown()
+
+        # Cleanup resources
+        if self.epoll:
+            self.epoll.close()
+
+        if self.server_sock:
+            self.server_sock.close()
+
+        # Clean up socket file
+        if os.path.exists(self.socket_path):
+            os.unlink(self.socket_path)
+
         logger.info("Broker run() complete")
 
     def _accept_worker(self):
@@ -189,7 +190,7 @@ class LocalBroker:
         # Update worker_id if not set
         if buffered_sock.worker_id is None:
             buffered_sock.worker_id = worker_id
-            logger.info(f"Worker {worker_id} connected (fd={buffered_sock.fileno})")
+            logger.info(f"Worker {worker_id} connected to {queue_name} (fd={buffered_sock.fileno})")
 
         # Dequeue task
         task_msg = self._dequeue_task(queue_name)

@@ -68,7 +68,7 @@ class PGReaderWorker:
         # Connect to database (reuse connection)
         self._connect_to_database()
 
-        logger.info(f"PG Reader {self.worker_id} started for arch={self.arch}")
+        logger.info(f"PG Reader {self.worker_id} started for arch={self.arch} (PID={os.getpid()})")
         self.running = True
 
         while self.running:
@@ -141,12 +141,12 @@ class PGReaderWorker:
                 time.sleep(5)  # Backoff on error
 
         # Cleanup
-        logger.info(f"PG Reader {self.worker_id} cleanup starting")
+        logger.info(f"PG Reader {self.worker_id} cleanup starting (PID={os.getpid()})")
         if self.db_conn:
             self.db_conn.close()
         if self.sock:
             self.sock.close()
-        logger.info(f"PG Reader {self.worker_id} cleanup complete, exiting run()")
+        logger.info(f"PG Reader {self.worker_id} cleanup complete, exiting run() (PID={os.getpid()})")
 
     def shutdown(self):
         """Graceful shutdown"""
@@ -283,16 +283,16 @@ def main():
 
     try:
         worker.run()
-        logger.info(f"PG Reader {args.worker_id} run() returned, main() exiting")
+        logger.info(f"PG Reader {args.worker_id} run() returned, main() exiting (PID={os.getpid()})")
     except KeyboardInterrupt:
-        logger.info(f"PG Reader {args.worker_id} interrupted")
+        logger.info(f"PG Reader {args.worker_id} interrupted (PID={os.getpid()})")
         worker.shutdown()
     except Exception as e:
-        logger.error(f"PG Reader {args.worker_id} failed: {e}", exc_info=True)
+        logger.error(f"PG Reader {args.worker_id} failed: {e} (PID={os.getpid()})", exc_info=True)
         worker.shutdown()
         sys.exit(1)
 
-    logger.info(f"PG Reader {args.worker_id} main() complete")
+    logger.info(f"PG Reader {args.worker_id} main() complete (PID={os.getpid()})")
 
 
 if __name__ == '__main__':

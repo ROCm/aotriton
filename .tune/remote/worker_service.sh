@@ -290,9 +290,9 @@ stop_process_group() {
         done
     fi
 
-    # Collect running PIDs
+    # Collect running PIDs and map PID → pidfile
     local pids=()
-    local pid_to_file=()
+    declare -A pid_to_file  # Associative array for PID → pidfile mapping
 
     for pidfile in "${pidfiles[@]}"; do
         if is_running "$pidfile"; then

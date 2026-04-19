@@ -39,21 +39,21 @@ def main():
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
 
-    logger.info("Starting LocalBroker")
+    logger.info(f"Starting LocalBroker (PID={os.getpid()})")
 
     try:
         broker.start()
         broker.run()
-        logger.info("Broker run() returned, main() exiting")
+        logger.info(f"Broker run() returned, main() exiting (PID={os.getpid()})")
     except KeyboardInterrupt:
-        logger.info("Broker interrupted")
+        logger.info(f"Broker interrupted (PID={os.getpid()})")
         broker.shutdown()
+        broker.run()  # Let it exit cleanly and cleanup
     except Exception as e:
-        logger.error(f"Broker failed: {e}", exc_info=True)
-        broker.shutdown()
+        logger.error(f"Broker failed: {e} (PID={os.getpid()})", exc_info=True)
         sys.exit(1)
 
-    logger.info("Broker main() complete")
+    logger.info(f"Broker main() complete (PID={os.getpid()})")
 
 
 if __name__ == '__main__':

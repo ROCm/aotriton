@@ -70,16 +70,16 @@ def main():
 
     try:
         worker.run()
-        logger.info(f"CPU worker {args.worker_id} run() returned, main() exiting")
+        logger.info(f"CPU worker {args.worker_id} run() returned, main() exiting (PID={os.getpid()})")
     except KeyboardInterrupt:
-        logger.info(f"CPU worker {args.worker_id} interrupted")
+        logger.info(f"CPU worker {args.worker_id} interrupted (PID={os.getpid()})")
         worker.shutdown()
     except Exception as e:
-        logger.error(f"CPU worker {args.worker_id} failed: {e}", exc_info=True)
+        logger.error(f"CPU worker {args.worker_id} failed: {e} (PID={os.getpid()})", exc_info=True)
         worker.shutdown()
         sys.exit(1)
 
-    logger.info(f"CPU worker {args.worker_id} main() complete")
+    logger.info(f"CPU worker {args.worker_id} main() complete (PID={os.getpid()})")
 
 
 if __name__ == '__main__':
