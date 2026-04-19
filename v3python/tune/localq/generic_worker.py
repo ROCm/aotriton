@@ -67,13 +67,11 @@ class GenericWorker:
         while self.running:
             try:
                 # Get task from queue
-                logger.info(f"Worker {self.worker_id} requesting next task from broker")
                 send_message(self.sock, {
                     'type': 'get_task',
                     'queue_name': self.queue_name,
                     'worker_id': self.worker_id
                 })
-                logger.info(f"Worker {self.worker_id} sent get_task request")
 
                 # Wait for socket with signal interruption support
                 if not self._wait_for_socket():
@@ -91,7 +89,7 @@ class GenericWorker:
                     break
 
                 if task['type'] == 'no_task':
-                    # No work available
+                    # No work available, sleep and retry
                     time.sleep(0.5)
                     continue
 
@@ -102,6 +100,7 @@ class GenericWorker:
                 elif task['type'] == 'task':
                     # Execute task
                     message = task['message']
+                    logger.info(f"Worker {self.worker_id} received task: {message['class']} (task_id={message.get('task_id')})")
                     self._handle_task(message)
 
             except KeyboardInterrupt:
