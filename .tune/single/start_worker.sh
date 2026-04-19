@@ -55,6 +55,7 @@ fi
 
 set -x
 WORKER_CONTAINER_ID=$(docker run -d \
+  --init \
   --device=/dev/kfd \
   --device=/dev/dri \
   --group-add video \

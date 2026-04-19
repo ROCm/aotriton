@@ -173,9 +173,19 @@ daemonize() {
 
         # Run command
         "${cmd[@]}" &
+        local child_pid=$!
 
         # Save PID
-        echo $! > "$pidfile"
+        echo $child_pid > "$pidfile"
+
+        # Wait for child to exit and reap it (prevents zombies)
+        wait $child_pid
+        exit_code=$?
+
+        # Clean up PID file when process exits
+        rm -f "$pidfile"
+
+        exit $exit_code
     ) &
 
     # Wait for PID file to be written
