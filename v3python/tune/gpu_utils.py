@@ -174,11 +174,9 @@ def wait_gpu_temperature(device_id=None, threshold=85.0):
 
 @contextmanager
 def device_ctx():
-    with ExitStack() as stack:
-        r1 = stack.enter_context(torch.device(default_device_string()))
-        r2 = stack.enter_context(getattr(torch, default_device_type()).device(default_device_id()))
+    with getattr(torch, default_device_type()).device(default_device_id()):
         wait_gpu_temperature()
-        yield r1, r2
+        yield
 
 def do_bench(fn,
              *, warmup=25, rep=100,
