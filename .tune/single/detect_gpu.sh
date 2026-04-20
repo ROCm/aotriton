@@ -5,7 +5,7 @@
 # Detect GPU information from a worker host
 # Usage: detect_gpu.sh <workdir> <hostname>
 
-set -e
+set -ex
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -25,9 +25,11 @@ load_config "$WORKDIR"
 echo "Detecting GPU info from $HOSTNAME..."
 
 # Run amd-smi static --json inside Docker container
+# Use -T to disable pseudo-terminal (suppresses login banners)
+# Use -o LogLevel=ERROR to reduce SSH verbosity
 # Disable set -e temporarily to capture exit code
 set +e
-JSON_OUTPUT=$(ssh "$HOSTNAME" docker run --rm \
+JSON_OUTPUT=$(ssh -T -o LogLevel=ERROR "$HOSTNAME" docker run --rm \
   --device=/dev/kfd \
   --device=/dev/dri \
   --group-add video \
