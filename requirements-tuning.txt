@@ -4,4 +4,3 @@ msgpack
 filelock
 psycopg[binary,pool]  # PostgreSQL adapter for task queue
 dacite
-ray  # Ray framework for GPU-exclusive task execution
