@@ -40,7 +40,7 @@ echo "Pulling PostgreSQL image: ${POSTGRES_DOCKER_IMAGE}"
 docker pull "${POSTGRES_DOCKER_IMAGE}"
 
 # Start PostgreSQL
-echo "Starting PostgreSQL..."
+echo "Starting PostgreSQL on port ${POSTGRES_PORT}..."
 POSTGRES_ID=$(docker run --ipc=host \
   --network=host \
   -d \
@@ -48,6 +48,7 @@ POSTGRES_ID=$(docker run --ipc=host \
   --ulimit nofile=65536:65536 \
   -e POSTGRES_USER="${POSTGRES_USER}" \
   -e POSTGRES_PASSWORD="${POSTGRES_PASSWORD}" \
+  -e PGPORT="${POSTGRES_PORT}" \
   -v "${POSTGRES_DOCKER_VOLUME}:/var/lib/postgresql/data" \
   --name "${POSTGRES_CONTAINER}" \
   "${POSTGRES_DOCKER_IMAGE}" \
