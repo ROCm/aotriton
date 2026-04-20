@@ -37,7 +37,15 @@ WORKER_WORKDIR="${workdir_override:-$DEFAULT_WORKDIR}"
 
 # Certain nodes need --network=host to access internet
 if [ -n "$FOLLOW" ]; then
-  ssh "$HOSTNAME" "jobid=\$(tsp docker build --network=host -f $WORKER_WORKDIR/image.build/Dockerfile -t $CELERY_WORKER_IMAGE $WORKER_WORKDIR) && tsp -c \$jobid"
+  # Use tsp -t to tail/follow output in real-time
+  ssh "$HOSTNAME" bash -s "$WORKER_WORKDIR" "$CELERY_WORKER_IMAGE" <<'EOF'
+WORKER_WORKDIR="$1"
+CELERY_WORKER_IMAGE="$2"
+
+jobid=$(tsp docker build --network=host -f $WORKER_WORKDIR/image.build/Dockerfile -t $CELERY_WORKER_IMAGE $WORKER_WORKDIR)
+echo "Job ID: $jobid"
+tsp -t $jobid
+EOF
 else
   ssh -n "$HOSTNAME" "tsp docker build --network=host -f $WORKER_WORKDIR/image.build/Dockerfile -t $CELERY_WORKER_IMAGE $WORKER_WORKDIR"
 fi
