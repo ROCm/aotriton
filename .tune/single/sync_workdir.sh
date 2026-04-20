@@ -29,10 +29,8 @@ IFS='|' read -r arch workdir_override <<< "$WORKER_INFO"
 
 WORKER_WORKDIR="${workdir_override:-$DEFAULT_WORKDIR}"
 
-# Create directory structure
-ssh "$HOSTNAME" mkdir -p "$WORKER_WORKDIR"
-
 # Sync main directories (exclude build, installed, run, scratch, secrets, aotriton.src)
+# --mkpath creates $WORKER_WORKDIR if it doesn't exist
 # aotriton.src synced below with architecture-specific files
 rsync -az --info=progress2 \
   --exclude '/build/' \
