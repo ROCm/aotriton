@@ -395,6 +395,7 @@ class PostprocessHandler(MessageHandler):
         # Update task_queue with completed status
         # Extract arch from task_config for partition routing
         arch = task_config.get('arch')
+        logger.info(f"PostprocessHandler: Marking task_id={task_id} as completed (arch={arch})")
         task_queue = TaskQueue(self.db_conn)
         task_queue.mark_completed(task_id, arch)
 

@@ -15,6 +15,9 @@ from dataclasses import dataclass
 from datetime import datetime
 import socket
 import os
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -88,6 +91,12 @@ class TaskQueue:
             rows = cur.fetchall()
 
             tasks = [Task(**row) for row in rows]
+
+            if tasks:
+                task_ids = [t.id for t in tasks]
+                logger.info(f"TaskQueue.fetch_tasks: Claimed {len(tasks)} task(s) from {partition_table}: "
+                           f"task_ids={task_ids}, status=pending→running, worker_id={self.worker_id}")
+
             return tasks
 
     def mark_completed(self, task_id: int, arch: str) -> None:
@@ -108,6 +117,9 @@ class TaskQueue:
                 WHERE id = %s
             """, (task_id,))
 
+            logger.info(f"TaskQueue.mark_completed: task_id={task_id}, arch={arch}, "
+                       f"status=→completed, partition={partition_table}")
+
     def mark_failed(self, task_id: int, error: str, arch: str = None) -> None:
         """
         Mark task as failed with error message.
@@ -127,6 +139,8 @@ class TaskQueue:
                         error = %s
                     WHERE id = %s
                 """, (error, task_id))
+                logger.error(f"TaskQueue.mark_failed: task_id={task_id}, arch={arch}, "
+                            f"status=→failed, partition={partition_table}, error={error}")
             else:
                 # Update parent table when arch unknown
                 cur.execute("""
@@ -136,6 +150,8 @@ class TaskQueue:
                         error = %s
                     WHERE id = %s
                 """, (error, task_id))
+                logger.error(f"TaskQueue.mark_failed: task_id={task_id}, arch=unknown, "
+                            f"status=→failed, partition=task_queue (parent), error={error}")
 
     def retry_task(self, task_id: int, arch: str, max_retries: int = 3) -> bool:
         """

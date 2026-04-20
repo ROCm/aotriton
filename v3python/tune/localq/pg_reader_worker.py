@@ -218,7 +218,9 @@ class PGReaderWorker:
 
             if tasks:
                 task = tasks[0]
-                logger.debug(f"PG Reader {self.worker_id} fetched task: id={task.id}")
+                logger.info(f"PG Reader {self.worker_id} fetched task from database: "
+                           f"id={task.id}, arch={task.arch}, module={task.module}, "
+                           f"status=pending→running")
                 return {
                     'id': task.id,
                     'arch': task.arch,

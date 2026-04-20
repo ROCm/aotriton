@@ -219,12 +219,15 @@ class GenericWorker:
             # Mark task as failed in database if this is a top-level task handler
             if msg_class in ['tune_kernel', 'preprocess', 'probe'] and task_id and self.db_conn:
                 try:
+                    # Extract arch from message if available
+                    arch = message.get('task_config', {}).get('arch')
                     task_queue = TaskQueue(self.db_conn)
                     error_msg = f"{msg_class} failed: {type(e).__name__}: {str(e)}"
-                    logger.error(f"Marking task_id={task_id} as failed in database: {error_msg}")
-                    task_queue.mark_failed(task_id, error_msg)
+                    logger.error(f"GenericWorker: Handler failed for msg_class={msg_class}, task_id={task_id}, "
+                                f"arch={arch}, marking as failed in database")
+                    task_queue.mark_failed(task_id, error_msg, arch)
                 except Exception as db_error:
-                    logger.error(f"Failed to mark task_id={task_id} as failed in database: {db_error}",
+                    logger.error(f"GenericWorker: Failed to mark task_id={task_id} as failed in database: {db_error}",
                                 exc_info=True)
 
             # Mark task as failed in database if this is a top-level task handler
