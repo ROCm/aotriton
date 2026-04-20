@@ -83,3 +83,29 @@ If you need to perform a database operation:
 3. DO NOT write raw SQL in other packages
 
 This keeps all database operations centralized and schema-consistent.
+
+## config.rc Usage
+
+**IMPORTANT: `<workdir>/config.rc` is for AOTriton tuning project configuration ONLY.**
+
+The `config.rc` file is:
+- Written in bash syntax for easy consumption by bash scripts
+- Used to configure tuning infrastructure (database, workers, containers)
+- NOT a general bash/environment configuration file
+
+**DO add to config.rc** (see `config-example.rc`):
+- PostgreSQL configuration: `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_PORT`, `POSTGRES_DOCKER_IMAGE`, `POSTGRES_DOCKER_VOLUME`
+- Worker/container configuration: `CONTAINER_SUFFIX`, `CELERY_WORKER_IMAGE`, `CELERY_WORKER_PYTHON`
+- Service hosts: `CELERY_SERVICE_HOST`
+- SLURM configuration: `SLURM_LOGIN_NODE`, `SLURM_WORKER_DIR`, `SLURM_MODULES`
+
+**DO NOT add to config.rc:**
+- General environment variables: `PYTHONDONTWRITEBYTECODE`, `PYCACHEPREFIX`, `PATH`, `LD_LIBRARY_PATH`
+- System-wide shell configuration
+- Python runtime settings
+- Non-tuning infrastructure settings
+
+**For general environment configuration**, use:
+- Docker environment variables: `docker run -e PYCACHEPREFIX=/tmp/pycache`
+- Worker startup scripts: `.tune/remote/worker_service.sh`
+- Container Dockerfiles or image configuration

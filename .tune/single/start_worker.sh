@@ -64,6 +64,7 @@ WORKER_CONTAINER_ID=$(docker run -d \
   --ipc=host \
   --network=host \
   -e PYTHONPATH=/wkdir/installed/$ARCH/lib \
+  -e PYCACHEPREFIX=/wkdir/run/pycache \
   --mount type=bind,source=$(realpath $WORKER_WORKDIR),target=/wkdir \
   "$CELERY_WORKER_IMAGE" \
   bash -c "source /wkdir/config.rc && source \$(dirname \$CELERY_WORKER_PYTHON)/activate && cd /wkdir/aotriton.src && bash .tune/remote/worker_service.sh start /wkdir $ARCH ${EXTRA_ARGS[*]} && exec sleep infinity")
