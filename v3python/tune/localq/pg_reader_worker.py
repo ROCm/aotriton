@@ -71,10 +71,12 @@ class PGReaderWorker:
         while self.running:
             try:
                 # Fetch task from PostgreSQL
+                logger.debug(f"PG Reader {self.worker_id} calling _fetch_pg_task()")
                 task = self._fetch_pg_task()
 
                 if task is None:
                     # No tasks available
+                    logger.debug(f"PG Reader {self.worker_id} no tasks available, sleeping 1s")
                     time.sleep(1)
                     continue
 
@@ -234,12 +236,18 @@ class PGReaderWorker:
                 # No commit needed - using autocommit mode
 
                 if row:
+                    logger.debug(f"PG Reader {self.worker_id} fetched row: id={row['id']}")
                     return dict(row)
                 else:
+                    logger.debug(f"PG Reader {self.worker_id} query returned no rows")
                     return None
 
         except psycopg.errors.QueryCanceled:
             # Statement timeout - no tasks available
+            logger.warning(f"PG Reader {self.worker_id} query timeout (no pending tasks or lock contention)")
+            return None
+        except Exception as e:
+            logger.error(f"PG Reader {self.worker_id} database error in _fetch_pg_task: {e}", exc_info=True)
             return None
 
 
