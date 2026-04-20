@@ -629,15 +629,37 @@ def get_workers_by_architecture(workdir):
     """Get workers grouped by architecture"""
     workers = get_workers(workdir)
 
+    # Load GPU metadata from config table
+    workdir_path = Path(workdir)
+    db_path = workdir_path / 'workers.db'
+    gpu_info_map = {}
+
+    init_workers_db(workdir)  # Ensure database exists
+    with sqlite3.connect(db_path.as_posix()) as conn:
+        cursor = conn.cursor()
+        # Fetch all GPU metadata (keys like hostname::gpu::*)
+        cursor.execute("SELECT key, value FROM config WHERE key LIKE '%::gpu::%'")
+        for key, value in cursor.fetchall():
+            parts = key.split('::')
+            if len(parts) == 3:
+                hostname, _, field = parts
+                if hostname not in gpu_info_map:
+                    gpu_info_map[hostname] = {}
+                gpu_info_map[hostname][field] = value
+
     # Group workers by architecture
     workers_by_arch = {arch: [] for arch in TUNING_ARCHITECTURES}
 
     for hostname, arch, workdir_override in workers:
         if arch in workers_by_arch:
+            gpu_info = gpu_info_map.get(hostname, {})
             workers_by_arch[arch].append({
                 'hostname': hostname,
                 'arch': arch,
-                'workdir': workdir_override or ''
+                'workdir': workdir_override or '',
+                'gpu_arch': gpu_info.get('arch', ''),
+                'gpu_pciid': gpu_info.get('pciid', ''),
+                'gpu_number': gpu_info.get('number', '')
             })
 
     return workers_by_arch
@@ -730,3 +752,9 @@ def set_default_workdir(workdir, path):
         return {'success': True, 'message': f"Default working directory set to: {path}"}
     except Exception as e:
         return {'success': False, 'error': str(e)}
+
+
+def detect_gpu_for_worker(workdir, hostname):
+    """Detect GPU metadata for a specific worker"""
+    cmd = ['.tune/single/detect_gpu.sh', workdir, hostname]
+    return run_command(cmd, cwd=AOTRITON_ROOT, workdir=workdir, description=f'Detect GPU info for {hostname}')

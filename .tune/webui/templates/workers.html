@@ -69,7 +69,7 @@
     <table style="width: 100%;">
         <thead>
             <tr>
-                <th style="width: 30%;">Hostname</th>
+                <th style="width: 30%;">Hostname&GPUs</th>
                 <th style="width: 25%;">Custom Workdir & GPUs</th>
                 <th style="width: 40%;">Status & Actions</th>
                 <th style="width: 5%;">Remove</th>
@@ -78,7 +78,29 @@
         <tbody>
             {% for worker in workers_by_arch[arch] %}
             <tr>
-                <td><code>{{ worker.hostname }}</code></td>
+                <td>
+                    <code>{{ worker.hostname }}</code><br>
+                    <span id="gpu-info-{{ worker.hostname }}" style="font-size: 0.85em; display: flex; align-items: center; gap: 0.3rem; margin-top: 0.2rem;">
+                        <button hx-post="/api/workers/{{ worker.hostname }}/detect-gpu"
+                                hx-swap="none"
+                                hx-indicator="#detect-spinner-{{ worker.hostname }}"
+                                style="padding: 0.3rem 0.5rem; font-size: 0.9em;">
+                            Detect
+                        </button>
+                        <button onclick="location.reload()"
+                                style="padding: 0.4rem 0.6rem; font-size: 1.2em;">
+                            ⟳
+                        </button>
+                        <span id="detect-spinner-{{ worker.hostname }}" class="htmx-indicator">⏳</span>
+                        {% if worker.gpu_arch and worker.gpu_number %}
+                            <span {% if worker.gpu_arch != worker.arch %}style="color: red; font-weight: bold;"{% endif %}>
+                                {{ worker.gpu_arch }}:{{ worker.gpu_number }}
+                            </span>
+                        {% else %}
+                            <span style="color: gray;">No GPU info</span>
+                        {% endif %}
+                    </span>
+                </td>
                 <td>
                     <form hx-post="/api/workers/{{ worker.hostname }}/workdir"
                           hx-swap="none"
@@ -110,7 +132,8 @@
                                        style="margin: 0;">
                                 <strong>All</strong>
                             </label>
-                            {% for gpu_id in range(8) %}
+                            {% set num_gpus = worker.gpu_number|int if worker.gpu_number else 8 %}
+                            {% for gpu_id in range(num_gpus) %}
                             <label style="font-size: 0.85em; margin: 0; display: flex; align-items: center; gap: 0.3rem;">
                                 <input type="checkbox"
                                        data-hostname="{{ worker.hostname }}"
@@ -212,8 +235,8 @@ function getSelectedGPUs(hostname) {
         }
     });
 
-    // If all 8 GPUs are selected, return [-1]
-    if (selectedGPUs.length === 8) {
+    // If all available GPUs are selected, return [-1]
+    if (selectedGPUs.length === checkboxes.length) {
         return [-1];
     }
 

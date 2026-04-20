@@ -159,6 +159,14 @@ def api_build_image_on_worker(hostname):
     return jsonify(result)
 
 
+@bp.route('/api/workers/<hostname>/detect-gpu', methods=['POST'])
+def api_detect_gpu(hostname):
+    """Detect GPU metadata for a specific worker"""
+    workdir = current_app.config['WORKDIR']
+    result = tasks.detect_gpu_for_worker(workdir, hostname)
+    return jsonify(result)
+
+
 # API endpoints for server actions
 
 @bp.route('/api/servers/start', methods=['POST'])
