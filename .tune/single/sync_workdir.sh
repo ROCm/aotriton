@@ -45,7 +45,8 @@ rsync -az --info=progress2 \
   "$WORKDIR/" "$HOSTNAME:$WORKER_WORKDIR/"
 
 # Sync architecture-specific files and aotriton.src with --delete
-# --delete ensures exact copy, removing stale .pyc, deleted files, old Ray code
+# --delete ensures exact copy, removing stale files, deleted files, old Ray code
+# --exclude '*.pyc' prevents deleting bytecode (may be root-owned from container)
 # We minimize rsync calls since some deployments have long SSH authentication time
 # TODO: Re-use SSH connection between multiple rsyncs (e.g., SSH ControlMaster)
 if [ "$arch" = "ALL" ]; then
@@ -56,13 +57,13 @@ fi
 
 if [ -d "$WORKDIR/installed$SUBDIR" ]; then
   # Sync both installed/$arch and aotriton.src in single rsync
-  rsync -azR --info=progress2 --delete \
+  rsync -azR --info=progress2 --delete --exclude '*.pyc' \
     "$WORKDIR/./installed$SUBDIR" \
     "$WORKDIR/./aotriton.src" \
     "$HOSTNAME:$WORKER_WORKDIR/./"
 else
   # Sync aotriton.src only if installed/$arch doesn't exist
-  rsync -az --info=progress2 --delete \
+  rsync -az --info=progress2 --delete --exclude '*.pyc' \
     "$WORKDIR/aotriton.src/" \
     "$HOSTNAME:$WORKER_WORKDIR/aotriton.src/"
 fi
