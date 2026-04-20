@@ -125,6 +125,8 @@ class PGReaderWorker:
                         logger.info(f"Received ack for task_id={task_id}, continuing")
                         break
 
+                logger.info(f"PG Reader {self.worker_id} finished ack wait loop, back to main loop")
+
             except KeyboardInterrupt:
                 logger.info(f"PG Reader {self.worker_id} interrupted")
                 break
