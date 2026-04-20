@@ -1,0 +1,104 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# Detect GPU information from all registered workers
+# Usage: detect-gpus <workdir> [--host <hostname>...]
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+WORKDIR=""
+HOSTS=()
+
+# Parse arguments
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --host)
+      shift
+      if [ $# -eq 0 ]; then
+        echo "Error: --host requires a hostname argument" >&2
+        exit 1
+      fi
+      HOSTS+=("$1")
+      shift
+      ;;
+    *)
+      if [ -z "$WORKDIR" ]; then
+        WORKDIR="$1"
+        shift
+      else
+        echo "Error: Unknown argument: $1" >&2
+        exit 1
+      fi
+      ;;
+  esac
+done
+
+if [ -z "$WORKDIR" ]; then
+  cat >&2 <<EOF
+Usage: $0 <workdir> [--host <hostname>...]
+
+Detect GPU information from registered workers.
+
+Arguments:
+  <workdir>          Working directory containing workers.db
+
+Options:
+  --host <hostname>  Detect from specific host(s) only (can be repeated)
+                     If not specified, detects from all registered workers
+
+Examples:
+  $0 /path/to/workdir
+  $0 /path/to/workdir --host gpu-01.example.com
+  $0 /path/to/workdir --host gpu-01.example.com --host gpu-02.example.com
+EOF
+  exit 1
+fi
+
+# Validate workdir
+if [ ! -d "$WORKDIR" ]; then
+  echo "Error: Working directory does not exist: $WORKDIR" >&2
+  exit 1
+fi
+
+DB_PATH="$WORKDIR/workers.db"
+if [ ! -f "$DB_PATH" ]; then
+  echo "Error: workers.db not found at $DB_PATH" >&2
+  exit 1
+fi
+
+# Get list of hosts to detect
+if [ ${#HOSTS[@]} -eq 0 ]; then
+  # No specific hosts specified, get all from workers.db
+  mapfile -t HOSTS < <(sqlite3 "$DB_PATH" "SELECT DISTINCT hostname FROM workers ORDER BY hostname;")
+fi
+
+TOTAL=${#HOSTS[@]}
+SUCCESS=0
+FAILED=0
+
+echo "Detecting GPU info for $TOTAL worker(s)..."
+echo ""
+
+for HOSTNAME in "${HOSTS[@]}"; do
+  echo "$HOSTNAME:"
+
+  if "$TUNE_ROOT/single/detect_gpu.sh" "$WORKDIR" "$HOSTNAME"; then
+    SUCCESS=$((SUCCESS + 1))
+  else
+    FAILED=$((FAILED + 1))
+  fi
+
+  echo ""
+done
+
+echo "Summary:"
+echo "  Success: $SUCCESS/$TOTAL"
+echo "  Failed: $FAILED/$TOTAL"
+
+if [ $FAILED -gt 0 ]; then
+  exit 1
+fi
