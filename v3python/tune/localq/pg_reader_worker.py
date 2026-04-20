@@ -22,6 +22,7 @@ from psycopg.types.json import Jsonb
 
 from .protocol import send_message, recv_message
 from ..utils import get_db_connection_params, configure_logging_with_flush
+from ..pq.queue import TaskQueue
 
 configure_logging_with_flush()
 
@@ -211,36 +212,22 @@ class PGReaderWorker:
         Returns:
             Task dict or None if no tasks available
         """
-        partition_table = f"task_queue_{self.arch}"
-
         try:
-            with self.db_conn.cursor() as cur:
-                # Atomic task claiming using UPDATE ... RETURNING
-                # statement_timeout is set on connection, so this won't block forever
-                cur.execute(f"""
-                    UPDATE {partition_table}
-                    SET status = 'running',
-                        worker_id = %s,
-                        started_at = NOW()
-                    WHERE id IN (
-                        SELECT id FROM {partition_table}
-                        WHERE status = 'pending'
-                        ORDER BY priority DESC, id ASC
-                        LIMIT 1
-                        FOR UPDATE SKIP LOCKED
-                    )
-                    RETURNING id, arch, module, task_config
-                """, (self.worker_id,))
+            task_queue = TaskQueue(self.db_conn)
+            tasks = task_queue.fetch_tasks(self.arch, batch_size=1)
 
-                row = cur.fetchone()
-                # No commit needed - using autocommit mode
-
-                if row:
-                    logger.debug(f"PG Reader {self.worker_id} fetched row: id={row['id']}")
-                    return dict(row)
-                else:
-                    logger.debug(f"PG Reader {self.worker_id} query returned no rows")
-                    return None
+            if tasks:
+                task = tasks[0]
+                logger.debug(f"PG Reader {self.worker_id} fetched task: id={task.id}")
+                return {
+                    'id': task.id,
+                    'arch': task.arch,
+                    'module': task.module,
+                    'task_config': task.task_config
+                }
+            else:
+                logger.debug(f"PG Reader {self.worker_id} no tasks available")
+                return None
 
         except psycopg.errors.QueryCanceled:
             # Statement timeout - no tasks available

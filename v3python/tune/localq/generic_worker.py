@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Dict, List
 
 from .protocol import send_message, recv_message
+from ..pq.queue import TaskQueue
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +31,8 @@ class GenericWorker:
     """
 
     def __init__(self, worker_id: str, queue_name: str, handlers: list,
-                 broker_socket: str = '/tmp/aotriton-broker.sock'):
+                 broker_socket: str = '/tmp/aotriton-broker.sock',
+                 db_conn = None):
         """
         Initialize generic worker.
 
@@ -39,10 +41,12 @@ class GenericWorker:
             queue_name: Queue to pull from
             handlers: List of MessageHandler instances
             broker_socket: Path to broker Unix socket
+            db_conn: PostgreSQL connection (for error handling)
         """
         self.worker_id = worker_id
         self.queue_name = queue_name
         self.broker_socket = broker_socket
+        self.db_conn = db_conn
 
         # Build handler registry
         self.handlers = {h.get_class_name(): h for h in handlers}
@@ -209,8 +213,23 @@ class GenericWorker:
             logger.info(f"Completed {msg_class} (task_id={message.get('task_id')})")
 
         except Exception as e:
-            logger.error(f"Handler error for {msg_class}: {e}", exc_info=True)
-            # TODO: Send error message to broker
+            task_id = message.get('task_id')
+            logger.error(f"Handler error for {msg_class} (task_id={task_id}): {e}", exc_info=True)
+
+            # Mark task as failed in database if this is a top-level task handler
+            if msg_class in ['tune_kernel', 'preprocess', 'probe'] and task_id and self.db_conn:
+                try:
+                    task_queue = TaskQueue(self.db_conn)
+                    error_msg = f"{msg_class} failed: {type(e).__name__}: {str(e)}"
+                    logger.error(f"Marking task_id={task_id} as failed in database: {error_msg}")
+                    task_queue.mark_failed(task_id, error_msg)
+                except Exception as db_error:
+                    logger.error(f"Failed to mark task_id={task_id} as failed in database: {db_error}",
+                                exc_info=True)
+
+            # Mark task as failed in database if this is a top-level task handler
+            if msg_class in ['tune_kernel', 'preprocess', 'probe'] and task_id:
+                self._mark_task_failed(task_id, str(e))
 
     def _forward_message(self, message: dict):
         """

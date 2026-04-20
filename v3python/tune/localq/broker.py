@@ -312,7 +312,7 @@ class LocalBroker:
 
             # Create temporary handler instance to call resolve_dependency
             # (In production, broker should maintain handler registry)
-            handler = PostprocessHandler(conn_params={})
+            handler = PostprocessHandler(db_conn=None)
 
             if handler.resolve_dependency(blocked_msg, incoming_msg):
                 # Dependency resolved

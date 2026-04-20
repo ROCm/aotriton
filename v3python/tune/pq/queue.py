@@ -38,20 +38,16 @@ class Task:
 class TaskQueue:
     """PostgreSQL-based task queue with architecture partitioning"""
 
-    def __init__(self, conn_params: Dict[str, Any]):
+    def __init__(self, conn):
         """
         Initialize task queue.
 
         Args:
-            conn_params: PostgreSQL connection parameters (host, port, user, password)
+            conn: PostgreSQL connection (from psycopg.connect)
         """
-        self.conn_params = conn_params
+        self.conn = conn
         self.worker_id = f"{socket.gethostname()}-{os.getpid()}"
         self.node_hostname = socket.gethostname()
-
-    def _get_connection(self):
-        """Get database connection"""
-        return psycopg.connect(**self.conn_params, row_factory=dict_row)
 
     def fetch_tasks(self, arch: str, batch_size: int = 10) -> List[Task]:
         """
@@ -69,32 +65,30 @@ class TaskQueue:
         """
         partition_table = f"task_queue_{arch}"
 
-        with self._get_connection() as conn:
-            with conn.cursor() as cur:
-                # Atomic task claiming using UPDATE ... RETURNING
-                cur.execute(f"""
-                    UPDATE {partition_table}
-                    SET status = 'running',
-                        worker_id = %s,
-                        node_hostname = %s,
-                        started_at = NOW()
-                    WHERE id IN (
-                        SELECT id FROM {partition_table}
-                        WHERE status = 'pending'
-                        ORDER BY priority DESC, id ASC
-                        LIMIT %s
-                        FOR UPDATE SKIP LOCKED
-                    )
-                    RETURNING id, arch, module, task_config, status, priority,
-                              worker_id, node_hostname, created_at, started_at,
-                              completed_at, error, retry_count
-                """, (self.worker_id, self.node_hostname, batch_size))
+        with self.conn.cursor() as cur:
+            # Atomic task claiming using UPDATE ... RETURNING
+            cur.execute(f"""
+                UPDATE {partition_table}
+                SET status = 'running',
+                    worker_id = %s,
+                    node_hostname = %s,
+                    started_at = NOW()
+                WHERE id IN (
+                    SELECT id FROM {partition_table}
+                    WHERE status = 'pending'
+                    ORDER BY priority DESC, id ASC
+                    LIMIT %s
+                    FOR UPDATE SKIP LOCKED
+                )
+                RETURNING id, arch, module, task_config, status, priority,
+                          worker_id, node_hostname, created_at, started_at,
+                          completed_at, error, retry_count
+            """, (self.worker_id, self.node_hostname, batch_size))
 
-                rows = cur.fetchall()
-                conn.commit()
+            rows = cur.fetchall()
 
-                tasks = [Task(**row) for row in rows]
-                return tasks
+            tasks = [Task(**row) for row in rows]
+            return tasks
 
     def mark_completed(self, task_id: int, arch: str) -> None:
         """
@@ -106,29 +100,26 @@ class TaskQueue:
         """
         partition_table = f"task_queue_{arch}"
 
-        with self._get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(f"""
-                    UPDATE {partition_table}
-                    SET status = 'completed',
-                        completed_at = NOW()
-                    WHERE id = %s
-                """, (task_id,))
-                conn.commit()
+        with self.conn.cursor() as cur:
+            cur.execute(f"""
+                UPDATE {partition_table}
+                SET status = 'completed',
+                    completed_at = NOW()
+                WHERE id = %s
+            """, (task_id,))
 
-    def mark_failed(self, task_id: int, arch: str, error: str) -> None:
+    def mark_failed(self, task_id: int, error: str, arch: str = None) -> None:
         """
         Mark task as failed with error message.
 
         Args:
             task_id: Task ID
-            arch: GPU architecture (for partition routing)
             error: Error message
+            arch: GPU architecture (for partition routing, optional)
         """
-        partition_table = f"task_queue_{arch}"
-
-        with self._get_connection() as conn:
-            with conn.cursor() as cur:
+        with self.conn.cursor() as cur:
+            if arch:
+                partition_table = f"task_queue_{arch}"
                 cur.execute(f"""
                     UPDATE {partition_table}
                     SET status = 'failed',
@@ -136,7 +127,15 @@ class TaskQueue:
                         error = %s
                     WHERE id = %s
                 """, (error, task_id))
-                conn.commit()
+            else:
+                # Update parent table when arch unknown
+                cur.execute("""
+                    UPDATE task_queue
+                    SET status = 'failed',
+                        completed_at = NOW(),
+                        error = %s
+                    WHERE id = %s
+                """, (error, task_id))
 
     def retry_task(self, task_id: int, arch: str, max_retries: int = 3) -> bool:
         """
@@ -152,25 +151,23 @@ class TaskQueue:
         """
         partition_table = f"task_queue_{arch}"
 
-        with self._get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(f"""
-                    UPDATE {partition_table}
-                    SET status = 'pending',
-                        retry_count = retry_count + 1,
-                        worker_id = NULL,
-                        node_hostname = NULL,
-                        started_at = NULL,
-                        completed_at = NULL,
-                        error = NULL
-                    WHERE id = %s
-                      AND retry_count < %s
-                    RETURNING id
-                """, (task_id, max_retries))
+        with self.conn.cursor() as cur:
+            cur.execute(f"""
+                UPDATE {partition_table}
+                SET status = 'pending',
+                    retry_count = retry_count + 1,
+                    worker_id = NULL,
+                    node_hostname = NULL,
+                    started_at = NULL,
+                    completed_at = NULL,
+                    error = NULL
+                WHERE id = %s
+                  AND retry_count < %s
+                RETURNING id
+            """, (task_id, max_retries))
 
-                result = cur.fetchone()
-                conn.commit()
-                return result is not None
+            result = cur.fetchone()
+            return result is not None
 
     def get_queue_stats(self, arch: Optional[str] = None) -> Dict[str, int]:
         """
@@ -182,30 +179,29 @@ class TaskQueue:
         Returns:
             Dictionary with pending, running, completed, failed counts
         """
-        with self._get_connection() as conn:
-            with conn.cursor() as cur:
-                if arch:
-                    partition_table = f"task_queue_{arch}"
-                    cur.execute(f"""
-                        SELECT
-                            COUNT(*) FILTER (WHERE status = 'pending') as pending,
-                            COUNT(*) FILTER (WHERE status = 'running') as running,
-                            COUNT(*) FILTER (WHERE status = 'completed') as completed,
-                            COUNT(*) FILTER (WHERE status = 'failed') as failed
-                        FROM {partition_table}
-                    """)
-                else:
-                    cur.execute("""
-                        SELECT
-                            COUNT(*) FILTER (WHERE status = 'pending') as pending,
-                            COUNT(*) FILTER (WHERE status = 'running') as running,
-                            COUNT(*) FILTER (WHERE status = 'completed') as completed,
-                            COUNT(*) FILTER (WHERE status = 'failed') as failed
-                        FROM task_queue
-                    """)
+        with self.conn.cursor() as cur:
+            if arch:
+                partition_table = f"task_queue_{arch}"
+                cur.execute(f"""
+                    SELECT
+                        COUNT(*) FILTER (WHERE status = 'pending') as pending,
+                        COUNT(*) FILTER (WHERE status = 'running') as running,
+                        COUNT(*) FILTER (WHERE status = 'completed') as completed,
+                        COUNT(*) FILTER (WHERE status = 'failed') as failed
+                    FROM {partition_table}
+                """)
+            else:
+                cur.execute("""
+                    SELECT
+                        COUNT(*) FILTER (WHERE status = 'pending') as pending,
+                        COUNT(*) FILTER (WHERE status = 'running') as running,
+                        COUNT(*) FILTER (WHERE status = 'completed') as completed,
+                        COUNT(*) FILTER (WHERE status = 'failed') as failed
+                    FROM task_queue
+                """)
 
-                row = cur.fetchone()
-                return dict(row) if row else {'pending': 0, 'running': 0, 'completed': 0, 'failed': 0}
+            row = cur.fetchone()
+            return dict(row) if row else {'pending': 0, 'running': 0, 'completed': 0, 'failed': 0}
 
     def detect_stale_tasks(self, timeout_seconds: int = 7200) -> List[Task]:
         """
@@ -217,20 +213,19 @@ class TaskQueue:
         Returns:
             List of stale tasks
         """
-        with self._get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT id, arch, module, task_config, status, priority,
-                           worker_id, node_hostname, created_at, started_at,
-                           completed_at, error, retry_count
-                    FROM task_queue
-                    WHERE status = 'running'
-                      AND EXTRACT(EPOCH FROM (NOW() - started_at)) > %s
-                    ORDER BY started_at ASC
-                """, (timeout_seconds,))
+        with self.conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, arch, module, task_config, status, priority,
+                       worker_id, node_hostname, created_at, started_at,
+                       completed_at, error, retry_count
+                FROM task_queue
+                WHERE status = 'running'
+                  AND EXTRACT(EPOCH FROM (NOW() - started_at)) > %s
+                ORDER BY started_at ASC
+            """, (timeout_seconds,))
 
-                rows = cur.fetchall()
-                return [Task(**row) for row in rows]
+            rows = cur.fetchall()
+            return [Task(**row) for row in rows]
 
     def reset_stale_tasks(self, timeout_seconds: int = 7200) -> int:
         """
@@ -242,43 +237,19 @@ class TaskQueue:
         Returns:
             Number of tasks reset
         """
-        with self._get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    UPDATE task_queue
-                    SET status = 'pending',
-                        worker_id = NULL,
-                        node_hostname = NULL,
-                        started_at = NULL,
-                        retry_count = retry_count + 1
-                    WHERE status = 'running'
-                      AND EXTRACT(EPOCH FROM (NOW() - started_at)) > %s
-                    RETURNING id
-                """, (timeout_seconds,))
+        with self.conn.cursor() as cur:
+            cur.execute("""
+                UPDATE task_queue
+                SET status = 'pending',
+                    worker_id = NULL,
+                    node_hostname = NULL,
+                    started_at = NULL,
+                    retry_count = retry_count + 1
+                WHERE status = 'running'
+                  AND EXTRACT(EPOCH FROM (NOW() - started_at)) > %s
+                RETURNING id
+            """, (timeout_seconds,))
 
-                count = len(cur.fetchall())
-                conn.commit()
-                return count
+            count = len(cur.fetchall())
+            return count
 
-    def purge_completed(self, older_than_hours: int = 24) -> int:
-        """
-        Remove completed tasks older than threshold.
-
-        Args:
-            older_than_hours: Age threshold in hours
-
-        Returns:
-            Number of tasks purged
-        """
-        with self._get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    DELETE FROM task_queue
-                    WHERE status = 'completed'
-                      AND completed_at < NOW() - INTERVAL '%s hours'
-                    RETURNING id
-                """, (older_than_hours,))
-
-                count = len(cur.fetchall())
-                conn.commit()
-                return count

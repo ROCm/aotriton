@@ -14,6 +14,8 @@ import psycopg
 from psycopg.types.json import Jsonb
 
 from v3python.tune.exaid import exaid_create, ExaidSubprocessNotOK
+from ..pq.queue import TaskQueue
+from ..pq.results import save_tuning_result
 
 logger = logging.getLogger(__name__)
 
@@ -269,8 +271,8 @@ class WriteHsacoResultHandler(MessageHandler):
     Output: None (triggers dependency resolution for postprocess)
     """
 
-    def __init__(self, conn_params: dict):
-        self.conn_params = conn_params
+    def __init__(self, db_conn):
+        self.db_conn = db_conn
 
     @classmethod
     def get_class_name(cls) -> str:
@@ -280,23 +282,8 @@ class WriteHsacoResultHandler(MessageHandler):
         task_id = message['task_id']
         report = message['report']
 
-        # Write to tuning_results table
-        with psycopg.connect(**self.conn_params) as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    INSERT INTO tuning_results
-                    (task_id, kernel_name, hsaco_index, result, result_data, error, gpu_id)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                """, (
-                    task_id,
-                    report['kernel_name'],
-                    report['hsaco_index'],
-                    report['result'],
-                    Jsonb(report.get('result_data')),
-                    Jsonb(report.get('error')),
-                    message.get('gpu_id')
-                ))
-                conn.commit()
+        # Write to tuning_results table using pq function
+        save_tuning_result(task_id, report, self.db_conn)
 
         logger.debug(f"Wrote hsaco result for task_id={task_id} "
                     f"{report['kernel_name']}[{report['hsaco_index']}]")
@@ -311,10 +298,23 @@ class PostprocessHandler(MessageHandler):
 
     Input: postprocess message (after dependencies resolved)
     Output: tune_kernel_ack message (triggers PG reader to continue)
+
+    DESIGN NOTE: This class has dual-context usage:
+    1. Broker context: Instantiated with db_conn=None, only resolve_dependency() is called
+    2. CPU worker context: Instantiated with valid db_conn, handle() is called
+
+    The broker tracks postprocess message dependencies using resolve_dependency(),
+    while the CPU worker executes the actual postprocessing using handle().
+
+    This means there are two "copies" of the postprocess message state:
+    - One in the broker's blocked_messages dict (tracking received_hsacos)
+    - One in the CPU worker's handler (executing final aggregation)
+
+    TODO: Consider splitting into BrokerPostprocessTracker + WorkerPostprocessHandler
     """
 
-    def __init__(self, conn_params: dict):
-        self.conn_params = conn_params
+    def __init__(self, db_conn):
+        self.db_conn = db_conn
 
     @classmethod
     def get_class_name(cls) -> str:
@@ -324,6 +324,16 @@ class PostprocessHandler(MessageHandler):
         """
         Called when hsaco_result arrives.
         Accumulate reports and check if all hsacos completed.
+
+        IMPORTANT: This method is called in the BROKER context, not the CPU worker context.
+        The broker instantiates PostprocessHandler with db_conn=None just to call this method.
+        Do NOT access self.db_conn here - it will be None. This method only manipulates
+        message dictionaries to track dependency resolution.
+
+        The actual handle() method runs in the CPU worker context and has a valid db_conn.
+
+        TODO: Consider splitting this class into BrokerPostprocessTracker and WorkerPostprocessHandler
+        to make the dual-context usage more explicit.
         """
         if blocked_msg['class'] != 'postprocess':
             return False
@@ -383,16 +393,10 @@ class PostprocessHandler(MessageHandler):
         }
 
         # Update task_queue with completed status
-        with psycopg.connect(**self.conn_params) as conn:
-            with conn.cursor() as cur:
-                # Note: We don't write tmpdir to database per feedback
-                cur.execute("""
-                    UPDATE task_queue
-                    SET status = 'completed',
-                        completed_at = NOW()
-                    WHERE id = %s
-                """, (task_id,))
-                conn.commit()
+        # Extract arch from task_config for partition routing
+        arch = task_config.get('arch')
+        task_queue = TaskQueue(self.db_conn)
+        task_queue.mark_completed(task_id, arch)
 
         logger.info(f"Postprocess completed for task_id={task_id}")
 

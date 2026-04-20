@@ -163,35 +163,6 @@ class QueueAdmin:
 
         return count
 
-    def purge_completed(self, older_than_hours: int = 24) -> int:
-        """
-        Delete completed tasks older than threshold.
-
-        Args:
-            older_than_hours: Age threshold in hours
-
-        Returns:
-            Number of tasks deleted
-        """
-        logger.info(f"Purging completed tasks older than {older_than_hours} hours")
-
-        with self._get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    DELETE FROM task_queue
-                    WHERE status = 'completed'
-                      AND completed_at < NOW() - INTERVAL '%s hours'
-                    RETURNING id
-                """ % older_than_hours)
-
-                count = len(cur.fetchall())
-
-        if count > 0:
-            logger.info(f"Purged {count} completed tasks")
-        else:
-            logger.info("No tasks to purge")
-
-        return count
 
     def get_statistics(self) -> Dict[str, Any]:
         """

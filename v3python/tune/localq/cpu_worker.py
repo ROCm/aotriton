@@ -12,6 +12,8 @@ import os
 import logging
 import argparse
 import signal
+import psycopg
+from psycopg.rows import dict_row
 
 from .generic_worker import GenericWorker
 from .handlers import WriteHsacoResultHandler, PostprocessHandler
@@ -34,14 +36,21 @@ def main():
                        help='Path to broker Unix socket')
     args = parser.parse_args()
 
-    # Get database connection parameters
+    # Get database connection parameters and create persistent connection
     from pathlib import Path
     conn_params = get_db_connection_params(Path(args.workdir))
 
+    # Create persistent database connection for this worker
+    db_conn = psycopg.connect(
+        **conn_params,
+        row_factory=dict_row,
+        autocommit=True
+    )
+
     # Create handlers for CPU tasks
     handlers = [
-        WriteHsacoResultHandler(conn_params),
-        PostprocessHandler(conn_params),
+        WriteHsacoResultHandler(db_conn),
+        PostprocessHandler(db_conn),
     ]
 
     # Create and run worker
@@ -49,7 +58,8 @@ def main():
         worker_id=args.worker_id,
         queue_name='cpu_queue',
         handlers=handlers,
-        broker_socket=args.broker_socket
+        broker_socket=args.broker_socket,
+        db_conn=db_conn
     )
 
     logger.info(f"Starting CPU worker {args.worker_id}")
@@ -75,6 +85,11 @@ def main():
         logger.error(f"CPU worker {args.worker_id} failed: {e} (PID={os.getpid()})", exc_info=True)
         worker.shutdown()
         sys.exit(1)
+    finally:
+        # Close database connection on shutdown
+        if db_conn:
+            db_conn.close()
+            logger.info(f"CPU worker {args.worker_id} database connection closed")
 
     logger.info(f"CPU worker {args.worker_id} main() complete (PID={os.getpid()})")
 
