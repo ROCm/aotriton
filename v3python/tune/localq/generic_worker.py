@@ -230,10 +230,6 @@ class GenericWorker:
                     logger.error(f"GenericWorker: Failed to mark task_id={task_id} as failed in database: {db_error}",
                                 exc_info=True)
 
-            # Mark task as failed in database if this is a top-level task handler
-            if msg_class in ['tune_kernel', 'preprocess', 'probe'] and task_id:
-                self._mark_task_failed(task_id, str(e))
-
     def _forward_message(self, message: dict):
         """
         Forward message to broker.

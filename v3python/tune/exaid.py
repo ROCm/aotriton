@@ -66,10 +66,12 @@ class ExaidProxy(object):
         logger.info(f"Waiting for response from worker (pid={self.process.pid}, timeout={timeout}s)")
         while True:
             (line, eno, error_msg) = safe_readline(self.process, timeout=timeout)
-            if eno != 0:
+            if eno != 0 or line is None:
                 if eno == errno.ETIMEDOUT:
                     logger.error(f"Worker timeout after {timeout}s, killing process (pid={self._process.pid})")
                     self._process.kill()
+                elif line is None:
+                    logger.error(f"Worker closed stdout unexpectedly (pid={self._process.pid})")
                 else:
                     logger.error(f"Worker error (pid={self._process.pid}, errno={eno}): {error_msg}")
                 self._process.wait()
@@ -79,7 +81,8 @@ class ExaidProxy(object):
                 logger.error(f"Worker stderr: {stderr}")
                 del self._process
                 self._process = None
-                raise OSError(eno, error_msg + "\nSTDOUT:\n" + stdout + "\nSTDERR:\n" + stderr)
+                error_desc = error_msg if error_msg else "stdout closed unexpectedly"
+                raise OSError(eno if eno != 0 else errno.EPIPE, error_desc + "\nSTDOUT:\n" + stdout + "\nSTDERR:\n" + stderr)
             ret, info = first(line)
             if ret == "OVERHEATING:":
                 logger.warning(f"Worker overheating warning: {line}")
