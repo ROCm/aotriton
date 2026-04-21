@@ -129,8 +129,9 @@ class WorkerScheduler:
         """Gracefully stop worker with --graceful flag"""
         logger.info(f"Gracefully stopping {hostname} for office hours...")
 
-        # Get aotriton root (parent of .tune)
-        aotriton_root = Path(self.workdir).resolve().parent.parent
+        # Get aotriton root: this file is at .tune/webui/scheduler.py
+        # So __file__.parent.parent.parent gives us aotriton root
+        aotriton_root = Path(__file__).resolve().parent.parent.parent
         script_path = aotriton_root / '.tune/single/stop_worker.sh'
 
         result = subprocess.run(
@@ -148,8 +149,9 @@ class WorkerScheduler:
         """Start worker when entering allowed hours"""
         logger.info(f"Starting {hostname} for allowed hours...")
 
-        # Get aotriton root (parent of .tune)
-        aotriton_root = Path(self.workdir).resolve().parent.parent
+        # Get aotriton root: this file is at .tune/webui/scheduler.py
+        # So __file__.parent.parent.parent gives us aotriton root
+        aotriton_root = Path(__file__).resolve().parent.parent.parent
         script_path = aotriton_root / '.tune/single/start_worker.sh'
 
         result = subprocess.run(
