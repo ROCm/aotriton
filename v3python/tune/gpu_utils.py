@@ -111,27 +111,14 @@ def _init_amdsmi():
     # Get all AMD-SMI devices
     amdsmi_devices = amdsmi.amdsmi_get_processor_handles()
 
-    # Build BDF map
-    bdf_to_amdsmi = {}
-    for dev in amdsmi_devices:
+    # Map HIP devices to AMD-SMI devices using HIP ID from enumeration info
+    for handle in amdsmi_devices:
         try:
-            bdf = amdsmi.amdsmi_get_gpu_device_bdf(dev)
-            bdf_to_amdsmi[bdf] = dev
+            info = amdsmi.amdsmi_get_gpu_enumeration_info(handle)
+            hip_id = info["hip_id"]
+            _hip_to_amdsmi[hip_id] = handle
         except Exception:
             continue
-
-    # Map HIP devices to AMD-SMI devices by PCI BDF
-    num_hip_devices = torch.cuda.device_count()
-    for hip_id in range(num_hip_devices):
-        try:
-            # Get PCI bus ID for HIP device (format: "0000:0c:00.0")
-            pci_bus_id = torch.cuda._get_pci_bus_id(hip_id)
-            if pci_bus_id in bdf_to_amdsmi:
-                _hip_to_amdsmi[hip_id] = bdf_to_amdsmi[pci_bus_id]
-        except (AttributeError, RuntimeError):
-            # Fallback: assume same enumeration order
-            if hip_id < len(amdsmi_devices):
-                _hip_to_amdsmi[hip_id] = amdsmi_devices[hip_id]
 
     _amdsmi_initialized = True
     return True
