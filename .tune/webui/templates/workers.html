@@ -127,8 +127,8 @@
                                 <input type="checkbox"
                                        data-hostname="{{ worker.hostname }}"
                                        data-gpu-all="true"
-                                       onchange="toggleAllGPUs('{{ worker.hostname }}', this.checked)"
-                                       checked
+                                       onchange="toggleAllGPUs('{{ worker.hostname }}', this.checked); saveGPUSelection('{{ worker.hostname }}');"
+                                       {% if not worker.gpu_selection or worker.gpu_selection == [-1] %}checked{% endif %}
                                        style="margin: 0;">
                                 <strong>All</strong>
                             </label>
@@ -138,8 +138,8 @@
                                 <input type="checkbox"
                                        data-hostname="{{ worker.hostname }}"
                                        data-gpu-id="{{ gpu_id }}"
-                                       onchange="updateGPUAllCheckbox('{{ worker.hostname }}')"
-                                       checked
+                                       onchange="updateGPUAllCheckbox('{{ worker.hostname }}'); saveGPUSelection('{{ worker.hostname }}');"
+                                       {% if not worker.gpu_selection or worker.gpu_selection == [-1] or (worker.gpu_selection and gpu_id in worker.gpu_selection) %}checked{% endif %}
                                        style="margin: 0;">
                                 {{ gpu_id }}
                             </label>
@@ -268,6 +268,39 @@ function sendWorkerAction(hostname, url) {
         console.error('Error:', error);
         alert('Failed to execute worker action: ' + error.message);
     });
+}
+
+// Save GPU selection to database
+let saveGPUSelectionTimers = {};
+function saveGPUSelection(hostname) {
+    // Debounce: wait 500ms after last change before saving
+    if (saveGPUSelectionTimers[hostname]) {
+        clearTimeout(saveGPUSelectionTimers[hostname]);
+    }
+
+    saveGPUSelectionTimers[hostname] = setTimeout(() => {
+        const gpuIds = getSelectedGPUs(hostname);
+
+        fetch(`/api/workers/${hostname}/gpu-selection`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ gpu_ids: gpuIds })
+        })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Failed to save GPU selection');
+            }
+            return response.json();
+        })
+        .then(data => {
+            console.log(`GPU selection saved for ${hostname}:`, gpuIds);
+        })
+        .catch(error => {
+            console.error('Error saving GPU selection:', error);
+        });
+    }, 500);
 }
 </script>
 

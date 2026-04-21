@@ -629,7 +629,7 @@ def get_workers_by_architecture(workdir):
     """Get workers grouped by architecture"""
     workers = get_workers(workdir)
 
-    # Load GPU metadata from config table
+    # Load GPU metadata and selection from config table
     workdir_path = Path(workdir)
     db_path = workdir_path / 'workers.db'
     gpu_info_map = {}
@@ -637,15 +637,27 @@ def get_workers_by_architecture(workdir):
     init_workers_db(workdir)  # Ensure database exists
     with sqlite3.connect(db_path.as_posix()) as conn:
         cursor = conn.cursor()
-        # Fetch all GPU metadata (keys like hostname::gpu::*)
-        cursor.execute("SELECT key, value FROM config WHERE key LIKE '%::gpu::%'")
+        # Fetch all GPU metadata (keys like hostname::gpu::*) and selections
+        cursor.execute("SELECT key, value FROM config WHERE key LIKE '%::gpu::%' OR key LIKE '%::gpu_selection'")
         for key, value in cursor.fetchall():
-            parts = key.split('::')
-            if len(parts) == 3:
-                hostname, _, field = parts
+            if '::gpu_selection' in key:
+                # Handle gpu_selection: hostname::gpu_selection
+                hostname = key.replace('::gpu_selection', '')
                 if hostname not in gpu_info_map:
                     gpu_info_map[hostname] = {}
-                gpu_info_map[hostname][field] = value
+                # Parse "0,1,2" or "-1" to list
+                if value == "-1":
+                    gpu_info_map[hostname]['selection'] = [-1]
+                else:
+                    gpu_info_map[hostname]['selection'] = [int(gid) for gid in value.split(',')]
+            else:
+                # Handle gpu metadata: hostname::gpu::field
+                parts = key.split('::')
+                if len(parts) == 3:
+                    hostname, _, field = parts
+                    if hostname not in gpu_info_map:
+                        gpu_info_map[hostname] = {}
+                    gpu_info_map[hostname][field] = value
 
     # Group workers by architecture
     workers_by_arch = {arch: [] for arch in TUNING_ARCHITECTURES}
@@ -659,7 +671,8 @@ def get_workers_by_architecture(workdir):
                 'workdir': workdir_override or '',
                 'gpu_arch': gpu_info.get('arch', ''),
                 'gpu_pciid': gpu_info.get('pciid', ''),
-                'gpu_number': gpu_info.get('number', '')
+                'gpu_number': gpu_info.get('number', ''),
+                'gpu_selection': gpu_info.get('selection')  # None if not set, [-1] for all, or [0,1,2,...]
             })
 
     return workers_by_arch
@@ -758,3 +771,51 @@ def detect_gpu_for_worker(workdir, hostname):
     """Detect GPU metadata for a specific worker"""
     cmd = ['.tune/single/detect_gpu.sh', workdir, hostname]
     return run_command(cmd, cwd=AOTRITON_ROOT, workdir=workdir, description=f'Detect GPU info for {hostname}')
+
+
+def save_worker_gpu_selection(workdir, hostname, gpu_ids):
+    """Save GPU selection for a worker to config table"""
+    init_workers_db(workdir)
+    workdir_path = Path(workdir)
+    db_path = workdir_path / 'workers.db'
+
+    # Convert list to comma-separated string
+    # [-1] means all GPUs, otherwise list of GPU IDs like [0,1,2,3]
+    if gpu_ids == [-1]:
+        value = "-1"
+    else:
+        value = ",".join(str(gid) for gid in gpu_ids)
+
+    try:
+        with sqlite3.connect(db_path.as_posix()) as conn:
+            conn.execute("""
+                INSERT INTO config (key, value) VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = CURRENT_TIMESTAMP
+            """, (f'{hostname}::gpu_selection', value, value))
+        return {'success': True, 'message': f'GPU selection saved for {hostname}'}
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
+
+
+def get_worker_gpu_selection(workdir, hostname):
+    """Get saved GPU selection for a worker"""
+    init_workers_db(workdir)
+    workdir_path = Path(workdir)
+    db_path = workdir_path / 'workers.db'
+
+    try:
+        with sqlite3.connect(db_path.as_posix()) as conn:
+            cursor = conn.execute(
+                "SELECT value FROM config WHERE key = ?",
+                (f'{hostname}::gpu_selection',)
+            )
+            row = cursor.fetchone()
+            if row:
+                value = row[0]
+                if value == "-1":
+                    return [-1]
+                else:
+                    return [int(gid) for gid in value.split(',')]
+            return None
+    except Exception:
+        return None

@@ -167,6 +167,16 @@ def api_detect_gpu(hostname):
     return jsonify(result)
 
 
+@bp.route('/api/workers/<hostname>/gpu-selection', methods=['POST'])
+def api_save_gpu_selection(hostname):
+    """Save GPU selection for a worker"""
+    workdir = current_app.config['WORKDIR']
+    data = request.get_json() or {}
+    gpu_ids = data.get('gpu_ids', [-1])
+    result = tasks.save_worker_gpu_selection(workdir, hostname, gpu_ids)
+    return jsonify(result)
+
+
 # API endpoints for server actions
 
 @bp.route('/api/servers/start', methods=['POST'])
