@@ -49,14 +49,15 @@ class WorkerScheduler:
         defaults = get_default_schedule(self.workdir) or {}
 
         for hostname, schedule in workers.items():
-            # Merge with defaults
+            # Merge with defaults (use 'or' to handle empty strings)
             for key in ['weekday_start', 'weekday_end', 'weekend_allowed']:
-                if key not in schedule or not schedule[key]:
+                if not schedule.get(key):
                     schedule[key] = defaults.get(key)
 
-            # Skip if required fields still missing
+            # Skip if required fields still missing or empty
             if not schedule.get('weekday_start') or not schedule.get('weekday_end'):
-                logger.warning(f"Skipping {hostname}: missing required schedule fields")
+                logger.warning(f"Skipping {hostname}: missing required schedule fields "
+                             f"(start={schedule.get('weekday_start')}, end={schedule.get('weekday_end')})")
                 continue
 
             self._arm_timer_for_worker(hostname, schedule)
@@ -194,8 +195,9 @@ class WorkerScheduler:
         """Calculate next time state will change (ALLOWED <-> BLOCKED)"""
         is_weekday = now.weekday() < 5
 
-        weekday_start = schedule.get('weekday_start', '18:00')
-        weekday_end = schedule.get('weekday_end', '08:00')
+        # Use 'or' to handle empty strings (not just missing keys)
+        weekday_start = schedule.get('weekday_start') or '18:00'
+        weekday_end = schedule.get('weekday_end') or '08:00'
         weekend_allowed = schedule.get('weekend_allowed', True)
         if isinstance(weekend_allowed, str):
             weekend_allowed = weekend_allowed.lower() == 'true'
