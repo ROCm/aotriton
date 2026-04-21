@@ -40,15 +40,28 @@ class WorkerScheduler:
 
     def arm_all_scheduled_workers(self):
         """Scan database and arm timers for all workers with enabled schedules"""
-        from .tasks import get_scheduled_workers
+        from .tasks import get_scheduled_workers, get_default_schedule
 
         workers = get_scheduled_workers(self.workdir)
         logger.info(f"Arming timers for {len(workers)} scheduled workers")
 
+        # Get default schedule for merging
+        defaults = get_default_schedule(self.workdir) or {}
+
         for hostname, schedule in workers.items():
+            # Merge with defaults
+            for key in ['weekday_start', 'weekday_end', 'weekend_allowed']:
+                if key not in schedule or not schedule[key]:
+                    schedule[key] = defaults.get(key)
+
+            # Skip if required fields still missing
+            if not schedule.get('weekday_start') or not schedule.get('weekday_end'):
+                logger.warning(f"Skipping {hostname}: missing required schedule fields")
+                continue
+
             self._arm_timer_for_worker(hostname, schedule)
 
-        return len(workers)
+        return len(self.timers)
 
     def _arm_timer_for_worker(self, hostname: str, schedule: dict):
         """Calculate next transition and arm timer"""

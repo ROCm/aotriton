@@ -447,6 +447,9 @@ function saveWorkerSchedule(hostname) {
       .then(data => alert(data.message || 'Saved'));
 }
 
+// Load scheduler status on page load
+loadSchedulerStatus();
+
 // Auto-refresh scheduler status every 60 seconds
 setInterval(loadSchedulerStatus, 60000);
 </script>
