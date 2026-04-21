@@ -908,9 +908,34 @@ def probe_worker_status(workdir, hostname):
 
 
 def probe_all_workers_status(workdir):
-    """Probe status for all registered workers"""
-    cmd = ['.tune/bin/probe-status', workdir]
-    return run_command(cmd, cwd=AOTRITON_ROOT, workdir=workdir, description='Probe status for all workers')
+    """Probe status for all registered workers and save to database"""
+    workers = get_workers(workdir)
+
+    results = []
+    for hostname, arch, workdir_override in workers:
+        try:
+            status_data = probe_worker_status(workdir, hostname)
+            results.append({
+                'hostname': hostname,
+                'success': True,
+                'status': status_data
+            })
+        except Exception as e:
+            logger.error(f"Failed to probe status for {hostname}: {e}")
+            results.append({
+                'hostname': hostname,
+                'success': False,
+                'error': str(e)
+            })
+
+    success_count = sum(1 for r in results if r['success'])
+    total_count = len(results)
+
+    return {
+        'success': success_count == total_count,
+        'message': f'Probed {success_count}/{total_count} workers successfully',
+        'results': results
+    }
 
 
 # Schedule management functions
