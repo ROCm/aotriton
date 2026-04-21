@@ -69,6 +69,40 @@
     <span id="probe-status-spinner" class="htmx-indicator">⏳ Probing...</span>
 </section>
 
+<section>
+    <h3>Office Hours Scheduling</h3>
+
+    <!-- Default schedule -->
+    <div style="margin-bottom: 1rem;">
+        <strong>Default Schedule:</strong><br>
+        <label>Weekdays:
+            <input type="time" id="default-weekday-start" value="18:00" style="width: 100px;">
+            to
+            <input type="time" id="default-weekday-end" value="08:00" style="width: 100px;">
+        </label>
+        <label>
+            <input type="checkbox" id="default-weekend-allowed" checked>
+            Allow weekends
+        </label>
+        <button onclick="saveDefaultSchedule()" style="background-color: #17a2b8; color: white;">
+            Save Default Schedule
+        </button>
+    </div>
+
+    <!-- Arm button -->
+    <button hx-post="/api/workers/schedule/arm"
+            hx-swap="none"
+            hx-on::after-request="loadSchedulerStatus()"
+            style="background-color: #ffc107; font-size: 1.2em; padding: 0.5rem 1rem;">
+        ⏰ Arm Scheduled Workers
+    </button>
+
+    <!-- Status display -->
+    <div id="scheduler-status" style="margin-top: 1rem; padding: 0.5rem; background: #f0f0f0; border-radius: 4px;">
+        <span style="color: gray;">Not armed</span>
+    </div>
+</section>
+
 {% for arch in supported_archs %}
 <section>
     <h3>{{ arch }} Workers ({{ workers_by_arch[arch]|length }})</h3>
@@ -188,6 +222,36 @@
                             hx-confirm="Are you sure you want to remove worker {{ worker.hostname }}?"
                             hx-on::after-request="location.reload()"
                             style="font-size: 0.8em; padding: 0.3rem 0.5rem; background-color: #dc3545; color: white;">Remove</button>
+                </td>
+            </tr>
+            <tr>
+                <td colspan="4">
+                    <details>
+                        <summary>⏰ Office Hours Schedule</summary>
+                        <div style="padding: 1rem;">
+                            <label>
+                                <input type="checkbox" id="schedule-enabled-{{ worker.hostname }}">
+                                Enable office hours restriction
+                            </label>
+
+                            <div id="schedule-config-{{ worker.hostname }}" style="margin-top: 0.5rem;">
+                                <label>Weekdays:
+                                    <input type="time" id="schedule-weekday-start-{{ worker.hostname }}" placeholder="18:00" style="width: 100px;">
+                                    to
+                                    <input type="time" id="schedule-weekday-end-{{ worker.hostname }}" placeholder="08:00" style="width: 100px;">
+                                </label>
+                                <label>
+                                    <input type="checkbox" id="schedule-weekend-allowed-{{ worker.hostname }}">
+                                    Allow weekends
+                                </label>
+
+                                <button onclick="saveWorkerSchedule('{{ worker.hostname }}')"
+                                        style="background-color: #28a745; color: white;">
+                                    Save Schedule
+                                </button>
+                            </div>
+                        </div>
+                    </details>
                 </td>
             </tr>
             {% endfor %}
@@ -312,6 +376,79 @@ function saveGPUSelection(hostname) {
         });
     }, 500);
 }
+
+// Office hours scheduling functions
+
+function saveDefaultSchedule() {
+    const data = {
+        weekday_start: document.getElementById('default-weekday-start').value,
+        weekday_end: document.getElementById('default-weekday-end').value,
+        weekend_allowed: document.getElementById('default-weekend-allowed').checked ? 'true' : 'false'
+    };
+
+    fetch('/api/workers/schedule/default', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(data)
+    }).then(response => response.json())
+      .then(data => alert(data.message || 'Saved'));
+}
+
+function formatDuration(seconds) {
+    // Format seconds as human-readable duration (e.g., "2h 15m", "45m", "30s")
+    const hours = Math.floor(seconds / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
+    const secs = Math.floor(seconds % 60);
+
+    if (hours > 0) {
+        return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+    } else if (mins > 0) {
+        return `${mins}m`;
+    } else {
+        return `${secs}s`;
+    }
+}
+
+function loadSchedulerStatus() {
+    fetch('/api/workers/schedule/status')
+        .then(response => response.json())
+        .then(status => {
+            const statusDiv = document.getElementById('scheduler-status');
+            const count = Object.keys(status).length;
+
+            if (count === 0) {
+                statusDiv.innerHTML = '<span style="color: gray;">No timers armed</span>';
+                return;
+            }
+
+            let html = `<strong>${count} timers armed:</strong><ul>`;
+            for (const [hostname, info] of Object.entries(status)) {
+                const timeStr = formatDuration(info.remaining_seconds);
+                html += `<li><code>${hostname}</code>: ${info.next_action} in ${timeStr}</li>`;
+            }
+            html += '</ul>';
+            statusDiv.innerHTML = html;
+        });
+}
+
+function saveWorkerSchedule(hostname) {
+    const data = {
+        enabled: document.getElementById(`schedule-enabled-${hostname}`).checked ? 'true' : 'false',
+        weekday_start: document.getElementById(`schedule-weekday-start-${hostname}`).value,
+        weekday_end: document.getElementById(`schedule-weekday-end-${hostname}`).value,
+        weekend_allowed: document.getElementById(`schedule-weekend-allowed-${hostname}`).checked ? 'true' : 'false'
+    };
+
+    fetch(`/api/workers/${hostname}/schedule`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(data)
+    }).then(response => response.json())
+      .then(data => alert(data.message || 'Saved'));
+}
+
+// Auto-refresh scheduler status every 60 seconds
+setInterval(loadSchedulerStatus, 60000);
 </script>
 
 {% endblock %}
