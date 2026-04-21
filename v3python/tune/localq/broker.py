@@ -84,7 +84,8 @@ class LocalBroker:
         """Mark broker for graceful shutdown with teardown (called from SIGHUP handler)"""
         logger.info("Graceful shutdown requested - will teardown blocked messages")
         self.graceful_shutdown_requested = True
-        self.running = False
+        # Do NOT set self.running = False - broker must continue serving
+        # teardown messages to CPU workers after SIGHUP
 
     def run(self):
         """Main broker event loop"""
