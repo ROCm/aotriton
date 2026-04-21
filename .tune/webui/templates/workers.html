@@ -61,6 +61,12 @@
             hx-indicator="#build-images-spinner"
             style="margin-top: 0.5rem; background-color: #17a2b8; color: white;">Build Images on All Workers</button>
     <span id="build-images-spinner" class="htmx-indicator">⏳ Building...</span>
+    <button hx-post="/api/workers/probe-all-status"
+            hx-swap="none"
+            hx-indicator="#probe-status-spinner"
+            hx-on::after-request="location.reload()"
+            style="margin-top: 0.5rem; background-color: #6c757d; color: white;">Probe All Status</button>
+    <span id="probe-status-spinner" class="htmx-indicator">⏳ Probing...</span>
 </section>
 
 {% for arch in supported_archs %}
@@ -148,13 +154,17 @@
                     </div>
                 </td>
                 <td>
-                    <span id="status-{{ worker.hostname }}" style="display: inline-block; min-width: 80px;">
-                        <span hx-get="/api/workers/{{ worker.hostname }}/status"
-                              hx-trigger="load, every 10s"
-                              hx-swap="innerHTML">
-                            <span class="status-badge status-unknown">Checking...</span>
+                    <div style="display: flex; align-items: center; gap: 0.3rem; margin-bottom: 0.5rem;">
+                        <button hx-post="/api/workers/{{ worker.hostname }}/probe-status"
+                                hx-swap="none"
+                                hx-on::after-request="location.reload()"
+                                style="padding: 0.4rem 0.6rem; font-size: 1.2em;">
+                            ⟳
+                        </button>
+                        <span id="status-{{ worker.hostname }}" style="font-family: monospace;">
+                            {{ worker.status_display }}
                         </span>
-                    </span>
+                    </div>
                     <button onclick="sendWorkerAction('{{ worker.hostname }}', '/api/workers/{{ worker.hostname }}/start')"
                             style="font-size: 0.8em; padding: 0.3rem 0.5rem;">Start</button>
                     <button hx-post="/api/workers/{{ worker.hostname }}/stop"

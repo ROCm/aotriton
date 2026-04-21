@@ -143,12 +143,20 @@ def api_stop_start_worker(hostname):
 
 @bp.route('/api/workers/<hostname>/status', methods=['GET'])
 def api_worker_status(hostname):
-    """Get worker status"""
+    """Get cached worker status"""
     workdir = current_app.config['WORKDIR']
-    worker = tasks.get_worker_by_hostname(workdir, hostname)
-    if worker:
-        return '<span style="color: gray">Unknown</span>'
-    return '<span style="color: red">Not Found</span>'
+    status = tasks.get_cached_worker_status(workdir, hostname)
+    if status:
+        return status.get('display', 'Unknown')
+    return 'Unknown'
+
+
+@bp.route('/api/workers/<hostname>/probe-status', methods=['POST'])
+def api_probe_worker_status(hostname):
+    """Probe worker status and cache result"""
+    workdir = current_app.config['WORKDIR']
+    status = tasks.probe_worker_status(workdir, hostname)
+    return jsonify(status)
 
 
 @bp.route('/api/workers/<hostname>/build-image', methods=['POST'])
@@ -174,6 +182,14 @@ def api_save_gpu_selection(hostname):
     data = request.get_json() or {}
     gpu_ids = data.get('gpu_ids', [-1])
     result = tasks.save_worker_gpu_selection(workdir, hostname, gpu_ids)
+    return jsonify(result)
+
+
+@bp.route('/api/workers/probe-all-status', methods=['POST'])
+def api_probe_all_workers_status():
+    """Probe status for all workers"""
+    workdir = current_app.config['WORKDIR']
+    result = tasks.probe_all_workers_status(workdir)
     return jsonify(result)
 
 

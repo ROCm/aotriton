@@ -11,8 +11,10 @@
         body { max-width: none !important; }
 
         /* Override Water.css small monospace font - enforce minimum 12pt */
-        code, pre, kbd, samp, var {
-            font-size: max(12pt, 1em);
+        code, pre, kbd, samp, var,
+        *[style*="monospace"],
+        .monospace {
+            font-size: max(12pt, 1em) !important;
         }
 
         nav { display: flex; gap: 1rem; padding: 1rem; background: #f0f0f0; }

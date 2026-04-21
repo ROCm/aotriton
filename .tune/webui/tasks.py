@@ -629,7 +629,7 @@ def get_workers_by_architecture(workdir):
     """Get workers grouped by architecture"""
     workers = get_workers(workdir)
 
-    # Load GPU metadata and selection from config table
+    # Load GPU metadata, selection, and status from config table
     workdir_path = Path(workdir)
     db_path = workdir_path / 'workers.db'
     gpu_info_map = {}
@@ -637,8 +637,8 @@ def get_workers_by_architecture(workdir):
     init_workers_db(workdir)  # Ensure database exists
     with sqlite3.connect(db_path.as_posix()) as conn:
         cursor = conn.cursor()
-        # Fetch all GPU metadata (keys like hostname::gpu::*) and selections
-        cursor.execute("SELECT key, value FROM config WHERE key LIKE '%::gpu::%' OR key LIKE '%::gpu_selection'")
+        # Fetch all GPU metadata, selections, and status
+        cursor.execute("SELECT key, value FROM config WHERE key LIKE '%::gpu::%' OR key LIKE '%::gpu_selection' OR key LIKE '%::status'")
         for key, value in cursor.fetchall():
             if '::gpu_selection' in key:
                 # Handle gpu_selection: hostname::gpu_selection
@@ -650,6 +650,16 @@ def get_workers_by_architecture(workdir):
                     gpu_info_map[hostname]['selection'] = [-1]
                 else:
                     gpu_info_map[hostname]['selection'] = [int(gid) for gid in value.split(',')]
+            elif '::status' in key:
+                # Handle cached status: hostname::status
+                import json
+                hostname = key.replace('::status', '')
+                if hostname not in gpu_info_map:
+                    gpu_info_map[hostname] = {}
+                try:
+                    gpu_info_map[hostname]['status'] = json.loads(value)
+                except:
+                    gpu_info_map[hostname]['status'] = {'status': 'unknown', 'display': 'Unknown'}
             else:
                 # Handle gpu metadata: hostname::gpu::field
                 parts = key.split('::')
@@ -665,6 +675,7 @@ def get_workers_by_architecture(workdir):
     for hostname, arch, workdir_override in workers:
         if arch in workers_by_arch:
             gpu_info = gpu_info_map.get(hostname, {})
+            status = gpu_info.get('status', {'status': 'unknown', 'display': 'Unknown'})
             workers_by_arch[arch].append({
                 'hostname': hostname,
                 'arch': arch,
@@ -672,7 +683,8 @@ def get_workers_by_architecture(workdir):
                 'gpu_arch': gpu_info.get('arch', ''),
                 'gpu_pciid': gpu_info.get('pciid', ''),
                 'gpu_number': gpu_info.get('number', ''),
-                'gpu_selection': gpu_info.get('selection')  # None if not set, [-1] for all, or [0,1,2,...]
+                'gpu_selection': gpu_info.get('selection'),  # None if not set, [-1] for all, or [0,1,2,...]
+                'status_display': status.get('display', 'Unknown')
             })
 
     return workers_by_arch
@@ -819,3 +831,83 @@ def get_worker_gpu_selection(workdir, hostname):
             return None
     except Exception:
         return None
+
+
+def get_worker_status_single(workdir, hostname):
+    """Get worker status (container ID and GPU process count)"""
+    import subprocess
+
+    script_path = AOTRITON_ROOT / '.tune/single/get_worker_status.sh'
+    result = subprocess.run(
+        [script_path.as_posix(), workdir, hostname],
+        capture_output=True,
+        text=True
+    )
+
+    if result.returncode != 0:
+        return {'status': 'error', 'display': 'Error'}
+
+    # Output is already in human-readable format
+    # "Stopped" or "pod: <id>; ngproc: <counts>"
+    display = result.stdout.strip()
+
+    if display == 'Stopped':
+        return {'status': 'stopped', 'display': 'Stopped'}
+    elif display.startswith('pod:'):
+        return {'status': 'running', 'display': display}
+    else:
+        return {'status': 'unknown', 'display': display if display else 'Unknown'}
+
+
+def save_worker_status(workdir, hostname, status_data):
+    """Save worker status to config table for caching"""
+    init_workers_db(workdir)
+    workdir_path = Path(workdir)
+    db_path = workdir_path / 'workers.db'
+
+    # Store as JSON string
+    import json
+    value = json.dumps(status_data)
+
+    try:
+        with sqlite3.connect(db_path.as_posix()) as conn:
+            conn.execute("""
+                INSERT INTO config (key, value) VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = CURRENT_TIMESTAMP
+            """, (f'{hostname}::status', value, value))
+    except Exception:
+        pass  # Ignore errors in caching
+
+
+def get_cached_worker_status(workdir, hostname):
+    """Get cached worker status from config table"""
+    init_workers_db(workdir)
+    workdir_path = Path(workdir)
+    db_path = workdir_path / 'workers.db'
+
+    try:
+        import json
+        with sqlite3.connect(db_path.as_posix()) as conn:
+            cursor = conn.execute(
+                "SELECT value FROM config WHERE key = ?",
+                (f'{hostname}::status',)
+            )
+            row = cursor.fetchone()
+            if row:
+                return json.loads(row[0])
+            return None
+    except Exception:
+        return None
+
+
+def probe_worker_status(workdir, hostname):
+    """Probe worker status and cache result"""
+    status_data = get_worker_status_single(workdir, hostname)
+    save_worker_status(workdir, hostname, status_data)
+    return status_data
+
+
+def probe_all_workers_status(workdir):
+    """Probe status for all registered workers"""
+    cmd = ['.tune/bin/probe-status', workdir]
+    return run_command(cmd, cwd=AOTRITON_ROOT, workdir=workdir, description='Probe status for all workers')
