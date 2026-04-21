@@ -46,3 +46,10 @@ get_slurm_bad_nodes() {
     sqlite3 "$workdir/workers.db" \
         "SELECT hostname FROM slurm_bad_nodes"
 }
+
+get_worker_gpu_selection() {
+    local workdir="$1"
+    local hostname="$2"
+    sqlite3 "$workdir/workers.db" \
+        "SELECT value FROM config WHERE key = '$hostname::gpu_selection'"
+}

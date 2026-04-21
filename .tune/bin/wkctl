@@ -60,7 +60,25 @@ for worker in "${WORKERS[@]}"; do
 
     WORKER_WORKDIR="${workdir_override:-$DEFAULT_WORKDIR}"
 
-    echo "[$hostname] ${ACTION}ing worker (arch: $arch, workdir: $WORKER_WORKDIR)"
+    # Get GPU selection from workers.db
+    GPU_SELECTION=$(get_worker_gpu_selection "$WORKDIR" "$hostname")
+
+    # Build --multi_gpu args if selection exists
+    MULTI_GPU_ARGS=()
+    if [ -n "$GPU_SELECTION" ]; then
+        MULTI_GPU_ARGS+=("--" "--multi_gpu")
+
+        # Parse GPU selection: "-1" for all, or comma-separated IDs like "1,2,3"
+        if [ "$GPU_SELECTION" = "-1" ]; then
+            MULTI_GPU_ARGS+=("-1")
+        else
+            # Split by comma and add each ID
+            IFS=',' read -ra GPU_IDS <<< "$GPU_SELECTION"
+            MULTI_GPU_ARGS+=("${GPU_IDS[@]}")
+        fi
+    fi
+
+    echo "[$hostname] ${ACTION}ing worker (arch: $arch, workdir: $WORKER_WORKDIR, gpus: ${GPU_SELECTION:-all})"
 
     # Disable exit-on-error for stop/stopwait to continue on failures
     if [ "$ACTION" = "stop" ] || [ "$ACTION" = "stopwait" ]; then
@@ -69,13 +87,13 @@ for worker in "${WORKERS[@]}"; do
 
     case "$ACTION" in
         start)
-            "$TUNE_ROOT/single/start_worker.sh" "$WORKDIR" "$hostname"
+            "$TUNE_ROOT/single/start_worker.sh" "$WORKDIR" "$hostname" "${MULTI_GPU_ARGS[@]}"
             ;;
         stop)
             "$TUNE_ROOT/single/stop_worker.sh" "$WORKDIR" "$hostname"
             ;;
         restart)
-            "$TUNE_ROOT/single/restart_worker.sh" "$WORKDIR" "$hostname"
+            "$TUNE_ROOT/single/restart_worker.sh" "$WORKDIR" "$hostname" "${MULTI_GPU_ARGS[@]}"
             ;;
         stopwait)
             "$TUNE_ROOT/single/stopwait_worker.sh" "$WORKDIR" "$hostname"
