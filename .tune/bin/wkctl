@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 
 # Worker control orchestration
-# Usage: worker_control [--host <hostname>...] <workdir> <action>
+# Usage: wkctl <workdir> <action> [--host <hostname>...]
 
 set -e
 
@@ -39,8 +39,15 @@ WORKDIR="${ARGS[0]}"
 ACTION="${ARGS[1]}"
 
 if [ -z "$WORKDIR" ] || [ -z "$ACTION" ]; then
-    echo "Usage: $0 [--host <hostname>...] <workdir> <action>" >&2
+    echo "Usage: $0 <workdir> <action> [--host <hostname>...]" >&2
     echo "Actions: start|stop|restart|stopwait" >&2
+    echo "" >&2
+    echo "Options:" >&2
+    echo "  --host <hostname>...  Filter to specific worker hosts (can be repeated)" >&2
+    echo "" >&2
+    echo "Examples:" >&2
+    echo "  $0 /path/to/workdir start" >&2
+    echo "  $0 /path/to/workdir stop --host gpu1.example.com gpu2.example.com" >&2
     exit 1
 fi
 
