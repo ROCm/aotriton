@@ -989,19 +989,21 @@ def save_worker_schedule(workdir, hostname, schedule_data):
 
 
 def delete_worker_schedule(workdir, hostname):
-    """Delete schedule configuration for a worker"""
+    """Delete per-host schedule configuration (but keep enabled state)"""
     init_workers_db(workdir)
     workdir_path = Path(workdir)
     db_path = workdir_path / 'workers.db'
 
     try:
         with sqlite3.connect(db_path.as_posix()) as conn:
+            # Delete weekday_start, weekday_end, weekend_allowed (but keep enabled)
             conn.execute("""
                 DELETE FROM config
                 WHERE key LIKE ? || '::schedule::%'
-            """, (hostname,))
+                AND key NOT LIKE ? || '::schedule::enabled'
+            """, (hostname, hostname))
 
-        return {'success': True, 'message': f'Schedule deleted for {hostname}'}
+        return {'success': True, 'message': f'Schedule reset to global defaults for {hostname}'}
     except Exception as e:
         logger.error(f"Error deleting schedule for {hostname}: {e}")
         return {'success': False, 'error': str(e)}

@@ -81,7 +81,7 @@
             <input type="time" id="default-weekday-end" value="08:00" style="width: 100px;">
         </label>
         <label>
-            <input type="checkbox" id="default-weekend-allowed" checked>
+            <input type="checkbox" id="default-weekend-allowed">
             Allow weekends
         </label>
         <button onclick="saveDefaultSchedule()" style="background-color: #17a2b8; color: white;">
@@ -89,17 +89,20 @@
         </button>
     </div>
 
-    <!-- Arm button -->
-    <button hx-post="/api/workers/schedule/arm"
-            hx-swap="none"
-            hx-on::after-request="loadSchedulerStatus()"
-            style="background-color: #ffc107; font-size: 1.2em; padding: 0.5rem 1rem;">
-        ⏰ Arm Scheduled Workers
-    </button>
+    <!-- Arm button and warning -->
+    <div style="display: flex; align-items: center; gap: 1rem;">
+        <button hx-post="/api/workers/schedule/arm"
+                hx-swap="none"
+                hx-on::after-request="loadSchedulerStatus()"
+                style="font-size: 1.2em; padding: 0.5rem 1rem;">
+            ⏰ Arm Scheduled Workers
+        </button>
+        <span style="color: #ffc107; font-weight: bold;">⚠️ Note: Click this button to activate/confirm scheduled timers</span>
+    </div>
 
     <!-- Status display -->
-    <div id="scheduler-status" style="margin-top: 1rem; padding: 0.5rem; background: #f0f0f0; border-radius: 4px;">
-        <span style="color: gray;">Not armed</span>
+    <div id="scheduler-status" style="margin-top: 1rem; padding: 0.5rem; border: 1px solid; border-radius: 4px;">
+        <span>Not armed</span>
     </div>
 </section>
 
@@ -118,17 +121,17 @@
         <tbody>
             {% for worker in workers_by_arch[arch] %}
             <tr>
-                <td>
-                    <code>{{ worker.hostname }}</code><br>
-                    <span id="gpu-info-{{ worker.hostname }}" style="font-size: 0.85em; display: flex; align-items: center; gap: 0.3rem; margin-top: 0.2rem;">
+                <td style="display: flex; flex-direction: column; gap: 0.3rem;">
+                    <code style="display: block;">{{ worker.hostname }}</code>
+                    <span id="gpu-info-{{ worker.hostname }}" style="font-size: 0.85em; display: flex; align-items: center; gap: 0.3rem;">
                         <button hx-post="/api/workers/{{ worker.hostname }}/detect-gpu"
                                 hx-swap="none"
                                 hx-indicator="#detect-spinner-{{ worker.hostname }}"
-                                style="padding: 0.3rem 0.5rem; font-size: 0.9em;">
+                                style="padding: 0.3rem 0.5rem; font-size: 0.9em; height: 2em;">
                             Detect
                         </button>
                         <button onclick="location.reload()"
-                                style="padding: 0.4rem 0.6rem; font-size: 1.2em;">
+                                style="padding: 0.3rem 0.5rem; font-size: 0.9em; height: 2em;">
                             ⟳
                         </button>
                         <span id="detect-spinner-{{ worker.hostname }}" class="htmx-indicator">⏳</span>
@@ -139,6 +142,33 @@
                         {% else %}
                             <span style="color: gray;">No GPU info</span>
                         {% endif %}
+                    </span>
+                    <span style="font-size: 0.85em; display: flex; align-items: center; gap: 0.3rem;">
+                        <input type="checkbox" id="schedule-enabled-{{ worker.hostname }}"
+                               onchange="toggleScheduleEnabled('{{ worker.hostname }}')" style="margin: 0;">
+                        ⏰
+                        <span id="schedule-fields-{{ worker.hostname }}" style="display: flex; align-items: center; gap: 0.3rem;">
+                            <input type="time" id="schedule-weekday-start-{{ worker.hostname }}" placeholder="18:00" style="width: 70px; padding: 0.2rem;">
+                            to
+                            <input type="time" id="schedule-weekday-end-{{ worker.hostname }}" placeholder="08:00" style="width: 70px; padding: 0.2rem;">
+                            <label style="display: flex; align-items: center; gap: 0.2rem; margin: 0;">
+                                <input type="checkbox" id="schedule-weekend-allowed-{{ worker.hostname }}" style="margin: 0;">
+                                weekends?
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 0.2rem; margin: 0;">
+                                <input type="checkbox" id="schedule-follow-global-{{ worker.hostname }}"
+                                       onchange="toggleFollowGlobal('{{ worker.hostname }}')" style="margin: 0;">
+                                follow global
+                            </label>
+                        </span>
+                        <button onclick="saveWorkerSchedule('{{ worker.hostname }}')"
+                                style="padding: 0.2rem 0.4rem; font-size: 1em;">
+                            💾
+                        </button>
+                        <button onclick="loadWorkerSchedule('{{ worker.hostname }}')"
+                                style="padding: 0.2rem 0.4rem; font-size: 1em;">
+                            ⟳
+                        </button>
                     </span>
                 </td>
                 <td>
@@ -222,36 +252,6 @@
                             hx-confirm="Are you sure you want to remove worker {{ worker.hostname }}?"
                             hx-on::after-request="location.reload()"
                             style="font-size: 0.8em; padding: 0.3rem 0.5rem; background-color: #dc3545; color: white;">Remove</button>
-                </td>
-            </tr>
-            <tr>
-                <td colspan="4">
-                    <details>
-                        <summary>⏰ Office Hours Schedule</summary>
-                        <div style="padding: 1rem;">
-                            <label>
-                                <input type="checkbox" id="schedule-enabled-{{ worker.hostname }}">
-                                Enable office hours restriction
-                            </label>
-
-                            <div id="schedule-config-{{ worker.hostname }}" style="margin-top: 0.5rem;">
-                                <label>Weekdays:
-                                    <input type="time" id="schedule-weekday-start-{{ worker.hostname }}" placeholder="18:00" style="width: 100px;">
-                                    to
-                                    <input type="time" id="schedule-weekday-end-{{ worker.hostname }}" placeholder="08:00" style="width: 100px;">
-                                </label>
-                                <label>
-                                    <input type="checkbox" id="schedule-weekend-allowed-{{ worker.hostname }}">
-                                    Allow weekends
-                                </label>
-
-                                <button onclick="saveWorkerSchedule('{{ worker.hostname }}')"
-                                        style="background-color: #28a745; color: white;">
-                                    Save Schedule
-                                </button>
-                            </div>
-                        </div>
-                    </details>
                 </td>
             </tr>
             {% endfor %}
@@ -417,7 +417,7 @@ function loadSchedulerStatus() {
             const count = Object.keys(status).length;
 
             if (count === 0) {
-                statusDiv.innerHTML = '<span style="color: gray;">No timers armed</span>';
+                statusDiv.innerHTML = '<span>No timers armed</span>';
                 return;
             }
 
@@ -431,20 +431,97 @@ function loadSchedulerStatus() {
         });
 }
 
-function saveWorkerSchedule(hostname) {
-    const data = {
-        enabled: document.getElementById(`schedule-enabled-${hostname}`).checked ? 'true' : 'false',
-        weekday_start: document.getElementById(`schedule-weekday-start-${hostname}`).value,
-        weekday_end: document.getElementById(`schedule-weekday-end-${hostname}`).value,
-        weekend_allowed: document.getElementById(`schedule-weekend-allowed-${hostname}`).checked ? 'true' : 'false'
-    };
+function toggleScheduleEnabled(hostname) {
+    const enabled = document.getElementById(`schedule-enabled-${hostname}`).checked;
+    const fieldsContainer = document.getElementById(`schedule-fields-${hostname}`);
 
-    fetch(`/api/workers/${hostname}/schedule`, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(data)
-    }).then(response => response.json())
-      .then(data => alert(data.message || 'Saved'));
+    if (enabled) {
+        fieldsContainer.style.display = 'flex';
+    } else {
+        fieldsContainer.style.display = 'none';
+    }
+}
+
+function toggleFollowGlobal(hostname) {
+    const followGlobal = document.getElementById(`schedule-follow-global-${hostname}`).checked;
+    const startInput = document.getElementById(`schedule-weekday-start-${hostname}`);
+    const endInput = document.getElementById(`schedule-weekday-end-${hostname}`);
+    const weekendCheckbox = document.getElementById(`schedule-weekend-allowed-${hostname}`);
+
+    if (followGlobal) {
+        // Disable and italicize
+        startInput.disabled = true;
+        endInput.disabled = true;
+        weekendCheckbox.disabled = true;
+        startInput.style.fontStyle = 'italic';
+        endInput.style.fontStyle = 'italic';
+    } else {
+        // Enable and remove italic
+        startInput.disabled = false;
+        endInput.disabled = false;
+        weekendCheckbox.disabled = false;
+        startInput.style.fontStyle = 'normal';
+        endInput.style.fontStyle = 'normal';
+    }
+}
+
+function loadWorkerSchedule(hostname) {
+    fetch(`/api/workers/${hostname}/schedule`)
+        .then(response => response.json())
+        .then(data => {
+            if (data && data.weekday_start && data.weekday_end) {
+                // Has per-host time config
+                document.getElementById(`schedule-enabled-${hostname}`).checked = data.enabled === 'true';
+                document.getElementById(`schedule-weekday-start-${hostname}`).value = data.weekday_start || '';
+                document.getElementById(`schedule-weekday-end-${hostname}`).value = data.weekday_end || '';
+                document.getElementById(`schedule-weekend-allowed-${hostname}`).checked = data.weekend_allowed === 'true';
+                document.getElementById(`schedule-follow-global-${hostname}`).checked = false;
+                toggleFollowGlobal(hostname);
+            } else {
+                // Following global (only has enabled, or nothing)
+                document.getElementById(`schedule-enabled-${hostname}`).checked = (data && data.enabled === 'true') || false;
+                document.getElementById(`schedule-follow-global-${hostname}`).checked = true;
+                toggleFollowGlobal(hostname);
+            }
+            // Update visibility based on enabled state
+            toggleScheduleEnabled(hostname);
+        })
+        .catch(error => console.error('Failed to load schedule:', error));
+}
+
+function saveWorkerSchedule(hostname) {
+    const followGlobal = document.getElementById(`schedule-follow-global-${hostname}`).checked;
+    const enabled = document.getElementById(`schedule-enabled-${hostname}`).checked ? 'true' : 'false';
+
+    if (followGlobal) {
+        // Delete per-host time config, but save enabled state
+        fetch(`/api/workers/${hostname}/schedule`, {
+            method: 'DELETE'
+        }).then(() => {
+            // Then save just the enabled state
+            return fetch(`/api/workers/${hostname}/schedule`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({enabled: enabled})
+            });
+        }).then(response => response.json())
+          .then(data => alert(data.message || 'Reset to global defaults'));
+    } else {
+        // Save per-host config
+        const data = {
+            enabled: enabled,
+            weekday_start: document.getElementById(`schedule-weekday-start-${hostname}`).value,
+            weekday_end: document.getElementById(`schedule-weekday-end-${hostname}`).value,
+            weekend_allowed: document.getElementById(`schedule-weekend-allowed-${hostname}`).checked ? 'true' : 'false'
+        };
+
+        fetch(`/api/workers/${hostname}/schedule`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(data)
+        }).then(response => response.json())
+          .then(data => alert(data.message || 'Saved'));
+    }
 }
 
 // Load scheduler status on page load
@@ -452,6 +529,15 @@ loadSchedulerStatus();
 
 // Auto-refresh scheduler status every 60 seconds
 setInterval(loadSchedulerStatus, 60000);
+
+// Load all worker schedules on page load
+document.addEventListener('DOMContentLoaded', function() {
+    {% for arch in supported_archs %}
+        {% for worker in workers_by_arch[arch] %}
+            loadWorkerSchedule('{{ worker.hostname }}');
+        {% endfor %}
+    {% endfor %}
+});
 </script>
 
 {% endblock %}
