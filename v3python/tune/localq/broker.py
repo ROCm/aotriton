@@ -31,6 +31,7 @@ class LocalBroker:
     def __init__(self, socket_path: str = '/tmp/aotriton-broker.sock'):
         self.socket_path = socket_path
         self.running = False
+        self.graceful_shutdown_requested = False
 
         # Named queues
         self.queues = {
@@ -79,6 +80,12 @@ class LocalBroker:
         logger.info("Shutting down broker")
         self.running = False
 
+    def graceful_shutdown(self):
+        """Mark broker for graceful shutdown with teardown (called from SIGHUP handler)"""
+        logger.info("Graceful shutdown requested - will teardown blocked messages")
+        self.graceful_shutdown_requested = True
+        self.running = False
+
     def run(self):
         """Main broker event loop"""
         self.running = True
@@ -99,6 +106,11 @@ class LocalBroker:
                 elif event & (select.EPOLLHUP | select.EPOLLERR):
                     # Worker disconnected
                     self._remove_worker(fd)
+
+        # Check if graceful shutdown requested
+        if self.graceful_shutdown_requested:
+            logger.info("Graceful shutdown flag set, tearing down blocked messages")
+            self._teardown_blocked_messages()
 
         logger.info("Broker run loop exited, cleanup starting")
 
@@ -442,3 +454,31 @@ class LocalBroker:
             if buffered_sock.worker_id == worker_id:
                 return buffered_sock
         return None
+
+    def _teardown_blocked_messages(self):
+        """Teardown all blocked messages (tasks with unmet dependencies)"""
+        total = sum(len(msgs) for msgs in self.blocked_messages.values())
+        logger.info(f"Tearing down {total} blocked messages")
+
+        # Import PostprocessHandler for teardown
+        from .handlers import PostprocessHandler
+
+        # Create handler instance (with db_conn=None for broker context)
+        postprocess_handler = PostprocessHandler(db_conn=None)
+
+        for dep_class, messages in self.blocked_messages.items():
+            for msg in messages:
+                msg_class = msg.get('class')
+                if not msg_class:
+                    continue
+
+                # Only postprocess messages need teardown (they're the only ones that can be blocked)
+                if msg_class == 'postprocess':
+                    logger.info(f"Calling teardown for {msg_class}: task_id={msg.get('task_id')}")
+                    result_msg = postprocess_handler.teardown_with_unmet_dependency(msg)
+
+                    if result_msg:
+                        self._enqueue_with_priority(result_msg['target_queue'], result_msg)
+
+        self.blocked_messages.clear()
+        logger.info("Blocked messages teardown complete")

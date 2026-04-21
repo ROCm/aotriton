@@ -80,9 +80,10 @@ WORKDIR="${2:-}"
 ARCH="${3:-}"
 shift 3
 
-# Parse optional --multi_gpu (must come after positionals)
+# Parse optional flags (must come after positionals)
 GPU_IDS=()
 USE_ALL_GPUS=false
+GRACEFUL=false
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -99,6 +100,10 @@ while [ $# -gt 0 ]; do
                     shift
                 fi
             done
+            ;;
+        --graceful)
+            GRACEFUL=true
+            shift
             ;;
         *)
             echo "Unknown option: $1" >&2
@@ -454,16 +459,36 @@ cmd_stop() {
     stop_process_group "PG readers" "pg-reader-$ARCH" 4
     echo ""
 
+    # Graceful stop: wait 5 minutes after stopping PG readers
+    if [ "$GRACEFUL" = "true" ]; then
+        echo "Graceful stop: Waiting 5 minutes for GPU workers to finish tasks..."
+        sleep 300
+        echo ""
+    fi
+
     # 2. Stop GPU workers (no more outgoing hsaco results)
     # Try to stop all possible GPU workers (0 to NUM_GPUS_ALL-1)
     stop_process_group "GPU workers" "gpu-worker" $NUM_GPUS_ALL
     echo ""
 
-    # 3. Stop CPU workers (finish processing remaining results)
+    # 3. Send SIGHUP to broker if graceful (before stopping CPU workers)
+    if [ "$GRACEFUL" = "true" ]; then
+        local broker_pidfile=$(get_pidfile "broker")
+        if is_running "$broker_pidfile"; then
+            local broker_pid=$(cat "$broker_pidfile")
+            echo "Graceful stop: Sending SIGHUP to broker (PID: $broker_pid)..."
+            kill -HUP "$broker_pid" 2>/dev/null || true
+            echo "Graceful stop: Waiting 30 seconds for broker teardown..."
+            sleep 30
+            echo ""
+        fi
+    fi
+
+    # 4. Stop CPU workers (process teardown messages from broker)
     stop_process_group "CPU workers" "cpu-worker" 4
     echo ""
 
-    # 4. Stop broker last (stop message router)
+    # 5. Stop broker
     stop_process_group "Broker" "broker"
     echo ""
 

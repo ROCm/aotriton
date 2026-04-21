@@ -55,6 +55,21 @@ class MessageHandler:
         """
         return False
 
+    def teardown_with_unmet_dependency(self, message: dict) -> dict | None:
+        """
+        Called during graceful shutdown when message has unmet dependencies.
+
+        Default implementation returns None (no action needed).
+        Override in subclasses if teardown requires specific actions.
+
+        Args:
+            message: Blocked message being torn down
+
+        Returns:
+            Result message to enqueue (or None)
+        """
+        return None
+
 
 class TuneKernelHandler(MessageHandler):
     """
@@ -416,3 +431,71 @@ class PostprocessHandler(MessageHandler):
         }
         logger.info(f"Postprocess returning ack message for task_id={task_id}")
         return ack_msg
+
+    def teardown_with_unmet_dependency(self, message: dict) -> dict:
+        """
+        Called during graceful shutdown when postprocess message has unmet dependencies.
+
+        This happens when GPU workers are stopped before completing all tune_hsaco tasks.
+        We need to cancel the running task by moving it back to pending state.
+
+        Args:
+            message: Postprocess message with unmet dependencies
+
+        Returns:
+            GracefulCancelRunningTask message to move task back to pending
+        """
+        task_id = message['task_id']
+        task_config = message.get('task_config', {})
+        arch = task_config.get('arch')
+
+        logger.info(f"PostprocessHandler teardown: task_id={task_id} has unmet dependencies, "
+                   f"creating cancel message")
+
+        # Cleanup tmpdir if it exists
+        if 'tmpdir' in task_config:
+            tmpdir = Path(task_config['tmpdir'])
+            try:
+                shutil.rmtree(tmpdir, ignore_errors=True)
+                logger.debug(f"Cleaned up tmpdir during teardown: {tmpdir}")
+            except Exception as e:
+                logger.warning(f"Failed to cleanup tmpdir {tmpdir} during teardown: {e}")
+
+        # Return message to cancel the running task (move it back to pending)
+        return {
+            'class': 'graceful_cancel_running_task',
+            'target_queue': 'cpu_queue',
+            'task_id': task_id,
+            'arch': arch
+        }
+
+
+class GracefulCancelRunningTaskHandler(MessageHandler):
+    """
+    Moves task state back to pending when gracefully cancelled.
+
+    This handler is used during graceful shutdown to cancel running tasks
+    that have unmet dependencies (incomplete tune_hsaco work).
+    """
+
+    def __init__(self, db_conn):
+        self.db_conn = db_conn
+
+    @classmethod
+    def get_class_name(cls) -> str:
+        return "graceful_cancel_running_task"
+
+    def handle(self, message: dict) -> None:
+        task_id = message['task_id']
+        arch = message['arch']
+
+        logger.info(f"Gracefully cancelling task_id={task_id}, moving back to pending")
+
+        # Move task back to pending state
+        task_queue = TaskQueue(self.db_conn)
+        task_queue.mark_pending(task_id, arch)
+
+        logger.info(f"Task {task_id} moved back to pending state")
+
+        # No result message
+        return None

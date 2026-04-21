@@ -16,7 +16,7 @@ import psycopg
 from psycopg.rows import dict_row
 
 from .generic_worker import GenericWorker
-from .handlers import WriteHsacoResultHandler, PostprocessHandler
+from .handlers import WriteHsacoResultHandler, PostprocessHandler, GracefulCancelRunningTaskHandler
 from ..utils import get_db_connection_params, configure_logging_with_flush
 
 configure_logging_with_flush()
@@ -51,6 +51,7 @@ def main():
     handlers = [
         WriteHsacoResultHandler(db_conn),
         PostprocessHandler(db_conn),
+        GracefulCancelRunningTaskHandler(db_conn),
     ]
 
     # Create and run worker

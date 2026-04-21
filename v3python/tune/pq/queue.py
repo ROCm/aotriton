@@ -153,6 +153,31 @@ class TaskQueue:
                 logger.error(f"TaskQueue.mark_failed: task_id={task_id}, arch=unknown, "
                             f"status=→failed, partition=task_queue (parent), error={error}")
 
+    def mark_pending(self, task_id: int, arch: str) -> None:
+        """
+        Mark task as pending (used during graceful shutdown to cancel running tasks).
+
+        Args:
+            task_id: Task ID
+            arch: GPU architecture (for partition routing)
+        """
+        partition_table = f"task_queue_{arch}"
+
+        with self.conn.cursor() as cur:
+            cur.execute(f"""
+                UPDATE {partition_table}
+                SET status = 'pending',
+                    worker_id = NULL,
+                    node_hostname = NULL,
+                    started_at = NULL,
+                    completed_at = NULL,
+                    error = NULL
+                WHERE id = %s
+            """, (task_id,))
+
+            logger.info(f"TaskQueue.mark_pending: task_id={task_id}, arch={arch}, "
+                       f"status=→pending, partition={partition_table}")
+
     def retry_task(self, task_id: int, arch: str, max_retries: int = 3) -> bool:
         """
         Retry a failed task if under retry limit.

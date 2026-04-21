@@ -34,8 +34,13 @@ def main():
         logger.info(f"Received signal {signum}, shutting down gracefully")
         broker.shutdown()
 
+    def sighup_handler(signum, frame):
+        logger.info(f"Received SIGHUP, requesting graceful shutdown with teardown")
+        broker.graceful_shutdown()
+
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGHUP, sighup_handler)
 
     logger.info(f"Starting LocalBroker (PID={os.getpid()})")
 

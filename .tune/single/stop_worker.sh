@@ -15,9 +15,26 @@ TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 WORKDIR="$1"
 HOSTNAME="$2"
+shift 2
+
+# Parse optional --graceful flag
+GRACEFUL=false
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --graceful)
+            GRACEFUL=true
+            shift
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            echo "Usage: $0 <workdir> <hostname> [--graceful]" >&2
+            exit 1
+            ;;
+    esac
+done
 
 if [ -z "$WORKDIR" ] || [ -z "$HOSTNAME" ]; then
-  echo "Usage: $0 <workdir> <hostname>" >&2
+  echo "Usage: $0 <workdir> <hostname> [--graceful]" >&2
   exit 1
 fi
 
@@ -29,9 +46,10 @@ IFS='|' read -r arch workdir_override <<< "$WORKER_INFO"
 
 WORKER_WORKDIR="${workdir_override:-$DEFAULT_WORKDIR}"
 
-ssh "$HOSTNAME" bash -s "$WORKER_WORKDIR" "$arch" <<'EOF'
+ssh "$HOSTNAME" bash -s "$WORKER_WORKDIR" "$arch" "$GRACEFUL" <<'EOF'
 WORKER_WORKDIR="$1"
 ARCH="$2"
+GRACEFUL="$3"
 RUNFILE="$WORKER_WORKDIR/run/worker.containerid"
 
 if [ ! -f "$RUNFILE" ]; then
@@ -41,8 +59,13 @@ fi
 
 WORKER_CONTAINER_ID=$(cat "$RUNFILE")
 
-echo "Stopping worker service in container: $WORKER_CONTAINER_ID"
-docker exec "$WORKER_CONTAINER_ID" bash -c "source /wkdir/config.rc && source \$(dirname \$CELERY_WORKER_PYTHON)/activate && cd /wkdir/aotriton.src && bash .tune/remote/worker_service.sh stop /wkdir $ARCH"
+if [ "$GRACEFUL" = "true" ]; then
+  echo "Gracefully stopping worker service in container: $WORKER_CONTAINER_ID"
+  docker exec "$WORKER_CONTAINER_ID" bash -c "source /wkdir/config.rc && source \$(dirname \$CELERY_WORKER_PYTHON)/activate && cd /wkdir/aotriton.src && bash .tune/remote/worker_service.sh stop /wkdir $ARCH --graceful"
+else
+  echo "Stopping worker service in container: $WORKER_CONTAINER_ID"
+  docker exec "$WORKER_CONTAINER_ID" bash -c "source /wkdir/config.rc && source \$(dirname \$CELERY_WORKER_PYTHON)/activate && cd /wkdir/aotriton.src && bash .tune/remote/worker_service.sh stop /wkdir $ARCH"
+fi
 
 echo "Stopping and removing container: $WORKER_CONTAINER_ID"
 docker rm -f "$WORKER_CONTAINER_ID"
