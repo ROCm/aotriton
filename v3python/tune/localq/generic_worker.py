@@ -216,7 +216,18 @@ class GenericWorker:
             task_id = message.get('task_id')
             logger.error(f"Handler error for {msg_class} (task_id={task_id}): {e}", exc_info=True)
 
-            # Mark task as failed in database if this is a top-level task handler
+            # LIMITATION: This fallback exception handler can only mark tasks as failed
+            # if the worker has database access (self.db_conn is not None).
+            #
+            # GPU workers do NOT have db_conn, so exceptions in GPU handlers will be logged
+            # but will NOT mark tasks as failed in the database. This will cause the task
+            # to remain in 'running' state forever.
+            #
+            # SOLUTION: GPU handlers (PreprocessHandler, ProbeHandler) must catch their own
+            # exceptions and return a 'mark_task_failed' message to cpu_queue instead of
+            # raising. See handlers.py for the implementation.
+            #
+            # This fallback is only effective for CPU workers (which have db_conn).
             if msg_class in ['tune_kernel', 'preprocess', 'probe'] and task_id and self.db_conn:
                 try:
                     # Extract arch from message if available

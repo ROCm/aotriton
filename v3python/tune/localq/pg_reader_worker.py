@@ -125,7 +125,11 @@ class PGReaderWorker:
                         return
 
                     if response['type'] == 'ack' and response['task_id'] == task_id:
-                        logger.info(f"Received ack for task_id={task_id}, continuing")
+                        # Check if this is a negative ack (task failed)
+                        if response.get('negative', False):
+                            logger.warning(f"Received NAK for task_id={task_id} (task failed), continuing")
+                        else:
+                            logger.info(f"Received ACK for task_id={task_id} (task completed), continuing")
                         break
 
                 logger.info(f"PG Reader {self.worker_id} finished ack wait loop, back to main loop")

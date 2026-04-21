@@ -98,7 +98,7 @@ class PreprocessHandler(MessageHandler):
     Prepares test data.
 
     Input: preprocess message
-    Output: probe message
+    Output: probe message or mark_task_failed message
     """
 
     def __init__(self, gpu_id: int):
@@ -108,8 +108,9 @@ class PreprocessHandler(MessageHandler):
     def get_class_name(cls) -> str:
         return "preprocess"
 
-    def handle(self, message: dict) -> dict:
+    def handle(self, message: dict) -> dict | None:
         task_config = message['task_config']
+        task_id = message['task_id']
 
         # Execute preprocessing
         module = task_config["module"]
@@ -124,8 +125,17 @@ class PreprocessHandler(MessageHandler):
             exaid.prepare_data(task_config["entry"], tmpdir)
             task_config['tmpdir'] = tmpdir.as_posix()
         except (OSError, ExaidSubprocessNotOK) as e:
-            logger.error(f"Preprocess failed: {e}")
-            raise
+            logger.error(f"Preprocess failed for task_id={task_id}: {e}")
+            # Return message to CPU worker to mark task as failed
+            arch = task_config.get('arch')
+            error_msg = f"Preprocess failed: {type(e).__name__}: {str(e)}"
+            return {
+                'class': 'mark_task_failed',
+                'target_queue': 'cpu_queue',
+                'task_id': task_id,
+                'arch': arch,
+                'error': error_msg
+            }
 
         # Return probe message
         return {
@@ -141,7 +151,7 @@ class ProbeHandler(MessageHandler):
     Discovers hsaco kernels and creates tune_hsaco + postprocess messages.
 
     Input: probe message
-    Output: Multiple tune_hsaco messages + one postprocess message (with dependencies)
+    Output: Multiple tune_hsaco messages + one postprocess message (with dependencies), or mark_task_failed message
     """
 
     def __init__(self, gpu_id: int):
@@ -151,7 +161,7 @@ class ProbeHandler(MessageHandler):
     def get_class_name(cls) -> str:
         return "probe"
 
-    def handle(self, message: dict) -> List[dict]:
+    def handle(self, message: dict) -> List[dict] | dict | None:
         task_config = message['task_config']
         task_id = message['task_id']
 
@@ -163,8 +173,17 @@ class ProbeHandler(MessageHandler):
         try:
             kernel_dict = exaid.probe(tmpdir)
         except (OSError, ExaidSubprocessNotOK) as e:
-            logger.error(f"Probe failed: {e}")
-            raise
+            logger.error(f"Probe failed for task_id={task_id}: {e}")
+            # Return message to CPU worker to mark task as failed
+            arch = task_config.get('arch')
+            error_msg = f"Probe failed: {type(e).__name__}: {str(e)}"
+            return {
+                'class': 'mark_task_failed',
+                'target_queue': 'cpu_queue',
+                'task_id': task_id,
+                'arch': arch,
+                'error': error_msg
+            }
 
         # Apply max_hsaco filtering
         max_hsaco_dict = task_config.get("max_hsaco", {})
@@ -499,3 +518,40 @@ class GracefulCancelRunningTaskHandler(MessageHandler):
 
         # No result message
         return None
+
+
+class MarkTaskFailedHandler(MessageHandler):
+    """
+    Marks task as failed in database.
+
+    This handler is used when GPU workers encounter exceptions during
+    preprocess or probe stages. GPU workers don't have DB access, so they
+    send this message to CPU workers to write the failure to the database.
+    """
+
+    def __init__(self, db_conn):
+        self.db_conn = db_conn
+
+    @classmethod
+    def get_class_name(cls) -> str:
+        return "mark_task_failed"
+
+    def handle(self, message: dict) -> dict:
+        task_id = message['task_id']
+        arch = message['arch']
+        error = message['error']
+
+        logger.info(f"Marking task_id={task_id} as failed: {error}")
+
+        # Mark task as failed in database
+        task_queue = TaskQueue(self.db_conn)
+        task_queue.mark_failed(task_id, arch, error)
+
+        logger.info(f"Task {task_id} marked as failed in database")
+
+        # Return nak (negative ack) message to unblock PG reader
+        return {
+            'class': 'tune_kernel_ack',
+            'task_id': task_id,
+            'negative': True
+        }

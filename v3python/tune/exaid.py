@@ -146,7 +146,7 @@ class ExaidWorker(object):
         logger.info(f"prepare_data: entry={entry_dict}, workdir={workdir}")
         entry = self.entry_from_dict(entry_dict)
         self.proxy.write('prepare_data', entry.as_text(), workdir.as_posix())
-        result = self.proxy.readinfo(timeout=30)
+        result = self.proxy.readinfo(timeout=120)
         logger.info(f"prepare_data completed: {result}")
         return result
 
