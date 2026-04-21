@@ -62,6 +62,11 @@ for worker in "${WORKERS[@]}"; do
 
     echo "[$hostname] ${ACTION}ing worker (arch: $arch, workdir: $WORKER_WORKDIR)"
 
+    # Disable exit-on-error for stop/stopwait to continue on failures
+    if [ "$ACTION" = "stop" ] || [ "$ACTION" = "stopwait" ]; then
+        set +e
+    fi
+
     case "$ACTION" in
         start)
             "$TUNE_ROOT/single/start_worker.sh" "$WORKDIR" "$hostname"
@@ -81,10 +86,17 @@ for worker in "${WORKERS[@]}"; do
             ;;
     esac
 
-    if [ $? -eq 0 ]; then
+    EXIT_CODE=$?
+
+    # Re-enable exit-on-error
+    if [ "$ACTION" = "stop" ] || [ "$ACTION" = "stopwait" ]; then
+        set -e
+    fi
+
+    if [ $EXIT_CODE -eq 0 ]; then
         echo "[$hostname] Worker ${ACTION}ed successfully"
     else
-        echo "[$hostname] Failed to ${ACTION} worker" >&2
+        echo "[$hostname] Failed to ${ACTION} worker (exit code: $EXIT_CODE)" >&2
     fi
 
     COUNT=$((COUNT + 1))
