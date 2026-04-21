@@ -23,6 +23,10 @@ def create_app(workdir):
     from .action_tracker import TrackerRegistry
     app.tracker_registry = TrackerRegistry()
 
+    # Initialize worker scheduler
+    from .scheduler import WorkerScheduler
+    app.scheduler = WorkerScheduler(workdir_path.as_posix())
+
     from . import routes
     app.register_blueprint(routes.bp)
 

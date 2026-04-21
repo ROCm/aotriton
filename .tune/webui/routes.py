@@ -526,3 +526,61 @@ def clear_all_actions():
     """Clear all action trackers"""
     current_app.tracker_registry.clear_all()
     return jsonify({'success': True})
+
+
+# Schedule management routes
+
+@bp.route('/api/workers/<hostname>/schedule', methods=['GET'])
+def api_get_worker_schedule(hostname):
+    """Get schedule configuration for a worker"""
+    workdir = current_app.config['WORKDIR']
+    schedule = tasks.get_worker_schedule(workdir, hostname)
+    return jsonify(schedule or {})
+
+
+@bp.route('/api/workers/<hostname>/schedule', methods=['POST'])
+def api_save_worker_schedule(hostname):
+    """Save schedule configuration for a worker"""
+    workdir = current_app.config['WORKDIR']
+    data = request.get_json() or {}
+    result = tasks.save_worker_schedule(workdir, hostname, data)
+    return jsonify(result)
+
+
+@bp.route('/api/workers/<hostname>/schedule', methods=['DELETE'])
+def api_delete_worker_schedule(hostname):
+    """Delete schedule configuration for a worker"""
+    workdir = current_app.config['WORKDIR']
+    result = tasks.delete_worker_schedule(workdir, hostname)
+    return jsonify(result)
+
+
+@bp.route('/api/workers/schedule/default', methods=['GET'])
+def api_get_default_schedule():
+    """Get default schedule configuration"""
+    workdir = current_app.config['WORKDIR']
+    schedule = tasks.get_default_schedule(workdir)
+    return jsonify(schedule or {})
+
+
+@bp.route('/api/workers/schedule/default', methods=['POST'])
+def api_save_default_schedule():
+    """Save default schedule configuration"""
+    workdir = current_app.config['WORKDIR']
+    data = request.get_json() or {}
+    result = tasks.save_default_schedule(workdir, data)
+    return jsonify(result)
+
+
+@bp.route('/api/workers/schedule/arm', methods=['POST'])
+def api_arm_scheduled_workers():
+    """Arm timers for all scheduled workers"""
+    count = current_app.scheduler.arm_all_scheduled_workers()
+    return jsonify({'armed_count': count, 'message': f'Armed timers for {count} workers'})
+
+
+@bp.route('/api/workers/schedule/status', methods=['GET'])
+def api_get_scheduler_status():
+    """Get status of all armed timers"""
+    status = current_app.scheduler.get_scheduler_status()
+    return jsonify(status)

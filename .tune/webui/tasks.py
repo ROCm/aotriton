@@ -427,7 +427,7 @@ def get_git_status(workdir):
     # check if working tree is dirty (1=dirty, 0=clean)
     cd {cwd} && git diff --quiet HEAD && git diff --cached --quiet 2>/dev/null; echo $?
     # check if any remote URL ends with aotriton or aotriton.git (0=yes, 1=no)
-    cd {cwd} && git config --get-regexp 'remote\..*\.url' 2>/dev/null | cut -d' ' -f2- | grep -qE 'aotriton(\.git)?$'; echo $?
+    cd {cwd} && git config --get-regexp 'remote\\..*\\.url' 2>/dev/null | cut -d' ' -f2- | grep -qE 'aotriton(\\.git)?$'; echo $?
     '''
 
     result = subprocess.run(script, shell=True, capture_output=True, text=True, executable='/bin/bash')
@@ -911,3 +911,151 @@ def probe_all_workers_status(workdir):
     """Probe status for all registered workers"""
     cmd = ['.tune/bin/probe-status', workdir]
     return run_command(cmd, cwd=AOTRITON_ROOT, workdir=workdir, description='Probe status for all workers')
+
+
+# Schedule management functions
+
+def get_worker_schedule(workdir, hostname):
+    """Get schedule configuration for a worker"""
+    init_workers_db(workdir)
+    workdir_path = Path(workdir)
+    db_path = workdir_path / 'workers.db'
+
+    try:
+        with sqlite3.connect(db_path.as_posix()) as conn:
+            cursor = conn.execute("""
+                SELECT key, value FROM config
+                WHERE key LIKE ? || '::schedule::%'
+            """, (hostname,))
+
+            schedule = {}
+            for row in cursor:
+                key = row[0]
+                # key format: hostname::schedule::field
+                field = key.split('::')[-1]
+                schedule[field] = row[1]
+
+            return schedule if schedule else None
+    except Exception as e:
+        logger.error(f"Error getting schedule for {hostname}: {e}")
+        return None
+
+
+def save_worker_schedule(workdir, hostname, schedule_data):
+    """Save schedule configuration for a worker"""
+    init_workers_db(workdir)
+    workdir_path = Path(workdir)
+    db_path = workdir_path / 'workers.db'
+
+    try:
+        with sqlite3.connect(db_path.as_posix()) as conn:
+            # Save each schedule field
+            for field, value in schedule_data.items():
+                key = f'{hostname}::schedule::{field}'
+                conn.execute("""
+                    INSERT INTO config (key, value) VALUES (?, ?)
+                    ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = CURRENT_TIMESTAMP
+                """, (key, value, value))
+
+        return {'success': True, 'message': f'Schedule saved for {hostname}'}
+    except Exception as e:
+        logger.error(f"Error saving schedule for {hostname}: {e}")
+        return {'success': False, 'error': str(e)}
+
+
+def delete_worker_schedule(workdir, hostname):
+    """Delete schedule configuration for a worker"""
+    init_workers_db(workdir)
+    workdir_path = Path(workdir)
+    db_path = workdir_path / 'workers.db'
+
+    try:
+        with sqlite3.connect(db_path.as_posix()) as conn:
+            conn.execute("""
+                DELETE FROM config
+                WHERE key LIKE ? || '::schedule::%'
+            """, (hostname,))
+
+        return {'success': True, 'message': f'Schedule deleted for {hostname}'}
+    except Exception as e:
+        logger.error(f"Error deleting schedule for {hostname}: {e}")
+        return {'success': False, 'error': str(e)}
+
+
+def get_default_schedule(workdir):
+    """Get default schedule configuration"""
+    init_workers_db(workdir)
+    workdir_path = Path(workdir)
+    db_path = workdir_path / 'workers.db'
+
+    try:
+        with sqlite3.connect(db_path.as_posix()) as conn:
+            cursor = conn.execute("""
+                SELECT key, value FROM config
+                WHERE key LIKE '::schedule::default::%'
+            """)
+
+            schedule = {}
+            for row in cursor:
+                key = row[0]
+                # key format: ::schedule::default::field
+                field = key.split('::')[-1]
+                schedule[field] = row[1]
+
+            return schedule if schedule else None
+    except Exception as e:
+        logger.error(f"Error getting default schedule: {e}")
+        return None
+
+
+def save_default_schedule(workdir, schedule_data):
+    """Save default schedule configuration"""
+    init_workers_db(workdir)
+    workdir_path = Path(workdir)
+    db_path = workdir_path / 'workers.db'
+
+    try:
+        with sqlite3.connect(db_path.as_posix()) as conn:
+            # Save each schedule field
+            for field, value in schedule_data.items():
+                key = f'::schedule::default::{field}'
+                conn.execute("""
+                    INSERT INTO config (key, value) VALUES (?, ?)
+                    ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = CURRENT_TIMESTAMP
+                """, (key, value, value))
+
+        return {'success': True, 'message': 'Default schedule saved'}
+    except Exception as e:
+        logger.error(f"Error saving default schedule: {e}")
+        return {'success': False, 'error': str(e)}
+
+
+def get_scheduled_workers(workdir):
+    """Get all workers with enabled schedules"""
+    init_workers_db(workdir)
+    workdir_path = Path(workdir)
+    db_path = workdir_path / 'workers.db'
+
+    try:
+        with sqlite3.connect(db_path.as_posix()) as conn:
+            # Get all workers with schedule::enabled=true
+            cursor = conn.execute("""
+                SELECT key FROM config
+                WHERE key LIKE '%::schedule::enabled' AND value = 'true'
+            """)
+
+            scheduled_workers = {}
+            for row in cursor:
+                key = row[0]
+                # key format: hostname::schedule::enabled
+                hostname = key.split('::')[0]
+
+                # Get full schedule for this worker
+                schedule = get_worker_schedule(workdir, hostname)
+                if schedule:
+                    scheduled_workers[hostname] = schedule
+
+            return scheduled_workers
+    except Exception as e:
+        logger.error(f"Error getting scheduled workers: {e}")
+        return {}
