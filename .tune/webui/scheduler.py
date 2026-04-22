@@ -19,6 +19,7 @@ class ScheduledTimer(threading.Timer):
 
     def __init__(self, interval, function, args=None, kwargs=None, hostname=None, action=None):
         super().__init__(interval, function, args or [], kwargs or {})
+        self.daemon = True  # Allow clean shutdown on Ctrl+C
         self.hostname = hostname
         self.action = action  # 'START' or 'STOP'
         self.fire_time = datetime.now() + timedelta(seconds=interval)

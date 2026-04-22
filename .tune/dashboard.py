@@ -82,4 +82,7 @@ if __name__ == '__main__':
     try:
         server.start()
     except KeyboardInterrupt:
+        print("\nShutting down...")
+        # Cancel all scheduled timers before stopping server
+        app.scheduler.cancel_all_timers()
         server.stop()
