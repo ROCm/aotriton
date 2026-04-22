@@ -76,6 +76,16 @@
 </section>
 
 <section>
+    <h3>Tuning Progress</h3>
+    <div id="tuning-progress-container"
+         hx-get="/api/tuning-progress"
+         hx-trigger="load, every 10s"
+         hx-swap="innerHTML">
+        {% include '_tuning_progress_table.html' %}
+    </div>
+</section>
+
+<section>
     <h3>Getting Started</h3>
     <ol>
         <li><a href="/workers">Manage Workers</a> - Start/stop GPU workers</li>

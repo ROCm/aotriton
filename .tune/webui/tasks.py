@@ -10,18 +10,22 @@ import subprocess
 import sqlite3
 import sys
 from pathlib import Path
-
-# Import supported GPU architectures
-_tune_root = Path(__file__).parent.parent
-sys.path.insert(0, (_tune_root.parent / 'v3python').as_posix())
-from gpu_targets import AOTRITON_ARCH_TO_PACK
-
-# Import tuning architectures configuration
-from .config import TUNING_ARCHITECTURES
+import psycopg
+from psycopg.rows import dict_row
+import json
+import re
+import logging
+from flask import current_app
 
 # Global constant for aotriton root directory
 AOTRITON_ROOT = Path(__file__).parent.parent.parent.resolve()
 
+# Import tuning architectures configuration
+from .config import TUNING_ARCHITECTURES
+
+# Add v3python to import get_db_connection_params
+sys.path.insert(0, AOTRITON_ROOT.as_posix())
+from v3python.tune.utils import get_db_connection_params
 
 def run_command(cmd, cwd, workdir, description=None):
     """
@@ -36,8 +40,6 @@ def run_command(cmd, cwd, workdir, description=None):
     Returns:
         dict with action_id, status, message
     """
-    from flask import current_app
-
     # Convert cmd list to strings
     cmd_parts = [str(p) for p in cmd]
     cmd_str = ' '.join(cmd_parts)
@@ -140,6 +142,44 @@ def get_status_summary(workdir):
         'architectures': archs,
         'postgres_status': postgres_status,
     }
+
+
+def get_tuning_progress(workdir):
+    """Get tuning progress from queue_progress view with speed calculation"""
+    try:
+        conn_params = get_db_connection_params(Path(workdir))
+        with psycopg.connect(**conn_params, row_factory=dict_row) as conn:
+            with conn.cursor() as cur:
+                # Get progress from view
+                cur.execute("SELECT * FROM queue_progress ORDER BY arch")
+                progress_rows = cur.fetchall()
+
+                # Calculate speed: tasks completed in last 5 minutes
+                cur.execute("""
+                    SELECT
+                        arch,
+                        COUNT(*) as recent_completions
+                    FROM task_queue
+                    WHERE status = 'completed'
+                      AND completed_at > NOW() - INTERVAL '5 minutes'
+                    GROUP BY arch
+                """)
+                speed_rows = cur.fetchall()
+
+                # Build speed map
+                speed_map = {row['arch']: row['recent_completions'] / 5.0 for row in speed_rows}
+
+                # Merge data
+                result = []
+                for row in progress_rows:
+                    data = dict(row)
+                    data['speed_per_minute'] = speed_map.get(data['arch'], 0.0)
+                    result.append(data)
+
+                return result
+    except Exception as e:
+        logging.error(f"Failed to get tuning progress: {e}")
+        return []
 
 
 # Command execution helpers
@@ -447,7 +487,6 @@ def get_git_status(workdir):
 
 def get_config_vars(workdir):
     """Parse all variables from config.rc"""
-    import re
     config_rc = Path(workdir) / 'config.rc'
 
     if not config_rc.exists():
@@ -656,7 +695,6 @@ def get_workers_by_architecture(workdir):
                     gpu_info_map[hostname]['selection'] = [int(gid) for gid in value.split(',')]
             elif '::status' in key:
                 # Handle cached status: hostname::status
-                import json
                 hostname = key.replace('::status', '')
                 if hostname not in gpu_info_map:
                     gpu_info_map[hostname] = {}
@@ -697,7 +735,7 @@ def get_workers_by_architecture(workdir):
 def add_worker(workdir, hostname, arch, workdir_override=None):
     """Add a worker to the database"""
     # Validate architecture
-    if arch not in AOTRITON_ARCH_TO_PACK:
+    if arch not in TUNING_ARCHITECTURES:
         return {
             'success': False,
             'error': f"Unsupported architecture '{arch}'. Supported: {', '.join(get_supported_architectures())}"
@@ -839,8 +877,6 @@ def get_worker_gpu_selection(workdir, hostname):
 
 def get_worker_status_single(workdir, hostname):
     """Get worker status (container ID and GPU process count)"""
-    import subprocess
-
     script_path = AOTRITON_ROOT / '.tune/single/get_worker_status.sh'
     result = subprocess.run(
         [script_path.as_posix(), workdir, hostname],
@@ -870,7 +906,6 @@ def save_worker_status(workdir, hostname, status_data):
     db_path = workdir_path / 'workers.db'
 
     # Store as JSON string
-    import json
     value = json.dumps(status_data)
 
     try:
@@ -890,7 +925,6 @@ def get_cached_worker_status(workdir, hostname):
     db_path = workdir_path / 'workers.db'
 
     try:
-        import json
         with sqlite3.connect(db_path.as_posix()) as conn:
             cursor = conn.execute(
                 "SELECT value FROM config WHERE key = ?",

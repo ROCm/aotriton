@@ -24,7 +24,8 @@ def dashboard():
     workers = []
     for arch_workers in workers_by_arch.values():
         workers.extend(arch_workers)
-    return render_template('dashboard.html', status=status, workers=workers)
+    tuning_progress = tasks.get_tuning_progress(workdir)
+    return render_template('dashboard.html', status=status, workers=workers, tuning_progress=tuning_progress)
 
 
 @bp.route('/workers')
@@ -589,3 +590,11 @@ def api_get_scheduler_status():
     """Get status of all armed timers"""
     status = current_app.scheduler.get_scheduler_status()
     return jsonify(status)
+
+
+@bp.route('/api/tuning-progress', methods=['GET'])
+def api_get_tuning_progress():
+    """Get tuning progress data (for HTMX polling)"""
+    workdir = current_app.config['WORKDIR']
+    tuning_progress = tasks.get_tuning_progress(workdir)
+    return render_template('_tuning_progress_table.html', tuning_progress=tuning_progress)

@@ -1,0 +1,32 @@
+{% if tuning_progress %}
+<table style="width: 100%;">
+    <thead>
+        <tr>
+            <th>Architecture</th>
+            <th>Pending</th>
+            <th>Running</th>
+            <th>Completed</th>
+            <th>Failed</th>
+            <th>Total</th>
+            <th>Progress</th>
+            <th>Speed</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in tuning_progress %}
+        <tr>
+            <td><code>{{ row.arch }}</code></td>
+            <td>{{ row.pending }}</td>
+            <td>{{ row.running }}</td>
+            <td>{{ row.completed }}</td>
+            <td>{{ row.failed }}</td>
+            <td>{{ row.total }}</td>
+            <td>{{ "%.1f"|format(row.pct_complete) }}%</td>
+            <td>{{ "%.1f"|format(row.speed_per_minute) }} tasks/min</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>No tuning tasks in queue.</p>
+{% endif %}
