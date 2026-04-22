@@ -92,6 +92,7 @@ class SdpaReference(KFTDesc):
         return None
 
     def generate_inputs(self, im: 'FlashInputMetadata'):
+        torch.cuda.empty_cache()
         dtype_str, D_HEAD, seqlen_q, seqlen_k, causal, dropout_p, bias_type, N_HEADS, BATCH, sm_scale, storage_flip, prng_seed = astuple(im)
         dtype = getattr(torch, dtype_str)
         if isinstance(N_HEADS, int):

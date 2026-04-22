@@ -119,6 +119,9 @@ class CommandProcessor(object):
             traceback.print_exc()
             print(e, file=sys.stderr)
             return 'Error when parsing argument ' + line
+        # Clear GPU cache before prepare_data
+        import torch
+        torch.cuda.empty_cache()
         tune.prepare_data(entry, odir)
 
     def command_probe(self, line):
@@ -154,6 +157,9 @@ class CommandProcessor(object):
             return 'Error when parsing argument ' + tail
         if not (data_dir / 'entry.json').is_file():
             return f'{data_dir} is not valid data director. Missing entry.json file.'
+        # Clear GPU cache before benchmark
+        import torch
+        torch.cuda.empty_cache()
         tune = self._module.TuneDesc()
         entry, impl_desc, adiffs, times, benchmark_input_metadata = tune.benchmark(data_dir, impl_selector)
         return {
