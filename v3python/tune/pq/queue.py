@@ -120,14 +120,14 @@ class TaskQueue:
             logger.info(f"TaskQueue.mark_completed: task_id={task_id}, arch={arch}, "
                        f"status=→completed, partition={partition_table}")
 
-    def mark_failed(self, task_id: int, error: str, arch: str = None) -> None:
+    def mark_failed(self, task_id: int, *, arch: str = None, error_message: str) -> None:
         """
         Mark task as failed with error message.
 
         Args:
             task_id: Task ID
-            error: Error message
-            arch: GPU architecture (for partition routing, optional)
+            arch: GPU architecture (for partition routing, optional, keyword-only)
+            error_message: Error message (keyword-only)
         """
         with self.conn.cursor() as cur:
             if arch:
@@ -138,9 +138,9 @@ class TaskQueue:
                         completed_at = NOW(),
                         error = %s
                     WHERE id = %s
-                """, (error, task_id))
+                """, (error_message, task_id))
                 logger.error(f"TaskQueue.mark_failed: task_id={task_id}, arch={arch}, "
-                            f"status=→failed, partition={partition_table}, error={error}")
+                            f"status=→failed, partition={partition_table}, error={error_message}")
             else:
                 # Update parent table when arch unknown
                 cur.execute("""
@@ -149,9 +149,9 @@ class TaskQueue:
                         completed_at = NOW(),
                         error = %s
                     WHERE id = %s
-                """, (error, task_id))
+                """, (error_message, task_id))
                 logger.error(f"TaskQueue.mark_failed: task_id={task_id}, arch=unknown, "
-                            f"status=→failed, partition=task_queue (parent), error={error}")
+                            f"status=→failed, partition=task_queue (parent), error={error_message}")
 
     def mark_pending(self, task_id: int, arch: str) -> None:
         """

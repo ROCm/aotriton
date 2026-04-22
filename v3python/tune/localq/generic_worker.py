@@ -236,7 +236,7 @@ class GenericWorker:
                     error_msg = f"{msg_class} failed: {type(e).__name__}: {str(e)}"
                     logger.error(f"GenericWorker: Handler failed for msg_class={msg_class}, task_id={task_id}, "
                                 f"arch={arch}, marking as failed in database")
-                    task_queue.mark_failed(task_id, error_msg, arch)
+                    task_queue.mark_failed(task_id, arch=arch, error_message=error_msg)
                 except Exception as db_error:
                     logger.error(f"GenericWorker: Failed to mark task_id={task_id} as failed in database: {db_error}",
                                 exc_info=True)

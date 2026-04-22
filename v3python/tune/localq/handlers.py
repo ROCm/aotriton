@@ -545,7 +545,7 @@ class MarkTaskFailedHandler(MessageHandler):
 
         # Mark task as failed in database
         task_queue = TaskQueue(self.db_conn)
-        task_queue.mark_failed(task_id, arch, error)
+        task_queue.mark_failed(task_id, arch=arch, error_message=error)
 
         logger.info(f"Task {task_id} marked as failed in database")
 
