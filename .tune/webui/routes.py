@@ -19,7 +19,12 @@ def dashboard():
     """Dashboard overview page"""
     workdir = current_app.config['WORKDIR']
     status = tasks.get_status_summary(workdir)
-    return render_template('dashboard.html', status=status)
+    workers_by_arch = tasks.get_workers_by_architecture(workdir)
+    # Flatten workers from all architectures for status display
+    workers = []
+    for arch_workers in workers_by_arch.values():
+        workers.extend(arch_workers)
+    return render_template('dashboard.html', status=status, workers=workers)
 
 
 @bp.route('/workers')

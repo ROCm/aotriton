@@ -130,11 +130,15 @@ def get_status_summary(workdir):
     workers = get_workers(workdir)
     archs = get_architectures(workdir)
 
+    # Get PostgreSQL status
+    server_status = get_server_status(workdir)
+    postgres_status = 'running' if server_status['running'] else 'stopped'
+
     return {
         'worker_count': len(workers),
         'architecture_count': len(archs),
         'architectures': archs,
-        'postgres_status': 'unknown',
+        'postgres_status': postgres_status,
     }
 
 
