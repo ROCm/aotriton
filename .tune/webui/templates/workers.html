@@ -219,9 +219,7 @@
                 </td>
                 <td>
                     <div style="display: flex; align-items: center; gap: 0.3rem; margin-bottom: 0.5rem;">
-                        <button hx-post="/api/workers/{{ worker.hostname }}/probe-status"
-                                hx-swap="none"
-                                hx-on::after-request="location.reload()"
+                        <button onclick="refreshWorkerStatus('{{ worker.hostname }}')"
                                 style="padding: 0.4rem 0.6rem; font-size: 1.2em;">
                             ⟳
                         </button>
@@ -529,6 +527,23 @@ loadSchedulerStatus();
 
 // Auto-refresh scheduler status every 60 seconds
 setInterval(loadSchedulerStatus, 60000);
+
+// Refresh worker status
+function refreshWorkerStatus(hostname) {
+    fetch(`/api/workers/${hostname}/probe-status`, {
+        method: 'POST'
+    })
+    .then(response => response.json())
+    .then(data => {
+        const statusSpan = document.getElementById(`status-${hostname}`);
+        if (statusSpan) {
+            statusSpan.textContent = data.display || 'Unknown';
+        }
+    })
+    .catch(error => {
+        console.error('Error refreshing status:', error);
+    });
+}
 
 // Load all worker schedules on page load
 document.addEventListener('DOMContentLoaded', function() {
