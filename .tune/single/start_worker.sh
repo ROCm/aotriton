@@ -37,6 +37,9 @@ IFS='|' read -r arch workdir_override <<< "$WORKER_INFO"
 
 WORKER_WORKDIR="${workdir_override:-$DEFAULT_WORKDIR}"
 
+# Add --hostname to extra args
+EXTRA_ARGS=(--hostname "$HOSTNAME" "${EXTRA_ARGS[@]}")
+
 ssh "$HOSTNAME" bash -s "$WORKER_WORKDIR" "$arch" "$CELERY_WORKER_IMAGE" "${EXTRA_ARGS[@]}" <<'EOF'
 WORKER_WORKDIR="$1"
 ARCH="$2"

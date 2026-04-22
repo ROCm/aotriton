@@ -22,13 +22,14 @@ CREATE TABLE IF NOT EXISTS task_queue (
 
 -- Worker heartbeat table (for monitoring and health checks)
 CREATE TABLE IF NOT EXISTS worker_heartbeat (
-    worker_id TEXT PRIMARY KEY,
     node_hostname TEXT NOT NULL,
+    worker_name TEXT NOT NULL,
     arch TEXT NOT NULL,
     last_heartbeat TIMESTAMP NOT NULL DEFAULT NOW(),
     status TEXT NOT NULL DEFAULT 'active',  -- active/idle/dead
     tasks_completed INT DEFAULT 0,
-    tasks_failed INT DEFAULT 0
+    tasks_failed INT DEFAULT 0,
+    PRIMARY KEY (node_hostname, worker_name)
 );
 
 CREATE INDEX IF NOT EXISTS idx_worker_heartbeat_alive
@@ -70,8 +71,8 @@ ORDER BY arch;
 
 CREATE OR REPLACE VIEW worker_health AS
 SELECT
-    worker_id,
     node_hostname,
+    worker_name,
     arch,
     status,
     tasks_completed,

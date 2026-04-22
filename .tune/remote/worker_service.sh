@@ -84,6 +84,7 @@ shift 3
 GPU_IDS=()
 USE_ALL_GPUS=false
 GRACEFUL=false
+NODE_HOSTNAME=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -100,6 +101,11 @@ while [ $# -gt 0 ]; do
                     shift
                 fi
             done
+            ;;
+        --hostname)
+            shift
+            NODE_HOSTNAME="$1"
+            shift
             ;;
         --graceful)
             GRACEFUL=true
@@ -409,6 +415,30 @@ cmd_start() {
 
     local failed=0
 
+    # 0. Start heartbeat monitor FIRST
+    if [ -z "$NODE_HOSTNAME" ]; then
+        echo "Warning: NODE_HOSTNAME not set, skipping heartbeat monitor"
+    else
+        echo "Starting heartbeat monitor..."
+        HEARTBEAT_PID="$PID_DIR/heartbeat-${ARCH}.pid"
+        daemonize \
+            /dev/null \
+            "$HEARTBEAT_PID" \
+            "$CELERY_WORKER_PYTHON" -m v3python.tune.localq.heartbeat_main \
+                --workdir "$WORKDIR" \
+                --hostname "$NODE_HOSTNAME" \
+                --arch "$ARCH" \
+                --check_interval 30
+
+        sleep 0.5
+        if is_running "$HEARTBEAT_PID"; then
+            echo "Heartbeat monitor started (PID: $(cat "$HEARTBEAT_PID"))"
+        else
+            echo "Warning: Failed to start heartbeat monitor"
+        fi
+        echo ""
+    fi
+
     # 1. Start broker
     if ! start_single_process "Broker" "broker" \
         "$CELERY_WORKER_PYTHON" -m "$BROKER_MODULE"; then
@@ -491,6 +521,14 @@ cmd_stop() {
     # 5. Stop broker
     stop_process_group "Broker" "broker"
     echo ""
+
+    # 6. Stop heartbeat monitor LAST
+    HEARTBEAT_PID="$PID_DIR/heartbeat-${ARCH}.pid"
+    if is_running "$HEARTBEAT_PID"; then
+        echo "Stopping heartbeat monitor..."
+        stop_process "heartbeat-${ARCH}" "Heartbeat monitor"
+        echo ""
+    fi
 
     # Clean up socket file
     rm -f "$AOTRITON_TUNER_BROKER_SOCKET"
