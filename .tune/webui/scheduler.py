@@ -126,45 +126,31 @@ class WorkerScheduler:
 
         self._arm_timer_for_worker(hostname, schedule)
 
-    def _graceful_stop_worker(self, hostname: str):
-        """Gracefully stop worker with --graceful flag"""
-        logger.info(f"Gracefully stopping {hostname} for office hours...")
-
-        # Get aotriton root: this file is at .tune/webui/scheduler.py
-        # So __file__.parent.parent.parent gives us aotriton root
+    def _wkctl(self, action: str, hostname: str):
+        """Run wkctl for a single host"""
         aotriton_root = Path(__file__).resolve().parent.parent.parent
-        script_path = aotriton_root / '.tune/single/stop_worker.sh'
+        wkctl_path = aotriton_root / '.tune/bin/wkctl'
 
         result = subprocess.run(
-            [script_path.as_posix(), self.workdir, hostname, '--graceful'],
+            [wkctl_path.as_posix(), self.workdir, action, '--host', hostname],
             capture_output=True,
             text=True
         )
 
         if result.returncode == 0:
-            logger.info(f"Successfully stopped {hostname}")
+            logger.info(f"wkctl {action} {hostname} succeeded")
         else:
-            logger.error(f"Failed to stop {hostname}: {result.stderr}")
+            logger.error(f"wkctl {action} {hostname} failed: {result.stderr}")
+
+    def _graceful_stop_worker(self, hostname: str):
+        """Gracefully stop worker for office hours"""
+        logger.info(f"Gracefully stopping {hostname} for office hours...")
+        self._wkctl('graceful', hostname)
 
     def _start_worker(self, hostname: str):
         """Start worker when entering allowed hours"""
         logger.info(f"Starting {hostname} for allowed hours...")
-
-        # Get aotriton root: this file is at .tune/webui/scheduler.py
-        # So __file__.parent.parent.parent gives us aotriton root
-        aotriton_root = Path(__file__).resolve().parent.parent.parent
-        script_path = aotriton_root / '.tune/single/start_worker.sh'
-
-        result = subprocess.run(
-            [script_path.as_posix(), self.workdir, hostname],
-            capture_output=True,
-            text=True
-        )
-
-        if result.returncode == 0:
-            logger.info(f"Successfully started {hostname}")
-        else:
-            logger.error(f"Failed to start {hostname}: {result.stderr}")
+        self._wkctl('start', hostname)
 
     def _is_allowed_now(self, now: datetime, schedule: dict) -> bool:
         """Check if current time is in allowed window"""

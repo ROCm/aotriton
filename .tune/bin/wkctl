@@ -4,6 +4,8 @@
 
 # Worker control orchestration
 # Usage: wkctl <workdir> <action> [--host <hostname>...]
+# Actions: start|stop|graceful|restart|stopwait
+# GPU selection is read from the workers DB and applied automatically for start/restart.
 
 set -e
 
@@ -40,13 +42,20 @@ ACTION="${ARGS[1]}"
 
 if [ -z "$WORKDIR" ] || [ -z "$ACTION" ]; then
     echo "Usage: $0 <workdir> <action> [--host <hostname>...]" >&2
-    echo "Actions: start|stop|restart|stopwait" >&2
+    echo "" >&2
+    echo "Actions:" >&2
+    echo "  start      Start worker (applies GPU selection from workers DB)" >&2
+    echo "  stop       Stop worker immediately (kill container)" >&2
+    echo "  graceful   Stop worker gracefully (waits for in-flight tasks to finish)" >&2
+    echo "  restart    Stop then start worker (applies GPU selection)" >&2
+    echo "  stopwait   Stop worker and wait for full shutdown" >&2
     echo "" >&2
     echo "Options:" >&2
     echo "  --host <hostname>...  Filter to specific worker hosts (can be repeated)" >&2
     echo "" >&2
     echo "Examples:" >&2
     echo "  $0 /path/to/workdir start" >&2
+    echo "  $0 /path/to/workdir graceful --host gpu1.example.com" >&2
     echo "  $0 /path/to/workdir stop --host gpu1.example.com gpu2.example.com" >&2
     exit 1
 fi
@@ -88,7 +97,7 @@ for worker in "${WORKERS[@]}"; do
     echo "[$hostname] ${ACTION}ing worker (arch: $arch, workdir: $WORKER_WORKDIR, gpus: ${GPU_SELECTION:-all})"
 
     # Disable exit-on-error for stop/stopwait to continue on failures
-    if [ "$ACTION" = "stop" ] || [ "$ACTION" = "stopwait" ]; then
+    if [ "$ACTION" = "stop" ] || [ "$ACTION" = "stopwait" ] || [ "$ACTION" = "graceful" ]; then
         set +e
     fi
 
@@ -98,6 +107,9 @@ for worker in "${WORKERS[@]}"; do
             ;;
         stop)
             "$TUNE_ROOT/single/stop_worker.sh" "$WORKDIR" "$hostname"
+            ;;
+        graceful)
+            "$TUNE_ROOT/single/stop_worker.sh" "$WORKDIR" "$hostname" --graceful
             ;;
         restart)
             "$TUNE_ROOT/single/restart_worker.sh" "$WORKDIR" "$hostname" "${MULTI_GPU_ARGS[@]}"
@@ -114,7 +126,7 @@ for worker in "${WORKERS[@]}"; do
     EXIT_CODE=$?
 
     # Re-enable exit-on-error
-    if [ "$ACTION" = "stop" ] || [ "$ACTION" = "stopwait" ]; then
+    if [ "$ACTION" = "stop" ] || [ "$ACTION" = "stopwait" ] || [ "$ACTION" = "graceful" ]; then
         set -e
     fi
 
