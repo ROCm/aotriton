@@ -166,14 +166,28 @@ def get_tuning_progress(workdir):
                 """)
                 speed_rows = cur.fetchall()
 
-                # Build speed map
+                # Count stale tasks (running > 2 hours)
+                cur.execute("""
+                    SELECT
+                        arch,
+                        COUNT(*) as stale_count
+                    FROM task_queue
+                    WHERE status = 'running'
+                      AND EXTRACT(EPOCH FROM (NOW() - started_at)) > 7200
+                    GROUP BY arch
+                """)
+                stale_rows = cur.fetchall()
+
+                # Build speed and stale maps
                 speed_map = {row['arch']: row['recent_completions'] / 5.0 for row in speed_rows}
+                stale_map = {row['arch']: row['stale_count'] for row in stale_rows}
 
                 # Merge data
                 result = []
                 for row in progress_rows:
                     data = dict(row)
                     data['speed_per_minute'] = speed_map.get(data['arch'], 0.0)
+                    data['stale'] = stale_map.get(data['arch'], 0)
                     result.append(data)
 
                 return result

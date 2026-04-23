@@ -17,7 +17,7 @@
         <tr>
             <td><code>{{ row.arch }}</code></td>
             <td>{{ row.pending }}</td>
-            <td>{{ row.running }}</td>
+            <td>{{ row.running }}{% if row.stale > 0 %} <span style="color: #ff6b6b;">({{ row.stale }} stale)</span>{% endif %}</td>
             <td>{{ row.completed }}</td>
             <td>{{ row.failed }}</td>
             <td>{{ row.total }}</td>
