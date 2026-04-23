@@ -160,7 +160,7 @@ class ExaidWorker(object):
     def benchmark(self, workdir: Path, kname: str, hsaco_index: int):
         logger.info(f"benchmark: workdir={workdir}, kernel={kname}, hsaco_index={hsaco_index}")
         self.proxy.write('benchmark', workdir.as_posix(), f'{kname}={hsaco_index}')
-        result = json.loads(self.proxy.readinfo())
+        result = json.loads(self.proxy.readinfo(timeout=30))
         logger.info(f"benchmark completed: {kname}[{hsaco_index}] result={result.get('result', 'unknown')}")
         return result
 
