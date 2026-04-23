@@ -18,6 +18,12 @@ GRES="$2"
 
 if [ -z "$WORKDIR" ] || [ -z "$GRES" ]; then
   echo "Usage: $0 <workdir> <gres>" >&2
+  echo "" >&2
+  echo "  Submit one SLURM job for a specific GRES (GPU resource) configuration." >&2
+  echo "  Requires SLURM_LOGIN_NODE to be set in config.rc." >&2
+  echo "  Bad nodes from workers.db are automatically excluded." >&2
+  echo "  Time limit defaults to 24:00:00; override with SLURM_TIME_LIMIT env var." >&2
+  echo "  Prints the SLURM job ID to stdout on success." >&2
   exit 1
 fi
 

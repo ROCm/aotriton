@@ -16,6 +16,10 @@ WORKDIR="$1"
 
 if [ -z "$WORKDIR" ]; then
   echo "Usage: $0 <workdir>" >&2
+  echo "" >&2
+  echo "  Start the PostgreSQL container for the tuning infrastructure." >&2
+  echo "  Container name and image are read from config.rc." >&2
+  echo "  Fails if services are already running (stale PID file)." >&2
   exit 1
 fi
 

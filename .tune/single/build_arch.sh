@@ -13,6 +13,10 @@ TRITON_WHEEL="$3"
 
 if [ -z "$WORKDIR" ] || [ -z "$ARCH" ] || [ -z "$TRITON_WHEEL" ]; then
   echo "Usage: $0 <workdir> <arch> <triton_wheel>" >&2
+  echo "" >&2
+  echo "  Build AOTriton libraries for <arch> locally using cmake+ninja." >&2
+  echo "  Output is installed into <workdir>/installed/<arch>/." >&2
+  echo "  Run build_triton_wheel.sh first to obtain the <triton_wheel> path." >&2
   exit 1
 fi
 

@@ -24,6 +24,10 @@ fi
 
 if [ -z "$WORKDIR" ] || [ -z "$HOSTNAME" ]; then
   echo "Usage: $0 <workdir> <hostname> [--follow]" >&2
+  echo "" >&2
+  echo "  Submit a Docker image build job via tsp on <hostname>." >&2
+  echo "  --follow  Tail the build output in real-time (blocks until done)." >&2
+  echo "  Without --follow, the job runs in background; check with tsp on the host." >&2
   exit 1
 fi
 

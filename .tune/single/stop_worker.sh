@@ -35,6 +35,10 @@ done
 
 if [ -z "$WORKDIR" ] || [ -z "$HOSTNAME" ]; then
   echo "Usage: $0 <workdir> <hostname> [--graceful]" >&2
+  echo "" >&2
+  echo "  Stop the worker container on <hostname> via SSH." >&2
+  echo "  --graceful  Signal worker service to finish in-flight tasks before stopping." >&2
+  echo "  Use wkctl stop / wkctl graceful to operate on all workers at once." >&2
   exit 1
 fi
 

@@ -18,6 +18,10 @@ HOSTNAME="$2"
 
 if [ -z "$WORKDIR" ] || [ -z "$HOSTNAME" ]; then
   echo "Usage: $0 <workdir> <hostname>" >&2
+  echo "" >&2
+  echo "  Cancel task fetching, drain the local queue, then stop the worker container." >&2
+  echo "  Waits up to 10 minutes for in-flight tasks to complete." >&2
+  echo "  Use wkctl stopwait to operate on all workers at once." >&2
   exit 1
 fi
 

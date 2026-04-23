@@ -26,6 +26,12 @@ fi
 
 if [ -z "$WORKDIR" ] || [ -z "$HOSTNAME" ]; then
   echo "Usage: $0 <workdir> <hostname> [-- <extra args>]" >&2
+  echo "" >&2
+  echo "  Start a worker container on <hostname> via SSH." >&2
+  echo "" >&2
+  echo "  WARNING: This script does NOT read GPU selection from the workers DB." >&2
+  echo "  GPU assignment must be passed explicitly via extra args (e.g. -- --multi_gpu 0 1)." >&2
+  echo "  Use wkctl start to apply GPU selection automatically." >&2
   exit 1
 fi
 

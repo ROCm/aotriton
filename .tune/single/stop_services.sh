@@ -16,6 +16,9 @@ WORKDIR="$1"
 
 if [ -z "$WORKDIR" ]; then
   echo "Usage: $0 <workdir>" >&2
+  echo "" >&2
+  echo "  Stop the PostgreSQL container for the tuning infrastructure." >&2
+  echo "  Falls back to stopping by container name if the PID file is missing." >&2
   exit 1
 fi
 

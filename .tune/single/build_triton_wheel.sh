@@ -11,6 +11,10 @@ WORKDIR="$1"
 
 if [ -z "$WORKDIR" ]; then
   echo "Usage: $0 <workdir>" >&2
+  echo "" >&2
+  echo "  Build the Triton wheel from third_party/triton and cache it in <workdir>/scratch/triton/." >&2
+  echo "  Skips rebuild if a wheel matching the current git revision already exists." >&2
+  echo "  Prints the wheel path to stdout on success (suitable for \$(…) capture)." >&2
   exit 1
 fi
 

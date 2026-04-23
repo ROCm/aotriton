@@ -18,6 +18,9 @@ HOSTNAME="$2"
 
 if [ -z "$WORKDIR" ] || [ -z "$HOSTNAME" ]; then
   echo "Usage: $0 <workdir> <hostname>" >&2
+  echo "" >&2
+  echo "  Rsync workdir and arch-specific installed/ files to <hostname>." >&2
+  echo "  Excludes build/, run/, scratch/, secrets/. Uses --delete on installed/ and aotriton.src/." >&2
   exit 1
 fi
 

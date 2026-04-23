@@ -18,6 +18,9 @@ HOSTNAME="$2"
 
 if [ -z "$WORKDIR" ] || [ -z "$HOSTNAME" ]; then
   echo "Usage: $0 <workdir> <hostname>" >&2
+  echo "" >&2
+  echo "  Query worker status on <hostname>: container ID and GPU process count." >&2
+  echo "  Output is key=value pairs (status, container_id, gpu_processes, message)." >&2
   exit 1
 fi
 
