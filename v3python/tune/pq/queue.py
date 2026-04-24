@@ -218,7 +218,7 @@ class TaskQueue:
             arch: Optional architecture filter (None = all architectures)
 
         Returns:
-            Dictionary with pending, running, completed, failed counts
+            Dictionary with pending, running, completed, failed, cancelled counts
         """
         with self.conn.cursor() as cur:
             if arch:

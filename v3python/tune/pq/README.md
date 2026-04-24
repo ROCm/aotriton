@@ -248,15 +248,25 @@ python v3python/pq/example.py stats
 | arch | TEXT | GPU architecture (partition key) |
 | module | TEXT | Tuning module name |
 | task_config | JSONB | Task configuration |
-| status | TEXT | pending/running/completed/failed |
+| status | TEXT | pending/running/completed/failed/cancelled — see below |
 | priority | INT | Task priority (higher = more urgent) |
 | worker_id | TEXT | Worker that claimed this task |
 | node_hostname | TEXT | Node hostname |
 | created_at | TIMESTAMP | Task creation time |
 | started_at | TIMESTAMP | Task start time |
 | completed_at | TIMESTAMP | Task completion time |
-| error | TEXT | Error message (if failed) |
+| error | TEXT | Error message (if failed); cancellation reason (if cancelled) |
 | retry_count | INT | Number of retries |
+
+**Task status values:**
+
+| Status | Description |
+|--------|-------------|
+| `pending` | Waiting to be claimed by a worker |
+| `running` | Currently being processed by a worker |
+| `completed` | Finished successfully |
+| `failed` | Terminated with an error; eligible for retry |
+| `cancelled` | Deliberately skipped; kept for archive purposes only. Not an error — workers never claim cancelled tasks and reset scripts must not touch them |
 
 **Indexes:**
 - `(status, priority DESC, id ASC) WHERE status = 'pending'` - Fast task fetching

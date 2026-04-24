@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS task_queue (
     arch TEXT NOT NULL,
     module TEXT NOT NULL,
     task_config JSONB NOT NULL,
-    status TEXT NOT NULL DEFAULT 'pending',  -- pending/running/completed/failed
+    status TEXT NOT NULL DEFAULT 'pending',  -- pending/running/completed/failed/cancelled
     priority INT DEFAULT 5,
     worker_id TEXT,
     node_hostname TEXT,
