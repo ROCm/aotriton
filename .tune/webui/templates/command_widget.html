@@ -1,4 +1,4 @@
-<section>
+<section style="display: flex; flex-direction: column; height: 100%;">
     <h3>Command Output
         <button hx-post="/api/actions/clear"
                 hx-swap="none"
@@ -17,7 +17,7 @@
 <style>
     .command-list-container {
         width: 100%;
-        max-height: 80vh;
+        flex: 1;
         overflow-y: scroll;
         border: 1px solid #ddd;
         border-radius: 4px;
