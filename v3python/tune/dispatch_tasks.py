@@ -237,9 +237,19 @@ def dispatch_tasks(workdir: Path, module_name: str, args):
         return (arch,) + field_values
 
     # Generate task configs
+    tty_output = sys.stdin.isatty()
+    printed_hw_reasons = set()
     def task_config_gen():
         for entry in entries_generator:
             for arch in args.arch:
+                supported, reason = module_instance.validate_hw_feature(arch, entry)
+                if not supported:
+                    if tty_output:
+                        key = (arch, reason)
+                        if key not in printed_hw_reasons:
+                            printed_hw_reasons.add(key)
+                            print(f"Skipping {arch} configurations: {reason}")
+                    continue
                 task_config = {
                     "arch": arch,
                     "module": module_name,

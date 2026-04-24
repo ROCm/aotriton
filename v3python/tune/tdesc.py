@@ -64,6 +64,26 @@ class TuningDescription(ABC):
         return True
 
     '''
+    validate_hw_feature:
+        Validate if an entry is supported on a specific architecture.
+
+        Args:
+            arch: Target GPU architecture string (e.g., 'gfx942', 'gfx1100')
+            entry: An ENTRY_CLASS instance to validate
+
+        Returns:
+            (supported: bool, reason: str)
+            supported is True if the entry is valid for this arch.
+            reason is a human-readable explanation when supported is False.
+
+        Subclasses override this to reject hardware-unsupported configurations.
+        Unlike validate_entry (which is arch-independent), this is called per
+        (arch, entry) pair in task_config_gen and skips unsupported combinations.
+    '''
+    def validate_hw_feature(self, arch: str, entry) -> tuple[bool, str]:
+        return True, ''
+
+    '''
     generate_entries_from_choices:
         Generate entry instances from choices.
 
