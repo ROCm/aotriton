@@ -12,12 +12,12 @@ import os
 import logging
 import argparse
 import signal
-import psycopg
 from psycopg.rows import dict_row
 
 from .generic_worker import GenericWorker
 from .handlers import WriteHsacoResultHandler, PostprocessHandler, GracefulCancelRunningTaskHandler, MarkTaskFailedHandler
 from ..utils import get_db_connection_params, configure_logging_with_flush
+from ..pq.connection import ReconnectableConn
 
 configure_logging_with_flush()
 
@@ -40,12 +40,9 @@ def main():
     from pathlib import Path
     conn_params = get_db_connection_params(Path(args.workdir))
 
-    # Create persistent database connection for this worker
-    db_conn = psycopg.connect(
-        **conn_params,
-        row_factory=dict_row,
-        autocommit=True
-    )
+    # Create persistent database connection for this worker.
+    # ReconnectableConn transparently reconnects if the server closes the connection.
+    db_conn = ReconnectableConn(conn_params, row_factory=dict_row, autocommit=True)
 
     # Create handlers for CPU tasks
     handlers = [
