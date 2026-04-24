@@ -16,13 +16,13 @@ import argparse
 import socket
 import signal
 import select
-import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from .protocol import send_message, recv_message
 from ..utils import get_db_connection_params, configure_logging_with_flush
 from ..pq.queue import TaskQueue
+from ..pq.connection import ReconnectableConn
 
 configure_logging_with_flush()
 
@@ -33,6 +33,16 @@ class PGReaderWorker:
     """
     Fetches tasks from PostgreSQL and sends to broker.
     Blocks until tune_kernel completes (via ack).
+
+    TODO: Consider redesigning into a single reader that tracks multiple in-flight ACKs
+    (one dict of task_id→pending instead of one blocking reader per slot). Benefits:
+    - Reduce from N PostgreSQL connections to 1
+    - Eliminate SELECT...FOR UPDATE SKIP LOCKED contention between reader processes
+    Risks to address before implementing:
+    - Need explicit in-flight cap for backpressure (currently implicit via num_readers)
+    - Single point of failure (one crash drops all in-flight tasks to stale)
+    - Signal handling must be redesigned (set_wakeup_fd only works on main thread)
+    Hold off until PostgreSQL connection count becomes a real bottleneck.
     """
 
     def __init__(self, worker_id: str, arch: str, broker_socket: str, conn_params: dict):
@@ -200,12 +210,12 @@ class PGReaderWorker:
     def _connect_to_database(self):
         """Connect to PostgreSQL database (persistent connection)"""
         # Set statement_timeout to 1 second to prevent blocking queries
-        options = f"-c statement_timeout=1000"  # 1000ms = 1s
-        self.db_conn = psycopg.connect(
-            **self.conn_params,
+        options = "-c statement_timeout=1000"  # 1000ms = 1s
+        self.db_conn = ReconnectableConn(
+            self.conn_params,
             row_factory=dict_row,
             options=options,
-            autocommit=True  # Auto-commit mode for simpler transaction handling
+            autocommit=True
         )
         logger.info(f"PG Reader {self.worker_id} connected to database")
 
