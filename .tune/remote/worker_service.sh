@@ -25,16 +25,16 @@ CPU_WORKER_MODULE="v3python.tune.localq.cpu_worker"
 
 usage() {
     cat <<EOF
-Usage: $0 <command> <workdir> <arch> [--multi_gpu <ids...>]
+Usage: $0 <command> <workdir> <arch> [options...]
 
 Manage Tuner v3.5 local queue processes (SysV-style init script)
 
 Commands:
     start       Start broker and all workers
-    stop        Stop all processes
+    stop        Stop all processes (gracefully, then SIGKILL after timeout)
     restart     Restart all processes (stop then start)
     status      Show process status
-    force-stop  Force kill all processes (SIGKILL)
+    force-stop  Force kill all processes immediately (SIGKILL)
 
 Arguments:
     command       Command to execute
@@ -44,12 +44,19 @@ Arguments:
 Options:
     --multi_gpu <id> [<id>...]    GPU IDs to use (space-separated)
                                   Use -1 for all GPUs (default: all auto-detected)
+    --session_name <name>         Subdirectory under <workdir>/run/pids/ and <workdir>/run/logs/
+                                  for pid and log files; required when multiple sessions
+                                  run concurrently to avoid file collisions
+    --nreader <n>                 Number of PG reader workers to start (default: 4)
+    --ncpu <n>                    Number of CPU workers to start (default: 4)
+    --graceful                    (stop only) Stop PG readers first, wait for in-flight
+                                  tasks to drain, then stop remaining workers
 
 Components started:
     - 1 broker (message router)
     - GPU workers (auto-detected or selected via --multi_gpu)
-    - 4 PG reader workers (fetch tasks from PostgreSQL)
-    - 4 CPU workers (postprocess, write results)
+    - N PG reader workers (fetch tasks from PostgreSQL; --nreader, default 4)
+    - N CPU workers (postprocess, write results; --ncpu, default 4)
 
 Examples:
     # Start all GPU workers (auto-detected)
@@ -65,11 +72,18 @@ Examples:
     # Stop always stops all processes regardless of which were started
     $0 stop /path/to/workdir gfx942
 
+    # Graceful stop: drain in-flight tasks before stopping
+    $0 stop /path/to/workdir gfx942 --graceful
+
     # Restart with selected GPUs
     $0 restart /path/to/workdir gfx942 --multi_gpu 2 3
 
-PID files location: <workdir>/run/pids/
-Log files location: <workdir>/run/logs/
+    # Isolate pid/log files for a named session (e.g. SLURM job)
+    $0 start /path/to/workdir gfx942 --session_name slurm-job-42
+    $0 stop  /path/to/workdir gfx942 --session_name slurm-job-42
+
+PID files location: <workdir>/run/pids/[<session_name>/]
+Log files location: <workdir>/run/logs/[<session_name>/]
 EOF
     exit 1
 }
@@ -85,9 +99,17 @@ GPU_IDS=()
 USE_ALL_GPUS=false
 GRACEFUL=false
 NODE_HOSTNAME=""
+SESSION_NAME=""
+NUM_READERS=4
+NUM_CPU=4
 
 while [ $# -gt 0 ]; do
     case "$1" in
+        --session_name)
+            shift
+            SESSION_NAME="$1"
+            shift
+            ;;
         --multi_gpu)
             shift
             # Collect all following numeric arguments (or -1)
@@ -105,6 +127,16 @@ while [ $# -gt 0 ]; do
         --hostname)
             shift
             NODE_HOSTNAME="$1"
+            shift
+            ;;
+        --nreader)
+            shift
+            NUM_READERS="$1"
+            shift
+            ;;
+        --ncpu)
+            shift
+            NUM_CPU="$1"
             shift
             ;;
         --graceful)
@@ -146,8 +178,8 @@ if [ ! -f "v3python/tune/localq/broker_main.py" ]; then
 fi
 
 # Directories
-PID_DIR="$WORKDIR/run/pids"
-LOG_DIR="$WORKDIR/run/logs"
+PID_DIR="$WORKDIR/run/pids${SESSION_NAME:+/$SESSION_NAME}"
+LOG_DIR="$WORKDIR/run/logs${SESSION_NAME:+/$SESSION_NAME}"
 
 mkdir -p "$PID_DIR" "$LOG_DIR"
 
@@ -456,15 +488,15 @@ cmd_start() {
     failed=$?
     echo ""
 
-    # 3. Start PG readers (4 workers)
-    echo "Starting 4 PG reader workers for arch=$ARCH..."
-    start_process_group "PG reader" "pg-reader-$ARCH" "$PG_READER_MODULE" "pg" 0 1 2 3
+    # 3. Start PG readers
+    echo "Starting $NUM_READERS PG reader workers for arch=$ARCH..."
+    start_process_group "PG reader" "pg-reader-$ARCH" "$PG_READER_MODULE" "pg" $(seq 0 $((NUM_READERS - 1)))
     failed=$((failed + $?))
     echo ""
 
-    # 4. Start CPU workers (4 workers)
-    echo "Starting 4 CPU workers..."
-    start_process_group "CPU worker" "cpu-worker" "$CPU_WORKER_MODULE" "cpu" 0 1 2 3
+    # 4. Start CPU workers
+    echo "Starting $NUM_CPU CPU workers..."
+    start_process_group "CPU worker" "cpu-worker" "$CPU_WORKER_MODULE" "cpu" $(seq 0 $((NUM_CPU - 1)))
     failed=$((failed + $?))
     echo ""
 
@@ -486,7 +518,7 @@ cmd_stop() {
     # Stop in order: PG readers → GPU workers → CPU workers → broker
 
     # 1. Stop PG readers first (halt incoming tasks)
-    stop_process_group "PG readers" "pg-reader-$ARCH" 4
+    stop_process_group "PG readers" "pg-reader-$ARCH" $NUM_READERS
     echo ""
 
     # Graceful stop: wait 5 minutes after stopping PG readers
@@ -515,7 +547,7 @@ cmd_stop() {
     fi
 
     # 4. Stop CPU workers (process teardown messages from broker)
-    stop_process_group "CPU workers" "cpu-worker" 4
+    stop_process_group "CPU workers" "cpu-worker" $NUM_CPU
     echo ""
 
     # 5. Stop broker
@@ -598,13 +630,13 @@ cmd_force_stop() {
     # Force stop in order: PG readers → GPU workers → CPU workers → broker
 
     # 1. PG readers
-    force_stop_process_group "PG readers" "pg-reader-$ARCH" 4
+    force_stop_process_group "PG readers" "pg-reader-$ARCH" $NUM_READERS
 
     # 2. GPU workers
     force_stop_process_group "GPU workers" "gpu-worker" $NUM_GPUS_ALL
 
     # 3. CPU workers
-    force_stop_process_group "CPU workers" "cpu-worker" 4
+    force_stop_process_group "CPU workers" "cpu-worker" $NUM_CPU
 
     # 4. Broker
     force_stop_process_group "Broker" "broker"
