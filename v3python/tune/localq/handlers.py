@@ -134,7 +134,8 @@ class PreprocessHandler(MessageHandler):
                 'target_queue': 'cpu_queue',
                 'task_id': task_id,
                 'arch': arch,
-                'error': error_msg
+                'error': error_msg,
+                'tmpdir': tmpdir.as_posix(),
             }
 
         # Return probe message
@@ -182,7 +183,8 @@ class ProbeHandler(MessageHandler):
                 'target_queue': 'cpu_queue',
                 'task_id': task_id,
                 'arch': arch,
-                'error': error_msg
+                'error': error_msg,
+                'tmpdir': tmpdir.as_posix(),
             }
 
         # Apply max_hsaco filtering
@@ -548,6 +550,17 @@ class MarkTaskFailedHandler(MessageHandler):
         task_queue.mark_failed(task_id, arch=arch, error_message=error)
 
         logger.info(f"Task {task_id} marked as failed in database")
+
+        # Remove prepared data from tmpfs to free space
+        tmpdir = message.get('tmpdir')
+        if tmpdir:
+            tmpdir_path = Path(tmpdir)
+            if tmpdir_path.exists():
+                try:
+                    shutil.rmtree(tmpdir_path)
+                    logger.info(f"Removed tmpdir {tmpdir_path} for failed task {task_id}")
+                except OSError as e:
+                    logger.warning(f"Failed to remove tmpdir {tmpdir_path}: {e}")
 
         # Return nak (negative ack) message to unblock PG reader
         return {

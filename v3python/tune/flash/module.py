@@ -165,7 +165,8 @@ class Flash(TuningDescription):
 
         # Extract values
         batch = im.BATCH if isinstance(im.BATCH, int) else 3
-        n_heads = im.N_HEADS if isinstance(im.N_HEADS, int) else im.N_HEADS[0]
+        is_gqa = not isinstance(im.N_HEADS, int)
+        n_heads = im.N_HEADS[0] if is_gqa else im.N_HEADS
         d_head = im.hdim if isinstance(im.hdim, int) else im.hdim[0]
         seqlen_q = im.seqlen_q
         seqlen_k = im.seqlen_k
@@ -188,17 +189,18 @@ class Flash(TuningDescription):
             return 2.0 * factor * base_cost  # Mul by 2 to ensure only use 50% of VRAM
 
         # Old empirical algorithm that (mostly) works with bwd
+        new_heads = im.N_HEADS
         if seqlen_q * seqlen_k * d_head >= 2048 * 2048 * vram_cap_gb:
             batch = min(batch, 3)
-            n_heads = min(n_heads, 4)
+            new_heads = (4, 1) if is_gqa else min(n_heads, 4)
         if (causal or bias_type != 0) and seqlen_q * seqlen_k * d_head >= 2048 * 2048 * vram_cap_gb:
             # Prevent OOM, causal=True needs more memory
             batch = min(batch, 2)
-            n_heads = min(n_heads, 2)
+            new_heads = (2, 1) if is_gqa else min(n_heads, 2)
 
         # Update im if values changed
-        if batch != im.BATCH or n_heads != im.N_HEADS:
-            return dataclasses.replace(im, BATCH=batch, N_HEADS=n_heads)
+        if batch != im.BATCH or new_heads != im.N_HEADS:
+            return dataclasses.replace(im, BATCH=batch, N_HEADS=new_heads)
         return im
 
     def _do_gen_ref(self, entry: FlashEntry, data_root: Path):
@@ -210,6 +212,7 @@ class Flash(TuningDescription):
         yield self._write_ref(im, data_root, '00_benchmark')
 
         gqa = dataclasses.replace(im, N_HEADS=(10, 2))
+        gqa = self._clamp_memory_usage(gqa)
         yield self._write_ref(gqa, data_root, '01_gqa')
 
         ihdim = dataclasses.replace(im, hdim=im.hdim - 8)
