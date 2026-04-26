@@ -266,6 +266,9 @@ class Flash(TuningDescription):
         Pre-condition: called with device_ctx()
         '''
         import torch
+        if im.qkh > 2048 * 2048 * 128:
+            gc.collect()
+            torch.cuda.empty_cache()
         # print(f'{tname=} {im=}')
         from .reference import SdpaReference
         ref_kernel = SdpaReference()
