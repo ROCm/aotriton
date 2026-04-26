@@ -187,20 +187,45 @@ class Flash(TuningDescription):
             if dtype == 'float32':
                 factor *= 2.0
             return 2.0 * factor * base_cost  # Mul by 2 to ensure only use 50% of VRAM
-
-        # Old empirical algorithm that (mostly) works with bwd
-        new_heads = im.N_HEADS
-        if seqlen_q * seqlen_k * d_head >= 2048 * 2048 * vram_cap_gb:
-            batch = min(batch, 3)
-            new_heads = (4, 1) if is_gqa else min(n_heads, 4)
-        if (causal or bias_type != 0) and seqlen_q * seqlen_k * d_head >= 2048 * 2048 * vram_cap_gb:
-            # Prevent OOM, causal=True needs more memory
+        if current_cost() > vram_cap_gb:
+            n_heads = min(n_heads, 24)
+        if current_cost() > vram_cap_gb:
+            n_heads = min(n_heads, 12)
+        if current_cost() > vram_cap_gb:
+            n_heads = min(n_heads, 6)
+        if current_cost() > vram_cap_gb:
+            n_heads = min(n_heads, 3)
+        if current_cost() > vram_cap_gb:
+            n_heads = min(n_heads, 2)
+        if current_cost() > vram_cap_gb:
             batch = min(batch, 2)
-            new_heads = (2, 1) if is_gqa else min(n_heads, 2)
+        if is_gqa:
+            if n_heads >= 24:
+                n_heads = (24, 8)
+            elif n_heads >= 12:
+                n_heads = (12, 4)
+            elif n_heads >= 6:
+                n_heads = (6, 2)
+            elif n_heads >= 3:
+                n_heads = (3, 1)
+            elif n_heads >= 2:
+                n_heads = (2, 1)
+
+        # # Old empirical algorithm that (mostly) works with bwd
+        # new_heads = im.N_HEADS
+        # if seqlen_q * seqlen_k * d_head >= 2048 * 2048 * vram_cap_gb:
+        #     batch = min(batch, 3)
+        #     new_heads = (4, 1) if is_gqa else min(n_heads, 4)
+        # if (causal or bias_type != 0) and seqlen_q * seqlen_k * d_head >= 2048 * 2048 * vram_cap_gb:
+        #     # Prevent OOM, causal=True needs more memory
+        #     batch = min(batch, 2)
+        #     new_heads = (2, 1) if is_gqa else min(n_heads, 2)
 
         # Update im if values changed
-        if batch != im.BATCH or new_heads != im.N_HEADS:
-            return dataclasses.replace(im, BATCH=batch, N_HEADS=new_heads)
+        if batch != im.BATCH or n_heads != im.N_HEADS:
+            gc.collect()
+            torch.cuda.empty_cache()
+            return dataclasses.replace(im, BATCH=batch, N_HEADS=n_heads)
         return im
 
     def _do_gen_ref(self, entry: FlashEntry, data_root: Path):
