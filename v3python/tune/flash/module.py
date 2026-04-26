@@ -223,6 +223,7 @@ class Flash(TuningDescription):
 
         # Update im if values changed
         if batch != im.BATCH or n_heads != im.N_HEADS:
+            import torch
             gc.collect()
             torch.cuda.empty_cache()
             return dataclasses.replace(im, BATCH=batch, N_HEADS=n_heads)
