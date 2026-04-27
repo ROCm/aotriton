@@ -35,7 +35,7 @@ WORKER_WORKDIR="${workdir_override:-$DEFAULT_WORKDIR}"
 # Sync main directories (exclude build, installed, run, scratch, secrets, aotriton.src)
 # --mkpath creates $WORKER_WORKDIR if it doesn't exist
 # aotriton.src synced below with architecture-specific files
-rsync -az --info=progress2 \
+rsync -az --checksum --info=progress2 \
   --exclude '/build/' \
   --exclude '/installed/' \
   --exclude '/run/' \
@@ -58,13 +58,13 @@ fi
 
 if [ -d "$WORKDIR/installed$SUBDIR" ]; then
   # Sync both installed/$arch and aotriton.src in single rsync
-  rsync -azR --info=progress2 --delete --exclude '*.pyc' \
+  rsync -azR --checksum --info=progress2 --delete --exclude '*.pyc' \
     "$WORKDIR/./installed$SUBDIR" \
     "$WORKDIR/./aotriton.src" \
     "$HOSTNAME:$WORKER_WORKDIR/./"
 else
   # Sync aotriton.src only if installed/$arch doesn't exist
-  rsync -az --info=progress2 --delete --exclude '*.pyc' \
+  rsync -az --checksum --info=progress2 --delete --exclude '*.pyc' \
     "$WORKDIR/aotriton.src/" \
     "$HOSTNAME:$WORKER_WORKDIR/aotriton.src/"
 fi
