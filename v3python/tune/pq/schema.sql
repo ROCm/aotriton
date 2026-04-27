@@ -63,6 +63,7 @@ SELECT
     COUNT(*) FILTER (WHERE status = 'running') as running,
     COUNT(*) FILTER (WHERE status = 'completed') as completed,
     COUNT(*) FILTER (WHERE status = 'failed') as failed,
+    COUNT(*) FILTER (WHERE status = 'cancelled') as cancelled,
     COUNT(*) as total,
     ROUND(100.0 * COUNT(*) FILTER (WHERE status = 'completed') / NULLIF(COUNT(*), 0), 2) as pct_complete
 FROM task_queue
@@ -134,6 +135,36 @@ SELECT
     END as eta_hours
 FROM stats
 WHERE remaining > 0;
+
+-- Materialized view: best_tuning_results
+-- Unnests result_data.adiffs and aggregates over all hsaco_index values,
+-- producing one row per (task_id, kernel_name, test_case, tensor_name)
+-- with the minimum absolute_error across all hsacos.
+-- Adiff leaf layout: [fudge_factor, absolute_error, reference_error]
+-- absolute_error may be NULL for NaN results.
+--
+-- Materialized for performance: jsonb_each over all tuning_results generates
+-- O(rows × test_cases × tensors) intermediate rows; a plain view is too slow.
+-- Refresh before building the tuning database:
+--   REFRESH MATERIALIZED VIEW best_tuning_results;
+CREATE MATERIALIZED VIEW IF NOT EXISTS best_tuning_results AS
+SELECT
+    tq.id          AS task_id,
+    tq.arch,
+    tq.task_config,
+    tr.kernel_name,
+    test_case.key  AS test_case,
+    tensor.key     AS tensor_name,
+    MIN((tensor.value->>1)::float) AS absolute_error
+FROM tuning_results tr
+CROSS JOIN LATERAL jsonb_each(tr.result_data->'adiffs') AS test_case(key, value)
+CROSS JOIN LATERAL jsonb_each(test_case.value)           AS tensor(key, value)
+JOIN task_queue tq ON tq.id = tr.task_id
+WHERE tr.result_data IS NOT NULL
+GROUP BY tq.id, tq.arch, tq.task_config, tr.kernel_name, test_case.key, tensor.key;
+
+CREATE INDEX IF NOT EXISTS idx_best_tuning_results_lookup
+    ON best_tuning_results (arch, kernel_name, task_id);
 
 -- Function to create partition for an architecture
 CREATE OR REPLACE FUNCTION create_arch_partition(arch_name TEXT)

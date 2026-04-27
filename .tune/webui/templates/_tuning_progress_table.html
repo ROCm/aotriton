@@ -9,6 +9,7 @@
             <th>Completed</th>
             <th>Failed</th>
             <th>Total</th>
+            <th>Cancelled</th>
             <th>Progress</th>
             <th>Speed</th>
         </tr>
@@ -21,7 +22,8 @@
             <td>{{ row.running }}{% if row.stale > 0 %} <span style="color: #ff6b6b;">({{ row.stale }} stale)</span>{% endif %}</td>
             <td>{{ row.completed }}</td>
             <td>{{ row.failed }}</td>
-            <td>{{ row.total }}</td>
+            <td>{{ row.effective_total }} <span style="color:#888;">({{ row.total }})</span></td>
+            <td>{{ row.cancelled }}</td>
             <td>{{ "%.1f"|format(row.pct_complete) }}%</td>
             <td>{{ "%.1f"|format(row.speed_per_minute) }} tasks/min</td>
         </tr>

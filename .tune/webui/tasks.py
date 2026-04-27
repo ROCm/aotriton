@@ -188,6 +188,12 @@ def get_tuning_progress(workdir):
                     data = dict(row)
                     data['speed_per_minute'] = speed_map.get(data['arch'], 0.0)
                     data['stale'] = stale_map.get(data['arch'], 0)
+                    cancelled = data.get('cancelled', 0) or 0
+                    effective_total = data['total'] - cancelled
+                    data['effective_total'] = effective_total
+                    data['pct_complete'] = round(
+                        100.0 * data['completed'] / effective_total, 1
+                    ) if effective_total > 0 else 0.0
                     result.append(data)
 
                 return result
