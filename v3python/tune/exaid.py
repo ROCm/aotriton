@@ -144,6 +144,7 @@ class ExaidWorker(object):
 
     def prepare_data(self, entry_dict: dict, workdir: Path):
         logger.info(f"prepare_data: entry={entry_dict}, workdir={workdir}")
+        workdir.mkdir(parents=True, exist_ok=True)
         entry = self.entry_from_dict(entry_dict)
         self.proxy.write('prepare_data', entry.as_text(), workdir.as_posix())
         result = self.proxy.readinfo(timeout=120)
