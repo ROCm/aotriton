@@ -1,5 +1,13 @@
 # Project Instructions for Claude Code
 
+## Python Version
+
+This project targets **Python 3.10 or newer** (dev environment is Python 3.12). Do not use syntax or features deprecated as of Python 3.10:
+- Use `X | Y` union syntax instead of `typing.Union[X, Y]`
+- Use `X | None` instead of `typing.Optional[X]`
+- Use `list`, `dict`, `tuple` etc. directly as generic types instead of `typing.List`, `typing.Dict`, `typing.Tuple`
+- Do not import `Union`, `Optional`, `List`, `Dict`, `Tuple` from `typing` for type annotations
+
 ## PostgreSQL Connection Configuration
 
 **CRITICAL: NEVER ADD ANY DATABASE NAME TO THE CONFIGURATION OF CONNECTION TO PGSQL. WE NEVER USE IT AND YOU MUST USE THE DEFAULT.**

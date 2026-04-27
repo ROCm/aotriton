@@ -25,7 +25,9 @@ def dashboard():
     for arch_workers in workers_by_arch.values():
         workers.extend(arch_workers)
     tuning_progress = tasks.get_tuning_progress(workdir)
-    return render_template('dashboard.html', status=status, workers=workers, tuning_progress=tuning_progress)
+    refresh_interval = current_app.config['REFRESH_INTERVAL']
+    return render_template('dashboard.html', status=status, workers=workers,
+                           tuning_progress=tuning_progress, refresh_interval=refresh_interval)
 
 
 @bp.route('/workers')
@@ -597,4 +599,4 @@ def api_get_tuning_progress():
     """Get tuning progress data (for HTMX polling)"""
     workdir = current_app.config['WORKDIR']
     tuning_progress = tasks.get_tuning_progress(workdir)
-    return render_template('_tuning_progress_table.html', tuning_progress=tuning_progress)
+    return render_template('_tuning_progress_table.html', tuning_progress=tuning_progress, last_refresh=None)

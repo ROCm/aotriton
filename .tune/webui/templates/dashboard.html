@@ -79,7 +79,7 @@
     <h3>Tuning Progress</h3>
     <div id="tuning-progress-container"
          hx-get="/api/tuning-progress"
-         hx-trigger="load, every 10s"
+         hx-trigger="load, every {{ refresh_interval }}s"
          hx-swap="innerHTML">
         {% include '_tuning_progress_table.html' %}
     </div>

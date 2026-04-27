@@ -6,12 +6,13 @@ from pathlib import Path
 import ssl
 
 
-def create_app(workdir):
+def create_app(workdir, refresh_interval: int = 10):
     """Create and configure the Flask application"""
     workdir_path = Path(workdir).resolve()
     app = Flask(__name__)
     app.config['WORKDIR'] = workdir_path.as_posix()
     app.config['TUNE_ROOT'] = Path(__file__).parent.parent.resolve().as_posix()
+    app.config['REFRESH_INTERVAL'] = refresh_interval
 
     # Configure mTLS
     secrets_dir = workdir_path / 'secrets'

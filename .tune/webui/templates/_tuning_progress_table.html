@@ -1,3 +1,4 @@
+{% if last_refresh is defined %}<h3>Tuning Progress <span class="last-refresh">Last refresh: {{ last_refresh }}</span></h3>{% endif %}
 {% if tuning_progress %}
 <table style="width: 100%;">
     <thead>
