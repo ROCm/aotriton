@@ -328,11 +328,13 @@ def translate_causal(causal, v3_api):
         window_left, window_right = causal
         causal_type = CausalType.WINDOWED
     elif isinstance(causal, bool):
-        # causal_type = CausalType.TOP_LEFT if causal else CausalType.NONE
         causal_type = CausalType.WINDOWED if causal else CausalType.NONE
         if causal:
-            window_left = WindowValue.BOTTOM_RIGHT_ALIGNED
-            window_right = WindowValue.BOTTOM_RIGHT_ALIGNED
+            # PyTorch SDPA's default causal mask is top-left aligned (upper-left triangle).
+            # FA backend always uses bottom-right aligned internally, but for correctness
+            # testing we match torch's SDPA convention here.
+            window_left = WindowValue.TOP_LEFT_ALIGNED
+            window_right = WindowValue.TOP_LEFT_ALIGNED
     else:
         assert causal in [CausalType.NONE, CausalType.TOP_LEFT, CausalType.BOTTOM_RIGHT]
         assert v3_api, 'CausalType.TOP_LEFT/BOTTOM_RIGHT variant is supported thru windowed attention, which requires V3 API'
