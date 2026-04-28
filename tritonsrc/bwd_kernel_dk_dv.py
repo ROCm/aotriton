@@ -236,10 +236,7 @@ def bwd_kernel_dk_dv(
     # )
     if BIAS_TYPE == 0:
         B_ptr = 0
-    elif BIAS_TYPE == 1:
-        # CAVEAT: bias is incompatible with GQA
-        B_ptr = B + off_h_k * stride_bh + batch_index * stride_bz
-    else:
+    elif BIAS_TYPE != 1:
         tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
 
     dk_offset = off_h_k * stride_dkh + batch_index * stride_dkz + cu_seqlens_k_start * stride_dkn
@@ -286,6 +283,8 @@ def bwd_kernel_dk_dv(
 
     dropout_scale = 1.0 / (1.0 - dropout_p) if ENABLE_DROPOUT else 1.0
     for off_h_q in range(off_h_k * group_size, off_h_k * group_size + group_size):
+        if BIAS_TYPE == 1:
+            B_ptr = B + off_h_q * stride_bh + batch_index * stride_bz
         off_zh = off_z * num_head_q + off_h_q * 1
         # This lower loop bound is because of the causal mask. We create a lower triangular
         # result. The upper triangular is -inf (becomes 0 when we do e^x). As such, it can
