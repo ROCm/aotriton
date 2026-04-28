@@ -136,36 +136,6 @@ SELECT
 FROM stats
 WHERE remaining > 0;
 
--- Materialized view: best_tuning_results
--- Unnests result_data.adiffs and aggregates over all hsaco_index values,
--- producing one row per (task_id, kernel_name, test_case, tensor_name)
--- with the minimum absolute_error across all hsacos.
--- Adiff leaf layout: [fudge_factor, absolute_error, reference_error]
--- absolute_error may be NULL for NaN results.
---
--- Materialized for performance: jsonb_each over all tuning_results generates
--- O(rows × test_cases × tensors) intermediate rows; a plain view is too slow.
--- Refresh before building the tuning database:
---   REFRESH MATERIALIZED VIEW best_tuning_results;
-CREATE MATERIALIZED VIEW IF NOT EXISTS best_tuning_results AS
-SELECT
-    tq.id          AS task_id,
-    tq.arch,
-    tq.task_config,
-    tr.kernel_name,
-    test_case.key  AS test_case,
-    tensor.key     AS tensor_name,
-    MIN((tensor.value->>1)::float) AS absolute_error
-FROM tuning_results tr
-CROSS JOIN LATERAL jsonb_each(tr.result_data->'adiffs') AS test_case(key, value)
-CROSS JOIN LATERAL jsonb_each(test_case.value)           AS tensor(key, value)
-JOIN task_queue tq ON tq.id = tr.task_id
-WHERE tr.result_data IS NOT NULL
-GROUP BY tq.id, tq.arch, tq.task_config, tr.kernel_name, test_case.key, tensor.key;
-
-CREATE INDEX IF NOT EXISTS idx_best_tuning_results_lookup
-    ON best_tuning_results (arch, kernel_name, task_id);
-
 -- Function to create partition for an architecture
 CREATE OR REPLACE FUNCTION create_arch_partition(arch_name TEXT)
 RETURNS VOID AS $$
@@ -197,3 +167,25 @@ BEGIN
     );
 END;
 $$ LANGUAGE plpgsql;
+
+-- best_tuning_results: plain table populated by compute_best_results.py.
+-- For each (task_id, kernel_name): fastest hsaco_index meeting the 10x
+-- accuracy threshold relative to most_accurate_tuning_results.
+CREATE TABLE IF NOT EXISTS best_tuning_results (
+    task_id     BIGINT    NOT NULL,
+    arch        TEXT      NOT NULL,
+    task_config JSONB     NOT NULL,
+    kernel_name TEXT      NOT NULL,
+    hsaco_index INT       NOT NULL,
+    median_time FLOAT     NOT NULL,
+    impl_desc   JSONB,
+    computed_at TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY (task_id, kernel_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_best_tuning_results_lookup
+    ON best_tuning_results (arch, kernel_name, task_id);
+
+-- Materialized view: most_accurate_tuning_results.
+-- \ir uses path relative to this file, so works regardless of psql's cwd.
+\ir materialized_views.sql

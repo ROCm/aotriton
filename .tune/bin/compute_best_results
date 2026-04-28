@@ -1,0 +1,40 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# Compute best_tuning_results table using Python multiprocessing.
+# Reads connection parameters from <workdir>/config.rc.
+#
+# Usage:
+#   compute_best_results <workdir> [--workers N]
+#
+# Examples:
+#   .tune/bin/compute_best_results ~/wkdir.v3.5
+#   .tune/bin/compute_best_results ~/wkdir.v3.5 --workers 16
+
+set -euo pipefail
+
+if [ "$#" -lt 1 ]; then
+    echo "Usage: $0 <workdir> [--workers N]" >&2
+    exit 1
+fi
+
+WORKDIR="$1"
+shift
+
+if [ ! -d "$WORKDIR" ]; then
+    echo "Error: workdir does not exist: $WORKDIR" >&2
+    exit 1
+fi
+
+if [ ! -f "$WORKDIR/config.rc" ]; then
+    echo "Error: config.rc not found in $WORKDIR" >&2
+    exit 1
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+exec python3 -m v3python.tune.pq.compute_best_results \
+    --workdir "$WORKDIR" \
+    "$@"
