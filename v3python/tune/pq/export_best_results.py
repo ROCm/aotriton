@@ -80,27 +80,28 @@ logger = logging.getLogger(__name__)
 # Note: 'id INTEGER PRIMARY KEY' is prepended automatically.
 
 _FWD_COLS = [
-    ('gpu',                          'gpu',     None),
-    ('inputs$Q_dtype',               'derived', 'dtype'),
-    ('inputs$Max_seqlen_q',          'entry',   'seqlen_q'),
-    ('inputs$Max_seqlen_k',          'entry',   'seqlen_k'),
-    ('inputs$CAUSAL_TYPE',           'derived', 'causal'),
-    ('inputs$BLOCK_DMODEL',          'entry',   'hdim'),
-    ('inputs$ENABLE_DROPOUT',        'derived', 'dropout_p'),
-    ('inputs$PADDED_HEAD',           'psels',   'PADDED_HEAD'),
-    ('inputs$BIAS_TYPE',             'entry',   'bias_type'),
-    ('inputs$USE_ALIBI',             'psels',   'USE_ALIBI'),
-    ('inputs$INT8',                  'psels',   'INT8'),
-    ('inputs$INT8_KV',               'psels',   'INT8_KV'),
-    ('inputs$USE_P_SCALE',           'psels',   'USE_P_SCALE'),
-    ('tuned_kernel$PERSISTENT_TYPE', 'psels',   'PERSISTENT_TYPE'),
-    ('tuned_kernel$GRID_CU_MULTIP',  'psels',   'GRID_CU_MULTIP'),
-    ('tuned_kernel$BLOCK_M',         'psels',   'BLOCK_M'),
-    ('tuned_kernel$BLOCK_N',         'psels',   'BLOCK_N'),
-    ('tuned_kernel$PRE_LOAD_V',      'psels',   'PRE_LOAD_V'),
-    ('compiler_options$waves_per_eu','copts',   'waves_per_eu'),
-    ('compiler_options$num_warps',   'copts',   'num_warps'),
-    ('compiler_options$num_stages',  'copts',   'num_stages'),
+    # (sqlite_col,                    sql_type,  source,    key)
+    ('gpu',                          'TEXT',    'gpu',     None),
+    ('inputs$Q_dtype',               'TEXT',    'derived', 'dtype'),
+    ('inputs$Max_seqlen_q',          'INTEGER', 'entry',   'seqlen_q'),
+    ('inputs$Max_seqlen_k',          'INTEGER', 'entry',   'seqlen_k'),
+    ('inputs$CAUSAL_TYPE',           'INTEGER', 'derived', 'causal'),
+    ('inputs$BLOCK_DMODEL',          'INTEGER', 'entry',   'hdim'),
+    ('inputs$ENABLE_DROPOUT',        'INTEGER', 'derived', 'dropout_p'),
+    ('inputs$PADDED_HEAD',           'INTEGER', 'psels',   'PADDED_HEAD'),
+    ('inputs$BIAS_TYPE',             'INTEGER', 'entry',   'bias_type'),
+    ('inputs$USE_ALIBI',             'INTEGER', 'psels',   'USE_ALIBI'),
+    ('inputs$INT8',                  'INTEGER', 'psels',   'INT8'),
+    ('inputs$INT8_KV',               'INTEGER', 'psels',   'INT8_KV'),
+    ('inputs$USE_P_SCALE',           'INTEGER', 'psels',   'USE_P_SCALE'),
+    ('tuned_kernel$PERSISTENT_TYPE', 'INTEGER', 'psels',   'PERSISTENT_TYPE'),
+    ('tuned_kernel$GRID_CU_MULTIP',  'INTEGER', 'psels',   'GRID_CU_MULTIP'),
+    ('tuned_kernel$BLOCK_M',         'INTEGER', 'psels',   'BLOCK_M'),
+    ('tuned_kernel$BLOCK_N',         'INTEGER', 'psels',   'BLOCK_N'),
+    ('tuned_kernel$PRE_LOAD_V',      'INTEGER', 'psels',   'PRE_LOAD_V'),
+    ('compiler_options$waves_per_eu','INTEGER', 'copts',   'waves_per_eu'),
+    ('compiler_options$num_warps',   'INTEGER', 'copts',   'num_warps'),
+    ('compiler_options$num_stages',  'INTEGER', 'copts',   'num_stages'),
 ]
 
 _FWD_UNIQUE = [
@@ -113,20 +114,21 @@ _FWD_UNIQUE = [
 # bwd_kernel_dk_dv and bwd_kernel_dq share the same schema.
 # Note lowercase max_seqlen vs. attn_fwd's Max_seqlen.
 _BWD_SPLIT_COLS = [
-    ('gpu',                          'gpu',     None),
-    ('inputs$Q_dtype',               'derived', 'dtype'),
-    ('inputs$max_seqlen_q',          'entry',   'seqlen_q'),
-    ('inputs$max_seqlen_k',          'entry',   'seqlen_k'),
-    ('inputs$CAUSAL_TYPE',           'derived', 'causal'),
-    ('inputs$BLOCK_DMODEL',          'entry',   'hdim'),
-    ('inputs$ENABLE_DROPOUT',        'derived', 'dropout_p'),
-    ('inputs$PADDED_HEAD',           'psels',   'PADDED_HEAD'),
-    ('inputs$BIAS_TYPE',             'entry',   'bias_type'),
-    ('tuned_kernel$BLOCK_M',         'psels',   'BLOCK_M'),
-    ('tuned_kernel$BLOCK_N',         'psels',   'BLOCK_N'),
-    ('compiler_options$waves_per_eu','copts',   'waves_per_eu'),
-    ('compiler_options$num_warps',   'copts',   'num_warps'),
-    ('compiler_options$num_stages',  'copts',   'num_stages'),
+    # (sqlite_col,                    sql_type,  source,    key)
+    ('gpu',                          'TEXT',    'gpu',     None),
+    ('inputs$Q_dtype',               'TEXT',    'derived', 'dtype'),
+    ('inputs$max_seqlen_q',          'INTEGER', 'entry',   'seqlen_q'),
+    ('inputs$max_seqlen_k',          'INTEGER', 'entry',   'seqlen_k'),
+    ('inputs$CAUSAL_TYPE',           'INTEGER', 'derived', 'causal'),
+    ('inputs$BLOCK_DMODEL',          'INTEGER', 'entry',   'hdim'),
+    ('inputs$ENABLE_DROPOUT',        'INTEGER', 'derived', 'dropout_p'),
+    ('inputs$PADDED_HEAD',           'INTEGER', 'psels',   'PADDED_HEAD'),
+    ('inputs$BIAS_TYPE',             'INTEGER', 'entry',   'bias_type'),
+    ('tuned_kernel$BLOCK_M',         'INTEGER', 'psels',   'BLOCK_M'),
+    ('tuned_kernel$BLOCK_N',         'INTEGER', 'psels',   'BLOCK_N'),
+    ('compiler_options$waves_per_eu','INTEGER', 'copts',   'waves_per_eu'),
+    ('compiler_options$num_warps',   'INTEGER', 'copts',   'num_warps'),
+    ('compiler_options$num_stages',  'INTEGER', 'copts',   'num_stages'),
 ]
 
 _BWD_SPLIT_UNIQUE = [
@@ -136,24 +138,25 @@ _BWD_SPLIT_UNIQUE = [
 ]
 
 _BWD_FUSE_COLS = [
-    ('gpu',                          'gpu',     None),
-    ('inputs$Q_dtype',               'derived', 'dtype'),
-    ('inputs$max_seqlen_q',          'entry',   'seqlen_q'),
-    ('inputs$max_seqlen_k',          'entry',   'seqlen_k'),
-    ('inputs$CAUSAL_TYPE',           'derived', 'causal'),
-    ('inputs$BLOCK_DMODEL',          'entry',   'hdim'),
-    ('inputs$ENABLE_DROPOUT',        'derived', 'dropout_p'),
-    ('inputs$PADDED_HEAD',           'psels',   'PADDED_HEAD'),
-    ('inputs$BIAS_TYPE',             'entry',   'bias_type'),
-    ('inputs$USE_ALIBI',             'psels',   'USE_ALIBI'),
-    ('inputs$INT8',                  'psels',   'INT8'),
-    ('inputs$INT8_KV',               'psels',   'INT8_KV'),
-    ('inputs$USE_P_SCALE',           'psels',   'USE_P_SCALE'),
-    ('tuned_kernel$BLOCK_M',         'psels',   'BLOCK_M'),
-    ('tuned_kernel$BLOCK_N',         'psels',   'BLOCK_N'),
-    ('compiler_options$waves_per_eu','copts',   'waves_per_eu'),
-    ('compiler_options$num_warps',   'copts',   'num_warps'),
-    ('compiler_options$num_stages',  'copts',   'num_stages'),
+    # (sqlite_col,                    sql_type,  source,    key)
+    ('gpu',                          'TEXT',    'gpu',     None),
+    ('inputs$Q_dtype',               'TEXT',    'derived', 'dtype'),
+    ('inputs$max_seqlen_q',          'INTEGER', 'entry',   'seqlen_q'),
+    ('inputs$max_seqlen_k',          'INTEGER', 'entry',   'seqlen_k'),
+    ('inputs$CAUSAL_TYPE',           'INTEGER', 'derived', 'causal'),
+    ('inputs$BLOCK_DMODEL',          'INTEGER', 'entry',   'hdim'),
+    ('inputs$ENABLE_DROPOUT',        'INTEGER', 'derived', 'dropout_p'),
+    ('inputs$PADDED_HEAD',           'INTEGER', 'psels',   'PADDED_HEAD'),
+    ('inputs$BIAS_TYPE',             'INTEGER', 'entry',   'bias_type'),
+    ('inputs$USE_ALIBI',             'INTEGER', 'psels',   'USE_ALIBI'),
+    ('inputs$INT8',                  'INTEGER', 'psels',   'INT8'),
+    ('inputs$INT8_KV',               'INTEGER', 'psels',   'INT8_KV'),
+    ('inputs$USE_P_SCALE',           'INTEGER', 'psels',   'USE_P_SCALE'),
+    ('tuned_kernel$BLOCK_M',         'INTEGER', 'psels',   'BLOCK_M'),
+    ('tuned_kernel$BLOCK_N',         'INTEGER', 'psels',   'BLOCK_N'),
+    ('compiler_options$waves_per_eu','INTEGER', 'copts',   'waves_per_eu'),
+    ('compiler_options$num_warps',   'INTEGER', 'copts',   'num_warps'),
+    ('compiler_options$num_stages',  'INTEGER', 'copts',   'num_stages'),
 ]
 
 _BWD_FUSE_UNIQUE = [
@@ -204,7 +207,7 @@ def derive_enable_dropout(entry: dict) -> int:
 
 def extract_value(col_def: tuple, gpu: str, entry: dict,
                   psels: dict, copts: dict):
-    _, source, key = col_def
+    _, _sql_type, source, key = col_def
     if source == 'gpu':
         return gpu
     if source == 'entry':
@@ -236,10 +239,11 @@ def ensure_table(db: sqlite3.Connection, kernel: str,
     """Create table with id INTEGER PRIMARY KEY (matching central DB format)."""
     table = f'FLASH${kernel}'
     col_defs = ', '.join(
-        f'"{c}" TEXT' if 'Q_dtype' in c else f'"{c}" INTEGER'
-        for c in _col_names(cols)
+        f'"{col}" {sql_type}'
+        for col, sql_type, _source, _key in cols
     )
-    unique_clause = f', UNIQUE({", ".join(f"{c!r}" for c in unique)})'
+    unique_cols = ', '.join(f'"{c}"' for c in unique)
+    unique_clause = f', UNIQUE({unique_cols})'
     db.execute(
         f'CREATE TABLE IF NOT EXISTS "{table}" '
         f'(id INTEGER PRIMARY KEY, {col_defs}{unique_clause})'
@@ -265,19 +269,16 @@ def insert_row(db: sqlite3.Connection, kernel: str,
 def export(conn_params: dict, output_path: Path) -> None:
     t0 = time.monotonic()
 
-    if output_path.exists():
-        logger.warning('Output file already exists, will append/replace: %s',
-                       output_path)
-
     logger.info('Querying best_tuning_results...')
     with psycopg.connect(**conn_params, autocommit=True,
                          row_factory=dict_row) as pg:
         with pg.cursor() as cur:
             cur.execute("""
-                SELECT arch, kernel_name, task_config, impl_desc
-                FROM best_tuning_results
-                WHERE impl_desc IS NOT NULL
-                ORDER BY arch, kernel_name
+                SELECT b.task_id, b.arch, b.kernel_name, b.task_config, b.impl_desc
+                FROM best_tuning_results b
+                JOIN task_queue t ON t.id = b.task_id AND t.arch = b.arch
+                WHERE t.status != 'cancelled'
+                ORDER BY b.arch, b.kernel_name
             """)
             rows = cur.fetchall()
 
@@ -292,13 +293,23 @@ def export(conn_params: dict, output_path: Path) -> None:
             ensure_table(db, kernel, cols, unique)
 
         for row in rows:
+            task_id     = row['task_id']
             arch        = row['arch']
             kernel_name = row['kernel_name']
             task_config = row['task_config']
             impl_desc   = row['impl_desc']
 
+            if impl_desc is None:
+                logger.warning(
+                    'Skipping task_id=%s arch=%s kernel=%s: impl_desc is NULL '
+                    '(compute_best_results may not have run for this entry)',
+                    task_id, arch, kernel_name,
+                )
+                skipped += 1
+                continue
+
             if kernel_name not in KERNEL_SCHEMAS:
-                logger.debug('Skipping unknown kernel %s', kernel_name)
+                logger.warning('Skipping unknown kernel %s (task_id=%s)', kernel_name, task_id)
                 skipped += 1
                 continue
 
@@ -314,9 +325,10 @@ def export(conn_params: dict, output_path: Path) -> None:
                     extract_value(col_def, gpu, entry, psels, copts)
                     for col_def in cols
                 ]
-            except ValueError as exc:
+            except Exception as exc:
                 logger.warning(
-                    'Skipping arch=%s kernel=%s: %s', arch, kernel_name, exc
+                    'Skipping task_id=%s arch=%s kernel=%s entry=%s: %s',
+                    task_id, arch, kernel_name, entry, exc,
                 )
                 skipped += 1
                 continue

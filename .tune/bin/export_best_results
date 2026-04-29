@@ -54,6 +54,11 @@ else
     mkdir -p "$WORKDIR/scratch"
 fi
 
+if [ -f "$OUTPUT" ]; then
+    echo "Deleting existing $OUTPUT" >&2
+    rm -f "$OUTPUT"
+fi
+
 if [ ! -d "$WORKDIR" ]; then
     echo "Error: workdir does not exist: $WORKDIR" >&2
     exit 1
