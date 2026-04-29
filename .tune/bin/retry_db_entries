@@ -15,10 +15,13 @@ Entries are de-duplicated on (arch, FlashEntry) before any DB queries are made
 (multiple kernels for the same task_queue row share the same entry).
 
 Usage:
-    .tune/bin/retry_db_entries <workdir> <dbreport.txt>
+    .tune/bin/retry_db_entries <workdir> [<dbreport.txt>]
+    .tune/bin/retry_db_entries ~/wkdir.v3.5
     .tune/bin/retry_db_entries ~/wkdir.v3.5 ~/wkdir.v3.5/scratch/dbreport.txt
 
-The script shows a summary and asks for confirmation before making any changes.
+The report defaults to <workdir>/scratch/dbreport.txt (the fixed output location
+produced by .tune/bin/sancheck). The script shows a summary and asks for
+confirmation before making any changes.
 """
 
 import argparse
@@ -146,11 +149,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('workdir', help='Project workdir containing config.rc')
-    parser.add_argument('report', help='dbreport.txt produced by .tune/bin/sancheck')
+    parser.add_argument('report', nargs='?', default=None,
+                        help='dbreport.txt produced by .tune/bin/sancheck '
+                             '(default: <workdir>/scratch/dbreport.txt)')
     args = parser.parse_args()
 
     workdir = Path(args.workdir)
-    report_path = Path(args.report)
+    report_path = Path(args.report) if args.report else workdir / 'scratch' / 'dbreport.txt'
 
     if not workdir.is_dir():
         sys.exit(f'Error: workdir does not exist: {workdir}')
