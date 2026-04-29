@@ -602,6 +602,17 @@ def api_get_tuning_progress():
     return render_template('_tuning_progress_table.html', tuning_progress=tuning_progress, last_refresh=None)
 
 
+@bp.route('/api/debug/resolve_entry', methods=['POST'])
+def api_debug_resolve_entry():
+    """Resolve a TUNE_V3BIS testrun line to a task_queue id."""
+    workdir = current_app.config['WORKDIR']
+    line = (request.get_json() or {}).get('line', '')
+    if not line:
+        return jsonify({'error': 'No line provided'}), 400
+    result = tasks.resolve_tune_entry(workdir, line)
+    return jsonify(result)
+
+
 @bp.route('/debug')
 def debug():
     """Debug page - inspect task_queue entries and all related rows"""

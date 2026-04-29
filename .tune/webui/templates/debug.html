@@ -15,6 +15,41 @@
     </form>
 </section>
 
+<section>
+    <h3>Lookup by TUNE_V3BIS entry</h3>
+    <div style="display: flex; gap: 0.5rem; align-items: flex-start;">
+        <textarea id="tune_entry_input" rows="3" style="flex: 1; font-family: monospace; font-size: 0.85em;"
+                  placeholder="Paste a TUNE_V3BIS testrun Item: line here"></textarea>
+        <button type="button" id="tune_lookup_btn">Lookup</button>
+    </div>
+    <p id="tune_lookup_error" style="color: red; margin: 0.25rem 0;"></p>
+</section>
+
+<script>
+document.getElementById('tune_lookup_btn').addEventListener('click', function() {
+    const line = document.getElementById('tune_entry_input').value.trim();
+    const errEl = document.getElementById('tune_lookup_error');
+    errEl.textContent = '';
+    if (!line) { errEl.textContent = 'Please paste a TUNE_V3BIS line.'; return; }
+
+    fetch('/api/debug/resolve_entry', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({line: line}),
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.error) {
+            errEl.textContent = data.error;
+        } else {
+            document.getElementById('task_id_input').value = data.task_id;
+            document.getElementById('task_id_input').closest('form').submit();
+        }
+    })
+    .catch(e => { errEl.textContent = 'Request failed: ' + e; });
+});
+</script>
+
 {% if task_id is not none and debug_data is not none %}
 
 {% if debug_data.error is defined %}

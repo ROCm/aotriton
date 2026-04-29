@@ -26,6 +26,7 @@ from .config import TUNING_ARCHITECTURES
 # Add v3python to import get_db_connection_params
 sys.path.insert(0, AOTRITON_ROOT.as_posix())
 from v3python.tune.utils import get_db_connection_params
+from v3python.tune.flash.module import FlashEntry
 
 def run_command(cmd, cwd, workdir, description=None):
     """
@@ -200,6 +201,59 @@ def get_tuning_progress(workdir):
     except Exception as e:
         logging.error(f"Failed to get tuning progress: {e}")
         return []
+
+
+_TUNE_V3BIS_MARKER = 'TUNE_V3BIS testrun Item: '
+
+
+def resolve_tune_entry(workdir, line: str) -> dict:
+    """
+    Parse a TUNE_V3BIS testrun line and return the matching task_queue id.
+
+    Accepts the full line or just the payload after the marker.
+    Returns {'task_id': <int>} or {'error': <str>}.
+    """
+    try:
+        idx = line.find(_TUNE_V3BIS_MARKER)
+        payload = line[idx + len(_TUNE_V3BIS_MARKER):].strip() if idx != -1 else line.strip()
+
+        arch_part, entry_part = payload.split(' ', 1)
+        arch = arch_part.split('=', 1)[1]
+        entry = FlashEntry.parse_text(entry_part)
+    except Exception as e:
+        return {'error': f'Failed to parse entry: {e}'}
+
+    from dataclasses import asdict
+    d = asdict(entry)
+
+    clauses = ["task_config->>'arch' = %s"]
+    params: list = [arch]
+    for field, value in d.items():
+        col = f"task_config->'entry'->>'{field}'"
+        if isinstance(value, bool):
+            clauses.append(f"({col})::boolean = %s")
+        elif isinstance(value, int):
+            clauses.append(f"({col})::integer = %s")
+        elif isinstance(value, float):
+            clauses.append(f"({col})::float = %s")
+        else:
+            clauses.append(f"{col} = %s")
+        params.append(value)
+
+    sql = 'SELECT id FROM task_queue WHERE ' + ' AND '.join(clauses) + ' LIMIT 1'
+
+    try:
+        conn_params = get_db_connection_params(Path(workdir))
+        with psycopg.connect(**conn_params, row_factory=dict_row) as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, params)
+                row = cur.fetchone()
+        if row is None:
+            return {'error': f'No task_queue row found for arch={arch} {entry_part}'}
+        return {'task_id': row['id']}
+    except Exception as e:
+        logging.error('resolve_tune_entry failed: %s', e)
+        return {'error': str(e)}
 
 
 def get_debug_task_data(workdir, task_id: int) -> dict:
