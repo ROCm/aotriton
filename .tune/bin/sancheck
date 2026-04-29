@@ -1,0 +1,98 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# Run the LUT sanity check against a centralized tuning database without
+# triggering any code generation.
+#
+# Usage:
+#   sancheck <workdir> [extra generate.py args...]
+#
+# The tuning database is expected at:
+#   <workdir>/scratch/centraldb.sqlite3
+#
+# This is the file produced by .tune/bin/export_best_results.
+#
+# GPU targets are read from <workdir>/config.rc (SANCHECK_GPUS variable) if
+# present, otherwise all supported GPUs are used.
+#
+# Extra arguments are passed directly to generate.py.
+#
+# Examples:
+#   .tune/bin/sancheck ~/wkdir.v3.5
+#   .tune/bin/sancheck ~/wkdir.v3.5 --target_gpus gfx942_mod0 gfx90a_mod0
+
+set -euo pipefail
+
+if [ "$#" -lt 1 ]; then
+    echo "Usage: $0 <workdir> [extra generate.py args...]" >&2
+    exit 1
+fi
+
+WORKDIR="$1"
+shift
+
+if [ ! -d "$WORKDIR" ]; then
+    echo "Error: workdir does not exist: $WORKDIR" >&2
+    exit 1
+fi
+
+CENTRALDB="$WORKDIR/scratch/centraldb.sqlite3"
+if [ ! -f "$CENTRALDB" ]; then
+    echo "Error: tuning database not found: $CENTRALDB" >&2
+    echo "Run .tune/bin/export_best_results first." >&2
+    exit 1
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+# Derive GPU targets from the gpu column in the centralized database.
+# This avoids any config.rc dependency — the database already knows
+# which GPUs have been tuned.
+GPUS=$(sqlite3 "$CENTRALDB" \
+    "SELECT DISTINCT gpu FROM \"FLASH\$attn_fwd\" \
+     UNION SELECT gpu FROM \"FLASH\$bwd_kernel_dk_dv\" \
+     UNION SELECT gpu FROM \"FLASH\$bwd_kernel_dq\" \
+     UNION SELECT gpu FROM \"FLASH\$bwd_kernel_fuse\"" \
+    2>/dev/null | tr '\n' ' ' | xargs)
+
+GPU_ARGS=()
+if [ -n "$GPUS" ]; then
+    read -ra GPU_ARGS <<< "--target_gpus $GPUS"
+fi
+
+# Persistent build directory — survives across runs so the op_database
+# only needs to be extracted once.
+#   <workdir>/build/sancheck/database/tuning_database.sqlite3  (symlink)
+#   <workdir>/build/sancheck/database/op_database.sqlite3      (extracted once)
+TMPDIR_BUILD="$WORKDIR/build/sancheck"
+mkdir -p "$TMPDIR_BUILD/database"
+
+# tuning_database.sqlite3: always re-symlink in case the path changed.
+ln -sf "$(realpath "$CENTRALDB")" "$TMPDIR_BUILD/database/tuning_database.sqlite3"
+
+# op_database.sqlite3: extract only if not already present.
+OP_TARBALL="$REPO_ROOT/v3python/database/op_database.sqlite3.tar.xz"
+if [ ! -f "$OP_TARBALL" ]; then
+    echo "Error: op database tarball not found: $OP_TARBALL" >&2
+    exit 1
+fi
+if [ ! -f "$TMPDIR_BUILD/database/op_database.sqlite3" ]; then
+    tar -xJf "$OP_TARBALL" -C "$TMPDIR_BUILD/database"
+fi
+
+REPORT="$WORKDIR/scratch/dbreport.txt"
+mkdir -p "$WORKDIR/scratch"
+echo "Sanity check report: $REPORT"
+
+# Diagnostic output goes to stdout (bare print() calls, no logging framework).
+python3 -m v3python.generate \
+    --build_dir "$TMPDIR_BUILD" \
+    --root_dir "$REPO_ROOT" \
+    --lut_sanity_check \
+    --sanity_check_only \
+    "${GPU_ARGS[@]}" \
+    "$@" > "$REPORT"
+
+echo "Done. Report written to $REPORT"
