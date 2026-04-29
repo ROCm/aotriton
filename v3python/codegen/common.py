@@ -32,7 +32,3 @@ class MissingLutEntry(Exception):
 
     def __repr__(self):
         return f'{self._functional.tunecc_signature} has broken tuning table:\n{self._lut_tensor}'
-
-    def get_missing_lut_entries(self) -> "list[str]":
-        kdesc = self._functional.meta_object
-        return kdesc.get_missing_lut_entries(self._lut_tensor, self._functional)
