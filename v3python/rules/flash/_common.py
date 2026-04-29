@@ -97,44 +97,43 @@ class FlashKernel(KernelDescription):
     '''
     TODO: new tuning framework should reuse KernelDescription
     '''
-    def get_missing_lut_entries(self, lut_tensor, functional) -> list[dict]:
-        from copy import deepcopy
-        import json
+    def get_missing_lut_entries(self, lut_tensor, functional) -> list[str]:
         import numpy as np
+        from v3python.tune.flash.module import FlashEntry
         arch = functional.arch
-        base = {'arch' : arch}
         MI = (AOTRITON_ARCH_WARPSIZE[arch] == 64)
         Navi = (AOTRITON_ARCH_WARPSIZE[arch] == 32)
-        # if Navi:
-        #     lut_full_seqlen_q = self.LUT_FULL_SEQLEN_NAVI
-        #     lut_full_seqlen_k = self.LUT_FULL_SEQLEN_NAVI
-        # else:
-        #     lut_full_seqlen_q = self.LUT_FULL_SEQLEN_Q
-        #     lut_full_seqlen_k = self.LUT_FULL_SEQLEN_K
         lut_full_seqlen_q = self.LUT_FULL_SEQLEN_Q
         lut_full_seqlen_k = self.LUT_FULL_SEQLEN_K
         LUT_TENSOR_SIZE = (len(self.LUT_FULL_SEQLEN_Q), len(self.LUT_FULL_SEQLEN_K))
-        base['causal_type'] = check_value(functional, 'CAUSAL_TYPE')
-        base['d_head'] = check_value(functional, 'BLOCK_DMODEL')
-        base['dropout_p'] = 0.5 if check_value(functional, 'ENABLE_DROPOUT') else 0.0
-        def dtype():
-            value = check_value(functional, 'Q')
-            if value.startswith('*fp16'):
-                return 'float16'
-            if value.startswith('*bf16'):
-                return 'bfloat16'
-            if value.startswith('*fp32'):
-                return 'float32'
-        base['dtype'] = dtype()
-        base['bias_type'] = check_value(functional, 'BIAS_TYPE')
+        causal_raw = check_value(functional, 'CAUSAL_TYPE')
+        hdim = check_value(functional, 'BLOCK_DMODEL')
+        dropout_p = 0.5 if check_value(functional, 'ENABLE_DROPOUT') else 0.0
+        q_ptr = check_value(functional, 'Q')
+        if q_ptr.startswith('*fp16'):
+            dtype = 'float16'
+        elif q_ptr.startswith('*bf16'):
+            dtype = 'bfloat16'
+        else:
+            dtype = 'float32'
+        bias_type = check_value(functional, 'BIAS_TYPE')
+        causal = bool(causal_raw)  # 0 → False, non-zero → True
+        def make_entry(seqlen_q, seqlen_k) -> str:
+            entry = FlashEntry(
+                dtype=dtype,
+                hdim=hdim,
+                seqlen_q=seqlen_q,
+                seqlen_k=seqlen_k,
+                causal=causal,
+                dropout_p=dropout_p,
+                bias_type=bias_type,
+            )
+            return f'arch={arch} {entry.as_text()}'
         ret = []
         if lut_tensor.size == 1:
             for seqlen_q in lut_full_seqlen_q:
                 for seqlen_k in lut_full_seqlen_k:
-                    d = deepcopy(base)
-                    d['seqlen_q'] = seqlen_q
-                    d['seqlen_k'] = seqlen_k
-                    ret.append(json.dumps(d))
+                    ret.append(make_entry(seqlen_q, seqlen_k))
         else:
             # TODO: support non-mod0
             if lut_tensor.shape[1:] == LUT_TENSOR_SIZE:
@@ -142,12 +141,8 @@ class FlashKernel(KernelDescription):
             else:
                 fake_lut = np.full(LUT_TENSOR_SIZE, -1, dtype=np.int32)
                 M_idxs, N_idxs = np.where(fake_lut < 0)
-            # print(f'{M_idxs=} {N_idxs=} {lut_full_seqlen_q=} {lut_full_seqlen_k=}')
             for M_id, N_id in zip(M_idxs, N_idxs):
-                d = deepcopy(base)
-                d['seqlen_q'] = lut_full_seqlen_q[M_id]
-                d['seqlen_k'] = lut_full_seqlen_k[N_id]
-                ret.append(json.dumps(d))
+                ret.append(make_entry(lut_full_seqlen_q[M_id], lut_full_seqlen_k[N_id]))
         return ret
 
 class FlashBwdKernel(FlashKernel):
