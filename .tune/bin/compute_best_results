@@ -6,16 +6,21 @@
 # Reads connection parameters from <workdir>/config.rc.
 #
 # Usage:
-#   compute_best_results <workdir> [--workers N]
+#   compute_best_results <workdir> [options...]
+#
+# All options after <workdir> are passed directly to:
+#   python3 -m v3python.tune.pq.compute_best_results --workdir <workdir> [options...]
+#
+# Run with --help to see all available options.
 #
 # Examples:
 #   .tune/bin/compute_best_results ~/wkdir.v3.5
-#   .tune/bin/compute_best_results ~/wkdir.v3.5 --workers 16
+#   .tune/bin/compute_best_results ~/wkdir.v3.5 --help
 
 set -euo pipefail
 
 if [ "$#" -lt 1 ]; then
-    echo "Usage: $0 <workdir> [--workers N]" >&2
+    echo "Usage: $0 <workdir> [options..]" >&2
     exit 1
 fi
 
