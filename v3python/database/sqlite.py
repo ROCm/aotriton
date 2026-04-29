@@ -32,7 +32,7 @@ def create_select_stmt(table_name, wheres):
 
 def format_sql(stmt, params):
     template = stmt.replace('?', '{!r}')
-    return template.format(*params)
+    return (stmt, params)
 
 class Factory(object):
     SIGNATURE_FILE = 'database/tuning_database.sqlite3'
@@ -82,4 +82,4 @@ class Factory(object):
             return df, format_sql(stmt, params)
         except pd.errors.DatabaseError:
             log(lambda : f'Table {table_name} may not exist. select stmt: {stmt} params {params}')
-            return None, ''
+            return None, format_sql(stmt, params)

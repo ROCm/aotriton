@@ -26,7 +26,7 @@ class SlimAffineGenerator(InterfaceGenerator):
         del self._target_gpus  # For safety
         self._target_arch_keys = list(self._target_arch.keys())
 
-    def create_sub_generator(self, functional : Functional, df : 'pandas.DataFrame', sql : str):
+    def create_sub_generator(self, functional : Functional, df : 'pandas.DataFrame', sql : tuple):
         raise RuntimeError("There should be no calls to SlimAffineGenerator.create_sub_generator"
                            " since slim affine kernel has vendored dispatcher.")
 

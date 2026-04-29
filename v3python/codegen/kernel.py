@@ -23,7 +23,7 @@ class KernelShimGenerator(InterfaceGenerator):
     SOURCE_TEMPLATE = get_template('shim.cc')
     PFX = 'shim'
 
-    def create_sub_generator(self, functional : Functional, df : 'pandas.DataFrame', sql : str):
+    def create_sub_generator(self, functional : Functional, df : 'pandas.DataFrame', sql : tuple):
         if functional.meta_object.is_functional_disabled(functional):
             log(lambda : f'Functional {functional.godel_number=} disabled')
             use_this_functional = False

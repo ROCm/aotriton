@@ -65,7 +65,7 @@ class InterfaceGenerator(ABC):
         for functional in iface.gen_functionals(self._target_arch):
             # print(f'{functional=}')
             df, sql = fac.create_view(functional)
-            # print(f'KernelShimGenerator.generate {df=}')
+            # print(f'KernelShimGenerator.generate {df=} {sql=}')
             subg, use_this_functional = self.create_sub_generator(functional, df, sql)
             if subg is not None:
                 subg.generate()
@@ -96,7 +96,7 @@ class InterfaceGenerator(ABC):
         self._shim_files.append(fullfn.with_suffix('.cc'))
 
     @abstractmethod
-    def create_sub_generator(self, functional : Functional, df : 'pandas.DataFrame', sql : str):
+    def create_sub_generator(self, functional : Functional, df : 'pandas.DataFrame', sql : tuple):
         pass
 
     @abstractmethod
