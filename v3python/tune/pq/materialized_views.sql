@@ -39,6 +39,8 @@ CROSS JOIN LATERAL jsonb_each(test_case.value)           AS tensor(key, value)
 WHERE tr.result_data IS NOT NULL
 GROUP BY tr.task_id, tq.arch, tq.task_config, tr.kernel_name, test_case.key, tensor.key;
 
--- Matches the join key used by compute_best_results.py.
-CREATE INDEX IF NOT EXISTS idx_most_accurate_tuning_results_lookup
+-- Unique: task_id is the PK of task_queue, so (task_id, kernel_name,
+-- test_case, tensor_name) is unique in this view. Required for
+-- REFRESH MATERIALIZED VIEW CONCURRENTLY.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_most_accurate_tuning_results_lookup
     ON most_accurate_tuning_results (task_id, kernel_name, test_case, tensor_name);

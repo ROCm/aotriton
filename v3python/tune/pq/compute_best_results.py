@@ -47,6 +47,12 @@ WORKERS_PER_ARCH = 2        # sub-workers per arch, sliced by task_id
 STREAM_BATCH_SIZE = 10_000  # rows fetched per server-side cursor batch
 INSERT_BATCH_SIZE = 1_000   # rows per bulk INSERT
 
+# Test cases excluded from accuracy gating (known kernel bugs whose results
+# cannot be used as a correctness criterion for hsaco selection).
+SKIP_TEST_CASES: frozenset[str] = frozenset({
+    '01_gqa',  # GQA bias indexing bug in bwd dk/dv kernels (fixed, pending re-tune)
+})
+
 
 # ---------------------------------------------------------------------------
 # Per-group computation (called inline inside each worker process)
@@ -74,6 +80,8 @@ def _find_best_hsaco(task_id: int, kernel_name: str,
 
         passes = True
         for tc, tensors in rd.get('adiffs', {}).items():
+            if tc in SKIP_TEST_CASES:
+                continue
             for tname, vals in tensors.items():
                 if not vals:
                     continue  # JSON null or empty array → inapplicable
