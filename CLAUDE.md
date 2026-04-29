@@ -8,6 +8,25 @@ This project targets **Python 3.10 or newer** (dev environment is Python 3.12). 
 - Use `list`, `dict`, `tuple` etc. directly as generic types instead of `typing.List`, `typing.Dict`, `typing.Tuple`
 - Do not import `Union`, `Optional`, `List`, `Dict`, `Tuple` from `typing` for type annotations
 
+## Python argparse naming
+
+Use **underscores** as word separators for all `argparse` argument names, not
+dashes. For example:
+
+```python
+# GOOD
+parser.add_argument('--sanity_check_only')
+parser.add_argument('--database_file')
+
+# BAD
+parser.add_argument('--sanity-check-only')
+parser.add_argument('--database-file')
+
+Dashes in argument names create attributes with hyphens that cannot be
+accessed as args.sanity-check-only; Python silently converts them to
+underscores anyway, so be explicit and consistent from the start.
+```
+
 ## PostgreSQL Connection Configuration
 
 **CRITICAL: NEVER ADD ANY DATABASE NAME TO THE CONFIGURATION OF CONNECTION TO PGSQL. WE NEVER USE IT AND YOU MUST USE THE DEFAULT.**
