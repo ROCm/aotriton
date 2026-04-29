@@ -9,9 +9,9 @@ if [ -z "$BASH_VERSION" ]; then
   exit 1
 fi
 
-if [ "$#" -ne 1 ]; then
+if [ "$#" -lt 1 ]; then
   cat >&2 <<EOF
-Usage: $0 <workdir>
+Usage: $0 <workdir> [-c <sql>]
 
 Connect to PostgreSQL database specified by workdir's config.rc using psql.
 
@@ -19,9 +19,11 @@ This script uses the alpine/psql Docker image to connect to the database.
 
 Arguments:
   <workdir>  Project working directory
+  -c <sql>   Run SQL command non-interactively and exit
 
 Example:
   $0 /path/to/workdir
+  $0 /path/to/workdir -c "SELECT * FROM task_queue LIMIT 5;"
 
 Once connected, you can run SQL queries, for example:
   \dt                           -- List all tables
@@ -35,6 +37,8 @@ EOF
 fi
 
 WORKDIR="$1"
+shift
+PSQL_EXTRA_ARGS=("$@")
 
 # Validate workdir
 if [ ! -d "$WORKDIR" ]; then
@@ -81,8 +85,15 @@ echo "Connecting to postgresql://$POSTGRES_USER@$POSTGRES_HOST:$POSTGRES_PORT/$P
 # Run psql via alpine/psql docker image
 # Use --network=host to connect to localhost
 # Pass password via PGPASSWORD environment variable
-exec docker run -it --rm \
+if [ "${#PSQL_EXTRA_ARGS[@]}" -eq 0 ]; then
+  DOCKER_TTY_FLAGS="-it"
+else
+  DOCKER_TTY_FLAGS="-i"
+fi
+
+exec docker run $DOCKER_TTY_FLAGS --rm \
   --network=host \
   -e PGPASSWORD="$POSTGRES_PASSWORD" \
   "$PSQL_IMAGE" \
-  postgresql://"$POSTGRES_USER"@"$POSTGRES_HOST":"$POSTGRES_PORT" #/"$POSTGRES_DB"
+  postgresql://"$POSTGRES_USER"@"$POSTGRES_HOST":"$POSTGRES_PORT" \
+  "${PSQL_EXTRA_ARGS[@]}"
