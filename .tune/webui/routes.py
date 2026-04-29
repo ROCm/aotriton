@@ -600,3 +600,23 @@ def api_get_tuning_progress():
     workdir = current_app.config['WORKDIR']
     tuning_progress = tasks.get_tuning_progress(workdir)
     return render_template('_tuning_progress_table.html', tuning_progress=tuning_progress, last_refresh=None)
+
+
+@bp.route('/debug')
+def debug():
+    """Debug page - inspect task_queue entries and all related rows"""
+    task_id_str = request.args.get('task_id', '').strip()
+    if task_id_str:
+        try:
+            task_id = int(task_id_str)
+        except ValueError:
+            task_id = None
+    else:
+        task_id = None
+
+    debug_data = None
+    if task_id is not None:
+        workdir = current_app.config['WORKDIR']
+        debug_data = tasks.get_debug_task_data(workdir, task_id)
+
+    return render_template('debug.html', task_id=task_id, debug_data=debug_data)

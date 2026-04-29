@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+
+{% block title %}Debug{% endblock %}
+
+{% block content %}
+<h2>Debug – Task Inspector</h2>
+
+<section>
+    <form method="get" action="/debug" style="display: flex; gap: 0.5rem; align-items: center;">
+        <label for="task_id_input">task_queue.id:</label>
+        <input id="task_id_input" type="number" name="task_id"
+               value="{{ task_id if task_id is not none else '' }}"
+               placeholder="e.g. 38712" style="width: 12rem;">
+        <button type="submit">Inspect</button>
+    </form>
+</section>
+
+{% if task_id is not none and debug_data is not none %}
+
+{% if debug_data.error is defined %}
+<section>
+    <p style="color: red;"><strong>Error:</strong> {{ debug_data.error }}</p>
+</section>
+{% else %}
+
+{# ── task_queue ─────────────────────────────────────────────────────────── #}
+<section>
+    <h3>task_queue row</h3>
+    {% if debug_data.task %}
+    {% set t = debug_data.task %}
+    <table>
+        <tbody>
+            <tr><td><strong>id</strong></td><td><code>{{ t.id }}</code></td></tr>
+            <tr><td><strong>arch</strong></td><td><code>{{ t.arch }}</code></td></tr>
+            <tr><td><strong>module</strong></td><td><code>{{ t.module }}</code></td></tr>
+            <tr><td><strong>status</strong></td><td>{{ t.status }}</td></tr>
+            <tr><td><strong>priority</strong></td><td>{{ t.priority }}</td></tr>
+            <tr><td><strong>worker_id</strong></td><td><code>{{ t.worker_id or '—' }}</code></td></tr>
+            <tr><td><strong>node_hostname</strong></td><td><code>{{ t.node_hostname or '—' }}</code></td></tr>
+            <tr><td><strong>retry_count</strong></td><td>{{ t.retry_count }}</td></tr>
+            <tr><td><strong>created_at</strong></td><td>{{ t.created_at }}</td></tr>
+            <tr><td><strong>started_at</strong></td><td>{{ t.started_at or '—' }}</td></tr>
+            <tr><td><strong>completed_at</strong></td><td>{{ t.completed_at or '—' }}</td></tr>
+            <tr><td><strong>error</strong></td><td><pre style="white-space: pre-wrap; margin: 0;">{{ t.error or '—' }}</pre></td></tr>
+            <tr>
+                <td><strong>task_config</strong></td>
+                <td><pre style="white-space: pre-wrap; font-size: 0.85em; margin: 0;">{{ t.task_config | tojson(indent=2) }}</pre></td>
+            </tr>
+        </tbody>
+    </table>
+    {% else %}
+    <p>No task_queue row found for id {{ task_id }}.</p>
+    {% endif %}
+</section>
+
+{# ── tuning_results ──────────────────────────────────────────────────────── #}
+<section>
+    <h3>tuning_results ({{ debug_data.tuning_results | length }} rows)</h3>
+    {% if debug_data.tuning_results %}
+    <table style="width: 100%;">
+        <thead>
+            <tr>
+                <th>id</th>
+                <th>kernel_name</th>
+                <th>hsaco_index</th>
+                <th>result</th>
+                <th>error</th>
+                <th>gpu_id</th>
+                <th>created_at</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in debug_data.tuning_results %}
+            <tr>
+                <td><code>{{ r.id }}</code></td>
+                <td><code>{{ r.kernel_name }}</code></td>
+                <td>{{ r.hsaco_index }}</td>
+                <td>{{ r.result }}</td>
+                <td><pre style="white-space: pre-wrap; font-size: 0.8em; margin: 0;">{{ r.error | tojson if r.error else '—' }}</pre></td>
+                <td>{{ r.gpu_id if r.gpu_id is not none else '—' }}</td>
+                <td>{{ r.created_at }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>No tuning_results rows.</p>
+    {% endif %}
+</section>
+
+{# ── best_tuning_results ─────────────────────────────────────────────────── #}
+<section>
+    <h3>best_tuning_results ({{ debug_data.best_results | length }} rows)</h3>
+    {% if debug_data.best_results %}
+    <table style="width: 100%;">
+        <thead>
+            <tr>
+                <th>kernel_name</th>
+                <th>hsaco_index</th>
+                <th>median_time</th>
+                <th>arch</th>
+                <th>computed_at</th>
+                <th>impl_desc</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in debug_data.best_results %}
+            <tr>
+                <td><code>{{ r.kernel_name }}</code></td>
+                <td>{{ r.hsaco_index }}</td>
+                <td>{{ "%.6f" | format(r.median_time) if r.median_time is not none else '—' }}</td>
+                <td><code>{{ r.arch }}</code></td>
+                <td>{{ r.computed_at }}</td>
+                <td><pre style="white-space: pre-wrap; font-size: 0.8em; margin: 0;">{{ r.impl_desc | tojson(indent=2) if r.impl_desc else '—' }}</pre></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>No best_tuning_results rows.</p>
+    {% endif %}
+</section>
+
+{# ── most_accurate_tuning_results ────────────────────────────────────────── #}
+<section>
+    <h3>most_accurate_tuning_results ({{ debug_data.accurate_results | length }} rows)</h3>
+    {% if debug_data.accurate_results %}
+    <table style="width: 100%;">
+        <thead>
+            <tr>
+                <th>kernel_name</th>
+                <th>test_case</th>
+                <th>tensor_name</th>
+                <th>target_fudge_factor</th>
+                <th>absolute_error</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in debug_data.accurate_results %}
+            <tr>
+                <td><code>{{ r.kernel_name }}</code></td>
+                <td><code>{{ r.test_case }}</code></td>
+                <td><code>{{ r.tensor_name }}</code></td>
+                <td>{{ "%.6f" | format(r.target_fudge_factor) if r.target_fudge_factor is not none else '—' }}</td>
+                <td>{{ "%.6f" | format(r.absolute_error) if r.absolute_error is not none else '—' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>No most_accurate_tuning_results rows.</p>
+    {% endif %}
+</section>
+
+{% endif %}{# end error check #}
+{% endif %}{# end task_id check #}
+{% endblock %}

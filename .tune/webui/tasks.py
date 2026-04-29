@@ -202,6 +202,50 @@ def get_tuning_progress(workdir):
         return []
 
 
+def get_debug_task_data(workdir, task_id: int) -> dict:
+    """Return all rows related to task_id from every relevant table."""
+    try:
+        conn_params = get_db_connection_params(Path(workdir))
+        with psycopg.connect(**conn_params, row_factory=dict_row) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM task_queue WHERE id = %s", (task_id,))
+                task = cur.fetchone()
+
+                cur.execute(
+                    "SELECT id, task_id, kernel_name, hsaco_index, result,"
+                    " error, gpu_id, created_at FROM tuning_results"
+                    " WHERE task_id = %s ORDER BY kernel_name, hsaco_index",
+                    (task_id,),
+                )
+                tuning_results = cur.fetchall()
+
+                cur.execute(
+                    "SELECT * FROM best_tuning_results WHERE task_id = %s"
+                    " ORDER BY kernel_name",
+                    (task_id,),
+                )
+                best_results = cur.fetchall()
+
+                cur.execute(
+                    "SELECT kernel_name, test_case, tensor_name,"
+                    " target_fudge_factor, absolute_error"
+                    " FROM most_accurate_tuning_results WHERE task_id = %s"
+                    " ORDER BY kernel_name, test_case, tensor_name",
+                    (task_id,),
+                )
+                accurate_results = cur.fetchall()
+
+        return {
+            'task': task,
+            'tuning_results': tuning_results,
+            'best_results': best_results,
+            'accurate_results': accurate_results,
+        }
+    except Exception as e:
+        logging.error('Failed to get debug data for task %s: %s', task_id, e)
+        return {'error': str(e)}
+
+
 # Command execution helpers
 
 class CommandBuilder:
