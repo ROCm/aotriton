@@ -243,6 +243,22 @@ def api_recreate_schema():
     return jsonify(result)
 
 
+@bp.route('/api/servers/compute-best-results', methods=['POST'])
+def api_compute_best_results():
+    """Compute best_tuning_results table from raw tuning results"""
+    workdir = current_app.config['WORKDIR']
+    result = tasks.compute_best_results(workdir)
+    return jsonify(result)
+
+
+@bp.route('/api/servers/export-best-results', methods=['POST'])
+def api_export_best_results():
+    """Export best results to centralized SQLite database"""
+    workdir = current_app.config['WORKDIR']
+    result = tasks.export_best_results(workdir)
+    return jsonify(result)
+
+
 @bp.route('/api/servers/status', methods=['GET'])
 def api_server_status():
     """Get server status (returns HTML for HTMX)"""

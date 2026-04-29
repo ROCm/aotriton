@@ -42,6 +42,26 @@
         <strong>Initialize Schema:</strong> Creates tables if they don't exist (safe, preserves data).<br>
         <strong>Recreate Schema:</strong> Drops all tables and recreates from scratch (destructive, clears all tasks and results).
     </p>
+
+    <div style="margin-top: 1rem; border-top: 1px solid #dee2e6; padding-top: 1rem;">
+        <button hx-post="/api/servers/compute-best-results"
+                hx-swap="none"
+                hx-confirm="Compute best_tuning_results from raw tuning results? This may take several minutes."
+                hx-indicator="#compute-spinner">Compute Best Results</button>
+        <span id="compute-spinner" class="htmx-indicator">⏳ Computing...</span>
+
+        <button hx-post="/api/servers/export-best-results"
+                hx-swap="none"
+                hx-confirm="Export best results to centraldb.sqlite3? Existing file will be deleted."
+                hx-indicator="#export-spinner"
+                style="margin-left: 1rem;">Export Best Results</button>
+        <span id="export-spinner" class="htmx-indicator">⏳ Exporting...</span>
+
+        <p style="font-size: 0.9em; color: gray; margin-top: 0.5rem;">
+            <strong>Compute Best Results:</strong> Aggregates raw tuning results into best_tuning_results table.<br>
+            <strong>Export Best Results:</strong> Exports best_tuning_results to <code>scratch/centraldb.sqlite3</code>.
+        </p>
+    </div>
 </section>
 
 <section>

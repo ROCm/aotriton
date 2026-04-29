@@ -423,6 +423,22 @@ class RecreateSchemaCommand(CommandBuilder):
         return self._run(self.RELATIVE, [workdir, '--recreate'], workdir, 'Recreate database schema')
 
 
+class ComputeBestResultsCommand(CommandBuilder):
+    """Compute best_tuning_results table from raw tuning results"""
+    RELATIVE = '.tune/bin/compute_best_results'
+
+    def exec(self, workdir):
+        return self._run(self.RELATIVE, [workdir], workdir, 'Compute best tuning results')
+
+
+class ExportBestResultsCommand(CommandBuilder):
+    """Export best results to centralized SQLite database"""
+    RELATIVE = '.tune/bin/export_best_results'
+
+    def exec(self, workdir):
+        return self._run(self.RELATIVE, [workdir], workdir, 'Export best results to centraldb')
+
+
 class BuildCommand(CommandBuilder):
     """Base class for build operations"""
     RELATIVE = None  # Subclass must define
@@ -495,6 +511,8 @@ _stop_servers = StopServersCommand()
 _restart_servers = RestartServersCommand()
 _init_database = InitDatabaseCommand()
 _recreate_schema = RecreateSchemaCommand()
+_compute_best_results = ComputeBestResultsCommand()
+_export_best_results = ExportBestResultsCommand()
 
 _build_libraries = BuildLibrariesCommand()
 _build_images = BuildImagesCommand()
@@ -574,6 +592,16 @@ def init_database(workdir):
 def recreate_schema(workdir):
     """Recreate database schema (drop all tables first)"""
     return _recreate_schema.exec(workdir)
+
+
+def compute_best_results(workdir):
+    """Compute best_tuning_results table from raw tuning results"""
+    return _compute_best_results.exec(workdir)
+
+
+def export_best_results(workdir):
+    """Export best results to centralized SQLite database"""
+    return _export_best_results.exec(workdir)
 
 
 def get_git_status(workdir):
