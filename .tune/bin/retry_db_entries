@@ -1,0 +1,189 @@
+#!/usr/bin/env python3
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+"""
+Parse a dbreport.txt produced by .tune/bin/sancheck, find the corresponding
+task_queue rows, and reset them to 'pending' so they are re-tuned.
+
+Report lines are identified by the marker "TUNE_V3BIS testrun Item:" and have
+the format:
+
+    <kernel_name> TUNE_V3BIS testrun Item:  arch=<arch> <FlashEntry.as_text()>
+
+Entries are de-duplicated on (arch, FlashEntry) before any DB queries are made
+(multiple kernels for the same task_queue row share the same entry).
+
+Usage:
+    .tune/bin/retry_db_entries <workdir> <dbreport.txt>
+    .tune/bin/retry_db_entries ~/wkdir.v3.5 ~/wkdir.v3.5/scratch/dbreport.txt
+
+The script shows a summary and asks for confirmation before making any changes.
+"""
+
+import argparse
+import sys
+from collections import Counter
+from dataclasses import asdict
+from pathlib import Path
+
+# Allow running from repo root without install
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(_REPO_ROOT))
+
+import psycopg
+from psycopg.rows import dict_row
+
+from v3python.tune.flash.module import FlashEntry
+from v3python.tune.utils import get_db_connection_params
+
+_MARKER = 'TUNE_V3BIS testrun Item: '
+
+
+def parse_report(report_path: Path) -> list[tuple[str, FlashEntry]]:
+    """Return de-duplicated (arch, FlashEntry) pairs from the report."""
+    seen: set[tuple] = set()
+    result: list[tuple[str, FlashEntry]] = []
+    with open(report_path) as f:
+        for line in f:
+            idx = line.find(_MARKER)
+            if idx == -1:
+                continue
+            payload = line[idx + len(_MARKER):].strip()
+            # payload: "arch=gfx1100 dtype='float16';hdim=96;..."
+            arch_part, entry_part = payload.split(' ', 1)
+            arch = arch_part.split('=', 1)[1]
+            entry = FlashEntry.parse_text(entry_part)
+            key = (arch, tuple(asdict(entry).values()))
+            if key not in seen:
+                seen.add(key)
+                result.append((arch, entry))
+    return result
+
+
+def _entry_to_jsonb_filter(entry: FlashEntry) -> tuple[str, list]:
+    """
+    Build a WHERE clause fragment matching task_config->'entry' fields.
+    Returns (sql_fragment, params).
+    """
+    d = asdict(entry)
+    clauses = []
+    params: list = []
+    for field, value in d.items():
+        col = f"task_config->'entry'->>'{field}'"
+        if isinstance(value, bool):
+            clauses.append(f"({col})::boolean = %s")
+        elif isinstance(value, int):
+            clauses.append(f"({col})::integer = %s")
+        elif isinstance(value, float):
+            clauses.append(f"({col})::float = %s")
+        else:
+            clauses.append(f"{col} = %s")
+        params.append(value)
+    return ' AND '.join(clauses), params
+
+
+def fetch_matches(conn, entries: list[tuple[str, FlashEntry]]) -> list[dict]:
+    """Query task_queue for all matching rows, return list of row dicts."""
+    rows: list[dict] = []
+    with conn.cursor() as cur:
+        for arch, entry in entries:
+            entry_sql, entry_params = _entry_to_jsonb_filter(entry)
+            sql = (
+                f"SELECT id, arch, status FROM task_queue "
+                f"WHERE task_config->>'arch' = %s AND {entry_sql}"
+            )
+            cur.execute(sql, [arch] + entry_params)
+            rows.extend(cur.fetchall())
+    return rows
+
+
+def print_summary(entries: list[tuple[str, FlashEntry]],
+                  matches: list[dict]) -> None:
+    by_arch: Counter = Counter()
+    by_status: Counter = Counter()
+    for r in matches:
+        by_arch[r['arch']] += 1
+        by_status[r['status']] += 1
+
+    print(f'\nReport entries (de-duplicated): {len(entries)}')
+    print(f'Matching task_queue rows:        {len(matches)}')
+
+    if not matches:
+        return
+
+    print('\nBy arch:')
+    for arch, n in sorted(by_arch.items()):
+        print(f'  {arch}: {n}')
+
+    print('\nBy current status:')
+    for status, n in sorted(by_status.items()):
+        print(f'  {status}: {n}')
+
+
+def reset_to_pending(conn, row_ids: list[int]) -> int:
+    """Reset the given task_queue ids to pending. Returns affected row count."""
+    if not row_ids:
+        return 0
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE task_queue
+               SET status       = 'pending',
+                   worker_id    = NULL,
+                   node_hostname= NULL,
+                   started_at   = NULL,
+                   completed_at = NULL,
+                   error        = NULL
+             WHERE id = ANY(%s)
+            """,
+            (row_ids,),
+        )
+        return cur.rowcount
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('workdir', help='Project workdir containing config.rc')
+    parser.add_argument('report', help='dbreport.txt produced by .tune/bin/sancheck')
+    args = parser.parse_args()
+
+    workdir = Path(args.workdir)
+    report_path = Path(args.report)
+
+    if not workdir.is_dir():
+        sys.exit(f'Error: workdir does not exist: {workdir}')
+    if not report_path.is_file():
+        sys.exit(f'Error: report file not found: {report_path}')
+
+    print(f'Parsing {report_path} …')
+    entries = parse_report(report_path)
+    if not entries:
+        print('No TUNE_V3BIS entries found in report. Nothing to do.')
+        return
+
+    conn_params = get_db_connection_params(workdir)
+    with psycopg.connect(**conn_params, row_factory=dict_row) as conn:
+        print('Querying task_queue …')
+        matches = fetch_matches(conn, entries)
+        print_summary(entries, matches)
+
+        if not matches:
+            print('\nNo matching rows found. Nothing to do.')
+            return
+
+        print()
+        answer = input('Reset these rows to pending? [y/N] ').strip().lower()
+        if answer != 'y':
+            print('Aborted.')
+            return
+
+        row_ids = [r['id'] for r in matches]
+        affected = reset_to_pending(conn, row_ids)
+        conn.commit()
+        print(f'Done: {affected} rows reset to pending.')
+
+
+if __name__ == '__main__':
+    main()
