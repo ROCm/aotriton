@@ -447,6 +447,22 @@ class RecreateMaterializedViewCommand(CommandBuilder):
         return self._run(self.RELATIVE, [workdir], workdir, 'Recreate materialized view')
 
 
+class UpdateMaterializedViewCommand(CommandBuilder):
+    """Incremental upsert of most_accurate_tuning_results for cached task_ids"""
+    RELATIVE = '.tune/bin/update_materialized_view'
+
+    def exec(self, workdir):
+        return self._run(self.RELATIVE, [workdir], workdir, 'Update materialized view (incremental)')
+
+
+class BakeLutIncrementalCommand(CommandBuilder):
+    """Bake LUT incremental: update MV for retried tasks, then compute/export/sancheck"""
+    RELATIVE = '.tune/bin/bake_lut'
+
+    def exec(self, workdir):
+        return self._run(self.RELATIVE, [workdir, '--incremental'], workdir, 'Bake LUT (incremental)')
+
+
 class SancheckCommand(CommandBuilder):
     """Run LUT sanity check against the exported centralized database"""
     RELATIVE = '.tune/bin/sancheck'
@@ -538,8 +554,10 @@ _recreate_schema = RecreateSchemaCommand()
 _compute_best_results = ComputeBestResultsCommand()
 _export_best_results = ExportBestResultsCommand()
 _recreate_materialized_view = RecreateMaterializedViewCommand()
+_update_materialized_view = UpdateMaterializedViewCommand()
 _sancheck = SancheckCommand()
 _bake_lut = BakeLutCommand()
+_bake_lut_incremental = BakeLutIncrementalCommand()
 
 _build_libraries = BuildLibrariesCommand()
 _build_images = BuildImagesCommand()
@@ -644,6 +662,14 @@ def sancheck(workdir):
 def bake_lut(workdir):
     """Bake LUT: convert raw PG tuning results into the aotriton SQLite DB"""
     return _bake_lut.exec(workdir)
+
+
+def update_materialized_view(workdir):
+    return _update_materialized_view.exec(workdir)
+
+
+def bake_lut_incremental(workdir):
+    return _bake_lut_incremental.exec(workdir)
 
 
 def get_git_status(workdir):

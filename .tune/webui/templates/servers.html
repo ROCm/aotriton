@@ -51,16 +51,32 @@
     <button hx-post="/api/servers/bake-lut"
             hx-swap="none"
             hx-confirm="Bake LUT: run all four steps in sequence (recreate materialized view, compute best results, export, sancheck)? This may take several minutes."
-            hx-indicator="#pipeline-spinner">Bake LUT</button>
+            hx-indicator="#pipeline-spinner"
+            style="background-color: #dc3545; color: white;">Bake LUT</button>
     <span id="pipeline-spinner" class="htmx-indicator">&#x23F3; Running...</span>
+
+    <button hx-post="/api/servers/bake-lut-incremental"
+            hx-swap="none"
+            hx-confirm="Bake LUT (incremental): update materialized view for retried tasks, then compute/export/sancheck?"
+            hx-indicator="#pipeline-incremental-spinner"
+            style="margin-left: 1rem;">Bake LUT (Incremental)</button>
+    <span id="pipeline-incremental-spinner" class="htmx-indicator">&#x23F3; Running...</span>
 
     <p style="font-size: 0.9em; color: gray; margin-top: 1rem; margin-bottom: 0.25rem;">Individual steps:</p>
 
     <button hx-post="/api/servers/recreate-materialized-view"
             hx-swap="none"
             hx-confirm="Recreate most_accurate_tuning_results (DROP + CREATE)? The view will be unavailable briefly."
-            hx-indicator="#refresh-mv-spinner">Recreate Materialized View</button>
+            hx-indicator="#refresh-mv-spinner"
+            style="background-color: #dc3545; color: white;">Recreate Materialized View</button>
     <span id="refresh-mv-spinner" class="htmx-indicator">&#x23F3; Recreating...</span>
+
+    <button hx-post="/api/servers/update-materialized-view"
+            hx-swap="none"
+            hx-confirm="Update materialized view incrementally for task_ids from scratch/retry_task_ids.txt?"
+            hx-indicator="#update-mv-spinner"
+            style="margin-left: 1rem;">Update Materialized View</button>
+    <span id="update-mv-spinner" class="htmx-indicator">&#x23F3; Updating...</span>
 
     <button hx-post="/api/servers/compute-best-results"
             hx-swap="none"
@@ -85,6 +101,7 @@
 
     <p style="font-size: 0.9em; color: gray; margin-top: 0.5rem;">
         <strong>Recreate Materialized View:</strong> DROP + CREATE <code>most_accurate_tuning_results</code> from scratch — faster than <code>REFRESH CONCURRENTLY</code>.<br>
+        <strong>Update Materialized View:</strong> Incrementally upserts rows for task_ids cached in <code>scratch/retry_task_ids.txt</code> by <code>retry_db_entries</code>.<br>
         <strong>Compute Best Results:</strong> Aggregates raw tuning results into best_tuning_results table.<br>
         <strong>Export Best Results:</strong> Exports best_tuning_results to <code>scratch/centraldb.sqlite3</code>.<br>
         <strong>Sancheck:</strong> Runs LUT sanity check against <code>scratch/centraldb.sqlite3</code> without triggering code generation.

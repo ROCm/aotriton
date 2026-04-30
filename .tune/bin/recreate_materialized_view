@@ -52,7 +52,7 @@ if [ ! -f "$SQL_FILE" ]; then
     exit 1
 fi
 
-echo "Recreating materialized view most_accurate_tuning_results..."
+echo "Recreating most_accurate_tuning_results table..."
 echo "Host: $POSTGRES_HOST"
 echo "Port: $POSTGRES_PORT"
 echo "User: $POSTGRES_USER"
@@ -63,7 +63,10 @@ docker run --rm \
     -v "$REPO_ROOT:/repo:ro" \
     "$PSQL_IMAGE" \
     postgresql://"$POSTGRES_USER"@"$POSTGRES_HOST":"$POSTGRES_PORT" \
-    -c "SET max_parallel_workers_per_gather = 8; SET max_parallel_workers = 16; DROP MATERIALIZED VIEW IF EXISTS most_accurate_tuning_results;" \
+    -c "SET max_parallel_workers_per_gather = 8; SET max_parallel_workers = 16; DROP TABLE IF EXISTS most_accurate_tuning_results;" \
     -f "/repo/v3python/tune/pq/materialized_views.sql"
 
-echo "Materialized view recreated successfully"
+echo "Table created. Populating most_accurate_tuning_results (full)..."
+PYTHONPATH="$REPO_ROOT" python3 -m v3python.tune.pq.populate_most_accurate "$WORKDIR"
+
+echo "most_accurate_tuning_results recreated successfully"

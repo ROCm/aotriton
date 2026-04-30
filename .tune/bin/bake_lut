@@ -5,22 +5,30 @@
 # Bake LUT: convert raw PostgreSQL tuning results into the SQLite database
 # used by the aotriton build process, then sanity-check the result.
 #
-#   1. Refresh PostgreSQL materialized views
+#   1. Populate most_accurate_tuning_results (full or incremental)
 #   2. Compute best_tuning_results from raw tuning results
 #   3. Export best results to centraldb.sqlite3
 #   4. Run LUT sanity check against the exported database
 #
 # Usage:
 #   bake_lut <workdir>
+#   bake_lut <workdir> --incremental
+#   bake_lut --incremental <workdir>
 
 set -euo pipefail
 
-if [ "$#" -lt 1 ]; then
-    echo "Usage: $0 <workdir>" >&2
+INCREMENTAL=0
+WORKDIR=""
+for arg in "$@"; do
+    if [ "$arg" = "--incremental" ]; then INCREMENTAL=1
+    else WORKDIR="$arg"
+    fi
+done
+
+if [ -z "$WORKDIR" ]; then
+    echo "Usage: $0 <workdir> [--incremental]" >&2
     exit 1
 fi
-
-WORKDIR="$1"
 
 if [ ! -d "$WORKDIR" ]; then
     echo "Error: workdir does not exist: $WORKDIR" >&2
@@ -34,8 +42,13 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-echo "=== Step 1/4: Refresh materialized views ==="
-"$SCRIPT_DIR/recreate_materialized_view" "$WORKDIR"
+if [ "$INCREMENTAL" -eq 1 ]; then
+    echo "=== Step 1/4: Update materialized view (incremental) ==="
+    "$SCRIPT_DIR/update_materialized_view" "$WORKDIR"
+else
+    echo "=== Step 1/4: Refresh materialized views ==="
+    "$SCRIPT_DIR/recreate_materialized_view" "$WORKDIR"
+fi
 
 echo ""
 echo "=== Step 2/4: Compute best results ==="
@@ -50,4 +63,8 @@ echo "=== Step 4/4: Sanity check ==="
 "$SCRIPT_DIR/sancheck" "$WORKDIR"
 
 echo ""
-echo "=== Bake LUT complete ==="
+if [ "$INCREMENTAL" -eq 1 ]; then
+    echo "=== Bake LUT (incremental) complete ==="
+else
+    echo "=== Bake LUT complete ==="
+fi

@@ -189,6 +189,10 @@ def main() -> None:
         conn.commit()
         print(f'Done: {affected} rows reset to pending.')
 
+        cache_path = workdir / 'scratch' / 'retry_task_ids.txt'
+        cache_path.write_text('\n'.join(str(i) for i in row_ids) + '\n')
+        print(f'Task IDs cached for bake_lut --incremental: {cache_path}')
+
 
 if __name__ == '__main__':
     main()

@@ -283,6 +283,20 @@ def api_bake_lut():
     return jsonify(result)
 
 
+@bp.route('/api/servers/update-materialized-view', methods=['POST'])
+def api_update_materialized_view():
+    workdir = current_app.config['WORKDIR']
+    result = tasks.update_materialized_view(workdir)
+    return jsonify(result)
+
+
+@bp.route('/api/servers/bake-lut-incremental', methods=['POST'])
+def api_bake_lut_incremental():
+    workdir = current_app.config['WORKDIR']
+    result = tasks.bake_lut_incremental(workdir)
+    return jsonify(result)
+
+
 @bp.route('/api/servers/status', methods=['GET'])
 def api_server_status():
     """Get server status (returns HTML for HTMX)"""
