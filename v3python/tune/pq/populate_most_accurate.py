@@ -74,30 +74,26 @@ def populate(conn, task_ids: list[int] | None = None) -> int:
     Returns:
         Number of rows produced (rowcount after CTAS or INSERT).
     """
-    # Step 1: set parallel GUCs at session level outside any transaction so
-    # the planner sees them unconditionally.
-    conn.autocommit = True
-    with conn.cursor() as cur:
-        cur.execute('SET max_parallel_workers_per_gather = 8')
-        cur.execute('SET max_parallel_workers = 16')
-        # Force the planner to choose parallel — without these, the planner
-        # may decide serial is cheaper due to poor JSONB lateral cardinality
-        # estimates or a table size below min_parallel_table_scan_size.
-        cur.execute('SET parallel_setup_cost = 0')
-        cur.execute('SET min_parallel_table_scan_size = 0')
-        # Avoid disk sort spills: EXPLAIN ANALYZE showed each of 8 workers
-        # spilling ~26MB to disk for the GROUP BY incremental sort.
-        cur.execute("SET work_mem = '64MB'")
-        # Skip JIT compilation — for a single large batch INSERT it adds
-        # ~1900ms of overhead (inlining + optimization + emission) with no
-        # benefit since the query runs only once per populate call.
-        cur.execute('SET jit = off')
-
     if task_ids is None:
         # Full mode: DROP + CREATE TABLE AS SELECT.
         # CTAS is parallel-safe; INSERT...SELECT is not (PostgreSQL serializes
         # it because INSERT is parallel-restricted).
+        # Set GUCs at session level outside any transaction so the planner
+        # sees them unconditionally.
         conn.autocommit = True
+        with conn.cursor() as cur:
+            cur.execute('SET max_parallel_workers_per_gather = 8')
+            cur.execute('SET max_parallel_workers = 16')
+            # Force parallel plan — without these the planner may decide
+            # serial is cheaper due to poor JSONB lateral cardinality estimates.
+            cur.execute('SET parallel_setup_cost = 0')
+            cur.execute('SET min_parallel_table_scan_size = 0')
+            # Avoid disk sort spills: EXPLAIN ANALYZE showed each of 8 workers
+            # spilling ~26MB to disk for the GROUP BY incremental sort.
+            cur.execute("SET work_mem = '64MB'")
+            # Skip JIT — for a single large CTAS it adds ~1900ms overhead
+            # (inlining + optimization + emission) with no amortization benefit.
+            cur.execute('SET jit = off')
         with conn.cursor() as cur:
             cur.execute('DROP TABLE IF EXISTS most_accurate_tuning_results')
             cur.execute('DROP INDEX IF EXISTS idx_most_accurate_tuning_results_lookup')
