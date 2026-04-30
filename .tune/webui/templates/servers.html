@@ -50,14 +50,14 @@
 
     <button hx-post="/api/servers/bake-lut"
             hx-swap="none"
-            hx-confirm="Bake LUT: run all four steps in sequence (rebuild accuracy table, compute best results, export, sancheck)? This may take several minutes."
+            hx-confirm="Bake LUT: run all five steps in sequence (rebuild accuracy table, compute best results, export, sancheck, decompose)? This may take several minutes."
             hx-indicator="#pipeline-spinner"
             style="background-color: #dc3545; color: white;">Bake LUT</button>
     <span id="pipeline-spinner" class="htmx-indicator">&#x23F3; Running...</span>
 
     <button hx-post="/api/servers/bake-lut-incremental"
             hx-swap="none"
-            hx-confirm="Bake LUT (incremental): update accuracy table for retried tasks, then compute/export/sancheck?"
+            hx-confirm="Bake LUT (incremental): update accuracy table for retried tasks, then compute/export/sancheck/decompose?"
             hx-indicator="#pipeline-incremental-spinner"
             style="margin-left: 1rem;">Bake LUT (Incremental)</button>
     <span id="pipeline-incremental-spinner" class="htmx-indicator">&#x23F3; Running...</span>
@@ -95,6 +95,12 @@
                 hx-confirm="Run LUT sanity check against scratch/centraldb.sqlite3? Requires export to have been run first."
                 hx-indicator="#sancheck-spinner">Sancheck</button>
         <span id="sancheck-spinner" class="htmx-indicator">&#x23F3; Checking...</span>
+
+        <button hx-post="/api/servers/decomposedb"
+                hx-swap="none"
+                hx-confirm="Decompose scratch/centraldb.sqlite3 into installed/database/<arch>/<family>/<kernel>.sqlite3.tar.xz?"
+                hx-indicator="#decomposedb-spinner">Decompose DB</button>
+        <span id="decomposedb-spinner" class="htmx-indicator">&#x23F3; Decomposing...</span>
     </div>
 
     <p style="font-size: 0.9em; color: gray; margin-top: 0.5rem;">
@@ -102,7 +108,8 @@
         <strong>Update Accuracy Table:</strong> Incrementally upserts rows for task_ids cached in <code>scratch/retry_task_ids.txt</code> by <code>retry_db_entries</code>.<br>
         <strong>Compute Best Results:</strong> Aggregates raw tuning results into best_tuning_results table.<br>
         <strong>Export Best Results:</strong> Exports best_tuning_results to <code>scratch/centraldb.sqlite3</code>.<br>
-        <strong>Sancheck:</strong> Runs LUT sanity check against <code>scratch/centraldb.sqlite3</code> without triggering code generation.
+        <strong>Sancheck:</strong> Runs LUT sanity check against <code>scratch/centraldb.sqlite3</code> without triggering code generation.<br>
+        <strong>Decompose DB:</strong> Partitions <code>scratch/centraldb.sqlite3</code> into <code>installed/database/amd/&lt;arch&gt;/&lt;family&gt;/&lt;kernel&gt;.sqlite3.tar.xz</code>.
     </p>
 </section>
 

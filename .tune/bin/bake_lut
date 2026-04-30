@@ -9,6 +9,7 @@
 #   2. Compute best_tuning_results from raw tuning results
 #   3. Export best results to centraldb.sqlite3
 #   4. Run LUT sanity check against the exported database
+#   5. Decompose centraldb.sqlite3 into per-arch/kernel shards
 #
 # Usage:
 #   bake_lut <workdir>
@@ -43,24 +44,28 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if [ "$INCREMENTAL" -eq 1 ]; then
-    echo "=== Step 1/4: Update accuracy table (incremental) ==="
+    echo "=== Step 1/5: Update accuracy table (incremental) ==="
     "$SCRIPT_DIR/update_materialized_view" "$WORKDIR"
 else
-    echo "=== Step 1/4: Rebuild accuracy table ==="
+    echo "=== Step 1/5: Rebuild accuracy table ==="
     "$SCRIPT_DIR/recreate_materialized_view" "$WORKDIR"
 fi
 
 echo ""
-echo "=== Step 2/4: Compute best results ==="
+echo "=== Step 2/5: Compute best results ==="
 "$SCRIPT_DIR/compute_best_results" "$WORKDIR"
 
 echo ""
-echo "=== Step 3/4: Export best results ==="
+echo "=== Step 3/5: Export best results ==="
 "$SCRIPT_DIR/export_best_results" "$WORKDIR"
 
 echo ""
-echo "=== Step 4/4: Sanity check ==="
+echo "=== Step 4/5: Sanity check ==="
 "$SCRIPT_DIR/sancheck" "$WORKDIR"
+
+echo ""
+echo "=== Step 5/5: Decompose database ==="
+"$SCRIPT_DIR/decomposedb" "$WORKDIR"
 
 echo ""
 if [ "$INCREMENTAL" -eq 1 ]; then

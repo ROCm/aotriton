@@ -1,0 +1,61 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# Decompose the centralized SQLite database into per-arch/kernel shards.
+#
+#   1. Generate scratch/decompose_db.sh from scratch/centraldb.sqlite3
+#      via v3python.database_decompose
+#   2. Execute the generated script to produce
+#      <workdir>/installed/database/amd/<arch>/<family>/<kernel>.sqlite3.tar.xz
+#
+# Usage:
+#   decomposedb <workdir>
+
+set -euo pipefail
+
+if [ "$#" -lt 1 ]; then
+    echo "Usage: $0 <workdir>" >&2
+    exit 1
+fi
+
+WORKDIR="$1"
+
+if [ ! -d "$WORKDIR" ]; then
+    echo "Error: workdir does not exist: $WORKDIR" >&2
+    exit 1
+fi
+
+CENTRALDB="$WORKDIR/scratch/centraldb.sqlite3"
+
+if [ ! -f "$CENTRALDB" ]; then
+    echo "Error: centraldb.sqlite3 not found: $CENTRALDB" >&2
+    echo "Run export_best_results first." >&2
+    exit 1
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+SCRIPT_OUTPUT="$WORKDIR/scratch/decompose_db.sh"
+DECOMPOSE_OUTPUT="$WORKDIR/installed/database"
+
+mkdir -p "$WORKDIR/scratch"
+mkdir -p "$DECOMPOSE_OUTPUT"
+
+echo "Step 1/2: Generating decompose script..."
+echo "  Input:  $CENTRALDB"
+echo "  Script: $SCRIPT_OUTPUT"
+echo "  Output: $DECOMPOSE_OUTPUT"
+
+PYTHONPATH="$REPO_ROOT" python3 -m v3python.database_decompose \
+    --database_file "$CENTRALDB" \
+    --script_output "$SCRIPT_OUTPUT" \
+    --decompose_output "$DECOMPOSE_OUTPUT"
+
+echo ""
+echo "Step 2/2: Running decompose script..."
+bash "$SCRIPT_OUTPUT"
+
+echo ""
+echo "Decompose complete: $DECOMPOSE_OUTPUT"

@@ -471,6 +471,14 @@ class SancheckCommand(CommandBuilder):
         return self._run(self.RELATIVE, [workdir], workdir, 'LUT sanity check')
 
 
+class DecomposeDbCommand(CommandBuilder):
+    """Decompose centraldb.sqlite3 into per-arch/kernel shards under <workdir>/installed/database/"""
+    RELATIVE = '.tune/bin/decomposedb'
+
+    def exec(self, workdir):
+        return self._run(self.RELATIVE, [workdir], workdir, 'Decompose database')
+
+
 class BakeLutCommand(CommandBuilder):
     """Bake LUT: convert raw PG tuning results into the aotriton SQLite DB"""
     RELATIVE = '.tune/bin/bake_lut'
@@ -556,6 +564,7 @@ _export_best_results = ExportBestResultsCommand()
 _recreate_materialized_view = RecreateMaterializedViewCommand()
 _update_materialized_view = UpdateMaterializedViewCommand()
 _sancheck = SancheckCommand()
+_decomposedb = DecomposeDbCommand()
 _bake_lut = BakeLutCommand()
 _bake_lut_incremental = BakeLutIncrementalCommand()
 
@@ -670,6 +679,11 @@ def update_materialized_view(workdir):
 
 def bake_lut_incremental(workdir):
     return _bake_lut_incremental.exec(workdir)
+
+
+def decomposedb(workdir):
+    """Decompose centraldb.sqlite3 into per-arch/kernel shards"""
+    return _decomposedb.exec(workdir)
 
 
 def get_git_status(workdir):

@@ -297,6 +297,14 @@ def api_bake_lut_incremental():
     return jsonify(result)
 
 
+@bp.route('/api/servers/decomposedb', methods=['POST'])
+def api_decomposedb():
+    """Decompose centraldb.sqlite3 into per-arch/kernel shards"""
+    workdir = current_app.config['WORKDIR']
+    result = tasks.decomposedb(workdir)
+    return jsonify(result)
+
+
 @bp.route('/api/servers/status', methods=['GET'])
 def api_server_status():
     """Get server status (returns HTML for HTMX)"""
