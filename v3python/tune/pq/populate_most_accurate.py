@@ -87,7 +87,7 @@ def populate(conn, task_ids: list[int] | None = None) -> int:
         cur.execute('SET min_parallel_table_scan_size = 0')
         # Avoid disk sort spills: EXPLAIN ANALYZE showed each of 8 workers
         # spilling ~26MB to disk for the GROUP BY incremental sort.
-        cur.execute('SET work_mem = %s', ('64MB',))
+        cur.execute("SET work_mem = '64MB'")
         # Skip JIT compilation — for a single large batch INSERT it adds
         # ~1900ms of overhead (inlining + optimization + emission) with no
         # benefit since the query runs only once per populate call.
