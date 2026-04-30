@@ -3,7 +3,12 @@
 # SPDX-License-Identifier: MIT
 
 # Sync workdir to one host (main files + architecture-specific files)
-# Usage: sync_workdir.sh <workdir> <hostname>
+# Usage: sync_workdir.sh <workdir> <hostname> [--remote_workdir <path>]
+#
+# --remote_workdir <path>
+#   Override the remote workdir instead of looking it up from workers.db.
+#   When set, arch is treated as ALL (sync all installed/ subdirs).
+#   Use this for hosts not registered as GPU workers (e.g. build nodes).
 
 set -e
 
@@ -15,22 +20,37 @@ TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 WORKDIR="$1"
 HOSTNAME="$2"
+shift 2
+
+REMOTE_WORKDIR_OVERRIDE=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --remote_workdir) REMOTE_WORKDIR_OVERRIDE="$2"; shift 2 ;;
+    *) echo "Unknown argument: $1" >&2; exit 1 ;;
+  esac
+done
 
 if [ -z "$WORKDIR" ] || [ -z "$HOSTNAME" ]; then
-  echo "Usage: $0 <workdir> <hostname>" >&2
+  echo "Usage: $0 <workdir> <hostname> [--remote_workdir <path>]" >&2
   echo "" >&2
   echo "  Rsync workdir and arch-specific installed/ files to <hostname>." >&2
   echo "  Excludes build/, run/, scratch/, secrets/. Uses --delete on installed/ and aotriton.src/." >&2
+  echo "" >&2
+  echo "  --remote_workdir <path>  Override remote workdir (skips workers.db lookup, syncs all installed/)." >&2
   exit 1
 fi
 
 load_config "$WORKDIR"
 
-# Get arch and workdir_override for this hostname
-WORKER_INFO=$(get_worker_by_hostname "$WORKDIR" "$HOSTNAME")
-IFS='|' read -r arch workdir_override <<< "$WORKER_INFO"
-
-WORKER_WORKDIR="${workdir_override:-$DEFAULT_WORKDIR}"
+if [ -n "$REMOTE_WORKDIR_OVERRIDE" ]; then
+  arch="ALL"
+  WORKER_WORKDIR="$REMOTE_WORKDIR_OVERRIDE"
+else
+  # Get arch and workdir_override for this hostname
+  WORKER_INFO=$(get_worker_by_hostname "$WORKDIR" "$HOSTNAME")
+  IFS='|' read -r arch workdir_override <<< "$WORKER_INFO"
+  WORKER_WORKDIR="${workdir_override:-$DEFAULT_WORKDIR}"
+fi
 
 # Sync main directories (exclude build, installed, run, scratch, secrets, aotriton.src)
 # --mkpath creates $WORKER_WORKDIR if it doesn't exist

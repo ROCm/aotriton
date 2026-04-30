@@ -1,0 +1,92 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# Build Testing Version of AOTriton Libraries (run INSIDE container)
+#
+# Builds all tuned architectures detected from <workdir>/installed/database/amd/
+# in one cmake pass and installs to <workdir>/installed/test/.
+#
+# This script must be run inside the CELERY_WORKER_IMAGE container.
+# Use .tune/bin/remotebld --test to launch the container automatically.
+#
+# Usage (inside container, workdir is typically /wkdir):
+#   testbld <workdir>
+
+set -euo pipefail
+
+if [ "$#" -ne 1 ]; then
+  cat >&2 <<EOF
+Usage: $0 <workdir>
+
+Build AOTriton testing libraries for all tuned architectures.
+Must be run inside the CELERY_WORKER_IMAGE container.
+
+Arguments:
+  <workdir>  Project working directory (typically /wkdir inside container)
+
+Output:
+  - AOTriton build:   <workdir>/build/test/
+  - AOTriton install: <workdir>/installed/test/
+EOF
+  exit 1
+fi
+
+WORKDIR="$1"
+
+if [ ! -d "$WORKDIR" ]; then
+  echo "Error: workdir does not exist: $WORKDIR" >&2
+  exit 1
+fi
+
+DATABASE_ROOT="$WORKDIR/installed/database"
+
+if [ ! -d "$DATABASE_ROOT/amd" ]; then
+  echo "Error: no sharded database found at $DATABASE_ROOT/amd" >&2
+  echo "Run .tune/bin/decomposedb first." >&2
+  exit 1
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+AOTRITON_ROOT="$(realpath "$SCRIPT_DIR/../..")"
+
+# Detect all tuned architectures from the sharded database directory
+mapfile -t ARCH_LIST < <(ls -1 "$DATABASE_ROOT/amd/")
+if [ "${#ARCH_LIST[@]}" -eq 0 ]; then
+  echo "Error: no architectures found under $DATABASE_ROOT/amd/" >&2
+  exit 1
+fi
+# cmake expects semicolon-separated arch list
+ARCHES=$(IFS=';'; echo "${ARCH_LIST[*]}")
+echo "Detected architectures: $ARCHES"
+
+BUILD_DIR="$WORKDIR/build/test"
+INSTALL_DIR="$WORKDIR/installed/test"
+
+mkdir -p "$BUILD_DIR" "$INSTALL_DIR"
+
+# Use pre-built Triton wheel from scratch/ if available, otherwise system Triton
+TRITON_OPTION="-DAOTRITON_INHERIT_SYSTEM_SITE_TRITON=ON"
+TRITON_WHEEL=$(ls "$WORKDIR/scratch/triton/"*.whl 2>/dev/null | head -1 || true)
+if [ -n "$TRITON_WHEEL" ]; then
+  echo "Using Triton wheel: $TRITON_WHEEL"
+  TRITON_OPTION="-DAOTRITON_USE_LOCAL_TRITON_WHEEL=$TRITON_WHEEL"
+else
+  echo "No Triton wheel found in scratch/triton/, using system Triton."
+fi
+
+cd "$BUILD_DIR"
+
+cmake "$AOTRITON_ROOT" \
+    -DCMAKE_INSTALL_PREFIX="$INSTALL_DIR" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DAOTRITON_TARGET_ARCH="$ARCHES" \
+    -DAOTRITON_NAME_SUFFIX=test \
+    -DAOTRITON_TUNING_DATABASE_ROOT="$DATABASE_ROOT" \
+    "$TRITON_OPTION" \
+    -G Ninja
+
+ninja install/strip
+
+echo ""
+echo "Test build complete: $INSTALL_DIR"

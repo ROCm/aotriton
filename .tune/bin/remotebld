@@ -1,0 +1,143 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# Remote build orchestration: build tuning or testing version of AOTriton.
+#
+# Reads build node config from <workdir>/workers.db (config table):
+#   buildnode::enable          1 = remote build enabled, 0 = local
+#   buildnode::hostname        SSH hostname of the build node
+#   buildnode::workdir_override  Remote workdir (empty = same as local WORKDIR)
+#
+# When build node is enabled, workdir is synced to the remote node and the
+# build runs there via SSH+docker (tsp-tracked to survive SSH disconnects).
+# When disabled, builds run locally.
+#
+#   --tuning (default)  Build tuning version (calls libbld).
+#   --test              Build testing version (docker run testbld inside
+#                       CELERY_WORKER_IMAGE container).
+#
+# Usage:
+#   remotebld <workdir>           # tuning build (default)
+#   remotebld <workdir> --test    # testing build
+#   remotebld --test <workdir>    # same, order-independent
+
+set -euo pipefail
+
+MODE="tuning"
+WORKDIR=""
+
+for arg in "$@"; do
+  case "$arg" in
+    --test)   MODE="test" ;;
+    --tuning) MODE="tuning" ;;
+    *)        WORKDIR="$arg" ;;
+  esac
+done
+
+if [ -z "$WORKDIR" ]; then
+  cat >&2 <<EOF
+Usage: $0 <workdir> [--tuning|--test]
+
+  --tuning (default)  Build tuning version of AOTriton (calls libbld).
+  --test              Build testing version of AOTriton (calls testbld
+                      inside CELERY_WORKER_IMAGE container).
+
+Build node config (workers.db config table):
+  buildnode::enable    1 = remote build; 0 = local.
+  buildnode::hostname  SSH hostname of the build node.
+  buildnode::workdir_override  Remote workdir (empty = same as local).
+EOF
+  exit 1
+fi
+
+if [ ! -d "$WORKDIR" ]; then
+  echo "Error: workdir does not exist: $WORKDIR" >&2
+  exit 1
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+. "$TUNE_ROOT/lib/config_load.sh"
+
+load_config "$WORKDIR"
+
+ABSWORKDIR=$(realpath "$WORKDIR")
+DB="$ABSWORKDIR/workers.db"
+
+# Read build node config from workers.db
+_cfg() {
+  sqlite3 "$DB" "SELECT COALESCE(value,'') FROM config WHERE key='$1'" 2>/dev/null || true
+}
+
+BUILD_NODE_ENABLE="$(_cfg buildnode::enable)"
+BUILD_NODE_HOST="$(_cfg buildnode::hostname)"
+BUILD_NODE_WORKDIR="$(_cfg buildnode::workdir_override)"
+
+USE_REMOTE=0
+if [ "$BUILD_NODE_ENABLE" = "1" ] && [ -n "$BUILD_NODE_HOST" ]; then
+  USE_REMOTE=1
+fi
+
+# Determine the remote workdir
+REMOTE_WORKDIR="${BUILD_NODE_WORKDIR:-$ABSWORKDIR}"
+
+if [ "$USE_REMOTE" -eq 1 ]; then
+  echo "Build node: $BUILD_NODE_HOST (remote workdir: $REMOTE_WORKDIR)"
+
+  # Sync workdir to the build node
+  echo "Syncing workdir to $BUILD_NODE_HOST..."
+  SYNC_ARGS=("$ABSWORKDIR" "$BUILD_NODE_HOST")
+  if [ -n "$BUILD_NODE_WORKDIR" ]; then
+    SYNC_ARGS+=(--remote_workdir "$BUILD_NODE_WORKDIR")
+  fi
+  "$TUNE_ROOT/single/sync_workdir.sh" "${SYNC_ARGS[@]}"
+
+  if [ "$MODE" = "test" ]; then
+    echo "Running testbld on $BUILD_NODE_HOST via tsp (image: $CELERY_WORKER_IMAGE)"
+    # Use tsp -t to follow progress and survive SSH reconnects
+    # shellcheck disable=SC2029
+    ssh "$BUILD_NODE_HOST" bash -s "$REMOTE_WORKDIR" "$CELERY_WORKER_IMAGE" <<'EOF'
+REMOTE_WORKDIR="$1"
+CELERY_WORKER_IMAGE="$2"
+
+jobid=$(tsp docker run --rm \
+  --user "$(id -u):$(id -g)" \
+  --mount "type=bind,source=$REMOTE_WORKDIR,target=/wkdir" \
+  "$CELERY_WORKER_IMAGE" \
+  bash /wkdir/aotriton.src/.tune/bin/testbld /wkdir)
+echo "tsp job ID: $jobid"
+tsp -t $jobid
+EOF
+  else
+    echo "Running libbld on $BUILD_NODE_HOST via tsp"
+    # shellcheck disable=SC2029
+    ssh "$BUILD_NODE_HOST" bash -s "$REMOTE_WORKDIR" <<'EOF'
+REMOTE_WORKDIR="$1"
+
+jobid=$(tsp bash "$REMOTE_WORKDIR/aotriton.src/.tune/bin/libbld" "$REMOTE_WORKDIR")
+echo "tsp job ID: $jobid"
+tsp -t $jobid
+EOF
+  fi
+else
+  if [ "$BUILD_NODE_ENABLE" = "1" ] && [ -z "$BUILD_NODE_HOST" ]; then
+    echo "Warning: build node enabled but hostname not set; building locally." >&2
+  fi
+
+  if [ "$MODE" = "test" ]; then
+    if [ -z "${CELERY_WORKER_IMAGE:-}" ]; then
+      echo "Error: CELERY_WORKER_IMAGE not set in config.rc" >&2
+      exit 1
+    fi
+    echo "Running testbld locally inside container: $CELERY_WORKER_IMAGE"
+    docker run --rm \
+      --user "$(id -u):$(id -g)" \
+      --mount "type=bind,source=$ABSWORKDIR,target=/wkdir" \
+      "$CELERY_WORKER_IMAGE" \
+      bash /wkdir/aotriton.src/.tune/bin/testbld /wkdir
+  else
+    "$SCRIPT_DIR/libbld" "$WORKDIR"
+  fi
+fi
