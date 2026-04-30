@@ -50,58 +50,56 @@
 
     <button hx-post="/api/servers/bake-lut"
             hx-swap="none"
-            hx-confirm="Bake LUT: run all four steps in sequence (recreate materialized view, compute best results, export, sancheck)? This may take several minutes."
+            hx-confirm="Bake LUT: run all four steps in sequence (rebuild accuracy table, compute best results, export, sancheck)? This may take several minutes."
             hx-indicator="#pipeline-spinner"
             style="background-color: #dc3545; color: white;">Bake LUT</button>
     <span id="pipeline-spinner" class="htmx-indicator">&#x23F3; Running...</span>
 
     <button hx-post="/api/servers/bake-lut-incremental"
             hx-swap="none"
-            hx-confirm="Bake LUT (incremental): update materialized view for retried tasks, then compute/export/sancheck?"
+            hx-confirm="Bake LUT (incremental): update accuracy table for retried tasks, then compute/export/sancheck?"
             hx-indicator="#pipeline-incremental-spinner"
             style="margin-left: 1rem;">Bake LUT (Incremental)</button>
     <span id="pipeline-incremental-spinner" class="htmx-indicator">&#x23F3; Running...</span>
 
     <p style="font-size: 0.9em; color: gray; margin-top: 1rem; margin-bottom: 0.25rem;">Individual steps:</p>
 
-    <button hx-post="/api/servers/recreate-materialized-view"
-            hx-swap="none"
-            hx-confirm="Recreate most_accurate_tuning_results (DROP + CREATE)? The view will be unavailable briefly."
-            hx-indicator="#refresh-mv-spinner"
-            style="background-color: #dc3545; color: white;">Recreate Materialized View</button>
-    <span id="refresh-mv-spinner" class="htmx-indicator">&#x23F3; Recreating...</span>
+    <div style="display: flex; flex-wrap: nowrap; align-items: center;">
+        <button hx-post="/api/servers/recreate-materialized-view"
+                hx-swap="none"
+                hx-confirm="Rebuild most_accurate_tuning_results (DROP + CTAS)? Table will be unavailable briefly."
+                hx-indicator="#refresh-mv-spinner"
+                style="background-color: #dc3545; color: white;">Rebuild Accuracy Table</button>
+        <span id="refresh-mv-spinner" class="htmx-indicator">&#x23F3; Rebuilding...</span>
 
-    <button hx-post="/api/servers/update-materialized-view"
-            hx-swap="none"
-            hx-confirm="Update materialized view incrementally for task_ids from scratch/retry_task_ids.txt?"
-            hx-indicator="#update-mv-spinner"
-            style="margin-left: 1rem;">Update Materialized View</button>
-    <span id="update-mv-spinner" class="htmx-indicator">&#x23F3; Updating...</span>
+        <button hx-post="/api/servers/update-materialized-view"
+                hx-swap="none"
+                hx-confirm="Update accuracy table incrementally for task_ids from scratch/retry_task_ids.txt?"
+                hx-indicator="#update-mv-spinner">Update Accuracy Table</button>
+        <span id="update-mv-spinner" class="htmx-indicator">&#x23F3; Updating...</span>
 
-    <button hx-post="/api/servers/compute-best-results"
-            hx-swap="none"
-            hx-confirm="Compute best_tuning_results from raw tuning results? This may take several minutes."
-            hx-indicator="#compute-spinner"
-            style="margin-left: 1rem;">Compute Best Results</button>
-    <span id="compute-spinner" class="htmx-indicator">&#x23F3; Computing...</span>
+        <button hx-post="/api/servers/compute-best-results"
+                hx-swap="none"
+                hx-confirm="Compute best_tuning_results from raw tuning results? This may take several minutes."
+                hx-indicator="#compute-spinner">Compute Best Results</button>
+        <span id="compute-spinner" class="htmx-indicator">&#x23F3; Computing...</span>
 
-    <button hx-post="/api/servers/export-best-results"
-            hx-swap="none"
-            hx-confirm="Export best results to centraldb.sqlite3? Existing file will be deleted."
-            hx-indicator="#export-spinner"
-            style="margin-left: 1rem;">Export Best Results</button>
-    <span id="export-spinner" class="htmx-indicator">&#x23F3; Exporting...</span>
+        <button hx-post="/api/servers/export-best-results"
+                hx-swap="none"
+                hx-confirm="Export best results to centraldb.sqlite3? Existing file will be deleted."
+                hx-indicator="#export-spinner">Export Best Results</button>
+        <span id="export-spinner" class="htmx-indicator">&#x23F3; Exporting...</span>
 
-    <button hx-post="/api/servers/sancheck"
-            hx-swap="none"
-            hx-confirm="Run LUT sanity check against scratch/centraldb.sqlite3? Requires export to have been run first."
-            hx-indicator="#sancheck-spinner"
-            style="margin-left: 1rem;">Sancheck</button>
-    <span id="sancheck-spinner" class="htmx-indicator">&#x23F3; Checking...</span>
+        <button hx-post="/api/servers/sancheck"
+                hx-swap="none"
+                hx-confirm="Run LUT sanity check against scratch/centraldb.sqlite3? Requires export to have been run first."
+                hx-indicator="#sancheck-spinner">Sancheck</button>
+        <span id="sancheck-spinner" class="htmx-indicator">&#x23F3; Checking...</span>
+    </div>
 
     <p style="font-size: 0.9em; color: gray; margin-top: 0.5rem;">
-        <strong>Recreate Materialized View:</strong> DROP + CREATE <code>most_accurate_tuning_results</code> from scratch — faster than <code>REFRESH CONCURRENTLY</code>.<br>
-        <strong>Update Materialized View:</strong> Incrementally upserts rows for task_ids cached in <code>scratch/retry_task_ids.txt</code> by <code>retry_db_entries</code>.<br>
+        <strong>Rebuild Accuracy Table:</strong> DROP + CTAS <code>most_accurate_tuning_results</code> in parallel.<br>
+        <strong>Update Accuracy Table:</strong> Incrementally upserts rows for task_ids cached in <code>scratch/retry_task_ids.txt</code> by <code>retry_db_entries</code>.<br>
         <strong>Compute Best Results:</strong> Aggregates raw tuning results into best_tuning_results table.<br>
         <strong>Export Best Results:</strong> Exports best_tuning_results to <code>scratch/centraldb.sqlite3</code>.<br>
         <strong>Sancheck:</strong> Runs LUT sanity check against <code>scratch/centraldb.sqlite3</code> without triggering code generation.

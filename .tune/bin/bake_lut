@@ -43,10 +43,10 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if [ "$INCREMENTAL" -eq 1 ]; then
-    echo "=== Step 1/4: Update materialized view (incremental) ==="
+    echo "=== Step 1/4: Update accuracy table (incremental) ==="
     "$SCRIPT_DIR/update_materialized_view" "$WORKDIR"
 else
-    echo "=== Step 1/4: Refresh materialized views ==="
+    echo "=== Step 1/4: Rebuild accuracy table ==="
     "$SCRIPT_DIR/recreate_materialized_view" "$WORKDIR"
 fi
 
