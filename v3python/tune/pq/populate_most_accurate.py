@@ -6,10 +6,13 @@
 Populate the most_accurate_tuning_results plain table.
 
 Full mode (no task_ids):
-    TRUNCATE most_accurate_tuning_results, then INSERT all rows.
+    DROP TABLE + CREATE TABLE AS SELECT (CTAS) — CTAS is parallel-safe
+    unlike INSERT...SELECT, which PostgreSQL serializes because INSERT is
+    parallel-restricted. After CTAS, rebuild the unique index.
 
 Incremental mode (task_ids given):
     DELETE rows for the given task_ids, then INSERT only those task_ids.
+    INSERT is acceptable here since the row count is small.
 
 Usage:
     python3 -m v3python.tune.pq.populate_most_accurate <workdir>
@@ -28,10 +31,7 @@ import psycopg
 
 from v3python.tune.utils import get_db_connection_params
 
-_INSERT_SQL = """
-INSERT INTO most_accurate_tuning_results
-    (task_id, arch, task_config, kernel_name, test_case, tensor_name,
-     target_fudge_factor, absolute_error)
+_SELECT_SQL = """
 SELECT
     tr.task_id,
     tq.arch,
@@ -49,6 +49,18 @@ WHERE tr.result_data IS NOT NULL {filter}
 GROUP BY tr.task_id, tq.arch, tq.task_config, tr.kernel_name, test_case.key, tensor.key
 """
 
+_CTAS_SQL = 'CREATE TABLE most_accurate_tuning_results AS' + _SELECT_SQL
+
+_INSERT_SQL = """INSERT INTO most_accurate_tuning_results
+    (task_id, arch, task_config, kernel_name, test_case, tensor_name,
+     target_fudge_factor, absolute_error)
+""" + _SELECT_SQL
+
+_INDEX_SQL = """
+CREATE UNIQUE INDEX idx_most_accurate_tuning_results_lookup
+    ON most_accurate_tuning_results (task_id, kernel_name, test_case, tensor_name)
+"""
+
 
 def populate(conn, task_ids: list[int] | None = None) -> int:
     """
@@ -56,11 +68,11 @@ def populate(conn, task_ids: list[int] | None = None) -> int:
 
     Args:
         conn:     psycopg connection. autocommit state is managed internally.
-        task_ids: If None, full TRUNCATE + INSERT.
-                  If given, DELETE matching rows then INSERT only those task_ids.
+        task_ids: If None, full DROP + CTAS (parallel).
+                  If given, DELETE + INSERT for those task_ids only (small, serial ok).
 
     Returns:
-        Number of rows inserted (cur.rowcount after INSERT).
+        Number of rows produced (rowcount after CTAS or INSERT).
     """
     # Step 1: set parallel GUCs at session level outside any transaction so
     # the planner sees them unconditionally.
@@ -81,28 +93,31 @@ def populate(conn, task_ids: list[int] | None = None) -> int:
         # benefit since the query runs only once per populate call.
         cur.execute('SET jit = off')
 
-    # Step 2: clear old rows and commit. Separating this from the INSERT means
-    # the INSERT runs in a fresh transaction with no prior writes — PostgreSQL
-    # only parallelizes INSERT...SELECT when no earlier writes exist in the txn.
-    conn.autocommit = False
-    with conn.cursor() as cur:
-        if task_ids is None:
-            cur.execute('TRUNCATE most_accurate_tuning_results')
-        else:
+    if task_ids is None:
+        # Full mode: DROP + CREATE TABLE AS SELECT.
+        # CTAS is parallel-safe; INSERT...SELECT is not (PostgreSQL serializes
+        # it because INSERT is parallel-restricted).
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            cur.execute('DROP TABLE IF EXISTS most_accurate_tuning_results')
+            cur.execute('DROP INDEX IF EXISTS idx_most_accurate_tuning_results_lookup')
+            cur.execute(_CTAS_SQL.format(filter=''))
+            row_count = cur.rowcount
+            cur.execute(_INDEX_SQL)
+    else:
+        # Incremental mode: row count is small, parallel not needed.
+        # DELETE in one transaction, INSERT in a fresh one.
+        conn.autocommit = False
+        with conn.cursor() as cur:
             cur.execute(
                 'DELETE FROM most_accurate_tuning_results WHERE task_id = ANY(%s)',
                 (task_ids,),
             )
-    conn.commit()
-
-    # Step 3: INSERT in a fresh transaction — parallel scan now allowed.
-    with conn.cursor() as cur:
-        if task_ids is None:
-            cur.execute(_INSERT_SQL.format(filter=''))
-        else:
+        conn.commit()
+        with conn.cursor() as cur:
             cur.execute(_INSERT_SQL.format(filter='AND tr.task_id = ANY(%s)'), (task_ids,))
-        row_count = cur.rowcount
-    conn.commit()
+            row_count = cur.rowcount
+        conn.commit()
 
     return row_count
 
