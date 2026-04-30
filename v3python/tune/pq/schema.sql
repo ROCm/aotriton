@@ -185,7 +185,3 @@ CREATE TABLE IF NOT EXISTS best_tuning_results (
 
 CREATE INDEX IF NOT EXISTS idx_best_tuning_results_lookup
     ON best_tuning_results (arch, kernel_name, task_id);
-
--- Materialized view: most_accurate_tuning_results.
--- \ir uses path relative to this file, so works regardless of psql's cwd.
-\ir materialized_views.sql
