@@ -259,6 +259,30 @@ def api_export_best_results():
     return jsonify(result)
 
 
+@bp.route('/api/servers/recreate-materialized-view', methods=['POST'])
+def api_recreate_materialized_view():
+    """Recreate most_accurate_tuning_results via DROP + CREATE"""
+    workdir = current_app.config['WORKDIR']
+    result = tasks.recreate_materialized_view(workdir)
+    return jsonify(result)
+
+
+@bp.route('/api/servers/sancheck', methods=['POST'])
+def api_sancheck():
+    """Run LUT sanity check against the exported centralized database"""
+    workdir = current_app.config['WORKDIR']
+    result = tasks.sancheck(workdir)
+    return jsonify(result)
+
+
+@bp.route('/api/servers/bake-lut', methods=['POST'])
+def api_bake_lut():
+    """Bake LUT: convert raw PG tuning results into the aotriton SQLite DB"""
+    workdir = current_app.config['WORKDIR']
+    result = tasks.bake_lut(workdir)
+    return jsonify(result)
+
+
 @bp.route('/api/servers/status', methods=['GET'])
 def api_server_status():
     """Get server status (returns HTML for HTMX)"""

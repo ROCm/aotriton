@@ -439,6 +439,30 @@ class ExportBestResultsCommand(CommandBuilder):
         return self._run(self.RELATIVE, [workdir], workdir, 'Export best results to centraldb')
 
 
+class RecreateMaterializedViewCommand(CommandBuilder):
+    """Recreate most_accurate_tuning_results via DROP + CREATE (faster than REFRESH CONCURRENTLY)"""
+    RELATIVE = '.tune/bin/recreate_materialized_view'
+
+    def exec(self, workdir):
+        return self._run(self.RELATIVE, [workdir], workdir, 'Recreate materialized view')
+
+
+class SancheckCommand(CommandBuilder):
+    """Run LUT sanity check against the exported centralized database"""
+    RELATIVE = '.tune/bin/sancheck'
+
+    def exec(self, workdir):
+        return self._run(self.RELATIVE, [workdir], workdir, 'LUT sanity check')
+
+
+class BakeLutCommand(CommandBuilder):
+    """Bake LUT: convert raw PG tuning results into the aotriton SQLite DB"""
+    RELATIVE = '.tune/bin/bake_lut'
+
+    def exec(self, workdir):
+        return self._run(self.RELATIVE, [workdir], workdir, 'Bake LUT')
+
+
 class BuildCommand(CommandBuilder):
     """Base class for build operations"""
     RELATIVE = None  # Subclass must define
@@ -513,6 +537,9 @@ _init_database = InitDatabaseCommand()
 _recreate_schema = RecreateSchemaCommand()
 _compute_best_results = ComputeBestResultsCommand()
 _export_best_results = ExportBestResultsCommand()
+_recreate_materialized_view = RecreateMaterializedViewCommand()
+_sancheck = SancheckCommand()
+_bake_lut = BakeLutCommand()
 
 _build_libraries = BuildLibrariesCommand()
 _build_images = BuildImagesCommand()
@@ -602,6 +629,21 @@ def compute_best_results(workdir):
 def export_best_results(workdir):
     """Export best results to centralized SQLite database"""
     return _export_best_results.exec(workdir)
+
+
+def recreate_materialized_view(workdir):
+    """Recreate most_accurate_tuning_results via DROP + CREATE"""
+    return _recreate_materialized_view.exec(workdir)
+
+
+def sancheck(workdir):
+    """Run LUT sanity check against the exported centralized database"""
+    return _sancheck.exec(workdir)
+
+
+def bake_lut(workdir):
+    """Bake LUT: convert raw PG tuning results into the aotriton SQLite DB"""
+    return _bake_lut.exec(workdir)
 
 
 def get_git_status(workdir):

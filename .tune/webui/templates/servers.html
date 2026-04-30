@@ -42,26 +42,53 @@
         <strong>Initialize Schema:</strong> Creates tables if they don't exist (safe, preserves data).<br>
         <strong>Recreate Schema:</strong> Drops all tables and recreates from scratch (destructive, clears all tasks and results).
     </p>
+</section>
 
-    <div style="margin-top: 1rem; border-top: 1px solid #dee2e6; padding-top: 1rem;">
-        <button hx-post="/api/servers/compute-best-results"
-                hx-swap="none"
-                hx-confirm="Compute best_tuning_results from raw tuning results? This may take several minutes."
-                hx-indicator="#compute-spinner">Compute Best Results</button>
-        <span id="compute-spinner" class="htmx-indicator">⏳ Computing...</span>
+<section>
+    <h3>Bake LUT</h3>
+    <p>Convert raw PostgreSQL tuning results into the SQLite database used by the aotriton build process, then sanity-check the LUT.</p>
 
-        <button hx-post="/api/servers/export-best-results"
-                hx-swap="none"
-                hx-confirm="Export best results to centraldb.sqlite3? Existing file will be deleted."
-                hx-indicator="#export-spinner"
-                style="margin-left: 1rem;">Export Best Results</button>
-        <span id="export-spinner" class="htmx-indicator">⏳ Exporting...</span>
+    <button hx-post="/api/servers/bake-lut"
+            hx-swap="none"
+            hx-confirm="Bake LUT: run all four steps in sequence (recreate materialized view, compute best results, export, sancheck)? This may take several minutes."
+            hx-indicator="#pipeline-spinner">Bake LUT</button>
+    <span id="pipeline-spinner" class="htmx-indicator">&#x23F3; Running...</span>
 
-        <p style="font-size: 0.9em; color: gray; margin-top: 0.5rem;">
-            <strong>Compute Best Results:</strong> Aggregates raw tuning results into best_tuning_results table.<br>
-            <strong>Export Best Results:</strong> Exports best_tuning_results to <code>scratch/centraldb.sqlite3</code>.
-        </p>
-    </div>
+    <p style="font-size: 0.9em; color: gray; margin-top: 1rem; margin-bottom: 0.25rem;">Individual steps:</p>
+
+    <button hx-post="/api/servers/recreate-materialized-view"
+            hx-swap="none"
+            hx-confirm="Recreate most_accurate_tuning_results (DROP + CREATE)? The view will be unavailable briefly."
+            hx-indicator="#refresh-mv-spinner">Recreate Materialized View</button>
+    <span id="refresh-mv-spinner" class="htmx-indicator">&#x23F3; Recreating...</span>
+
+    <button hx-post="/api/servers/compute-best-results"
+            hx-swap="none"
+            hx-confirm="Compute best_tuning_results from raw tuning results? This may take several minutes."
+            hx-indicator="#compute-spinner"
+            style="margin-left: 1rem;">Compute Best Results</button>
+    <span id="compute-spinner" class="htmx-indicator">&#x23F3; Computing...</span>
+
+    <button hx-post="/api/servers/export-best-results"
+            hx-swap="none"
+            hx-confirm="Export best results to centraldb.sqlite3? Existing file will be deleted."
+            hx-indicator="#export-spinner"
+            style="margin-left: 1rem;">Export Best Results</button>
+    <span id="export-spinner" class="htmx-indicator">&#x23F3; Exporting...</span>
+
+    <button hx-post="/api/servers/sancheck"
+            hx-swap="none"
+            hx-confirm="Run LUT sanity check against scratch/centraldb.sqlite3? Requires export to have been run first."
+            hx-indicator="#sancheck-spinner"
+            style="margin-left: 1rem;">Sancheck</button>
+    <span id="sancheck-spinner" class="htmx-indicator">&#x23F3; Checking...</span>
+
+    <p style="font-size: 0.9em; color: gray; margin-top: 0.5rem;">
+        <strong>Recreate Materialized View:</strong> DROP + CREATE <code>most_accurate_tuning_results</code> from scratch — faster than <code>REFRESH CONCURRENTLY</code>.<br>
+        <strong>Compute Best Results:</strong> Aggregates raw tuning results into best_tuning_results table.<br>
+        <strong>Export Best Results:</strong> Exports best_tuning_results to <code>scratch/centraldb.sqlite3</code>.<br>
+        <strong>Sancheck:</strong> Runs LUT sanity check against <code>scratch/centraldb.sqlite3</code> without triggering code generation.
+    </p>
 </section>
 
 <section>

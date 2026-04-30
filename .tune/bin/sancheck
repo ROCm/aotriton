@@ -96,3 +96,6 @@ python3 -m v3python.generate \
     "$@" > "$REPORT"
 
 echo "Done. Report written to $REPORT"
+
+MISSING=$(grep -c 'TUNE_V3BIS' "$REPORT" 2>/dev/null || true)
+echo "Missing LUT entries: $MISSING"
