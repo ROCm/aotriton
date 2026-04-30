@@ -34,6 +34,14 @@ if [ ! -f "$CENTRALDB" ]; then
     exit 1
 fi
 
+GNU_PARALLEL=$(which parallel 2>/dev/null || true)
+if [ -z "$GNU_PARALLEL" ] || ! "$GNU_PARALLEL" --version 2>/dev/null | grep -q 'GNU parallel'; then
+    echo "Error: GNU parallel is required but not installed (found moreutils parallel or nothing)." >&2
+    echo "Install: sudo apt-get install parallel  OR  conda install -c conda-forge parallel" >&2
+    exit 1
+fi
+export GNU_PARALLEL
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
