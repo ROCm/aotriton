@@ -41,6 +41,7 @@ SCRIPT_OUTPUT="$WORKDIR/scratch/decompose_db.sh"
 DECOMPOSE_OUTPUT="$WORKDIR/installed/database"
 
 mkdir -p "$WORKDIR/scratch"
+rm -rf "$DECOMPOSE_OUTPUT"
 mkdir -p "$DECOMPOSE_OUTPUT"
 
 echo "Step 1/2: Generating decompose script..."

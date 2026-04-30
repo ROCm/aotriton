@@ -23,6 +23,7 @@ tarxz() {
     b=$(basename "$1")
     cd "$d"
     tar cJf "$b.tar.xz" "$b"
+    rm "$b"
   )
 }'''
 
