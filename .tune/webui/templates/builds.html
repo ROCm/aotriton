@@ -6,12 +6,74 @@
 <h2>Build Management</h2>
 
 <section>
-    <h3>Build AOTriton Libraries</h3>
+    <details {% if not build_node_config.hostname %}open{% endif %}>
+        <summary><h3 style="display: inline;">Remote Build Node</h3>
+            — {% if build_node_config.enabled %}<strong>enabled</strong>{% else %}disabled{% endif %}{% if build_node_config.hostname %}: {{ build_node_config.hostname }}{% endif %}
+        </summary>
+        <p>Remote node for building AOTriton. When enabled, <code>remotebld</code> syncs the workdir and runs builds via SSH+Docker on this node.</p>
+        <form hx-post="/api/builds/build-node"
+              hx-swap="none"
+              hx-on::after-request="location.reload()"
+              style="margin-top: 1rem;">
+            <table>
+                <tr>
+                    <td><label for="build-node-hostname">Hostname:</label></td>
+                    <td>
+                        <input type="text" name="hostname" id="build-node-hostname"
+                               value="{{ build_node_config.hostname }}"
+                               data-original="{{ build_node_config.hostname }}"
+                               placeholder="build-host.example.com"
+                               style="width: 400px;">
+                    </td>
+                </tr>
+                <tr>
+                    <td><label for="build-node-workdir">Remote Workdir:</label></td>
+                    <td>
+                        <input type="text" name="workdir_override" id="build-node-workdir"
+                               value="{{ build_node_config.workdir_override }}"
+                               data-original="{{ build_node_config.workdir_override }}"
+                               placeholder="use GPU workers' default: {{ default_workdir }}"
+                               style="width: 400px;">
+                    </td>
+                </tr>
+                <tr>
+                    <td><label for="build-node-enable">Enabled:</label></td>
+                    <td>
+                        <input type="checkbox" name="enabled" id="build-node-enable"
+                               {% if build_node_config.enabled %}checked{% endif %}>
+                    </td>
+                </tr>
+            </table>
+            <div style="margin-top: 0.75rem;">
+                <button type="submit" style="background-color: #dc3545; color: white;">Save Remote Build Node</button>
+                <button type="button"
+                        onclick="document.getElementById('build-node-hostname').value = document.getElementById('build-node-hostname').getAttribute('data-original'); document.getElementById('build-node-workdir').value = document.getElementById('build-node-workdir').getAttribute('data-original');"
+                        style="background-color: #6c757d; color: white;">Reset</button>
+            </div>
+        </form>
+        <p style="font-size: 0.9em; color: gray; margin-top: 0.5rem;">
+            Leave hostname empty to build locally. Remote workdir defaults to the local workdir path if not set.
+        </p>
+    </details>
+</section>
+
+<section>
+    <h3>Build Tuning Version of AOTriton Libraries</h3>
     <p>Build libraries for all registered architectures: <strong>{{ archs|join(', ') }}</strong></p>
     <button hx-post="/api/builds/libraries"
             hx-swap="none"
             hx-indicator="#build-spinner">Build Libraries</button>
     <span id="build-spinner" class="htmx-indicator">⏳ Building...</span>
+</section>
+
+<section>
+    <h3>Build Testing Version of AOTriton Libraries</h3>
+    <p>Build all tuned architectures from <code>installed/database/amd/</code> inside the container image and install to <code>installed/test/</code>. Uses <code>remotebld --test</code>.</p>
+    <button hx-post="/api/builds/test-libraries"
+            hx-swap="none"
+            hx-confirm="Build testing version of AOTriton inside container? This may take a long time."
+            hx-indicator="#test-build-spinner">Build Test Libraries</button>
+    <span id="test-build-spinner" class="htmx-indicator">⏳ Building...</span>
 </section>
 
 <section>

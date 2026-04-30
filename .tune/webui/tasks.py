@@ -499,7 +499,15 @@ class BuildCommand(CommandBuilder):
 
 class BuildLibrariesCommand(BuildCommand):
     RELATIVE = '.tune/bin/libbld'
-    DESCRIPTION = 'Build libraries'
+    DESCRIPTION = 'Build tuning version of AOTriton libraries'
+
+
+class BuildTestLibrariesCommand(CommandBuilder):
+    """Build testing version of AOTriton libraries inside container via remotebld --test"""
+    RELATIVE = '.tune/bin/remotebld'
+
+    def exec(self, workdir):
+        return self._run(self.RELATIVE, [workdir, '--test'], workdir, 'Build testing AOTriton libraries')
 
 
 class BuildImagesCommand(BuildCommand):
@@ -569,6 +577,7 @@ _bake_lut = BakeLutCommand()
 _bake_lut_incremental = BakeLutIncrementalCommand()
 
 _build_libraries = BuildLibrariesCommand()
+_build_test_libraries = BuildTestLibrariesCommand()
 _build_images = BuildImagesCommand()
 _build_image_on_worker = BuildImageOnWorkerCommand()
 
@@ -803,8 +812,13 @@ def get_server_status(workdir):
 # Build functions
 
 def build_libraries(workdir):
-    """Build libraries"""
+    """Build tuning version of AOTriton libraries"""
     return _build_libraries.exec(workdir)
+
+
+def build_test_libraries(workdir):
+    """Build testing version of AOTriton libraries inside container"""
+    return _build_test_libraries.exec(workdir)
 
 
 def build_images(workdir):
@@ -1045,6 +1059,46 @@ def set_default_workdir(workdir, path):
                 ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = CURRENT_TIMESTAMP
             """, (path, path))
         return {'success': True, 'message': f"Default working directory set to: {path}"}
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
+
+
+def get_build_node_config(workdir):
+    """Get build node configuration from workers.db config table"""
+    init_workers_db(workdir)
+    workdir_path = Path(workdir)
+    db_path = workdir_path / 'workers.db'
+    try:
+        with sqlite3.connect(db_path.as_posix()) as conn:
+            cursor = conn.execute(
+                "SELECT key, value FROM config WHERE key LIKE 'buildnode::%'"
+            )
+            rows = {row[0]: row[1] for row in cursor.fetchall()}
+        return {
+            'hostname': rows.get('buildnode::hostname', ''),
+            'workdir_override': rows.get('buildnode::workdir_override', ''),
+            'enabled': rows.get('buildnode::enable', '0') == '1',
+        }
+    except Exception:
+        return {'hostname': '', 'workdir_override': '', 'enabled': False}
+
+
+def set_build_node_config(workdir, hostname, workdir_override, enabled):
+    """Save build node configuration to workers.db config table"""
+    init_workers_db(workdir)
+    workdir_path = Path(workdir)
+    db_path = workdir_path / 'workers.db'
+    upsert = """
+        INSERT INTO config (key, value) VALUES (?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = CURRENT_TIMESTAMP
+    """
+    try:
+        with sqlite3.connect(db_path.as_posix()) as conn:
+            conn.execute(upsert, ('buildnode::hostname', hostname, hostname))
+            conn.execute(upsert, ('buildnode::workdir_override', workdir_override, workdir_override))
+            enable_val = '1' if enabled else '0'
+            conn.execute(upsert, ('buildnode::enable', enable_val, enable_val))
+        return {'success': True, 'message': 'Build node configuration saved'}
     except Exception as e:
         return {'success': False, 'error': str(e)}
 

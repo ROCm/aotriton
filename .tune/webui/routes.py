@@ -59,7 +59,11 @@ def builds():
     workdir = current_app.config['WORKDIR']
     archs = tasks.get_architectures(workdir)
     hostnames = tasks.get_hostnames(workdir)
-    return render_template('builds.html', archs=archs, hostnames=hostnames)
+    build_node_config = tasks.get_build_node_config(workdir)
+    default_workdir = tasks.get_default_workdir(workdir) or '(not set)'
+    return render_template('builds.html', archs=archs, hostnames=hostnames,
+                           build_node_config=build_node_config,
+                           default_workdir=default_workdir)
 
 
 @bp.route('/deploy')
@@ -325,9 +329,36 @@ def api_git_status():
 
 @bp.route('/api/builds/libraries', methods=['POST'])
 def api_build_libraries():
-    """Build AOTriton libraries"""
+    """Build tuning version of AOTriton libraries"""
     workdir = current_app.config['WORKDIR']
     result = tasks.build_libraries(workdir)
+    return jsonify(result)
+
+
+@bp.route('/api/builds/test-libraries', methods=['POST'])
+def api_build_test_libraries():
+    """Build testing version of AOTriton libraries inside container"""
+    workdir = current_app.config['WORKDIR']
+    result = tasks.build_test_libraries(workdir)
+    return jsonify(result)
+
+
+@bp.route('/api/builds/build-node', methods=['GET'])
+def api_get_build_node_config():
+    """Get build node configuration"""
+    workdir = current_app.config['WORKDIR']
+    config = tasks.get_build_node_config(workdir)
+    return jsonify(config)
+
+
+@bp.route('/api/builds/build-node', methods=['POST'])
+def api_set_build_node_config():
+    """Save build node configuration"""
+    workdir = current_app.config['WORKDIR']
+    hostname = request.form.get('hostname', '').strip()
+    workdir_override = request.form.get('workdir_override', '').strip()
+    enabled = request.form.get('enabled') == 'on'
+    result = tasks.set_build_node_config(workdir, hostname, workdir_override, enabled)
     return jsonify(result)
 
 
