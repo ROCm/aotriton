@@ -55,42 +55,44 @@ def populate(conn, task_ids: list[int] | None = None) -> int:
     Populate most_accurate_tuning_results.
 
     Args:
-        conn:     psycopg connection (autocommit must be False on entry;
-                  this function commits at the end).
+        conn:     psycopg connection. autocommit state is managed internally.
         task_ids: If None, full TRUNCATE + INSERT.
                   If given, DELETE matching rows then INSERT only those task_ids.
 
     Returns:
         Number of rows inserted (cur.rowcount after INSERT).
     """
-    old_autocommit = conn.autocommit
-    if old_autocommit:
-        conn.autocommit = False
+    # Step 1: set parallel GUCs at session level outside any transaction so
+    # the planner sees them unconditionally.
+    conn.autocommit = True
+    with conn.cursor() as cur:
+        cur.execute('SET max_parallel_workers_per_gather = 8')
+        cur.execute('SET max_parallel_workers = 16')
 
-    try:
-        with conn.cursor() as cur:
-            cur.execute('SET max_parallel_workers_per_gather = 8')
-            cur.execute('SET max_parallel_workers = 16')
+    # Step 2: clear old rows and commit. Separating this from the INSERT means
+    # the INSERT runs in a fresh transaction with no prior writes — PostgreSQL
+    # only parallelizes INSERT...SELECT when no earlier writes exist in the txn.
+    conn.autocommit = False
+    with conn.cursor() as cur:
+        if task_ids is None:
+            cur.execute('TRUNCATE most_accurate_tuning_results')
+        else:
+            cur.execute(
+                'DELETE FROM most_accurate_tuning_results WHERE task_id = ANY(%s)',
+                (task_ids,),
+            )
+    conn.commit()
 
-            if task_ids is None:
-                cur.execute('TRUNCATE most_accurate_tuning_results')
-                sql = _INSERT_SQL.format(filter='')
-                cur.execute(sql)
-            else:
-                cur.execute(
-                    'DELETE FROM most_accurate_tuning_results WHERE task_id = ANY(%s)',
-                    (task_ids,),
-                )
-                sql = _INSERT_SQL.format(filter='AND tr.task_id = ANY(%s)')
-                cur.execute(sql, (task_ids,))
+    # Step 3: INSERT in a fresh transaction — parallel scan now allowed.
+    with conn.cursor() as cur:
+        if task_ids is None:
+            cur.execute(_INSERT_SQL.format(filter=''))
+        else:
+            cur.execute(_INSERT_SQL.format(filter='AND tr.task_id = ANY(%s)'), (task_ids,))
+        row_count = cur.rowcount
+    conn.commit()
 
-            row_count = cur.rowcount
-
-        conn.commit()
-        return row_count
-    finally:
-        if old_autocommit:
-            conn.autocommit = True
+    return row_count
 
 
 def main() -> None:
