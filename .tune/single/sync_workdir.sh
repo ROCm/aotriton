@@ -3,12 +3,17 @@
 # SPDX-License-Identifier: MIT
 
 # Sync workdir to one host (main files + architecture-specific files)
-# Usage: sync_workdir.sh <workdir> <hostname> [--remote_workdir <path>]
+# Usage: sync_workdir.sh <workdir> <hostname> [--remote_workdir <path>|--buildnode]
 #
 # --remote_workdir <path>
 #   Override the remote workdir instead of looking it up from workers.db.
 #   When set, arch is treated as ALL (sync all installed/ subdirs).
 #   Use this for hosts not registered as GPU workers (e.g. build nodes).
+#
+# --buildnode
+#   Look up buildnode::workdir_override (falling back to default_workdir) from
+#   workers.db config table. Sets SUBDIR to 'database' so only installed/database/
+#   is synced to the remote (the build node needs the sharded DB, not GPU binaries).
 
 set -e
 
@@ -23,9 +28,13 @@ HOSTNAME="$2"
 shift 2
 
 REMOTE_WORKDIR_OVERRIDE=""
+BUILDNODE_MODE=0
+TESTNODE_MODE=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --remote_workdir) REMOTE_WORKDIR_OVERRIDE="$2"; shift 2 ;;
+    --buildnode)      BUILDNODE_MODE=1; shift ;;
+    --testnode)       TESTNODE_MODE=1; shift ;;
     *) echo "Unknown argument: $1" >&2; exit 1 ;;
   esac
 done
@@ -45,6 +54,8 @@ load_config "$WORKDIR"
 if [ -n "$REMOTE_WORKDIR_OVERRIDE" ]; then
   arch="ALL"
   WORKER_WORKDIR="$REMOTE_WORKDIR_OVERRIDE"
+elif [ "$BUILDNODE_MODE" -eq 1 ]; then
+  WORKER_WORKDIR="$(get_buildnode_workdir "$WORKDIR")"
 else
   # Get arch and workdir_override for this hostname
   WORKER_INFO=$(get_worker_by_hostname "$WORKDIR" "$HOSTNAME")
@@ -70,20 +81,23 @@ rsync -az --checksum --info=progress2 \
 # --exclude '*.pyc' prevents deleting bytecode (may be root-owned from container)
 # We minimize rsync calls since some deployments have long SSH authentication time
 # TODO: Re-use SSH connection between multiple rsyncs (e.g., SSH ControlMaster)
-if [ "$arch" = "ALL" ]; then
+if [ "$BUILDNODE_MODE" -eq 1 ]; then
+  SUBDIR="/database"
+elif [ "$TESTNODE_MODE" -eq 1 ]; then
+  SUBDIR="/test"
+elif [ "$arch" = "ALL" ]; then
   SUBDIR=""
 else
   SUBDIR="/$arch"
 fi
 
 if [ -d "$WORKDIR/installed$SUBDIR" ]; then
-  # Sync both installed/$arch and aotriton.src in single rsync
   rsync -azR --checksum --info=progress2 --delete --exclude '*.pyc' \
     "$WORKDIR/./installed$SUBDIR" \
     "$WORKDIR/./aotriton.src" \
     "$HOSTNAME:$WORKER_WORKDIR/./"
 else
-  # Sync aotriton.src only if installed/$arch doesn't exist
+  # Sync aotriton.src only if installed$SUBDIR doesn't exist
   rsync -az --checksum --info=progress2 --delete --exclude '*.pyc' \
     "$WORKDIR/aotriton.src/" \
     "$HOSTNAME:$WORKER_WORKDIR/aotriton.src/"

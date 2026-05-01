@@ -817,11 +817,7 @@ def sync_build_node(workdir):
     hostname = cfg.get('hostname', '')
     if not hostname:
         return {'status': 'error', 'message': 'Remote build node hostname is not configured'}
-    workdir_override = cfg.get('workdir_override', '')
-    args = [workdir, hostname]
-    if workdir_override:
-        args += ['--remote_workdir', workdir_override]
-    cmd = ['.tune/single/sync_workdir.sh'] + args
+    cmd = ['.tune/single/sync_workdir.sh', workdir, hostname, '--buildnode']
     return run_command(cmd, cwd=AOTRITON_ROOT, workdir=workdir,
                        description=f'Sync workdir to remote build node {hostname}')
 

@@ -47,6 +47,18 @@ get_slurm_bad_nodes() {
         "SELECT hostname FROM slurm_bad_nodes"
 }
 
+get_buildnode_workdir() {
+    local workdir="$1"
+    local override
+    override=$(sqlite3 "$workdir/workers.db" \
+        "SELECT COALESCE(value,'') FROM config WHERE key = 'buildnode::workdir_override'" 2>/dev/null || true)
+    if [ -n "$override" ]; then
+        echo "$override"
+    else
+        get_default_workdir "$workdir"
+    fi
+}
+
 get_worker_gpu_selection() {
     local workdir="$1"
     local hostname="$2"
