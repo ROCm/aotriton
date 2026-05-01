@@ -120,7 +120,7 @@
         </thead>
         <tbody>
             {% for worker in workers_by_arch[arch] %}
-            <tr {% if not worker.is_tuner %}style="background-color: #f8f8f8;"{% endif %}>
+            <tr>
                 <td style="display: flex; flex-direction: column; gap: 0.3rem;">
                     <span style="display: flex; align-items: center; gap: 0.4rem;">
                         <input type="checkbox"
@@ -128,10 +128,9 @@
                                title="Assign Tuner role"
                                {% if worker.is_tuner %}checked{% endif %}
                                onchange="setTunerRole('{{ worker.hostname }}', this.checked)">
-                        <code>{{ worker.hostname }}</code>
+                        <code {% if not worker.is_tuner %}style="text-decoration: line-through;"{% endif %}>{{ worker.hostname }}</code>
                     </span>
-                    <div id="worker-controls-{{ worker.hostname }}"
-                         {% if not worker.is_tuner %}style="opacity: 0.4; pointer-events: none;"{% endif %}>
+                    {% if worker.is_tuner %}
                     <span id="gpu-info-{{ worker.hostname }}" style="font-size: 0.85em; display: flex; align-items: center; gap: 0.3rem;">
                         <button hx-post="/api/workers/{{ worker.hostname }}/detect-gpu"
                                 hx-swap="none"
@@ -179,9 +178,10 @@
                             ⟳
                         </button>
                     </span>
-                    </div>{# end worker-controls column 1 #}
+                    {% endif %}
                 </td>
-                <td {% if not worker.is_tuner %}style="opacity: 0.4; pointer-events: none;"{% endif %}>
+                {% if worker.is_tuner %}
+                <td>
                     <form hx-post="/api/workers/{{ worker.hostname }}/workdir"
                           hx-swap="none"
                           hx-confirm="Are you sure you want to update the custom workdir for {{ worker.hostname }}?"
@@ -227,7 +227,7 @@
                         </div>
                     </div>
                 </td>
-                <td {% if not worker.is_tuner %}style="opacity: 0.4; pointer-events: none;"{% endif %}>
+                <td>
                     <div style="display: flex; align-items: center; gap: 0.3rem; margin-bottom: 0.5rem;">
                         <button onclick="refreshWorkerStatus('{{ worker.hostname }}')"
                                 style="padding: 0.4rem 0.6rem; font-size: 1.2em;">
@@ -254,7 +254,11 @@
                             hx-swap="none"
                             style="font-size: 0.8em; padding: 0.3rem 0.5rem; background-color: #17a2b8; color: white;">Build Image</button>
                 </td>
-                <td {% if not worker.is_tuner %}style="opacity: 0.4; pointer-events: none;"{% endif %}>
+                {% else %}
+                <td></td>
+                <td></td>
+                {% endif %}
+                <td>
                     <button hx-post="/api/workers/{{ worker.hostname }}/remove"
                             hx-swap="none"
                             hx-confirm="Are you sure you want to remove worker {{ worker.hostname }}?"
