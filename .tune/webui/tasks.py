@@ -811,6 +811,21 @@ def get_server_status(workdir):
 
 # Build functions
 
+def sync_build_node(workdir):
+    """Sync local workdir to the remote build node"""
+    cfg = get_build_node_config(workdir)
+    hostname = cfg.get('hostname', '')
+    if not hostname:
+        return {'status': 'error', 'message': 'Remote build node hostname is not configured'}
+    workdir_override = cfg.get('workdir_override', '')
+    args = [workdir, hostname]
+    if workdir_override:
+        args += ['--remote_workdir', workdir_override]
+    cmd = ['.tune/single/sync_workdir.sh'] + args
+    return run_command(cmd, cwd=AOTRITON_ROOT, workdir=workdir,
+                       description=f'Sync workdir to remote build node {hostname}')
+
+
 def build_libraries(workdir):
     """Build tuning version of AOTriton libraries"""
     return _build_libraries.exec(workdir)

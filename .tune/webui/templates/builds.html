@@ -58,6 +58,26 @@
 </section>
 
 <section>
+    <h3>Deployment</h3>
+    <div id="git-status">
+        {% include 'partials/git_status.html' %}
+    </div>
+    <button hx-post="/api/deploy/prepare"
+            hx-swap="none"
+            hx-indicator="#prepare-spinner">Prepare Workdir</button>
+    <span id="prepare-spinner" class="htmx-indicator">⏳ Preparing...</span>
+    <button hx-post="/api/deploy/workdir"
+            hx-swap="none"
+            hx-indicator="#deploy-all-spinner">Deploy to All Workers</button>
+    <span id="deploy-all-spinner" class="htmx-indicator">⏳ Deploying...</span>
+    <button hx-post="/api/builds/deploy-build-node"
+            hx-swap="none"
+            hx-indicator="#deploy-buildnode-spinner"
+            {% if not build_node_config.hostname %}disabled title="Configure a remote build node hostname first"{% endif %}>Deploy to Remote Build Node{% if build_node_config.hostname %} ({{ build_node_config.hostname }}){% endif %}</button>
+    <span id="deploy-buildnode-spinner" class="htmx-indicator">⏳ Syncing...</span>
+</section>
+
+<section>
     <h3>Build Tuning Version of AOTriton Libraries</h3>
     <p>Build libraries for all registered architectures: <strong>{{ archs|join(', ') }}</strong></p>
     <button hx-post="/api/builds/libraries"

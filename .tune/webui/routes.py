@@ -61,9 +61,11 @@ def builds():
     hostnames = tasks.get_hostnames(workdir)
     build_node_config = tasks.get_build_node_config(workdir)
     default_workdir = tasks.get_default_workdir(workdir) or '(not set)'
+    git_status = tasks.get_git_status(workdir)
     return render_template('builds.html', archs=archs, hostnames=hostnames,
                            build_node_config=build_node_config,
-                           default_workdir=default_workdir)
+                           default_workdir=default_workdir,
+                           git_status=git_status)
 
 
 @bp.route('/deploy')
@@ -359,6 +361,14 @@ def api_set_build_node_config():
     workdir_override = request.form.get('workdir_override', '').strip()
     enabled = request.form.get('enabled') == 'on'
     result = tasks.set_build_node_config(workdir, hostname, workdir_override, enabled)
+    return jsonify(result)
+
+
+@bp.route('/api/builds/deploy-build-node', methods=['POST'])
+def api_sync_build_node():
+    """Sync local workdir to the remote build node"""
+    workdir = current_app.config['WORKDIR']
+    result = tasks.sync_build_node(workdir)
     return jsonify(result)
 
 
