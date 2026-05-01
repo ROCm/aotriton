@@ -95,18 +95,17 @@
                     </div>
 
                     {# Run-test action #}
-                    <div id="runtest-inputs-{{ worker.hostname }}"
-                         style="display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; margin-bottom: 0.5rem;">
+                    <div style="display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; margin-bottom: 0.5rem;">
                         <label style="font-size: 0.85em; margin: 0;">Pass:
-                            <input type="number" name="pass_num" id="pass-{{ worker.hostname }}" value="0" min="0"
+                            <input type="number" id="pass-{{ worker.hostname }}" value="0" min="0"
                                    style="width: 4em; margin: 0; padding: 0.2rem;">
                         </label>
                         <label style="font-size: 0.85em; margin: 0;">Level:
-                            <input type="number" name="test_level" id="level-{{ worker.hostname }}" value="0" min="0"
+                            <input type="number" id="level-{{ worker.hostname }}" value="0" min="0"
                                    style="width: 4em; margin: 0; padding: 0.2rem;">
                         </label>
                         <label style="font-size: 0.85em; margin: 0;">Backend:
-                            <select name="backend" id="backend-{{ worker.hostname }}" style="margin: 0; padding: 0.2rem;">
+                            <select id="backend-{{ worker.hostname }}" style="margin: 0; padding: 0.2rem;">
                                 <option value="split">split</option>
                                 <option value="fused">fused</option>
                                 <option value="aiter">aiter</option>
@@ -115,28 +114,33 @@
                         </label>
                         <button hx-post="/api/testing/{{ worker.hostname }}/run-test"
                                 hx-swap="none"
-                                hx-include="#runtest-inputs-{{ worker.hostname }}"
+                                hx-vals='js:{pass_num: document.getElementById("pass-{{ worker.hostname }}").value, test_level: document.getElementById("level-{{ worker.hostname }}").value, backend: document.getElementById("backend-{{ worker.hostname }}").value}'
                                 style="font-size: 0.8em; padding: 0.3rem 0.5rem;">
                             Run Test
                         </button>
                     </div>
 
-                    {# Sel file display #}
-                    <div style="margin-bottom: 0.3rem; display: flex; gap: 0.4rem; align-items: center;">
-                        <button onclick="fetchSelFiles('{{ worker.hostname }}')"
+                    {# Tail output display #}
+                    <div style="margin-bottom: 0.3rem; display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap;">
+                        <button onclick="fetchTailOutput('{{ worker.hostname }}')"
                                 style="font-size: 0.8em; padding: 0.2rem 0.4rem;">
-                            Fetch sel files
+                            Tail Output
                         </button>
-                        <span style="font-size: 0.85em; color: gray;">(uses current Pass value above)</span>
+                        <label style="font-size: 0.85em; margin: 0;">
+                            <input type="checkbox" id="wrap-{{ worker.hostname }}" checked
+                                   onchange="setTailWrap('{{ worker.hostname }}', this.checked)">
+                            Wrap text
+                        </label>
+                        <span style="font-size: 0.85em; color: gray;">(uses current Pass &amp; Backend above)</span>
                     </div>
-                    <div id="sel-{{ worker.hostname }}" style="font-size: 0.82em; font-family: monospace; display: none;">
+                    <div id="tail-{{ worker.hostname }}" style="font-size: 0.82em; font-family: monospace; display: none;">
                         <div>
-                            <strong id="sel-name-{{ worker.hostname }}"></strong>
-                            <pre id="sel-content-{{ worker.hostname }}" style="margin: 0.2rem 0; max-height: 10em; overflow-y: auto; background: #f4f4f4; padding: 0.4rem;"></pre>
+                            <strong id="tail-name-{{ worker.hostname }}"></strong>
+                            <pre id="tail-content-{{ worker.hostname }}" style="margin: 0.2rem 0; max-height: 10em; overflow-y: auto; background: #1e1e1e; color: #d4d4d4; padding: 0.4rem; white-space: pre-wrap; max-width: 78ch; overflow-wrap: break-word;"></pre>
                         </div>
                         <div>
-                            <strong id="sel-varlen-name-{{ worker.hostname }}"></strong>
-                            <pre id="sel-varlen-content-{{ worker.hostname }}" style="margin: 0.2rem 0; max-height: 10em; overflow-y: auto; background: #f4f4f4; padding: 0.4rem;"></pre>
+                            <strong id="tail-varlen-name-{{ worker.hostname }}"></strong>
+                            <pre id="tail-varlen-content-{{ worker.hostname }}" style="margin: 0.2rem 0; max-height: 10em; overflow-y: auto; background: #1e1e1e; color: #d4d4d4; padding: 0.4rem; white-space: pre-wrap; max-width: 78ch; overflow-wrap: break-word;"></pre>
                         </div>
                     </div>
                 </td>
@@ -202,28 +206,42 @@ function refreshSignature(hostname, arch) {
         });
 }
 
-function fetchSelFiles(hostname) {
+function setTailWrap(hostname, wrap) {
+    const pres = [
+        document.getElementById(`tail-content-${hostname}`),
+        document.getElementById(`tail-varlen-content-${hostname}`),
+    ];
+    pres.forEach(el => {
+        if (!el) return;
+        el.style.whiteSpace = wrap ? 'pre-wrap' : 'pre';
+        el.style.maxWidth = wrap ? '78ch' : 'none';
+        el.style.overflowWrap = wrap ? 'break-word' : 'normal';
+    });
+}
+
+function fetchTailOutput(hostname) {
     const pass_num = document.getElementById(`pass-${hostname}`).value;
-    fetch(`/api/testing/${hostname}/sel-files?pass=${pass_num}`)
+    const backend = document.getElementById(`backend-${hostname}`).value;
+    fetch(`/api/testing/${hostname}/tail-output?pass=${pass_num}&backend=${backend}`)
         .then(r => r.json())
         .then(data => {
-            const container = document.getElementById(`sel-${hostname}`);
+            const container = document.getElementById(`tail-${hostname}`);
             container.style.display = 'block';
             if (data.files) {
                 for (const [fname, content] of Object.entries(data.files)) {
                     if (fname.includes('varlen')) {
-                        document.getElementById(`sel-varlen-name-${hostname}`).textContent = fname;
-                        document.getElementById(`sel-varlen-content-${hostname}`).textContent = content;
+                        document.getElementById(`tail-varlen-name-${hostname}`).textContent = fname;
+                        document.getElementById(`tail-varlen-content-${hostname}`).textContent = content;
                     } else {
-                        document.getElementById(`sel-name-${hostname}`).textContent = fname;
-                        document.getElementById(`sel-content-${hostname}`).textContent = content;
+                        document.getElementById(`tail-name-${hostname}`).textContent = fname;
+                        document.getElementById(`tail-content-${hostname}`).textContent = content;
                     }
                 }
             } else {
-                document.getElementById(`sel-name-${hostname}`).textContent = '';
-                document.getElementById(`sel-content-${hostname}`).textContent = data.message || '(error)';
-                document.getElementById(`sel-varlen-name-${hostname}`).textContent = '';
-                document.getElementById(`sel-varlen-content-${hostname}`).textContent = '';
+                document.getElementById(`tail-name-${hostname}`).textContent = '';
+                document.getElementById(`tail-content-${hostname}`).textContent = data.message || '(error)';
+                document.getElementById(`tail-varlen-name-${hostname}`).textContent = '';
+                document.getElementById(`tail-varlen-content-${hostname}`).textContent = '';
             }
         });
 }

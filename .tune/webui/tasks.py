@@ -1213,21 +1213,25 @@ def run_test_on_host(workdir, hostname, pass_num, test_level, backend):
                        description=f'run-test on {hostname} pass={pass_num} level={test_level} backend={backend}')
 
 
-def get_sel_files(workdir, hostname, pass_num):
-    """Fetch sel${pass}.txt and sel${pass}.varlen.txt from a remote tester host."""
+def get_tail_output(workdir, hostname, pass_num, backend):
+    """Fetch tail -n 5 of test output files for the given pass and backend."""
     worker = get_worker_by_hostname(workdir, hostname)
     if not worker:
         return {'status': 'error', 'message': f"Worker '{hostname}' not found"}
     _, _, workdir_override = worker
     default_wd = get_default_workdir(workdir) or workdir
     remote_wd = workdir_override or default_wd
+    prefix_map = {'split': 'ut_pass', 'fused': 'fused_pass', 'aiter': 'aiter_pass', 'v3': 'oput_pass'}
+    prefix = prefix_map.get(backend, 'ut_pass')
+    output_dir = f'{remote_wd}/run/tests'
     results = {}
     for suffix in ('', '.varlen'):
-        fname = f'sel{pass_num}{suffix}.txt'
-        cmd = ['ssh', hostname, f'cat {remote_wd}/{fname} 2>/dev/null || echo "(not found)"']
-        r = run_command(cmd, cwd=AOTRITON_ROOT, workdir=workdir,
-                        description=f'Read {fname} from {hostname}')
-        results[fname] = r.get('output', r.get('message', ''))
+        fname = f'{prefix}{pass_num}{suffix}.out'
+        r = subprocess.run(
+            ['ssh', hostname, f'tail -n 5 {output_dir}/{fname} 2>/dev/null || echo "(not found)"'],
+            capture_output=True, text=True
+        )
+        results[fname] = r.stdout
     return {'status': 'ok', 'files': results}
 
 

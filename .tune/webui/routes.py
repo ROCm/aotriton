@@ -793,12 +793,13 @@ def api_run_test(hostname):
     return jsonify(result)
 
 
-@bp.route('/api/testing/<hostname>/sel-files', methods=['GET'])
-def api_sel_files(hostname):
-    """Fetch sel${pass}.txt and sel${pass}.varlen.txt from a tester host"""
+@bp.route('/api/testing/<hostname>/tail-output', methods=['GET'])
+def api_tail_output(hostname):
+    """Fetch tail -n 5 of test output files for a tester host"""
     workdir = current_app.config['WORKDIR']
     pass_num = request.args.get('pass', '0')
-    result = tasks.get_sel_files(workdir, hostname, pass_num)
+    backend = request.args.get('backend', 'split')
+    result = tasks.get_tail_output(workdir, hostname, pass_num, backend)
     return jsonify(result)
 
 
