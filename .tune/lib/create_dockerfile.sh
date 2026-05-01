@@ -55,6 +55,7 @@ RUN if [ ! -f ${CELERY_WORKER_PYTHON} ]; then \\
 # Install requirements-tuning.txt
 COPY aotriton.src/requirements*.txt /tmp/
 RUN ${CELERY_WORKER_PYTHON} -m pip install -r /tmp/requirements-tuning.txt && \\
+    ${CELERY_WORKER_PYTHON} -m pip install -r /tmp/requirements-dev.txt && \\
     rm /tmp/requirements*.txt
 
 # Run all scripts matching pattern: NN-*.sh
