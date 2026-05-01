@@ -175,7 +175,8 @@ document.body.addEventListener('htmx:afterRequest', function(event) {
     const isActionTrigger = path.startsWith('/api/workers/') ||
                            path.startsWith('/api/servers/') ||
                            path.startsWith('/api/builds/') ||
-                           path.startsWith('/api/deploy/');
+                           path.startsWith('/api/deploy/') ||
+                           path.startsWith('/api/testing/');
 
     if (isActionTrigger && event.detail.successful) {
         // Trigger refresh of command list
