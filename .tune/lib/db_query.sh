@@ -65,3 +65,9 @@ get_worker_gpu_selection() {
     sqlite3 "$workdir/workers.db" \
         "SELECT value FROM config WHERE key = '$hostname::gpu_selection'"
 }
+
+get_tester_workers() {
+    local workdir="$1"
+    sqlite3 "$workdir/workers.db" \
+        "SELECT w.hostname, w.arch, COALESCE(w.workdir_override, '') FROM workers w INNER JOIN worker_roles r ON w.hostname = r.hostname WHERE r.role_name = 'Tester' ORDER BY w.hostname"
+}
