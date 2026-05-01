@@ -266,7 +266,7 @@ class Flash(TuningDescription):
         Pre-condition: called with device_ctx()
         '''
         import torch
-        if im.qkh > 2048 * 2048 * 128:
+        if im.qkh > 2048 * 2048 * 64:
             gc.collect()
             torch.cuda.empty_cache()
         # print(f'{tname=} {im=}')
@@ -298,7 +298,7 @@ class Flash(TuningDescription):
             outputs = kernel.direct_call(direct_inputs, args)
             refs = from_dict(data_class=kernel.PT_REF_CLASS, data=d["bidi_outputs"], config=dacite_tuple)
             result = kernel.compare(outputs, refs)
-            if im.qkh > 2048 * 2048 * 128:
+            if im.qkh > 2048 * 2048 * 64:
                 gc.collect()
                 torch.cuda.empty_cache()
             return sanitize_value(result)
@@ -324,7 +324,7 @@ class Flash(TuningDescription):
             def fn():
                 kernel.direct_call(direct_inputs, args)
             times = do_bench(fn, quantiles=(0.5, 0.2, 0.8))
-            if im.qkh > 2048 * 2048 * 128:
+            if im.qkh > 2048 * 2048 * 64:
                 gc.collect()
                 torch.cuda.empty_cache()
             return sanitize_value(impl_desc), sanitize_value(times)
