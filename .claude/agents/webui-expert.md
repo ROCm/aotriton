@@ -127,17 +127,23 @@ Panels with `returncode === 0` auto-minimize on completion.
 
 Worker hostnames can be IP addresses (e.g. `10.216.51.98`). HTMX's `hx-indicator` uses `document.querySelectorAll`, which treats dots as CSS class selectors — so `#spinner-10.216.51.98` throws `DOMException: not a valid selector`.
 
-**Never use `hx-indicator` on per-host buttons.** Just omit it. `getElementById` in plain JS is fine with dots since it does not use CSS selector parsing.
+**Never use `hx-indicator` or `hx-include` on per-host buttons**, and never put a hostname-derived string in an ID that is referenced by a CSS selector. Just omit `hx-indicator`. For `hx-include`, use `hx-vals='js:{...}'` with `getElementById` instead — `getElementById` does not use CSS selector parsing and is safe with dots.
+
+`getElementById` in plain JS is fine with dots since it does not use CSS selector parsing.
 
 ```html
-<!-- BAD: crashes with IP hostnames -->
+<!-- BAD: crashes with IP hostnames (dots = CSS class selectors) -->
 <button hx-post="/api/deploy/{{ worker.hostname }}"
-        hx-indicator="#spinner-{{ worker.hostname }}">Deploy</button>
-<span id="spinner-{{ worker.hostname }}" class="htmx-indicator">⏳</span>
+        hx-indicator="#spinner-{{ worker.hostname }}"
+        hx-include="#inputs-{{ worker.hostname }}">Deploy</button>
 
-<!-- GOOD: no spinner, works with any hostname -->
-<button hx-post="/api/deploy/{{ worker.hostname }}"
-        hx-swap="none">Deploy</button>
+<!-- GOOD: no hx-indicator, use hx-vals+js for input values -->
+<button hx-post="/api/testing/{{ worker.hostname }}/run-test"
+        hx-swap="none"
+        hx-vals='js:{pass_num: document.getElementById("pass-{{ worker.hostname }}").value,
+                     backend: document.getElementById("backend-{{ worker.hostname }}").value}'>
+    Run Test
+</button>
 ```
 
 ### Synchronous reads must NOT use the action tracker
