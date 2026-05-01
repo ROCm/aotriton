@@ -5,7 +5,7 @@
 # Build Triton wheel (cached by version)
 # Usage: build_triton_wheel.sh <workdir>
 
-set -e
+set -ex
 
 WORKDIR="$1"
 
@@ -27,6 +27,8 @@ TRITON_SRC_DIR="$AOTRITON_ROOT/third_party/triton"
 TRITON_WHEEL_OUTPUT_DIR="$WORKDIR/scratch/triton"
 mkdir -p "$TRITON_WHEEL_OUTPUT_DIR"
 
+echo "Sync triton source..." >&2
+(cd "$AOTRITON_ROOT"; git submodule sync && git submodule update --init --recursive --force) >&2
 set -e # MUST NOT FAIL
 TRITON_GIT12=$(cd "$TRITON_SRC_DIR" && git rev-parse --short=12 HEAD 2>/dev/null || echo "unknown")
 set +e
@@ -60,6 +62,7 @@ echo "TRITON_WHEEL detected: $TRITON_WHEEL" >&2
 
 # Build triton wheel if not found
 if [ -z "$TRITON_WHEEL" ]; then
+
   echo "Building triton wheel..." >&2
   # Must set TRITON_WHEEL_VERSION_SUFFIX triton's setup.py use .is_dir() to
   # detect .git and thus cannot append +git<hash8> when being built as a submodule.

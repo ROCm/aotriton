@@ -38,6 +38,8 @@ if [ ! -d "$WORKDIR" ]; then
   echo "Error: workdir does not exist: $WORKDIR" >&2
   exit 1
 fi
+source "$WORKDIR/config.rc"
+source "$(dirname "$CELERY_WORKER_PYTHON")/activate"
 
 DATABASE_ROOT="$WORKDIR/installed/database"
 
@@ -47,7 +49,13 @@ if [ ! -d "$DATABASE_ROOT/amd" ]; then
   exit 1
 fi
 
+set -x
+
+mkdir -p "$WORKDIR/scratch/fakehome"
+export HOME="$WORKDIR/scratch/fakehome"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 AOTRITON_ROOT="$(realpath "$SCRIPT_DIR/../..")"
 
 # Detect all tuned architectures from the sharded database directory
@@ -65,15 +73,10 @@ INSTALL_DIR="$WORKDIR/installed/test"
 
 mkdir -p "$BUILD_DIR" "$INSTALL_DIR"
 
-# Use pre-built Triton wheel from scratch/ if available, otherwise system Triton
-TRITON_OPTION="-DAOTRITON_INHERIT_SYSTEM_SITE_TRITON=ON"
-TRITON_WHEEL=$(ls "$WORKDIR/scratch/triton/"*.whl 2>/dev/null | head -1 || true)
-if [ -n "$TRITON_WHEEL" ]; then
-  echo "Using Triton wheel: $TRITON_WHEEL"
-  TRITON_OPTION="-DAOTRITON_USE_LOCAL_TRITON_WHEEL=$TRITON_WHEEL"
-else
-  echo "No Triton wheel found in scratch/triton/, using system Triton."
-fi
+# Step 1: Build Triton wheel (cached)
+echo "Step 1: Building Triton wheel..."
+TRITON_WHEEL=$("$TUNE_ROOT/single/build_triton_wheel.sh" "$WORKDIR")
+echo "Using Triton wheel: $TRITON_WHEEL"
 
 cd "$BUILD_DIR"
 
@@ -83,7 +86,7 @@ cmake "$AOTRITON_ROOT" \
     -DAOTRITON_TARGET_ARCH="$ARCHES" \
     -DAOTRITON_NAME_SUFFIX=test \
     -DAOTRITON_TUNING_DATABASE_ROOT="$DATABASE_ROOT" \
-    "$TRITON_OPTION" \
+    -DAOTRITON_USE_LOCAL_TRITON_WHEEL="$TRITON_WHEEL" \
     -G Ninja
 
 ninja install/strip
