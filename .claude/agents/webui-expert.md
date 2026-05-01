@@ -73,7 +73,26 @@ def api_my_action():
 <span id="my-spinner" class="htmx-indicator">⏳ Running...</span>
 ```
 
-The button automatically appears in Command Output if the endpoint path starts with one of the watched prefixes in `command_widget.html`: `/api/workers/`, `/api/servers/`, `/api/builds/`, `/api/deploy/`.
+The button automatically appears in Command Output if the endpoint path starts with one of the watched prefixes in `command_widget.html`: `/api/workers/`, `/api/servers/`, `/api/builds/`, `/api/deploy/`, `/api/testing/`.
+
+**CRITICAL: use a bare `<button hx-post=...>`, never `<form hx-post=...>`, for action-triggering buttons.** When wrapped in a `<form>`, `event.detail.pathInfo.requestPath` is undefined in the `htmx:afterRequest` listener, so `isActionTrigger` never matches and the Command Output panel is never created. If the button needs to submit input values, use `hx-include="#container-id"` pointing to a plain `<div>` wrapping the inputs — do NOT use a `<form>`.
+
+```html
+<!-- GOOD: bare button + hx-include -->
+<div id="my-inputs-{{ hostname }}">
+    <input type="number" name="pass_num" value="0">
+    <select name="backend">...</select>
+</div>
+<button hx-post="/api/testing/{{ hostname }}/run-test"
+        hx-swap="none"
+        hx-include="#my-inputs-{{ hostname }}">Run Test</button>
+
+<!-- BAD: form wrapper breaks Command Output panel creation -->
+<form hx-post="/api/testing/{{ hostname }}/run-test" hx-swap="none">
+    <input name="pass_num">
+    <button type="submit">Run Test</button>
+</form>
+```
 
 ### Background process lifecycle (action_tracker.py)
 
@@ -103,6 +122,74 @@ Panels with `returncode === 0` auto-minimize on completion.
 - `hx-trigger="load, every 5s"` — poll on load and every 5 seconds
 - `hx-indicator="#id"` — show spinner element during request
 - `hx-confirm="..."` — browser confirm dialog before sending
+
+### hx-indicator must NOT be used with hostname-derived IDs
+
+Worker hostnames can be IP addresses (e.g. `10.216.51.98`). HTMX's `hx-indicator` uses `document.querySelectorAll`, which treats dots as CSS class selectors — so `#spinner-10.216.51.98` throws `DOMException: not a valid selector`.
+
+**Never use `hx-indicator` on per-host buttons.** Just omit it. `getElementById` in plain JS is fine with dots since it does not use CSS selector parsing.
+
+```html
+<!-- BAD: crashes with IP hostnames -->
+<button hx-post="/api/deploy/{{ worker.hostname }}"
+        hx-indicator="#spinner-{{ worker.hostname }}">Deploy</button>
+<span id="spinner-{{ worker.hostname }}" class="htmx-indicator">⏳</span>
+
+<!-- GOOD: no spinner, works with any hostname -->
+<button hx-post="/api/deploy/{{ worker.hostname }}"
+        hx-swap="none">Deploy</button>
+```
+
+### Synchronous reads must NOT use the action tracker
+
+Use `subprocess.run(capture_output=True)` for synchronous SSH reads (e.g. reading a remote file). Do NOT use `run_command()` / the action tracker for these — that creates a Command Output panel for a trivial read, which is confusing and noisy.
+
+```python
+# GOOD: synchronous read
+result = subprocess.run(['ssh', hostname, 'cat /remote/file'], capture_output=True, text=True)
+return {'status': 'ok', 'content': result.stdout}
+
+# BAD: pollutes Command Output with a read operation
+return run_command(['ssh', hostname, 'cat /remote/file'], ...)
+```
+
+### Role-based host filtering (workers.db)
+
+Workers have roles via the `worker_roles(hostname, role_name)` junction table. Role names: `Tuner`, `Builder`, `Tester`.
+
+- In templates: show controls only for hosts with the relevant role using `{% if worker.is_tuner %}...{% else %}<td></td><td></td>{% endif %}`. Use strikethrough on the hostname (`style="text-decoration: line-through;"`) when a host lacks the role — do not change background color.
+- Bulk actions iterate only role-filtered hosts via `get_tuner_hostnames()` / `get_tester_hostnames()` in tasks.py, never all workers.
+- Role toggle is a plain `fetch()` POST (not HTMX) followed by `location.reload()` so the row re-renders correctly.
+
+### Command Output widget: always use textarea + JS polling, never HTMX swap
+
+The Command Output widget (`command_widget.html`) deliberately avoids HTMX swaps for output updates. Every output panel is a `<textarea readonly>` whose content is appended by plain `fetch()` polling in JS.
+
+**Why:** HTMX `hx-swap` replaces DOM nodes. If the command list were re-rendered via HTMX swap, every refresh would destroy all existing textarea values, reset scroll positions, and tear down any in-progress poll loops. This is unacceptable when multiple commands are running simultaneously.
+
+**The correct pattern:**
+1. `#command-list` uses `hx-swap="none"` — HTMX fires the request and calls `htmx:afterRequest`, but never touches the DOM itself.
+2. The `htmx:afterRequest` listener reads `event.detail.xhr.response` (raw JSON) and **only creates panels for action IDs not already in the DOM** (`getElementById('panel-' + id)`). Existing panels are left untouched.
+3. Each new panel contains a `<textarea id="output-{id}" data-offset="0">`. JS `pollOutput()` calls `GET /api/actions/{id}/output?offset=N`, appends the returned text to `textarea.value`, and updates `data-offset` for incremental delivery.
+4. Status updates (`GET /api/actions/{id}/status`) are also plain `fetch()` — they update the status badge and kill-button visibility by direct DOM manipulation, not by re-rendering.
+
+```html
+<!-- GOOD: textarea updated by JS, not HTMX -->
+<textarea readonly id="output-${actionId}" data-offset="0"></textarea>
+<script>
+function pollOutput(actionId) {
+    const ta = document.getElementById('output-' + actionId);
+    fetch(`/api/actions/${actionId}/output?offset=${ta.dataset.offset}`)
+        .then(r => { ta.dataset.offset = r.headers.get('X-Output-Offset'); return r.text(); })
+        .then(text => { ta.value += text; /* auto-scroll */ });
+}
+</script>
+
+<!-- BAD: re-rendering via hx-swap destroys running panel state -->
+<div hx-get="/api/actions" hx-trigger="every 1s" hx-swap="innerHTML">...</div>
+```
+
+**Auto-minimize:** panels with `returncode === 0` call `toggleMinimize()` on completion, which sets `height: 0` on the textarea via a CSS class. This keeps the UI clean without removing the panel.
 
 ### Adding a new tab/page
 
