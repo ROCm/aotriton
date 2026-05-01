@@ -330,9 +330,11 @@ class SingleWorkerCommand(CommandBuilder):
     RELATIVE = None  # Subclass must define
     ACTION_NAME = None  # Subclass must define
 
-    def exec(self, workdir, hostname, options=None):
+    def exec(self, workdir, hostname, options=None, extra_args=None):
         """Execute command with script at RELATIVE path"""
         args = _build_worker_args(workdir, hostname, options)
+        if extra_args:
+            args = args + list(extra_args)
         return self._run(self.RELATIVE, args, workdir, f'{self.ACTION_NAME} worker {hostname}')
 
 
@@ -889,9 +891,9 @@ def deploy_workdir(workdir):
     return _deploy_all.exec(workdir)
 
 
-def deploy_workdir_single(workdir, hostname):
+def deploy_workdir_single(workdir, hostname, extra_args=None):
     """Deploy to single worker"""
-    return _deploy_worker.exec(workdir, hostname)
+    return _deploy_worker.exec(workdir, hostname, extra_args=extra_args)
 
 
 def prepare_workdir(workdir):
@@ -1144,6 +1146,89 @@ def get_tuner_hostnames(workdir):
             "SELECT hostname FROM worker_roles WHERE role_name = 'Tuner' ORDER BY hostname"
         )
         return [row[0] for row in cursor.fetchall()]
+
+
+def get_tester_hostnames(workdir):
+    """Return list of hostnames that have the Tester role."""
+    init_workers_db(workdir)
+    db_path = Path(workdir) / 'workers.db'
+    with sqlite3.connect(db_path.as_posix()) as conn:
+        cursor = conn.execute(
+            "SELECT hostname FROM worker_roles WHERE role_name = 'Tester' ORDER BY hostname"
+        )
+        return [row[0] for row in cursor.fetchall()]
+
+
+def get_workers_for_testing(workdir):
+    """Return all workers with is_tester flag and their workdir, for the Testing tab."""
+    workers = get_workers(workdir)
+    init_workers_db(workdir)
+    db_path = Path(workdir) / 'workers.db'
+    with sqlite3.connect(db_path.as_posix()) as conn:
+        cursor = conn.execute(
+            "SELECT hostname FROM worker_roles WHERE role_name = 'Tester'"
+        )
+        tester_set = {row[0] for row in cursor.fetchall()}
+    result = []
+    for hostname, arch, workdir_override in workers:
+        result.append({
+            'hostname': hostname,
+            'arch': arch,
+            'workdir': workdir_override or '',
+            'is_tester': hostname in tester_set,
+        })
+    return result
+
+
+def get_tester_signature(workdir, hostname):
+    """Read the __signature__ file from installed/test/ on a remote tester host."""
+    worker = get_worker_by_hostname(workdir, hostname)
+    if not worker:
+        return {'status': 'error', 'message': f"Worker '{hostname}' not found"}
+    _, _, workdir_override = worker
+    default_wd = get_default_workdir(workdir) or workdir
+    remote_wd = workdir_override or default_wd
+    sig_glob = f'{remote_wd}/installed/test/lib/aotriton.images/*/__signature__'
+    script = f'f=$(ls {sig_glob} 2>/dev/null | head -1); [ -n "$f" ] && cat "$f" || echo "__NOT_FOUND__"'
+    result = subprocess.run(
+        ['ssh', hostname, script],
+        capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        return {'status': 'error', 'message': result.stderr.strip() or '(ssh error)'}
+    content = result.stdout
+    if content.strip() == '__NOT_FOUND__':
+        return {'status': 'error', 'message': '(no __signature__ file found)'}
+    return {'status': 'ok', 'content': content}
+
+
+
+def run_test_on_host(workdir, hostname, pass_num, test_level, backend):
+    """Queue run-test on a remote tester host via .tune/single/run-test.sh (tsp-backed)."""
+    cmd = [
+        '.tune/single/run-test.sh', workdir, hostname,
+        str(pass_num), str(test_level), backend,
+    ]
+    return run_command(cmd, cwd=AOTRITON_ROOT, workdir=workdir,
+                       description=f'run-test on {hostname} pass={pass_num} level={test_level} backend={backend}')
+
+
+def get_sel_files(workdir, hostname, pass_num):
+    """Fetch sel${pass}.txt and sel${pass}.varlen.txt from a remote tester host."""
+    worker = get_worker_by_hostname(workdir, hostname)
+    if not worker:
+        return {'status': 'error', 'message': f"Worker '{hostname}' not found"}
+    _, _, workdir_override = worker
+    default_wd = get_default_workdir(workdir) or workdir
+    remote_wd = workdir_override or default_wd
+    results = {}
+    for suffix in ('', '.varlen'):
+        fname = f'sel{pass_num}{suffix}.txt'
+        cmd = ['ssh', hostname, f'cat {remote_wd}/{fname} 2>/dev/null || echo "(not found)"']
+        r = run_command(cmd, cwd=AOTRITON_ROOT, workdir=workdir,
+                        description=f'Read {fname} from {hostname}')
+        results[fname] = r.get('output', r.get('message', ''))
+    return {'status': 'ok', 'files': results}
 
 
 def get_default_workdir(workdir):

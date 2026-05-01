@@ -408,9 +408,10 @@ def api_deploy_workdir():
 
 @bp.route('/api/deploy/<hostname>', methods=['POST'])
 def api_deploy_single(hostname):
-    """Deploy workdir to a single worker"""
+    """Deploy workdir to a single worker; pass testnode=1 to add --testnode flag"""
     workdir = current_app.config['WORKDIR']
-    result = tasks.deploy_workdir_single(workdir, hostname)
+    extra_args = ['--testnode'] if request.form.get('testnode') == '1' else None
+    result = tasks.deploy_workdir_single(workdir, hostname, extra_args=extra_args)
     return jsonify(result)
 
 
@@ -739,6 +740,65 @@ def api_debug_resolve_entry():
     if not line:
         return jsonify({'error': 'No line provided'}), 400
     result = tasks.resolve_tune_entry(workdir, line)
+    return jsonify(result)
+
+
+@bp.route('/testing')
+def testing():
+    """Testing tab"""
+    workdir = current_app.config['WORKDIR']
+    workers = tasks.get_workers_for_testing(workdir)
+    git_status = tasks.get_git_status(workdir)
+    return render_template('testing.html', workers=workers, git_status=git_status)
+
+
+@bp.route('/api/testing/<hostname>/role', methods=['POST'])
+def api_set_tester_role(hostname):
+    """Set or clear Tester role for a host"""
+    workdir = current_app.config['WORKDIR']
+    enabled_raw = request.form.get('enabled', 'false').strip().lower()
+    enabled = enabled_raw in ('1', 'true', 'yes', 'on')
+    result = tasks.set_worker_role(workdir, hostname, 'Tester', enabled)
+    return jsonify(result)
+
+
+@bp.route('/api/testing/<hostname>/workdir', methods=['POST'])
+def api_update_tester_workdir(hostname):
+    """Update custom workdir for a tester host"""
+    workdir = current_app.config['WORKDIR']
+    workdir_override = request.form.get('workdir_override', '').strip() or None
+    result = tasks.update_worker_workdir(workdir, hostname, workdir_override)
+    return jsonify(result)
+
+
+@bp.route('/api/testing/<hostname>/signature', methods=['GET'])
+def api_tester_signature(hostname):
+    """Get __signature__ file content from a tester host"""
+    workdir = current_app.config['WORKDIR']
+    result = tasks.get_tester_signature(workdir, hostname)
+    return jsonify(result)
+
+
+
+@bp.route('/api/testing/<hostname>/run-test', methods=['POST'])
+def api_run_test(hostname):
+    """Run .ci/run-test.sh on a tester host"""
+    workdir = current_app.config['WORKDIR']
+    pass_num = str(request.form.get('pass_num', '0'))
+    test_level = str(request.form.get('test_level', '0'))
+    backend = request.form.get('backend', 'split')
+    if backend not in ('split', 'fused', 'aiter', 'v3'):
+        return jsonify({'status': 'error', 'message': f'Invalid backend: {backend}'}), 400
+    result = tasks.run_test_on_host(workdir, hostname, pass_num, test_level, backend)
+    return jsonify(result)
+
+
+@bp.route('/api/testing/<hostname>/sel-files', methods=['GET'])
+def api_sel_files(hostname):
+    """Fetch sel${pass}.txt and sel${pass}.varlen.txt from a tester host"""
+    workdir = current_app.config['WORKDIR']
+    pass_num = request.args.get('pass', '0')
+    result = tasks.get_sel_files(workdir, hostname, pass_num)
     return jsonify(result)
 
 
