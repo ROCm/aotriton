@@ -61,12 +61,14 @@ mkdir -p "$outdir"
   set -v
   export PYTHONPATH="${AOTRITON_TEST_LIBDIR:-${bdir}/install_dir/lib}"
   pytest --tb=line -n ${ngpus} --max-worker-restart 48 -rfEsx \
+    --cache-dir "${outdir}/.pytest_cache" \
     test/test_backward.py \
     -v \
     1>"${outdir}/${fnprefix}${pass}.out" \
     2>"${outdir}/${fnprefix}${pass}.err" || true
   grep '^FAILED' "${outdir}/${fnprefix}${pass}.out"|sed 's/^FAILED //' | sed 's/].*/]/' > "${outdir}/sel${pass}.txt"
   pytest --tb=line -n ${ngpus} --max-worker-restart 48 -rfEsx \
+    --cache-dir "${outdir}/.pytest_cache" \
     test/test_varlen.py \
     -v \
     1>"${outdir}/${fnprefix}${pass}.varlen.out" \
