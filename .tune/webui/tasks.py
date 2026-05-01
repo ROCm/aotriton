@@ -832,6 +832,28 @@ def build_test_libraries(workdir):
     return _build_test_libraries.exec(workdir)
 
 
+def fetch_tuning_build(workdir):
+    """Fetch tuning build artifacts from remote build node"""
+    cfg = get_build_node_config(workdir)
+    hostname = cfg.get('hostname', '')
+    if not hostname:
+        return {'status': 'error', 'message': 'Remote build node hostname is not configured'}
+    cmd = ['.tune/bin/fetchbuild', workdir, '--tuning']
+    return run_command(cmd, cwd=AOTRITON_ROOT, workdir=workdir,
+                       description=f'Fetch tuning build from {hostname}')
+
+
+def fetch_test_build(workdir):
+    """Fetch test build artifacts from remote build node"""
+    cfg = get_build_node_config(workdir)
+    hostname = cfg.get('hostname', '')
+    if not hostname:
+        return {'status': 'error', 'message': 'Remote build node hostname is not configured'}
+    cmd = ['.tune/bin/fetchbuild', workdir, '--test']
+    return run_command(cmd, cwd=AOTRITON_ROOT, workdir=workdir,
+                       description=f'Fetch test build from {hostname}')
+
+
 def build_images(workdir):
     """Build Docker images"""
     return _build_images.exec(workdir)

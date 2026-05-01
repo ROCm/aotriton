@@ -84,6 +84,11 @@
             hx-swap="none"
             hx-indicator="#build-spinner">Build Libraries</button>
     <span id="build-spinner" class="htmx-indicator">⏳ Building...</span>
+    <button hx-post="/api/builds/fetch-tuning"
+            hx-swap="none"
+            hx-indicator="#fetch-tuning-spinner"
+            {% if not build_node_config.hostname %}disabled title="Configure a remote build node hostname first"{% endif %}>Fetch from Remote Build Node{% if build_node_config.hostname %} ({{ build_node_config.hostname }}){% endif %}</button>
+    <span id="fetch-tuning-spinner" class="htmx-indicator">⏳ Fetching...</span>
 </section>
 
 <section>
@@ -94,6 +99,11 @@
             hx-confirm="Build testing version of AOTriton inside container? This may take a long time."
             hx-indicator="#test-build-spinner">Build Test Libraries</button>
     <span id="test-build-spinner" class="htmx-indicator">⏳ Building...</span>
+    <button hx-post="/api/builds/fetch-test"
+            hx-swap="none"
+            hx-indicator="#fetch-test-spinner"
+            {% if not build_node_config.hostname %}disabled title="Configure a remote build node hostname first"{% endif %}>Fetch from Remote Build Node{% if build_node_config.hostname %} ({{ build_node_config.hostname }}){% endif %}</button>
+    <span id="fetch-test-spinner" class="htmx-indicator">⏳ Fetching...</span>
 </section>
 
 <section>

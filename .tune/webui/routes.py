@@ -372,6 +372,22 @@ def api_sync_build_node():
     return jsonify(result)
 
 
+@bp.route('/api/builds/fetch-tuning', methods=['POST'])
+def api_fetch_tuning_build():
+    """Fetch tuning build artifacts from remote build node"""
+    workdir = current_app.config['WORKDIR']
+    result = tasks.fetch_tuning_build(workdir)
+    return jsonify(result)
+
+
+@bp.route('/api/builds/fetch-test', methods=['POST'])
+def api_fetch_test_build():
+    """Fetch test build artifacts from remote build node"""
+    workdir = current_app.config['WORKDIR']
+    result = tasks.fetch_test_build(workdir)
+    return jsonify(result)
+
+
 @bp.route('/api/builds/images', methods=['POST'])
 def api_build_images():
     """Build Docker images"""
