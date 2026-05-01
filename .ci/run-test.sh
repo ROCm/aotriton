@@ -17,14 +17,22 @@ add_torch_ldconfig
 pass=$1
 test_level="$2"
 backend="$3"
-mapfile -d '' bdir_cans < <(find . -maxdepth 1 -type d -name "build-${aotriton_major}.${aotriton_minor}-test-*${native_arch}*" -print0)
-if [ ${#bdir_cans[@]} -gt 1 ]; then
-  echo "There are multiple build directory candidates matching pattern 'build-${aotriton_major}.${aotriton_minor}-test-*${native_arch}*' for testing: ${bdir_cans[@]}. Please keep one only"
-  exit 1
+if [ -n "${AOTRITON_TEST_LIBDIR:-}" ]; then
+  bdir=""
+else
+  mapfile -d '' bdir_cans < <(find . -maxdepth 1 -type d -name "build-${aotriton_major}.${aotriton_minor}-test-*${native_arch}*" -print0)
+  if [ ${#bdir_cans[@]} -gt 1 ]; then
+    echo "There are multiple build directory candidates matching pattern 'build-${aotriton_major}.${aotriton_minor}-test-*${native_arch}*' for testing: ${bdir_cans[@]}. Please keep one only"
+    exit 1
+  fi
+  bdir="${bdir_cans[0]}"
 fi
-bdir="${bdir_cans[0]}"
 
 small_vram=$(amd-smi static -g 0 -v --json|grep -v '^WARNING:'| python -c 'import json, sys; j = json.load(sys.stdin); print(int(j["gpu_data"][0]["vram"]["size"]["value"] / 1024.0 < 60))')
+
+# Output directory: use $OUTPUT_DIR if set, otherwise current directory
+outdir="${OUTPUT_DIR:-.}"
+mkdir -p "$outdir"
 
 (
   ulimit -c 0
@@ -51,17 +59,17 @@ small_vram=$(amd-smi static -g 0 -v --json|grep -v '^WARNING:'| python -c 'impor
     fnprefix="oput_pass"
   fi
   set -v
-  export PYTHONPATH="${bdir}/install_dir/lib"
+  export PYTHONPATH="${AOTRITON_TEST_LIBDIR:-${bdir}/install_dir/lib}"
   pytest --tb=line -n ${ngpus} --max-worker-restart 48 -rfEsx \
     test/test_backward.py \
     -v \
-    1>"${fnprefix}${pass}.out" \
-    2>"${fnprefix}${pass}.err" || true
-  grep '^FAILED' "${fnprefix}${pass}.out"|sed 's/^FAILED //' | sed 's/].*/]/' > "sel${pass}.txt"
+    1>"${outdir}/${fnprefix}${pass}.out" \
+    2>"${outdir}/${fnprefix}${pass}.err" || true
+  grep '^FAILED' "${outdir}/${fnprefix}${pass}.out"|sed 's/^FAILED //' | sed 's/].*/]/' > "${outdir}/sel${pass}.txt"
   pytest --tb=line -n ${ngpus} --max-worker-restart 48 -rfEsx \
     test/test_varlen.py \
     -v \
-    1>"${fnprefix}${pass}.varlen.out" \
-    2>"${fnprefix}${pass}.varlen.err" || true
-  grep '^FAILED' "${fnprefix}${pass}.varlen.out"|sed 's/^FAILED //' | sed 's/].*/]/' > "sel${pass}.varlen.txt"
+    1>"${outdir}/${fnprefix}${pass}.varlen.out" \
+    2>"${outdir}/${fnprefix}${pass}.varlen.err" || true
+  grep '^FAILED' "${outdir}/${fnprefix}${pass}.varlen.out"|sed 's/^FAILED //' | sed 's/].*/]/' > "${outdir}/sel${pass}.varlen.txt"
 )
