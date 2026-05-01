@@ -58,22 +58,6 @@
     {% endif %}
 </section>
 
-<section>
-    <h3>Quick Actions</h3>
-    <button hx-post="/api/workers/all/start"
-            hx-swap="none"
-            hx-indicator="#spinner">Start All Workers</button>
-    <button hx-post="/api/workers/all/stop"
-            hx-swap="none"
-            hx-indicator="#spinner">Stop All Workers</button>
-    <button hx-post="/api/servers/start"
-            hx-swap="none"
-            hx-indicator="#spinner">Start Servers</button>
-    <button hx-post="/api/servers/stop"
-            hx-swap="none"
-            hx-indicator="#spinner">Stop Servers</button>
-    <span id="spinner" class="htmx-indicator">⏳ Processing...</span>
-</section>
 
 <section>
     <h3>Tuning Progress</h3>

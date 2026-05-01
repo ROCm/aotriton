@@ -607,27 +607,45 @@ def stop_start_worker_single(workdir, hostname, options=None):
     return _stopstart_worker.exec(workdir, hostname, options)
 
 
+def _bulk_worker_action(workdir, action, options=None):
+    """Run a worker action on all Tuner-role hosts."""
+    hostnames = get_tuner_hostnames(workdir)
+    if not hostnames:
+        return {'status': 'ok', 'message': 'No Tuner-role workers configured', 'output': ''}
+    results = []
+    for hostname in hostnames:
+        if action == 'start':
+            r = start_worker_single(workdir, hostname, options)
+        elif action == 'stop':
+            r = stop_worker_single(workdir, hostname)
+        elif action == 'restart':
+            r = restart_worker_single(workdir, hostname, options)
+        elif action == 'stop-start':
+            r = stop_start_worker_single(workdir, hostname, options)
+        else:
+            r = {'status': 'error', 'message': f'Unknown action: {action}'}
+        results.append(f"{hostname}: {r.get('status', 'unknown')}")
+    return {'status': 'ok', 'message': '\n'.join(results), 'output': '\n'.join(results)}
+
+
 def start_all_workers(workdir):
-    """Start all workers"""
-    return _start_all_workers.exec(workdir)
+    """Start all Tuner-role workers"""
+    return _bulk_worker_action(workdir, 'start')
 
 
 def stop_all_workers(workdir):
-    """Stop all workers"""
-    return _stop_all_workers.exec(workdir)
+    """Stop all Tuner-role workers"""
+    return _bulk_worker_action(workdir, 'stop')
 
 
 def restart_all_workers(workdir):
-    """Restart all workers"""
-    return _restart_all_workers.exec(workdir)
+    """Restart all Tuner-role workers"""
+    return _bulk_worker_action(workdir, 'restart')
 
 
 def stop_start_all_workers(workdir):
-    """Stop then start all workers (using shell ; operator)"""
-    # Special case: need sequential execution with ; operator
-    wkctl = '.tune/bin/wkctl'
-    cmd = ['/bin/bash', '-c', f'{wkctl} {workdir} stop ; {wkctl} {workdir} start']
-    return run_command(cmd, cwd=AOTRITON_ROOT, workdir=workdir, description='Stop & start all workers')
+    """Stop then start all Tuner-role workers"""
+    return _bulk_worker_action(workdir, 'stop-start')
 
 
 # Server control functions
@@ -935,6 +953,21 @@ def init_workers_db(workdir):
                 reason TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+
+            CREATE TABLE IF NOT EXISTS roles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            INSERT OR IGNORE INTO roles (name) VALUES ('Tuner'), ('Builder'), ('Tester');
+
+            CREATE TABLE IF NOT EXISTS worker_roles (
+                hostname TEXT NOT NULL,
+                role_name TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (hostname, role_name)
+            );
         """)
 
 
@@ -955,6 +988,9 @@ def get_workers_by_architecture(workdir):
     init_workers_db(workdir)  # Ensure database exists
     with sqlite3.connect(db_path.as_posix()) as conn:
         cursor = conn.cursor()
+        # Fetch all tuner-role hostnames
+        cursor.execute("SELECT hostname FROM worker_roles WHERE role_name = 'Tuner'")
+        tuner_set = {row[0] for row in cursor.fetchall()}
         # Fetch all GPU metadata, selections, and status
         cursor.execute("SELECT key, value FROM config WHERE key LIKE '%::gpu::%' OR key LIKE '%::gpu_selection' OR key LIKE '%::status'")
         for key, value in cursor.fetchall():
@@ -1001,7 +1037,8 @@ def get_workers_by_architecture(workdir):
                 'gpu_pciid': gpu_info.get('pciid', ''),
                 'gpu_number': gpu_info.get('number', ''),
                 'gpu_selection': gpu_info.get('selection'),  # None if not set, [-1] for all, or [0,1,2,...]
-                'status_display': status.get('display', 'Unknown')
+                'status_display': status.get('display', 'Unknown'),
+                'is_tuner': hostname in tuner_set,
             })
 
     return workers_by_arch
@@ -1063,6 +1100,50 @@ def update_worker_workdir(workdir, hostname, workdir_override):
         return {'success': True, 'message': f"Worker '{hostname}' workdir updated successfully"}
     except Exception as e:
         return {'success': False, 'error': str(e)}
+
+
+def get_worker_role(workdir, hostname, role):
+    """Return True if hostname has the given role."""
+    init_workers_db(workdir)
+    db_path = Path(workdir) / 'workers.db'
+    with sqlite3.connect(db_path.as_posix()) as conn:
+        cursor = conn.execute(
+            "SELECT 1 FROM worker_roles WHERE hostname = ? AND role_name = ?",
+            (hostname, role)
+        )
+        return cursor.fetchone() is not None
+
+
+def set_worker_role(workdir, hostname, role, enabled):
+    """Add or remove a role association for a hostname."""
+    init_workers_db(workdir)
+    db_path = Path(workdir) / 'workers.db'
+    try:
+        with sqlite3.connect(db_path.as_posix()) as conn:
+            if enabled:
+                conn.execute(
+                    "INSERT OR IGNORE INTO worker_roles (hostname, role_name) VALUES (?, ?)",
+                    (hostname, role)
+                )
+            else:
+                conn.execute(
+                    "DELETE FROM worker_roles WHERE hostname = ? AND role_name = ?",
+                    (hostname, role)
+                )
+        return {'success': True}
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
+
+
+def get_tuner_hostnames(workdir):
+    """Return list of hostnames that have the Tuner role."""
+    init_workers_db(workdir)
+    db_path = Path(workdir) / 'workers.db'
+    with sqlite3.connect(db_path.as_posix()) as conn:
+        cursor = conn.execute(
+            "SELECT hostname FROM worker_roles WHERE role_name = 'Tuner' ORDER BY hostname"
+        )
+        return [row[0] for row in cursor.fetchall()]
 
 
 def get_default_workdir(workdir):

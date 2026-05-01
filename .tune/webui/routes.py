@@ -456,6 +456,16 @@ def api_update_worker_workdir(hostname):
     return jsonify(result)
 
 
+@bp.route('/api/workers/<hostname>/role/<role>', methods=['POST'])
+def api_set_worker_role(hostname, role):
+    """Set or clear a role for a worker (body: enabled=true|false)"""
+    workdir = current_app.config['WORKDIR']
+    enabled_raw = request.form.get('enabled', 'false').strip().lower()
+    enabled = enabled_raw in ('1', 'true', 'yes', 'on')
+    result = tasks.set_worker_role(workdir, hostname, role, enabled)
+    return jsonify(result)
+
+
 @bp.route('/api/config/default-workdir', methods=['GET', 'POST'])
 def api_default_workdir():
     """Get or set default working directory"""
