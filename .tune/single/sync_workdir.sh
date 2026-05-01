@@ -91,14 +91,16 @@ else
   SUBDIR="/$arch"
 fi
 
-if [ -d "$WORKDIR/installed$SUBDIR" ]; then
-  rsync -azR --checksum --info=progress2 --delete --exclude '*.pyc' \
-    "$WORKDIR/./installed$SUBDIR" \
-    "$WORKDIR/./aotriton.src" \
-    "$HOSTNAME:$WORKER_WORKDIR/./"
-else
-  # Sync aotriton.src only if installed$SUBDIR doesn't exist
-  rsync -az --checksum --info=progress2 --delete --exclude '*.pyc' \
-    "$WORKDIR/aotriton.src/" \
-    "$HOSTNAME:$WORKER_WORKDIR/aotriton.src/"
-fi
+# Always use --delete so aotriton.src is an exact copy.
+# When SUBDIR is empty (ALL), protect installed/ from deletion so remote
+# arch dirs not present locally are not wiped.
+FILTER_ARGS=()
+[ -z "$SUBDIR" ] && FILTER_ARGS+=("--filter=P /installed/***")
+
+SOURCES=()
+[ -d "$WORKDIR/installed$SUBDIR" ] && SOURCES+=("$WORKDIR/./installed$SUBDIR")
+SOURCES+=("$WORKDIR/./aotriton.src")
+
+rsync -azR --checksum --info=progress2 --delete "${FILTER_ARGS[@]}" --exclude '*.pyc' \
+  "${SOURCES[@]}" \
+  "$HOSTNAME:$WORKER_WORKDIR/./"
