@@ -25,7 +25,7 @@ You are an expert in the AOTriton Tuner v3 infrastructure. Your scope covers two
 │   ├── export_best_results  # Export best results → scratch/centraldb.sqlite3
 │   ├── psql                 # Non-interactive psql wrapper (supports -c flag)
 │   ├── sancheck             # LUT integrity checker
-│   ├── retry_db_entries     # Reset missing LUT entries to pending
+│   ├── retry_missing_entries # Reset missing LUT entries to pending
 │   ├── dispatch             # Dispatch tuning tasks to queue
 │   ├── pg_dump              # Backup PostgreSQL in directory format
 │   ├── probe-status         # Check probe status

@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 
 # Incrementally update most_accurate_tuning_results for the task_ids listed
-# in <workdir>/scratch/retry_task_ids.txt (written by retry_db_entries).
+# in <workdir>/scratch/retry_task_ids.txt (written by retry_missing_entries).
 #
 # Usage:
 #   update_materialized_view <workdir>
@@ -30,7 +30,7 @@ TASK_IDS_FILE="$WORKDIR/scratch/retry_task_ids.txt"
 
 if [ ! -f "$TASK_IDS_FILE" ]; then
     echo "Error: task_ids file not found: $TASK_IDS_FILE" >&2
-    echo "Run .tune/bin/retry_db_entries first." >&2
+    echo "Run .tune/bin/retry_missing_entries first." >&2
     exit 1
 fi
 

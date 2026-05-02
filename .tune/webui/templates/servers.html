@@ -93,7 +93,7 @@
 
     <p style="font-size: 0.9em; color: gray; margin-top: 0.5rem;">
         <strong>Rebuild Accuracy Table:</strong> DROP + CTAS <code>most_accurate_tuning_results</code> in parallel.<br>
-        <strong>Update Accuracy Table:</strong> Incrementally upserts rows for task_ids cached in <code>scratch/retry_task_ids.txt</code> by <code>retry_db_entries</code>.<br>
+        <strong>Update Accuracy Table:</strong> Incrementally upserts rows for task_ids cached in <code>scratch/retry_task_ids.txt</code> by <code>retry_missing_entries</code>.<br>
         <strong>Compute Best Results:</strong> Aggregates raw tuning results into best_tuning_results table.<br>
         <strong>Export Best Results:</strong> Exports best_tuning_results to <code>scratch/centraldb.sqlite3</code>.<br>
         <strong>Sancheck:</strong> Runs LUT sanity check against <code>scratch/centraldb.sqlite3</code> without triggering code generation.<br>

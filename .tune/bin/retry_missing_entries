@@ -15,9 +15,9 @@ Entries are de-duplicated on (arch, FlashEntry) before any DB queries are made
 (multiple kernels for the same task_queue row share the same entry).
 
 Usage:
-    .tune/bin/retry_db_entries <workdir> [<dbreport.txt>]
-    .tune/bin/retry_db_entries ~/wkdir.v3.5
-    .tune/bin/retry_db_entries ~/wkdir.v3.5 ~/wkdir.v3.5/scratch/dbreport.txt
+    .tune/bin/retry_missing_entries <workdir> [<dbreport.txt>]
+    .tune/bin/retry_missing_entries ~/wkdir.v3.5
+    .tune/bin/retry_missing_entries ~/wkdir.v3.5 ~/wkdir.v3.5/scratch/dbreport.txt
 
 The report defaults to <workdir>/scratch/dbreport.txt (the fixed output location
 produced by .tune/bin/sancheck). The script shows a summary and asks for
