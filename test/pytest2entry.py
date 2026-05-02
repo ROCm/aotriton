@@ -140,6 +140,8 @@ def parse_pytest_out(args, f, out):
     for line in f:
         if not line.startswith('FAILED'):
             continue
+        if 'OutOfMemoryError' in line:
+            continue
         parts = re.split(SEP, line)
         utfn, utname, utparam = [ parts[i] for i in INDICES ]
         tr2cfg = {"arch": args.arch}
