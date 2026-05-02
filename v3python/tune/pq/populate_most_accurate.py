@@ -17,6 +17,7 @@ Incremental mode (task_ids given):
 Usage:
     python3 -m v3python.tune.pq.populate_most_accurate <workdir>
     python3 -m v3python.tune.pq.populate_most_accurate <workdir> --task_ids_file /path/to/ids.txt
+    query_broken_entries ~/wkdir | python3 -m v3python.tune.pq.populate_most_accurate <workdir> --task_ids_file -
 """
 
 import argparse
@@ -127,7 +128,7 @@ def main() -> None:
     parser.add_argument(
         '--task_ids_file',
         default=None,
-        help='Path to file with one task_id per line (incremental mode)',
+        help='Path to file with one task_id per line (incremental mode); use - to read from stdin',
     )
     args = parser.parse_args()
 
@@ -138,10 +139,13 @@ def main() -> None:
     task_ids: list[int] | None = None
 
     if args.task_ids_file is not None:
-        ids_path = Path(args.task_ids_file)
-        if not ids_path.is_file():
-            sys.exit(f'Error: task_ids_file not found: {ids_path}')
-        lines = ids_path.read_text().splitlines()
+        if args.task_ids_file == '-':
+            lines = sys.stdin.read().splitlines()
+        else:
+            ids_path = Path(args.task_ids_file)
+            if not ids_path.is_file():
+                sys.exit(f'Error: task_ids_file not found: {ids_path}')
+            lines = ids_path.read_text().splitlines()
         task_ids = [int(line) for line in lines if line.strip()]
         if not task_ids:
             print('No task_ids. Nothing to do.')

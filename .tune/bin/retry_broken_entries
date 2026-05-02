@@ -1,0 +1,68 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# SSH into a test host, run pytest2entry.py on the .out files for the given
+# pass number, and store the resolved task_ids in broken_entries.db.
+#
+# Usage:
+#   retry_broken_entries <workdir> <hostname> <pass#>
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_ROOT="$(cd "$TUNE_ROOT/.." && pwd)"
+
+. "$TUNE_ROOT/lib/config_load.sh"
+. "$TUNE_ROOT/lib/db_query.sh"
+
+if [ "$#" -ne 3 ]; then
+    echo "Usage: $0 <workdir> <hostname> <pass#>" >&2
+    exit 1
+fi
+
+WORKDIR="$1"
+HOSTNAME="$2"
+PASS_NUM="$3"
+
+load_config "$WORKDIR"
+
+worker_row=$(get_worker_by_hostname "$WORKDIR" "$HOSTNAME")
+IFS='|' read -r ARCH workdir_override <<< "$worker_row"
+
+if [ -z "$ARCH" ]; then
+    echo "Error: hostname '$HOSTNAME' not found in workers.db" >&2
+    exit 1
+fi
+
+REMOTE_WORKDIR="${workdir_override:-$DEFAULT_WORKDIR}"
+REMOTE_OUTDIR="$REMOTE_WORKDIR/run/tests"
+
+echo "Host:          $HOSTNAME ($ARCH)"
+echo "Remote outdir: $REMOTE_OUTDIR"
+echo "Pass:          $PASS_NUM"
+
+PREFIXES=(ut_pass fused_pass aiter_pass oput_pass)
+FOUND=0
+
+for prefix in "${PREFIXES[@]}"; do
+    out_file="$REMOTE_OUTDIR/${prefix}${PASS_NUM}.out"
+    if ! ssh "$HOSTNAME" "[ -f '$out_file' ]" 2>/dev/null; then
+        continue
+    fi
+    echo "Processing $out_file ..."
+    FOUND=$((FOUND + 1))
+    ssh "$HOSTNAME" \
+        "python3 '$REMOTE_WORKDIR/aotriton.src/test/pytest2entry.py' '$out_file'" \
+    | PYTHONPATH="$REPO_ROOT" python3 "$TUNE_ROOT/libexec/broken_entries_to_db" \
+        "$WORKDIR" "$HOSTNAME" "$ARCH" "$PASS_NUM"
+done
+
+if [ "$FOUND" -eq 0 ]; then
+    echo "Error: no .out files found for pass $PASS_NUM on $HOSTNAME under $REMOTE_OUTDIR" >&2
+    exit 1
+fi
+
+# Dry run for testing now.
+# TODO: move entries back to pending state (reset task_queue rows to pending via broken_entries.db)

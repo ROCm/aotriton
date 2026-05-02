@@ -1,0 +1,168 @@
+#!/usr/bin/env python3
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+"""
+Private helper for retry_broken_entries.
+
+Reads pytest2entry.py JSON output from stdin (one JSON object per line),
+looks up the matching task_queue row IDs in PostgreSQL, and inserts
+(pass, host, arch, module, entry_text, task_id) into broken_entries.db.
+
+Usage (called by retry_broken_entries, not directly):
+    <pytest2entry output> | broken_entries_to_db <workdir> <hostname> <arch> <pass_num>
+"""
+
+import argparse
+import json
+import sqlite3
+import sys
+from dataclasses import asdict
+from pathlib import Path
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(_REPO_ROOT))
+
+import psycopg
+from psycopg.rows import dict_row
+
+from v3python.tune.flash.module import FlashEntry
+from v3python.tune.utils import get_db_connection_params
+
+# 'flash' matches v3python.tune.flash — the only tuning module currently supported.
+# TODO: extend when additional modules (e.g. gemm) are added to v3python.tune.*
+_MODULE = 'flash'
+
+_CREATE_TABLE = '''
+CREATE TABLE IF NOT EXISTS broken_entries (
+    pass        INTEGER NOT NULL,
+    host        TEXT    NOT NULL,
+    arch        TEXT    NOT NULL,
+    module      TEXT    NOT NULL,
+    entry_text  TEXT    NOT NULL,
+    task_id     INTEGER NOT NULL,
+    PRIMARY KEY (pass, host, module, entry_text)
+)
+'''
+
+
+def _cfg_to_entry(cfg: dict) -> tuple[str, FlashEntry]:
+    """Translate a pytest2entry cfg dict to (arch, FlashEntry)."""
+    return cfg['arch'], FlashEntry(
+        dtype=cfg['dtype'],
+        hdim=cfg['d_head'],
+        seqlen_q=cfg['seqlen_q'],
+        seqlen_k=cfg['seqlen_k'],
+        causal=bool(cfg['causal_type']),
+        dropout_p=cfg['dropout_p'],
+        bias_type=cfg['bias_type'],
+    )
+
+
+def _entry_to_jsonb_filter(entry: FlashEntry) -> tuple[str, list]:
+    d = asdict(entry)
+    clauses = []
+    params: list = []
+    for field, value in d.items():
+        col = f"task_config->'entry'->>'{field}'"
+        if isinstance(value, bool):
+            clauses.append(f"({col})::boolean = %s")
+        elif isinstance(value, int):
+            clauses.append(f"({col})::integer = %s")
+        elif isinstance(value, float):
+            clauses.append(f"({col})::float = %s")
+        else:
+            clauses.append(f"{col} = %s")
+        params.append(value)
+    return ' AND '.join(clauses), params
+
+
+def _fetch_task_id(conn, arch: str, entry: FlashEntry) -> int | None:
+    entry_sql, entry_params = _entry_to_jsonb_filter(entry)
+    sql = (
+        f"SELECT id FROM task_queue "
+        f"WHERE task_config->>'arch' = %s AND {entry_sql} LIMIT 1"
+    )
+    with conn.cursor() as cur:
+        cur.execute(sql, [arch] + entry_params)
+        row = cur.fetchone()
+        return row['id'] if row else None
+
+
+def _parse_stdin() -> list[tuple[str, FlashEntry]]:
+    """Parse JSON lines from stdin, return de-duplicated (arch, FlashEntry) list."""
+    seen: set[tuple] = set()
+    result: list[tuple[str, FlashEntry]] = []
+    raw_count = 0
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            cfg = json.loads(line)
+        except json.JSONDecodeError as e:
+            print(f'Warning: skipping malformed JSON line: {e}', file=sys.stderr)
+            continue
+        raw_count += 1
+        arch, entry = _cfg_to_entry(cfg)
+        key = (arch, tuple(asdict(entry).values()))
+        if key not in seen:
+            seen.add(key)
+            result.append((arch, entry))
+    print(f'Entries parsed: {raw_count}, unique: {len(result)}')
+    return result
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument('workdir', help='Project workdir containing config.rc')
+    parser.add_argument('hostname', help='Test host name (for SQLite record)')
+    parser.add_argument('arch', help='GPU arch of test host (for SQLite record)')
+    parser.add_argument('pass_num', type=int, help='Test pass number')
+    args = parser.parse_args()
+
+    workdir = Path(args.workdir)
+    db_path = workdir / 'scratch' / 'broken_entries.db'
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    entries = _parse_stdin()
+    if not entries:
+        print('No entries from stdin. Nothing to do.')
+        return
+
+    conn_params = get_db_connection_params(workdir)
+    resolved: list[tuple[FlashEntry, int]] = []
+    not_found = 0
+
+    with psycopg.connect(**conn_params, row_factory=dict_row) as conn:
+        for arch, entry in entries:
+            task_id = _fetch_task_id(conn, arch, entry)
+            if task_id is None:
+                print(
+                    f'Warning: no task_queue row for {arch} {entry.as_text()}',
+                    file=sys.stderr,
+                )
+                not_found += 1
+            else:
+                resolved.append((entry, task_id))
+
+    print(f'Resolved: {len(resolved)}, not found: {not_found}')
+
+    with sqlite3.connect(db_path) as db:
+        db.execute(_CREATE_TABLE)
+        for entry, task_id in resolved:
+            db.execute(
+                'INSERT OR REPLACE INTO broken_entries VALUES (?,?,?,?,?,?)',
+                (args.pass_num, args.hostname, args.arch, _MODULE,
+                 entry.as_text(), task_id),
+            )
+        db.commit()
+
+    print(f'Written {len(resolved)} entries to {db_path}')
+
+
+if __name__ == '__main__':
+    main()
