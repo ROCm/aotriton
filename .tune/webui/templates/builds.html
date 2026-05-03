@@ -93,12 +93,23 @@
 
 <section>
     <h3>Build Testing Version of AOTriton Libraries</h3>
-    <p>Build all tuned architectures from <code>installed/database/amd/</code> inside the container image and install to <code>installed/test/</code>. Uses <code>remotebld --test</code>.</p>
+    <p>Per-arch builds from <code>installed/database/amd/&lt;arch&gt;/</code> into <code>installed/test/&lt;arch&gt;/</code>. Uses <code>remotebld --test [--single_arch]</code>.</p>
     <button hx-post="/api/builds/test-libraries"
             hx-swap="none"
-            hx-confirm="Build testing version of AOTriton inside container? This may take a long time."
-            hx-indicator="#test-build-spinner">Build Test Libraries</button>
+            hx-confirm="Build testing version of AOTriton for all architectures inside container? This may take a long time."
+            hx-indicator="#test-build-spinner">Build Test Libraries (All)</button>
     <span id="test-build-spinner" class="htmx-indicator">⏳ Building...</span>
+    <div style="margin-top: 0.5rem; display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center;">
+        <span style="font-size: 0.9em; color: gray; margin-right: 0.2rem;">Single arch:</span>
+        {% for arch in archs %}
+        <button hx-post="/api/builds/test-libraries"
+                hx-vals='{"single_arch": "{{ arch }}"}'
+                hx-swap="none"
+                hx-confirm="Build testing libraries for {{ arch }} only?"
+                hx-indicator="#test-build-spinner-{{ arch }}">{{ arch }}</button>
+        <span id="test-build-spinner-{{ arch }}" class="htmx-indicator">⏳</span>
+        {% endfor %}
+    </div>
     <button hx-post="/api/builds/fetch-test"
             hx-swap="none"
             hx-indicator="#fetch-test-spinner"

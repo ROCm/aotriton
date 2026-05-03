@@ -504,8 +504,12 @@ class BuildTestLibrariesCommand(CommandBuilder):
     """Build testing version of AOTriton libraries inside container via remotebld --test"""
     RELATIVE = '.tune/bin/remotebld'
 
-    def exec(self, workdir):
-        return self._run(self.RELATIVE, [workdir, '--test'], workdir, 'Build testing AOTriton libraries')
+    def exec(self, workdir, single_arch: str | None = None):
+        args = [workdir, '--test']
+        if single_arch:
+            args += ['--single_arch', single_arch]
+        label = f'Build testing AOTriton libraries ({single_arch})' if single_arch else 'Build testing AOTriton libraries'
+        return self._run(self.RELATIVE, args, workdir, label)
 
 
 class BuildImagesCommand(BuildCommand):
@@ -841,9 +845,9 @@ def build_libraries(workdir):
     return _build_libraries.exec(workdir)
 
 
-def build_test_libraries(workdir):
-    """Build testing version of AOTriton libraries inside container"""
-    return _build_test_libraries.exec(workdir)
+def build_test_libraries(workdir, single_arch: str | None = None):
+    """Build testing version of AOTriton libraries inside container (all arches or one)."""
+    return _build_test_libraries.exec(workdir, single_arch)
 
 
 def fetch_tuning_build(workdir):
@@ -1175,14 +1179,14 @@ def get_workers_for_testing(workdir):
 
 
 def get_tester_signature(workdir, hostname):
-    """Read the __signature__ file from installed/test/ on a remote tester host."""
+    """Read the __signature__ file from installed/test/<arch>/ on a remote tester host."""
     worker = get_worker_by_hostname(workdir, hostname)
     if not worker:
         return {'status': 'error', 'message': f"Worker '{hostname}' not found"}
-    _, _, workdir_override = worker
+    _, arch, workdir_override = worker
     default_wd = get_default_workdir(workdir) or workdir
     remote_wd = workdir_override or default_wd
-    sig_glob = f'{remote_wd}/installed/test/lib/aotriton.images/*/__signature__'
+    sig_glob = f'{remote_wd}/installed/test/{arch}/lib/aotriton.images/*/__signature__'
     script = f'f=$(ls {sig_glob} 2>/dev/null | head -1); [ -n "$f" ] && cat "$f" || echo "__NOT_FOUND__"'
     result = subprocess.run(
         ['ssh', hostname, script],
@@ -1199,12 +1203,16 @@ def get_tester_signature(workdir, hostname):
 
 def run_test_on_host(workdir, hostname, pass_num, test_level, backend):
     """Queue run-test on a remote tester host via .tune/single/run-test.sh (tsp-backed)."""
+    worker = get_worker_by_hostname(workdir, hostname)
+    if not worker:
+        return {'status': 'error', 'message': f"Worker '{hostname}' not found"}
+    _, arch, workdir_override = worker
     cmd = [
-        '.tune/single/run-test.sh', workdir, hostname,
+        '.tune/single/run-test.sh', workdir, hostname, arch, workdir_override or '',
         str(pass_num), str(test_level), backend,
     ]
     return run_command(cmd, cwd=AOTRITON_ROOT, workdir=workdir,
-                       description=f'run-test on {hostname} pass={pass_num} level={test_level} backend={backend}')
+                       description=f'run-test on {hostname} ({arch}) pass={pass_num} level={test_level} backend={backend}')
 
 
 def get_tail_output(workdir, hostname, pass_num, backend):

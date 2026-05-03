@@ -351,9 +351,10 @@ def api_build_libraries():
 
 @bp.route('/api/builds/test-libraries', methods=['POST'])
 def api_build_test_libraries():
-    """Build testing version of AOTriton libraries inside container"""
+    """Build testing version of AOTriton libraries inside container (all or single arch)."""
     workdir = current_app.config['WORKDIR']
-    result = tasks.build_test_libraries(workdir)
+    single_arch = request.form.get('single_arch', '').strip() or None
+    result = tasks.build_test_libraries(workdir, single_arch)
     return jsonify(result)
 
 

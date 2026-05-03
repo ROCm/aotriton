@@ -28,25 +28,28 @@ set -euo pipefail
 MODE="tuning"
 WORKDIR=""
 DO_SYNC=0
+SINGLE_ARCH=""
 
-for arg in "$@"; do
-  case "$arg" in
-    --test)   MODE="test" ;;
-    --tuning) MODE="tuning" ;;
-    --sync)   DO_SYNC=1 ;;
-    *)        WORKDIR="$arg" ;;
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --test)        MODE="test"; shift ;;
+    --tuning)      MODE="tuning"; shift ;;
+    --sync)        DO_SYNC=1; shift ;;
+    --single_arch) SINGLE_ARCH="$2"; shift 2 ;;
+    *)             WORKDIR="$1"; shift ;;
   esac
 done
 
 if [ -z "$WORKDIR" ]; then
   cat >&2 <<EOF
-Usage: $0 <workdir> [--tuning|--test] [--sync]
+Usage: $0 <workdir> [--tuning|--test] [--sync] [--single_arch <arch>]
 
-  --tuning (default)  Build tuning version of AOTriton (calls libbld).
-  --test              Build testing version of AOTriton (calls testbld
-                      inside CELERY_WORKER_IMAGE container).
-  --sync              Sync workdir to the build node before building
-                      (calls sync_workdir --buildnode).
+  --tuning (default)    Build tuning version of AOTriton (calls libbld).
+  --test                Build testing version of AOTriton (calls testbld
+                        inside CELERY_WORKER_IMAGE container).
+  --sync                Sync workdir to the build node before building
+                        (calls sync_workdir --buildnode).
+  --single_arch <arch>  Build only the specified arch (--test mode only).
 
 Build node config (workers.db config table):
   buildnode::enable           1 = remote build; 0 = local.
@@ -95,16 +98,20 @@ if [ "$USE_REMOTE" -eq 1 ]; then
   if [ "$MODE" = "test" ]; then
     echo "Running testbld on $BUILD_NODE_HOST via tsp (image: $CELERY_WORKER_IMAGE)"
     # shellcheck disable=SC2029
-    ssh "$BUILD_NODE_HOST" bash -s "$REMOTE_WORKDIR" "$CELERY_WORKER_IMAGE" <<'EOF'
+    ssh "$BUILD_NODE_HOST" bash -s "$REMOTE_WORKDIR" "$CELERY_WORKER_IMAGE" "$SINGLE_ARCH" <<'EOF'
 REMOTE_WORKDIR="$1"
 CELERY_WORKER_IMAGE="$2"
+SINGLE_ARCH="$3"
+
+TESTBLD_ARGS=(/wkdir)
+[ -n "$SINGLE_ARCH" ] && TESTBLD_ARGS+=(--single_arch "$SINGLE_ARCH")
 
 set -x
 jobid=$(tsp docker run --rm \
   --user "$(id -u):$(id -g)" \
   --mount "type=bind,source=$REMOTE_WORKDIR,target=/wkdir" \
   "$CELERY_WORKER_IMAGE" \
-  bash /wkdir/aotriton.src/.tune/bin/testbld /wkdir)
+  bash /wkdir/aotriton.src/.tune/bin/testbld "${TESTBLD_ARGS[@]}")
 echo "tsp job ID: $jobid"
 tsp -t $jobid
 EOF
@@ -130,12 +137,14 @@ else
       echo "Error: CELERY_WORKER_IMAGE not set in config.rc" >&2
       exit 1
     fi
+    TESTBLD_ARGS=(/wkdir)
+    [ -n "$SINGLE_ARCH" ] && TESTBLD_ARGS+=(--single_arch "$SINGLE_ARCH")
     echo "Running testbld locally inside container: $CELERY_WORKER_IMAGE"
     docker run --rm \
       --user "$(id -u):$(id -g)" \
       --mount "type=bind,source=$ABSWORKDIR,target=/wkdir" \
       "$CELERY_WORKER_IMAGE" \
-      bash /wkdir/aotriton.src/.tune/bin/testbld /wkdir
+      bash /wkdir/aotriton.src/.tune/bin/testbld "${TESTBLD_ARGS[@]}"
   else
     "$SCRIPT_DIR/libbld" "$WORKDIR"
   fi

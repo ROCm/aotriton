@@ -68,13 +68,13 @@ mapfile -t WORKERS < <(get_tester_workers "$WORKDIR")
 
 COUNT=0
 for worker in "${WORKERS[@]}"; do
-  IFS='|' read -r hostname _arch _workdir_override <<< "$worker"
+  IFS='|' read -r hostname arch workdir_override <<< "$worker"
 
   if ! should_process_host "$hostname"; then
     continue
   fi
 
-  "$TUNE_ROOT/single/run-test.sh" "$WORKDIR" "$hostname" \
+  "$TUNE_ROOT/single/run-test.sh" "$WORKDIR" "$hostname" "$arch" "${workdir_override:-}" \
     "$PASS_NUM" "$TEST_LEVEL" "$BACKEND" $FOLLOW_FLAG
 
   COUNT=$((COUNT + 1))

@@ -5,9 +5,10 @@
 # Run .ci/run-test.sh on a single tester host via tsp (SSH-disconnect tolerant).
 #
 # Usage:
-#   run-test.sh <workdir> <hostname> <pass#> <test_level> <split|fused|aiter|v3> [--follow]
+#   run-test.sh <workdir> <hostname> <arch> <workdir_override> <pass#> <test_level> <split|fused|aiter|v3> [--follow]
 #
-#   --follow  Wait for the tsp job to complete (tsp -t <jobid>); default is fire-and-forget.
+#   workdir_override  Remote workdir override (empty string = use DEFAULT_WORKDIR from config.rc)
+#   --follow          Wait for the tsp job to complete (tsp -t <jobid>); default is fire-and-forget.
 
 set -euo pipefail
 
@@ -15,7 +16,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 . "$TUNE_ROOT/lib/config_load.sh"
-. "$TUNE_ROOT/lib/db_query.sh"
 
 POSITIONAL=()
 FOLLOW=0
@@ -27,21 +27,24 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [ "${#POSITIONAL[@]}" -lt 5 ]; then
+if [ "${#POSITIONAL[@]}" -lt 7 ]; then
   cat >&2 <<EOF
-Usage: $0 <workdir> <hostname> <pass#> <test_level> <split|fused|aiter|v3> [--follow]
+Usage: $0 <workdir> <hostname> <arch> <workdir_override> <pass#> <test_level> <split|fused|aiter|v3> [--follow]
 
-  --follow  Wait for the remote tsp job to finish (tsp -t <jobid>).
-            Without this flag the job is queued and the script returns immediately.
+  workdir_override  Remote workdir override (empty string = use DEFAULT_WORKDIR).
+  --follow          Wait for the remote tsp job to finish (tsp -t <jobid>).
+                    Without this flag the job is queued and the script returns immediately.
 EOF
   exit 1
 fi
 
 WORKDIR="${POSITIONAL[0]}"
 HOSTNAME="${POSITIONAL[1]}"
-PASS_NUM="${POSITIONAL[2]}"
-TEST_LEVEL="${POSITIONAL[3]}"
-BACKEND="${POSITIONAL[4]}"
+ARCH="${POSITIONAL[2]}"
+WORKDIR_OVERRIDE="${POSITIONAL[3]}"
+PASS_NUM="${POSITIONAL[4]}"
+TEST_LEVEL="${POSITIONAL[5]}"
+BACKEND="${POSITIONAL[6]}"
 
 case "$BACKEND" in
   split|fused|aiter|v3) ;;
@@ -50,15 +53,14 @@ esac
 
 load_config "$WORKDIR"
 
-WORKER_INFO=$(get_worker_by_hostname "$WORKDIR" "$HOSTNAME")
-IFS='|' read -r _arch workdir_override <<< "$WORKER_INFO"
-REMOTE_WORKDIR="${workdir_override:-$DEFAULT_WORKDIR}"
+REMOTE_WORKDIR="${WORKDIR_OVERRIDE:-$DEFAULT_WORKDIR}"
 
-LIBDIR="/wkdir/installed/test/lib"
+# Per-arch test install: installed/test/<arch>/lib
+LIBDIR="/wkdir/installed/test/$ARCH/lib"
 REMOTE_SCRIPT="/wkdir/aotriton.src/.ci/run-test.sh"
 OUTPUT_DIR="/wkdir/run/tests"
 
-echo "[$HOSTNAME] Queuing run-test pass=$PASS_NUM level=$TEST_LEVEL backend=$BACKEND"
+echo "[$HOSTNAME] Queuing run-test pass=$PASS_NUM level=$TEST_LEVEL backend=$BACKEND arch=$ARCH"
 echo "[$HOSTNAME] output -> $REMOTE_WORKDIR/run/tests/"
 
 # shellcheck disable=SC2029

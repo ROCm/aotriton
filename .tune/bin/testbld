@@ -15,24 +15,33 @@
 
 set -euo pipefail
 
-if [ "$#" -ne 1 ]; then
-  cat >&2 <<EOF
-Usage: $0 <workdir>
+WORKDIR=""
+SINGLE_ARCH=""
 
-Build AOTriton testing libraries for all tuned architectures.
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --single_arch) SINGLE_ARCH="$2"; shift 2 ;;
+    *) WORKDIR="$1"; shift ;;
+  esac
+done
+
+if [ -z "$WORKDIR" ]; then
+  cat >&2 <<EOF
+Usage: $0 <workdir> [--single_arch <arch>]
+
+Build AOTriton testing libraries (per-arch builds).
 Must be run inside the CELERY_WORKER_IMAGE container.
 
 Arguments:
-  <workdir>  Project working directory (typically /wkdir inside container)
+  <workdir>             Project working directory (typically /wkdir inside container)
+  --single_arch <arch>  Build only the specified architecture
 
-Output:
-  - AOTriton build:   <workdir>/build/test/
-  - AOTriton install: <workdir>/installed/test/
+Output (per arch):
+  - AOTriton build:   <workdir>/build/test/<arch>/
+  - AOTriton install: <workdir>/installed/test/<arch>/
 EOF
   exit 1
 fi
-
-WORKDIR="$1"
 
 if [ ! -d "$WORKDIR" ]; then
   echo "Error: workdir does not exist: $WORKDIR" >&2
@@ -58,38 +67,50 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 AOTRITON_ROOT="$(realpath "$SCRIPT_DIR/../..")"
 
-# Detect all tuned architectures from the sharded database directory
-mapfile -t ARCH_LIST < <(ls -1 "$DATABASE_ROOT/amd/")
-if [ "${#ARCH_LIST[@]}" -eq 0 ]; then
-  echo "Error: no architectures found under $DATABASE_ROOT/amd/" >&2
-  exit 1
+# Collect architectures to build
+if [ -n "$SINGLE_ARCH" ]; then
+  if [ ! -d "$DATABASE_ROOT/amd/$SINGLE_ARCH" ]; then
+    echo "Error: no sharded database found for arch '$SINGLE_ARCH' at $DATABASE_ROOT/amd/$SINGLE_ARCH" >&2
+    exit 1
+  fi
+  ARCH_LIST=("$SINGLE_ARCH")
+else
+  mapfile -t ARCH_LIST < <(ls -1 "$DATABASE_ROOT/amd/")
+  if [ "${#ARCH_LIST[@]}" -eq 0 ]; then
+    echo "Error: no architectures found under $DATABASE_ROOT/amd/" >&2
+    exit 1
+  fi
 fi
-# cmake expects semicolon-separated arch list
-ARCHES=$(IFS=';'; echo "${ARCH_LIST[*]}")
-echo "Detected architectures: $ARCHES"
+echo "Architectures to build: ${ARCH_LIST[*]}"
 
-BUILD_DIR="$WORKDIR/build/test"
-INSTALL_DIR="$WORKDIR/installed/test"
-
-mkdir -p "$BUILD_DIR" "$INSTALL_DIR"
-
-# Step 1: Build Triton wheel (cached)
+# Step 1: Build Triton wheel (cached, shared across all arch builds)
 echo "Step 1: Building Triton wheel..."
 TRITON_WHEEL=$("$TUNE_ROOT/single/build_triton_wheel.sh" "$WORKDIR")
 echo "Using Triton wheel: $TRITON_WHEEL"
 
-cd "$BUILD_DIR"
+# Step 2: Per-arch cmake+ninja build
+for ARCH in "${ARCH_LIST[@]}"; do
+  BUILD_DIR="$WORKDIR/build/test/$ARCH"
+  INSTALL_DIR="$WORKDIR/installed/test/$ARCH"
+  mkdir -p "$BUILD_DIR" "$INSTALL_DIR"
 
-cmake "$AOTRITON_ROOT" \
-    -DCMAKE_INSTALL_PREFIX="$INSTALL_DIR" \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DAOTRITON_TARGET_ARCH="$ARCHES" \
-    -DAOTRITON_NAME_SUFFIX=test \
-    -DAOTRITON_TUNING_DATABASE_ROOT="$DATABASE_ROOT" \
-    -DAOTRITON_USE_LOCAL_TRITON_WHEEL="$TRITON_WHEEL" \
-    -G Ninja
+  echo ""
+  echo "=== Building arch: $ARCH ==="
+  cd "$BUILD_DIR"
 
-ninja install/strip
+  cmake "$AOTRITON_ROOT" \
+      -DCMAKE_INSTALL_PREFIX="$INSTALL_DIR" \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DAOTRITON_TARGET_ARCH="$ARCH" \
+      -DAOTRITON_NAME_SUFFIX=test \
+      -DAOTRITON_TUNING_DATABASE_ROOT="$DATABASE_ROOT" \
+      -DAOTRITON_USE_LOCAL_TRITON_WHEEL="$TRITON_WHEEL" \
+      -G Ninja
+
+  ninja install/strip
+
+  echo "Installed: $INSTALL_DIR"
+done
 
 echo ""
-echo "Test build complete: $INSTALL_DIR"
+echo "Test build complete."
