@@ -2,6 +2,9 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
+_CONFIG_LOAD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$_CONFIG_LOAD_DIR/sqlite3_compat.sh"
+
 # Load configuration from workdir
 
 load_config() {

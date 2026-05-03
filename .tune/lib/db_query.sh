@@ -2,6 +2,9 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
+_DB_QUERY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$_DB_QUERY_DIR/sqlite3_compat.sh"
+
 # Database query helpers
 
 get_workers() {
@@ -18,7 +21,8 @@ get_hostnames() {
 
 get_architectures() {
     local workdir="$1"
-    python3 -c "import sqlite3; conn=sqlite3.connect('$workdir/workers.db'); [print(r[0]) for r in conn.execute('SELECT DISTINCT arch FROM workers ORDER BY arch')]"
+    sqlite3 "$workdir/workers.db" \
+        "SELECT DISTINCT arch FROM workers ORDER BY arch"
 }
 
 get_slurm_batch() {
