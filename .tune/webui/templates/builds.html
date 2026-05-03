@@ -82,8 +82,19 @@
     <p>Build libraries for all registered architectures: <strong>{{ archs|join(', ') }}</strong></p>
     <button hx-post="/api/builds/libraries"
             hx-swap="none"
-            hx-indicator="#build-spinner">Build Libraries</button>
+            hx-indicator="#build-spinner">Build Libraries (All)</button>
     <span id="build-spinner" class="htmx-indicator">⏳ Building...</span>
+    <div style="margin-top: 0.5rem; display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center;">
+        <span style="font-size: 0.9em; color: gray; margin-right: 0.2rem;">Single arch:</span>
+        {% for arch in archs %}
+        <button hx-post="/api/builds/libraries"
+                hx-vals='{"single_arch": "{{ arch }}"}'
+                hx-swap="none"
+                hx-confirm="Build tuning libraries for {{ arch }} only?"
+                hx-indicator="#build-spinner-{{ arch }}">{{ arch }}</button>
+        <span id="build-spinner-{{ arch }}" class="htmx-indicator">⏳</span>
+        {% endfor %}
+    </div>
     <button hx-post="/api/builds/fetch-tuning"
             hx-swap="none"
             hx-indicator="#fetch-tuning-spinner"

@@ -20,15 +20,26 @@ EOF
   exit 1
 fi
 
-if [ "$#" -ne 1 ]; then
+WORKDIR=""
+SINGLE_ARCH=""
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --single_arch) SINGLE_ARCH="$2"; shift 2 ;;
+    *) WORKDIR="$1"; shift ;;
+  esac
+done
+
+if [ -z "$WORKDIR" ]; then
   cat >&2 <<EOF
-Usage: $0 <workdir>
+Usage: $0 <workdir> [--single_arch <arch>]
 
 Build triton wheel and AOTriton tuning binaries for all registered
-architectures by manage-workers.py.
+architectures (or a single one).
 
 Arguments:
-  <workdir>  Project working directory (created by initproj)
+  <workdir>             Project working directory (created by initproj)
+  --single_arch <arch>  Build only the specified architecture
 
 Output:
   - Triton wheel: <workdir>/scratch/triton/
@@ -46,8 +57,6 @@ TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 . "$TUNE_ROOT/lib/config_load.sh"
 . "$TUNE_ROOT/lib/db_query.sh"
 
-WORKDIR="$1"
-
 # Validate
 if [ ! -d "$WORKDIR" ] || [ ! -f "$WORKDIR/workers.db" ]; then
   echo "Error: Invalid workdir or workers.db not found" >&2
@@ -62,12 +71,15 @@ TRITON_WHEEL=$("$TUNE_ROOT/single/build_triton_wheel.sh" "$WORKDIR")
 echo "Using Triton wheel: $TRITON_WHEEL"
 
 # Step 2: Build AOTriton for each architecture
-echo "Step 2: Building AOTriton for all architectures..."
-mapfile -t ARCHS < <(get_architectures "$WORKDIR")
-
-echo "Architectures detected: ${ARCHS[*]}"
-
 ABSWORKDIR=$(realpath "$WORKDIR")
+
+if [ -n "$SINGLE_ARCH" ]; then
+  ARCHS=("$SINGLE_ARCH")
+  echo "Step 2: Building AOTriton for arch: $SINGLE_ARCH"
+else
+  mapfile -t ARCHS < <(get_architectures "$WORKDIR")
+  echo "Step 2: Building AOTriton for all architectures: ${ARCHS[*]}"
+fi
 
 for arch in "${ARCHS[@]}"; do
     echo "Building $arch..."

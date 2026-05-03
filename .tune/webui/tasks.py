@@ -499,6 +499,13 @@ class BuildLibrariesCommand(BuildCommand):
     RELATIVE = '.tune/bin/libbld'
     DESCRIPTION = 'Build tuning version of AOTriton libraries'
 
+    def exec(self, workdir, single_arch: str | None = None):
+        args = [workdir]
+        if single_arch:
+            args += ['--single_arch', single_arch]
+        label = f'Build tuning AOTriton libraries ({single_arch})' if single_arch else self.DESCRIPTION
+        return self._run(self.RELATIVE, args, workdir, label)
+
 
 class BuildTestLibrariesCommand(CommandBuilder):
     """Build testing version of AOTriton libraries inside container via remotebld --test"""
@@ -840,9 +847,9 @@ def sync_build_node(workdir):
                        description=f'Sync workdir to remote build node {hostname}')
 
 
-def build_libraries(workdir):
-    """Build tuning version of AOTriton libraries"""
-    return _build_libraries.exec(workdir)
+def build_libraries(workdir, single_arch: str | None = None):
+    """Build tuning version of AOTriton libraries (all arches or one)."""
+    return _build_libraries.exec(workdir, single_arch)
 
 
 def build_test_libraries(workdir, single_arch: str | None = None):

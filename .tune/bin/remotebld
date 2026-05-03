@@ -118,11 +118,15 @@ EOF
   else
     echo "Running libbld on $BUILD_NODE_HOST via tsp"
     # shellcheck disable=SC2029
-    ssh "$BUILD_NODE_HOST" bash -s "$REMOTE_WORKDIR" <<'EOF'
+    ssh "$BUILD_NODE_HOST" bash -s "$REMOTE_WORKDIR" "$SINGLE_ARCH" <<'EOF'
 REMOTE_WORKDIR="$1"
+SINGLE_ARCH="$2"
+
+LIBBLD_ARGS=("$REMOTE_WORKDIR")
+[ -n "$SINGLE_ARCH" ] && LIBBLD_ARGS+=(--single_arch "$SINGLE_ARCH")
 
 set -x
-jobid=$(tsp bash "$REMOTE_WORKDIR/aotriton.src/.tune/bin/libbld" "$REMOTE_WORKDIR")
+jobid=$(tsp bash "$REMOTE_WORKDIR/aotriton.src/.tune/bin/libbld" "${LIBBLD_ARGS[@]}")
 echo "tsp job ID: $jobid"
 tsp -t $jobid
 EOF
@@ -146,6 +150,8 @@ else
       "$CELERY_WORKER_IMAGE" \
       bash /wkdir/aotriton.src/.tune/bin/testbld "${TESTBLD_ARGS[@]}"
   else
-    "$SCRIPT_DIR/libbld" "$WORKDIR"
+    LIBBLD_ARGS=("$WORKDIR")
+    [ -n "$SINGLE_ARCH" ] && LIBBLD_ARGS+=(--single_arch "$SINGLE_ARCH")
+    "$SCRIPT_DIR/libbld" "${LIBBLD_ARGS[@]}"
   fi
 fi

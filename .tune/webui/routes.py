@@ -343,9 +343,10 @@ def api_git_status():
 
 @bp.route('/api/builds/libraries', methods=['POST'])
 def api_build_libraries():
-    """Build tuning version of AOTriton libraries"""
+    """Build tuning version of AOTriton libraries (all arches or single arch)."""
     workdir = current_app.config['WORKDIR']
-    result = tasks.build_libraries(workdir)
+    single_arch = request.form.get('single_arch', '').strip() or None
+    result = tasks.build_libraries(workdir, single_arch)
     return jsonify(result)
 
 
