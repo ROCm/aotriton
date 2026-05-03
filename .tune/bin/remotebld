@@ -116,17 +116,22 @@ echo "tsp job ID: $jobid"
 tsp -t $jobid
 EOF
   else
-    echo "Running libbld on $BUILD_NODE_HOST via tsp"
+    echo "Running libbld on $BUILD_NODE_HOST via tsp (image: $CELERY_WORKER_IMAGE)"
     # shellcheck disable=SC2029
-    ssh "$BUILD_NODE_HOST" bash -s "$REMOTE_WORKDIR" "$SINGLE_ARCH" <<'EOF'
+    ssh "$BUILD_NODE_HOST" bash -s "$REMOTE_WORKDIR" "$CELERY_WORKER_IMAGE" "$SINGLE_ARCH" <<'EOF'
 REMOTE_WORKDIR="$1"
-SINGLE_ARCH="$2"
+CELERY_WORKER_IMAGE="$2"
+SINGLE_ARCH="$3"
 
-LIBBLD_ARGS=("$REMOTE_WORKDIR")
+LIBBLD_ARGS=(/wkdir)
 [ -n "$SINGLE_ARCH" ] && LIBBLD_ARGS+=(--single_arch "$SINGLE_ARCH")
 
 set -x
-jobid=$(tsp bash "$REMOTE_WORKDIR/aotriton.src/.tune/bin/libbld" "${LIBBLD_ARGS[@]}")
+jobid=$(tsp docker run --rm \
+  --user "$(id -u):$(id -g)" \
+  --mount "type=bind,source=$REMOTE_WORKDIR,target=/wkdir" \
+  "$CELERY_WORKER_IMAGE" \
+  bash /wkdir/aotriton.src/.tune/bin/libbld "${LIBBLD_ARGS[@]}")
 echo "tsp job ID: $jobid"
 tsp -t $jobid
 EOF
@@ -136,11 +141,11 @@ else
     echo "Warning: build node enabled but hostname not set; building locally." >&2
   fi
 
+  if [ -z "${CELERY_WORKER_IMAGE:-}" ]; then
+    echo "Error: CELERY_WORKER_IMAGE not set in config.rc" >&2
+    exit 1
+  fi
   if [ "$MODE" = "test" ]; then
-    if [ -z "${CELERY_WORKER_IMAGE:-}" ]; then
-      echo "Error: CELERY_WORKER_IMAGE not set in config.rc" >&2
-      exit 1
-    fi
     TESTBLD_ARGS=(/wkdir)
     [ -n "$SINGLE_ARCH" ] && TESTBLD_ARGS+=(--single_arch "$SINGLE_ARCH")
     echo "Running testbld locally inside container: $CELERY_WORKER_IMAGE"
@@ -150,8 +155,13 @@ else
       "$CELERY_WORKER_IMAGE" \
       bash /wkdir/aotriton.src/.tune/bin/testbld "${TESTBLD_ARGS[@]}"
   else
-    LIBBLD_ARGS=("$WORKDIR")
+    LIBBLD_ARGS=(/wkdir)
     [ -n "$SINGLE_ARCH" ] && LIBBLD_ARGS+=(--single_arch "$SINGLE_ARCH")
-    "$SCRIPT_DIR/libbld" "${LIBBLD_ARGS[@]}"
+    echo "Running libbld locally inside container: $CELERY_WORKER_IMAGE"
+    docker run --rm \
+      --user "$(id -u):$(id -g)" \
+      --mount "type=bind,source=$ABSWORKDIR,target=/wkdir" \
+      "$CELERY_WORKER_IMAGE" \
+      bash /wkdir/aotriton.src/.tune/bin/libbld "${LIBBLD_ARGS[@]}"
   fi
 fi
