@@ -64,5 +64,6 @@ if [ "$FOUND" -eq 0 ]; then
     exit 1
 fi
 
-# Dry run for testing now.
-# TODO: move entries back to pending state (reset task_queue rows to pending via broken_entries.db)
+echo ""
+PYTHONPATH="$REPO_ROOT" python3 "$TUNE_ROOT/libexec/reset_broken_to_pending" \
+    "$WORKDIR" "$HOSTNAME" "$PASS_NUM"
