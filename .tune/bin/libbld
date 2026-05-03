@@ -10,16 +10,6 @@ if [ -z "$BASH_VERSION" ]; then
   exit 1
 fi
 
-if ! command -v sqlite3 &> /dev/null; then
-  cat <<EOF >&2
-Command 'sqlite3' could not be found. Install it with
-dnf install sqlite3
-or
-snap install sqlite3
-EOF
-  exit 1
-fi
-
 WORKDIR=""
 SINGLE_ARCH=""
 

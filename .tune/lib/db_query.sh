@@ -18,8 +18,7 @@ get_hostnames() {
 
 get_architectures() {
     local workdir="$1"
-    sqlite3 "$workdir/workers.db" \
-        "SELECT DISTINCT arch FROM workers ORDER BY arch"
+    python3 -c "import sqlite3; conn=sqlite3.connect('$workdir/workers.db'); [print(r[0]) for r in conn.execute('SELECT DISTINCT arch FROM workers ORDER BY arch')]"
 }
 
 get_slurm_batch() {
