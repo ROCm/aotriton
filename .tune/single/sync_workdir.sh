@@ -84,7 +84,7 @@ rsync -az --checksum --info=progress2 \
 if [ "$BUILDNODE_MODE" -eq 1 ]; then
   SUBDIR="/database"
 elif [ "$TESTNODE_MODE" -eq 1 ]; then
-  SUBDIR="/test"
+  SUBDIR="/test/$arch"
 elif [ "$arch" = "ALL" ]; then
   SUBDIR=""
 else
