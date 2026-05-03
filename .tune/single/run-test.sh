@@ -106,5 +106,13 @@ echo "[$HOSTNAME] tsp job ID: $JOBID"
 
 if [ "$FOLLOW" -eq 1 ]; then
   echo "[$HOSTNAME] Waiting for job $JOBID to complete..."
-  ssh "$HOSTNAME" "tsp -t $JOBID"
+  # shellcheck disable=SC2029
+  ssh "$HOSTNAME" bash -s "$JOBID" <<'EOF'
+JOBID="$1"
+if [ "$(tsp -s "$JOBID")" = "queued" ]; then
+  echo "Waiting for tsp job $JOBID to start..."
+  while [ "$(tsp -s "$JOBID")" = "queued" ]; do sleep 5; done
+fi
+tsp -t "$JOBID"
+EOF
 fi

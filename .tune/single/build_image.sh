@@ -48,6 +48,10 @@ CELERY_WORKER_IMAGE="$2"
 
 jobid=$(tsp docker build --network=host -f $WORKER_WORKDIR/image.build/Dockerfile -t $CELERY_WORKER_IMAGE $WORKER_WORKDIR)
 echo "Job ID: $jobid"
+if [ "$(tsp -s "$jobid")" = "queued" ]; then
+  echo "Waiting for tsp job $jobid to start..."
+  while [ "$(tsp -s "$jobid")" = "queued" ]; do sleep 5; done
+fi
 tsp -t $jobid
 EOF
 else
