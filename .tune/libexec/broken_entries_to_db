@@ -15,6 +15,7 @@ Usage (called by retry_broken_entries, not directly):
 
 import argparse
 import json
+import os
 import sqlite3
 import sys
 from dataclasses import asdict
@@ -33,6 +34,27 @@ from v3python.tune.utils import get_db_connection_params
 # TODO: extend when additional modules (e.g. gemm) are added to v3python.tune.*
 _MODULE = 'flash'
 
+# Copied from v3python/rules/flash/op_attn_fwd.py: AOTRITON_FLASH_BLOCK_DMODEL.
+# d_head values from pytest must be rounded up to the nearest compiled block size
+# because the tuning library only has kernels for these specific hdim values.
+_BLOCK_DMODEL_DEFAULT = '16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256, 512'
+_BLOCK_DMODEL = sorted(
+    int(x.strip())
+    for x in os.getenv('AOTRITON_FLASH_BLOCK_DMODEL', _BLOCK_DMODEL_DEFAULT).split(',')
+)
+
+# Copied from v3python/tune/flash/module.py (no env var override for seqlen).
+# Uses BinningLessOrEqual, so seqlen is also ceiling-rounded to the nearest entry.
+_SEQLEN_ENTRIES = [16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
+
+
+def _round_up(value: int, table: list[int], name: str) -> int:
+    """Round value up to the nearest entry in table (ceiling rounding)."""
+    for entry in table:
+        if entry >= value:
+            return entry
+    raise ValueError(f'{name} {value} exceeds maximum tuning table entry {table[-1]}')
+
 _CREATE_TABLE = '''
 CREATE TABLE IF NOT EXISTS broken_entries (
     pass        INTEGER NOT NULL,
@@ -41,7 +63,7 @@ CREATE TABLE IF NOT EXISTS broken_entries (
     module      TEXT    NOT NULL,
     entry_text  TEXT    NOT NULL,
     task_id     INTEGER NOT NULL,
-    PRIMARY KEY (pass, host, module, entry_text)
+    PRIMARY KEY (pass, task_id)
 )
 '''
 
@@ -50,9 +72,9 @@ def _cfg_to_entry(cfg: dict) -> tuple[str, FlashEntry]:
     """Translate a pytest2entry cfg dict to (arch, FlashEntry)."""
     return cfg['arch'], FlashEntry(
         dtype=cfg['dtype'],
-        hdim=cfg['d_head'],
-        seqlen_q=cfg['seqlen_q'],
-        seqlen_k=cfg['seqlen_k'],
+        hdim=_round_up(cfg['d_head'], _BLOCK_DMODEL, 'd_head'),
+        seqlen_q=_round_up(cfg['seqlen_q'], _SEQLEN_ENTRIES, 'seqlen_q'),
+        seqlen_k=_round_up(cfg['seqlen_k'], _SEQLEN_ENTRIES, 'seqlen_k'),
         causal=bool(cfg['causal_type']),
         dropout_p=cfg['dropout_p'],
         bias_type=cfg['bias_type'],
