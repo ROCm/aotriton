@@ -88,10 +88,23 @@ def print_summary(label: str, count: int, matches: list[dict]) -> None:
 
 
 def reset_to_pending(conn, row_ids: list[int]) -> int:
-    """Reset the given task_queue ids to pending. Returns affected row count."""
+    """
+    Reset the given task_queue ids to pending. Returns affected row count.
+
+    Also deletes related rows from most_accurate_tuning_results and
+    tuning_results so stale results don't contaminate future re-runs.
+    """
     if not row_ids:
         return 0
     with conn.cursor() as cur:
+        cur.execute(
+            'DELETE FROM most_accurate_tuning_results WHERE task_id = ANY(%s)',
+            (row_ids,),
+        )
+        cur.execute(
+            'DELETE FROM tuning_results WHERE task_id = ANY(%s)',
+            (row_ids,),
+        )
         cur.execute(
             """
             UPDATE task_queue
