@@ -99,3 +99,10 @@ echo "Done. Report written to $REPORT"
 
 MISSING=$(grep -c 'TUNE_V3BIS' "$REPORT" 2>/dev/null || true)
 echo "Missing LUT entries: $MISSING"
+
+if [ "$MISSING" -gt 0 ]; then
+    echo "Error: sancheck found $MISSING missing LUT entries." >&2
+    echo "  → Run retry_missing_entries to re-queue missing tasks, then bake_lut --incremental." >&2
+    echo "  → (bake_lut --fix is for entries present but failed in correctness tests.)" >&2
+    exit 1
+fi
