@@ -457,12 +457,6 @@ class UpdateMaterializedViewCommand(CommandBuilder):
         return self._run(self.RELATIVE, [workdir], workdir, 'Update materialized view (incremental)')
 
 
-class BakeLutIncrementalCommand(CommandBuilder):
-    """Bake LUT incremental: update MV for retried tasks, then compute/export/sancheck"""
-    RELATIVE = '.tune/bin/bake_lut'
-
-    def exec(self, workdir):
-        return self._run(self.RELATIVE, [workdir, '--incremental'], workdir, 'Bake LUT (incremental)')
 
 
 class SancheckCommand(CommandBuilder):
@@ -485,8 +479,10 @@ class BakeLutCommand(CommandBuilder):
     """Bake LUT: convert raw PG tuning results into the aotriton SQLite DB"""
     RELATIVE = '.tune/bin/bake_lut'
 
-    def exec(self, workdir):
-        return self._run(self.RELATIVE, [workdir], workdir, 'Bake LUT')
+    def exec(self, workdir, extra_args: list | None = None):
+        args = [workdir] + (extra_args or [])
+        label = 'Bake LUT' + (f' ({" ".join(extra_args)})' if extra_args else '')
+        return self._run(self.RELATIVE, args, workdir, label)
 
 
 class BuildCommand(CommandBuilder):
@@ -576,7 +572,6 @@ _update_materialized_view = UpdateMaterializedViewCommand()
 _sancheck = SancheckCommand()
 _decomposedb = DecomposeDbCommand()
 _bake_lut = BakeLutCommand()
-_bake_lut_incremental = BakeLutIncrementalCommand()
 
 _build_libraries = BuildLibrariesCommand()
 _build_test_libraries = BuildTestLibrariesCommand()
@@ -697,17 +692,16 @@ def sancheck(workdir):
     return _sancheck.exec(workdir)
 
 
-def bake_lut(workdir):
-    """Bake LUT: convert raw PG tuning results into the aotriton SQLite DB"""
-    return _bake_lut.exec(workdir)
+def bake_lut(workdir, extra_args: list | None = None):
+    """Bake LUT: convert raw PG tuning results into the aotriton SQLite DB.
+
+    extra_args examples: ['--incremental'], ['--fix', 'gpu01:0'], ['--fix', '0']
+    """
+    return _bake_lut.exec(workdir, extra_args)
 
 
 def update_materialized_view(workdir):
     return _update_materialized_view.exec(workdir)
-
-
-def bake_lut_incremental(workdir):
-    return _bake_lut_incremental.exec(workdir)
 
 
 def decomposedb(workdir):

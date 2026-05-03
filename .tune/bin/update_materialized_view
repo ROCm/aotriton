@@ -2,20 +2,43 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-# Incrementally update most_accurate_tuning_results for the task_ids listed
-# in <workdir>/scratch/retry_task_ids.txt (written by retry_missing_entries).
+# Incrementally update most_accurate_tuning_results.
+#
+# Default mode: reads task_ids from <workdir>/scratch/retry_task_ids.txt
+#   (written by retry_missing_entries).
+#
+# Fix mode (--fix [hostname:]<pass>): reads task_ids from broken_entries.db
+#   for the given hostname and pass, then updates most_accurate_tuning_results.
+#   hostname is optional; if omitted, all hosts for that pass are included.
 #
 # Usage:
 #   update_materialized_view <workdir>
+#   update_materialized_view <workdir> --fix <pass>
+#   update_materialized_view <workdir> --fix <hostname>:<pass>
 
 set -euo pipefail
 
 if [ "$#" -lt 1 ]; then
-    echo "Usage: $0 <workdir>" >&2
+    echo "Usage: $0 <workdir> [--fix [hostname:]<pass>]" >&2
     exit 1
 fi
 
 WORKDIR="$1"
+shift
+FIX_SPEC=""
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --fix)
+            FIX_SPEC="$2"
+            shift 2
+            ;;
+        *)
+            echo "Unknown argument: $1" >&2
+            exit 1
+            ;;
+    esac
+done
 
 if [ ! -d "$WORKDIR" ]; then
     echo "Error: workdir does not exist: $WORKDIR" >&2
@@ -26,16 +49,34 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$TUNE_ROOT/.." && pwd)"
 
-TASK_IDS_FILE="$WORKDIR/scratch/retry_task_ids.txt"
+if [ -n "$FIX_SPEC" ]; then
+    # --fix [hostname:]<pass>
+    if [[ "$FIX_SPEC" == *:* ]]; then
+        FIX_HOST="${FIX_SPEC%%:*}"
+        FIX_PASS="${FIX_SPEC##*:}"
+        HOST_ARG="--host $FIX_HOST"
+    else
+        FIX_PASS="$FIX_SPEC"
+        HOST_ARG=""
+    fi
 
-if [ ! -f "$TASK_IDS_FILE" ]; then
-    echo "Error: task_ids file not found: $TASK_IDS_FILE" >&2
-    echo "Run .tune/bin/retry_missing_entries first." >&2
-    exit 1
+    echo "Updating most_accurate_tuning_results (fix broken, pass=$FIX_PASS${FIX_HOST:+, host=$FIX_HOST})..."
+    # shellcheck disable=SC2086
+    "$SCRIPT_DIR/query_broken_entries" "$WORKDIR" --pass "$FIX_PASS" $HOST_ARG \
+    | PYTHONPATH="$REPO_ROOT" ~/venv/bin/python -m v3python.tune.pq.populate_most_accurate \
+        "$WORKDIR" --task_ids_file -
+else
+    TASK_IDS_FILE="$WORKDIR/scratch/retry_task_ids.txt"
+
+    if [ ! -f "$TASK_IDS_FILE" ]; then
+        echo "Error: task_ids file not found: $TASK_IDS_FILE" >&2
+        echo "Run .tune/bin/retry_missing_entries first." >&2
+        exit 1
+    fi
+
+    echo "Updating most_accurate_tuning_results (incremental)..."
+    echo "Task IDs file: $TASK_IDS_FILE"
+
+    PYTHONPATH="$REPO_ROOT" ~/venv/bin/python -m v3python.tune.pq.populate_most_accurate \
+        "$WORKDIR" --task_ids_file "$TASK_IDS_FILE"
 fi
-
-echo "Updating most_accurate_tuning_results (incremental)..."
-echo "Task IDs file: $TASK_IDS_FILE"
-
-PYTHONPATH="$REPO_ROOT" python3 -m v3python.tune.pq.populate_most_accurate \
-    "$WORKDIR" --task_ids_file "$TASK_IDS_FILE"

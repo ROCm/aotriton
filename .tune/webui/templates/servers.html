@@ -55,12 +55,32 @@
             style="background-color: #dc3545; color: white;">Bake LUT</button>
     <span id="pipeline-spinner" class="htmx-indicator">&#x23F3; Running...</span>
 
-    <button hx-post="/api/servers/bake-lut-incremental"
+    <button hx-post="/api/servers/bake-lut"
+            hx-vals='{"incremental": "1"}'
             hx-swap="none"
             hx-confirm="Bake LUT (incremental): update accuracy table for retried tasks, then compute/export/sancheck/decompose?"
             hx-indicator="#pipeline-incremental-spinner"
             style="margin-left: 1rem;">Bake LUT (Incremental)</button>
     <span id="pipeline-incremental-spinner" class="htmx-indicator">&#x23F3; Running...</span>
+
+    <form id="bake-lut-fix-form" style="display: inline-flex; align-items: center; gap: 0.5rem; margin-left: 1rem;">
+        <input type="hidden" name="fix" value="1">
+        <select name="hostname" id="bake-lut-fix-host">
+            <option value="__all__">(all hosts)</option>
+            {% for h in hostnames %}
+            <option value="{{ h }}">{{ h }}</option>
+            {% endfor %}
+        </select>
+        <label for="bake-lut-fix-pass" style="font-size: 0.9em;">Pass:</label>
+        <input type="number" name="pass_num" id="bake-lut-fix-pass" value="0" min="0" style="width: 4rem;">
+        <button type="button"
+                hx-post="/api/servers/bake-lut"
+                hx-include="#bake-lut-fix-form"
+                hx-swap="none"
+                hx-confirm="Bake LUT (fix broken): update accuracy table from broken_entries.db for the selected host/pass, then compute/export/sancheck/decompose?"
+                hx-indicator="#pipeline-fix-spinner">Bake LUT (Fix Broken)</button>
+        <span id="pipeline-fix-spinner" class="htmx-indicator">&#x23F3; Running...</span>
+    </form>
 
     <p style="font-size: 0.9em; color: gray; margin-top: 1rem; margin-bottom: 0.25rem;">Individual steps:</p>
 

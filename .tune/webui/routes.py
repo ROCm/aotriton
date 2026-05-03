@@ -50,7 +50,8 @@ def servers():
     """Server control page"""
     workdir = current_app.config['WORKDIR']
     config_vars = tasks.get_config_vars(workdir)
-    return render_template('servers.html', config_vars=config_vars)
+    hostnames = tasks.get_hostnames(workdir)
+    return render_template('servers.html', config_vars=config_vars, hostnames=hostnames)
 
 
 @bp.route('/builds')
@@ -283,9 +284,27 @@ def api_sancheck():
 
 @bp.route('/api/servers/bake-lut', methods=['POST'])
 def api_bake_lut():
-    """Bake LUT: convert raw PG tuning results into the aotriton SQLite DB"""
+    """Bake LUT — full, incremental, or fix-broken depending on form fields.
+
+    Form fields (all optional):
+      incremental=1          → passes --incremental
+      fix=1 + pass_num=N     → passes --fix [hostname:]N  (hostname optional)
+      hostname=<h>           → used only when fix=1; sentinel '__all__' means all hosts
+    """
     workdir = current_app.config['WORKDIR']
-    result = tasks.bake_lut(workdir)
+    extra_args: list = []
+
+    if request.form.get('fix') == '1':
+        pass_num = request.form.get('pass_num', '').strip()
+        if not pass_num:
+            return jsonify({'status': 'error', 'message': 'pass_num is required for fix mode'}), 400
+        hostname = request.form.get('hostname', '').strip()
+        fix_spec = f'{hostname}:{pass_num}' if hostname and hostname != '__all__' else pass_num
+        extra_args = ['--fix', fix_spec]
+    elif request.form.get('incremental') == '1':
+        extra_args = ['--incremental']
+
+    result = tasks.bake_lut(workdir, extra_args or None)
     return jsonify(result)
 
 
@@ -293,13 +312,6 @@ def api_bake_lut():
 def api_update_materialized_view():
     workdir = current_app.config['WORKDIR']
     result = tasks.update_materialized_view(workdir)
-    return jsonify(result)
-
-
-@bp.route('/api/servers/bake-lut-incremental', methods=['POST'])
-def api_bake_lut_incremental():
-    workdir = current_app.config['WORKDIR']
-    result = tasks.bake_lut_incremental(workdir)
     return jsonify(result)
 
 
