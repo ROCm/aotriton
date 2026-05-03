@@ -131,7 +131,8 @@ jobid=$(tsp docker run --rm \
   --user "$(id -u):$(id -g)" \
   --mount "type=bind,source=$REMOTE_WORKDIR,target=/wkdir" \
   "$CELERY_WORKER_IMAGE" \
-  bash /wkdir/aotriton.src/.tune/bin/libbld "${LIBBLD_ARGS[@]}")
+  bash -lc 'source /wkdir/config.rc && source "$(dirname "$CELERY_WORKER_PYTHON")/activate" && exec bash /wkdir/aotriton.src/.tune/bin/libbld "$@"' \
+  _ "${LIBBLD_ARGS[@]}")
 echo "tsp job ID: $jobid"
 tsp -t $jobid
 EOF
@@ -162,6 +163,7 @@ else
       --user "$(id -u):$(id -g)" \
       --mount "type=bind,source=$ABSWORKDIR,target=/wkdir" \
       "$CELERY_WORKER_IMAGE" \
-      bash /wkdir/aotriton.src/.tune/bin/libbld "${LIBBLD_ARGS[@]}"
+      bash -lc 'source /wkdir/config.rc && source "$(dirname "$CELERY_WORKER_PYTHON")/activate" && exec bash /wkdir/aotriton.src/.tune/bin/libbld "$@"' \
+      _ "${LIBBLD_ARGS[@]}"
   fi
 fi
