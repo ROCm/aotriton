@@ -495,8 +495,9 @@ class BuildCommand(CommandBuilder):
         return self._run(self.RELATIVE, [workdir], workdir, self.DESCRIPTION)
 
 
-class BuildLibrariesCommand(BuildCommand):
-    RELATIVE = '.tune/bin/libbld'
+class BuildLibrariesCommand(CommandBuilder):
+    """Build tuning version of AOTriton libraries via remotebld (handles local/remote transparently)"""
+    RELATIVE = '.tune/bin/remotebld'
     DESCRIPTION = 'Build tuning version of AOTriton libraries'
 
     def exec(self, workdir, single_arch: str | None = None):
