@@ -191,11 +191,18 @@ CREATE INDEX IF NOT EXISTS idx_best_tuning_results_lookup
 -- Rows accumulate across passes and are never deleted by reset_to_pending.
 CREATE TABLE IF NOT EXISTS task_extra_uts (
     id          BIGSERIAL PRIMARY KEY,
-    task_id     BIGINT NOT NULL REFERENCES task_queue(id) ON DELETE CASCADE,
-    im_text     TEXT   NOT NULL,
+    task_id     BIGINT  NOT NULL REFERENCES task_queue(id) ON DELETE CASCADE,
+    im_text     TEXT    NOT NULL,
+    active      BOOLEAN NOT NULL DEFAULT TRUE,
     created_at  TIMESTAMP DEFAULT NOW(),
     UNIQUE (task_id, im_text)
 );
+
+-- Migration: add active column to existing deployments.
+DO $$ BEGIN
+    ALTER TABLE task_extra_uts ADD COLUMN active BOOLEAN NOT NULL DEFAULT TRUE;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_task_extra_uts_task_id
     ON task_extra_uts (task_id);

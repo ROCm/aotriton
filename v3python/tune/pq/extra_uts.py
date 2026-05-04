@@ -14,14 +14,18 @@ def insert_extra_uts(conn, task_id: int, im_texts: list[str]) -> None:
         return
     with conn.cursor() as cur:
         cur.executemany(
-            'INSERT INTO task_extra_uts (task_id, im_text) VALUES (%s, %s) ON CONFLICT DO NOTHING',
+            '''INSERT INTO task_extra_uts (task_id, im_text, active) VALUES (%s, %s, TRUE)
+               ON CONFLICT (task_id, im_text) DO UPDATE SET active = TRUE''',
             [(task_id, t) for t in im_texts],
         )
 
 
 def get_extra_uts(conn, task_id: int) -> list[str]:
     with conn.cursor() as cur:
-        cur.execute('SELECT im_text FROM task_extra_uts WHERE task_id = %s', (task_id,))
+        cur.execute(
+            'SELECT im_text FROM task_extra_uts WHERE task_id = %s AND active = TRUE',
+            (task_id,),
+        )
         return [row[0] for row in cur.fetchall()]
 
 
