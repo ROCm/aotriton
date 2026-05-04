@@ -51,7 +51,7 @@ class Irregulars(Translator):
             "nheads" : int(nheads),     # unread by tune_flash.py, but no harm as well
             "batch" : int(batch),       # unread by tune_flash.py, but no harm as well
             "sm_scale" : sm_scale_str.lower(),
-            "storage_flip": None if storage == 'False' else (1, 2),
+            "storage_flip": storage != 'False',
         }
 
 class Regulars(Translator):
@@ -69,7 +69,7 @@ class Regulars(Translator):
             "nheads" : int(nheads),     # unread by tune_flash.py, but no harm as well
             "batch" : int(batch),       # unread by tune_flash.py, but no harm as well
             "sm_scale" : sm_scale_str.lower(),
-            "storage_flip": None if storage == 'False' else (1, 2),
+            "storage_flip": storage != 'False',
         }
 
 class RegularBias(Translator):
@@ -88,7 +88,7 @@ class RegularBias(Translator):
             "nheads" : int(nheads),     # unread by tune_flash.py, but no harm as well
             "batch" : int(batch),       # unread by tune_flash.py, but no harm as well
             "sm_scale" : sm_scale_str.lower(),
-            "storage_flip": None if storage == 'False' else (1, 2),
+            "storage_flip": storage != 'False',
         }
 
 class Gqa(Translator):
@@ -106,7 +106,7 @@ class Gqa(Translator):
             "nheads" : (16, 8),
             "batch" : int(batch),       # unread by tune_flash.py, but no harm as well
             "sm_scale" : sm_scale_str.lower(),
-            "storage_flip": None if storage == 'False' else (1, 2),
+            "storage_flip": storage != 'False',
         }
 
 UT2TR = {

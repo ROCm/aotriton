@@ -89,7 +89,6 @@ def _cfg_to_entry(cfg: dict) -> tuple[str, FlashEntry]:
 
 def _cfg_to_im(cfg: dict) -> FlashInputMetadata:
     """Translate a pytest2entry cfg dict to a FlashInputMetadata im_text string."""
-    storage_flip = cfg.get('storage_flip')
     return FlashInputMetadata(
         dtype=cfg['dtype'],
         hdim=cfg['d_head'],
@@ -101,7 +100,7 @@ def _cfg_to_im(cfg: dict) -> FlashInputMetadata:
         N_HEADS=cfg.get('nheads', 5),
         BATCH=cfg.get('batch', 3),
         sm_scale=cfg.get('sm_scale', 'l1'),
-        storage_flip=False if storage_flip is None else tuple(storage_flip) if isinstance(storage_flip, list) else storage_flip,
+        storage_flip=bool(cfg.get('storage_flip', False)),
     )
 
 
