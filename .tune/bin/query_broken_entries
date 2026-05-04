@@ -57,7 +57,11 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [ ${#WHERE_CLAUSES[@]} -gt 0 ]; then
-    WHERE="WHERE $(IFS=' AND '; echo "${WHERE_CLAUSES[*]}")"
+    joined="${WHERE_CLAUSES[0]}"
+    for clause in "${WHERE_CLAUSES[@]:1}"; do
+        joined="$joined AND $clause"
+    done
+    WHERE="WHERE $joined"
 else
     WHERE=""
 fi
