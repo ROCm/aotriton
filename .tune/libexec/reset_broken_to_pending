@@ -27,6 +27,7 @@ import psycopg
 from psycopg.rows import dict_row
 
 from v3python.tune.utils import get_db_connection_params
+from v3python.tune.pq.extra_uts import insert_extra_uts
 from pq_helpers import fetch_matches_by_ids, print_summary, reset_to_pending
 
 
@@ -37,6 +38,22 @@ def _load_task_ids(db_path: Path, hostname: str, pass_num: int) -> list[int]:
             (hostname, pass_num),
         )
         return [row[0] for row in cur.fetchall()]
+
+
+def _load_extra_uts(db_path: Path, pass_num: int, task_ids: list[int]) -> dict[int, list[str]]:
+    """Load extra_uts from SQLite for the given pass and task_ids."""
+    result: dict[int, list[str]] = {}
+    if not task_ids:
+        return result
+    with sqlite3.connect(db_path) as db:
+        placeholders = ','.join('?' * len(task_ids))
+        cur = db.execute(
+            f'SELECT task_id, im_text FROM extra_uts WHERE pass = ? AND task_id IN ({placeholders})',
+            [pass_num] + task_ids,
+        )
+        for task_id, im_text in cur.fetchall():
+            result.setdefault(task_id, []).append(im_text)
+    return result
 
 
 def main() -> None:
@@ -81,6 +98,15 @@ def main() -> None:
             return
 
         row_ids = [r['id'] for r in matches]
+
+        # Insert extra UTs into PG before resetting status to pending,
+        # so workers always see them when they claim the task.
+        extra_uts_map = _load_extra_uts(db_path, args.pass_num, row_ids)
+        for task_id, im_texts in extra_uts_map.items():
+            insert_extra_uts(conn, task_id, im_texts)
+        total_extra = sum(len(v) for v in extra_uts_map.values())
+        print(f'Inserted {total_extra} extra UT entries for {len(extra_uts_map)} tasks.')
+
         affected = reset_to_pending(conn, row_ids)
         conn.commit()
         print(f'Done: {affected} rows reset to pending.')

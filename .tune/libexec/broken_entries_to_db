@@ -27,7 +27,7 @@ sys.path.insert(0, str(_REPO_ROOT))
 import psycopg
 from psycopg.rows import dict_row
 
-from v3python.tune.flash.module import FlashEntry
+from v3python.tune.flash.module import FlashEntry, FlashInputMetadata
 from v3python.tune.utils import get_db_connection_params
 
 # 'flash' matches v3python.tune.flash — the only tuning module currently supported.
@@ -64,6 +64,12 @@ CREATE TABLE IF NOT EXISTS broken_entries (
     entry_text  TEXT    NOT NULL,
     task_id     INTEGER NOT NULL,
     PRIMARY KEY (pass, task_id)
+);
+CREATE TABLE IF NOT EXISTS extra_uts (
+    pass        INTEGER NOT NULL,
+    task_id     INTEGER NOT NULL,
+    im_text     TEXT    NOT NULL,
+    PRIMARY KEY (pass, task_id, im_text)
 )
 '''
 
@@ -78,6 +84,24 @@ def _cfg_to_entry(cfg: dict) -> tuple[str, FlashEntry]:
         causal=bool(cfg['causal_type']),
         dropout_p=cfg['dropout_p'],
         bias_type=cfg['bias_type'],
+    )
+
+
+def _cfg_to_im(cfg: dict) -> FlashInputMetadata:
+    """Translate a pytest2entry cfg dict to a FlashInputMetadata im_text string."""
+    storage_flip = cfg.get('storage_flip')
+    return FlashInputMetadata(
+        dtype=cfg['dtype'],
+        hdim=cfg['d_head'],
+        seqlen_q=cfg['seqlen_q'],
+        seqlen_k=cfg['seqlen_k'],
+        causal=bool(cfg['causal_type']),
+        dropout_p=cfg['dropout_p'],
+        bias_type=cfg['bias_type'],
+        N_HEADS=cfg.get('nheads', 5),
+        BATCH=cfg.get('batch', 3),
+        sm_scale=cfg.get('sm_scale', 'l1'),
+        storage_flip=False if storage_flip is None else tuple(storage_flip) if isinstance(storage_flip, list) else storage_flip,
     )
 
 
@@ -111,10 +135,10 @@ def _fetch_task_id(conn, arch: str, entry: FlashEntry) -> int | None:
         return row['id'] if row else None
 
 
-def _parse_stdin() -> list[tuple[str, FlashEntry]]:
-    """Parse JSON lines from stdin, return de-duplicated (arch, FlashEntry) list."""
+def _parse_stdin() -> list[tuple[str, FlashEntry, FlashInputMetadata]]:
+    """Parse JSON lines from stdin, return de-duplicated (arch, FlashEntry, FlashInputMetadata) list."""
     seen: set[tuple] = set()
-    result: list[tuple[str, FlashEntry]] = []
+    result: list[tuple[str, FlashEntry, FlashInputMetadata]] = []
     raw_count = 0
     for line in sys.stdin:
         line = line.strip()
@@ -130,7 +154,8 @@ def _parse_stdin() -> list[tuple[str, FlashEntry]]:
         key = (arch, tuple(asdict(entry).values()))
         if key not in seen:
             seen.add(key)
-            result.append((arch, entry))
+            im = _cfg_to_im(cfg)
+            result.append((arch, entry, im))
     print(f'Entries parsed: {raw_count}, unique: {len(result)}')
     return result
 
@@ -156,11 +181,11 @@ def main() -> None:
         return
 
     conn_params = get_db_connection_params(workdir)
-    resolved: list[tuple[FlashEntry, int]] = []
+    resolved: list[tuple[FlashEntry, FlashInputMetadata, int]] = []
     not_found = 0
 
     with psycopg.connect(**conn_params, row_factory=dict_row) as conn:
-        for arch, entry in entries:
+        for arch, entry, im in entries:
             task_id = _fetch_task_id(conn, arch, entry)
             if task_id is None:
                 print(
@@ -169,17 +194,21 @@ def main() -> None:
                 )
                 not_found += 1
             else:
-                resolved.append((entry, task_id))
+                resolved.append((entry, im, task_id))
 
     print(f'Resolved: {len(resolved)}, not found: {not_found}')
 
     with sqlite3.connect(db_path) as db:
-        db.execute(_CREATE_TABLE)
-        for entry, task_id in resolved:
+        db.executescript(_CREATE_TABLE)
+        for entry, im, task_id in resolved:
             db.execute(
                 'INSERT OR REPLACE INTO broken_entries VALUES (?,?,?,?,?,?)',
                 (args.pass_num, args.hostname, args.arch, _MODULE,
                  entry.as_text(), task_id),
+            )
+            db.execute(
+                'INSERT OR REPLACE INTO extra_uts VALUES (?,?,?)',
+                (args.pass_num, task_id, im.as_text()),
             )
         db.commit()
 
