@@ -26,8 +26,19 @@ WORKDIR=""
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --incremental) INCREMENTAL=1; shift ;;
-        --fix) FIX_SPEC="$2"; shift 2 ;;
+        --incremental)
+            if [ -n "$FIX_SPEC" ]; then
+                echo "Error: --incremental and --fix are mutually exclusive" >&2; exit 1
+            fi
+            INCREMENTAL=1; shift ;;
+        --fix)
+            if [ "$INCREMENTAL" -eq 1 ]; then
+                echo "Error: --incremental and --fix are mutually exclusive" >&2; exit 1
+            fi
+            if [ -n "$FIX_SPEC" ]; then
+                echo "Error: --fix may only be specified once" >&2; exit 1
+            fi
+            FIX_SPEC="$2"; shift 2 ;;
         *) WORKDIR="$1"; shift ;;
     esac
 done
@@ -62,7 +73,13 @@ fi
 
 echo ""
 echo "=== Step 2/5: Compute best results ==="
-"$SCRIPT_DIR/compute_best_results" "$WORKDIR"
+if [ -n "$FIX_SPEC" ]; then
+    "$SCRIPT_DIR/compute_best_results" "$WORKDIR" --fix "$FIX_SPEC"
+elif [ "$INCREMENTAL" -eq 1 ]; then
+    "$SCRIPT_DIR/compute_best_results" "$WORKDIR" --incremental
+else
+    "$SCRIPT_DIR/compute_best_results" "$WORKDIR"
+fi
 
 echo ""
 echo "=== Step 3/5: Export best results ==="

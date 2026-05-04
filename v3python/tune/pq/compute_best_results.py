@@ -18,6 +18,9 @@ so no result_data is ever sent over IPC — only small result tuples are returne
 
 Usage:
     python -m v3python.tune.pq.compute_best_results --workdir /path/to/workdir
+    python -m v3python.tune.pq.compute_best_results --workdir /path/to/workdir --incremental
+    python -m v3python.tune.pq.compute_best_results --workdir /path/to/workdir --fix <pass>
+    python -m v3python.tune.pq.compute_best_results --workdir /path/to/workdir --fix <hostname>:<pass>
     python -m v3python.tune.pq.compute_best_results --host localhost --port 5432 --user myuser --password secret
 """
 
@@ -112,22 +115,33 @@ def _find_best_hsaco(task_id: int, kernel_name: str,
 # Step 1: load most_accurate_tuning_results, keyed by arch
 # ---------------------------------------------------------------------------
 
-def load_thresholds(conn) -> dict:
+def load_thresholds(conn, task_ids: list[int] | None = None) -> dict:
     """
     Returns:
         {arch: {task_id: {kernel_name: {(test_case, tensor_name): min_absolute_error}}}}
 
     Keyed by arch so each worker process receives only its own slice.
+    If task_ids is given, only those task_ids are loaded (incremental/fix mode).
     """
-    logger.info('Step 1: loading most_accurate_tuning_results into RAM...')
+    if task_ids:
+        logger.info('Step 1: loading most_accurate_tuning_results for %d task_id(s)...', len(task_ids))
+    else:
+        logger.info('Step 1: loading most_accurate_tuning_results into RAM...')
     t0 = time.monotonic()
 
     thresholds: dict = {}
     with conn.cursor() as cur:
-        cur.execute("""
-            SELECT arch, task_id, kernel_name, test_case, tensor_name, absolute_error
-            FROM most_accurate_tuning_results
-        """)
+        if task_ids:
+            cur.execute("""
+                SELECT arch, task_id, kernel_name, test_case, tensor_name, absolute_error
+                FROM most_accurate_tuning_results
+                WHERE task_id = ANY(%s)
+            """, (task_ids,))
+        else:
+            cur.execute("""
+                SELECT arch, task_id, kernel_name, test_case, tensor_name, absolute_error
+                FROM most_accurate_tuning_results
+            """)
         for arch, task_id, kernel_name, test_case, tensor_name, abs_err in cur:
             tk = thresholds.setdefault(arch, {}).setdefault(task_id, {}).setdefault(kernel_name, {})
             tk[(test_case, tensor_name)] = abs_err
@@ -242,13 +256,15 @@ def worker_process_arch(arch: str, worker_index: int,
 # Step 4: write results to best_tuning_results table
 # ---------------------------------------------------------------------------
 
-def write_results(conn, arch_results: list) -> None:
+def write_results(conn, arch_results: list, incremental: bool = False) -> None:
     """
-    Truncates best_tuning_results and bulk-inserts all rows.
+    Writes rows to best_tuning_results.
+    Full mode: truncates first. Incremental mode: upserts only affected rows.
     Fetches task_config from task_queue for each task_id.
     arch is already known from worker results.
     """
-    logger.info('Step 4: writing %d rows to best_tuning_results...', len(arch_results))
+    logger.info('Step 4: writing %d rows to best_tuning_results (%s)...',
+                len(arch_results), 'incremental' if incremental else 'full')
     t0 = time.monotonic()
 
     task_ids = list({r[0] for r in arch_results})
@@ -282,7 +298,8 @@ def write_results(conn, arch_results: list) -> None:
                                Jsonb(impl_desc) if impl_desc is not None else None))
 
     with conn.cursor() as cur:
-        cur.execute('TRUNCATE TABLE best_tuning_results')
+        if not incremental:
+            cur.execute('TRUNCATE TABLE best_tuning_results')
         for i in range(0, len(rows_to_insert), INSERT_BATCH_SIZE):
             batch = rows_to_insert[i:i + INSERT_BATCH_SIZE]
             cur.executemany("""
@@ -308,6 +325,50 @@ def write_results(conn, arch_results: list) -> None:
 # Main
 # ---------------------------------------------------------------------------
 
+def _resolve_task_ids_incremental(workdir: Path) -> list[int]:
+    """Read task_ids from scratch/retry_task_ids.txt (written by reset_broken_to_pending)."""
+    cache = workdir / 'scratch' / 'retry_task_ids.txt'
+    if not cache.is_file():
+        raise FileNotFoundError(f'--incremental: {cache} not found; run reset_broken_to_pending first')
+    ids = [int(line.strip()) for line in cache.read_text().splitlines() if line.strip()]
+    if not ids:
+        raise ValueError(f'--incremental: {cache} is empty')
+    logger.info('Incremental mode: %d task_id(s) from %s', len(ids), cache)
+    return ids
+
+
+def _resolve_task_ids_fix(workdir: Path, fix_spec: str) -> list[int]:
+    """Read task_ids from broken_entries.db for the given [hostname:]pass spec."""
+    import sqlite3
+    if ':' in fix_spec:
+        hostname, pass_str = fix_spec.rsplit(':', 1)
+    else:
+        hostname, pass_str = None, fix_spec
+    pass_num = int(pass_str)
+
+    db_path = workdir / 'scratch' / 'broken_entries.db'
+    if not db_path.is_file():
+        raise FileNotFoundError(f'--fix: {db_path} not found')
+
+    with sqlite3.connect(db_path) as db:
+        if hostname:
+            cur = db.execute(
+                'SELECT task_id FROM broken_entries WHERE pass = ? AND host = ? ORDER BY task_id',
+                (pass_num, hostname),
+            )
+        else:
+            cur = db.execute(
+                'SELECT task_id FROM broken_entries WHERE pass = ? ORDER BY task_id',
+                (pass_num,),
+            )
+        ids = [row[0] for row in cur.fetchall()]
+
+    if not ids:
+        raise ValueError(f'--fix: no entries in broken_entries.db for {fix_spec}')
+    logger.info('Fix mode: %d task_id(s) for %s', len(ids), fix_spec)
+    return ids
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -318,26 +379,50 @@ def main() -> None:
     parser.add_argument('--port', type=int, default=5432)
     parser.add_argument('--user')
     parser.add_argument('--password')
+
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--incremental', action='store_true',
+                      help='Only recompute task_ids listed in scratch/retry_task_ids.txt')
+    mode.add_argument('--fix', metavar='[HOSTNAME:]PASS',
+                      help='Only recompute task_ids from broken_entries.db for the given pass')
+
     args = parser.parse_args()
 
     if args.workdir:
-        conn_params = get_db_connection_params(Path(args.workdir))
+        workdir = Path(args.workdir)
+        conn_params = get_db_connection_params(workdir)
     else:
+        workdir = None
         conn_params = {'host': args.host, 'port': args.port}
         if args.user:
             conn_params['user'] = args.user
         if args.password:
             conn_params['password'] = args.password
 
+    # Resolve optional task_id filter
+    filter_task_ids: list[int] | None = None
+    if args.incremental:
+        if workdir is None:
+            parser.error('--incremental requires --workdir')
+        filter_task_ids = _resolve_task_ids_incremental(workdir)
+    elif args.fix:
+        if workdir is None:
+            parser.error('--fix requires --workdir')
+        filter_task_ids = _resolve_task_ids_fix(workdir, args.fix)
+
+    incremental = filter_task_ids is not None
+
     t_total = time.monotonic()
 
     with psycopg.connect(**conn_params, autocommit=True) as conn:
-        thresholds = load_thresholds(conn)
+        thresholds = load_thresholds(conn, filter_task_ids)
         archs = get_archs(conn)
 
     # Build work items: split each arch's task_id range into WORKERS_PER_ARCH bands.
     work_items = []  # (arch, worker_index, task_id_lo, task_id_hi)
     for arch in archs:
+        if arch not in thresholds:
+            continue
         task_ids = thresholds[arch].keys()
         lo, hi = min(task_ids), max(task_ids)
         step = math.ceil((hi - lo + 1) / WORKERS_PER_ARCH)
@@ -363,7 +448,7 @@ def main() -> None:
             all_results.extend(f.get())
 
     with psycopg.connect(**conn_params, autocommit=False) as conn:
-        write_results(conn, all_results)
+        write_results(conn, all_results, incremental=incremental)
 
     logger.info('Total time: %.1fs', time.monotonic() - t_total)
 
