@@ -191,7 +191,7 @@ CREATE INDEX IF NOT EXISTS idx_best_tuning_results_lookup
 -- Rows accumulate across passes and are never deleted by reset_to_pending.
 CREATE TABLE IF NOT EXISTS task_extra_uts (
     id          BIGSERIAL PRIMARY KEY,
-    task_id     BIGINT  NOT NULL REFERENCES task_queue(id) ON DELETE CASCADE,
+    task_id     BIGINT  NOT NULL,
     im_text     TEXT    NOT NULL,
     active      BOOLEAN NOT NULL DEFAULT TRUE,
     created_at  TIMESTAMP DEFAULT NOW(),
