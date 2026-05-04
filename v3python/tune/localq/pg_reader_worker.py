@@ -17,7 +17,6 @@ import socket
 import signal
 import select
 from psycopg.rows import dict_row
-from psycopg.types.json import Jsonb
 
 from .protocol import send_message, recv_message
 from ..utils import get_db_connection_params, configure_logging_with_flush
@@ -252,10 +251,6 @@ class PGReaderWorker:
                 logger.debug(f"PG Reader {self.worker_id} no tasks available")
                 return None
 
-        except psycopg.errors.QueryCanceled:
-            # Statement timeout - no tasks available
-            logger.warning(f"PG Reader {self.worker_id} query timeout (no pending tasks or lock contention)")
-            return None
         except Exception as e:
             logger.error(f"PG Reader {self.worker_id} database error in _fetch_pg_task: {e}", exc_info=True)
             return None

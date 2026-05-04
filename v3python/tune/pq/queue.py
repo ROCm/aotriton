@@ -88,7 +88,11 @@ class TaskQueue:
                           completed_at, error, retry_count
             """, (self.worker_id, self.node_hostname, batch_size))
 
-            rows = cur.fetchall()
+            try:
+                rows = cur.fetchall()
+            except psycopg.errors.QueryCanceled:
+                logger.warning(f"TaskQueue.fetch_tasks: statement_timeout hit for {partition_table}")
+                return []
 
             tasks = [Task(**row) for row in rows]
 

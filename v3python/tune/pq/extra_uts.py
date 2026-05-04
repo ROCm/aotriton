@@ -21,7 +21,8 @@ def insert_extra_uts(conn, task_id: int, im_texts: list[str]) -> None:
 
 
 def get_extra_uts(conn, task_id: int) -> list[str]:
-    with conn.cursor() as cur:
+    from psycopg.rows import tuple_row
+    with conn.cursor(row_factory=tuple_row) as cur:
         cur.execute(
             'SELECT im_text FROM task_extra_uts WHERE task_id = %s AND active = TRUE',
             (task_id,),
