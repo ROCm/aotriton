@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 import sys
+import math
 from argparse import Namespace
 from dataclasses import dataclass, astuple
 from ..kftdesc import KernelForTuneDescription as KFTDesc
