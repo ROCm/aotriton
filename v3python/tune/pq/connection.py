@@ -37,11 +37,11 @@ class ReconnectableConn:
         self._conn = psycopg.connect(**self._params, **self._kwargs)
         logger.info("Database connection (re)established")
 
-    def cursor(self):
+    def cursor(self, **kwargs):
         if self._conn.closed:
             logger.warning("Database connection was closed; reconnecting...")
             self._connect()
-        return self._conn.cursor()
+        return self._conn.cursor(**kwargs)
 
     @property
     def closed(self):
