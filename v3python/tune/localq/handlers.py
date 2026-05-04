@@ -121,8 +121,10 @@ class PreprocessHandler(MessageHandler):
         else:
             tmpdir = exaid.get_tmpfs_for(task_config["entry"])
 
+        extra_im_texts = task_config.get('extra_im_texts', [])
+
         try:
-            exaid.prepare_data(task_config["entry"], tmpdir)
+            exaid.prepare_data(task_config["entry"], tmpdir, extra_im_texts=extra_im_texts)
             task_config['tmpdir'] = tmpdir.as_posix()
         except (OSError, ExaidSubprocessNotOK) as e:
             logger.error(f"Preprocess failed for task_id={task_id}: {e}")

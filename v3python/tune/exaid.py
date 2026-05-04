@@ -142,11 +142,11 @@ class ExaidWorker(object):
     def get_tmpfs_for(self, entry_dict):
         return self.TMPFS_LOCATION / self.entry_from_dict(entry_dict).as_posix()
 
-    def prepare_data(self, entry_dict: dict, workdir: Path):
-        logger.info(f"prepare_data: entry={entry_dict}, workdir={workdir}")
+    def prepare_data(self, entry_dict: dict, workdir: Path, extra_im_texts: list[str] = []):
+        logger.info(f"prepare_data: entry={entry_dict}, workdir={workdir}, extra_ims={len(extra_im_texts)}")
         workdir.mkdir(parents=True, exist_ok=True)
         entry = self.entry_from_dict(entry_dict)
-        self.proxy.write('prepare_data', entry.as_text(), workdir.as_posix())
+        self.proxy.write('prepare_data', entry.as_text(), workdir.as_posix(), *extra_im_texts)
         result = self.proxy.readinfo(timeout=120)
         logger.info(f"prepare_data completed: {result}")
         return result
