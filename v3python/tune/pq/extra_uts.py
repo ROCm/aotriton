@@ -21,13 +21,16 @@ def insert_extra_uts(conn, task_id: int, im_texts: list[str]) -> None:
 
 
 def get_extra_uts(conn, task_id: int) -> list[str]:
-    from psycopg.rows import tuple_row
-    with conn.cursor(row_factory=tuple_row) as cur:
+    with conn.cursor() as cur:
         cur.execute(
             'SELECT im_text FROM task_extra_uts WHERE task_id = %s AND active = TRUE',
             (task_id,),
         )
-        return [row[0] for row in cur.fetchall()]
+        rows = cur.fetchall()
+        # Support both dict_row and tuple_row connections
+        if rows and isinstance(rows[0], dict):
+            return [row['im_text'] for row in rows]
+        return [row[0] for row in rows]
 
 
 def delete_extra_uts(conn, task_ids: list[int]) -> None:
