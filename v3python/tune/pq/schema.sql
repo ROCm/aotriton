@@ -185,3 +185,17 @@ CREATE TABLE IF NOT EXISTS best_tuning_results (
 
 CREATE INDEX IF NOT EXISTS idx_best_tuning_results_lookup
     ON best_tuning_results (arch, kernel_name, task_id);
+
+-- Extra unit tests associated with a task, populated by reset_broken_to_pending
+-- when re-queuing entries that failed pytest correctness checks.
+-- Rows accumulate across passes and are never deleted by reset_to_pending.
+CREATE TABLE IF NOT EXISTS task_extra_uts (
+    id          BIGSERIAL PRIMARY KEY,
+    task_id     BIGINT NOT NULL REFERENCES task_queue(id) ON DELETE CASCADE,
+    im_text     TEXT   NOT NULL,
+    created_at  TIMESTAMP DEFAULT NOW(),
+    UNIQUE (task_id, im_text)
+);
+
+CREATE INDEX IF NOT EXISTS idx_task_extra_uts_task_id
+    ON task_extra_uts (task_id);
