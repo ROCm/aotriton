@@ -65,6 +65,11 @@ class FlashInputMetadata(FlashEntry):
     prng_seed: int = 0x9be9_98d4_cf17_5339
 
     @staticmethod
+    def parse_text(line: str) -> "FlashEntry":
+        d = parse_python(line)
+        return FlashInputMetadata(**d)
+
+    @staticmethod
     def from_dict(d: dict) -> "FlashInputMetadata":
         return from_dict(data_class=FlashInputMetadata, data=d, config=dacite_tuple)
 
@@ -144,11 +149,14 @@ class Flash(TuningDescription):
                     yield d
             return list(gen())
 
-    def _gen_ref(self, entry: FlashEntry, data_root: Path):
+    def _gen_ref(self, entry: FlashEntry, data_root: Path, extra_ims: list = []):
         import torch
         from ..gpu_utils import device_ctx
         with device_ctx():
             yield from self._do_gen_ref(entry, data_root)
+            for idx, im in enumerate(extra_ims):
+                tname = f'{6 + idx:02d}_utextra'
+                yield self._write_ref_no_clamp(im, data_root, tname)
 
     def _clamp_memory_usage(self, im: FlashInputMetadata) -> FlashInputMetadata:
         '''
@@ -270,6 +278,30 @@ class Flash(TuningDescription):
             gc.collect()
             torch.cuda.empty_cache()
         # print(f'{tname=} {im=}')
+        from .reference import SdpaReference
+        ref_kernel = SdpaReference()
+        bidi_inputs = ref_kernel.generate_inputs(im)
+        bidi_inputs, outputs = ref_kernel(im, bidi_inputs, None)
+        d = {
+            "bidi_inputs" : asdict_shallow(bidi_inputs),
+            "bidi_outputs" : asdict_shallow(outputs),
+        }
+        pt = (root / tname).with_suffix('.pt')
+        torch.save(d, pt)
+        return tname, im, pt
+
+    def _write_ref_no_clamp(self,
+                            im: FlashInputMetadata,
+                            root: Path,
+                            tname: str):
+        '''Like _write_ref but skips _clamp_memory_usage — extra IMs come from real
+        pytest runs so their shapes are known to fit in VRAM.
+        Pre-condition: called with device_ctx()
+        '''
+        import torch
+        if im.qkh > 2048 * 2048 * 64:
+            gc.collect()
+            torch.cuda.empty_cache()
         from .reference import SdpaReference
         ref_kernel = SdpaReference()
         bidi_inputs = ref_kernel.generate_inputs(im)

@@ -106,15 +106,20 @@ class CommandProcessor(object):
 
     def command_prepare_data(self, line):
         if line is None:
-            return r'''Syntax Error: no package name. Expect: prepare_data <entry> <data directory>'''
+            return r'''Syntax Error: Expect: prepare_data <entry> <odir> [im_text ...]'''
         if self._module is None:
             return r'''Error: Need to run module <package name> first'''
         tune = self._module.TuneDesc()
         try:
-            entry, odir = first(line)
+            entry, tail = first(line)
+            odir, tail = first(tail)
             entry = tune.ENTRY_CLASS.parse_text(entry)
             odir = Path(odir)
             odir.mkdir(parents=True, exist_ok=True)
+            extra_ims = []
+            while tail:
+                im_text, tail = first(tail)
+                extra_ims.append(tune.INPUT_METADATA.parse_text(im_text))
         except Exception as e:
             traceback.print_exc()
             print(e, file=sys.stderr)
@@ -122,7 +127,7 @@ class CommandProcessor(object):
         # Clear GPU cache before prepare_data
         import torch
         torch.cuda.empty_cache()
-        tune.prepare_data(entry, odir)
+        tune.prepare_data(entry, odir, extra_ims=extra_ims)
 
     def command_probe(self, line):
         if line is None:

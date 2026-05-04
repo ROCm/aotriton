@@ -144,7 +144,7 @@ class TuningDescription(ABC):
         pass
 
     @abstractmethod
-    def _gen_ref(self, entry, root: Path):  # Gen [tname: str, input_metadata, pt: Path]
+    def _gen_ref(self, entry, root: Path, extra_ims: list = []):  # Gen [tname: str, input_metadata, pt: Path]
         """
         Inputs:
             entry: an object to describe an entry in tuning database.
@@ -160,9 +160,9 @@ class TuningDescription(ABC):
         """
         pass
 
-    def prepare_data(self, entry, root: Path):
+    def prepare_data(self, entry, root: Path, extra_ims: list = []):
         def iterate_test():
-            for tname, im, pt in self._gen_ref(entry, root):
+            for tname, im, pt in self._gen_ref(entry, root, extra_ims):
                 yield {'test_name': tname, 'input_metadata' : asdict(im), 'pt_file': pt.as_posix()}
         with open(root / 'entry.json', 'w') as f:
             json.dump({'entry' : asdict(entry), 'tests': list(iterate_test()) }, f)
