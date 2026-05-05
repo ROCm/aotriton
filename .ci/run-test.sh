@@ -34,6 +34,25 @@ small_vram=$(amd-smi static -g 0 -v --json|grep -v '^WARNING:'| python -c 'impor
 outdir="${OUTPUT_DIR:-.}"
 mkdir -p "$outdir"
 
+# Partial test mode: if PARTIAL_INFO_DIR is set, fix and use sel files as pytest selectors
+SELECT_FROM=""
+SELECT_VARLEN_FROM=""
+if [ -n "${PARTIAL_INFO_DIR:-}" ]; then
+  for kind in "" ".varlen"; do
+    src="${PARTIAL_INFO_DIR}/sel${pass}${kind}.txt"
+    dst="${outdir}/pytest-select-${pass}${kind}.txt"
+    if [ -f "$src" ]; then
+      # Remove "path/to/file.py::" prefix (first occurrence per line only)
+      sed 's|[^:]*\.py::||' "$src" > "$dst"
+      if [ -z "$kind" ]; then
+        SELECT_FROM="--select-from-file $dst"
+      else
+        SELECT_VARLEN_FROM="--select-from-file $dst"
+      fi
+    fi
+  done
+fi
+
 (
   ulimit -c 0
   cd ${SCRIPT_DIR}/..;
@@ -62,6 +81,7 @@ mkdir -p "$outdir"
   export PYTHONPATH="${AOTRITON_TEST_LIBDIR:-${bdir}/install_dir/lib}"
   pytest --tb=line -n ${ngpus} --max-worker-restart 48 -rfEsx \
     -p no:cacheprovider \
+    ${SELECT_FROM} \
     test/test_backward.py \
     -v \
     1>"${outdir}/${fnprefix}${pass}.out" \
@@ -69,6 +89,7 @@ mkdir -p "$outdir"
   grep '^FAILED' "${outdir}/${fnprefix}${pass}.out"|sed 's/^FAILED //' | sed 's/].*/]/' > "${outdir}/sel${pass}.txt"
   pytest --tb=line -n ${ngpus} --max-worker-restart 48 -rfEsx \
     -p no:cacheprovider \
+    ${SELECT_VARLEN_FROM} \
     test/test_varlen.py \
     -v \
     1>"${outdir}/${fnprefix}${pass}.varlen.out" \

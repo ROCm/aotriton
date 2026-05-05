@@ -148,6 +148,40 @@
                             <pre id="tail-varlen-content-{{ worker.hostname }}" style="margin: 0.2rem 0; max-height: 10em; overflow-y: auto; background: #1e1e1e; color: #d4d4d4; padding: 0.4rem; white-space: pre-wrap; max-width: 78ch; overflow-wrap: break-word;"></pre>
                         </div>
                     </div>
+
+                    {# Run partial test #}
+                    <div style="display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; margin-bottom: 0.5rem; margin-top: 0.5rem;">
+                        <button hx-post="/api/testing/{{ worker.hostname }}/run-test?variant=partial"
+                                hx-swap="none"
+                                hx-vals='js:{pass_num: document.getElementById("pass-{{ worker.hostname }}").value, test_level: document.getElementById("level-{{ worker.hostname }}").value, backend: document.getElementById("backend-{{ worker.hostname }}").value}'
+                                style="font-size: 0.8em; padding: 0.3rem 0.5rem;">
+                            Run Partial Test
+                        </button>
+                        <button type="button"
+                                onclick="window.open('/api/testing/{{ worker.hostname }}/failures?pass=' + document.getElementById('pass-{{ worker.hostname }}').value + '&backend=' + document.getElementById('backend-{{ worker.hostname }}').value + '&variant=partial', '_blank', 'width=900,height=600')"
+                                style="font-size: 0.8em; padding: 0.3rem 0.5rem;">
+                            Show Partial Failures
+                        </button>
+                    </div>
+
+                    {# Tail partial output display #}
+                    <div style="margin-bottom: 0.3rem; display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap;">
+                        <button onclick="fetchTailOutput('{{ worker.hostname }}', 'partial')"
+                                style="font-size: 0.8em; padding: 0.2rem 0.4rem;">
+                            Tail Partial Output
+                        </button>
+                        <span style="font-size: 0.85em; color: gray;">(uses Wrap text above)</span>
+                    </div>
+                    <div id="tail-partial-{{ worker.hostname }}" style="font-size: 0.82em; font-family: monospace; display: none;">
+                        <div>
+                            <strong id="tail-partial-name-{{ worker.hostname }}"></strong>
+                            <pre id="tail-partial-content-{{ worker.hostname }}" style="margin: 0.2rem 0; max-height: 10em; overflow-y: auto; background: #1e1e1e; color: #d4d4d4; padding: 0.4rem; white-space: pre-wrap; max-width: 78ch; overflow-wrap: break-word;"></pre>
+                        </div>
+                        <div>
+                            <strong id="tail-partial-varlen-name-{{ worker.hostname }}"></strong>
+                            <pre id="tail-partial-varlen-content-{{ worker.hostname }}" style="margin: 0.2rem 0; max-height: 10em; overflow-y: auto; background: #1e1e1e; color: #d4d4d4; padding: 0.4rem; white-space: pre-wrap; max-width: 78ch; overflow-wrap: break-word;"></pre>
+                        </div>
+                    </div>
                 </td>
                 {% else %}
                 <td></td>
@@ -212,11 +246,14 @@ function refreshSignature(hostname, arch) {
 }
 
 function setTailWrap(hostname, wrap) {
-    const pres = [
-        document.getElementById(`tail-content-${hostname}`),
-        document.getElementById(`tail-varlen-content-${hostname}`),
+    const ids = [
+        `tail-content-${hostname}`,
+        `tail-varlen-content-${hostname}`,
+        `tail-partial-content-${hostname}`,
+        `tail-partial-varlen-content-${hostname}`,
     ];
-    pres.forEach(el => {
+    ids.forEach(id => {
+        const el = document.getElementById(id);
         if (!el) return;
         el.style.whiteSpace = wrap ? 'pre-wrap' : 'pre';
         el.style.maxWidth = wrap ? '78ch' : 'none';
@@ -224,29 +261,32 @@ function setTailWrap(hostname, wrap) {
     });
 }
 
-function fetchTailOutput(hostname) {
+function fetchTailOutput(hostname, variant) {
     const pass_num = document.getElementById(`pass-${hostname}`).value;
     const backend = document.getElementById(`backend-${hostname}`).value;
-    fetch(`/api/testing/${hostname}/tail-output?pass=${pass_num}&backend=${backend}`)
+    const prefix = variant === 'partial' ? 'tail-partial' : 'tail';
+    let url = `/api/testing/${hostname}/tail-output?pass=${pass_num}&backend=${backend}`;
+    if (variant) url += `&variant=${variant}`;
+    fetch(url)
         .then(r => r.json())
         .then(data => {
-            const container = document.getElementById(`tail-${hostname}`);
+            const container = document.getElementById(`${prefix}-${hostname}`);
             container.style.display = 'block';
             if (data.files) {
                 for (const [fname, content] of Object.entries(data.files)) {
                     if (fname.includes('varlen')) {
-                        document.getElementById(`tail-varlen-name-${hostname}`).textContent = fname;
-                        document.getElementById(`tail-varlen-content-${hostname}`).textContent = content;
+                        document.getElementById(`${prefix}-varlen-name-${hostname}`).textContent = fname;
+                        document.getElementById(`${prefix}-varlen-content-${hostname}`).textContent = content;
                     } else {
-                        document.getElementById(`tail-name-${hostname}`).textContent = fname;
-                        document.getElementById(`tail-content-${hostname}`).textContent = content;
+                        document.getElementById(`${prefix}-name-${hostname}`).textContent = fname;
+                        document.getElementById(`${prefix}-content-${hostname}`).textContent = content;
                     }
                 }
             } else {
-                document.getElementById(`tail-name-${hostname}`).textContent = '';
-                document.getElementById(`tail-content-${hostname}`).textContent = data.message || '(error)';
-                document.getElementById(`tail-varlen-name-${hostname}`).textContent = '';
-                document.getElementById(`tail-varlen-content-${hostname}`).textContent = '';
+                document.getElementById(`${prefix}-name-${hostname}`).textContent = '';
+                document.getElementById(`${prefix}-content-${hostname}`).textContent = data.message || '(error)';
+                document.getElementById(`${prefix}-varlen-name-${hostname}`).textContent = '';
+                document.getElementById(`${prefix}-varlen-content-${hostname}`).textContent = '';
             }
         });
 }

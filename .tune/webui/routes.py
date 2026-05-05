@@ -801,9 +801,12 @@ def api_run_test(hostname):
     pass_num = str(request.form.get('pass_num', '0'))
     test_level = str(request.form.get('test_level', '0'))
     backend = request.form.get('backend', 'split')
+    variant = request.form.get('variant') or request.args.get('variant') or None
     if backend not in ('split', 'fused', 'aiter', 'v3'):
         return jsonify({'status': 'error', 'message': f'Invalid backend: {backend}'}), 400
-    result = tasks.run_test_on_host(workdir, hostname, pass_num, test_level, backend)
+    if variant and variant not in ('partial',):
+        return jsonify({'status': 'error', 'message': f'Invalid variant: {variant}'}), 400
+    result = tasks.run_test_on_host(workdir, hostname, pass_num, test_level, backend, variant=variant)
     return jsonify(result)
 
 
@@ -813,7 +816,8 @@ def api_tail_output(hostname):
     workdir = current_app.config['WORKDIR']
     pass_num = request.args.get('pass', '0')
     backend = request.args.get('backend', 'split')
-    result = tasks.get_tail_output(workdir, hostname, pass_num, backend)
+    variant = request.args.get('variant') or None
+    result = tasks.get_tail_output(workdir, hostname, pass_num, backend, variant=variant)
     return jsonify(result)
 
 

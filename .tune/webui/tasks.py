@@ -1209,7 +1209,7 @@ def get_tester_signature(workdir, hostname):
 
 
 
-def run_test_on_host(workdir, hostname, pass_num, test_level, backend):
+def run_test_on_host(workdir, hostname, pass_num, test_level, backend, variant=None):
     """Queue run-test on a remote tester host via .tune/single/run-test.sh (tsp-backed)."""
     worker = get_worker_by_hostname(workdir, hostname)
     if not worker:
@@ -1219,8 +1219,12 @@ def run_test_on_host(workdir, hostname, pass_num, test_level, backend):
         '.tune/single/run-test.sh', workdir, hostname, arch, workdir_override or '',
         str(pass_num), str(test_level), backend,
     ]
-    return run_command(cmd, cwd=AOTRITON_ROOT, workdir=workdir,
-                       description=f'run-test on {hostname} ({arch}) pass={pass_num} level={test_level} backend={backend}')
+    if variant == 'partial':
+        cmd.append('partial')
+    desc = f'run-test on {hostname} ({arch}) pass={pass_num} level={test_level} backend={backend}'
+    if variant:
+        desc += f' variant={variant}'
+    return run_command(cmd, cwd=AOTRITON_ROOT, workdir=workdir, description=desc)
 
 
 def get_failed_tests(workdir, hostname, pass_num, backend, variant=None):
@@ -1254,7 +1258,7 @@ def get_failed_tests(workdir, hostname, pass_num, backend, variant=None):
     return {'status': 'ok', 'filename': fname, 'lines': lines}
 
 
-def get_tail_output(workdir, hostname, pass_num, backend):
+def get_tail_output(workdir, hostname, pass_num, backend, variant=None):
     """Fetch tail -n 5 of test output files for the given pass and backend."""
     worker = get_worker_by_hostname(workdir, hostname)
     if not worker:
@@ -1265,6 +1269,8 @@ def get_tail_output(workdir, hostname, pass_num, backend):
     prefix_map = {'split': 'ut_pass', 'fused': 'fused_pass', 'aiter': 'aiter_pass', 'v3': 'oput_pass'}
     prefix = prefix_map.get(backend, 'ut_pass')
     output_dir = f'{remote_wd}/run/tests'
+    if variant == 'partial':
+        output_dir += '/partial'
     results = {}
     for suffix in ('', '.varlen'):
         fname = f'{prefix}{pass_num}{suffix}.out'
