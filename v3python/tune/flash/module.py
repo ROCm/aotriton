@@ -123,6 +123,8 @@ class Flash(TuningDescription):
         return True, ''
 
     def list_kernels(self, entry: FlashEntry):
+        if True:  # Debugging, fwd only tuning. Keep it for selective tuning
+            return ['attn_fwd']
         if entry.hdim > 224:
             return ['attn_fwd', 'bwd_kernel_dk_dv', 'bwd_kernel_dq']
         return ['attn_fwd', 'bwd_kernel_dk_dv', 'bwd_kernel_dq', 'bwd_kernel_fuse']
@@ -369,16 +371,24 @@ class Flash(TuningDescription):
 
     def get_kernel(self, kernel_name: str):
         if self.KERNEL_DICT is None:
-            from .kernels import (
-                attn_fwd,
-                bwd_kernel_dk_dv,
-                bwd_kernel_dq,
-                bwd_kernel_fuse,
-            )
-            self.KERNEL_DICT = {
-                'attn_fwd'          : attn_fwd(),
-                'bwd_kernel_dk_dv'  : bwd_kernel_dk_dv(),
-                'bwd_kernel_dq'     : bwd_kernel_dq(),
-                'bwd_kernel_fuse'   : bwd_kernel_fuse(),
-            }
+            if True:  # Debugging, fwd only tuning. Keep it for selective tuning
+                from .kernels import (
+                    attn_fwd,
+                )
+                self.KERNEL_DICT = {
+                    'attn_fwd'          : attn_fwd(),
+                }
+            else:
+                from .kernels import (
+                    attn_fwd,
+                    bwd_kernel_dk_dv,
+                    bwd_kernel_dq,
+                    bwd_kernel_fuse,
+                )
+                self.KERNEL_DICT = {
+                    'attn_fwd'          : attn_fwd(),
+                    'bwd_kernel_dk_dv'  : bwd_kernel_dk_dv(),
+                    'bwd_kernel_dq'     : bwd_kernel_dq(),
+                    'bwd_kernel_fuse'   : bwd_kernel_fuse(),
+                }
         return self.KERNEL_DICT[kernel_name]
