@@ -192,7 +192,7 @@ CREATE INDEX IF NOT EXISTS idx_best_tuning_results_lookup
 CREATE TABLE IF NOT EXISTS task_extra_uts (
     id          BIGSERIAL PRIMARY KEY,
     task_id     BIGINT  NOT NULL,
-    im_text     TEXT    NOT NULL,
+    im_text     TEXT    NOT NULL CHECK (im_text NOT LIKE '% %'),
     active      BOOLEAN NOT NULL DEFAULT TRUE,
     created_at  TIMESTAMP DEFAULT NOW(),
     UNIQUE (task_id, im_text)
@@ -202,6 +202,13 @@ CREATE TABLE IF NOT EXISTS task_extra_uts (
 DO $$ BEGIN
     ALTER TABLE task_extra_uts ADD COLUMN active BOOLEAN NOT NULL DEFAULT TRUE;
 EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
+-- Migration: add no-space constraint to existing deployments.
+DO $$ BEGIN
+    ALTER TABLE task_extra_uts
+        ADD CONSTRAINT task_extra_uts_im_text_no_space CHECK (im_text NOT LIKE '% %');
+EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
 CREATE INDEX IF NOT EXISTS idx_task_extra_uts_task_id
