@@ -1223,6 +1223,37 @@ def run_test_on_host(workdir, hostname, pass_num, test_level, backend):
                        description=f'run-test on {hostname} ({arch}) pass={pass_num} level={test_level} backend={backend}')
 
 
+def get_failed_tests(workdir, hostname, pass_num, backend, variant=None):
+    """Grep '^FAILED' lines (excluding OutOfMemoryError) from the test output file on a tester host."""
+    worker = get_worker_by_hostname(workdir, hostname)
+    if not worker:
+        return {'status': 'error', 'message': f"Worker '{hostname}' not found"}
+    _, _, workdir_override = worker
+    default_wd = get_default_workdir(workdir) or workdir
+    remote_wd = workdir_override or default_wd
+    prefix_map = {'split': 'ut_pass', 'fused': 'fused_pass', 'aiter': 'aiter_pass', 'v3': 'oput_pass'}
+    prefix = prefix_map.get(backend, 'ut_pass')
+    output_dir = f'{remote_wd}/run/tests'
+    if variant == 'partial':
+        output_dir += '/partial'
+    fname = f'{prefix}{pass_num}.out'
+    remote_path = f'{output_dir}/{fname}'
+    script = (
+        f'if [ -f {remote_path} ]; then '
+        f'grep \'^FAILED\' {remote_path} | grep -v OutOfMemoryError; '
+        f'else echo "__NOT_FOUND__"; fi'
+    )
+    r = subprocess.run(
+        ['ssh', hostname, script],
+        capture_output=True, text=True
+    )
+    raw = r.stdout
+    if raw.strip() == '__NOT_FOUND__':
+        return {'status': 'not_found', 'filename': fname}
+    lines = [line for line in raw.splitlines() if line.strip()]
+    return {'status': 'ok', 'filename': fname, 'lines': lines}
+
+
 def get_tail_output(workdir, hostname, pass_num, backend):
     """Fetch tail -n 5 of test output files for the given pass and backend."""
     worker = get_worker_by_hostname(workdir, hostname)

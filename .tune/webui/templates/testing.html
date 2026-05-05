@@ -118,6 +118,11 @@
                                 style="font-size: 0.8em; padding: 0.3rem 0.5rem;">
                             Run Test
                         </button>
+                        <button type="button"
+                                onclick="window.open('/api/testing/{{ worker.hostname }}/failures?pass=' + document.getElementById('pass-{{ worker.hostname }}').value + '&backend=' + document.getElementById('backend-{{ worker.hostname }}').value, '_blank', 'width=900,height=600')"
+                                style="font-size: 0.8em; padding: 0.3rem 0.5rem;">
+                            Show Failures
+                        </button>
                     </div>
 
                     {# Tail output display #}

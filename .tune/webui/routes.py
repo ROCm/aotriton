@@ -817,6 +817,86 @@ def api_tail_output(hostname):
     return jsonify(result)
 
 
+@bp.route('/api/testing/<hostname>/failures', methods=['GET'])
+def api_testing_failures(hostname):
+    """Return a full HTML page listing FAILED test lines from the output file."""
+    workdir = current_app.config['WORKDIR']
+    pass_num = request.args.get('pass', '0')
+    backend = request.args.get('backend', 'split')
+    variant = request.args.get('variant') or None
+    result = tasks.get_failed_tests(workdir, hostname, pass_num, backend, variant=variant)
+
+    variant_label = f' ({variant})' if variant else ''
+    title = f'Failures — {hostname} pass {pass_num}{variant_label}'
+
+    if result['status'] == 'not_found':
+        body = f'<p class="err">File not found: <code>{result["filename"]}</code></p>'
+    elif result['status'] == 'error':
+        msg = result.get('message', 'Unknown error')
+        body = f'<p class="err">Error: {msg}</p>'
+    elif not result['lines']:
+        body = '<p class="ok">No failures found.</p>'
+    else:
+        import html as _html
+        escaped = _html.escape('\n'.join(result['lines']))
+        body = (
+            f'<p class="meta">{len(result["lines"])} failure(s) in'
+            f' <code>{result["filename"]}</code></p>'
+            f'<pre class="failures">{escaped}</pre>'
+        )
+
+    page = f'''<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{title}</title>
+<style>
+  body {{
+    margin: 0;
+    padding: 1rem 1.4rem;
+    background: #1a1a1a;
+    color: #d4d4d4;
+    font-family: system-ui, sans-serif;
+    font-size: 0.95rem;
+  }}
+  h1 {{
+    font-size: 1.1rem;
+    margin: 0 0 0.8rem 0;
+    color: #e0e0e0;
+    border-bottom: 1px solid #333;
+    padding-bottom: 0.4rem;
+  }}
+  code {{
+    font-family: monospace;
+    background: #2a2a2a;
+    padding: 0.1em 0.3em;
+    border-radius: 3px;
+  }}
+  .meta {{ color: #999; font-size: 0.85em; margin: 0 0 0.5rem 0; }}
+  .err {{ color: #f88; }}
+  .ok  {{ color: #8f8; }}
+  pre.failures {{
+    margin: 0;
+    padding: 0.7rem;
+    background: #111;
+    color: #f88;
+    border: 1px solid #333;
+    border-radius: 4px;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    line-height: 1.45;
+    font-size: 0.88rem;
+  }}
+</style>
+</head>
+<body>
+<h1>{title}</h1>
+{body}
+</body>
+</html>'''
+    return page, 200, {'Content-Type': 'text/html; charset=utf-8'}
+
+
 @bp.route('/debug')
 def debug():
     """Debug page - inspect task_queue entries and all related rows"""
