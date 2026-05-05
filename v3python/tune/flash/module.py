@@ -48,6 +48,10 @@ class FlashEntry:
         def tr(v) -> str:
             if isinstance(v, str):
                 return f"'{v}'"
+            if isinstance(v, tuple):
+                return '(' + ','.join(tr(x) for x in v) + ')'
+            if isinstance(v, list):
+                return '[' + ','.join(tr(x) for x in v) + ']'
             return str(v)
         return ';'.join([f"{k}={tr(v)}" for k, v in asdict(self).items()])
 
