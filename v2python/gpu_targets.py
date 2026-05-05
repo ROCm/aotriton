@@ -1,6 +1,8 @@
 # Copyright © 2023-2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
+from __future__ import annotations
+
 from collections import defaultdict
 
 AOTRITON_SUPPORTED_GPUS = (
@@ -41,13 +43,16 @@ def cluster_gpus(gpus : list[str]) -> dict[str : list[str]]:
         ret[k] = sorted(v)
     return ret
 
-def select_gpus(target_arch, target_gpus) -> list[str]:
+def select_gpus(
+    target_arch: list[str] | None,
+    target_gpus: list[str] | None,
+) -> list[str]:
     if target_gpus:
         return target_gpus
-    ret = []
+    ret: list[str] = []
     for gpu in AOTRITON_SUPPORTED_GPUS:
         arch = gpu2arch(gpu)
-        if arch in target_arch:
+        if target_arch and arch in target_arch:
             ret.append(gpu)
     return ret
 
