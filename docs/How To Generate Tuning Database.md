@@ -25,7 +25,6 @@ This replaces the previous Celery-based architecture (Tuner v3.0) with a simpler
 
 **Network Requirements:**
 - PostgreSQL port (default: 5432, configurable in config.rc)
-- WebUI port (TBD)
 - SSH access from dev node to all GPU workers
 
 Linux is assumed for all nodes.
@@ -35,13 +34,11 @@ Linux is assumed for all nodes.
 **All nodes:**
 - `ssh` - for remote access
 - `docker` - for containerized execution (podman may work but is untested)
+- `task-spooler` (`tsp`) - for queuing Docker image builds (optional but recommended)
 
 **Dev node:**
 - `sqlite3` - for worker database management
 - `rsync` - for deploying workdir to GPU workers
-
-**GPU worker nodes:**
-- `task-spooler` (`tsp`) - for queuing Docker image builds (optional but recommended)
 
 **Docker base image** (shared across all workers):
 - Python >= 3.10
@@ -61,66 +58,75 @@ cd aotriton
 # 2. Create and configure working directory
 .tune/bin/initproj ~/wkdir.tuning
 
-# 3. Open WebUI and register GPU workers
-#    https://<dev-node>:<port> → Workers tab → Add Worker
+# 3. Generate mTLS certificates and start WebUI
+.tune/webui/gencerts/generate_all_certs.sh ~/wkdir.tuning   # first time only
+~/venv/bin/python .tune/dashboard.py ~/wkdir.tuning
+#    Open https://<CELERY_SERVICE_HOST>:8888 — import client.p12 into browser first
 
-# 4. Build tuning libraries (on dev node or remote build node)
-#    WebUI → Builds tab → Build Tuning Version → Build Libraries (All)
-#    (or: .tune/bin/libbld ~/wkdir.tuning)
+# 4. Register GPU workers
+#    WebUI → Workers tab → + Add Worker
 
-# 5. Fetch tuning libraries from remote build node (if applicable)
-#    WebUI → Builds tab → Build Tuning Version → Fetch from Remote Build Node
-
-# 6. Prepare workdir (clone aotriton.src, generate Dockerfile)
+# 5. Prepare workdir — REQUIRED before every build when dev repo has changed
+#    (copies aotriton.src from upstream/main into <workdir>/aotriton.src)
 #    WebUI → Builds tab → Deployment → Prepare Workdir
 #    (or: .tune/bin/prepwkdir ~/wkdir.tuning)
 
-# 7. Deploy to GPU workers
+# 6. Deploy to remote build node (if using one; required before building there)
+#    WebUI → Builds tab → Deployment → Deploy to Remote Build Node
+
+# 7. Build tuning version of AOTriton libraries
+#    WebUI → Builds tab → Build Tuning Version → Build Libraries (All)
+#    (or: .tune/bin/libbld ~/wkdir.tuning)
+
+# 8. Fetch tuning libraries from remote build node (if applicable)
+#    WebUI → Builds tab → Build Tuning Version → Fetch from Remote Build Node
+
+# 9. Deploy to GPU workers
 #    WebUI → Workers tab → Bulk Actions → Deploy to All Workers
 #    (or: .tune/bin/deploy ~/wkdir.tuning)
 
-# 8. Build Docker images on each worker
-#    WebUI → Workers tab → Bulk Actions → Build Images on All Workers
+# 10. Build Docker images on each worker
+#     WebUI → Workers tab → Bulk Actions → Build Images on All Workers
 
-# 9. Start PostgreSQL and initialize database schema
-#    WebUI → Servers tab → PostgreSQL → Start Server
-#    WebUI → Servers tab → Database Schema → Initialize Schema
-#    (or: .tune/bin/srvctl ~/wkdir.tuning start && .tune/bin/initdb ~/wkdir.tuning)
+# 11. Start PostgreSQL and initialize database schema
+#     WebUI → Servers tab → PostgreSQL → Start Server
+#     WebUI → Servers tab → Database Schema → Initialize Schema
+#     (or: .tune/bin/srvctl ~/wkdir.tuning start && .tune/bin/initdb ~/wkdir.tuning)
 
-# 10. Start GPU workers (select GPUs first)
+# 12. Start GPU workers (select GPUs first)
 #     WebUI → Workers tab → per-host → Start
 #     (or: .tune/bin/wkctl ~/wkdir.tuning start)
 
-# 11. Dispatch tuning tasks
+# 13. Dispatch tuning tasks
 #     .tune/bin/dispatch ~/wkdir.tuning flash --arch gfx942
 
-# 12. Monitor progress
-#     WebUI → Dashboard (auto-refreshes every 30s)
+# 14. Monitor progress
+#     WebUI → Dashboard (auto-refreshes every 10s)
 
-# 13. Export results after tuning completes
+# 15. Export results after tuning completes
 #     WebUI → Servers tab → Bake LUT
 
 # --- Correctness Testing (after Bake LUT) ---
 
-# 14. Prepare workdir (optional, if source changed)
+# 16. Prepare workdir (required if dev repo changed since last prepare)
 #     WebUI → Builds tab → Deployment → Prepare Workdir
 
-# 15. Deploy to workers (push updated aotriton.src)
-#     WebUI → Workers tab → Bulk Actions → Deploy to All Workers
+# 17. Deploy to remote build node (push updated aotriton.src and baked LUT at installed/database/ before building)
+#     WebUI → Builds tab → Deployment → Deploy to Remote Build Node
 
-# 16. Build testing libraries
+# 18. Build testing libraries
 #     WebUI → Builds tab → Build Testing Version → Build Test Libraries (All)
 
-# 17. Fetch testing libraries from remote build node (if applicable)
+# 19. Fetch testing libraries from remote build node (if applicable)
 #     WebUI → Builds tab → Build Testing Version → Fetch from Remote Build Node
 
-# 18. Deploy testing libraries to workers
+# 20. Deploy testing libraries to workers
 #     WebUI → Workers tab → Bulk Actions → Deploy to All Workers
 
-# 19. Run tests
+# 21. Run tests
 #     WebUI → Testing tab → Run Test / Run Partial Test
 
-# 20. Stop workers and services when done
+# 22. Stop workers and services when done
 .tune/bin/wkctl ~/wkdir.tuning stop
 .tune/bin/srvctl ~/wkdir.tuning stop
 ```
@@ -178,6 +184,111 @@ CELERY_WORKER_IMAGE=aotriton-tunerv3.5
 CELERY_WORKER_PYTHON=/venv/bin/python
 ```
 
+## Working Directory Structure
+
+After setup, the working directory contains:
+
+```
+<workdir>/
+├── config.rc                   # Tuning infrastructure configuration (bash syntax)
+├── workers.db                  # SQLite registry of worker hosts and GPU metadata
+├── secrets/                    # mTLS certificates (CA, server, client.p12)
+│   ├── ca.crt / ca.key
+│   ├── server.crt / server.key
+│   ├── client.crt / client.key
+│   └── client.p12              # Import into browser for WebUI access
+├── aotriton.src/               # Snapshot of the AOTriton source (from upstream/main)
+│                               # Updated by Prepare Workdir; NOT auto-synced with dev repo
+├── installed/
+│   ├── <arch>/                 # Tuning-instrumented libraries for arch (e.g. gfx942/)
+│   ├── test/<arch>/            # Testing-instrumented libraries for arch
+│   ├── database/               # Baked LUT: sharded kernel selection database
+│   │   └── amd/<arch>/...      # Per-arch SQLite shards produced by Decompose DB
+│   └── adiffs/<arch>.txt       # Downloaded accuracy-diff file (from Download adiffs)
+├── image.build/                # Generated Dockerfile and build scripts
+│   └── Dockerfile
+├── image.scripts/              # Helper scripts copied into the Docker image
+├── scratch/
+│   ├── triton/                 # Cached Triton wheel build
+│   └── centraldb.sqlite3       # Intermediate unified SQLite before sharding
+├── build/                      # Local CMake build artifacts (not synced to workers)
+├── run/                        # Runtime state (not synced to workers)
+│   ├── broker.sock             # Unix socket for local broker (on each worker node)
+│   ├── logs/                   # Worker process logs
+│   └── tests/                  # Test output directory
+│       └── partial/            # Partial test run outputs (sel<N>.txt, adiffs.txt)
+└── <per-pass test output>/
+    ├── ut_pass<N>.out          # Full pytest log for pass N
+    └── sel<N>.txt              # Failing test IDs for pass N (drives partial re-run)
+```
+
+**Key facts:**
+- `aotriton.src/` is a **separate copy** that does not auto-sync with the dev repo — re-run Prepare Workdir whenever you make source changes.
+- `build/`, `scratch/`, `run/`, and `secrets/` are **never rsynced** to worker nodes.
+- `installed/database/` is synced to the **remote build node** (for embedding the LUT into the test build) and to **worker nodes** so workers can reference it.
+
+## Start the WebUI
+
+The WebUI is launched from the cloned AOTriton repository on the dev node. All
+commands below assume the current directory is the repo root.
+
+**Prerequisites:** install `cheroot` into the dev environment:
+```bash
+pip install cheroot
+```
+
+### Generate mTLS Certificates (first time)
+
+The WebUI uses mutual TLS — both the server and the browser must present
+certificates signed by the same CA. Certificates are stored in
+`<workdir>/secrets/` and are tied to the hostname in `CELERY_SERVICE_HOST`
+from `config.rc`.
+
+```bash
+.tune/webui/gencerts/generate_all_certs.sh <working_directory>
+```
+
+The script is interactive:
+- If you already have certificates from another workdir, enter that path to
+  copy them (avoids re-distributing `client.p12` to users).
+- Otherwise, confirm generation to create a new CA, server certificate, and
+  client certificate bundle.
+
+Generated files in `<workdir>/secrets/`:
+
+| File | Purpose |
+|------|---------|
+| `ca.crt` / `ca.key` | Certificate Authority (keep `ca.key` private) |
+| `server.crt` / `server.key` | Server certificate (loaded by dashboard.py) |
+| `client.crt` / `client.key` | Client certificate |
+| `client.p12` | PKCS12 bundle — import this into every browser that needs access |
+
+**Browser import (one time per browser):**
+- **Chrome**: Settings → Privacy & Security → Manage certificates → Import → select `client.p12`
+- **Firefox**: Preferences → Privacy & Security → Certificates → View Certificates → Your Certificates → Import
+
+### Launch the WebUI
+
+```bash
+~/venv/bin/python .tune/dashboard.py <working_directory> [--port 8888]
+```
+
+The server starts on `https://0.0.0.0:8888` by default. Open
+`https://<CELERY_SERVICE_HOST>:8888` in the browser; select the imported
+`admin` certificate when prompted.
+
+### Guest Mode (read-only, no auth)
+
+For sharing a read-only progress view without certificate distribution:
+
+```bash
+~/venv/bin/python .tune/dashboard.py <working_directory> --guest [--port 9999]
+```
+
+Guest mode serves plain HTTP on port 9999 with no client certificate required.
+It exposes only the Dashboard (tuning progress) and is safe to share on an
+internal network.
+
 ## Register GPU Workers
 
 Open the WebUI in a browser (`https://<dev-node>:<port>`). Navigate to the
@@ -201,29 +312,6 @@ INSERT INTO workers (hostname, arch) VALUES ('gpu-01.example.com', 'gfx942');
 INSERT OR REPLACE INTO config (key, value) VALUES ('default_workdir', '/home/user/wkdir');
 ```
 
-## Build AOTriton for All Architectures
-
-In the WebUI **Builds** tab, under **Build Tuning Version of AOTriton Libraries**,
-click **Build Libraries (All)** to build for all registered architectures, or
-click an individual arch button to build only that arch.
-
-This builds a Triton wheel (cached in `<workdir>/scratch/triton/`) and AOTriton
-libraries. Build artifacts land in `<workdir>/installed/<arch>/`.
-
-CLI equivalent:
-```bash
-.tune/bin/libbld <working_directory>
-```
-
-## Fetch Tuning Libraries from Remote Build Node
-
-If the build was run on a remote build node (configured under **Remote Build
-Node** in the Builds tab), click **Fetch from Remote Build Node** in the
-**Build Tuning Version of AOTriton Libraries** section to download the built
-artifacts to the local workdir before deployment.
-
-Skip this step if the build ran directly on the dev node.
-
 ## Prepare Working Directory
 
 In the **Builds** or **Workers** tab, under **Deployment**, click **Prepare Workdir**.
@@ -235,6 +323,49 @@ CLI equivalent:
 ```bash
 .tune/bin/prepwkdir <working_directory>
 ```
+
+> **Important:** The workdir maintains its own copy of the AOTriton source at
+> `<workdir>/aotriton.src`. This copy is **not** automatically kept in sync
+> with the dev repo you cloned. You must re-run **Prepare Workdir** every time
+> you make changes to the dev repo that should be reflected in the build or on
+> the worker nodes — otherwise those changes will be silently ignored.
+
+## Deploy Working Directory to Remote Build Node
+
+If you are using a remote build node (configured under **Remote Build Node** in
+the Builds tab), deploy the workdir to it before building:
+
+In the **Builds** tab, under **Deployment**, click
+**Deploy to Remote Build Node (hostname)**.
+
+This is a hard requirement before building on the remote node — the build node
+must have the latest `<workdir>/aotriton.src` (synced by Prepare above) to
+compile from.
+
+Skip this step if building directly on the dev node.
+
+## Build Tuning Version of AOTriton Libraries
+
+In the WebUI **Builds** tab, under **Build Tuning Version of AOTriton Libraries**,
+click **Build Libraries (All)** to build for all registered architectures, or
+click an individual arch button to build only that arch.
+
+This builds a Triton wheel (cached in `<workdir>/scratch/triton/`) and the
+tuning-instrumented AOTriton libraries used by GPU workers during kernel search.
+Build artifacts land in `<workdir>/installed/<arch>/`.
+
+CLI equivalent:
+```bash
+.tune/bin/libbld <working_directory>
+```
+
+## Fetch Tuning Libraries from Remote Build Node
+
+If the build ran on a remote build node, click **Fetch from Remote Build Node**
+in the **Build Tuning Version of AOTriton Libraries** section to download the
+built artifacts back to the local workdir.
+
+Skip this step if the build ran directly on the dev node.
 
 ## Deploy Working Directory to GPU Workers
 
@@ -391,13 +522,18 @@ Fetch from Remote Build Node → Deploy to Workers → Run Tests**
 If the AOTriton source has changed since the last prepare, run **Prepare Workdir**
 again from the **Builds** or **Workers** tab → **Deployment** section.
 
-This updates `<workdir>/aotriton.src` from `upstream/main` so workers run tests
-against the latest source.
+This updates `<workdir>/aotriton.src` from `upstream/main`. The updated source
+will be pushed to the remote build node in the next step.
 
-## Deploy Working Directory to Workers
+## Deploy Working Directory to Remote Build Node
 
-Click **Deploy to All Workers** (Workers tab → Bulk Actions) to push the updated
-`aotriton.src` to all worker nodes before building test libraries.
+In the **Builds** tab, under **Deployment**, click
+**Deploy to Remote Build Node (hostname)**.
+
+This pushes the updated `<workdir>/aotriton.src` (from Prepare above) and the
+baked LUT (`installed/database/`) to the remote build node before building the
+test libraries. Both are required: the source for compilation, and the LUT so
+the test build embeds the correct kernel selection database.
 
 ## Build Testing Version of AOTriton Libraries
 
