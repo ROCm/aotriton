@@ -61,37 +61,66 @@ cd aotriton
 # 2. Create and configure working directory
 .tune/bin/initproj ~/wkdir.tuning
 
-# 3. Register GPU workers (interactive web-based UI)
-# TODO: WebUI-based worker registration - see "Register GPU Workers" section
+# 3. Open WebUI and register GPU workers
+#    https://<dev-node>:<port> → Workers tab → Add Worker
 
-# 4. Build AOTriton for all architectures
-.tune/bin/libbld ~/wkdir.tuning
+# 4. Build tuning libraries (on dev node or remote build node)
+#    WebUI → Builds tab → Build Tuning Version → Build Libraries (All)
+#    (or: .tune/bin/libbld ~/wkdir.tuning)
 
-# 5. Prepare workdir and create Docker image
-.tune/bin/prepwkdir ~/wkdir.tuning
+# 5. Fetch tuning libraries from remote build node (if applicable)
+#    WebUI → Builds tab → Build Tuning Version → Fetch from Remote Build Node
 
-# 6. Deploy to GPU workers
-.tune/bin/deploy ~/wkdir.tuning
+# 6. Prepare workdir (clone aotriton.src, generate Dockerfile)
+#    WebUI → Builds tab → Deployment → Prepare Workdir
+#    (or: .tune/bin/prepwkdir ~/wkdir.tuning)
 
-# 7. Build Docker images on each worker
-.tune/bin/imgbld ~/wkdir.tuning
+# 7. Deploy to GPU workers
+#    WebUI → Workers tab → Bulk Actions → Deploy to All Workers
+#    (or: .tune/bin/deploy ~/wkdir.tuning)
 
-# 8. Initialize database schema
-.tune/bin/initdb ~/wkdir.tuning
+# 8. Build Docker images on each worker
+#    WebUI → Workers tab → Bulk Actions → Build Images on All Workers
 
-# 9. Start PostgreSQL service
-.tune/bin/srvctl ~/wkdir.tuning start
+# 9. Start PostgreSQL and initialize database schema
+#    WebUI → Servers tab → PostgreSQL → Start Server
+#    WebUI → Servers tab → Database Schema → Initialize Schema
+#    (or: .tune/bin/srvctl ~/wkdir.tuning start && .tune/bin/initdb ~/wkdir.tuning)
 
-# 10. Start GPU workers
-.tune/bin/wkctl ~/wkdir.tuning start
+# 10. Start GPU workers (select GPUs first)
+#     WebUI → Workers tab → per-host → Start
+#     (or: .tune/bin/wkctl ~/wkdir.tuning start)
 
-# 11. Dispatch tuning tasks via WebUI
-# TODO: WebUI-based task dispatch - see "Dispatch Tuning Tasks" section
+# 11. Dispatch tuning tasks
+#     .tune/bin/dispatch ~/wkdir.tuning flash --arch gfx942
 
-# 12. Monitor progress via WebUI
-# TODO: WebUI URL and usage
+# 12. Monitor progress
+#     WebUI → Dashboard (auto-refreshes every 30s)
 
-# 13. Stop workers and services when done
+# 13. Export results after tuning completes
+#     WebUI → Servers tab → Bake LUT
+
+# --- Correctness Testing (after Bake LUT) ---
+
+# 14. Prepare workdir (optional, if source changed)
+#     WebUI → Builds tab → Deployment → Prepare Workdir
+
+# 15. Deploy to workers (push updated aotriton.src)
+#     WebUI → Workers tab → Bulk Actions → Deploy to All Workers
+
+# 16. Build testing libraries
+#     WebUI → Builds tab → Build Testing Version → Build Test Libraries (All)
+
+# 17. Fetch testing libraries from remote build node (if applicable)
+#     WebUI → Builds tab → Build Testing Version → Fetch from Remote Build Node
+
+# 18. Deploy testing libraries to workers
+#     WebUI → Workers tab → Bulk Actions → Deploy to All Workers
+
+# 19. Run tests
+#     WebUI → Testing tab → Run Test / Run Partial Test
+
+# 20. Stop workers and services when done
 .tune/bin/wkctl ~/wkdir.tuning stop
 .tune/bin/srvctl ~/wkdir.tuning stop
 ```
@@ -151,290 +180,330 @@ CELERY_WORKER_PYTHON=/venv/bin/python
 
 ## Register GPU Workers
 
-**TODO: WebUI-based worker registration interface**
+Open the WebUI in a browser (`https://<dev-node>:<port>`). Navigate to the
+**Workers** tab.
 
-Currently, workers must be registered by directly editing `<working_directory>/workers.db`:
+1. In the **Basic Configuration** section, set the **Default Workdir** (path on
+   remote workers, e.g. `/home/user/wkdir`) and click **Update Default Workdir**.
+2. In the worker table at the bottom, fill in hostname and GPU arch (e.g.
+   `gfx942`) and click **+ Add Worker**. Optionally set a per-host workdir
+   override via the **Update** button in the worker row.
+3. Click **Detect GPU** on each worker row to populate GPU metadata automatically,
+   then click the refresh icon next to it to display the result.
+4. Check the **Tuner** role checkbox for each worker that will run tuning tasks.
+
+The worker list is stored in `<working_directory>/workers.db` (SQLite). You can
+also edit it directly:
 
 ```bash
 sqlite3 <working_directory>/workers.db
-```
-
-```sql
--- Set default workdir for all workers
-INSERT OR REPLACE INTO config (key, value) VALUES ('default_workdir', '/path/on/workers');
-
--- Add GPU workers
 INSERT INTO workers (hostname, arch) VALUES ('gpu-01.example.com', 'gfx942');
-INSERT INTO workers (hostname, arch) VALUES ('gpu-02.example.com', 'gfx942');
-INSERT INTO workers (hostname, arch) VALUES ('gpu-03.example.com', 'gfx90a');
-
--- Optional: Set custom workdir for specific worker
-UPDATE workers SET workdir_override='/custom/path' WHERE hostname='gpu-03.example.com';
-
--- View registered workers
-SELECT * FROM workers;
+INSERT OR REPLACE INTO config (key, value) VALUES ('default_workdir', '/home/user/wkdir');
 ```
-
-**Worker Database Schema:**
-- `hostname` - SSH hostname of the GPU worker
-- `arch` - GPU architecture (e.g., gfx942, gfx90a, gfx1100)
-- `workdir_override` - Optional custom workdir path (overrides default_workdir)
 
 ## Build AOTriton for All Architectures
 
-**This step must be run in an environment compatible with `CELERY_WORKER_IMAGE_BASE`**
+In the WebUI **Builds** tab, under **Build Tuning Version of AOTriton Libraries**,
+click **Build Libraries (All)** to build for all registered architectures, or
+click an individual arch button to build only that arch.
 
+This builds a Triton wheel (cached in `<workdir>/scratch/triton/`) and AOTriton
+libraries. Build artifacts land in `<workdir>/installed/<arch>/`.
+
+CLI equivalent:
 ```bash
 .tune/bin/libbld <working_directory>
 ```
 
-This script:
-1. Builds a Triton wheel from `third_party/triton/` and caches it in `<working_directory>/scratch/triton/`
-   - Cached wheel is reused if Triton and Python versions match
-   - Automatically rebuilds if versions change
-2. Queries `workers.db` and builds AOTriton for each registered architecture
-   - Build artifacts: `<working_directory>/build/<arch>/` (not synced to workers)
-   - Installed files: `<working_directory>/installed/<arch>/` (synced to workers)
+## Fetch Tuning Libraries from Remote Build Node
 
-The script is idempotent - safe to run multiple times.
+If the build was run on a remote build node (configured under **Remote Build
+Node** in the Builds tab), click **Fetch from Remote Build Node** in the
+**Build Tuning Version of AOTriton Libraries** section to download the built
+artifacts to the local workdir before deployment.
+
+Skip this step if the build ran directly on the dev node.
 
 ## Prepare Working Directory
 
+In the **Builds** or **Workers** tab, under **Deployment**, click **Prepare Workdir**.
+
+This clones (or updates) `<workdir>/aotriton.src` from `upstream/main`,
+copies `image.scripts/`, and generates `image.build/Dockerfile`.
+
+CLI equivalent:
 ```bash
 .tune/bin/prepwkdir <working_directory>
 ```
 
-This script:
-1. Clones or updates AOTriton source to `<working_directory>/aotriton.src`
-   - Performs shallow clone from `upstream/main`
-   - If already cloned, performs `git pull` to update
-2. Copies `.tune/image.scripts/` to `<working_directory>/image.scripts/`
-3. Creates `<working_directory>/image.build/Dockerfile` from `config.rc`
-
-**Generated Dockerfile:**
-- Starts from `${CELERY_WORKER_IMAGE_BASE}`
-- Creates Python venv at `${CELERY_WORKER_PYTHON}` if it doesn't exist
-- Installs `requirements-tuning.txt`
-- Runs all scripts matching `[0-9][0-9]-*.sh` in `image.scripts/`
-
-### Customizing the Worker Image
-
-Add custom scripts to `<working_directory>/image.scripts/` with numeric prefixes:
-
-Example: `<working_directory>/image.scripts/90-install_torch.sh`
-```bash
-#!/bin/bash
-/venv/bin/pip install torch torchvision --index-url https://download.pytorch.org/whl/rocm7.2
-```
-
-Scripts are executed in lexicographic order during Docker build.
-
 ## Deploy Working Directory to GPU Workers
 
+In the **Workers** tab, under **Bulk Actions**, click **Deploy to All Workers**.
+For a single host, click the per-row **Deploy** button.
+
+This rsyncs all workdir files to each registered worker, skipping `build/`,
+`scratch/`, `run/`, `secrets/`. Architecture-specific files (`installed/<arch>/`
+and `aotriton.src/`) are synced with `--delete`.
+
+CLI equivalent:
 ```bash
 .tune/bin/deploy <working_directory>
 ```
 
-This script uses rsync to deploy the workdir to each registered GPU worker:
-- Syncs all files except: `build/`, `scratch/`, `run/`, `secrets/`, `installed/`, `aotriton.src/`
-- Architecture-specific files (`installed/<arch>/` and `aotriton.src/`) are synced separately with `--delete` to ensure exact copies
-- Uses `--exclude '*.pyc'` to avoid issues with root-owned bytecode files
-- Respects each worker's configured workdir (default or custom override)
-
-**Note:** The script minimizes rsync calls to reduce SSH authentication overhead.
-
 ## Build Worker Docker Images
 
-```bash
-.tune/bin/imgbld <working_directory>
-```
+In the **Workers** tab, under **Bulk Actions**, click **Build Images on All Workers**.
+For a single host, click the per-row **Build Image** button.
 
-This script builds the Docker image on each GPU worker in parallel:
-- SSHs to each worker
-- Queues `docker build` command via `tsp` (task-spooler)
-- Builds from `<worker_workdir>/image.build/Dockerfile`
-- Tags image as `${CELERY_WORKER_IMAGE}`
+Build progress streams live in the Command Output panel. The image is tagged as
+`${CELERY_WORKER_IMAGE}` on the remote host.
 
-To follow build progress on a specific worker:
+To follow a build from the CLI:
 ```bash
 .tune/single/build_image.sh <working_directory> <hostname> --follow
 ```
 
 ## Initialize Database Schema
 
-**Ensure PostgreSQL service is running first** (see next section)
+In the WebUI **Servers** tab, under **PostgreSQL**, click **Start Server** first.
+Then under **Database Schema**, click **Initialize Schema**.
 
-```bash
-.tune/bin/initdb <working_directory>
-```
+This runs `v3python/tune/pq/schema.sql` against the database and creates
+per-arch partitions (`task_queue_gfx942`, etc.) for each worker in `workers.db`.
+Re-run whenever new GPU architectures are added.
 
-This script:
-1. Connects to PostgreSQL using credentials from `config.rc`
-2. Executes `v3python/tune/pq/schema.sql` to create tables
-3. Creates partitioned tables for each architecture in `workers.db`
-   - Example: `task_queue_gfx942`, `task_queue_gfx90a`
+To drop all data and recreate from scratch, click **Recreate Schema (Danger)**.
 
-To recreate the schema (drops all existing data):
-```bash
-.tune/bin/initdb <working_directory> --recreate
-```
-
-**Tables created:**
-- `task_queue` - Main task queue (partitioned by architecture)
-- `task_queue_<arch>` - Per-architecture partitions
-- `tuning_results` - Stores kernel tuning results
-- Helper functions for partition management
-
-## Start PostgreSQL Service
-
+CLI equivalents:
 ```bash
 .tune/bin/srvctl <working_directory> start
+.tune/bin/initdb <working_directory>
+.tune/bin/initdb <working_directory> --recreate  # destructive
 ```
 
-This starts a PostgreSQL container on the server node:
-- Uses `--network=host` (no port mapping needed)
-- Listens on port configured in `config.rc` (`POSTGRES_PORT`)
-- Data persisted in Docker volume `${POSTGRES_DOCKER_VOLUME}`
-- Container name: `aotriton_pgsql.${CONTAINER_SUFFIX}`
-
-**Other commands:**
+**Connecting to PostgreSQL directly:**
 ```bash
-.tune/bin/srvctl <working_directory> stop     # Stop PostgreSQL
-.tune/bin/srvctl <working_directory> restart  # Restart PostgreSQL
-.tune/bin/srvctl <working_directory> status   # Check status
-```
-
-**Connecting to PostgreSQL:**
-```bash
-.tune/bin/psql <working_directory>  # Interactive psql shell
+.tune/bin/psql <working_directory>       # interactive shell
+.tune/bin/psql <working_directory> -c "SELECT COUNT(*) FROM task_queue;"
 ```
 
 ## Start GPU Workers
 
+In the **Workers** tab, select which GPUs to use (checkboxes in each worker row),
+then click **Start** on the host. Use **Stop & Start** to restart with a new GPU
+selection. The status widget shows container ID and GPU process counts.
+
+**Bulk actions**: **Start All**, **Stop All**, **Restart All**, and
+**Stop All & Start All** are available in the **Bulk Actions** section.
+
+Each node starts:
+- 1 local broker (Unix socket `/wkdir/run/broker.sock`)
+- N GPU workers (one per selected GPU)
+- 4 PostgreSQL reader workers
+- 4 CPU workers (postprocess)
+
+**Office hours scheduling**: in the **Office Hours Scheduling** section, set a
+default start/stop schedule and click **Save Default Schedule**, then
+**Arm Scheduled Workers** to activate timers. Per-host overrides are set in the
+worker row's schedule controls.
+
+CLI equivalents:
 ```bash
 .tune/bin/wkctl <working_directory> start
-```
-
-This script:
-- SSHs to each registered GPU worker
-- Starts a Docker container with the worker image
-- Mounts `<worker_workdir>` to `/wkdir` inside container
-- Starts local queue system (broker + GPU workers + PG readers + CPU workers)
-- Records container ID in `<worker_workdir>/run/worker.containerid`
-
-**Worker components started (per node):**
-- 1 local broker (message router via Unix socket)
-- N GPU workers (one per GPU, detected automatically)
-- 4 PostgreSQL reader workers (fetch tasks from database)
-- 4 CPU workers (postprocess and write results)
-
-**Start specific workers only:**
-```bash
-.tune/bin/wkctl --host gpu-01.example.com --host gpu-02.example.com <working_directory> start
-```
-
-**Stop all workers:**
-```bash
 .tune/bin/wkctl <working_directory> stop
-```
-
-**Restart workers:**
-```bash
 .tune/bin/wkctl <working_directory> restart
+# Target specific hosts:
+.tune/bin/wkctl --host gpu-01.example.com <working_directory> start
 ```
 
-**Check worker status:**
+Check worker logs on the remote host:
 ```bash
-# SSH to a worker and check processes
-ssh gpu-01.example.com "docker exec \$(cat <worker_workdir>/run/worker.containerid) bash .tune/remote/worker_service.sh status /wkdir gfx942"
-```
-
-## Dispatch Tuning Tasks
-
-**TODO: WebUI-based task dispatch interface**
-
-Currently, tasks can be dispatched programmatically:
-
-```bash
-.tune/bin/dispatch <working_directory> <module> [options]
-```
-
-**Available modules:**
-- `flash` - Flash attention kernels
-
-**Common options:**
-- `--arch ARCH [ARCH ...]` - Target architecture(s)
-- Module-specific parameter filters (see module help)
-
-Example:
-```bash
-# Dispatch all flash tasks for gfx942
-.tune/bin/dispatch ~/wkdir.tuning flash --arch gfx942
-
-# Dispatch only float16 tasks with specific sequence lengths
-.tune/bin/dispatch ~/wkdir.tuning flash --arch gfx942 \
-  --dtype float16 --seqlen_q 128 256 --seqlen_k 128 256
-```
-
-**How it works:**
-1. Script queries the module for all parameter combinations
-2. Creates task entries in PostgreSQL `task_queue_<arch>` partitions
-3. PostgreSQL reader workers fetch tasks and send to local broker
-4. Broker distributes tasks to GPU workers
-5. Results written back to `tuning_results` table
-
-## Monitor Tuning Progress
-
-**TODO: WebUI monitoring interface**
-
-Currently, monitor via database queries:
-
-```bash
-# Connect to database
-.tune/bin/psql ~/wkdir.tuning
-```
-
-```sql
--- Queue statistics for all architectures
-SELECT arch, 
-       COUNT(*) FILTER (WHERE status = 'pending') as pending,
-       COUNT(*) FILTER (WHERE status = 'running') as running,
-       COUNT(*) FILTER (WHERE status = 'completed') as completed,
-       COUNT(*) FILTER (WHERE status = 'failed') as failed
-FROM task_queue
-GROUP BY arch;
-
--- Recent completed tasks
-SELECT id, arch, module, completed_at, error
-FROM task_queue
-WHERE status = 'completed'
-ORDER BY completed_at DESC
-LIMIT 10;
-
--- Failed tasks
-SELECT id, arch, module, error
-FROM task_queue
-WHERE status = 'failed'
-ORDER BY id DESC
-LIMIT 10;
-
--- Tuning results count
-SELECT COUNT(*) FROM tuning_results;
-```
-
-**Check worker logs:**
-```bash
-# On GPU worker
 tail -f <worker_workdir>/run/logs/gpu-worker-0.log
 tail -f <worker_workdir>/run/logs/pg-reader-gfx942-0.log
 tail -f <worker_workdir>/run/logs/cpu-worker-0.log
 ```
 
+## Dispatch Tuning Tasks
+
+Use the CLI to dispatch tasks (WebUI dispatch is not yet available):
+
+```bash
+# All flash tasks for gfx942
+.tune/bin/dispatch ~/wkdir.tuning flash --arch gfx942
+
+# Float16 only, specific sequence lengths
+.tune/bin/dispatch ~/wkdir.tuning flash --arch gfx942 \
+  --dtype float16 --seqlen_q 128 256 --seqlen_k 128 256
+```
+
+Tasks are inserted into `task_queue_<arch>`. PostgreSQL readers pick them up,
+the broker distributes them to GPU workers, and results are written to
+`tuning_results`.
+
+## Monitor Tuning Progress
+
+The WebUI **Dashboard** shows a per-arch table (pending / running / completed /
+failed / cancelled / total / ETA) that auto-refreshes every 30 seconds.
+
+For raw queries:
+```bash
+.tune/bin/psql ~/wkdir.tuning -c "SELECT * FROM queue_progress;"
+.tune/bin/psql ~/wkdir.tuning -c "SELECT * FROM completion_eta;"
+```
+
 ## Export Tuning Results
 
-**TODO: Export functionality**
+After tuning completes, run the export pipeline from the **Servers** tab under
+**Bake LUT**. The steps can be run individually or as a combined pipeline:
 
-Results are stored in the `tuning_results` table and can be exported for integration into AOTriton.
+- **Bake LUT** — runs Rebuild Accuracy Table → Compute Best Results → Export
+  Best Results → Sancheck → Decompose DB in one shot.
+- **Bake LUT (Incremental)** — same pipeline but passes `--incremental` to
+  Compute Best Results (skips already-computed tasks).
+
+Individual steps (for debugging or partial re-runs):
+
+| Button | What it does |
+|--------|-------------|
+| **Rebuild Accuracy Table** | Recreates the most-accurate materialized view from scratch |
+| **Update Accuracy Table** | Incremental MV update using `scratch/retry_task_ids.txt` |
+| **Compute Best Results** | Selects fastest `hsaco_index` meeting 3× accuracy threshold |
+| **Export Best Results** | Writes `scratch/centraldb.sqlite3` from `best_tuning_results` |
+| **Sancheck** | Verifies LUT integrity against `scratch/centraldb.sqlite3` |
+| **Decompose DB** | Shards `scratch/centraldb.sqlite3` into `installed/database/amd/<arch>/...` |
+
+CLI equivalents:
+```bash
+.tune/bin/compute_best_results <workdir> [--incremental] [--fix <pass>]
+.tune/bin/bake_lut <workdir>
+```
+
+# Running Correctness Tests
+
+After Bake LUT, run correctness tests to verify the tuning database against
+reference implementations. The complete testing pipeline is:
+
+**Bake LUT → Prepare (optional) → Deploy → Build Testing Libraries →
+Fetch from Remote Build Node → Deploy to Workers → Run Tests**
+
+## Prepare Working Directory (Optional)
+
+If the AOTriton source has changed since the last prepare, run **Prepare Workdir**
+again from the **Builds** or **Workers** tab → **Deployment** section.
+
+This updates `<workdir>/aotriton.src` from `upstream/main` so workers run tests
+against the latest source.
+
+## Deploy Working Directory to Workers
+
+Click **Deploy to All Workers** (Workers tab → Bulk Actions) to push the updated
+`aotriton.src` to all worker nodes before building test libraries.
+
+## Build Testing Version of AOTriton Libraries
+
+In the **Builds** tab, under **Build Testing Version of AOTriton Libraries**,
+click **Build Test Libraries (All)** or an individual arch button.
+
+This builds the test-instrumented libraries (`installed/test/<arch>/`) used by
+the Testing tab to run pytest correctness checks.
+
+CLI equivalent:
+```bash
+.tune/bin/testbld <working_directory>
+```
+
+## Fetch Testing Libraries from Remote Build Node
+
+If the test build ran on a remote build node, click **Fetch from Remote Build
+Node** in the **Build Testing Version of AOTriton Libraries** section to pull
+the built `installed/test/<arch>/` artifacts to the local workdir.
+
+Skip this step if the build ran directly on the dev node.
+
+## Deploy Testing Libraries to Workers
+
+Click **Deploy to All Workers** again to push the newly built test libraries
+(`installed/test/<arch>/`) to the worker nodes.
+
+## Run Tests
+
+Navigate to the **Testing** tab. Each registered Tester host shows controls for
+selecting pass number, test level, and backend.
+
+**Signature**: displays the SHA of the current test build on that host — use
+the **⟳ Refresh** button to verify the deployed libraries match expectations.
+
+### Pass Number
+
+An arbitrary integer label for the run. Output files are named by pass
+(`ut_pass<N>.out`, `sel<N>.txt`, etc.) so multiple passes can coexist in the
+same output directory without overwriting each other.
+
+### Test Level (`FOR_RELEASE`)
+
+Controls which test suites are collected, mapped to the `FOR_RELEASE` env var:
+
+| Level | Tests included (`test_backward.py`) |
+|-------|-------------------------------------|
+| 0 | `test_fast` — quick smoke test only |
+| 1 | + `test_regular_bwd`, `test_op_bwd_with_matrix_bias`, `test_gqa` |
+| 2 | + `test_irregulars` (prime/irregular sequence lengths) |
+| 3 | + `test_hdim_qk_ne_vo` (asymmetric head dimensions) |
+
+`test_varlen.py` is always run alongside `test_backward.py`; its `FOR_RELEASE`
+is treated as a boolean (level ≥ 1 enables full varlen coverage).
+
+**Release criterion**: a flash attention tuning database is considered releasable
+when it passes **test level 2, split backend** with only a reasonable number of
+failures. All failures must be documented in `test/adiffs/<arch>.txt` (see
+below). The CI script `run-ci-test.sh` sets `USE_ADIFFS_TXT` to that file,
+causing known-failing tests to be skipped or marked `xfail` instead of
+`FAILED`.
+
+### Backend
+
+| Value | What it tests |
+|-------|--------------|
+| `split` | Split-kernel backward (primary release target, `BWD_IMPL=0`) |
+| `fused` | Fused backward kernel (`BWD_IMPL=1`) |
+| `aiter` | AITER ASM backend (`BWD_IMPL=2`; bias/GQA tests skipped) |
+| `v3` | V3 API output correctness (`V3_API=1`) |
+
+### Full Test Run
+
+Set **Pass**, **Level**, and **Backend**, then click **Run Test**. Output is
+streamed via **Tail Output**. After the run, click **Show Failures** to open a
+window listing all `FAILED` test lines. The run also writes `sel<pass>.txt`
+(and `sel<pass>.varlen.txt`) for use by partial runs.
+
+### Partial Test Run
+
+After a full run, click **Run Partial Test** to re-run only the tests that
+failed in the previous pass. This uses `sel<pass>.txt` to drive
+`--select-from-file` in pytest.
+
+- **Show Partial Failures**: open a failures window filtered to the partial run.
+- **Tail Partial Output**: stream the partial run's output log.
+
+### Record and Document Accuracy Diffs
+
+Click **Record adiffs** to run a partial test with `RECORD_ADIFFS_TO` set,
+capturing per-test accuracy diff values to
+`<remote_workdir>/run/tests/partial/adiffs.txt`.
+
+Click **Download adiffs** to SSH-fetch that file and save it locally to
+`<local_workdir>/installed/adiffs/<arch>.txt`, served as a browser download.
+
+To generate an adiffs entry for OOM failures (which produce no accuracy data):
+```bash
+.tune/bin/amend_sel_to_adiffs.sh sel1.txt [--error_reason OOM] >> adiffs.txt
+```
+
+Once the adiffs file is complete, copy it into the repository at
+`test/adiffs/<arch>.txt` and commit it. The CI script `.ci/run-ci-test.sh`
+sets `USE_ADIFFS_TXT=$(realpath test/adiffs/${native_arch}.txt)` before calling
+`run-test.sh`, so documented failures are automatically skipped (`OOM` → `pytest.skip`,
+`NAN` → `pytest.xfail`) in gated CI runs.
 
 # Troubleshooting
 
