@@ -162,6 +162,12 @@
                                 style="font-size: 0.8em; padding: 0.3rem 0.5rem;">
                             Show Partial Failures
                         </button>
+                        <button hx-post="/api/testing/{{ worker.hostname }}/run-test?variant=partial_adiffs"
+                                hx-swap="none"
+                                hx-vals='js:{pass_num: document.getElementById("pass-{{ worker.hostname }}").value, test_level: document.getElementById("level-{{ worker.hostname }}").value, backend: document.getElementById("backend-{{ worker.hostname }}").value}'
+                                style="font-size: 0.8em; padding: 0.3rem 0.5rem;">
+                            Record adiffs
+                        </button>
                     </div>
 
                     {# Tail partial output display #}
@@ -169,6 +175,11 @@
                         <button onclick="fetchTailOutput('{{ worker.hostname }}', 'partial')"
                                 style="font-size: 0.8em; padding: 0.2rem 0.4rem;">
                             Tail Partial Output
+                        </button>
+                        <button type="button"
+                                onclick="window.location='/api/testing/download_adiffs?hostname={{ worker.hostname }}&arch={{ worker.arch }}'"
+                                style="font-size: 0.8em; padding: 0.2rem 0.4rem;">
+                            Download adiffs
                         </button>
                         <span style="font-size: 0.85em; color: gray;">(uses Wrap text above)</span>
                     </div>

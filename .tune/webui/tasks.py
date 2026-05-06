@@ -1226,8 +1226,8 @@ def run_test_on_host(workdir, hostname, pass_num, test_level, backend, variant=N
     ]
     if workdir_override:
         cmd += ['--workdir_override', workdir_override]
-    if variant == 'partial':
-        cmd += ['--variant', 'partial']
+    if variant in ('partial', 'partial_adiffs'):
+        cmd += ['--variant', variant]
     desc = f'run-test on {hostname} ({arch}) pass={pass_num} level={test_level} backend={backend}'
     if variant:
         desc += f' variant={variant}'
@@ -1287,6 +1287,43 @@ def get_tail_output(workdir, hostname, pass_num, backend, variant=None):
         )
         results[fname] = r.stdout
     return {'status': 'ok', 'files': results}
+
+
+def get_adiffs_file(workdir, hostname, arch):
+    """SSH-read <remote_workdir>/run/tests/partial/adiffs.txt and save it locally.
+
+    Returns dict with keys:
+      status: 'ok' | 'not_found' | 'error'
+      content: file text (when status == 'ok')
+      local_path: where the file was saved (when status == 'ok')
+      message: error description (when status != 'ok')
+    """
+    worker = get_worker_by_hostname(workdir, hostname)
+    if not worker:
+        return {'status': 'error', 'message': f"Worker '{hostname}' not found"}
+    _, _, workdir_override = worker
+    default_wd = get_default_workdir(workdir) or workdir
+    remote_wd = workdir_override or default_wd
+    remote_path = f'{remote_wd}/run/tests/partial/adiffs.txt'
+    script = (
+        f'if [ -f {remote_path} ]; then cat {remote_path}; '
+        f'else echo "__NOT_FOUND__"; fi'
+    )
+    r = subprocess.run(
+        ['ssh', hostname, script],
+        capture_output=True, text=True
+    )
+    if r.returncode != 0:
+        return {'status': 'error', 'message': r.stderr.strip() or '(ssh error)'}
+    content = r.stdout
+    if content.strip() == '__NOT_FOUND__':
+        return {'status': 'not_found', 'message': f'{remote_path} not found on {hostname}'}
+    # Save locally
+    local_dir = Path(workdir) / 'installed' / 'adiffs'
+    local_dir.mkdir(parents=True, exist_ok=True)
+    local_path = local_dir / f'{arch}.txt'
+    local_path.write_text(content)
+    return {'status': 'ok', 'content': content, 'local_path': local_path.as_posix()}
 
 
 def get_default_workdir(workdir):

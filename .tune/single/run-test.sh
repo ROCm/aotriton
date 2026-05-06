@@ -68,8 +68,8 @@ case "$BACKEND" in
 esac
 
 case "${VARIANT:-}" in
-  partial|"") ;;
-  *) echo "Error: variant must be 'partial' or empty, got: $VARIANT" >&2; exit 1 ;;
+  partial|partial_adiffs|"") ;;
+  *) echo "Error: variant must be 'partial', 'partial_adiffs', or empty, got: $VARIANT" >&2; exit 1 ;;
 esac
 
 load_config "$WORKDIR"
@@ -80,12 +80,17 @@ REMOTE_WORKDIR="${WORKDIR_OVERRIDE:-$DEFAULT_WORKDIR}"
 LIBDIR="/wkdir/installed/test/$ARCH/lib"
 REMOTE_SCRIPT="/wkdir/aotriton.src/.ci/run-test.sh"
 BASE_OUTPUT_DIR="/wkdir/run/tests"
-if [ "${VARIANT:-}" = "partial" ]; then
+if [ "${VARIANT:-}" = "partial" ] || [ "${VARIANT:-}" = "partial_adiffs" ]; then
   OUTPUT_DIR="$BASE_OUTPUT_DIR/partial"
   PARTIAL_INFO_DIR="$BASE_OUTPUT_DIR"
 else
   OUTPUT_DIR="$BASE_OUTPUT_DIR"
   PARTIAL_INFO_DIR=""
+fi
+if [ "${VARIANT:-}" = "partial_adiffs" ]; then
+  RECORD_ADIFFS_TO="$OUTPUT_DIR/adiffs.txt"
+else
+  RECORD_ADIFFS_TO=""
 fi
 
 echo "[$HOSTNAME] Queuing run-test pass=$PASS_NUM level=$TEST_LEVEL backend=$BACKEND arch=$ARCH variant=${VARIANT:-normal}"
@@ -94,7 +99,7 @@ echo "[$HOSTNAME] output -> $REMOTE_WORKDIR/${OUTPUT_DIR#/wkdir/}/"
 # shellcheck disable=SC2029
 JOBID=$(ssh "$HOSTNAME" bash -s "$REMOTE_WORKDIR" "$CELERY_WORKER_IMAGE" \
         "$LIBDIR" "$REMOTE_SCRIPT" "$OUTPUT_DIR" \
-        "$PASS_NUM" "$TEST_LEVEL" "$BACKEND" "$PARTIAL_INFO_DIR" <<'ENDSSH'
+        "$PASS_NUM" "$TEST_LEVEL" "$BACKEND" "$PARTIAL_INFO_DIR" "$RECORD_ADIFFS_TO" <<'ENDSSH'
 REMOTE_WORKDIR="$1"
 CELERY_WORKER_IMAGE="$2"
 LIBDIR="$3"
@@ -104,6 +109,7 @@ PASS_NUM="$6"
 TEST_LEVEL="$7"
 BACKEND="$8"
 PARTIAL_INFO_DIR="$9"
+RECORD_ADIFFS_TO="${10}"
 
 mkdir -p "$REMOTE_WORKDIR/run/tests"
 [ -n "$PARTIAL_INFO_DIR" ] && mkdir -p "$REMOTE_WORKDIR/${OUTPUT_DIR#/wkdir/}"
@@ -121,6 +127,7 @@ jobid=$(tsp docker run --rm \
   -e AOTRITON_TEST_LIBDIR="$LIBDIR" \
   -e OUTPUT_DIR="$OUTPUT_DIR" \
   ${PARTIAL_INFO_DIR:+-e PARTIAL_INFO_DIR="$PARTIAL_INFO_DIR"} \
+  ${RECORD_ADIFFS_TO:+-e RECORD_ADIFFS_TO="$RECORD_ADIFFS_TO"} \
   --mount type=bind,source="$(realpath "$REMOTE_WORKDIR")",target=/wkdir \
   "$CELERY_WORKER_IMAGE" \
   bash -l -c '

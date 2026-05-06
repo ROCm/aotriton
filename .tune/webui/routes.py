@@ -804,7 +804,7 @@ def api_run_test(hostname):
     variant = request.form.get('variant') or request.args.get('variant') or None
     if backend not in ('split', 'fused', 'aiter', 'v3'):
         return jsonify({'status': 'error', 'message': f'Invalid backend: {backend}'}), 400
-    if variant and variant not in ('partial',):
+    if variant and variant not in ('partial', 'partial_adiffs'):
         return jsonify({'status': 'error', 'message': f'Invalid variant: {variant}'}), 400
     result = tasks.run_test_on_host(workdir, hostname, pass_num, test_level, backend, variant=variant)
     return jsonify(result)
@@ -899,6 +899,27 @@ def api_testing_failures(hostname):
 </body>
 </html>'''
     return page, 200, {'Content-Type': 'text/html; charset=utf-8'}
+
+
+@bp.route('/api/testing/download_adiffs', methods=['GET'])
+def api_download_adiffs():
+    """SSH-read adiffs.txt from a tester host, save it locally, and serve as a download."""
+    workdir = current_app.config['WORKDIR']
+    hostname = request.args.get('hostname', '').strip()
+    arch = request.args.get('arch', '').strip()
+    if not hostname or not arch:
+        return jsonify({'status': 'error', 'message': 'hostname and arch are required'}), 400
+    result = tasks.get_adiffs_file(workdir, hostname, arch)
+    if result['status'] == 'not_found':
+        return result['message'], 404, {'Content-Type': 'text/plain; charset=utf-8'}
+    if result['status'] == 'error':
+        return result['message'], 500, {'Content-Type': 'text/plain; charset=utf-8'}
+    content = result['content']
+    filename = f'{arch}.txt'
+    return content, 200, {
+        'Content-Type': 'text/plain; charset=utf-8',
+        'Content-Disposition': f'attachment; filename="{filename}"',
+    }
 
 
 @bp.route('/debug')
