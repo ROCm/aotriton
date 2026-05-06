@@ -171,6 +171,7 @@ This interactive script will:
 - `CELERY_SERVICE_HOST` - Hostname where PostgreSQL runs
 
 Example `config.rc`:
+
 ```bash
 POSTGRES_USER=aotriton
 POSTGRES_PASSWORD=securepassword123
@@ -233,6 +234,7 @@ The WebUI is launched from the cloned AOTriton repository on the dev node. All
 commands below assume the current directory is the repo root.
 
 **Prerequisites:** install `cheroot` into the dev environment:
+
 ```bash
 pip install cheroot
 ```
@@ -320,6 +322,7 @@ This clones (or updates) `<workdir>/aotriton.src` from `upstream/main`,
 copies `image.scripts/`, and generates `image.build/Dockerfile`.
 
 CLI equivalent:
+
 ```bash
 .tune/bin/prepwkdir <working_directory>
 ```
@@ -355,6 +358,7 @@ tuning-instrumented AOTriton libraries used by GPU workers during kernel search.
 Build artifacts land in `<workdir>/installed/<arch>/`.
 
 CLI equivalent:
+
 ```bash
 .tune/bin/libbld <working_directory>
 ```
@@ -377,6 +381,7 @@ This rsyncs all workdir files to each registered worker, skipping `build/`,
 and `aotriton.src/`) are synced with `--delete`.
 
 CLI equivalent:
+
 ```bash
 .tune/bin/deploy <working_directory>
 ```
@@ -390,6 +395,7 @@ Build progress streams live in the Command Output panel. The image is tagged as
 `${CELERY_WORKER_IMAGE}` on the remote host.
 
 To follow a build from the CLI:
+
 ```bash
 .tune/single/build_image.sh <working_directory> <hostname> --follow
 ```
@@ -406,6 +412,7 @@ Re-run whenever new GPU architectures are added.
 To drop all data and recreate from scratch, click **Recreate Schema (Danger)**.
 
 CLI equivalents:
+
 ```bash
 .tune/bin/srvctl <working_directory> start
 .tune/bin/initdb <working_directory>
@@ -413,6 +420,7 @@ CLI equivalents:
 ```
 
 **Connecting to PostgreSQL directly:**
+
 ```bash
 .tune/bin/psql <working_directory>       # interactive shell
 .tune/bin/psql <working_directory> -c "SELECT COUNT(*) FROM task_queue;"
@@ -439,6 +447,7 @@ default start/stop schedule and click **Save Default Schedule**, then
 worker row's schedule controls.
 
 CLI equivalents:
+
 ```bash
 .tune/bin/wkctl <working_directory> start
 .tune/bin/wkctl <working_directory> stop
@@ -448,6 +457,7 @@ CLI equivalents:
 ```
 
 Check worker logs on the remote host:
+
 ```bash
 tail -f <worker_workdir>/run/logs/gpu-worker-0.log
 tail -f <worker_workdir>/run/logs/pg-reader-gfx942-0.log
@@ -477,6 +487,7 @@ The WebUI **Dashboard** shows a per-arch table (pending / running / completed /
 failed / cancelled / total / ETA) that auto-refreshes every 30 seconds.
 
 For raw queries:
+
 ```bash
 .tune/bin/psql ~/wkdir.tuning -c "SELECT * FROM queue_progress;"
 .tune/bin/psql ~/wkdir.tuning -c "SELECT * FROM completion_eta;"
@@ -504,6 +515,7 @@ Individual steps (for debugging or partial re-runs):
 | **Decompose DB** | Shards `scratch/centraldb.sqlite3` into `installed/database/amd/<arch>/...` |
 
 CLI equivalents:
+
 ```bash
 .tune/bin/compute_best_results <workdir> [--incremental] [--fix <pass>]
 .tune/bin/bake_lut <workdir>
@@ -544,6 +556,7 @@ This builds the test-instrumented libraries (`installed/test/<arch>/`) used by
 the Testing tab to run pytest correctness checks.
 
 CLI equivalent:
+
 ```bash
 .tune/bin/testbld <working_directory>
 ```
@@ -631,6 +644,7 @@ Click **Download adiffs** to SSH-fetch that file and save it locally to
 `<local_workdir>/installed/adiffs/<arch>.txt`, served as a browser download.
 
 To generate an adiffs entry for OOM failures (which produce no accuracy data):
+
 ```bash
 .tune/bin/amend_sel_to_adiffs.sh sel1.txt [--error_reason OOM] >> adiffs.txt
 ```
@@ -674,6 +688,7 @@ sets `USE_ADIFFS_TXT=$(realpath test/adiffs/${native_arch}.txt)` before calling
 **Cause:** Root-owned `.pyc` files created inside Docker containers
 
 **Solution:** Already handled by `--exclude '*.pyc'` in sync_workdir.sh. If issue persists:
+
 ```bash
 # On remote worker, delete root-owned files
 ssh <worker> "docker run --rm -v <worker_workdir>:/wkdir -w /wkdir <worker_image> find aotriton.src -name '*.pyc' -delete"
@@ -696,6 +711,7 @@ ssh <worker> "docker run --rm -v <worker_workdir>:/wkdir -w /wkdir <worker_image
 3. PostgreSQL container using old volume with different credentials
 
 **Solution:**
+
 ```bash
 # Check what port PostgreSQL is listening on
 docker port aotriton_pgsql.<suffix>
@@ -756,6 +772,7 @@ For HPC environments, SLURM support will allow:
 - Bad node tracking and automatic exclusion
 
 Planned workflow:
+
 ```bash
 # Setup
 .tune/bin/initproj <workdir>  # Enable SLURM when prompted
