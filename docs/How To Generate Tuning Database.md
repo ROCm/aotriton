@@ -225,7 +225,7 @@ After setup, the working directory contains:
 **Key facts:**
 - `aotriton.src/` is a **separate copy** that does not auto-sync with the dev repo — re-run Prepare Workdir whenever you make source changes.
 - `build/`, `scratch/`, `run/`, and `secrets/` are **never rsynced** to worker nodes.
-- `installed/database/` is synced to the **remote build node** (for embedding the LUT into the test build) and to **worker nodes** so workers can reference it.
+- `installed/database/` is synced only to the **remote build node** (so the test build can embed the LUT). It is **not** synced to GPU workers — the deploy script sends only `installed/<arch>/` to each worker.
 
 ## Start the WebUI
 
