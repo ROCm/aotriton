@@ -259,7 +259,7 @@ class SdpaReference(KFTDesc):
         inputs.delta = delta.reshape(delta.shape[0] * delta.shape[1], delta.shape[2])
         inputs.out = hpout.to(inputs.q.dtype)
         inputs.logsumexp = logsumexp.to(torch.float32)
-        if True:  # Debugging, keep it for selective tuning
+        if False:  # Debugging, keep it for selective tuning
             outputs = SdpaGoldenOutputs(out=adiff2(hpout, out), dq=None, dk=None, dv=None, db=None)
             return SdpaBidiInputs(**detach_member_tensors(inputs)), SdpaGoldenOutputs(**detach_member_tensors(outputs))
         out.backward(inputs.dout)
