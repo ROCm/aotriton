@@ -712,6 +712,32 @@ The script looks for output files matching `ut_pass<N>.out`,
 After the rows are reset, restart the tuning workers to pick them up. Then
 re-run **Bake LUT** and the correctness tests to verify the fixes.
 
+# Publish Database to Repository
+
+Once the baked LUT passes Sancheck and correctness tests, copy it into the
+repository so it can be committed and shipped:
+
+```bash
+rsync -a <workdir>/installed/database/ v3python/database/
+```
+
+This copies the freshly sharded SQLite files produced by Decompose DB into
+`v3python/database/amd/<arch>/`. Stub files already in `v3python/database/`
+(e.g. `factories.py`, `sqlite.py`) are left untouched.
+
+**Tip:** update one architecture at a time so each commit is bisectable and
+the diff stays reviewable:
+
+```bash
+rsync -a <workdir>/installed/database/amd/gfx942/ v3python/database/amd/gfx942/
+git add v3python/database/amd/gfx942/
+git commit -m "database: update gfx942 tuning database"
+
+rsync -a <workdir>/installed/database/amd/gfx1100/ v3python/database/amd/gfx1100/
+git add v3python/database/amd/gfx1100/
+git commit -m "database: update gfx1100 tuning database"
+```
+
 # Troubleshooting
 
 ## Workers Not Fetching Tasks
