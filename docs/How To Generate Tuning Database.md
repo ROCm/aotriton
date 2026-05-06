@@ -511,7 +511,7 @@ Individual steps (for debugging or partial re-runs):
 | **Update Accuracy Table** | Incremental MV update using `scratch/retry_task_ids.txt` |
 | **Compute Best Results** | Selects fastest `hsaco_index` meeting 3× accuracy threshold |
 | **Export Best Results** | Writes `scratch/centraldb.sqlite3` from `best_tuning_results` |
-| **Sancheck** | Verifies LUT integrity against `scratch/centraldb.sqlite3` |
+| **Sancheck** | Verifies LUT integrity; writes `scratch/dbreport.txt` listing missing entries (see [Fix Incomplete/Broken Entries](#fix-incompletebroken-entries)) |
 | **Decompose DB** | Shards `scratch/centraldb.sqlite3` into `installed/database/amd/<arch>/...` |
 
 CLI equivalents:
@@ -654,6 +654,63 @@ Once the adiffs file is complete, copy it into the repository at
 sets `USE_ADIFFS_TXT=$(realpath test/adiffs/${native_arch}.txt)` before calling
 `run-test.sh`, so documented failures are automatically skipped (`OOM` → `pytest.skip`,
 `NAN` → `pytest.xfail`) in gated CI runs.
+
+If test failures indicate tuning defects (not known accuracy limits), use
+`retry_broken_entries` to reset those tasks and re-tune them — see
+[Fix Incomplete/Broken Entries](#fix-incompletebroken-entries).
+
+# Fix Incomplete/Broken Entries
+
+Two CLI tools reset task_queue rows back to `pending` for re-tuning:
+
+- **`retry_missing_entries`** — targets entries the LUT sancheck flagged as
+  missing or incomplete.
+- **`retry_broken_entries`** — targets entries that failed correctness tests on
+  a worker node (UT failures found in pytest output).
+
+Both tools show a summary and prompt for confirmation before making any DB
+changes.
+
+## retry_missing_entries
+
+Use this after running **Sancheck** (part of Bake LUT). Sancheck writes
+`<workdir>/scratch/dbreport.txt` listing every LUT entry that could not be
+satisfied. `retry_missing_entries` parses that report, finds the corresponding
+`task_queue` rows, and resets them to `pending`.
+
+```bash
+.tune/bin/retry_missing_entries <workdir>
+# or with an explicit report file:
+.tune/bin/retry_missing_entries <workdir> /path/to/dbreport.txt
+```
+
+After resetting, re-run the workers to pick up the pending tasks, then re-run
+**Bake LUT (Incremental)** — the script also writes
+`scratch/retry_task_ids.txt` which **Update Accuracy Table** uses to limit the
+recomputation to the affected tasks.
+
+## retry_broken_entries
+
+Use this after a correctness test run has produced `.out` files on a worker
+node. The tool SSHes into the test host, runs `pytest2entry.py` on the pytest
+output files for the given pass number to extract failing task IDs, stores them
+in `scratch/broken_entries.db`, and then resets those `task_queue` rows to
+`pending`. It also propagates any extra UT constraints from the test results
+into the PostgreSQL `task_extra_uts` table so that re-tuned tasks are validated
+against the specific inputs that failed.
+
+```bash
+.tune/bin/retry_broken_entries <workdir> <hostname> <pass#>
+# Example:
+.tune/bin/retry_broken_entries ~/wkdir.tuning gpu-01.example.com 1
+```
+
+The script looks for output files matching `ut_pass<N>.out`,
+`fused_pass<N>.out`, `aiter_pass<N>.out`, and `oput_pass<N>.out` under
+`<remote_workdir>/run/tests/` on the specified host. At least one must exist.
+
+After the rows are reset, restart the tuning workers to pick them up. Then
+re-run **Bake LUT** and the correctness tests to verify the fixes.
 
 # Troubleshooting
 
