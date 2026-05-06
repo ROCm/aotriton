@@ -89,7 +89,6 @@ class attn_fwd(FlashKernel):
                      }
                 kw = self.update_programmatic_perfs(kw, f)
                 yield Config(kw, num_stages=4, num_warps=8)
-            return
         for (M, N), waves, warps, stages, pre in itertools.product(BLOCK_SIZES,
                                                                    WAVES_PER_EU,
                                                                    NUM_WARPS,
