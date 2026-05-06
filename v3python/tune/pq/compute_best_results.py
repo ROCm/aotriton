@@ -45,7 +45,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-ACCURACY_MULTIPLIER = 10.0
+ACCURACY_MULTIPLIER = 3.0
 WORKERS_PER_ARCH = 2        # sub-workers per arch, sliced by task_id
 STREAM_BATCH_SIZE = 10_000  # rows fetched per server-side cursor batch
 INSERT_BATCH_SIZE = 1_000   # rows per bulk INSERT
