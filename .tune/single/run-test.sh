@@ -5,11 +5,13 @@
 # Run .ci/run-test.sh on a single tester host via tsp (SSH-disconnect tolerant).
 #
 # Usage:
-#   run-test.sh <workdir> <hostname> <arch> <workdir_override> <pass#> <test_level> <split|fused|aiter|v3> [partial] [--follow]
+#   run-test.sh --workdir <workdir> --hostname <host> --arch <arch>
+#               --pass <pass#> --test_level <level> --backend <split|fused|aiter|v3>
+#               [--workdir_override <path>] [--variant partial] [--follow]
 #
-#   workdir_override  Remote workdir override (empty string = use DEFAULT_WORKDIR from config.rc)
-#   partial           Optional 8th positional arg; sets PARTIAL_INFO_DIR and routes output to partial/
-#   --follow          Wait for the tsp job to complete (tsp -t <jobid>); default is fire-and-forget.
+#   --workdir_override  Remote workdir override (empty = use DEFAULT_WORKDIR from config.rc)
+#   --variant partial   Sets PARTIAL_INFO_DIR and routes output to partial/
+#   --follow            Wait for the tsp job to complete; default is fire-and-forget.
 
 set -euo pipefail
 
@@ -18,36 +20,47 @@ TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 . "$TUNE_ROOT/lib/config_load.sh"
 
-POSITIONAL=()
+WORKDIR=""
+HOSTNAME=""
+ARCH=""
+WORKDIR_OVERRIDE=""
+PASS_NUM=""
+TEST_LEVEL=""
+BACKEND=""
+VARIANT=""
 FOLLOW=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --follow) FOLLOW=1; shift ;;
-    *) POSITIONAL+=("$1"); shift ;;
+    --workdir)          WORKDIR="$2";          shift 2 ;;
+    --hostname)         HOSTNAME="$2";         shift 2 ;;
+    --arch)             ARCH="$2";             shift 2 ;;
+    --workdir_override) WORKDIR_OVERRIDE="$2"; shift 2 ;;
+    --pass)             PASS_NUM="$2";         shift 2 ;;
+    --test_level)       TEST_LEVEL="$2";       shift 2 ;;
+    --backend)          BACKEND="$2";          shift 2 ;;
+    --variant)          VARIANT="$2";          shift 2 ;;
+    --follow)           FOLLOW=1;              shift ;;
+    *) echo "Unknown argument: $1" >&2; exit 1 ;;
   esac
 done
 
-if [ "${#POSITIONAL[@]}" -lt 7 ]; then
+_missing=()
+[ -z "$WORKDIR"    ] && _missing+=(--workdir)
+[ -z "$HOSTNAME"   ] && _missing+=(--hostname)
+[ -z "$ARCH"       ] && _missing+=(--arch)
+[ -z "$PASS_NUM"   ] && _missing+=(--pass)
+[ -z "$TEST_LEVEL" ] && _missing+=(--test_level)
+[ -z "$BACKEND"    ] && _missing+=(--backend)
+if [ "${#_missing[@]}" -gt 0 ]; then
+  echo "Error: missing required arguments: ${_missing[*]}" >&2
   cat >&2 <<EOF
-Usage: $0 <workdir> <hostname> <arch> <workdir_override> <pass#> <test_level> <split|fused|aiter|v3> [partial] [--follow]
-
-  workdir_override  Remote workdir override (empty string = use DEFAULT_WORKDIR).
-  partial           Run partial tests using sel*.txt from the previous run as selectors.
-  --follow          Wait for the remote tsp job to finish (tsp -t <jobid>).
-                    Without this flag the job is queued and the script returns immediately.
+Usage: $0 --workdir <workdir> --hostname <host> --arch <arch>
+          --pass <pass#> --test_level <level> --backend <split|fused|aiter|v3>
+          [--workdir_override <path>] [--variant partial] [--follow]
 EOF
   exit 1
 fi
-
-WORKDIR="${POSITIONAL[0]}"
-HOSTNAME="${POSITIONAL[1]}"
-ARCH="${POSITIONAL[2]}"
-WORKDIR_OVERRIDE="${POSITIONAL[3]}"
-PASS_NUM="${POSITIONAL[4]}"
-TEST_LEVEL="${POSITIONAL[5]}"
-BACKEND="${POSITIONAL[6]}"
-VARIANT="${POSITIONAL[7]:-}"
 
 case "$BACKEND" in
   split|fused|aiter|v3) ;;

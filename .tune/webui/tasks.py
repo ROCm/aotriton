@@ -1216,11 +1216,18 @@ def run_test_on_host(workdir, hostname, pass_num, test_level, backend, variant=N
         return {'status': 'error', 'message': f"Worker '{hostname}' not found"}
     _, arch, workdir_override = worker
     cmd = [
-        '.tune/single/run-test.sh', workdir, hostname, arch, workdir_override or '',
-        str(pass_num), str(test_level), backend,
+        '.tune/single/run-test.sh',
+        '--workdir', workdir,
+        '--hostname', hostname,
+        '--arch', arch,
+        '--pass', str(pass_num),
+        '--test_level', str(test_level),
+        '--backend', backend,
     ]
+    if workdir_override:
+        cmd += ['--workdir_override', workdir_override]
     if variant == 'partial':
-        cmd.append('partial')
+        cmd += ['--variant', 'partial']
     desc = f'run-test on {hostname} ({arch}) pass={pass_num} level={test_level} backend={backend}'
     if variant:
         desc += f' variant={variant}'
