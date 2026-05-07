@@ -87,26 +87,67 @@ def cluster_gpus(gpus : list[str]) -> dict[str : list[str]]:
         ret[k] = sorted(v)
     return ret
 
-def select_gpus(target_arch, target_gpus) -> list[str]:
+def select_gpus(
+    target_arch: list[str] | None,
+    target_gpus: list[str] | None,
+) -> list[str]:
     if target_gpus:
         return target_gpus
-    ret = []
+    ret: list[str] = []
     for gpu in AOTRITON_SUPPORTED_GPUS:
         arch = gpu2arch(gpu)
-        if arch in target_arch:
+        if target_arch and arch in target_arch:
             ret.append(gpu)
     return ret
 
 def main():
     import argparse
+    import sys
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     arch_metavar = '{' + ','.join(AOTRITON_ARCH_WARPSIZE.keys()) + '}'
     p.add_argument("--target_arch", type=str, default=None, nargs='*', metavar=arch_metavar,
-                   help=f"Select architectures and related GPU tuning information. Unsupported ones will be ignored.")
+                   help="Select architectures and related GPU tuning information. Unsupported ones will be ignored.")
     p.add_argument("--target_gpus", type=str, default=None, nargs='*', choices=AOTRITON_SUPPORTED_GPUS,
                    help="Select specific list of GPUs. Overrides --target_arch.")
     args = p.parse_args()
     gpus = select_gpus(args.target_arch, args.target_gpus)
+    if not gpus:
+        # Derive the "supported" arch list from AOTRITON_SUPPORTED_GPUS rather
+        # than AOTRITON_ARCH_WARPSIZE — the warpsize map can list archs (e.g.
+        # gfx1251) that don't yet have an _mod0 GPU entry, which would mislead
+        # users into requesting them and hitting this same empty-result path.
+        supported = sorted({gpu2arch(g) for g in AOTRITON_SUPPORTED_GPUS})
+        requested = list(args.target_gpus or args.target_arch or [])
+        unsupported = [a for a in (args.target_arch or []) if a not in supported]
+        # PyTorch's PYTORCH_ROCM_ARCH commonly uses comma separators that
+        # leak through as a single token like "gfx942,gfx950"; CMake then
+        # forwards it as one --target_arch argument and our filter drops
+        # everything. Catch the common-case shape and tell the user the
+        # actual problem rather than just listing supported archs.
+        comma_blob = next(
+            (a for a in (args.target_arch or []) if "," in a),
+            None,
+        )
+        hint_lines = [
+            "hint: disable aotriton in your build system when no requested arch matches",
+            "      the supported set. See https://github.com/ROCm/aotriton/issues/169.",
+        ]
+        if comma_blob:
+            hint_lines.insert(
+                0,
+                f"hint: --target_arch must be space-separated; got '{comma_blob}' "
+                f"which contains commas. For PyTorch builds, set "
+                f'PYTORCH_ROCM_ARCH="gfx942;gfx950" (semicolon-separated).',
+            )
+        print(
+            "aotriton: no supported target arch in input list\n"
+            f"  requested: {', '.join(requested) if requested else '(none)'}\n"
+            f"  unsupported (filtered out): {', '.join(unsupported) if unsupported else '(none)'}\n"
+            f"  supported: {', '.join(supported)}\n"
+            + "\n".join(hint_lines),
+            file=sys.stderr,
+        )
+        sys.exit(2)
     print(";".join(gpus))
 
 if __name__ == '__main__':
