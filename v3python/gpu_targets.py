@@ -1,8 +1,6 @@
 # Copyright © 2023-2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-from __future__ import annotations
-
 from collections import defaultdict
 
 AOTRITON_SUPPORTED_GPUS = (
@@ -117,13 +115,31 @@ def main():
         supported = sorted(AOTRITON_ARCH_WARPSIZE.keys())
         requested = list(args.target_gpus or args.target_arch or [])
         unsupported = [a for a in (args.target_arch or []) if a not in AOTRITON_ARCH_WARPSIZE]
+        # PyTorch's PYTORCH_ROCM_ARCH commonly uses comma separators that
+        # leak through as a single token like "gfx942,gfx950"; CMake then
+        # forwards it as one --target_arch argument and our filter drops
+        # everything. Catch the common-case shape and tell the user the
+        # actual problem rather than just listing supported archs.
+        comma_blob = next(
+            (a for a in (args.target_arch or []) if "," in a),
+            None,
+        )
+        hint_lines = [
+            "hint: disable aotriton in your build system when no requested arch matches",
+            "      the supported set. See https://github.com/ROCm/aotriton/issues/169.",
+        ]
+        if comma_blob:
+            hint_lines.insert(
+                0,
+                f"hint: --target_arch entries are space-separated, not comma-separated. "
+                f"Got '{comma_blob}'; try splitting on ',' (e.g. PYTORCH_ROCM_ARCH=\"gfx942;gfx950\").",
+            )
         print(
             "aotriton: no supported target arch in input list\n"
             f"  requested: {', '.join(requested) if requested else '(none)'}\n"
             f"  unsupported (filtered out): {', '.join(unsupported) if unsupported else '(none)'}\n"
             f"  supported: {', '.join(supported)}\n"
-            "hint: disable aotriton in your build system when no requested arch matches\n"
-            "      the supported set. See https://github.com/ROCm/aotriton/issues/169.",
+            + "\n".join(hint_lines),
             file=sys.stderr,
         )
         sys.exit(2)

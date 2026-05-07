@@ -1,8 +1,6 @@
 # Copyright © 2023-2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-from __future__ import annotations
-
 from collections import defaultdict
 
 AOTRITON_SUPPORTED_GPUS = (
@@ -43,44 +41,26 @@ def cluster_gpus(gpus : list[str]) -> dict[str : list[str]]:
         ret[k] = sorted(v)
     return ret
 
-def select_gpus(
-    target_arch: list[str] | None,
-    target_gpus: list[str] | None,
-) -> list[str]:
+def select_gpus(target_arch, target_gpus) -> list[str]:
     if target_gpus:
         return target_gpus
-    ret: list[str] = []
+    ret = []
     for gpu in AOTRITON_SUPPORTED_GPUS:
         arch = gpu2arch(gpu)
-        if target_arch and arch in target_arch:
+        if arch in target_arch:
             ret.append(gpu)
     return ret
 
 def main():
     import argparse
-    import sys
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     arch_metavar = '{' + ','.join(AOTRITON_ARCH_WARPSIZE.keys()) + '}'
     p.add_argument("--target_arch", type=str, default=None, nargs='*', metavar=arch_metavar,
-                   help="Select architectures and related GPU tuning information. Unsupported ones will be ignored.")
+                   help=f"Select architectures and related GPU tuning information. Unsupported ones will be ignored.")
     p.add_argument("--target_gpus", type=str, default=None, nargs='*', choices=AOTRITON_SUPPORTED_GPUS,
                    help="Select specific list of GPUs. Overrides --target_arch.")
     args = p.parse_args()
     gpus = select_gpus(args.target_arch, args.target_gpus)
-    if not gpus:
-        supported = sorted(AOTRITON_ARCH_WARPSIZE.keys())
-        requested = list(args.target_gpus or args.target_arch or [])
-        unsupported = [a for a in (args.target_arch or []) if a not in AOTRITON_ARCH_WARPSIZE]
-        print(
-            "aotriton: no supported target arch in input list\n"
-            f"  requested: {', '.join(requested) if requested else '(none)'}\n"
-            f"  unsupported (filtered out): {', '.join(unsupported) if unsupported else '(none)'}\n"
-            f"  supported: {', '.join(supported)}\n"
-            "hint: disable aotriton in your build system when no requested arch matches\n"
-            "      the supported set. See https://github.com/ROCm/aotriton/issues/169.",
-            file=sys.stderr,
-        )
-        sys.exit(2)
     print(";".join(gpus))
 
 if __name__ == '__main__':
