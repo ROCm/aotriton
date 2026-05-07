@@ -106,6 +106,17 @@ class AttnOptionsWrapper:
     def selected_hsaco_copts(self):
         return self._c.kernel_fine_control[self._slot].kernel_copts
 
+    @classmethod
+    def for_op_backend(cls, backend_index: int) -> 'AttnOptionsWrapper':
+        '''Force a backend but leave all kernel slots at Default so the runtime
+        looks up hsacos from the tuning DB normally (no Ignore/Manual bits).'''
+        obj = cls.__new__(cls)
+        obj._c = cls.C_CLASS()
+        obj._backend = backend_index
+        obj._slot = None
+        obj._c.force_backend_index = backend_index
+        return obj
+
 
 # Common code for All SDPA kernels
 #
@@ -115,7 +126,8 @@ class SdpaCommon(SdpaReference):
     EXT_CLASS = AttnOptionsWrapper
     BACKEND_INDEX = None  # Must define in subclass
 
-    def create_extargs(self, *, hsaco_index=None, probe=False):
+    def create_extargs(self, *, which_kernel=None, probe=False):
+        hsaco_index = which_kernel.hsaco_index if which_kernel is not None else None
         ext = self.EXT_CLASS(self.BACKEND_INDEX, self.KERNEL_SLOT)
         ext.set_hsaco(hsaco=hsaco_index, probe=probe)
         return ext

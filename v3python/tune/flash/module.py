@@ -88,6 +88,16 @@ class FlashKernelSelector:
         kernel_name, hsaco_index = line.split("=")
         return FlashKernelSelector(kernel_name=kernel_name, hsaco_index=int(hsaco_index))
 
+@dataclass
+class FlashOpKernelSelector:
+    kernel_name: str = ''
+    backend_index: int = -1
+
+    @staticmethod
+    def parse_text(line: str) -> "FlashOpKernelSelector":
+        kernel_name, backend_index = line.split("=")
+        return FlashOpKernelSelector(kernel_name=kernel_name, backend_index=int(backend_index))
+
 class Flash(TuningDescription):
     ENTRY_CLASS = FlashEntry
     INPUT_METADATA = FlashInputMetadata
@@ -138,7 +148,7 @@ class Flash(TuningDescription):
         from ..gpu_utils import device_ctx, default_device_string
         with device_ctx():
             kernel = self.get_kernel(which_kernel)
-            args = kernel.create_extargs(hsaco_index=None, probe=True)
+            args = kernel.create_extargs(probe=True)
             d = torch.load(pt, map_location=default_device_string(), mmap=True)
             inputs = from_dict(data_class=kernel.PT_INPUT_CLASS, data=d["bidi_inputs"], config=dacite_tuple)
             # print(f'{type(inputs)=}')
@@ -328,7 +338,7 @@ class Flash(TuningDescription):
         from ..gpu_utils import device_ctx, default_device_string
         with device_ctx():
             kernel = self.get_kernel(which_kernel.kernel_name)
-            args = kernel.create_extargs(hsaco_index=which_kernel.hsaco_index)
+            args = kernel.create_extargs(which_kernel=which_kernel)
             d = torch.load(pt, map_location=default_device_string(), mmap=True)
             inputs = from_dict(data_class=kernel.PT_INPUT_CLASS, data=d["bidi_inputs"], config=dacite_tuple)
             direct_inputs = kernel.prepare_directs(im, inputs)
@@ -351,7 +361,7 @@ class Flash(TuningDescription):
             kernel = self.get_kernel(which_kernel.kernel_name)
             d = torch.load(pt, map_location=default_device_string(), mmap=True)
             inputs = from_dict(data_class=kernel.PT_INPUT_CLASS, data=d["bidi_inputs"], config=dacite_tuple)
-            args = kernel.create_extargs(hsaco_index=which_kernel.hsaco_index, probe=True)
+            args = kernel.create_extargs(which_kernel=which_kernel, probe=True)
             direct_inputs = kernel.prepare_directs(im, inputs)
             kernel.direct_call(direct_inputs, args)
             impl_desc = {
