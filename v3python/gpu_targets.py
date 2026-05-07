@@ -112,9 +112,13 @@ def main():
     args = p.parse_args()
     gpus = select_gpus(args.target_arch, args.target_gpus)
     if not gpus:
-        supported = sorted(AOTRITON_ARCH_WARPSIZE.keys())
+        # Derive the "supported" arch list from AOTRITON_SUPPORTED_GPUS rather
+        # than AOTRITON_ARCH_WARPSIZE — the warpsize map can list archs (e.g.
+        # gfx1251) that don't yet have an _mod0 GPU entry, which would mislead
+        # users into requesting them and hitting this same empty-result path.
+        supported = sorted({gpu2arch(g) for g in AOTRITON_SUPPORTED_GPUS})
         requested = list(args.target_gpus or args.target_arch or [])
-        unsupported = [a for a in (args.target_arch or []) if a not in AOTRITON_ARCH_WARPSIZE]
+        unsupported = [a for a in (args.target_arch or []) if a not in supported]
         # PyTorch's PYTORCH_ROCM_ARCH commonly uses comma separators that
         # leak through as a single token like "gfx942,gfx950"; CMake then
         # forwards it as one --target_arch argument and our filter drops
@@ -131,8 +135,9 @@ def main():
         if comma_blob:
             hint_lines.insert(
                 0,
-                f"hint: --target_arch entries are space-separated, not comma-separated. "
-                f"Got '{comma_blob}'; try splitting on ',' (e.g. PYTORCH_ROCM_ARCH=\"gfx942;gfx950\").",
+                f"hint: --target_arch must be space-separated; got '{comma_blob}' "
+                f"which contains commas. For PyTorch builds, set "
+                f'PYTORCH_ROCM_ARCH="gfx942;gfx950" (semicolon-separated).',
             )
         print(
             "aotriton: no supported target arch in input list\n"
