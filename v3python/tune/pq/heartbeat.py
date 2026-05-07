@@ -8,7 +8,6 @@ Tracks worker health and activity for monitoring and dead worker detection.
 """
 
 import psycopg
-from typing import Dict, Any
 import socket
 import os
 
@@ -16,7 +15,7 @@ import os
 class HeartbeatManager:
     """Manages worker heartbeat updates"""
 
-    def __init__(self, conn_params: Dict[str, Any], arch: str):
+    def __init__(self, conn_params: dict, arch: str):
         """
         Initialize heartbeat manager.
 

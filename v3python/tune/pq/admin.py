@@ -9,7 +9,7 @@ Provides schema initialization, partition management, and maintenance tasks.
 
 import psycopg
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Any
 import logging
 
 logger = logging.getLogger(__name__)
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 class QueueAdmin:
     """Administrative operations for PostgreSQL queue"""
 
-    def __init__(self, conn_params: Dict[str, Any]):
+    def __init__(self, conn_params: dict):
         """
         Initialize queue admin.
 
@@ -65,7 +65,7 @@ class QueueAdmin:
 
         logger.info(f"Partition task_queue_{arch} created successfully")
 
-    def create_partitions(self, architectures: List[str]) -> None:
+    def create_partitions(self, architectures: list[str]) -> None:
         """
         Create partitions for multiple architectures.
 
@@ -75,7 +75,7 @@ class QueueAdmin:
         for arch in architectures:
             self.create_partition(arch)
 
-    def list_partitions(self) -> List[str]:
+    def list_partitions(self) -> list[str]:
         """
         List all existing task_queue partitions.
 
@@ -164,7 +164,7 @@ class QueueAdmin:
         return count
 
 
-    def get_statistics(self) -> Dict[str, Any]:
+    def get_statistics(self) -> dict[str, Any]:
         """
         Get overall queue statistics.
 

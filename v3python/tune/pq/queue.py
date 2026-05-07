@@ -10,7 +10,6 @@ using PostgreSQL SELECT FOR UPDATE SKIP LOCKED.
 
 import psycopg
 from psycopg.rows import dict_row
-from typing import List, Dict, Optional, Any
 from dataclasses import dataclass
 from datetime import datetime
 import socket
@@ -26,15 +25,15 @@ class Task:
     id: int
     arch: str
     module: str
-    task_config: Dict[str, Any]
+    task_config: dict
     status: str
     priority: int = 5
-    worker_id: Optional[str] = None
-    node_hostname: Optional[str] = None
-    created_at: Optional[datetime] = None
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
-    error: Optional[str] = None
+    worker_id: str | None = None
+    node_hostname: str | None = None
+    created_at: datetime | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    error: str | None = None
     retry_count: int = 0
 
 
@@ -52,7 +51,7 @@ class TaskQueue:
         self.worker_id = f"{socket.gethostname()}-{os.getpid()}"
         self.node_hostname = socket.gethostname()
 
-    def fetch_tasks(self, arch: str, batch_size: int = 10) -> List[Task]:
+    def fetch_tasks(self, arch: str, batch_size: int = 10) -> list[Task]:
         """
         Fetch pending tasks for a specific architecture.
 
@@ -68,7 +67,7 @@ class TaskQueue:
         """
         partition_table = f"task_queue_{arch}"
 
-        with self.conn.cursor() as cur:
+        with self.conn.cursor(row_factory=dict_row) as cur:
             # Atomic task claiming using UPDATE ... RETURNING
             cur.execute(f"""
                 UPDATE {partition_table}
@@ -124,7 +123,7 @@ class TaskQueue:
             logger.info(f"TaskQueue.mark_completed: task_id={task_id}, arch={arch}, "
                        f"status=→completed, partition={partition_table}")
 
-    def mark_failed(self, task_id: int, *, arch: str = None, error_message: str) -> None:
+    def mark_failed(self, task_id: int, *, arch: str | None = None, error_message: str) -> None:
         """
         Mark task as failed with error message.
 
@@ -214,7 +213,7 @@ class TaskQueue:
             result = cur.fetchone()
             return result is not None
 
-    def get_queue_stats(self, arch: Optional[str] = None) -> Dict[str, int]:
+    def get_queue_stats(self, arch: str | None = None) -> dict[str, int]:
         """
         Get queue statistics.
 
@@ -248,7 +247,7 @@ class TaskQueue:
             row = cur.fetchone()
             return dict(row) if row else {'pending': 0, 'running': 0, 'completed': 0, 'failed': 0}
 
-    def detect_stale_tasks(self, timeout_seconds: int = 7200) -> List[Task]:
+    def detect_stale_tasks(self, timeout_seconds: int = 7200) -> list[Task]:
         """
         Detect tasks running longer than timeout.
 
@@ -258,7 +257,7 @@ class TaskQueue:
         Returns:
             List of stale tasks
         """
-        with self.conn.cursor() as cur:
+        with self.conn.cursor(row_factory=dict_row) as cur:
             cur.execute("""
                 SELECT id, arch, module, task_config, status, priority,
                        worker_id, node_hostname, created_at, started_at,

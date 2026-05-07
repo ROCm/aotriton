@@ -88,7 +88,6 @@ conn_params = {
     'port': 5432,
     'user': 'aotriton',
     'password': 'password',
-    'dbname': 'aotriton'
 }
 
 admin = QueueAdmin(conn_params)

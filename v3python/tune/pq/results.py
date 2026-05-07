@@ -10,10 +10,9 @@ Handles writing individual hsaco benchmark results to PostgreSQL.
 
 import psycopg
 from psycopg.types.json import Jsonb
-from typing import Dict, Any
 
 
-def save_tuning_result(task_id: str, report: Dict[str, Any], conn) -> None:
+def save_tuning_result(task_id: str, report: dict, conn) -> None:
     """
     Save a single tuning result to the database.
 

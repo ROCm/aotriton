@@ -9,14 +9,14 @@ Bulk INSERT tasks into PostgreSQL queue, replacing Celery task dispatch.
 
 import psycopg
 from psycopg.types.json import Jsonb
-from typing import Dict, Any, List, Iterable
+from collections.abc import Iterable
 from dataclasses import asdict
 
 
 class TaskDispatcher:
     """Dispatches tuning tasks to PostgreSQL queue"""
 
-    def __init__(self, conn_params: Dict[str, Any]):
+    def __init__(self, conn_params: dict):
         """
         Initialize task dispatcher.
 
@@ -31,7 +31,7 @@ class TaskDispatcher:
 
     def dispatch_bulk(
         self,
-        tasks: Iterable[Dict[str, Any]],
+        tasks: Iterable[dict],
         batch_size: int = 1000
     ) -> int:
         """
@@ -75,7 +75,7 @@ class TaskDispatcher:
 
         return total_dispatched
 
-    def _insert_batch(self, cur, batch: List[Dict[str, Any]]) -> None:
+    def _insert_batch(self, cur, batch: list[dict]) -> None:
         """
         Insert a batch of tasks using executemany.
 
@@ -88,7 +88,7 @@ class TaskDispatcher:
             VALUES (%(arch)s, %(module)s, %(task_config)s, %(priority)s)
         """, batch)
 
-    def dispatch_single(self, arch: str, module: str, task_config: Dict[str, Any], priority: int = 5) -> int:
+    def dispatch_single(self, arch: str, module: str, task_config: dict, priority: int = 5) -> int:
         """
         Dispatch a single task.
 

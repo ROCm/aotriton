@@ -11,7 +11,8 @@ and tracks worker health via heartbeats.
 import time
 import signal
 import logging
-from typing import Dict, Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 from .queue import TaskQueue, Task
 from .heartbeat import HeartbeatManager
 
@@ -23,7 +24,7 @@ class Worker:
 
     def __init__(
         self,
-        conn_params: Dict[str, Any],
+        conn_params: dict,
         arch: str,
         executor: Callable[[Task], Any],
         batch_size: int = 10,
