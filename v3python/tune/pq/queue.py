@@ -67,10 +67,7 @@ class TaskQueue:
             List of claimed Task objects
         """
         partition_table = f"task_queue_{arch}"
-        if tuning_mode == 'op':
-            module_filter = "AND module LIKE '%_op'"
-        else:
-            module_filter = "AND module NOT LIKE '%_op'"
+        module_filter = "AND module LIKE %s" if tuning_mode == 'op' else "AND module NOT LIKE %s"
 
         with self.conn.cursor(row_factory=dict_row) as cur:
             # Atomic task claiming using UPDATE ... RETURNING
@@ -91,7 +88,7 @@ class TaskQueue:
                 RETURNING id, arch, module, task_config, status, priority,
                           worker_id, node_hostname, created_at, started_at,
                           completed_at, error, retry_count
-            """, (self.worker_id, self.node_hostname, batch_size))
+            """, (self.worker_id, self.node_hostname, '%_op', batch_size))
 
             try:
                 rows = cur.fetchall()
