@@ -375,6 +375,7 @@ def add_module_subparser(subparsers, module_name, module_instance):
     module_parser = subparsers.add_parser(
         module_name,
         help=f'{module_name.capitalize()} tuning module',
+        usage=f'%(prog)s <workdir> [options...]',
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
 
