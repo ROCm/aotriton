@@ -558,8 +558,7 @@ class DeployAllCommand(DeployCommand):
     DESCRIPTION = 'Deploy to all workers'
 
     def exec(self, workdir, tuning_mode: str = 'kernel', dry_run: bool = False):
-        extra = ['--testnode'] if tuning_mode == 'op' else []
-        return self._run(self.RELATIVE, [workdir] + extra, workdir, self.DESCRIPTION, dry_run=dry_run)
+        return self._run(self.RELATIVE, [workdir, '--tuning_mode', tuning_mode], workdir, self.DESCRIPTION, dry_run=dry_run)
 
 
 class PrepareWorkdirCommand(DeployCommand):

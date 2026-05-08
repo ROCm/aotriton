@@ -32,6 +32,31 @@
 </section>
 
 <section>
+    <h3>Tuning Mode</h3>
+    <form hx-post="/api/config/tuning-mode"
+          hx-swap="none"
+          hx-on::after-request="location.reload()">
+        <label>
+            <input type="radio" name="mode" value="kernel"
+                   {% if tuning_mode == 'kernel' %}checked{% endif %}>
+            Kernel Tuning &mdash; select best HSACO within each backend
+        </label><br>
+        <label>
+            <input type="radio" name="mode" value="op"
+                   {% if tuning_mode == 'op' %}checked{% endif %}>
+            Operator Tuning &mdash; select fastest backend for attn_fwd / attn_bwd
+        </label>
+        <br><br>
+        <button type="submit">Save Tuning Mode</button>
+    </form>
+    <p style="font-size: 0.9em; color: gray; margin-top: 0.5rem;">
+        Operator tuning requires the testing build
+        (<code>installed/test/&lt;arch&gt;/</code>) deployed to workers.
+        After changing mode, redeploy and restart workers.
+    </p>
+</section>
+
+<section>
     <h3>Deployment</h3>
     <div id="git-status">
         {% include 'partials/git_status.html' %}

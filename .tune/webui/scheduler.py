@@ -41,9 +41,11 @@ class WorkerScheduler:
 
     def arm_all_scheduled_workers(self):
         """Scan database and arm timers for all workers with enabled schedules"""
-        from .tasks import get_scheduled_workers, get_default_schedule
+        from .tasks import get_scheduled_workers, get_default_schedule, get_tuner_hostnames
 
-        workers = get_scheduled_workers(self.workdir)
+        all_scheduled = get_scheduled_workers(self.workdir)
+        tuner_hosts = set(get_tuner_hostnames(self.workdir))
+        workers = {h: s for h, s in all_scheduled.items() if h in tuner_hosts}
         logger.info(f"Arming timers for {len(workers)} scheduled workers")
 
         # Get default schedule for merging
@@ -128,11 +130,14 @@ class WorkerScheduler:
 
     def _wkctl(self, action: str, hostname: str):
         """Run wkctl for a single host"""
+        from .tasks import get_tuning_mode
         aotriton_root = Path(__file__).resolve().parent.parent.parent
         wkctl_path = aotriton_root / '.tune/bin/wkctl'
+        tuning_mode = get_tuning_mode(self.workdir)
 
         result = subprocess.run(
-            [wkctl_path.as_posix(), self.workdir, action, '--host', hostname],
+            [wkctl_path.as_posix(), self.workdir, action, '--host', hostname,
+             '--tuning_mode', tuning_mode],
             capture_output=True,
             text=True
         )
