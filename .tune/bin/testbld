@@ -71,6 +71,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 AOTRITON_ROOT="$(realpath "$SCRIPT_DIR/../..")"
 
+# sqlite3 CLI may not be present inside CELERY_WORKER_IMAGE; use Python fallback
+. "$TUNE_ROOT/lib/sqlite3_compat.sh"
+
 # Collect architectures to build
 if [ -n "$SINGLE_ARCH" ]; then
   if [ "$SOURCE_DB" -eq 0 ] && [ ! -d "$DATABASE_ROOT/amd/$SINGLE_ARCH" ]; then
