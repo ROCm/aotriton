@@ -124,6 +124,7 @@ jobid=$(tsp docker run --rm \
   --security-opt seccomp=unconfined \
   --ipc=host \
   --network=host \
+  -e PYTHONPYCACHEPREFIX=/wkdir/run/pycache \
   -e AOTRITON_TEST_LIBDIR="$LIBDIR" \
   -e OUTPUT_DIR="$OUTPUT_DIR" \
   ${PARTIAL_INFO_DIR:+-e PARTIAL_INFO_DIR="$PARTIAL_INFO_DIR"} \
