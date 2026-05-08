@@ -154,15 +154,15 @@ class TuningDescription(ABC):
         (import torch-dependent modules inside this method, not at module level)."""
         pass
 
-    def probe_backends(self, root: Path, which_kernel: str) -> list[dict]:
+    def probe_backends(self, root: Path, which_impl: str) -> list[dict]:
         entry, tests = self.get_entry(root, and_tests=True)
         test = tests[0]
         im = self.INPUT_METADATA.from_dict(test["input_metadata"])
         pt = Path(test["pt_file"])
-        return self._do_probe_backends(entry, im, which_kernel, pt)
+        return self._do_probe_backends(entry, im, which_impl, pt)
 
     @abstractmethod
-    def _do_probe_backends(self, entry, im, which_kernel: str, pt: Path) -> list[dict]:
+    def _do_probe_backends(self, entry, im, which_impl: str, pt: Path) -> list[dict]:
         pass
 
     @abstractmethod
@@ -194,14 +194,30 @@ class TuningDescription(ABC):
     def run_single_test(self,
                         input_metadata,
                         pt: Path,
-                        which_kernel) -> list[float]:  # L1 error
+                        which_impl) -> list[float]:  # L1 error
+        """
+        Args:
+            which_impl: an ImplSelector instance identifying what to run.
+                Subclasses rename this parameter to reflect their granularity:
+                  which_kernel  — kernel-level tuning (e.g. flash: selects HSACO variant)
+                  which_backend — backend-level tuning (e.g. flash_op: selects backend index)
+        Returns:
+            L1 error per test case.
+        """
         pass
 
     @abstractmethod
     def run_single_benchmark(self,
                              input_metadata,
                              pt: Path,
-                             which_kernel) -> tuple[dict, list[float]]:
+                             which_impl) -> tuple[dict, list[float]]:
+        """
+        Args:
+            which_impl: an ImplSelector instance. See run_single_test for naming convention.
+        Returns:
+            (impl_desc, times) where impl_desc is a JSON-serialisable dict
+            and times is [median, p20, p80] latencies in ms.
+        """
         pass
 
     def get_entry(self, root: Path, *, and_tests=False):
@@ -213,7 +229,7 @@ class TuningDescription(ABC):
         else:
             return entry
 
-    def benchmark(self, root: Path, which_kernel: 'KernelSelector'):
+    def benchmark(self, root: Path, which_impl: 'ImplSelector'):
         """
         Output:
             entry: ENTRY_CLASS, describes an entry in tuning table
@@ -228,8 +244,8 @@ class TuningDescription(ABC):
                 im = self.INPUT_METADATA.from_dict(t['input_metadata'])
                 pt = t['pt_file']
                 yield t['test_name'], im, pt
-        adiffs = {tname : self.run_single_test(im, pt, which_kernel) for tname, im, pt in gen()}
+        adiffs = {tname : self.run_single_test(im, pt, which_impl) for tname, im, pt in gen()}
         for _, bim, pt in gen():
-            impl_desc, times = self.run_single_benchmark(bim, pt, which_kernel)
+            impl_desc, times = self.run_single_benchmark(bim, pt, which_impl)
             break
         return entry, impl_desc, adiffs, times, bim

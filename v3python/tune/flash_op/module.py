@@ -50,15 +50,15 @@ class FlashOp(TuningDescription):
             }
         return self.KERNEL_DICT[name]
 
-    def _do_probe_backends(self, entry, im, which_kernel, pt):
-        kernel = self.get_kernel(which_kernel)
+    def _do_probe_backends(self, entry, im, which_backend, pt):
+        kernel = self.get_kernel(which_backend)
         return [{'backend_index': i} for i in range(kernel.BACKEND_COUNT)]
 
     def _gen_ref(self, entry, data_root: Path, extra_ims: list = []):
         return self._flash._gen_ref(entry, data_root, extra_ims)
 
-    def run_single_test(self, im, pt, which_kernel: FlashOpBackendSelector):
-        return self._flash.run_single_test(im, pt, which_kernel)
+    def run_single_test(self, im, pt, which_backend: FlashOpBackendSelector):
+        return self._flash.run_single_test(im, pt, which_backend)
 
-    def run_single_benchmark(self, im, pt, which_kernel: FlashOpBackendSelector):
-        return self._flash.run_single_benchmark(im, pt, which_kernel)
+    def run_single_benchmark(self, im, pt, which_backend: FlashOpBackendSelector):
+        return self._flash.run_single_benchmark(im, pt, which_backend)

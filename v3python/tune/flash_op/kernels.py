@@ -12,8 +12,8 @@ from ..flash.kernels import (
 class SdpaOpCommon(SdpaCommon):
     BACKEND_COUNT = None  # must define in subclass
 
-    def create_extargs(self, *, which_kernel=None, probe=False):
-        backend_index = which_kernel.backend_index if which_kernel is not None else 0
+    def create_extargs(self, *, which_backend=None, probe=False):
+        backend_index = which_backend.backend_index if which_backend is not None else 0
         return self.EXT_CLASS.for_op_backend(backend_index)
 
 
