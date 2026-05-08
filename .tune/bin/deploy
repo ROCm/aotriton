@@ -6,7 +6,7 @@
 # Usage: deploy <workdir> [--tuning_mode kernel|op]
 #
 # --tuning_mode kernel (default)  Deploy to Tuner-role hosts; sync installed/<arch>/.
-# --tuning_mode op                Deploy to Tester-role hosts; sync installed/test/<arch>/.
+# --tuning_mode op                Deploy to Tuner-role hosts; sync installed/test/<arch>/.
 
 set -e
 
@@ -38,11 +38,10 @@ echo "Deploying from $WORKDIR (tuning_mode=$TUNING_MODE)"
 
 if [ "$TUNING_MODE" = "op" ]; then
     SYNC_FLAG="--testnode"
-    mapfile -t WORKER_DATA < <(get_workers "$WORKDIR" Tester)
 else
     SYNC_FLAG=""
-    mapfile -t WORKER_DATA < <(get_workers "$WORKDIR" Tuner)
 fi
+mapfile -t WORKER_DATA < <(get_workers "$WORKDIR" Tuner)
 
 for worker in "${WORKER_DATA[@]}"; do
     IFS='|' read -r hostname arch workdir_override <<< "$worker"
