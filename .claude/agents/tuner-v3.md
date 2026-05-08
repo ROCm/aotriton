@@ -78,6 +78,39 @@ v3python/tune/
 └── tdesc.py                 # Task descriptor
 ```
 
+## TuneDesc subclass rule: lazy get_kernel initialization
+
+`TuningDescription.get_kernel()` is an abstract method. All subclasses MUST implement
+it with **lazy initialization** — never import kernel modules or instantiate kernel
+objects at module level or in `__init__`.
+
+Kernel modules chain into `flash/reference.py` which imports `torch`. `torch` is only
+available inside GPU containers. `dispatch_tasks.py` imports every `TuneDesc` subclass
+at startup to build argparse subparsers, so any top-level torch import breaks dispatch
+on machines without torch.
+
+```python
+# BAD — breaks dispatch_tasks.py on machines without torch
+from .kernels import KernelA, KernelB
+
+class MyModule(TuningDescription):
+    def __init__(self):
+        self._kernel_dict = {'a': KernelA(), 'b': KernelB()}  # eager, imports torch
+
+# GOOD — lazy, safe to import anywhere
+class MyModule(TuningDescription):
+    _kernel_dict = None
+
+    def get_kernel(self, name: str):
+        if self._kernel_dict is None:
+            from .kernels import KernelA, KernelB  # deferred until GPU context
+            self._kernel_dict = {'a': KernelA(), 'b': KernelB()}
+        return self._kernel_dict[name]
+```
+
+This rule is documented in `tdesc.py`'s module docstring and enforced by making
+`get_kernel` an `@abstractmethod` on `TuningDescription`.
+
 ## Key concepts
 
 ### Task lifecycle

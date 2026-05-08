@@ -199,16 +199,13 @@ def get_completed_tasks(module_name: str, module_instance, verbose: bool = False
     finally:
         conn.close()
 
-def dispatch_tasks(workdir: Path, module_name: str, args):
+def dispatch_tasks(workdir: Path, module_name: str, module_instance, args):
     """Dispatch tuning tasks to PostgreSQL queue."""
     from .pq.dispatcher import TaskDispatcher
     from dataclasses import asdict
 
     # Get database connection parameters
     conn_params = get_db_connection_params()
-
-    # Load module
-    module_instance = load_module(module_name)
 
     # Generate filtered entries (don't materialize the list)
     entries_generator = generate_filtered_entries(module_instance, args)
@@ -331,13 +328,20 @@ def str_to_bool(s):
 
 def get_available_modules():
     """
-    Get list of available tuning modules.
-
-    Scans v3python/tune directory for modules that have a capitalized class.
+    Scan v3python/tune/ for packages that export TuneDesc and return a dict
+    mapping module name to an instantiated TuneDesc object.
     """
-    # For now, hardcode known modules
-    # TODO: Auto-discover by scanning v3python/tune/
-    return ['flash']
+    tune_dir = Path(__file__).parent
+    modules = {}
+    for init_file in sorted(tune_dir.glob('*/__init__.py')):
+        name = init_file.parent.name
+        try:
+            mod = import_module(f'.{name}', package='v3python.tune')
+            if hasattr(mod, 'TuneDesc'):
+                modules[name] = mod.TuneDesc()
+        except Exception:
+            pass
+    return modules
 
 def add_common_arguments(parser):
     """Add common arguments (workdir, arch, etc.) to a parser."""
@@ -356,33 +360,26 @@ def add_common_arguments(parser):
     parser.add_argument('-y', '--yes', action='store_true',
                         help='Skip confirmation prompt and proceed with dispatch')
 
-def add_module_subparser(subparsers, module_name, load_params=True):
+def add_module_subparser(subparsers, module_name, module_instance):
     """
     Add a subparser for a specific tuning module with its parameter choices.
 
     Args:
         subparsers: The subparsers object from ArgumentParser.add_subparsers()
         module_name: Name of the tuning module (e.g., 'flash')
-        load_params: If True, load module and add parameter arguments
+        module_instance: Already-instantiated TuneDesc object for this module
 
     Returns:
         The created subparser
     """
-    # Create subparser for this module
     module_parser = subparsers.add_parser(
         module_name,
         help=f'{module_name.capitalize()} tuning module',
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
 
-    # Add common arguments to this subparser
     add_common_arguments(module_parser)
 
-    if not load_params:
-        return module_parser
-
-    # Load module to get parameter choices
-    module_instance = load_module(module_name)
     all_choices = get_parameter_choices(module_instance)
 
     # Add dynamic arguments based on module parameters
@@ -452,8 +449,8 @@ Examples:
                                        help='Tuning module')
 
     available_modules = get_available_modules()
-    for module_name in available_modules:
-        add_module_subparser(subparsers, module_name, load_params=True)
+    for module_name, module_instance in available_modules.items():
+        add_module_subparser(subparsers, module_name, module_instance)
 
     # Parse all arguments
     args = parser.parse_args()
@@ -473,7 +470,7 @@ Examples:
         print(f"No --arch specified, using all registered: {', '.join(args.arch)}")
 
     # Dispatch tasks
-    dispatch_tasks(args.workdir, args.module, args)
+    dispatch_tasks(args.workdir, args.module, available_modules[args.module], args)
 
 if __name__ == '__main__':
     main()

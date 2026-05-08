@@ -10,10 +10,26 @@ from dacite import from_dict
 from dataclasses import asdict, fields
 
 '''
-A dual-purpose class
+A dual-purpose class for task dispatch and GPU worker execution.
 
-On Celery Controller: generate entries for celery tasks
-On Celery Worker: actual perform tasks
+IMPORTANT — lazy kernel initialization rule for get_kernel():
+    Subclasses MUST NOT import kernel modules or instantiate kernel objects at
+    module level or in __init__. Kernel modules typically import torch (via
+    reference.py), which is unavailable outside GPU containers.
+    dispatch_tasks.py imports every TuneDesc subclass at startup (to build
+    argparse subparsers), so a top-level torch import breaks dispatch on
+    machines without torch.
+
+    Always initialize kernel objects lazily inside get_kernel() on first call:
+
+        class MyModule(TuningDescription):
+            _kernel_dict = None
+
+            def get_kernel(self, name):
+                if self._kernel_dict is None:
+                    from .kernels import KernelA, KernelB  # lazy import
+                    self._kernel_dict = {'a': KernelA(), 'b': KernelB()}
+                return self._kernel_dict[name]
 '''
 class TuningDescription(ABC):
     @property
@@ -130,6 +146,12 @@ class TuningDescription(ABC):
 
     @abstractmethod
     def list_kernels(self, entry) -> list[str]:
+        pass
+
+    @abstractmethod
+    def get_kernel(self, name: str):
+        """Return the kernel object for the given name. MUST use lazy initialization
+        (import torch-dependent modules inside this method, not at module level)."""
         pass
 
     def probe_backends(self, root: Path, which_kernel: str) -> list[dict]:

@@ -88,16 +88,6 @@ class FlashKernelSelector:
         kernel_name, hsaco_index = line.split("=")
         return FlashKernelSelector(kernel_name=kernel_name, hsaco_index=int(hsaco_index))
 
-@dataclass
-class FlashOpKernelSelector:
-    kernel_name: str = ''
-    backend_index: int = -1
-
-    @staticmethod
-    def parse_text(line: str) -> "FlashOpKernelSelector":
-        kernel_name, backend_index = line.split("=")
-        return FlashOpKernelSelector(kernel_name=kernel_name, backend_index=int(backend_index))
-
 class Flash(TuningDescription):
     ENTRY_CLASS = FlashEntry
     INPUT_METADATA = FlashInputMetadata
