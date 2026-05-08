@@ -63,12 +63,25 @@ if [ -t 0 ]; then
         cp "$SOURCE_SECRETS/client.key" "$SECRETS_DIR/"
         cp "$SOURCE_SECRETS/client.p12" "$SECRETS_DIR/"
 
+        # Copy demo certs if they exist in source (optional)
+        for f in demo.crt demo.key demo.p12; do
+          if [ -f "$SOURCE_SECRETS/$f" ]; then
+            cp "$SOURCE_SECRETS/$f" "$SECRETS_DIR/"
+          fi
+        done
+
         chmod 600 "$SECRETS_DIR"/*
 
-        echo "✓ All certificates copied successfully"
+        echo "All certificates copied successfully"
         echo ""
         echo "Certificates are ready in $SECRETS_DIR"
         echo "Import client.p12 into browsers to access the WebUI"
+        # Generate demo cert if not present in source
+        if [ ! -f "$SECRETS_DIR/demo.p12" ]; then
+          echo ""
+          echo "Demo certificate not found in source — generating now..."
+          "$SCRIPT_DIR/05-generate-demo.sh" "$WORKDIR"
+        fi
         exit 0
       else
         echo "Warning: Incomplete certificate set in $SOURCE_WORKDIR"
@@ -108,18 +121,27 @@ echo ""
 # Step 2: Generate Server Certificate
 "$SCRIPT_DIR/02-generate-server.sh" "$WORKDIR" "$CELERY_SERVICE_HOST"
 
-# Step 3: Generate Client Certificate
+# Step 3: Generate Client Certificate (CN=admin)
 "$SCRIPT_DIR/03-generate-client.sh" "$WORKDIR"
 
-# Step 4: Generate PKCS12 bundle
+# Step 4: Generate PKCS12 bundle for admin
 "$SCRIPT_DIR/04-generate-p12.sh" "$WORKDIR"
+
+# Step 5: Generate Demo Client Certificate and PKCS12 bundle (CN=demo)
+"$SCRIPT_DIR/05-generate-demo.sh" "$WORKDIR"
 
 echo ""
 echo "All certificates generated in $SECRETS_DIR"
 echo ""
-echo "To use the dashboard:"
+echo "To use the dashboard (admin access):"
 echo "1. Import $SECRETS_DIR/client.p12 into your browser"
 echo "   - Chrome: Settings → Privacy → Manage certificates → Import"
 echo "   - Firefox: Preferences → Privacy → Certificates → View Certificates → Import"
 echo "2. Access https://$CELERY_SERVICE_HOST:8888 (or configured port)"
 echo "3. Select the 'admin' certificate when prompted"
+echo ""
+echo "To use the dashboard (demo / read-only access):"
+echo "1. Import $SECRETS_DIR/demo.p12 into your browser"
+echo "2. Access https://$CELERY_SERVICE_HOST:8899 (demo port)"
+echo "3. Select the 'demo' certificate when prompted"
+echo "   All mutating operations will be blocked in demo mode."

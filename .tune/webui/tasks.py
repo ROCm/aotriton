@@ -28,7 +28,7 @@ sys.path.insert(0, AOTRITON_ROOT.as_posix())
 from v3python.tune.utils import get_db_connection_params
 from v3python.tune.flash.module import FlashEntry
 
-def run_command(cmd, cwd, workdir, description=None):
+def run_command(cmd, cwd, workdir, description=None, dry_run: bool = False):
     """
     Execute shell command with per-action tracker
 
@@ -37,6 +37,7 @@ def run_command(cmd, cwd, workdir, description=None):
         cwd: Current working directory for command execution (Path object)
         workdir: Workdir path where logs should be stored (str)
         description: Human-readable description
+        dry_run: When True, log the command but do not execute it
 
     Returns:
         dict with action_id, status, message
@@ -44,6 +45,14 @@ def run_command(cmd, cwd, workdir, description=None):
     # Convert cmd list to strings
     cmd_parts = [str(p) for p in cmd]
     cmd_str = ' '.join(cmd_parts)
+
+    if dry_run:
+        logger.info('[DRY RUN] %s', cmd_str)
+        return {
+            'action_id': None,
+            'status': 'dry_run',
+            'message': f'[DRY RUN] Would run: {description or cmd_str}',
+        }
 
     # Get log directory from workdir (use /scratch which is excluded from sync)
     log_dir = Path(workdir) / 'scratch' / 'webui-commands'
@@ -305,10 +314,10 @@ def get_debug_task_data(workdir, task_id: int) -> dict:
 class CommandBuilder:
     """Base class for building commands"""
 
-    def _run(self, script_relative_path, args, workdir, description):
+    def _run(self, script_relative_path, args, workdir, description, dry_run: bool = False):
         """Execute command with proper paths"""
         cmd = [script_relative_path] + list(args)
-        return run_command(cmd, cwd=AOTRITON_ROOT, workdir=workdir, description=description)
+        return run_command(cmd, cwd=AOTRITON_ROOT, workdir=workdir, description=description, dry_run=dry_run)
 
 
 def _build_worker_args(workdir, hostname, options=None):
@@ -330,12 +339,12 @@ class SingleWorkerCommand(CommandBuilder):
     RELATIVE = None  # Subclass must define
     ACTION_NAME = None  # Subclass must define
 
-    def exec(self, workdir, hostname, options=None, extra_args=None):
+    def exec(self, workdir, hostname, options=None, extra_args=None, dry_run: bool = False):
         """Execute command with script at RELATIVE path"""
         args = _build_worker_args(workdir, hostname, options)
         if extra_args:
             args = args + list(extra_args)
-        return self._run(self.RELATIVE, args, workdir, f'{self.ACTION_NAME} worker {hostname}')
+        return self._run(self.RELATIVE, args, workdir, f'{self.ACTION_NAME} worker {hostname}', dry_run=dry_run)
 
 
 class StartWorkerCommand(SingleWorkerCommand):
@@ -368,9 +377,9 @@ class BulkWorkerCommand(CommandBuilder):
     RELATIVE = '.tune/bin/wkctl'
     ACTION = None  # Subclass must define
 
-    def exec(self, workdir):
+    def exec(self, workdir, dry_run: bool = False):
         """Execute wkctl with action"""
-        return self._run(self.RELATIVE, [workdir, self.ACTION], workdir, f'{self.ACTION.capitalize()} all workers')
+        return self._run(self.RELATIVE, [workdir, self.ACTION], workdir, f'{self.ACTION.capitalize()} all workers', dry_run=dry_run)
 
 
 class StartAllWorkersCommand(BulkWorkerCommand):
@@ -390,9 +399,9 @@ class ServerCommand(CommandBuilder):
     RELATIVE = '.tune/bin/srvctl'
     ACTION = None  # Subclass must define
 
-    def exec(self, workdir):
+    def exec(self, workdir, dry_run: bool = False):
         """Execute srvctl with action"""
-        return self._run(self.RELATIVE, [workdir, self.ACTION], workdir, f'{self.ACTION.capitalize()} servers')
+        return self._run(self.RELATIVE, [workdir, self.ACTION], workdir, f'{self.ACTION.capitalize()} servers', dry_run=dry_run)
 
 
 class StartServersCommand(ServerCommand):
@@ -411,78 +420,76 @@ class InitDatabaseCommand(CommandBuilder):
     """Initialize database schema"""
     RELATIVE = '.tune/bin/initdb'
 
-    def exec(self, workdir):
+    def exec(self, workdir, dry_run: bool = False):
         """Execute initdb script"""
-        return self._run(self.RELATIVE, [workdir], workdir, 'Initialize database schema')
+        return self._run(self.RELATIVE, [workdir], workdir, 'Initialize database schema', dry_run=dry_run)
 
 
 class RecreateSchemaCommand(CommandBuilder):
     """Recreate database schema (drop all tables first)"""
     RELATIVE = '.tune/bin/initdb'
 
-    def exec(self, workdir):
+    def exec(self, workdir, dry_run: bool = False):
         """Execute initdb script with --recreate flag"""
-        return self._run(self.RELATIVE, [workdir, '--recreate'], workdir, 'Recreate database schema')
+        return self._run(self.RELATIVE, [workdir, '--recreate'], workdir, 'Recreate database schema', dry_run=dry_run)
 
 
 class ComputeBestResultsCommand(CommandBuilder):
     """Compute best_tuning_results table from raw tuning results"""
     RELATIVE = '.tune/bin/compute_best_results'
 
-    def exec(self, workdir):
-        return self._run(self.RELATIVE, [workdir], workdir, 'Compute best tuning results')
+    def exec(self, workdir, dry_run: bool = False):
+        return self._run(self.RELATIVE, [workdir], workdir, 'Compute best tuning results', dry_run=dry_run)
 
 
 class ExportBestResultsCommand(CommandBuilder):
     """Export best results to centralized SQLite database"""
     RELATIVE = '.tune/bin/export_best_results'
 
-    def exec(self, workdir):
-        return self._run(self.RELATIVE, [workdir], workdir, 'Export best results to centraldb')
+    def exec(self, workdir, dry_run: bool = False):
+        return self._run(self.RELATIVE, [workdir], workdir, 'Export best results to centraldb', dry_run=dry_run)
 
 
 class RecreateMaterializedViewCommand(CommandBuilder):
     """Recreate most_accurate_tuning_results via DROP + CREATE (faster than REFRESH CONCURRENTLY)"""
     RELATIVE = '.tune/bin/recreate_materialized_view'
 
-    def exec(self, workdir):
-        return self._run(self.RELATIVE, [workdir], workdir, 'Recreate materialized view')
+    def exec(self, workdir, dry_run: bool = False):
+        return self._run(self.RELATIVE, [workdir], workdir, 'Recreate materialized view', dry_run=dry_run)
 
 
 class UpdateMaterializedViewCommand(CommandBuilder):
     """Incremental upsert of most_accurate_tuning_results for cached task_ids"""
     RELATIVE = '.tune/bin/update_materialized_view'
 
-    def exec(self, workdir):
-        return self._run(self.RELATIVE, [workdir], workdir, 'Update materialized view (incremental)')
-
-
+    def exec(self, workdir, dry_run: bool = False):
+        return self._run(self.RELATIVE, [workdir], workdir, 'Update materialized view (incremental)', dry_run=dry_run)
 
 
 class SancheckCommand(CommandBuilder):
     """Run LUT sanity check against the exported centralized database"""
     RELATIVE = '.tune/bin/sancheck'
 
-    def exec(self, workdir):
-        return self._run(self.RELATIVE, [workdir], workdir, 'LUT sanity check')
+    def exec(self, workdir, dry_run: bool = False):
+        return self._run(self.RELATIVE, [workdir], workdir, 'LUT sanity check', dry_run=dry_run)
 
 
 class DecomposeDbCommand(CommandBuilder):
     """Decompose centraldb.sqlite3 into per-arch/kernel shards under <workdir>/installed/database/"""
     RELATIVE = '.tune/bin/decomposedb'
 
-    def exec(self, workdir):
-        return self._run(self.RELATIVE, [workdir], workdir, 'Decompose database')
+    def exec(self, workdir, dry_run: bool = False):
+        return self._run(self.RELATIVE, [workdir], workdir, 'Decompose database', dry_run=dry_run)
 
 
 class BakeLutCommand(CommandBuilder):
     """Bake LUT: convert raw PG tuning results into the aotriton SQLite DB"""
     RELATIVE = '.tune/bin/bake_lut'
 
-    def exec(self, workdir, extra_args: list | None = None):
+    def exec(self, workdir, extra_args: list | None = None, dry_run: bool = False):
         args = [workdir] + (extra_args or [])
         label = 'Bake LUT' + (f' ({" ".join(extra_args)})' if extra_args else '')
-        return self._run(self.RELATIVE, args, workdir, label)
+        return self._run(self.RELATIVE, args, workdir, label, dry_run=dry_run)
 
 
 class BuildCommand(CommandBuilder):
@@ -490,9 +497,9 @@ class BuildCommand(CommandBuilder):
     RELATIVE = None  # Subclass must define
     DESCRIPTION = None  # Subclass must define
 
-    def exec(self, workdir):
+    def exec(self, workdir, dry_run: bool = False):
         """Execute build script"""
-        return self._run(self.RELATIVE, [workdir], workdir, self.DESCRIPTION)
+        return self._run(self.RELATIVE, [workdir], workdir, self.DESCRIPTION, dry_run=dry_run)
 
 
 class BuildLibrariesCommand(CommandBuilder):
@@ -500,24 +507,24 @@ class BuildLibrariesCommand(CommandBuilder):
     RELATIVE = '.tune/bin/remotebld'
     DESCRIPTION = 'Build tuning version of AOTriton libraries'
 
-    def exec(self, workdir, single_arch: str | None = None):
+    def exec(self, workdir, single_arch: str | None = None, dry_run: bool = False):
         args = [workdir]
         if single_arch:
             args += ['--single_arch', single_arch]
         label = f'Build tuning AOTriton libraries ({single_arch})' if single_arch else self.DESCRIPTION
-        return self._run(self.RELATIVE, args, workdir, label)
+        return self._run(self.RELATIVE, args, workdir, label, dry_run=dry_run)
 
 
 class BuildTestLibrariesCommand(CommandBuilder):
     """Build testing version of AOTriton libraries inside container via remotebld --test"""
     RELATIVE = '.tune/bin/remotebld'
 
-    def exec(self, workdir, single_arch: str | None = None):
+    def exec(self, workdir, single_arch: str | None = None, dry_run: bool = False):
         args = [workdir, '--test']
         if single_arch:
             args += ['--single_arch', single_arch]
         label = f'Build testing AOTriton libraries ({single_arch})' if single_arch else 'Build testing AOTriton libraries'
-        return self._run(self.RELATIVE, args, workdir, label)
+        return self._run(self.RELATIVE, args, workdir, label, dry_run=dry_run)
 
 
 class BuildImagesCommand(BuildCommand):
@@ -529,9 +536,9 @@ class BuildImageOnWorkerCommand(CommandBuilder):
     """Build Docker image on a single worker"""
     RELATIVE = '.tune/single/build_image.sh'
 
-    def exec(self, workdir, hostname):
+    def exec(self, workdir, hostname, dry_run: bool = False):
         """Execute build_image.sh for a specific worker with --follow for web UI"""
-        return self._run(self.RELATIVE, [workdir, hostname, '--follow'], workdir, f'Build image on {hostname}')
+        return self._run(self.RELATIVE, [workdir, hostname, '--follow'], workdir, f'Build image on {hostname}', dry_run=dry_run)
 
 
 class DeployCommand(CommandBuilder):
@@ -539,9 +546,9 @@ class DeployCommand(CommandBuilder):
     RELATIVE = None  # Subclass must define
     DESCRIPTION = None  # Subclass must define
 
-    def exec(self, workdir):
+    def exec(self, workdir, dry_run: bool = False):
         """Execute deployment script"""
-        return self._run(self.RELATIVE, [workdir], workdir, self.DESCRIPTION)
+        return self._run(self.RELATIVE, [workdir], workdir, self.DESCRIPTION, dry_run=dry_run)
 
 
 class DeployAllCommand(DeployCommand):
@@ -553,12 +560,12 @@ class PrepareWorkdirCommand(DeployCommand):
     RELATIVE = '.tune/bin/prepwkdir'
     DESCRIPTION = 'Prepare workdir'
 
-    def exec(self, workdir):
+    def exec(self, workdir, dry_run: bool = False):
         # Ensure log directory exists (use /scratch which is excluded from sync)
         log_dir = Path(workdir) / 'scratch' / 'webui-commands'
         log_dir.mkdir(parents=True, exist_ok=True)
 
-        return super().exec(workdir)
+        return super().exec(workdir, dry_run=dry_run)
 
 
 # Global command instances
@@ -596,27 +603,27 @@ _prepare_workdir = PrepareWorkdirCommand()
 
 # Worker control functions
 
-def start_worker_single(workdir, hostname, options=None):
+def start_worker_single(workdir, hostname, options=None, dry_run: bool = False):
     """Start single worker"""
-    return _start_worker.exec(workdir, hostname, options)
+    return _start_worker.exec(workdir, hostname, options, dry_run=dry_run)
 
 
-def stop_worker_single(workdir, hostname):
+def stop_worker_single(workdir, hostname, dry_run: bool = False):
     """Stop single worker"""
-    return _stop_worker.exec(workdir, hostname)
+    return _stop_worker.exec(workdir, hostname, dry_run=dry_run)
 
 
-def restart_worker_single(workdir, hostname, options=None):
+def restart_worker_single(workdir, hostname, options=None, dry_run: bool = False):
     """Restart single worker"""
-    return _restart_worker.exec(workdir, hostname, options)
+    return _restart_worker.exec(workdir, hostname, options, dry_run=dry_run)
 
 
-def stop_start_worker_single(workdir, hostname, options=None):
+def stop_start_worker_single(workdir, hostname, options=None, dry_run: bool = False):
     """Stop then start single worker"""
-    return _stopstart_worker.exec(workdir, hostname, options)
+    return _stopstart_worker.exec(workdir, hostname, options, dry_run=dry_run)
 
 
-def _bulk_worker_action(workdir, action, options=None):
+def _bulk_worker_action(workdir, action, options=None, dry_run: bool = False):
     """Run a worker action on all Tuner-role hosts."""
     hostnames = get_tuner_hostnames(workdir)
     if not hostnames:
@@ -624,101 +631,101 @@ def _bulk_worker_action(workdir, action, options=None):
     results = []
     for hostname in hostnames:
         if action == 'start':
-            r = start_worker_single(workdir, hostname, options)
+            r = start_worker_single(workdir, hostname, options, dry_run=dry_run)
         elif action == 'stop':
-            r = stop_worker_single(workdir, hostname)
+            r = stop_worker_single(workdir, hostname, dry_run=dry_run)
         elif action == 'restart':
-            r = restart_worker_single(workdir, hostname, options)
+            r = restart_worker_single(workdir, hostname, options, dry_run=dry_run)
         elif action == 'stop-start':
-            r = stop_start_worker_single(workdir, hostname, options)
+            r = stop_start_worker_single(workdir, hostname, options, dry_run=dry_run)
         else:
             r = {'status': 'error', 'message': f'Unknown action: {action}'}
         results.append(f"{hostname}: {r.get('status', 'unknown')}")
     return {'status': 'ok', 'message': '\n'.join(results), 'output': '\n'.join(results)}
 
 
-def start_all_workers(workdir):
+def start_all_workers(workdir, dry_run: bool = False):
     """Start all Tuner-role workers"""
-    return _bulk_worker_action(workdir, 'start')
+    return _bulk_worker_action(workdir, 'start', dry_run=dry_run)
 
 
-def stop_all_workers(workdir):
+def stop_all_workers(workdir, dry_run: bool = False):
     """Stop all Tuner-role workers"""
-    return _bulk_worker_action(workdir, 'stop')
+    return _bulk_worker_action(workdir, 'stop', dry_run=dry_run)
 
 
-def restart_all_workers(workdir):
+def restart_all_workers(workdir, dry_run: bool = False):
     """Restart all Tuner-role workers"""
-    return _bulk_worker_action(workdir, 'restart')
+    return _bulk_worker_action(workdir, 'restart', dry_run=dry_run)
 
 
-def stop_start_all_workers(workdir):
+def stop_start_all_workers(workdir, dry_run: bool = False):
     """Stop then start all Tuner-role workers"""
-    return _bulk_worker_action(workdir, 'stop-start')
+    return _bulk_worker_action(workdir, 'stop-start', dry_run=dry_run)
 
 
 # Server control functions
 
-def start_servers(workdir):
+def start_servers(workdir, dry_run: bool = False):
     """Start servers"""
-    return _start_servers.exec(workdir)
+    return _start_servers.exec(workdir, dry_run=dry_run)
 
 
-def stop_servers(workdir):
+def stop_servers(workdir, dry_run: bool = False):
     """Stop servers"""
-    return _stop_servers.exec(workdir)
+    return _stop_servers.exec(workdir, dry_run=dry_run)
 
 
-def restart_servers(workdir):
+def restart_servers(workdir, dry_run: bool = False):
     """Restart servers"""
-    return _restart_servers.exec(workdir)
+    return _restart_servers.exec(workdir, dry_run=dry_run)
 
 
-def init_database(workdir):
+def init_database(workdir, dry_run: bool = False):
     """Initialize database schema"""
-    return _init_database.exec(workdir)
+    return _init_database.exec(workdir, dry_run=dry_run)
 
 
-def recreate_schema(workdir):
+def recreate_schema(workdir, dry_run: bool = False):
     """Recreate database schema (drop all tables first)"""
-    return _recreate_schema.exec(workdir)
+    return _recreate_schema.exec(workdir, dry_run=dry_run)
 
 
-def compute_best_results(workdir):
+def compute_best_results(workdir, dry_run: bool = False):
     """Compute best_tuning_results table from raw tuning results"""
-    return _compute_best_results.exec(workdir)
+    return _compute_best_results.exec(workdir, dry_run=dry_run)
 
 
-def export_best_results(workdir):
+def export_best_results(workdir, dry_run: bool = False):
     """Export best results to centralized SQLite database"""
-    return _export_best_results.exec(workdir)
+    return _export_best_results.exec(workdir, dry_run=dry_run)
 
 
-def recreate_materialized_view(workdir):
+def recreate_materialized_view(workdir, dry_run: bool = False):
     """Recreate most_accurate_tuning_results via DROP + CREATE"""
-    return _recreate_materialized_view.exec(workdir)
+    return _recreate_materialized_view.exec(workdir, dry_run=dry_run)
 
 
-def sancheck(workdir):
+def sancheck(workdir, dry_run: bool = False):
     """Run LUT sanity check against the exported centralized database"""
-    return _sancheck.exec(workdir)
+    return _sancheck.exec(workdir, dry_run=dry_run)
 
 
-def bake_lut(workdir, extra_args: list | None = None):
+def bake_lut(workdir, extra_args: list | None = None, dry_run: bool = False):
     """Bake LUT: convert raw PG tuning results into the aotriton SQLite DB.
 
     extra_args examples: ['--incremental'], ['--fix', 'gpu01:0'], ['--fix', '0']
     """
-    return _bake_lut.exec(workdir, extra_args)
+    return _bake_lut.exec(workdir, extra_args, dry_run=dry_run)
 
 
-def update_materialized_view(workdir):
-    return _update_materialized_view.exec(workdir)
+def update_materialized_view(workdir, dry_run: bool = False):
+    return _update_materialized_view.exec(workdir, dry_run=dry_run)
 
 
-def decomposedb(workdir):
+def decomposedb(workdir, dry_run: bool = False):
     """Decompose centraldb.sqlite3 into per-arch/kernel shards"""
-    return _decomposedb.exec(workdir)
+    return _decomposedb.exec(workdir, dry_run=dry_run)
 
 
 def get_git_status(workdir):
@@ -837,7 +844,7 @@ def get_server_status(workdir):
 
 # Build functions
 
-def sync_build_node(workdir):
+def sync_build_node(workdir, dry_run: bool = False):
     """Sync local workdir to the remote build node"""
     cfg = get_build_node_config(workdir)
     hostname = cfg.get('hostname', '')
@@ -845,20 +852,20 @@ def sync_build_node(workdir):
         return {'status': 'error', 'message': 'Remote build node hostname is not configured'}
     cmd = ['.tune/single/sync_workdir.sh', workdir, hostname, '--buildnode']
     return run_command(cmd, cwd=AOTRITON_ROOT, workdir=workdir,
-                       description=f'Sync workdir to remote build node {hostname}')
+                       description=f'Sync workdir to remote build node {hostname}', dry_run=dry_run)
 
 
-def build_libraries(workdir, single_arch: str | None = None):
+def build_libraries(workdir, single_arch: str | None = None, dry_run: bool = False):
     """Build tuning version of AOTriton libraries (all arches or one)."""
-    return _build_libraries.exec(workdir, single_arch)
+    return _build_libraries.exec(workdir, single_arch, dry_run=dry_run)
 
 
-def build_test_libraries(workdir, single_arch: str | None = None):
+def build_test_libraries(workdir, single_arch: str | None = None, dry_run: bool = False):
     """Build testing version of AOTriton libraries inside container (all arches or one)."""
-    return _build_test_libraries.exec(workdir, single_arch)
+    return _build_test_libraries.exec(workdir, single_arch, dry_run=dry_run)
 
 
-def fetch_tuning_build(workdir):
+def fetch_tuning_build(workdir, dry_run: bool = False):
     """Fetch tuning build artifacts from remote build node"""
     cfg = get_build_node_config(workdir)
     hostname = cfg.get('hostname', '')
@@ -866,10 +873,10 @@ def fetch_tuning_build(workdir):
         return {'status': 'error', 'message': 'Remote build node hostname is not configured'}
     cmd = ['.tune/bin/fetchbuild', workdir, '--tuning']
     return run_command(cmd, cwd=AOTRITON_ROOT, workdir=workdir,
-                       description=f'Fetch tuning build from {hostname}')
+                       description=f'Fetch tuning build from {hostname}', dry_run=dry_run)
 
 
-def fetch_test_build(workdir):
+def fetch_test_build(workdir, dry_run: bool = False):
     """Fetch test build artifacts from remote build node"""
     cfg = get_build_node_config(workdir)
     hostname = cfg.get('hostname', '')
@@ -877,34 +884,34 @@ def fetch_test_build(workdir):
         return {'status': 'error', 'message': 'Remote build node hostname is not configured'}
     cmd = ['.tune/bin/fetchbuild', workdir, '--test']
     return run_command(cmd, cwd=AOTRITON_ROOT, workdir=workdir,
-                       description=f'Fetch test build from {hostname}')
+                       description=f'Fetch test build from {hostname}', dry_run=dry_run)
 
 
-def build_images(workdir):
+def build_images(workdir, dry_run: bool = False):
     """Build Docker images"""
-    return _build_images.exec(workdir)
+    return _build_images.exec(workdir, dry_run=dry_run)
 
 
-def build_image_on_worker(workdir, hostname):
+def build_image_on_worker(workdir, hostname, dry_run: bool = False):
     """Build Docker image on specific worker"""
-    return _build_image_on_worker.exec(workdir, hostname)
+    return _build_image_on_worker.exec(workdir, hostname, dry_run=dry_run)
 
 
 # Deploy functions
 
-def deploy_workdir(workdir):
+def deploy_workdir(workdir, dry_run: bool = False):
     """Deploy to all workers"""
-    return _deploy_all.exec(workdir)
+    return _deploy_all.exec(workdir, dry_run=dry_run)
 
 
-def deploy_workdir_single(workdir, hostname, extra_args=None):
+def deploy_workdir_single(workdir, hostname, extra_args=None, dry_run: bool = False):
     """Deploy to single worker"""
-    return _deploy_worker.exec(workdir, hostname, extra_args=extra_args)
+    return _deploy_worker.exec(workdir, hostname, extra_args=extra_args, dry_run=dry_run)
 
 
-def prepare_workdir(workdir):
+def prepare_workdir(workdir, dry_run: bool = False):
     """Prepare workdir"""
-    return _prepare_workdir.exec(workdir)
+    return _prepare_workdir.exec(workdir, dry_run=dry_run)
 
 
 # Worker management functions
@@ -1209,7 +1216,7 @@ def get_tester_signature(workdir, hostname):
 
 
 
-def run_test_on_host(workdir, hostname, pass_num, test_level, backend, variant=None):
+def run_test_on_host(workdir, hostname, pass_num, test_level, backend, variant=None, dry_run: bool = False):
     """Queue run-test on a remote tester host via .tune/single/run-test.sh (tsp-backed)."""
     worker = get_worker_by_hostname(workdir, hostname)
     if not worker:
@@ -1231,7 +1238,7 @@ def run_test_on_host(workdir, hostname, pass_num, test_level, backend, variant=N
     desc = f'run-test on {hostname} ({arch}) pass={pass_num} level={test_level} backend={backend}'
     if variant:
         desc += f' variant={variant}'
-    return run_command(cmd, cwd=AOTRITON_ROOT, workdir=workdir, description=desc)
+    return run_command(cmd, cwd=AOTRITON_ROOT, workdir=workdir, description=desc, dry_run=dry_run)
 
 
 def get_failed_tests(workdir, hostname, pass_num, backend, variant=None):
@@ -1397,10 +1404,10 @@ def set_build_node_config(workdir, hostname, workdir_override, enabled):
         return {'success': False, 'error': str(e)}
 
 
-def detect_gpu_for_worker(workdir, hostname):
+def detect_gpu_for_worker(workdir, hostname, dry_run: bool = False):
     """Detect GPU metadata for a specific worker"""
     cmd = ['.tune/single/detect_gpu.sh', workdir, hostname]
-    return run_command(cmd, cwd=AOTRITON_ROOT, workdir=workdir, description=f'Detect GPU info for {hostname}')
+    return run_command(cmd, cwd=AOTRITON_ROOT, workdir=workdir, description=f'Detect GPU info for {hostname}', dry_run=dry_run)
 
 
 def save_worker_gpu_selection(workdir, hostname, gpu_ids):

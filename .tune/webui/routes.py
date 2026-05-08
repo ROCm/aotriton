@@ -5,13 +5,40 @@
 URL routes and handlers for the web dashboard
 """
 
-from flask import Blueprint, render_template, request, jsonify, current_app, Response
+from flask import Blueprint, render_template, request, jsonify, current_app, Response, g
 import time
 import json
+import logging
 
 from . import tasks
 
 bp = Blueprint('main', __name__)
+
+logger = logging.getLogger(__name__)
+
+
+@bp.before_request
+def _detect_demo_mode():
+    """Auto-detect demo mode from client certificate CN.
+
+    If the server-level DEMO_MODE config is already True the flag is already
+    set.  Additionally, if the connecting client presents a certificate with
+    CN=demo we treat this request as demo regardless of the --demo flag so
+    that the demo cert works even on a plain --no-demo server (e.g. shared
+    infrastructure where both admin and demo certs are in use).
+    """
+    # Start from the app-level flag
+    g.demo_mode = bool(current_app.config.get('DEMO_MODE', False))
+
+    # Also check client cert CN from the WSGI SSL environ populated by cheroot
+    client_cn = request.environ.get('SSL_CLIENT_S_DN_CN', '')
+    if client_cn == 'demo':
+        g.demo_mode = True
+
+
+def should_dryrun() -> bool:
+    """Return True if the current request should be treated as a dry run (demo mode)."""
+    return getattr(g, 'demo_mode', False)
 
 
 @bp.route('/')
@@ -93,7 +120,7 @@ def commands():
 def api_start_all_workers():
     """Start all workers"""
     workdir = current_app.config['WORKDIR']
-    result = tasks.start_all_workers(workdir)
+    result = tasks.start_all_workers(workdir, dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -101,7 +128,7 @@ def api_start_all_workers():
 def api_stop_all_workers():
     """Stop all workers"""
     workdir = current_app.config['WORKDIR']
-    result = tasks.stop_all_workers(workdir)
+    result = tasks.stop_all_workers(workdir, dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -109,7 +136,7 @@ def api_stop_all_workers():
 def api_restart_all_workers():
     """Restart all workers"""
     workdir = current_app.config['WORKDIR']
-    result = tasks.restart_all_workers(workdir)
+    result = tasks.restart_all_workers(workdir, dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -117,7 +144,7 @@ def api_restart_all_workers():
 def api_stop_start_all_workers():
     """Stop then start all workers"""
     workdir = current_app.config['WORKDIR']
-    result = tasks.stop_start_all_workers(workdir)
+    result = tasks.stop_start_all_workers(workdir, dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -126,7 +153,7 @@ def api_start_worker(hostname):
     """Start single worker"""
     workdir = current_app.config['WORKDIR']
     options = request.get_json() or {}
-    result = tasks.start_worker_single(workdir, hostname, options=options)
+    result = tasks.start_worker_single(workdir, hostname, options=options, dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -134,7 +161,7 @@ def api_start_worker(hostname):
 def api_stop_worker(hostname):
     """Stop single worker"""
     workdir = current_app.config['WORKDIR']
-    result = tasks.stop_worker_single(workdir, hostname)
+    result = tasks.stop_worker_single(workdir, hostname, dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -143,7 +170,7 @@ def api_restart_worker(hostname):
     """Restart single worker"""
     workdir = current_app.config['WORKDIR']
     options = request.get_json() or {}
-    result = tasks.restart_worker_single(workdir, hostname, options=options)
+    result = tasks.restart_worker_single(workdir, hostname, options=options, dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -152,7 +179,7 @@ def api_stop_start_worker(hostname):
     """Stop then start single worker"""
     workdir = current_app.config['WORKDIR']
     options = request.get_json() or {}
-    result = tasks.stop_start_worker_single(workdir, hostname, options=options)
+    result = tasks.stop_start_worker_single(workdir, hostname, options=options, dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -178,7 +205,7 @@ def api_probe_worker_status(hostname):
 def api_build_image_on_worker(hostname):
     """Build Docker image on specific worker"""
     workdir = current_app.config['WORKDIR']
-    result = tasks.build_image_on_worker(workdir, hostname)
+    result = tasks.build_image_on_worker(workdir, hostname, dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -186,7 +213,7 @@ def api_build_image_on_worker(hostname):
 def api_detect_gpu(hostname):
     """Detect GPU metadata for a specific worker"""
     workdir = current_app.config['WORKDIR']
-    result = tasks.detect_gpu_for_worker(workdir, hostname)
+    result = tasks.detect_gpu_for_worker(workdir, hostname, dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -214,7 +241,7 @@ def api_probe_all_workers_status():
 def api_start_servers():
     """Start PostgreSQL"""
     workdir = current_app.config['WORKDIR']
-    result = tasks.start_servers(workdir)
+    result = tasks.start_servers(workdir, dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -222,7 +249,7 @@ def api_start_servers():
 def api_stop_servers():
     """Stop PostgreSQL"""
     workdir = current_app.config['WORKDIR']
-    result = tasks.stop_servers(workdir)
+    result = tasks.stop_servers(workdir, dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -230,7 +257,7 @@ def api_stop_servers():
 def api_restart_servers():
     """Restart PostgreSQL"""
     workdir = current_app.config['WORKDIR']
-    result = tasks.restart_servers(workdir)
+    result = tasks.restart_servers(workdir, dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -238,7 +265,7 @@ def api_restart_servers():
 def api_init_database():
     """Initialize database schema"""
     workdir = current_app.config['WORKDIR']
-    result = tasks.init_database(workdir)
+    result = tasks.init_database(workdir, dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -246,7 +273,7 @@ def api_init_database():
 def api_recreate_schema():
     """Recreate database schema (drops all tables first)"""
     workdir = current_app.config['WORKDIR']
-    result = tasks.recreate_schema(workdir)
+    result = tasks.recreate_schema(workdir, dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -254,7 +281,7 @@ def api_recreate_schema():
 def api_compute_best_results():
     """Compute best_tuning_results table from raw tuning results"""
     workdir = current_app.config['WORKDIR']
-    result = tasks.compute_best_results(workdir)
+    result = tasks.compute_best_results(workdir, dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -262,7 +289,7 @@ def api_compute_best_results():
 def api_export_best_results():
     """Export best results to centralized SQLite database"""
     workdir = current_app.config['WORKDIR']
-    result = tasks.export_best_results(workdir)
+    result = tasks.export_best_results(workdir, dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -270,7 +297,7 @@ def api_export_best_results():
 def api_recreate_materialized_view():
     """Recreate most_accurate_tuning_results via DROP + CREATE"""
     workdir = current_app.config['WORKDIR']
-    result = tasks.recreate_materialized_view(workdir)
+    result = tasks.recreate_materialized_view(workdir, dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -278,7 +305,7 @@ def api_recreate_materialized_view():
 def api_sancheck():
     """Run LUT sanity check against the exported centralized database"""
     workdir = current_app.config['WORKDIR']
-    result = tasks.sancheck(workdir)
+    result = tasks.sancheck(workdir, dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -304,14 +331,14 @@ def api_bake_lut():
     elif request.form.get('incremental') == '1':
         extra_args = ['--incremental']
 
-    result = tasks.bake_lut(workdir, extra_args or None)
+    result = tasks.bake_lut(workdir, extra_args or None, dry_run=should_dryrun())
     return jsonify(result)
 
 
 @bp.route('/api/servers/update-materialized-view', methods=['POST'])
 def api_update_materialized_view():
     workdir = current_app.config['WORKDIR']
-    result = tasks.update_materialized_view(workdir)
+    result = tasks.update_materialized_view(workdir, dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -319,7 +346,7 @@ def api_update_materialized_view():
 def api_decomposedb():
     """Decompose centraldb.sqlite3 into per-arch/kernel shards"""
     workdir = current_app.config['WORKDIR']
-    result = tasks.decomposedb(workdir)
+    result = tasks.decomposedb(workdir, dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -346,7 +373,7 @@ def api_build_libraries():
     """Build tuning version of AOTriton libraries (all arches or single arch)."""
     workdir = current_app.config['WORKDIR']
     single_arch = request.form.get('single_arch', '').strip() or None
-    result = tasks.build_libraries(workdir, single_arch)
+    result = tasks.build_libraries(workdir, single_arch, dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -355,7 +382,7 @@ def api_build_test_libraries():
     """Build testing version of AOTriton libraries inside container (all or single arch)."""
     workdir = current_app.config['WORKDIR']
     single_arch = request.form.get('single_arch', '').strip() or None
-    result = tasks.build_test_libraries(workdir, single_arch)
+    result = tasks.build_test_libraries(workdir, single_arch, dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -382,7 +409,7 @@ def api_set_build_node_config():
 def api_sync_build_node():
     """Sync local workdir to the remote build node"""
     workdir = current_app.config['WORKDIR']
-    result = tasks.sync_build_node(workdir)
+    result = tasks.sync_build_node(workdir, dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -390,7 +417,7 @@ def api_sync_build_node():
 def api_fetch_tuning_build():
     """Fetch tuning build artifacts from remote build node"""
     workdir = current_app.config['WORKDIR']
-    result = tasks.fetch_tuning_build(workdir)
+    result = tasks.fetch_tuning_build(workdir, dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -398,7 +425,7 @@ def api_fetch_tuning_build():
 def api_fetch_test_build():
     """Fetch test build artifacts from remote build node"""
     workdir = current_app.config['WORKDIR']
-    result = tasks.fetch_test_build(workdir)
+    result = tasks.fetch_test_build(workdir, dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -406,7 +433,7 @@ def api_fetch_test_build():
 def api_build_images():
     """Build Docker images"""
     workdir = current_app.config['WORKDIR']
-    result = tasks.build_images(workdir)
+    result = tasks.build_images(workdir, dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -416,7 +443,7 @@ def api_build_images():
 def api_deploy_workdir():
     """Deploy workdir to all workers"""
     workdir = current_app.config['WORKDIR']
-    result = tasks.deploy_workdir(workdir)
+    result = tasks.deploy_workdir(workdir, dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -425,7 +452,7 @@ def api_deploy_single(hostname):
     """Deploy workdir to a single worker; pass testnode=1 to add --testnode flag"""
     workdir = current_app.config['WORKDIR']
     extra_args = ['--testnode'] if request.form.get('testnode') == '1' else None
-    result = tasks.deploy_workdir_single(workdir, hostname, extra_args=extra_args)
+    result = tasks.deploy_workdir_single(workdir, hostname, extra_args=extra_args, dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -433,7 +460,7 @@ def api_deploy_single(hostname):
 def api_prepare_workdir():
     """Prepare workdir"""
     workdir = current_app.config['WORKDIR']
-    result = tasks.prepare_workdir(workdir)
+    result = tasks.prepare_workdir(workdir, dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -806,7 +833,7 @@ def api_run_test(hostname):
         return jsonify({'status': 'error', 'message': f'Invalid backend: {backend}'}), 400
     if variant and variant not in ('partial', 'partial_adiffs'):
         return jsonify({'status': 'error', 'message': f'Invalid variant: {variant}'}), 400
-    result = tasks.run_test_on_host(workdir, hostname, pass_num, test_level, backend, variant=variant)
+    result = tasks.run_test_on_host(workdir, hostname, pass_num, test_level, backend, variant=variant, dry_run=should_dryrun())
     return jsonify(result)
 
 

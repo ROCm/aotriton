@@ -26,6 +26,24 @@
         .status-stopped { background: #dc3545; color: white; }
         footer { margin-top: 2rem; padding: 1rem; text-align: center; border-top: 1px solid #ccc; font-size: 0.9em; color: #666; }
 
+        /* Demo mode banner */
+        .demo-banner {
+            background: #856404;
+            color: #fff3cd;
+            text-align: center;
+            padding: 0.6rem 1rem;
+            font-weight: bold;
+            font-size: 1rem;
+            letter-spacing: 0.03em;
+            border-bottom: 2px solid #533d02;
+        }
+        .demo-banner code {
+            background: rgba(0,0,0,0.25);
+            padding: 0.1em 0.4em;
+            border-radius: 3px;
+            font-size: 0.9em !important;
+        }
+
         /* Better table styling */
         table { table-layout: auto; }
         table th, table td { padding: 0.5rem; }
@@ -64,6 +82,12 @@
     </style>
 </head>
 <body>
+    {% if config.DEMO_MODE %}
+    <div class="demo-banner">
+        DEMO MODE — All mutating operations are disabled. Read-only access only.
+        Connect with <code>admin</code> certificate for full access.
+    </div>
+    {% endif %}
     <header>
         <h1>AOTriton Tuning Dashboard</h1>
         <nav>
