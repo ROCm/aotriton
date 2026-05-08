@@ -104,7 +104,29 @@
 
 <section>
     <h3>Build Testing Version of AOTriton Libraries</h3>
-    <p>Per-arch builds from <code>installed/database/amd/&lt;arch&gt;/</code> into <code>installed/test/&lt;arch&gt;/</code>. Uses <code>remotebld --test [--single_arch]</code>.</p>
+    <form hx-post="/api/config/test-build-use-installed-db"
+          hx-trigger="change"
+          hx-swap="none"
+          hx-on::after-request="location.reload()"
+          style="margin-bottom: 0.5rem;">
+        <input type="hidden" name="enabled" value="0">
+        <label>
+            <input type="checkbox" name="enabled" value="1"
+                   {% if use_installed_db %}checked{% endif %}>
+            Use <code>installed/database/</code>
+        </label>
+    </form>
+    <p>
+        {% if use_installed_db %}
+        Per-arch builds from <code>installed/database/</code> into <code>installed/test/&lt;arch&gt;/</code>.
+        {% else %}
+        Per-arch builds into <code>installed/test/&lt;arch&gt;/</code> using the database embedded in the source tree (<code>v3python/database/</code>).
+        {% endif %}
+        Uses <code>remotebld --test {% if not use_installed_db %}--source_db {% endif %}[--single_arch]</code>.
+    </p>
+    <p style="font-size: 0.85em; color: gray;">
+        <code>installed/database/</code>: artifact directory holding the WIP tuning database computed from the current PG database via <code>bake_lut</code> (Servers tab).
+    </p>
     <button hx-post="/api/builds/test-libraries"
             hx-swap="none"
             hx-confirm="Build testing version of AOTriton for all architectures inside container? This may take a long time."

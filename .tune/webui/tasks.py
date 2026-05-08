@@ -519,10 +519,12 @@ class BuildTestLibrariesCommand(CommandBuilder):
     """Build testing version of AOTriton libraries inside container via remotebld --test"""
     RELATIVE = '.tune/bin/remotebld'
 
-    def exec(self, workdir, single_arch: str | None = None, dry_run: bool = False):
+    def exec(self, workdir, single_arch: str | None = None, use_installed_db: bool = True, dry_run: bool = False):
         args = [workdir, '--test']
         if single_arch:
             args += ['--single_arch', single_arch]
+        if not use_installed_db:
+            args += ['--source_db']
         label = f'Build testing AOTriton libraries ({single_arch})' if single_arch else 'Build testing AOTriton libraries'
         return self._run(self.RELATIVE, args, workdir, label, dry_run=dry_run)
 
@@ -554,6 +556,10 @@ class DeployCommand(CommandBuilder):
 class DeployAllCommand(DeployCommand):
     RELATIVE = '.tune/bin/deploy'
     DESCRIPTION = 'Deploy to all workers'
+
+    def exec(self, workdir, tuning_mode: str = 'kernel', dry_run: bool = False):
+        extra = ['--testnode'] if tuning_mode == 'op' else []
+        return self._run(self.RELATIVE, [workdir] + extra, workdir, self.DESCRIPTION, dry_run=dry_run)
 
 
 class PrepareWorkdirCommand(DeployCommand):
@@ -603,9 +609,10 @@ _prepare_workdir = PrepareWorkdirCommand()
 
 # Worker control functions
 
-def start_worker_single(workdir, hostname, options=None, dry_run: bool = False):
+def start_worker_single(workdir, hostname, options=None, tuning_mode: str = 'kernel', dry_run: bool = False):
     """Start single worker"""
-    return _start_worker.exec(workdir, hostname, options, dry_run=dry_run)
+    extra = ['--tuning_mode', tuning_mode]
+    return _start_worker.exec(workdir, hostname, options, extra_args=extra, dry_run=dry_run)
 
 
 def stop_worker_single(workdir, hostname, dry_run: bool = False):
@@ -613,17 +620,19 @@ def stop_worker_single(workdir, hostname, dry_run: bool = False):
     return _stop_worker.exec(workdir, hostname, dry_run=dry_run)
 
 
-def restart_worker_single(workdir, hostname, options=None, dry_run: bool = False):
+def restart_worker_single(workdir, hostname, options=None, tuning_mode: str = 'kernel', dry_run: bool = False):
     """Restart single worker"""
-    return _restart_worker.exec(workdir, hostname, options, dry_run=dry_run)
+    extra = ['--tuning_mode', tuning_mode]
+    return _restart_worker.exec(workdir, hostname, options, extra_args=extra, dry_run=dry_run)
 
 
-def stop_start_worker_single(workdir, hostname, options=None, dry_run: bool = False):
+def stop_start_worker_single(workdir, hostname, options=None, tuning_mode: str = 'kernel', dry_run: bool = False):
     """Stop then start single worker"""
-    return _stopstart_worker.exec(workdir, hostname, options, dry_run=dry_run)
+    extra = ['--tuning_mode', tuning_mode]
+    return _stopstart_worker.exec(workdir, hostname, options, extra_args=extra, dry_run=dry_run)
 
 
-def _bulk_worker_action(workdir, action, options=None, dry_run: bool = False):
+def _bulk_worker_action(workdir, action, options=None, tuning_mode: str = 'kernel', dry_run: bool = False):
     """Run a worker action on all Tuner-role hosts."""
     hostnames = get_tuner_hostnames(workdir)
     if not hostnames:
@@ -631,22 +640,22 @@ def _bulk_worker_action(workdir, action, options=None, dry_run: bool = False):
     results = []
     for hostname in hostnames:
         if action == 'start':
-            r = start_worker_single(workdir, hostname, options, dry_run=dry_run)
+            r = start_worker_single(workdir, hostname, options, tuning_mode=tuning_mode, dry_run=dry_run)
         elif action == 'stop':
             r = stop_worker_single(workdir, hostname, dry_run=dry_run)
         elif action == 'restart':
-            r = restart_worker_single(workdir, hostname, options, dry_run=dry_run)
+            r = restart_worker_single(workdir, hostname, options, tuning_mode=tuning_mode, dry_run=dry_run)
         elif action == 'stop-start':
-            r = stop_start_worker_single(workdir, hostname, options, dry_run=dry_run)
+            r = stop_start_worker_single(workdir, hostname, options, tuning_mode=tuning_mode, dry_run=dry_run)
         else:
             r = {'status': 'error', 'message': f'Unknown action: {action}'}
         results.append(f"{hostname}: {r.get('status', 'unknown')}")
     return {'status': 'ok', 'message': '\n'.join(results), 'output': '\n'.join(results)}
 
 
-def start_all_workers(workdir, dry_run: bool = False):
+def start_all_workers(workdir, tuning_mode: str = 'kernel', dry_run: bool = False):
     """Start all Tuner-role workers"""
-    return _bulk_worker_action(workdir, 'start', dry_run=dry_run)
+    return _bulk_worker_action(workdir, 'start', tuning_mode=tuning_mode, dry_run=dry_run)
 
 
 def stop_all_workers(workdir, dry_run: bool = False):
@@ -654,14 +663,14 @@ def stop_all_workers(workdir, dry_run: bool = False):
     return _bulk_worker_action(workdir, 'stop', dry_run=dry_run)
 
 
-def restart_all_workers(workdir, dry_run: bool = False):
+def restart_all_workers(workdir, tuning_mode: str = 'kernel', dry_run: bool = False):
     """Restart all Tuner-role workers"""
-    return _bulk_worker_action(workdir, 'restart', dry_run=dry_run)
+    return _bulk_worker_action(workdir, 'restart', tuning_mode=tuning_mode, dry_run=dry_run)
 
 
-def stop_start_all_workers(workdir, dry_run: bool = False):
+def stop_start_all_workers(workdir, tuning_mode: str = 'kernel', dry_run: bool = False):
     """Stop then start all Tuner-role workers"""
-    return _bulk_worker_action(workdir, 'stop-start', dry_run=dry_run)
+    return _bulk_worker_action(workdir, 'stop-start', tuning_mode=tuning_mode, dry_run=dry_run)
 
 
 # Server control functions
@@ -860,9 +869,9 @@ def build_libraries(workdir, single_arch: str | None = None, dry_run: bool = Fal
     return _build_libraries.exec(workdir, single_arch, dry_run=dry_run)
 
 
-def build_test_libraries(workdir, single_arch: str | None = None, dry_run: bool = False):
+def build_test_libraries(workdir, single_arch: str | None = None, use_installed_db: bool = True, dry_run: bool = False):
     """Build testing version of AOTriton libraries inside container (all arches or one)."""
-    return _build_test_libraries.exec(workdir, single_arch, dry_run=dry_run)
+    return _build_test_libraries.exec(workdir, single_arch, use_installed_db=use_installed_db, dry_run=dry_run)
 
 
 def fetch_tuning_build(workdir, dry_run: bool = False):
@@ -899,14 +908,16 @@ def build_image_on_worker(workdir, hostname, dry_run: bool = False):
 
 # Deploy functions
 
-def deploy_workdir(workdir, dry_run: bool = False):
+def deploy_workdir(workdir, tuning_mode: str = 'kernel', dry_run: bool = False):
     """Deploy to all workers"""
-    return _deploy_all.exec(workdir, dry_run=dry_run)
+    return _deploy_all.exec(workdir, tuning_mode=tuning_mode, dry_run=dry_run)
 
 
-def deploy_workdir_single(workdir, hostname, extra_args=None, dry_run: bool = False):
+def deploy_workdir_single(workdir, hostname, extra_args=None, tuning_mode: str = 'kernel', dry_run: bool = False):
     """Deploy to single worker"""
-    return _deploy_worker.exec(workdir, hostname, extra_args=extra_args, dry_run=dry_run)
+    testnode_args = ['--testnode'] if tuning_mode == 'op' else []
+    combined = testnode_args + list(extra_args or [])
+    return _deploy_worker.exec(workdir, hostname, extra_args=combined or None, dry_run=dry_run)
 
 
 def prepare_workdir(workdir, dry_run: bool = False):
@@ -1382,6 +1393,71 @@ def get_build_node_config(workdir):
         }
     except Exception:
         return {'hostname': '', 'workdir_override': '', 'enabled': False}
+
+
+def get_test_build_use_installed_db(workdir) -> bool:
+    """Get whether test builds use installed/database/ (True by default)."""
+    init_workers_db(workdir)
+    workdir_path = Path(workdir)
+    db_path = workdir_path / 'workers.db'
+    try:
+        with sqlite3.connect(db_path.as_posix()) as conn:
+            cursor = conn.execute(
+                "SELECT value FROM config WHERE key = 'webui::test_build_use_installed_db'"
+            )
+            row = cursor.fetchone()
+            return row[0] != '0' if row else True
+    except Exception:
+        return True
+
+
+def set_test_build_use_installed_db(workdir, enabled: bool):
+    """Set whether test builds use installed/database/ in workers.db."""
+    value = '1' if enabled else '0'
+    init_workers_db(workdir)
+    workdir_path = Path(workdir)
+    db_path = workdir_path / 'workers.db'
+    try:
+        with sqlite3.connect(db_path.as_posix()) as conn:
+            conn.execute("""
+                INSERT INTO config (key, value) VALUES ('webui::test_build_use_installed_db', ?)
+                ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = CURRENT_TIMESTAMP
+            """, (value, value))
+        return {'success': True, 'message': f"Test build use installed db set to: {enabled}"}
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
+
+
+def get_tuning_mode(workdir) -> str:
+    """Get the WebUI tuning mode from workers.db; defaults to 'kernel'."""
+    init_workers_db(workdir)
+    workdir_path = Path(workdir)
+    db_path = workdir_path / 'workers.db'
+    try:
+        with sqlite3.connect(db_path.as_posix()) as conn:
+            cursor = conn.execute("SELECT value FROM config WHERE key = 'webui::tuning_mode'")
+            row = cursor.fetchone()
+            return row[0] if row else 'kernel'
+    except Exception:
+        return 'kernel'
+
+
+def set_tuning_mode(workdir, mode: str):
+    """Set the WebUI tuning mode in workers.db. mode must be 'kernel' or 'op'."""
+    if mode not in ('kernel', 'op'):
+        return {'success': False, 'error': f"Invalid tuning mode: {mode!r}"}
+    init_workers_db(workdir)
+    workdir_path = Path(workdir)
+    db_path = workdir_path / 'workers.db'
+    try:
+        with sqlite3.connect(db_path.as_posix()) as conn:
+            conn.execute("""
+                INSERT INTO config (key, value) VALUES ('webui::tuning_mode', ?)
+                ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = CURRENT_TIMESTAMP
+            """, (mode, mode))
+        return {'success': True, 'message': f"Tuning mode set to: {mode}"}
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
 
 
 def set_build_node_config(workdir, hostname, workdir_override, enabled):

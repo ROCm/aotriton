@@ -65,11 +65,13 @@ def workers():
     supported_archs = tasks.get_supported_architectures()
     default_workdir = tasks.get_default_workdir(workdir) or '<not set>'
     git_status = tasks.get_git_status(workdir)
+    tuning_mode = tasks.get_tuning_mode(workdir)
     return render_template('workers.html',
                           workers_by_arch=workers_by_arch,
                           supported_archs=supported_archs,
                           default_workdir=default_workdir,
-                          git_status=git_status)
+                          git_status=git_status,
+                          tuning_mode=tuning_mode)
 
 
 @bp.route('/servers')
@@ -90,10 +92,12 @@ def builds():
     build_node_config = tasks.get_build_node_config(workdir)
     default_workdir = tasks.get_default_workdir(workdir) or '(not set)'
     git_status = tasks.get_git_status(workdir)
+    use_installed_db = tasks.get_test_build_use_installed_db(workdir)
     return render_template('builds.html', archs=archs, hostnames=hostnames,
                            build_node_config=build_node_config,
                            default_workdir=default_workdir,
-                           git_status=git_status)
+                           git_status=git_status,
+                           use_installed_db=use_installed_db)
 
 
 @bp.route('/deploy')
@@ -120,7 +124,7 @@ def commands():
 def api_start_all_workers():
     """Start all workers"""
     workdir = current_app.config['WORKDIR']
-    result = tasks.start_all_workers(workdir, dry_run=should_dryrun())
+    result = tasks.start_all_workers(workdir, tuning_mode=tasks.get_tuning_mode(workdir), dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -136,7 +140,7 @@ def api_stop_all_workers():
 def api_restart_all_workers():
     """Restart all workers"""
     workdir = current_app.config['WORKDIR']
-    result = tasks.restart_all_workers(workdir, dry_run=should_dryrun())
+    result = tasks.restart_all_workers(workdir, tuning_mode=tasks.get_tuning_mode(workdir), dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -144,7 +148,7 @@ def api_restart_all_workers():
 def api_stop_start_all_workers():
     """Stop then start all workers"""
     workdir = current_app.config['WORKDIR']
-    result = tasks.stop_start_all_workers(workdir, dry_run=should_dryrun())
+    result = tasks.stop_start_all_workers(workdir, tuning_mode=tasks.get_tuning_mode(workdir), dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -153,7 +157,9 @@ def api_start_worker(hostname):
     """Start single worker"""
     workdir = current_app.config['WORKDIR']
     options = request.get_json() or {}
-    result = tasks.start_worker_single(workdir, hostname, options=options, dry_run=should_dryrun())
+    result = tasks.start_worker_single(workdir, hostname, options=options,
+                                       tuning_mode=tasks.get_tuning_mode(workdir),
+                                       dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -170,7 +176,9 @@ def api_restart_worker(hostname):
     """Restart single worker"""
     workdir = current_app.config['WORKDIR']
     options = request.get_json() or {}
-    result = tasks.restart_worker_single(workdir, hostname, options=options, dry_run=should_dryrun())
+    result = tasks.restart_worker_single(workdir, hostname, options=options,
+                                         tuning_mode=tasks.get_tuning_mode(workdir),
+                                         dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -179,7 +187,9 @@ def api_stop_start_worker(hostname):
     """Stop then start single worker"""
     workdir = current_app.config['WORKDIR']
     options = request.get_json() or {}
-    result = tasks.stop_start_worker_single(workdir, hostname, options=options, dry_run=should_dryrun())
+    result = tasks.stop_start_worker_single(workdir, hostname, options=options,
+                                            tuning_mode=tasks.get_tuning_mode(workdir),
+                                            dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -382,7 +392,18 @@ def api_build_test_libraries():
     """Build testing version of AOTriton libraries inside container (all or single arch)."""
     workdir = current_app.config['WORKDIR']
     single_arch = request.form.get('single_arch', '').strip() or None
-    result = tasks.build_test_libraries(workdir, single_arch, dry_run=should_dryrun())
+    use_installed_db = tasks.get_test_build_use_installed_db(workdir)
+    result = tasks.build_test_libraries(workdir, single_arch, use_installed_db=use_installed_db, dry_run=should_dryrun())
+    return jsonify(result)
+
+
+@bp.route('/api/config/test-build-use-installed-db', methods=['POST'])
+def api_test_build_use_installed_db():
+    """Set whether test builds use installed/database/ (enabled) or source-embedded DB (disabled)."""
+    workdir = current_app.config['WORKDIR']
+    values = request.form.getlist('enabled')
+    enabled = values[-1] == '1' if values else True
+    result = tasks.set_test_build_use_installed_db(workdir, enabled)
     return jsonify(result)
 
 
@@ -443,7 +464,7 @@ def api_build_images():
 def api_deploy_workdir():
     """Deploy workdir to all workers"""
     workdir = current_app.config['WORKDIR']
-    result = tasks.deploy_workdir(workdir, dry_run=should_dryrun())
+    result = tasks.deploy_workdir(workdir, tuning_mode=tasks.get_tuning_mode(workdir), dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -452,7 +473,9 @@ def api_deploy_single(hostname):
     """Deploy workdir to a single worker; pass testnode=1 to add --testnode flag"""
     workdir = current_app.config['WORKDIR']
     extra_args = ['--testnode'] if request.form.get('testnode') == '1' else None
-    result = tasks.deploy_workdir_single(workdir, hostname, extra_args=extra_args, dry_run=should_dryrun())
+    result = tasks.deploy_workdir_single(workdir, hostname, extra_args=extra_args,
+                                         tuning_mode=tasks.get_tuning_mode(workdir),
+                                         dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -523,6 +546,15 @@ def api_default_workdir():
         return jsonify({'success': False, 'error': 'Path is required'}), 400
 
     result = tasks.set_default_workdir(workdir, path)
+    return jsonify(result)
+
+
+@bp.route('/api/config/tuning-mode', methods=['POST'])
+def api_tuning_mode():
+    """Set the WebUI tuning mode (kernel or op)"""
+    workdir = current_app.config['WORKDIR']
+    mode = request.form.get('mode', '').strip()
+    result = tasks.set_tuning_mode(workdir, mode)
     return jsonify(result)
 
 

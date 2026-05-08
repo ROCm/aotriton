@@ -29,6 +29,7 @@ MODE="tuning"
 WORKDIR=""
 DO_SYNC=0
 SINGLE_ARCH=""
+SOURCE_DB=0
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -36,6 +37,7 @@ while [ "$#" -gt 0 ]; do
     --tuning)      MODE="tuning"; shift ;;
     --sync)        DO_SYNC=1; shift ;;
     --single_arch) SINGLE_ARCH="$2"; shift 2 ;;
+    --source_db)   SOURCE_DB=1; shift ;;
     *)             WORKDIR="$1"; shift ;;
   esac
 done
@@ -98,13 +100,15 @@ if [ "$USE_REMOTE" -eq 1 ]; then
   if [ "$MODE" = "test" ]; then
     echo "Running testbld on $BUILD_NODE_HOST via tsp (image: $CELERY_WORKER_IMAGE)"
     # shellcheck disable=SC2029
-    ssh "$BUILD_NODE_HOST" bash -s "$REMOTE_WORKDIR" "$CELERY_WORKER_IMAGE" "$SINGLE_ARCH" <<'EOF'
+    ssh "$BUILD_NODE_HOST" bash -s "$REMOTE_WORKDIR" "$CELERY_WORKER_IMAGE" "$SINGLE_ARCH" "$SOURCE_DB" <<'EOF'
 REMOTE_WORKDIR="$1"
 CELERY_WORKER_IMAGE="$2"
 SINGLE_ARCH="$3"
+SOURCE_DB="$4"
 
 TESTBLD_ARGS=(/wkdir)
 [ -n "$SINGLE_ARCH" ] && TESTBLD_ARGS+=(--single_arch "$SINGLE_ARCH")
+[ "$SOURCE_DB" = "1" ] && TESTBLD_ARGS+=(--source_db)
 
 set -x
 jobid=$(tsp docker run --rm \
@@ -157,6 +161,7 @@ else
   if [ "$MODE" = "test" ]; then
     TESTBLD_ARGS=(/wkdir)
     [ -n "$SINGLE_ARCH" ] && TESTBLD_ARGS+=(--single_arch "$SINGLE_ARCH")
+    [ "$SOURCE_DB" -eq 1 ] && TESTBLD_ARGS+=(--source_db)
     echo "Running testbld locally inside container: $CELERY_WORKER_IMAGE"
     docker run --rm \
       --user "$(id -u):$(id -g)" \
