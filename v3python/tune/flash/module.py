@@ -130,6 +130,9 @@ class Flash(TuningDescription):
         if arch.startswith('gfx11') and entry.hdim > 256:
             return False, (f'arch {arch} does not support hdim={entry.hdim} '
                            f'(gfx11xx maximum is 256; larger hdim exceeds LDS/register limits)')
+        if arch.startswith('gfx11') and (entry.seqlen_q > 2048 or entry.seqlen_k > 2048):
+            return False, (f'Insufficient number of gfx1100 GPUs available for tuning arch {arch}: '
+                           f'only seqlen_q/k <= 2048 entries are tuned')
         return True, ''
 
     def list_kernels(self, entry: FlashEntry):
