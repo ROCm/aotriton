@@ -144,7 +144,7 @@ class CommandProcessor(object):
             return f'{data_dir} is not valid data director. Missing entry.json file.'
         def gen():
             entry = tune.get_entry(data_dir)
-            kernels = tune.list_kernels(entry)
+            kernels = tune.list_impls(entry)
             for k in kernels:
                 yield k, tune.probe_backends(data_dir, k)
         return dict(gen())

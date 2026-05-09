@@ -20,12 +20,12 @@ IMPORTANT — lazy kernel initialization rule for get_kernel():
     argparse subparsers), so a top-level torch import breaks dispatch on
     machines without torch.
 
-    Always initialize kernel objects lazily inside get_kernel() on first call:
+    Always initialize kernel objects lazily inside get_impl() on first call:
 
         class MyModule(TuningDescription):
             _kernel_dict = None
 
-            def get_kernel(self, name):
+            def get_impl(self, name):
                 if self._kernel_dict is None:
                     from .kernels import KernelA, KernelB  # lazy import
                     self._kernel_dict = {'a': KernelA(), 'b': KernelB()}
@@ -145,13 +145,33 @@ class TuningDescription(ABC):
         return self.generate_entries_from_choices()
 
     @abstractmethod
-    def list_kernels(self, entry) -> list[str]:
+    def list_impls(self, entry) -> list[str]:
         pass
 
     @abstractmethod
-    def get_kernel(self, name: str):
-        """Return the kernel object for the given name. MUST use lazy initialization
-        (import torch-dependent modules inside this method, not at module level)."""
+    def get_impl(self, name: str | 'ImplSelector'):
+        """Return the impl object for the given name or selector.
+        Accepts either a plain str name or an ImplSelector instance.
+        Subclasses extract the name from the selector's appropriate field
+        (e.g., kernel_name for FlashKernelSelector, op_name for FlashOpBackendSelector).
+        MUST use lazy initialization (import torch-dependent modules inside
+        this method, not at module level).
+        """
+        pass
+
+    @abstractmethod
+    def probe_impl_desc(self, kernel, args) -> dict:
+        """Extract impl_desc from a probing run's extargs.
+
+        Called by run_single_benchmark after kernel.direct_call(direct_inputs, args)
+        with probe=True. Returns a JSON-serialisable dict that uniquely identifies
+        the chosen implementation (e.g., {psels, copts} for HSACO kernels,
+        {backend_index} for op backends).
+
+        Args:
+            kernel: the impl object returned by get_impl()
+            args: the extargs object returned by create_extargs(probe=True)
+        """
         pass
 
     def probe_backends(self, root: Path, which_impl: str) -> list[dict]:
@@ -197,10 +217,10 @@ class TuningDescription(ABC):
                         which_impl) -> list[float]:  # L1 error
         """
         Args:
-            which_impl: an ImplSelector instance identifying what to run.
+            which_impl: a FlashKernelSelector | FlashOpBackendSelector instance.
                 Subclasses rename this parameter to reflect their granularity:
-                  which_kernel  — kernel-level tuning (e.g. flash: selects HSACO variant)
-                  which_backend — backend-level tuning (e.g. flash_op: selects backend index)
+                  which_kernel  — kernel-level tuning (flash: selects HSACO variant)
+                  which_backend — backend-level tuning (flash_op: selects backend index)
         Returns:
             L1 error per test case.
         """
@@ -213,7 +233,7 @@ class TuningDescription(ABC):
                              which_impl) -> tuple[dict, list[float]]:
         """
         Args:
-            which_impl: an ImplSelector instance. See run_single_test for naming convention.
+            which_impl: a FlashKernelSelector | FlashOpBackendSelector instance.
         Returns:
             (impl_desc, times) where impl_desc is a JSON-serialisable dict
             and times is [median, p20, p80] latencies in ms.

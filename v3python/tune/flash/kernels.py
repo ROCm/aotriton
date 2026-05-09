@@ -79,6 +79,10 @@ class AttnOptionsWrapper:
     '''
     Unlike set_hsaco, None means "don't change"
     '''
+    def disable_probing(self):
+        """Switch from probe mode to run mode (clear Query/Skip bits, keep Manual/hsaco)."""
+        self.update_hsaco(probe=False)
+
     def update_hsaco(self, hsaco: int|None = None, probe: bool|None = None):
         c = self._c
         slot = self._slot
@@ -126,8 +130,8 @@ class SdpaCommon(SdpaReference):
     EXT_CLASS = AttnOptionsWrapper
     BACKEND_INDEX = None  # Must define in subclass
 
-    def create_extargs(self, *, which_kernel=None, probe=False):
-        hsaco_index = which_kernel.hsaco_index if which_kernel is not None else None
+    def create_extargs(self, *, which_impl=None, probe=False):
+        hsaco_index = which_impl.hsaco_index if which_impl is not None else None
         ext = self.EXT_CLASS(self.BACKEND_INDEX, self.KERNEL_SLOT)
         ext.set_hsaco(hsaco=hsaco_index, probe=probe)
         return ext
