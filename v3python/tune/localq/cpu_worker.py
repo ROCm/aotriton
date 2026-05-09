@@ -15,7 +15,7 @@ import signal
 from psycopg.rows import dict_row
 
 from .generic_worker import GenericWorker
-from .handlers import WriteHsacoResultHandler, PostprocessHandler, GracefulCancelRunningTaskHandler, MarkTaskFailedHandler
+from .handlers import WriteHsacoResultHandler, WriteBackendResultHandler, PostprocessHandler, GracefulCancelRunningTaskHandler, MarkTaskFailedHandler
 from ..utils import get_db_connection_params, configure_logging_with_flush
 from ..pq.connection import ReconnectableConn
 
@@ -47,6 +47,7 @@ def main():
     # Create handlers for CPU tasks
     handlers = [
         WriteHsacoResultHandler(db_conn),
+        WriteBackendResultHandler(db_conn),
         PostprocessHandler(db_conn),
         GracefulCancelRunningTaskHandler(db_conn),
         MarkTaskFailedHandler(db_conn),

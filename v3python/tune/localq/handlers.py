@@ -8,6 +8,7 @@ Message handlers for local queue DAG workflow.
 import json
 import logging
 import shutil
+from collections import defaultdict
 from pathlib import Path
 from typing import Dict, Any, List
 import psycopg
@@ -15,7 +16,7 @@ from psycopg.types.json import Jsonb
 
 from v3python.tune.exaid import exaid_create, ExaidSubprocessNotOK
 from ..pq.queue import TaskQueue
-from ..pq.results import save_tuning_result
+from ..pq.results import save_tuning_result, save_optune_result
 
 logger = logging.getLogger(__name__)
 
@@ -84,12 +85,11 @@ class TuneKernelHandler(MessageHandler):
         return "tune_kernel"
 
     def handle(self, message: dict) -> dict:
-        # Just forward task_config to preprocess
         return {
             'class': 'preprocess',
             'target_queue': 'gpu_queue',
             'task_id': message['task_id'],
-            'task_config': message['task_config']
+            'task_config': message['task_config'],
         }
 
 
@@ -167,73 +167,104 @@ class ProbeHandler(MessageHandler):
     def handle(self, message: dict) -> List[dict] | dict | None:
         task_config = message['task_config']
         task_id = message['task_id']
+        module = task_config['module']
+        is_op = module.endswith('_op')
 
-        # Execute probe
-        module = task_config["module"]
         exaid = exaid_create(module, self.gpu_id)
         tmpdir = Path(task_config['tmpdir'])
 
         try:
-            kernel_dict = exaid.probe(tmpdir)
+            impl_dict = exaid.probe(tmpdir)
         except (OSError, ExaidSubprocessNotOK) as e:
             logger.error(f"Probe failed for task_id={task_id}: {e}")
-            # Return message to CPU worker to mark task as failed
-            arch = task_config.get('arch')
-            error_msg = f"Probe failed: {type(e).__name__}: {str(e)}"
             return {
                 'class': 'mark_task_failed',
                 'target_queue': 'cpu_queue',
                 'task_id': task_id,
-                'arch': arch,
-                'error': error_msg,
+                'arch': task_config.get('arch'),
+                'error': f"Probe failed: {type(e).__name__}: {e}",
                 'tmpdir': tmpdir.as_posix(),
             }
 
-        # Apply max_hsaco filtering
-        max_hsaco_dict = task_config.get("max_hsaco", {})
-        max_hsaco_global = max_hsaco_dict.get("*", None)
+        if is_op:
+            return self._build_fanout_op(impl_dict, task_id, task_config)
+        else:
+            return self._build_fanout_kernel(impl_dict, task_id, task_config)
 
-        # Generate tune_hsaco messages
+    def _build_fanout_kernel(self, impl_dict: dict, task_id: int,
+                             task_config: dict) -> List[dict]:
+        max_hsaco_dict = task_config.get('max_hsaco', {})
+        max_hsaco_global = max_hsaco_dict.get('*', None)
         results = []
-        hsaco_tasks = []  # List of (kname, hsaco_index) for tracking
+        impl_tasks = []
 
-        for kname, hsaco_list in kernel_dict.items():
-            max_hsaco = max_hsaco_dict.get(kname, max_hsaco_global)
-            limited_hsaco = hsaco_list[:max_hsaco] if max_hsaco else hsaco_list
-
-            for hsaco_index in range(len(limited_hsaco)):
-                hsaco_tasks.append((kname, hsaco_index))
-
+        for kname, hsaco_list in impl_dict.items():
+            max_h = max_hsaco_dict.get(kname, max_hsaco_global)
+            limited = hsaco_list[:max_h] if max_h else hsaco_list
+            for hsaco_index in range(len(limited)):
+                impl_tasks.append((kname, hsaco_index))
                 results.append({
                     'class': 'tune_hsaco',
                     'target_queue': 'gpu_queue',
                     'task_id': task_id,
                     'task_config': task_config,
                     'kname': kname,
-                    'hsaco_index': hsaco_index
+                    'hsaco_index': hsaco_index,
                 })
 
-        # Generate postprocess message (depends on all tune_hsaco)
-        # Build expected_hsacos dict for tracking: {kname: [hsaco_index, ...]}
-        expected_hsacos = {}
-        for kname, hsaco_index in hsaco_tasks:
-            if kname not in expected_hsacos:
-                expected_hsacos[kname] = []
-            expected_hsacos[kname].append(hsaco_index)
+        expected_impls = {}
+        for name, index in impl_tasks:
+            expected_impls.setdefault(name, []).append(index)
 
-        postprocess_msg = {
+        results.append({
             'class': 'postprocess',
             'target_queue': 'cpu_queue',
             'task_id': task_id,
             'task_config': task_config,
-            'depends': ['hsaco_result'],  # Wait for all hsaco_result messages
-            'expected_hsacos': expected_hsacos,  # Track which kernels expected
-            'received_hsacos': {},  # Will accumulate: {kname: {hsaco_index: report}}
-        }
+            'depends': ['hsaco_result'],
+            'name_key': 'kname',
+            'index_key': 'hsaco_index',
+            'expected_impls': expected_impls,
+            'received_impls': defaultdict(dict),
+        })
+        logger.info(f"Probed {len(impl_tasks)} hsaco kernels for task_id={task_id}")
+        return results
 
-        results.append(postprocess_msg)
+    def _build_fanout_op(self, impl_dict: dict, task_id: int,
+                         task_config: dict) -> List[dict]:
+        # impl_dict: {op_name: [{'backend_index': i}, ...], ...}
+        results = []
+        impl_tasks = []
 
-        logger.info(f"Probed {len(hsaco_tasks)} hsaco kernels for task_id={task_id}")
+        for op_name, backend_list in impl_dict.items():
+            for entry in backend_list:
+                backend_index = entry['backend_index']
+                impl_tasks.append((op_name, backend_index))
+                results.append({
+                    'class': 'tune_backend',
+                    'target_queue': 'gpu_queue',
+                    'task_id': task_id,
+                    'task_config': task_config,
+                    'op_name': op_name,
+                    'backend_index': backend_index,
+                })
+
+        expected_impls = {}
+        for name, index in impl_tasks:
+            expected_impls.setdefault(name, []).append(index)
+
+        results.append({
+            'class': 'postprocess',
+            'target_queue': 'cpu_queue',
+            'task_id': task_id,
+            'task_config': task_config,
+            'depends': ['backend_result'],
+            'name_key': 'op_name',
+            'index_key': 'backend_index',
+            'expected_impls': expected_impls,
+            'received_impls': defaultdict(dict),
+        })
+        logger.info(f"Probed {len(impl_tasks)} backends for task_id={task_id}")
         return results
 
 
@@ -252,53 +283,76 @@ class TuneHsacoHandler(MessageHandler):
     def get_class_name(cls) -> str:
         return "tune_hsaco"
 
+    def _impl_keys(self, message: dict) -> tuple[str, int]:
+        return message['kname'], message['hsaco_index']
+
+    def _result_class(self) -> str:
+        return "hsaco_result"
+
+    def _report_id_fields(self, impl_name: str, impl_index: int) -> dict:
+        return {'kernel_name': impl_name, 'hsaco_index': impl_index}
+
+    def _result_id_fields(self, impl_name: str, impl_index: int) -> dict:
+        return {'kname': impl_name, 'hsaco_index': impl_index}
+
     def handle(self, message: dict) -> dict:
         task_config = message['task_config']
-        kname = message['kname']
-        hsaco_index = message['hsaco_index']
         task_id = message['task_id']
+        impl_name, impl_index = self._impl_keys(message)
 
-        # Execute benchmarking
-        module = task_config["module"]
+        module = task_config['module']
         exaid = exaid_create(module, self.gpu_id)
         tmpdir = Path(task_config['tmpdir'])
 
-        report = {
-            "kernel_name": kname,
-            "hsaco_index": hsaco_index,
-        }
-
+        report = self._report_id_fields(impl_name, impl_index)
         try:
-            result_data = exaid.benchmark(tmpdir, kname, hsaco_index)
-            report['result'] = "OK"
+            result_data = exaid.benchmark(tmpdir, impl_name, impl_index)
+            report['result'] = 'OK'
             report['result_data'] = result_data
             report['error'] = None
         except OSError as e:
-            logger.error(f"Benchmark crashed for {kname}[{hsaco_index}]: {e}")
-            report['result'] = "crash"
+            logger.error(f"Benchmark crashed for {impl_name}[{impl_index}]: {e}")
+            report['result'] = 'crash'
             report['result_data'] = None
-            report['error'] = {
-                "errno": e.errno,
-                "stderr": e.strerror
-            }
+            report['error'] = {'errno': e.errno, 'stderr': e.strerror}
         except ExaidSubprocessNotOK as e:
-            logger.error(f"Benchmark NotOK for {kname}[{hsaco_index}]: {e}")
-            report['result'] = "NotOK"
+            logger.error(f"Benchmark NotOK for {impl_name}[{impl_index}]: {e}")
+            report['result'] = 'NotOK'
             report['result_data'] = None
-            report['error'] = {
-                "stdout": e.stdout,
-                "stderr": e.stderr,
-            }
+            report['error'] = {'stdout': e.stdout, 'stderr': e.stderr}
 
-        # Return hsaco_result message
         return {
-            'class': 'hsaco_result',
+            'class': self._result_class(),
             'target_queue': 'cpu_queue',
             'task_id': task_id,
-            'kname': kname,
-            'hsaco_index': hsaco_index,
-            'report': report
+            **self._result_id_fields(impl_name, impl_index),
+            'report': report,
         }
+
+
+class TuneBackendHandler(TuneHsacoHandler):
+    """
+    Benchmarks single op backend.
+
+    Input: tune_backend message
+    Output: backend_result message
+    """
+
+    @classmethod
+    def get_class_name(cls) -> str:
+        return "tune_backend"
+
+    def _impl_keys(self, message: dict) -> tuple[str, int]:
+        return message['op_name'], message['backend_index']
+
+    def _result_class(self) -> str:
+        return "backend_result"
+
+    def _report_id_fields(self, impl_name: str, impl_index: int) -> dict:
+        return {'op_name': impl_name, 'backend_index': impl_index}
+
+    def _result_id_fields(self, impl_name: str, impl_index: int) -> dict:
+        return {'op_name': impl_name, 'backend_index': impl_index}
 
 
 class WriteHsacoResultHandler(MessageHandler):
@@ -320,13 +374,36 @@ class WriteHsacoResultHandler(MessageHandler):
         task_id = message['task_id']
         report = message['report']
 
-        # Write to tuning_results table using pq function
         save_tuning_result(task_id, report, self.db_conn)
 
         logger.debug(f"Wrote hsaco result for task_id={task_id} "
                     f"{report['kernel_name']}[{report['hsaco_index']}]")
+        return None
 
-        # No result message - this triggers dependency resolution in broker
+
+class WriteBackendResultHandler(MessageHandler):
+    """
+    Writes op backend result to optune_results.
+
+    Input: backend_result message
+    Output: None (triggers dependency resolution for postprocess)
+    """
+
+    def __init__(self, db_conn):
+        self.db_conn = db_conn
+
+    @classmethod
+    def get_class_name(cls) -> str:
+        return "backend_result"
+
+    def handle(self, message: dict) -> None:
+        task_id = message['task_id']
+        report = message['report']
+
+        save_optune_result(task_id, report, self.db_conn)
+
+        logger.debug(f"Wrote backend result for task_id={task_id} "
+                    f"{report['op_name']}[{report['backend_index']}]")
         return None
 
 
@@ -360,86 +437,50 @@ class PostprocessHandler(MessageHandler):
 
     def resolve_dependency(self, blocked_msg: dict, incoming_msg: dict) -> bool:
         """
-        Called when hsaco_result arrives.
-        Accumulate reports and check if all hsacos completed.
+        Called when an impl result arrives (hsaco_result or backend_result).
+        Accumulates reports and checks if all expected impls completed.
 
         IMPORTANT: This method is called in the BROKER context, not the CPU worker context.
-        The broker instantiates PostprocessHandler with db_conn=None just to call this method.
-        Do NOT access self.db_conn here - it will be None. This method only manipulates
-        message dictionaries to track dependency resolution.
-
-        The actual handle() method runs in the CPU worker context and has a valid db_conn.
-
-        TODO: Consider splitting this class into BrokerPostprocessTracker and WorkerPostprocessHandler
-        to make the dual-context usage more explicit.
+        Do NOT access self.db_conn here — it will be None.
         """
         if blocked_msg['class'] != 'postprocess':
             return False
 
-        if incoming_msg['class'] != 'hsaco_result':
+        if incoming_msg['class'] not in blocked_msg['depends']:
             return False
 
         if blocked_msg['task_id'] != incoming_msg['task_id']:
             return False
 
-        # Accumulate report
-        kname = incoming_msg['kname']
-        hsaco_index = incoming_msg['hsaco_index']
-        report = incoming_msg['report']
+        name_key = blocked_msg['name_key']
+        index_key = blocked_msg['index_key']
+        impl_name = incoming_msg[name_key]
+        impl_index = incoming_msg[index_key]
+        blocked_msg['received_impls'][impl_name][impl_index] = incoming_msg['report']
 
-        if kname not in blocked_msg['received_hsacos']:
-            blocked_msg['received_hsacos'][kname] = {}
+        expected = blocked_msg['expected_impls']
+        received = blocked_msg['received_impls']
+        for name, indices in expected.items():
+            if name not in received:
+                return False
+            for idx in indices:
+                if idx not in received[name]:
+                    return False
 
-        blocked_msg['received_hsacos'][kname][hsaco_index] = report
-
-        # Check if all expected hsacos received
-        expected = blocked_msg['expected_hsacos']
-        received = blocked_msg['received_hsacos']
-
-        # Check each kernel
-        for kname, expected_indices in expected.items():
-            if kname not in received:
-                return False  # Kernel not started yet
-
-            for hsaco_index in expected_indices:
-                if hsaco_index not in received[kname]:
-                    return False  # Missing hsaco index
-
-        # All hsacos received
-        logger.info(f"All hsacos received for task_id={blocked_msg['task_id']}, "
+        logger.info(f"All impls received for task_id={blocked_msg['task_id']}, "
                    f"unblocking postprocess")
         return True
 
     def handle(self, message: dict) -> dict:
-        """
-        Called after all dependencies resolved.
-        """
         task_id = message['task_id']
         task_config = message['task_config']
-        received_hsacos = message['received_hsacos']
 
-        # Aggregate results into brief format
-        # brief = {kname: {hsaco_index: result, ...}, ...}
-        brief = {}
-        for kname, hsaco_dict in received_hsacos.items():
-            brief[kname] = {}
-            for hsaco_index, report in hsaco_dict.items():
-                brief[kname][hsaco_index] = report['result']
-
-        aggregation = {
-            "brief": brief,
-        }
-
-        # Update task_queue with completed status
-        # Extract arch from task_config for partition routing
         arch = task_config.get('arch')
         logger.info(f"PostprocessHandler: Marking task_id={task_id} as completed (arch={arch})")
-        task_queue = TaskQueue(self.db_conn)
-        task_queue.mark_completed(task_id, arch)
+        TaskQueue(self.db_conn).mark_completed(task_id, arch)
 
         logger.info(f"Postprocess completed for task_id={task_id}")
 
-        # Cleanup tmpdir
         tmpdir = Path(task_config['tmpdir'])
         try:
             shutil.rmtree(tmpdir, ignore_errors=True)
@@ -447,13 +488,11 @@ class PostprocessHandler(MessageHandler):
         except Exception as e:
             logger.warning(f"Failed to cleanup tmpdir {tmpdir}: {e}")
 
-        # Return ack message to unblock PG reader
-        ack_msg = {
-            'class': 'tune_kernel_ack',
-            'task_id': task_id
-        }
         logger.info(f"Postprocess returning ack message for task_id={task_id}")
-        return ack_msg
+        return {
+            'class': 'tune_kernel_ack',
+            'task_id': task_id,
+        }
 
     def teardown_with_unmet_dependency(self, message: dict) -> dict:
         """

@@ -55,6 +55,37 @@ def save_tuning_result(task_id: str, report: dict, conn) -> None:
         ))
 
 
+def save_optune_result(task_id: str, report: dict, conn) -> None:
+    """
+    Save a single op-tuning backend result to optune_results.
+
+    Args:
+        task_id: Task ID from task_queue
+        report: Benchmark report dictionary with keys:
+            - op_name: Operator name
+            - backend_index: Backend variant index
+            - result: Result status (OK/NotOK/crash/ERROR)
+            - result_data: Optional benchmark data (JSONB)
+            - error: Optional error information (JSONB)
+            - complete_on_gpu: GPU ID used for benchmark
+        conn: PostgreSQL connection (from psycopg.connect)
+    """
+    with conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO optune_results
+                (task_id, op_name, backend_index, result, result_data, error, gpu_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """, (
+            task_id,
+            report['op_name'],
+            report['backend_index'],
+            report['result'],
+            Jsonb(report['result_data']) if report.get('result_data') else None,
+            Jsonb(report['error']) if report.get('error') else None,
+            report.get('complete_on_gpu'),
+        ))
+
+
 def get_task_results(task_id: str, conn) -> list:
     """
     Retrieve all results for a task.

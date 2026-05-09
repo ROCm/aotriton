@@ -14,7 +14,7 @@ import argparse
 import signal
 
 from .generic_worker import GenericWorker
-from .handlers import TuneKernelHandler, PreprocessHandler, ProbeHandler, TuneHsacoHandler
+from .handlers import TuneKernelHandler, PreprocessHandler, ProbeHandler, TuneHsacoHandler, TuneBackendHandler
 from ..utils import configure_logging_with_flush
 
 configure_logging_with_flush()
@@ -41,6 +41,7 @@ def main():
         PreprocessHandler(gpu_id),
         ProbeHandler(gpu_id),
         TuneHsacoHandler(gpu_id),
+        TuneBackendHandler(gpu_id),
     ]
 
     # Create and run worker

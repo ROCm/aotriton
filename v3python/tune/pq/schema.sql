@@ -55,6 +55,24 @@ CREATE INDEX IF NOT EXISTS idx_tuning_results_task
 CREATE INDEX IF NOT EXISTS idx_tuning_results_kernel
     ON tuning_results (kernel_name, result);
 
+CREATE TABLE IF NOT EXISTS optune_results (
+    id BIGSERIAL PRIMARY KEY,
+    task_id BIGINT NOT NULL,
+    op_name TEXT NOT NULL,
+    backend_index INT NOT NULL,
+    result TEXT NOT NULL,  -- OK/NotOK/crash/ERROR
+    result_data JSONB,
+    error JSONB,
+    gpu_id INT,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_optune_results_task
+    ON optune_results (task_id, op_name, backend_index);
+
+CREATE INDEX IF NOT EXISTS idx_optune_results_backend
+    ON optune_results (op_name, result);
+
 -- Utility views for monitoring
 CREATE OR REPLACE VIEW queue_progress AS
 SELECT
