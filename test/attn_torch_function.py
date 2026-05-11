@@ -215,7 +215,7 @@ class _attention(torch.autograd.Function):
         # if q.shape[-1] <= 32:
         # do = do.contiguous()
         dq = torch.empty_like(q)
-        dq_acc = lazy_dq_acc(q)
+        dq_acc = lazy_dq_acc(q)  # dq_acc only supports BHSD; lazy_dq_acc always produces BHSD to satisfy this.
         dk = torch.empty_like(k)
         dv = torch.empty_like(v)
         db = torch.empty_like(b) if b is not None else None

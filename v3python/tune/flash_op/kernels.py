@@ -6,7 +6,6 @@ from ..flash.kernel_calls import (
     attn_fwd,
     bwd_kernel_dk_dv,
 )
-from ..gpu_utils import create_aotensor_like
 import torch
 
 class AttnOptionsWrapperOp:
@@ -59,9 +58,18 @@ class attn_bwd_op(SdpaOpCommon, bwd_kernel_dk_dv):
     # kMetro_TritonSplit=0, kShim_BwdKernelFuse=1, kSlimAffine_AiterFmhaV3Bwd=2
     BACKEND_COUNT = 3
 
+    def direct_call(self, direct_inputs, extargs):
+        im, view, devm = direct_inputs
+        from ..gpu_utils import zero_devm
+        if extargs.backend_index == 2:  # kSlimAffine_AiterFmhaV3Bwd accumulates into dq_acc; clear before each call.
+            zero_devm(devm.dq_acc)
+        return super().direct_call(direct_inputs, extargs)
+
     def prepare_directs(self, im, inputs):
         im, view, devm = super().prepare_directs(im, inputs)
         from pyaotriton import lazy_tensor
-        tmp, devm.dq_acc = create_aotensor_like(dq, dtype=torch.float32)
-        view.dq_acc = lazy_tensor.eager_dq_acc(tmp)
+        from ..gpu_utils import mk_aotensor
+        devm.dq_acc = torch.zeros(*devm.q.size(), dtype=torch.float32, device=devm.q.device)
+        dq_acc_view, _ = mk_aotensor(devm.dq_acc)
+        view.dq_acc = lazy_tensor.eager_null_dq_acc(dq_acc_view)
         return im, view, devm
