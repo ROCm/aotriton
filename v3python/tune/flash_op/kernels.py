@@ -68,6 +68,8 @@ class attn_fwd_op(SdpaOpCommon, attn_fwd):
 class attn_bwd_op(SdpaOpCommon, bwd_kernel_dk_dv):
     # kMetro_TritonSplit=0, kShim_BwdKernelFuse=1, kSlimAffine_AiterFmhaV3Bwd=2 (gfx942/gfx950 only)
 
+    OUTPUT_TNAMES = ["dk", "dv", "dq", "db"]
+
     @property
     def BACKEND_COUNT(self):
         return 3 if _gpu_arch() in ('gfx942', 'gfx950') else 2
@@ -77,7 +79,8 @@ class attn_bwd_op(SdpaOpCommon, bwd_kernel_dk_dv):
         from ..gpu_utils import zero_devm
         if extargs.backend_index == 2:  # kSlimAffine_AiterFmhaV3Bwd accumulates into dq_acc; clear before each call.
             zero_devm(devm.dq_acc)
-        return super().direct_call(direct_inputs, extargs)
+        self._direct_call(direct_inputs, extargs)
+        return (devm.dk, devm.dv, devm.dq, devm.db)
 
     def prepare_directs(self, im, inputs):
         im, view, devm = super().prepare_directs(im, inputs)
