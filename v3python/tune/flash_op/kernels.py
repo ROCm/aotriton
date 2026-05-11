@@ -59,11 +59,7 @@ class attn_bwd_op(SdpaOpCommon, bwd_kernel_dk_dv):
     BACKEND_COUNT = 3
 
     def prepare_directs(self, im, inputs):
-        view = super().prepare_directs(im, inputs)
-        # Replace null dq_acc with a real lazy accumulator for non-Triton backends
-        from pyaotriton import lazy_tensor, T4
-        from ..gpu_utils import cast_dtype
-        dq = view.dq
-        dq_view = T4(dq.data_ptr(), tuple(dq.size()), dq.stride(), cast_dtype(dq.dtype))
-        view.dq_acc = lazy_tensor.dq_acc(dq_view, dq.device.index)
-        return view
+        im, view, devm = super().prepare_directs(im, inputs)
+        from pyaotriton import lazy_tensor
+        view.dq_acc = lazy_tensor.dq_acc(view.dq, devm.dq.device.index)
+        return im, view, devm
