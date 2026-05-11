@@ -35,8 +35,9 @@ NAN = float("nan")
 def eager_null_dq_acc(dq):
     from pyaotriton import lazy_tensor
     # data_ptr=0: Triton kernel will not access dq_acc, so the null pointer is safe.
+    # TODO(next-cycle): call lazy_tensor.eager_dq_acc after the binding is renamed.
     dq_view = T4(0, tuple(dq.size()), dq.stride(), cast_dtype(dq.dtype))
-    return lazy_tensor.eager_dq_acc(dq_view)
+    return lazy_tensor.eager_null_dq_acc(dq_view)
 
 def eager_delta(L):
     from pyaotriton import lazy_tensor
