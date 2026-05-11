@@ -8,6 +8,14 @@ from ..flash.kernel_calls import (
 )
 import torch
 
+_cached_arch = None
+
+def _gpu_arch() -> str:
+    global _cached_arch
+    if _cached_arch is None:
+        _cached_arch = torch.cuda.get_device_properties(0).gcnArchName.split(':')[0]
+    return _cached_arch
+
 class AttnOptionsWrapperOp:
     """
     Wraps attn_options from the *testing* version of pyaotriton (installed/test/).
@@ -55,8 +63,11 @@ class attn_fwd_op(SdpaOpCommon, attn_fwd):
 
 
 class attn_bwd_op(SdpaOpCommon, bwd_kernel_dk_dv):
-    # kMetro_TritonSplit=0, kShim_BwdKernelFuse=1, kSlimAffine_AiterFmhaV3Bwd=2
-    BACKEND_COUNT = 3
+    # kMetro_TritonSplit=0, kShim_BwdKernelFuse=1, kSlimAffine_AiterFmhaV3Bwd=2 (gfx942/gfx950 only)
+
+    @property
+    def BACKEND_COUNT(self):
+        return 3 if _gpu_arch() in ('gfx942', 'gfx950') else 2
 
     def direct_call(self, direct_inputs, extargs):
         im, view, devm = direct_inputs
