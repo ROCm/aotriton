@@ -237,6 +237,9 @@ class ProbeHandler(MessageHandler):
         impl_tasks = []
 
         for op_name, backend_list in impl_dict.items():
+            if len(backend_list) <= 1:
+                logger.info(f"Skipping op_name={op_name} for task_id={task_id}: only 1 backend, no tuning needed")
+                continue
             for entry in backend_list:
                 backend_index = entry['backend_index']
                 impl_tasks.append((op_name, backend_index))
