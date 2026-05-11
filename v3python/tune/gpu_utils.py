@@ -71,7 +71,9 @@ def target_fudge_factor(out: torch.Tensor,
     tft = max(1.0, adiff / ref_error)
     return (tft, adiff, ref_error)
 
-def record_early_reject(tff_result: tuple[float, float, float]) -> tuple[float, float, float]:
+def record_early_reject(tff_result: tuple[float, float, float] | None) -> tuple[float, float, float]:
+    if tff_result is None:
+        return None
     from pyaotriton import hipError_t
     sentinel = -int(hipError_t.hipErrorPeerAccessUnsupported)
     tft, _adiff, ref_error = tff_result
