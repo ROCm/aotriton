@@ -71,6 +71,12 @@ def target_fudge_factor(out: torch.Tensor,
     tft = max(1.0, adiff / ref_error)
     return (tft, adiff, ref_error)
 
+def record_early_reject(tff_result: tuple[float, float, float]) -> tuple[float, float, float]:
+    from aotriton_flash import hipError_t
+    sentinel = -int(hipError_t.hipErrorPeerAccessUnsupported)
+    tft, _adiff, ref_error = tff_result
+    return (tft, sentinel, ref_error)
+
 def detach_member_tensors(data_object) -> dict:
     d = asdict_shallow(data_object)
     return { k: v.detach() if isinstance(v, torch.Tensor) else v for k, v in d.items() }

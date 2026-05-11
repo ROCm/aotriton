@@ -114,7 +114,7 @@ class attn_fwd(SdpaCalls):
                             fa_forward_op_params.kVersion,
                             view.stream,
                             extargs.c_object)
-        return (devm.out, devm.logsumexp)
+        return (devm.out, devm.logsumexp), err
 
     OUTPUT_TNAMES = ["out"]
 
@@ -187,8 +187,8 @@ class bwd_kernel_dk_dv(SdpaCalls):
 
     def direct_call(self, direct_inputs, extargs):
         im, view, devm = direct_inputs
-        self._direct_call(direct_inputs, extargs)
-        return (devm.dk, devm.dv)
+        err = self._direct_call(direct_inputs, extargs)
+        return (devm.dk, devm.dv), err
 
     OUTPUT_TNAMES = ["dk", "dv"]
 
@@ -231,7 +231,7 @@ class bwd_kernel_dq(SdpaCalls):
                              fa_backward_op_params.kVersion,
                              view.stream,
                              extargs.c_object)
-        return (devm.dq, devm.db)
+        return (devm.dq, devm.db), err
 
     OUTPUT_TNAMES = ["dq", "db"]
 
@@ -303,6 +303,6 @@ class bwd_kernel_fuse(SdpaCalls):
                              fa_backward_op_params.kVersion,
                              view.stream,
                              extargs.c_object)
-        return (devm.dk, devm.dv, devm.dq, devm.db)
+        return (devm.dk, devm.dv, devm.dq, devm.db), err
 
     OUTPUT_TNAMES = ["dk", "dv", "dq", "db"]

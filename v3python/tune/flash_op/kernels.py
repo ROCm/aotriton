@@ -6,6 +6,7 @@ from ..flash.kernel_calls import (
     attn_fwd,
     bwd_kernel_dk_dv,
 )
+from ..kftdesc import BackendForTuneDescription
 import torch
 
 _cached_arch = None
@@ -48,7 +49,7 @@ class AttnOptionsWrapperOp:
         pass
 
 
-class SdpaOpCommon(SdpaCalls):
+class SdpaOpCommon(BackendForTuneDescription, SdpaCalls):
     EXT_CLASS = AttnOptionsWrapperOp
     BACKEND_COUNT = None  # must define in subclass
 
@@ -79,8 +80,8 @@ class attn_bwd_op(SdpaOpCommon, bwd_kernel_dk_dv):
         from ..gpu_utils import zero_devm
         if extargs.backend_index == 2:  # kSlimAffine_AiterFmhaV3Bwd accumulates into dq_acc; clear before each call.
             zero_devm(devm.dq_acc)
-        self._direct_call(direct_inputs, extargs)
-        return (devm.dk, devm.dv, devm.dq, devm.db)
+        err = self._direct_call(direct_inputs, extargs)
+        return (devm.dk, devm.dv, devm.dq, devm.db), err
 
     def prepare_directs(self, im, inputs):
         im, view, devm = super().prepare_directs(im, inputs)

@@ -336,9 +336,12 @@ class Flash(TuningDescription):
             inputs = from_dict(data_class=kernel.PT_INPUT_CLASS, data=d["bidi_inputs"], config=dacite_tuple)
             direct_inputs = kernel.prepare_directs(im, inputs)
             kernel.fill_nan_to_outputs(direct_inputs)
-            outputs = kernel.direct_call(direct_inputs, args)
+            outputs, err = kernel.direct_call(direct_inputs, args)
             refs = from_dict(data_class=kernel.PT_REF_CLASS, data=d["bidi_outputs"], config=dacite_tuple)
             result = kernel.compare(outputs, refs)
+            early = kernel.check_early_reject_results(result, err)
+            if early is not None:
+                result = early
             if im.qkh > 2048 * 2048 * 64:
                 gc.collect()
                 torch.cuda.empty_cache()
