@@ -6,7 +6,8 @@ from ..flash.kernel_calls import (
     attn_fwd,
     bwd_kernel_dk_dv,
 )
-
+from ..gpu_utils import create_aotensor_like
+import torch
 
 class AttnOptionsWrapperOp:
     """
@@ -61,5 +62,6 @@ class attn_bwd_op(SdpaOpCommon, bwd_kernel_dk_dv):
     def prepare_directs(self, im, inputs):
         im, view, devm = super().prepare_directs(im, inputs)
         from pyaotriton import lazy_tensor
-        view.dq_acc = lazy_tensor.dq_acc(view.dq, devm.dq.device.index)
+        tmp, devm.dq_acc = create_aotensor_like(dq, dtype=torch.float32)
+        view.dq_acc = lazy_tensor.eager_dq_acc(tmp)
         return im, view, devm
