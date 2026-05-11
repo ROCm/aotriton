@@ -58,8 +58,11 @@ class SdpaOpCommon(SdpaCalls):
 
 
 class attn_fwd_op(SdpaOpCommon, attn_fwd):
-    # kMetro_Triton=0, kSlimAffine_AiterFmhaV3Fwd=1
-    BACKEND_COUNT = 2
+    # kMetro_Triton=0, kSlimAffine_AiterFmhaV3Fwd=1 (gfx942/gfx950 only)
+
+    @property
+    def BACKEND_COUNT(self):
+        return 2 if _gpu_arch() in ('gfx942', 'gfx950') else 1
 
 
 class attn_bwd_op(SdpaOpCommon, bwd_kernel_dk_dv):
