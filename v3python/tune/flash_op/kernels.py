@@ -1,8 +1,8 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-from ..flash.kernels import (
-    SdpaCommon,
+from ..flash.kernel_calls import (
+    SdpaCalls,
     attn_fwd,
     bwd_kernel_dk_dv,
 )
@@ -40,7 +40,7 @@ class AttnOptionsWrapperOp:
         pass
 
 
-class SdpaOpCommon(SdpaCommon):
+class SdpaOpCommon(SdpaCalls):
     EXT_CLASS = AttnOptionsWrapperOp
     BACKEND_COUNT = None  # must define in subclass
 
