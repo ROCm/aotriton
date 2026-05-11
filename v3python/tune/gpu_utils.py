@@ -72,7 +72,7 @@ def target_fudge_factor(out: torch.Tensor,
     return (tft, adiff, ref_error)
 
 def record_early_reject(tff_result: tuple[float, float, float]) -> tuple[float, float, float]:
-    from aotriton_flash import hipError_t
+    from pyaotriton import hipError_t
     sentinel = -int(hipError_t.hipErrorPeerAccessUnsupported)
     tft, _adiff, ref_error = tff_result
     return (tft, sentinel, ref_error)

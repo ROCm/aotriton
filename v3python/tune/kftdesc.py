@@ -83,7 +83,7 @@ class BackendForTuneDescription(KernelForTuneDescription):
     """
 
     def check_early_reject_results(self, result: dict, err) -> dict | None:
-        from aotriton_flash import hipError_t
+        from pyaotriton import hipError_t
         if err == hipError_t.hipErrorPeerAccessUnsupported:
             from .gpu_utils import record_early_reject
             return {name: record_early_reject(v) for name, v in result.items()}
