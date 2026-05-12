@@ -298,11 +298,20 @@ def get_debug_task_data(workdir, task_id: int) -> dict:
                 )
                 accurate_results = cur.fetchall()
 
+                cur.execute(
+                    "SELECT id, op_name, backend_index, result, result_data,"
+                    " error, gpu_id, created_at FROM optune_results"
+                    " WHERE task_id = %s ORDER BY op_name, backend_index",
+                    (task_id,),
+                )
+                optune_results = cur.fetchall()
+
         return {
             'task': task,
             'tuning_results': tuning_results,
             'best_results': best_results,
             'accurate_results': accurate_results,
+            'optune_results': optune_results,
         }
     except Exception as e:
         logging.error('Failed to get debug data for task %s: %s', task_id, e)

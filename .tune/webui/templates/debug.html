@@ -187,6 +187,62 @@ document.getElementById('tune_lookup_btn').addEventListener('click', function() 
     {% endif %}
 </section>
 
+{# ── optune_results ──────────────────────────────────────────────────────── #}
+<section>
+    <h3>optune_results ({{ debug_data.optune_results | length }} rows)</h3>
+    {% if debug_data.optune_results %}
+    <table style="width: 100%;">
+        <thead>
+            <tr>
+                <th>id</th>
+                <th>op_name</th>
+                <th>backend_index</th>
+                <th>result</th>
+                <th>times (ms) med/p20/p80</th>
+                <th>adiffs</th>
+                <th>error</th>
+                <th>created_at</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in debug_data.optune_results %}
+            {% set rd = r.result_data %}
+            <tr>
+                <td><code>{{ r.id }}</code></td>
+                <td><code>{{ r.op_name }}</code></td>
+                <td>{{ r.backend_index }}</td>
+                <td>{{ r.result }}</td>
+                <td>{% if rd and rd.times %}{{ "%.3f" | format(rd.times[0]) }} / {{ "%.3f" | format(rd.times[1]) }} / {{ "%.3f" | format(rd.times[2]) }}{% else %}—{% endif %}</td>
+                <td>{% if rd and rd.adiffs %}
+                    <table style="font-size: 0.8em; border-collapse: collapse;">
+                        {% for tname, tensors in rd.adiffs.items() %}
+                        <tr><td colspan="4"><b>{{ tname }}</b></td></tr>
+                        {% for tsor, vals in tensors.items() %}
+                        <tr>
+                            <td style="padding-right: 4px;"><code>{{ tsor }}</code></td>
+                            {% if vals is none %}
+                            <td colspan="3">—</td>
+                            {% else %}
+                            <td>tft={{ "%.4f" | format(vals[0]) }}</td>
+                            <td>{% if vals[1] | int == -217 %}early-reject{% else %}adiff={{ "%.4e" | format(vals[1]) }}{% endif %}</td>
+                            <td>ref={{ "%.4e" | format(vals[2]) }}</td>
+                            {% endif %}
+                        </tr>
+                        {% endfor %}
+                        {% endfor %}
+                    </table>
+                    {% else %}—{% endif %}</td>
+                <td><pre style="white-space: pre-wrap; font-size: 0.8em; margin: 0;">{{ r.error | tojson if r.error else '—' }}</pre></td>
+                <td>{{ r.created_at }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>No optune_results rows.</p>
+    {% endif %}
+</section>
+
 {% endif %}{# end error check #}
 {% endif %}{# end task_id check #}
 {% endblock %}
