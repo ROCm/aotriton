@@ -32,7 +32,45 @@ import psycopg
 
 from v3python.tune.utils import get_db_connection_params
 
-_SELECT_SQL = """
+class SqlStatements:
+    def __init__(self, tuning_mode: str):
+        self._tuning_mode = tuning_mode
+
+    @property
+    def table_name(self) -> str:
+        return 'most_accurate_optune_results' if self._tuning_mode == 'op' else 'most_accurate_tuning_results'
+
+    @property
+    def index_name(self) -> str:
+        return f'idx_{self.table_name}_lookup'
+
+    @property
+    def _key_col(self) -> str:
+        return 'op_name' if self._tuning_mode == 'op' else 'kernel_name'
+
+    @property
+    def _select_sql(self) -> str:
+        if self._tuning_mode == 'op':
+            return """
+SELECT
+    tr.task_id,
+    tq.arch,
+    tq.task_config,
+    tr.op_name,
+    test_case.key                                   AS test_case,
+    tensor.key                                      AS tensor_name,
+    MIN((tensor.value->>0)::float)                  AS target_fudge_factor,
+    MIN((tensor.value->>1)::float)                  AS absolute_error
+FROM optune_results tr
+JOIN task_queue tq ON tq.id = tr.task_id
+CROSS JOIN LATERAL jsonb_each(tr.result_data->'adiffs') AS test_case(key, value)
+CROSS JOIN LATERAL jsonb_each(test_case.value)           AS tensor(key, value)
+WHERE tr.result_data IS NOT NULL
+  AND tq.module LIKE '%_op'
+  AND (tensor.value IS NULL OR (tensor.value->>1)::float >= 0.0) {filter}
+GROUP BY tr.task_id, tq.arch, tq.task_config, tr.op_name, test_case.key, tensor.key
+"""
+        return """
 SELECT
     tr.task_id,
     tq.arch,
@@ -46,35 +84,45 @@ FROM tuning_results tr
 JOIN task_queue tq ON tq.id = tr.task_id
 CROSS JOIN LATERAL jsonb_each(tr.result_data->'adiffs') AS test_case(key, value)
 CROSS JOIN LATERAL jsonb_each(test_case.value)           AS tensor(key, value)
-WHERE tr.result_data IS NOT NULL {filter}
+WHERE tr.result_data IS NOT NULL
+  AND tq.module NOT LIKE '%_op' {filter}
 GROUP BY tr.task_id, tq.arch, tq.task_config, tr.kernel_name, test_case.key, tensor.key
 """
 
-_CTAS_SQL = 'CREATE TABLE most_accurate_tuning_results AS' + _SELECT_SQL
+    @property
+    def ctas_sql(self) -> str:
+        return f'CREATE TABLE {self.table_name} AS' + self._select_sql
 
-_INSERT_SQL = """INSERT INTO most_accurate_tuning_results
-    (task_id, arch, task_config, kernel_name, test_case, tensor_name,
+    @property
+    def insert_sql(self) -> str:
+        return f"""INSERT INTO {self.table_name}
+    (task_id, arch, task_config, {self._key_col}, test_case, tensor_name,
      target_fudge_factor, absolute_error)
-""" + _SELECT_SQL
+""" + self._select_sql
 
-_INDEX_SQL = """
-CREATE UNIQUE INDEX idx_most_accurate_tuning_results_lookup
-    ON most_accurate_tuning_results (task_id, kernel_name, test_case, tensor_name)
+    @property
+    def index_sql(self) -> str:
+        return f"""
+CREATE UNIQUE INDEX {self.index_name}
+    ON {self.table_name} (task_id, {self._key_col}, test_case, tensor_name)
 """
 
 
-def populate(conn, task_ids: list[int] | None = None) -> int:
+def populate(conn, task_ids: list[int] | None = None, tuning_mode: str = 'kernel') -> int:
     """
     Populate most_accurate_tuning_results.
 
     Args:
-        conn:     psycopg connection. autocommit state is managed internally.
-        task_ids: If None, full DROP + CTAS (parallel).
-                  If given, DELETE + INSERT for those task_ids only (small, serial ok).
+        conn:         psycopg connection. autocommit state is managed internally.
+        task_ids:     If None, full DROP + CTAS (parallel).
+                      If given, DELETE + INSERT for those task_ids only (small, serial ok).
+        tuning_mode:  'kernel' reads from tuning_results; 'op' reads from optune_results.
 
     Returns:
         Number of rows produced (rowcount after CTAS or INSERT).
     """
+    sql = SqlStatements(tuning_mode)
+
     if task_ids is None:
         # Full mode: DROP + CREATE TABLE AS SELECT.
         # CTAS is parallel-safe; INSERT...SELECT is not (PostgreSQL serializes
@@ -96,23 +144,23 @@ def populate(conn, task_ids: list[int] | None = None) -> int:
             # (inlining + optimization + emission) with no amortization benefit.
             cur.execute('SET jit = off')
         with conn.cursor() as cur:
-            cur.execute('DROP TABLE IF EXISTS most_accurate_tuning_results')
-            cur.execute('DROP INDEX IF EXISTS idx_most_accurate_tuning_results_lookup')
-            cur.execute(_CTAS_SQL.format(filter=''))
+            cur.execute(f'DROP TABLE IF EXISTS {sql.table_name}')
+            cur.execute(f'DROP INDEX IF EXISTS {sql.index_name}')
+            cur.execute(sql.ctas_sql.format(filter=''))
             row_count = cur.rowcount
-            cur.execute(_INDEX_SQL)
+            cur.execute(sql.index_sql)
     else:
         # Incremental mode: row count is small, parallel not needed.
         # DELETE in one transaction, INSERT in a fresh one.
         conn.autocommit = False
         with conn.cursor() as cur:
             cur.execute(
-                'DELETE FROM most_accurate_tuning_results WHERE task_id = ANY(%s)',
+                f'DELETE FROM {sql.table_name} WHERE task_id = ANY(%s)',
                 (task_ids,),
             )
         conn.commit()
         with conn.cursor() as cur:
-            cur.execute(_INSERT_SQL.format(filter='AND tr.task_id = ANY(%s)'), (task_ids,))
+            cur.execute(sql.insert_sql.format(filter='AND tr.task_id = ANY(%s)'), (task_ids,))
             row_count = cur.rowcount
         conn.commit()
 
@@ -129,6 +177,12 @@ def main() -> None:
         '--task_ids_file',
         default=None,
         help='Path to file with one task_id per line (incremental mode); use - to read from stdin',
+    )
+    parser.add_argument(
+        '--tuning_mode',
+        choices=['kernel', 'op'],
+        default='kernel',
+        help='kernel: populate from tuning_results; op: populate from optune_results',
     )
     args = parser.parse_args()
 
@@ -159,7 +213,7 @@ def main() -> None:
         print(f'Incremental populate: {len(task_ids)} task_id(s)...')
 
     with psycopg.connect(**conn_params, autocommit=False) as conn:
-        row_count = populate(conn, task_ids)
+        row_count = populate(conn, task_ids, tuning_mode=args.tuning_mode)
 
     print(f'Done: {row_count} rows inserted into most_accurate_tuning_results.')
 
