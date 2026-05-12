@@ -176,8 +176,8 @@ document.getElementById('tune_lookup_btn').addEventListener('click', function() 
                 <td><code>{{ r.kernel_name }}</code></td>
                 <td><code>{{ r.test_case }}</code></td>
                 <td><code>{{ r.tensor_name }}</code></td>
-                <td>{{ "%.6f" | format(r.target_fudge_factor) if r.target_fudge_factor is not none else '—' }}</td>
-                <td>{{ "%.6f" | format(r.absolute_error) if r.absolute_error is not none else '—' }}</td>
+                <td>{{ "%.6f" | format(r.target_fudge_factor) if r.target_fudge_factor is not none else 'NaN' }}</td>
+                <td>{{ "%.6f" | format(r.absolute_error) if r.absolute_error is not none else 'NaN' }}</td>
             </tr>
             {% endfor %}
         </tbody>
@@ -221,10 +221,10 @@ document.getElementById('tune_lookup_btn').addEventListener('click', function() 
                         <tr>
                             <td style="padding-right: 4px;"><code>{{ tsor }}</code></td>
                             {% if vals is none %}
-                            <td colspan="3">—</td>
+                            <td colspan="3">N/A</td>
                             {% else %}
                             <td>tft={{ "%.4f" | format(vals[0]) }}</td>
-                            <td>{% if vals[1] | int == -217 %}early-reject{% else %}adiff={{ "%.4e" | format(vals[1]) }}{% endif %}</td>
+                            <td>{% if vals[1] is none %}NaN{% elif vals[1] | int == -217 %}early-reject{% else %}adiff={{ "%.4e" | format(vals[1]) }}{% endif %}</td>
                             <td>ref={{ "%.4e" | format(vals[2]) }}</td>
                             {% endif %}
                         </tr>
