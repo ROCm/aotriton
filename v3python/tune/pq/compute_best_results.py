@@ -105,9 +105,16 @@ class SqlStatements:
 # Per-group computation (called inline inside each worker process)
 # ---------------------------------------------------------------------------
 
-def _find_best_hsaco(task_id: int, key_name: str,
-                     group_rows: list, thresholds: dict,
-                     tuning_mode: str = 'kernel') -> tuple | None:
+from typing import NamedTuple
+
+class Audit(NamedTuple):
+    passes: bool
+    executed: bool  # False when abs_err < 0 (early-reject, never ran on hardware)
+
+
+def _find_best_candidate(task_id: int, key_name: str,
+                         group_rows: list, thresholds: dict,
+                         tuning_mode: str = 'kernel') -> tuple | None:
     """
     Find the fastest hsaco/backend that passes the accuracy threshold.
 
@@ -120,6 +127,37 @@ def _find_best_hsaco(task_id: int, key_name: str,
 
     Returns (task_id, key_name, index, median_time, impl_desc) or None.
     """
+    if tuning_mode == 'op':
+        def tensor_audit(abs_err, tc, tname) -> Audit:
+            if abs_err is not None and abs_err < 0:
+                return Audit(passes=True, executed=False)   # early-reject sentinel
+            if abs_err is None:
+                return Audit(passes=False, executed=False)  # backend broken / NaN
+            min_err = thresholds.get((tc, tname))
+            if min_err is not None and abs_err > ACCURACY_MULTIPLIER * min_err:
+                return Audit(passes=False, executed=True)
+            return Audit(passes=True, executed=True)
+
+        def update_basic_ut(acc, tc, tc_executed) -> bool:
+            return acc or (tc.startswith('00_') and tc_executed)
+
+        def final_gate(passes, has_basic_ut_pass) -> bool:
+            return passes and has_basic_ut_pass
+    else:
+        def tensor_audit(abs_err, tc, tname) -> Audit:
+            if abs_err is None:
+                return Audit(passes=False, executed=False)  # kernel broken / NaN
+            min_err = thresholds.get((tc, tname))
+            if min_err is not None and abs_err > ACCURACY_MULTIPLIER * min_err:
+                return Audit(passes=False, executed=True)
+            return Audit(passes=True, executed=True)
+
+        def update_basic_ut(acc, tc, tc_executed) -> bool:
+            return acc
+
+        def final_gate(passes, has_basic_ut_pass) -> bool:
+            return passes
+
     best = None
 
     for index, rd in group_rows:
@@ -130,12 +168,12 @@ def _find_best_hsaco(task_id: int, key_name: str,
         impl_desc = rd.get('impl_desc')
 
         passes = True
-        has_basic_ut_pass = False  # op mode: tracks whether a '00_' tc ran normally
+        has_basic_ut_pass = False
 
         for tc, tensors in rd.get('adiffs', {}).items():
             if tc in SKIP_TEST_CASES:
                 continue
-            tc_has_nonneg = False
+            tc_executed = False
             for tname, vals in tensors.items():
                 if not vals:
                     continue  # JSON null or empty array → inapplicable
@@ -143,33 +181,16 @@ def _find_best_hsaco(task_id: int, key_name: str,
                 if ref_err is None:
                     continue  # tensor genuinely inapplicable → pass
                 abs_err = vals[1] if len(vals) > 1 else None
-
-                if tuning_mode == 'op' and abs_err is not None and abs_err < 0:
-                    # Early-reject sentinel → treat as passed for this tensor
-                    continue
-
-                if abs_err is None:
-                    passes = False  # kernel/backend broken (NaN output) → fail
-                    break
-
-                if tuning_mode == 'op':
-                    tc_has_nonneg = True
-
-                min_err = thresholds.get((tc, tname))
-                if min_err is not None and abs_err > ACCURACY_MULTIPLIER * min_err:
+                a = tensor_audit(abs_err, tc, tname)
+                if not a.passes:
                     passes = False
                     break
-
+                tc_executed = tc_executed or a.executed
             if not passes:
                 break
+            has_basic_ut_pass = update_basic_ut(has_basic_ut_pass, tc, tc_executed)
 
-            if tuning_mode == 'op' and tc.startswith('00_') and tc_has_nonneg:
-                has_basic_ut_pass = True
-
-        if tuning_mode == 'op' and not has_basic_ut_pass:
-            passes = False
-
-        if passes and (best is None or median_time < best[1]):
+        if final_gate(passes, has_basic_ut_pass) and (best is None or median_time < best[1]):
             best = (index, median_time, impl_desc)
 
     if best is None:
@@ -300,8 +321,8 @@ def worker_process_arch(arch: str, worker_index: int,
                 group_count += 1
 
                 task_thresholds = arch_thresholds.get(task_id, {}).get(key_name, {})
-                result = _find_best_hsaco(task_id, key_name, group_rows, task_thresholds,
-                                          tuning_mode=tuning_mode)
+                result = _find_best_candidate(task_id, key_name, group_rows, task_thresholds,
+                                              tuning_mode=tuning_mode)
                 if result is not None:
                     results.append(result)
 
