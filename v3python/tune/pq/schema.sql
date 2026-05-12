@@ -88,6 +88,36 @@ FROM task_queue
 GROUP BY arch
 ORDER BY arch;
 
+CREATE OR REPLACE VIEW kernel_queue_progress AS
+SELECT
+    arch,
+    COUNT(*) FILTER (WHERE status = 'pending') as pending,
+    COUNT(*) FILTER (WHERE status = 'running') as running,
+    COUNT(*) FILTER (WHERE status = 'completed') as completed,
+    COUNT(*) FILTER (WHERE status = 'failed') as failed,
+    COUNT(*) FILTER (WHERE status = 'cancelled') as cancelled,
+    COUNT(*) as total,
+    ROUND(100.0 * COUNT(*) FILTER (WHERE status = 'completed') / NULLIF(COUNT(*), 0), 2) as pct_complete
+FROM task_queue
+WHERE module NOT LIKE '%_op'
+GROUP BY arch
+ORDER BY arch;
+
+CREATE OR REPLACE VIEW op_queue_progress AS
+SELECT
+    arch,
+    COUNT(*) FILTER (WHERE status = 'pending') as pending,
+    COUNT(*) FILTER (WHERE status = 'running') as running,
+    COUNT(*) FILTER (WHERE status = 'completed') as completed,
+    COUNT(*) FILTER (WHERE status = 'failed') as failed,
+    COUNT(*) FILTER (WHERE status = 'cancelled') as cancelled,
+    COUNT(*) as total,
+    ROUND(100.0 * COUNT(*) FILTER (WHERE status = 'completed') / NULLIF(COUNT(*), 0), 2) as pct_complete
+FROM task_queue
+WHERE module LIKE '%_op'
+GROUP BY arch
+ORDER BY arch;
+
 CREATE OR REPLACE VIEW worker_health AS
 SELECT
     node_hostname,
