@@ -459,7 +459,7 @@ class PostprocessHandler(MessageHandler):
         index_key = blocked_msg['index_key']
         impl_name = incoming_msg[name_key]
         impl_index = incoming_msg[index_key]
-        blocked_msg['received_impls'][impl_name][impl_index] = incoming_msg['report']
+        blocked_msg['received_impls'].setdefault(impl_name, {})[impl_index] = incoming_msg['report']
 
         expected = blocked_msg['expected_impls']
         received = blocked_msg['received_impls']
