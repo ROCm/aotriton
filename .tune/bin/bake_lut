@@ -23,6 +23,7 @@ set -euo pipefail
 INCREMENTAL=0
 FIX_SPEC=""
 WORKDIR=""
+TUNING_MODE="kernel"
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -39,12 +40,14 @@ while [ "$#" -gt 0 ]; do
                 echo "Error: --fix may only be specified once" >&2; exit 1
             fi
             FIX_SPEC="$2"; shift 2 ;;
+        --tuning_mode)
+            TUNING_MODE="$2"; shift 2 ;;
         *) WORKDIR="$1"; shift ;;
     esac
 done
 
 if [ -z "$WORKDIR" ]; then
-    echo "Usage: $0 <workdir> [--incremental | --fix [hostname:]<pass>]" >&2
+    echo "Usage: $0 <workdir> [--tuning_mode kernel|op] [--incremental | --fix [hostname:]<pass>]" >&2
     exit 1
 fi
 
@@ -62,36 +65,36 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if [ -n "$FIX_SPEC" ]; then
     echo "=== Step 1/5: Update accuracy table (fix broken: $FIX_SPEC) ==="
-    "$SCRIPT_DIR/update_materialized_view" "$WORKDIR" --fix "$FIX_SPEC"
+    "$SCRIPT_DIR/update_materialized_view" "$WORKDIR" --tuning_mode "$TUNING_MODE" --fix "$FIX_SPEC"
 elif [ "$INCREMENTAL" -eq 1 ]; then
     echo "=== Step 1/5: Update accuracy table (incremental) ==="
-    "$SCRIPT_DIR/update_materialized_view" "$WORKDIR"
+    "$SCRIPT_DIR/update_materialized_view" "$WORKDIR" --tuning_mode "$TUNING_MODE"
 else
     echo "=== Step 1/5: Rebuild accuracy table ==="
-    "$SCRIPT_DIR/recreate_materialized_view" "$WORKDIR"
+    "$SCRIPT_DIR/recreate_materialized_view" "$WORKDIR" --tuning_mode "$TUNING_MODE"
 fi
 
 echo ""
 echo "=== Step 2/5: Compute best results ==="
 if [ -n "$FIX_SPEC" ]; then
-    "$SCRIPT_DIR/compute_best_results" "$WORKDIR" --fix "$FIX_SPEC"
+    "$SCRIPT_DIR/compute_best_results" "$WORKDIR" --tuning_mode "$TUNING_MODE" --fix "$FIX_SPEC"
 elif [ "$INCREMENTAL" -eq 1 ]; then
-    "$SCRIPT_DIR/compute_best_results" "$WORKDIR" --incremental
+    "$SCRIPT_DIR/compute_best_results" "$WORKDIR" --tuning_mode "$TUNING_MODE" --incremental
 else
-    "$SCRIPT_DIR/compute_best_results" "$WORKDIR"
+    "$SCRIPT_DIR/compute_best_results" "$WORKDIR" --tuning_mode "$TUNING_MODE"
 fi
 
 echo ""
 echo "=== Step 3/5: Export best results ==="
-"$SCRIPT_DIR/export_best_results" "$WORKDIR"
+"$SCRIPT_DIR/export_best_results" "$WORKDIR" --tuning_mode "$TUNING_MODE"
 
 echo ""
 echo "=== Step 4/5: Sanity check ==="
-"$SCRIPT_DIR/sancheck" "$WORKDIR"
+"$SCRIPT_DIR/sancheck" "$WORKDIR" --tuning_mode "$TUNING_MODE"
 
 echo ""
 echo "=== Step 5/5: Decompose database ==="
-"$SCRIPT_DIR/decomposedb" "$WORKDIR"
+"$SCRIPT_DIR/decomposedb" "$WORKDIR" --tuning_mode "$TUNING_MODE"
 
 echo ""
 if [ -n "$FIX_SPEC" ]; then

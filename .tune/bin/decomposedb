@@ -10,16 +10,25 @@
 #      <workdir>/installed/database/amd/<arch>/<family>/<kernel>.sqlite3.tar.xz
 #
 # Usage:
-#   decomposedb <workdir>
+#   decomposedb <workdir> [--tuning_mode kernel|op]
 
 set -euo pipefail
 
 if [ "$#" -lt 1 ]; then
-    echo "Usage: $0 <workdir>" >&2
+    echo "Usage: $0 <workdir> [--tuning_mode kernel|op]" >&2
     exit 1
 fi
 
 WORKDIR="$1"
+shift
+
+TUNING_MODE="kernel"
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --tuning_mode) TUNING_MODE="$2"; shift 2 ;;
+        *) echo "Unknown argument: $1" >&2; exit 1 ;;
+    esac
+done
 
 if [ ! -d "$WORKDIR" ]; then
     echo "Error: workdir does not exist: $WORKDIR" >&2
@@ -60,7 +69,8 @@ echo "  Output: $DECOMPOSE_OUTPUT"
 PYTHONPATH="$REPO_ROOT" python3 -m v3python.database_decompose \
     --database_file "$CENTRALDB" \
     --script_output "$SCRIPT_OUTPUT" \
-    --decompose_output "$DECOMPOSE_OUTPUT"
+    --decompose_output "$DECOMPOSE_OUTPUT" \
+    --tuning_mode "$TUNING_MODE"
 
 echo ""
 echo "Step 2/3: Running decompose script..."
