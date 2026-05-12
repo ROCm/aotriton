@@ -154,62 +154,83 @@ def get_status_summary(workdir):
     }
 
 
+def _merge_progress_rows(progress_rows, speed_rows, stale_rows):
+    speed_map = {row['arch']: row['recent_completions'] / 5.0 for row in speed_rows}
+    stale_map = {row['arch']: row['stale_count'] for row in stale_rows}
+    result = []
+    for row in progress_rows:
+        data = dict(row)
+        data['speed_per_minute'] = speed_map.get(data['arch'], 0.0)
+        data['stale'] = stale_map.get(data['arch'], 0)
+        cancelled = data.get('cancelled', 0) or 0
+        effective_total = data['total'] - cancelled
+        data['effective_total'] = effective_total
+        data['pct_complete'] = round(
+            100.0 * data['completed'] / effective_total, 1
+        ) if effective_total > 0 else 0.0
+        result.append(data)
+    return result
+
+
 def get_tuning_progress(workdir):
-    """Get tuning progress from queue_progress view with speed calculation"""
+    """Get kernel and op tuning progress using the two queue-progress views."""
     try:
         conn_params = get_db_connection_params(Path(workdir))
         with psycopg.connect(**conn_params, row_factory=dict_row) as conn:
             with conn.cursor() as cur:
-                # Get progress from view
-                cur.execute("SELECT * FROM queue_progress ORDER BY arch")
-                progress_rows = cur.fetchall()
+                cur.execute("SELECT * FROM kernel_queue_progress ORDER BY arch")
+                kernel_rows = cur.fetchall()
 
-                # Calculate speed: tasks completed in last 5 minutes
+                cur.execute("SELECT * FROM op_queue_progress ORDER BY arch")
+                op_rows = cur.fetchall()
+
                 cur.execute("""
-                    SELECT
-                        arch,
-                        COUNT(*) as recent_completions
+                    SELECT arch, COUNT(*) as recent_completions
                     FROM task_queue
                     WHERE status = 'completed'
                       AND completed_at > NOW() - INTERVAL '5 minutes'
+                      AND module NOT LIKE '%_op'
                     GROUP BY arch
                 """)
-                speed_rows = cur.fetchall()
+                kernel_speed_rows = cur.fetchall()
 
-                # Count stale tasks (running > 2 hours)
                 cur.execute("""
-                    SELECT
-                        arch,
-                        COUNT(*) as stale_count
+                    SELECT arch, COUNT(*) as recent_completions
+                    FROM task_queue
+                    WHERE status = 'completed'
+                      AND completed_at > NOW() - INTERVAL '5 minutes'
+                      AND module LIKE '%_op'
+                    GROUP BY arch
+                """)
+                op_speed_rows = cur.fetchall()
+
+                cur.execute("""
+                    SELECT arch, COUNT(*) as stale_count
                     FROM task_queue
                     WHERE status = 'running'
                       AND EXTRACT(EPOCH FROM (NOW() - started_at)) > 7200
+                      AND module NOT LIKE '%_op'
                     GROUP BY arch
                 """)
-                stale_rows = cur.fetchall()
+                kernel_stale_rows = cur.fetchall()
 
-                # Build speed and stale maps
-                speed_map = {row['arch']: row['recent_completions'] / 5.0 for row in speed_rows}
-                stale_map = {row['arch']: row['stale_count'] for row in stale_rows}
+                cur.execute("""
+                    SELECT arch, COUNT(*) as stale_count
+                    FROM task_queue
+                    WHERE status = 'running'
+                      AND EXTRACT(EPOCH FROM (NOW() - started_at)) > 7200
+                      AND module LIKE '%_op'
+                    GROUP BY arch
+                """)
+                op_stale_rows = cur.fetchall()
 
-                # Merge data
-                result = []
-                for row in progress_rows:
-                    data = dict(row)
-                    data['speed_per_minute'] = speed_map.get(data['arch'], 0.0)
-                    data['stale'] = stale_map.get(data['arch'], 0)
-                    cancelled = data.get('cancelled', 0) or 0
-                    effective_total = data['total'] - cancelled
-                    data['effective_total'] = effective_total
-                    data['pct_complete'] = round(
-                        100.0 * data['completed'] / effective_total, 1
-                    ) if effective_total > 0 else 0.0
-                    result.append(data)
-
-                return result
+                return {
+                    'kernel': _merge_progress_rows(kernel_rows, kernel_speed_rows, kernel_stale_rows),
+                    'op': _merge_progress_rows(op_rows, op_speed_rows, op_stale_rows),
+                }
     except Exception as e:
         logging.error(f"Failed to get tuning progress: {e}")
-        return []
+        return {'kernel': [], 'op': []}
 
 
 _TUNE_V3BIS_MARKER = 'TUNE_V3BIS testrun Item: '
