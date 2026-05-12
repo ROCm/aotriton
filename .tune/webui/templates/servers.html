@@ -48,7 +48,35 @@
     <h3>Bake LUT</h3>
     <p>Convert raw PostgreSQL tuning results into the SQLite database used by the aotriton build process, then sanity-check the LUT.</p>
 
+    <h4>Tuning Mode</h4>
+    <div id="tuning-mode-inputs">
+        <label>
+            <input type="radio" name="mode" value="kernel"
+                   {% if tuning_mode == 'kernel' %}checked{% endif %}>
+            Kernel Tuning &mdash; select best HSACO within each backend
+        </label><br>
+        <label>
+            <input type="radio" name="mode" value="op"
+                   {% if tuning_mode == 'op' %}checked{% endif %}>
+            Operator Tuning &mdash; select fastest backend for operators
+        </label>
+    </div>
+    <form hx-post="/api/config/tuning-mode"
+          hx-include="#tuning-mode-inputs"
+          hx-swap="none"
+          hx-on::after-request="location.reload()"
+          style="display: inline; margin-top: 0.5rem;">
+        <button type="submit">Save Tuning Mode</button>
+    </form>
+    <p style="font-size: 0.9em; color: gray; margin-top: 0.5rem;">
+        Operator tuning requires the testing build
+        (<code>installed/test/&lt;arch&gt;/</code>) deployed to workers.
+        After changing mode, redeploy and restart workers.
+        All Bake LUT actions below use the currently selected mode (not the saved value).
+    </p>
+
     <button hx-post="/api/servers/bake-lut"
+            hx-include="#tuning-mode-inputs"
             hx-swap="none"
             hx-confirm="Bake LUT: run all five steps in sequence (rebuild accuracy table, compute best results, export, sancheck, decompose)? This may take several minutes."
             hx-indicator="#pipeline-spinner"
@@ -56,6 +84,7 @@
     <span id="pipeline-spinner" class="htmx-indicator">&#x23F3; Running...</span>
 
     <button hx-post="/api/servers/bake-lut"
+            hx-include="#tuning-mode-inputs"
             hx-vals='{"incremental": "1"}'
             hx-swap="none"
             hx-confirm="Bake LUT (incremental): update accuracy table for retried tasks, then compute/export/sancheck/decompose?"
@@ -75,7 +104,7 @@
         <input type="number" name="pass_num" id="bake-lut-fix-pass" value="0" min="0" style="width: 4rem;">
         <button type="button"
                 hx-post="/api/servers/bake-lut"
-                hx-include="#bake-lut-fix-form"
+                hx-include="#bake-lut-fix-form, #tuning-mode-inputs"
                 hx-swap="none"
                 hx-confirm="Bake LUT (fix broken): update accuracy table from broken_entries.db for the selected host/pass, then compute/export/sancheck/decompose?"
                 hx-indicator="#pipeline-fix-spinner">Bake LUT (Fix Broken)</button>
@@ -86,39 +115,46 @@
 
     <div style="display: flex; flex-wrap: nowrap; align-items: center;">
         <button hx-post="/api/servers/recreate-materialized-view"
+                hx-include="#tuning-mode-inputs"
                 hx-swap="none"
-                hx-confirm="Rebuild most_accurate_tuning_results (DROP + CTAS)? Table will be unavailable briefly."
+                hx-confirm="Rebuild accuracy table (DROP + CTAS)? Table will be unavailable briefly."
                 style="background-color: #dc3545; color: white;">Rebuild Accuracy Table</button>
 
         <button hx-post="/api/servers/update-materialized-view"
+                hx-include="#tuning-mode-inputs"
                 hx-swap="none"
                 hx-confirm="Update accuracy table incrementally for task_ids from scratch/retry_task_ids.txt?">Update Accuracy Table</button>
 
         <button hx-post="/api/servers/compute-best-results"
+                hx-include="#tuning-mode-inputs"
                 hx-swap="none"
                 hx-confirm="Compute best_tuning_results from raw tuning results? This may take several minutes.">Compute Best Results</button>
 
         <button hx-post="/api/servers/export-best-results"
+                hx-include="#tuning-mode-inputs"
                 hx-swap="none"
                 hx-confirm="Export best results to centraldb.sqlite3? Existing file will be deleted.">Export Best Results</button>
 
         <button hx-post="/api/servers/sancheck"
+                hx-include="#tuning-mode-inputs"
                 hx-swap="none"
                 hx-confirm="Run LUT sanity check against scratch/centraldb.sqlite3? Requires export to have been run first.">Sancheck</button>
 
         <button hx-post="/api/servers/decomposedb"
+                hx-include="#tuning-mode-inputs"
                 hx-swap="none"
                 hx-confirm="Decompose scratch/centraldb.sqlite3 into installed/database/<arch>/<family>/<kernel>.sqlite3.tar.xz?">Decompose DB</button>
     </div>
 
     <p style="font-size: 0.9em; color: gray; margin-top: 0.5rem;">
-        <strong>Rebuild Accuracy Table:</strong> DROP + CTAS <code>most_accurate_tuning_results</code> in parallel.<br>
-        <strong>Update Accuracy Table:</strong> Incrementally upserts rows for task_ids cached in <code>scratch/retry_task_ids.txt</code> by <code>retry_missing_entries</code>.<br>
+        <strong>Rebuild Accuracy Table:</strong> DROP + CTAS <code>{% if tuning_mode == 'op' %}most_accurate_optune_results{% else %}most_accurate_tuning_results{% endif %}</code> in parallel.<br>
+        <strong>Update Accuracy Table:</strong> Incrementally upserts rows for task_ids cached in <code>scratch/retry_task_ids.txt</code> into <code>{% if tuning_mode == 'op' %}most_accurate_optune_results{% else %}most_accurate_tuning_results{% endif %}</code> by <code>retry_missing_entries</code>.<br>
         <strong>Compute Best Results:</strong> Aggregates raw tuning results into best_tuning_results table.<br>
         <strong>Export Best Results:</strong> Exports best_tuning_results to <code>scratch/centraldb.sqlite3</code>.<br>
         <strong>Sancheck:</strong> Runs LUT sanity check against <code>scratch/centraldb.sqlite3</code> without triggering code generation.<br>
         <strong>Decompose DB:</strong> Partitions <code>scratch/centraldb.sqlite3</code> into <code>installed/database/amd/&lt;arch&gt;/&lt;family&gt;/&lt;kernel&gt;.sqlite3.tar.xz</code>.
     </p>
+
 </section>
 
 <section>

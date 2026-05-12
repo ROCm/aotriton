@@ -80,7 +80,9 @@ def servers():
     workdir = current_app.config['WORKDIR']
     config_vars = tasks.get_config_vars(workdir)
     hostnames = tasks.get_hostnames(workdir)
-    return render_template('servers.html', config_vars=config_vars, hostnames=hostnames)
+    tuning_mode = tasks.get_tuning_mode(workdir)
+    return render_template('servers.html', config_vars=config_vars, hostnames=hostnames,
+                           tuning_mode=tuning_mode)
 
 
 @bp.route('/builds')
@@ -291,7 +293,8 @@ def api_recreate_schema():
 def api_compute_best_results():
     """Compute best_tuning_results table from raw tuning results"""
     workdir = current_app.config['WORKDIR']
-    result = tasks.compute_best_results(workdir, dry_run=should_dryrun())
+    tuning_mode = request.form.get('mode', 'kernel')
+    result = tasks.compute_best_results(workdir, tuning_mode=tuning_mode, dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -299,15 +302,17 @@ def api_compute_best_results():
 def api_export_best_results():
     """Export best results to centralized SQLite database"""
     workdir = current_app.config['WORKDIR']
-    result = tasks.export_best_results(workdir, dry_run=should_dryrun())
+    tuning_mode = request.form.get('mode', 'kernel')
+    result = tasks.export_best_results(workdir, tuning_mode=tuning_mode, dry_run=should_dryrun())
     return jsonify(result)
 
 
 @bp.route('/api/servers/recreate-materialized-view', methods=['POST'])
 def api_recreate_materialized_view():
-    """Recreate most_accurate_tuning_results via DROP + CREATE"""
+    """Recreate accuracy table via DROP + CREATE"""
     workdir = current_app.config['WORKDIR']
-    result = tasks.recreate_materialized_view(workdir, dry_run=should_dryrun())
+    tuning_mode = request.form.get('mode', 'kernel')
+    result = tasks.recreate_materialized_view(workdir, tuning_mode=tuning_mode, dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -315,7 +320,8 @@ def api_recreate_materialized_view():
 def api_sancheck():
     """Run LUT sanity check against the exported centralized database"""
     workdir = current_app.config['WORKDIR']
-    result = tasks.sancheck(workdir, dry_run=should_dryrun())
+    tuning_mode = request.form.get('mode', 'kernel')
+    result = tasks.sancheck(workdir, tuning_mode=tuning_mode, dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -327,8 +333,10 @@ def api_bake_lut():
       incremental=1          → passes --incremental
       fix=1 + pass_num=N     → passes --fix [hostname:]N  (hostname optional)
       hostname=<h>           → used only when fix=1; sentinel '__all__' means all hosts
+      mode=kernel|op         → tuning mode (from UI radio buttons)
     """
     workdir = current_app.config['WORKDIR']
+    tuning_mode = request.form.get('mode', 'kernel')
     extra_args: list = []
 
     if request.form.get('fix') == '1':
@@ -341,14 +349,15 @@ def api_bake_lut():
     elif request.form.get('incremental') == '1':
         extra_args = ['--incremental']
 
-    result = tasks.bake_lut(workdir, extra_args or None, dry_run=should_dryrun())
+    result = tasks.bake_lut(workdir, extra_args or None, tuning_mode=tuning_mode, dry_run=should_dryrun())
     return jsonify(result)
 
 
 @bp.route('/api/servers/update-materialized-view', methods=['POST'])
 def api_update_materialized_view():
     workdir = current_app.config['WORKDIR']
-    result = tasks.update_materialized_view(workdir, dry_run=should_dryrun())
+    tuning_mode = request.form.get('mode', 'kernel')
+    result = tasks.update_materialized_view(workdir, tuning_mode=tuning_mode, dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -356,7 +365,8 @@ def api_update_materialized_view():
 def api_decomposedb():
     """Decompose centraldb.sqlite3 into per-arch/kernel shards"""
     workdir = current_app.config['WORKDIR']
-    result = tasks.decomposedb(workdir, dry_run=should_dryrun())
+    tuning_mode = request.form.get('mode', 'kernel')
+    result = tasks.decomposedb(workdir, tuning_mode=tuning_mode, dry_run=should_dryrun())
     return jsonify(result)
 
 
