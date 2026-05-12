@@ -173,6 +173,22 @@ KERNEL_SCHEMAS = {
     'bwd_kernel_fuse':  (_BWD_FUSE_COLS,   _BWD_FUSE_UNIQUE),
 }
 
+# Op-mode schemas — same input columns as the kernel tables (minus tuned_kernel$/
+# compiler_options$ columns) plus op$backend and op$tflops.
+_OP_EXTRA_COLS = [
+    ('op$backend', 'INTEGER', 'op_backend', None),
+    ('op$tflops',  'REAL',    'op_tflops',  None),
+]
+
+def _input_only(cols: list) -> list:
+    return [c for c in cols
+            if not c[0].startswith(('tuned_kernel$', 'compiler_options$'))]
+
+OP_SCHEMAS = {
+    'op_attn_fwd': (_input_only(_FWD_COLS)      + _OP_EXTRA_COLS, _FWD_UNIQUE),
+    'op_attn_bwd': (_input_only(_BWD_FUSE_COLS) + _OP_EXTRA_COLS, _BWD_FUSE_UNIQUE),
+}
+
 # ---------------------------------------------------------------------------
 # Value derivations
 # ---------------------------------------------------------------------------
@@ -349,6 +365,82 @@ def export(conn_params: dict, output_path: Path) -> None:
     logger.info('Next step: .tune/bin/sancheck <workdir>')
 
 
+def export_op(conn_params: dict, output_path: Path) -> None:
+    t0 = time.monotonic()
+
+    logger.info('Querying best_optune_results...')
+    with psycopg.connect(**conn_params, autocommit=True,
+                         row_factory=dict_row) as pg:
+        with pg.cursor() as cur:
+            cur.execute("""
+                SELECT b.task_id, b.arch, b.op_name, b.task_config,
+                       b.impl_desc, b.backend_index
+                FROM best_optune_results b
+                JOIN task_queue t ON t.id = b.task_id AND t.arch = b.arch
+                WHERE t.status != 'cancelled'
+                ORDER BY b.arch, b.op_name
+            """)
+            rows = cur.fetchall()
+
+    logger.info('Fetched %d rows from best_optune_results', len(rows))
+
+    counts: dict[str, int] = {}
+    skipped = 0
+
+    with sqlite3.connect(output_path) as db:
+        for op_name, (cols, unique) in OP_SCHEMAS.items():
+            ensure_table(db, op_name, cols, unique)
+
+        for row in rows:
+            task_id       = row['task_id']
+            arch          = row['arch']
+            op_name       = row['op_name']
+            task_config   = row['task_config']
+            backend_index = row['backend_index']
+
+            if op_name not in OP_SCHEMAS:
+                logger.warning('Skipping unknown op %s (task_id=%s)', op_name, task_id)
+                skipped += 1
+                continue
+
+            cols, _ = OP_SCHEMAS[op_name]
+            entry = task_config['entry']
+            gpu   = f'{arch}_mod0'
+
+            try:
+                values = []
+                for col_def in cols:
+                    source = col_def[2]
+                    if source == 'op_backend':
+                        values.append(backend_index)
+                    elif source == 'op_tflops':
+                        values.append(0.0)
+                    else:
+                        values.append(extract_value(col_def, gpu, entry, {}, {}))
+            except Exception as exc:
+                logger.warning(
+                    'Skipping task_id=%s arch=%s op=%s entry=%s: %s',
+                    task_id, arch, op_name, entry, exc,
+                )
+                skipped += 1
+                continue
+
+            insert_row(db, op_name, cols, values)
+            counts[op_name] = counts.get(op_name, 0) + 1
+
+        db.commit()
+
+    for op_name, n in sorted(counts.items()):
+        logger.info('  %-20s: %d rows', op_name, n)
+
+    total = sum(counts.values())
+    logger.info(
+        'Done: %d rows exported to %s, %d skipped in %.1fs',
+        total, output_path, skipped, time.monotonic() - t0,
+    )
+    logger.info('Next step: .tune/bin/sancheck <workdir> --tuning_mode op')
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -369,6 +461,8 @@ def main() -> None:
     parser.add_argument('--password')
     parser.add_argument('--output', required=True, type=Path,
                         help='Output SQLite file path (e.g. tuning_database.sqlite3)')
+    parser.add_argument('--tuning_mode', choices=['kernel', 'op'], default='kernel',
+                        help='kernel: export best_tuning_results; op: export best_optune_results')
     args = parser.parse_args()
 
     if args.workdir:
@@ -380,7 +474,10 @@ def main() -> None:
         if args.password:
             conn_params['password'] = args.password
 
-    export(conn_params, args.output)
+    if args.tuning_mode == 'op':
+        export_op(conn_params, args.output)
+    else:
+        export(conn_params, args.output)
 
 
 if __name__ == '__main__':
