@@ -234,6 +234,23 @@ CREATE TABLE IF NOT EXISTS best_tuning_results (
 CREATE INDEX IF NOT EXISTS idx_best_tuning_results_lookup
     ON best_tuning_results (arch, kernel_name, task_id);
 
+-- best_optune_results: plain table populated by compute_best_results.py in op mode.
+-- For each (task_id, op_name): fastest backend_index meeting the accuracy threshold.
+CREATE TABLE IF NOT EXISTS best_optune_results (
+    task_id      BIGINT    NOT NULL,
+    arch         TEXT      NOT NULL,
+    task_config  JSONB     NOT NULL,
+    op_name      TEXT      NOT NULL,
+    backend_index INT      NOT NULL,
+    median_time  FLOAT     NOT NULL,
+    impl_desc    JSONB,
+    computed_at  TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY (task_id, op_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_best_optune_results_lookup
+    ON best_optune_results (arch, op_name, task_id);
+
 -- Extra unit tests associated with a task, populated by reset_broken_to_pending
 -- when re-queuing entries that failed pytest correctness checks.
 -- Rows accumulate across passes and are never deleted by reset_to_pending.
