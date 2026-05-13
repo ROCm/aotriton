@@ -197,6 +197,10 @@ function pollOutput(actionId) {
 
 **Auto-minimize:** panels with `returncode === 0` call `toggleMinimize()` on completion, which sets `height: 0` on the textarea via a CSS class. This keeps the UI clean without removing the panel.
 
+### Do not add custom styles to `<pre>` tags
+
+Never add `style="..."` attributes or inline CSS to `<pre>` elements. Leave `<pre>` tags unstyled; rely on the stylesheet for any formatting.
+
 ### Adding a new tab/page
 
 1. Create `templates/new_tab.html` extending `base.html`
