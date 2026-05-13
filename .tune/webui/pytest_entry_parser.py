@@ -18,6 +18,7 @@ Usage as CLI:
       "test/test_backward.py::test_regular_bwd[Split-False-l1-dtype2-0.0-CausalOff-256-8192-hdim8-5-3]"
 """
 
+import os
 import re
 import json
 import sys
@@ -29,6 +30,23 @@ DTYPE_MAP: dict[str, str] = {
     'dtype1': 'bfloat16',
     'dtype2': 'float32',
 }
+
+# Rounding tables — copied from .tune/libexec/broken_entries_to_db.
+# hdim and seqlen values from pytest must be ceiling-rounded to the nearest
+# compiled entry because the tuning DB only stores rows for these values.
+_BLOCK_DMODEL_DEFAULT = '16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256, 512'
+_BLOCK_DMODEL: list[int] = sorted(
+    int(x.strip())
+    for x in os.getenv('AOTRITON_FLASH_BLOCK_DMODEL', _BLOCK_DMODEL_DEFAULT).split(',')
+)
+_SEQLEN_ENTRIES: list[int] = [16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
+
+
+def _round_up(value: int, table: list[int], name: str) -> int:
+    for entry in table:
+        if entry >= value:
+            return entry
+    raise ValueError(f'{name} {value} exceeds maximum tuning table entry {table[-1]}')
 
 
 def parse_hdim(token: str) -> int | tuple[int, int]:
@@ -106,7 +124,15 @@ def parse_pytest_node_id(node_id: str) -> dict:
                 'Expected CausalOff or CausalOn.'
             )
         causal = causal_map[causal_str]
-        hdim = parse_hdim(hdim_token)
+        raw_hdim = parse_hdim(hdim_token)
+        hdim = (
+            (_round_up(raw_hdim[0], _BLOCK_DMODEL, 'hdim_qk'),
+             _round_up(raw_hdim[1], _BLOCK_DMODEL, 'hdim_vo'))
+            if isinstance(raw_hdim, tuple)
+            else _round_up(raw_hdim, _BLOCK_DMODEL, 'hdim')
+        )
+        seqlen_q = _round_up(seqlen_q, _SEQLEN_ENTRIES, 'seqlen_q')
+        seqlen_k = _round_up(seqlen_k, _SEQLEN_ENTRIES, 'seqlen_k')
         bias_type = 0
 
     elif test_name == 'test_op_bwd_with_matrix_bias':
@@ -127,7 +153,15 @@ def parse_pytest_node_id(node_id: str) -> dict:
         dtype = DTYPE_MAP.get(dtype_token)
         if dtype is None:
             raise ValueError(f'Unknown dtype token: {dtype_token!r}')
-        hdim = parse_hdim(hdim_token)
+        raw_hdim = parse_hdim(hdim_token)
+        hdim = (
+            (_round_up(raw_hdim[0], _BLOCK_DMODEL, 'hdim_qk'),
+             _round_up(raw_hdim[1], _BLOCK_DMODEL, 'hdim_vo'))
+            if isinstance(raw_hdim, tuple)
+            else _round_up(raw_hdim, _BLOCK_DMODEL, 'hdim')
+        )
+        seqlen_q = _round_up(seqlen_q, _SEQLEN_ENTRIES, 'seqlen_q')
+        seqlen_k = _round_up(seqlen_k, _SEQLEN_ENTRIES, 'seqlen_k')
         causal = False
         bias_type = 1
 
@@ -223,7 +257,8 @@ def main() -> None:
         clauses, params = entry_to_sql_clauses(entry)
         print('SQL WHERE clauses (no arch filter — pytest IDs do not encode arch):')
         for clause, param in zip(clauses, params):
-            print(f'  {clause}  [param={param!r}]')
+            print(f'  {clause}  [param={param!r}]', end=' ')
+        print()
 
 
 if __name__ == '__main__':
