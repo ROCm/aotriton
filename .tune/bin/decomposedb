@@ -88,8 +88,7 @@ echo "  Output: $DECOMPOSE_OUTPUT"
 PYTHONPATH="$REPO_ROOT" python3 -m v3python.database_decompose \
     --database_file "$CENTRALDB" \
     --script_output "$SCRIPT_OUTPUT" \
-    --decompose_output "$DECOMPOSE_OUTPUT" \
-    --tuning_mode "$TUNING_MODE"
+    --decompose_output "$DECOMPOSE_OUTPUT"
 
 echo ""
 echo "Step 2/3: Running decompose script..."
