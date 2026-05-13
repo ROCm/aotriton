@@ -21,7 +21,7 @@
         Accepts either a <strong>TUNE_V3BIS testrun Item:</strong> line or a
         <strong>pytest node ID</strong>. Examples:
     </p>
-    <pre style="font-size: 0.8em; background: #f5f5f5; padding: 0.4rem 0.6rem; margin: 0 0 0.5rem; border-radius: 3px; white-space: pre-wrap;">TUNE_V3BIS testrun Item: arch=gfx942 dtype='float16';hdim=64;seqlen_q=256;seqlen_k=8192;causal=False;dropout_p=0.0;bias_type=0
+    <pre>TUNE_V3BIS testrun Item: arch=gfx942 dtype='float16';hdim=64;seqlen_q=256;seqlen_k=8192;causal=False;dropout_p=0.0;bias_type=0
 test/test_backward.py::test_regular_bwd[Split-False-l1-dtype2-0.0-CausalOff-256-8192-hdim8-5-3]</pre>
     <div style="display: flex; gap: 0.5rem; align-items: flex-start;">
         <textarea id="tune_entry_input" rows="3" style="flex: 1; font-family: monospace; font-size: 0.85em;"
@@ -29,13 +29,16 @@ test/test_backward.py::test_regular_bwd[Split-False-l1-dtype2-0.0-CausalOff-256-
         <button type="button" id="tune_lookup_btn">Lookup</button>
     </div>
     <p id="tune_lookup_error" style="color: red; margin: 0.25rem 0;"></p>
+    <div id="tune_lookup_results" style="margin: 0.25rem 0;"></div>
 </section>
 
 <script>
 document.getElementById('tune_lookup_btn').addEventListener('click', function() {
     const line = document.getElementById('tune_entry_input').value.trim();
     const errEl = document.getElementById('tune_lookup_error');
+    const resultsEl = document.getElementById('tune_lookup_results');
     errEl.textContent = '';
+    resultsEl.innerHTML = '';
     if (!line) { errEl.textContent = 'Please paste a TUNE_V3BIS line or pytest node ID.'; return; }
 
     fetch('/api/debug/resolve_entry', {
@@ -47,9 +50,38 @@ document.getElementById('tune_lookup_btn').addEventListener('click', function() 
     .then(data => {
         if (data.error) {
             errEl.textContent = data.error;
-        } else {
+        } else if (data.task_id !== undefined) {
+            // TUNE_V3BIS path: single result, navigate immediately
             document.getElementById('task_id_input').value = data.task_id;
             document.getElementById('task_id_input').closest('form').submit();
+        } else if (data.matches !== undefined) {
+            if (data.matches.length === 0) {
+                errEl.textContent = 'No matching task_queue rows found.';
+                return;
+            }
+            if (data.matches.length === 1) {
+                // Single match: navigate immediately
+                document.getElementById('task_id_input').value = data.matches[0].task_id;
+                document.getElementById('task_id_input').closest('form').submit();
+                return;
+            }
+            // Multiple matches: render a list of clickable links
+            const label = document.createElement('p');
+            label.style.cssText = 'margin: 0 0 0.3rem; font-size: 0.9em; color: #555;';
+            label.textContent = data.matches.length + ' matching rows (select one to inspect):';
+            resultsEl.appendChild(label);
+            const ul = document.createElement('ul');
+            ul.style.cssText = 'list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.2rem;';
+            data.matches.forEach(function(m) {
+                const li = document.createElement('li');
+                const a = document.createElement('a');
+                a.href = '/debug?task_id=' + m.task_id;
+                a.style.cssText = 'font-family: monospace; font-size: 0.9em;';
+                a.textContent = '[id=' + m.task_id + '] ' + m.arch + ' / ' + m.module;
+                li.appendChild(a);
+                ul.appendChild(li);
+            });
+            resultsEl.appendChild(ul);
         }
     })
     .catch(e => { errEl.textContent = 'Request failed: ' + e; });
@@ -246,6 +278,39 @@ document.getElementById('tune_lookup_btn').addEventListener('click', function() 
     </table>
     {% else %}
     <p>No optune_results rows.</p>
+    {% endif %}
+</section>
+
+{# ── best_optune_results ─────────────────────────────────────────────────── #}
+<section>
+    <h3>best_optune_results ({{ debug_data.best_optune_results | length }} rows)</h3>
+    {% if debug_data.best_optune_results %}
+    <table style="width: 100%;">
+        <thead>
+            <tr>
+                <th>op_name</th>
+                <th>backend_index</th>
+                <th>median_time</th>
+                <th>arch</th>
+                <th>computed_at</th>
+                <th>impl_desc</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in debug_data.best_optune_results %}
+            <tr>
+                <td><code>{{ r.op_name }}</code></td>
+                <td>{{ r.backend_index }}</td>
+                <td>{{ "%.6f" | format(r.median_time) if r.median_time is not none else '—' }}</td>
+                <td><code>{{ r.arch }}</code></td>
+                <td>{{ r.computed_at }}</td>
+                <td><pre>{{ r.impl_desc | tojson(indent=2) if r.impl_desc else '—' }}</pre></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>No best_optune_results rows.</p>
     {% endif %}
 </section>
 

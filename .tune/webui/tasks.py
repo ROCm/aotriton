@@ -243,7 +243,7 @@ def _resolve_pytest_entry(workdir, line: str) -> dict:
 
     Delegates parsing to pytest_entry_parser.parse_pytest_node_id(), then
     queries task_queue without an arch filter (pytest IDs do not encode arch).
-    Returns {'task_id': <int>} or {'error': <str>}.
+    Returns {'matches': [{'task_id': int, 'arch': str, 'module': str}, ...]} or {'error': str}.
     """
     try:
         entry = parse_pytest_node_id(line)
@@ -252,9 +252,9 @@ def _resolve_pytest_entry(workdir, line: str) -> dict:
 
     clauses, params = entry_to_sql_clauses(entry)
     sql = (
-        'SELECT id FROM task_queue WHERE '
+        'SELECT id, arch, module FROM task_queue WHERE '
         + ' AND '.join(clauses)
-        + ' ORDER BY id LIMIT 1'
+        + ' ORDER BY arch, id'
     )
     parsed_desc = ', '.join(f'{k}={v!r}' for k, v in entry.items())
 
@@ -263,10 +263,10 @@ def _resolve_pytest_entry(workdir, line: str) -> dict:
         with psycopg.connect(**conn_params, row_factory=dict_row) as conn:
             with conn.cursor() as cur:
                 cur.execute(sql, params)
-                row = cur.fetchone()
-        if row is None:
+                rows = cur.fetchall()
+        if not rows:
             return {'error': f'No task_queue row found for {parsed_desc}'}
-        return {'task_id': row['id']}
+        return {'matches': [{'task_id': r['id'], 'arch': r['arch'], 'module': r['module']} for r in rows]}
     except Exception as e:
         logging.error('_resolve_pytest_entry failed: %s', e)
         return {'error': str(e)}
@@ -371,12 +371,21 @@ def get_debug_task_data(workdir, task_id: int) -> dict:
                 )
                 optune_results = cur.fetchall()
 
+                cur.execute(
+                    "SELECT op_name, backend_index, median_time, arch, impl_desc, computed_at"
+                    " FROM best_optune_results WHERE task_id = %s"
+                    " ORDER BY op_name",
+                    (task_id,),
+                )
+                best_optune_results = cur.fetchall()
+
         return {
             'task': task,
             'tuning_results': tuning_results,
             'best_results': best_results,
             'accurate_results': accurate_results,
             'optune_results': optune_results,
+            'best_optune_results': best_optune_results,
         }
     except Exception as e:
         logging.error('Failed to get debug data for task %s: %s', task_id, e)
