@@ -283,6 +283,9 @@ def _do_test_op_bwd(request, args, device_str='cuda'):
         pytest.skip("_scaled_dot_product_attention: Explicit attn_mask should not be set when is_causal=True")
     if SMALL_VRAM and seqlen_q * seqlen_k * HDIM_MAX * dtype.itemsize > 4096 * 8192 * 256 * 2:
         pytest.skip("Skip large tests (qkd > 4096 * 8192 * 256) due to low VRAM.")
+    if seqlen_q * seqlen_k * HDIM_MAX * dtype.itemsize > 2048 * 2048 * 64 * 2:
+        gc.collect()
+        torch.cuda.empty_cache()
     if 'gfx11' in torch.cuda.get_device_properties(0).gcnArchName:
         if HDIM_MAX > 256:
             pytest.skip("Skip hdim > 256 on gfx11 arch due to register pressure.")
