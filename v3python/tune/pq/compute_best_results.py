@@ -114,19 +114,25 @@ class Audit(NamedTuple):
 
 def _find_best_candidate(task_id: int, key_name: str,
                          group_rows: list, thresholds: dict,
-                         tuning_mode: str = 'kernel') -> tuple | None:
+                         tuning_mode: str = 'kernel',
+                         verbose: bool = False) -> tuple | None:
     """
     Find the fastest hsaco/backend that passes the accuracy threshold.
 
     group_rows:   [(index, result_data), ...]  (result_data is a dict, already parsed)
     thresholds:   {(test_case, tensor_name): min_absolute_error}
     tuning_mode:  'kernel' or 'op'
+    verbose:      if True, log per-candidate and per-tensor audit details
 
     op mode: negative adiffs (early-reject) are treated as passed per tensor;
              backend only valid if at least one '00_' test case has non-negative adiff.
 
     Returns (task_id, key_name, index, median_time, impl_desc) or None.
     """
+    log = logging.getLogger(__name__)
+    if not thresholds:
+        log.warning('task_id=%d key=%s: thresholds empty — no accuracy gating, '
+                    'fastest candidate wins unconditionally', task_id, key_name)
     if tuning_mode == 'op':
         def tensor_audit(abs_err, tc, tname) -> Audit:
             if abs_err is not None and abs_err < 0:
@@ -163,25 +169,47 @@ def _find_best_candidate(task_id: int, key_name: str,
     for index, rd in group_rows:
         times = rd.get('times')
         if not times:
+            if verbose:
+                log.debug('task_id=%d key=%s index=%d: skipped — no times', task_id, key_name, index)
             continue
         median_time = times[0]
         impl_desc = rd.get('impl_desc')
+
+        if verbose:
+            log.debug('task_id=%d key=%s index=%d: times=[%.3f, %.3f, %.3f] impl=%s',
+                      task_id, key_name, index,
+                      times[0], times[1], times[2],
+                      impl_desc)
 
         passes = True
         has_basic_ut_pass = False
 
         for tc, tensors in rd.get('adiffs', {}).items():
             if tc in SKIP_TEST_CASES:
+                if verbose:
+                    log.debug('  tc=%s: skipped (in SKIP_TEST_CASES)', tc)
                 continue
             tc_executed = False
             for tname, vals in tensors.items():
                 if not vals:
+                    if verbose:
+                        log.debug('  tc=%s tname=%s: inapplicable (null vals)', tc, tname)
                     continue  # JSON null or empty array → inapplicable
                 ref_err = vals[2] if len(vals) > 2 else None
                 if ref_err is None:
+                    if verbose:
+                        log.debug('  tc=%s tname=%s: inapplicable (ref_err=None)', tc, tname)
                     continue  # tensor genuinely inapplicable → pass
                 abs_err = vals[1] if len(vals) > 1 else None
+                min_err = thresholds.get((tc, tname))
                 a = tensor_audit(abs_err, tc, tname)
+                if verbose:
+                    threshold_str = f'{ACCURACY_MULTIPLIER}×{min_err:.4e}={ACCURACY_MULTIPLIER * min_err:.4e}' if min_err is not None else 'no-threshold'
+                    log.debug('  tc=%s tname=%s: abs_err=%s ref_err=%.4e threshold=%s → %s',
+                              tc, tname,
+                              f'{abs_err:.4e}' if abs_err is not None else 'None',
+                              ref_err, threshold_str,
+                              'PASS' if a.passes else 'FAIL')
                 if not a.passes:
                     passes = False
                     break
@@ -190,7 +218,12 @@ def _find_best_candidate(task_id: int, key_name: str,
                 break
             has_basic_ut_pass = update_basic_ut(has_basic_ut_pass, tc, tc_executed)
 
-        if final_gate(passes, has_basic_ut_pass) and (best is None or median_time < best[1]):
+        gate = final_gate(passes, has_basic_ut_pass)
+        if verbose:
+            log.debug('  → passes=%s has_basic_ut_pass=%s gate=%s%s',
+                      passes, has_basic_ut_pass, gate,
+                      ' NEW_BEST' if gate and (best is None or median_time < best[1]) else '')
+        if gate and (best is None or median_time < best[1]):
             best = (index, median_time, impl_desc)
 
     if best is None:
@@ -258,7 +291,7 @@ def get_archs(conn, sql: SqlStatements) -> list[str]:
 def worker_process_arch(arch: str, worker_index: int,
                         task_id_lo: int, task_id_hi: int,
                         conn_params: dict, arch_thresholds: dict,
-                        tuning_mode: str) -> list:
+                        tuning_mode: str, verbose: bool = False) -> list:
     """
     Runs in a child process. Streams results for one (arch, task_id range),
     processes each (task_id, key_name) group inline, returns best rows.
@@ -322,7 +355,7 @@ def worker_process_arch(arch: str, worker_index: int,
 
                 task_thresholds = arch_thresholds.get(task_id, {}).get(key_name, {})
                 result = _find_best_candidate(task_id, key_name, group_rows, task_thresholds,
-                                              tuning_mode=tuning_mode)
+                                              tuning_mode=tuning_mode, verbose=verbose)
                 if result is not None:
                     results.append(result)
 
@@ -471,11 +504,18 @@ def main() -> None:
                       help='Only recompute task_ids listed in scratch/retry_task_ids.txt (or retry_optune_ids.txt for op mode)')
     mode.add_argument('--fix', metavar='[HOSTNAME:]PASS',
                       help='Only recompute task_ids from broken_entries.db for the given pass')
+    mode.add_argument('--ids', type=int, nargs='+', metavar='TASK_ID',
+                      help='Debug: compute for specific task_id(s). Runs inline (no multiprocessing). Prints results; does NOT write to DB.')
 
     parser.add_argument('--tuning_mode', choices=['kernel', 'op'], default='kernel',
                         help='kernel: use tuning_results/best_tuning_results; op: use optune_results/best_optune_results')
+    parser.add_argument('--verbose', action='store_true',
+                        help='Debug: print per-candidate per-tensor accuracy details (implies DEBUG log level)')
 
     args = parser.parse_args()
+
+    if args.verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
 
     sql = SqlStatements(args.tuning_mode)
 
@@ -500,6 +540,9 @@ def main() -> None:
         if workdir is None:
             parser.error('--fix requires --workdir')
         filter_task_ids = _resolve_task_ids_fix(workdir, sql, args.fix)
+    elif args.ids:
+        filter_task_ids = args.ids
+        logger.info('Debug mode: %d task_id(s): %s', len(filter_task_ids), filter_task_ids)
 
     incremental = filter_task_ids is not None
 
@@ -508,6 +551,53 @@ def main() -> None:
     with psycopg.connect(**conn_params, autocommit=True) as conn:
         thresholds = load_thresholds(conn, sql, filter_task_ids)
         archs = get_archs(conn, sql)
+
+    # --ids: run inline in the main process for debuggability; do not write to DB.
+    if args.ids:
+        all_results = []
+        with psycopg.connect(**conn_params, autocommit=True) as conn:
+            with conn.cursor() as cur:
+                placeholders = ','.join(['%s'] * len(args.ids))
+                cur.execute(f"""
+                    SELECT tr.task_id, tr.{sql.key_col}, tr.{sql.index_col}, tr.result_data
+                    FROM {sql.results_table} tr
+                    JOIN task_queue tq ON tq.id = tr.task_id
+                    WHERE tr.result_data IS NOT NULL
+                      AND tr.task_id IN ({placeholders})
+                    ORDER BY tr.task_id, tr.{sql.key_col}
+                """, args.ids)
+                rows = cur.fetchall()
+
+        for (task_id, key_name), group in groupby(rows, key=lambda r: (r[0], r[1])):
+            group_rows = []
+            for r in group:
+                index, rd = r[2], r[3]
+                if isinstance(rd, str):
+                    try:
+                        rd = json.loads(rd)
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+                group_rows.append((index, rd))
+
+            arch_thresholds = next(
+                (at for at in thresholds.values() if task_id in at), {}
+            )
+            task_thresholds = arch_thresholds.get(task_id, {}).get(key_name, {})
+            logger.info('--- task_id=%d key=%s: %d candidates, %d thresholds ---',
+                        task_id, key_name, len(group_rows), len(task_thresholds))
+            result = _find_best_candidate(task_id, key_name, group_rows, task_thresholds,
+                                          tuning_mode=args.tuning_mode, verbose=args.verbose)
+            if result is not None:
+                _, _, index, median_time, impl_desc = result
+                logger.info('  → best: index=%d median_time=%.3fms impl=%s',
+                            index, median_time, impl_desc)
+                all_results.append(result)
+            else:
+                logger.info('  → no best candidate found')
+
+        logger.info('--ids: %d best results found (not written to DB)', len(all_results))
+        logger.info('Total time: %.1fs', time.monotonic() - t_total)
+        return
 
     # Build work items: split each arch's task_id range into WORKERS_PER_ARCH bands.
     work_items = []  # (arch, worker_index, task_id_lo, task_id_hi)
@@ -531,7 +621,7 @@ def main() -> None:
             pool.apply_async(
                 worker_process_arch,
                 (arch, worker_index, band_lo, band_hi, conn_params, thresholds[arch],
-                 args.tuning_mode)
+                 args.tuning_mode, args.verbose)
             )
             for arch, worker_index, band_lo, band_hi in work_items
         ]
