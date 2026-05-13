@@ -184,6 +184,12 @@ def _input_only(cols: list) -> list:
     return [c for c in cols
             if not c[0].startswith(('tuned_kernel$', 'compiler_options$'))]
 
+# Tuning stores op names as e.g. 'attn_fwd_op'; SQLite tables use 'op_attn_fwd'.
+OP_NAME_MAP = {
+    'attn_fwd_op': 'op_attn_fwd',
+    'attn_bwd_op': 'op_attn_bwd',
+}
+
 OP_SCHEMAS = {
     'op_attn_fwd': (_input_only(_FWD_COLS)      + _OP_EXTRA_COLS, _FWD_UNIQUE),
     'op_attn_bwd': (_input_only(_BWD_FUSE_COLS) + _OP_EXTRA_COLS, _BWD_FUSE_UNIQUE),
@@ -398,12 +404,13 @@ def export_op(conn_params: dict, output_path: Path) -> None:
             task_config   = row['task_config']
             backend_index = row['backend_index']
 
-            if op_name not in OP_SCHEMAS:
+            table_name = OP_NAME_MAP.get(op_name)
+            if table_name is None or table_name not in OP_SCHEMAS:
                 logger.warning('Skipping unknown op %s (task_id=%s)', op_name, task_id)
                 skipped += 1
                 continue
 
-            cols, _ = OP_SCHEMAS[op_name]
+            cols, _ = OP_SCHEMAS[table_name]
             entry = task_config['entry']
             gpu   = f'{arch}_mod0'
 
@@ -425,8 +432,8 @@ def export_op(conn_params: dict, output_path: Path) -> None:
                 skipped += 1
                 continue
 
-            insert_row(db, op_name, cols, values)
-            counts[op_name] = counts.get(op_name, 0) + 1
+            insert_row(db, table_name, cols, values)
+            counts[table_name] = counts.get(table_name, 0) + 1
 
         db.commit()
 
