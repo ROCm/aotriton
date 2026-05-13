@@ -133,26 +133,26 @@
         <button hx-post="/api/servers/export-best-results"
                 hx-include="#tuning-mode-inputs"
                 hx-swap="none"
-                hx-confirm="Export best results to centraldb.sqlite3? Existing file will be deleted.">Export Best Results</button>
+                hx-confirm="Export best results to {% if tuning_mode == 'op' %}op_database.sqlite3{% else %}centraldb.sqlite3{% endif %}? Existing file will be deleted.">Export Best Results</button>
 
         <button hx-post="/api/servers/sancheck"
                 hx-include="#tuning-mode-inputs"
                 hx-swap="none"
-                hx-confirm="Run LUT sanity check against scratch/centraldb.sqlite3? Requires export to have been run first.">Sancheck</button>
+                hx-confirm="Run LUT sanity check against scratch/{% if tuning_mode == 'op' %}op_database.sqlite3{% else %}centraldb.sqlite3{% endif %}? Requires export to have been run first.">Sancheck</button>
 
         <button hx-post="/api/servers/decomposedb"
                 hx-include="#tuning-mode-inputs"
                 hx-swap="none"
-                hx-confirm="Decompose scratch/centraldb.sqlite3 into installed/database/<arch>/<family>/<kernel>.sqlite3.tar.xz?">Decompose DB</button>
+                hx-confirm="{% if tuning_mode == 'op' %}Decompose scratch/op_database.sqlite3 into installed/database/op_database.sqlite3.tar.xz?{% else %}Decompose scratch/centraldb.sqlite3 into installed/database/<arch>/<family>/<kernel>.sqlite3.tar.xz?{% endif %}">Decompose DB</button>
     </div>
 
     <p style="font-size: 0.9em; color: gray; margin-top: 0.5rem;">
         <strong>Rebuild Accuracy Table:</strong> DROP + CTAS <code>{% if tuning_mode == 'op' %}most_accurate_optune_results{% else %}most_accurate_tuning_results{% endif %}</code> in parallel.<br>
         <strong>Update Accuracy Table:</strong> Incrementally upserts rows for task_ids cached in <code>scratch/retry_task_ids.txt</code> into <code>{% if tuning_mode == 'op' %}most_accurate_optune_results{% else %}most_accurate_tuning_results{% endif %}</code> by <code>retry_missing_entries</code>.<br>
         <strong>Compute Best Results:</strong> Aggregates raw tuning results into best_tuning_results table.<br>
-        <strong>Export Best Results:</strong> Exports best_tuning_results to <code>scratch/centraldb.sqlite3</code>.<br>
-        <strong>Sancheck:</strong> Runs LUT sanity check against <code>scratch/centraldb.sqlite3</code> without triggering code generation.<br>
-        <strong>Decompose DB:</strong> Partitions <code>scratch/centraldb.sqlite3</code> into <code>installed/database/amd/&lt;arch&gt;/&lt;family&gt;/&lt;kernel&gt;.sqlite3.tar.xz</code>.
+        <strong>Export Best Results:</strong> Exports {% if tuning_mode == 'op' %}best_optune_results{% else %}best_tuning_results{% endif %} to <code>scratch/{% if tuning_mode == 'op' %}op_database.sqlite3{% else %}centraldb.sqlite3{% endif %}</code>.<br>
+        <strong>Sancheck:</strong> Runs LUT sanity check against <code>scratch/{% if tuning_mode == 'op' %}op_database.sqlite3{% else %}centraldb.sqlite3{% endif %}</code> without triggering code generation.<br>
+        <strong>Decompose DB:</strong> {% if tuning_mode == 'op' %}Compresses <code>scratch/op_database.sqlite3</code> into <code>installed/database/op_database.sqlite3.tar.xz</code>.{% else %}Partitions <code>scratch/centraldb.sqlite3</code> into <code>installed/database/amd/&lt;arch&gt;/&lt;family&gt;/&lt;kernel&gt;.sqlite3.tar.xz</code>.{% endif %}
     </p>
 
 </section>
