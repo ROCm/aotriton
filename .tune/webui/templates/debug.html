@@ -16,10 +16,16 @@
 </section>
 
 <section>
-    <h3>Lookup by TUNE_V3BIS entry</h3>
+    <h3>Lookup by TUNE_V3BIS/pytest entry</h3>
+    <p style="margin: 0 0 0.4rem; font-size: 0.9em; color: #555;">
+        Accepts either a <strong>TUNE_V3BIS testrun Item:</strong> line or a
+        <strong>pytest node ID</strong>. Examples:
+    </p>
+    <pre style="font-size: 0.8em; background: #f5f5f5; padding: 0.4rem 0.6rem; margin: 0 0 0.5rem; border-radius: 3px; white-space: pre-wrap;">TUNE_V3BIS testrun Item: arch=gfx942 dtype='float16';hdim=64;seqlen_q=256;seqlen_k=8192;causal=False;dropout_p=0.0;bias_type=0
+test/test_backward.py::test_regular_bwd[Split-False-l1-dtype2-0.0-CausalOff-256-8192-hdim8-5-3]</pre>
     <div style="display: flex; gap: 0.5rem; align-items: flex-start;">
         <textarea id="tune_entry_input" rows="3" style="flex: 1; font-family: monospace; font-size: 0.85em;"
-                  placeholder="Paste a TUNE_V3BIS testrun Item: line here"></textarea>
+                  placeholder="Paste a TUNE_V3BIS testrun Item: line or a pytest node ID here"></textarea>
         <button type="button" id="tune_lookup_btn">Lookup</button>
     </div>
     <p id="tune_lookup_error" style="color: red; margin: 0.25rem 0;"></p>
@@ -30,7 +36,7 @@ document.getElementById('tune_lookup_btn').addEventListener('click', function() 
     const line = document.getElementById('tune_entry_input').value.trim();
     const errEl = document.getElementById('tune_lookup_error');
     errEl.textContent = '';
-    if (!line) { errEl.textContent = 'Please paste a TUNE_V3BIS line.'; return; }
+    if (!line) { errEl.textContent = 'Please paste a TUNE_V3BIS line or pytest node ID.'; return; }
 
     fetch('/api/debug/resolve_entry', {
         method: 'POST',

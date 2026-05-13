@@ -27,6 +27,7 @@ from .config import TUNING_ARCHITECTURES
 sys.path.insert(0, AOTRITON_ROOT.as_posix())
 from v3python.tune.utils import get_db_connection_params
 from v3python.tune.flash.module import FlashEntry
+from .pytest_entry_parser import parse_pytest_node_id, entry_to_sql_clauses
 
 def run_command(cmd, cwd, workdir, description=None, dry_run: bool = False):
     """
@@ -236,13 +237,56 @@ def get_tuning_progress(workdir):
 _TUNE_V3BIS_MARKER = 'TUNE_V3BIS testrun Item: '
 
 
-def resolve_tune_entry(workdir, line: str) -> dict:
+def _resolve_pytest_entry(workdir, line: str) -> dict:
     """
-    Parse a TUNE_V3BIS testrun line and return the matching task_queue id.
+    Resolve a pytest node ID to a task_queue id.
 
-    Accepts the full line or just the payload after the marker.
+    Delegates parsing to pytest_entry_parser.parse_pytest_node_id(), then
+    queries task_queue without an arch filter (pytest IDs do not encode arch).
     Returns {'task_id': <int>} or {'error': <str>}.
     """
+    try:
+        entry = parse_pytest_node_id(line)
+    except ValueError as e:
+        return {'error': str(e)}
+
+    clauses, params = entry_to_sql_clauses(entry)
+    sql = (
+        'SELECT id FROM task_queue WHERE '
+        + ' AND '.join(clauses)
+        + ' ORDER BY id LIMIT 1'
+    )
+    parsed_desc = ', '.join(f'{k}={v!r}' for k, v in entry.items())
+
+    try:
+        conn_params = get_db_connection_params(Path(workdir))
+        with psycopg.connect(**conn_params, row_factory=dict_row) as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, params)
+                row = cur.fetchone()
+        if row is None:
+            return {'error': f'No task_queue row found for {parsed_desc}'}
+        return {'task_id': row['id']}
+    except Exception as e:
+        logging.error('_resolve_pytest_entry failed: %s', e)
+        return {'error': str(e)}
+
+
+def resolve_tune_entry(workdir, line: str) -> dict:
+    """
+    Parse a TUNE_V3BIS testrun line or pytest node ID and return the matching
+    task_queue id.
+
+    Accepts:
+      - A TUNE_V3BIS testrun Item line (full or payload only)
+      - A pytest node ID: path/test_file.py::test_name[params]
+
+    Returns {'task_id': <int>} or {'error': <str>}.
+    """
+    # Detect pytest node ID format before trying TUNE_V3BIS parsing
+    if '::' in line and '[' in line:
+        return _resolve_pytest_entry(workdir, line)
+
     try:
         idx = line.find(_TUNE_V3BIS_MARKER)
         payload = line[idx + len(_TUNE_V3BIS_MARKER):].strip() if idx != -1 else line.strip()
