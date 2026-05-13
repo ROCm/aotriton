@@ -1,0 +1,34 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# Display sha256sum of the uncompressed sqlite3 files under <dbroot>.
+# Decompresses each .sqlite3.tar.xz to stdout to avoid writing temp files.
+#
+# Usage:
+#   dbsum <dbroot>
+#
+# Examples:
+#   dbsum v3python/database
+#   dbsum ~/wkdir.v3.5/installed/database
+
+set -euo pipefail
+
+if [ "$#" -lt 1 ]; then
+    echo "Usage: $0 <dbroot>" >&2
+    exit 1
+fi
+
+DBROOT="${1%/}"
+
+if [ ! -d "$DBROOT" ]; then
+    echo "Error: dbroot does not exist: $DBROOT" >&2
+    exit 1
+fi
+
+while IFS= read -r -d '' xzfile; do
+    relpath="${xzfile#"$DBROOT"/}"
+    dbname="${relpath%.tar.xz}"
+    checksum=$(tar xJf "$xzfile" -O 2>/dev/null | sha256sum | awk '{print $1}')
+    echo "$checksum  $dbname"
+done < <(find "$DBROOT" -name '*.sqlite3.tar.xz' -print0 | sort -z)
