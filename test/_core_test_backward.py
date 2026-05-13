@@ -281,7 +281,7 @@ def _do_test_op_bwd(request, args, device_str='cuda'):
             pytest.skip("GQA is not exposed in AITER ASM backend.")
     if causal and bias_type is not None:
         pytest.skip("_scaled_dot_product_attention: Explicit attn_mask should not be set when is_causal=True")
-    if SMALL_VRAM and seqlen_q * seqlen_k * HDIM_MAX > 4096 * 8192 * 256:
+    if SMALL_VRAM and seqlen_q * seqlen_k * HDIM_MAX * dtype.itemsize > 4096 * 8192 * 256 * 2:
         pytest.skip("Skip large tests (qkd > 4096 * 8192 * 256) due to low VRAM.")
     if 'gfx11' in torch.cuda.get_device_properties(0).gcnArchName:
         if HDIM_MAX > 256:
