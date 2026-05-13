@@ -7,6 +7,7 @@ task_queue lookup.
 
 Supported test functions (from test/test_backward.py):
   test_regular_bwd, test_fast
+  test_irregulars
   test_op_bwd_with_matrix_bias  (best-effort)
 
 Bracket parameter order for test_regular_bwd / test_fast (left to right):
@@ -135,6 +136,46 @@ def parse_pytest_node_id(node_id: str) -> dict:
         seqlen_k = _round_up(seqlen_k, _SEQLEN_ENTRIES, 'seqlen_k')
         bias_type = 0
 
+    elif test_name == 'test_irregulars':
+        # Positions: 0=BWDOP, 1=bias_type, 2=storage_flip, 3=sm_scale, 4=dtype,
+        #            5=dropout_p, 6=causal, 7=seqlen_k, 8=seqlen_q,
+        #            9=D_HEAD, 10=N_HEADS, 11=BATCH
+        if len(parts) < 12:
+            raise ValueError(
+                f'Expected 12 bracket params for {test_name}, '
+                f'got {len(parts)}: {bracket}'
+            )
+        bias_str = parts[1]
+        dtype_token = parts[4]
+        dropout_p = float(parts[5])
+        causal_str = parts[6]
+        seqlen_k = int(parts[7])
+        seqlen_q = int(parts[8])
+        hdim_token = parts[9]
+
+        bias_map = {'BiasOff': 0, 'BiasOn': 1}
+        if bias_str not in bias_map:
+            raise ValueError(f'Unknown bias_type token: {bias_str!r}. Expected BiasOff or BiasOn.')
+        bias_type = bias_map[bias_str]
+
+        dtype = DTYPE_MAP.get(dtype_token)
+        if dtype is None:
+            raise ValueError(f'Unknown dtype token: {dtype_token!r}')
+
+        causal_map = {'CausalOff': False, 'CausalOn': True}
+        if causal_str not in causal_map:
+            raise ValueError(f'Unknown causal token: {causal_str!r}. Expected CausalOff or CausalOn.')
+        causal = causal_map[causal_str]
+        raw_hdim = parse_hdim(hdim_token)
+        hdim = (
+            (_round_up(raw_hdim[0], _BLOCK_DMODEL, 'hdim_qk'),
+             _round_up(raw_hdim[1], _BLOCK_DMODEL, 'hdim_vo'))
+            if isinstance(raw_hdim, tuple)
+            else _round_up(raw_hdim, _BLOCK_DMODEL, 'hdim')
+        )
+        seqlen_q = _round_up(seqlen_q, _SEQLEN_ENTRIES, 'seqlen_q')
+        seqlen_k = _round_up(seqlen_k, _SEQLEN_ENTRIES, 'seqlen_k')
+
     elif test_name == 'test_op_bwd_with_matrix_bias':
         # Parametrize order (no causal param; causal=False hardcoded):
         #   BWDOP(0), storage_flip(1), sm_scale(2), dtype(3), dropout_p(4),
@@ -168,7 +209,7 @@ def parse_pytest_node_id(node_id: str) -> dict:
     else:
         raise ValueError(
             f'Unsupported test name: {test_name!r}. '
-            'Supported: test_regular_bwd, test_fast, test_op_bwd_with_matrix_bias.'
+            'Supported: test_regular_bwd, test_fast, test_irregulars, test_op_bwd_with_matrix_bias.'
         )
 
     return {
