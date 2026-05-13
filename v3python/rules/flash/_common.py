@@ -70,12 +70,6 @@ class FlashKernel(KernelDescription):
             hdim = check_value(functional, 'BLOCK_DMODEL')
             if hdim > 256:
                 return True
-        # FIXME: check if compiler fixes this at every release
-        # gfx950 compiler has known numerical error on hdim=48/80
-        if functional.arch == 'gfx950':
-            hdim = check_value(functional, 'BLOCK_DMODEL')
-            if hdim in [48, 80]:
-                return True
         return False
 
     def sancheck_lut_tensor(self,
@@ -169,4 +163,10 @@ class FlashKernel(KernelDescription):
 
 class FlashBwdKernel(FlashKernel):
     def is_functional_disabled(self, functional):
+        # FIXME: check if compiler fixes this at every release
+        # gfx950 compiler has known numerical error on hdim=48/80
+        if functional.arch == 'gfx950':
+            hdim = check_value(functional, 'BLOCK_DMODEL')
+            if hdim in [48, 80]:
+                return True
         return super().is_functional_disabled(functional)
