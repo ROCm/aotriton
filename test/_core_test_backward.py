@@ -109,7 +109,7 @@ SMALL_VRAM = bool(int(os.getenv('SMALL_VRAM', default='0')))
 
 DTYPES = [torch.float16, torch.bfloat16, torch.float32]
 
-if BWD_IMPL == 0:
+if BWD_IMPL is None or BWD_IMPL == 0:
     POT_HEADDIMS = [16, 32, 64, 128, 256, 512]
     NPOT_HEADDIMS = [48, 80, 96, 160, 192, 224]
     M8_HEADDIMS = [8, 24, 40, 56, 72, 88, 96, 120, 152, 184, 216, 248, 408]
@@ -224,7 +224,7 @@ def _get_BWDOP_id():
         return 'Fused'
     if BWD_IMPL == 0:
         return 'Split'
-    if V3_API:
+    if V3_API and BWD_IMPL is None:
         return 'V3'
     assert False, f'Unsupported BWD_IMPL {BWD_IMPL}'
 
