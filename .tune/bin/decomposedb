@@ -49,6 +49,9 @@ if [ "$TUNING_MODE" = "op" ]; then
         exit 1
     fi
 
+    echo "Vacuuming op_database.sqlite3..."
+    sqlite3 "$OP_DB" "VACUUM;"
+
     echo "Compressing op_database.sqlite3..."
     tar -cJf "$DECOMPOSE_OUTPUT/op_database.sqlite3.tar.xz" \
         -C "$(dirname "$OP_DB")" "$(basename "$OP_DB")"
