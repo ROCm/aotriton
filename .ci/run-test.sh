@@ -53,6 +53,15 @@ if [ -n "${PARTIAL_INFO_DIR:-}" ]; then
   done
 fi
 
+if [ -n "${USE_ADIFFS_TXT:-}" ]; then
+  if [ -f "$USE_ADIFFS_TXT" ]; then
+    echo "USE_ADIFFS_TXT: $USE_ADIFFS_TXT ($(wc -l < "$USE_ADIFFS_TXT") lines)"
+  else
+    echo "USE_ADIFFS_TXT: $USE_ADIFFS_TXT does not exist, unsetting"
+    unset USE_ADIFFS_TXT
+  fi
+fi
+
 (
   ulimit -c 0
   cd ${SCRIPT_DIR}/..;
