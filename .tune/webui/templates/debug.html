@@ -137,6 +137,8 @@ document.getElementById('tune_lookup_btn').addEventListener('click', function() 
                 <th>kernel_name</th>
                 <th>hsaco_index</th>
                 <th>result</th>
+                <th>times (ms) med/p20/p80</th>
+                <th>adiffs</th>
                 <th>error</th>
                 <th>gpu_id</th>
                 <th>created_at</th>
@@ -144,12 +146,33 @@ document.getElementById('tune_lookup_btn').addEventListener('click', function() 
         </thead>
         <tbody>
             {% for r in debug_data.tuning_results %}
+            {% set rd = r.result_data %}
             <tr>
                 <td><code>{{ r.id }}</code></td>
                 <td><code>{{ r.kernel_name }}</code></td>
                 <td>{{ r.hsaco_index }}</td>
                 <td>{{ r.result }}</td>
-                <td><pre style="white-space: pre-wrap; font-size: 0.8em; margin: 0;">{{ r.error | tojson if r.error else '—' }}</pre></td>
+                <td>{% if rd and rd.times %}{{ "%.3f" | format(rd.times[0]) }} / {{ "%.3f" | format(rd.times[1]) }} / {{ "%.3f" | format(rd.times[2]) }}{% else %}—{% endif %}</td>
+                <td>{% if rd and rd.adiffs %}
+                    <table>
+                        {% for tname, tensors in rd.adiffs.items() %}
+                        <tr><td colspan="4"><b>{{ tname }}</b></td></tr>
+                        {% for tsor, vals in tensors.items() %}
+                        <tr>
+                            <td><code>{{ tsor }}</code></td>
+                            {% if vals is none %}
+                            <td colspan="3">N/A</td>
+                            {% else %}
+                            <td>tft={{ "%.4f" | format(vals[0]) }}</td>
+                            <td>{% if vals[1] is none %}NaN{% elif vals[1] | int == -217 %}early-reject{% else %}adiff={{ "%.4e" | format(vals[1]) }}{% endif %}</td>
+                            <td>ref={{ "%.4e" | format(vals[2]) }}</td>
+                            {% endif %}
+                        </tr>
+                        {% endfor %}
+                        {% endfor %}
+                    </table>
+                    {% else %}—{% endif %}</td>
+                <td><pre>{{ r.error | tojson if r.error else '—' }}</pre></td>
                 <td>{{ r.gpu_id if r.gpu_id is not none else '—' }}</td>
                 <td>{{ r.created_at }}</td>
             </tr>

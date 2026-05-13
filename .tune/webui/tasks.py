@@ -341,7 +341,7 @@ def get_debug_task_data(workdir, task_id: int) -> dict:
 
                 cur.execute(
                     "SELECT id, task_id, kernel_name, hsaco_index, result,"
-                    " error, gpu_id, created_at FROM tuning_results"
+                    " result_data, error, gpu_id, created_at FROM tuning_results"
                     " WHERE task_id = %s ORDER BY kernel_name, hsaco_index",
                     (task_id,),
                 )
