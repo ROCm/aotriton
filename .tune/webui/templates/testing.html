@@ -118,6 +118,12 @@
                                 style="font-size: 0.8em; padding: 0.3rem 0.5rem;">
                             Run Test
                         </button>
+                        <button hx-post="/api/testing/{{ worker.hostname }}/run-test"
+                                hx-swap="none"
+                                hx-vals='js:{pass_num: document.getElementById("pass-{{ worker.hostname }}").value, test_level: document.getElementById("level-{{ worker.hostname }}").value, backend: document.getElementById("backend-{{ worker.hostname }}").value, adiff: "1"}'
+                                style="font-size: 0.8em; padding: 0.3rem 0.5rem;">
+                            Run Test with adiff.txt
+                        </button>
                         <button type="button"
                                 onclick="window.open('/api/testing/{{ worker.hostname }}/failures?pass=' + document.getElementById('pass-{{ worker.hostname }}').value + '&backend=' + document.getElementById('backend-{{ worker.hostname }}').value, '_blank', 'width=900,height=600')"
                                 style="font-size: 0.8em; padding: 0.3rem 0.5rem;">

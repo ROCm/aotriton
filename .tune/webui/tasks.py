@@ -1262,8 +1262,12 @@ def get_tester_signature(workdir, hostname):
 
 
 
-def run_test_on_host(workdir, hostname, pass_num, test_level, backend, variant=None, dry_run: bool = False):
-    """Queue run-test on a remote tester host via .tune/single/run-test.sh (tsp-backed)."""
+def run_test_on_host(workdir, hostname, pass_num, test_level, backend, variant=None, adiff: bool = False, dry_run: bool = False):
+    """Queue run-test on a remote tester host via .tune/single/run-test.sh (tsp-backed).
+
+    When adiff is True the remote script is switched to .ci/run-ci-test.sh via
+    the --adiff flag, which reads adiff.txt to select the tests to run.
+    """
     worker = get_worker_by_hostname(workdir, hostname)
     if not worker:
         return {'status': 'error', 'message': f"Worker '{hostname}' not found"}
@@ -1277,13 +1281,15 @@ def run_test_on_host(workdir, hostname, pass_num, test_level, backend, variant=N
         '--test_level', str(test_level),
         '--backend', backend,
     ]
+    desc = f'run-test on {hostname} ({arch}) pass={pass_num} level={test_level} backend={backend}'
     if workdir_override:
         cmd += ['--workdir_override', workdir_override]
     if variant in ('partial', 'partial_adiffs'):
         cmd += ['--variant', variant]
-    desc = f'run-test on {hostname} ({arch}) pass={pass_num} level={test_level} backend={backend}'
-    if variant:
         desc += f' variant={variant}'
+    if adiff:
+        cmd += ['--adiff']
+        desc += ' adiff=1'
     return run_command(cmd, cwd=AOTRITON_ROOT, workdir=workdir, description=desc, dry_run=dry_run)
 
 
