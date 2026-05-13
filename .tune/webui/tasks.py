@@ -300,8 +300,8 @@ def resolve_tune_entry(workdir, line: str) -> dict:
     from dataclasses import asdict
     d = asdict(entry)
 
-    clauses = ["task_config->>'arch' = %s"]
-    params: list = [arch]
+    clauses = ["task_config->>'arch' = %s", "module NOT LIKE %s"]
+    params: list = [arch, '%_op']
     for field, value in d.items():
         col = f"task_config->'entry'->>'{field}'"
         if isinstance(value, bool):
