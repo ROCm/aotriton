@@ -58,6 +58,9 @@ class InterfaceGenerator(ABC):
 
         # registry
         all_functionals = []
+        self.lut_stats: dict[tuple, int] = {}
+        # (arch, op_name) → {'trivial': N, 'non_trivial': N}
+        self.trivial_stats: dict[tuple, dict[str, int]] = {}
 
         # autotune phase
         fac = DatabaseFactories.create_factory(args.build_dir)
@@ -71,6 +74,13 @@ class InterfaceGenerator(ABC):
                 subg.generate()
                 if subg.cc_file:
                     self._shim_files.append(subg.cc_file)
+                if hasattr(subg, 'lut_stats'):
+                    for lut_value, count in subg.lut_stats.items():
+                        key = (functional.arch, functional.name, lut_value)
+                        self.lut_stats[key] = self.lut_stats.get(key, 0) + count
+                    ak = (functional.arch, functional.name)
+                    ts = self.trivial_stats.setdefault(ak, {'trivial': 0, 'non_trivial': 0})
+                    ts['trivial' if subg.is_trivial else 'non_trivial'] += 1
             if use_this_functional:
                 all_functionals.append(functional)
 
