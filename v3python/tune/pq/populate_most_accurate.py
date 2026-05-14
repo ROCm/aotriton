@@ -66,7 +66,7 @@ JOIN task_queue tq ON tq.id = tr.task_id
 CROSS JOIN LATERAL jsonb_each(tr.result_data->'adiffs') AS test_case(key, value)
 CROSS JOIN LATERAL jsonb_each(test_case.value)           AS tensor(key, value)
 WHERE tr.result_data IS NOT NULL
-  AND tq.module LIKE '%_op'
+  AND tq.module LIKE '%%_op'
   AND (tensor.value IS NULL OR (tensor.value->>1)::float >= 0.0) {filter}
 GROUP BY tr.task_id, tq.arch, tq.task_config, tr.op_name, test_case.key, tensor.key
 """
@@ -85,7 +85,7 @@ JOIN task_queue tq ON tq.id = tr.task_id
 CROSS JOIN LATERAL jsonb_each(tr.result_data->'adiffs') AS test_case(key, value)
 CROSS JOIN LATERAL jsonb_each(test_case.value)           AS tensor(key, value)
 WHERE tr.result_data IS NOT NULL
-  AND tq.module NOT LIKE '%_op' {filter}
+  AND tq.module NOT LIKE '%%_op' {filter}
 GROUP BY tr.task_id, tq.arch, tq.task_config, tr.kernel_name, test_case.key, tensor.key
 """
 
