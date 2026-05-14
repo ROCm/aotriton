@@ -1418,7 +1418,7 @@ def get_adiffs_file(workdir, hostname, arch):
     remote_wd = workdir_override or default_wd
     remote_path = f'{remote_wd}/run/tests/partial/adiffs.txt'
     script = (
-        f'if [ -f {remote_path} ]; then cat {remote_path}; '
+        f'if [ -f {remote_path} ]; then sort -u {remote_path}; '
         f'else echo "__NOT_FOUND__"; fi'
     )
     r = subprocess.run(

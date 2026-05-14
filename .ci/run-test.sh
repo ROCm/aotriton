@@ -104,4 +104,9 @@ fi
     1>"${outdir}/${fnprefix}${pass}.varlen.out" \
     2>"${outdir}/${fnprefix}${pass}.varlen.err" || true
   grep '^FAILED' "${outdir}/${fnprefix}${pass}.varlen.out"|sed 's/^FAILED //' | sed 's/].*/]/' > "${outdir}/sel${pass}.varlen.txt"
+  if [ -n "${RECORD_ADIFFS_TO:-}" ]; then
+    SCRIPT_DIR_ABS="$(cd "${SCRIPT_DIR}" && pwd)"
+    bash "${SCRIPT_DIR_ABS}/../.tune/bin/append_oom_to_adiffs.sh" "${outdir}/${fnprefix}${pass}.out" >> "${RECORD_ADIFFS_TO}"
+    bash "${SCRIPT_DIR_ABS}/../.tune/bin/append_oom_to_adiffs.sh" "${outdir}/${fnprefix}${pass}.varlen.out" >> "${RECORD_ADIFFS_TO}"
+  fi
 )
