@@ -6,7 +6,7 @@
 # pass number, and store the resolved task_ids in broken_entries.db.
 #
 # Usage:
-#   retry_broken_entries <workdir> <hostname> <pass#>
+#   retry_broken_entries <workdir> <hostname> <pass#> [--tuning_mode kernel|op]
 
 set -euo pipefail
 
@@ -17,14 +17,30 @@ REPO_ROOT="$(cd "$TUNE_ROOT/.." && pwd)"
 . "$TUNE_ROOT/lib/config_load.sh"
 . "$TUNE_ROOT/lib/db_query.sh"
 
-if [ "$#" -ne 3 ]; then
-    echo "Usage: $0 <workdir> <hostname> <pass#>" >&2
+if [ "$#" -lt 3 ]; then
+    echo "Usage: $0 <workdir> <hostname> <pass#> [--tuning_mode kernel|op]" >&2
     exit 1
 fi
 
 WORKDIR="$1"
 HOSTNAME="$2"
 PASS_NUM="$3"
+TUNING_MODE="kernel"
+
+shift 3
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --tuning_mode)
+            TUNING_MODE="$2"; shift 2 ;;
+        *)
+            echo "Unknown argument: $1" >&2; exit 1 ;;
+    esac
+done
+
+if [ "$TUNING_MODE" != "kernel" ] && [ "$TUNING_MODE" != "op" ]; then
+    echo "Error: --tuning_mode must be 'kernel' or 'op'" >&2
+    exit 1
+fi
 
 load_config "$WORKDIR"
 
@@ -56,7 +72,7 @@ for prefix in "${PREFIXES[@]}"; do
     ssh "$HOSTNAME" \
         "python3 '$REMOTE_WORKDIR/aotriton.src/test/pytest2entry.py' '$out_file'" \
     | PYTHONPATH="$REPO_ROOT" python3 "$TUNE_ROOT/libexec/broken_entries_to_db" \
-        "$WORKDIR" "$HOSTNAME" "$ARCH" "$PASS_NUM"
+        "$WORKDIR" "$HOSTNAME" "$ARCH" "$PASS_NUM" --tuning_mode "$TUNING_MODE"
 done
 
 if [ "$FOUND" -eq 0 ]; then
@@ -66,4 +82,4 @@ fi
 
 echo ""
 PYTHONPATH="$REPO_ROOT" python3 "$TUNE_ROOT/libexec/reset_broken_to_pending" \
-    "$WORKDIR" "$HOSTNAME" "$PASS_NUM"
+    "$WORKDIR" "$HOSTNAME" "$PASS_NUM" --tuning_mode "$TUNING_MODE"
