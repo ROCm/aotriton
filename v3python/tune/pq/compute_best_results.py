@@ -291,14 +291,18 @@ def get_archs(conn, sql: SqlStatements) -> list[str]:
 def worker_process_arch(arch: str, worker_index: int,
                         task_id_lo: int, task_id_hi: int,
                         conn_params: dict, arch_thresholds: dict,
-                        tuning_mode: str, verbose: bool = False) -> list:
+                        tuning_mode: str, verbose: bool = False,
+                        filter_task_ids: list[int] | None = None) -> list:
     """
     Runs in a child process. Streams results for one (arch, task_id range),
     processes each (task_id, key_name) group inline, returns best rows.
 
-    task_id_lo/hi:   inclusive task_id range this worker is responsible for
-    arch_thresholds: {task_id: {key_name: {(test_case, tensor_name): min_absolute_error}}}
-                     full arch slice; worker only accesses task_ids in [lo, hi]
+    task_id_lo/hi:    inclusive task_id range this worker is responsible for
+                      (ignored when filter_task_ids is given)
+    arch_thresholds:  {task_id: {key_name: {(test_case, tensor_name): min_absolute_error}}}
+                      full arch slice; worker only accesses task_ids in its range/filter
+    filter_task_ids:  if given, restrict the DB query to exactly these task_ids
+                      (incremental/fix/ids mode); caller sends one worker per arch
 
     Returns list of (task_id, key_name, index, median_time, impl_desc).
     """
@@ -319,16 +323,27 @@ def worker_process_arch(arch: str, worker_index: int,
     # Stagger: worker i first logs at (i+1)*3s, then every 15s thereafter.
     last_log_time = t0 + (worker_index + 1) * 3 - LOG_INTERVAL
 
-    # Count groups in this range from thresholds (new tasks added while tuning
-    # is active may push group_count above this estimate).
-    total_groups = sum(len(kn_dict) for tid, kn_dict in arch_thresholds.items()
-                       if task_id_lo <= tid <= task_id_hi)
-    log.info('arch=%s chunk=%d [%d, %d]: ~%d groups to process',
-             arch, worker_index, task_id_lo, task_id_hi, total_groups)
-
-    with psycopg.connect(**conn_params, autocommit=True) as conn:
-        with conn.transaction(), conn.cursor(name=f'worker_{arch}_{worker_index}') as cur:
-            cur.itersize = STREAM_BATCH_SIZE
+    def _execute_and_group(cur):
+        # Count groups in thresholds for this worker's scope (new tasks may push
+        # group_count above this estimate if tuning runs concurrently).
+        if filter_task_ids is not None:
+            total_groups = sum(len(kn_dict) for tid, kn_dict in arch_thresholds.items()
+                               if tid in set(filter_task_ids))
+            log.info('arch=%s chunk=%d [incremental %d task_id(s)]: ~%d groups to process',
+                     arch, worker_index, len(filter_task_ids), total_groups)
+            cur.execute(f"""
+                SELECT tr.task_id, tr.{sql.key_col}, tr.{sql.index_col}, tr.result_data
+                FROM {sql.results_table} tr
+                JOIN task_queue tq ON tq.id = tr.task_id AND tq.arch = %s
+                WHERE tr.result_data IS NOT NULL
+                  AND tr.task_id = ANY(%s)
+                ORDER BY tr.task_id, tr.{sql.key_col}
+            """, (arch, filter_task_ids))
+        else:
+            total_groups = sum(len(kn_dict) for tid, kn_dict in arch_thresholds.items()
+                               if task_id_lo <= tid <= task_id_hi)
+            log.info('arch=%s chunk=%d [%d, %d]: ~%d groups to process',
+                     arch, worker_index, task_id_lo, task_id_hi, total_groups)
             cur.execute(f"""
                 SELECT tr.task_id, tr.{sql.key_col}, tr.{sql.index_col}, tr.result_data
                 FROM {sql.results_table} tr
@@ -337,8 +352,13 @@ def worker_process_arch(arch: str, worker_index: int,
                   AND tr.task_id BETWEEN %s AND %s
                 ORDER BY tr.task_id, tr.{sql.key_col}
             """, (arch, task_id_lo, task_id_hi))
+        return total_groups, groupby(cur, key=lambda r: (r[0], r[1]))
 
-            for (task_id, key_name), rows in groupby(cur, key=lambda r: (r[0], r[1])):
+    with psycopg.connect(**conn_params, autocommit=True) as conn:
+        with conn.transaction(), conn.cursor(name=f'worker_{arch}_{worker_index}') as cur:
+            cur.itersize = STREAM_BATCH_SIZE
+            total_groups, grouped_rows = _execute_and_group(cur)
+            for (task_id, key_name), rows in grouped_rows:
                 # Parse JSONB here in the worker — never crosses IPC boundary.
                 group_rows = []
                 for r in rows:
@@ -599,21 +619,29 @@ def main() -> None:
         logger.info('Total time: %.1fs', time.monotonic() - t_total)
         return
 
-    # Build work items: split each arch's task_id range into WORKERS_PER_ARCH bands.
-    work_items = []  # (arch, worker_index, task_id_lo, task_id_hi)
+    # Build work items.
+    # Incremental/fix mode: one worker per arch, passing filter_task_ids directly.
+    # Full mode: split each arch's task_id range into WORKERS_PER_ARCH bands.
+    work_items = []  # (arch, worker_index, band_lo, band_hi)
     for arch in archs:
         if arch not in thresholds:
             continue
-        task_ids = thresholds[arch].keys()
-        lo, hi = min(task_ids), max(task_ids)
-        step = math.ceil((hi - lo + 1) / WORKERS_PER_ARCH)
-        for chunk_idx in range(WORKERS_PER_ARCH):
-            band_lo = lo + chunk_idx * step
-            band_hi = min(lo + (chunk_idx + 1) * step - 1, hi)
-            work_items.append((arch, len(work_items), band_lo, band_hi))
+        task_ids_for_arch = thresholds[arch].keys()
+        lo, hi = min(task_ids_for_arch), max(task_ids_for_arch)
+        if filter_task_ids is not None:
+            # One worker handles all filter_task_ids for this arch via = ANY(%s).
+            # band_lo/hi are passed but unused in the worker's incremental branch.
+            work_items.append((arch, len(work_items), lo, hi))
+        else:
+            step = math.ceil((hi - lo + 1) / WORKERS_PER_ARCH)
+            for chunk_idx in range(WORKERS_PER_ARCH):
+                band_lo = lo + chunk_idx * step
+                band_hi = min(lo + (chunk_idx + 1) * step - 1, hi)
+                work_items.append((arch, len(work_items), band_lo, band_hi))
 
+    workers_per_arch = 1 if filter_task_ids is not None else WORKERS_PER_ARCH
     logger.info('Step 2+3: spawning %d worker(s) (%d arch(s) × %d) — archs: %s',
-                len(work_items), len(archs), WORKERS_PER_ARCH, archs)
+                len(work_items), len(archs), workers_per_arch, archs)
 
     ctx = multiprocessing.get_context('spawn')
     with ctx.Pool(processes=len(work_items)) as pool:
@@ -621,7 +649,7 @@ def main() -> None:
             pool.apply_async(
                 worker_process_arch,
                 (arch, worker_index, band_lo, band_hi, conn_params, thresholds[arch],
-                 args.tuning_mode, args.verbose)
+                 args.tuning_mode, args.verbose, filter_task_ids)
             )
             for arch, worker_index, band_lo, band_hi in work_items
         ]
