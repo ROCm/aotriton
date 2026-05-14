@@ -32,6 +32,7 @@ from v3python.tune.utils import get_db_connection_params
 
 # 'flash' matches v3python.tune.flash — the only tuning module currently supported.
 # TODO: extend when additional modules (e.g. gemm) are added to v3python.tune.*
+# TODO: support flash_op (operator tuning)
 _MODULE = 'flash'
 
 # Copied from v3python/rules/flash/op_attn_fwd.py: AOTRITON_FLASH_BLOCK_DMODEL.
@@ -126,10 +127,10 @@ def _fetch_task_id(conn, arch: str, entry: FlashEntry) -> int | None:
     entry_sql, entry_params = _entry_to_jsonb_filter(entry)
     sql = (
         f"SELECT id FROM task_queue "
-        f"WHERE task_config->>'arch' = %s AND {entry_sql} LIMIT 1"
+        f"WHERE task_config->>'arch' = %s AND module = %s AND {entry_sql} LIMIT 1"
     )
     with conn.cursor() as cur:
-        cur.execute(sql, [arch] + entry_params)
+        cur.execute(sql, [arch, _MODULE] + entry_params)
         row = cur.fetchone()
         return row['id'] if row else None
 
