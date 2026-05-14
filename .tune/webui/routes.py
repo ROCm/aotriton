@@ -126,7 +126,9 @@ def commands():
 def api_start_all_workers():
     """Start all workers"""
     workdir = current_app.config['WORKDIR']
-    result = tasks.start_all_workers(workdir, tuning_mode=tasks.get_tuning_mode(workdir), dry_run=should_dryrun())
+    options = request.get_json() or {}
+    tuning_mode = options.get('tuning_mode') or tasks.get_tuning_mode(workdir)
+    result = tasks.start_all_workers(workdir, tuning_mode=tuning_mode, dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -142,7 +144,9 @@ def api_stop_all_workers():
 def api_restart_all_workers():
     """Restart all workers"""
     workdir = current_app.config['WORKDIR']
-    result = tasks.restart_all_workers(workdir, tuning_mode=tasks.get_tuning_mode(workdir), dry_run=should_dryrun())
+    options = request.get_json() or {}
+    tuning_mode = options.get('tuning_mode') or tasks.get_tuning_mode(workdir)
+    result = tasks.restart_all_workers(workdir, tuning_mode=tuning_mode, dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -150,7 +154,9 @@ def api_restart_all_workers():
 def api_stop_start_all_workers():
     """Stop then start all workers"""
     workdir = current_app.config['WORKDIR']
-    result = tasks.stop_start_all_workers(workdir, tuning_mode=tasks.get_tuning_mode(workdir), dry_run=should_dryrun())
+    options = request.get_json() or {}
+    tuning_mode = options.get('tuning_mode') or tasks.get_tuning_mode(workdir)
+    result = tasks.stop_start_all_workers(workdir, tuning_mode=tuning_mode, dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -159,8 +165,9 @@ def api_start_worker(hostname):
     """Start single worker"""
     workdir = current_app.config['WORKDIR']
     options = request.get_json() or {}
+    tuning_mode = options.get('tuning_mode') or tasks.get_tuning_mode(workdir)
     result = tasks.start_worker_single(workdir, hostname, options=options,
-                                       tuning_mode=tasks.get_tuning_mode(workdir),
+                                       tuning_mode=tuning_mode,
                                        dry_run=should_dryrun())
     return jsonify(result)
 
@@ -178,8 +185,9 @@ def api_restart_worker(hostname):
     """Restart single worker"""
     workdir = current_app.config['WORKDIR']
     options = request.get_json() or {}
+    tuning_mode = options.get('tuning_mode') or tasks.get_tuning_mode(workdir)
     result = tasks.restart_worker_single(workdir, hostname, options=options,
-                                         tuning_mode=tasks.get_tuning_mode(workdir),
+                                         tuning_mode=tuning_mode,
                                          dry_run=should_dryrun())
     return jsonify(result)
 
@@ -189,8 +197,9 @@ def api_stop_start_worker(hostname):
     """Stop then start single worker"""
     workdir = current_app.config['WORKDIR']
     options = request.get_json() or {}
+    tuning_mode = options.get('tuning_mode') or tasks.get_tuning_mode(workdir)
     result = tasks.stop_start_worker_single(workdir, hostname, options=options,
-                                            tuning_mode=tasks.get_tuning_mode(workdir),
+                                            tuning_mode=tuning_mode,
                                             dry_run=should_dryrun())
     return jsonify(result)
 
@@ -474,7 +483,8 @@ def api_build_images():
 def api_deploy_workdir():
     """Deploy workdir to all workers"""
     workdir = current_app.config['WORKDIR']
-    result = tasks.deploy_workdir(workdir, tuning_mode=tasks.get_tuning_mode(workdir), dry_run=should_dryrun())
+    tuning_mode = request.form.get('tuning_mode') or tasks.get_tuning_mode(workdir)
+    result = tasks.deploy_workdir(workdir, tuning_mode=tuning_mode, dry_run=should_dryrun())
     return jsonify(result)
 
 
@@ -483,8 +493,9 @@ def api_deploy_single(hostname):
     """Deploy workdir to a single worker; pass testnode=1 to add --testnode flag"""
     workdir = current_app.config['WORKDIR']
     extra_args = ['--testnode'] if request.form.get('testnode') == '1' else None
+    tuning_mode = request.form.get('tuning_mode') or tasks.get_tuning_mode(workdir)
     result = tasks.deploy_workdir_single(workdir, hostname, extra_args=extra_args,
-                                         tuning_mode=tasks.get_tuning_mode(workdir),
+                                         tuning_mode=tuning_mode,
                                          dry_run=should_dryrun())
     return jsonify(result)
 
