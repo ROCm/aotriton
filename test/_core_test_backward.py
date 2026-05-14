@@ -372,6 +372,9 @@ def core_test_op_bwd(request, args, device : int | None = None):
         if qkh > 2048 * 2048 * 64:
             gc.collect()
             torch.cuda.empty_cache()
+    except torch.AcceleratorError as e:
+        print(f'AcceleratorError: {e}')
+        exit_pytest()
     except RuntimeError as e:
         if hipGetLastError() == hipError_t.hipErrorIllegalAddress:
             exit_pytest()
