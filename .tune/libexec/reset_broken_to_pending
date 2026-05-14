@@ -99,13 +99,13 @@ def main() -> None:
             print('\nNo matching rows found. Nothing to do.')
             return
 
+        row_ids = [r['id'] for r in matches]
         print()
+        print(f'Preview Task IDs: {row_ids[:min(8, len(row_ids))]}')
         answer = input('Reset these rows to pending? [y/N] ').strip().lower()
         if answer != 'y':
             print('Aborted.')
             return
-
-        row_ids = [r['id'] for r in matches]
 
         # Insert extra UTs into PG before resetting status to pending,
         # so workers always see them when they claim the task.
