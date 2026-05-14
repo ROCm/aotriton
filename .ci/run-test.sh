@@ -88,12 +88,18 @@ fi
   fi
   set -v
   export PYTHONPATH="${AOTRITON_TEST_LIBDIR:-${bdir}/install_dir/lib}"
+  _sig=$(ls "$PYTHONPATH/aotriton.images/"*"/__signature__" 2>/dev/null | head -n 1)
+  {
+    [ -n "$_sig" ] && cat "$_sig" \
+      || echo "NO __signature__ file at $PYTHONPATH/aotriton.images/"
+  } | tee "${outdir}/${fnprefix}${pass}.out" \
+          "${outdir}/${fnprefix}${pass}.varlen.out" > /dev/null
   pytest --tb=line -n ${ngpus} --max-worker-restart 48 -rfEsx \
     -p no:cacheprovider \
     ${SELECT_FROM} \
     test/test_backward.py \
     -v \
-    1>"${outdir}/${fnprefix}${pass}.out" \
+    1>>"${outdir}/${fnprefix}${pass}.out" \
     2>"${outdir}/${fnprefix}${pass}.err" || true
   grep '^FAILED' "${outdir}/${fnprefix}${pass}.out"|sed 's/^FAILED //' | sed 's/].*/]/' > "${outdir}/sel${pass}.txt"
   pytest --tb=line -n ${ngpus} --max-worker-restart 48 -rfEsx \
@@ -101,7 +107,7 @@ fi
     ${SELECT_VARLEN_FROM} \
     test/test_varlen.py \
     -v \
-    1>"${outdir}/${fnprefix}${pass}.varlen.out" \
+    1>>"${outdir}/${fnprefix}${pass}.varlen.out" \
     2>"${outdir}/${fnprefix}${pass}.varlen.err" || true
   grep '^FAILED' "${outdir}/${fnprefix}${pass}.varlen.out"|sed 's/^FAILED //' | sed 's/].*/]/' > "${outdir}/sel${pass}.varlen.txt"
   if [ -n "${RECORD_ADIFFS_TO:-}" ]; then
