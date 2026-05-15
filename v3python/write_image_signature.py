@@ -16,6 +16,7 @@ def parse():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument('--build_dir', type=Path, required=True)
     p.add_argument('--git_sha1', required=True)
+    p.add_argument('--git_treesha1', required=True)
     p.add_argument('--target_arch', nargs='+')
     p.add_argument('--vendors', nargs='*', default=['amd'])
     p.add_argument('--output_file', required=True)
@@ -44,6 +45,7 @@ def main():
     args = parse()
     sig = {}
     sig['AOTRITON_GIT_SHA1'] = args.git_sha1
+    sig['AOTRITON_GIT_TREESHA1'] = args.git_treesha1
     fac = DatabaseFactories.create_factory(args.build_dir)
     db = {}
     def gen_primary_db_hash():
