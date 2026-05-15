@@ -8,7 +8,17 @@
 #include "runtime.h"
 #include "util.h"
 #include "cpp_tune.h"
+// APIs in this file are deprecated, and this file will be removed in the next release.
+// define AOTRITON_V2_API_FLASH_ATTN_H to avoid including it.
 #include "v2/flash.h"
+
+namespace AOTRITON_NS::v2::flash {
+
+// check_gpu will be preserved for backward compatibility
+hipError_t AOTRITON_API
+check_gpu(AOTRITON_NS::Stream stream);
+
+}
 
 namespace AOTRITON_NS::v3::flash {
 

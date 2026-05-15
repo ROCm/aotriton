@@ -11,10 +11,6 @@ namespace AOTRITON_NS::v2::flash {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 
-[[deprecated("V2 API is deprecated, use V3 API instead")]]
-hipError_t AOTRITON_API
-check_gpu(AOTRITON_NS::Stream stream);
-
 using T4 = AOTRITON_NS::TensorView<4>;
 using T2 = AOTRITON_NS::TensorView<2>;
 using T1 = AOTRITON_NS::TensorView<1>;
