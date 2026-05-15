@@ -38,6 +38,14 @@ EOF
       -v ${source_volume}:/src \
       -w /src \
       ${base_docker_image} \
-      bash -c "set -ex; git clone --recursive ${git_https_origin} && cd ${local_dir} && git checkout ${git_name} && git submodule sync && git submodule update --init --recursive --force"
+      bash -s "${git_https_origin}" "${local_dir}" "${git_name}" << 'EOF'
+set -ex
+rm -rf "$2"
+git clone --recursive "$1" "$2"
+cd "$2"
+git checkout "$3"
+git submodule sync
+git submodule update --init --recursive --force
+EOF
   fi
 }
