@@ -1,0 +1,305 @@
+{% extends "base.html" %}
+
+{% block title %}Testing{% endblock %}
+
+{% block content %}
+<h2>Testing</h2>
+
+<section>
+    <h3>Deployment</h3>
+    <div id="git-status">
+        {% include 'partials/git_status.html' %}
+    </div>
+    <button hx-post="/api/deploy/prepare"
+            hx-swap="none"
+            hx-indicator="#prepare-spinner">Prepare Workdir</button>
+    <span id="prepare-spinner" class="htmx-indicator">⏳ Preparing...</span>
+    <p style="font-size: 0.9em; color: gray; margin-top: 0.5rem;">
+        Initialize the working directory structure, sync configuration files and tuning framework code.
+    </p>
+</section>
+
+<section>
+    <h3>Tester Hosts</h3>
+    <p style="font-size: 0.9em; color: gray;">
+        Hosts are drawn from the Workers tab. To add or remove a host, go to
+        <a href="/workers">Workers</a>.
+    </p>
+    {% if not workers %}
+    <p>No workers configured. Add hosts in the <a href="/workers">Workers</a> tab first.</p>
+    {% else %}
+    <table style="width: 100%;">
+        <thead>
+            <tr>
+                <th style="width: 22%;">Host</th>
+                <th style="width: 20%;">Custom Workdir</th>
+                <th style="width: 58%;">Status &amp; Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for worker in workers %}
+            <tr>
+                <td style="vertical-align: top; padding-top: 0.5rem;">
+                    <span style="display: flex; align-items: center; gap: 0.4rem;">
+                        <input type="checkbox"
+                               title="Assign Tester role"
+                               {% if worker.is_tester %}checked{% endif %}
+                               onchange="setTesterRole('{{ worker.hostname }}', this.checked)">
+                        <code {% if not worker.is_tester %}style="text-decoration: line-through;"{% endif %}>{{ worker.hostname }}</code>
+                    </span>
+                    <div style="font-size: 0.85em; color: gray; margin-top: 0.2rem; padding-left: 1.4rem;">{{ worker.arch }}</div>
+                </td>
+                {% if worker.is_tester %}
+                <td style="vertical-align: top; padding-top: 0.5rem;">
+                    <form hx-post="/api/testing/{{ worker.hostname }}/workdir"
+                          hx-swap="none"
+                          hx-confirm="Update custom workdir for {{ worker.hostname }}?"
+                          hx-on::after-request="location.reload()"
+                          style="display: flex; gap: 0.3rem; align-items: center; margin: 0;">
+                        <input type="text"
+                               name="workdir_override"
+                               value="{{ worker.workdir }}"
+                               placeholder="default"
+                               style="flex: 1; margin: 0; font-family: monospace; font-size: 0.85em;">
+                        <button type="submit"
+                                style="font-size: 0.75em; padding: 0.2rem 0.4rem; white-space: nowrap;">Update</button>
+                    </form>
+                </td>
+                <td style="vertical-align: top; padding-top: 0.5rem;">
+                    {# Signature status #}
+                    <div style="margin-bottom: 0.5rem;">
+                        <span style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.3rem;">
+                            <strong style="font-size: 0.85em;">Signature</strong>
+                            <button onclick="refreshSignature('{{ worker.hostname }}', '{{ worker.arch }}')"
+                                    style="padding: 0.2rem 0.4rem; font-size: 0.9em;">⟳ Refresh</button>
+                        </span>
+                        <div id="sig-{{ worker.hostname }}"
+                             style="width: 100%; font-family: monospace; font-size: 0.8em;
+                                    background: #1e1e1e; color: #d4d4d4; border: 1px solid #444;
+                                    padding: 0.3rem; overflow-x: auto;">
+                            <span style="color: #888;">(click Refresh)</span>
+                        </div>
+                    </div>
+
+                    {# Deploy action #}
+                    <div style="margin-bottom: 0.5rem;">
+                        <form hx-post="/api/deploy/{{ worker.hostname }}"
+                              hx-swap="none"
+                              style="display: inline;">
+                            <input type="hidden" name="testnode" value="1">
+                            <button type="submit"
+                                    style="font-size: 0.8em; padding: 0.3rem 0.5rem; background-color: #17a2b8; color: white;">
+                                Deploy (--testnode)
+                            </button>
+                        </form>
+                    </div>
+
+                    {# Run-test action #}
+                    <div style="display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; margin-bottom: 0.5rem;">
+                        <label style="font-size: 0.85em; margin: 0;">Pass:
+                            <input type="number" id="pass-{{ worker.hostname }}" value="0" min="0"
+                                   style="width: 4em; margin: 0; padding: 0.2rem;">
+                        </label>
+                        <label style="font-size: 0.85em; margin: 0;">Level:
+                            <input type="number" id="level-{{ worker.hostname }}" value="0" min="0"
+                                   style="width: 4em; margin: 0; padding: 0.2rem;">
+                        </label>
+                        <label style="font-size: 0.85em; margin: 0;">Backend:
+                            <select id="backend-{{ worker.hostname }}" style="margin: 0; padding: 0.2rem;">
+                                <option value="split">split</option>
+                                <option value="fused">fused</option>
+                                <option value="aiter">aiter</option>
+                                <option value="v3">v3</option>
+                            </select>
+                        </label>
+                        <button hx-post="/api/testing/{{ worker.hostname }}/run-test"
+                                hx-swap="none"
+                                hx-vals='js:{pass_num: document.getElementById("pass-{{ worker.hostname }}").value, test_level: document.getElementById("level-{{ worker.hostname }}").value, backend: document.getElementById("backend-{{ worker.hostname }}").value}'
+                                style="font-size: 0.8em; padding: 0.3rem 0.5rem;">
+                            Run Test
+                        </button>
+                        <button type="button"
+                                onclick="window.open('/api/testing/{{ worker.hostname }}/failures?pass=' + document.getElementById('pass-{{ worker.hostname }}').value + '&backend=' + document.getElementById('backend-{{ worker.hostname }}').value, '_blank', 'width=900,height=600')"
+                                style="font-size: 0.8em; padding: 0.3rem 0.5rem;">
+                            Show Failures
+                        </button>
+                    </div>
+
+                    {# Tail output display #}
+                    <div style="margin-bottom: 0.3rem; display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap;">
+                        <button onclick="fetchTailOutput('{{ worker.hostname }}')"
+                                style="font-size: 0.8em; padding: 0.2rem 0.4rem;">
+                            Tail Output
+                        </button>
+                        <label style="font-size: 0.85em; margin: 0;">
+                            <input type="checkbox" id="wrap-{{ worker.hostname }}" checked
+                                   onchange="setTailWrap('{{ worker.hostname }}', this.checked)">
+                            Wrap text
+                        </label>
+                        <span style="font-size: 0.85em; color: gray;">(uses current Pass &amp; Backend above)</span>
+                    </div>
+                    <div id="tail-{{ worker.hostname }}" style="font-size: 0.82em; font-family: monospace; display: none;">
+                        <div>
+                            <strong id="tail-name-{{ worker.hostname }}"></strong>
+                            <pre id="tail-content-{{ worker.hostname }}" style="margin: 0.2rem 0; max-height: 10em; overflow-y: auto; background: #1e1e1e; color: #d4d4d4; padding: 0.4rem; white-space: pre-wrap; max-width: 78ch; overflow-wrap: break-word;"></pre>
+                        </div>
+                        <div>
+                            <strong id="tail-varlen-name-{{ worker.hostname }}"></strong>
+                            <pre id="tail-varlen-content-{{ worker.hostname }}" style="margin: 0.2rem 0; max-height: 10em; overflow-y: auto; background: #1e1e1e; color: #d4d4d4; padding: 0.4rem; white-space: pre-wrap; max-width: 78ch; overflow-wrap: break-word;"></pre>
+                        </div>
+                    </div>
+
+                    {# Run partial test #}
+                    <div style="display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; margin-bottom: 0.5rem; margin-top: 0.5rem;">
+                        <button hx-post="/api/testing/{{ worker.hostname }}/run-test?variant=partial"
+                                hx-swap="none"
+                                hx-vals='js:{pass_num: document.getElementById("pass-{{ worker.hostname }}").value, test_level: document.getElementById("level-{{ worker.hostname }}").value, backend: document.getElementById("backend-{{ worker.hostname }}").value}'
+                                style="font-size: 0.8em; padding: 0.3rem 0.5rem;">
+                            Run Partial Test
+                        </button>
+                        <button type="button"
+                                onclick="window.open('/api/testing/{{ worker.hostname }}/failures?pass=' + document.getElementById('pass-{{ worker.hostname }}').value + '&backend=' + document.getElementById('backend-{{ worker.hostname }}').value + '&variant=partial', '_blank', 'width=900,height=600')"
+                                style="font-size: 0.8em; padding: 0.3rem 0.5rem;">
+                            Show Partial Failures
+                        </button>
+                        <button hx-post="/api/testing/{{ worker.hostname }}/run-test?variant=partial_adiffs"
+                                hx-swap="none"
+                                hx-vals='js:{pass_num: document.getElementById("pass-{{ worker.hostname }}").value, test_level: document.getElementById("level-{{ worker.hostname }}").value, backend: document.getElementById("backend-{{ worker.hostname }}").value}'
+                                style="font-size: 0.8em; padding: 0.3rem 0.5rem;">
+                            Record adiffs
+                        </button>
+                    </div>
+
+                    {# Tail partial output display #}
+                    <div style="margin-bottom: 0.3rem; display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap;">
+                        <button onclick="fetchTailOutput('{{ worker.hostname }}', 'partial')"
+                                style="font-size: 0.8em; padding: 0.2rem 0.4rem;">
+                            Tail Partial Output
+                        </button>
+                        <button type="button"
+                                onclick="window.location='/api/testing/download_adiffs?hostname={{ worker.hostname }}&arch={{ worker.arch }}'"
+                                style="font-size: 0.8em; padding: 0.2rem 0.4rem;">
+                            Download adiffs
+                        </button>
+                        <span style="font-size: 0.85em; color: gray;">(uses Wrap text above)</span>
+                    </div>
+                    <div id="tail-partial-{{ worker.hostname }}" style="font-size: 0.82em; font-family: monospace; display: none;">
+                        <div>
+                            <strong id="tail-partial-name-{{ worker.hostname }}"></strong>
+                            <pre id="tail-partial-content-{{ worker.hostname }}" style="margin: 0.2rem 0; max-height: 10em; overflow-y: auto; background: #1e1e1e; color: #d4d4d4; padding: 0.4rem; white-space: pre-wrap; max-width: 78ch; overflow-wrap: break-word;"></pre>
+                        </div>
+                        <div>
+                            <strong id="tail-partial-varlen-name-{{ worker.hostname }}"></strong>
+                            <pre id="tail-partial-varlen-content-{{ worker.hostname }}" style="margin: 0.2rem 0; max-height: 10em; overflow-y: auto; background: #1e1e1e; color: #d4d4d4; padding: 0.4rem; white-space: pre-wrap; max-width: 78ch; overflow-wrap: break-word;"></pre>
+                        </div>
+                    </div>
+                </td>
+                {% else %}
+                <td></td>
+                <td></td>
+                {% endif %}
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+</section>
+
+<script>
+function setTesterRole(hostname, enabled) {
+    const body = new URLSearchParams({ enabled: enabled ? 'true' : 'false' });
+    fetch(`/api/testing/${hostname}/role`, { method: 'POST', body })
+        .then(() => location.reload());
+}
+
+function refreshSignature(hostname, arch) {
+    const el = document.getElementById(`sig-${hostname}`);
+    el.innerHTML = '<span style="color:#888;">…</span>';
+    fetch(`/api/testing/${hostname}/signature`)
+        .then(r => r.json())
+        .then(data => {
+            if (data.status === 'error') {
+                el.innerHTML = `<span style="color:#f88;">${data.message || '(error)'}</span>`;
+                return;
+            }
+            try {
+                const sig = JSON.parse(data.content);
+                const tdStyle = 'padding: 0.15rem 0.5rem; border-bottom: 1px solid #333; vertical-align: top;';
+                const hdStyle = tdStyle + ' color: #aaa; white-space: nowrap;';
+                const rows = [];
+                const row = (k, v) => `<tr><td style="${hdStyle}">${k}</td><td style="${tdStyle}">${v}</td></tr>`;
+
+                rows.push(row('SHA1', sig.AOTRITON_GIT_SHA1 || ''));
+                rows.push(row('Triton', sig.TRITON_VERSION || ''));
+
+                const primary = sig.DB_SHA256?.primary || {};
+                const archData = primary[arch];
+                if (archData) {
+                    for (const [op, hashes] of Object.entries(archData)) {
+                        for (const [kname, hash] of Object.entries(hashes)) {
+                            rows.push(row(`${arch}.${op}.${kname}`, hash));
+                        }
+                    }
+                } else {
+                    rows.push(row(`DB.primary.${arch}`, '<span style="color:#f88;">(not found)</span>'));
+                }
+
+                const secondary = sig.DB_SHA256?.secondary || {};
+                for (const [k, v] of Object.entries(secondary)) {
+                    rows.push(row(`secondary.${k}`, v));
+                }
+
+                el.innerHTML = `<table style="width:100%; border-collapse: collapse;">${rows.join('')}</table>`;
+            } catch(e) {
+                el.textContent = data.content;
+            }
+        });
+}
+
+function setTailWrap(hostname, wrap) {
+    const ids = [
+        `tail-content-${hostname}`,
+        `tail-varlen-content-${hostname}`,
+        `tail-partial-content-${hostname}`,
+        `tail-partial-varlen-content-${hostname}`,
+    ];
+    ids.forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.style.whiteSpace = wrap ? 'pre-wrap' : 'pre';
+        el.style.maxWidth = wrap ? '78ch' : 'none';
+        el.style.overflowWrap = wrap ? 'break-word' : 'normal';
+    });
+}
+
+function fetchTailOutput(hostname, variant) {
+    const pass_num = document.getElementById(`pass-${hostname}`).value;
+    const backend = document.getElementById(`backend-${hostname}`).value;
+    const prefix = variant === 'partial' ? 'tail-partial' : 'tail';
+    let url = `/api/testing/${hostname}/tail-output?pass=${pass_num}&backend=${backend}`;
+    if (variant) url += `&variant=${variant}`;
+    fetch(url)
+        .then(r => r.json())
+        .then(data => {
+            const container = document.getElementById(`${prefix}-${hostname}`);
+            container.style.display = 'block';
+            if (data.files) {
+                for (const [fname, content] of Object.entries(data.files)) {
+                    if (fname.includes('varlen')) {
+                        document.getElementById(`${prefix}-varlen-name-${hostname}`).textContent = fname;
+                        document.getElementById(`${prefix}-varlen-content-${hostname}`).textContent = content;
+                    } else {
+                        document.getElementById(`${prefix}-name-${hostname}`).textContent = fname;
+                        document.getElementById(`${prefix}-content-${hostname}`).textContent = content;
+                    }
+                }
+            } else {
+                document.getElementById(`${prefix}-name-${hostname}`).textContent = '';
+                document.getElementById(`${prefix}-content-${hostname}`).textContent = data.message || '(error)';
+                document.getElementById(`${prefix}-varlen-name-${hostname}`).textContent = '';
+                document.getElementById(`${prefix}-varlen-content-${hostname}`).textContent = '';
+            }
+        });
+}
+</script>
+{% endblock %}

@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+"""
+Parse a dbreport.txt produced by .tune/bin/sancheck, find the corresponding
+task_queue rows, and reset them to 'pending' so they are re-tuned.
+
+Report lines are identified by the marker "TUNE_V3BIS testrun Item:" and have
+the format:
+
+    <kernel_name> TUNE_V3BIS testrun Item:  arch=<arch> <FlashEntry.as_text()>
+
+Entries are de-duplicated on (arch, FlashEntry) before any DB queries are made
+(multiple kernels for the same task_queue row share the same entry).
+
+Usage:
+    .tune/bin/retry_missing_entries <workdir> [<dbreport.txt>]
+    .tune/bin/retry_missing_entries ~/wkdir.v3.5
+    .tune/bin/retry_missing_entries ~/wkdir.v3.5 ~/wkdir.v3.5/scratch/dbreport.txt
+
+The report defaults to <workdir>/scratch/dbreport.txt (the fixed output location
+produced by .tune/bin/sancheck). The script shows a summary and asks for
+confirmation before making any changes.
+"""
+
+import argparse
+import sys
+from dataclasses import asdict
+from pathlib import Path
+
+# Allow running from repo root without install
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+_TUNE_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_REPO_ROOT))
+sys.path.insert(0, str(_TUNE_ROOT / 'libexec'))
+
+import psycopg
+from psycopg.rows import dict_row
+
+from v3python.tune.flash.module import FlashEntry
+from v3python.tune.utils import get_db_connection_params
+from pq_helpers import fetch_matches, print_summary, reset_to_pending
+
+_MARKER = 'TUNE_V3BIS testrun Item: '
+
+
+def parse_report(report_path: Path) -> list[tuple[str, FlashEntry]]:
+    """Return de-duplicated (arch, FlashEntry) pairs from the report."""
+    seen: set[tuple] = set()
+    result: list[tuple[str, FlashEntry]] = []
+    with open(report_path) as f:
+        for line in f:
+            idx = line.find(_MARKER)
+            if idx == -1:
+                continue
+            payload = line[idx + len(_MARKER):].strip()
+            # payload: "arch=gfx1100 dtype='float16';hdim=96;..."
+            arch_part, entry_part = payload.split(' ', 1)
+            arch = arch_part.split('=', 1)[1]
+            entry = FlashEntry.parse_text(entry_part)
+            key = (arch, tuple(asdict(entry).values()))
+            if key not in seen:
+                seen.add(key)
+                result.append((arch, entry))
+    return result
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('workdir', help='Project workdir containing config.rc')
+    parser.add_argument('report', nargs='?', default=None,
+                        help='dbreport.txt produced by .tune/bin/sancheck '
+                             '(default: <workdir>/scratch/dbreport.txt)')
+    args = parser.parse_args()
+
+    workdir = Path(args.workdir)
+    report_path = Path(args.report) if args.report else workdir / 'scratch' / 'dbreport.txt'
+
+    if not workdir.is_dir():
+        sys.exit(f'Error: workdir does not exist: {workdir}')
+    if not report_path.is_file():
+        sys.exit(f'Error: report file not found: {report_path}')
+
+    print(f'Parsing {report_path} …')
+    entries = parse_report(report_path)
+    if not entries:
+        print('No TUNE_V3BIS entries found in report. Nothing to do.')
+        return
+
+    conn_params = get_db_connection_params(workdir)
+    with psycopg.connect(**conn_params, row_factory=dict_row) as conn:
+        print('Querying task_queue …')
+        matches = fetch_matches(conn, entries)
+        print_summary('Report entries', len(entries), matches)
+
+        if not matches:
+            print('\nNo matching rows found. Nothing to do.')
+            return
+
+        print()
+        answer = input('Reset these rows to pending? [y/N] ').strip().lower()
+        if answer != 'y':
+            print('Aborted.')
+            return
+
+        row_ids = [r['id'] for r in matches]
+        affected = reset_to_pending(conn, row_ids)
+        conn.commit()
+        print(f'Done: {affected} rows reset to pending.')
+
+        cache_path = workdir / 'scratch' / 'retry_task_ids.txt'
+        cache_path.write_text('\n'.join(str(i) for i in row_ids) + '\n')
+        print(f'Task IDs cached for bake_lut --incremental: {cache_path}')
+
+
+if __name__ == '__main__':
+    main()

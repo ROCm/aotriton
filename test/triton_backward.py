@@ -2,6 +2,7 @@
 # Copyright © 2023-2024 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
+import math
 import pytest
 import torch
 

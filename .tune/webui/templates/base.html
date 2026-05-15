@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AOTriton Dashboard - {% block title %}{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/water.min.css') }}">
+    <script src="{{ url_for('static', filename='js/htmx.min.js') }}"></script>
+    <style>
+        /* Use full horizontal space available */
+        body { max-width: none !important; }
+
+        /* Override Water.css small monospace font - enforce minimum 12pt */
+        code, pre, kbd, samp, var,
+        *[style*="monospace"],
+        .monospace {
+            font-size: max(12pt, 1em) !important;
+        }
+
+        nav { display: flex; gap: 1rem; padding: 1rem; background: #f0f0f0; }
+        nav a { text-decoration: none; }
+        nav a:hover { text-decoration: underline; }
+        .status-badge { padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.9em; }
+        .status-unknown { background: #gray; color: white; }
+        .status-running { background: #28a745; color: white; }
+        .status-stopped { background: #dc3545; color: white; }
+        footer { margin-top: 2rem; padding: 1rem; text-align: center; border-top: 1px solid #ccc; font-size: 0.9em; color: #666; }
+
+        /* Better table styling */
+        table { table-layout: auto; }
+        table th, table td { padding: 0.5rem; }
+
+        /* Larger font for hostname/workdir in worker tables */
+        table td code { font-size: 1.8em !important; }
+
+        /* Desktop: show both content and command widget in grid */
+        @media (min-width: 1024px) {
+            .layout-container {
+                display: grid;
+                grid-template-columns: 7fr 3fr;
+                gap: 2rem;
+                align-items: start;
+            }
+            .command-widget {
+                display: flex;
+                flex-direction: column;
+                align-self: stretch;
+            }
+            .layout-container.hide-sidebar {
+                display: block;
+            }
+            .desktop-only { display: block; }
+            .mobile-only { display: none; }
+        }
+
+        /* Mobile: hide desktop widget completely */
+        @media (max-width: 1023px) {
+            .desktop-only { display: none; }
+            .mobile-only { display: block; }
+        }
+
+        /* Force hide sidebar when requested */
+        .force-hide { display: none !important; }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>AOTriton Tuning Dashboard</h1>
+        <nav>
+            <a href="/">Dashboard</a>
+            <a href="/workers">Workers</a>
+            <a href="/testing">Testing</a>
+            <a href="/servers">Servers</a>
+            <a href="/builds">Builds</a>
+            <a href="/slurm">SLURM</a>
+            <a href="/commands">Commands</a>
+            <a href="/debug">Debug</a>
+        </nav>
+    </header>
+
+    <main style="padding: 2rem;">
+        <div class="layout-container {% if hide_sidebar %}hide-sidebar{% endif %}">
+            <div class="content-pane">
+                {% block content %}{% endblock %}
+            </div>
+            <div class="command-widget desktop-only {% if hide_sidebar %}force-hide{% endif %}">
+                {% include 'command_widget.html' %}
+            </div>
+        </div>
+    </main>
+
+    <footer>
+        <p>AOTriton Tuning Dashboard | Workdir: <code>{{ config.WORKDIR }}</code></p>
+    </footer>
+</body>
+</html>

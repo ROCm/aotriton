@@ -1,0 +1,78 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# Export best_tuning_results from PostgreSQL to a centralized SQLite database.
+# Reads connection parameters from <workdir>/config.rc.
+#
+# Usage:
+#   export_best_results <workdir> [output.sqlite3] [options...]
+#
+# output.sqlite3 defaults to <workdir>/scratch/centraldb.sqlite3
+#
+# All options after <output.sqlite3> are passed directly to:
+#   python3 -m v3python.tune.pq.export_best_results \
+#       --workdir <workdir> --output <output.sqlite3> [options...]
+#
+# Run with --help to see all available options.
+#
+# Typical workflow:
+#   # 1. Export centralized database
+#   .tune/bin/export_best_results ~/wkdir.v3.5 /tmp/tuning_database.sqlite3
+#
+#   # 2. Decompose into per-arch shards
+#   python3 -m v3python.database_decompose \
+#       --database_file /tmp/tuning_database.sqlite3 \
+#       --script_output /tmp/decompose.sh \
+#       --decompose_output /tmp/decomposed
+#   bash /tmp/decompose.sh
+#
+#   # 3. Copy shards into the source tree
+#   cp -r /tmp/decomposed/amd/ v3python/database/
+#
+# Examples:
+#   .tune/bin/export_best_results ~/wkdir.v3.5
+#   .tune/bin/export_best_results ~/wkdir.v3.5 /tmp/tuning_database.sqlite3
+#   .tune/bin/export_best_results ~/wkdir.v3.5 --help
+
+set -euo pipefail
+
+if [ "$#" -lt 1 ]; then
+    echo "Usage: $0 <workdir> [output.sqlite3] [options...]" >&2
+    exit 1
+fi
+
+WORKDIR="$1"
+shift
+
+# Default output: <workdir>/scratch/centraldb.sqlite3
+if [ "$#" -gt 0 ] && [[ "$1" != --* ]]; then
+    OUTPUT="$1"
+    shift
+else
+    OUTPUT="$WORKDIR/scratch/centraldb.sqlite3"
+    mkdir -p "$WORKDIR/scratch"
+fi
+
+if [ -f "$OUTPUT" ]; then
+    echo "Deleting existing $OUTPUT" >&2
+    rm -f "$OUTPUT"
+fi
+
+if [ ! -d "$WORKDIR" ]; then
+    echo "Error: workdir does not exist: $WORKDIR" >&2
+    exit 1
+fi
+
+if [ ! -f "$WORKDIR/config.rc" ]; then
+    echo "Error: config.rc not found in $WORKDIR" >&2
+    exit 1
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+exec python3 -m v3python.tune.pq.export_best_results \
+    --workdir "$WORKDIR" \
+    --output "$OUTPUT" \
+    "$@"

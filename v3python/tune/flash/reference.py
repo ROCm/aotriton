@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 import sys
+import math
 from argparse import Namespace
 from dataclasses import dataclass, astuple
 from ..kftdesc import KernelForTuneDescription as KFTDesc
@@ -70,9 +71,9 @@ class SdpaBidiInputs:
 @dataclass
 class SdpaGoldenOutputs:
     out: tuple[torch.Tensor, float]
-    dq: tuple[torch.Tensor, float]
-    dk: tuple[torch.Tensor, float]
-    dv: tuple[torch.Tensor, float]
+    dq: tuple[torch.Tensor, float] | None  # Can be fwd only profiling
+    dk: tuple[torch.Tensor, float] | None  # Can be fwd only profiling
+    dv: tuple[torch.Tensor, float] | None  # Can be fwd only profiling
     db: tuple[torch.Tensor, float] | None
 
 # ret = attn_bwd(q, k, v, b, sm_scale, o, do, dq, dk, dv, db, dq_acc, L, delta,
@@ -92,6 +93,7 @@ class SdpaReference(KFTDesc):
         return None
 
     def generate_inputs(self, im: 'FlashInputMetadata'):
+        torch.cuda.empty_cache()
         dtype_str, D_HEAD, seqlen_q, seqlen_k, causal, dropout_p, bias_type, N_HEADS, BATCH, sm_scale, storage_flip, prng_seed = astuple(im)
         dtype = getattr(torch, dtype_str)
         if isinstance(N_HEADS, int):
@@ -257,6 +259,9 @@ class SdpaReference(KFTDesc):
         inputs.delta = delta.reshape(delta.shape[0] * delta.shape[1], delta.shape[2])
         inputs.out = hpout.to(inputs.q.dtype)
         inputs.logsumexp = logsumexp.to(torch.float32)
+        if False:  # Debugging, keep it for selective tuning
+            outputs = SdpaGoldenOutputs(out=adiff2(hpout, out), dq=None, dk=None, dv=None, db=None)
+            return SdpaBidiInputs(**detach_member_tensors(inputs)), SdpaGoldenOutputs(**detach_member_tensors(outputs))
         out.backward(inputs.dout)
         hpout.backward(inputs.dout.to(dtype=hpout.dtype))
         outputs = SdpaGoldenOutputs(out=adiff2(hpout, out),

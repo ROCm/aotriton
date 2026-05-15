@@ -1,0 +1,578 @@
+{% extends "base.html" %}
+
+{% block title %}Workers{% endblock %}
+
+{% block content %}
+<h2>Worker Management</h2>
+
+<section>
+    <details {% if default_workdir == '<not set>' %}open{% endif %}>
+        <summary><h3 style="display: inline;">Basic Configuration</h3></summary>
+        <form hx-post="/api/config/default-workdir"
+              hx-swap="none"
+              hx-confirm="Are you sure you want to update the default working directory? This will affect all workers without a custom workdir."
+              hx-on::after-request="location.reload()"
+              hx-on::htmx:confirm="if (event.detail.issueRequest === false) { var input = document.getElementById('default-workdir-input'); input.value = input.getAttribute('data-original'); }"
+              style="margin-top: 1rem;">
+            <label>Default Working Directory:
+                <input type="text" name="path" id="default-workdir-input" value="{{ default_workdir }}"
+                       data-original="{{ default_workdir }}"
+                       placeholder="/opt/aotriton/workdir" required style="width: 500px;">
+            </label>
+            <button type="submit"
+                    style="background-color: #dc3545; color: white;">Update Default Workdir</button>
+            <button type="button"
+                    onclick="document.getElementById('default-workdir-input').value = document.getElementById('default-workdir-input').getAttribute('data-original')"
+                    style="background-color: #6c757d; color: white;">Reset</button>
+        </form>
+        <p style="font-size: 0.9em; color: gray;">
+            Workers without a custom workdir will use this default directory. <strong>Warning:</strong> Changing this is a rare operation.
+        </p>
+    </details>
+</section>
+
+<section>
+    <h3>Deployment</h3>
+    <div id="git-status">
+        {% include 'partials/git_status.html' %}
+    </div>
+    <button hx-post="/api/deploy/prepare"
+            hx-swap="none"
+            hx-indicator="#prepare-spinner">Prepare Workdir</button>
+    <span id="prepare-spinner" class="htmx-indicator">⏳ Preparing...</span>
+    <p style="font-size: 0.9em; color: gray; margin-top: 0.5rem;">
+        Initialize the working directory structure, sync configuration files and tuning framework code.
+    </p>
+</section>
+
+<section>
+    <h3>Bulk Actions</h3>
+    <button hx-post="/api/workers/all/start" hx-swap="none">Start All</button>
+    <button hx-post="/api/workers/all/stop" hx-swap="none">Stop All</button>
+    <button hx-post="/api/workers/all/restart" hx-swap="none">Restart All</button>
+    <button hx-post="/api/workers/all/stop-start" hx-swap="none">Stop All & Start All</button>
+    <button hx-post="/api/deploy/workdir"
+            hx-swap="none"
+            hx-indicator="#deploy-all-spinner">Deploy to All Workers</button>
+    <span id="deploy-all-spinner" class="htmx-indicator">⏳ Deploying...</span>
+    <br>
+    <button hx-post="/api/builds/images"
+            hx-swap="none"
+            hx-indicator="#build-images-spinner"
+            style="margin-top: 0.5rem; background-color: #17a2b8; color: white;">Build Images on All Workers</button>
+    <span id="build-images-spinner" class="htmx-indicator">⏳ Building...</span>
+    <button hx-post="/api/workers/probe-all-status"
+            hx-swap="none"
+            hx-indicator="#probe-status-spinner"
+            hx-on::after-request="location.reload()"
+            style="margin-top: 0.5rem; background-color: #6c757d; color: white;">Probe All Status</button>
+    <span id="probe-status-spinner" class="htmx-indicator">⏳ Probing...</span>
+</section>
+
+<section>
+    <h3>Office Hours Scheduling</h3>
+
+    <!-- Default schedule -->
+    <div style="margin-bottom: 1rem;">
+        <strong>Default Schedule:</strong><br>
+        <label>Weekdays:
+            <input type="time" id="default-weekday-start" value="18:00" style="width: 100px;">
+            to
+            <input type="time" id="default-weekday-end" value="08:00" style="width: 100px;">
+        </label>
+        <label>
+            <input type="checkbox" id="default-weekend-allowed">
+            Allow weekends
+        </label>
+        <button onclick="saveDefaultSchedule()" style="background-color: #17a2b8; color: white;">
+            Save Default Schedule
+        </button>
+    </div>
+
+    <!-- Arm button and warning -->
+    <div style="display: flex; align-items: center; gap: 1rem;">
+        <button hx-post="/api/workers/schedule/arm"
+                hx-swap="none"
+                hx-on::after-request="loadSchedulerStatus()"
+                style="font-size: 1.2em; padding: 0.5rem 1rem;">
+            ⏰ Arm Scheduled Workers
+        </button>
+        <span style="color: #ffc107; font-weight: bold;">⚠️ Note: Click this button to activate/confirm scheduled timers</span>
+    </div>
+
+    <!-- Status display -->
+    <div id="scheduler-status" style="margin-top: 1rem; padding: 0.5rem; border: 1px solid; border-radius: 4px;">
+        <span>Not armed</span>
+    </div>
+</section>
+
+{% for arch in supported_archs %}
+<section>
+    <h3>{{ arch }} Workers ({{ workers_by_arch[arch]|length }})</h3>
+    <table style="width: 100%;">
+        <thead>
+            <tr>
+                <th style="width: 30%;">Hostname&GPUs</th>
+                <th style="width: 25%;">Custom Workdir & GPUs</th>
+                <th style="width: 40%;">Status & Actions</th>
+                <th style="width: 5%;">Remove</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for worker in workers_by_arch[arch] %}
+            <tr>
+                <td style="display: flex; flex-direction: column; gap: 0.3rem;">
+                    <span style="display: flex; align-items: center; gap: 0.4rem;">
+                        <input type="checkbox"
+                               id="tuner-role-{{ worker.hostname }}"
+                               title="Assign Tuner role"
+                               {% if worker.is_tuner %}checked{% endif %}
+                               onchange="setTunerRole('{{ worker.hostname }}', this.checked)">
+                        <code {% if not worker.is_tuner %}style="text-decoration: line-through;"{% endif %}>{{ worker.hostname }}</code>
+                    </span>
+                    {% if worker.is_tuner %}
+                    <span id="gpu-info-{{ worker.hostname }}" style="font-size: 0.85em; display: flex; align-items: center; gap: 0.3rem;">
+                        <button hx-post="/api/workers/{{ worker.hostname }}/detect-gpu"
+                                hx-swap="none"
+                                hx-indicator="#detect-spinner-{{ worker.hostname }}"
+                                style="padding: 0.3rem 0.5rem; font-size: 0.9em; height: 2em;">
+                            Detect
+                        </button>
+                        <button onclick="location.reload()"
+                                style="padding: 0.3rem 0.5rem; font-size: 0.9em; height: 2em;">
+                            ⟳
+                        </button>
+                        <span id="detect-spinner-{{ worker.hostname }}" class="htmx-indicator">⏳</span>
+                        {% if worker.gpu_arch and worker.gpu_number %}
+                            <span {% if worker.gpu_arch != worker.arch %}style="color: red; font-weight: bold;"{% endif %}>
+                                {{ worker.gpu_arch }}:{{ worker.gpu_number }}
+                            </span>
+                        {% else %}
+                            <span style="color: gray;">No GPU info</span>
+                        {% endif %}
+                    </span>
+                    <span style="font-size: 0.85em; display: flex; align-items: center; gap: 0.3rem;">
+                        <input type="checkbox" id="schedule-enabled-{{ worker.hostname }}"
+                               onchange="toggleScheduleEnabled('{{ worker.hostname }}')" style="margin: 0;">
+                        ⏰
+                        <span id="schedule-fields-{{ worker.hostname }}" style="display: flex; align-items: center; gap: 0.3rem;">
+                            <input type="time" id="schedule-weekday-start-{{ worker.hostname }}" placeholder="18:00" style="width: 70px; padding: 0.2rem;">
+                            to
+                            <input type="time" id="schedule-weekday-end-{{ worker.hostname }}" placeholder="08:00" style="width: 70px; padding: 0.2rem;">
+                            <label style="display: flex; align-items: center; gap: 0.2rem; margin: 0;">
+                                <input type="checkbox" id="schedule-weekend-allowed-{{ worker.hostname }}" style="margin: 0;">
+                                weekends?
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 0.2rem; margin: 0;">
+                                <input type="checkbox" id="schedule-follow-global-{{ worker.hostname }}"
+                                       onchange="toggleFollowGlobal('{{ worker.hostname }}')" style="margin: 0;">
+                                follow global
+                            </label>
+                        </span>
+                        <button onclick="saveWorkerSchedule('{{ worker.hostname }}')"
+                                style="padding: 0.2rem 0.4rem; font-size: 1em;">
+                            💾
+                        </button>
+                        <button onclick="loadWorkerSchedule('{{ worker.hostname }}')"
+                                style="padding: 0.2rem 0.4rem; font-size: 1em;">
+                            ⟳
+                        </button>
+                    </span>
+                    {% endif %}
+                </td>
+                {% if worker.is_tuner %}
+                <td>
+                    <form hx-post="/api/workers/{{ worker.hostname }}/workdir"
+                          hx-swap="none"
+                          hx-confirm="Are you sure you want to update the custom workdir for {{ worker.hostname }}?"
+                          hx-on::after-request="location.reload()"
+                          hx-on::htmx:confirm="if (event.detail.issueRequest === false) { var input = document.getElementById('workdir-{{ worker.hostname }}'); input.value = input.getAttribute('data-original'); }"
+                          style="display: flex; gap: 0.3rem; align-items: center; margin: 0;">
+                        <input type="text"
+                               id="workdir-{{ worker.hostname }}"
+                               name="workdir_override"
+                               value="{{ worker.workdir }}"
+                               data-original="{{ worker.workdir }}"
+                               placeholder="default"
+                               style="flex: 1; margin: 0; font-family: monospace;">
+                        <button type="submit"
+                                style="font-size: 0.75em; padding: 0.2rem 0.4rem; white-space: nowrap;">Update</button>
+                        <button type="button"
+                                onclick="document.getElementById('workdir-{{ worker.hostname }}').value = document.getElementById('workdir-{{ worker.hostname }}').getAttribute('data-original')"
+                                style="font-size: 0.75em; padding: 0.2rem 0.4rem; white-space: nowrap;">Reset</button>
+                    </form>
+                    <div style="margin-top: 0.5rem; padding: 0.3rem; border-top: 1px solid #ddd;">
+                        <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                            <label style="font-size: 0.85em; margin: 0; display: flex; align-items: center; gap: 0.3rem;">
+                                <input type="checkbox"
+                                       data-hostname="{{ worker.hostname }}"
+                                       data-gpu-all="true"
+                                       onchange="toggleAllGPUs('{{ worker.hostname }}', this.checked); saveGPUSelection('{{ worker.hostname }}');"
+                                       {% if not worker.gpu_selection or worker.gpu_selection == [-1] %}checked{% endif %}
+                                       style="margin: 0;">
+                                <strong>All</strong>
+                            </label>
+                            {% set num_gpus = worker.gpu_number|int if worker.gpu_number else 8 %}
+                            {% for gpu_id in range(num_gpus) %}
+                            <label style="font-size: 0.85em; margin: 0; display: flex; align-items: center; gap: 0.3rem;">
+                                <input type="checkbox"
+                                       data-hostname="{{ worker.hostname }}"
+                                       data-gpu-id="{{ gpu_id }}"
+                                       onchange="updateGPUAllCheckbox('{{ worker.hostname }}'); saveGPUSelection('{{ worker.hostname }}');"
+                                       {% if not worker.gpu_selection or worker.gpu_selection == [-1] or (worker.gpu_selection and gpu_id in worker.gpu_selection) %}checked{% endif %}
+                                       style="margin: 0;">
+                                {{ gpu_id }}
+                            </label>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </td>
+                <td>
+                    <div style="display: flex; align-items: center; gap: 0.3rem; margin-bottom: 0.5rem;">
+                        <button onclick="refreshWorkerStatus('{{ worker.hostname }}')"
+                                style="padding: 0.4rem 0.6rem; font-size: 1.2em;">
+                            ⟳
+                        </button>
+                        <span id="status-{{ worker.hostname }}" style="font-family: monospace;">
+                            {{ worker.status_display }}
+                        </span>
+                    </div>
+                    <button onclick="sendWorkerAction('{{ worker.hostname }}', '/api/workers/{{ worker.hostname }}/start')"
+                            style="font-size: 0.8em; padding: 0.3rem 0.5rem;">Start</button>
+                    <button hx-post="/api/workers/{{ worker.hostname }}/stop"
+                            hx-swap="none"
+                            style="font-size: 0.8em; padding: 0.3rem 0.5rem;">Stop</button>
+                    <button onclick="sendWorkerAction('{{ worker.hostname }}', '/api/workers/{{ worker.hostname }}/restart')"
+                            style="font-size: 0.8em; padding: 0.3rem 0.5rem;">Restart</button>
+                    <button onclick="sendWorkerAction('{{ worker.hostname }}', '/api/workers/{{ worker.hostname }}/stop-start')"
+                            style="font-size: 0.8em; padding: 0.3rem 0.5rem;">Stop & Start</button>
+                    <br style="margin: 0.2rem 0;">
+                    <button hx-post="/api/deploy/{{ worker.hostname }}"
+                            hx-swap="none"
+                            style="font-size: 0.8em; padding: 0.3rem 0.5rem; background-color: #17a2b8; color: white;">Deploy</button>
+                    <button hx-post="/api/workers/{{ worker.hostname }}/build-image"
+                            hx-swap="none"
+                            style="font-size: 0.8em; padding: 0.3rem 0.5rem; background-color: #17a2b8; color: white;">Build Image</button>
+                </td>
+                {% else %}
+                <td></td>
+                <td></td>
+                {% endif %}
+                <td>
+                    <button hx-post="/api/workers/{{ worker.hostname }}/remove"
+                            hx-swap="none"
+                            hx-confirm="Are you sure you want to remove worker {{ worker.hostname }}?"
+                            hx-on::after-request="location.reload()"
+                            style="font-size: 0.8em; padding: 0.3rem 0.5rem; background-color: #dc3545; color: white;">Remove</button>
+                </td>
+            </tr>
+            {% endfor %}
+
+            {# Add new worker form row #}
+            <tr style="background-color: #f0f0f0;">
+                <td colspan="4">
+                    <form hx-post="/api/workers/add" hx-swap="none" hx-on::after-request="location.reload()" style="display: flex; gap: 0.5rem; align-items: center; margin: 0;">
+                        <input type="hidden" name="arch" value="{{ arch }}">
+                        <input type="text" name="hostname" placeholder="gpu-node.example.com" required style="width: 30%; margin: 0;">
+                        <input type="text" name="workdir_override" placeholder="Custom workdir (optional)" style="width: 20%; margin: 0;">
+                        <div style="width: 40%;"></div>
+                        <button type="submit" style="white-space: nowrap; margin: 0; width: auto;">+ Add Worker</button>
+                    </form>
+                </td>
+            </tr>
+        </tbody>
+    </table>
+
+    {% if workers_by_arch[arch]|length == 0 %}
+    <p style="font-size: 0.9em; color: gray; margin-top: 0.5rem;">
+        No workers registered for {{ arch }}. Use the form above to add workers.
+    </p>
+    {% endif %}
+</section>
+{% endfor %}
+
+<script>
+function setTunerRole(hostname, enabled) {
+    const body = new URLSearchParams({ enabled: enabled ? 'true' : 'false' });
+    fetch(`/api/workers/${hostname}/role/Tuner`, { method: 'POST', body })
+        .then(() => location.reload());
+}
+
+// Toggle all GPU checkboxes for a worker
+function toggleAllGPUs(hostname, checked) {
+    const checkboxes = document.querySelectorAll(`input[data-hostname="${hostname}"][data-gpu-id]`);
+    checkboxes.forEach(checkbox => {
+        checkbox.checked = checked;
+    });
+}
+
+// Update the "All" checkbox state based on individual GPU checkboxes
+function updateGPUAllCheckbox(hostname) {
+    const allCheckbox = document.querySelector(`input[data-hostname="${hostname}"][data-gpu-all="true"]`);
+    const checkboxes = document.querySelectorAll(`input[data-hostname="${hostname}"][data-gpu-id]`);
+
+    // Check if all individual checkboxes are checked
+    const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+    allCheckbox.checked = allChecked;
+}
+
+// Get selected GPU IDs for a worker
+function getSelectedGPUs(hostname) {
+    const checkboxes = document.querySelectorAll(`input[data-hostname="${hostname}"][data-gpu-id]`);
+    const selectedGPUs = [];
+
+    checkboxes.forEach((cb) => {
+        if (cb.checked) {
+            selectedGPUs.push(parseInt(cb.dataset.gpuId));
+        }
+    });
+
+    // If all available GPUs are selected, return [-1]
+    if (selectedGPUs.length === checkboxes.length) {
+        return [-1];
+    }
+
+    return selectedGPUs;
+}
+
+// Send worker action with GPU selection
+function sendWorkerAction(hostname, url) {
+    const multiGpu = getSelectedGPUs(hostname);
+
+    fetch(url, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ multi_gpu: multiGpu })
+    })
+    .then(response => {
+        if (!response.ok) {
+            throw new Error('Request failed with status ' + response.status);
+        }
+        return response.json();
+    })
+    .then(data => {
+        // Trigger command list refresh (same as htmx:afterRequest)
+        htmx.trigger('#command-list', 'refreshCommandList');
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('Failed to execute worker action: ' + error.message);
+    });
+}
+
+// Save GPU selection to database
+let saveGPUSelectionTimers = {};
+function saveGPUSelection(hostname) {
+    // Debounce: wait 500ms after last change before saving
+    if (saveGPUSelectionTimers[hostname]) {
+        clearTimeout(saveGPUSelectionTimers[hostname]);
+    }
+
+    saveGPUSelectionTimers[hostname] = setTimeout(() => {
+        const gpuIds = getSelectedGPUs(hostname);
+
+        fetch(`/api/workers/${hostname}/gpu-selection`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ gpu_ids: gpuIds })
+        })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Failed to save GPU selection');
+            }
+            return response.json();
+        })
+        .then(data => {
+            console.log(`GPU selection saved for ${hostname}:`, gpuIds);
+        })
+        .catch(error => {
+            console.error('Error saving GPU selection:', error);
+        });
+    }, 500);
+}
+
+// Office hours scheduling functions
+
+function saveDefaultSchedule() {
+    const data = {
+        weekday_start: document.getElementById('default-weekday-start').value,
+        weekday_end: document.getElementById('default-weekday-end').value,
+        weekend_allowed: document.getElementById('default-weekend-allowed').checked ? 'true' : 'false'
+    };
+
+    fetch('/api/workers/schedule/default', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(data)
+    }).then(response => response.json())
+      .then(data => alert(data.message || 'Saved'));
+}
+
+function formatDuration(seconds) {
+    // Format seconds as human-readable duration (e.g., "2h 15m", "45m", "30s")
+    const hours = Math.floor(seconds / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
+    const secs = Math.floor(seconds % 60);
+
+    if (hours > 0) {
+        return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+    } else if (mins > 0) {
+        return `${mins}m`;
+    } else {
+        return `${secs}s`;
+    }
+}
+
+function loadSchedulerStatus() {
+    fetch('/api/workers/schedule/status')
+        .then(response => response.json())
+        .then(status => {
+            const statusDiv = document.getElementById('scheduler-status');
+            const count = Object.keys(status).length;
+
+            if (count === 0) {
+                statusDiv.innerHTML = '<span>No timers armed</span>';
+                return;
+            }
+
+            let html = `<strong>${count} timers armed:</strong><ul>`;
+            for (const [hostname, info] of Object.entries(status)) {
+                const timeStr = formatDuration(info.remaining_seconds);
+                html += `<li><code>${hostname}</code>: ${info.next_action} in ${timeStr}</li>`;
+            }
+            html += '</ul>';
+            statusDiv.innerHTML = html;
+        });
+}
+
+function toggleScheduleEnabled(hostname) {
+    const enabled = document.getElementById(`schedule-enabled-${hostname}`).checked;
+    const fieldsContainer = document.getElementById(`schedule-fields-${hostname}`);
+
+    if (enabled) {
+        fieldsContainer.style.display = 'flex';
+    } else {
+        fieldsContainer.style.display = 'none';
+    }
+}
+
+function toggleFollowGlobal(hostname) {
+    const followGlobal = document.getElementById(`schedule-follow-global-${hostname}`).checked;
+    const startInput = document.getElementById(`schedule-weekday-start-${hostname}`);
+    const endInput = document.getElementById(`schedule-weekday-end-${hostname}`);
+    const weekendCheckbox = document.getElementById(`schedule-weekend-allowed-${hostname}`);
+
+    if (followGlobal) {
+        // Disable and italicize
+        startInput.disabled = true;
+        endInput.disabled = true;
+        weekendCheckbox.disabled = true;
+        startInput.style.fontStyle = 'italic';
+        endInput.style.fontStyle = 'italic';
+    } else {
+        // Enable and remove italic
+        startInput.disabled = false;
+        endInput.disabled = false;
+        weekendCheckbox.disabled = false;
+        startInput.style.fontStyle = 'normal';
+        endInput.style.fontStyle = 'normal';
+    }
+}
+
+function loadWorkerSchedule(hostname) {
+    fetch(`/api/workers/${hostname}/schedule`)
+        .then(response => response.json())
+        .then(data => {
+            if (data && data.weekday_start && data.weekday_end) {
+                // Has per-host time config
+                document.getElementById(`schedule-enabled-${hostname}`).checked = data.enabled === 'true';
+                document.getElementById(`schedule-weekday-start-${hostname}`).value = data.weekday_start || '';
+                document.getElementById(`schedule-weekday-end-${hostname}`).value = data.weekday_end || '';
+                document.getElementById(`schedule-weekend-allowed-${hostname}`).checked = data.weekend_allowed === 'true';
+                document.getElementById(`schedule-follow-global-${hostname}`).checked = false;
+                toggleFollowGlobal(hostname);
+            } else {
+                // Following global (only has enabled, or nothing)
+                document.getElementById(`schedule-enabled-${hostname}`).checked = (data && data.enabled === 'true') || false;
+                document.getElementById(`schedule-follow-global-${hostname}`).checked = true;
+                toggleFollowGlobal(hostname);
+            }
+            // Update visibility based on enabled state
+            toggleScheduleEnabled(hostname);
+        })
+        .catch(error => console.error('Failed to load schedule:', error));
+}
+
+function saveWorkerSchedule(hostname) {
+    const followGlobal = document.getElementById(`schedule-follow-global-${hostname}`).checked;
+    const enabled = document.getElementById(`schedule-enabled-${hostname}`).checked ? 'true' : 'false';
+
+    if (followGlobal) {
+        // Delete per-host time config, but save enabled state
+        fetch(`/api/workers/${hostname}/schedule`, {
+            method: 'DELETE'
+        }).then(() => {
+            // Then save just the enabled state
+            return fetch(`/api/workers/${hostname}/schedule`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({enabled: enabled})
+            });
+        }).then(response => response.json())
+          .then(data => alert(data.message || 'Reset to global defaults'));
+    } else {
+        // Save per-host config
+        const data = {
+            enabled: enabled,
+            weekday_start: document.getElementById(`schedule-weekday-start-${hostname}`).value,
+            weekday_end: document.getElementById(`schedule-weekday-end-${hostname}`).value,
+            weekend_allowed: document.getElementById(`schedule-weekend-allowed-${hostname}`).checked ? 'true' : 'false'
+        };
+
+        fetch(`/api/workers/${hostname}/schedule`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(data)
+        }).then(response => response.json())
+          .then(data => alert(data.message || 'Saved'));
+    }
+}
+
+// Load scheduler status on page load
+loadSchedulerStatus();
+
+// Auto-refresh scheduler status every 60 seconds
+setInterval(loadSchedulerStatus, 60000);
+
+// Refresh worker status
+function refreshWorkerStatus(hostname) {
+    fetch(`/api/workers/${hostname}/probe-status`, {
+        method: 'POST'
+    })
+    .then(response => response.json())
+    .then(data => {
+        const statusSpan = document.getElementById(`status-${hostname}`);
+        if (statusSpan) {
+            statusSpan.textContent = data.display || 'Unknown';
+        }
+    })
+    .catch(error => {
+        console.error('Error refreshing status:', error);
+    });
+}
+
+// Load all worker schedules on page load
+document.addEventListener('DOMContentLoaded', function() {
+    {% for arch in supported_archs %}
+        {% for worker in workers_by_arch[arch] %}
+            loadWorkerSchedule('{{ worker.hostname }}');
+        {% endfor %}
+    {% endfor %}
+});
+</script>
+
+{% endblock %}

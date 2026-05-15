@@ -12,6 +12,9 @@ import importlib
 import errno
 from pathlib import Path
 import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 CURRENT_FILE_PATH = Path(__file__).resolve()
 AOTRITON_ROOT = CURRENT_FILE_PATH.parent.parent.parent.absolute()
@@ -43,42 +46,66 @@ class ExaidProxy(object):
         if self._process is None:
             args = ['python', '-m', 'v3python.tune.testrun',
                     self._module_name, '--gpu', str(self._gpu_id)]
+            logger.info(f"Starting exaid worker process: module={self._module_name}, gpu={self._gpu_id}")
             self._process = subprocess.Popen(args,
                                              stdin=subprocess.PIPE,
                                              stdout=subprocess.PIPE,
-                                             cwd=self.get_base_dir(),
-                                             text=True)
+                                             stderr=subprocess.PIPE,
+                                             cwd=self.get_base_dir())
+            logger.info(f"Exaid worker process started: pid={self._process.pid}")
         return self._process
 
     def write(self, *objects, sep=' '):
-        print(*objects, sep=sep, file=self.process.stdin, flush=True)
-        print('[exaid] sending command to worker process: ', *objects, sep=sep, flush=True)
+        cmd = sep.join(str(o) for o in objects)
+        logger.info(f"Sending command to worker (pid={self.process.pid}): {cmd}")
+        line = cmd + '\n'
+        self.process.stdin.write(line.encode('utf-8'))
+        self.process.stdin.flush()
 
-    def readinfo(self, *, timeout=10):
-        (line, eno, error_msg) = safe_readline(self.process, timeout=timeout)
-        if eno != 0:
-            if eno == errno.ETIMEDOUT:
-                self._process.kill()
-            self._process.wait()
-            stdout = self._process.stdout.read()
-            stderr = self._process.stderr.read()
-            del self._process
-            self._process = None
-            raise OSError(eno, error_msg + "\nSTDOUT:\n" + stdout + "\nSTDERR:\n" + stderr)
-        ret, info = first(line)
-        if ret != "OK":
-            raise ExaidSubprocessNotOK(line, error_msg)
+    def readinfo(self, *, timeout: int | float = 10):
+        logger.info(f"Waiting for response from worker (pid={self.process.pid}, timeout={timeout}s)")
+        while True:
+            (line, eno, error_msg) = safe_readline(self.process, timeout=timeout)
+            if eno != 0 or line is None:
+                if eno == errno.ETIMEDOUT:
+                    logger.error(f"Worker timeout after {timeout}s, killing process (pid={self._process.pid})")
+                    self._process.kill()
+                elif line is None:
+                    logger.error(f"Worker closed stdout unexpectedly (pid={self._process.pid})")
+                else:
+                    logger.error(f"Worker error (pid={self._process.pid}, errno={eno}): {error_msg}")
+                self._process.wait()
+                stdout = self._process.stdout.read().decode('utf-8', errors='replace')
+                stderr = self._process.stderr.read().decode('utf-8', errors='replace')
+                logger.error(f"Worker stdout: {stdout}")
+                logger.error(f"Worker stderr: {stderr}")
+                del self._process
+                self._process = None
+                error_desc = error_msg if error_msg else "stdout closed unexpectedly"
+                raise OSError(eno if eno != 0 else errno.EPIPE, error_desc + "\nSTDOUT:\n" + stdout + "\nSTDERR:\n" + stderr)
+            ret, info = first(line)
+            if ret == "OVERHEATING:":
+                logger.warning(f"Worker overheating warning: {line}")
+                continue
+            if ret != "OK":
+                logger.error(f"Worker returned non-OK status: {line}")
+                raise ExaidSubprocessNotOK(line, error_msg)
+            logger.info(f"Received response from worker (pid={self.process.pid}): {ret} {info}")
+            break
         return info
 
     def join(self):
         if self._process is None:
             return
+        pid = self._process.pid
         try:
             self._process.wait(0.2)
-            print('[exaid][join] waited worker process: ', self._process.pid)
+            logger.info(f"Worker process exited cleanly (pid={pid})")
         except subprocess.TimeoutExpired:
+            logger.warning(f"Worker process did not exit in 0.2s, killing (pid={pid})")
             self._process.kill()
             self._process.wait()
+            logger.info(f"Worker process killed (pid={pid})")
             del self._process
             self._process = None
 
@@ -115,18 +142,28 @@ class ExaidWorker(object):
     def get_tmpfs_for(self, entry_dict):
         return self.TMPFS_LOCATION / self.entry_from_dict(entry_dict).as_posix()
 
-    def prepare_data(self, entry_dict: dict, workdir: Path):
+    def prepare_data(self, entry_dict: dict, workdir: Path, extra_im_texts: list[str] = []):
+        logger.info(f"prepare_data: entry={entry_dict}, workdir={workdir}, extra_ims={len(extra_im_texts)}")
+        workdir.mkdir(parents=True, exist_ok=True)
         entry = self.entry_from_dict(entry_dict)
-        self.proxy.write('prepare_data', entry.as_text(), workdir.as_posix())
-        return self.proxy.readinfo(timeout=30)
+        self.proxy.write('prepare_data', entry.as_text(), workdir.as_posix(), *extra_im_texts)
+        result = self.proxy.readinfo(timeout=120)
+        logger.info(f"prepare_data completed: {result}")
+        return result
 
     def probe(self, workdir: Path):
+        logger.info(f"probe: workdir={workdir}")
         self.proxy.write('probe', workdir.as_posix())
-        return json.loads(self.proxy.readinfo())
+        result = json.loads(self.proxy.readinfo())
+        logger.info(f"probe completed: found {len(result)} kernels")
+        return result
 
     def benchmark(self, workdir: Path, kname: str, hsaco_index: int):
+        logger.info(f"benchmark: workdir={workdir}, kernel={kname}, hsaco_index={hsaco_index}")
         self.proxy.write('benchmark', workdir.as_posix(), f'{kname}={hsaco_index}')
-        return json.loads(self.proxy.readinfo())
+        result = json.loads(self.proxy.readinfo(timeout=30))
+        logger.info(f"benchmark completed: {kname}[{hsaco_index}] result={result.get('result', 'unknown')}")
+        return result
 
     def exit(self):
         self.proxy.write("exit")

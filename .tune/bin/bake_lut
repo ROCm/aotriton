@@ -1,0 +1,103 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# Bake LUT: convert raw PostgreSQL tuning results into the SQLite database
+# used by the aotriton build process, then sanity-check the result.
+#
+#   1. Populate most_accurate_tuning_results (full or incremental)
+#   2. Compute best_tuning_results from raw tuning results
+#   3. Export best results to centraldb.sqlite3
+#   4. Run LUT sanity check against the exported database
+#   5. Decompose centraldb.sqlite3 into per-arch/kernel shards
+#
+# Usage:
+#   bake_lut <workdir>
+#   bake_lut <workdir> --incremental
+#   bake_lut --incremental <workdir>
+#   bake_lut <workdir> --fix <pass>
+#   bake_lut <workdir> --fix <hostname>:<pass>
+
+set -euo pipefail
+
+INCREMENTAL=0
+FIX_SPEC=""
+WORKDIR=""
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --incremental)
+            if [ -n "$FIX_SPEC" ]; then
+                echo "Error: --incremental and --fix are mutually exclusive" >&2; exit 1
+            fi
+            INCREMENTAL=1; shift ;;
+        --fix)
+            if [ "$INCREMENTAL" -eq 1 ]; then
+                echo "Error: --incremental and --fix are mutually exclusive" >&2; exit 1
+            fi
+            if [ -n "$FIX_SPEC" ]; then
+                echo "Error: --fix may only be specified once" >&2; exit 1
+            fi
+            FIX_SPEC="$2"; shift 2 ;;
+        *) WORKDIR="$1"; shift ;;
+    esac
+done
+
+if [ -z "$WORKDIR" ]; then
+    echo "Usage: $0 <workdir> [--incremental | --fix [hostname:]<pass>]" >&2
+    exit 1
+fi
+
+if [ ! -d "$WORKDIR" ]; then
+    echo "Error: workdir does not exist: $WORKDIR" >&2
+    exit 1
+fi
+
+if [ ! -f "$WORKDIR/config.rc" ]; then
+    echo "Error: config.rc not found in $WORKDIR" >&2
+    exit 1
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [ -n "$FIX_SPEC" ]; then
+    echo "=== Step 1/5: Update accuracy table (fix broken: $FIX_SPEC) ==="
+    "$SCRIPT_DIR/update_materialized_view" "$WORKDIR" --fix "$FIX_SPEC"
+elif [ "$INCREMENTAL" -eq 1 ]; then
+    echo "=== Step 1/5: Update accuracy table (incremental) ==="
+    "$SCRIPT_DIR/update_materialized_view" "$WORKDIR"
+else
+    echo "=== Step 1/5: Rebuild accuracy table ==="
+    "$SCRIPT_DIR/recreate_materialized_view" "$WORKDIR"
+fi
+
+echo ""
+echo "=== Step 2/5: Compute best results ==="
+if [ -n "$FIX_SPEC" ]; then
+    "$SCRIPT_DIR/compute_best_results" "$WORKDIR" --fix "$FIX_SPEC"
+elif [ "$INCREMENTAL" -eq 1 ]; then
+    "$SCRIPT_DIR/compute_best_results" "$WORKDIR" --incremental
+else
+    "$SCRIPT_DIR/compute_best_results" "$WORKDIR"
+fi
+
+echo ""
+echo "=== Step 3/5: Export best results ==="
+"$SCRIPT_DIR/export_best_results" "$WORKDIR"
+
+echo ""
+echo "=== Step 4/5: Sanity check ==="
+"$SCRIPT_DIR/sancheck" "$WORKDIR"
+
+echo ""
+echo "=== Step 5/5: Decompose database ==="
+"$SCRIPT_DIR/decomposedb" "$WORKDIR"
+
+echo ""
+if [ -n "$FIX_SPEC" ]; then
+    echo "=== Bake LUT (fix broken: $FIX_SPEC) complete ==="
+elif [ "$INCREMENTAL" -eq 1 ]; then
+    echo "=== Bake LUT (incremental) complete ==="
+else
+    echo "=== Bake LUT complete ==="
+fi

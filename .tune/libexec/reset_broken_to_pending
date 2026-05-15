@@ -1,0 +1,116 @@
+#!/usr/bin/env python3
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+"""
+Private helper for retry_broken_entries.
+
+Reads task_ids from broken_entries.db for the given pass and host,
+shows a summary of matching task_queue rows, asks for confirmation,
+and resets them to 'pending'.
+
+Usage (called by retry_broken_entries, not directly):
+    reset_broken_to_pending <workdir> <hostname> <pass_num>
+"""
+
+import argparse
+import sqlite3
+import sys
+from pathlib import Path
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+_TUNE_LIBEXEC = Path(__file__).resolve().parent
+sys.path.insert(0, str(_REPO_ROOT))
+sys.path.insert(0, str(_TUNE_LIBEXEC))
+
+import psycopg
+from psycopg.rows import dict_row
+
+from v3python.tune.utils import get_db_connection_params
+from v3python.tune.pq.extra_uts import insert_extra_uts
+from pq_helpers import fetch_matches_by_ids, print_summary, reset_to_pending
+
+
+def _load_task_ids(db_path: Path, hostname: str, pass_num: int) -> list[int]:
+    with sqlite3.connect(db_path) as db:
+        cur = db.execute(
+            'SELECT task_id FROM broken_entries WHERE host = ? AND pass = ? ORDER BY task_id',
+            (hostname, pass_num),
+        )
+        return [row[0] for row in cur.fetchall()]
+
+
+def _load_extra_uts(db_path: Path, pass_num: int, task_ids: list[int]) -> dict[int, list[str]]:
+    """Load extra_uts from SQLite for the given pass and task_ids."""
+    result: dict[int, list[str]] = {}
+    if not task_ids:
+        return result
+    with sqlite3.connect(db_path) as db:
+        placeholders = ','.join('?' * len(task_ids))
+        cur = db.execute(
+            f'SELECT task_id, im_text FROM extra_uts WHERE pass = ? AND task_id IN ({placeholders})',
+            [pass_num] + task_ids,
+        )
+        for task_id, im_text in cur.fetchall():
+            result.setdefault(task_id, []).append(im_text)
+    return result
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument('workdir', help='Project workdir containing config.rc')
+    parser.add_argument('hostname', help='Test host name')
+    parser.add_argument('pass_num', type=int, help='Test pass number')
+    args = parser.parse_args()
+
+    workdir = Path(args.workdir)
+    db_path = workdir / 'scratch' / 'broken_entries.db'
+
+    if not db_path.is_file():
+        sys.exit(f'Error: broken_entries.db not found at {db_path}')
+
+    task_ids = _load_task_ids(db_path, args.hostname, args.pass_num)
+    if not task_ids:
+        print(f'No entries in broken_entries.db for host={args.hostname} pass={args.pass_num}.')
+        return
+
+    conn_params = get_db_connection_params(workdir)
+    with psycopg.connect(**conn_params, row_factory=dict_row) as conn:
+        print('Querying task_queue …')
+        matches = fetch_matches_by_ids(conn, task_ids)
+        print_summary(
+            f'Broken entries (host={args.hostname} pass={args.pass_num})',
+            len(task_ids),
+            matches,
+        )
+
+        if not matches:
+            print('\nNo matching rows found. Nothing to do.')
+            return
+
+        print()
+        answer = input('Reset these rows to pending? [y/N] ').strip().lower()
+        if answer != 'y':
+            print('Aborted.')
+            return
+
+        row_ids = [r['id'] for r in matches]
+
+        # Insert extra UTs into PG before resetting status to pending,
+        # so workers always see them when they claim the task.
+        extra_uts_map = _load_extra_uts(db_path, args.pass_num, row_ids)
+        for task_id, im_texts in extra_uts_map.items():
+            insert_extra_uts(conn, task_id, im_texts)
+        total_extra = sum(len(v) for v in extra_uts_map.values())
+        print(f'Inserted {total_extra} extra UT entries for {len(extra_uts_map)} tasks.')
+
+        affected = reset_to_pending(conn, row_ids)
+        conn.commit()
+        print(f'Done: {affected} rows reset to pending.')
+
+
+if __name__ == '__main__':
+    main()

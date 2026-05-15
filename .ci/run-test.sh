@@ -17,14 +17,41 @@ add_torch_ldconfig
 pass=$1
 test_level="$2"
 backend="$3"
-mapfile -d '' bdir_cans < <(find . -maxdepth 1 -type d -name "build-${aotriton_major}.${aotriton_minor}-test-*${native_arch}*" -print0)
-if [ ${#bdir_cans[@]} -gt 1 ]; then
-  echo "There are multiple build directory candidates matching pattern 'build-${aotriton_major}.${aotriton_minor}-test-*${native_arch}*' for testing: ${bdir_cans[@]}. Please keep one only"
-  exit 1
+if [ -n "${AOTRITON_TEST_LIBDIR:-}" ]; then
+  bdir=""
+else
+  mapfile -d '' bdir_cans < <(find . -maxdepth 1 -type d -name "build-${aotriton_major}.${aotriton_minor}-test-*${native_arch}*" -print0)
+  if [ ${#bdir_cans[@]} -gt 1 ]; then
+    echo "There are multiple build directory candidates matching pattern 'build-${aotriton_major}.${aotriton_minor}-test-*${native_arch}*' for testing: ${bdir_cans[@]}. Please keep one only"
+    exit 1
+  fi
+  bdir="${bdir_cans[0]}"
 fi
-bdir="${bdir_cans[0]}"
 
 small_vram=$(amd-smi static -g 0 -v --json|grep -v '^WARNING:'| python -c 'import json, sys; j = json.load(sys.stdin); print(int(j["gpu_data"][0]["vram"]["size"]["value"] / 1024.0 < 60))')
+
+# Output directory: use $OUTPUT_DIR if set, otherwise current directory
+outdir="${OUTPUT_DIR:-.}"
+mkdir -p "$outdir"
+
+# Partial test mode: if PARTIAL_INFO_DIR is set, fix and use sel files as pytest selectors
+SELECT_FROM=""
+SELECT_VARLEN_FROM=""
+if [ -n "${PARTIAL_INFO_DIR:-}" ]; then
+  for kind in "" ".varlen"; do
+    src="${PARTIAL_INFO_DIR}/sel${pass}${kind}.txt"
+    dst="${outdir}/pytest-select-${pass}${kind}.txt"
+    if [ -f "$src" ]; then
+      # Remove "path/to/file.py::" prefix (first occurrence per line only)
+      sed 's|[^:]*\.py::||' "$src" > "$dst"
+      if [ -z "$kind" ]; then
+        SELECT_FROM="--select-from-file $dst"
+      else
+        SELECT_VARLEN_FROM="--select-from-file $dst"
+      fi
+    fi
+  done
+fi
 
 (
   ulimit -c 0
@@ -51,17 +78,21 @@ small_vram=$(amd-smi static -g 0 -v --json|grep -v '^WARNING:'| python -c 'impor
     fnprefix="oput_pass"
   fi
   set -v
-  export PYTHONPATH="${bdir}/install_dir/lib"
+  export PYTHONPATH="${AOTRITON_TEST_LIBDIR:-${bdir}/install_dir/lib}"
   pytest --tb=line -n ${ngpus} --max-worker-restart 48 -rfEsx \
+    -p no:cacheprovider \
+    ${SELECT_FROM} \
     test/test_backward.py \
     -v \
-    1>"${fnprefix}${pass}.out" \
-    2>"${fnprefix}${pass}.err" || true
-  grep '^FAILED' "${fnprefix}${pass}.out"|sed 's/^FAILED //' | sed 's/].*/]/' > "sel${pass}.txt"
+    1>"${outdir}/${fnprefix}${pass}.out" \
+    2>"${outdir}/${fnprefix}${pass}.err" || true
+  grep '^FAILED' "${outdir}/${fnprefix}${pass}.out"|sed 's/^FAILED //' | sed 's/].*/]/' > "${outdir}/sel${pass}.txt"
   pytest --tb=line -n ${ngpus} --max-worker-restart 48 -rfEsx \
+    -p no:cacheprovider \
+    ${SELECT_VARLEN_FROM} \
     test/test_varlen.py \
     -v \
-    1>"${fnprefix}${pass}.varlen.out" \
-    2>"${fnprefix}${pass}.varlen.err" || true
-  grep '^FAILED' "${fnprefix}${pass}.varlen.out"|sed 's/^FAILED //' | sed 's/].*/]/' > "sel${pass}.varlen.txt"
+    1>"${outdir}/${fnprefix}${pass}.varlen.out" \
+    2>"${outdir}/${fnprefix}${pass}.varlen.err" || true
+  grep '^FAILED' "${outdir}/${fnprefix}${pass}.varlen.out"|sed 's/^FAILED //' | sed 's/].*/]/' > "${outdir}/sel${pass}.varlen.txt"
 )

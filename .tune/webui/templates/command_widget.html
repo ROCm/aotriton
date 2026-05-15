@@ -1,0 +1,356 @@
+<section style="display: flex; flex-direction: column; height: 100%;">
+    <h3>Command Output
+        <button hx-post="/api/actions/clear"
+                hx-swap="none"
+                hx-confirm="Clear all command history?"
+                hx-on::after-request="location.reload()"
+                style="font-size: 0.8em; float: right; background-color: #dc3545; color: white;">Clear All</button>
+    </h3>
+
+    <div class="command-list-container">
+        <div id="command-list" hx-get="/api/actions" hx-trigger="load, refreshCommandList from:body" hx-swap="none">
+            <p style="color: gray;">No active commands</p>
+        </div>
+    </div>
+</section>
+
+<style>
+    .command-list-container {
+        width: 100%;
+        flex: 1;
+        overflow-y: scroll;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        padding: 0.5rem;
+        scrollbar-width: auto;
+    }
+    .command-list-container::-webkit-scrollbar {
+        width: 14px;
+    }
+    .command-list-container::-webkit-scrollbar-track {
+        background: #f1f1f1;
+        border-radius: 4px;
+    }
+    .command-list-container::-webkit-scrollbar-thumb {
+        background: #888;
+        border-radius: 4px;
+    }
+    .command-list-container::-webkit-scrollbar-thumb:hover {
+        background: #555;
+    }
+    .command-panel {
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        margin-bottom: 1rem;
+        position: relative;
+    }
+    .command-remove-btn {
+        position: absolute;
+        top: 0.3rem;
+        left: 0.3rem;
+        width: 1.5rem;
+        height: 1.5rem;
+        background-color: #dc3545;
+        color: white;
+        border: none;
+        border-radius: 3px;
+        cursor: pointer;
+        font-size: 1em;
+        font-weight: bold;
+        line-height: 1;
+        padding: 0;
+        z-index: 10;
+    }
+    .command-remove-btn:hover {
+        background-color: #c82333;
+    }
+    .command-kill-btn {
+        position: absolute;
+        top: 2.0rem;
+        left: 0.3rem;
+        width: 1.5rem;
+        height: 1.5rem;
+        background-color: #ff9800;
+        color: white;
+        border: none;
+        border-radius: 3px;
+        cursor: pointer;
+        font-size: 1em;
+        font-weight: bold;
+        line-height: 1;
+        padding: 0;
+        z-index: 10;
+        display: none;
+    }
+    .command-kill-btn:hover {
+        background-color: #e68900;
+    }
+    .command-kill-btn.visible {
+        display: inline-block;
+    }
+    .command-minimize-btn {
+        position: absolute;
+        top: 3.7rem;
+        left: 0.3rem;
+        width: 1.5rem;
+        height: 1.5rem;
+        background-color: #6c757d;
+        color: white;
+        border: none;
+        border-radius: 3px;
+        cursor: pointer;
+        font-size: 0.8em;
+        font-weight: bold;
+        line-height: 1;
+        padding: 0;
+        z-index: 10;
+    }
+    .command-minimize-btn:hover {
+        background-color: #5a6268;
+    }
+    .command-header {
+        padding: 0.5rem 0.5rem 0.5rem 2.2rem;
+        border-bottom: 1px solid #ddd;
+    }
+    .command-text {
+        width: 100%;
+        font-family: monospace;
+        font-size: max(12pt, 1em);
+        border: 1px solid #ccc;
+        border-radius: 3px;
+        padding: 0.3rem;
+        resize: vertical;
+        min-height: 1.2em;
+        max-height: 4em;
+    }
+    .command-status {
+        padding: 0.3rem 0.5rem;
+        font-size: 0.85em;
+        border-bottom: 1px solid #ddd;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .command-status .status-text {
+        flex: 1;
+    }
+    .command-status .autoscroll-control {
+        font-size: 0.9em;
+    }
+    .command-status .autoscroll-control label {
+        display: flex;
+        align-items: center;
+        gap: 0.3rem;
+        margin: 0;
+        cursor: pointer;
+    }
+    .command-output {
+        width: 100%;
+        height: 400px !important;
+        padding: 0.5rem;
+        margin: 0;
+        background: #1e1e1e;
+        color: #d4d4d4;
+        border: 1px solid #444;
+        resize: vertical;
+        font-family: monospace;
+        font-size: max(12pt, 1em);
+        white-space: pre;
+        overflow-wrap: normal;
+        transition: height 0.3s ease;
+    }
+    .command-output.minimized {
+        height: 0px !important;
+        padding: 0;
+        border: none;
+        overflow: hidden;
+    }
+</style>
+
+<script>
+// Refresh command list after any API action that creates a command
+document.body.addEventListener('htmx:afterRequest', function(event) {
+    const path = event.detail.pathInfo.requestPath;
+    // Only refresh on action-triggering endpoints, not status/output polling
+    const isActionTrigger = path.startsWith('/api/workers/') ||
+                           path.startsWith('/api/servers/') ||
+                           path.startsWith('/api/builds/') ||
+                           path.startsWith('/api/deploy/') ||
+                           path.startsWith('/api/testing/');
+
+    if (isActionTrigger && event.detail.successful) {
+        // Trigger refresh of command list
+        htmx.trigger('#command-list', 'refreshCommandList');
+    }
+});
+
+// Template for rendering action list - incremental updates only
+document.body.addEventListener('htmx:afterRequest', function(event) {
+    if (event.detail.target.id === 'command-list') {
+        const data = JSON.parse(event.detail.xhr.response);
+        if (data.actions && data.actions.length > 0) {
+            // Only add new panels that don't exist yet
+            data.actions.forEach(action => {
+                const existingPanel = document.getElementById('panel-' + action.action_id);
+                if (!existingPanel) {
+                    // New action - create panel
+                    const statusColor = action.status === 'completed' ? '#28a745' :
+                                      action.status === 'failed' ? '#dc3545' : '#ffc107';
+
+                    const html = `
+                    <div class="command-panel" id="panel-${action.action_id}">
+                        <button class="command-remove-btn"
+                                hx-delete="/api/actions/${action.action_id}"
+                                hx-target="#panel-${action.action_id}"
+                                hx-swap="outerHTML"
+                                hx-confirm="Remove this command from history?"
+                                title="Remove">×</button>
+                        <button class="command-kill-btn ${action.status === 'running' ? 'visible' : ''}"
+                                id="kill-${action.action_id}"
+                                hx-post="/api/actions/${action.action_id}/kill"
+                                hx-swap="none"
+                                hx-confirm="Kill this running process?"
+                                title="Kill process">🛑</button>
+                        <button class="command-minimize-btn"
+                                id="minimize-${action.action_id}"
+                                onclick="toggleMinimize('${action.action_id}')"
+                                title="Minimize output">▼</button>
+                        <div class="command-header">
+                            <textarea readonly class="command-text">${action.command}</textarea>
+                        </div>
+                        <div class="command-status" style="color: ${statusColor};">
+                            <span class="status-text">
+                                Status: <strong>${action.status}</strong>
+                                ${action.returncode !== null ? ' | Exit code: ' + action.returncode : ''}
+                            </span>
+                            <div class="autoscroll-control">
+                                <label>
+                                    <input type="checkbox" id="autoscroll-${action.action_id}" checked>
+                                    Auto-scroll
+                                </label>
+                            </div>
+                        </div>
+                        <textarea readonly class="command-output" id="output-${action.action_id}"
+                                  data-offset="0"
+                                  data-action-id="${action.action_id}"
+                                  data-status="${action.status}"></textarea>
+                    </div>
+                    `;
+
+                    // Remove "No active commands" message if it exists
+                    const noCommandsMsg = event.detail.target.querySelector('p');
+                    if (noCommandsMsg) {
+                        noCommandsMsg.remove();
+                    }
+
+                    // Append new panel
+                    event.detail.target.insertAdjacentHTML('beforeend', html);
+
+                    // Process HTMX attributes on new panel
+                    const newPanel = document.getElementById('panel-' + action.action_id);
+                    htmx.process(newPanel);
+
+                    // Auto-minimize if completed successfully
+                    if (action.status === 'completed' && action.returncode === 0) {
+                        toggleMinimize(action.action_id);
+                    }
+
+                    // Start polling for this new action
+                    pollOutput(action.action_id);
+                }
+            });
+        }
+    }
+});
+
+// Poll output for a specific action
+function pollOutput(actionId) {
+    const textarea = document.getElementById('output-' + actionId);
+    if (!textarea) return;
+
+    const offset = textarea.getAttribute('data-offset') || '0';
+    const status = textarea.getAttribute('data-status');
+
+    // Stop polling if completed, failed, or killed
+    if (status === 'completed' || status === 'failed' || status === 'killed') {
+        return;
+    }
+
+    fetch(`/api/actions/${actionId}/output?offset=${offset}`)
+        .then(response => {
+            const newOffset = response.headers.get('X-Output-Offset');
+            if (newOffset) {
+                textarea.setAttribute('data-offset', newOffset);
+            }
+            return response.text();
+        })
+        .then(text => {
+            if (text) {
+                textarea.value += text;
+
+                // Auto-scroll if checkbox is checked
+                const checkbox = document.getElementById('autoscroll-' + actionId);
+                if (checkbox && checkbox.checked) {
+                    textarea.scrollTop = textarea.scrollHeight;
+                }
+            }
+
+            // Check if status changed
+            fetch(`/api/actions/${actionId}/status`)
+                .then(r => r.json())
+                .then(data => {
+                    textarea.setAttribute('data-status', data.status);
+
+                    // Update status badge in UI
+                    const panel = document.getElementById('panel-' + actionId);
+                    if (panel) {
+                        const statusText = panel.querySelector('.status-text');
+                        const statusColor = data.status === 'completed' ? '#28a745' :
+                                          data.status === 'failed' ? '#dc3545' :
+                                          data.status === 'killed' ? '#6c757d' : '#ffc107';
+                        if (statusText) {
+                            statusText.innerHTML = `Status: <strong>${data.status}</strong>${data.returncode !== null ? ' | Exit code: ' + data.returncode : ''}`;
+                            statusText.parentElement.style.color = statusColor;
+                        }
+
+                        // Hide kill button if not running
+                        const killBtn = document.getElementById('kill-' + actionId);
+                        if (killBtn && data.status !== 'running') {
+                            killBtn.classList.remove('visible');
+                        }
+
+                        // Auto-minimize if completed successfully (exit code 0)
+                        if (data.status === 'completed' && data.returncode === 0) {
+                            toggleMinimize(actionId);
+                        }
+                    }
+
+                    // Continue polling if still running
+                    if (data.status === 'running' || data.status === 'queued') {
+                        setTimeout(() => pollOutput(actionId), 1000);
+                    }
+                });
+        })
+        .catch(err => console.error('Poll error:', err));
+}
+
+// Toggle minimize state for output textarea
+function toggleMinimize(actionId) {
+    const textarea = document.getElementById('output-' + actionId);
+    const minimizeBtn = document.getElementById('minimize-' + actionId);
+
+    if (!textarea || !minimizeBtn) return;
+
+    if (textarea.classList.contains('minimized')) {
+        // Expand
+        textarea.classList.remove('minimized');
+        minimizeBtn.textContent = '▼';
+        minimizeBtn.title = 'Minimize output';
+    } else {
+        // Minimize
+        textarea.classList.add('minimized');
+        minimizeBtn.textContent = '▶';
+        minimizeBtn.title = 'Expand output';
+    }
+}
+</script>

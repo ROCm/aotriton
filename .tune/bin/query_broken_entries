@@ -1,0 +1,69 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# Query broken_entries.db and print task_ids to stdout (one per line).
+# Pipe output into populate_most_accurate or a reset script.
+#
+# Usage:
+#   query_broken_entries <workdir> [--host <hostname>] [--pass <pass#>] [--arch <arch>] [--module <module>]
+#
+# Example:
+#   query_broken_entries ~/wkdir.v3.5 --host gpu01 --pass 0 | \
+#     python3 -m v3python.tune.pq.populate_most_accurate ~/wkdir.v3.5 --task_ids_file -
+
+set -euo pipefail
+
+if [ "$#" -lt 1 ]; then
+    echo "Usage: $0 <workdir> [--host <hostname>] [--pass <pass#>] [--arch <arch>] [--module <module>]" >&2
+    exit 1
+fi
+
+WORKDIR="$1"
+shift
+
+DB_PATH="$WORKDIR/scratch/broken_entries.db"
+
+if [ ! -f "$DB_PATH" ]; then
+    echo "Error: broken_entries.db not found at $DB_PATH" >&2
+    exit 1
+fi
+
+WHERE_CLAUSES=()
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --host)
+            WHERE_CLAUSES+=("host = '$2'")
+            shift 2
+            ;;
+        --pass)
+            WHERE_CLAUSES+=("pass = $2")
+            shift 2
+            ;;
+        --arch)
+            WHERE_CLAUSES+=("arch = '$2'")
+            shift 2
+            ;;
+        --module)
+            WHERE_CLAUSES+=("module = '$2'")
+            shift 2
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            exit 1
+            ;;
+    esac
+done
+
+if [ ${#WHERE_CLAUSES[@]} -gt 0 ]; then
+    joined="${WHERE_CLAUSES[0]}"
+    for clause in "${WHERE_CLAUSES[@]:1}"; do
+        joined="$joined AND $clause"
+    done
+    WHERE="WHERE $joined"
+else
+    WHERE=""
+fi
+
+sqlite3 "$DB_PATH" "SELECT task_id FROM broken_entries $WHERE ORDER BY task_id"

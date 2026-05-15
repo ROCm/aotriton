@@ -366,7 +366,7 @@ def core_test_op_bwd(request, args, device : int | None = None):
         else:
             with torch.cuda.device(device):
                 qkh = _do_test_op_bwd(request, args, device_str=f'cuda:{device}')
-        if qkh > 2048 * 2048 * 128:
+        if qkh > 2048 * 2048 * 64:
             gc.collect()
             torch.cuda.empty_cache()
     except RuntimeError as e:

@@ -1,0 +1,79 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# Build Triton wheel and AOTriton libraries for all architectures
+# Usage: libbld <workdir>
+
+if [ -z "$BASH_VERSION" ]; then
+  echo "This script requires Bash. Please run it with 'bash script_name.sh' or ensure /bin/sh points to /bin/bash." >&2
+  exit 1
+fi
+
+WORKDIR=""
+SINGLE_ARCH=""
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --single_arch) SINGLE_ARCH="$2"; shift 2 ;;
+    *) WORKDIR="$1"; shift ;;
+  esac
+done
+
+if [ -z "$WORKDIR" ]; then
+  cat >&2 <<EOF
+Usage: $0 <workdir> [--single_arch <arch>]
+
+Build triton wheel and AOTriton tuning binaries for all registered
+architectures (or a single one).
+
+Arguments:
+  <workdir>             Project working directory (created by initproj)
+  --single_arch <arch>  Build only the specified architecture
+
+Output:
+  - Triton wheel: <workdir>/scratch/triton/
+  - AOTriton builds: <workdir>/build/<arch>/
+  - AOTriton installs: <workdir>/installed/<arch>/
+EOF
+  exit 1
+fi
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+. "$TUNE_ROOT/lib/config_load.sh"
+. "$TUNE_ROOT/lib/db_query.sh"
+
+# Validate
+if [ ! -d "$WORKDIR" ] || [ ! -f "$WORKDIR/workers.db" ]; then
+  echo "Error: Invalid workdir or workers.db not found" >&2
+  exit 1
+fi
+
+load_config "$WORKDIR"
+
+# Step 1: Build Triton wheel (cached)
+echo "Step 1: Building Triton wheel..."
+TRITON_WHEEL=$("$TUNE_ROOT/single/build_triton_wheel.sh" "$WORKDIR")
+echo "Using Triton wheel: $TRITON_WHEEL"
+
+# Step 2: Build AOTriton for each architecture
+ABSWORKDIR=$(realpath "$WORKDIR")
+
+if [ -n "$SINGLE_ARCH" ]; then
+  ARCHS=("$SINGLE_ARCH")
+  echo "Step 2: Building AOTriton for arch: $SINGLE_ARCH"
+else
+  mapfile -t ARCHS < <(get_architectures "$WORKDIR")
+  echo "Step 2: Building AOTriton for all architectures: ${ARCHS[*]}"
+fi
+
+for arch in "${ARCHS[@]}"; do
+    echo "Building $arch..."
+    "$TUNE_ROOT/single/build_arch.sh" "$ABSWORKDIR" "$arch" "$TRITON_WHEEL"
+done
+
+echo "Build complete"

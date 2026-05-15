@@ -9,6 +9,10 @@ from pathlib import Path
 #           The file is only updated when the content changes
 # Was named as NoWriteIfNoUpdateFile (very verbose)
 class LazyFile(object):
+    # When True, all instances skip actual disk writes (content is still
+    # generated in memory so the rest of the pipeline runs normally).
+    suppress_writes: bool = False
+
     def __init__(self, ofn : Path):
         self._ofn = ofn
         self._old_content = ''
@@ -19,7 +23,7 @@ class LazyFile(object):
 
     def __enter__(self):
         self._mf = io.StringIO()
-        if self._ofn.exists():
+        if not LazyFile.suppress_writes and self._ofn.exists():
             with open(self._ofn) as f:
                 self._old_content = f.read()
         return self._mf
@@ -29,6 +33,8 @@ class LazyFile(object):
         return self._mf
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        if LazyFile.suppress_writes:
+            return
         mf = self.memory_file
         mf.seek(0)
         if mf.read() != self._old_content:

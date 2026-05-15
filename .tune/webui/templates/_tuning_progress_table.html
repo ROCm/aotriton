@@ -1,0 +1,35 @@
+{% if last_refresh is defined %}<h3>Tuning Progress <span class="last-refresh">Last refresh: {{ last_refresh }}</span></h3>{% endif %}
+{% if tuning_progress %}
+<table style="width: 100%;">
+    <thead>
+        <tr>
+            <th>Architecture</th>
+            <th>Pending</th>
+            <th>Running</th>
+            <th>Completed</th>
+            <th>Failed</th>
+            <th>Total</th>
+            <th>Cancelled</th>
+            <th>Progress</th>
+            <th>Speed</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in tuning_progress %}
+        <tr>
+            <td><code>{{ row.arch }}</code></td>
+            <td>{{ row.pending }}</td>
+            <td>{{ row.running }}{% if row.stale > 0 %} <span style="color: #ff6b6b;">({{ row.stale }} stale)</span>{% endif %}</td>
+            <td>{{ row.completed }}</td>
+            <td>{{ row.failed }}</td>
+            <td>{{ row.effective_total }} <span style="color:#888;">({{ row.total }})</span></td>
+            <td>{{ row.cancelled }}</td>
+            <td>{{ "%.1f"|format(row.pct_complete) }}%</td>
+            <td>{{ "%.1f"|format(row.speed_per_minute) }} tasks/min</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>No tuning tasks in queue.</p>
+{% endif %}

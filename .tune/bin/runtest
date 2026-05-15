@@ -1,0 +1,88 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# Run tests on all Tester-role hosts (or a filtered subset).
+#
+# Usage:
+#   runtest <workdir> <pass#> <test_level> <split|fused|aiter|v3> [--hostname <h>...] [--follow]
+#
+#   --hostname <h>  Restrict to specific hosts (repeatable); default: all Tester-role hosts.
+#   --follow        Wait for each tsp job to finish before moving to the next host.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+. "$TUNE_ROOT/lib/config_load.sh"
+. "$TUNE_ROOT/lib/db_query.sh"
+. "$TUNE_ROOT/lib/host_filter.sh"
+
+# ---- argument parsing ----
+POSITIONAL=()
+FOLLOW=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --hostname)
+      shift
+      while [[ $# -gt 0 ]] && [[ ! "$1" =~ ^-- ]]; do
+        FILTER_HOSTS+=("$1")
+        shift
+      done
+      ;;
+    --follow)
+      FOLLOW=1
+      shift
+      ;;
+    *)
+      POSITIONAL+=("$1")
+      shift
+      ;;
+  esac
+done
+
+if [ "${#POSITIONAL[@]}" -lt 4 ]; then
+  cat >&2 <<EOF
+Usage: $0 <workdir> <pass#> <test_level> <split|fused|aiter|v3> [--hostname <h>...] [--follow]
+
+  --hostname <h>  Restrict to specific Tester-role hosts (repeatable).
+  --follow        Wait for each remote tsp job to complete (tsp -t).
+EOF
+  exit 1
+fi
+
+WORKDIR="${POSITIONAL[0]}"
+PASS_NUM="${POSITIONAL[1]}"
+TEST_LEVEL="${POSITIONAL[2]}"
+BACKEND="${POSITIONAL[3]}"
+
+load_config "$WORKDIR"
+
+FOLLOW_FLAG=""
+[ "$FOLLOW" -eq 1 ] && FOLLOW_FLAG="--follow"
+
+# ---- iterate Tester-role workers ----
+mapfile -t WORKERS < <(get_tester_workers "$WORKDIR")
+
+COUNT=0
+for worker in "${WORKERS[@]}"; do
+  IFS='|' read -r hostname arch workdir_override <<< "$worker"
+
+  if ! should_process_host "$hostname"; then
+    continue
+  fi
+
+  "$TUNE_ROOT/single/run-test.sh" "$WORKDIR" "$hostname" "$arch" "${workdir_override:-}" \
+    "$PASS_NUM" "$TEST_LEVEL" "$BACKEND" $FOLLOW_FLAG
+
+  COUNT=$((COUNT + 1))
+done
+
+if [ "$COUNT" -eq 0 ]; then
+  echo "Warning: No Tester-role hosts matched the specified criteria" >&2
+  exit 1
+fi
+
+echo "runtest dispatched to $COUNT host(s)"

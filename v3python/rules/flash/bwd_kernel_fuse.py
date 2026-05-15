@@ -104,8 +104,3 @@ class bwd_kernel_fuse(FlashBwdKernel):
             kw = {'BLOCK_M': M, 'BLOCK_N': N, 'waves_per_eu': waves}
             kw = self.update_programmatic_perfs(kw, f)
             yield Config(kw, num_stages=stages, num_warps=warps)
-
-    # 16, 32, 64, 128, 256, 512, 1024
-    LUT_FULL_SEQLEN_Q = [16,32,64,128,256,512,1024]
-    LUT_FULL_SEQLEN_K = [16,32,64,128,256,512,1024]
-    LUT_FULL_SEQLEN_NAVI = [16,32,64,128,256,512,1024]

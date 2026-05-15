@@ -1,0 +1,147 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# Worker control orchestration
+# Usage: wkctl <workdir> <action> [--host <hostname>...]
+# Actions: start|stop|graceful|restart|stopwait
+# GPU selection is read from the workers DB and applied automatically for start/restart.
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Load utilities
+. "$TUNE_ROOT/lib/config_load.sh"
+. "$TUNE_ROOT/lib/db_query.sh"
+. "$TUNE_ROOT/lib/host_filter.sh"
+
+# Parse arguments
+parse_host_filter "$@"
+
+# Remove --host options from args
+ARGS=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --host)
+            shift
+            while [[ $# -gt 0 ]] && [[ ! "$1" =~ ^-- ]]; do
+                shift
+            done
+            ;;
+        *)
+            ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
+
+WORKDIR="${ARGS[0]}"
+ACTION="${ARGS[1]}"
+
+if [ -z "$WORKDIR" ] || [ -z "$ACTION" ]; then
+    echo "Usage: $0 <workdir> <action> [--host <hostname>...]" >&2
+    echo "" >&2
+    echo "Actions:" >&2
+    echo "  start      Start worker (applies GPU selection from workers DB)" >&2
+    echo "  stop       Stop worker immediately (kill container)" >&2
+    echo "  graceful   Stop worker gracefully (waits for in-flight tasks to finish)" >&2
+    echo "  restart    Stop then start worker (applies GPU selection)" >&2
+    echo "  stopwait   Stop worker and wait for full shutdown" >&2
+    echo "" >&2
+    echo "Options:" >&2
+    echo "  --host <hostname>...  Filter to specific worker hosts (can be repeated)" >&2
+    echo "" >&2
+    echo "Examples:" >&2
+    echo "  $0 /path/to/workdir start" >&2
+    echo "  $0 /path/to/workdir graceful --host gpu1.example.com" >&2
+    echo "  $0 /path/to/workdir stop --host gpu1.example.com gpu2.example.com" >&2
+    exit 1
+fi
+
+# Load config
+load_config "$WORKDIR"
+
+# Get workers and iterate
+mapfile -t WORKERS < <(get_workers "$WORKDIR")
+
+COUNT=0
+for worker in "${WORKERS[@]}"; do
+    IFS='|' read -r hostname arch workdir_override <<< "$worker"
+
+    if ! should_process_host "$hostname"; then
+        continue
+    fi
+
+    WORKER_WORKDIR="${workdir_override:-$DEFAULT_WORKDIR}"
+
+    # Get GPU selection from workers.db
+    GPU_SELECTION=$(get_worker_gpu_selection "$WORKDIR" "$hostname")
+
+    # Build --multi_gpu args if selection exists
+    MULTI_GPU_ARGS=()
+    if [ -n "$GPU_SELECTION" ]; then
+        MULTI_GPU_ARGS+=("--" "--multi_gpu")
+
+        # Parse GPU selection: "-1" for all, or comma-separated IDs like "1,2,3"
+        if [ "$GPU_SELECTION" = "-1" ]; then
+            MULTI_GPU_ARGS+=("-1")
+        else
+            # Split by comma and add each ID
+            IFS=',' read -ra GPU_IDS <<< "$GPU_SELECTION"
+            MULTI_GPU_ARGS+=("${GPU_IDS[@]}")
+        fi
+    fi
+
+    echo "[$hostname] ${ACTION}ing worker (arch: $arch, workdir: $WORKER_WORKDIR, gpus: ${GPU_SELECTION:-all})"
+
+    # Disable exit-on-error for stop/stopwait to continue on failures
+    if [ "$ACTION" = "stop" ] || [ "$ACTION" = "stopwait" ] || [ "$ACTION" = "graceful" ]; then
+        set +e
+    fi
+
+    case "$ACTION" in
+        start)
+            "$TUNE_ROOT/single/start_worker.sh" "$WORKDIR" "$hostname" "${MULTI_GPU_ARGS[@]}"
+            ;;
+        stop)
+            "$TUNE_ROOT/single/stop_worker.sh" "$WORKDIR" "$hostname"
+            ;;
+        graceful)
+            "$TUNE_ROOT/single/stop_worker.sh" "$WORKDIR" "$hostname" --graceful
+            ;;
+        restart)
+            "$TUNE_ROOT/single/restart_worker.sh" "$WORKDIR" "$hostname" "${MULTI_GPU_ARGS[@]}"
+            ;;
+        stopwait)
+            "$TUNE_ROOT/single/stopwait_worker.sh" "$WORKDIR" "$hostname"
+            ;;
+        *)
+            echo "Unknown action: $ACTION" >&2
+            exit 1
+            ;;
+    esac
+
+    EXIT_CODE=$?
+
+    # Re-enable exit-on-error
+    if [ "$ACTION" = "stop" ] || [ "$ACTION" = "stopwait" ] || [ "$ACTION" = "graceful" ]; then
+        set -e
+    fi
+
+    if [ $EXIT_CODE -eq 0 ]; then
+        echo "[$hostname] Worker ${ACTION}ed successfully"
+    else
+        echo "[$hostname] Failed to ${ACTION} worker (exit code: $EXIT_CODE)" >&2
+    fi
+
+    COUNT=$((COUNT + 1))
+done
+
+if [ "$COUNT" -eq 0 ]; then
+    echo "Warning: No workers matched the specified criteria" >&2
+    exit 1
+fi
+
+echo "Worker control completed: $ACTION on $COUNT worker(s)"

@@ -9,6 +9,7 @@ from .rules import (
 from .codegen import (
     RootGenerator
 )
+from .utils import LazyFile
 import argparse
 from pathlib import Path
 from .gpu_targets import AOTRITON_SUPPORTED_GPUS
@@ -43,9 +44,13 @@ def parse():
     # p.add_argument("--generate_cluster_info", action='store_true', help="Generate Bare.functionals for clustering.")
     p.add_argument("--verbose", action='store_true', help="Print debugging messages")
     p.add_argument("--lut_sanity_check", action='store_true', help="By default, an exception will ba raised when any the look up table (LUT) is broken. With this option the exception is not raised, and diagnose information is printed for developers to re-run the tuning script in order to fix the database.")
+    p.add_argument("--sanity_check_only", action='store_true', help="Run --lut_sanity_check but suppress all code generation. No files are written. Implies --lut_sanity_check.")
     # Handled by CMake
     # p.add_argument("--timeout", type=float, default=8.0, help='Maximal time the compiler can run. Passing < 0 for indefinite. No effect in bare mode (handled separately)')
     args = p.parse_args()
+    if args.sanity_check_only:
+        args.lut_sanity_check = True
+        LazyFile.suppress_writes = True
     args._sanity_check_exceptions = []
     args.build_for_tuning_but_skip_kernel = args.build_for_tuning_but_skip_kernel
     args._object_file_registry = []

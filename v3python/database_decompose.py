@@ -23,6 +23,7 @@ tarxz() {
     b=$(basename "$1")
     cd "$d"
     tar cJf "$b.tar.xz" "$b"
+    rm "$b"
   )
 }'''
 
@@ -61,7 +62,7 @@ def write_script(args, dbc, out):
     db_base = args.decompose_output / VENDOR
     print(TARXZ, file=out)
     print(f'''export -f tarxz''', file=out)
-    print(f'''find {db_base.as_posix()} -name '*.sqlite3' | parallel tarxz''', file=out)
+    print(f'''find {db_base.as_posix()} -name '*.sqlite3' | "$GNU_PARALLEL" tarxz''', file=out)
 
 
 def main():

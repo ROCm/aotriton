@@ -1,0 +1,99 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# Debug script to connect to PostgreSQL database using psql
+
+if [ -z "$BASH_VERSION" ]; then
+  echo "This script requires Bash. Please run it with 'bash script_name.sh' or ensure /bin/sh points to /bin/bash." >&2
+  exit 1
+fi
+
+if [ "$#" -lt 1 ]; then
+  cat >&2 <<EOF
+Usage: $0 <workdir> [-c <sql>]
+
+Connect to PostgreSQL database specified by workdir's config.rc using psql.
+
+This script uses the alpine/psql Docker image to connect to the database.
+
+Arguments:
+  <workdir>  Project working directory
+  -c <sql>   Run SQL command non-interactively and exit
+
+Example:
+  $0 /path/to/workdir
+  $0 /path/to/workdir -c "SELECT * FROM task_queue LIMIT 5;"
+
+Once connected, you can run SQL queries, for example:
+  \dt                           -- List all tables
+  \d task_queue                 -- Describe table structure
+  \d task_queue_gfx942          -- Describe partition table
+  SELECT * FROM task_queue WHERE arch='gfx942' LIMIT 10;  -- Query data
+  SELECT * FROM tuning_results LIMIT 10;  -- Query results
+  \q                            -- Quit
+EOF
+  exit 1
+fi
+
+WORKDIR="$1"
+shift
+PSQL_EXTRA_ARGS=("$@")
+
+# Validate workdir
+if [ ! -d "$WORKDIR" ]; then
+  echo "Error: Working directory does not exist: $WORKDIR" >&2
+  exit 1
+fi
+
+CONFIG_RC="$WORKDIR/config.rc"
+if [ ! -f "$CONFIG_RC" ]; then
+  echo "Error: config.rc not found at $CONFIG_RC" >&2
+  exit 1
+fi
+
+# Source config
+. "$CONFIG_RC"
+
+# Validate required config variables
+if [ -z "$POSTGRES_USER" ] || [ -z "$POSTGRES_PASSWORD" ]; then
+  echo "Error: POSTGRES_USER or POSTGRES_PASSWORD not set in config.rc" >&2
+  exit 1
+fi
+
+if [ -z "$POSTGRES_DOCKER_IMAGE" ]; then
+  echo "Error: POSTGRES_DOCKER_IMAGE not set in config.rc" >&2
+  exit 1
+fi
+
+# Extract PostgreSQL version from POSTGRES_DOCKER_IMAGE
+# e.g., postgres:17.6 -> 17.6
+POSTGRES_VERSION=$(echo "$POSTGRES_DOCKER_IMAGE" | cut -d: -f2)
+
+# Use matching psql docker image version
+PSQL_IMAGE="alpine/psql:${POSTGRES_VERSION}"
+
+# PostgreSQL connection parameters
+# Default to localhost and standard port since containers use --network=host
+POSTGRES_HOST="${POSTGRES_HOST:-localhost}"
+POSTGRES_PORT="${POSTGRES_PORT:-5432}"
+# For tuner v3.5, default database is 'workers' not 'celery'
+POSTGRES_DB="${POSTGRES_DB:-workers}"
+
+echo "Connecting to postgresql://$POSTGRES_USER@$POSTGRES_HOST:$POSTGRES_PORT/$POSTGRES_DB (psql $POSTGRES_VERSION)"
+
+# Run psql via alpine/psql docker image
+# Use --network=host to connect to localhost
+# Pass password via PGPASSWORD environment variable
+if [ "${#PSQL_EXTRA_ARGS[@]}" -eq 0 ]; then
+  DOCKER_TTY_FLAGS="-it"
+else
+  DOCKER_TTY_FLAGS="-i"
+fi
+
+exec docker run $DOCKER_TTY_FLAGS --rm \
+  --network=host \
+  -e PGPASSWORD="$POSTGRES_PASSWORD" \
+  "$PSQL_IMAGE" \
+  postgresql://"$POSTGRES_USER"@"$POSTGRES_HOST":"$POSTGRES_PORT" \
+  "${PSQL_EXTRA_ARGS[@]}"

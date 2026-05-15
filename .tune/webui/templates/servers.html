@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+
+{% block title %}Servers{% endblock %}
+
+{% block content %}
+<h2>Server Management</h2>
+
+<section>
+    <h3>PostgreSQL</h3>
+    <p>Control the PostgreSQL database server for task queue and results storage.</p>
+
+    <button hx-post="/api/servers/start"
+            hx-swap="none"
+            hx-indicator="#server-spinner">Start Server</button>
+    <button hx-post="/api/servers/stop"
+            hx-swap="none"
+            hx-indicator="#server-spinner">Stop Server</button>
+    <button hx-post="/api/servers/restart"
+            hx-swap="none"
+            hx-indicator="#server-spinner">Restart Server</button>
+    <span id="server-spinner" class="htmx-indicator">⏳ Processing...</span>
+</section>
+
+<section>
+    <h3>Database Schema</h3>
+    <p>Initialize or update the PostgreSQL database schema for Tuner v3.5. <strong style="color: #856404; background-color: #fff3cd; padding: 0.2rem 0.5rem; border-radius: 3px;">Note: Re-run this when registering workers with new GPU architectures.</strong></p>
+
+    <button hx-post="/api/servers/initdb"
+            hx-swap="none"
+            hx-confirm="This will create/update database tables. Existing data will be preserved. Continue?"
+            hx-indicator="#initdb-spinner">Initialize Schema</button>
+    <span id="initdb-spinner" class="htmx-indicator">⏳ Initializing...</span>
+
+    <button hx-post="/api/servers/recreate-schema"
+            hx-swap="none"
+            hx-confirm="WARNING: This will DROP ALL TABLES and recreate the schema from scratch. ALL DATA WILL BE LOST. Are you absolutely sure?"
+            hx-indicator="#recreate-spinner"
+            style="margin-left: 1rem; background-color: #dc3545; color: white;">Recreate Schema (Danger)</button>
+    <span id="recreate-spinner" class="htmx-indicator">⏳ Recreating...</span>
+
+    <p style="font-size: 0.9em; color: gray; margin-top: 0.5rem;">
+        <strong>Initialize Schema:</strong> Creates tables if they don't exist (safe, preserves data).<br>
+        <strong>Recreate Schema:</strong> Drops all tables and recreates from scratch (destructive, clears all tasks and results).
+    </p>
+</section>
+
+<section>
+    <h3>Bake LUT</h3>
+    <p>Convert raw PostgreSQL tuning results into the SQLite database used by the aotriton build process, then sanity-check the LUT.</p>
+
+    <button hx-post="/api/servers/bake-lut"
+            hx-swap="none"
+            hx-confirm="Bake LUT: run all five steps in sequence (rebuild accuracy table, compute best results, export, sancheck, decompose)? This may take several minutes."
+            hx-indicator="#pipeline-spinner"
+            style="background-color: #dc3545; color: white;">Bake LUT</button>
+    <span id="pipeline-spinner" class="htmx-indicator">&#x23F3; Running...</span>
+
+    <button hx-post="/api/servers/bake-lut"
+            hx-vals='{"incremental": "1"}'
+            hx-swap="none"
+            hx-confirm="Bake LUT (incremental): update accuracy table for retried tasks, then compute/export/sancheck/decompose?"
+            hx-indicator="#pipeline-incremental-spinner"
+            style="margin-left: 1rem;">Bake LUT (Incremental)</button>
+    <span id="pipeline-incremental-spinner" class="htmx-indicator">&#x23F3; Running...</span>
+
+    <form id="bake-lut-fix-form" style="display: inline-flex; align-items: center; gap: 0.5rem; margin-left: 1rem;">
+        <input type="hidden" name="fix" value="1">
+        <select name="hostname" id="bake-lut-fix-host">
+            <option value="__all__">(all hosts)</option>
+            {% for h in hostnames %}
+            <option value="{{ h }}">{{ h }}</option>
+            {% endfor %}
+        </select>
+        <label for="bake-lut-fix-pass" style="font-size: 0.9em;">Pass:</label>
+        <input type="number" name="pass_num" id="bake-lut-fix-pass" value="0" min="0" style="width: 4rem;">
+        <button type="button"
+                hx-post="/api/servers/bake-lut"
+                hx-include="#bake-lut-fix-form"
+                hx-swap="none"
+                hx-confirm="Bake LUT (fix broken): update accuracy table from broken_entries.db for the selected host/pass, then compute/export/sancheck/decompose?"
+                hx-indicator="#pipeline-fix-spinner">Bake LUT (Fix Broken)</button>
+        <span id="pipeline-fix-spinner" class="htmx-indicator">&#x23F3; Running...</span>
+    </form>
+
+    <p style="font-size: 0.9em; color: gray; margin-top: 1rem; margin-bottom: 0.25rem;">Individual steps:</p>
+
+    <div style="display: flex; flex-wrap: nowrap; align-items: center;">
+        <button hx-post="/api/servers/recreate-materialized-view"
+                hx-swap="none"
+                hx-confirm="Rebuild most_accurate_tuning_results (DROP + CTAS)? Table will be unavailable briefly."
+                style="background-color: #dc3545; color: white;">Rebuild Accuracy Table</button>
+
+        <button hx-post="/api/servers/update-materialized-view"
+                hx-swap="none"
+                hx-confirm="Update accuracy table incrementally for task_ids from scratch/retry_task_ids.txt?">Update Accuracy Table</button>
+
+        <button hx-post="/api/servers/compute-best-results"
+                hx-swap="none"
+                hx-confirm="Compute best_tuning_results from raw tuning results? This may take several minutes.">Compute Best Results</button>
+
+        <button hx-post="/api/servers/export-best-results"
+                hx-swap="none"
+                hx-confirm="Export best results to centraldb.sqlite3? Existing file will be deleted.">Export Best Results</button>
+
+        <button hx-post="/api/servers/sancheck"
+                hx-swap="none"
+                hx-confirm="Run LUT sanity check against scratch/centraldb.sqlite3? Requires export to have been run first.">Sancheck</button>
+
+        <button hx-post="/api/servers/decomposedb"
+                hx-swap="none"
+                hx-confirm="Decompose scratch/centraldb.sqlite3 into installed/database/<arch>/<family>/<kernel>.sqlite3.tar.xz?">Decompose DB</button>
+    </div>
+
+    <p style="font-size: 0.9em; color: gray; margin-top: 0.5rem;">
+        <strong>Rebuild Accuracy Table:</strong> DROP + CTAS <code>most_accurate_tuning_results</code> in parallel.<br>
+        <strong>Update Accuracy Table:</strong> Incrementally upserts rows for task_ids cached in <code>scratch/retry_task_ids.txt</code> by <code>retry_missing_entries</code>.<br>
+        <strong>Compute Best Results:</strong> Aggregates raw tuning results into best_tuning_results table.<br>
+        <strong>Export Best Results:</strong> Exports best_tuning_results to <code>scratch/centraldb.sqlite3</code>.<br>
+        <strong>Sancheck:</strong> Runs LUT sanity check against <code>scratch/centraldb.sqlite3</code> without triggering code generation.<br>
+        <strong>Decompose DB:</strong> Partitions <code>scratch/centraldb.sqlite3</code> into <code>installed/database/amd/&lt;arch&gt;/&lt;family&gt;/&lt;kernel&gt;.sqlite3.tar.xz</code>.
+    </p>
+</section>
+
+<section>
+    <h3>Service Status</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>Service</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><strong>PostgreSQL</strong></td>
+                <td>
+                    <span hx-get="/api/servers/status"
+                          hx-trigger="load, every 5s"
+                          hx-swap="innerHTML">
+                        <span class="status-badge status-unknown">Checking...</span>
+                    </span>
+                </td>
+            </tr>
+        </tbody>
+    </table>
+</section>
+
+<section>
+    <h3>Configuration (config.rc)</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>Variable</th>
+                <th>Value</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for key, value in config_vars.items() %}
+            <tr>
+                <td><strong>{{ key }}</strong></td>
+                <td><code>{{ value }}</code></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endblock %}

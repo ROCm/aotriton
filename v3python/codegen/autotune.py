@@ -32,7 +32,7 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
                  args,
                  f : Functional,
                  dataframe_for_tuning : 'pandas.DataFrame | None',
-                 sql : str,
+                 sql : tuple,
                  parent_repo):
         super().__init__(args, f, dataframe_for_tuning, parent_repo)
         self._sql = sql
@@ -60,13 +60,16 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
         else:
             log(lambda : f'translate_dataframe for kernel {kdesc.NAME}')
             self._lut_tensor, self._sigs, self._binning_dict = kdesc.translate_dataframe(f, self._df)
-            if not kdesc.sancheck_lut_tensor(f, self._lut_tensor):
-                ent = MissingLutEntry(f, self._lut_tensor)
+            ok, errors, missing_entries = kdesc.sancheck_lut_tensor(f, self._lut_tensor)
+            if not ok:
                 if args._should_raise_for_lut(f):
-                    raise ent
+                    raise MissingLutEntry(f, self._lut_tensor)
                 else:
-                    for j in ent.get_missing_lut_entries():
-                        print(kdesc.NAME, "TUNE_FLASH --entry_from_json Item: ", j)
+                    for j in missing_entries:
+                        print(kdesc.NAME, "TUNE_V3BIS testrun Item: ", j)
+                        print("  SQL:", self._sql)
+                        for err in errors:
+                            print("    ERROR:", err)
         assert all([isinstance(k, KernelSignature)] for k in self._sigs)
 
     def generate(self):

@@ -1,0 +1,72 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# Recreate the most_accurate_tuning_results materialized view from scratch.
+# DROP + CREATE is faster than REFRESH CONCURRENTLY because it avoids the
+# expensive FULL JOIN diff phase that CONCURRENTLY requires.
+#
+# Usage:
+#   recreate_materialized_view <workdir>
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_ROOT="$(cd "$TUNE_ROOT/.." && pwd)"
+
+. "$TUNE_ROOT/lib/config_load.sh"
+
+if [ "$#" -lt 1 ]; then
+    echo "Usage: $0 <workdir>" >&2
+    exit 1
+fi
+
+WORKDIR="$1"
+
+if [ ! -d "$WORKDIR" ]; then
+    echo "Error: workdir does not exist: $WORKDIR" >&2
+    exit 1
+fi
+
+load_config "$WORKDIR"
+
+if [ -z "$POSTGRES_USER" ] || [ -z "$POSTGRES_PASSWORD" ]; then
+    echo "Error: POSTGRES_USER or POSTGRES_PASSWORD not set in config.rc" >&2
+    exit 1
+fi
+
+if [ -z "$POSTGRES_DOCKER_IMAGE" ]; then
+    echo "Error: POSTGRES_DOCKER_IMAGE not set in config.rc" >&2
+    exit 1
+fi
+
+POSTGRES_VERSION=$(echo "$POSTGRES_DOCKER_IMAGE" | cut -d: -f2)
+PSQL_IMAGE="alpine/psql:${POSTGRES_VERSION}"
+POSTGRES_HOST="${CELERY_SERVICE_HOST:-localhost}"
+POSTGRES_PORT="${POSTGRES_PORT:-5432}"
+
+SQL_FILE="$REPO_ROOT/v3python/tune/pq/materialized_views.sql"
+if [ ! -f "$SQL_FILE" ]; then
+    echo "Error: SQL file not found: $SQL_FILE" >&2
+    exit 1
+fi
+
+echo "Recreating most_accurate_tuning_results table..."
+echo "Host: $POSTGRES_HOST"
+echo "Port: $POSTGRES_PORT"
+echo "User: $POSTGRES_USER"
+
+docker run --rm \
+    --network=host \
+    -e PGPASSWORD="$POSTGRES_PASSWORD" \
+    -v "$REPO_ROOT:/repo:ro" \
+    "$PSQL_IMAGE" \
+    postgresql://"$POSTGRES_USER"@"$POSTGRES_HOST":"$POSTGRES_PORT" \
+    -c "SET max_parallel_workers_per_gather = 8; SET max_parallel_workers = 16; DROP TABLE IF EXISTS most_accurate_tuning_results;" \
+    -f "/repo/v3python/tune/pq/materialized_views.sql"
+
+echo "Table created. Populating most_accurate_tuning_results (full)..."
+PYTHONPATH="$REPO_ROOT" python3 -m v3python.tune.pq.populate_most_accurate "$WORKDIR"
+
+echo "most_accurate_tuning_results recreated successfully"

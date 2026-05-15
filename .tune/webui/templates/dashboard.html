@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+
+{% block title %}Overview{% endblock %}
+
+{% block content %}
+<h2>Dashboard Overview</h2>
+
+<section>
+    <h3>Status Summary</h3>
+    <table>
+        <tr>
+            <th>Metric</th>
+            <th>Value</th>
+        </tr>
+        <tr>
+            <td>Total Workers</td>
+            <td><strong>{{ status.worker_count }}</strong></td>
+        </tr>
+        <tr>
+            <td>Architectures</td>
+            <td><strong>{{ status.architecture_count }}</strong> ({{ status.architectures|join(', ') }})</td>
+        </tr>
+        <tr>
+            <td>PostgreSQL</td>
+            <td><span class="status-badge status-{{ status.postgres_status }}">{{ status.postgres_status }}</span></td>
+        </tr>
+    </table>
+</section>
+
+<section>
+    <h3>Worker Status
+        <button hx-post="/api/workers/probe-all-status"
+                hx-swap="none"
+                hx-on::after-request="location.reload()"
+                style="margin-left: 1rem; font-size: 0.9em;">
+            ⟳ Refresh All
+        </button>
+    </h3>
+    {% if workers %}
+    <table style="width: 100%;">
+        <thead>
+            <tr>
+                <th>Hostname</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for worker in workers %}
+            <tr>
+                <td><code>{{ worker.hostname }}</code></td>
+                <td style="font-family: monospace; font-size: 0.9em;">{{ worker.status_display or 'No status' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>No workers configured. <a href="/workers">Add workers</a> to get started.</p>
+    {% endif %}
+</section>
+
+
+<section>
+    <h3>Tuning Progress</h3>
+    <div id="tuning-progress-container"
+         hx-get="/api/tuning-progress"
+         hx-trigger="load, every {{ refresh_interval }}s"
+         hx-swap="innerHTML">
+        {% include '_tuning_progress_table.html' %}
+    </div>
+</section>
+
+<section>
+    <h3>Getting Started</h3>
+    <ol>
+        <li><a href="/workers">Manage Workers</a> - Start/stop GPU workers</li>
+        <li><a href="/servers">Control Servers</a> - Manage PostgreSQL database</li>
+        <li><a href="/builds">Build</a> - Build libraries and Docker images</li>
+        <li><a href="/deploy">Deploy</a> - Deploy to worker nodes</li>
+        <li><a href="/slurm">SLURM</a> - Submit and monitor jobs</li>
+    </ol>
+</section>
+{% endblock %}

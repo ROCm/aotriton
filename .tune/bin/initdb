@@ -1,0 +1,127 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# Initialize PostgreSQL database schema for Tuner v3.5
+# Usage: initdb <workdir> [--recreate]
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+AOTRITON_ROOT="$(cd "$TUNE_ROOT/.." && pwd)"
+
+. "$TUNE_ROOT/lib/config_load.sh"
+
+WORKDIR="$1"
+RECREATE_FLAG="${2:-}"
+
+if [ -z "$WORKDIR" ]; then
+    echo "Usage: $0 <workdir> [--recreate]" >&2
+    exit 1
+fi
+
+load_config "$WORKDIR"
+
+# Path to schema SQL file
+SCHEMA_SQL="$AOTRITON_ROOT/v3python/tune/pq/schema.sql"
+
+if [ ! -f "$SCHEMA_SQL" ]; then
+    echo "Error: Schema file not found: $SCHEMA_SQL" >&2
+    exit 1
+fi
+
+# Validate required config variables
+if [ -z "$POSTGRES_USER" ] || [ -z "$POSTGRES_PASSWORD" ]; then
+    echo "Error: POSTGRES_USER or POSTGRES_PASSWORD not set in config.rc" >&2
+    exit 1
+fi
+
+if [ -z "$POSTGRES_DOCKER_IMAGE" ]; then
+    echo "Error: POSTGRES_DOCKER_IMAGE not set in config.rc" >&2
+    exit 1
+fi
+
+# Extract PostgreSQL version from POSTGRES_DOCKER_IMAGE (e.g., postgres:17.6 -> 17.6)
+POSTGRES_VERSION=$(echo "$POSTGRES_DOCKER_IMAGE" | cut -d: -f2)
+
+# Use matching psql docker image version
+PSQL_IMAGE="alpine/psql:${POSTGRES_VERSION}"
+
+# PostgreSQL connection parameters
+# Default to localhost and standard port since containers use --network=host
+POSTGRES_HOST="${CELERY_SERVICE_HOST:-localhost}"
+POSTGRES_PORT="${POSTGRES_PORT:-5432}"
+
+# Drop all tables if --recreate flag is set
+if [ "$RECREATE_FLAG" = "--recreate" ]; then
+    echo "WARNING: Recreating schema - dropping all tables first..."
+
+    # Drop all tables in public schema
+    docker run --rm \
+        --network=host \
+        -e PGPASSWORD="$POSTGRES_PASSWORD" \
+        "$PSQL_IMAGE" \
+        postgresql://"$POSTGRES_USER"@"$POSTGRES_HOST":"$POSTGRES_PORT" \
+        -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO $POSTGRES_USER; GRANT ALL ON SCHEMA public TO public;"
+
+    if [ $? -ne 0 ]; then
+        echo "Error: Failed to drop existing schema" >&2
+        exit 1
+    fi
+
+    echo "All tables dropped successfully"
+fi
+
+echo "Initializing database schema..."
+echo "Host: $POSTGRES_HOST"
+echo "Port: $POSTGRES_PORT"
+echo "User: $POSTGRES_USER"
+echo "Using psql: $PSQL_IMAGE"
+
+# Pull psql image if not present
+echo "Pulling psql image: $PSQL_IMAGE"
+docker pull "$PSQL_IMAGE"
+
+# Execute schema SQL via containerized psql
+# Mount schema file into container and execute it
+docker run --rm \
+    --network=host \
+    -v "$SCHEMA_SQL:/schema.sql:ro" \
+    -e PGPASSWORD="$POSTGRES_PASSWORD" \
+    "$PSQL_IMAGE" \
+    postgresql://"$POSTGRES_USER"@"$POSTGRES_HOST":"$POSTGRES_PORT" \
+    -f /schema.sql
+
+if [ $? -ne 0 ]; then
+    echo "Error: Failed to initialize database schema" >&2
+    exit 1
+fi
+
+echo "Database schema initialized successfully"
+
+# Create partitions for all architectures in workers.db
+echo "Creating partitions for architectures in workers.db..."
+ARCHS=$(sqlite3 "$WORKDIR/workers.db" "SELECT DISTINCT arch FROM workers;" 2>/dev/null)
+
+if [ -z "$ARCHS" ]; then
+    echo "Warning: No workers found in workers.db, no partitions created"
+else
+    for ARCH in $ARCHS; do
+        echo "Creating partition for architecture: $ARCH"
+        docker run --rm \
+            --network=host \
+            -e PGPASSWORD="$POSTGRES_PASSWORD" \
+            "$PSQL_IMAGE" \
+            postgresql://"$POSTGRES_USER"@"$POSTGRES_HOST":"$POSTGRES_PORT" \
+            -c "SELECT create_arch_partition('$ARCH');"
+
+        if [ $? -eq 0 ]; then
+            echo "  ✓ Partition task_queue_$ARCH created"
+        else
+            echo "  ✗ Failed to create partition for $ARCH" >&2
+            exit 1
+        fi
+    done
+    echo "All partitions created successfully"
+fi

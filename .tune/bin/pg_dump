@@ -1,0 +1,95 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# Dump the AOTriton tuning PostgreSQL database in directory format.
+# Output is a directory archive suitable for restore with pg_restore.
+# Uses the official postgres:<version>-alpine image (which includes pg_dump).
+
+if [ -z "$BASH_VERSION" ]; then
+  echo "This script requires Bash. Please run it with 'bash script_name.sh' or ensure /bin/sh points to /bin/bash." >&2
+  exit 1
+fi
+
+if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
+  cat >&2 <<EOF
+Usage: $0 <workdir> [output_dir]
+
+Dump the AOTriton tuning PostgreSQL database in directory format (-F d),
+producing a directory archive suitable for input into pg_restore.
+
+Uses the official postgres:<version>-alpine Docker image, which includes
+pg_dump with the matching version to the running server.
+
+Arguments:
+  <workdir>    Project working directory containing config.rc
+  [output_dir] Output directory (default: <workdir>/backup_YYYYMMDD_HHMMSS)
+               Must not already exist; pg_dump creates it.
+
+Examples:
+  $0 /path/to/workdir
+  $0 /path/to/workdir /mnt/nas/tuning_backup
+
+To restore:
+  pg_restore -h localhost -U <user> -d <dbname> /path/to/backup_dir
+EOF
+  exit 1
+fi
+
+WORKDIR="$1"
+OUTPUT_DIR="${2:-$WORKDIR/backup_$(date +%Y%m%d_%H%M%S)}"
+
+# Validate workdir
+if [ ! -d "$WORKDIR" ]; then
+  echo "Error: Working directory does not exist: $WORKDIR" >&2
+  exit 1
+fi
+
+CONFIG_RC="$WORKDIR/config.rc"
+if [ ! -f "$CONFIG_RC" ]; then
+  echo "Error: config.rc not found at $CONFIG_RC" >&2
+  exit 1
+fi
+
+# Source config
+. "$CONFIG_RC"
+
+# Validate required config variables
+if [ -z "$POSTGRES_USER" ] || [ -z "$POSTGRES_PASSWORD" ]; then
+  echo "Error: POSTGRES_USER or POSTGRES_PASSWORD not set in config.rc" >&2
+  exit 1
+fi
+
+if [ -z "$POSTGRES_DOCKER_IMAGE" ]; then
+  echo "Error: POSTGRES_DOCKER_IMAGE not set in config.rc" >&2
+  exit 1
+fi
+
+# Extract PostgreSQL version from POSTGRES_DOCKER_IMAGE (e.g., postgres:17.6 -> 17.6)
+POSTGRES_VERSION=$(echo "$POSTGRES_DOCKER_IMAGE" | cut -d: -f2)
+
+# Use matching postgres-alpine image (includes pg_dump; alpine/psql does not)
+PGDUMP_IMAGE="postgres:${POSTGRES_VERSION}-alpine"
+
+POSTGRES_HOST="${POSTGRES_HOST:-localhost}"
+POSTGRES_PORT="${POSTGRES_PORT:-5432}"
+
+# pg_dump -F d writes into the output directory; create it first so Docker
+# can bind-mount it directly as /backup.
+mkdir -p "$OUTPUT_DIR"
+
+echo "Dumping postgresql://$POSTGRES_USER@$POSTGRES_HOST:$POSTGRES_PORT (pg_dump $POSTGRES_VERSION)"
+echo "Output: $OUTPUT_DIR"
+
+exec docker run --rm \
+  --network=host \
+  -e PGPASSWORD="$POSTGRES_PASSWORD" \
+  -v "$OUTPUT_DIR":/backup \
+  "$PGDUMP_IMAGE" \
+  pg_dump \
+    -F d \
+    --compress=zstd \
+    -h "$POSTGRES_HOST" \
+    -p "$POSTGRES_PORT" \
+    -U "$POSTGRES_USER" \
+    -f /backup

@@ -39,7 +39,7 @@ class Translator(object):
 
 class Irregulars(Translator):
     def parts2cfg(self, parts):
-        _bwd, bias, storage, _sm_scale, dtype, dropout_p, causal, seqlen_k, seqlen_q, hdim, nheads, batch = parts
+        _bwd, bias, storage, sm_scale_str, dtype, dropout_p, causal, seqlen_k, seqlen_q, hdim, nheads, batch = parts
         return {
             "causal_type" : 0 if causal == 'CausalOff' else 1,
             "d_head" : int(hdim.removeprefix('hdim')),
@@ -50,13 +50,14 @@ class Irregulars(Translator):
             "seqlen_k" : int(seqlen_k),
             "nheads" : int(nheads),     # unread by tune_flash.py, but no harm as well
             "batch" : int(batch),       # unread by tune_flash.py, but no harm as well
-            # "storage_flip": None if storage == 'False' else (1, 2),
+            "sm_scale" : sm_scale_str.lower(),
+            "storage_flip": storage != 'False',
         }
 
 class Regulars(Translator):
     def parts2cfg(self, parts):
         bias = 'BiasOff'
-        _bwd, storage, _sm_scale, dtype, dropout_p, causal, seqlen_k, seqlen_q, hdim, nheads, batch = parts
+        _bwd, storage, sm_scale_str, dtype, dropout_p, causal, seqlen_k, seqlen_q, hdim, nheads, batch = parts
         return {
             "causal_type" : 0 if causal == 'CausalOff' else 1,
             "d_head" : int(hdim.removeprefix('hdim')),
@@ -67,14 +68,15 @@ class Regulars(Translator):
             "seqlen_k" : int(seqlen_k),
             "nheads" : int(nheads),     # unread by tune_flash.py, but no harm as well
             "batch" : int(batch),       # unread by tune_flash.py, but no harm as well
-            # "storage_flip": None if storage == 'False' else (1, 2),
+            "sm_scale" : sm_scale_str.lower(),
+            "storage_flip": storage != 'False',
         }
 
 class RegularBias(Translator):
     def parts2cfg(self, parts):
         bias = 'BiasOn'
         causal = 'CausalOff'
-        _bwd, storage, _sm_scale, dtype, dropout_p, seqlen_k, seqlen_q, hdim, nheads, batch = parts
+        _bwd, storage, sm_scale_str, dtype, dropout_p, seqlen_k, seqlen_q, hdim, nheads, batch = parts
         return {
             "causal_type" : 0 if causal == 'CausalOff' else 1,
             "d_head" : int(hdim.removeprefix('hdim')),
@@ -85,13 +87,14 @@ class RegularBias(Translator):
             "seqlen_k" : int(seqlen_k),
             "nheads" : int(nheads),     # unread by tune_flash.py, but no harm as well
             "batch" : int(batch),       # unread by tune_flash.py, but no harm as well
-            # "storage_flip": None if storage == 'False' else (1, 2),
+            "sm_scale" : sm_scale_str.lower(),
+            "storage_flip": storage != 'False',
         }
 
 class Gqa(Translator):
     def parts2cfg(self, parts):
         bias = 'BiasOff'
-        _bwd, storage, _sm_scale, dtype, dropout_p, causal, seqlen_k, seqlen_q, hdim, _, batch = parts
+        _bwd, storage, sm_scale_str, dtype, dropout_p, causal, seqlen_k, seqlen_q, hdim, _, batch = parts
         return {
             "causal_type" : 0 if causal == 'CausalOff' else 1,
             "d_head" : int(hdim.removeprefix('hdim')),
@@ -102,7 +105,8 @@ class Gqa(Translator):
             "seqlen_k" : int(seqlen_k),
             "nheads" : (16, 8),
             "batch" : int(batch),       # unread by tune_flash.py, but no harm as well
-            # "storage_flip": None if storage == 'False' else (1, 2),
+            "sm_scale" : sm_scale_str.lower(),
+            "storage_flip": storage != 'False',
         }
 
 UT2TR = {
@@ -139,6 +143,8 @@ def parse():
 def parse_pytest_out(args, f, out):
     for line in f:
         if not line.startswith('FAILED'):
+            continue
+        if 'OutOfMemoryError' in line:
             continue
         parts = re.split(SEP, line)
         utfn, utname, utparam = [ parts[i] for i in INDICES ]

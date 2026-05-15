@@ -21,6 +21,10 @@ from v3python.autotune import (
 from v3python.utils import log
 from v3python.affine import SlimAffineKernelDescription
 
+def _empty_generator():
+    return
+    yield  # makes this a generator function
+
 class OpAttn(Operator):
     FAMILY = 'flash'
     MAIN_DATATYPES = ['*fp16:16', '*bf16:16', '*fp32:16'] if AOTRITON_ENABLE_FP32 else ['*fp16:16', '*bf16:16']
@@ -48,7 +52,7 @@ class FlashKernel(KernelDescription):
     FAMILY = 'flash'
     LUT_FULL_SEQLEN_Q = [16,32,64,128,256,512,1024,2048,4096,8192]
     LUT_FULL_SEQLEN_K = [16,32,64,128,256,512,1024,2048,4096,8192]
-    LUT_FULL_SEQLEN_NAVI = [16,32,64,128,256,512,1024]
+    LUT_FULL_SEQLEN_NAVI = [16,32,64,128,256,512,1024,2048]
 
     PROGRAMMATIC_PERFS = {
         "NUM_XCDS": lambda f: 8 if f.arch in ['gfx942', 'gfx950'] else 1
@@ -74,81 +78,88 @@ class FlashKernel(KernelDescription):
         # Only kernels that provide gen_autotune_configs may have entries in
         # tuning database
         if not hasattr(self, 'gen_autotune_configs'):
-            return True
+            return True, [], _empty_generator()
         arch = functional.arch
         if self.is_functional_disabled(functional):
-            return True  # ignore disabled functionals
+            return True, [], _empty_generator()
         MI = (AOTRITON_ARCH_WARPSIZE[arch] == 64)
         Navi = (AOTRITON_ARCH_WARPSIZE[arch] == 32)
         LUT_TENSOR_SIZE = (len(self.LUT_FULL_SEQLEN_Q), len(self.LUT_FULL_SEQLEN_K))
         LUT_TENSOR_SIZE_NAVI = (len(self.LUT_FULL_SEQLEN_NAVI), len(self.LUT_FULL_SEQLEN_NAVI))
-        if lut_tensor.size == 1:
-            to_check = lut_tensor
-        else:
-            to_check = lut_tensor
         log(lambda : f'{lut_tensor.shape=} ==? {LUT_TENSOR_SIZE=}')
+        all_pos = (lut_tensor >= 0).all()
+        shape = lut_tensor.shape[1:]
         if MI:
-            return (to_check >= 0).all() and lut_tensor.shape[1:] == LUT_TENSOR_SIZE
+            shape_match = shape == LUT_TENSOR_SIZE
         elif Navi:
-            return (to_check >= 0).all() and (lut_tensor.shape[1:] == LUT_TENSOR_SIZE or lut_tensor.shape[1:] == LUT_TENSOR_SIZE_NAVI)
+            shape_match = (shape == LUT_TENSOR_SIZE or shape == LUT_TENSOR_SIZE_NAVI)
         else:
             assert False, f"Unknown {arch}"
+        ok = all_pos and shape_match
+        if ok:
+            return ok, [], _empty_generator()
+        errors = []
+        if not all_pos:
+            errors.append("certain entries are empty (-1)")
+        if not shape_match:
+            if Navi:
+                errors.append(f"Unexpected {shape=}, Expecting {LUT_TENSOR_SIZE} or {LUT_TENSOR_SIZE_NAVI}")
+            else:
+                errors.append(f"Unexpected {shape=}, Expecting {LUT_TENSOR_SIZE}")
+        # Pick the seqlen lists that match the actual lut_tensor shape for this arch.
+        if Navi and lut_tensor.shape[1:] == LUT_TENSOR_SIZE_NAVI:
+            lut_full_seqlen_q = self.LUT_FULL_SEQLEN_NAVI
+            lut_full_seqlen_k = self.LUT_FULL_SEQLEN_NAVI
+            expected_size = LUT_TENSOR_SIZE_NAVI
+        else:
+            lut_full_seqlen_q = self.LUT_FULL_SEQLEN_Q
+            lut_full_seqlen_k = self.LUT_FULL_SEQLEN_K
+            expected_size = LUT_TENSOR_SIZE
+        missing_entries = self._gen_missing_entries(functional, lut_tensor,
+                                                    arch, lut_full_seqlen_q,
+                                                    lut_full_seqlen_k, expected_size)
+        return ok, errors, missing_entries
 
-    '''
-    TODO: new tuning framework should reuse KernelDescription
-    '''
-    def get_missing_lut_entries(self, lut_tensor, functional) -> list[dict]:
-        from copy import deepcopy
-        import json
+    def _gen_missing_entries(self, functional, lut_tensor,
+                             arch, lut_full_seqlen_q, lut_full_seqlen_k, expected_size):
         import numpy as np
-        arch = functional.arch
-        base = {'arch' : arch}
-        MI = (AOTRITON_ARCH_WARPSIZE[arch] == 64)
-        Navi = (AOTRITON_ARCH_WARPSIZE[arch] == 32)
-        # if Navi:
-        #     lut_full_seqlen_q = self.LUT_FULL_SEQLEN_NAVI
-        #     lut_full_seqlen_k = self.LUT_FULL_SEQLEN_NAVI
-        # else:
-        #     lut_full_seqlen_q = self.LUT_FULL_SEQLEN_Q
-        #     lut_full_seqlen_k = self.LUT_FULL_SEQLEN_K
-        lut_full_seqlen_q = self.LUT_FULL_SEQLEN_Q
-        lut_full_seqlen_k = self.LUT_FULL_SEQLEN_K
-        LUT_TENSOR_SIZE = (len(self.LUT_FULL_SEQLEN_Q), len(self.LUT_FULL_SEQLEN_K))
-        base['causal_type'] = check_value(functional, 'CAUSAL_TYPE')
-        base['d_head'] = check_value(functional, 'BLOCK_DMODEL')
-        base['dropout_p'] = 0.5 if check_value(functional, 'ENABLE_DROPOUT') else 0.0
-        def dtype():
-            value = check_value(functional, 'Q')
-            if value.startswith('*fp16'):
-                return 'float16'
-            if value.startswith('*bf16'):
-                return 'bfloat16'
-            if value.startswith('*fp32'):
-                return 'float32'
-        base['dtype'] = dtype()
-        base['bias_type'] = check_value(functional, 'BIAS_TYPE')
-        ret = []
+        from v3python.tune.flash.module import FlashEntry
+        causal_raw = check_value(functional, 'CAUSAL_TYPE')
+        hdim = check_value(functional, 'BLOCK_DMODEL')
+        dropout_p = 0.5 if check_value(functional, 'ENABLE_DROPOUT') else 0.0
+        q_ptr = check_value(functional, 'Q')
+        if q_ptr.startswith('*fp16'):
+            dtype = 'float16'
+        elif q_ptr.startswith('*bf16'):
+            dtype = 'bfloat16'
+        else:
+            dtype = 'float32'
+        bias_type = check_value(functional, 'BIAS_TYPE')
+        causal = bool(causal_raw)  # 0 → False, non-zero → True
+        def make_entry(seqlen_q, seqlen_k) -> str:
+            entry = FlashEntry(
+                dtype=dtype,
+                hdim=hdim,
+                seqlen_q=seqlen_q,
+                seqlen_k=seqlen_k,
+                causal=causal,
+                dropout_p=dropout_p,
+                bias_type=bias_type,
+            )
+            return f'arch={arch} {entry.as_text()}'
         if lut_tensor.size == 1:
             for seqlen_q in lut_full_seqlen_q:
                 for seqlen_k in lut_full_seqlen_k:
-                    d = deepcopy(base)
-                    d['seqlen_q'] = seqlen_q
-                    d['seqlen_k'] = seqlen_k
-                    ret.append(json.dumps(d))
+                    yield make_entry(seqlen_q, seqlen_k)
         else:
             # TODO: support non-mod0
-            if lut_tensor.shape[1:] == LUT_TENSOR_SIZE:
+            if lut_tensor.shape[1:] == expected_size:
                 _, M_idxs, N_idxs = np.where(lut_tensor < 0)
             else:
-                fake_lut = np.full(LUT_TENSOR_SIZE, -1, dtype=np.int32)
+                fake_lut = np.full(expected_size, -1, dtype=np.int32)
                 M_idxs, N_idxs = np.where(fake_lut < 0)
-            # print(f'{M_idxs=} {N_idxs=} {lut_full_seqlen_q=} {lut_full_seqlen_k=}')
             for M_id, N_id in zip(M_idxs, N_idxs):
-                d = deepcopy(base)
-                d['seqlen_q'] = lut_full_seqlen_q[M_id]
-                d['seqlen_k'] = lut_full_seqlen_k[N_id]
-                ret.append(json.dumps(d))
-        return ret
+                yield make_entry(lut_full_seqlen_q[M_id], lut_full_seqlen_k[N_id])
 
 class FlashBwdKernel(FlashKernel):
     def is_functional_disabled(self, functional):

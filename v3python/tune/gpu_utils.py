@@ -3,8 +3,16 @@
 
 import sys
 import os
+import time
+import shutil
 from contextlib import contextmanager, ExitStack
+from pathlib import Path
 import torch
+
+# Import amdsmi with path handling (following amdsmi_cli.py practice)
+# Find amd-smi location and add its directory to sys.path
+import amdsmi
+
 from pyaotriton import (
     get_name_suffix,
     T0,
@@ -67,11 +75,96 @@ def detach_member_tensors(data_object) -> dict:
     d = asdict_shallow(data_object)
     return { k: v.detach() if isinstance(v, torch.Tensor) else v for k, v in d.items() }
 
+_amdsmi_initialized = False
+_hip_to_amdsmi = {}
+_total_memory_gb = None
+
+def get_total_memory_from_amdsmi():
+    """Get total GPU memory in GB from AMD-SMI."""
+    global _total_memory_gb
+    if _total_memory_gb is not None:
+        return _total_memory_gb
+
+    if not _init_amdsmi():
+        return None
+
+    try:
+        devices = amdsmi.amdsmi_get_processor_handles()
+        vram_cap = -1
+        for device in devices:
+            vram_usage = amdsmi.amdsmi_get_gpu_vram_usage(device)
+            total_memory = vram_usage['vram_total'] / (1024 ** 3)  # Bytes -> GB
+            vram_cap = min(vram_cap, total_memory) if vram_cap > 0 else total_memory
+        _total_memory_gb = vram_cap
+        return vram_cap
+    except Exception:
+        return None
+
+def _init_amdsmi():
+    """Initialize AMD-SMI and build HIP to AMD-SMI device mapping."""
+    global _amdsmi_initialized, _hip_to_amdsmi
+    if _amdsmi_initialized:
+        return True
+
+    amdsmi.amdsmi_init()
+
+    # Get all AMD-SMI devices
+    amdsmi_devices = amdsmi.amdsmi_get_processor_handles()
+
+    # Map HIP devices to AMD-SMI devices using HIP ID from enumeration info
+    for handle in amdsmi_devices:
+        try:
+            info = amdsmi.amdsmi_get_gpu_enumeration_info(handle)
+            hip_id = info["hip_id"]
+            _hip_to_amdsmi[hip_id] = handle
+        except Exception:
+            continue
+
+    _amdsmi_initialized = True
+    return True
+
+def _get_temperature_amdsmi(device_id):
+    """Get GPU temperature using AMD-SMI (works correctly with device IDs)."""
+    if not _init_amdsmi():
+        return None
+
+    amdsmi_dev = _hip_to_amdsmi.get(device_id)
+    assert amdsmi_dev is not None
+
+    temp = amdsmi.amdsmi_get_temp_metric(
+        amdsmi_dev,
+        amdsmi.AmdSmiTemperatureType.JUNCTION,
+        amdsmi.AmdSmiTemperatureMetric.CURRENT
+    )
+    return temp
+
+def wait_gpu_temperature(device_id=None, threshold=85.0):
+    """Wait until GPU temperature drops below threshold. Only prints if waiting > 5 minutes."""
+    if device_id is None:
+        device_id = default_device_id()
+
+    # Use AMD-SMI directly to avoid HIP ID vs AMD-SMI ID confusion
+    temp = _get_temperature_amdsmi(device_id)
+
+    if temp <= threshold:
+        return
+
+    start_time = time.time()
+    while temp > threshold:
+        elapsed = time.time() - start_time
+        print(f"OVERHEATING: GPU HIP ID {device_id} TEMP. {temp}", flush=True)
+        time.sleep(5)
+        temp = _get_temperature_amdsmi(device_id)
+        if temp is None:
+            break
+    print(f"OVERHEATING: EXIT GPU HIP ID {device_id} TEMP. {temp}", flush=True)
+
 @contextmanager
 def device_ctx():
     with ExitStack() as stack:
         r1 = stack.enter_context(torch.device(default_device_string()))
         r2 = stack.enter_context(getattr(torch, default_device_type()).device(default_device_id()))
+        wait_gpu_temperature()
         yield r1, r2
 
 def do_bench(fn,
@@ -235,11 +328,13 @@ def translate_causal(causal, v3_api):
         window_left, window_right = causal
         causal_type = CausalType.WINDOWED
     elif isinstance(causal, bool):
-        # causal_type = CausalType.TOP_LEFT if causal else CausalType.NONE
         causal_type = CausalType.WINDOWED if causal else CausalType.NONE
         if causal:
-            window_left = WindowValue.BOTTOM_RIGHT_ALIGNED
-            window_right = WindowValue.BOTTOM_RIGHT_ALIGNED
+            # PyTorch SDPA's default causal mask is top-left aligned (upper-left triangle).
+            # FA backend always uses bottom-right aligned internally, but for correctness
+            # testing we match torch's SDPA convention here.
+            window_left = WindowValue.TOP_LEFT_ALIGNED
+            window_right = WindowValue.TOP_LEFT_ALIGNED
     else:
         assert causal in [CausalType.NONE, CausalType.TOP_LEFT, CausalType.BOTTOM_RIGHT]
         assert v3_api, 'CausalType.TOP_LEFT/BOTTOM_RIGHT variant is supported thru windowed attention, which requires V3 API'
