@@ -8,9 +8,9 @@ get_root_cmake() {
 }
 root_cmake=$(get_root_cmake)
 
-aotriton_major=$(grep 'set(AOTRITON_VERSION_MAJOR_INT' "${root_cmake}"|cut -d ' ' -f 2|cut -d ')' -f 1)
-aotriton_minor=$(grep 'set(AOTRITON_VERSION_MINOR_INT' "${root_cmake}"|cut -d ' ' -f 2|cut -d ')' -f 1)
-default_target_arch=$(grep 'set(AOTRITON_TARGET_ARCH' "${root_cmake}"|cut -d ' ' -f 2|cut -d '"' -f 2)
+aotriton_major=$(grep '^set(AOTRITON_VERSION_MAJOR_INT' "${root_cmake}"|cut -d ' ' -f 2|cut -d ')' -f 1)
+aotriton_minor=$(grep '^set(AOTRITON_VERSION_MINOR_INT' "${root_cmake}"|cut -d ' ' -f 2|cut -d ')' -f 1)
+default_target_arch=$(grep '^set(AOTRITON_TARGET_ARCH' "${root_cmake}"|cut -d ' ' -f 2|cut -d '"' -f 2)
 native_arch=$(rocm_agent_enumerator|grep -v gfx000|head -n 1)
 ngpus=$(rocm_agent_enumerator|grep -v gfx000|wc -l)
 
