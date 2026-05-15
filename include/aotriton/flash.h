@@ -14,9 +14,20 @@
 
 namespace AOTRITON_NS::v2::flash {
 
+using T4 = AOTRITON_NS::TensorView<4>;
+using T0 = AOTRITON_NS::TensorView<0>;
+
 // check_gpu will be preserved for backward compatibility
 hipError_t AOTRITON_API
 check_gpu(AOTRITON_NS::Stream stream);
+
+hipError_t AOTRITON_API
+debug_simulate_encoded_softmax(T4 r,  // batch_size x num_heads x max_seqlen_q x max_seqlen_k
+                               float dropout_p,
+                               T0 philox_seed,
+                               T0 philox_offset1,
+                               uint64_t philox_offset2,
+                               AOTRITON_NS::Stream stream);
 
 }
 
