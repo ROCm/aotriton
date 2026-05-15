@@ -175,7 +175,7 @@ if [[ -n "${SUITE_YAML}" ]]; then
   WHEEL_CFG="/cache/tmpconfig.yaml"
 else
   DEFAULT_SHORT="${DEFAULT_HASH:0:8}"
-  WHEEL_CFG=$(ls "${WHEEL_CACHE_DIR}"/triton-*+"*${DEFAULT_SHORT}"*.whl 2>/dev/null | head -1)
+  WHEEL_CFG=$(ls "${WHEEL_CACHE_DIR}"/triton-*+*${DEFAULT_SHORT}*.whl 2>/dev/null | head -1)
   if [[ -z "${WHEEL_CFG}" ]]; then
     echo "Error: no pre-built triton wheel found for ${DEFAULT_SHORT} in ${WHEEL_CACHE_DIR}" >&2
     exit 1
