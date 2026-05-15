@@ -2,10 +2,12 @@
 
 ```
 pip install -r requirements.txt
+# Preferred since 0.12; build inside a container if possible to avoid https://github.com/ROCm/aotriton/issues/166
+pip wheel third_party/triton -w /tmp/triton_wheel/
 mkdir build
 cd build
 export PKG_CONFIG_PATH="${PKG_CONFIG_PATH}:${CONDA_PREFIX}/lib/pkgconfig"
-cmake .. -DCMAKE_INSTALL_PREFIX=./install_dir -DCMAKE_BUILD_TYPE=Release -DAOTRITON_GPU_BUILD_TIMEOUT=0 -G Ninja
+cmake .. -DCMAKE_INSTALL_PREFIX=./install_dir -DCMAKE_BUILD_TYPE=Release -DAOTRITON_GPU_BUILD_TIMEOUT=0 -DAOTRITON_USE_LOCAL_TRITON_WHEEL=/tmp/triton_wheel/<triton_wheel>.whl -G Ninja
 # Use ccmake to tweak options
 ninja install/strip  # Use `ninja install` to keep symbols
 ```

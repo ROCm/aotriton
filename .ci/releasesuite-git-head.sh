@@ -125,18 +125,42 @@ setup_source_volume ${SOURCE_VOLUME} ${GIT_HTTPS_ORIGIN} ${LOCAL_DIR} ${GIT_COMM
 
 INPUT_DIR=${SCRIPT_DIR}/../dockerfile/input
 OUTPUT_DIR="$1"
+CACHE_DIR="${OUTPUT_DIR}/.cache"
+WHEEL_CACHE_DIR="${CACHE_DIR}/wheels"
+mkdir -p "${WHEEL_CACHE_DIR}"
 
-if [[ -n "${SUITE_YAML}" && ${SUITE_SELECT_IMAGE} -gt 0 ]]; then
-  readarray -t TRITON_ALTHASH < <(yq -r '.venvs|.[]' "${SUITE_YAML}")
-  mkdir -p "${INPUT_DIR}/altwheels"
-  cp "${SUITE_YAML}" "${INPUT_DIR}/altwheels/tmpconfig.yaml"
-  bash "${SCRIPT_DIR}/build-altwheels.sh" "${INPUT_DIR}/altwheels" "${TRITON_ALTHASH[@]}"
+# Determine Triton hashes to build.
+# .venvs.default in SUITE_YAML replaces the embedded submodule hash;
+# otherwise the submodule is the mandatory default.
+DEFAULT_HASH=""
+if [[ -n "${SUITE_YAML}" ]]; then
+  DEFAULT_HASH=$(yq -r '.venvs.default // empty' "${SUITE_YAML}")
+fi
+if [[ -z "${DEFAULT_HASH}" ]]; then
+  DEFAULT_HASH=$(git rev-parse HEAD:third_party/triton)
+fi
+TRITON_HASHES=("${DEFAULT_HASH}")
+if [[ -n "${SUITE_YAML}" ]]; then
+  readarray -t YAML_HASHES < <(yq -r '.venvs | to_entries | .[] | select(.key != "default") | .value' "${SUITE_YAML}")
+  TRITON_HASHES+=("${YAML_HASHES[@]}")
+fi
+
+# Always build Triton wheels upfront (cached across runs in CACHE_DIR)
+TRITON_WHEEL_VERSION_SUFFIX="+aotriton${aotriton_major}.${aotriton_minor}"
+bash "${SCRIPT_DIR}/build_triton_wheels.sh" \
+  --wheel_output_dir "${WHEEL_CACHE_DIR}" \
+  --version_suffix "${TRITON_WHEEL_VERSION_SUFFIX}" \
+  "${TRITON_HASHES[@]}"
+
+# Resolve YAML hashes → real wheel paths for the altwheel config
+if [[ -n "${SUITE_YAML}" ]]; then
+  cp "${SUITE_YAML}" "${CACHE_DIR}/tmpconfig.yaml"
   replace_hash \
-    "${INPUT_DIR}/altwheels/tmpconfig.yaml" \
-    "${INPUT_DIR}/altwheels" \
-    "/input/altwheels" \
-    "${TRITON_ALTHASH[@]}"
-  ALTWHEEL_CFG="/input/altwheels/tmpconfig.yaml"
+    "${CACHE_DIR}/tmpconfig.yaml" \
+    "${WHEEL_CACHE_DIR}" \
+    "/cache/wheels" \
+    "${TRITON_HASHES[@]}"
+  ALTWHEEL_CFG="/cache/tmpconfig.yaml"
 else
   ALTWHEEL_CFG=""
 fi
@@ -148,9 +172,6 @@ function build_inside() {
   if [ -z "$(docker images -q ${DOCKER_IMAGE} 2>/dev/null)" ]; then
     # Use theRock.Dockerfile for ROCm >= 7.10
     if awk "BEGIN {exit !($rocmver >= 7.10)}"; then
-      # TODO: We cannot have theRock.Dockerfile without internal URL until
-      #       gfx1250 wheel goes GA.
-      #       For now, create the docker with git commit.
       DOCKERFILE="theRock.Dockerfile"
     else
       DOCKERFILE="rocm.Dockerfile"
@@ -164,7 +185,11 @@ function build_inside() {
     -v ${SOURCE_VOLUME}:/src:ro \
     --mount "type=bind,source=$(realpath ${INPUT_DIR}),target=/input" \
     --mount "type=bind,source=$(realpath ${OUTPUT_DIR}),target=/output" \
-    --tmpfs "/root/build:exec" \
+    --mount "type=bind,source=$(realpath ${CACHE_DIR}),target=/cache" \
+    --tmpfs "/scratch:exec" \
+    -e AOTRITON_BUILD_PATH=/scratch/build/aotriton \
+    -e AOTRITON_INSTALL_PATH=/scratch/install/aotriton \
+    -e TRITON_CACHE_PATH=/cache/triton \
     -w / \
     ${DOCKER_IMAGE} \
     bash -l \

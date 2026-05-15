@@ -29,9 +29,18 @@ if [ "${target_arch}" = "ALL" ]; then
   target_arch="${default_target_arch}"
 fi
 
-bdir="build"
-mkdir -p "${SCRIPT_DIR}/../${bdir}"
-cd "${SCRIPT_DIR}/../${bdir}"
+source_dir="${SCRIPT_DIR}/.."
+if [ -n "${AOTRITON_BUILD_PATH}" ]; then
+  bdir="${AOTRITON_BUILD_PATH}"
+else
+  bdir="${source_dir}/build"
+fi
+if [ -n "${AOTRITON_INSTALL_PATH}" ]; then
+  install_prefix="${AOTRITON_INSTALL_PATH}"
+else
+  install_prefix="${bdir}/installed_dir/aotriton"
+fi
+mkdir -p "${bdir}"
 
 if [ -z "${ROCM_PATH}" ]; then
   export ROCM_PATH=$(hipconfig --rocmpath 2>/dev/null)
@@ -41,9 +50,9 @@ if [ -z "${ROCM_PATH}" ]; then
   fi
 fi
 
-cmake .. -DCMAKE_PREFIX_PATH="${ROCM_PATH}" \
+(cd "${bdir}" && cmake "${source_dir}" -DCMAKE_PREFIX_PATH="${ROCM_PATH}" \
   -DPYTHON_EXECUTABLE="${python_exec}" \
-  -DCMAKE_INSTALL_PREFIX=installed_dir/aotriton \
+  -DCMAKE_INSTALL_PREFIX="${install_prefix}" \
   -DCMAKE_BUILD_TYPE=Release \
   -DAOTRITON_GPU_BUILD_TIMEOUT=0 \
   "-DAOTRITON_TARGET_ARCH=${target_arch}" \
@@ -51,4 +60,4 @@ cmake .. -DCMAKE_PREFIX_PATH="${ROCM_PATH}" \
   -DAOTRITON_NOIMAGE_MODE=${noimage} \
   -G Ninja \
   "$@" \
-  && ninja install/strip
+  && ninja install/strip)

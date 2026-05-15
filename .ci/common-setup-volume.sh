@@ -19,7 +19,7 @@ function setup_source_volume() {
       -v ${source_volume}:/src \
       -w /src/${local_dir} \
       ${base_docker_image} \
-      bash -c "set -ex; git fetch && git checkout ${git_name} --recurse-submodules"
+      bash -c "set -ex; git fetch --all && git checkout -f ${git_name} && git submodule sync && git submodule update --init --recursive --force"
     if [ $? -ne 0 ]; then
       need_clone=1
     fi

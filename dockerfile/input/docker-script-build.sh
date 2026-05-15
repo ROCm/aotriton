@@ -6,7 +6,6 @@ TRITON_LLVM_HASH="$1"
 NOIMAGE_MODE="$2"
 ALTWHEEL_CFG="$3"
 
-rsync -a --exclude='.git' /src/aotriton/ /root/build/aotriton/
 cd /src/aotriton/
 GIT_FULL=$(git rev-parse HEAD)
 GIT_SHORT=$(git rev-parse --short=12 HEAD)
@@ -30,23 +29,31 @@ if [ ${NOIMAGE_MODE} == "OFF" ]; then
   fi
 fi
 
-cd /root/build/
+if [ -z "${AOTRITON_BUILD_PATH}" ]; then
+  echo "Error: AOTRITON_BUILD_PATH is not set." >&2
+  exit 1
+fi
+if [ -z "${AOTRITON_INSTALL_PATH}" ]; then
+  echo "Error: AOTRITON_INSTALL_PATH is not set." >&2
+  exit 1
+fi
 export AOTRITON_CI_SUPPLIED_SHA1=${GIT_FULL}
 if [ -z "${ALTWHEEL_CFG}" ]; then
-  scl enable gcc-toolset-13 -- bash aotriton/.ci/build-release.sh "${NOIMAGE_MODE}" 
+  scl enable gcc-toolset-13 -- bash /src/aotriton/.ci/build-release.sh "${NOIMAGE_MODE}"
 else
-  scl enable gcc-toolset-13 -- bash aotriton/.ci/build-release.sh "${NOIMAGE_MODE}" "ALL" \
+  scl enable gcc-toolset-13 -- bash /src/aotriton/.ci/build-release.sh "${NOIMAGE_MODE}" "ALL" \
     "-DAOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE=${ALTWHEEL_CFG}"
 fi
 
+# Both tar archives must have aotriton/ as the root directory.
 if [ ${NOIMAGE_MODE} == "OFF" ]; then
   tarbase=aotriton-${GIT_SHORT}-images
-  cd /root/build/aotriton/build/installed_dir
+  cd "${AOTRITON_INSTALL_PATH}/.."
   for d in $(ls aotriton/lib/aotriton.images/); do
     tarfile=${tarbase}-$d.tar.gz
     tar cz "aotriton/lib/aotriton.images/$d" > /output/${tarfile}
   done
 else
   tarfile=aotriton-${GIT_SHORT}-manylinux_2_28_x86_64-rocm${hipver}-shared.tar.gz
-  cd /root/build/aotriton/build/installed_dir && tar cz aotriton > /output/${tarfile}
+  cd "${AOTRITON_INSTALL_PATH}/.." && tar cz aotriton > /output/${tarfile}
 fi

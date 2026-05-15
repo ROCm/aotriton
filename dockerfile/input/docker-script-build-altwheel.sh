@@ -1,5 +1,10 @@
 #!/bin/bash
 
+# DEPRECATED: this script is no longer used.
+# Triton wheels are now built inline via heredoc in .ci/build_triton_wheels.sh.
+echo "DEPRECATED: docker-script-build-altwheel.sh is no longer used. See .ci/build_triton_wheels.sh." >&2
+exit 1
+
 set -ex
 
 cd /src/triton
