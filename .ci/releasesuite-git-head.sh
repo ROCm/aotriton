@@ -126,7 +126,7 @@ BASE_DOCKER_IMAGE="aotriton:base"
 
 # build base docker image
 if [ -z "$(docker images -q ${BASE_DOCKER_IMAGE} 2>/dev/null)" ]; then
-  docker build --network=host -t ${BASE_DOCKER_IMAGE} -f base.Dockerfile .
+  (cd "${SCRIPT_DIR}" && docker build --network=host -t ${BASE_DOCKER_IMAGE} -f base.Dockerfile .)
 fi
 
 SOURCE_VOLUME="aotriton-src-shared"
@@ -195,9 +195,9 @@ function build_inside() {
     else
       DOCKERFILE="rocm.Dockerfile"
     fi
-    docker build --network=host -t ${DOCKER_IMAGE} \
+    (cd "${SCRIPT_DIR}" && docker build --network=host -t ${DOCKER_IMAGE} \
       --build-arg ROCM_VERSION_IN_URL=${rocmver} \
-      -f ${DOCKERFILE} .
+      -f ${DOCKERFILE} .)
   fi
   set -x
   docker run --network=host -it --rm \
