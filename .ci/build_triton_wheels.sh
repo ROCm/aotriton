@@ -66,7 +66,7 @@ for HASH in "${TRITON_HASHES[@]}"; do
     continue
   fi
 
-  docker run --network=host --rm \
+  docker run --network=host -i --rm \
     -v "${TRITON_MIRROR_VOLUME}:/mirror:ro" \
     --mount "type=bind,source=$(realpath ${WHEEL_OUTPUT_DIR}),target=/cache/wheels" \
     --tmpfs "/scratch:exec" \
