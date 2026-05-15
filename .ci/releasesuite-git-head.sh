@@ -190,7 +190,7 @@ function build_inside() {
   DOCKER_IMAGE="aotriton:buildenv-rocm${rocmver}"
   if [ -z "$(docker images -q ${DOCKER_IMAGE} 2>/dev/null)" ]; then
     # Use theRock.Dockerfile for ROCm >= 7.10
-    if awk "BEGIN {exit !($rocmver >= 7.10)}"; then
+    if printf '%s\n%s\n' "7.10" "${rocmver}" | sort -V -C; then
       DOCKERFILE="theRock.Dockerfile"
     else
       DOCKERFILE="rocm.Dockerfile"
