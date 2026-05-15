@@ -48,7 +48,7 @@ eval set -- "$TEMP"
 
 SUITE_SELECT_IMAGE=-1
 SUITE_SELECT_RUNTIME=-1
-SUITE_RUNTIME_LIST=(6.2.4 6.3.4 6.4.4 7.0.3 7.1.1 7.2)
+SUITE_RUNTIME_LIST=(6.4.4 7.0.3 7.1.1 7.2.3)
 CMDLIST=()
 SUITE_DEFAULT_SELECTION=1
 SUITE_YAML=""
@@ -146,10 +146,20 @@ function build_inside() {
   NOIMAGE_MODE="$2"
   DOCKER_IMAGE="aotriton:buildenv-rocm${rocmver}"
   if [ -z "$(docker images -q ${DOCKER_IMAGE} 2>/dev/null)" ]; then
+    # Use theRock.Dockerfile for ROCm >= 7.10
+    if awk "BEGIN {exit !($rocmver >= 7.10)}"; then
+      # TODO: We cannot have theRock.Dockerfile without internal URL until
+      #       gfx1250 wheel goes GA.
+      #       For now, create the docker with git commit.
+      DOCKERFILE="theRock.Dockerfile"
+    else
+      DOCKERFILE="rocm.Dockerfile"
+    fi
     docker build --network=host -t ${DOCKER_IMAGE} \
       --build-arg ROCM_VERSION_IN_URL=${rocmver} \
-      -f rocm.Dockerfile .
+      -f ${DOCKERFILE} .
   fi
+  set -x
   docker run --network=host -it --rm \
     -v ${SOURCE_VOLUME}:/src:ro \
     --mount "type=bind,source=$(realpath ${INPUT_DIR}),target=/input" \
@@ -157,7 +167,7 @@ function build_inside() {
     --tmpfs "/root/build:exec" \
     -w / \
     ${DOCKER_IMAGE} \
-    bash \
+    bash -l \
     /input/docker-script-build.sh ${llvm_hash_url} ${NOIMAGE_MODE} "${ALTWHEEL_CFG}"
 }
 
@@ -170,6 +180,6 @@ if [ ${SUITE_SELECT_RUNTIME} -gt 0 ]; then
 fi
 
 if [ ${SUITE_SELECT_IMAGE} -gt 0 ]; then
-  rocmver=7.1
+  rocmver=7.2.3
   build_inside ${rocmver} OFF
 fi
