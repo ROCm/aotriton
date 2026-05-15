@@ -200,7 +200,7 @@ function build_inside() {
       -f ${DOCKERFILE} .)
   fi
   set -x
-  docker run --network=host -it --rm \
+  docker run --network=host -i --rm \
     -v ${SOURCE_VOLUME}:/src:ro \
     --mount "type=bind,source=$(realpath ${OUTPUT_DIR}),target=/output" \
     --mount "type=bind,source=$(realpath ${CACHE_DIR}),target=/cache" \

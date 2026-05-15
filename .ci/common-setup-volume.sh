@@ -15,7 +15,7 @@ function setup_source_volume() {
   local need_clone=0
   if docker volume ls -q -f name="${source_volume}" | grep -q "${source_volume}"; then
     set +e
-    docker run --network=host -it --rm \
+    docker run --network=host -i --rm \
       -v ${source_volume}:/src \
       -w /src/${local_dir} \
       ${base_docker_image} \
@@ -34,7 +34,7 @@ EOF
   fi
 
   if [ ${need_clone} -ne 0 ]; then
-    docker run --network=host -it --rm \
+    docker run --network=host -i --rm \
       -v ${source_volume}:/src \
       -w /src \
       ${base_docker_image} \
