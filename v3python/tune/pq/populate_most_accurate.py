@@ -215,7 +215,8 @@ def main() -> None:
     with psycopg.connect(**conn_params, autocommit=False) as conn:
         row_count = populate(conn, task_ids, tuning_mode=args.tuning_mode)
 
-    print(f'Done: {row_count} rows inserted into most_accurate_tuning_results.')
+    table = SqlStatements(args.tuning_mode).table_name
+    print(f'Done: {row_count} rows inserted into {table}.')
 
 
 if __name__ == '__main__':
