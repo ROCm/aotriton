@@ -1,4 +1,7 @@
 #!/bin/bash
+# DEPRECATED: The build script is now inlined as a heredoc in
+# .ci/releasesuite-git-head.sh build_inside(). This file is no longer used
+# and will be removed in a future release.
 
 set -ex
 

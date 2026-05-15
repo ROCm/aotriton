@@ -123,7 +123,6 @@ SOURCE_VOLUME="aotriton-src-shared"
 LOCAL_DIR="aotriton"
 setup_source_volume ${SOURCE_VOLUME} ${GIT_HTTPS_ORIGIN} ${LOCAL_DIR} ${GIT_COMMIT}
 
-INPUT_DIR=${SCRIPT_DIR}/../dockerfile/input
 OUTPUT_DIR="$1"
 CACHE_DIR="${OUTPUT_DIR}/.cache"
 WHEEL_CACHE_DIR="${CACHE_DIR}/wheels"
@@ -145,14 +144,17 @@ if [[ -n "${SUITE_YAML}" ]]; then
   TRITON_HASHES+=("${YAML_HASHES[@]}")
 fi
 
-# Always build Triton wheels upfront (cached across runs in CACHE_DIR)
-TRITON_WHEEL_VERSION_SUFFIX="+aotriton${aotriton_major}.${aotriton_minor}"
-bash "${SCRIPT_DIR}/build_triton_wheels.sh" \
-  --wheel_output_dir "${WHEEL_CACHE_DIR}" \
-  --version_suffix "${TRITON_WHEEL_VERSION_SUFFIX}" \
-  "${TRITON_HASHES[@]}"
+# Triton wheels are only needed for image builds (GPU kernel images embed the wheel).
+# Runtime builds consume pre-built wheels from /cache/wheels via WHEEL_CFG.
+if [[ ${SUITE_SELECT_IMAGE} -gt 0 ]]; then
+  TRITON_WHEEL_VERSION_SUFFIX="+aotriton${aotriton_major}.${aotriton_minor}"
+  bash "${SCRIPT_DIR}/build_triton_wheels.sh" \
+    --wheel_output_dir "${WHEEL_CACHE_DIR}" \
+    --version_suffix "${TRITON_WHEEL_VERSION_SUFFIX}" \
+    "${TRITON_HASHES[@]}"
+fi
 
-# Resolve YAML hashes → real wheel paths for the altwheel config
+# Resolve wheel configuration: yaml altwheel config, or path to the default pre-built wheel.
 if [[ -n "${SUITE_YAML}" ]]; then
   cp "${SUITE_YAML}" "${CACHE_DIR}/tmpconfig.yaml"
   replace_hash \
@@ -160,9 +162,16 @@ if [[ -n "${SUITE_YAML}" ]]; then
     "${WHEEL_CACHE_DIR}" \
     "/cache/wheels" \
     "${TRITON_HASHES[@]}"
-  ALTWHEEL_CFG="/cache/tmpconfig.yaml"
+  WHEEL_CFG="/cache/tmpconfig.yaml"
 else
-  ALTWHEEL_CFG=""
+  DEFAULT_SHORT="${DEFAULT_HASH:0:8}"
+  WHEEL_CFG=$(ls "${WHEEL_CACHE_DIR}"/triton-*+"*${DEFAULT_SHORT}"*.whl 2>/dev/null | head -1)
+  if [[ -z "${WHEEL_CFG}" ]]; then
+    echo "Error: no pre-built triton wheel found for ${DEFAULT_SHORT} in ${WHEEL_CACHE_DIR}" >&2
+    exit 1
+  fi
+  # Map host path to in-container path under /cache/wheels
+  WHEEL_CFG="/cache/wheels/$(basename "${WHEEL_CFG}")"
 fi
 
 function build_inside() {
@@ -183,17 +192,15 @@ function build_inside() {
   set -x
   docker run --network=host -it --rm \
     -v ${SOURCE_VOLUME}:/src:ro \
-    --mount "type=bind,source=$(realpath ${INPUT_DIR}),target=/input" \
     --mount "type=bind,source=$(realpath ${OUTPUT_DIR}),target=/output" \
     --mount "type=bind,source=$(realpath ${CACHE_DIR}),target=/cache" \
     --tmpfs "/scratch:exec" \
     -e AOTRITON_BUILD_PATH=/scratch/build/aotriton \
-    -e AOTRITON_INSTALL_PATH=/scratch/install/aotriton \
-    -e TRITON_CACHE_PATH=/cache/triton \
+    -e AOTRITON_INSTALL_PREFIX=/scratch/install \
     -w / \
     ${DOCKER_IMAGE} \
-    bash -l \
-    /input/docker-script-build.sh ${llvm_hash_url} ${NOIMAGE_MODE} "${ALTWHEEL_CFG}"
+    bash -l -s "${NOIMAGE_MODE}" "${WHEEL_CFG}" \
+    < "${SCRIPT_DIR}/runc-manylinux-build-tar.sh"
 }
 
 if [ ${SUITE_SELECT_RUNTIME} -gt 0 ]; then

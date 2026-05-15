@@ -5,10 +5,29 @@ if [ -z "$BASH_VERSION" ]; then
   exit 1
 fi
 
-if [ "$#" -lt 1 ]; then
-  echo 'Missing arguments. Usage: build-release.sh <noimage mode> [arch list string] [cmake options ...]' >&2
-  echo 'Put "ALL" to [arch list string] to build all architectures'
+function usage() {
+  cat <<EOF >&2
+Usage: build-release.sh <noimage_mode> [arch_list] [cmake_options ...]
+  noimage_mode   ON|OFF — passed as -DAOTRITON_NOIMAGE_MODE
+  arch_list      space-separated GPU arch list, or ALL for all architectures
+  cmake_options  extra -D flags forwarded to cmake
+                 e.g. -DAOTRITON_USE_LOCAL_TRITON_WHEEL=<path>
+                      -DAOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE=<yaml>
+
+Environment variables:
+  AOTRITON_BUILD_PATH   cmake build directory; defaults to <source>/build
+  AOTRITON_INSTALL_PATH cmake install prefix; defaults to
+                        \$AOTRITON_BUILD_PATH/installed_dir/aotriton
+                        When called from runc-manylinux-build-tar.sh this is
+                        derived from AOTRITON_INSTALL_PREFIX as
+                        \$AOTRITON_INSTALL_PREFIX/aotriton
+  ROCM_PATH             ROCm installation root; auto-detected via hipconfig if unset
+EOF
   exit 1
+}
+
+if [ "$#" -lt 1 ]; then
+  usage
 fi
 
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
