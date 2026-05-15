@@ -17,12 +17,14 @@ fi
 
 function help() {
   cat <<EOF
-Usage releasesuite-git-head.sh [-h] [-r <ROCM ver>] [--image] [--runtime] [--yaml <yaml config file>] <output directory>.
+Usage: releasesuite-git-head.sh [-h] [options..] <output directory>
+Options:
                     -h: show help and exit.
          -r <ROCM ver>: build ROCM runtime image
                --image: build GPU images.
              --runtime: build all C++ runtimes.
          --yaml <.yml>: Use yml config file to build the release
+        --origin <url>: Override the git HTTPS origin URL (default: auto-detected from remote)
 By default both GPU images and runtimes are built.
 If either --image or --runtime is specified, the missing one will not be built.
 
@@ -37,7 +39,7 @@ EOF
   exit $1
 }
 
-TEMP=$(getopt -o hr: --longoptions image,runtime,yaml: -- "$@")
+TEMP=$(getopt -o hr: --longoptions image,runtime,yaml:,origin: -- "$@")
 
 if [ $? -ne 0 ]; then
   echo "Error: Invalid option." >&2
@@ -52,6 +54,7 @@ SUITE_RUNTIME_LIST=(6.4.4 7.0.3 7.1.1 7.2.3)
 CMDLIST=()
 SUITE_DEFAULT_SELECTION=1
 SUITE_YAML=""
+SUITE_ORIGIN=""
 
 while true; do
   case "$1" in
@@ -75,6 +78,10 @@ while true; do
     --yaml)
       shift
       SUITE_YAML="$1"
+      ;;
+    --origin)
+      shift
+      SUITE_ORIGIN="$1"
       ;;
     '--')
       shift
@@ -108,6 +115,9 @@ SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 . "${SCRIPT_DIR}/common-vars.sh"
 . "${SCRIPT_DIR}/common-setup-volume.sh"
 . "${SCRIPT_DIR}/common-git-https-origin.sh"
+if [[ -n "${SUITE_ORIGIN}" ]]; then
+  GIT_HTTPS_ORIGIN="${SUITE_ORIGIN}"
+fi
 . "${SCRIPT_DIR}/include-altwheel.sh"
 
 GIT_COMMIT=$(git rev-parse HEAD)
