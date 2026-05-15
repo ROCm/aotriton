@@ -87,6 +87,9 @@ class attn_bwd_op(SdpaOpCommon, bwd_kernel_dk_dv):
         im, view, devm = super().prepare_directs(im, inputs)
         from pyaotriton import lazy_tensor
         from ..gpu_utils import mk_aotensor
+        # FIXME: only allocate when backend == 2 (AITER); other backends don't
+        # need dq_acc. Current interface does not support this — `args` would
+        # need to be threaded into prepare_directs to know the backend index.
         devm.dq_acc = torch.zeros(*devm.q.size(), dtype=torch.float32, device=devm.q.device)
         dq_acc_view, _ = mk_aotensor(devm.dq_acc)
         view.dq_acc = lazy_tensor.eager_null_dq_acc(dq_acc_view)
