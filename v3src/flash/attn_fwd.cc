@@ -83,6 +83,11 @@ attn_fwd(const attn_fwd_params& in,
   }
   const auto& compiled_head_dims = AttnFwdMetadata::get_BLOCK_DMODEL_choices();
   int16_t hdim_rounded = round_value(hdim_max, compiled_head_dims);
+  // FIXME: Remove when compiler bug fixed
+  if (Gpu2VendorArch(gpu) == CAT32(GpuVendor::kAMD, 0x950)) {
+    if (hdim_rounded == 16)
+      hdim_rounded = 32;
+  }
   OpAttnFwdParams params = {
     .Q = &in.Q,
     .K = &in.K,

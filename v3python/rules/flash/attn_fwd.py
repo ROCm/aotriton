@@ -33,6 +33,21 @@ class attn_fwd(FlashKernel):
     # Note: There is no other FWD metro kernel right now so the arguments are shared
     ARGUMENTS = OpAttnFwd.ARGUMENTS
 
+    def is_functional_disabled(self, functional):
+        # FIXME: check if compiler fixes this at every release
+        # gfx950 compiler has known numerical error on hdim == 16
+        # Can only be reproduced by repeated runs:
+        #   1. Record high precision reference output, and the tensor index of the faulty entry
+        #   2. Run the same SDPA call for 64K times,
+        #   3. Collect the error of the faulty entry vs reference
+        # Here is the result:
+        # {0.001560986042022705: 65491, -0.5028335452079773: 45}
+        if functional.arch == 'gfx950':
+            hdim = check_value(functional, 'BLOCK_DMODEL')
+            if hdim in [16]:
+                return True
+        return super().is_functional_disabled(functional)
+
     PERF_CHOICES = {
         frozenset(['PERSISTENT_TYPE']) : _IF_CAUSAL(TC.constexpr.int8_t(2)),
         frozenset(['GRID_CU_MULTIP']) : np.array([2], dtype=np.int8),  # NOTE: use np.array with dtype to reduce size of the generate tuning infomation struct
