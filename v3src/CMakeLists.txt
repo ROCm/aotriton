@@ -159,6 +159,7 @@ if(NOT AOTRITON_NOIMAGE_MODE)
     -m v3python.write_image_signature
     --build_dir "${AOTRITON_V2_BUILD_DIR}"
     --git_sha1 ${AOTRITON_GIT_SHA1}
+    --git_treesha1 ${AOTRITON_GIT_TREESHA1}
     --target_arch ${AOTRITON_TARGET_ARCH}
     --output_file "${SIGNATURE_FILE}"
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"

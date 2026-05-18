@@ -1,5 +1,11 @@
 #!/bin/bash
 
+# DEPRECATED: use .ci/build_triton_wheels.sh instead.
+# That script uses a bare triton-mirror volume and shallow clones per hash,
+# avoiding the full clone required by this script.
+echo "DEPRECATED: build-altwheels.sh is no longer used. See .ci/build_triton_wheels.sh." >&2
+exit 1
+
 set -ex
 
 WHEEL_OUTPUT_DIR="$1"

@@ -1,6 +1,6 @@
 FROM almalinux:8 AS base
 
-RUN dnf install -y gcc-toolset-13 python3.11 python3.11-devel \
+RUN dnf install -y gcc-toolset-13 python3.11 python3.11-devel libatomic \
     zstd libzstd-devel xz-devel zlib-devel git which vim wget rsync && \
     update-alternatives --set python /usr/bin/python3.11 && \
     update-alternatives --set python3 /usr/bin/python3.11 && \

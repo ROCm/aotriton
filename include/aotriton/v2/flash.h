@@ -11,10 +11,6 @@ namespace AOTRITON_NS::v2::flash {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 
-[[deprecated("V2 API is deprecated, use V3 API instead")]]
-hipError_t AOTRITON_API
-check_gpu(AOTRITON_NS::Stream stream);
-
 using T4 = AOTRITON_NS::TensorView<4>;
 using T2 = AOTRITON_NS::TensorView<2>;
 using T1 = AOTRITON_NS::TensorView<1>;
@@ -149,16 +145,6 @@ attn_bwd_compact_varlen(T4 q, // 1 x num_heads x total_q x hdim_qk, total_q := \
                         bool is_causal,
                         AOTRITON_NS::Stream stream,
                         BwdExtraArguments* extargs = nullptr);
-
-// varlen should use len(cu_seqlens_q) - 1 for the batch size
-[[deprecated("V2 API is deprecated, use V3 API instead")]]
-hipError_t AOTRITON_API
-debug_simulate_encoded_softmax(T4 r,  // batch_size x num_heads x max_seqlen_q x max_seqlen_k
-                               float dropout_p,
-                               T0 philox_seed,
-                               T0 philox_offset1,
-                               uint64_t philox_offset2,
-                               AOTRITON_NS::Stream stream);
 
 #pragma GCC diagnostic pop
 

@@ -16,13 +16,15 @@ EOF
 fi
 
 function help() {
-  cat <<EOF
-Usage releasesuite-git-head.sh [-h] [-r <ROCM ver>] [--image] [--runtime] [--yaml <yaml config file>] <output directory>.
+  cat <<EOF >&2
+Usage: releasesuite-git-head.sh [-h] [options..] <output directory>
+Options:
                     -h: show help and exit.
          -r <ROCM ver>: build ROCM runtime image
                --image: build GPU images.
              --runtime: build all C++ runtimes.
          --yaml <.yml>: Use yml config file to build the release
+        --origin <url>: Override the git HTTPS origin URL (default: auto-detected from remote)
 By default both GPU images and runtimes are built.
 If either --image or --runtime is specified, the missing one will not be built.
 
@@ -33,11 +35,10 @@ The build process will
 2. Replace SHA1 with actual wheel path and use the replaced yaml file to build
    AOTriton
 EOF
->&2
   exit $1
 }
 
-TEMP=$(getopt -o hr: --longoptions image,runtime,yaml: -- "$@")
+TEMP=$(getopt -o hr: --longoptions image,runtime,yaml:,origin: -- "$@")
 
 if [ $? -ne 0 ]; then
   echo "Error: Invalid option." >&2
@@ -48,10 +49,11 @@ eval set -- "$TEMP"
 
 SUITE_SELECT_IMAGE=-1
 SUITE_SELECT_RUNTIME=-1
-SUITE_RUNTIME_LIST=(6.2.4 6.3.4 6.4.4 7.0.3 7.1.1 7.2)
+SUITE_RUNTIME_LIST=(6.4.4 7.0.3 7.1.1 7.2.3)
 CMDLIST=()
 SUITE_DEFAULT_SELECTION=1
 SUITE_YAML=""
+SUITE_ORIGIN=""
 
 while true; do
   case "$1" in
@@ -75,6 +77,10 @@ while true; do
     --yaml)
       shift
       SUITE_YAML="$1"
+      ;;
+    --origin)
+      shift
+      SUITE_ORIGIN="$1"
       ;;
     '--')
       shift
@@ -108,6 +114,9 @@ SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 . "${SCRIPT_DIR}/common-vars.sh"
 . "${SCRIPT_DIR}/common-setup-volume.sh"
 . "${SCRIPT_DIR}/common-git-https-origin.sh"
+if [[ -n "${SUITE_ORIGIN}" ]]; then
+  GIT_HTTPS_ORIGIN="${SUITE_ORIGIN}"
+fi
 . "${SCRIPT_DIR}/include-altwheel.sh"
 
 GIT_COMMIT=$(git rev-parse HEAD)
@@ -116,29 +125,62 @@ BASE_DOCKER_IMAGE="aotriton:base"
 
 # build base docker image
 if [ -z "$(docker images -q ${BASE_DOCKER_IMAGE} 2>/dev/null)" ]; then
-  docker build --network=host -t ${BASE_DOCKER_IMAGE} -f base.Dockerfile .
+  (cd "${SCRIPT_DIR}" && docker build --network=host -t ${BASE_DOCKER_IMAGE} -f base.Dockerfile .)
 fi
 
 SOURCE_VOLUME="aotriton-src-shared"
 LOCAL_DIR="aotriton"
 setup_source_volume ${SOURCE_VOLUME} ${GIT_HTTPS_ORIGIN} ${LOCAL_DIR} ${GIT_COMMIT}
 
-INPUT_DIR=${SCRIPT_DIR}/../dockerfile/input
 OUTPUT_DIR="$1"
+CACHE_DIR="${OUTPUT_DIR}/.cache"
+WHEEL_CACHE_DIR="${CACHE_DIR}/wheels"
+mkdir -p "${WHEEL_CACHE_DIR}"
 
-if [[ -n "${SUITE_YAML}" && ${SUITE_SELECT_IMAGE} -gt 0 ]]; then
-  readarray -t TRITON_ALTHASH < <(yq -r '.venvs|.[]' "${SUITE_YAML}")
-  mkdir -p "${INPUT_DIR}/altwheels"
-  cp "${SUITE_YAML}" "${INPUT_DIR}/altwheels/tmpconfig.yaml"
-  bash "${SCRIPT_DIR}/build-altwheels.sh" "${INPUT_DIR}/altwheels" "${TRITON_ALTHASH[@]}"
+# Determine Triton hashes to build.
+# .venvs.default in SUITE_YAML replaces the embedded submodule hash;
+# otherwise the submodule is the mandatory default.
+DEFAULT_HASH=""
+if [[ -n "${SUITE_YAML}" ]]; then
+  DEFAULT_HASH=$(yq -r '.venvs.default // empty' "${SUITE_YAML}")
+fi
+if [[ -z "${DEFAULT_HASH}" ]]; then
+  DEFAULT_HASH=$(git rev-parse HEAD:third_party/triton)
+fi
+TRITON_HASHES=("${DEFAULT_HASH}")
+if [[ -n "${SUITE_YAML}" ]]; then
+  readarray -t YAML_HASHES < <(yq -r '.venvs | to_entries | .[] | select(.key != "default") | .value' "${SUITE_YAML}")
+  TRITON_HASHES+=("${YAML_HASHES[@]}")
+fi
+
+# Triton wheels are only needed for image builds (GPU kernel images embed the wheel).
+# Runtime builds consume pre-built wheels from /cache/wheels via WHEEL_CFG.
+if [[ ${SUITE_SELECT_IMAGE} -gt 0 ]]; then
+  TRITON_WHEEL_VERSION_SUFFIX="+aotriton${aotriton_major}.${aotriton_minor}"
+  bash "${SCRIPT_DIR}/build_triton_wheels.sh" \
+    --wheel_output_dir "${WHEEL_CACHE_DIR}" \
+    --version_suffix "${TRITON_WHEEL_VERSION_SUFFIX}" \
+    "${TRITON_HASHES[@]}"
+fi
+
+# Resolve wheel configuration: yaml altwheel config, or path to the default pre-built wheel.
+if [[ -n "${SUITE_YAML}" ]]; then
+  cp "${SUITE_YAML}" "${CACHE_DIR}/tmpconfig.yaml"
   replace_hash \
-    "${INPUT_DIR}/altwheels/tmpconfig.yaml" \
-    "${INPUT_DIR}/altwheels" \
-    "/input/altwheels" \
-    "${TRITON_ALTHASH[@]}"
-  ALTWHEEL_CFG="/input/altwheels/tmpconfig.yaml"
+    "${CACHE_DIR}/tmpconfig.yaml" \
+    "${WHEEL_CACHE_DIR}" \
+    "/cache/wheels" \
+    "${TRITON_HASHES[@]}"
+  WHEEL_CFG="/cache/tmpconfig.yaml"
 else
-  ALTWHEEL_CFG=""
+  DEFAULT_SHORT="${DEFAULT_HASH:0:8}"
+  WHEEL_CFG=$(ls "${WHEEL_CACHE_DIR}"/triton-*+*${DEFAULT_SHORT}*.whl 2>/dev/null | head -1)
+  if [[ -z "${WHEEL_CFG}" ]]; then
+    echo "Error: no pre-built triton wheel found for ${DEFAULT_SHORT} in ${WHEEL_CACHE_DIR}" >&2
+    exit 1
+  fi
+  # Map host path to in-container path under /cache/wheels
+  WHEEL_CFG="/cache/wheels/$(basename "${WHEEL_CFG}")"
 fi
 
 function build_inside() {
@@ -146,19 +188,28 @@ function build_inside() {
   NOIMAGE_MODE="$2"
   DOCKER_IMAGE="aotriton:buildenv-rocm${rocmver}"
   if [ -z "$(docker images -q ${DOCKER_IMAGE} 2>/dev/null)" ]; then
-    docker build --network=host -t ${DOCKER_IMAGE} \
+    # Use theRock.Dockerfile for ROCm >= 7.10
+    if printf '%s\n%s\n' "7.10" "${rocmver}" | sort -V -C; then
+      DOCKERFILE="theRock.Dockerfile"
+    else
+      DOCKERFILE="rocm.Dockerfile"
+    fi
+    (cd "${SCRIPT_DIR}" && docker build --network=host -t ${DOCKER_IMAGE} \
       --build-arg ROCM_VERSION_IN_URL=${rocmver} \
-      -f rocm.Dockerfile .
+      -f ${DOCKERFILE} .)
   fi
-  docker run --network=host -it --rm \
+  set -x
+  docker run --network=host -i --rm \
     -v ${SOURCE_VOLUME}:/src:ro \
-    --mount "type=bind,source=$(realpath ${INPUT_DIR}),target=/input" \
     --mount "type=bind,source=$(realpath ${OUTPUT_DIR}),target=/output" \
-    --tmpfs "/root/build:exec" \
+    --mount "type=bind,source=$(realpath ${CACHE_DIR}),target=/cache" \
+    --tmpfs "/scratch:exec" \
+    -e AOTRITON_BUILD_PATH=/scratch/build/aotriton \
+    -e AOTRITON_INSTALL_PREFIX=/scratch/install \
     -w / \
     ${DOCKER_IMAGE} \
-    bash \
-    /input/docker-script-build.sh ${llvm_hash_url} ${NOIMAGE_MODE} "${ALTWHEEL_CFG}"
+    bash -l -s "${NOIMAGE_MODE}" "${WHEEL_CFG}" \
+    < "${SCRIPT_DIR}/runc-manylinux-build-tar.sh"
 }
 
 if [ ${SUITE_SELECT_RUNTIME} -gt 0 ]; then
@@ -170,6 +221,6 @@ if [ ${SUITE_SELECT_RUNTIME} -gt 0 ]; then
 fi
 
 if [ ${SUITE_SELECT_IMAGE} -gt 0 ]; then
-  rocmver=7.1
+  rocmver=7.2.3
   build_inside ${rocmver} OFF
 fi

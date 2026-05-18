@@ -31,6 +31,22 @@ else()
   message(FATAL_ERROR "[AOTriton] Cannot identify Git Commit SHA1 from command `git rev-parse HEAD`.\nIf you are building AOTriton without git clone, define AOTRITON_CI_SUPPLIED_SHA1.")
 endif()
 
+if(DEFINED ENV{AOTRITON_GIT_TREESHA1})
+  set(AOTRITON_GIT_TREESHA1 $ENV{AOTRITON_GIT_TREESHA1})
+else()
+  execute_process(
+    COMMAND git rev-parse HEAD^{tree}
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+    OUTPUT_VARIABLE AOTRITON_GIT_TREESHA1
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+  )
+endif()
+if(AOTRITON_GIT_TREESHA1)
+  message(STATUS "[AOTriton] Use tree SHA1 ${AOTRITON_GIT_TREESHA1}.")
+else()
+  message(FATAL_ERROR "[AOTriton] Cannot identify Git tree SHA1 from command `git rev-parse HEAD^{tree}`.\nIf you are building AOTriton without git clone, define AOTRITON_GIT_TREESHA1.")
+endif()
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_C_USE_RESPONSE_FILE_FOR_OBJECTS   ON)
 set(CMAKE_CXX_USE_RESPONSE_FILE_FOR_OBJECTS ON)

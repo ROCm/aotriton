@@ -10,7 +10,8 @@ NOTE: ALL SCRIPTS REQUIRE **BASH**.
 | run-ci-test.sh             | Run run-test.sh with `USE_ADIFFS_TXT` set                 |
 | build-for-torch.sh         | Build AOTriton for PyTorch                                |
 | torch-build.sh             | Build PyTorch with AOTriton built by build-for-torch.sh   |
-| releasesuite-git-head.sh   | Build AOTriton release tarballs                           |
+| releasesuite-git-head.sh   | Build AOTriton release tarballs (calls build_triton_wheels.sh first) |
+| build_triton_wheels.sh     | Build and cache Triton wheels from commit hashes          |
 | triton-wheel-build.sh      | Build AOTrton-compatible Triton Wheel from mainline       |
 | triton-tester-build.sh     | Build AOTrtion with Triton Wheel from triton-wheel-build.sh    |
 | triton-tester-run.sh       | Run tests to check correctness of Triton mainline         |
@@ -94,6 +95,29 @@ Step 2: build pytoch with aotriton built in Step 1
 ``` bash
 cd pytorch
 bahs ../aotriton/.ci/torch-build.sh
+```
+
+## Triton Wheel Pre-Build
+
+`releasesuite-git-head.sh` always builds Triton wheels before starting the
+AOTriton build. The wheels are cached in `<output_dir>/.cache/wheels/` and
+reused on subsequent runs (skipped if a matching wheel is already present).
+
+A `triton-mirror` Docker volume is maintained automatically as a bare clone of
+`https://github.com/ROCm/triton`. Each run fetches all remote branches to
+ensure the requested commit hashes are reachable, then performs a shallow clone
+per hash into a tmpfs for the actual wheel build.
+
+The `--yaml` flag is still optional. When provided, its `.venvs` hashes are
+built in addition to the embedded `third_party/triton` submodule (unless the
+YAML supplies `.venvs.default`, which replaces the submodule hash).
+
+To build wheels manually:
+```bash
+bash .ci/build_triton_wheels.sh \
+  --wheel_output_dir <output_dir> \
+  --version_suffix "+aotriton0.12" \
+  <hash1> [<hash2> ...]
 ```
 
 ## Release the Package
