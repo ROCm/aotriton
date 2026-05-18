@@ -79,7 +79,6 @@ bool isArchExperimentallySupported(hipStream_t stream) {
   return (vendor_arch == CAT32(GpuVendor::kAMD, 0x1150) ||
           vendor_arch == CAT32(GpuVendor::kAMD, 0x1152) ||
           vendor_arch == CAT32(GpuVendor::kAMD, 0x1153) ||
-          vendor_arch == CAT32(GpuVendor::kAMD, 0x1100) ||
           vendor_arch == CAT32(GpuVendor::kAMD, 0x1101) ||
           vendor_arch == CAT32(GpuVendor::kAMD, 0x1102) ||
           vendor_arch == CAT32(GpuVendor::kAMD, 0x1103) ||
