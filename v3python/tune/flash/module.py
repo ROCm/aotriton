@@ -120,9 +120,12 @@ class Flash(TuningDescription):
         if arch.startswith('gfx11') and entry.hdim > 256:
             return False, (f'arch {arch} does not support hdim={entry.hdim} '
                            f'(gfx11xx maximum is 256; larger hdim exceeds LDS/register limits)')
+        if arch.startswith('gfx11') and (entry.seqlen_q > 2048 or entry.seqlen_k > 2048):
+            return False, (f'Insufficient number of gfx1100 GPUs available for tuning arch {arch}: '
+                           f'only seqlen_q/k <= 2048 entries are tuned')
         return True, ''
 
-    def list_kernels(self, entry: FlashEntry):
+    def list_impls(self, entry: FlashEntry):
         if False:  # Debugging, fwd only tuning. Keep it for selective tuning
             return ['attn_fwd']
         if entry.hdim > 224:
@@ -132,13 +135,13 @@ class Flash(TuningDescription):
     def _do_probe_backends(self,
                            entry: FlashEntry,
                            im: FlashInputMetadata,
-                           which_kernel: str,
+                           which_impl: str,
                            pt: Path) -> list[dict]:
         import torch
         from ..gpu_utils import device_ctx, default_device_string
         with device_ctx():
-            kernel = self.get_kernel(which_kernel)
-            args = kernel.create_extargs(hsaco_index=None, probe=True)
+            kernel = self.get_impl(which_impl)
+            args = kernel.create_extargs(probe=True)
             d = torch.load(pt, map_location=default_device_string(), mmap=True)
             inputs = from_dict(data_class=kernel.PT_INPUT_CLASS, data=d["bidi_inputs"], config=dacite_tuple)
             # print(f'{type(inputs)=}')
@@ -323,42 +326,48 @@ class Flash(TuningDescription):
     def run_single_test(self,
                         im: FlashInputMetadata,
                         pt: Path,
-                        which_kernel: FlashKernelSelector):
+                        which_impl: FlashKernelSelector):
         import torch
         from ..gpu_utils import device_ctx, default_device_string
         with device_ctx():
-            kernel = self.get_kernel(which_kernel.kernel_name)
-            args = kernel.create_extargs(hsaco_index=which_kernel.hsaco_index)
+            kernel = self.get_impl(which_impl)
+            args = kernel.create_extargs(which_impl=which_impl)
             d = torch.load(pt, map_location=default_device_string(), mmap=True)
             inputs = from_dict(data_class=kernel.PT_INPUT_CLASS, data=d["bidi_inputs"], config=dacite_tuple)
             direct_inputs = kernel.prepare_directs(im, inputs)
             kernel.fill_nan_to_outputs(direct_inputs)
-            outputs = kernel.direct_call(direct_inputs, args)
+            outputs, err = kernel.direct_call(direct_inputs, args)
             refs = from_dict(data_class=kernel.PT_REF_CLASS, data=d["bidi_outputs"], config=dacite_tuple)
             result = kernel.compare(outputs, refs)
+            early = kernel.check_early_reject_results(result, err)
+            if early is not None:
+                result = early
             if im.qkh > 2048 * 2048 * 64:
                 gc.collect()
                 torch.cuda.empty_cache()
             return sanitize_value(result)
 
+    def probe_impl_desc(self, kernel, args) -> dict:
+        return {
+            'psels': safeload(args.selected_hsaco_psels),
+            'copts': safeload(args.selected_hsaco_copts),
+        }
+
     def run_single_benchmark(self,
                              im: FlashInputMetadata,
                              pt: Path,
-                             which_kernel: FlashKernelSelector):
+                             which_impl: FlashKernelSelector):
         import torch
         from ..gpu_utils import do_bench, device_ctx, default_device_string
         with device_ctx():
-            kernel = self.get_kernel(which_kernel.kernel_name)
+            kernel = self.get_impl(which_impl)
+            args = kernel.create_extargs(which_impl=which_impl, probe=True)
             d = torch.load(pt, map_location=default_device_string(), mmap=True)
             inputs = from_dict(data_class=kernel.PT_INPUT_CLASS, data=d["bidi_inputs"], config=dacite_tuple)
-            args = kernel.create_extargs(hsaco_index=which_kernel.hsaco_index, probe=True)
             direct_inputs = kernel.prepare_directs(im, inputs)
             kernel.direct_call(direct_inputs, args)
-            impl_desc = {
-                'psels': safeload(args.selected_hsaco_psels),
-                'copts': safeload(args.selected_hsaco_copts),
-            }
-            args.update_hsaco(probe=False)
+            impl_desc = self.probe_impl_desc(kernel, args)
+            args.disable_probing()
             def fn():
                 kernel.direct_call(direct_inputs, args)
             times = do_bench(fn, quantiles=(0.5, 0.2, 0.8))
@@ -369,7 +378,9 @@ class Flash(TuningDescription):
 
     KERNEL_DICT = None
 
-    def get_kernel(self, kernel_name: str):
+    def get_impl(self, name: str | FlashKernelSelector):
+        if isinstance(name, FlashKernelSelector):
+            name = name.kernel_name
         if self.KERNEL_DICT is None:
             if False:  # Debugging, fwd only tuning. Keep it for selective tuning
                 from .kernels import (
@@ -391,4 +402,4 @@ class Flash(TuningDescription):
                     'bwd_kernel_dq'     : bwd_kernel_dq(),
                     'bwd_kernel_fuse'   : bwd_kernel_fuse(),
                 }
-        return self.KERNEL_DICT[kernel_name]
+        return self.KERNEL_DICT[name]

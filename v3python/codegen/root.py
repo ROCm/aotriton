@@ -83,10 +83,24 @@ class RootGenerator(object):
         hsaco_for_kernels = []
         asms_for_kernels = []
         shims = []
+        # (arch, op_name, lut_value) -> count
+        all_lut_stats: dict[tuple, int] = {}
+        # (arch, op_name) -> {'trivial': N, 'non_trivial': N}
+        all_trivial_stats: dict[tuple, dict[str, int]] = {}
         for op in dispatcher_operators:
             opg = OperatorGenerator(self._args, op, parent_repo=None)
             opg.generate()
             shims += opg.shim_files
+            op_name = op.NAME
+            for (arch, _, lut_value), count in opg.lut_stats.items():
+                key = (arch, op_name, lut_value)
+                all_lut_stats[key] = all_lut_stats.get(key, 0) + count
+            for (arch, _), ts in opg.trivial_stats.items():
+                ak = (arch, op_name)
+                d = all_trivial_stats.setdefault(ak, {'trivial': 0, 'non_trivial': 0})
+                d['trivial']     += ts['trivial']
+                d['non_trivial'] += ts['non_trivial']
+        self._print_lut_stats(all_lut_stats, all_trivial_stats)
         for k in triton_kernels:
             ksg = KernelShimGenerator(self._args, k, parent_repo=None)
             ksg.generate()
@@ -224,6 +238,50 @@ class RootGenerator(object):
                 return matched
         # We can add an always-true matcher to self._altrules but let's be explicit
         return "default", self._venvpython["default"]
+
+    def _print_lut_stats(self, all_lut_stats: dict, all_trivial_stats: dict):
+        def _table(title, header, rows):
+            sep = '-' * len(header)
+            print(sep)
+            print(title)
+            print(sep)
+            print(header)
+            print(sep)
+            for row in rows:
+                print(row)
+            print(sep)
+
+        if all_trivial_stats:
+            sorted_pairs = sorted(all_trivial_stats.keys())
+            col_arch = max(len('arch'),    max(len(p[0]) for p in sorted_pairs))
+            col_op   = max(len('op_name'), max(len(p[1]) for p in sorted_pairs))
+            col_t    = len('trivial')
+            col_nt   = len('non_trivial')
+            header = (f'{"arch":<{col_arch}}  {"op_name":<{col_op}}'
+                      f'  {"trivial":>{col_t}}  {"non_trivial":>{col_nt}}')
+            rows = [
+                f'{arch:<{col_arch}}  {op_name:<{col_op}}'
+                f'  {d["trivial"]:>{col_t}}  {d["non_trivial"]:>{col_nt}}'
+                for (arch, op_name), d in sorted(all_trivial_stats.items())
+            ]
+            _table('Op tuning: trivial vs non-trivial functionals', header, rows)
+
+        if all_lut_stats:
+            sorted_keys = sorted(all_lut_stats.keys())
+            col_arch = max(len('arch'),      max(len(k[0]) for k in sorted_keys))
+            col_op   = max(len('op_name'),   max(len(k[1]) for k in sorted_keys))
+            col_lut  = max(len('lut_value'), max(len(str(k[2])) for k in sorted_keys))
+            col_cnt  = max(len('count'),     max(len(str(all_lut_stats[k])) for k in sorted_keys))
+            header = (f'{"arch":<{col_arch}}  {"op_name":<{col_op}}'
+                      f'  {"lut_value":>{col_lut}}  {"count":>{col_cnt}}')
+            rows = [
+                f'{arch:<{col_arch}}  {op_name:<{col_op}}'
+                f'  {str(lv) + (" (no backend)" if lv == -1 else ""):>{col_lut}}'
+                f'  {all_lut_stats[k]:>{col_cnt}}'
+                for k in sorted_keys
+                for arch, op_name, lv in [k]
+            ]
+            _table('Op tuning LUT coverage statistics', header, rows)
 
     # def write_cluster(self, kdesc, path, functional, signatures, clusterfile):
     #     full_filepack_path = functional.full_filepack_path

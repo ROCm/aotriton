@@ -28,6 +28,8 @@ namespace pyaotriton::lazy_tensor {
     m.def("dq_acc", &lazy_tensor_creator<4, true>);
     m.def("delta", &lazy_tensor_creator<2, false>);
     m.def("eager_delta", &eager_lazy_tensor_creator<2>);
+    // TODO(next-cycle): rename to eager_dq_acc — this API is not specific to null tensors;
+    //   pass a T4 with data_ptr=0 only when you are confident dq_acc will not be used.
     m.def("eager_null_dq_acc", &eager_lazy_tensor_creator<4>);
   }
 }

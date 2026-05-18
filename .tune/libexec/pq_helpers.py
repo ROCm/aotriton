@@ -87,22 +87,29 @@ def print_summary(label: str, count: int, matches: list[dict]) -> None:
         print(f'  {status}: {n}')
 
 
-def reset_to_pending(conn, row_ids: list[int]) -> int:
+def reset_to_pending(conn, row_ids: list[int], module: str = 'flash') -> int:
     """
     Reset the given task_queue ids to pending. Returns affected row count.
 
-    Also deletes related rows from most_accurate_tuning_results and
-    tuning_results so stale results don't contaminate future re-runs.
+    Also deletes related rows from the results and accuracy tables so stale
+    results don't contaminate future re-runs.  The tables chosen depend on
+    whether module ends with '_op' (operator tuning) or not (kernel tuning).
     """
     if not row_ids:
         return 0
+    if module.endswith('_op'):
+        results_table  = 'optune_results'
+        accuracy_table = 'most_accurate_optune_results'
+    else:
+        results_table  = 'tuning_results'
+        accuracy_table = 'most_accurate_tuning_results'
     with conn.cursor() as cur:
         cur.execute(
-            'DELETE FROM most_accurate_tuning_results WHERE task_id = ANY(%s)',
+            f'DELETE FROM {accuracy_table} WHERE task_id = ANY(%s)',
             (row_ids,),
         )
         cur.execute(
-            'DELETE FROM tuning_results WHERE task_id = ANY(%s)',
+            f'DELETE FROM {results_table} WHERE task_id = ANY(%s)',
             (row_ids,),
         )
         cur.execute(

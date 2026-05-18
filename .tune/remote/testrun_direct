@@ -4,8 +4,8 @@
 
 # Run the testrun CLI tool inside the tuning Docker image.
 #
-# This script is meant to be invoked as:
-#   <workdir>/aotriton.src/.tune/remote/testrun_direct [args...]
+# Interface is identical to v3python.tune.testrun:
+#   testrun_direct [module] [--gpu GPU]
 #
 # The workdir is detected automatically from the script's location:
 #   testrun_direct lives at  <workdir>/aotriton.src/.tune/remote/testrun_direct
@@ -14,19 +14,28 @@
 # Docker image and connection parameters are read from <workdir>/config.rc.
 # The container is removed automatically on exit (--rm).
 #
-# All arguments are forwarded verbatim to:
-#   python -m v3python.tune.testrun [args...]
+# GPU architecture is detected automatically via rocm_agent_enumerator.
+#
+# PYTHONPATH selection (based on module name):
+#   Modules ending with _op use the testing library: installed/test/<arch>/lib
+#   All other modules use the tuning library:        installed/<arch>/lib
+#
+# testrun is a REPL — commands are sent via stdin, not positional arguments.
 #
 # Examples:
-#   # Show testrun help
+#   # Show this wrapper's help
 #   .tune/remote/testrun_direct -h
 #   .tune/remote/testrun_direct --help
 #
-#   # Run a specific entry on gfx942
-#   .tune/remote/testrun_direct arch=gfx942 dtype='float16';hdim=128;...
+#   # Interactive session for kernel tuning
+#   .tune/remote/testrun_direct flash
 #
-#   # Dry-run / list kernels
-#   .tune/remote/testrun_direct --list arch=gfx942 dtype='float16';hdim=128;...
+#   # Interactive session for op tuning (uses installed/test/ PYTHONPATH)
+#   .tune/remote/testrun_direct flash_op
+#
+#   # Run a specific entry non-interactively (pipe commands via stdin)
+#   printf 'prepare_data dtype=float16;hdim=128;seqlen_q=4096;seqlen_k=4096;causal=False;dropout_p=0.0;bias_type=0 /tmp/myentry\n' \
+#     | .tune/remote/testrun_direct flash
 
 set -euo pipefail
 
@@ -36,9 +45,16 @@ WORKDIR="$(cd "$AOTRITON_ROOT/.." && pwd)"
 
 if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
     cat <<EOF
-Usage: $(basename "$0") [testrun args...]
+Usage: $(basename "$0") [module] [--gpu GPU]
 
-Run the v3python.tune.testrun CLI inside the tuning Docker image.
+Run the v3python.tune.testrun REPL inside the tuning Docker image.
+Interface is identical to: python -m v3python.tune.testrun
+
+GPU architecture is auto-detected via rocm_agent_enumerator.
+
+PYTHONPATH selection (based on module name):
+  Modules ending with _op  → installed/test/<arch>/lib  (testing library)
+  All other modules        → installed/<arch>/lib        (tuning library)
 
 Workdir auto-detected from script location:
   $WORKDIR
@@ -46,19 +62,19 @@ Workdir auto-detected from script location:
 Config read from:
   $WORKDIR/config.rc
 
-The container is ephemeral (--rm) and interactive.
-All arguments are forwarded to:
-  python -m v3python.tune.testrun [testrun args...]
-
-To see testrun's own help, run without arguments or pass --help after
-the testrun module has loaded (some flags may differ from this wrapper).
+testrun is a REPL: commands are read from stdin, not passed as positional args.
+Pipe commands in for non-interactive use.
 
 Examples:
-  # Show testrun module help
-  $(basename "$0")
+  # Interactive session
+  $(basename "$0") flash
 
-  # Run a specific entry
-  $(basename "$0") arch=gfx942 "dtype='float16';hdim=128;seqlen_q=4096;seqlen_k=4096;causal=False;dropout_p=0.0;bias_type=0"
+  # Interactive session for op tuning
+  $(basename "$0") flash_op
+
+  # Run a specific entry non-interactively
+  printf 'prepare_data dtype=float16;hdim=128;seqlen_q=4096;seqlen_k=4096;causal=False;dropout_p=0.0;bias_type=0 /tmp/myentry\n' \\
+    | $(basename "$0") flash
 EOF
     exit 0
 fi
@@ -75,24 +91,34 @@ if [ -z "${CELERY_WORKER_IMAGE:-}" ]; then
     exit 1
 fi
 
-# Extract arch from args (e.g. "arch=gfx942 ..." or "arch=gfx942;...").
-# Fall back to rocm_agent_enumerator when not found in args.
-# PYTHONPATH must point to the arch-specific installed libs inside the container.
-ARCH=""
-for arg in "$@"; do
-    if [[ "$arg" =~ ^arch=([^;[:space:]]+) ]]; then
-        ARCH="${BASH_REMATCH[1]}"
-        break
-    fi
-done
-
+# Detect arch from rocm_agent_enumerator.
+ARCH=$(rocm_agent_enumerator | grep -v gfx000 | head -1)
 if [ -z "$ARCH" ]; then
-    ARCH=$(rocm_agent_enumerator | grep -v gfx000 | head -1)
+    echo "Error: could not detect arch via rocm_agent_enumerator" >&2
+    exit 1
 fi
 
-if [ -z "$ARCH" ]; then
-    echo "Error: could not detect arch from args or rocm_agent_enumerator" >&2
-    exit 1
+# Peek at the module positional arg (first non-option arg) for PYTHONPATH selection.
+# All args are passed verbatim to testrun — nothing is consumed here.
+MODULE=""
+skip_next=false
+for arg in "$@"; do
+    if $skip_next; then
+        skip_next=false
+        continue
+    fi
+    case "$arg" in
+        --gpu) skip_next=true ;;
+        --*)   ;;
+        *)     MODULE="$arg"; break ;;
+    esac
+done
+
+# Modules ending with _op use the testing library (no KernelControl).
+if [[ "$MODULE" == *_op ]]; then
+    WORKER_PYTHONPATH="/wkdir/installed/test/$ARCH/lib"
+else
+    WORKER_PYTHONPATH="/wkdir/installed/$ARCH/lib"
 fi
 
 exec docker run --rm -it \
@@ -103,7 +129,7 @@ exec docker run --rm -it \
     --security-opt seccomp=unconfined \
     --ipc=host \
     --network=host \
-    -e "PYTHONPATH=/wkdir/installed/$ARCH/lib" \
+    -e "PYTHONPATH=$WORKER_PYTHONPATH" \
     -e PYTHONPYCACHEPREFIX=/wkdir/run/pycache \
     --mount type=bind,source="$(realpath "$WORKDIR")",target=/wkdir \
     "$CELERY_WORKER_IMAGE" \

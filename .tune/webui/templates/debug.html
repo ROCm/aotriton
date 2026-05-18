@@ -16,21 +16,30 @@
 </section>
 
 <section>
-    <h3>Lookup by TUNE_V3BIS entry</h3>
+    <h3>Lookup by TUNE_V3BIS/pytest entry</h3>
+    <p style="margin: 0 0 0.4rem; font-size: 0.9em; color: #555;">
+        Accepts either a <strong>TUNE_V3BIS testrun Item:</strong> line or a
+        <strong>pytest node ID</strong>. Examples:
+    </p>
+    <pre>TUNE_V3BIS testrun Item: arch=gfx942 dtype='float16';hdim=64;seqlen_q=256;seqlen_k=8192;causal=False;dropout_p=0.0;bias_type=0
+test/test_backward.py::test_regular_bwd[Split-False-l1-dtype2-0.0-CausalOff-256-8192-hdim8-5-3]</pre>
     <div style="display: flex; gap: 0.5rem; align-items: flex-start;">
         <textarea id="tune_entry_input" rows="3" style="flex: 1; font-family: monospace; font-size: 0.85em;"
-                  placeholder="Paste a TUNE_V3BIS testrun Item: line here"></textarea>
+                  placeholder="Paste a TUNE_V3BIS testrun Item: line or a pytest node ID here"></textarea>
         <button type="button" id="tune_lookup_btn">Lookup</button>
     </div>
     <p id="tune_lookup_error" style="color: red; margin: 0.25rem 0;"></p>
+    <div id="tune_lookup_results" style="margin: 0.25rem 0;"></div>
 </section>
 
 <script>
 document.getElementById('tune_lookup_btn').addEventListener('click', function() {
     const line = document.getElementById('tune_entry_input').value.trim();
     const errEl = document.getElementById('tune_lookup_error');
+    const resultsEl = document.getElementById('tune_lookup_results');
     errEl.textContent = '';
-    if (!line) { errEl.textContent = 'Please paste a TUNE_V3BIS line.'; return; }
+    resultsEl.innerHTML = '';
+    if (!line) { errEl.textContent = 'Please paste a TUNE_V3BIS line or pytest node ID.'; return; }
 
     fetch('/api/debug/resolve_entry', {
         method: 'POST',
@@ -41,9 +50,38 @@ document.getElementById('tune_lookup_btn').addEventListener('click', function() 
     .then(data => {
         if (data.error) {
             errEl.textContent = data.error;
-        } else {
+        } else if (data.task_id !== undefined) {
+            // TUNE_V3BIS path: single result, navigate immediately
             document.getElementById('task_id_input').value = data.task_id;
             document.getElementById('task_id_input').closest('form').submit();
+        } else if (data.matches !== undefined) {
+            if (data.matches.length === 0) {
+                errEl.textContent = 'No matching task_queue rows found.';
+                return;
+            }
+            if (data.matches.length === 1) {
+                // Single match: navigate immediately
+                document.getElementById('task_id_input').value = data.matches[0].task_id;
+                document.getElementById('task_id_input').closest('form').submit();
+                return;
+            }
+            // Multiple matches: render a list of clickable links
+            const label = document.createElement('p');
+            label.style.cssText = 'margin: 0 0 0.3rem; font-size: 0.9em; color: #555;';
+            label.textContent = data.matches.length + ' matching rows (select one to inspect):';
+            resultsEl.appendChild(label);
+            const ul = document.createElement('ul');
+            ul.style.cssText = 'list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.2rem;';
+            data.matches.forEach(function(m) {
+                const li = document.createElement('li');
+                const a = document.createElement('a');
+                a.href = '/debug?task_id=' + m.task_id;
+                a.style.cssText = 'font-family: monospace; font-size: 0.9em;';
+                a.textContent = '[id=' + m.task_id + '] ' + m.arch + ' / ' + m.module;
+                li.appendChild(a);
+                ul.appendChild(li);
+            });
+            resultsEl.appendChild(ul);
         }
     })
     .catch(e => { errEl.textContent = 'Request failed: ' + e; });
@@ -99,6 +137,8 @@ document.getElementById('tune_lookup_btn').addEventListener('click', function() 
                 <th>kernel_name</th>
                 <th>hsaco_index</th>
                 <th>result</th>
+                <th>times (ms) med/p20/p80</th>
+                <th>adiffs</th>
                 <th>error</th>
                 <th>gpu_id</th>
                 <th>created_at</th>
@@ -106,12 +146,33 @@ document.getElementById('tune_lookup_btn').addEventListener('click', function() 
         </thead>
         <tbody>
             {% for r in debug_data.tuning_results %}
+            {% set rd = r.result_data %}
             <tr>
                 <td><code>{{ r.id }}</code></td>
                 <td><code>{{ r.kernel_name }}</code></td>
                 <td>{{ r.hsaco_index }}</td>
                 <td>{{ r.result }}</td>
-                <td><pre style="white-space: pre-wrap; font-size: 0.8em; margin: 0;">{{ r.error | tojson if r.error else '—' }}</pre></td>
+                <td>{% if rd and rd.times %}{{ "%.3f" | format(rd.times[0]) }} / {{ "%.3f" | format(rd.times[1]) }} / {{ "%.3f" | format(rd.times[2]) }}{% else %}—{% endif %}</td>
+                <td>{% if rd and rd.adiffs %}
+                    <table>
+                        {% for tname, tensors in rd.adiffs.items() %}
+                        <tr><td colspan="4"><b>{{ tname }}</b></td></tr>
+                        {% for tsor, vals in tensors.items() %}
+                        <tr>
+                            <td><code>{{ tsor }}</code></td>
+                            {% if vals is none %}
+                            <td colspan="3">N/A</td>
+                            {% else %}
+                            <td>tft={{ "%.4f" | format(vals[0]) }}</td>
+                            <td>{% if vals[1] is none %}NaN{% elif vals[1] | int == -217 %}early-reject{% else %}adiff={{ "%.4e" | format(vals[1]) }}{% endif %}</td>
+                            <td>ref={{ "%.4e" | format(vals[2]) }}</td>
+                            {% endif %}
+                        </tr>
+                        {% endfor %}
+                        {% endfor %}
+                    </table>
+                    {% else %}—{% endif %}</td>
+                <td><pre>{{ r.error | tojson if r.error else '—' }}</pre></td>
                 <td>{{ r.gpu_id if r.gpu_id is not none else '—' }}</td>
                 <td>{{ r.created_at }}</td>
             </tr>
@@ -176,14 +237,103 @@ document.getElementById('tune_lookup_btn').addEventListener('click', function() 
                 <td><code>{{ r.kernel_name }}</code></td>
                 <td><code>{{ r.test_case }}</code></td>
                 <td><code>{{ r.tensor_name }}</code></td>
-                <td>{{ "%.6f" | format(r.target_fudge_factor) if r.target_fudge_factor is not none else '—' }}</td>
-                <td>{{ "%.6f" | format(r.absolute_error) if r.absolute_error is not none else '—' }}</td>
+                <td>{{ "%.6f" | format(r.target_fudge_factor) if r.target_fudge_factor is not none else 'NaN' }}</td>
+                <td>{{ "%.6f" | format(r.absolute_error) if r.absolute_error is not none else 'NaN' }}</td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
     {% else %}
     <p>No most_accurate_tuning_results rows.</p>
+    {% endif %}
+</section>
+
+{# ── optune_results ──────────────────────────────────────────────────────── #}
+<section>
+    <h3>optune_results ({{ debug_data.optune_results | length }} rows)</h3>
+    {% if debug_data.optune_results %}
+    <table style="width: 100%;">
+        <thead>
+            <tr>
+                <th>id</th>
+                <th>op_name</th>
+                <th>backend_index</th>
+                <th>result</th>
+                <th>times (ms) med/p20/p80</th>
+                <th>adiffs</th>
+                <th>error</th>
+                <th>created_at</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in debug_data.optune_results %}
+            {% set rd = r.result_data %}
+            <tr>
+                <td><code>{{ r.id }}</code></td>
+                <td><code>{{ r.op_name }}</code></td>
+                <td>{{ r.backend_index }}</td>
+                <td>{{ r.result }}</td>
+                <td>{% if rd and rd.times %}{{ "%.3f" | format(rd.times[0]) }} / {{ "%.3f" | format(rd.times[1]) }} / {{ "%.3f" | format(rd.times[2]) }}{% else %}—{% endif %}</td>
+                <td>{% if rd and rd.adiffs %}
+                    <table style="font-size: 0.8em; border-collapse: collapse;">
+                        {% for tname, tensors in rd.adiffs.items() %}
+                        <tr><td colspan="4"><b>{{ tname }}</b></td></tr>
+                        {% for tsor, vals in tensors.items() %}
+                        <tr>
+                            <td style="padding-right: 4px;"><code>{{ tsor }}</code></td>
+                            {% if vals is none %}
+                            <td colspan="3">N/A</td>
+                            {% else %}
+                            <td>tft={{ "%.4f" | format(vals[0]) }}</td>
+                            <td>{% if vals[1] is none %}NaN{% elif vals[1] | int == -217 %}early-reject{% else %}adiff={{ "%.4e" | format(vals[1]) }}{% endif %}</td>
+                            <td>ref={{ "%.4e" | format(vals[2]) }}</td>
+                            {% endif %}
+                        </tr>
+                        {% endfor %}
+                        {% endfor %}
+                    </table>
+                    {% else %}—{% endif %}</td>
+                <td><pre style="white-space: pre-wrap; font-size: 0.8em; margin: 0;">{{ r.error | tojson if r.error else '—' }}</pre></td>
+                <td>{{ r.created_at }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>No optune_results rows.</p>
+    {% endif %}
+</section>
+
+{# ── best_optune_results ─────────────────────────────────────────────────── #}
+<section>
+    <h3>best_optune_results ({{ debug_data.best_optune_results | length }} rows)</h3>
+    {% if debug_data.best_optune_results %}
+    <table style="width: 100%;">
+        <thead>
+            <tr>
+                <th>op_name</th>
+                <th>backend_index</th>
+                <th>median_time</th>
+                <th>arch</th>
+                <th>computed_at</th>
+                <th>impl_desc</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in debug_data.best_optune_results %}
+            <tr>
+                <td><code>{{ r.op_name }}</code></td>
+                <td>{{ r.backend_index }}</td>
+                <td>{{ "%.6f" | format(r.median_time) if r.median_time is not none else '—' }}</td>
+                <td><code>{{ r.arch }}</code></td>
+                <td>{{ r.computed_at }}</td>
+                <td><pre>{{ r.impl_desc | tojson(indent=2) if r.impl_desc else '—' }}</pre></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>No best_optune_results rows.</p>
     {% endif %}
 </section>
 

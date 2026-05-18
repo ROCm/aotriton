@@ -17,11 +17,13 @@ set -euo pipefail
 
 WORKDIR=""
 SINGLE_ARCH=""
+SOURCE_DB=0
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --single_arch) SINGLE_ARCH="$2"; shift 2 ;;
-    *) WORKDIR="$1"; shift ;;
+    --source_db)   SOURCE_DB=1; shift ;;
+    *)             WORKDIR="$1"; shift ;;
   esac
 done
 
@@ -52,10 +54,12 @@ source "$(dirname "$CELERY_WORKER_PYTHON")/activate"
 
 DATABASE_ROOT="$WORKDIR/installed/database"
 
-if [ ! -d "$DATABASE_ROOT/amd" ]; then
-  echo "Error: no sharded database found at $DATABASE_ROOT/amd" >&2
-  echo "Run .tune/bin/decomposedb first." >&2
-  exit 1
+if [ "$SOURCE_DB" -eq 0 ]; then
+  if [ ! -d "$DATABASE_ROOT/amd" ]; then
+    echo "Error: no sharded database found at $DATABASE_ROOT/amd" >&2
+    echo "Run .tune/bin/decomposedb first, or pass --source_db to use the source-embedded database." >&2
+    exit 1
+  fi
 fi
 
 set -x
@@ -67,18 +71,30 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 AOTRITON_ROOT="$(realpath "$SCRIPT_DIR/../..")"
 
+# sqlite3 CLI may not be present inside CELERY_WORKER_IMAGE; use Python fallback
+. "$TUNE_ROOT/lib/sqlite3_compat.sh"
+
 # Collect architectures to build
 if [ -n "$SINGLE_ARCH" ]; then
-  if [ ! -d "$DATABASE_ROOT/amd/$SINGLE_ARCH" ]; then
+  if [ "$SOURCE_DB" -eq 0 ] && [ ! -d "$DATABASE_ROOT/amd/$SINGLE_ARCH" ]; then
     echo "Error: no sharded database found for arch '$SINGLE_ARCH' at $DATABASE_ROOT/amd/$SINGLE_ARCH" >&2
     exit 1
   fi
   ARCH_LIST=("$SINGLE_ARCH")
 else
-  mapfile -t ARCH_LIST < <(ls -1 "$DATABASE_ROOT/amd/")
-  if [ "${#ARCH_LIST[@]}" -eq 0 ]; then
-    echo "Error: no architectures found under $DATABASE_ROOT/amd/" >&2
-    exit 1
+  if [ "$SOURCE_DB" -eq 1 ]; then
+    # When using the source-embedded database, use registered workers' arch list
+    mapfile -t ARCH_LIST < <(sqlite3 "$WORKDIR/workers.db" "SELECT DISTINCT arch FROM workers" 2>/dev/null || true)
+    if [ "${#ARCH_LIST[@]}" -eq 0 ]; then
+      echo "Error: no architectures found in workers.db (needed for --source_db arch discovery)" >&2
+      exit 1
+    fi
+  else
+    mapfile -t ARCH_LIST < <(ls -1 "$DATABASE_ROOT/amd/")
+    if [ "${#ARCH_LIST[@]}" -eq 0 ]; then
+      echo "Error: no architectures found under $DATABASE_ROOT/amd/" >&2
+      exit 1
+    fi
   fi
 fi
 echo "Architectures to build: ${ARCH_LIST[*]}"
@@ -98,12 +114,17 @@ for ARCH in "${ARCH_LIST[@]}"; do
   echo "=== Building arch: $ARCH ==="
   cd "$BUILD_DIR"
 
+  CMAKE_DB_ARGS=()
+  if [ "$SOURCE_DB" -eq 0 ]; then
+    CMAKE_DB_ARGS+=(-DAOTRITON_TUNING_DATABASE_ROOT="$DATABASE_ROOT")
+  fi
+
   cmake "$AOTRITON_ROOT" \
       -DCMAKE_INSTALL_PREFIX="$INSTALL_DIR" \
       -DCMAKE_BUILD_TYPE=Release \
       -DAOTRITON_TARGET_ARCH="$ARCH" \
       -DAOTRITON_NAME_SUFFIX=test \
-      -DAOTRITON_TUNING_DATABASE_ROOT="$DATABASE_ROOT" \
+      "${CMAKE_DB_ARGS[@]}" \
       -DAOTRITON_USE_LOCAL_TRITON_WHEEL="$TRITON_WHEEL" \
       -G Ninja
 

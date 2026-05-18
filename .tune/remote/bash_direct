@@ -1,0 +1,81 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# Open an interactive bash shell inside the tuning Docker image.
+#
+# The workdir is detected automatically from the script's location:
+#   bash_direct lives at  <workdir>/aotriton.src/.tune/remote/bash_direct
+#   so workdir is         <workdir>/aotriton.src/../.. resolved
+#
+# Docker image and connection parameters are read from <workdir>/config.rc.
+# The container is removed automatically on exit (--rm).
+#
+# GPU architecture is detected automatically via rocm_agent_enumerator.
+#
+# PYTHONPATH defaults to the tuning library (installed/<arch>/lib).
+# Pass --op to use the testing library (installed/test/<arch>/lib) instead.
+#
+# Examples:
+#   .tune/remote/bash_direct
+#   .tune/remote/bash_direct --op
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+AOTRITON_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+WORKDIR="$(cd "$AOTRITON_ROOT/.." && pwd)"
+
+USE_OP=false
+for arg in "$@"; do
+    case "$arg" in
+        --op) USE_OP=true ;;
+        *) echo "Unknown argument: $arg" >&2; exit 1 ;;
+    esac
+done
+
+if [ ! -f "$WORKDIR/config.rc" ]; then
+    echo "Error: config.rc not found at $WORKDIR/config.rc" >&2
+    exit 1
+fi
+
+. "$WORKDIR/config.rc"
+
+if [ -z "${CELERY_WORKER_IMAGE:-}" ]; then
+    echo "Error: CELERY_WORKER_IMAGE not set in config.rc" >&2
+    exit 1
+fi
+
+ARCH=$(rocm_agent_enumerator | grep -v gfx000 | head -1)
+if [ -z "$ARCH" ]; then
+    echo "Error: could not detect arch via rocm_agent_enumerator" >&2
+    exit 1
+fi
+
+if $USE_OP; then
+    WORKER_PYTHONPATH="/wkdir/installed/test/$ARCH/lib"
+else
+    WORKER_PYTHONPATH="/wkdir/installed/$ARCH/lib"
+fi
+
+exec docker run --rm -it \
+    --device=/dev/kfd \
+    --device=/dev/dri \
+    --group-add video \
+    --cap-add=SYS_PTRACE \
+    --security-opt seccomp=unconfined \
+    --ipc=host \
+    --network=host \
+    -e "PYTHONPATH=$WORKER_PYTHONPATH" \
+    -e PYTHONPYCACHEPREFIX=/wkdir/run/pycache \
+    --mount type=bind,source="$(realpath "$WORKDIR")",target=/wkdir \
+    "$CELERY_WORKER_IMAGE" \
+    bash -c '
+        source /wkdir/config.rc
+        source "$(dirname "$CELERY_WORKER_PYTHON")/activate"
+        cd /wkdir/aotriton.src
+        source .ci/common-vars.sh
+        add_torch_ldconfig
+        export COLUMNS=400
+        exec bash
+    '

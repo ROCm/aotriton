@@ -10,7 +10,7 @@ looks up the matching task_queue row IDs in PostgreSQL, and inserts
 (pass, host, arch, module, entry_text, task_id) into broken_entries.db.
 
 Usage (called by retry_broken_entries, not directly):
-    <pytest2entry output> | broken_entries_to_db <workdir> <hostname> <arch> <pass_num>
+    <pytest2entry output> | broken_entries_to_db <workdir> <hostname> <arch> <pass_num> [--tuning_mode kernel|op]
 """
 
 import argparse
@@ -30,9 +30,12 @@ from psycopg.rows import dict_row
 from v3python.tune.flash.module import FlashEntry, FlashInputMetadata
 from v3python.tune.utils import get_db_connection_params
 
-# 'flash' matches v3python.tune.flash — the only tuning module currently supported.
+# Module name is selected by --tuning_mode at runtime (see main()).
 # TODO: extend when additional modules (e.g. gemm) are added to v3python.tune.*
-_MODULE = 'flash'
+_MODULE_BY_TUNING_MODE = {
+    'kernel': 'flash',
+    'op':     'flash_op',
+}
 
 # Copied from v3python/rules/flash/op_attn_fwd.py: AOTRITON_FLASH_BLOCK_DMODEL.
 # d_head values from pytest must be rounded up to the nearest compiled block size
@@ -122,14 +125,14 @@ def _entry_to_jsonb_filter(entry: FlashEntry) -> tuple[str, list]:
     return ' AND '.join(clauses), params
 
 
-def _fetch_task_id(conn, arch: str, entry: FlashEntry) -> int | None:
+def _fetch_task_id(conn, arch: str, entry: FlashEntry, module: str) -> int | None:
     entry_sql, entry_params = _entry_to_jsonb_filter(entry)
     sql = (
         f"SELECT id FROM task_queue "
-        f"WHERE task_config->>'arch' = %s AND {entry_sql} LIMIT 1"
+        f"WHERE task_config->>'arch' = %s AND module = %s AND {entry_sql} LIMIT 1"
     )
     with conn.cursor() as cur:
-        cur.execute(sql, [arch] + entry_params)
+        cur.execute(sql, [arch, module] + entry_params)
         row = cur.fetchone()
         return row['id'] if row else None
 
@@ -168,7 +171,15 @@ def main() -> None:
     parser.add_argument('hostname', help='Test host name (for SQLite record)')
     parser.add_argument('arch', help='GPU arch of test host (for SQLite record)')
     parser.add_argument('pass_num', type=int, help='Test pass number')
+    parser.add_argument(
+        '--tuning_mode',
+        choices=['kernel', 'op'],
+        default='kernel',
+        help='kernel: flash module; op: flash_op module',
+    )
     args = parser.parse_args()
+
+    module = _MODULE_BY_TUNING_MODE[args.tuning_mode]
 
     workdir = Path(args.workdir)
     db_path = workdir / 'scratch' / 'broken_entries.db'
@@ -185,7 +196,7 @@ def main() -> None:
 
     with psycopg.connect(**conn_params, row_factory=dict_row) as conn:
         for arch, entry, im in entries:
-            task_id = _fetch_task_id(conn, arch, entry)
+            task_id = _fetch_task_id(conn, arch, entry, module)
             if task_id is None:
                 print(
                     f'Warning: no task_queue row for {arch} {entry.as_text()}',
@@ -202,7 +213,7 @@ def main() -> None:
         for entry, im, task_id in resolved:
             db.execute(
                 'INSERT OR REPLACE INTO broken_entries VALUES (?,?,?,?,?,?)',
-                (args.pass_num, args.hostname, args.arch, _MODULE,
+                (args.pass_num, args.hostname, args.arch, module,
                  entry.as_text(), task_id),
             )
             db.execute(

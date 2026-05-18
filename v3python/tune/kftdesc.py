@@ -58,6 +58,33 @@ class KernelForTuneDescription(ABC):
     def direct_call(self, direct_inputs, extargs):
         pass
 
+    def check_early_reject_results(self, result: dict, err) -> dict | None:
+        """
+        Called by run_single_test after compare() to detect graceful backend rejection.
+
+        Returns:
+            None  — not an early reject; caller uses result from compare() unchanged.
+            dict  — result dict with adiff replaced by early-reject sentinel.
+
+        Default: always returns None.  Override in BackendForTuneDescription.
+        """
+        return None
+
     @abstractmethod
     def compare(self, outputs, refs) -> list[float]:    # L1 error
         pass
+
+
+class BackendForTuneDescription(KernelForTuneDescription):
+    """
+    Mixin for op-level kernels whose backends may gracefully reject unsupported inputs
+    by returning hipErrorPeerAccessUnsupported.  Subclass this to record the negative
+    sentinel adiff instead of NaN for those inputs.
+    """
+
+    def check_early_reject_results(self, result: dict, err) -> dict | None:
+        from pyaotriton import hipError_t
+        if err == hipError_t.hipErrorPeerAccessUnsupported:
+            from .gpu_utils import record_early_reject
+            return {name: record_early_reject(v) for name, v in result.items()}
+        return None

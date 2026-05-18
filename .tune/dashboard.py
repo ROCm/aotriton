@@ -29,6 +29,7 @@ if __name__ == '__main__':
     parser.add_argument('--port', type=int, default=None, help='Port to listen on (default: 8888, or 9999 in guest mode)')
     parser.add_argument('--host', default='0.0.0.0', help='Host to bind to (default: 0.0.0.0)')
     parser.add_argument('--guest', action='store_true', help='Read-only guest mode: no auth, plain HTTP, port 9999')
+    parser.add_argument('--demo', action='store_true', help='Demo mode: mTLS on port 8899, all mutating actions blocked')
     parser.add_argument('--refresh_interval', type=int, default=None,
                         help='Tuning Progress refresh interval in seconds (default: 120 for guest, 10 for admin)')
     args = parser.parse_args()
@@ -61,7 +62,12 @@ if __name__ == '__main__':
 
     else:
         from webui import create_app
-        port = args.port if args.port is not None else 8888
+
+        is_demo = args.demo
+        if is_demo:
+            port = args.port if args.port is not None else 8899
+        else:
+            port = args.port if args.port is not None else 8888
 
         # Check certificates exist
         secrets_dir = os.path.join(args.workdir, 'secrets')
@@ -76,21 +82,29 @@ if __name__ == '__main__':
             sys.exit(1)
 
         refresh_interval = args.refresh_interval if args.refresh_interval is not None else 10
-        app = create_app(args.workdir, refresh_interval=refresh_interval)
+        app = create_app(args.workdir, refresh_interval=refresh_interval, demo_mode=is_demo)
 
         server_cert = os.path.join(secrets_dir, 'server.crt')
         server_key = os.path.join(secrets_dir, 'server.key')
         ca_cert = os.path.join(secrets_dir, 'ca.crt')
 
         print(f"=" * 70)
-        print(f"AOTriton Tuning Dashboard")
+        if is_demo:
+            print(f"AOTriton Tuning Dashboard (DEMO MODE)")
+        else:
+            print(f"AOTriton Tuning Dashboard")
         print(f"=" * 70)
         print(f"URL:     https://{args.host}:{port}")
         print(f"Workdir: {args.workdir}")
         print(f"Certificates: {secrets_dir}")
         print(f"")
-        print(f"Client certificate required: {secrets_dir}/client.p12")
-        print(f"Import client.p12 into your browser to access the dashboard.")
+        if is_demo:
+            print(f"Demo certificate required: {secrets_dir}/demo.p12")
+            print(f"Import demo.p12 into your browser to access the dashboard.")
+            print(f"All mutating operations are BLOCKED in demo mode.")
+        else:
+            print(f"Client certificate required: {secrets_dir}/client.p12")
+            print(f"Import client.p12 into your browser to access the dashboard.")
         print(f"=" * 70)
 
         server = WSGIServer((args.host, port), app, numthreads=10)

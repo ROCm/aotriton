@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from 'partials/tuning_mode_section.html' import tuning_mode_radios %}
 
 {% block title %}Servers{% endblock %}
 
@@ -48,7 +49,12 @@
     <h3>Bake LUT</h3>
     <p>Convert raw PostgreSQL tuning results into the SQLite database used by the aotriton build process, then sanity-check the LUT.</p>
 
+    <h4>Tuning Mode</h4>
+    {{ tuning_mode_radios(tuning_mode, with_own_save_form=true,
+           description_extra='All Bake LUT actions below use the currently selected mode (not the saved value).') }}
+
     <button hx-post="/api/servers/bake-lut"
+            hx-vals='js:{mode: getTuningMode()}'
             hx-swap="none"
             hx-confirm="Bake LUT: run all five steps in sequence (rebuild accuracy table, compute best results, export, sancheck, decompose)? This may take several minutes."
             hx-indicator="#pipeline-spinner"
@@ -56,15 +62,14 @@
     <span id="pipeline-spinner" class="htmx-indicator">&#x23F3; Running...</span>
 
     <button hx-post="/api/servers/bake-lut"
-            hx-vals='{"incremental": "1"}'
+            hx-vals='js:{mode: getTuningMode(), incremental: "1"}'
             hx-swap="none"
             hx-confirm="Bake LUT (incremental): update accuracy table for retried tasks, then compute/export/sancheck/decompose?"
             hx-indicator="#pipeline-incremental-spinner"
             style="margin-left: 1rem;">Bake LUT (Incremental)</button>
     <span id="pipeline-incremental-spinner" class="htmx-indicator">&#x23F3; Running...</span>
 
-    <form id="bake-lut-fix-form" style="display: inline-flex; align-items: center; gap: 0.5rem; margin-left: 1rem;">
-        <input type="hidden" name="fix" value="1">
+    <div id="bake-lut-fix-inputs" style="display: inline-flex; align-items: center; gap: 0.5rem; margin-left: 1rem;">
         <select name="hostname" id="bake-lut-fix-host">
             <option value="__all__">(all hosts)</option>
             {% for h in hostnames %}
@@ -73,52 +78,58 @@
         </select>
         <label for="bake-lut-fix-pass" style="font-size: 0.9em;">Pass:</label>
         <input type="number" name="pass_num" id="bake-lut-fix-pass" value="0" min="0" style="width: 4rem;">
-        <button type="button"
-                hx-post="/api/servers/bake-lut"
-                hx-include="#bake-lut-fix-form"
+        <button hx-post="/api/servers/bake-lut"
+                hx-vals='js:{mode: getTuningMode(), fix: "1", hostname: document.getElementById("bake-lut-fix-host").value, pass_num: document.getElementById("bake-lut-fix-pass").value}'
                 hx-swap="none"
                 hx-confirm="Bake LUT (fix broken): update accuracy table from broken_entries.db for the selected host/pass, then compute/export/sancheck/decompose?"
                 hx-indicator="#pipeline-fix-spinner">Bake LUT (Fix Broken)</button>
         <span id="pipeline-fix-spinner" class="htmx-indicator">&#x23F3; Running...</span>
-    </form>
+    </div>
 
     <p style="font-size: 0.9em; color: gray; margin-top: 1rem; margin-bottom: 0.25rem;">Individual steps:</p>
 
     <div style="display: flex; flex-wrap: nowrap; align-items: center;">
         <button hx-post="/api/servers/recreate-materialized-view"
+                hx-vals='js:{mode: getTuningMode()}'
                 hx-swap="none"
-                hx-confirm="Rebuild most_accurate_tuning_results (DROP + CTAS)? Table will be unavailable briefly."
+                hx-confirm="Rebuild accuracy table (DROP + CTAS)? Table will be unavailable briefly."
                 style="background-color: #dc3545; color: white;">Rebuild Accuracy Table</button>
 
         <button hx-post="/api/servers/update-materialized-view"
+                hx-vals='js:{mode: getTuningMode()}'
                 hx-swap="none"
                 hx-confirm="Update accuracy table incrementally for task_ids from scratch/retry_task_ids.txt?">Update Accuracy Table</button>
 
         <button hx-post="/api/servers/compute-best-results"
+                hx-vals='js:{mode: getTuningMode()}'
                 hx-swap="none"
                 hx-confirm="Compute best_tuning_results from raw tuning results? This may take several minutes.">Compute Best Results</button>
 
         <button hx-post="/api/servers/export-best-results"
+                hx-vals='js:{mode: getTuningMode()}'
                 hx-swap="none"
-                hx-confirm="Export best results to centraldb.sqlite3? Existing file will be deleted.">Export Best Results</button>
+                hx-confirm="Export best results to {% if tuning_mode == 'op' %}op_database.sqlite3{% else %}centraldb.sqlite3{% endif %}? Existing file will be deleted.">Export Best Results</button>
 
         <button hx-post="/api/servers/sancheck"
+                hx-vals='js:{mode: getTuningMode()}'
                 hx-swap="none"
-                hx-confirm="Run LUT sanity check against scratch/centraldb.sqlite3? Requires export to have been run first.">Sancheck</button>
+                hx-confirm="Run LUT sanity check against scratch/{% if tuning_mode == 'op' %}op_database.sqlite3{% else %}centraldb.sqlite3{% endif %}? Requires export to have been run first.">Sancheck</button>
 
         <button hx-post="/api/servers/decomposedb"
+                hx-vals='js:{mode: getTuningMode()}'
                 hx-swap="none"
-                hx-confirm="Decompose scratch/centraldb.sqlite3 into installed/database/<arch>/<family>/<kernel>.sqlite3.tar.xz?">Decompose DB</button>
+                hx-confirm="{% if tuning_mode == 'op' %}Decompose scratch/op_database.sqlite3 into installed/database/op_database.sqlite3.tar.xz?{% else %}Decompose scratch/centraldb.sqlite3 into installed/database/<arch>/<family>/<kernel>.sqlite3.tar.xz?{% endif %}">Decompose DB</button>
     </div>
 
     <p style="font-size: 0.9em; color: gray; margin-top: 0.5rem;">
-        <strong>Rebuild Accuracy Table:</strong> DROP + CTAS <code>most_accurate_tuning_results</code> in parallel.<br>
-        <strong>Update Accuracy Table:</strong> Incrementally upserts rows for task_ids cached in <code>scratch/retry_task_ids.txt</code> by <code>retry_missing_entries</code>.<br>
+        <strong>Rebuild Accuracy Table:</strong> DROP + CTAS <code>{% if tuning_mode == 'op' %}most_accurate_optune_results{% else %}most_accurate_tuning_results{% endif %}</code> in parallel.<br>
+        <strong>Update Accuracy Table:</strong> Incrementally upserts rows for task_ids cached in <code>scratch/retry_task_ids.txt</code> into <code>{% if tuning_mode == 'op' %}most_accurate_optune_results{% else %}most_accurate_tuning_results{% endif %}</code> by <code>retry_missing_entries</code>.<br>
         <strong>Compute Best Results:</strong> Aggregates raw tuning results into best_tuning_results table.<br>
-        <strong>Export Best Results:</strong> Exports best_tuning_results to <code>scratch/centraldb.sqlite3</code>.<br>
-        <strong>Sancheck:</strong> Runs LUT sanity check against <code>scratch/centraldb.sqlite3</code> without triggering code generation.<br>
-        <strong>Decompose DB:</strong> Partitions <code>scratch/centraldb.sqlite3</code> into <code>installed/database/amd/&lt;arch&gt;/&lt;family&gt;/&lt;kernel&gt;.sqlite3.tar.xz</code>.
+        <strong>Export Best Results:</strong> Exports {% if tuning_mode == 'op' %}best_optune_results{% else %}best_tuning_results{% endif %} to <code>scratch/{% if tuning_mode == 'op' %}op_database.sqlite3{% else %}centraldb.sqlite3{% endif %}</code>.<br>
+        <strong>Sancheck:</strong> Runs LUT sanity check against <code>scratch/{% if tuning_mode == 'op' %}op_database.sqlite3{% else %}centraldb.sqlite3{% endif %}</code> without triggering code generation.<br>
+        <strong>Decompose DB:</strong> {% if tuning_mode == 'op' %}Compresses <code>scratch/op_database.sqlite3</code> into <code>installed/database/op_database.sqlite3.tar.xz</code>.{% else %}Partitions <code>scratch/centraldb.sqlite3</code> into <code>installed/database/amd/&lt;arch&gt;/&lt;family&gt;/&lt;kernel&gt;.sqlite3.tar.xz</code>.{% endif %}
     </p>
+
 </section>
 
 <section>

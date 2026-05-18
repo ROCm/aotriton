@@ -28,8 +28,12 @@ class OptuneCodeGenerator(BaseTuneCodeGenerator):
         iface = self._f.meta_object
         if self._df is None or self._df.empty:
             self._lut_tensor, self._backend_names, self._binning_dict = iface.translate_empty_dataframe(f)
+            self.lut_stats: dict[int, int] = {}
         else:
             self._lut_tensor, self._backend_names, self._binning_dict = iface.translate_dataframe(f, self._df)
+            import numpy as np
+            values, counts = np.unique(self._lut_tensor, return_counts=True)
+            self.lut_stats: dict[int, int] = {int(v): int(c) for v, c in zip(values, counts)}
 
     @property
     def is_trivial(self):

@@ -53,6 +53,30 @@ CELERY_WORKER_IMAGE="$3"
 shift 3
 EXTRA_ARGS=("$@")
 
+# Parse --tuning_mode from EXTRA_ARGS; strip it, set WORKER_PYTHONPATH, re-append explicitly.
+TUNING_MODE="kernel"
+REMAINING_ARGS=()
+set -- "${EXTRA_ARGS[@]}"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --tuning_mode)
+      TUNING_MODE="$2"
+      shift 2
+      ;;
+    *)
+      REMAINING_ARGS+=("$1")
+      shift
+      ;;
+  esac
+done
+EXTRA_ARGS=("${REMAINING_ARGS[@]}" --tuning_mode "$TUNING_MODE")
+
+if [ "$TUNING_MODE" = "op" ]; then
+  WORKER_PYTHONPATH="/wkdir/installed/test/$ARCH/lib"
+else
+  WORKER_PYTHONPATH="/wkdir/installed/$ARCH/lib"
+fi
+
 RUNFILE="$WORKER_WORKDIR/run/worker.containerid"
 
 mkdir -p "$WORKER_WORKDIR/run"
@@ -72,7 +96,7 @@ WORKER_CONTAINER_ID=$(docker run -d \
   --security-opt seccomp=unconfined \
   --ipc=host \
   --network=host \
-  -e PYTHONPATH=/wkdir/installed/$ARCH/lib \
+  -e PYTHONPATH=$WORKER_PYTHONPATH \
   -e PYTHONPYCACHEPREFIX=/wkdir/run/pycache \
   --mount type=bind,source=$(realpath $WORKER_WORKDIR),target=/wkdir \
   "$CELERY_WORKER_IMAGE" \

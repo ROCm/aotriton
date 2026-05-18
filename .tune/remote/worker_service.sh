@@ -51,6 +51,7 @@ Options:
     --ncpu <n>                    Number of CPU workers to start (default: 4)
     --graceful                    (stop only) Stop PG readers first, wait for in-flight
                                   tasks to drain, then stop remaining workers
+    --tuning_mode kernel|op       Tuning mode passed to PG reader workers (default: kernel)
 
 Components started:
     - 1 broker (message router)
@@ -102,6 +103,7 @@ NODE_HOSTNAME=""
 SESSION_NAME=""
 NUM_READERS=4
 NUM_CPU=4
+TUNING_MODE="kernel"
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -141,6 +143,11 @@ while [ $# -gt 0 ]; do
             ;;
         --graceful)
             GRACEFUL=true
+            shift
+            ;;
+        --tuning_mode)
+            shift
+            TUNING_MODE="$1"
             shift
             ;;
         *)
@@ -306,7 +313,7 @@ start_process_group() {
                 module_args=("--gpu_id" "$id")
                 ;;
             pg)
-                module_args=("--worker_id" "$name" "--arch" "$ARCH" "--workdir" "$WORKDIR")
+                module_args=("--worker_id" "$name" "--arch" "$ARCH" "--workdir" "$WORKDIR" "--tuning_mode" "$TUNING_MODE")
                 ;;
             cpu)
                 module_args=("--worker_id" "$name" "--workdir" "$WORKDIR")

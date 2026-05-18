@@ -15,22 +15,28 @@
 #   update_materialized_view <workdir>
 #   update_materialized_view <workdir> --fix <pass>
 #   update_materialized_view <workdir> --fix <hostname>:<pass>
+#   update_materialized_view <workdir> --tuning_mode kernel|op
 
 set -euo pipefail
 
 if [ "$#" -lt 1 ]; then
-    echo "Usage: $0 <workdir> [--fix [hostname:]<pass>]" >&2
+    echo "Usage: $0 <workdir> [--tuning_mode kernel|op] [--fix [hostname:]<pass>]" >&2
     exit 1
 fi
 
 WORKDIR="$1"
 shift
 FIX_SPEC=""
+TUNING_MODE="kernel"
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --fix)
             FIX_SPEC="$2"
+            shift 2
+            ;;
+        --tuning_mode)
+            TUNING_MODE="$2"
             shift 2
             ;;
         *)
@@ -64,7 +70,7 @@ if [ -n "$FIX_SPEC" ]; then
     # shellcheck disable=SC2086
     "$SCRIPT_DIR/query_broken_entries" "$WORKDIR" --pass "$FIX_PASS" $HOST_ARG \
     | PYTHONPATH="$REPO_ROOT" ~/venv/bin/python -m v3python.tune.pq.populate_most_accurate \
-        "$WORKDIR" --task_ids_file -
+        "$WORKDIR" --task_ids_file - --tuning_mode "$TUNING_MODE"
 else
     TASK_IDS_FILE="$WORKDIR/scratch/retry_task_ids.txt"
 
@@ -78,5 +84,5 @@ else
     echo "Task IDs file: $TASK_IDS_FILE"
 
     PYTHONPATH="$REPO_ROOT" ~/venv/bin/python -m v3python.tune.pq.populate_most_accurate \
-        "$WORKDIR" --task_ids_file "$TASK_IDS_FILE"
+        "$WORKDIR" --task_ids_file "$TASK_IDS_FILE" --tuning_mode "$TUNING_MODE"
 fi

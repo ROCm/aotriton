@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from 'partials/tuning_mode_section.html' import tuning_mode_radios %}
 
 {% block title %}Workers{% endblock %}
 
@@ -32,6 +33,12 @@
 </section>
 
 <section>
+    <h3>Tuning Mode</h3>
+    {{ tuning_mode_radios(tuning_mode, with_own_save_form=true,
+           description_extra='This sets the default selection in the Bulk Actions section below.') }}
+</section>
+
+<section>
     <h3>Deployment</h3>
     <div id="git-status">
         {% include 'partials/git_status.html' %}
@@ -47,14 +54,21 @@
 
 <section>
     <h3>Bulk Actions</h3>
-    <button hx-post="/api/workers/all/start" hx-swap="none">Start All</button>
+    <button hx-post="/api/workers/all/start"
+            hx-swap="none"
+            hx-vals='js:{tuning_mode: getTuningMode()}'>Start All</button>
     <button hx-post="/api/workers/all/stop" hx-swap="none">Stop All</button>
-    <button hx-post="/api/workers/all/restart" hx-swap="none">Restart All</button>
-    <button hx-post="/api/workers/all/stop-start" hx-swap="none">Stop All & Start All</button>
+    <button hx-post="/api/workers/all/restart"
+            hx-swap="none"
+            hx-vals='js:{tuning_mode: getTuningMode()}'>Restart All</button>
+    <button hx-post="/api/workers/all/stop-start"
+            hx-swap="none"
+            hx-vals='js:{tuning_mode: getTuningMode()}'>Stop All & Start All</button>
     <button hx-post="/api/deploy/workdir"
             hx-swap="none"
-            hx-indicator="#deploy-all-spinner">Deploy to All Workers</button>
-    <span id="deploy-all-spinner" class="htmx-indicator">⏳ Deploying...</span>
+            hx-indicator="#deploy-all-spinner"
+            hx-vals='js:{tuning_mode: getTuningMode()}'>Deploy to All Workers</button>
+    <span id="deploy-all-spinner" class="htmx-indicator">Deploying...</span>
     <br>
     <button hx-post="/api/builds/images"
             hx-swap="none"
@@ -249,6 +263,7 @@
                     <br style="margin: 0.2rem 0;">
                     <button hx-post="/api/deploy/{{ worker.hostname }}"
                             hx-swap="none"
+                            hx-vals='js:{tuning_mode: getTuningMode()}'
                             style="font-size: 0.8em; padding: 0.3rem 0.5rem; background-color: #17a2b8; color: white;">Deploy</button>
                     <button hx-post="/api/workers/{{ worker.hostname }}/build-image"
                             hx-swap="none"
@@ -335,7 +350,7 @@ function getSelectedGPUs(hostname) {
     return selectedGPUs;
 }
 
-// Send worker action with GPU selection
+// Send worker action with GPU selection and tuning mode
 function sendWorkerAction(hostname, url) {
     const multiGpu = getSelectedGPUs(hostname);
 
@@ -344,7 +359,7 @@ function sendWorkerAction(hostname, url) {
         headers: {
             'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ multi_gpu: multiGpu })
+        body: JSON.stringify({ multi_gpu: multiGpu, tuning_mode: getTuningMode() })
     })
     .then(response => {
         if (!response.ok) {

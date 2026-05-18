@@ -109,7 +109,7 @@ SMALL_VRAM = bool(int(os.getenv('SMALL_VRAM', default='0')))
 
 DTYPES = [torch.float16, torch.bfloat16, torch.float32]
 
-if BWD_IMPL == 0:
+if BWD_IMPL is None or BWD_IMPL == 0:
     POT_HEADDIMS = [16, 32, 64, 128, 256, 512]
     NPOT_HEADDIMS = [48, 80, 96, 160, 192, 224]
     M8_HEADDIMS = [8, 24, 40, 56, 72, 88, 96, 120, 152, 184, 216, 248, 408]
@@ -224,7 +224,7 @@ def _get_BWDOP_id():
         return 'Fused'
     if BWD_IMPL == 0:
         return 'Split'
-    if V3_API:
+    if V3_API and BWD_IMPL is None:
         return 'V3'
     assert False, f'Unsupported BWD_IMPL {BWD_IMPL}'
 
@@ -281,8 +281,11 @@ def _do_test_op_bwd(request, args, device_str='cuda'):
             pytest.skip("GQA is not exposed in AITER ASM backend.")
     if causal and bias_type is not None:
         pytest.skip("_scaled_dot_product_attention: Explicit attn_mask should not be set when is_causal=True")
-    if SMALL_VRAM and seqlen_q * seqlen_k * HDIM_MAX > 4096 * 8192 * 256:
+    if SMALL_VRAM and seqlen_q * seqlen_k * HDIM_MAX * dtype.itemsize > 4096 * 8192 * 256 * 2:
         pytest.skip("Skip large tests (qkd > 4096 * 8192 * 256) due to low VRAM.")
+    if seqlen_q * seqlen_k * HDIM_MAX * dtype.itemsize > 2048 * 2048 * 64 * 2:
+        gc.collect()
+        torch.cuda.empty_cache()
     if 'gfx11' in torch.cuda.get_device_properties(0).gcnArchName:
         if HDIM_MAX > 256:
             pytest.skip("Skip hdim > 256 on gfx11 arch due to register pressure.")
@@ -369,6 +372,9 @@ def core_test_op_bwd(request, args, device : int | None = None):
         if qkh > 2048 * 2048 * 64:
             gc.collect()
             torch.cuda.empty_cache()
+    except torch.AcceleratorError as e:
+        print(f'AcceleratorError: {e}')
+        exit_pytest()
     except RuntimeError as e:
         if hipGetLastError() == hipError_t.hipErrorIllegalAddress:
             exit_pytest()

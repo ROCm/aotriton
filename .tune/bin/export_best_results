@@ -2,13 +2,15 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-# Export best_tuning_results from PostgreSQL to a centralized SQLite database.
+# Export best_tuning_results / best_optune_results from PostgreSQL to SQLite.
 # Reads connection parameters from <workdir>/config.rc.
 #
 # Usage:
-#   export_best_results <workdir> [output.sqlite3] [options...]
+#   export_best_results <workdir> [output.sqlite3] [--tuning_mode kernel|op] [options...]
 #
-# output.sqlite3 defaults to <workdir>/scratch/centraldb.sqlite3
+# output.sqlite3 defaults to:
+#   kernel mode: <workdir>/scratch/centraldb.sqlite3
+#   op mode:     <workdir>/scratch/op_database.sqlite3
 #
 # All options after <output.sqlite3> are passed directly to:
 #   python3 -m v3python.tune.pq.export_best_results \
@@ -33,22 +35,35 @@
 # Examples:
 #   .tune/bin/export_best_results ~/wkdir.v3.5
 #   .tune/bin/export_best_results ~/wkdir.v3.5 /tmp/tuning_database.sqlite3
+#   .tune/bin/export_best_results ~/wkdir.v3.5 --tuning_mode op
 #   .tune/bin/export_best_results ~/wkdir.v3.5 --help
 
 set -euo pipefail
 
 if [ "$#" -lt 1 ]; then
-    echo "Usage: $0 <workdir> [output.sqlite3] [options...]" >&2
+    echo "Usage: $0 <workdir> [output.sqlite3] [--tuning_mode kernel|op] [options...]" >&2
     exit 1
 fi
 
 WORKDIR="$1"
 shift
+TUNING_MODE="kernel"
 
-# Default output: <workdir>/scratch/centraldb.sqlite3
+# Peek ahead to extract --tuning_mode before deciding the default output path.
+for arg in "$@"; do
+    if [ "$arg" = "op" ] && [ "${prev_arg:-}" = "--tuning_mode" ]; then
+        TUNING_MODE="op"
+    fi
+    prev_arg="$arg"
+done
+
+# Default output depends on tuning mode.
 if [ "$#" -gt 0 ] && [[ "$1" != --* ]]; then
     OUTPUT="$1"
     shift
+elif [ "$TUNING_MODE" = "op" ]; then
+    OUTPUT="$WORKDIR/scratch/op_database.sqlite3"
+    mkdir -p "$WORKDIR/scratch"
 else
     OUTPUT="$WORKDIR/scratch/centraldb.sqlite3"
     mkdir -p "$WORKDIR/scratch"

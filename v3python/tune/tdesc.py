@@ -1,6 +1,8 @@
 # Copyright © 2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
+from __future__ import annotations
+
 import json
 import itertools
 from abc import ABC, abstractmethod
@@ -10,10 +12,26 @@ from dacite import from_dict
 from dataclasses import asdict, fields
 
 '''
-A dual-purpose class
+A dual-purpose class for task dispatch and GPU worker execution.
 
-On Celery Controller: generate entries for celery tasks
-On Celery Worker: actual perform tasks
+IMPORTANT — lazy kernel initialization rule for get_kernel():
+    Subclasses MUST NOT import kernel modules or instantiate kernel objects at
+    module level or in __init__. Kernel modules typically import torch (via
+    reference.py), which is unavailable outside GPU containers.
+    dispatch_tasks.py imports every TuneDesc subclass at startup (to build
+    argparse subparsers), so a top-level torch import breaks dispatch on
+    machines without torch.
+
+    Always initialize kernel objects lazily inside get_impl() on first call:
+
+        class MyModule(TuningDescription):
+            _kernel_dict = None
+
+            def get_impl(self, name):
+                if self._kernel_dict is None:
+                    from .kernels import KernelA, KernelB  # lazy import
+                    self._kernel_dict = {'a': KernelA(), 'b': KernelB()}
+                return self._kernel_dict[name]
 '''
 class TuningDescription(ABC):
     @property
@@ -129,18 +147,44 @@ class TuningDescription(ABC):
         return self.generate_entries_from_choices()
 
     @abstractmethod
-    def list_kernels(self, entry) -> list[str]:
+    def list_impls(self, entry) -> list[str]:
         pass
 
-    def probe_backends(self, root: Path, which_kernel: str) -> list[dict]:
+    @abstractmethod
+    def get_impl(self, name: str | 'ImplSelector'):
+        """Return the impl object for the given name or selector.
+        Accepts either a plain str name or an ImplSelector instance.
+        Subclasses extract the name from the selector's appropriate field
+        (e.g., kernel_name for FlashKernelSelector, op_name for FlashOpBackendSelector).
+        MUST use lazy initialization (import torch-dependent modules inside
+        this method, not at module level).
+        """
+        pass
+
+    @abstractmethod
+    def probe_impl_desc(self, kernel, args) -> dict:
+        """Extract impl_desc from a probing run's extargs.
+
+        Called by run_single_benchmark after kernel.direct_call(direct_inputs, args)
+        with probe=True. Returns a JSON-serialisable dict that uniquely identifies
+        the chosen implementation (e.g., {psels, copts} for HSACO kernels,
+        {backend_index} for op backends).
+
+        Args:
+            kernel: the impl object returned by get_impl()
+            args: the extargs object returned by create_extargs(probe=True)
+        """
+        pass
+
+    def probe_backends(self, root: Path, which_impl: str) -> list[dict]:
         entry, tests = self.get_entry(root, and_tests=True)
         test = tests[0]
         im = self.INPUT_METADATA.from_dict(test["input_metadata"])
         pt = Path(test["pt_file"])
-        return self._do_probe_backends(entry, im, which_kernel, pt)
+        return self._do_probe_backends(entry, im, which_impl, pt)
 
     @abstractmethod
-    def _do_probe_backends(self, entry, im, which_kernel: str, pt: Path) -> list[dict]:
+    def _do_probe_backends(self, entry, im, which_impl: str, pt: Path) -> list[dict]:
         pass
 
     @abstractmethod
@@ -172,14 +216,30 @@ class TuningDescription(ABC):
     def run_single_test(self,
                         input_metadata,
                         pt: Path,
-                        which_kernel) -> list[float]:  # L1 error
+                        which_impl) -> list[float]:  # L1 error
+        """
+        Args:
+            which_impl: a FlashKernelSelector | FlashOpBackendSelector instance.
+                Subclasses rename this parameter to reflect their granularity:
+                  which_kernel  — kernel-level tuning (flash: selects HSACO variant)
+                  which_backend — backend-level tuning (flash_op: selects backend index)
+        Returns:
+            L1 error per test case.
+        """
         pass
 
     @abstractmethod
     def run_single_benchmark(self,
                              input_metadata,
                              pt: Path,
-                             which_kernel) -> tuple[dict, list[float]]:
+                             which_impl) -> tuple[dict, list[float]]:
+        """
+        Args:
+            which_impl: a FlashKernelSelector | FlashOpBackendSelector instance.
+        Returns:
+            (impl_desc, times) where impl_desc is a JSON-serialisable dict
+            and times is [median, p20, p80] latencies in ms.
+        """
         pass
 
     def get_entry(self, root: Path, *, and_tests=False):
@@ -191,7 +251,7 @@ class TuningDescription(ABC):
         else:
             return entry
 
-    def benchmark(self, root: Path, which_kernel: 'KernelSelector'):
+    def benchmark(self, root: Path, which_impl: 'ImplSelector'):
         """
         Output:
             entry: ENTRY_CLASS, describes an entry in tuning table
@@ -206,8 +266,8 @@ class TuningDescription(ABC):
                 im = self.INPUT_METADATA.from_dict(t['input_metadata'])
                 pt = t['pt_file']
                 yield t['test_name'], im, pt
-        adiffs = {tname : self.run_single_test(im, pt, which_kernel) for tname, im, pt in gen()}
+        adiffs = {tname : self.run_single_test(im, pt, which_impl) for tname, im, pt in gen()}
         for _, bim, pt in gen():
-            impl_desc, times = self.run_single_benchmark(bim, pt, which_kernel)
+            impl_desc, times = self.run_single_benchmark(bim, pt, which_impl)
             break
         return entry, impl_desc, adiffs, times, bim

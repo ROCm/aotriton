@@ -28,6 +28,7 @@ PASS_NUM=""
 TEST_LEVEL=""
 BACKEND=""
 VARIANT=""
+ADIFF=0
 FOLLOW=0
 
 while [[ $# -gt 0 ]]; do
@@ -40,6 +41,7 @@ while [[ $# -gt 0 ]]; do
     --test_level)       TEST_LEVEL="$2";       shift 2 ;;
     --backend)          BACKEND="$2";          shift 2 ;;
     --variant)          VARIANT="$2";          shift 2 ;;
+    --adiff)            ADIFF=1;               shift ;;
     --follow)           FOLLOW=1;              shift ;;
     *) echo "Unknown argument: $1" >&2; exit 1 ;;
   esac
@@ -78,7 +80,11 @@ REMOTE_WORKDIR="${WORKDIR_OVERRIDE:-$DEFAULT_WORKDIR}"
 
 # Per-arch test install: installed/test/<arch>/lib
 LIBDIR="/wkdir/installed/test/$ARCH/lib"
-REMOTE_SCRIPT="/wkdir/aotriton.src/.ci/run-test.sh"
+if [ "$ADIFF" -eq 1 ]; then
+  REMOTE_SCRIPT="/wkdir/aotriton.src/.ci/run-ci-test.sh"
+else
+  REMOTE_SCRIPT="/wkdir/aotriton.src/.ci/run-test.sh"
+fi
 BASE_OUTPUT_DIR="/wkdir/run/tests"
 if [ "${VARIANT:-}" = "partial" ] || [ "${VARIANT:-}" = "partial_adiffs" ]; then
   OUTPUT_DIR="$BASE_OUTPUT_DIR/partial"
@@ -124,6 +130,7 @@ jobid=$(tsp docker run --rm \
   --security-opt seccomp=unconfined \
   --ipc=host \
   --network=host \
+  -e PYTHONPYCACHEPREFIX=/wkdir/run/pycache \
   -e AOTRITON_TEST_LIBDIR="$LIBDIR" \
   -e OUTPUT_DIR="$OUTPUT_DIR" \
   ${PARTIAL_INFO_DIR:+-e PARTIAL_INFO_DIR="$PARTIAL_INFO_DIR"} \

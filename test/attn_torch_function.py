@@ -29,12 +29,27 @@ from dataclasses import dataclass
 from typing import Callable
 
 FWD_IMPL = int(os.getenv('FWD_IMPL', default='0'))
-BWD_IMPL = int(os.getenv('BWD_IMPL', default='0'))
+
+# BWD_IMPL selects which backward kernel implementation to use:
+#   unset / None : V3 auto-selection (FORCE_BWD_BACKEND=False, extargs=None)
+#   0            : split bwd — separate dkdv + dq kernels (attn_bwd)
+#   1            : fused bwd — single fused kernel (attn_bwd_fused)
+#   2            : AITER ASM backend — restricts head dims, no dropout, no GQA, fp16/bf16 only
+#
+# Test parameter restrictions by BWD_IMPL value (see _core_test_backward.py):
+#   None/0 : full head-dim coverage (POT up to 512, NPOT up to 224, M8 up to 408); all dtypes
+#   1      : POT up to 256, M8 up to 216; all dtypes
+#   2      : POT up to 128, NPOT up to 192, M8 up to 184; fp16/bf16 only; no GQA; no dropout
+#
+# Note: triton_tester.py asserts BWD_IMPL is unset, then forces BWD_IMPL='0' before importing
+# test modules — so it always runs the split-bwd path.
+BWD_IMPL = os.getenv('BWD_IMPL', default=None)
+if BWD_IMPL is not None:
+    BWD_IMPL = int(BWD_IMPL)
 V3_API = bool(int(os.getenv('V3_API', default='1')))
-if BWD_IMPL == 2:
-    PROBE_UNSUPPORTED = bool(int(os.getenv('PROBE_UNSUPPORTED', default='0')))
-else:
-    PROBE_UNSUPPORTED = False
+# PROBE_UNSUPPORTED is independent of BWD_IMPL: enables NotImplementedError on
+# hipErrorPeerAccessUnsupported so callers can skip unsupported configurations.
+PROBE_UNSUPPORTED = bool(int(os.getenv('PROBE_UNSUPPORTED', default='0')))
 
 if BWD_IMPL == 2 or V3_API:
     from aotriton_flash import lazy_dq_acc, lazy_delta
@@ -45,6 +60,7 @@ else:
         return torch.empty_like(L)
 
 FORCE_FWD_BACKEND = V3_API and (os.getenv('FWD_IMPL', default=None) is not None)
+# When FORCE_BWD_BACKEND is True, backward_v3 sets extargs.force_backend_index = BWD_IMPL
 FORCE_BWD_BACKEND = V3_API and (os.getenv('BWD_IMPL', default=None) is not None)
 
 def empty_handler():
@@ -215,7 +231,7 @@ class _attention(torch.autograd.Function):
         # if q.shape[-1] <= 32:
         # do = do.contiguous()
         dq = torch.empty_like(q)
-        dq_acc = lazy_dq_acc(q)
+        dq_acc = lazy_dq_acc(q)  # dq_acc only supports BHSD; lazy_dq_acc always produces BHSD to satisfy this.
         dk = torch.empty_like(k)
         dv = torch.empty_like(v)
         db = torch.empty_like(b) if b is not None else None

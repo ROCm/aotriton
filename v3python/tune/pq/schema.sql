@@ -55,6 +55,24 @@ CREATE INDEX IF NOT EXISTS idx_tuning_results_task
 CREATE INDEX IF NOT EXISTS idx_tuning_results_kernel
     ON tuning_results (kernel_name, result);
 
+CREATE TABLE IF NOT EXISTS optune_results (
+    id BIGSERIAL PRIMARY KEY,
+    task_id BIGINT NOT NULL,
+    op_name TEXT NOT NULL,
+    backend_index INT NOT NULL,
+    result TEXT NOT NULL,  -- OK/NotOK/crash/ERROR
+    result_data JSONB,
+    error JSONB,
+    gpu_id INT,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_optune_results_task
+    ON optune_results (task_id, op_name, backend_index);
+
+CREATE INDEX IF NOT EXISTS idx_optune_results_backend
+    ON optune_results (op_name, result);
+
 -- Utility views for monitoring
 CREATE OR REPLACE VIEW queue_progress AS
 SELECT
@@ -67,6 +85,36 @@ SELECT
     COUNT(*) as total,
     ROUND(100.0 * COUNT(*) FILTER (WHERE status = 'completed') / NULLIF(COUNT(*), 0), 2) as pct_complete
 FROM task_queue
+GROUP BY arch
+ORDER BY arch;
+
+CREATE OR REPLACE VIEW kernel_queue_progress AS
+SELECT
+    arch,
+    COUNT(*) FILTER (WHERE status = 'pending') as pending,
+    COUNT(*) FILTER (WHERE status = 'running') as running,
+    COUNT(*) FILTER (WHERE status = 'completed') as completed,
+    COUNT(*) FILTER (WHERE status = 'failed') as failed,
+    COUNT(*) FILTER (WHERE status = 'cancelled') as cancelled,
+    COUNT(*) as total,
+    ROUND(100.0 * COUNT(*) FILTER (WHERE status = 'completed') / NULLIF(COUNT(*), 0), 2) as pct_complete
+FROM task_queue
+WHERE module NOT LIKE '%_op'
+GROUP BY arch
+ORDER BY arch;
+
+CREATE OR REPLACE VIEW op_queue_progress AS
+SELECT
+    arch,
+    COUNT(*) FILTER (WHERE status = 'pending') as pending,
+    COUNT(*) FILTER (WHERE status = 'running') as running,
+    COUNT(*) FILTER (WHERE status = 'completed') as completed,
+    COUNT(*) FILTER (WHERE status = 'failed') as failed,
+    COUNT(*) FILTER (WHERE status = 'cancelled') as cancelled,
+    COUNT(*) as total,
+    ROUND(100.0 * COUNT(*) FILTER (WHERE status = 'completed') / NULLIF(COUNT(*), 0), 2) as pct_complete
+FROM task_queue
+WHERE module LIKE '%_op'
 GROUP BY arch
 ORDER BY arch;
 
@@ -185,6 +233,23 @@ CREATE TABLE IF NOT EXISTS best_tuning_results (
 
 CREATE INDEX IF NOT EXISTS idx_best_tuning_results_lookup
     ON best_tuning_results (arch, kernel_name, task_id);
+
+-- best_optune_results: plain table populated by compute_best_results.py in op mode.
+-- For each (task_id, op_name): fastest backend_index meeting the accuracy threshold.
+CREATE TABLE IF NOT EXISTS best_optune_results (
+    task_id      BIGINT    NOT NULL,
+    arch         TEXT      NOT NULL,
+    task_config  JSONB     NOT NULL,
+    op_name      TEXT      NOT NULL,
+    backend_index INT      NOT NULL,
+    median_time  FLOAT     NOT NULL,
+    impl_desc    JSONB,
+    computed_at  TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY (task_id, op_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_best_optune_results_lookup
+    ON best_optune_results (arch, op_name, task_id);
 
 -- Extra unit tests associated with a task, populated by reset_broken_to_pending
 -- when re-queuing entries that failed pytest correctness checks.

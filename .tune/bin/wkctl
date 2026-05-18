@@ -20,8 +20,9 @@ TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Parse arguments
 parse_host_filter "$@"
 
-# Remove --host options from args
+# Remove --host options from args; extract --tuning_mode
 ARGS=()
+TUNING_MODE="kernel"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --host)
@@ -29,6 +30,10 @@ while [[ $# -gt 0 ]]; do
             while [[ $# -gt 0 ]] && [[ ! "$1" =~ ^-- ]]; do
                 shift
             done
+            ;;
+        --tuning_mode)
+            TUNING_MODE="$2"
+            shift 2
             ;;
         *)
             ARGS+=("$1")
@@ -64,7 +69,7 @@ fi
 load_config "$WORKDIR"
 
 # Get workers and iterate
-mapfile -t WORKERS < <(get_workers "$WORKDIR")
+mapfile -t WORKERS < <(get_workers "$WORKDIR" Tuner)
 
 COUNT=0
 for worker in "${WORKERS[@]}"; do
@@ -103,7 +108,7 @@ for worker in "${WORKERS[@]}"; do
 
     case "$ACTION" in
         start)
-            "$TUNE_ROOT/single/start_worker.sh" "$WORKDIR" "$hostname" "${MULTI_GPU_ARGS[@]}"
+            "$TUNE_ROOT/single/start_worker.sh" "$WORKDIR" "$hostname" "${MULTI_GPU_ARGS[@]}" -- --tuning_mode "$TUNING_MODE"
             ;;
         stop)
             "$TUNE_ROOT/single/stop_worker.sh" "$WORKDIR" "$hostname"
@@ -112,7 +117,7 @@ for worker in "${WORKERS[@]}"; do
             "$TUNE_ROOT/single/stop_worker.sh" "$WORKDIR" "$hostname" --graceful
             ;;
         restart)
-            "$TUNE_ROOT/single/restart_worker.sh" "$WORKDIR" "$hostname" "${MULTI_GPU_ARGS[@]}"
+            "$TUNE_ROOT/single/restart_worker.sh" "$WORKDIR" "$hostname" "${MULTI_GPU_ARGS[@]}" -- --tuning_mode "$TUNING_MODE"
             ;;
         stopwait)
             "$TUNE_ROOT/single/stopwait_worker.sh" "$WORKDIR" "$hostname"

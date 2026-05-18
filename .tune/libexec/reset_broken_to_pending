@@ -10,7 +10,7 @@ shows a summary of matching task_queue rows, asks for confirmation,
 and resets them to 'pending'.
 
 Usage (called by retry_broken_entries, not directly):
-    reset_broken_to_pending <workdir> <hostname> <pass_num>
+    reset_broken_to_pending <workdir> <hostname> <pass_num> [--tuning_mode kernel|op]
 """
 
 import argparse
@@ -31,11 +31,11 @@ from v3python.tune.pq.extra_uts import insert_extra_uts
 from pq_helpers import fetch_matches_by_ids, print_summary, reset_to_pending
 
 
-def _load_task_ids(db_path: Path, hostname: str, pass_num: int) -> list[int]:
+def _load_task_ids(db_path: Path, hostname: str, pass_num: int, module: str) -> list[int]:
     with sqlite3.connect(db_path) as db:
         cur = db.execute(
-            'SELECT task_id FROM broken_entries WHERE host = ? AND pass = ? ORDER BY task_id',
-            (hostname, pass_num),
+            'SELECT task_id FROM broken_entries WHERE host = ? AND pass = ? AND module = ? ORDER BY task_id',
+            (hostname, pass_num, module),
         )
         return [row[0] for row in cur.fetchall()]
 
@@ -64,7 +64,15 @@ def main() -> None:
     parser.add_argument('workdir', help='Project workdir containing config.rc')
     parser.add_argument('hostname', help='Test host name')
     parser.add_argument('pass_num', type=int, help='Test pass number')
+    parser.add_argument(
+        '--tuning_mode',
+        choices=['kernel', 'op'],
+        default='kernel',
+        help='kernel: flash module; op: flash_op module',
+    )
     args = parser.parse_args()
+
+    module = 'flash_op' if args.tuning_mode == 'op' else 'flash'
 
     workdir = Path(args.workdir)
     db_path = workdir / 'scratch' / 'broken_entries.db'
@@ -72,7 +80,7 @@ def main() -> None:
     if not db_path.is_file():
         sys.exit(f'Error: broken_entries.db not found at {db_path}')
 
-    task_ids = _load_task_ids(db_path, args.hostname, args.pass_num)
+    task_ids = _load_task_ids(db_path, args.hostname, args.pass_num, module)
     if not task_ids:
         print(f'No entries in broken_entries.db for host={args.hostname} pass={args.pass_num}.')
         return
@@ -91,13 +99,13 @@ def main() -> None:
             print('\nNo matching rows found. Nothing to do.')
             return
 
+        row_ids = [r['id'] for r in matches]
         print()
+        print(f'Preview Task IDs: {row_ids[:min(8, len(row_ids))]}')
         answer = input('Reset these rows to pending? [y/N] ').strip().lower()
         if answer != 'y':
             print('Aborted.')
             return
-
-        row_ids = [r['id'] for r in matches]
 
         # Insert extra UTs into PG before resetting status to pending,
         # so workers always see them when they claim the task.
@@ -107,7 +115,7 @@ def main() -> None:
         total_extra = sum(len(v) for v in extra_uts_map.values())
         print(f'Inserted {total_extra} extra UT entries for {len(extra_uts_map)} tasks.')
 
-        affected = reset_to_pending(conn, row_ids)
+        affected = reset_to_pending(conn, row_ids, module)
         conn.commit()
         print(f'Done: {affected} rows reset to pending.')
 

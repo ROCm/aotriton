@@ -25,12 +25,21 @@
 set -euo pipefail
 
 if [ "$#" -lt 1 ]; then
-    echo "Usage: $0 <workdir> [extra generate.py args...]" >&2
+    echo "Usage: $0 <workdir> [--tuning_mode kernel|op] [extra generate.py args...]" >&2
     exit 1
 fi
 
 WORKDIR="$1"
 shift
+TUNING_MODE="kernel"
+EXTRA_ARGS=()
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --tuning_mode) TUNING_MODE="$2"; shift 2 ;;
+        *) EXTRA_ARGS+=("$1"); shift ;;
+    esac
+done
 
 if [ ! -d "$WORKDIR" ]; then
     echo "Error: workdir does not exist: $WORKDIR" >&2
@@ -65,20 +74,23 @@ fi
 # Persistent build directory — survives across runs so the op_database
 # only needs to be extracted once.
 #   <workdir>/build/sancheck/database/tuning_database.sqlite3  (symlink)
-#   <workdir>/build/sancheck/database/op_database.sqlite3      (extracted once)
+#   <workdir>/build/sancheck/database/op_database.sqlite3      (extracted once, or copied from scratch/)
 TMPDIR_BUILD="$WORKDIR/build/sancheck"
 mkdir -p "$TMPDIR_BUILD/database"
 
 # tuning_database.sqlite3: always re-symlink in case the path changed.
 ln -sf "$(realpath "$CENTRALDB")" "$TMPDIR_BUILD/database/tuning_database.sqlite3"
 
-# op_database.sqlite3: extract only if not already present.
 OP_TARBALL="$REPO_ROOT/v3python/database/op_database.sqlite3.tar.xz"
 if [ ! -f "$OP_TARBALL" ]; then
     echo "Error: op database tarball not found: $OP_TARBALL" >&2
     exit 1
 fi
-if [ ! -f "$TMPDIR_BUILD/database/op_database.sqlite3" ]; then
+
+# op_database.sqlite3: use freshly generated file in op mode; extract from tarball otherwise.
+if [ "$TUNING_MODE" = "op" ]; then
+    cp "$WORKDIR/scratch/op_database.sqlite3" "$TMPDIR_BUILD/database/op_database.sqlite3"
+elif [ ! -f "$TMPDIR_BUILD/database/op_database.sqlite3" ]; then
     tar -xJf "$OP_TARBALL" -C "$TMPDIR_BUILD/database"
 fi
 
@@ -93,7 +105,7 @@ python3 -m v3python.generate \
     --lut_sanity_check \
     --sanity_check_only \
     "${GPU_ARGS[@]}" \
-    "$@" > "$REPORT"
+    "${EXTRA_ARGS[@]}" > "$REPORT"
 
 echo "Done. Report written to $REPORT"
 

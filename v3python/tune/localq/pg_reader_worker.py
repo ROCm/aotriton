@@ -45,7 +45,8 @@ class PGReaderWorker:
     Hold off until PostgreSQL connection count becomes a real bottleneck.
     """
 
-    def __init__(self, worker_id: str, arch: str, broker_socket: str, conn_params: dict):
+    def __init__(self, worker_id: str, arch: str, broker_socket: str, conn_params: dict,
+                 tuning_mode: str = 'kernel'):
         """
         Initialize PG reader worker.
 
@@ -54,11 +55,13 @@ class PGReaderWorker:
             arch: GPU architecture to fetch tasks for
             broker_socket: Path to broker Unix socket
             conn_params: PostgreSQL connection parameters
+            tuning_mode: 'kernel' or 'op' — controls module filter in fetch_tasks
         """
         self.worker_id = worker_id
         self.arch = arch
         self.broker_socket = broker_socket
         self.conn_params = conn_params
+        self.tuning_mode = tuning_mode
         self.sock = None
         self.db_conn = None
         self.running = False
@@ -76,7 +79,7 @@ class PGReaderWorker:
         # Connect to database (reuse connection)
         self._connect_to_database()
 
-        logger.info(f"PG Reader {self.worker_id} started for arch={self.arch} (PID={os.getpid()})")
+        logger.info(f"PG Reader {self.worker_id} started for arch={self.arch} tuning_mode={self.tuning_mode} (PID={os.getpid()})")
         self.running = True
 
         while self.running:
@@ -228,7 +231,7 @@ class PGReaderWorker:
         """
         try:
             task_queue = TaskQueue(self.db_conn)
-            tasks = task_queue.fetch_tasks(self.arch, batch_size=1)
+            tasks = task_queue.fetch_tasks(self.arch, batch_size=1, tuning_mode=self.tuning_mode)
 
             if tasks:
                 task = tasks[0]
@@ -268,6 +271,8 @@ def main():
     parser.add_argument('--broker_socket', type=str,
                        default=os.environ.get('AOTRITON_TUNER_BROKER_SOCKET', '/tmp/aotriton-broker.sock'),
                        help='Path to broker Unix socket')
+    parser.add_argument('--tuning_mode', type=str, default='kernel', choices=['kernel', 'op'],
+                       help='Task filter mode: kernel (default) or op')
     args = parser.parse_args()
 
     # Get database connection parameters
@@ -279,7 +284,8 @@ def main():
         worker_id=args.worker_id,
         arch=args.arch,
         broker_socket=args.broker_socket,
-        conn_params=conn_params
+        conn_params=conn_params,
+        tuning_mode=args.tuning_mode,
     )
 
     # Setup signal handlers for graceful shutdown

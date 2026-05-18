@@ -1,0 +1,53 @@
+{#
+  Macro: tuning_mode_radios
+  Renders the Tuning Mode radio inputs and defines getTuningMode().
+
+  getTuningMode() reads the radio value at call time so every button that
+  needs the current mode can use hx-vals='js:{mode: getTuningMode()}' rather
+  than coupling to a DOM id via hx-include.
+
+  Parameters:
+    tuning_mode        - current value from template context ('kernel' or 'op')
+    with_own_save_form - if true, emits the Save button in its own
+                         <form hx-post="/api/config/tuning-mode"> (servers.html
+                         style, where the radios are not already inside a form).
+                         If false, the caller wraps the macro call in a form
+                         (workers.html style).
+    description_extra  - optional extra sentence appended to the description
+                         paragraph.
+#}
+{% macro tuning_mode_radios(tuning_mode, with_own_save_form=false, description_extra='') %}
+<div id="tuning-mode-inputs">
+    <label>
+        <input type="radio" name="mode" value="kernel"
+               {% if tuning_mode == 'kernel' %}checked{% endif %}>
+        Kernel Tuning &mdash; select best HSACO within each backend
+    </label><br>
+    <label>
+        <input type="radio" name="mode" value="op"
+               {% if tuning_mode == 'op' %}checked{% endif %}>
+        Operator Tuning &mdash; select fastest backend for operators
+    </label>
+</div>
+{% if with_own_save_form %}
+<form hx-post="/api/config/tuning-mode"
+      hx-include="#tuning-mode-inputs"
+      hx-swap="none"
+      hx-on::after-request="location.reload()"
+      style="display: inline; margin-top: 0.5rem;">
+    <button type="submit">Save as Default (pre-selects on page load)</button>
+</form>
+{% endif %}
+<p style="font-size: 0.9em; color: gray; margin-top: 0.5rem;">
+    Operator tuning requires the testing build
+    (<code>installed/test/&lt;arch&gt;/</code>) deployed to workers.
+    After changing mode, redeploy and restart workers.
+    {% if description_extra %}{{ description_extra }}{% endif %}
+</p>
+<script>
+function getTuningMode() {
+    const el = document.querySelector('#tuning-mode-inputs input[name="mode"]:checked');
+    return el ? el.value : 'kernel';
+}
+</script>
+{% endmacro %}

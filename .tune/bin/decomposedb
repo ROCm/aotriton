@@ -10,20 +10,53 @@
 #      <workdir>/installed/database/amd/<arch>/<family>/<kernel>.sqlite3.tar.xz
 #
 # Usage:
-#   decomposedb <workdir>
+#   decomposedb <workdir> [--tuning_mode kernel|op]
 
 set -euo pipefail
 
 if [ "$#" -lt 1 ]; then
-    echo "Usage: $0 <workdir>" >&2
+    echo "Usage: $0 <workdir> [--tuning_mode kernel|op]" >&2
     exit 1
 fi
 
 WORKDIR="$1"
+shift
+
+TUNING_MODE="kernel"
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --tuning_mode) TUNING_MODE="$2"; shift 2 ;;
+        *) echo "Unknown argument: $1" >&2; exit 1 ;;
+    esac
+done
 
 if [ ! -d "$WORKDIR" ]; then
     echo "Error: workdir does not exist: $WORKDIR" >&2
     exit 1
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+DECOMPOSE_OUTPUT="$WORKDIR/installed/database"
+mkdir -p "$DECOMPOSE_OUTPUT"
+
+if [ "$TUNING_MODE" = "op" ]; then
+    OP_DB="$WORKDIR/scratch/op_database.sqlite3"
+    if [ ! -f "$OP_DB" ]; then
+        echo "Error: op_database.sqlite3 not found: $OP_DB" >&2
+        echo "Run export_best_results --tuning_mode op first." >&2
+        exit 1
+    fi
+
+    echo "Vacuuming op_database.sqlite3..."
+    sqlite3 "$OP_DB" "VACUUM;"
+
+    echo "Compressing op_database.sqlite3..."
+    tar -cJf "$DECOMPOSE_OUTPUT/op_database.sqlite3.tar.xz" \
+        -C "$(dirname "$OP_DB")" "$(basename "$OP_DB")"
+    echo "Decompose (op) complete: $DECOMPOSE_OUTPUT/op_database.sqlite3.tar.xz"
+    exit 0
 fi
 
 CENTRALDB="$WORKDIR/scratch/centraldb.sqlite3"
@@ -42,13 +75,8 @@ if [ -z "$GNU_PARALLEL" ] || ! "$GNU_PARALLEL" --version 2>/dev/null | grep -q '
 fi
 export GNU_PARALLEL
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-
 SCRIPT_OUTPUT="$WORKDIR/scratch/decompose_db.sh"
-DECOMPOSE_OUTPUT="$WORKDIR/installed/database"
 
-mkdir -p "$WORKDIR/scratch"
 rm -rf "$DECOMPOSE_OUTPUT"
 mkdir -p "$DECOMPOSE_OUTPUT"
 
