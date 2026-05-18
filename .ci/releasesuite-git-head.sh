@@ -16,7 +16,7 @@ EOF
 fi
 
 function help() {
-  cat <<EOF
+  cat <<EOF >&2
 Usage: releasesuite-git-head.sh [-h] [options..] <output directory>
 Options:
                     -h: show help and exit.
@@ -35,7 +35,6 @@ The build process will
 2. Replace SHA1 with actual wheel path and use the replaced yaml file to build
    AOTriton
 EOF
->&2
   exit $1
 }
 
