@@ -10,7 +10,6 @@ from aotriton_flash import IGNORE_BACKWARD_IMPORT
 from aotriton_flash import (
     attn_fwd,
     debug_simulate_encoded_softmax,
-    FwdExtraArguments,
     hipError_t,
     hipGetLastError,
     AOTRITON_TORCH_ONLY_USE_CPU,
@@ -20,9 +19,6 @@ from aotriton_flash import (
 if not IGNORE_BACKWARD_IMPORT:
     from aotriton_flash import (
         attn_bwd,
-        attn_bwd_fused,
-        BwdExtraArguments,
-        FusedBwdExtraArguments,
     )
 from collections import namedtuple
 from dataclasses import dataclass

@@ -4,26 +4,13 @@
 import os
 IGNORE_BACKWARD_IMPORT = bool(int(os.getenv('IGNORE_BACKWARD_IMPORT', default='0')))
 
-from pyaotriton.v2.flash import (
-    attn_fwd as fa_forward,
-    attn_fwd_compact_varlen as fa_forward_compact_varlen,
-    # debug_fill_dropout_rng as fa_debug_fill_dropout_rng,
-    debug_simulate_encoded_softmax as fa_debug_simulate_encoded_softmax,
-    FwdExtraArguments,
-)
+from pyaotriton.v2.flash import debug_simulate_encoded_softmax as fa_debug_simulate_encoded_softmax
 from pyaotriton.v3.flash import (
     attn_fwd as fa_forward_op,
     attn_fwd_params as fa_forward_op_params,
     attn_options,
 )
 if not IGNORE_BACKWARD_IMPORT:
-    from pyaotriton.v2.flash import (
-        attn_bwd as fa_backward,
-        attn_bwd_fused as fa_backward_fused,
-        attn_bwd_compact_varlen as fa_backward_compact_varlen,
-        BwdExtraArguments,
-        FusedBwdExtraArguments,
-    )
     from pyaotriton.v3.flash import (
         attn_bwd as fa_backward_op,
         attn_bwd_params as fa_backward_op_params,
@@ -85,9 +72,6 @@ try:
     PASS_PHILOX_AS_TENSOR = True
 except:
     PASS_PHILOX_AS_TENSOR = False
-
-from pyaotriton.v2 import CppTuneSpecialKernelIndex
-import os
 
 AOTRITON_TORCH_ONLY_USE_CPU = bool(int(os.getenv('AOTRITON_TORCH_ONLY_USE_CPU', default='0')))
 if AOTRITON_TORCH_ONLY_USE_CPU:
@@ -267,51 +251,6 @@ def attn_bwd(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, dq_acc, L, delta,
     if AOTRITON_TORCH_ONLY_USE_CPU:  # FIXME: V3+CPU
         _torch_cpu_only_copy_back([dq, dk, dv, db, delta],
                                   [dqdevm, dkdevm, dvdevm, dbdevm, deltadevm])
-    return err
-
-def attn_bwd_fused(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, L,
-             dropout_p, philox_seed, philox_offset1, philox_offset2, causal, extargs=None):
-    extargs = FusedBwdExtraArguments() if extargs is None else extargs
-    qview, qdevm = mk_aotensor(q)
-    kview, kdevm = mk_aotensor(k)
-    vview, vdevm = mk_aotensor(v)
-    bview, bdevm = mk_aotensor(b, if_empty_then_like=q)
-    oview, odevm = mk_aotensor(o)
-    doutview, doutdevm = mk_aotensor(dout)
-    dqview, dqdevm = mk_aotensor(dq)
-    dkview, dkdevm = mk_aotensor(dk)
-    dvview, dvdevm = mk_aotensor(dv)
-    dbview, dbdevm = mk_aotensor(db, if_empty_then_like=q)
-    Lview, Ldevm = mk_aotensor(L)
-    seedview, seeddevm = mk_aotensor(philox_seed)
-    offset1view, offset1devm = mk_aotensor(philox_offset1)
-    if AOTRITON_TORCH_ONLY_USE_CPU:
-        hipDeviceSynchronize()
-    causal_type, window_left, window_right = translate_causal(causal, v3_api=False)
-    # print(f'{b=}')
-    err = fa_backward_fused(qview,
-                            kview,
-                            vview,
-                            bview,
-                            float(sm_scale),
-                            oview,
-                            doutview,
-                            dqview,
-                            dkview,
-                            dvview,
-                            dbview,
-                            Lview,
-                            float(dropout_p),
-                            seedview,
-                            offset1view,
-                            philox_offset2,
-                            causal_type,
-                            Stream(),
-                            extargs)
-    if AOTRITON_TORCH_ONLY_USE_CPU:
-        _torch_cpu_only_copy_back([dq, dk, dv, db],
-                                  [dqdevm, dkdevm, dvdevm, dbdevm])
-    # print(f'{err=}')
     return err
 
 # def debug_fill_dropout_rng(R, philox_seed, philox_offset):
