@@ -128,21 +128,3 @@ def get_task_results(task_id: str, conn) -> list:
 
         return results
 
-
-def complete_task(task_id: str, arch: str, conn) -> None:
-    """
-    Mark a task as completed in the task_queue.
-
-    DEPRECATED: Use TaskQueue.mark_completed() instead.
-
-    Args:
-        task_id: Task ID
-        arch: GPU architecture (for partition routing)
-        conn: PostgreSQL connection (from psycopg.connect)
-
-    Raises:
-        psycopg.Error: Database errors
-    """
-    from .queue import TaskQueue
-    task_queue = TaskQueue(conn)
-    task_queue.mark_completed(task_id, arch)
