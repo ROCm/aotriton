@@ -8,9 +8,6 @@
 #include "runtime.h"
 #include "util.h"
 #include "cpp_tune.h"
-// APIs in this file are deprecated, and this file will be removed in the next release.
-// define AOTRITON_V2_API_FLASH_ATTN_H to avoid including it.
-#include "v2/flash.h"
 
 namespace AOTRITON_NS::v2::flash {
 

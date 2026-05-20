@@ -39,5 +39,5 @@ def test_exaid(module, gpu_id):
     shutil.rmtree(tmpdir)
 
 if __name__ == '__main__':
-    main()
+    raise SystemExit("Run this file with pytest, not directly:\n  pytest v3python/tune/test_exaid.py")
 

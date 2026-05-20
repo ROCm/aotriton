@@ -436,67 +436,7 @@ class _varlen_attention(torch.autograd.Function):
         print(f'backward {ctx.bias_type=} {ctx.autotune=} {BLOCK_M=} {BLOCK_N=} {stride_dbz=} {stride_dbh=} {stride_dbm=} {stride_dbn=}')
         if k.requires_grad and v.requires_grad:
             if ctx.autotune:
-                sized_tuned_bwd_kernel_dk_dv[grid_dk_dv](
-                    q, k, v, b, ctx.sm_scale,
-                    o, do,
-                    dk, dv,
-                    L, delta,
-                    q.stride(0), q.stride(1), q.stride(2), q.stride(3),
-                    k.stride(0), k.stride(1), k.stride(2), k.stride(3),
-                    v.stride(0), v.stride(1), v.stride(2), v.stride(3),
-                    b.stride(0), b.stride(1), b.stride(2), b.stride(3),
-                    do.stride(0), do.stride(1), do.stride(2), do.stride(3),
-                    dk.stride(0), dk.stride(1), dk.stride(2), dk.stride(3),
-                    dv.stride(0), dv.stride(1), dv.stride(2), dv.stride(3),
-                    cu_seqlens_q=cu_seqlens_q,
-                    cu_seqlens_k=cu_seqlens_k,
-                    num_seqlens=len(cu_seqlens_q),
-                    max_seqlen_q=max_seqlen_q,
-                    max_seqlen_k=max_seqlen_k,
-                    head_dim=Lk,
-                    dropout_p=ctx.dropout_p,
-                    philox_seed_ptr=philox_seed,
-                    philox_offset1=philox_offset,
-                    philox_offset2=0,
-                    BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N,
-                    BLOCK_DMODEL=head_dim_rounded,
-                    CAUSAL_TYPE=causal_type,
-                    ENABLE_DROPOUT=ctx.dropout_p > 0.0,
-                    PADDED_HEAD=padded_head,
-                    BIAS_TYPE=ctx.bias_type,
-                )
-                if return_autotune:
-                    dkdv_best_config = copy.deepcopy(sized_tuned_bwd_kernel_dk_dv.get_best_config())
-                    # BLOCK_M/N are missing with sized_tuned_bwd_kernel_*
-                    dkdv_best_config.kwargs['BLOCK_M'] = BLOCK_M
-                    dkdv_best_config.kwargs['BLOCK_N'] = BLOCK_N
-                    tuning_result = copy.deepcopy(dkdv_best_config)
-                    """
-                    inputs = {
-                        'Q.shape' : list(q.shape),
-                        'Q.dtype' : str(q.dtype),
-                        'N_HEADS' : q.shape[1],
-                        'max_seqlen_q': max_seqlen_q,
-                        'max_seqlen_k': max_seqlen_k,
-                        'head_dim' : ctx.BLOCK_DMODEL,
-                        'BLOCK_DMODEL' : head_dim_rounded,
-                        'CAUSAL'  : ctx.causal,
-                        'ENABLE_DROPOUT' : ctx.dropout_p > 0.0,
-                    }
-                    tuned_kernel = dict(dkdv_best_config.kwargs)
-                    compiler_options = {
-                        'num_warps' : dkdv_best_config.num_warps,
-                        'num_stages': dkdv_best_config.num_stages,
-                    }
-                    tuning_result = {
-                        'kernel_name' : 'bwd_kernel_dk_dv',
-                        'inputs' : inputs,
-                        'tuned_kernel' : tuned_kernel,
-                        'compiler_options' : compiler_options,
-                    }
-                    """
-                    ctx.tuning_result.append(('bwd_kernel_dk_dv', tuning_result))
-                    print(f'{id(ctx.tuning_result)=}')
+                assert False, 'To refactor'
             else:
                 print(f'Running bare_bwd_kernel_dk_dv {window_left=} {window_right=} {causal_type=}')
                 bare_bwd_kernel_dk_dv[grid_dk_dv](
@@ -558,68 +498,7 @@ class _varlen_attention(torch.autograd.Function):
         )
         if q.requires_grad:
             if ctx.autotune:
-                sized_tuned_bwd_kernel_dq[grid_dq](
-                    q, k, v, b, ctx.sm_scale,
-                    o, do,
-                    dq, db,
-                    L, delta,
-                    q.stride(0), q.stride(1), q.stride(2), q.stride(3),
-                    k.stride(0), k.stride(1), k.stride(2), k.stride(3),
-                    v.stride(0), v.stride(1), v.stride(2), v.stride(3),
-                    b.stride(0), b.stride(1), b.stride(2), b.stride(3),
-                    do.stride(0), do.stride(1), do.stride(2), do.stride(3),
-                    dq.stride(0), dq.stride(1), dq.stride(2), dq.stride(3),
-                    stride_dbz, stride_dbh, stride_dbm, stride_dbn,
-                    num_head_q=num_head_q,
-                    num_head_k=num_head_k,
-                    cu_seqlens_q=cu_seqlens_q,
-                    cu_seqlens_k=cu_seqlens_k,
-                    num_seqlens=len(cu_seqlens_q) - 1,
-                    max_seqlen_q=max_seqlen_q,
-                    max_seqlen_k=max_seqlen_k,
-                    head_dim=Lk,
-                    dropout_p=ctx.dropout_p,
-                    philox_seed_ptr=philox_seed,
-                    philox_offset1=philox_offset,
-                    philox_offset2=0,
-                    BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N,
-                    BLOCK_DMODEL=head_dim_rounded,
-                    CAUSAL_TYPE=causal_type,
-                    ENABLE_DROPOUT=ctx.dropout_p > 0.0,
-                    PADDED_HEAD=padded_head,
-                    BIAS_TYPE=ctx.bias_type,
-                )
-                if return_autotune:
-                    dq_best_config = copy.deepcopy(sized_tuned_bwd_kernel_dq.get_best_config())
-                    # BLOCK_M/N are missing with sized_tuned_bwd_kernel_*
-                    dq_best_config.kwargs['BLOCK_M'] = BLOCK_M
-                    dq_best_config.kwargs['BLOCK_N'] = BLOCK_N
-                    tuning_result = dq_best_config
-                    """
-                    inputs = {
-                        'Q.shape' : list(q.shape),
-                        'Q.dtype' : str(q.dtype),
-                        'N_HEADS' : q.shape[1],
-                        'max_seqlen_q': max_seqlen_q,
-                        'max_seqlen_k': max_seqlen_k,
-                        'head_dim' : ctx.BLOCK_DMODEL,
-                        'BLOCK_DMODEL' : head_dim_rounded,
-                        'CAUSAL'  : ctx.causal,
-                        'ENABLE_DROPOUT' : ctx.dropout_p > 0.0,
-                    }
-                    tuned_kernel = dict(dq_best_config.kwargs)
-                    compiler_options = {
-                        'num_warps' : dq_best_config.num_warps,
-                        'num_stages': dq_best_config.num_stages,
-                    }
-                    tuning_result = {
-                        'kernel_name' : 'bwd_kernel_dq',
-                        'inputs' : inputs,
-                        'tuned_kernel' : tuned_kernel,
-                        'compiler_options' : compiler_options,
-                    }
-                    """
-                    ctx.tuning_result.append(('bwd_kernel_dq', tuning_result))
+                assert False, 'Unsupported, to refactor'
             else:
                 bare_bwd_kernel_dq[grid_dq](
                     q, k, v, b, ctx.sm_scale, do,

@@ -12,8 +12,8 @@ from .queue import TaskQueue
 from .dispatcher import TaskDispatcher
 from .worker import Worker
 from .heartbeat import HeartbeatManager
-from .results import save_tuning_result, get_task_results, complete_task
+from .results import save_tuning_result, get_task_results
 
-__all__ = ['TaskQueue', 'TaskDispatcher', 'Worker', 'HeartbeatManager', 'save_tuning_result', 'get_task_results', 'complete_task']
+__all__ = ['TaskQueue', 'TaskDispatcher', 'Worker', 'HeartbeatManager', 'save_tuning_result', 'get_task_results']
 
 __version__ = '3.5.0'
