@@ -27,10 +27,10 @@ using DebugSimulateEncodedSoftmaxParams = AOTRITON_NS::v3::flash::OpAttnFwdParam
 using DebugSimulateEncodedSoftmaxContext = AOTRITON_NS::v3::flash::DebugSimulateEncodedSoftmaxContext;
 
 hipError_t
-debug_simulate_encoded_softmax(T4 r,
+debug_simulate_encoded_softmax(AOTRITON_NS::TensorView<4> r,
                                float dropout_p,
-                               T0 philox_seed,
-                               T0 philox_offset1,
+                               AOTRITON_NS::TensorView<0> philox_seed,
+                               AOTRITON_NS::TensorView<0> philox_offset1,
                                uint64_t philox_offset2,
                                AOTRITON_NS::Stream stream_wrap) {
   hipError_t err;
