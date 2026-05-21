@@ -8,6 +8,7 @@ from ..base import (
 import numpy as np
 
 class Operator(Interface):
+    CODEGEN_MODULE = 'op'
     TUNE_NAME = 'optune'
     CALL_OPTIONS_NAME = None
 

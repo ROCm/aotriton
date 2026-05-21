@@ -49,6 +49,7 @@ def select_pattern(arguments, prefix, trim_left=None, trim_right=None, delete_wh
     return (ret[trim_left:trim_right], delete_when)
 
 class KernelDescription(Interface):
+    CODEGEN_MODULE = 'triton'
     TUNE_NAME = 'autotune'
     FILE_PFX = 'shim'
     ARGUMENTS = []

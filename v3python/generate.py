@@ -43,7 +43,7 @@ def parse():
     # Always True
     # p.add_argument("--generate_cluster_info", action='store_true', help="Generate Bare.functionals for clustering.")
     p.add_argument("--selective", type=Path, default=None,
-                   help="Only generate one item, e.g. op/flash/op_attn_fwd, triton/flash/attn_fwd, affine/flash/aiter_fmha_v3_fwd")
+                   help="Only generate one item, e.g. flash/op/op_attn_fwd, flash/triton/attn_fwd, flash/affine/aiter_fmha_v3_fwd")
     p.add_argument("--verbose", action='store_true', help="Print debugging messages")
     p.add_argument("--lut_sanity_check", action='store_true', help="By default, an exception will ba raised when any the look up table (LUT) is broken. With this option the exception is not raised, and diagnose information is printed for developers to re-run the tuning script in order to fix the database.")
     p.add_argument("--sanity_check_only", action='store_true', help="Run --lut_sanity_check but suppress all code generation. No files are written. Implies --lut_sanity_check.")

@@ -90,8 +90,6 @@ class RootGenerator(object):
     def do_generate(self):
         args = self._args
         sel = args.selective  # Path or None
-        if sel is not None:
-            sel_kind, sel_family, sel_name = sel.parts
 
         hsaco_for_kernels = []
         asms_for_kernels = []
@@ -102,10 +100,8 @@ class RootGenerator(object):
         all_trivial_stats: dict[tuple, dict[str, int]] = {}
 
         ops = dispatcher_operators
-        if sel is not None and sel_kind != 'op':
-            ops = []
-        elif sel is not None:
-            ops = [op for op in ops if op.FAMILY == sel_family and op.NAME == sel_name]
+        if sel is not None:
+            ops = [op for op in ops if op.unique_path == sel]
         for op in ops:
             opg = OperatorGenerator(self._args, op, parent_repo=None)
             opg.generate()
@@ -122,10 +118,8 @@ class RootGenerator(object):
         self._print_lut_stats(all_lut_stats, all_trivial_stats)
 
         kerns = triton_kernels
-        if sel is not None and sel_kind != 'triton':
-            kerns = []
-        elif sel is not None:
-            kerns = [k for k in kerns if k.FAMILY == sel_family and k.NAME == sel_name]
+        if sel is not None:
+            kerns = [k for k in kerns if k.unique_path == sel]
         for k in kerns:
             ksg = KernelShimGenerator(self._args, k, parent_repo=None)
             ksg.generate()
@@ -137,10 +131,8 @@ class RootGenerator(object):
         # On Windows, you get "KeyError: 'validator_function'"
         # See discussion in https://discord.com/channels/1239631572886491286/1401853302139912222/1401862203845378201
         affs = affine_kernels
-        if sel is not None and sel_kind != 'affine':
-            affs = []
-        elif sel is not None:
-            affs = [ak for ak in affs if ak.FAMILY == sel_family and ak.NAME == sel_name]
+        if sel is not None:
+            affs = [ak for ak in affs if ak.unique_path == sel]
         for ak in affs:
             log(lambda : f'{ak.__class__=}')
             if isinstance(ak, SlimAffineKernelDescription):
@@ -210,9 +202,9 @@ class RootGenerator(object):
     def launch_workers(self):
         args = self._args
         items: list[Path] = []
-        items += [Path('op')     / op.FAMILY / op.NAME  for op in dispatcher_operators]
-        items += [Path('triton') / k.FAMILY  / k.NAME   for k in triton_kernels]
-        items += [Path('affine') / ak.FAMILY / ak.NAME  for ak in affine_kernels]
+        items += [op.unique_path for op in dispatcher_operators]
+        items += [k.unique_path  for k in triton_kernels]
+        items += [ak.unique_path for ak in affine_kernels]
 
         base_argv = [x for x in sys.argv[1:] if not x.startswith('--selective')]
 
