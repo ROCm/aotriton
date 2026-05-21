@@ -382,7 +382,8 @@ install(FILES
 
 if(NOT AOTRITON_NOIMAGE_MODE)
   install(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/aotriton.images"
-          DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)
+          DESTINATION ${CMAKE_INSTALL_PREFIX}/lib
+          PATTERN "*.nsv" EXCLUDE)
 endif(NOT AOTRITON_NOIMAGE_MODE)
 
 # Python binding only available for AOTriton V2 API
