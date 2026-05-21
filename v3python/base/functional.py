@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 from pathlib import Path
+from functools import cached_property
 from ..gpu_targets import (
     cluster_gpus,
     gpu2arch,
@@ -126,7 +127,7 @@ class Functional(object):
     def fallback_choices(self) -> dict:
         return self.meta_object.fallback_compact_dict(self._compact_dict)
 
-    @property
+    @cached_property
     def unified_signature(self) -> str:
         def fmt(b):
             return f'{b.name}={b.value.testrun_entry_signature}'
