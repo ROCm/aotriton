@@ -40,32 +40,15 @@ class Factory(object):
         'op': 'database/op_database.sqlite3',
     }
 
-    @staticmethod
-    def _load_into_memory(disk_path, uri_name):
-        '''Back up a disk SQLite file into a named shared-cache in-memory database.
-        The URI file:uri_name?mode=memory&cache=shared can be ATTACHed by any
-        connection in the same process.'''
-        disk = sqlite3.connect(disk_path)
-        mem = sqlite3.connect(f'file:{uri_name}?mode=memory&cache=shared', uri=True)
-        disk.backup(mem)
-        disk.close()
-        return mem
-
     def __init__(self, path):
-        log(lambda : f'sqlite3.connect({path / self.SIGNATURE_FILE}) -> :memory:')
-        # Keep references alive so the shared-cache in-memory dbs are not freed.
-        self._mem_conns = []
-        self._mem_conns.append(self._load_into_memory(path / self.SIGNATURE_FILE, 'primary'))
-        self._conn = sqlite3.connect('file:primary?mode=memory&cache=shared', uri=True)
+        log(lambda : f'sqlite3.connect({path / self.SIGNATURE_FILE})')
+        self._conn = sqlite3.connect(path / self.SIGNATURE_FILE)
         self._conn.set_trace_callback(log) # Debug
         for schema, bn in self.SECONDARY_DATABASES.items():
             fn = path / bn
             if fn.is_file():
-                log(lambda : f"Loading {fn} into :memory: as schema '{schema}'")
-                self._mem_conns.append(self._load_into_memory(fn, schema))
-                self._conn.execute(
-                    f"ATTACH DATABASE 'file:{schema}?mode=memory&cache=shared' AS {schema};"
-                )
+                log(lambda : f"ATTACH DATABASE '{fn.as_posix()}' AS {schema};")
+                self._conn.execute(f"ATTACH DATABASE '{fn.as_posix()}' AS {schema};")
             else:
                 assert False, f'{fn} is not a file, {path}'
 
