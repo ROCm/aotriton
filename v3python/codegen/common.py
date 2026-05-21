@@ -17,7 +17,7 @@ def hsaco_dir(build_dir : Path, k : 'KernelDescription'):
 
 def tunecc_ondisk_name(f: 'Functional') -> str:
     digest = hashlib.sha256(f.tunecc_signature.encode()).hexdigest()
-    return f.name + digest
+    return f.name + '-' + digest + '.cc'
 
 '''
 _cfields means the data type has been translated to c types

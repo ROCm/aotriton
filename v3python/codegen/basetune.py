@@ -31,7 +31,7 @@ class BaseTuneCodeGenerator(ABC):
         ondisk = tunecc_ondisk_name(f)
         with open(tune_dir / 'manifest.nsv', 'a', encoding='utf-8') as mf:
             mf.write(ondisk + '\x00' + f.tunecc_signature + '\x00\n')
-        return tune_dir / (ondisk + '.cc')
+        return tune_dir / ondisk
 
     @property
     def cc_file(self):
