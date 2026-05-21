@@ -157,8 +157,7 @@ class Functional(object):
     '''
     @property
     def tunecc_signature(self):
-        sf = self.signature_in_func_name
-        return 'FONLY__' + sf + f'___{self.arch}'
+        return '#F;' + self.unified_signature + f';;arch={self.arch}'
 
     '''
     Used by KSignature to construct full kernel name

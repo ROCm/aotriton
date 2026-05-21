@@ -15,6 +15,10 @@ def hsaco_inaks2_name(kdesc: 'KernelDescription', ksig: 'KernelSignature') -> st
 def hsaco_dir(build_dir : Path, k : 'KernelDescription'):
     return build_dir / k.FAMILY / f'gpu_kernel_image.{k.NAME}'
 
+def tunecc_ondisk_name(f: 'Functional') -> str:
+    digest = hashlib.sha256(f.tunecc_signature.encode()).hexdigest()
+    return f.name + digest
+
 '''
 _cfields means the data type has been translated to c types
 '''

@@ -7,6 +7,7 @@ from ..base import (
     Functional,
     Interface,
 )
+from .common import tunecc_ondisk_name
 import numpy as np
 
 class BaseTuneCodeGenerator(ABC):
@@ -27,7 +28,10 @@ class BaseTuneCodeGenerator(ABC):
         iface = self._f.meta_object
         tune_dir = self._args.build_dir / iface.FAMILY / f'{iface.TUNE_NAME}.{iface.NAME}'
         tune_dir.mkdir(parents=True, exist_ok=True)
-        return tune_dir / (f.tunecc_signature + '.cc')
+        ondisk = tunecc_ondisk_name(f)
+        with open(tune_dir / 'manifest.nsv', 'a', encoding='utf-8') as mf:
+            mf.write(ondisk + '\x00' + f.tunecc_signature + '\x00\n')
+        return tune_dir / (ondisk + '.cc')
 
     @property
     def cc_file(self):
