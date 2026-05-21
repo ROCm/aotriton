@@ -25,7 +25,8 @@ from ..utils import (
 )
 from .common import (
     hsaco_dir,
-    hsaco_filename,
+    hsaco_ondisk_name,
+    hsaco_inaks2_name,
 )
 from ..gpu_targets import AOTRITON_ARCH_TO_DIRECTORY
 import sys
@@ -133,7 +134,7 @@ class RootGenerator(object):
         # TODO: Support Cluter Functionals
         #       Implemented this in
         #       Functional.filepack_signature (used by Functional.full_filepack_path)
-        cluster_dict = defaultdict(list)
+        cluster_dict: dict[Path, dict[str, str]] = {}
         with LazyFile(args.build_dir / 'Bare.compile') as rulefile:
             for kdesc, hsacos in hsaco_for_kernels:
                 image_path = hsaco_dir(args.build_dir, kdesc)
@@ -146,11 +147,13 @@ class RootGenerator(object):
                         # functional == ksig._functional ?
                         self.write_hsaco(kdesc, image_path, functional, ksig, rulefile)
                     ffp = functional.full_filepack_path
-                    aol = [self._absobjfn(image_path, kdesc, ksig) for ksig in signatures]
-                    cluster_dict[ffp] += aol
+                    cluster_dict.setdefault(ffp, {}).update(
+                        {self._absobjfn(image_path, kdesc, ksig): hsaco_inaks2_name(kdesc, ksig)
+                         for ksig in signatures}
+                    )
         with LazyFile(args.build_dir / 'Bare.cluster') as clusterfile:
-            for ffp, aol in cluster_dict.items():
-                self.write_cluster(ffp, aol, clusterfile)
+            for ffp, aol_map in cluster_dict.items():
+                self.write_cluster(ffp, aol_map, clusterfile)
         '''
         Note: Affine kernel's functionals have residual choices, so it is not
         completely the same with Triton kernel/Interface's functionals
@@ -159,17 +162,24 @@ class RootGenerator(object):
         compute full_filepack_path, so eventually .hsaco and .co files will be
         consolated into the same .aks2 file, which is intentional.
         '''
-        affine_dict = defaultdict(list)
+        affine_dict: dict[Path, dict[str, str]] = {}
+
+        def parse_rule(asm: str) -> tuple[str, str]:
+            assert asm.startswith(':')
+            _, inaks2, ondisk = asm.split(':', 2)
+            return Path(ondisk).absolute().as_posix(), inaks2
+
         for akdesc, asm_registry in asms_for_kernels:
             for package_path, asms in asm_registry.items():
-                affine_dict[Path(package_path)] += [ self._absasmfn(asm_rule) for asm_rule in asms ]
+                ffp = Path(package_path)
+                affine_dict.setdefault(ffp, {}).update(dict(parse_rule(r) for r in asms))
         with LazyFile(args.build_dir / 'Affine.cluster') as clusterfile:
-            for ffp, aol in affine_dict.items():
-                self.write_cluster(ffp, list(set(aol)), clusterfile)
+            for ffp, aol_map in affine_dict.items():
+                self.write_cluster(ffp, aol_map, clusterfile)
 
     def _absobjfn(self, path, kdesc, ksig):
-        full = path / hsaco_filename(kdesc, ksig)
-        return str(full.absolute())
+        full = path / hsaco_ondisk_name(kdesc, ksig)
+        return full.absolute().as_posix()
 
     def write_hsaco(self, kdesc, path, functional, ksig, rulefile):
         log(lambda : f'{ksig=}')
@@ -187,16 +197,20 @@ class RootGenerator(object):
               ksig.triton_signature_string,  # Functional is not Triton-specific
               sep=';', file=rulefile)
 
-    def write_cluster(self, ffp, aol, clusterfile):
-        print(*ffp.parts, end=';', sep=';', file=clusterfile)
-        print(*aol, sep=';', file=clusterfile)
+    def write_cluster(self, ffp, aol_map, clusterfile):
+        manifest_path = (self._args.build_dir / ffp).with_suffix('.nsv')
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(manifest_path, 'w', encoding='utf-8') as mf:
+            for abs_path, entry_name in aol_map.items():
+                mf.write(abs_path + '\x00' + entry_name + '\x00\n')
+        print(*ffp.parts, *aol_map.keys(), sep=';', file=clusterfile)
 
     # TODO: deprecate this, the generator should return the full path directly
     def _absasmfn(self, asm_rule):
         if asm_rule.startswith(':'):
             return asm_rule
         full = self._args.root_dir / asm_rule
-        return str(full.absolute())
+        return full.absolute().as_posix()
 
     def _load_altwheel_config(self, d: dict):
         venvs = d.get("venvs", {})

@@ -15,7 +15,7 @@ from ..utils import (
 from .common import (
     codegen_struct_cfields,
     MissingLutEntry,
-    hsaco_filename,
+    hsaco_ondisk_name,
     hsaco_dir,
 )
 from .basetune import BaseTuneCodeGenerator
@@ -47,7 +47,7 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
                 if args.build_for_tuning_second_pass:
                     image_path = hsaco_dir(args.build_dir, kdesc)
                     def hsaco_compile_successful(ksig : KernelSignature):
-                        full = image_path / hsaco_filename(kdesc, ksig)
+                        full = image_path / hsaco_ondisk_name(kdesc, ksig)
                         if not full.exists():
                             return False
                         meta = full.with_suffix('.json')
@@ -99,7 +99,7 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
             'godel_number'          : f.godel_number,
             'perf_fields'           : codegen_struct_cfields(kdesc.perf_cfields, nalign=4),
             'package_path'          : package_path,
-            'func_name'             : f.signature_in_func_name,
+            'func_name'             : f.unified_signature,
             'arch_name'             : f.arch,
             'meta_hsacos'           : meta_hsacos,
             'kernel_image_perfs'    : self.codegen_kernel_image_perfs(self._sigs),
@@ -141,8 +141,8 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
             assert len(b2sum_u64) == 16
             b2sum_u64_hi = b2sum_u64[:8]
             b2sum_u64_lo = b2sum_u64[8:]
-            psel_offset = register_string(sig.perf_signature)
-            copt_offset = register_string(sig.copt_signature)
+            psel_offset = register_string(sig.perf_section)
+            copt_offset = register_string(sig.copt_section)
             meta_hsacos.append(f'{{ 0x{b2sum_u64_hi}u, 0x{b2sum_u64_lo}u, {psel_offset}, {copt_offset} }}, // {b2sum_u64} = b2sum -l 64 <<< {u8raw}')
         # assert string_dict[None] < 2 ** 16 - 1, f'Packed string size {string_dict[None]} exceeds uint16_t limit'
         # del string_dict[None]

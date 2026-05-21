@@ -231,6 +231,12 @@ if(NOT AOTRITON_NOIMAGE_MODE)
         ${DIR_FAMILY}
         ${DIR_KERNEL}
         "${FONLY}.aks2")
+      string(JOIN "/" HSACO_MANIFEST
+        ${AOTRITON_KERNEL_STORAGE_V2_DIR}
+        ${DIR_ARCH}
+        ${DIR_FAMILY}
+        ${DIR_KERNEL}
+        "${FONLY}.nsv")
       # message(STATUS "Add AKS2 ${AKS2}")
       add_custom_command(OUTPUT "${AKS2}"
         COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
@@ -238,8 +244,7 @@ if(NOT AOTRITON_NOIMAGE_MODE)
         -m v3python.aks2
         -o "${AKS2}"
         ${AKS2_OPTIONS}
-        --
-        ${RULE}
+        --hsaco_manifest "${HSACO_MANIFEST}"
         DEPENDS aotriton_v2_compile
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
         COMMAND_EXPAND_LISTS)

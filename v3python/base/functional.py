@@ -126,6 +126,12 @@ class Functional(object):
     def fallback_choices(self) -> dict:
         return self.meta_object.fallback_compact_dict(self._compact_dict)
 
+    @property
+    def unified_signature(self) -> str:
+        def fmt(b):
+            return f'{b.name}={b.value.testrun_entry_signature}'
+        return ';'.join(fmt(b) for b in self._binds if b.show_in_compact)
+
     '''
     "core" signature
     only directly used to supply TritonKernel as HSACO name component
