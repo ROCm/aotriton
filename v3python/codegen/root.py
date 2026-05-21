@@ -198,7 +198,7 @@ class RootGenerator(object):
               sep=';', file=rulefile)
 
     def write_cluster(self, ffp, aol_map, clusterfile):
-        manifest_path = (self._args.build_dir / ffp).with_suffix('.nsv')
+        manifest_path = (self._args.build_dir / 'aotriton.images' / ffp).with_suffix('.nsv')
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
         with open(manifest_path, 'w', encoding='utf-8') as mf:
             for abs_path, entry_name in aol_map.items():
