@@ -67,7 +67,8 @@ public:
                     const char* copt);
 
   hipError_t invoke(std::string_view kernel_name,
-                    pstring_view package_path,
+                    pstring_view flatzip_path,
+                    std::string_view aks2_entry,
                     std::string_view func_name,
                     std::string_view arch_name,
                     dim3 grid,

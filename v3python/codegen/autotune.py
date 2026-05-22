@@ -87,10 +87,11 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
         kdesc = f.meta_object
         lut_ctype, lut_cshape, lut_cdata = self.codegen_format_lut(self._lut_tensor)
         # gpu_kernel_image_dir = args.build_dir / f.FAMILY / f'gpu_kernel_image.{f.NAME}'
-        package_path = str(f.full_filepack_path)
+        flatzip_path = f.full_flatzip_path.as_posix()
+        aks2_entry   = f.filepack_inzip_name
         meta_hsacos = self.codegen_compact_kernels(kdesc,
                                                    self._sigs,
-                                                   package_path)
+                                                   flatzip_path)
         d = {
             'kernel_psels'          : self.codegen_kernel_psels(self._sigs),
             'kernel_copts'          : self.codegen_kernel_copts(self._sigs),
@@ -98,7 +99,8 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
             'shim_kernel_name'      : kdesc.NAME,
             'godel_number'          : f.godel_number,
             'perf_fields'           : codegen_struct_cfields(kdesc.perf_cfields, nalign=4),
-            'package_path'          : package_path,
+            'flatzip_path'          : flatzip_path,
+            'aks2_entry'            : aks2_entry,
             'func_name'             : f.unified_signature,
             'arch_name'             : f.arch,
             'meta_hsacos'           : meta_hsacos,
@@ -128,7 +130,7 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
             lines.append(f'R"xyzw({dict2json(sig.copt_dict)})xyzw"')
         return 'static const char* kernel_copts[] = {\n  ' + ",\n  ".join(lines) + "\n}"
 
-    def codegen_compact_kernels(self, kdesc, ksigs, package_path):
+    def codegen_compact_kernels(self, kdesc, ksigs, flatzip_path):
         meta_hsacos = []
         string_registry = self._parent_repo.get_string_registry('per_kernel_packed_string')
         def register_string(s):
@@ -136,7 +138,7 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
         for sig in ksigs:
             # if not noimage_mode and not self._feature_disabled:
             #     assert o.compiled_files_exist, f'Compiled file {o._hsaco_kernel_path} not exists'
-            b2sum_u64, raw = sig.blake2b_hash(package_path)
+            b2sum_u64, raw = sig.blake2b_hash(flatzip_path)
             u8raw = raw.decode('utf-8')
             assert len(b2sum_u64) == 16
             b2sum_u64_hi = b2sum_u64[:8]

@@ -115,7 +115,8 @@ hipError_t
     }
 #if AOTRITON_BUILD_FOR_TUNING && [[shared_iface]]
     auto ret = kernel_on_device->invoke(triton_kernel_name,
-                                        package_path,
+                                        flatzip_path,
+                                        aks2_entry,
                                         func_name,
                                         arch_name,
                                         grid,
@@ -136,7 +137,8 @@ hipError_t
     return ret;
 #else
     return kernel_on_device->invoke(triton_kernel_name,
-                                    package_path,
+                                    flatzip_path,
+                                    aks2_entry,
                                     func_name,
                                     arch_name,
                                     grid,

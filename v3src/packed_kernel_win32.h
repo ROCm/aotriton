@@ -158,4 +158,22 @@ static ssize_t fd_read(int fd, void *buf, size_t count) {
     return static_cast<ssize_t>(bytes_read);
 }
 
+static off_t fd_seek(int fd, off_t offset, int whence) {
+    HANDLE file_handle = fd_to_handle(fd);
+    if (file_handle == INVALID_HANDLE_VALUE)
+        return -1;
+    DWORD move_method;
+    switch (whence) {
+        case SEEK_SET: move_method = FILE_BEGIN;   break;
+        case SEEK_CUR: move_method = FILE_CURRENT; break;
+        case SEEK_END: move_method = FILE_END;     break;
+        default: return -1;
+    }
+    LARGE_INTEGER li_offset, li_new;
+    li_offset.QuadPart = static_cast<LONGLONG>(offset);
+    if (!SetFilePointerEx(file_handle, li_offset, &li_new, move_method))
+        return -1;
+    return static_cast<off_t>(li_new.QuadPart);
+}
+
 #endif // AOTRITON_V2_API_PACKED_KERNEL_WIN32_H

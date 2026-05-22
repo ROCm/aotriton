@@ -32,9 +32,10 @@ public:
     dim3 block { 0, 0, 0 };  // For Kernel who has compile-time determined block size
   };
   struct OnDiskKernelInfo {
-    pstring_view package_path;
-    std::string_view stem_name;
-    std::string_view function_name;
+    pstring_view     flatzip_path;  // path to .zip relative to aotriton.images/
+    std::string_view aks2_entry;    // ZIP entry name = unified_signature
+    std::string_view stem_name;     // HSACO entry name inside AKS2 (;;#F/P/CO/arch)
+    std::string_view function_name; // HIP kernel symbol name
   };
 
   OnDeviceKernel() {
@@ -69,8 +70,7 @@ private:
 
   // AKS2 kernel -> In-Memory kernel image
   Essentials essentials_;
-  void decompress_kernel(pstring_view package_path,
-                         std::string_view stem_name);
+  void decompress_kernel(const OnDiskKernelInfo& info);
   std::shared_ptr<PackedKernel> packed_kernel_ = nullptr;
   std::shared_mutex packedkernel_mutex_;
 };

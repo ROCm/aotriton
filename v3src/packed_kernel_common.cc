@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include <aotriton/_internal/packed_kernel.h>
+#include <aotriton/_internal/flat_zip.h>
 #include <aotriton/runtime.h>
 #include <mutex>
 #include <cstring>
@@ -49,73 +50,100 @@ locate_aotriton_images() {
 namespace AOTRITON_NS {
 
 std::shared_mutex PackedKernel::registry_mutex_;
-std::unordered_map<pstring_view, PackedKernelPtr> PackedKernel::registry_;
+std::unordered_map<pstring_type, PackedKernel::InnerMap,
+                   PackedKernel::PStringHash, std::equal_to<>> PackedKernel::registry_;
 
 PackedKernelPtr
-PackedKernel::open(pstring_view package_path) {
+PackedKernel::open(pstring_view flatzip_path, std::string_view aks2_entry) {
+  // Fast path: both ZIP directory and this AKS2 entry already cached.
   {
-    // Fast path
     std::shared_lock lock(registry_mutex_);
-    if (registry_.contains(package_path))
-      return registry_[package_path];
+    auto outer = registry_.find(flatzip_path);
+    if (outer != registry_.end()) {
+      auto inner = outer->second.find(std::string(aks2_entry));
+      if (inner == outer->second.end())
+        return nullptr;  // ZIP directory cached but entry absent
+      if (inner->second.ptr)
+        return inner->second.ptr;
+      // Entry found but PackedKernel not yet constructed — fall through to slow path.
+    }
   }
 
-  // Slow path, registry doesn't contain this kernel
-  std::unique_lock lock(registry_mutex_);
-  // Prevent TOCTTOU b/w two locks
-  if (registry_.contains(package_path))
-    return registry_[package_path];
   const auto& storage_base = locate_aotriton_images();
-#if !defined(_WIN32)
-#if AOTRITON_KERNEL_VERBOSE
-  std::cerr << "open dir " << storage_base << std::endl;
-#endif
-  int dirfd = ::open(storage_base.c_str(), O_RDONLY);
-  std::string rel_path(package_path);
-  rel_path += ".aks2";
-#if AOTRITON_KERNEL_VERBOSE
-  std::cerr << "openat " << rel_path << std::endl;
-#endif
-  int aks2fd = ::openat(dirfd, rel_path.c_str(), O_RDONLY);
-#else
-  // Build the full path using filesystem::path
-  fs::path full_path = storage_base / (std::wstring(package_path) + L".aks2");
-  std::string utf8_path;
-  auto u8str = full_path.u8string();
-  utf8_path = std::string(reinterpret_cast<const char*>(u8str.data()), u8str.size());
+  int dirfd = -1, zipfd = -1;
 
-  int aks2fd = fd_open(utf8_path.c_str());
-#endif
-  if (aks2fd < 0) {
-#if AOTRITON_KERNEL_VERBOSE
-#if defined(_WIN32)
-    std::cerr << "open(\"" << utf8_path << "\")" << " failed." << std::endl;
+  // Lazy-open the ZIP file on demand; captures by reference, no-op if already open.
+  auto open_zip = [&]() {
+    if (zipfd != -1)
+      return;
+#if !defined(_WIN32)
+    // Linux/POSIX: use dirfd+openat to avoid PATH_MAX overflow for long install prefixes.
+    if (dirfd == -1)
+      dirfd = ::open(storage_base.c_str(), O_RDONLY);
+    std::string rel_path(flatzip_path);
+    zipfd = ::openat(dirfd, rel_path.c_str(), O_RDONLY);
+    if (dirfd != -1) { fd_close(dirfd); dirfd = -1; }
 #else
-    std::cerr << "openat(\"" << storage_base << "\", \"" << rel_path << "\")"
-              << " failed. errno: " << errno << std::endl;
+    // Windows: construct full path via fs::path and open with fd_open.
+    fs::path full_path = storage_base / std::wstring(flatzip_path);
+    auto u8str = full_path.u8string();
+    std::string utf8_path(reinterpret_cast<const char*>(u8str.data()), u8str.size());
+    zipfd = fd_open(utf8_path.c_str());
 #endif
+  };
+
+  std::unique_lock lock(registry_mutex_);
+
+  // Warm the FlatZip central directory cache if this ZIP hasn't been seen yet.
+  if (!registry_.contains(flatzip_path)) {
+    open_zip();
+    if (zipfd < 0) {
+#if AOTRITON_KERNEL_VERBOSE
+      std::cerr << "PackedKernel::open: failed to open zip " << std::string(flatzip_path) << std::endl;
 #endif
+      return nullptr;
+    }
+    FlatZip::warm(flatzip_path, zipfd);
+    // Populate registry_ from the warm cache.
+    InnerMap& inner_map = registry_[pstring_type(flatzip_path)];
+    // iterate all entries returned by lookup — we seed them lazily on demand instead.
+    // (No bulk iteration API on FlatZip; entries are inserted as they are opened.)
+    (void)inner_map;
+  }
+
+  // Look up this entry in the FlatZip cache to get (offset, size).
+  auto loc = FlatZip::lookup(flatzip_path, aks2_entry);
+  if (!loc) {
+    if (zipfd != -1) fd_close(zipfd);
     return nullptr;
   }
-  auto ret = std::make_shared<PackedKernel>(aks2fd);
-  fd_close(aks2fd);
-#if !defined(_WIN32)
-  fd_close(dirfd);
-#endif
-  if (ret->status() == hipSuccess) {
-    registry_.emplace(package_path, ret);
-    return ret;
+
+  InnerMap& inner_map = registry_[pstring_type(flatzip_path)];
+  auto& entry = inner_map[std::string(aks2_entry)];
+  entry.offset = loc->offset;
+  entry.size   = loc->size;
+
+  if (entry.ptr) {
+    if (zipfd != -1) fd_close(zipfd);
+    return entry.ptr;
   }
+
+  open_zip();
+  if (zipfd < 0) {
+    if (dirfd != -1) fd_close(dirfd);
+    return nullptr;
+  }
+  entry.ptr = std::make_shared<PackedKernel>(zipfd, entry.offset, entry.size);
+  fd_close(zipfd);
+  if (entry.ptr->status() != hipSuccess) {
 #if AOTRITON_KERNEL_VERBOSE
-#if defined(_WIN32)
-  std::wcerr << L"PackedKernel::open(" << package_path << L") failed."
-            << L" Final status: " << ret->status() << std::endl;
-#else
-  std::cerr << "PackedKernel::open(" << package_path << ") failed."
-            << " Final status " << ret->status() << std::endl;
+    std::cerr << "PackedKernel: AKS2 decompression failed for entry "
+              << std::string(aks2_entry) << std::endl;
 #endif
-#endif
-  return nullptr;
+    entry.ptr.reset();
+    return nullptr;
+  }
+  return entry.ptr;
 }
 
 struct AKS2_Header {
@@ -147,7 +175,9 @@ struct AKS2_Metadata {
 //     4B file name length (M), including trailing '\0'
 //     MB file name
 // N * varlen: Kernel Images (TODO: alignment requirements?)
-PackedKernel::PackedKernel(int fd) {
+PackedKernel::PackedKernel(int fd, size_t offset, size_t size) {
+  if (offset != 0)
+    ::lseek(fd, static_cast<off_t>(offset), SEEK_SET);
   AKS2_Header header;
   auto header_read = fd_read(fd, &header, sizeof(AKS2_Header));
   if (header_read == sizeof(AKS2_MAGIC) && std::string_view(header.magic, 4) != AKS2_MAGIC) {
@@ -172,14 +202,19 @@ PackedKernel::PackedKernel(int fd) {
   strm.next_out = (uint8_t*)decompressed_content_.data();
   strm.avail_out = decompressed_content_.size();
   lzma_action action = LZMA_RUN;
+  // Track remaining bytes when size is bounded (reading AKS2 from inside a ZIP).
+  size_t remaining = (size == SIZE_MAX) ? SIZE_MAX : (size - sizeof(AKS2_Header));
   while (true) {
     if (strm.avail_in == 0) {
       strm.next_in = inbuf;
-      auto rbytes = fd_read(fd, inbuf, AOTRITON_LZMA_BUFSIZ);
+      size_t to_read = std::min<size_t>(AOTRITON_LZMA_BUFSIZ, remaining);
+      auto rbytes = (to_read > 0) ? fd_read(fd, inbuf, to_read) : 0;
       if (rbytes <= 0) {
         action = LZMA_FINISH;
         break;
       }
+      if (remaining != SIZE_MAX)
+        remaining -= static_cast<size_t>(rbytes);
       strm.avail_in = rbytes;
     }
     lzma_ret ret = lzma_code(&strm, action);
