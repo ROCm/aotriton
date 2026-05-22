@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include <aotriton/_internal/packed_kernel.h>
-#include <aotriton/_internal/flat_zip.h>
+#include <aotriton/_internal/lszip.h>
 #include <aotriton/runtime.h>
 #include <mutex>
 #include <cstring>
@@ -55,36 +55,34 @@ std::unordered_map<pstring_type, PackedKernel::InnerMap,
 
 PackedKernelPtr
 PackedKernel::open(pstring_view flatzip_path, std::string_view aks2_entry) {
-  // Fast path: this AKS2 entry already cached with a loaded PackedKernel.
+  // Fast path: registry already has the full directory for this ZIP.
+  // InnerMap is fully populated on first open, so inner lookup is ground truth.
   {
     std::shared_lock lock(registry_mutex_);
     auto outer = registry_.find(flatzip_path);
     if (outer != registry_.end()) {
       auto inner = outer->second.find(aks2_entry);
-      if (inner != outer->second.end() && inner->second.ptr)
+      if (inner == outer->second.end())
+        return nullptr;          // entry absent from ZIP
+      if (inner->second.ptr)
         return inner->second.ptr;
-      // Fall through: entry absent or not yet constructed.
-      // PackedKernel::registry_ only caches previously opened entries, not the
-      // full ZIP directory — FlatZip::registry_ holds that. Do not short-circuit.
+      // Entry exists but PackedKernel not yet constructed — fall through to slow path.
     }
   }
 
   const auto& storage_base = locate_aotriton_images();
   int dirfd = -1, zipfd = -1;
 
-  // Lazy-open the ZIP file on demand; captures by reference, no-op if already open.
   auto open_zip = [&]() {
     if (zipfd != -1)
       return;
 #if !defined(_WIN32)
-    // Linux/POSIX: use dirfd+openat to avoid PATH_MAX overflow for long install prefixes.
     if (dirfd == -1)
       dirfd = ::open(storage_base.c_str(), O_RDONLY);
     std::string rel_path(flatzip_path);
     zipfd = ::openat(dirfd, rel_path.c_str(), O_RDONLY);
     if (dirfd != -1) { fd_close(dirfd); dirfd = -1; }
 #else
-    // Windows: construct full path via fs::path and open with fd_open.
     fs::path full_path = storage_base / std::wstring(flatzip_path);
     auto u8str = full_path.u8string();
     std::string utf8_path(reinterpret_cast<const char*>(u8str.data()), u8str.size());
@@ -94,7 +92,7 @@ PackedKernel::open(pstring_view flatzip_path, std::string_view aks2_entry) {
 
   std::unique_lock lock(registry_mutex_);
 
-  // Warm the FlatZip central directory cache if this ZIP hasn't been seen yet.
+  // Populate InnerMap for this ZIP if not yet done.
   if (!registry_.contains(flatzip_path)) {
     open_zip();
     if (zipfd < 0) {
@@ -103,24 +101,24 @@ PackedKernel::open(pstring_view flatzip_path, std::string_view aks2_entry) {
 #endif
       return nullptr;
     }
-    FlatZip::warm(flatzip_path, zipfd);
+    InnerMap& new_map = registry_[pstring_type(flatzip_path)];
+    lszip(zipfd, [&new_map](std::string_view name, uint64_t off, uint64_t sz) {
+      new_map.try_emplace(std::string(name), CachedEntry{ off, sz, nullptr });
+    });
   }
 
-  // Look up this entry in the FlatZip cache to get (offset, size).
-  auto loc = FlatZip::lookup(flatzip_path, aks2_entry);
-  if (!loc) {
+  InnerMap& inner_map = registry_[pstring_type(flatzip_path)];
+  auto it = inner_map.find(aks2_entry);
+  if (it == inner_map.end()) {
+    // Entry not present in ZIP central directory.
     if (zipfd != -1) fd_close(zipfd);
     return nullptr;
   }
 
-  InnerMap& inner_map = registry_[pstring_type(flatzip_path)];
-  auto& entry = inner_map[std::string(aks2_entry)];
-  entry.offset = loc->offset;
-  entry.size   = loc->size;
-
-  if (entry.ptr) {
+  if (it->second.ptr) {
+    // Another thread constructed it while we waited for the lock.
     if (zipfd != -1) fd_close(zipfd);
-    return entry.ptr;
+    return it->second.ptr;
   }
 
   open_zip();
@@ -128,17 +126,17 @@ PackedKernel::open(pstring_view flatzip_path, std::string_view aks2_entry) {
     if (dirfd != -1) fd_close(dirfd);
     return nullptr;
   }
-  entry.ptr = std::make_shared<PackedKernel>(zipfd, entry.offset, entry.size);
+  it->second.ptr = std::make_shared<PackedKernel>(zipfd, it->second.offset, it->second.size);
   fd_close(zipfd);
-  if (entry.ptr->status() != hipSuccess) {
+  if (it->second.ptr->status() != hipSuccess) {
 #if AOTRITON_KERNEL_VERBOSE
     std::cerr << "PackedKernel: AKS2 decompression failed for entry "
               << std::string(aks2_entry) << std::endl;
 #endif
-    entry.ptr.reset();
+    it->second.ptr.reset();
     return nullptr;
   }
-  return entry.ptr;
+  return it->second.ptr;
 }
 
 struct AKS2_Header {

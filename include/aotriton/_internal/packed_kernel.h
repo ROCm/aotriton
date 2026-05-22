@@ -7,7 +7,6 @@
 #include <aotriton/_internal/triton_kernel.h>
 #include <aotriton/config.h>
 #include <cstddef>
-#include <functional>
 #include <memory>
 #include <shared_mutex>
 #include <stdint.h>
@@ -42,12 +41,23 @@ private:
       return std::hash<pstring_type>{}(s);
     }
   };
+  struct StringHash {
+    using is_transparent = void;
+    size_t operator()(std::string_view s) const noexcept {
+      return std::hash<std::string_view>{}(s);
+    }
+    size_t operator()(const std::string& s) const noexcept {
+      return std::hash<std::string>{}(s);
+    }
+  };
   struct CachedEntry {
-    uint64_t       offset;
-    uint64_t       size;
+    uint64_t        offset;
+    uint64_t        size;
     PackedKernelPtr ptr;
   };
-  using InnerMap = std::unordered_map<std::string, CachedEntry>;
+  // InnerMap is fully populated from ZIP central directory on first open;
+  // inner lookup result is ground truth (not-found means entry absent from ZIP).
+  using InnerMap = std::unordered_map<std::string, CachedEntry, StringHash, std::equal_to<>>;
   static std::shared_mutex registry_mutex_;
   static std::unordered_map<pstring_type, InnerMap, PStringHash, std::equal_to<>> registry_;
   // Note: do NOT drop the decompressed directory, its content is used by
