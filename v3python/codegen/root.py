@@ -181,9 +181,6 @@ class RootGenerator(object):
         with LazyFile(out_dir / 'Bare.cluster') as clusterfile:
             for fodp, path_entry_map in cluster_dict.items():
                 self.write_cluster(aks2_dir, fodp, path_entry_map, clusterfile)
-        with LazyFile(out_dir / 'Bare.flatzip') as flatzip_file:
-            for fzp_stem, path_entry_map in flatzip_dict.items():
-                self.write_cluster(images_dir, fzp_stem, path_entry_map, flatzip_file)
 
         '''
         Note: Affine kernel's functionals have residual choices, so it is not
@@ -207,6 +204,18 @@ class RootGenerator(object):
         with LazyFile(out_dir / 'Affine.cluster') as clusterfile:
             for ffp, aol_map in affine_dict.items():
                 self.write_cluster(images_dir, ffp, aol_map, clusterfile)
+
+        # Fold affine modules into flatzip_dict: each module's .aks2 becomes an entry in
+        # <vendor-arch>/<family>/affine_kernels.zip, keyed by module name.
+        for ffp in affine_dict:
+            # ffp        = amd-gfx950/flash/affine_kernels/fmha_v3_fwd
+            # ffp.parent = amd-gfx950/flash/affine_kernels  (= ZIP stem)
+            aks2_abs = (aks2_dir / ffp).with_suffix('.aks2').absolute().as_posix()
+            flatzip_dict.setdefault(ffp.parent, {})[aks2_abs] = ffp.name
+
+        with LazyFile(out_dir / 'Bare.flatzip') as flatzip_file:
+            for fzp_stem, path_entry_map in flatzip_dict.items():
+                self.write_cluster(images_dir, fzp_stem, path_entry_map, flatzip_file)
 
     def launch_workers(self):
         args = self._args
