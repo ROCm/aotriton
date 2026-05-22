@@ -89,8 +89,19 @@ class RootGenerator(object):
 
     def do_generate(self):
         args = self._args
-        sel = args.selective  # list[Path] or None
-        sel_set = set(sel) if sel is not None else None
+        sel = args.selective  # str (possibly with * glob) or None
+        if sel is not None:
+            _sel_path = Path(sel)
+            if 'affine' in _sel_path.parts:
+                # Affine kernels within the same family all contribute entries to the
+                # same per-family ZIP (e.g. flash/affine_kernels.zip).  If only one
+                # module is processed, its Bare.flatzip shard line covers only that
+                # module's .aks2, leaving the ZIP incomplete.  Running all modules in
+                # one worker (via a glob pattern) ensures flatzip_dict accumulates every
+                # module before a single shard line is written for the shared ZIP.
+                assert _sel_path.name == '*', \
+                    f"--selective for affine kernels must be a glob pattern ending in *, got: {sel!r}. " \
+                    f"Use e.g. '{_sel_path.parent}/*'"
 
         hsaco_for_kernels = []
         asms_for_kernels = []
@@ -101,8 +112,8 @@ class RootGenerator(object):
         all_trivial_stats: dict[tuple, dict[str, int]] = {}
 
         ops = dispatcher_operators
-        if sel_set is not None:
-            ops = [op for op in ops if op.unique_path in sel_set]
+        if sel is not None:
+            ops = [op for op in ops if op.unique_path.match(sel)]
         for op in ops:
             opg = OperatorGenerator(self._args, op, parent_repo=None)
             opg.generate()
@@ -119,8 +130,8 @@ class RootGenerator(object):
         self._print_lut_stats(all_lut_stats, all_trivial_stats)
 
         kerns = triton_kernels
-        if sel_set is not None:
-            kerns = [k for k in kerns if k.unique_path in sel_set]
+        if sel is not None:
+            kerns = [k for k in kerns if k.unique_path.match(sel)]
         for k in kerns:
             ksg = KernelShimGenerator(self._args, k, parent_repo=None)
             ksg.generate()
@@ -132,8 +143,8 @@ class RootGenerator(object):
         # On Windows, you get "KeyError: 'validator_function'"
         # See discussion in https://discord.com/channels/1239631572886491286/1401853302139912222/1401862203845378201
         affs = affine_kernels
-        if sel_set is not None:
-            affs = [ak for ak in affs if ak.unique_path in sel_set]
+        if sel is not None:
+            affs = [ak for ak in affs if ak.unique_path.match(sel)]
         for ak in affs:
             log(lambda : f'{ak.__class__=}')
             if isinstance(ak, SlimAffineKernelDescription):
@@ -149,7 +160,7 @@ class RootGenerator(object):
         if args.build_for_tuning_second_pass:
             return
 
-        out_dir = args.build_dir / 'Bare.shards' / sel[0] if sel is not None else args.build_dir
+        out_dir = args.build_dir / 'Bare.shards' / sel if sel is not None else args.build_dir
         if sel is not None:
             out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -220,51 +231,42 @@ class RootGenerator(object):
 
     def launch_workers(self):
         args = self._args
-        # Regular items: one worker per item.
-        items: list[Path] = []
-        items += [op.unique_path for op in dispatcher_operators]
-        items += [k.unique_path  for k in triton_kernels]
+        # Each entry is a --selective value: exact path str for ops/kernels,
+        # glob pattern str (e.g. 'flash/affine/*') for affine families.
+        items: list[str] = []
+        items += [op.unique_path.as_posix() for op in dispatcher_operators]
+        items += [k.unique_path.as_posix()  for k in triton_kernels]
 
         # Affine kernels sharing the same FAMILY produce entries in the same ZIP
-        # (affine_kernels.zip), so they must run in one worker to avoid duplicate
-        # shard lines for the same output ZIP.
+        # (affine_kernels.zip), so they must run in one worker via a glob pattern
+        # to avoid duplicate shard lines for the same output ZIP.
         from itertools import groupby
-        affine_groups: list[list[Path]] = []
         sorted_affs = sorted(affine_kernels, key=lambda ak: ak.FAMILY)
         for _, grp in groupby(sorted_affs, key=lambda ak: ak.FAMILY):
-            affine_groups.append([ak.unique_path for ak in grp])
+            grp_list = list(grp)
+            # e.g. unique_path = flash/affine/aiter_fmha_v3_fwd → parent/  = flash/affine/
+            items.append(grp_list[0].unique_path.parent.as_posix() + '/*')
 
         base_argv = [x for x in sys.argv[1:] if not x.startswith('--selective')]
 
-        def run_one(item: Path):
+        def run_one(item: str):
             cmd = [sys.executable, '-m', 'v3python.generate',
-                   '--selective', item.as_posix()] + base_argv
+                   '--selective', item] + base_argv
             result = subprocess.run(cmd, capture_output=False)
             if result.returncode != 0:
                 raise RuntimeError(f'Worker failed for {item}: exit {result.returncode}')
 
-        def run_group(group: list[Path]):
-            cmd = [sys.executable, '-m', 'v3python.generate',
-                   '--selective'] + [p.as_posix() for p in group] + base_argv
-            result = subprocess.run(cmd, capture_output=False)
-            if result.returncode != 0:
-                raise RuntimeError(f'Worker failed for {group}: exit {result.returncode}')
-
         with ThreadPoolExecutor() as pool:
-            futures  = [pool.submit(run_one,   item)  for item  in items]
-            futures += [pool.submit(run_group, group) for group in affine_groups]
+            futures = [pool.submit(run_one, item) for item in items]
         for f in futures:
             f.result()  # re-raise any worker exception
-
-        # Shard keys for merging: single items + representative (first) of each affine group.
-        shard_keys = items + [group[0] for group in affine_groups]
 
         shard_names = ['Bare.shim', 'Bare.compile', 'Bare.cluster', 'Affine.cluster', 'Bare.flatzip']
         out_files = {name: args.build_dir / name for name in shard_names}
         # Truncate output files before appending
         for path in out_files.values():
             path.unlink(missing_ok=True)
-        for item in shard_keys:
+        for item in items:
             shard_dir = args.build_dir / 'Bare.shards' / item
             for name, out_path in out_files.items():
                 shard_file = shard_dir / name

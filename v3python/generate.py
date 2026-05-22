@@ -42,8 +42,11 @@ def parse():
                    help="Excluse certain GPU kernels for performance tuning when --build_for_tuning=True.")
     # Always True
     # p.add_argument("--generate_cluster_info", action='store_true', help="Generate Bare.functionals for clustering.")
-    p.add_argument("--selective", type=Path, default=None, nargs='+',
-                   help="Only generate the specified item(s), e.g. flash/affine/aiter_fmha_v3_fwd flash/affine/aiter_fmha_v3_bwd")
+    p.add_argument("--selective", type=str, default=None,
+                   help="Only generate the item matching this path or glob pattern, "
+                        "e.g. flash/triton/attn_fwd or 'flash/affine/*'. "
+                        "Paths containing <family>/affine MUST be a glob pattern ending in *; "
+                        "use quotes to prevent shell expansion of *.")
     p.add_argument("--verbose", action='store_true', help="Print debugging messages")
     p.add_argument("--lut_sanity_check", action='store_true', help="By default, an exception will ba raised when any the look up table (LUT) is broken. With this option the exception is not raised, and diagnose information is printed for developers to re-run the tuning script in order to fix the database.")
     p.add_argument("--sanity_check_only", action='store_true', help="Run --lut_sanity_check but suppress all code generation. No files are written. Implies --lut_sanity_check.")
