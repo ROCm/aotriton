@@ -268,13 +268,13 @@ if(NOT AOTRITON_NOIMAGE_MODE)
       list(POP_FRONT RULE DIR_KERNEL)
       list(POP_FRONT RULE FONLY)
       string(JOIN "/" AKS2
-        ${AOTRITON_KERNEL_STORAGE_V2_DIR}
+        ${AOTRITON_AKS2_DIR}
         ${DIR_ARCH}
         ${DIR_FAMILY}
         ${DIR_KERNEL}
         "${FONLY}.aks2")
       string(JOIN "/" HSACO_MANIFEST
-        ${AOTRITON_KERNEL_STORAGE_V2_DIR}
+        ${AOTRITON_AKS2_DIR}
         ${DIR_ARCH}
         ${DIR_FAMILY}
         ${DIR_KERNEL}

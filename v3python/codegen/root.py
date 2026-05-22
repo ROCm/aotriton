@@ -203,7 +203,7 @@ class RootGenerator(object):
                 affine_dict.setdefault(ffp, {}).update(dict(parse_rule(r) for r in asms))
         with LazyFile(out_dir / 'Affine.cluster') as clusterfile:
             for ffp, aol_map in affine_dict.items():
-                self.write_cluster(images_dir, ffp, aol_map, clusterfile)
+                self.write_cluster(aks2_dir, ffp, aol_map, clusterfile)
 
         # Fold affine modules into flatzip_dict: each module's .aks2 becomes an entry in
         # <vendor-arch>/<family>/affine_kernels.zip, keyed by module name.
