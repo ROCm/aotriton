@@ -128,7 +128,7 @@ OnDeviceKernel::decompress_kernel(const OnDeviceKernel::OnDiskKernelInfo& info) 
     std::cerr << "PackedKernel::open returns " << packed_kernel_.get()
               << " status: " << packed_kernel_->status() << std::endl;
 #endif
-    essentials_ = packed_kernel_->filter(stem_name);
+    essentials_ = packed_kernel_->filter(info.stem_name);
   }
   kernel_loaded_ = true;
 }
