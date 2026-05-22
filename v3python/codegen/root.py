@@ -89,7 +89,8 @@ class RootGenerator(object):
 
     def do_generate(self):
         args = self._args
-        sel = args.selective  # Path or None
+        sel = args.selective  # list[Path] or None
+        sel_set = set(sel) if sel is not None else None
 
         hsaco_for_kernels = []
         asms_for_kernels = []
@@ -100,8 +101,8 @@ class RootGenerator(object):
         all_trivial_stats: dict[tuple, dict[str, int]] = {}
 
         ops = dispatcher_operators
-        if sel is not None:
-            ops = [op for op in ops if op.unique_path == sel]
+        if sel_set is not None:
+            ops = [op for op in ops if op.unique_path in sel_set]
         for op in ops:
             opg = OperatorGenerator(self._args, op, parent_repo=None)
             opg.generate()
@@ -118,8 +119,8 @@ class RootGenerator(object):
         self._print_lut_stats(all_lut_stats, all_trivial_stats)
 
         kerns = triton_kernels
-        if sel is not None:
-            kerns = [k for k in kerns if k.unique_path == sel]
+        if sel_set is not None:
+            kerns = [k for k in kerns if k.unique_path in sel_set]
         for k in kerns:
             ksg = KernelShimGenerator(self._args, k, parent_repo=None)
             ksg.generate()
@@ -131,8 +132,8 @@ class RootGenerator(object):
         # On Windows, you get "KeyError: 'validator_function'"
         # See discussion in https://discord.com/channels/1239631572886491286/1401853302139912222/1401862203845378201
         affs = affine_kernels
-        if sel is not None:
-            affs = [ak for ak in affs if ak.unique_path == sel]
+        if sel_set is not None:
+            affs = [ak for ak in affs if ak.unique_path in sel_set]
         for ak in affs:
             log(lambda : f'{ak.__class__=}')
             if isinstance(ak, SlimAffineKernelDescription):
@@ -148,7 +149,7 @@ class RootGenerator(object):
         if args.build_for_tuning_second_pass:
             return
 
-        out_dir = args.build_dir / 'Bare.shards' / sel if sel is not None else args.build_dir
+        out_dir = args.build_dir / 'Bare.shards' / sel[0] if sel is not None else args.build_dir
         if sel is not None:
             out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -219,10 +220,19 @@ class RootGenerator(object):
 
     def launch_workers(self):
         args = self._args
+        # Regular items: one worker per item.
         items: list[Path] = []
         items += [op.unique_path for op in dispatcher_operators]
         items += [k.unique_path  for k in triton_kernels]
-        items += [ak.unique_path for ak in affine_kernels]
+
+        # Affine kernels sharing the same FAMILY produce entries in the same ZIP
+        # (affine_kernels.zip), so they must run in one worker to avoid duplicate
+        # shard lines for the same output ZIP.
+        from itertools import groupby
+        affine_groups: list[list[Path]] = []
+        sorted_affs = sorted(affine_kernels, key=lambda ak: ak.FAMILY)
+        for _, grp in groupby(sorted_affs, key=lambda ak: ak.FAMILY):
+            affine_groups.append([ak.unique_path for ak in grp])
 
         base_argv = [x for x in sys.argv[1:] if not x.startswith('--selective')]
 
@@ -233,17 +243,28 @@ class RootGenerator(object):
             if result.returncode != 0:
                 raise RuntimeError(f'Worker failed for {item}: exit {result.returncode}')
 
+        def run_group(group: list[Path]):
+            cmd = [sys.executable, '-m', 'v3python.generate',
+                   '--selective'] + [p.as_posix() for p in group] + base_argv
+            result = subprocess.run(cmd, capture_output=False)
+            if result.returncode != 0:
+                raise RuntimeError(f'Worker failed for {group}: exit {result.returncode}')
+
         with ThreadPoolExecutor() as pool:
-            futures = [pool.submit(run_one, item) for item in items]
+            futures  = [pool.submit(run_one,   item)  for item  in items]
+            futures += [pool.submit(run_group, group) for group in affine_groups]
         for f in futures:
             f.result()  # re-raise any worker exception
+
+        # Shard keys for merging: single items + representative (first) of each affine group.
+        shard_keys = items + [group[0] for group in affine_groups]
 
         shard_names = ['Bare.shim', 'Bare.compile', 'Bare.cluster', 'Affine.cluster', 'Bare.flatzip']
         out_files = {name: args.build_dir / name for name in shard_names}
         # Truncate output files before appending
         for path in out_files.values():
             path.unlink(missing_ok=True)
-        for item in items:
+        for item in shard_keys:
             shard_dir = args.build_dir / 'Bare.shards' / item
             for name, out_path in out_files.items():
                 shard_file = shard_dir / name
