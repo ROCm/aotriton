@@ -3,6 +3,7 @@
 
 #include <aotriton/_internal/flat_zip.h>
 #include <cstring>
+#include <mutex>
 #include <vector>
 
 #if defined(_WIN32)
