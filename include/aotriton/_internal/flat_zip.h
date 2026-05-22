@@ -29,7 +29,7 @@ public:
   // Warm the static registry for zip_path: parse ZIP central directory and
   // cache entry→EntryLocation. No-op if already cached.
   // fd must be an open file descriptor for zip_path (caller owns it).
-  static hipError_t warm(pstring_view zip_path, int fd);
+  static void warm(pstring_view zip_path, int fd);
 
   // Returns std::nullopt if the zip or entry is not found in the cache.
   static std::optional<EntryLocation> lookup(pstring_view zip_path,

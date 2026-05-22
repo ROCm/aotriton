@@ -142,18 +142,17 @@ FlatZip::parse_central_directory(int fd) {
   return dir;
 }
 
-hipError_t
+void
 FlatZip::warm(pstring_view zip_path, int fd) {
   {
     std::shared_lock lock(registry_mutex_);
     if (registry_.contains(zip_path))
-      return hipSuccess;
+      return;
   }
   std::unique_lock lock(registry_mutex_);
   if (registry_.contains(zip_path))
-    return hipSuccess;
+    return;
   registry_[pstring_type(zip_path)] = parse_central_directory(fd);
-  return hipSuccess;
 }
 
 std::optional<FlatZip::EntryLocation>
