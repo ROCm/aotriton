@@ -4,6 +4,7 @@
 #ifndef AOTRITON_V3_LSZIP_H
 #define AOTRITON_V3_LSZIP_H
 
+#include <aotriton/config.h>
 #include <cstdint>
 #include <functional>
 #include <string_view>
