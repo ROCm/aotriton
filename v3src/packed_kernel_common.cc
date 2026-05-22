@@ -104,11 +104,6 @@ PackedKernel::open(pstring_view flatzip_path, std::string_view aks2_entry) {
       return nullptr;
     }
     FlatZip::warm(flatzip_path, zipfd);
-    // Populate registry_ from the warm cache.
-    InnerMap& inner_map = registry_[pstring_type(flatzip_path)];
-    // iterate all entries returned by lookup — we seed them lazily on demand instead.
-    // (No bulk iteration API on FlatZip; entries are inserted as they are opened.)
-    (void)inner_map;
   }
 
   // Look up this entry in the FlatZip cache to get (offset, size).
