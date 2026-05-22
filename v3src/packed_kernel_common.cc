@@ -55,17 +55,17 @@ std::unordered_map<pstring_type, PackedKernel::InnerMap,
 
 PackedKernelPtr
 PackedKernel::open(pstring_view flatzip_path, std::string_view aks2_entry) {
-  // Fast path: both ZIP directory and this AKS2 entry already cached.
+  // Fast path: this AKS2 entry already cached with a loaded PackedKernel.
   {
     std::shared_lock lock(registry_mutex_);
     auto outer = registry_.find(flatzip_path);
     if (outer != registry_.end()) {
-      auto inner = outer->second.find(std::string(aks2_entry));
-      if (inner == outer->second.end())
-        return nullptr;  // ZIP directory cached but entry absent
-      if (inner->second.ptr)
+      auto inner = outer->second.find(aks2_entry);
+      if (inner != outer->second.end() && inner->second.ptr)
         return inner->second.ptr;
-      // Entry found but PackedKernel not yet constructed — fall through to slow path.
+      // Fall through: entry absent or not yet constructed.
+      // PackedKernel::registry_ only caches previously opened entries, not the
+      // full ZIP directory — FlatZip::registry_ holds that. Do not short-circuit.
     }
   }
 

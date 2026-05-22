@@ -161,7 +161,7 @@ FlatZip::lookup(pstring_view zip_path, std::string_view entry_name) {
   auto outer = registry_.find(zip_path);
   if (outer == registry_.end())
     return std::nullopt;
-  auto inner = outer->second.find(std::string(entry_name));
+  auto inner = outer->second.find(entry_name);
   if (inner == outer->second.end())
     return std::nullopt;
   return inner->second;

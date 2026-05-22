@@ -36,17 +36,18 @@ public:
                                              std::string_view entry_name);
 
 private:
+  struct StringHash {
+    using is_transparent = void;
+    size_t operator()(std::string_view s) const noexcept { return std::hash<std::string_view>{}(s); }
+    size_t operator()(const std::string& s)  const noexcept { return std::hash<std::string>{}(s); }
+  };
   struct PStringHash {
     using is_transparent = void;
-    size_t operator()(pstring_view s) const noexcept {
-      return std::hash<pstring_view>{}(s);
-    }
-    size_t operator()(const pstring_type& s) const noexcept {
-      return std::hash<pstring_type>{}(s);
-    }
+    size_t operator()(pstring_view s) const noexcept { return std::hash<pstring_view>{}(s); }
+    size_t operator()(const pstring_type& s) const noexcept { return std::hash<pstring_type>{}(s); }
   };
 
-  using DirectoryMap = std::unordered_map<std::string, EntryLocation>;
+  using DirectoryMap = std::unordered_map<std::string, EntryLocation, StringHash, std::equal_to<>>;
   using Registry     = std::unordered_map<pstring_type, DirectoryMap, PStringHash, std::equal_to<>>;
 
   static std::shared_mutex registry_mutex_;
