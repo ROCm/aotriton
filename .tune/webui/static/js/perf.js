@@ -39,15 +39,6 @@ function _hslComponents(fraction) {
   };
 }
 
-// Returns the ratio fp16_peak/dtype_peak for the given arch+dtype, so that
-// fp32 TFLOPS are scaled up before color mapping — penalizing them relative
-// to the machine's fp16 headroom. Returns 1 if peaks are unknown or equal.
-function dtypeScale(arch, dtype) {
-  if (!dtype || dtype === 'float16' || dtype === 'bfloat16') return 1;
-  const peak = THEORETICAL_PEAK_TFLOPS[arch];
-  if (!peak || !peak['float16'] || !peak[dtype] || peak[dtype] === 0) return 1;
-  return peak['float16'] / peak[dtype];
-}
 
 // Map a raw linear fraction [0,1] to a perceptual fraction using log scaling.
 // log(1 + k*x)/log(1+k) with k=9 maps 10% linear → ~53% perceptual,
@@ -215,15 +206,24 @@ function computeAnchor(visibleRows, state) {
     if (peak && peak[dtype]) return peak[dtype];
     // Fall through to max_observed if not found.
   }
-  // max_observed: max TFLOPS across the rows currently visible.
-  let maxT = 0;
+  // max_observed: per-dtype max TFLOPS across the rows currently visible.
+  // Returns a Map<dtype, number> so each dtype is normalized to its own peak.
+  const byDtype = new Map();
   for (const r of visibleRows) {
     if (r.median_ms > 0) {
       const t = desc.tflops(r);
-      if (t > maxT) maxT = t;
+      const d = r.dtype || '';
+      if (!byDtype.has(d) || t > byDtype.get(d)) byDtype.set(d, t);
     }
   }
-  return maxT || 1;
+  return byDtype.size ? byDtype : new Map([['', 1]]);
+}
+
+// Pick the anchor value for a given dtype from computeAnchor's return value.
+// When anchor is a Map (max_observed), look up by dtype; otherwise use directly.
+function anchorFor(anchor, dtype) {
+  if (!(anchor instanceof Map)) return anchor;
+  return anchor.get(dtype) || anchor.get('') || [...anchor.values()][0] || 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -270,13 +270,13 @@ function renderHeatmap(container, seqQ, seqK, index, desc, anchor) {
       }
 
       const tflops = desc.tflops(row);
-      const scale  = dtypeScale(state.arch, row.dtype);
-      const frac   = perfFrac(tflops * scale, anchor);
+      const a      = anchorFor(anchor, row.dtype);
+      const frac   = perfFrac(tflops, a);
       td.style.background = perfColor(frac);
       td.style.color      = cellTextColor(frac);
       td.style.cursor     = 'default';
 
-      const pct = Math.round(tflops * scale / anchor * 100);
+      const pct = Math.round(tflops / a * 100);
       td.innerHTML = `<div style="line-height:1.2">${tflops.toFixed(1)}<br><span style="opacity:0.8">${pct}%</span></div>`;
 
       // Tooltip.
@@ -420,11 +420,11 @@ function renderAutozoom(grid, layout, anchor) {
         const maxT = _maxTflops(cell.index, desc);
         if (maxT > 0) {
           const dtype = colCombo.dtype || rowCombo.dtype;
-          const scale = dtypeScale(state.arch, dtype);
-          const frac = perfFrac(maxT * scale, anchor);
+          const a    = anchorFor(anchor, dtype);
+          const frac = perfFrac(maxT, a);
           td.style.background = perfColor(frac);
           td.style.color      = cellTextColor(frac);
-          const pct = Math.round(maxT * scale / anchor * 100);
+          const pct = Math.round(maxT / a * 100);
           td.innerHTML = `<div style="line-height:1.2">${maxT.toFixed(1)}<br><span style="opacity:0.8">${pct}%</span></div>`;
           td.title = `Max TFLOPS: ${maxT.toFixed(2)}\nClick to view seqlen matrix`;
           td.addEventListener('click', () => {
@@ -504,7 +504,7 @@ function renderGrid() {
 
       const legend = document.createElement('div');
       legend.style.cssText = 'margin-top:8px;opacity:0.75;';
-      legend.textContent = `Scale anchor: ${anchor.toFixed(1)} TFLOPS (${state.scale.mode})`;
+      legend.textContent = `Scale anchor: ${anchor instanceof Map ? [...anchor.entries()].map(([d,v])=>`${d}:${v.toFixed(1)}`).join(", ") : anchor.toFixed(1)} TFLOPS (${state.scale.mode})`;
       grid.appendChild(legend);
     } else {
       // Overview: anchor from all visible rows.
@@ -514,7 +514,7 @@ function renderGrid() {
 
       const legend = document.createElement('div');
       legend.style.cssText = 'margin-top:8px;opacity:0.75;';
-      legend.textContent = `Scale anchor: ${anchor.toFixed(1)} TFLOPS (${state.scale.mode})`;
+      legend.textContent = `Scale anchor: ${anchor instanceof Map ? [...anchor.entries()].map(([d,v])=>`${d}:${v.toFixed(1)}`).join(", ") : anchor.toFixed(1)} TFLOPS (${state.scale.mode})`;
       grid.appendChild(legend);
     }
     return;
@@ -607,7 +607,7 @@ function renderGrid() {
   // Scale legend.
   const legend = document.createElement('div');
   legend.style.cssText = 'margin-top:8px;opacity:0.75;';
-  legend.textContent = `Scale anchor: ${anchor.toFixed(1)} TFLOPS (${state.scale.mode})`;
+  legend.textContent = `Scale anchor: ${anchor instanceof Map ? [...anchor.entries()].map(([d,v])=>`${d}:${v.toFixed(1)}`).join(", ") : anchor.toFixed(1)} TFLOPS (${state.scale.mode})`;
   grid.appendChild(legend);
 }
 
