@@ -364,7 +364,7 @@ function renderGrid() {
     for (let ri = 0; ri < numRowDims; ri++) {
       const th = document.createElement('th');
       if (di === 0 && ri === numRowDims - 1) {
-        th.textContent = state.colDims.join(' / ') + ' →';
+        th.textContent = 'features →';
         th.style.cssText = 'text-align:right;opacity:0.7;';
       }
       tr.appendChild(th);
