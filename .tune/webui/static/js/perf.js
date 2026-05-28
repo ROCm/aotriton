@@ -39,6 +39,16 @@ function _hslComponents(fraction) {
   };
 }
 
+// Returns the ratio fp16_peak/dtype_peak for the given arch+dtype, so that
+// fp32 TFLOPS are scaled up before color mapping — penalizing them relative
+// to the machine's fp16 headroom. Returns 1 if peaks are unknown or equal.
+function dtypeScale(arch, dtype) {
+  if (!dtype || dtype === 'float16' || dtype === 'bfloat16') return 1;
+  const peak = THEORETICAL_PEAK_TFLOPS[arch];
+  if (!peak || !peak['float16'] || !peak[dtype] || peak[dtype] === 0) return 1;
+  return peak['float16'] / peak[dtype];
+}
+
 // Map a raw linear fraction [0,1] to a perceptual fraction using log scaling.
 // log(1 + k*x)/log(1+k) with k=9 maps 10% linear → ~53% perceptual,
 // spreading the color range across the lower-performance majority.
@@ -260,12 +270,13 @@ function renderHeatmap(container, seqQ, seqK, index, desc, anchor) {
       }
 
       const tflops = desc.tflops(row);
-      const frac   = perfFrac(tflops, anchor);
+      const scale  = dtypeScale(state.arch, row.dtype);
+      const frac   = perfFrac(tflops * scale, anchor);
       td.style.background = perfColor(frac);
       td.style.color      = cellTextColor(frac);
       td.style.cursor     = 'default';
 
-      const pct = Math.round(tflops / anchor * 100);
+      const pct = Math.round(tflops * scale / anchor * 100);
       td.innerHTML = `<div style="line-height:1.2">${tflops.toFixed(1)}<br><span style="opacity:0.8">${pct}%</span></div>`;
 
       // Tooltip.
@@ -408,10 +419,12 @@ function renderAutozoom(grid, layout, anchor) {
       if (cell) {
         const maxT = _maxTflops(cell.index, desc);
         if (maxT > 0) {
-          const frac = perfFrac(maxT, anchor);
+          const dtype = colCombo.dtype || rowCombo.dtype;
+          const scale = dtypeScale(state.arch, dtype);
+          const frac = perfFrac(maxT * scale, anchor);
           td.style.background = perfColor(frac);
           td.style.color      = cellTextColor(frac);
-          const pct = Math.round(maxT / anchor * 100);
+          const pct = Math.round(maxT * scale / anchor * 100);
           td.innerHTML = `<div style="line-height:1.2">${maxT.toFixed(1)}<br><span style="opacity:0.8">${pct}%</span></div>`;
           td.title = `Max TFLOPS: ${maxT.toFixed(2)}\nClick to view seqlen matrix`;
           td.addEventListener('click', () => {
