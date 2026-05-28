@@ -124,7 +124,8 @@ function cartesian(arrays) {
   return head.flatMap(v => rest.map(t => [v, ...t]));
 }
 
-// Enumerate distinct dim-value tuples present in rows (for a given set of dim keys).
+// Enumerate distinct dim-value tuples present in rows, ordered by the
+// descriptor's declared values[] order for each key (falls back to natural order).
 function distinctCombos(rows, dimKeys) {
   const seen = new Set();
   const result = [];
@@ -137,6 +138,23 @@ function distinctCombos(rows, dimKeys) {
       result.push(obj);
     }
   }
+  // Sort by descriptor values[] order for each dim key.
+  const desc = state.descriptor;
+  result.sort((a, b) => {
+    for (const k of dimKeys) {
+      const dim = desc && desc.dims.find(d => d.key === k);
+      const order = dim ? dim.values : null;
+      const ai = order ? order.indexOf(a[k]) : -1;
+      const bi = order ? order.indexOf(b[k]) : -1;
+      // Known values sort by index; unknowns go last, then by natural order.
+      const av = ai >= 0 ? ai : Infinity;
+      const bv = bi >= 0 ? bi : Infinity;
+      if (av !== bv) return av - bv;
+      if (a[k] < b[k]) return -1;
+      if (a[k] > b[k]) return 1;
+    }
+    return 0;
+  });
   return result;
 }
 
