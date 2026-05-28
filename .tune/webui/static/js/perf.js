@@ -513,10 +513,11 @@ function initPerf() {
     chip.className = 'dim-chip';
     chip.dataset.dim = key;
 
-    // Dropdown for value filtering — shown only when unchecked.
+    // Dropdown for value filtering — always visible, disabled when checkbox is checked.
     // Built before the checkbox so the checkbox handler can reference it.
     const sel = document.createElement('select');
-    sel.style.cssText = 'margin-left:0.3rem;' + (isChecked ? 'display:none;' : '');
+    sel.style.cssText = 'margin-left:0.3rem;';
+    sel.disabled = isChecked;
     // Pick the currently filtered value, or the first value as default.
     const currentVal = state.filter[key]
       ? [...state.filter[key]][0]
@@ -534,7 +535,7 @@ function initPerf() {
       renderGrid();
     });
 
-    // Checkbox toggles between "all values" and "single value from dropdown".
+    // Checkbox toggles between "all values" (dropdown disabled) and "single value" (dropdown enabled).
     const cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.checked = isChecked;
@@ -543,10 +544,10 @@ function initPerf() {
       e.stopPropagation();
       if (cb.checked) {
         state.filter[key] = null;
-        sel.style.display = 'none';
+        sel.disabled = true;
       } else {
         state.filter[key] = new Set([sel.value || currentVal]);
-        sel.style.display = '';
+        sel.disabled = false;
       }
       renderGrid();
     });
