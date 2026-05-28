@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+
+{% block title %}Performance{% endblock %}
+
+{% block content %}
+<h2>Performance Visualization</h2>
+
+<style>
+  #perf-config { border:1px solid var(--border); border-radius:4px; padding:1rem; margin-bottom:1rem; }
+  #perf-config label { margin-right:0.8rem; }
+  #perf-config select { margin-right:0.4rem; }
+  #perf-layout-panel { margin-top:0.75rem; }
+  #perf-layout-panel summary { cursor:pointer; font-weight:bold; }
+  .dim-assignment { display:flex; gap:2rem; margin-top:0.5rem; flex-wrap:wrap; }
+  .dim-assignment > div > strong { display:block; margin-bottom:0.3rem; }
+  .dim-chip { display:inline-flex; align-items:center; gap:0.3rem; margin:0.15rem;
+              padding:0.2rem 0.5rem; border:1px solid var(--border); border-radius:3px;
+              cursor:grab; user-select:none; }
+  .dim-chip input[type=checkbox] { margin:0; cursor:pointer; }
+  .dim-chip.dragging { opacity:0.4; }
+  .dim-drop-target { min-height:2rem; padding:0.2rem; border:1px dashed var(--border);
+                     border-radius:3px; display:flex; flex-wrap:wrap; align-items:center; }
+  .dim-drop-target.drag-over { outline:2px solid; }
+  #perf-fixed-filters { margin-top:0.5rem; }
+  #perf-grid { overflow-x:auto; }
+  #perf-grid table { border-collapse:separate; border-spacing:4px; }
+  #perf-grid th { font-size:1em; white-space:nowrap; }
+  #perf-status { font-size:1em; margin-top:0.4rem; }
+  .scale-user-input { display:none; margin-left:0.3rem; width:6rem; }
+</style>
+
+<section id="perf-config">
+  <div>
+    <label>Arch:
+      <select id="perf-arch">
+        {% for arch in archs %}
+        <option value="{{ arch }}">{{ arch }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label>Mode:
+      <select id="perf-mode">
+        <option value="kernel">Kernel</option>
+        <option value="op">Op</option>
+      </select>
+    </label>
+
+    <label>Kernel / Op:
+      <select id="perf-kernel">
+        <optgroup label="Kernels">
+          <option value="attn_fwd">attn_fwd</option>
+          <option value="bwd_kernel_dk_dv">bwd_kernel_dk_dv</option>
+          <option value="bwd_kernel_dq">bwd_kernel_dq</option>
+          <option value="bwd_kernel_fuse">bwd_kernel_fuse</option>
+        </optgroup>
+        <optgroup label="Ops">
+          <option value="attn_fwd_op">attn_fwd_op</option>
+          <option value="attn_bwd_op">attn_bwd_op</option>
+        </optgroup>
+      </select>
+    </label>
+
+    <label>Display:
+      <select id="perf-display">
+        <option value="heatmap">Heatmap</option>
+        <option value="3d">3-D bars</option>
+      </select>
+    </label>
+
+    <button id="perf-refresh">Load</button>
+  </div>
+
+  <div style="margin-top:0.5rem;">
+    <label>Scale:
+      <select id="perf-scale">
+        <option value="max_observed">Max observed (default)</option>
+        <option value="theoretical">Theoretical peak</option>
+        <option value="user">User-defined</option>
+      </select>
+    </label>
+    <input id="perf-scale-value" class="scale-user-input" type="number" min="0" step="1"
+           placeholder="TFLOPS" title="Absolute TFLOPS anchor">
+  </div>
+
+  <details id="perf-layout-panel">
+    <summary>Dimension layout</summary>
+    <div class="dim-assignment">
+      <div>
+        <strong>Column dims</strong>
+        <div id="perf-col-dims" class="dim-drop-target" data-role="col"></div>
+      </div>
+      <div>
+        <strong>Row dims</strong>
+        <div id="perf-row-dims" class="dim-drop-target" data-role="row"></div>
+      </div>
+      <div>
+        <strong>Fixed filters</strong>
+        <div id="perf-fixed-filters" class="dim-drop-target" data-role="fixed"></div>
+      </div>
+    </div>
+  </details>
+
+  <div id="perf-status"></div>
+</section>
+
+<div id="perf-grid">
+  <p>Select arch and kernel, then click Load.</p>
+</div>
+
+<!-- Load Plotly from CDN; falls back to locally cached copy if CDN fails. -->
+<script
+  src="https://cdn.jsdelivr.net/npm/plotly.js-basic-dist@2.35.2/plotly.basic.min.js"
+  crossorigin="anonymous"
+  onerror="loadFallbackPlotly()">
+</script>
+<script>
+function loadFallbackPlotly() {
+  var s = document.createElement('script');
+  s.src = '/static/cache/plotly.basic.min.js';
+  document.head.appendChild(s);
+}
+</script>
+
+<script src="{{ url_for('static', filename='js/perf.js') }}"></script>
+<script src="{{ url_for('static', filename='js/vis_descriptors/flash.js') }}"></script>
+<script>registerDescriptor(FLASH_DESCRIPTOR);</script>
+{% endblock %}

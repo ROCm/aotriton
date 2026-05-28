@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AOTriton Performance Visualization</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, sans-serif; max-width: none; margin: 0; padding: 1rem 2rem; }
+  h1 { font-size: 1.4rem; margin-bottom: 0.5rem; }
+  #perf-config { border:1px solid; border-radius:4px; padding:1rem; margin-bottom:1rem; opacity:0.95; }
+  #perf-config label { margin-right:0.8rem; }
+  #perf-config select, #perf-config input { margin-right:0.4rem; }
+  #perf-fixed-filters { margin-top:0.5rem; }
+  #perf-grid { overflow-x:auto; }
+  #perf-grid table { border-collapse:separate; border-spacing:4px; }
+  #perf-grid th { font-size:0.82em; white-space:nowrap; }
+  #perf-status { font-size:0.85em; opacity:0.75; margin-top:0.4rem; }
+  .scale-user-input { display:none; width:6rem; }
+</style>
+</head>
+<body>
+
+<h1>AOTriton Performance Visualization</h1>
+
+<section id="perf-config">
+  <div>
+    <label>Arch:
+      <select id="perf-arch"></select>
+    </label>
+
+    <label>Mode:
+      <select id="perf-mode">
+        <option value="kernel">Kernel</option>
+        <option value="op">Op</option>
+      </select>
+    </label>
+
+    <label>Kernel / Op:
+      <select id="perf-kernel">
+        <optgroup label="Kernels">
+          <option value="attn_fwd">attn_fwd</option>
+          <option value="bwd_kernel_dk_dv">bwd_kernel_dk_dv</option>
+          <option value="bwd_kernel_dq">bwd_kernel_dq</option>
+          <option value="bwd_kernel_fuse">bwd_kernel_fuse</option>
+        </optgroup>
+        <optgroup label="Ops">
+          <option value="attn_fwd_op">attn_fwd_op</option>
+          <option value="attn_bwd_op">attn_bwd_op</option>
+        </optgroup>
+      </select>
+    </label>
+
+    <label>Display:
+      <select id="perf-display">
+        <option value="heatmap">Heatmap</option>
+        <option value="3d">3-D bars</option>
+      </select>
+    </label>
+
+    <button id="perf-refresh">Load</button>
+  </div>
+
+  <div style="margin-top:0.5rem;">
+    <label>Scale:
+      <select id="perf-scale">
+        <option value="max_observed">Max observed (default)</option>
+        <option value="theoretical">Theoretical peak</option>
+        <option value="user">User-defined</option>
+      </select>
+    </label>
+    <input id="perf-scale-value" class="scale-user-input" type="number" min="0" step="1"
+           placeholder="TFLOPS">
+  </div>
+
+  <div id="perf-fixed-filters"></div>
+  <div id="perf-status"></div>
+</section>
+
+<div id="perf-grid">
+  <p>Select arch and kernel, then click Load.</p>
+</div>
+
+<!-- Plotly CDN (exact semver pin) -->
+<script src="__PLOTLY_CDN__" crossorigin="anonymous"></script>
+
+<script>
+// Flash attention descriptor — auto-injected by export_visperf.py
+// __FLASH_JS__
+</script>
+
+<script>
+// Inlined data from PostgreSQL best_tuning_results / best_optune_results.
+// Keys: data[arch][kernel] = {arch, kernel, axes, rows}
+const ALL_PERF_DATA = __PERF_DATA__;
+</script>
+
+<script>
+// perf.js rendering engine — auto-injected by export_visperf.py
+// __PERF_JS__
+</script>
+
+<script>
+// Static-export bootstrap: populate arch dropdown from inlined data,
+// then override fetchData to serve from ALL_PERF_DATA instead of the API.
+
+registerDescriptor(FLASH_DESCRIPTOR);
+
+(function() {
+  const archSel = document.getElementById('perf-arch');
+  const archs = Object.keys(ALL_PERF_DATA).sort();
+  archs.forEach(arch => {
+    const opt = document.createElement('option');
+    opt.value = opt.textContent = arch;
+    archSel.appendChild(opt);
+  });
+
+  // Override fetchData so it reads from inlined JSON instead of HTTP.
+  window.fetchData = async function(arch, kernel, mode) {
+    const archData = ALL_PERF_DATA[arch] || {};
+    const d = archData[kernel] || { arch, kernel, axes: {}, rows: [] };
+    d.rows.forEach(r => { r._kernel = kernel; });
+    return d;
+  };
+})();
+</script>
+
+</body>
+</html>

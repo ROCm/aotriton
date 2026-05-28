@@ -28,6 +28,8 @@ sys.path.insert(0, AOTRITON_ROOT.as_posix())
 from v3python.tune.utils import get_db_connection_params
 from v3python.tune.flash.module import FlashEntry
 from .pytest_entry_parser import parse_pytest_node_id, entry_to_sql_clauses
+from v3python.tune.pq.visperf import query_best_results, get_available_archs
+from v3python.tune.pq.export_visperf import export_visperf as _do_export_visperf
 
 def run_command(cmd, cwd, workdir, description=None, dry_run: bool = False):
     """
@@ -1877,3 +1879,62 @@ def get_scheduled_workers(workdir):
     except Exception as e:
         logger.error(f"Error getting scheduled workers: {e}")
         return {}
+
+
+# ---------------------------------------------------------------------------
+# Performance visualization
+# ---------------------------------------------------------------------------
+
+PLOTLY_CDN_URL = (
+    'https://cdn.jsdelivr.net/npm/plotly.js-basic-dist@2.35.2/plotly.basic.min.js'
+)
+
+
+def _ensure_plotly_cache(workdir: str) -> None:
+    """Download Plotly.js to scratch/webcache/ if not already present."""
+    import urllib.request
+    cache_path = Path(workdir) / 'scratch' / 'webcache' / 'plotly.basic.min.js'
+    if cache_path.exists():
+        return
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    logger.info('Downloading Plotly.js to %s', cache_path)
+    urllib.request.urlretrieve(PLOTLY_CDN_URL, cache_path)
+    logger.info('Plotly.js cached (%d bytes)', cache_path.stat().st_size)
+
+
+def get_perf_archs(workdir: str) -> list[str]:
+    """Return sorted list of arches with best_tuning_results data."""
+    try:
+        conn_params = get_db_connection_params(Path(workdir))
+        with psycopg.connect(**conn_params, autocommit=True) as conn:
+            return get_available_archs(conn)
+    except Exception as e:
+        logger.error('get_perf_archs failed: %s', e)
+        return []
+
+
+def query_perf_data(workdir: str, arch: str, kernel: str, mode: str = 'kernel',
+                    seqlen_min: int = 0, seqlen_max: int = 65536) -> dict:
+    """Query best results for the Perf tab API endpoint."""
+    try:
+        conn_params = get_db_connection_params(Path(workdir))
+        with psycopg.connect(**conn_params, autocommit=True) as conn:
+            return query_best_results(conn, arch, kernel, mode, seqlen_min, seqlen_max)
+    except Exception as e:
+        logger.error('query_perf_data failed: %s', e)
+        return {'error': str(e), 'rows': [], 'axes': {}}
+
+
+def export_visperf(workdir: str, dry_run: bool = False) -> dict:
+    """Export self-contained perf.html to <workdir>/perf.html."""
+    if dry_run:
+        return {'status': 'dry_run', 'message': '[DRY RUN] Would export perf.html'}
+    output = Path(workdir) / 'perf.html'
+    try:
+        conn_params = get_db_connection_params(Path(workdir))
+        with psycopg.connect(**conn_params, autocommit=True) as conn:
+            _do_export_visperf(conn, output)
+        return {'status': 'ok', 'message': f'Exported to {output}'}
+    except Exception as e:
+        logger.error('export_visperf failed: %s', e)
+        return {'status': 'error', 'message': str(e)}

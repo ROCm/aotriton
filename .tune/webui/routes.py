@@ -5,10 +5,11 @@
 URL routes and handlers for the web dashboard
 """
 
-from flask import Blueprint, render_template, request, jsonify, current_app, Response, g
+from flask import Blueprint, render_template, request, jsonify, current_app, Response, g, send_file
 import time
 import json
 import logging
+from pathlib import Path
 
 from . import tasks
 
@@ -1001,6 +1002,47 @@ def api_download_adiffs():
         'Content-Type': 'text/plain; charset=utf-8',
         'Content-Disposition': f'attachment; filename="{filename}"',
     }
+
+
+@bp.route('/perf')
+def perf():
+    """Performance visualization tab"""
+    workdir = current_app.config['WORKDIR']
+    archs = tasks.get_perf_archs(workdir)
+    return render_template('perf.html', archs=archs, hide_sidebar=True)
+
+
+@bp.route('/api/perf/data')
+def api_perf_data():
+    """Return best results JSON for arch+kernel combination."""
+    workdir = current_app.config['WORKDIR']
+    arch        = request.args.get('arch', '')
+    kernel      = request.args.get('kernel', 'attn_fwd')
+    mode        = request.args.get('mode', 'kernel')
+    seqlen_min  = int(request.args.get('seqlen_min', 0))
+    seqlen_max  = int(request.args.get('seqlen_max', 65536))
+    if not arch:
+        return jsonify({'error': 'arch is required'}), 400
+    data = tasks.query_perf_data(workdir, arch, kernel, mode, seqlen_min, seqlen_max)
+    return jsonify(data)
+
+
+@bp.route('/api/servers/export-visperf', methods=['POST'])
+def api_export_visperf():
+    """Export self-contained perf.html for GitHub Pages."""
+    workdir = current_app.config['WORKDIR']
+    result = tasks.export_visperf(workdir, dry_run=should_dryrun())
+    return jsonify(result)
+
+
+@bp.route('/static/cache/plotly.basic.min.js')
+def plotly_cache():
+    """Serve locally cached Plotly.js from scratch/webcache/."""
+    workdir = current_app.config['WORKDIR']
+    cache_path = Path(workdir) / 'scratch' / 'webcache' / 'plotly.basic.min.js'
+    if not cache_path.exists():
+        return 'Plotly cache not available. Load the Perf page online first.', 503
+    return send_file(cache_path, mimetype='application/javascript')
 
 
 @bp.route('/debug')
