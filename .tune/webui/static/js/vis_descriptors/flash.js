@@ -41,9 +41,9 @@ const FLASH_DESCRIPTOR = {
 
   matrixAxes: { row: 'seqlen_q', col: 'seqlen_k' },
 
-  defaultColDims: ['dtype', 'bias_type', 'causal'],
+  defaultColDims: ['dtype', 'bias_type', 'causal', 'dropout'],
   defaultRowDims: ['hdim'],
-  defaultFixed:   { dropout: 0 },
+  defaultFixed:   {},
 
   // kernel names that use the forward FLOPs formula
   fwdKernels: new Set(['attn_fwd', 'attn_fwd_op']),
