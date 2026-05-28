@@ -206,7 +206,7 @@ function computeAnchor(data, state) {
 
 function renderHeatmap(container, seqQ, seqK, index, desc, anchor) {
   const tbl = document.createElement('table');
-  tbl.style.cssText = 'border-collapse:collapse;font-size:0.8em;font-family:monospace;';
+  tbl.style.cssText = 'border-collapse:collapse;font-size:0.8em;font-family:monospace;width:auto;';
 
   // Header row: empty corner + one th per seqlen_k value.
   const thead = tbl.createTHead();
@@ -229,7 +229,7 @@ function renderHeatmap(container, seqQ, seqK, index, desc, anchor) {
 
     // Row header.
     const th = document.createElement('th');
-    th.style.cssText = 'padding:2px 6px;text-align:right;opacity:0.7;font-weight:normal;white-space:nowrap;';
+    th.style.cssText = 'padding:2px 6px;text-align:right;opacity:0.7;font-weight:normal;white-space:nowrap;width:1px;';
     th.textContent = q;
     tr.appendChild(th);
 

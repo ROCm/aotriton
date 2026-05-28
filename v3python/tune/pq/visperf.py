@@ -159,9 +159,13 @@ def query_all_best_results(conn, descriptor_id: str = 'flash') -> dict:
     return result
 
 
+_ARCH_ORDER = ['gfx942', 'gfx950', 'gfx1201', 'gfx90a', 'gfx1100']
+
 def get_available_archs(conn, descriptor_id: str = 'flash') -> list[str]:
-    """Return sorted list of arches present in best_tuning_results."""
+    """Return arches present in best_tuning_results in preferred display order."""
     desc = DESCRIPTORS[descriptor_id]
     with conn.cursor() as cur:
-        cur.execute(f"SELECT DISTINCT arch FROM {desc['kernel_table']} ORDER BY arch")
-        return [r[0] for r in cur.fetchall()]
+        cur.execute(f"SELECT DISTINCT arch FROM {desc['kernel_table']}")
+        archs = [r[0] for r in cur.fetchall()]
+    priority = {a: i for i, a in enumerate(_ARCH_ORDER)}
+    return sorted(archs, key=lambda a: (priority.get(a, len(_ARCH_ORDER)), a))
