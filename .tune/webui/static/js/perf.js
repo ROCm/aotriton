@@ -79,7 +79,7 @@ let state = {
   // filter: per-dim allowed value sets for grid dims (col/row).
   // null = all values shown. A Set means only those values are shown.
   filter: {},
-  displayMode: 'heatmap',   // 'heatmap' | '3d' | 'autozoom'
+  displayMode: 'autozoom',  // 'heatmap' | '3d' | 'autozoom'
   autozoom: { drilldown: null },  // drilldown = {rowCombo, colCombo} or null for overview
   seqlenRange: [0, 65536],
   scale: {
@@ -622,6 +622,7 @@ function initPerf() {
 
     state.arch = arch;
     state.kernel = kernel;
+    if (dispSel) state.displayMode = dispSel.value;
     if (status) status.textContent = 'Loading…';
 
     try {
