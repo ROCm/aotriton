@@ -439,7 +439,6 @@ function _dimLabel(desc, key, value) {
 function initPerf() {
   const archSel    = document.getElementById('perf-arch');
   const kernelSel  = document.getElementById('perf-kernel');
-  const modeSel    = document.getElementById('perf-mode');
   const scaleSel   = document.getElementById('perf-scale');
   const scaleInput = document.getElementById('perf-scale-value');
   const dispSel    = document.getElementById('perf-display');
@@ -450,8 +449,10 @@ function initPerf() {
     if (!archSel || !kernelSel) return;
     const arch   = archSel.value;
     const kernel = kernelSel.value;
-    const mode   = modeSel ? modeSel.value : 'kernel';
     if (!arch || !kernel) return;
+    // Infer mode from the active descriptor's ops set; fall back to kernel.
+    const activeDesc = Object.values(DESCRIPTORS)[0];
+    const mode = (activeDesc && activeDesc.ops && activeDesc.ops.has(kernel)) ? 'op' : 'kernel';
 
     state.arch = arch;
     state.kernel = kernel;

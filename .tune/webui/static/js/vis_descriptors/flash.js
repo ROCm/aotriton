@@ -45,6 +45,8 @@ const FLASH_DESCRIPTOR = {
   defaultRowDims: ['hdim'],
   defaultFixed:   {},
 
+  ops: new Set(['attn_fwd_op', 'attn_bwd_op']),
+
   // kernel names that use the forward FLOPs formula
   fwdKernels: new Set(['attn_fwd', 'attn_fwd_op']),
 
