@@ -39,6 +39,20 @@ function _hslComponents(fraction) {
   };
 }
 
+// Map a raw linear fraction [0,1] to a perceptual fraction using log scaling.
+// log(1 + k*x)/log(1+k) with k=9 maps 10% linear → ~53% perceptual,
+// spreading the color range across the lower-performance majority.
+const _LOG_K = 9;
+function _logFrac(linearFrac) {
+  const x = Math.max(0, Math.min(1, linearFrac));
+  return Math.log1p(_LOG_K * x) / Math.log1p(_LOG_K);
+}
+
+// Compute the display fraction for tflops/anchor, log-scaled.
+function perfFrac(tflops, anchor) {
+  return _logFrac(tflops / anchor);
+}
+
 // Background color for a performance fraction.
 function perfColor(fraction) {
   const { h, s, l } = _hslComponents(fraction);
@@ -245,12 +259,12 @@ function renderHeatmap(container, seqQ, seqK, index, desc, anchor) {
       }
 
       const tflops = desc.tflops(row);
-      const frac   = Math.min(1, tflops / anchor);
+      const frac   = perfFrac(tflops, anchor);
       td.style.background = perfColor(frac);
       td.style.color      = cellTextColor(frac);
       td.style.cursor     = 'default';
 
-      const pct = Math.round(frac * 100);
+      const pct = Math.round(tflops / anchor * 100);
       td.innerHTML = `<div style="line-height:1.2">${tflops.toFixed(1)}<br><span style="opacity:0.8">${pct}%</span></div>`;
 
       // Tooltip.
@@ -393,10 +407,10 @@ function renderAutozoom(grid, layout, anchor) {
       if (cell) {
         const maxT = _maxTflops(cell.index, desc);
         if (maxT > 0) {
-          const frac = Math.min(1, maxT / anchor);
+          const frac = perfFrac(maxT, anchor);
           td.style.background = perfColor(frac);
           td.style.color      = cellTextColor(frac);
-          const pct = Math.round(frac * 100);
+          const pct = Math.round(maxT / anchor * 100);
           td.innerHTML = `<div style="line-height:1.2">${maxT.toFixed(1)}<br><span style="opacity:0.8">${pct}%</span></div>`;
           td.title = `Max TFLOPS: ${maxT.toFixed(2)}\nClick to view seqlen matrix`;
           td.addEventListener('click', () => {
