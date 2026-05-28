@@ -65,7 +65,8 @@ let state = {
   // filter: per-dim allowed value sets for grid dims (col/row).
   // null = all values shown. A Set means only those values are shown.
   filter: {},
-  displayMode: 'heatmap',   // 'heatmap' | '3d'
+  displayMode: 'heatmap',   // 'heatmap' | '3d' | 'autozoom'
+  autozoom: { drilldown: null },  // drilldown = {rowCombo, colCombo} or null for overview
   seqlenRange: [0, 65536],
   scale: {
     mode: 'max_observed',   // 'max_observed' | 'theoretical' | 'user'
@@ -310,6 +311,113 @@ function render3D(container, seqQ, seqK, index, desc, anchor) {
 }
 
 // ---------------------------------------------------------------------------
+// Autozoom rendering
+// ---------------------------------------------------------------------------
+
+// Returns the max TFLOPS across all seqlen_q×seqlen_k entries in the index.
+function _maxTflops(index, desc) {
+  let max = 0;
+  for (const row of index.values()) {
+    if (row && row.median_ms > 0) {
+      const t = desc.tflops(row);
+      if (t > max) max = t;
+    }
+  }
+  return max;
+}
+
+// Overview table: rows = rowDims combos, cols = colDims combos.
+// Each cell shows max TFLOPS across seqlen_q×seqlen_k; click to drill in.
+function renderAutozoom(grid, layout, anchor) {
+  const desc = state.descriptor;
+  const { rowCombos, colCombos, seqQ, seqK, cells } = layout;
+  const numRowDims = state.rowDims.length;
+  const numColDims = state.colDims.length;
+
+  const table = document.createElement('table');
+  table.style.cssText = 'border-collapse:separate;border-spacing:4px;';
+
+  // Column header rows.
+  for (let di = 0; di < numColDims; di++) {
+    const tr = document.createElement('tr');
+    for (let ri = 0; ri < numRowDims; ri++) {
+      const th = document.createElement('th');
+      if (di === 0 && ri === numRowDims - 1) {
+        th.textContent = 'features →';
+        th.style.cssText = 'text-align:right;opacity:0.7;';
+      }
+      tr.appendChild(th);
+    }
+    const dimKey = state.colDims[di];
+    const spans = [];
+    let curLabel = null, curCount = 0;
+    for (const cc of colCombos) {
+      const label = _dimLabel(desc, dimKey, cc[dimKey]);
+      if (label !== curLabel) {
+        if (curCount) spans.push({ label: curLabel, count: curCount });
+        curLabel = label;
+        curCount = 0;
+      }
+      curCount++;
+    }
+    if (curCount) spans.push({ label: curLabel, count: curCount });
+    for (const { label, count } of spans) {
+      const th = document.createElement('th');
+      th.colSpan = count;
+      th.textContent = `${dimKey}=${label}`;
+      th.style.cssText = 'text-align:center;border-bottom:1px solid currentColor;opacity:0.8;';
+      tr.appendChild(th);
+    }
+    table.appendChild(tr);
+  }
+
+  // Data rows.
+  for (const rowCombo of rowCombos) {
+    const tr = document.createElement('tr');
+    for (const rk of state.rowDims) {
+      const th = document.createElement('th');
+      th.textContent = `${rk}=${_dimLabel(desc, rk, rowCombo[rk])}`;
+      th.style.cssText = 'text-align:right;white-space:nowrap;padding-right:6px;';
+      tr.appendChild(th);
+    }
+
+    for (const colCombo of colCombos) {
+      const td = document.createElement('td');
+      td.style.cssText = 'padding:0;width:5rem;height:2.4rem;text-align:center;vertical-align:middle;cursor:pointer;';
+
+      const cell = cells.find(c =>
+        state.rowDims.every(k => c.rowCombo[k] === rowCombo[k]) &&
+        state.colDims.every(k => c.colCombo[k] === colCombo[k])
+      );
+
+      if (cell) {
+        const maxT = _maxTflops(cell.index, desc);
+        if (maxT > 0) {
+          const frac = Math.min(1, maxT / anchor);
+          td.style.background = perfColor(frac);
+          td.style.color      = cellTextColor(frac);
+          const pct = Math.round(frac * 100);
+          td.innerHTML = `<div style="line-height:1.2">${maxT.toFixed(1)}<br><span style="opacity:0.8">${pct}%</span></div>`;
+          td.title = `Max TFLOPS: ${maxT.toFixed(2)}\nClick to view seqlen matrix`;
+          td.addEventListener('click', () => {
+            state.autozoom.drilldown = { rowCombo, colCombo };
+            renderGrid();
+          });
+        } else {
+          td.style.background = 'rgba(128,128,128,0.15)';
+        }
+      } else {
+        td.style.background = 'rgba(128,128,128,0.15)';
+      }
+      tr.appendChild(td);
+    }
+    table.appendChild(tr);
+  }
+
+  grid.appendChild(table);
+}
+
+// ---------------------------------------------------------------------------
 // Grid rendering
 // ---------------------------------------------------------------------------
 
@@ -327,6 +435,50 @@ function renderGrid() {
   const layout = buildLayout(state);
   if (!layout.cells || !layout.cells.length) {
     grid.textContent = 'No matching data for current filters.';
+    return;
+  }
+
+  // Autozoom: overview or drilldown.
+  if (state.displayMode === 'autozoom') {
+    const dd = state.autozoom.drilldown;
+    if (dd) {
+      // Drilldown: show full heatmap for one cell + return button.
+      const returnBtn = document.createElement('button');
+      returnBtn.textContent = '← Return to overview';
+      returnBtn.style.cssText = 'margin-bottom:0.6rem;';
+      returnBtn.addEventListener('click', () => {
+        state.autozoom.drilldown = null;
+        renderGrid();
+      });
+      grid.appendChild(returnBtn);
+
+      // Title.
+      const title = document.createElement('div');
+      const label = [
+        ...state.rowDims.map(k => `${k}=${_dimLabel(state.descriptor, k, dd.rowCombo[k])}`),
+        ...state.colDims.map(k => `${k}=${_dimLabel(state.descriptor, k, dd.colCombo[k])}`),
+      ].join(', ');
+      title.style.cssText = 'margin-bottom:0.4rem;font-weight:bold;';
+      title.textContent = label;
+      grid.appendChild(title);
+
+      const cell = layout.cells.find(c =>
+        state.rowDims.every(k => c.rowCombo[k] === dd.rowCombo[k]) &&
+        state.colDims.every(k => c.colCombo[k] === dd.colCombo[k])
+      );
+      if (cell) {
+        const container = document.createElement('div');
+        renderHeatmap(container, cell.seqQ, cell.seqK, cell.index, state.descriptor, anchor);
+        grid.appendChild(container);
+      }
+    } else {
+      renderAutozoom(grid, layout, anchor);
+    }
+
+    const legend = document.createElement('div');
+    legend.style.cssText = 'margin-top:8px;opacity:0.75;';
+    legend.textContent = `Scale anchor: ${anchor.toFixed(1)} TFLOPS (${state.scale.mode})`;
+    grid.appendChild(legend);
     return;
   }
 
@@ -467,6 +619,7 @@ function initPerf() {
         state.rowDims = [...state.descriptor.defaultRowDims];
         state.fixed   = { ...state.descriptor.defaultFixed };
         state.filter  = {};   // clear all value filters on fresh load
+        state.autozoom.drilldown = null;
       }
       updateDimPanel();
       renderGrid();
@@ -673,6 +826,7 @@ function initPerf() {
   if (dispSel) {
     dispSel.addEventListener('change', () => {
       state.displayMode = dispSel.value;
+      state.autozoom.drilldown = null;
       renderGrid();
     });
   }
