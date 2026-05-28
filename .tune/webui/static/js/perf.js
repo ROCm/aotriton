@@ -62,6 +62,9 @@ let state = {
   colDims: [],
   rowDims: [],
   fixed: {},
+  // filter: per-dim allowed value sets for grid dims (col/row).
+  // null = all values shown. A Set means only those values are shown.
+  filter: {},
   displayMode: 'heatmap',   // 'heatmap' | '3d'
   seqlenRange: [0, 65536],
   scale: {
@@ -121,9 +124,19 @@ function distinctCombos(rows, dimKeys) {
   return result;
 }
 
-// Apply fixed filters to rows.
-function applyFixed(rows, fixed) {
-  return rows.filter(r => Object.entries(fixed).every(([k, v]) => r[k] === v));
+// Apply fixed filters and per-dim value filters to rows.
+function applyFixed(rows, fixed, filter) {
+  return rows.filter(r => {
+    for (const [k, v] of Object.entries(fixed)) {
+      if (r[k] !== v) return false;
+    }
+    if (filter) {
+      for (const [k, allowed] of Object.entries(filter)) {
+        if (allowed !== null && !allowed.has(String(r[k]))) return false;
+      }
+    }
+    return true;
+  });
 }
 
 // Build nested layout: array of {rowCombo, colCombo, matrix} objects.
@@ -131,7 +144,7 @@ function buildLayout(state) {
   if (!state.data) return [];
   const { rows, axes } = state.data;
 
-  const filtered = applyFixed(rows, state.fixed);
+  const filtered = applyFixed(rows, state.fixed, state.filter);
 
   const rowCombos = distinctCombos(filtered, state.rowDims);
   const colCombos = distinctCombos(filtered, state.colDims);
@@ -176,7 +189,7 @@ function computeAnchor(data, state) {
     // Fall through to max_observed if not found.
   }
   // max_observed: max TFLOPS across all currently displayed rows.
-  const filtered = applyFixed(data.rows, state.fixed);
+  const filtered = applyFixed(data.rows, state.fixed, state.filter);
   let maxT = 0;
   for (const r of filtered) {
     if (r.median_ms > 0) {
@@ -473,6 +486,7 @@ function initPerf() {
         state.colDims = [...state.descriptor.defaultColDims];
         state.rowDims = [...state.descriptor.defaultRowDims];
         state.fixed   = { ...state.descriptor.defaultFixed };
+        state.filter  = {};   // clear all value filters on fresh load
       }
       updateDimPanel();
       renderGrid();
@@ -498,8 +512,10 @@ function initPerf() {
         const vals = state.data && state.data.axes[key];
         state.fixed[key] = vals && vals.length ? vals[0] : null;
       }
+      delete state.filter[key];   // fixed select takes over; no grid filter needed
     } else {
       delete state.fixed[key];
+      // Preserve any existing filter[key] when moving back to col/row.
     }
     // Insert into target list.
     const targetList = toRole === 'col' ? state.colDims : toRole === 'row' ? state.rowDims : null;
@@ -511,17 +527,69 @@ function initPerf() {
   }
 
   function buildDimChip(key) {
+    const vals = (state.data && state.data.axes[key]) || [];
+    const isChecked = !state.filter[key];   // null = all shown = checked
+
     const chip = document.createElement('span');
     chip.className = 'dim-chip';
-    chip.draggable = true;
     chip.dataset.dim = key;
-    chip.textContent = key;
-    chip.addEventListener('dragstart', e => {
+
+    // Checkbox toggles whether this dim is fully expanded or value-filtered.
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = isChecked;
+    cb.title = 'Uncheck to filter values shown in the grid';
+    cb.addEventListener('change', e => {
+      e.stopPropagation();   // don't trigger drag
+      if (cb.checked) {
+        state.filter[key] = null;    // all values
+        sel.style.display = 'none';
+      } else {
+        // Default: keep currently selected options, or all if none chosen yet.
+        const chosen = [...sel.options].filter(o => o.selected).map(o => o.value);
+        state.filter[key] = new Set(chosen.length ? chosen : vals.map(String));
+        sel.style.display = '';
+      }
+      renderGrid();
+    });
+
+    // Label (not draggable-sensitive).
+    const lbl = document.createElement('span');
+    lbl.textContent = key;
+
+    // Multi-select for value filtering — shown only when unchecked.
+    const sel = document.createElement('select');
+    sel.multiple = true;
+    sel.size = Math.min(vals.length, 4);
+    sel.style.cssText = 'margin-left:0.3rem;' + (isChecked ? 'display:none;' : '');
+    vals.forEach(v => {
+      const opt = document.createElement('option');
+      opt.value = String(v);
+      opt.textContent = _dimLabel(state.descriptor, key, v);
+      // Pre-select values currently in the filter set (or all if filter is null).
+      opt.selected = !state.filter[key] || state.filter[key].has(String(v));
+      sel.appendChild(opt);
+    });
+    sel.addEventListener('change', e => {
+      e.stopPropagation();
+      const chosen = [...sel.options].filter(o => o.selected).map(o => o.value);
+      state.filter[key] = chosen.length ? new Set(chosen) : null;
+      renderGrid();
+    });
+
+    // Make chip draggable only from the label, not from controls.
+    lbl.draggable = true;
+    lbl.style.cursor = 'grab';
+    lbl.addEventListener('dragstart', e => {
       e.dataTransfer.setData('text/plain', key);
       e.dataTransfer.effectAllowed = 'move';
       chip.classList.add('dragging');
     });
     chip.addEventListener('dragend', () => chip.classList.remove('dragging'));
+
+    chip.appendChild(cb);
+    chip.appendChild(lbl);
+    chip.appendChild(sel);
     return chip;
   }
 
