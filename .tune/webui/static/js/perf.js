@@ -188,8 +188,8 @@ function buildLayout(state) {
 // Scale anchor computation
 // ---------------------------------------------------------------------------
 
-function computeAnchor(data, state) {
-  if (!data) return 1;
+// visibleRows: the rows actually rendered in the current view (caller's responsibility).
+function computeAnchor(visibleRows, state) {
   const desc = state.descriptor;
   if (!desc) return 1;
 
@@ -198,15 +198,16 @@ function computeAnchor(data, state) {
   }
   if (state.scale.mode === 'theoretical') {
     const arch = state.arch;
-    const dtype = state.fixed.dtype || (data.axes.dtype && data.axes.dtype[0]) || 'float16';
+    const dtype = state.fixed.dtype
+      || (state.data && state.data.axes.dtype && state.data.axes.dtype[0])
+      || 'float16';
     const peak = THEORETICAL_PEAK_TFLOPS[arch];
     if (peak && peak[dtype]) return peak[dtype];
     // Fall through to max_observed if not found.
   }
-  // max_observed: max TFLOPS across all currently displayed rows.
-  const filtered = applyFixed(data.rows, state.fixed, state.filter);
+  // max_observed: max TFLOPS across the rows currently visible.
   let maxT = 0;
-  for (const r of filtered) {
+  for (const r of visibleRows) {
     if (r.median_ms > 0) {
       const t = desc.tflops(r);
       if (t > maxT) maxT = t;
@@ -445,7 +446,6 @@ function renderGrid() {
     return;
   }
 
-  const anchor = computeAnchor(state.data, state);
   const layout = buildLayout(state);
   if (!layout.cells || !layout.cells.length) {
     grid.textContent = 'No matching data for current filters.';
@@ -456,6 +456,14 @@ function renderGrid() {
   if (state.displayMode === 'autozoom') {
     const dd = state.autozoom.drilldown;
     if (dd) {
+      // Anchor from drilldown cell rows only.
+      const cell = layout.cells.find(c =>
+        state.rowDims.every(k => c.rowCombo[k] === dd.rowCombo[k]) &&
+        state.colDims.every(k => c.colCombo[k] === dd.colCombo[k])
+      );
+      const visibleRows = cell ? [...cell.index.values()].filter(Boolean) : [];
+      const anchor = computeAnchor(visibleRows, state);
+
       // Drilldown: show full heatmap for one cell + return button.
       const returnBtn = document.createElement('button');
       returnBtn.textContent = '← Return to overview';
@@ -466,7 +474,6 @@ function renderGrid() {
       });
       grid.appendChild(returnBtn);
 
-      // Title.
       const title = document.createElement('div');
       const label = [
         ...state.rowDims.map(k => `${k}=${_dimLabel(state.descriptor, k, dd.rowCombo[k])}`),
@@ -476,25 +483,33 @@ function renderGrid() {
       title.textContent = label;
       grid.appendChild(title);
 
-      const cell = layout.cells.find(c =>
-        state.rowDims.every(k => c.rowCombo[k] === dd.rowCombo[k]) &&
-        state.colDims.every(k => c.colCombo[k] === dd.colCombo[k])
-      );
       if (cell) {
         const container = document.createElement('div');
         renderHeatmap(container, cell.seqQ, cell.seqK, cell.index, state.descriptor, anchor);
         grid.appendChild(container);
       }
-    } else {
-      renderAutozoom(grid, layout, anchor);
-    }
 
-    const legend = document.createElement('div');
-    legend.style.cssText = 'margin-top:8px;opacity:0.75;';
-    legend.textContent = `Scale anchor: ${anchor.toFixed(1)} TFLOPS (${state.scale.mode})`;
-    grid.appendChild(legend);
+      const legend = document.createElement('div');
+      legend.style.cssText = 'margin-top:8px;opacity:0.75;';
+      legend.textContent = `Scale anchor: ${anchor.toFixed(1)} TFLOPS (${state.scale.mode})`;
+      grid.appendChild(legend);
+    } else {
+      // Overview: anchor from all visible rows.
+      const allVisible = layout.cells.flatMap(c => [...c.index.values()].filter(Boolean));
+      const anchor = computeAnchor(allVisible, state);
+      renderAutozoom(grid, layout, anchor);
+
+      const legend = document.createElement('div');
+      legend.style.cssText = 'margin-top:8px;opacity:0.75;';
+      legend.textContent = `Scale anchor: ${anchor.toFixed(1)} TFLOPS (${state.scale.mode})`;
+      grid.appendChild(legend);
+    }
     return;
   }
+
+  // Heatmap / 3D: anchor from all visible rows.
+  const visibleRows = layout.cells.flatMap(c => [...c.index.values()].filter(Boolean));
+  const anchor = computeAnchor(visibleRows, state);
 
   // Build column-header rows.
   const numRowDims = state.rowDims.length;
