@@ -205,84 +205,63 @@ function computeAnchor(data, state) {
 // ---------------------------------------------------------------------------
 
 function renderHeatmap(container, seqQ, seqK, index, desc, anchor) {
-  const cellW = 72, cellH = 36, headerH = 24, headerW = 56;
-  const width  = headerW + seqK.length * cellW;
-  const height = headerH + seqQ.length * cellH;
+  const tbl = document.createElement('table');
+  tbl.style.cssText = 'border-collapse:collapse;font-size:0.8em;font-family:monospace;';
 
-  const canvas = document.createElement('canvas');
-  canvas.width  = width;
-  canvas.height = height;
-  canvas.style.display = 'block';
-  const ctx = canvas.getContext('2d');
-  ctx.font = '13px monospace';
-  // Use the page's current text color for axis labels (theme-aware).
-  const labelColor = getComputedStyle(document.body).color || '#888';
-
-  // Column headers (seqlen_k)
-  ctx.fillStyle = labelColor;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  seqK.forEach((k, ci) => {
-    ctx.fillText(k, headerW + ci * cellW + cellW / 2, headerH / 2);
+  // Header row: empty corner + one th per seqlen_k value.
+  const thead = tbl.createTHead();
+  const hrow = thead.insertRow();
+  const corner = document.createElement('th');
+  corner.style.cssText = 'padding:2px 6px;opacity:0.5;font-weight:normal;';
+  corner.textContent = 'sq \\ sk';
+  hrow.appendChild(corner);
+  seqK.forEach(k => {
+    const th = document.createElement('th');
+    th.style.cssText = 'padding:2px 4px;text-align:center;opacity:0.7;font-weight:normal;white-space:nowrap;';
+    th.textContent = k;
+    hrow.appendChild(th);
   });
 
-  // Row headers (seqlen_q) + cells
-  seqQ.forEach((q, ri) => {
-    const y = headerH + ri * cellH;
-    ctx.fillStyle = labelColor;
-    ctx.textAlign = 'right';
-    ctx.fillText(q, headerW - 4, y + cellH / 2);
+  // Data rows: one per seqlen_q.
+  const tbody = tbl.createTBody();
+  seqQ.forEach(q => {
+    const tr = tbody.insertRow();
 
-    seqK.forEach((k, ci) => {
-      const x = headerW + ci * cellW;
+    // Row header.
+    const th = document.createElement('th');
+    th.style.cssText = 'padding:2px 6px;text-align:right;opacity:0.7;font-weight:normal;white-space:nowrap;';
+    th.textContent = q;
+    tr.appendChild(th);
+
+    seqK.forEach(k => {
+      const td = tr.insertCell();
+      td.style.cssText = 'padding:0;width:4.5rem;height:2.2rem;text-align:center;vertical-align:middle;';
+
       const row = index.get(`${q}|${k}`);
       if (!row || !(row.median_ms > 0)) {
-        ctx.fillStyle = 'rgba(128,128,128,0.15)';
-        ctx.fillRect(x, y, cellW - 1, cellH - 1);
+        td.style.background = 'rgba(128,128,128,0.15)';
         return;
       }
+
       const tflops = desc.tflops(row);
-      const frac = Math.min(1, tflops / anchor);
-      ctx.fillStyle = perfColor(frac);
-      ctx.fillRect(x, y, cellW - 1, cellH - 1);
+      const frac   = Math.min(1, tflops / anchor);
+      td.style.background = perfColor(frac);
+      td.style.color      = cellTextColor(frac);
+      td.style.cursor     = 'default';
 
       const pct = Math.round(frac * 100);
-      ctx.fillStyle = cellTextColor(frac);
-      ctx.textAlign = 'center';
-      ctx.fillText(tflops.toFixed(1), x + cellW / 2, y + cellH * 0.33);
-      ctx.fillText(`${pct}%`,          x + cellW / 2, y + cellH * 0.67);
+      td.innerHTML = `<div style="line-height:1.2">${tflops.toFixed(1)}<br><span style="opacity:0.8">${pct}%</span></div>`;
+
+      // Tooltip.
+      if (desc.tooltip) {
+        const lines = desc.tooltip(row);
+        lines.unshift(`TFLOPS (matrix): ${tflops.toFixed(2)}`);
+        td.title = lines.join('\n');
+      }
     });
   });
 
-  // Tooltip via title on a transparent overlay div.
-  const wrap = document.createElement('div');
-  wrap.style.cssText = 'position:relative;display:inline-block;';
-  const overlay = document.createElement('canvas');
-  overlay.width  = width;
-  overlay.height = height;
-  overlay.style.cssText = `position:absolute;top:0;left:0;cursor:crosshair;`;
-  overlay.addEventListener('mousemove', e => {
-    const rect = overlay.getBoundingClientRect();
-    const mx = e.clientX - rect.left;
-    const my = e.clientY - rect.top;
-    const ci = Math.floor((mx - headerW) / cellW);
-    const ri = Math.floor((my - headerH) / cellH);
-    if (ci < 0 || ri < 0 || ci >= seqK.length || ri >= seqQ.length) {
-      overlay.title = '';
-      return;
-    }
-    const q = seqQ[ri], k = seqK[ci];
-    const row = index.get(`${q}|${k}`);
-    if (!row) { overlay.title = 'no data'; return; }
-    const tflops = desc.tflops(row);
-    const lines = desc.tooltip ? desc.tooltip(row) : [];
-    lines.unshift(`TFLOPS (matrix): ${tflops.toFixed(2)}`);
-    overlay.title = lines.join('\n');
-  });
-
-  wrap.appendChild(canvas);
-  wrap.appendChild(overlay);
-  container.appendChild(wrap);
+  container.appendChild(tbl);
 }
 
 // ---------------------------------------------------------------------------
