@@ -534,20 +534,39 @@ function initPerf() {
     chip.className = 'dim-chip';
     chip.dataset.dim = key;
 
-    // Checkbox toggles whether this dim is fully expanded or value-filtered.
+    // Dropdown for value filtering — shown only when unchecked.
+    // Built before the checkbox so the checkbox handler can reference it.
+    const sel = document.createElement('select');
+    sel.style.cssText = 'margin-left:0.3rem;' + (isChecked ? 'display:none;' : '');
+    // Pick the currently filtered value, or the first value as default.
+    const currentVal = state.filter[key]
+      ? [...state.filter[key]][0]
+      : (vals.length ? String(vals[0]) : '');
+    vals.forEach(v => {
+      const opt = document.createElement('option');
+      opt.value = String(v);
+      opt.textContent = _dimLabel(state.descriptor, key, v);
+      opt.selected = String(v) === currentVal;
+      sel.appendChild(opt);
+    });
+    sel.addEventListener('change', e => {
+      e.stopPropagation();
+      state.filter[key] = new Set([sel.value]);
+      renderGrid();
+    });
+
+    // Checkbox toggles between "all values" and "single value from dropdown".
     const cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.checked = isChecked;
-    cb.title = 'Uncheck to filter values shown in the grid';
+    cb.title = 'Uncheck to filter to a single value';
     cb.addEventListener('change', e => {
-      e.stopPropagation();   // don't trigger drag
+      e.stopPropagation();
       if (cb.checked) {
-        state.filter[key] = null;    // all values
+        state.filter[key] = null;
         sel.style.display = 'none';
       } else {
-        // Default: keep currently selected options, or all if none chosen yet.
-        const chosen = [...sel.options].filter(o => o.selected).map(o => o.value);
-        state.filter[key] = new Set(chosen.length ? chosen : vals.map(String));
+        state.filter[key] = new Set([sel.value || currentVal]);
         sel.style.display = '';
       }
       renderGrid();
@@ -556,26 +575,6 @@ function initPerf() {
     // Label (not draggable-sensitive).
     const lbl = document.createElement('span');
     lbl.textContent = key;
-
-    // Multi-select for value filtering — shown only when unchecked.
-    const sel = document.createElement('select');
-    sel.multiple = true;
-    sel.size = Math.min(vals.length, 4);
-    sel.style.cssText = 'margin-left:0.3rem;' + (isChecked ? 'display:none;' : '');
-    vals.forEach(v => {
-      const opt = document.createElement('option');
-      opt.value = String(v);
-      opt.textContent = _dimLabel(state.descriptor, key, v);
-      // Pre-select values currently in the filter set (or all if filter is null).
-      opt.selected = !state.filter[key] || state.filter[key].has(String(v));
-      sel.appendChild(opt);
-    });
-    sel.addEventListener('change', e => {
-      e.stopPropagation();
-      const chosen = [...sel.options].filter(o => o.selected).map(o => o.value);
-      state.filter[key] = chosen.length ? new Set(chosen) : null;
-      renderGrid();
-    });
 
     // Make chip draggable only from the label, not from controls.
     lbl.draggable = true;
