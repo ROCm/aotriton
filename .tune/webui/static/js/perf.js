@@ -73,6 +73,7 @@ function cellTextColor(fraction) {
 
 let state = {
   descriptor: null,
+  descriptorId: 'flash',
   data: null,           // raw API response {arch, kernel, axes, rows}
   colDims: [],
   rowDims: [],
@@ -686,8 +687,9 @@ function _dimLabel(desc, key, value) {
 
 function pushURLState() {
   const p = new URLSearchParams();
-  if (state.arch)   p.set('arch',    state.arch);
-  if (state.kernel) p.set('kernel',  state.kernel);
+  if (state.arch)         p.set('arch',    state.arch);
+  if (state.descriptorId) p.set('module',  state.descriptorId);
+  if (state.kernel)       p.set('kernel',  state.kernel);
   p.set('display', state.displayMode);
   p.set('scale',   state.scale.mode);
   if (state.scale.mode === 'user' && state.scale.userValue)
@@ -706,6 +708,7 @@ function restoreFromURL() {
   return {
     arch:        p.get('arch')        || '',
     kernel:      p.get('kernel')      || '',
+    module:      p.get('module')      || '',
     display:     p.get('display')     || '',
     scale:       p.get('scale')       || '',
     scale_value: p.get('scale_value') || '',
@@ -732,6 +735,7 @@ function initPerf() {
 
   // Apply URL params to selectors before load().
   const saved = restoreFromURL();
+  if (saved.module) state.descriptorId = saved.module;
   if (saved.arch   && archSel)   archSel.value   = saved.arch;
   if (saved.kernel && kernelSel) kernelSel.value = saved.kernel;
   if (saved.display && dispSel)  dispSel.value   = saved.display;
@@ -751,7 +755,7 @@ function initPerf() {
     const kernel = kernelSel.value;
     if (!arch || !kernel) return;
     // Infer mode from the active descriptor's ops set; fall back to kernel.
-    const activeDesc = Object.values(DESCRIPTORS)[0];
+    const activeDesc = DESCRIPTORS[state.descriptorId] || DESCRIPTORS[Object.keys(DESCRIPTORS)[0]];
     const mode = (activeDesc && activeDesc.ops && activeDesc.ops.has(kernel)) ? 'op' : 'kernel';
 
     state.arch = arch;
@@ -761,8 +765,8 @@ function initPerf() {
 
     try {
       state.data = await fetchData(arch, kernel, mode);
-      // Pick descriptor by kernel family — currently always flash.
-      state.descriptor = DESCRIPTORS['flash'];
+      // Pick descriptor by id (from URL state or default).
+      state.descriptor = DESCRIPTORS[state.descriptorId] || DESCRIPTORS[Object.keys(DESCRIPTORS)[0]];
       if (state.descriptor) {
         // Restore col/row dims from URL if present, else use descriptor defaults.
         state.colDims = saved.col_dims
