@@ -216,13 +216,15 @@ function computeAnchor(visibleRows, state) {
     return state.scale.userValue;
   }
   if (state.scale.mode === 'theoretical') {
-    const arch = state.arch;
-    const dtype = state.fixed.dtype
-      || (state.data && state.data.axes.dtype && state.data.axes.dtype[0])
-      || 'float16';
-    const peak = THEORETICAL_PEAK_TFLOPS[arch];
-    if (peak && peak[dtype]) return peak[dtype];
-    // Fall through to max_observed if not found.
+    const peak = THEORETICAL_PEAK_TFLOPS[state.arch];
+    if (peak) {
+      // Return a per-dtype Map so each dtype column is normalized to its own peak.
+      const dtypes = state.data && state.data.axes.dtype;
+      const map = new Map();
+      (dtypes || Object.keys(peak)).forEach(d => { if (peak[d]) map.set(d, peak[d]); });
+      if (map.size) return map;
+    }
+    // Fall through to max_observed if arch not found.
   }
   // max_observed: per-dtype max TFLOPS across the rows currently visible.
   // Returns a Map<dtype, number> so each dtype is normalized to its own peak.
