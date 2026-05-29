@@ -381,6 +381,18 @@ function renderAutozoom(grid, layout, anchor) {
   const table = document.createElement('table');
   table.style.cssText = 'border-collapse:separate;border-spacing:4px;';
 
+  // Precompute separator positions (same logic as heatmap/3D grid).
+  const colSeps = state.colDims.map((dimKey) => {
+    const seps = new Set();
+    let prev = null;
+    colCombos.forEach((cc, ci) => {
+      if (ci > 0 && cc[dimKey] !== prev) seps.add(ci);
+      prev = cc[dimKey];
+    });
+    return seps;
+  });
+  const colNeedsSep = colCombos.map((_, ci) => colSeps.some(s => s.has(ci)));
+
   // Column header rows.
   for (let di = 0; di < numColDims; di++) {
     const tr = document.createElement('tr');
@@ -394,22 +406,22 @@ function renderAutozoom(grid, layout, anchor) {
     }
     const dimKey = state.colDims[di];
     const spans = [];
-    let curLabel = null, curCount = 0;
-    for (const cc of colCombos) {
+    let curLabel = null, curCount = 0, curStart = 0;
+    colCombos.forEach((cc, ci) => {
       const label = _dimLabel(desc, dimKey, cc[dimKey]);
       if (label !== curLabel) {
-        if (curCount) spans.push({ label: curLabel, count: curCount });
-        curLabel = label;
-        curCount = 0;
+        if (curCount) spans.push({ label: curLabel, count: curCount, start: curStart });
+        curLabel = label; curCount = 0; curStart = ci;
       }
       curCount++;
-    }
-    if (curCount) spans.push({ label: curLabel, count: curCount });
-    for (const { label, count } of spans) {
+    });
+    if (curCount) spans.push({ label: curLabel, count: curCount, start: curStart });
+    for (const { label, count, start } of spans) {
       const th = document.createElement('th');
       th.colSpan = count;
       th.textContent = `${dimKey}=${label}`;
-      th.style.cssText = 'text-align:center;border-bottom:1px solid currentColor;opacity:0.8;';
+      const sep = start > 0 ? 'border-left:2px solid currentColor;' : '';
+      th.style.cssText = `text-align:center;border-bottom:1px solid currentColor;opacity:0.8;${sep}`;
       tr.appendChild(th);
     }
     table.appendChild(tr);
@@ -425,9 +437,10 @@ function renderAutozoom(grid, layout, anchor) {
       tr.appendChild(th);
     }
 
-    for (const colCombo of colCombos) {
+    for (const [ci, colCombo] of colCombos.entries()) {
       const td = document.createElement('td');
-      td.style.cssText = 'padding:0;width:5rem;height:2.4rem;text-align:center;vertical-align:middle;cursor:pointer;';
+      const sep = colNeedsSep[ci] ? 'border-left:2px solid currentColor;' : '';
+      td.style.cssText = `padding:0;width:5rem;height:2.4rem;text-align:center;vertical-align:middle;cursor:pointer;${sep}`;
 
       const cell = cells.find(c =>
         state.rowDims.every(k => c.rowCombo[k] === rowCombo[k]) &&
@@ -548,6 +561,21 @@ function renderGrid() {
   const table = document.createElement('table');
   table.style.cssText = 'border-collapse:separate;border-spacing:4px;';
 
+  // Precompute which colCombo indices start a new group for each dim level.
+  // colSeps[di] is a Set of colCombo indices where dim di's value changes.
+  const colSeps = state.colDims.map((dimKey, di) => {
+    const seps = new Set();
+    let prev = null;
+    layout.colCombos.forEach((cc, ci) => {
+      const val = cc[dimKey];
+      if (ci > 0 && val !== prev) seps.add(ci);
+      prev = val;
+    });
+    return seps;
+  });
+  // A column index needs a separator if ANY dim level starts a new group there.
+  const colNeedsSep = layout.colCombos.map((_, ci) => colSeps.some(s => s.has(ci)));
+
   // Header rows — one per colDim.
   for (let di = 0; di < numColDims; di++) {
     const tr = document.createElement('tr');
@@ -562,25 +590,26 @@ function renderGrid() {
     }
     // Compute spans for this dim level.
     const dimKey = state.colDims[di];
-    // Group consecutive colCombos by the shared prefix up to di.
     const spans = [];
-    let curLabel = null, curCount = 0;
-    for (const cc of layout.colCombos) {
+    let curLabel = null, curCount = 0, curStart = 0;
+    layout.colCombos.forEach((cc, ci) => {
       const label = _dimLabel(state.descriptor, dimKey, cc[dimKey]);
       if (label !== curLabel) {
-        if (curCount) spans.push({ label: curLabel, count: curCount });
+        if (curCount) spans.push({ label: curLabel, count: curCount, start: curStart });
         curLabel = label;
         curCount = 0;
+        curStart = ci;
       }
       curCount++;
-    }
-    if (curCount) spans.push({ label: curLabel, count: curCount });
+    });
+    if (curCount) spans.push({ label: curLabel, count: curCount, start: curStart });
 
-    for (const { label, count } of spans) {
+    for (const { label, count, start } of spans) {
       const th = document.createElement('th');
       th.colSpan = count;
       th.textContent = `${state.colDims[di]}=${label}`;
-      th.style.cssText = 'text-align:center;border-bottom:1px solid currentColor;opacity:0.8;';
+      const sep = start > 0 ? 'border-left:2px solid currentColor;' : '';
+      th.style.cssText = `text-align:center;border-bottom:1px solid currentColor;opacity:0.8;${sep}`;
       tr.appendChild(th);
     }
     table.appendChild(tr);
@@ -599,9 +628,10 @@ function renderGrid() {
     }
 
     // Matrix cells.
-    for (const colCombo of layout.colCombos) {
+    for (const [ci, colCombo] of layout.colCombos.entries()) {
       const td = document.createElement('td');
-      td.style.cssText = 'vertical-align:top;padding:2px;';
+      const sep = colNeedsSep[ci] ? 'border-left:2px solid currentColor;' : '';
+      td.style.cssText = `vertical-align:top;padding:2px;${sep}`;
 
       const matchingCell = layout.cells.find(c =>
         state.rowDims.every(k => c.rowCombo[k] === rowCombo[k]) &&
