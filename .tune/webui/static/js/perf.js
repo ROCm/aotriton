@@ -390,8 +390,19 @@ function render3D(container, layout, anchor) {
   // Build one mesh3d bar per cell using 8 vertices + 12 triangles.
   const BAR_W = 0.8;  // fraction of unit grid spacing
   const allVx = [], allVy = [], allVz = [], allI = [], allJ = [], allK = [];
-  const allColor = [];
+  const allColor = [], allCustom = [];
   let vOffset = 0;
+
+  // Pre-build per-cell hover label: all feature dims + TFLOPS.
+  function _cellHoverLabel(bi) {
+    const ri = Math.floor(bi / nCol), ci = bi % nCol;
+    const rowCombo = rowCombos[ri], colCombo = colCombos[ci];
+    const parts = [];
+    for (const k of state.rowDims) parts.push(`${k}=${_dimLabel(desc, k, rowCombo[k])}`);
+    for (const k of state.colDims) parts.push(`${k}=${_dimLabel(desc, k, colCombo[k])}`);
+    parts.push(`TFLOPS=${zs[bi].toFixed(1)}`);
+    return parts.join('<br>');
+  }
 
   for (let bi = 0; bi < xs.length; bi++) {
     const cx = xs[bi], cy = ys[bi], h = zs[bi], c = colors[bi];
@@ -401,7 +412,8 @@ function render3D(container, layout, anchor) {
     allVx.push(x0, x1, x1, x0,  x0, x1, x1, x0);
     allVy.push(y0, y0, y1, y1,  y0, y0, y1, y1);
     allVz.push( 0,  0,  0,  0,   h,  h,  h,  h);
-    for (let v = 0; v < 8; v++) allColor.push(c);
+    const label = _cellHoverLabel(bi);
+    for (let v = 0; v < 8; v++) { allColor.push(c); allCustom.push(label); }
 
     // 12 triangles (6 faces × 2 triangles each), using local indices 0–7.
     const tris = [
@@ -449,6 +461,8 @@ function render3D(container, layout, anchor) {
     showscale: false,
     flatshading: true,
     lighting: { ambient: 0.9, diffuse: 0.3 },
+    customdata: allCustom,
+    hovertemplate: '%{customdata}<extra></extra>',
   }], {
     margin: { t: 20, b: 0, l: 0, r: 0 },
     scene: {
