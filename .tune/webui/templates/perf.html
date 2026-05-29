@@ -104,18 +104,11 @@
   <p>Select arch and kernel, then click Load.</p>
 </div>
 
-<!-- Load Plotly from CDN; falls back to locally cached copy if CDN fails. -->
+<!-- Plotly for 3-D bars; falls back to locally cached copy if CDN is unreachable. -->
 <script
   src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"
   crossorigin="anonymous"
-  onerror="loadFallbackPlotly()">
-</script>
-<script>
-function loadFallbackPlotly() {
-  var s = document.createElement('script');
-  s.src = '/static/cache/plotly.basic.min.js';
-  document.head.appendChild(s);
-}
+  onerror="(function(){var s=document.createElement('script');s.src='/static/cache/plotly.basic.min.js';document.head.appendChild(s);})()">
 </script>
 
 <script src="{{ url_for('static', filename='js/perf.js') }}"></script>

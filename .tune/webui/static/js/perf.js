@@ -347,47 +347,126 @@ function renderHeatmap(container, seqQ, seqK, index, desc, anchor) {
   container.appendChild(tbl);
 }
 
+
 // ---------------------------------------------------------------------------
-// Rendering: 3-D bars via Plotly
+// Rendering: 3-D bars via Plotly (one bar per autozoom cell)
 // ---------------------------------------------------------------------------
 
-function render3D(container, seqQ, seqK, index, desc, anchor) {
+// Build a single Plotly mesh3d figure where each autozoom cell becomes one
+// colored rectangular bar. X axis = colCombo index, Y axis = rowCombo index,
+// Z axis = TFLOPS. Each bar is a unit-width box.
+function render3D(container, layout, anchor) {
   if (typeof Plotly === 'undefined') {
     container.textContent = 'Plotly.js not loaded — 3D view unavailable.';
     return;
   }
-  const z = seqQ.map(q =>
-    seqK.map(k => {
-      const row = index.get(`${q}|${k}`);
-      return (row && row.median_ms > 0) ? desc.tflops(row) : null;
-    })
-  );
-  const div = document.createElement('div');
-  div.style.cssText = 'width:320px;height:280px;';
-  container.appendChild(div);
 
-  Plotly.newPlot(div, [{
-    type: 'surface',
-    x: seqK,
-    y: seqQ,
-    z,
-    colorscale: [
-      [0,    'hsl(0,90%,45%)'],
-      [0.25, 'hsl(30,90%,50%)'],
-      [0.5,  'hsl(60,90%,50%)'],
-      [0.75, 'hsl(120,70%,40%)'],
-      [1,    'hsl(220,80%,45%)'],
-    ],
-    cmin: 0,
-    cmax: anchor,
+  const desc = state.descriptor;
+  const { rowCombos, colCombos, cells } = layout;
+  const nCol = colCombos.length;
+  const nRow = rowCombos.length;
+
+  // Collect (xi, yi, tflops, color) per cell.
+  const xs = [], ys = [], zs = [], colors = [];
+  for (let ri = 0; ri < nRow; ri++) {
+    for (let ci = 0; ci < nCol; ci++) {
+      const rowCombo = rowCombos[ri];
+      const colCombo = colCombos[ci];
+      const cell = cells.find(c =>
+        state.rowDims.every(k => c.rowCombo[k] === rowCombo[k]) &&
+        state.colDims.every(k => c.colCombo[k] === colCombo[k])
+      );
+      const cellT = cell ? _cellTflops(cell.index, desc) : 0;
+      const dtype = colCombo.dtype || rowCombo.dtype;
+      const a = anchorFor(anchor, dtype);
+      const frac = cellT > 0 ? perfFrac(cellT, a) : 0;
+      xs.push(ci);
+      ys.push(ri);
+      zs.push(cellT > 0 ? cellT : 0);
+      colors.push(frac);
+    }
+  }
+
+  // Build one mesh3d bar per cell using 8 vertices + 12 triangles.
+  const BAR_W = 0.8;  // fraction of unit grid spacing
+  const allVx = [], allVy = [], allVz = [], allI = [], allJ = [], allK = [];
+  const allColor = [];
+  let vOffset = 0;
+
+  for (let bi = 0; bi < xs.length; bi++) {
+    const cx = xs[bi], cy = ys[bi], h = zs[bi], c = colors[bi];
+    const x0 = cx - BAR_W / 2, x1 = cx + BAR_W / 2;
+    const y0 = cy - BAR_W / 2, y1 = cy + BAR_W / 2;
+    // 8 corners: bottom face then top face
+    allVx.push(x0, x1, x1, x0,  x0, x1, x1, x0);
+    allVy.push(y0, y0, y1, y1,  y0, y0, y1, y1);
+    allVz.push( 0,  0,  0,  0,   h,  h,  h,  h);
+    for (let v = 0; v < 8; v++) allColor.push(c);
+
+    // 12 triangles (6 faces × 2 triangles each), using local indices 0–7.
+    const tris = [
+      [0,1,2],[0,2,3],  // bottom
+      [4,6,5],[4,7,6],  // top
+      [0,4,5],[0,5,1],  // front
+      [2,6,7],[2,7,3],  // back
+      [1,5,6],[1,6,2],  // right
+      [0,3,7],[0,7,4],  // left
+    ];
+    for (const [a, b, c2] of tris) {
+      allI.push(vOffset + a);
+      allJ.push(vOffset + b);
+      allK.push(vOffset + c2);
+    }
+    vOffset += 8;
+  }
+
+  // Axis tick labels from combo labels.
+  const xTickText  = colCombos.map((cc, ci) =>
+    state.colDims.map(k => _dimLabel(desc, k, cc[k])).join('/'));
+  const yTickText  = rowCombos.map((rc, ri) =>
+    state.rowDims.map(k => _dimLabel(desc, k, rc[k])).join('/'));
+
+  // HSL colorscale matching the hue-wheel.
+  const plotlyScale = [
+    [0,    'hsl(0,90%,45%)'],
+    [0.25, 'hsl(30,90%,50%)'],
+    [0.5,  'hsl(60,90%,50%)'],
+    [0.75, 'hsl(120,70%,40%)'],
+    [1,    'hsl(220,80%,45%)'],
+  ];
+
+  const plotDiv = document.createElement('div');
+  plotDiv.style.cssText = 'width:100%;height:520px;';
+  container.appendChild(plotDiv);
+
+  Plotly.newPlot(plotDiv, [{
+    type: 'mesh3d',
+    x: allVx, y: allVy, z: allVz,
+    i: allI,  j: allJ,  k: allK,
+    intensity: allColor,
+    colorscale: plotlyScale,
+    cmin: 0, cmax: 1,
     showscale: false,
-    hovertemplate: 'sk=%{x}<br>sq=%{y}<br>TFLOPS=%{z:.2f}<extra></extra>',
+    flatshading: true,
+    lighting: { ambient: 0.9, diffuse: 0.3 },
   }], {
-    margin: { t: 0, b: 0, l: 0, r: 0 },
+    margin: { t: 20, b: 0, l: 0, r: 0 },
     scene: {
-      xaxis: { title: 'seqlen_k' },
-      yaxis: { title: 'seqlen_q' },
+      xaxis: {
+        title: state.colDims.join('/'),
+        tickvals: colCombos.map((_, i) => i),
+        ticktext: xTickText,
+        tickfont: { size: 9 },
+      },
+      yaxis: {
+        title: state.rowDims.join('/'),
+        tickvals: rowCombos.map((_, i) => i),
+        ticktext: yTickText,
+        tickfont: { size: 9 },
+      },
       zaxis: { title: 'TFLOPS' },
+      aspectmode: 'manual',
+      aspectratio: { x: Math.max(1, nCol * 0.4), y: Math.max(1, nRow * 0.4), z: 1 },
     },
   }, { responsive: true, displayModeBar: false });
 }
@@ -446,7 +525,7 @@ function _cellTflops(index, desc) {
 }
 
 // Overview table: rows = rowDims combos, cols = colDims combos.
-// Each cell shows max TFLOPS across seqlen_q×seqlen_k; click to drill in.
+// Each cell shows the representative TFLOPS value; click to drill in.
 function renderAutozoom(grid, layout, anchor) {
   const desc = state.descriptor;
   const { rowCombos, colCombos, seqQ, seqK, cells } = layout;
@@ -577,8 +656,8 @@ function renderGrid() {
     return;
   }
 
-  // Autozoom: overview or drilldown.
-  if (state.displayMode === 'autozoom') {
+  // Autozoom and 3D both use the autozoom data path (one value per cell).
+  if (state.displayMode === 'autozoom' || state.displayMode === '3d') {
     const dd = state.autozoom.drilldown;
     if (dd) {
       // Anchor from drilldown cell rows only.
@@ -621,7 +700,11 @@ function renderGrid() {
     } else {
       // Overview: anchor based on the same per-cell tflops values that will be displayed.
       const anchor = computeAnchorFromCells(layout.cells, state);
-      renderAutozoom(grid, layout, anchor);
+      if (state.displayMode === '3d') {
+        render3D(grid, layout, anchor);
+      } else {
+        renderAutozoom(grid, layout, anchor);
+      }
 
       const legend = document.createElement('div');
       legend.style.cssText = 'margin-top:8px;opacity:0.75;';
@@ -724,11 +807,7 @@ function renderGrid() {
       );
       if (matchingCell) {
         const { seqQ, seqK, index } = matchingCell;
-        if (state.displayMode === '3d') {
-          render3D(td, seqQ, seqK, index, state.descriptor, anchor);
-        } else {
-          renderHeatmap(td, seqQ, seqK, index, state.descriptor, anchor);
-        }
+        renderHeatmap(td, seqQ, seqK, index, state.descriptor, anchor);
       }
       tr.appendChild(td);
     }
