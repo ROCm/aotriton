@@ -9,6 +9,7 @@ from flask import Blueprint, render_template, request, jsonify, current_app, Res
 import time
 import json
 import logging
+import urllib.request
 from pathlib import Path
 
 from . import tasks
@@ -1035,13 +1036,20 @@ def api_export_visperf():
     return jsonify(result)
 
 
+_PLOTLY_CDN = 'https://cdn.jsdelivr.net/npm/plotly.js-basic-dist@2.35.2/plotly.basic.min.js'
+
 @bp.route('/static/cache/plotly.basic.min.js')
 def plotly_cache():
-    """Serve locally cached Plotly.js from scratch/webcache/."""
+    """Serve Plotly.js from a local cache, downloading it on first request."""
     workdir = current_app.config['WORKDIR']
     cache_path = Path(workdir) / 'scratch' / 'webcache' / 'plotly.basic.min.js'
     if not cache_path.exists():
-        return 'Plotly cache not available. Load the Perf page online first.', 503
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            urllib.request.urlretrieve(_PLOTLY_CDN, cache_path)
+        except Exception as exc:
+            logger.warning('Failed to download Plotly from CDN: %s', exc)
+            return f'Plotly unavailable: {exc}', 503
     return send_file(cache_path, mimetype='application/javascript')
 
 
