@@ -409,7 +409,9 @@ function renderAutozoom(grid, layout, anchor) {
     let curLabel = null, curCount = 0, curStart = 0;
     colCombos.forEach((cc, ci) => {
       const label = _dimLabel(desc, dimKey, cc[dimKey]);
-      if (label !== curLabel) {
+      // Break when this dim's value changes OR any ancestor dim changes.
+      const ancestorBreak = ci > 0 && colSeps.slice(0, di).some(s => s.has(ci));
+      if (label !== curLabel || ancestorBreak) {
         if (curCount) spans.push({ label: curLabel, count: curCount, start: curStart });
         curLabel = label; curCount = 0; curStart = ci;
       }
@@ -594,7 +596,9 @@ function renderGrid() {
     let curLabel = null, curCount = 0, curStart = 0;
     layout.colCombos.forEach((cc, ci) => {
       const label = _dimLabel(state.descriptor, dimKey, cc[dimKey]);
-      if (label !== curLabel) {
+      // Break when this dim's value changes OR any ancestor dim changes.
+      const ancestorBreak = ci > 0 && colSeps.slice(0, di).some(s => s.has(ci));
+      if (label !== curLabel || ancestorBreak) {
         if (curCount) spans.push({ label: curLabel, count: curCount, start: curStart });
         curLabel = label;
         curCount = 0;
