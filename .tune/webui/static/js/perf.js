@@ -681,6 +681,43 @@ function _dimLabel(desc, key, value) {
 }
 
 // ---------------------------------------------------------------------------
+// URL state persistence
+// ---------------------------------------------------------------------------
+
+function pushURLState() {
+  const p = new URLSearchParams();
+  if (state.arch)   p.set('arch',    state.arch);
+  if (state.kernel) p.set('kernel',  state.kernel);
+  p.set('display', state.displayMode);
+  p.set('scale',   state.scale.mode);
+  if (state.scale.mode === 'user' && state.scale.userValue)
+    p.set('scale_value', state.scale.userValue);
+  if (state.colDims.length) p.set('col_dims', state.colDims.join(','));
+  if (state.rowDims.length) p.set('row_dims', state.rowDims.join(','));
+  // Encode active single-value filters as f_<key>=<value>.
+  for (const [k, v] of Object.entries(state.filter)) {
+    if (v instanceof Set) p.set(`f_${k}`, [...v][0]);
+  }
+  history.replaceState(null, '', `?${p}`);
+}
+
+function restoreFromURL() {
+  const p = new URLSearchParams(location.search);
+  return {
+    arch:        p.get('arch')        || '',
+    kernel:      p.get('kernel')      || '',
+    display:     p.get('display')     || '',
+    scale:       p.get('scale')       || '',
+    scale_value: p.get('scale_value') || '',
+    col_dims:    p.get('col_dims')    || '',
+    row_dims:    p.get('row_dims')    || '',
+    filters:     [...p.entries()]
+                   .filter(([k]) => k.startsWith('f_'))
+                   .map(([k, v]) => [k.slice(2), v]),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Initialization and event wiring
 // ---------------------------------------------------------------------------
 
@@ -692,6 +729,21 @@ function initPerf() {
   const dispSel    = document.getElementById('perf-display');
   const refreshBtn = document.getElementById('perf-refresh');
   const status     = document.getElementById('perf-status');
+
+  // Apply URL params to selectors before load().
+  const saved = restoreFromURL();
+  if (saved.arch   && archSel)   archSel.value   = saved.arch;
+  if (saved.kernel && kernelSel) kernelSel.value = saved.kernel;
+  if (saved.display && dispSel)  dispSel.value   = saved.display;
+  if (saved.scale  && scaleSel) {
+    scaleSel.value = saved.scale;
+    state.scale.mode = saved.scale;
+    if (scaleInput) scaleInput.style.display = saved.scale === 'user' ? 'inline' : 'none';
+  }
+  if (saved.scale_value && scaleInput) {
+    scaleInput.value = saved.scale_value;
+    state.scale.userValue = parseFloat(saved.scale_value) || null;
+  }
 
   async function load() {
     if (!archSel || !kernelSel) return;
@@ -712,14 +764,24 @@ function initPerf() {
       // Pick descriptor by kernel family — currently always flash.
       state.descriptor = DESCRIPTORS['flash'];
       if (state.descriptor) {
-        state.colDims = [...state.descriptor.defaultColDims];
-        state.rowDims = [...state.descriptor.defaultRowDims];
+        // Restore col/row dims from URL if present, else use descriptor defaults.
+        state.colDims = saved.col_dims
+          ? saved.col_dims.split(',').filter(Boolean)
+          : [...state.descriptor.defaultColDims];
+        state.rowDims = saved.row_dims
+          ? saved.row_dims.split(',').filter(Boolean)
+          : [...state.descriptor.defaultRowDims];
         state.fixed   = { ...state.descriptor.defaultFixed };
-        state.filter  = {};   // clear all value filters on fresh load
+        state.filter  = {};
+        // Restore per-dim filters from URL.
+        for (const [k, v] of saved.filters) {
+          state.filter[k] = new Set([v]);
+        }
         state.autozoom.drilldown = null;
       }
       updateDimPanel();
       renderGrid();
+      pushURLState();
       if (status) status.textContent = `${state.data.rows.length} rows loaded.`;
       // Open the layout panel on first load so users discover it.
       const panel = document.getElementById('perf-layout-panel');
@@ -771,6 +833,7 @@ function initPerf() {
       e.stopPropagation();
       state.filter[key] = new Set([sel.value]);
       renderGrid();
+      pushURLState();
     });
 
     // Checkbox toggles between "all values" (dropdown disabled) and "single value" (dropdown enabled).
@@ -788,6 +851,7 @@ function initPerf() {
         sel.disabled = false;
       }
       renderGrid();
+      pushURLState();
     });
 
     // Label (not draggable-sensitive).
@@ -833,6 +897,7 @@ function initPerf() {
       moveDim(key, role, beforeKey);
       updateDimPanel();
       renderGrid();
+      pushURLState();
     });
   }
 
@@ -866,12 +931,14 @@ function initPerf() {
       state.scale.mode = scaleSel.value;
       if (scaleInput) scaleInput.style.display = scaleSel.value === 'user' ? 'inline' : 'none';
       renderGrid();
+      pushURLState();
     });
   }
   if (scaleInput) {
     scaleInput.addEventListener('change', () => {
       state.scale.userValue = parseFloat(scaleInput.value) || null;
       renderGrid();
+      pushURLState();
     });
   }
   if (dispSel) {
@@ -879,10 +946,11 @@ function initPerf() {
       state.displayMode = dispSel.value;
       state.autozoom.drilldown = null;
       renderGrid();
+      pushURLState();
     });
   }
 
-  // Auto-load on first visit if arch+kernel already selected.
+  // Auto-load if arch+kernel are set (either from URL or server-rendered default).
   if (archSel && archSel.value && kernelSel && kernelSel.value) {
     load();
   }
