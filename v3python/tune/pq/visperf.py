@@ -24,7 +24,7 @@ def _build_query(desc: dict, arch: str, kernel_or_op: str, mode: str,
     if mode == 'op':
         table = desc['op_table']
         name_col = desc['op_name_col']
-        dim_selects = ',\n    '.join(f'b.{expr} AS {alias}' for expr, alias in desc['dims'])
+        dim_selects = ',\n    '.join(f'{expr} AS {alias}' for expr, alias in desc['dims'])
         dim_groups  = ', '.join(alias for _, alias in desc['dims'])
         # Join optune_results on the winning backend_index to get bim BATCH/N_HEADS.
         sql = f"""

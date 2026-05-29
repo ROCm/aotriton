@@ -17,6 +17,8 @@ import re
 import logging
 from flask import current_app
 
+logger = logging.getLogger(__name__)
+
 # Global constant for aotriton root directory
 AOTRITON_ROOT = Path(__file__).parent.parent.parent.resolve()
 
