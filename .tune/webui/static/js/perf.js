@@ -82,7 +82,10 @@ let state = {
   // null = all values shown. A Set means only those values are shown.
   filter: {},
   displayMode: 'autozoom',  // 'heatmap' | '3d' | 'autozoom'
-  autozoom: { drilldown: null },  // drilldown = {rowCombo, colCombo} or null for overview
+  autozoom: {
+    drilldown: null,   // {rowCombo, colCombo} or null for overview
+    seqMode: 'max_load',  // 'max_load' = arch-specific sq=sk target; 'max_tflops' = max across all seqlens
+  },
   seqlenRange: [0, 65536],
   scale: {
     mode: 'max_observed',   // 'max_observed' | 'theoretical' | 'user'
@@ -241,6 +244,38 @@ function computeAnchor(visibleRows, state) {
 }
 
 // Pick the anchor value for a given dtype from computeAnchor's return value.
+// Like computeAnchor but uses _cellTflops() per cell instead of raw row values.
+// Used by autozoom overview so the anchor matches what is actually displayed.
+function computeAnchorFromCells(cells, state) {
+  const desc = state.descriptor;
+  if (!desc) return new Map([['', 1]]);
+
+  if (state.scale.mode === 'user' && state.scale.userValue > 0) {
+    return state.scale.userValue;
+  }
+  if (state.scale.mode === 'theoretical') {
+    const peak = THEORETICAL_PEAK_TFLOPS[state.arch];
+    if (peak) {
+      const dtypes = state.data && state.data.axes.dtype;
+      const map = new Map();
+      (dtypes || Object.keys(peak)).forEach(d => { if (peak[d]) map.set(d, peak[d]); });
+      if (map.size) return map;
+    }
+  }
+  // max_observed per dtype, using the same per-cell tflops value as displayed.
+  const byDtype = new Map();
+  for (const cell of cells) {
+    const t = _cellTflops(cell.index, desc);
+    if (t > 0) {
+      // Determine dtype from combo dims.
+      const dtype = (cell.colCombo && cell.colCombo.dtype) ||
+                    (cell.rowCombo && cell.rowCombo.dtype) || '';
+      if (!byDtype.has(dtype) || t > byDtype.get(dtype)) byDtype.set(dtype, t);
+    }
+  }
+  return byDtype.size ? byDtype : new Map([['', 1]]);
+}
+
 // When anchor is a Map (max_observed), look up by dtype; otherwise use directly.
 function anchorFor(anchor, dtype) {
   if (!(anchor instanceof Map)) return anchor;
@@ -361,6 +396,36 @@ function render3D(container, seqQ, seqK, index, desc, anchor) {
 // Autozoom rendering
 // ---------------------------------------------------------------------------
 
+// Default "representative" seqlen for autozoom fixed mode, keyed by arch.
+// gfx1100 has limited HBM so 2k×2k is the canonical point; everything else uses 8k×8k.
+const _AZ_TARGET_SEQLEN = {
+  gfx1100: 2048,
+};
+const _AZ_DEFAULT_SEQLEN = 8192;
+
+function _azTargetSeqlen() {
+  return _AZ_TARGET_SEQLEN[state.arch] || _AZ_DEFAULT_SEQLEN;
+}
+
+// Returns the TFLOPS at (sq, sk). If that exact entry is missing, finds the
+// closest available sq and sk independently (by absolute distance) and falls
+// back to that entry, or 0 if still not found.
+function _tflopsAtSeq(index, desc, sq, sk) {
+  const row = index.get(`${sq}|${sk}`);
+  if (row && row.median_ms > 0) return desc.tflops(row);
+
+  // Collect available seqlens from the index keys.
+  const seqQs = new Set(), seqKs = new Set();
+  for (const key of index.keys()) {
+    const [q, k] = key.split('|').map(Number);
+    seqQs.add(q); seqKs.add(k);
+  }
+  const nearQ = [...seqQs].reduce((best, v) => Math.abs(v - sq) < Math.abs(best - sq) ? v : best, [...seqQs][0]);
+  const nearK = [...seqKs].reduce((best, v) => Math.abs(v - sk) < Math.abs(best - sk) ? v : best, [...seqKs][0]);
+  const fallback = index.get(`${nearQ}|${nearK}`);
+  return (fallback && fallback.median_ms > 0) ? desc.tflops(fallback) : 0;
+}
+
 // Returns the max TFLOPS across all seqlen_q×seqlen_k entries in the index.
 function _maxTflops(index, desc) {
   let max = 0;
@@ -371,6 +436,13 @@ function _maxTflops(index, desc) {
     }
   }
   return max;
+}
+
+// Returns the representative TFLOPS for an autozoom cell based on seqMode.
+function _cellTflops(index, desc) {
+  if (state.autozoom.seqMode === 'max_tflops') return _maxTflops(index, desc);
+  const sq = _azTargetSeqlen(), sk = _azTargetSeqlen();
+  return _tflopsAtSeq(index, desc, sq, sk);
 }
 
 // Overview table: rows = rowDims combos, cols = colDims combos.
@@ -453,16 +525,20 @@ function renderAutozoom(grid, layout, anchor) {
       );
 
       if (cell) {
-        const maxT = _maxTflops(cell.index, desc);
-        if (maxT > 0) {
+        const cellT = _cellTflops(cell.index, desc);
+        if (cellT > 0) {
           const dtype = colCombo.dtype || rowCombo.dtype;
           const a    = anchorFor(anchor, dtype);
-          const frac = perfFrac(maxT, a);
+          const frac = perfFrac(cellT, a);
           td.style.background = perfColor(frac);
           td.style.color      = cellTextColor(frac);
-          const pct = Math.round(maxT / a * 100);
-          td.innerHTML = `<div style="line-height:1.2">${maxT.toFixed(1)}<br><span style="opacity:0.8">${pct}%</span></div>`;
-          td.title = `Max TFLOPS: ${maxT.toFixed(2)}\nClick to view seqlen matrix`;
+          const pct = Math.round(cellT / a * 100);
+          td.innerHTML = `<div style="line-height:1.2">${cellT.toFixed(1)}<br><span style="opacity:0.8">${pct}%</span></div>`;
+          const sq = _azTargetSeqlen();
+          const tooltipLabel = state.autozoom.seqMode === 'max_tflops'
+            ? `Max TFLOPS: ${cellT.toFixed(2)}`
+            : `TFLOPS @ ${sq}×${sq}: ${cellT.toFixed(2)}`;
+          td.title = `${tooltipLabel}\nClick to view seqlen matrix`;
           td.addEventListener('click', () => {
             state.autozoom.drilldown = { rowCombo, colCombo };
             renderGrid();
@@ -543,14 +619,16 @@ function renderGrid() {
       legend.textContent = `Scale anchor: ${anchor instanceof Map ? [...anchor.entries()].map(([d,v])=>`${d}:${v.toFixed(1)}`).join(", ") : anchor.toFixed(1)} TFLOPS (${state.scale.mode})`;
       grid.appendChild(legend);
     } else {
-      // Overview: anchor from all visible rows.
-      const allVisible = layout.cells.flatMap(c => [...c.index.values()].filter(Boolean));
-      const anchor = computeAnchor(allVisible, state);
+      // Overview: anchor based on the same per-cell tflops values that will be displayed.
+      const anchor = computeAnchorFromCells(layout.cells, state);
       renderAutozoom(grid, layout, anchor);
 
       const legend = document.createElement('div');
       legend.style.cssText = 'margin-top:8px;opacity:0.75;';
-      legend.textContent = `Scale anchor: ${anchor instanceof Map ? [...anchor.entries()].map(([d,v])=>`${d}:${v.toFixed(1)}`).join(", ") : anchor.toFixed(1)} TFLOPS (${state.scale.mode})`;
+      const azLabel = state.autozoom.seqMode === 'max_tflops'
+        ? 'max TFLOPS'
+        : `${_azTargetSeqlen()}×${_azTargetSeqlen()} TFLOPS`;
+      legend.textContent = `Showing: ${azLabel} — Scale anchor: ${anchor instanceof Map ? [...anchor.entries()].map(([d,v])=>`${d}:${v.toFixed(1)}`).join(", ") : anchor.toFixed(1)} TFLOPS (${state.scale.mode})`;
       grid.appendChild(legend);
     }
     return;
@@ -690,8 +768,9 @@ function pushURLState() {
   if (state.arch)         p.set('arch',    state.arch);
   if (state.descriptorId) p.set('module',  state.descriptorId);
   if (state.kernel)       p.set('kernel',  state.kernel);
-  p.set('display', state.displayMode);
-  p.set('scale',   state.scale.mode);
+  p.set('display',  state.displayMode);
+  p.set('az_mode',  state.autozoom.seqMode);
+  p.set('scale',    state.scale.mode);
   if (state.scale.mode === 'user' && state.scale.userValue)
     p.set('scale_value', state.scale.userValue);
   if (state.colDims.length) p.set('col_dims', state.colDims.join(','));
@@ -712,6 +791,7 @@ function restoreFromURL() {
     display:     p.get('display')     || '',
     scale:       p.get('scale')       || '',
     scale_value: p.get('scale_value') || '',
+    az_mode:     p.get('az_mode')     || '',
     col_dims:    p.get('col_dims')    || '',
     row_dims:    p.get('row_dims')    || '',
     filters:     [...p.entries()]
@@ -730,15 +810,30 @@ function initPerf() {
   const scaleSel   = document.getElementById('perf-scale');
   const scaleInput = document.getElementById('perf-scale-value');
   const dispSel    = document.getElementById('perf-display');
+  const azModeSel  = document.getElementById('perf-az-mode');
+  const azModeLabel = document.getElementById('perf-az-mode-label');
   const refreshBtn = document.getElementById('perf-refresh');
   const status     = document.getElementById('perf-status');
+
+  function _syncAzModeVisibility() {
+    if (azModeLabel) azModeLabel.style.display =
+      (state.displayMode === 'autozoom') ? '' : 'none';
+  }
 
   // Apply URL params to selectors before load().
   const saved = restoreFromURL();
   if (saved.module) state.descriptorId = saved.module;
   if (saved.arch   && archSel)   archSel.value   = saved.arch;
   if (saved.kernel && kernelSel) kernelSel.value = saved.kernel;
-  if (saved.display && dispSel)  dispSel.value   = saved.display;
+  if (saved.display && dispSel) {
+    dispSel.value = saved.display;
+    state.displayMode = saved.display || 'autozoom';
+  }
+  if (saved.az_mode && azModeSel) {
+    azModeSel.value = saved.az_mode;
+    state.autozoom.seqMode = saved.az_mode;
+  }
+  _syncAzModeVisibility();
   if (saved.scale  && scaleSel) {
     scaleSel.value = saved.scale;
     state.scale.mode = saved.scale;
@@ -949,6 +1044,14 @@ function initPerf() {
     dispSel.addEventListener('change', () => {
       state.displayMode = dispSel.value;
       state.autozoom.drilldown = null;
+      _syncAzModeVisibility();
+      renderGrid();
+      pushURLState();
+    });
+  }
+  if (azModeSel) {
+    azModeSel.addEventListener('change', () => {
+      state.autozoom.seqMode = azModeSel.value;
       renderGrid();
       pushURLState();
     });
