@@ -678,21 +678,8 @@ function initPerf() {
 
   // Move dim to a new role (and optionally a position within that role's list).
   function moveDim(key, toRole, beforeKey) {
-    // Remove from current role list.
     state.colDims = state.colDims.filter(k => k !== key);
     state.rowDims = state.rowDims.filter(k => k !== key);
-    // Also clear fixed value when moving into col/row.
-    if (toRole === 'fixed') {
-      if (state.fixed[key] === undefined) {
-        const vals = state.data && state.data.axes[key];
-        state.fixed[key] = vals && vals.length ? vals[0] : null;
-      }
-      delete state.filter[key];   // fixed select takes over; no grid filter needed
-    } else {
-      delete state.fixed[key];
-      // Preserve any existing filter[key] when moving back to col/row.
-    }
-    // Insert into target list.
     const targetList = toRole === 'col' ? state.colDims : toRole === 'row' ? state.rowDims : null;
     if (targetList !== null) {
       const idx = beforeKey ? targetList.indexOf(beforeKey) : -1;
@@ -768,30 +755,6 @@ function initPerf() {
     return chip;
   }
 
-  function buildFixedSelect(key) {
-    const vals = (state.data && state.data.axes[key]) || [];
-    const wrap = document.createElement('span');
-    wrap.style.cssText = 'display:inline-flex;align-items:center;gap:0.3rem;margin:0.15rem;';
-    const lbl = document.createElement('span');
-    lbl.textContent = key + ':';
-    const sel = document.createElement('select');
-    vals.forEach(v => {
-      const opt = document.createElement('option');
-      opt.value = v;
-      opt.textContent = _dimLabel(state.descriptor, key, v);
-      if (state.fixed[key] !== undefined && String(state.fixed[key]) === String(v)) opt.selected = true;
-      sel.appendChild(opt);
-    });
-    sel.addEventListener('change', () => {
-      const raw = sel.value;
-      state.fixed[key] = isNaN(Number(raw)) ? raw : Number(raw);
-      renderGrid();
-    });
-    wrap.appendChild(lbl);
-    wrap.appendChild(sel);
-    return wrap;
-  }
-
   function wireDropTarget(zone) {
     zone.addEventListener('dragover', e => {
       e.preventDefault();
@@ -824,30 +787,21 @@ function initPerf() {
                        .filter(k => (state.data.axes[k] || []).length > 1 ||
                                     state.colDims.includes(k) || state.rowDims.includes(k));
 
-    const colZone   = document.getElementById('perf-col-dims');
-    const rowZone   = document.getElementById('perf-row-dims');
-    const fixedZone = document.getElementById('perf-fixed-filters');
-    if (!colZone || !rowZone || !fixedZone) return;
+    const colZone = document.getElementById('perf-col-dims');
+    const rowZone = document.getElementById('perf-row-dims');
+    if (!colZone || !rowZone) return;
 
-    colZone.innerHTML   = '';
-    rowZone.innerHTML   = '';
-    fixedZone.innerHTML = '';
+    colZone.innerHTML = '';
+    rowZone.innerHTML = '';
 
-    // Render chips in order for col/row zones; fixed zone gets selects.
     for (const key of state.colDims) {
       if (allDims.includes(key)) colZone.appendChild(buildDimChip(key));
     }
     for (const key of state.rowDims) {
       if (allDims.includes(key)) rowZone.appendChild(buildDimChip(key));
     }
-    for (const key of allDims) {
-      if (!state.colDims.includes(key) && !state.rowDims.includes(key)) {
-        fixedZone.appendChild(buildFixedSelect(key));
-      }
-    }
 
-    // Wire drop targets once per rebuild (they are fresh DOM nodes).
-    [colZone, rowZone, fixedZone].forEach(wireDropTarget);
+    [colZone, rowZone].forEach(wireDropTarget);
   }
 
   if (refreshBtn) refreshBtn.addEventListener('click', load);
