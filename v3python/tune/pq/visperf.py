@@ -17,30 +17,37 @@ def _build_query(desc: dict, arch: str, kernel_or_op: str, mode: str,
                  seqlen_min: int, seqlen_max: int) -> tuple[str, list]:
     """Build the SELECT query for a single kernel/op using the descriptor.
 
-    Joins tuning_results to retrieve BATCH and N_HEADS from result_data->'bim',
-    so the TFLOPS formula accounts for the actual benchmark dimensions.
-    For op-mode, result_data is not available; batch/n_heads default to 1.
+    Joins tuning_results (kernel mode) or optune_results (op mode) to retrieve
+    BATCH and N_HEADS from result_data->'bim', so the TFLOPS formula accounts
+    for the actual benchmark dimensions.
     """
     if mode == 'op':
         table = desc['op_table']
         name_col = desc['op_name_col']
-        # best_optune_results has no matching tuning_results join; use 1/1.
-        dim_selects = ',\n    '.join(f'{expr} AS {alias}' for expr, alias in desc['dims'])
+        dim_selects = ',\n    '.join(f'b.{expr} AS {alias}' for expr, alias in desc['dims'])
         dim_groups  = ', '.join(alias for _, alias in desc['dims'])
+        # Join optune_results on the winning backend_index to get bim BATCH/N_HEADS.
         sql = f"""
             SELECT
                 {dim_selects},
-                MIN(median_time) AS median_ms,
-                1 AS batch,
-                1 AS n_heads
-            FROM {table}
-            WHERE arch = %s
-              AND {name_col} = %s
-              AND (task_config->'entry'->>'seqlen_q')::int >= %s
-              AND (task_config->'entry'->>'seqlen_q')::int <= %s
-              AND (task_config->'entry'->>'seqlen_k')::int >= %s
-              AND (task_config->'entry'->>'seqlen_k')::int <= %s
-            GROUP BY {dim_groups}
+                b.median_time AS median_ms,
+                (r.result_data->'bim'->>'BATCH')::int AS batch,
+                CASE
+                    WHEN jsonb_typeof(r.result_data->'bim'->'N_HEADS') = 'array'
+                    THEN (r.result_data->'bim'->'N_HEADS'->0)::int
+                    ELSE (r.result_data->'bim'->>'N_HEADS')::int
+                END AS n_heads
+            FROM {table} b
+            JOIN optune_results r
+              ON r.task_id = b.task_id
+             AND r.{name_col} = b.{name_col}
+             AND r.backend_index = b.backend_index
+            WHERE b.arch = %s
+              AND b.{name_col} = %s
+              AND (b.task_config->'entry'->>'seqlen_q')::int >= %s
+              AND (b.task_config->'entry'->>'seqlen_q')::int <= %s
+              AND (b.task_config->'entry'->>'seqlen_k')::int >= %s
+              AND (b.task_config->'entry'->>'seqlen_k')::int <= %s
             ORDER BY {dim_groups}
         """
         params = [arch, kernel_or_op, seqlen_min, seqlen_max, seqlen_min, seqlen_max]
