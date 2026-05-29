@@ -1036,7 +1036,7 @@ def api_export_visperf():
     return jsonify(result)
 
 
-_PLOTLY_CDN = 'https://cdn.jsdelivr.net/npm/plotly.js-basic-dist@2.35.2/plotly.basic.min.js'
+_PLOTLY_CDN = 'https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js'
 
 @bp.route('/static/cache/plotly.basic.min.js')
 def plotly_cache():

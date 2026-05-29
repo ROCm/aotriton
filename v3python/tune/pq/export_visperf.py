@@ -36,7 +36,7 @@ _TEMPLATE = _HERE / 'visperf_template.html'
 
 # CDN URL with exact semver pin.
 PLOTLY_CDN = (
-    'https://cdn.jsdelivr.net/npm/plotly.js-basic-dist@2.35.2/plotly.basic.min.js'
+    'https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js'
 )
 
 
