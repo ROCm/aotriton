@@ -38,10 +38,6 @@ struct [[context_class_name]] {
 #if [[shared_iface]]
     const [[call_options_struct]] *call_options = nullptr;
 #endif
-    // FIXME: this is for V2 API and will be removed after 0.12
-#if AOTRITON_VERSION_MAJOR == 0 && AOTRITON_VERSION_MINOR == 12
-    [[context_class_name]]() {}
-#endif
     template <typename ParentContext>
     [[context_class_name]](const ParentContext& pcontext, bool condition)
       : launch_condition(condition)

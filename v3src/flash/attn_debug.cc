@@ -25,12 +25,13 @@ namespace AOTRITON_NS::v2::flash {
 
 using DebugSimulateEncodedSoftmaxParams = AOTRITON_NS::v3::flash::OpAttnFwdParams;
 using DebugSimulateEncodedSoftmaxContext = AOTRITON_NS::v3::flash::DebugSimulateEncodedSoftmaxContext;
+using attn_options = AOTRITON_NS::v3::flash::attn_options;
 
 hipError_t
-debug_simulate_encoded_softmax(T4 r,
+debug_simulate_encoded_softmax(AOTRITON_NS::TensorView<4> r,
                                float dropout_p,
-                               T0 philox_seed,
-                               T0 philox_offset1,
+                               AOTRITON_NS::TensorView<0> philox_seed,
+                               AOTRITON_NS::TensorView<0> philox_offset1,
                                uint64_t philox_offset2,
                                AOTRITON_NS::Stream stream_wrap) {
   hipError_t err;
@@ -49,7 +50,15 @@ debug_simulate_encoded_softmax(T4 r,
     .philox_offset2 = philox_offset2,
     .encoded_softmax = &r,
   };
-  DebugSimulateEncodedSoftmaxContext context;
+  struct NullParent {
+    DebugSimulateEncodedSoftmaxParams* params;
+    attn_options* call_options;
+  };
+  NullParent null_parent = {
+    .params = &params,
+    .call_options = nullptr
+  };
+  DebugSimulateEncodedSoftmaxContext context(null_parent, true);
   context.params = &params;
   err = context.lookup_optimal(gpu);
   if (err != hipSuccess) {

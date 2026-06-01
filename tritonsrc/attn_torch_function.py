@@ -25,10 +25,6 @@ from tuned_bwd import (
     tuned_bwd_kernel_dk_dv,
     tuned_bwd_kernel_dq,
 )
-from sized_tuned_bwd import (
-    sized_tuned_bwd_kernel_dk_dv,
-    sized_tuned_bwd_kernel_dq,
-)
 
 '''
 Parse TRITON_PRINT_AUTOTUNING=1 output
@@ -584,13 +580,6 @@ class _attention(torch.autograd.Function):
                 if report:
                     best = copy.deepcopy(tuned_bwd_kernel_dk_dv.best_config)
                     attn_extra_args.report_best_config('bwd_kernel_dk_dv', best)
-                if return_autotune:
-                    dkdv_best_config = copy.deepcopy(sized_tuned_bwd_kernel_dk_dv.get_best_config())
-                    # BLOCK_M/N are missing with sized_tuned_bwd_kernel_*
-                    dkdv_best_config.kwargs['BLOCK_M'] = BLOCK_M
-                    dkdv_best_config.kwargs['BLOCK_N'] = BLOCK_N
-                    tuning_result = copy.deepcopy(dkdv_best_config)
-                    ctx.tuning_result.append(('bwd_kernel_dk_dv', tuning_result))
         # print(f"{dq.stride()=}", flush=True)
         # print(f"{dq.data_ptr()=:x}", flush=True)
         # print(f"{dk.stride()=}", flush=True)
@@ -668,13 +657,6 @@ class _attention(torch.autograd.Function):
                 if report:
                     best = copy.deepcopy(tuned_bwd_kernel_dq.best_config)
                     attn_extra_args.report_best_config('bwd_kernel_dq', best)
-                if return_autotune:
-                    dq_best_config = copy.deepcopy(sized_tuned_bwd_kernel_dq.get_best_config())
-                    # BLOCK_M/N are missing with sized_tuned_bwd_kernel_*
-                    dq_best_config.kwargs['BLOCK_M'] = BLOCK_M
-                    dq_best_config.kwargs['BLOCK_N'] = BLOCK_N
-                    tuning_result = dq_best_config
-                    ctx.tuning_result.append(('bwd_kernel_dq', tuning_result))
         if attn_extra_args.is_testing:
             assert not torch.isnan(delta).any(), f'{delta=}'
         # print(h.asm["ttgir"])
