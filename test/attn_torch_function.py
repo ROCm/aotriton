@@ -174,6 +174,14 @@ class _attention(torch.autograd.Function):
             if PROBE_UNSUPPORTED and ret == hipError_t.hipErrorPeerAccessUnsupported:
                 raise NotImplementedError()
             assert ret == hipError_t.hipSuccess, ret
+            # Reset the persistent atomic tile counter between the pre-flight
+            # probe call and the real call. Without this, the second attn_fwd
+            # sees the counter already at num_tiles_total + Num_WG and the
+            # persistent loop body never executes -- the real call becomes a
+            # no-op, and any NaN-prefilled cells in o/M survive into the
+            # is_testing assert below.
+            if causal:
+                atomic.zero_()
 
         ret = attn_fwd(q, k, v, b, sm_scale, M, o,
                        dropout_p, philox_seed, philox_offset1, philox_offset2,
