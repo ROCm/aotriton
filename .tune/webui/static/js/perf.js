@@ -933,16 +933,10 @@ function _exportURLParams() {
 }
 
 async function exportZip(statusEl) {
-  if (!state.data || !state.arch || !state.kernel) return;
-  if (statusEl) statusEl.textContent = 'Building export…';
-
-  const desc = state.descriptor;
-  const mode = (desc && desc.ops && desc.ops.has(state.kernel)) ? 'op' : 'kernel';
+  if (!state.data) return;
+  if (statusEl) statusEl.textContent = 'Building export (all arches/kernels)…';
 
   const body = {
-    arch:            state.arch,
-    kernel:          state.kernel,
-    mode,
     col_dim_filters: _colDimFilters(),
     url_params:      _exportURLParams(),
   };
@@ -962,7 +956,7 @@ async function exportZip(statusEl) {
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement('a');
     a.href = url;
-    a.download = `aotriton_perf_${state.arch}_${state.kernel}.zip`;
+    a.download = 'aotriton_perf.zip';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);

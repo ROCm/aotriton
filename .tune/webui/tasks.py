@@ -30,7 +30,7 @@ sys.path.insert(0, AOTRITON_ROOT.as_posix())
 from v3python.tune.utils import get_db_connection_params
 from v3python.tune.flash.module import FlashEntry
 from .pytest_entry_parser import parse_pytest_node_id, entry_to_sql_clauses
-from v3python.tune.pq.visperf import query_best_results, get_available_archs, _build_axes
+from v3python.tune.pq.visperf import query_best_results, query_all_best_results, get_available_archs, _build_axes
 from v3python.tune.pq.vis_descriptors import DESCRIPTORS
 from v3python.tune.pq.export_visperf import export_visperf as _do_export_visperf, build_export_html
 
@@ -1943,28 +1943,29 @@ def export_visperf(workdir: str, dry_run: bool = False) -> dict:
         return {'status': 'error', 'message': str(e)}
 
 
-def build_perf_export_html(arch: str, kernel: str, mode: str,
-                           col_filters: dict, url_params: dict,
+def build_perf_export_html(col_filters: dict, url_params: dict,
                            workdir: str) -> str:
-    """Build a self-contained autozoom HTML string for the given arch+kernel.
+    """Build a self-contained autozoom HTML string for all arches and kernels/ops.
 
     col_filters: {dim: [allowed_values]} — empty list means include all values.
     url_params:  forwarded into the static bootstrap as the initial URL state.
     """
     conn_params = get_db_connection_params(Path(workdir))
     with psycopg.connect(**conn_params, autocommit=True) as conn:
-        data = query_best_results(conn, arch, kernel, mode)
+        all_data = query_all_best_results(conn)
 
-    # Filter rows to only include col-dim combos that are checked (not filtered).
     if col_filters:
+        desc = DESCRIPTORS.get('flash')
+
         def _row_allowed(r: dict) -> bool:
             for dim, allowed in col_filters.items():
                 if allowed and str(r.get(dim)) not in allowed:
                     return False
             return True
-        data['rows'] = [r for r in data['rows'] if _row_allowed(r)]
-        # Recompute axes for the filtered rows.
-        desc = DESCRIPTORS.get('flash')
-        data['axes'] = _build_axes(data['rows'], desc)
 
-    return build_export_html({arch: {kernel: data}}, url_params)
+        for arch_data in all_data.values():
+            for kdata in arch_data.values():
+                kdata['rows'] = [r for r in kdata['rows'] if _row_allowed(r)]
+                kdata['axes'] = _build_axes(kdata['rows'], desc)
+
+    return build_export_html(all_data, url_params)

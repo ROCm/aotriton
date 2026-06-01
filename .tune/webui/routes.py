@@ -1032,39 +1032,30 @@ def api_perf_data():
 
 @bp.route('/api/perf/export_zip', methods=['POST'])
 def api_perf_export_zip():
-    """Build a self-contained autozoom HTML and return it as a .zip download.
+    """Build a self-contained autozoom HTML (all arches/kernels) as a .zip download.
 
     Request JSON:
-      arch, kernel, mode           – same as /api/perf/data
-      col_dim_filters              – {dim: [allowed_values, ...]} — empty list means all
-      url_params                   – dict of URL search params to pre-set in the export
+      col_dim_filters  – {dim: [allowed_values, ...]} — empty list means all
+      url_params       – dict of URL search params to pre-set in the export
     """
-    body       = request.get_json(force=True) or {}
-    arch       = body.get('arch', '')
-    kernel     = body.get('kernel', 'attn_fwd')
-    mode       = body.get('mode', 'kernel')
+    body        = request.get_json(force=True) or {}
     col_filters: dict = body.get('col_dim_filters', {})
     url_params: dict  = body.get('url_params', {})
 
-    if not arch:
-        return jsonify({'error': 'arch is required'}), 400
-
     try:
-        html = tasks.build_perf_export_html(arch, kernel, mode, col_filters, url_params,
+        html = tasks.build_perf_export_html(col_filters, url_params,
                                             current_app.config['WORKDIR'])
     except Exception as exc:
         logger.error('build_perf_export_html failed: %s', exc)
         return jsonify({'error': str(exc)}), 500
 
     buf = io.BytesIO()
-    filename = f'aotriton_perf_{arch}_{kernel}.html'
     with zipfile.ZipFile(buf, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr(filename, html.encode('utf-8'))
+        zf.writestr('aotriton_perf.html', html.encode('utf-8'))
     buf.seek(0)
 
-    zip_name = f'aotriton_perf_{arch}_{kernel}.zip'
     return send_file(buf, mimetype='application/zip',
-                     as_attachment=True, download_name=zip_name)
+                     as_attachment=True, download_name='aotriton_perf.zip')
 
 
 @bp.route('/api/servers/export-visperf', methods=['POST'])
