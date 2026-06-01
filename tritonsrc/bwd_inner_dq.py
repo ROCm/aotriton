@@ -22,6 +22,8 @@ def dot(BLOCK_M : tl.constexpr, QDIM : tl.constexpr, KDIM : tl.constexpr, q, k):
     if BLOCK_M == 1:
         return tl.sum(tl.view(q, [QDIM]) * tl.view(k, [KDIM]))
     else:
+        # TODO: add out_dtype=tl.float32 once a backward NaN reproducer on
+        # gfx1151 is available (see issue #54 and fwd_kernel_inner.py fix).
         return tl.dot(q, k)
 
 @triton.jit

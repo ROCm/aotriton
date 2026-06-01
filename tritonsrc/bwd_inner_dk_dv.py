@@ -22,6 +22,10 @@ def dot(BLOCK_M : tl.constexpr, QDIM : tl.constexpr, KDIM : tl.constexpr, q, k):
     if BLOCK_M == 1:
         return tl.sum(tl.view(q, [QDIM]) * tl.view(k, [KDIM]))
     else:
+        # TODO: add out_dtype=tl.float32 here once a backward NaN reproducer on
+        # gfx1151 is available to validate the fix.  The forward path already
+        # carries explicit out_dtype=tl.float32 (see issue #54); the backward
+        # dot() helper is suspected to have the same AOT-vs-JIT divergence.
         return tl.dot(q, k)
 
 @triton.jit

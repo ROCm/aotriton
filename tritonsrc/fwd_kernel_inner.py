@@ -156,6 +156,10 @@ def _attn_fwd_inner(
         # -- compute qk ----
         # TODO: INT8 NPOT OPTIMIZATION
         if INT8_GEMM:
+            # TODO: tl.dot(q, k) here also lacks out_dtype=tl.float32.
+            # The .to(tl.float32) cast is post-hoc — if the dot overflows the
+            # implicit output dtype first, the cast preserves +inf. Same class
+            # of issue as #54, but untested on gfx1151 with INT8 inputs.
             qk += ((((tl.dot(q, k).to(tl.float32) * q_descale)) * k_descale) * Qk_scale)
         else:
             if INT8_KV:
@@ -163,9 +167,13 @@ def _attn_fwd_inner(
             # DO NOT CALL composed_dot_both.
             # The generated code will trigger https://github.com/ROCm/aotriton/issues/54
             # for BLOCK_M = 128 and BLOCK_N = 64
-            qk += (Qk_scale * tl.dot(q0, k0))
-            if BLOCK_DMODEL1 > 0 : qk += (Qk_scale * tl.dot(q1, k1))
-            if BLOCK_DMODEL2 > 0 : qk += (Qk_scale * tl.dot(q2, k2))
+            # out_dtype=tl.float32: explicit fp32 accumulation prevents Triton from
+            # keeping the dot result in the input dtype (bf16/fp16) before the
+            # Qk_scale multiply, which on gfx1151 can produce intermediate values
+            # that overflow or lose mantissa bits before being promoted.
+            qk += (Qk_scale * tl.dot(q0, k0, out_dtype=tl.float32))
+            if BLOCK_DMODEL1 > 0 : qk += (Qk_scale * tl.dot(q1, k1, out_dtype=tl.float32))
+            if BLOCK_DMODEL2 > 0 : qk += (Qk_scale * tl.dot(q2, k2, out_dtype=tl.float32))
 
         if B_ptrs is not None:
             NS = start_N + OFFS_N
