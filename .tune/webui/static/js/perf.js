@@ -894,6 +894,86 @@ function restoreFromURL() {
 }
 
 // ---------------------------------------------------------------------------
+// Single-page HTML export (autozoom only)
+// ---------------------------------------------------------------------------
+
+// Collect the col-dim filter: for each col dim, if it has an active single-
+// value filter (Set in state.filter), include that value; otherwise include
+// all values present in the data axes (empty list = "all allowed" on server).
+function _colDimFilters() {
+  const filters = {};
+  for (const k of state.colDims) {
+    const f = state.filter[k];
+    if (f instanceof Set) {
+      filters[k] = [...f].map(String);
+    } else {
+      filters[k] = [];  // empty = all values
+    }
+  }
+  return filters;
+}
+
+// Build the URL params object that the exported HTML should start with.
+function _exportURLParams() {
+  const p = {};
+  if (state.arch)    p.arch    = state.arch;
+  if (state.kernel)  p.kernel  = state.kernel;
+  if (state.descriptorId) p.module = state.descriptorId;
+  p.display  = 'autozoom';  // export only supports autozoom
+  p.az_mode  = state.autozoom.seqMode;
+  p.scale    = state.scale.mode;
+  if (state.scale.mode === 'user' && state.scale.userValue)
+    p.scale_value = String(state.scale.userValue);
+  if (state.colDims.length) p.col_dims = state.colDims.join(',');
+  if (state.rowDims.length) p.row_dims = state.rowDims.join(',');
+  for (const [k, v] of Object.entries(state.filter)) {
+    if (v instanceof Set) p[`f_${k}`] = [...v][0];
+  }
+  return p;
+}
+
+async function exportZip(statusEl) {
+  if (!state.data || !state.arch || !state.kernel) return;
+  if (statusEl) statusEl.textContent = 'Building export…';
+
+  const desc = state.descriptor;
+  const mode = (desc && desc.ops && desc.ops.has(state.kernel)) ? 'op' : 'kernel';
+
+  const body = {
+    arch:            state.arch,
+    kernel:          state.kernel,
+    mode,
+    col_dim_filters: _colDimFilters(),
+    url_params:      _exportURLParams(),
+  };
+
+  try {
+    const resp = await fetch('/api/perf/export_zip', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ error: resp.statusText }));
+      if (statusEl) statusEl.textContent = `Export failed: ${err.error || resp.statusText}`;
+      return;
+    }
+    const blob = await resp.blob();
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url;
+    a.download = `aotriton_perf_${state.arch}_${state.kernel}.zip`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    if (statusEl) statusEl.textContent = 'Export downloaded.';
+  } catch (err) {
+    if (statusEl) statusEl.textContent = `Export error: ${err.message}`;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Initialization and event wiring
 // ---------------------------------------------------------------------------
 
@@ -906,6 +986,7 @@ function initPerf() {
   const azModeSel  = document.getElementById('perf-az-mode');
   const azModeLabel = document.getElementById('perf-az-mode-label');
   const refreshBtn = document.getElementById('perf-refresh');
+  const exportBtn  = document.getElementById('perf-export');
   const status     = document.getElementById('perf-status');
 
   function _syncAzModeVisibility() {
@@ -975,6 +1056,7 @@ function initPerf() {
       renderGrid();
       pushURLState();
       if (status) status.textContent = `${state.data.rows.length} rows loaded.`;
+      if (exportBtn) { exportBtn.disabled = false; exportBtn.title = ''; }
       // Open the layout panel on first load so users discover it.
       const panel = document.getElementById('perf-layout-panel');
       if (panel && !panel.open) panel.open = true;
@@ -1117,6 +1199,7 @@ function initPerf() {
   }
 
   if (refreshBtn) refreshBtn.addEventListener('click', load);
+  if (exportBtn)  exportBtn.addEventListener('click', () => exportZip(status));
 
   if (scaleSel) {
     scaleSel.addEventListener('change', () => {

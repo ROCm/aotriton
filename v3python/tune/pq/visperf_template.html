@@ -96,11 +96,26 @@ const ALL_PERF_DATA = __PERF_DATA__;
 
 <script>
 // Static-export bootstrap: populate arch dropdown from inlined data,
-// then override fetchData to serve from ALL_PERF_DATA instead of the API.
+// restore any pre-set URL params, then override fetchData to serve from
+// ALL_PERF_DATA instead of the HTTP API.
 
 registerDescriptor(FLASH_DESCRIPTOR);
 
 (function() {
+  // Pre-set URL params injected at export time (empty object for full exports).
+  const INITIAL_PARAMS = __INITIAL_PARAMS__;
+
+  // Merge INITIAL_PARAMS into the URL if not already present so that
+  // restoreFromURL() in perf.js picks them up before initPerf() runs.
+  if (Object.keys(INITIAL_PARAMS).length) {
+    const p = new URLSearchParams(location.search);
+    let changed = false;
+    for (const [k, v] of Object.entries(INITIAL_PARAMS)) {
+      if (!p.has(k)) { p.set(k, v); changed = true; }
+    }
+    if (changed) history.replaceState(null, '', '?' + p);
+  }
+
   const archSel = document.getElementById('perf-arch');
   const archs = Object.keys(ALL_PERF_DATA).sort();
   archs.forEach(arch => {

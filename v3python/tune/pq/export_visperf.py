@@ -40,6 +40,27 @@ PLOTLY_CDN = (
 )
 
 
+def build_export_html(data: dict, url_params: dict | None = None) -> str:
+    """Build a self-contained HTML string from pre-fetched data.
+
+    data:       {arch: {kernel: {arch, kernel, axes, rows}}}
+    url_params: optional dict of URL search params to pre-set on first load
+                (e.g. arch, kernel, display, scale, az_mode, col_dims, row_dims).
+    """
+    flash_js = _FLASH_JS.read_text()
+    perf_js  = _PERF_JS.read_text()
+    template = _TEMPLATE.read_text()
+
+    initial_params = json.dumps(url_params or {}, separators=(',', ':'))
+
+    return (template
+            .replace('__PERF_DATA__', json.dumps(data, separators=(',', ':')))
+            .replace('__INITIAL_PARAMS__', initial_params)
+            .replace('__PLOTLY_CDN__', PLOTLY_CDN)
+            .replace('// __FLASH_JS__', flash_js)
+            .replace('// __PERF_JS__', perf_js))
+
+
 def export_visperf(conn, output_path: Path) -> None:
     """Generate self-contained perf.html from live database."""
     logger.info('Querying all best results (all arches, all kernels)…')
@@ -47,16 +68,7 @@ def export_visperf(conn, output_path: Path) -> None:
     total = sum(len(kd['rows']) for ad in data.values() for kd in ad.values())
     logger.info('Fetched %d rows across %d arches', total, len(data))
 
-    flash_js = _FLASH_JS.read_text()
-    perf_js  = _PERF_JS.read_text()
-    template = _TEMPLATE.read_text()
-
-    html = (template
-            .replace('__PERF_DATA__', json.dumps(data, separators=(',', ':')))
-            .replace('__PLOTLY_CDN__', PLOTLY_CDN)
-            .replace('// __FLASH_JS__', flash_js)
-            .replace('// __PERF_JS__', perf_js))
-
+    html = build_export_html(data)
     output_path.write_text(html, encoding='utf-8')
     logger.info('Written %d bytes to %s', len(html), output_path)
 
