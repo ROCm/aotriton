@@ -156,10 +156,7 @@ def _attn_fwd_inner(
         # -- compute qk ----
         # TODO: INT8 NPOT OPTIMIZATION
         if INT8_GEMM:
-            # TODO: tl.dot(q, k) here also lacks out_dtype=tl.float32.
-            # The .to(tl.float32) cast is post-hoc — if the dot overflows the
-            # implicit output dtype first, the cast preserves +inf. Same class
-            # of issue as #54, but untested on gfx1151 with INT8 inputs.
+            # TODO(#54): add out_dtype=tl.float32 (see PR #179)
             qk += ((((tl.dot(q, k).to(tl.float32) * q_descale)) * k_descale) * Qk_scale)
         else:
             if INT8_KV:
