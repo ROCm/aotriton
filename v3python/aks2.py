@@ -17,7 +17,8 @@ def parse():
     parser = ArgumentParser(description=desc)
     parser.add_argument("-o", help="Output AKS2 file")
     parser.add_argument("--ignore_json", help="Ignore JSON files", action='store_true')
-    parser.add_argument("hsaco_files", nargs='*', help="Input HSACO Files")
+    parser.add_argument("--hsaco_manifest", required=True,
+                        help="NSV file mapping abs HSACO path to its AKS2 entry name")
     args = parser.parse_args()
     return args
 
@@ -37,39 +38,41 @@ _AKS2_DirectoryEntry_BaseSize = (len(fields(AKS2_DirectoryEntry)) - 1) * 4
 def directory_entry_size(entry):
     return entry.filename_length + _AKS2_DirectoryEntry_BaseSize
 
-def load_hsaco(hsaco_rule : str, offset, ignore_json):
-    # Rule syntax
-    # :<aks2 filename>:<.hsaco path>
-    # aks2 filename may contain '/'
-    if hsaco_rule.startswith(':'):
-        _, filename, hsaco = hsaco_rule.split(':', 2)
-        hsaco = Path(hsaco)
-        filename = filename.encode('utf-8')
-    else:
-        hsaco = Path(hsaco_rule)
-        filename = str(hsaco.stem).encode('utf-8')
+def read_manifest(manifest_path: str) -> dict[str, str]:
+    '''Read NUL-separated manifest, return {abs_hsaco_path: aks2_entry_name}.'''
+    text = Path(manifest_path).read_text(encoding='utf-8')
+    result = {}
+    for line in text.splitlines():
+        parts = line.split('\x00')
+        if len(parts) >= 2 and parts[0]:
+            result[parts[0]] = parts[1]
+    return result
+
+def load_hsaco(hsaco_path: str, entry_name: str, offset: int, ignore_json: bool):
+    hsaco = Path(hsaco_path)
+    filename = entry_name.encode('utf-8')
     with open(hsaco, 'rb') as f:
         blob = f.read()
-        if ignore_json:
-            shared_memory_size = 0
-            block_threads = 0
-        else:
-            with open(hsaco.with_suffix('.json')) as jf:
-                j = json.load(jf)
-                if len(blob) > 0:
-                    shared_memory_size = j['shared']
-                    block_threads = j['num_warps'] * j['warp_size']
-                else:
-                    shared_memory_size = 0
-                    block_threads = 0
-                    assert j['compile_status'] != 'Complete'
-        entry = AKS2_DirectoryEntry(shared_memory_size=shared_memory_size,
-                                    block_threads=block_threads,
-                                    offset=offset,
-                                    image_size=len(blob),
-                                    filename_length=len(filename)+1,
-                                    filename=filename)
-        return entry, blob
+    if ignore_json:
+        shared_memory_size = 0
+        block_threads = 0
+    else:
+        with open(hsaco.with_suffix('.json')) as jf:
+            j = json.load(jf)
+            if len(blob) > 0:
+                shared_memory_size = j['shared']
+                block_threads = j['num_warps'] * j['warp_size']
+            else:
+                shared_memory_size = 0
+                block_threads = 0
+                assert j['compile_status'] != 'Complete'
+    entry = AKS2_DirectoryEntry(shared_memory_size=shared_memory_size,
+                                block_threads=block_threads,
+                                offset=offset,
+                                image_size=len(blob),
+                                filename_length=len(filename)+1,
+                                filename=filename)
+    return entry, blob
 
 def u32(val):
     return val.to_bytes(4, byteorder=sys.byteorder, signed=False)
@@ -97,10 +100,10 @@ class AKS2(object):
         self.hsaco_blobs = []
         self.current_offset = 0
 
-    def load(self, args):
-        self.number_of_kernels = len(args.hsaco_files)
-        for hsaco_rule in args.hsaco_files:
-            entry, blob = load_hsaco(hsaco_rule, self.current_offset, args.ignore_json)
+    def load(self, manifest: dict[str, str], ignore_json: bool):
+        self.number_of_kernels = len(manifest)
+        for hsaco_path, entry_name in manifest.items():
+            entry, blob = load_hsaco(hsaco_path, entry_name, self.current_offset, ignore_json)
             self.current_offset += len(blob)
             self.directory.append(entry)
             self.hsaco_blobs.append(blob)
@@ -121,11 +124,12 @@ class AKS2(object):
         f.write(lzc.flush())
 
 def do_create(args):
-    if not args.hsaco_files:
+    manifest = read_manifest(args.hsaco_manifest)
+    if not manifest:
         print("No input file, exit")
         return
     aks2 = AKS2()
-    aks2.load(args)
+    aks2.load(manifest, args.ignore_json)
     with open(Path(args.o).with_suffix('.aks2'), "wb") as f:
         aks2.write(f)
 

@@ -5,6 +5,8 @@
 
 from pathlib import Path, PurePath
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
+import subprocess
 from ..rules import (
     kernels as triton_kernels,
     operators as dispatcher_operators,
@@ -25,7 +27,8 @@ from ..utils import (
 )
 from .common import (
     hsaco_dir,
-    hsaco_filename,
+    hsaco_ondisk_name,
+    hsaco_inaks2_name,
 )
 from ..gpu_targets import AOTRITON_ARCH_TO_DIRECTORY
 import sys
@@ -79,7 +82,15 @@ class RootGenerator(object):
         self._load_altwheel_config(self._altrules_dict)
 
     def generate(self):
+        if self._args.selective:
+            self.do_generate()
+        else:
+            self.launch_workers()
+
+    def do_generate(self):
         args = self._args
+        sel = args.selective  # Path or None
+
         hsaco_for_kernels = []
         asms_for_kernels = []
         shims = []
@@ -87,7 +98,11 @@ class RootGenerator(object):
         all_lut_stats: dict[tuple, int] = {}
         # (arch, op_name) -> {'trivial': N, 'non_trivial': N}
         all_trivial_stats: dict[tuple, dict[str, int]] = {}
-        for op in dispatcher_operators:
+
+        ops = dispatcher_operators
+        if sel is not None:
+            ops = [op for op in ops if op.unique_path == sel]
+        for op in ops:
             opg = OperatorGenerator(self._args, op, parent_repo=None)
             opg.generate()
             shims += opg.shim_files
@@ -101,16 +116,24 @@ class RootGenerator(object):
                 d['trivial']     += ts['trivial']
                 d['non_trivial'] += ts['non_trivial']
         self._print_lut_stats(all_lut_stats, all_trivial_stats)
-        for k in triton_kernels:
+
+        kerns = triton_kernels
+        if sel is not None:
+            kerns = [k for k in kerns if k.unique_path == sel]
+        for k in kerns:
             ksg = KernelShimGenerator(self._args, k, parent_repo=None)
             ksg.generate()
             hsacos = ksg.this_repo.get_data('hsaco')
             hsaco_for_kernels.append((k, hsacos))
             shims += ksg.shim_files
+
         # TODO: Fix this for Windows
         # On Windows, you get "KeyError: 'validator_function'"
         # See discussion in https://discord.com/channels/1239631572886491286/1401853302139912222/1401862203845378201
-        for ak in affine_kernels:
+        affs = affine_kernels
+        if sel is not None:
+            affs = [ak for ak in affs if ak.unique_path == sel]
+        for ak in affs:
             log(lambda : f'{ak.__class__=}')
             if isinstance(ak, SlimAffineKernelDescription):
                 aksg = SlimAffineGenerator(self._args, ak, parent_repo=None)
@@ -125,32 +148,34 @@ class RootGenerator(object):
         if args.build_for_tuning_second_pass:
             return
 
-        with LazyFile(args.build_dir / 'Bare.shim') as shimfile:
+        out_dir = args.build_dir / 'Bare.shards' / sel if sel is not None else args.build_dir
+        if sel is not None:
+            out_dir.mkdir(parents=True, exist_ok=True)
+
+        with LazyFile(out_dir / 'Bare.shim') as shimfile:
             for shim in shims:
                 print(shim.absolute().as_posix(), file=shimfile)
         if args.noimage_mode:
             return
-        # TODO: Support Cluter Functionals
-        #       Implemented this in
-        #       Functional.filepack_signature (used by Functional.full_filepack_path)
-        cluster_dict = defaultdict(list)
-        with LazyFile(args.build_dir / 'Bare.compile') as rulefile:
+
+        cluster_dict: dict[Path, dict[str, str]] = {}
+        with LazyFile(out_dir / 'Bare.compile') as rulefile:
             for kdesc, hsacos in hsaco_for_kernels:
                 image_path = hsaco_dir(args.build_dir, kdesc)
                 image_path.mkdir(parents=True, exist_ok=True)
                 for functional, signatures in hsacos.items():
                     log(lambda : f'{signatures=}')
                     for ksig in signatures:
-                        # TODO: Add sanity check to ensure
-                        # k == functional.meta_object and
-                        # functional == ksig._functional ?
                         self.write_hsaco(kdesc, image_path, functional, ksig, rulefile)
                     ffp = functional.full_filepack_path
-                    aol = [self._absobjfn(image_path, kdesc, ksig) for ksig in signatures]
-                    cluster_dict[ffp] += aol
-        with LazyFile(args.build_dir / 'Bare.cluster') as clusterfile:
-            for ffp, aol in cluster_dict.items():
-                self.write_cluster(ffp, aol, clusterfile)
+                    cluster_dict.setdefault(ffp, {}).update(
+                        {self._absobjfn(image_path, kdesc, ksig): hsaco_inaks2_name(kdesc, ksig)
+                         for ksig in signatures}
+                    )
+        with LazyFile(out_dir / 'Bare.cluster') as clusterfile:
+            for ffp, aol_map in cluster_dict.items():
+                self.write_cluster(ffp, aol_map, clusterfile)
+
         '''
         Note: Affine kernel's functionals have residual choices, so it is not
         completely the same with Triton kernel/Interface's functionals
@@ -159,17 +184,58 @@ class RootGenerator(object):
         compute full_filepack_path, so eventually .hsaco and .co files will be
         consolated into the same .aks2 file, which is intentional.
         '''
-        affine_dict = defaultdict(list)
+        affine_dict: dict[Path, dict[str, str]] = {}
+
+        def parse_rule(asm: str) -> tuple[str, str]:
+            assert asm.startswith(':')
+            _, inaks2, ondisk = asm.split(':', 2)
+            return Path(ondisk).absolute().as_posix(), inaks2
+
         for akdesc, asm_registry in asms_for_kernels:
             for package_path, asms in asm_registry.items():
-                affine_dict[Path(package_path)] += [ self._absasmfn(asm_rule) for asm_rule in asms ]
-        with LazyFile(args.build_dir / 'Affine.cluster') as clusterfile:
-            for ffp, aol in affine_dict.items():
-                self.write_cluster(ffp, list(set(aol)), clusterfile)
+                ffp = Path(package_path)
+                affine_dict.setdefault(ffp, {}).update(dict(parse_rule(r) for r in asms))
+        with LazyFile(out_dir / 'Affine.cluster') as clusterfile:
+            for ffp, aol_map in affine_dict.items():
+                self.write_cluster(ffp, aol_map, clusterfile)
+
+    def launch_workers(self):
+        args = self._args
+        items: list[Path] = []
+        items += [op.unique_path for op in dispatcher_operators]
+        items += [k.unique_path  for k in triton_kernels]
+        items += [ak.unique_path for ak in affine_kernels]
+
+        base_argv = [x for x in sys.argv[1:] if not x.startswith('--selective')]
+
+        def run_one(item: Path):
+            cmd = [sys.executable, '-m', 'v3python.generate',
+                   '--selective', item.as_posix()] + base_argv
+            result = subprocess.run(cmd, capture_output=False)
+            if result.returncode != 0:
+                raise RuntimeError(f'Worker failed for {item}: exit {result.returncode}')
+
+        with ThreadPoolExecutor() as pool:
+            futures = [pool.submit(run_one, item) for item in items]
+        for f in futures:
+            f.result()  # re-raise any worker exception
+
+        shard_names = ['Bare.shim', 'Bare.compile', 'Bare.cluster', 'Affine.cluster']
+        out_files = {name: args.build_dir / name for name in shard_names}
+        # Truncate output files before appending
+        for path in out_files.values():
+            path.unlink(missing_ok=True)
+        for item in items:
+            shard_dir = args.build_dir / 'Bare.shards' / item
+            for name, out_path in out_files.items():
+                shard_file = shard_dir / name
+                if shard_file.exists():
+                    with open(out_path, 'ab') as out, open(shard_file, 'rb') as src:
+                        out.write(src.read())
 
     def _absobjfn(self, path, kdesc, ksig):
-        full = path / hsaco_filename(kdesc, ksig)
-        return str(full.absolute())
+        full = path / hsaco_ondisk_name(kdesc, ksig)
+        return full.absolute().as_posix()
 
     def write_hsaco(self, kdesc, path, functional, ksig, rulefile):
         log(lambda : f'{ksig=}')
@@ -187,16 +253,20 @@ class RootGenerator(object):
               ksig.triton_signature_string,  # Functional is not Triton-specific
               sep=';', file=rulefile)
 
-    def write_cluster(self, ffp, aol, clusterfile):
-        print(*ffp.parts, end=';', sep=';', file=clusterfile)
-        print(*aol, sep=';', file=clusterfile)
+    def write_cluster(self, ffp, aol_map, clusterfile):
+        manifest_path = (self._args.build_dir / 'aotriton.images' / ffp).with_suffix('.nsv')
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(manifest_path, 'w', encoding='utf-8') as mf:
+            for abs_path, entry_name in aol_map.items():
+                mf.write(abs_path + '\x00' + entry_name + '\x00\n')
+        print(*ffp.parts, *aol_map.keys(), sep=';', file=clusterfile)
 
     # TODO: deprecate this, the generator should return the full path directly
     def _absasmfn(self, asm_rule):
         if asm_rule.startswith(':'):
             return asm_rule
         full = self._args.root_dir / asm_rule
-        return str(full.absolute())
+        return full.absolute().as_posix()
 
     def _load_altwheel_config(self, d: dict):
         venvs = d.get("venvs", {})

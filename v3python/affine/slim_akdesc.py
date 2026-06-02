@@ -22,6 +22,7 @@ from ..gpu_targets import AOTRITON_ARCH_TO_PACK
 C++ dispather and does not need to generate one.
 '''
 class SlimAffineKernelDescription(Interface):
+    CODEGEN_MODULE = 'affine'
     TUNE_NAME = None
     FILE_PFX = 'affine'
     NAME = None     # Name for AOTriton shim code

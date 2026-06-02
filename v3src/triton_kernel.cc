@@ -20,35 +20,25 @@
 
 namespace AOTRITON_NS {
 
-constexpr std::string_view INTER_KERNEL_FUNC { "-Sig-F__" };
-constexpr std::string_view INTER_FUNC_PSEL { "__P__" };
-constexpr std::string_view INTER_PSEL_COPT { "__CO__" };
-constexpr std::string_view INTER_COPT_ARCH { "--Arch_" };
+constexpr std::string_view SEC_F    { ";;#F;" };
+constexpr std::string_view SEC_P    { ";;#P;" };
+constexpr std::string_view SEC_CO   { ";;#CO;" };
+constexpr std::string_view SEC_ARCH { ";;arch=" };
 
-std::string construct_stem_name(std::string_view kernel_name,
+std::string construct_stem_name(std::string_view /* kernel_name */,
                                 std::string_view func_name,
                                 std::string_view psel_name,
                                 std::string_view copt_name,
                                 std::string_view arch_name) {
   std::string ret;
-  ret.reserve(kernel_name.size() +
-              INTER_KERNEL_FUNC.size() +
-              func_name.size() +
-              INTER_FUNC_PSEL.size() +
-              psel_name.size() +
-              INTER_PSEL_COPT.size() +
-              copt_name.size() +
-              INTER_COPT_ARCH.size() +
-              arch_name.size());
-  ret += kernel_name;
-  ret += INTER_KERNEL_FUNC;
-  ret += func_name;
-  ret += INTER_FUNC_PSEL;
-  ret += psel_name;
-  ret += INTER_PSEL_COPT;
-  ret += copt_name;
-  ret += INTER_COPT_ARCH;
-  ret += arch_name;
+  ret.reserve(SEC_F.size() + func_name.size() +
+              SEC_P.size() + psel_name.size() +
+              SEC_CO.size() + copt_name.size() +
+              SEC_ARCH.size() + arch_name.size());
+  ret += SEC_F;    ret += func_name;
+  ret += SEC_P;    ret += psel_name;
+  ret += SEC_CO;   ret += copt_name;
+  ret += SEC_ARCH; ret += arch_name;
   return ret;
 }
 

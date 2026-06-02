@@ -48,7 +48,7 @@ if [ "${target_arch}" = "ALL" ]; then
   target_arch="${default_target_arch}"
 fi
 
-source_dir="${SCRIPT_DIR}/.."
+source_dir=$(realpath ${SCRIPT_DIR}/..)
 if [ -n "${AOTRITON_BUILD_PATH}" ]; then
   bdir="${AOTRITON_BUILD_PATH}"
 else

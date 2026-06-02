@@ -1,15 +1,23 @@
 # Copyright © 2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
+import hashlib
 from v3python.utils import log
 from pathlib import Path
 
-def hsaco_filename(kdesc : 'KernelDescription',
-                   ksig : 'KernelSignature'):
-    return kdesc.NAME + '-Sig-' + ksig.full_compact_signature + '.hsaco'
+def hsaco_ondisk_name(kdesc: 'KernelDescription', ksig: 'KernelSignature') -> str:
+    digest = hashlib.sha256(ksig.hsaco_entry_name.encode()).hexdigest()
+    return kdesc.NAME + '-' + digest + '.hsaco'
+
+def hsaco_inaks2_name(kdesc: 'KernelDescription', ksig: 'KernelSignature') -> str:
+    return ksig.hsaco_entry_name
 
 def hsaco_dir(build_dir : Path, k : 'KernelDescription'):
     return build_dir / k.FAMILY / f'gpu_kernel_image.{k.NAME}'
+
+def tunecc_ondisk_name(f: 'Functional') -> str:
+    digest = hashlib.sha256(f.tunecc_signature.encode()).hexdigest()
+    return f.name + '-' + digest + '.cc'
 
 '''
 _cfields means the data type has been translated to c types

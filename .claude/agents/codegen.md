@@ -74,6 +74,27 @@ Kernel specs in `v3python/rules/` define:
 - `FEAT_CHOICES` — dict of feature flag → list of bool/int values
 - `AUTOTUNE_KEYS` — which input dimensions drive the LUT binning (e.g., seqlen_q, seqlen_k)
 
+### Implied change relationships
+
+Some changes in the codegen pipeline are **implied** by a higher-level change
+and easy to miss when writing PR descriptions. Key examples:
+
+- **HSACO entry name format change → `autotune.py` `func_name`**: The C++
+  runtime (in `v3src/triton_kernel.cc`) reconstructs the AKS2 entry name from
+  section strings embedded in the generated autotune `.cc` files. When
+  `hsaco_inaks2_name`/`hsaco_entry_name` format changes, `autotune.py` must
+  embed the same format via `func_name` (now `unified_signature` instead of
+  `signature_in_func_name`) so the reconstructed name matches the AKS2 archive
+  key. This is a required consistency constraint, not an independent change.
+
+- **`unified_signature` → `tunecc_signature`**: When `unified_signature` format
+  changes, `tunecc_signature` (which builds on it) changes too, affecting the
+  SHA-256 of autotune `.cc` filenames.
+
+When asked to identify implied changes for a PR, trace the data flow:
+entry name construction (Python) → embedded strings in generated `.cc` →
+C++ runtime reconstruction → AKS2 lookup. Any break in this chain is a bug.
+
 ### What this agent can help with
 
 - Adding a new kernel or operator to `v3python/rules/`

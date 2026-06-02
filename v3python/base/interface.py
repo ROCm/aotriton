@@ -3,6 +3,7 @@
 
 from abc import ABC, abstractmethod
 import itertools
+from pathlib import Path
 from .parameter import (
     TemplateParameter as TP,
 )
@@ -22,6 +23,7 @@ Interface: common items b/w Operator, KernelDescription and MetroKernel
 class Interface(ABC):
     FAMILY = None               # Must be defined
     NAME = None                 # Must be defined
+    CODEGEN_MODULE = None       # Must be defined: 'op', 'triton', or 'affine'
     TUNE_NAME = None            # Must be defined autotune/optune
     FILE_PFX = 'iface'          # Op uses iface, while Triton kernel uses 'shim'
     ARGUMENTS = None            # Must be defined
@@ -39,6 +41,16 @@ class Interface(ABC):
     @property
     def UNTYPED_FULL_NAME(self):
         return f'{self.FAMILY}.{self.NAME}'
+
+    '''
+    Stable three-component identifier: FAMILY/CODEGEN_MODULE/NAME
+    (e.g. flash/triton/attn_fwd, flash/op/op_attn_fwd, flash/affine/aiter_fmha_v3_fwd).
+    Used as the --selective argument for code generator subprocesses and as the shard
+    subdirectory key under build_dir/Bare.shards/.
+    '''
+    @property
+    def unique_path(self) -> Path:
+        return Path(self.FAMILY) / self.CODEGEN_MODULE / self.NAME
 
     def _insert_tensor_strides_to_choices(self, last_is_continuous=False):
         log(lambda:f"_insert_tensor_strides_to_choices {self.NAME} {self.TENSOR_STRIDE_INPUTS=}")

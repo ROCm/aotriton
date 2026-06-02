@@ -3,6 +3,7 @@
 
 from ..base import Functional
 from ..utils import log
+from functools import cached_property
 import hashlib
 
 # Move to a dedicated file
@@ -59,6 +60,26 @@ class KernelSignature(object):
         lc = [f"{COMPACT_COMPILER_OPTIONS[oname]}{v}" for oname, v in self.copt_dict.items()]
         return '_'.join(lc)
 
+    @cached_property
+    def perf_section(self) -> str:
+        parts = []
+        for bind in self._perfs:
+            parts.append(f'{bind.name}={bind.value.testrun_entry_signature}')
+        return ';'.join(parts)
+
+    @cached_property
+    def copt_section(self) -> str:
+        return ';'.join(f'{k}={v}' for k, v in self.copt_dict.items())
+
+    @cached_property
+    def hsaco_entry_name(self) -> str:
+        return (
+            f';;#F;{self._functional.unified_signature}'
+            f';;#P;{self.perf_section}'
+            f';;#CO;{self.copt_section}'
+            f';;arch={self._functional.arch}'
+        )
+
     @property
     def both_signature(self):
         perf = self.perf_signature
@@ -70,9 +91,8 @@ class KernelSignature(object):
         return self._functional.compact_signature_noarch + self.both_signature + '--Arch_' + self._functional.arch
 
     def blake2b_hash(self, package_path):
-        raw = package_path.encode('utf-8')
-        s = self.both_signature + '--Arch_' + self._functional.arch
-        raw += s.encode('utf-8')
+        entry = self.hsaco_entry_name
+        raw = (package_path + entry).encode('utf-8')
         h = hashlib.blake2b(raw, digest_size=8)
         return h.hexdigest(), raw
 

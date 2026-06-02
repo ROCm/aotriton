@@ -111,6 +111,15 @@ If you need to perform a database operation:
 
 This keeps all database operations centralized and schema-consistent.
 
+## v3python Package Architecture
+
+The `v3python` package has a strict layering between **description** and **generation**:
+
+- `v3python/base/`, `v3python/kernel/`, `v3python/op/`, `v3python/affine/` — description layer. These serve as structured knowledge for describing kernels and operators, analogous to an AST in a compiler. They should have **minimal knowledge about the code generator**.
+- `v3python/codegen/` — generation layer. This drives the code generation process and is the only layer that should contain codegen logic.
+
+Knowledge must not flow upward: description-layer classes must not import from `codegen/` or embed generation logic. When adding a property or method to `Interface`, `KernelDescription`, `Operator`, or the affine classes, ask whether the concept belongs to the *description* of the kernel/operator (fine) or to the *generation process* (put it in `codegen/` instead).
+
 ## config.rc Usage
 
 **IMPORTANT: `<workdir>/config.rc` is for AOTriton tuning project configuration ONLY.**

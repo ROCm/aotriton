@@ -26,6 +26,11 @@ class TypedChoice(ABC):
         pass
 
     @property
+    def testrun_entry_signature(self) -> str:
+        v = self.triton_compile_signature
+        return repr(v) if isinstance(v, str) else str(v)
+
+    @property
     def sql_value(self):
         return self.triton_compile_signature
 

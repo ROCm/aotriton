@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 from pathlib import Path
+from functools import cached_property
 from ..gpu_targets import (
     cluster_gpus,
     gpu2arch,
@@ -126,6 +127,12 @@ class Functional(object):
     def fallback_choices(self) -> dict:
         return self.meta_object.fallback_compact_dict(self._compact_dict)
 
+    @cached_property
+    def unified_signature(self) -> str:
+        def fmt(b):
+            return f'{b.name}={b.value.testrun_entry_signature}'
+        return ';'.join(fmt(b) for b in self._binds if b.show_in_compact)
+
     '''
     "core" signature
     only directly used to supply TritonKernel as HSACO name component
@@ -150,8 +157,7 @@ class Functional(object):
     '''
     @property
     def tunecc_signature(self):
-        sf = self.signature_in_func_name
-        return 'FONLY__' + sf + f'___{self.arch}'
+        return '#F;' + self.unified_signature + f';;arch={self.arch}'
 
     '''
     Used by KSignature to construct full kernel name
