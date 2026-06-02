@@ -259,7 +259,8 @@ if(NOT AOTRITON_NOIMAGE_MODE)
   file(STRINGS "${AOTRITON_V2_BUILD_DIR}/Bare.cluster" CLUSTER_RULES ENCODING UTF-8)
   set(AKS2_OPTIONS "")
   ADD_FROM_CLUSTER_RULES()
-  # Affine kernels: still write to aotriton.images/ (unchanged; uses FONLY name as 4th part).
+  # Affine kernels: emit AKS2 blobs to the intermediate aks2/ tree (same as Bare),
+  # then pack them into the per-family affine_kernels.zip below.
   if(EXISTS "${AOTRITON_V2_BUILD_DIR}/Affine.cluster")
     file(STRINGS "${AOTRITON_V2_BUILD_DIR}/Affine.cluster" AFFINE_CLUSTER_RULES ENCODING UTF-8)
     foreach(RULE IN LISTS AFFINE_CLUSTER_RULES)

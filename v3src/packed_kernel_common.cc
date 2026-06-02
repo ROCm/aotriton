@@ -169,11 +169,16 @@ struct AKS2_Metadata {
 //     MB file name
 // N * varlen: Kernel Images (TODO: alignment requirements?)
 PackedKernel::PackedKernel(int fd, size_t offset, size_t size) {
+  if (size < sizeof(AKS2_Header)) {
+    final_status_ = hipErrorInvalidSource;
+    return;
+  }
   if (offset != 0)
-    ::lseek(fd, static_cast<off_t>(offset), SEEK_SET);
+    fd_seek(fd, static_cast<off_t>(offset), SEEK_SET);
   AKS2_Header header;
   auto header_read = fd_read(fd, &header, sizeof(AKS2_Header));
-  if (header_read == sizeof(AKS2_MAGIC) && std::string_view(header.magic, 4) != AKS2_MAGIC) {
+  if (header_read != static_cast<ssize_t>(sizeof(AKS2_Header))
+      || std::string_view(header.magic, 4) != AKS2_MAGIC) {
     final_status_ = hipErrorInvalidSource; // Broken at XZ level
     return;
   }

@@ -7,6 +7,7 @@
 #include <cstring>
 #include <iostream>
 #include <string>
+#include <sys/types.h>  // off_t (POSIX type; MSVC/MinGW provide it here)
 #include <windows.h>
 #include "utf8_to_wide.hh"
 

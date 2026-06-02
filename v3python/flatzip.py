@@ -9,7 +9,6 @@
 # Usage:
 #   python -m v3python.flatzip \
 #     --manifest <kernel>.nsv \
-#     --build_dir <aks2_intermediate_dir> \
 #     -o <kernel>.zip
 
 import argparse
@@ -25,6 +24,8 @@ _EOCD_SIG           = b'PK\x05\x06'
 _COMPRESSION_STORED = 0
 _VERSION_NEEDED     = 20  # 2.0 — minimum for deflate, sufficient for STORED
 _VERSION_MADE_BY    = 20
+# Bit 11 (0x0800) tells ZIP readers to decode entry names as UTF-8 (PKWARE §4.4.4)
+_GP_FLAG_UTF8       = 0x0800
 
 
 def _encode_name(name: str) -> bytes:
@@ -36,7 +37,7 @@ def _local_file_header(name_bytes: bytes, data_size: int, crc32: int) -> bytes:
         '<4sHHHHHIIIHH',
         _LOCAL_HEADER_SIG,
         _VERSION_NEEDED,
-        0,                  # general purpose bit flag
+        _GP_FLAG_UTF8,      # general purpose bit flag (UTF-8 name)
         _COMPRESSION_STORED,
         0,                  # last mod time
         0,                  # last mod date
@@ -54,7 +55,7 @@ def _central_dir_entry(name_bytes: bytes, data_size: int, crc32: int, local_offs
         _CENTRAL_DIR_SIG,
         _VERSION_MADE_BY,
         _VERSION_NEEDED,
-        0,                  # general purpose bit flag
+        _GP_FLAG_UTF8,      # general purpose bit flag (UTF-8 name)
         _COMPRESSION_STORED,
         0,                  # last mod time
         0,                  # last mod date

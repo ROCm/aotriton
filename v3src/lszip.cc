@@ -58,6 +58,11 @@ lszip(int fd,
   uint32_t cd_size       = le32(eocd + 8);
   uint32_t cd_offset     = le32(eocd + 12);
 
+  // Reject corrupted EOCD pointing past file_size or describing a CD that
+  // would overflow allocation / read past end-of-file.
+  if (static_cast<uint64_t>(cd_offset) + cd_size > static_cast<uint64_t>(file_size))
+    return;
+
   std::vector<uint8_t> cd(cd_size);
   fd_seek(fd, static_cast<off_t>(cd_offset), SEEK_SET);
   if (fd_read(fd, cd.data(), cd_size) != static_cast<ssize_t>(cd_size))
@@ -80,7 +85,8 @@ lszip(int fd,
     // Local header's extra field length may differ from central directory's.
     uint8_t lhdr[4];
     fd_seek(fd, static_cast<off_t>(local_offset) + 26, SEEK_SET);
-    fd_read(fd, lhdr, 4);
+    if (fd_read(fd, lhdr, 4) != 4)
+      break;
     uint16_t local_fname_len = le16(lhdr + 0);
     uint16_t local_extra_len = le16(lhdr + 2);
     uint64_t data_offset = static_cast<uint64_t>(local_offset) + 30
