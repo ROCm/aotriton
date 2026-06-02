@@ -33,6 +33,22 @@ class attn_fwd(FlashKernel):
     # Note: There is no other FWD metro kernel right now so the arguments are shared
     ARGUMENTS = OpAttnFwd.ARGUMENTS
 
+    def translate_dataframe(self, f, df):
+        '''
+        Workaround for gfx1150 (RDNA3.5) persistent-scheduler race on
+        fp32 hdim=80 causal kernels (F_F_3_0 family). The persistent_atomic_counter
+        handoff between WGs produces L=NaN / out=NaN at rates of 250-400/500
+        on affected shapes. gfx1151 (also RDNA3.5) is unaffected. Force
+        PERSISTENT_TYPE=0 (non-persistent grid) post-DB-lookup. The launcher
+        in v3src/flash/attn_fwd.cc already handles PT=0 correctly.
+        '''
+        dtype = check_value(f, ['Q'])
+        HEAD_DIM = check_value(f, ['BLOCK_DMODEL'])
+        if f.arch == 'gfx1150' and ('*fp32' in dtype) and HEAD_DIM == 80:
+            df = df.copy()
+            df['tuned_kernel$PERSISTENT_TYPE'] = 0
+        return super().translate_dataframe(f, df)
+
     def is_functional_disabled(self, functional):
         # FIXME: check if compiler fixes this at every release
         # gfx950 compiler has known numerical error on hdim == 16
