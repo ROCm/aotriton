@@ -77,6 +77,10 @@ public:
                     bool peek_kernel_image,
 #endif
                     hipStream_t stream);
+  // UNMAINTAINED: original affine kernel path is no longer built; kept for
+  // reference only. Signature still references the legacy package_path layout
+  // and has not been migrated to the flatzip + aks2_entry scheme.
+  [[maybe_unused]]
   hipError_t direct_invoke(std::string_view mangled_kernel_function_name,
                            pstring_view package_path,
                            std::string_view func_name,
