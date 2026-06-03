@@ -17,6 +17,11 @@
   #perf-grid th { font-size:0.82em; white-space:nowrap; }
   #perf-status { font-size:0.85em; opacity:0.75; margin-top:0.4rem; }
   .scale-user-input { display:none; width:6rem; }
+  /* Match live webui (base.html): enforce a readable minimum on the monospace
+     perf table cells, which perf.js styles at 0.8em. */
+  code, pre, kbd, samp, var,
+  *[style*="monospace"],
+  .monospace { font-size: max(12pt, 1em) !important; }
 </style>
 </head>
 <body>
