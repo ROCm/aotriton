@@ -112,7 +112,10 @@ TritonKernel::direct_invoke(std::string_view mangled_kernel_function_name,
   int device_id;
   AOTRITON_HIP_CHECK_RETURN(hipGetDevice(&device_id));
   auto lazy = [&]() -> OnDeviceKernel::OnDiskKernelInfo {
+    // UNMAINTAINED: legacy package_path layout. The flatzip migration left
+    // aks2_entry empty here because direct_invoke has no live callers.
     return { package_path,
+             {},  // aks2_entry — legacy path predates flatzip
              ksig_copt_,  // Affine use ksig_psel_ as arch, ksig_copt_ as file name
              mangled_kernel_function_name };
   };

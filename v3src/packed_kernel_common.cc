@@ -97,7 +97,10 @@ PackedKernel::open(pstring_view flatzip_path, std::string_view aks2_entry) {
     open_zip();
     if (zipfd < 0) {
 #if AOTRITON_KERNEL_VERBOSE
-      std::cerr << "PackedKernel::open: failed to open zip " << std::string(flatzip_path) << std::endl;
+      // pstring_view is wstring_view on Windows, so route through fs::path
+      // which knows how to stream both narrow and wide values to std::ostream.
+      std::cerr << "PackedKernel::open: failed to open zip "
+                << std::filesystem::path(flatzip_path) << std::endl;
 #endif
       return nullptr;
     }

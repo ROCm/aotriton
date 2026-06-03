@@ -4,6 +4,7 @@
 // Copyright © 2024-2025 Advanced Micro Devices, Inc.
 // SPDX-License-Identifier: MIT
 
+#include <cstdio>       // SEEK_SET/SEEK_CUR/SEEK_END
 #include <cstring>
 #include <iostream>
 #include <string>

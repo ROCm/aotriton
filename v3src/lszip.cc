@@ -5,6 +5,16 @@
 #include <cstring>
 #include <vector>
 
+#ifdef NDEBUG
+#define AOTRITON_KERNEL_VERBOSE 0
+#else
+#define AOTRITON_KERNEL_VERBOSE 1
+#endif
+
+#if AOTRITON_KERNEL_VERBOSE
+#include <iostream>
+#endif
+
 #if defined(_WIN32)
 #include "packed_kernel_win32.h"
 #else
@@ -74,11 +84,26 @@ lszip(int fd,
   for (uint16_t i = 0; i < total_entries; ++i) {
     if (p + 46 > end || le32(p) != ZIP_CENTRAL_DIR_SIG)
       break;
+    uint16_t gp_flag      = le16(p + 8);
+    uint16_t comp_method  = le16(p + 10);
     uint32_t comp_size    = le32(p + 20);
     uint16_t fname_len    = le16(p + 28);
     uint16_t extra_len    = le16(p + 30);
     uint16_t comment_len  = le16(p + 32);
     uint32_t local_offset = le32(p + 42);
+
+    // flatzip is STORED-only; reject anything compressed or encrypted so the
+    // caller never gets back offsets that point at non-raw data.
+    if (comp_method != 0 || (gp_flag & 0x0001) != 0) {
+#if AOTRITON_KERNEL_VERBOSE
+      std::cerr << "lszip: rejecting non-STORED/encrypted entry "
+                << std::string_view(reinterpret_cast<const char*>(p + 46), fname_len)
+                << " (comp_method=" << comp_method
+                << ", gp_flag=0x" << std::hex << gp_flag << std::dec << ")"
+                << std::endl;
+#endif
+      break;
+    }
 
     std::string_view entry_name(reinterpret_cast<const char*>(p + 46), fname_len);
 
