@@ -124,12 +124,29 @@ registerDescriptor(FLASH_DESCRIPTOR);
     archSel.appendChild(opt);
   });
 
+  // Rehydrate column-store rows (cols + rows[][]) into list-of-dicts the
+  // first time a (arch, kernel) is requested; cache the result in place.
+  function rehydrate(d, kernel) {
+    if (d._hydrated) return d;
+    const cols = d.cols || [];
+    if (cols.length && d.rows.length && Array.isArray(d.rows[0])) {
+      d.rows = d.rows.map(r => {
+        const o = { _kernel: kernel };
+        for (let i = 0; i < cols.length; i++) o[cols[i]] = r[i];
+        return o;
+      });
+    } else {
+      d.rows.forEach(r => { r._kernel = kernel; });
+    }
+    d._hydrated = true;
+    return d;
+  }
+
   // Override fetchData so it reads from inlined JSON instead of HTTP.
   window.fetchData = async function(arch, kernel, mode) {
     const archData = ALL_PERF_DATA[arch] || {};
-    const d = archData[kernel] || { arch, kernel, axes: {}, rows: [] };
-    d.rows.forEach(r => { r._kernel = kernel; });
-    return d;
+    const d = archData[kernel] || { arch, kernel, axes: {}, rows: [], cols: [] };
+    return rehydrate(d, kernel);
   };
 })();
 </script>

@@ -40,6 +40,26 @@ PLOTLY_CDN = (
 )
 
 
+def _to_column_store(data: dict) -> dict:
+    """Convert per-kernel rows from list-of-dicts to a column-store form.
+
+    Each {arch, kernel, axes, rows: [{col: val, ...}]} becomes
+         {arch, kernel, axes, cols: [...], rows: [[...]]}.
+    Rehydrated client-side in visperf_template.html's fetchData override.
+    """
+    for arch_data in data.values():
+        for kdata in arch_data.values():
+            rows = kdata.get('rows') or []
+            if not rows:
+                kdata['cols'] = []
+                kdata['rows'] = []
+                continue
+            cols = list(rows[0].keys())
+            kdata['cols'] = cols
+            kdata['rows'] = [[r.get(c) for c in cols] for r in rows]
+    return data
+
+
 def build_export_html(data: dict, url_params: dict | None = None) -> str:
     """Build a self-contained HTML string from pre-fetched data.
 
@@ -52,6 +72,7 @@ def build_export_html(data: dict, url_params: dict | None = None) -> str:
     template = _TEMPLATE.read_text()
 
     initial_params = json.dumps(url_params or {}, separators=(',', ':'))
+    data = _to_column_store(data)
 
     return (template
             .replace('__PERF_DATA__', json.dumps(data, separators=(',', ':')))
