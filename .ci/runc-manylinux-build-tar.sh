@@ -44,7 +44,8 @@ if [ -z "${ROCM_PATH}" ]; then
 fi
 printf '#include <hip/hip_version.h>\nHIP_VERSION_MAJOR . HIP_VERSION_MINOR\n' > /tmp/print_hip_version.h
 if [[ "${ASAN_MODE}" == "ON" ]]; then
-  hipver=$(cpp -I${ROCM_PATH}/include /tmp/print_hip_version.h | tail -n 1 | sed 's/ //g')
+  # No gcc-toolset/cpp in this path; use clang's preprocessor.
+  hipver=$(${ROCM_PATH}/llvm/bin/clang -E -P -x c -I${ROCM_PATH}/include /tmp/print_hip_version.h | tail -n 1 | sed 's/ //g')
 else
   hipver=$(scl enable gcc-toolset-13 "cpp -I${ROCM_PATH}/include /tmp/print_hip_version.h" | tail -n 1 | sed 's/ //g')
 fi
@@ -70,24 +71,13 @@ else
   scl enable gcc-toolset-13 -- bash /src/aotriton/.ci/build-release.sh "${build_args[@]}"
 fi
 
-# --- Determine manylinux tag from produced .so (runtime only) ---
-detect_manylinux_tag() {
-  local lib_dir="$1"
-  local sos
-  sos=$(ls "${lib_dir}"/libaotriton*.so* 2>/dev/null)
-  if [ -z "${sos}" ]; then
-    echo "manylinux_2_28"; return
-  fi
-  local max
-  max=$(objdump -T ${sos} 2>/dev/null \
-        | grep -oE 'GLIBC_[0-9]+\.[0-9]+' \
-        | sed 's/GLIBC_//' | sort -V | tail -1)
-  if [ -z "${max}" ]; then
-    echo "manylinux_2_28"
-  else
-    echo "manylinux_${max//./_}"
-  fi
-}
+# manylinux tag matches the build platform's glibc baseline.
+# AlmaLinux 8 (aotriton:base) ships glibc 2.28 -> manylinux_2_28.
+# Hardcoded rather than auto-detected: objdump-based "max GLIBC_x.y in
+# the .so" measures the highest symbol version *referenced*, not the
+# baseline glibc the binary was linked against, so a binary that happens
+# to use only old symbols would falsely tag as a lower manylinux.
+MANYLINUX_TAG="manylinux_2_28"
 
 asan_suffix=""
 if [[ "${ASAN_MODE}" == "ON" ]]; then
@@ -103,7 +93,6 @@ if [ ${NOIMAGE_MODE} == "OFF" ]; then
     tar cz "aotriton/lib/aotriton.images/$d" > /output/${tarfile}
   done
 else
-  manylinux_tag=$(detect_manylinux_tag "${AOTRITON_INSTALL_PATH}/lib")
-  tarfile=aotriton-${GIT_SHORT}${asan_suffix}-${manylinux_tag}_x86_64-rocm${hipver}-shared.tar.gz
+  tarfile=aotriton-${GIT_SHORT}${asan_suffix}-${MANYLINUX_TAG}_x86_64-rocm${hipver}-shared.tar.gz
   cd "${AOTRITON_INSTALL_PREFIX}" && tar cz aotriton > /output/${tarfile}
 fi
