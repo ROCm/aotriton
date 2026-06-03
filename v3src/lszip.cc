@@ -3,6 +3,7 @@
 
 #include <aotriton/_internal/lszip.h>
 #include <cstring>
+#include <algorithm>
 #include <vector>
 
 #ifdef NDEBUG
