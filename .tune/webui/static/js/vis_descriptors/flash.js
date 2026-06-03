@@ -60,21 +60,21 @@ const FLASH_DESCRIPTOR = {
     // Ops use a single backend_index so a psel×copt matrix is degenerate.
     kernels: {
       attn_fwd: {
-        psels: ['PERSISTENT_TYPE', 'GRID_CU_MULTIP',
-                'BLOCK_M', 'BLOCK_N', 'PRE_LOAD_V', 'NUM_XCDS'],
-        copts: ['num_warps', 'num_stages', 'waves_per_eu'],
+        psels: ['NUM_XCDS', 'PERSISTENT_TYPE', 'GRID_CU_MULTIP',
+                'BLOCK_M', 'BLOCK_N', 'PRE_LOAD_V'],
+        copts: ['num_stages', 'num_warps', 'waves_per_eu'],
       },
       bwd_kernel_dk_dv: {
-        psels: ['BLOCK_M', 'BLOCK_N', 'NUM_XCDS'],
-        copts: ['num_warps', 'num_stages', 'waves_per_eu'],
+        psels: ['NUM_XCDS', 'BLOCK_M', 'BLOCK_N'],
+        copts: ['num_stages', 'num_warps', 'waves_per_eu'],
       },
       bwd_kernel_dq: {
-        psels: ['BLOCK_M', 'BLOCK_N', 'NUM_XCDS'],
-        copts: ['num_warps', 'num_stages', 'waves_per_eu'],
+        psels: ['NUM_XCDS', 'BLOCK_M', 'BLOCK_N'],
+        copts: ['num_stages', 'num_warps', 'waves_per_eu'],
       },
       bwd_kernel_fuse: {
-        psels: ['BLOCK_M', 'BLOCK_N', 'NUM_XCDS'],
-        copts: ['num_warps', 'num_stages', 'waves_per_eu'],
+        psels: ['NUM_XCDS', 'BLOCK_M', 'BLOCK_N'],
+        copts: ['num_stages', 'num_warps', 'waves_per_eu'],
       },
     },
 

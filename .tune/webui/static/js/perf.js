@@ -592,17 +592,16 @@ function renderAutozoom(grid, layout, anchor) {
   const table = document.createElement('table');
   table.style.cssText = 'border-collapse:separate;border-spacing:4px;';
 
-  // Precompute separator positions (same logic as heatmap/3D grid).
-  const colSeps = state.colDims.map((dimKey) => {
-    const seps = new Set();
-    let prev = null;
-    colCombos.forEach((cc, ci) => {
-      if (ci > 0 && cc[dimKey] !== prev) seps.add(ci);
-      prev = cc[dimKey];
-    });
-    return seps;
+  // Per-column dim-value tuples in colDims order; used both for separators and
+  // for the merged-header spans below.
+  const colVecs = colCombos.map(cc => state.colDims.map(k => cc[k]));
+  const colNeedsSep = colCombos.map((_, ci) => {
+    if (ci === 0) return false;
+    for (let li = 0; li < state.colDims.length; li++) {
+      if (colVecs[ci][li] !== colVecs[ci - 1][li]) return true;
+    }
+    return false;
   });
-  const colNeedsSep = colCombos.map((_, ci) => colSeps.some(s => s.has(ci)));
 
   // Column header rows.
   for (let di = 0; di < numColDims; di++) {
@@ -616,19 +615,8 @@ function renderAutozoom(grid, layout, anchor) {
       tr.appendChild(th);
     }
     const dimKey = state.colDims[di];
-    const spans = [];
-    let curLabel = null, curCount = 0, curStart = 0;
-    colCombos.forEach((cc, ci) => {
-      const label = _dimLabel(desc, dimKey, cc[dimKey]);
-      // Break when this dim's value changes OR any ancestor dim changes.
-      const ancestorBreak = ci > 0 && colSeps.slice(0, di).some(s => s.has(ci));
-      if (label !== curLabel || ancestorBreak) {
-        if (curCount) spans.push({ label: curLabel, count: curCount, start: curStart });
-        curLabel = label; curCount = 0; curStart = ci;
-      }
-      curCount++;
-    });
-    if (curCount) spans.push({ label: curLabel, count: curCount, start: curStart });
+    const spans = computeHeaderSpans(colVecs, di,
+      (vec, l) => _dimLabel(desc, state.colDims[l], vec[l]));
     for (const { label, count, start } of spans) {
       const th = document.createElement('th');
       th.colSpan = count;
@@ -696,6 +684,40 @@ function renderAutozoom(grid, layout, anchor) {
 // ---------------------------------------------------------------------------
 // Grid rendering
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Generic header-merging helper
+// ---------------------------------------------------------------------------
+
+// Compute colSpan groups for a hierarchical-header row at `level`.
+//   vectors: array of per-column tuples (each tuple is an array of length L).
+//   level:   0..L-1 — which entry of the tuple this header row displays.
+//   labelFn: (vec, level) → display label string (defaults to String(vec[level])).
+// A new span starts when the label at `level` changes OR any earlier (ancestor)
+// level changes — so a child header never spans across a parent's break.
+// Returns [{label, count, start}].
+function computeHeaderSpans(vectors, level, labelFn) {
+  labelFn = labelFn || ((v, l) => String(v[l]));
+  const spans = [];
+  let curLabel = null, curCount = 0, curStart = 0;
+  vectors.forEach((vec, i) => {
+    const label = labelFn(vec, level);
+    let ancestorBreak = false;
+    if (i > 0) {
+      const prev = vectors[i - 1];
+      for (let li = 0; li < level; li++) {
+        if (vec[li] !== prev[li]) { ancestorBreak = true; break; }
+      }
+    }
+    if (i === 0 || label !== curLabel || ancestorBreak) {
+      if (curCount) spans.push({ label: curLabel, count: curCount, start: curStart });
+      curLabel = label; curCount = 0; curStart = i;
+    }
+    curCount++;
+  });
+  if (curCount) spans.push({ label: curLabel, count: curCount, start: curStart });
+  return spans;
+}
 
 // ---------------------------------------------------------------------------
 // Rendering: level-2 (psel × copt) cell detail
@@ -798,26 +820,29 @@ function renderCellDetail(container, cd) {
   tbl.style.cssText = 'border-collapse:collapse;font-size:0.8em;font-family:monospace;';
 
   const thead = tbl.createTHead();
-  // One header row per psel field; each cell shows that field's value.
+  const pselVecs = psels.map(([, v]) => v);
+  // One header row per psel field, with adjacent identical values merged.
   for (let li = 0; li < schema.psels.length; li++) {
     const tr = thead.insertRow();
     const lbl = document.createElement('th');
     lbl.textContent = li === 0 ? `psel \\ copt` : '';
     lbl.style.cssText = 'padding:2px 6px;text-align:right;opacity:0.7;font-weight:normal;';
     tr.appendChild(lbl);
-    // Skip the copt-label columns at the start (we use one column per copt field below).
+    // Pad the copt-label columns at the start (we use one column per copt field below).
     for (let cj = 0; cj < schema.copts.length - 1; cj++) {
-      const pad = document.createElement('th');
-      tr.appendChild(pad);
+      tr.appendChild(document.createElement('th'));
     }
     const fieldName = document.createElement('th');
     fieldName.textContent = schema.psels[li];
     fieldName.style.cssText = 'padding:2px 6px;text-align:right;opacity:0.8;font-weight:normal;';
     tr.appendChild(fieldName);
-    for (const [, vec] of psels) {
+    const spans = computeHeaderSpans(pselVecs, li);
+    for (const { label, count, start } of spans) {
       const th = document.createElement('th');
-      th.textContent = String(vec[li]);
-      th.style.cssText = 'padding:2px 4px;text-align:center;opacity:0.8;font-weight:normal;white-space:nowrap;';
+      th.colSpan = count;
+      th.textContent = label;
+      const sep = start > 0 ? 'border-left:2px solid currentColor;' : '';
+      th.style.cssText = `padding:2px 4px;text-align:center;border-bottom:1px solid currentColor;opacity:0.8;font-weight:normal;white-space:nowrap;${sep}`;
       tr.appendChild(th);
     }
   }
@@ -864,11 +889,20 @@ function renderCellDetail(container, cd) {
       const pct = Math.round(info.tflops / anchor * 100);
       let html = `<div style="line-height:1.2">${info.tflops.toFixed(1)}<br><span style="opacity:0.8">${pct}%</span></div>`;
       if (!info.passed) {
-        // SVG cross overlay; bright red so it shows on any background.
+        // Black ✕ with a white halo via paint-order:stroke — readable on any
+        // background (the perfColor() palette spans hues 0..220, so avoiding
+        // pure chromatic markers entirely is the safest).
         html += `<svg style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none"
                      viewBox="0 0 10 10" preserveAspectRatio="none">
-                  <line x1="0" y1="0" x2="10" y2="10" stroke="#e00" stroke-width="1.2"/>
-                  <line x1="10" y1="0" x2="0" y2="10" stroke="#e00" stroke-width="1.2"/>
+                  <g stroke="#111" stroke-width="1.1" fill="none"
+                     style="paint-order:stroke;stroke-linecap:round">
+                    <line x1="1.5" y1="1.5" x2="8.5" y2="8.5"
+                          stroke="#fff" stroke-width="2.4"/>
+                    <line x1="8.5" y1="1.5" x2="1.5" y2="8.5"
+                          stroke="#fff" stroke-width="2.4"/>
+                    <line x1="1.5" y1="1.5" x2="8.5" y2="8.5"/>
+                    <line x1="8.5" y1="1.5" x2="1.5" y2="8.5"/>
+                  </g>
                 </svg>`;
       }
       td.innerHTML = html;
@@ -989,20 +1023,15 @@ function renderGrid() {
   const table = document.createElement('table');
   table.style.cssText = 'border-collapse:separate;border-spacing:4px;';
 
-  // Precompute which colCombo indices start a new group for each dim level.
-  // colSeps[di] is a Set of colCombo indices where dim di's value changes.
-  const colSeps = state.colDims.map((dimKey, di) => {
-    const seps = new Set();
-    let prev = null;
-    layout.colCombos.forEach((cc, ci) => {
-      const val = cc[dimKey];
-      if (ci > 0 && val !== prev) seps.add(ci);
-      prev = val;
-    });
-    return seps;
+  // Per-column dim-value tuples in colDims order; powers separators + spans.
+  const colVecs = layout.colCombos.map(cc => state.colDims.map(k => cc[k]));
+  const colNeedsSep = layout.colCombos.map((_, ci) => {
+    if (ci === 0) return false;
+    for (let li = 0; li < state.colDims.length; li++) {
+      if (colVecs[ci][li] !== colVecs[ci - 1][li]) return true;
+    }
+    return false;
   });
-  // A column index needs a separator if ANY dim level starts a new group there.
-  const colNeedsSep = layout.colCombos.map((_, ci) => colSeps.some(s => s.has(ci)));
 
   // Header rows — one per colDim.
   for (let di = 0; di < numColDims; di++) {
@@ -1016,24 +1045,9 @@ function renderGrid() {
       }
       tr.appendChild(th);
     }
-    // Compute spans for this dim level.
     const dimKey = state.colDims[di];
-    const spans = [];
-    let curLabel = null, curCount = 0, curStart = 0;
-    layout.colCombos.forEach((cc, ci) => {
-      const label = _dimLabel(state.descriptor, dimKey, cc[dimKey]);
-      // Break when this dim's value changes OR any ancestor dim changes.
-      const ancestorBreak = ci > 0 && colSeps.slice(0, di).some(s => s.has(ci));
-      if (label !== curLabel || ancestorBreak) {
-        if (curCount) spans.push({ label: curLabel, count: curCount, start: curStart });
-        curLabel = label;
-        curCount = 0;
-        curStart = ci;
-      }
-      curCount++;
-    });
-    if (curCount) spans.push({ label: curLabel, count: curCount, start: curStart });
-
+    const spans = computeHeaderSpans(colVecs, di,
+      (vec, l) => _dimLabel(state.descriptor, state.colDims[l], vec[l]));
     for (const { label, count, start } of spans) {
       const th = document.createElement('th');
       th.colSpan = count;
