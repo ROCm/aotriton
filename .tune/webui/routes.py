@@ -1030,6 +1030,21 @@ def api_perf_data():
     return jsonify(data)
 
 
+@bp.route('/api/perf/cell_detail')
+def api_perf_cell_detail():
+    """Return all candidate (psel/copt) rows + accuracy thresholds for one cell."""
+    workdir = current_app.config['WORKDIR']
+    try:
+        task_id = int(request.args.get('task_id', ''))
+    except ValueError:
+        return jsonify({'error': 'task_id is required (int)'}), 400
+    kernel = request.args.get('kernel', '')
+    mode   = request.args.get('mode', 'kernel')
+    if not kernel:
+        return jsonify({'error': 'kernel is required'}), 400
+    return jsonify(tasks.query_perf_cell_detail(workdir, task_id, kernel, mode))
+
+
 @bp.route('/api/perf/export_zip', methods=['POST'])
 def api_perf_export_zip():
     """Build a self-contained autozoom HTML (all arches/kernels) as a .zip download.

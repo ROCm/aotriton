@@ -30,7 +30,10 @@ sys.path.insert(0, AOTRITON_ROOT.as_posix())
 from v3python.tune.utils import get_db_connection_params
 from v3python.tune.flash.module import FlashEntry
 from .pytest_entry_parser import parse_pytest_node_id, entry_to_sql_clauses
-from v3python.tune.pq.visperf import query_best_results, query_all_best_results, get_available_archs, _build_axes
+from v3python.tune.pq.visperf import (
+    query_best_results, query_all_best_results, get_available_archs,
+    _build_axes, query_cell_detail,
+)
 from v3python.tune.pq.vis_descriptors import DESCRIPTORS
 from v3python.tune.pq.export_visperf import export_visperf as _do_export_visperf, build_export_html
 
@@ -1941,6 +1944,18 @@ def export_visperf(workdir: str, dry_run: bool = False) -> dict:
     except Exception as e:
         logger.error('export_visperf failed: %s', e)
         return {'status': 'error', 'message': str(e)}
+
+
+def query_perf_cell_detail(workdir: str, task_id: int, kernel: str,
+                           mode: str = 'kernel') -> dict:
+    """Fetch psel/copt-level candidates for one (task_id, kernel) cell."""
+    conn_params = get_db_connection_params(Path(workdir))
+    try:
+        with psycopg.connect(**conn_params, autocommit=True) as conn:
+            return query_cell_detail(conn, task_id, kernel, mode)
+    except Exception as e:
+        logger.error('query_perf_cell_detail failed: %s', e)
+        return {'error': str(e)}
 
 
 def build_perf_export_html(col_filters: dict, url_params: dict,

@@ -31,6 +31,7 @@ def _build_query(desc: dict, arch: str, kernel_or_op: str, mode: str,
             SELECT
                 {dim_selects},
                 b.median_time AS median_ms,
+                b.task_id     AS task_id,
                 (r.result_data->'bim'->>'BATCH')::int AS batch,
                 CASE
                     WHEN jsonb_typeof(r.result_data->'bim'->'N_HEADS') = 'array'
@@ -66,6 +67,7 @@ def _build_query(desc: dict, arch: str, kernel_or_op: str, mode: str,
         SELECT
             {dim_selects},
             b.median_time AS median_ms,
+            b.task_id     AS task_id,
             (r.result_data->'bim'->>'BATCH')::int AS batch,
             CASE
                 WHEN jsonb_typeof(r.result_data->'bim'->'N_HEADS') = 'array'
@@ -164,6 +166,91 @@ def query_all_best_results(conn, descriptor_id: str = 'flash') -> dict:
                 result[arch][op] = data
 
     return result
+
+
+def query_cell_detail(conn, task_id: int, kernel: str, mode: str = 'kernel') -> dict:
+    """
+    Fetch all candidate tuning_results / optune_results rows for a single
+    (task_id, kernel) cell, plus the per-(test_case, tensor_name) accuracy
+    threshold from most_accurate_tuning_results / most_accurate_optune_results.
+
+    Returns:
+        {
+          'task_id': int,
+          'kernel': str,
+          'mode': str,                # 'kernel' | 'op'
+          'candidates': [
+            {
+              'index': int,           # hsaco_index or backend_index
+              'median_ms': float|None,
+              'times': [float, ...],
+              'psels': {key: val, ...},
+              'copts': {key: val, ...},
+              'adiffs': {test_case: {tensor: [target, abs_err, ref_err], ...}, ...},
+              'result': str,          # OK/NotOK/crash/ERROR
+            },
+            ...
+          ],
+          'thresholds': [
+            {'test_case': str, 'tensor': str, 'absolute_error': float},
+            ...
+          ],
+        }
+    """
+    if mode == 'op':
+        results_table = 'optune_results'
+        accuracy_table = 'most_accurate_optune_results'
+        name_col = 'op_name'
+        idx_col = 'backend_index'
+    else:
+        results_table = 'tuning_results'
+        accuracy_table = 'most_accurate_tuning_results'
+        name_col = 'kernel_name'
+        idx_col = 'hsaco_index'
+
+    candidates: list[dict] = []
+    with conn.cursor() as cur:
+        cur.execute(f"""
+            SELECT {idx_col}, result, result_data
+              FROM {results_table}
+             WHERE task_id = %s AND {name_col} = %s
+             ORDER BY {idx_col}
+        """, (task_id, kernel))
+        for index, result, rd in cur:
+            rd = rd or {}
+            impl = rd.get('impl_desc') or {}
+            times = rd.get('times') or []
+            candidates.append({
+                'index': index,
+                'median_ms': float(times[0]) if times else None,
+                'times': [float(t) for t in times],
+                'psels': impl.get('psels') or {},
+                'copts': impl.get('copts') or {},
+                'adiffs': rd.get('adiffs') or {},
+                'result': result,
+            })
+
+    thresholds: list[dict] = []
+    with conn.cursor() as cur:
+        cur.execute(f"""
+            SELECT test_case, tensor_name, absolute_error
+              FROM {accuracy_table}
+             WHERE task_id = %s AND {name_col} = %s
+        """, (task_id, kernel))
+        for tc, tn, ae in cur:
+            thresholds.append({
+                'test_case': tc,
+                'tensor': tn,
+                'absolute_error': float(ae) if ae is not None else None,
+            })
+
+    return {
+        'task_id': task_id,
+        'kernel': kernel,
+        'mode': mode,
+        'candidates': candidates,
+        'thresholds': thresholds,
+    }
 
 
 _ARCH_ORDER = ['gfx942', 'gfx950', 'gfx1201', 'gfx90a', 'gfx1100']

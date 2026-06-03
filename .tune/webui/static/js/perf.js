@@ -86,6 +86,8 @@ let state = {
     drilldown: null,   // {rowCombo, colCombo} or null for overview
     seqMode: 'max_load',  // 'max_load' = arch-specific sq=sk target; 'max_tflops' = max across all seqlens
   },
+  // Level-2 (psel/copt) drilldown — null when not active.
+  cellDetail: null,    // {rowCombo, colCombo, seqQ, seqK, row, data, loading}
   seqlenRange: [0, 65536],
   scale: {
     mode: 'max_observed',   // 'max_observed' | 'theoretical' | 'user'
@@ -113,6 +115,21 @@ async function fetchData(arch, kernel, mode) {
 
   // Annotate rows with the kernel name for the tflops() function.
   data.rows.forEach(r => { r._kernel = kernel; });
+  return data;
+}
+
+async function fetchCellDetail(row) {
+  const mode = state.descriptor && state.descriptor.ops &&
+               state.descriptor.ops.has(row._kernel) ? 'op' : 'kernel';
+  const params = new URLSearchParams({
+    task_id: row.task_id,
+    kernel:  row._kernel,
+    mode:    mode,
+  });
+  const resp = await fetch(`/api/perf/cell_detail?${params}`);
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  const data = await resp.json();
+  if (data.error) throw new Error(data.error);
   return data;
 }
 
@@ -330,15 +347,41 @@ function renderHeatmap(container, seqQ, seqK, index, desc, anchor) {
       const frac   = perfFrac(tflops, a);
       td.style.background = perfColor(frac);
       td.style.color      = cellTextColor(frac);
-      td.style.cursor     = 'default';
 
       const pct = Math.round(tflops / a * 100);
       td.innerHTML = `<div style="line-height:1.2">${tflops.toFixed(1)}<br><span style="opacity:0.8">${pct}%</span></div>`;
+
+      // Level-2 click-through: psel × copt matrix for this (task_id, kernel).
+      const cd = desc.cellDetail;
+      const supportsL2 = cd && row.task_id != null
+                         && cd.kernels && cd.kernels[row._kernel];
+      if (supportsL2) {
+        td.style.cursor = 'pointer';
+        td.addEventListener('click', () => {
+          state.cellDetail = { row, loading: true, data: null };
+          renderGrid();
+          fetchCellDetail(row).then(data => {
+            // Bail if user navigated away in the meantime.
+            if (state.cellDetail && state.cellDetail.row === row) {
+              state.cellDetail = { row, loading: false, data };
+              renderGrid();
+            }
+          }).catch(err => {
+            if (state.cellDetail && state.cellDetail.row === row) {
+              state.cellDetail = { row, loading: false, data: null, error: String(err) };
+              renderGrid();
+            }
+          });
+        });
+      } else {
+        td.style.cursor = 'default';
+      }
 
       // Tooltip.
       if (desc.tooltip) {
         const lines = desc.tooltip(row);
         lines.unshift(`TFLOPS (matrix): ${tflops.toFixed(2)}`);
+        if (supportsL2) lines.push('Click to view psel × copt matrix');
         td.title = lines.join('\n');
       }
     });
@@ -654,6 +697,205 @@ function renderAutozoom(grid, layout, anchor) {
 // Grid rendering
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Rendering: level-2 (psel × copt) cell detail
+// ---------------------------------------------------------------------------
+
+// Build a stable column-vector key from a list of (field, value) pairs.
+function _vecKey(fields, src) {
+  return fields.map(f => `${f}=${src[f]}`).join('|');
+}
+
+function renderCellDetail(container, cd) {
+  const desc   = state.descriptor;
+  const schema = desc.cellDetail.kernels[cd.row._kernel];
+
+  const back = document.createElement('button');
+  back.textContent = '← Return to seqlen matrix';
+  back.style.cssText = 'margin-bottom:0.6rem;';
+  back.addEventListener('click', () => { state.cellDetail = null; renderGrid(); });
+  container.appendChild(back);
+
+  const title = document.createElement('div');
+  title.style.cssText = 'margin-bottom:0.4rem;font-weight:bold;';
+  title.textContent =
+    `${cd.row._kernel} @ sq=${cd.row.seqlen_q} sk=${cd.row.seqlen_k}, ` +
+    `hdim=${cd.row.hdim}, ${cd.row.dtype}, causal=${cd.row.causal ? 'T' : 'F'}, ` +
+    `task_id=${cd.row.task_id}`;
+  container.appendChild(title);
+
+  if (cd.loading) {
+    const p = document.createElement('p');
+    p.textContent = 'Loading psel × copt detail…';
+    container.appendChild(p);
+    return;
+  }
+  if (cd.error) {
+    const p = document.createElement('p');
+    p.style.color = 'red';
+    p.textContent = `Error: ${cd.error}`;
+    container.appendChild(p);
+    return;
+  }
+  if (!cd.data) return;
+
+  const cands = cd.data.candidates || [];
+  if (!cands.length) {
+    const p = document.createElement('p');
+    p.textContent = 'No candidate tuning_results rows for this cell.';
+    container.appendChild(p);
+    return;
+  }
+
+  // Build threshold lookup {tc: {tensor: abs_err}}.
+  const threshold = {};
+  for (const t of (cd.data.thresholds || [])) {
+    (threshold[t.test_case] = threshold[t.test_case] || {})[t.tensor] = t.absolute_error;
+  }
+
+  // Index by (psel-vector, copt-vector) → candidate.
+  const cellByKey = new Map();
+  const pselSet = new Map();   // key → ordered field values
+  const coptSet = new Map();
+  for (const cand of cands) {
+    const pkey = _vecKey(schema.psels, cand.psels);
+    const ckey = _vecKey(schema.copts, cand.copts);
+    if (!pselSet.has(pkey)) pselSet.set(pkey, schema.psels.map(f => cand.psels[f]));
+    if (!coptSet.has(ckey)) coptSet.set(ckey, schema.copts.map(f => cand.copts[f]));
+    cellByKey.set(`${pkey}||${ckey}`, cand);
+  }
+
+  // Lexicographic sort by field values.
+  const cmpVec = (a, b) => {
+    for (let i = 0; i < a.length; i++) {
+      const av = a[i], bv = b[i];
+      if (av === bv) continue;
+      if (av === undefined || av === null) return 1;
+      if (bv === undefined || bv === null) return -1;
+      if (av < bv) return -1;
+      if (av > bv) return 1;
+    }
+    return 0;
+  };
+  const psels = [...pselSet.entries()].sort((a, b) => cmpVec(a[1], b[1]));
+  const copts = [...coptSet.entries()].sort((a, b) => cmpVec(a[1], b[1]));
+
+  // Compute TFLOPS for each cell + max for anchor.
+  const cellInfo = new Map();
+  let maxT = 0;
+  for (const cand of cands) {
+    const t = desc.cellDetail.candidateTflops(cand, cd.row);
+    const pkey = _vecKey(schema.psels, cand.psels);
+    const ckey = _vecKey(schema.copts, cand.copts);
+    const passed = desc.passesAccuracy(cand, threshold);
+    cellInfo.set(`${pkey}||${ckey}`, { tflops: t, passed, cand });
+    if (t > maxT) maxT = t;
+  }
+  const anchor = maxT > 0 ? maxT : 1;
+
+  // Build table: rows = copts (Y), cols = psels (X).
+  const tbl = document.createElement('table');
+  tbl.style.cssText = 'border-collapse:collapse;font-size:0.8em;font-family:monospace;';
+
+  const thead = tbl.createTHead();
+  // One header row per psel field; each cell shows that field's value.
+  for (let li = 0; li < schema.psels.length; li++) {
+    const tr = thead.insertRow();
+    const lbl = document.createElement('th');
+    lbl.textContent = li === 0 ? `psel \\ copt` : '';
+    lbl.style.cssText = 'padding:2px 6px;text-align:right;opacity:0.7;font-weight:normal;';
+    tr.appendChild(lbl);
+    // Skip the copt-label columns at the start (we use one column per copt field below).
+    for (let cj = 0; cj < schema.copts.length - 1; cj++) {
+      const pad = document.createElement('th');
+      tr.appendChild(pad);
+    }
+    const fieldName = document.createElement('th');
+    fieldName.textContent = schema.psels[li];
+    fieldName.style.cssText = 'padding:2px 6px;text-align:right;opacity:0.8;font-weight:normal;';
+    tr.appendChild(fieldName);
+    for (const [, vec] of psels) {
+      const th = document.createElement('th');
+      th.textContent = String(vec[li]);
+      th.style.cssText = 'padding:2px 4px;text-align:center;opacity:0.8;font-weight:normal;white-space:nowrap;';
+      tr.appendChild(th);
+    }
+  }
+  // Header row with copt field names.
+  const tr0 = thead.insertRow();
+  const lbl0 = document.createElement('th');
+  lbl0.textContent = 'copt:';
+  lbl0.style.cssText = 'padding:2px 6px;text-align:right;opacity:0.7;font-weight:normal;';
+  tr0.appendChild(lbl0);
+  for (const cf of schema.copts) {
+    const th = document.createElement('th');
+    th.textContent = cf;
+    th.style.cssText = 'padding:2px 4px;text-align:center;opacity:0.8;font-weight:normal;';
+    tr0.appendChild(th);
+  }
+  for (let i = 0; i < psels.length; i++) {
+    tr0.appendChild(document.createElement('th'));
+  }
+
+  const tbody = tbl.createTBody();
+  for (const [ckey, cvec] of copts) {
+    const tr = tbody.insertRow();
+    const lbl = document.createElement('th');
+    lbl.style.cssText = 'padding:2px 6px;text-align:right;opacity:0.5;font-weight:normal;';
+    tr.appendChild(lbl);
+    for (const v of cvec) {
+      const th = document.createElement('th');
+      th.textContent = String(v);
+      th.style.cssText = 'padding:2px 6px;text-align:right;opacity:0.8;font-weight:normal;white-space:nowrap;';
+      tr.appendChild(th);
+    }
+    for (const [pkey, pvec] of psels) {
+      const td = tr.insertCell();
+      td.style.cssText = 'padding:0;width:5rem;height:2.2rem;text-align:center;vertical-align:middle;position:relative;';
+      const info = cellInfo.get(`${pkey}||${ckey}`);
+      if (!info || !(info.tflops > 0)) {
+        td.style.background = 'rgba(128,128,128,0.15)';
+        td.title = info ? `index=${info.cand.index}, result=${info.cand.result}` : 'missing';
+        continue;
+      }
+      const frac = perfFrac(info.tflops, anchor);
+      td.style.background = perfColor(frac);
+      td.style.color      = cellTextColor(frac);
+      const pct = Math.round(info.tflops / anchor * 100);
+      let html = `<div style="line-height:1.2">${info.tflops.toFixed(1)}<br><span style="opacity:0.8">${pct}%</span></div>`;
+      if (!info.passed) {
+        // SVG cross overlay; bright red so it shows on any background.
+        html += `<svg style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none"
+                     viewBox="0 0 10 10" preserveAspectRatio="none">
+                  <line x1="0" y1="0" x2="10" y2="10" stroke="#e00" stroke-width="1.2"/>
+                  <line x1="10" y1="0" x2="0" y2="10" stroke="#e00" stroke-width="1.2"/>
+                </svg>`;
+      }
+      td.innerHTML = html;
+      const psStr = schema.psels.map((f, i) => `${f}=${pvec[i]}`).join(', ');
+      const coStr = schema.copts.map((f, i) => `${f}=${cvec[i]}`).join(', ');
+      td.title = [
+        `TFLOPS: ${info.tflops.toFixed(2)} (${pct}% of best)`,
+        `psels: ${psStr}`,
+        `copts: ${coStr}`,
+        `median_ms: ${info.cand.median_ms != null ? info.cand.median_ms.toFixed(4) : 'n/a'}`,
+        `index: ${info.cand.index}, result: ${info.cand.result}`,
+        info.passed ? 'accuracy: PASS' : 'accuracy: FAIL (✕)',
+      ].join('\n');
+    }
+  }
+
+  container.appendChild(tbl);
+
+  const legend = document.createElement('div');
+  legend.style.cssText = 'margin-top:8px;opacity:0.75;';
+  const nFail = [...cellInfo.values()].filter(c => !c.passed).length;
+  legend.textContent =
+    `${cellInfo.size} candidates, ${nFail} failed accuracy gate (✕). ` +
+    `Anchor: best in this cell = ${anchor.toFixed(1)} TFLOPS.`;
+  container.appendChild(legend);
+}
+
 function renderGrid() {
   const grid = document.getElementById('perf-grid');
   if (!grid) return;
@@ -661,6 +903,12 @@ function renderGrid() {
 
   if (!state.data || !state.descriptor) {
     grid.textContent = 'No data.';
+    return;
+  }
+
+  // Level-2 view supersedes everything else when active.
+  if (state.cellDetail) {
+    renderCellDetail(grid, state.cellDetail);
     return;
   }
 
