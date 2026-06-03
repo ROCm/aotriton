@@ -23,6 +23,9 @@ Options:
          -r <ROCM ver>: build ROCM runtime image
                --image: build GPU images.
              --runtime: build all C++ runtimes.
+                --asan: build with AddressSanitizer (clang). Forces theRock
+                        (ROCm 7.13.0rc2) for both runtime and image; tarball
+                        version gets a +asan suffix.
          --yaml <.yml>: Use yml config file to build the release
         --origin <url>: Override the git HTTPS origin URL (default: auto-detected from remote)
 By default both GPU images and runtimes are built.
@@ -38,7 +41,7 @@ EOF
   exit $1
 }
 
-TEMP=$(getopt -o hr: --longoptions image,runtime,yaml:,origin: -- "$@")
+TEMP=$(getopt -o hr: --longoptions image,runtime,asan,yaml:,origin: -- "$@")
 
 if [ $? -ne 0 ]; then
   echo "Error: Invalid option." >&2
@@ -54,6 +57,8 @@ CMDLIST=()
 SUITE_DEFAULT_SELECTION=1
 SUITE_YAML=""
 SUITE_ORIGIN=""
+SUITE_ASAN=0
+THEROCK_ASAN_VERSION="7.13.0rc2"
 
 while true; do
   case "$1" in
@@ -67,6 +72,9 @@ while true; do
     --runtime)
       SUITE_SELECT_RUNTIME=1
       SUITE_DEFAULT_SELECTION=0
+      ;;
+    --asan)
+      SUITE_ASAN=1
       ;;
     -r)
       SUITE_SELECT_RUNTIME=1
@@ -186,17 +194,26 @@ fi
 function build_inside() {
   rocmver="$1"
   NOIMAGE_MODE="$2"
+  ASAN_MODE="${3:-OFF}"
   DOCKER_IMAGE="aotriton:buildenv-rocm${rocmver}"
   if [ -z "$(docker images -q ${DOCKER_IMAGE} 2>/dev/null)" ]; then
     # Use theRock.Dockerfile for ROCm >= 7.10
     if printf '%s\n%s\n' "7.10" "${rocmver}" | sort -V -C; then
       DOCKERFILE="theRock.Dockerfile"
+      BUILD_ARG=(--build-arg "THEROCK_VERSION=${rocmver}")
     else
       DOCKERFILE="rocm.Dockerfile"
+      BUILD_ARG=(--build-arg "ROCM_VERSION_IN_URL=${rocmver}")
     fi
     (cd "${SCRIPT_DIR}" && docker build --network=host -t ${DOCKER_IMAGE} \
-      --build-arg ROCM_VERSION_IN_URL=${rocmver} \
+      "${BUILD_ARG[@]}" \
       -f ${DOCKERFILE} .)
+  fi
+  # TRITON_ENABLE_ASAN=1 is consumed by the GPU-image build (Triton
+  # compiles kernels at image-build time). Harmless for runtime-only builds.
+  EXTRA_ENV=()
+  if [[ "${ASAN_MODE}" == "ON" ]]; then
+    EXTRA_ENV+=(-e "TRITON_ENABLE_ASAN=1")
   fi
   set -x
   docker run --network=host -i --rm \
@@ -206,21 +223,34 @@ function build_inside() {
     --tmpfs "/scratch:exec" \
     -e AOTRITON_BUILD_PATH=/scratch/build/aotriton \
     -e AOTRITON_INSTALL_PREFIX=/scratch/install \
+    "${EXTRA_ENV[@]}" \
     -w / \
     ${DOCKER_IMAGE} \
-    bash -l -s "${NOIMAGE_MODE}" "${WHEEL_CFG}" \
+    bash -l -s "${NOIMAGE_MODE}" "${WHEEL_CFG}" "${ASAN_MODE}" \
     < "${SCRIPT_DIR}/runc-manylinux-build-tar.sh"
 }
+
+# --asan forces theRock (and a specific theRock release) for all selected
+# components. Override runtime list and image rocmver accordingly.
+if [ ${SUITE_ASAN} -gt 0 ]; then
+  if [[ ${#CMDLIST[@]} -eq 0 ]]; then
+    SUITE_RUNTIME_LIST=("${THEROCK_ASAN_VERSION}")
+  fi
+  IMAGE_ROCMVER="${THEROCK_ASAN_VERSION}"
+  ASAN_MODE="ON"
+else
+  IMAGE_ROCMVER="7.2.3"
+  ASAN_MODE="OFF"
+fi
 
 if [ ${SUITE_SELECT_RUNTIME} -gt 0 ]; then
   # build ROCM runtime image
   for rocmver in "${SUITE_RUNTIME_LIST[@]}"
   do
-    build_inside ${rocmver} ON
+    build_inside ${rocmver} ON "${ASAN_MODE}"
   done
 fi
 
 if [ ${SUITE_SELECT_IMAGE} -gt 0 ]; then
-  rocmver=7.2.3
-  build_inside ${rocmver} OFF
+  build_inside "${IMAGE_ROCMVER}" OFF "${ASAN_MODE}"
 fi

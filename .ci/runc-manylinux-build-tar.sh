@@ -1,7 +1,7 @@
 #!/bin/bash
 # Runs inside the AlmaLinux 8 ROCm Docker container (manylinux_2_28 environment).
 # Fed via stdin by build_inside() in releasesuite-git-head.sh; no bind mount needed.
-# Positional args: $1=NOIMAGE_MODE $2=WHEEL_CFG
+# Positional args: $1=NOIMAGE_MODE $2=WHEEL_CFG $3=ASAN_MODE
 #
 # Container prerequisites:
 #   Mounts:
@@ -16,7 +16,7 @@
 #                               AOTRITON_INSTALL_PATH is derived as $AOTRITON_INSTALL_PREFIX/aotriton
 #   Tools (provided by the ROCm AlmaLinux 8 image):
 #     hipconfig        — to locate ROCM_PATH
-#     gcc-toolset-13   — C++17 compiler via scl enable
+#     gcc-toolset-13   — C++17 compiler via scl enable (non-asan path only)
 #     cpp              — preprocessor used to extract the HIP version number
 
 set -ex
@@ -24,6 +24,7 @@ set -ex
 # --- Arguments ---
 NOIMAGE_MODE="$1"
 WHEEL_CFG="$2"
+ASAN_MODE="${3:-OFF}"
 
 # --- Validate environment ---
 if [ -z "${AOTRITON_BUILD_PATH}" ]; then
@@ -42,7 +43,11 @@ if [ -z "${ROCM_PATH}" ]; then
   exit 1
 fi
 printf '#include <hip/hip_version.h>\nHIP_VERSION_MAJOR . HIP_VERSION_MINOR\n' > /tmp/print_hip_version.h
-hipver=$(scl enable gcc-toolset-13 "cpp -I${ROCM_PATH}/include /tmp/print_hip_version.h" | tail -n 1 | sed 's/ //g')
+if [[ "${ASAN_MODE}" == "ON" ]]; then
+  hipver=$(cpp -I${ROCM_PATH}/include /tmp/print_hip_version.h | tail -n 1 | sed 's/ //g')
+else
+  hipver=$(scl enable gcc-toolset-13 "cpp -I${ROCM_PATH}/include /tmp/print_hip_version.h" | tail -n 1 | sed 's/ //g')
+fi
 
 # --- Build ---
 build_args=("${NOIMAGE_MODE}" "ALL")
@@ -52,17 +57,53 @@ else
   cmake_arg="-DAOTRITON_USE_LOCAL_TRITON_WHEEL=${WHEEL_CFG}"
 fi
 build_args+=("${cmake_arg}")
-scl enable gcc-toolset-13 -- bash /src/aotriton/.ci/build-release.sh "${build_args[@]}"
+
+if [[ "${ASAN_MODE}" == "ON" ]]; then
+  build_args+=(
+    "-DAOTRITON_ENABLE_ASAN_CLANG=ON"
+    "-DCMAKE_C_COMPILER=${ROCM_PATH}/llvm/bin/clang"
+    "-DCMAKE_CXX_COMPILER=${ROCM_PATH}/llvm/bin/clang++"
+  )
+  # Use theRock clang directly — no scl gcc-toolset wrapper.
+  bash /src/aotriton/.ci/build-release.sh "${build_args[@]}"
+else
+  scl enable gcc-toolset-13 -- bash /src/aotriton/.ci/build-release.sh "${build_args[@]}"
+fi
+
+# --- Determine manylinux tag from produced .so (runtime only) ---
+detect_manylinux_tag() {
+  local lib_dir="$1"
+  local sos
+  sos=$(ls "${lib_dir}"/libaotriton*.so* 2>/dev/null)
+  if [ -z "${sos}" ]; then
+    echo "manylinux_2_28"; return
+  fi
+  local max
+  max=$(objdump -T ${sos} 2>/dev/null \
+        | grep -oE 'GLIBC_[0-9]+\.[0-9]+' \
+        | sed 's/GLIBC_//' | sort -V | tail -1)
+  if [ -z "${max}" ]; then
+    echo "manylinux_2_28"
+  else
+    echo "manylinux_${max//./_}"
+  fi
+}
+
+asan_suffix=""
+if [[ "${ASAN_MODE}" == "ON" ]]; then
+  asan_suffix="+asan"
+fi
 
 # --- Package (both archives must have aotriton/ as the root directory) ---
 if [ ${NOIMAGE_MODE} == "OFF" ]; then
-  tarbase=aotriton-${GIT_SHORT}-images
+  tarbase=aotriton-${GIT_SHORT}${asan_suffix}-images
   cd "${AOTRITON_INSTALL_PREFIX}"
   for d in $(ls aotriton/lib/aotriton.images/); do
     tarfile=${tarbase}-$d.tar.gz
     tar cz "aotriton/lib/aotriton.images/$d" > /output/${tarfile}
   done
 else
-  tarfile=aotriton-${GIT_SHORT}-manylinux_2_28_x86_64-rocm${hipver}-shared.tar.gz
+  manylinux_tag=$(detect_manylinux_tag "${AOTRITON_INSTALL_PATH}/lib")
+  tarfile=aotriton-${GIT_SHORT}${asan_suffix}-${manylinux_tag}_x86_64-rocm${hipver}-shared.tar.gz
   cd "${AOTRITON_INSTALL_PREFIX}" && tar cz aotriton > /output/${tarfile}
 fi
