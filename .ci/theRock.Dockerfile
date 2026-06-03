@@ -16,5 +16,3 @@ RUN set -ex \
 ENV ROCM_PATH=/opt/therock
 ENV PATH="${ROCM_PATH}/bin:${ROCM_PATH}/llvm/bin:${PATH}"
 ENV LD_LIBRARY_PATH="${ROCM_PATH}/lib:${LD_LIBRARY_PATH}"
-
-RUN rocm-sdk init
