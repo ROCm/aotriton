@@ -26,6 +26,10 @@ Options:
                 --asan: build with AddressSanitizer (clang). Forces theRock
                         (ROCm 7.13.0rc2) for both runtime and image; tarball
                         version gets a +asan suffix.
+       --arch <list>: ';'-separated GPU arch list (e.g. 'gfx942;gfx950'),
+                        forwarded to cmake as AOTRITON_TARGET_ARCH. Defaults
+                        to ALL (every arch in the CMakeLists default list).
+                        Useful to shorten debug builds.
          --yaml <.yml>: Use yml config file to build the release
         --origin <url>: Override the git HTTPS origin URL (default: auto-detected from remote)
 By default both GPU images and runtimes are built.
@@ -41,7 +45,7 @@ EOF
   exit $1
 }
 
-TEMP=$(getopt -o hr: --longoptions image,runtime,asan,yaml:,origin: -- "$@")
+TEMP=$(getopt -o hr: --longoptions image,runtime,asan,arch:,yaml:,origin: -- "$@")
 
 if [ $? -ne 0 ]; then
   echo "Error: Invalid option." >&2
@@ -58,6 +62,7 @@ SUITE_DEFAULT_SELECTION=1
 SUITE_YAML=""
 SUITE_ORIGIN=""
 SUITE_ASAN=0
+SUITE_ARCH="ALL"
 THEROCK_ASAN_VERSION="7.13.0rc2"
 
 while true; do
@@ -75,6 +80,10 @@ while true; do
       ;;
     --asan)
       SUITE_ASAN=1
+      ;;
+    --arch)
+      shift
+      SUITE_ARCH="$1"
       ;;
     -r)
       SUITE_SELECT_RUNTIME=1
@@ -195,6 +204,7 @@ function build_inside() {
   rocmver="$1"
   NOIMAGE_MODE="$2"
   ASAN_MODE="${3:-OFF}"
+  ARCH_LIST="${4:-ALL}"
   DOCKER_IMAGE="aotriton:buildenv-rocm${rocmver}"
   if [ -z "$(docker images -q ${DOCKER_IMAGE} 2>/dev/null)" ]; then
     # Use theRock.Dockerfile for ROCm >= 7.10
@@ -226,7 +236,7 @@ function build_inside() {
     "${EXTRA_ENV[@]}" \
     -w / \
     ${DOCKER_IMAGE} \
-    bash -l -s "${NOIMAGE_MODE}" "${WHEEL_CFG}" "${ASAN_MODE}" \
+    bash -l -s "${NOIMAGE_MODE}" "${WHEEL_CFG}" "${ASAN_MODE}" "${ARCH_LIST}" \
     < "${SCRIPT_DIR}/runc-manylinux-build-tar.sh"
 }
 
@@ -247,10 +257,10 @@ if [ ${SUITE_SELECT_RUNTIME} -gt 0 ]; then
   # build ROCM runtime image
   for rocmver in "${SUITE_RUNTIME_LIST[@]}"
   do
-    build_inside ${rocmver} ON "${ASAN_MODE}"
+    build_inside ${rocmver} ON "${ASAN_MODE}" "${SUITE_ARCH}"
   done
 fi
 
 if [ ${SUITE_SELECT_IMAGE} -gt 0 ]; then
-  build_inside "${IMAGE_ROCMVER}" OFF "${ASAN_MODE}"
+  build_inside "${IMAGE_ROCMVER}" OFF "${ASAN_MODE}" "${SUITE_ARCH}"
 fi
