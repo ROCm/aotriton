@@ -208,7 +208,10 @@ function build_inside() {
   DOCKER_IMAGE="aotriton:buildenv-rocm${rocmver}"
   if [ -z "$(docker images -q ${DOCKER_IMAGE} 2>/dev/null)" ]; then
     # Use theRock.Dockerfile for ROCm >= 7.10
-    if printf '%s\n%s\n' "7.10" "${rocmver}" | sort -V -C; then
+    if [[ "${ASAN_MODE}" == "ON" ]]; then
+      DOCKERFILE="theRockASAN.Dockerfile"
+      BUILD_ARG=(--build-arg "THEROCK_VERSION=${rocmver}")
+    elif printf '%s\n%s\n' "7.10" "${rocmver}" | sort -V -C; then
       DOCKERFILE="theRock.Dockerfile"
       BUILD_ARG=(--build-arg "THEROCK_VERSION=${rocmver}")
     else
@@ -233,6 +236,7 @@ function build_inside() {
     --tmpfs "/scratch:exec" \
     -e AOTRITON_BUILD_PATH=/scratch/build/aotriton \
     -e AOTRITON_INSTALL_PREFIX=/scratch/install \
+    -e PIP_CACHE_DIR=/cache/pip \
     "${EXTRA_ENV[@]}" \
     -w / \
     ${DOCKER_IMAGE} \
