@@ -22,8 +22,17 @@ _LOCAL_HEADER_SIG   = b'PK\x03\x04'
 _CENTRAL_DIR_SIG    = b'PK\x01\x02'
 _EOCD_SIG           = b'PK\x05\x06'
 _COMPRESSION_STORED = 0
-_VERSION_NEEDED     = 20  # 2.0 — minimum for deflate, sufficient for STORED
+# 2.0 is over-spec for STORED (which only needs 1.0 / version 10) but matches
+# what most ZIP writers in the wild emit, so consumers don't trip on a value
+# below their hardcoded minimum.
+_VERSION_NEEDED     = 20
 _VERSION_MADE_BY    = 20
+
+# All sizes/offsets in the headers below are packed as 32-bit unsigned ('I').
+# This archive intentionally does NOT use ZIP64: a cumulative offset or entry
+# size exceeding 4 GiB will raise struct.error at build time (loud failure,
+# not silent truncation). The STORED layout means decompressed == compressed,
+# so the ceiling is the sum of all .aks2 sizes packed into one .zip.
 # Bit 11 (0x0800) tells ZIP readers to decode entry names as UTF-8 (PKWARE §4.4.4)
 _GP_FLAG_UTF8       = 0x0800
 
