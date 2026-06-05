@@ -206,18 +206,24 @@ function buildLayout(state) {
   const seqQ = axes.seqlen_q || [];
   const seqK = axes.seqlen_k || [];
 
+  // Single pass over filtered: bin each row by its (rowCombo, colCombo) key
+  // into a per-cell index. O(nRows) instead of O(nCells * nRows).
+  const _comboKey = (r, dims) => dims.map(k => r[k]).join('\x1f');
+  const cellMap = new Map();  // key -> Map<sq|sk, row>
+  for (const r of filtered) {
+    const key = _comboKey(r, state.rowDims) + '\x1e' + _comboKey(r, state.colDims);
+    let idx = cellMap.get(key);
+    if (!idx) { idx = new Map(); cellMap.set(key, idx); }
+    idx.set(`${r.seqlen_q}|${r.seqlen_k}`, r);
+  }
+
+  // Walk row × col in fixed order so cells[ri * nCol + ci] is addressable.
   const cells = [];
   for (const rowCombo of rowCombos) {
+    const rk = state.rowDims.map(k => rowCombo[k]).join('\x1f');
     for (const colCombo of colCombos) {
-      // Build index of (seqlen_q, seqlen_k) -> row for this combo.
-      const index = new Map();
-      for (const r of filtered) {
-        const matchRow = state.rowDims.every(k => r[k] === rowCombo[k]);
-        const matchCol = state.colDims.every(k => r[k] === colCombo[k]);
-        if (matchRow && matchCol) {
-          index.set(`${r.seqlen_q}|${r.seqlen_k}`, r);
-        }
-      }
+      const ck = state.colDims.map(k => colCombo[k]).join('\x1f');
+      const index = cellMap.get(rk + '\x1e' + ck) || new Map();
       cells.push({ rowCombo, colCombo, seqQ, seqK, index });
     }
   }
@@ -411,14 +417,13 @@ function render3D(container, layout, anchor) {
 
   // Collect (xi, yi, tflops, color) per cell.
   const xs = [], ys = [], zs = [], colors = [];
+  // cells[] is filled by buildLayout() in row-major order (rowCombos outer,
+  // colCombos inner), so direct indexing is O(1) per cell.
   for (let ri = 0; ri < nRow; ri++) {
     for (let ci = 0; ci < nCol; ci++) {
       const rowCombo = rowCombos[ri];
       const colCombo = colCombos[ci];
-      const cell = cells.find(c =>
-        state.rowDims.every(k => c.rowCombo[k] === rowCombo[k]) &&
-        state.colDims.every(k => c.colCombo[k] === colCombo[k])
-      );
+      const cell = cells[ri * nCol + ci];
       const cellT = cell ? _cellTflops(cell.index, desc) : 0;
       const dtype = colCombo.dtype || rowCombo.dtype;
       const a = anchorFor(anchor, dtype);
