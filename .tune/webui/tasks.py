@@ -1892,14 +1892,14 @@ def get_scheduled_workers(workdir):
 # ---------------------------------------------------------------------------
 
 PLOTLY_CDN_URL = (
-    'https://cdn.jsdelivr.net/npm/plotly.js-basic-dist@2.35.2/plotly.basic.min.js'
+    'https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js'
 )
 
 
 def _ensure_plotly_cache(workdir: str) -> None:
     """Download Plotly.js to scratch/webcache/ if not already present."""
     import urllib.request
-    cache_path = Path(workdir) / 'scratch' / 'webcache' / 'plotly.basic.min.js'
+    cache_path = Path(workdir) / 'scratch' / 'webcache' / 'plotly.min.js'
     if cache_path.exists():
         return
     cache_path.parent.mkdir(parents=True, exist_ok=True)

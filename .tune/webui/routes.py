@@ -1086,11 +1086,11 @@ def api_export_visperf():
 
 _PLOTLY_CDN = 'https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js'
 
-@bp.route('/static/cache/plotly.basic.min.js')
+@bp.route('/static/cache/plotly.min.js')
 def plotly_cache():
     """Serve Plotly.js from a local cache, downloading it on first request."""
     workdir = current_app.config['WORKDIR']
-    cache_path = Path(workdir) / 'scratch' / 'webcache' / 'plotly.basic.min.js'
+    cache_path = Path(workdir) / 'scratch' / 'webcache' / 'plotly.min.js'
     if not cache_path.exists():
         try:
             cache_path.parent.mkdir(parents=True, exist_ok=True)
