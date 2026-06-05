@@ -14,7 +14,10 @@ namespace AOTRITON_NS {
 // Parse the central directory of a STORED (uncompressed) ZIP file and invoke
 // visitor(entry_name, data_offset, data_size) for each entry.
 // fd must be an open, seekable file descriptor; the caller retains ownership.
-void lszip(int fd,
+// Returns true iff every entry in the central directory was parsed
+// successfully. On false the visitor may have been called for some prefix of
+// entries; callers must not cache a partial directory as authoritative.
+bool lszip(int fd,
            std::function<void(std::string_view name,
                               uint64_t data_offset,
                               uint64_t data_size)> visitor);

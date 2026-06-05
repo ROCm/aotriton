@@ -41,18 +41,18 @@ static inline uint32_t le32(const uint8_t* p) {
 
 namespace AOTRITON_NS {
 
-void
+bool
 lszip(int fd,
       std::function<void(std::string_view, uint64_t, uint64_t)> visitor) {
   off_t file_size = fd_seek(fd, 0, SEEK_END);
   if (file_size < EOCD_MIN_SIZE)
-    return;
+    return false;
 
   int search_len = static_cast<int>(std::min<off_t>(file_size, EOCD_SEARCH_MAX));
   std::vector<uint8_t> tail(search_len);
   fd_seek(fd, file_size - search_len, SEEK_SET);
   if (fd_read(fd, tail.data(), search_len) != search_len)
-    return;
+    return false;
 
   int eocd_off = -1;
   for (int i = search_len - EOCD_MIN_SIZE; i >= 0; --i) {
@@ -62,7 +62,7 @@ lszip(int fd,
     }
   }
   if (eocd_off < 0)
-    return;
+    return false;
 
   const uint8_t* eocd    = tail.data() + eocd_off + 4;
   uint16_t total_entries = le16(eocd + 6);
@@ -72,19 +72,19 @@ lszip(int fd,
   // Reject corrupted EOCD pointing past file_size or describing a CD that
   // would overflow allocation / read past end-of-file.
   if (static_cast<uint64_t>(cd_offset) + cd_size > static_cast<uint64_t>(file_size))
-    return;
+    return false;
 
   std::vector<uint8_t> cd(cd_size);
   fd_seek(fd, static_cast<off_t>(cd_offset), SEEK_SET);
   if (fd_read(fd, cd.data(), cd_size) != static_cast<ssize_t>(cd_size))
-    return;
+    return false;
 
   const uint8_t* p   = cd.data();
   const uint8_t* end = p + cd_size;
 
   for (uint16_t i = 0; i < total_entries; ++i) {
     if (p + 46 > end || le32(p) != ZIP_CENTRAL_DIR_SIG)
-      break;
+      return false;
     uint16_t gp_flag      = le16(p + 8);
     uint16_t comp_method  = le16(p + 10);
     uint32_t comp_size    = le32(p + 20);
@@ -92,6 +92,14 @@ lszip(int fd,
     uint16_t extra_len    = le16(p + 30);
     uint16_t comment_len  = le16(p + 32);
     uint32_t local_offset = le32(p + 42);
+
+    // Bounds check the variable-length tail (name + extra + comment) before
+    // reading the entry name — fname_len/extra_len/comment_len all come from
+    // file bytes and a truncated central directory must not produce an OOB read.
+    if (p + 46 + static_cast<size_t>(fname_len)
+              + static_cast<size_t>(extra_len)
+              + static_cast<size_t>(comment_len) > end)
+      return false;
 
     // flatzip is STORED-only; reject anything compressed or encrypted so the
     // caller never gets back offsets that point at non-raw data.
@@ -103,7 +111,7 @@ lszip(int fd,
                 << ", gp_flag=0x" << std::hex << gp_flag << std::dec << ")"
                 << std::endl;
 #endif
-      break;
+      return false;
     }
 
     std::string_view entry_name(reinterpret_cast<const char*>(p + 46), fname_len);
@@ -112,7 +120,7 @@ lszip(int fd,
     uint8_t lhdr[4];
     fd_seek(fd, static_cast<off_t>(local_offset) + 26, SEEK_SET);
     if (fd_read(fd, lhdr, 4) != 4)
-      break;
+      return false;
     uint16_t local_fname_len = le16(lhdr + 0);
     uint16_t local_extra_len = le16(lhdr + 2);
     uint64_t data_offset = static_cast<uint64_t>(local_offset) + 30
@@ -122,6 +130,7 @@ lszip(int fd,
 
     p += 46 + fname_len + extra_len + comment_len;
   }
+  return true;
 }
 
 // Considerations about Zip Directory Loading
