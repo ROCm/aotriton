@@ -63,7 +63,7 @@ SUITE_YAML=""
 SUITE_ORIGIN=""
 SUITE_ASAN=0
 SUITE_ARCH="ALL"
-THEROCK_ASAN_VERSION="7.13.0rc2"
+THEROCK_ASAN_VERSION="7.14.0.dev0"
 
 while true; do
   case "$1" in
@@ -228,6 +228,8 @@ function build_inside() {
   if [[ "${ASAN_MODE}" == "ON" ]]; then
     EXTRA_ENV+=(-e "TRITON_ENABLE_ASAN=1")
   fi
+  # Cache pip downloads under <output>/.cache/pip on the host.
+  mkdir -p "${CACHE_DIR}/pip"
   set -x
   docker run --network=host -i --rm \
     -v ${SOURCE_VOLUME}:/src:ro \
