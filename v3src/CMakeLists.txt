@@ -305,6 +305,11 @@ if(NOT AOTRITON_NOIMAGE_MODE)
       list(POP_FRONT RULE DIR_ARCH)
       list(POP_FRONT RULE DIR_FAMILY)
       list(POP_FRONT RULE DIR_KERNEL)
+      # Remaining RULE entries are the absolute paths of the .aks2 files that
+      # feed this ZIP (see v3python/codegen/root.py write_cluster()). Depending
+      # on the concrete inputs ensures the ZIP is rebuilt when any contributing
+      # .aks2 changes, even if the .nsv manifest text is unchanged.
+      set(ZIP_AKS2_DEPS ${RULE})
       set(ZIP_OUT "${AOTRITON_KERNEL_STORAGE_V2_DIR}/${DIR_ARCH}/${DIR_FAMILY}/${DIR_KERNEL}.zip")
       set(ZIP_MANIFEST "${AOTRITON_KERNEL_STORAGE_V2_DIR}/${DIR_ARCH}/${DIR_FAMILY}/${DIR_KERNEL}.nsv")
       # ZIP_MANIFEST is written by write_cluster() at generate time alongside Bare.flatzip.
@@ -313,7 +318,7 @@ if(NOT AOTRITON_NOIMAGE_MODE)
         "${VENV_BIN_PYTHON}" -m v3python.flatzip
         --manifest "${ZIP_MANIFEST}"
         -o "${ZIP_OUT}"
-        DEPENDS aotriton_v3_aks2 "${ZIP_MANIFEST}"
+        DEPENDS aotriton_v3_aks2 "${ZIP_MANIFEST}" ${ZIP_AKS2_DEPS}
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
         COMMAND_EXPAND_LISTS)
       list(APPEND ALL_ZIPS "${ZIP_OUT}")
