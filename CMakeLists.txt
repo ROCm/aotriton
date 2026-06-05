@@ -129,8 +129,10 @@ if(NOT AOTRITON_NO_PYTHON)
                   OUTPUT_STRIP_TRAILING_WHITESPACE
                   OUTPUT_VARIABLE pybind11_DIR)
 
-  # The build system should work when pybind11 is available as system package,
-  # or any other location findable by find_package(pybind11)
+  # Must use Python3_EXECUTABLE (the cmake-invoking python), NOT VENV_BIN_PYTHON.
+  # Workflow: (user's python env) -> cmake & ninja -> test aotriton.
+  # pyaotriton must be ABI-compatible with the test environment, which also supplies
+  # torch (required for GPU memory and reference). VENV_DIR must never have torch.
   find_package(pybind11 CONFIG REQUIRED)
   if(AOTRITON_USE_TORCH)
     message(STATUS "Python3_EXECUTABLE: ${Python3_EXECUTABLE}")

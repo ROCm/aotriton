@@ -54,8 +54,6 @@ class OptuneCodeGenerator(BaseTuneCodeGenerator):
         f = self._f
         iface = f.meta_object
         lut_ctype, lut_cshape, lut_cdata = self.codegen_format_lut(self._lut_tensor)
-        # gpu_kernel_image_dir = args.build_dir / f.FAMILY / f'gpu_kernel_image.{f.NAME}'
-        package_path = str(f.full_filepack_path)
         d = {
             'op_family_name'        : iface.FAMILY,
             'op_name'               : iface.NAME,

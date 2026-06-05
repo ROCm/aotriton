@@ -80,13 +80,14 @@ OnDeviceKernel::load_for_device(int device_id,
 
 #if AOTRITON_KERNEL_VERBOSE
 #if defined(_WIN32)
-  std::wcerr << L"Trying to decompress kernel " << info.package_path;
-  std::cerr << " " << info.stem_name << std::endl;
+  std::wcerr << L"Trying to decompress kernel " << info.flatzip_path;
+  std::cerr << " entry=" << info.aks2_entry << " stem=" << info.stem_name << std::endl;
 #else
-  std::cerr << "Trying to decompress kernel " << info.package_path << " " << info.stem_name << std::endl;
+  std::cerr << "Trying to decompress kernel " << std::string(info.flatzip_path)
+            << " entry=" << info.aks2_entry << " stem=" << info.stem_name << std::endl;
 #endif
 #endif
-  decompress_kernel(info.package_path, info.stem_name);
+  decompress_kernel(info);
 #if AOTRITON_KERNEL_VERBOSE
   std::cerr << "Decompress kernel to " << essentials_.image << std::endl;
 #endif
@@ -108,8 +109,7 @@ OnDeviceKernel::load_for_device(int device_id,
 // tell if a kernel is loaded, or the kernel image failed to compile and thus
 // does not exists from beginning by testing essentials_.image == nullptr
 void
-OnDeviceKernel::decompress_kernel(pstring_view package_path,
-                                      std::string_view stem_name) {
+OnDeviceKernel::decompress_kernel(const OnDeviceKernel::OnDiskKernelInfo& info) {
   if (kernel_loaded_) {
     return ;
   }
@@ -121,14 +121,14 @@ OnDeviceKernel::decompress_kernel(pstring_view package_path,
     return ;
   }
   if (!packed_kernel_) {
-    packed_kernel_ = PackedKernel::open(package_path);
+    packed_kernel_ = PackedKernel::open(info.flatzip_path, info.aks2_entry);
   }
   if (packed_kernel_) { // open may fail
 #if AOTRITON_KERNEL_VERBOSE
     std::cerr << "PackedKernel::open returns " << packed_kernel_.get()
               << " status: " << packed_kernel_->status() << std::endl;
 #endif
-    essentials_ = packed_kernel_->filter(stem_name);
+    essentials_ = packed_kernel_->filter(info.stem_name);
   }
   kernel_loaded_ = true;
 }

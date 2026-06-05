@@ -216,7 +216,12 @@ if(NOT AOTRITON_NOIMAGE_MODE)
   file(STRINGS "${AOTRITON_HSACO_RECORD}" ALL_HSACOS ENCODING UTF-8)
   add_custom_target(aotriton_v2_compile ALL DEPENDS ${ALL_HSACOS})
 
-  # Kernel Storage V2
+  # AKS2 intermediate output directory (not installed; used only during build).
+  set(AOTRITON_AKS2_DIR "${AOTRITON_V2_BUILD_DIR}/aks2")
+  execute_process(COMMAND ${CMAKE_COMMAND} -E make_directory "${AOTRITON_AKS2_DIR}")
+
+  # Kernel Storage V2: build per-functional AKS2 files under aks2/ intermediate dir.
+  # Bare.cluster format: <vendor-arch> <family> <kernel> <sha256> <abs_hsaco>...
   set(ALL_AKS2 "")
   set(ALL_ARCH_DIRS "")
   macro(ADD_FROM_CLUSTER_RULES)
@@ -224,19 +229,19 @@ if(NOT AOTRITON_NOIMAGE_MODE)
       list(POP_FRONT RULE DIR_ARCH)
       list(POP_FRONT RULE DIR_FAMILY)
       list(POP_FRONT RULE DIR_KERNEL)
-      list(POP_FRONT RULE FONLY)
+      list(POP_FRONT RULE SHA256)
       string(JOIN "/" AKS2
-        ${AOTRITON_KERNEL_STORAGE_V2_DIR}
+        ${AOTRITON_AKS2_DIR}
         ${DIR_ARCH}
         ${DIR_FAMILY}
         ${DIR_KERNEL}
-        "${FONLY}.aks2")
+        "${SHA256}.aks2")
       string(JOIN "/" HSACO_MANIFEST
-        ${AOTRITON_KERNEL_STORAGE_V2_DIR}
+        ${AOTRITON_AKS2_DIR}
         ${DIR_ARCH}
         ${DIR_FAMILY}
         ${DIR_KERNEL}
-        "${FONLY}.nsv")
+        "${SHA256}.nsv")
       # message(STATUS "Add AKS2 ${AKS2}")
       add_custom_command(OUTPUT "${AKS2}"
         COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
@@ -249,32 +254,87 @@ if(NOT AOTRITON_NOIMAGE_MODE)
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
         COMMAND_EXPAND_LISTS)
       list(APPEND ALL_AKS2 "${AKS2}")
-      # Add signature file as part of build process to avoid race conditions
-      if(NOT "${DIR_ARCH}" IN_LIST ALL_ARCH_DIRS)
-        string(JOIN "/" IMAGE_ARCH_SIGNATURE
-          ${AOTRITON_KERNEL_STORAGE_V2_DIR}
-          ${DIR_ARCH}
-          "__signature__")
-        add_custom_command(OUTPUT "${IMAGE_ARCH_SIGNATURE}"
-          COMMAND ${CMAKE_COMMAND} -E copy "${SIGNATURE_FILE}" "${IMAGE_ARCH_SIGNATURE}"
-          DEPENDS "${AKS2}" "${SIGNATURE_FILE}"
-          VERBATIM
-        )
-        list(APPEND ALL_AKS2 "${IMAGE_ARCH_SIGNATURE}")
-        list(APPEND ALL_ARCH_DIRS "${DIR_ARCH}")
-      endif()
     endforeach(RULE)
   endmacro()
   file(STRINGS "${AOTRITON_V2_BUILD_DIR}/Bare.cluster" CLUSTER_RULES ENCODING UTF-8)
   set(AKS2_OPTIONS "")
   ADD_FROM_CLUSTER_RULES()
-  # Affine kernels
+  # Affine kernels: emit AKS2 blobs to the intermediate aks2/ tree (same as Bare),
+  # then pack them into the per-family affine_kernels.zip below.
   if(EXISTS "${AOTRITON_V2_BUILD_DIR}/Affine.cluster")
-    file(STRINGS "${AOTRITON_V2_BUILD_DIR}/Affine.cluster" CLUSTER_RULES ENCODING UTF-8)
-    set(AKS2_OPTIONS "--ignore_json")
-    ADD_FROM_CLUSTER_RULES()
+    file(STRINGS "${AOTRITON_V2_BUILD_DIR}/Affine.cluster" AFFINE_CLUSTER_RULES ENCODING UTF-8)
+    foreach(RULE IN LISTS AFFINE_CLUSTER_RULES)
+      list(POP_FRONT RULE DIR_ARCH)
+      list(POP_FRONT RULE DIR_FAMILY)
+      list(POP_FRONT RULE DIR_KERNEL)
+      list(POP_FRONT RULE FONLY)
+      string(JOIN "/" AKS2
+        ${AOTRITON_AKS2_DIR}
+        ${DIR_ARCH}
+        ${DIR_FAMILY}
+        ${DIR_KERNEL}
+        "${FONLY}.aks2")
+      string(JOIN "/" HSACO_MANIFEST
+        ${AOTRITON_AKS2_DIR}
+        ${DIR_ARCH}
+        ${DIR_FAMILY}
+        ${DIR_KERNEL}
+        "${FONLY}.nsv")
+      add_custom_command(OUTPUT "${AKS2}"
+        COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
+        "${VENV_BIN_PYTHON}"
+        -m v3python.aks2
+        -o "${AKS2}"
+        --ignore_json
+        --hsaco_manifest "${HSACO_MANIFEST}"
+        DEPENDS aotriton_v2_compile
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
+        COMMAND_EXPAND_LISTS)
+      list(APPEND ALL_AKS2 "${AKS2}")
+    endforeach(RULE)
   endif()
-  add_custom_target(aotriton_kernel_storage_v3 ALL DEPENDS ${ALL_AKS2})
+  add_custom_target(aotriton_v3_aks2 ALL DEPENDS ${ALL_AKS2})
+
+  # Pack AKS2 files into per-kernel uncompressed ZIP archives under aotriton.images/.
+  # Bare.flatzip format: <vendor-arch> <family> <kernel> <abs_aks2>...
+  # ZIP is STORED (no compression) so entries are readable via lseek+read at fixed offsets.
+  set(ALL_ZIPS "")
+  if(EXISTS "${AOTRITON_V2_BUILD_DIR}/Bare.flatzip")
+    file(STRINGS "${AOTRITON_V2_BUILD_DIR}/Bare.flatzip" FLATZIP_RULES ENCODING UTF-8)
+    foreach(RULE IN LISTS FLATZIP_RULES)
+      list(POP_FRONT RULE DIR_ARCH)
+      list(POP_FRONT RULE DIR_FAMILY)
+      list(POP_FRONT RULE DIR_KERNEL)
+      # Remaining RULE entries are the absolute paths of the .aks2 files that
+      # feed this ZIP (see v3python/codegen/root.py write_cluster()). Depending
+      # on the concrete inputs ensures the ZIP is rebuilt when any contributing
+      # .aks2 changes, even if the .nsv manifest text is unchanged.
+      set(ZIP_AKS2_DEPS ${RULE})
+      set(ZIP_OUT "${AOTRITON_KERNEL_STORAGE_V2_DIR}/${DIR_ARCH}/${DIR_FAMILY}/${DIR_KERNEL}.zip")
+      set(ZIP_MANIFEST "${AOTRITON_KERNEL_STORAGE_V2_DIR}/${DIR_ARCH}/${DIR_FAMILY}/${DIR_KERNEL}.nsv")
+      # ZIP_MANIFEST is written by write_cluster() at generate time alongside Bare.flatzip.
+      add_custom_command(OUTPUT "${ZIP_OUT}"
+        COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
+        "${VENV_BIN_PYTHON}" -m v3python.flatzip
+        --manifest "${ZIP_MANIFEST}"
+        -o "${ZIP_OUT}"
+        DEPENDS aotriton_v3_aks2 "${ZIP_MANIFEST}" ${ZIP_AKS2_DEPS}
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
+        COMMAND_EXPAND_LISTS)
+      list(APPEND ALL_ZIPS "${ZIP_OUT}")
+      # Place __signature__ alongside the first ZIP in each arch dir.
+      if(NOT "${DIR_ARCH}" IN_LIST ALL_ARCH_DIRS)
+        set(IMAGE_ARCH_SIGNATURE "${AOTRITON_KERNEL_STORAGE_V2_DIR}/${DIR_ARCH}/__signature__")
+        add_custom_command(OUTPUT "${IMAGE_ARCH_SIGNATURE}"
+          COMMAND ${CMAKE_COMMAND} -E copy "${SIGNATURE_FILE}" "${IMAGE_ARCH_SIGNATURE}"
+          DEPENDS "${ZIP_OUT}" "${SIGNATURE_FILE}"
+          VERBATIM)
+        list(APPEND ALL_ZIPS "${IMAGE_ARCH_SIGNATURE}")
+        list(APPEND ALL_ARCH_DIRS "${DIR_ARCH}")
+      endif()
+    endforeach(RULE)
+  endif()
+  add_custom_target(aotriton_kernel_storage_v3 ALL DEPENDS ${ALL_ZIPS})
 endif(NOT AOTRITON_NOIMAGE_MODE)
 
 # The build logic is slightly different when AOTRITON_BUILD_FOR_TUNING=ON

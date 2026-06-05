@@ -1,6 +1,7 @@
 # Copyright © 2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
+import hashlib
 from pathlib import Path
 from functools import cached_property
 from ..gpu_targets import (
@@ -142,14 +143,20 @@ class Functional(object):
         lf = [bind.signature_in_func_name for bind in self._binds if bind.show_in_compact]
         return '_'.join([x for x in lf])
 
-    '''
-    file pack signature only cares about Functional, so it is FONLY__
-    '''
+    @cached_property
+    def filepack_ondisk_path(self) -> Path:
+        """AKS2 stem relative to the aks2/ intermediate dir: <vendor-arch>/<family>/<kernel>/<sha256>."""
+        digest = hashlib.sha256(self.unified_signature.encode()).hexdigest()
+        return Path(AOTRITON_ARCH_TO_DIRECTORY[self.arch]) / self._meta.FAMILY / self._meta.NAME / digest
+
     @property
-    def filepack_signature(self):
-        sf = self.signature_in_func_name
-        pack = AOTRITON_ARCH_TO_PACK.get(self.arch, self.arch)
-        return 'FONLY__' + sf + f'___{pack}'
+    def filepack_inzip_name(self) -> str:
+        return self.unified_signature
+
+    @property
+    def full_flatzip_path(self) -> Path:
+        """ZIP path relative to aotriton.images/: <vendor-arch>/<family>/<kernel>.zip."""
+        return Path(AOTRITON_ARCH_TO_DIRECTORY[self.arch]) / self._meta.FAMILY / (self._meta.NAME + '.zip')
 
     '''
     Unlike filepack which may consolates multiple arches into the same file.
@@ -170,10 +177,6 @@ class Functional(object):
     @property
     def full_filepack_dir(self):
         return Path(AOTRITON_ARCH_TO_DIRECTORY[self.arch]) / self._meta.FAMILY / self._meta.NAME
-
-    @property
-    def full_filepack_path(self):
-        return self.full_filepack_dir / self.filepack_signature
 
     def translate_dataframe(self, df):
         # Only meta object (kdesc/op) of a functional knows how to translate dataframe

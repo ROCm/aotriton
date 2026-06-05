@@ -89,7 +89,19 @@ class RootGenerator(object):
 
     def do_generate(self):
         args = self._args
-        sel = args.selective  # Path or None
+        sel = args.selective  # str (possibly with * glob) or None
+        if sel is not None:
+            _sel_path = Path(sel)
+            if 'affine' in _sel_path.parts:
+                # Affine kernels within the same family all contribute entries to the
+                # same per-family ZIP (e.g. flash/affine_kernels.zip).  If only one
+                # module is processed, its Bare.flatzip shard line covers only that
+                # module's .aks2, leaving the ZIP incomplete.  Running all modules in
+                # one worker (via a glob pattern) ensures flatzip_dict accumulates every
+                # module before a single shard line is written for the shared ZIP.
+                assert _sel_path.name == '*', \
+                    f"--selective for affine kernels must be a glob pattern ending in *, got: {sel!r}. " \
+                    f"Use e.g. '{_sel_path.parent}/*'"
 
         hsaco_for_kernels = []
         asms_for_kernels = []
@@ -101,7 +113,7 @@ class RootGenerator(object):
 
         ops = dispatcher_operators
         if sel is not None:
-            ops = [op for op in ops if op.unique_path == sel]
+            ops = [op for op in ops if op.unique_path.match(sel)]
         for op in ops:
             opg = OperatorGenerator(self._args, op, parent_repo=None)
             opg.generate()
@@ -119,7 +131,7 @@ class RootGenerator(object):
 
         kerns = triton_kernels
         if sel is not None:
-            kerns = [k for k in kerns if k.unique_path == sel]
+            kerns = [k for k in kerns if k.unique_path.match(sel)]
         for k in kerns:
             ksg = KernelShimGenerator(self._args, k, parent_repo=None)
             ksg.generate()
@@ -132,7 +144,7 @@ class RootGenerator(object):
         # See discussion in https://discord.com/channels/1239631572886491286/1401853302139912222/1401862203845378201
         affs = affine_kernels
         if sel is not None:
-            affs = [ak for ak in affs if ak.unique_path == sel]
+            affs = [ak for ak in affs if ak.unique_path.match(sel)]
         for ak in affs:
             log(lambda : f'{ak.__class__=}')
             if isinstance(ak, SlimAffineKernelDescription):
@@ -159,6 +171,9 @@ class RootGenerator(object):
             return
 
         cluster_dict: dict[Path, dict[str, str]] = {}
+        flatzip_dict: dict[Path, dict[str, str]] = {}
+        aks2_dir   = args.build_dir / 'aks2'
+        images_dir = args.build_dir / 'aotriton.images'
         with LazyFile(out_dir / 'Bare.compile') as rulefile:
             for kdesc, hsacos in hsaco_for_kernels:
                 image_path = hsaco_dir(args.build_dir, kdesc)
@@ -167,14 +182,17 @@ class RootGenerator(object):
                     log(lambda : f'{signatures=}')
                     for ksig in signatures:
                         self.write_hsaco(kdesc, image_path, functional, ksig, rulefile)
-                    ffp = functional.full_filepack_path
-                    cluster_dict.setdefault(ffp, {}).update(
+                    fodp = functional.filepack_ondisk_path
+                    cluster_dict.setdefault(fodp, {}).update(
                         {self._absobjfn(image_path, kdesc, ksig): hsaco_inaks2_name(kdesc, ksig)
                          for ksig in signatures}
                     )
+                    fzp_stem = fodp.parent  # drop <sha256> leaf → <vendor-arch>/<family>/<kernel>
+                    aks2_abs = (aks2_dir / fodp).with_suffix('.aks2').absolute().as_posix()
+                    flatzip_dict.setdefault(fzp_stem, {})[aks2_abs] = functional.filepack_inzip_name
         with LazyFile(out_dir / 'Bare.cluster') as clusterfile:
-            for ffp, aol_map in cluster_dict.items():
-                self.write_cluster(ffp, aol_map, clusterfile)
+            for fodp, path_entry_map in cluster_dict.items():
+                self.write_cluster(aks2_dir, fodp, path_entry_map, clusterfile)
 
         '''
         Note: Affine kernel's functionals have residual choices, so it is not
@@ -197,20 +215,43 @@ class RootGenerator(object):
                 affine_dict.setdefault(ffp, {}).update(dict(parse_rule(r) for r in asms))
         with LazyFile(out_dir / 'Affine.cluster') as clusterfile:
             for ffp, aol_map in affine_dict.items():
-                self.write_cluster(ffp, aol_map, clusterfile)
+                self.write_cluster(aks2_dir, ffp, aol_map, clusterfile)
+
+        # Fold affine modules into flatzip_dict: each module's .aks2 becomes an entry in
+        # <vendor-arch>/<family>/affine_kernels.zip, keyed by module name.
+        for ffp in affine_dict:
+            # ffp        = amd-gfx950/flash/affine_kernels/fmha_v3_fwd
+            # ffp.parent = amd-gfx950/flash/affine_kernels  (= ZIP stem)
+            aks2_abs = (aks2_dir / ffp).with_suffix('.aks2').absolute().as_posix()
+            flatzip_dict.setdefault(ffp.parent, {})[aks2_abs] = ffp.name
+
+        with LazyFile(out_dir / 'Bare.flatzip') as flatzip_file:
+            for fzp_stem, path_entry_map in flatzip_dict.items():
+                self.write_cluster(images_dir, fzp_stem, path_entry_map, flatzip_file)
 
     def launch_workers(self):
         args = self._args
-        items: list[Path] = []
-        items += [op.unique_path for op in dispatcher_operators]
-        items += [k.unique_path  for k in triton_kernels]
-        items += [ak.unique_path for ak in affine_kernels]
+        # Each entry is a --selective value: exact path str for ops/kernels,
+        # glob pattern str (e.g. 'flash/affine/*') for affine families.
+        items: list[str] = []
+        items += [op.unique_path.as_posix() for op in dispatcher_operators]
+        items += [k.unique_path.as_posix()  for k in triton_kernels]
+
+        # Affine kernels sharing the same FAMILY produce entries in the same ZIP
+        # (affine_kernels.zip), so they must run in one worker via a glob pattern
+        # to avoid duplicate shard lines for the same output ZIP.
+        from itertools import groupby
+        sorted_affs = sorted(affine_kernels, key=lambda ak: ak.FAMILY)
+        for _, grp in groupby(sorted_affs, key=lambda ak: ak.FAMILY):
+            grp_list = list(grp)
+            # e.g. unique_path = flash/affine/aiter_fmha_v3_fwd → parent/  = flash/affine/
+            items.append(grp_list[0].unique_path.parent.as_posix() + '/*')
 
         base_argv = [x for x in sys.argv[1:] if not x.startswith('--selective')]
 
-        def run_one(item: Path):
+        def run_one(item: str):
             cmd = [sys.executable, '-m', 'v3python.generate',
-                   '--selective', item.as_posix()] + base_argv
+                   '--selective', item] + base_argv
             result = subprocess.run(cmd, capture_output=False)
             if result.returncode != 0:
                 raise RuntimeError(f'Worker failed for {item}: exit {result.returncode}')
@@ -220,7 +261,7 @@ class RootGenerator(object):
         for f in futures:
             f.result()  # re-raise any worker exception
 
-        shard_names = ['Bare.shim', 'Bare.compile', 'Bare.cluster', 'Affine.cluster']
+        shard_names = ['Bare.shim', 'Bare.compile', 'Bare.cluster', 'Affine.cluster', 'Bare.flatzip']
         out_files = {name: args.build_dir / name for name in shard_names}
         # Truncate output files before appending
         for path in out_files.values():
@@ -253,13 +294,13 @@ class RootGenerator(object):
               ksig.triton_signature_string,  # Functional is not Triton-specific
               sep=';', file=rulefile)
 
-    def write_cluster(self, ffp, aol_map, clusterfile):
-        manifest_path = (self._args.build_dir / 'aotriton.images' / ffp).with_suffix('.nsv')
+    def write_cluster(self, base_dir, odp, path_entry_map, clusterfile):
+        manifest_path = (base_dir / odp).with_suffix('.nsv')
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
         with open(manifest_path, 'w', encoding='utf-8') as mf:
-            for abs_path, entry_name in aol_map.items():
+            for abs_path, entry_name in path_entry_map.items():
                 mf.write(abs_path + '\x00' + entry_name + '\x00\n')
-        print(*ffp.parts, *aol_map.keys(), sep=';', file=clusterfile)
+        print(*odp.parts, *path_entry_map.keys(), sep=';', file=clusterfile)
 
     # TODO: deprecate this, the generator should return the full path directly
     def _absasmfn(self, asm_rule):

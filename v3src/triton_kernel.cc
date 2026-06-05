@@ -53,7 +53,8 @@ void TritonKernel::delayed_init(uint32_t blake2b_lo,
 
 hipError_t
 TritonKernel::invoke(std::string_view kernel_name,
-                     pstring_view package_path,
+                     pstring_view flatzip_path,
+                     std::string_view aks2_entry,
                      std::string_view func_name,
                      std::string_view arch_name,
                      dim3 grid,
@@ -71,7 +72,7 @@ TritonKernel::invoke(std::string_view kernel_name,
   std::string stem_name;
   auto lazy = [&]() -> OnDeviceKernel::OnDiskKernelInfo {
     stem_name = construct_stem_name(kernel_name, func_name, ksig_psel_, ksig_copt_, arch_name);
-    return { package_path, stem_name, kernel_name };
+    return { flatzip_path, aks2_entry, stem_name, kernel_name };
   };
   auto [func, essentials] = get_kernel(device_id, lazy);
 #if AOTRITON_BUILD_FOR_TUNING
@@ -111,7 +112,10 @@ TritonKernel::direct_invoke(std::string_view mangled_kernel_function_name,
   int device_id;
   AOTRITON_HIP_CHECK_RETURN(hipGetDevice(&device_id));
   auto lazy = [&]() -> OnDeviceKernel::OnDiskKernelInfo {
+    // UNMAINTAINED: legacy package_path layout. The flatzip migration left
+    // aks2_entry empty here because direct_invoke has no live callers.
     return { package_path,
+             {},  // aks2_entry — legacy path predates flatzip
              ksig_copt_,  // Affine use ksig_psel_ as arch, ksig_copt_ as file name
              mangled_kernel_function_name };
   };

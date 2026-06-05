@@ -45,8 +45,12 @@ AiterAsmKernel::launch_kernel(const AiterAsmKernelArgs& kargs) {
   int device_id;
   AOTRITON_HIP_CHECK_RETURN(hipGetDevice(&device_id));
   pstring_type persistant_storage;
+  std::string  aiter_module;
   auto lazy = [&]() -> OnDeviceKernel::OnDiskKernelInfo {
-    return { get_package_path(kargs.stream, persistant_storage), hsaco_, mangled_kernel_function_name_ };
+    return { get_package_path(kargs.stream, persistant_storage, aiter_module),
+             aiter_module,
+             hsaco_,
+             mangled_kernel_function_name_ };
   };
   auto [kernel_func, essentials] = get_kernel(device_id, lazy);
 
@@ -64,7 +68,7 @@ AiterAsmKernel::launch_kernel(const AiterAsmKernelArgs& kargs) {
 }
 
 pstring_view
-AiterAsmKernel::get_package_path(hipStream_t stream, pstring_type& persistant_storage) const {
+AiterAsmKernel::get_package_path(hipStream_t stream, pstring_type& persistant_storage, std::string& aiter_module) const {
   if (path_cache_.empty()) {
 #if !defined(_WIN32)
     path_cache_ = hsaco_;
@@ -76,17 +80,14 @@ AiterAsmKernel::get_package_path(hipStream_t stream, pstring_type& persistant_st
   auto arch = Gpu2VendorArch(gpu);
   try {
     auto aks2_arch = AITER_KERNEL_ARCH_TO_STORAGE.at(arch);
-    // Example hsaco value
-    //   fmha_v3_bwd/bwd_hd64_dq_convert_fp16.co
-    auto it = path_cache_.begin();
-    std::string aiter_module = it->string();
+    // Example hsaco value: fmha_v3_bwd/bwd_hd64_dq_convert_fp16.co
+    aiter_module = path_cache_.begin()->string();
     auto aks2_family = AITER_KERNEL_MODULE_TO_STORAGE.at(aiter_module);
-    // AKS2 path Example
-    //   amd-gfx942/flash/affine_kernels/fmha_v3_bwd.aks2
+    // flatzip path example: amd-gfx942/flash/affine_kernels.zip
 #if !defined(_WIN32)
-    persistant_storage = aks2_arch + "/" + aks2_family + "/affine_kernels/" + aiter_module;
+    persistant_storage = aks2_arch + "/" + aks2_family + "/affine_kernels.zip";
 #else
-    persistant_storage = utf8_to_wide(aks2_arch) + L"/" + utf8_to_wide(aks2_family) + L"/affine_kernels/" + utf8_to_wide(aiter_module);
+    persistant_storage = utf8_to_wide(aks2_arch) + L"/" + utf8_to_wide(aks2_family) + L"/affine_kernels.zip";
 #endif
   } catch (std::out_of_range&) {
     // TODO: return error?
