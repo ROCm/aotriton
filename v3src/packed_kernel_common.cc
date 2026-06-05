@@ -92,8 +92,11 @@ PackedKernel::open(pstring_view flatzip_path, std::string_view aks2_entry) {
 
   std::unique_lock lock(registry_mutex_);
 
-  // Populate InnerMap for this ZIP if not yet done.
-  if (!registry_.contains(flatzip_path)) {
+  // Populate InnerMap for this ZIP if not yet done. Hold a single reference
+  // into the map across populate + lookup to avoid repeated hashes and
+  // pstring_type copies.
+  auto outer_it = registry_.find(flatzip_path);
+  if (outer_it == registry_.end()) {
     open_zip();
     if (zipfd < 0) {
 #if AOTRITON_KERNEL_VERBOSE
@@ -104,13 +107,23 @@ PackedKernel::open(pstring_view flatzip_path, std::string_view aks2_entry) {
 #endif
       return nullptr;
     }
-    InnerMap& new_map = registry_[pstring_type(flatzip_path)];
-    lszip(zipfd, [&new_map](std::string_view name, uint64_t off, uint64_t sz) {
-      new_map.try_emplace(std::string(name), CachedEntry{ off, sz, nullptr });
+    InnerMap staging_map;
+    bool ok = lszip(zipfd, [&staging_map](std::string_view name, uint64_t off, uint64_t sz) {
+      staging_map.try_emplace(std::string(name), CachedEntry{ off, sz, nullptr });
     });
+    if (!ok) {
+      // Partial directory must not be cached as authoritative.
+#if AOTRITON_KERNEL_VERBOSE
+      std::cerr << "PackedKernel::open: lszip failed to fully parse "
+                << std::filesystem::path(flatzip_path) << std::endl;
+#endif
+      if (zipfd != -1) fd_close(zipfd);
+      return nullptr;
+    }
+    outer_it = registry_.emplace(pstring_type(flatzip_path), std::move(staging_map)).first;
   }
 
-  InnerMap& inner_map = registry_[pstring_type(flatzip_path)];
+  InnerMap& inner_map = outer_it->second;
   auto it = inner_map.find(aks2_entry);
   if (it == inner_map.end()) {
     // Entry not present in ZIP central directory.
