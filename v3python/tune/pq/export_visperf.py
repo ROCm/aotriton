@@ -5,9 +5,14 @@
 Export a self-contained performance visualization HTML file.
 
 The output is a single .html file with all chart data inlined as JSON and
-all JS logic inlined from perf.js / vis_descriptors/flash.js.  Plotly.js is
-loaded from CDN (no fallback — the file is intended for online use or GitHub
-Pages).
+all JS logic inlined from perf.js / vis_descriptors/flash.js. The 2-D
+heatmap and level-1 drilldown work fully offline; the 3-D mesh3d view
+requires Plotly.js, which is loaded from CDN (no inlined copy — Plotly is
+~4.5 MB and would bloat the export). Level-2 (psel × copt) drilldown is
+not included; it queries the live PostgreSQL backend.
+
+Also packaged as a .zip download by the /api/perf/export_zip route in
+.tune/webui/routes.py.
 
 Usage:
     python -m v3python.tune.pq.export_visperf --workdir <workdir> --output perf.html

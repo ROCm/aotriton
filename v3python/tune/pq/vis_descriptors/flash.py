@@ -4,10 +4,9 @@
 # Python-side descriptor for flash attention kernels/ops.
 # Drives query construction in visperf.py.
 #
-# dims entries: (sql_expression, alias, cast)
-#   sql_expression: fragment used in SELECT and GROUP BY
-#   alias: column name in result rows and JS descriptor
-#   cast: SQL cast for type safety (informational; applied in sql_expression)
+# dims entries: (sql_expression, alias)
+#   sql_expression: fragment used in SELECT and GROUP BY (cast inline if needed)
+#   alias: column name in result rows and the JS descriptor
 
 FLASH_DESCRIPTOR: dict = {
     'id': 'flash',
