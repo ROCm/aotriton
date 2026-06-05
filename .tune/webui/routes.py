@@ -1022,8 +1022,11 @@ def api_perf_data():
     arch        = request.args.get('arch', '')
     kernel      = request.args.get('kernel', 'attn_fwd')
     mode        = request.args.get('mode', 'kernel')
-    seqlen_min  = int(request.args.get('seqlen_min', 0))
-    seqlen_max  = int(request.args.get('seqlen_max', 65536))
+    try:
+        seqlen_min = int(request.args.get('seqlen_min', 0))
+        seqlen_max = int(request.args.get('seqlen_max', 65536))
+    except ValueError:
+        return jsonify({'error': 'seqlen_min/seqlen_max must be integers'}), 400
     if not arch:
         return jsonify({'error': 'arch is required'}), 400
     data = tasks.query_perf_data(workdir, arch, kernel, mode, seqlen_min, seqlen_max)
