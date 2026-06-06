@@ -1904,7 +1904,8 @@ def _ensure_plotly_cache(workdir: str) -> None:
         return
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     logger.info('Downloading Plotly.js to %s', cache_path)
-    urllib.request.urlretrieve(PLOTLY_CDN_URL, cache_path)
+    with urllib.request.urlopen(PLOTLY_CDN_URL, timeout=30) as resp:
+        cache_path.write_bytes(resp.read())
     logger.info('Plotly.js cached (%d bytes)', cache_path.stat().st_size)
 
 

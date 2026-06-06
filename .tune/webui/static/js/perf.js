@@ -112,6 +112,7 @@ async function fetchData(arch, kernel, mode) {
   const resp = await fetch(`/api/perf/data?${params}`);
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   const data = await resp.json();
+  if (data.error) throw new Error(data.error);
 
   // Annotate rows with the kernel name for the tflops() function.
   data.rows.forEach(r => { r._kernel = kernel; });

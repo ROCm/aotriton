@@ -4,7 +4,9 @@
 // Flash attention TFLOPS formulas.
 // Source: ROCm/triton perf-kernels/flash-attention.py @ 0ec280cf, bench_flash_attention()
 // Counts only the two matmuls (QK^T and PV); excludes softmax, LSE, dropout.
-// BATCH=1, N_HEADS=1 for kernel-mode tuning (single-head benchmark).
+// BATCH and N_HEADS are read from each row (provided by the DB); they
+// default to 1 when absent (e.g. older kernel-mode rows from single-head
+// benchmarks).
 
 function _attnValidElements(seqlen_q, seqlen_k, causal) {
   if (causal) {
@@ -79,10 +81,10 @@ const FLASH_DESCRIPTOR = {
     },
 
     // Skipped test cases — must match v3python/tune/pq/compute_best_results.SKIP_TEST_CASES.
-    skipTestCases: new Set([]),
+    skipTestCases: new Set(['01_gqa']),
 
     // Accuracy gate: must match compute_best_results.ACCURACY_MULTIPLIER.
-    accuracyMultiplier: 10.0,
+    accuracyMultiplier: 3.0,
 
     // TFLOPS for one psel/copt candidate, given its median_ms and the
     // level-1 row context (so we know seqlen_q/seqlen_k/hdim/causal/etc).

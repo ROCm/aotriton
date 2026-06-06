@@ -1094,7 +1094,8 @@ def plotly_cache():
     if not cache_path.exists():
         try:
             cache_path.parent.mkdir(parents=True, exist_ok=True)
-            urllib.request.urlretrieve(_PLOTLY_CDN, cache_path)
+            with urllib.request.urlopen(_PLOTLY_CDN, timeout=30) as resp:
+                cache_path.write_bytes(resp.read())
         except Exception as exc:
             logger.warning('Failed to download Plotly from CDN: %s', exc)
             return f'Plotly unavailable: {exc}', 503
