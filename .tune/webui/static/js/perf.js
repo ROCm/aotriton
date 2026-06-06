@@ -1313,6 +1313,7 @@ function initPerf() {
           state.filter[k] = new Set([v]);
         }
         state.autozoom.drilldown = null;
+        state.cellDetail = null;
       }
       updateDimPanel();
       renderGrid();

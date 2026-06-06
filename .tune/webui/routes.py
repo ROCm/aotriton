@@ -7,6 +7,7 @@ URL routes and handlers for the web dashboard
 
 from flask import Blueprint, render_template, request, jsonify, current_app, Response, g, send_file
 import io
+import os
 import time
 import json
 import logging
@@ -1056,13 +1057,21 @@ def api_perf_export_zip():
       col_dim_filters  – {dim: [allowed_values, ...]} — empty list means all
       url_params       – dict of URL search params to pre-set in the export
     """
-    body        = request.get_json(force=True) or {}
-    col_filters: dict = body.get('col_dim_filters', {})
-    url_params: dict  = body.get('url_params', {})
+    body        = request.get_json(silent=True) or {}
+    if not isinstance(body, dict):
+        return jsonify({'error': 'request body must be a JSON object'}), 400
+    col_filters = body.get('col_dim_filters', {})
+    url_params  = body.get('url_params', {})
+    descriptor_id = body.get('descriptor_id', 'flash')
+    if not isinstance(col_filters, dict) or not isinstance(url_params, dict):
+        return jsonify({'error': 'col_dim_filters and url_params must be objects'}), 400
+    if not isinstance(descriptor_id, str):
+        return jsonify({'error': 'descriptor_id must be a string'}), 400
 
     try:
         html = tasks.build_perf_export_html(col_filters, url_params,
-                                            current_app.config['WORKDIR'])
+                                            current_app.config['WORKDIR'],
+                                            descriptor_id=descriptor_id)
     except Exception as exc:
         logger.error('build_perf_export_html failed: %s', exc)
         return jsonify({'error': str(exc)}), 500
@@ -1094,10 +1103,19 @@ def plotly_cache():
     if not cache_path.exists():
         try:
             cache_path.parent.mkdir(parents=True, exist_ok=True)
+            # Download to a temp file in the same dir, then atomic rename:
+            # avoids serving a truncated cache if the connection drops or
+            # two concurrent first-time requests race.
+            tmp_path = cache_path.with_suffix(cache_path.suffix + f'.tmp.{os.getpid()}')
             with urllib.request.urlopen(_PLOTLY_CDN, timeout=30) as resp:
-                cache_path.write_bytes(resp.read())
+                tmp_path.write_bytes(resp.read())
+            os.replace(tmp_path, cache_path)
         except Exception as exc:
             logger.warning('Failed to download Plotly from CDN: %s', exc)
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
             return f'Plotly unavailable: {exc}', 503
     return send_file(cache_path, mimetype='application/javascript')
 

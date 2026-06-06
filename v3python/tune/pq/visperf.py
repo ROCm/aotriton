@@ -95,7 +95,7 @@ def _build_axes(rows: list[dict], desc: dict) -> dict:
     """Compute sorted unique values for each dimension from the result rows."""
     axes: dict[str, list] = {}
     for _, alias in desc['dims']:
-        vals = sorted({r[alias] for r in rows if r[alias] is not None})
+        vals = sorted({r.get(alias) for r in rows if r.get(alias) is not None})
         axes[alias] = vals
     return axes
 
@@ -145,10 +145,18 @@ def query_all_best_results(conn, descriptor_id: str = 'flash') -> dict:
     """
     desc = DESCRIPTORS[descriptor_id]
 
-    # Enumerate all arches
+    # Enumerate all arches. Union across kernel_table and op_table so
+    # descriptors that expose only ops (no kernel_table) still appear.
+    arch_tables = [t for t in (desc.get('kernel_table'), desc.get('op_table')) if t]
+    archs: list[str] = []
+    seen: set[str] = set()
     with conn.cursor() as cur:
-        cur.execute(f"SELECT DISTINCT arch FROM {desc['kernel_table']} ORDER BY arch")
-        archs = [r[0] for r in cur.fetchall()]
+        for tbl in arch_tables:
+            cur.execute(f"SELECT DISTINCT arch FROM {tbl} ORDER BY arch")
+            for (a,) in cur.fetchall():
+                if a not in seen:
+                    seen.add(a)
+                    archs.append(a)
 
     result: dict[str, dict[str, dict]] = {}
     for arch in archs:
@@ -197,6 +205,7 @@ def query_cell_detail(conn, task_id: int, kernel: str, mode: str = 'kernel') -> 
           ],
         }
     """
+    assert mode in ('kernel', 'op'), f"query_cell_detail: invalid mode {mode!r}"
     if mode == 'op':
         results_table = 'optune_results'
         accuracy_table = 'most_accurate_optune_results'

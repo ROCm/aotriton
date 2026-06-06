@@ -72,9 +72,9 @@ def build_export_html(data: dict, url_params: dict | None = None) -> str:
     url_params: optional dict of URL search params to pre-set on first load
                 (e.g. arch, kernel, display, scale, az_mode, col_dims, row_dims).
     """
-    flash_js = _FLASH_JS.read_text()
-    perf_js  = _PERF_JS.read_text()
-    template = _TEMPLATE.read_text()
+    flash_js = _FLASH_JS.read_text(encoding='utf-8')
+    perf_js  = _PERF_JS.read_text(encoding='utf-8')
+    template = _TEMPLATE.read_text(encoding='utf-8')
 
     initial_params = json.dumps(url_params or {}, separators=(',', ':'))
     data = _to_column_store(data)

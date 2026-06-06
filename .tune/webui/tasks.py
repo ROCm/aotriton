@@ -1960,18 +1960,21 @@ def query_perf_cell_detail(workdir: str, task_id: int, kernel: str,
 
 
 def build_perf_export_html(col_filters: dict, url_params: dict,
-                           workdir: str) -> str:
+                           workdir: str, descriptor_id: str = 'flash') -> str:
     """Build a self-contained autozoom HTML string for all arches and kernels/ops.
 
     col_filters: {dim: [allowed_values]} — empty list means include all values.
     url_params:  forwarded into the static bootstrap as the initial URL state.
     """
+    desc = DESCRIPTORS.get(descriptor_id)
+    if desc is None:
+        raise ValueError(f"Unknown descriptor_id {descriptor_id!r}")
+
     conn_params = get_db_connection_params(Path(workdir))
     with psycopg.connect(**conn_params, autocommit=True) as conn:
-        all_data = query_all_best_results(conn)
+        all_data = query_all_best_results(conn, descriptor_id=descriptor_id)
 
     if col_filters:
-        desc = DESCRIPTORS.get('flash')
 
         def _row_allowed(r: dict) -> bool:
             for dim, allowed in col_filters.items():
