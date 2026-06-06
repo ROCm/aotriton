@@ -4,51 +4,53 @@
 // Copyright © 2024-2025 Advanced Micro Devices, Inc.
 // SPDX-License-Identifier: MIT
 
+#include <algorithm>
+#include <cstdint>
 #include <cstdio>       // SEEK_SET/SEEK_CUR/SEEK_END
+#include <cwchar>
 #include <cstring>
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <sys/types.h>  // off_t (POSIX type; MSVC/MinGW provide it here)
 #include <windows.h>
-#include "utf8_to_wide.hh"
 
 #if !defined(ssize_t)
     #include <BaseTsd.h> // For SSIZE_T
     typedef SSIZE_T ssize_t;
 #endif
 
-// Invalid handle value that can be returned as int
-constexpr int INVALID_FD = -1;
+// Invalid handle value that can be returned as an internal file descriptor.
+constexpr std::intptr_t INVALID_FD = -1;
 
 // Helper function to add long path prefix for Windows
-static std::wstring add_long_path_prefix(const std::wstring& path) {
-    // Regular paths - add \\?\ prefix
+static std::wstring add_long_path_prefix(std::wstring path) {
+    std::replace(path.begin(), path.end(), L'/', L'\\');
+    if (path.rfind(LR"(\\?\)", 0) == 0 || path.rfind(LR"(\\.\)", 0) == 0) {
+        return path;
+    }
+    if (path.rfind(LR"(\\)", 0) == 0) {
+        return LR"(\\?\UNC\)" + path.substr(2);
+    }
     return LR"(\\?\)" + path;
 }
 
-// Convert HANDLE to int for our interface
-// We use intptr_t to ensure the HANDLE fits
-static int handle_to_fd(HANDLE handle) {
+static std::intptr_t handle_to_fd(HANDLE handle) {
     if (handle == INVALID_HANDLE_VALUE) {
         return INVALID_FD;
     }
-    // Cast HANDLE to intptr_t then to int
-    // On 64-bit Windows, HANDLE is 64-bit, but we need to maintain int interface
-    // This is safe as Windows guarantees handles fit in 32 bits for compatibility
-    return static_cast<int>(reinterpret_cast<intptr_t>(handle));
+    return reinterpret_cast<std::intptr_t>(handle);
 }
 
-// Convert int back to HANDLE
-static HANDLE fd_to_handle(int fd) {
+static HANDLE fd_to_handle(std::intptr_t fd) {
     if (fd == INVALID_FD) {
         return INVALID_HANDLE_VALUE;
     }
-    return reinterpret_cast<HANDLE>(static_cast<intptr_t>(fd));
+    return reinterpret_cast<HANDLE>(fd);
 }
 
-static int fd_open(const char* pathname) {
-    // Convert UTF-8 pathname to wide string
-    std::wstring wide_path = utf8_to_wide(std::string(pathname));
+static std::intptr_t fd_open(const std::filesystem::path& pathname) {
+    std::wstring wide_path = pathname.wstring();
     if (wide_path.empty()) {
         return INVALID_FD;
     }
@@ -74,34 +76,33 @@ static int fd_open(const char* pathname) {
         DWORD error_code = GetLastError();
         
 #if AOTRITON_KERNEL_VERBOSE
-        char error_message[256] = {0};
-        FormatMessageA(
+        wchar_t error_message[256] = {0};
+        FormatMessageW(
             FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
             nullptr,
             error_code,
             MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
             error_message,
-            sizeof(error_message),
+            sizeof(error_message) / sizeof(error_message[0]),
             nullptr
         );
-        // Remove trailing newline
-        size_t len = strlen(error_message);
-        if (len > 0 && (error_message[len-1] == '\n' || error_message[len-1] == '\r')) {
-            error_message[len-1] = '\0';
+        for (size_t len = wcslen(error_message);
+             len > 0 && (error_message[len - 1] == L'\n' || error_message[len - 1] == L'\r');
+             --len) {
+            error_message[len - 1] = L'\0';
         }
-        std::cerr << "CreateFileW failed for: " << pathname 
-                  << ", Win32 error " << error_code 
-                  << ": " << error_message << std::endl;
+        std::wcerr << L"CreateFileW failed for: " << wide_path
+                   << L", Win32 error " << error_code
+                   << L": " << error_message << std::endl;
 #endif
         
         return INVALID_FD;
     }
     
-    // Return the handle as an int
     return handle_to_fd(file_handle);
 }
 
-static int fd_close(int fd) {
+static int fd_close(std::intptr_t fd) {
     HANDLE file_handle = fd_to_handle(fd);
     if (file_handle == INVALID_HANDLE_VALUE) {
         return -1;
@@ -121,7 +122,7 @@ static int fd_close(int fd) {
     return 0;
 }
 
-static ssize_t fd_read(int fd, void *buf, size_t count) {
+static ssize_t fd_read(std::intptr_t fd, void *buf, size_t count) {
     if (count == 0) {
         return 0;
     }
@@ -160,7 +161,7 @@ static ssize_t fd_read(int fd, void *buf, size_t count) {
     return static_cast<ssize_t>(bytes_read);
 }
 
-static off_t fd_seek(int fd, off_t offset, int whence) {
+static off_t fd_seek(std::intptr_t fd, off_t offset, int whence) {
     HANDLE file_handle = fd_to_handle(fd);
     if (file_handle == INVALID_HANDLE_VALUE)
         return -1;

@@ -39,6 +39,11 @@ import yaml
 # DO NOT USE Path.absolute(), which does not resolve '..' in the path
 REL_PYTHON = Path(os.path.abspath(sys.executable)).relative_to(Path(sys.exec_prefix))
 
+def _shard_path(selective: str) -> Path:
+    # --selective may be a glob pattern such as flash/affine/*; keep glob
+    # metacharacters out of host filesystem paths used only for worker shards.
+    return Path(selective.replace('*', '__wildcard__'))
+
 class StrMatcher(object):
     def __init__(self, pattern):
         self._pattern = pattern
@@ -160,7 +165,7 @@ class RootGenerator(object):
         if args.build_for_tuning_second_pass:
             return
 
-        out_dir = args.build_dir / 'Bare.shards' / sel if sel is not None else args.build_dir
+        out_dir = args.build_dir / 'Bare.shards' / _shard_path(sel) if sel is not None else args.build_dir
         if sel is not None:
             out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -267,7 +272,7 @@ class RootGenerator(object):
         for path in out_files.values():
             path.unlink(missing_ok=True)
         for item in items:
-            shard_dir = args.build_dir / 'Bare.shards' / item
+            shard_dir = args.build_dir / 'Bare.shards' / _shard_path(item)
             for name, out_path in out_files.items():
                 shard_file = shard_dir / name
                 if shard_file.exists():

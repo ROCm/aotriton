@@ -7,7 +7,11 @@
 #include <mutex>
 #include <cstring>
 #include <cassert>
+#if defined(_WIN32)
+#include <windows.h>
+#else
 #include <dlfcn.h>
+#endif
 #include <errno.h>
 #include <filesystem>
 #include <iostream>
@@ -32,15 +36,54 @@ constexpr int AOTRITON_LZMA_BUFSIZ = 64 * 1024;
 
 namespace {
 
+#if defined(_WIN32)
+fs::path
+module_path_from_address(const void* address) {
+  HMODULE module = nullptr;
+  if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                          GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                          reinterpret_cast<LPCWSTR>(address),
+                          &module)) {
+    return {};
+  }
+
+  std::wstring path(MAX_PATH, L'\0');
+  while (true) {
+    DWORD size = GetModuleFileNameW(module, path.data(), static_cast<DWORD>(path.size()));
+    if (size == 0) {
+      return {};
+    }
+    if (size < path.size()) {
+      path.resize(size);
+      return fs::path(path);
+    }
+    path.resize(path.size() * 2);
+  }
+}
+#endif
+
 const fs::path&
 locate_aotriton_images() {
   static fs::path aotriton_images = []() {
+#if defined(_WIN32)
+    fs::path module_path = module_path_from_address(
+      reinterpret_cast<const void*>(locate_aotriton_images));
+    if (module_path.empty()) {
+      return fs::path{};
+    }
+#if AOTRITON_KERNEL_VERBOSE
+    std::wcerr << L"Win32 locates libaotriton at: "
+               << module_path.native() << std::endl;
+#endif
+    return module_path.parent_path() / KERNEL_STORAGE_V2_BASE;
+#else
     Dl_info info;
     dladdr((void*)locate_aotriton_images, &info);
 #if AOTRITON_KERNEL_VERBOSE
     std::cerr << "dladdr locates libaotriton at: " << info.dli_fname << std::endl;
 #endif
     return fs::path(info.dli_fname).parent_path() / KERNEL_STORAGE_V2_BASE;
+#endif
   }();
   return aotriton_images;
 }
@@ -71,7 +114,7 @@ PackedKernel::open(pstring_view flatzip_path, std::string_view aks2_entry) {
   }
 
   const auto& storage_base = locate_aotriton_images();
-  int dirfd = -1, zipfd = -1;
+  std::intptr_t dirfd = -1, zipfd = -1;
 
   auto open_zip = [&]() {
     if (zipfd != -1)
@@ -83,10 +126,10 @@ PackedKernel::open(pstring_view flatzip_path, std::string_view aks2_entry) {
     zipfd = ::openat(dirfd, rel_path.c_str(), O_RDONLY);
     if (dirfd != -1) { fd_close(dirfd); dirfd = -1; }
 #else
+    if (storage_base.empty())
+      return;
     fs::path full_path = storage_base / std::wstring(flatzip_path);
-    auto u8str = full_path.u8string();
-    std::string utf8_path(reinterpret_cast<const char*>(u8str.data()), u8str.size());
-    zipfd = fd_open(utf8_path.c_str());
+    zipfd = fd_open(full_path);
 #endif
   };
 
@@ -184,7 +227,7 @@ struct AKS2_Metadata {
 //     4B file name length (M), including trailing '\0'
 //     MB file name
 // N * varlen: Kernel Images (TODO: alignment requirements?)
-PackedKernel::PackedKernel(int fd, size_t offset, size_t size) {
+PackedKernel::PackedKernel(std::intptr_t fd, size_t offset, size_t size) {
   if (size < sizeof(AKS2_Header)) {
     final_status_ = hipErrorInvalidSource;
     return;
