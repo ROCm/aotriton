@@ -1257,7 +1257,7 @@ function initPerf() {
   }
 
   // Apply URL params to selectors before load().
-  const saved = restoreFromURL();
+  let saved = restoreFromURL();
   if (saved.module) state.descriptorId = saved.module;
   if (saved.arch   && archSel)   archSel.value   = saved.arch;
   if (saved.kernel && kernelSel) kernelSel.value = saved.kernel;
@@ -1285,6 +1285,8 @@ function initPerf() {
     const arch   = archSel.value;
     const kernel = kernelSel.value;
     if (!arch || !kernel) return;
+    // Refresh saved from current URL so prior pushURLState() updates are picked up.
+    saved = restoreFromURL();
     // Infer mode from the active descriptor's ops set; fall back to kernel.
     const activeDesc = DESCRIPTORS[state.descriptorId] || DESCRIPTORS[Object.keys(DESCRIPTORS)[0]];
     const mode = (activeDesc && activeDesc.ops && activeDesc.ops.has(kernel)) ? 'op' : 'kernel';

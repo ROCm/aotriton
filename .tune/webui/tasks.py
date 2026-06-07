@@ -1891,24 +1891,6 @@ def get_scheduled_workers(workdir):
 # Performance visualization
 # ---------------------------------------------------------------------------
 
-PLOTLY_CDN_URL = (
-    'https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js'
-)
-
-
-def _ensure_plotly_cache(workdir: str) -> None:
-    """Download Plotly.js to scratch/webcache/ if not already present."""
-    import urllib.request
-    cache_path = Path(workdir) / 'scratch' / 'webcache' / 'plotly.min.js'
-    if cache_path.exists():
-        return
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-    logger.info('Downloading Plotly.js to %s', cache_path)
-    with urllib.request.urlopen(PLOTLY_CDN_URL, timeout=30) as resp:
-        cache_path.write_bytes(resp.read())
-    logger.info('Plotly.js cached (%d bytes)', cache_path.stat().st_size)
-
-
 def get_perf_archs(workdir: str) -> list[str]:
     """Return sorted list of arches with best_tuning_results data."""
     try:
