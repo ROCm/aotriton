@@ -265,7 +265,12 @@ def query_cell_detail(conn, task_id: int, kernel: str, mode: str = 'kernel') -> 
 _ARCH_ORDER = ['gfx942', 'gfx950', 'gfx1201', 'gfx90a', 'gfx1100']
 
 def get_available_archs(conn, descriptor_id: str = 'flash') -> list[str]:
-    """Return arches present in best_tuning_results in preferred display order."""
+    """Return arches present in the descriptor's kernel_table, in display order.
+
+    Every operator in AOTriton is backed by one or more Triton kernels, so
+    querying kernel_table alone yields the complete set of arches the
+    library has been built for. There is no op-only arch to recover.
+    """
     desc = DESCRIPTORS[descriptor_id]
     with conn.cursor() as cur:
         cur.execute(f"SELECT DISTINCT arch FROM {desc['kernel_table']}")

@@ -21,6 +21,7 @@ Usage:
 import argparse
 import json
 import logging
+import re
 from pathlib import Path
 
 import psycopg
@@ -65,6 +66,23 @@ def _to_column_store(data: dict) -> dict:
     return data
 
 
+def _json_for_script(obj) -> str:
+    """json.dumps suitable for embedding directly inside <script>...</script>.
+
+    The HTML parser ends a <script> element at the first ``</`` (followed by
+    a valid tag name) — most importantly ``</script>``, but also ``<!--`` and
+    ``<script`` open new parsing states. ``json.dumps`` leaves ``/`` and
+    ``<`` untouched, so a string value containing ``</script>`` would break
+    out of the tag.
+
+    Replacing ``<`` with the JSON-equivalent ``\\u003c`` is the canonical
+    fix: it neutralizes all three problem sequences, the JSON parser
+    decodes the escape back to ``<`` transparently, and it requires no
+    changes on the consuming JS side (vs. e.g. base64).
+    """
+    return json.dumps(obj, separators=(',', ':')).replace('<', '\\u003c')
+
+
 def build_export_html(data: dict, url_params: dict | None = None) -> str:
     """Build a self-contained HTML string from pre-fetched data.
 
@@ -76,15 +94,19 @@ def build_export_html(data: dict, url_params: dict | None = None) -> str:
     perf_js  = _PERF_JS.read_text(encoding='utf-8')
     template = _TEMPLATE.read_text(encoding='utf-8')
 
-    initial_params = json.dumps(url_params or {}, separators=(',', ':'))
     data = _to_column_store(data)
-
-    return (template
-            .replace('__PERF_DATA__', json.dumps(data, separators=(',', ':')))
-            .replace('__INITIAL_PARAMS__', initial_params)
-            .replace('__PLOTLY_CDN__', PLOTLY_CDN)
-            .replace('// __FLASH_JS__', flash_js)
-            .replace('// __PERF_JS__', perf_js))
+    substitutions = {
+        '__PERF_DATA__':     _json_for_script(data),
+        '__INITIAL_PARAMS__': _json_for_script(url_params or {}),
+        '__PLOTLY_CDN__':    PLOTLY_CDN,
+        '// __FLASH_JS__':   flash_js,
+        '// __PERF_JS__':    perf_js,
+    }
+    # Single-pass substitution so a value that happens to contain another
+    # placeholder token (e.g. inlined JS mentioning `__PERF_DATA__`) cannot
+    # be re-substituted in a later step.
+    pattern = re.compile('|'.join(re.escape(k) for k in substitutions))
+    return pattern.sub(lambda m: substitutions[m.group(0)], template)
 
 
 def export_visperf(conn, output_path: Path) -> None:

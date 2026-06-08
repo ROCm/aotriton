@@ -135,6 +135,19 @@ dispatch_tasks.py → task_queue (PostgreSQL, status=pending)
   - `status` values: `pending`, `running`, `completed`, `failed`, `cancelled`
 - **`tuning_results`** — raw per-kernel results with `impl_desc` (JSONB: psels + copts)
 - **`best_tuning_results`** — aggregated best result per (arch, kernel, task_config)
+- **`optune_results` / `best_optune_results`** — same shape, but for op-mode tuning
+
+### Arch enumeration: prefer kernel_table, do not union op_table
+
+Every operator in AOTriton is implemented on top of one or more Triton
+kernels. The set of arches the library has been built for is therefore
+fully determined by the kernel side of the database — there is no
+op-only arch. When listing available arches for UI/export purposes
+(e.g. `visperf.get_available_archs`), `SELECT DISTINCT arch FROM
+<kernel_table>` is the complete answer; do **not** add a `UNION SELECT
+DISTINCT arch FROM <op_table>` "for safety". The union is dead SQL,
+masks bugs (op rows without a corresponding kernel build), and review
+comments that recommend it should be pushed back on.
 
 ### Unix-socket protocol (localq/protocol.py)
 
