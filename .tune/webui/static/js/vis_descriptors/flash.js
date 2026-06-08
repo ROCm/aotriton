@@ -47,6 +47,10 @@ const FLASH_DESCRIPTOR = {
   defaultRowDims: ['hdim'],
   defaultFixed:   {},
 
+  // Kernels and ops exposed in the UI's Kernel/Op dropdown.
+  // Declared in display order; ops uses a Set elsewhere for mode inference.
+  kernels: ['attn_fwd', 'bwd_kernel_dk_dv', 'bwd_kernel_dq', 'bwd_kernel_fuse'],
+  opsList: ['attn_fwd_op', 'attn_bwd_op'],
   ops: new Set(['attn_fwd_op', 'attn_bwd_op']),
 
   // kernel names that use the forward FLOPs formula

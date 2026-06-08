@@ -15,6 +15,26 @@ const THEORETICAL_PEAK_TFLOPS = {
 const DESCRIPTORS = {};
 function registerDescriptor(desc) { DESCRIPTORS[desc.id] = desc; }
 
+// Populate the Kernel/Op <select> from a descriptor's kernels/opsList.
+// Empties existing options first so re-population is idempotent.
+function populateKernelSelect(selectEl, desc) {
+  if (!selectEl || !desc) return;
+  while (selectEl.firstChild) selectEl.removeChild(selectEl.firstChild);
+  const _grp = (label, names) => {
+    if (!names || !names.length) return;
+    const og = document.createElement('optgroup');
+    og.label = label;
+    for (const n of names) {
+      const opt = document.createElement('option');
+      opt.value = opt.textContent = n;
+      og.appendChild(opt);
+    }
+    selectEl.appendChild(og);
+  };
+  _grp('Kernels', desc.kernels);
+  _grp('Ops',     desc.opsList);
+}
+
 // ---------------------------------------------------------------------------
 // Color utilities
 // ---------------------------------------------------------------------------
@@ -1259,6 +1279,11 @@ function initPerf() {
   // Apply URL params to selectors before load().
   let saved = restoreFromURL();
   if (saved.module) state.descriptorId = saved.module;
+  // Populate the Kernel/Op dropdown from the active descriptor so adding
+  // new kernels/descriptors does not require editing the template.
+  const _activeDesc = DESCRIPTORS[state.descriptorId]
+                   || DESCRIPTORS[Object.keys(DESCRIPTORS)[0]];
+  populateKernelSelect(kernelSel, _activeDesc);
   if (saved.arch   && archSel)   archSel.value   = saved.arch;
   if (saved.kernel && kernelSel) kernelSel.value = saved.kernel;
   if (saved.display && dispSel) {

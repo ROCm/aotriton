@@ -35,18 +35,8 @@
     </label>
 
     <label>Kernel / Op:
-      <select id="perf-kernel">
-        <optgroup label="Kernels">
-          <option value="attn_fwd">attn_fwd</option>
-          <option value="bwd_kernel_dk_dv">bwd_kernel_dk_dv</option>
-          <option value="bwd_kernel_dq">bwd_kernel_dq</option>
-          <option value="bwd_kernel_fuse">bwd_kernel_fuse</option>
-        </optgroup>
-        <optgroup label="Ops">
-          <option value="attn_fwd_op">attn_fwd_op</option>
-          <option value="attn_bwd_op">attn_bwd_op</option>
-        </optgroup>
-      </select>
+      <!-- Populated at runtime from the active descriptor (see populateKernelSelect in perf.js). -->
+      <select id="perf-kernel"></select>
     </label>
 
     <label>Display:

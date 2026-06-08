@@ -1103,14 +1103,15 @@ _PLOTLY_SHA256 = '6d21266ce1bd7d9e5ab4e115989c70c20de0382fd973a8f26ab58619eba4d6
 def plotly_cache():
     """Serve Plotly.js from a local cache, downloading it on first request."""
     import hashlib
+    import tempfile
     workdir = current_app.config['WORKDIR']
     cache_path = Path(workdir) / 'scratch' / 'webcache' / 'plotly.min.js'
     if not cache_path.exists():
-        # Download to a temp file in the same dir, then atomic rename:
-        # avoids serving a truncated cache if the connection drops or
-        # two concurrent first-time requests race. Pre-declared so the
-        # except cleanup never trips UnboundLocalError on early failure.
-        tmp_path = cache_path.with_suffix(cache_path.suffix + f'.tmp.{os.getpid()}')
+        # tempfile.mkstemp gives us a unique, atomically-created file in the
+        # same directory as the final cache_path so os.replace() is atomic on
+        # the same filesystem. Unique name avoids the PID-only TOCTOU race
+        # where two concurrent threads in the same process collide.
+        tmp_path: Path | None = None
         try:
             cache_path.parent.mkdir(parents=True, exist_ok=True)
             with urllib.request.urlopen(_PLOTLY_CDN, timeout=30) as resp:
@@ -1121,14 +1122,20 @@ def plotly_cache():
                     f'Plotly CDN payload SHA-256 mismatch: got {digest}, '
                     f'expected {_PLOTLY_SHA256}'
                 )
-            tmp_path.write_bytes(payload)
+            fd, tmp_name = tempfile.mkstemp(prefix='plotly.', suffix='.tmp',
+                                            dir=cache_path.parent)
+            tmp_path = Path(tmp_name)
+            with os.fdopen(fd, 'wb') as fh:
+                fh.write(payload)
             os.replace(tmp_path, cache_path)
+            tmp_path = None  # ownership transferred to cache_path
         except Exception as exc:
             logger.warning('Failed to download Plotly from CDN: %s', exc)
-            try:
-                tmp_path.unlink(missing_ok=True)
-            except Exception:
-                pass
+            if tmp_path is not None:
+                try:
+                    tmp_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
             return f'Plotly unavailable: {exc}', 503
     return send_file(cache_path, mimetype='application/javascript')
 
