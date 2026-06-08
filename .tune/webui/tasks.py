@@ -32,7 +32,7 @@ from v3python.tune.flash.module import FlashEntry
 from .pytest_entry_parser import parse_pytest_node_id, entry_to_sql_clauses
 from v3python.tune.pq.visperf import (
     query_best_results, query_all_best_results, get_available_archs,
-    _build_axes, query_cell_detail,
+    build_axes, query_cell_detail,
 )
 from v3python.tune.pq.vis_descriptors import DESCRIPTORS
 from v3python.tune.pq.export_visperf import export_visperf as _do_export_visperf, build_export_html
@@ -1967,6 +1967,6 @@ def build_perf_export_html(col_filters: dict, url_params: dict,
         for arch_data in all_data.values():
             for kdata in arch_data.values():
                 kdata['rows'] = [r for r in kdata['rows'] if _row_allowed(r)]
-                kdata['axes'] = _build_axes(kdata['rows'], desc)
+                kdata['axes'] = build_axes(kdata['rows'], desc)
 
     return build_export_html(all_data, url_params)

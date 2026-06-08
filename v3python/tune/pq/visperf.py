@@ -91,7 +91,7 @@ def _build_query(desc: dict, arch: str, kernel_or_op: str, mode: str,
     return sql, params
 
 
-def _build_axes(rows: list[dict], desc: dict) -> dict:
+def build_axes(rows: list[dict], desc: dict) -> dict:
     """Compute sorted unique values for each dimension from the result rows."""
     axes: dict[str, list] = {}
     for _, alias in desc['dims']:
@@ -122,7 +122,7 @@ def query_best_results(conn, arch: str, kernel: str, mode: str = 'kernel',
         rows = cur.fetchall()
 
     rows = [dict(r) for r in rows]
-    axes = _build_axes(rows, desc)
+    axes = build_axes(rows, desc)
 
     return {
         'arch': arch,

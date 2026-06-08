@@ -1094,21 +1094,34 @@ def api_export_visperf():
 
 
 _PLOTLY_CDN = 'https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js'
+# SHA-256 of the upstream plotly.js-dist-min@2.35.2/plotly.min.js bundle.
+# Verified out-of-band; if the CDN returns content that does not match this
+# digest we refuse to cache or serve it.
+_PLOTLY_SHA256 = '6d21266ce1bd7d9e5ab4e115989c70c20de0382fd973a8f26ab58619eba4d603'
 
 @bp.route('/static/cache/plotly.min.js')
 def plotly_cache():
     """Serve Plotly.js from a local cache, downloading it on first request."""
+    import hashlib
     workdir = current_app.config['WORKDIR']
     cache_path = Path(workdir) / 'scratch' / 'webcache' / 'plotly.min.js'
     if not cache_path.exists():
+        # Download to a temp file in the same dir, then atomic rename:
+        # avoids serving a truncated cache if the connection drops or
+        # two concurrent first-time requests race. Pre-declared so the
+        # except cleanup never trips UnboundLocalError on early failure.
+        tmp_path = cache_path.with_suffix(cache_path.suffix + f'.tmp.{os.getpid()}')
         try:
             cache_path.parent.mkdir(parents=True, exist_ok=True)
-            # Download to a temp file in the same dir, then atomic rename:
-            # avoids serving a truncated cache if the connection drops or
-            # two concurrent first-time requests race.
-            tmp_path = cache_path.with_suffix(cache_path.suffix + f'.tmp.{os.getpid()}')
             with urllib.request.urlopen(_PLOTLY_CDN, timeout=30) as resp:
-                tmp_path.write_bytes(resp.read())
+                payload = resp.read()
+            digest = hashlib.sha256(payload).hexdigest()
+            if digest != _PLOTLY_SHA256:
+                raise ValueError(
+                    f'Plotly CDN payload SHA-256 mismatch: got {digest}, '
+                    f'expected {_PLOTLY_SHA256}'
+                )
+            tmp_path.write_bytes(payload)
             os.replace(tmp_path, cache_path)
         except Exception as exc:
             logger.warning('Failed to download Plotly from CDN: %s', exc)
