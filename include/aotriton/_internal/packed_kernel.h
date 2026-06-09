@@ -4,6 +4,7 @@
 #ifndef AOTRITON_V2_API_PACKED_KERNEL_H
 #define AOTRITON_V2_API_PACKED_KERNEL_H
 
+#include <aotriton/_internal/fd.h>
 #include <aotriton/_internal/triton_kernel.h>
 #include <aotriton/config.h>
 #include <cstddef>
@@ -24,7 +25,7 @@ struct AKS2_Metadata;
 class PackedKernel {
 public:
   static PackedKernelPtr open(pstring_view flatzip_path, std::string_view aks2_entry);
-  PackedKernel(std::intptr_t fd, size_t offset = 0, size_t size = SIZE_MAX);
+  PackedKernel(fd_t fd, size_t offset = 0, size_t size = SIZE_MAX);
   ~PackedKernel();
   hipError_t status() const {
     return final_status_;

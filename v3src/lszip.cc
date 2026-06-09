@@ -42,7 +42,7 @@ static inline uint32_t le32(const uint8_t* p) {
 namespace AOTRITON_NS {
 
 bool
-lszip(std::intptr_t fd,
+lszip(fd_t fd,
       std::function<void(std::string_view, uint64_t, uint64_t)> visitor) {
   off_t file_size = fd_seek(fd, 0, SEEK_END);
   if (file_size < EOCD_MIN_SIZE)

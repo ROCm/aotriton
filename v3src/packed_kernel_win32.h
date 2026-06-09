@@ -4,8 +4,8 @@
 // Copyright © 2024-2025 Advanced Micro Devices, Inc.
 // SPDX-License-Identifier: MIT
 
+#include <aotriton/_internal/fd.h>
 #include <algorithm>
-#include <cstdint>
 #include <cstdio>       // SEEK_SET/SEEK_CUR/SEEK_END
 #include <cwchar>
 #include <cstring>
@@ -13,15 +13,13 @@
 #include <iostream>
 #include <string>
 #include <sys/types.h>  // off_t (POSIX type; MSVC/MinGW provide it here)
-#include <windows.h>
 
 #if !defined(ssize_t)
     #include <BaseTsd.h> // For SSIZE_T
     typedef SSIZE_T ssize_t;
 #endif
 
-// Invalid handle value that can be returned as an internal file descriptor.
-constexpr std::intptr_t INVALID_FD = -1;
+namespace AOTRITON_NS {
 
 // Helper function to add long path prefix for Windows
 static std::wstring add_long_path_prefix(std::wstring path) {
@@ -35,24 +33,10 @@ static std::wstring add_long_path_prefix(std::wstring path) {
     return LR"(\\?\)" + path;
 }
 
-static std::intptr_t handle_to_fd(HANDLE handle) {
-    if (handle == INVALID_HANDLE_VALUE) {
-        return INVALID_FD;
-    }
-    return reinterpret_cast<std::intptr_t>(handle);
-}
-
-static HANDLE fd_to_handle(std::intptr_t fd) {
-    if (fd == INVALID_FD) {
-        return INVALID_HANDLE_VALUE;
-    }
-    return reinterpret_cast<HANDLE>(fd);
-}
-
-static std::intptr_t fd_open(const std::filesystem::path& pathname) {
+static fd_t fd_open(const std::filesystem::path& pathname) {
     std::wstring wide_path = pathname.wstring();
     if (wide_path.empty()) {
-        return INVALID_FD;
+        return invalid_fd();
     }
 
     wide_path = add_long_path_prefix(wide_path);
@@ -96,20 +80,19 @@ static std::intptr_t fd_open(const std::filesystem::path& pathname) {
                    << L": " << error_message << std::endl;
 #endif
         
-        return INVALID_FD;
+        return invalid_fd();
     }
     
-    return handle_to_fd(file_handle);
+    return file_handle;
 }
 
-static int fd_close(std::intptr_t fd) {
-    HANDLE file_handle = fd_to_handle(fd);
-    if (file_handle == INVALID_HANDLE_VALUE) {
+static int fd_close(fd_t fd) {
+    if (!fd_is_valid(fd)) {
         return -1;
     }
     
     // Close using Win32 API
-    if (!CloseHandle(file_handle)) {
+    if (!CloseHandle(fd)) {
         DWORD error_code = GetLastError();
         
 #if AOTRITON_KERNEL_VERBOSE
@@ -122,13 +105,12 @@ static int fd_close(std::intptr_t fd) {
     return 0;
 }
 
-static ssize_t fd_read(std::intptr_t fd, void *buf, size_t count) {
+static ssize_t fd_read(fd_t fd, void *buf, size_t count) {
     if (count == 0) {
         return 0;
     }
     
-    HANDLE file_handle = fd_to_handle(fd);
-    if (file_handle == INVALID_HANDLE_VALUE) {
+    if (!fd_is_valid(fd)) {
         return -1;
     }
     
@@ -143,7 +125,7 @@ static ssize_t fd_read(std::intptr_t fd, void *buf, size_t count) {
     DWORD bytes_read = 0;
     
     // Read using Win32 API
-    if (!ReadFile(file_handle, buf, bytes_to_read, &bytes_read, nullptr)) {
+    if (!ReadFile(fd, buf, bytes_to_read, &bytes_read, nullptr)) {
         DWORD error_code = GetLastError();
         
         // ERROR_HANDLE_EOF is not really an error
@@ -161,9 +143,8 @@ static ssize_t fd_read(std::intptr_t fd, void *buf, size_t count) {
     return static_cast<ssize_t>(bytes_read);
 }
 
-static off_t fd_seek(std::intptr_t fd, off_t offset, int whence) {
-    HANDLE file_handle = fd_to_handle(fd);
-    if (file_handle == INVALID_HANDLE_VALUE)
+static off_t fd_seek(fd_t fd, off_t offset, int whence) {
+    if (!fd_is_valid(fd))
         return -1;
     DWORD move_method;
     switch (whence) {
@@ -174,9 +155,11 @@ static off_t fd_seek(std::intptr_t fd, off_t offset, int whence) {
     }
     LARGE_INTEGER li_offset, li_new;
     li_offset.QuadPart = static_cast<LONGLONG>(offset);
-    if (!SetFilePointerEx(file_handle, li_offset, &li_new, move_method))
+    if (!SetFilePointerEx(fd, li_offset, &li_new, move_method))
         return -1;
     return static_cast<off_t>(li_new.QuadPart);
 }
+
+} // namespace AOTRITON_NS
 
 #endif // AOTRITON_V2_API_PACKED_KERNEL_WIN32_H

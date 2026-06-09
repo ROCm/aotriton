@@ -4,6 +4,7 @@
 #include <aotriton/_internal/packed_kernel.h>
 #include <aotriton/_internal/lszip.h>
 #include <aotriton/runtime.h>
+#include <algorithm>
 #include <mutex>
 #include <cstring>
 #include <cassert>
@@ -39,6 +40,7 @@ namespace {
 #if defined(_WIN32)
 fs::path
 module_path_from_address(const void* address) {
+  constexpr size_t kMaxModulePath = 32768;
   HMODULE module = nullptr;
   if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
                           GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
@@ -48,7 +50,7 @@ module_path_from_address(const void* address) {
   }
 
   std::wstring path(MAX_PATH, L'\0');
-  while (true) {
+  for (int attempt = 0; attempt < 8; ++attempt) {
     DWORD size = GetModuleFileNameW(module, path.data(), static_cast<DWORD>(path.size()));
     if (size == 0) {
       return {};
@@ -57,8 +59,12 @@ module_path_from_address(const void* address) {
       path.resize(size);
       return fs::path(path);
     }
-    path.resize(path.size() * 2);
+    if (path.size() >= kMaxModulePath) {
+      return {};
+    }
+    path.resize((std::min)(path.size() * 2, kMaxModulePath));
   }
+  return {};
 }
 #endif
 
@@ -114,17 +120,20 @@ PackedKernel::open(pstring_view flatzip_path, std::string_view aks2_entry) {
   }
 
   const auto& storage_base = locate_aotriton_images();
-  std::intptr_t dirfd = -1, zipfd = -1;
+  fd_t dirfd = invalid_fd();
+  fd_t zipfd = invalid_fd();
 
   auto open_zip = [&]() {
-    if (zipfd != -1)
+    if (fd_is_valid(zipfd))
       return;
 #if !defined(_WIN32)
-    if (dirfd == -1)
+    if (!fd_is_valid(dirfd))
       dirfd = ::open(storage_base.c_str(), O_RDONLY);
+    if (!fd_is_valid(dirfd))
+      return;
     std::string rel_path(flatzip_path);
     zipfd = ::openat(dirfd, rel_path.c_str(), O_RDONLY);
-    if (dirfd != -1) { fd_close(dirfd); dirfd = -1; }
+    if (fd_is_valid(dirfd)) { fd_close(dirfd); dirfd = invalid_fd(); }
 #else
     if (storage_base.empty())
       return;
@@ -141,7 +150,7 @@ PackedKernel::open(pstring_view flatzip_path, std::string_view aks2_entry) {
   auto outer_it = registry_.find(flatzip_path);
   if (outer_it == registry_.end()) {
     open_zip();
-    if (zipfd < 0) {
+    if (!fd_is_valid(zipfd)) {
 #if AOTRITON_KERNEL_VERBOSE
       // pstring_view is wstring_view on Windows, so route through fs::path
       // which knows how to stream both narrow and wide values to std::ostream.
@@ -160,7 +169,7 @@ PackedKernel::open(pstring_view flatzip_path, std::string_view aks2_entry) {
       std::cerr << "PackedKernel::open: lszip failed to fully parse "
                 << std::filesystem::path(flatzip_path) << std::endl;
 #endif
-      if (zipfd != -1) fd_close(zipfd);
+      if (fd_is_valid(zipfd)) fd_close(zipfd);
       return nullptr;
     }
     outer_it = registry_.emplace(pstring_type(flatzip_path), std::move(staging_map)).first;
@@ -170,19 +179,19 @@ PackedKernel::open(pstring_view flatzip_path, std::string_view aks2_entry) {
   auto it = inner_map.find(aks2_entry);
   if (it == inner_map.end()) {
     // Entry not present in ZIP central directory.
-    if (zipfd != -1) fd_close(zipfd);
+    if (fd_is_valid(zipfd)) fd_close(zipfd);
     return nullptr;
   }
 
   if (it->second.ptr) {
     // Another thread constructed it while we waited for the lock.
-    if (zipfd != -1) fd_close(zipfd);
+    if (fd_is_valid(zipfd)) fd_close(zipfd);
     return it->second.ptr;
   }
 
   open_zip();
-  if (zipfd < 0) {
-    if (dirfd != -1) fd_close(dirfd);
+  if (!fd_is_valid(zipfd)) {
+    if (fd_is_valid(dirfd)) fd_close(dirfd);
     return nullptr;
   }
   it->second.ptr = std::make_shared<PackedKernel>(zipfd, it->second.offset, it->second.size);
@@ -227,7 +236,7 @@ struct AKS2_Metadata {
 //     4B file name length (M), including trailing '\0'
 //     MB file name
 // N * varlen: Kernel Images (TODO: alignment requirements?)
-PackedKernel::PackedKernel(std::intptr_t fd, size_t offset, size_t size) {
+PackedKernel::PackedKernel(fd_t fd, size_t offset, size_t size) {
   if (size < sizeof(AKS2_Header)) {
     final_status_ = hipErrorInvalidSource;
     return;
