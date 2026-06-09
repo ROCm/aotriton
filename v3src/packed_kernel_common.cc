@@ -49,8 +49,8 @@ module_path_from_address(const void* address) {
     return {};
   }
 
-  // Match the fixed-buffer shape dlfcn-win32's dladdr used before; it has
-  // covered current install paths, while the W API preserves UTF-16 contents.
+  // Match the previous Windows fixed-buffer shape; it has covered current
+  // install paths, while the W API preserves UTF-16 contents.
   std::wstring path(kModulePathChars, L'\0');
   DWORD size = GetModuleFileNameW(module, path.data(), kModulePathChars);
   if (size == 0 || size == kModulePathChars) {
