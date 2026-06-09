@@ -40,7 +40,7 @@ namespace {
 #if defined(_WIN32)
 fs::path
 module_path_from_address(const void* address) {
-  constexpr size_t kMaxModulePath = 32768;
+  constexpr DWORD kModulePathChars = 2 * MAX_PATH;
   HMODULE module = nullptr;
   if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
                           GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
@@ -49,22 +49,15 @@ module_path_from_address(const void* address) {
     return {};
   }
 
-  std::wstring path(MAX_PATH, L'\0');
-  for (int attempt = 0; attempt < 8; ++attempt) {
-    DWORD size = GetModuleFileNameW(module, path.data(), static_cast<DWORD>(path.size()));
-    if (size == 0) {
-      return {};
-    }
-    if (size < path.size()) {
-      path.resize(size);
-      return fs::path(path);
-    }
-    if (path.size() >= kMaxModulePath) {
-      return {};
-    }
-    path.resize((std::min)(path.size() * 2, kMaxModulePath));
+  // Match the fixed-buffer shape dlfcn-win32's dladdr used before; it has
+  // covered current install paths, while the W API preserves UTF-16 contents.
+  std::wstring path(kModulePathChars, L'\0');
+  DWORD size = GetModuleFileNameW(module, path.data(), kModulePathChars);
+  if (size == 0 || size == kModulePathChars) {
+    return {};
   }
-  return {};
+  path.resize(size);
+  return fs::path(path);
 }
 #endif
 
