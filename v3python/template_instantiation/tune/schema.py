@@ -100,6 +100,11 @@ class PerfSchema:
     def names(self):
         return [p.name for p in self.params]
 
+    def __call__(self, kernel):
+        """Stacked-@ form: accumulate this schema onto the kernel below it."""
+        from ..describe import accumulate_spec
+        return accumulate_spec(self, kernel)
+
     def __repr__(self):
         return (f'PerfSchema({self.dataclass.__name__!r}, '
                 f'{[p.name for p in self.params]})')

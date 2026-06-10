@@ -43,11 +43,11 @@ def _check_names():
 def _check_stubs_raise():
     # Entry points not yet implemented must still fail loudly, not silently no-op.
     # (tensor_dtype/choice_set/tensor/scalar: Step 2.1; overrides/eq/ne/lt/gt:
-    #  Step 2.2; tune.schema: Step 3.1.)
+    #  Step 2.2; tune.schema: Step 3.1; tune.configs/binning/fallback/derived:
+    #  Step 3.2.)
     callables = [
         lambda: ati.union_params([]),
-        lambda: ati.tune.binning(key=ati.tune.binning.le),
-        lambda: ati.tune.configs(lambda f: None),
+        lambda: ati.tune.optune(),
     ]
     for call in callables:
         try:

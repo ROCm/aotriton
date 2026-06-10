@@ -10,12 +10,18 @@ The perf schema (Step 3.1) and the configs/binning/fallback/derived registration
 """
 
 from .schema import PerfParam, PerfSchema, schema
-from .binning import binning, Binning, BinningSelector
+from .binning import BinningSelector
+from .registration import (
+    Config, TuneSpec,
+    ConfigsSpec, BinningSpec, FallbackSpec, DerivedSpec,
+    configs, binning, fallback, derived,
+)
 
 __all__ = [
     'PerfParam', 'PerfSchema', 'schema',
-    'binning', 'Binning', 'BinningSelector',
+    'binning', 'BinningSelector',
     'configs', 'fallback', 'derived', 'optune', 'Config',
+    'TuneSpec', 'ConfigsSpec', 'BinningSpec', 'FallbackSpec', 'DerivedSpec',
 ]
 
 
@@ -29,9 +35,5 @@ def _stub(name):
     return _raise
 
 
-# Implemented in Step 3.2.
-configs = _stub('configs')
-fallback = _stub('fallback')
-derived = _stub('derived')
+# operator-level tuning keys; implemented with the operator in Phase 5.
 optune = _stub('optune')
-Config = _stub('Config')

@@ -44,8 +44,37 @@ class KernelSpec:
                 f'{len(self.overrides)} overrides)')
 
 
+def _build_tune_spec(tune_records):
+    """Fold the collected tune spec-records into one TuneSpec, or None if there
+    are no tuning decorators on this kernel."""
+    from .tune import (
+        TuneSpec, PerfSchema, ConfigsSpec, BinningSpec, FallbackSpec, DerivedSpec,
+    )
+    if not tune_records:
+        return None
+    ts = TuneSpec()
+    for r in tune_records:
+        if isinstance(r, PerfSchema):
+            assert ts.schema is None, 'duplicate ati.tune.schema on one kernel'
+            ts.schema = r
+        elif isinstance(r, ConfigsSpec):
+            assert ts.configs is None, 'duplicate ati.tune.configs on one kernel'
+            ts.configs = r.generator
+        elif isinstance(r, BinningSpec):
+            ts.binning.update(r.keys)
+        elif isinstance(r, FallbackSpec):
+            ts.fallback.update(r.values)
+        elif isinstance(r, DerivedSpec):
+            ts.derived.update(r.programs)
+        else:
+            raise AssertionError(f'unrecognized tune spec {r!r}')
+    return ts
+
+
 def _partition(specs):
-    tensors, scalars, overrides, others = [], [], [], []
+    from .tune import PerfSchema, ConfigsSpec, BinningSpec, FallbackSpec, DerivedSpec
+    tune_types = (PerfSchema, ConfigsSpec, BinningSpec, FallbackSpec, DerivedSpec)
+    tensors, scalars, overrides, tune_records, others = [], [], [], [], []
     for s in specs:
         if isinstance(s, TensorSpec):
             tensors.append(s)
@@ -53,9 +82,11 @@ def _partition(specs):
             scalars.append(s)
         elif isinstance(s, Override):
             overrides.append(s)
+        elif isinstance(s, tune_types):
+            tune_records.append(s)
         else:
             others.append(s)
-    return tensors, scalars, overrides, others
+    return tensors, scalars, overrides, tune_records, others
 
 
 def _validate_completeness(params, tensors, scalars):
@@ -97,14 +128,15 @@ def _validate_completeness(params, tensors, scalars):
 def describe(kernel, *specs, _validate=True):
     """Attach an ATI KernelSpec to a kernel. Canonical for both authoring modes."""
     params = kernel_params(kernel)
-    tensors, scalars, overrides, others = _partition(specs)
+    tensors, scalars, overrides, tune_records, others = _partition(specs)
     assert not others, f'describe() got unrecognized specs: {others}'
     if _validate:
         errors = _validate_completeness(params, tensors, scalars)
         assert not errors, (
             f'ATI describe({getattr(kernel, "__name__", kernel)!r}) validation '
             f'failed:\n  ' + '\n  '.join(errors))
-    spec = KernelSpec(kernel, params, tensors, scalars, overrides)
+    spec = KernelSpec(kernel, params, tensors, scalars, overrides,
+                      tune=_build_tune_spec(tune_records))
     kernel.__ati__ = spec
     return kernel
 
