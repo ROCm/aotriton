@@ -7,9 +7,11 @@ from .override import (
     Predicate, VarRef, Override,
     eq, ne, lt, gt, le, ge,
 )
+from .functional import Functional, enumerate_functionals
 
 __all__ = [
     'Choice', 'Axis', 'assign_godel', 'godel_of',
     'Predicate', 'VarRef', 'Override',
     'eq', 'ne', 'lt', 'gt', 'le', 'ge',
+    'Functional', 'enumerate_functionals',
 ]
