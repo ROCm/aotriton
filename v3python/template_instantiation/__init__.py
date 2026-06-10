@@ -1,0 +1,61 @@
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+"""
+Advanced Template Instantiation (ATI) — declarative front-end for describing
+Triton kernels and operators.
+
+This is the Step 0.2 skeleton: every documented public name resolves so the API
+shape is fixed early, but each entry point raises NotImplementedError until its
+implementing step lands. See agent-plans/ati_executive0.md.
+
+Authoring surface (see agent-plans/ati_rev1.md):
+    tensor_dtype, choice_set   - named choice variables (§3.1, §3.2)
+    tensor, scalar             - bind args to a variable / literal type (§3.1, §3.2)
+    overrides                  - conditional value rules (§3.3)
+    eq, ne, lt, gt             - predicate builders for overrides / metro `if`
+    describe                   - attach a spec to a pure-Triton kernel (§3.4 Mode B)
+    operator                   - declare an operator over backends (§4)
+    union_params               - order-preserving param merge (§4.2)
+    metro_kernel               - if/else metro wiring (§5)
+    tune                       - perf schema / autotune submodule (§6)
+"""
+
+from . import tune
+
+__all__ = [
+    'tensor_dtype', 'choice_set', 'tensor', 'scalar',
+    'overrides', 'eq', 'ne', 'lt', 'gt',
+    'describe', 'operator', 'union_params', 'metro_kernel',
+    'tune',
+]
+
+
+def _stub(name):
+    def _raise(*args, **kwargs):
+        raise NotImplementedError(
+            f'ati.{name} is not implemented yet (Step 0.2 skeleton). '
+            f'See agent-plans/ati_executive0.md.')
+    _raise.__name__ = name
+    _raise.__qualname__ = name
+    return _raise
+
+
+# --- choice-declaring surface (§3.1, §3.2) ---
+tensor_dtype = _stub('tensor_dtype')
+choice_set = _stub('choice_set')
+tensor = _stub('tensor')
+scalar = _stub('scalar')
+
+# --- conditional overrides + predicate builders (§3.3) ---
+overrides = _stub('overrides')
+eq = _stub('eq')
+ne = _stub('ne')
+lt = _stub('lt')
+gt = _stub('gt')
+
+# --- description attachment + operator + metro (§3.4, §4, §5) ---
+describe = _stub('describe')
+operator = _stub('operator')
+union_params = _stub('union_params')
+metro_kernel = _stub('metro_kernel')
