@@ -23,6 +23,9 @@ Surface:
 
 import fnmatch
 
+from .ir import Override, VarRef
+from .ir import eq, ne, lt, gt, le, ge   # predicate builders, re-exported as ati.*
+
 
 class ChoiceVar:
     """A named choice variable shared by several arguments — the
@@ -183,3 +186,20 @@ def scalar(arg_name, type_or_var=None, *, options=None):
     """Bind a non-tensor argument: a plain runtime scalar, an enumerated choice
     (options=), or a member of a shared choice variable."""
     return ScalarSpec(arg_name, type_or_var, options=options)
+
+
+def overrides(targets, *, to, when):
+    """Conditional override (agent-plans/ati_rev1.md §3.3): rewrite `targets` to
+    `to` for functionals where `when` holds.
+
+      ati.overrides('encoded_softmax', to=0,  when=ati.eq('RETURN_ENCODED_SOFTMAX', False))
+      ati.overrides('Hdim_qk', to='BLOCK_DMODEL', when=ati.eq('PADDED_HEAD', False))
+      ati.overrides(['dropout_p', ...], to=0, when=ati.eq('ENABLE_DROPOUT', False))
+
+    The shape of `to` selects the value kind:
+      * str          -> VarRef (copy another variable's choice, e.g. BLOCK_DMODEL)
+      * anything else -> literal (Choice.parse handles ints/bools/floats; `0` on a
+                         tensor target is the constexpr-zero / former-CDETensor case)
+    """
+    value = VarRef(to) if isinstance(to, str) else to
+    return Override(targets, when, value)
