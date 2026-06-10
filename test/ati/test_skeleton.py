@@ -41,11 +41,9 @@ def _check_names():
 
 
 def _check_stubs_raise():
-    # Calling an unimplemented entry point must fail loudly, not silently no-op.
+    # Entry points not yet implemented must still fail loudly, not silently no-op.
+    # (tensor_dtype/choice_set/tensor/scalar are implemented as of Step 2.1.)
     callables = [
-        lambda: ati.tensor_dtype('T'),
-        lambda: ati.tensor('Q', 'T'),
-        lambda: ati.scalar('x', 'i32'),
         lambda: ati.overrides('B', to=0),
         lambda: ati.describe(object()),
         lambda: ati.union_params([]),

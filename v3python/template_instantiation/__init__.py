@@ -22,6 +22,7 @@ Authoring surface (see agent-plans/ati_rev1.md):
 """
 
 from . import tune
+from .decorators import tensor_dtype, choice_set, tensor, scalar
 
 __all__ = [
     'tensor_dtype', 'choice_set', 'tensor', 'scalar',
@@ -41,11 +42,8 @@ def _stub(name):
     return _raise
 
 
-# --- choice-declaring surface (§3.1, §3.2) ---
-tensor_dtype = _stub('tensor_dtype')
-choice_set = _stub('choice_set')
-tensor = _stub('tensor')
-scalar = _stub('scalar')
+# --- choice-declaring surface (§3.1, §3.2): implemented in Step 2.1 ---
+# tensor_dtype, choice_set, tensor, scalar imported from .decorators
 
 # --- conditional overrides + predicate builders (§3.3) ---
 overrides = _stub('overrides')
