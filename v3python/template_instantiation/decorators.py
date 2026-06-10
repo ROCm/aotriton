@@ -58,21 +58,43 @@ def choice_set(name, options):
 class TensorSpec:
     """One tensor argument binding (one `@ati.tensor`).
 
+    The first argument is either a single name or a LIST of names that share one
+    dtype and shape but have NO strides — e.g. the rank-0 philox pointers
+    (replaces grouping them under one frozenset). Strides require a per-tensor
+    glob, so a name list forbids `strides=`/`contiguous=`.
+
     `dtype` is either a ChoiceVar (shared dimension) or a literal type string
     (anonymous single-choice variable). Strides are bound per tensor via a glob;
     rank is inferred from the matched stride count unless given explicitly."""
 
-    __slots__ = ('arg_name', 'dtype', 'strides_pattern', 'rank', 'contiguous')
+    __slots__ = ('arg_names', 'dtype', 'strides_pattern', 'rank', 'contiguous')
 
     def __init__(self, arg_name, dtype, strides=None, rank=None, contiguous=None):
         assert isinstance(dtype, (ChoiceVar, str)), \
             f'@ati.tensor dtype must be a ChoiceVar or a literal type string, ' \
             f'got {dtype!r}'
-        self.arg_name = arg_name
+        if isinstance(arg_name, (list, tuple)):
+            assert arg_name, '@ati.tensor needs at least one argument name'
+            assert all(isinstance(a, str) for a in arg_name), \
+                '@ati.tensor name list must contain strings'
+            assert strides is None and contiguous is None, (
+                '@ati.tensor with a name list cannot take strides=/contiguous= '
+                '(a stride glob cannot be partitioned across several tensors); '
+                'group only strideless tensors, or declare them individually')
+            self.arg_names = tuple(arg_name)
+        else:
+            assert isinstance(arg_name, str), \
+                f'@ati.tensor first arg must be a name or list of names, got {arg_name!r}'
+            self.arg_names = (arg_name,)
         self.dtype = dtype
         self.strides_pattern = strides
         self.rank = rank
         self.contiguous = contiguous          # int index | stride-name | None
+
+    @property
+    def arg_name(self) -> str:
+        """The representative (first) argument name."""
+        return self.arg_names[0]
 
     @property
     def is_literal_dtype(self) -> bool:
@@ -81,8 +103,8 @@ class TensorSpec:
     @property
     def var_name(self) -> str:
         """The choice-variable name this tensor binds. A literal dtype is sugar
-        for an anonymous single-choice variable named after the argument."""
-        return self.dtype.name if isinstance(self.dtype, ChoiceVar) else self.arg_name
+        for an anonymous single-choice variable named after the first argument."""
+        return self.dtype.name if isinstance(self.dtype, ChoiceVar) else self.arg_names[0]
 
     def match_strides(self, param_names) -> list[str]:
         """Glob-match this tensor's stride parameters from the kernel signature,
@@ -132,18 +154,29 @@ class TensorSpec:
 class ScalarSpec:
     """One non-tensor argument binding (one `@ati.scalar`).
 
-    Forms:
-      scalar('Sm_scale', 'fp32')          -> type_='fp32'      (plain runtime)
-      scalar('CAUSAL_TYPE', options=[..]) -> options=[..]      (enumerated)
-      scalar('Max_seqlen_q', S)           -> dtype=ChoiceVar S (shared dimension)
-      scalar('Num_head_q')                -> neither; type read from annotation
-                                             at build time (Step 2.3)
+    The first argument is either a single name or a LIST of names that share one
+    choice dimension (the scalar analogue of grouping several tensors under one
+    tensor_dtype; replaces the legacy `frozenset([...])` keys):
+
+      scalar('Sm_scale', 'fp32')              -> plain runtime scalar
+      scalar('CAUSAL_TYPE', options=[..])     -> enumerated (former feature)
+      scalar(['Q_descale','K_descale'], options=[0])  -> several args, one axis
+      scalar('Max_seqlen_q', S)               -> bound to a shared ChoiceVar S
+      scalar('Num_head_q')                    -> type read from annotation (Step 2.3)
     """
 
-    __slots__ = ('arg_name', 'type_', 'dtype', 'options')
+    __slots__ = ('arg_names', 'type_', 'dtype', 'options')
 
     def __init__(self, arg_name, type_or_var=None, options=None):
-        self.arg_name = arg_name
+        if isinstance(arg_name, (list, tuple)):
+            assert arg_name, '@ati.scalar needs at least one argument name'
+            assert all(isinstance(a, str) for a in arg_name), \
+                '@ati.scalar name list must contain strings'
+            self.arg_names = tuple(arg_name)
+        else:
+            assert isinstance(arg_name, str), \
+                f'@ati.scalar first arg must be a name or list of names, got {arg_name!r}'
+            self.arg_names = (arg_name,)
         self.type_ = None
         self.dtype = None
         self.options = None
@@ -163,10 +196,15 @@ class ScalarSpec:
             self.options = list(options) if not _is_numpy_array(options) else options
 
     @property
+    def arg_name(self) -> str:
+        """The representative (first) argument name."""
+        return self.arg_names[0]
+
+    @property
     def var_name(self) -> str:
-        """The choice-variable name. A shared ChoiceVar uses its name; everything
-        else is an anonymous variable named after the argument."""
-        return self.dtype.name if self.dtype is not None else self.arg_name
+        """The choice-variable name. A shared ChoiceVar uses its name; a name list
+        uses its first member; a single arg names its own anonymous variable."""
+        return self.dtype.name if self.dtype is not None else self.arg_names[0]
 
     @property
     def has_explicit_type(self) -> bool:
@@ -178,7 +216,7 @@ class ScalarSpec:
         return accumulate_spec(self, kernel)
 
     def __repr__(self):
-        return (f'ScalarSpec({self.arg_name!r}, type_={self.type_!r}, '
+        return (f'ScalarSpec({self.arg_names!r}, type_={self.type_!r}, '
                 f'dtype={self.dtype!r}, options={self.options!r})')
 
 

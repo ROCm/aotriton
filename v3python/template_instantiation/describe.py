@@ -89,11 +89,13 @@ def _partition(specs):
     return tensors, scalars, overrides, tune_records, others
 
 
-def _validate_completeness(params, tensors, scalars):
-    """Every introspected parameter must be claimed exactly once — either by a
-    tensor (as the tensor itself or one of its stride globs) or by a scalar.
+def _validate_completeness(params, tensors, scalars, tune_records):
+    """Every introspected parameter must be claimed exactly once — by a tensor
+    (itself or one of its stride globs), a scalar, or a perf-schema field.
     Reports orphans and double-claims (the §9.1a completeness check, kernel-scoped).
     """
+    from .tune import PerfSchema
+
     param_names = [p.name for p in params]
     name_set = set(param_names)
     claims = {}      # arg_name -> list of claimant descriptions
@@ -102,11 +104,17 @@ def _validate_completeness(params, tensors, scalars):
         claims.setdefault(arg_name, []).append(who)
 
     for t in tensors:
-        claim(t.arg_name, f'tensor({t.arg_name})')
+        for a in t.arg_names:
+            claim(a, f'tensor({a})')
         for sname in t.match_strides(param_names):
             claim(sname, f'tensor({t.arg_name}).strides')
     for s in scalars:
-        claim(s.arg_name, f'scalar({s.arg_name})')
+        for a in s.arg_names:
+            claim(a, f'scalar({a})')
+    for r in tune_records:
+        if isinstance(r, PerfSchema):
+            for pp in r.params:
+                claim(pp.name, f'tune.schema({pp.name})')
 
     errors = []
     # claims referencing names not in the signature
@@ -121,7 +129,7 @@ def _validate_completeness(params, tensors, scalars):
     for name in param_names:
         if name not in claims:
             errors.append(f'parameter {name!r} is not claimed by any '
-                          f'@ati.tensor/@ati.scalar (or stride glob)')
+                          f'@ati.tensor/@ati.scalar/tune.schema (or stride glob)')
     return errors
 
 
@@ -131,7 +139,7 @@ def describe(kernel, *specs, _validate=True):
     tensors, scalars, overrides, tune_records, others = _partition(specs)
     assert not others, f'describe() got unrecognized specs: {others}'
     if _validate:
-        errors = _validate_completeness(params, tensors, scalars)
+        errors = _validate_completeness(params, tensors, scalars, tune_records)
         assert not errors, (
             f'ATI describe({getattr(kernel, "__name__", kernel)!r}) validation '
             f'failed:\n  ' + '\n  '.join(errors))

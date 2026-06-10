@@ -162,8 +162,12 @@ def build_kernel(kernel_spec) -> BuiltKernel:
             # all members of a shared var must name the same variable -> same choices
         else:
             choices = _choices_from([first.dtype])     # literal: single choice
-        arg_names = [t.arg_name for t in group]
-        ranks = {t.arg_name: t.resolve_rank(kernel_spec.param_names) for t in group}
+        arg_names = [a for t in group for a in t.arg_names]
+        ranks = {}
+        for t in group:
+            r = t.resolve_rank(kernel_spec.param_names)
+            for a in t.arg_names:
+                ranks[a] = r
         contiguous = {}
         for t in group:
             cstride = t.resolve_contiguous(kernel_spec.param_names)
@@ -193,7 +197,7 @@ def build_kernel(kernel_spec) -> BuiltKernel:
             choices = _choices_from(first.options)
         else:                                       # plain runtime scalar
             choices = _choices_from([_scalar_type(first, ann_by_name, name)])
-        arg_names = [s.arg_name for s in group]
+        arg_names = [a for s in group for a in s.arg_names]
         anchor = min(param_index[a] for a in arg_names)
         axes.append(Axis(var_name, arg_names, choices, anchor))
 

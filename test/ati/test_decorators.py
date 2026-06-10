@@ -119,6 +119,32 @@ def test_scalar_no_type_defers_to_annotation():
     assert spec.var_name == 'Num_head_q'
 
 
+def test_scalar_name_list_shares_one_axis():
+    spec = ati.scalar(['Q_descale', 'K_descale', 'P_scale'], options=[0])
+    assert spec.arg_names == ('Q_descale', 'K_descale', 'P_scale')
+    assert spec.arg_name == 'Q_descale'              # representative
+    assert spec.var_name == 'Q_descale'
+    assert spec.options == [0]
+
+
+def test_tensor_name_list_strideless():
+    T = ati.tensor_dtype('Tp', dtype=['*u64'])
+    spec = ati.tensor(['philox_seed_ptr', 'philox_offset1'], T, rank=0)
+    assert spec.arg_names == ('philox_seed_ptr', 'philox_offset1')
+    assert spec.var_name == 'Tp'
+    assert spec.resolve_rank([]) == 0
+
+
+def test_tensor_name_list_forbids_strides():
+    T = ati.tensor_dtype('Tp', dtype=['*u64'])
+    try:
+        ati.tensor(['a', 'b'], T, strides='stride_a?')
+    except AssertionError as e:
+        assert 'name list' in str(e)
+        return
+    raise AssertionError('expected strides-forbidden assertion')
+
+
 def main():
     fns = [v for k, v in sorted(globals().items()) if k.startswith('test_')]
     for fn in fns:
