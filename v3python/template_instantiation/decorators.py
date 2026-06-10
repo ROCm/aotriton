@@ -118,6 +118,11 @@ class TensorSpec:
         assert isinstance(self.contiguous, str)
         return self.contiguous
 
+    def __call__(self, kernel):
+        """Stacked-@ form: accumulate this spec onto the kernel below it."""
+        from .describe import accumulate_spec
+        return accumulate_spec(self, kernel)
+
     def __repr__(self):
         return (f'TensorSpec({self.arg_name!r}, dtype={self.dtype!r}, '
                 f'strides={self.strides_pattern!r}, rank={self.rank}, '
@@ -166,6 +171,11 @@ class ScalarSpec:
     @property
     def has_explicit_type(self) -> bool:
         return self.type_ is not None or self.dtype is not None
+
+    def __call__(self, kernel):
+        """Stacked-@ form: accumulate this spec onto the kernel below it."""
+        from .describe import accumulate_spec
+        return accumulate_spec(self, kernel)
 
     def __repr__(self):
         return (f'ScalarSpec({self.arg_name!r}, type_={self.type_!r}, '

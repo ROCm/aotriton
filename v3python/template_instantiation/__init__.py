@@ -26,11 +26,12 @@ from .decorators import (
     tensor_dtype, choice_set, tensor, scalar,
     overrides, eq, ne, lt, gt,
 )
+from .describe import describe, kernel
 
 __all__ = [
     'tensor_dtype', 'choice_set', 'tensor', 'scalar',
     'overrides', 'eq', 'ne', 'lt', 'gt',
-    'describe', 'operator', 'union_params', 'metro_kernel',
+    'describe', 'kernel', 'operator', 'union_params', 'metro_kernel',
     'tune',
 ]
 
@@ -50,8 +51,8 @@ def _stub(name):
 # --- conditional overrides + predicate builders (§3.3): implemented in Step 2.2 ---
 # overrides, eq, ne, lt, gt imported from .decorators
 
-# --- description attachment + operator + metro (§3.4, §4, §5) ---
-describe = _stub('describe')
+# --- description attachment (§3.4): describe + kernel imported from .describe ---
+# --- operator + metro (§4, §5): not yet implemented ---
 operator = _stub('operator')
 union_params = _stub('union_params')
 metro_kernel = _stub('metro_kernel')

@@ -20,7 +20,7 @@ import v3python.template_instantiation as ati
 TOP_LEVEL_NAMES = [
     'tensor_dtype', 'choice_set', 'tensor', 'scalar',
     'overrides', 'eq', 'ne', 'lt', 'gt',
-    'describe', 'operator', 'union_params', 'metro_kernel',
+    'describe', 'kernel', 'operator', 'union_params', 'metro_kernel',
     'tune',
 ]
 
@@ -45,7 +45,6 @@ def _check_stubs_raise():
     # (tensor_dtype/choice_set/tensor/scalar implemented in Step 2.1;
     #  overrides/eq/ne/lt/gt implemented in Step 2.2.)
     callables = [
-        lambda: ati.describe(object()),
         lambda: ati.union_params([]),
         lambda: ati.tune.schema(object()),
         lambda: ati.tune.binning(key=ati.tune.binning.le),

@@ -110,5 +110,10 @@ class Override:
                 f'override value {self.value!r} references {self.value.var_name!r}, '
                 f'which is not a free choice axis; VarRef may read free axes only')
 
+    def __call__(self, kernel):
+        """Stacked-@ form: accumulate this override onto the kernel below it."""
+        from ..describe import accumulate_spec
+        return accumulate_spec(self, kernel)
+
     def __repr__(self):
         return f'Override(targets={self.targets}, {self.predicate!r}, value={self.value!r})'
