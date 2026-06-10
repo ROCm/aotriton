@@ -201,11 +201,10 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
         hit, findex = pp_registry.contains(assign_skips)
         if hit:
             return findex
-        getter_dict = self.codegen_getter(kdesc)
         stmt = []
-        for aname in kdesc.KERNEL_DATA_ARGUMENTS:
-            bind, tc = bind_dict[aname]
-            assign = getter_dict[aname] + f', // {aname}'
+        for larg in kdesc.iter_launch_arguments():
+            bind, tc = bind_dict[larg.aname]
+            assign = larg.expr + f', // {larg.aname}'
             # Comment out constexpr values
             if isinstance(tc, TC.constexpr_base):  # isinstance(True, int) == True
                 fmt_val = str(bind.value)
@@ -221,24 +220,6 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
         # Do NOT join with ','. There are comment text after the parameter.
         src = pfx + join.join(stmt) + '\n' + sfx
         return pp_registry.register(assign_skips, src)
-
-    def codegen_getter(self, kdesc):
-        d = {}
-        for tensor_aname, (stride_anames, _) in kdesc.TENSOR_STRIDE_INPUTS.items():
-            tensor_rank = kdesc.get_tensor_rank(tensor_aname)
-            for i in range(tensor_rank):
-                aname = stride_anames[i]
-                d[aname] = f'params.{tensor_aname}->kparam_stride({i})'
-        for tp in kdesc.list_functional_params():
-            for aname in tp.all_names:
-                tc = tp.repr_choice.resolve(aname, tc_dict=None)
-                if isinstance(tc, TC.tensor):
-                    d[aname] = f'params.{aname}->kparam_data_ptr()'
-        for aname in kdesc.KERNEL_DATA_ARGUMENTS:  # TODO: make this general
-            if aname in d:
-                continue
-            d[aname] = f'CAST(&params.{aname})'
-        return d
 
     def codegen_perf_assignment(self):
         kdesc = self._f.meta_object

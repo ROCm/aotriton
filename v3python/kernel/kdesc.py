@@ -82,6 +82,32 @@ class KernelDescription(Interface):
     def is_functional_disabled(self, functional):
         return False
 
+    def iter_launch_arguments(self):
+        """Yield the C++ launch-argument vector entries, in KERNEL_DATA_ARGUMENTS
+        order (see codegen.common.LaunchArg). This is the single source the code
+        generator uses to build prepare_arguments(); it replaces the former
+        codegen_getter that re-joined KERNEL_DATA_ARGUMENTS + TENSOR_STRIDE_INPUTS
+        + get_tensor_rank. The ATI adapter provides the same generator from its
+        Axis set, unifying the codegen path."""
+        from ..codegen.common import LaunchArg
+        from ..base import typed_choice as TC
+        # arg name -> (kind, expr)
+        access = {}
+        for tensor_aname, (stride_anames, _) in self.TENSOR_STRIDE_INPUTS.items():
+            for i in range(self.get_tensor_rank(tensor_aname)):
+                sname = stride_anames[i]
+                access[sname] = ('tensor_stride',
+                                 f'params.{tensor_aname}->kparam_stride({i})')
+        for tp in self.list_functional_params():
+            for aname in tp.all_names:
+                tc = tp.repr_choice.resolve(aname, tc_dict=None)
+                if isinstance(tc, TC.tensor):
+                    access[aname] = ('tensor_ptr',
+                                     f'params.{aname}->kparam_data_ptr()')
+        for aname in self.KERNEL_DATA_ARGUMENTS:
+            kind, expr = access.get(aname, ('scalar', f'CAST(&params.{aname})'))
+            yield LaunchArg(aname=aname, kind=kind, expr=expr)
+
     def iter_kernel_slot_names(self):
         """Yield this kernel's NAME for selective kernel execution."""
         yield self.NAME

@@ -22,10 +22,11 @@ from .choice import Choice
 
 class Axis:
     __slots__ = ('var_name', 'arg_names', 'choices', 'anchor',
-                 'ranks', 'contiguous', 'godel_stride')
+                 'ranks', 'contiguous', 'godel_stride', 'kind', 'stride_of')
 
+    # kind values: 'tensor' | 'scalar' | 'stride' | 'stride_unit'
     def __init__(self, var_name, arg_names, choices, anchor,
-                 ranks=None, contiguous=None):
+                 ranks=None, contiguous=None, kind='scalar', stride_of=None):
         self.var_name = var_name
         self.arg_names = tuple(arg_names)
         self.choices = tuple(choices)
@@ -36,6 +37,13 @@ class Axis:
         self.ranks = dict(ranks) if ranks else {}
         self.contiguous = dict(contiguous) if contiguous else {}
         self.godel_stride = None   # assigned by assign_godel over multi-choice axes
+        self.kind = kind
+        # for stride axes: (tensor_arg, dim_index) the stride belongs to
+        self.stride_of = stride_of
+
+    @property
+    def is_stride(self) -> bool:
+        return self.kind in ('stride', 'stride_unit')
 
     @property
     def radix(self) -> int:

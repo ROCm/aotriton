@@ -2,8 +2,26 @@
 # SPDX-License-Identifier: MIT
 
 import hashlib
+from dataclasses import dataclass
 from v3python.utils import log
 from pathlib import Path
+
+
+@dataclass(frozen=True)
+class LaunchArg:
+    """One entry of a kernel's C++ launch-argument vector. Produced by
+    KernelDescription.iter_launch_arguments() and consumed when building the
+    prepare_arguments() function. `kind` selects the access expression form:
+
+      'tensor_ptr'    -> params.<aname>->kparam_data_ptr()
+      'tensor_stride' -> params.<tensor>->kparam_stride(<dim>)
+      'scalar'        -> CAST(&params.<aname>)
+
+    `expr` is the fully-rendered C++ expression; `aname` is the kernel argument
+    name (used for the trailing comment + per-functional constexpr lookup)."""
+    aname: str
+    kind: str
+    expr: str
 
 def hsaco_ondisk_name(kdesc: 'KernelDescription', ksig: 'KernelSignature') -> str:
     digest = hashlib.sha256(ksig.hsaco_entry_name.encode()).hexdigest()

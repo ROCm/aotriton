@@ -87,13 +87,14 @@ _STRIDE_ONE = 1              # contiguous stride -> constexpr 1
 
 class BuiltKernel:
     """The lowered IR for one kernel: everything enumerate_functionals needs."""
-    __slots__ = ('name', 'axes', 'overrides', 'arguments')
+    __slots__ = ('name', 'axes', 'overrides', 'arguments', 'tune')
 
-    def __init__(self, name, axes, overrides, arguments):
+    def __init__(self, name, axes, overrides, arguments, tune=None):
         self.name = name
         self.axes = axes              # list[Axis] (incl. trivial + hidden strides)
         self.overrides = overrides    # list[Override]
         self.arguments = arguments    # full signature order (list[str])
+        self.tune = tune              # TuneSpec | None (perf schema, configs, ...)
 
     def __repr__(self):
         nmulti = sum(1 for a in self.axes if not a.is_trivial)
@@ -175,14 +176,17 @@ def build_kernel(kernel_spec) -> BuiltKernel:
                 contiguous[t.arg_name] = cstride
         anchor = min(param_index[a] for a in arg_names)
         axes.append(Axis(var_name, arg_names, choices, anchor,
-                         ranks=ranks, contiguous=contiguous))
+                         ranks=ranks, contiguous=contiguous, kind='tensor'))
         # hidden stride axes for every matched stride of every tensor in the group
         for t in group:
-            for sname in t.match_strides(kernel_spec.param_names):
+            matched = t.match_strides(kernel_spec.param_names)
+            for dim, sname in enumerate(matched):
                 is_unit = (sname in contiguous.values())
                 stype = _STRIDE_ONE if is_unit else _STRIDE_TYPE
                 axes.append(Axis(sname, (sname,), _choices_from([stype]),
-                                 param_index[sname]))
+                                 param_index[sname],
+                                 kind='stride_unit' if is_unit else 'stride',
+                                 stride_of=(t.arg_name, dim)))
 
     # --- scalar axes (grouped by choice variable) ---
     scalar_groups = {}
@@ -199,8 +203,9 @@ def build_kernel(kernel_spec) -> BuiltKernel:
             choices = _choices_from([_scalar_type(first, ann_by_name, name)])
         arg_names = [a for s in group for a in s.arg_names]
         anchor = min(param_index[a] for a in arg_names)
-        axes.append(Axis(var_name, arg_names, choices, anchor))
+        axes.append(Axis(var_name, arg_names, choices, anchor, kind='scalar'))
 
     axes.sort(key=lambda a: a.anchor)
     arguments = [p.name for p in params]
-    return BuiltKernel(name, axes, list(kernel_spec.overrides), arguments)
+    return BuiltKernel(name, axes, list(kernel_spec.overrides), arguments,
+                       tune=kernel_spec.tune)

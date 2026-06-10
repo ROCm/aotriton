@@ -26,6 +26,59 @@ from ..describe import get_kernel_spec
 from ..ir import assign_godel, enumerate_functionals
 
 
+class _AxisParamShim:
+    """Compat view of an Axis as a legacy `tp` for the compiled-in feature tables
+    (codegen.kernel get_<name>_choices). Exposes the members that code reads:
+    repr_name, choices, repr_typed_choice, and `maybe_conditional` (a legacy-name
+    alias; in the new IR it means 'this argument is baked to a constexpr by an
+    override' — see overridden_to_constexpr)."""
+
+    __slots__ = ('_axis', '_overridden')
+
+    def __init__(self, axis, overridden_to_constexpr):
+        self._axis = axis
+        self._overridden = overridden_to_constexpr
+
+    @property
+    def repr_name(self):
+        # Legacy repr_name is the representative ARGUMENT name (the axis's first
+        # argument in signature order), NOT the dtype-variable name — the C++
+        # get_<name>_choices() function name derives from it.
+        return self._axis.arg_names[0]
+
+    @property
+    def all_names(self):
+        return list(self._axis.arg_names)
+
+    @property
+    def nchoices(self):
+        return self._axis.radix
+
+    @property
+    def choices(self):
+        # legacy code reads tc.infotext off each; expose the underlying TypedChoice
+        return [c.tc for c in self._axis.choices]
+
+    @property
+    def repr_typed_choice(self):
+        return self._axis.choices[0].tc
+
+    @property
+    def overridden_to_constexpr(self) -> bool:
+        """True when an override bakes this axis's representative argument into a
+        constexpr (a derived/dependent value), so it is not a free feature and is
+        excluded from the compiled-in feature tables. Note this is an ARGUMENT
+        property: a dtype variable shared by several tensors is never baked, even
+        if one member tensor (e.g. B) is individually overridden."""
+        return self._overridden
+
+    # Legacy-name alias for the current generator, which still reads
+    # `tp.maybe_conditional`. Refactored away in Step 4.2.4.
+    @property
+    def maybe_conditional(self) -> bool:
+        return self._overridden
+
+
 class AtiFunctional:
     """A functional produced by the adapter. Wraps an IR Functional and carries
     the identity the generator keys on. Codegen-facing signature/name helpers are
@@ -104,6 +157,13 @@ class AtiKernelDescription:
         self._godel_number = 1
         for a in self._axes_multi:
             self._godel_number *= a.radix
+        self._arg_index = {a: i for i, a in enumerate(built.arguments)}
+        # arg name -> owning axis (excludes nothing; every arg belongs to one axis)
+        self._axis_of_arg = {arg: ax for ax in self._axes_all for arg in ax.arg_names}
+        # Arguments an override bakes into a constexpr. This is an ARGUMENT-level
+        # property (B, dropout_p, ...), not an axis/type-variable one: a dtype
+        # variable is never baked even when a member tensor is overridden.
+        self._baked_args = {t for ov in built.overrides for t in ov.targets}
 
     # --- identity ---
 
@@ -120,6 +180,105 @@ class AtiKernelDescription:
         from pathlib import Path
         return Path(self.FAMILY) / self.CODEGEN_MODULE / self.NAME
 
+    # --- class names (legacy Interface naming rules) ---
+
+    @property
+    def class_name_base(self):
+        return ''.join(x.capitalize() for x in self.NAME.lower().split('_'))
+
+    @property
+    def param_class_name(self):
+        return self.class_name_base + 'Params'
+
+    @property
+    def context_class_name(self):
+        return self.class_name_base + 'Context'
+
+    @property
+    def metadata_class_name(self):
+        return self.class_name_base + 'Metadata'
+
+    @property
+    def enum_name(self):
+        return f'kShim_{self.class_name_base}'
+
+    # --- struct cfields (params struct ABI) ---
+
+    @property
+    def func_cfields(self):
+        """One cfield per non-stride, non-perf argument, in signature order, with
+        the axis's representative (rank-specialized) C itype. Overrides never
+        change the struct — the ABI is owned by the axis (ati+newbinds §6.2)."""
+        from v3python.base.cfield import cfield
+        out = []
+        for ax in self._axes_all:
+            if ax.is_stride:
+                continue          # strides are hidden (supplied via TensorView)
+            for arg in ax.arg_names:
+                tc = ax.choice_for_arg(0, arg).tc
+                out.append(cfield(ctype=tc.itype, aname=arg,
+                                  index=self._arg_index[arg], nbits=tc.NBITS or 0))
+        out.sort(key=lambda cf: cf.index)
+        return out
+
+    @property
+    def perf_cfields(self):
+        """Perf-struct fields from the schema, sorted nbits-descending for compact
+        packing (matching legacy)."""
+        from v3python.base.cfield import cfield
+        ts = self._built.tune
+        if ts is None or ts.schema is None:
+            return []
+        out = []
+        for pp in ts.schema.params:
+            tc = pp.tcc(0)
+            out.append(cfield(ctype=tc.itype, aname=pp.name,
+                              index=self._arg_index.get(pp.name, -1),
+                              nbits=tc.NBITS or 0))
+        out.sort(key=lambda cf: cf.nbits, reverse=True)
+        return out
+
+    # --- launch-argument vector (replaces KERNEL_DATA_ARGUMENTS + strides) ---
+
+    def iter_launch_arguments(self):
+        """Yield the C++ launch-argument vector entries in signature order
+        (see codegen.common.LaunchArg). Data args only: tensors (ptr + each
+        stride dim), scalars by-ref; constexpr features and perf are not launch
+        data. Strides are emitted right after their tensor, matching legacy."""
+        from v3python.codegen.common import LaunchArg
+        # Build per-arg access in signature order. Stride axes carry stride_of.
+        access = {}
+        for ax in self._axes_all:
+            if ax.kind == 'tensor':
+                for arg in ax.arg_names:
+                    access[arg] = ('tensor_ptr',
+                                   f'params.{arg}->kparam_data_ptr()')
+            elif ax.is_stride:
+                tensor_arg, dim = ax.stride_of
+                access[ax.arg_names[0]] = (
+                    'tensor_stride',
+                    f'params.{tensor_arg}->kparam_stride({dim})')
+        for arg in self._built.arguments:
+            ax = self._axis_of_arg.get(arg)
+            if ax is None:
+                continue
+            if not self._is_launch_data(arg, ax):
+                continue
+            kind, expr = access.get(arg, ('scalar', f'CAST(&params.{arg})'))
+            yield LaunchArg(aname=arg, kind=kind, expr=expr)
+
+    def _is_launch_data(self, arg, ax):
+        """A launch data argument: a tensor, a non-unit stride, or a runtime
+        scalar. Excludes constexpr feature scalars, unit strides, and perf."""
+        if ax.kind == 'tensor':
+            return True
+        if ax.kind == 'stride':
+            return True
+        if ax.kind == 'stride_unit':
+            return False
+        # scalar axis: runtime if its choice is not a constexpr
+        return not ax.choices[0].is_constexpr
+
     # --- enumeration (replaces legacy gen_functionals) ---
 
     def gen_functionals(self, target_arch):
@@ -127,6 +286,21 @@ class AtiKernelDescription:
                                           target_arch):
             yield AtiFunctional(ir_f, self,
                                 optimized_for=target_arch[ir_f.arch])
+
+    # --- compiled-in feature tables ---
+
+    def list_functional_params(self):
+        """Compat view for the generator's compiled-in feature tables
+        (get_<name>_choices). Yields one shim per non-stride axis. An axis is a
+        free feature unless its representative argument is baked to a constexpr by
+        an override. A grouped dtype variable like T_io stays a feature even if a
+        member tensor (B) is individually baked — baking is an argument property,
+        not a type-variable one."""
+        for ax in self._axes_all:
+            if ax.is_stride:
+                continue
+            baked = ax.arg_names[0] in self._baked_args
+            yield _AxisParamShim(ax, baked)
 
     # --- tuning passthrough ---
 
