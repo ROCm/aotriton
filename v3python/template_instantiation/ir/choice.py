@@ -18,6 +18,20 @@ NOTE: the new IR deliberately does NOT use the TC `resolve`/`resolve_rank`/
 per-name-RANKS design, both of which are replaced (overrides for conditionals,
 Axis-owned ranks for shape). `with_rank()` builds a fresh ranked tensor TC
 directly instead. Do not reach for `resolve*` when extending this layer.
+
+WHY a wrapper instead of extending TypedChoice (and its lifecycle):
+  Choice owns only the semantics the new IR needs but the old IR never had:
+    * value equality + hashing (TypedChoice uses identity equality; the old path
+      compares triton_compile_signature strings / np.unique on dataframes, never
+      the TC objects). enumerate_functionals, the godel bijection, and the
+      f.choices view all key on Choice value equality.
+    * a narrow rank surface (with_rank) instead of the pull-model
+      resolve_rank/_specialized API.
+  Adding those to TypedChoice means changing a class ~30 shipping subclasses
+  still depend on, mid-migration, while the golden gate requires the old path to
+  stay byte-for-byte identical. So Choice is a deliberately TEMPORARY adapter.
+  Plan: keep Choice until the migration is complete; then merge its features into
+  TypedChoice and delete this wrapper. See executive plan Step 6.3.
 """
 
 from ...base import typed_choice as TC
