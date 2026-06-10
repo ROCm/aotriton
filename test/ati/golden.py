@@ -33,21 +33,24 @@ GOLDEN_DIR = Path(__file__).resolve().parent / 'golden'
 DB_SRC_DIR = REPO_ROOT / 'v3python' / 'database'
 
 # Default arch + the selective targets snapshotted. Kept small but covering both
-# a Triton kernel shim and an operator (the two byte-for-byte gates referenced by
-# executive plan Steps 4.2 and 5.2). Broaden as more kernels are ported.
+# The golden covers the FULL flash family (every triton/op/affine target), not a
+# subset: the byte-for-byte gate must include the metro launcher and the bare
+# debug_simulate_encoded_softmax shim (the ME backend calls the latter directly,
+# without an operator). Generation runs with no --selective, mirroring
+# v3python.generate's production per-item worker path.
 DEFAULT_ARCH = 'gfx942_mod0'
-DEFAULT_TARGETS = [
-    'flash/triton/attn_fwd',
-    'flash/op/op_attn_fwd',
-]
 
 MANIFEST_NAME = 'manifest.json'
 # Primary files copied verbatim for readable diffs (relative to build dir).
+# Covers a bare kernel shim, the metro-bearing operator, and the bare debug
+# kernel the ME backend launches directly.
 VERBATIM_FILES = [
     'flash/shim.attn_fwd.h',
     'flash/shim.attn_fwd.cc',
     'flash/iface.op_attn_fwd.h',
     'flash/iface.op_attn_fwd.cc',
+    'flash/shim.debug_simulate_encoded_softmax.h',
+    'flash/shim.debug_simulate_encoded_softmax.cc',
 ]
 
 
@@ -73,21 +76,21 @@ def _compose_database(build_dir: Path):
     )
 
 
-def _run_generator(build_dir: Path, arch: str, targets: list[str]):
-    for target in targets:
-        subprocess.run(
-            [_venv_python(), '-m', 'v3python.generate',
-             '--selective', target,
-             '--build_dir', str(build_dir),
-             '--noimage_mode',
-             '--target_gpus', arch],
-            cwd=REPO_ROOT, check=True,
-        )
+def _run_generator(build_dir: Path, arch: str):
+    """Generate the full family with no --selective, mirroring the production
+    per-item worker path (RootGenerator.launch_workers)."""
+    subprocess.run(
+        [_venv_python(), '-m', 'v3python.generate',
+         '--build_dir', str(build_dir),
+         '--noimage_mode',
+         '--target_gpus', arch],
+        cwd=REPO_ROOT, check=True,
+    )
 
 
-def _generate_into(build_dir: Path, arch: str, targets: list[str]):
+def _generate_into(build_dir: Path, arch: str):
     _compose_database(build_dir)
-    _run_generator(build_dir, arch, targets)
+    _run_generator(build_dir, arch)
 
 
 def _manifest_of(build_dir: Path) -> dict[str, str]:
@@ -104,20 +107,20 @@ def _manifest_of(build_dir: Path) -> dict[str, str]:
     return manifest
 
 
-def _produce(arch: str, targets: list[str]):
-    """Generate into a temp build dir; return (manifest, build_dir). Caller must
-    clean up build_dir."""
-    build_dir = Path(tempfile.mkdtemp(prefix='ati_golden_'))
-    _generate_into(build_dir, arch, targets)
+def _produce(arch: str, keep_dir: Path = None):
+    """Generate into a build dir (a temp one unless keep_dir is given); return
+    (manifest, build_dir). Caller cleans up a temp build_dir."""
+    build_dir = Path(keep_dir) if keep_dir else Path(tempfile.mkdtemp(prefix='ati_golden_'))
+    _generate_into(build_dir, arch)
     return _manifest_of(build_dir), build_dir
 
 
-def update(arch: str, targets: list[str]):
-    manifest, build_dir = _produce(arch, targets)
+def update(arch: str, keep_dir: Path = None):
+    manifest, build_dir = _produce(arch, keep_dir=keep_dir)
     try:
         GOLDEN_DIR.mkdir(parents=True, exist_ok=True)
         (GOLDEN_DIR / MANIFEST_NAME).write_text(
-            json.dumps({'arch': arch, 'targets': targets, 'files': manifest},
+            json.dumps({'arch': arch, 'files': manifest},
                        indent=2, sort_keys=True) + '\n')
         verbatim_dir = GOLDEN_DIR / 'files'
         if verbatim_dir.exists():
@@ -132,18 +135,19 @@ def update(arch: str, targets: list[str]):
             shutil.copyfile(src, dst)
         print(f'Wrote golden snapshot: {len(manifest)} files -> {GOLDEN_DIR}')
     finally:
-        shutil.rmtree(build_dir, ignore_errors=True)
+        if keep_dir is None:
+            shutil.rmtree(build_dir, ignore_errors=True)
     return 0
 
 
-def check(arch: str, targets: list[str]):
+def check(arch: str, keep_dir: Path = None):
     golden_path = GOLDEN_DIR / MANIFEST_NAME
     if not golden_path.exists():
         print(f'No golden snapshot at {golden_path}; run --update first.',
               file=sys.stderr)
         return 2
     golden = json.loads(golden_path.read_text())
-    fresh, build_dir = _produce(arch, targets)
+    fresh, build_dir = _produce(arch, keep_dir=keep_dir)
     try:
         expected = golden['files']
         missing = sorted(set(expected) - set(fresh))
@@ -163,7 +167,8 @@ def check(arch: str, targets: list[str]):
               f'{len(changed)} changed.', file=sys.stderr)
         return 1
     finally:
-        shutil.rmtree(build_dir, ignore_errors=True)
+        if keep_dir is None:
+            shutil.rmtree(build_dir, ignore_errors=True)
 
 
 def main():
@@ -177,12 +182,13 @@ def main():
                       help='Regenerate and diff against the committed snapshot.')
     p.add_argument('--arch', type=str, default=DEFAULT_ARCH,
                    help='Target GPU arch passed to --target_gpus.')
-    p.add_argument('--targets', type=str, nargs='+', default=DEFAULT_TARGETS,
-                   help='Selective generation targets to snapshot.')
+    p.add_argument('--keep_dir', type=Path, default=None,
+                   help='Generate into this dir and keep it (full tree on disk '
+                        'for file-level diffing) instead of a temp dir.')
     args = p.parse_args()
     if args.update:
-        return update(args.arch, args.targets)
-    return check(args.arch, args.targets)
+        return update(args.arch, keep_dir=args.keep_dir)
+    return check(args.arch, keep_dir=args.keep_dir)
 
 
 if __name__ == '__main__':

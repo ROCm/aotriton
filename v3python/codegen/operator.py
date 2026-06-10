@@ -175,7 +175,7 @@ class OperatorGenerator(InterfaceGenerator):
 
     def codegen_trivial_tunes(self):
         trivial_tunes = self._this_repo.get_data('trivial_tunes')
-        uniques = set(trivial_tunes.values())
+        uniques = sorted(set(trivial_tunes.values()))
         context_class_name = self._iface.context_class_name
         tune_name = self._iface.TUNE_NAME
         stmt = []
