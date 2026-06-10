@@ -27,12 +27,13 @@ from .decorators import (
     overrides, eq, ne, lt, gt,
 )
 from .describe import describe, kernel
+from .builder import AtiDescriptionError
 
 __all__ = [
     'tensor_dtype', 'choice_set', 'tensor', 'scalar',
     'overrides', 'eq', 'ne', 'lt', 'gt',
     'describe', 'kernel', 'operator', 'union_params', 'metro_kernel',
-    'tune',
+    'tune', 'AtiDescriptionError',
 ]
 
 
