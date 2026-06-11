@@ -74,8 +74,9 @@ def test_lower_to_ir_matches_legacy_strings():
             ('attn_fwd', 'debug_simulate_encoded_softmax')}
     captured = {}
 
-    def metro_factory(steps):
+    def metro_factory(steps, renames):
         captured['steps'] = steps
+        captured['renames'] = renames
         return steps
 
     steps = lower_plan(metro_fwd.__ati_metro__, kmap,
@@ -87,6 +88,47 @@ def test_lower_to_ir_matches_legacy_strings():
     assert ck.if_expr == '->data_ptr() != nullptr'
     assert ck.if_kernel is kmap['debug_simulate_encoded_softmax']
     assert ck.else_kernel is None
+    # The debug sub-kernel's R is wired to the operand encoded_softmax; the rename
+    # is captured keyed by the concrete sub-kernel object (metro-layer property).
+    debug = kmap['debug_simulate_encoded_softmax']
+    assert captured['renames'] == {debug: {'R': 'encoded_softmax'}}
+
+
+def test_metro_kernel_merges_renamed_arg():
+    # The renamed arg must collapse into its operand node, not appear twice in the
+    # merged operand order. (This is what keeps `R` out of the params struct.) The
+    # MetroKernel constructor runs the heavy Interface machinery that needs an
+    # operator-bound SHARED_IFACE; here we exercise only merged_operand_order, so
+    # build the object directly and let lower_plan populate it.
+    from v3python.op import MetroKernel, ConditionalKernel
+
+    class _K:
+        def __init__(self, name, arguments):
+            self.NAME = name
+            self.SHARED_IFACE = None
+            self.ARGUMENTS = arguments
+        def list_non_functional_params(self):
+            return []
+
+    attn = _K('attn_fwd', ['Q', 'K', 'V', 'Out', 'encoded_softmax'])
+    debug = _K('debug_simulate_encoded_softmax', ['R', 'dropout_p'])
+    kmap = {'attn_fwd': attn, 'debug_simulate_encoded_softmax': debug}
+
+    def metro_factory(steps, renames):
+        m = object.__new__(MetroKernel)   # skip Interface init (orthogonal here)
+        m.NAME = 'metro_fwd'
+        m._kernels = steps
+        m._renames = renames
+        return m
+
+    metro = lower_plan(metro_fwd.__ati_metro__, kmap,
+                       metro_factory, ConditionalKernel)
+    assert metro.rename_for(debug) == {'R': 'encoded_softmax'}
+    order = metro.merged_operand_order()
+    # R folded into encoded_softmax: present once, no bare 'R'.
+    assert 'R' not in order
+    assert order.count('encoded_softmax') == 1
+    assert order == ['Q', 'K', 'V', 'Out', 'encoded_softmax', 'dropout_p']
 
 
 def test_out_of_grammar_rejected():

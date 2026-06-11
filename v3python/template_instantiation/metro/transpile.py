@@ -207,20 +207,27 @@ def lower_plan(plan, kernel_map, metro_factory, conditional_factory):
     """Lower a MetroPlan to the existing MetroKernel/ConditionalKernel IR.
 
     kernel_map:          {sub-kernel name -> KernelDescription object}.
-    metro_factory:       callable(steps:list) -> MetroKernel (the operator supplies
-                         it with the metro's name/SHARED_IFACE/ARGUMENTS bound).
+    metro_factory:       callable(steps:list, renames:dict) -> MetroKernel. `steps`
+                         is the lowered backend list; `renames` maps each concrete
+                         sub-kernel OBJECT to its {kernel_arg: operand} wiring (from
+                         the metro DSL's kwargs, e.g. debug's R -> encoded_softmax).
     conditional_factory: the ConditionalKernel class/callable
                          (if_parameter, if_expr, if_kernel, else_kernel).
 
     Each Cond branch must be a single sub-kernel call (the C++ if/else launcher
     template supports one kernel per branch); a multi-step branch is an error.
     """
+    renames = {}        # concrete sub-kernel object -> {kernel_arg: operand}
+
     def resolve(call):
         if call.kernel not in kernel_map:
             raise MetroError(
                 f'metro {plan.name!r}: unknown sub-kernel {call.kernel!r}; '
                 f'known: {sorted(kernel_map)}')
-        return kernel_map[call.kernel]
+        kdesc = kernel_map[call.kernel]
+        if call.renames:
+            renames[kdesc] = dict(call.renames)
+        return kdesc
 
     def one_call(name, branch, which):
         if len(branch) != 1 or not isinstance(branch[0], Call):
@@ -240,4 +247,4 @@ def lower_plan(plan, kernel_map, metro_factory, conditional_factory):
                 else_kernel = resolve(one_call(plan.name, step.orelse, 'else'))
             steps.append(conditional_factory(step.if_parameter, step.if_expr,
                                              resolve(if_call), else_kernel))
-    return metro_factory(steps)
+    return metro_factory(steps, renames)
