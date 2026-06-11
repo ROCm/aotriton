@@ -58,12 +58,9 @@ if _ati_enabled('attn_fwd'):
     __attn_fwd = build_kernel_description(_ati_attn_fwd_jit, family='flash',
                                          source_path=SOURCE_FILE,
                                          triton_kernel_name='attn_fwd')
-    # Step-4 scaffolding (temporary): the kernel borrows the operator's param
-    # struct. In Step 5 this is INFERRED from the operator -> metro -> kernel
-    # relationship; here we hand-set it so the shim resolves OpAttnFwdParams /
-    # attn_options and the byte-for-byte golden passes. Do NOT promote this to the
-    # @ati.* surface — see executive plan Phase 5.
-    __attn_fwd.SHARED_IFACE = OpAttnFwd
+    # SHARED_IFACE (which operator's param struct this kernel borrows) is NOT set
+    # here — it is inferred from the operator -> metro -> kernel relationship by
+    # infer_shared_iface() after `operators` is built below.
 __bwd_kernel_dk_dv = bwd_kernel_dk_dv('bwd_kernel_dk_dv', SOURCE_FILE)
 __bwd_kernel_dq = bwd_kernel_dq('bwd_kernel_dq', SOURCE_FILE)
 __bwd_kernel_fuse = bwd_kernel_fuse('bwd_kernel_fuse', SOURCE_FILE)
@@ -113,4 +110,11 @@ operators = [
         __bwd_aiter,
     ]),
 ]
+
+# Infer SHARED_IFACE (the param struct a kernel borrows) from the
+# operator -> metro -> kernel relationship. Legacy kernels declare it on their
+# class; ATI adapter kernels leave it None and have it filled in here. No-op for
+# the all-legacy build; replaces the Step-4 hand-set scaffolding.
+from v3python.template_instantiation.operator.infer import infer_shared_iface
+infer_shared_iface(operators)
 
