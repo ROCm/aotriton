@@ -94,13 +94,30 @@ class MetroFwdKernel(MetroKernel):
     SHARED_IFACE = OpAttnFwd
     ARGUMENTS = OpAttnFwd.ARGUMENTS
 
-operators = [
-    OpAttnFwd([
+def _build_op_attn_fwd():
+    backends = [
         MetroFwdKernel('triton',
                        [__attn_fwd,
                         ConditionalKernel('encoded_softmax', '->data_ptr() != nullptr', __debug_simulate_encoded_softmax)]),
-        __fwd_aiter,  # No need to provide encoded_softmax because no dropout support 
-    ]),
+        __fwd_aiter,  # No need to provide encoded_softmax because no dropout support
+    ]
+    if _ati_enabled('op_attn_fwd'):
+        # ATI operator: dispatch among backends; the param struct is the DEFAULT
+        # backend's (attn_fwd, the feature superset). Reuses the ATI attn_fwd
+        # adapter for the functional/struct surface. (union_params over the metro
+        # sub-kernels — projecting the debug kernel's private args — lands with the
+        # metro transpiler, Step 5.5; today the default backend's struct is used.)
+        from v3python.template_instantiation.compat.operator_adapter import AtiOperator
+        from v3python.template_instantiation.tune.binning import binning as _bn
+        return AtiOperator('op_attn_fwd', family='flash', default_kdesc=__attn_fwd,
+                           backends=backends,
+                           optune_keys={'Max_seqlen_q': _bn.le, 'Max_seqlen_k': _bn.le},
+                           call_options_name='attn_options')
+    return OpAttnFwd(backends)
+
+
+operators = [
+    _build_op_attn_fwd(),
     OpAttnBwd([
         MetroBwdKernel('triton_split',
                        [ConditionalKernel('num_seqlens', '> 0', __bwd_preprocess_varlen, __bwd_preprocess),  # padded varlen (num_seqlens < 0) should call bwd_preprocess
