@@ -23,7 +23,7 @@ BLOCK_DMODEL_VALUES = [16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256, 512]
 
 
 def _adapter():
-    T_io = ati.tensor_dtype('T_io', dtype=MAIN_DTYPES)
+    T_io = ati.tensor_dtype('T_io', dtype=MAIN_DTYPES, signature_name='Q')
     describe(attn_fwd,
              ati.tensor('Q', T_io, strides='stride_q?', contiguous=-1),
              ati.tensor('K', T_io, strides='stride_k?', contiguous=-1),

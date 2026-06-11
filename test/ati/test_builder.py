@@ -30,7 +30,7 @@ BLOCK_DMODEL_VALUES = [16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256, 512]  # 
 
 
 def _describe_attn_fwd_subset():
-    T_io = ati.tensor_dtype('T_io', dtype=MAIN_DTYPES)
+    T_io = ati.tensor_dtype('T_io', dtype=MAIN_DTYPES, signature_name='Q')
     specs = [
         ati.tensor('Q', T_io, strides='stride_q?', contiguous=-1),
         ati.tensor('K', T_io, strides='stride_k?', contiguous=-1),

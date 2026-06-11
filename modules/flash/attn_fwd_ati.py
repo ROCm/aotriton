@@ -59,9 +59,12 @@ def gen_autotune_configs(f):
 
 
 def describe_attn_fwd(attn_fwd):
-    T_io = ati.tensor_dtype('T_io', dtype=MAIN_DTYPES)
-    T_seq = ati.tensor_dtype('T_seq', dtype=['*i32:16'])      # cu_seqlens / seq_strides
-    T_u64 = ati.tensor_dtype('T_u64', dtype=['*u64'])         # philox pointers (rank 0)
+    # Only T_io is multi-choice, so only it needs an explicit signature_name
+    # (the argument recording it in the aks2 entry name / DB row key). T_seq and
+    # T_u64 are single-choice (trivial) and never appear in the signature.
+    T_io = ati.tensor_dtype('T_io', dtype=MAIN_DTYPES, signature_name='Q')
+    T_seq = ati.tensor_dtype('T_seq', dtype=['*i32:16'])
+    T_u64 = ati.tensor_dtype('T_u64', dtype=['*u64'])
 
     specs = [
         # --- main tensors (rank 4, last stride contiguous) ---

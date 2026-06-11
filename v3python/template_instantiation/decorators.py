@@ -31,28 +31,42 @@ class ChoiceVar:
     """A named choice variable shared by several arguments — the
     `template<typename T>` / TypeVar analogue. `tensor_dtype` and `choice_set`
     both produce one; `kind` records which authoring word created it (purely for
-    diagnostics — Choice.parse handles tensor vs scalar literals uniformly)."""
+    diagnostics — Choice.parse handles tensor vs scalar literals uniformly).
 
-    __slots__ = ('name', 'choices', 'kind')
+    `signature_name` is the argument under which this variable is recorded in all
+    PERSISTED forms — the compact signature string, which becomes the aks2 / zip
+    entry name and the tuning-database row key. A multi-choice variable spanning
+    several arguments MUST give it explicitly (it cannot be silently derived from
+    spec order, or stored artifacts would shift); single-choice variables are
+    trivial and exempt. `None` when not given — the builder resolves it."""
 
-    def __init__(self, name, choices, kind):
+    __slots__ = ('name', 'choices', 'kind', 'signature_name')
+
+    def __init__(self, name, choices, kind, signature_name=None):
         assert isinstance(name, str) and name, 'choice variable needs a name'
         self.name = name
         self.choices = list(choices)
         self.kind = kind          # 'dtype' | 'scalar'
+        self.signature_name = signature_name
 
     def __repr__(self):
-        return f'ChoiceVar({self.name!r}, kind={self.kind}, choices={self.choices})'
+        return (f'ChoiceVar({self.name!r}, kind={self.kind}, '
+                f'signature_name={self.signature_name!r}, choices={self.choices})')
 
 
-def tensor_dtype(name, dtype):
-    """Declare a named tensor element-type variable. `dtype` is the choice set."""
-    return ChoiceVar(name, dtype, kind='dtype')
+def tensor_dtype(name, dtype, signature_name=None):
+    """Declare a named tensor element-type variable. `dtype` is the choice set.
+    `signature_name` is the argument that records this variable in persisted
+    artifacts (compact signature, aks2/zip entry name, DB row key); required for
+    multi-choice variables shared across several tensors."""
+    return ChoiceVar(name, dtype, kind='dtype', signature_name=signature_name)
 
 
-def choice_set(name, options):
-    """Declare a named scalar choice variable. `options` is the choice set."""
-    return ChoiceVar(name, options, kind='scalar')
+def choice_set(name, options, signature_name=None):
+    """Declare a named scalar choice variable. `options` is the choice set.
+    `signature_name` is the argument that records this variable in persisted
+    artifacts (compact signature, aks2/zip entry name, DB row key)."""
+    return ChoiceVar(name, options, kind='scalar', signature_name=signature_name)
 
 
 class TensorSpec:

@@ -22,11 +22,13 @@ from .choice import Choice
 
 class Axis:
     __slots__ = ('var_name', 'arg_names', 'choices', 'anchor',
-                 'ranks', 'contiguous', 'godel_stride', 'kind', 'stride_of')
+                 'ranks', 'contiguous', 'godel_stride', 'kind', 'stride_of',
+                 'signature_name')
 
     # kind values: 'tensor' | 'scalar' | 'stride' | 'stride_unit'
     def __init__(self, var_name, arg_names, choices, anchor,
-                 ranks=None, contiguous=None, kind='scalar', stride_of=None):
+                 ranks=None, contiguous=None, kind='scalar', stride_of=None,
+                 signature_name=None):
         self.var_name = var_name
         self.arg_names = tuple(arg_names)
         self.choices = tuple(choices)
@@ -40,6 +42,10 @@ class Axis:
         self.kind = kind
         # for stride axes: (tensor_arg, dim_index) the stride belongs to
         self.stride_of = stride_of
+        # the argument recording this axis in persisted artifacts (compact
+        # signature, aks2/zip entry name, DB row key); explicit for shared
+        # multi-choice variables, else the first argument.
+        self.signature_name = signature_name or self.arg_names[0]
 
     @property
     def is_stride(self) -> bool:

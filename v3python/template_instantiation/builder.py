@@ -140,6 +140,38 @@ def _choices_from(values) -> list:
     return [Choice.parse(v) for v in values]
 
 
+def _resolve_signature_name(dtype, arg_names, param_index, kernel_name):
+    """The argument that records an axis in persisted artifacts — the compact
+    signature, the aks2/zip entry name, and the tuning-database row key.
+
+    A MULTI-CHOICE shared ChoiceVar (ati.tensor_dtype/ati.choice_set bound by
+    several specs) MUST declare signature_name explicitly when it spans several
+    arguments — it is baked into stored artifacts, so it cannot be silently
+    derived from spec order. A single-choice (radix 1) variable is trivial: it
+    never appears in the compact signature / aks2 entry name, so signature_name is
+    irrelevant and need not be given. A list-grouped spec
+    (ati.scalar([names], ...)) or a single argument uses its first listed
+    argument, which the author already wrote in the order they chose."""
+    if isinstance(dtype, ChoiceVar) and dtype.signature_name is not None:
+        assert dtype.signature_name in arg_names, (
+            f"kernel {kernel_name!r}: choice variable signature_name "
+            f"{dtype.signature_name!r} is not one of its arguments {arg_names}")
+        return dtype.signature_name
+    # A multi-choice shared ChoiceVar spanning multiple args needs an explicit
+    # signature_name (single-choice variables are trivial and excluded from the
+    # aks2 entry name, so they are exempt).
+    if (isinstance(dtype, ChoiceVar) and len(arg_names) > 1
+            and len(dtype.choices) > 1):
+        raise AtiDescriptionError(
+            f"kernel {kernel_name!r}: multi-choice variable {dtype.name!r} spans "
+            f"{arg_names} and must declare an explicit signature_name (it is baked "
+            f"into the aks2 entry name / DB row key); pass signature_name= to "
+            f"ati.tensor_dtype/ati.choice_set")
+    # List-grouped, single-argument, or single-choice: the first listed argument
+    # represents it.
+    return arg_names[0]
+
+
 def build_kernel(kernel_spec) -> BuiltKernel:
     """Lower a KernelSpec (from describe()) into Axis + Override IR."""
     params = kernel_spec.params
@@ -175,8 +207,10 @@ def build_kernel(kernel_spec) -> BuiltKernel:
             if cstride is not None:
                 contiguous[t.arg_name] = cstride
         anchor = min(param_index[a] for a in arg_names)
+        signature_name = _resolve_signature_name(first.dtype, arg_names, param_index, name)
         axes.append(Axis(var_name, arg_names, choices, anchor,
-                         ranks=ranks, contiguous=contiguous, kind='tensor'))
+                         ranks=ranks, contiguous=contiguous, kind='tensor',
+                         signature_name=signature_name))
         # hidden stride axes for every matched stride of every tensor in the group
         for t in group:
             matched = t.match_strides(kernel_spec.param_names)
@@ -203,7 +237,9 @@ def build_kernel(kernel_spec) -> BuiltKernel:
             choices = _choices_from([_scalar_type(first, ann_by_name, name)])
         arg_names = [a for s in group for a in s.arg_names]
         anchor = min(param_index[a] for a in arg_names)
-        axes.append(Axis(var_name, arg_names, choices, anchor, kind='scalar'))
+        signature_name = _resolve_signature_name(first.dtype, arg_names, param_index, name)
+        axes.append(Axis(var_name, arg_names, choices, anchor, kind='scalar',
+                         signature_name=signature_name))
 
     axes.sort(key=lambda a: a.anchor)
     arguments = [p.name for p in params]

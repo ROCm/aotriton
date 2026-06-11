@@ -41,10 +41,10 @@ class _AxisParamShim:
 
     @property
     def repr_name(self):
-        # Legacy repr_name is the representative ARGUMENT name (the axis's first
-        # argument in signature order), NOT the dtype-variable name — the C++
+        # The representative ARGUMENT name (explicit on the choice variable, or
+        # the single arg), NOT the dtype-variable name — the C++
         # get_<name>_choices() function name derives from it.
-        return self._axis.arg_names[0]
+        return self._axis.signature_name
 
     @property
     def all_names(self):
@@ -128,8 +128,126 @@ class AtiFunctional:
         return self._kdesc.FAMILY
 
     @property
+    def FAMILY(self):
+        return self._kdesc.FAMILY
+
+    @property
     def name(self):
         return self._kdesc.NAME
+
+    @property
+    def NAME(self):
+        return self._kdesc.NAME
+
+    @property
+    def database_gpus(self):
+        from v3python.gpu_targets import AOTRITON_TUNING_DATABASE_REUSE
+        return [AOTRITON_TUNING_DATABASE_REUSE.get(g, g) for g in self._optimized_for]
+
+    # --- compact / fallback choices (multi-choice axes only) ---
+
+    @property
+    def compact_choices(self) -> dict:
+        """repr_name -> resolved TypedChoice for each multi-choice axis (the
+        legacy compact_dict)."""
+        d = {}
+        for ax in self._kdesc.axes_multi:
+            name = ax.signature_name
+            d[name] = self._ir.resolved[name].tc
+        return d
+
+    @property
+    def fallback_choices(self) -> dict:
+        fb = self._kdesc.partially_tuned_functionals
+        out = {}
+        for k, tc in self.compact_choices.items():
+            out[k] = fb.get(k, tc)
+        return out
+
+    # --- triton-compile-signature dicts (resolved per arg) ---
+
+    def build_complete_tc_dict(self):
+        """arg_name -> resolved TypedChoice for every argument (post-override)."""
+        return {a: c.tc for a, c in self._ir.resolved.items()}
+
+    def build_tc_dict(self):
+        """repr_name -> resolved TypedChoice for multi-choice axes."""
+        return self.compact_choices
+
+    # --- core signatures (must match legacy bytes) ---
+
+    @property
+    def unified_signature(self) -> str:
+        parts = []
+        for ax in self._kdesc.axes_multi:
+            name = ax.signature_name
+            tc = self._ir.resolved[name].tc
+            parts.append(f'{name}={tc.testrun_entry_signature}')
+        return ';'.join(parts)
+
+    @property
+    def signature_in_func_name(self) -> str:
+        parts = []
+        for ax in self._kdesc.axes_multi:
+            name = ax.signature_name
+            s = str(self._ir.resolved[name].tc.triton_compile_signature)
+            s = s.replace('*', '＊').replace(':', '@') \
+                 .replace('True', 'T').replace('False', 'F')
+            parts.append(s)
+        return '_'.join(parts)
+
+    @property
+    def compact_signature_noarch(self) -> str:
+        return 'F__' + self.signature_in_func_name
+
+    @property
+    def human_readable_signature(self) -> str:
+        # Best-effort: a C++ comment, not byte-load-bearing (per review). One line
+        # per non-stride / non-hidden axis, representative arg + resolved value.
+        lines = []
+        for ax in self._kdesc.axes_all_ordered:
+            if ax.is_stride and ax.kind == 'stride':
+                # hidden u64 strides are omitted; baked (constexpr) strides shown
+                if not self._ir.resolved[ax.arg_names[0]].is_constexpr:
+                    continue
+            if ax.kind == 'stride_unit':
+                continue
+            name = ax.signature_name
+            lines.append(f'{name} = {self._ir.resolved[name].tc}')
+        return 'Human-readable Signature \n// ' + '\n// '.join(lines)
+
+    # --- file packing paths ---
+
+    @property
+    def filepack_ondisk_path(self):
+        import hashlib
+        from pathlib import Path
+        from v3python.gpu_targets import AOTRITON_ARCH_TO_DIRECTORY
+        digest = hashlib.sha256(self.unified_signature.encode()).hexdigest()
+        return (Path(AOTRITON_ARCH_TO_DIRECTORY[self.arch]) / self._kdesc.FAMILY
+                / self._kdesc.NAME / digest)
+
+    @property
+    def filepack_inzip_name(self) -> str:
+        return self.unified_signature
+
+    @property
+    def full_flatzip_path(self):
+        from pathlib import Path
+        from v3python.gpu_targets import AOTRITON_ARCH_TO_DIRECTORY
+        return (Path(AOTRITON_ARCH_TO_DIRECTORY[self.arch]) / self._kdesc.FAMILY
+                / (self._kdesc.NAME + '.zip'))
+
+    @property
+    def full_filepack_dir(self):
+        from pathlib import Path
+        from v3python.gpu_targets import AOTRITON_ARCH_TO_DIRECTORY
+        return (Path(AOTRITON_ARCH_TO_DIRECTORY[self.arch]) / self._kdesc.FAMILY
+                / self._kdesc.NAME)
+
+    @property
+    def tunecc_signature(self) -> str:
+        return '#F;' + self.unified_signature + f';;arch={self.arch}'
 
     def __repr__(self):
         return (f'AtiFunctional({self._kdesc.NAME!r}, arch={self.arch!r}, '
@@ -164,6 +282,25 @@ class AtiKernelDescription:
         # property (B, dropout_p, ...), not an axis/type-variable one: a dtype
         # variable is never baked even when a member tensor is overridden.
         self._baked_args = {t for ov in built.overrides for t in ov.targets}
+
+    # --- axis views (used by AtiFunctional signatures) ---
+
+    @property
+    def axes_all_ordered(self):
+        """All axes (incl. strides), canonical anchor order."""
+        return self._axes_all
+
+    @property
+    def axes_multi(self):
+        """Multi-choice axes in anchor order — the compact-signature dimensions.
+        Each axis's representative name (arg_names[0], the first kernel argument
+        of the group, NOT the dtype variable) is the legacy repr_name."""
+        return self._axes_multi
+
+    @property
+    def partially_tuned_functionals(self) -> dict:
+        ts = self._built.tune
+        return dict(ts.fallback) if ts is not None else {}
 
     # --- identity ---
 
@@ -299,7 +436,7 @@ class AtiKernelDescription:
         for ax in self._axes_all:
             if ax.is_stride:
                 continue
-            baked = ax.arg_names[0] in self._baked_args
+            baked = ax.signature_name in self._baked_args
             yield _AxisParamShim(ax, baked)
 
     # --- tuning passthrough ---
