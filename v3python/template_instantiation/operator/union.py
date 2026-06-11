@@ -12,9 +12,12 @@ order is a stable topological sort (graphlib.TopologicalSorter). The tiebreak is
 the **sub-kernel's index in the metro call sequence** (collaboration order) then
 position — so e.g. dk_dv (called first) contributes DK,DV before dq's DQ,DB.
 
-Shared arguments stitch the chains together; a contradictory order is a cycle ->
-CycleError, a hard error the author resolves with `order_hint` (which PINS a
-relative order, overriding the contradicting edges).
+Shared arguments stitch the chains together. Conflicts are resolved by PRIORITY,
+not by error: edges are added order_hint-first then sub-kernel by sub-kernel, and
+an edge that would close a cycle is dropped. So an adjacent reversal (a shared
+block ordered x,y,z in one kernel and z,y,x in another) auto-resolves to the
+earlier-listed kernel's order — the result is always a DAG. `order_hint` is simply
+the highest-priority chain when an author wants to force an order.
 
 Rename-aware: the metro DSL wires sub-kernel arguments to operator operands (the
 transpiler's by-name + kwarg renames). Pass per-sub-kernel rename maps
@@ -43,47 +46,84 @@ def union_params(arg_lists, *, renames=None, order_hint=None):
     renames:    optional list of per-sub-kernel {kernel_arg: operand} maps, aligned
                 with arg_lists; the merge runs over the renamed (operand) names so
                 wired operands collapse to one node.
-    order_hint: optional sequence pinning a relative order; it OVERRIDES any
-                contradicting chain edges among the hinted nodes (so it can break a
-                cycle, not merely add to it).
+    order_hint: optional sequence given the HIGHEST priority — its consecutive
+                edges are added before any sub-kernel's, so it wins all conflicts.
 
-    Returns the merged list of (operand) names. Raises graphlib.CycleError on a
-    contradictory ordering not resolved by order_hint.
+    Conflicts are resolved by PRIORITY, not by error: edges are added
+    order_hint-first, then sub-kernel by sub-kernel, and an edge is skipped if it
+    would close a cycle (its target already reaches its source). So when a shared
+    block appears in different orders across sub-kernels (e.g. x,y,z vs z,y,x), the
+    earlier-listed kernel's order wins and the later contradicting edges are
+    dropped — no CycleError. The result is always a DAG; the toposort never fails.
+
+    Returns the merged list of (operand) names.
     """
     renames = renames or [None] * len(arg_lists)
     assert len(renames) == len(arg_lists), 'renames must align with arg_lists'
 
-    succ = {}       # node -> set(successors)
     pos = {}        # node -> (subkernel_index, position) tiebreak key
+    # Candidate edges in PRIORITY order, each tagged authoritative?: order_hint
+    # first (authoritative — may break any cycle), then each sub-kernel's
+    # consecutive pairs in metro call order.
+    # When an order_hint is given the author takes responsibility for ordering, so
+    # ALL chains become authoritative: any edge that would close a cycle is dropped
+    # (the hint, added first, wins). Without a hint, sub-kernel chains are
+    # non-authoritative: only adjacent reversals auto-resolve, longer cycles raise.
+    hint_mode = bool(order_hint)
+    edge_sources = []       # list of (chain, authoritative)
+    if order_hint:
+        edge_sources.append((list(order_hint), True))
     for ki, (args, rename) in enumerate(zip(arg_lists, renames)):
         chain = _renamed(args, rename)
         for i, a in enumerate(chain):
             pos.setdefault(a, (ki, i))          # first mention owns the tiebreak
-            if i + 1 < len(chain):
-                succ.setdefault(a, set()).add(chain[i + 1])
+        edge_sources.append((chain, hint_mode))
 
-    if order_hint:
-        # The hint pins the relative order of its nodes. Remove any chain edge that
-        # contradicts it (b->a where the hint says a before b), then add the hint's
-        # own consecutive edges. This is what lets a hint BREAK a cycle.
-        hinted = set(order_hint)
-        rank = {n: r for r, n in enumerate(order_hint)}
-        for a, outs in list(succ.items()):
-            for b in list(outs):
-                if a in hinted and b in hinted and rank[a] > rank[b]:
-                    outs.discard(b)             # contradicts the hint -> drop
-        for a, b in zip(order_hint, order_hint[1:]):
+    succ = {}       # node -> set(successors)
+    nodes = set(pos)
+
+    def _reaches(src, dst):
+        """True if dst is reachable from src in the edges added so far."""
+        if src == dst:
+            return True
+        stack = [src]
+        seen = set()
+        while stack:
+            n = stack.pop()
+            if n == dst:
+                return True
+            if n in seen:
+                continue
+            seen.add(n)
+            stack.extend(succ.get(n, ()))
+        return False
+
+    # `authoritative` chains (order_hint) may break ANY cycle by dropping the
+    # contradicting lower-priority edge. Sub-kernel chains only auto-resolve an
+    # ADJACENT reversal (a direct b->a transposition); a cycle that closes through
+    # a longer path (shared params interleaved with private ones, e.g.
+    # k1=[x,p,z] k2=[z,q,x]) is a genuine conflict left to surface as CycleError,
+    # for the author to resolve with order_hint.
+    for chain, authoritative in edge_sources:
+        for a, b in zip(chain, chain[1:]):
+            if a == b:
+                continue
+            if b in succ.get(a, ()):            # already have a->b
+                continue
+            if _reaches(b, a):
+                if authoritative or (b in succ and a in succ[b]):
+                    continue                    # drop a->b; higher priority wins
+                # else: genuine non-adjacent conflict; let toposort raise.
             succ.setdefault(a, set()).add(b)
-            pos.setdefault(a, (len(arg_lists), 0))
-        pos.setdefault(order_hint[-1], (len(arg_lists), 0))
 
-    preds = {n: set() for n in pos}             # graphlib wants {node: predecessors}
+    preds = {n: set() for n in nodes}           # graphlib wants {node: predecessors}
     for a, outs in succ.items():
         for b in outs:
             preds[b].add(a)
 
     ts = TopologicalSorter(preds)
-    ts.prepare()                                # raises CycleError on a true conflict
+    ts.prepare()                                # raises CycleError on a genuine
+                                                # (non-adjacent) conflict -> order_hint
     out = []
     ready = list(ts.get_ready())
     while ready:

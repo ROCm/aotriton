@@ -45,23 +45,45 @@ def test_real_bwd_kernels_merge_without_hint():
     assert i['DO'] < i['DK'] < i['DV'] < i['DQ'] < i['DB'] < i['D']
 
 
-def test_contradictory_order_raises_cycle():
-    a = ['X', 'Y']
-    b = ['Y', 'X']
+def test_adjacent_reversal_first_kernel_wins():
+    # A shared block appears in different orders across sub-kernels; the earlier
+    # (first-listed) kernel's order wins, no error.
+    k1 = ['x', 'y', 'z', 'k1a', 'k1b']
+    k2 = ['z', 'y', 'x', 'k2a', 'k2b']
+    assert union_params([k1, k2]) == ['x', 'y', 'z', 'k1a', 'k1b', 'k2a', 'k2b']
+
+
+def test_contradictory_pair_first_wins_no_error():
+    # The simplest reversal: a says X<Y, b says Y<X -> a direct transposition, so
+    # first kernel wins (X,Y); the contradicting edge is dropped, no error.
+    assert union_params([['X', 'Y'], ['Y', 'X']]) == ['X', 'Y']
+
+
+def test_nonadjacent_cycle_raises_without_hint():
+    # Shared params NOT adjacent: k1=[x,k1p,z] (x<z), k2=[z,k2p,x] (z<x). The cycle
+    # closes through private params (a longer path), not a direct transposition, so
+    # it is a genuine conflict the author must resolve -> CycleError.
     try:
-        union_params([a, b])
+        union_params([['x', 'k1p', 'z'], ['z', 'k2p', 'x']])
     except CycleError:
         return
-    raise AssertionError('expected CycleError on contradictory order')
+    raise AssertionError('expected CycleError on non-adjacent cycle')
 
 
-def test_order_hint_resolves_cycle():
-    # order_hint is only needed when sub-kernels genuinely contradict (here a says
-    # X<Y, b says Y<X). Real bwd kernels do NOT hit this (see the no-hint test);
-    # the hint exists for the rare conflict, pinning X before Y to break the cycle.
+def test_nonadjacent_cycle_resolved_by_hint():
+    # The same conflict, resolved: order_hint pins x before z and takes
+    # responsibility, so contradicting edges are dropped instead of raising.
+    merged = union_params([['x', 'k1p', 'z'], ['z', 'k2p', 'x']],
+                          order_hint=['x', 'z'])
+    assert merged.index('x') < merged.index('z')
+    assert set(merged) == {'x', 'k1p', 'z', 'k2p'}
+
+
+def test_order_hint_forces_order():
+    # order_hint is the highest-priority chain: it overrides both kernels' order.
     a = ['X', 'Y']
-    b = ['Y', 'X']
-    assert union_params([a, b], order_hint=['X', 'Y']) == ['X', 'Y']
+    b = ['X', 'Y']
+    assert union_params([a, b], order_hint=['Y', 'X']) == ['Y', 'X']
 
 
 def test_rename_merges_wired_operands():
