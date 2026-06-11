@@ -51,6 +51,7 @@ def parse():
     p.add_argument("--lut_sanity_check", action='store_true', help="By default, an exception will ba raised when any the look up table (LUT) is broken. With this option the exception is not raised, and diagnose information is printed for developers to re-run the tuning script in order to fix the database.")
     p.add_argument("--sanity_check_only", action='store_true', help="Run --lut_sanity_check but suppress all code generation. No files are written. Implies --lut_sanity_check.")
     p.add_argument("--sancheck", action='store_true', help="Validate the ATI descriptions (completeness, override scope, no arg in two axes, derive-target resolution, operator merge cycles) and exit. Read-only: no code is generated. Exit non-zero if any error.")
+    p.add_argument("--preview", type=str, default=None, nargs='?', const='*', help="Dump the implicit structures (params struct, merged argument order, axis manifest) an ATI description derives, then exit. Optionally pass a unique_path or glob (e.g. flash/op/op_attn_fwd); default all. Read-only.")
     # Handled by CMake
     # p.add_argument("--timeout", type=float, default=8.0, help='Maximal time the compiler can run. Passing < 0 for indefinite. No effect in bare mode (handled separately)')
     args = p.parse_args()
@@ -79,11 +80,24 @@ def run_sancheck() -> int:
         print(f'  {e}', file=sys.stderr)
     return 1
 
+def run_preview(selective) -> int:
+    """Print the implicit structures of the ATI descriptions matching `selective`."""
+    from .rules import kernels as triton_kernels, operators as dispatcher_operators
+    from .template_instantiation.tools import preview
+    sel = None if selective == '*' else selective
+    text = preview(selective=sel, kernels=triton_kernels,
+                   operators=dispatcher_operators)
+    print(text if text else '// --preview: no ATI-described items match')
+    return 0
+
 def main():
     args = parse()
     if args.sancheck:
         import sys
         sys.exit(run_sancheck())
+    if args.preview is not None:
+        import sys
+        sys.exit(run_preview(args.preview))
     gen = RootGenerator(args)
     gen.generate()
     for e in args._sanity_check_exceptions:
