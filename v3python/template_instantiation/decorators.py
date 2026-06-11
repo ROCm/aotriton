@@ -293,3 +293,39 @@ def _ALWAYS(functional):
 
 # Back-compat alias; `derives` is the preferred facade.
 overrides = derives
+
+
+class DisableSpec:
+    """One @ati.disable(when=callable): a predicate over the functional marking it
+    excluded from generation (compiler/numerical correctness exclusion). Multiple
+    compose with OR. The callable reads functional state (f.arch, f.choices.<var>).
+    This is the user interface to is_functional_disabled."""
+
+    __slots__ = ('when',)
+
+    def __init__(self, when):
+        assert callable(when), \
+            f'@ati.disable(when=...) needs a callable f -> bool, got {when!r}'
+        self.when = when
+
+    def holds(self, functional) -> bool:
+        return bool(self.when(functional))
+
+    def __call__(self, kernel):
+        """Stacked-@ form: accumulate this spec onto the kernel below it."""
+        from .describe import accumulate_spec
+        return accumulate_spec(self, kernel)
+
+    def __repr__(self):
+        return f'DisableSpec({getattr(self.when, "__name__", self.when)!r})'
+
+
+def disable(when):
+    """Disable the functionals where `when(functional)` is truthy — a
+    compiler/numerical correctness exclusion that travels with the kernel
+    description (the user interface to is_functional_disabled):
+
+      ati.disable(when=lambda f: f.choices.CAUSAL_TYPE and f.choices.BIAS_TYPE != 0)
+      ati.disable(when=lambda f: f.arch == 'gfx950' and f.choices.BLOCK_DMODEL == 16)
+    """
+    return DisableSpec(when)

@@ -24,14 +24,14 @@ Authoring surface (see agent-plans/ati_rev1.md):
 from . import tune
 from .decorators import (
     tensor_dtype, choice_set, tensor, scalar,
-    derives, overrides, eq, ne, lt, gt,
+    derives, overrides, disable, eq, ne, lt, gt,
 )
 from .describe import describe, kernel
 from .builder import AtiDescriptionError
 
 __all__ = [
     'tensor_dtype', 'choice_set', 'tensor', 'scalar',
-    'derives', 'overrides', 'eq', 'ne', 'lt', 'gt',
+    'derives', 'overrides', 'disable', 'eq', 'ne', 'lt', 'gt',
     'describe', 'kernel', 'operator', 'union_params', 'metro_kernel',
     'tune', 'AtiDescriptionError',
 ]

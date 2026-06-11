@@ -692,24 +692,12 @@ class AtiKernelDescription:
         return self._built.tune is not None and self._built.tune.is_tunable
 
     def is_functional_disabled(self, functional):
-        # Mirror the legacy attn_fwd.is_functional_disabled (which chains into
-        # FlashKernel): disable causal+bias, gfx11 hdim>256, and gfx950 hdim==16.
-        # TODO(postati): these are kernel-correctness exclusions that belong in the
-        # @ati.* description, not hand-ported here — see agent-plans/postati_todo.md.
-        from v3python.rules.flash._common import check_value
+        # Driven by the @ati.disable predicates in the kernel description (any
+        # firing disables). Only meaningful for tunable kernels — an untunable
+        # kernel has no functionals to exclude from autotuning.
         if not self.is_tunable:
             return False
-        is_causal = check_value(functional, ['CAUSAL', 'CAUSAL_TYPE'])
-        bias_type = check_value(functional, 'BIAS_TYPE')
-        if is_causal and bias_type != 0:
-            return True
-        arch = functional.arch
-        if arch.startswith('gfx11'):
-            if check_value(functional, 'BLOCK_DMODEL') > 256:
-                return True
-        if arch == 'gfx950' and check_value(functional, 'BLOCK_DMODEL') in (16,):
-            return True
-        return False
+        return any(d.holds(functional) for d in self._built.disables)
 
 
 def build_kernel_description(kernel, *, family, source_path=None,

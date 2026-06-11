@@ -62,6 +62,25 @@ def gen_autotune_configs(f):
     yield ati.tune.Config(kw, num_warps=4, num_stages=1)
 
 
+def _attn_fwd_disabled(f):
+    """Functionals excluded for compiler/numerical correctness (the user interface
+    to is_functional_disabled — one function covering all cases, mirroring the
+    legacy attn_fwd.is_functional_disabled / FlashKernel rules)."""
+    causal = f.choices.CAUSAL_TYPE
+    hdim = f.choices.BLOCK_DMODEL
+    bias_type = f.choices.BIAS_TYPE
+    # causal + matrix bias is unsupported
+    if causal != 0 and bias_type != 0:
+        return True
+    # gfx11xx cannot handle hdim > 256
+    if f.arch.startswith('gfx11') and hdim > 256:
+        return True
+    # gfx950 compiler has a known numerical error on hdim == 16
+    if f.arch == 'gfx950' and hdim == 16:
+        return True
+    return False
+
+
 def describe_attn_fwd(attn_fwd):
     # Only T_io is multi-choice, so only it needs an explicit signature_name
     # (the argument recording it in the aks2 entry name / DB row key). T_seq and
@@ -159,6 +178,9 @@ def describe_attn_fwd(attn_fwd):
         # non-causal -> persistent_atomic_counter becomes constexpr 0
         ati.derives('persistent_atomic_counter', to=0,
                       when=ati.eq('CAUSAL_TYPE', 0)),
+
+        # --- functional-disable (compiler/numerical correctness exclusions) ---
+        ati.disable(when=_attn_fwd_disabled),
     ]
     ati.describe(attn_fwd, *specs)
     return attn_fwd

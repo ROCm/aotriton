@@ -93,16 +93,18 @@ class BuiltKernel:
         enumerate_functionals, lands in resolved[] (the compiled signature).
       * `perf_overrides` — target is a PERF-SCHEMA field; applied only in the perf
         layer (translate_*), never in resolved[]."""
-    __slots__ = ('name', 'axes', 'overrides', 'perf_overrides', 'arguments', 'tune')
+    __slots__ = ('name', 'axes', 'overrides', 'perf_overrides', 'arguments',
+                 'tune', 'disables')
 
     def __init__(self, name, axes, overrides, arguments, tune=None,
-                 perf_overrides=None):
+                 perf_overrides=None, disables=None):
         self.name = name
         self.axes = axes              # list[Axis] (incl. trivial + hidden strides)
         self.overrides = overrides    # functional-arg overrides
         self.perf_overrides = perf_overrides or []   # perf-field overrides
         self.arguments = arguments    # full signature order (list[str])
         self.tune = tune              # TuneSpec | None (perf schema, configs, ...)
+        self.disables = disables or []  # list[DisableSpec] (functional-disable)
 
     def __repr__(self):
         nmulti = sum(1 for a in self.axes if not a.is_trivial)
@@ -265,4 +267,5 @@ def build_kernel(kernel_spec) -> BuiltKernel:
         else:
             func_ovs.append(ov)
     return BuiltKernel(name, axes, func_ovs, arguments,
-                       tune=kernel_spec.tune, perf_overrides=perf_ovs)
+                       tune=kernel_spec.tune, perf_overrides=perf_ovs,
+                       disables=list(kernel_spec.disables))
