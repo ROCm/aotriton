@@ -154,7 +154,7 @@ namespace autotune {
 
 extern const char attn_fwd_packed_string[];
 
-extern int attn_fwd__lut_lambda__0(const OpAttnFwdParams& params, int mod_number, int8_t lut[1][1]);
+extern int attn_fwd__lut_lambda__0(const OpAttnFwdParams& params, int mod_number, int8_t lut[1][10][10]);
 
 void Autotune_attn_fwd__A0__F0(AttnFwdContext& params, int mod_number);
 void Autotune_attn_fwd__A0__F1(AttnFwdContext& params, int mod_number);

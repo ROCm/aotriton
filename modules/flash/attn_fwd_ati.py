@@ -34,12 +34,16 @@ MAIN_DTYPES = ['*fp16:16', '*bf16:16', '*fp32:16']
 
 @dataclass
 class AttnFwdPerf:
-    PERSISTENT_TYPE: np.int8
-    GRID_CU_MULTIP:  np.int8
-    BLOCK_M:         np.int16
-    BLOCK_N:         np.int16
-    PRE_LOAD_V:      bool
-    NUM_XCDS:        np.int8
+    # Field defaults are the untuned/empty-path base values (rarely used: tuned
+    # functionals read their values from the DB). PERSISTENT_TYPE and NUM_XCDS
+    # are refined per-functional by @ati.derives below — NUM_XCDS defaults to 1
+    # (non-MI) and is raised to 8 on gfx942/950.
+    PERSISTENT_TYPE: np.int8 = 0
+    GRID_CU_MULTIP:  np.int8 = 2
+    BLOCK_M:         np.int16 = 16
+    BLOCK_N:         np.int16 = 16
+    PRE_LOAD_V:      bool = False
+    NUM_XCDS:        np.int8 = 1
 
 
 def gen_autotune_configs(f):
@@ -121,31 +125,39 @@ def describe_attn_fwd(attn_fwd):
         ati.tune.binning(Max_seqlen_q=ati.tune.binning.le,
                          Max_seqlen_k=ati.tune.binning.le),
         ati.tune.fallback(PADDED_HEAD=False),
-        ati.tune.derived(NUM_XCDS=lambda f: 8 if f.arch in ('gfx942', 'gfx950') else 1),
+
+        # --- perf-value derives (replace @ati.tune.derived; a perf value that is
+        # a pure function of an existing dimension, so it needn't be its own Axis).
+        # PERSISTENT_TYPE depends only on CAUSAL_TYPE (2 when causal else 0);
+        # NUM_XCDS depends only on arch (8 on gfx942/950 else the default 1) and
+        # uses a callable predicate over the functional.
+        ati.derives('PERSISTENT_TYPE', to=2, when=ati.ne('CAUSAL_TYPE', 0)),
+        ati.derives('NUM_XCDS', to=8,
+                    when=lambda f: f.arch in ('gfx942', 'gfx950')),
 
         # --- conditional overrides (legacy CC/CDC/CDETensor) ---
         # bias off -> B and its non-unit strides become constexpr 0
-        ati.overrides('B', to=0, when=ati.eq('BIAS_TYPE', 0)),
-        ati.overrides(['stride_bz', 'stride_bh', 'stride_bm'], to=0,
+        ati.derives('B', to=0, when=ati.eq('BIAS_TYPE', 0)),
+        ati.derives(['stride_bz', 'stride_bh', 'stride_bm'], to=0,
                       when=ati.eq('BIAS_TYPE', 0)),
         # alibi off (always) -> A and its non-unit stride become constexpr 0
-        ati.overrides('A', to=0, when=ati.eq('USE_ALIBI', False)),
-        ati.overrides('stride_az', to=0, when=ati.eq('USE_ALIBI', False)),
+        ati.derives('A', to=0, when=ati.eq('USE_ALIBI', False)),
+        ati.derives('stride_az', to=0, when=ati.eq('USE_ALIBI', False)),
         # padded head off -> Hdim_qk/vo defer to BLOCK_DMODEL
-        ati.overrides('Hdim_qk', to='BLOCK_DMODEL', when=ati.eq('PADDED_HEAD', False)),
-        ati.overrides('Hdim_vo', to='BLOCK_DMODEL', when=ati.eq('PADDED_HEAD', False)),
+        ati.derives('Hdim_qk', to='BLOCK_DMODEL', when=ati.eq('PADDED_HEAD', False)),
+        ati.derives('Hdim_vo', to='BLOCK_DMODEL', when=ati.eq('PADDED_HEAD', False)),
         # dropout off -> dropout_p / philox become constexpr 0
-        ati.overrides(['dropout_p', 'philox_seed_ptr', 'philox_offset1',
+        ati.derives(['dropout_p', 'philox_seed_ptr', 'philox_offset1',
                        'philox_offset2', 'philox_seed_output', 'philox_offset_output'],
                       to=0, when=ati.eq('ENABLE_DROPOUT', False)),
         # encoded softmax off (always) -> encoded_softmax becomes constexpr 0
-        ati.overrides('encoded_softmax', to=0,
+        ati.derives('encoded_softmax', to=0,
                       when=ati.eq('RETURN_ENCODED_SOFTMAX', False)),
         # non-sliding-window -> Window_left/right become constexpr 0
-        ati.overrides(['Window_left', 'Window_right'], to=0,
+        ati.derives(['Window_left', 'Window_right'], to=0,
                       when=ati.ne('CAUSAL_TYPE', 3)),
         # non-causal -> persistent_atomic_counter becomes constexpr 0
-        ati.overrides('persistent_atomic_counter', to=0,
+        ati.derives('persistent_atomic_counter', to=0,
                       when=ati.eq('CAUSAL_TYPE', 0)),
     ]
     ati.describe(attn_fwd, *specs)

@@ -43,6 +43,22 @@ class VarRef:
         return f'VarRef({self.var_name!r})'
 
 
+class ValueFn:
+    """A derive value computed from the functional: `to(functional)` -> value.
+    For values that are a function of functional state (e.g. NUM_XCDS from arch,
+    possibly several values 1/3/6/8)."""
+    __slots__ = ('fn',)
+
+    def __init__(self, fn):
+        self.fn = fn
+
+    def __call__(self, functional):
+        return self.fn(functional)
+
+    def __repr__(self):
+        return f'ValueFn({getattr(self.fn, "__name__", self.fn)!r})'
+
+
 class Predicate:
     """`(var_name <op> operand)` over a free-axis choice value."""
     __slots__ = ('var_name', 'op', 'operand')
@@ -82,29 +98,51 @@ def ge(var_name, operand): return Predicate(var_name, '>=', operand)
 
 
 class Override:
-    """Rewrite `targets` to `value` for functionals where `predicate` holds."""
+    """Rewrite `targets` to `value` for functionals where `predicate` fires.
+
+    `predicate` is either a structured `Predicate` (var op operand, over a free
+    choice axis) or a plain CALLABLE taking the functional and returning bool —
+    e.g. `when=lambda f: f.arch in ('gfx942', 'gfx950')`. The callable form can
+    read any functional state (arch, several choices) without growing a predicate
+    operator/var vocabulary."""
     __slots__ = ('targets', 'predicate', 'value')
 
-    def __init__(self, targets, predicate: Predicate, value):
+    def __init__(self, targets, predicate, value):
         if isinstance(targets, str):
             targets = (targets,)
         self.targets = tuple(targets)
-        assert isinstance(predicate, Predicate), \
-            f'Override needs a Predicate, got {predicate!r}'
+        assert isinstance(predicate, Predicate) or callable(predicate), \
+            f'Override needs a Predicate or a callable, got {predicate!r}'
         self.predicate = predicate
         self.value = value          # literal | str type | VarRef
 
-    def materialize(self, picked: dict) -> Choice:
-        """The Choice to write into the targets for a firing functional."""
+    def fires(self, functional) -> bool:
+        """Whether this override applies to `functional`. Dispatches on the
+        predicate kind: a structured Predicate reads the choice dict; a callable
+        receives the functional itself."""
+        if isinstance(self.predicate, Predicate):
+            return self.predicate.holds(functional.choice)
+        return bool(self.predicate(functional))
+
+    def materialize(self, ctx) -> Choice:
+        """The Choice to write into the targets for a firing functional. `ctx` is
+        a functional-like object exposing `.choice` (var->Choice) and `.arch`, or
+        a plain {var->Choice} dict (no ValueFn support in that form)."""
+        picked = ctx.choice if hasattr(ctx, 'choice') else ctx
         if isinstance(self.value, VarRef):
             assert self.value.var_name in picked, (
                 f'override value {self.value!r} references a variable not in the '
                 f'selection {sorted(picked)}')
             return picked[self.value.var_name]
+        if isinstance(self.value, ValueFn):
+            return Choice.parse(self.value(ctx))
         return Choice.parse(self.value)
 
     def validate(self, free_var_names) -> None:
-        self.predicate.validate(free_var_names)
+        # A callable predicate is opaque to static validation; only structured
+        # Predicates are checked against the free axes.
+        if isinstance(self.predicate, Predicate):
+            self.predicate.validate(free_var_names)
         if isinstance(self.value, VarRef):
             assert self.value.var_name in free_var_names, (
                 f'override value {self.value!r} references {self.value.var_name!r}, '

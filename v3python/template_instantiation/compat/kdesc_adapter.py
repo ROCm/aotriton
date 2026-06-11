@@ -26,6 +26,78 @@ from ..describe import get_kernel_spec
 from ..ir import assign_godel, enumerate_functionals
 
 
+def _binning_class(selector):
+    """Map an ati.tune.binning selector (.le/.gt/.eq) to the concrete
+    v3python.autotune Binning class the DB-translation expects."""
+    from v3python.autotune import BinningLessOrEqual, BinningExact
+    key = getattr(selector, 'key', selector)
+    if key == 'le':
+        return BinningLessOrEqual
+    if key == 'eq':
+        return BinningExact
+    raise NotImplementedError(
+        f'binning selector {key!r} has no concrete class yet '
+        f'(only le/eq are implemented; gt is parity-only)')
+
+
+class _PerfBind:
+    """A perf parameter bound to a concrete value, implementing exactly the
+    interface KernelSignature consumes (name, value, iteration, get_typed_value,
+    settle_unresolved) — without the legacy Bind. Perf params are always plain
+    non-conditional constexprs, so settle_unresolved is a no-op."""
+
+    __slots__ = ('_name', '_tc')
+
+    def __init__(self, name, tc):
+        self._name = name
+        self._tc = tc
+
+    @property
+    def name(self):
+        return self._name
+
+    @property
+    def value(self):
+        return self._tc
+
+    def __iter__(self):
+        yield self._name, self._tc
+
+    def get_typed_value(self, aname):
+        return self._tc
+
+    def settle_unresolved(self, tc_dict):
+        pass
+
+
+class _PerfParamShim:
+    """Compat view of a perf-schema field as a legacy performance TemplateParameter
+    for translate_dataframe / gen_signatures_for_tuning. Exposes repr_name,
+    all_names, choices, create_direct, and get_cfields."""
+
+    __slots__ = ('_pp',)
+
+    def __init__(self, perf_param):
+        self._pp = perf_param           # tune.schema.PerfParam
+
+    @property
+    def repr_name(self):
+        return self._pp.name
+
+    @property
+    def all_names(self):
+        return [self._pp.name]
+
+    def create_direct(self, value):
+        return _PerfBind(self._pp.name, self._pp.tcc(value))
+
+    def get_cfields(self):
+        from v3python.base.cfield import cfield
+        tc = self._pp.tcc(0)
+        return [cfield(ctype=tc.itype, aname=self._pp.name, index=-1,
+                       nbits=tc.NBITS or 0)]
+
+
 class _AxisParamShim:
     """Compat view of an Axis as a legacy `tp` for the compiled-in feature tables
     (codegen.kernel get_<name>_choices). Exposes the members that code reads:
@@ -53,6 +125,12 @@ class _AxisParamShim:
     @property
     def nchoices(self):
         return self._axis.radix
+
+    @property
+    def godel_number(self):
+        # The axis's godel stride (legacy TP.godel_number == its stride). Trivial
+        # (single-choice) axes have no stride assigned; they contribute 0.
+        return self._axis.godel_stride or 0
 
     @property
     def choices(self):
@@ -111,6 +189,11 @@ class AtiFunctional:
     @property
     def choices(self):
         return self._ir.choices
+
+    @property
+    def choice(self):
+        """The raw {var_name -> Choice} dict (for predicate evaluation)."""
+        return self._ir.choice
 
     @property
     def resolved(self):
@@ -285,6 +368,8 @@ class AtiKernelDescription:
     TUNE_NAME = 'autotune'
     FILE_PFX = 'shim'
     SHARED_IFACE = None
+    HEADER_EXTRA_INCLUDES = []
+    SOURCE_EXTRA_INCLUDES = []
 
     def __init__(self, built, *, family, source_path=None, triton_kernel_name=None):
         self._built = built
@@ -306,6 +391,129 @@ class AtiKernelDescription:
         # property (B, dropout_p, ...), not an axis/type-variable one: a dtype
         # variable is never baked even when a member tensor is overridden.
         self._baked_args = {t for ov in built.overrides for t in ov.targets}
+        # Perf params (shims over the tune schema), in schema order.
+        ts = built.tune
+        self._perf_params = ([_PerfParamShim(pp) for pp in ts.schema.params]
+                             if (ts and ts.schema) else [])
+        # AUTOTUNE_KEYS validated against the arguments (legacy contract).
+        self._autotune_keys_validated = []
+        if ts is not None:
+            argset = set(built.arguments)
+            for key, sel in ts.binning.items():
+                if key in argset:
+                    self._autotune_keys_validated.append((key, _binning_class(sel)))
+
+    # --- perf params + tuning metadata (legacy translate_* contract) ---
+
+    @property
+    def AUTOTUNE_KEYS_VALIDATED(self):
+        return self._autotune_keys_validated
+
+    @property
+    def PROGRAMMATIC_PERFS(self) -> dict:
+        ts = self._built.tune
+        return dict(ts.derived) if ts is not None else {}
+
+    def gen_performance_params(self):
+        yield from self._perf_params
+
+    @property
+    def perf_cfields(self):
+        ts = self._built.tune
+        if ts is None or ts.schema is None:
+            return []
+        from v3python.base.cfield import cfield
+        out = []
+        for pp in ts.schema.params:
+            tc = pp.tcc(0)
+            out.append(cfield(ctype=tc.itype, aname=pp.name,
+                              index=self._arg_index.get(pp.name, -1),
+                              nbits=tc.NBITS or 0))
+        out.sort(key=lambda cf: cf.nbits, reverse=True)
+        return out
+
+    # --- DB / LUT translation (reuses legacy bodies via exposed accessors) ---
+
+    @property
+    def triton_source_path(self):
+        from pathlib import Path
+        return Path(self._source_path)
+
+    @property
+    def triton_kernel_name(self):
+        return self._triton_kernel_name
+
+    @property
+    def is_tunable(self):
+        return self._built.tune is not None and self._built.tune.is_tunable
+
+    def perf_value(self, perf_param, f):
+        """The value of a perf param for functional f: the @dataclass field
+        default, then any perf-channel @ati.derives that fires (last wins), e.g.
+        PERSISTENT_TYPE -> 2 when CAUSAL_TYPE!=0, NUM_XCDS -> 8 when arch in
+        {gfx942,gfx950}. Replaces the legacy PERF_CHOICES default +
+        PROGRAMMATIC_PERFS."""
+        from ..ir import VarRef, ValueFn
+        value = perf_param.default
+        for ov in self._built.perf_overrides:
+            if perf_param.name in ov.targets and ov.fires(f):
+                if isinstance(ov.value, VarRef):
+                    value = f.choice[ov.value.var_name].triton_compile_signature
+                elif isinstance(ov.value, ValueFn):
+                    value = ov.value(f)
+                else:
+                    value = ov.value
+        return value
+
+    def translate_dataframe(self, f, df):
+        # Inject perf params that are NOT tuned DB columns (their value is the
+        # default/override, the legacy PROGRAMMATIC_PERFS role) before the shared
+        # dataframe logic reads tuned_kernel$<name>.
+        import pandas as pd  # noqa: F401  (df is already a DataFrame)
+        for pp in self._built.tune.schema.params:
+            col = f'tuned_kernel${pp.name}'
+            if col not in df.columns:
+                df[col] = self.perf_value(pp, f)
+        from v3python.kernel.kdesc import KernelDescription
+        return KernelDescription.translate_dataframe(self, f, df)
+
+    def translate_empty_dataframe(self, f):
+        import numpy as np
+        from v3python.kernel.ksignature import KernelSignature, DEFAULT_COPT
+        lut_tensor = np.zeros([f.noptimized_for, 1], dtype=np.int8)
+        defaults = []
+        for shim in self._perf_params:
+            value = self.perf_value(shim._pp, f)
+            defaults.append(shim.create_direct(value))
+        sigs = [KernelSignature(f, defaults, DEFAULT_COPT)]
+        return lut_tensor, sigs, None
+
+    def gen_signatures_for_tuning(self, f):
+        from v3python.kernel.kdesc import KernelDescription
+        return KernelDescription.gen_signatures_for_tuning(self, f)
+
+    def gen_autotune_configs(self, f):
+        cfg = self._built.tune.configs
+        return cfg(f)
+
+    # Flash-family LUT shape constants (used by the reused sancheck body).
+    # TODO: move to a per-family adapter mixin when a second family is ported.
+    LUT_FULL_SEQLEN_Q = [16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
+    LUT_FULL_SEQLEN_K = [16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
+    LUT_FULL_SEQLEN_NAVI = [16, 32, 64, 128, 256, 512, 1024, 2048]
+
+    def sancheck_lut_tensor(self, f, lut_tensor):
+        from v3python.rules.flash._common import FlashKernel
+        return FlashKernel.sancheck_lut_tensor(self, f, lut_tensor)
+
+    def _gen_missing_entries(self, *args, **kwargs):
+        from v3python.rules.flash._common import FlashKernel
+        return FlashKernel._gen_missing_entries(self, *args, **kwargs)
+
+    def update_programmatic_perfs(self, kw, f):
+        for perf_name, program in self.PROGRAMMATIC_PERFS.items():
+            kw[perf_name] = program(f)
+        return kw
 
     # --- axis views (used by AtiFunctional signatures) ---
 
@@ -361,12 +569,21 @@ class AtiKernelDescription:
 
     # --- class names (legacy Interface naming rules) ---
 
+    @staticmethod
+    def _name_to_base(name):
+        return ''.join(x.capitalize() for x in name.lower().split('_'))
+
     @property
     def class_name_base(self):
-        return ''.join(x.capitalize() for x in self.NAME.lower().split('_'))
+        return self._name_to_base(self.NAME)
 
     @property
     def param_class_name(self):
+        # When SHARED_IFACE is set (the kernel borrows an operator's param struct,
+        # like legacy attn_fwd -> OpAttnFwdParams), the struct name comes from the
+        # shared interface, not this kernel.
+        if self.SHARED_IFACE is not None:
+            return self._name_to_base(self.SHARED_IFACE.NAME) + 'Params'
         return self.class_name_base + 'Params'
 
     @property
@@ -398,23 +615,6 @@ class AtiKernelDescription:
                 out.append(cfield(ctype=tc.itype, aname=arg,
                                   index=self._arg_index[arg], nbits=tc.NBITS or 0))
         out.sort(key=lambda cf: cf.index)
-        return out
-
-    @property
-    def perf_cfields(self):
-        """Perf-struct fields from the schema, sorted nbits-descending for compact
-        packing (matching legacy)."""
-        from v3python.base.cfield import cfield
-        ts = self._built.tune
-        if ts is None or ts.schema is None:
-            return []
-        out = []
-        for pp in ts.schema.params:
-            tc = pp.tcc(0)
-            out.append(cfield(ctype=tc.itype, aname=pp.name,
-                              index=self._arg_index.get(pp.name, -1),
-                              nbits=tc.NBITS or 0))
-        out.sort(key=lambda cf: cf.nbits, reverse=True)
         return out
 
     # --- launch-argument vector (replaces KERNEL_DATA_ARGUMENTS + strides) ---
@@ -492,6 +692,23 @@ class AtiKernelDescription:
         return self._built.tune is not None and self._built.tune.is_tunable
 
     def is_functional_disabled(self, functional):
+        # Mirror the legacy attn_fwd.is_functional_disabled (which chains into
+        # FlashKernel): disable causal+bias, gfx11 hdim>256, and gfx950 hdim==16.
+        # TODO(postati): these are kernel-correctness exclusions that belong in the
+        # @ati.* description, not hand-ported here — see agent-plans/postati_todo.md.
+        from v3python.rules.flash._common import check_value
+        if not self.is_tunable:
+            return False
+        is_causal = check_value(functional, ['CAUSAL', 'CAUSAL_TYPE'])
+        bias_type = check_value(functional, 'BIAS_TYPE')
+        if is_causal and bias_type != 0:
+            return True
+        arch = functional.arch
+        if arch.startswith('gfx11'):
+            if check_value(functional, 'BLOCK_DMODEL') > 256:
+                return True
+        if arch == 'gfx950' and check_value(functional, 'BLOCK_DMODEL') in (16,):
+            return True
         return False
 
 

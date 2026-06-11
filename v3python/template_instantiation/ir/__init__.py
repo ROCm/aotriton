@@ -4,14 +4,14 @@
 from .choice import Choice
 from .axis import Axis, assign_godel, godel_of
 from .override import (
-    Predicate, VarRef, Override,
+    Predicate, VarRef, ValueFn, Override,
     eq, ne, lt, gt, le, ge,
 )
 from .functional import Functional, ChoiceView, enumerate_functionals
 
 __all__ = [
     'Choice', 'Axis', 'assign_godel', 'godel_of',
-    'Predicate', 'VarRef', 'Override',
+    'Predicate', 'VarRef', 'ValueFn', 'Override',
     'eq', 'ne', 'lt', 'gt', 'le', 'ge',
     'Functional', 'ChoiceView', 'enumerate_functionals',
 ]

@@ -98,17 +98,29 @@ class Functional:
                 f'godel={self.godel_number})')
 
 
-def _resolve(axes_all, overrides, picked):
+class _PredCtx:
+    """Minimal functional-like context for evaluating override predicates during
+    enumeration, before the Functional object exists. Exposes the `.choice` dict
+    and `.arch` a callable predicate may read."""
+    __slots__ = ('choice', 'arch')
+
+    def __init__(self, choice, arch):
+        self.choice = choice
+        self.arch = arch
+
+
+def _resolve(axes_all, overrides, picked, arch):
     """Step 3+4: fan out var->args (tensor ranks specialized per arg), then push
-    overrides in declared order. Pure function of `picked`."""
+    overrides in declared order. Pure function of `picked` (+ arch dimension)."""
     resolved = {}
     for axis in axes_all:
         nth = axis.choices.index(picked[axis.var_name])
         for arg in axis.arg_names:
             resolved[arg] = axis.choice_for_arg(nth, arg)
+    ctx = _PredCtx(picked, arch)
     for ov in overrides:
-        if ov.predicate.holds(picked):
-            c = ov.materialize(picked)
+        if ov.fires(ctx):
+            c = ov.materialize(ctx)
             for t in ov.targets:
                 resolved[t] = c
     return resolved
@@ -134,7 +146,7 @@ def enumerate_functionals(axes, overrides, target_arch):
             picked = dict(trivial_pick)
             picked.update({a.var_name: a.choices[i]
                            for i, a in zip(sel, axes_multi)})
-            resolved = _resolve(axes_all, overrides, picked)
+            resolved = _resolve(axes_all, overrides, picked, arch)
             yield Functional(arch=arch, arch_number=arch_number,
                              godel_number=godel,
                              choice=picked, resolved=resolved)

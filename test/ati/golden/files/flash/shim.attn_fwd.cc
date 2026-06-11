@@ -1000,13 +1000,71 @@ const std::vector<std::string>& AttnFwdMetadata::get_Num_CU_choices()
 namespace autotune {
 
 const char attn_fwd_packed_string[] =
-"PERSISTENT_TYPE=0;GRID_CU_MULTIP=2;BLOCK_M=16;BLOCK_N=16;PRE_LOAD_V=False;NUM_XCDS=8\0"
+"PERSISTENT_TYPE=0;GRID_CU_MULTIP=2;BLOCK_M=32;BLOCK_N=16;PRE_LOAD_V=False;NUM_XCDS=8\0"
+"waves_per_eu=1;num_warps=2;num_stages=1\0"
+"waves_per_eu=3;num_warps=2;num_stages=1\0"
+"waves_per_eu=4;num_warps=2;num_stages=1\0"
+"PERSISTENT_TYPE=0;GRID_CU_MULTIP=2;BLOCK_M=32;BLOCK_N=16;PRE_LOAD_V=True;NUM_XCDS=8\0"
+"waves_per_eu=2;num_warps=2;num_stages=1\0"
+"PERSISTENT_TYPE=0;GRID_CU_MULTIP=2;BLOCK_M=64;BLOCK_N=32;PRE_LOAD_V=False;NUM_XCDS=8\0"
+"PERSISTENT_TYPE=0;GRID_CU_MULTIP=2;BLOCK_M=64;BLOCK_N=32;PRE_LOAD_V=True;NUM_XCDS=8\0"
+"PERSISTENT_TYPE=0;GRID_CU_MULTIP=2;BLOCK_M=64;BLOCK_N=64;PRE_LOAD_V=False;NUM_XCDS=8\0"
+"waves_per_eu=1;num_warps=4;num_stages=1\0"
 "waves_per_eu=2;num_warps=4;num_stages=1\0"
-"PERSISTENT_TYPE=2;GRID_CU_MULTIP=2;BLOCK_M=16;BLOCK_N=16;PRE_LOAD_V=False;NUM_XCDS=8\0";
+"PERSISTENT_TYPE=0;GRID_CU_MULTIP=2;BLOCK_M=64;BLOCK_N=64;PRE_LOAD_V=True;NUM_XCDS=8\0"
+"waves_per_eu=3;num_warps=4;num_stages=1\0"
+"waves_per_eu=4;num_warps=4;num_stages=1\0"
+"PERSISTENT_TYPE=0;GRID_CU_MULTIP=2;BLOCK_M=128;BLOCK_N=64;PRE_LOAD_V=False;NUM_XCDS=8\0"
+"PERSISTENT_TYPE=0;GRID_CU_MULTIP=2;BLOCK_M=128;BLOCK_N=128;PRE_LOAD_V=False;NUM_XCDS=8\0"
+"PERSISTENT_TYPE=0;GRID_CU_MULTIP=2;BLOCK_M=128;BLOCK_N=128;PRE_LOAD_V=True;NUM_XCDS=8\0"
+"PERSISTENT_TYPE=2;GRID_CU_MULTIP=2;BLOCK_M=32;BLOCK_N=16;PRE_LOAD_V=True;NUM_XCDS=8\0"
+"PERSISTENT_TYPE=2;GRID_CU_MULTIP=2;BLOCK_M=64;BLOCK_N=32;PRE_LOAD_V=False;NUM_XCDS=8\0"
+"PERSISTENT_TYPE=2;GRID_CU_MULTIP=2;BLOCK_M=64;BLOCK_N=64;PRE_LOAD_V=False;NUM_XCDS=8\0"
+"PERSISTENT_TYPE=2;GRID_CU_MULTIP=2;BLOCK_M=64;BLOCK_N=64;PRE_LOAD_V=True;NUM_XCDS=8\0"
+"PERSISTENT_TYPE=2;GRID_CU_MULTIP=2;BLOCK_M=128;BLOCK_N=64;PRE_LOAD_V=False;NUM_XCDS=8\0"
+"PERSISTENT_TYPE=2;GRID_CU_MULTIP=2;BLOCK_M=128;BLOCK_N=64;PRE_LOAD_V=True;NUM_XCDS=8\0"
+"PERSISTENT_TYPE=2;GRID_CU_MULTIP=2;BLOCK_M=128;BLOCK_N=128;PRE_LOAD_V=False;NUM_XCDS=8\0"
+"PERSISTENT_TYPE=2;GRID_CU_MULTIP=2;BLOCK_M=128;BLOCK_N=128;PRE_LOAD_V=True;NUM_XCDS=8\0"
+"PERSISTENT_TYPE=0;GRID_CU_MULTIP=2;BLOCK_M=128;BLOCK_N=64;PRE_LOAD_V=True;NUM_XCDS=8\0"
+"PERSISTENT_TYPE=2;GRID_CU_MULTIP=2;BLOCK_M=32;BLOCK_N=16;PRE_LOAD_V=False;NUM_XCDS=8\0"
+"PERSISTENT_TYPE=2;GRID_CU_MULTIP=2;BLOCK_M=64;BLOCK_N=32;PRE_LOAD_V=True;NUM_XCDS=8\0"
+"PERSISTENT_TYPE=0;GRID_CU_MULTIP=2;BLOCK_M=16;BLOCK_N=16;PRE_LOAD_V=False;NUM_XCDS=8\0"
+"PERSISTENT_TYPE=0;GRID_CU_MULTIP=2;BLOCK_M=16;BLOCK_N=16;PRE_LOAD_V=True;NUM_XCDS=8\0"
+"PERSISTENT_TYPE=0;GRID_CU_MULTIP=2;BLOCK_M=32;BLOCK_N=32;PRE_LOAD_V=False;NUM_XCDS=8\0"
+"PERSISTENT_TYPE=0;GRID_CU_MULTIP=2;BLOCK_M=32;BLOCK_N=32;PRE_LOAD_V=True;NUM_XCDS=8\0"
+"PERSISTENT_TYPE=2;GRID_CU_MULTIP=2;BLOCK_M=16;BLOCK_N=16;PRE_LOAD_V=False;NUM_XCDS=8\0"
+"PERSISTENT_TYPE=2;GRID_CU_MULTIP=2;BLOCK_M=16;BLOCK_N=16;PRE_LOAD_V=True;NUM_XCDS=8\0"
+"PERSISTENT_TYPE=2;GRID_CU_MULTIP=2;BLOCK_M=32;BLOCK_N=32;PRE_LOAD_V=False;NUM_XCDS=8\0"
+"PERSISTENT_TYPE=2;GRID_CU_MULTIP=2;BLOCK_M=32;BLOCK_N=32;PRE_LOAD_V=True;NUM_XCDS=8\0";
 
-int attn_fwd__lut_lambda__0 (const OpAttnFwdParams& params, int mod_number, int8_t lut[1][1]) {
-    
-    return lut[mod_number][0];
+int attn_fwd__lut_lambda__0 (const OpAttnFwdParams& params, int mod_number, int8_t lut[1][10][10]) {
+    auto Max_seqlen_q_binned_index = [] (int x) {
+        if (x <= 16) return 0;
+        if (x <= 32) return 1;
+        if (x <= 64) return 2;
+        if (x <= 128) return 3;
+        if (x <= 256) return 4;
+        if (x <= 512) return 5;
+        if (x <= 1024) return 6;
+        if (x <= 2048) return 7;
+        if (x <= 4096) return 8;
+        if (x <= 8192) return 9;
+        return 9;
+    }(params.Max_seqlen_q);
+    auto Max_seqlen_k_binned_index = [] (int x) {
+        if (x <= 16) return 0;
+        if (x <= 32) return 1;
+        if (x <= 64) return 2;
+        if (x <= 128) return 3;
+        if (x <= 256) return 4;
+        if (x <= 512) return 5;
+        if (x <= 1024) return 6;
+        if (x <= 2048) return 7;
+        if (x <= 4096) return 8;
+        if (x <= 8192) return 9;
+        return 9;
+    }(params.Max_seqlen_k);
+    return lut[mod_number][Max_seqlen_q_binned_index][Max_seqlen_k_binned_index];
 };
 
 } // namespace autotune

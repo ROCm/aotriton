@@ -86,13 +86,21 @@ _STRIDE_ONE = 1              # contiguous stride -> constexpr 1
 
 
 class BuiltKernel:
-    """The lowered IR for one kernel: everything enumerate_functionals needs."""
-    __slots__ = ('name', 'axes', 'overrides', 'arguments', 'tune')
+    """The lowered IR for one kernel: everything enumerate_functionals needs.
 
-    def __init__(self, name, axes, overrides, arguments, tune=None):
+    Overrides (@ati.derives) split into two channels by target:
+      * `overrides`      — target is a kernel ARGUMENT; applied in
+        enumerate_functionals, lands in resolved[] (the compiled signature).
+      * `perf_overrides` — target is a PERF-SCHEMA field; applied only in the perf
+        layer (translate_*), never in resolved[]."""
+    __slots__ = ('name', 'axes', 'overrides', 'perf_overrides', 'arguments', 'tune')
+
+    def __init__(self, name, axes, overrides, arguments, tune=None,
+                 perf_overrides=None):
         self.name = name
         self.axes = axes              # list[Axis] (incl. trivial + hidden strides)
-        self.overrides = overrides    # list[Override]
+        self.overrides = overrides    # functional-arg overrides
+        self.perf_overrides = perf_overrides or []   # perf-field overrides
         self.arguments = arguments    # full signature order (list[str])
         self.tune = tune              # TuneSpec | None (perf schema, configs, ...)
 
@@ -243,5 +251,18 @@ def build_kernel(kernel_spec) -> BuiltKernel:
 
     axes.sort(key=lambda a: a.anchor)
     arguments = [p.name for p in params]
-    return BuiltKernel(name, axes, list(kernel_spec.overrides), arguments,
-                       tune=kernel_spec.tune)
+    # Split overrides by target: perf-schema fields -> perf channel, the rest ->
+    # functional channel (applied in enumerate_functionals / resolved[]).
+    perf_names = set()
+    if kernel_spec.tune is not None and kernel_spec.tune.schema is not None:
+        perf_names = {pp.name for pp in kernel_spec.tune.schema.params}
+    func_ovs, perf_ovs = [], []
+    for ov in kernel_spec.overrides:
+        if any(t in perf_names for t in ov.targets):
+            assert all(t in perf_names for t in ov.targets), (
+                f'@ati.derives target mixes perf and non-perf names: {ov.targets}')
+            perf_ovs.append(ov)
+        else:
+            func_ovs.append(ov)
+    return BuiltKernel(name, axes, func_ovs, arguments,
+                       tune=kernel_spec.tune, perf_overrides=perf_ovs)

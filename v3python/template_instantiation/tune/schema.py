@@ -66,14 +66,30 @@ def _resolve_tcc(field_name, annotation):
 
 
 class PerfParam:
-    """One performance parameter: its name and the constexpr TypedChoice class
-    fixing its C struct width. A concrete value (from a tuning Config) is bound
-    later via tcc(value)."""
-    __slots__ = ('name', 'tcc')
+    """One performance parameter: its name, the constexpr TypedChoice class fixing
+    its C struct width, and an optional default value (from the @dataclass field
+    default). The default is the value used by the *empty/untuned* path (e.g.
+    bwd_preprocess, or a functional with no DB row); tuned kernels read their
+    value from the DB instead, so the default is rarely exercised."""
+    __slots__ = ('name', 'tcc', 'default')
 
-    def __init__(self, name, tcc):
+    _NO_DEFAULT = object()
+
+    def __init__(self, name, tcc, default=_NO_DEFAULT):
         self.name = name
         self.tcc = tcc          # a TCC.*_t class
+        self.default = default  # python value | _NO_DEFAULT
+
+    @property
+    def has_default(self) -> bool:
+        return self.default is not PerfParam._NO_DEFAULT
+
+    def default_choice(self):
+        """The settled constexpr TypedChoice for the default value."""
+        assert self.has_default, \
+            f'perf param {self.name!r} has no default; give the @dataclass field ' \
+            f'a default value for the untuned/empty path'
+        return self.tcc(self.default)
 
     def choice_for(self, value):
         """A settled constexpr TypedChoice of this param's declared width."""
@@ -85,7 +101,7 @@ class PerfParam:
         return self.tcc(0).itype
 
     def __repr__(self):
-        return f'PerfParam({self.name!r}, {self.tcc.__name__})'
+        return f'PerfParam({self.name!r}, {self.tcc.__name__}, default={self.default!r})'
 
 
 class PerfSchema:
@@ -113,8 +129,15 @@ class PerfSchema:
 def build_schema(dataclass) -> PerfSchema:
     assert dataclasses.is_dataclass(dataclass), \
         f'ati.tune.schema expects a @dataclass, got {dataclass!r}'
-    params = [PerfParam(f.name, _resolve_tcc(f.name, f.type))
-              for f in dataclasses.fields(dataclass)]
+    params = []
+    for f in dataclasses.fields(dataclass):
+        if f.default is not dataclasses.MISSING:
+            default = f.default
+        elif f.default_factory is not dataclasses.MISSING:  # type: ignore[attr-defined]
+            default = f.default_factory()
+        else:
+            default = PerfParam._NO_DEFAULT
+        params.append(PerfParam(f.name, _resolve_tcc(f.name, f.type), default))
     return PerfSchema(dataclass, params)
 
 

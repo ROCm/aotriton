@@ -23,7 +23,7 @@ Surface:
 
 import fnmatch
 
-from .ir import Override, VarRef
+from .ir import Override, VarRef, ValueFn
 from .ir import eq, ne, lt, gt, le, ge   # predicate builders, re-exported as ati.*
 
 
@@ -250,18 +250,46 @@ def scalar(arg_name, type_or_var=None, *, options=None):
     return ScalarSpec(arg_name, type_or_var, options=options)
 
 
-def overrides(targets, *, to, when):
-    """Conditional override (agent-plans/ati_rev1.md §3.3): rewrite `targets` to
-    `to` for functionals where `when` holds.
+def derives(targets, *, to, when=None):
+    """Derive `targets`' value from other functional state (agent-plans/ati_rev1.md
+    §3.3). The single facade for both derive channels — the builder routes by
+    target:
+      * a kernel ARGUMENT target  -> applied in resolved[] (compiled signature),
+        the former conditional/CC/CDETensor case (B, dropout_p, Hdim_qk, ...);
+      * a PERF-SCHEMA target       -> applied in the perf layer (PERSISTENT_TYPE,
+        NUM_XCDS), the former PROGRAMMATIC_PERFS / @ati.tune.derived case.
 
-      ati.overrides('encoded_softmax', to=0,  when=ati.eq('RETURN_ENCODED_SOFTMAX', False))
-      ati.overrides('Hdim_qk', to='BLOCK_DMODEL', when=ati.eq('PADDED_HEAD', False))
-      ati.overrides(['dropout_p', ...], to=0, when=ati.eq('ENABLE_DROPOUT', False))
-
-    The shape of `to` selects the value kind:
+    `to` selects the value kind:
       * str          -> VarRef (copy another variable's choice, e.g. BLOCK_DMODEL)
+      * callable     -> compute the value from the functional, `to(f)` — for a
+                        value that is a function of functional state (e.g. NUM_XCDS
+                        from arch, possibly several values 1/3/6/8). Fires
+                        unconditionally unless `when` is also given.
       * anything else -> literal (Choice.parse handles ints/bools/floats; `0` on a
                          tensor target is the constexpr-zero / former-CDETensor case)
+
+    `when` is an optional predicate gating the derive: a structured ati.eq/ne/...
+    over a free choice axis, or a callable `f -> bool`. Omit it (callable `to`) to
+    always fire.
+
+      ati.derives('encoded_softmax', to=0, when=ati.eq('RETURN_ENCODED_SOFTMAX', False))
+      ati.derives('Hdim_qk', to='BLOCK_DMODEL', when=ati.eq('PADDED_HEAD', False))
+      ati.derives('PERSISTENT_TYPE', to=2, when=ati.ne('CAUSAL_TYPE', 0))
+      ati.derives('NUM_XCDS', to=lambda f: {'gfx942': 8, 'gfx950': 8}.get(f.arch, 1))
     """
-    value = VarRef(to) if isinstance(to, str) else to
-    return Override(targets, when, value)
+    if callable(to) and not isinstance(to, VarRef):
+        value = ValueFn(to)
+    elif isinstance(to, str):
+        value = VarRef(to)
+    else:
+        value = to
+    predicate = when if when is not None else _ALWAYS
+    return Override(targets, predicate, value)
+
+
+def _ALWAYS(functional):
+    return True
+
+
+# Back-compat alias; `derives` is the preferred facade.
+overrides = derives
