@@ -91,6 +91,14 @@ class TemplateParameter(object):
         return self._maybe_conditional
 
     @property
+    def emit_feature_table(self) -> bool:
+        '''Whether this parameter gets a compiled-in get_<name>_choices() table.
+        Conditional/baked params and hidden (stride) params are excluded. This is
+        the IR-neutral seam the generator uses; the ATI adapter provides the same
+        property computed from its Axis set.'''
+        return not (self._maybe_conditional or self.repr_typed_choice.HIDDEN)
+
+    @property
     def godel_number(self):
         return self._godel_number
 

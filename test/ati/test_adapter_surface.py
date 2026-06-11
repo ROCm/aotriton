@@ -63,9 +63,9 @@ def test_feature_tables_match():
     def feat(d):
         out = []
         for tp in d.list_functional_params():
-            tc = tp.repr_typed_choice
-            if tp.maybe_conditional or tc.HIDDEN:
+            if not tp.emit_feature_table:
                 continue
+            tc = tp.repr_typed_choice
             out.append((tp.repr_name, tp.nchoices, tc.infotype,
                         tuple(c.infotext for c in tp.choices)))
         return out
@@ -77,7 +77,7 @@ def test_dtype_variable_not_baked_even_if_member_overridden():
     # must still appear — baking is an argument property, not a type-variable one.
     ak, _ = _pair()
     names = [tp.repr_name for tp in ak.list_functional_params()
-             if not tp.maybe_conditional]
+             if tp.emit_feature_table]
     assert 'Q' in names                 # the T_io dtype variable survives
 
 

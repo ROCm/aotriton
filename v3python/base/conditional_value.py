@@ -142,4 +142,8 @@ class ConditionalDeferredElseTensor(ConditionalConstexpr):
             tc.resolve_rank(all_names, RANKS)
 
     def document_conditional_value(self, bind):
-        return 'nullptr'
+        # The value actually baked into the HSACO is the then-branch constexpr
+        # (0 for a degraded tensor), not a null pointer; the launch-arg comment
+        # must reflect what is compiled. (This line is comment-only — the arg is
+        # commented out — but it should say what the kernel was built with.)
+        return str(self._then)

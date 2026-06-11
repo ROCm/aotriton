@@ -29,9 +29,9 @@ from ..ir import assign_godel, enumerate_functionals
 class _AxisParamShim:
     """Compat view of an Axis as a legacy `tp` for the compiled-in feature tables
     (codegen.kernel get_<name>_choices). Exposes the members that code reads:
-    repr_name, choices, repr_typed_choice, and `maybe_conditional` (a legacy-name
-    alias; in the new IR it means 'this argument is baked to a constexpr by an
-    override' — see overridden_to_constexpr)."""
+    repr_name, choices, repr_typed_choice, and `emit_feature_table` (whether this
+    axis gets a compiled-in get_<name>_choices() table; false when the axis's
+    representative argument is baked to a constexpr by an override)."""
 
     __slots__ = ('_axis', '_overridden')
 
@@ -72,11 +72,12 @@ class _AxisParamShim:
         if one member tensor (e.g. B) is individually overridden."""
         return self._overridden
 
-    # Legacy-name alias for the current generator, which still reads
-    # `tp.maybe_conditional`. Refactored away in Step 4.2.4.
     @property
-    def maybe_conditional(self) -> bool:
-        return self._overridden
+    def emit_feature_table(self) -> bool:
+        """Whether this axis gets a compiled-in get_<name>_choices() table. A
+        baked (override→constexpr) axis is excluded; stride axes never reach here
+        (filtered before the shim is built)."""
+        return not self._overridden
 
 
 class AtiFunctional:
@@ -173,6 +174,29 @@ class AtiFunctional:
     def build_tc_dict(self):
         """repr_name -> resolved TypedChoice for multi-choice axes."""
         return self.compact_choices
+
+    def pp_arg_doc(self, aname):
+        """(is_constexpr, comment_value) for one launch argument's prepare_arguments
+        entry. Mirrors the legacy Functional.pp_arg_doc but is sourced from the
+        resolved Choice + the firing Override (no Bind):
+          * non-constexpr   -> (False, None)
+          * VarRef override -> (True, '<deferred var choices joined by />')
+          * literal/plain   -> (True, '<baked value>')"""
+        from ..ir import VarRef
+        choice = self._ir.resolved[aname]
+        if not choice.is_constexpr:
+            return False, None
+        ov = self._kdesc.override_for(aname)
+        if ov is not None and isinstance(ov.value, VarRef):
+            # Deferred to another variable: document its full choice list (the
+            # legacy CDC behavior, e.g. Hdim_qk -> 16/32/.../512).
+            src = self._kdesc.axis_by_var(ov.value.var_name)
+            return True, '/'.join(
+                str(c.tc.triton_compile_signature) for c in src.choices)
+        # Literal override or plain constexpr: the value actually baked in. (A
+        # tensor degraded to constexpr also reports its baked value, e.g. 0 — what
+        # the HSACO is compiled with, not 'nullptr'.)
+        return True, str(choice.tc.triton_compile_signature)
 
     # --- core signatures (must match legacy bytes) ---
 
@@ -301,6 +325,24 @@ class AtiKernelDescription:
     def partially_tuned_functionals(self) -> dict:
         ts = self._built.tune
         return dict(ts.fallback) if ts is not None else {}
+
+    def axis_of_arg(self, aname):
+        return self._axis_of_arg.get(aname)
+
+    def axis_by_var(self, var_name):
+        for ax in self._axes_all:
+            if ax.var_name == var_name:
+                return ax
+        return None
+
+    def override_for(self, aname):
+        """The override that rewrites `aname`, or None. (Last one wins, matching
+        the declared-order apply in enumerate_functionals.)"""
+        found = None
+        for ov in self._built.overrides:
+            if aname in ov.targets:
+                found = ov
+        return found
 
     # --- identity ---
 

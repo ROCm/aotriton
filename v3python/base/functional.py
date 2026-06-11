@@ -115,6 +115,26 @@ class Functional(object):
         d = build_complete_dict(self._binds)
         return { aname : bind.get_typed_value(aname) for aname, bind in d.items() }
 
+    '''
+    Per-argument launch-vector documentation for prepare_arguments().
+    Returns (is_constexpr, comment_value):
+      * is_constexpr: whether the arg is baked at compile time (commented out).
+      * comment_value: the "as constexpr <value>" text (a plain value, a
+        '/'-joined deferred list, or 'nullptr' for a tensor), or None.
+    This is the IR-neutral seam the generator uses instead of reaching into Bind
+    internals (param_maybe_conditional / document_conditional_value).
+    '''
+    def pp_arg_doc(self, aname):
+        from .typed_choice import constexpr_base
+        d = build_complete_dict(self._binds)
+        bind = d[aname]
+        tc = bind.get_typed_value(aname)
+        if not isinstance(tc, constexpr_base):
+            return False, None
+        if bind.param_maybe_conditional:
+            return True, bind.document_conditional_value()
+        return True, str(bind.value)
+
     @property
     def human_readable_signature(self):
         lf = [s.human_readable_signature for s in self._binds]

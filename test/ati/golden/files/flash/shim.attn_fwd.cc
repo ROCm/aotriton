@@ -246,8 +246,8 @@ attn_fwd_pp_args_0(const OpAttnFwdParams& params,
   return { params.Q->kparam_data_ptr(), // Q
            params.K->kparam_data_ptr(), // K
            params.V->kparam_data_ptr(), // V
-           // params.B->kparam_data_ptr(), // B as constexpr nullptr
-           // params.A->kparam_data_ptr(), // A as constexpr nullptr
+           // params.B->kparam_data_ptr(), // B as constexpr 0
+           // params.A->kparam_data_ptr(), // A as constexpr 0
            CAST(&params.Sm_scale), // Sm_scale
            params.L->kparam_data_ptr(), // L
            params.Out->kparam_data_ptr(), // Out
@@ -284,7 +284,7 @@ attn_fwd_pp_args_0(const OpAttnFwdParams& params,
            // CAST(&params.philox_offset2), // philox_offset2 as constexpr 0
            // params.philox_seed_output->kparam_data_ptr(), // philox_seed_output as constexpr 0
            // params.philox_offset_output->kparam_data_ptr(), // philox_offset_output as constexpr 0
-           // params.encoded_softmax->kparam_data_ptr(), // encoded_softmax as constexpr nullptr
+           // params.encoded_softmax->kparam_data_ptr(), // encoded_softmax as constexpr 0
            // CAST(&params.Window_left), // Window_left as constexpr 0
            // CAST(&params.Window_right), // Window_right as constexpr 0
            // params.persistent_atomic_counter->kparam_data_ptr(), // persistent_atomic_counter as constexpr 0
@@ -301,7 +301,7 @@ attn_fwd_pp_args_1(const OpAttnFwdParams& params,
            params.K->kparam_data_ptr(), // K
            params.V->kparam_data_ptr(), // V
            params.B->kparam_data_ptr(), // B
-           // params.A->kparam_data_ptr(), // A as constexpr nullptr
+           // params.A->kparam_data_ptr(), // A as constexpr 0
            CAST(&params.Sm_scale), // Sm_scale
            params.L->kparam_data_ptr(), // L
            params.Out->kparam_data_ptr(), // Out
@@ -338,7 +338,7 @@ attn_fwd_pp_args_1(const OpAttnFwdParams& params,
            // CAST(&params.philox_offset2), // philox_offset2 as constexpr 0
            // params.philox_seed_output->kparam_data_ptr(), // philox_seed_output as constexpr 0
            // params.philox_offset_output->kparam_data_ptr(), // philox_offset_output as constexpr 0
-           // params.encoded_softmax->kparam_data_ptr(), // encoded_softmax as constexpr nullptr
+           // params.encoded_softmax->kparam_data_ptr(), // encoded_softmax as constexpr 0
            // CAST(&params.Window_left), // Window_left as constexpr 0
            // CAST(&params.Window_right), // Window_right as constexpr 0
            // params.persistent_atomic_counter->kparam_data_ptr(), // persistent_atomic_counter as constexpr 0
@@ -354,8 +354,8 @@ attn_fwd_pp_args_2(const OpAttnFwdParams& params,
   return { params.Q->kparam_data_ptr(), // Q
            params.K->kparam_data_ptr(), // K
            params.V->kparam_data_ptr(), // V
-           // params.B->kparam_data_ptr(), // B as constexpr nullptr
-           // params.A->kparam_data_ptr(), // A as constexpr nullptr
+           // params.B->kparam_data_ptr(), // B as constexpr 0
+           // params.A->kparam_data_ptr(), // A as constexpr 0
            CAST(&params.Sm_scale), // Sm_scale
            params.L->kparam_data_ptr(), // L
            params.Out->kparam_data_ptr(), // Out
@@ -392,7 +392,7 @@ attn_fwd_pp_args_2(const OpAttnFwdParams& params,
            // CAST(&params.philox_offset2), // philox_offset2 as constexpr 0
            // params.philox_seed_output->kparam_data_ptr(), // philox_seed_output as constexpr 0
            // params.philox_offset_output->kparam_data_ptr(), // philox_offset_output as constexpr 0
-           // params.encoded_softmax->kparam_data_ptr(), // encoded_softmax as constexpr nullptr
+           // params.encoded_softmax->kparam_data_ptr(), // encoded_softmax as constexpr 0
            CAST(&params.Window_left), // Window_left
            CAST(&params.Window_right), // Window_right
            params.persistent_atomic_counter->kparam_data_ptr(), // persistent_atomic_counter
@@ -408,8 +408,8 @@ attn_fwd_pp_args_3(const OpAttnFwdParams& params,
   return { params.Q->kparam_data_ptr(), // Q
            params.K->kparam_data_ptr(), // K
            params.V->kparam_data_ptr(), // V
-           // params.B->kparam_data_ptr(), // B as constexpr nullptr
-           // params.A->kparam_data_ptr(), // A as constexpr nullptr
+           // params.B->kparam_data_ptr(), // B as constexpr 0
+           // params.A->kparam_data_ptr(), // A as constexpr 0
            CAST(&params.Sm_scale), // Sm_scale
            params.L->kparam_data_ptr(), // L
            params.Out->kparam_data_ptr(), // Out
@@ -446,7 +446,7 @@ attn_fwd_pp_args_3(const OpAttnFwdParams& params,
            CAST(&params.philox_offset2), // philox_offset2
            params.philox_seed_output->kparam_data_ptr(), // philox_seed_output
            params.philox_offset_output->kparam_data_ptr(), // philox_offset_output
-           // params.encoded_softmax->kparam_data_ptr(), // encoded_softmax as constexpr nullptr
+           // params.encoded_softmax->kparam_data_ptr(), // encoded_softmax as constexpr 0
            // CAST(&params.Window_left), // Window_left as constexpr 0
            // CAST(&params.Window_right), // Window_right as constexpr 0
            // params.persistent_atomic_counter->kparam_data_ptr(), // persistent_atomic_counter as constexpr 0
@@ -463,7 +463,7 @@ attn_fwd_pp_args_4(const OpAttnFwdParams& params,
            params.K->kparam_data_ptr(), // K
            params.V->kparam_data_ptr(), // V
            params.B->kparam_data_ptr(), // B
-           // params.A->kparam_data_ptr(), // A as constexpr nullptr
+           // params.A->kparam_data_ptr(), // A as constexpr 0
            CAST(&params.Sm_scale), // Sm_scale
            params.L->kparam_data_ptr(), // L
            params.Out->kparam_data_ptr(), // Out
@@ -500,7 +500,7 @@ attn_fwd_pp_args_4(const OpAttnFwdParams& params,
            CAST(&params.philox_offset2), // philox_offset2
            params.philox_seed_output->kparam_data_ptr(), // philox_seed_output
            params.philox_offset_output->kparam_data_ptr(), // philox_offset_output
-           // params.encoded_softmax->kparam_data_ptr(), // encoded_softmax as constexpr nullptr
+           // params.encoded_softmax->kparam_data_ptr(), // encoded_softmax as constexpr 0
            // CAST(&params.Window_left), // Window_left as constexpr 0
            // CAST(&params.Window_right), // Window_right as constexpr 0
            // params.persistent_atomic_counter->kparam_data_ptr(), // persistent_atomic_counter as constexpr 0
@@ -516,8 +516,8 @@ attn_fwd_pp_args_5(const OpAttnFwdParams& params,
   return { params.Q->kparam_data_ptr(), // Q
            params.K->kparam_data_ptr(), // K
            params.V->kparam_data_ptr(), // V
-           // params.B->kparam_data_ptr(), // B as constexpr nullptr
-           // params.A->kparam_data_ptr(), // A as constexpr nullptr
+           // params.B->kparam_data_ptr(), // B as constexpr 0
+           // params.A->kparam_data_ptr(), // A as constexpr 0
            CAST(&params.Sm_scale), // Sm_scale
            params.L->kparam_data_ptr(), // L
            params.Out->kparam_data_ptr(), // Out
@@ -554,7 +554,7 @@ attn_fwd_pp_args_5(const OpAttnFwdParams& params,
            CAST(&params.philox_offset2), // philox_offset2
            params.philox_seed_output->kparam_data_ptr(), // philox_seed_output
            params.philox_offset_output->kparam_data_ptr(), // philox_offset_output
-           // params.encoded_softmax->kparam_data_ptr(), // encoded_softmax as constexpr nullptr
+           // params.encoded_softmax->kparam_data_ptr(), // encoded_softmax as constexpr 0
            CAST(&params.Window_left), // Window_left
            CAST(&params.Window_right), // Window_right
            params.persistent_atomic_counter->kparam_data_ptr(), // persistent_atomic_counter
@@ -570,8 +570,8 @@ attn_fwd_pp_args_6(const OpAttnFwdParams& params,
   return { params.Q->kparam_data_ptr(), // Q
            params.K->kparam_data_ptr(), // K
            params.V->kparam_data_ptr(), // V
-           // params.B->kparam_data_ptr(), // B as constexpr nullptr
-           // params.A->kparam_data_ptr(), // A as constexpr nullptr
+           // params.B->kparam_data_ptr(), // B as constexpr 0
+           // params.A->kparam_data_ptr(), // A as constexpr 0
            CAST(&params.Sm_scale), // Sm_scale
            params.L->kparam_data_ptr(), // L
            params.Out->kparam_data_ptr(), // Out
@@ -608,7 +608,7 @@ attn_fwd_pp_args_6(const OpAttnFwdParams& params,
            // CAST(&params.philox_offset2), // philox_offset2 as constexpr 0
            // params.philox_seed_output->kparam_data_ptr(), // philox_seed_output as constexpr 0
            // params.philox_offset_output->kparam_data_ptr(), // philox_offset_output as constexpr 0
-           // params.encoded_softmax->kparam_data_ptr(), // encoded_softmax as constexpr nullptr
+           // params.encoded_softmax->kparam_data_ptr(), // encoded_softmax as constexpr 0
            // CAST(&params.Window_left), // Window_left as constexpr 0
            // CAST(&params.Window_right), // Window_right as constexpr 0
            // params.persistent_atomic_counter->kparam_data_ptr(), // persistent_atomic_counter as constexpr 0
@@ -625,7 +625,7 @@ attn_fwd_pp_args_7(const OpAttnFwdParams& params,
            params.K->kparam_data_ptr(), // K
            params.V->kparam_data_ptr(), // V
            params.B->kparam_data_ptr(), // B
-           // params.A->kparam_data_ptr(), // A as constexpr nullptr
+           // params.A->kparam_data_ptr(), // A as constexpr 0
            CAST(&params.Sm_scale), // Sm_scale
            params.L->kparam_data_ptr(), // L
            params.Out->kparam_data_ptr(), // Out
@@ -662,7 +662,7 @@ attn_fwd_pp_args_7(const OpAttnFwdParams& params,
            // CAST(&params.philox_offset2), // philox_offset2 as constexpr 0
            // params.philox_seed_output->kparam_data_ptr(), // philox_seed_output as constexpr 0
            // params.philox_offset_output->kparam_data_ptr(), // philox_offset_output as constexpr 0
-           // params.encoded_softmax->kparam_data_ptr(), // encoded_softmax as constexpr nullptr
+           // params.encoded_softmax->kparam_data_ptr(), // encoded_softmax as constexpr 0
            // CAST(&params.Window_left), // Window_left as constexpr 0
            // CAST(&params.Window_right), // Window_right as constexpr 0
            // params.persistent_atomic_counter->kparam_data_ptr(), // persistent_atomic_counter as constexpr 0
@@ -678,8 +678,8 @@ attn_fwd_pp_args_8(const OpAttnFwdParams& params,
   return { params.Q->kparam_data_ptr(), // Q
            params.K->kparam_data_ptr(), // K
            params.V->kparam_data_ptr(), // V
-           // params.B->kparam_data_ptr(), // B as constexpr nullptr
-           // params.A->kparam_data_ptr(), // A as constexpr nullptr
+           // params.B->kparam_data_ptr(), // B as constexpr 0
+           // params.A->kparam_data_ptr(), // A as constexpr 0
            CAST(&params.Sm_scale), // Sm_scale
            params.L->kparam_data_ptr(), // L
            params.Out->kparam_data_ptr(), // Out
@@ -716,7 +716,7 @@ attn_fwd_pp_args_8(const OpAttnFwdParams& params,
            // CAST(&params.philox_offset2), // philox_offset2 as constexpr 0
            // params.philox_seed_output->kparam_data_ptr(), // philox_seed_output as constexpr 0
            // params.philox_offset_output->kparam_data_ptr(), // philox_offset_output as constexpr 0
-           // params.encoded_softmax->kparam_data_ptr(), // encoded_softmax as constexpr nullptr
+           // params.encoded_softmax->kparam_data_ptr(), // encoded_softmax as constexpr 0
            CAST(&params.Window_left), // Window_left
            CAST(&params.Window_right), // Window_right
            params.persistent_atomic_counter->kparam_data_ptr(), // persistent_atomic_counter
@@ -732,8 +732,8 @@ attn_fwd_pp_args_9(const OpAttnFwdParams& params,
   return { params.Q->kparam_data_ptr(), // Q
            params.K->kparam_data_ptr(), // K
            params.V->kparam_data_ptr(), // V
-           // params.B->kparam_data_ptr(), // B as constexpr nullptr
-           // params.A->kparam_data_ptr(), // A as constexpr nullptr
+           // params.B->kparam_data_ptr(), // B as constexpr 0
+           // params.A->kparam_data_ptr(), // A as constexpr 0
            CAST(&params.Sm_scale), // Sm_scale
            params.L->kparam_data_ptr(), // L
            params.Out->kparam_data_ptr(), // Out
@@ -770,7 +770,7 @@ attn_fwd_pp_args_9(const OpAttnFwdParams& params,
            CAST(&params.philox_offset2), // philox_offset2
            params.philox_seed_output->kparam_data_ptr(), // philox_seed_output
            params.philox_offset_output->kparam_data_ptr(), // philox_offset_output
-           // params.encoded_softmax->kparam_data_ptr(), // encoded_softmax as constexpr nullptr
+           // params.encoded_softmax->kparam_data_ptr(), // encoded_softmax as constexpr 0
            // CAST(&params.Window_left), // Window_left as constexpr 0
            // CAST(&params.Window_right), // Window_right as constexpr 0
            // params.persistent_atomic_counter->kparam_data_ptr(), // persistent_atomic_counter as constexpr 0
@@ -787,7 +787,7 @@ attn_fwd_pp_args_10(const OpAttnFwdParams& params,
            params.K->kparam_data_ptr(), // K
            params.V->kparam_data_ptr(), // V
            params.B->kparam_data_ptr(), // B
-           // params.A->kparam_data_ptr(), // A as constexpr nullptr
+           // params.A->kparam_data_ptr(), // A as constexpr 0
            CAST(&params.Sm_scale), // Sm_scale
            params.L->kparam_data_ptr(), // L
            params.Out->kparam_data_ptr(), // Out
@@ -824,7 +824,7 @@ attn_fwd_pp_args_10(const OpAttnFwdParams& params,
            CAST(&params.philox_offset2), // philox_offset2
            params.philox_seed_output->kparam_data_ptr(), // philox_seed_output
            params.philox_offset_output->kparam_data_ptr(), // philox_offset_output
-           // params.encoded_softmax->kparam_data_ptr(), // encoded_softmax as constexpr nullptr
+           // params.encoded_softmax->kparam_data_ptr(), // encoded_softmax as constexpr 0
            // CAST(&params.Window_left), // Window_left as constexpr 0
            // CAST(&params.Window_right), // Window_right as constexpr 0
            // params.persistent_atomic_counter->kparam_data_ptr(), // persistent_atomic_counter as constexpr 0
@@ -840,8 +840,8 @@ attn_fwd_pp_args_11(const OpAttnFwdParams& params,
   return { params.Q->kparam_data_ptr(), // Q
            params.K->kparam_data_ptr(), // K
            params.V->kparam_data_ptr(), // V
-           // params.B->kparam_data_ptr(), // B as constexpr nullptr
-           // params.A->kparam_data_ptr(), // A as constexpr nullptr
+           // params.B->kparam_data_ptr(), // B as constexpr 0
+           // params.A->kparam_data_ptr(), // A as constexpr 0
            CAST(&params.Sm_scale), // Sm_scale
            params.L->kparam_data_ptr(), // L
            params.Out->kparam_data_ptr(), // Out
@@ -878,7 +878,7 @@ attn_fwd_pp_args_11(const OpAttnFwdParams& params,
            CAST(&params.philox_offset2), // philox_offset2
            params.philox_seed_output->kparam_data_ptr(), // philox_seed_output
            params.philox_offset_output->kparam_data_ptr(), // philox_offset_output
-           // params.encoded_softmax->kparam_data_ptr(), // encoded_softmax as constexpr nullptr
+           // params.encoded_softmax->kparam_data_ptr(), // encoded_softmax as constexpr 0
            CAST(&params.Window_left), // Window_left
            CAST(&params.Window_right), // Window_right
            params.persistent_atomic_counter->kparam_data_ptr(), // persistent_atomic_counter

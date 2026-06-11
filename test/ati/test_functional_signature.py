@@ -64,6 +64,21 @@ def test_signature_name_is_explicit_repr_not_dtype_var():
     assert 'T_io' not in f.unified_signature
 
 
+def test_pp_arg_doc_matches_legacy():
+    # The prepare_arguments per-arg (is_constexpr, comment) must match legacy for
+    # every launch argument of every functional. Covers the override comment cases:
+    # tensor-degraded-to-0, literal 0, and VarRef (Hdim -> deferred choice list).
+    lf, mf = _pair_functionals()
+    leg = next(k for k in F.kernels if k.NAME == 'attn_fwd')
+    largs = [la.aname for la in leg.iter_launch_arguments()]
+    bad = []
+    for g in lf:
+        for a in largs:
+            if lf[g].pp_arg_doc(a) != mf[g].pp_arg_doc(a):
+                bad.append((g, a, lf[g].pp_arg_doc(a), mf[g].pp_arg_doc(a)))
+    assert not bad, f'{len(bad)} pp_arg_doc mismatches, e.g. {bad[:3]}'
+
+
 def test_multichoice_shared_var_requires_signature_name():
     # A multi-choice variable spanning >1 arg without signature_name -> error.
     def k(a, b):

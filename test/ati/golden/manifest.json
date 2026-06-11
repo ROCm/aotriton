@@ -2044,7 +2044,7 @@
     "flash/optune.op_attn_fwd/op_attn_fwd-4c0ccf028566e4969e6b01e851bac60c33d9a9226bcd3d8ef9a871ed5a503120.cc": "9eadc2a4a42bcebe709d2fb1f8cd5df0de0729dfaea1dcf44ef320d8a13084bf",
     "flash/optune.op_attn_fwd/op_attn_fwd-c7bf664a1ca8cec028702a0f1591ccddc03ec9f681104b790bb7cae5d477d9a8.cc": "c404bf28b4659a97bf6ab2bba39fab9f10c0af70e694282fd94d07ae77ec664a",
     "flash/optune.op_attn_fwd/op_attn_fwd-d7fa5d6cc824705b66dbd3109395ddc777b4c5a5c033ebf0901710c631e50a3f.cc": "34c9b6484f9b1a85b9a15ca2722dc464c5b28ebd2b1da7de97d361e2a0ac2b2f",
-    "flash/shim.attn_fwd.cc": "a667efa2f1170afee2f36e3456f0796a603c1b18b1f807c0374996f8fb6f98a5",
+    "flash/shim.attn_fwd.cc": "b76de6f58a525dbece55d6c3d9edcf6c981e03dcb2285a85751a8fbecc5b07ad",
     "flash/shim.attn_fwd.h": "89e2017e72e5848e5965a4294a680e71b75d2be258799ca053cefc8304bbc227",
     "flash/shim.bwd_kernel_dk_dv.cc": "f64abd30e1dd3c21752edcb871732cc32d41a751df49902ec0b81e00eb592ba2",
     "flash/shim.bwd_kernel_dk_dv.h": "3409ebadfd68349b05ff914cc512a09e7ff4a931721601c88a3aab2e5ba6cae8",

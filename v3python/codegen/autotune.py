@@ -186,31 +186,22 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
         kdesc = self._f.meta_object
 
         pp_registry = self._parent_repo.get_signatured_function_registry('pp_function')
-        bind_dict = functional.build_complete_bind_dict(with_resolved_tc=True)
-        def _pp_signature(aname):
-            bind, tc = bind_dict[aname]
-            is_constexpr = isinstance(tc, TC.constexpr_base)
-            return is_constexpr
-            # tc_value = tc.json_value if is_constexpr else None
-            # print(f'\tassign_skips {aname} {is_constexpr=}')
-            # return (is_constexpr, tc_value)
-        assign_skips = tuple([_pp_signature(aname) for aname in kdesc.KERNEL_DATA_ARGUMENTS])
-        if True:
-            tc_dict = { aname : tc.triton_compile_signature for aname, (_, tc) in bind_dict.items() }
-            log(lambda : f'{functional.compact_signature_noarch=} {assign_skips=} {tc_dict=}')
+        # IR-neutral: pp_arg_doc(aname) -> (is_constexpr, comment_value). Works for
+        # both legacy Bind-backed and ATI Override-backed functionals.
+        doc = { larg.aname : functional.pp_arg_doc(larg.aname)
+                for larg in kdesc.iter_launch_arguments() }
+        assign_skips = tuple([doc[larg.aname][0]
+                              for larg in kdesc.iter_launch_arguments()])
         hit, findex = pp_registry.contains(assign_skips)
         if hit:
             return findex
         stmt = []
         for larg in kdesc.iter_launch_arguments():
-            bind, tc = bind_dict[larg.aname]
+            is_constexpr, comment_value = doc[larg.aname]
             assign = larg.expr + f', // {larg.aname}'
             # Comment out constexpr values
-            if isinstance(tc, TC.constexpr_base):  # isinstance(True, int) == True
-                fmt_val = str(bind.value)
-                if bind.param_maybe_conditional:
-                    fmt_val = bind.document_conditional_value()
-                assign = '// ' + assign + f' as constexpr {fmt_val}'
+            if is_constexpr:
+                assign = '// ' + assign + f' as constexpr {comment_value}'
             stmt.append(assign)
         stmt.append('CAST(&aux.global_scratch),')
         stmt.append('CAST(&aux.profile_scratch)')
