@@ -709,5 +709,7 @@ def build_kernel_description(kernel, *, family, source_path=None,
         f'kernel {getattr(kernel, "__name__", kernel)!r} has no ATI description; '
         f'call ati.describe(...) or use the stacked-@ form first')
     built = build_kernel(spec)
-    return AtiKernelDescription(built, family=family, source_path=source_path,
-                                triton_kernel_name=triton_kernel_name)
+    adapter = AtiKernelDescription(built, family=family, source_path=source_path,
+                                   triton_kernel_name=triton_kernel_name)
+    adapter.kernel_spec = spec      # source KernelSpec (for --sancheck)
+    return adapter

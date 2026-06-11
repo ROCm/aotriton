@@ -50,6 +50,7 @@ def parse():
     p.add_argument("--verbose", action='store_true', help="Print debugging messages")
     p.add_argument("--lut_sanity_check", action='store_true', help="By default, an exception will ba raised when any the look up table (LUT) is broken. With this option the exception is not raised, and diagnose information is printed for developers to re-run the tuning script in order to fix the database.")
     p.add_argument("--sanity_check_only", action='store_true', help="Run --lut_sanity_check but suppress all code generation. No files are written. Implies --lut_sanity_check.")
+    p.add_argument("--sancheck", action='store_true', help="Validate the ATI descriptions (completeness, override scope, no arg in two axes, derive-target resolution, operator merge cycles) and exit. Read-only: no code is generated. Exit non-zero if any error.")
     # Handled by CMake
     # p.add_argument("--timeout", type=float, default=8.0, help='Maximal time the compiler can run. Passing < 0 for indefinite. No effect in bare mode (handled separately)')
     args = p.parse_args()
@@ -63,8 +64,26 @@ def parse():
     # print(args)
     return args
 
+def run_sancheck() -> int:
+    """Validate all ATI descriptions; print every error; return process exit code."""
+    import sys
+    from .rules import kernels as triton_kernels, operators as dispatcher_operators
+    from .template_instantiation.tools import sancheck_report
+    ok, errors = sancheck_report(kernels=triton_kernels,
+                                 operators=dispatcher_operators)
+    if ok:
+        print('ATI sancheck: OK (no errors)')
+        return 0
+    print(f'ATI sancheck: {len(errors)} error(s):', file=sys.stderr)
+    for e in errors:
+        print(f'  {e}', file=sys.stderr)
+    return 1
+
 def main():
     args = parse()
+    if args.sancheck:
+        import sys
+        sys.exit(run_sancheck())
     gen = RootGenerator(args)
     gen.generate()
     for e in args._sanity_check_exceptions:
