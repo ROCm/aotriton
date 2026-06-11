@@ -7,7 +7,9 @@ import sys
 from pathlib import Path
 from graphlib import CycleError
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+REPO = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO))
+sys.path.insert(0, str(REPO / 'tritonsrc'))
 
 from v3python.template_instantiation.operator import union_params
 
@@ -30,6 +32,19 @@ def test_bwd_interleave_dk_dv_dq_db():
     assert i['DO'] < i['DK'] < i['DV'] < i['DQ'] < i['DB'] < i['L']
 
 
+def test_real_bwd_kernels_merge_without_hint():
+    # The actual tritonsrc bwd kernels: dk_dv (DO,DK,DV,D) + dq (DO,DQ,DB,D). They
+    # merge to DK,DV,DQ,DB with NO order_hint — the metro call order alone suffices.
+    from bwd_kernel_dk_dv import bwd_kernel_dk_dv
+    from bwd_kernel_dq import bwd_kernel_dq
+    dkv = [p.name for p in bwd_kernel_dk_dv.params]
+    dq = [p.name for p in bwd_kernel_dq.params]
+    merged = union_params([dkv, dq])             # metro call order: dk_dv, then dq
+    assert len(merged) == len(set(merged))       # no duplicates
+    i = {n: merged.index(n) for n in ('DO', 'DK', 'DV', 'DQ', 'DB', 'D')}
+    assert i['DO'] < i['DK'] < i['DV'] < i['DQ'] < i['DB'] < i['D']
+
+
 def test_contradictory_order_raises_cycle():
     a = ['X', 'Y']
     b = ['Y', 'X']
@@ -41,9 +56,11 @@ def test_contradictory_order_raises_cycle():
 
 
 def test_order_hint_resolves_cycle():
+    # order_hint is only needed when sub-kernels genuinely contradict (here a says
+    # X<Y, b says Y<X). Real bwd kernels do NOT hit this (see the no-hint test);
+    # the hint exists for the rare conflict, pinning X before Y to break the cycle.
     a = ['X', 'Y']
     b = ['Y', 'X']
-    # Pin X before Y to break the cycle.
     assert union_params([a, b], order_hint=['X', 'Y']) == ['X', 'Y']
 
 
