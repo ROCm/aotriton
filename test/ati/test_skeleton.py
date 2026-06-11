@@ -46,7 +46,7 @@ def _check_stubs_raise():
     #  Step 2.2; tune.schema: Step 3.1; tune.configs/binning/fallback/derived:
     #  Step 3.2.)
     callables = [
-        lambda: ati.union_params([]),
+        lambda: ati.operator(),
         lambda: ati.tune.optune(),
     ]
     for call in callables:

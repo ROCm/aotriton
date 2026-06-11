@@ -28,6 +28,8 @@ from .decorators import (
 )
 from .describe import describe, kernel
 from .builder import AtiDescriptionError
+from .operator import union_params
+from .metro import metro_kernel
 
 __all__ = [
     'tensor_dtype', 'choice_set', 'tensor', 'scalar',
@@ -53,7 +55,5 @@ def _stub(name):
 # overrides, eq, ne, lt, gt imported from .decorators
 
 # --- description attachment (§3.4): describe + kernel imported from .describe ---
-# --- operator + metro (§4, §5): not yet implemented ---
+# --- operator + metro (§4, §5): union_params (5.1), metro_kernel (5.5) imported ---
 operator = _stub('operator')
-union_params = _stub('union_params')
-metro_kernel = _stub('metro_kernel')
