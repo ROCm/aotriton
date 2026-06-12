@@ -117,6 +117,15 @@ class AtiOperator:
     def override_for(self, aname):
         return self._default.override_for(aname)
 
+    def apparel_of(self, real_arg):
+        # The operator's params come from its default backend; reuse its wiring so
+        # AtiFunctional (shared between kdesc and operator meta_object) resolves the
+        # same apparel names regardless of which it is keyed on.
+        return self._default.apparel_of(real_arg)
+
+    def real_of(self, apparel_arg):
+        return self._default.real_of(apparel_arg)
+
     def gen_functionals(self, target_arch):
         # Same functional product as the default backend, but meta_object is THIS
         # operator (codegen keys on functional.meta_object).

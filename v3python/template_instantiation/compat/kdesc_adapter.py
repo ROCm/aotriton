@@ -105,22 +105,28 @@ class _AxisParamShim:
     axis gets a compiled-in get_<name>_choices() table; false when the axis's
     representative argument is baked to a constexpr by an override)."""
 
-    __slots__ = ('_axis', '_overridden')
+    __slots__ = ('_axis', '_overridden', '_repr_name', '_all_names')
 
-    def __init__(self, axis, overridden_to_constexpr):
+    def __init__(self, axis, overridden_to_constexpr,
+                 repr_name=None, all_names=None):
         self._axis = axis
         self._overridden = overridden_to_constexpr
+        # Apparel-mapped names (the operator operands) for the C++ surface; default
+        # to the axis's own (real) names when not wired.
+        self._repr_name = repr_name if repr_name is not None else axis.signature_name
+        self._all_names = (list(all_names) if all_names is not None
+                           else list(axis.arg_names))
 
     @property
     def repr_name(self):
         # The representative ARGUMENT name (explicit on the choice variable, or
         # the single arg), NOT the dtype-variable name — the C++
-        # get_<name>_choices() function name derives from it.
-        return self._axis.signature_name
+        # get_<name>_choices() function name derives from it. Apparel-mapped.
+        return self._repr_name
 
     @property
     def all_names(self):
-        return list(self._axis.arg_names)
+        return list(self._all_names)
 
     @property
     def nchoices(self):
@@ -233,11 +239,12 @@ class AtiFunctional:
     @property
     def compact_choices(self) -> dict:
         """repr_name -> resolved TypedChoice for each multi-choice axis (the
-        legacy compact_dict)."""
+        legacy compact_dict). The key is the APPAREL name (the operator operand /
+        persisted DB-row key); the value is looked up by the real signature name."""
         d = {}
         for ax in self._kdesc.axes_multi:
             name = ax.signature_name
-            d[name] = self._ir.resolved[name].tc
+            d[self._kdesc.apparel_of(name)] = self._ir.resolved[name].tc
         return d
 
     @property
@@ -266,6 +273,9 @@ class AtiFunctional:
           * VarRef override -> (True, '<deferred var choices joined by />')
           * literal/plain   -> (True, '<baked value>')"""
         from ..ir import VarRef
+        # iter_launch_arguments emits apparel names; the IR tables are keyed on
+        # real names. Map back before looking up.
+        aname = self._kdesc.real_of(aname)
         choice = self._ir.resolved[aname]
         if not choice.is_constexpr:
             return False, None
@@ -289,7 +299,8 @@ class AtiFunctional:
         for ax in self._kdesc.axes_multi:
             name = ax.signature_name
             tc = self._ir.resolved[name].tc
-            parts.append(f'{name}={tc.testrun_entry_signature}')
+            # The persisted key (aks2/zip entry, DB-row key) is the APPAREL name.
+            parts.append(f'{self._kdesc.apparel_of(name)}={tc.testrun_entry_signature}')
         return ';'.join(parts)
 
     @property
@@ -577,6 +588,16 @@ class AtiKernelDescription:
         launch site addresses."""
         return self._arg_wiring.get(real_arg, real_arg)
 
+    def real_of(self, apparel_arg: str) -> str:
+        """Inverse of apparel_of: the REAL Triton argument behind an apparel name,
+        or the name itself when not wired. Used to map an apparel name emitted on
+        the codegen surface back to the IR's real-keyed tables (resolved[], etc.).
+        Wiring is 1:1 today, so the inverse is well-defined."""
+        for real, apparel in self._arg_wiring.items():
+            if apparel == apparel_arg:
+                return real
+        return apparel_arg
+
     # --- identity ---
 
     @property
@@ -637,7 +658,9 @@ class AtiKernelDescription:
                 continue          # strides are hidden (supplied via TensorView)
             for arg in ax.arg_names:
                 tc = ax.choice_for_arg(0, arg).tc
-                out.append(cfield(ctype=tc.itype, aname=arg,
+                # The struct field is the APPAREL name (the operator operand); the
+                # IR (index, axis) stays keyed on the real argument.
+                out.append(cfield(ctype=tc.itype, aname=self.apparel_of(arg),
                                   index=self._arg_index[arg], nbits=tc.NBITS or 0))
         out.sort(key=lambda cf: cf.index)
         return out
@@ -650,26 +673,37 @@ class AtiKernelDescription:
         stride dim), scalars by-ref; constexpr features and perf are not launch
         data. Strides are emitted right after their tensor, matching legacy."""
         from v3python.codegen.common import LaunchArg
-        # Build per-arg access in signature order. Stride axes carry stride_of.
+        # Build per-arg access in signature order. Stride axes carry stride_of. All
+        # `params.<X>` access goes through the APPAREL name (the operator operand /
+        # struct field); the LaunchArg.aname is the apparel name too (it drives the
+        # struct-field reference and the comment). The IR lookup in pp_arg_doc maps
+        # the apparel name back to the real argument.
         access = {}
         for ax in self._axes_all:
             if ax.kind == 'tensor':
                 for arg in ax.arg_names:
+                    a = self.apparel_of(arg)
                     access[arg] = ('tensor_ptr',
-                                   f'params.{arg}->kparam_data_ptr()')
+                                   f'params.{a}->kparam_data_ptr()')
             elif ax.is_stride:
                 tensor_arg, dim = ax.stride_of
+                # The stride references its tensor's APPAREL name, but the stride
+                # argument itself keeps its real name (matches golden:
+                # params.encoded_softmax->kparam_stride(0), // stride_rz).
                 access[ax.arg_names[0]] = (
                     'tensor_stride',
-                    f'params.{tensor_arg}->kparam_stride({dim})')
+                    f'params.{self.apparel_of(tensor_arg)}->kparam_stride({dim})')
         for arg in self._built.arguments:
             ax = self._axis_of_arg.get(arg)
             if ax is None:
                 continue
             if not self._is_launch_data(arg, ax):
                 continue
-            kind, expr = access.get(arg, ('scalar', f'CAST(&params.{arg})'))
-            yield LaunchArg(aname=arg, kind=kind, expr=expr)
+            # Strides keep their real arg name (the comment shows stride_rz, not an
+            # apparel name); tensors/scalars surface as their apparel name.
+            emit_name = arg if ax.is_stride else self.apparel_of(arg)
+            kind, expr = access.get(arg, ('scalar', f'CAST(&params.{self.apparel_of(arg)})'))
+            yield LaunchArg(aname=emit_name, kind=kind, expr=expr)
 
     def _is_launch_data(self, arg, ax):
         """A launch data argument: a tensor, a non-unit stride, or a runtime
@@ -704,7 +738,11 @@ class AtiKernelDescription:
             if ax.is_stride:
                 continue
             baked = ax.signature_name in self._baked_args
-            yield _AxisParamShim(ax, baked)
+            # The C++ getter name (get_<repr>_choices) and member list use the
+            # APPAREL names (operator operands); baked-ness is a real-arg property.
+            yield _AxisParamShim(ax, baked,
+                                 repr_name=self.apparel_of(ax.signature_name),
+                                 all_names=[self.apparel_of(a) for a in ax.arg_names])
 
     # --- tuning passthrough ---
 
