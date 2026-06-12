@@ -3,5 +3,6 @@
 
 from .union import union_params
 from .infer import infer_shared_iface
+from .cite import resolve_cites
 
-__all__ = ['union_params', 'infer_shared_iface']
+__all__ = ['union_params', 'infer_shared_iface', 'resolve_cites']

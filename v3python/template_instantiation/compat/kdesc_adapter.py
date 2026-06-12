@@ -112,8 +112,10 @@ class _AxisParamShim:
         self._axis = axis
         self._overridden = overridden_to_constexpr
         # Apparel-mapped names (the operator operands) for the C++ surface; default
-        # to the axis's own (real) names when not wired.
-        self._repr_name = repr_name if repr_name is not None else axis.signature_name
+        # to the axis's own (real) names when not wired. The getter name derives
+        # from the representative REAL argument (repr_arg), NOT signature_name (a
+        # persisted-artifact label, unrelated to the C++ surface).
+        self._repr_name = repr_name if repr_name is not None else axis.repr_arg
         self._all_names = (list(all_names) if all_names is not None
                            else list(axis.arg_names))
 
@@ -238,13 +240,14 @@ class AtiFunctional:
 
     @property
     def compact_choices(self) -> dict:
-        """repr_name -> resolved TypedChoice for each multi-choice axis (the
-        legacy compact_dict). The key is the APPAREL name (the operator operand /
-        persisted DB-row key); the value is looked up by the real signature name."""
+        """label -> resolved TypedChoice for each multi-choice axis (the legacy
+        compact_dict). The KEY is the axis's `signature_name` — the pure label used
+        in persisted artifacts (aks2/zip entry, DB-row key), unrelated to wiring.
+        The VALUE is looked up by the representative REAL argument (repr_arg);
+        signature_name is never used to index the resolved table."""
         d = {}
         for ax in self._kdesc.axes_multi:
-            name = ax.signature_name
-            d[self._kdesc.apparel_of(name)] = self._ir.resolved[name].tc
+            d[ax.signature_name] = self._ir.resolved[ax.repr_arg].tc
         return d
 
     @property
@@ -297,18 +300,16 @@ class AtiFunctional:
     def unified_signature(self) -> str:
         parts = []
         for ax in self._kdesc.axes_multi:
-            name = ax.signature_name
-            tc = self._ir.resolved[name].tc
-            # The persisted key (aks2/zip entry, DB-row key) is the APPAREL name.
-            parts.append(f'{self._kdesc.apparel_of(name)}={tc.testrun_entry_signature}')
+            # KEY = signature_name (pure persisted label); VALUE by repr_arg.
+            tc = self._ir.resolved[ax.repr_arg].tc
+            parts.append(f'{ax.signature_name}={tc.testrun_entry_signature}')
         return ';'.join(parts)
 
     @property
     def signature_in_func_name(self) -> str:
         parts = []
         for ax in self._kdesc.axes_multi:
-            name = ax.signature_name
-            s = str(self._ir.resolved[name].tc.triton_compile_signature)
+            s = str(self._ir.resolved[ax.repr_arg].tc.triton_compile_signature)
             s = s.replace('*', '＊').replace(':', '@') \
                  .replace('True', 'T').replace('False', 'F')
             parts.append(s)
@@ -330,8 +331,7 @@ class AtiFunctional:
                     continue
             if ax.kind == 'stride_unit':
                 continue
-            name = ax.signature_name
-            lines.append(f'{name} = {self._ir.resolved[name].tc}')
+            lines.append(f'{ax.signature_name} = {self._ir.resolved[ax.repr_arg].tc}')
         return 'Human-readable Signature \n// ' + '\n// '.join(lines)
 
     # --- file packing paths ---
@@ -737,11 +737,12 @@ class AtiKernelDescription:
         for ax in self._axes_all:
             if ax.is_stride:
                 continue
-            baked = ax.signature_name in self._baked_args
+            # Baking is a REAL-argument property (override targets are real args).
+            baked = ax.repr_arg in self._baked_args
             # The C++ getter name (get_<repr>_choices) and member list use the
-            # APPAREL names (operator operands); baked-ness is a real-arg property.
+            # APPAREL of the real arg names (operator operands), not signature_name.
             yield _AxisParamShim(ax, baked,
-                                 repr_name=self.apparel_of(ax.signature_name),
+                                 repr_name=self.apparel_of(ax.repr_arg),
                                  all_names=[self.apparel_of(a) for a in ax.arg_names])
 
     # --- tuning passthrough ---
@@ -764,15 +765,24 @@ class AtiKernelDescription:
 
 
 def build_kernel_description(kernel, *, family, source_path=None,
-                             triton_kernel_name=None):
+                             triton_kernel_name=None, register=True):
     """Build an AtiKernelDescription from a kernel already described via
-    ati.describe() / the stacked-@ form."""
+    ati.describe() / the stacked-@ form.
+
+    Before lowering, @ati.cite gaps are filled from kernels built earlier (the flat
+    per-family registry). After building, the kdesc registers itself so later
+    kernels can cite it. `register=False` skips registration (test isolation)."""
+    from ..operator.cite import resolve_cites
+    from .. import registry as _registry
     spec = get_kernel_spec(kernel)
     assert spec is not None, (
         f'kernel {getattr(kernel, "__name__", kernel)!r} has no ATI description; '
         f'call ati.describe(...) or use the stacked-@ form first')
+    resolve_cites(spec, family=family)        # fill cited gaps before lowering
     built = build_kernel(spec)
     adapter = AtiKernelDescription(built, family=family, source_path=source_path,
                                    triton_kernel_name=triton_kernel_name)
     adapter.kernel_spec = spec      # source KernelSpec (for --sancheck)
+    if register:
+        _registry.register_kernel(adapter)
     return adapter

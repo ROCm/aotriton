@@ -109,6 +109,27 @@ def test_literal_string_dtype_still_works():
     assert L.choices[0].is_tensor
 
 
+def test_signature_name_is_a_free_label():
+    # signature_name is ONLY a persisted-artifact label; it is never used to locate
+    # a kernel argument. Setting it to 'dtype' (not an argument at all) must still
+    # build correctly — only the persisted entry name changes. The resolved VALUE is
+    # looked up by the axis's representative real argument (repr_arg).
+    specs = [
+        ati.tensor_dtype('T_io', dtype=MAIN_DTYPES, signature_name='dtype'),
+        ati.tensor('Q', 'T_io', strides='stride_q?', contiguous=-1),
+        ati.tensor('K', 'T_io', strides='stride_k?', contiguous=-1),
+        ati.tensor('V', 'T_io', strides='stride_v?', contiguous=-1),
+        ati.tensor('Out', 'T_io', strides='stride_o?', contiguous=-1),
+        ati.tensor('B', 'T_io', strides='stride_b?'),
+    ] + _common_specs()
+    describe(attn_fwd, *specs, _validate=False)
+    bk = build_kernel(get_kernel_spec(attn_fwd))
+    tio = next(a for a in bk.axes if a.var_name == 'T_io')
+    assert tio.signature_name == 'dtype'         # the free label
+    assert tio.repr_arg == 'Q'                   # the real arg for value lookup
+    assert tio.repr_arg in tio.arg_names
+
+
 def test_unknown_string_dtype_raises():
     specs = [
         ati.tensor('Q', 'T_nope', strides='stride_q?', contiguous=-1),

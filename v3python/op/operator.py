@@ -27,6 +27,17 @@ class Operator(Interface):
     def list_backends(self):
         return self._backends
 
+    def get_backend(self, name):
+        """The backend whose name (metro NAME / kernel NAME) is `name`, for
+        @ati.cite resolution (ops[op].get_backend(metro)). Raises KeyError if
+        absent."""
+        for b in self._backends:
+            if getattr(b, 'NAME', None) == name:
+                return b
+        raise KeyError(
+            f'operator {self.NAME!r} has no backend named {name!r}; '
+            f'backends: {[getattr(b, "NAME", None) for b in self._backends]}')
+
     @property
     def fallback_backend(self):
         return self._backends[0]

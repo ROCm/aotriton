@@ -48,6 +48,17 @@ class Axis:
         self.signature_name = signature_name or self.arg_names[0]
 
     @property
+    def repr_arg(self) -> str:
+        """The representative REAL argument of this axis — the first-appearing
+        kernel argument it instantiates. This is the key used to look up the axis's
+        resolved value (all members of an axis share one choice per functional,
+        modulo per-arg overrides). It is ALWAYS a real argument, unlike
+        `signature_name`, which is only the LABEL recorded in persisted artifacts
+        and may be set to anything (e.g. 'dtype'). Never use `signature_name` to
+        index the resolved table."""
+        return self.arg_names[0]
+
+    @property
     def is_stride(self) -> bool:
         return self.kind in ('stride', 'stride_unit')
 

@@ -154,21 +154,21 @@ def _choices_from(values) -> list:
 
 
 def _resolve_signature_name(dtype, arg_names, param_index, kernel_name):
-    """The argument that records an axis in persisted artifacts — the compact
-    signature, the aks2/zip entry name, and the tuning-database row key.
+    """The LABEL recording an axis in persisted artifacts — the compact signature,
+    the aks2/zip entry name, and the tuning-database row key.
 
-    A MULTI-CHOICE shared ChoiceVar (ati.tensor_dtype/ati.choice_set bound by
-    several specs) MUST declare signature_name explicitly when it spans several
-    arguments — it is baked into stored artifacts, so it cannot be silently
-    derived from spec order. A single-choice (radix 1) variable is trivial: it
-    never appears in the compact signature / aks2 entry name, so signature_name is
-    irrelevant and need not be given. A list-grouped spec
-    (ati.scalar([names], ...)) or a single argument uses its first listed
-    argument, which the author already wrote in the order they chose."""
+    This is purely a label: it is NOT used to locate a kernel argument (the axis's
+    representative real argument, `Axis.repr_arg`, does that). An author may set it
+    to any string (e.g. 'dtype'); the generated code works regardless — only the
+    persisted entry names / human-readable signatures change. When explicit it is
+    used verbatim; it need not be one of the axis's arguments.
+
+    A MULTI-CHOICE shared ChoiceVar spanning several arguments MUST declare it
+    explicitly (the default — first argument — would be an arbitrary pick baked into
+    stored artifacts). A single-choice (trivial) variable never appears in the
+    compact signature, so it is exempt. A list-grouped or single-argument spec uses
+    its first listed argument as the default label."""
     if isinstance(dtype, ChoiceVar) and dtype.signature_name is not None:
-        assert dtype.signature_name in arg_names, (
-            f"kernel {kernel_name!r}: choice variable signature_name "
-            f"{dtype.signature_name!r} is not one of its arguments {arg_names}")
         return dtype.signature_name
     # A multi-choice shared ChoiceVar spanning multiple args needs an explicit
     # signature_name (single-choice variables are trivial and excluded from the

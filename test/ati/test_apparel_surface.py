@@ -65,13 +65,17 @@ def test_feature_getter_name_is_apparel():
     assert 'R' not in reprs
 
 
-def test_persisted_signature_uses_apparel():
+def test_persisted_signature_uses_signature_name_label():
+    # The persisted key (compact_choices / unified_signature) is the axis's
+    # signature_name LABEL, independent of wiring/apparel. Here T_io's
+    # signature_name is 'R', so the persisted key is 'R' (not the apparel
+    # 'encoded_softmax', and not derived from the real repr_arg either — it is the
+    # free label). The VALUE is looked up by the real repr_arg.
     kdesc = _describe_debug()
     f = next(kdesc.gen_functionals({'gfx942': ['gfx942']}))
-    # The compact / unified signature key (DB-row / aks2 entry) is the apparel name.
-    assert 'encoded_softmax' in f.compact_choices
-    assert 'R' not in f.compact_choices
-    assert f.unified_signature.startswith('encoded_softmax=')
+    assert 'R' in f.compact_choices
+    assert 'encoded_softmax' not in f.compact_choices
+    assert f.unified_signature.startswith('R=')
 
 
 def test_ir_stays_keyed_on_real_names():

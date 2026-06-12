@@ -25,10 +25,10 @@ class KernelSpec:
     """The ATI sidecar attached to a kernel as `kernel.__ati__`."""
 
     __slots__ = ('kernel', 'params', 'tensors', 'scalars', 'overrides', 'tune',
-                 'disables', 'dtype_vars')
+                 'disables', 'dtype_vars', 'cites')
 
     def __init__(self, kernel, params, tensors, scalars, overrides, tune=None,
-                 disables=None, dtype_vars=None):
+                 disables=None, dtype_vars=None, cites=None):
         self.kernel = kernel
         self.params = params           # list[ParamSpec], signature order
         self.tensors = tensors         # list[TensorSpec]
@@ -41,6 +41,7 @@ class KernelSpec:
         # tensor/scalar specs refer to them by name. ChoiceVars passed inline by
         # object (the older form) are NOT here — they ride on the spec's dtype.
         self.dtype_vars = dtype_vars or []   # list[ChoiceVar]
+        self.cites = cites or []             # list[CiteSpec] (@ati.cite targets)
 
     @property
     def param_names(self):
@@ -81,10 +82,10 @@ def _build_tune_spec(tune_records):
 
 def _partition(specs):
     from .tune import PerfSchema, ConfigsSpec, BinningSpec, FallbackSpec, DerivedSpec
-    from .decorators import DisableSpec
+    from .decorators import DisableSpec, CiteSpec
     tune_types = (PerfSchema, ConfigsSpec, BinningSpec, FallbackSpec, DerivedSpec)
-    tensors, scalars, overrides, tune_records, disables, dtype_vars, others = \
-        [], [], [], [], [], [], []
+    tensors, scalars, overrides, tune_records, disables, dtype_vars, cites, others = \
+        [], [], [], [], [], [], [], []
     for s in specs:
         if isinstance(s, TensorSpec):
             tensors.append(s)
@@ -92,6 +93,8 @@ def _partition(specs):
             scalars.append(s)
         elif isinstance(s, ChoiceVar):
             dtype_vars.append(s)
+        elif isinstance(s, CiteSpec):
+            cites.append(s)
         elif isinstance(s, Override):
             overrides.append(s)
         elif isinstance(s, DisableSpec):
@@ -100,14 +103,18 @@ def _partition(specs):
             tune_records.append(s)
         else:
             others.append(s)
-    return tensors, scalars, overrides, tune_records, disables, dtype_vars, others
+    return (tensors, scalars, overrides, tune_records, disables, dtype_vars,
+            cites, others)
 
 
-def _validate_completeness(params, tensors, scalars, tune_records):
+def _validate_completeness(params, tensors, scalars, tune_records, has_cite=False):
     """Every introspected parameter must be claimed exactly once — by a tensor
     (itself or one of its stride globs), a scalar, or a perf-schema field.
     Reports orphans and double-claims (the §9.1a completeness check, kernel-scoped).
-    """
+
+    When the kernel has an @ati.cite (has_cite), an UNCLAIMED parameter is NOT an
+    orphan: the cite resolver (operator/infer.py) fills it from the cited metro at
+    build time. Unknown-parameter and double-claim errors still apply."""
     from .tune import PerfSchema
 
     param_names = [p.name for p in params]
@@ -139,28 +146,31 @@ def _validate_completeness(params, tensors, scalars, tune_records):
     for arg_name, who in claims.items():
         if len(who) > 1:
             errors.append(f'parameter {arg_name!r} claimed by multiple specs: {who}')
-    # orphans (unclaimed params)
-    for name in param_names:
-        if name not in claims:
-            errors.append(f'parameter {name!r} is not claimed by any '
-                          f'@ati.tensor/@ati.scalar/tune.schema (or stride glob)')
+    # orphans (unclaimed params) — only an error WITHOUT a cite; with a cite the
+    # resolver supplies them and reports anything still unresolved.
+    if not has_cite:
+        for name in param_names:
+            if name not in claims:
+                errors.append(f'parameter {name!r} is not claimed by any '
+                              f'@ati.tensor/@ati.scalar/tune.schema (or stride glob)')
     return errors
 
 
 def describe(kernel, *specs, _validate=True):
     """Attach an ATI KernelSpec to a kernel. Canonical for both authoring modes."""
     params = kernel_params(kernel)
-    tensors, scalars, overrides, tune_records, disables, dtype_vars, others = \
+    tensors, scalars, overrides, tune_records, disables, dtype_vars, cites, others = \
         _partition(specs)
     assert not others, f'describe() got unrecognized specs: {others}'
     if _validate:
-        errors = _validate_completeness(params, tensors, scalars, tune_records)
+        errors = _validate_completeness(params, tensors, scalars, tune_records,
+                                        has_cite=bool(cites))
         assert not errors, (
             f'ATI describe({getattr(kernel, "__name__", kernel)!r}) validation '
             f'failed:\n  ' + '\n  '.join(errors))
     spec = KernelSpec(kernel, params, tensors, scalars, overrides,
                       tune=_build_tune_spec(tune_records), disables=disables,
-                      dtype_vars=dtype_vars)
+                      dtype_vars=dtype_vars, cites=cites)
     kernel.__ati__ = spec
     return kernel
 
