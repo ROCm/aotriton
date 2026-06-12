@@ -140,6 +140,17 @@ def resolve_cites(spec, *, family, lookup=None):
             if d is not None and not isinstance(d, str):
                 cited_dtype_vars.setdefault(d.name, d)
 
+    # 0) Perf is citeable (rev0 §4.3). When the citing kernel declares NO perf at
+    # all, inherit the cited kernel's whole `tune` (schema + configs + binning +
+    # ...). A kernel that wants its OWN perf — e.g. a schema-only untunable aux
+    # kernel (schema, no configs) — declares it and is left untouched. Done BEFORE
+    # the gap-fill so an inherited schema's perf-param names count as claimed.
+    if spec.tune is None:
+        for cs in cited_specs:
+            if cs.tune is not None:
+                spec.tune = cs.tune
+                break
+
     # 1) Gap arguments -> cloned specs (apparel == gap name; unclaimed args unwired).
     claimed = _locally_claimed(spec, param_names)
     for arg in param_names:
