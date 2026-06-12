@@ -30,19 +30,11 @@ class MetroKernel(Interface):
 
     def __init__(self,
                  metro_name : str,
-                 kernels : list[KernelDescription],
-                 renames : dict = None):
+                 kernels : list[KernelDescription]):
         self.NAME = metro_name
         super().__init__()
         self._late_init()
         self._kernels = kernels
-        # How a sub-kernel's own arguments wire to the operator's operands:
-        # {concrete sub-kernel object -> {kernel_arg: operand}}. The metro DSL
-        # (e.g. `debug(params, R=params.encoded_softmax)`) is the source; renaming
-        # is a property of the COLLABORATION, so it lives on the metro, not the
-        # sub-kernel. Used to merge wired arguments into one node (so a renamed arg
-        # is not added to the params struct twice) and to wire the launch call.
-        self._renames = dict(renames) if renames else {}
 
     @property
     def class_name_base(self):
@@ -64,10 +56,16 @@ class MetroKernel(Interface):
     def list_kernels(self):
         return self._kernels
 
-    def rename_for(self, subkernel) -> dict:
-        """The {kernel_arg: operand} rename map wiring `subkernel`'s own arguments
-        to the operator's operands (empty if the sub-kernel needs no renaming)."""
-        return self._renames.get(subkernel, {})
+    def get_kernel(self, name):
+        """The concrete sub-kernel named `name` (flattening ConditionalKernel
+        branches), for @ati.cite("<op>.<metro>.<kernel>") resolution. Raises
+        KeyError if absent."""
+        for sub in self.iter_subkernels():
+            if getattr(sub, 'NAME', None) == name:
+                return sub
+        raise KeyError(
+            f'metro {self.NAME!r} has no sub-kernel named {name!r}; '
+            f'sub-kernels: {[getattr(s, "NAME", None) for s in self.iter_subkernels()]}')
 
     def iter_subkernels(self):
         """Yield the concrete sub-kernels in metro call order (flattening any
@@ -77,14 +75,24 @@ class MetroKernel(Interface):
 
     def merged_operand_order(self):
         """The operator's operand list: an order-preserving merge (union_params) of
-        every sub-kernel's ARGUMENTS, each first translated through its rename map.
-        A wired argument (debug's `R` -> `encoded_softmax`) collapses into the
-        operand node it is wired to, so it is never added to the params struct as a
-        separate field."""
+        every sub-kernel's ARGUMENTS, each first translated through its APPAREL
+        mapping (real -> operator operand, read from the sub-kernel's kdesc via
+        apparel_of). A wired argument (debug's `R` -> `encoded_softmax`) collapses
+        into the operand node it is dressed as, so it is never added to the params
+        struct as a separate field."""
         from v3python.template_instantiation.operator import union_params
         subs = list(self.iter_subkernels())
         arg_lists = [list(s.ARGUMENTS) for s in subs]
-        renames = [self.rename_for(s) for s in subs]
+        # Per-sub-kernel real->apparel map, from the kdesc (wires_to=); legacy
+        # kdescs have no apparel_of, so they pass through unchanged.
+        renames = []
+        for s in subs:
+            apparel_of = getattr(s, 'apparel_of', None)
+            if apparel_of is None:
+                renames.append({})
+            else:
+                renames.append({a: apparel_of(a) for a in s.ARGUMENTS
+                                if apparel_of(a) != a})
         return union_params(arg_lists, renames=renames)
 
     def iter_kernel_slot_names(self):

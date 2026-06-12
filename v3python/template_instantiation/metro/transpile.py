@@ -38,15 +38,16 @@ class MetroError(Exception):
 
 
 class Call:
-    """A sub-kernel invocation: kernel name + arg renames {kernel_arg: operand}."""
-    __slots__ = ('kernel', 'renames')
+    """A sub-kernel invocation: just the sub-kernel name. Argument wiring is NOT a
+    metro concern — it lives on the sub-kernel's own @ati.tensor/@ati.scalar
+    `wires_to=` decorator (rev0 §4.3), so a metro call is plain `kernel(params)`."""
+    __slots__ = ('kernel',)
 
-    def __init__(self, kernel, renames):
+    def __init__(self, kernel):
         self.kernel = kernel
-        self.renames = renames
 
     def __repr__(self):
-        return f'Call({self.kernel!r}, renames={self.renames})'
+        return f'Call({self.kernel!r})'
 
 
 class Cond:
@@ -135,7 +136,9 @@ def _lower_condition(name, test, params_name):
 
 
 def _lower_call(name, node, params_name):
-    """An expression statement `kernel(params, kwarg=params.X, ...)` -> Call."""
+    """An expression statement `kernel(params)` -> Call. Keyword renames are no
+    longer accepted here — argument wiring is declared on the sub-kernel's
+    `wires_to=` decorator, not in the metro body (rev0 §4.3)."""
     if not isinstance(node, ast.Expr) or not isinstance(node.value, ast.Call):
         raise _err(name, node, 'only sub-kernel calls and if/else are allowed')
     call = node.value
@@ -147,15 +150,11 @@ def _lower_call(name, node, params_name):
                                    and call.args[0].id == params_name):
         raise _err(name, call, f'sub-kernel call takes exactly the positional '
                                f'{params_name!r}')
-    renames = {}        # kernel_arg -> operand
-    for kw in call.keywords:
-        if kw.arg is None:
-            raise _err(name, call, '**kwargs not allowed in a sub-kernel call')
-        operand = _param_attr(kw.value, params_name, None)
-        if operand is None:
-            raise _err(name, call, f'keyword {kw.arg}= must be params.<operand>')
-        renames[kw.arg] = operand
-    return Call(kernel, renames)
+    if call.keywords:
+        raise _err(name, call, 'sub-kernel call takes no keyword arguments; '
+                               'declare argument wiring with wires_to= on the '
+                               "sub-kernel's @ati.tensor/@ati.scalar instead")
+    return Call(kernel)
 
 
 def _lower_body(name, body, params_name):
@@ -207,27 +206,21 @@ def lower_plan(plan, kernel_map, metro_factory, conditional_factory):
     """Lower a MetroPlan to the existing MetroKernel/ConditionalKernel IR.
 
     kernel_map:          {sub-kernel name -> KernelDescription object}.
-    metro_factory:       callable(steps:list, renames:dict) -> MetroKernel. `steps`
-                         is the lowered backend list; `renames` maps each concrete
-                         sub-kernel OBJECT to its {kernel_arg: operand} wiring (from
-                         the metro DSL's kwargs, e.g. debug's R -> encoded_softmax).
+    metro_factory:       callable(steps:list) -> MetroKernel (the lowered backend
+                         list). Argument wiring is NOT threaded here — it lives on
+                         each sub-kernel's kdesc (wires_to=, rev0 §4.3).
     conditional_factory: the ConditionalKernel class/callable
                          (if_parameter, if_expr, if_kernel, else_kernel).
 
     Each Cond branch must be a single sub-kernel call (the C++ if/else launcher
     template supports one kernel per branch); a multi-step branch is an error.
     """
-    renames = {}        # concrete sub-kernel object -> {kernel_arg: operand}
-
     def resolve(call):
         if call.kernel not in kernel_map:
             raise MetroError(
                 f'metro {plan.name!r}: unknown sub-kernel {call.kernel!r}; '
                 f'known: {sorted(kernel_map)}')
-        kdesc = kernel_map[call.kernel]
-        if call.renames:
-            renames[kdesc] = dict(call.renames)
-        return kdesc
+        return kernel_map[call.kernel]
 
     def one_call(name, branch, which):
         if len(branch) != 1 or not isinstance(branch[0], Call):
@@ -247,4 +240,4 @@ def lower_plan(plan, kernel_map, metro_factory, conditional_factory):
                 else_kernel = resolve(one_call(plan.name, step.orelse, 'else'))
             steps.append(conditional_factory(step.if_parameter, step.if_expr,
                                              resolve(if_call), else_kernel))
-    return metro_factory(steps, renames)
+    return metro_factory(steps)

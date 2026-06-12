@@ -22,7 +22,7 @@ from v3python.template_instantiation.metro import (
 def metro_fwd(params):
     attn_fwd(params)
     if params.encoded_softmax.data_ptr() != 0:
-        debug_simulate_encoded_softmax(params, R=params.encoded_softmax)
+        debug_simulate_encoded_softmax(params)   # wiring is on the kdesc, not here
 
 
 @ati.metro_kernel
@@ -43,7 +43,6 @@ def test_fwd_plan_structure():
     assert cond.if_parameter == 'encoded_softmax'
     assert cond.if_expr == '->data_ptr() != nullptr'   # matches legacy string
     assert cond.then[0].kernel == 'debug_simulate_encoded_softmax'
-    assert cond.then[0].renames == {'R': 'encoded_softmax'}   # kwarg rename
     assert cond.orelse == []
 
 
@@ -74,9 +73,8 @@ def test_lower_to_ir_matches_legacy_strings():
             ('attn_fwd', 'debug_simulate_encoded_softmax')}
     captured = {}
 
-    def metro_factory(steps, renames):
+    def metro_factory(steps):
         captured['steps'] = steps
-        captured['renames'] = renames
         return steps
 
     steps = lower_plan(metro_fwd.__ati_metro__, kmap,
@@ -88,44 +86,43 @@ def test_lower_to_ir_matches_legacy_strings():
     assert ck.if_expr == '->data_ptr() != nullptr'
     assert ck.if_kernel is kmap['debug_simulate_encoded_softmax']
     assert ck.else_kernel is None
-    # The debug sub-kernel's R is wired to the operand encoded_softmax; the rename
-    # is captured keyed by the concrete sub-kernel object (metro-layer property).
-    debug = kmap['debug_simulate_encoded_softmax']
-    assert captured['renames'] == {debug: {'R': 'encoded_softmax'}}
 
 
 def test_metro_kernel_merges_renamed_arg():
     # The renamed arg must collapse into its operand node, not appear twice in the
     # merged operand order. (This is what keeps `R` out of the params struct.) The
-    # MetroKernel constructor runs the heavy Interface machinery that needs an
-    # operator-bound SHARED_IFACE; here we exercise only merged_operand_order, so
-    # build the object directly and let lower_plan populate it.
+    # apparel mapping now lives on each sub-kernel's kdesc (apparel_of), NOT on the
+    # metro; merged_operand_order reads it from there. The MetroKernel constructor
+    # runs the heavy Interface machinery that needs an operator-bound SHARED_IFACE,
+    # so build the object directly and exercise only merged_operand_order.
     from v3python.op import MetroKernel, ConditionalKernel
 
     class _K:
-        def __init__(self, name, arguments):
+        def __init__(self, name, arguments, wiring=None):
             self.NAME = name
             self.SHARED_IFACE = None
             self.ARGUMENTS = arguments
+            self._wiring = wiring or {}
+        def apparel_of(self, real):
+            return self._wiring.get(real, real)
         def list_non_functional_params(self):
             return []
 
     attn = _K('attn_fwd', ['Q', 'K', 'V', 'Out', 'encoded_softmax'])
-    debug = _K('debug_simulate_encoded_softmax', ['R', 'dropout_p'])
+    debug = _K('debug_simulate_encoded_softmax', ['R', 'dropout_p'],
+               wiring={'R': 'encoded_softmax'})
     kmap = {'attn_fwd': attn, 'debug_simulate_encoded_softmax': debug}
 
-    def metro_factory(steps, renames):
+    def metro_factory(steps):
         m = object.__new__(MetroKernel)   # skip Interface init (orthogonal here)
         m.NAME = 'metro_fwd'
         m._kernels = steps
-        m._renames = renames
         return m
 
     metro = lower_plan(metro_fwd.__ati_metro__, kmap,
                        metro_factory, ConditionalKernel)
-    assert metro.rename_for(debug) == {'R': 'encoded_softmax'}
     order = metro.merged_operand_order()
-    # R folded into encoded_softmax: present once, no bare 'R'.
+    # R folded into encoded_softmax (via debug.apparel_of): present once, no bare R.
     assert 'R' not in order
     assert order.count('encoded_softmax') == 1
     assert order == ['Q', 'K', 'V', 'Out', 'encoded_softmax', 'dropout_p']
@@ -152,6 +149,19 @@ def test_unsupported_condition_rejected():
     except MetroError:
         return
     raise AssertionError('expected MetroError on unsupported condition')
+
+
+def test_kwarg_in_metro_call_rejected():
+    # Argument wiring moved to the sub-kernel's wires_to= decorator; a kwarg in a
+    # metro call is now an error pointing the author to wires_to=.
+    def bad(params):
+        debug_simulate_encoded_softmax(params, R=params.encoded_softmax)
+    try:
+        transpile(bad)
+    except MetroError as e:
+        assert 'wires_to' in str(e)
+        return
+    raise AssertionError('expected MetroError on kwarg in sub-kernel call')
 
 
 def main():
