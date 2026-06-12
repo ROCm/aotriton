@@ -65,24 +65,28 @@ def _locally_claimed(spec, param_names):
     return claimed
 
 
-def _clone_for_gap(name, src_spec, gap_arg):
-    """A new single-argument spec for `gap_arg`, copying the cited binding's
-    type/dtype/options/rank. Strided cited tensors cannot be cloned into a gap (the
-    citing kernel must declare them locally with its own stride glob)."""
+def _clone_for_gap(name, src_spec, gap_args):
+    """A new spec for `gap_args` (>=1 arguments that came from the SAME cited
+    binding), copying the cited binding's type/dtype/options/rank. Passing the whole
+    group preserves the cited grouping — several gap args sharing one cited spec
+    collapse to one axis / one feature-table getter, matching the cited kernel.
+    Strided cited tensors cannot be cloned into a gap (the citing kernel must
+    declare them locally with its own stride glob)."""
+    arg = gap_args if len(gap_args) > 1 else gap_args[0]
     if isinstance(src_spec, TensorSpec):
         if src_spec.strides_pattern is not None:
             raise AtiDescriptionError(
-                f"kernel {name!r}: cited gap tensor {gap_arg!r} is stride-bearing; "
+                f"kernel {name!r}: cited gap tensor {gap_args!r} is stride-bearing; "
                 f"declare it locally with its own strides= glob (rev0 §5), not via "
                 f"@ati.cite")
-        return TensorSpec(gap_arg, src_spec.dtype, strides=None,
+        return TensorSpec(arg, src_spec.dtype, strides=None,
                           rank=src_spec.rank, contiguous=None)
     # ScalarSpec: reconstruct from whichever slot the cited binding used.
     if src_spec.dtype is not None:
-        return ScalarSpec(gap_arg, src_spec.dtype)
+        return ScalarSpec(arg, src_spec.dtype)
     if src_spec.options is not None:
-        return ScalarSpec(gap_arg, options=src_spec.options)
-    return ScalarSpec(gap_arg, src_spec.type_)
+        return ScalarSpec(arg, options=src_spec.options)
+    return ScalarSpec(arg, src_spec.type_)
 
 
 def _string_dtype_names(spec):
@@ -194,8 +198,15 @@ def resolve_cites(spec, *, family, lookup=None):
                 spec.tune = cs.tune
                 break
 
-    # 1) Gap arguments -> cloned specs (apparel == gap name; unclaimed args unwired).
+    # 1) Gap arguments -> cloned specs. Gaps that came from the SAME cited binding
+    # are cloned together (one axis / one feature-table getter), PRESERVING the
+    # cited grouping — e.g. attn_fwd groups Num_head_q/Max_seqlen_q/Max_seqlen_k
+    # under one scalar spec, so debug inherits them as one group, not three. Group
+    # membership is keyed on the cited source spec (identity); order follows the
+    # citing kernel's signature.
     claimed = _locally_claimed(spec, param_names)
+    gap_groups = []          # list of (src_spec, [gap_arg, ...]) preserving order
+    group_index = {}         # id(src_spec) -> index into gap_groups
     for arg in param_names:
         if arg in claimed:
             continue
@@ -206,7 +217,13 @@ def resolve_cites(spec, *, family, lookup=None):
                 f"nor supplied by any @ati.cite ({[c.target for c in spec.cites]}); "
                 f"declare it or cite a kernel that defines it")
         src_spec, _real = pair
-        clone = _clone_for_gap(name, src_spec, arg)
+        key = id(src_spec)
+        if key not in group_index:
+            group_index[key] = len(gap_groups)
+            gap_groups.append((src_spec, []))
+        gap_groups[group_index[key]][1].append(arg)
+    for src_spec, gap_args in gap_groups:
+        clone = _clone_for_gap(name, src_spec, gap_args)
         if isinstance(clone, TensorSpec):
             spec.tensors.append(clone)
         else:

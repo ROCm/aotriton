@@ -69,6 +69,29 @@ __bwd_aiter = aiter_fmha_v3_bwd()
 # # TODO: Re-implement this as part of kernel(?)
 __debug_simulate_encoded_softmax = debug_simulate_encoded_softmax('debug_simulate_encoded_softmax', SOURCE_FILE)
 
+if _ati_enabled('debug_simulate_encoded_softmax'):
+    # Route debug through the ATI adapter (executive plan Step 11). It cites the
+    # forward metro's key kernel (attn_fwd) for the shared operands' practices, so
+    # __attn_fwd must already be ATI-built+registered above. The cite resolves via
+    # the flat kernel registry (op_attn_fwd is built later, below).
+    assert _ati_enabled('attn_fwd'), (
+        'AOTRITON_ATI_KERNELS=debug_simulate_encoded_softmax requires attn_fwd too '
+        '(debug cites op_attn_fwd.triton.attn_fwd)')
+    import importlib.util as _ilu2
+    from pathlib import Path as _Path2
+    from tritonsrc.dropout_rng import debug_simulate_encoded_softmax as _ati_debug_jit
+    _ROOT2 = _Path2(__file__).resolve().parents[3]
+    _spec2 = _ilu2.spec_from_file_location(
+        '_ati_modules_flash_debug', _ROOT2 / 'modules' / 'flash'
+        / 'debug_simulate_encoded_softmax_ati.py')
+    _mod2 = _ilu2.module_from_spec(_spec2)
+    _spec2.loader.exec_module(_mod2)
+    from v3python.template_instantiation.compat import build_kernel_description
+    _mod2.describe_debug_simulate_encoded_softmax(_ati_debug_jit)
+    __debug_simulate_encoded_softmax = build_kernel_description(
+        _ati_debug_jit, family='flash', source_path=SOURCE_FILE,
+        triton_kernel_name='debug_simulate_encoded_softmax')
+
 kernels = [
     __bwd_preprocess,
     __bwd_preprocess_varlen,
