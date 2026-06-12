@@ -94,10 +94,10 @@ class BuiltKernel:
       * `perf_overrides` — target is a PERF-SCHEMA field; applied only in the perf
         layer (translate_*), never in resolved[]."""
     __slots__ = ('name', 'axes', 'overrides', 'perf_overrides', 'arguments',
-                 'tune', 'disables')
+                 'tune', 'disables', 'wiring')
 
     def __init__(self, name, axes, overrides, arguments, tune=None,
-                 perf_overrides=None, disables=None):
+                 perf_overrides=None, disables=None, wiring=None):
         self.name = name
         self.axes = axes              # list[Axis] (incl. trivial + hidden strides)
         self.overrides = overrides    # functional-arg overrides
@@ -105,6 +105,9 @@ class BuiltKernel:
         self.arguments = arguments    # full signature order (list[str])
         self.tune = tune              # TuneSpec | None (perf schema, configs, ...)
         self.disables = disables or []  # list[DisableSpec] (functional-disable)
+        # real->apparel arg wiring (rev0 §4.3), {real_arg: apparel_operand}, from
+        # wires_to= on tensor/scalar specs. Empty when nothing is wired.
+        self.wiring = wiring or {}
 
     def __repr__(self):
         nmulti = sum(1 for a in self.axes if not a.is_trivial)
@@ -295,6 +298,14 @@ def build_kernel(kernel_spec) -> BuiltKernel:
 
     axes.sort(key=lambda a: a.anchor)
     arguments = [p.name for p in params]
+    # Collect real->apparel wiring (rev0 §4.3) from wires_to= on tensor/scalar
+    # specs. The IR stays keyed on REAL names; the wiring is applied only on the
+    # outward codegen surface (Step 3).
+    wiring = {}
+    for spec in (*kernel_spec.tensors, *kernel_spec.scalars):
+        w = getattr(spec, 'wires_to', None)
+        if w is not None:
+            wiring[spec.arg_name] = w
     # Split overrides by target: perf-schema fields -> perf channel, the rest ->
     # functional channel (applied in enumerate_functionals / resolved[]).
     perf_names = set()
@@ -310,4 +321,4 @@ def build_kernel(kernel_spec) -> BuiltKernel:
             func_ovs.append(ov)
     return BuiltKernel(name, axes, func_ovs, arguments,
                        tune=kernel_spec.tune, perf_overrides=perf_ovs,
-                       disables=list(kernel_spec.disables))
+                       disables=list(kernel_spec.disables), wiring=wiring)

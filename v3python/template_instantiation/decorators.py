@@ -89,9 +89,11 @@ class TensorSpec:
     (anonymous single-choice variable). Strides are bound per tensor via a glob;
     rank is inferred from the matched stride count unless given explicitly."""
 
-    __slots__ = ('arg_names', 'dtype', 'strides_pattern', 'rank', 'contiguous')
+    __slots__ = ('arg_names', 'dtype', 'strides_pattern', 'rank', 'contiguous',
+                 'wires_to')
 
-    def __init__(self, arg_name, dtype, strides=None, rank=None, contiguous=None):
+    def __init__(self, arg_name, dtype, strides=None, rank=None, contiguous=None,
+                 wires_to=None):
         assert isinstance(dtype, (ChoiceVar, str)), \
             f'@ati.tensor dtype must be a ChoiceVar or a literal type string, ' \
             f'got {dtype!r}'
@@ -103,6 +105,9 @@ class TensorSpec:
                 '@ati.tensor with a name list cannot take strides=/contiguous= '
                 '(a stride glob cannot be partitioned across several tensors); '
                 'group only strideless tensors, or declare them individually')
+            assert wires_to is None, (
+                '@ati.tensor with a name list cannot take wires_to= (wiring is '
+                'per single argument); declare wired tensors individually')
             self.arg_names = tuple(arg_name)
         else:
             assert isinstance(arg_name, str), \
@@ -112,6 +117,11 @@ class TensorSpec:
         self.strides_pattern = strides
         self.rank = rank
         self.contiguous = contiguous          # int index | stride-name | None
+        # real->apparel wiring (rev0 §4.3): the operator operand this REAL argument
+        # is dressed as. A plain operand-name string today; representation kept
+        # opaque for the future tuple[Callable, list[str]] reducer form. None =
+        # not wired (identity).
+        self.wires_to = wires_to
 
     @property
     def arg_name(self) -> str:
@@ -187,13 +197,16 @@ class ScalarSpec:
       scalar('Num_head_q')                    -> type read from annotation (Step 2.3)
     """
 
-    __slots__ = ('arg_names', 'type_', 'dtype', 'options')
+    __slots__ = ('arg_names', 'type_', 'dtype', 'options', 'wires_to')
 
-    def __init__(self, arg_name, type_or_var=None, options=None):
+    def __init__(self, arg_name, type_or_var=None, options=None, wires_to=None):
         if isinstance(arg_name, (list, tuple)):
             assert arg_name, '@ati.scalar needs at least one argument name'
             assert all(isinstance(a, str) for a in arg_name), \
                 '@ati.scalar name list must contain strings'
+            assert wires_to is None, (
+                '@ati.scalar with a name list cannot take wires_to= (wiring is '
+                'per single argument); declare wired scalars individually')
             self.arg_names = tuple(arg_name)
         else:
             assert isinstance(arg_name, str), \
@@ -202,6 +215,8 @@ class ScalarSpec:
         self.type_ = None
         self.dtype = None
         self.options = None
+        # real->apparel wiring (rev0 §4.3); see TensorSpec.wires_to.
+        self.wires_to = wires_to
         if isinstance(type_or_var, ChoiceVar):
             self.dtype = type_or_var
             assert options is None, \
@@ -246,16 +261,19 @@ def _is_numpy_array(x) -> bool:
     return type(x).__module__ == 'numpy' and type(x).__name__ == 'ndarray'
 
 
-def tensor(arg_name, dtype, *, strides=None, rank=None, contiguous=None):
-    """Bind a tensor argument to a dtype variable (or literal type string)."""
+def tensor(arg_name, dtype, *, strides=None, rank=None, contiguous=None,
+           wires_to=None):
+    """Bind a tensor argument to a dtype variable (or literal type string).
+    `wires_to=` dresses this REAL argument as an operator operand (rev0 §4.3)."""
     return TensorSpec(arg_name, dtype, strides=strides, rank=rank,
-                      contiguous=contiguous)
+                      contiguous=contiguous, wires_to=wires_to)
 
 
-def scalar(arg_name, type_or_var=None, *, options=None):
+def scalar(arg_name, type_or_var=None, *, options=None, wires_to=None):
     """Bind a non-tensor argument: a plain runtime scalar, an enumerated choice
-    (options=), or a member of a shared choice variable."""
-    return ScalarSpec(arg_name, type_or_var, options=options)
+    (options=), or a member of a shared choice variable. `wires_to=` dresses this
+    REAL argument as an operator operand (rev0 §4.3)."""
+    return ScalarSpec(arg_name, type_or_var, options=options, wires_to=wires_to)
 
 
 def derives(targets, *, to, when=None):

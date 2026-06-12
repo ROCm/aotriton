@@ -377,6 +377,16 @@ class AtiKernelDescription:
         self.FAMILY = family
         self._source_path = source_path
         self._triton_kernel_name = triton_kernel_name or built.name
+        # Argument wiring (real -> apparel). A kernel's REAL arguments are its own
+        # Triton-signature parameters (e.g. debug's `R`); an APPAREL argument is the
+        # operator-side operand it is dressed as at the params-struct / launch site
+        # (e.g. `encoded_softmax`). Declared per-argument via `wires_to=` (rev0 §4.3)
+        # and stored HERE, on the kdesc, because a kernel can be launched bare (the
+        # ME backend calls debug directly, with no metro) and its shim must still
+        # address the apparel field. The apparel value is a plain operand name for
+        # now; the representation is kept opaque so it can later carry a tuple of
+        # operator params or an expression (`kernel(X=params.A+params.B)`).
+        self._arg_wiring = dict(getattr(built, 'wiring', None) or {})
         # Canonical (anchor-ordered) axes; assign godel strides to multi-choice.
         self._axes_all = sorted(built.axes, key=lambda a: a.anchor)
         self._axes_multi = [a for a in self._axes_all if not a.is_trivial]
@@ -551,6 +561,21 @@ class AtiKernelDescription:
             if aname in ov.targets:
                 found = ov
         return found
+
+    # --- argument wiring (real -> apparel) ---
+
+    def set_arg_wiring(self, wiring: dict):
+        """Install the real->apparel wiring for this kernel (real argument name ->
+        operator operand it is dressed as). Called when the kernel is placed into an
+        operator/metro; the wiring then applies to EVERY launch of this kernel,
+        including a bare (metro-less) launch by an alternative backend."""
+        self._arg_wiring = dict(wiring)
+
+    def apparel_of(self, real_arg: str) -> str:
+        """The apparel argument `real_arg` is dressed as (its operator operand), or
+        `real_arg` itself when it is not wired. This is the name the params struct /
+        launch site addresses."""
+        return self._arg_wiring.get(real_arg, real_arg)
 
     # --- identity ---
 
