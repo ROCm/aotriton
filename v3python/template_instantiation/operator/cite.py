@@ -187,4 +187,25 @@ def resolve_cites(spec, *, family, lookup=None):
         spec.dtype_vars.append(
             ChoiceVar(dv.name, dv.choices, kind=dv.kind, signature_name=None))
         local_dv.add(dname)
+
+    # 3) @ati.disable is citeable (rev0 §4.5): no local disable -> inherit the
+    # cited target's; a local disable REPLACES it. A bare-callable local disable
+    # shadowing a cited one (it cannot super()) is a FATAL error unless explicitly
+    # affirmed — a warning would be lost in the generator's output, silently
+    # dropping the cited correctness exclusion.
+    cited_disables = [d for cs in cited_specs for d in cs.disables]
+    if not spec.disables:
+        spec.disables = list(cited_disables)        # inherit verbatim
+    elif cited_disables:
+        for d in spec.disables:
+            if not d.is_callable_class and not d.override_ack:
+                raise AtiDescriptionError(
+                    f"kernel {name!r}: a local @ati.disable (a bare "
+                    f"lambda/function) would replace the cited disable from "
+                    f"{[c.target for c in spec.cites]}, silently dropping the cited "
+                    f"correctness exclusion. To EXTEND it, make the disable a "
+                    f"callable class that calls super().__call__(f); to override "
+                    f"intentionally, pass "
+                    f"I_understand_this_overrides_cited_disable=True to "
+                    f"ati.disable(...).")
     return spec
