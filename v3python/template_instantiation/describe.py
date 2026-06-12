@@ -16,7 +16,7 @@ This step stores the collected, validated specs. Lowering them to the
 Axis/Override IR (enumerate_functionals input) is Step 2.4 (builder.py).
 """
 
-from .decorators import TensorSpec, ScalarSpec
+from .decorators import TensorSpec, ScalarSpec, ChoiceVar
 from .ir import Override
 from .introspect import kernel_params
 
@@ -25,10 +25,10 @@ class KernelSpec:
     """The ATI sidecar attached to a kernel as `kernel.__ati__`."""
 
     __slots__ = ('kernel', 'params', 'tensors', 'scalars', 'overrides', 'tune',
-                 'disables')
+                 'disables', 'dtype_vars')
 
     def __init__(self, kernel, params, tensors, scalars, overrides, tune=None,
-                 disables=None):
+                 disables=None, dtype_vars=None):
         self.kernel = kernel
         self.params = params           # list[ParamSpec], signature order
         self.tensors = tensors         # list[TensorSpec]
@@ -36,6 +36,11 @@ class KernelSpec:
         self.overrides = overrides     # list[Override]
         self.tune = tune               # tune specs, attached later (Phase 3)
         self.disables = disables or []  # list[DisableSpec]
+        # Named dtype/choice variables declared via @ati.tensor_dtype /
+        # ati.choice_set as standalone records (the stacked-@ / string-ref form);
+        # tensor/scalar specs refer to them by name. ChoiceVars passed inline by
+        # object (the older form) are NOT here — they ride on the spec's dtype.
+        self.dtype_vars = dtype_vars or []   # list[ChoiceVar]
 
     @property
     def param_names(self):
@@ -78,12 +83,15 @@ def _partition(specs):
     from .tune import PerfSchema, ConfigsSpec, BinningSpec, FallbackSpec, DerivedSpec
     from .decorators import DisableSpec
     tune_types = (PerfSchema, ConfigsSpec, BinningSpec, FallbackSpec, DerivedSpec)
-    tensors, scalars, overrides, tune_records, disables, others = [], [], [], [], [], []
+    tensors, scalars, overrides, tune_records, disables, dtype_vars, others = \
+        [], [], [], [], [], [], []
     for s in specs:
         if isinstance(s, TensorSpec):
             tensors.append(s)
         elif isinstance(s, ScalarSpec):
             scalars.append(s)
+        elif isinstance(s, ChoiceVar):
+            dtype_vars.append(s)
         elif isinstance(s, Override):
             overrides.append(s)
         elif isinstance(s, DisableSpec):
@@ -92,7 +100,7 @@ def _partition(specs):
             tune_records.append(s)
         else:
             others.append(s)
-    return tensors, scalars, overrides, tune_records, disables, others
+    return tensors, scalars, overrides, tune_records, disables, dtype_vars, others
 
 
 def _validate_completeness(params, tensors, scalars, tune_records):
@@ -142,7 +150,8 @@ def _validate_completeness(params, tensors, scalars, tune_records):
 def describe(kernel, *specs, _validate=True):
     """Attach an ATI KernelSpec to a kernel. Canonical for both authoring modes."""
     params = kernel_params(kernel)
-    tensors, scalars, overrides, tune_records, disables, others = _partition(specs)
+    tensors, scalars, overrides, tune_records, disables, dtype_vars, others = \
+        _partition(specs)
     assert not others, f'describe() got unrecognized specs: {others}'
     if _validate:
         errors = _validate_completeness(params, tensors, scalars, tune_records)
@@ -150,7 +159,8 @@ def describe(kernel, *specs, _validate=True):
             f'ATI describe({getattr(kernel, "__name__", kernel)!r}) validation '
             f'failed:\n  ' + '\n  '.join(errors))
     spec = KernelSpec(kernel, params, tensors, scalars, overrides,
-                      tune=_build_tune_spec(tune_records), disables=disables)
+                      tune=_build_tune_spec(tune_records), disables=disables,
+                      dtype_vars=dtype_vars)
     kernel.__ati__ = spec
     return kernel
 

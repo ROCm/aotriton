@@ -49,6 +49,14 @@ class ChoiceVar:
         self.kind = kind          # 'dtype' | 'scalar'
         self.signature_name = signature_name
 
+    def __call__(self, kernel):
+        """Stacked-@ form: register this dtype/choice variable on the kernel below
+        it (so `@ati.tensor_dtype('T_io', ...)` works as a decorator, and
+        `@ati.tensor('Q', 'T_io', ...)` can refer to it by name). Mirrors
+        TensorSpec/ScalarSpec.__call__."""
+        from .describe import accumulate_spec
+        return accumulate_spec(self, kernel)
+
     def __repr__(self):
         return (f'ChoiceVar({self.name!r}, kind={self.kind}, '
                 f'signature_name={self.signature_name!r}, choices={self.choices})')
