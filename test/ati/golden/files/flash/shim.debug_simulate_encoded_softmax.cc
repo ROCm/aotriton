@@ -220,12 +220,6 @@ const std::vector<std::string>& DebugSimulateEncodedSoftmaxMetadata::get_philox_
     return choices;
 }
 
-const std::vector<std::string>& DebugSimulateEncodedSoftmaxMetadata::get_philox_offset1_choices()
-{
-    static const std::vector<std::string> choices = { "*u64" };
-    return choices;
-}
-
 const std::vector<std::string>& DebugSimulateEncodedSoftmaxMetadata::get_philox_offset2_choices()
 {
     static const std::vector<std::string> choices = { "u64" };

@@ -34,8 +34,8 @@ struct OpAttnFwdParams {
     int32_t              Num_head_q;
     int32_t              Max_seqlen_q;
     int32_t              Max_seqlen_k;
-    const TensorView<4>* philox_seed_ptr;
-    const TensorView<4>* philox_offset1;
+    const TensorView<0>* philox_seed_ptr;
+    const TensorView<0>* philox_offset1;
     uint64_t             philox_offset2;
 };
 #endif
@@ -95,7 +95,6 @@ struct DebugSimulateEncodedSoftmaxMetadata {
     static const std::vector<std::string>& get_dropout_p_choices();
     static const std::vector<std::string>& get_Num_head_q_choices();
     static const std::vector<std::string>& get_philox_seed_ptr_choices();
-    static const std::vector<std::string>& get_philox_offset1_choices();
     static const std::vector<std::string>& get_philox_offset2_choices();
 };
 
