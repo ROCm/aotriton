@@ -94,11 +94,35 @@ class MetroFwdKernel(MetroKernel):
     SHARED_IFACE = OpAttnFwd
     ARGUMENTS = OpAttnFwd.ARGUMENTS
 
+def _build_metro_fwd():
+    """The forward metro. Hand-built by default; when AOTRITON_ATI_KERNELS includes
+    'metro_fwd', built from the @ati.metro_kernel transpiler (Step 9) via lower_plan
+    — which must lower to the SAME MetroKernel/ConditionalKernel IR."""
+    if not _ati_enabled('metro_fwd'):
+        return MetroFwdKernel('triton',
+                              [__attn_fwd,
+                               ConditionalKernel('encoded_softmax', '->data_ptr() != nullptr',
+                                                 __debug_simulate_encoded_softmax)])
+    import importlib.util as _ilu
+    from pathlib import Path as _Path
+    from v3python.template_instantiation.metro import lower_plan
+    _ROOT = _Path(__file__).resolve().parents[3]
+    _spec = _ilu.spec_from_file_location(
+        '_ati_modules_flash_metro_fwd', _ROOT / 'modules' / 'flash' / 'metro_fwd_ati.py')
+    _mod = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_mod)
+    kernel_map = {
+        'attn_fwd': __attn_fwd,
+        'debug_simulate_encoded_softmax': __debug_simulate_encoded_softmax,
+    }
+    return lower_plan(_mod.metro_fwd.__ati_metro__, kernel_map,
+                      lambda steps: MetroFwdKernel('triton', steps),
+                      ConditionalKernel)
+
+
 def _build_op_attn_fwd():
     backends = [
-        MetroFwdKernel('triton',
-                       [__attn_fwd,
-                        ConditionalKernel('encoded_softmax', '->data_ptr() != nullptr', __debug_simulate_encoded_softmax)]),
+        _build_metro_fwd(),
         __fwd_aiter,  # No need to provide encoded_softmax because no dropout support
     ]
     if _ati_enabled('op_attn_fwd'):
