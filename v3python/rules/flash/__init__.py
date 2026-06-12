@@ -90,6 +90,22 @@ if _ati_enabled('bwd_kernel_dq'):
     _m_dq.describe_bwd_kernel_dq(_ati_dq_jit)
     __bwd_kernel_dq = _bkd(_ati_dq_jit, family='flash', source_path=SOURCE_FILE,
                           triton_kernel_name='bwd_kernel_dq')
+if _ati_enabled('bwd_preprocess'):
+    # Aux bwd kernels; cite a bwd key kernel (built+registered above) for shared
+    # operands. Built here (after dk_dv/dq) so the flat-registry cite resolves.
+    assert _ati_enabled('bwd_kernel_dk_dv'), (
+        'AOTRITON_ATI_KERNELS=bwd_preprocess requires bwd_kernel_dk_dv too '
+        '(bwd_preprocess cites op_attn_bwd.triton_split.bwd_kernel_dk_dv)')
+    from v3python.template_instantiation.compat import build_kernel_description as _bkd
+    _m_pp = _load_ati_module('bwd_preprocess_ati.py')
+    from bwd_preprocess import (bwd_preprocess as _ati_pp_jit,
+                                bwd_preprocess_varlen as _ati_ppv_jit)
+    _m_pp.describe_bwd_preprocess(_ati_pp_jit)
+    __bwd_preprocess = _bkd(_ati_pp_jit, family='flash', source_path=SOURCE_FILE,
+                           triton_kernel_name='bwd_preprocess')
+    _m_pp.describe_bwd_preprocess_varlen(_ati_ppv_jit)
+    __bwd_preprocess_varlen = _bkd(_ati_ppv_jit, family='flash', source_path=SOURCE_FILE,
+                                  triton_kernel_name='bwd_preprocess_varlen')
 __bwd_kernel_fuse = bwd_kernel_fuse('bwd_kernel_fuse', SOURCE_FILE)
 __fwd_aiter = aiter_fmha_v3_fwd()
 __bwd_aiter = aiter_fmha_v3_bwd()
