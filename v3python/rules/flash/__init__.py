@@ -135,3 +135,11 @@ operators = [
 from v3python.template_instantiation.operator.infer import infer_shared_iface
 infer_shared_iface(operators)
 
+# Register operators in the ops registry so @ati.cite("<op>.<metro>[.<kernel>]")
+# can resolve metros/sub-kernels (executive plan Step 8). Each op exposes
+# FAMILY/NAME/get_backend; metros expose get_kernel/iter_subkernels.
+from v3python.template_instantiation import registry as _ati_registry
+for _op in operators:
+    if getattr(_op, 'FAMILY', None) is not None:
+        _ati_registry.register_op(_op)
+

@@ -100,10 +100,64 @@ def _string_dtype_names(spec):
     return names
 
 
+def _kernel_spec_of(kdesc, name, target):
+    cs = getattr(kdesc, 'kernel_spec', None)
+    if cs is None:
+        raise AtiDescriptionError(
+            f"kernel {name!r}: cite target {target!r} resolves to a kernel with "
+            f"no ATI spec (a legacy kernel cannot be cited)")
+    return cs
+
+
+def _resolve_one_cite(c, family, name, lookup):
+    """Resolve a single @ati.cite target to a LIST of cited KernelSpecs.
+
+    Resolution order (rev0 §4.4):
+      1. operator/metro level via the `ops` registry — `ops[op].get_backend(metro)`,
+         then `.get_kernel(kernel)` for a 3-segment target, or ALL of the metro's
+         sub-kernels for a 2-segment (whole-metro) target;
+      2. kernel level via the flat kernel registry (`lookup`) on the last segment —
+         the Step-4 path, used when the operator is not (yet) built.
+    A whole-metro (2-segment) target REQUIRES the ops path."""
+    op = registry.get_op(family, c.op_name)
+    if op is not None:
+        try:
+            metro = op.get_backend(c.metro_name)
+        except KeyError as e:
+            raise AtiDescriptionError(
+                f"kernel {name!r}: @ati.cite({c.target!r}): {e}")
+        if c.kernel_name is None:
+            # whole metro -> every sub-kernel's spec (the merged interface)
+            return [_kernel_spec_of(k, name, c.target)
+                    for k in metro.iter_subkernels()]
+        try:
+            sub = metro.get_kernel(c.kernel_name)
+        except KeyError as e:
+            raise AtiDescriptionError(
+                f"kernel {name!r}: @ati.cite({c.target!r}): {e}")
+        return [_kernel_spec_of(sub, name, c.target)]
+    # Operator not built; fall back to the flat kernel registry (kernel-level).
+    if c.kernel_name is None:
+        raise AtiDescriptionError(
+            f"kernel {name!r}: @ati.cite({c.target!r}) is a whole-metro cite but "
+            f"operator {c.op_name!r} is not a built {family!r} operator "
+            f"(build/import it before the citing kernel)")
+    kdesc = lookup(family, c.kernel_name)
+    if kdesc is None:
+        raise AtiDescriptionError(
+            f"kernel {name!r}: @ati.cite({c.target!r}) names kernel "
+            f"{c.kernel_name!r}, which is neither a built {family!r} operator's "
+            f"sub-kernel nor a built kernel (declare/import it before the citing "
+            f"kernel)")
+    return [_kernel_spec_of(kdesc, name, c.target)]
+
+
 def resolve_cites(spec, *, family, lookup=None):
     """Augment a citing KernelSpec in place from its @ati.cite targets, BEFORE
-    build_kernel. `lookup(family, kernel_name) -> cited AtiKernelDescription` (its
-    spec is read via `.kernel_spec`); defaults to the flat kernel registry."""
+    build_kernel. Each target resolves (via the ops registry, else the flat kernel
+    registry) to one or more cited KernelSpecs whose practices fill the citing
+    kernel's gaps. `lookup(family, kernel_name)` overrides the flat-registry lookup
+    (test injection)."""
     if not spec.cites:
         return spec
     if lookup is None:
@@ -111,20 +165,9 @@ def resolve_cites(spec, *, family, lookup=None):
     name = getattr(spec.kernel, '__name__', 'kernel')
     param_names = [p.name for p in spec.params]
 
-    # Cited specs (kernel-level: key on the last cite segment).
     cited_specs = []
     for c in spec.cites:
-        cited_kdesc = lookup(family, c.kernel_name)
-        if cited_kdesc is None:
-            raise AtiDescriptionError(
-                f"kernel {name!r}: @ati.cite({c.target!r}) names kernel "
-                f"{c.kernel_name!r}, which is not a built {family!r} kernel "
-                f"(declare/import it before the citing kernel)")
-        cs = getattr(cited_kdesc, 'kernel_spec', None)
-        if cs is None:
-            raise AtiDescriptionError(
-                f"kernel {name!r}: cited kernel {c.kernel_name!r} has no ATI spec")
-        cited_specs.append(cs)
+        cited_specs.extend(_resolve_one_cite(c, family, name, lookup))
 
     # Merge cited apparel/dtype tables (earlier cites win on a tie — first found).
     cited_apparel = {}
