@@ -33,26 +33,37 @@ def _ati_enabled(kernel_name: str) -> bool:
     return kernel_name in sel.replace(',', ' ').split()
 
 
+def _load_ati_module(module_filename: str):
+    """Import a modules/flash/*_ati.py description module by path (the 'flash'
+    top-level package name collides with this v3python.rules.flash module, so we
+    load under a private name)."""
+    import sys as _sys
+    import importlib.util as _ilu
+    from pathlib import Path as _Path
+    _root = _Path(__file__).resolve().parents[3]
+    _tritonsrc = _root / 'tritonsrc'
+    if str(_tritonsrc) not in _sys.path:
+        _sys.path.insert(0, str(_tritonsrc))
+    # Make modules/flash importable so description modules can share helpers
+    # (e.g. `from _common_ati import flash_disabled`).
+    _modflash = _root / 'modules' / 'flash'
+    if str(_modflash) not in _sys.path:
+        _sys.path.insert(0, str(_modflash))
+    spec = _ilu.spec_from_file_location(
+        '_ati_modules_flash_' + module_filename.replace('.py', ''),
+        _root / 'modules' / 'flash' / module_filename)
+    mod = _ilu.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 if _ati_enabled('attn_fwd'):
     # Route attn_fwd through the ATI adapter (executive plan Step 4.2.5). The
     # description lives in modules/flash/attn_fwd_ati.py (Mode B; the Triton
     # source is untouched). The adapter is byte-for-byte equivalent to the legacy
     # __attn_fwd, so it drops into both `kernels` and the metro operator below.
-    import sys as _sys
-    import importlib.util as _ilu
-    from pathlib import Path as _Path
-    _ROOT = _Path(__file__).resolve().parents[3]
-    _TRITONSRC = _ROOT / 'tritonsrc'
-    if str(_TRITONSRC) not in _sys.path:
-        _sys.path.insert(0, str(_TRITONSRC))
+    _mod = _load_ati_module('attn_fwd_ati.py')
     from fwd_kernel import attn_fwd as _ati_attn_fwd_jit
-    # Load modules/flash/attn_fwd_ati.py by path — 'flash' as a top-level package
-    # name collides with this very module (v3python.rules.flash), so import it
-    # under a private module name instead.
-    _spec = _ilu.spec_from_file_location(
-        '_ati_modules_flash_attn_fwd', _ROOT / 'modules' / 'flash' / 'attn_fwd_ati.py')
-    _mod = _ilu.module_from_spec(_spec)
-    _spec.loader.exec_module(_mod)
     from v3python.template_instantiation.compat import build_kernel_description
     _mod.describe_attn_fwd(_ati_attn_fwd_jit)
     __attn_fwd = build_kernel_description(_ati_attn_fwd_jit, family='flash',
@@ -62,6 +73,15 @@ if _ati_enabled('attn_fwd'):
     # here — it is inferred from the operator -> metro -> kernel relationship by
     # infer_shared_iface() after `operators` is built below.
 __bwd_kernel_dk_dv = bwd_kernel_dk_dv('bwd_kernel_dk_dv', SOURCE_FILE)
+if _ati_enabled('bwd_kernel_dk_dv'):
+    # Key bwd kernel via the ATI adapter (executive plan Step 12). Standalone full
+    # description (no cite); SHARED_IFACE (OpAttnBwd) is inferred after `operators`.
+    from v3python.template_instantiation.compat import build_kernel_description as _bkd
+    _m_dkdv = _load_ati_module('bwd_kernel_dk_dv_ati.py')
+    from bwd_kernel_dk_dv import bwd_kernel_dk_dv as _ati_dkdv_jit
+    _m_dkdv.describe_bwd_kernel_dk_dv(_ati_dkdv_jit)
+    __bwd_kernel_dk_dv = _bkd(_ati_dkdv_jit, family='flash', source_path=SOURCE_FILE,
+                             triton_kernel_name='bwd_kernel_dk_dv')
 __bwd_kernel_dq = bwd_kernel_dq('bwd_kernel_dq', SOURCE_FILE)
 __bwd_kernel_fuse = bwd_kernel_fuse('bwd_kernel_fuse', SOURCE_FILE)
 __fwd_aiter = aiter_fmha_v3_fwd()
@@ -77,16 +97,9 @@ if _ati_enabled('debug_simulate_encoded_softmax'):
     assert _ati_enabled('attn_fwd'), (
         'AOTRITON_ATI_KERNELS=debug_simulate_encoded_softmax requires attn_fwd too '
         '(debug cites op_attn_fwd.triton.attn_fwd)')
-    import importlib.util as _ilu2
-    from pathlib import Path as _Path2
-    from tritonsrc.dropout_rng import debug_simulate_encoded_softmax as _ati_debug_jit
-    _ROOT2 = _Path2(__file__).resolve().parents[3]
-    _spec2 = _ilu2.spec_from_file_location(
-        '_ati_modules_flash_debug', _ROOT2 / 'modules' / 'flash'
-        / 'debug_simulate_encoded_softmax_ati.py')
-    _mod2 = _ilu2.module_from_spec(_spec2)
-    _spec2.loader.exec_module(_mod2)
+    from dropout_rng import debug_simulate_encoded_softmax as _ati_debug_jit
     from v3python.template_instantiation.compat import build_kernel_description
+    _mod2 = _load_ati_module('debug_simulate_encoded_softmax_ati.py')
     _mod2.describe_debug_simulate_encoded_softmax(_ati_debug_jit)
     __debug_simulate_encoded_softmax = build_kernel_description(
         _ati_debug_jit, family='flash', source_path=SOURCE_FILE,

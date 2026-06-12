@@ -62,23 +62,18 @@ def gen_autotune_configs(f):
     yield ati.tune.Config(kw, num_warps=4, num_stages=1)
 
 
+import sys as _sys
+from pathlib import Path as _Path
+if str(_Path(__file__).resolve().parent) not in _sys.path:
+    _sys.path.insert(0, str(_Path(__file__).resolve().parent))
+from _common_ati import flash_disabled
+
+
 def _attn_fwd_disabled(f):
-    """Functionals excluded for compiler/numerical correctness (the user interface
-    to is_functional_disabled — one function covering all cases, mirroring the
-    legacy attn_fwd.is_functional_disabled / FlashKernel rules)."""
-    causal = f.choices.CAUSAL_TYPE
-    hdim = f.choices.BLOCK_DMODEL
-    bias_type = f.choices.BIAS_TYPE
-    # causal + matrix bias is unsupported
-    if causal != 0 and bias_type != 0:
-        return True
-    # gfx11xx cannot handle hdim > 256
-    if f.arch.startswith('gfx11') and hdim > 256:
-        return True
-    # gfx950 compiler has a known numerical error on hdim == 16
-    if f.arch == 'gfx950' and hdim == 16:
-        return True
-    return False
+    """Functionals excluded for compiler/numerical correctness. Shares the common
+    flash predicate (causal+bias, gfx11 hdim>256); the fwd-specific gfx950 bad head
+    dim is {16}."""
+    return flash_disabled(f, gfx950_bad_hdims={16})
 
 
 def describe_attn_fwd(attn_fwd):

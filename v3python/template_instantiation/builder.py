@@ -30,9 +30,12 @@ class AtiDescriptionError(Exception):
 
 def _is_ati_type_string(s: str) -> bool:
     """True if `s` is a type string Choice.parse accepts: a tensor pointer like
-    '*fp16:16', or an elemental type like 'i32' / 'fp32' / 'u64'."""
+    '*fp16:16', an elemental type like 'i32' / 'fp32' / 'u64', or a lazy tensor
+    'LazyTensor:*fp32:16'."""
     if not s:
         return False
+    if s.startswith('LazyTensor:'):
+        s = s[len('LazyTensor:'):]
     return (s.startswith('*') and s[1:] in ELEMENTAL_TYPE_MAP) or s in ELEMENTAL_TYPE_MAP
 
 # Scalar type fallback (agent-plans/ati_rev1.md §3.2, fb Q5).
