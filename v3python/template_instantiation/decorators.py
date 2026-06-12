@@ -90,10 +90,10 @@ class TensorSpec:
     rank is inferred from the matched stride count unless given explicitly."""
 
     __slots__ = ('arg_names', 'dtype', 'strides_pattern', 'rank', 'contiguous',
-                 'wires_to')
+                 'wires_to', 'resolved_strides')
 
     def __init__(self, arg_name, dtype, strides=None, rank=None, contiguous=None,
-                 wires_to=None):
+                 wires_to=None, resolved_strides=None):
         assert isinstance(dtype, (ChoiceVar, str)), \
             f'@ati.tensor dtype must be a ChoiceVar or a literal type string, ' \
             f'got {dtype!r}'
@@ -122,6 +122,15 @@ class TensorSpec:
         # opaque for the future tuple[Callable, list[str]] reducer form. None =
         # not wired (identity).
         self.wires_to = wires_to
+        # The EXACT stride argument names this tensor binds, in order. Normally
+        # None (derived from `strides`/the glob against the kernel signature). When
+        # a strided tensor is inherited through @ati.cite, the resolver copies the
+        # cited tensor's RESOLVED stride names here so the citing kernel binds the
+        # exact same argument names — never re-globbing, which could match a
+        # different set if the two kernels name their strides differently
+        # (stride_a0/a1 vs stride_az/ah). match_strides() returns these verbatim
+        # when present.
+        self.resolved_strides = list(resolved_strides) if resolved_strides else None
 
     @property
     def arg_name(self) -> str:
@@ -139,9 +148,17 @@ class TensorSpec:
         return self.dtype.name if isinstance(self.dtype, ChoiceVar) else self.arg_names[0]
 
     def match_strides(self, param_names) -> list[str]:
-        """Glob-match this tensor's stride parameters from the kernel signature,
-        in signature order. Required — the whole-signature stride set cannot be
-        partitioned by tensor without a per-tensor pattern."""
+        """The tensor's stride parameter names, in order. If exact resolved names
+        were recorded (the @ati.cite path), return those verbatim (asserting they
+        are all in the signature) — never re-glob, since the citing kernel may name
+        its strides differently. Otherwise glob-match `strides_pattern` against the
+        signature."""
+        if self.resolved_strides is not None:
+            missing = [s for s in self.resolved_strides if s not in param_names]
+            assert not missing, (
+                f'@ati.tensor({self.arg_name!r}) cited stride names {missing} are '
+                f'not in the kernel signature {list(param_names)}')
+            return list(self.resolved_strides)
         if self.strides_pattern is None:
             return []
         return [p for p in param_names

@@ -104,7 +104,12 @@ class OperatorGenerator(InterfaceGenerator):
         return ALIGN.join(stmt)
 
     def codegen_single_launcher(self, backend : Interface, nalign):
-        if isinstance(backend, KernelDescription) or isinstance(backend, SlimAffineKernelDescription):
+        # A single-kernel (kshim) backend is any triton kernel description — the
+        # legacy KernelDescription, the ATI AtiKernelDescription (not a subclass),
+        # or the slim affine kernel. Identify by CODEGEN_MODULE rather than class so
+        # the ATI adapter is recognized without codegen importing the compat layer.
+        if (isinstance(backend, (KernelDescription, SlimAffineKernelDescription))
+                or getattr(backend, 'CODEGEN_MODULE', None) in ('triton', 'affine')):
             return self.codegen_kshim_launcher(backend, nalign)
         if isinstance(backend, MetroKernel):
             return self.codegen_metro_launcher(backend, nalign)

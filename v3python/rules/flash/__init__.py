@@ -107,6 +107,19 @@ if _ati_enabled('bwd_preprocess'):
     __bwd_preprocess_varlen = _bkd(_ati_ppv_jit, family='flash', source_path=SOURCE_FILE,
                                   triton_kernel_name='bwd_preprocess_varlen')
 __bwd_kernel_fuse = bwd_kernel_fuse('bwd_kernel_fuse', SOURCE_FILE)
+if _ati_enabled('bwd_kernel_fuse'):
+    # Alternative fused bwd backend; cites the bwd metro's sub-kernels (built above)
+    # for the merged operand vocabulary, overriding BLOCK_DMODEL (<=256) and its
+    # own perf. Built after dk_dv/dq/preprocess so the flat-registry cites resolve.
+    assert _ati_enabled('bwd_kernel_dk_dv') and _ati_enabled('bwd_preprocess'), (
+        'AOTRITON_ATI_KERNELS=bwd_kernel_fuse requires bwd_kernel_dk_dv, '
+        'bwd_kernel_dq and bwd_preprocess (it cites all three)')
+    from v3python.template_instantiation.compat import build_kernel_description as _bkd
+    _m_fuse = _load_ati_module('bwd_kernel_fuse_ati.py')
+    from bwd_kernel_fuse import bwd_kernel_fuse as _ati_fuse_jit
+    _m_fuse.describe_bwd_kernel_fuse(_ati_fuse_jit)
+    __bwd_kernel_fuse = _bkd(_ati_fuse_jit, family='flash', source_path=SOURCE_FILE,
+                            triton_kernel_name='bwd_kernel_fuse')
 __fwd_aiter = aiter_fmha_v3_fwd()
 __bwd_aiter = aiter_fmha_v3_bwd()
 # # TODO: Re-implement this as part of kernel(?)

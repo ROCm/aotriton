@@ -26,30 +26,35 @@ up in the flat per-family registry; the `<op>.<metro>` prefix is validated and k
 for the later metro/operator-level resolution.
 """
 
+import fnmatch
+
 from ..builder import AtiDescriptionError, _is_ati_type_string
 from ..decorators import TensorSpec, ScalarSpec, ChoiceVar
 from .. import registry
 
 
 def _spec_apparel_names(spec):
-    """{apparel_name -> (source_spec, real_arg)} for one cited KernelSpec's tensor
-    and scalar bindings. A single binding's apparel is its wires_to or its own arg
-    name; multi-arg (list) bindings cannot wire, so apparel == each arg name."""
+    """{apparel_name -> (source_spec, real_arg, cited_param_names)} for one cited
+    KernelSpec's tensor and scalar bindings. A single binding's apparel is its
+    wires_to or its own arg name; multi-arg (list) bindings cannot wire, so
+    apparel == each arg name. cited_param_names is the cited kernel's signature
+    (needed to resolve a cited tensor's stride glob to exact names)."""
+    cited_params = [p.name for p in spec.params]
     out = {}
     for t in spec.tensors:
         if len(t.arg_names) == 1:
             apparel = t.wires_to or t.arg_names[0]
-            out[apparel] = (t, t.arg_names[0])
+            out[apparel] = (t, t.arg_names[0], cited_params)
         else:
             for a in t.arg_names:
-                out[a] = (t, a)
+                out[a] = (t, a, cited_params)
     for s in spec.scalars:
         if len(s.arg_names) == 1:
             apparel = s.wires_to or s.arg_names[0]
-            out[apparel] = (s, s.arg_names[0])
+            out[apparel] = (s, s.arg_names[0], cited_params)
         else:
             for a in s.arg_names:
-                out[a] = (s, a)
+                out[a] = (s, a, cited_params)
     return out
 
 
@@ -65,22 +70,25 @@ def _locally_claimed(spec, param_names):
     return claimed
 
 
-def _clone_for_gap(name, src_spec, gap_args):
+def _clone_for_gap(name, src_spec, gap_args, cited_params):
     """A new spec for `gap_args` (>=1 arguments that came from the SAME cited
     binding), copying the cited binding's type/dtype/options/rank. Passing the whole
     group preserves the cited grouping — several gap args sharing one cited spec
     collapse to one axis / one feature-table getter, matching the cited kernel.
-    Strided cited tensors cannot be cloned into a gap (the citing kernel must
-    declare them locally with its own stride glob)."""
+
+    A STRIDED cited tensor is cloned with its EXACT resolved stride names + the
+    resolved contiguous stride name (rev0 §5 extension): the cited glob is resolved
+    against the CITED kernel's params here, and those exact names are recorded on
+    the clone (resolved_strides) so the citing builder binds the same arguments
+    verbatim — never re-globbing, which could match a different set if the two
+    kernels name their strides differently."""
     arg = gap_args if len(gap_args) > 1 else gap_args[0]
     if isinstance(src_spec, TensorSpec):
-        if src_spec.strides_pattern is not None:
-            raise AtiDescriptionError(
-                f"kernel {name!r}: cited gap tensor {gap_args!r} is stride-bearing; "
-                f"declare it locally with its own strides= glob (rev0 §5), not via "
-                f"@ati.cite")
-        return TensorSpec(arg, src_spec.dtype, strides=None,
-                          rank=src_spec.rank, contiguous=None)
+        resolved = src_spec.match_strides(cited_params) or None
+        contiguous = (src_spec.resolve_contiguous(cited_params)
+                      if resolved is not None else None)
+        return TensorSpec(arg, src_spec.dtype, rank=src_spec.rank,
+                          contiguous=contiguous, resolved_strides=resolved)
     # ScalarSpec: reconstruct from whichever slot the cited binding used.
     if src_spec.dtype is not None:
         return ScalarSpec(arg, src_spec.dtype)
@@ -205,10 +213,23 @@ def resolve_cites(spec, *, family, lookup=None):
     # membership is keyed on the cited source spec (identity); order follows the
     # citing kernel's signature.
     claimed = _locally_claimed(spec, param_names)
-    gap_groups = []          # list of (src_spec, [gap_arg, ...]) preserving order
+    paramset = set(param_names)
+    # A strided cited tensor cloned into a gap also covers the cited tensor's
+    # RESOLVED stride names (resolved against the CITED kernel's params) that also
+    # appear in the citing signature — those are not standalone gaps; the clone
+    # binds them. Using resolved names (not a re-glob) keeps it robust when the two
+    # kernels name their strides differently.
+    stride_covered = set()
+    for apparel, (src_spec, _real, cited_params) in cited_apparel.items():
+        if (isinstance(src_spec, TensorSpec) and src_spec.strides_pattern
+                and apparel not in claimed):
+            for sname in src_spec.match_strides(cited_params):
+                if sname in paramset and sname != apparel:
+                    stride_covered.add(sname)
+    gap_groups = []          # list of (src_spec, [gap_arg,...], cited_params)
     group_index = {}         # id(src_spec) -> index into gap_groups
     for arg in param_names:
-        if arg in claimed:
+        if arg in claimed or arg in stride_covered:
             continue
         pair = cited_apparel.get(arg)
         if pair is None:
@@ -216,14 +237,14 @@ def resolve_cites(spec, *, family, lookup=None):
                 f"kernel {name!r}: parameter {arg!r} is neither declared locally "
                 f"nor supplied by any @ati.cite ({[c.target for c in spec.cites]}); "
                 f"declare it or cite a kernel that defines it")
-        src_spec, _real = pair
+        src_spec, _real, cited_params = pair
         key = id(src_spec)
         if key not in group_index:
             group_index[key] = len(gap_groups)
-            gap_groups.append((src_spec, []))
+            gap_groups.append((src_spec, [], cited_params))
         gap_groups[group_index[key]][1].append(arg)
-    for src_spec, gap_args in gap_groups:
-        clone = _clone_for_gap(name, src_spec, gap_args)
+    for src_spec, gap_args, cited_params in gap_groups:
+        clone = _clone_for_gap(name, src_spec, gap_args, cited_params)
         if isinstance(clone, TensorSpec):
             spec.tensors.append(clone)
         else:
@@ -241,12 +262,42 @@ def resolve_cites(spec, *, family, lookup=None):
                 f"kernel {name!r}: dtype variable {dname!r} is neither an "
                 f"@ati.tensor_dtype on this kernel nor reachable through "
                 f"@ati.cite ({[c.target for c in spec.cites]})")
-        # Clone WITHOUT the cited signature_name: it names a cited argument (e.g.
-        # 'Q') absent from this kernel. The builder re-derives signature_name from
-        # the citing kernel's own args (the wired/cloned ones using this dtype).
+        # Keep the cited signature_name when that argument also exists in the citing
+        # kernel (so the persisted aks2/DB key matches, e.g. 'Q' shared by fwd/bwd);
+        # otherwise drop it and let the builder re-derive from the citing kernel's
+        # own arguments.
+        sig = dv.signature_name if dv.signature_name in paramset else None
         spec.dtype_vars.append(
-            ChoiceVar(dv.name, dv.choices, kind=dv.kind, signature_name=None))
+            ChoiceVar(dv.name, dv.choices, kind=dv.kind, signature_name=sig))
         local_dv.add(dname)
+
+    # 2b) Inherit cited OVERRIDES (@ati.derives) for shared operands. A cited
+    # kernel's conditional degradation (dropout/philox/Window -> constexpr 0 when
+    # off, B -> 0 when bias off) travels with the operand: a citing kernel that
+    # shares the operand should degrade it the same way (otherwise it would emit a
+    # live feature table for an argument that is conditionally baked). Inherit a
+    # cited override only when ALL its targets exist in the citing kernel AND the
+    # citing kernel does not already override any of them (local wins). Perf-channel
+    # derives are NOT inherited here (they ride on the cited tune via step 0).
+    locally_overridden = {t for ov in spec.overrides for t in ov.targets}
+    perf_param_names = set()
+    if spec.tune is not None and spec.tune.schema is not None:
+        perf_param_names = {pp.name for pp in spec.tune.schema.params}
+    seen_inherited = set()
+    for cs in cited_specs:
+        for ov in cs.overrides:
+            if any(t in perf_param_names for t in ov.targets):
+                continue                      # perf derive -> via the tune, not here
+            if not all(t in paramset for t in ov.targets):
+                continue                      # operand absent from the citing kernel
+            if any(t in locally_overridden for t in ov.targets):
+                continue                      # local override wins
+            # Dedup across cited kernels: dk_dv and dq carry the same
+            # dropout/Window degradation, so inherit each target-set once.
+            if ov.targets in seen_inherited:
+                continue
+            seen_inherited.add(ov.targets)
+            spec.overrides.append(ov)
 
     # 3) @ati.disable is citeable (rev0 §4.5): no local disable -> inherit the
     # cited target's; a local disable REPLACES it. A bare-callable local disable

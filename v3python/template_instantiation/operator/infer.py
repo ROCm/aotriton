@@ -47,9 +47,15 @@ def infer_shared_iface(operators):
         backends = op.list_backends()
         if not backends:
             continue
-        default_backend = backends[0]
-        for sub in _iter_subkernels(default_backend):
-            # Only fill in kernels whose SHARED_IFACE is unset (ATI adapter); never
-            # override a legacy kernel's declared class attribute.
-            if getattr(sub, 'SHARED_IFACE', None) is None:
-                sub.SHARED_IFACE = op
+        # Every backend's concrete kernels borrow this operator's param struct: the
+        # default backend's metro sub-kernels AND any alternative backend that is a
+        # kernel in its own right (e.g. the fused bwd_kernel_fuse). The default
+        # backend is the struct OWNER, but all of them must reference it.
+        for backend in backends:
+            for sub in _iter_subkernels(backend):
+                # Only fill in kernels whose SHARED_IFACE is unset (ATI adapter);
+                # never override a legacy kernel's declared class attribute. Affine
+                # backends have their own surface and are skipped (no SHARED_IFACE
+                # attribute to set meaningfully).
+                if hasattr(sub, 'SHARED_IFACE') and getattr(sub, 'SHARED_IFACE', None) is None:
+                    sub.SHARED_IFACE = op

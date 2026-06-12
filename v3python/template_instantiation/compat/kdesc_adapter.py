@@ -739,10 +739,12 @@ class AtiKernelDescription:
                 continue
             # Baking is a REAL-argument property (override targets are real args).
             baked = ax.repr_arg in self._baked_args
-            # The C++ getter name (get_<repr>_choices) and member list use the
-            # APPAREL of the real arg names (operator operands), not signature_name.
+            # The C++ getter name (get_<name>_choices) is the axis's SIGNATURE_NAME
+            # — the persisted/human-readable label (e.g. T_io -> 'Q'), not the
+            # repr_arg used for value lookup. The member list is the apparel of the
+            # real arg names (operator operands).
             yield _AxisParamShim(ax, baked,
-                                 repr_name=self.apparel_of(ax.repr_arg),
+                                 repr_name=self.apparel_of(ax.signature_name),
                                  all_names=[self.apparel_of(a) for a in ax.arg_names])
 
     # --- tuning passthrough ---
