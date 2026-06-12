@@ -5,10 +5,15 @@
 URL routes and handlers for the web dashboard
 """
 
-from flask import Blueprint, render_template, request, jsonify, current_app, Response, g
+from flask import Blueprint, render_template, request, jsonify, current_app, Response, g, send_file
+import io
+import os
 import time
 import json
 import logging
+import urllib.request
+import zipfile
+from pathlib import Path
 
 from . import tasks
 
@@ -1001,6 +1006,138 @@ def api_download_adiffs():
         'Content-Type': 'text/plain; charset=utf-8',
         'Content-Disposition': f'attachment; filename="{filename}"',
     }
+
+
+@bp.route('/perf')
+def perf():
+    """Performance visualization tab"""
+    workdir = current_app.config['WORKDIR']
+    archs = tasks.get_perf_archs(workdir)
+    return render_template('perf.html', archs=archs, hide_sidebar=True)
+
+
+@bp.route('/api/perf/data')
+def api_perf_data():
+    """Return best results JSON for arch+kernel combination."""
+    workdir = current_app.config['WORKDIR']
+    arch        = request.args.get('arch', '')
+    kernel      = request.args.get('kernel', 'attn_fwd')
+    mode        = request.args.get('mode', 'kernel')
+    try:
+        seqlen_min = int(request.args.get('seqlen_min', 0))
+        seqlen_max = int(request.args.get('seqlen_max', 65536))
+    except ValueError:
+        return jsonify({'error': 'seqlen_min/seqlen_max must be integers'}), 400
+    if not arch:
+        return jsonify({'error': 'arch is required'}), 400
+    data = tasks.query_perf_data(workdir, arch, kernel, mode, seqlen_min, seqlen_max)
+    return jsonify(data)
+
+
+@bp.route('/api/perf/cell_detail')
+def api_perf_cell_detail():
+    """Return all candidate (psel/copt) rows + accuracy thresholds for one cell."""
+    workdir = current_app.config['WORKDIR']
+    try:
+        task_id = int(request.args.get('task_id', ''))
+    except ValueError:
+        return jsonify({'error': 'task_id is required (int)'}), 400
+    kernel = request.args.get('kernel', '')
+    mode   = request.args.get('mode', 'kernel')
+    if not kernel:
+        return jsonify({'error': 'kernel is required'}), 400
+    return jsonify(tasks.query_perf_cell_detail(workdir, task_id, kernel, mode))
+
+
+@bp.route('/api/perf/export_zip', methods=['POST'])
+def api_perf_export_zip():
+    """Build a self-contained autozoom HTML (all arches/kernels) as a .zip download.
+
+    Request JSON:
+      col_dim_filters  – {dim: [allowed_values, ...]} — empty list means all
+      url_params       – dict of URL search params to pre-set in the export
+    """
+    body        = request.get_json(silent=True) or {}
+    if not isinstance(body, dict):
+        return jsonify({'error': 'request body must be a JSON object'}), 400
+    col_filters = body.get('col_dim_filters', {})
+    url_params  = body.get('url_params', {})
+    descriptor_id = body.get('descriptor_id', 'flash')
+    if not isinstance(col_filters, dict) or not isinstance(url_params, dict):
+        return jsonify({'error': 'col_dim_filters and url_params must be objects'}), 400
+    if not isinstance(descriptor_id, str):
+        return jsonify({'error': 'descriptor_id must be a string'}), 400
+
+    try:
+        html = tasks.build_perf_export_html(col_filters, url_params,
+                                            current_app.config['WORKDIR'],
+                                            descriptor_id=descriptor_id)
+    except Exception as exc:
+        logger.error('build_perf_export_html failed: %s', exc)
+        return jsonify({'error': str(exc)}), 500
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr('aotriton_perf.html', html.encode('utf-8'))
+    buf.seek(0)
+
+    return send_file(buf, mimetype='application/zip',
+                     as_attachment=True, download_name='aotriton_perf.zip')
+
+
+@bp.route('/api/servers/export-visperf', methods=['POST'])
+def api_export_visperf():
+    """Export self-contained perf.html for GitHub Pages."""
+    workdir = current_app.config['WORKDIR']
+    result = tasks.export_visperf(workdir, dry_run=should_dryrun())
+    return jsonify(result)
+
+
+_PLOTLY_CDN = 'https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js'
+# SHA-256 of the upstream plotly.js-dist-min@2.35.2/plotly.min.js bundle.
+# Verified out-of-band; if the CDN returns content that does not match this
+# digest we refuse to cache or serve it.
+_PLOTLY_SHA256 = '6d21266ce1bd7d9e5ab4e115989c70c20de0382fd973a8f26ab58619eba4d603'
+
+@bp.route('/static/cache/plotly.min.js')
+def plotly_cache():
+    """Serve Plotly.js from a local cache, downloading it on first request."""
+    import hashlib
+    import tempfile
+    workdir = current_app.config['WORKDIR']
+    cache_path = Path(workdir) / 'scratch' / 'webcache' / 'plotly.min.js'
+    if not cache_path.exists():
+        # tempfile.mkstemp gives us a unique, atomically-created file in the
+        # same directory as the final cache_path so os.replace() is atomic on
+        # the same filesystem. Unique name avoids the PID-only TOCTOU race
+        # where two concurrent threads in the same process collide.
+        tmp_path: Path | None = None
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            with urllib.request.urlopen(_PLOTLY_CDN, timeout=30) as resp:
+                payload = resp.read()
+            digest = hashlib.sha256(payload).hexdigest()
+            if digest != _PLOTLY_SHA256:
+                raise ValueError(
+                    f'Plotly CDN payload SHA-256 mismatch: got {digest}, '
+                    f'expected {_PLOTLY_SHA256}'
+                )
+            fd, tmp_name = tempfile.mkstemp(prefix='plotly.', suffix='.tmp',
+                                            dir=cache_path.parent)
+            tmp_path = Path(tmp_name)
+            with os.fdopen(fd, 'wb') as fh:
+                fh.write(payload)
+            os.replace(tmp_path, cache_path)
+            tmp_path = None  # ownership transferred to cache_path
+        except Exception as exc:
+            logger.warning('Failed to download Plotly from CDN: %s', exc)
+            if tmp_path is not None:
+                try:
+                    tmp_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+            return f'Plotly unavailable: {exc}', 503
+    return send_file(cache_path, mimetype='application/javascript')
 
 
 @bp.route('/debug')

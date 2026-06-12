@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+
+{% block title %}Performance{% endblock %}
+
+{% block content %}
+<h2>Performance Visualization</h2>
+
+<style>
+  #perf-config { border:1px solid var(--border); border-radius:4px; padding:1rem; margin-bottom:1rem; }
+  #perf-config label { margin-right:0.8rem; }
+  #perf-config select { margin-right:0.4rem; }
+  #perf-layout-panel { margin-top:0.75rem; }
+  #perf-layout-panel summary { cursor:pointer; font-weight:bold; }
+  .dim-assignment { display:flex; gap:2rem; margin-top:0.5rem; flex-wrap:wrap; }
+  .dim-assignment > div > strong { display:block; margin-bottom:0.3rem; }
+  .dim-chip { display:inline-flex; align-items:flex-start; gap:0.3rem; margin:0.15rem;
+              padding:0.2rem 0.5rem; border:1px solid var(--border); border-radius:3px;
+              user-select:none; }
+  .dim-chip input[type=checkbox] { margin:0.2rem 0 0; cursor:pointer; flex-shrink:0; }
+  .dim-chip.dragging { opacity:0.4; }
+  .dim-drop-target { min-height:2rem; padding:0.2rem; border:1px dashed var(--border);
+                     border-radius:3px; display:flex; flex-wrap:wrap; align-items:center; }
+  .dim-drop-target.drag-over { outline:2px solid; }
+  #perf-grid { overflow-x:auto; }
+  #perf-grid table { border-collapse:separate; border-spacing:4px; margin:0; width:auto; }
+  #perf-grid th { font-size:1em; white-space:nowrap; }
+  #perf-status { font-size:1em; margin-top:0.4rem; }
+  .scale-user-input { display:none; margin-left:0.3rem; width:6rem; }
+</style>
+
+<section id="perf-config">
+  <div>
+    <label>Arch:
+      <select id="perf-arch">
+        {% for arch in archs %}
+        <option value="{{ arch }}">{{ arch }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label>Kernel / Op:
+      <!-- Populated at runtime from the active descriptor (see populateKernelSelect in perf.js). -->
+      <select id="perf-kernel"></select>
+    </label>
+
+    <label>Display:
+      <select id="perf-display">
+        <option value="autozoom" selected>Autozoom</option>
+        <option value="heatmap">Heatmap</option>
+        <option value="3d">3-D bars</option>
+      </select>
+    </label>
+
+    <label id="perf-az-mode-label">Autozoom TFLOPS:
+      <select id="perf-az-mode">
+        <option value="max_load">Max load (default)</option>
+        <option value="max_tflops">Max TFLOPS</option>
+      </select>
+    </label>
+
+    <button id="perf-refresh">Load</button>
+    <button id="perf-export" style="margin-left:0.5rem;" disabled title="Load data first">Download .zip</button>
+  </div>
+
+  <div style="margin-top:0.5rem;">
+    <label>Scale:
+      <select id="perf-scale">
+        <option value="max_observed">Max observed (default)</option>
+        <option value="theoretical">Theoretical peak</option>
+        <option value="user">User-defined</option>
+      </select>
+    </label>
+    <input id="perf-scale-value" class="scale-user-input" type="number" min="0" step="1"
+           placeholder="TFLOPS" title="Absolute TFLOPS anchor">
+  </div>
+
+  <details id="perf-layout-panel">
+    <summary>Dimension layout</summary>
+    <div class="dim-assignment">
+      <div>
+        <strong>Column dims</strong>
+        <div id="perf-col-dims" class="dim-drop-target" data-role="col"></div>
+      </div>
+      <div>
+        <strong>Row dims</strong>
+        <div id="perf-row-dims" class="dim-drop-target" data-role="row"></div>
+      </div>
+    </div>
+  </details>
+
+  <div id="perf-status"></div>
+</section>
+
+<div id="perf-grid">
+  <p>Select arch and kernel, then click Load.</p>
+</div>
+
+<!-- Plotly for 3-D bars; falls back to locally cached copy if CDN is unreachable. -->
+<script
+  src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"
+  crossorigin="anonymous"
+  onerror="(function(){var s=document.createElement('script');s.src='/static/cache/plotly.min.js';document.head.appendChild(s);})()">
+</script>
+
+<script src="{{ url_for('static', filename='js/perf.js') }}"></script>
+<script src="{{ url_for('static', filename='js/vis_descriptors/flash.js') }}"></script>
+<script>registerDescriptor(FLASH_DESCRIPTOR);</script>
+{% endblock %}
