@@ -146,20 +146,37 @@ def _build_metro_fwd():
                               [__attn_fwd,
                                ConditionalKernel('encoded_softmax', '->data_ptr() != nullptr',
                                                  __debug_simulate_encoded_softmax)])
-    import importlib.util as _ilu
-    from pathlib import Path as _Path
     from v3python.template_instantiation.metro import lower_plan
-    _ROOT = _Path(__file__).resolve().parents[3]
-    _spec = _ilu.spec_from_file_location(
-        '_ati_modules_flash_metro_fwd', _ROOT / 'modules' / 'flash' / 'metro_fwd_ati.py')
-    _mod = _ilu.module_from_spec(_spec)
-    _spec.loader.exec_module(_mod)
+    _mod = _load_ati_module('metro_fwd_ati.py')
     kernel_map = {
         'attn_fwd': __attn_fwd,
         'debug_simulate_encoded_softmax': __debug_simulate_encoded_softmax,
     }
     return lower_plan(_mod.metro_fwd.__ati_metro__, kernel_map,
                       lambda steps: MetroFwdKernel('triton', steps),
+                      ConditionalKernel)
+
+
+def _build_metro_bwd():
+    """The backward metro (the `triton_split` backend). Hand-built by default; when
+    AOTRITON_ATI_KERNELS includes 'metro_bwd', built from the @ati.metro_kernel
+    transpiler via lower_plan — same MetroKernel/ConditionalKernel IR."""
+    if not _ati_enabled('metro_bwd'):
+        return MetroBwdKernel('triton_split',
+                              [ConditionalKernel('num_seqlens', '> 0',
+                                                 __bwd_preprocess_varlen, __bwd_preprocess),
+                               __bwd_kernel_dk_dv,
+                               __bwd_kernel_dq])
+    from v3python.template_instantiation.metro import lower_plan
+    _mod = _load_ati_module('metro_bwd_ati.py')
+    kernel_map = {
+        'bwd_preprocess': __bwd_preprocess,
+        'bwd_preprocess_varlen': __bwd_preprocess_varlen,
+        'bwd_kernel_dk_dv': __bwd_kernel_dk_dv,
+        'bwd_kernel_dq': __bwd_kernel_dq,
+    }
+    return lower_plan(_mod.metro_bwd.__ati_metro__, kernel_map,
+                      lambda steps: MetroBwdKernel('triton_split', steps),
                       ConditionalKernel)
 
 
@@ -183,16 +200,23 @@ def _build_op_attn_fwd():
     return OpAttnFwd(backends)
 
 
-operators = [
-    _build_op_attn_fwd(),
-    OpAttnBwd([
-        MetroBwdKernel('triton_split',
-                       [ConditionalKernel('num_seqlens', '> 0', __bwd_preprocess_varlen, __bwd_preprocess),  # padded varlen (num_seqlens < 0) should call bwd_preprocess
-                        __bwd_kernel_dk_dv,
-                        __bwd_kernel_dq]),
+def _build_op_attn_bwd():
+    # op_attn_bwd stays the LEGACY operator: its params struct is the hand-coded
+    # union of the metro's sub-kernels, and no single bwd key kernel is the feature
+    # superset (unlike fwd's attn_fwd), so the AtiOperator default-backend-reuse
+    # shortcut does not apply. The backends' metro carries the ATI dk_dv/dq
+    # sub-kernels (they borrow OpAttnBwdParams via SHARED_IFACE inference). The ATI
+    # op_attn_bwd — building the struct from union_params — is the deferred Step 10.
+    return OpAttnBwd([
+        _build_metro_bwd(),
         __bwd_kernel_fuse,
         __bwd_aiter,
-    ]),
+    ])
+
+
+operators = [
+    _build_op_attn_fwd(),
+    _build_op_attn_bwd(),
 ]
 
 # Infer SHARED_IFACE (the param struct a kernel borrows) from the
