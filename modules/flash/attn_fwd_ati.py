@@ -150,13 +150,11 @@ def describe_attn_fwd(attn_fwd):
                     when=lambda f: f.arch in ('gfx942', 'gfx950')),
 
         # --- conditional overrides (legacy CC/CDC/CDETensor) ---
-        # bias off -> B and its non-unit strides become constexpr 0
+        # bias off -> B becomes constexpr 0; its non-unit strides cascade to 0
+        # automatically (a zeroed tensor needs no live strides).
         ati.derives('B', to=0, when=ati.eq('BIAS_TYPE', 0)),
-        ati.derives(['stride_bz', 'stride_bh', 'stride_bm'], to=0,
-                      when=ati.eq('BIAS_TYPE', 0)),
-        # alibi off (always) -> A and its non-unit stride become constexpr 0
+        # alibi off (always) -> A becomes constexpr 0 (its stride cascades to 0).
         ati.derives('A', to=0, when=ati.eq('USE_ALIBI', False)),
-        ati.derives('stride_az', to=0, when=ati.eq('USE_ALIBI', False)),
         # padded head off -> Hdim_qk/vo defer to BLOCK_DMODEL
         ati.derives('Hdim_qk', to='BLOCK_DMODEL', when=ati.eq('PADDED_HEAD', False)),
         ati.derives('Hdim_vo', to='BLOCK_DMODEL', when=ati.eq('PADDED_HEAD', False)),

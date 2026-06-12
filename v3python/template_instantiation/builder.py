@@ -246,6 +246,7 @@ def build_kernel(kernel_spec) -> BuiltKernel:
     for t in kernel_spec.tensors:
         tensor_groups.setdefault(t.var_name, []).append(t)
 
+    nonunit_strides = {}     # tensor arg -> [its non-unit (real, hideable) strides]
     for var_name, group in tensor_groups.items():
         first = group[0]
         if isinstance(first.dtype, ChoiceVar):
@@ -275,6 +276,8 @@ def build_kernel(kernel_spec) -> BuiltKernel:
             for dim, sname in enumerate(matched):
                 is_unit = (sname in contiguous.values())
                 stype = _STRIDE_ONE if is_unit else _STRIDE_TYPE
+                if not is_unit:
+                    nonunit_strides.setdefault(t.arg_name, []).append(sname)
                 axes.append(Axis(sname, (sname,), _choices_from([stype]),
                                  param_index[sname],
                                  kind='stride_unit' if is_unit else 'stride',
@@ -322,6 +325,22 @@ def build_kernel(kernel_spec) -> BuiltKernel:
             perf_ovs.append(ov)
         else:
             func_ovs.append(ov)
+
+    # A functional override that constexpr-zeroes a TENSOR implicitly cascades to
+    # that tensor's non-unit strides (a zeroed tensor needs no live strides). This
+    # keeps the description terse: `ati.derives('B', to=0, when=...)` need not also
+    # list stride_b*. Synthesize the stride overrides here, under the SAME
+    # predicate. (Unit/contiguous strides are constexpr 1 already and excluded.)
+    from .ir import Override as _Override
+    extra_stride_ovs = []
+    for ov in func_ovs:
+        if ov.value != 0:
+            continue
+        for t in ov.targets:
+            for sname in nonunit_strides.get(t, ()):
+                extra_stride_ovs.append(_Override([sname], ov.predicate, 0))
+    func_ovs += extra_stride_ovs
+
     return BuiltKernel(name, axes, func_ovs, arguments,
                        tune=kernel_spec.tune, perf_overrides=perf_ovs,
                        disables=list(kernel_spec.disables), wiring=wiring)

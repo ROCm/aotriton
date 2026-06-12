@@ -83,6 +83,13 @@ if _ati_enabled('bwd_kernel_dk_dv'):
     __bwd_kernel_dk_dv = _bkd(_ati_dkdv_jit, family='flash', source_path=SOURCE_FILE,
                              triton_kernel_name='bwd_kernel_dk_dv')
 __bwd_kernel_dq = bwd_kernel_dq('bwd_kernel_dq', SOURCE_FILE)
+if _ati_enabled('bwd_kernel_dq'):
+    from v3python.template_instantiation.compat import build_kernel_description as _bkd
+    _m_dq = _load_ati_module('bwd_kernel_dq_ati.py')
+    from bwd_kernel_dq import bwd_kernel_dq as _ati_dq_jit
+    _m_dq.describe_bwd_kernel_dq(_ati_dq_jit)
+    __bwd_kernel_dq = _bkd(_ati_dq_jit, family='flash', source_path=SOURCE_FILE,
+                          triton_kernel_name='bwd_kernel_dq')
 __bwd_kernel_fuse = bwd_kernel_fuse('bwd_kernel_fuse', SOURCE_FILE)
 __fwd_aiter = aiter_fmha_v3_fwd()
 __bwd_aiter = aiter_fmha_v3_bwd()
