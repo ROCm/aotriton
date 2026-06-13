@@ -1,22 +1,7 @@
 # Copyright © 2023-2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-from aotriton.gpu_targets import gpu2arch, AOTRITON_ARCH_WARPSIZE
-from aotriton.op import Operator
-from aotriton.kernel.kdesc import (
-    KernelDescription,
-    get_possible_choices,
-    select_pattern,
-    ConditionalConstexpr,
-    ConditionalDeferredConstexpr,
-    ConditionalDeferredElseTensor,
-    AOTRITON_ENABLE_FP32,
-)
-from aotriton.autotune import (
-    Config,
-    BinningLessOrEqual,
-    BinningExact,
-)
+from aotriton.gpu_targets import AOTRITON_ARCH_WARPSIZE
 from aotriton.utils import log
 
 
@@ -43,11 +28,6 @@ def _empty_generator():
     return
     yield  # makes this a generator function
 
-class OpAttn(Operator):
-    FAMILY = 'flash'
-    MAIN_DATATYPES = ['*fp16:16', '*bf16:16', '*fp32:16'] if AOTRITON_ENABLE_FP32 else ['*fp16:16', '*bf16:16']
-    CALL_OPTIONS_NAME = 'attn_options'
-
 
 def check_value(functional, repr_name):
     if not isinstance(repr_name, list):
@@ -58,7 +38,11 @@ def check_value(functional, repr_name):
             return tc[aname].triton_compile_signature
     assert False, f'Cannot find {repr_name=} in {functional=}'
 
-class FlashKernel(KernelDescription):
+class FlashKernel:
+    """Flash-family LUT sancheck + missing-entry diagnostic, called by the ATI
+    kdesc (FlashKernel.method(self=kdesc, ...) via family_aot). A plain holder — no
+    description base; it relies only on the duck-typed kdesc surface (check_value,
+    gen_autotune_configs presence)."""
     FAMILY = 'flash'
     LUT_FULL_SEQLEN_Q = [16,32,64,128,256,512,1024,2048,4096,8192]
     LUT_FULL_SEQLEN_K = [16,32,64,128,256,512,1024,2048,4096,8192]
@@ -170,13 +154,3 @@ class FlashKernel(KernelDescription):
                 M_idxs, N_idxs = np.where(fake_lut < 0)
             for M_id, N_id in zip(M_idxs, N_idxs):
                 yield make_entry(lut_full_seqlen_q[M_id], lut_full_seqlen_k[N_id])
-
-class FlashBwdKernel(FlashKernel):
-    def is_functional_disabled(self, functional):
-        # FIXME: check if compiler fixes this at every release
-        # gfx950 compiler has known numerical error on hdim=48/80
-        if functional.arch == 'gfx950':
-            hdim = check_value(functional, 'BLOCK_DMODEL')
-            if hdim in [48, 80]:
-                return True
-        return super().is_functional_disabled(functional)

@@ -485,20 +485,66 @@ class AtiKernelDescription(Interface):
         return value
 
     def translate_dataframe(self, f, df):
+        """Build the (lut_tensor, signatures, binning) triple for functional f from
+        its tuning dataframe. Ported from the legacy KernelDescription; reads the
+        adapter's AUTOTUNE_KEYS_VALIDATED / perf params / PROGRAMMATIC_PERFS."""
+        import numpy as np
+        from ..ksignature import KernelSignature, COMPILER_OPTIONS
         # Inject perf params that are NOT tuned DB columns (their value is the
-        # default/override, the legacy PROGRAMMATIC_PERFS role) before the shared
-        # dataframe logic reads tuned_kernel$<name>.
-        import pandas as pd  # noqa: F401  (df is already a DataFrame)
+        # default/override, the legacy PROGRAMMATIC_PERFS role) before reading
+        # tuned_kernel$<name>.
         for pp in self._built.tune.schema.params:
             col = f'tuned_kernel${pp.name}'
             if col not in df.columns:
                 df[col] = self.perf_value(pp, f)
-        from aotriton.kernel.kdesc import KernelDescription
-        return KernelDescription.translate_dataframe(self, f, df)
+        sparse_keys = [f'inputs${key}' for key, _ in self.AUTOTUNE_KEYS_VALIDATED]
+        nkeys = len(sparse_keys)
+        def sorted_unique_key(key):
+            return np.unique(df[key].to_numpy()).tolist()
+        sparse_key_possible_values = {key: sorted_unique_key(key) for key in sparse_keys}
+        binning_dict = {key: algo(sparse_key_possible_values[spk])
+                        for spk, (key, algo) in zip(sparse_keys, self.AUTOTUNE_KEYS_VALIDATED)}
+        for perf_name, program in self.PROGRAMMATIC_PERFS.items():
+            df[f'tuned_kernel${perf_name}'] = program(f)
+        lut_shape = [f.noptimized_for] + [len(sparse_key_possible_values[key]) for key in sparse_keys]
+        lut_tensor = np.full(lut_shape, -1, dtype=np.int32)
+        perf_keys = [f'tuned_kernel${meta.repr_name}' for meta in self._perf_params]
+        copt_keys = [f'compiler_options${key}' for key in COMPILER_OPTIONS]
+        # Deduplicate (perf + copt) rows -> signatures.
+        np_sigs, revind = np.unique(df[perf_keys + copt_keys].to_numpy(), axis=0,
+                                    return_inverse=True)
+        df['$$sig_num'] = revind
+        def perf_bind(nprow):
+            return [meta.create_direct(value)
+                    for meta, value in zip(self._perf_params, nprow)]
+        nperfs = len(perf_keys)
+        def create_sig(nprow):
+            return KernelSignature(f, perf_bind(nprow), nprow[nperfs:].tolist())
+        sigs = [create_sig(nprow) for nprow in np_sigs]
+        # Bucket autotune indices and fill the LUT (df's gpu column comes from the DB,
+        # so iterate database_gpus).
+        for i, ind_key in enumerate(sparse_keys):
+            bucket = sparse_key_possible_values[ind_key]
+            def discretization(v, bucket=bucket):
+                return bucket.index(v)
+            df[f'$$ind_{i}'] = df[ind_key].apply(discretization)
+        for i, gpu in enumerate(f.database_gpus):
+            if i > 0:
+                lut_tensor[i] = lut_tensor[0]
+            df_i = df[df['gpu'] == gpu]
+            inds = tuple([df_i[f'$$ind_{j}'] for j in range(nkeys)])
+            lut_tensor[i][inds] = df_i['$$sig_num']
+        # Downcast the LUT dtype (int8 usually suffices).
+        nsigs = len(sigs)
+        for dtype in [np.int8, np.int16, np.int32]:
+            if nsigs < np.iinfo(dtype).max:
+                break
+        lut_tensor = lut_tensor.astype(dtype)
+        return lut_tensor, sigs, binning_dict
 
     def translate_empty_dataframe(self, f):
         import numpy as np
-        from aotriton.kernel.ksignature import KernelSignature, DEFAULT_COPT
+        from ..ksignature import KernelSignature, DEFAULT_COPT
         lut_tensor = np.zeros([f.noptimized_for, 1], dtype=np.int8)
         defaults = []
         for shim in self._perf_params:
@@ -508,8 +554,17 @@ class AtiKernelDescription(Interface):
         return lut_tensor, sigs, None
 
     def gen_signatures_for_tuning(self, f):
-        from aotriton.kernel.kdesc import KernelDescription
-        return KernelDescription.gen_signatures_for_tuning(self, f)
+        """Yield a KernelSignature per autotune config (the tuning-build path).
+        Ported from the legacy KernelDescription."""
+        from ..ksignature import KernelSignature, COMPILER_OPTIONS, DEFAULT_COPT
+        def gen_perfs(cfg):
+            for meta in self._perf_params:
+                yield meta.create_direct(cfg.kwargs[meta.repr_name])
+        def gen_copts(cfg):
+            for copt, defopt in zip(COMPILER_OPTIONS, DEFAULT_COPT):
+                yield getattr(cfg, copt, defopt)
+        for cfg in self.gen_autotune_configs(f):
+            yield KernelSignature(f, list(gen_perfs(cfg)), list(gen_copts(cfg)))
 
     def gen_autotune_configs(self, f):
         cfg = self._built.tune.configs

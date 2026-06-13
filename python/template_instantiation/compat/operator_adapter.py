@@ -201,12 +201,37 @@ class AtiOperator(Interface):
         return {k: _binning_class(sel) for k, sel in self._optune_keys.items()}
 
     def translate_dataframe(self, f, df):
-        from aotriton.op.operator import Operator
-        return Operator.translate_dataframe(self, f, df)
+        """Build the operator's backend-selection LUT from its optune dataframe.
+        Ported from the legacy Operator; the LUT stores backend enum names."""
+        import numpy as np
+        sparse_keys = [f'inputs${key}' for key in self.OPTUNE_KEYS.keys()]
+        nkeys = len(sparse_keys)
+        def sorted_unique_key(key):
+            return np.unique(df[key].to_numpy()).tolist()
+        sparse_key_possible_values = {key: sorted_unique_key(key) for key in sparse_keys}
+        binning_dict = {key: algo(sparse_key_possible_values[f'inputs${key}'])
+                        for key, algo in self.OPTUNE_KEYS.items()}
+        lut_shape = [f.noptimized_for] + [len(sparse_key_possible_values[key]) for key in sparse_keys]
+        lut_tensor = np.full(lut_shape, -1, dtype=np.int32)
+        backend_key = 'op$backend'
+        for i, ind_key in enumerate(sparse_keys):
+            bucket = sparse_key_possible_values[ind_key]
+            def discretization(v, bucket=bucket):
+                return bucket.index(v)
+            df[f'$$ind_{i}'] = df[ind_key].apply(discretization)
+        for i, gpu in enumerate(f.database_gpus):
+            if i > 0:
+                lut_tensor[i] = lut_tensor[0]
+            df_i = df[df['gpu'] == gpu]
+            inds = tuple([df_i[f'$$ind_{j}'] for j in range(nkeys)])
+            lut_tensor[i][inds] = df_i[backend_key]
+        backend_inds = np.unique(lut_tensor).tolist()
+        return lut_tensor, [self._backends[ind].enum_name for ind in backend_inds], binning_dict
 
     def translate_empty_dataframe(self, f):
-        from aotriton.op.operator import Operator
-        return Operator.translate_empty_dataframe(self, f)
+        import numpy as np
+        lut_tensor = np.zeros([f.noptimized_for, 1], dtype=np.int8)
+        return lut_tensor, [self.fallback_backend.enum_name], None
 
     # fallback_compact_dict comes from the ATI Interface base (reads
     # partially_tuned_functionals, which this operator overrides above).

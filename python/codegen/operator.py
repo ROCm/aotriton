@@ -10,13 +10,6 @@ from ..base import (
     Interface,
 )
 from .interface import InterfaceGenerator
-from ..op import (
-    Operator,
-    MetroKernel,
-    ConditionalKernel,
-)
-from ..kernel import KernelDescription
-from ..affine import SlimAffineKernelDescription
 from .template import get_template
 from ..utils import (
     LazyFile,
@@ -104,18 +97,17 @@ class OperatorGenerator(InterfaceGenerator):
         return ALIGN.join(stmt)
 
     def codegen_single_launcher(self, backend : Interface, nalign):
-        # A single-kernel (kshim) backend is any triton kernel description — the
-        # legacy KernelDescription, the ATI AtiKernelDescription (not a subclass),
-        # or the slim affine kernel. Identify by CODEGEN_MODULE rather than class so
-        # the ATI adapter is recognized without codegen importing the compat layer.
-        if (isinstance(backend, (KernelDescription, SlimAffineKernelDescription))
-                or getattr(backend, 'CODEGEN_MODULE', None) in ('triton', 'affine')):
+        # Dispatch by CODEGEN_MODULE (duck-typed), not class: a single-kernel (kshim)
+        # backend is a triton kernel or the slim affine kernel ('triton'/'affine'); a
+        # metro launcher is 'op' and exposes list_kernels().
+        cgmod = getattr(backend, 'CODEGEN_MODULE', None)
+        if cgmod in ('triton', 'affine'):
             return self.codegen_kshim_launcher(backend, nalign)
-        if isinstance(backend, MetroKernel):
+        if cgmod == 'op' and hasattr(backend, 'list_kernels'):
             return self.codegen_metro_launcher(backend, nalign)
         assert False, f'Unsupported backend class {backend.__class__}'
 
-    def codegen_kshim_launcher(self, kdesc : KernelDescription, nalign):
+    def codegen_kshim_launcher(self, kdesc : Interface, nalign):
         iface = self._iface
         stmt = []
         self._add_iface_for_source(kdesc)
@@ -126,7 +118,7 @@ class OperatorGenerator(InterfaceGenerator):
         }
         return self.KSHIM_LAUNCHER_TEMPLATE.format_map(d)
 
-    def codegen_metro_launcher(self, metro : MetroKernel, nalign):
+    def codegen_metro_launcher(self, metro : Interface, nalign):
         iface = self._iface
         context_class_name = iface.context_class_name
         lookup_stmt = []
@@ -134,7 +126,7 @@ class OperatorGenerator(InterfaceGenerator):
 
         # FIXME: lookup all and then launch, in case any sub-kernel failed
         for nth, kdesc in enumerate(metro.list_kernels()):
-            if isinstance(kdesc, ConditionalKernel):
+            if hasattr(kdesc, 'if_kernel'):       # a ConditionalKernel step
                 self._add_iface_for_source(kdesc.if_kernel)
                 d = {
                     'condition'             : f'context.params->{kdesc.if_parameter} {kdesc.if_expr}',
