@@ -15,7 +15,7 @@ sys.path.insert(0, str(REPO / 'modules' / 'flash'))
 import aotriton.template_instantiation as ati
 from aotriton.template_instantiation.describe import describe, get_kernel_spec
 from aotriton.template_instantiation.builder import build_kernel, AtiDescriptionError
-from aotriton.template_instantiation.compat import build_kernel_description
+from aotriton.template_instantiation.ir.kdesc import build_kernel_description
 from aotriton.gpu_targets import cluster_gpus
 import aot.attn_fwd as _attn_fwd_desc
 attn_fwd = _attn_fwd_desc.attn_fwd

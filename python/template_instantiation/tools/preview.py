@@ -69,7 +69,7 @@ def preview_kdesc(kdesc) -> str:
 def preview(selective=None, kernels=None, operators=None) -> str:
     """Render --preview output for the ATI items matching `selective` (a
     unique_path string/glob), or all ATI items if None."""
-    from ..compat.operator_adapter import AtiOperator
+    from ..ir.operator import AtiOperator
     out = []
     items = list(kernels or []) + list(operators or [])
     for it in items:

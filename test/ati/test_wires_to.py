@@ -17,7 +17,7 @@ sys.path.insert(0, str(REPO / 'tritonsrc'))
 
 import aotriton.template_instantiation as ati
 from aotriton.template_instantiation.describe import describe
-from aotriton.template_instantiation.compat import build_kernel_description
+from aotriton.template_instantiation.ir.kdesc import build_kernel_description
 
 from dropout_rng import debug_simulate_encoded_softmax
 

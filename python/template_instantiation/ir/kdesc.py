@@ -23,7 +23,9 @@ surface.
 
 from ..builder import build_kernel
 from ..describe import get_kernel_spec
-from ..ir import assign_godel, enumerate_functionals, Interface
+from .axis import assign_godel
+from .functional import enumerate_functionals
+from .interface import Interface
 
 
 def _binning_class(selector):
@@ -275,7 +277,7 @@ class AtiFunctional:
           * non-constexpr   -> (False, None)
           * VarRef override -> (True, '<deferred var choices joined by />')
           * literal/plain   -> (True, '<baked value>')"""
-        from ..ir import VarRef
+        from .override import VarRef
         # iter_launch_arguments emits apparel names; the IR tables are keyed on
         # real names. Map back before looking up.
         aname = self._kdesc.real_of(aname)
@@ -472,7 +474,7 @@ class AtiKernelDescription(Interface):
         PERSISTENT_TYPE -> 2 when CAUSAL_TYPE!=0, NUM_XCDS -> 8 when arch in
         {gfx942,gfx950}. Replaces the legacy PERF_CHOICES default +
         PROGRAMMATIC_PERFS."""
-        from ..ir import VarRef, ValueFn
+        from .override import VarRef, ValueFn
         value = perf_param.default
         for ov in self._built.perf_overrides:
             if perf_param.name in ov.targets and ov.fires(f):

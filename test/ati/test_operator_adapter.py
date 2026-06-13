@@ -13,7 +13,7 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 
 import aotriton.rules as F
-from aotriton.template_instantiation.compat.operator_adapter import AtiOperator
+from aotriton.template_instantiation.ir.operator import AtiOperator
 from aotriton.gpu_targets import cluster_gpus
 
 

@@ -23,7 +23,7 @@ sys.path.insert(0, str(REPO / 'modules' / 'flash' / 'kernel'))
 import aotriton.template_instantiation as ati
 from aotriton.template_instantiation import registry
 from aotriton.template_instantiation.describe import describe
-from aotriton.template_instantiation.compat import build_kernel_description
+from aotriton.template_instantiation.ir.kdesc import build_kernel_description
 
 # Cited kernel: the real ATI attn_fwd (described on import). Citing kernel: debug.
 import aot.attn_fwd as _attn_fwd_desc

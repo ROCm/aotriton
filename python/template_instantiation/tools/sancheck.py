@@ -84,7 +84,7 @@ def sancheck_report(kernels=None, operators=None):
     """Run sancheck over the given ATI kernels/operators. Returns (ok, errors).
     Only ATI-described items (an AtiKernelDescription with a `kernel_spec`, or an
     AtiOperator) are checked; legacy descriptions are skipped."""
-    from ..compat.operator_adapter import AtiOperator
+    from ..ir.operator import AtiOperator
 
     errors = []
     seen_specs = set()

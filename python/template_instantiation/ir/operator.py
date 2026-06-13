@@ -14,8 +14,8 @@ the backend list + enums, CALL_OPTIONS_NAME, and optune (OPTUNE_KEYS +
 translate_dataframe, reused from the legacy Operator body).
 """
 
-from .kdesc_adapter import AtiFunctional, _binning_class
-from ..ir import Interface
+from .kdesc import AtiFunctional, _binning_class
+from .interface import Interface
 
 
 def build_merged_struct_cfields(subkernels):
@@ -189,7 +189,7 @@ class AtiOperator(Interface):
     def gen_functionals(self, target_arch):
         # Same functional product as the default backend, but meta_object is THIS
         # operator (codegen keys on functional.meta_object).
-        from ..ir import enumerate_functionals
+        from .functional import enumerate_functionals
         built = self._default._built
         for ir_f in enumerate_functionals(built.axes, built.overrides, target_arch):
             yield AtiFunctional(ir_f, self, optimized_for=target_arch[ir_f.arch])

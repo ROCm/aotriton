@@ -308,7 +308,7 @@ def _finalize_operator(placeholder, specs):
     import warnings
     from .decorators import OperatorSpec, BackendSpec
     from .tune import BinningSpec, FallbackSpec, ConfigsSpec
-    from .compat.operator_adapter import build_operator
+    from .ir.operator import build_operator
 
     opspec = None
     backends = []

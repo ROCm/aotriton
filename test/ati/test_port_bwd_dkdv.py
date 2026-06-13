@@ -16,7 +16,7 @@ sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / 'modules' / 'flash'))
 
 from aotriton.template_instantiation import registry
-from aotriton.template_instantiation.compat import build_kernel_description
+from aotriton.template_instantiation.ir.kdesc import build_kernel_description
 
 import aot.bwd_kernel_dk_dv as _bwd_kernel_dk_dv_desc
 bwd_kernel_dk_dv = _bwd_kernel_dk_dv_desc.bwd_kernel_dk_dv

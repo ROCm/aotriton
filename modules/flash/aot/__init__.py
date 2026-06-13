@@ -26,11 +26,11 @@ to be pushed down into the operator/generator layers next phase.
 from pathlib import Path
 
 import aotriton.template_instantiation as ati
-from aotriton.template_instantiation.compat import build_kernel_description
+from aotriton.template_instantiation.ir.kdesc import build_kernel_description
 from aotriton.template_instantiation.metro.build import build_metro
 from aotriton.template_instantiation.ops.infer import infer_shared_iface
 from aotriton.template_instantiation import registry as _ati_registry
-from aotriton.template_instantiation.compat.operator_adapter import (
+from aotriton.template_instantiation.ir.operator import (
     build_merged_struct_cfields)
 
 from . import (
