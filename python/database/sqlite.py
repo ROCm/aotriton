@@ -4,7 +4,6 @@
 import sqlite3
 import pandas as pd
 from ..base import typed_choice as TC
-from ..op import Operator
 from ..utils import log
 from ..gpu_targets import AOTRITON_TUNING_DATABASE_REUSE
 
@@ -55,7 +54,7 @@ class Factory(object):
     def create_view(self, functional):
         log(lambda : f'{functional=}')
         meta = functional.meta_object
-        pfx = 'op.' if isinstance(meta, Operator) else ''
+        pfx = 'op.' if getattr(meta, 'CODEGEN_MODULE', None) == 'op' else ''
         table_name = pfx + meta.FAMILY.upper() + '$' + meta.NAME
         # TODO: Incremental changes:
         # 1. load database_gpus first

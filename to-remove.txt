@@ -39,32 +39,27 @@ tritonsrc/flash.py             # legacy per-family aggregator (ATI uses per-kern
 modules/flash/kernel/flash.py  # the aggregator's real target; ATI never imports it
 
 # =============================================================================
-# C. Legacy DESCRIPTION layers under python/ — base/, kernel/, op/
+# C. Legacy DESCRIPTION layers under python/ — kernel/, op/, affine/ — DONE
 # =============================================================================
-# Copied from v3python in Step 3. The ATI layer (template_instantiation/) WRAPS
-# these via compat/ adapters and STILL depends on them at runtime:
-#   - compat/kdesc_adapter reuses KernelDescription.translate_dataframe /
-#     gen_signatures_for_tuning (python/kernel/kdesc.py, ksignature.py)
-#   - compat/operator_adapter reuses Operator.translate_dataframe
-#     (python/op/operator.py)
-#   - base/cfield, base/interface, base/typed_choice, base/functional are used by
-#     the adapters AND by the still-legacy affine kernel (SlimAffineKernelDescription)
-#     and the data-only OpAttn* classes (modules/flash/aot/ops.py, op_attn_*.py).
-#   - op/metro.py, op/conditional.py back MetroKernel/ConditionalKernel.
+# python/kernel/ (KernelDescription, KernelSignature), python/op/ (Operator,
+# MetroKernel, ConditionalKernel) and python/affine/ (SlimAffineKernelDescription +
+# the already-deleted full AffineKernelDescription) are DELETED. Their reused logic
+# was ported into the ATI layer:
+#   - KernelDescription.translate_dataframe/translate_empty_dataframe/
+#     gen_signatures_for_tuning -> ir/kdesc.py::AtiKernelDescription (methods inlined)
+#   - KernelSignature + COMPILER_OPTIONS/DEFAULT_COPT -> template_instantiation/ksignature.py
+#   - Operator.translate_dataframe/empty -> ir/operator.py::AtiOperator
+#   - MetroKernel launcher + ConditionalKernel -> metro/build.py (ATI-native,
+#     subclass the ATI Interface base)
+#   - SlimAffineKernelDescription.co_gen + slim surface -> affine.py::AtiAffineKernel
+#   - the shared identity surface -> ir/interface.py::Interface (ATI base)
+# codegen dispatches by CODEGEN_MODULE duck-typing (no legacy isinstance). compat/
+# (the ex-adapter dir) is also DELETED; the classes live in ir/.
 #
-# Precondition to remove: the description layer is fully ATI-native — the reused
-# translate_dataframe / gen_signatures_for_tuning / cfield / Interface logic is
-# ported into template_instantiation/, and the data-only OpAttn* classes are gone.
-# (The full AffineKernelDescription + its codegen — akdesc.py, csv_translator.py,
-# dkarg.py, codegen/affine.py, codegen/affine_cap.py, template/affine.{cc,h} — are
-# DELETED; only SlimAffineKernelDescription + SlimAffineGenerator remain, used by the
-# ATI @ati.affine kernels.)
-python/kernel/                 # KernelDescription, ksignature (reused by kdesc_adapter)
-python/op/operator.py          # Operator.translate_dataframe (reused by operator_adapter)
-# python/op/metro.py: KEEP — AtiMetroKernel subclasses MetroKernel (the launcher
-#   base). op/conditional.py: KEEP — ConditionalKernel is used by build_metro.
-#   Removable only once the launcher base is folded into the ATI metro builder.
-# python/base/*: keep until cfield/interface/typed_choice/functional are ATI-native.
+# STILL KEPT: python/base/ — shared FOUNDATION (typed_choice, cfield, Functional,
+# Interface, parameter, conditional_value, bind), used by python/codegen/* and the
+# ATI layer. Its retirement is the next plan (merge the live bits into
+# template_instantiation/, drop dead pieces like bind).
 # python/affine/slim_akdesc.py: KEEP — the slim affine base AtiAffineKernel subclasses.
 
 # =============================================================================

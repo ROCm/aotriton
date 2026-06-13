@@ -31,7 +31,8 @@ union over all backends with no hand-injection.
 from pathlib import Path
 
 from aotriton.base.cfield import cfield
-from aotriton.affine import SlimAffineKernelDescription
+from aotriton.gpu_targets import AOTRITON_ARCH_TO_PACK
+from .ir import Interface
 
 
 # --- spec records (callable -> accumulate onto the placeholder def) ----------
@@ -181,27 +182,29 @@ def _supplied_cfield(spec, index):
     return cfield(ctype=ctype, aname=aname, index=index, nbits=0)
 
 
-class AtiAffineKernel(SlimAffineKernelDescription):
-    """A slim affine kernel built from the @ati.affine.* stacked form. Exposes the
-    surface the SlimAffineGenerator reads (NAME / FAMILY / CO_DIR / COOKIE_CLASS /
-    SUPPORTED_ARCH / AFFINE_KERNEL_ROOT / co_gen / SHARED_IFACE / is_functional_disabled)
-    plus `supplied_operands` (the operand specs it contributes to the operator union).
+class AtiAffineKernel(Interface):
+    """A slim affine (AITER ASM) kernel built from the @ati.affine.* stacked form.
 
-    SHARED_IFACE is filled in by infer_shared_iface (operator -> backend) like the
-    triton kernels; the @ati.affine.shared_operator name is kept for reference.
-    Interface's functional machinery is intentionally bypassed (a slim affine kernel
-    has a vendored dispatcher: gen_functionals is empty, func_cfields unused)."""
+    ATI-native: subclasses the ATI Interface base (identity surface) and absorbs the
+    slim-affine codegen surface directly — co_gen (.co packaging), the empty
+    functional space (vendored dispatcher), and the metadata SlimAffineGenerator
+    reads (CO_DIR / COOKIE_CLASS / SUPPORTED_ARCH / SHARED_IFACE). It also exposes
+    `supplied_operands` (the operands it contributes to the operator params-struct
+    union, e.g. the bwd DQ_ACC).
 
-    FAMILY = 'flash'
+    SHARED_IFACE is filled in by infer_shared_iface (operator -> backend); the
+    @ati.affine.shared_operator name is kept for reference."""
+
+    CODEGEN_MODULE = 'affine'
+    TUNE_NAME = None
+    FILE_PFX = 'affine'
+    ENUM_PREFIX = 'kSlimAffine_'
     AFFINE_KERNEL_ROOT = Path('aiter/hsa')
-    SHARED_IFACE = None      # set by infer_shared_iface
+    is_tunable = False
 
     def __init__(self, *, name, family, co_dir, cookie, headers, supported_arch,
                  choice_filters, shared_operator_name, supplied_specs, disable,
                  supplies_after=None, supplies_before=None):
-        # NOTE: deliberately do NOT call Interface.__init__ — that builds a functional
-        # space from SHARED_IFACE's TYPE/FEAT_CHOICES, which a slim affine kernel does
-        # not need (vendored dispatcher; slim codegen reads only the metadata below).
         self.NAME = name
         self.FAMILY = family
         self.CO_DIR = co_dir
@@ -218,30 +221,41 @@ class AtiAffineKernel(SlimAffineKernelDescription):
         self._supplied_cfields = [_supplied_cfield(s, i)
                                   for i, s in enumerate(self._supplied_specs)]
 
-    # NAME is a per-INSTANCE attribute (one AtiAffineKernel class, many kernels),
-    # so the Interface classmethod _class_name_base (which reads the CLASS NAME)
-    # can't see it — derive the name base from the instance here.
-    @property
-    def class_name_base(self):
-        return ''.join(x.capitalize() for x in self.NAME.lower().split('_'))
-
-    @property
-    def enum_name(self):
-        return f'kSlimAffine_{self.class_name_base}'
-
     @property
     def param_class_name(self):
-        # The params struct is the shared operator's. Read it directly off
-        # SHARED_IFACE (the AtiOperator exposes param_class_name), rather than
-        # reconstructing via the legacy classmethod _class_name_base.
+        # The params struct is the shared operator's (the AtiOperator exposes it).
         return self.SHARED_IFACE.param_class_name
 
-    @property
-    def context_class_name(self):
-        return self.class_name_base + 'Context'
+    # --- slim-affine codegen surface (absorbed from SlimAffineKernelDescription) ---
 
-    def co_dir_path(self, build_dir: Path, functional):
-        return build_dir / self.AFFINE_KERNEL_ROOT / functional.arch / self.CO_DIR
+    @property
+    def perf_cfields(self):
+        return []
+
+    def gen_functionals(self, build_for_target_arch):
+        # Slim affine kernels have a vendored C++ dispatcher — no functional space.
+        return
+        yield
+
+    def list_functional_params(self):
+        return []
+
+    def list_non_functional_params(self):
+        return []
+
+    def co_gen(self, build_dir: Path, build_for_target_arch):
+        """Yield (aks2_path, inarchive_path, kernel_co) for every prebuilt .co under
+        the supported arches — the relocate rules that pack the AITER .co files."""
+        target_arch = {arch: gpus for arch, gpus in build_for_target_arch.items()
+                       if arch in self.SUPPORTED_ARCH}
+        archless_package_path = Path(self.FAMILY) / 'affine_kernels' / self.CO_DIR
+        for arch in target_arch.keys():
+            aks2_path = Path(f'amd-{AOTRITON_ARCH_TO_PACK[arch]}') / archless_package_path
+            aiter_arch = build_dir / self.AFFINE_KERNEL_ROOT / arch
+            aiter_arch_module = aiter_arch / self.CO_DIR
+            for kernel_co in aiter_arch_module.glob('**/*.co'):
+                inarchive_path = kernel_co.relative_to(aiter_arch).as_posix()
+                yield (aks2_path, inarchive_path, kernel_co)
 
     # --- operator-union contribution -------------------------------------
     #

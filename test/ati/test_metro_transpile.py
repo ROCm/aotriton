@@ -60,7 +60,7 @@ def test_lower_to_ir_matches_legacy_strings():
     # Lower with stand-in kernels + the real ConditionalKernel; the lowered metro
     # must carry the same kernel order and conditional (if_parameter, if_expr) the
     # hand-written MetroFwdKernel uses.
-    from aotriton.op import ConditionalKernel
+    from aotriton.template_instantiation.metro.build import ConditionalKernel
 
     class _K:
         def __init__(self, name):
@@ -92,10 +92,9 @@ def test_metro_kernel_merges_renamed_arg():
     # The renamed arg must collapse into its operand node, not appear twice in the
     # merged operand order. (This is what keeps `R` out of the params struct.) The
     # apparel mapping now lives on each sub-kernel's kdesc (apparel_of), NOT on the
-    # metro; merged_operand_order reads it from there. The MetroKernel constructor
-    # runs the heavy Interface machinery that needs an operator-bound SHARED_IFACE,
-    # so build the object directly and exercise only merged_operand_order.
-    from aotriton.op import MetroKernel, ConditionalKernel
+    # metro; merged_operand_order reads it from there.
+    from aotriton.template_instantiation.metro.build import (
+        AtiMetroKernel, ConditionalKernel)
 
     class _K:
         def __init__(self, name, arguments, wiring=None):
@@ -114,10 +113,7 @@ def test_metro_kernel_merges_renamed_arg():
     kmap = {'attn_fwd': attn, 'debug_simulate_encoded_softmax': debug}
 
     def metro_factory(steps):
-        m = object.__new__(MetroKernel)   # skip Interface init (orthogonal here)
-        m.NAME = 'metro_fwd'
-        m._kernels = steps
-        return m
+        return AtiMetroKernel('metro_fwd', steps)
 
     metro = lower_plan(metro_fwd.__ati_metro__, kmap,
                        metro_factory, ConditionalKernel)

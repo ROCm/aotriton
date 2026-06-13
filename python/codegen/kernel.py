@@ -9,7 +9,6 @@ from ..base import (
     Functional,
 )
 from .interface import InterfaceGenerator
-from ..kernel import KernelDescription
 from .template import get_template
 from ..utils import (
     LazyFile,

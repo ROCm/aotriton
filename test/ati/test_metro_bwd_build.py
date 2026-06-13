@@ -15,7 +15,8 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / 'modules' / 'flash'))
 
-from aotriton.op import MetroKernel, ConditionalKernel
+from aotriton.template_instantiation.metro.build import (
+    AtiMetroKernel, ConditionalKernel)
 from aotriton.template_instantiation.metro import lower_plan
 
 
@@ -49,10 +50,7 @@ def test_transpiled_bwd_metro_matches_handwritten():
                                'bwd_kernel_dk_dv', 'bwd_kernel_dq')}
 
     def factory(steps):
-        m = object.__new__(MetroKernel)
-        m.NAME = 'triton_split'
-        m._kernels = steps
-        return m
+        return AtiMetroKernel('triton_split', steps)
 
     transpiled = lower_plan(_load_metro_bwd_plan(), subs, factory, ConditionalKernel)
 
