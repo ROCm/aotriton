@@ -13,11 +13,10 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
-sys.path.insert(0, str(REPO / 'tritonsrc'))
+sys.path.insert(0, str(REPO / 'modules' / 'flash'))
 
-import importlib.util
-from v3python.op import MetroKernel, ConditionalKernel
-from v3python.template_instantiation.metro import lower_plan
+from aotriton.op import MetroKernel, ConditionalKernel
+from aotriton.template_instantiation.metro import lower_plan
 
 
 class _K:
@@ -29,10 +28,7 @@ class _K:
 
 
 def _load_metro_bwd_plan():
-    p = REPO / 'modules' / 'flash' / 'metro_bwd_ati.py'
-    spec = importlib.util.spec_from_file_location('_t_metro_bwd_ati', p)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    import aot.metro_bwd as mod
     return mod.metro_bwd.__ati_metro__
 
 

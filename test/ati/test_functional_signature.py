@@ -10,17 +10,16 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
-sys.path.insert(0, str(REPO / 'tritonsrc'))
-sys.path.insert(0, str(REPO / 'modules'))
+sys.path.insert(0, str(REPO / 'modules' / 'flash'))
 
-import v3python.template_instantiation as ati
-from v3python.template_instantiation.describe import describe, get_kernel_spec
-from v3python.template_instantiation.builder import build_kernel, AtiDescriptionError
-from v3python.template_instantiation.compat import build_kernel_description
-from v3python.gpu_targets import cluster_gpus
-from fwd_kernel import attn_fwd
-from flash.attn_fwd_ati import describe_attn_fwd
-import v3python.rules.flash as F
+import aotriton.template_instantiation as ati
+from aotriton.template_instantiation.describe import describe, get_kernel_spec
+from aotriton.template_instantiation.builder import build_kernel, AtiDescriptionError
+from aotriton.template_instantiation.compat import build_kernel_description
+from aotriton.gpu_targets import cluster_gpus
+import aot.attn_fwd as _attn_fwd_desc
+attn_fwd = _attn_fwd_desc.attn_fwd
+import v3python.rules.flash as F   # legacy reference for parity comparison
 
 _SIG_FIELDS = ['unified_signature', 'signature_in_func_name',
                'compact_signature_noarch', 'filepack_inzip_name',
@@ -28,7 +27,6 @@ _SIG_FIELDS = ['unified_signature', 'signature_in_func_name',
 
 
 def _pair_functionals():
-    describe_attn_fwd(attn_fwd)
     ak = build_kernel_description(attn_fwd, family='flash')
     leg = next(k for k in F.kernels if k.NAME == 'attn_fwd')
     ta = cluster_gpus(['gfx942_mod0'])

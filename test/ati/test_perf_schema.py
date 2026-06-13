@@ -11,8 +11,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import numpy as np
 
-import v3python.template_instantiation as ati
-from v3python.template_instantiation.tune.schema import PerfSchema, PerfParam
+import aotriton.template_instantiation as ati
+from aotriton.template_instantiation.tune.schema import PerfSchema, PerfParam
 
 
 # Mirrors the real attn_fwd PERF_CHOICES widths (v3python/rules/flash/attn_fwd.py):

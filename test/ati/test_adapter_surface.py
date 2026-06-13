@@ -10,17 +10,15 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
-sys.path.insert(0, str(REPO / 'tritonsrc'))
-sys.path.insert(0, str(REPO / 'modules'))
+sys.path.insert(0, str(REPO / 'modules' / 'flash'))
 
-from fwd_kernel import attn_fwd
-from flash.attn_fwd_ati import describe_attn_fwd
-from v3python.template_instantiation.compat import build_kernel_description
-import v3python.rules.flash as F
+import aot.attn_fwd as _attn_fwd_desc
+attn_fwd = _attn_fwd_desc.attn_fwd
+from aotriton.template_instantiation.compat import build_kernel_description
+import v3python.rules.flash as F   # legacy reference for parity comparison
 
 
 def _pair():
-    describe_attn_fwd(attn_fwd)
     ak = build_kernel_description(attn_fwd, family='flash')
     leg = next(k for k in F.kernels if k.NAME == 'attn_fwd')
     return ak, leg

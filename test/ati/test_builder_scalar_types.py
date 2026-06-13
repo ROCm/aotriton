@@ -15,9 +15,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import v3python.template_instantiation as ati
-from v3python.template_instantiation.describe import describe, get_kernel_spec
-from v3python.template_instantiation.builder import build_kernel, AtiDescriptionError
+import aotriton.template_instantiation as ati
+from aotriton.template_instantiation.describe import describe, get_kernel_spec
+from aotriton.template_instantiation.builder import build_kernel, AtiDescriptionError
 
 
 def _build(kernel, *specs):

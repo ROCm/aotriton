@@ -524,13 +524,13 @@ class AtiKernelDescription:
     LUT_FULL_SEQLEN_NAVI = [16, 32, 64, 128, 256, 512, 1024, 2048]
 
     def sancheck_lut_tensor(self, f, lut_tensor):
-        import aotriton.rules  # ensures modules/ is on sys.path
-        from flash.aot._common import FlashKernel
+        import aotriton.rules
+        FlashKernel = aotriton.rules.family_aot('flash')._common.FlashKernel
         return FlashKernel.sancheck_lut_tensor(self, f, lut_tensor)
 
     def _gen_missing_entries(self, *args, **kwargs):
-        import aotriton.rules  # ensures modules/ is on sys.path
-        from flash.aot._common import FlashKernel
+        import aotriton.rules
+        FlashKernel = aotriton.rules.family_aot('flash')._common.FlashKernel
         return FlashKernel._gen_missing_entries(self, *args, **kwargs)
 
     def update_programmatic_perfs(self, kw, f):

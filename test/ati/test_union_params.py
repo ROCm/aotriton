@@ -11,7 +11,7 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / 'tritonsrc'))
 
-from v3python.template_instantiation.operator import union_params
+from aotriton.template_instantiation.operator import union_params
 
 
 def test_shared_spine_simple():

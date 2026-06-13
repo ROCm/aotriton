@@ -12,9 +12,9 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / 'modules' / 'flash' / 'kernel'))
 
-import v3python.template_instantiation as ati
-from v3python.template_instantiation.decorators import AtiSourceError
-from v3python.template_instantiation.describe import get_kernel_spec
+import aotriton.template_instantiation as ati
+from aotriton.template_instantiation.decorators import AtiSourceError
+from aotriton.template_instantiation.describe import get_kernel_spec
 
 KSRC = '../../modules/flash/kernel/fwd_kernel.py'   # relative to THIS test file's dir (test/ati/)
 

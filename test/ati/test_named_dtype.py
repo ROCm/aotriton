@@ -15,9 +15,9 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / 'tritonsrc'))
 
-import v3python.template_instantiation as ati
-from v3python.template_instantiation.describe import describe, get_kernel_spec
-from v3python.template_instantiation.builder import build_kernel, AtiDescriptionError
+import aotriton.template_instantiation as ati
+from aotriton.template_instantiation.describe import describe, get_kernel_spec
+from aotriton.template_instantiation.builder import build_kernel, AtiDescriptionError
 
 from fwd_kernel import attn_fwd
 

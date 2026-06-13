@@ -15,7 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import v3python.template_instantiation as ati
+import aotriton.template_instantiation as ati
 
 TOP_LEVEL_NAMES = [
     'tensor_dtype', 'choice_set', 'tensor', 'scalar',

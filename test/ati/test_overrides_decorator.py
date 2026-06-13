@@ -11,8 +11,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import v3python.template_instantiation as ati
-from v3python.template_instantiation.ir import Override, Predicate, VarRef, Choice
+import aotriton.template_instantiation as ati
+from aotriton.template_instantiation.ir import Override, Predicate, VarRef, Choice
 
 
 def test_predicate_builders_return_predicates():

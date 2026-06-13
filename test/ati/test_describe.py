@@ -8,9 +8,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import v3python.template_instantiation as ati
-from v3python.template_instantiation.introspect import kernel_params, kernel_param_names
-from v3python.template_instantiation.describe import get_kernel_spec
+import aotriton.template_instantiation as ati
+from aotriton.template_instantiation.introspect import kernel_params, kernel_param_names
+from aotriton.template_instantiation.describe import get_kernel_spec
 
 
 # A plain function stands in for a @triton.jit kernel; introspection falls back to

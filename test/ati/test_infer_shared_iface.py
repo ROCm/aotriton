@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from v3python.template_instantiation.operator import infer_shared_iface
+from aotriton.template_instantiation.operator import infer_shared_iface
 
 
 class _Kernel:

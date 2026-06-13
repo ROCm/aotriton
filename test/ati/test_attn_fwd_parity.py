@@ -9,14 +9,13 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
-sys.path.insert(0, str(REPO / 'tritonsrc'))
-sys.path.insert(0, str(REPO / 'modules'))
+sys.path.insert(0, str(REPO / 'modules' / 'flash'))
 
-from fwd_kernel import attn_fwd
-from flash.attn_fwd_ati import describe_attn_fwd
-from v3python.template_instantiation.compat import build_kernel_description
-from v3python.gpu_targets import cluster_gpus
-import v3python.rules.flash as F
+import aot.attn_fwd as _attn_fwd_desc
+attn_fwd = _attn_fwd_desc.attn_fwd
+from aotriton.template_instantiation.compat import build_kernel_description
+from aotriton.gpu_targets import cluster_gpus
+import v3python.rules.flash as F   # legacy reference for parity comparison
 
 # perf params live in the schema, not the functional choice space
 _PERF = {'PERSISTENT_TYPE', 'GRID_CU_MULTIP', 'BLOCK_M', 'BLOCK_N',
@@ -24,7 +23,6 @@ _PERF = {'PERSISTENT_TYPE', 'GRID_CU_MULTIP', 'BLOCK_M', 'BLOCK_N',
 
 
 def _setup():
-    describe_attn_fwd(attn_fwd)
     ak = build_kernel_description(attn_fwd, family='flash')
     legacy = next(k for k in F.kernels if k.NAME == 'attn_fwd')
     ta = cluster_gpus(['gfx942_mod0'])
@@ -32,8 +30,8 @@ def _setup():
 
 
 def test_describe_completeness_passes():
-    # describe_attn_fwd uses no _validate=False: all 74 params must be claimed.
-    describe_attn_fwd(attn_fwd)
+    # The stacked-@ form finalizes with full validation on import: all 74 params
+    # must be claimed or @ati.kernel would have raised.
     assert attn_fwd.__ati__ is not None
 
 

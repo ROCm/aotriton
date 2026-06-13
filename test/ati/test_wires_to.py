@@ -15,9 +15,9 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / 'tritonsrc'))
 
-import v3python.template_instantiation as ati
-from v3python.template_instantiation.describe import describe
-from v3python.template_instantiation.compat import build_kernel_description
+import aotriton.template_instantiation as ati
+from aotriton.template_instantiation.describe import describe
+from aotriton.template_instantiation.compat import build_kernel_description
 
 from dropout_rng import debug_simulate_encoded_softmax
 

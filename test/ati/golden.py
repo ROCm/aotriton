@@ -83,33 +83,25 @@ def _compose_database(build_dir: Path):
         with tarfile.open(tarxz) as tf:
             tf.extractall(db_dir)
     subprocess.run(
-        [_venv_python(), '-m', 'v3python.database_compose',
+        [_venv_python(), '-m', 'aotriton.database_compose',
          '--database_file', str(db_dir / 'tuning_database.sqlite3'),
          '--decomposed', str(DB_SRC_DIR)],
         cwd=REPO_ROOT, check=True,
     )
 
 
-# The whole flash family is now ATI-described; the golden snapshot is the ATI
-# output. Enable every ported kernel/metro by default so --check/--update validate
-# the ATI path. (An explicit AOTRITON_ATI_KERNELS in the environment overrides
-# this, e.g. to regenerate the legacy snapshot for comparison.)
-_ATI_ALL = ('attn_fwd op_attn_fwd metro_fwd debug_simulate_encoded_softmax '
-            'bwd_kernel_dk_dv bwd_kernel_dq metro_bwd bwd_preprocess '
-            'bwd_kernel_fuse')
-
-
 def _run_generator(build_dir: Path, arch: str):
     """Generate the full family with no --selective, mirroring the production
-    per-item worker path (RootGenerator.launch_workers)."""
-    env = dict(os.environ)
-    env.setdefault('AOTRITON_ATI_KERNELS', _ATI_ALL)
+    per-item worker path (RootGenerator.launch_workers).
+
+    Runs the modular generator (`aotriton.generate`), which is ATI-always — the
+    legacy env-switched path is gone, so no AOTRITON_ATI_KERNELS is needed."""
     subprocess.run(
-        [_venv_python(), '-m', 'v3python.generate',
+        [_venv_python(), '-m', 'aotriton.generate',
          '--build_dir', str(build_dir),
          '--noimage_mode',
          '--target_gpus', arch],
-        cwd=REPO_ROOT, check=True, env=env,
+        cwd=REPO_ROOT, check=True,
     )
 
 

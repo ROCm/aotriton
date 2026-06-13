@@ -14,40 +14,20 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
-sys.path.insert(0, str(REPO / 'tritonsrc'))
+sys.path.insert(0, str(REPO / 'modules' / 'flash'))
 
-import importlib.util
-import v3python.template_instantiation as ati
-from v3python.template_instantiation import registry
-from v3python.template_instantiation.compat import build_kernel_description
+import aotriton.template_instantiation as ati
 
-from fwd_kernel import attn_fwd
-from dropout_rng import debug_simulate_encoded_softmax
-
-
-def _load(path, modname):
-    spec = importlib.util.spec_from_file_location(modname, REPO / path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+# The flash family build (aot package) builds attn_fwd (cited) then debug (citing),
+# resolving debug's @ati.cite against the registered key kernel. We assert on that
+# real, family-built debug kdesc — rebuilding it would re-run resolve_cites over a
+# spec that already carries the inherited cited disable.
+import aot
 
 
 def _build():
-    registry.clear('flash')
-    # Cited kernel: attn_fwd (registers itself in the flat kernel registry).
-    fwd = _load('modules/flash/attn_fwd_ati.py', '_port_attn_fwd_ati')
-    fwd.describe_attn_fwd(attn_fwd)
-    build_kernel_description(attn_fwd, family='flash',
-                             source_path='tritonsrc/flash.py',
-                             triton_kernel_name='attn_fwd')
-    # Citing kernel: debug.
-    dbg = _load('modules/flash/debug_simulate_encoded_softmax_ati.py',
-                '_port_debug_ati')
-    dbg.describe_debug_simulate_encoded_softmax(debug_simulate_encoded_softmax)
-    return build_kernel_description(
-        debug_simulate_encoded_softmax, family='flash',
-        source_path='tritonsrc/flash.py',
-        triton_kernel_name='debug_simulate_encoded_softmax', register=False)
+    return next(k for k in aot.kernels
+                if k.NAME == 'debug_simulate_encoded_softmax')
 
 
 def test_struct_fields_use_apparel_and_are_complete():

@@ -17,14 +17,17 @@ import numpy as np
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
-sys.path.insert(0, str(REPO / 'tritonsrc'))
+sys.path.insert(0, str(REPO / 'modules' / 'flash'))
+sys.path.insert(0, str(REPO / 'modules' / 'flash' / 'kernel'))
 
-import v3python.template_instantiation as ati
-from v3python.template_instantiation import registry
-from v3python.template_instantiation.describe import describe
-from v3python.template_instantiation.compat import build_kernel_description
+import aotriton.template_instantiation as ati
+from aotriton.template_instantiation import registry
+from aotriton.template_instantiation.describe import describe
+from aotriton.template_instantiation.compat import build_kernel_description
 
-from fwd_kernel import attn_fwd
+# Cited kernel: the real ATI attn_fwd (described on import). Citing kernel: debug.
+import aot.attn_fwd as _attn_fwd_desc
+attn_fwd = _attn_fwd_desc.attn_fwd
 from dropout_rng import debug_simulate_encoded_softmax
 
 MAIN_DTYPES = ['*fp16:16', '*bf16:16', '*fp32:16']
@@ -37,12 +40,6 @@ class DebugPerf:
 
 
 def _register_attn_fwd():
-    import importlib.util
-    p = REPO / 'modules' / 'flash' / 'attn_fwd_ati.py'
-    spec = importlib.util.spec_from_file_location('_perf_attn_fwd_ati', p)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    mod.describe_attn_fwd(attn_fwd)
     return build_kernel_description(attn_fwd, family='flash',
                                     source_path='tritonsrc/flash.py',
                                     triton_kernel_name='attn_fwd')

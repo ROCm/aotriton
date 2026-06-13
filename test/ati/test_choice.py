@@ -8,7 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from v3python.template_instantiation.ir import Choice
+from aotriton.template_instantiation.ir import Choice
 
 
 def test_tensor_dtype():

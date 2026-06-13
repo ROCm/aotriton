@@ -10,8 +10,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import v3python.template_instantiation as ati
-from v3python.template_instantiation.metro import (
+import aotriton.template_instantiation as ati
+from aotriton.template_instantiation.metro import (
     transpile, lower_plan, MetroError, Call, Cond,
 )
 
@@ -60,7 +60,7 @@ def test_lower_to_ir_matches_legacy_strings():
     # Lower with stand-in kernels + the real ConditionalKernel; the lowered metro
     # must carry the same kernel order and conditional (if_parameter, if_expr) the
     # hand-written MetroFwdKernel uses.
-    from v3python.op import ConditionalKernel
+    from aotriton.op import ConditionalKernel
 
     class _K:
         def __init__(self, name):
@@ -95,7 +95,7 @@ def test_metro_kernel_merges_renamed_arg():
     # metro; merged_operand_order reads it from there. The MetroKernel constructor
     # runs the heavy Interface machinery that needs an operator-bound SHARED_IFACE,
     # so build the object directly and exercise only merged_operand_order.
-    from v3python.op import MetroKernel, ConditionalKernel
+    from aotriton.op import MetroKernel, ConditionalKernel
 
     class _K:
         def __init__(self, name, arguments, wiring=None):

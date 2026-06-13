@@ -4,18 +4,14 @@
 """Step 5.4: --preview renders the implicit structures (params struct, merged
 argument order, axis manifest) of an ATI description."""
 
-import os
 import sys
 from pathlib import Path
 
-os.environ['AOTRITON_ATI_KERNELS'] = 'attn_fwd op_attn_fwd'
-
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
-sys.path.insert(0, str(REPO / 'tritonsrc'))
 
-import v3python.rules.flash as F
-from v3python.template_instantiation.tools import preview, preview_kdesc
+import aotriton.rules as F
+from aotriton.template_instantiation.tools import preview, preview_kdesc
 
 
 def _op():

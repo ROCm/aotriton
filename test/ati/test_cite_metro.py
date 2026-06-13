@@ -15,15 +15,17 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
-sys.path.insert(0, str(REPO / 'tritonsrc'))
+sys.path.insert(0, str(REPO / 'modules' / 'flash'))
+sys.path.insert(0, str(REPO / 'modules' / 'flash' / 'kernel'))
 
-import v3python.template_instantiation as ati
-from v3python.template_instantiation import registry
-from v3python.template_instantiation.describe import describe, get_kernel_spec
-from v3python.template_instantiation.compat import build_kernel_description
-from v3python.template_instantiation.builder import AtiDescriptionError
+import aotriton.template_instantiation as ati
+from aotriton.template_instantiation import registry
+from aotriton.template_instantiation.describe import describe, get_kernel_spec
+from aotriton.template_instantiation.compat import build_kernel_description
+from aotriton.template_instantiation.builder import AtiDescriptionError
 
-from fwd_kernel import attn_fwd
+import aot.attn_fwd as _attn_fwd_desc
+attn_fwd = _attn_fwd_desc.attn_fwd
 from dropout_rng import debug_simulate_encoded_softmax
 
 MAIN_DTYPES = ['*fp16:16', '*bf16:16', '*fp32:16']
@@ -57,12 +59,7 @@ class _FakeOp:
 
 
 def _build_attn_fwd_kdesc():
-    import importlib.util
-    p = REPO / 'modules' / 'flash' / 'attn_fwd_ati.py'
-    spec = importlib.util.spec_from_file_location('_citemetro_attn_fwd_ati', p)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    mod.describe_attn_fwd(attn_fwd)
+    # attn_fwd already ATI-described on import; build + flat-register it.
     return build_kernel_description(attn_fwd, family='flash',
                                     source_path='tritonsrc/flash.py',
                                     triton_kernel_name='attn_fwd')
@@ -90,7 +87,7 @@ def _cite_debug(target):
     ]
     describe(debug_simulate_encoded_softmax, *specs, _validate=False)
     spec = get_kernel_spec(debug_simulate_encoded_softmax)
-    from v3python.template_instantiation.operator.cite import resolve_cites
+    from aotriton.template_instantiation.operator.cite import resolve_cites
     resolve_cites(spec, family='flash')
     return build_kernel_description(debug_simulate_encoded_softmax, family='flash',
                                     source_path='tritonsrc/flash.py', register=False)

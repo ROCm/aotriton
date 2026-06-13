@@ -9,15 +9,12 @@ import os
 import sys
 from pathlib import Path
 
-os.environ['AOTRITON_ATI_KERNELS'] = 'attn_fwd op_attn_fwd'
-
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
-sys.path.insert(0, str(REPO / 'tritonsrc'))
 
-import v3python.rules.flash as F
-from v3python.template_instantiation.compat.operator_adapter import AtiOperator
-from v3python.gpu_targets import cluster_gpus
+import aotriton.rules as F
+from aotriton.template_instantiation.compat.operator_adapter import AtiOperator
+from aotriton.gpu_targets import cluster_gpus
 
 
 def _ati_op():

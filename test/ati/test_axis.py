@@ -10,7 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from v3python.template_instantiation.ir import Choice, Axis, assign_godel, godel_of
+from aotriton.template_instantiation.ir import Choice, Axis, assign_godel, godel_of
 
 
 def _axis(var_name, raw_choices, anchor):

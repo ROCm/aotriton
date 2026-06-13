@@ -13,23 +13,17 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
-sys.path.insert(0, str(REPO / 'tritonsrc'))
 sys.path.insert(0, str(REPO / 'modules' / 'flash'))
 
-import importlib.util
-from v3python.template_instantiation import registry
-from v3python.template_instantiation.compat import build_kernel_description
+from aotriton.template_instantiation import registry
+from aotriton.template_instantiation.compat import build_kernel_description
 
-from bwd_kernel_dk_dv import bwd_kernel_dk_dv
+import aot.bwd_kernel_dk_dv as _bwd_kernel_dk_dv_desc
+bwd_kernel_dk_dv = _bwd_kernel_dk_dv_desc.bwd_kernel_dk_dv
 
 
 def _build():
     registry.clear('flash')
-    p = REPO / 'modules' / 'flash' / 'bwd_kernel_dk_dv_ati.py'
-    spec = importlib.util.spec_from_file_location('_port_dkdv_ati', p)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    mod.describe_bwd_kernel_dk_dv(bwd_kernel_dk_dv)
     return build_kernel_description(bwd_kernel_dk_dv, family='flash',
                                     source_path='tritonsrc/flash.py',
                                     triton_kernel_name='bwd_kernel_dk_dv',

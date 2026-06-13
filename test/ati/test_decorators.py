@@ -10,8 +10,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import numpy as np
 
-import v3python.template_instantiation as ati
-from v3python.template_instantiation.decorators import (
+import aotriton.template_instantiation as ati
+from aotriton.template_instantiation.decorators import (
     ChoiceVar, TensorSpec, ScalarSpec,
 )
 

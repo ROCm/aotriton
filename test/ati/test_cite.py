@@ -14,15 +14,19 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
-sys.path.insert(0, str(REPO / 'tritonsrc'))
+sys.path.insert(0, str(REPO / 'modules' / 'flash'))
+sys.path.insert(0, str(REPO / 'modules' / 'flash' / 'kernel'))
 
-import v3python.template_instantiation as ati
-from v3python.template_instantiation import registry
-from v3python.template_instantiation.describe import describe
-from v3python.template_instantiation.compat import build_kernel_description
-from v3python.template_instantiation.builder import AtiDescriptionError
+import aotriton.template_instantiation as ati
+from aotriton.template_instantiation import registry
+from aotriton.template_instantiation.describe import describe
+from aotriton.template_instantiation.compat import build_kernel_description
+from aotriton.template_instantiation.builder import AtiDescriptionError
 
-from fwd_kernel import attn_fwd
+# The cited kernel: the real ATI attn_fwd description (finalized on import).
+import aot.attn_fwd as _attn_fwd_desc
+attn_fwd = _attn_fwd_desc.attn_fwd
+# The citing kernel: the debug kernel (re-described per-test below).
 from dropout_rng import debug_simulate_encoded_softmax
 
 MAIN_DTYPES = ['*fp16:16', '*bf16:16', '*fp32:16']
@@ -30,13 +34,8 @@ BLOCK_DMODEL_VALUES = [16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256, 512]
 
 
 def _describe_full_attn_fwd():
-    # Reuse the real ATI description (object form is fine here).
-    import importlib.util
-    p = REPO / 'modules' / 'flash' / 'attn_fwd_ati.py'
-    spec = importlib.util.spec_from_file_location('_cite_attn_fwd_ati', p)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    mod.describe_attn_fwd(attn_fwd)
+    # The real ATI attn_fwd (already described via the stacked-@ form on import);
+    # just build + register it as the cite target.
     return build_kernel_description(attn_fwd, family='flash',
                                     source_path='tritonsrc/flash.py',
                                     triton_kernel_name='attn_fwd')

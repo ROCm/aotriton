@@ -11,9 +11,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import numpy as np
 
-import v3python.template_instantiation as ati
-from v3python.template_instantiation.describe import describe, get_kernel_spec
-from v3python.template_instantiation.ir import Choice, Axis, enumerate_functionals
+import aotriton.template_instantiation as ati
+from aotriton.template_instantiation.describe import describe, get_kernel_spec
+from aotriton.template_instantiation.ir import Choice, Axis, enumerate_functionals
 
 
 @dataclass
@@ -24,7 +24,7 @@ class TinyPerf:
 
 def gen_configs(f):
     # reads pinned choices through f.choices (keyed by variable name);
-    # Config(kw, ...) mirrors triton.Config / v3python.autotune.Config.
+    # Config(kw, ...) mirrors triton.Config / aotriton.autotune.Config.
     causal = f.choices.CAUSAL_TYPE
     for bm in (16, 32):
         kw = {'BLOCK_M': bm, 'PRE_LOAD_V': (causal != 0), 'waves_per_eu': 2}
