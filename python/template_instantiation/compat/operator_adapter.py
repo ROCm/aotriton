@@ -15,6 +15,7 @@ translate_dataframe, reused from the legacy Operator body).
 """
 
 from .kdesc_adapter import AtiFunctional, _binning_class
+from ..ir import Interface
 
 
 def build_merged_struct_cfields(subkernels):
@@ -76,15 +77,13 @@ def build_operator(opspec, backend_specs, *, binning, fallback):
                        partially_tuned_functionals=dict(fallback))
 
 
-class AtiOperator:
+class AtiOperator(Interface):
     """Operator-compatible facade backed by a default-backend BuiltKernel."""
 
     CODEGEN_MODULE = 'op'
     TUNE_NAME = 'optune'
     FILE_PFX = 'iface'
-    SHARED_IFACE = None
-    HEADER_EXTRA_INCLUDES = []
-    SOURCE_EXTRA_INCLUDES = []
+    ENUM_PREFIX = 'kOp_'
 
     def __init__(self, name, *, family, default_kdesc, backends, optune_keys,
                  call_options_name, struct_cfields=None,
@@ -110,34 +109,9 @@ class AtiOperator:
 
     # --- identity ---
 
-    @property
-    def unique_path(self):
-        from pathlib import Path
-        return Path(self.FAMILY) / self.CODEGEN_MODULE / self.NAME
-
-    @staticmethod
-    def _name_to_base(name):
-        return ''.join(x.capitalize() for x in name.lower().split('_'))
-
-    @property
-    def class_name_base(self):
-        return self._name_to_base(self.NAME)
-
-    @property
-    def enum_name(self):
-        return f'kOp_{self.class_name_base}'
-
-    @property
-    def param_class_name(self):
-        return self.class_name_base + 'Params'
-
-    @property
-    def context_class_name(self):
-        return self.class_name_base + 'Context'
-
-    @property
-    def metadata_class_name(self):
-        return self.class_name_base + 'Metadata'
+    # identity surface (unique_path / class_name_base / enum_name (kOp_) /
+    # param_class_name / context_class_name / metadata_class_name) comes from the ATI
+    # Interface base.
 
     # --- backends ---
 
@@ -234,8 +208,5 @@ class AtiOperator:
         from aotriton.op.operator import Operator
         return Operator.translate_empty_dataframe(self, f)
 
-    def fallback_compact_dict(self, compact_dict):
-        # Downgrade keys by the operator's OWN partial-tune (default {} -> identity,
-        # matching the legacy operators). Never the representative kernel's fallback.
-        fb = self._partially_tuned
-        return {k: fb.get(k, v) for k, v in compact_dict.items()}
+    # fallback_compact_dict comes from the ATI Interface base (reads
+    # partially_tuned_functionals, which this operator overrides above).

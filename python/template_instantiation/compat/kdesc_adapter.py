@@ -23,7 +23,7 @@ surface.
 
 from ..builder import build_kernel
 from ..describe import get_kernel_spec
-from ..ir import assign_godel, enumerate_functionals
+from ..ir import assign_godel, enumerate_functionals, Interface
 
 
 def _binning_class(selector):
@@ -372,15 +372,13 @@ class AtiFunctional:
                 f'godel={self.godel_number})')
 
 
-class AtiKernelDescription:
+class AtiKernelDescription(Interface):
     """KernelDescription-compatible facade backed by a BuiltKernel."""
 
     CODEGEN_MODULE = 'triton'
     TUNE_NAME = 'autotune'
     FILE_PFX = 'shim'
-    SHARED_IFACE = None
-    HEADER_EXTRA_INCLUDES = []
-    SOURCE_EXTRA_INCLUDES = []
+    ENUM_PREFIX = 'kShim_'
 
     def __init__(self, built, *, family, source_path=None, triton_kernel_name=None):
         self._built = built
@@ -610,41 +608,17 @@ class AtiKernelDescription:
     def godel_number(self):
         return self._godel_number
 
-    @property
-    def unique_path(self):
-        from pathlib import Path
-        return Path(self.FAMILY) / self.CODEGEN_MODULE / self.NAME
-
-    # --- class names (legacy Interface naming rules) ---
-
-    @staticmethod
-    def _name_to_base(name):
-        return ''.join(x.capitalize() for x in name.lower().split('_'))
-
-    @property
-    def class_name_base(self):
-        return self._name_to_base(self.NAME)
-
+    # identity surface (unique_path / class_name_base / context_class_name /
+    # metadata_class_name / enum_name) comes from the ATI Interface base. Only the
+    # SHARED_IFACE-borrow of param_class_name is kernel-specific:
     @property
     def param_class_name(self):
         # When SHARED_IFACE is set (the kernel borrows an operator's param struct,
         # like legacy attn_fwd -> OpAttnFwdParams), the struct name comes from the
         # shared interface, not this kernel.
         if self.SHARED_IFACE is not None:
-            return self._name_to_base(self.SHARED_IFACE.NAME) + 'Params'
+            return self.SHARED_IFACE.param_class_name
         return self.class_name_base + 'Params'
-
-    @property
-    def context_class_name(self):
-        return self.class_name_base + 'Context'
-
-    @property
-    def metadata_class_name(self):
-        return self.class_name_base + 'Metadata'
-
-    @property
-    def enum_name(self):
-        return f'kShim_{self.class_name_base}'
 
     # --- struct cfields (params struct ABI) ---
 

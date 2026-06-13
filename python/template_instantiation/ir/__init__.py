@@ -1,6 +1,7 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
+from .interface import Interface
 from .choice import Choice
 from .axis import Axis, assign_godel, godel_of
 from .override import (
@@ -10,6 +11,7 @@ from .override import (
 from .functional import Functional, ChoiceView, enumerate_functionals
 
 __all__ = [
+    'Interface',
     'Choice', 'Axis', 'assign_godel', 'godel_of',
     'Predicate', 'VarRef', 'ValueFn', 'Override',
     'eq', 'ne', 'lt', 'gt', 'le', 'ge',
