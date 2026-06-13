@@ -26,15 +26,13 @@ to be pushed down into the operator/generator layers next phase.
 from pathlib import Path
 
 import aotriton.template_instantiation as ati
-from aotriton.op import MetroKernel, ConditionalKernel
 from aotriton.template_instantiation.compat import build_kernel_description
-from aotriton.template_instantiation.metro import lower_plan
+from aotriton.template_instantiation.metro.build import build_metro
 from aotriton.template_instantiation.ops.infer import infer_shared_iface
 from aotriton.template_instantiation import registry as _ati_registry
 from aotriton.template_instantiation.compat.operator_adapter import (
     build_merged_struct_cfields)
 
-from .ops import OpAttnFwd, OpAttnBwd
 from . import (
     attn_fwd as _d_attn_fwd,
     bwd_kernel_dk_dv as _d_dk_dv,
@@ -98,46 +96,24 @@ affine_kernels = [
 ]
 
 
-class MetroFwdKernel(MetroKernel):
-    FAMILY = OpAttnFwd.FAMILY
-    SHARED_IFACE = OpAttnFwd
-    ARGUMENTS = OpAttnFwd.ARGUMENTS
-
-
-class MetroBwdKernel(MetroKernel):
-    FAMILY = OpAttnBwd.FAMILY
-    SHARED_IFACE = OpAttnBwd
-    ARGUMENTS = OpAttnBwd.ARGUMENTS
-
-
-def _build_metro_fwd():
-    kernel_map = {
-        'attn_fwd': __attn_fwd,
-        'debug_simulate_encoded_softmax': __debug_simulate_encoded_softmax,
-    }
-    return lower_plan(_m_fwd.metro_fwd.__ati_metro__, kernel_map,
-                      lambda steps: MetroFwdKernel('triton', steps),
-                      ConditionalKernel)
-
-
-def _build_metro_bwd():
-    kernel_map = {
-        'bwd_preprocess': __bwd_preprocess,
-        'bwd_preprocess_varlen': __bwd_preprocess_varlen,
-        'bwd_kernel_dk_dv': __bwd_kernel_dk_dv,
-        'bwd_kernel_dq': __bwd_kernel_dq,
-    }
-    return lower_plan(_m_bwd.metro_bwd.__ati_metro__, kernel_map,
-                      lambda steps: MetroBwdKernel('triton_split', steps),
-                      ConditionalKernel)
-
-
 # --- operators (declarative @ati.operator form) ---------------------------
 #
-# Built metros (the triton backends). Affine backends are the already-built legacy
-# objects (__fwd_aiter / __bwd_aiter); porting their internals to ATI is deferred.
-_metro_fwd = _build_metro_fwd()
-_metro_bwd = _build_metro_bwd()
+# Triton metro backends: built from the @ati.metro_kernel transpiler plan
+# (metro_fwd.py / metro_bwd.py) + the sub-kernel map via build_metro -> an
+# AtiMetroKernel launcher (no MetroFwdKernel/MetroBwdKernel subclasses, no OpAttn*).
+# Affine backends are the ATI @ati.affine kernels (__fwd_aiter / __bwd_aiter).
+_metro_fwd = build_metro(
+    _m_fwd.metro_fwd.__ati_metro__,
+    {'attn_fwd': __attn_fwd,
+     'debug_simulate_encoded_softmax': __debug_simulate_encoded_softmax},
+    'triton')
+_metro_bwd = build_metro(
+    _m_bwd.metro_bwd.__ati_metro__,
+    {'bwd_preprocess': __bwd_preprocess,
+     'bwd_preprocess_varlen': __bwd_preprocess_varlen,
+     'bwd_kernel_dk_dv': __bwd_kernel_dk_dv,
+     'bwd_kernel_dq': __bwd_kernel_dq},
+    'triton_split')
 
 # The bwd params struct has no single owning kernel: it is the union over ALL
 # backends — the metro sub-kernels (KEY-first: dk_dv, dq, then the preprocess kernels

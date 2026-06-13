@@ -61,25 +61,25 @@ modules/flash/kernel/flash.py  # the aggregator's real target; ATI never imports
 # ATI @ati.affine kernels.)
 python/kernel/                 # KernelDescription, ksignature (reused by kdesc_adapter)
 python/op/operator.py          # Operator.translate_dataframe (reused by operator_adapter)
-# python/op/metro.py, op/conditional.py: keep until MetroKernel is ATI-native.
+# python/op/metro.py: KEEP — AtiMetroKernel subclasses MetroKernel (the launcher
+#   base). op/conditional.py: KEEP — ConditionalKernel is used by build_metro.
+#   Removable only once the launcher base is folded into the ATI metro builder.
 # python/base/*: keep until cfield/interface/typed_choice/functional are ATI-native.
 # python/affine/slim_akdesc.py: KEEP — the slim affine base AtiAffineKernel subclasses.
 
 # =============================================================================
-# D. Legacy data-only operator metadata classes (modules/flash/aot/)
+# D. Legacy data-only operator metadata classes — DONE (deleted)
 # =============================================================================
-# OpAttnFwd/OpAttnBwd are no longer constructed as operators (the operators are ATI
-# AtiOperators) and no longer borrowed by the affine kernels (those are now ATI
-# @ati.affine descriptions). They survive ONLY as the FAMILY / SHARED_IFACE /
-# ARGUMENTS holder the MetroFwdKernel/MetroBwdKernel classes borrow.
+# OpAttnFwd/OpAttnBwd (modules/flash/aot/op_attn_*.py, ops.py) were the data-only
+# FAMILY/SHARED_IFACE/ARGUMENTS holders the old MetroFwdKernel/MetroBwdKernel
+# borrowed. With the metro migrated to AtiMetroKernel (build_metro), they were
+# orphaned and have been DELETED.
 #
-# Precondition to remove: MetroKernel is ATI-native (no longer needs a legacy
-# SHARED_IFACE class with ARGUMENTS).
-modules/flash/aot/op_attn_fwd.py   # OpAttnFwd: data-only (borrowed by MetroFwdKernel)
-modules/flash/aot/op_attn_bwd.py   # OpAttnBwd: data-only (borrowed by MetroBwdKernel)
-modules/flash/aot/ops.py           # re-exports the two data-only classes
-# _common.py: keep — it also hosts FlashKernel/flash_disabled/flash_entry/check_value
-# used by ATI.
+# Residual cleanup (cheap, deferred): modules/flash/aot/_common.py still defines the
+# now-unused OpAttn base class + select_pattern / get_possible_choices / the
+# Conditional* re-exports those deleted descriptions used. _common.py is KEPT (it
+# also hosts FlashKernel / flash_disabled / flash_entry / check_value used by ATI);
+# its dead helpers can be pruned later.
 
 # =============================================================================
 # E. Interim scaffolding inside the new tree (replace, don't just delete)
