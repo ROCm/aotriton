@@ -494,19 +494,33 @@ def source(path, name=None):
             raise AtiSourceError(
                 f"@ati.source: kernel source {src} (from {path!r}, relative to "
                 f"{base}) does not exist")
-        # Put the source dir on sys.path so its sibling imports (flat
-        # `from fwd_kernel_inner import ...`) resolve, then import by NAME so the
-        # module is cached in sys.modules — repeated @ati.source calls and any
-        # `from <stem> import ...` elsewhere then share ONE module object (and thus
-        # one kernel object). Importing by file would exec a fresh copy each time.
+        # Put the kernel source dir on sys.path so its flat sibling imports
+        # (`from fwd_kernel_inner import ...`) resolve, then import the kernel by its
+        # stem. The kernel sources own the bare stem namespace (they import each
+        # other by stem); the cached module is reused so all references share one
+        # kernel object. NOTE: a DESCRIPTION module must NOT be imported under the
+        # same bare stem as its kernel source — load descriptions under a namespace
+        # (e.g. aot.<name>) so they never shadow sys.modules[<kernel stem>]; the
+        # family loader does this.
         import sys
-        import importlib
+        import importlib.util
         srcdir = str(src.parent)
         if srcdir not in sys.path:
             sys.path.insert(0, srcdir)
-        mod = sys.modules.get(src.stem)
-        if mod is None or getattr(mod, '__file__', None) != str(src):
-            mod = importlib.import_module(src.stem)
+        # Reuse a previously-loaded kernel module ONLY if its __file__ is exactly
+        # this source path; otherwise load by EXPLICIT FILE PATH (not a sys.path
+        # search) so the right file is loaded even when a same-stem description on
+        # sys.path (aot/<stem>.py) would otherwise shadow the kernel (kernel/<stem>.py).
+        cached = sys.modules.get(src.stem)
+        if cached is not None and getattr(cached, '__file__', None) == str(src):
+            mod = cached
+        else:
+            spec = importlib.util.spec_from_file_location(src.stem, src)
+            mod = importlib.util.module_from_spec(spec)
+            sys.modules[src.stem] = mod      # so the kernel's sibling imports
+                                             # (`from <stem> import ...`) and any
+                                             # later @ati.source share this object
+            spec.loader.exec_module(mod)
         if not hasattr(mod, sym):
             raise AtiSourceError(
                 f"@ati.source({path!r}): module {src.name} has no symbol {sym!r} "
