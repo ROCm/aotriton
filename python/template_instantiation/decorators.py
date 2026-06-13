@@ -526,7 +526,14 @@ def source(path, name=None):
                 f"@ati.source({path!r}): module {src.name} has no symbol {sym!r} "
                 f"(the placeholder def is named {placeholder.__name__!r}; pass "
                 f"name= if the kernel symbol differs)")
-        return getattr(mod, sym)
+        obj = getattr(mod, sym)
+        # Stash the resolved triton source path so describe()/the linker can read it
+        # off the KernelSpec (replacing the family file's per-kernel source_path arg).
+        try:
+            obj.__ati_source_path__ = str(src)
+        except (AttributeError, TypeError):
+            pass
+        return obj
 
     return _decorator
 

@@ -25,7 +25,7 @@ class KernelSpec:
     """The ATI sidecar attached to a kernel as `kernel.__ati__`."""
 
     __slots__ = ('kernel', 'params', 'tensors', 'scalars', 'overrides', 'tune',
-                 'disables', 'dtype_vars', 'cites')
+                 'disables', 'dtype_vars', 'cites', 'source_path')
 
     def __init__(self, kernel, params, tensors, scalars, overrides, tune=None,
                  disables=None, dtype_vars=None, cites=None):
@@ -36,6 +36,10 @@ class KernelSpec:
         self.overrides = overrides     # list[Override]
         self.tune = tune               # tune specs, attached later (Phase 3)
         self.disables = disables or []  # list[DisableSpec]
+        # The kernel's own Triton source file (set by @ati.source on the kernel
+        # object, copied here in describe()). The linker reads it instead of the
+        # family file passing source_path to a builder.
+        self.source_path = getattr(kernel, '__ati_source_path__', None)
         # Named dtype/choice variables declared via @ati.tensor_dtype /
         # ati.choice_set as standalone records (the stacked-@ / string-ref form);
         # tensor/scalar specs refer to them by name. ChoiceVars passed inline by
@@ -246,12 +250,35 @@ def kernel(jit_fn):
     return jit_fn
 
 
-def _finalize_affine(placeholder, specs):
-    """Build an AffineKernel from a stacked-@ affine description: one
-    @ati.affine.aiter_asm marker + the @ati.affine.* metadata specs + an optional
-    @ati.disable. SHARED_IFACE is wired later by infer_shared_iface."""
+class AffineDecl:
+    """Passive record of an @ati.affine stack (the affine kernel's "object file"):
+    the marker + @ati.affine.* metadata + optional @ati.disable. NO build — the
+    linker (codegen) consumes this. Attached to the def as `fn.__ati_affine__`."""
+
+    __slots__ = ('name', 'co_dir', 'cookie', 'headers', 'supported_arch',
+                 'choice_filters', 'shared_operator_name', 'supplied_specs',
+                 'supplies_after', 'supplies_before', 'disable')
+
+    def __init__(self, *, name, co_dir, cookie, headers, supported_arch,
+                 choice_filters, shared_operator_name, supplied_specs,
+                 supplies_after, supplies_before, disable):
+        self.name = name
+        self.co_dir = co_dir
+        self.cookie = cookie
+        self.headers = headers
+        self.supported_arch = supported_arch
+        self.choice_filters = choice_filters
+        self.shared_operator_name = shared_operator_name
+        self.supplied_specs = supplied_specs
+        self.supplies_after = supplies_after
+        self.supplies_before = supplies_before
+        self.disable = disable
+
+
+def _collect_affine_decl(specs):
+    """Partition an @ati.affine stack into a passive AffineDecl (no build)."""
     from .affine import (
-        AffineKernel, AffineMarkerSpec, SharedOperatorSpec, ArchSpec,
+        AffineMarkerSpec, SharedOperatorSpec, ArchSpec,
         LimitationsSpec, StructuresSpec, DirectoriesSpec, SuppliesSpec,
     )
     from .decorators import DisableSpec
@@ -293,22 +320,53 @@ def _finalize_affine(placeholder, specs):
                 f'accept @ati.affine.* and @ati.disable only')
     assert marker is not None, '@ati.kernel affine path without an @ati.affine marker'
     assert co_dir is not None, f'affine kernel {marker.name!r} missing @ati.affine.directories'
-    return AffineKernel(name=marker.name, family='flash', co_dir=co_dir,
-                           cookie=cookie, headers=headers, supported_arch=arches,
-                           choice_filters=filters, shared_operator_name=shared_op,
-                           supplied_specs=supplied, disable=disable,
-                           supplies_after=supplies_after, supplies_before=supplies_before)
+    return AffineDecl(name=marker.name, co_dir=co_dir, cookie=cookie, headers=headers,
+                      supported_arch=arches, choice_filters=filters,
+                      shared_operator_name=shared_op, supplied_specs=supplied,
+                      supplies_after=supplies_after, supplies_before=supplies_before,
+                      disable=disable)
 
 
-def _finalize_operator(placeholder, specs):
-    """Build an Operator from a stacked-@ operator description: one
-    @ati.operator marker (the construction params), @ati.backend specs (the
-    interchangeable backends), and operator-level @ati.tune.* (binning ->
-    OPTUNE_KEYS, fallback -> PARTIALLY_TUNED; configs warned + ignored)."""
+def _finalize_affine(placeholder, specs):
+    """Attach the passive AffineDecl, then (interim) eagerly build the AffineKernel
+    from it so behavior is unchanged until the codegen linker takes over."""
+    from .affine import AffineKernel
+    decl = _collect_affine_decl(specs)
+    placeholder.__ati_affine__ = decl
+    return AffineKernel(name=decl.name, family='flash', co_dir=decl.co_dir,
+                        cookie=decl.cookie, headers=decl.headers,
+                        supported_arch=decl.supported_arch,
+                        choice_filters=decl.choice_filters,
+                        shared_operator_name=decl.shared_operator_name,
+                        supplied_specs=decl.supplied_specs, disable=decl.disable,
+                        supplies_after=decl.supplies_after,
+                        supplies_before=decl.supplies_before)
+
+
+class OperatorDecl:
+    """Passive record of an @ati.operator stack (the operator's "object file"): the
+    OperatorSpec marker, the (index-sorted) BackendSpecs, and operator-level tune
+    (binning -> OPTUNE_KEYS, fallback -> PARTIALLY_TUNED). NO build — the linker
+    (codegen) consumes this. Attached to the def as `fn.__ati_operator__`."""
+
+    __slots__ = ('opspec', 'backends', 'binning', 'fallback')
+
+    def __init__(self, opspec, backends, binning, fallback):
+        self.opspec = opspec
+        self.backends = backends      # index-sorted list[BackendSpec]
+        self.binning = binning        # {key -> BinningSelector}
+        self.fallback = fallback      # {key -> value}
+
+    @property
+    def name(self):
+        return self.opspec.name
+
+
+def _collect_operator_decl(specs):
+    """Partition an @ati.operator stack into a passive OperatorDecl (no build)."""
     import warnings
     from .decorators import OperatorSpec, BackendSpec
     from .tune import BinningSpec, FallbackSpec, ConfigsSpec
-    from .ir.operator import build_operator
 
     opspec = None
     backends = []
@@ -337,7 +395,17 @@ def _finalize_operator(placeholder, specs):
     assert opspec is not None, '@ati.kernel operator path without an @ati.operator marker'
     assert backends, f'operator {opspec.name!r} declares no @ati.backend'
     backends.sort(key=lambda b: b.index)
-    return build_operator(opspec, backends, binning=binning, fallback=fallback)
+    return OperatorDecl(opspec, backends, binning, fallback)
+
+
+def _finalize_operator(placeholder, specs):
+    """Attach the passive OperatorDecl, then (interim) eagerly build the Operator from
+    it so behavior is unchanged until the codegen linker takes over (exec0 Step 3)."""
+    from .ir.operator import build_operator
+    decl = _collect_operator_decl(specs)
+    placeholder.__ati_operator__ = decl
+    return build_operator(decl.opspec, decl.backends,
+                          binning=decl.binning, fallback=decl.fallback)
 
 
 def get_kernel_spec(kernel_obj):
