@@ -13,11 +13,9 @@ from ..rules import (
     affine_kernels,
 )
 from ..affine import (
-    AffineKernelDescription,
     SlimAffineKernelDescription,
 )
 from .kernel import KernelShimGenerator
-from .affine import AffineGenerator
 from .slim_affine import SlimAffineGenerator
 from .operator import OperatorGenerator
 from ..utils import (
@@ -147,10 +145,9 @@ class RootGenerator(object):
             affs = [ak for ak in affs if ak.unique_path.match(sel)]
         for ak in affs:
             log(lambda : f'{ak.__class__=}')
-            if isinstance(ak, SlimAffineKernelDescription):
-                aksg = SlimAffineGenerator(self._args, ak, parent_repo=None)
-            elif isinstance(ak, AffineKernelDescription):
-                aksg = AffineGenerator(self._args, ak, parent_repo=None)
+            assert isinstance(ak, SlimAffineKernelDescription), \
+                f'affine kernel {ak} must be a SlimAffineKernelDescription'
+            aksg = SlimAffineGenerator(self._args, ak, parent_repo=None)
             aksg.generate()
             asms = aksg.this_repo.get_data('asms', return_none=True)
             if asms is not None:

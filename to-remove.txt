@@ -54,26 +54,32 @@ modules/flash/kernel/flash.py  # the aggregator's real target; ATI never imports
 #
 # Precondition to remove: the description layer is fully ATI-native — the reused
 # translate_dataframe / gen_signatures_for_tuning / cfield / Interface logic is
-# ported into template_instantiation/, the affine kernel is ATI-described, and the
-# data-only OpAttn* classes are gone.
+# ported into template_instantiation/, and the data-only OpAttn* classes are gone.
+# (The full AffineKernelDescription + its codegen — akdesc.py, csv_translator.py,
+# dkarg.py, codegen/affine.py, codegen/affine_cap.py, template/affine.{cc,h} — are
+# DELETED; only SlimAffineKernelDescription + SlimAffineGenerator remain, used by the
+# ATI @ati.affine kernels.)
 python/kernel/                 # KernelDescription, ksignature (reused by kdesc_adapter)
 python/op/operator.py          # Operator.translate_dataframe (reused by operator_adapter)
 # python/op/metro.py, op/conditional.py: keep until MetroKernel is ATI-native.
 # python/base/*: keep until cfield/interface/typed_choice/functional are ATI-native.
+# python/affine/slim_akdesc.py: KEEP — the slim affine base AtiAffineKernel subclasses.
 
 # =============================================================================
-# D. Legacy family support kept data-only (modules/flash/aot/)
+# D. Legacy data-only operator metadata classes (modules/flash/aot/)
 # =============================================================================
-# Demoted to data-only metadata holders, still borrowed by the DEFERRED affine
-# kernel (SHARED_IFACE / ARGUMENTS) and the metro classes.
+# OpAttnFwd/OpAttnBwd are no longer constructed as operators (the operators are ATI
+# AtiOperators) and no longer borrowed by the affine kernels (those are now ATI
+# @ati.affine descriptions). They survive ONLY as the FAMILY / SHARED_IFACE /
+# ARGUMENTS holder the MetroFwdKernel/MetroBwdKernel classes borrow.
 #
-# Precondition to remove: the affine/AiterASM kernel (aiter_fmha_v3_fwd/bwd) is
-# ported to the ATI @ati.affine.* surface (see the DRAFT in aiter_fwd.py), so it no
-# longer borrows OpAttn*/_common legacy metadata.
-modules/flash/aot/op_attn_fwd.py   # OpAttnFwd: data-only (TYPE/FEAT_CHOICES, ARGUMENTS)
-modules/flash/aot/op_attn_bwd.py   # OpAttnBwd: data-only (borrowed by affine bwd + MetroBwdKernel)
+# Precondition to remove: MetroKernel is ATI-native (no longer needs a legacy
+# SHARED_IFACE class with ARGUMENTS).
+modules/flash/aot/op_attn_fwd.py   # OpAttnFwd: data-only (borrowed by MetroFwdKernel)
+modules/flash/aot/op_attn_bwd.py   # OpAttnBwd: data-only (borrowed by MetroBwdKernel)
 modules/flash/aot/ops.py           # re-exports the two data-only classes
-# _common.py: keep — it also hosts FlashKernel/flash_disabled/flash_entry used by ATI.
+# _common.py: keep — it also hosts FlashKernel/flash_disabled/flash_entry/check_value
+# used by ATI.
 
 # =============================================================================
 # E. Interim scaffolding inside the new tree (replace, don't just delete)

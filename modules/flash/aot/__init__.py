@@ -76,9 +76,10 @@ __bwd_preprocess = _build(_d_pp, 'bwd_preprocess', 'bwd_preprocess.py')
 __bwd_preprocess_varlen = _build(_d_ppv, 'bwd_preprocess_varlen', 'bwd_preprocess.py')
 __bwd_kernel_fuse = _build(_d_fuse, 'bwd_kernel_fuse', 'bwd_kernel_fuse.py')
 
-# Affine (asm) backends.
-__fwd_aiter = aiter_fmha_v3_fwd()
-__bwd_aiter = aiter_fmha_v3_bwd()
+# Affine (asm) backends — already finalized AtiAffineKernel objects (the @ati.affine
+# stacked form returns the built kernel from @ati.kernel, like the operators).
+__fwd_aiter = aiter_fmha_v3_fwd
+__bwd_aiter = aiter_fmha_v3_bwd
 
 
 kernels = [
@@ -138,16 +139,15 @@ def _build_metro_bwd():
 _metro_fwd = _build_metro_fwd()
 _metro_bwd = _build_metro_bwd()
 
-# The bwd params struct has no single owning kernel: it is the union of the metro
-# sub-kernels' fields (KEY-first: dk_dv, dq, then the preprocess kernels that
-# contribute Out — this order reproduces the legacy struct order), plus DQ_ACC
-# (which lives only on the deferred affine backend) injected after DB. The fwd
-# struct is just attn_fwd's (the feature superset), so no struct_cfields there.
+# The bwd params struct has no single owning kernel: it is the union over ALL
+# backends — the metro sub-kernels (KEY-first: dk_dv, dq, then the preprocess kernels
+# that contribute Out — this order reproduces the legacy struct order) plus the
+# affine backend, which SUPPLIES DQ_ACC (anchored between DB and L via its
+# union_order). The fwd struct is just attn_fwd's (the feature superset), so no
+# struct_cfields there.
 _bwd_struct = build_merged_struct_cfields(
     [__bwd_kernel_dk_dv, __bwd_kernel_dq,
-     __bwd_preprocess_varlen, __bwd_preprocess],
-    inject={'name': 'DQ_ACC', 'after': 'DB',
-            'ctype': 'LazyTensorInternal<4>*', 'nbits': 0})
+     __bwd_preprocess_varlen, __bwd_preprocess, __bwd_aiter])
 
 
 # Stacked-@ operator form: @ati.kernel (top) ends the stack; @ati.operator (bottom,

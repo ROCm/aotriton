@@ -17,39 +17,36 @@ translate_dataframe, reused from the legacy Operator body).
 from .kdesc_adapter import AtiFunctional, _binning_class
 
 
-def build_merged_struct_cfields(subkernels, *, inject=None):
-    """The operator params-struct field list, merged across several sub-kernels.
+def build_merged_struct_cfields(subkernels):
+    """The operator params-struct field list, merged across all backends' sub-kernels.
 
     For an operator whose params struct is NOT a single kernel's superset (the bwd
-    operator: the struct is the union of dk_dv/dq + the preprocess kernels' `Out`),
-    merge the sub-kernels' `func_cfields` into one order-preserving list via
-    union_params over their (apparel) field names. The FIRST sub-kernel to define a
-    name owns its cfield (so each operand's ctype/nbits come from its defining
-    kernel). `subkernels` must be given in the desired priority order (key kernels
-    first), since union_params resolves order conflicts by first-listed-wins.
+    operator: the struct is the union of dk_dv/dq + the preprocess kernels' `Out` +
+    the affine kernel's `DQ_ACC`), merge the sub-kernels' `func_cfields` into one
+    order-preserving list via union_params over their (apparel) field names. The
+    FIRST sub-kernel to define a name owns its cfield (so each operand's ctype/nbits
+    come from its defining kernel). `subkernels` must be given in the desired priority
+    order (key kernels first), since union_params resolves order conflicts by
+    first-listed-wins.
 
-    `inject` (optional) adds one synthetic operand absent from every sub-kernel
-    (the bwd `DQ_ACC`, which lives only on the deferred affine backend):
-    `{'name', 'after', 'ctype', 'nbits'?}` inserts a cfield right after the operand
-    named `after`. The merged list is re-indexed from its final positions.
+    A backend may provide a `union_order` (e.g. the affine kernel: an anchored chain
+    like [DB, DQ_ACC, L]) used purely for ORDERING — so an operand only that backend
+    supplies lands between its declared neighbors — while its cfields still come from
+    `func_cfields`.
     """
     from aotriton.base.cfield import cfield
     from ..ops import union_params
     cfield_by_name = {}
     name_lists = []
     for s in subkernels:
-        names = []
         for cf in s.func_cfields:
-            names.append(cf.aname)
             cfield_by_name.setdefault(cf.aname, cf)   # first definer owns the cfield
-        name_lists.append(names)
+        order_hint = getattr(s, 'union_order', None)
+        if order_hint:
+            name_lists.append(list(order_hint))       # anchored ordering chain
+        else:
+            name_lists.append([cf.aname for cf in s.func_cfields])
     order = union_params(name_lists)
-    if inject is not None:
-        pos = order.index(inject['after']) + 1
-        order.insert(pos, inject['name'])
-        cfield_by_name[inject['name']] = cfield(ctype=inject['ctype'],
-                                                aname=inject['name'],
-                                                nbits=inject.get('nbits', 0))
     merged = []
     for i, name in enumerate(order):
         cf = cfield_by_name[name]

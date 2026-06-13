@@ -86,14 +86,29 @@ def test_bwd_identity_and_backends():
     assert set(op.OPTUNE_KEYS) == {'max_seqlen_q', 'max_seqlen_k'}
 
 
-def test_bwd_union_struct_with_injected_dq_acc():
+def test_bwd_union_struct_with_supplied_dq_acc():
     op = _ati_bwd_op()
     names = [cf.aname for cf in op.func_cfields]
     assert names == _BWD_FIELDS                       # union order == legacy order
     assert len(names) == 36
     dq_acc = op.func_cfields[11]
-    assert dq_acc.aname == 'DQ_ACC'                   # injected after DB
+    assert dq_acc.aname == 'DQ_ACC'                   # between DB and L (anchored)
     assert dq_acc.ctype == 'LazyTensorInternal<4>*'
+
+
+def test_dq_acc_supplied_by_affine_backend():
+    # DQ_ACC is NOT a triton sub-kernel operand — it is SUPPLIED by the affine
+    # backend (@ati.affine.supplies), so the operator struct is a pure union over
+    # all backends (no hand-injection).
+    op = _ati_bwd_op()
+    aiter = next(b for b in op.list_backends()
+                 if getattr(b, 'NAME', None) == 'aiter_fmha_v3_bwd')
+    supplied = [s.arg_names[0] for s in aiter.supplied_operands]
+    assert supplied == ['DQ_ACC']
+    # the triton metro sub-kernels do NOT carry DQ_ACC
+    metro = op.list_backends()[0]
+    for sub in metro.iter_subkernels():
+        assert 'DQ_ACC' not in [cf.aname for cf in sub.func_cfields]
 
 
 def test_bwd_fallback_not_inherited_from_kernel():

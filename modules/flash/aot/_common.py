@@ -1,7 +1,6 @@
 # Copyright © 2023-2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-from pathlib import Path
 from aotriton.gpu_targets import gpu2arch, AOTRITON_ARCH_WARPSIZE
 from aotriton.op import Operator
 from aotriton.kernel.kdesc import (
@@ -19,7 +18,6 @@ from aotriton.autotune import (
     BinningExact,
 )
 from aotriton.utils import log
-from aotriton.affine import SlimAffineKernelDescription
 
 
 def flash_disabled(f, *, gfx950_bad_hdims=()):
@@ -50,14 +48,6 @@ class OpAttn(Operator):
     MAIN_DATATYPES = ['*fp16:16', '*bf16:16', '*fp32:16'] if AOTRITON_ENABLE_FP32 else ['*fp16:16', '*bf16:16']
     CALL_OPTIONS_NAME = 'attn_options'
 
-class FlashAffine(SlimAffineKernelDescription):
-    FAMILY = 'flash'
-    MODULE_FILE = __file__
-    AFFINE_KERNEL_ROOT = Path('aiter/hsa')
-    CO_DIR = None           # Required by subclass
-
-    def co_dir(self, build_dir: Path, functional):
-        return build_dir / self.AFFINE_KERNEL_ROOT / functional.arch / self.CO_DIR
 
 def check_value(functional, repr_name):
     if not isinstance(repr_name, list):

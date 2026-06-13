@@ -1,41 +1,49 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-import itertools
-from ._common import (
-    get_possible_choices,
-    select_pattern,
-    BinningLessOrEqual,
-    BinningExact,
-    Config,
-    check_value,
-    FlashAffine,
-    ConditionalConstexpr as CC,
-)
-from .op_attn_bwd import OpAttnBwd
-from .aiter_fwd import aiter_fmha_v3_fwd
-from aotriton.utils import log
+"""
+ATI description of the flash backward affine (AITER ASM) kernel.
 
-class aiter_fmha_v3_bwd(aiter_fmha_v3_fwd):
-    CO_DIR = 'fmha_v3_bwd'
-    HEADER_EXTRA_INCLUDES = ['aotriton/_internal/flash/aiter.h']
-    COOKIE_CLASS = 'aiter::mha_bwd_args'
+A SLIM affine backend: a thin C++ shim translating OpAttnBwdParams into the AITER
+`aiter::mha_bwd_args` cookie and packaging pre-built fmha_v3_bwd .co files.
 
-    # The affine kernel borrows its functional metadata (ARGUMENTS / TENSOR_* /
-    # *_CHOICES) from the data-only OpAttnBwd class via _collect_functionals_from_shared
-    # + SHARED_IFACE; both stay until the affine kernel is ported (Step 10). The
-    # generated param-struct name (SHARED_IFACE._class_name_base()+'Params') is
-    # OpAttnBwdParams, matching the op_attn_bwd AtiOperator.
-    SHARED_IFACE = OpAttnBwd
-    NAME = 'aiter_fmha_v3_bwd'
-    ARGUMENTS = OpAttnBwd.ARGUMENTS
-    CHOICE_FILTERS = {
-        'Q' : lambda dtype : 'fp16' in dtype or 'bf16' in dtype,
-        'BLOCK_DMODEL' : lambda x : x >= 64 and x <= 192,       # Note: asm kernel only have [64, 128, 192] hdim variants but others in between may be padded.
-        'BIAS_TYPE' : lambda b : b == 0,
-        'ENABLE_DROPOUT' : lambda dropout : dropout == False,   # TODO: support dropout = True with validated PRNG
-    }
+It SUPPLIES the DQ_ACC operand (the workspace accumulator only this backend uses):
+the operator's params-struct union picks it up so DQ_ACC lands in OpAttnBwdParams
+without any hand-injection. DQ_ACC is a LazyTensor (rank 4, strides stride_acc?).
+"""
 
-    # gfx950+16-bit dq_acc requires another dq_shuffle_kernel, but fp32 dq_acc doesn't
-    SUPPORTED_ARCH = ['gfx942', 'gfx950']
-    DIRECT_KERNEL_ARGS = []
+import aotriton.template_instantiation as ati
+from ._common import check_value
+
+
+def _bwd_disabled(functional):
+    """ASM-kernel exclusions: no fp32, no hdim > 192."""
+    dtype = check_value(functional, ['Q'])
+    if '*fp32' in dtype:
+        return True
+    hdim = check_value(functional, ['BLOCK_DMODEL'])
+    if hdim > 192:
+        return True
+    return False
+
+
+@ati.kernel
+@ati.disable(when=_bwd_disabled)
+@ati.affine.aiter_asm(name='aiter_fmha_v3_bwd')
+@ati.affine.shared_operator('op_attn_bwd')
+@ati.affine.arch(['gfx942', 'gfx950'])
+# asm bwd has [64, 128, 192] hdim variants (others in between may be padded).
+@ati.affine.limitations(Q=lambda dtype: 'fp16' in dtype or 'bf16' in dtype,
+                        BLOCK_DMODEL=lambda x: 64 <= x <= 192,
+                        BIAS_TYPE=lambda b: b == 0,
+                        ENABLE_DROPOUT=lambda dropout: dropout == False)
+@ati.affine.structures(cookie='aiter::mha_bwd_args')
+@ati.affine.directories(co_dir='fmha_v3_bwd',
+                        headers=['aotriton/_internal/flash/aiter.h'])
+# The extra operand this backend contributes to OpAttnBwdParams (the union places
+# it between DB and L via the after/before anchors).
+@ati.affine.supplies(
+    ati.tensor('DQ_ACC', 'LazyTensor:*fp32:16', strides='stride_acc?', contiguous=-1),
+    after='DB', before='L')
+def aiter_fmha_v3_bwd():
+    pass

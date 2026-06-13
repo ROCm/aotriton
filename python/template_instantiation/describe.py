@@ -232,13 +232,72 @@ def kernel(jit_fn):
         'use ati.describe(kernel, *specs) (Mode B) instead.')
     specs = list(reversed(pending))      # bottom-up application -> source order
     from .decorators import OperatorSpec
+    from .affine import AffineMarkerSpec
     if any(isinstance(s, OperatorSpec) for s in specs):
         op = _finalize_operator(jit_fn, specs)
         delattr(jit_fn, _PENDING)
         return op
+    if any(isinstance(s, AffineMarkerSpec) for s in specs):
+        ak = _finalize_affine(jit_fn, specs)
+        delattr(jit_fn, _PENDING)
+        return ak
     describe(jit_fn, *specs)
     delattr(jit_fn, _PENDING)
     return jit_fn
+
+
+def _finalize_affine(placeholder, specs):
+    """Build an AtiAffineKernel from a stacked-@ affine description: one
+    @ati.affine.aiter_asm marker + the @ati.affine.* metadata specs + an optional
+    @ati.disable. SHARED_IFACE is wired later by infer_shared_iface."""
+    from .affine import (
+        AtiAffineKernel, AffineMarkerSpec, SharedOperatorSpec, ArchSpec,
+        LimitationsSpec, StructuresSpec, DirectoriesSpec, SuppliesSpec,
+    )
+    from .decorators import DisableSpec
+
+    marker = None
+    shared_op = None
+    arches = []
+    filters = {}
+    cookie = None
+    co_dir = None
+    headers = []
+    supplied = []
+    supplies_after = None
+    supplies_before = None
+    disable = None
+    for s in specs:
+        if isinstance(s, AffineMarkerSpec):
+            assert marker is None, 'multiple @ati.affine.aiter_asm markers in one stack'
+            marker = s
+        elif isinstance(s, SharedOperatorSpec):
+            shared_op = s.op_name
+        elif isinstance(s, ArchSpec):
+            arches = s.arches
+        elif isinstance(s, LimitationsSpec):
+            filters.update(s.filters)
+        elif isinstance(s, StructuresSpec):
+            cookie = s.cookie
+        elif isinstance(s, DirectoriesSpec):
+            co_dir, headers = s.co_dir, s.headers
+        elif isinstance(s, SuppliesSpec):
+            supplied.extend(s.specs)
+            supplies_after = s.after if s.after is not None else supplies_after
+            supplies_before = s.before if s.before is not None else supplies_before
+        elif isinstance(s, DisableSpec):
+            disable = s
+        else:
+            raise AssertionError(
+                f'unexpected spec {s!r} in an @ati.affine stack; affine kernels '
+                f'accept @ati.affine.* and @ati.disable only')
+    assert marker is not None, '@ati.kernel affine path without an @ati.affine marker'
+    assert co_dir is not None, f'affine kernel {marker.name!r} missing @ati.affine.directories'
+    return AtiAffineKernel(name=marker.name, family='flash', co_dir=co_dir,
+                           cookie=cookie, headers=headers, supported_arch=arches,
+                           choice_filters=filters, shared_operator_name=shared_op,
+                           supplied_specs=supplied, disable=disable,
+                           supplies_after=supplies_after, supplies_before=supplies_before)
 
 
 def _finalize_operator(placeholder, specs):

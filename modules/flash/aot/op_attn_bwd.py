@@ -14,10 +14,10 @@ from ._common import (
 )
 
 # DATA-ONLY metadata class (no longer constructed as an operator — op_attn_bwd is
-# now an AtiOperator, see modules/flash/aot/__init__._build_op_attn_bwd). It survives
-# only as the ARGUMENTS / TENSOR_* / *_CHOICES holder that the deferred affine kernel
-# (aiter_fmha_v3_bwd) and MetroBwdKernel borrow. Retire it once the affine kernel is
-# ported off the legacy SlimAffineKernelDescription (Step 10).
+# now an AtiOperator built declaratively in modules/flash/aot/__init__). It survives
+# only as the FAMILY / SHARED_IFACE / ARGUMENTS holder that the MetroBwdKernel class
+# borrows. Retire it once MetroKernel is ATI-native (no longer needs a legacy
+# SHARED_IFACE class).
 class OpAttnBwd(OpAttn):
     NAME = 'op_attn_bwd'
     ARGUMENTS = [
