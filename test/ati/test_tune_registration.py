@@ -13,7 +13,21 @@ import numpy as np
 
 import aotriton.template_instantiation as ati
 from aotriton.template_instantiation.describe import describe, get_kernel_spec
-from aotriton.template_instantiation.ir import Choice, Axis, enumerate_functionals
+from aotriton.template_instantiation.ir import Choice, Axis, Interface
+
+
+class _IRStub(Interface):
+    FAMILY = 'test'
+    NAME = 'stub'
+    def __init__(self, axes, overrides):
+        self._axes = axes
+        self._overrides = overrides
+    def _axes_overrides(self):
+        return self._axes, self._overrides
+
+
+def enumerate_functionals(axes, overrides, target_arch):
+    return _IRStub(axes, overrides).gen_functionals(target_arch)
 
 
 @dataclass

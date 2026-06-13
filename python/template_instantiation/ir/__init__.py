@@ -11,7 +11,7 @@ from .override import (
     Predicate, VarRef, ValueFn, Override,
     eq, ne, lt, gt, le, ge,
 )
-from .functional import Functional, ChoiceView, enumerate_functionals
+from .functional import Functional, ChoiceView
 
 __all__ = [
     'typed_choice', 'ConditionalChoice', 'cfield',
@@ -19,5 +19,5 @@ __all__ = [
     'Choice', 'Axis', 'assign_godel', 'godel_of',
     'Predicate', 'VarRef', 'ValueFn', 'Override',
     'eq', 'ne', 'lt', 'gt', 'le', 'ge',
-    'Functional', 'ChoiceView', 'enumerate_functionals',
+    'Functional', 'ChoiceView',
 ]

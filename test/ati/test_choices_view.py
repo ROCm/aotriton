@@ -9,8 +9,22 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from aotriton.template_instantiation.ir import (
-    Choice, Axis, Override, eq, enumerate_functionals,
+    Choice, Axis, Override, eq, Interface,
 )
+
+
+class _IRStub(Interface):
+    FAMILY = 'test'
+    NAME = 'stub'
+    def __init__(self, axes, overrides):
+        self._axes = axes
+        self._overrides = overrides
+    def _axes_overrides(self):
+        return self._axes, self._overrides
+
+
+def enumerate_functionals(axes, overrides, target_arch):
+    return _IRStub(axes, overrides).gen_functionals(target_arch)
 
 
 def _axis(var_name, arg_names, raw_choices, anchor, ranks=None):

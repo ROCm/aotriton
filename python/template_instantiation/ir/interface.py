@@ -77,6 +77,39 @@ class Interface:
         fb = self.partially_tuned_functionals
         return {k: fb.get(k, v) for k, v in compact_dict.items()}
 
+    # --- functional enumeration (classical: the Interface yields its functionals) -
+
+    def _axes_overrides(self):
+        """(axes, overrides) this Interface enumerates over. Default reads the
+        lowered BuiltKernel (`self._built`); the operator overrides this to source
+        its DEFAULT backend's axes while keeping meta_object = the operator."""
+        return self._built.axes, self._built.overrides
+
+    def gen_functionals(self, target_arch):
+        """Yield every Functional of this Interface (the classical enumeration:
+        product over the multi-choice axes (godel), fan each variable's choice onto
+        its arguments, apply overrides in declared order). `target_arch` is an
+        ordered {arch -> gpus}; arch_number is its enumeration index."""
+        import itertools
+        from .axis import assign_godel, godel_of
+        from .functional import Functional, _resolve
+        axes, overrides = self._axes_overrides()
+        axes_all = sorted(axes, key=lambda a: a.anchor)
+        axes_multi = [a for a in axes_all if not a.is_trivial]
+        assign_godel(axes_multi)
+        trivial_pick = {a.var_name: a.choices[0] for a in axes_all if a.is_trivial}
+        for arch_number, (arch, gpus) in enumerate(target_arch.items()):
+            for sel in itertools.product(*[range(a.radix) for a in axes_multi]):
+                godel = godel_of(axes_multi, sel)
+                picked = dict(trivial_pick)
+                picked.update({a.var_name: a.choices[i]
+                               for i, a in zip(sel, axes_multi)})
+                resolved = _resolve(axes_all, overrides, picked, arch)
+                yield Functional(meta_object=self, arch=arch,
+                                 arch_number=arch_number, godel_number=godel,
+                                 choice=picked, resolved=resolved,
+                                 optimized_for=gpus)
+
     # --- selective execution (overridden by kernels that support it) -------
 
     def iter_kernel_slot_names(self):

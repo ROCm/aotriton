@@ -14,7 +14,7 @@ the backend list + enums, CALL_OPTIONS_NAME, and optune (OPTUNE_KEYS +
 translate_dataframe, reused from the legacy Operator body).
 """
 
-from .kdesc import AtiFunctional, _binning_class
+from .kdesc import _binning_class
 from .interface import Interface
 
 
@@ -186,13 +186,12 @@ class Operator(Interface):
     def real_of(self, apparel_arg):
         return self._default.real_of(apparel_arg)
 
-    def gen_functionals(self, target_arch):
-        # Same functional product as the default backend, but meta_object is THIS
-        # operator (codegen keys on functional.meta_object).
-        from .functional import enumerate_functionals
+    def _axes_overrides(self):
+        # The operator's functional space is its DEFAULT backend's; meta_object on the
+        # yielded functionals stays THIS operator (Interface.gen_functionals sets it),
+        # which is what codegen keys on.
         built = self._default._built
-        for ir_f in enumerate_functionals(built.axes, built.overrides, target_arch):
-            yield AtiFunctional(ir_f, self, optimized_for=target_arch[ir_f.arch])
+        return built.axes, built.overrides
 
     # --- optune (operator-level: pick the backend) ---
 

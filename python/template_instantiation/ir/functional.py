@@ -2,25 +2,21 @@
 # SPDX-License-Identifier: MIT
 
 """
-Functional + enumerate_functionals (ATI executive plan Step 1.4; see
+Functional + the enumeration helpers (ATI executive plan Step 1.4; see
 agent-plans/ati+newbinds_rev1.md §6).
 
-A Functional is one fully-pinned instantiation of a kernel, excluding perf:
-every choice axis selected and all overrides applied. It is frozen — it stores
-the resolved {arg_name -> Choice} table rather than anything that still needs
-settling. `(arch_number, godel_number)` is its global identity; arches share the
-godel space.
+A Functional is one fully-pinned instantiation of a kernel/operator, excluding perf:
+every choice axis selected and all overrides applied, frozen into a resolved
+{arg_name -> Choice} table. `(arch_number, godel_number)` is its global identity
+(arches share the godel space).
 
-enumerate_functionals is the outer loop of the build: product over the
-multi-choice axes (godel), fan out each variable's choice onto its arguments,
-then apply overrides in declared order. No fixpoint — predicates read only the
-free-axis selection, known in full before overrides run.
+This is the SINGLE Functional class (the former low-level IR node and the codegen
+adapter `AtiFunctional` are fused here): it carries the enumeration state AND the
+codegen-facing signature/name/packing surface the generator reads. `meta_object` is
+the owning Interface (kernel/operator) — None for bare IR-level use (tests). The
+enumeration itself lives on `Interface.gen_functionals` (the classical shape); the
+module-level `_resolve` / `_PredCtx` helpers are shared by it.
 """
-
-import itertools
-
-from .axis import assign_godel, godel_of
-
 
 class ChoiceView:
     """Ergonomic accessor over a Functional's pinned choices (executive plan
@@ -70,16 +66,29 @@ class ChoiceView:
 
 
 class Functional:
-    __slots__ = ('arch', 'arch_number', 'godel_number', 'choice', 'resolved',
-                 '_choices_view')
+    """One fully-pinned kernel/operator instantiation (excluding perf).
 
-    def __init__(self, arch, arch_number, godel_number, choice, resolved):
+    State: `meta_object` (the owning Interface; None for bare IR tests), `arch`,
+    `arch_number`, `godel_number`, `choice` ({var_name -> Choice}), `resolved`
+    ({arg_name -> Choice}, post-override), `optimized_for` (the gpu list this
+    functional is tuned for; may be empty). The rest is the codegen-facing surface
+    (signatures, packing paths, per-arg docs)."""
+
+    __slots__ = ('meta_object', 'arch', 'arch_number', 'godel_number',
+                 'choice', 'resolved', '_optimized_for', '_choices_view')
+
+    def __init__(self, *, meta_object, arch, arch_number, godel_number,
+                 choice, resolved, optimized_for=()):
+        self.meta_object = meta_object
         self.arch = arch
         self.arch_number = arch_number
         self.godel_number = godel_number
         self.choice = dict(choice)        # var_name -> Choice (free + trivial)
         self.resolved = dict(resolved)    # arg_name -> Choice (post-override)
+        self._optimized_for = list(optimized_for)
         self._choices_view = None
+
+    # --- pinned-choice accessors ---
 
     @property
     def choices(self) -> ChoiceView:
@@ -93,9 +102,169 @@ class Functional:
         """Global identity: (arch_number, godel_number)."""
         return (self.arch_number, self.godel_number)
 
+    # --- identity convenience (delegated to meta_object) ---
+
+    @property
+    def optimized_for(self):
+        return self._optimized_for
+
+    @property
+    def noptimized_for(self):
+        return len(self._optimized_for)
+
+    @property
+    def family(self):
+        return self.meta_object.FAMILY
+
+    @property
+    def FAMILY(self):
+        return self.meta_object.FAMILY
+
+    @property
+    def name(self):
+        return self.meta_object.NAME
+
+    @property
+    def NAME(self):
+        return self.meta_object.NAME
+
+    @property
+    def database_gpus(self):
+        from aotriton.gpu_targets import AOTRITON_TUNING_DATABASE_REUSE
+        return [AOTRITON_TUNING_DATABASE_REUSE.get(g, g) for g in self._optimized_for]
+
+    # --- compact / fallback choices (multi-choice axes only) ---
+
+    @property
+    def compact_choices(self) -> dict:
+        """label -> resolved TypedChoice for each multi-choice axis (the legacy
+        compact_dict). The KEY is the axis's `signature_name` — the pure label used
+        in persisted artifacts (aks2/zip entry, DB-row key), unrelated to wiring.
+        The VALUE is looked up by the representative REAL argument (repr_arg);
+        signature_name is never used to index the resolved table."""
+        d = {}
+        for ax in self.meta_object.axes_multi:
+            d[ax.signature_name] = self.resolved[ax.repr_arg].tc
+        return d
+
+    @property
+    def fallback_choices(self) -> dict:
+        fb = self.meta_object.partially_tuned_functionals
+        out = {}
+        for k, tc in self.compact_choices.items():
+            out[k] = fb.get(k, tc)
+        return out
+
+    # --- triton-compile-signature dicts (resolved per arg) ---
+
+    def build_complete_tc_dict(self):
+        """arg_name -> resolved TypedChoice for every argument (post-override)."""
+        return {a: c.tc for a, c in self.resolved.items()}
+
+    def build_tc_dict(self):
+        """repr_name -> resolved TypedChoice for multi-choice axes."""
+        return self.compact_choices
+
+    def pp_arg_doc(self, aname):
+        """(is_constexpr, comment_value) for one launch argument's prepare_arguments
+        entry, sourced from the resolved Choice + the firing Override (no Bind):
+          * non-constexpr   -> (False, None)
+          * VarRef override -> (True, '<deferred var choices joined by />')
+          * literal/plain   -> (True, '<baked value>')"""
+        from .override import VarRef
+        kdesc = self.meta_object
+        # iter_launch_arguments emits apparel names; the IR tables are keyed on
+        # real names. Map back before looking up.
+        aname = kdesc.real_of(aname)
+        choice = self.resolved[aname]
+        if not choice.is_constexpr:
+            return False, None
+        ov = kdesc.override_for(aname)
+        if ov is not None and isinstance(ov.value, VarRef):
+            # Deferred to another variable: document its full choice list (the
+            # legacy CDC behavior, e.g. Hdim_qk -> 16/32/.../512).
+            src = kdesc.axis_by_var(ov.value.var_name)
+            return True, '/'.join(
+                str(c.tc.triton_compile_signature) for c in src.choices)
+        # Literal override or plain constexpr: the value actually baked in.
+        return True, str(choice.tc.triton_compile_signature)
+
+    # --- core signatures (must match legacy bytes) ---
+
+    @property
+    def unified_signature(self) -> str:
+        parts = []
+        for ax in self.meta_object.axes_multi:
+            # KEY = signature_name (pure persisted label); VALUE by repr_arg.
+            tc = self.resolved[ax.repr_arg].tc
+            parts.append(f'{ax.signature_name}={tc.testrun_entry_signature}')
+        return ';'.join(parts)
+
+    @property
+    def signature_in_func_name(self) -> str:
+        parts = []
+        for ax in self.meta_object.axes_multi:
+            s = str(self.resolved[ax.repr_arg].tc.triton_compile_signature)
+            s = s.replace('*', '＊').replace(':', '@') \
+                 .replace('True', 'T').replace('False', 'F')
+            parts.append(s)
+        return '_'.join(parts)
+
+    @property
+    def compact_signature_noarch(self) -> str:
+        return 'F__' + self.signature_in_func_name
+
+    @property
+    def human_readable_signature(self) -> str:
+        # Best-effort: a C++ comment, not byte-load-bearing (per review). One line
+        # per non-stride / non-hidden axis, representative arg + resolved value.
+        lines = []
+        for ax in self.meta_object.axes_all_ordered:
+            if ax.is_stride and ax.kind == 'stride':
+                # hidden u64 strides are omitted; baked (constexpr) strides shown
+                if not self.resolved[ax.arg_names[0]].is_constexpr:
+                    continue
+            if ax.kind == 'stride_unit':
+                continue
+            lines.append(f'{ax.signature_name} = {self.resolved[ax.repr_arg].tc}')
+        return 'Human-readable Signature \n// ' + '\n// '.join(lines)
+
+    # --- file packing paths ---
+
+    @property
+    def filepack_ondisk_path(self):
+        import hashlib
+        from pathlib import Path
+        from aotriton.gpu_targets import AOTRITON_ARCH_TO_DIRECTORY
+        digest = hashlib.sha256(self.unified_signature.encode()).hexdigest()
+        return (Path(AOTRITON_ARCH_TO_DIRECTORY[self.arch]) / self.meta_object.FAMILY
+                / self.meta_object.NAME / digest)
+
+    @property
+    def filepack_inzip_name(self) -> str:
+        return self.unified_signature
+
+    @property
+    def full_flatzip_path(self):
+        from pathlib import Path
+        from aotriton.gpu_targets import AOTRITON_ARCH_TO_DIRECTORY
+        return (Path(AOTRITON_ARCH_TO_DIRECTORY[self.arch]) / self.meta_object.FAMILY
+                / (self.meta_object.NAME + '.zip'))
+
+    @property
+    def full_filepack_dir(self):
+        from pathlib import Path
+        from aotriton.gpu_targets import AOTRITON_ARCH_TO_DIRECTORY
+        return (Path(AOTRITON_ARCH_TO_DIRECTORY[self.arch]) / self.meta_object.FAMILY
+                / self.meta_object.NAME)
+
+    @property
+    def tunecc_signature(self) -> str:
+        return '#F;' + self.unified_signature + f';;arch={self.arch}'
+
     def __repr__(self):
-        return (f'Functional(arch={self.arch!r}, arch_number={self.arch_number}, '
-                f'godel={self.godel_number})')
+        name = self.meta_object.NAME if self.meta_object is not None else '<bare>'
+        return f'Functional({name!r}, arch={self.arch!r}, godel={self.godel_number})'
 
 
 class _PredCtx:
@@ -111,7 +280,8 @@ class _PredCtx:
 
 def _resolve(axes_all, overrides, picked, arch):
     """Step 3+4: fan out var->args (tensor ranks specialized per arg), then push
-    overrides in declared order. Pure function of `picked` (+ arch dimension)."""
+    overrides in declared order. Pure function of `picked` (+ arch dimension).
+    Shared by Interface.gen_functionals (the enumeration lives there now)."""
     resolved = {}
     for axis in axes_all:
         nth = axis.choices.index(picked[axis.var_name])
@@ -124,29 +294,3 @@ def _resolve(axes_all, overrides, picked, arch):
             for t in ov.targets:
                 resolved[t] = c
     return resolved
-
-
-def enumerate_functionals(axes, overrides, target_arch):
-    """Yield every Functional of a kernel.
-
-    axes:        all Axis objects (ordering need not be canonical; sorted here).
-    overrides:   Override list, in declared order.
-    target_arch: ordered {arch -> gpus}; arch_number is its enumeration index.
-    """
-    axes_all = sorted(axes, key=lambda a: a.anchor)
-    axes_multi = [a for a in axes_all if not a.is_trivial]
-    assign_godel(axes_multi)
-
-    # Trivial axes pin a single choice; precompute it.
-    trivial_pick = {a.var_name: a.choices[0] for a in axes_all if a.is_trivial}
-
-    for arch_number, (arch, _gpus) in enumerate(target_arch.items()):
-        for sel in itertools.product(*[range(a.radix) for a in axes_multi]):
-            godel = godel_of(axes_multi, sel)
-            picked = dict(trivial_pick)
-            picked.update({a.var_name: a.choices[i]
-                           for i, a in zip(sel, axes_multi)})
-            resolved = _resolve(axes_all, overrides, picked, arch)
-            yield Functional(arch=arch, arch_number=arch_number,
-                             godel_number=godel,
-                             choice=picked, resolved=resolved)

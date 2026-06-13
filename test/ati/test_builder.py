@@ -20,7 +20,21 @@ sys.path.insert(0, str(REPO / 'tritonsrc'))
 import aotriton.template_instantiation as ati
 from aotriton.template_instantiation.describe import describe, get_kernel_spec
 from aotriton.template_instantiation.builder import build_kernel, BuiltKernel
-from aotriton.template_instantiation.ir import enumerate_functionals
+from aotriton.template_instantiation.ir import Interface
+
+
+class _IRStub(Interface):
+    FAMILY = 'test'
+    NAME = 'stub'
+    def __init__(self, axes, overrides):
+        self._axes = axes
+        self._overrides = overrides
+    def _axes_overrides(self):
+        return self._axes, self._overrides
+
+
+def enumerate_functionals(axes, overrides, target_arch):
+    return _IRStub(axes, overrides).gen_functionals(target_arch)
 
 # Real kernel (requires triton; it lives in a real file so JITFunction loads).
 from fwd_kernel import attn_fwd

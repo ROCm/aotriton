@@ -24,7 +24,6 @@ surface.
 from ..builder import build_kernel
 from ..describe import get_kernel_spec
 from .axis import assign_godel
-from .functional import enumerate_functionals
 from .interface import Interface
 
 
@@ -166,212 +165,6 @@ class _AxisParamShim:
         baked (override→constexpr) axis is excluded; stride axes never reach here
         (filtered before the shim is built)."""
         return not self._overridden
-
-
-class AtiFunctional:
-    """A functional produced by the adapter. Wraps an IR Functional and carries
-    the identity the generator keys on. Codegen-facing signature/name helpers are
-    added in Step 4.2."""
-
-    __slots__ = ('_ir', '_kdesc', '_optimized_for')
-
-    def __init__(self, ir_functional, kdesc, optimized_for):
-        self._ir = ir_functional
-        self._kdesc = kdesc
-        self._optimized_for = list(optimized_for)
-
-    @property
-    def meta_object(self):
-        return self._kdesc
-
-    @property
-    def arch(self):
-        return self._ir.arch
-
-    @property
-    def arch_number(self):
-        return self._ir.arch_number
-
-    @property
-    def godel_number(self):
-        return self._ir.godel_number
-
-    @property
-    def choices(self):
-        return self._ir.choices
-
-    @property
-    def choice(self):
-        """The raw {var_name -> Choice} dict (for predicate evaluation)."""
-        return self._ir.choice
-
-    @property
-    def resolved(self):
-        return self._ir.resolved
-
-    @property
-    def optimized_for(self):
-        return self._optimized_for
-
-    @property
-    def noptimized_for(self):
-        return len(self._optimized_for)
-
-    @property
-    def family(self):
-        return self._kdesc.FAMILY
-
-    @property
-    def FAMILY(self):
-        return self._kdesc.FAMILY
-
-    @property
-    def name(self):
-        return self._kdesc.NAME
-
-    @property
-    def NAME(self):
-        return self._kdesc.NAME
-
-    @property
-    def database_gpus(self):
-        from aotriton.gpu_targets import AOTRITON_TUNING_DATABASE_REUSE
-        return [AOTRITON_TUNING_DATABASE_REUSE.get(g, g) for g in self._optimized_for]
-
-    # --- compact / fallback choices (multi-choice axes only) ---
-
-    @property
-    def compact_choices(self) -> dict:
-        """label -> resolved TypedChoice for each multi-choice axis (the legacy
-        compact_dict). The KEY is the axis's `signature_name` — the pure label used
-        in persisted artifacts (aks2/zip entry, DB-row key), unrelated to wiring.
-        The VALUE is looked up by the representative REAL argument (repr_arg);
-        signature_name is never used to index the resolved table."""
-        d = {}
-        for ax in self._kdesc.axes_multi:
-            d[ax.signature_name] = self._ir.resolved[ax.repr_arg].tc
-        return d
-
-    @property
-    def fallback_choices(self) -> dict:
-        fb = self._kdesc.partially_tuned_functionals
-        out = {}
-        for k, tc in self.compact_choices.items():
-            out[k] = fb.get(k, tc)
-        return out
-
-    # --- triton-compile-signature dicts (resolved per arg) ---
-
-    def build_complete_tc_dict(self):
-        """arg_name -> resolved TypedChoice for every argument (post-override)."""
-        return {a: c.tc for a, c in self._ir.resolved.items()}
-
-    def build_tc_dict(self):
-        """repr_name -> resolved TypedChoice for multi-choice axes."""
-        return self.compact_choices
-
-    def pp_arg_doc(self, aname):
-        """(is_constexpr, comment_value) for one launch argument's prepare_arguments
-        entry. Mirrors the legacy Functional.pp_arg_doc but is sourced from the
-        resolved Choice + the firing Override (no Bind):
-          * non-constexpr   -> (False, None)
-          * VarRef override -> (True, '<deferred var choices joined by />')
-          * literal/plain   -> (True, '<baked value>')"""
-        from .override import VarRef
-        # iter_launch_arguments emits apparel names; the IR tables are keyed on
-        # real names. Map back before looking up.
-        aname = self._kdesc.real_of(aname)
-        choice = self._ir.resolved[aname]
-        if not choice.is_constexpr:
-            return False, None
-        ov = self._kdesc.override_for(aname)
-        if ov is not None and isinstance(ov.value, VarRef):
-            # Deferred to another variable: document its full choice list (the
-            # legacy CDC behavior, e.g. Hdim_qk -> 16/32/.../512).
-            src = self._kdesc.axis_by_var(ov.value.var_name)
-            return True, '/'.join(
-                str(c.tc.triton_compile_signature) for c in src.choices)
-        # Literal override or plain constexpr: the value actually baked in. (A
-        # tensor degraded to constexpr also reports its baked value, e.g. 0 — what
-        # the HSACO is compiled with, not 'nullptr'.)
-        return True, str(choice.tc.triton_compile_signature)
-
-    # --- core signatures (must match legacy bytes) ---
-
-    @property
-    def unified_signature(self) -> str:
-        parts = []
-        for ax in self._kdesc.axes_multi:
-            # KEY = signature_name (pure persisted label); VALUE by repr_arg.
-            tc = self._ir.resolved[ax.repr_arg].tc
-            parts.append(f'{ax.signature_name}={tc.testrun_entry_signature}')
-        return ';'.join(parts)
-
-    @property
-    def signature_in_func_name(self) -> str:
-        parts = []
-        for ax in self._kdesc.axes_multi:
-            s = str(self._ir.resolved[ax.repr_arg].tc.triton_compile_signature)
-            s = s.replace('*', '＊').replace(':', '@') \
-                 .replace('True', 'T').replace('False', 'F')
-            parts.append(s)
-        return '_'.join(parts)
-
-    @property
-    def compact_signature_noarch(self) -> str:
-        return 'F__' + self.signature_in_func_name
-
-    @property
-    def human_readable_signature(self) -> str:
-        # Best-effort: a C++ comment, not byte-load-bearing (per review). One line
-        # per non-stride / non-hidden axis, representative arg + resolved value.
-        lines = []
-        for ax in self._kdesc.axes_all_ordered:
-            if ax.is_stride and ax.kind == 'stride':
-                # hidden u64 strides are omitted; baked (constexpr) strides shown
-                if not self._ir.resolved[ax.arg_names[0]].is_constexpr:
-                    continue
-            if ax.kind == 'stride_unit':
-                continue
-            lines.append(f'{ax.signature_name} = {self._ir.resolved[ax.repr_arg].tc}')
-        return 'Human-readable Signature \n// ' + '\n// '.join(lines)
-
-    # --- file packing paths ---
-
-    @property
-    def filepack_ondisk_path(self):
-        import hashlib
-        from pathlib import Path
-        from aotriton.gpu_targets import AOTRITON_ARCH_TO_DIRECTORY
-        digest = hashlib.sha256(self.unified_signature.encode()).hexdigest()
-        return (Path(AOTRITON_ARCH_TO_DIRECTORY[self.arch]) / self._kdesc.FAMILY
-                / self._kdesc.NAME / digest)
-
-    @property
-    def filepack_inzip_name(self) -> str:
-        return self.unified_signature
-
-    @property
-    def full_flatzip_path(self):
-        from pathlib import Path
-        from aotriton.gpu_targets import AOTRITON_ARCH_TO_DIRECTORY
-        return (Path(AOTRITON_ARCH_TO_DIRECTORY[self.arch]) / self._kdesc.FAMILY
-                / (self._kdesc.NAME + '.zip'))
-
-    @property
-    def full_filepack_dir(self):
-        from pathlib import Path
-        from aotriton.gpu_targets import AOTRITON_ARCH_TO_DIRECTORY
-        return (Path(AOTRITON_ARCH_TO_DIRECTORY[self.arch]) / self._kdesc.FAMILY
-                / self._kdesc.NAME)
-
-    @property
-    def tunecc_signature(self) -> str:
-        return '#F;' + self.unified_signature + f';;arch={self.arch}'
-
-    def __repr__(self):
-        return (f'AtiFunctional({self._kdesc.NAME!r}, arch={self.arch!r}, '
-                f'godel={self.godel_number})')
 
 
 class KernelDescription(Interface):
@@ -750,13 +543,9 @@ class KernelDescription(Interface):
         # scalar axis: runtime if its choice is not a constexpr
         return not ax.choices[0].is_constexpr
 
-    # --- enumeration (replaces legacy gen_functionals) ---
-
-    def gen_functionals(self, target_arch):
-        for ir_f in enumerate_functionals(self._built.axes, self._built.overrides,
-                                          target_arch):
-            yield AtiFunctional(ir_f, self,
-                                optimized_for=target_arch[ir_f.arch])
+    # gen_functionals is inherited from ir.Interface (its default _axes_overrides
+    # reads self._built.{axes,overrides}); each yielded Functional has
+    # meta_object = this kdesc.
 
     # --- compiled-in feature tables ---
 
