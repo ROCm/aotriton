@@ -13,3 +13,6 @@ tritonsrc/tune-*.json
 *.log
 *.cfg
 agent-plans
+
+# Python packaging artifacts
+*.egg-info/
