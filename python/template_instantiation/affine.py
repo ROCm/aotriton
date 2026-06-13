@@ -30,7 +30,7 @@ union over all backends with no hand-injection.
 
 from pathlib import Path
 
-from aotriton.base.cfield import cfield
+from .ir.cfield import cfield
 from aotriton.gpu_targets import AOTRITON_ARCH_TO_PACK
 from .ir import Interface
 

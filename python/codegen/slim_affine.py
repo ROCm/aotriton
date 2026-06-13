@@ -1,7 +1,7 @@
 from pathlib import Path
 from argparse import Namespace
 
-from ..base import (
+from ..template_instantiation.ir import (
     Interface,
     Functional,
 )

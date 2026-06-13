@@ -3,8 +3,8 @@
 
 # Generate <family>/autotune.<kernel_name>/<functional>.cc
 
-from ..base import Functional
-from ..base import typed_choice as TC
+from ..template_instantiation.ir import Functional
+from ..template_instantiation.ir import typed_choice as TC
 from ..template_instantiation.ksignature import KernelSignature
 from .template import get_template
 from ..utils import (

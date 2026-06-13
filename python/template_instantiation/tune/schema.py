@@ -29,7 +29,7 @@ import dataclasses
 
 import numpy as np
 
-from ...base.typed_choice import constexpr as TCC
+from ..ir.typed_choice import constexpr as TCC
 
 # numpy dtype -> constexpr TypedChoice class (the perf field's C width).
 _NP_TO_TCC = {

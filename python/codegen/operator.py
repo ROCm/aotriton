@@ -4,7 +4,7 @@
 # Generate <family>/op.<op_name>.{h,cc}
 
 import io
-from ..base import (
+from ..template_instantiation.ir import (
     typed_choice as TC,
     Functional,
     Interface,

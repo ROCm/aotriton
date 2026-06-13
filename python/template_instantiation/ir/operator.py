@@ -35,7 +35,7 @@ def build_merged_struct_cfields(subkernels):
     supplies lands between its declared neighbors — while its cfields still come from
     `func_cfields`.
     """
-    from aotriton.base.cfield import cfield
+    from .cfield import cfield
     from ..ops import union_params
     cfield_by_name = {}
     name_lists = []

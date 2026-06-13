@@ -94,7 +94,7 @@ class _PerfParamShim:
         return _PerfBind(self._pp.name, self._pp.tcc(value))
 
     def get_cfields(self):
-        from aotriton.base.cfield import cfield
+        from .cfield import cfield
         tc = self._pp.tcc(0)
         return [cfield(ctype=tc.itype, aname=self._pp.name, index=-1,
                        nbits=tc.NBITS or 0)]
@@ -443,7 +443,7 @@ class KernelDescription(Interface):
         ts = self._built.tune
         if ts is None or ts.schema is None:
             return []
-        from aotriton.base.cfield import cfield
+        from .cfield import cfield
         out = []
         for pp in ts.schema.params:
             tc = pp.tcc(0)
@@ -684,7 +684,7 @@ class KernelDescription(Interface):
         """One cfield per non-stride, non-perf argument, in signature order, with
         the axis's representative (rank-specialized) C itype. Overrides never
         change the struct — the ABI is owned by the axis (ati+newbinds §6.2)."""
-        from aotriton.base.cfield import cfield
+        from .cfield import cfield
         out = []
         for ax in self._axes_all:
             if ax.is_stride:

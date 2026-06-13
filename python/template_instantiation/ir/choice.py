@@ -34,7 +34,7 @@ WHY a wrapper instead of extending TypedChoice (and its lifecycle):
   TypedChoice and delete this wrapper. See executive plan Step 6.3.
 """
 
-from ...base import typed_choice as TC
+from . import typed_choice as TC
 
 
 class Choice:

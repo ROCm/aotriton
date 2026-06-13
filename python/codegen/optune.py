@@ -4,7 +4,7 @@
 # Generate <family>/optune.<kernel_name>/<functional>.cc
 
 from .template import get_template
-from ..base import (
+from ..template_instantiation.ir import (
     typed_choice as TC,
     Functional,
     Interface,

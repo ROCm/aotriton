@@ -6,10 +6,10 @@
 
 from abc import ABC, abstractmethod
 import io
-from ..base import (
+from ..template_instantiation.ir import (
     typed_choice as TC,
-    Interface,
     Functional,
+    Interface,
 )
 from .template import get_template
 from ..utils import (

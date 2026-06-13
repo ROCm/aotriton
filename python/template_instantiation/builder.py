@@ -19,7 +19,7 @@ the params/signature machinery but are not godel digits.
 from .decorators import TensorSpec, ScalarSpec, ChoiceVar
 from .introspect import ParamSpec
 from .ir import Choice, Axis
-from ..base.typed_choice import ELEMENTAL_TYPE_MAP
+from .ir.typed_choice import ELEMENTAL_TYPE_MAP
 
 
 class DescriptionError(Exception):

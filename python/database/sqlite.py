@@ -3,7 +3,7 @@
 
 import sqlite3
 import pandas as pd
-from ..base import typed_choice as TC
+from ..template_instantiation.ir import typed_choice as TC
 from ..utils import log
 from ..gpu_targets import AOTRITON_TUNING_DATABASE_REUSE
 

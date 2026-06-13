@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 from abc import ABC, abstractmethod
-from ..base import (
+from ..template_instantiation.ir import (
     typed_choice as TC,
     Functional,
     Interface,
