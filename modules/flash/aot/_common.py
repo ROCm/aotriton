@@ -143,7 +143,7 @@ class FlashKernel(KernelDescription):
     def _gen_missing_entries(self, functional, lut_tensor,
                              arch, lut_full_seqlen_q, lut_full_seqlen_k, expected_size):
         import numpy as np
-        from v3python.tune.flash.module import FlashEntry  # Step 6: port off v3python.tune
+        from .flash_entry import FlashEntry
         causal_raw = check_value(functional, 'CAUSAL_TYPE')
         hdim = check_value(functional, 'BLOCK_DMODEL')
         dropout_p = 0.5 if check_value(functional, 'ENABLE_DROPOUT') else 0.0
