@@ -17,7 +17,7 @@ from dataclasses import dataclass
 import numpy as np
 
 import aotriton.template_instantiation as ati
-from _common import flash_disabled
+from ._common import flash_disabled
 
 
 def _block_dmodel_values():
