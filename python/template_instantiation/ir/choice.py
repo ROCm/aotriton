@@ -9,7 +9,7 @@ a constexpr (`0`, `False`), or a scalar type (`i32`). It is the unit an Axis
 enumerates over (see agent-plans/ati+newbinds_rev1.md §2.1).
 
 Rather than reinvent type strings, Choice is a thin wrapper over the existing
-`aotriton.base.typed_choice` (TC) settled objects: it adapts what enumeration and
+`ir.typed_choice` (TC) settled objects: it adapts what enumeration and
 codegen need (triton signature, C itype, dtype enum) and adds rank handling,
 since in the new IR a tensor's rank lives on the Axis, not the dtype.
 

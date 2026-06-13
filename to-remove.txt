@@ -56,11 +56,12 @@ modules/flash/kernel/flash.py  # the aggregator's real target; ATI never imports
 # codegen dispatches by CODEGEN_MODULE duck-typing (no legacy isinstance). compat/
 # (the ex-adapter dir) is also DELETED; the classes live in ir/.
 #
-# STILL KEPT: python/base/ — shared FOUNDATION (typed_choice, cfield, Functional,
-# Interface, parameter, conditional_value, bind), used by python/codegen/* and the
-# ATI layer. Its retirement is the next plan (merge the live bits into
-# template_instantiation/, drop dead pieces like bind).
-# python/affine/slim_akdesc.py: KEEP — the slim affine base AtiAffineKernel subclasses.
+# python/base/ — DELETED. Only typed_choice.py + cfield.py were load-bearing; they
+# moved to python/template_instantiation/ir/. The rest (functional.py, interface.py,
+# parameter.py, conditional_value.py, bind.py) had zero real importers (codegen only
+# type-hinted Functional/Interface, now the ir ones). The legacy IR Functional and
+# the codegen AtiFunctional were FUSED into ir/functional.py::Functional, and the
+# enumeration moved to the classical ir.Interface.gen_functionals.
 
 # =============================================================================
 # D. Legacy data-only operator metadata classes — DONE (deleted)

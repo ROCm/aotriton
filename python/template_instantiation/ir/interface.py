@@ -11,7 +11,7 @@ Metadata}` / enum-name rules. This base factors that surface so each concrete cl
 declares only its distinct behavior (functional/tuning surface, launcher methods,
 co_gen, branch refs) plus a few class attrs.
 
-NOTE: this is NOT the legacy `aotriton.base.interface.Interface`. That one also
+NOTE: this is NOT the former legacy base Interface. That one also
 carried the pre-ATI functional-generation machinery (TYPE_CHOICES / FEAT_CHOICES /
 ARGUMENTS dicts, `__init__`/`_late_init`) which the ATI enumeration replaced. The ATI
 base is identity-only — no functional `__init__`.
