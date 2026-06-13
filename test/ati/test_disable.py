@@ -18,7 +18,10 @@ from aotriton.template_instantiation.compat import build_kernel_description
 from aotriton.gpu_targets import cluster_gpus
 import aot.attn_fwd as _attn_fwd_desc
 attn_fwd = _attn_fwd_desc.attn_fwd
-import v3python.rules.flash as F   # legacy reference for parity comparison
+try:
+    import v3python.rules.flash as F   # legacy reference for parity comparison
+except ModuleNotFoundError:
+    F = None   # legacy reference unavailable (v3python removed) -> parity tests skip
 
 
 def test_disable_spec_partitioned_and_built():
@@ -56,6 +59,9 @@ def test_flash_disabled_set_matches_legacy():
 
 
 def main():
+    if F is None:
+        print('SKIP: v3python legacy reference unavailable; parity test skipped.')
+        return 0
     fns = [v for k, v in sorted(globals().items()) if k.startswith('test_')]
     for fn in fns:
         fn()

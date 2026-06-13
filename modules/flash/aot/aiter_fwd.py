@@ -51,3 +51,19 @@ class aiter_fmha_v3_fwd(FlashAffine):
         if df is None:
             return True
         return False
+
+# DRAFT (design sketch for the future affine-kernel ATI port — NOT yet executable;
+# @ati.affine.* / @ati.start do not exist yet). Kept as a note for the deferred
+# Step that ports aiter_fmha_v3_* off the legacy SlimAffineKernelDescription.
+#
+#   @ati.start  # or @ati.kernel if start hasn't been created yet
+#   @ati.disable(when=is_functional_disabled)
+#   @ati.affine.arch(['gfx942', 'gfx950'])
+#   @ati.affine.limitations(Q=lambda dtype: 'fp16' in dtype or 'bf16' in dtype,
+#                           BLOCK_DMODEL=lambda x: x in [128, 192])
+#   @ati.affine.structures(COOKIE='aiter::mha_fwd_args')
+#   @ati.affine.directories(CO_DIR='fmha_v3_fwd',
+#                           HEADERS=['aotriton/_internal/flash/aiter.h'])
+#   @ati.affine.aiter_asm
+#   def aiter_fmha_v3_fwd():
+#       pass

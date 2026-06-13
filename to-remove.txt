@@ -1,0 +1,86 @@
+# Legacy files to remove when the ATI migration is COMPLETE
+#
+# Tracking list (do NOT delete yet). Each entry notes WHY it still exists and the
+# precondition that must hold before it can be deleted. Generated during the modular
+# migration (agent-plans/ati_modular_exec0.md). Grouped by what blocks removal.
+
+# =============================================================================
+# A. The entire legacy generator tree — v3python/
+# =============================================================================
+# `python/` (the `aotriton` package) is the new generator; `v3python/` is the
+# pre-ATI generator, kept in-tree ONLY as the parity reference for a handful of
+# unit tests (test_adapter_surface / test_attn_fwd_parity / test_disable /
+# test_functional_signature / test_kdesc_adapter import `v3python.rules.flash`).
+# Codegen no longer imports v3python at all (proven: generation + golden pass with
+# v3python moved aside; the parity tests SKIP when it is absent).
+#
+# Precondition to remove: the parity tests are retired or re-pointed at a frozen
+# golden, so no test imports v3python.
+v3python/                      # whole tree (generator, rules, tune, database code)
+v3python/database/amd          # symlink -> ../../modules/database/amd (DB already moved)
+
+# Note: test/ati/golden.py still has DB_SRC_DIR = v3python/database as a FALLBACK
+# only (primary path is the prebuilt fused DB). Repoint DB_SRC_DIR (e.g. to
+# modules/database or a fixtures dir) before deleting v3python/.
+
+# =============================================================================
+# B. tritonsrc/ — legacy flat source dir (now symlinks into modules/flash/kernel)
+# =============================================================================
+# The 17 codegen Triton sources under tritonsrc/ are symlinks into
+# modules/flash/kernel/ (Step 1); the real test/perf .py files remain. The ATI
+# generator reads kernels from modules/flash/kernel/ directly (@ati.source), not
+# tritonsrc/.
+#
+# Precondition to remove the symlinks: the test/perf harnesses that still import
+# from `tritonsrc` (test_*.py, performance_*.py, attn_torch_function, ...) are
+# repointed at modules/flash/kernel/ (or modules/ is put on their sys.path).
+tritonsrc/*.py                 # the 17 codegen symlinks (NOT the real test/perf files)
+tritonsrc/flash.py             # legacy per-family aggregator (ATI uses per-kernel source_path)
+modules/flash/kernel/flash.py  # the aggregator's real target; ATI never imports it
+
+# =============================================================================
+# C. Legacy DESCRIPTION layers under python/ — base/, kernel/, op/
+# =============================================================================
+# Copied from v3python in Step 3. The ATI layer (template_instantiation/) WRAPS
+# these via compat/ adapters and STILL depends on them at runtime:
+#   - compat/kdesc_adapter reuses KernelDescription.translate_dataframe /
+#     gen_signatures_for_tuning (python/kernel/kdesc.py, ksignature.py)
+#   - compat/operator_adapter reuses Operator.translate_dataframe
+#     (python/op/operator.py)
+#   - base/cfield, base/interface, base/typed_choice, base/functional are used by
+#     the adapters AND by the still-legacy affine kernel (SlimAffineKernelDescription)
+#     and the data-only OpAttn* classes (modules/flash/aot/ops.py, op_attn_*.py).
+#   - op/metro.py, op/conditional.py back MetroKernel/ConditionalKernel.
+#
+# Precondition to remove: the description layer is fully ATI-native — the reused
+# translate_dataframe / gen_signatures_for_tuning / cfield / Interface logic is
+# ported into template_instantiation/, the affine kernel is ATI-described, and the
+# data-only OpAttn* classes are gone.
+python/kernel/                 # KernelDescription, ksignature (reused by kdesc_adapter)
+python/op/operator.py          # Operator.translate_dataframe (reused by operator_adapter)
+# python/op/metro.py, op/conditional.py: keep until MetroKernel is ATI-native.
+# python/base/*: keep until cfield/interface/typed_choice/functional are ATI-native.
+
+# =============================================================================
+# D. Legacy family support kept data-only (modules/flash/aot/)
+# =============================================================================
+# Demoted to data-only metadata holders, still borrowed by the DEFERRED affine
+# kernel (SHARED_IFACE / ARGUMENTS) and the metro classes.
+#
+# Precondition to remove: the affine/AiterASM kernel (aiter_fmha_v3_fwd/bwd) is
+# ported to the ATI @ati.affine.* surface (see the DRAFT in aiter_fwd.py), so it no
+# longer borrows OpAttn*/_common legacy metadata.
+modules/flash/aot/op_attn_fwd.py   # OpAttnFwd: data-only (TYPE/FEAT_CHOICES, ARGUMENTS)
+modules/flash/aot/op_attn_bwd.py   # OpAttnBwd: data-only (borrowed by affine bwd + MetroBwdKernel)
+modules/flash/aot/ops.py           # re-exports the two data-only classes
+# _common.py: keep — it also hosts FlashKernel/flash_disabled/flash_entry used by ATI.
+
+# =============================================================================
+# E. Interim scaffolding inside the new tree (replace, don't just delete)
+# =============================================================================
+# python/rules/__init__.py — the temporary aggregator that enumerates modules/*/aot
+#   by explicit path. To be REPLACED by --root_dir-driven family discovery in
+#   generate.py (not a plain deletion).
+# modules/flash/aot/__init__.py — the _build_metro_* / per-kernel
+#   build_kernel_description wiring is interim; should be pushed into the
+#   operator/generator layers so __init__ exposes only `operators`.
