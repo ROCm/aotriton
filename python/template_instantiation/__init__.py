@@ -24,7 +24,7 @@ Authoring surface (see agent-plans/ati_rev1.md):
 from . import tune
 from .decorators import (
     tensor_dtype, choice_set, tensor, scalar,
-    derives, overrides, disable, cite, eq, ne, lt, gt,
+    derives, overrides, disable, cite, source, eq, ne, lt, gt,
 )
 from .describe import describe, kernel
 from .builder import AtiDescriptionError
@@ -33,7 +33,7 @@ from .metro import metro_kernel
 
 __all__ = [
     'tensor_dtype', 'choice_set', 'tensor', 'scalar',
-    'derives', 'overrides', 'disable', 'cite', 'eq', 'ne', 'lt', 'gt',
+    'derives', 'overrides', 'disable', 'cite', 'source', 'eq', 'ne', 'lt', 'gt',
     'describe', 'kernel', 'operator', 'union_params', 'metro_kernel',
     'tune', 'AtiDescriptionError',
 ]

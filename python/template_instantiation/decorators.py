@@ -455,3 +455,67 @@ def cite(target):
       @ati.cite("op_attn_bwd.triton_split")      # whole metro (merged interface)
     """
     return CiteSpec(target)
+
+
+def source(path, name=None):
+    """Innermost stacked-@ decorator: import the Triton source at `path` and return
+    the kernel it defines, so the @ati.* decorators ABOVE stack onto the real kernel
+    without copying it into the description (agent-plans/ati_modular_rev0.md §5a).
+
+        @ati.kernel
+        @ati.tensor('Q', 'T_io', strides='stride_q?', contiguous=-1)
+        # ... more @ati.* specs ...
+        @ati.source("../kernel/fwd_kernel.py")   # innermost, just above the def
+        def attn_fwd():                          # placeholder: no args, body `pass`
+            pass
+
+    `path` is resolved relative to the DESCRIPTION file (the caller's __file__).
+    The kernel symbol looked up in the imported module defaults to the placeholder
+    `def`'s name; pass `name=` to override (the source filename, the kernel symbol,
+    and the description module name are all independent). The returned object need
+    not be a Triton kernel — any callable the builder can introspect.
+
+    MUST be the innermost @ati.* (directly above the def): decorators apply
+    bottom-up, so source() runs first and supplies the object every spec above then
+    attaches to. A spec placed BELOW it would attach to the placeholder.
+    """
+    import inspect
+    import importlib.util
+    from pathlib import Path
+
+    # Resolve `path` relative to the caller's file (the description module), not CWD.
+    caller_file = inspect.stack()[1].filename
+    base = Path(caller_file).resolve().parent
+    src = (base / path).resolve()
+
+    def _decorator(placeholder):
+        sym = name or placeholder.__name__
+        if not src.exists():
+            raise AtiSourceError(
+                f"@ati.source: kernel source {src} (from {path!r}, relative to "
+                f"{base}) does not exist")
+        # Put the source dir on sys.path so its sibling imports (flat
+        # `from fwd_kernel_inner import ...`) resolve, then import by NAME so the
+        # module is cached in sys.modules — repeated @ati.source calls and any
+        # `from <stem> import ...` elsewhere then share ONE module object (and thus
+        # one kernel object). Importing by file would exec a fresh copy each time.
+        import sys
+        import importlib
+        srcdir = str(src.parent)
+        if srcdir not in sys.path:
+            sys.path.insert(0, srcdir)
+        mod = sys.modules.get(src.stem)
+        if mod is None or getattr(mod, '__file__', None) != str(src):
+            mod = importlib.import_module(src.stem)
+        if not hasattr(mod, sym):
+            raise AtiSourceError(
+                f"@ati.source({path!r}): module {src.name} has no symbol {sym!r} "
+                f"(the placeholder def is named {placeholder.__name__!r}; pass "
+                f"name= if the kernel symbol differs)")
+        return getattr(mod, sym)
+
+    return _decorator
+
+
+class AtiSourceError(Exception):
+    """A bad @ati.source: missing file or kernel symbol."""
