@@ -7,7 +7,7 @@
 A citing kernel declares only what is unique to it and cites another kernel for the
 rest: gap arguments (matched by apparel name) and string dtype-variable references
 are inherited from the cited kernel. Unresolved gaps / unknown cite targets raise
-AtiDescriptionError. We use the real attn_fwd (cited) and debug (citing) kernels."""
+DescriptionError. We use the real attn_fwd (cited) and debug (citing) kernels."""
 
 import sys
 from pathlib import Path
@@ -21,7 +21,7 @@ import aotriton.template_instantiation as ati
 from aotriton.template_instantiation import registry
 from aotriton.template_instantiation.describe import describe
 from aotriton.template_instantiation.ir.kdesc import build_kernel_description
-from aotriton.template_instantiation.builder import AtiDescriptionError
+from aotriton.template_instantiation.builder import DescriptionError
 
 # The cited kernel: the real ATI attn_fwd description (finalized on import).
 import aot.attn_fwd as _attn_fwd_desc
@@ -86,7 +86,7 @@ def test_gap_scalars_inherited():
 
 def test_unresolved_gap_raises():
     setup()
-    # Cite a kernel that does NOT define some of debug's args -> AtiDescriptionError.
+    # Cite a kernel that does NOT define some of debug's args -> DescriptionError.
     # Use a tiny cited kernel missing philox.
     from fwd_kernel import attn_fwd as _af  # noqa
     specs = [
@@ -99,10 +99,10 @@ def test_unresolved_gap_raises():
     try:
         build_kernel_description(debug_simulate_encoded_softmax, family='flash',
                                  source_path='tritonsrc/flash.py', register=False)
-    except AtiDescriptionError as e:
+    except DescriptionError as e:
         assert 'R' in str(e) or 'stride_rz' in str(e)
         return
-    raise AssertionError('expected AtiDescriptionError for unresolved gap')
+    raise AssertionError('expected DescriptionError for unresolved gap')
 
 
 def test_unknown_cite_target_raises():
@@ -116,10 +116,10 @@ def test_unknown_cite_target_raises():
     try:
         build_kernel_description(debug_simulate_encoded_softmax, family='flash',
                                  source_path='tritonsrc/flash.py', register=False)
-    except AtiDescriptionError as e:
+    except DescriptionError as e:
         assert 'no_such_kernel' in str(e)
         return
-    raise AssertionError('expected AtiDescriptionError for unknown cite target')
+    raise AssertionError('expected DescriptionError for unknown cite target')
 
 
 def main():

@@ -7,7 +7,7 @@ Flash family build block (the ATI registry for the `flash` family).
 Enumerating `modules/<family>/aot` packages drives the per-family build (interim
 protocol; `--module_dir` deferred). This module imports the `aot/` kernel
 descriptions (each finalizes on import via `@ati.kernel`/`@ati.source`), builds the
-AtiKernelDescription for each kernel, assembles the metros (from the
+KernelDescription for each kernel, assembles the metros (from the
 `@ati.metro_kernel` descriptions via `lower_plan`) and the operators, runs
 SHARED_IFACE inference + operator registration, and exposes the family's
 `kernels` / `operators` / `affine_kernels` for the generator (`aotriton.rules`).
@@ -74,7 +74,7 @@ __bwd_preprocess = _build(_d_pp, 'bwd_preprocess', 'bwd_preprocess.py')
 __bwd_preprocess_varlen = _build(_d_ppv, 'bwd_preprocess_varlen', 'bwd_preprocess.py')
 __bwd_kernel_fuse = _build(_d_fuse, 'bwd_kernel_fuse', 'bwd_kernel_fuse.py')
 
-# Affine (asm) backends — already finalized AtiAffineKernel objects (the @ati.affine
+# Affine (asm) backends — already finalized AffineKernel objects (the @ati.affine
 # stacked form returns the built kernel from @ati.kernel, like the operators).
 __fwd_aiter = aiter_fmha_v3_fwd
 __bwd_aiter = aiter_fmha_v3_bwd
@@ -100,7 +100,7 @@ affine_kernels = [
 #
 # Triton metro backends: built from the @ati.metro_kernel transpiler plan
 # (metro_fwd.py / metro_bwd.py) + the sub-kernel map via build_metro -> an
-# AtiMetroKernel launcher (no MetroFwdKernel/MetroBwdKernel subclasses, no OpAttn*).
+# MetroKernel launcher (no MetroFwdKernel/MetroBwdKernel subclasses, no OpAttn*).
 # Affine backends are the ATI @ati.affine kernels (__fwd_aiter / __bwd_aiter).
 _metro_fwd = build_metro(
     _m_fwd.metro_fwd.__ati_metro__,

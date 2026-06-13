@@ -23,7 +23,7 @@ def sancheck_kernel_spec(kernel_spec):
     """Validate one KernelSpec (from describe()). Returns a list of error strings
     (empty == clean). Does not raise."""
     from ..describe import _validate_completeness
-    from ..builder import build_kernel, AtiDescriptionError
+    from ..builder import build_kernel, DescriptionError
 
     name = getattr(kernel_spec.kernel, '__name__', 'kernel')
     errors = []
@@ -38,7 +38,7 @@ def sancheck_kernel_spec(kernel_spec):
     # 2/3/4. build the IR (axes/overrides) and validate scope + resolution.
     try:
         built = build_kernel(kernel_spec)
-    except AtiDescriptionError as e:
+    except DescriptionError as e:
         errors.append(f'{name}: {e}')
         return errors
 
@@ -82,9 +82,9 @@ def _tune_specs(kernel_spec):
 
 def sancheck_report(kernels=None, operators=None):
     """Run sancheck over the given ATI kernels/operators. Returns (ok, errors).
-    Only ATI-described items (an AtiKernelDescription with a `kernel_spec`, or an
-    AtiOperator) are checked; legacy descriptions are skipped."""
-    from ..ir.operator import AtiOperator
+    Only ATI-described items (an KernelDescription with a `kernel_spec`, or an
+    Operator) are checked; legacy descriptions are skipped."""
+    from ..ir.operator import Operator
 
     errors = []
     seen_specs = set()
@@ -98,7 +98,7 @@ def sancheck_report(kernels=None, operators=None):
     for k in (kernels or []):
         _check(k)
     for op in (operators or []):
-        if isinstance(op, AtiOperator):
+        if isinstance(op, Operator):
             _check(op._default)                  # the default backend's kernel spec
             try:
                 _ = op.func_cfields              # exercises the struct build

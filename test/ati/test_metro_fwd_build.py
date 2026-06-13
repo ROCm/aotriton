@@ -18,7 +18,7 @@ sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / 'modules' / 'flash'))
 
 from aotriton.template_instantiation.metro.build import (
-    AtiMetroKernel, ConditionalKernel)
+    MetroKernel, ConditionalKernel)
 from aotriton.template_instantiation.metro import lower_plan
 
 
@@ -54,7 +54,7 @@ def test_transpiled_fwd_metro_matches_handwritten():
     kmap = {'attn_fwd': attn, 'debug_simulate_encoded_softmax': debug}
 
     def factory(steps):
-        return AtiMetroKernel('triton', steps)
+        return MetroKernel('triton', steps)
 
     transpiled = lower_plan(_load_metro_fwd_plan(), kmap, factory, ConditionalKernel)
 

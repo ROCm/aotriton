@@ -224,7 +224,7 @@ def kernel(jit_fn):
     Two stack kinds share this finalizer (TODO: rename to a generic @ati.start
     facade): a KERNEL stack (the default — finalized through describe()) and an
     OPERATOR stack (marked by an innermost @ati.operator — finalized into an
-    AtiOperator)."""
+    Operator)."""
     pending = getattr(jit_fn, _PENDING, None)
     assert pending is not None, (
         '@ati.kernel found no pending @ati.* specs below it; either stack at '
@@ -247,11 +247,11 @@ def kernel(jit_fn):
 
 
 def _finalize_affine(placeholder, specs):
-    """Build an AtiAffineKernel from a stacked-@ affine description: one
+    """Build an AffineKernel from a stacked-@ affine description: one
     @ati.affine.aiter_asm marker + the @ati.affine.* metadata specs + an optional
     @ati.disable. SHARED_IFACE is wired later by infer_shared_iface."""
     from .affine import (
-        AtiAffineKernel, AffineMarkerSpec, SharedOperatorSpec, ArchSpec,
+        AffineKernel, AffineMarkerSpec, SharedOperatorSpec, ArchSpec,
         LimitationsSpec, StructuresSpec, DirectoriesSpec, SuppliesSpec,
     )
     from .decorators import DisableSpec
@@ -293,7 +293,7 @@ def _finalize_affine(placeholder, specs):
                 f'accept @ati.affine.* and @ati.disable only')
     assert marker is not None, '@ati.kernel affine path without an @ati.affine marker'
     assert co_dir is not None, f'affine kernel {marker.name!r} missing @ati.affine.directories'
-    return AtiAffineKernel(name=marker.name, family='flash', co_dir=co_dir,
+    return AffineKernel(name=marker.name, family='flash', co_dir=co_dir,
                            cookie=cookie, headers=headers, supported_arch=arches,
                            choice_filters=filters, shared_operator_name=shared_op,
                            supplied_specs=supplied, disable=disable,
@@ -301,7 +301,7 @@ def _finalize_affine(placeholder, specs):
 
 
 def _finalize_operator(placeholder, specs):
-    """Build an AtiOperator from a stacked-@ operator description: one
+    """Build an Operator from a stacked-@ operator description: one
     @ati.operator marker (the construction params), @ati.backend specs (the
     interchangeable backends), and operator-level @ati.tune.* (binning ->
     OPTUNE_KEYS, fallback -> PARTIALLY_TUNED; configs warned + ignored)."""

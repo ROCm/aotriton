@@ -182,7 +182,7 @@ def _supplied_cfield(spec, index):
     return cfield(ctype=ctype, aname=aname, index=index, nbits=0)
 
 
-class AtiAffineKernel(Interface):
+class AffineKernel(Interface):
     """A slim affine (AITER ASM) kernel built from the @ati.affine.* stacked form.
 
     ATI-native: subclasses the ATI Interface base (identity surface) and absorbs the
@@ -223,7 +223,7 @@ class AtiAffineKernel(Interface):
 
     @property
     def param_class_name(self):
-        # The params struct is the shared operator's (the AtiOperator exposes it).
+        # The params struct is the shared operator's (the Operator exposes it).
         return self.SHARED_IFACE.param_class_name
 
     # --- slim-affine codegen surface (absorbed from SlimAffineKernelDescription) ---

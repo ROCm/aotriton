@@ -374,7 +374,7 @@ class AtiFunctional:
                 f'godel={self.godel_number})')
 
 
-class AtiKernelDescription(Interface):
+class KernelDescription(Interface):
     """KernelDescription-compatible facade backed by a BuiltKernel."""
 
     CODEGEN_MODULE = 'triton'
@@ -801,7 +801,7 @@ class AtiKernelDescription(Interface):
 
 def build_kernel_description(kernel, *, family, source_path=None,
                              triton_kernel_name=None, register=True):
-    """Build an AtiKernelDescription from a kernel already described via
+    """Build an KernelDescription from a kernel already described via
     ati.describe() / the stacked-@ form.
 
     Before lowering, @ati.cite gaps are filled from kernels built earlier (the flat
@@ -815,7 +815,7 @@ def build_kernel_description(kernel, *, family, source_path=None,
         f'call ati.describe(...) or use the stacked-@ form first')
     resolve_cites(spec, family=family)        # fill cited gaps before lowering
     built = build_kernel(spec)
-    adapter = AtiKernelDescription(built, family=family, source_path=source_path,
+    adapter = KernelDescription(built, family=family, source_path=source_path,
                                    triton_kernel_name=triton_kernel_name)
     adapter.kernel_spec = spec      # source KernelSpec (for --sancheck)
     if register:

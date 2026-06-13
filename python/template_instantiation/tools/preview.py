@@ -49,7 +49,7 @@ def _axis_manifest(kdesc) -> str:
 
 
 def preview_kdesc(kdesc) -> str:
-    """Render the implicit structures of an AtiKernelDescription / AtiOperator."""
+    """Render the implicit structures of an KernelDescription / Operator."""
     parts = [
         f'// ==== {kdesc.unique_path.as_posix()} ====',
         _axis_manifest(kdesc),
@@ -69,12 +69,12 @@ def preview_kdesc(kdesc) -> str:
 def preview(selective=None, kernels=None, operators=None) -> str:
     """Render --preview output for the ATI items matching `selective` (a
     unique_path string/glob), or all ATI items if None."""
-    from ..ir.operator import AtiOperator
+    from ..ir.operator import Operator
     out = []
     items = list(kernels or []) + list(operators or [])
     for it in items:
         # only ATI-backed items have the axis surface
-        if not hasattr(it, 'axes_all_ordered') and not isinstance(it, AtiOperator):
+        if not hasattr(it, 'axes_all_ordered') and not isinstance(it, Operator):
             continue
         if selective is not None and not it.unique_path.match(selective):
             continue

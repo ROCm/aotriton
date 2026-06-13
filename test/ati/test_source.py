@@ -13,7 +13,7 @@ sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / 'modules' / 'flash' / 'kernel'))
 
 import aotriton.template_instantiation as ati
-from aotriton.template_instantiation.decorators import AtiSourceError
+from aotriton.template_instantiation.decorators import SourceError
 from aotriton.template_instantiation.describe import get_kernel_spec
 
 KSRC = '../../modules/flash/kernel/fwd_kernel.py'   # relative to THIS test file's dir (test/ati/)
@@ -56,10 +56,10 @@ def test_missing_symbol_errors():
         @ati.source(KSRC, name='no_such_kernel')
         def whatever():
             pass
-    except AtiSourceError as e:
+    except SourceError as e:
         assert 'no_such_kernel' in str(e)
         return
-    raise AssertionError('expected AtiSourceError for missing symbol')
+    raise AssertionError('expected SourceError for missing symbol')
 
 
 def test_missing_file_errors():
@@ -67,10 +67,10 @@ def test_missing_file_errors():
         @ati.source('../kernel/does_not_exist.py')
         def attn_fwd():
             pass
-    except AtiSourceError as e:
+    except SourceError as e:
         assert 'does not exist' in str(e)
         return
-    raise AssertionError('expected AtiSourceError for missing file')
+    raise AssertionError('expected SourceError for missing file')
 
 
 def main():

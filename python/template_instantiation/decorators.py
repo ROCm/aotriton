@@ -491,7 +491,7 @@ def source(path, name=None):
     def _decorator(placeholder):
         sym = name or placeholder.__name__
         if not src.exists():
-            raise AtiSourceError(
+            raise SourceError(
                 f"@ati.source: kernel source {src} (from {path!r}, relative to "
                 f"{base}) does not exist")
         # Put the kernel source dir on sys.path so its flat sibling imports
@@ -522,7 +522,7 @@ def source(path, name=None):
                                              # later @ati.source share this object
             spec.loader.exec_module(mod)
         if not hasattr(mod, sym):
-            raise AtiSourceError(
+            raise SourceError(
                 f"@ati.source({path!r}): module {src.name} has no symbol {sym!r} "
                 f"(the placeholder def is named {placeholder.__name__!r}; pass "
                 f"name= if the kernel symbol differs)")
@@ -531,7 +531,7 @@ def source(path, name=None):
     return _decorator
 
 
-class AtiSourceError(Exception):
+class SourceError(Exception):
     """A bad @ati.source: missing file or kernel symbol."""
 
 
@@ -539,7 +539,7 @@ class AtiSourceError(Exception):
 #
 # An operator dispatches among interchangeable BACKENDS (a triton metro, a fused
 # triton kernel, an affine asm kernel, ...). It is described declaratively with the
-# stacked-@ form, mirroring kernels but finalizing into an AtiOperator rather than a
+# stacked-@ form, mirroring kernels but finalizing into an Operator rather than a
 # KernelSpec:
 #
 #     @ati.operator(family='flash', call_options_name='attn_options',
@@ -633,6 +633,6 @@ def operator(name=None, *, family, call_options_name, default_kdesc,
     """Innermost stacked-@ marker declaring the def to be an operator description
     (the operator analogue of @ati.source). The @ati.backend / @ati.tune.* specs
     ABOVE it accumulate onto the operator, and @ati.kernel finalizes the stack into
-    an AtiOperator."""
+    an Operator."""
     return OperatorSpec(name, family=family, call_options_name=call_options_name,
                         default_kdesc=default_kdesc, struct_cfields=struct_cfields)

@@ -14,7 +14,7 @@ sys.path.insert(0, str(REPO / 'modules' / 'flash'))
 
 import aotriton.template_instantiation as ati
 from aotriton.template_instantiation.describe import describe, get_kernel_spec
-from aotriton.template_instantiation.builder import build_kernel, AtiDescriptionError
+from aotriton.template_instantiation.builder import build_kernel, DescriptionError
 from aotriton.template_instantiation.ir.kdesc import build_kernel_description
 from aotriton.gpu_targets import cluster_gpus
 import aot.attn_fwd as _attn_fwd_desc
@@ -89,7 +89,7 @@ def test_multichoice_shared_var_requires_signature_name():
              _validate=False)
     try:
         build_kernel(get_kernel_spec(k))
-    except AtiDescriptionError as e:
+    except DescriptionError as e:
         assert 'signature_name' in str(e)
         return
     raise AssertionError('expected signature_name requirement error')

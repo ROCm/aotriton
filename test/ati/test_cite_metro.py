@@ -22,7 +22,7 @@ import aotriton.template_instantiation as ati
 from aotriton.template_instantiation import registry
 from aotriton.template_instantiation.describe import describe, get_kernel_spec
 from aotriton.template_instantiation.ir.kdesc import build_kernel_description
-from aotriton.template_instantiation.builder import AtiDescriptionError
+from aotriton.template_instantiation.builder import DescriptionError
 
 import aot.attn_fwd as _attn_fwd_desc
 attn_fwd = _attn_fwd_desc.attn_fwd
@@ -113,10 +113,10 @@ def test_unknown_metro_raises():
     _register_fwd_op()
     try:
         _cite_debug('op_attn_fwd.no_such_metro')
-    except AtiDescriptionError as e:
+    except DescriptionError as e:
         assert 'no_such_metro' in str(e) or 'no backend' in str(e)
         return
-    raise AssertionError('expected AtiDescriptionError for unknown metro')
+    raise AssertionError('expected DescriptionError for unknown metro')
 
 
 def test_whole_metro_requires_built_op():
@@ -125,10 +125,10 @@ def test_whole_metro_requires_built_op():
     registry.clear('flash'); _build_attn_fwd_kdesc()   # kernel only, no op
     try:
         _cite_debug('op_attn_fwd.triton')
-    except AtiDescriptionError as e:
+    except DescriptionError as e:
         assert 'whole-metro' in str(e) or 'not a built' in str(e)
         return
-    raise AssertionError('expected AtiDescriptionError for whole-metro without op')
+    raise AssertionError('expected DescriptionError for whole-metro without op')
 
 
 def main():

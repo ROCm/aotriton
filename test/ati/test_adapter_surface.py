@@ -1,7 +1,7 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-"""Step 4.2.2: AtiKernelDescription codegen surface matches the legacy attn_fwd
+"""Step 4.2.2: KernelDescription codegen surface matches the legacy attn_fwd
 KernelDescription — struct cfields, perf cfields, launch arguments, and the
 compiled-in feature tables."""
 

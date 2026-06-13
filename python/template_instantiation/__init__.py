@@ -28,7 +28,7 @@ from . import affine          # ati.affine.* decorator namespace (slim affine ke
 # @ati.operator DECORATOR exported below.
 from .ops import union_params
 from .describe import describe, kernel
-from .builder import AtiDescriptionError
+from .builder import DescriptionError
 from .metro import metro_kernel
 from .decorators import (
     tensor_dtype, choice_set, tensor, scalar,
@@ -41,7 +41,7 @@ __all__ = [
     'tensor_dtype', 'choice_set', 'tensor', 'scalar',
     'derives', 'overrides', 'disable', 'cite', 'source', 'eq', 'ne', 'lt', 'gt',
     'describe', 'kernel', 'operator', 'backend', 'union_params', 'metro_kernel',
-    'tune', 'AtiDescriptionError',
+    'tune', 'DescriptionError',
 ]
 
 

@@ -94,7 +94,7 @@ def test_metro_kernel_merges_renamed_arg():
     # apparel mapping now lives on each sub-kernel's kdesc (apparel_of), NOT on the
     # metro; merged_operand_order reads it from there.
     from aotriton.template_instantiation.metro.build import (
-        AtiMetroKernel, ConditionalKernel)
+        MetroKernel, ConditionalKernel)
 
     class _K:
         def __init__(self, name, arguments, wiring=None):
@@ -113,7 +113,7 @@ def test_metro_kernel_merges_renamed_arg():
     kmap = {'attn_fwd': attn, 'debug_simulate_encoded_softmax': debug}
 
     def metro_factory(steps):
-        return AtiMetroKernel('metro_fwd', steps)
+        return MetroKernel('metro_fwd', steps)
 
     metro = lower_plan(metro_fwd.__ati_metro__, kmap,
                        metro_factory, ConditionalKernel)

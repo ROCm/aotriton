@@ -1,7 +1,7 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-"""Step 4.1: AtiKernelDescription enumeration/godel parity with the legacy
+"""Step 4.1: KernelDescription enumeration/godel parity with the legacy
 attn_fwd KernelDescription."""
 
 import sys

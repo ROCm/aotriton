@@ -25,7 +25,7 @@ from aotriton.template_instantiation import registry
 from aotriton.template_instantiation.describe import describe, get_kernel_spec
 from aotriton.template_instantiation.ir.kdesc import build_kernel_description
 from aotriton.template_instantiation.ops.cite import resolve_cites
-from aotriton.template_instantiation.builder import AtiDescriptionError
+from aotriton.template_instantiation.builder import DescriptionError
 
 import aot.attn_fwd as _attn_fwd_desc
 attn_fwd = _attn_fwd_desc.attn_fwd
@@ -94,7 +94,7 @@ def test_bare_lambda_override_is_fatal():
     registry.clear('flash'); _register_attn_fwd_with_disable()
     try:
         _resolve_citing(ati.disable(lambda f: f.arch == 'gfx950'))
-    except AtiDescriptionError as e:
+    except DescriptionError as e:
         assert 'cited disable' in str(e)
         return
     raise AssertionError('expected a FATAL error for a bare-lambda disable + cite')

@@ -6,7 +6,7 @@ refs on @ati.tensor / @ati.scalar (agent-plans/ati_aux-kernel-xref_rev0.md §4.2
 
 A dtype variable declared by name must build an identical BuiltKernel to the
 object-threaded form, and an unknown string dtype (neither a same-kernel dtype-var
-nor a literal ATI type) must raise AtiDescriptionError."""
+nor a literal ATI type) must raise DescriptionError."""
 
 import sys
 from pathlib import Path
@@ -17,7 +17,7 @@ sys.path.insert(0, str(REPO / 'tritonsrc'))
 
 import aotriton.template_instantiation as ati
 from aotriton.template_instantiation.describe import describe, get_kernel_spec
-from aotriton.template_instantiation.builder import build_kernel, AtiDescriptionError
+from aotriton.template_instantiation.builder import build_kernel, DescriptionError
 
 from fwd_kernel import attn_fwd
 
@@ -137,10 +137,10 @@ def test_unknown_string_dtype_raises():
     describe(attn_fwd, *specs, _validate=False)
     try:
         build_kernel(get_kernel_spec(attn_fwd))
-    except AtiDescriptionError as e:
+    except DescriptionError as e:
         assert 'T_nope' in str(e)
         return
-    raise AssertionError('expected AtiDescriptionError for unknown dtype var name')
+    raise AssertionError('expected DescriptionError for unknown dtype var name')
 
 
 def main():

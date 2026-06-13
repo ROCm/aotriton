@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import aotriton.template_instantiation as ati
 from aotriton.template_instantiation.describe import describe, get_kernel_spec
-from aotriton.template_instantiation.builder import build_kernel, AtiDescriptionError
+from aotriton.template_instantiation.builder import build_kernel, DescriptionError
 
 
 def _build(kernel, *specs):
@@ -49,27 +49,27 @@ def test_unrecognized_string_annotation_names_kernel_and_param():
     def attn_fwd(weird: 'not_a_type'): pass
     try:
         _build(attn_fwd, ati.scalar('weird'))
-    except AtiDescriptionError as e:
+    except DescriptionError as e:
         msg = str(e)
         assert "'attn_fwd'" in msg          # names the kernel
         assert "'weird'" in msg             # names the parameter
         assert 'not_a_type' in msg          # shows the bad annotation
         assert 'ati.scalar' in msg          # tells how to fix
         return
-    raise AssertionError('expected AtiDescriptionError')
+    raise AssertionError('expected DescriptionError')
 
 
 def test_missing_type_and_annotation_names_kernel_and_param():
     def attn_fwd(Num_head_q): pass           # no annotation at all
     try:
         _build(attn_fwd, ati.scalar('Num_head_q'))
-    except AtiDescriptionError as e:
+    except DescriptionError as e:
         msg = str(e)
         assert "'attn_fwd'" in msg
         assert "'Num_head_q'" in msg
         assert 'no type' in msg or 'no annotation' in msg
         return
-    raise AssertionError('expected AtiDescriptionError')
+    raise AssertionError('expected DescriptionError')
 
 
 def main():

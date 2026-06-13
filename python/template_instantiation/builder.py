@@ -22,7 +22,7 @@ from .ir import Choice, Axis
 from ..base.typed_choice import ELEMENTAL_TYPE_MAP
 
 
-class AtiDescriptionError(Exception):
+class DescriptionError(Exception):
     """A diagnostic from the ATI front-end. Like the Triton compiler frontend it
     partially mimics, it names the kernel and parameter at fault and says how to
     fix it."""
@@ -123,14 +123,14 @@ def _scalar_type(spec: ScalarSpec, ann_by_name: dict, kernel_name: str):
     Choice.parse accepts: explicit type wins; else a string annotation (validated
     against the ATI type vocabulary); else a triton type OBJECT mapped by identity.
 
-    Emits a kernel+parameter-named AtiDescriptionError on failure, in the spirit
+    Emits a kernel+parameter-named DescriptionError on failure, in the spirit
     of the Triton compiler frontend this generator partially reimplements."""
     if spec.type_ is not None:
         return spec.type_
     ann = ann_by_name.get(spec.arg_name, ParamSpec.EMPTY)
     if isinstance(ann, str) and ann:
         if not _is_ati_type_string(ann):
-            raise AtiDescriptionError(
+            raise DescriptionError(
                 f"kernel {kernel_name!r}: parameter {spec.arg_name!r} is annotated "
                 f"{ann!r}, which is not a recognized ATI type. Give it an explicit "
                 f"type via ati.scalar({spec.arg_name!r}, '<type>'), or fix the "
@@ -140,12 +140,12 @@ def _scalar_type(spec: ScalarSpec, ann_by_name: dict, kernel_name: str):
     if mapped is not None:
         return mapped
     if ann is ParamSpec.EMPTY:
-        raise AtiDescriptionError(
+        raise DescriptionError(
             f"kernel {kernel_name!r}: parameter {spec.arg_name!r} has no type. "
             f"It is declared with ati.scalar({spec.arg_name!r}) but the kernel "
             f"gives it no annotation to infer from; specify it explicitly via "
             f"ati.scalar({spec.arg_name!r}, '<type>').")
-    raise AtiDescriptionError(
+    raise DescriptionError(
         f"kernel {kernel_name!r}: parameter {spec.arg_name!r} is annotated with "
         f"{ann!r}, which ATI cannot map to a type. If it is a triton dtype, extend "
         f"_annotation_type_map; otherwise give an explicit type via "
@@ -178,7 +178,7 @@ def _resolve_signature_name(dtype, arg_names, param_index, kernel_name):
     # aks2 entry name, so they are exempt).
     if (isinstance(dtype, ChoiceVar) and len(arg_names) > 1
             and len(dtype.choices) > 1):
-        raise AtiDescriptionError(
+        raise DescriptionError(
             f"kernel {kernel_name!r}: multi-choice variable {dtype.name!r} spans "
             f"{arg_names} and must declare an explicit signature_name (it is baked "
             f"into the aks2 entry name / DB row key); pass signature_name= to "
@@ -198,7 +198,7 @@ def _resolve_named_dtypes(kernel_spec, name):
       (1) a same-kernel dtype-var of that name  -> rewrite the slot to the ChoiceVar;
       (2) a literal ATI type string             -> leave as-is (handled downstream);
       (3) (Step 4) a dtype-var reachable through @ati.cite;
-      (4) else AtiDescriptionError.
+      (4) else DescriptionError.
     A `dtype` already given by object (ChoiceVar) or a literal already validated is
     left untouched. Mutates the spec dtype slots in place."""
     by_name = {dv.name: dv for dv in getattr(kernel_spec, 'dtype_vars', [])}
@@ -210,7 +210,7 @@ def _resolve_named_dtypes(kernel_spec, name):
         if isinstance(d, str) and d in by_name:
             t.dtype = by_name[d]
         elif isinstance(d, str) and not _is_ati_type_string(d):
-            raise AtiDescriptionError(
+            raise DescriptionError(
                 f"kernel {name!r}: tensor {t.arg_name!r} names dtype variable "
                 f"{d!r}, which is neither an @ati.tensor_dtype on this kernel "
                 f"{sorted(by_name)} nor a literal ATI type. Declare it with "
@@ -221,7 +221,7 @@ def _resolve_named_dtypes(kernel_spec, name):
             s.type_ = None
             s.dtype = by_name[d]
         elif isinstance(d, str) and not _is_ati_type_string(d):
-            raise AtiDescriptionError(
+            raise DescriptionError(
                 f"kernel {name!r}: scalar {s.arg_name!r} names dtype variable "
                 f"{d!r}, which is neither an @ati.tensor_dtype on this kernel "
                 f"{sorted(by_name)} nor a literal ATI type. Declare it with "

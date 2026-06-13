@@ -8,7 +8,7 @@ A metro is a LAUNCHER: it sequences its sub-kernels' contexts to implement one
 operator functional (e.g. attn_fwd then the debug kernel; or preprocess + dk_dv +
 dq). It owns no params struct or functional space of its own — the operator does.
 
-`AtiMetroKernel` is the ATI metro launcher and `ConditionalKernel` its if/else step;
+`MetroKernel` is the ATI metro launcher and `ConditionalKernel` its if/else step;
 both are ATI-native (subclass the ATI Interface base, no legacy aotriton.op). They
 expose only the launcher surface the operator codegen reads (`enum_name`,
 `list_kernels`, `iter_subkernels`, `get_kernel`, `iter_kernel_slot_names`).
@@ -73,7 +73,7 @@ class ConditionalKernel(Interface):
             yield from self._else_kernel.iter_kernel_slot_names()
 
 
-class AtiMetroKernel(Interface):
+class MetroKernel(Interface):
     """A metro launcher built from a transpiled @ati.metro_kernel plan. Has no
     functional space of its own — it sequences sub-kernel contexts."""
 
@@ -127,12 +127,12 @@ class AtiMetroKernel(Interface):
 
 
 def build_metro(plan, kernel_map, name, *, family='flash'):
-    """Lower a transpiled MetroPlan to an AtiMetroKernel (a metro launcher).
+    """Lower a transpiled MetroPlan to a MetroKernel (a metro launcher).
 
     plan:        the @ati.metro_kernel transpiler output (fn.__ati_metro__).
     kernel_map:  {sub-kernel name -> built kdesc}.
     name:        the metro/backend NAME (-> kMetro_<Name> enum).
     """
     return lower_plan(plan, kernel_map,
-                      lambda steps: AtiMetroKernel(name, steps, family=family),
+                      lambda steps: MetroKernel(name, steps, family=family),
                       ConditionalKernel)

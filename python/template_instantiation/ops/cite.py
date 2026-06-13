@@ -19,7 +19,7 @@ the citing kernel's gaps at the SPEC level, BEFORE build_kernel lowers it to axe
     (Step 1 resolution path 3), cloning the named dtype-var locally.
 
 Precedence is `local > cited > error`: anything the citing kernel declares wins; a
-gap or dtype-var the cite cannot supply raises AtiDescriptionError.
+gap or dtype-var the cite cannot supply raises DescriptionError.
 
 Kernel-level citing keys on the LAST cite segment (the Triton kernel name) looked
 up in the flat per-family registry; the `<op>.<metro>` prefix is validated and kept
@@ -28,7 +28,7 @@ for the later metro/operator-level resolution.
 
 import fnmatch
 
-from ..builder import AtiDescriptionError, _is_ati_type_string
+from ..builder import DescriptionError, _is_ati_type_string
 from ..decorators import TensorSpec, ScalarSpec, ChoiceVar
 from .. import registry
 
@@ -115,7 +115,7 @@ def _string_dtype_names(spec):
 def _kernel_spec_of(kdesc, name, target):
     cs = getattr(kdesc, 'kernel_spec', None)
     if cs is None:
-        raise AtiDescriptionError(
+        raise DescriptionError(
             f"kernel {name!r}: cite target {target!r} resolves to a kernel with "
             f"no ATI spec (a legacy kernel cannot be cited)")
     return cs
@@ -136,7 +136,7 @@ def _resolve_one_cite(c, family, name, lookup):
         try:
             metro = op.get_backend(c.metro_name)
         except KeyError as e:
-            raise AtiDescriptionError(
+            raise DescriptionError(
                 f"kernel {name!r}: @ati.cite({c.target!r}): {e}")
         if c.kernel_name is None:
             # whole metro -> every sub-kernel's spec (the merged interface)
@@ -145,18 +145,18 @@ def _resolve_one_cite(c, family, name, lookup):
         try:
             sub = metro.get_kernel(c.kernel_name)
         except KeyError as e:
-            raise AtiDescriptionError(
+            raise DescriptionError(
                 f"kernel {name!r}: @ati.cite({c.target!r}): {e}")
         return [_kernel_spec_of(sub, name, c.target)]
     # Operator not built; fall back to the flat kernel registry (kernel-level).
     if c.kernel_name is None:
-        raise AtiDescriptionError(
+        raise DescriptionError(
             f"kernel {name!r}: @ati.cite({c.target!r}) is a whole-metro cite but "
             f"operator {c.op_name!r} is not a built {family!r} operator "
             f"(build/import it before the citing kernel)")
     kdesc = lookup(family, c.kernel_name)
     if kdesc is None:
-        raise AtiDescriptionError(
+        raise DescriptionError(
             f"kernel {name!r}: @ati.cite({c.target!r}) names kernel "
             f"{c.kernel_name!r}, which is neither a built {family!r} operator's "
             f"sub-kernel nor a built kernel (declare/import it before the citing "
@@ -233,7 +233,7 @@ def resolve_cites(spec, *, family, lookup=None):
             continue
         pair = cited_apparel.get(arg)
         if pair is None:
-            raise AtiDescriptionError(
+            raise DescriptionError(
                 f"kernel {name!r}: parameter {arg!r} is neither declared locally "
                 f"nor supplied by any @ati.cite ({[c.target for c in spec.cites]}); "
                 f"declare it or cite a kernel that defines it")
@@ -258,7 +258,7 @@ def resolve_cites(spec, *, family, lookup=None):
             continue
         dv = cited_dtype_vars.get(dname)
         if dv is None:
-            raise AtiDescriptionError(
+            raise DescriptionError(
                 f"kernel {name!r}: dtype variable {dname!r} is neither an "
                 f"@ati.tensor_dtype on this kernel nor reachable through "
                 f"@ati.cite ({[c.target for c in spec.cites]})")
@@ -310,7 +310,7 @@ def resolve_cites(spec, *, family, lookup=None):
     elif cited_disables:
         for d in spec.disables:
             if not d.is_callable_class and not d.override_ack:
-                raise AtiDescriptionError(
+                raise DescriptionError(
                     f"kernel {name!r}: a local @ati.disable (a bare "
                     f"lambda/function) would replace the cited disable from "
                     f"{[c.target for c in spec.cites]}, silently dropping the cited "

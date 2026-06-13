@@ -1,7 +1,7 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-"""Step 5.2b: AtiOperator reproduces the legacy OpAttnFwd operator surface — the
+"""Step 5.2b: Operator reproduces the legacy OpAttnFwd operator surface — the
 identity, functional space, param struct, and backend/optune metadata the
 operator codegen reads. Requires the ATI kernel+operator path."""
 
@@ -13,24 +13,24 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 
 import aotriton.rules as F
-from aotriton.template_instantiation.ir.operator import AtiOperator
+from aotriton.template_instantiation.ir.operator import Operator
 from aotriton.gpu_targets import cluster_gpus
 
 
 def _ati_op():
     op = next(o for o in F.operators if o.NAME == 'op_attn_fwd')
-    assert isinstance(op, AtiOperator), 'op_attn_fwd should be ATI-backed here'
+    assert isinstance(op, Operator), 'op_attn_fwd should be ATI-backed here'
     return op
 
 
 def _ati_bwd_op():
     op = next(o for o in F.operators if o.NAME == 'op_attn_bwd')
-    assert isinstance(op, AtiOperator), 'op_attn_bwd should be ATI-backed here'
+    assert isinstance(op, Operator), 'op_attn_bwd should be ATI-backed here'
     return op
 
 
 def test_operator_is_ati_backed():
-    assert isinstance(_ati_op(), AtiOperator)
+    assert isinstance(_ati_op(), Operator)
 
 
 def test_identity_and_param_struct():

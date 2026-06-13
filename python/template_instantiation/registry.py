@@ -10,7 +10,7 @@ avoid circular imports between sibling kernel modules. A string defers resolutio
 to build time; these registries are what the resolver looks the target up in.
 
 Two registries, both per-family:
-  * KERNELS (Step 4) — flat {kernel NAME -> AtiKernelDescription}, populated as each
+  * KERNELS (Step 4) — flat {kernel NAME -> KernelDescription}, populated as each
     kdesc is built. Kernel-level citing keys on the LAST cite segment (the Triton
     kernel name). A kernel can only cite one built earlier in module import order —
     the natural key-kernel-before-aux-kernel ordering.
@@ -20,14 +20,14 @@ Two registries, both per-family:
     through `metro.get_kernel(kernel)`.
 """
 
-# family -> { kernel NAME -> AtiKernelDescription }
+# family -> { kernel NAME -> KernelDescription }
 _KERNELS: dict[str, dict] = {}
 # family -> { operator NAME -> operator IR }
 _OPS: dict[str, dict] = {}
 
 
 def register_kernel(kdesc):
-    """Record a built AtiKernelDescription so later kernels can @ati.cite it."""
+    """Record a built KernelDescription so later kernels can @ati.cite it."""
     _KERNELS.setdefault(kdesc.FAMILY, {})[kdesc.NAME] = kdesc
 
 

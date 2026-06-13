@@ -8,7 +8,7 @@ An operator dispatches among interchangeable BACKENDS (the triton metro vs an
 aiter ASM kernel, ...). It owns the params struct, built from its DEFAULT backend
 (the feature superset): the union (union_params) of the default backend's metro
 sub-kernel arguments. The operator's *functional* space is that same default
-backend's axes — so AtiOperator reuses the default backend's BuiltKernel for the
+backend's axes — so Operator reuses the default backend's BuiltKernel for the
 func_cfields / gen_functionals / godel surface, and adds the operator-only bits:
 the backend list + enums, CALL_OPTIONS_NAME, and optune (OPTUNE_KEYS +
 translate_dataframe, reused from the legacy Operator body).
@@ -57,7 +57,7 @@ def build_merged_struct_cfields(subkernels):
 
 
 def build_operator(opspec, backend_specs, *, binning, fallback):
-    """Construct an AtiOperator from a finalized @ati.operator stack.
+    """Construct an Operator from a finalized @ati.operator stack.
 
     `opspec` is the OperatorSpec (name/family/call_options_name/default_kdesc/
     struct_cfields); `backend_specs` the BackendSpecs sorted by index; `binning` the
@@ -68,7 +68,7 @@ def build_operator(opspec, backend_specs, *, binning, fallback):
     assert indices == list(range(len(backend_specs))), (
         f'operator {opspec.name!r} backend indices must be dense 0..n-1, '
         f'got {indices}')
-    return AtiOperator(opspec.name, family=opspec.family,
+    return Operator(opspec.name, family=opspec.family,
                        default_kdesc=opspec.default_kdesc,
                        struct_cfields=opspec.struct_cfields,
                        backends=[b.obj for b in backend_specs],
@@ -77,7 +77,7 @@ def build_operator(opspec, backend_specs, *, binning, fallback):
                        partially_tuned_functionals=dict(fallback))
 
 
-class AtiOperator(Interface):
+class Operator(Interface):
     """Operator-compatible facade backed by a default-backend BuiltKernel."""
 
     CODEGEN_MODULE = 'op'
