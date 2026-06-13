@@ -24,7 +24,7 @@ import aotriton.template_instantiation as ati
 from aotriton.template_instantiation import registry
 from aotriton.template_instantiation.describe import describe, get_kernel_spec
 from aotriton.template_instantiation.compat import build_kernel_description
-from aotriton.template_instantiation.operator.cite import resolve_cites
+from aotriton.template_instantiation.ops.cite import resolve_cites
 from aotriton.template_instantiation.builder import AtiDescriptionError
 
 import aot.attn_fwd as _attn_fwd_desc

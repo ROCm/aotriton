@@ -13,6 +13,11 @@ from ._common import (
     ConditionalDeferredElseTensor as CDETensor,
 )
 
+# DATA-ONLY metadata class (no longer constructed as an operator — op_attn_bwd is
+# now an AtiOperator, see modules/flash/aot/__init__._build_op_attn_bwd). It survives
+# only as the ARGUMENTS / TENSOR_* / *_CHOICES holder that the deferred affine kernel
+# (aiter_fmha_v3_bwd) and MetroBwdKernel borrow. Retire it once the affine kernel is
+# ported off the legacy SlimAffineKernelDescription (Step 10).
 class OpAttnBwd(OpAttn):
     NAME = 'op_attn_bwd'
     ARGUMENTS = [

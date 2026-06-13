@@ -17,6 +17,68 @@ translate_dataframe, reused from the legacy Operator body).
 from .kdesc_adapter import AtiFunctional, _binning_class
 
 
+def build_merged_struct_cfields(subkernels, *, inject=None):
+    """The operator params-struct field list, merged across several sub-kernels.
+
+    For an operator whose params struct is NOT a single kernel's superset (the bwd
+    operator: the struct is the union of dk_dv/dq + the preprocess kernels' `Out`),
+    merge the sub-kernels' `func_cfields` into one order-preserving list via
+    union_params over their (apparel) field names. The FIRST sub-kernel to define a
+    name owns its cfield (so each operand's ctype/nbits come from its defining
+    kernel). `subkernels` must be given in the desired priority order (key kernels
+    first), since union_params resolves order conflicts by first-listed-wins.
+
+    `inject` (optional) adds one synthetic operand absent from every sub-kernel
+    (the bwd `DQ_ACC`, which lives only on the deferred affine backend):
+    `{'name', 'after', 'ctype', 'nbits'?}` inserts a cfield right after the operand
+    named `after`. The merged list is re-indexed from its final positions.
+    """
+    from aotriton.base.cfield import cfield
+    from ..ops import union_params
+    cfield_by_name = {}
+    name_lists = []
+    for s in subkernels:
+        names = []
+        for cf in s.func_cfields:
+            names.append(cf.aname)
+            cfield_by_name.setdefault(cf.aname, cf)   # first definer owns the cfield
+        name_lists.append(names)
+    order = union_params(name_lists)
+    if inject is not None:
+        pos = order.index(inject['after']) + 1
+        order.insert(pos, inject['name'])
+        cfield_by_name[inject['name']] = cfield(ctype=inject['ctype'],
+                                                aname=inject['name'],
+                                                nbits=inject.get('nbits', 0))
+    merged = []
+    for i, name in enumerate(order):
+        cf = cfield_by_name[name]
+        merged.append(cfield(ctype=cf.ctype, aname=cf.aname, ctext=cf.ctext,
+                             index=i, nbits=cf.nbits))
+    return merged
+
+
+def build_operator(opspec, backend_specs, *, binning, fallback):
+    """Construct an AtiOperator from a finalized @ati.operator stack.
+
+    `opspec` is the OperatorSpec (name/family/call_options_name/default_kdesc/
+    struct_cfields); `backend_specs` the BackendSpecs sorted by index; `binning` the
+    operator's backend-selection keys (-> OPTUNE_KEYS); `fallback` the operator's OWN
+    partial-tune (default {}). The backend index is load-bearing (tuning DB / enum
+    order); we assert it is dense 0..n-1 so the dispatch table has no gaps."""
+    indices = [b.index for b in backend_specs]
+    assert indices == list(range(len(backend_specs))), (
+        f'operator {opspec.name!r} backend indices must be dense 0..n-1, '
+        f'got {indices}')
+    return AtiOperator(opspec.name, family=opspec.family,
+                       default_kdesc=opspec.default_kdesc,
+                       struct_cfields=opspec.struct_cfields,
+                       backends=[b.obj for b in backend_specs],
+                       optune_keys=dict(binning),
+                       call_options_name=opspec.call_options_name,
+                       partially_tuned_functionals=dict(fallback))
+
+
 class AtiOperator:
     """Operator-compatible facade backed by a default-backend BuiltKernel."""
 
@@ -28,14 +90,26 @@ class AtiOperator:
     SOURCE_EXTRA_INCLUDES = []
 
     def __init__(self, name, *, family, default_kdesc, backends, optune_keys,
-                 call_options_name):
+                 call_options_name, struct_cfields=None,
+                 partially_tuned_functionals=None):
         self.NAME = name
         self.FAMILY = family
-        self._default = default_kdesc      # AtiKernelDescription (param-struct owner)
+        # default_kdesc owns the FUNCTIONAL axes (godel/gen_functionals/axis lookups).
+        # By default it also owns the params STRUCT (the feature-superset kernel, e.g.
+        # attn_fwd for op_attn_fwd). When the struct is a union across sub-kernels
+        # with no single superset (op_attn_bwd), struct_cfields supplies it while the
+        # axes still come from default_kdesc (a representative sub-kernel, dk_dv).
+        self._default = default_kdesc
+        self._struct_cfields = struct_cfields
         self._backends = list(backends)
         self._optune_keys = dict(optune_keys)      # arg name -> BinningSelector
         self.CALL_OPTIONS_NAME = call_options_name
         self._backend_dict = {b.enum_name: b for b in self._backends}
+        # Operator-level partial tuning. EXPLICIT — never inherited from default_kdesc:
+        # a kernel's @ati.tune.fallback is a per-perf-row downgrade that would fight
+        # the operator's backend-selection tuning. Default {} (the legacy operators'
+        # effective value).
+        self._partially_tuned = dict(partially_tuned_functionals or {})
 
     # --- identity ---
 
@@ -99,6 +173,8 @@ class AtiOperator:
 
     @property
     def func_cfields(self):
+        if self._struct_cfields is not None:
+            return self._struct_cfields
         return self._default.func_cfields
 
     def list_functional_params(self):
@@ -116,7 +192,10 @@ class AtiOperator:
 
     @property
     def partially_tuned_functionals(self):
-        return self._default.partially_tuned_functionals
+        # The operator's OWN partial-tune, NOT the representative kernel's. Inheriting
+        # default_kdesc's @ati.tune.fallback here would wrongly fold a kernel-level
+        # perf downgrade into the operator's backend-selection LUT.
+        return dict(self._partially_tuned)
 
     def axis_of_arg(self, aname):
         return self._default.axis_of_arg(aname)
@@ -159,5 +238,7 @@ class AtiOperator:
         return Operator.translate_empty_dataframe(self, f)
 
     def fallback_compact_dict(self, compact_dict):
-        # No PARTIALLY_TUNED_FUNCTIONALS at the operator level (matches legacy).
-        return dict(compact_dict)
+        # Downgrade keys by the operator's OWN partial-tune (default {} -> identity,
+        # matching the legacy operators). Never the representative kernel's fallback.
+        fb = self._partially_tuned
+        return {k: fb.get(k, v) for k, v in compact_dict.items()}

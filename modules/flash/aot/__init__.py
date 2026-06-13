@@ -25,13 +25,14 @@ to be pushed down into the operator/generator layers next phase.
 
 from pathlib import Path
 
+import aotriton.template_instantiation as ati
 from aotriton.op import MetroKernel, ConditionalKernel
 from aotriton.template_instantiation.compat import build_kernel_description
 from aotriton.template_instantiation.metro import lower_plan
-from aotriton.template_instantiation.operator.infer import infer_shared_iface
+from aotriton.template_instantiation.ops.infer import infer_shared_iface
 from aotriton.template_instantiation import registry as _ati_registry
-from aotriton.template_instantiation.compat.operator_adapter import AtiOperator
-from aotriton.template_instantiation.tune.binning import binning as _bn
+from aotriton.template_instantiation.compat.operator_adapter import (
+    build_merged_struct_cfields)
 
 from .ops import OpAttnFwd, OpAttnBwd
 from . import (
@@ -130,24 +131,55 @@ def _build_metro_bwd():
                       ConditionalKernel)
 
 
-def _build_op_attn_fwd():
-    backends = [_build_metro_fwd(), __fwd_aiter]
-    return AtiOperator('op_attn_fwd', family='flash', default_kdesc=__attn_fwd,
-                       backends=backends,
-                       optune_keys={'Max_seqlen_q': _bn.le, 'Max_seqlen_k': _bn.le},
-                       call_options_name='attn_options')
+# --- operators (declarative @ati.operator form) ---------------------------
+#
+# Built metros (the triton backends). Affine backends are the already-built legacy
+# objects (__fwd_aiter / __bwd_aiter); porting their internals to ATI is deferred.
+_metro_fwd = _build_metro_fwd()
+_metro_bwd = _build_metro_bwd()
+
+# The bwd params struct has no single owning kernel: it is the union of the metro
+# sub-kernels' fields (KEY-first: dk_dv, dq, then the preprocess kernels that
+# contribute Out — this order reproduces the legacy struct order), plus DQ_ACC
+# (which lives only on the deferred affine backend) injected after DB. The fwd
+# struct is just attn_fwd's (the feature superset), so no struct_cfields there.
+_bwd_struct = build_merged_struct_cfields(
+    [__bwd_kernel_dk_dv, __bwd_kernel_dq,
+     __bwd_preprocess_varlen, __bwd_preprocess],
+    inject={'name': 'DQ_ACC', 'after': 'DB',
+            'ctype': 'LazyTensorInternal<4>*', 'nbits': 0})
 
 
-def _build_op_attn_bwd():
-    # op_attn_bwd stays the legacy OpAttnBwd: its params struct is the hand-coded
-    # union of the metro's sub-kernels (no single bwd key kernel is the superset).
-    return OpAttnBwd([_build_metro_bwd(), __bwd_kernel_fuse, __bwd_aiter])
+# Stacked-@ operator form: @ati.kernel (top) ends the stack; @ati.operator (bottom,
+# next to def) STARTS the description (like @ati.source). Decorators apply bottom-up,
+# so @ati.operator runs first and seeds the pending list.
+@ati.kernel
+# Operator-level partial tuning, declared EXPLICITLY (not inherited from a kernel):
+# matches the legacy OpAttnFwd.PARTIALLY_TUNED_FUNCTIONALS. op_attn_bwd declares none.
+@ati.tune.fallback(PADDED_HEAD=False)
+@ati.tune.binning(Max_seqlen_q=ati.tune.binning.le,
+                  Max_seqlen_k=ati.tune.binning.le)
+@ati.backend(1, __fwd_aiter, 'aiter')
+@ati.backend(0, _metro_fwd, 'triton')
+@ati.operator(family='flash', call_options_name='attn_options',
+              default_kdesc=__attn_fwd)
+def op_attn_fwd():
+    pass
 
 
-operators = [
-    _build_op_attn_fwd(),
-    _build_op_attn_bwd(),
-]
+@ati.kernel
+@ati.tune.binning(max_seqlen_q=ati.tune.binning.le,
+                  max_seqlen_k=ati.tune.binning.le)
+@ati.backend(2, __bwd_aiter, 'aiter')
+@ati.backend(1, __bwd_kernel_fuse, 'bwd_kernel_fuse')
+@ati.backend(0, _metro_bwd, 'triton_split')
+@ati.operator(family='flash', call_options_name='attn_options',
+              default_kdesc=__bwd_kernel_dk_dv, struct_cfields=_bwd_struct)
+def op_attn_bwd():
+    pass
+
+
+operators = [op_attn_fwd, op_attn_bwd]
 
 # Infer SHARED_IFACE (operator -> metro -> kernel), then register operators so
 # @ati.cite("<op>.<metro>[.<kernel>]") resolves.
@@ -155,3 +187,4 @@ infer_shared_iface(operators)
 for _op in operators:
     if getattr(_op, 'FAMILY', None) is not None:
         _ati_registry.register_op(_op)
+

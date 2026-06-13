@@ -219,16 +219,66 @@ def accumulate_spec(spec, kernel):
 
 def kernel(jit_fn):
     """Terminal decorator marking the end of a stacked-@ ATI block. Finalizes the
-    accumulated specs through describe() and returns the kernel."""
+    accumulated specs and returns the described object.
+
+    Two stack kinds share this finalizer (TODO: rename to a generic @ati.start
+    facade): a KERNEL stack (the default — finalized through describe()) and an
+    OPERATOR stack (marked by an innermost @ati.operator — finalized into an
+    AtiOperator)."""
     pending = getattr(jit_fn, _PENDING, None)
     assert pending is not None, (
         '@ati.kernel found no pending @ati.* specs below it; either stack at '
         'least one @ati.tensor/@ati.scalar/@ati.overrides above @ati.kernel, or '
         'use ati.describe(kernel, *specs) (Mode B) instead.')
     specs = list(reversed(pending))      # bottom-up application -> source order
+    from .decorators import OperatorSpec
+    if any(isinstance(s, OperatorSpec) for s in specs):
+        op = _finalize_operator(jit_fn, specs)
+        delattr(jit_fn, _PENDING)
+        return op
     describe(jit_fn, *specs)
     delattr(jit_fn, _PENDING)
     return jit_fn
+
+
+def _finalize_operator(placeholder, specs):
+    """Build an AtiOperator from a stacked-@ operator description: one
+    @ati.operator marker (the construction params), @ati.backend specs (the
+    interchangeable backends), and operator-level @ati.tune.* (binning ->
+    OPTUNE_KEYS, fallback -> PARTIALLY_TUNED; configs warned + ignored)."""
+    import warnings
+    from .decorators import OperatorSpec, BackendSpec
+    from .tune import BinningSpec, FallbackSpec, ConfigsSpec
+    from .compat.operator_adapter import build_operator
+
+    opspec = None
+    backends = []
+    binning = {}
+    fallback = {}
+    for s in specs:
+        if isinstance(s, OperatorSpec):
+            assert opspec is None, 'multiple @ati.operator markers in one stack'
+            opspec = s
+        elif isinstance(s, BackendSpec):
+            backends.append(s)
+        elif isinstance(s, BinningSpec):
+            binning.update(s.keys)            # operator backend-selection keys
+        elif isinstance(s, FallbackSpec):
+            fallback.update(s.values)         # operator's OWN partial-tune (default {})
+        elif isinstance(s, ConfigsSpec):
+            warnings.warn(
+                f'@ati.tune.configs on operator {opspec.name if opspec else "?"!r} '
+                f'is ignored: operator tuning selects a backend (binning) and does '
+                f'not generate perf configs. Move configs to the kernel/tune module.',
+                stacklevel=3)
+        else:
+            raise AssertionError(
+                f'unexpected spec {s!r} in an @ati.operator stack; operators accept '
+                f'only @ati.backend and operator-level @ati.tune.binning/fallback')
+    assert opspec is not None, '@ati.kernel operator path without an @ati.operator marker'
+    assert backends, f'operator {opspec.name!r} declares no @ati.backend'
+    backends.sort(key=lambda b: b.index)
+    return build_operator(opspec, backends, binning=binning, fallback=fallback)
 
 
 def get_kernel_spec(kernel_obj):

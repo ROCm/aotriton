@@ -23,6 +23,12 @@ def _ati_op():
     return op
 
 
+def _ati_bwd_op():
+    op = next(o for o in F.operators if o.NAME == 'op_attn_bwd')
+    assert isinstance(op, AtiOperator), 'op_attn_bwd should be ATI-backed here'
+    return op
+
+
 def test_operator_is_ati_backed():
     assert isinstance(_ati_op(), AtiOperator)
 
@@ -51,6 +57,50 @@ def test_backends_and_optune():
     assert op.nbackends == 2                         # triton metro + aiter
     assert op.fallback_backend is op.list_backends()[0]
     assert set(op.OPTUNE_KEYS) == {'Max_seqlen_q', 'Max_seqlen_k'}
+
+
+def test_fwd_fallback_is_explicit():
+    # fwd declares @ati.tune.fallback(PADDED_HEAD=False) at the OPERATOR level
+    # (matching legacy OpAttnFwd.PARTIALLY_TUNED_FUNCTIONALS).
+    assert _ati_op().partially_tuned_functionals == {'PADDED_HEAD': False}
+
+
+# --- op_attn_bwd: the union-struct operator (Step 10) ---
+
+_BWD_FIELDS = [
+    'Q', 'K', 'V', 'B', 'sm_scale', 'Out', 'DO', 'DK', 'DV', 'DQ', 'DB', 'DQ_ACC',
+    'L', 'D', 'num_head_q', 'num_head_k', 'cu_seqlens_q', 'cu_seqlens_k',
+    'num_seqlens', 'max_seqlen_q', 'max_seqlen_k', 'seq_strides_q', 'seq_strides_k',
+    'hdim_qk', 'hdim_vo', 'dropout_p', 'philox_seed_ptr', 'philox_offset1',
+    'philox_offset2', 'Window_left', 'Window_right', 'BLOCK_DMODEL', 'CAUSAL_TYPE',
+    'ENABLE_DROPOUT', 'PADDED_HEAD', 'BIAS_TYPE',
+]
+
+
+def test_bwd_identity_and_backends():
+    op = _ati_bwd_op()
+    assert op.enum_name == 'kOp_OpAttnBwd'
+    assert op.param_class_name == 'OpAttnBwdParams'
+    assert op.godel_number == 576
+    assert op.nbackends == 3                          # metro_split + fuse + aiter
+    assert set(op.OPTUNE_KEYS) == {'max_seqlen_q', 'max_seqlen_k'}
+
+
+def test_bwd_union_struct_with_injected_dq_acc():
+    op = _ati_bwd_op()
+    names = [cf.aname for cf in op.func_cfields]
+    assert names == _BWD_FIELDS                       # union order == legacy order
+    assert len(names) == 36
+    dq_acc = op.func_cfields[11]
+    assert dq_acc.aname == 'DQ_ACC'                   # injected after DB
+    assert dq_acc.ctype == 'LazyTensorInternal<4>*'
+
+
+def test_bwd_fallback_not_inherited_from_kernel():
+    # The representative kernel (bwd_kernel_dk_dv) declares
+    # @ati.tune.fallback(PADDED_HEAD=False); the OPERATOR must NOT inherit it
+    # (legacy OpAttnBwd has an empty PARTIALLY_TUNED_FUNCTIONALS).
+    assert _ati_bwd_op().partially_tuned_functionals == {}
 
 
 def main():

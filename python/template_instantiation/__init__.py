@@ -22,19 +22,23 @@ Authoring surface (see agent-plans/ati_rev1.md):
 """
 
 from . import tune
+# The operator-build helpers live in the `.ops` subpackage (ops/cite.py, infer.py,
+# union.py) — deliberately NOT named `operator`, so it never shadows the
+# @ati.operator DECORATOR exported below.
+from .ops import union_params
+from .describe import describe, kernel
+from .builder import AtiDescriptionError
+from .metro import metro_kernel
 from .decorators import (
     tensor_dtype, choice_set, tensor, scalar,
     derives, overrides, disable, cite, source, eq, ne, lt, gt,
+    operator, backend,
 )
-from .describe import describe, kernel
-from .builder import AtiDescriptionError
-from .operator import union_params
-from .metro import metro_kernel
 
 __all__ = [
     'tensor_dtype', 'choice_set', 'tensor', 'scalar',
     'derives', 'overrides', 'disable', 'cite', 'source', 'eq', 'ne', 'lt', 'gt',
-    'describe', 'kernel', 'operator', 'union_params', 'metro_kernel',
+    'describe', 'kernel', 'operator', 'backend', 'union_params', 'metro_kernel',
     'tune', 'AtiDescriptionError',
 ]
 
@@ -55,5 +59,5 @@ def _stub(name):
 # overrides, eq, ne, lt, gt imported from .decorators
 
 # --- description attachment (§3.4): describe + kernel imported from .describe ---
-# --- operator + metro (§4, §5): union_params (5.1), metro_kernel (5.5) imported ---
-operator = _stub('operator')
+# --- operator + metro (§4, §5): operator/backend (§4), union_params (5.1),
+#     metro_kernel (5.5) imported from .decorators / .operator / .metro ---

@@ -776,7 +776,7 @@ def build_kernel_description(kernel, *, family, source_path=None,
     Before lowering, @ati.cite gaps are filled from kernels built earlier (the flat
     per-family registry). After building, the kdesc registers itself so later
     kernels can cite it. `register=False` skips registration (test isolation)."""
-    from ..operator.cite import resolve_cites
+    from ..ops.cite import resolve_cites
     from .. import registry as _registry
     spec = get_kernel_spec(kernel)
     assert spec is not None, (

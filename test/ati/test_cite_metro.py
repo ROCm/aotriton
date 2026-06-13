@@ -87,7 +87,7 @@ def _cite_debug(target):
     ]
     describe(debug_simulate_encoded_softmax, *specs, _validate=False)
     spec = get_kernel_spec(debug_simulate_encoded_softmax)
-    from aotriton.template_instantiation.operator.cite import resolve_cites
+    from aotriton.template_instantiation.ops.cite import resolve_cites
     resolve_cites(spec, family='flash')
     return build_kernel_description(debug_simulate_encoded_softmax, family='flash',
                                     source_path='tritonsrc/flash.py', register=False)

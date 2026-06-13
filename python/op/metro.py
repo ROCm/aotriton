@@ -80,7 +80,7 @@ class MetroKernel(Interface):
         apparel_of). A wired argument (debug's `R` -> `encoded_softmax`) collapses
         into the operand node it is dressed as, so it is never added to the params
         struct as a separate field."""
-        from aotriton.template_instantiation.operator import union_params
+        from aotriton.template_instantiation.ops import union_params
         subs = list(self.iter_subkernels())
         arg_lists = [list(s.ARGUMENTS) for s in subs]
         # Per-sub-kernel real->apparel map, from the kdesc (wires_to=); legacy

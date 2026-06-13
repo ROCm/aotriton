@@ -20,7 +20,7 @@ import aotriton.template_instantiation as ati
 TOP_LEVEL_NAMES = [
     'tensor_dtype', 'choice_set', 'tensor', 'scalar',
     'overrides', 'eq', 'ne', 'lt', 'gt',
-    'describe', 'kernel', 'operator', 'union_params', 'metro_kernel',
+    'describe', 'kernel', 'operator', 'backend', 'union_params', 'metro_kernel',
     'tune',
 ]
 
@@ -42,11 +42,8 @@ def _check_names():
 
 def _check_stubs_raise():
     # Entry points not yet implemented must still fail loudly, not silently no-op.
-    # (tensor_dtype/choice_set/tensor/scalar: Step 2.1; overrides/eq/ne/lt/gt:
-    #  Step 2.2; tune.schema: Step 3.1; tune.configs/binning/fallback/derived:
-    #  Step 3.2.)
+    # (operator/backend are now implemented — Step 10 declarative operator surface.)
     callables = [
-        lambda: ati.operator(),
         lambda: ati.tune.optune(),
     ]
     for call in callables:

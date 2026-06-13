@@ -21,6 +21,11 @@ class aiter_fmha_v3_bwd(aiter_fmha_v3_fwd):
     HEADER_EXTRA_INCLUDES = ['aotriton/_internal/flash/aiter.h']
     COOKIE_CLASS = 'aiter::mha_bwd_args'
 
+    # The affine kernel borrows its functional metadata (ARGUMENTS / TENSOR_* /
+    # *_CHOICES) from the data-only OpAttnBwd class via _collect_functionals_from_shared
+    # + SHARED_IFACE; both stay until the affine kernel is ported (Step 10). The
+    # generated param-struct name (SHARED_IFACE._class_name_base()+'Params') is
+    # OpAttnBwdParams, matching the op_attn_bwd AtiOperator.
     SHARED_IFACE = OpAttnBwd
     NAME = 'aiter_fmha_v3_bwd'
     ARGUMENTS = OpAttnBwd.ARGUMENTS

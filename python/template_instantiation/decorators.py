@@ -533,3 +533,106 @@ def source(path, name=None):
 
 class AtiSourceError(Exception):
     """A bad @ati.source: missing file or kernel symbol."""
+
+
+# --- operator description surface (§4) ------------------------------------
+#
+# An operator dispatches among interchangeable BACKENDS (a triton metro, a fused
+# triton kernel, an affine asm kernel, ...). It is described declaratively with the
+# stacked-@ form, mirroring kernels but finalizing into an AtiOperator rather than a
+# KernelSpec:
+#
+#     @ati.operator(family='flash', call_options_name='attn_options',
+#                   default_kdesc=__attn_fwd)          # innermost, next to def
+#     @ati.backend(0, metro_fwd, 'triton')             # explicit dispatch index
+#     @ati.backend(1, __fwd_aiter, 'aiter')
+#     @ati.tune.binning(Max_seqlen_q=ati.tune.binning.le,   # -> operator OPTUNE_KEYS
+#                       Max_seqlen_k=ati.tune.binning.le)
+#     @ati.kernel                                       # ends the stack (finalizes)
+#     def op_attn_fwd():
+#         pass
+#
+# Operator tuning is EXPLICIT: an operator never inherits a kernel's @ati.tune.*
+# (kernel-level perf/fallback would fight the operator's backend-selection tuning).
+# @ati.tune.binning on an operator means "which backend" (OPTUNE_KEYS); a
+# @ati.tune.fallback means the operator's own PARTIALLY_TUNED (default {});
+# @ati.tune.configs is accepted but ignored with a warning (a kernel-only concept).
+#
+# TODO: rename the terminal @ati.kernel to a generic @ati.start facade that finalizes
+# any stacked description (kernel OR operator); @ati.operator/@ati.source mark the
+# start, @ati.start ends the stack.
+
+
+class BackendSpec:
+    """One @ati.backend(index, obj, name): a dispatchable operator backend.
+
+    `index` is the explicit dispatch / enum / tuning-database order (load-bearing:
+    the op tuning rows store this integer). `obj` is the backend object (a metro, a
+    triton kdesc, or an affine kernel). `name` is the backend NAME used to form the
+    C++ enum (e.g. 'triton_split' -> kMetro_TritonSplit)."""
+
+    __slots__ = ('index', 'obj', 'name')
+
+    def __init__(self, index, obj, name):
+        assert isinstance(index, int), \
+            f'@ati.backend index must be an int, got {index!r}'
+        assert isinstance(name, str) and name, \
+            f'@ati.backend name must be a non-empty string, got {name!r}'
+        self.index = index
+        self.obj = obj
+        self.name = name
+
+    def __call__(self, kernel):
+        from .describe import accumulate_spec
+        return accumulate_spec(self, kernel)
+
+    def __repr__(self):
+        return f'BackendSpec({self.index}, {self.name!r})'
+
+
+def backend(index, obj, name):
+    """Declare one operator backend at an explicit dispatch index (see BackendSpec)."""
+    return BackendSpec(index, obj, name)
+
+
+class OperatorSpec:
+    """The @ati.operator marker (innermost, next to the def): records the
+    operator-construction parameters that are not themselves decorators.
+
+    `default_kdesc` owns the FUNCTIONAL axes (godel / gen_functionals / axis lookups)
+    — the feature-superset kernel for fwd, a representative sub-kernel for bwd.
+    `struct_cfields` (optional) supplies the params struct when it is a union across
+    sub-kernels with no single owner (bwd); when None the struct comes from
+    `default_kdesc`."""
+
+    __slots__ = ('name', 'family', 'call_options_name', 'default_kdesc',
+                 'struct_cfields')
+
+    def __init__(self, name=None, *, family, call_options_name,
+                 default_kdesc, struct_cfields=None):
+        self.name = name
+        self.family = family
+        self.call_options_name = call_options_name
+        self.default_kdesc = default_kdesc
+        self.struct_cfields = struct_cfields
+
+    def __call__(self, placeholder):
+        # Innermost decorator: like @ati.source it runs first and seeds the pending
+        # list with itself, so the specs above accumulate onto the same object.
+        from .describe import accumulate_spec
+        if self.name is None:
+            self.name = placeholder.__name__
+        return accumulate_spec(self, placeholder)
+
+    def __repr__(self):
+        return f'OperatorSpec({self.name!r}, family={self.family!r})'
+
+
+def operator(name=None, *, family, call_options_name, default_kdesc,
+             struct_cfields=None):
+    """Innermost stacked-@ marker declaring the def to be an operator description
+    (the operator analogue of @ati.source). The @ati.backend / @ati.tune.* specs
+    ABOVE it accumulate onto the operator, and @ati.kernel finalizes the stack into
+    an AtiOperator."""
+    return OperatorSpec(name, family=family, call_options_name=call_options_name,
+                        default_kdesc=default_kdesc, struct_cfields=struct_cfields)
