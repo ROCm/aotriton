@@ -34,22 +34,36 @@ class FamilyArtifacts:
         self.affine_kernels = affine_kernels
 
 
+def _metro_subkernel_names(compiled, op_name, metro_name):
+    """The concrete sub-kernel def-names of a whole-metro cite target, or None if the
+    metro is not in this family. The op_name segment is informational (the metro name
+    is the backend enum name, unique within the family)."""
+    metro_shell = compiled.metros.get(metro_name)
+    if metro_shell is None:
+        return None
+    return list(metro_shell.subkernel_names)
+
+
 def _kernel_build_order(compiled):
-    """Order kernel def-names so every 3-segment @ati.cite target is built before its
-    citer (cited kernels are dependencies). All current cites are 3-segment (they name
-    a single kernel); a whole-metro 2-segment cite would need the ops path and is not
-    used by any family today."""
+    """Order kernel def-names so every @ati.cite target is built before its citer.
+    A 3-segment cite depends on the named sub-kernel; a 2-segment (whole-metro) cite
+    depends on the metro's OTHER sub-kernels — never on the citer itself, so a
+    sub-kernel citing the metro that contains it (a true cycle in implementation
+    terms) is acyclic in HEADER terms and terminates: the citer reads the others'
+    argument surface, not its own. A genuine dependency cycle (A != B both ways) is a
+    compiler error."""
     ts = TopologicalSorter()
     for name, shell in compiled.kernels.items():
         deps = set()
         for c in shell.cites:
-            if c.kernel_name is not None and c.kernel_name in compiled.kernels:
-                deps.add(c.kernel_name)
-            elif c.kernel_name is None:
-                raise NotImplementedError(
-                    f'kernel {name!r}: whole-metro @ati.cite({c.target!r}) is not '
-                    f'supported by the linker (no family uses it); cite a specific '
-                    f'sub-kernel "<op>.<metro>.<kernel>"')
+            if c.kernel_name is not None:
+                if c.kernel_name in compiled.kernels:
+                    deps.add(c.kernel_name)
+            else:
+                for sub in (_metro_subkernel_names(
+                        compiled, c.op_name, c.metro_name) or []):
+                    if sub != name:                  # exclude the citer (header path)
+                        deps.add(sub)
         ts.add(name, *deps)
     try:
         return list(ts.static_order())
@@ -88,12 +102,33 @@ def _build_kernels(compiled):
     specs = {}                # def-name -> the cloned, cite-resolved spec
 
     def lookup(_family, kernel_name):
-        return built.get(kernel_name)
+        kd = built.get(kernel_name)
+        return kd
+
+    def metro_lookup(_family, _op_name, metro_name, _citer):
+        """A whole-metro cite donor set: the metro's sub-kernels EXCEPT the citer
+        (header path — the citer inherits the others' argument surface, never its
+        own), in @ati.hints.union_precedence priority order (key kernels first) so a
+        colliding operand's binding comes from the canonical key kernel, not whichever
+        sub-kernel happens to come first in call order. Each donor is its cite-resolved
+        clone (already built, since build order puts donors before the citer)."""
+        metro_shell = compiled.metros.get(metro_name)
+        if metro_shell is None:
+            return None
+        donors = []
+        for sub in metro_shell.donor_order():
+            if sub == _citer:
+                continue
+            donor_spec = specs.get(sub)        # the cite-resolved clone KernelSpec
+            if donor_spec is not None:
+                donors.append(donor_spec)
+        return donors
 
     for name in _kernel_build_order(compiled):
         shell = compiled.kernels[name]
         spec = _clone_spec(shell.spec)
-        resolve_cites(spec, family=compiled.family, lookup=lookup)
+        resolve_cites(spec, family=compiled.family, lookup=lookup,
+                      metro_lookup=lambda f, o, m, _n=name: metro_lookup(f, o, m, _n))
         specs[name] = spec
         bk = build_kernel(spec)
         kdesc = KernelDescription(bk, family=compiled.family,

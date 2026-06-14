@@ -121,16 +121,27 @@ def _kernel_spec_of(kdesc, name, target):
     return cs
 
 
-def _resolve_one_cite(c, family, name, lookup):
+def _resolve_one_cite(c, family, name, lookup, metro_lookup=None):
     """Resolve a single @ati.cite target to a LIST of cited KernelSpecs.
 
     Resolution order (rev0 §4.4):
+      0. metro level via `metro_lookup` (the linker's injection) — for a whole-metro
+         (2-segment) target, return every sub-kernel's KernelSpec straight from the
+         Pass-1 shells, WITHOUT requiring a built operator. This is the header/extern
+         path that lets a sub-kernel cite the metro that contains it (a true cycle):
+         the cited sub-kernels' argument surface is known from Pass 1, so the citer's
+         gaps resolve even while its own implementation is still being linked. A
+         3-segment target falls through to the per-kernel `lookup`.
       1. operator/metro level via the `ops` registry — `ops[op].get_backend(metro)`,
          then `.get_kernel(kernel)` for a 3-segment target, or ALL of the metro's
          sub-kernels for a 2-segment (whole-metro) target;
       2. kernel level via the flat kernel registry (`lookup`) on the last segment —
          the Step-4 path, used when the operator is not (yet) built.
-    A whole-metro (2-segment) target REQUIRES the ops path."""
+    A whole-metro (2-segment) target REQUIRES the ops path or metro_lookup."""
+    if metro_lookup is not None and c.kernel_name is None:
+        cited = metro_lookup(family, c.op_name, c.metro_name)
+        if cited is not None:
+            return list(cited)
     op = registry.get_op(family, c.op_name)
     if op is not None:
         try:
@@ -164,12 +175,13 @@ def _resolve_one_cite(c, family, name, lookup):
     return [_kernel_spec_of(kdesc, name, c.target)]
 
 
-def resolve_cites(spec, *, family, lookup=None):
+def resolve_cites(spec, *, family, lookup=None, metro_lookup=None):
     """Augment a citing KernelSpec in place from its @ati.cite targets, BEFORE
-    build_kernel. Each target resolves (via the ops registry, else the flat kernel
-    registry) to one or more cited KernelSpecs whose practices fill the citing
-    kernel's gaps. `lookup(family, kernel_name)` overrides the flat-registry lookup
-    (test injection)."""
+    build_kernel. Each target resolves (via metro_lookup, the ops registry, else the
+    flat kernel registry) to one or more cited KernelSpecs whose practices fill the
+    citing kernel's gaps. `lookup(family, kernel_name)` overrides the flat-registry
+    lookup; `metro_lookup(family, op_name, metro_name)` resolves a whole-metro cite to
+    its sub-kernels' specs directly (the linker's header/extern path)."""
     if not spec.cites:
         return spec
     if lookup is None:
@@ -179,7 +191,8 @@ def resolve_cites(spec, *, family, lookup=None):
 
     cited_specs = []
     for c in spec.cites:
-        cited_specs.extend(_resolve_one_cite(c, family, name, lookup))
+        cited_specs.extend(
+            _resolve_one_cite(c, family, name, lookup, metro_lookup=metro_lookup))
 
     # Merge cited apparel/dtype tables (earlier cites win on a tie — first found).
     cited_apparel = {}

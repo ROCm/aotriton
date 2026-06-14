@@ -23,6 +23,7 @@ Authoring surface (see agent-plans/ati_rev1.md):
 
 from . import tune
 from . import affine          # ati.affine.* decorator namespace (slim affine kernels)
+from . import hints           # ati.hints.* author hints (union_precedence, ...)
 # The operator-build helpers live in the `.ops` subpackage (ops/cite.py, infer.py,
 # union.py) — deliberately NOT named `operator`, so it never shadows the
 # @ati.operator DECORATOR exported below.
@@ -37,7 +38,7 @@ from .decorators import (
 )
 
 __all__ = [
-    'affine',
+    'affine', 'hints',
     'tensor_dtype', 'choice_set', 'tensor', 'scalar',
     'derives', 'overrides', 'disable', 'cite', 'source', 'eq', 'ne', 'lt', 'gt',
     'describe', 'kernel', 'operator', 'backend', 'union_params', 'metro_kernel',

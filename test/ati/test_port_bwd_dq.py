@@ -4,29 +4,26 @@
 """Aux-kernel xref Step 12 (part 1): bwd_kernel_dq ported to ATI
 (agent-plans/ati_aux-kernel-xref_exec0.md Step 12).
 
-A KEY backward kernel: a standalone full description (no cite), tunable. This test
-exercises the port directly: the struct fields, the multi-choice axes, tunability,
-the shared disable predicate, and the bias/dropout/window degradation."""
+A KEY backward kernel, tunable. Since the ATI-linker acceptance demo
+(ati_linker_exec0 Step 7), bwd_kernel_dq is CITE-based: it declares only its dQ/dB
+outputs + perf and @ati.cites the whole metro (op_attn_bwd.triton_split) for the
+shared inputs. So it is built through the two-pass LINKER (which resolves the
+whole-metro cite), not a standalone build_kernel_description. This test exercises the
+linked result: struct fields (incl. the inherited Q/L/D + local DQ/DB), the
+multi-choice axes, tunability, and the inherited shared disable predicate."""
 
 import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
-sys.path.insert(0, str(REPO / 'modules' / 'flash'))
 
-from aotriton.template_instantiation import registry
-from aotriton.template_instantiation.ir.kdesc import build_kernel_description
-
-from aot.bwd_kernel_dq import bwd_kernel_dq
+from aotriton.codegen.linker import link_all_families
 
 
 def _build():
-    registry.clear('flash')
-    return build_kernel_description(bwd_kernel_dq, family='flash',
-                                    source_path='tritonsrc/flash.py',
-                                    triton_kernel_name='bwd_kernel_dq',
-                                    register=False)
+    kernels, _ops, _aff = link_all_families()
+    return next(k for k in kernels if k.NAME == 'bwd_kernel_dq')
 
 
 def test_struct_has_bwd_fields():
@@ -47,8 +44,11 @@ def test_struct_has_bwd_fields():
 def test_multichoice_axes():
     kdesc = _build()
     multi = {a.repr_arg: a.radix for a in kdesc.axes_multi}
-    # same functional axes as fwd: T_io(3) + BLOCK_DMODEL(12) + 4 binary features
-    assert multi['Q'] == 3
+    # same functional axes as fwd: T_io(3) + BLOCK_DMODEL(12) + 4 binary features.
+    # The T_io tensor axis groups Q/K/V/B/DO (inherited) + DQ/DB (local); its repr is
+    # the representative member, so assert on the grouped T_io axis carrying Q.
+    tio = next(a for a in kdesc.axes_multi if 'Q' in a.arg_names)
+    assert tio.radix == 3
     assert multi['BLOCK_DMODEL'] == 12
     assert kdesc.godel_number == 3 * 12 * 2 * 2 * 2 * 2     # 576
 

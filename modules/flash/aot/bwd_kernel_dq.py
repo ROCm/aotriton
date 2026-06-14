@@ -50,44 +50,27 @@ def gen_autotune_configs(f):
     yield ati.tune.Config(kw, num_warps=4, num_stages=1)
 
 
+# Cite-based form (ati_linker_req acceptance demo): bwd_kernel_dq declares only what
+# is UNIQUE to it — its dQ/dB outputs (DQ/DB strided tensors), its perf schema/configs/
+# binning/fallback, and the bias-stride derive on its own DB — and cites the metro it
+# is PART OF (op_attn_bwd.triton_split) for everything else. The shared inputs
+# (Q/K/V/B/DO, sm_scale, L/D, the seqlen/head scalars, dropout/philox/window, the
+# BLOCK_DMODEL/CAUSAL_TYPE/ENABLE_DROPOUT/PADDED_HEAD/BIAS_TYPE constexprs) and their
+# shared derives are inherited as GAPS from the metro's other sub-kernel (dk_dv),
+# matched by apparel name. This is a TRUE cycle (dq cites the metro that contains dq):
+# the linker resolves it via the header/extern model — dq reads the OTHER sub-kernels'
+# argument surface (known from Pass 1), never its own.
 @ati.kernel
-@ati.tensor_dtype('T_io', dtype=MAIN_DTYPES, signature_name='Q')
-@ati.tensor('Q',  'T_io', strides='stride_q?',  contiguous=-1)
-@ati.tensor('K',  'T_io', strides='stride_k?',  contiguous=-1)
-@ati.tensor('V',  'T_io', strides='stride_v?',  contiguous=-1)
-@ati.tensor('B',  'T_io', strides='stride_b?',  contiguous=-1)
-@ati.tensor('DO', 'T_io', strides='stride_do?', contiguous=-1)
+@ati.cite('op_attn_bwd.triton_split')
 @ati.tensor('DQ', 'T_io', strides='stride_dq?', contiguous=-1)
 @ati.tensor('DB', 'T_io', strides='stride_db?', contiguous=-1)
-@ati.scalar('sm_scale', 'fp32')
-@ati.tensor('L', '*fp32:16', rank=2)
-@ati.tensor('D', 'LazyTensor:*fp32:16', rank=2)
-@ati.scalar(['num_head_q', 'num_head_k', 'hdim_qk', 'hdim_vo'], 'i32')
-@ati.tensor(['cu_seqlens_q', 'cu_seqlens_k',
-             'seq_strides_q', 'seq_strides_k'], '*i32:16', rank=1)
-@ati.scalar(['num_seqlens', 'max_seqlen_q', 'max_seqlen_k'], 'i32')
-@ati.scalar('dropout_p', 'fp32')
-@ati.tensor(['philox_seed_ptr', 'philox_offset1'], '*u64', rank=0)
-@ati.scalar('philox_offset2', 'u64')
-@ati.scalar('Window_left', 'i32')
-@ati.scalar('Window_right', 'i32')
-@ati.scalar('BLOCK_DMODEL', options=_block_dmodel_values())
-@ati.scalar('CAUSAL_TYPE', options=[0, 3])
-@ati.scalar('ENABLE_DROPOUT', options=[False, True])
-@ati.scalar('PADDED_HEAD', options=[False, True])
-@ati.scalar('BIAS_TYPE', options=[0, 1])
 @ati.tune.schema(BwdKernelDqPerf)
 @ati.tune.configs(gen_autotune_configs)
 @ati.tune.binning(max_seqlen_q=ati.tune.binning.le,
                   max_seqlen_k=ati.tune.binning.le)
 @ati.tune.fallback(PADDED_HEAD=False)
 @ati.derives('NUM_XCDS', to=8, when=lambda f: f.arch in ('gfx942', 'gfx950'))
-@ati.derives('B', to=0, when=ati.eq('BIAS_TYPE', 0))           # strides cascade
 @ati.derives('DB', to=0, when=ati.eq('BIAS_TYPE', 0))          # strides cascade
-@ati.derives(['dropout_p', 'philox_seed_ptr', 'philox_offset1', 'philox_offset2'],
-             to=0, when=ati.eq('ENABLE_DROPOUT', False))
-@ati.derives(['Window_left', 'Window_right'], to=0, when=ati.ne('CAUSAL_TYPE', 3))
-@ati.disable(when=_bwd_disabled)
 @ati.source('../kernel/bwd_kernel_dq.py')
 def bwd_kernel_dq():
     pass

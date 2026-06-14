@@ -40,6 +40,13 @@ def metro_fwd(params):
         debug_simulate_encoded_softmax(params)
 
 
+# union_precedence: the KEY kernels (dk_dv, dq) own the canonical operand bindings;
+# the preprocess kernels name some shared strides differently (dO's 4th stride is
+# `stride_don` there vs `stride_dok` on the key kernels). When bwd_kernel_dq @ati.cites
+# the whole metro, the gap donor must be a key kernel — this priority order (key first)
+# steers both the cite gap-fill and the operator params-struct union.
+@ati.hints.union_precedence([bwd_kernel_dk_dv, bwd_kernel_dq,
+                             bwd_preprocess_varlen, bwd_preprocess])
 @ati.metro_kernel
 def metro_bwd(params):
     if params.num_seqlens > 0:

@@ -89,14 +89,30 @@ class KernelShell:
 
 class MetroShell:
     """A parsed @ati.metro_kernel backend: its MetroPlan + the backend enum-name. The
-    sub-kernel NAMES (plan Call strings) are the relocation the linker binds."""
+    sub-kernel NAMES (plan Call strings) are the relocation the linker binds.
 
-    __slots__ = ('name', 'plan', 'subkernel_names')
+    `precedence` is the optional @ati.hints.union_precedence order (highest priority
+    first) used when sub-kernel bindings collide — for a whole-metro @ati.cite gap
+    donor and the operator params-struct union. When absent it is the call order."""
 
-    def __init__(self, name, plan, subkernel_names):
+    __slots__ = ('name', 'plan', 'subkernel_names', 'precedence')
+
+    def __init__(self, name, plan, subkernel_names, precedence=None):
         self.name = name
         self.plan = plan
         self.subkernel_names = subkernel_names
+        self.precedence = precedence
+
+    def donor_order(self):
+        """Sub-kernel names in donor priority: the union_precedence order (filtered to
+        this metro's sub-kernels, then any unlisted ones in call order), else call
+        order."""
+        if not self.precedence:
+            return list(self.subkernel_names)
+        subs = set(self.subkernel_names)
+        ordered = [n for n in self.precedence if n in subs]
+        ordered += [n for n in self.subkernel_names if n not in self.precedence]
+        return ordered
 
 
 class OperatorShell:
@@ -179,7 +195,9 @@ def compile_family(aot_module, family):
                         f'{sub_name!r} not found in the aot module')
                     _parse_kernel(sub_def, compiled)
                 if b.name not in compiled.metros:
-                    compiled.metros[b.name] = MetroShell(b.name, plan, sub_names)
+                    precedence = getattr(ref, '__ati_union_precedence__', None)
+                    compiled.metros[b.name] = MetroShell(b.name, plan, sub_names,
+                                                         precedence=precedence)
                 backend_refs.append((b.index, 'metro', b.name))
             elif getattr(ref, '__ati__', None) is not None:
                 kname = _parse_kernel(ref, compiled)       # a bare-kernel backend
