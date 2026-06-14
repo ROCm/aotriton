@@ -4,18 +4,20 @@
 """
 Triton kernel introspection (executive plan Step 2.3; agent-plans/ati_rev1.md §2).
 
-ARGUMENTS is the kernel's real parameter order, read from the @triton.jit
-function — the human never writes it.
+ARGUMENTS is the kernel's real parameter order — the human never writes it.
 
-We deliberately do NOT read triton's JITFunction.params: that object, its
-.is_constexpr flag, and especially its annotation *normalization* (collapsing
-tl.int32 / constexpr_or_i32 / 'i32' all to the string 'i32', tl.int1 to 'u1',
-etc.) are undocumented internals that can change between releases. Instead we use
-the stdlib inspect.signature over the underlying function and keep each
-annotation as the RAW object the author wrote — a tl.dtype instance
-(tl.float32, ...), the tl.constexpr class, a type string ('*u64'), or empty. The
-builder maps those by identity/value (see builder._ANNOTATION_TYPE), so we depend
-only on Triton's public type objects, never on internal strings.
+PRIMARY path (triton-free, agent-plans/ati_triton-free_exec0.md): @ati.source AST-parses
+the kernel file and produces a KernelStub carrying `__ati_params__` (the parameter
+NAMES). kernel_params returns those with EMPTY annotations — the generator never imports
+triton, and every parameter's type is supplied explicitly by the @ati.* decorators.
+
+FALLBACK path (a real callable / @triton.jit function, e.g. a unit test passing a plain
+function): we use stdlib inspect.signature over the underlying function and keep each
+annotation as the RAW object the author wrote — a tl.dtype instance, the tl.constexpr
+class, a type string ('*u64'), or empty. We deliberately do NOT read triton's
+JITFunction.params (its .is_constexpr flag and annotation normalization are undocumented
+internals); the builder maps raw annotations by identity/value (builder._ANNOTATION_TYPE),
+depending only on Triton's public type objects when triton is present.
 """
 
 import inspect
@@ -68,8 +70,19 @@ def _is_constexpr_annotation(ann) -> bool:
 
 
 def kernel_params(jit_fn) -> list[ParamSpec]:
-    """The ordered parameter list of a @triton.jit kernel (or plain function),
-    via stdlib inspect.signature. Annotations are kept raw."""
+    """The ordered parameter list of a kernel.
+
+    Primary path: a KernelStub from @ati.source (AST-parsed, no triton import) carries
+    `__ati_params__` — the parameter NAMES. Types are supplied by the @ati.* decorators,
+    so the stub has no annotations (annotation=EMPTY, is_constexpr=False). This is the
+    triton-free generator path (agent-plans/ati_triton-free_exec0.md).
+
+    Fallback path: a real callable / @triton.jit function (e.g. a unit test passing a
+    plain function) is introspected via stdlib inspect.signature with raw annotations."""
+    ati_params = getattr(jit_fn, '__ati_params__', None)
+    if ati_params is not None:
+        return [ParamSpec(name=n, is_constexpr=False, annotation=ParamSpec.EMPTY)
+                for n in ati_params]
     fn = _underlying_fn(jit_fn)
     if not callable(fn):
         raise TypeError(f'kernel_params expects a callable/JITFunction, got {jit_fn!r}')
