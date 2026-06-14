@@ -222,11 +222,10 @@ execute_process(COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_
   COMMAND_ERROR_IS_FATAL ANY)
 
 set(ALL_TRITON_SOS "")
-# ATI requires the Triton package even in noimage mode: the code generator imports
-# triton to introspect the kernel sources (@ati.source). So Triton is ALWAYS
-# installed; the `AND FALSE` neutralizes the former noimage skip with minimal churn.
-# (Later: a way to introspect triton kernels without the runtime dependency.)
-if(AOTRITON_NOIMAGE_MODE AND FALSE)
+# Triton is needed ONLY to compile the GPU kernel images: the ATI code generator is
+# triton-free (@ati.source AST-parses the kernel sources, see
+# agent-plans/ati_triton-free_exec0.md), so noimage builds skip triton entirely.
+if(AOTRITON_NOIMAGE_MODE)
   message(STATUS "[AOTriton] Skipping triton due to AOTRITON_NOIMAGE_MODE")
 elseif(AOTRITON_INHERIT_SYSTEM_SITE_TRITON)
   # Check if triton can be imported in the venv
