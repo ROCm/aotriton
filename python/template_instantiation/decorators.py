@@ -571,14 +571,20 @@ class SourceError(Exception):
 
 
 class BackendSpec:
-    """One @ati.backend(index, obj, name): a dispatchable operator backend.
+    """One @ati.backend(index, ref, name): a dispatchable operator backend.
 
     `index` is the explicit dispatch / enum / tuning-database order (load-bearing:
-    the op tuning rows store this integer). `obj` is the backend object (a metro, a
-    triton kdesc, or an affine kernel). `name` is the backend NAME used to form the
-    C++ enum (e.g. 'triton_split' -> kMetro_TritonSplit)."""
+    the op tuning rows store this integer). `ref` is the in-file object used to
+    IDENTIFY the backend dependency (a metro function carrying `__ati_metro__`, a
+    triton kdesc, or an affine kernel) — the linker keys its symbol table on the
+    target's declared NAME (`ref_name`), NOT on the object identity. `name` is the
+    backend NAME used to form the C++ enum (e.g. 'triton_split' -> kMetro_TritonSplit).
 
-    __slots__ = ('index', 'obj', 'name')
+    `obj` is retained for the interim eager build path (it passes the BUILT backend
+    object directly); once the codegen linker owns the build (exec0 Step 3) the
+    reference is resolved purely by `ref_name` against the per-family symbol table."""
+
+    __slots__ = ('index', 'obj', 'name', 'ref_name')
 
     def __init__(self, index, obj, name):
         assert isinstance(index, int), \
@@ -588,13 +594,18 @@ class BackendSpec:
         self.index = index
         self.obj = obj
         self.name = name
+        # Name-based reference the linker will key on: the target's declared NAME when
+        # the ref already carries one (a built metro/kdesc/affine in the eager path),
+        # else the backend enum name as a stand-in (passive metro functions have no
+        # NAME until the linker builds them under this same `name`).
+        self.ref_name = getattr(obj, 'NAME', None) or name
 
     def __call__(self, kernel):
         from .describe import accumulate_spec
         return accumulate_spec(self, kernel)
 
     def __repr__(self):
-        return f'BackendSpec({self.index}, {self.name!r})'
+        return f'BackendSpec({self.index}, {self.name!r}, ref={self.ref_name!r})'
 
 
 def backend(index, obj, name):
