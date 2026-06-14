@@ -1,2 +1,0 @@
-module flash
-probe /dev/shm/tt3

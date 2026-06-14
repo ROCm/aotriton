@@ -1,4 +1,0 @@
-module flash
-benchmark /dev/shm/tt3 bwd_kernel_fuse=0
-benchmark /dev/shm/tt3 bwd_kernel_dq=1
-benchmark /dev/shm/tt3 bwd_kernel_dq=2

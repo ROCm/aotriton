@@ -1,2 +1,0 @@
-module flash
-benchmark /dev/shm/tt3 attn_fwd=3
