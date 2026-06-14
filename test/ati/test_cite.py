@@ -83,6 +83,51 @@ def test_gap_scalars_inherited():
     assert dp.choices[0].tc.triton_compile_signature == 'fp32'
 
 
+def test_local_scalar_wins_over_cite():
+    """A2: a locally-declared argument is NEVER overwritten by a cite that also
+    defines it. attn_fwd declares dropout_p as a plain fp32 scalar; debug declaring
+    it locally as an enumerated (options) scalar must keep the LOCAL definition."""
+    setup()
+    specs = [
+        ati.cite('op_attn_fwd.triton.attn_fwd'),
+        ati.tensor('R', 'T_io', strides='stride_r?', contiguous=-1,
+                   wires_to='encoded_softmax'),
+        # dropout_p is defined by the cite (fp32) AND locally (as an enumerated
+        # constexpr) — the local definition must win.
+        ati.scalar('dropout_p', options=[0]),
+        ati.scalar(['BLOCK_M', 'BLOCK_N'], options=[64]),
+    ]
+    describe(debug_simulate_encoded_softmax, *specs, _validate=False)
+    kdesc = build_kernel_description(debug_simulate_encoded_softmax, family='flash',
+                                     source_path='tritonsrc/flash.py', register=False)
+    dp = kdesc.axis_of_arg('dropout_p')
+    # Local enumerated [0] -> a single constexpr choice 0, NOT the cited fp32 scalar.
+    assert dp is not None
+    sigs = [c.tc.triton_compile_signature for c in dp.choices]
+    assert sigs == [0], f'local dropout_p overwritten by cite: {sigs!r}'
+
+
+def test_local_derive_wins_over_cited_derive():
+    """A2: a cited @ati.derives is inherited only when the citing kernel does NOT
+    override the same target. attn_fwd derives dropout_p->0 when ENABLE_DROPOUT is
+    False; debug declaring dropout_p locally (no derive) must NOT inherit that
+    derive (the operand is locally claimed, so the cited override is skipped)."""
+    setup()
+    specs = [
+        ati.cite('op_attn_fwd.triton.attn_fwd'),
+        ati.tensor('R', 'T_io', strides='stride_r?', contiguous=-1,
+                   wires_to='encoded_softmax'),
+        ati.scalar('dropout_p', options=[0]),     # local claim, no derive
+        ati.scalar(['BLOCK_M', 'BLOCK_N'], options=[64]),
+    ]
+    describe(debug_simulate_encoded_softmax, *specs, _validate=False)
+    kdesc = build_kernel_description(debug_simulate_encoded_softmax, family='flash',
+                                     source_path='tritonsrc/flash.py', register=False)
+    targets = {t for ov in kdesc._built.overrides for t in ov.targets}
+    assert 'dropout_p' not in targets, \
+        'cited dropout_p derive leaked onto a locally-claimed operand'
+
+
 def test_unresolved_gap_raises():
     setup()
     # Cite a kernel that does NOT define some of debug's args -> DescriptionError.
