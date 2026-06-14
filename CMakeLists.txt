@@ -111,7 +111,7 @@ set(AOTRITON_TARGET_ARCH "gfx90a;gfx942;gfx950;gfx1100;gfx1101;gfx1102;gfx1103;g
 set(TARGET_GPUS "OBSOLETE" CACHE STRING "OBSOLETE. To select only one GPU, use AOTRITON_TARGET_ARCH or AOTRITON_OVERRIDE_TARGET_GPUS.")
 set(AOTRITON_OVERRIDE_TARGET_GPUS "" CACHE STRING "Override AOTRITON_TARGET_ARCH, and only build for GPUs within this list.")
 set(AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE "" CACHE STRING "Specify how to use alternative Triton wheels for different architectures in a YAML config file.")
-set(AOTRITON_TUNING_DATABASE_ROOT "" CACHE PATH "Root directory of sharded tuning database files (amd/<arch>/...). When set, used instead of v3python/database/ as the source of tuning data.")
+set(AOTRITON_TUNING_DATABASE_ROOT "" CACHE PATH "Root directory of sharded tuning database files (amd/<arch>/...). When set, used instead of modules/database/ as the source of tuning data.")
 
 if(AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
   cmake_path(IS_ABSOLUTE AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE altwheel_yaml_is_absolute)
@@ -213,8 +213,20 @@ message("VENV_SITE ${VENV_SITE}")
 
 execute_process(COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_BIN_PYTHON}" -m pip install -r "${CMAKE_CURRENT_LIST_DIR}/requirements.txt")
 
+# Install the `aotriton` code-generation package (python/ -> aotriton) into the venv
+# so `python -m aotriton.<tool>` resolves. A full install (NOT -e): the build venv is
+# disposable and a non-editable install avoids leaking a .pth into the user's tree.
+# Configure-time (execute_process) because aotriton.generate is invoked at configure
+# time below (it must already be importable).
+execute_process(COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_BIN_PYTHON}" -m pip install "${CMAKE_CURRENT_LIST_DIR}"
+  COMMAND_ERROR_IS_FATAL ANY)
+
 set(ALL_TRITON_SOS "")
-if(AOTRITON_NOIMAGE_MODE)
+# ATI requires the Triton package even in noimage mode: the code generator imports
+# triton to introspect the kernel sources (@ati.source). So Triton is ALWAYS
+# installed; the `AND FALSE` neutralizes the former noimage skip with minimal churn.
+# (Later: a way to introspect triton kernels without the runtime dependency.)
+if(AOTRITON_NOIMAGE_MODE AND FALSE)
   message(STATUS "[AOTriton] Skipping triton due to AOTRITON_NOIMAGE_MODE")
 elseif(AOTRITON_INHERIT_SYSTEM_SITE_TRITON)
   # Check if triton can be imported in the venv

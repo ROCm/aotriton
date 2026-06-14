@@ -26,12 +26,34 @@ top-level name so its relative imports resolve without a `<family>` namespace pk
 its `kernel/` sources keep importing each other by bare name.
 """
 
+import os
 import sys
 import importlib.util
 from pathlib import Path
 
-# <repo>/modules — repo root is the parent of the aotriton package dir (python/).
-_MODULES_DIR = Path(__file__).resolve().parent.parent.parent / 'modules'
+
+def _resolve_modules_dir() -> Path:
+    """Locate the `modules/` tree (the per-family kernel/operator descriptions).
+
+    `modules/` is DATA living beside the package source, not inside the importable
+    `aotriton` package, so its location depends on how the package was installed:
+      1. `$AOTRITON_MODULE_DIR` — explicit override (wins when set);
+      2. source-tree-relative — `<python/>/../modules` (editable install / running
+         straight from the checkout);
+      3. cwd-relative — `./modules` (a NON-editable `pip install .`: the package is
+         copied into site-packages so (2) misses, but the build / generator is run
+         from the repo root, where `modules/` is a sibling).
+    """
+    env = os.getenv('AOTRITON_MODULE_DIR')
+    if env:
+        return Path(env)
+    src_rel = Path(__file__).resolve().parent.parent.parent / 'modules'
+    if src_rel.is_dir():
+        return src_rel
+    return Path.cwd() / 'modules'
+
+
+_MODULES_DIR = _resolve_modules_dir()
 
 
 # --- family discovery / loading (absorbed from python/rules) -----------------

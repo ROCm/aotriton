@@ -41,8 +41,21 @@ _package_dir = {'aotriton': 'python'}
 _package_dir.update({f'aotriton.{p}': 'python/' + p.replace('.', '/')
                      for p in _subs})
 
+# Non-.py runtime data shipped inside the package: the codegen Jinja/C++ templates
+# (codegen/template/**.{cc,h}). Required for a NON-editable install — they are read at
+# runtime via open() (see codegen/template.py), so they must be copied into the
+# installed package, not just left in the source tree.
+_package_data = {
+    'aotriton.codegen': [
+        'template/*.cc', 'template/*.h',
+        'template/snippet/*.cc', 'template/snippet/*.h',
+    ],
+}
+
 setup(
     version=_aotriton_version(),
     packages=_packages,
     package_dir=_package_dir,
+    package_data=_package_data,
+    include_package_data=True,
 )

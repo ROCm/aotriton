@@ -30,7 +30,11 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 GOLDEN_DIR = Path(__file__).resolve().parent / 'golden'
-DB_SRC_DIR = REPO_ROOT / 'v3python' / 'database'
+# Fallback DB source (schema tarballs + decomposed per-kernel blobs). The primary
+# path is the prebuilt FUSED_DB below; this only fires when that is absent. Points at
+# the retired legacy tree (kept on disk, untracked) since the central schema tarballs
+# never moved out of it; relocating them is deferred (see to-remove.txt section A).
+DB_SRC_DIR = REPO_ROOT / 'v3python.retiring' / 'database'
 # Prebuilt fused tuning database (real tuning rows, exercises translate_dataframe).
 # Override with AOTRITON_GOLDEN_DB. Falls back to composing the decomposed DB.
 import os
