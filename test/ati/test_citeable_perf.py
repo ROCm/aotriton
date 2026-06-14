@@ -26,8 +26,7 @@ from aotriton.template_instantiation.describe import describe
 from aotriton.template_instantiation.ir.kdesc import build_kernel_description
 
 # Cited kernel: the real ATI attn_fwd (described on import). Citing kernel: debug.
-import aot.attn_fwd as _attn_fwd_desc
-attn_fwd = _attn_fwd_desc.attn_fwd
+from aot.attn_fwd import attn_fwd
 from dropout_rng import debug_simulate_encoded_softmax
 
 MAIN_DTYPES = ['*fp16:16', '*bf16:16', '*fp32:16']

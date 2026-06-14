@@ -56,27 +56,6 @@ def build_merged_struct_cfields(subkernels):
     return merged
 
 
-def build_operator(opspec, backend_specs, *, binning, fallback):
-    """Construct an Operator from a finalized @ati.operator stack.
-
-    `opspec` is the OperatorSpec (name/family/call_options_name/default_kdesc/
-    struct_cfields); `backend_specs` the BackendSpecs sorted by index; `binning` the
-    operator's backend-selection keys (-> OPTUNE_KEYS); `fallback` the operator's OWN
-    partial-tune (default {}). The backend index is load-bearing (tuning DB / enum
-    order); we assert it is dense 0..n-1 so the dispatch table has no gaps."""
-    indices = [b.index for b in backend_specs]
-    assert indices == list(range(len(backend_specs))), (
-        f'operator {opspec.name!r} backend indices must be dense 0..n-1, '
-        f'got {indices}')
-    return Operator(opspec.name, family=opspec.family,
-                       default_kdesc=opspec.default_kdesc,
-                       struct_cfields=opspec.struct_cfields,
-                       backends=[b.obj for b in backend_specs],
-                       optune_keys=dict(binning),
-                       call_options_name=opspec.call_options_name,
-                       partially_tuned_functionals=dict(fallback))
-
-
 class Operator(Interface):
     """Operator-compatible facade backed by a default-backend BuiltKernel."""
 

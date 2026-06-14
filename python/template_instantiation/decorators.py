@@ -614,25 +614,20 @@ def backend(index, obj, name):
 
 
 class OperatorSpec:
-    """The @ati.operator marker (innermost, next to the def): records the
-    operator-construction parameters that are not themselves decorators.
+    """The @ati.operator marker (innermost, next to the def): records the operator's
+    declared parameters that are not themselves decorators.
 
-    `default_kdesc` owns the FUNCTIONAL axes (godel / gen_functionals / axis lookups)
-    — the feature-superset kernel for fwd, a representative sub-kernel for bwd.
-    `struct_cfields` (optional) supplies the params struct when it is a union across
-    sub-kernels with no single owner (bwd); when None the struct comes from
-    `default_kdesc`."""
+    `default_kdesc` (the functional-axes owner) and `struct_cfields` (the params
+    struct) are NO LONGER declared here — the linker DERIVES both from the backend
+    tree (the union over backends for the struct; the default backend's first tunable
+    sub-kernel for the axes). Family is inferred from the modules/<family>/aot path,
+    so it is not declared either."""
 
-    __slots__ = ('name', 'family', 'call_options_name', 'default_kdesc',
-                 'struct_cfields')
+    __slots__ = ('name', 'call_options_name')
 
-    def __init__(self, name=None, *, family, call_options_name,
-                 default_kdesc, struct_cfields=None):
+    def __init__(self, name=None, *, call_options_name):
         self.name = name
-        self.family = family
         self.call_options_name = call_options_name
-        self.default_kdesc = default_kdesc
-        self.struct_cfields = struct_cfields
 
     def __call__(self, placeholder):
         # Innermost decorator: like @ati.source it runs first and seeds the pending
@@ -643,14 +638,12 @@ class OperatorSpec:
         return accumulate_spec(self, placeholder)
 
     def __repr__(self):
-        return f'OperatorSpec({self.name!r}, family={self.family!r})'
+        return f'OperatorSpec({self.name!r})'
 
 
-def operator(name=None, *, family, call_options_name, default_kdesc,
-             struct_cfields=None):
+def operator(name=None, *, call_options_name):
     """Innermost stacked-@ marker declaring the def to be an operator description
     (the operator analogue of @ati.source). The @ati.backend / @ati.tune.* specs
-    ABOVE it accumulate onto the operator, and @ati.kernel finalizes the stack into
-    an Operator."""
-    return OperatorSpec(name, family=family, call_options_name=call_options_name,
-                        default_kdesc=default_kdesc, struct_cfields=struct_cfields)
+    ABOVE it accumulate onto the operator; @ati.kernel finalizes the stack into a
+    PASSIVE @ati.operator def (fn.__ati_operator__) the linker builds."""
+    return OperatorSpec(name, call_options_name=call_options_name)

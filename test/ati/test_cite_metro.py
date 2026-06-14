@@ -24,8 +24,7 @@ from aotriton.template_instantiation.describe import describe, get_kernel_spec
 from aotriton.template_instantiation.ir.kdesc import build_kernel_description
 from aotriton.template_instantiation.builder import DescriptionError
 
-import aot.attn_fwd as _attn_fwd_desc
-attn_fwd = _attn_fwd_desc.attn_fwd
+from aot.attn_fwd import attn_fwd
 from dropout_rng import debug_simulate_encoded_softmax
 
 MAIN_DTYPES = ['*fp16:16', '*bf16:16', '*fp32:16']

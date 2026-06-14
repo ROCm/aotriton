@@ -12,8 +12,7 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / 'modules' / 'flash'))
 
-import aot.attn_fwd as _attn_fwd_desc
-attn_fwd = _attn_fwd_desc.attn_fwd
+from aot.attn_fwd import attn_fwd
 from aotriton.template_instantiation.ir.kdesc import build_kernel_description
 try:
     import v3python.rules.flash as F   # legacy reference for parity comparison

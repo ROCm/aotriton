@@ -12,8 +12,12 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 
-import aotriton.rules as F
+from types import SimpleNamespace
+from aotriton.codegen.linker import link_all_families
 from aotriton.template_instantiation.ir.operator import Operator
+
+_k, _o, _a = link_all_families()
+F = SimpleNamespace(kernels=_k, operators=_o, affine_kernels=_a)
 from aotriton.gpu_targets import cluster_gpus
 
 

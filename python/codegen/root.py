@@ -7,11 +7,7 @@ from pathlib import Path, PurePath
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 import subprocess
-from ..rules import (
-    kernels as triton_kernels,
-    operators as dispatcher_operators,
-    affine_kernels,
-)
+from .linker import link_all_families
 from .kernel import KernelShimGenerator
 from .slim_affine import SlimAffineGenerator
 from .operator import OperatorGenerator
@@ -75,6 +71,10 @@ class RootGenerator(object):
         else:
             self._altrules_dict = {}
         self._load_altwheel_config(self._altrules_dict)
+        # Two-pass build (parse passive descriptions -> link the IR tree). Linked once
+        # per generator; the lists are what the per-item generators iterate.
+        (self._triton_kernels, self._dispatcher_operators,
+         self._affine_kernels) = link_all_families()
 
     def generate(self):
         if self._args.selective:
@@ -106,7 +106,7 @@ class RootGenerator(object):
         # (arch, op_name) -> {'trivial': N, 'non_trivial': N}
         all_trivial_stats: dict[tuple, dict[str, int]] = {}
 
-        ops = dispatcher_operators
+        ops = self._dispatcher_operators
         if sel is not None:
             ops = [op for op in ops if op.unique_path.match(sel)]
         for op in ops:
@@ -124,7 +124,7 @@ class RootGenerator(object):
                 d['non_trivial'] += ts['non_trivial']
         self._print_lut_stats(all_lut_stats, all_trivial_stats)
 
-        kerns = triton_kernels
+        kerns = self._triton_kernels
         if sel is not None:
             kerns = [k for k in kerns if k.unique_path.match(sel)]
         for k in kerns:
@@ -137,7 +137,7 @@ class RootGenerator(object):
         # TODO: Fix this for Windows
         # On Windows, you get "KeyError: 'validator_function'"
         # See discussion in https://discord.com/channels/1239631572886491286/1401853302139912222/1401862203845378201
-        affs = affine_kernels
+        affs = self._affine_kernels
         if sel is not None:
             affs = [ak for ak in affs if ak.unique_path.match(sel)]
         for ak in affs:
@@ -228,14 +228,14 @@ class RootGenerator(object):
         # Each entry is a --selective value: exact path str for ops/kernels,
         # glob pattern str (e.g. 'flash/affine/*') for affine families.
         items: list[str] = []
-        items += [op.unique_path.as_posix() for op in dispatcher_operators]
-        items += [k.unique_path.as_posix()  for k in triton_kernels]
+        items += [op.unique_path.as_posix() for op in self._dispatcher_operators]
+        items += [k.unique_path.as_posix()  for k in self._triton_kernels]
 
         # Affine kernels sharing the same FAMILY produce entries in the same ZIP
         # (affine_kernels.zip), so they must run in one worker via a glob pattern
         # to avoid duplicate shard lines for the same output ZIP.
         from itertools import groupby
-        sorted_affs = sorted(affine_kernels, key=lambda ak: ak.FAMILY)
+        sorted_affs = sorted(self._affine_kernels, key=lambda ak: ak.FAMILY)
         for _, grp in groupby(sorted_affs, key=lambda ak: ak.FAMILY):
             grp_list = list(grp)
             # e.g. unique_path = flash/affine/aiter_fmha_v3_fwd → parent/  = flash/affine/

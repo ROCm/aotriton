@@ -10,7 +10,9 @@ import hashlib
 import itertools
 import importlib.metadata
 from .database import Factories as DatabaseFactories
-from .rules import kernels
+from .codegen.linker import link_all_families
+
+kernels, _operators, _affine_kernels = link_all_families()
 
 def parse():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)

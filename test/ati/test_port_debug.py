@@ -18,15 +18,15 @@ sys.path.insert(0, str(REPO / 'modules' / 'flash'))
 
 import aotriton.template_instantiation as ati
 
-# The flash family build (aot package) builds attn_fwd (cited) then debug (citing),
-# resolving debug's @ati.cite against the registered key kernel. We assert on that
-# real, family-built debug kdesc — rebuilding it would re-run resolve_cites over a
-# spec that already carries the inherited cited disable.
-import aot
+# The flash family LINK (parser+linker) builds attn_fwd (cited) then debug (citing),
+# resolving debug's @ati.cite against the key kernel. We assert on that real, linked
+# debug kdesc.
+from aotriton.codegen.linker import link_all_families
 
 
 def _build():
-    return next(k for k in aot.kernels
+    kernels, _ops, _aff = link_all_families()
+    return next(k for k in kernels
                 if k.NAME == 'debug_simulate_encoded_softmax')
 
 

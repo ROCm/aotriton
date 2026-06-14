@@ -31,8 +31,8 @@ class _K:
 
 
 def _load_metro_fwd_plan():
-    import aot.metro_fwd as mod
-    return mod.metro_fwd.__ati_metro__
+    import aot
+    return aot.metro_fwd.__ati_metro__
 
 
 def _structure(metro):

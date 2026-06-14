@@ -16,8 +16,7 @@ from aotriton.template_instantiation.describe import describe, get_kernel_spec
 from aotriton.template_instantiation.builder import build_kernel
 from aotriton.template_instantiation.ir.kdesc import build_kernel_description
 from aotriton.gpu_targets import cluster_gpus
-import aot.attn_fwd as _attn_fwd_desc
-attn_fwd = _attn_fwd_desc.attn_fwd
+from aot.attn_fwd import attn_fwd
 try:
     import v3python.rules.flash as F   # legacy reference for parity comparison
 except ModuleNotFoundError:

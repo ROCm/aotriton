@@ -2,13 +2,10 @@
 # SPDX-License-Identifier: MIT
 
 import os
-from .rules import (
-    kernels as triton_kernels,
-    operators as dispatcher_operators,
-)
 from .codegen import (
     RootGenerator
 )
+from .codegen.linker import link_all_families
 from .utils import LazyFile
 import argparse
 from pathlib import Path
@@ -68,7 +65,7 @@ def parse():
 def run_sancheck() -> int:
     """Validate all ATI descriptions; print every error; return process exit code."""
     import sys
-    from .rules import kernels as triton_kernels, operators as dispatcher_operators
+    triton_kernels, dispatcher_operators, _aff = link_all_families()
     from .template_instantiation.tools import sancheck_report
     ok, errors = sancheck_report(kernels=triton_kernels,
                                  operators=dispatcher_operators)
@@ -82,7 +79,7 @@ def run_sancheck() -> int:
 
 def run_preview(selective) -> int:
     """Print the implicit structures of the ATI descriptions matching `selective`."""
-    from .rules import kernels as triton_kernels, operators as dispatcher_operators
+    triton_kernels, dispatcher_operators, _aff = link_all_families()
     from .template_instantiation.tools import preview
     sel = None if selective == '*' else selective
     text = preview(selective=sel, kernels=triton_kernels,

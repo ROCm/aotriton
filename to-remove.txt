@@ -78,11 +78,15 @@ modules/flash/kernel/flash.py  # the aggregator's real target; ATI never imports
 # its dead helpers can be pruned later.
 
 # =============================================================================
-# E. Interim scaffolding inside the new tree (replace, don't just delete)
+# E. Interim scaffolding inside the new tree — DONE (ATI linker, ati_linker_exec0)
 # =============================================================================
-# python/rules/__init__.py — the temporary aggregator that enumerates modules/*/aot
-#   by explicit path. To be REPLACED by --root_dir-driven family discovery in
-#   generate.py (not a plain deletion).
-# modules/flash/aot/__init__.py — the _build_metro_* / per-kernel
-#   build_kernel_description wiring is interim; should be pushed into the
-#   operator/generator layers so __init__ exposes only `operators`.
+# python/rules/ — DELETED. Family discovery + module loading moved into
+#   aotriton.codegen.parser (discover_families / load_family_aot); the two-pass build
+#   (parser=COMPILE, linker=LINK) replaced the eager aggregator. Consumers
+#   (codegen/root.py, generate.py, write_image_signature.py, ir/kdesc.py back-edge)
+#   now drive aotriton.codegen.linker.link_all_families().
+# modules/flash/aot/__init__.py — now PASSIVE: only kernel/affine imports, the two
+#   inlined @ati.metro_kernel defs, the two @ati.operator defs, and `operators`. No
+#   build_metro / build_kernel_description / build_merged_struct_cfields / registry
+#   writes; the linker derives each operator's struct + default kernel. The standalone
+#   metro_fwd.py / metro_bwd.py were inlined and DELETED.

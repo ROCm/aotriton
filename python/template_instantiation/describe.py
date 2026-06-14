@@ -328,19 +328,10 @@ def _collect_affine_decl(specs):
 
 
 def _finalize_affine(placeholder, specs):
-    """Attach the passive AffineDecl, then (interim) eagerly build the AffineKernel
-    from it so behavior is unchanged until the codegen linker takes over."""
-    from .affine import AffineKernel
-    decl = _collect_affine_decl(specs)
-    placeholder.__ati_affine__ = decl
-    return AffineKernel(name=decl.name, family='flash', co_dir=decl.co_dir,
-                        cookie=decl.cookie, headers=decl.headers,
-                        supported_arch=decl.supported_arch,
-                        choice_filters=decl.choice_filters,
-                        shared_operator_name=decl.shared_operator_name,
-                        supplied_specs=decl.supplied_specs, disable=decl.disable,
-                        supplies_after=decl.supplies_after,
-                        supplies_before=decl.supplies_before)
+    """PASSIVE: attach the AffineDecl to the def and return the def. The codegen linker
+    builds the AffineKernel from this record (family inferred from the path)."""
+    placeholder.__ati_affine__ = _collect_affine_decl(specs)
+    return placeholder
 
 
 class OperatorDecl:
@@ -399,13 +390,10 @@ def _collect_operator_decl(specs):
 
 
 def _finalize_operator(placeholder, specs):
-    """Attach the passive OperatorDecl, then (interim) eagerly build the Operator from
-    it so behavior is unchanged until the codegen linker takes over (exec0 Step 3)."""
-    from .ir.operator import build_operator
-    decl = _collect_operator_decl(specs)
-    placeholder.__ati_operator__ = decl
-    return build_operator(decl.opspec, decl.backends,
-                          binning=decl.binning, fallback=decl.fallback)
+    """PASSIVE: attach the OperatorDecl to the def and return the def. The codegen
+    linker (aotriton.codegen.linker) builds the Operator from this record."""
+    placeholder.__ati_operator__ = _collect_operator_decl(specs)
+    return placeholder
 
 
 def get_kernel_spec(kernel_obj):
