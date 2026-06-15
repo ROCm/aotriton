@@ -48,13 +48,18 @@ printf '#include <hip/hip_version.h>\nHIP_VERSION_MAJOR . HIP_VERSION_MINOR\n' >
 hipver=$(scl enable gcc-toolset-13 "cpp -I${ROCM_PATH}/include /tmp/print_hip_version.h" | tail -n 1 | sed 's/ //g')
 
 # --- Build ---
+# Only image builds embed a Triton wheel. Runtime builds (NOIMAGE_MODE=ON)
+# run with AOTRITON_NOIMAGE_MODE=ON and skip Triton entirely, so no wheel
+# config is passed (WHEEL_CFG is "NONE" in that case).
 build_args=("${NOIMAGE_MODE}" "${ARCH_LIST}")
-if [[ "${WHEEL_CFG}" == *.yml || "${WHEEL_CFG}" == *.yaml ]]; then
-  cmake_arg="-DAOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE=${WHEEL_CFG}"
-else
-  cmake_arg="-DAOTRITON_USE_LOCAL_TRITON_WHEEL=${WHEEL_CFG}"
+if [ "${NOIMAGE_MODE}" == "OFF" ]; then
+  if [[ "${WHEEL_CFG}" == *.yml || "${WHEEL_CFG}" == *.yaml ]]; then
+    cmake_arg="-DAOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE=${WHEEL_CFG}"
+  else
+    cmake_arg="-DAOTRITON_USE_LOCAL_TRITON_WHEEL=${WHEEL_CFG}"
+  fi
+  build_args+=("${cmake_arg}")
 fi
-build_args+=("${cmake_arg}")
 scl enable gcc-toolset-13 -- bash /src/aotriton/.ci/build-release.sh "${build_args[@]}"
 
 # --- Package (both archives must have aotriton/ as the root directory) ---

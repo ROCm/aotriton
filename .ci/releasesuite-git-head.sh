@@ -173,23 +173,29 @@ if [[ ${SUITE_SELECT_IMAGE} -gt 0 ]]; then
 fi
 
 # Resolve wheel configuration: yaml altwheel config, or path to the default pre-built wheel.
-if [[ -n "${SUITE_YAML}" ]]; then
-  cp "${SUITE_YAML}" "${CACHE_DIR}/tmpconfig.yaml"
-  replace_hash \
-    "${CACHE_DIR}/tmpconfig.yaml" \
-    "${WHEEL_CACHE_DIR}" \
-    "/cache/wheels" \
-    "${TRITON_HASHES[@]}"
-  WHEEL_CFG="/cache/tmpconfig.yaml"
-else
-  DEFAULT_SHORT="${DEFAULT_HASH:0:8}"
-  WHEEL_CFG=$(ls "${WHEEL_CACHE_DIR}"/triton-*+*${DEFAULT_SHORT}*.whl 2>/dev/null | head -1)
-  if [[ -z "${WHEEL_CFG}" ]]; then
-    echo "Error: no pre-built triton wheel found for ${DEFAULT_SHORT} in ${WHEEL_CACHE_DIR}" >&2
-    exit 1
+# Only image builds embed a Triton wheel. Runtime builds run with
+# AOTRITON_NOIMAGE_MODE=ON and never touch Triton, so skip wheel resolution
+# entirely (and avoid failing when no wheel was pre-built).
+WHEEL_CFG="NONE"
+if [[ ${SUITE_SELECT_IMAGE} -gt 0 ]]; then
+  if [[ -n "${SUITE_YAML}" ]]; then
+    cp "${SUITE_YAML}" "${CACHE_DIR}/tmpconfig.yaml"
+    replace_hash \
+      "${CACHE_DIR}/tmpconfig.yaml" \
+      "${WHEEL_CACHE_DIR}" \
+      "/cache/wheels" \
+      "${TRITON_HASHES[@]}"
+    WHEEL_CFG="/cache/tmpconfig.yaml"
+  else
+    DEFAULT_SHORT="${DEFAULT_HASH:0:8}"
+    WHEEL_CFG=$(ls "${WHEEL_CACHE_DIR}"/triton-*+*${DEFAULT_SHORT}*.whl 2>/dev/null | head -1)
+    if [[ -z "${WHEEL_CFG}" ]]; then
+      echo "Error: no pre-built triton wheel found for ${DEFAULT_SHORT} in ${WHEEL_CACHE_DIR}" >&2
+      exit 1
+    fi
+    # Map host path to in-container path under /cache/wheels
+    WHEEL_CFG="/cache/wheels/$(basename "${WHEEL_CFG}")"
   fi
-  # Map host path to in-container path under /cache/wheels
-  WHEEL_CFG="/cache/wheels/$(basename "${WHEEL_CFG}")"
 fi
 
 function build_inside() {
