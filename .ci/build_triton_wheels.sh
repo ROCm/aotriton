@@ -44,17 +44,24 @@ if docker run --rm \
      -v "${TRITON_MIRROR_VOLUME}:/mirror" \
      "${BASE_DOCKER_IMAGE}" \
      bash -c "git -C /mirror rev-parse --git-dir" &>/dev/null; then
-  # fetch --all: required because we don't know which branch contains the target hash
+  # Repair + update. A plain `git clone --bare` sets no fetch refspec, so
+  # `git fetch` only updates FETCH_HEAD and never picks up new branches
+  # (e.g. aotriton/* release branches). Force the mirror refspec, then
+  # fetch --prune so all refs/heads/* track the remote.
   docker run --network=host --rm \
     -v "${TRITON_MIRROR_VOLUME}:/mirror" \
     "${BASE_DOCKER_IMAGE}" \
-    bash -c "git -C /mirror fetch --all"
+    bash -c "set -ex
+git -C /mirror config remote.origin.mirror true
+git -C /mirror config remote.origin.fetch '+refs/*:refs/*'
+git -C /mirror config uploadpack.allowReachableSHA1InWant true
+git -C /mirror fetch --prune origin"
 else
   docker run --network=host --rm \
     -v "${TRITON_MIRROR_VOLUME}:/mirror" \
     "${BASE_DOCKER_IMAGE}" \
     bash -c "set -ex
-git clone --bare ${TRITON_GIT_ORIGIN} /mirror
+git clone --mirror ${TRITON_GIT_ORIGIN} /mirror
 git -C /mirror config uploadpack.allowReachableSHA1InWant true"
 fi
 
