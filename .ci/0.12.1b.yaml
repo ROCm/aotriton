@@ -1,5 +1,5 @@
 venvs:
-  gfx1250: f784f2650de8630d52f1f7216c7f5b24499554bf
+  gfx1250: 98c9ef1f44f7a9916a7a6e3b6b99271211f67f88
 rules:
   - matches:  # String matches (identical)
       arch: gfx1250
