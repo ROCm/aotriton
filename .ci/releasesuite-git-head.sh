@@ -210,6 +210,8 @@ function build_inside() {
       "${BUILD_ARG[@]}" \
       -f ${DOCKERFILE} .)
   fi
+  # Cache pip downloads under <output>/.cache/pip on the host.
+  mkdir -p "${CACHE_DIR}/pip"
   set -x
   docker run --network=host -i --rm \
     -v ${SOURCE_VOLUME}:/src:ro \
@@ -218,6 +220,7 @@ function build_inside() {
     --tmpfs "/scratch:exec" \
     -e AOTRITON_BUILD_PATH=/scratch/build/aotriton \
     -e AOTRITON_INSTALL_PREFIX=/scratch/install \
+    -e PIP_CACHE_DIR=/cache/pip \
     -w / \
     ${DOCKER_IMAGE} \
     bash -l -s "${NOIMAGE_MODE}" "${WHEEL_CFG}" "${ARCH_LIST}" \
