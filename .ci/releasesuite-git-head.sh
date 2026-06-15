@@ -23,6 +23,10 @@ Options:
          -r <ROCM ver>: build ROCM runtime image
                --image: build GPU images.
              --runtime: build all C++ runtimes.
+       --arch <list>: ';'-separated GPU arch list (e.g. 'gfx942;gfx950'),
+                        forwarded to cmake as AOTRITON_TARGET_ARCH. Defaults
+                        to ALL (every arch in the CMakeLists default list).
+                        Useful to shorten debug builds.
          --yaml <.yml>: Use yml config file to build the release
         --origin <url>: Override the git HTTPS origin URL (default: auto-detected from remote)
 By default both GPU images and runtimes are built.
@@ -38,7 +42,7 @@ EOF
   exit $1
 }
 
-TEMP=$(getopt -o hr: --longoptions image,runtime,yaml:,origin: -- "$@")
+TEMP=$(getopt -o hr: --longoptions image,runtime,arch:,yaml:,origin: -- "$@")
 
 if [ $? -ne 0 ]; then
   echo "Error: Invalid option." >&2
@@ -54,6 +58,7 @@ CMDLIST=()
 SUITE_DEFAULT_SELECTION=1
 SUITE_YAML=""
 SUITE_ORIGIN=""
+SUITE_ARCH="ALL"
 
 while true; do
   case "$1" in
@@ -67,6 +72,10 @@ while true; do
     --runtime)
       SUITE_SELECT_RUNTIME=1
       SUITE_DEFAULT_SELECTION=0
+      ;;
+    --arch)
+      shift
+      SUITE_ARCH="$1"
       ;;
     -r)
       SUITE_SELECT_RUNTIME=1
@@ -186,6 +195,7 @@ fi
 function build_inside() {
   rocmver="$1"
   NOIMAGE_MODE="$2"
+  ARCH_LIST="${3:-ALL}"
   DOCKER_IMAGE="aotriton:buildenv-rocm${rocmver}"
   if [ -z "$(docker images -q ${DOCKER_IMAGE} 2>/dev/null)" ]; then
     # Use theRock.Dockerfile for ROCm >= 7.10
@@ -210,7 +220,7 @@ function build_inside() {
     -e AOTRITON_INSTALL_PREFIX=/scratch/install \
     -w / \
     ${DOCKER_IMAGE} \
-    bash -l -s "${NOIMAGE_MODE}" "${WHEEL_CFG}" \
+    bash -l -s "${NOIMAGE_MODE}" "${WHEEL_CFG}" "${ARCH_LIST}" \
     < "${SCRIPT_DIR}/runc-manylinux-build-tar.sh"
 }
 
@@ -218,11 +228,11 @@ if [ ${SUITE_SELECT_RUNTIME} -gt 0 ]; then
   # build ROCM runtime image
   for rocmver in "${SUITE_RUNTIME_LIST[@]}"
   do
-    build_inside ${rocmver} ON
+    build_inside ${rocmver} ON "${SUITE_ARCH}"
   done
 fi
 
 if [ ${SUITE_SELECT_IMAGE} -gt 0 ]; then
   rocmver=7.2.3
-  build_inside ${rocmver} OFF
+  build_inside ${rocmver} OFF "${SUITE_ARCH}"
 fi

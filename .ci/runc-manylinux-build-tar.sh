@@ -1,7 +1,9 @@
 #!/bin/bash
 # Runs inside the AlmaLinux 8 ROCm Docker container (manylinux_2_28 environment).
 # Fed via stdin by build_inside() in releasesuite-git-head.sh; no bind mount needed.
-# Positional args: $1=NOIMAGE_MODE $2=WHEEL_CFG
+# Positional args: $1=NOIMAGE_MODE $2=WHEEL_CFG $3=ARCH_LIST
+#   ARCH_LIST: "ALL" (default) or a ';'-separated GPU arch list forwarded
+#   to build-release.sh as its arch_list arg (becomes AOTRITON_TARGET_ARCH).
 #
 # Container prerequisites:
 #   Mounts:
@@ -24,6 +26,7 @@ set -ex
 # --- Arguments ---
 NOIMAGE_MODE="$1"
 WHEEL_CFG="$2"
+ARCH_LIST="${3:-ALL}"
 
 # --- Validate environment ---
 if [ -z "${AOTRITON_BUILD_PATH}" ]; then
@@ -45,7 +48,7 @@ printf '#include <hip/hip_version.h>\nHIP_VERSION_MAJOR . HIP_VERSION_MINOR\n' >
 hipver=$(scl enable gcc-toolset-13 "cpp -I${ROCM_PATH}/include /tmp/print_hip_version.h" | tail -n 1 | sed 's/ //g')
 
 # --- Build ---
-build_args=("${NOIMAGE_MODE}" "ALL")
+build_args=("${NOIMAGE_MODE}" "${ARCH_LIST}")
 if [[ "${WHEEL_CFG}" == *.yml || "${WHEEL_CFG}" == *.yaml ]]; then
   cmake_arg="-DAOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE=${WHEEL_CFG}"
 else
