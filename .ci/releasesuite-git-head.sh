@@ -191,11 +191,13 @@ function build_inside() {
     # Use theRock.Dockerfile for ROCm >= 7.10
     if printf '%s\n%s\n' "7.10" "${rocmver}" | sort -V -C; then
       DOCKERFILE="theRock.Dockerfile"
+      BUILD_ARG=(--build-arg "THEROCK_VERSION=${rocmver}")
     else
       DOCKERFILE="rocm.Dockerfile"
+      BUILD_ARG=(--build-arg "ROCM_VERSION_IN_URL=${rocmver}")
     fi
     (cd "${SCRIPT_DIR}" && docker build --network=host -t ${DOCKER_IMAGE} \
-      --build-arg ROCM_VERSION_IN_URL=${rocmver} \
+      "${BUILD_ARG[@]}" \
       -f ${DOCKERFILE} .)
   fi
   set -x
