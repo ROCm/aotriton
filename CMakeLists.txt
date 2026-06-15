@@ -211,9 +211,30 @@ message("VENV_SITE ${VENV_SITE}")
 
 execute_process(COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_BIN_PYTHON}" -m pip install -r "${CMAKE_CURRENT_LIST_DIR}/requirements.txt")
 
+# An alt wheel config must define a 'default' venv: arches unmatched by any
+# rule fall back to 'default', and the default Triton is installed into
+# altvenvs/default by the alt-wheel block below. Without it the default venv
+# would build Triton from the third_party/triton source tree, which is
+# read-only in CI containers and would fail. Require it explicitly.
+if(AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
+  execute_process(
+    COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_BIN_PYTHON}" -c
+    "import yaml,sys; d=yaml.load(open(sys.argv[1]), Loader=yaml.Loader); print(d.get('venvs', {}).get('default', ''))"
+    "${AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE}"
+    OUTPUT_VARIABLE _ALT_DEFAULT
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+  )
+  if(NOT _ALT_DEFAULT)
+    message(FATAL_ERROR "[AOTriton] Alt wheel config ${AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE} must define venvs.default.")
+  endif()
+endif()
+
 set(ALL_TRITON_SOS "")
 if(AOTRITON_NOIMAGE_MODE)
   message(STATUS "[AOTriton] Skipping triton due to AOTRITON_NOIMAGE_MODE")
+elseif(AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
+  # All venvs (including 'default') are supplied by the alt-wheel block below.
+  message(STATUS "[AOTriton] Triton venvs deferred to alt wheel config: ${AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE}")
 elseif(AOTRITON_INHERIT_SYSTEM_SITE_TRITON)
   # Check if triton can be imported in the venv
   execute_process(

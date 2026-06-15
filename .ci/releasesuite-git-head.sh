@@ -151,7 +151,7 @@ mkdir -p "${WHEEL_CACHE_DIR}"
 # otherwise the submodule is the mandatory default.
 DEFAULT_HASH=""
 if [[ -n "${SUITE_YAML}" ]]; then
-  DEFAULT_HASH=$(yq -r '.venvs.default // empty' "${SUITE_YAML}")
+  DEFAULT_HASH=$(yq -r '.venvs.default // ""' "${SUITE_YAML}")
 fi
 if [[ -z "${DEFAULT_HASH}" ]]; then
   DEFAULT_HASH=$(git rev-parse HEAD:third_party/triton)
@@ -180,6 +180,14 @@ WHEEL_CFG="NONE"
 if [[ ${SUITE_SELECT_IMAGE} -gt 0 ]]; then
   if [[ -n "${SUITE_YAML}" ]]; then
     cp "${SUITE_YAML}" "${CACHE_DIR}/tmpconfig.yaml"
+    # The user yaml may omit venvs.default. Arches unmatched by any rule fall
+    # back to 'default' in CMakeLists.txt; without it the default venv builds
+    # Triton from the read-only third_party/triton source and fails in CI.
+    # Inject the resolved DEFAULT_HASH (whose wheel is already built and part
+    # of TRITON_HASHES) so replace_hash maps it to the pre-built wheel path.
+    if [[ -z "$(yq -r '.venvs.default // ""' "${CACHE_DIR}/tmpconfig.yaml")" ]]; then
+      yq -i ".venvs.default = \"${DEFAULT_HASH}\"" "${CACHE_DIR}/tmpconfig.yaml"
+    fi
     replace_hash \
       "${CACHE_DIR}/tmpconfig.yaml" \
       "${WHEEL_CACHE_DIR}" \
