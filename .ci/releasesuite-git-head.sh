@@ -242,6 +242,11 @@ if [ ${SUITE_SELECT_RUNTIME} -gt 0 ]; then
 fi
 
 if [ ${SUITE_SELECT_IMAGE} -gt 0 ]; then
-  rocmver=7.2.3
+  # Build the GPU image with the last ROCm version in the runtime list.
+  # Newer archs (e.g. gfx1250) require a matching newer ROCm (e.g. 7.14.0)
+  # that older versions like 7.2.3 cannot compile. With `-r 7.14.0` the
+  # runtime list becomes (7.14.0); without -r it defaults to the embedded
+  # list whose last entry (7.2.3) preserves prior behavior.
+  rocmver="${SUITE_RUNTIME_LIST[-1]}"
   build_inside ${rocmver} OFF "${SUITE_ARCH}"
 fi
