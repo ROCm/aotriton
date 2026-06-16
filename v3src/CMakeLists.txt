@@ -167,6 +167,9 @@ if(NOT AOTRITON_NOIMAGE_MODE)
     --target_arch ${AOTRITON_TARGET_ARCH}
     ${SIGNATURE_ALT_VENV_OPTION}
     --output_file "${SIGNATURE_FILE}"
+    # Probing per-venv Triton versions requires the wheels to be installed
+    # first; otherwise alt venvs report 'unknown'.
+    DEPENDS aotriton_venv_triton
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
   )
 

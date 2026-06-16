@@ -219,7 +219,7 @@ execute_process(COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_
 if(AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
   execute_process(
     COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_BIN_PYTHON}" -c
-    "import yaml,sys; d=yaml.load(open(sys.argv[1]), Loader=yaml.Loader); print(d.get('venvs', {}).get('default', ''))"
+    "import yaml,sys; d=yaml.safe_load(open(sys.argv[1])); print(d.get('venvs', {}).get('default', ''))"
     "${AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE}"
     OUTPUT_VARIABLE _ALT_DEFAULT
     OUTPUT_STRIP_TRAILING_WHITESPACE
@@ -289,7 +289,7 @@ endif()
 if(NOT AOTRITON_NOIMAGE_MODE AND AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
   execute_process(
     COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_BIN_PYTHON}" -c
-    "import yaml,sys; f = open(sys.argv[1]); d = yaml.load(f, Loader=yaml.Loader); print(';'.join([f'{k};{v}' for k, v in d['venvs'].items()]))"
+    "import yaml,sys; f = open(sys.argv[1]); d = yaml.safe_load(f); print(';'.join([f'{k};{v}' for k, v in d['venvs'].items()]))"
     "${AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE}"
     OUTPUT_VARIABLE ALT_VENVS
     OUTPUT_STRIP_TRAILING_WHITESPACE

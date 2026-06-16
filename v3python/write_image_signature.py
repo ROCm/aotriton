@@ -59,14 +59,19 @@ def _triton_version_local():
         return 'unknown'
 
 def _venv_python(args, name, value):
-    # Matches v3python/codegen/root.py venv resolution.
+    # Matches v3python/codegen/root.py venv resolution: a "python:" value points
+    # at an explicit interpreter; any other value (including for 'default') is an
+    # alt wheel installed under altvenvs/<name>.
     if value.startswith("python:"):
         return Path(value[len("python:"):]).absolute()
-    if name == 'default':
-        venv_dir = os.getenv('VIRTUAL_ENV')
-        base = Path(venv_dir) if venv_dir else (args.build_dir.parent / 'venv')
-        return (base / REL_PYTHON).absolute()
     return (args.build_dir.parent / "altvenvs" / name / REL_PYTHON).absolute()
+
+def _default_venv_python(args):
+    # Mirror root.py's fallback used only when the config has no 'default' venv:
+    # prefer the active VIRTUAL_ENV, else build_dir.parent/venv.
+    venv_dir = os.getenv('VIRTUAL_ENV')
+    base = Path(venv_dir) if venv_dir else (args.build_dir.parent / 'venv')
+    return (base / REL_PYTHON).absolute()
 
 def _triton_version_in_venv(python_path):
     # Query the triton version installed in another venv by running its python.
@@ -91,10 +96,14 @@ def make_triton_version(args):
     # keys (matches/rmatches/gmatches) with 'venv' replaced by the resolved
     # 'triton_version'.
     with open(args.alt_venv_config) as f:
-        cfg = yaml.load(f, Loader=yaml.Loader)
+        cfg = yaml.safe_load(f)
     venvs = cfg.get('venvs', {})
     resolved = {name: _triton_version_in_venv(_venv_python(args, name, value))
                 for name, value in venvs.items()}
+    if 'default' not in resolved:
+        # No 'default' venv in the config: resolve it from VIRTUAL_ENV/venv,
+        # mirroring root.py's fallback.
+        resolved['default'] = _triton_version_in_venv(_default_venv_python(args))
     out = {'default': resolved.get('default', _triton_version_local())}
     rules_out = []
     for rule in cfg.get('rules', []):
