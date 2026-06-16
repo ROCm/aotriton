@@ -54,7 +54,7 @@ def test_transpiled_fwd_metro_matches_handwritten():
     kmap = {'attn_fwd': attn, 'debug_simulate_encoded_softmax': debug}
 
     def factory(steps):
-        return MetroKernel('triton', steps)
+        return MetroKernel('triton', steps, family='flash')
 
     transpiled = lower_plan(_load_metro_fwd_plan(), kmap, factory, ConditionalKernel)
 

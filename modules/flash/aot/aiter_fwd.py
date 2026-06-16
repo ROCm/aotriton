@@ -14,7 +14,7 @@ import aotriton.template_instantiation as ati
 from ._common import check_value
 
 
-def _fwd_disabled(functional):
+def _aiter_fwd_disabled(functional):
     """ASM-kernel exclusions: no fp32, no hdim > 192."""
     dtype = check_value(functional, ['Q'])
     if '*fp32' in dtype:
@@ -26,7 +26,7 @@ def _fwd_disabled(functional):
 
 
 @ati.kernel
-@ati.disable(when=_fwd_disabled)
+@ati.disable(when=_aiter_fwd_disabled)
 @ati.affine.aiter_asm(name='aiter_fmha_v3_fwd')
 @ati.affine.shared_operator('op_attn_fwd')
 @ati.affine.arch(['gfx942', 'gfx950'])

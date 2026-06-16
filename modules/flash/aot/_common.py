@@ -1,8 +1,21 @@
 # Copyright © 2023-2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
+import os
+
 from aotriton.gpu_targets import AOTRITON_ARCH_WARPSIZE
 from aotriton.utils import log
+
+
+# Shared across the flash kernel descriptions (attn_fwd / bwd_kernel_* / bwd_preprocess*).
+MAIN_DTYPES = ['*fp16:16', '*bf16:16', '*fp32:16']
+
+
+def block_dmodel_values():
+    """The BLOCK_DMODEL axis values, overridable via AOTRITON_FLASH_BLOCK_DMODEL."""
+    env = os.getenv('AOTRITON_FLASH_BLOCK_DMODEL',
+                    default='16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256, 512')
+    return [int(d) for d in env.split(',')]
 
 
 def flash_disabled(f, *, gfx950_bad_hdims=()):

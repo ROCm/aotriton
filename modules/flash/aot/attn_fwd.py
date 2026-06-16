@@ -11,22 +11,12 @@ instantiation description onto it. Covers all 74 parameters. Conditional argumen
 the derive fixes the per-functional value (ati+newbinds_rev1.md §6.2).
 """
 
-import os
 from dataclasses import dataclass
 
 import numpy as np
 
 import aotriton.template_instantiation as ati
-from ._common import flash_disabled
-
-
-def _block_dmodel_values():
-    env = os.getenv('AOTRITON_FLASH_BLOCK_DMODEL',
-                    default='16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256, 512')
-    return [int(d) for d in env.split(',')]
-
-
-MAIN_DTYPES = ['*fp16:16', '*bf16:16', '*fp32:16']
+from ._common import flash_disabled, block_dmodel_values, MAIN_DTYPES
 
 
 @dataclass
@@ -84,7 +74,7 @@ def _attn_fwd_disabled(f):
 @ati.tensor(['cu_seqlens_q', 'cu_seqlens_k',
              'seq_strides_q', 'seq_strides_k'], 'T_seq', rank=1)
 # --- head dims ---
-@ati.scalar('BLOCK_DMODEL', options=_block_dmodel_values())
+@ati.scalar('BLOCK_DMODEL', options=block_dmodel_values())
 @ati.scalar(['Hdim_qk', 'Hdim_vo'], 'i32')
 @ati.scalar('PADDED_HEAD', options=[False, True])
 # --- dropout + PRNG ---

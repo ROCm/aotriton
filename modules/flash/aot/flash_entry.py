@@ -11,6 +11,8 @@ of v3python.tune is what severs the last v3python edge from the codegen closure.
 
 `as_text()` output MUST stay byte-identical to the original (it is the diagnostic
 line the tuner re-parses).
+
+TODO: Merge with modules/flash/tune in ATI Phase 2: Modularization.
 """
 
 from dataclasses import dataclass, asdict

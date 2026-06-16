@@ -117,15 +117,7 @@ class Functional:
         return self.meta_object.FAMILY
 
     @property
-    def FAMILY(self):
-        return self.meta_object.FAMILY
-
-    @property
     def name(self):
-        return self.meta_object.NAME
-
-    @property
-    def NAME(self):
         return self.meta_object.NAME
 
     @property

@@ -81,7 +81,7 @@ class MetroKernel(Interface):
     TUNE_NAME = None
     ENUM_PREFIX = 'kMetro_'
 
-    def __init__(self, name, kernels, *, family='flash'):
+    def __init__(self, name, kernels, *, family):
         self.NAME = name
         self.FAMILY = family
         self._kernels = list(kernels)
@@ -126,7 +126,7 @@ class MetroKernel(Interface):
         return union_params(arg_lists, renames=renames)
 
 
-def build_metro(plan, kernel_map, name, *, family='flash'):
+def build_metro(plan, kernel_map, name, *, family):
     """Lower a transpiled MetroPlan to a MetroKernel (a metro launcher).
 
     plan:        the @ati.metro_kernel transpiler output (fn.__ati_metro__).

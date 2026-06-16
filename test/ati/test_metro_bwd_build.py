@@ -50,7 +50,7 @@ def test_transpiled_bwd_metro_matches_handwritten():
                                'bwd_kernel_dk_dv', 'bwd_kernel_dq')}
 
     def factory(steps):
-        return MetroKernel('triton_split', steps)
+        return MetroKernel('triton_split', steps, family='flash')
 
     transpiled = lower_plan(_load_metro_bwd_plan(), subs, factory, ConditionalKernel)
 

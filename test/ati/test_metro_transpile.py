@@ -113,7 +113,7 @@ def test_metro_kernel_merges_renamed_arg():
     kmap = {'attn_fwd': attn, 'debug_simulate_encoded_softmax': debug}
 
     def metro_factory(steps):
-        return MetroKernel('metro_fwd', steps)
+        return MetroKernel('metro_fwd', steps, family='flash')
 
     metro = lower_plan(metro_fwd.__ati_metro__, kmap,
                        metro_factory, ConditionalKernel)

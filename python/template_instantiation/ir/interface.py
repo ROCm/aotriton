@@ -17,7 +17,11 @@ ARGUMENTS dicts, `__init__`/`_late_init`) which the ATI enumeration replaced. Th
 base is identity-only — no functional `__init__`.
 """
 
+import itertools
 from pathlib import Path
+
+from .axis import assign_godel, godel_of
+from .functional import Functional, _resolve
 
 
 class Interface:
@@ -90,9 +94,6 @@ class Interface:
         product over the multi-choice axes (godel), fan each variable's choice onto
         its arguments, apply overrides in declared order). `target_arch` is an
         ordered {arch -> gpus}; arch_number is its enumeration index."""
-        import itertools
-        from .axis import assign_godel, godel_of
-        from .functional import Functional, _resolve
         axes, overrides = self._axes_overrides()
         axes_all = sorted(axes, key=lambda a: a.anchor)
         axes_multi = [a for a in axes_all if not a.is_trivial]

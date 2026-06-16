@@ -12,22 +12,12 @@ but the operator/golden call it `stride_bk`; ATI emits the real name in the cosm
 pp_args comment (the access expression is identical).
 """
 
-import os
 from dataclasses import dataclass
 
 import numpy as np
 
 import aotriton.template_instantiation as ati
-from ._common import flash_disabled
-
-
-def _block_dmodel_values():
-    env = os.getenv('AOTRITON_FLASH_BLOCK_DMODEL',
-                    default='16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256, 512')
-    return [int(d) for d in env.split(',')]
-
-
-MAIN_DTYPES = ['*fp16:16', '*bf16:16', '*fp32:16']
+from ._common import flash_disabled, block_dmodel_values, MAIN_DTYPES
 
 
 @dataclass
@@ -71,7 +61,7 @@ def gen_autotune_configs(f):
 @ati.scalar('philox_offset2', 'u64')
 @ati.scalar('Window_left', 'i32')
 @ati.scalar('Window_right', 'i32')
-@ati.scalar('BLOCK_DMODEL', options=_block_dmodel_values())
+@ati.scalar('BLOCK_DMODEL', options=block_dmodel_values())
 @ati.scalar('CAUSAL_TYPE', options=[0, 3])
 @ati.scalar('ENABLE_DROPOUT', options=[False, True])
 @ati.scalar('PADDED_HEAD', options=[False, True])

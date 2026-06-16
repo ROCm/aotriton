@@ -12,18 +12,18 @@ from the cited preprocess, rev1 §5), and its own perf (no NUM_XCDS). Stacked-@ 
 over ../kernel/bwd_kernel_fuse.py.
 """
 
-import os
 from dataclasses import dataclass
 
 import numpy as np
 
 import aotriton.template_instantiation as ati
+from ._common import block_dmodel_values
 
 
 def _block_dmodel_values_capped():
-    env = os.getenv('AOTRITON_FLASH_BLOCK_DMODEL',
-                    default='16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256, 512')
-    return [int(d) for d in env.split(',') if int(d) <= 256]
+    # The fused bwd kernel caps BLOCK_DMODEL at 256 (legacy v3python rule
+    # rules/flash/bwd_kernel_fuse.py: `BLOCK_DMODEL: lambda x: x <= 256`).
+    return [d for d in block_dmodel_values() if d <= 256]
 
 
 @dataclass

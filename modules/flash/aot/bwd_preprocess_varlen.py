@@ -8,21 +8,12 @@ inherited from the cite. Stacked-@ form over ../kernel/bwd_preprocess.py (the
 varlen kernel is defined there too).
 """
 
-import os
 from dataclasses import dataclass
 
 import numpy as np
 
 import aotriton.template_instantiation as ati
-
-
-def _block_dmodel_values():
-    env = os.getenv('AOTRITON_FLASH_BLOCK_DMODEL',
-                    default='16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256, 512')
-    return [int(d) for d in env.split(',')]
-
-
-MAIN_DTYPES = ['*fp16:16', '*bf16:16', '*fp32:16']
+from ._common import block_dmodel_values, MAIN_DTYPES
 
 
 @dataclass
@@ -36,7 +27,7 @@ class BwdPreprocessVarlenPerf:
 @ati.tensor('Out', 'T_io', strides='stride_o?', contiguous=-1)
 @ati.tensor('DO',  'T_io', strides='stride_do?', contiguous=-1)
 @ati.tensor('Delta', 'LazyTensor:*fp32:16', rank=2, wires_to='D')
-@ati.scalar('D_HEAD', options=_block_dmodel_values(), wires_to='BLOCK_DMODEL')
+@ati.scalar('D_HEAD', options=block_dmodel_values(), wires_to='BLOCK_DMODEL')
 @ati.scalar('PADDED_HEAD', options=[False, True])
 @ati.tune.schema(BwdPreprocessVarlenPerf)   # schema-only -> untunable
 @ati.tune.fallback(PADDED_HEAD=False)
