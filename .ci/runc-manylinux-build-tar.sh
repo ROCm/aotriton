@@ -37,6 +37,13 @@ if [ -z "${AOTRITON_INSTALL_PREFIX}" ]; then
 fi
 export AOTRITON_INSTALL_PATH="${AOTRITON_INSTALL_PREFIX}/aotriton"
 
+# pip (running as root) refuses a cache dir not owned by root and silently
+# disables caching. PIP_CACHE_DIR=/cache/pip is bind-mounted from the host
+# and owned by the host UID, so take ownership inside the container.
+if [ -n "${PIP_CACHE_DIR}" ] && [ -d "${PIP_CACHE_DIR}" ]; then
+  chown -R "$(id -u):$(id -g)" "${PIP_CACHE_DIR}" || true
+fi
+
 # --- Detect ROCm and HIP version ---
 GIT_SHORT=$(git -C /src/aotriton rev-parse --short=12 HEAD)
 export ROCM_PATH=$(hipconfig --rocmpath)
