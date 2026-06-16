@@ -23,8 +23,15 @@ Options:
          -r <ROCM ver>: build ROCM runtime image
                --image: build GPU images.
              --runtime: build all C++ runtimes.
+       --arch <list>: ';'-separated GPU arch list (e.g. 'gfx942;gfx950'),
+                        forwarded to cmake as AOTRITON_TARGET_ARCH. Defaults
+                        to ALL (every arch in the CMakeLists default list).
+                        Useful to shorten debug builds.
          --yaml <.yml>: Use yml config file to build the release
         --origin <url>: Override the git HTTPS origin URL (default: auto-detected from remote)
+ --triton_origin <url>: Override the Triton git origin for wheel builds.
+                        Accepts a fork URL or a local checkout via file:///abs/path
+                        (default: https://github.com/ROCm/triton)
 By default both GPU images and runtimes are built.
 If either --image or --runtime is specified, the missing one will not be built.
 
@@ -38,7 +45,7 @@ EOF
   exit $1
 }
 
-TEMP=$(getopt -o hr: --longoptions image,runtime,yaml:,origin: -- "$@")
+TEMP=$(getopt -o hr: --longoptions image,runtime,arch:,yaml:,origin:,triton_origin: -- "$@")
 
 if [ $? -ne 0 ]; then
   echo "Error: Invalid option." >&2
@@ -54,6 +61,8 @@ CMDLIST=()
 SUITE_DEFAULT_SELECTION=1
 SUITE_YAML=""
 SUITE_ORIGIN=""
+SUITE_TRITON_ORIGIN=""
+SUITE_ARCH="ALL"
 
 while true; do
   case "$1" in
@@ -68,6 +77,10 @@ while true; do
       SUITE_SELECT_RUNTIME=1
       SUITE_DEFAULT_SELECTION=0
       ;;
+    --arch)
+      shift
+      SUITE_ARCH="$1"
+      ;;
     -r)
       SUITE_SELECT_RUNTIME=1
       SUITE_DEFAULT_SELECTION=0
@@ -81,6 +94,10 @@ while true; do
     --origin)
       shift
       SUITE_ORIGIN="$1"
+      ;;
+    --triton_origin)
+      shift
+      SUITE_TRITON_ORIGIN="$1"
       ;;
     '--')
       shift
@@ -142,7 +159,7 @@ mkdir -p "${WHEEL_CACHE_DIR}"
 # otherwise the submodule is the mandatory default.
 DEFAULT_HASH=""
 if [[ -n "${SUITE_YAML}" ]]; then
-  DEFAULT_HASH=$(yq -r '.venvs.default // empty' "${SUITE_YAML}")
+  DEFAULT_HASH=$(yq -r '.venvs.default // ""' "${SUITE_YAML}")
 fi
 if [[ -z "${DEFAULT_HASH}" ]]; then
   DEFAULT_HASH=$(git rev-parse HEAD:third_party/triton)
@@ -157,47 +174,70 @@ fi
 # Runtime builds consume pre-built wheels from /cache/wheels via WHEEL_CFG.
 if [[ ${SUITE_SELECT_IMAGE} -gt 0 ]]; then
   TRITON_WHEEL_VERSION_SUFFIX="+aotriton${aotriton_major}.${aotriton_minor}"
-  bash "${SCRIPT_DIR}/build_triton_wheels.sh" \
+  TRITON_ORIGIN_ENV=()
+  if [[ -n "${SUITE_TRITON_ORIGIN}" ]]; then
+    TRITON_ORIGIN_ENV=(TRITON_GIT_ORIGIN="${SUITE_TRITON_ORIGIN}")
+  fi
+  env "${TRITON_ORIGIN_ENV[@]}" bash "${SCRIPT_DIR}/build_triton_wheels.sh" \
     --wheel_output_dir "${WHEEL_CACHE_DIR}" \
     --version_suffix "${TRITON_WHEEL_VERSION_SUFFIX}" \
     "${TRITON_HASHES[@]}"
 fi
 
 # Resolve wheel configuration: yaml altwheel config, or path to the default pre-built wheel.
-if [[ -n "${SUITE_YAML}" ]]; then
-  cp "${SUITE_YAML}" "${CACHE_DIR}/tmpconfig.yaml"
-  replace_hash \
-    "${CACHE_DIR}/tmpconfig.yaml" \
-    "${WHEEL_CACHE_DIR}" \
-    "/cache/wheels" \
-    "${TRITON_HASHES[@]}"
-  WHEEL_CFG="/cache/tmpconfig.yaml"
-else
-  DEFAULT_SHORT="${DEFAULT_HASH:0:8}"
-  WHEEL_CFG=$(ls "${WHEEL_CACHE_DIR}"/triton-*+*${DEFAULT_SHORT}*.whl 2>/dev/null | head -1)
-  if [[ -z "${WHEEL_CFG}" ]]; then
-    echo "Error: no pre-built triton wheel found for ${DEFAULT_SHORT} in ${WHEEL_CACHE_DIR}" >&2
-    exit 1
+# Only image builds embed a Triton wheel. Runtime builds run with
+# AOTRITON_NOIMAGE_MODE=ON and never touch Triton, so skip wheel resolution
+# entirely (and avoid failing when no wheel was pre-built).
+WHEEL_CFG="NONE"
+if [[ ${SUITE_SELECT_IMAGE} -gt 0 ]]; then
+  if [[ -n "${SUITE_YAML}" ]]; then
+    cp "${SUITE_YAML}" "${CACHE_DIR}/tmpconfig.yaml"
+    # The user yaml may omit venvs.default. Arches unmatched by any rule fall
+    # back to 'default' in CMakeLists.txt; without it the default venv builds
+    # Triton from the read-only third_party/triton source and fails in CI.
+    # Inject the resolved DEFAULT_HASH (whose wheel is already built and part
+    # of TRITON_HASHES) so replace_hash maps it to the pre-built wheel path.
+    if [[ -z "$(yq -r '.venvs.default // ""' "${CACHE_DIR}/tmpconfig.yaml")" ]]; then
+      yq -i ".venvs.default = \"${DEFAULT_HASH}\"" "${CACHE_DIR}/tmpconfig.yaml"
+    fi
+    replace_hash \
+      "${CACHE_DIR}/tmpconfig.yaml" \
+      "${WHEEL_CACHE_DIR}" \
+      "/cache/wheels" \
+      "${TRITON_HASHES[@]}"
+    WHEEL_CFG="/cache/tmpconfig.yaml"
+  else
+    DEFAULT_SHORT="${DEFAULT_HASH:0:8}"
+    WHEEL_CFG=$(ls "${WHEEL_CACHE_DIR}"/triton-*+*${DEFAULT_SHORT}*.whl 2>/dev/null | head -1)
+    if [[ -z "${WHEEL_CFG}" ]]; then
+      echo "Error: no pre-built triton wheel found for ${DEFAULT_SHORT} in ${WHEEL_CACHE_DIR}" >&2
+      exit 1
+    fi
+    # Map host path to in-container path under /cache/wheels
+    WHEEL_CFG="/cache/wheels/$(basename "${WHEEL_CFG}")"
   fi
-  # Map host path to in-container path under /cache/wheels
-  WHEEL_CFG="/cache/wheels/$(basename "${WHEEL_CFG}")"
 fi
 
 function build_inside() {
   rocmver="$1"
   NOIMAGE_MODE="$2"
+  ARCH_LIST="${3:-ALL}"
   DOCKER_IMAGE="aotriton:buildenv-rocm${rocmver}"
   if [ -z "$(docker images -q ${DOCKER_IMAGE} 2>/dev/null)" ]; then
     # Use theRock.Dockerfile for ROCm >= 7.10
     if printf '%s\n%s\n' "7.10" "${rocmver}" | sort -V -C; then
       DOCKERFILE="theRock.Dockerfile"
+      BUILD_ARG=(--build-arg "THEROCK_VERSION=${rocmver}")
     else
       DOCKERFILE="rocm.Dockerfile"
+      BUILD_ARG=(--build-arg "ROCM_VERSION_IN_URL=${rocmver}")
     fi
     (cd "${SCRIPT_DIR}" && docker build --network=host -t ${DOCKER_IMAGE} \
-      --build-arg ROCM_VERSION_IN_URL=${rocmver} \
+      "${BUILD_ARG[@]}" \
       -f ${DOCKERFILE} .)
   fi
+  # Cache pip downloads under <output>/.cache/pip on the host.
+  mkdir -p "${CACHE_DIR}/pip"
   set -x
   docker run --network=host -i --rm \
     -v ${SOURCE_VOLUME}:/src:ro \
@@ -206,9 +246,10 @@ function build_inside() {
     --tmpfs "/scratch:exec" \
     -e AOTRITON_BUILD_PATH=/scratch/build/aotriton \
     -e AOTRITON_INSTALL_PREFIX=/scratch/install \
+    -e PIP_CACHE_DIR=/cache/pip \
     -w / \
     ${DOCKER_IMAGE} \
-    bash -l -s "${NOIMAGE_MODE}" "${WHEEL_CFG}" \
+    bash -l -s "${NOIMAGE_MODE}" "${WHEEL_CFG}" "${ARCH_LIST}" \
     < "${SCRIPT_DIR}/runc-manylinux-build-tar.sh"
 }
 
@@ -216,11 +257,16 @@ if [ ${SUITE_SELECT_RUNTIME} -gt 0 ]; then
   # build ROCM runtime image
   for rocmver in "${SUITE_RUNTIME_LIST[@]}"
   do
-    build_inside ${rocmver} ON
+    build_inside ${rocmver} ON "${SUITE_ARCH}"
   done
 fi
 
 if [ ${SUITE_SELECT_IMAGE} -gt 0 ]; then
-  rocmver=7.2.3
-  build_inside ${rocmver} OFF
+  # Build the GPU image with the last ROCm version in the runtime list.
+  # Newer archs (e.g. gfx1250) require a matching newer ROCm (e.g. 7.14.0)
+  # that older versions like 7.2.3 cannot compile. With `-r 7.14.0` the
+  # runtime list becomes (7.14.0); without -r it defaults to the embedded
+  # list whose last entry (7.2.3) preserves prior behavior.
+  rocmver="${SUITE_RUNTIME_LIST[-1]}"
+  build_inside ${rocmver} OFF "${SUITE_ARCH}"
 fi

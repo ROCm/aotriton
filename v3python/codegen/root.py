@@ -73,7 +73,7 @@ class RootGenerator(object):
         self._args = args
         if args.alt_venv_config:
             with open(args.alt_venv_config) as yamlfile:
-                self._altrules_dict = yaml.load(yamlfile, Loader=yaml.Loader)
+                self._altrules_dict = yaml.safe_load(yamlfile)
         else:
             self._altrules_dict = {}
         self._load_altwheel_config(self._altrules_dict)
@@ -211,14 +211,8 @@ class RootGenerator(object):
             else:
                 self._altwheels[name] = Path(value)
                 self._venvpython[name] = (self._args.build_dir.parent / "altvenvs" / name / REL_PYTHON).absolute()
-        if "default" not in self._venvpython:
-            # Use VIRTUAL_ENV environment variable if set (by CMake in v3src/CMakeLists.txt)
-            # This ensures we use an existing build environment before falling back to venv
-            venv_dir = os.getenv('VIRTUAL_ENV')
-            if venv_dir:
-                self._venvpython['default'] = (Path(venv_dir) / REL_PYTHON).absolute()
-            else:
-                self._venvpython['default'] = (self._args.build_dir.parent / 'venv' / REL_PYTHON).absolute()
+        # CMakeLists.txt requires venvs.default in any alt wheel config, so it is
+        # always present here (arches unmatched by a rule fall back to it).
         self._altrules = [ self._create_rule_function(rule) for rule in rules ]
 
     def _create_rule_function(self, rule):

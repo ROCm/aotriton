@@ -1,7 +1,9 @@
 #!/bin/bash
 # Runs inside the AlmaLinux 8 ROCm Docker container (manylinux_2_28 environment).
 # Fed via stdin by build_inside() in releasesuite-git-head.sh; no bind mount needed.
-# Positional args: $1=NOIMAGE_MODE $2=WHEEL_CFG
+# Positional args: $1=NOIMAGE_MODE $2=WHEEL_CFG $3=ARCH_LIST
+#   ARCH_LIST: "ALL" (default) or a ';'-separated GPU arch list forwarded
+#   to build-release.sh as its arch_list arg (becomes AOTRITON_TARGET_ARCH).
 #
 # Container prerequisites:
 #   Mounts:
@@ -24,6 +26,7 @@ set -ex
 # --- Arguments ---
 NOIMAGE_MODE="$1"
 WHEEL_CFG="$2"
+ARCH_LIST="${3:-ALL}"
 
 # --- Validate environment ---
 if [ -z "${AOTRITON_BUILD_PATH}" ]; then
@@ -33,6 +36,13 @@ if [ -z "${AOTRITON_INSTALL_PREFIX}" ]; then
   echo "Error: AOTRITON_INSTALL_PREFIX is not set." >&2; exit 1
 fi
 export AOTRITON_INSTALL_PATH="${AOTRITON_INSTALL_PREFIX}/aotriton"
+
+# pip (running as root) refuses a cache dir not owned by root and silently
+# disables caching. PIP_CACHE_DIR=/cache/pip is bind-mounted from the host
+# and owned by the host UID, so take ownership inside the container.
+if [ -n "${PIP_CACHE_DIR}" ] && [ -d "${PIP_CACHE_DIR}" ]; then
+  chown -R "$(id -u):$(id -g)" "${PIP_CACHE_DIR}" || true
+fi
 
 # --- Detect ROCm and HIP version ---
 GIT_SHORT=$(git -C /src/aotriton rev-parse --short=12 HEAD)
@@ -45,13 +55,18 @@ printf '#include <hip/hip_version.h>\nHIP_VERSION_MAJOR . HIP_VERSION_MINOR\n' >
 hipver=$(scl enable gcc-toolset-13 "cpp -I${ROCM_PATH}/include /tmp/print_hip_version.h" | tail -n 1 | sed 's/ //g')
 
 # --- Build ---
-build_args=("${NOIMAGE_MODE}" "ALL")
-if [[ "${WHEEL_CFG}" == *.yml || "${WHEEL_CFG}" == *.yaml ]]; then
-  cmake_arg="-DAOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE=${WHEEL_CFG}"
-else
-  cmake_arg="-DAOTRITON_USE_LOCAL_TRITON_WHEEL=${WHEEL_CFG}"
+# Only image builds embed a Triton wheel. Runtime builds (NOIMAGE_MODE=ON)
+# run with AOTRITON_NOIMAGE_MODE=ON and skip Triton entirely, so no wheel
+# config is passed (WHEEL_CFG is "NONE" in that case).
+build_args=("${NOIMAGE_MODE}" "${ARCH_LIST}")
+if [ "${NOIMAGE_MODE}" == "OFF" ]; then
+  if [[ "${WHEEL_CFG}" == *.yml || "${WHEEL_CFG}" == *.yaml ]]; then
+    cmake_arg="-DAOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE=${WHEEL_CFG}"
+  else
+    cmake_arg="-DAOTRITON_USE_LOCAL_TRITON_WHEEL=${WHEEL_CFG}"
+  fi
+  build_args+=("${cmake_arg}")
 fi
-build_args+=("${cmake_arg}")
 scl enable gcc-toolset-13 -- bash /src/aotriton/.ci/build-release.sh "${build_args[@]}"
 
 # --- Package (both archives must have aotriton/ as the root directory) ---
