@@ -93,7 +93,6 @@ endif()
 if(NOT AOTRITON_NOIMAGE_MODE)
   find_package(Git REQUIRED)
   ## Handle aiter.txt
-  # CAVEAT: MUST USE GIT TAG OTHERWISE GIT_SHALLOW WILL NOT WORK
   execute_process(
     COMMAND ${CMAKE_COMMAND} -E cat "${CMAKE_CURRENT_SOURCE_PARENT_DIR}/third_party/aiter.txt"
     OUTPUT_VARIABLE AITER_GIT_TAG
@@ -110,25 +109,37 @@ if(NOT AOTRITON_NOIMAGE_MODE)
       COMMAND_ERROR_IS_FATAL ANY
     )
   else()
-    # Check current HEAD tag to avoid unnecessary network fetches on every configure
+    # Accept either a tag or a branch name in third_party/aiter.txt. This lets
+    # development builds track upstream main while release builds can stay on a
+    # stable tag.
     execute_process(
-      COMMAND ${GIT_EXECUTABLE} describe --tags --exact-match HEAD
+      COMMAND ${GIT_EXECUTABLE} rev-parse HEAD
       WORKING_DIRECTORY "${AITER_DIR}"
-      RESULT_VARIABLE AITER_DESCRIBE_RESULT
-      OUTPUT_VARIABLE AITER_CURRENT_TAG
+      OUTPUT_VARIABLE AITER_CURRENT_HEAD
       OUTPUT_STRIP_TRAILING_WHITESPACE
-      ERROR_QUIET
     )
-    if(NOT AITER_DESCRIBE_RESULT EQUAL 0 OR NOT AITER_CURRENT_TAG STREQUAL "${AITER_GIT_TAG}")
+    execute_process(
+      COMMAND ${GIT_EXECUTABLE} fetch origin --depth 1 "${AITER_GIT_TAG}"
+      WORKING_DIRECTORY "${AITER_DIR}"
+      RESULT_VARIABLE AITER_FETCH_RESULT
+    )
+    if(NOT AITER_FETCH_RESULT EQUAL 0)
       execute_process(
         COMMAND ${GIT_EXECUTABLE} fetch origin --depth 1 "tag" "${AITER_GIT_TAG}"
         WORKING_DIRECTORY "${AITER_DIR}"
         COMMAND_ERROR_IS_FATAL ANY
       )
-      # cmake doc: "For sequential execution of multiple commands use multiple
-      # execute_process calls each with a single COMMAND argument."
+    endif()
+    execute_process(
+      COMMAND ${GIT_EXECUTABLE} rev-parse FETCH_HEAD
+      WORKING_DIRECTORY "${AITER_DIR}"
+      OUTPUT_VARIABLE AITER_TARGET_HEAD
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+      COMMAND_ERROR_IS_FATAL ANY
+    )
+    if(NOT AITER_CURRENT_HEAD STREQUAL AITER_TARGET_HEAD)
       execute_process(
-        COMMAND ${GIT_EXECUTABLE} checkout ${AITER_GIT_TAG}
+        COMMAND ${GIT_EXECUTABLE} checkout --detach FETCH_HEAD
         WORKING_DIRECTORY "${AITER_DIR}"
         COMMAND_ERROR_IS_FATAL ANY
       )

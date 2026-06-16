@@ -216,20 +216,6 @@ def bwd_inner_dk_dv_fuse(
         else:
             p_dropped = p
 
-        if BLOCK_M == 1:
-            # dv += p.to(q_ptrs.dtype.element_ty) * do
-            dv0, dv1, dv2 = composed_mul_acc(do0, do1, do2,
-                                             p_dropped.to(do0.dtype),
-                                             dv0, dv1, dv2,
-                                             BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
-        else:
-            # dv += tl.dot(tl.trans(p.to(do.dtype)), do)
-            dv0, dv1, dv2 = composed_dot_rhs(p_dropped,
-                                             do0, do1, do2,
-                                             dv0, dv1, dv2,
-                                             BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
-                                             TRANSPOSE_LHS=True)
-
         dp = tl.zeros([BLOCK_M, BLOCK_N], dtype=tl.float32)
         # compute dp = dot(do, vt)
         # dp += dot(BLOCK_M, BLOCK_DMODEL, BLOCK_DMODEL, do, vt)
@@ -238,6 +224,21 @@ def bwd_inner_dk_dv_fuse(
                                 vt0, vt1, vt2,
                                 dp,
                                 BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
+
+        p_for_dv = p_dropped + dp * 0.0
+        if BLOCK_M == 1:
+            # dv += p.to(q_ptrs.dtype.element_ty) * do
+            dv0, dv1, dv2 = composed_mul_acc(do0, do1, do2,
+                                             p_for_dv.to(do0.dtype),
+                                             dv0, dv1, dv2,
+                                             BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
+        else:
+            # dv += tl.dot(tl.trans(p.to(do.dtype)), do)
+            dv0, dv1, dv2 = composed_dot_rhs(p_for_dv,
+                                             do0, do1, do2,
+                                             dv0, dv1, dv2,
+                                             BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
+                                             TRANSPOSE_LHS=True)
         if ENABLE_DROPOUT:
             dp = tl.where(keep, dp * dropout_scale, 0)
         # compute ds = p * (dp - delta[:, None])
@@ -257,4 +258,3 @@ def bwd_inner_dk_dv_fuse(
                                              BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
                                              TRANSPOSE_LHS=True)
     return dk0, dk1, dk2, dv0, dv1, dv2
-

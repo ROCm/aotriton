@@ -33,5 +33,5 @@ class aiter_fmha_v3_bwd(aiter_fmha_v3_fwd):
     }
 
     # gfx950+16-bit dq_acc requires another dq_shuffle_kernel, but fp32 dq_acc doesn't
-    SUPPORTED_ARCH = ['gfx942', 'gfx950']
+    SUPPORTED_ARCH = ['gfx942', 'gfx950', 'gfx1250']
     DIRECT_KERNEL_ARGS = []

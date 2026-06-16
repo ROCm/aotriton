@@ -211,8 +211,12 @@ class RootGenerator(object):
             else:
                 self._altwheels[name] = Path(value)
                 self._venvpython[name] = (self._args.build_dir.parent / "altvenvs" / name / REL_PYTHON).absolute()
-        # CMakeLists.txt requires venvs.default in any alt wheel config, so it is
-        # always present here (arches unmatched by a rule fall back to it).
+        if "default" not in self._venvpython:
+            # Non-alt builds and unmatched alt rules use the build venv created
+            # by CMake. Prefer VIRTUAL_ENV because CMake sets it explicitly.
+            venv_dir = os.getenv("VIRTUAL_ENV")
+            base = Path(venv_dir) if venv_dir else (self._args.build_dir.parent / "venv")
+            self._venvpython["default"] = (base / REL_PYTHON).absolute()
         self._altrules = [ self._create_rule_function(rule) for rule in rules ]
 
     def _create_rule_function(self, rule):
