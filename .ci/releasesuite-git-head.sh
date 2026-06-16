@@ -29,6 +29,9 @@ Options:
                         Useful to shorten debug builds.
          --yaml <.yml>: Use yml config file to build the release
         --origin <url>: Override the git HTTPS origin URL (default: auto-detected from remote)
+ --triton_origin <url>: Override the Triton git origin for wheel builds.
+                        Accepts a fork URL or a local checkout via file:///abs/path
+                        (default: https://github.com/ROCm/triton)
 By default both GPU images and runtimes are built.
 If either --image or --runtime is specified, the missing one will not be built.
 
@@ -42,7 +45,7 @@ EOF
   exit $1
 }
 
-TEMP=$(getopt -o hr: --longoptions image,runtime,arch:,yaml:,origin: -- "$@")
+TEMP=$(getopt -o hr: --longoptions image,runtime,arch:,yaml:,origin:,triton_origin: -- "$@")
 
 if [ $? -ne 0 ]; then
   echo "Error: Invalid option." >&2
@@ -58,6 +61,7 @@ CMDLIST=()
 SUITE_DEFAULT_SELECTION=1
 SUITE_YAML=""
 SUITE_ORIGIN=""
+SUITE_TRITON_ORIGIN=""
 SUITE_ARCH="ALL"
 
 while true; do
@@ -90,6 +94,10 @@ while true; do
     --origin)
       shift
       SUITE_ORIGIN="$1"
+      ;;
+    --triton_origin)
+      shift
+      SUITE_TRITON_ORIGIN="$1"
       ;;
     '--')
       shift
@@ -166,7 +174,11 @@ fi
 # Runtime builds consume pre-built wheels from /cache/wheels via WHEEL_CFG.
 if [[ ${SUITE_SELECT_IMAGE} -gt 0 ]]; then
   TRITON_WHEEL_VERSION_SUFFIX="+aotriton${aotriton_major}.${aotriton_minor}"
-  bash "${SCRIPT_DIR}/build_triton_wheels.sh" \
+  TRITON_ORIGIN_ENV=()
+  if [[ -n "${SUITE_TRITON_ORIGIN}" ]]; then
+    TRITON_ORIGIN_ENV=(TRITON_GIT_ORIGIN="${SUITE_TRITON_ORIGIN}")
+  fi
+  env "${TRITON_ORIGIN_ENV[@]}" bash "${SCRIPT_DIR}/build_triton_wheels.sh" \
     --wheel_output_dir "${WHEEL_CACHE_DIR}" \
     --version_suffix "${TRITON_WHEEL_VERSION_SUFFIX}" \
     "${TRITON_HASHES[@]}"
