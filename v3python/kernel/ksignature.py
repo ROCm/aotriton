@@ -29,6 +29,9 @@ class KernelSignature(object):
             bind.settle_unresolved(tc_dict)
         self._perfs = perf_values
         self._copts = list(copt_values)
+        # TODO: Remove when gfx1250 database is created.
+        if f.arch == 'gfx1250':
+            self._copts[COPT_NWARPS_INDEX] *= 2
 
     def functional(self):
         return self._functional

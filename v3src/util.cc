@@ -82,8 +82,7 @@ bool isArchExperimentallySupported(hipStream_t stream) {
           vendor_arch == CAT32(GpuVendor::kAMD, 0x1101) ||
           vendor_arch == CAT32(GpuVendor::kAMD, 0x1102) ||
           vendor_arch == CAT32(GpuVendor::kAMD, 0x1103) ||
-          vendor_arch == CAT32(GpuVendor::kAMD, 0x1200) ||
-          vendor_arch == CAT32(GpuVendor::kAMD, 0x1250));
+          vendor_arch == CAT32(GpuVendor::kAMD, 0x1200));
 }
 
 int getMultiProcessorCount(hipStream_t stream) {

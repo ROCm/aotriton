@@ -38,6 +38,13 @@ if [ -z "${AOTRITON_INSTALL_PREFIX}" ]; then
 fi
 export AOTRITON_INSTALL_PATH="${AOTRITON_INSTALL_PREFIX}/aotriton"
 
+# pip (running as root) refuses a cache dir not owned by root and silently
+# disables caching. PIP_CACHE_DIR=/cache/pip is bind-mounted from the host
+# and owned by the host UID, so take ownership inside the container.
+if [ -n "${PIP_CACHE_DIR}" ] && [ -d "${PIP_CACHE_DIR}" ]; then
+  chown -R "$(id -u):$(id -g)" "${PIP_CACHE_DIR}" || true
+fi
+
 # --- Detect ROCm and HIP version ---
 GIT_SHORT=$(git -C /src/aotriton rev-parse --short=12 HEAD)
 export ROCM_PATH=$(hipconfig --rocmpath)
@@ -54,13 +61,18 @@ else
 fi
 
 # --- Build ---
+# Only image builds embed a Triton wheel. Runtime builds (NOIMAGE_MODE=ON)
+# run with AOTRITON_NOIMAGE_MODE=ON and skip Triton entirely, so no wheel
+# config is passed (WHEEL_CFG is "NONE" in that case).
 build_args=("${NOIMAGE_MODE}" "${ARCH_LIST}")
-if [[ "${WHEEL_CFG}" == *.yml || "${WHEEL_CFG}" == *.yaml ]]; then
-  cmake_arg="-DAOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE=${WHEEL_CFG}"
-else
-  cmake_arg="-DAOTRITON_USE_LOCAL_TRITON_WHEEL=${WHEEL_CFG}"
+if [ "${NOIMAGE_MODE}" == "OFF" ]; then
+  if [[ "${WHEEL_CFG}" == *.yml || "${WHEEL_CFG}" == *.yaml ]]; then
+    cmake_arg="-DAOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE=${WHEEL_CFG}"
+  else
+    cmake_arg="-DAOTRITON_USE_LOCAL_TRITON_WHEEL=${WHEEL_CFG}"
+  fi
+  build_args+=("${cmake_arg}")
 fi
-build_args+=("${cmake_arg}")
 
 if [[ "${ASAN_MODE}" == "ON" ]]; then
   build_args+=(
