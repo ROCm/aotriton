@@ -14,8 +14,8 @@ re-exported below) is unchanged — `from ...decorators import TensorSpec` etc. 
 before.
 
 Surface:
-    T   = ati.tensor_dtype('T_io', dtype=[...])      # named dtype variable
-    S   = ati.choice_set('Seqlen', options=[...])    # named scalar choice variable
+    T   = ati.type_var('T_io', dtype=[...])          # named element-type variable
+    S   = ati.scalar_var('Seqlen', options=[...])    # named scalar choice variable
     ati.tensor('Q', T, strides='stride_q?', contiguous=-1)
     ati.tensor('L', '*fp32:16', rank=2)              # literal dtype
     ati.scalar('Sm_scale', 'fp32')                   # plain runtime scalar
@@ -23,7 +23,7 @@ Surface:
     ati.scalar('Max_seqlen_q', S)                    # bound to a shared variable
 """
 
-from .choicevar import ChoiceVar, tensor_dtype, choice_set
+from .choicevar import ChoiceVar, type_var, scalar_var
 from .argspec import TensorSpec, ScalarSpec, tensor, scalar
 from .derive import derives, overrides, eq, ne, lt, gt, le, ge
 from .disable import DisableSpec, disable
@@ -32,7 +32,7 @@ from .source import KernelStub, SourceError, source
 from .operator import BackendSpec, backend, OperatorSpec, operator
 
 __all__ = [
-    'ChoiceVar', 'tensor_dtype', 'choice_set',
+    'ChoiceVar', 'type_var', 'scalar_var',
     'TensorSpec', 'ScalarSpec', 'tensor', 'scalar',
     'derives', 'overrides', 'eq', 'ne', 'lt', 'gt', 'le', 'ge',
     'DisableSpec', 'disable',

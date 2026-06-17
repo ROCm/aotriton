@@ -40,8 +40,8 @@ class KernelSpec:
         # object, copied here in describe()). The linker reads it instead of the
         # family file passing source_path to a builder.
         self.source_path = getattr(kernel, '__ati_source_path__', None)
-        # Named dtype/choice variables declared via @ati.tensor_dtype /
-        # ati.choice_set as standalone records (the stacked-@ / string-ref form);
+        # Named dtype/choice variables declared via @ati.type_var /
+        # ati.scalar_var as standalone records (the stacked-@ / string-ref form);
         # tensor/scalar specs refer to them by name. ChoiceVars passed inline by
         # object (the older form) are NOT here — they ride on the spec's dtype.
         self.dtype_vars = dtype_vars or []   # list[ChoiceVar]

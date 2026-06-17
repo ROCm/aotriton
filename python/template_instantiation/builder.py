@@ -182,7 +182,7 @@ def _resolve_signature_name(dtype, arg_names, param_index, kernel_name):
             f"kernel {kernel_name!r}: multi-choice variable {dtype.name!r} spans "
             f"{arg_names} and must declare an explicit signature_name (it is baked "
             f"into the aks2 entry name / DB row key); pass signature_name= to "
-            f"ati.tensor_dtype/ati.choice_set")
+            f"ati.type_var/ati.scalar_var")
     # List-grouped, single-argument, or single-choice: the first listed argument
     # represents it.
     return arg_names[0]
@@ -193,7 +193,7 @@ def _resolve_named_dtypes(kernel_spec, name):
     named dtype-variable table (rev0 §4.2).
 
     A `dtype` slot holding a `str` is ambiguous: it is EITHER the name of an
-    `@ati.tensor_dtype`/`ati.choice_set` variable declared on this kernel, OR a
+    `@ati.type_var`/`ati.scalar_var` variable declared on this kernel, OR a
     literal ATI type string (`'*fp16:16'`, `'i32'`). Resolution order:
       (1) a same-kernel dtype-var of that name  -> rewrite the slot to the ChoiceVar;
       (2) a literal ATI type string             -> leave as-is (handled downstream);
@@ -212,9 +212,9 @@ def _resolve_named_dtypes(kernel_spec, name):
         elif isinstance(d, str) and not _is_ati_type_string(d):
             raise DescriptionError(
                 f"kernel {name!r}: tensor {t.arg_name!r} names dtype variable "
-                f"{d!r}, which is neither an @ati.tensor_dtype on this kernel "
+                f"{d!r}, which is neither an @ati.type_var on this kernel "
                 f"{sorted(by_name)} nor a literal ATI type. Declare it with "
-                f"@ati.tensor_dtype({d!r}, dtype=[...]) or fix the type string.")
+                f"@ati.type_var({d!r}, dtype=[...]) or fix the type string.")
     for s in kernel_spec.scalars:
         d = s.type_
         if isinstance(d, str) and d in by_name:
@@ -223,9 +223,9 @@ def _resolve_named_dtypes(kernel_spec, name):
         elif isinstance(d, str) and not _is_ati_type_string(d):
             raise DescriptionError(
                 f"kernel {name!r}: scalar {s.arg_name!r} names dtype variable "
-                f"{d!r}, which is neither an @ati.tensor_dtype on this kernel "
+                f"{d!r}, which is neither an @ati.type_var on this kernel "
                 f"{sorted(by_name)} nor a literal ATI type. Declare it with "
-                f"@ati.tensor_dtype({d!r}, dtype=[...]) or fix the type string.")
+                f"@ati.type_var({d!r}, dtype=[...]) or fix the type string.")
 
 
 def build_kernel(kernel_spec) -> BuiltKernel:

@@ -23,7 +23,7 @@ class BwdPreprocessVarlenPerf:
 
 @ati.kernel
 @ati.cite('op_attn_bwd.triton_split.bwd_kernel_dk_dv')
-@ati.tensor_dtype('T_io', dtype=MAIN_DTYPES, signature_name='Out')
+@ati.type_var('T_io', dtype=MAIN_DTYPES, signature_name='Out')
 @ati.tensor('Out', 'T_io', strides='stride_o?', contiguous=-1)
 @ati.tensor('DO',  'T_io', strides='stride_do?', contiguous=-1)
 @ati.tensor('Delta', 'LazyTensor:*fp32:16', rank=2, wires_to='D')

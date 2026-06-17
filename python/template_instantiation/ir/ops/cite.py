@@ -14,7 +14,7 @@ the citing kernel's gaps at the SPEC level, BEFORE build_kernel lowers it to axe
     APPAREL name. (Stride-bearing tensors must be declared locally per rev0 §5, so
     gap args are scalars / strideless tensors; a gap mapping to a strided cited
     tensor is an error.)
-  * a STRING DTYPE reference that names neither a same-kernel @ati.tensor_dtype nor
+  * a STRING DTYPE reference that names neither a same-kernel @ati.type_var nor
     a literal ATI type is resolved against the cited kernel's dtype-variable table
     (Step 1 resolution path 3), cloning the named dtype-var locally.
 
@@ -273,7 +273,7 @@ def resolve_cites(spec, *, family, lookup=None, metro_lookup=None):
         if dv is None:
             raise DescriptionError(
                 f"kernel {name!r}: dtype variable {dname!r} is neither an "
-                f"@ati.tensor_dtype on this kernel nor reachable through "
+                f"@ati.type_var on this kernel nor reachable through "
                 f"@ati.cite ({[c.target for c in spec.cites]})")
         # Keep the cited signature_name when that argument also exists in the citing
         # kernel (so the persisted aks2/DB key matches, e.g. 'Q' shared by fwd/bwd);

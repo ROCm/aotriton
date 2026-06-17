@@ -10,7 +10,7 @@ shape is fixed early, but each entry point raises NotImplementedError until its
 implementing step lands. See agent-plans/ati_executive0.md.
 
 Authoring surface (see agent-plans/ati_rev1.md):
-    tensor_dtype, choice_set   - named choice variables (§3.1, §3.2)
+    type_var, scalar_var       - named choice variables (§3.1, §3.2)
     tensor, scalar             - bind args to a variable / literal type (§3.1, §3.2)
     overrides                  - conditional value rules (§3.3)
     eq, ne, lt, gt             - predicate builders for overrides / metro `if`
@@ -32,14 +32,14 @@ from .describe import describe, kernel
 from .builder import DescriptionError
 from .metro import metro_kernel
 from .decorators import (
-    tensor_dtype, choice_set, tensor, scalar,
+    type_var, scalar_var, tensor, scalar,
     derives, overrides, disable, cite, source, eq, ne, lt, gt,
     operator, backend,
 )
 
 __all__ = [
     'affine', 'hints',
-    'tensor_dtype', 'choice_set', 'tensor', 'scalar',
+    'type_var', 'scalar_var', 'tensor', 'scalar',
     'derives', 'overrides', 'disable', 'cite', 'source', 'eq', 'ne', 'lt', 'gt',
     'describe', 'kernel', 'operator', 'backend', 'union_params', 'metro_kernel',
     'tune', 'DescriptionError',
@@ -57,7 +57,7 @@ def _stub(name):
 
 
 # --- choice-declaring surface (§3.1, §3.2): implemented in Step 2.1 ---
-# tensor_dtype, choice_set, tensor, scalar imported from .decorators
+# type_var, scalar_var, tensor, scalar imported from .decorators
 # --- conditional overrides + predicate builders (§3.3): implemented in Step 2.2 ---
 # overrides, eq, ne, lt, gt imported from .decorators
 

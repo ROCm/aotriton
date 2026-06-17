@@ -141,7 +141,7 @@ class ScalarSpec:
 
     The first argument is either a single name or a LIST of names that share one
     choice dimension (the scalar analogue of grouping several tensors under one
-    tensor_dtype; replaces the legacy `frozenset([...])` keys):
+    type_var; replaces the legacy `frozenset([...])` keys):
 
       scalar('Sm_scale', 'fp32')              -> plain runtime scalar
       scalar('CAUSAL_TYPE', options=[..])     -> enumerated (former feature)

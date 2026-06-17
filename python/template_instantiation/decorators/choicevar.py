@@ -2,17 +2,17 @@
 # SPDX-License-Identifier: MIT
 
 """
-Named choice variables: `ati.tensor_dtype` / `ati.choice_set`.
+Named choice variables: `ati.type_var` / `ati.scalar_var`.
 
-A ChoiceVar is the `template<typename T>` / TypeVar analogue — one choice set shared
-by several arguments (the dtype variable a group of tensors binds, or a scalar choice
-variable). See the package docstring for the authoring surface.
+A ChoiceVar is the `template<typename T>` / typing.TypeVar analogue — one choice set
+shared by several arguments (the element-type variable a group of tensors binds, or a
+scalar choice variable). See the package docstring for the authoring surface.
 """
 
 
 class ChoiceVar:
     """A named choice variable shared by several arguments — the
-    `template<typename T>` / TypeVar analogue. `tensor_dtype` and `choice_set`
+    `template<typename T>` / typing.TypeVar analogue. `type_var` and `scalar_var`
     both produce one; `kind` records which authoring word created it (purely for
     diagnostics — TypedChoice.parse handles tensor vs scalar literals uniformly).
 
@@ -29,12 +29,12 @@ class ChoiceVar:
         assert isinstance(name, str) and name, 'choice variable needs a name'
         self.name = name
         self.choices = list(choices)
-        self.kind = kind          # 'dtype' | 'scalar'
+        self.kind = kind          # 'type' | 'scalar'
         self.signature_name = signature_name
 
     def __call__(self, kernel):
-        """Stacked-@ form: register this dtype/choice variable on the kernel below
-        it (so `@ati.tensor_dtype('T_io', ...)` works as a decorator, and
+        """Stacked-@ form: register this type/scalar variable on the kernel below
+        it (so `@ati.type_var('T_io', ...)` works as a decorator, and
         `@ati.tensor('Q', 'T_io', ...)` can refer to it by name). Mirrors
         TensorSpec/ScalarSpec.__call__."""
         from ..describe import accumulate_spec
@@ -45,15 +45,15 @@ class ChoiceVar:
                 f'signature_name={self.signature_name!r}, choices={self.choices})')
 
 
-def tensor_dtype(name, dtype, signature_name=None):
-    """Declare a named tensor element-type variable. `dtype` is the choice set.
-    `signature_name` is the argument that records this variable in persisted
-    artifacts (compact signature, aks2/zip entry name, DB row key); required for
-    multi-choice variables shared across several tensors."""
-    return ChoiceVar(name, dtype, kind='dtype', signature_name=signature_name)
+def type_var(name, dtype, signature_name=None):
+    """Declare a named tensor element-type variable (the typing.TypeVar analogue).
+    `dtype` is the choice set. `signature_name` is the argument that records this
+    variable in persisted artifacts (compact signature, aks2/zip entry name, DB row
+    key); required for multi-choice variables shared across several tensors."""
+    return ChoiceVar(name, dtype, kind='type', signature_name=signature_name)
 
 
-def choice_set(name, options, signature_name=None):
+def scalar_var(name, options, signature_name=None):
     """Declare a named scalar choice variable. `options` is the choice set.
     `signature_name` is the argument that records this variable in persisted
     artifacts (compact signature, aks2/zip entry name, DB row key)."""

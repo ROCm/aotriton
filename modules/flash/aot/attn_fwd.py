@@ -53,9 +53,9 @@ def _attn_fwd_disabled(f):
 
 @ati.kernel
 # --- dtype variables (named; tensors below reference them by string) ---
-@ati.tensor_dtype('T_io', dtype=MAIN_DTYPES, signature_name='Q')
-@ati.tensor_dtype('T_seq', dtype=['*i32:16'])
-@ati.tensor_dtype('T_u64', dtype=['*u64'])
+@ati.type_var('T_io', dtype=MAIN_DTYPES, signature_name='Q')
+@ati.type_var('T_seq', dtype=['*i32:16'])
+@ati.type_var('T_u64', dtype=['*u64'])
 # --- main tensors (rank 4, last stride contiguous) ---
 @ati.tensor('Q',   'T_io', strides='stride_q?', contiguous=-1)
 @ati.tensor('K',   'T_io', strides='stride_k?', contiguous=-1)
