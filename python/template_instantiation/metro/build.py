@@ -112,7 +112,7 @@ class MetroKernel(Interface):
     def merged_operand_order(self):
         """Order-preserving merge (union_params) of every sub-kernel's ARGUMENTS,
         each translated through its APPAREL map (real -> operand, via apparel_of)."""
-        from ..ops import union_params
+        from ..ir.ops import union_params
         subs = list(self.iter_subkernels())
         arg_lists = [list(s.ARGUMENTS) for s in subs]
         renames = []

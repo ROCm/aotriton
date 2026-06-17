@@ -36,7 +36,7 @@ def build_merged_struct_cfields(subkernels):
     `func_cfields`.
     """
     from .cfield import cfield
-    from ..ops import union_params
+    from .ops import union_params
     cfield_by_name = {}
     name_lists = []
     for s in subkernels:

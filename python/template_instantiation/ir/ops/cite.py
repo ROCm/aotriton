@@ -28,9 +28,9 @@ for the later metro/operator-level resolution.
 
 import fnmatch
 
-from ..builder import DescriptionError, _is_ati_type_string
-from ..decorators import TensorSpec, ScalarSpec, ChoiceVar
-from .. import registry
+from ...builder import DescriptionError, _is_ati_type_string
+from ...decorators import TensorSpec, ScalarSpec, ChoiceVar
+from ... import registry
 
 
 def _spec_apparel_names(spec):

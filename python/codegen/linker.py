@@ -94,7 +94,7 @@ def _clone_spec(spec):
 def _build_kernels(compiled):
     """Resolve cites + build every kernel shell into a KernelDescription, in cite
     dependency order. Returns {def-name -> KernelDescription}."""
-    from aotriton.template_instantiation.ops.cite import resolve_cites
+    from aotriton.template_instantiation.ir.ops.cite import resolve_cites
     from aotriton.template_instantiation.builder import build_kernel
     from aotriton.template_instantiation.ir.kdesc import KernelDescription
 
@@ -267,7 +267,7 @@ def _check_unresolved_arguments(built_kernels):
 def link_family(aot_module, family):
     """Pass 2 for one family: compile (Pass 1) then resolve + build the final tree.
     Returns FamilyArtifacts(kernels, operators, affine_kernels)."""
-    from aotriton.template_instantiation.ops.infer import infer_shared_iface
+    from aotriton.template_instantiation.ir.ops.infer import infer_shared_iface
     from . import parser
 
     compiled = parser.compile_family(aot_module, family)
