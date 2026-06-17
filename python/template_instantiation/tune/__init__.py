@@ -4,24 +4,24 @@
 """
 ATI performance-tuning layer (ati.tune.*).
 
-The perf schema (Step 3.1) and the configs/binning/fallback/derived registration
-(Step 3.2) live here. This package supersedes the Step 0.2 stub module
-(template_instantiation/tune.py was a flat stub); the public surface is unchanged.
+The perf schema and the configs/binning/fallback registration live here. Per-functional
+derived perf values use @ati.derives (the unified derive facade), not a separate
+tune.derived channel.
 """
 
 from .schema import PerfParam, PerfSchema, schema
 from .binning import BinningSelector
 from .registration import (
     Config, TuneSpec,
-    ConfigsSpec, BinningSpec, FallbackSpec, DerivedSpec,
-    configs, binning, fallback, derived,
+    ConfigsSpec, BinningSpec, FallbackSpec,
+    configs, binning, fallback,
 )
 
 __all__ = [
     'PerfParam', 'PerfSchema', 'schema',
     'binning', 'BinningSelector',
-    'configs', 'fallback', 'derived', 'optune', 'Config',
-    'TuneSpec', 'ConfigsSpec', 'BinningSpec', 'FallbackSpec', 'DerivedSpec',
+    'configs', 'fallback', 'optune', 'Config',
+    'TuneSpec', 'ConfigsSpec', 'BinningSpec', 'FallbackSpec',
 ]
 
 

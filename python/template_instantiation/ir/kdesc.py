@@ -223,11 +223,6 @@ class KernelDescription(Interface):
     def AUTOTUNE_KEYS_VALIDATED(self):
         return self._autotune_keys_validated
 
-    @property
-    def PROGRAMMATIC_PERFS(self) -> dict:
-        ts = self._built.tune
-        return dict(ts.derived) if ts is not None else {}
-
     def gen_performance_params(self):
         yield from self._perf_params
 
@@ -282,11 +277,12 @@ class KernelDescription(Interface):
     def translate_dataframe(self, f, df):
         """Build the (lut_tensor, signatures, binning) triple for functional f from
         its tuning dataframe. Ported from the legacy KernelDescription; reads the
-        adapter's AUTOTUNE_KEYS_VALIDATED / perf params / PROGRAMMATIC_PERFS."""
+        adapter's AUTOTUNE_KEYS_VALIDATED + perf params."""
         import numpy as np
         from ..ksignature import KernelSignature, COMPILER_OPTIONS
-        # Inject perf params that are NOT tuned DB columns (their value is the
-        # default/override, the legacy PROGRAMMATIC_PERFS role) before reading
+        # Inject perf params that are NOT tuned DB columns: their value is the
+        # @dataclass default plus any perf-channel @ati.derives (perf_value), the
+        # role the legacy PROGRAMMATIC_PERFS used to fill, before reading
         # tuned_kernel$<name>.
         for pp in self._built.tune.schema.params:
             col = f'tuned_kernel${pp.name}'
@@ -299,8 +295,6 @@ class KernelDescription(Interface):
         sparse_key_possible_values = {key: sorted_unique_key(key) for key in sparse_keys}
         binning_dict = {key: algo(sparse_key_possible_values[spk])
                         for spk, (key, algo) in zip(sparse_keys, self.AUTOTUNE_KEYS_VALIDATED)}
-        for perf_name, program in self.PROGRAMMATIC_PERFS.items():
-            df[f'tuned_kernel${perf_name}'] = program(f)
         lut_shape = [f.noptimized_for] + [len(sparse_key_possible_values[key]) for key in sparse_keys]
         lut_tensor = np.full(lut_shape, -1, dtype=np.int32)
         perf_keys = [f'tuned_kernel${meta.repr_name}' for meta in self._perf_params]
@@ -380,11 +374,6 @@ class KernelDescription(Interface):
         from aotriton.codegen.parser import load_family_aot
         FlashKernel = load_family_aot('flash')._common.FlashKernel
         return FlashKernel._gen_missing_entries(self, *args, **kwargs)
-
-    def update_programmatic_perfs(self, kw, f):
-        for perf_name, program in self.PROGRAMMATIC_PERFS.items():
-            kw[perf_name] = program(f)
-        return kw
 
     # --- axis views (used by AtiFunctional signatures) ---
 

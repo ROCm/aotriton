@@ -61,7 +61,7 @@ def _build_tune_spec(tune_records):
     """Fold the collected tune spec-records into one TuneSpec, or None if there
     are no tuning decorators on this kernel."""
     from .tune import (
-        TuneSpec, PerfSchema, ConfigsSpec, BinningSpec, FallbackSpec, DerivedSpec,
+        TuneSpec, PerfSchema, ConfigsSpec, BinningSpec, FallbackSpec,
     )
     if not tune_records:
         return None
@@ -77,17 +77,15 @@ def _build_tune_spec(tune_records):
             ts.binning.update(r.keys)
         elif isinstance(r, FallbackSpec):
             ts.fallback.update(r.values)
-        elif isinstance(r, DerivedSpec):
-            ts.derived.update(r.programs)
         else:
             raise AssertionError(f'unrecognized tune spec {r!r}')
     return ts
 
 
 def _partition(specs):
-    from .tune import PerfSchema, ConfigsSpec, BinningSpec, FallbackSpec, DerivedSpec
+    from .tune import PerfSchema, ConfigsSpec, BinningSpec, FallbackSpec
     from .decorators import DisableSpec, CiteSpec
-    tune_types = (PerfSchema, ConfigsSpec, BinningSpec, FallbackSpec, DerivedSpec)
+    tune_types = (PerfSchema, ConfigsSpec, BinningSpec, FallbackSpec)
     tensors, scalars, overrides, tune_records, disables, dtype_vars, cites, others = \
         [], [], [], [], [], [], [], []
     for s in specs:

@@ -300,7 +300,7 @@ def derives(targets, *, to, when=None):
       * a kernel ARGUMENT target  -> applied in resolved[] (compiled signature),
         the former conditional/CC/CDETensor case (B, dropout_p, Hdim_qk, ...);
       * a PERF-SCHEMA target       -> applied in the perf layer (PERSISTENT_TYPE,
-        NUM_XCDS), the former PROGRAMMATIC_PERFS / @ati.tune.derived case.
+        NUM_XCDS), the former PROGRAMMATIC_PERFS case.
 
     `to` selects the value kind:
       * str          -> VarRef (copy another variable's choice, e.g. BLOCK_DMODEL)

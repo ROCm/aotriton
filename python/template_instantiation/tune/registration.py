@@ -123,21 +123,6 @@ class FallbackSpec(_TuneRecord):
         return f'FallbackSpec({self.values})'
 
 
-class DerivedSpec(_TuneRecord):
-    """@ati.tune.derived(NAME=fn, ...) -> PROGRAMMATIC_PERFS. Each fn maps a
-    Functional to a derived perf value (e.g. NUM_XCDS from arch)."""
-    __slots__ = ('programs',)
-
-    def __init__(self, programs):
-        for name, fn in programs.items():
-            assert callable(fn), \
-                f'ati.tune.derived({name}=...) expects a callable, got {fn!r}'
-        self.programs = dict(programs)
-
-    def __repr__(self):
-        return f'DerivedSpec({list(self.programs)})'
-
-
 # --- public decorator entry points ---
 
 def configs(generator):
@@ -162,22 +147,17 @@ def fallback(**values):
     return FallbackSpec(values)
 
 
-def derived(**programs):
-    return DerivedSpec(programs)
-
-
 # --- the kernel's collected tuning metadata ---
 
 class TuneSpec:
     """All tuning metadata gathered for one kernel (lives on KernelSpec.tune)."""
-    __slots__ = ('schema', 'configs', 'binning', 'fallback', 'derived')
+    __slots__ = ('schema', 'configs', 'binning', 'fallback')
 
     def __init__(self):
         self.schema = None        # PerfSchema
         self.configs = None       # generator callable
         self.binning = {}         # key -> BinningSelector
         self.fallback = {}        # key -> value
-        self.derived = {}         # name -> fn
 
     @property
     def is_tunable(self) -> bool:
@@ -186,4 +166,4 @@ class TuneSpec:
     def __repr__(self):
         return (f'TuneSpec(schema={self.schema is not None}, '
                 f'tunable={self.is_tunable}, binning={list(self.binning)}, '
-                f'fallback={list(self.fallback)}, derived={list(self.derived)})')
+                f'fallback={list(self.fallback)})')
