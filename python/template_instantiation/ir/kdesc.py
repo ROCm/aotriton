@@ -143,12 +143,12 @@ class _AxisParamShim:
 
     @property
     def choices(self):
-        # legacy code reads tc.infotext off each; expose the underlying TypedChoice
-        return [c.tc for c in self._axis.choices]
+        # the axis choices ARE TypedChoices (legacy code reads tc.infotext off each)
+        return list(self._axis.choices)
 
     @property
     def repr_typed_choice(self):
-        return self._axis.choices[0].tc
+        return self._axis.choices[0]
 
     @property
     def overridden_to_constexpr(self) -> bool:
@@ -472,7 +472,7 @@ class KernelDescription(Interface):
             if ax.is_stride:
                 continue          # strides are hidden (supplied via TensorView)
             for arg in ax.arg_names:
-                tc = ax.choice_for_arg(0, arg).tc
+                tc = ax.choice_for_arg(0, arg)
                 # The struct field is the APPAREL name (the operator operand); the
                 # IR (index, axis) stays keyed on the real argument.
                 out.append(cfield(ctype=tc.itype, aname=self.apparel_of(arg),

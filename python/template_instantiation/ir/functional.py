@@ -7,7 +7,7 @@ agent-plans/ati+newbinds_rev1.md §6).
 
 A Functional is one fully-pinned instantiation of a kernel/operator, excluding perf:
 every choice axis selected and all overrides applied, frozen into a resolved
-{arg_name -> Choice} table. `(arch_number, godel_number)` is its global identity
+{arg_name -> TypedChoice} table. `(arch_number, godel_number)` is its global identity
 (arches share the godel space).
 
 This is the SINGLE Functional class (the former low-level IR node and the codegen
@@ -24,14 +24,14 @@ class ChoiceView:
 
     Attribute access is keyed by *choice-variable name*: `f.choices.T_io` returns
     the variable's triton signature (replacing the old check_value(f, ['Q'])
-    argument-name lookup). `.tc(var)` hands back the raw Choice; `.arg(aname)`
+    argument-name lookup). `.tc(var)` hands back the raw TypedChoice; `.arg(aname)`
     reads the resolved per-argument value (post-override)."""
 
     __slots__ = ('_choice', '_resolved')
 
     def __init__(self, functional):
-        self._choice = functional.choice       # var_name -> Choice
-        self._resolved = functional.resolved   # arg_name -> Choice
+        self._choice = functional.choice       # var_name -> TypedChoice
+        self._resolved = functional.resolved   # arg_name -> TypedChoice
 
     def __getattr__(self, var):
         choice = self._choice.get(var)
@@ -42,7 +42,7 @@ class ChoiceView:
         return choice.triton_compile_signature
 
     def tc(self, var):
-        """The raw Choice for a variable (for .itype / .type_enum / rank)."""
+        """The raw TypedChoice for a variable (for .itype / .type_enum / rank)."""
         if var not in self._choice:
             raise KeyError(
                 f'{var!r} is not a choice variable; valid: {sorted(self._choice)}')
@@ -57,7 +57,7 @@ class ChoiceView:
         return self._resolved[aname].triton_compile_signature
 
     def arg_tc(self, aname):
-        """Resolved (post-override) raw Choice for an argument."""
+        """Resolved (post-override) raw TypedChoice for an argument."""
         if aname not in self._resolved:
             raise KeyError(
                 f'{aname!r} is not a resolved argument; '
@@ -69,8 +69,8 @@ class Functional:
     """One fully-pinned kernel/operator instantiation (excluding perf).
 
     State: `meta_object` (the owning Interface; None for bare IR tests), `arch`,
-    `arch_number`, `godel_number`, `choice` ({var_name -> Choice}), `resolved`
-    ({arg_name -> Choice}, post-override), `optimized_for` (the gpu list this
+    `arch_number`, `godel_number`, `choice` ({var_name -> TypedChoice}), `resolved`
+    ({arg_name -> TypedChoice}, post-override), `optimized_for` (the gpu list this
     functional is tuned for; may be empty). The rest is the codegen-facing surface
     (signatures, packing paths, per-arg docs)."""
 
@@ -83,8 +83,8 @@ class Functional:
         self.arch = arch
         self.arch_number = arch_number
         self.godel_number = godel_number
-        self.choice = dict(choice)        # var_name -> Choice (free + trivial)
-        self.resolved = dict(resolved)    # arg_name -> Choice (post-override)
+        self.choice = dict(choice)        # var_name -> TypedChoice (free + trivial)
+        self.resolved = dict(resolved)    # arg_name -> TypedChoice (post-override)
         self._optimized_for = list(optimized_for)
         self._choices_view = None
 
@@ -136,7 +136,7 @@ class Functional:
         signature_name is never used to index the resolved table."""
         d = {}
         for ax in self.meta_object.axes_multi:
-            d[ax.signature_name] = self.resolved[ax.repr_arg].tc
+            d[ax.signature_name] = self.resolved[ax.repr_arg]
         return d
 
     @property
@@ -151,7 +151,7 @@ class Functional:
 
     def build_complete_tc_dict(self):
         """arg_name -> resolved TypedChoice for every argument (post-override)."""
-        return {a: c.tc for a, c in self.resolved.items()}
+        return dict(self.resolved)
 
     def build_tc_dict(self):
         """repr_name -> resolved TypedChoice for multi-choice axes."""
@@ -159,7 +159,7 @@ class Functional:
 
     def pp_arg_doc(self, aname):
         """(is_constexpr, comment_value) for one launch argument's prepare_arguments
-        entry, sourced from the resolved Choice + the firing Override (no Bind):
+        entry, sourced from the resolved TypedChoice + the firing Override (no Bind):
           * non-constexpr   -> (False, None)
           * VarRef override -> (True, '<deferred var choices joined by />')
           * literal/plain   -> (True, '<baked value>')"""
@@ -177,9 +177,9 @@ class Functional:
             # legacy CDC behavior, e.g. Hdim_qk -> 16/32/.../512).
             src = kdesc.axis_by_var(ov.value.var_name)
             return True, '/'.join(
-                str(c.tc.triton_compile_signature) for c in src.choices)
+                str(c.triton_compile_signature) for c in src.choices)
         # Literal override or plain constexpr: the value actually baked in.
-        return True, str(choice.tc.triton_compile_signature)
+        return True, str(choice.triton_compile_signature)
 
     # --- core signatures (must match legacy bytes) ---
 
@@ -188,7 +188,7 @@ class Functional:
         parts = []
         for ax in self.meta_object.axes_multi:
             # KEY = signature_name (pure persisted label); VALUE by repr_arg.
-            tc = self.resolved[ax.repr_arg].tc
+            tc = self.resolved[ax.repr_arg]
             parts.append(f'{ax.signature_name}={tc.testrun_entry_signature}')
         return ';'.join(parts)
 
@@ -196,7 +196,7 @@ class Functional:
     def signature_in_func_name(self) -> str:
         parts = []
         for ax in self.meta_object.axes_multi:
-            s = str(self.resolved[ax.repr_arg].tc.triton_compile_signature)
+            s = str(self.resolved[ax.repr_arg].triton_compile_signature)
             s = s.replace('*', '＊').replace(':', '@') \
                  .replace('True', 'T').replace('False', 'F')
             parts.append(s)
@@ -218,7 +218,7 @@ class Functional:
                     continue
             if ax.kind == 'stride_unit':
                 continue
-            lines.append(f'{ax.signature_name} = {self.resolved[ax.repr_arg].tc}')
+            lines.append(f'{ax.signature_name} = {self.resolved[ax.repr_arg]}')
         return 'Human-readable Signature \n// ' + '\n// '.join(lines)
 
     # --- file packing paths ---

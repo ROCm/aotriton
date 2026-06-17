@@ -193,7 +193,6 @@ class InterfaceGenerator(ABC):
         print(INDENT + '{', file=fout)
         print(2 * INDENT + 'int64_t number = -1;', file=fout)
         for number, tc in enumerate(tp.choices):
-            assert not isinstance(tc, TC.ConditionalChoice)
             if isinstance(tc, TC.tensor):
                 type_enum = tc.type_enum
                 getter = f'{anamespace}{aname}->dtype()'

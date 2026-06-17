@@ -7,7 +7,7 @@ Step 1.2; see agent-plans/ati+newbinds_rev1.md §2.1, §4, §5).
 
 One Axis per choice variable (tensor_dtype / choice_set / enumerated scalar). It
 owns the variable name (the public identity used by f.choices.<var_name>), the
-arguments it instantiates, the ordered concrete Choices, and per-argument shape
+arguments it instantiates, the ordered concrete TypedChoices, and per-argument shape
 (rank, contiguous). Overrides are NOT axes — only choice variables create
 combinatorial dimensions.
 
@@ -17,7 +17,7 @@ from the params struct. Both orderings must be reproducible and identical, so th
 canonical axis order is ascending `anchor` (earliest signature argument first).
 """
 
-from .choice import Choice
+from .typed_choice import TypedChoice
 
 
 class Axis:
@@ -32,8 +32,8 @@ class Axis:
         self.var_name = var_name
         self.arg_names = tuple(arg_names)
         self.choices = tuple(choices)
-        assert all(isinstance(c, Choice) for c in self.choices), \
-            'Axis.choices must be Choice objects'
+        assert all(isinstance(c, TypedChoice) for c in self.choices), \
+            'Axis.choices must be TypedChoice objects'
         self.anchor = anchor
         # per-arg shape; only meaningful for tensor axes
         self.ranks = dict(ranks) if ranks else {}
@@ -72,7 +72,7 @@ class Axis:
         excluded from godel digits (a digit that is always 0)."""
         return self.radix <= 1
 
-    def choice_for_arg(self, nth: int, arg_name: str) -> Choice:
+    def choice_for_arg(self, nth: int, arg_name: str) -> TypedChoice:
         """The nth choice, specialized to a concrete rank for a tensor arg."""
         c = self.choices[nth]
         if c.is_tensor and arg_name in self.ranks:

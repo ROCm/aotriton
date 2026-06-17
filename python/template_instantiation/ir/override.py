@@ -10,16 +10,16 @@ functional's free-axis selection. This replaces the old pull-style deferred
 conditional choices (ConditionalConstexpr / CDC / CDETensor): target, value, and
 condition are explicit and separate, so no fixpoint settling is needed.
 
-Resolution runs in declared order over a `picked` map {var_name -> Choice}:
+Resolution runs in declared order over a `picked` map {var_name -> TypedChoice}:
   - Predicate.holds(picked) reads only free axes (asserted at build time), which
     is the invariant that keeps resolution a single pure pass (§8-1).
-  - Override.value is a literal (-> Choice.parse) or a VarRef (-> copy the Choice
-    currently assigned to that variable, e.g. Hdim_qk <- BLOCK_DMODEL).
+  - Override.value is a literal (-> TypedChoice.parse) or a VarRef (-> copy the
+    TypedChoice currently assigned to that variable, e.g. Hdim_qk <- BLOCK_DMODEL).
 """
 
 import operator as _op
 
-from .choice import Choice
+from .typed_choice import TypedChoice
 
 # Closed comparison grammar. Same operator set as the metro `if` conditions.
 _OPS = {
@@ -71,7 +71,7 @@ class Predicate:
 
     def holds(self, picked: dict) -> bool:
         """True if this functional's selection satisfies the predicate. `picked`
-        maps var_name -> Choice; constexpr choices expose their python value via
+        maps var_name -> TypedChoice; constexpr choices expose their python value via
         triton_compile_signature (0 / False / 3 ...)."""
         assert self.var_name in picked, \
             f'predicate variable {self.var_name!r} not in selection {sorted(picked)}'
@@ -124,10 +124,10 @@ class Override:
             return self.predicate.holds(functional.choice)
         return bool(self.predicate(functional))
 
-    def materialize(self, ctx) -> Choice:
-        """The Choice to write into the targets for a firing functional. `ctx` is
-        a functional-like object exposing `.choice` (var->Choice) and `.arch`, or
-        a plain {var->Choice} dict (no ValueFn support in that form)."""
+    def materialize(self, ctx) -> 'TypedChoice':
+        """The TypedChoice to write into the targets for a firing functional. `ctx` is
+        a functional-like object exposing `.choice` (var->TypedChoice) and `.arch`, or
+        a plain {var->TypedChoice} dict (no ValueFn support in that form)."""
         picked = ctx.choice if hasattr(ctx, 'choice') else ctx
         if isinstance(self.value, VarRef):
             assert self.value.var_name in picked, (
@@ -135,8 +135,8 @@ class Override:
                 f'selection {sorted(picked)}')
             return picked[self.value.var_name]
         if isinstance(self.value, ValueFn):
-            return Choice.parse(self.value(ctx))
-        return Choice.parse(self.value)
+            return TypedChoice.parse(self.value(ctx))
+        return TypedChoice.parse(self.value)
 
     def validate(self, free_var_names) -> None:
         # A callable predicate is opaque to static validation; only structured

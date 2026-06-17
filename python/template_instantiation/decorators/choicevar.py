@@ -14,7 +14,7 @@ class ChoiceVar:
     """A named choice variable shared by several arguments — the
     `template<typename T>` / TypeVar analogue. `tensor_dtype` and `choice_set`
     both produce one; `kind` records which authoring word created it (purely for
-    diagnostics — Choice.parse handles tensor vs scalar literals uniformly).
+    diagnostics — TypedChoice.parse handles tensor vs scalar literals uniformly).
 
     `signature_name` is the argument under which this variable is recorded in all
     PERSISTED forms — the compact signature string, which becomes the aks2 / zip

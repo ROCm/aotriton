@@ -9,11 +9,20 @@ from aotriton.utils import log
 class TypedChoice(ABC):
     HIDDEN = False    # For strides
     NBITS = None
-    '''
-    Identity for settled TC. Only a few TC classes are unsettled.
-    '''
-    def resolve(self, aname, tc_dict):
-        return self
+
+    @classmethod
+    def parse(cls, spec):
+        """Build a settled TypedChoice from an authoring literal: a type string
+        (`'*fp16:16'`, `'i32'`), a python scalar (`0`, `False`), or an already-built
+        TypedChoice. The single concrete instantiation value an Axis enumerates over."""
+        if isinstance(spec, TypedChoice):
+            return spec
+        if isinstance(spec, str):
+            return parse_complex(spec)
+        # python scalars (int/bool/float/np scalar) -> constexpr via the guessers
+        tcs = parse_choices([spec])
+        assert len(tcs) == 1
+        return tcs[0]
 
     @property
     @abstractmethod
@@ -34,21 +43,40 @@ class TypedChoice(ABC):
     def sql_value(self):
         return self.triton_compile_signature
 
-    def resolve_rank(self, all_names, RANKS):
-        pass
-
     @property
     def is_tensor(self):
         return False
 
+    @property
+    def is_constexpr(self):
+        """True for a compile-time constant choice (a constexpr_base subclass).
+        The ATI IR keys some codegen decisions on this (e.g. pp_arg_doc, runtime-vs-
+        constexpr scalar)."""
+        return False
+
+    def with_rank(self, rank: int) -> 'TypedChoice':
+        """Return a TypedChoice whose tensor is specialized to a concrete rank. In the
+        ATI IR a tensor's rank lives on the owning Axis, not the dtype, so the Axis
+        calls this to settle the rank just-in-time. Non-tensor choices ignore rank and
+        return self (overridden by `tensor`)."""
+        return self
+
     def create_constexpr(self, value):
         raise RuntimeError(f"create_constexpr is unsupported in class {self.__class__}")
 
-'''
-New design: ConditionalConstexpr is subclass of TypedChoice
-'''
-class ConditionalChoice(TypedChoice):
-    pass
+    # Value identity (not object identity): two TypedChoices are equal iff they are
+    # the same concrete class and carry the same triton compile signature. The Axis /
+    # godel enumeration and the f.choices view key on this (e.g. the override path's
+    # `axis.choices.index(picked[var])`). Tensors of different RANK compare equal —
+    # rank is an Axis concern, not part of the choice's value.
+    def __eq__(self, other):
+        if not isinstance(other, TypedChoice):
+            return NotImplemented
+        return (self.__class__ == other.__class__ and
+                self.triton_compile_signature == other.triton_compile_signature)
+
+    def __hash__(self):
+        return hash((self.__class__, str(self.triton_compile_signature)))
 
 class argument_base(TypedChoice):  # Will be actual argument
     ALIGNMENT = None  # Unlike NBITS this is BYTES
@@ -171,6 +199,10 @@ class constexpr_base(TypedChoice):
     def __init__(self, value):
         self._value = self.pytype(value)
 
+    @property
+    def is_constexpr(self):
+        return True
+
     def __str__(self):
         return str(self._value)
 
@@ -257,22 +289,11 @@ class tensor(argument_base):
     def __init__(self, elem_ty : TypedChoice, rank):
         self._elem_ty = elem_ty
         self._rank = rank
-        self._specialized = {}
         self.ALIGNMENT = elem_ty.ALIGNMENT
 
-    def resolve_rank(self, all_names, RANKS):
-        default_rank = RANKS['_default']
-        def specialize(aname):
-            rank = RANKS.get(aname, default_rank)
-            # Must use __class__ to ensure lazy_tensor is resolved to lazy_tensor as well
-            return self.__class__(elem_ty=self._elem_ty, rank=rank)
-        # print(f'resolve_rank {self=} {self._elem_ty=} {all_names=} BEFORE {self._specialized=}')
-        self._specialized.update({ aname : specialize(aname) for aname in all_names })
-        log(lambda : f'resolve_rank {self=} {self._elem_ty=} {all_names=} AFTER  {self._specialized=}')
-
-    def resolve(self, aname, tc_dict):
-        log(lambda : f'{self._specialized=} {aname=}')
-        return self._specialized.get(aname, self)
+    def with_rank(self, rank: int) -> 'TypedChoice':
+        # Preserve subclass (tensor vs lazy_tensor) and element type; settle the rank.
+        return self.__class__(elem_ty=self._elem_ty, rank=rank)
 
     @property
     def itype(self):

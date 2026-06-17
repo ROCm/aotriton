@@ -7,7 +7,7 @@ agent-plans/ati+newbinds_rev1.md §3-§4).
 
 This closes the loop from the decorator surface (Step 2.1-2.3) to the enumeration
 core (Step 1.2-1.4): it groups the collected specs by choice variable, builds
-Choice lists, computes each axis's signature anchor, resolves per-argument tensor
+TypedChoice lists, computes each axis's signature anchor, resolves per-argument tensor
 shape (rank + contiguous strides), and emits Axis + Override objects ready for
 enumerate_functionals.
 
@@ -18,8 +18,8 @@ the params/signature machinery but are not godel digits.
 
 from .decorators import TensorSpec, ScalarSpec, ChoiceVar
 from .introspect import ParamSpec
-from .ir import Choice, Axis
-from .ir.typed_choice import ELEMENTAL_TYPE_MAP
+from .ir import Axis
+from .ir.typed_choice import TypedChoice, ELEMENTAL_TYPE_MAP
 
 
 class DescriptionError(Exception):
@@ -29,7 +29,7 @@ class DescriptionError(Exception):
 
 
 def _is_ati_type_string(s: str) -> bool:
-    """True if `s` is a type string Choice.parse accepts: a tensor pointer like
+    """True if `s` is a type string TypedChoice.parse accepts: a tensor pointer like
     '*fp16:16', an elemental type like 'i32' / 'fp32' / 'u64', or a lazy tensor
     'LazyTensor:*fp32:16'."""
     if not s:
@@ -41,7 +41,7 @@ def _is_ati_type_string(s: str) -> bool:
 # Scalar type fallback (agent-plans/ati_rev1.md §3.2, fb Q5).
 #
 # An introspected annotation (introspect.py keeps it RAW) is one of:
-#   * a string ('*u64', 'i32', ...) -> handed directly to Choice.parse, which
+#   * a string ('*u64', 'i32', ...) -> handed directly to TypedChoice.parse, which
 #     already parses the ATI type vocabulary (typed_choice.ELEMENTAL_TYPE_MAP).
 #   * a triton type OBJECT (tl.float32, tl.int32, tl.uint64, ...) -> looked up in
 #     the map below BY OBJECT IDENTITY. We never call str() on a triton dtype
@@ -120,7 +120,7 @@ class BuiltKernel:
 
 def _scalar_type(spec: ScalarSpec, ann_by_name: dict, kernel_name: str):
     """Resolve a plain (non-options, non-shared) scalar's type, returning a value
-    Choice.parse accepts: explicit type wins; else a string annotation (validated
+    TypedChoice.parse accepts: explicit type wins; else a string annotation (validated
     against the ATI type vocabulary); else a triton type OBJECT mapped by identity.
 
     Emits a kernel+parameter-named DescriptionError on failure, in the spirit
@@ -135,7 +135,7 @@ def _scalar_type(spec: ScalarSpec, ann_by_name: dict, kernel_name: str):
                 f"{ann!r}, which is not a recognized ATI type. Give it an explicit "
                 f"type via ati.scalar({spec.arg_name!r}, '<type>'), or fix the "
                 f"annotation (e.g. 'i32', 'fp32', '*u64').")
-        return ann                      # Choice.parse / TypedChoice handle it
+        return ann                      # TypedChoice.parse / TypedChoice handle it
     mapped = _annotation_type_map().get(ann)
     if mapped is not None:
         return mapped
@@ -153,7 +153,7 @@ def _scalar_type(spec: ScalarSpec, ann_by_name: dict, kernel_name: str):
 
 
 def _choices_from(values) -> list:
-    return [Choice.parse(v) for v in values]
+    return [TypedChoice.parse(v) for v in values]
 
 
 def _resolve_signature_name(dtype, arg_names, param_index, kernel_name):

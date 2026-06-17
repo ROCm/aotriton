@@ -29,7 +29,7 @@ def derives(targets, *, to, when=None):
                         value that is a function of functional state (e.g. NUM_XCDS
                         from arch, possibly several values 1/3/6/8). Fires
                         unconditionally unless `when` is also given.
-      * anything else -> literal (Choice.parse handles ints/bools/floats; `0` on a
+      * anything else -> literal (TypedChoice.parse handles ints/bools/floats; `0` on a
                          tensor target is the constexpr-zero / former-CDETensor case)
 
     `when` is an optional predicate gating the derive: a structured ati.eq/ne/...
