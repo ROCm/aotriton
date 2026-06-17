@@ -21,3 +21,8 @@ agent-plans
 # agent-plans/ati_retire_v3python.md). The live generator is the `aotriton`
 # package under python/.
 v3python.retiring/
+
+# Session review artifacts (not repo content)
+ati-code-quality.md
+ati-ccreview-*.md
+agent-files/
