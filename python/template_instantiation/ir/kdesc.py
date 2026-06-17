@@ -209,19 +209,21 @@ class KernelDescription(Interface):
         ts = built.tune
         self._perf_params = ([_PerfParamShim(pp) for pp in ts.schema.params]
                              if (ts and ts.schema) else [])
-        # AUTOTUNE_KEYS validated against the arguments (legacy contract).
-        self._autotune_keys_validated = []
+        # Autotune keys from @ati.tune.binning, paired with their Binning class.
+        # Keys that are not kernel arguments are skipped (a binning key only matters
+        # when it names a real argument the LUT is indexed by).
+        self._autotune_keys = []
         if ts is not None:
             argset = set(built.arguments)
             for key, sel in ts.binning.items():
                 if key in argset:
-                    self._autotune_keys_validated.append((key, _binning_class(sel)))
+                    self._autotune_keys.append((key, _binning_class(sel)))
 
     # --- perf params + tuning metadata (legacy translate_* contract) ---
 
     @property
-    def AUTOTUNE_KEYS_VALIDATED(self):
-        return self._autotune_keys_validated
+    def autotune_keys(self):
+        return self._autotune_keys
 
     def gen_performance_params(self):
         yield from self._perf_params
@@ -277,7 +279,7 @@ class KernelDescription(Interface):
     def translate_dataframe(self, f, df):
         """Build the (lut_tensor, signatures, binning) triple for functional f from
         its tuning dataframe. Ported from the legacy KernelDescription; reads the
-        adapter's AUTOTUNE_KEYS_VALIDATED + perf params."""
+        adapter's autotune_keys + perf params."""
         import numpy as np
         from ..ksignature import KernelSignature, COMPILER_OPTIONS
         # Inject perf params that are NOT tuned DB columns: their value is the
@@ -288,13 +290,13 @@ class KernelDescription(Interface):
             col = f'tuned_kernel${pp.name}'
             if col not in df.columns:
                 df[col] = self.perf_value(pp, f)
-        sparse_keys = [f'inputs${key}' for key, _ in self.AUTOTUNE_KEYS_VALIDATED]
+        sparse_keys = [f'inputs${key}' for key, _ in self.autotune_keys]
         nkeys = len(sparse_keys)
         def sorted_unique_key(key):
             return np.unique(df[key].to_numpy()).tolist()
         sparse_key_possible_values = {key: sorted_unique_key(key) for key in sparse_keys}
         binning_dict = {key: algo(sparse_key_possible_values[spk])
-                        for spk, (key, algo) in zip(sparse_keys, self.AUTOTUNE_KEYS_VALIDATED)}
+                        for spk, (key, algo) in zip(sparse_keys, self.autotune_keys)}
         lut_shape = [f.noptimized_for] + [len(sparse_key_possible_values[key]) for key in sparse_keys]
         lut_tensor = np.full(lut_shape, -1, dtype=np.int32)
         perf_keys = [f'tuned_kernel${meta.repr_name}' for meta in self._perf_params]
