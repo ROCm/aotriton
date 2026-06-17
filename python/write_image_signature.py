@@ -10,13 +10,12 @@ import hashlib
 import itertools
 import importlib.metadata
 from .database import Factories as DatabaseFactories
-from .codegen.linker import link_all_families
-
-kernels, _operators, _affine_kernels = link_all_families()
+from .codegen.linker import Linker
 
 def parse():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument('--build_dir', type=Path, required=True)
+    p.add_argument('--root_dir', type=Path, default='.', help="Root of repository directory")
     p.add_argument('--git_sha1', required=True)
     p.add_argument('--git_treesha1', required=True)
     p.add_argument('--target_arch', nargs='+')
@@ -45,6 +44,8 @@ def hash_primary(args, vendor, arch, k):
 
 def main():
     args = parse()
+    kernels, _operators, _affine_kernels = \
+        Linker(args.root_dir / 'modules').link_all_families()
     sig = {}
     sig['AOTRITON_GIT_SHA1'] = args.git_sha1
     sig['AOTRITON_GIT_TREESHA1'] = args.git_treesha1

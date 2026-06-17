@@ -144,6 +144,7 @@ AOTRITON_ENABLE_FP32=${AOTRITON_ENABLE_FP32}
 "${VENV_BIN_PYTHON}" -X utf8 -m aotriton.generate
 --target_gpus ${EFFECTIVE_TARGET_GPUS}
 --build_dir "${AOTRITON_V2_BUILD_DIR}"
+--root_dir "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
 ${GENERATE_OPTION}
 COMMAND_ECHO STDOUT
 WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
@@ -158,6 +159,7 @@ if(NOT AOTRITON_NOIMAGE_MODE)
     "${VENV_BIN_PYTHON}"
     -m aotriton.write_image_signature
     --build_dir "${AOTRITON_V2_BUILD_DIR}"
+    --root_dir "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
     --git_sha1 ${AOTRITON_GIT_SHA1}
     --git_treesha1 ${AOTRITON_GIT_TREESHA1}
     --target_arch ${AOTRITON_TARGET_ARCH}
@@ -348,6 +350,7 @@ if(AOTRITON_BUILD_FOR_TUNING)
     "${VENV_BIN_PYTHON}" -m aotriton.generate
     --target_gpus ${EFFECTIVE_TARGET_GPUS}
     --build_dir "${AOTRITON_V2_BUILD_DIR}"
+    --root_dir "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
     ${GENERATE_OPTION}
     --build_for_tuning_second_pass
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}")

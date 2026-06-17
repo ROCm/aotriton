@@ -5,7 +5,7 @@ import os
 from .codegen import (
     RootGenerator
 )
-from .codegen.linker import link_all_families
+from .codegen.linker import Linker
 from .utils import LazyFile
 import argparse
 from pathlib import Path
@@ -62,10 +62,11 @@ def parse():
     # print(args)
     return args
 
-def run_sancheck() -> int:
+def run_sancheck(args) -> int:
     """Validate all ATI descriptions; print every error; return process exit code."""
     import sys
-    triton_kernels, dispatcher_operators, _aff = link_all_families()
+    triton_kernels, dispatcher_operators, _aff = \
+        Linker(args.root_dir / 'modules').link_all_families()
     from .template_instantiation.tools import sancheck_report
     ok, errors = sancheck_report(kernels=triton_kernels,
                                  operators=dispatcher_operators)
@@ -77,9 +78,10 @@ def run_sancheck() -> int:
         print(f'  {e}', file=sys.stderr)
     return 1
 
-def run_preview(selective) -> int:
+def run_preview(args, selective) -> int:
     """Print the implicit structures of the ATI descriptions matching `selective`."""
-    triton_kernels, dispatcher_operators, _aff = link_all_families()
+    triton_kernels, dispatcher_operators, _aff = \
+        Linker(args.root_dir / 'modules').link_all_families()
     from .template_instantiation.tools import preview
     sel = None if selective == '*' else selective
     text = preview(selective=sel, kernels=triton_kernels,
@@ -91,10 +93,10 @@ def main():
     args = parse()
     if args.sancheck:
         import sys
-        sys.exit(run_sancheck())
+        sys.exit(run_sancheck(args))
     if args.preview is not None:
         import sys
-        sys.exit(run_preview(args.preview))
+        sys.exit(run_preview(args, args.preview))
     gen = RootGenerator(args)
     gen.generate()
     for e in args._sanity_check_exceptions:

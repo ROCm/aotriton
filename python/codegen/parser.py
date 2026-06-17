@@ -26,67 +26,21 @@ top-level name so its relative imports resolve without a `<family>` namespace pk
 its `kernel/` sources keep importing each other by bare name.
 """
 
-import os
 import sys
 import importlib.util
 from pathlib import Path
 
 
-def _resolve_modules_dir() -> Path:
-    """Locate the `modules/` tree (the per-family kernel/operator descriptions).
-
-    `modules/` is DATA living beside the package source, not inside the importable
-    `aotriton` package, so its location depends on how the package was installed:
-      1. `$AOTRITON_MODULE_DIR` — explicit override (wins when set);
-      2. source-tree-relative — `<python/>/../modules` (editable install / running
-         straight from the checkout);
-      3. cwd-relative — `./modules` (a NON-editable `pip install .`: the package is
-         copied into site-packages so (2) misses, but the build / generator is run
-         from the repo root, where `modules/` is a sibling).
-    """
-    env = os.getenv('AOTRITON_MODULE_DIR')
-    if env:
-        return Path(env)
-    src_rel = Path(__file__).resolve().parent.parent.parent / 'modules'
-    if src_rel.is_dir():
-        return src_rel
-    return Path.cwd() / 'modules'
-
-
-_MODULES_DIR = _resolve_modules_dir()
-
-
-# --- family discovery / loading (absorbed from python/rules) -----------------
-
-def discover_families():
-    """Family names = subdirs of modules/ that contain an `aot` package."""
-    if not _MODULES_DIR.is_dir():
-        return []
-    return [child.name for child in sorted(_MODULES_DIR.iterdir())
-            if (child / 'aot' / '__init__.py').is_file()]
-
-
 def load_family_aot(family):
-    """Import modules/<family>/aot/__init__.py by path under a synthetic unique
-    package name so its relative imports work without a <family> namespace pkg.
+    """Fetch an already-loaded family's `aot` package from the import cache.
 
-    `modules/<family>` must stay a plain directory (not a package) so its `kernel/`
-    sources keep importing each other by bare name; loading `aot` by name would
-    require `<family>` to be a clean namespace package, which any sys.path entry
-    containing a `<family>.py` (e.g. `tritonsrc/flash.py`) would shadow. Loading by
-    path sidesteps that entirely."""
-    modname = f'_aotriton_modules_{family}_aot'
-    cached = sys.modules.get(modname)
-    if cached is not None:
-        return cached
-    aot_dir = _MODULES_DIR / family / 'aot'
-    spec = importlib.util.spec_from_file_location(
-        modname, aot_dir / '__init__.py',
-        submodule_search_locations=[str(aot_dir)])
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[modname] = mod
-    spec.loader.exec_module(mod)
-    return mod
+    The Parser loads each family by path under the synthetic name
+    `_aotriton_modules_<family>_aot`; this free function returns that cached module
+    (or None) for the few consumers that need the loaded package but do not have a
+    Parser handle — e.g. ir/kdesc.py's flash sancheck back-edge, which runs after the
+    family was loaded during linking. It never loads (no modules_dir): the family
+    must already be loaded by a Parser."""
+    return sys.modules.get(f'_aotriton_modules_{family}_aot')
 
 
 # --- Pass-1 shells (relocations stored on the shell) -------------------------
@@ -178,63 +132,108 @@ def _plan_subkernel_names(plan):
     return out
 
 
-def _parse_kernel(def_obj, compiled):
-    """Record a triton-kernel `def` (carrying fn.__ati__) as a KernelShell."""
-    from aotriton.template_instantiation.describe import get_kernel_spec
-    spec = get_kernel_spec(def_obj)
-    assert spec is not None, (
-        f'{getattr(def_obj, "__name__", def_obj)!r} has no @ati.* kernel spec')
-    name = getattr(spec.kernel, '__name__', None)
-    assert name, f'kernel {def_obj!r} has no __name__'
-    if name not in compiled.kernels:
-        compiled.kernels[name] = KernelShell(name, spec, spec.source_path)
-    return name
+class Parser:
+    """Pass 1 — COMPILE. Owns the `modules/` root (the per-family kernel/operator
+    descriptions) and turns each family's passive `@ati.*` records into IR shells.
 
+    `module_dir` is `<root_dir>/modules`, given explicitly by the generator
+    (--root_dir). `modules/` is DATA beside the package source, NOT inside the
+    importable `aotriton` package (a non-editable install copies the package out of
+    the checkout but never ships modules/), so its location is passed in — never
+    derived from `__file__` or the cwd."""
 
-def compile_family(aot_module, family):
-    """Pass 1 for one family: walk the `operators` roots, parse every reachable kernel
-    / metro / affine into a shell, and record cross-references as relocations on the
-    shells. Returns a CompiledFamily (nothing is built yet)."""
-    from aotriton.template_instantiation.metro.transpile import MetroPlan
+    def __init__(self, module_dir):
+        self.module_dir = Path(module_dir)
 
-    compiled = CompiledFamily(family)
-    for op_def in getattr(aot_module, 'operators', []):
-        decl = getattr(op_def, '__ati_operator__', None)
-        assert decl is not None, (
-            f'{family}: operators entry {op_def!r} has no __ati_operator__ '
-            f'(not a passive @ati.operator def)')
-        backend_refs = []
-        for b in decl.backends:
-            ref = b.obj            # the in-file def/object the @ati.backend points at
-            if getattr(ref, '__ati_metro__', None) is not None:
-                plan = ref.__ati_metro__
-                assert isinstance(plan, MetroPlan)
-                sub_names = _plan_subkernel_names(plan)
-                for sub_name in sub_names:
-                    sub_def = getattr(aot_module, sub_name, None)
-                    assert sub_def is not None, (
-                        f'{family}: metro {b.name!r} calls sub-kernel '
-                        f'{sub_name!r} not found in the aot module')
-                    _parse_kernel(sub_def, compiled)
-                if b.name not in compiled.metros:
-                    precedence = getattr(ref, '__ati_union_precedence__', None)
-                    compiled.metros[b.name] = MetroShell(b.name, plan, sub_names,
-                                                         precedence=precedence)
-                backend_refs.append((b.index, 'metro', b.name))
-            elif getattr(ref, '__ati__', None) is not None:
-                kname = _parse_kernel(ref, compiled)       # a bare-kernel backend
-                backend_refs.append((b.index, 'kernel', kname))
-            elif getattr(ref, '__ati_affine__', None) is not None:
-                adecl = ref.__ati_affine__
-                if adecl.name not in compiled.affines:
-                    compiled.affines[adecl.name] = adecl
-                backend_refs.append((b.index, 'affine', adecl.name))
-            else:
-                raise AssertionError(
-                    f'{family}: backend {b.name!r} ref {ref!r} is neither a metro, a '
-                    f'kernel, nor an affine description')
-        backend_refs.sort(key=lambda t: t[0])
-        compiled.operators[decl.name] = OperatorShell(decl.name, decl, backend_refs)
-        compiled.op_order.append(decl.name)
+    # --- family discovery / loading (absorbed from python/rules) -------------
 
-    return compiled
+    def discover_families(self):
+        """Family names = subdirs of module_dir that contain an `aot` package."""
+        if not self.module_dir.is_dir():
+            return []
+        return [child.name for child in sorted(self.module_dir.iterdir())
+                if (child / 'aot' / '__init__.py').is_file()]
+
+    def load_family_aot(self, family):
+        """Import <module_dir>/<family>/aot/__init__.py by path under a synthetic
+        unique package name so its relative imports work without a <family> namespace
+        pkg. `modules/<family>` must stay a plain directory (not a package) so its
+        `kernel/` sources keep importing each other by bare name; loading `aot` by
+        name would require `<family>` to be a clean namespace package, which any
+        sys.path entry containing a `<family>.py` (e.g. `tritonsrc/flash.py`) would
+        shadow. Loading by path sidesteps that entirely. Cached in sys.modules."""
+        modname = f'_aotriton_modules_{family}_aot'
+        cached = sys.modules.get(modname)
+        if cached is not None:
+            return cached
+        aot_dir = self.module_dir / family / 'aot'
+        spec = importlib.util.spec_from_file_location(
+            modname, aot_dir / '__init__.py',
+            submodule_search_locations=[str(aot_dir)])
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[modname] = mod
+        spec.loader.exec_module(mod)
+        return mod
+
+    # --- compile ------------------------------------------------------------
+
+    def _parse_kernel(self, def_obj, compiled):
+        """Record a triton-kernel `def` (carrying fn.__ati__) as a KernelShell."""
+        from aotriton.template_instantiation.describe import get_kernel_spec
+        spec = get_kernel_spec(def_obj)
+        assert spec is not None, (
+            f'{getattr(def_obj, "__name__", def_obj)!r} has no @ati.* kernel spec')
+        name = getattr(spec.kernel, '__name__', None)
+        assert name, f'kernel {def_obj!r} has no __name__'
+        if name not in compiled.kernels:
+            compiled.kernels[name] = KernelShell(name, spec, spec.source_path)
+        return name
+
+    def compile_family(self, aot_module, family):
+        """Pass 1 for one family: walk the `operators` roots, parse every reachable
+        kernel / metro / affine into a shell, and record cross-references as
+        relocations on the shells. Returns a CompiledFamily (nothing is built yet)."""
+        from aotriton.template_instantiation.metro.transpile import MetroPlan
+
+        compiled = CompiledFamily(family)
+        for op_def in getattr(aot_module, 'operators', []):
+            decl = getattr(op_def, '__ati_operator__', None)
+            assert decl is not None, (
+                f'{family}: operators entry {op_def!r} has no __ati_operator__ '
+                f'(not a passive @ati.operator def)')
+            backend_refs = []
+            for b in decl.backends:
+                ref = b.obj        # the in-file def/object the @ati.backend points at
+                if getattr(ref, '__ati_metro__', None) is not None:
+                    plan = ref.__ati_metro__
+                    assert isinstance(plan, MetroPlan)
+                    sub_names = _plan_subkernel_names(plan)
+                    for sub_name in sub_names:
+                        sub_def = getattr(aot_module, sub_name, None)
+                        assert sub_def is not None, (
+                            f'{family}: metro {b.name!r} calls sub-kernel '
+                            f'{sub_name!r} not found in the aot module')
+                        self._parse_kernel(sub_def, compiled)
+                    if b.name not in compiled.metros:
+                        precedence = getattr(ref, '__ati_union_precedence__', None)
+                        compiled.metros[b.name] = MetroShell(b.name, plan, sub_names,
+                                                             precedence=precedence)
+                    backend_refs.append((b.index, 'metro', b.name))
+                elif getattr(ref, '__ati__', None) is not None:
+                    kname = self._parse_kernel(ref, compiled)   # bare-kernel backend
+                    backend_refs.append((b.index, 'kernel', kname))
+                elif getattr(ref, '__ati_affine__', None) is not None:
+                    adecl = ref.__ati_affine__
+                    if adecl.name not in compiled.affines:
+                        compiled.affines[adecl.name] = adecl
+                    backend_refs.append((b.index, 'affine', adecl.name))
+                else:
+                    raise AssertionError(
+                        f'{family}: backend {b.name!r} ref {ref!r} is neither a '
+                        f'metro, a kernel, nor an affine description')
+            backend_refs.sort(key=lambda t: t[0])
+            compiled.operators[decl.name] = OperatorShell(decl.name, decl,
+                                                          backend_refs)
+            compiled.op_order.append(decl.name)
+
+        return compiled

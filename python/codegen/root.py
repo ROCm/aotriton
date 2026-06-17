@@ -7,7 +7,7 @@ from pathlib import Path, PurePath
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 import subprocess
-from .linker import link_all_families
+from .linker import Linker
 from .kernel import KernelShimGenerator
 from .slim_affine import SlimAffineGenerator
 from .operator import OperatorGenerator
@@ -72,9 +72,10 @@ class RootGenerator(object):
             self._altrules_dict = {}
         self._load_altwheel_config(self._altrules_dict)
         # Two-pass build (parse passive descriptions -> link the IR tree). Linked once
-        # per generator; the lists are what the per-item generators iterate.
+        # per generator; the lists are what the per-item generators iterate. The
+        # descriptions live under <root_dir>/modules (passed explicitly, no guessing).
         (self._triton_kernels, self._dispatcher_operators,
-         self._affine_kernels) = link_all_families()
+         self._affine_kernels) = Linker(self._args.root_dir / 'modules').link_all_families()
 
     def generate(self):
         if self._args.selective:

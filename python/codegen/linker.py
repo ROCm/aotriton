@@ -264,38 +264,47 @@ def _check_unresolved_arguments(built_kernels):
         raise SystemExit(1)
 
 
-def link_family(aot_module, family):
-    """Pass 2 for one family: compile (Pass 1) then resolve + build the final tree.
-    Returns FamilyArtifacts(kernels, operators, affine_kernels)."""
-    from aotriton.template_instantiation.ir.ops.infer import infer_shared_iface
-    from . import parser
+class Linker:
+    """Pass 2 — LINK. Owns a Parser (and thus the `modules/` root); resolves each
+    family's Pass-1 shells into the final IR tree the code generators consume.
 
-    compiled = parser.compile_family(aot_module, family)
-    built_kernels = _build_kernels(compiled)
-    _check_unresolved_arguments(built_kernels)
-    affines = _build_affines(compiled)
-    metros = _build_metros(compiled, built_kernels)
-    operators = _build_operators(compiled, built_kernels, metros, affines)
+    `module_dir` is `<root_dir>/modules`, given explicitly by the generator
+    (--root_dir) — no cwd/__file__ guessing. Construct one Linker per generation."""
 
-    op_list = [operators[n] for n in compiled.op_order]
-    infer_shared_iface(op_list)
+    def __init__(self, module_dir):
+        from .parser import Parser
+        self.parser = Parser(module_dir)
 
-    return FamilyArtifacts(
-        family,
-        kernels=list(built_kernels.values()),
-        operators=op_list,
-        affine_kernels=list(affines.values()))
+    def link_family(self, aot_module, family):
+        """Pass 2 for one family: compile (Pass 1) then resolve + build the final
+        tree. Returns FamilyArtifacts(kernels, operators, affine_kernels)."""
+        from aotriton.template_instantiation.ir.ops.infer import infer_shared_iface
 
+        compiled = self.parser.compile_family(aot_module, family)
+        built_kernels = _build_kernels(compiled)
+        _check_unresolved_arguments(built_kernels)
+        affines = _build_affines(compiled)
+        metros = _build_metros(compiled, built_kernels)
+        operators = _build_operators(compiled, built_kernels, metros, affines)
 
-def link_all_families():
-    """Discover every family, link each, and concatenate the artifacts the generator
-    consumes. Returns (kernels, operators, affine_kernels)."""
-    from . import parser
-    kernels, operators, affine_kernels = [], [], []
-    for family in parser.discover_families():
-        aot = parser.load_family_aot(family)
-        arts = link_family(aot, family)
-        kernels.extend(arts.kernels)
-        operators.extend(arts.operators)
-        affine_kernels.extend(arts.affine_kernels)
-    return kernels, operators, affine_kernels
+        op_list = [operators[n] for n in compiled.op_order]
+        infer_shared_iface(op_list)
+
+        return FamilyArtifacts(
+            family,
+            kernels=list(built_kernels.values()),
+            operators=op_list,
+            affine_kernels=list(affines.values()))
+
+    def link_all_families(self):
+        """Discover every family under module_dir, link each, and concatenate the
+        artifacts the generator consumes. Returns (kernels, operators,
+        affine_kernels)."""
+        kernels, operators, affine_kernels = [], [], []
+        for family in self.parser.discover_families():
+            aot = self.parser.load_family_aot(family)
+            arts = self.link_family(aot, family)
+            kernels.extend(arts.kernels)
+            operators.extend(arts.operators)
+            affine_kernels.extend(arts.affine_kernels)
+        return kernels, operators, affine_kernels
