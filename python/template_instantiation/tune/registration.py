@@ -79,7 +79,7 @@ class Config:
 class _TuneRecord:
     """Base for the stacked-@ tune spec records: callable to accumulate."""
     def __call__(self, kernel):
-        from ..describe import accumulate_spec
+        from ..specs.finalize import accumulate_spec
         return accumulate_spec(self, kernel)
 
 

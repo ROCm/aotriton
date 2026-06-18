@@ -28,6 +28,10 @@ from .decorators import hints    # ati.hints.* author hints (union_precedence, .
 # infer.py, union.py) — under ir/ since they operate on the IR, and NOT named
 # `operator`, so it never shadows the @ati.operator DECORATOR exported below.
 from .ir.ops import union_params
+# Import via the `.describe` shim (not `.specs.finalize` directly) so the `describe`
+# submodule loads here FIRST — its package attribute is then overwritten by the
+# `describe` FUNCTION binding below, so `ati.describe` stays the callable even after
+# a later `from ...template_instantiation.describe import ...` re-touches the module.
 from .describe import describe, kernel
 from .builder import DescriptionError
 from .decorators import metro_kernel

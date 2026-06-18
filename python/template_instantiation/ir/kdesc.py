@@ -22,7 +22,7 @@ surface.
 """
 
 from ..builder import build_kernel
-from ..describe import get_kernel_spec
+from ..specs.finalize import get_kernel_spec
 from .axis import assign_godel
 from .interface import Interface
 

@@ -179,7 +179,7 @@ class Parser:
 
     def _parse_kernel(self, def_obj, compiled):
         """Record a triton-kernel `def` (carrying fn.__ati__) as a KernelShell."""
-        from aotriton.template_instantiation.describe import get_kernel_spec
+        from aotriton.template_instantiation.specs.finalize import get_kernel_spec
         spec = get_kernel_spec(def_obj)
         assert spec is not None, (
             f'{getattr(def_obj, "__name__", def_obj)!r} has no @ati.* kernel spec')

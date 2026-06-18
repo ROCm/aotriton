@@ -150,7 +150,7 @@ class Override:
 
     def __call__(self, kernel):
         """Stacked-@ form: accumulate this override onto the kernel below it."""
-        from ..describe import accumulate_spec
+        from ..specs.finalize import accumulate_spec
         return accumulate_spec(self, kernel)
 
     def __repr__(self):

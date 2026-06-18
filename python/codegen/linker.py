@@ -76,7 +76,7 @@ def _clone_spec(spec):
     resolve_cites (which appends gap tensors/scalars/overrides/dtype_vars and may set
     tune/disables) never mutates the module-level passive spec — making linking
     idempotent (the spec is the source of truth; the linker builds from a copy)."""
-    from aotriton.template_instantiation.describe import KernelSpec
+    from aotriton.template_instantiation.specs.kernel import KernelSpec
     clone = KernelSpec.__new__(KernelSpec)
     clone.kernel = spec.kernel
     clone.params = spec.params              # immutable signature; shared is fine

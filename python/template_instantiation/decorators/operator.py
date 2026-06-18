@@ -60,7 +60,7 @@ class BackendSpec:
         self.ref_name = getattr(obj, 'NAME', None) or name
 
     def __call__(self, kernel):
-        from ..describe import accumulate_spec
+        from ..specs.finalize import accumulate_spec
         return accumulate_spec(self, kernel)
 
     def __repr__(self):
@@ -91,7 +91,7 @@ class OperatorSpec:
     def __call__(self, placeholder):
         # Innermost decorator: like @ati.source it runs first and seeds the pending
         # list with itself, so the specs above accumulate onto the same object.
-        from ..describe import accumulate_spec
+        from ..specs.finalize import accumulate_spec
         if self.name is None:
             self.name = placeholder.__name__
         return accumulate_spec(self, placeholder)

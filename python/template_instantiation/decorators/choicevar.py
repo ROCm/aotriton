@@ -37,7 +37,7 @@ class ChoiceVar:
         it (so `@ati.type_var('T_io', ...)` works as a decorator, and
         `@ati.tensor('Q', 'T_io', ...)` can refer to it by name). Mirrors
         TensorSpec/ScalarSpec.__call__."""
-        from ..describe import accumulate_spec
+        from ..specs.finalize import accumulate_spec
         return accumulate_spec(self, kernel)
 
     def __repr__(self):

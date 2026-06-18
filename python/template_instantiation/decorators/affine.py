@@ -37,7 +37,7 @@ and the linker builds the ir.affine.AffineKernel.
 class _AffineSpec:
     """Base: a stacked-@ affine spec record. Calling it accumulates onto the def."""
     def __call__(self, placeholder):
-        from ..describe import accumulate_spec
+        from ..specs.finalize import accumulate_spec
         return accumulate_spec(self, placeholder)
 
 
@@ -51,7 +51,7 @@ class AffineMarkerSpec(_AffineSpec):
         self.name = name
 
     def __call__(self, placeholder):
-        from ..describe import accumulate_spec
+        from ..specs.finalize import accumulate_spec
         if self.name is None:
             self.name = placeholder.__name__
         return accumulate_spec(self, placeholder)

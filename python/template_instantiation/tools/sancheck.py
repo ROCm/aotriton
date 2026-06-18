@@ -22,7 +22,7 @@ from graphlib import CycleError
 def sancheck_kernel_spec(kernel_spec):
     """Validate one KernelSpec (from describe()). Returns a list of error strings
     (empty == clean). Does not raise."""
-    from ..describe import _validate_completeness
+    from ..specs.finalize import _validate_completeness
     from ..builder import build_kernel, DescriptionError
 
     name = getattr(kernel_spec.kernel, '__name__', 'kernel')
