@@ -74,6 +74,8 @@ class ScalarSpec(StackedSpec):
 
     @property
     def has_explicit_type(self) -> bool:
+        # Test-only accessor (test_decorators.py); not used by the generator, which
+        # checks the type_ / dtype slots individually at each site.
         return self.type_ is not None or self.dtype is not None
 
     def __repr__(self):

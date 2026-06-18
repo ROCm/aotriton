@@ -76,6 +76,8 @@ class TensorSpec(StackedSpec):
 
     @property
     def is_literal_dtype(self) -> bool:
+        # Test-only accessor (test_decorators.py); not used by the generator, which
+        # branches on isinstance(dtype, ChoiceVar) at each site directly.
         return isinstance(self.dtype, str)
 
     @property
