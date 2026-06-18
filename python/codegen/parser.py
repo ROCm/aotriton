@@ -143,20 +143,112 @@ class CompiledFamily:
         self.op_order = []     # operator NAMEs in declared order
 
 
-def _plan_subkernel_names(plan):
-    """Every concrete sub-kernel NAME a MetroPlan calls (descending into if/else)."""
-    from aotriton.template_instantiation.specs.metro import Call, Cond
-    out = []
+# --- backend-kind classifier (single source for 'what kinds of backend exist') ---
 
-    def walk(steps):
+_NODE_ATTRS = (
+    ('__ati_metro__', 'metro'),
+    ('__ati__',       'kernel'),
+    ('__ati_affine__','affine'),
+)
+
+def _node_kind(ref):
+    """The kind string for a backend ref object: 'metro' | 'kernel' | 'affine'."""
+    for attr, kind in _NODE_ATTRS:
+        if getattr(ref, attr, None) is not None:
+            return kind
+    raise AssertionError(
+        f'backend ref {ref!r} is not a metro, a kernel, nor an affine description')
+
+
+class FamilyCompiler:
+    """Pass-1 visitor that walks the ATI description tree and accumulates a
+    CompiledFamily. Replaces the monolithic compile_family if/elif chain with
+    named visit_* methods dispatched through _node_kind — one method per node
+    kind, one method per metro-step kind. Adding a new backend kind = adding a
+    visit_<kind> method; no other edits needed.
+
+    Modelled on Python's own ast.NodeVisitor but deliberately small (3 backend
+    kinds + 2 metro step kinds) — no reflective generic_visit machinery."""
+
+    def __init__(self, aot_module, family):
+        self.aot = aot_module
+        self.family = family
+        self.compiled = CompiledFamily(family)
+
+    def run(self):
+        for op_def in getattr(self.aot, 'operators', []):
+            self.visit_operator(op_def)
+        return self.compiled
+
+    # --- operator + backend dispatch -----------------------------------------
+
+    def visit_operator(self, op_def):
+        decl = getattr(op_def, '__ati_operator__', None)
+        assert decl is not None, (
+            f'{self.family}: operators entry {op_def!r} has no __ati_operator__ '
+            f'(not a passive @ati.operator def)')
+        backend_refs = []
+        for b in decl.backends:
+            backend_refs.append(getattr(self, f'visit_{_node_kind(b.obj)}')(b))
+        backend_refs.sort(key=lambda t: t[0])
+        self.compiled.operators[decl.name] = OperatorShell(decl.name, decl,
+                                                           backend_refs)
+        self.compiled.op_order.append(decl.name)
+
+    def visit_metro(self, b):
+        from aotriton.template_instantiation.specs.metro import MetroPlan
+        plan = b.obj.__ati_metro__
+        assert isinstance(plan, MetroPlan)
+        sub_names = list(self._iter_plan_subkernels(plan.steps))
+        for sub_name in sub_names:
+            sub_def = getattr(self.aot, sub_name, None)
+            assert sub_def is not None, (
+                f'{self.family}: metro {b.name!r} calls sub-kernel '
+                f'{sub_name!r} not found in the aot module')
+            self._record_kernel(sub_def)
+        if b.name not in self.compiled.metros:
+            precedence = getattr(b.obj, '__ati_union_precedence__', None)
+            self.compiled.metros[b.name] = MetroShell(b.name, plan, sub_names,
+                                                      precedence=precedence)
+        return (b.index, 'metro', b.name)
+
+    def visit_kernel(self, b):
+        kname = self._record_kernel(b.obj)
+        return (b.index, 'kernel', kname)
+
+    def visit_affine(self, b):
+        adecl = b.obj.__ati_affine__
+        if adecl.name not in self.compiled.affines:
+            self.compiled.affines[adecl.name] = adecl
+        return (b.index, 'affine', adecl.name)
+
+    # --- metro sub-plan descent (Call | Cond tree) ---------------------------
+
+    def _iter_plan_subkernels(self, steps):
+        """Yield every concrete sub-kernel NAME in a metro plan, descending into
+        Cond branches — the Pass-1 analogue of ir/ops/infer._iter_subkernels."""
+        from aotriton.template_instantiation.specs.metro import Call, Cond
         for s in steps:
             if isinstance(s, Call):
-                out.append(s.kernel)
+                yield s.kernel
             elif isinstance(s, Cond):
-                walk(s.then)
-                walk(s.orelse)
-    walk(plan.steps)
-    return out
+                yield from self._iter_plan_subkernels(s.then)
+                yield from self._iter_plan_subkernels(s.orelse)
+
+    # --- kernel recording (dedup by name) ------------------------------------
+
+    def _record_kernel(self, def_obj):
+        """Record a triton-kernel def as a KernelShell (no-op if already recorded).
+        Returns the kernel def-name."""
+        from aotriton.template_instantiation.specs.finalize import get_kernel_spec
+        spec = get_kernel_spec(def_obj)
+        assert spec is not None, (
+            f'{getattr(def_obj, "__name__", def_obj)!r} has no @ati.* kernel spec')
+        name = getattr(spec.kernel, '__name__', None)
+        assert name, f'kernel {def_obj!r} has no __name__'
+        if name not in self.compiled.kernels:
+            self.compiled.kernels[name] = KernelShell(name, spec, spec.source_path)
+        return name
 
 
 class Parser:
@@ -204,63 +296,8 @@ class Parser:
 
     # --- compile ------------------------------------------------------------
 
-    def _parse_kernel(self, def_obj, compiled):
-        """Record a triton-kernel `def` (carrying fn.__ati__) as a KernelShell."""
-        from aotriton.template_instantiation.specs.finalize import get_kernel_spec
-        spec = get_kernel_spec(def_obj)
-        assert spec is not None, (
-            f'{getattr(def_obj, "__name__", def_obj)!r} has no @ati.* kernel spec')
-        name = getattr(spec.kernel, '__name__', None)
-        assert name, f'kernel {def_obj!r} has no __name__'
-        if name not in compiled.kernels:
-            compiled.kernels[name] = KernelShell(name, spec, spec.source_path)
-        return name
-
     def compile_family(self, aot_module, family):
         """Pass 1 for one family: walk the `operators` roots, parse every reachable
         kernel / metro / affine into a shell, and record cross-references as
         relocations on the shells. Returns a CompiledFamily (nothing is built yet)."""
-        from aotriton.template_instantiation.specs.metro import MetroPlan
-
-        compiled = CompiledFamily(family)
-        for op_def in getattr(aot_module, 'operators', []):
-            decl = getattr(op_def, '__ati_operator__', None)
-            assert decl is not None, (
-                f'{family}: operators entry {op_def!r} has no __ati_operator__ '
-                f'(not a passive @ati.operator def)')
-            backend_refs = []
-            for b in decl.backends:
-                ref = b.obj        # the in-file def/object the @ati.backend points at
-                if getattr(ref, '__ati_metro__', None) is not None:
-                    plan = ref.__ati_metro__
-                    assert isinstance(plan, MetroPlan)
-                    sub_names = _plan_subkernel_names(plan)
-                    for sub_name in sub_names:
-                        sub_def = getattr(aot_module, sub_name, None)
-                        assert sub_def is not None, (
-                            f'{family}: metro {b.name!r} calls sub-kernel '
-                            f'{sub_name!r} not found in the aot module')
-                        self._parse_kernel(sub_def, compiled)
-                    if b.name not in compiled.metros:
-                        precedence = getattr(ref, '__ati_union_precedence__', None)
-                        compiled.metros[b.name] = MetroShell(b.name, plan, sub_names,
-                                                             precedence=precedence)
-                    backend_refs.append((b.index, 'metro', b.name))
-                elif getattr(ref, '__ati__', None) is not None:
-                    kname = self._parse_kernel(ref, compiled)   # bare-kernel backend
-                    backend_refs.append((b.index, 'kernel', kname))
-                elif getattr(ref, '__ati_affine__', None) is not None:
-                    adecl = ref.__ati_affine__
-                    if adecl.name not in compiled.affines:
-                        compiled.affines[adecl.name] = adecl
-                    backend_refs.append((b.index, 'affine', adecl.name))
-                else:
-                    raise AssertionError(
-                        f'{family}: backend {b.name!r} ref {ref!r} is neither a '
-                        f'metro, a kernel, nor an affine description')
-            backend_refs.sort(key=lambda t: t[0])
-            compiled.operators[decl.name] = OperatorShell(decl.name, decl,
-                                                          backend_refs)
-            compiled.op_order.append(decl.name)
-
-        return compiled
+        return FamilyCompiler(aot_module, family).run()
