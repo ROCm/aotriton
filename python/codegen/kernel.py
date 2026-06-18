@@ -94,7 +94,7 @@ class KernelShimGenerator(InterfaceGenerator):
     def codegen_declare_compiled_in_features(self):
         kdesc = self._iface
         decl_list = []
-        for tp in kdesc.list_functional_params():
+        for tp in kdesc.list_functional_params():   # tp: TemplateParam
             tc = tp.repr_typed_choice
             if not tp.emit_feature_table:
                 continue
@@ -107,7 +107,7 @@ class KernelShimGenerator(InterfaceGenerator):
         def_list = []
         kdesc = self._iface
         meta_class = kdesc.metadata_class_name
-        for tp in kdesc.list_functional_params():
+        for tp in kdesc.list_functional_params():   # tp: TemplateParam
             tc = tp.repr_typed_choice
             if not tp.emit_feature_table:
                 continue

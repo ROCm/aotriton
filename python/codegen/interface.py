@@ -4,13 +4,18 @@
 # Generate <family>/<prefix>.<kernel_name>.{h,cc}
 # For operator and kernel
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 import io
+from typing import TYPE_CHECKING
 from ..template_instantiation.ir import (
     typed_choice as TC,
     Functional,
     Interface,
 )
+if TYPE_CHECKING:
+    from ..template_instantiation.ir.kdesc import TemplateParam
 from .template import get_template
 from ..utils import (
     LazyFile,
@@ -181,11 +186,11 @@ class InterfaceGenerator(ABC):
     def codegen_godel_number_body(self):
         body = io.StringIO()
         iface = self._iface
-        for tp in iface.list_functional_params():
+        for tp in iface.list_functional_params():   # tp: TemplateParam
             self.codegen_godel_number_calculation(tp, body)
         return body.getvalue()
 
-    def codegen_godel_number_calculation(self, tp, fout, *, anamespace='args.'):
+    def codegen_godel_number_calculation(self, tp: 'TemplateParam', fout, *, anamespace='args.'):
         if tp.radix <= 1:
             return
         aname = tp.repr_name

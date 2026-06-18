@@ -30,6 +30,7 @@ from .axis import assign_godel
 from .interface import Interface
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from .axis import Axis
     from .typed_choice import TypedChoice
 
@@ -49,10 +50,12 @@ def _binning_class(selector):
 
 
 @dataclass(slots=True)
-class FunctionalParam:
+class TemplateParam:
     """The per-kernel view of one functional Axis for the compiled-in feature tables
-    (codegen.kernel get_<name>_choices). It is NOT a re-shaping of Axis — it pairs the
-    axis with this kernel's wiring/override state that Axis cannot hold:
+    (codegen.kernel get_<name>_choices). Named after the legacy `TemplateParameter`
+    (TP) it descends from — the codegen loops still call its instances `tp`. It is NOT
+    a re-shaping of Axis — it pairs the axis with this kernel's wiring/override state
+    that Axis cannot hold:
       * `repr_name` / `all_names` — the APPAREL-mapped names (operator operands) for the
         C++ surface, which depend on the kernel's wires_to map, not on the axis.
       * `overridden_to_constexpr` — whether an override bakes the axis's representative
@@ -463,9 +466,9 @@ class KernelDescription(Interface):
 
     # --- compiled-in feature tables ---
 
-    def list_functional_params(self):
-        """The functional-param view for the generator's compiled-in feature tables
-        (get_<name>_choices). Yields one FunctionalParam per non-stride axis. An axis
+    def list_functional_params(self) -> 'Iterator[TemplateParam]':
+        """The template-param view for the generator's compiled-in feature tables
+        (get_<name>_choices). Yields one TemplateParam per non-stride axis. An axis
         is a free feature unless its representative argument is baked to a constexpr by
         an override. A grouped dtype variable like T_io stays a feature even if a
         member tensor (B) is individually baked — baking is an argument property,
@@ -479,7 +482,7 @@ class KernelDescription(Interface):
             # — the persisted/human-readable label (e.g. T_io -> 'Q'), not the
             # repr_arg used for value lookup. The member list is the apparel of the
             # real arg names (operator operands).
-            yield FunctionalParam(
+            yield TemplateParam(
                 axis=ax, overridden_to_constexpr=baked,
                 repr_name=self.apparel_of(ax.signature_name),
                 all_names=[self.apparel_of(a) for a in ax.arg_names])
