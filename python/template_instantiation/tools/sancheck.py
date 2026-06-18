@@ -44,7 +44,7 @@ def sancheck_kernel_spec(kernel_spec):
 
     free_vars = {ax.var_name for ax in built.axes if not ax.is_stride}
     arg_names = set(built.arguments)
-    perf_names = ({pp.name for pp in built.tune.schema.params}
+    perf_names = (set(built.tune.schema.param_names())
                   if (built.tune and built.tune.schema) else set())
 
     # no arg in two axes

@@ -39,64 +39,6 @@ def _binning_class(selector):
         f'(only le/eq are implemented; gt is parity-only)')
 
 
-class _PerfBind:
-    """A perf parameter bound to a concrete value, implementing exactly the
-    interface KernelSignature consumes (name, value, iteration, get_typed_value,
-    settle_unresolved) — without the legacy Bind. Perf params are always plain
-    non-conditional constexprs, so settle_unresolved is a no-op."""
-
-    __slots__ = ('_name', '_tc')
-
-    def __init__(self, name, tc):
-        self._name = name
-        self._tc = tc
-
-    @property
-    def name(self):
-        return self._name
-
-    @property
-    def value(self):
-        return self._tc
-
-    def __iter__(self):
-        yield self._name, self._tc
-
-    def get_typed_value(self, aname):
-        return self._tc
-
-    def settle_unresolved(self, tc_dict):
-        pass
-
-
-class _PerfParamShim:
-    """Compat view of a perf-schema field as a legacy performance TemplateParameter
-    for translate_dataframe / gen_signatures_for_tuning. Exposes repr_name,
-    all_names, choices, create_direct, and get_cfields."""
-
-    __slots__ = ('_pp',)
-
-    def __init__(self, perf_param):
-        self._pp = perf_param           # tune.schema.PerfParam
-
-    @property
-    def repr_name(self):
-        return self._pp.name
-
-    @property
-    def all_names(self):
-        return [self._pp.name]
-
-    def create_direct(self, value):
-        return _PerfBind(self._pp.name, self._pp.tcc(value))
-
-    def get_cfields(self):
-        from .cfield import cfield
-        tc = self._pp.tcc(0)
-        return [cfield(ctype=tc.itype, aname=self._pp.name, index=-1,
-                       nbits=tc.NBITS or 0)]
-
-
 class _AxisParamShim:
     """Compat view of an Axis as a legacy `tp` for the compiled-in feature tables
     (codegen.kernel get_<name>_choices). Exposes the members that code reads:
@@ -203,10 +145,12 @@ class KernelDescription(Interface):
         # property (B, dropout_p, ...), not an axis/type-variable one: a dtype
         # variable is never baked even when a member tensor is overridden.
         self._baked_args = {t for ov in built.overrides for t in ov.targets}
-        # Perf params (shims over the tune schema), in schema order.
+        # The synthesized perf struct (the tune schema), in field order. A canonical
+        # empty struct stands in when the kernel has no @ati.tune.schema, so the perf
+        # paths need no None-guards.
+        from ..specs.tune import EMPTY_PERF_STRUCT
         ts = built.tune
-        self._perf_params = ([_PerfParamShim(pp) for pp in ts.schema.params]
-                             if (ts and ts.schema) else [])
+        self._perf_struct = ts.schema if (ts and ts.schema) else EMPTY_PERF_STRUCT
         # Autotune keys from @ati.tune.binning, paired with their Binning class.
         # Keys that are not kernel arguments are skipped (a binning key only matters
         # when it names a real argument the LUT is indexed by).
@@ -224,20 +168,14 @@ class KernelDescription(Interface):
         return self._autotune_keys
 
     def gen_performance_params(self):
-        yield from self._perf_params
+        """The perf-param NAMES, in schema order (consumed by codegen_perf_assignment)."""
+        yield from self._perf_struct.param_names()
 
     @property
     def perf_cfields(self):
-        ts = self._built.tune
-        if ts is None or ts.schema is None:
-            return []
-        from .cfield import cfield
-        out = []
-        for pp in ts.schema.params:
-            tc = pp.tcc(0)
-            out.append(cfield(ctype=tc.itype, aname=pp.name,
-                              index=self._arg_index.get(pp.name, -1),
-                              nbits=tc.NBITS or 0))
+        # The struct owns the cfield layout (type + nbits); we supply the kernel arg
+        # index and keep the nbits-descending sort (codegen struct-packing policy).
+        out = self._perf_struct.cfields(index_of=lambda n: self._arg_index.get(n, -1))
         out.sort(key=lambda cf: cf.nbits, reverse=True)
         return out
 
@@ -256,16 +194,16 @@ class KernelDescription(Interface):
     def is_tunable(self):
         return self._built.tune is not None and self._built.tune.is_tunable
 
-    def perf_value(self, perf_param, f):
-        """The value of a perf param for functional f: the @dataclass field
+    def perf_value(self, name, f):
+        """The value of perf param `name` for functional f: the @dataclass field
         default, then any perf-channel @ati.derives that fires (last wins), e.g.
         PERSISTENT_TYPE -> 2 when CAUSAL_TYPE!=0, NUM_XCDS -> 8 when arch in
         {gfx942,gfx950}. Replaces the legacy PERF_CHOICES default +
         PROGRAMMATIC_PERFS."""
         from .override import VarRef, ValueFn
-        value = perf_param.default
+        value = self._perf_struct.default_value(name)
         for ov in self._built.perf_overrides:
-            if perf_param.name in ov.targets and ov.fires(f):
+            if name in ov.targets and ov.fires(f):
                 if isinstance(ov.value, VarRef):
                     value = f.choice[ov.value.var_name].triton_compile_signature
                 elif isinstance(ov.value, ValueFn):
@@ -284,10 +222,10 @@ class KernelDescription(Interface):
         # @dataclass default plus any perf-channel @ati.derives (perf_value), the
         # role the legacy PROGRAMMATIC_PERFS used to fill, before reading
         # tuned_kernel$<name>.
-        for pp in self._built.tune.schema.params:
-            col = f'tuned_kernel${pp.name}'
+        for name in self._perf_struct.param_names():
+            col = f'tuned_kernel${name}'
             if col not in df.columns:
-                df[col] = self.perf_value(pp, f)
+                df[col] = self.perf_value(name, f)
         sparse_keys = [f'inputs${key}' for key, _ in self.autotune_keys]
         nkeys = len(sparse_keys)
         def sorted_unique_key(key):
@@ -297,15 +235,17 @@ class KernelDescription(Interface):
                         for spk, (key, algo) in zip(sparse_keys, self.autotune_keys)}
         lut_shape = [f.noptimized_for] + [len(sparse_key_possible_values[key]) for key in sparse_keys]
         lut_tensor = np.full(lut_shape, -1, dtype=np.int32)
-        perf_keys = [f'tuned_kernel${meta.repr_name}' for meta in self._perf_params]
+        perf_names = self._perf_struct.param_names()
+        perf_keys = [f'tuned_kernel${n}' for n in perf_names]
         copt_keys = [f'compiler_options${key}' for key in COMPILER_OPTIONS]
         # Deduplicate (perf + copt) rows -> signatures.
         np_sigs, revind = np.unique(df[perf_keys + copt_keys].to_numpy(), axis=0,
                                     return_inverse=True)
         df['$$sig_num'] = revind
         def perf_bind(nprow):
-            return [meta.create_direct(value)
-                    for meta, value in zip(self._perf_params, nprow)]
+            # one perf bind row: a struct instance with each field a settled choice.
+            return self._perf_struct(**{n: self._perf_struct.choice_for(n, value)
+                                        for n, value in zip(perf_names, nprow)})
         nperfs = len(perf_keys)
         def create_sig(nprow):
             return KernelSignature(f, perf_bind(nprow), nprow[nperfs:].tolist())
@@ -335,10 +275,9 @@ class KernelDescription(Interface):
         import numpy as np
         from .ksignature import KernelSignature, DEFAULT_COPT
         lut_tensor = np.zeros([f.noptimized_for, 1], dtype=np.int8)
-        defaults = []
-        for shim in self._perf_params:
-            value = self.perf_value(shim._pp, f)
-            defaults.append(shim.create_direct(value))
+        defaults = self._perf_struct(
+            **{n: self._perf_struct.choice_for(n, self.perf_value(n, f))
+               for n in self._perf_struct.param_names()})
         sigs = [KernelSignature(f, defaults, DEFAULT_COPT)]
         return lut_tensor, sigs, None
 
@@ -346,14 +285,16 @@ class KernelDescription(Interface):
         """Yield a KernelSignature per autotune config (the tuning-build path).
         Ported from the legacy KernelDescription."""
         from .ksignature import KernelSignature, COMPILER_OPTIONS, DEFAULT_COPT
-        def gen_perfs(cfg):
-            for meta in self._perf_params:
-                yield meta.create_direct(cfg.kwargs[meta.repr_name])
+        def perf_bind(cfg):
+            # one perf bind row from an autotune config: struct instance of settled choices.
+            return self._perf_struct(
+                **{n: self._perf_struct.choice_for(n, cfg.kwargs[n])
+                   for n in self._perf_struct.param_names()})
         def gen_copts(cfg):
             for copt, defopt in zip(COMPILER_OPTIONS, DEFAULT_COPT):
                 yield getattr(cfg, copt, defopt)
         for cfg in self.gen_autotune_configs(f):
-            yield KernelSignature(f, list(gen_perfs(cfg)), list(gen_copts(cfg)))
+            yield KernelSignature(f, perf_bind(cfg), list(gen_copts(cfg)))
 
     def gen_autotune_configs(self, f):
         cfg = self._built.tune.configs

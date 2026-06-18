@@ -7,7 +7,7 @@ The `ati.tune` namespace facade.
 `tune` was a package whose only job, after the pipeline-stage reorg, was to re-export
 the tuning surface. The actual code lives in its pipeline stages now:
 - decorators/tune.py: the author-facing factories (schema/configs/binning/fallback).
-- specs/tune.py: the passive spec records (TuneSpec/PerfSchema/PerfParam/Config/
+- specs/tune.py: the passive spec records (TuneSpec/PerfSchema/Config/
   ConfigsSpec/BinningSpec/FallbackSpec/BinningSelector).
 
 So `ati.tune` is just a grouping label, not a layer — a plain namespace object backed
@@ -20,7 +20,7 @@ from types import SimpleNamespace
 
 from .decorators.tune import schema, configs, binning, fallback
 from .specs.tune import (
-    PerfParam, PerfSchema, BinningSelector,
+    PerfSchema, BinningSelector,
     Config, TuneSpec, ConfigsSpec, BinningSpec, FallbackSpec,
 )
 
@@ -37,7 +37,7 @@ def _stub(name):
 
 tune = SimpleNamespace(
     schema=schema, configs=configs, binning=binning, fallback=fallback,
-    PerfParam=PerfParam, PerfSchema=PerfSchema, BinningSelector=BinningSelector,
+    PerfSchema=PerfSchema, BinningSelector=BinningSelector,
     Config=Config, TuneSpec=TuneSpec,
     ConfigsSpec=ConfigsSpec, BinningSpec=BinningSpec, FallbackSpec=FallbackSpec,
     # operator-level tuning keys; implemented with the operator in Phase 5.

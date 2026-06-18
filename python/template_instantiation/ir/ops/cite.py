@@ -66,7 +66,7 @@ def _locally_claimed(spec, param_names):
     for s in spec.scalars:
         claimed.update(s.arg_names)
     if spec.tune is not None and spec.tune.schema is not None:
-        claimed.update(pp.name for pp in spec.tune.schema.params)
+        claimed.update(spec.tune.schema.param_names())
     return claimed
 
 
@@ -295,7 +295,7 @@ def resolve_cites(spec, *, family, lookup=None, metro_lookup=None):
     locally_overridden = {t for ov in spec.overrides for t in ov.targets}
     perf_param_names = set()
     if spec.tune is not None and spec.tune.schema is not None:
-        perf_param_names = {pp.name for pp in spec.tune.schema.params}
+        perf_param_names = set(spec.tune.schema.param_names())
     seen_inherited = set()
     for cs in cited_specs:
         for ov in cs.overrides:

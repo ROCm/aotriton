@@ -4,10 +4,10 @@
 """
 Passive tuning spec records (pipeline Stage 2; agent-plans/ati_rev1.md §6).
 
-The data side of ati.tune.*: the perf schema (PerfSchema/PerfParam), the stacked-@
-spec records (ConfigsSpec/BinningSpec/FallbackSpec), the binning selector value
-object (BinningSelector), the per-functional Config a generator yields, and the
-kernel's collected TuneSpec. The decorator FACTORIES that produce these
+The data side of ati.tune.*: the perf schema (a SYNTHESIZED dataclass + PerfSchema
+envelope), the stacked-@ spec records (ConfigsSpec/BinningSpec/FallbackSpec), the
+binning selector value object (BinningSelector), the per-functional Config a generator
+yields, and the kernel's collected TuneSpec. The decorator FACTORIES that produce these
 (ati.tune.schema/configs/binning/fallback) live in decorators/tune.py.
 
 Each spec record is callable so it doubles as a stacked-@ decorator (the same
@@ -65,78 +65,110 @@ def _resolve_tcc(field_name, annotation):
         f"bool")
 
 
-class PerfParam:
-    """One performance parameter: its name, the constexpr TypedChoice class fixing
-    its C struct width, and an optional default value (from the @dataclass field
-    default). The default is the value used by the *empty/untuned* path (e.g.
-    bwd_preprocess, or a functional with no DB row); tuned kernels read their
-    value from the DB instead, so the default is rarely exercised.
+class PerfStructBase:
+    """Mixin for the SYNTHESIZED perf struct (built by build_schema). The struct's
+    fields ARE the perf params: each field is annotated with its constexpr TypedChoice
+    class (the C width) and carries the python default (the untuned/empty-path value).
 
-    Not a @dataclass: the `_NO_DEFAULT` sentinel default value would be exposed as a
-    class attribute clashing with the dataclass `default` field name."""
-    __slots__ = ('name', 'tcc', 'default')
+    The class doubles as the schema (the classmethods below query the fields); an
+    INSTANCE is one perf bind row (every field set to a settled TypedChoice), iterated
+    via items(). This single object replaces the old PerfParam + _PerfParamShim +
+    _PerfBind wrapper stack."""
 
-    _NO_DEFAULT = object()
+    @classmethod
+    def param_names(cls) -> list[str]:
+        return [f.name for f in dataclasses.fields(cls)]
 
-    def __init__(self, name, tcc, default=_NO_DEFAULT):
-        self.name = name
-        self.tcc = tcc          # a TCC.*_t class
-        self.default = default  # python value | _NO_DEFAULT
+    @classmethod
+    def tcc_of(cls, name):
+        """The constexpr TypedChoice CLASS for a field (its annotation). We annotate
+        synthesized fields with the class object itself, so field.type IS the class."""
+        tcc = cls.__dataclass_fields__[name].type
+        assert isinstance(tcc, type), (
+            f'perf field {name!r} annotation is {tcc!r}, expected a constexpr class '
+            f'(stringized annotations are not used on synthesized perf structs)')
+        return tcc
 
-    @property
-    def has_default(self) -> bool:
-        return self.default is not PerfParam._NO_DEFAULT
-
-    def default_choice(self):
-        """The settled constexpr TypedChoice for the default value."""
-        assert self.has_default, \
-            f'perf param {self.name!r} has no default; give the @dataclass field ' \
-            f'a default value for the untuned/empty path'
-        return self.tcc(self.default)
-
-    def choice_for(self, value):
-        """A settled constexpr TypedChoice of this param's declared width."""
-        return self.tcc(value)
-
-    @property
-    def itype(self) -> str:
+    @classmethod
+    def itype_of(cls, name) -> str:
         # Width-only instance to read the C itype (value is irrelevant).
-        return self.tcc(0).itype
+        return cls.tcc_of(name)(0).itype
 
-    def __repr__(self):
-        return f'PerfParam({self.name!r}, {self.tcc.__name__}, default={self.default!r})'
+    @classmethod
+    def default_value(cls, name):
+        return cls.__dataclass_fields__[name].default
+
+    @classmethod
+    def choice_for(cls, name, value):
+        """A settled constexpr TypedChoice of this field's declared width."""
+        return cls.tcc_of(name)(value)
+
+    @classmethod
+    def default_choice(cls, name):
+        """The settled constexpr TypedChoice for the field's default value."""
+        return cls.choice_for(name, cls.default_value(name))
+
+    @classmethod
+    def cfields(cls, index_of=None):
+        """One cfield per perf field (C struct layout). `index_of` is an optional
+        name -> int callback for the kernel's argument index (default -1). The caller
+        owns any ordering (e.g. the nbits-descending sort in codegen)."""
+        from ..ir.cfield import cfield
+        out = []
+        for name in cls.param_names():
+            tc = cls.tcc_of(name)(0)
+            out.append(cfield(ctype=tc.itype, aname=name,
+                              index=(index_of(name) if index_of else -1),
+                              nbits=tc.NBITS or 0))
+        return out
+
+    def items(self):
+        """(name, settled TypedChoice) for each field of this bind row."""
+        for f in dataclasses.fields(self):
+            yield f.name, getattr(self, f.name)
 
 
 class PerfSchema(StackedSpec):
-    """The ordered perf parameters of a kernel, derived from a @dataclass."""
-    __slots__ = ('dataclass', 'params')
+    """Stage-2 spec record for @ati.tune.schema: a thin envelope around the synthesized
+    perf struct CLASS (PerfStructBase subclass). Kept a StackedSpec so the stacked-@
+    `__call__` accumulate works; the finalizer stores `.struct` on TuneSpec.schema."""
+    __slots__ = ('struct',)
 
-    def __init__(self, dataclass, params):
-        self.dataclass = dataclass
-        self.params = params            # list[PerfParam], field order
-
-    @property
-    def names(self):
-        return [p.name for p in self.params]
+    def __init__(self, struct):
+        self.struct = struct
 
     def __repr__(self):
-        return (f'PerfSchema({self.dataclass.__name__!r}, '
-                f'{[p.name for p in self.params]})')
+        return (f'PerfSchema({self.struct.__name__!r}, '
+                f'{self.struct.param_names()})')
 
 
-def build_schema(dataclass) -> PerfSchema:
-    assert dataclasses.is_dataclass(dataclass), \
-        f'ati.tune.schema expects a @dataclass, got {dataclass!r}'
-    params = []
-    for f in dataclasses.fields(dataclass):
+def build_schema(src) -> PerfSchema:
+    """Synthesize a perf struct from the author's @dataclass: replace each numpy field
+    type with its constexpr TypedChoice class, keeping the field's default. Every field
+    MUST declare a default (the untuned/empty-path value)."""
+    assert dataclasses.is_dataclass(src), \
+        f'ati.tune.schema expects a @dataclass, got {src!r}'
+    specs = []
+    for f in dataclasses.fields(src):
+        tcc = _resolve_tcc(f.name, f.type)
         if f.default is not dataclasses.MISSING:
             default = f.default
         elif f.default_factory is not dataclasses.MISSING:  # type: ignore[attr-defined]
             default = f.default_factory()
         else:
-            default = PerfParam._NO_DEFAULT
-        params.append(PerfParam(f.name, _resolve_tcc(f.name, f.type), default))
-    return PerfSchema(dataclass, params)
+            raise TypeError(
+                f"perf schema {src.__name__!r}: field {f.name!r} needs a default "
+                f"(the untuned/empty-path value); give it `= <value>` in the dataclass")
+        specs.append((f.name, tcc, default))     # annotation = the constexpr CLASS
+    struct = dataclasses.make_dataclass(src.__name__, specs,
+                                        bases=(PerfStructBase,), slots=True)
+    return PerfSchema(struct)
+
+
+# A canonical empty perf struct for kernels with no @ati.tune.schema: its param_names()
+# / items() are empty, so the perf code paths need no None-guards.
+EMPTY_PERF_STRUCT = dataclasses.make_dataclass('NoPerf', [], bases=(PerfStructBase,),
+                                               slots=True)
 
 
 # --- per-functional Config -------------------------------------------------
@@ -251,7 +283,7 @@ class TuneSpec:
     __slots__ = ('schema', 'configs', 'binning', 'fallback')
 
     def __init__(self):
-        self.schema = None        # PerfSchema
+        self.schema = None        # the synthesized perf struct CLASS (PerfStructBase)
         self.configs = None       # generator callable
         self.binning = {}         # key -> BinningSelector
         self.fallback = {}        # key -> value

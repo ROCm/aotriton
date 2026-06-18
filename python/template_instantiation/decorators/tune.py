@@ -19,8 +19,9 @@ from ..specs.tune import (
 
 
 def schema(dataclass):
-    """ati.tune.schema(PerfDataclass): build the PerfSchema from a @dataclass whose
-    fields (annotated with numpy dtypes / bool) are the kernel's perf parameters."""
+    """ati.tune.schema(PerfDataclass): synthesize the kernel's perf struct from a
+    @dataclass whose fields (annotated with numpy dtypes / bool, each with a default)
+    are the perf parameters. Returns a PerfSchema envelope over the synthesized struct."""
     return build_schema(dataclass)
 
 

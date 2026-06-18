@@ -252,7 +252,7 @@ def _check_unresolved_arguments(built_kernels):
         # Perf-schema params are implemented by the tune schema (autotune configs),
         # not by a functional axis or an override.
         if built.tune is not None and built.tune.schema is not None:
-            covered.update(pp.name for pp in built.tune.schema.params)
+            covered.update(built.tune.schema.param_names())
         for arg in built.arguments:
             if arg not in covered:
                 errors.append((name, arg))

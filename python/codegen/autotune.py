@@ -216,9 +216,8 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
         kdesc = self._f.meta_object
         ALIGN = ';\n' + 4 * ' '
         stmt = []
-        for meta in kdesc.gen_performance_params():
-            for aname in meta.all_names:
-                stmt.append(f'context.{aname} = perf.{aname}')
+        for aname in kdesc.gen_performance_params():
+            stmt.append(f'context.{aname} = perf.{aname}')
         return ALIGN.join(stmt)
 
     @property

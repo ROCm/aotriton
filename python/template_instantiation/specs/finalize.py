@@ -40,7 +40,7 @@ def _build_tune_spec(tune_records):
     for r in tune_records:
         if isinstance(r, PerfSchema):
             assert ts.schema is None, 'duplicate ati.tune.schema on one kernel'
-            ts.schema = r
+            ts.schema = r.struct        # store the synthesized perf struct CLASS
         elif isinstance(r, ConfigsSpec):
             assert ts.configs is None, 'duplicate ati.tune.configs on one kernel'
             ts.configs = r.generator
@@ -107,8 +107,8 @@ def _validate_completeness(params, tensors, scalars, tune_records, has_cite=Fals
             claim(a, f'scalar({a})')
     for r in tune_records:
         if isinstance(r, PerfSchema):
-            for pp in r.params:
-                claim(pp.name, f'tune.schema({pp.name})')
+            for pname in r.struct.param_names():
+                claim(pname, f'tune.schema({pname})')
 
     errors = []
     # claims referencing names not in the signature

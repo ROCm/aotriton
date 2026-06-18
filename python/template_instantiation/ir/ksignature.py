@@ -29,12 +29,12 @@ assert COMPILER_OPTIONS[COPT_NSTAGES_INDEX] == 'num_stages'
 
 class KernelSignature(object):
 
-    def __init__(self, f : 'Functional', perf_values : 'list[Bind]', copt_values : list):
+    def __init__(self, f : 'Functional', perf_struct, copt_values : list):
+        # perf_struct: a synthesized perf-struct INSTANCE (specs/tune.PerfStructBase),
+        # one bind row whose fields are settled TypedChoices. Iterated via .items().
+        # Perf params are non-conditional constexprs, so there is nothing to settle.
         self._functional = f
-        tc_dict = f.build_tc_dict()
-        for bind in perf_values:
-            bind.settle_unresolved(tc_dict)
-        self._perfs = perf_values
+        self._perfs = perf_struct
         self._copts = list(copt_values)
 
     def functional(self):
@@ -42,17 +42,17 @@ class KernelSignature(object):
 
     @property
     def perf_cdict(self):
-        return { aname : tc.json_value for bind in self._perfs for aname, tc in bind }
+        return { name : tc.json_value for name, tc in self._perfs.items() }
 
     @property
     def perf_compact_dict(self):
-        return { bind.name : bind.get_typed_value(bind.name) for bind in self._perfs }
+        return { name : tc for name, tc in self._perfs.items() }
 
     @property
     def perf_signature(self):
         kdesc = self._functional.meta_object
         # TODO: Add prefix?
-        lp = [str(p.value) for p in self._perfs]
+        lp = [str(tc) for name, tc in self._perfs.items()]
         psel = '_'.join([x for x in lp if x is not None])
         return psel
 
@@ -69,8 +69,8 @@ class KernelSignature(object):
     @cached_property
     def perf_section(self) -> str:
         parts = []
-        for bind in self._perfs:
-            parts.append(f'{bind.name}={bind.value.testrun_entry_signature}')
+        for name, tc in self._perfs.items():
+            parts.append(f'{name}={tc.testrun_entry_signature}')
         return ';'.join(parts)
 
     @cached_property
@@ -117,9 +117,8 @@ class KernelSignature(object):
     @property
     def triton_signature_string(self):
         complete_dict = self._functional.build_complete_tc_dict()
-        for perf in self._perfs:
-            for aname, tc in perf:
-                complete_dict[aname] = tc
+        for aname, tc in self._perfs.items():
+            complete_dict[aname] = tc
         kdesc = self._functional.meta_object
         ARGUMENTS = kdesc.ARGUMENTS
         log(lambda: f'{kdesc.NAME=}')

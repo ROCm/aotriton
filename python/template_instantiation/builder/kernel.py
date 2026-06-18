@@ -269,7 +269,7 @@ def build_kernel(kernel_spec) -> BuiltKernel:
     # functional channel (applied in enumerate_functionals / resolved[]).
     perf_names = set()
     if kernel_spec.tune is not None and kernel_spec.tune.schema is not None:
-        perf_names = {pp.name for pp in kernel_spec.tune.schema.params}
+        perf_names = set(kernel_spec.tune.schema.param_names())
     func_ovs, perf_ovs = [], []
     for ov in kernel_spec.overrides:
         if any(t in perf_names for t in ov.targets):
