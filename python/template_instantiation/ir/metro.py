@@ -66,6 +66,14 @@ class ConditionalKernel(Interface):
     def else_kernel(self):
         return self._else_kernel
 
+    # A launcher owns no functional space (the Interface contract; empty surface).
+    @property
+    def func_cfields(self):
+        return []
+
+    def list_functional_params(self):
+        return []
+
     def iter_kernel_slot_names(self):
         yield from self._if_kernel.iter_kernel_slot_names()
         if self._else_kernel is not None:
@@ -107,6 +115,14 @@ class MetroKernel(Interface):
     def iter_kernel_slot_names(self):
         for kdesc in self._kernels:
             yield from kdesc.iter_kernel_slot_names()
+
+    # A launcher owns no functional space (the Interface contract; empty surface).
+    @property
+    def func_cfields(self):
+        return []
+
+    def list_functional_params(self):
+        return []
 
     def merged_operand_order(self):
         """Order-preserving merge (union_params) of every sub-kernel's ARGUMENTS,

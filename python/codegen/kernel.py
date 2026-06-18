@@ -51,7 +51,7 @@ class KernelShimGenerator(InterfaceGenerator):
             'perf_fields'           : codegen_struct_cfields(kdesc.perf_cfields, nalign=4),
             'declare_compiled_in_features'  : self.codegen_declare_compiled_in_features(),
             'kernel_table_entry_declares'   : self.codegen_tune_table_entry_declares(functionals),
-            'number_of_functionals' : kdesc._godel_number,
+            'number_of_functionals' : kdesc.godel_number,
             'declare_list_of_deduplicated_lut_functions' : self.codegen_declare_list_of_deduplicated_lut_functions(),
         }
         d['includes'] = codegen_includes(self._hdr_include_repo.get_data())
@@ -77,7 +77,7 @@ class KernelShimGenerator(InterfaceGenerator):
             'list_of_pp_args_function_defs' : list_of_pp_args_function_defs,
             'list_of_pp_args_function_decls' : list_of_pp_args_function_decls,
             'get_archmod_number_body' : self.codegen_archmod_number_body(),
-            'number_of_functionals': kdesc._godel_number,
+            'number_of_functionals': kdesc.godel_number,
             'define_compiled_in_features' : self.codegen_define_compiled_in_features(),
             # 'copy_perf_fields_body': self.copy_perf_fields_body,
             'kernel_table_entry_declares' : self.codegen_tune_table_entry_declares(functionals),

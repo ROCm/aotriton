@@ -493,10 +493,6 @@ class KernelDescription(Interface):
     def tune(self):
         return self._built.tune
 
-    @property
-    def is_tunable(self):
-        return self._built.tune is not None and self._built.tune.is_tunable
-
     def is_functional_disabled(self, functional):
         # Driven by the @ati.disable predicates in the kernel description (any
         # firing disables). Only meaningful for tunable kernels — an untunable

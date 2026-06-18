@@ -18,13 +18,14 @@ base is identity-only — no functional `__init__`.
 """
 
 import itertools
+from abc import ABC, abstractmethod
 from pathlib import Path
 
 from .axis import assign_godel, godel_of
 from .functional import Functional, _resolve
 
 
-class Interface:
+class Interface(ABC):
     # --- identity / codegen wiring (subclasses set these) -------------------
     FAMILY = None              # e.g. 'flash'
     NAME = None                # e.g. 'attn_fwd' (often per-instance, set in __init__)
@@ -110,6 +111,41 @@ class Interface:
                                  arch_number=arch_number, godel_number=godel,
                                  choice=picked, resolved=resolved,
                                  optimized_for=gpus)
+
+    # --- functional surface (the contract the code generator consumes) -----
+    #
+    # Every Interface must answer these for the generator's params-struct ABI and
+    # compiled-in feature tables. KernelDescription / Operator / AffineKernel compute
+    # them from their axes; metro launchers (MetroKernel / ConditionalKernel) own no
+    # functional space and answer with the empty surface.
+
+    @property
+    @abstractmethod
+    def func_cfields(self):
+        """The params-struct C fields (list[cfield]), one per non-stride/non-perf
+        functional argument in signature order."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def list_functional_params(self):
+        """The per-axis TemplateParam views for the compiled-in feature tables
+        (get_<name>_choices). Iterable; empty for launchers with no functional space."""
+        raise NotImplementedError
+
+    # --- tuning surface (safe defaults; tunable kernels override) -----------
+
+    is_tunable = False           # only KernelDescription with a tune schema is tunable
+
+    @property
+    def perf_cfields(self):
+        """The perf-struct C fields (list[cfield]); empty unless the kernel has a
+        @ati.tune.schema."""
+        return []
+
+    def is_functional_disabled(self, functional) -> bool:
+        """Whether `functional` is excluded from generation (@ati.disable). Default
+        False — only kernels/affines carrying a disable predicate override this."""
+        return False
 
     # --- selective execution (overridden by kernels that support it) -------
 
