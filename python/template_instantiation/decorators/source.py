@@ -30,7 +30,7 @@ class KernelStub:
     introspect.kernel_params). `annotations` carries the STRING type annotations the
     author wrote on the PLACEHOLDER def below @ati.source (e.g. `def attn_fwd(dropout_p:
     'fp32')`), which the finalizer turns into ScalarSpecs. `source_path` is the resolved
-    path to the Triton source file (consumed by KernelSpec). `__ati_pending__` / `__ati__`
+    path to the Triton source file (consumed by KernelSpec). `__ati_pending__` / `__ati_node__`
     are the stacked-@ sidecars describe.py sets on the kernel object (the pending spec
     list during stacking, then the finalized KernelSpec).
 
@@ -40,7 +40,7 @@ class KernelStub:
     a reliable type source."""
 
     __slots__ = ('__name__', 'params', 'source_path', 'annotations',
-                 '__ati_pending__', '__ati__')
+                 '__ati_pending__', '__ati_node__')
 
     def __init__(self, name, params, source_path, annotations=None):
         self.__name__ = name

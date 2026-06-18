@@ -36,7 +36,7 @@ class BackendSpec(StackedSpec):
 
     `index` is the explicit dispatch / enum / tuning-database order (load-bearing:
     the op tuning rows store this integer). `ref` is the in-file object used to
-    IDENTIFY the backend dependency (a metro function carrying `__ati_metro__`, a
+    IDENTIFY the backend dependency (a metro function carrying `__ati_node__`, a
     triton kdesc, or an affine kernel) — the linker keys its symbol table on the
     target's declared NAME (`ref_name`), NOT on the object identity. `name` is the
     backend NAME used to form the C++ enum (e.g. 'triton_split' -> kMetro_TritonSplit).
@@ -101,5 +101,5 @@ def operator(name=None, *, call_options_name):
     """Innermost stacked-@ marker declaring the def to be an operator description
     (the operator analogue of @ati.source). The @ati.backend / @ati.tune.* specs
     ABOVE it accumulate onto the operator; @ati.start finalizes the stack into a
-    PASSIVE @ati.operator def (fn.__ati_operator__) the linker builds."""
+    PASSIVE @ati.operator def (fn.__ati_node__) the linker builds."""
     return OperatorSpec(name, call_options_name=call_options_name)

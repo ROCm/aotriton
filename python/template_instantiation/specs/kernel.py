@@ -5,7 +5,7 @@
 The KernelSpec passive record (pipeline Stage 2).
 
 `@ati.describe` / the stacked-@ finalizer (specs/finalize.py) attaches one of these
-to a kernel as `kernel.__ati__`: the introspected signature plus the partitioned
+to a kernel as `kernel.__ati_node__`: the introspected signature plus the partitioned
 spec-records (tensors / scalars / overrides / tune / disables / dtype_vars / cites).
 It is a passive "object file" — no Axis/Override IR is built here; the linker
 (codegen) resolves cites then the builder lowers it to a KernelDescription.
@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
+from .node import AtiNode
 
 if TYPE_CHECKING:
     from ..introspect import ParamSpec
@@ -28,8 +29,8 @@ if TYPE_CHECKING:
 
 
 @dataclass(slots=True)
-class KernelSpec:
-    """The ATI sidecar attached to a kernel as `kernel.__ati__`.
+class KernelSpec(AtiNode):
+    """The ATI sidecar attached to a kernel as `kernel.__ati_node__`.
 
     This is the kernel's passive Stage-2 "object file" — the same role that
     OperatorDecl and AffineDecl play for operators and affine kernels. There is no

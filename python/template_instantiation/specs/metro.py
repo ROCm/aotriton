@@ -14,6 +14,7 @@ import ast
 import inspect
 
 from .base import StackedSpec
+from .node import AtiNode
 
 # Comparison operator -> C++ rendering.
 _CMP = {
@@ -56,17 +57,18 @@ class Cond:
                 f'then={self.then}, orelse={self.orelse})')
 
 
-class MetroPlan(StackedSpec):
+class MetroPlan(AtiNode, StackedSpec):
     """The transpiled metro: its name, the params variable, and an ordered list of
     steps (Call | Cond). Subclasses StackedSpec so @ati.metro_kernel can simply
     return transpile(fn) and the result, being callable, accumulates itself onto the
     pending spec list when applied as a decorator."""
-    __slots__ = ('name', 'params_name', 'steps')
+    __slots__ = ('name', 'params_name', 'steps', 'precedence')
 
     def __init__(self, name, params_name, steps):
         self.name = name
         self.params_name = params_name
         self.steps = steps
+        self.precedence = None   # filled by _finalize_metro from @ati.hints.union_precedence
 
     def __repr__(self):
         return f'MetroPlan({self.name!r}, steps={self.steps})'

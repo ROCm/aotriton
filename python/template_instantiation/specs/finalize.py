@@ -11,7 +11,7 @@ specs/operator.py OperatorDecl):
 
 `ati.describe(kernel, *specs)` is the canonical primitive: it introspects the
 kernel's parameter list, validates that the specs claim every argument exactly
-once, and attaches a KernelSpec sidecar (`kernel.__ati__`). The stacked-@ form
+once, and attaches a KernelSpec sidecar (`kernel.__ati_node__`). The stacked-@ form
 lowers to the same path — each `@ati.tensor(...)` returns a spec and the eventual
 `@triton.jit`-adjacent collection is replayed through describe() — so the two
 authoring modes share one implementation and produce an identical KernelSpec.
@@ -175,7 +175,7 @@ def describe(kernel, *specs, _validate=True):
     spec = KernelSpec(kernel, params, tensors, scalars, overrides,
                       tune=_build_tune_spec(tune_records), disables=disables,
                       dtype_vars=dtype_vars, cites=cites)
-    kernel.__ati__ = spec
+    kernel.__ati_node__ = spec
     return kernel
 
 
@@ -230,7 +230,7 @@ def start(jit_fn):
     decorator's spec is always the kind discriminant (O(1), no scan):
       * OperatorSpec     → operator stack → OperatorDecl
       * AffineKernelSpec → affine stack   → AffineDecl
-      * MetroPlan        → metro stack    → fn.__ati_metro__
+      * MetroPlan        → metro stack    → fn.__ati_node__ (MetroPlan)
       * anything else    → kernel stack   → KernelSpec via describe()
     """
     pending = getattr(jit_fn, _PENDING, None)
@@ -257,32 +257,26 @@ def start(jit_fn):
 
 
 def _finalize_metro(fn, specs):
-    """PASSIVE: attach the MetroPlan to fn.__ati_metro__. Reads the optional
-    UnionPrecedenceSpec from the pending list (it accumulates above metro_kernel,
-    so it appears before the MetroPlan in source order i.e. index < -1)."""
+    """PASSIVE: attach the MetroPlan to fn.__ati_node__. Reads the optional
+    UnionPrecedenceSpec from the pending list and stores it on the plan directly."""
     from ..decorators.hints import UnionPrecedenceSpec
     plan = specs[-1]          # innermost — the MetroPlan
-    precedence = None
-    for s in specs[:-1]:      # everything above the innermost marker
+    for s in specs[:-1]:
         if isinstance(s, UnionPrecedenceSpec):
-            assert precedence is None, 'duplicate @ati.hints.union_precedence'
-            precedence = s.names
-    fn.__ati_metro__ = plan
-    if precedence is not None:
-        fn.__ati_union_precedence__ = precedence
+            assert plan.precedence is None, 'duplicate @ati.hints.union_precedence'
+            plan.precedence = s.names
+    fn.__ati_node__ = plan
 
 
 def _finalize_affine(placeholder, specs):
-    """PASSIVE: attach the AffineDecl to the def and return the def. The codegen linker
-    builds the AffineKernel from this record (family inferred from the path)."""
-    placeholder.__ati_affine__ = collect_affine_decl(specs)
+    """PASSIVE: attach the AffineDecl to fn.__ati_node__."""
+    placeholder.__ati_node__ = collect_affine_decl(specs)
     return placeholder
 
 
 def _finalize_operator(placeholder, specs):
-    """PASSIVE: attach the OperatorDecl to the def and return the def. The codegen
-    linker (aotriton.codegen.linker) builds the Operator from this record."""
-    placeholder.__ati_operator__ = collect_operator_decl(specs)
+    """PASSIVE: attach the OperatorDecl to fn.__ati_node__."""
+    placeholder.__ati_node__ = collect_operator_decl(specs)
     return placeholder
 
 
@@ -293,4 +287,7 @@ def get_kernel_spec(kernel_obj):
     assert getattr(kernel_obj, _PENDING, None) is None, (
         f'{getattr(kernel_obj, "__name__", kernel_obj)!r} has un-finalized ATI '
         f'specs; a stacked-@ block must end with @ati.start at the top.')
-    return getattr(kernel_obj, '__ati__', None)
+    from .node import AtiNode
+    from .kernel import KernelSpec
+    node = getattr(kernel_obj, '__ati_node__', None)
+    return node if isinstance(node, KernelSpec) else None

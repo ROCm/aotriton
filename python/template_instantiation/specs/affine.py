@@ -5,7 +5,7 @@
 The AffineDecl passive record + its collector (pipeline Stage 2).
 
 The stacked-@ affine finalizer (specs/finalize.py) partitions an @ati.affine.*
-stack into one AffineDecl, attached to the def as `fn.__ati_affine__`. NO build —
+stack into one AffineDecl, attached to the def as `fn.__ati_node__`. NO build —
 the codegen linker constructs the AffineKernel (ir/affine.py) from this record.
 """
 
@@ -13,16 +13,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+from .node import AtiNode
 
 if TYPE_CHECKING:
     from ..decorators.disable import DisableSpec
 
 
 @dataclass(slots=True, kw_only=True)
-class AffineDecl:
+class AffineDecl(AtiNode):
     """Passive record of an @ati.affine stack (the affine kernel's "object file"):
     the marker + @ati.affine.* metadata + optional @ati.disable. NO build — the
-    linker (codegen) consumes this. Attached to the def as `fn.__ati_affine__`."""
+    linker (codegen) consumes this. Attached to the def as `fn.__ati_node__`."""
 
     name: str
     co_dir: str

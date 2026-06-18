@@ -5,7 +5,7 @@
 The OperatorDecl passive record + its collector (pipeline Stage 2).
 
 The stacked-@ operator finalizer (specs/finalize.py) partitions an @ati.operator
-stack into one OperatorDecl, attached to the def as `fn.__ati_operator__`. NO build —
+stack into one OperatorDecl, attached to the def as `fn.__ati_node__`. NO build —
 the codegen linker constructs the Operator (ir/operator.py) from this record.
 """
 
@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+from .node import AtiNode
 
 if TYPE_CHECKING:
     from ..decorators.operator import OperatorSpec, BackendSpec
@@ -20,11 +21,11 @@ if TYPE_CHECKING:
 
 
 @dataclass(slots=True)
-class OperatorDecl:
+class OperatorDecl(AtiNode):
     """Passive record of an @ati.operator stack (the operator's "object file"): the
     OperatorSpec marker, the (index-sorted) BackendSpecs, and operator-level tune
     (binning -> OPTUNE_KEYS, fallback -> PARTIALLY_TUNED). NO build — the linker
-    (codegen) consumes this. Attached to the def as `fn.__ati_operator__`."""
+    (codegen) consumes this. Attached to the def as `fn.__ati_node__`."""
 
     opspec: OperatorSpec
     backends: list[BackendSpec]            # index-sorted

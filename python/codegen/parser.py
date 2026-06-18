@@ -5,7 +5,7 @@
 ATI build — Pass 1: COMPILE (parser).
 
 The ATI decorators are PASSIVE: they only RECORD specs onto the `def` objects
-(`fn.__ati__` / `fn.__ati_operator__` / `fn.__ati_affine__` / `fn.__ati_metro__`).
+(`fn.__ati__` / `fn.__ati_node__` / `fn.__ati_node__` / `fn.__ati_node__`).
 This module parses those passive records into lightweight IR SHELLS the linker
 (Pass 2) builds + resolves, and also owns family discovery / module loading
 (absorbed from the old `aotriton.rules` aggregator).
@@ -145,19 +145,22 @@ class CompiledFamily:
 
 # --- backend-kind classifier (single source for 'what kinds of backend exist') ---
 
-_NODE_ATTRS = (
-    ('__ati_metro__', 'metro'),
-    ('__ati__',       'kernel'),
-    ('__ati_affine__','affine'),
-)
-
 def _node_kind(ref):
-    """The kind string for a backend ref object: 'metro' | 'kernel' | 'affine'."""
-    for attr, kind in _NODE_ATTRS:
-        if getattr(ref, attr, None) is not None:
-            return kind
-    raise AssertionError(
-        f'backend ref {ref!r} is not a metro, a kernel, nor an affine description')
+    """The visit_* method suffix for a backend ref — dispatched by isinstance on the
+    AtiNode subclass stored as fn.__ati_node__."""
+    from aotriton.template_instantiation.specs.node import AtiNode
+    from aotriton.template_instantiation.specs.metro import MetroPlan
+    from aotriton.template_instantiation.specs.kernel import KernelSpec
+    from aotriton.template_instantiation.specs.affine import AffineDecl
+    node = getattr(ref, '__ati_node__', None)
+    if not isinstance(node, AtiNode):
+        raise AssertionError(
+            f'backend ref {ref!r} has no __ati_node__ '
+            f'(not a metro, kernel, nor affine description)')
+    if isinstance(node, MetroPlan):  return 'metro'
+    if isinstance(node, KernelSpec): return 'kernel'
+    if isinstance(node, AffineDecl): return 'affine'
+    raise AssertionError(f'unrecognised AtiNode type {type(node)!r} on {ref!r}')
 
 
 class FamilyCompiler:
@@ -167,8 +170,8 @@ class FamilyCompiler:
     kind, one method per metro-step kind. Adding a new backend kind = adding a
     visit_<kind> method; no other edits needed.
 
-    Modelled on Python's own ast.NodeVisitor but deliberately small (3 backend
-    kinds + 2 metro step kinds) — no reflective generic_visit machinery."""
+    Dispatch uses isinstance() on fn.__ati_node__ (an AtiNode subclass), not string
+    attribute probing. 3 backend kinds + 2 metro step kinds; no reflective machinery."""
 
     def __init__(self, aot_module, family):
         self.aot = aot_module
@@ -183,10 +186,12 @@ class FamilyCompiler:
     # --- operator + backend dispatch -----------------------------------------
 
     def visit_operator(self, op_def):
-        decl = getattr(op_def, '__ati_operator__', None)
-        assert decl is not None, (
-            f'{self.family}: operators entry {op_def!r} has no __ati_operator__ '
+        from aotriton.template_instantiation.specs.operator import OperatorDecl
+        node = getattr(op_def, '__ati_node__', None)
+        assert isinstance(node, OperatorDecl), (
+            f'{self.family}: operators entry {op_def!r} has no OperatorDecl '
             f'(not a passive @ati.operator def)')
+        decl = node
         backend_refs = []
         for b in decl.backends:
             backend_refs.append(getattr(self, f'visit_{_node_kind(b.obj)}')(b))
@@ -196,9 +201,7 @@ class FamilyCompiler:
         self.compiled.op_order.append(decl.name)
 
     def visit_metro(self, b):
-        from aotriton.template_instantiation.specs.metro import MetroPlan
-        plan = b.obj.__ati_metro__
-        assert isinstance(plan, MetroPlan)
+        plan = b.obj.__ati_node__   # MetroPlan
         sub_names = list(self._iter_plan_subkernels(plan.steps))
         for sub_name in sub_names:
             sub_def = getattr(self.aot, sub_name, None)
@@ -207,9 +210,8 @@ class FamilyCompiler:
                 f'{sub_name!r} not found in the aot module')
             self._record_kernel(sub_def)
         if b.name not in self.compiled.metros:
-            precedence = getattr(b.obj, '__ati_union_precedence__', None)
             self.compiled.metros[b.name] = MetroShell(b.name, plan, sub_names,
-                                                      precedence=precedence)
+                                                      precedence=plan.precedence)
         return (b.index, 'metro', b.name)
 
     def visit_kernel(self, b):
@@ -217,7 +219,7 @@ class FamilyCompiler:
         return (b.index, 'kernel', kname)
 
     def visit_affine(self, b):
-        adecl = b.obj.__ati_affine__
+        adecl = b.obj.__ati_node__   # AffineDecl
         if adecl.name not in self.compiled.affines:
             self.compiled.affines[adecl.name] = adecl
         return (b.index, 'affine', adecl.name)

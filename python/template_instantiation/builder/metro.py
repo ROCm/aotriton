@@ -55,7 +55,7 @@ def lower_plan(plan, kernel_map, metro_factory, conditional_factory):
 def build_metro(plan, kernel_map, name, *, family):
     """Lower a transpiled MetroPlan to a MetroKernel (a metro launcher).
 
-    plan:        the @ati.metro_kernel transpiler output (fn.__ati_metro__).
+    plan:        the @ati.metro_kernel transpiler output (fn.__ati_node__).
     kernel_map:  {sub-kernel name -> built kdesc}.
     name:        the metro/backend NAME (-> kMetro_<Name> enum).
     """
