@@ -41,7 +41,7 @@ from ..specs.base import StackedSpec
 # --- spec records (callable -> accumulate onto the placeholder def) ----------
 
 
-class AffineMarkerSpec(StackedSpec):
+class AffineKernelSpec(StackedSpec):
     """@ati.affine.aiter_asm(name=...): the innermost marker that makes the def an
     affine-kernel description (the affine analogue of @ati.operator / @ati.source).
     `name` is the AOTriton shim name (defaults to the def name)."""
@@ -56,7 +56,7 @@ class AffineMarkerSpec(StackedSpec):
         return super().__call__(placeholder)
 
     def __repr__(self):
-        return f'AffineMarkerSpec({self.name!r})'
+        return f'AffineKernelSpec({self.name!r})'
 
 
 @dataclass(slots=True)
@@ -128,7 +128,7 @@ class SuppliesSpec(StackedSpec):
 # --- public decorator namespace (ati.affine.*) ------------------------------
 
 def aiter_asm(name=None):
-    return AffineMarkerSpec(name)
+    return AffineKernelSpec(name)
 
 
 def shared_operator(op_name):

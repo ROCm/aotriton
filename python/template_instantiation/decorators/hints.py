@@ -20,10 +20,13 @@ decide on its own. Unlike the core @ati.* decorators they carry no kernel semant
 """
 
 
-class UnionPrecedenceSpec:
+from ..specs.base import StackedSpec
+
+
+class UnionPrecedenceSpec(StackedSpec):
     """The @ati.hints.union_precedence record: an ordered list of sub-kernel NAMEs
-    (highest priority first). Attached to the metro def as
-    `fn.__ati_union_precedence__`."""
+    (highest priority first). Accumulates onto the metro def's pending list via the
+    standard StackedSpec.__call__; @ati.start reads it when finalising the metro."""
 
     __slots__ = ('names',)
 
@@ -36,10 +39,6 @@ class UnionPrecedenceSpec:
                 f'name strings, got {k!r}')
             names.append(name)
         self.names = names
-
-    def __call__(self, metro_fn):
-        metro_fn.__ati_union_precedence__ = list(self.names)
-        return metro_fn
 
     def __repr__(self):
         return f'UnionPrecedenceSpec({self.names!r})'

@@ -40,7 +40,7 @@ class AffineDecl:
 def collect_affine_decl(specs):
     """Partition an @ati.affine stack into a passive AffineDecl (no build)."""
     from ..decorators.affine import (
-        AffineMarkerSpec, SharedOperatorSpec, ArchSpec,
+        AffineKernelSpec, SharedOperatorSpec, ArchSpec,
         LimitationsSpec, StructuresSpec, DirectoriesSpec, SuppliesSpec,
     )
     from ..decorators import DisableSpec
@@ -57,7 +57,7 @@ def collect_affine_decl(specs):
     supplies_before = None
     disable = None
     for s in specs:
-        if isinstance(s, AffineMarkerSpec):
+        if isinstance(s, AffineKernelSpec):
             assert marker is None, 'multiple @ati.affine.aiter_asm markers in one stack'
             marker = s
         elif isinstance(s, SharedOperatorSpec):

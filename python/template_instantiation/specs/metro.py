@@ -13,6 +13,8 @@ linker's build_metro) lowers the plan to the MetroKernel / ConditionalKernel IR.
 import ast
 import inspect
 
+from .base import StackedSpec
+
 # Comparison operator -> C++ rendering.
 _CMP = {
     ast.Eq: '==', ast.NotEq: '!=', ast.Gt: '>', ast.Lt: '<',
@@ -54,9 +56,11 @@ class Cond:
                 f'then={self.then}, orelse={self.orelse})')
 
 
-class MetroPlan:
+class MetroPlan(StackedSpec):
     """The transpiled metro: its name, the params variable, and an ordered list of
-    steps (Call | Cond)."""
+    steps (Call | Cond). Subclasses StackedSpec so @ati.metro_kernel can simply
+    return transpile(fn) and the result, being callable, accumulates itself onto the
+    pending spec list when applied as a decorator."""
     __slots__ = ('name', 'params_name', 'steps')
 
     def __init__(self, name, params_name, steps):

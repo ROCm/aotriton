@@ -225,29 +225,51 @@ def start(jit_fn):
     """Terminal decorator marking the end of a stacked-@ ATI block. Finalizes the
     accumulated specs and returns the described object.
 
-    Generic over the three stack kinds it finalizes: a KERNEL stack (the default —
-    finalized through describe()), an OPERATOR stack (marked by an innermost
-    @ati.operator — finalized into an Operator), and an AFFINE stack (marked by an
-    @ati.affine.aiter_asm — finalized into an AffineDecl)."""
+    Generic over four stack kinds dispatched by the INNERMOST spec (specs[-1] after
+    source-order reversal) — Python applies decorators bottom-up, so the innermost
+    decorator's spec is always the kind discriminant (O(1), no scan):
+      * OperatorSpec     → operator stack → OperatorDecl
+      * AffineKernelSpec → affine stack   → AffineDecl
+      * MetroPlan        → metro stack    → fn.__ati_metro__
+      * anything else    → kernel stack   → KernelSpec via describe()
+    """
     pending = getattr(jit_fn, _PENDING, None)
     assert pending is not None, (
         '@ati.start found no pending @ati.* specs below it; either stack at '
         'least one @ati.tensor/@ati.scalar/@ati.overrides above @ati.start, or '
         'use ati.describe(kernel, *specs) (Mode B) instead.')
     specs = list(reversed(pending))      # bottom-up application -> source order
+    # Dispatch on the innermost spec (specs[-1]) — the kind discriminant.
     from ..decorators import OperatorSpec
-    from ..decorators.affine import AffineMarkerSpec
-    if any(isinstance(s, OperatorSpec) for s in specs):
-        op = _finalize_operator(jit_fn, specs)
-        delattr(jit_fn, _PENDING)
-        return op
-    if any(isinstance(s, AffineMarkerSpec) for s in specs):
-        ak = _finalize_affine(jit_fn, specs)
-        delattr(jit_fn, _PENDING)
-        return ak
-    describe(jit_fn, *specs)
+    from ..decorators.affine import AffineKernelSpec
+    from .metro import MetroPlan
+    marker = specs[-1]
+    if isinstance(marker, OperatorSpec):
+        _finalize_operator(jit_fn, specs)
+    elif isinstance(marker, AffineKernelSpec):
+        _finalize_affine(jit_fn, specs)
+    elif isinstance(marker, MetroPlan):
+        _finalize_metro(jit_fn, specs)
+    else:
+        describe(jit_fn, *specs)
     delattr(jit_fn, _PENDING)
     return jit_fn
+
+
+def _finalize_metro(fn, specs):
+    """PASSIVE: attach the MetroPlan to fn.__ati_metro__. Reads the optional
+    UnionPrecedenceSpec from the pending list (it accumulates above metro_kernel,
+    so it appears before the MetroPlan in source order i.e. index < -1)."""
+    from ..decorators.hints import UnionPrecedenceSpec
+    plan = specs[-1]          # innermost — the MetroPlan
+    precedence = None
+    for s in specs[:-1]:      # everything above the innermost marker
+        if isinstance(s, UnionPrecedenceSpec):
+            assert precedence is None, 'duplicate @ati.hints.union_precedence'
+            precedence = s.names
+    fn.__ati_metro__ = plan
+    if precedence is not None:
+        fn.__ati_union_precedence__ = precedence
 
 
 def _finalize_affine(placeholder, specs):

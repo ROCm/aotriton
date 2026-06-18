@@ -4,11 +4,14 @@
 """
 The `@ati.metro_kernel` decorator (pipeline Stage 1).
 
-Transpiles the decorated function's body (never executed) into a MetroPlan spec
-(specs/metro.py) attached as fn.__ati_metro__. A metro wires an operator's
-collaborating kernels with ordinary Python if/else:
+Innermost marker of a metro stacked-@ block: transpiles the body (never executed)
+into a MetroPlan and ACCUMULATES it onto the pending list so @ati.start can
+finalise the whole stack (including @ati.hints.union_precedence above it). A metro
+wires an operator's collaborating kernels with ordinary Python if/else:
 
-    @ati.metro_kernel
+    @ati.start
+    @ati.hints.union_precedence([kernel_a, kernel_b])   # optional, above
+    @ati.metro_kernel                                    # innermost
     def metro_fwd(params):
         attn_fwd(params)
         if params.encoded_softmax.data_ptr() != 0:
@@ -20,7 +23,7 @@ from ..specs.metro import transpile
 
 def metro_kernel(fn):
     """@ati.metro_kernel: transpile the function body (never executed) into a
-    MetroPlan, attached as fn.__ati_metro__. Returns the function untouched so the
-    operator builder can read the plan."""
-    fn.__ati_metro__ = transpile(fn)
-    return fn
+    MetroPlan (a StackedSpec), accumulate it onto fn's pending list, and return fn
+    so @ati.start above receives the original function object."""
+    plan = transpile(fn)
+    return plan(fn)          # MetroPlan.__call__(fn) → accumulate_spec(plan, fn) → fn
