@@ -40,7 +40,7 @@ def gen_autotune_configs(f):
     yield ati.tune.Config(kw, num_warps=4, num_stages=1)
 
 
-@ati.kernel
+@ati.start
 @ati.type_var('T_io', dtype=MAIN_DTYPES, signature_name='Q')
 @ati.tensor('Q',  'T_io', strides='stride_q?',  contiguous=-1)
 @ati.tensor('K',  'T_io', strides='stride_k?',  contiguous=-1)

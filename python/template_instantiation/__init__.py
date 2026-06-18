@@ -15,6 +15,8 @@ Authoring surface (see agent-plans/ati_rev1.md):
     overrides                  - conditional value rules (§3.3)
     eq, ne, lt, gt             - predicate builders for overrides / metro `if`
     describe                   - attach a spec to a pure-Triton kernel (§3.4 Mode B)
+    start                      - terminal stacked-@ decorator finalizing a kernel/
+                                 operator/affine description (§3.4 Mode A)
     operator                   - declare an operator over backends (§4)
     union_params               - order-preserving param merge (§4.2)
     metro_kernel               - if/else metro wiring (§5)
@@ -32,7 +34,7 @@ from .ir.ops import union_params
 # submodule loads here FIRST — its package attribute is then overwritten by the
 # `describe` FUNCTION binding below, so `ati.describe` stays the callable even after
 # a later `from ...template_instantiation.describe import ...` re-touches the module.
-from .describe import describe, kernel
+from .describe import describe, start
 from .builder import DescriptionError
 from .decorators import metro_kernel
 from .decorators import (
@@ -45,7 +47,7 @@ __all__ = [
     'affine', 'hints',
     'type_var', 'scalar_var', 'tensor', 'scalar',
     'derives', 'overrides', 'disable', 'cite', 'source', 'eq', 'ne', 'lt', 'gt',
-    'describe', 'kernel', 'operator', 'backend', 'union_params', 'metro_kernel',
+    'describe', 'start', 'operator', 'backend', 'union_params', 'metro_kernel',
     'tune', 'DescriptionError',
 ]
 
@@ -65,6 +67,6 @@ def _stub(name):
 # --- conditional overrides + predicate builders (§3.3): implemented in Step 2.2 ---
 # overrides, eq, ne, lt, gt imported from .decorators
 
-# --- description attachment (§3.4): describe + kernel imported from .describe ---
+# --- description attachment (§3.4): describe + start imported from .describe ---
 # --- operator + metro (§4, §5): operator/backend (§4), union_params (5.1),
 #     metro_kernel (5.5) imported from .decorators / .operator / .metro ---

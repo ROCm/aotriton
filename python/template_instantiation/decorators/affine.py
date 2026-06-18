@@ -10,7 +10,7 @@ call (via a COOKIE class) and packages pre-built `.co` files. Its ATI descriptio
 metadata + a reference to the operator whose params struct it consumes, declared with
 the stacked-@ form:
 
-    @ati.kernel                                          # terminal (ends the stack)
+    @ati.start                                           # terminal (ends the stack)
     @ati.disable(when=_fwd_disabled)
     @ati.affine.aiter_asm(name='aiter_fmha_v3_fwd')      # innermost marker
     @ati.affine.shared_operator('op_attn_fwd')           # SHARED_IFACE (by op name)

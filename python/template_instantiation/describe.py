@@ -15,7 +15,7 @@ from .specs.kernel import KernelSpec
 from .specs.affine import AffineDecl, collect_affine_decl
 from .specs.operator import OperatorDecl, collect_operator_decl
 from .specs.finalize import (
-    describe, kernel, accumulate_spec, get_kernel_spec,
+    describe, start, accumulate_spec, get_kernel_spec,
     _validate_completeness, _partition, _build_tune_spec,
     _finalize_affine, _finalize_operator,
 )
@@ -26,6 +26,6 @@ _collect_operator_decl = collect_operator_decl
 
 __all__ = [
     'KernelSpec', 'AffineDecl', 'OperatorDecl',
-    'describe', 'kernel', 'accumulate_spec', 'get_kernel_spec',
+    'describe', 'start', 'accumulate_spec', 'get_kernel_spec',
     'collect_affine_decl', 'collect_operator_decl',
 ]

@@ -38,7 +38,7 @@ def gen_autotune_configs(f):
                           num_warps=4, num_stages=1)
 
 
-@ati.kernel
+@ati.start
 # Cite the bwd metro's sub-kernels for the merged operand practices (mode b).
 @ati.cite('op_attn_bwd.triton_split.bwd_kernel_dk_dv')
 @ati.cite('op_attn_bwd.triton_split.bwd_kernel_dq')

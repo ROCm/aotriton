@@ -66,7 +66,7 @@ def collect_operator_decl(specs):
             raise AssertionError(
                 f'unexpected spec {s!r} in an @ati.operator stack; operators accept '
                 f'only @ati.backend and operator-level @ati.tune.binning/fallback')
-    assert opspec is not None, '@ati.kernel operator path without an @ati.operator marker'
+    assert opspec is not None, '@ati.start operator path without an @ati.operator marker'
     assert backends, f'operator {opspec.name!r} declares no @ati.backend'
     backends.sort(key=lambda b: b.index)
     return OperatorDecl(opspec, backends, binning, fallback)

@@ -50,7 +50,7 @@ def gen_autotune_configs(f):
 # matched by apparel name. This is a TRUE cycle (dq cites the metro that contains dq):
 # the linker resolves it via the header/extern model — dq reads the OTHER sub-kernels'
 # argument surface (known from Pass 1), never its own.
-@ati.kernel
+@ati.start
 @ati.cite('op_attn_bwd.triton_split')
 @ati.tensor('DQ', 'T_io', strides='stride_dq?', contiguous=-1)
 @ati.tensor('DB', 'T_io', strides='stride_db?', contiguous=-1)

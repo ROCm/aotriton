@@ -25,7 +25,7 @@ def _aiter_fwd_disabled(functional):
     return False
 
 
-@ati.kernel
+@ati.start
 @ati.disable(when=_aiter_fwd_disabled)
 @ati.affine.aiter_asm(name='aiter_fmha_v3_fwd')
 @ati.affine.shared_operator('op_attn_fwd')

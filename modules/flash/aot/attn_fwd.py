@@ -51,7 +51,7 @@ def _attn_fwd_disabled(f):
     return flash_disabled(f, gfx950_bad_hdims={16})
 
 
-@ati.kernel
+@ati.start
 # --- dtype variables (named; tensors below reference them by string) ---
 @ati.type_var('T_io', dtype=MAIN_DTYPES, signature_name='Q')
 @ati.type_var('T_seq', dtype=['*i32:16'])

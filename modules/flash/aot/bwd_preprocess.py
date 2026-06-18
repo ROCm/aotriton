@@ -23,7 +23,7 @@ class BwdPreprocessPerf:
     BLOCK_M: np.int16 = 128
 
 
-@ati.kernel
+@ati.start
 # Cite a bwd key kernel (citing the whole metro would be circular — the metro calls
 # this preprocess). The 3-segment cite resolves via the flat kernel registry.
 @ati.cite('op_attn_bwd.triton_split.bwd_kernel_dk_dv')

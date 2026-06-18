@@ -73,7 +73,7 @@ def source(path, name=None):
     §5a). The source file is NOT imported — only parsed — so the generator needs no
     `triton` package (agent-plans/ati_triton-free_exec0.md).
 
-        @ati.kernel
+        @ati.start
         @ati.tensor('Q', 'T_io', strides='stride_q?', contiguous=-1)
         # ... more @ati.* specs ...
         @ati.source("../kernel/fwd_kernel.py")   # innermost, just above the def

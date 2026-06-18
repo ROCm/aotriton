@@ -27,7 +27,7 @@ def _aiter_bwd_disabled(functional):
     return False
 
 
-@ati.kernel
+@ati.start
 @ati.disable(when=_aiter_bwd_disabled)
 @ati.affine.aiter_asm(name='aiter_fmha_v3_bwd')
 @ati.affine.shared_operator('op_attn_bwd')

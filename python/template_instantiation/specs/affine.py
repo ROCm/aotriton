@@ -80,7 +80,7 @@ def collect_affine_decl(specs):
             raise AssertionError(
                 f'unexpected spec {s!r} in an @ati.affine stack; affine kernels '
                 f'accept @ati.affine.* and @ati.disable only')
-    assert marker is not None, '@ati.kernel affine path without an @ati.affine marker'
+    assert marker is not None, '@ati.start affine path without an @ati.affine marker'
     assert co_dir is not None, f'affine kernel {marker.name!r} missing @ati.affine.directories'
     return AffineDecl(name=marker.name, co_dir=co_dir, cookie=cookie, headers=headers,
                       supported_arch=arches, choice_filters=filters,

@@ -8,7 +8,7 @@ An operator dispatches among interchangeable BACKENDS (a triton metro, a fused t
 kernel, an affine asm kernel, ...). It is described declaratively with the stacked-@
 form, mirroring kernels but finalizing into an Operator rather than a KernelSpec:
 
-    @ati.kernel                                       # ends the stack (finalizes)
+    @ati.start                                        # ends the stack (finalizes)
     @ati.backend(1, fwd_aiter, 'aiter')               # explicit dispatch index
     @ati.backend(0, metro_fwd, 'triton')
     @ati.tune.binning(Max_seqlen_q=ati.tune.binning.le,   # -> operator OPTUNE_KEYS
@@ -23,9 +23,9 @@ Operator tuning is EXPLICIT: an operator never inherits a kernel's @ati.tune.*
 @ati.tune.fallback means the operator's own PARTIALLY_TUNED (default {});
 @ati.tune.configs is accepted but ignored with a warning (a kernel-only concept).
 
-TODO: rename the terminal @ati.kernel to a generic @ati.start facade that finalizes
-any stacked description (kernel OR operator); @ati.operator/@ati.source mark the
-start, @ati.start ends the stack.
+The terminal @ati.start is the generic finalizer for any stacked description
+(kernel OR operator OR affine): @ati.operator / @ati.source / @ati.affine.aiter_asm
+mark the innermost start, and @ati.start (outermost) ends the stack.
 """
 
 from ..specs.base import StackedSpec
@@ -100,6 +100,6 @@ class OperatorSpec(StackedSpec):
 def operator(name=None, *, call_options_name):
     """Innermost stacked-@ marker declaring the def to be an operator description
     (the operator analogue of @ati.source). The @ati.backend / @ati.tune.* specs
-    ABOVE it accumulate onto the operator; @ati.kernel finalizes the stack into a
+    ABOVE it accumulate onto the operator; @ati.start finalizes the stack into a
     PASSIVE @ati.operator def (fn.__ati_operator__) the linker builds."""
     return OperatorSpec(name, call_options_name=call_options_name)

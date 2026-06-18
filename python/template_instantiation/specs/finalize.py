@@ -164,16 +164,16 @@ def describe(kernel, *specs, _validate=True):
 # accumulates the spec onto the kernel and returns it. describe() never calls a
 # spec, so it sees plain specs; the @ form calls each spec once.
 #
-# A terminal decorator `@ati.kernel` marks the end of the stack and triggers
+# A terminal decorator `@ati.start` marks the end of the stack and triggers
 # finalization explicitly (no lazy-on-access guessing):
 #
-#     @ati.kernel                                  # applied LAST -> finalizes
+#     @ati.start                                   # applied LAST -> finalizes
 #     @ati.tensor('Q', T_io, strides='stride_q?')
 #     @ati.scalar('CAUSAL_TYPE', options=[0, 3])
 #     @triton.jit
 #     def attn_fwd(...): ...
 #
-# Python applies decorators bottom-up, so by the time @ati.kernel runs, every
+# Python applies decorators bottom-up, so by the time @ati.start runs, every
 # spec is accumulated; the list is in bottom-up order, which finalize restores to
 # source order before replaying through describe().
 
@@ -190,18 +190,18 @@ def accumulate_spec(spec, kernel):
     return kernel
 
 
-def kernel(jit_fn):
+def start(jit_fn):
     """Terminal decorator marking the end of a stacked-@ ATI block. Finalizes the
     accumulated specs and returns the described object.
 
-    Two stack kinds share this finalizer (TODO: rename to a generic @ati.start
-    facade): a KERNEL stack (the default — finalized through describe()) and an
-    OPERATOR stack (marked by an innermost @ati.operator — finalized into an
-    Operator)."""
+    Generic over the three stack kinds it finalizes: a KERNEL stack (the default —
+    finalized through describe()), an OPERATOR stack (marked by an innermost
+    @ati.operator — finalized into an Operator), and an AFFINE stack (marked by an
+    @ati.affine.aiter_asm — finalized into an AffineDecl)."""
     pending = getattr(jit_fn, _PENDING, None)
     assert pending is not None, (
-        '@ati.kernel found no pending @ati.* specs below it; either stack at '
-        'least one @ati.tensor/@ati.scalar/@ati.overrides above @ati.kernel, or '
+        '@ati.start found no pending @ati.* specs below it; either stack at '
+        'least one @ati.tensor/@ati.scalar/@ati.overrides above @ati.start, or '
         'use ati.describe(kernel, *specs) (Mode B) instead.')
     specs = list(reversed(pending))      # bottom-up application -> source order
     from ..decorators import OperatorSpec
@@ -236,8 +236,8 @@ def _finalize_operator(placeholder, specs):
 def get_kernel_spec(kernel_obj):
     """The finalized KernelSpec for a kernel, or None. Consumers (the Step 2.4
     builder) use this. Asserts the stacked-@ block was terminated with
-    @ati.kernel (no un-finalized pending specs left dangling)."""
+    @ati.start (no un-finalized pending specs left dangling)."""
     assert getattr(kernel_obj, _PENDING, None) is None, (
         f'{getattr(kernel_obj, "__name__", kernel_obj)!r} has un-finalized ATI '
-        f'specs; a stacked-@ block must end with @ati.kernel at the top.')
+        f'specs; a stacked-@ block must end with @ati.start at the top.')
     return getattr(kernel_obj, '__ati__', None)

@@ -59,11 +59,11 @@ def metro_bwd(params):
 
 # --- operators (declarative @ati.operator form) ---------------------------
 #
-# Stacked-@: @ati.kernel (top) ends the stack; @ati.operator (bottom, next to def)
+# Stacked-@: @ati.start (top) ends the stack; @ati.operator (bottom, next to def)
 # starts it. Backends are referenced by their in-file def; the linker derives the
 # params struct (union over backends) and the functional-axes owner (default kernel).
 
-@ati.kernel
+@ati.start
 # Operator-level partial tuning, declared EXPLICITLY (not inherited from a kernel).
 @ati.tune.fallback(PADDED_HEAD=False)
 @ati.tune.binning(Max_seqlen_q=ati.tune.binning.le,
@@ -75,7 +75,7 @@ def op_attn_fwd():
     pass
 
 
-@ati.kernel
+@ati.start
 @ati.tune.binning(max_seqlen_q=ati.tune.binning.le,
                   max_seqlen_k=ati.tune.binning.le)
 @ati.backend(2, aiter_fmha_v3_bwd, 'aiter')
