@@ -16,11 +16,21 @@ constexpr 1 for the contiguous stride). They live in the resolved arg table and
 the params/signature machinery but are not godel digits.
 """
 
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
 from ..decorators import TensorSpec, ScalarSpec, ChoiceVar
 from ..introspect import ParamSpec
 from ..ir import Axis
 from ..ir.typed_choice import TypedChoice, ELEMENTAL_TYPE_MAP
 from .errors import DescriptionError
+
+if TYPE_CHECKING:
+    from ..ir.override import Override
+    from ..decorators.disable import DisableSpec
+    from ..specs.tune import TuneSpec
 
 
 def _is_ati_type_string(s: str) -> bool:
@@ -48,6 +58,7 @@ _STRIDE_TYPE = 'u64:8'        # hidden stride dtype (matches the v2 stride_a8)
 _STRIDE_ONE = 1              # contiguous stride -> constexpr 1
 
 
+@dataclass(slots=True)
 class BuiltKernel:
     """The lowered IR for one kernel: everything enumerate_functionals needs.
 
@@ -56,21 +67,22 @@ class BuiltKernel:
         enumerate_functionals, lands in resolved[] (the compiled signature).
       * `perf_overrides` — target is a PERF-SCHEMA field; applied only in the perf
         layer (translate_*), never in resolved[]."""
-    __slots__ = ('name', 'axes', 'overrides', 'perf_overrides', 'arguments',
-                 'tune', 'disables', 'wiring')
 
-    def __init__(self, name, axes, overrides, arguments, tune=None,
-                 perf_overrides=None, disables=None, wiring=None):
-        self.name = name
-        self.axes = axes              # list[Axis] (incl. trivial + hidden strides)
-        self.overrides = overrides    # functional-arg overrides
-        self.perf_overrides = perf_overrides or []   # perf-field overrides
-        self.arguments = arguments    # full signature order (list[str])
-        self.tune = tune              # TuneSpec | None (perf schema, configs, ...)
-        self.disables = disables or []  # list[DisableSpec] (functional-disable)
-        # real->apparel arg wiring (rev0 §4.3), {real_arg: apparel_operand}, from
-        # wires_to= on tensor/scalar specs. Empty when nothing is wired.
-        self.wiring = wiring or {}
+    name: str
+    axes: list[Axis]                    # incl. trivial + hidden strides
+    overrides: list[Override]           # functional-arg overrides
+    arguments: list[str]                # full signature order
+    tune: TuneSpec | None = None        # perf schema, configs, ...
+    perf_overrides: list[Override] = None    # perf-field overrides
+    disables: list[DisableSpec] = None
+    # real->apparel arg wiring (rev0 §4.3), {real_arg: apparel_operand}, from
+    # wires_to= on tensor/scalar specs. Empty when nothing is wired.
+    wiring: dict[str, str] = None
+
+    def __post_init__(self):
+        self.perf_overrides = self.perf_overrides or []
+        self.disables = self.disables or []
+        self.wiring = self.wiring or {}
 
     def __repr__(self):
         nmulti = sum(1 for a in self.axes if not a.is_trivial)
