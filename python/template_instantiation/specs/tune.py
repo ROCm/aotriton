@@ -23,6 +23,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from ..ir.typed_choice import constexpr as TCC
+from ..ir.typed_choice import NUMPY_TO_CONSTEXPR
 from .base import StackedSpec
 
 
@@ -42,18 +43,6 @@ class BinningSelector:
 
 # --- perf schema -----------------------------------------------------------
 
-# numpy dtype -> constexpr TypedChoice class (the perf field's C width).
-_NP_TO_TCC = {
-    np.int8: TCC.int8_t,
-    np.int16: TCC.int16_t,
-    np.int32: TCC.int32_t,
-    np.int64: TCC.int64_t,
-    np.uint8: TCC.uint8_t,
-    np.uint16: TCC.uint16_t,
-    np.uint32: TCC.uint32_t,
-    np.uint64: TCC.uint64_t,
-}
-
 
 def _resolve_tcc(field_name, annotation):
     """Map a dataclass field annotation to its constexpr TypedChoice class."""
@@ -68,8 +57,8 @@ def _resolve_tcc(field_name, annotation):
             np_type = np.dtype(annotation).type
         except TypeError:
             np_type = None
-    if np_type in _NP_TO_TCC:
-        return _NP_TO_TCC[np_type]
+    if np_type in NUMPY_TO_CONSTEXPR:
+        return NUMPY_TO_CONSTEXPR[np_type]
     raise TypeError(
         f"perf schema field {field_name!r}: annotation {annotation!r} is not a "
         f"supported perf dtype; use a numpy integer dtype (np.int8/int16/...) or "

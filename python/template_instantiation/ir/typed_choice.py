@@ -325,22 +325,27 @@ class lazy_tensor(tensor):
         return f'LazyTensorInternal<{self._rank}>*'
 
 ##################### Guessing Functions #####################
+# numpy scalar type -> constexpr TypedChoice class (the C struct width). The single
+# source of truth for this mapping: GuessNumpy reads it for np.array choices, and the
+# perf-schema resolver (specs/tune._resolve_tcc) reads it for numpy dtype annotations.
+NUMPY_TO_CONSTEXPR = {
+    np.bool_  : constexpr.bool_t,   # np.bool_ (not np.bool: removed in numpy 1.20-1.26)
+    np.int8   : constexpr.int8_t,
+    np.int16  : constexpr.int16_t,
+    np.int32  : constexpr.int32_t,
+    np.int64  : constexpr.int64_t,
+    np.uint8  : constexpr.uint8_t,
+    np.uint16 : constexpr.uint16_t,
+    np.uint32 : constexpr.uint32_t,
+    np.uint64 : constexpr.uint64_t,
+}
+
 class Guess(object):
     def guess(self):
         return [ self._efactory(v) for v in self._choices ]
 
 class GuessNumpy(Guess):
-    FACTORY = {
-        np.bool   : constexpr.bool_t,
-        np.int8   : constexpr.int8_t,
-        np.int16  : constexpr.int16_t,
-        np.int32  : constexpr.int32_t,
-        np.int64  : constexpr.int64_t,
-        np.uint8  : constexpr.uint8_t,
-        np.uint16 : constexpr.uint16_t,
-        np.uint32 : constexpr.uint32_t,
-        np.uint64 : constexpr.uint64_t,
-    }
+    FACTORY = NUMPY_TO_CONSTEXPR
     def __init__(self, choices):
         self._efactory = self.FACTORY[choices.dtype.type]
         self._choices = choices

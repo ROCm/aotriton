@@ -59,6 +59,10 @@ class ScalarSpec(StackedSpec):
                 f'@ati.scalar second arg must be a type string or ChoiceVar, '
                 f'got {type_or_var!r}')
         if options is not None:
+            # A numpy array with an explicit dtype is preserved AS-IS (not listified)
+            # so the builder's parse_choices -> GuessNumpy path can read its dtype to
+            # fix the constexpr C width (e.g. np.array([...], np.int16) -> int16_t).
+            # A plain python list is listified and width-inferred (GuessInt/GuessBool).
             self.options = list(options) if not _is_numpy_array(options) else options
 
     @property
@@ -90,5 +94,9 @@ def _is_numpy_array(x) -> bool:
 def scalar(arg_name, type_or_var=None, *, options=None, wires_to=None):
     """Bind a non-tensor argument: a plain runtime scalar, an enumerated choice
     (options=), or a member of a shared choice variable. `wires_to=` dresses this
-    REAL argument as an operator operand (rev0 §4.3)."""
+    REAL argument as an operator operand (rev0 §4.3).
+
+    `options=` accepts a plain python list (the C width is inferred from the values)
+    OR a numpy array with an explicit dtype (the dtype fixes the width), e.g.
+    `options=np.array([0, 3], np.int16)` to force int16_t regardless of the values."""
     return ScalarSpec(arg_name, type_or_var, options=options, wires_to=wires_to)
