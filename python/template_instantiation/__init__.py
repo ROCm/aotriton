@@ -21,7 +21,7 @@ Authoring surface (see agent-plans/ati_rev1.md):
     tune                       - perf schema / autotune submodule (§6)
 """
 
-from . import tune
+from .tune_facade import tune    # ati.tune.* namespace (decorators/tune + specs/tune)
 from .decorators import affine   # ati.affine.* decorator namespace (slim affine kernels)
 from .decorators import hints    # ati.hints.* author hints (union_precedence, ...)
 # The operator-build helpers live in the `.ir.ops` subpackage (ir/ops/cite.py,

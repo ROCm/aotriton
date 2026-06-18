@@ -33,7 +33,7 @@ def collect_operator_decl(specs):
     """Partition an @ati.operator stack into a passive OperatorDecl (no build)."""
     import warnings
     from ..decorators import OperatorSpec, BackendSpec
-    from ..tune import BinningSpec, FallbackSpec, ConfigsSpec
+    from .tune import BinningSpec, FallbackSpec, ConfigsSpec
 
     opspec = None
     backends = []

@@ -31,7 +31,7 @@ from .operator import OperatorDecl, collect_operator_decl
 def _build_tune_spec(tune_records):
     """Fold the collected tune spec-records into one TuneSpec, or None if there
     are no tuning decorators on this kernel."""
-    from ..tune import (
+    from .tune import (
         TuneSpec, PerfSchema, ConfigsSpec, BinningSpec, FallbackSpec,
     )
     if not tune_records:
@@ -54,7 +54,7 @@ def _build_tune_spec(tune_records):
 
 
 def _partition(specs):
-    from ..tune import PerfSchema, ConfigsSpec, BinningSpec, FallbackSpec
+    from .tune import PerfSchema, ConfigsSpec, BinningSpec, FallbackSpec
     from ..decorators import DisableSpec, CiteSpec
     tune_types = (PerfSchema, ConfigsSpec, BinningSpec, FallbackSpec)
     tensors, scalars, overrides, tune_records, disables, dtype_vars, cites, others = \
@@ -88,7 +88,7 @@ def _validate_completeness(params, tensors, scalars, tune_records, has_cite=Fals
     When the kernel has an @ati.cite (has_cite), an UNCLAIMED parameter is NOT an
     orphan: the cite resolver (operator/infer.py) fills it from the cited metro at
     build time. Unknown-parameter and double-claim errors still apply."""
-    from ..tune import PerfSchema
+    from .tune import PerfSchema
 
     param_names = [p.name for p in params]
     name_set = set(param_names)
