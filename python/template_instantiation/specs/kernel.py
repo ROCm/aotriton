@@ -29,7 +29,14 @@ if TYPE_CHECKING:
 
 @dataclass(slots=True)
 class KernelSpec:
-    """The ATI sidecar attached to a kernel as `kernel.__ati__`."""
+    """The ATI sidecar attached to a kernel as `kernel.__ati__`.
+
+    This is the kernel's passive Stage-2 "object file" — the same role that
+    OperatorDecl and AffineDecl play for operators and affine kernels. There is no
+    separate KernelDecl because KernelSpec must be CLONED AND MUTATED during linking:
+    cite resolution (ir/ops/cite.py) appends gap tensors/scalars/overrides onto a
+    per-link mutable copy of this record. OperatorDecl / AffineDecl carry no unresolved
+    cross-kernel references, so the linker reads them verbatim (no clone needed)."""
 
     kernel: object
     params: list[ParamSpec]            # signature order

@@ -44,6 +44,33 @@ def load_family_aot(family):
 
 
 # --- Pass-1 shells (relocations stored on the shell) -------------------------
+#
+# Each shell is the minimal representation of ONE description node that is knowable
+# at parse time, before the linker resolves cross-object references.  They are the
+# compiler analogue of object-file symbol-table entries: they record the exported
+# name and the list of unresolved external references ("relocations").
+#
+# WHY NOT merge shells into the IR classes (KernelDescription / MetroKernel / Operator)?
+# Because the IR constructors require fully-resolved inputs that do not exist yet:
+#   • KernelDescription needs a lowered BuiltKernel (cite gaps filled, Axis IR built,
+#     Godel strides assigned). Cite resolution requires every cite target to already be
+#     built — which requires a global topological sort over the whole family.
+#   • MetroKernel needs live KernelDescription objects for its sub-kernels (the plan
+#     only carries names-as-strings at parse time).
+#   • Operator needs its default_kdesc and struct_cfields derived from all fully-built
+#     backends; there is no partial result until every backend is materialized.
+#
+# A two-phase IR init would work, but it leaves IR objects in a broken intermediate
+# state — every consumer would need guards. The shell/IR split makes incompleteness
+# unrepresentable: an IR object that exists is always fully constructed.
+#
+# NOTE: there is no KernelDecl alongside OperatorDecl / AffineDecl. That is because
+# KernelSpec *is* the kernel's passive "object file" — it plays the same role. The
+# difference is that KernelSpec must be cloned and mutated during linking (cite
+# resolution appends to its tensors/scalars/overrides on a per-link copy), so it
+# cannot be a frozen record the way OperatorDecl and AffineDecl are. OperatorDecl /
+# AffineDecl contain no unresolved cross-kernel references; their contents are fully
+# known at parse time and the linker reads them verbatim.
 
 class KernelShell:
     """A parsed triton-kernel description: its un-cite-resolved KernelSpec + identity.
