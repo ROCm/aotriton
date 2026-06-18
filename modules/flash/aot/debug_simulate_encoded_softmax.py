@@ -27,6 +27,10 @@ class DebugSimulateEncodedSoftmaxPerf:
 
 @ati.start
 @ati.cite('op_attn_fwd.triton.attn_fwd')
+# The cited attn_fwd carries flash_disabled (reads CAUSAL_TYPE/BLOCK_DMODEL/BIAS_TYPE),
+# which do not exist in this kernel's choice space. Replace with no_disable — this
+# auxiliary kernel has no correctness exclusions of its own (rev0 §4.5).
+@ati.no_disable()
 # R (encoded-softmax output) dressed as the operand encoded_softmax; stride-bearing
 # so declared locally. Its dtype T_io is inherited from the cite.
 @ati.tensor('R', 'T_io', strides='stride_r?', contiguous=-1,

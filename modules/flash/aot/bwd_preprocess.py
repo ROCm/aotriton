@@ -26,6 +26,10 @@ class BwdPreprocessPerf:
 @ati.start
 # Cite a bwd key kernel (citing the whole metro would be circular — the metro calls
 # this preprocess). The 3-segment cite resolves via the flat kernel registry.
+# The cited bwd_kernel_dk_dv carries _bwd_disabled (reads CAUSAL_TYPE/BLOCK_DMODEL/
+# BIAS_TYPE), which are not in this preprocess kernel's choice space. Replace with
+# no_disable — preprocess has no correctness exclusions of its own (rev0 §4.5).
+@ati.no_disable()
 @ati.cite('op_attn_bwd.triton_split.bwd_kernel_dk_dv')
 @ati.type_var('T_io', dtype=MAIN_DTYPES, signature_name='Out')
 @ati.tensor('Out', 'T_io', strides='stride_o?', contiguous=-1)
