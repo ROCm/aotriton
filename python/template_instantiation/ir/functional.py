@@ -18,6 +18,15 @@ enumeration itself lives on `Interface.gen_functionals` (the classical shape); t
 module-level `_resolve` / `_PredCtx` helpers are shared by it.
 """
 
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .typed_choice import TypedChoice
+
+
 class ChoiceView:
     """Ergonomic accessor over a Functional's pinned choices (executive plan
     Step 1.5; agent-plans/ati_rev1.md §6, ati+newbinds_rev1.md §5).
@@ -259,15 +268,13 @@ class Functional:
         return f'Functional({name!r}, arch={self.arch!r}, godel={self.godel_number})'
 
 
+@dataclass(slots=True)
 class _PredCtx:
     """Minimal functional-like context for evaluating override predicates during
     enumeration, before the Functional object exists. Exposes the `.choice` dict
     and `.arch` a callable predicate may read."""
-    __slots__ = ('choice', 'arch')
-
-    def __init__(self, choice, arch):
-        self.choice = choice
-        self.arch = arch
+    choice: dict[str, TypedChoice]      # var_name -> pinned TypedChoice
+    arch: str
 
 
 def _resolve(axes_all, overrides, picked, arch):
