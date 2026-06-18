@@ -9,30 +9,32 @@ stack into one AffineDecl, attached to the def as `fn.__ati_affine__`. NO build 
 the codegen linker constructs the AffineKernel (ir/affine.py) from this record.
 """
 
+from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..decorators.disable import DisableSpec
+
+
+@dataclass(slots=True, kw_only=True)
 class AffineDecl:
     """Passive record of an @ati.affine stack (the affine kernel's "object file"):
     the marker + @ati.affine.* metadata + optional @ati.disable. NO build — the
     linker (codegen) consumes this. Attached to the def as `fn.__ati_affine__`."""
 
-    __slots__ = ('name', 'co_dir', 'cookie', 'headers', 'supported_arch',
-                 'choice_filters', 'shared_operator_name', 'supplied_specs',
-                 'supplies_after', 'supplies_before', 'disable')
-
-    def __init__(self, *, name, co_dir, cookie, headers, supported_arch,
-                 choice_filters, shared_operator_name, supplied_specs,
-                 supplies_after, supplies_before, disable):
-        self.name = name
-        self.co_dir = co_dir
-        self.cookie = cookie
-        self.headers = headers
-        self.supported_arch = supported_arch
-        self.choice_filters = choice_filters
-        self.shared_operator_name = shared_operator_name
-        self.supplied_specs = supplied_specs
-        self.supplies_after = supplies_after
-        self.supplies_before = supplies_before
-        self.disable = disable
+    name: str
+    co_dir: str
+    cookie: str | None                     # the 3rd-party COOKIE_CLASS name
+    headers: list[str]
+    supported_arch: list[str]
+    choice_filters: dict[str, object]      # {arg name -> predicate callable}
+    shared_operator_name: str | None
+    supplied_specs: list                   # list[TensorSpec | ScalarSpec]
+    supplies_after: str | None             # neighbor operand name (union order)
+    supplies_before: str | None
+    disable: DisableSpec | None
 
 
 def collect_affine_decl(specs):

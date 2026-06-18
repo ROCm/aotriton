@@ -15,7 +15,10 @@ pattern as @ati.tensor): calling it on a kernel accumulates it onto the pending
 list; describe()/the finalizer partitions it into the kernel's TuneSpec.
 """
 
+from __future__ import annotations
+
 import dataclasses
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -78,7 +81,10 @@ class PerfParam:
     its C struct width, and an optional default value (from the @dataclass field
     default). The default is the value used by the *empty/untuned* path (e.g.
     bwd_preprocess, or a functional with no DB row); tuned kernels read their
-    value from the DB instead, so the default is rarely exercised."""
+    value from the DB instead, so the default is rarely exercised.
+
+    Not a @dataclass: the `_NO_DEFAULT` sentinel default value would be exposed as a
+    class attribute clashing with the dataclass `default` field name."""
     __slots__ = ('name', 'tcc', 'default')
 
     _NO_DEFAULT = object()
@@ -152,6 +158,7 @@ _COMPILER_OPTIONS = ('waves_per_eu', 'num_warps', 'num_stages')
 _CONFIG_RESERVED = _COMPILER_OPTIONS + ('num_ctas', 'maxnreg', 'pre_hook')
 
 
+@dataclass(slots=True)
 class Config:
     """One perf point yielded by a gen_autotune_configs generator.
 
@@ -175,17 +182,15 @@ class Config:
     COMPILER_OPTIONS in aotriton.kernel.ksignature). So we accept it inside kw for
     call-site compatibility but route it into .copts, never .perf."""
 
-    __slots__ = ('kwargs', 'num_warps', 'num_stages', 'num_ctas',
-                 'maxnreg', 'pre_hook')
+    kwargs: dict[str, object]               # perf-field dict (waves_per_eu inside)
+    num_warps: int = 4
+    num_stages: int = 2
+    num_ctas: int = 1
+    maxnreg: int | None = None
+    pre_hook: object = None
 
-    def __init__(self, kwargs, num_warps=4, num_stages=2, num_ctas=1,
-                 maxnreg=None, pre_hook=None):
-        self.kwargs = dict(kwargs)
-        self.num_warps = num_warps
-        self.num_stages = num_stages
-        self.num_ctas = num_ctas
-        self.maxnreg = maxnreg
-        self.pre_hook = pre_hook
+    def __post_init__(self):
+        self.kwargs = dict(self.kwargs)     # defensive copy of the perf-field dict
 
     @property
     def waves_per_eu(self):

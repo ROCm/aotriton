@@ -31,18 +31,17 @@ These produce passive spec records; specs/finalize.py collects them into an Affi
 and the linker builds the ir.affine.AffineKernel.
 """
 
+from __future__ import annotations
 
-# --- spec records (callable -> accumulate onto the placeholder def) ----------
+from dataclasses import dataclass
 
 from ..specs.base import StackedSpec
 
 
-class _AffineSpec(StackedSpec):
-    """Base: a stacked-@ affine spec record (the StackedSpec accumulate-on-call
-    behavior, kept as a named affine marker base for isinstance grouping)."""
+# --- spec records (callable -> accumulate onto the placeholder def) ----------
 
 
-class AffineMarkerSpec(_AffineSpec):
+class AffineMarkerSpec(StackedSpec):
     """@ati.affine.aiter_asm(name=...): the innermost marker that makes the def an
     affine-kernel description (the affine analogue of @ati.operator / @ati.source).
     `name` is the AOTriton shim name (defaults to the def name)."""
@@ -60,30 +59,28 @@ class AffineMarkerSpec(_AffineSpec):
         return f'AffineMarkerSpec({self.name!r})'
 
 
-class SharedOperatorSpec(_AffineSpec):
+@dataclass(slots=True)
+class SharedOperatorSpec(StackedSpec):
     """@ati.affine.shared_operator('<op_name>'): the operator whose params struct
     this affine kernel consumes (SHARED_IFACE), referenced by NAME and resolved
     against the ops registry at finalize time (string avoids import cycles)."""
-    __slots__ = ('op_name',)
+    op_name: str
 
-    def __init__(self, op_name):
-        assert isinstance(op_name, str) and op_name, \
-            f'@ati.affine.shared_operator needs an operator name, got {op_name!r}'
-        self.op_name = op_name
-
-    def __repr__(self):
-        return f'SharedOperatorSpec({self.op_name!r})'
+    def __post_init__(self):
+        assert isinstance(self.op_name, str) and self.op_name, \
+            f'@ati.affine.shared_operator needs an operator name, got {self.op_name!r}'
 
 
-class ArchSpec(_AffineSpec):
+@dataclass(slots=True)
+class ArchSpec(StackedSpec):
     """@ati.affine.arch([...]): SUPPORTED_ARCH."""
-    __slots__ = ('arches',)
+    arches: list[str]
 
-    def __init__(self, arches):
-        self.arches = list(arches)
+    def __post_init__(self):
+        self.arches = list(self.arches)
 
 
-class LimitationsSpec(_AffineSpec):
+class LimitationsSpec(StackedSpec):
     """@ati.affine.limitations(key=predicate, ...): CHOICE_FILTERS — per-argument
     predicates restricting which choices the ASM kernel supports."""
     __slots__ = ('filters',)
@@ -95,26 +92,25 @@ class LimitationsSpec(_AffineSpec):
         self.filters = dict(filters)
 
 
-class StructuresSpec(_AffineSpec):
+@dataclass(slots=True)
+class StructuresSpec(StackedSpec):
     """@ati.affine.structures(cookie='...'): the 3rd-party COOKIE_CLASS the shim
     fills in and hands to the AITER API."""
-    __slots__ = ('cookie',)
-
-    def __init__(self, cookie):
-        self.cookie = cookie
+    cookie: str
 
 
-class DirectoriesSpec(_AffineSpec):
+@dataclass(slots=True)
+class DirectoriesSpec(StackedSpec):
     """@ati.affine.directories(co_dir='...', headers=[...]): CO_DIR (the kernel's
     name in the affine .co repository) + extra C++ headers the shim includes."""
-    __slots__ = ('co_dir', 'headers')
+    co_dir: str
+    headers: list[str] | None = None
 
-    def __init__(self, co_dir, headers=None):
-        self.co_dir = co_dir
-        self.headers = list(headers) if headers else []
+    def __post_init__(self):
+        self.headers = list(self.headers) if self.headers else []
 
 
-class SuppliesSpec(_AffineSpec):
+class SuppliesSpec(StackedSpec):
     """@ati.affine.supplies(ati.tensor(...), ..., after=..., before=...): operands
     this affine backend contributes to the operator's params-struct union (e.g. the
     bwd DQ_ACC, which lives only on the affine backend). Each positional is an

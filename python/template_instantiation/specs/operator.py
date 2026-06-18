@@ -9,20 +9,27 @@ stack into one OperatorDecl, attached to the def as `fn.__ati_operator__`. NO bu
 the codegen linker constructs the Operator (ir/operator.py) from this record.
 """
 
+from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..decorators.operator import OperatorSpec, BackendSpec
+    from .tune import BinningSelector
+
+
+@dataclass(slots=True)
 class OperatorDecl:
     """Passive record of an @ati.operator stack (the operator's "object file"): the
     OperatorSpec marker, the (index-sorted) BackendSpecs, and operator-level tune
     (binning -> OPTUNE_KEYS, fallback -> PARTIALLY_TUNED). NO build — the linker
     (codegen) consumes this. Attached to the def as `fn.__ati_operator__`."""
 
-    __slots__ = ('opspec', 'backends', 'binning', 'fallback')
-
-    def __init__(self, opspec, backends, binning, fallback):
-        self.opspec = opspec
-        self.backends = backends      # index-sorted list[BackendSpec]
-        self.binning = binning        # {key -> BinningSelector}
-        self.fallback = fallback      # {key -> value}
+    opspec: OperatorSpec
+    backends: list[BackendSpec]            # index-sorted
+    binning: dict[str, BinningSelector]    # operator backend-selection keys
+    fallback: dict[str, object]            # {key -> value}
 
     @property
     def name(self):
