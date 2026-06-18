@@ -21,8 +21,17 @@ filled in Step 4.2 while running the real generator, where the exact requirement
 surface.
 """
 
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
 from .axis import assign_godel
 from .interface import Interface
+
+if TYPE_CHECKING:
+    from .axis import Axis
+    from .typed_choice import TypedChoice
 
 
 def _binning_class(selector):
@@ -39,72 +48,47 @@ def _binning_class(selector):
         f'(only le/eq are implemented; gt is parity-only)')
 
 
-class _AxisParamShim:
-    """Compat view of an Axis as a legacy `tp` for the compiled-in feature tables
-    (codegen.kernel get_<name>_choices). Exposes the members that code reads:
-    repr_name, choices, repr_typed_choice, and `emit_feature_table` (whether this
-    axis gets a compiled-in get_<name>_choices() table; false when the axis's
-    representative argument is baked to a constexpr by an override)."""
+@dataclass(slots=True)
+class FunctionalParam:
+    """The per-kernel view of one functional Axis for the compiled-in feature tables
+    (codegen.kernel get_<name>_choices). It is NOT a re-shaping of Axis — it pairs the
+    axis with this kernel's wiring/override state that Axis cannot hold:
+      * `repr_name` / `all_names` — the APPAREL-mapped names (operator operands) for the
+        C++ surface, which depend on the kernel's wires_to map, not on the axis.
+      * `overridden_to_constexpr` — whether an override bakes the axis's representative
+        REAL argument to a constexpr (an argument property; a dtype variable shared by
+        several tensors is never baked even if one member tensor is). A baked axis is
+        excluded from the feature tables.
+    Intrinsic axis data (radix / godel_stride / choices / repr_typed_choice) is read
+    straight off the axis."""
 
-    __slots__ = ('_axis', '_overridden', '_repr_name', '_all_names')
-
-    def __init__(self, axis, overridden_to_constexpr,
-                 repr_name=None, all_names=None):
-        self._axis = axis
-        self._overridden = overridden_to_constexpr
-        # Apparel-mapped names (the operator operands) for the C++ surface; default
-        # to the axis's own (real) names when not wired. The getter name derives
-        # from the representative REAL argument (repr_arg), NOT signature_name (a
-        # persisted-artifact label, unrelated to the C++ surface).
-        self._repr_name = repr_name if repr_name is not None else axis.repr_arg
-        self._all_names = (list(all_names) if all_names is not None
-                           else list(axis.arg_names))
+    axis: Axis
+    repr_name: str                  # apparel-mapped getter name (get_<repr_name>_choices)
+    all_names: list[str]            # apparel-mapped member arg names
+    overridden_to_constexpr: bool
 
     @property
-    def repr_name(self):
-        # The representative ARGUMENT name (explicit on the choice variable, or
-        # the single arg), NOT the dtype-variable name — the C++
-        # get_<name>_choices() function name derives from it. Apparel-mapped.
-        return self._repr_name
+    def radix(self) -> int:
+        return self.axis.radix
 
     @property
-    def all_names(self):
-        return list(self._all_names)
-
-    @property
-    def nchoices(self):
-        return self._axis.radix
-
-    @property
-    def godel_number(self):
-        # The axis's godel stride (legacy TP.godel_number == its stride). Trivial
-        # (single-choice) axes have no stride assigned; they contribute 0.
-        return self._axis.godel_stride or 0
+    def godel_stride(self) -> int:
+        # Trivial (single-choice) axes have no stride assigned; they contribute 0.
+        return self.axis.godel_stride or 0
 
     @property
     def choices(self):
-        # the axis choices ARE TypedChoices (legacy code reads tc.infotext off each)
-        return list(self._axis.choices)
+        return list(self.axis.choices)
 
     @property
-    def repr_typed_choice(self):
-        return self._axis.choices[0]
-
-    @property
-    def overridden_to_constexpr(self) -> bool:
-        """True when an override bakes this axis's representative argument into a
-        constexpr (a derived/dependent value), so it is not a free feature and is
-        excluded from the compiled-in feature tables. Note this is an ARGUMENT
-        property: a dtype variable shared by several tensors is never baked, even
-        if one member tensor (e.g. B) is individually overridden."""
-        return self._overridden
+    def repr_typed_choice(self) -> TypedChoice:
+        return self.axis.repr_typed_choice
 
     @property
     def emit_feature_table(self) -> bool:
-        """Whether this axis gets a compiled-in get_<name>_choices() table. A
-        baked (override→constexpr) axis is excluded; stride axes never reach here
-        (filtered before the shim is built)."""
-        return not self._overridden
+        """Whether this axis gets a compiled-in get_<name>_choices() table. A baked
+        (override->constexpr) axis is excluded; stride axes never reach here."""
+        return not self.overridden_to_constexpr
 
 
 class KernelDescription(Interface):
@@ -480,9 +464,9 @@ class KernelDescription(Interface):
     # --- compiled-in feature tables ---
 
     def list_functional_params(self):
-        """Compat view for the generator's compiled-in feature tables
-        (get_<name>_choices). Yields one shim per non-stride axis. An axis is a
-        free feature unless its representative argument is baked to a constexpr by
+        """The functional-param view for the generator's compiled-in feature tables
+        (get_<name>_choices). Yields one FunctionalParam per non-stride axis. An axis
+        is a free feature unless its representative argument is baked to a constexpr by
         an override. A grouped dtype variable like T_io stays a feature even if a
         member tensor (B) is individually baked — baking is an argument property,
         not a type-variable one."""
@@ -495,9 +479,10 @@ class KernelDescription(Interface):
             # — the persisted/human-readable label (e.g. T_io -> 'Q'), not the
             # repr_arg used for value lookup. The member list is the apparel of the
             # real arg names (operator operands).
-            yield _AxisParamShim(ax, baked,
-                                 repr_name=self.apparel_of(ax.signature_name),
-                                 all_names=[self.apparel_of(a) for a in ax.arg_names])
+            yield FunctionalParam(
+                axis=ax, overridden_to_constexpr=baked,
+                repr_name=self.apparel_of(ax.signature_name),
+                all_names=[self.apparel_of(a) for a in ax.arg_names])
 
     # --- tuning passthrough ---
 

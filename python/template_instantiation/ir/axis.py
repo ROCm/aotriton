@@ -67,6 +67,12 @@ class Axis:
         return len(self.choices)
 
     @property
+    def repr_typed_choice(self) -> TypedChoice:
+        """The representative TypedChoice (the first) — read for its infotype when
+        emitting the compiled-in feature table for this axis."""
+        return self.choices[0]
+
+    @property
     def is_trivial(self) -> bool:
         """A single-choice axis: pins a type but adds no combinations, so it is
         excluded from godel digits (a digit that is always 0)."""

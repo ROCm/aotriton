@@ -186,9 +186,9 @@ class InterfaceGenerator(ABC):
         return body.getvalue()
 
     def codegen_godel_number_calculation(self, tp, fout, *, anamespace='args.'):
-        if tp.nchoices <= 1:
+        if tp.radix <= 1:
             return
-        aname = tp.repr_name # meta._ordered_arguments[0][0]
+        aname = tp.repr_name
         INDENT = 4 * ' '
         print(INDENT + '{', file=fout)
         print(2 * INDENT + 'int64_t number = -1;', file=fout)
@@ -213,7 +213,7 @@ class InterfaceGenerator(ABC):
         print(0 * INDENT +  '#endif', file=fout)
         print(3 * INDENT +  'return -1;', file=fout)
         print(2 * INDENT +  '}', file=fout)
-        print(2 * INDENT + f'sum += number * {tp.godel_number};', file=fout)
+        print(2 * INDENT + f'sum += number * {tp.godel_stride};', file=fout)
         print(1 * INDENT + '}', file=fout)
 
     def codegen_archmod_number_body(self):
