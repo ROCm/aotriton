@@ -27,7 +27,7 @@ from .choicevar import ChoiceVar, type_var, scalar_var
 from .tensor import TensorSpec, tensor
 from .scalar import ScalarSpec, scalar
 from .derive import derives, overrides, eq, ne, lt, gt, le, ge
-from .disable import DisableSpec, disable
+from .disable import DisableSpec, disable, no_disable
 from .cite import CiteSpec, cite
 from .source import KernelStub, SourceError, source
 from .operator import BackendSpec, backend, OperatorSpec, operator
@@ -37,7 +37,7 @@ __all__ = [
     'ChoiceVar', 'type_var', 'scalar_var',
     'TensorSpec', 'ScalarSpec', 'tensor', 'scalar',
     'derives', 'overrides', 'eq', 'ne', 'lt', 'gt', 'le', 'ge',
-    'DisableSpec', 'disable',
+    'DisableSpec', 'disable', 'no_disable',
     'CiteSpec', 'cite',
     'KernelStub', 'SourceError', 'source',
     'BackendSpec', 'backend', 'OperatorSpec', 'operator',

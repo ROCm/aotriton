@@ -27,6 +27,14 @@ if TYPE_CHECKING:
     from .typed_choice import TypedChoice
 
 
+class ChoiceVarAbsent(AttributeError):
+    """Raised by ChoiceView when a predicate reads a choice variable the functional
+    does not have. Subclasses AttributeError so getattr/hasattr duck-typing still
+    behaves, but is_functional_disabled catches it specifically to emit a
+    write-your-own-@ati.disable diagnostic (a cited disable predicate that reads a
+    variable absent from the citing kernel)."""
+
+
 class ChoiceView:
     """Ergonomic accessor over a Functional's pinned choices (executive plan
     Step 1.5; agent-plans/ati_rev1.md §6, ati+newbinds_rev1.md §5).
@@ -45,7 +53,7 @@ class ChoiceView:
     def __getattr__(self, var):
         choice = self._choice.get(var)
         if choice is None:
-            raise AttributeError(
+            raise ChoiceVarAbsent(
                 f'{var!r} is not a choice variable of this functional; '
                 f'valid: {sorted(self._choice)}')
         return choice.triton_compile_signature

@@ -66,3 +66,17 @@ def disable(when, *, I_understand_this_overrides_cited_disable=False):
     """
     return DisableSpec(when,
                        override_ack=I_understand_this_overrides_cited_disable)
+
+
+def _never_disabled(f):
+    return False
+
+
+def no_disable():
+    """@ati.no_disable: a local disable that excludes NOTHING, intentionally
+    replacing any cited disable (rev0 §4.5). Use it on a citing kernel whose own
+    choice space cannot satisfy the cited kernel's disable predicate (e.g. the cited
+    flash_disabled reads CAUSAL_TYPE, which an auxiliary kernel does not have) and
+    which itself needs no exclusions. Shorthand for
+    `ati.disable(when=lambda f: False, I_understand_this_overrides_cited_disable=True)`."""
+    return DisableSpec(_never_disabled, override_ack=True)

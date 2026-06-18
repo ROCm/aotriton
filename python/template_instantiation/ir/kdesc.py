@@ -495,8 +495,27 @@ class KernelDescription(Interface):
 
     def is_functional_disabled(self, functional):
         # Driven by the @ati.disable predicates in the kernel description (any
-        # firing disables). Only meaningful for tunable kernels — an untunable
-        # kernel has no functionals to exclude from autotuning.
-        if not self.is_tunable:
-            return False
-        return any(d.holds(functional) for d in self._built.disables)
+        # firing disables). Orthogonal to tuning: disabling excludes invalid input
+        # combinations from generation, which any kernel may need — tunable or not.
+        # A kernel with no @ati.disable has an empty `disables` list -> never fires.
+        from .functional import ChoiceVarAbsent
+        from ..builder import DescriptionError
+        for d in self._built.disables:
+            try:
+                if d.holds(functional):
+                    return True
+            except ChoiceVarAbsent as e:
+                # A disable predicate (often inherited via @ati.cite) reads a choice
+                # variable this kernel does not have. We do NOT guess a neutral value:
+                # the author must declare a local @ati.disable compatible with this
+                # kernel's own choice space (rev0 §4.5: a local disable REPLACES the
+                # cited one).
+                pred = getattr(d.when, '__name__', d.when)
+                raise DescriptionError(
+                    f"kernel {self.NAME!r}: the @ati.disable predicate {pred!r} reads "
+                    f"a choice variable this kernel does not have ({e}). It is likely "
+                    f"inherited via @ati.cite from a kernel with a different choice "
+                    f"space. Declare a local @ati.disable on {self.NAME!r} that uses "
+                    f"only its own choice variables (a local disable replaces the "
+                    f"cited one).") from e
+        return False

@@ -39,14 +39,14 @@ from .builder import DescriptionError
 from .decorators import metro_kernel
 from .decorators import (
     type_var, scalar_var, tensor, scalar,
-    derives, overrides, disable, cite, source, eq, ne, lt, gt,
+    derives, overrides, disable, no_disable, cite, source, eq, ne, lt, gt,
     operator, backend,
 )
 
 __all__ = [
     'affine', 'hints',
     'type_var', 'scalar_var', 'tensor', 'scalar',
-    'derives', 'overrides', 'disable', 'cite', 'source', 'eq', 'ne', 'lt', 'gt',
+    'derives', 'overrides', 'disable', 'no_disable', 'cite', 'source', 'eq', 'ne', 'lt', 'gt',
     'describe', 'start', 'operator', 'backend', 'union_params', 'metro_kernel',
     'tune', 'DescriptionError',
 ]
