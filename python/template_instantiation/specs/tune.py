@@ -20,6 +20,7 @@ import dataclasses
 import numpy as np
 
 from ..ir.typed_choice import constexpr as TCC
+from .base import StackedSpec
 
 
 # --- binning selector value object -----------------------------------------
@@ -111,7 +112,7 @@ class PerfParam:
         return f'PerfParam({self.name!r}, {self.tcc.__name__}, default={self.default!r})'
 
 
-class PerfSchema:
+class PerfSchema(StackedSpec):
     """The ordered perf parameters of a kernel, derived from a @dataclass."""
     __slots__ = ('dataclass', 'params')
 
@@ -122,11 +123,6 @@ class PerfSchema:
     @property
     def names(self):
         return [p.name for p in self.params]
-
-    def __call__(self, kernel):
-        """Stacked-@ form: accumulate this schema onto the kernel below it."""
-        from .finalize import accumulate_spec
-        return accumulate_spec(self, kernel)
 
     def __repr__(self):
         return (f'PerfSchema({self.dataclass.__name__!r}, '
@@ -214,14 +210,7 @@ class Config:
 
 # --- stacked-@ tune spec records -------------------------------------------
 
-class _TuneRecord:
-    """Base for the stacked-@ tune spec records: callable to accumulate."""
-    def __call__(self, kernel):
-        from .finalize import accumulate_spec
-        return accumulate_spec(self, kernel)
-
-
-class ConfigsSpec(_TuneRecord):
+class ConfigsSpec(StackedSpec):
     """@ati.tune.configs(gen_autotune_configs): registers the per-functional perf
     config generator. The generator takes a Functional and yields Config."""
     __slots__ = ('generator',)
@@ -235,7 +224,7 @@ class ConfigsSpec(_TuneRecord):
         return f'ConfigsSpec({getattr(self.generator, "__name__", self.generator)!r})'
 
 
-class BinningSpec(_TuneRecord):
+class BinningSpec(StackedSpec):
     """@ati.tune.binning(key=selector, ...): autotune binning keys -> selectors."""
     __slots__ = ('keys',)
 
@@ -250,7 +239,7 @@ class BinningSpec(_TuneRecord):
         return f'BinningSpec({self.keys})'
 
 
-class FallbackSpec(_TuneRecord):
+class FallbackSpec(StackedSpec):
     """@ati.tune.fallback(KEY=value, ...) -> PARTIALLY_TUNED_FUNCTIONALS."""
     __slots__ = ('values',)
 

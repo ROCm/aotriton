@@ -9,8 +9,10 @@ shared by several arguments (the element-type variable a group of tensors binds,
 scalar choice variable). See the package docstring for the authoring surface.
 """
 
+from ..specs.base import StackedSpec
 
-class ChoiceVar:
+
+class ChoiceVar(StackedSpec):
     """A named choice variable shared by several arguments — the
     `template<typename T>` / typing.TypeVar analogue. `type_var` and `scalar_var`
     both produce one; `kind` records which authoring word created it (purely for
@@ -31,14 +33,6 @@ class ChoiceVar:
         self.choices = list(choices)
         self.kind = kind          # 'type' | 'scalar'
         self.signature_name = signature_name
-
-    def __call__(self, kernel):
-        """Stacked-@ form: register this type/scalar variable on the kernel below
-        it (so `@ati.type_var('T_io', ...)` works as a decorator, and
-        `@ati.tensor('Q', 'T_io', ...)` can refer to it by name). Mirrors
-        TensorSpec/ScalarSpec.__call__."""
-        from ..specs.finalize import accumulate_spec
-        return accumulate_spec(self, kernel)
 
     def __repr__(self):
         return (f'ChoiceVar({self.name!r}, kind={self.kind}, '

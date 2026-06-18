@@ -20,6 +20,7 @@ Resolution runs in declared order over a `picked` map {var_name -> TypedChoice}:
 import operator as _op
 
 from .typed_choice import TypedChoice
+from ..specs.base import StackedSpec
 
 # Closed comparison grammar. Same operator set as the metro `if` conditions.
 _OPS = {
@@ -97,7 +98,7 @@ def le(var_name, operand): return Predicate(var_name, '<=', operand)
 def ge(var_name, operand): return Predicate(var_name, '>=', operand)
 
 
-class Override:
+class Override(StackedSpec):
     """Rewrite `targets` to `value` for functionals where `predicate` fires.
 
     `predicate` is either a structured `Predicate` (var op operand, over a free
@@ -147,11 +148,6 @@ class Override:
             assert self.value.var_name in free_var_names, (
                 f'override value {self.value!r} references {self.value.var_name!r}, '
                 f'which is not a free choice axis; VarRef may read free axes only')
-
-    def __call__(self, kernel):
-        """Stacked-@ form: accumulate this override onto the kernel below it."""
-        from ..specs.finalize import accumulate_spec
-        return accumulate_spec(self, kernel)
 
     def __repr__(self):
         return f'Override(targets={self.targets}, {self.predicate!r}, value={self.value!r})'

@@ -8,6 +8,8 @@ correctness exclusion that travels with the kernel description; citeable per rev
 
 import types
 
+from ..specs.base import StackedSpec
+
 
 def _is_callable_class_instance(when) -> bool:
     """True if `when` is an INSTANCE of a class defining __call__ (so it can extend
@@ -21,7 +23,7 @@ def _is_callable_class_instance(when) -> bool:
         and not isinstance(when, type)
 
 
-class DisableSpec:
+class DisableSpec(StackedSpec):
     """One @ati.disable(when=callable): a predicate over the functional marking it
     excluded from generation (compiler/numerical correctness exclusion). Multiple
     compose with OR. The callable reads functional state (f.arch, f.choices.<var>).
@@ -46,11 +48,6 @@ class DisableSpec:
 
     def holds(self, functional) -> bool:
         return bool(self.when(functional))
-
-    def __call__(self, kernel):
-        """Stacked-@ form: accumulate this spec onto the kernel below it."""
-        from ..specs.finalize import accumulate_spec
-        return accumulate_spec(self, kernel)
 
     def __repr__(self):
         return f'DisableSpec({getattr(self.when, "__name__", self.when)!r})'

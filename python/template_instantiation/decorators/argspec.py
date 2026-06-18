@@ -11,9 +11,10 @@ the logic to resolve stride globs and infer rank against a concrete parameter-na
 import fnmatch
 
 from .choicevar import ChoiceVar
+from ..specs.base import StackedSpec
 
 
-class TensorSpec:
+class TensorSpec(StackedSpec):
     """One tensor argument binding (one `@ati.tensor`).
 
     The first argument is either a single name or a LIST of names that share one
@@ -125,18 +126,13 @@ class TensorSpec:
         assert isinstance(self.contiguous, str)
         return self.contiguous
 
-    def __call__(self, kernel):
-        """Stacked-@ form: accumulate this spec onto the kernel below it."""
-        from ..specs.finalize import accumulate_spec
-        return accumulate_spec(self, kernel)
-
     def __repr__(self):
         return (f'TensorSpec({self.arg_name!r}, dtype={self.dtype!r}, '
                 f'strides={self.strides_pattern!r}, rank={self.rank}, '
                 f'contiguous={self.contiguous!r})')
 
 
-class ScalarSpec:
+class ScalarSpec(StackedSpec):
     """One non-tensor argument binding (one `@ati.scalar`).
 
     The first argument is either a single name or a LIST of names that share one
@@ -199,11 +195,6 @@ class ScalarSpec:
     @property
     def has_explicit_type(self) -> bool:
         return self.type_ is not None or self.dtype is not None
-
-    def __call__(self, kernel):
-        """Stacked-@ form: accumulate this spec onto the kernel below it."""
-        from ..specs.finalize import accumulate_spec
-        return accumulate_spec(self, kernel)
 
     def __repr__(self):
         return (f'ScalarSpec({self.arg_names!r}, type_={self.type_!r}, '

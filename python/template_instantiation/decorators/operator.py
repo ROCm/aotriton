@@ -28,8 +28,10 @@ any stacked description (kernel OR operator); @ati.operator/@ati.source mark the
 start, @ati.start ends the stack.
 """
 
+from ..specs.base import StackedSpec
 
-class BackendSpec:
+
+class BackendSpec(StackedSpec):
     """One @ati.backend(index, ref, name): a dispatchable operator backend.
 
     `index` is the explicit dispatch / enum / tuning-database order (load-bearing:
@@ -59,10 +61,6 @@ class BackendSpec:
         # NAME until the linker builds them under this same `name`).
         self.ref_name = getattr(obj, 'NAME', None) or name
 
-    def __call__(self, kernel):
-        from ..specs.finalize import accumulate_spec
-        return accumulate_spec(self, kernel)
-
     def __repr__(self):
         return f'BackendSpec({self.index}, {self.name!r}, ref={self.ref_name!r})'
 
@@ -72,7 +70,7 @@ def backend(index, obj, name):
     return BackendSpec(index, obj, name)
 
 
-class OperatorSpec:
+class OperatorSpec(StackedSpec):
     """The @ati.operator marker (innermost, next to the def): records the operator's
     declared parameters that are not themselves decorators.
 
@@ -91,10 +89,9 @@ class OperatorSpec:
     def __call__(self, placeholder):
         # Innermost decorator: like @ati.source it runs first and seeds the pending
         # list with itself, so the specs above accumulate onto the same object.
-        from ..specs.finalize import accumulate_spec
         if self.name is None:
             self.name = placeholder.__name__
-        return accumulate_spec(self, placeholder)
+        return super().__call__(placeholder)
 
     def __repr__(self):
         return f'OperatorSpec({self.name!r})'

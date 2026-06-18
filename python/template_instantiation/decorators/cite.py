@@ -6,8 +6,10 @@
 instantiation practices the citing kernel inherits for shared arguments (rev0 §4.4).
 """
 
+from ..specs.base import StackedSpec
 
-class CiteSpec:
+
+class CiteSpec(StackedSpec):
     """One @ati.cite("<op>.<metro>"[.<kernel>]): a STRING reference to a metro (or
     one of its sub-kernels) whose instantiation practices the current kernel pulls
     in for any argument it shares by apparel name (agent-plans/
@@ -39,11 +41,6 @@ class CiteSpec:
         """The cited sub-kernel name, or None for a whole-metro cite."""
         parts = self.target.split('.')
         return parts[2] if len(parts) == 3 else None
-
-    def __call__(self, kernel):
-        """Stacked-@ form: accumulate this cite onto the kernel below it."""
-        from ..specs.finalize import accumulate_spec
-        return accumulate_spec(self, kernel)
 
     def __repr__(self):
         return f'CiteSpec({self.target!r})'

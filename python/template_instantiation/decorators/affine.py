@@ -34,11 +34,12 @@ and the linker builds the ir.affine.AffineKernel.
 
 # --- spec records (callable -> accumulate onto the placeholder def) ----------
 
-class _AffineSpec:
-    """Base: a stacked-@ affine spec record. Calling it accumulates onto the def."""
-    def __call__(self, placeholder):
-        from ..specs.finalize import accumulate_spec
-        return accumulate_spec(self, placeholder)
+from ..specs.base import StackedSpec
+
+
+class _AffineSpec(StackedSpec):
+    """Base: a stacked-@ affine spec record (the StackedSpec accumulate-on-call
+    behavior, kept as a named affine marker base for isinstance grouping)."""
 
 
 class AffineMarkerSpec(_AffineSpec):
@@ -51,10 +52,9 @@ class AffineMarkerSpec(_AffineSpec):
         self.name = name
 
     def __call__(self, placeholder):
-        from ..specs.finalize import accumulate_spec
         if self.name is None:
             self.name = placeholder.__name__
-        return accumulate_spec(self, placeholder)
+        return super().__call__(placeholder)
 
     def __repr__(self):
         return f'AffineMarkerSpec({self.name!r})'
