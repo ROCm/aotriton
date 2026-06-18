@@ -440,7 +440,7 @@ class KernelDescription(Interface):
             ax = self._axis_of_arg.get(arg)
             if ax is None:
                 continue
-            if not self._is_launch_data(arg, ax):
+            if not ax.is_launch_data:
                 continue
             # Strides keep their real arg name (the comment shows stride_rz, not an
             # apparel name); tensors/scalars surface as their apparel name.
@@ -448,17 +448,6 @@ class KernelDescription(Interface):
             kind, expr = access.get(arg, ('scalar', f'CAST(&params.{self.apparel_of(arg)})'))
             yield LaunchArg(aname=emit_name, kind=kind, expr=expr)
 
-    def _is_launch_data(self, arg, ax):
-        """A launch data argument: a tensor, a non-unit stride, or a runtime
-        scalar. Excludes constexpr feature scalars, unit strides, and perf."""
-        if ax.kind == 'tensor':
-            return True
-        if ax.kind == 'stride':
-            return True
-        if ax.kind == 'stride_unit':
-            return False
-        # scalar axis: runtime if its choice is not a constexpr
-        return not ax.choices[0].is_constexpr
 
     # gen_functionals is inherited from ir.Interface (its default _axes_overrides
     # reads self._built.{axes,overrides}); each yielded Functional has

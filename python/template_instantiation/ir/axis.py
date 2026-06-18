@@ -78,6 +78,21 @@ class Axis:
         excluded from godel digits (a digit that is always 0)."""
         return self.radix <= 1
 
+    @property
+    def is_launch_data(self) -> bool:
+        """Whether arguments of this axis are live launch data (passed at dispatch
+        time). Tensors and non-unit strides are live; unit (contiguous) strides are
+        constexpr 1 (not passed); feature scalars with a constexpr choice are baked
+        at compile time (not passed); perf scalars are also constexpr (not here)."""
+        if self.kind == 'tensor':
+            return True
+        if self.kind == 'stride':
+            return True
+        if self.kind == 'stride_unit':
+            return False
+        # scalar axis: live at runtime iff its choice is not a constexpr
+        return not self.choices[0].is_constexpr
+
     def choice_for_arg(self, nth: int, arg_name: str) -> TypedChoice:
         """The nth choice, specialized to a concrete rank for a tensor arg."""
         c = self.choices[nth]
