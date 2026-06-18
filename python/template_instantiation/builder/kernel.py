@@ -202,9 +202,11 @@ def _resolve_named_dtypes(kernel_spec, name):
     # (ScalarSpec puts any str second-arg there), so we must check both slots.
     for t in kernel_spec.tensors:
         d = t.dtype
-        if isinstance(d, str) and d in by_name:
+        if not isinstance(d, str):
+            continue
+        if d in by_name:
             t.dtype = by_name[d]
-        elif isinstance(d, str) and not _is_ati_type_string(d):
+        elif not _is_ati_type_string(d):
             raise DescriptionError(
                 f"kernel {name!r}: tensor {t.arg_name!r} names dtype variable "
                 f"{d!r}, which is neither an @ati.type_var on this kernel "
@@ -212,10 +214,12 @@ def _resolve_named_dtypes(kernel_spec, name):
                 f"@ati.type_var({d!r}, dtype=[...]) or fix the type string.")
     for s in kernel_spec.scalars:
         d = s.type_
-        if isinstance(d, str) and d in by_name:
+        if not isinstance(d, str):
+            continue
+        if d in by_name:
             s.type_ = None
             s.dtype = by_name[d]
-        elif isinstance(d, str) and not _is_ati_type_string(d):
+        elif not _is_ati_type_string(d):
             raise DescriptionError(
                 f"kernel {name!r}: scalar {s.arg_name!r} names dtype variable "
                 f"{d!r}, which is neither an @ati.type_var on this kernel "
