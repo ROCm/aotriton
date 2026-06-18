@@ -113,7 +113,7 @@ def _choices_from(values) -> list:
     return [TypedChoice.parse(v) for v in values]
 
 
-def _resolve_signature_name(dtype, arg_names, param_index, kernel_name):
+def _resolve_signature_name(dtype, arg_names, kernel_name):
     """The LABEL recording an axis in persisted artifacts — the compact signature,
     the aks2/zip entry name, and the tuning-database row key.
 
@@ -227,7 +227,7 @@ def build_kernel(kernel_spec) -> BuiltKernel:
             if cstride is not None:
                 contiguous[t.arg_name] = cstride
         anchor = min(param_index[a] for a in arg_names)
-        signature_name = _resolve_signature_name(first.dtype, arg_names, param_index, name)
+        signature_name = _resolve_signature_name(first.dtype, arg_names, name)
         axes.append(Axis(var_name, arg_names, choices, anchor,
                          ranks=ranks, contiguous=contiguous, kind='tensor',
                          signature_name=signature_name))
@@ -259,7 +259,7 @@ def build_kernel(kernel_spec) -> BuiltKernel:
             choices = _choices_from([_scalar_type(first, ann_by_name, name)])
         arg_names = [a for s in group for a in s.arg_names]
         anchor = min(param_index[a] for a in arg_names)
-        signature_name = _resolve_signature_name(first.dtype, arg_names, param_index, name)
+        signature_name = _resolve_signature_name(first.dtype, arg_names, name)
         axes.append(Axis(var_name, arg_names, choices, anchor, kind='scalar',
                          signature_name=signature_name))
 
