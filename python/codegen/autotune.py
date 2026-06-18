@@ -5,7 +5,7 @@
 
 from ..template_instantiation.ir import Functional
 from ..template_instantiation.ir import typed_choice as TC
-from ..template_instantiation.ksignature import KernelSignature
+from ..template_instantiation.ir.ksignature import KernelSignature
 from .template import get_template
 from ..utils import (
     LazyFile,

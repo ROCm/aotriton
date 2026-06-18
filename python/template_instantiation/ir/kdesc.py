@@ -281,7 +281,7 @@ class KernelDescription(Interface):
         its tuning dataframe. Ported from the legacy KernelDescription; reads the
         adapter's autotune_keys + perf params."""
         import numpy as np
-        from ..ksignature import KernelSignature, COMPILER_OPTIONS
+        from .ksignature import KernelSignature, COMPILER_OPTIONS
         # Inject perf params that are NOT tuned DB columns: their value is the
         # @dataclass default plus any perf-channel @ati.derives (perf_value), the
         # role the legacy PROGRAMMATIC_PERFS used to fill, before reading
@@ -335,7 +335,7 @@ class KernelDescription(Interface):
 
     def translate_empty_dataframe(self, f):
         import numpy as np
-        from ..ksignature import KernelSignature, DEFAULT_COPT
+        from .ksignature import KernelSignature, DEFAULT_COPT
         lut_tensor = np.zeros([f.noptimized_for, 1], dtype=np.int8)
         defaults = []
         for shim in self._perf_params:
@@ -347,7 +347,7 @@ class KernelDescription(Interface):
     def gen_signatures_for_tuning(self, f):
         """Yield a KernelSignature per autotune config (the tuning-build path).
         Ported from the legacy KernelDescription."""
-        from ..ksignature import KernelSignature, COMPILER_OPTIONS, DEFAULT_COPT
+        from .ksignature import KernelSignature, COMPILER_OPTIONS, DEFAULT_COPT
         def gen_perfs(cfg):
             for meta in self._perf_params:
                 yield meta.create_direct(cfg.kwargs[meta.repr_name])
