@@ -6,21 +6,17 @@
 correctness exclusion that travels with the kernel description; citeable per rev0 §4.5).
 """
 
-import types
+import inspect
 
 from ..specs.base import StackedSpec
 
 
 def _is_callable_class_instance(when) -> bool:
     """True if `when` is an INSTANCE of a class defining __call__ (so it can extend
-    a cited disable via super().__call__), as opposed to a bare function/lambda or a
-    builtin. Functions, lambdas, and methods are not callable-class instances."""
-    if isinstance(when, (types.FunctionType, types.LambdaType, types.MethodType,
-                         types.BuiltinFunctionType)):
-        return False
-    # An instance whose own type defines __call__ (not a plain function object).
-    return callable(when) and hasattr(type(when), '__call__') \
-        and not isinstance(when, type)
+    a cited disable via super().__call__), as opposed to a bare function / lambda /
+    method / builtin (inspect.isroutine) or a class object itself."""
+    return (callable(when) and not inspect.isroutine(when)
+            and not isinstance(when, type))
 
 
 class DisableSpec(StackedSpec):
