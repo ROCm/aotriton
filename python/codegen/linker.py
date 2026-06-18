@@ -156,7 +156,7 @@ def _build_affines(compiled):
 
 def _build_metros(compiled, built_kernels):
     """Build every MetroKernel, binding its sub-kernels by name to built kdescs."""
-    from aotriton.template_instantiation.metro.build import build_metro
+    from aotriton.template_instantiation.ir.metro import build_metro
     out = {}
     for name, shell in compiled.metros.items():
         out[name] = build_metro(shell.plan, built_kernels, name,

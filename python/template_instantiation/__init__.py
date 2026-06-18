@@ -30,7 +30,7 @@ from .decorators import hints    # ati.hints.* author hints (union_precedence, .
 from .ir.ops import union_params
 from .describe import describe, kernel
 from .builder import DescriptionError
-from .metro import metro_kernel
+from .decorators import metro_kernel
 from .decorators import (
     type_var, scalar_var, tensor, scalar,
     derives, overrides, disable, cite, source, eq, ne, lt, gt,

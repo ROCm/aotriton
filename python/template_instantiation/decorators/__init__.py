@@ -30,6 +30,7 @@ from .disable import DisableSpec, disable
 from .cite import CiteSpec, cite
 from .source import KernelStub, SourceError, source
 from .operator import BackendSpec, backend, OperatorSpec, operator
+from .metro import metro_kernel
 
 __all__ = [
     'ChoiceVar', 'type_var', 'scalar_var',
@@ -39,4 +40,5 @@ __all__ = [
     'CiteSpec', 'cite',
     'KernelStub', 'SourceError', 'source',
     'BackendSpec', 'backend', 'OperatorSpec', 'operator',
+    'metro_kernel',
 ]

@@ -2,21 +2,22 @@
 # SPDX-License-Identifier: MIT
 
 """
-ATI metro-kernel builder.
+Metro IR: MetroKernel / ConditionalKernel (codegen-facing) + lower_plan/build_metro.
 
 A metro is a LAUNCHER: it sequences its sub-kernels' contexts to implement one
-operator functional (e.g. attn_fwd then the debug kernel; or preprocess + dk_dv +
-dq). It owns no params struct or functional space of its own — the operator does.
+operator functional (e.g. attn_fwd then the debug kernel; or preprocess + dk_dv + dq).
+It owns no params struct or functional space of its own — the operator does.
 
-`MetroKernel` is the ATI metro launcher and `ConditionalKernel` its if/else step;
-both are ATI-native (subclass the ATI Interface base, no legacy aotriton.op). They
-expose only the launcher surface the operator codegen reads (`enum_name`,
-`list_kernels`, `iter_subkernels`, `get_kernel`, `iter_kernel_slot_names`).
-`build_metro` lowers a transpiled @ati.metro_kernel plan straight to one.
+`MetroKernel` is the ATI metro launcher and `ConditionalKernel` its if/else step; both
+subclass the ATI Interface base. They expose only the launcher surface the operator
+codegen reads (`enum_name`, `list_kernels`, `iter_subkernels`, `get_kernel`,
+`iter_kernel_slot_names`). `build_metro` lowers a transpiled @ati.metro_kernel plan
+(specs/metro.MetroPlan) straight to one. (lower_plan/build_metro are the Stage-4
+builders; they live here next to the IR until the builder/ package absorbs them.)
 """
 
-from ..ir import Interface
-from .transpile import lower_plan
+from .interface import Interface
+from ..specs.metro import Call, MetroError
 
 
 def _iter_concrete_subkernels(node):
@@ -112,7 +113,7 @@ class MetroKernel(Interface):
     def merged_operand_order(self):
         """Order-preserving merge (union_params) of every sub-kernel's ARGUMENTS,
         each translated through its APPAREL map (real -> operand, via apparel_of)."""
-        from ..ir.ops import union_params
+        from .ops import union_params
         subs = list(self.iter_subkernels())
         arg_lists = [list(s.ARGUMENTS) for s in subs]
         renames = []
@@ -124,6 +125,47 @@ class MetroKernel(Interface):
                 renames.append({a: apparel_of(a) for a in s.ARGUMENTS
                                 if apparel_of(a) != a})
         return union_params(arg_lists, renames=renames)
+
+
+def lower_plan(plan, kernel_map, metro_factory, conditional_factory):
+    """Lower a MetroPlan to the existing MetroKernel/ConditionalKernel IR.
+
+    kernel_map:          {sub-kernel name -> KernelDescription object}.
+    metro_factory:       callable(steps:list) -> MetroKernel (the lowered backend
+                         list). Argument wiring is NOT threaded here — it lives on
+                         each sub-kernel's kdesc (wires_to=, rev0 §4.3).
+    conditional_factory: the ConditionalKernel class/callable
+                         (if_parameter, if_expr, if_kernel, else_kernel).
+
+    Each Cond branch must be a single sub-kernel call (the C++ if/else launcher
+    template supports one kernel per branch); a multi-step branch is an error.
+    """
+    def resolve(call):
+        if call.kernel not in kernel_map:
+            raise MetroError(
+                f'metro {plan.name!r}: unknown sub-kernel {call.kernel!r}; '
+                f'known: {sorted(kernel_map)}')
+        return kernel_map[call.kernel]
+
+    def one_call(name, branch, which):
+        if len(branch) != 1 or not isinstance(branch[0], Call):
+            raise MetroError(
+                f'metro {plan.name!r}: the {which} branch of a condition must be a '
+                f'single sub-kernel call')
+        return branch[0]
+
+    steps = []
+    for step in plan.steps:
+        if isinstance(step, Call):
+            steps.append(resolve(step))
+        else:  # Cond
+            if_call = one_call(plan.name, step.then, 'if')
+            else_kernel = None
+            if step.orelse:
+                else_kernel = resolve(one_call(plan.name, step.orelse, 'else'))
+            steps.append(conditional_factory(step.if_parameter, step.if_expr,
+                                             resolve(if_call), else_kernel))
+    return metro_factory(steps)
 
 
 def build_metro(plan, kernel_map, name, *, family):

@@ -118,7 +118,7 @@ class CompiledFamily:
 
 def _plan_subkernel_names(plan):
     """Every concrete sub-kernel NAME a MetroPlan calls (descending into if/else)."""
-    from aotriton.template_instantiation.metro.transpile import Call, Cond
+    from aotriton.template_instantiation.specs.metro import Call, Cond
     out = []
 
     def walk(steps):
@@ -193,7 +193,7 @@ class Parser:
         """Pass 1 for one family: walk the `operators` roots, parse every reachable
         kernel / metro / affine into a shell, and record cross-references as
         relocations on the shells. Returns a CompiledFamily (nothing is built yet)."""
-        from aotriton.template_instantiation.metro.transpile import MetroPlan
+        from aotriton.template_instantiation.specs.metro import MetroPlan
 
         compiled = CompiledFamily(family)
         for op_def in getattr(aot_module, 'operators', []):

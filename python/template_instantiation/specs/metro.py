@@ -2,24 +2,12 @@
 # SPDX-License-Identifier: MIT
 
 """
-Metro-kernel transpiler (executive plan Step 5.5; agent-plans/ati_rev1.md §5).
+The MetroPlan spec + its transpiler (pipeline Stage 2).
 
-`@ati.metro_kernel` lets an operator's collaborating kernels be wired with
-ordinary Python if/else:
-
-    @ati.metro_kernel
-    def metro_fwd(params):
-        attn_fwd(params)                               # by-name wiring
-        if params.encoded_softmax.data_ptr() != 0:     # 0/None -> nullptr
-            debug_simulate_encoded_softmax(params, R=params.encoded_softmax)
-
-We PARSE the function's AST and never execute it (so both if/else branches are
-visible — no __bool__-on-proxy problem). The grammar is narrow: bare sub-kernel
-calls, if/elif/else, and `ast.Compare` conditions of the form
-`params.<NAME>[.data_ptr()] <op> <literal>`. Anything else is a build-time error.
-
-Output is a MetroPlan (steps); the operator builder lowers it to the existing
-MetroKernel / ConditionalKernel IR, so the C++ launcher codegen is untouched.
+`@ati.metro_kernel` (decorators/metro.py) wires an operator's collaborating kernels
+with ordinary Python if/else; this module PARSES that function's AST (never executes
+it) into a MetroPlan of Call/Cond steps. The builder (builder.metro.lower_plan / the
+linker's build_metro) lowers the plan to the MetroKernel / ConditionalKernel IR.
 """
 
 import ast
@@ -172,6 +160,11 @@ def _lower_body(name, body, params_name):
     return steps
 
 
+def _dedent(src):
+    import textwrap
+    return textwrap.dedent(src)
+
+
 def transpile(fn) -> MetroPlan:
     """Parse a @ati.metro_kernel function into a MetroPlan. Never executes it."""
     src = inspect.getsource(fn)
@@ -187,57 +180,3 @@ def transpile(fn) -> MetroPlan:
     params_name = args.args[0].arg
     steps = _lower_body(fdef.name, fdef.body, params_name)
     return MetroPlan(fdef.name, params_name, steps)
-
-
-def _dedent(src):
-    import textwrap
-    return textwrap.dedent(src)
-
-
-def metro_kernel(fn):
-    """@ati.metro_kernel: transpile the function body (never executed) into a
-    MetroPlan, attached as fn.__ati_metro__. Returns the function untouched so the
-    operator builder can read the plan."""
-    fn.__ati_metro__ = transpile(fn)
-    return fn
-
-
-def lower_plan(plan, kernel_map, metro_factory, conditional_factory):
-    """Lower a MetroPlan to the existing MetroKernel/ConditionalKernel IR.
-
-    kernel_map:          {sub-kernel name -> KernelDescription object}.
-    metro_factory:       callable(steps:list) -> MetroKernel (the lowered backend
-                         list). Argument wiring is NOT threaded here — it lives on
-                         each sub-kernel's kdesc (wires_to=, rev0 §4.3).
-    conditional_factory: the ConditionalKernel class/callable
-                         (if_parameter, if_expr, if_kernel, else_kernel).
-
-    Each Cond branch must be a single sub-kernel call (the C++ if/else launcher
-    template supports one kernel per branch); a multi-step branch is an error.
-    """
-    def resolve(call):
-        if call.kernel not in kernel_map:
-            raise MetroError(
-                f'metro {plan.name!r}: unknown sub-kernel {call.kernel!r}; '
-                f'known: {sorted(kernel_map)}')
-        return kernel_map[call.kernel]
-
-    def one_call(name, branch, which):
-        if len(branch) != 1 or not isinstance(branch[0], Call):
-            raise MetroError(
-                f'metro {plan.name!r}: the {which} branch of a condition must be a '
-                f'single sub-kernel call')
-        return branch[0]
-
-    steps = []
-    for step in plan.steps:
-        if isinstance(step, Call):
-            steps.append(resolve(step))
-        else:  # Cond
-            if_call = one_call(plan.name, step.then, 'if')
-            else_kernel = None
-            if step.orelse:
-                else_kernel = resolve(one_call(plan.name, step.orelse, 'else'))
-            steps.append(conditional_factory(step.if_parameter, step.if_expr,
-                                             resolve(if_call), else_kernel))
-    return metro_factory(steps)
