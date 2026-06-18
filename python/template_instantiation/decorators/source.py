@@ -29,17 +29,26 @@ class KernelStub:
     `__name__` / `__ati_source_path__` mirror the attributes the old JITFunction
     carried (consumed by builder.build_kernel and KernelSpec.source_path);
     `__ati_params__` is the AST-extracted parameter-name list (consumed by
-    introspect.kernel_params). `__ati_pending__` / `__ati__` are the stacked-@ sidecars
-    describe.py sets on the kernel object (the pending spec list during stacking, then
-    the finalized KernelSpec)."""
+    introspect.kernel_params). `__ati_annotations__` carries the STRING type
+    annotations the author wrote on the PLACEHOLDER def below @ati.source (e.g.
+    `def attn_fwd(dropout_p: 'fp32')`), which the finalizer turns into ScalarSpecs —
+    a terser alternative to a stacked @ati.scalar. `__ati_pending__` / `__ati__` are
+    the stacked-@ sidecars describe.py sets on the kernel object (the pending spec
+    list during stacking, then the finalized KernelSpec).
+
+    The Triton SOURCE file's own annotations are intentionally NOT read — only the
+    placeholder def's (agent-plans/ati_triton-free_exec0.md): triton kernels rarely
+    annotate, and @triton.jit abuses annotations (e.g. tl.constexpr), so they are not
+    a reliable type source."""
 
     __slots__ = ('__name__', '__ati_params__', '__ati_source_path__',
-                 '__ati_pending__', '__ati__')
+                 '__ati_annotations__', '__ati_pending__', '__ati__')
 
-    def __init__(self, name, params, source_path):
+    def __init__(self, name, params, source_path, annotations=None):
         self.__name__ = name
         self.__ati_params__ = list(params)
         self.__ati_source_path__ = source_path
+        self.__ati_annotations__ = dict(annotations or {})
 
     def __repr__(self):
         return (f'KernelStub({self.__name__!r}, {len(self.__ati_params__)} params, '
@@ -80,6 +89,15 @@ def source(path, name=None):
         def attn_fwd():                          # placeholder: no args, body `pass`
             pass
 
+    The placeholder def may declare scalar parameters with STRING type annotations as
+    a terser alternative to a stacked @ati.scalar — the finalizer turns each into a
+    ScalarSpec (it is an error for one to also be claimed by an explicit @ati.* spec):
+
+        @ati.start
+        @ati.source("../kernel/fwd_kernel.py")
+        def attn_fwd(dropout_p: 'fp32', philox_seed: '*u64'):
+            pass
+
     `path` is resolved relative to the DESCRIPTION file (the caller's __file__).
     The kernel symbol parsed from the source defaults to the placeholder `def`'s name;
     pass `name=` to override (the source filename, the kernel symbol, and the
@@ -101,6 +119,11 @@ def source(path, name=None):
                 f"@ati.source: kernel source {src} (from {path!r}, relative to "
                 f"{base}) does not exist")
         params = _ast_kernel_param_names(src, sym, path)
-        return KernelStub(sym, params, str(src))
+        # STRING type annotations on the placeholder def -> ScalarSpecs (finalizer).
+        # Non-string annotations (a stray triton dtype / tl.constexpr object) are
+        # disregarded: only the author's ATI type strings are a type source.
+        anns = {n: a for n, a in getattr(placeholder, '__annotations__', {}).items()
+                if isinstance(a, str)}
+        return KernelStub(sym, params, str(src), annotations=anns)
 
     return _decorator

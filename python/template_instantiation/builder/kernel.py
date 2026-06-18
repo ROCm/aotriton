@@ -22,7 +22,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from ..decorators import TensorSpec, ScalarSpec, ChoiceVar
-from ..introspect import ParamSpec
 from ..ir import Axis
 from ..ir.typed_choice import TypedChoice, ELEMENTAL_TYPE_MAP
 from .errors import DescriptionError
@@ -43,15 +42,14 @@ def _is_ati_type_string(s: str) -> bool:
         s = s[len('LazyTensor:'):]
     return (s.startswith('*') and s[1:] in ELEMENTAL_TYPE_MAP) or s in ELEMENTAL_TYPE_MAP
 
-# Scalar type fallback (agent-plans/ati_rev1.md §3.2, fb Q5).
+# Scalar type source (agent-plans/ati_rev1.md §3.2, fb Q5).
 #
-# A scalar's type comes from its explicit ati.scalar(..., '<type>') argument or, when
-# omitted, from the kernel signature's annotation — which the triton-free generator
-# only ever sees as a STRING ('*u64', 'i32', ...), handed to TypedChoice.parse (it
-# parses the ATI type vocabulary, typed_choice.ELEMENTAL_TYPE_MAP). The generator
-# never imports triton, so a raw triton dtype OBJECT (tl.float32, ...) cannot reach
-# here on the real path; if one does (a unit test introspecting a live @triton.jit via
-# inspect.signature), the author must give an explicit ATI type string instead.
+# A scalar's type comes from its explicit ati.scalar(..., '<type>') argument, or from a
+# STRING type annotation on the placeholder def (def k(x: 'fp32')) that the finalizer
+# (specs/finalize.describe) already turned into a ScalarSpec. Either way the type
+# reaches the builder as a string on ScalarSpec.type_, handed to TypedChoice.parse
+# (it parses the ATI type vocabulary, typed_choice.ELEMENTAL_TYPE_MAP). The generator
+# is triton-free and never reads types from the Triton source itself.
 
 
 _STRIDE_TYPE = 'u64:8'        # hidden stride dtype (matches the v2 stride_a8)
@@ -90,35 +88,18 @@ class BuiltKernel:
                 f'({nmulti} multi-choice), {len(self.overrides)} overrides)')
 
 
-def _scalar_type(spec: ScalarSpec, ann_by_name: dict, kernel_name: str):
-    """Resolve a plain (non-options, non-shared) scalar's type, returning a value
-    TypedChoice.parse accepts: explicit type wins; else a string annotation (validated
-    against the ATI type vocabulary).
-
-    Emits a kernel+parameter-named DescriptionError on failure, in the spirit
-    of the Triton compiler frontend this generator partially reimplements."""
+def _scalar_type(spec: ScalarSpec, kernel_name: str):
+    """The explicit type of a plain (non-options, non-shared) scalar. A scalar reaches
+    here only with `type_` set — either from ati.scalar('X', '<type>') or from a
+    placeholder-def string annotation the finalizer already turned into a ScalarSpec.
+    A scalar with no type is an error (the generator is triton-free; it never infers a
+    type from the Triton source)."""
     if spec.type_ is not None:
         return spec.type_
-    ann = ann_by_name.get(spec.arg_name, ParamSpec.EMPTY)
-    if isinstance(ann, str) and ann:
-        if not _is_ati_type_string(ann):
-            raise DescriptionError(
-                f"kernel {kernel_name!r}: parameter {spec.arg_name!r} is annotated "
-                f"{ann!r}, which is not a recognized ATI type. Give it an explicit "
-                f"type via ati.scalar({spec.arg_name!r}, '<type>'), or fix the "
-                f"annotation (e.g. 'i32', 'fp32', '*u64').")
-        return ann                      # TypedChoice.parse / TypedChoice handle it
-    if ann is ParamSpec.EMPTY:
-        raise DescriptionError(
-            f"kernel {kernel_name!r}: parameter {spec.arg_name!r} has no type. "
-            f"It is declared with ati.scalar({spec.arg_name!r}) but the kernel "
-            f"gives it no annotation to infer from; specify it explicitly via "
-            f"ati.scalar({spec.arg_name!r}, '<type>').")
     raise DescriptionError(
-        f"kernel {kernel_name!r}: parameter {spec.arg_name!r} is annotated with "
-        f"{ann!r}, a non-string annotation ATI cannot resolve (the generator is "
-        f"triton-free and does not map triton dtype objects); give an explicit ATI "
-        f"type string via ati.scalar({spec.arg_name!r}, '<type>').")
+        f"kernel {kernel_name!r}: parameter {spec.arg_name!r} has no type. Give it a "
+        f"type via ati.scalar({spec.arg_name!r}, '<type>') or a string annotation on "
+        f"the placeholder def (e.g. def {kernel_name}({spec.arg_name}: 'fp32')).")
 
 
 def _choices_from(values) -> list:
@@ -205,7 +186,6 @@ def build_kernel(kernel_spec) -> BuiltKernel:
     """Lower a KernelSpec (from describe()) into Axis + Override IR."""
     params = kernel_spec.params
     param_index = {p.name: i for i, p in enumerate(params)}
-    ann_by_name = {p.name: p.annotation for p in params}
     name = getattr(kernel_spec.kernel, '__name__', 'kernel')
 
     _resolve_named_dtypes(kernel_spec, name)
@@ -268,7 +248,7 @@ def build_kernel(kernel_spec) -> BuiltKernel:
         elif first.options is not None:             # enumerated (former feature)
             choices = _choices_from(first.options)
         else:                                       # plain runtime scalar
-            choices = _choices_from([_scalar_type(first, ann_by_name, name)])
+            choices = _choices_from([_scalar_type(first, name)])
         arg_names = [a for s in group for a in s.arg_names]
         anchor = min(param_index[a] for a in arg_names)
         signature_name = _resolve_signature_name(first.dtype, arg_names, name)

@@ -22,7 +22,7 @@ Axis/Override IR (enumerate_functionals input) is Step 2.4 (builder.py).
 
 from ..decorators import TensorSpec, ScalarSpec, ChoiceVar
 from ..ir import Override
-from ..introspect import kernel_params
+from ..introspect import kernel_params, kernel_annotations
 from .kernel import KernelSpec
 from .affine import AffineDecl, collect_affine_decl
 from .operator import OperatorDecl, collect_operator_decl
@@ -129,12 +129,43 @@ def _validate_completeness(params, tensors, scalars, tune_records, has_cite=Fals
     return errors
 
 
+def _claimed_arg_names(tensors, scalars):
+    """Every argument name claimed by an explicit @ati.tensor/@ati.scalar spec."""
+    claimed = set()
+    for t in tensors:
+        claimed.update(t.arg_names)
+    for s in scalars:
+        claimed.update(s.arg_names)
+    return claimed
+
+
+def _annotation_scalars(kernel, tensors, scalars):
+    """Synthesize a ScalarSpec for each STRING-annotated placeholder parameter (the
+    terse `def attn_fwd(dropout_p: 'fp32')` form), so the builder sees a uniform spec
+    list and needs no separate annotation code path. An annotated parameter that an
+    explicit @ati.* spec already claims is a conflict (DescriptionError)."""
+    from ..builder import DescriptionError
+    claimed = _claimed_arg_names(tensors, scalars)
+    out = []
+    for arg, type_str in kernel_annotations(kernel).items():
+        if arg in claimed:
+            raise DescriptionError(
+                f"kernel {getattr(kernel, '__name__', kernel)!r}: parameter {arg!r} "
+                f"has both a type annotation ({type_str!r} on the def) and an "
+                f"explicit @ati.tensor/@ati.scalar; declare it only once.")
+        out.append(ScalarSpec(arg, type_str))
+    return out
+
+
 def describe(kernel, *specs, _validate=True):
     """Attach an ATI KernelSpec to a kernel. Canonical for both authoring modes."""
     params = kernel_params(kernel)
     tensors, scalars, overrides, tune_records, disables, dtype_vars, cites, others = \
         _partition(specs)
     assert not others, f'describe() got unrecognized specs: {others}'
+    # Placeholder-def string annotations become ScalarSpecs (terse alternative to a
+    # stacked @ati.scalar); appended so completeness sees them like any other scalar.
+    scalars = scalars + _annotation_scalars(kernel, tensors, scalars)
     if _validate:
         errors = _validate_completeness(params, tensors, scalars, tune_records,
                                         has_cite=bool(cites))

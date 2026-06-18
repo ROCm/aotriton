@@ -99,5 +99,18 @@ def kernel_params(jit_fn) -> list[ParamSpec]:
     return out
 
 
+def kernel_annotations(jit_fn) -> dict[str, str]:
+    """The STRING type annotations the AUTHOR wrote on the @ati.source placeholder def
+    ({name -> type string}), captured onto the KernelStub as `__ati_annotations__`.
+
+    ONLY the placeholder def's annotations count. A real @triton.jit function's own
+    signature is deliberately NOT read (agent-plans/ati_triton-free_exec0.md): triton
+    kernels rarely annotate types and @triton.jit abuses annotations (e.g.
+    tl.constexpr), so the source is not a reliable type vocabulary. A Mode-B kernel
+    (a real function passed to describe()) therefore contributes no annotation-specs;
+    its types come entirely from explicit @ati.tensor/@ati.scalar."""
+    return dict(getattr(jit_fn, '__ati_annotations__', None) or {})
+
+
 def kernel_param_names(jit_fn) -> list[str]:
     return [p.name for p in kernel_params(jit_fn)]
