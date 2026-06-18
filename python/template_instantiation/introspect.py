@@ -16,8 +16,9 @@ function): we use stdlib inspect.signature over the underlying function and keep
 annotation as the RAW object the author wrote — a tl.dtype instance, the tl.constexpr
 class, a type string ('*u64'), or empty. We deliberately do NOT read triton's
 JITFunction.params (its .is_constexpr flag and annotation normalization are undocumented
-internals); the builder maps raw annotations by identity/value (builder._ANNOTATION_TYPE),
-depending only on Triton's public type objects when triton is present.
+internals). The builder resolves only STRING annotations against the ATI type
+vocabulary; a raw triton dtype object is rejected with a "give an explicit type string"
+error, since the generator is triton-free.
 """
 
 import inspect

@@ -35,48 +35,13 @@ def _is_ati_type_string(s: str) -> bool:
 
 # Scalar type fallback (agent-plans/ati_rev1.md §3.2, fb Q5).
 #
-# An introspected annotation (introspect.py keeps it RAW) is one of:
-#   * a string ('*u64', 'i32', ...) -> handed directly to TypedChoice.parse, which
-#     already parses the ATI type vocabulary (typed_choice.ELEMENTAL_TYPE_MAP).
-#   * a triton type OBJECT (tl.float32, tl.int32, tl.uint64, ...) -> looked up in
-#     the map below BY OBJECT IDENTITY. We never call str() on a triton dtype
-#     (its str is 'int32'/'uint64', not our 'i32'/'u64'); keying by the public
-#     type object is the stable contract.
-#
-# _build_annotation_type_map() is lazy so the module imports without triton (the
-# generation venv has none). When triton is absent, only string annotations are
-# resolvable here — which is the case the inspect fallback / tests exercise.
-#
-# A `tl.constexpr` annotation is intentionally unresolvable: such a parameter is
-# a compile-time enumerated dimension and must be declared via
-# @ati.scalar(..., options=...).
-_ANNOTATION_TYPE = None        # built lazily; {tl.dtype object -> ATI type str}
-
-
-def _annotation_type_map():
-    global _ANNOTATION_TYPE
-    if _ANNOTATION_TYPE is None:
-        m = {}
-        try:
-            import triton.language as tl
-            m = {
-                tl.float32: 'fp32',
-                tl.float16: 'fp16',
-                tl.bfloat16: 'bf16',
-                tl.int8: 'i8',
-                tl.int16: 'i16',
-                tl.int32: 'i32',
-                tl.int64: 'i64',
-                tl.uint8: 'u8',
-                tl.uint16: 'u16',
-                tl.uint32: 'u32',
-                tl.uint64: 'u64',
-                tl.int1: 'i1',
-            }
-        except Exception:
-            pass
-        _ANNOTATION_TYPE = m
-    return _ANNOTATION_TYPE
+# A scalar's type comes from its explicit ati.scalar(..., '<type>') argument or, when
+# omitted, from the kernel signature's annotation — which the triton-free generator
+# only ever sees as a STRING ('*u64', 'i32', ...), handed to TypedChoice.parse (it
+# parses the ATI type vocabulary, typed_choice.ELEMENTAL_TYPE_MAP). The generator
+# never imports triton, so a raw triton dtype OBJECT (tl.float32, ...) cannot reach
+# here on the real path; if one does (a unit test introspecting a live @triton.jit via
+# inspect.signature), the author must give an explicit ATI type string instead.
 
 
 _STRIDE_TYPE = 'u64:8'        # hidden stride dtype (matches the v2 stride_a8)
@@ -116,7 +81,7 @@ class BuiltKernel:
 def _scalar_type(spec: ScalarSpec, ann_by_name: dict, kernel_name: str):
     """Resolve a plain (non-options, non-shared) scalar's type, returning a value
     TypedChoice.parse accepts: explicit type wins; else a string annotation (validated
-    against the ATI type vocabulary); else a triton type OBJECT mapped by identity.
+    against the ATI type vocabulary).
 
     Emits a kernel+parameter-named DescriptionError on failure, in the spirit
     of the Triton compiler frontend this generator partially reimplements."""
@@ -131,9 +96,6 @@ def _scalar_type(spec: ScalarSpec, ann_by_name: dict, kernel_name: str):
                 f"type via ati.scalar({spec.arg_name!r}, '<type>'), or fix the "
                 f"annotation (e.g. 'i32', 'fp32', '*u64').")
         return ann                      # TypedChoice.parse / TypedChoice handle it
-    mapped = _annotation_type_map().get(ann)
-    if mapped is not None:
-        return mapped
     if ann is ParamSpec.EMPTY:
         raise DescriptionError(
             f"kernel {kernel_name!r}: parameter {spec.arg_name!r} has no type. "
@@ -142,9 +104,9 @@ def _scalar_type(spec: ScalarSpec, ann_by_name: dict, kernel_name: str):
             f"ati.scalar({spec.arg_name!r}, '<type>').")
     raise DescriptionError(
         f"kernel {kernel_name!r}: parameter {spec.arg_name!r} is annotated with "
-        f"{ann!r}, which ATI cannot map to a type. If it is a triton dtype, extend "
-        f"_annotation_type_map; otherwise give an explicit type via "
-        f"ati.scalar({spec.arg_name!r}, '<type>').")
+        f"{ann!r}, a non-string annotation ATI cannot resolve (the generator is "
+        f"triton-free and does not map triton dtype objects); give an explicit ATI "
+        f"type string via ati.scalar({spec.arg_name!r}, '<type>').")
 
 
 def _choices_from(values) -> list:
