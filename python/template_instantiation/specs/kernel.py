@@ -18,7 +18,8 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..introspect import ParamSpec
-    from ..decorators.argspec import TensorSpec, ScalarSpec
+    from ..decorators.tensor import TensorSpec
+    from ..decorators.scalar import ScalarSpec
     from ..decorators.choicevar import ChoiceVar
     from ..decorators.cite import CiteSpec
     from ..decorators.disable import DisableSpec

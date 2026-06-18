@@ -24,7 +24,8 @@ Surface:
 """
 
 from .choicevar import ChoiceVar, type_var, scalar_var
-from .argspec import TensorSpec, ScalarSpec, tensor, scalar
+from .tensor import TensorSpec, tensor
+from .scalar import ScalarSpec, scalar
 from .derive import derives, overrides, eq, ne, lt, gt, le, ge
 from .disable import DisableSpec, disable
 from .cite import CiteSpec, cite
