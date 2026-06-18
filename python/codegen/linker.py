@@ -156,7 +156,7 @@ def _build_affines(compiled):
 
 def _build_metros(compiled, built_kernels):
     """Build every MetroKernel, binding its sub-kernels by name to built kdescs."""
-    from aotriton.template_instantiation.ir.metro import build_metro
+    from aotriton.template_instantiation.builder import build_metro
     out = {}
     for name, shell in compiled.metros.items():
         out[name] = build_metro(shell.plan, built_kernels, name,
@@ -202,7 +202,7 @@ def _derive_struct_cfields(backends, default_kdesc):
     so return it directly (the merge over a superset can reorder shared fields and is
     unnecessary). Otherwise merge (the bwd case — DQ/DB/Out/DQ_ACC live only on some
     backends)."""
-    from aotriton.template_instantiation.ir.operator import build_merged_struct_cfields
+    from aotriton.template_instantiation.builder import build_merged_struct_cfields
     contributors = [s for b in backends for s in _iter_concrete(b)]
     default_fields = {cf.aname for cf in default_kdesc.func_cfields}
     all_fields = set()

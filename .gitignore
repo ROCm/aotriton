@@ -1,5 +1,8 @@
 __pycache__/
 *build*/
+# ...but the ATI `builder/` source package is tracked (the *build*/ rule above is
+# for CMake/out-of-source build dirs, not this Python package).
+!python/template_instantiation/builder/
 *.swp
 tritonsrc/tune-*.json
 *.csv

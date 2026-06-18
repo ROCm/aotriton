@@ -16,16 +16,11 @@ constexpr 1 for the contiguous stride). They live in the resolved arg table and
 the params/signature machinery but are not godel digits.
 """
 
-from .decorators import TensorSpec, ScalarSpec, ChoiceVar
-from .introspect import ParamSpec
-from .ir import Axis
-from .ir.typed_choice import TypedChoice, ELEMENTAL_TYPE_MAP
-
-
-class DescriptionError(Exception):
-    """A diagnostic from the ATI front-end. Like the Triton compiler frontend it
-    partially mimics, it names the kernel and parameter at fault and says how to
-    fix it."""
+from ..decorators import TensorSpec, ScalarSpec, ChoiceVar
+from ..introspect import ParamSpec
+from ..ir import Axis
+from ..ir.typed_choice import TypedChoice, ELEMENTAL_TYPE_MAP
+from .errors import DescriptionError
 
 
 def _is_ati_type_string(s: str) -> bool:
@@ -331,7 +326,7 @@ def build_kernel(kernel_spec) -> BuiltKernel:
     # keeps the description terse: `ati.derives('B', to=0, when=...)` need not also
     # list stride_b*. Synthesize the stride overrides here, under the SAME
     # predicate. (Unit/contiguous strides are constexpr 1 already and excluded.)
-    from .ir import Override as _Override
+    from ..ir import Override as _Override
     extra_stride_ovs = []
     for ov in func_ovs:
         if ov.value != 0:

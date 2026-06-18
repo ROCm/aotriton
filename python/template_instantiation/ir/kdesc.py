@@ -21,8 +21,6 @@ filled in Step 4.2 while running the real generator, where the exact requirement
 surface.
 """
 
-from ..builder import build_kernel
-from ..specs.finalize import get_kernel_spec
 from .axis import assign_godel
 from .interface import Interface
 
@@ -577,27 +575,3 @@ class KernelDescription(Interface):
         if not self.is_tunable:
             return False
         return any(d.holds(functional) for d in self._built.disables)
-
-
-def build_kernel_description(kernel, *, family, source_path=None,
-                             triton_kernel_name=None, register=True):
-    """Build an KernelDescription from a kernel already described via
-    ati.describe() / the stacked-@ form.
-
-    Before lowering, @ati.cite gaps are filled from kernels built earlier (the flat
-    per-family registry). After building, the kdesc registers itself so later
-    kernels can cite it. `register=False` skips registration (test isolation)."""
-    from .ops.cite import resolve_cites
-    from .. import registry as _registry
-    spec = get_kernel_spec(kernel)
-    assert spec is not None, (
-        f'kernel {getattr(kernel, "__name__", kernel)!r} has no ATI description; '
-        f'call ati.describe(...) or use the stacked-@ form first')
-    resolve_cites(spec, family=family)        # fill cited gaps before lowering
-    built = build_kernel(spec)
-    adapter = KernelDescription(built, family=family, source_path=source_path,
-                                   triton_kernel_name=triton_kernel_name)
-    adapter.kernel_spec = spec      # source KernelSpec (for --sancheck)
-    if register:
-        _registry.register_kernel(adapter)
-    return adapter
