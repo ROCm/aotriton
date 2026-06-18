@@ -80,10 +80,10 @@ def kernel_params(jit_fn) -> list[ParamSpec]:
 
     Fallback path: a real callable / @triton.jit function (e.g. a unit test passing a
     plain function) is introspected via stdlib inspect.signature with raw annotations."""
-    ati_params = getattr(jit_fn, '__ati_params__', None)
-    if ati_params is not None:
+    from .decorators.source import KernelStub
+    if isinstance(jit_fn, KernelStub):
         return [ParamSpec(name=n, is_constexpr=False, annotation=ParamSpec.EMPTY)
-                for n in ati_params]
+                for n in jit_fn.params]
     fn = _underlying_fn(jit_fn)
     if not callable(fn):
         raise TypeError(f'kernel_params expects a callable/JITFunction, got {jit_fn!r}')
@@ -109,7 +109,10 @@ def kernel_annotations(jit_fn) -> dict[str, str]:
     tl.constexpr), so the source is not a reliable type vocabulary. A Mode-B kernel
     (a real function passed to describe()) therefore contributes no annotation-specs;
     its types come entirely from explicit @ati.tensor/@ati.scalar."""
-    return dict(getattr(jit_fn, '__ati_annotations__', None) or {})
+    from .decorators.source import KernelStub
+    if isinstance(jit_fn, KernelStub):
+        return dict(jit_fn.annotations)
+    return {}
 
 
 def kernel_param_names(jit_fn) -> list[str]:

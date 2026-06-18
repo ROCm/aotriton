@@ -60,7 +60,8 @@ class KernelSpec:
         self.disables = self.disables or []
         self.dtype_vars = self.dtype_vars or []
         self.cites = self.cites or []
-        self.source_path = getattr(self.kernel, '__ati_source_path__', None)
+        from ..decorators.source import KernelStub
+        self.source_path = self.kernel.source_path if isinstance(self.kernel, KernelStub) else None
 
     @property
     def param_names(self):

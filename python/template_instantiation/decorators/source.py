@@ -26,14 +26,12 @@ class KernelStub:
     triton; their types are supplied entirely by the @ati.* decorators (annotations on
     the kernel are intentionally NOT read — see agent-plans/ati_triton-free_exec0.md).
 
-    `__name__` / `__ati_source_path__` mirror the attributes the old JITFunction
-    carried (consumed by builder.build_kernel and KernelSpec.source_path);
-    `__ati_params__` is the AST-extracted parameter-name list (consumed by
-    introspect.kernel_params). `__ati_annotations__` carries the STRING type
-    annotations the author wrote on the PLACEHOLDER def below @ati.source (e.g.
-    `def attn_fwd(dropout_p: 'fp32')`), which the finalizer turns into ScalarSpecs —
-    a terser alternative to a stacked @ati.scalar. `__ati_pending__` / `__ati__` are
-    the stacked-@ sidecars describe.py sets on the kernel object (the pending spec
+    `params` is the AST-extracted parameter-name list (consumed by
+    introspect.kernel_params). `annotations` carries the STRING type annotations the
+    author wrote on the PLACEHOLDER def below @ati.source (e.g. `def attn_fwd(dropout_p:
+    'fp32')`), which the finalizer turns into ScalarSpecs. `source_path` is the resolved
+    path to the Triton source file (consumed by KernelSpec). `__ati_pending__` / `__ati__`
+    are the stacked-@ sidecars describe.py sets on the kernel object (the pending spec
     list during stacking, then the finalized KernelSpec).
 
     The Triton SOURCE file's own annotations are intentionally NOT read — only the
@@ -41,18 +39,18 @@ class KernelStub:
     annotate, and @triton.jit abuses annotations (e.g. tl.constexpr), so they are not
     a reliable type source."""
 
-    __slots__ = ('__name__', '__ati_params__', '__ati_source_path__',
-                 '__ati_annotations__', '__ati_pending__', '__ati__')
+    __slots__ = ('__name__', 'params', 'source_path', 'annotations',
+                 '__ati_pending__', '__ati__')
 
     def __init__(self, name, params, source_path, annotations=None):
         self.__name__ = name
-        self.__ati_params__ = list(params)
-        self.__ati_source_path__ = source_path
-        self.__ati_annotations__ = dict(annotations or {})
+        self.params = list(params)
+        self.source_path = source_path
+        self.annotations = dict(annotations or {})
 
     def __repr__(self):
-        return (f'KernelStub({self.__name__!r}, {len(self.__ati_params__)} params, '
-                f'{self.__ati_source_path__!r})')
+        return (f'KernelStub({self.__name__!r}, {len(self.params)} params, '
+                f'{self.source_path!r})')
 
 
 def _ast_kernel_param_names(src, sym, path):
