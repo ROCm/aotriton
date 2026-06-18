@@ -141,7 +141,7 @@ def _build_kernels(compiled):
 
 def _build_affines(compiled):
     """Build every AffineKernel from its parsed AffineDecl."""
-    from aotriton.template_instantiation.affine import AffineKernel
+    from aotriton.template_instantiation.ir.affine import AffineKernel
     out = {}
     for name, decl in compiled.affines.items():
         out[name] = AffineKernel(

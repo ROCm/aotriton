@@ -234,7 +234,7 @@ def kernel(jit_fn):
         'use ati.describe(kernel, *specs) (Mode B) instead.')
     specs = list(reversed(pending))      # bottom-up application -> source order
     from .decorators import OperatorSpec
-    from .affine import AffineMarkerSpec
+    from .decorators.affine import AffineMarkerSpec
     if any(isinstance(s, OperatorSpec) for s in specs):
         op = _finalize_operator(jit_fn, specs)
         delattr(jit_fn, _PENDING)
@@ -275,7 +275,7 @@ class AffineDecl:
 
 def _collect_affine_decl(specs):
     """Partition an @ati.affine stack into a passive AffineDecl (no build)."""
-    from .affine import (
+    from .decorators.affine import (
         AffineMarkerSpec, SharedOperatorSpec, ArchSpec,
         LimitationsSpec, StructuresSpec, DirectoriesSpec, SuppliesSpec,
     )
