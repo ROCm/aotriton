@@ -33,6 +33,7 @@ from .aiter_bwd import aiter_fmha_v3_bwd
 
 # --- triton metro backends (transpiled, never executed) -------------------
 
+@ati.start
 @ati.metro_kernel
 def metro_fwd(params):
     attn_fwd(params)
@@ -45,6 +46,7 @@ def metro_fwd(params):
 # `stride_don` there vs `stride_dok` on the key kernels). When bwd_kernel_dq @ati.cites
 # the whole metro, the gap donor must be a key kernel — this priority order (key first)
 # steers both the cite gap-fill and the operator params-struct union.
+@ati.start
 @ati.hints.union_precedence([bwd_kernel_dk_dv, bwd_kernel_dq,
                              bwd_preprocess_varlen, bwd_preprocess])
 @ati.metro_kernel

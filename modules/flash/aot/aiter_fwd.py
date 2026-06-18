@@ -27,7 +27,6 @@ def _aiter_fwd_disabled(functional):
 
 @ati.start
 @ati.disable(when=_aiter_fwd_disabled)
-@ati.affine.aiter_asm(name='aiter_fmha_v3_fwd')
 @ati.affine.shared_operator('op_attn_fwd')
 @ati.affine.arch(['gfx942', 'gfx950'])
 @ati.affine.limitations(Q=lambda dtype: 'fp16' in dtype or 'bf16' in dtype,
@@ -37,5 +36,6 @@ def _aiter_fwd_disabled(functional):
 @ati.affine.structures(cookie='aiter::mha_fwd_args')
 @ati.affine.directories(co_dir='fmha_v3_fwd',
                         headers=['aotriton/_internal/flash/aiter.h'])
+@ati.affine.aiter_asm(name='aiter_fmha_v3_fwd')
 def aiter_fmha_v3_fwd():
     pass

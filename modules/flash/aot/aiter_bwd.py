@@ -29,7 +29,6 @@ def _aiter_bwd_disabled(functional):
 
 @ati.start
 @ati.disable(when=_aiter_bwd_disabled)
-@ati.affine.aiter_asm(name='aiter_fmha_v3_bwd')
 @ati.affine.shared_operator('op_attn_bwd')
 @ati.affine.arch(['gfx942', 'gfx950'])
 # asm bwd has [64, 128, 192] hdim variants (others in between may be padded).
@@ -45,5 +44,6 @@ def _aiter_bwd_disabled(functional):
 @ati.affine.supplies(
     ati.tensor('DQ_ACC', 'LazyTensor:*fp32:16', strides='stride_acc?', contiguous=-1),
     after='DB', before='L')
+@ati.affine.aiter_asm(name='aiter_fmha_v3_bwd')
 def aiter_fmha_v3_bwd():
     pass
