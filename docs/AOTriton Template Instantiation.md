@@ -38,7 +38,7 @@ symbol name in the Triton source file (or the `name=` argument to
 `@ati.source`). The function body is never executed — write `pass` or `...`.
 The only meaningful content on the placeholder `def` is optional **string type
 annotations** on the parameters, which become `ScalarSpec`s (see
-[§2.1](#21-atisourcepath-namenone)).
+[§2.2](#22-inline-scalar-types-via-placeholder-annotations)).
 
 There are four kinds of stacked block, distinguished by the innermost decorator:
 
@@ -89,8 +89,10 @@ environment), and returns a `KernelStub` carrying the parameter names. The
 kernel symbol name defaults to the placeholder `def`'s name; pass `name=` to
 override.
 
-The placeholder `def` may also declare scalar parameters with **string type
-annotations** as a terse alternative to stacked `@ati.scalar`:
+#### 2.2 Inline Scalar Types via Placeholder Annotations
+
+As a terse alternative to stacked `@ati.scalar`, the placeholder `def` may
+declare scalar parameters with **string type annotations**:
 
 ```python
 @ati.start
@@ -99,10 +101,13 @@ def attn_fwd(dropout_p: 'fp32', philox_seed: '*u64'):
     pass
 ```
 
-Each string-annotated parameter becomes a `ScalarSpec`; a conflict with an
-explicit `@ati.scalar` for the same parameter is an error.
+Each string-annotated parameter becomes a `ScalarSpec` with the given ATI type.
+Non-string annotations (e.g. a stray `tl.constexpr` object) are silently
+ignored — only string literals are a valid type source. A conflict between an
+annotation and an explicit `@ati.scalar` on the same parameter is an error;
+declare it only once.
 
-#### 2.2 Type Variables — `ati.type_var` and its scalar variant `ati.scalar_var`
+#### 2.3 Type Variables — `ati.type_var` and its scalar variant `ati.scalar_var`
 
 Inspired by Python's `typing.TypeVar`, an ATI type variable is a **named,
 reusable placeholder for a set of concrete types**. Just as `TypeVar('T')` lets
@@ -129,7 +134,7 @@ artifacts).
 
 `ati.scalar_var` works identically for scalar enumerations.
 
-#### 2.3 Tensor Binding — `@ati.tensor`
+#### 2.4 Tensor Binding — `@ati.tensor`
 
 ```python
 ati.tensor(arg_name, dtype, *,
@@ -148,7 +153,7 @@ A `dtype` of `'*fp16:16'` is a literal ATI type string; a `ChoiceVar` (from
 `ati.type_var`) makes the tensor polymorphic. Multiple argument names can share
 one binding by passing a list: `ati.tensor(['Q', 'K'], T_io, rank=2)`.
 
-#### 2.4 Scalar Binding — `@ati.scalar`
+#### 2.5 Scalar Binding — `@ati.scalar`
 
 ```python
 ati.scalar(arg_name, type_or_var=None, *, options=None, wires_to=None)
@@ -162,7 +167,7 @@ ati.scalar(arg_name, type_or_var=None, *, options=None, wires_to=None)
 `options` accepts a Python list (C width inferred from values) or a numpy array
 with an explicit dtype (`np.array([0, 3], np.int16)`) to fix the struct width.
 
-#### 2.5 Conditional Overrides — `@ati.derives`
+#### 2.6 Conditional Overrides — `@ati.derives`
 
 ```python
 ati.derives('B', to=0, when=ati.eq('BIAS_TYPE', 0))
@@ -180,7 +185,7 @@ description stays terse.
 
 `@ati.overrides` is an alias for `@ati.derives`.
 
-#### 2.6 Disable Predicates — `@ati.disable` / `@ati.no_disable`
+#### 2.7 Disable Predicates — `@ati.disable` / `@ati.no_disable`
 
 ```python
 @ati.disable(when=lambda f: f.arch.startswith('gfx11') and f.choices.BLOCK_DMODEL > 256)
@@ -203,7 +208,7 @@ def bwd_preprocess():
     pass
 ```
 
-#### 2.7 Cross-Kernel References — `@ati.cite`
+#### 2.8 Cross-Kernel References — `@ati.cite`
 
 ```python
 @ati.cite('op_attn_fwd.triton.attn_fwd')          # 3-segment: one sub-kernel
@@ -215,7 +220,7 @@ locally — from the cited kernel's bindings, matched by apparel name. Gap filli
 happens at link time (Pass 2), so there is no order constraint between the
 citing and cited kernel in the source file.
 
-#### 2.8 Performance Tuning — `@ati.tune.*`
+#### 2.9 Performance Tuning — `@ati.tune.*`
 
 ```python
 from dataclasses import dataclass
