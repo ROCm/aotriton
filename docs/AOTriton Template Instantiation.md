@@ -24,14 +24,21 @@ Every description is made with **stacked decorator blocks**, all terminated by
 @ati.tensor(...)     ← specs accumulate bottom-up ...
 @ati.scalar(...)
 @ati.source(...)     ← innermost; runs first; supplies the kernel object
-def my_kernel():
-    pass
+def my_kernel():     ← placeholder def — body is IGNORED
+    pass             ← use `pass` or `...`; the function is never called
 ```
 
 Python applies decorators from bottom to top, so `@ati.source` runs first and
 returns a stub; each spec above it accumulates onto that stub; finally `@ati.start`
 reads all accumulated specs in source order and produces the passive description
 record.
+
+**The placeholder `def` name is the kernel's identity.** It must match the
+symbol name in the Triton source file (or the `name=` argument to
+`@ati.source`). The function body is never executed — write `pass` or `...`.
+The only meaningful content on the placeholder `def` is optional **string type
+annotations** on the parameters, which become `ScalarSpec`s (see
+[§2.1](#21-atisourcepath-namenone)).
 
 There are four kinds of stacked block, distinguished by the innermost decorator:
 
