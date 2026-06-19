@@ -215,15 +215,38 @@ def bwd_preprocess():
 
 #### 2.7 Cross-Kernel References — `@ati.cite`
 
+`@ati.cite` fills **gap arguments** — signature parameters the citing kernel
+doesn't claim locally — from another kernel's bindings, matched by apparel name.
+Gap filling happens at link time, so there is no source-file order constraint
+between the citing and cited kernel. Each kernel uses exactly one `@ati.cite`.
+
+**3-segment cite** (`op.metro.kernel`): inherit from one specific sub-kernel.
+
 ```python
-@ati.cite('op_attn_fwd.triton.attn_fwd')          # 3-segment: one sub-kernel
-@ati.cite('op_attn_bwd.triton_split')              # 2-segment: whole metro
+# bwd_kernel_dq inherits dropout/seqlen scalars from the fwd metro's attn_fwd
+@ati.start
+@ati.cite('op_attn_bwd.triton_split.bwd_kernel_dk_dv')   # op.metro.kernel
+@ati.tensor('DQ', 'T_io', strides='stride_dq?', contiguous=-1)
+# ...remaining local args only...
+@ati.source('../kernel/bwd_kernel_dq.py')
+def bwd_kernel_dq():
+    pass
 ```
 
-Fills **gap arguments** — signature parameters the citing kernel doesn't claim
-locally — from the cited kernel's bindings, matched by apparel name. Gap filling
-happens at link time (Pass 2), so there is no order constraint between the
-citing and cited kernel in the source file.
+**2-segment cite** (`op.metro`): inherit from all sub-kernels of an entire
+metro, merged in `union_precedence` order (key kernels first). Used when the
+citing kernel shares the full argument surface of the metro.
+
+```python
+# bwd_preprocess inherits from every sub-kernel of metro_bwd
+@ati.start
+@ati.cite('op_attn_bwd.triton_split')                    # op.metro (whole metro)
+@ati.tensor('Out', 'T_io', strides='stride_o?', contiguous=-1)
+# ...remaining local args only...
+@ati.source('../kernel/bwd_preprocess.py')
+def bwd_preprocess():
+    pass
+```
 
 #### 2.8 Performance Tuning — `@ati.tune.*`
 
