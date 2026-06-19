@@ -39,23 +39,14 @@ class ChoiceView:
     Step 1.5.md §6, ati+newbinds_rev1.md §5).
 
     Attribute access is keyed by *choice-variable name*: `f.choices.T_io` returns
-    the variable's triton signature (replacing the old check_value(f, ['Q'])
-    argument-name lookup). `.tc(var)` hands back the raw TypedChoice; `.arg(aname)`
-    reads the resolved per-argument value (post-override)."""
+    the variable's triton signature. `.tc(var)` returns the raw TypedChoice;
+    `.arg(aname)` / `.arg_tc(aname)` read a resolved argument by real name."""
 
     __slots__ = ('_choice', '_resolved')
 
     def __init__(self, functional):
         self._choice = functional.choice       # var_name -> TypedChoice
         self._resolved = functional.resolved   # arg_name -> TypedChoice
-
-    def __getattr__(self, var):
-        choice = self._choice.get(var)
-        if choice is None:
-            raise ChoiceVarAbsent(
-                f'{var!r} is not a choice variable of this functional; '
-                f'valid: {sorted(self._choice)}')
-        return choice.triton_compile_signature
 
     def tc(self, var):
         """The raw TypedChoice for a variable (for .itype / .type_enum / rank)."""
@@ -79,6 +70,15 @@ class ChoiceView:
                 f'{aname!r} is not a resolved argument; '
                 f'valid: {sorted(self._resolved)}')
         return self._resolved[aname]
+
+    def __getattr__(self, var):
+        choice = self._choice.get(var)
+        if choice is None:
+            raise ChoiceVarAbsent(
+                f'{var!r} is not a choice variable of this functional; '
+                f'valid: {sorted(self._choice)}')
+        return choice.triton_compile_signature
+
 
 
 class Functional:
@@ -169,10 +169,6 @@ class Functional:
         """arg_name -> resolved TypedChoice for every argument (post-override)."""
         return dict(self.resolved)
 
-    def build_tc_dict(self):
-        """repr_name -> resolved TypedChoice for multi-choice axes."""
-        return self.compact_choices
-
     def pp_arg_doc(self, aname):
         """(is_constexpr, comment_value) for one launch argument's prepare_arguments
         entry, sourced from the resolved TypedChoice + the firing Override (no Bind):
@@ -207,20 +203,6 @@ class Functional:
             tc = self.resolved[ax.repr_arg]
             parts.append(f'{ax.signature_name}={tc.testrun_entry_signature}')
         return ';'.join(parts)
-
-    @property
-    def signature_in_func_name(self) -> str:
-        parts = []
-        for ax in self.meta_object.axes_multi:
-            s = str(self.resolved[ax.repr_arg].triton_compile_signature)
-            s = s.replace('*', '＊').replace(':', '@') \
-                 .replace('True', 'T').replace('False', 'F')
-            parts.append(s)
-        return '_'.join(parts)
-
-    @property
-    def compact_signature_noarch(self) -> str:
-        return 'F__' + self.signature_in_func_name
 
     @property
     def human_readable_signature(self) -> str:
@@ -258,13 +240,6 @@ class Functional:
         from aotriton.gpu_targets import AOTRITON_ARCH_TO_DIRECTORY
         return (Path(AOTRITON_ARCH_TO_DIRECTORY[self.arch]) / self.meta_object.FAMILY
                 / (self.meta_object.NAME + '.zip'))
-
-    @property
-    def full_filepack_dir(self):
-        from pathlib import Path
-        from aotriton.gpu_targets import AOTRITON_ARCH_TO_DIRECTORY
-        return (Path(AOTRITON_ARCH_TO_DIRECTORY[self.arch]) / self.meta_object.FAMILY
-                / self.meta_object.NAME)
 
     @property
     def tunecc_signature(self) -> str:

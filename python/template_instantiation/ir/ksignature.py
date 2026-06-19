@@ -37,9 +37,6 @@ class KernelSignature(object):
         self._perfs = perf_struct
         self._copts = list(copt_values)
 
-    def functional(self):
-        return self._functional
-
     @property
     def perf_cdict(self):
         return { name : tc.json_value for name, tc in self._perfs.items() }
@@ -50,13 +47,7 @@ class KernelSignature(object):
 
     @property
     def copt_dict(self):
-        kdesc = self._functional.meta_object
         return { oname : v for oname, v in zip(COMPILER_OPTIONS, self._copts) }
-
-    @property
-    def copt_signature(self):
-        lc = [f"{COMPACT_COMPILER_OPTIONS[oname]}{v}" for oname, v in self.copt_dict.items()]
-        return '_'.join(lc)
 
     @cached_property
     def perf_section(self) -> str:
