@@ -138,22 +138,31 @@ def _claimed_arg_names(tensors, scalars):
     return claimed
 
 
-def _annotation_scalars(kernel, tensors, scalars):
-    """Synthesize a ScalarSpec for each STRING-annotated placeholder parameter (the
-    terse `def attn_fwd(dropout_p: 'fp32')` form), so the builder sees a uniform spec
-    list and needs no separate annotation code path. An annotated parameter that an
-    explicit @ati.* spec already claims is a conflict (DescriptionError)."""
-    from ..builder import DescriptionError
+def _annotation_specs(kernel, tensors, scalars):
+    """Synthesize specs from STRING-annotated placeholder parameters.
+
+    Tensor pointer annotations (starting with '*' or 'LazyTensor:') produce a
+    rank-0 TensorSpec with no strides — suitable for strideless pointer arguments
+    like philox seeds, LSE tensors, or encoded-softmax buffers. All other string
+    annotations produce a ScalarSpec.
+
+    An annotated parameter that an explicit @ati.* spec already claims is an error.
+    """
+    from ..builder import DescriptionError, _is_ati_type_string
     claimed = _claimed_arg_names(tensors, scalars)
-    out = []
+    new_tensors, new_scalars = [], []
     for arg, type_str in kernel_annotations(kernel).items():
         if arg in claimed:
             raise DescriptionError(
                 f"kernel {getattr(kernel, '__name__', kernel)!r}: parameter {arg!r} "
                 f"has both a type annotation ({type_str!r} on the def) and an "
                 f"explicit @ati.tensor/@ati.scalar; declare it only once.")
-        out.append(ScalarSpec(arg, type_str))
-    return out
+        if type_str.startswith('*') or type_str.startswith('LazyTensor:'):
+            # Tensor pointer type: rank=0, no strides (strideless pointer argument).
+            new_tensors.append(TensorSpec(arg, type_str, rank=0))
+        else:
+            new_scalars.append(ScalarSpec(arg, type_str))
+    return new_tensors, new_scalars
 
 
 def describe(kernel, *specs, _validate=True):
@@ -162,9 +171,12 @@ def describe(kernel, *specs, _validate=True):
     tensors, scalars, overrides, tune_records, disables, dtype_vars, cites, others = \
         _partition(specs)
     assert not others, f'describe() got unrecognized specs: {others}'
-    # Placeholder-def string annotations become ScalarSpecs (terse alternative to a
-    # stacked @ati.scalar); appended so completeness sees them like any other scalar.
-    scalars = scalars + _annotation_scalars(kernel, tensors, scalars)
+    # Placeholder-def string annotations become TensorSpec (pointer types: '*...' /
+    # 'LazyTensor:...') or ScalarSpec (all others). Appended so completeness sees
+    # them like any other tensor/scalar.
+    ann_tensors, ann_scalars = _annotation_specs(kernel, tensors, scalars)
+    tensors = tensors + ann_tensors
+    scalars = scalars + ann_scalars
     if _validate:
         errors = _validate_completeness(params, tensors, scalars, tune_records,
                                         has_cite=bool(cites))
