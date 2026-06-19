@@ -1,9 +1,19 @@
 # AOTriton Template Instantiation (ATI)
 
-ATI is the declarative front-end for describing AOTriton kernels and operators.
-An author writes Python decorator stacks that record *what* a kernel does; the ATI
-compiler pipeline translates those descriptions into C++ shim headers, operator
-dispatchers, and autotune tables without ever importing or executing Triton.
+AOTriton Template Instantiation is the declarative front-end for describing AOTriton
+kernels and operators. An author writes Python decorator stacks that record *what* a
+kernel does; the compiler pipeline translates those descriptions into C++ shim headers,
+operator dispatchers, and autotune tables without ever importing or executing Triton.
+
+The entire authoring surface is exposed through a single import, conventionally
+aliased as `ati`:
+
+```python
+import aotriton.template_instantiation as ati
+```
+
+All decorator and factory names in this document use the `ati.` prefix. The
+abbreviation **ATI** is used throughout to refer to this system.
 
 ---
 
