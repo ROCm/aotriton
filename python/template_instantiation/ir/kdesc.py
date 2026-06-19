@@ -23,10 +23,9 @@ surface.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from .axis import assign_godel
+from .axis import assign_godel, TemplateParam
 from .interface import Interface
 
 if TYPE_CHECKING:
@@ -47,51 +46,6 @@ def _binning_class(selector):
     raise NotImplementedError(
         f'binning selector {key!r} has no concrete class yet '
         f'(only le/eq are implemented; gt is parity-only)')
-
-
-@dataclass(slots=True)
-class TemplateParam:
-    """The per-kernel view of one functional Axis for the compiled-in feature tables
-    (codegen.kernel get_<name>_choices). Named after the legacy `TemplateParameter`
-    (TP) it descends from — the codegen loops still call its instances `tp`. It is NOT
-    a re-shaping of Axis — it pairs the axis with this kernel's wiring/override state
-    that Axis cannot hold:
-      * `repr_name` / `all_names` — the APPAREL-mapped names (operator operands) for the
-        C++ surface, which depend on the kernel's wires_to map, not on the axis.
-      * `overridden_to_constexpr` — whether an override bakes the axis's representative
-        REAL argument to a constexpr (an argument property; a dtype variable shared by
-        several tensors is never baked even if one member tensor is). A baked axis is
-        excluded from the feature tables.
-    Intrinsic axis data (radix / godel_stride / choices / repr_typed_choice) is read
-    straight off the axis."""
-
-    axis: Axis
-    repr_name: str                  # apparel-mapped getter name (get_<repr_name>_choices)
-    all_names: list[str]            # apparel-mapped member arg names
-    overridden_to_constexpr: bool
-
-    @property
-    def radix(self) -> int:
-        return self.axis.radix
-
-    @property
-    def godel_stride(self) -> int:
-        # Trivial (single-choice) axes have no stride assigned; they contribute 0.
-        return self.axis.godel_stride or 0
-
-    @property
-    def choices(self):
-        return list(self.axis.choices)
-
-    @property
-    def repr_typed_choice(self) -> TypedChoice:
-        return self.axis.repr_typed_choice
-
-    @property
-    def emit_feature_table(self) -> bool:
-        """Whether this axis gets a compiled-in get_<name>_choices() table. A baked
-        (override->constexpr) axis is excluded; stride axes never reach here."""
-        return not self.overridden_to_constexpr
 
 
 class KernelDescription(Interface):

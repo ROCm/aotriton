@@ -15,7 +15,7 @@ from ..template_instantiation.ir import (
     Interface,
 )
 if TYPE_CHECKING:
-    from ..template_instantiation.ir.kdesc import TemplateParam
+    from ..template_instantiation.ir.axis import TemplateParam
 from .template import get_template
 from ..utils import (
     LazyFile,
