@@ -15,7 +15,7 @@ def _ALWAYS(functional):
 
 
 def derives(targets, *, to, when=None):
-    """Derive `targets`' value from other functional state (agent-plans/ati_rev1.md
+    """Derive `targets`' value from other functional state
     §3.3). The single facade for both derive channels — the builder routes by
     target:
       * a kernel ARGUMENT target  -> applied in resolved[] (compiled signature),

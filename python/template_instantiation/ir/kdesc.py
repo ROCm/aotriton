@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 """
-KernelDescription adapter over the ATI IR (executive plan Step 4.1).
+KernelDescription adapter over the ATI IR.
 
 Goal: drive the EXISTING code generator from the new Axis/Override/Functional IR,
 without going through the legacy TYPE_CHOICES / FEAT_CHOICES / PERF_CHOICES /

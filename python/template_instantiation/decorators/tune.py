@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 """
-Tune decorator factories (pipeline Stage 1; agent-plans/ati_rev1.md §6).
+Tune decorator factories (pipeline Stage 1.md §6).
 
 The author-facing entry points of ati.tune.*: schema / configs / binning /
 fallback. Each builds a passive spec record (specs/tune.py) which doubles as a

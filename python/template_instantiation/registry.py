@@ -2,8 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 """
-Per-family registries for @ati.cite resolution (executive plan
-agent-plans/ati_aux-kernel-xref_exec0.md Steps 4 & 8).
+Per-family registries for @ati.cite resolution.
 
 @ati.cite("<op>.<metro>[.<kernel>]") refers to another kernel/metro by STRING to
 avoid circular imports between sibling kernel modules. A string defers resolution

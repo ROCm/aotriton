@@ -2,8 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 """
-ATI choice-declaring decorators (executive plan Step 2.1; agent-plans/ati_rev1.md
-§3.1–§3.2).
+ATI choice-declaring decorators
 
 These produce *spec records* describing how an argument is instantiated; they are
 not yet attached to a kernel (that is Step 2.3 — describe() + the @-sugar) and do

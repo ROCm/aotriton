@@ -3,8 +3,7 @@
 
 """
 union_params / build_merged_struct_cfields — order-preserving merge of a METRO
-KERNEL's sub-kernel argument lists (executive plan Step 5.1;
-agent-plans/ati_rev1.md §4.2), and the operator params-struct cfield union.
+KERNEL's sub-kernel argument lists, and the operator params-struct cfield union.
 
 A metro kernel implements one operator functional with a *set of collaborating
 kernels* (fwd: attn_fwd + debug; bwd: preprocess + dk_dv + dq). Each sub-kernel's

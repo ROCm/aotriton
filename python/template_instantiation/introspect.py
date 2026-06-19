@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 """
-Triton kernel introspection (executive plan Step 2.3; agent-plans/ati_rev1.md §2).
+Triton kernel introspection
 
 ARGUMENTS is the kernel's real parameter order — the human never writes it.
 

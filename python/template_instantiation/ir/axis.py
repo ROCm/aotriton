@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: MIT
 
 """
-Axis — a free dimension of a kernel's instantiation space (ATI executive plan
-Step 1.2; see agent-plans/ati+newbinds_rev1.md §2.1, §4, §5).
+Axis — a free dimension of a kernel's instantiation space
+Step 1.2.md §2.1, §4, §5).
 
 One Axis per choice variable (type_var / scalar_var / enumerated scalar). It
 owns the variable name (the public identity used by f.choices.<var_name>), the

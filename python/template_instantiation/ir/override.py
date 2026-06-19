@@ -3,7 +3,6 @@
 
 """
 Predicate / VarRef / Override — the conditional primitive of the new IR
-(ATI executive plan Step 1.3; see agent-plans/ati+newbinds_rev1.md §2.2, §6).
 
 An Override pushes a value onto target arguments when its Predicate holds for a
 functional's free-axis selection. This replaces the old pull-style deferred

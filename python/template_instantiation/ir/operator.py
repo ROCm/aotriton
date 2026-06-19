@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 """
-Operator adapter over the ATI IR (executive plan Step 5.2b).
+Operator adapter over the ATI IR.
 
 An operator dispatches among interchangeable BACKENDS (the triton metro vs an
 aiter ASM kernel, ...). It owns the params struct, built from its DEFAULT backend

@@ -5,11 +5,7 @@
 Advanced Template Instantiation (ATI) — declarative front-end for describing
 Triton kernels and operators.
 
-This is the Step 0.2 skeleton: every documented public name resolves so the API
-shape is fixed early, but each entry point raises NotImplementedError until its
-implementing step lands. See agent-plans/ati_executive0.md.
-
-Authoring surface (see agent-plans/ati_rev1.md):
+Authoring surface:
     type_var, scalar_var       - named choice variables (§3.1, §3.2)
     tensor, scalar             - bind args to a variable / literal type (§3.1, §3.2)
     overrides                  - conditional value rules (§3.3)
@@ -55,18 +51,12 @@ __all__ = [
 def _stub(name):
     def _raise(*args, **kwargs):
         raise NotImplementedError(
-            f'ati.{name} is not implemented yet (Step 0.2 skeleton). '
-            f'See agent-plans/ati_executive0.md.')
+            f'ati.{name} is not yet implemented.')
     _raise.__name__ = name
     _raise.__qualname__ = name
     return _raise
 
 
-# --- choice-declaring surface (§3.1, §3.2): implemented in Step 2.1 ---
-# type_var, scalar_var, tensor, scalar imported from .decorators
-# --- conditional overrides + predicate builders (§3.3): implemented in Step 2.2 ---
-# overrides, eq, ne, lt, gt imported from .decorators
-
-# --- description attachment (§3.4): describe + start imported from .describe ---
-# --- operator + metro (§4, §5): operator/backend (§4), union_params (5.1),
-#     metro_kernel (5.5) imported from .decorators / .operator / .metro ---
+# type_var, scalar_var, tensor, scalar, overrides, eq/ne/lt/gt from .decorators
+# describe + start from .describe; operator/backend, union_params, metro_kernel
+# from .decorators

@@ -2,8 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 """
-Functional + the enumeration helpers (ATI executive plan Step 1.4; see
-agent-plans/ati+newbinds_rev1.md §6).
+Functional + the enumeration helpers.
 
 A Functional is one fully-pinned instantiation of a kernel/operator, excluding perf:
 every choice axis selected and all overrides applied, frozen into a resolved
@@ -36,8 +35,8 @@ class ChoiceVarAbsent(AttributeError):
 
 
 class ChoiceView:
-    """Ergonomic accessor over a Functional's pinned choices (executive plan
-    Step 1.5; agent-plans/ati_rev1.md §6, ati+newbinds_rev1.md §5).
+    """Ergonomic accessor over a Functional's pinned choices
+    Step 1.5.md §6, ati+newbinds_rev1.md §5).
 
     Attribute access is keyed by *choice-variable name*: `f.choices.T_io` returns
     the variable's triton signature (replacing the old check_value(f, ['Q'])

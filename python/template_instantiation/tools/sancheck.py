@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: MIT
 
 """
---sancheck: a read-only validation pass over ATI descriptions (executive plan
-Step 5.3; agent-plans/ati_rev1.md §9.1a). Collects ALL problems at once (not
+--sancheck: a read-only validation pass over ATI descriptions
+Step 5.3.md §9.1a). Collects ALL problems at once (not
 first-failure) and never generates code. Centralizes the scattered asserts:
 
   * completeness — every introspected parameter claimed exactly once

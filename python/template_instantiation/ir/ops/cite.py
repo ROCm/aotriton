@@ -2,8 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 """
-@ati.cite resolution — kernel level (executive plan
-agent-plans/ati_aux-kernel-xref_exec0.md Step 4).
+@ati.cite resolution — kernel level.
 
 A citing kernel declares only what is unique to it (wiring, perf, private args) and
 @ati.cite("<op>.<metro>.<kernel>")s another kernel for the rest. This pass fills

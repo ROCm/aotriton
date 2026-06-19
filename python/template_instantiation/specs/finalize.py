@@ -2,8 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 """
-describe() + the stacked-@ sugar finalizer (executive plan Step 2.3;
-agent-plans/ati_rev1.md §3.4).
+describe() + the stacked-@ sugar finalizer
 
 This is the GLUE that turns the loose @ati.* spec-records into the passive Stage-2
 "object files" (specs/kernel.py KernelSpec, specs/affine.py AffineDecl,

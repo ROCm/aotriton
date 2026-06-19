@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 """
-SHARED_IFACE inference (executive plan Step 5.2).
+SHARED_IFACE inference.
 
 A triton kernel never declares which param struct it participates in — that is the
 operator → metro → kernel relationship, inferred here. The operator owns the param

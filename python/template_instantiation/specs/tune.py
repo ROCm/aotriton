@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 """
-Passive tuning spec records (pipeline Stage 2; agent-plans/ati_rev1.md §6).
+Passive tuning spec records (pipeline Stage 2.md §6).
 
 The data side of ati.tune.*: the perf schema (a SYNTHESIZED dataclass + PerfSchema
 envelope), the stacked-@ spec records (ConfigsSpec/BinningSpec/FallbackSpec), the

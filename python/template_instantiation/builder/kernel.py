@@ -2,8 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 """
-Builder: KernelSpec -> (axes, overrides) IR (executive plan Step 2.4;
-agent-plans/ati+newbinds_rev1.md §3-§4).
+Builder: KernelSpec -> (axes, overrides) IR
 
 This closes the loop from the decorator surface (Step 2.1-2.3) to the enumeration
 core (Step 1.2-1.4): it groups the collected specs by choice variable, builds
@@ -42,7 +41,7 @@ def _is_ati_type_string(s: str) -> bool:
         s = s[len('LazyTensor:'):]
     return (s.startswith('*') and s[1:] in ELEMENTAL_TYPE_MAP) or s in ELEMENTAL_TYPE_MAP
 
-# Scalar type source (agent-plans/ati_rev1.md §3.2, fb Q5).
+# Scalar type source.
 #
 # A scalar's type comes from its explicit ati.scalar(..., '<type>') argument, or from a
 # STRING type annotation on the placeholder def (def k(x: 'fp32')) that the finalizer

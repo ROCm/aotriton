@@ -3,8 +3,7 @@
 
 """
 --preview: dump the IMPLICIT structures an ATI description derives, so an author
-can review them before committing (executive plan Step 5.4; agent-plans/ati_rev1.md
-§9.1b). It is a formatter over the already-built description objects (axes,
+can review them before committing It is a formatter over the already-built description objects (axes,
 overrides, merged argument order, cfields); it imports nothing from codegen/
 beyond the small struct-formatting helper, preserving the CLAUDE.md layering.
 

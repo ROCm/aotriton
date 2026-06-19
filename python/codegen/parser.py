@@ -10,7 +10,7 @@ This module parses those passive records into lightweight IR SHELLS the linker
 (Pass 2) builds + resolves, and also owns family discovery / module loading
 (absorbed from the old `aotriton.rules` aggregator).
 
-Compile vs link (the compiler framing the executive plan adopts):
+Compile vs link (the compiler framing):
   * COMPILE (here) parses each passive declaration and records its cross-object
     references as deferred "relocations" stored DIRECTLY ON the shell (the metro shell
     keeps its sub-kernel name list; the operator shell keeps its backend refs; the
