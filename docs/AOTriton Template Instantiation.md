@@ -102,11 +102,16 @@ def attn_fwd(dropout_p: 'fp32', philox_seed: '*u64'):
 Each string-annotated parameter becomes a `ScalarSpec`; a conflict with an
 explicit `@ati.scalar` for the same parameter is an error.
 
-#### 2.2 Choice Variables — `ati.type_var` / `ati.scalar_var`
+#### 2.2 Type Variables — `ati.type_var` and its scalar variant `ati.scalar_var`
 
-A **choice variable** is a named, reusable set of TypedChoices. Multiple tensors
-or scalars can bind to the same variable, grouping them into one enumeration
-axis:
+Inspired by Python's `typing.TypeVar`, an ATI type variable is a **named,
+reusable placeholder for a set of concrete types**. Just as `TypeVar('T')` lets
+a generic function be parameterised over a type, `ati.type_var('T_io', dtype=[...])`
+lets a kernel description be parameterised over a set of element types — one
+code generation axis per type in the set.
+
+Multiple tensors or scalars can bind to the same variable, grouping them into
+one enumeration axis so they are always instantiated together:
 
 ```python
 T_io = ati.type_var('T_io', dtype=['*fp16:16', '*bf16:16', '*fp32:16'],
