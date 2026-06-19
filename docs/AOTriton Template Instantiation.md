@@ -1,4 +1,4 @@
-# AOTriton Template Instantiation (ATI)
+# AOTriton Template Instantiation
 
 AOTriton Template Instantiation is the declarative front-end for describing AOTriton
 kernels and operators. An author writes Python decorator stacks that record *what* a
