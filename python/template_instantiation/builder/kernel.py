@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from ..decorators import TensorSpec, ScalarSpec, ChoiceVar
-from ..ir import Axis
+from ..ir import Axis, Override
 from ..ir.typed_choice import TypedChoice, ELEMENTAL_TYPE_MAP
 from .errors import DescriptionError
 
@@ -181,118 +181,172 @@ def _resolve_named_dtypes(kernel_spec, name):
                 f"@ati.type_var({d!r}, dtype=[...]) or fix the type string.")
 
 
-def build_kernel(kernel_spec) -> BuiltKernel:
-    """Lower a KernelSpec (from describe()) into Axis + Override IR."""
-    params = kernel_spec.params
-    param_index = {p.name: i for i, p in enumerate(params)}
-    name = getattr(kernel_spec.kernel, '__name__', 'kernel')
+def _group_by_var_name(specs):
+    """Group specs by their var_name (the choice-variable they bind to)."""
+    groups: dict = {}
+    for spec in specs:
+        groups.setdefault(spec.var_name, []).append(spec)
+    return groups
 
-    _resolve_named_dtypes(kernel_spec, name)
 
+def _resolve_tensor_choices(first: TensorSpec) -> list:
+    """TypedChoices for a tensor group: shared ChoiceVar or single literal dtype."""
+    if isinstance(first.dtype, ChoiceVar):
+        return _choices_from(first.dtype.choices)
+    return _choices_from([first.dtype])
+
+
+def _resolve_scalar_choices(first: ScalarSpec, kernel_name: str) -> list:
+    """TypedChoices for a scalar group: shared ChoiceVar, options list, or plain type."""
+    if first.dtype is not None:
+        return _choices_from(first.dtype.choices)
+    if first.options is not None:
+        return _choices_from(first.options)
+    return _choices_from([_scalar_type(first, kernel_name)])
+
+
+def _resolve_tensor_metadata(group: list, param_names: list) -> tuple[dict, dict]:
+    """Resolve rank and contiguous-stride metadata for a tensor group.
+
+    Returns (ranks, contiguous):
+      ranks      — {arg_name -> resolved_rank}
+      contiguous — {arg_name -> contiguous_stride_name} for tensors that declare one
+    """
+    ranks = {}
+    for t in group:
+        r = t.resolve_rank(param_names)
+        for a in t.arg_names:
+            ranks[a] = r
+    contiguous = {}
+    for t in group:
+        cstride = t.resolve_contiguous(param_names)
+        if cstride is not None:
+            contiguous[t.arg_name] = cstride
+    return ranks, contiguous
+
+
+def _iter_stride_axes(tensor, contiguous, param_index, param_names, nonunit_strides):
+    """Yield hidden stride Axis objects for every matched stride of one tensor.
+
+    Also records each non-unit stride into `nonunit_strides[tensor.arg_name]` so
+    the override-cascade phase can synthesise zero-overrides for them later.
+    """
+    for dim, sname in enumerate(tensor.match_strides(param_names)):
+        is_unit = sname in contiguous.values()
+        if not is_unit:
+            nonunit_strides.setdefault(tensor.arg_name, []).append(sname)
+        yield Axis(sname, (sname,),
+                   _choices_from([_STRIDE_ONE if is_unit else _STRIDE_TYPE]),
+                   param_index[sname],
+                   kind='stride_unit' if is_unit else 'stride',
+                   stride_of=(tensor.arg_name, dim))
+
+
+def _build_axes(kernel_spec, param_index: dict, kernel_name: str):
+    """Build all Axis objects (tensor, stride, scalar) from the KernelSpec.
+
+    Returns (axes, nonunit_strides):
+      axes            — unsorted list of Axis objects
+      nonunit_strides — {tensor_arg -> [non-unit stride names]} for override cascade
+    """
     axes = []
+    nonunit_strides = {}
+    param_names = kernel_spec.param_names
 
-    # --- tensor axes (grouped by choice variable) ---
-    # A shared ChoiceVar groups several tensors into one axis; a literal dtype is
-    # an anonymous single-tensor axis.
-    tensor_groups = {}     # var_name -> list[TensorSpec]
-    for t in kernel_spec.tensors:
-        tensor_groups.setdefault(t.var_name, []).append(t)
-
-    nonunit_strides = {}     # tensor arg -> [its non-unit (real, hideable) strides]
-    for var_name, group in tensor_groups.items():
+    for var_name, group in _group_by_var_name(kernel_spec.tensors).items():
         first = group[0]
-        if isinstance(first.dtype, ChoiceVar):
-            choices = _choices_from(first.dtype.choices)
-            # all members of a shared var must name the same variable -> same choices
-        else:
-            choices = _choices_from([first.dtype])     # literal: single choice
+        choices = _resolve_tensor_choices(first)
+        ranks, contiguous = _resolve_tensor_metadata(group, param_names)
         arg_names = [a for t in group for a in t.arg_names]
-        ranks = {}
-        for t in group:
-            r = t.resolve_rank(kernel_spec.param_names)
-            for a in t.arg_names:
-                ranks[a] = r
-        contiguous = {}
-        for t in group:
-            cstride = t.resolve_contiguous(kernel_spec.param_names)
-            if cstride is not None:
-                contiguous[t.arg_name] = cstride
         anchor = min(param_index[a] for a in arg_names)
-        signature_name = _resolve_signature_name(first.dtype, arg_names, name)
         axes.append(Axis(var_name, arg_names, choices, anchor,
                          ranks=ranks, contiguous=contiguous, kind='tensor',
-                         signature_name=signature_name))
-        # hidden stride axes for every matched stride of every tensor in the group
+                         signature_name=_resolve_signature_name(
+                             first.dtype, arg_names, kernel_name)))
         for t in group:
-            matched = t.match_strides(kernel_spec.param_names)
-            for dim, sname in enumerate(matched):
-                is_unit = (sname in contiguous.values())
-                stype = _STRIDE_ONE if is_unit else _STRIDE_TYPE
-                if not is_unit:
-                    nonunit_strides.setdefault(t.arg_name, []).append(sname)
-                axes.append(Axis(sname, (sname,), _choices_from([stype]),
-                                 param_index[sname],
-                                 kind='stride_unit' if is_unit else 'stride',
-                                 stride_of=(t.arg_name, dim)))
+            axes.extend(_iter_stride_axes(t, contiguous, param_index,
+                                          param_names, nonunit_strides))
 
-    # --- scalar axes (grouped by choice variable) ---
-    scalar_groups = {}
-    for s in kernel_spec.scalars:
-        scalar_groups.setdefault(s.var_name, []).append(s)
-
-    for var_name, group in scalar_groups.items():
+    for var_name, group in _group_by_var_name(kernel_spec.scalars).items():
         first = group[0]
-        if first.dtype is not None:                 # shared ChoiceVar
-            choices = _choices_from(first.dtype.choices)
-        elif first.options is not None:             # enumerated (former feature)
-            choices = _choices_from(first.options)
-        else:                                       # plain runtime scalar
-            choices = _choices_from([_scalar_type(first, name)])
+        choices = _resolve_scalar_choices(first, kernel_name)
         arg_names = [a for s in group for a in s.arg_names]
         anchor = min(param_index[a] for a in arg_names)
-        signature_name = _resolve_signature_name(first.dtype, arg_names, name)
         axes.append(Axis(var_name, arg_names, choices, anchor, kind='scalar',
-                         signature_name=signature_name))
+                         signature_name=_resolve_signature_name(
+                             first.dtype, arg_names, kernel_name)))
 
-    axes.sort(key=lambda a: a.anchor)
-    arguments = [p.name for p in params]
-    # Collect real->apparel wiring (rev0 §4.3) from wires_to= on tensor/scalar
-    # specs. The IR stays keyed on REAL names; the wiring is applied only on the
-    # outward codegen surface (Step 3).
-    wiring = {}
-    for spec in (*kernel_spec.tensors, *kernel_spec.scalars):
-        w = getattr(spec, 'wires_to', None)
-        if w is not None:
-            wiring[spec.arg_name] = w
-    # Split overrides by target: perf-schema fields -> perf channel, the rest ->
-    # functional channel (applied in enumerate_functionals / resolved[]).
-    perf_names = set()
-    if kernel_spec.tune is not None and kernel_spec.tune.schema is not None:
-        perf_names = set(kernel_spec.tune.schema.param_names())
-    func_ovs, perf_ovs = [], []
-    for ov in kernel_spec.overrides:
+    return axes, nonunit_strides
+
+
+def _collect_wiring(tensors, scalars) -> dict[str, str]:
+    """Collect real->apparel wiring from wires_to= declarations on tensor/scalar specs.
+
+    The IR stays keyed on REAL argument names; the wiring is applied only on the
+    outward codegen surface (rev0 §4.3)."""
+    return {spec.arg_name: spec.wires_to
+            for spec in (*tensors, *scalars)
+            if getattr(spec, 'wires_to', None) is not None}
+
+
+def _split_overrides(overrides, tune, kernel_name: str) -> tuple[list, list]:
+    """Split overrides into functional and perf channels.
+
+    Functional overrides target kernel arguments (applied during functional
+    enumeration, land in resolved[]). Perf overrides target perf-schema fields
+    (applied in the tuning layer only, never in resolved[]).
+
+    Returns (functional_overrides, perf_overrides).
+    """
+    perf_names = (set(tune.schema.param_names())
+                  if tune is not None and tune.schema is not None
+                  else set())
+    functional_overrides, perf_overrides = [], []
+    for ov in overrides:
         if any(t in perf_names for t in ov.targets):
             assert all(t in perf_names for t in ov.targets), (
-                f'@ati.derives target mixes perf and non-perf names: {ov.targets}')
-            perf_ovs.append(ov)
+                f'kernel {kernel_name!r}: @ati.derives target mixes perf and '
+                f'non-perf names: {ov.targets}')
+            perf_overrides.append(ov)
         else:
-            func_ovs.append(ov)
+            functional_overrides.append(ov)
+    return functional_overrides, perf_overrides
 
-    # A functional override that constexpr-zeroes a TENSOR implicitly cascades to
-    # that tensor's non-unit strides (a zeroed tensor needs no live strides). This
-    # keeps the description terse: `ati.derives('B', to=0, when=...)` need not also
-    # list stride_b*. Synthesize the stride overrides here, under the SAME
-    # predicate. (Unit/contiguous strides are constexpr 1 already and excluded.)
-    from ..ir import Override as _Override
-    extra_stride_ovs = []
-    for ov in func_ovs:
+
+def _synthesize_stride_overrides(functional_overrides, nonunit_strides) -> list:
+    """Synthesize implicit stride overrides from zeroed-tensor overrides.
+
+    A functional override that constexpr-zeroes a TENSOR implicitly cascades to
+    that tensor's non-unit strides (a zeroed tensor needs no live strides). This
+    keeps descriptions terse: `ati.derives('B', to=0, when=...)` need not also
+    list stride_b*. Unit/contiguous strides are constexpr 1 already and excluded.
+    """
+    extra = []
+    for ov in functional_overrides:
         if ov.value != 0:
             continue
-        for t in ov.targets:
-            for sname in nonunit_strides.get(t, ()):
-                extra_stride_ovs.append(_Override([sname], ov.predicate, 0))
-    func_ovs += extra_stride_ovs
+        for tensor_arg in ov.targets:
+            for stride_name in nonunit_strides.get(tensor_arg, ()):
+                extra.append(Override([stride_name], ov.predicate, 0))
+    return extra
 
-    return BuiltKernel(name, axes, func_ovs, arguments,
-                       tune=kernel_spec.tune, perf_overrides=perf_ovs,
+
+def build_kernel(kernel_spec) -> BuiltKernel:
+    """Lower a KernelSpec (from describe()) into Axis + Override IR."""
+    name = getattr(kernel_spec.kernel, '__name__', 'kernel')
+    param_index = {p.name: i for i, p in enumerate(kernel_spec.params)}
+    _resolve_named_dtypes(kernel_spec, name)
+
+    axes, nonunit_strides = _build_axes(kernel_spec, param_index, name)
+    axes.sort(key=lambda a: a.anchor)
+
+    wiring = _collect_wiring(kernel_spec.tensors, kernel_spec.scalars)
+    functional_overrides, perf_overrides = _split_overrides(
+        kernel_spec.overrides, kernel_spec.tune, name)
+    functional_overrides += _synthesize_stride_overrides(
+        functional_overrides, nonunit_strides)
+
+    return BuiltKernel(name, axes, functional_overrides,
+                       [p.name for p in kernel_spec.params],
+                       tune=kernel_spec.tune, perf_overrides=perf_overrides,
                        disables=list(kernel_spec.disables), wiring=wiring)
