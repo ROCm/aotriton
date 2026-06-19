@@ -158,8 +158,10 @@ def _annotation_specs(kernel, tensors, scalars):
                 f"has both a type annotation ({type_str!r} on the def) and an "
                 f"explicit @ati.tensor/@ati.scalar; declare it only once.")
         if type_str.startswith('*') or type_str.startswith('LazyTensor:'):
-            # Tensor pointer type: rank=0, no strides (strideless pointer argument).
-            new_tensors.append(TensorSpec(arg, type_str, rank=0))
+            # Tensor pointer type: rank from '[N]' suffix, default 0 (strideless).
+            from ..ir.typed_choice import _parse_rank_suffix
+            _, rank = _parse_rank_suffix(type_str)
+            new_tensors.append(TensorSpec(arg, type_str, rank=rank if rank is not None else 0))
         else:
             new_scalars.append(ScalarSpec(arg, type_str))
     return new_tensors, new_scalars

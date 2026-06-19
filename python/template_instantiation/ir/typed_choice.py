@@ -409,14 +409,37 @@ ELEMENTAL_TYPE_MAP = {
 LAZY_TENSOR_PATTERN = 'LazyTensor:'
 LAZY_TENSOR_LEN = len(LAZY_TENSOR_PATTERN)
 
+def _parse_rank_suffix(v: str):
+    """Strip an optional C-style rank suffix `[N]` from a type string.
+
+    Returns (type_str_without_suffix, rank_or_None).
+    Examples:
+      '*fp32:16[2]' -> ('*fp32:16', 2)
+      '*u64[0]'     -> ('*u64', 0)
+      '*fp16:16'    -> ('*fp16:16', None)
+      'i32'         -> ('i32', None)
+    """
+    if v.endswith(']'):
+        bracket = v.rfind('[')
+        if bracket != -1:
+            rank_str = v[bracket+1:-1]
+            if rank_str.isdigit():
+                return v[:bracket], int(rank_str)
+    return v, None
+
+
 def parse_complex(v : 'str | TypedChoice'):
     if isinstance(v, TypedChoice):  # Already typed
         return v
     assert isinstance(v, str), 'Unsupported choice {v=} with class {v.__class__=}'
     log(lambda : f'{v=} {v.__class__=}')
     if v.startswith('*'):  # Tensor
-        return tensor(elem_ty=ELEMENTAL_TYPE_MAP[v[1:]](), rank=None)
+        v, rank = _parse_rank_suffix(v)
+        tc = tensor(elem_ty=ELEMENTAL_TYPE_MAP[v[1:]](), rank=rank)
+        return tc
     if v.startswith(LAZY_TENSOR_PATTERN):
+        v, rank = _parse_rank_suffix(v)
         etype = v[LAZY_TENSOR_LEN+1:]
-        return lazy_tensor(elem_ty=ELEMENTAL_TYPE_MAP[etype](), rank=None)
+        tc = lazy_tensor(elem_ty=ELEMENTAL_TYPE_MAP[etype](), rank=rank)
+        return tc
     return ELEMENTAL_TYPE_MAP[v]()

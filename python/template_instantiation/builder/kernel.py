@@ -33,12 +33,17 @@ if TYPE_CHECKING:
 
 def _is_ati_type_string(s: str) -> bool:
     """True if `s` is a type string TypedChoice.parse accepts: a tensor pointer like
-    '*fp16:16', an elemental type like 'i32' / 'fp32' / 'u64', or a lazy tensor
-    'LazyTensor:*fp32:16'."""
+    '*fp16:16', an elemental type like 'i32' / 'fp32' / 'u64', a lazy tensor
+    'LazyTensor:*fp32:16', or any of the above with a rank suffix like '*fp32:16[2]'."""
     if not s:
         return False
     if s.startswith('LazyTensor:'):
         s = s[len('LazyTensor:'):]
+    # Strip optional rank suffix '[N]' before checking the element type.
+    if s.endswith(']'):
+        bracket = s.rfind('[')
+        if bracket != -1 and s[bracket+1:-1].isdigit():
+            s = s[:bracket]
     return (s.startswith('*') and s[1:] in ELEMENTAL_TYPE_MAP) or s in ELEMENTAL_TYPE_MAP
 
 # Scalar type source.
