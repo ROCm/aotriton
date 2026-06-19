@@ -78,10 +78,6 @@ class Interface(ABC):
     def partially_tuned_functionals(self) -> dict:
         return {}
 
-    def fallback_compact_dict(self, compact_dict):
-        fb = self.partially_tuned_functionals
-        return {k: fb.get(k, v) for k, v in compact_dict.items()}
-
     # --- functional enumeration (classical: the Interface yields its functionals) -
 
     def _axes_overrides(self):

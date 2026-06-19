@@ -173,5 +173,3 @@ class Operator(Interface):
         lut_tensor = np.zeros([f.noptimized_for, 1], dtype=np.int8)
         return lut_tensor, [self.fallback_backend.enum_name], None
 
-    # fallback_compact_dict comes from the ATI Interface base (reads
-    # partially_tuned_functionals, which this operator overrides above).

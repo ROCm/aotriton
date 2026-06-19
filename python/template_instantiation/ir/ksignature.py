@@ -49,14 +49,6 @@ class KernelSignature(object):
         return { name : tc for name, tc in self._perfs.items() }
 
     @property
-    def perf_signature(self):
-        kdesc = self._functional.meta_object
-        # TODO: Add prefix?
-        lp = [str(tc) for name, tc in self._perfs.items()]
-        psel = '_'.join([x for x in lp if x is not None])
-        return psel
-
-    @property
     def copt_dict(self):
         kdesc = self._functional.meta_object
         return { oname : v for oname, v in zip(COMPILER_OPTIONS, self._copts) }
@@ -86,15 +78,6 @@ class KernelSignature(object):
             f';;arch={self._functional.arch}'
         )
 
-    @property
-    def both_signature(self):
-        perf = self.perf_signature
-        copt = self.copt_signature
-        return '__P__' + perf + '__CO__' + copt
-
-    @property
-    def full_compact_signature(self):
-        return self._functional.compact_signature_noarch + self.both_signature + '--Arch_' + self._functional.arch
 
     def blake2b_hash(self, package_path):
         entry = self.hsaco_entry_name

@@ -88,13 +88,9 @@ class AffineKernel(Interface):
 
     def gen_functionals(self, build_for_target_arch):
         # Slim affine kernels have a vendored C++ dispatcher — no functional space.
-        return
-        yield
+        yield from ()
 
     def list_functional_params(self):
-        return []
-
-    def list_non_functional_params(self):
         return []
 
     def co_gen(self, build_dir: Path, build_for_target_arch):

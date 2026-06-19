@@ -4,7 +4,6 @@
 # Root of the Generation process
 
 from pathlib import Path, PurePath
-from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 import subprocess
 from .linker import Linker
