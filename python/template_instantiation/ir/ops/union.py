@@ -59,6 +59,17 @@ def build_merged_struct_cfields(subkernels):
     order = union_params(name_lists)
     merged = []
     for i, name in enumerate(order):
+        if name not in cfield_by_name:
+            from ...builder.errors import DescriptionError
+            sources = [type(s).__name__ for s in subkernels]
+            raise DescriptionError(
+                f'build_merged_struct_cfields: operand {name!r} appears in '
+                f'a union_order chain but is not defined in any sub-kernel\'s '
+                f'func_cfields. Merged order: {order}. '
+                f'Defined operands: {sorted(cfield_by_name)}. '
+                f'Sub-kernels (in priority order): {sources}. '
+                f'Check the union_order declaration for a misspelled or '
+                f'missing operand name.')
         cf = cfield_by_name[name]
         merged.append(cfield(ctype=cf.ctype, aname=cf.aname, ctext=cf.ctext,
                              index=i, nbits=cf.nbits))
