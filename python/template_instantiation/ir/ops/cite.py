@@ -29,7 +29,6 @@ import fnmatch
 
 from ...builder import DescriptionError, _is_ati_type_string
 from ...decorators import TensorSpec, ScalarSpec, ChoiceVar
-from ... import registry
 
 
 def _spec_apparel_names(spec):
@@ -120,7 +119,7 @@ def _kernel_spec_of(kdesc, name, target):
     return cs
 
 
-def _resolve_one_cite(c, family, name, lookup, metro_lookup=None):
+def _resolve_one_cite(c, family, name, lookup, metro_lookup=None, op_lookup=None):
     """Resolve a single @ati.cite target to a LIST of cited KernelSpecs.
 
     Resolution order (rev0 §4.4):
@@ -141,7 +140,7 @@ def _resolve_one_cite(c, family, name, lookup, metro_lookup=None):
         cited = metro_lookup(family, c.op_name, c.metro_name)
         if cited is not None:
             return list(cited)
-    op = registry.get_op(family, c.op_name)
+    op = op_lookup(family, c.op_name) if op_lookup is not None else None
     if op is not None:
         try:
             metro = op.get_backend(c.metro_name)
@@ -164,7 +163,7 @@ def _resolve_one_cite(c, family, name, lookup, metro_lookup=None):
             f"kernel {name!r}: @ati.cite({c.target!r}) is a whole-metro cite but "
             f"operator {c.op_name!r} is not a built {family!r} operator "
             f"(build/import it before the citing kernel)")
-    kdesc = lookup(family, c.kernel_name)
+    kdesc = lookup(family, c.kernel_name) if lookup is not None else None
     if kdesc is None:
         raise DescriptionError(
             f"kernel {name!r}: @ati.cite({c.target!r}) names kernel "
@@ -174,7 +173,7 @@ def _resolve_one_cite(c, family, name, lookup, metro_lookup=None):
     return [_kernel_spec_of(kdesc, name, c.target)]
 
 
-def resolve_cites(spec, *, family, lookup=None, metro_lookup=None):
+def resolve_cites(spec, *, family, lookup=None, metro_lookup=None, op_lookup=None):
     """Augment a citing KernelSpec in place from its @ati.cite targets, BEFORE
     build_kernel. Each target resolves (via metro_lookup, the ops registry, else the
     flat kernel registry) to one or more cited KernelSpecs whose practices fill the
@@ -183,15 +182,14 @@ def resolve_cites(spec, *, family, lookup=None, metro_lookup=None):
     its sub-kernels' specs directly (the linker's header/extern path)."""
     if not spec.cites:
         return spec
-    if lookup is None:
-        lookup = registry.get_kernel
     name = getattr(spec.kernel, '__name__', 'kernel')
     param_names = [p.name for p in spec.params]
 
     cited_specs = []
     for c in spec.cites:
         cited_specs.extend(
-            _resolve_one_cite(c, family, name, lookup, metro_lookup=metro_lookup))
+            _resolve_one_cite(c, family, name, lookup,
+                              metro_lookup=metro_lookup, op_lookup=op_lookup))
 
     # Merge cited apparel/dtype tables (earlier cites win on a tie — first found).
     cited_apparel = {}
