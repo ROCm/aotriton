@@ -73,8 +73,16 @@ def collect_affine_decl(specs):
             co_dir, headers = s.co_dir, s.headers
         elif isinstance(s, SuppliesSpec):
             supplied.extend(s.specs)
-            supplies_after = s.after if s.after is not None else supplies_after
-            supplies_before = s.before if s.before is not None else supplies_before
+            if s.after is not None:
+                assert supplies_after is None or supplies_after == s.after, (
+                    f'conflicting after= anchors in @ati.affine.supplies: '
+                    f'{supplies_after!r} vs {s.after!r}')
+                supplies_after = s.after
+            if s.before is not None:
+                assert supplies_before is None or supplies_before == s.before, (
+                    f'conflicting before= anchors in @ati.affine.supplies: '
+                    f'{supplies_before!r} vs {s.before!r}')
+                supplies_before = s.before
         elif isinstance(s, DisableSpec):
             disable = s
         else:
