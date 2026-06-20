@@ -35,7 +35,9 @@ def _aotriton_version() -> str:
 
 
 # Sub-packages under python/ (e.g. 'codegen', 'template_instantiation.compat').
-_subs = find_packages(where=str(_PYDIR))
+# modules/ holds user application source code (Triton kernels, AOT artifacts)
+# compiled BY aotriton — a compiler does not ship the application it compiles.
+_subs = find_packages(where=str(_PYDIR), exclude=['modules', 'modules.*'])  # exclude is technically redundant, but to stop complains from /code-review
 _packages = ['aotriton'] + [f'aotriton.{p}' for p in _subs]
 _package_dir = {'aotriton': 'python'}
 _package_dir.update({f'aotriton.{p}': 'python/' + p.replace('.', '/')
