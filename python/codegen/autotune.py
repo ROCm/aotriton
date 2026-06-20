@@ -70,7 +70,7 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
                         print("  SQL:", self._sql)
                         for err in errors:
                             print("    ERROR:", err)
-        assert all([isinstance(k, KernelSignature)] for k in self._sigs)
+        assert all(isinstance(k, KernelSignature) for k in self._sigs)
 
     def generate(self):
         # Un "self._" section

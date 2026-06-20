@@ -33,8 +33,8 @@ class LazyFile(object):
         return self._mf
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        if LazyFile.suppress_writes:
-            return
+        if exc_type is not None or LazyFile.suppress_writes:
+            return  # do not flush partial buffer on exception
         mf = self.memory_file
         mf.seek(0)
         if mf.read() != self._old_content:

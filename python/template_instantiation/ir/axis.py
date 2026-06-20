@@ -32,6 +32,8 @@ class Axis:
         self.var_name = var_name
         self.arg_names = tuple(arg_names)
         self.choices = tuple(choices)
+        assert len(self.choices) >= 1, \
+            f'Axis {var_name!r}: choices must be non-empty (got options=[])'
         assert all(isinstance(c, TypedChoice) for c in self.choices), \
             'Axis.choices must be TypedChoice objects'
         self.anchor = anchor
