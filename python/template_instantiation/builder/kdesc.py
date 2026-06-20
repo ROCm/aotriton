@@ -4,7 +4,7 @@
 """
 Standalone KernelDescription builder (pipeline Stage 4 — LOWER).
 
-`build_kernel_description` is the single-kernel build path used outside the linker
+`_testonly_build_kernel_description` is the single-kernel build path used outside the linker
 (the per-kernel registry tests + ad-hoc builds): resolve @ati.cite gaps, lower the
 spec to a BuiltKernel, wrap it in the KernelDescription IR, and register it so later
 kernels can cite it. The whole-family build goes through codegen/linker.py instead.
@@ -13,8 +13,8 @@ kernels can cite it. The whole-family build goes through codegen/linker.py inste
 from .kernel import build_kernel
 
 
-def build_kernel_description(kernel, *, family, source_path=None,
-                             triton_kernel_name=None, register=True):
+def _testonly_build_kernel_description(kernel, *, family, source_path=None,
+                                       triton_kernel_name=None, register=True):
     """Build an KernelDescription from a kernel already described via
     ati.describe() / the stacked-@ form.
 
