@@ -57,8 +57,13 @@ def _kernel_build_order(compiled):
         deps = set()
         for c in shell.cites:
             if c.kernel_name is not None:
-                if c.kernel_name in compiled.kernels:
-                    deps.add(c.kernel_name)
+                if c.kernel_name not in compiled.kernels:
+                    raise SystemExit(
+                        f'ATI linker: kernel {name!r} cites '
+                        f'{c.target!r} but {c.kernel_name!r} was not '
+                        f'found in the family (check @ati.source and the '
+                        f'aot __init__.py operator/backend declarations)')
+                deps.add(c.kernel_name)
             else:
                 for sub in (_metro_subkernel_names(
                         compiled, c.op_name, c.metro_name) or []):
