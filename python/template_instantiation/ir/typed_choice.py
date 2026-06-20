@@ -357,9 +357,14 @@ class GuessBool(Guess):
 
 class GuessInt(Guess):
     def __init__(self, choices):
-        if max(abs(v) for v in choices) < 16:  # size on magnitude to handle negatives
+        # Conservative margin: size on abs(v) rather than tight two's-complement
+        # bounds.  A value near 100 today may exceed 127 tomorrow; abs gives
+        # headroom so the inferred type doesn't need to change when new choices
+        # are added near the boundary.
+        magnitude = max(abs(v) for v in choices)
+        if magnitude < 16:
             self._efactory = constexpr.int8_t
-        elif max(abs(v) for v in choices) < 8192:
+        elif magnitude < 8192:
             self._efactory = constexpr.int16_t
         else:
             self._efactory = constexpr.int32_t

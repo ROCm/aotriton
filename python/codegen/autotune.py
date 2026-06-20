@@ -165,9 +165,11 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
 
     def codegen_format_lut(self, lut_tensor):
         f = self._f
-        max_value = np.max(lut_tensor)
+        lut_min = int(np.min(lut_tensor))
+        lut_max = int(np.max(lut_tensor))
         for dtype in [np.int8, np.int16, np.int32, np.int64]:
-            if max_value < np.iinfo(dtype).max:
+            info = np.iinfo(dtype)
+            if info.min <= lut_min and lut_max <= info.max:
                 break
         ctype =  f'int{np.iinfo(dtype).bits}_t'
         cshape = ''.join([f'[{s}]' for s in lut_tensor.shape])
