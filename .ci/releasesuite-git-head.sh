@@ -35,8 +35,7 @@ Options:
  --triton_origin <url>: Override the Triton git origin for wheel builds.
                         Accepts a fork URL or a local checkout via file:///abs/path
                         (default: https://github.com/ROCm/triton)
-By default both GPU images and runtimes are built.
-If either --image or --runtime is specified, the missing one will not be built.
+Either --image, --runtime, or both must be specified explicitly.
 
 The YAML configuration file follows the format shown in docs/AltWheelExample.yaml.
 However it accepts GIT SHA1 for Triton wheels instead.
@@ -57,11 +56,10 @@ fi
 
 eval set -- "$TEMP"
 
-SUITE_SELECT_IMAGE=-1
-SUITE_SELECT_RUNTIME=-1
+SUITE_SELECT_IMAGE=0
+SUITE_SELECT_RUNTIME=0
 SUITE_RUNTIME_LIST=(6.4.4 7.0.3 7.1.1 7.2.3)
 CMDLIST=()
-SUITE_DEFAULT_SELECTION=1
 SUITE_YAML=""
 SUITE_ORIGIN=""
 SUITE_TRITON_ORIGIN=""
@@ -75,11 +73,9 @@ while true; do
       ;;
     --image)
       SUITE_SELECT_IMAGE=1
-      SUITE_DEFAULT_SELECTION=0
       ;;
     --runtime)
       SUITE_SELECT_RUNTIME=1
-      SUITE_DEFAULT_SELECTION=0
       ;;
     --debug)
       SUITE_DEBUG=1
@@ -125,22 +121,14 @@ if [ "$#" -ne 1 ]; then
   help 1
 fi
 
-if [ ${#CMDLIST[@]} -gt 0 ] && [ ${SUITE_SELECT_IMAGE} -lt 0 ] && [ ${SUITE_SELECT_RUNTIME} -lt 0 ]; then
-  echo "Error: -r <ROCM ver> requires --runtime, --image, or both to be specified." >&2
+if [ ${SUITE_SELECT_IMAGE} -eq 0 ] && [ ${SUITE_SELECT_RUNTIME} -eq 0 ]; then
+  echo "Error: specify --runtime, --image, or both." >&2
   help 1
 fi
 
 if [ ${SUITE_DEBUG} -gt 0 ] && [ ${#SUITE_RUNTIME_LIST[@]} -ne 1 ]; then
   echo "Error: --debug requires exactly one runtime version via -r <ROCM ver>." >&2
   help 1
-fi
-
-if [ ${SUITE_SELECT_IMAGE} -lt 0 ]; then
-  SUITE_SELECT_IMAGE=${SUITE_DEFAULT_SELECTION}
-fi
-
-if [ ${SUITE_SELECT_RUNTIME} -lt 0 ]; then
-  SUITE_SELECT_RUNTIME=${SUITE_DEFAULT_SELECTION}
 fi
 
 echo "SUITE_RUNTIME_LIST ${SUITE_RUNTIME_LIST[@]}"
