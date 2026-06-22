@@ -89,10 +89,11 @@ while true; do
       SUITE_ARCH="$1"
       ;;
     -r)
-      SUITE_SELECT_RUNTIME=1
-      SUITE_DEFAULT_SELECTION=0
       shift
       CMDLIST+=("$1")
+      # -r specifies the ROCm version list only; component selection (runtime
+      # vs image) is governed solely by --runtime / --image.  When neither is
+      # given, both components build (default behaviour unchanged).
       ;;
     --yaml)
       shift
@@ -121,6 +122,11 @@ fi
 if [ "$#" -ne 1 ]; then
   echo "$@"
   echo 'Missing argument <output directory>.' >&2
+  help 1
+fi
+
+if [ ${#CMDLIST[@]} -gt 0 ] && [ ${SUITE_SELECT_IMAGE} -lt 0 ] && [ ${SUITE_SELECT_RUNTIME} -lt 0 ]; then
+  echo "Error: -r <ROCM ver> requires --runtime, --image, or both to be specified." >&2
   help 1
 fi
 
