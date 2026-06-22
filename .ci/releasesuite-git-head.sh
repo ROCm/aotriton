@@ -27,6 +27,9 @@ Options:
                         forwarded to cmake as AOTRITON_TARGET_ARCH. Defaults
                         to ALL (every arch in the CMakeLists default list).
                         Useful to shorten debug builds.
+              --debug: Debug mode: require exactly one runtime version (-r),
+                        and leave the build container running after the build
+                        so the contents can be inspected interactively.
          --yaml <.yml>: Use yml config file to build the release
         --origin <url>: Override the git HTTPS origin URL (default: auto-detected from remote)
  --triton_origin <url>: Override the Triton git origin for wheel builds.
@@ -45,7 +48,7 @@ EOF
   exit $1
 }
 
-TEMP=$(getopt -o hr: --longoptions image,runtime,arch:,yaml:,origin:,triton_origin: -- "$@")
+TEMP=$(getopt -o hr: --longoptions image,runtime,debug,arch:,yaml:,origin:,triton_origin: -- "$@")
 
 if [ $? -ne 0 ]; then
   echo "Error: Invalid option." >&2
@@ -63,6 +66,7 @@ SUITE_YAML=""
 SUITE_ORIGIN=""
 SUITE_TRITON_ORIGIN=""
 SUITE_ARCH="ALL"
+SUITE_DEBUG=0
 
 while true; do
   case "$1" in
@@ -76,6 +80,9 @@ while true; do
     --runtime)
       SUITE_SELECT_RUNTIME=1
       SUITE_DEFAULT_SELECTION=0
+      ;;
+    --debug)
+      SUITE_DEBUG=1
       ;;
     --arch)
       shift
@@ -114,6 +121,11 @@ fi
 if [ "$#" -ne 1 ]; then
   echo "$@"
   echo 'Missing argument <output directory>.' >&2
+  help 1
+fi
+
+if [ ${SUITE_DEBUG} -gt 0 ] && [ ${#SUITE_RUNTIME_LIST[@]} -ne 1 ]; then
+  echo "Error: --debug requires exactly one runtime version via -r <ROCM ver>." >&2
   help 1
 fi
 
@@ -238,19 +250,33 @@ function build_inside() {
   fi
   # Cache pip downloads under <output>/.cache/pip on the host.
   mkdir -p "${CACHE_DIR}/pip"
+  # In debug mode allocate a tty so runc-manylinux-build-tar.sh can drop into
+  # an interactive shell after the build. Container is always removed on exit.
+  DEBUG_FLAGS=()
+  if [ ${SUITE_DEBUG} -gt 0 ]; then
+    DEBUG_FLAGS=(-t -e SUITE_DEBUG=1)
+  fi
   set -x
+  # Always bind-mount the build script from the host so the working-tree
+  # version is used without requiring a commit. In debug mode also allocate a
+  # TTY so the interactive shell at the end of the script works; the script is
+  # run by path (not piped via stdin) so stdin stays attached to the terminal.
+  TTY_FLAGS=()
+  [ ${SUITE_DEBUG} -gt 0 ] && TTY_FLAGS=(-t -e SUITE_DEBUG=1)
   docker run --network=host -i --rm \
     -v ${SOURCE_VOLUME}:/src:ro \
+    -v "$(realpath ${SCRIPT_DIR}/runc-manylinux-build-tar.sh)":/tmp/runc-manylinux-build-tar.sh:ro \
     --mount "type=bind,source=$(realpath ${OUTPUT_DIR}),target=/output" \
     --mount "type=bind,source=$(realpath ${CACHE_DIR}),target=/cache" \
     --tmpfs "/scratch:exec" \
     -e AOTRITON_BUILD_PATH=/scratch/build/aotriton \
     -e AOTRITON_INSTALL_PREFIX=/scratch/install \
     -e PIP_CACHE_DIR=/cache/pip \
+    "${TTY_FLAGS[@]}" \
     -w / \
     ${DOCKER_IMAGE} \
-    bash -l -s "${NOIMAGE_MODE}" "${WHEEL_CFG}" "${ARCH_LIST}" \
-    < "${SCRIPT_DIR}/runc-manylinux-build-tar.sh"
+    bash -l /tmp/runc-manylinux-build-tar.sh \
+    "${NOIMAGE_MODE}" "${WHEEL_CFG}" "${ARCH_LIST}"
 }
 
 if [ ${SUITE_SELECT_RUNTIME} -gt 0 ]; then
