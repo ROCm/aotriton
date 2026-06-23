@@ -20,7 +20,8 @@ function help() {
 Usage: releasesuite-git-head.sh [-h] [options..] <output directory>
 Options:
                     -h: show help and exit.
-         -r <ROCM ver>: build ROCM runtime image
+         -r <ROCM ver>: override the ROCm version list (does not select a
+                        component; use with --runtime, --image, or both)
                --image: build GPU images.
              --runtime: build all C++ runtimes.
                 --asan: build with AddressSanitizer (clang). Forces theRock
@@ -30,13 +31,15 @@ Options:
                         forwarded to cmake as AOTRITON_TARGET_ARCH. Defaults
                         to ALL (every arch in the CMakeLists default list).
                         Useful to shorten debug builds.
+              --debug: Debug mode: require exactly one runtime version (-r),
+                        and leave the build container running after the build
+                        so the contents can be inspected interactively.
          --yaml <.yml>: Use yml config file to build the release
         --origin <url>: Override the git HTTPS origin URL (default: auto-detected from remote)
  --triton_origin <url>: Override the Triton git origin for wheel builds.
                         Accepts a fork URL or a local checkout via file:///abs/path
                         (default: https://github.com/ROCm/triton)
-By default both GPU images and runtimes are built.
-If either --image or --runtime is specified, the missing one will not be built.
+Either --image, --runtime, or both must be specified explicitly.
 
 The YAML configuration file follows the format shown in docs/AltWheelExample.yaml.
 However it accepts GIT SHA1 for Triton wheels instead.
@@ -48,7 +51,7 @@ EOF
   exit $1
 }
 
-TEMP=$(getopt -o hr: --longoptions image,runtime,asan,arch:,yaml:,origin:,triton_origin: -- "$@")
+TEMP=$(getopt -o hr: --longoptions image,runtime,asan,debug,arch:,yaml:,origin:,triton_origin: -- "$@")
 
 if [ $? -ne 0 ]; then
   echo "Error: Invalid option." >&2
@@ -57,16 +60,16 @@ fi
 
 eval set -- "$TEMP"
 
-SUITE_SELECT_IMAGE=-1
-SUITE_SELECT_RUNTIME=-1
+SUITE_SELECT_IMAGE=0
+SUITE_SELECT_RUNTIME=0
 SUITE_RUNTIME_LIST=(6.4.4 7.0.3 7.1.1 7.2.3)
 CMDLIST=()
-SUITE_DEFAULT_SELECTION=1
 SUITE_YAML=""
 SUITE_ORIGIN=""
 SUITE_ASAN=0
 SUITE_TRITON_ORIGIN=""
 SUITE_ARCH="ALL"
+SUITE_DEBUG=0
 THEROCK_ASAN_VERSION="7.14.0.dev0"
 
 while true; do
@@ -76,11 +79,12 @@ while true; do
       ;;
     --image)
       SUITE_SELECT_IMAGE=1
-      SUITE_DEFAULT_SELECTION=0
       ;;
     --runtime)
       SUITE_SELECT_RUNTIME=1
-      SUITE_DEFAULT_SELECTION=0
+      ;;
+    --debug)
+      SUITE_DEBUG=1
       ;;
     --asan)
       SUITE_ASAN=1
@@ -90,10 +94,10 @@ while true; do
       SUITE_ARCH="$1"
       ;;
     -r)
-      SUITE_SELECT_RUNTIME=1
-      SUITE_DEFAULT_SELECTION=0
       shift
       CMDLIST+=("$1")
+      # -r specifies the ROCm version list only; component selection is
+      # governed solely by --runtime / --image.  Omitting both is an error.
       ;;
     --yaml)
       shift
@@ -125,12 +129,14 @@ if [ "$#" -ne 1 ]; then
   help 1
 fi
 
-if [ ${SUITE_SELECT_IMAGE} -lt 0 ]; then
-  SUITE_SELECT_IMAGE=${SUITE_DEFAULT_SELECTION}
+if [ ${SUITE_SELECT_IMAGE} -eq 0 ] && [ ${SUITE_SELECT_RUNTIME} -eq 0 ]; then
+  echo "Error: specify --runtime, --image, or both." >&2
+  help 1
 fi
 
-if [ ${SUITE_SELECT_RUNTIME} -lt 0 ]; then
-  SUITE_SELECT_RUNTIME=${SUITE_DEFAULT_SELECTION}
+if [ ${SUITE_DEBUG} -gt 0 ] && [ ${#CMDLIST[@]} -ne 1 ]; then
+  echo "Error: --debug requires exactly one runtime version specified via -r <ROCM ver>." >&2
+  help 1
 fi
 
 echo "SUITE_RUNTIME_LIST ${SUITE_RUNTIME_LIST[@]}"
@@ -256,9 +262,16 @@ function build_inside() {
   fi
   # Cache pip downloads under <output>/.cache/pip on the host.
   mkdir -p "${CACHE_DIR}/pip"
+  # Always bind-mount the build script from the host so the working-tree
+  # version is used without requiring a commit. In debug mode also allocate a
+  # TTY so the interactive shell at the end of the script works; the script is
+  # run by path (not piped via stdin) so stdin stays attached to the terminal.
+  TTY_FLAGS=()
+  [ ${SUITE_DEBUG} -gt 0 ] && TTY_FLAGS=(-t -e SUITE_DEBUG=1)
   set -x
   docker run --network=host -i --rm \
     -v ${SOURCE_VOLUME}:/src:ro \
+    --mount "type=bind,source=$(realpath ${SCRIPT_DIR}/runc-manylinux-build-tar.sh),target=/tmp/runc-manylinux-build-tar.sh,readonly" \
     --mount "type=bind,source=$(realpath ${OUTPUT_DIR}),target=/output" \
     --mount "type=bind,source=$(realpath ${CACHE_DIR}),target=/cache" \
     --tmpfs "/scratch:exec" \
@@ -266,10 +279,11 @@ function build_inside() {
     -e AOTRITON_INSTALL_PREFIX=/scratch/install \
     -e PIP_CACHE_DIR=/cache/pip \
     "${EXTRA_ENV[@]}" \
+    "${TTY_FLAGS[@]}" \
     -w / \
     ${DOCKER_IMAGE} \
-    bash -l -s "${NOIMAGE_MODE}" "${WHEEL_CFG}" "${ASAN_MODE}" "${ARCH_LIST}" \
-    < "${SCRIPT_DIR}/runc-manylinux-build-tar.sh"
+    bash -l /tmp/runc-manylinux-build-tar.sh \
+    "${NOIMAGE_MODE}" "${WHEEL_CFG}" "${ASAN_MODE}" "${ARCH_LIST}"
 }
 
 # --asan forces theRock (and a specific theRock release) for all selected
