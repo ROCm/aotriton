@@ -1,6 +1,7 @@
 #!/bin/bash
 # Runs inside the AlmaLinux 8 ROCm Docker container (manylinux_2_28 environment).
-# Fed via stdin by build_inside() in releasesuite-git-head.sh; no bind mount needed.
+# Bind-mounted by build_inside() in releasesuite-git-head.sh at /tmp/runc-manylinux-build-tar.sh
+# and invoked as: bash -l /tmp/runc-manylinux-build-tar.sh <args>
 # Positional args: $1=NOIMAGE_MODE $2=WHEEL_CFG $3=ARCH_LIST
 #   ARCH_LIST: "ALL" (default) or a ';'-separated GPU arch list forwarded
 #   to build-release.sh as its arch_list arg (becomes AOTRITON_TARGET_ARCH).

@@ -126,8 +126,8 @@ if [ ${SUITE_SELECT_IMAGE} -eq 0 ] && [ ${SUITE_SELECT_RUNTIME} -eq 0 ]; then
   help 1
 fi
 
-if [ ${SUITE_DEBUG} -gt 0 ] && [ ${#SUITE_RUNTIME_LIST[@]} -ne 1 ]; then
-  echo "Error: --debug requires exactly one runtime version via -r <ROCM ver>." >&2
+if [ ${SUITE_DEBUG} -gt 0 ] && [ ${#CMDLIST[@]} -ne 1 ]; then
+  echo "Error: --debug requires exactly one runtime version specified via -r <ROCM ver>." >&2
   help 1
 fi
 
@@ -253,7 +253,7 @@ function build_inside() {
   set -x
   docker run --network=host -i --rm \
     -v ${SOURCE_VOLUME}:/src:ro \
-    -v "$(realpath ${SCRIPT_DIR}/runc-manylinux-build-tar.sh)":/tmp/runc-manylinux-build-tar.sh:ro \
+    --mount "type=bind,source=$(realpath ${SCRIPT_DIR}/runc-manylinux-build-tar.sh),target=/tmp/runc-manylinux-build-tar.sh,readonly" \
     --mount "type=bind,source=$(realpath ${OUTPUT_DIR}),target=/output" \
     --mount "type=bind,source=$(realpath ${CACHE_DIR}),target=/cache" \
     --tmpfs "/scratch:exec" \
