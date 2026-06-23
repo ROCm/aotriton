@@ -1,6 +1,7 @@
 # Copyright © 2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
+import logging
 import sys
 import os
 import time
@@ -32,6 +33,8 @@ from .defaults import (
     default_device_id,
     default_device_string,
 )
+
+logger = logging.getLogger(__name__)
 
 def elike(t: torch.Tensor | None) -> torch.Tensor | None:
     return torch.empty_like(t) if t is not None else None
@@ -85,6 +88,8 @@ def detach_member_tensors(data_object) -> dict:
 
 _amdsmi_initialized = False
 _hip_to_amdsmi = {}
+_hip_to_drm_card = {}
+_hwmon_warning_logged = False
 _total_memory_gb = None
 
 def get_total_memory_from_amdsmi():
@@ -110,7 +115,7 @@ def get_total_memory_from_amdsmi():
 
 def _init_amdsmi():
     """Initialize AMD-SMI and build HIP to AMD-SMI device mapping."""
-    global _amdsmi_initialized, _hip_to_amdsmi
+    global _amdsmi_initialized, _hip_to_amdsmi, _hip_to_drm_card
     if _amdsmi_initialized:
         return True
 
@@ -124,12 +129,104 @@ def _init_amdsmi():
         try:
             info = amdsmi.amdsmi_get_gpu_enumeration_info(handle)
             hip_id = info["hip_id"]
+            drm_card = info["drm_card"]
             _hip_to_amdsmi[hip_id] = handle
+            _hip_to_drm_card[hip_id] = drm_card
         except Exception:
             continue
 
     _amdsmi_initialized = True
     return True
+
+def _get_temperature_hwmon(device_id):
+    """Get GPU temperature via Linux hwmon sysfs interface.
+
+    This is a fallback for GPUs where AMD-SMI temperature monitoring is not supported.
+    Uses the DRM card number from AMD-SMI enumeration to locate the correct hwmon device.
+
+    NOTE: This only works on Linux. On other operating systems, returns None and logs a warning.
+
+    Args:
+        device_id: HIP device ID
+
+    Returns:
+        Temperature in degrees Celsius, or None if unavailable.
+    """
+    global _hwmon_warning_logged
+
+    try:
+        # Get DRM card number for this HIP device from AMD-SMI mapping
+        # This requires AMD-SMI init to have succeeded at least once
+        if not _init_amdsmi():
+            return None
+
+        card_num = _hip_to_drm_card.get(device_id)
+        if card_num is None:
+            return None
+
+        # Find hwmon directory for this DRM card
+        # On non-Linux systems, /sys/class/drm won't exist and this will return None
+        card_path = f"/sys/class/drm/card{card_num}/device/hwmon"
+        if not os.path.exists(card_path):
+            if not _hwmon_warning_logged:
+                logger.warning(
+                    f"hwmon temperature monitoring unavailable for GPU {device_id} "
+                    f"(path {card_path} does not exist). "
+                    f"This is expected on non-Linux systems. Proceeding without thermal monitoring."
+                )
+                _hwmon_warning_logged = True
+            return None
+
+        # Find the hwmon subdirectory (e.g., hwmon3)
+        # There's typically only one hwmon per GPU
+        hwmon_dirs = [d for d in os.listdir(card_path) if d.startswith('hwmon')]
+        if not hwmon_dirs:
+            if not _hwmon_warning_logged:
+                logger.warning(
+                    f"hwmon temperature monitoring unavailable for GPU {device_id} "
+                    f"(no hwmon device found under {card_path}). "
+                    f"Proceeding without thermal monitoring."
+                )
+                _hwmon_warning_logged = True
+            return None
+
+        # Try to read temperature - prioritize junction (hottest point) if available
+        hwmon_base = os.path.join(card_path, hwmon_dirs[0])
+        temp_path = os.path.join(hwmon_base, 'temp2_input')
+        if os.path.exists(temp_path):
+            try:
+                with open(temp_path, 'r') as f:
+                    temp_millidegrees = int(f.read().strip())
+                return temp_millidegrees / 1000.0
+            except (ValueError, OSError):
+                pass
+
+        # Fall back to edge temperature (most universally available)
+        temp_path = os.path.join(hwmon_base, 'temp1_input')
+        if not os.path.exists(temp_path):
+            if not _hwmon_warning_logged:
+                logger.warning(
+                    f"hwmon temperature monitoring unavailable for GPU {device_id} "
+                    f"(no temp1_input or temp2_input found under {hwmon_base}). "
+                    f"Proceeding without thermal monitoring."
+                )
+                _hwmon_warning_logged = True
+            return None
+
+        with open(temp_path, 'r') as f:
+            temp_millidegrees = int(f.read().strip())
+
+        # Convert millidegrees to degrees Celsius
+        return temp_millidegrees / 1000.0
+
+    except (FileNotFoundError, ValueError, PermissionError, IndexError) as e:
+        if not _hwmon_warning_logged:
+            logger.warning(
+                f"hwmon temperature monitoring failed for GPU {device_id}: {type(e).__name__}: {e}. "
+                f"Proceeding without thermal monitoring."
+            )
+            _hwmon_warning_logged = True
+        return None
 
 def _get_temperature_amdsmi(device_id):
     """Get GPU temperature using AMD-SMI (works correctly with device IDs)."""
@@ -146,13 +243,36 @@ def _get_temperature_amdsmi(device_id):
     )
     return temp
 
+def _get_temperature(device_id):
+    """Get GPU temperature with automatic fallback.
+
+    Tries AMD-SMI first (preferred), falls back to hwmon if unsupported.
+
+    Args:
+        device_id: HIP device ID
+
+    Returns:
+        Temperature in degrees Celsius, or None if unavailable.
+    """
+    # Try AMD-SMI first (most reliable when supported)
+    try:
+        temp = _get_temperature_amdsmi(device_id)
+        if temp is not None:
+            return temp
+    except amdsmi.amdsmi_exception.AmdSmiLibraryException:
+        # AMD-SMI doesn't support temperature on this GPU, fall through to hwmon
+        pass
+
+    # Fall back to hwmon interface
+    return _get_temperature_hwmon(device_id)
+
 def wait_gpu_temperature(device_id=None, threshold=85.0):
     """Wait until GPU temperature drops below threshold. Only prints if waiting > 5 minutes."""
     if device_id is None:
         device_id = default_device_id()
 
-    # Use AMD-SMI directly to avoid HIP ID vs AMD-SMI ID confusion
-    temp = _get_temperature_amdsmi(device_id)
+    # Use temperature function with AMD-SMI + hwmon fallback
+    temp = _get_temperature(device_id)
 
     if temp <= threshold:
         return
@@ -162,7 +282,7 @@ def wait_gpu_temperature(device_id=None, threshold=85.0):
         elapsed = time.time() - start_time
         print(f"OVERHEATING: GPU HIP ID {device_id} TEMP. {temp}", flush=True)
         time.sleep(5)
-        temp = _get_temperature_amdsmi(device_id)
+        temp = _get_temperature(device_id)
         if temp is None:
             break
     print(f"OVERHEATING: EXIT GPU HIP ID {device_id} TEMP. {temp}", flush=True)
