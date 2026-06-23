@@ -1,6 +1,7 @@
 #!/bin/bash
 # Runs inside the AlmaLinux 8 ROCm Docker container (manylinux_2_28 environment).
-# Fed via stdin by build_inside() in releasesuite-git-head.sh; no bind mount needed.
+# Bind-mounted by build_inside() in releasesuite-git-head.sh at /tmp/runc-manylinux-build-tar.sh
+# and invoked as: bash -l /tmp/runc-manylinux-build-tar.sh <args>
 # Positional args: $1=NOIMAGE_MODE $2=WHEEL_CFG $3=ARCH_LIST
 #   ARCH_LIST: "ALL" (default) or a ';'-separated GPU arch list forwarded
 #   to build-release.sh as its arch_list arg (becomes AOTRITON_TARGET_ARCH).
@@ -80,4 +81,15 @@ if [ ${NOIMAGE_MODE} == "OFF" ]; then
 else
   tarfile=aotriton-${GIT_SHORT}-manylinux_2_28_x86_64-rocm${hipver}-shared.tar.gz
   cd "${AOTRITON_INSTALL_PREFIX}" && tar cz aotriton > /output/${tarfile}
+fi
+
+# Debug: drop into interactive shell after everything is done so the full
+# build and install tree can be inspected. Requires -t from the caller.
+if [[ "${SUITE_DEBUG:-0}" == "1" ]]; then
+  if [ -t 0 ]; then
+    echo "=== DEBUG MODE: build complete. Dropping into interactive shell. ===" >&2
+    bash -i </dev/tty >/dev/tty 2>&1 || true
+  else
+    echo "=== DEBUG MODE: build complete, but no TTY available. Skipping interactive shell. ===" >&2
+  fi
 fi
