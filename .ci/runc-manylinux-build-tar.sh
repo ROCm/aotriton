@@ -85,6 +85,10 @@ fi
 # Debug: drop into interactive shell after everything is done so the full
 # build and install tree can be inspected. Requires -t from the caller.
 if [[ "${SUITE_DEBUG:-0}" == "1" ]]; then
-  echo "=== DEBUG MODE: build complete. Dropping into interactive shell. ===" >&2
-  bash -i </dev/tty >/dev/tty 2>&1 || true
+  if [ -t 0 ]; then
+    echo "=== DEBUG MODE: build complete. Dropping into interactive shell. ===" >&2
+    bash -i </dev/tty >/dev/tty 2>&1 || true
+  else
+    echo "=== DEBUG MODE: build complete, but no TTY available. Skipping interactive shell. ===" >&2
+  fi
 fi

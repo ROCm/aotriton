@@ -20,7 +20,8 @@ function help() {
 Usage: releasesuite-git-head.sh [-h] [options..] <output directory>
 Options:
                     -h: show help and exit.
-         -r <ROCM ver>: build ROCM runtime image
+         -r <ROCM ver>: override the ROCm version list (does not select a
+                        component; use with --runtime, --image, or both)
                --image: build GPU images.
              --runtime: build all C++ runtimes.
        --arch <list>: ';'-separated GPU arch list (e.g. 'gfx942;gfx950'),
@@ -87,9 +88,8 @@ while true; do
     -r)
       shift
       CMDLIST+=("$1")
-      # -r specifies the ROCm version list only; component selection (runtime
-      # vs image) is governed solely by --runtime / --image.  When neither is
-      # given, both components build (default behaviour unchanged).
+      # -r specifies the ROCm version list only; component selection is
+      # governed solely by --runtime / --image.  Omitting both is an error.
       ;;
     --yaml)
       shift
@@ -244,19 +244,13 @@ function build_inside() {
   fi
   # Cache pip downloads under <output>/.cache/pip on the host.
   mkdir -p "${CACHE_DIR}/pip"
-  # In debug mode allocate a tty so runc-manylinux-build-tar.sh can drop into
-  # an interactive shell after the build. Container is always removed on exit.
-  DEBUG_FLAGS=()
-  if [ ${SUITE_DEBUG} -gt 0 ]; then
-    DEBUG_FLAGS=(-t -e SUITE_DEBUG=1)
-  fi
-  set -x
   # Always bind-mount the build script from the host so the working-tree
   # version is used without requiring a commit. In debug mode also allocate a
   # TTY so the interactive shell at the end of the script works; the script is
   # run by path (not piped via stdin) so stdin stays attached to the terminal.
   TTY_FLAGS=()
   [ ${SUITE_DEBUG} -gt 0 ] && TTY_FLAGS=(-t -e SUITE_DEBUG=1)
+  set -x
   docker run --network=host -i --rm \
     -v ${SOURCE_VOLUME}:/src:ro \
     -v "$(realpath ${SCRIPT_DIR}/runc-manylinux-build-tar.sh)":/tmp/runc-manylinux-build-tar.sh:ro \
