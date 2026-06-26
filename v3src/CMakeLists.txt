@@ -14,7 +14,7 @@ execute_process(COMMAND ${CMAKE_COMMAND} -E make_directory "${AOTRITON_KERNEL_ST
 
 execute_process(COMMAND ${CMAKE_COMMAND}
   -E env VIRTUAL_ENV=${VENV_DIR}
-  "${VENV_BIN_PYTHON}" -m v3python.gpu_targets
+  "${VENV_BIN_PYTHON}" -m aotriton.gpu_targets
   --target_arch ${AOTRITON_TARGET_ARCH}
   --target_gpus ${AOTRITON_OVERRIDE_TARGET_GPUS}
   WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/.."
@@ -29,7 +29,7 @@ if(AOTRITON_TUNING_DATABASE_ROOT)
   set(DBXZ_BASE "${AOTRITON_TUNING_DATABASE_ROOT}")
   message(STATUS "Using external tuning database root: ${DBXZ_BASE}")
 else()
-  set(DBXZ_BASE "${CMAKE_SOURCE_DIR}/v3python/database")
+  set(DBXZ_BASE "${CMAKE_SOURCE_DIR}/modules/database")
 endif()
 file(GLOB_RECURSE DB_TARS CONFIGURE_DEPENDS "${DBXZ_BASE}/*.sqlite3.tar.xz")
 foreach(DBXZ IN LISTS DB_TARS)
@@ -42,13 +42,13 @@ endforeach(DBXZ)
 message(STATUS "Assembling Central Database...")
 execute_process(
     COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
-    "${VENV_BIN_PYTHON}" -m v3python.database_compose
+    "${VENV_BIN_PYTHON}" -m aotriton.database_compose
     --database_file "${AOTRITON_V2_BUILD_DIR}/database/tuning_database.sqlite3"
     --decomposed "${AOTRITON_V2_BUILD_DIR}/database"
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
     COMMAND_ERROR_IS_FATAL ANY)
 
-get_filename_component(AOTRITON_COMPILER "${CMAKE_CURRENT_LIST_DIR}/../v3python/compile.py" ABSOLUTE)
+get_filename_component(AOTRITON_COMPILER "${CMAKE_CURRENT_LIST_DIR}/../python/compile.py" ABSOLUTE)
 message("AOTRITON_COMPILER ${AOTRITON_COMPILER}")
 
 set(HSACO_COMPILE_OPTION "")
@@ -141,9 +141,10 @@ execute_process(
 COMMAND ${CMAKE_COMMAND}
 -E env VIRTUAL_ENV=${VENV_DIR}
 AOTRITON_ENABLE_FP32=${AOTRITON_ENABLE_FP32}
-"${VENV_BIN_PYTHON}" -X utf8 -m v3python.generate
+"${VENV_BIN_PYTHON}" -X utf8 -m aotriton.generate
 --target_gpus ${EFFECTIVE_TARGET_GPUS}
 --build_dir "${AOTRITON_V2_BUILD_DIR}"
+--root_dir "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
 ${GENERATE_OPTION}
 COMMAND_ECHO STDOUT
 WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
@@ -156,8 +157,9 @@ if(NOT AOTRITON_NOIMAGE_MODE)
   add_custom_command(OUTPUT "${SIGNATURE_FILE}"
     COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
     "${VENV_BIN_PYTHON}"
-    -m v3python.write_image_signature
+    -m aotriton.write_image_signature
     --build_dir "${AOTRITON_V2_BUILD_DIR}"
+    --root_dir "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
     --git_sha1 ${AOTRITON_GIT_SHA1}
     --git_treesha1 ${AOTRITON_GIT_TREESHA1}
     --target_arch ${AOTRITON_TARGET_ARCH}
@@ -246,7 +248,7 @@ if(NOT AOTRITON_NOIMAGE_MODE)
       add_custom_command(OUTPUT "${AKS2}"
         COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
         "${VENV_BIN_PYTHON}"
-        -m v3python.aks2
+        -m aotriton.aks2
         -o "${AKS2}"
         ${AKS2_OPTIONS}
         --hsaco_manifest "${HSACO_MANIFEST}"
@@ -283,7 +285,7 @@ if(NOT AOTRITON_NOIMAGE_MODE)
       add_custom_command(OUTPUT "${AKS2}"
         COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
         "${VENV_BIN_PYTHON}"
-        -m v3python.aks2
+        -m aotriton.aks2
         -o "${AKS2}"
         --ignore_json
         --hsaco_manifest "${HSACO_MANIFEST}"
@@ -306,7 +308,7 @@ if(NOT AOTRITON_NOIMAGE_MODE)
       list(POP_FRONT RULE DIR_FAMILY)
       list(POP_FRONT RULE DIR_KERNEL)
       # Remaining RULE entries are the absolute paths of the .aks2 files that
-      # feed this ZIP (see v3python/codegen/root.py write_cluster()). Depending
+      # feed this ZIP (see python/codegen/root.py write_cluster()). Depending
       # on the concrete inputs ensures the ZIP is rebuilt when any contributing
       # .aks2 changes, even if the .nsv manifest text is unchanged.
       set(ZIP_AKS2_DEPS ${RULE})
@@ -315,7 +317,7 @@ if(NOT AOTRITON_NOIMAGE_MODE)
       # ZIP_MANIFEST is written by write_cluster() at generate time alongside Bare.flatzip.
       add_custom_command(OUTPUT "${ZIP_OUT}"
         COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
-        "${VENV_BIN_PYTHON}" -m v3python.flatzip
+        "${VENV_BIN_PYTHON}" -m aotriton.flatzip
         --manifest "${ZIP_MANIFEST}"
         -o "${ZIP_OUT}"
         DEPENDS aotriton_v3_aks2 "${ZIP_MANIFEST}" ${ZIP_AKS2_DEPS}
@@ -345,9 +347,10 @@ if(AOTRITON_BUILD_FOR_TUNING)
     COMMAND ${CMAKE_COMMAND}
     -E env VIRTUAL_ENV=${VENV_DIR}
     AOTRITON_ENABLE_FP32=${AOTRITON_ENABLE_FP32}
-    "${VENV_BIN_PYTHON}" -m v3python.generate
+    "${VENV_BIN_PYTHON}" -m aotriton.generate
     --target_gpus ${EFFECTIVE_TARGET_GPUS}
     --build_dir "${AOTRITON_V2_BUILD_DIR}"
+    --root_dir "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
     ${GENERATE_OPTION}
     --build_for_tuning_second_pass
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}")
@@ -397,7 +400,7 @@ if(NOT WIN32)
   execute_process(
     COMMAND ${CMAKE_COMMAND}
     -E env VIRTUAL_ENV=${VENV_DIR}
-    "${VENV_BIN_PYTHON}" -m v3python.comment_only_asm
+    "${VENV_BIN_PYTHON}" -m aotriton.comment_only_asm
     -o "${AOTRITON_V2_BUILD_DIR}/set_aotriton_version.s"
     ${AOTRITON_VERSION_MAJOR_INT}
     ${AOTRITON_VERSION_MINOR_INT}
