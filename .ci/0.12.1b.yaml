@@ -1,6 +1,0 @@
-venvs:
-  gfx1250: 62e7ab2012114facfbec892fa8d646e0fa08a61f
-rules:
-  - matches:  # String matches (identical)
-      arch: gfx1250
-    venv: gfx1250
