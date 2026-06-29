@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # Copyright (c) 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
-"""Regression tests for v3python.gpu_targets.
+"""Regression tests for aotriton.gpu_targets.
 
 Covers the failure mode reported in #169: when the requested arch list is
 fully filtered out (e.g. PYTORCH_ROCM_ARCH=gfx900 against the supported set),
@@ -31,7 +31,7 @@ def _run(module: str, *args: str) -> "subprocess.CompletedProcess":
     )
 
 
-@pytest.mark.parametrize("module", ["v3python.gpu_targets"])
+@pytest.mark.parametrize("module", ["aotriton.gpu_targets"])
 def test_unsupported_arch_fails_loud(module):
     """gfx900 is unsupported on every aotriton release. Filtering it out must
     not pass through silently — exit non-zero with a diagnostic naming the
@@ -48,7 +48,7 @@ def test_unsupported_arch_fails_loud(module):
     assert result.stdout.strip() == ""
 
 
-@pytest.mark.parametrize("module", ["v3python.gpu_targets"])
+@pytest.mark.parametrize("module", ["aotriton.gpu_targets"])
 def test_supported_arch_still_works(module):
     """Sanity: a supported arch resolves cleanly (no regression on the
     happy path)."""
@@ -57,7 +57,7 @@ def test_supported_arch_still_works(module):
     assert "gfx942" in result.stdout
 
 
-@pytest.mark.parametrize("module", ["v3python.gpu_targets"])
+@pytest.mark.parametrize("module", ["aotriton.gpu_targets"])
 def test_mixed_arch_drops_unsupported_keeps_supported(module):
     """A multi-arch build with at least one supported target must keep the
     supported subset rather than fail. This is the multi-arch release shape
@@ -68,7 +68,7 @@ def test_mixed_arch_drops_unsupported_keeps_supported(module):
     assert "gfx900" not in result.stdout
 
 
-@pytest.mark.parametrize("module", ["v3python.gpu_targets"])
+@pytest.mark.parametrize("module", ["aotriton.gpu_targets"])
 def test_no_args_fails_loud(module):
     """Bare invocation (no archs at all) must also fail loud rather than
     print an empty string."""
@@ -77,7 +77,7 @@ def test_no_args_fails_loud(module):
     assert "no supported target arch" in result.stderr
 
 
-@pytest.mark.parametrize("module", ["v3python.gpu_targets"])
+@pytest.mark.parametrize("module", ["aotriton.gpu_targets"])
 def test_comma_separator_blob_diagnosed(module):
     """PyTorch's PYTORCH_ROCM_ARCH often leaks a comma-joined blob like
     'gfx942,gfx950' as a single CMake list element. The error path should

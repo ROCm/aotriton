@@ -233,6 +233,14 @@ Non-command functions in `tasks.py` query PostgreSQL directly using `psycopg` an
 - `current_app.tracker_registry` — `TrackerRegistry` instance
 - `current_app.scheduler` — `Scheduler` instance
 
+## Notes for `/perf` (visperf)
+
+- The arch dropdown is populated by `v3python.tune.pq.visperf.get_available_archs`,
+  which queries `kernel_table` only. This is intentional and complete:
+  every AOTriton op is backed by one or more Triton kernels, so any arch
+  the library is built for shows up in `best_tuning_results`. Do not
+  "fix" this by unioning `best_optune_results` — the union is dead SQL.
+
 ## Out of scope
 
 - `.tune/bin/` scripts and their internals — use the tuner-v3 agent

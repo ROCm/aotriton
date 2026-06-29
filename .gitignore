@@ -1,5 +1,7 @@
 __pycache__/
-*build*/
+# Out-of-source CMake build dirs at the repo root only (so it never catches a
+# nested source dir like python/template_instantiation/builder/).
+/*build*/
 *.swp
 tritonsrc/tune-*.json
 *.csv
@@ -13,3 +15,16 @@ tritonsrc/tune-*.json
 *.log
 *.cfg
 agent-plans
+
+# Python packaging artifacts
+*.egg-info/
+
+# Retired legacy generator (kept on disk for reference, not tracked; see
+# agent-plans/ati_retire_v3python.md). The live generator is the `aotriton`
+# package under python/.
+v3python.retiring/
+
+# Session review artifacts (not repo content)
+ati-code-quality.md
+ati-ccreview-*.md
+agent-files/

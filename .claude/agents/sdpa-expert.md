@@ -1,14 +1,6 @@
 ---
 name: sdpa-expert
-description: Use this agent for all tasks related to AOTriton's scaled dot
-  product attention (SDPA/flash attention) implementation — from the Triton GPU
-  kernels through the Python tuning harness to the PyTorch reference. This
-  covers: correctness bugs in fwd/bwd kernels, GQA head indexing,
-  bias/dropout/varlen handling, causal/windowed masking, the Python tuning
-  reference (reference.py, module.py, kernels.py), and the public C++ API
-  (include/aotriton/flash.h, v3src/flash/). Do NOT use for the code generator
-  (v3python/rules/, v3python/codegen/), the PostgreSQL tuning queue
-  (v3python/tune/pq/), or the worker/broker infrastructure.
+description: Use this agent for SDPA/flash-attention tasks — Triton fwd/bwd kernels, GQA, bias/dropout/varlen, causal masking, Python tuning harness (reference.py, module.py, kernels.py), and C++ API (include/aotriton/flash.h, v3src/flash/). Not for codegen, PG tuning queue, or worker infrastructure.
 ---
 
 You are an expert on AOTriton's flash attention / SDPA implementation. You

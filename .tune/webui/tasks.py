@@ -17,6 +17,8 @@ import re
 import logging
 from flask import current_app
 
+logger = logging.getLogger(__name__)
+
 # Global constant for aotriton root directory
 AOTRITON_ROOT = Path(__file__).parent.parent.parent.resolve()
 
@@ -28,6 +30,12 @@ sys.path.insert(0, AOTRITON_ROOT.as_posix())
 from v3python.tune.utils import get_db_connection_params
 from v3python.tune.flash.module import FlashEntry
 from .pytest_entry_parser import parse_pytest_node_id, entry_to_sql_clauses
+from v3python.tune.pq.visperf import (
+    query_best_results, query_all_best_results, get_available_archs,
+    build_axes, query_cell_detail,
+)
+from v3python.tune.pq.vis_descriptors import DESCRIPTORS
+from v3python.tune.pq.export_visperf import export_visperf as _do_export_visperf, build_export_html
 
 def run_command(cmd, cwd, workdir, description=None, dry_run: bool = False):
     """
@@ -1877,3 +1885,88 @@ def get_scheduled_workers(workdir):
     except Exception as e:
         logger.error(f"Error getting scheduled workers: {e}")
         return {}
+
+
+# ---------------------------------------------------------------------------
+# Performance visualization
+# ---------------------------------------------------------------------------
+
+def get_perf_archs(workdir: str) -> list[str]:
+    """Return sorted list of arches with best_tuning_results data."""
+    try:
+        conn_params = get_db_connection_params(Path(workdir))
+        with psycopg.connect(**conn_params, autocommit=True) as conn:
+            return get_available_archs(conn)
+    except Exception as e:
+        logger.error('get_perf_archs failed: %s', e)
+        return []
+
+
+def query_perf_data(workdir: str, arch: str, kernel: str, mode: str = 'kernel',
+                    seqlen_min: int = 0, seqlen_max: int = 65536) -> dict:
+    """Query best results for the Perf tab API endpoint."""
+    try:
+        conn_params = get_db_connection_params(Path(workdir))
+        with psycopg.connect(**conn_params, autocommit=True) as conn:
+            return query_best_results(conn, arch, kernel, mode, seqlen_min, seqlen_max)
+    except Exception as e:
+        logger.error('query_perf_data failed: %s', e)
+        return {'error': str(e), 'rows': [], 'axes': {}}
+
+
+def export_visperf(workdir: str, dry_run: bool = False) -> dict:
+    """Export self-contained perf.html to <workdir>/perf.html."""
+    if dry_run:
+        return {'status': 'dry_run', 'message': '[DRY RUN] Would export perf.html'}
+    output = Path(workdir) / 'perf.html'
+    try:
+        conn_params = get_db_connection_params(Path(workdir))
+        with psycopg.connect(**conn_params, autocommit=True) as conn:
+            _do_export_visperf(conn, output)
+        return {'status': 'ok', 'message': f'Exported to {output}'}
+    except Exception as e:
+        logger.error('export_visperf failed: %s', e)
+        return {'status': 'error', 'message': str(e)}
+
+
+def query_perf_cell_detail(workdir: str, task_id: int, kernel: str,
+                           mode: str = 'kernel') -> dict:
+    """Fetch psel/copt-level candidates for one (task_id, kernel) cell."""
+    conn_params = get_db_connection_params(Path(workdir))
+    try:
+        with psycopg.connect(**conn_params, autocommit=True) as conn:
+            return query_cell_detail(conn, task_id, kernel, mode)
+    except Exception as e:
+        logger.error('query_perf_cell_detail failed: %s', e)
+        return {'error': str(e)}
+
+
+def build_perf_export_html(col_filters: dict, url_params: dict,
+                           workdir: str, descriptor_id: str = 'flash') -> str:
+    """Build a self-contained autozoom HTML string for all arches and kernels/ops.
+
+    col_filters: {dim: [allowed_values]} — empty list means include all values.
+    url_params:  forwarded into the static bootstrap as the initial URL state.
+    """
+    desc = DESCRIPTORS.get(descriptor_id)
+    if desc is None:
+        raise ValueError(f"Unknown descriptor_id {descriptor_id!r}")
+
+    conn_params = get_db_connection_params(Path(workdir))
+    with psycopg.connect(**conn_params, autocommit=True) as conn:
+        all_data = query_all_best_results(conn, descriptor_id=descriptor_id)
+
+    if col_filters:
+
+        def _row_allowed(r: dict) -> bool:
+            for dim, allowed in col_filters.items():
+                if allowed and str(r.get(dim)) not in allowed:
+                    return False
+            return True
+
+        for arch_data in all_data.values():
+            for kdata in arch_data.values():
+                kdata['rows'] = [r for r in kdata['rows'] if _row_allowed(r)]
+                kdata['axes'] = build_axes(kdata['rows'], desc)
+
+    return build_export_html(all_data, url_params)

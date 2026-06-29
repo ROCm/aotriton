@@ -1,0 +1,22 @@
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+#
+# Packaging for the `aotriton` code-generation package, which lives under python/.
+# `python/` maps to the top-level `aotriton` package (see setup.py); the version is
+# read from CMakeLists.txt (the single source of truth). Dynamic metadata + the
+# package mapping are computed in setup.py because the directory layout (python/ ->
+# aotriton, with sub-dirs as aotriton.<subpkg>) needs programmatic package_dir.
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aotriton"
+dynamic = ["version"]
+description = "AOTriton ahead-of-time Triton code generator"
+requires-python = ">=3.10"
+
+# No console scripts: the generator tools are invoked as `python -m aotriton.<tool>`
+# (e.g. `python -m aotriton.generate`), the same way the build currently uses
+# `python -m v3python.<tool>` — not as installed binaries.
