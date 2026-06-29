@@ -67,11 +67,9 @@ def _venv_python(args, name, value):
     return (args.build_dir.parent / "altvenvs" / name / REL_PYTHON).absolute()
 
 def _default_venv_python(args):
-    # Mirror root.py's fallback used only when the config has no 'default' venv:
-    # prefer the active VIRTUAL_ENV, else build_dir.parent/venv.
-    venv_dir = os.getenv('VIRTUAL_ENV')
-    base = Path(venv_dir) if venv_dir else (args.build_dir.parent / 'venv')
-    return (base / REL_PYTHON).absolute()
+    # Mirror v3python/codegen/root.py fallback when the config has no 'default' venv:
+    # use the running interpreter.
+    return Path(sys.executable).absolute()
 
 def _triton_version_in_venv(python_path):
     # Query the triton version installed in another venv by running its python.
