@@ -2,20 +2,14 @@
 // SPDX-License-Identifier: MIT
 
 #include <aotriton/_internal/fd.h>
+#include <aotriton/_internal/log.h>
 
 #if defined(_WIN32)
 
 #include <algorithm>
 #include <cstdio>
 #include <cwchar>
-#include <iostream>
 #include <string>
-
-#ifdef NDEBUG
-#define AOTRITON_KERNEL_VERBOSE 0
-#else
-#define AOTRITON_KERNEL_VERBOSE 1
-#endif
 
 namespace AOTRITON_NS {
 
@@ -50,25 +44,16 @@ fd_t fd_open(const std::filesystem::path& pathname) {
                                    nullptr);
 
   if (file_handle == INVALID_HANDLE_VALUE) {
-#if AOTRITON_KERNEL_VERBOSE
     DWORD error_code = GetLastError();
-    wchar_t error_message[256] = {0};
-    FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-                   nullptr,
-                   error_code,
-                   MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-                   error_message,
-                   sizeof(error_message) / sizeof(error_message[0]),
-                   nullptr);
-    for (size_t len = wcslen(error_message);
-         len > 0 && (error_message[len - 1] == L'\n' || error_message[len - 1] == L'\r');
-         --len) {
-      error_message[len - 1] = L'\0';
-    }
-    std::wcerr << L"CreateFileW failed for: " << wide_path
-               << L", Win32 error " << error_code
-               << L": " << error_message << std::endl;
-#endif
+    char error_message[256] = {0};
+    FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                   nullptr, error_code, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+                   error_message, sizeof(error_message), nullptr);
+    size_t len = strlen(error_message);
+    while (len > 0 && (error_message[len-1] == '\n' || error_message[len-1] == '\r'))
+      error_message[--len] = '\0';
+    AOTRITON_LOG(LOG_DEBUG, "CreateFileW failed for: {}, Win32 error {}: {}",
+                 pathname.string(), error_code, error_message);
     return invalid_fd();
   }
 
@@ -80,9 +65,7 @@ int fd_close(fd_t fd) {
     return -1;
   }
   if (!CloseHandle(fd)) {
-#if AOTRITON_KERNEL_VERBOSE
-    std::cerr << "CloseHandle failed with error: " << GetLastError() << std::endl;
-#endif
+    AOTRITON_LOG(LOG_DEBUG, "CloseHandle failed with error: {}", GetLastError());
     return -1;
   }
   return 0;
@@ -103,9 +86,7 @@ ssize_t fd_read(fd_t fd, void *buf, size_t count) {
     if (error_code == ERROR_HANDLE_EOF) {
       return 0;
     }
-#if AOTRITON_KERNEL_VERBOSE
-    std::cerr << "ReadFile failed with error: " << error_code << std::endl;
-#endif
+    AOTRITON_LOG(LOG_DEBUG, "ReadFile failed with error: {}", error_code);
     return -1;
   }
 

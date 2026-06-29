@@ -3,19 +3,10 @@
 
 #include <aotriton/_internal/lszip.h>
 #include <aotriton/_internal/fd.h>
+#include <aotriton/_internal/log.h>
 #include <cstring>
 #include <algorithm>
 #include <vector>
-
-#ifdef NDEBUG
-#define AOTRITON_KERNEL_VERBOSE 0
-#else
-#define AOTRITON_KERNEL_VERBOSE 1
-#endif
-
-#if AOTRITON_KERNEL_VERBOSE
-#include <iostream>
-#endif
 
 // ZIP format constants (PKWARE spec §4.3)
 static constexpr uint32_t ZIP_CENTRAL_DIR_SIG = 0x02014b50;
@@ -99,13 +90,10 @@ lszip(fd_t fd,
     // flatzip is STORED-only; reject anything compressed or encrypted so the
     // caller never gets back offsets that point at non-raw data.
     if (comp_method != 0 || (gp_flag & 0x0001) != 0) {
-#if AOTRITON_KERNEL_VERBOSE
-      std::cerr << "lszip: rejecting non-STORED/encrypted entry "
-                << std::string_view(reinterpret_cast<const char*>(p + 46), fname_len)
-                << " (comp_method=" << comp_method
-                << ", gp_flag=0x" << std::hex << gp_flag << std::dec << ")"
-                << std::endl;
-#endif
+      AOTRITON_LOG(LOG_DEBUG,
+                   "lszip: rejecting non-STORED/encrypted entry {} (comp_method={}, gp_flag={:#06x})",
+                   std::string_view(reinterpret_cast<const char*>(p + 46), fname_len),
+                   comp_method, gp_flag);
       return false;
     }
 

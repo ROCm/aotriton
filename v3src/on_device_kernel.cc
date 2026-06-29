@@ -4,20 +4,11 @@
 #include <aotriton/_internal/packed_kernel.h>
 #include <aotriton/_internal/util.h>
 #include <aotriton/_internal/on_device_kernel.h>
+#include <aotriton/_internal/log.h>
 #include <aotriton/runtime.h>
-#include <iostream>
+#include <filesystem>
 #include <string>
 #include <mutex>
-
-#ifdef NDEBUG
-#define AOTRITON_KERNEL_VERBOSE 0
-#else
-#define AOTRITON_KERNEL_VERBOSE 1
-#endif
-
-#if AOTRITON_KERNEL_VERBOSE
-#include <stdio.h>
-#endif
 
 namespace AOTRITON_NS {
 
@@ -78,19 +69,11 @@ OnDeviceKernel::load_for_device(int device_id,
                      log.data(),
                      (void*)(uintptr_t)1 };
 
-#if AOTRITON_KERNEL_VERBOSE
-#if defined(_WIN32)
-  std::wcerr << L"Trying to decompress kernel " << info.flatzip_path;
-  std::cerr << " entry=" << info.aks2_entry << " stem=" << info.stem_name << std::endl;
-#else
-  std::cerr << "Trying to decompress kernel " << std::string(info.flatzip_path)
-            << " entry=" << info.aks2_entry << " stem=" << info.stem_name << std::endl;
-#endif
-#endif
+  AOTRITON_LOG(LOG_DEBUG,
+               "Trying to decompress kernel {} entry={} stem={}",
+               std::filesystem::path(info.flatzip_path).string(), info.aks2_entry, info.stem_name);
   decompress_kernel(info);
-#if AOTRITON_KERNEL_VERBOSE
-  std::cerr << "Decompress kernel to " << essentials_.image << std::endl;
-#endif
+  AOTRITON_LOG(LOG_DEBUG, "Decompress kernel to {}", static_cast<const void*>(essentials_.image));
   if (!essentials_.image) {
     return std::make_tuple(nullptr, hipErrorInvalidImage);
   }
@@ -124,10 +107,9 @@ OnDeviceKernel::decompress_kernel(const OnDeviceKernel::OnDiskKernelInfo& info) 
     packed_kernel_ = PackedKernel::open(info.flatzip_path, info.aks2_entry);
   }
   if (packed_kernel_) { // open may fail
-#if AOTRITON_KERNEL_VERBOSE
-    std::cerr << "PackedKernel::open returns " << packed_kernel_.get()
-              << " status: " << packed_kernel_->status() << std::endl;
-#endif
+    AOTRITON_LOG(LOG_DEBUG, "PackedKernel::open returns {} status: {}",
+                 static_cast<const void*>(packed_kernel_.get()),
+                 static_cast<int>(packed_kernel_->status()));
     essentials_ = packed_kernel_->filter(info.stem_name);
   }
   kernel_loaded_ = true;

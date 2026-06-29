@@ -3,20 +3,11 @@
 
 #include <aotriton/_internal/triton_kernel.h>
 #include <aotriton/_internal/util.h>
+#include <aotriton/_internal/log.h>
 #include <aotriton/runtime.h>
-#include <iostream>
+#include <cctype>
 #include <string>
 #include <mutex>
-
-#ifdef NDEBUG
-#define AOTRITON_KERNEL_VERBOSE 0
-#else
-#define AOTRITON_KERNEL_VERBOSE 1
-#endif
-
-#if AOTRITON_KERNEL_VERBOSE
-#include <stdio.h>
-#endif
 
 namespace AOTRITON_NS {
 
@@ -63,10 +54,8 @@ TritonKernel::invoke(std::string_view kernel_name,
                      bool peek_kernel_image,
 #endif
                      hipStream_t stream) {
-#if AOTRITON_KERNEL_VERBOSE
-  std::cerr << "Invoking TritonKernel " << this << " with kernel_name = \"" << kernel_name << '"'
-            << std::endl;
-#endif
+  AOTRITON_LOG(LOG_DEBUG, "Invoking TritonKernel {} with kernel_name = \"{}\"",
+               static_cast<const void*>(this), kernel_name);
   int device_id;
   AOTRITON_HIP_CHECK_RETURN(hipGetDevice(&device_id));
   std::string stem_name;
@@ -104,11 +93,8 @@ TritonKernel::direct_invoke(std::string_view mangled_kernel_function_name,
                             hipStream_t stream)
 {
   // TODO: Deduplication
-#if AOTRITON_KERNEL_VERBOSE
-  std::cerr << "Invoking Kernel " << this << " with kernel_name = \"" << mangled_kernel_function_name << '"'
-            << " struct_of_args = " << struct_of_args
-            << std::endl;
-#endif
+  AOTRITON_LOG(LOG_DEBUG, "Invoking Kernel {} with kernel_name = \"{}\" struct_of_args = {}",
+               static_cast<const void*>(this), mangled_kernel_function_name, struct_of_args);
   int device_id;
   AOTRITON_HIP_CHECK_RETURN(hipGetDevice(&device_id));
   auto lazy = [&]() -> OnDeviceKernel::OnDiskKernelInfo {
@@ -125,27 +111,30 @@ TritonKernel::direct_invoke(std::string_view mangled_kernel_function_name,
                     HIP_LAUNCH_PARAM_BUFFER_SIZE,
                     &sizeof_struct,
                     HIP_LAUNCH_PARAM_END};
-#if AOTRITON_KERNEL_VERBOSE
-  auto hexdump = [](void *ptr, int buflen) {
-    unsigned char *buf = (unsigned char*)ptr;
-    int i, j;
-    fprintf(stderr, "hexdump: %08p\n", buf);
-    for (i=0; i<buflen; i+=16) {
-      fprintf(stderr, "%06x: ", i);
-      for (j=0; j<16; j++)
-        if (i+j < buflen)
-          fprintf(stderr, "%02x ", buf[i+j]);
-        else
-          fprintf(stderr, "   ");
-      fprintf(stderr, " ");
-      for (j=0; j<16; j++)
-        if (i+j < buflen)
-          fprintf(stderr, "%c", isprint(buf[i+j]) ? buf[i+j] : '.');
-      fprintf(stderr, "\n");
-    }
-  };
-  hexdump(struct_of_args, sizeof_struct);
-#endif
+  if (AOTRITON_NS::debug_config().debug_level >= LOG_DEBUG) {
+    auto hexdump = [](const void* ptr, int buflen) {
+      const auto* buf = static_cast<const unsigned char*>(ptr);
+      emit_log(std::format("hexdump: {}", ptr));
+      for (int i = 0; i < buflen; i += 16) {
+        std::string line = std::format("{:06x}: ", i);
+        for (int j = 0; j < 16; j++) {
+          if (i+j < buflen)
+            line += std::format("{:02x} ", buf[i+j]);
+          else
+            line += "   ";
+        }
+        line += ' ';
+        for (int j = 0; j < 16; j++) {
+          if (i+j < buflen) {
+            unsigned char c = buf[i+j];
+            line += static_cast<char>(std::isprint(c) ? c : '.');
+          }
+        }
+        emit_log(line);
+      }
+    };
+    hexdump(struct_of_args, sizeof_struct);
+  }
   return hipModuleLaunchKernel(func,
                                grid.x,
                                grid.y,
