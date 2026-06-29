@@ -3,9 +3,9 @@
 
 // clang-format off
 #include "iface.[[iface_name]].h"
+#include <aotriton/_internal/log.h>
 #include <aotriton/util.h>
 #include <tuple>
-#include <iostream>
 [[includes]]
 
 namespace AOTRITON_NS::v3::[[family_name]] {
@@ -57,16 +57,13 @@ hipError_t
     // In this case hipErrorPeerAccessUnsupported will be returned
     if (ret == hipErrorPeerAccessUnsupported) {
         if (!disable_fallback) {
-#ifndef NDEBUG
-          std::cerr << "[[context_class_name]]::launch failed with optimal backend, "
-                     << "calling fallback." << std::endl;
-#endif
+          AOTRITON_LOG(LOG_INFO,
+                       "[[context_class_name]]::launch failed with optimal backend, calling fallback.");
           return launcher_table[fallback_backend](*this, gpu, stream);
         }
-#ifndef NDEBUG
-        std::cerr << "[[context_class_name]]::launch failed with optimal backend, "
-                   << "fallback disabled, returning error." << std::endl;
-#endif
+        AOTRITON_LOG(LOG_WARNING,
+                     "[[context_class_name]]::launch failed with optimal backend, "
+                     "fallback disabled, returning error.");
     }
     return ret;
 }

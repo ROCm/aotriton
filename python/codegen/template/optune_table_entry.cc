@@ -4,9 +4,6 @@
 #include "../iface.[[op_name]].h"
 // #include <aotriton/cpp_tune.h>  // TODO: add op_tune
 #include <string_view>
-#ifndef NDEBUG
-#include <iostream>
-#endif
 
 #define CURRENT_ENTRY_PUBLIC Optune_[[op_name]]__A[[arch_number]]__F[[godel_number]]
 
