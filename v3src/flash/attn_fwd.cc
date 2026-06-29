@@ -3,26 +3,18 @@
 
 #include <aotriton/config.h>
 #include <aotriton/_internal/util.h>
+#include <aotriton/_internal/log.h>
 #include <aotriton/flash.h>
 #include <aotriton/util.h>
 #include <flash/shim.attn_fwd.h>
 #include <flash/iface.op_attn_fwd.h>
-#include <iostream>
-
-#ifdef NDEBUG
-#define AOTRITON_VERBOSE 0
-#else
-#define AOTRITON_VERBOSE 1
-#endif
 
 namespace AOTRITON_NS::v3::flash {
 
 dim3 AttnFwdContext::grid_calculator() const {
-#if AOTRITON_VERBOSE
-    std::cerr << "Selected Kernel "
-              << " BLOCK_M = " << this->BLOCK_M << " BLOCK_N = " << this->BLOCK_N
-              << " PRE_LOAD_V = " << this->PRE_LOAD_V << std::endl;
-#endif
+    AOTRITON_LOG(LOG_DEBUG,
+                 "Selected Kernel BLOCK_M = {} BLOCK_N = {} PRE_LOAD_V = {}",
+                 this->BLOCK_M, this->BLOCK_N, this->PRE_LOAD_V);
     bool unsupported_by_persistent = params->Num_seqlens != 0;
     auto nblocks = AOTRITON_NS::cdiv<uint32_t>(params->Max_seqlen_q, this->BLOCK_M);
     // Use default grid if not persistent, or input is unsupported_by_persistent,
@@ -139,14 +131,11 @@ attn_fwd(const attn_fwd_params& in,
   OpAttnFwdContext context;
   context.params = &params;
   context.call_options = options;
-#ifndef NDEBUG
-  std::cerr << "v3::flash::attn_fwd options = " << options << std::endl;
+  AOTRITON_LOG(LOG_DEBUG, "v3::flash::attn_fwd options = {}", static_cast<const void*>(options));
   if (options) {
-    std::cerr << "v3::flash::attn_fwd options->force_backend_index = "
-              << options->force_backend_index
-              << std::endl;
+    AOTRITON_LOG(LOG_DEBUG, "v3::flash::attn_fwd options->force_backend_index = {}",
+                 options->force_backend_index);
   }
-#endif
   if (options && options->force_backend_index >= 0) {
     context.backend_index = static_cast<OpAttnFwdContext::BackendEnum>(options->force_backend_index);
     context.disable_fallback = true;

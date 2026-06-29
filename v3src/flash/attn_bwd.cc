@@ -10,7 +10,7 @@
 #include <flash/shim.bwd_preprocess.h>
 #include <flash/shim.bwd_preprocess_varlen.h>
 #include <flash/iface.op_attn_bwd.h>
-#include <iostream>
+#include <aotriton/_internal/log.h>
 
 namespace AOTRITON_NS::v3::flash {
 
@@ -132,14 +132,11 @@ attn_bwd(const attn_bwd_params& in,
   OpAttnBwdContext context;
   context.params = &params;
   context.call_options = options;
-#ifndef NDEBUG
-  std::cerr << "v3::flash::attn_bwd options = " << options << std::endl;
+  AOTRITON_LOG(LOG_DEBUG, "v3::flash::attn_bwd options = {}", static_cast<const void*>(options));
   if (options) {
-    std::cerr << "v3::flash::attn_bwd options->force_backend_index = "
-              << options->force_backend_index
-              << std::endl;
+    AOTRITON_LOG(LOG_DEBUG, "v3::flash::attn_bwd options->force_backend_index = {}",
+                 options->force_backend_index);
   }
-#endif
   bool deterministic = false;
   if (params_version >= 4 && options) {
     deterministic = options->deterministic;
@@ -155,9 +152,7 @@ attn_bwd(const attn_bwd_params& in,
       return err;
     }
   }
-#ifndef NDEBUG
-  std::cerr << "v3::flash::attn_bwd context.backend_index = " << context.backend_index << std::endl;
-#endif
+  AOTRITON_LOG(LOG_DEBUG, "v3::flash::attn_bwd context.backend_index = {}", context.backend_index);
   err = context.launch(gpu, stream);
   in.D.free();
   in.DQ_ACC.free();

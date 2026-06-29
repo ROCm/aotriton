@@ -7,7 +7,6 @@
 #include <aotriton/util.h>
 #include <flash/shim.bwd_kernel_fuse.h>
 #include <flash/iface.op_attn_bwd.h>
-#include <iostream>
 
 namespace AOTRITON_NS::v3::flash {
 

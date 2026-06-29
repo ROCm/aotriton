@@ -11,10 +11,7 @@
 #include <flash/affine.aiter_fmha_v3_fwd.h>
 #include <algorithm>
 #include <limits>
-#ifndef NDEBUG
-#include <iostream>
-#include <stdio.h>
-#endif
+#include <aotriton/_internal/log.h>
 
 namespace AOTRITON_NS::v3::flash {
 
@@ -55,12 +52,9 @@ AiterFmhaV3FwdContext::check_inputs_are_supported(Gpu gpu) {
     // Invalid assignment
     RETURN_IF(args.Window_left != args.Window_right);
     if (args.Window_left != WindowValue::TopLeftAligned) {
-#ifndef NDEBUG
-      std::cerr << "Input unsupported due to args.CAUSAL_TYPE = " << int(args.CAUSAL_TYPE) << " and "
-                << " args.Window_left = " << args.Window_left
-                << " args.Window_right = " << args.Window_right
-                << std::endl;
-#endif
+      AOTRITON_LOG(LOG_DEBUG,
+                   "Input unsupported due to args.CAUSAL_TYPE = {} and args.Window_left = {} args.Window_right = {}",
+                   int(args.CAUSAL_TYPE), args.Window_left, args.Window_right);
       return "Input unsupported due to BottomRightAligned/SWA";
     }
   }
