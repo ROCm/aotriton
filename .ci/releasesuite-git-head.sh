@@ -24,9 +24,11 @@ Options:
                         component; use with --runtime, --image, or both)
                --image: build GPU images.
              --runtime: build all C++ runtimes.
-                --asan: build with AddressSanitizer (clang). Forces theRock
-                        (ROCm 7.13.0rc2) for both runtime and image; tarball
-                        version gets a +asan suffix.
+                --asan: build with AddressSanitizer (clang). ASAN support is
+                        pinned to a single TheRock 7.14 pre-release
+                        (THEROCK_ASAN_VERSION). If -r is given it must be
+                        "7.14.0" (used as a selector); the actual build always
+                        uses THEROCK_ASAN_VERSION. Tarball gets a +asan suffix.
        --arch <list>: ';'-separated GPU arch list (e.g. 'gfx942;gfx950'),
                         forwarded to cmake as AOTRITON_TARGET_ARCH. Defaults
                         to ALL (every arch in the CMakeLists default list).
@@ -70,7 +72,7 @@ SUITE_ASAN=0
 SUITE_TRITON_ORIGIN=""
 SUITE_ARCH="ALL"
 SUITE_DEBUG=0
-THEROCK_ASAN_VERSION="7.14.0"
+THEROCK_ASAN_VERSION="7.14.0a20260624"
 
 while true; do
   case "$1" in
@@ -286,12 +288,23 @@ function build_inside() {
     "${NOIMAGE_MODE}" "${WHEEL_CFG}" "${ASAN_MODE}" "${ARCH_LIST}"
 }
 
-# --asan forces theRock (and a specific theRock release) for all selected
-# components. Override runtime list and image rocmver accordingly.
+# --asan support is limited to a single pinned TheRock 7.14 pre-release
+# (THEROCK_ASAN_VERSION).  The version string "7.14.0" is the only accepted
+# -r argument when --asan is active; it is treated as a selector that maps to
+# the pinned pre-release regardless of its exact value.  Any other -r value
+# is an error.  The actual docker image and tarball always use
+# THEROCK_ASAN_VERSION (e.g. 7.14.0a20260624).
 if [ ${SUITE_ASAN} -gt 0 ]; then
-  if [[ ${#CMDLIST[@]} -eq 0 ]]; then
-    SUITE_RUNTIME_LIST=("${THEROCK_ASAN_VERSION}")
+  if [[ ${#CMDLIST[@]} -gt 0 ]]; then
+    for _ver in "${SUITE_RUNTIME_LIST[@]}"; do
+      if [[ "${_ver}" != "7.14.0" ]]; then
+        echo "Error: --asan only accepts -r 7.14.0 (maps to ${THEROCK_ASAN_VERSION}); got -r ${_ver}." >&2
+        exit 1
+      fi
+    done
   fi
+  # Always resolve to the pinned pre-release, ignoring the symbolic -r value.
+  SUITE_RUNTIME_LIST=("${THEROCK_ASAN_VERSION}")
   IMAGE_ROCMVER="${THEROCK_ASAN_VERSION}"
   ASAN_MODE="ON"
 else

@@ -1,7 +1,7 @@
 FROM aotriton:base
 
-ARG THEROCK_VERSION=7.14.0.dev0+9dfbd936fa3750b21f4aabea2f861f97a435aec0
-ARG THEROCK_PIP_FIND_LINKS=https://therock-ci-artifacts.s3.amazonaws.com/26732801416-linux/python/index.html
+ARG THEROCK_VERSION=7.14.0a20260624
+ARG THEROCK_PIP_INDEX_URL=https://rocm.nightlies.amd.com/whl-multi-arch/
 
 # Create the venv at /opt/therock, install rocm wheels into it, then let
 # rocm-sdk init copy/link the actual ROCm tree into place. ROCM_PATH is
@@ -11,8 +11,8 @@ RUN set -ex \
  && . /opt/therock/bin/activate \
  && pip install --upgrade pip \
  && pip install \
-      "rocm[libraries,devel,device-gfx942,device-gfx950]" --pre \
-      --find-links="${THEROCK_PIP_FIND_LINKS}" \
+      "rocm[libraries,devel,device-gfx942,device-gfx950]==${THEROCK_VERSION}" --pre \
+      --index-url="${THEROCK_PIP_INDEX_URL}" \
  && rocm-sdk init \
  && rocm_root=$(rocm-sdk path --root) \
  && echo "Resolved ROCM_PATH=${rocm_root}" \
