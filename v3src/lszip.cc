@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include <aotriton/_internal/lszip.h>
+#include <aotriton/_internal/fd.h>
 #include <cstring>
 #include <algorithm>
 #include <vector>
@@ -14,12 +15,6 @@
 
 #if AOTRITON_KERNEL_VERBOSE
 #include <iostream>
-#endif
-
-#if defined(_WIN32)
-#include "packed_kernel_win32.h"
-#else
-#include "packed_kernel_unix.h"
 #endif
 
 // ZIP format constants (PKWARE spec §4.3)

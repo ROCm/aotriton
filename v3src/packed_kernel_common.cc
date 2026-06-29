@@ -3,6 +3,7 @@
 
 #include <aotriton/_internal/packed_kernel.h>
 #include <aotriton/_internal/lszip.h>
+#include <aotriton/_internal/fd.h>
 #include <aotriton/runtime.h>
 #include <algorithm>
 #include <mutex>
@@ -12,17 +13,13 @@
 #include <windows.h>
 #else
 #include <dlfcn.h>
+#include <fcntl.h>
+#include <unistd.h>
 #endif
 #include <errno.h>
 #include <filesystem>
 #include <iostream>
 #include <lzma.h>
-
-#if defined(_WIN32)
-#include "packed_kernel_win32.h"
-#else
-#include "packed_kernel_unix.h"
-#endif
 
 #ifdef NDEBUG
 #define AOTRITON_KERNEL_VERBOSE 0
