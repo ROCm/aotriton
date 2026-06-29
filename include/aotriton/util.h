@@ -248,6 +248,7 @@ struct LazyTensor {
 Gpu AOTRITON_API getGpuFromStream(hipStream_t);
 bool AOTRITON_API isArchExperimentallySupported(hipStream_t);
 int AOTRITON_API getMultiProcessorCount(hipStream_t stream);
+bool AOTRITON_API isArchTechPreview(hipStream_t);
 
 } // namespace AOTRITON_NS
 

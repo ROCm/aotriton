@@ -97,7 +97,8 @@ find_package(hip REQUIRED)
 set(VENV_DIR "${CMAKE_CURRENT_BINARY_DIR}/venv" CACHE STRING "Virtual Environment Directory")
 option(AOTRITON_NO_PYTHON "Disable python binding build" OFF)
 option(AOTRITON_USE_TORCH "Enable functions in python binding that requires libtorch" ON)
-option(AOTRITON_ENABLE_ASAN "Enable Address Sanitizer. Implies -g" OFF)
+option(AOTRITON_ENABLE_ASAN "Enable Address Sanitizer (g++). Implies -g" OFF)
+option(AOTRITON_ENABLE_ASAN_CLANG "Enable Address Sanitizer using Clang (e.g. theRock clang++). Implies -g" OFF)
 option(AOTRITON_BUILD_FOR_TUNING "Build all GPU kernels and set -DAOTRITON_BUILD_FOR_TUNING=1 (=0 otherwise)" OFF)
 set(AOTRITON_BUILD_FOR_TUNING_BUT_SKIP_KERNEL "" CACHE STRING "Use tuning database for certain kernels when AOTRITON_BUILD_FOR_TUNING=ON")
 option(AOTRITON_ENABLE_FP32_INPUTS "Enable FP32 support." ON)
@@ -107,7 +108,7 @@ option(AOTRITON_INHERIT_SYSTEM_SITE_TRITON "Use system site packages and verify 
 set(AOTRITON_USE_LOCAL_TRITON_WHEEL "" CACHE STRING "Substitute install from third_party/triton with install from local pip wheel package.")
 set(AOTRITON_GPU_BUILD_TIMEOUT "8.0" CACHE STRING "GPU kernel compiler times out after X minutes. 0 for indefinite. Highly recommended if AOTRITON_BUILD_FOR_TUNING=On.")
 option(AOTRITON_TERMINATE_WHEN_GPU_BUILD_TIMEOUT "compile.py will return error when GPU built timeout. Defensive option for CI" OFF)
-set(AOTRITON_TARGET_ARCH "gfx90a;gfx942;gfx950;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1152;gfx1153;gfx1201;gfx1200" CACHE STRING "Target GPU Architecture. Select all GPUs within the given list")
+set(AOTRITON_TARGET_ARCH "gfx90a;gfx942;gfx950;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1152;gfx1153;gfx1201;gfx1200;gfx1250" CACHE STRING "Target GPU Architecture. Select all GPUs within the given list")
 set(TARGET_GPUS "OBSOLETE" CACHE STRING "OBSOLETE. To select only one GPU, use AOTRITON_TARGET_ARCH or AOTRITON_OVERRIDE_TARGET_GPUS.")
 set(AOTRITON_OVERRIDE_TARGET_GPUS "" CACHE STRING "Override AOTRITON_TARGET_ARCH, and only build for GPUs within this list.")
 set(AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE "" CACHE STRING "Specify how to use alternative Triton wheels for different architectures in a YAML config file.")
@@ -178,8 +179,29 @@ else()
   target_link_libraries(lzma_interface INTERFACE liblzma::liblzma)
 endif()
 
+if(AOTRITON_ENABLE_ASAN AND AOTRITON_ENABLE_ASAN_CLANG)
+  message(FATAL_ERROR
+    "AOTRITON_ENABLE_ASAN (g++) and AOTRITON_ENABLE_ASAN_CLANG are mutually exclusive.")
+endif()
+
 if(AOTRITON_ENABLE_ASAN)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -fsanitize=address -fno-omit-frame-pointer")
+endif()
+
+if(AOTRITON_ENABLE_ASAN_CLANG)
+  if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    message(FATAL_ERROR
+      "AOTRITON_ENABLE_ASAN_CLANG requires Clang; got ${CMAKE_CXX_COMPILER_ID}.")
+  endif()
+  add_compile_options(
+    -g
+    -fsanitize=address
+    -shared-libasan
+    -Wno-cast-function-type-strict
+    -fclang-abi-compat=17
+    -mllvm -asan-use-private-alias=1
+  )
+  add_link_options(-fsanitize=address -shared-libasan)
 endif()
 
 set(Python_ARTIFACTS_INTERACTIVE TRUE)
@@ -211,9 +233,30 @@ message("VENV_SITE ${VENV_SITE}")
 
 execute_process(COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_BIN_PYTHON}" -m pip install -r "${CMAKE_CURRENT_LIST_DIR}/requirements.txt")
 
+# An alt wheel config must define a 'default' venv: arches unmatched by any
+# rule fall back to 'default', and the default Triton is installed into
+# altvenvs/default by the alt-wheel block below. Without it the default venv
+# would build Triton from the third_party/triton source tree, which is
+# read-only in CI containers and would fail. Require it explicitly.
+if(AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
+  execute_process(
+    COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_BIN_PYTHON}" -c
+    "import yaml,sys; d=yaml.safe_load(open(sys.argv[1])); print(d.get('venvs', {}).get('default', ''))"
+    "${AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE}"
+    OUTPUT_VARIABLE _ALT_DEFAULT
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+  )
+  if(NOT _ALT_DEFAULT)
+    message(FATAL_ERROR "[AOTriton] Alt wheel config ${AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE} must define venvs.default.")
+  endif()
+endif()
+
 set(ALL_TRITON_SOS "")
 if(AOTRITON_NOIMAGE_MODE)
   message(STATUS "[AOTriton] Skipping triton due to AOTRITON_NOIMAGE_MODE")
+elseif(AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
+  # All venvs (including 'default') are supplied by the alt-wheel block below.
+  message(STATUS "[AOTriton] Triton venvs deferred to alt wheel config: ${AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE}")
 elseif(AOTRITON_INHERIT_SYSTEM_SITE_TRITON)
   # Check if triton can be imported in the venv
   execute_process(
@@ -268,7 +311,7 @@ endif()
 if(NOT AOTRITON_NOIMAGE_MODE AND AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
   execute_process(
     COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_BIN_PYTHON}" -c
-    "import yaml,sys; f = open(sys.argv[1]); d = yaml.load(f, Loader=yaml.Loader); print(';'.join([f'{k};{v}' for k, v in d['venvs'].items()]))"
+    "import yaml,sys; f = open(sys.argv[1]); d = yaml.safe_load(f); print(';'.join([f'{k};{v}' for k, v in d['venvs'].items()]))"
     "${AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE}"
     OUTPUT_VARIABLE ALT_VENVS
     OUTPUT_STRIP_TRAILING_WHITESPACE
