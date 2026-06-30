@@ -152,7 +152,7 @@ attn_bwd(const attn_bwd_params& in,
       return err;
     }
   }
-  AOTRITON_LOG(LOG_DEBUG, "v3::flash::attn_bwd context.backend_index = {}", context.backend_index);
+  AOTRITON_LOG(LOG_DEBUG, "v3::flash::attn_bwd context.backend_index = {}", static_cast<int>(context.backend_index));
   err = context.launch(gpu, stream);
   in.D.free();
   in.DQ_ACC.free();
