@@ -111,7 +111,7 @@ TritonKernel::direct_invoke(std::string_view mangled_kernel_function_name,
                     HIP_LAUNCH_PARAM_BUFFER_SIZE,
                     &sizeof_struct,
                     HIP_LAUNCH_PARAM_END};
-  if (AOTRITON_NS::debug_config().debug_level >= LOG_DEBUG) {
+  if (AOTRITON_NS::debug_config().debug_level >= LOG_EXTRA_DEBUG) {
     auto hexdump = [](const void* ptr, int buflen) {
       const auto* buf = static_cast<const unsigned char*>(ptr);
       emit_log(LOG_DEBUG, __FILE__, __LINE__, std::format("hexdump: {}", ptr));
