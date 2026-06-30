@@ -53,6 +53,11 @@ against.
 The archive file and header files are installed in the path specified by
 `CMAKE_INSTALL_PREFIX`.
 
+## Debugging
+
+Set `AOTRITON_DEBUG_LEVEL=<n>` to enable runtime logging: 1=ERROR,
+2=WARNING, 3=INFO, 4=DEBUG, 5=EXTRA_DEBUG (default: 0, silent).
+
 ## Kernel Support
 
 Currently the first kernel supported is FlashAttention as based on the
