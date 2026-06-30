@@ -18,6 +18,22 @@
 using pstring_type = std::filesystem::path::string_type;
 using pstring_view = std::basic_string_view<std::filesystem::path::value_type>;
 
+#if defined(_WIN32)
+// On Windows pstring_view is wstring_view, which std::format cannot emit as
+// UTF-8 text.  This specialisation converts via filesystem::path::u8string()
+// so AOTRITON_LOG("{}", flatzip_path) works without manual conversion at every
+// call site.  On Linux pstring_view == string_view and needs no specialisation.
+#include <format>
+template <>
+struct std::formatter<pstring_view> : std::formatter<std::string_view> {
+  auto format(pstring_view sv, std::format_context& ctx) const {
+    auto u8 = std::filesystem::path(sv).u8string();
+    return std::formatter<std::string_view>::format(
+        std::string_view(reinterpret_cast<const char*>(u8.data()), u8.size()), ctx);
+  }
+};
+#endif
+
 namespace AOTRITON_NS {
 
 class PackedKernel;

@@ -71,7 +71,7 @@ OnDeviceKernel::load_for_device(int device_id,
 
   AOTRITON_LOG(LOG_DEBUG,
                "Trying to decompress kernel {} entry={} stem={}",
-               std::filesystem::path(info.flatzip_path).string(), info.aks2_entry, info.stem_name);
+               info.flatzip_path, info.aks2_entry, info.stem_name);
   decompress_kernel(info);
   AOTRITON_LOG(LOG_DEBUG, "Decompress kernel to {}", static_cast<const void*>(essentials_.image));
   if (!essentials_.image) {
