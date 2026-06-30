@@ -32,9 +32,9 @@ struct DebugConfig {
 // Thread-safe singleton — initialised once on first call.
 const DebugConfig& debug_config();
 
-// Write a pre-formatted message to stderr.  Defined in log.cc so that
-// <iostream> is NOT pulled into every translation unit via this header.
-void emit_log(std::string_view msg);
+// Write a pre-formatted message to stderr with level/file/line prefix.
+// Defined in log.cc so that <iostream> is NOT pulled into every TU via this header.
+void emit_log(int level, const char* file, int line, std::string_view msg);
 
 } // namespace AOTRITON_NS
 
@@ -46,7 +46,8 @@ void emit_log(std::string_view msg);
 #define AOTRITON_LOG(level, ...)                                                     \
   do {                                                                               \
     if ((level) > 0 && AOTRITON_NS::debug_config().debug_level >= (level))          \
-      AOTRITON_NS::emit_log(std::format(__VA_ARGS__));                               \
+      AOTRITON_NS::emit_log((level), __FILE__, __LINE__,                             \
+                            std::format(__VA_ARGS__));                               \
   } while (0)
 
 #endif // AOTRITON_V2_INTERNAL_LOG_H

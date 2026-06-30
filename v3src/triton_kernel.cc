@@ -114,7 +114,7 @@ TritonKernel::direct_invoke(std::string_view mangled_kernel_function_name,
   if (AOTRITON_NS::debug_config().debug_level >= LOG_DEBUG) {
     auto hexdump = [](const void* ptr, int buflen) {
       const auto* buf = static_cast<const unsigned char*>(ptr);
-      emit_log(std::format("hexdump: {}", ptr));
+      emit_log(LOG_DEBUG, __FILE__, __LINE__, std::format("hexdump: {}", ptr));
       for (int i = 0; i < buflen; i += 16) {
         std::string line = std::format("{:06x}: ", i);
         for (int j = 0; j < 16; j++) {
@@ -130,7 +130,7 @@ TritonKernel::direct_invoke(std::string_view mangled_kernel_function_name,
             line += static_cast<char>(std::isprint(c) ? c : '.');
           }
         }
-        emit_log(line);
+        emit_log(LOG_DEBUG, __FILE__, __LINE__, line);
       }
     };
     hexdump(struct_of_args, sizeof_struct);

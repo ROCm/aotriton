@@ -19,8 +19,26 @@ const DebugConfig& debug_config() {
   return cfg;
 }
 
-void emit_log(std::string_view msg) {
-  std::cerr << msg << '\n';
+static const char* level_name(int level) noexcept {
+  switch (level) {
+    case 1: return "ERROR";
+    case 2: return "WARNING";
+    case 3: return "INFO";
+    case 4: return "DEBUG";
+    case 5: return "EXTRA_DEBUG";
+    default: return "LOG";
+  }
+}
+
+static const char* basename(const char* path) noexcept {
+  const char* last = path;
+  for (const char* p = path; *p; ++p)
+    if (*p == '/' || *p == '\\') last = p + 1;
+  return last;
+}
+
+void emit_log(int level, const char* file, int line, std::string_view msg) {
+  std::cerr << std::format("[{}] {}:{}: {}\n", level_name(level), basename(file), line, msg);
 }
 
 } // namespace AOTRITON_NS
