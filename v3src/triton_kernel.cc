@@ -112,19 +112,19 @@ TritonKernel::direct_invoke(std::string_view mangled_kernel_function_name,
                     &sizeof_struct,
                     HIP_LAUNCH_PARAM_END};
   if (log_enabled(LOG_EXTRA_DEBUG)) {
-    auto hexdump = [](const void* ptr, int buflen) {
+    auto hexdump = [](const void* ptr, size_t buflen) {
       const auto* buf = static_cast<const unsigned char*>(ptr);
       emit_log(LOG_EXTRA_DEBUG, __FILE__, __LINE__, std::format("hexdump: {}", ptr));
-      for (int i = 0; i < buflen; i += 16) {
+      for (size_t i = 0; i < buflen; i += 16) {
         std::string line = std::format("{:06x}: ", i);
-        for (int j = 0; j < 16; j++) {
+        for (size_t j = 0; j < 16; j++) {
           if (i+j < buflen)
-            line += std::format("{:02x} ", buf[i+j]);
+            line += std::format("{:02x} ", static_cast<unsigned>(buf[i+j]));
           else
             line += "   ";
         }
         line += ' ';
-        for (int j = 0; j < 16; j++) {
+        for (size_t j = 0; j < 16; j++) {
           if (i+j < buflen) {
             unsigned char c = buf[i+j];
             line += static_cast<char>(std::isprint(c) ? c : '.');

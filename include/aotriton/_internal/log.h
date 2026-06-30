@@ -5,6 +5,7 @@
 #define AOTRITON_V2_INTERNAL_LOG_H
 
 #include <aotriton/config.h>
+#include <algorithm>
 #include <format>
 #include <string>
 #include <string_view>
@@ -51,8 +52,10 @@ inline bool log_enabled(int level) noexcept {
 // uses fully-qualified names so it resolves regardless of the caller's namespace.
 #define AOTRITON_LOG(level, ...)                                                     \
   do {                                                                               \
-    if ((level) > 0 && AOTRITON_NS::debug_config().debug_level >= (level))          \
-      AOTRITON_NS::emit_log((level), __FILE__, __LINE__,                             \
+    const int _aotriton_level = (level);                                             \
+    if (_aotriton_level > 0 &&                                                       \
+        AOTRITON_NS::debug_config().debug_level >= _aotriton_level)                  \
+      AOTRITON_NS::emit_log(_aotriton_level, __FILE__, __LINE__,                     \
                             std::format(__VA_ARGS__));                               \
   } while (0)
 
