@@ -5,7 +5,6 @@
 #define AOTRITON_V2_INTERNAL_LOG_H
 
 #include <aotriton/config.h>
-#include <algorithm>
 #include <format>
 #include <string>
 #include <string_view>
