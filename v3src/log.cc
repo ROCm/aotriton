@@ -3,6 +3,7 @@
 
 #include <aotriton/_internal/log.h>
 #include <algorithm>
+#include <cerrno>
 #include <cstdlib>
 #include <iostream>
 
@@ -13,8 +14,9 @@ const DebugConfig& debug_config() {
     DebugConfig c;
     if (const char* lvl = std::getenv("AOTRITON_DEBUG_LEVEL")) {
       char* end = nullptr;
+      errno = 0;
       long val = std::strtol(lvl, &end, 10);
-      if (end != lvl && *end == '\0')
+      if (end != lvl && *end == '\0' && errno == 0)
         c.debug_level = static_cast<int>(std::clamp(val, 0L, 5L));
     }
     if (const char* dir = std::getenv("AOTRITON_TENSOR_DUMP"))
