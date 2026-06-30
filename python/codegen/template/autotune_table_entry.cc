@@ -98,7 +98,7 @@ void CURRENT_ENTRY_PUBLIC([[context_class_name]]& context, int mod_number) {
     context._preferred_kernel_psels = kernel_psels[kernel_index];
     context._preferred_kernel_copts = kernel_copts[kernel_index];
 #endif
-    AOTRITON_LOG(LOG_DEBUG, "{} kernel_index = {}", __FILE__, int(kernel_index));
+    AOTRITON_LOG(LOG_DEBUG, "kernel_index = {}", int(kernel_index));
     const auto& perf = image_perf_list[kernel_index];
     [[perf_field_assignment]];
 }
