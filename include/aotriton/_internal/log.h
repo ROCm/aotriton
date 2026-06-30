@@ -36,6 +36,12 @@ const DebugConfig& debug_config();
 // Defined in log.cc so that <iostream> is NOT pulled into every TU via this header.
 void emit_log(int level, const char* file, int line, std::string_view msg);
 
+// Returns true when a message at `level` should be emitted.  Use this to guard
+// multi-statement log blocks that cannot be expressed as a single AOTRITON_LOG call.
+inline bool log_enabled(int level) noexcept {
+  return level > 0 && debug_config().debug_level >= level;
+}
+
 } // namespace AOTRITON_NS
 
 // Print a std::format-style message to stderr when the configured debug level
