@@ -54,8 +54,8 @@ TritonKernel::invoke(std::string_view kernel_name,
                      bool peek_kernel_image,
 #endif
                      hipStream_t stream) {
-  AOTRITON_LOG(LOG_DEBUG, "Invoking TritonKernel {} with kernel_name = \"{}\"",
-               static_cast<const void*>(this), kernel_name);
+  AOTRITON_LOG(LOG_DEBUG, "Invoking TritonKernel %p with kernel_name = \"%.*s\"",
+               static_cast<const void*>(this), int(kernel_name.size()), kernel_name.data());
   int device_id;
   AOTRITON_HIP_CHECK_RETURN(hipGetDevice(&device_id));
   std::string stem_name;
@@ -93,8 +93,10 @@ TritonKernel::direct_invoke(std::string_view mangled_kernel_function_name,
                             hipStream_t stream)
 {
   // TODO: Deduplication
-  AOTRITON_LOG(LOG_DEBUG, "Invoking Kernel {} with kernel_name = \"{}\" struct_of_args = {}",
-               static_cast<const void*>(this), mangled_kernel_function_name, struct_of_args);
+  AOTRITON_LOG(LOG_DEBUG, "Invoking Kernel %p with kernel_name = \"%.*s\" struct_of_args = %p",
+               static_cast<const void*>(this),
+               int(mangled_kernel_function_name.size()), mangled_kernel_function_name.data(),
+               struct_of_args);
   int device_id;
   AOTRITON_HIP_CHECK_RETURN(hipGetDevice(&device_id));
   auto lazy = [&]() -> OnDeviceKernel::OnDiskKernelInfo {
@@ -114,23 +116,23 @@ TritonKernel::direct_invoke(std::string_view mangled_kernel_function_name,
   if (log_enabled(LOG_EXTRA_DEBUG)) {
     auto hexdump = [](const void* ptr, size_t buflen) {
       const auto* buf = static_cast<const unsigned char*>(ptr);
-      emit_log(LOG_EXTRA_DEBUG, __FILE__, __LINE__, std::format("hexdump: {}", ptr));
+      AOTRITON_LOG(LOG_EXTRA_DEBUG, "hexdump: %p", ptr);
       for (size_t i = 0; i < buflen; i += 16) {
-        std::string line = std::format("{:06x}: ", i);
+        char line[80];
+        int n = 0;
         for (size_t j = 0; j < 16; j++) {
           if (i+j < buflen)
-            line += std::format("{:02x} ", static_cast<unsigned>(buf[i+j]));
+            n += std::snprintf(line + n, sizeof(line) - n, "%02x ", static_cast<unsigned>(buf[i+j]));
           else
-            line += "   ";
+            n += std::snprintf(line + n, sizeof(line) - n, "   ");
         }
-        line += ' ';
-        for (size_t j = 0; j < 16; j++) {
-          if (i+j < buflen) {
-            unsigned char c = buf[i+j];
-            line += static_cast<char>(std::isprint(c) ? c : '.');
-          }
+        line[n++] = ' ';
+        for (size_t j = 0; j < 16 && i+j < buflen; j++) {
+          unsigned char c = buf[i+j];
+          line[n++] = static_cast<char>(std::isprint(c) ? c : '.');
         }
-        emit_log(LOG_EXTRA_DEBUG, __FILE__, __LINE__, line);
+        line[n] = '\0';
+        AOTRITON_LOG(LOG_EXTRA_DEBUG, "%06zx: %s", i, line);
       }
     };
     hexdump(struct_of_args, sizeof_struct);

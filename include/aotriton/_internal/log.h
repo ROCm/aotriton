@@ -5,9 +5,8 @@
 #define AOTRITON_V2_INTERNAL_LOG_H
 
 #include <aotriton/config.h>
-#include <format>
+#include <cstdio>
 #include <string>
-#include <string_view>
 
 namespace AOTRITON_NS {
 
@@ -32,28 +31,13 @@ struct DebugConfig {
 // Thread-safe singleton — initialised once on first call.
 const DebugConfig& debug_config();
 
-// Write a pre-formatted message to stderr with level/file/line prefix.
-// Defined in log.cc so that <iostream> is NOT pulled into every TU via this header.
-void emit_log(int level, const char* file, int line, std::string_view msg);
+// Human-readable name for a log level ("DEBUG", "ERROR", ...), used by the
+// AOTRITON_LOG prefix.  Defined in log.cc.
+const char* log_level_name(int level) noexcept;
 
-// Type-erased formatting sink: runs std::vformat in log.cc (a SINGLE TU) and
-// forwards to emit_log.  Keeping the heavy vformat machinery out of line is the
-// whole point — otherwise std::format gets inlined into every call site (e.g. the
-// ~3700 generated autotune TUs), bloating .text by megabytes of duplicated,
-// internal-linkage code the linker cannot deduplicate.
-void emit_log(int level, const char* file, int line,
-              std::string_view fmt, std::format_args args);
-
-// Thin per-call wrapper.  Only make_format_args() (trivial) is instantiated at
-// the call site; the format_string<Args...> parameter preserves compile-time
-// format-string checking.  The wrapper is also required for correctness: C++23's
-// std::make_format_args takes lvalue references, so a prvalue argument (e.g.
-// int(kernel_index)) must first be materialised into the named parameter here.
-template <typename... Args>
-inline void log_formatted(int level, const char* file, int line,
-                          std::format_string<Args...> fmt, Args&&... args) {
-  emit_log(level, file, line, fmt.get(), std::make_format_args(args...));
-}
+// Return the basename component of a (compile-time __FILE__) path.  Runs only
+// when a message is actually emitted, so the scan cost is negligible.
+const char* log_basename(const char* path) noexcept;
 
 // Returns true when a message at `level` should be emitted.  Use this to guard
 // multi-statement log blocks that cannot be expressed as a single AOTRITON_LOG call.
@@ -63,17 +47,32 @@ inline bool log_enabled(int level) noexcept {
 
 } // namespace AOTRITON_NS
 
-// Print a std::format-style message to stderr when the configured debug level
-// is at or above `level`.  Higher debug_level = more output; 0 = disabled.
-// Usage: AOTRITON_LOG(LOG_DEBUG, "x = {}, y = {}", x, y)
+// Print a printf-style message to stderr when the configured debug level is at
+// or above `level`.  Higher debug_level = more output; 0 = disabled.
+// Usage: AOTRITON_LOG(LOG_DEBUG, "x = %d, y = %s", x, y)
+//
+// `fmt` MUST be a string literal: it is concatenated with the "[LEVEL] file:line: "
+// prefix at compile time so the whole call becomes a single std::fprintf.  This
+// keeps binary size minimal — std::fprintf lives in libc, so no formatting code
+// is emitted into the library (unlike std::format, which instantiates a formatter
+// for every arithmetic type into every translation unit).  -Wformat still checks
+// the arguments against the concatenated literal.  A single fprintf is written
+// atomically under glibc's per-stream lock, so log lines never interleave.
+//
+// Note: pass std::string_view as `%.*s` with `(int)sv.size(), sv.data()` since it
+// is not NUL-terminated.
+//
 // Macro lives outside the namespace so it is usable in any context; the body
 // uses fully-qualified names so it resolves regardless of the caller's namespace.
-#define AOTRITON_LOG(level, ...)                                                     \
-  do {                                                                               \
-    const int _aotriton_level = (level);                                             \
-    if (_aotriton_level > 0 &&                                                       \
-        AOTRITON_NS::debug_config().debug_level >= _aotriton_level)                  \
-      AOTRITON_NS::log_formatted(_aotriton_level, __FILE__, __LINE__, __VA_ARGS__);  \
+#define AOTRITON_LOG(level, fmt, ...)                                            \
+  do {                                                                           \
+    const int _aotriton_level = (level);                                         \
+    if (_aotriton_level > 0 &&                                                   \
+        AOTRITON_NS::debug_config().debug_level >= _aotriton_level)              \
+      std::fprintf(stderr, "[%s] %s:%d: " fmt "\n",                             \
+                   AOTRITON_NS::log_level_name(_aotriton_level),                 \
+                   AOTRITON_NS::log_basename(__FILE__), __LINE__                 \
+                   __VA_OPT__(,) __VA_ARGS__);                                    \
   } while (0)
 
 #endif // AOTRITON_V2_INTERNAL_LOG_H

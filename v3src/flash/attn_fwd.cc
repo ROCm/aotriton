@@ -13,8 +13,8 @@ namespace AOTRITON_NS::v3::flash {
 
 dim3 AttnFwdContext::grid_calculator() const {
     AOTRITON_LOG(LOG_DEBUG,
-                 "Selected Kernel BLOCK_M = {} BLOCK_N = {} PRE_LOAD_V = {}",
-                 this->BLOCK_M, this->BLOCK_N, this->PRE_LOAD_V);
+                 "Selected Kernel BLOCK_M = %d BLOCK_N = %d PRE_LOAD_V = %d",
+                 int(this->BLOCK_M), int(this->BLOCK_N), int(this->PRE_LOAD_V));
     bool unsupported_by_persistent = params->Num_seqlens != 0;
     auto nblocks = AOTRITON_NS::cdiv<uint32_t>(params->Max_seqlen_q, this->BLOCK_M);
     // Use default grid if not persistent, or input is unsupported_by_persistent,
@@ -131,10 +131,10 @@ attn_fwd(const attn_fwd_params& in,
   OpAttnFwdContext context;
   context.params = &params;
   context.call_options = options;
-  AOTRITON_LOG(LOG_DEBUG, "v3::flash::attn_fwd options = {}", static_cast<const void*>(options));
+  AOTRITON_LOG(LOG_DEBUG, "v3::flash::attn_fwd options = %p", static_cast<const void*>(options));
   if (options) {
-    AOTRITON_LOG(LOG_DEBUG, "v3::flash::attn_fwd options->force_backend_index = {}",
-                 options->force_backend_index);
+    AOTRITON_LOG(LOG_DEBUG, "v3::flash::attn_fwd options->force_backend_index = %d",
+                 int(options->force_backend_index));
   }
   if (options && options->force_backend_index >= 0) {
     context.backend_index = static_cast<OpAttnFwdContext::BackendEnum>(options->force_backend_index);

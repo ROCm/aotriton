@@ -5,7 +5,6 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstdlib>
-#include <iostream>
 
 namespace AOTRITON_NS {
 
@@ -26,7 +25,7 @@ const DebugConfig& debug_config() {
   return cfg;
 }
 
-static const char* level_name(int level) noexcept {
+const char* log_level_name(int level) noexcept {
   switch (level) {
     case 1: return "ERROR";
     case 2: return "WARNING";
@@ -37,22 +36,11 @@ static const char* level_name(int level) noexcept {
   }
 }
 
-static const char* basename(const char* path) noexcept {
+const char* log_basename(const char* path) noexcept {
   const char* last = path;
   for (const char* p = path; *p; ++p)
     if (*p == '/' || *p == '\\') last = p + 1;
   return last;
-}
-
-void emit_log(int level, const char* file, int line, std::string_view msg) {
-  std::cerr << std::format("[{}] {}:{}: {}\n", level_name(level), basename(file), line, msg);
-}
-
-// std::vformat is instantiated here ONCE, instead of being inlined into every
-// AOTRITON_LOG call site.  See the header for the rationale.
-void emit_log(int level, const char* file, int line,
-              std::string_view fmt, std::format_args args) {
-  emit_log(level, file, line, std::vformat(fmt, args));
 }
 
 } // namespace AOTRITON_NS

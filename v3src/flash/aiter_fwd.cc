@@ -53,8 +53,8 @@ AiterFmhaV3FwdContext::check_inputs_are_supported(Gpu gpu) {
     RETURN_IF(args.Window_left != args.Window_right);
     if (args.Window_left != WindowValue::TopLeftAligned) {
       AOTRITON_LOG(LOG_DEBUG,
-                   "Input unsupported due to args.CAUSAL_TYPE = {} and args.Window_left = {} args.Window_right = {}",
-                   int(args.CAUSAL_TYPE), args.Window_left, args.Window_right);
+                   "Input unsupported due to args.CAUSAL_TYPE = %d and args.Window_left = %d args.Window_right = %d",
+                   int(args.CAUSAL_TYPE), int(args.Window_left), int(args.Window_right));
       return "Input unsupported due to BottomRightAligned/SWA";
     }
   }

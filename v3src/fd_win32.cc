@@ -52,8 +52,8 @@ fd_t fd_open(const std::filesystem::path& pathname) {
     size_t len = strlen(error_message);
     while (len > 0 && (error_message[len-1] == '\n' || error_message[len-1] == '\r'))
       error_message[--len] = '\0';
-    AOTRITON_LOG(LOG_DEBUG, "CreateFileW failed for: {}, Win32 error {}: {}",
-                 pathname.string(), error_code, error_message);
+    AOTRITON_LOG(LOG_DEBUG, "CreateFileW failed for: %s, Win32 error %lu: %s",
+                 pathname.string().c_str(), error_code, error_message);
     return invalid_fd();
   }
 
@@ -65,7 +65,7 @@ int fd_close(fd_t fd) {
     return -1;
   }
   if (!CloseHandle(fd)) {
-    AOTRITON_LOG(LOG_DEBUG, "CloseHandle failed with error: {}", GetLastError());
+    AOTRITON_LOG(LOG_DEBUG, "CloseHandle failed with error: %lu", GetLastError());
     return -1;
   }
   return 0;
@@ -86,7 +86,7 @@ ssize_t fd_read(fd_t fd, void *buf, size_t count) {
     if (error_code == ERROR_HANDLE_EOF) {
       return 0;
     }
-    AOTRITON_LOG(LOG_DEBUG, "ReadFile failed with error: {}", error_code);
+    AOTRITON_LOG(LOG_DEBUG, "ReadFile failed with error: %lu", error_code);
     return -1;
   }
 

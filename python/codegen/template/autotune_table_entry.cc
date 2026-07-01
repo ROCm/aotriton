@@ -76,7 +76,7 @@ int CURRENT_ENTRY_PUBLIC([[context_class_name]]& context, int mod_number) {
     constexpr int kLutInTuningModeAlwaysReturnZero = 0;
     AOTRITON_LOG(LOG_DEBUG,
                  "Autotune_[[shim_kernel_name]]__A[[arch_number]]__F[[godel_number]] "
-                 "kTotalNumKernels = {} _has_preferred_kernel = {}",
+                 "kTotalNumKernels = %d _has_preferred_kernel = %d",
                  kTotalNumKernels, context._has_preferred_kernel);
 #ifndef NDEBUG
     assert([[deduplicated_lut_function]](*context.params, mod_number, lut) == kLutInTuningModeAlwaysReturnZero);

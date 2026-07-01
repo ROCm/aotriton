@@ -70,10 +70,12 @@ OnDeviceKernel::load_for_device(int device_id,
                      (void*)(uintptr_t)1 };
 
   AOTRITON_LOG(LOG_DEBUG,
-               "Trying to decompress kernel {} entry={} stem={}",
-               info.flatzip_path, info.aks2_entry, info.stem_name);
+               "Trying to decompress kernel %s entry=%.*s stem=%.*s",
+               pstring_to_utf8(info.flatzip_path).c_str(),
+               int(info.aks2_entry.size()), info.aks2_entry.data(),
+               int(info.stem_name.size()), info.stem_name.data());
   decompress_kernel(info);
-  AOTRITON_LOG(LOG_DEBUG, "Decompress kernel to {}", static_cast<const void*>(essentials_.image));
+  AOTRITON_LOG(LOG_DEBUG, "Decompress kernel to %p", static_cast<const void*>(essentials_.image));
   if (!essentials_.image) {
     return std::make_tuple(nullptr, hipErrorInvalidImage);
   }
@@ -107,7 +109,7 @@ OnDeviceKernel::decompress_kernel(const OnDeviceKernel::OnDiskKernelInfo& info) 
     packed_kernel_ = PackedKernel::open(info.flatzip_path, info.aks2_entry);
   }
   if (packed_kernel_) { // open may fail
-    AOTRITON_LOG(LOG_DEBUG, "PackedKernel::open returns {} status: {}",
+    AOTRITON_LOG(LOG_DEBUG, "PackedKernel::open returns %p status: %d",
                  static_cast<const void*>(packed_kernel_.get()),
                  static_cast<int>(packed_kernel_->status()));
     essentials_ = packed_kernel_->filter(info.stem_name);

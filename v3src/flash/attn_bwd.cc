@@ -132,10 +132,10 @@ attn_bwd(const attn_bwd_params& in,
   OpAttnBwdContext context;
   context.params = &params;
   context.call_options = options;
-  AOTRITON_LOG(LOG_DEBUG, "v3::flash::attn_bwd options = {}", static_cast<const void*>(options));
+  AOTRITON_LOG(LOG_DEBUG, "v3::flash::attn_bwd options = %p", static_cast<const void*>(options));
   if (options) {
-    AOTRITON_LOG(LOG_DEBUG, "v3::flash::attn_bwd options->force_backend_index = {}",
-                 options->force_backend_index);
+    AOTRITON_LOG(LOG_DEBUG, "v3::flash::attn_bwd options->force_backend_index = %d",
+                 int(options->force_backend_index));
   }
   bool deterministic = false;
   if (params_version >= 4 && options) {
@@ -152,7 +152,7 @@ attn_bwd(const attn_bwd_params& in,
       return err;
     }
   }
-  AOTRITON_LOG(LOG_DEBUG, "v3::flash::attn_bwd context.backend_index = {}", static_cast<int>(context.backend_index));
+  AOTRITON_LOG(LOG_DEBUG, "v3::flash::attn_bwd context.backend_index = %d", static_cast<int>(context.backend_index));
   err = context.launch(gpu, stream);
   in.D.free();
   in.DQ_ACC.free();

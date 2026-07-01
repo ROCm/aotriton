@@ -61,13 +61,13 @@ locate_aotriton_images() {
     if (module_path.empty()) {
       return fs::path{};
     }
-    AOTRITON_LOG(AOTRITON_NS::LOG_DEBUG, "Win32 locates libaotriton at: {}",
-                 module_path.string());
+    AOTRITON_LOG(AOTRITON_NS::LOG_DEBUG, "Win32 locates libaotriton at: %s",
+                 module_path.string().c_str());
     return module_path.parent_path() / KERNEL_STORAGE_V2_BASE;
 #else
     Dl_info info;
     dladdr((void*)locate_aotriton_images, &info);
-    AOTRITON_LOG(AOTRITON_NS::LOG_DEBUG, "dladdr locates libaotriton at: {}", info.dli_fname);
+    AOTRITON_LOG(AOTRITON_NS::LOG_DEBUG, "dladdr locates libaotriton at: %s", info.dli_fname);
     return fs::path(info.dli_fname).parent_path() / KERNEL_STORAGE_V2_BASE;
 #endif
   }();
@@ -131,8 +131,8 @@ PackedKernel::open(pstring_view flatzip_path, std::string_view aks2_entry) {
   if (outer_it == registry_.end()) {
     open_zip();
     if (!fd_is_valid(zipfd)) {
-      AOTRITON_LOG(LOG_DEBUG, "PackedKernel::open: failed to open zip {}",
-                   std::filesystem::path(flatzip_path).string());
+      AOTRITON_LOG(LOG_DEBUG, "PackedKernel::open: failed to open zip %s",
+                   pstring_to_utf8(flatzip_path).data());
       return nullptr;
     }
     InnerMap staging_map;
@@ -141,8 +141,8 @@ PackedKernel::open(pstring_view flatzip_path, std::string_view aks2_entry) {
     });
     if (!ok) {
       // Partial directory must not be cached as authoritative.
-      AOTRITON_LOG(LOG_DEBUG, "PackedKernel::open: lszip failed to fully parse {}",
-                   std::filesystem::path(flatzip_path).string());
+      AOTRITON_LOG(LOG_DEBUG, "PackedKernel::open: lszip failed to fully parse %s",
+                   pstring_to_utf8(flatzip_path).data());
       if (fd_is_valid(zipfd)) fd_close(zipfd);
       return nullptr;
     }
@@ -171,7 +171,8 @@ PackedKernel::open(pstring_view flatzip_path, std::string_view aks2_entry) {
   it->second.ptr = std::make_shared<PackedKernel>(zipfd, it->second.offset, it->second.size);
   fd_close(zipfd);
   if (it->second.ptr->status() != hipSuccess) {
-    AOTRITON_LOG(LOG_DEBUG, "PackedKernel: AKS2 decompression failed for entry {}", aks2_entry);
+    AOTRITON_LOG(LOG_DEBUG, "PackedKernel: AKS2 decompression failed for entry %.*s",
+                 int(aks2_entry.size()), aks2_entry.data());
     it->second.ptr.reset();
     return nullptr;
   }
@@ -228,7 +229,7 @@ PackedKernel::PackedKernel(fd_t fd, size_t offset, size_t size) {
   lzma_stream strm = LZMA_STREAM_INIT;
   lzma_ret ret = lzma_stream_decoder(&strm, UINT64_MAX, 0);
   if (ret != LZMA_OK) {
-    AOTRITON_LOG(LOG_DEBUG, "lzma_stream_decoder error: {}", static_cast<int>(ret));
+    AOTRITON_LOG(LOG_DEBUG, "lzma_stream_decoder error: %d", static_cast<int>(ret));
     final_status_ = hipErrorInvalidSource; // Broken at XZ level
     return;
   }
@@ -261,7 +262,7 @@ PackedKernel::PackedKernel(fd_t fd, size_t offset, size_t size) {
       return;
     }
   }
-  AOTRITON_LOG(LOG_DEBUG, "PackedKernel decompressed to {}",
+  AOTRITON_LOG(LOG_DEBUG, "PackedKernel decompressed to %p",
                static_cast<const void*>(decompressed_content_.data()));
   const uint8_t* parse_ptr = decompressed_content_.data();
   for (uint32_t i = 0; i < header.number_of_kernels; i++) {
@@ -269,12 +270,12 @@ PackedKernel::PackedKernel(fd_t fd, size_t offset, size_t size) {
     parse_ptr += sizeof(*metadata);
     std::string_view filename(reinterpret_cast<const char*>(parse_ptr));
     directory_.emplace(filename, metadata);
-    AOTRITON_LOG(LOG_DEBUG, "Add kernel {}: {} offset: {}", i, filename, metadata->offset);
+    AOTRITON_LOG(LOG_DEBUG, "Add kernel %u: %.*s offset: %u",
+                 unsigned(i), int(filename.size()), filename.data(), unsigned(metadata->offset));
     parse_ptr += metadata->filename_length;
   }
   kernel_start_ = parse_ptr;
-  AOTRITON_LOG(LOG_DEBUG, "PackedKernel.kernel_start_ = {}",
-               static_cast<const void*>(kernel_start_));
+  AOTRITON_LOG(LOG_DEBUG, "PackedKernel.kernel_start_ = %p", static_cast<const void*>(kernel_start_));
   if (kernel_start_ - decompressed_content_.data() != header.directory_size) {
     decompressed_content_.clear();
     directory_.clear();

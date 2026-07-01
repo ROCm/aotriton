@@ -7,6 +7,7 @@
 #include <atomic>
 #include <memory>
 #include <filesystem>
+#include <string>
 #include <string_view>
 #include <shared_mutex>
 #include <unordered_map>
@@ -18,21 +19,19 @@
 using pstring_type = std::filesystem::path::string_type;
 using pstring_view = std::basic_string_view<std::filesystem::path::value_type>;
 
+// Convert a native-encoded path view to a UTF-8 std::string for logging.
+// On Windows pstring_view is wstring_view; u8string() yields UTF-8 bytes (the
+// caller is responsible for a UTF-8-capable console, e.g. `chcp 65001`).
+// Only invoked inside AOTRITON_LOG guards, so the allocation is paid only when
+// logging is actually enabled.  Pass the result via .c_str() and "%s".
+inline std::string pstring_to_utf8(pstring_view sv) {
 #if defined(_WIN32)
-// On Windows pstring_view is wstring_view, which std::format cannot emit as
-// UTF-8 text.  This specialisation converts via filesystem::path::u8string()
-// so AOTRITON_LOG("{}", flatzip_path) works without manual conversion at every
-// call site.  On Linux pstring_view == string_view and needs no specialisation.
-#include <format>
-template <>
-struct std::formatter<pstring_view> : std::formatter<std::string_view> {
-  auto format(pstring_view sv, std::format_context& ctx) const {
-    auto u8 = std::filesystem::path(sv).u8string();
-    return std::formatter<std::string_view>::format(
-        std::string_view(reinterpret_cast<const char*>(u8.data()), u8.size()), ctx);
-  }
-};
+  auto u8 = std::filesystem::path(sv).u8string();
+  return std::string(reinterpret_cast<const char*>(u8.data()), u8.size());
+#else
+  return std::string(sv);
 #endif
+}
 
 namespace AOTRITON_NS {
 

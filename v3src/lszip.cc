@@ -91,9 +91,9 @@ lszip(fd_t fd,
     // caller never gets back offsets that point at non-raw data.
     if (comp_method != 0 || (gp_flag & 0x0001) != 0) {
       AOTRITON_LOG(LOG_DEBUG,
-                   "lszip: rejecting non-STORED/encrypted entry {} (comp_method={}, gp_flag={:#06x})",
-                   std::string_view(reinterpret_cast<const char*>(p + 46), fname_len),
-                   comp_method, gp_flag);
+                   "lszip: rejecting non-STORED/encrypted entry %.*s (comp_method=%d, gp_flag=%#06x)",
+                   int(fname_len), reinterpret_cast<const char*>(p + 46),
+                   int(comp_method), unsigned(gp_flag));
       return false;
     }
 

@@ -33,7 +33,7 @@ hipError_t
     const char* reject_reason = check_inputs_are_supported(gpu);
     if (reject_reason) {
         AOTRITON_LOG(LOG_INFO,
-                     "Unsupported inputs for backend [[context_class_name]] reason: {}",
+                     "Unsupported inputs for backend [[context_class_name]] reason: %s",
                      reject_reason);
         return hipErrorPeerAccessUnsupported;
     }

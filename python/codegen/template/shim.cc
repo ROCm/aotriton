@@ -85,13 +85,16 @@ hipError_t
     if (kernel_index < 0) {
         AOTRITON_LOG(LOG_DEBUG,
                      "[[shim_kernel_name]] lookup_optimal: no valid kernel selected "
-                     "(kernel_index = {})",
+                     "(kernel_index = %d)",
                      kernel_index);
     } else {
         AOTRITON_LOG(LOG_DEBUG,
-                     "[[shim_kernel_name]] lookup_optimal: kernel_index = {} "
-                     "aks2_entry = {} func_name = {} arch_name = {}",
-                     kernel_index, aks2_entry, func_name, arch_name);
+                     "[[shim_kernel_name]] lookup_optimal: kernel_index = %d "
+                     "aks2_entry = %.*s func_name = %.*s arch_name = %.*s",
+                     kernel_index,
+                     int(aks2_entry.size()), aks2_entry.data(),
+                     int(func_name.size()), func_name.data(),
+                     int(arch_name.size()), arch_name.data());
     }
     if (!kernel_on_device)
         return hipErrorSharedObjectSymbolNotFound;
