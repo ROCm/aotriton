@@ -92,6 +92,7 @@ int CURRENT_ENTRY_PUBLIC([[context_class_name]]& context, int mod_number) {
     context.kernel_on_device = kernel_cluster.get(kernel_index);
     context.pp_args_index = [[deduplicated_pp_args_function_index]];
     context.flatzip_path = FLATZIP_PATH;
+    // aks2_entry IS the func_name (supplied by f.unified_signature)
     context.aks2_entry   = FUNC_NAME;
     context.func_name = FUNC_NAME;
     context.arch_name = ARCH_NAME;
