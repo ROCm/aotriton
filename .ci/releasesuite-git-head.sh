@@ -135,7 +135,7 @@ setup_source_volume ${SOURCE_VOLUME} ${GIT_HTTPS_ORIGIN} ${LOCAL_DIR} ${GIT_COMM
 OUTPUT_DIR="$1"
 CACHE_DIR="${OUTPUT_DIR}/.cache"
 WHEEL_CACHE_DIR="${CACHE_DIR}/wheels"
-mkdir -p "${WHEEL_CACHE_DIR}"
+mkdir -p "${WHEEL_CACHE_DIR}" "${CACHE_DIR}/pip"
 
 # Determine Triton hashes to build.
 # .venvs.default in SUITE_YAML replaces the embedded submodule hash;
@@ -206,6 +206,7 @@ function build_inside() {
     --tmpfs "/scratch:exec" \
     -e AOTRITON_BUILD_PATH=/scratch/build/aotriton \
     -e AOTRITON_INSTALL_PREFIX=/scratch/install \
+    -e PIP_CACHE_DIR=/cache/pip \
     -w / \
     ${DOCKER_IMAGE} \
     bash -l -s "${NOIMAGE_MODE}" "${WHEEL_CFG}" \

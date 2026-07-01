@@ -34,27 +34,39 @@ fi
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 BASE_DOCKER_IMAGE="aotriton:base"
 TRITON_MIRROR_VOLUME="triton-mirror"
-TRITON_GIT_ORIGIN="https://github.com/ROCm/triton"
+# TRITON_GIT_ORIGIN may be overridden from the environment (e.g. by
+# releasesuite-git-head.sh --triton_origin) to fetch Triton from a fork or a
+# local checkout via the file:// protocol.
+TRITON_GIT_ORIGIN="${TRITON_GIT_ORIGIN:-https://github.com/ROCm/triton}"
 
 mkdir -p "${WHEEL_OUTPUT_DIR}"
 
-# Ensure triton-mirror bare volume exists and is up to date
+# Ensure triton-mirror volume exists and is up to date.
+# Uses --mirror (not --bare) so all refs/heads/* are tracked and new branches
+# (e.g. aotriton/* release branches) are picked up on subsequent fetches.
 docker volume create --name "${TRITON_MIRROR_VOLUME}"
 if docker run --rm \
      -v "${TRITON_MIRROR_VOLUME}:/mirror" \
      "${BASE_DOCKER_IMAGE}" \
      bash -c "git -C /mirror rev-parse --git-dir" &>/dev/null; then
-  # fetch --all: required because we don't know which branch contains the target hash
+  # Repair + update. A plain `git clone --bare` sets no fetch refspec, so
+  # `git fetch` only updates FETCH_HEAD and never picks up new branches.
+  # Force the mirror refspec and re-point origin, then fetch --prune.
   docker run --network=host --rm \
     -v "${TRITON_MIRROR_VOLUME}:/mirror" \
     "${BASE_DOCKER_IMAGE}" \
-    bash -c "git -C /mirror fetch --all"
+    bash -c "set -ex
+git config --global --add safe.directory '*'
+git -C /mirror config remote.origin.fetch '+refs/*:refs/*'
+git -C /mirror remote set-url origin '${TRITON_GIT_ORIGIN}'
+git -C /mirror fetch --prune origin"
 else
   docker run --network=host --rm \
     -v "${TRITON_MIRROR_VOLUME}:/mirror" \
     "${BASE_DOCKER_IMAGE}" \
     bash -c "set -ex
-git clone --bare ${TRITON_GIT_ORIGIN} /mirror
+git config --global --add safe.directory '*'
+git clone --mirror '${TRITON_GIT_ORIGIN}' /mirror
 git -C /mirror config uploadpack.allowReachableSHA1InWant true"
 fi
 
@@ -74,6 +86,7 @@ for HASH in "${TRITON_HASHES[@]}"; do
     "${BASE_DOCKER_IMAGE}" \
     bash -s "${HASH}" << 'EOF'
 set -ex
+git config --global --add safe.directory '*'
 HASH="$1"
 SHORT="${HASH:0:8}"
 rm -rf /scratch/build
