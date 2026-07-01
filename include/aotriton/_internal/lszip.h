@@ -4,6 +4,7 @@
 #ifndef AOTRITON_V3_LSZIP_H
 #define AOTRITON_V3_LSZIP_H
 
+#include <aotriton/_internal/fd.h>
 #include <aotriton/config.h>
 #include <cstdint>
 #include <functional>
@@ -17,7 +18,7 @@ namespace AOTRITON_NS {
 // Returns true iff every entry in the central directory was parsed
 // successfully. On false the visitor may have been called for some prefix of
 // entries; callers must not cache a partial directory as authoritative.
-bool lszip(int fd,
+bool lszip(fd_t fd,
            std::function<void(std::string_view name,
                               uint64_t data_offset,
                               uint64_t data_size)> visitor);

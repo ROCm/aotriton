@@ -38,9 +38,6 @@ system, `ninja install` will run the whole build process unconditionally.
   - On RHEL and its derivatives this dependency is ensured by `xz-devel`.
   - On Debian and its derivatives this dependency is met by installing `pkgconf`
     or `pkg-config` in older releases.
-* [`dlfcn-win32`](https://github.com/dlfcn-win32/dlfcn-win32) (**WINDOWS ONLY**)
-  - Windows version of the `dl` library.
-
 ## Generation
 
 The kernel definition for generation is done in
@@ -127,5 +124,3 @@ replacement of their corresponding feature releases.
    This is because triton is not officially available on Windows yet.
 2. To build on Windows, set AOTRITON_NOIMAGE_MODE and use the `aotriton.images`
    folder from a Linux build.
-3. The Windows version uses dlfcn-win32 which doesn't support file paths with
-   unicode characters in them. A fix for this is planned.

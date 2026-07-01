@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include <aotriton/_internal/lszip.h>
+#include <aotriton/_internal/fd.h>
 #include <cstring>
 #include <algorithm>
 #include <vector>
@@ -14,12 +15,6 @@
 
 #if AOTRITON_KERNEL_VERBOSE
 #include <iostream>
-#endif
-
-#if defined(_WIN32)
-#include "packed_kernel_win32.h"
-#else
-#include "packed_kernel_unix.h"
 #endif
 
 // ZIP format constants (PKWARE spec §4.3)
@@ -42,7 +37,7 @@ static inline uint32_t le32(const uint8_t* p) {
 namespace AOTRITON_NS {
 
 bool
-lszip(int fd,
+lszip(fd_t fd,
       std::function<void(std::string_view, uint64_t, uint64_t)> visitor) {
   off_t file_size = fd_seek(fd, 0, SEEK_END);
   if (file_size < EOCD_MIN_SIZE)
