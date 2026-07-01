@@ -1,5 +1,11 @@
 # Project Instructions for Claude Code
 
+## Product Naming
+
+Name products by their architecture identifier only (e.g. gfx1250, gfx942).
+Do not add commercial names, code names, or any other aliases. Only manual
+editing by the user may introduce alternative names.
+
 ## Python Version
 
 This project targets **Python 3.10 or newer** (dev environment is Python 3.12). Do not use syntax or features deprecated as of Python 3.10:
