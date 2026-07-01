@@ -48,4 +48,11 @@ void emit_log(int level, const char* file, int line, std::string_view msg) {
   std::cerr << std::format("[{}] {}:{}: {}\n", level_name(level), basename(file), line, msg);
 }
 
+// std::vformat is instantiated here ONCE, instead of being inlined into every
+// AOTRITON_LOG call site.  See the header for the rationale.
+void emit_log(int level, const char* file, int line,
+              std::string_view fmt, std::format_args args) {
+  emit_log(level, file, line, std::vformat(fmt, args));
+}
+
 } // namespace AOTRITON_NS

@@ -36,6 +36,25 @@ const DebugConfig& debug_config();
 // Defined in log.cc so that <iostream> is NOT pulled into every TU via this header.
 void emit_log(int level, const char* file, int line, std::string_view msg);
 
+// Type-erased formatting sink: runs std::vformat in log.cc (a SINGLE TU) and
+// forwards to emit_log.  Keeping the heavy vformat machinery out of line is the
+// whole point — otherwise std::format gets inlined into every call site (e.g. the
+// ~3700 generated autotune TUs), bloating .text by megabytes of duplicated,
+// internal-linkage code the linker cannot deduplicate.
+void emit_log(int level, const char* file, int line,
+              std::string_view fmt, std::format_args args);
+
+// Thin per-call wrapper.  Only make_format_args() (trivial) is instantiated at
+// the call site; the format_string<Args...> parameter preserves compile-time
+// format-string checking.  The wrapper is also required for correctness: C++23's
+// std::make_format_args takes lvalue references, so a prvalue argument (e.g.
+// int(kernel_index)) must first be materialised into the named parameter here.
+template <typename... Args>
+inline void log_formatted(int level, const char* file, int line,
+                          std::format_string<Args...> fmt, Args&&... args) {
+  emit_log(level, file, line, fmt.get(), std::make_format_args(args...));
+}
+
 // Returns true when a message at `level` should be emitted.  Use this to guard
 // multi-statement log blocks that cannot be expressed as a single AOTRITON_LOG call.
 inline bool log_enabled(int level) noexcept {
@@ -54,8 +73,7 @@ inline bool log_enabled(int level) noexcept {
     const int _aotriton_level = (level);                                             \
     if (_aotriton_level > 0 &&                                                       \
         AOTRITON_NS::debug_config().debug_level >= _aotriton_level)                  \
-      AOTRITON_NS::emit_log(_aotriton_level, __FILE__, __LINE__,                     \
-                            std::format(__VA_ARGS__));                               \
+      AOTRITON_NS::log_formatted(_aotriton_level, __FILE__, __LINE__, __VA_ARGS__);  \
   } while (0)
 
 #endif // AOTRITON_V2_INTERNAL_LOG_H
