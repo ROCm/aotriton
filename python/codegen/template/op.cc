@@ -31,7 +31,9 @@ hipError_t
     auto tune_func = optune_table[arch_number][number];
     if (!tune_func)
         return hipErrorProfilerNotInitialized;
-    tune_func(*this, mod_number);
+    // Return value (backend_index) is unused here; it is read back from
+    // context.backend_index, which tune_func sets directly.
+    (void) tune_func(*this, mod_number);
     // In case tuning database is broken
     if (backend_index < 0)
         backend_index = fallback_backend;

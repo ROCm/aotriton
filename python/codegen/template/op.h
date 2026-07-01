@@ -57,7 +57,8 @@ struct [[context_class_name]] {
     // call backend's lookup_optimal
     hipError_t launch(Gpu gpu, hipStream_t stream) const;
 private:
-    typedef void (*OpTuneTableEntry)([[context_class_name]]& context, int mod_number);
+    // Returns the selected backend_index (-1 when no valid backend was selected).
+    typedef int (*OpTuneTableEntry)([[context_class_name]]& context, int mod_number);
     static OpTuneTableEntry optune_table[][ kMaxGodelNumber ];
 
     typedef hipError_t (*BackendLauncher)(const [[context_class_name]]& context,
