@@ -6,6 +6,7 @@
 
 #include <aotriton/config.h>
 #include <cstddef>
+#include <stdio.h>
 #include <sys/types.h>
 
 #if defined(_WIN32)
