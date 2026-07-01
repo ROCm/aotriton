@@ -103,7 +103,8 @@ find_package(hip REQUIRED)
 set(VENV_DIR "${CMAKE_CURRENT_BINARY_DIR}/venv" CACHE STRING "Virtual Environment Directory")
 option(AOTRITON_NO_PYTHON "Disable python binding build" OFF)
 option(AOTRITON_USE_TORCH "Enable functions in python binding that requires libtorch" ON)
-option(AOTRITON_ENABLE_ASAN "Enable Address Sanitizer. Implies -g" OFF)
+option(AOTRITON_ENABLE_ASAN "Enable Address Sanitizer (g++). Implies -g" OFF)
+option(AOTRITON_ENABLE_ASAN_CLANG "Enable Address Sanitizer using Clang (e.g. theRock clang++). Implies -g" OFF)
 option(AOTRITON_BUILD_FOR_TUNING "Build all GPU kernels and set -DAOTRITON_BUILD_FOR_TUNING=1 (=0 otherwise)" OFF)
 set(AOTRITON_BUILD_FOR_TUNING_BUT_SKIP_KERNEL "" CACHE STRING "Use tuning database for certain kernels when AOTRITON_BUILD_FOR_TUNING=ON")
 option(AOTRITON_ENABLE_FP32_INPUTS "Enable FP32 support." ON)
@@ -186,8 +187,19 @@ else()
   target_link_libraries(lzma_interface INTERFACE liblzma::liblzma)
 endif()
 
+if(AOTRITON_ENABLE_ASAN AND AOTRITON_ENABLE_ASAN_CLANG)
+  message(FATAL_ERROR "AOTRITON_ENABLE_ASAN and AOTRITON_ENABLE_ASAN_CLANG are mutually exclusive.")
+endif()
 if(AOTRITON_ENABLE_ASAN)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -fsanitize=address -fno-omit-frame-pointer")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -fsanitize=address -fno-omit-frame-pointer")
+endif()
+if(AOTRITON_ENABLE_ASAN_CLANG)
+  # theRock clang++ flags: shared libasan avoids link-order issues with HIP;
+  # asan-use-private-alias avoids false ODR violations across DSOs.
+  add_compile_options(-g -fsanitize=address -shared-libasan
+                      -Wno-cast-function-type-strict -fclang-abi-compat=17
+                      -mllvm -asan-use-private-alias=1)
+  add_link_options(-fsanitize=address -shared-libasan)
 endif()
 
 set(Python_ARTIFACTS_INTERACTIVE TRUE)

@@ -2,7 +2,9 @@
 # Runs inside the AlmaLinux 8 ROCm Docker container (manylinux_2_28 environment).
 # Bind-mounted by build_inside() in releasesuite-git-head.sh at /tmp/runc-manylinux-build-tar.sh
 # and invoked as: bash -l /tmp/runc-manylinux-build-tar.sh <args>
-# Positional args: $1=NOIMAGE_MODE $2=WHEEL_CFG
+# Positional args: $1=NOIMAGE_MODE $2=WHEEL_CFG $3=ASAN_MODE $4=ARCH_LIST
+#   ARCH_LIST: "ALL" (default) or a ';'-separated GPU arch list forwarded
+#   to build-release.sh as its arch_list arg (becomes AOTRITON_TARGET_ARCH).
 #
 # Container prerequisites:
 #   Mounts:
@@ -18,7 +20,7 @@
 #     PIP_CACHE_DIR          — pip download cache (bind-mounted from host)
 #   Tools (provided by the ROCm AlmaLinux 8 image):
 #     hipconfig        — to locate ROCM_PATH
-#     gcc-toolset-13   — C++17 compiler via scl enable
+#     gcc-toolset-13   — C++17 compiler via scl enable (non-asan path only)
 #     cpp              — preprocessor used to extract the HIP version number
 
 set -ex
@@ -26,6 +28,8 @@ set -ex
 # --- Arguments ---
 NOIMAGE_MODE="$1"
 WHEEL_CFG="$2"
+ASAN_MODE="${3:-OFF}"
+ARCH_LIST="${4:-ALL}"
 
 # --- Validate environment ---
 if [ -z "${AOTRITON_BUILD_PATH}" ]; then
@@ -51,28 +55,57 @@ if [ -z "${ROCM_PATH}" ]; then
   exit 1
 fi
 printf '#include <hip/hip_version.h>\nHIP_VERSION_MAJOR . HIP_VERSION_MINOR\n' > /tmp/print_hip_version.h
-hipver=$(scl enable gcc-toolset-13 "cpp -I${ROCM_PATH}/include /tmp/print_hip_version.h" | tail -n 1 | sed 's/ //g')
+if [[ "${ASAN_MODE}" == "ON" ]]; then
+  # No gcc-toolset/cpp in this path; use clang's preprocessor.
+  hipver=$(${ROCM_PATH}/llvm/bin/clang -E -P -x c -I${ROCM_PATH}/include /tmp/print_hip_version.h | tail -n 1 | sed 's/ //g')
+else
+  hipver=$(scl enable gcc-toolset-13 "cpp -I${ROCM_PATH}/include /tmp/print_hip_version.h" | tail -n 1 | sed 's/ //g')
+fi
 
 # --- Build ---
-build_args=("${NOIMAGE_MODE}" "ALL")
-if [[ "${WHEEL_CFG}" == *.yml || "${WHEEL_CFG}" == *.yaml ]]; then
-  cmake_arg="-DAOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE=${WHEEL_CFG}"
-else
-  cmake_arg="-DAOTRITON_USE_LOCAL_TRITON_WHEEL=${WHEEL_CFG}"
+# Only image builds embed a Triton wheel. Runtime builds (NOIMAGE_MODE=ON)
+# run with AOTRITON_NOIMAGE_MODE=ON and skip Triton entirely, so no wheel
+# config is passed (WHEEL_CFG is "NONE" in that case).
+build_args=("${NOIMAGE_MODE}" "${ARCH_LIST}")
+if [ "${NOIMAGE_MODE}" == "OFF" ]; then
+  if [[ "${WHEEL_CFG}" == *.yml || "${WHEEL_CFG}" == *.yaml ]]; then
+    cmake_arg="-DAOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE=${WHEEL_CFG}"
+  else
+    cmake_arg="-DAOTRITON_USE_LOCAL_TRITON_WHEEL=${WHEEL_CFG}"
+  fi
+  build_args+=("${cmake_arg}")
 fi
-build_args+=("${cmake_arg}")
-scl enable gcc-toolset-13 -- bash /src/aotriton/.ci/build-release.sh "${build_args[@]}"
+
+if [[ "${ASAN_MODE}" == "ON" ]]; then
+  build_args+=(
+    "-DAOTRITON_ENABLE_ASAN_CLANG=ON"
+    "-DCMAKE_C_COMPILER=${ROCM_PATH}/llvm/bin/clang"
+    "-DCMAKE_CXX_COMPILER=${ROCM_PATH}/llvm/bin/clang++"
+  )
+  # Use theRock clang directly — no scl gcc-toolset wrapper.
+  bash /src/aotriton/.ci/build-release.sh "${build_args[@]}"
+else
+  scl enable gcc-toolset-13 -- bash /src/aotriton/.ci/build-release.sh "${build_args[@]}"
+fi
+
+# manylinux tag: hardcoded to AlmaLinux 8 baseline (glibc 2.28).
+MANYLINUX_TAG="manylinux_2_28"
+
+asan_suffix=""
+if [[ "${ASAN_MODE}" == "ON" ]]; then
+  asan_suffix="+asan"
+fi
 
 # --- Package (both archives must have aotriton/ as the root directory) ---
 if [ ${NOIMAGE_MODE} == "OFF" ]; then
-  tarbase=aotriton-${GIT_SHORT}-images
+  tarbase=aotriton-${GIT_SHORT}${asan_suffix}-images
   cd "${AOTRITON_INSTALL_PREFIX}"
   for d in $(ls aotriton/lib/aotriton.images/); do
     tarfile=${tarbase}-$d.tar.gz
     tar cz "aotriton/lib/aotriton.images/$d" > /output/${tarfile}
   done
 else
-  tarfile=aotriton-${GIT_SHORT}-manylinux_2_28_x86_64-rocm${hipver}-shared.tar.gz
+  tarfile=aotriton-${GIT_SHORT}${asan_suffix}-${MANYLINUX_TAG}_x86_64-rocm${hipver}-shared.tar.gz
   cd "${AOTRITON_INSTALL_PREFIX}" && tar cz aotriton > /output/${tarfile}
 fi
 
