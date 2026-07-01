@@ -47,8 +47,12 @@ fd_t fd_open(const std::filesystem::path& pathname) {
     DWORD error_code = GetLastError();
     char error_message[256] = {0};
     FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-                   nullptr, error_code, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-                   error_message, sizeof(error_message), nullptr);
+                   nullptr,
+                   error_code,
+                   MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+                   error_message,
+                   sizeof(error_message),
+                   nullptr);
     size_t len = strlen(error_message);
     while (len > 0 && (error_message[len-1] == '\n' || error_message[len-1] == '\r'))
       error_message[--len] = '\0';
