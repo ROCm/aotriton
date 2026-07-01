@@ -20,11 +20,18 @@ function help() {
 Usage: releasesuite-git-head.sh [-h] [options..] <output directory>
 Options:
                     -h: show help and exit.
-         -r <ROCM ver>: build ROCM runtime image
+         -r <ROCM ver>: override the ROCm version list (does not select a
+                        component; use with --runtime, --image, or both)
                --image: build GPU images.
              --runtime: build all C++ runtimes.
+              --debug: Debug mode: require exactly one runtime version (-r),
+                        and leave the build container running after the build
+                        so the contents can be inspected interactively.
          --yaml <.yml>: Use yml config file to build the release
         --origin <url>: Override the git HTTPS origin URL (default: auto-detected from remote)
+ --triton_origin <url>: Override the Triton git origin for wheel builds.
+                        Accepts a fork URL or a local checkout via file:///abs/path
+                        (default: https://github.com/ROCm/triton)
 By default both GPU images and runtimes are built.
 If either --image or --runtime is specified, the missing one will not be built.
 
@@ -38,7 +45,7 @@ EOF
   exit $1
 }
 
-TEMP=$(getopt -o hr: --longoptions image,runtime,yaml:,origin: -- "$@")
+TEMP=$(getopt -o hr: --longoptions image,runtime,debug,yaml:,origin:,triton_origin: -- "$@")
 
 if [ $? -ne 0 ]; then
   echo "Error: Invalid option." >&2
@@ -54,6 +61,8 @@ CMDLIST=()
 SUITE_DEFAULT_SELECTION=1
 SUITE_YAML=""
 SUITE_ORIGIN=""
+SUITE_TRITON_ORIGIN=""
+SUITE_DEBUG=0
 
 while true; do
   case "$1" in
@@ -68,9 +77,10 @@ while true; do
       SUITE_SELECT_RUNTIME=1
       SUITE_DEFAULT_SELECTION=0
       ;;
+    --debug)
+      SUITE_DEBUG=1
+      ;;
     -r)
-      SUITE_SELECT_RUNTIME=1
-      SUITE_DEFAULT_SELECTION=0
       shift
       CMDLIST+=("$1")
       ;;
@@ -81,6 +91,10 @@ while true; do
     --origin)
       shift
       SUITE_ORIGIN="$1"
+      ;;
+    --triton_origin)
+      shift
+      SUITE_TRITON_ORIGIN="$1"
       ;;
     '--')
       shift
@@ -106,6 +120,11 @@ fi
 
 if [ ${SUITE_SELECT_RUNTIME} -lt 0 ]; then
   SUITE_SELECT_RUNTIME=${SUITE_DEFAULT_SELECTION}
+fi
+
+if [ ${SUITE_DEBUG} -gt 0 ] && [ ${#CMDLIST[@]} -ne 1 ]; then
+  echo "Error: --debug requires exactly one runtime version specified via -r <ROCM ver>." >&2
+  help 1
 fi
 
 echo "SUITE_RUNTIME_LIST ${SUITE_RUNTIME_LIST[@]}"
@@ -142,7 +161,7 @@ mkdir -p "${WHEEL_CACHE_DIR}" "${CACHE_DIR}/pip"
 # otherwise the submodule is the mandatory default.
 DEFAULT_HASH=""
 if [[ -n "${SUITE_YAML}" ]]; then
-  DEFAULT_HASH=$(yq -r '.venvs.default // empty' "${SUITE_YAML}")
+  DEFAULT_HASH=$(yq -r '.venvs.default // ""' "${SUITE_YAML}")
 fi
 if [[ -z "${DEFAULT_HASH}" ]]; then
   DEFAULT_HASH=$(git rev-parse HEAD:third_party/triton)
@@ -157,7 +176,11 @@ fi
 # Runtime builds consume pre-built wheels from /cache/wheels via WHEEL_CFG.
 if [[ ${SUITE_SELECT_IMAGE} -gt 0 ]]; then
   TRITON_WHEEL_VERSION_SUFFIX="+aotriton${aotriton_major}.${aotriton_minor}"
-  bash "${SCRIPT_DIR}/build_triton_wheels.sh" \
+  TRITON_ORIGIN_ENV=()
+  if [[ -n "${SUITE_TRITON_ORIGIN}" ]]; then
+    TRITON_ORIGIN_ENV=(TRITON_GIT_ORIGIN="${SUITE_TRITON_ORIGIN}")
+  fi
+  env "${TRITON_ORIGIN_ENV[@]}" bash "${SCRIPT_DIR}/build_triton_wheels.sh" \
     --wheel_output_dir "${WHEEL_CACHE_DIR}" \
     --version_suffix "${TRITON_WHEEL_VERSION_SUFFIX}" \
     "${TRITON_HASHES[@]}"
@@ -198,19 +221,27 @@ function build_inside() {
       --build-arg ROCM_VERSION_IN_URL=${rocmver} \
       -f ${DOCKERFILE} .)
   fi
+  # Always bind-mount the build script from the host so the working-tree
+  # version is used without requiring a commit. In debug mode also allocate a
+  # TTY so the interactive shell at the end of the script works; the script is
+  # run by path (not piped via stdin) so stdin stays attached to the terminal.
+  TTY_FLAGS=()
+  [ ${SUITE_DEBUG} -gt 0 ] && TTY_FLAGS=(-t -e SUITE_DEBUG=1)
   set -x
   docker run --network=host -i --rm \
     -v ${SOURCE_VOLUME}:/src:ro \
+    --mount "type=bind,source=$(realpath ${SCRIPT_DIR}/runc-manylinux-build-tar.sh),target=/tmp/runc-manylinux-build-tar.sh,readonly" \
     --mount "type=bind,source=$(realpath ${OUTPUT_DIR}),target=/output" \
     --mount "type=bind,source=$(realpath ${CACHE_DIR}),target=/cache" \
     --tmpfs "/scratch:exec" \
     -e AOTRITON_BUILD_PATH=/scratch/build/aotriton \
     -e AOTRITON_INSTALL_PREFIX=/scratch/install \
     -e PIP_CACHE_DIR=/cache/pip \
+    "${TTY_FLAGS[@]}" \
     -w / \
     ${DOCKER_IMAGE} \
-    bash -l -s "${NOIMAGE_MODE}" "${WHEEL_CFG}" \
-    < "${SCRIPT_DIR}/runc-manylinux-build-tar.sh"
+    bash -l /tmp/runc-manylinux-build-tar.sh \
+    "${NOIMAGE_MODE}" "${WHEEL_CFG}"
 }
 
 if [ ${SUITE_SELECT_RUNTIME} -gt 0 ]; then
