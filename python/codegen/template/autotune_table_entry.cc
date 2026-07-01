@@ -70,7 +70,7 @@ namespace AOTRITON_NS::v3::[[kernel_family_name]]::autotune {
 
 // Returns the selected kernel_index, or -1 when no valid kernel was selected.
 // The kernel_index is logged by the caller (lookup_optimal in shim.cc) so the
-// std::format machinery is not duplicated across every generated autotune TU.
+// AOTRITON_LOG machinery is not duplicated across every generated autotune TU.
 int CURRENT_ENTRY_PUBLIC([[context_class_name]]& context, int mod_number) {
 #if AOTRITON_BUILD_FOR_TUNING
     constexpr int kLutInTuningModeAlwaysReturnZero = 0;
