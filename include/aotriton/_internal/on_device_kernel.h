@@ -19,18 +19,20 @@
 using pstring_type = std::filesystem::path::string_type;
 using pstring_view = std::basic_string_view<std::filesystem::path::value_type>;
 
-// Native path view -> UTF-8 std::string for logging (pass via .c_str()/"%s").
-// On Windows u8string() yields UTF-8 bytes; the console must handle UTF-8 (e.g.
-// `chcp 65001`).  Called only inside AOTRITON_LOG guards, so it allocates only
-// when logging is enabled.
-inline std::string pstring_to_utf8(pstring_view sv) {
+// Native path view -> UTF-8 for logging with "%s" via .data().
+// Windows: u8string() yields an owning UTF-8 std::string (console must handle
+//   UTF-8, e.g. `chcp 65001`); std::string::data() is always NUL-terminated.
+// Linux: the path is already UTF-8, so the view is returned unchanged (no copy).
+// "%s" is safe because every logged path views the generated FLATZIP_PATH string
+// literal, which is NUL-terminated.
 #if defined(_WIN32)
+inline std::string pstring_to_utf8(pstring_view sv) {
   auto u8 = std::filesystem::path(sv).u8string();
   return std::string(reinterpret_cast<const char*>(u8.data()), u8.size());
-#else
-  return std::string(sv);
-#endif
 }
+#else
+inline pstring_view pstring_to_utf8(pstring_view sv) noexcept { return sv; }
+#endif
 
 namespace AOTRITON_NS {
 
@@ -46,6 +48,7 @@ public:
     dim3 block { 0, 0, 0 };  // For Kernel who has compile-time determined block size
   };
   struct OnDiskKernelInfo {
+    // Must view a NUL-terminated string (logged via "%s"), even though string_view does not require it.
     pstring_view     flatzip_path;  // path to .zip relative to aotriton.images/
     std::string_view aks2_entry;    // ZIP entry name = unified_signature
     std::string_view stem_name;     // HSACO entry name inside AKS2 (;;#F/P/CO/arch)

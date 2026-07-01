@@ -71,7 +71,7 @@ OnDeviceKernel::load_for_device(int device_id,
 
   AOTRITON_LOG(LOG_DEBUG,
                "Trying to decompress kernel %s entry=%.*s stem=%.*s",
-               pstring_to_utf8(info.flatzip_path).c_str(),
+               pstring_to_utf8(info.flatzip_path).data(),
                int(info.aks2_entry.size()), info.aks2_entry.data(),
                int(info.stem_name.size()), info.stem_name.data());
   decompress_kernel(info);
