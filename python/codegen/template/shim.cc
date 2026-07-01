@@ -4,6 +4,7 @@
 // clang-format off
 #include "shim.[[shim_kernel_name]].h"
 #include <aotriton/util.h>
+#include <aotriton/_internal/log.h>
 #include <tuple>
 #if AOTRITON_BUILD_FOR_TUNING
 #include <aotriton/cpp_tune.h>
@@ -79,7 +80,19 @@ hipError_t
     auto tune_func = autotune_table[arch_number][number];
     if (!tune_func)
         return hipErrorProfilerNotInitialized;
-    tune_func(*this, mod_number);
+    auto kernel_index = tune_func(*this, mod_number);
+    // aks2_entry/func_name/arch_name are only set when a valid kernel is selected.
+    if (kernel_index < 0) {
+        AOTRITON_LOG(LOG_DEBUG,
+                     "[[shim_kernel_name]] lookup_optimal: no valid kernel selected "
+                     "(kernel_index = {})",
+                     kernel_index);
+    } else {
+        AOTRITON_LOG(LOG_DEBUG,
+                     "[[shim_kernel_name]] lookup_optimal: kernel_index = {} "
+                     "aks2_entry = {} func_name = {} arch_name = {}",
+                     kernel_index, aks2_entry, func_name, arch_name);
+    }
     if (!kernel_on_device)
         return hipErrorSharedObjectSymbolNotFound;
 

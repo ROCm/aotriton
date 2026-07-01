@@ -77,7 +77,9 @@ struct [[context_class_name]] {
     static std::tuple<int, int> get_archmod_number(Gpu gpu);
     static constexpr int kMaxGodelNumber = [[number_of_functionals]];
 
-    typedef void (*AutoTuneTableEntry)([[context_class_name]]& context, int mod_number);
+    // Returns the selected kernel_index (>= 0), or -1 when no valid kernel was
+    // selected (in which case aks2_entry/func_name/arch_name are left unset).
+    typedef int (*AutoTuneTableEntry)([[context_class_name]]& context, int mod_number);
     static AutoTuneTableEntry autotune_table[][ kMaxGodelNumber ];
 };
 

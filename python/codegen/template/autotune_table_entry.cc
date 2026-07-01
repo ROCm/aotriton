@@ -69,7 +69,10 @@ namespace AOTRITON_NS::v3::[[kernel_family_name]]::autotune {
 
 // using AOTRITON_NS::v2::[[kernel_family_name]]::[[context_class_name]];
 
-void CURRENT_ENTRY_PUBLIC([[context_class_name]]& context, int mod_number) {
+// Returns the selected kernel_index, or -1 when no valid kernel was selected.
+// The kernel_index is logged by the caller (lookup_optimal in shim.cc) so the
+// std::format machinery is not duplicated across every generated autotune TU.
+int CURRENT_ENTRY_PUBLIC([[context_class_name]]& context, int mod_number) {
 #if AOTRITON_BUILD_FOR_TUNING
     constexpr int kLutInTuningModeAlwaysReturnZero = 0;
     AOTRITON_LOG(LOG_DEBUG,
@@ -85,7 +88,7 @@ void CURRENT_ENTRY_PUBLIC([[context_class_name]]& context, int mod_number) {
     auto kernel_index = [[deduplicated_lut_function]](*context.params, mod_number, lut);
 #endif
     if (kernel_index < 0 || kernel_index >= kTotalNumKernels) {
-        return ;
+        return -1;
     }
     context.kernel_on_device = kernel_cluster.get(kernel_index);
     context.pp_args_index = [[deduplicated_pp_args_function_index]];
@@ -98,9 +101,9 @@ void CURRENT_ENTRY_PUBLIC([[context_class_name]]& context, int mod_number) {
     context._preferred_kernel_psels = kernel_psels[kernel_index];
     context._preferred_kernel_copts = kernel_copts[kernel_index];
 #endif
-    AOTRITON_LOG(LOG_DEBUG, "kernel_index = {}", int(kernel_index));
     const auto& perf = image_perf_list[kernel_index];
     [[perf_field_assignment]];
+    return kernel_index;
 }
 
 #undef CURRENT_ENTRY_PUBLIC

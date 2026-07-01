@@ -140,13 +140,18 @@ class InterfaceGenerator(ABC):
         return f'{tune_name}_{self._iface.NAME}__A{arch_number}__F{godel_number}', True
 
     def codegen_tune_table_entry_declares(self, functionals):
+        # Autotune entries return the selected kernel_index so shim.cc can log it
+        # from a single TU (see AOTRITON_LOG in lookup_optimal); emitting the log
+        # per-entry would duplicate std::format machinery across ~thousands of
+        # generated autotune TUs.  Optune entries remain void.
+        ret_type = 'int' if self._iface.TUNE_NAME == 'autotune' else 'void'
         decls = []
         for arch_number, target_arch in enumerate(self._target_arch_keys):
             godel_numbers = sorted(list(set([f.godel_number for f in functionals if f.arch == target_arch])))
             for godel_number in godel_numbers:
                 struct_name, is_extern = self.codegen_tune_struct_name(arch_number, godel_number)
                 if is_extern:
-                    decls.append(f'void {struct_name}({self._iface.context_class_name}& params, int mod_number);')
+                    decls.append(f'{ret_type} {struct_name}({self._iface.context_class_name}& params, int mod_number);')
         return '\n'.join(decls)
 
     def codegen_tune_table_entries(self, functionals):
