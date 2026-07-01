@@ -59,6 +59,7 @@ std::unordered_map<std::string, GpuClassifier> LazyGpu::string_to_classifier = {
   {"gfx1153", DummyClassifier<GPU_AMD_ARCH_GFX1153_MOD0>() },
   {"gfx1200", DummyClassifier<GPU_AMD_ARCH_GFX1200_MOD0>() },
   {"gfx1201", DummyClassifier<GPU_AMD_ARCH_GFX1201_MOD0>() },
+  {"gfx1250", DummyClassifier<GPU_AMD_ARCH_GFX1250_MOD0>() },
 };
 
 Gpu
