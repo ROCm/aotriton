@@ -198,7 +198,6 @@ struct AKS2_Metadata {
 // 4B: AKS2  (AOTriton Kernel Storage version 2)
 // 4B: Total uncompressed content size
 // 4B: Number of Kernels (N)
-// 4B: Number of Kernels (N)
 // 4B: directory size
 // -- Compressed
 // N * varlen: (Directory)
