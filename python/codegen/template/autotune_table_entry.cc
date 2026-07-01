@@ -39,7 +39,6 @@ constexpr pstring_view FLATZIP_PATH
 #else
 { R"xyzw([[flatzip_path]])xyzw" };
 #endif
-constexpr std::string_view AKS2_ENTRY  { R"xyzw([[aks2_entry]])xyzw"  };
 constexpr std::string_view FUNC_NAME   { R"xyzw([[func_name]])xyzw"   };
 constexpr std::string_view ARCH_NAME { R"xyzw([[arch_name]])xyzw" };
 
@@ -93,7 +92,7 @@ int CURRENT_ENTRY_PUBLIC([[context_class_name]]& context, int mod_number) {
     context.kernel_on_device = kernel_cluster.get(kernel_index);
     context.pp_args_index = [[deduplicated_pp_args_function_index]];
     context.flatzip_path = FLATZIP_PATH;
-    context.aks2_entry   = AKS2_ENTRY;
+    context.aks2_entry   = FUNC_NAME;
     context.func_name = FUNC_NAME;
     context.arch_name = ARCH_NAME;
 #if AOTRITON_BUILD_FOR_TUNING

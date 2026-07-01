@@ -88,7 +88,7 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
         lut_ctype, lut_cshape, lut_cdata = self.codegen_format_lut(self._lut_tensor)
         # gpu_kernel_image_dir = args.build_dir / f.FAMILY / f'gpu_kernel_image.{f.NAME}'
         flatzip_path = f.full_flatzip_path.as_posix()
-        aks2_entry   = f.filepack_inzip_name
+        assert f.filepack_inzip_name == f.unified_signature
         meta_hsacos = self.codegen_compact_kernels(kdesc,
                                                    self._sigs,
                                                    flatzip_path)
@@ -100,7 +100,6 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
             'godel_number'          : f.godel_number,
             'perf_fields'           : codegen_struct_cfields(kdesc.perf_cfields, nalign=4),
             'flatzip_path'          : flatzip_path,
-            'aks2_entry'            : aks2_entry,
             'func_name'             : f.unified_signature,
             'arch_name'             : f.arch,
             'meta_hsacos'           : meta_hsacos,
