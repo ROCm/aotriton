@@ -257,10 +257,7 @@ function build_inside() {
   ARCH_LIST="${4:-ALL}"
   DOCKER_IMAGE="aotriton:buildenv-rocm${rocmver}"
   if [ -z "$(docker images -q ${DOCKER_IMAGE} 2>/dev/null)" ]; then
-    if [[ "${ASAN_MODE}" == "ON" ]]; then
-      DOCKERFILE="theRockASAN.Dockerfile"
-      BUILD_ARG=(--build-arg "THEROCK_VERSION=${rocmver}")
-    elif printf '%s\n%s\n' "7.10" "${rocmver}" | sort -V -C; then
+    if printf '%s\n%s\n' "7.10" "${rocmver}" | sort -V -C; then
       DOCKERFILE="theRock.Dockerfile"
       BUILD_ARG=(--build-arg "THEROCK_VERSION=${rocmver}")
     else
