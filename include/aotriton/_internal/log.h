@@ -31,39 +31,28 @@ struct DebugConfig {
 // Thread-safe singleton — initialised once on first call.
 const DebugConfig& debug_config();
 
-// Human-readable name for a log level ("DEBUG", "ERROR", ...), used by the
-// AOTRITON_LOG prefix.  Defined in log.cc.
+// Level name ("DEBUG", ...) for the AOTRITON_LOG prefix.  Defined in log.cc.
 const char* log_level_name(int level) noexcept;
 
-// Return the basename component of a (compile-time __FILE__) path.  Runs only
-// when a message is actually emitted, so the scan cost is negligible.
+// Basename of a __FILE__ path; only called when a line is actually emitted.
 const char* log_basename(const char* path) noexcept;
 
-// Returns true when a message at `level` should be emitted.  Use this to guard
-// multi-statement log blocks that cannot be expressed as a single AOTRITON_LOG call.
+// True when `level` should be emitted.  Guards multi-statement log blocks that
+// cannot be written as a single AOTRITON_LOG call.
 inline bool log_enabled(int level) noexcept {
   return level > 0 && debug_config().debug_level >= level;
 }
 
 } // namespace AOTRITON_NS
 
-// Print a printf-style message to stderr when the configured debug level is at
-// or above `level`.  Higher debug_level = more output; 0 = disabled.
+// printf-style log to stderr, emitted when debug_level >= level (0 = disabled).
 // Usage: AOTRITON_LOG(LOG_DEBUG, "x = %d, y = %s", x, y)
 //
-// `fmt` MUST be a string literal: it is concatenated with the "[LEVEL] file:line: "
-// prefix at compile time so the whole call becomes a single std::fprintf.  This
-// keeps binary size minimal — std::fprintf lives in libc, so no formatting code
-// is emitted into the library (unlike std::format, which instantiates a formatter
-// for every arithmetic type into every translation unit).  -Wformat still checks
-// the arguments against the concatenated literal.  A single fprintf is written
-// atomically under glibc's per-stream lock, so log lines never interleave.
-//
-// Note: pass std::string_view as `%.*s` with `(int)sv.size(), sv.data()` since it
-// is not NUL-terminated.
-//
-// Macro lives outside the namespace so it is usable in any context; the body
-// uses fully-qualified names so it resolves regardless of the caller's namespace.
+// `fmt` MUST be a string literal; it is concatenated with the prefix at compile
+// time into one std::fprintf.  fprintf lives in libc, so no formatting code is
+// emitted into the library (unlike std::format).  -Wformat still checks the args,
+// and a single fprintf is atomic under glibc's per-stream lock.  Pass a
+// std::string_view as "%.*s" with (int)sv.size(), sv.data() (not NUL-terminated).
 #define AOTRITON_LOG(level, fmt, ...)                                            \
   do {                                                                           \
     const int _aotriton_level = (level);                                         \

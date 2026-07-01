@@ -140,18 +140,13 @@ class InterfaceGenerator(ABC):
         return f'{tune_name}_{self._iface.NAME}__A{arch_number}__F{godel_number}', True
 
     def codegen_tune_table_entry_declares(self, functionals):
-        # Tuning table entries return the selected index (kernel_index for
-        # autotune, backend_index for optune) so the caller can log it from a
-        # single TU; emitting the log per-entry would duplicate formatting code
-        # across the ~thousands of generated autotune TUs.
-        ret_type = 'int'
         decls = []
         for arch_number, target_arch in enumerate(self._target_arch_keys):
             godel_numbers = sorted(list(set([f.godel_number for f in functionals if f.arch == target_arch])))
             for godel_number in godel_numbers:
                 struct_name, is_extern = self.codegen_tune_struct_name(arch_number, godel_number)
                 if is_extern:
-                    decls.append(f'{ret_type} {struct_name}({self._iface.context_class_name}& params, int mod_number);')
+                    decls.append(f'int {struct_name}({self._iface.context_class_name}& params, int mod_number);')
         return '\n'.join(decls)
 
     def codegen_tune_table_entries(self, functionals):

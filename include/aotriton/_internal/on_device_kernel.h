@@ -19,11 +19,10 @@
 using pstring_type = std::filesystem::path::string_type;
 using pstring_view = std::basic_string_view<std::filesystem::path::value_type>;
 
-// Convert a native-encoded path view to a UTF-8 std::string for logging.
-// On Windows pstring_view is wstring_view; u8string() yields UTF-8 bytes (the
-// caller is responsible for a UTF-8-capable console, e.g. `chcp 65001`).
-// Only invoked inside AOTRITON_LOG guards, so the allocation is paid only when
-// logging is actually enabled.  Pass the result via .c_str() and "%s".
+// Native path view -> UTF-8 std::string for logging (pass via .c_str()/"%s").
+// On Windows u8string() yields UTF-8 bytes; the console must handle UTF-8 (e.g.
+// `chcp 65001`).  Called only inside AOTRITON_LOG guards, so it allocates only
+// when logging is enabled.
 inline std::string pstring_to_utf8(pstring_view sv) {
 #if defined(_WIN32)
   auto u8 = std::filesystem::path(sv).u8string();
