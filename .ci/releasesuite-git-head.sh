@@ -211,14 +211,17 @@ function build_inside() {
   NOIMAGE_MODE="$2"
   DOCKER_IMAGE="aotriton:buildenv-rocm${rocmver}"
   if [ -z "$(docker images -q ${DOCKER_IMAGE} 2>/dev/null)" ]; then
-    # Use theRock.Dockerfile for ROCm >= 7.10
+    # Use theRock.Dockerfile (pip-based) for ROCm >= 7.10; rocm.Dockerfile
+    # (repo-based) for older releases. Build-arg names differ between the two.
     if printf '%s\n%s\n' "7.10" "${rocmver}" | sort -V -C; then
       DOCKERFILE="theRock.Dockerfile"
+      BUILD_ARG=(--build-arg "THEROCK_VERSION=${rocmver}")
     else
       DOCKERFILE="rocm.Dockerfile"
+      BUILD_ARG=(--build-arg "ROCM_VERSION_IN_URL=${rocmver}")
     fi
     (cd "${SCRIPT_DIR}" && docker build --network=host -t ${DOCKER_IMAGE} \
-      --build-arg ROCM_VERSION_IN_URL=${rocmver} \
+      "${BUILD_ARG[@]}" \
       -f ${DOCKERFILE} .)
   fi
   # Always bind-mount the build script from the host so the working-tree
