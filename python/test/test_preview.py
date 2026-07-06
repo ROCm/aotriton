@@ -10,16 +10,20 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 
+from functools import lru_cache
 from types import SimpleNamespace
 from aotriton.codegen.linker import Linker
 from aotriton.template_instantiation.tools import preview, preview_kdesc
 
-_k, _o, _a = Linker(REPO / 'modules').link_all_families()
-F = SimpleNamespace(kernels=_k, operators=_o, affine_kernels=_a)
+
+@lru_cache(maxsize=1)
+def _families():
+    _k, _o, _a = Linker(REPO / 'modules').link_all_families()
+    return SimpleNamespace(kernels=_k, operators=_o, affine_kernels=_a)
 
 
 def _op():
-    return next(o for o in F.operators if o.NAME == 'op_attn_fwd')
+    return next(o for o in _families().operators if o.NAME == 'op_attn_fwd')
 
 
 def test_params_struct_rendered():
@@ -49,6 +53,7 @@ def test_merged_argument_order():
 
 def test_selective_filter():
     # selective matches the operator only
+    F = _families()
     text = preview(selective='flash/op/op_attn_fwd',
                    kernels=F.kernels, operators=F.operators)
     assert 'op_attn_fwd' in text

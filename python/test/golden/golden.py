@@ -71,6 +71,16 @@ def _venv_python() -> str:
     return sys.executable
 
 
+def _safe_extractall(tf: tarfile.TarFile, dest: Path):
+    """Extract all members, refusing any that would escape dest (path traversal)."""
+    dest = dest.resolve()
+    for member in tf.getmembers():
+        target = (dest / member.name).resolve()
+        if target != dest and dest not in target.parents:
+            raise RuntimeError(f'Unsafe path in tar archive: {member.name!r}')
+    tf.extractall(dest)
+
+
 def _compose_database(build_dir: Path):
     """Populate build_dir/database with the tuning + op databases.
 
@@ -89,7 +99,7 @@ def _compose_database(build_dir: Path):
     # Fallback: extract schemas + compose from the decomposed DB.
     for tarxz in DB_SRC_DIR.glob('*.sqlite3.tar.xz'):
         with tarfile.open(tarxz) as tf:
-            tf.extractall(db_dir)
+            _safe_extractall(tf, db_dir)
     subprocess.run(
         [_venv_python(), '-m', 'aotriton.database_compose',
          '--database_file', str(db_dir / 'tuning_database.sqlite3'),
@@ -223,9 +233,9 @@ def main():
         description='Golden codegen snapshot harness for the flash family.')
     mode = p.add_mutually_exclusive_group(required=True)
     mode.add_argument('--update', action='store_true',
-                      help='Regenerate and overwrite the committed snapshot.')
+                      help='Regenerate and overwrite the local snapshot baseline.')
     mode.add_argument('--check', action='store_true',
-                      help='Regenerate and diff against the committed snapshot.')
+                      help='Regenerate and diff against the local snapshot baseline.')
     p.add_argument('--arch', type=str, default=DEFAULT_ARCH,
                    help='Target GPU arch passed to --target_gpus.')
     p.add_argument('--keep_dir', type=Path, default=None,

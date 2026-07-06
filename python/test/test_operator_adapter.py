@@ -12,23 +12,27 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 
+from functools import lru_cache
 from types import SimpleNamespace
 from aotriton.codegen.linker import Linker
 from aotriton.template_instantiation.ir.operator import Operator
-
-_k, _o, _a = Linker(REPO / 'modules').link_all_families()
-F = SimpleNamespace(kernels=_k, operators=_o, affine_kernels=_a)
 from aotriton.gpu_targets import cluster_gpus
 
 
+@lru_cache(maxsize=1)
+def _families():
+    _k, _o, _a = Linker(REPO / 'modules').link_all_families()
+    return SimpleNamespace(kernels=_k, operators=_o, affine_kernels=_a)
+
+
 def _ati_op():
-    op = next(o for o in F.operators if o.NAME == 'op_attn_fwd')
+    op = next(o for o in _families().operators if o.NAME == 'op_attn_fwd')
     assert isinstance(op, Operator), 'op_attn_fwd should be ATI-backed here'
     return op
 
 
 def _ati_bwd_op():
-    op = next(o for o in F.operators if o.NAME == 'op_attn_bwd')
+    op = next(o for o in _families().operators if o.NAME == 'op_attn_bwd')
     assert isinstance(op, Operator), 'op_attn_bwd should be ATI-backed here'
     return op
 
