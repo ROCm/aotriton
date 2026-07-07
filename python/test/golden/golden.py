@@ -41,7 +41,6 @@ GOLDEN_DIR = Path(__file__).resolve().parent / 'snapshot'
 DB_SRC_DIR = REPO_ROOT / 'modules' / 'database'
 # Prebuilt fused tuning database (real tuning rows, exercises translate_dataframe).
 # Override with AOTRITON_GOLDEN_DB. Falls back to composing the decomposed DB.
-import os
 FUSED_DB_DIR = Path(os.getenv('AOTRITON_GOLDEN_DB', '/tmp/ati_golden_fused_db'))
 
 # Default arch + the selective targets snapshotted. Kept small but covering both
@@ -72,13 +71,20 @@ def _venv_python() -> str:
 
 
 def _safe_extractall(tf: tarfile.TarFile, dest: Path):
-    """Extract all members, refusing any that would escape dest (path traversal)."""
+    """Extract members one-by-one, refusing any that would escape dest.
+
+    Guards against both path traversal (../ names) and link-based escapes:
+    symlink/hardlink members are rejected outright, so a later member cannot be
+    written through a previously-extracted link.
+    """
     dest = dest.resolve()
     for member in tf.getmembers():
+        if member.islnk() or member.issym():
+            raise RuntimeError(f'Refusing link entry in tar archive: {member.name!r}')
         target = (dest / member.name).resolve()
         if target != dest and dest not in target.parents:
             raise RuntimeError(f'Unsafe path in tar archive: {member.name!r}')
-    tf.extractall(dest)
+        tf.extract(member, dest)
 
 
 def _compose_database(build_dir: Path):
