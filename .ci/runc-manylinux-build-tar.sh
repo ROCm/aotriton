@@ -8,10 +8,12 @@
 #
 # Container prerequisites:
 #   Mounts:
-#     /src/aotriton  — AOTriton source tree (read-only git repo)
+#     /mirror        — bare AOTriton git mirror (read-only); the source is
+#                      cloned from it into /src/aotriton at the requested commit
 #     /output        — destination for output tar archives
 #     /cache         — shared cache; /cache/wheels holds pre-built Triton wheels
 #   Environment variables:
+#     AOTRITON_GIT_COMMIT    — commit to check out from /mirror
 #     AOTRITON_BUILD_PATH    — build directory, e.g. /scratch/build/aotriton
 #                              Recommended: mount /scratch as tmpfs with exec flag
 #                              and sufficient memory to hold the full build tree.
@@ -39,6 +41,19 @@ if [ -z "${AOTRITON_INSTALL_PREFIX}" ]; then
   echo "Error: AOTRITON_INSTALL_PREFIX is not set." >&2; exit 1
 fi
 export AOTRITON_INSTALL_PATH="${AOTRITON_INSTALL_PREFIX}/aotriton"
+
+# --- Materialize the AOTriton source from the local mirror ---
+# Clone the exact commit from the read-only /mirror volume (offline, fast).
+# Non-recursive: Triton (the only submodule) is installed from a pre-built
+# wheel, so third_party/triton is never checked out here.
+if [ -z "${AOTRITON_GIT_COMMIT}" ]; then
+  echo "Error: AOTRITON_GIT_COMMIT is not set." >&2; exit 1
+fi
+git config --global --add safe.directory '*'
+rm -rf /src/aotriton
+git clone file:///mirror /src/aotriton
+git -C /src/aotriton fetch --force origin "${AOTRITON_GIT_COMMIT}" || true
+git -C /src/aotriton checkout -f "${AOTRITON_GIT_COMMIT}"
 
 # pip (running as root) refuses a cache dir not owned by root and silently
 # disables caching. PIP_CACHE_DIR=/cache/pip is bind-mounted from the host

@@ -179,7 +179,7 @@ echo "SUITE_RUNTIME_LIST ${SUITE_RUNTIME_LIST[@]}"
 
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 . "${SCRIPT_DIR}/common-vars.sh"
-. "${SCRIPT_DIR}/common-setup-volume.sh"
+. "${SCRIPT_DIR}/common-git-cache.sh"
 . "${SCRIPT_DIR}/common-git-https-origin.sh"
 # --origin auto: keep the GIT_HTTPS_ORIGIN auto-derived from the tracked
 # remote by common-git-https-origin.sh (ssh/git URLs already rewritten to
@@ -198,9 +198,10 @@ if [ -z "$(docker images -q ${BASE_DOCKER_IMAGE} 2>/dev/null)" ]; then
   (cd "${SCRIPT_DIR}" && docker build --network=host -t ${BASE_DOCKER_IMAGE} -f base.Dockerfile .)
 fi
 
-SOURCE_VOLUME="aotriton-src-shared"
-LOCAL_DIR="aotriton"
-setup_source_volume ${SOURCE_VOLUME} ${GIT_HTTPS_ORIGIN} ${LOCAL_DIR} ${GIT_COMMIT}
+# GitHub -> local mirror volume. Each build container clones the requested
+# commit (GIT_COMMIT) from this local mirror; there is no shared worktree.
+MIRROR_VOLUME="aotriton-mirror"
+sync_mirror "${MIRROR_VOLUME}" "${GIT_HTTPS_ORIGIN}" "${BASE_DOCKER_IMAGE}"
 
 OUTPUT_DIR="$1"
 CACHE_DIR="${OUTPUT_DIR}/.cache"
@@ -287,13 +288,14 @@ function build_inside() {
   [ ${SUITE_DEBUG} -gt 0 ] && TTY_FLAGS=(-t -e SUITE_DEBUG=1)
   set -x
   docker run --network=host -i --rm \
-    -v ${SOURCE_VOLUME}:/src:ro \
+    -v ${MIRROR_VOLUME}:/mirror:ro \
     --mount "type=bind,source=$(realpath ${SCRIPT_DIR}/runc-manylinux-build-tar.sh),target=/tmp/runc-manylinux-build-tar.sh,readonly" \
     --mount "type=bind,source=$(realpath ${OUTPUT_DIR}),target=/output" \
     --mount "type=bind,source=$(realpath ${CACHE_DIR}),target=/cache" \
     --tmpfs "/scratch:exec" \
     -e AOTRITON_BUILD_PATH=/scratch/build/aotriton \
     -e AOTRITON_INSTALL_PREFIX=/scratch/install \
+    -e AOTRITON_GIT_COMMIT=${GIT_COMMIT} \
     -e PIP_CACHE_DIR=/cache/pip \
     "${EXTRA_ENV[@]}" \
     "${TTY_FLAGS[@]}" \

@@ -32,6 +32,7 @@ if [[ "${#TRITON_HASHES[@]}" -eq 0 ]]; then
 fi
 
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
+. "${SCRIPT_DIR}/common-git-cache.sh"
 BASE_DOCKER_IMAGE="aotriton:base"
 TRITON_MIRROR_VOLUME="triton-mirror"
 # TRITON_GIT_ORIGIN may be overridden from the environment (e.g. by
@@ -41,51 +42,9 @@ TRITON_GIT_ORIGIN="${TRITON_GIT_ORIGIN:-https://github.com/ROCm/triton}"
 
 mkdir -p "${WHEEL_OUTPUT_DIR}"
 
-# When the origin is a local file:// URL, the path must be visible inside the
-# mirror container. Bind-mount it read-only at a fixed path and rewrite the
-# URL the container uses.
-ORIGIN_MOUNT=()
-ORIGIN_IN_CONTAINER="${TRITON_GIT_ORIGIN}"
-if [[ "${TRITON_GIT_ORIGIN}" == file://* ]]; then
-  origin_path="${TRITON_GIT_ORIGIN#file://}"   # file:///abs/path -> /abs/path
-  origin_path=$(realpath "${origin_path}")
-  if [[ ! -d "${origin_path}" ]]; then
-    echo "Error: file:// origin path does not exist: ${origin_path}" >&2; exit 1
-  fi
-  ORIGIN_MOUNT=(-v "${origin_path}:/triton-origin:ro")
-  ORIGIN_IN_CONTAINER="file:///triton-origin"
-fi
-
-# Ensure triton-mirror volume exists and is up to date.
-# Uses --mirror (not --bare) so all refs/heads/* are tracked and new branches
-# (e.g. aotriton/* release branches) are picked up on subsequent fetches.
-docker volume create --name "${TRITON_MIRROR_VOLUME}"
-if docker run --rm \
-     -v "${TRITON_MIRROR_VOLUME}:/mirror" \
-     "${BASE_DOCKER_IMAGE}" \
-     bash -c "git -C /mirror rev-parse --git-dir" &>/dev/null; then
-  # Repair + update. A plain `git clone --bare` sets no fetch refspec, so
-  # `git fetch` only updates FETCH_HEAD and never picks up new branches.
-  # Force the mirror refspec and re-point origin, then fetch --prune.
-  docker run --network=host --rm \
-    -v "${TRITON_MIRROR_VOLUME}:/mirror" \
-    "${ORIGIN_MOUNT[@]}" \
-    "${BASE_DOCKER_IMAGE}" \
-    bash -c "set -ex
-git config --global --add safe.directory '*'
-git -C /mirror config remote.origin.fetch '+refs/*:refs/*'
-git -C /mirror remote set-url origin '${ORIGIN_IN_CONTAINER}'
-git -C /mirror fetch --prune origin"
-else
-  docker run --network=host --rm \
-    -v "${TRITON_MIRROR_VOLUME}:/mirror" \
-    "${ORIGIN_MOUNT[@]}" \
-    "${BASE_DOCKER_IMAGE}" \
-    bash -c "set -ex
-git config --global --add safe.directory '*'
-git clone --mirror '${ORIGIN_IN_CONTAINER}' /mirror
-git -C /mirror config uploadpack.allowReachableSHA1InWant true"
-fi
+# GitHub -> local mirror volume. The per-hash loop below then clones the exact
+# commit from the local mirror (file:///mirror).
+sync_mirror "${TRITON_MIRROR_VOLUME}" "${TRITON_GIT_ORIGIN}" "${BASE_DOCKER_IMAGE}"
 
 # Build wheel for each hash, skipping if already cached
 for HASH in "${TRITON_HASHES[@]}"; do
