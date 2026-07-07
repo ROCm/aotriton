@@ -11,10 +11,7 @@
 #include <flash/affine.aiter_fmha_v3_bwd.h>
 #include <algorithm>
 #include <limits>
-#ifndef NDEBUG
-#include <iostream>
-#include <stdio.h>
-#endif
+#include <aotriton/_internal/log.h>
 
 namespace AOTRITON_NS::v3::flash {
 
@@ -57,12 +54,9 @@ AiterFmhaV3BwdContext::check_inputs_are_supported(Gpu gpu) {
     RETURN_IF(args.Window_left != args.Window_right);
     if (args.Window_left != WindowValue::TopLeftAligned &&
         args.Window_left != WindowValue::BottomRightAligned) {
-#ifndef NDEBUG
-      std::cerr << "Input unsupported due to args.CAUSAL_TYPE = " << int(args.CAUSAL_TYPE) << " and "
-                << " args.Window_left = " << args.Window_left
-                << " args.Window_right = " << args.Window_right
-                << std::endl;
-#endif
+      AOTRITON_LOG(LOG_DEBUG,
+                   "Input unsupported due to args.CAUSAL_TYPE = %d and args.Window_left = %d args.Window_right = %d",
+                   int(args.CAUSAL_TYPE), int(args.Window_left), int(args.Window_right));
       return "Input unsupported due to SWA";
     }
   }
@@ -101,55 +95,51 @@ AiterFmhaV3BwdContext::check_inputs_are_supported(Gpu gpu) {
   return nullptr;
 }
 
-// Too many narrowing warning here.
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wnarrowing"
-
 aiter::mha_bwd_args
 static construct_mha_bwd_args(const AiterFmhaV3BwdContext& ctx) {
   const auto& args = *ctx.params;
-  auto batch = args.Q->size(0);
-  auto nhead_q = args.Q->size(1);
-  auto nhead_k = args.K->size(1);
-  auto hdim_qk = args.Q->size(3);
-  auto hdim_vo = args.V->size(3);
+  int batch = static_cast<int>(args.Q->size(0));
+  int nhead_q = static_cast<int>(args.Q->size(1));
+  int nhead_k = static_cast<int>(args.K->size(1));
+  int hdim_qk = static_cast<int>(args.Q->size(3));
+  int hdim_vo = static_cast<int>(args.V->size(3));
   auto scale = args.sm_scale;
-  auto stride_q = args.Q->stride(2);
-  auto stride_k = args.K->stride(2);
-  auto stride_v = args.V->stride(2);
-  auto stride_o = args.Out->stride(2);
-  auto stride_do = args.DO->stride(2);
-  auto stride_dq_acc = args.DQ_ACC->stride(2);
-  auto stride_dq = args.DQ->stride(2);
-  auto stride_dk = args.DK->stride(2);
-  auto stride_dv = args.DV->stride(2);
+  int stride_q = static_cast<int>(args.Q->stride(2));
+  int stride_k = static_cast<int>(args.K->stride(2));
+  int stride_v = static_cast<int>(args.V->stride(2));
+  int stride_o = static_cast<int>(args.Out->stride(2));
+  int stride_do = static_cast<int>(args.DO->stride(2));
+  int stride_dq_acc = static_cast<int>(args.DQ_ACC->stride(2));
+  int stride_dq = static_cast<int>(args.DQ->stride(2));
+  int stride_dk = static_cast<int>(args.DK->stride(2));
+  int stride_dv = static_cast<int>(args.DV->stride(2));
 
-  auto nhead_stride_q = args.Q->stride(1);
-  auto nhead_stride_k = args.K->stride(1);
-  auto nhead_stride_v = args.V->stride(1);
-  auto nhead_stride_o = args.Out->stride(1);
-  auto nhead_stride_do = args.DO->stride(1);
-  auto nhead_stride_dq_acc = args.DQ_ACC->stride(1);
-  auto nhead_stride_dq = args.DQ->stride(1);
-  auto nhead_stride_dk = args.DK->stride(1);
-  auto nhead_stride_dv = args.DV->stride(1);
+  int nhead_stride_q = static_cast<int>(args.Q->stride(1));
+  int nhead_stride_k = static_cast<int>(args.K->stride(1));
+  int nhead_stride_v = static_cast<int>(args.V->stride(1));
+  int nhead_stride_o = static_cast<int>(args.Out->stride(1));
+  int nhead_stride_do = static_cast<int>(args.DO->stride(1));
+  int64_t nhead_stride_dq_acc = static_cast<int64_t>(args.DQ_ACC->stride(1));
+  int nhead_stride_dq = static_cast<int>(args.DQ->stride(1));
+  int nhead_stride_dk = static_cast<int>(args.DK->stride(1));
+  int nhead_stride_dv = static_cast<int>(args.DV->stride(1));
   // FIXME: Use Rank-3 tensor for LSE
   // then:
   // nhead_stride_lsed = args.L->stride(1);
   // batch_stride_lsed = args.L->stride(0);
-  auto seqlen_q = args.Q->size(2);
-  auto nhead_stride_lsed = seqlen_q;
+  int seqlen_q = static_cast<int>(args.Q->size(2));
+  int nhead_stride_lsed = seqlen_q;
 
-  auto batch_stride_q = args.Q->stride(0);
-  auto batch_stride_k = args.K->stride(0);
-  auto batch_stride_v = args.V->stride(0);
-  auto batch_stride_o = args.Out->stride(0);
-  auto batch_stride_do = args.DO->stride(0);
-  auto batch_stride_dq_acc = args.DQ_ACC->stride(0);
-  auto batch_stride_dq = args.DQ->stride(0);
-  auto batch_stride_dk = args.DK->stride(0);
-  auto batch_stride_dv = args.DV->stride(0);
-  auto batch_stride_lsed = nhead_q * seqlen_q;
+  int batch_stride_q = static_cast<int>(args.Q->stride(0));
+  int batch_stride_k = static_cast<int>(args.K->stride(0));
+  int batch_stride_v = static_cast<int>(args.V->stride(0));
+  int batch_stride_o = static_cast<int>(args.Out->stride(0));
+  int batch_stride_do = static_cast<int>(args.DO->stride(0));
+  int64_t batch_stride_dq_acc = static_cast<int64_t>(args.DQ_ACC->stride(0));
+  int batch_stride_dq = static_cast<int>(args.DQ->stride(0));
+  int batch_stride_dk = static_cast<int>(args.DK->stride(0));
+  int batch_stride_dv = static_cast<int>(args.DV->stride(0));
+  int batch_stride_lsed = nhead_q * seqlen_q;
 
   auto data_type = [&args]() {
     if (args.Q->dtype() == DType::kFloat16)
@@ -189,7 +179,7 @@ static construct_mha_bwd_args(const AiterFmhaV3BwdContext& ctx) {
     .hdim_q               = hdim_qk,                                            // int
     .hdim_v               = hdim_vo,                                            // int
     .data_type            = data_type(),                                        // std::string
-    .is_group_mode        = args.cu_seqlens_q->data_ptr(),                      // bool
+    .is_group_mode        = static_cast<bool>(args.cu_seqlens_q->data_ptr()),  // bool
     .mask_type            = mask_type,                                          // int
     .bias_type            = args.BIAS_TYPE,                                     // int
     .has_dbias            = 0,                                                  // bool
@@ -278,7 +268,6 @@ static construct_mha_bwd_args(const AiterFmhaV3BwdContext& ctx) {
 
   return ret;
 }
-#pragma GCC diagnostic pop
 
 hipError_t
 AiterFmhaV3BwdContext::launch(hipStream_t stream) const {

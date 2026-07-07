@@ -4,6 +4,7 @@
 #include <aotriton/_internal/packed_kernel.h>
 #include <aotriton/_internal/lszip.h>
 #include <aotriton/_internal/fd.h>
+#include <aotriton/_internal/log.h>
 #include <aotriton/runtime.h>
 #include <algorithm>
 #include <mutex>
@@ -18,14 +19,7 @@
 #endif
 #include <errno.h>
 #include <filesystem>
-#include <iostream>
 #include <lzma.h>
-
-#ifdef NDEBUG
-#define AOTRITON_KERNEL_VERBOSE 0
-#else
-#define AOTRITON_KERNEL_VERBOSE 1
-#endif
 
 namespace fs = std::filesystem;
 static const std::string_view KERNEL_STORAGE_V2_BASE = "aotriton.images";
@@ -67,17 +61,13 @@ locate_aotriton_images() {
     if (module_path.empty()) {
       return fs::path{};
     }
-#if AOTRITON_KERNEL_VERBOSE
-    std::wcerr << L"Win32 locates libaotriton at: "
-               << module_path.native() << std::endl;
-#endif
+    AOTRITON_LOG(AOTRITON_NS::LOG_DEBUG, "Win32 locates libaotriton at: %s",
+                 module_path.string().c_str());
     return module_path.parent_path() / KERNEL_STORAGE_V2_BASE;
 #else
     Dl_info info;
     dladdr((void*)locate_aotriton_images, &info);
-#if AOTRITON_KERNEL_VERBOSE
-    std::cerr << "dladdr locates libaotriton at: " << info.dli_fname << std::endl;
-#endif
+    AOTRITON_LOG(AOTRITON_NS::LOG_DEBUG, "dladdr locates libaotriton at: %s", info.dli_fname);
     return fs::path(info.dli_fname).parent_path() / KERNEL_STORAGE_V2_BASE;
 #endif
   }();
@@ -141,12 +131,8 @@ PackedKernel::open(pstring_view flatzip_path, std::string_view aks2_entry) {
   if (outer_it == registry_.end()) {
     open_zip();
     if (!fd_is_valid(zipfd)) {
-#if AOTRITON_KERNEL_VERBOSE
-      // pstring_view is wstring_view on Windows, so route through fs::path
-      // which knows how to stream both narrow and wide values to std::ostream.
-      std::cerr << "PackedKernel::open: failed to open zip "
-                << std::filesystem::path(flatzip_path) << std::endl;
-#endif
+      AOTRITON_LOG(LOG_DEBUG, "PackedKernel::open: failed to open zip %s",
+                   pstring_to_utf8(flatzip_path).data());
       return nullptr;
     }
     InnerMap staging_map;
@@ -155,10 +141,8 @@ PackedKernel::open(pstring_view flatzip_path, std::string_view aks2_entry) {
     });
     if (!ok) {
       // Partial directory must not be cached as authoritative.
-#if AOTRITON_KERNEL_VERBOSE
-      std::cerr << "PackedKernel::open: lszip failed to fully parse "
-                << std::filesystem::path(flatzip_path) << std::endl;
-#endif
+      AOTRITON_LOG(LOG_DEBUG, "PackedKernel::open: lszip failed to fully parse %s",
+                   pstring_to_utf8(flatzip_path).data());
       if (fd_is_valid(zipfd)) fd_close(zipfd);
       return nullptr;
     }
@@ -187,10 +171,8 @@ PackedKernel::open(pstring_view flatzip_path, std::string_view aks2_entry) {
   it->second.ptr = std::make_shared<PackedKernel>(zipfd, it->second.offset, it->second.size);
   fd_close(zipfd);
   if (it->second.ptr->status() != hipSuccess) {
-#if AOTRITON_KERNEL_VERBOSE
-    std::cerr << "PackedKernel: AKS2 decompression failed for entry "
-              << std::string(aks2_entry) << std::endl;
-#endif
+    AOTRITON_LOG(LOG_DEBUG, "PackedKernel: AKS2 decompression failed for entry %.*s",
+                 int(aks2_entry.size()), aks2_entry.data());
     it->second.ptr.reset();
     return nullptr;
   }
@@ -246,9 +228,7 @@ PackedKernel::PackedKernel(fd_t fd, size_t offset, size_t size) {
   lzma_stream strm = LZMA_STREAM_INIT;
   lzma_ret ret = lzma_stream_decoder(&strm, UINT64_MAX, 0);
   if (ret != LZMA_OK) {
-#if AOTRITON_KERNEL_VERBOSE
-    std::cerr << " lzma_stream_decoder error: " << ret << std::endl;
-#endif
+    AOTRITON_LOG(LOG_DEBUG, "lzma_stream_decoder error: %d", static_cast<int>(ret));
     final_status_ = hipErrorInvalidSource; // Broken at XZ level
     return;
   }
@@ -281,24 +261,20 @@ PackedKernel::PackedKernel(fd_t fd, size_t offset, size_t size) {
       return;
     }
   }
-#if AOTRITON_KERNEL_VERBOSE
-  std::cerr << "PackedKernel decompressed to " << (void*)decompressed_content_.data() << std::endl;
-#endif
+  AOTRITON_LOG(LOG_DEBUG, "PackedKernel decompressed to %p",
+               static_cast<const void*>(decompressed_content_.data()));
   const uint8_t* parse_ptr = decompressed_content_.data();
   for (uint32_t i = 0; i < header.number_of_kernels; i++) {
     auto metadata = reinterpret_cast<const AKS2_Metadata*>(parse_ptr);
     parse_ptr += sizeof(*metadata);
     std::string_view filename(reinterpret_cast<const char*>(parse_ptr));
     directory_.emplace(filename, metadata);
-#if AOTRITON_KERNEL_VERBOSE
-    std::cerr << "Add kernel " << i << ": " << filename << " offset: " << metadata->offset << std::endl;
-#endif
+    AOTRITON_LOG(LOG_DEBUG, "Add kernel %u: %.*s offset: %u",
+                 unsigned(i), int(filename.size()), filename.data(), unsigned(metadata->offset));
     parse_ptr += metadata->filename_length;
   }
   kernel_start_ = parse_ptr;
-#if AOTRITON_KERNEL_VERBOSE
-  std::cerr << "PackedKernel.kernel_start_ = " << (void*)kernel_start_ << std::endl;
-#endif
+  AOTRITON_LOG(LOG_DEBUG, "PackedKernel.kernel_start_ = %p", static_cast<const void*>(kernel_start_));
   if (kernel_start_ - decompressed_content_.data() != header.directory_size) {
     decompressed_content_.clear();
     directory_.clear();
@@ -306,9 +282,7 @@ PackedKernel::PackedKernel(fd_t fd, size_t offset, size_t size) {
     final_status_ = hipErrorIllegalAddress;
     return;
   }
-#if AOTRITON_KERNEL_VERBOSE
-  std::cerr << "PackedKernel.kernel_start_ sanity check passed" << std::endl;
-#endif
+  AOTRITON_LOG(LOG_DEBUG, "PackedKernel.kernel_start_ sanity check passed");
   final_status_ = hipSuccess;
 }
 

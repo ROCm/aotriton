@@ -1,6 +1,22 @@
 #ifndef AOTRITON_V2_INTERNAL_AITER_HIP_COMMON_H
 #define AOTRITON_V2_INTERNAL_AITER_HIP_COMMON_H
 
+// Cross-platform packed struct macros. MSVC does not support
+// __attribute__((packed)) and requires #pragma pack instead.
+#if defined(_MSC_VER)
+#  define AOTRITON_PACKED_STRUCT_START __pragma(pack(push, 1))
+#  define AOTRITON_PACKED_STRUCT_END   __pragma(pack(pop))
+#  define AOTRITON_PACKED_ATTR
+#elif defined(__GNUC__) || defined(__clang__)
+#  define AOTRITON_PACKED_STRUCT_START
+#  define AOTRITON_PACKED_STRUCT_END
+#  define AOTRITON_PACKED_ATTR __attribute__((packed))
+#else
+#  define AOTRITON_PACKED_STRUCT_START
+#  define AOTRITON_PACKED_STRUCT_END
+#  define AOTRITON_PACKED_ATTR
+#endif
+
 #include <aotriton/config.h>
 #include <aotriton/runtime.h>
 #include <aotriton/util.h>

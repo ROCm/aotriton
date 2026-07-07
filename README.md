@@ -53,6 +53,16 @@ against.
 The archive file and header files are installed in the path specified by
 `CMAKE_INSTALL_PREFIX`.
 
+## Debugging
+
+Set `AOTRITON_DEBUG_LEVEL=<n>` to enable runtime logging: 1=ERROR,
+2=WARNING, 3=INFO, 4=DEBUG, 5=EXTRA_DEBUG (default: 0, silent).
+
+**Windows limitation:** log messages that include file paths (e.g. at
+`LOG_DEBUG` level) use UTF-8 encoding. If your kernel package path contains
+non-ASCII characters, ensure your terminal and console code page support UTF-8
+(e.g. `chcp 65001`) to avoid garbled output.
+
 ## Kernel Support
 
 Currently the first kernel supported is FlashAttention as based on the

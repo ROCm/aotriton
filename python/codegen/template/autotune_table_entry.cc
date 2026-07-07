@@ -4,12 +4,10 @@
 #include "../shim.[[shim_kernel_name]].h"
 #include <aotriton/_internal/triton_kernel.h>
 #include <aotriton/_internal/kernel_cluster.h>
+#include <aotriton/_internal/log.h>
 #include <aotriton/cpp_tune.h>
-#include <string_view>
-#ifndef NDEBUG
-#include <iostream>
 #include <assert.h>
-#endif
+#include <string_view>
 
 #define CURRENT_ENTRY_PUBLIC Autotune_[[shim_kernel_name]]__A[[arch_number]]__F[[godel_number]]
 
@@ -41,7 +39,6 @@ constexpr pstring_view FLATZIP_PATH
 #else
 { R"xyzw([[flatzip_path]])xyzw" };
 #endif
-constexpr std::string_view AKS2_ENTRY  { R"xyzw([[aks2_entry]])xyzw"  };
 constexpr std::string_view FUNC_NAME   { R"xyzw([[func_name]])xyzw"   };
 constexpr std::string_view ARCH_NAME { R"xyzw([[arch_name]])xyzw" };
 
@@ -71,14 +68,17 @@ namespace AOTRITON_NS::v3::[[kernel_family_name]]::autotune {
 
 // using AOTRITON_NS::v2::[[kernel_family_name]]::[[context_class_name]];
 
-void CURRENT_ENTRY_PUBLIC([[context_class_name]]& context, int mod_number) {
+// Returns the selected kernel_index, or -1 when no valid kernel was selected.
+// The kernel_index is logged by the caller (lookup_optimal in shim.cc) so the
+// AOTRITON_LOG machinery is not duplicated across every generated autotune TU.
+int CURRENT_ENTRY_PUBLIC([[context_class_name]]& context, int mod_number) {
 #if AOTRITON_BUILD_FOR_TUNING
     constexpr int kLutInTuningModeAlwaysReturnZero = 0;
+    AOTRITON_LOG(LOG_DEBUG,
+                 "Autotune_[[shim_kernel_name]]__A[[arch_number]]__F[[godel_number]] "
+                 "kTotalNumKernels = %d _has_preferred_kernel = %d",
+                 kTotalNumKernels, context._has_preferred_kernel);
 #ifndef NDEBUG
-    std::cerr << "Autotune_[[shim_kernel_name]]__A[[arch_number]]__F[[godel_number]] "
-              << "kTotalNumKernels = " << kTotalNumKernels << " "
-              << "_has_preferred_kernel = " << context._has_preferred_kernel << " "
-              << std::endl;
     assert([[deduplicated_lut_function]](*context.params, mod_number, lut) == kLutInTuningModeAlwaysReturnZero);
 #endif
     int preferred = context._has_preferred_kernel;
@@ -87,12 +87,13 @@ void CURRENT_ENTRY_PUBLIC([[context_class_name]]& context, int mod_number) {
     auto kernel_index = [[deduplicated_lut_function]](*context.params, mod_number, lut);
 #endif
     if (kernel_index < 0 || kernel_index >= kTotalNumKernels) {
-        return ;
+        return -1;
     }
     context.kernel_on_device = kernel_cluster.get(kernel_index);
     context.pp_args_index = [[deduplicated_pp_args_function_index]];
     context.flatzip_path = FLATZIP_PATH;
-    context.aks2_entry   = AKS2_ENTRY;
+    // aks2_entry IS the func_name (supplied by f.unified_signature)
+    context.aks2_entry   = FUNC_NAME;
     context.func_name = FUNC_NAME;
     context.arch_name = ARCH_NAME;
 #if AOTRITON_BUILD_FOR_TUNING
@@ -100,11 +101,9 @@ void CURRENT_ENTRY_PUBLIC([[context_class_name]]& context, int mod_number) {
     context._preferred_kernel_psels = kernel_psels[kernel_index];
     context._preferred_kernel_copts = kernel_copts[kernel_index];
 #endif
-#ifndef NDEBUG
-    std::cerr << __FILE__ << " kernel_index = " << int(kernel_index) << std::endl;
-#endif
     const auto& perf = image_perf_list[kernel_index];
     [[perf_field_assignment]];
+    return kernel_index;
 }
 
 #undef CURRENT_ENTRY_PUBLIC

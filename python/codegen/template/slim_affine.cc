@@ -3,9 +3,9 @@
 
 #include "affine.[[affine_kernel_name]].h"
 #include <aotriton/_internal/kernel_cluster.h>
+#include <aotriton/_internal/log.h>
 #include <aotriton/util.h>
 #include <tuple>
-#include <iostream>
 [[includes]]
 
 namespace AOTRITON_NS::v3::[[kernel_family_name]] {
@@ -32,13 +32,9 @@ hipError_t
     }
     const char* reject_reason = check_inputs_are_supported(gpu);
     if (reject_reason) {
-#ifndef NDEBUG
-        std::cerr << "Unsupported inputs for backend "
-                  << "[[context_class_name]]"
-                  << " reason: "
-                  << reject_reason
-                  << std::endl;
-#endif
+        AOTRITON_LOG(LOG_INFO,
+                     "Unsupported inputs for backend [[context_class_name]] reason: %s",
+                     reject_reason);
         return hipErrorPeerAccessUnsupported;
     }
     return hipSuccess;

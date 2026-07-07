@@ -146,7 +146,7 @@ class InterfaceGenerator(ABC):
             for godel_number in godel_numbers:
                 struct_name, is_extern = self.codegen_tune_struct_name(arch_number, godel_number)
                 if is_extern:
-                    decls.append(f'void {struct_name}({self._iface.context_class_name}& params, int mod_number);')
+                    decls.append(f'int {struct_name}({self._iface.context_class_name}& params, int mod_number);')
         return '\n'.join(decls)
 
     def codegen_tune_table_entries(self, functionals):

@@ -177,8 +177,9 @@ class OperatorGenerator(InterfaceGenerator):
         tune_name = self._iface.TUNE_NAME
         stmt = []
         for trivial_enum in uniques:
-            stmt.append(f'void {tune_name}_{self._iface.NAME}__Trivial_{trivial_enum}({context_class_name}& context, int) {{')
+            stmt.append(f'int {tune_name}_{self._iface.NAME}__Trivial_{trivial_enum}({context_class_name}& context, int) {{')
             stmt.append(f'    context.backend_index = {context_class_name}::BackendEnum::{trivial_enum};')
+            stmt.append(f'    return context.backend_index;')
             stmt.append('}')
             stmt.append('')
         return '\n'.join(stmt)

@@ -3,9 +3,9 @@
 
 // clang-format off
 #include "iface.[[iface_name]].h"
+#include <aotriton/_internal/log.h>
 #include <aotriton/util.h>
 #include <tuple>
-#include <iostream>
 [[includes]]
 
 namespace AOTRITON_NS::v3::[[family_name]] {
@@ -31,7 +31,9 @@ hipError_t
     auto tune_func = optune_table[arch_number][number];
     if (!tune_func)
         return hipErrorProfilerNotInitialized;
-    tune_func(*this, mod_number);
+    // Return value (backend_index) is unused here; it is read back from
+    // context.backend_index, which tune_func sets directly.
+    (void) tune_func(*this, mod_number);
     // In case tuning database is broken
     if (backend_index < 0)
         backend_index = fallback_backend;
@@ -57,16 +59,13 @@ hipError_t
     // In this case hipErrorPeerAccessUnsupported will be returned
     if (ret == hipErrorPeerAccessUnsupported) {
         if (!disable_fallback) {
-#ifndef NDEBUG
-          std::cerr << "[[context_class_name]]::launch failed with optimal backend, "
-                     << "calling fallback." << std::endl;
-#endif
+          AOTRITON_LOG(LOG_INFO,
+                       "[[context_class_name]]::launch failed with optimal backend, calling fallback.");
           return launcher_table[fallback_backend](*this, gpu, stream);
         }
-#ifndef NDEBUG
-        std::cerr << "[[context_class_name]]::launch failed with optimal backend, "
-                   << "fallback disabled, returning error." << std::endl;
-#endif
+        AOTRITON_LOG(LOG_WARNING,
+                     "[[context_class_name]]::launch failed with optimal backend, "
+                     "fallback disabled, returning error.");
     }
     return ret;
 }
