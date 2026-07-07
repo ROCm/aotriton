@@ -20,3 +20,10 @@ requires-python = ">=3.10"
 # No console scripts: the generator tools are invoked as `python -m aotriton.<tool>`
 # (e.g. `python -m aotriton.generate`), the same way the build currently uses
 # `python -m v3python.<tool>` — not as installed binaries.
+
+[tool.pytest.ini_options]
+testpaths = ["python/test"]
+# GPU integration tests live under test/ and require hardware; keep them separate.
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
