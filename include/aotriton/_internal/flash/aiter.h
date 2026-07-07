@@ -153,7 +153,8 @@ struct mha_fwd_args
     ck_tile::index_t block_scale_size_kv;
 };
 
-struct __attribute__((packed)) fmha_fwd_v3_args
+AOTRITON_PACKED_STRUCT_START
+struct fmha_fwd_v3_args
 {
     void* ptr_o;
     p2 _p0;
@@ -219,7 +220,8 @@ struct __attribute__((packed)) fmha_fwd_v3_args
     p2 _p30;
     const void* ptr_kseq_padding;
     p2 _p31;
-};
+} AOTRITON_PACKED_ATTR;
+AOTRITON_PACKED_STRUCT_END
 
 float fmha_fwd_v3(mha_fwd_args args, const ck_tile::stream_config& s);
 
@@ -360,7 +362,8 @@ struct mha_bwd_args
         drop_seed_offset;
 };
 
-struct __attribute__((packed)) fmha_bwd_dqdkdv_args
+AOTRITON_PACKED_STRUCT_START
+struct fmha_bwd_dqdkdv_args
 {
     void* ptr_dq; // 0x00: dq or dq_acc
     p2 _p0;
@@ -457,9 +460,11 @@ struct __attribute__((packed)) fmha_bwd_dqdkdv_args
     p3 _p42;
     int mask_y; // 0x2b0
     p3 _p43;
-};
+} AOTRITON_PACKED_ATTR;
+AOTRITON_PACKED_STRUCT_END
 
-struct __attribute__((packed)) fmha_bwd_odo_args
+AOTRITON_PACKED_STRUCT_START
+struct fmha_bwd_odo_args
 {
     const void* ptr_o;
     p2 _p0;
@@ -487,10 +492,12 @@ struct __attribute__((packed)) fmha_bwd_odo_args
     p2 _p11;
     const void* ptr_qseq_padded;
     p2 _p12;
-};
+} AOTRITON_PACKED_ATTR;
+AOTRITON_PACKED_STRUCT_END
 
 // dq_shuffle & dq_convert post process kernel args
-struct __attribute__((packed)) fmha_bwd_post_kernel_args
+AOTRITON_PACKED_STRUCT_START
+struct fmha_bwd_post_kernel_args
 {
     void* ptr_dq_acc;
     p2 _p0;
@@ -516,13 +523,15 @@ struct __attribute__((packed)) fmha_bwd_post_kernel_args
     p2 _p10;
     const void* ptr_qseq_padded;
     p2 _p11;
-};
+} AOTRITON_PACKED_ATTR;
+AOTRITON_PACKED_STRUCT_END
 
 float mha_bwd(mha_bwd_args, const ck_tile::stream_config&);
 
 float fmha_v3_bwd(mha_bwd_args, const ck_tile::stream_config&);
 
-struct __attribute__((packed)) fmha_bwd_v3_args
+AOTRITON_PACKED_STRUCT_START
+struct fmha_bwd_v3_args
 {
     void* ptr_dq;
     p2 _p0;
@@ -566,9 +575,11 @@ struct __attribute__((packed)) fmha_bwd_v3_args
     p3 _p19;
     unsigned int Seqs_dkv;
     p3 _p20;
-};
+} AOTRITON_PACKED_ATTR;
+AOTRITON_PACKED_STRUCT_END
 
-struct __attribute__((packed)) fmha_bwd_dq_shuffle_args
+AOTRITON_PACKED_STRUCT_START
+struct fmha_bwd_dq_shuffle_args
 {
     void *ptr_dq;
     p2 _p0;
@@ -580,7 +591,8 @@ struct __attribute__((packed)) fmha_bwd_dq_shuffle_args
     p3 _p3;
     unsigned int Seqs;
     p3 _p4;
-};
+} AOTRITON_PACKED_ATTR;
+AOTRITON_PACKED_STRUCT_END
 
 struct fmha_bwd_v3_traits
 {
