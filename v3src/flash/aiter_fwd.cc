@@ -89,42 +89,38 @@ AiterFmhaV3FwdContext::check_inputs_are_supported(Gpu gpu) {
   return nullptr;
 }
 
-// Too many narrowing warning here.
-AOTRITON_COMPILER_PUSH
-AOTRITON_COMPILER_ALLOW_NARROWING
-
 aiter::mha_fwd_args
 static construct_mha_fwd_args(const AiterFmhaV3FwdContext& ctx) {
   const auto& args = *ctx.params;
   bool has_lse = *args.L;
   bool is_group_mode = args.cu_seqlens_q->data_ptr();
-  auto batch = args.Q->size(0);
-  auto nhead_q = args.Q->size(1);
-  auto nhead_k = args.K->size(1);
-  auto hdim_qk = args.Q->size(3);
-  auto hdim_vo = args.V->size(3);
+  int batch = static_cast<int>(args.Q->size(0));
+  int nhead_q = static_cast<int>(args.Q->size(1));
+  int nhead_k = static_cast<int>(args.K->size(1));
+  int hdim_qk = static_cast<int>(args.Q->size(3));
+  int hdim_vo = static_cast<int>(args.V->size(3));
   auto scale = args.Sm_scale;
-  auto stride_q = args.Q->stride(2);
-  auto stride_k = args.K->stride(2);
-  auto stride_v = args.V->stride(2);
-  auto stride_o = args.Out->stride(2);
+  int stride_q = static_cast<int>(args.Q->stride(2));
+  int stride_k = static_cast<int>(args.K->stride(2));
+  int stride_v = static_cast<int>(args.V->stride(2));
+  int stride_o = static_cast<int>(args.Out->stride(2));
 
-  auto nhead_stride_q = args.Q->stride(1);
-  auto nhead_stride_k = args.K->stride(1);
-  auto nhead_stride_v = args.V->stride(1);
-  auto nhead_stride_o = args.Out->stride(1);
+  int nhead_stride_q = static_cast<int>(args.Q->stride(1));
+  int nhead_stride_k = static_cast<int>(args.K->stride(1));
+  int nhead_stride_v = static_cast<int>(args.V->stride(1));
+  int nhead_stride_o = static_cast<int>(args.Out->stride(1));
   // FIXME: Use Rank-3 tensor for LSE
   // then:
   // nhead_stride_lsed = args.L->stride(1);
   // batch_stride_lsed = args.L->stride(0);
-  auto seqlen_q = args.Q->size(2);
-  auto nhead_stride_lsed = seqlen_q;
+  int seqlen_q = static_cast<int>(args.Q->size(2));
+  int nhead_stride_lsed = seqlen_q;
 
-  auto batch_stride_q = args.Q->stride(0);
-  auto batch_stride_k = args.K->stride(0);
-  auto batch_stride_v = args.V->stride(0);
-  auto batch_stride_o = args.Out->stride(0);
-  auto batch_stride_lse = nhead_q * seqlen_q;
+  int batch_stride_q = static_cast<int>(args.Q->stride(0));
+  int batch_stride_k = static_cast<int>(args.K->stride(0));
+  int batch_stride_v = static_cast<int>(args.V->stride(0));
+  int batch_stride_o = static_cast<int>(args.Out->stride(0));
+  int batch_stride_lse = nhead_q * seqlen_q;
 
   auto data_type = [&args]() {
     if (args.Q->dtype() == DType::kFloat16)
@@ -231,7 +227,6 @@ static construct_mha_fwd_args(const AiterFmhaV3FwdContext& ctx) {
 
   return ret;
 }
-AOTRITON_COMPILER_POP
 
 hipError_t
 AiterFmhaV3FwdContext::launch(hipStream_t stream) const {

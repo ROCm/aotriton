@@ -1,21 +1,6 @@
 #ifndef AOTRITON_V2_INTERNAL_AITER_HIP_COMMON_H
 #define AOTRITON_V2_INTERNAL_AITER_HIP_COMMON_H
 
-// Cross-platform diagnostic suppression macros.
-#if defined(_MSC_VER)
-#  define AOTRITON_COMPILER_PUSH          __pragma(warning(push))
-#  define AOTRITON_COMPILER_ALLOW_NARROWING __pragma(warning(disable: 4244 4267))
-#  define AOTRITON_COMPILER_POP           __pragma(warning(pop))
-#elif defined(__GNUC__) || defined(__clang__)
-#  define AOTRITON_COMPILER_PUSH          _Pragma("GCC diagnostic push")
-#  define AOTRITON_COMPILER_ALLOW_NARROWING _Pragma("GCC diagnostic ignored \"-Wnarrowing\"")
-#  define AOTRITON_COMPILER_POP           _Pragma("GCC diagnostic pop")
-#else
-#  define AOTRITON_COMPILER_PUSH
-#  define AOTRITON_COMPILER_ALLOW_NARROWING
-#  define AOTRITON_COMPILER_POP
-#endif
-
 // Cross-platform packed struct macros. MSVC does not support
 // __attribute__((packed)) and requires #pragma pack instead.
 #if defined(_MSC_VER)
