@@ -90,8 +90,8 @@ AiterFmhaV3FwdContext::check_inputs_are_supported(Gpu gpu) {
 }
 
 // Too many narrowing warning here.
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wnarrowing"
+AOTRITON_COMPILER_PUSH
+AOTRITON_COMPILER_ALLOW_NARROWING
 
 aiter::mha_fwd_args
 static construct_mha_fwd_args(const AiterFmhaV3FwdContext& ctx) {
@@ -231,7 +231,7 @@ static construct_mha_fwd_args(const AiterFmhaV3FwdContext& ctx) {
 
   return ret;
 }
-#pragma GCC diagnostic pop
+AOTRITON_COMPILER_POP
 
 hipError_t
 AiterFmhaV3FwdContext::launch(hipStream_t stream) const {
