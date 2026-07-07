@@ -24,11 +24,11 @@ Options:
                         component; use with --runtime, --image, or both)
                --image: build GPU images.
              --runtime: build all C++ runtimes.
-                --asan: build with AddressSanitizer (clang). ASAN support is
-                        pinned to a single TheRock 7.14 pre-release
-                        (THEROCK_ASAN_VERSION). If -r is given it must be
-                        "7.14.0" (used as a selector); the actual build always
-                        uses THEROCK_ASAN_VERSION. Tarball gets a +asan suffix.
+                --asan: build with AddressSanitizer (clang). Requires TheRock
+                        clang, which ships only with ROCm >= 7.10, so every -r
+                        must be a TheRock version given as a long pre-release
+                        string (e.g. 7.14.0a20260624). With no -r it defaults
+                        to THEROCK_ASAN_VERSION. Tarball gets a +asan suffix.
        --arch <list>: ';'-separated GPU arch list (e.g. 'gfx942;gfx950'),
                         forwarded to cmake as AOTRITON_TARGET_ARCH. Defaults
                         to ALL (every arch in the CMakeLists default list).
@@ -36,7 +36,9 @@ Options:
                         and leave the build container running after the build
                         so the contents can be inspected interactively.
          --yaml <.yml>: Use yml config file to build the release
-        --origin <url>: Override the git HTTPS origin URL (default: auto-detected from remote)
+        --origin <url>: Override the git HTTPS origin URL. Pass "auto" to use the
+                        tracked remote URL (ssh/git URLs are rewritten to https).
+                        (default: auto-detected from remote)
  --triton_origin <url>: Override the Triton git origin for wheel builds.
                         Accepts a fork URL or a local checkout via file:///abs/path
                         (default: https://github.com/ROCm/triton)
@@ -64,7 +66,10 @@ eval set -- "$TEMP"
 
 SUITE_SELECT_IMAGE=-1
 SUITE_SELECT_RUNTIME=-1
-SUITE_RUNTIME_LIST=(6.4.4 7.0.3 7.1.1 7.2.3)
+# TheRock runtimes are pre-release/nightlies and must use the long version
+# string (e.g. 7.15.0a20260707). The last entry is also the default GPU image
+# ROCm (IMAGE_ROCMVER), so keep a gfx1250-capable TheRock build last.
+SUITE_RUNTIME_LIST=(6.4.4 7.0.3 7.1.1 7.2.4 7.14.0a20260624 7.15.0a20260707)
 CMDLIST=()
 SUITE_DEFAULT_SELECTION=1
 SUITE_YAML=""
@@ -147,19 +152,22 @@ if [ ${SUITE_DEBUG} -gt 0 ] && [ ${#CMDLIST[@]} -ne 1 ]; then
   help 1
 fi
 
-# --asan: if -r was given it must be "7.14.0" (symbolic); the actual build
-# always resolves to THEROCK_ASAN_VERSION regardless.
+# --asan: AddressSanitizer needs TheRock's clang, which ships only with ROCm
+# >= 7.10 (the theRock.Dockerfile path). Every -r must therefore be a TheRock
+# (pre-release) version, given as a long nightly string. With no -r, default
+# to THEROCK_ASAN_VERSION.
 if [ ${SUITE_ASAN} -gt 0 ]; then
   if [[ ${#CMDLIST[@]} -gt 0 ]]; then
     for _ver in "${SUITE_RUNTIME_LIST[@]}"; do
-      if [[ "${_ver}" != "7.14.0" ]]; then
-        echo "Error: --asan only accepts -r 7.14.0 (maps to ${THEROCK_ASAN_VERSION}); got -r ${_ver}." >&2
+      if ! printf '%s\n%s\n' "7.10" "${_ver}" | sort -V -C; then
+        echo "Error: --asan requires TheRock ROCm >= 7.10 (e.g. ${THEROCK_ASAN_VERSION}); got -r ${_ver}." >&2
         exit 1
       fi
     done
+  else
+    SUITE_RUNTIME_LIST=("${THEROCK_ASAN_VERSION}")
   fi
-  SUITE_RUNTIME_LIST=("${THEROCK_ASAN_VERSION}")
-  IMAGE_ROCMVER="${THEROCK_ASAN_VERSION}"
+  IMAGE_ROCMVER="${SUITE_RUNTIME_LIST[-1]}"
   ASAN_MODE="ON"
 else
   # Build the GPU image with the last ROCm version in the runtime list.
@@ -173,7 +181,10 @@ SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 . "${SCRIPT_DIR}/common-vars.sh"
 . "${SCRIPT_DIR}/common-setup-volume.sh"
 . "${SCRIPT_DIR}/common-git-https-origin.sh"
-if [[ -n "${SUITE_ORIGIN}" ]]; then
+# --origin auto: keep the GIT_HTTPS_ORIGIN auto-derived from the tracked
+# remote by common-git-https-origin.sh (ssh/git URLs already rewritten to
+# https). Any other non-empty value overrides it explicitly.
+if [[ -n "${SUITE_ORIGIN}" && "${SUITE_ORIGIN}" != "auto" ]]; then
   GIT_HTTPS_ORIGIN="${SUITE_ORIGIN}"
 fi
 . "${SCRIPT_DIR}/include-altwheel.sh"
