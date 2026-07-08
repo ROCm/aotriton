@@ -26,18 +26,25 @@ message(STATUS "AOTRITON_OVERRIDE_TARGET_GPUS ${AOTRITON_OVERRIDE_TARGET_GPUS}")
 message(STATUS "EFFECTIVE_TARGET_GPUS ${EFFECTIVE_TARGET_GPUS}")
 
 if(AOTRITON_TUNING_DATABASE_ROOT)
-  set(DBXZ_BASE "${AOTRITON_TUNING_DATABASE_ROOT}")
-  message(STATUS "Using external tuning database root: ${DBXZ_BASE}")
+  # External override: a single sharded tree (amd/<arch>/<family>/...).
+  set(DBXZ_BASES "${AOTRITON_TUNING_DATABASE_ROOT}")
+  message(STATUS "Using external tuning database root: ${AOTRITON_TUNING_DATABASE_ROOT}")
 else()
-  set(DBXZ_BASE "${CMAKE_SOURCE_DIR}/modules/database")
+  # Per-family databases: each modules/<family>/database is its own base; its
+  # relative subtree (amd/<arch>/<family>/...) is preserved into the build dir, so
+  # database_compose still sees amd/<arch>/<family>/<kernel>.sqlite3. Convention
+  # over hardcoding — a new family drops in modules/<fam>/database, no edit here.
+  file(GLOB DBXZ_BASES "${CMAKE_SOURCE_DIR}/modules/*/database")
 endif()
-file(GLOB_RECURSE DB_TARS CONFIGURE_DEPENDS "${DBXZ_BASE}/*.sqlite3.tar.xz")
-foreach(DBXZ IN LISTS DB_TARS)
-  cmake_path(RELATIVE_PATH DBXZ BASE_DIRECTORY "${DBXZ_BASE}" OUTPUT_VARIABLE REL_DBXZ)
-  cmake_path(REMOVE_FILENAME REL_DBXZ)
-  file(ARCHIVE_EXTRACT INPUT "${DBXZ}" DESTINATION "${AOTRITON_V2_BUILD_DIR}/database/${REL_DBXZ}")
-  message(STATUS "Extracting ${DBXZ} to ${AOTRITON_V2_BUILD_DIR}/database/${REL_DBXZ}")
-endforeach(DBXZ)
+foreach(DBXZ_BASE IN LISTS DBXZ_BASES)
+  file(GLOB_RECURSE DB_TARS CONFIGURE_DEPENDS "${DBXZ_BASE}/*.sqlite3.tar.xz")
+  foreach(DBXZ IN LISTS DB_TARS)
+    cmake_path(RELATIVE_PATH DBXZ BASE_DIRECTORY "${DBXZ_BASE}" OUTPUT_VARIABLE REL_DBXZ)
+    cmake_path(REMOVE_FILENAME REL_DBXZ)
+    file(ARCHIVE_EXTRACT INPUT "${DBXZ}" DESTINATION "${AOTRITON_V2_BUILD_DIR}/database/${REL_DBXZ}")
+    message(STATUS "Extracting ${DBXZ} to ${AOTRITON_V2_BUILD_DIR}/database/${REL_DBXZ}")
+  endforeach(DBXZ)
+endforeach(DBXZ_BASE)
 
 message(STATUS "Assembling Central Database...")
 execute_process(
