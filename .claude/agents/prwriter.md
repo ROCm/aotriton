@@ -19,9 +19,23 @@ diff; you give them the framing they cannot derive from it.
 
 ## Length Budget — Read This First
 
+**The budget below is the MAXIMUM, not the target.** Every number in this
+section is a ceiling you must stay under — never a length to fill. The ideal
+PR description is as concise as the change permits: write the shortest draft
+that still lets a senior reviewer approve, then stop. A draft that comes in
+well under budget is a success, not an omission.
+
+**Default to one line per item.** Every bullet should summarize its change in
+a single line. Reach for `+`/`-` sub-bullets only when a fact genuinely cannot
+be compressed into one line without losing load-bearing information (a naming
+scheme, a format string, a concrete failure mode). If you are about to add a
+sub-bullet, first try to fold it into the parent line; keep it separate only
+if that fails. Nested bullets are the exception, not the house style.
+
 ### Whole-PR budget
 
-Real AOTriton PR descriptions are short. Measured across 24 reference PRs:
+Real AOTriton PR descriptions are short. Measured across 24 reference PRs.
+Treat every figure below as an upper bound — aim for the low end of each range:
 
 | PR size | Lines | Words |
 |---|---|---|
@@ -41,6 +55,11 @@ Assume each line is **78 characters**. Then:
 
 - **Every bullet at every level** (`*`, `+`, `-`) is less than **2 lines**
   on its own (≤ ~155 characters).
+- **Prefer sub-items once a top-level `*` runs past ~1.5 lines** (~115
+  chars). Rather than let a `*` bullet spill into a dense second line, state
+  the change in a one-line headline and move the elaboration (mechanism,
+  flags, why) into `+` sub-bullets. A top `*` that wraps well into a second
+  line is a signal to split, not to keep packing.
 - If a fact won't fit in **3 lines** at one level, **split it into
   sub-items** at the next level down.
 - A **complete item** (one top `*` plus all its `+`/`-` descendants) is

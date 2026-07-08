@@ -32,31 +32,19 @@ if [[ "${#TRITON_HASHES[@]}" -eq 0 ]]; then
 fi
 
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
+. "${SCRIPT_DIR}/common-git-cache.sh"
 BASE_DOCKER_IMAGE="aotriton:base"
 TRITON_MIRROR_VOLUME="triton-mirror"
-TRITON_GIT_ORIGIN="https://github.com/ROCm/triton"
+# TRITON_GIT_ORIGIN may be overridden from the environment (e.g. by
+# releasesuite-git-head.sh --triton_origin) to fetch Triton from a fork or a
+# local checkout via the file:// protocol.
+TRITON_GIT_ORIGIN="${TRITON_GIT_ORIGIN:-https://github.com/ROCm/triton}"
 
 mkdir -p "${WHEEL_OUTPUT_DIR}"
 
-# Ensure triton-mirror bare volume exists and is up to date
-docker volume create --name "${TRITON_MIRROR_VOLUME}"
-if docker run --rm \
-     -v "${TRITON_MIRROR_VOLUME}:/mirror" \
-     "${BASE_DOCKER_IMAGE}" \
-     bash -c "git -C /mirror rev-parse --git-dir" &>/dev/null; then
-  # fetch --all: required because we don't know which branch contains the target hash
-  docker run --network=host --rm \
-    -v "${TRITON_MIRROR_VOLUME}:/mirror" \
-    "${BASE_DOCKER_IMAGE}" \
-    bash -c "git -C /mirror fetch --all"
-else
-  docker run --network=host --rm \
-    -v "${TRITON_MIRROR_VOLUME}:/mirror" \
-    "${BASE_DOCKER_IMAGE}" \
-    bash -c "set -ex
-git clone --bare ${TRITON_GIT_ORIGIN} /mirror
-git -C /mirror config uploadpack.allowReachableSHA1InWant true"
-fi
+# GitHub -> local mirror volume. The per-hash loop below then clones the exact
+# commit from the local mirror (file:///mirror).
+sync_mirror "${TRITON_MIRROR_VOLUME}" "${TRITON_GIT_ORIGIN}" "${BASE_DOCKER_IMAGE}"
 
 # Build wheel for each hash, skipping if already cached
 for HASH in "${TRITON_HASHES[@]}"; do
@@ -74,6 +62,7 @@ for HASH in "${TRITON_HASHES[@]}"; do
     "${BASE_DOCKER_IMAGE}" \
     bash -s "${HASH}" << 'EOF'
 set -ex
+git config --global --add safe.directory '*'
 HASH="$1"
 SHORT="${HASH:0:8}"
 rm -rf /scratch/build
