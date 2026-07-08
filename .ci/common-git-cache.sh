@@ -44,24 +44,20 @@ set -ex
 origin="$1"
 git config --global --add safe.directory '*'
 
-reclone() {
-  # Wipe any partial/corrupt content (keep the mount point) and mirror afresh.
-  find /mirror -mindepth 1 -maxdepth 1 -exec rm -rf {} +
-  git clone --mirror "${origin}" /mirror
-}
-
 if git -C /mirror rev-parse --git-dir >/dev/null 2>&1; then
   # Repair an existing mirror in place. Covers legacy `git clone --bare`
   # volumes that lack a mirror refspec, and origin re-points (fork / file://).
+  # A fetch failure (network blip, rate limit) is left to fail loudly rather
+  # than wiping a healthy mirror; reclone is only for a missing/corrupt repo.
   git -C /mirror config remote.origin.fetch '+refs/*:refs/*'
   git -C /mirror remote set-url origin "${origin}" \
     || git -C /mirror remote add origin "${origin}"
-  if ! git -C /mirror fetch --prune origin; then
-    echo "mirror fetch failed; re-cloning from scratch" >&2
-    reclone
-  fi
+  git -C /mirror fetch --prune origin
 else
-  reclone
+  # Empty volume or corrupt repo: wipe any partial content (keep the mount
+  # point) and mirror afresh.
+  find /mirror -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+  git clone --mirror "${origin}" /mirror
 fi
 
 # Let consumers fetch any reachable commit SHA (not just branch/tag tips).

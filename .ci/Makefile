@@ -21,10 +21,17 @@ VERSION_DIR := $(shell \
   M=$$(sed -n 's/^set.AOTRITON_VERSION_MAJOR_INT \([0-9]*\).*/\1/p' $(CMAKELISTS)); \
   N=$$(sed -n 's/^set.AOTRITON_VERSION_MINOR_INT \([0-9]*\).*/\1/p' $(CMAKELISTS)); \
   P=$$(sed -n 's/^set.AOTRITON_VERSION_PATCH_INT \([0-9]*\).*/\1/p' $(CMAKELISTS)); \
+  if [ -z "$$M" ] || [ -z "$$N" ] || [ -z "$$P" ]; then exit 0; fi; \
   V="$$M.$$N"; \
   if [ "$$P" != "0" ]; then V="$$V.$$P"; fi; \
   if [ "$$M" -lt 1 ]; then V="$$V"b; fi; \
   echo "$$V")
+
+# Fail loudly if the version could not be parsed, rather than silently writing
+# artifacts to .../release//hashed.
+ifeq ($(strip $(VERSION_DIR)),)
+$(error Could not parse AOTRITON_VERSION_*_INT from $(CMAKELISTS))
+endif
 
 # Output directory for release artifacts.
 OUTDIR ?= $(HOME)/aotriton-gh-release/release/$(VERSION_DIR)/hashed

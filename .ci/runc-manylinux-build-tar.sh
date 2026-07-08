@@ -43,17 +43,20 @@ fi
 export AOTRITON_INSTALL_PATH="${AOTRITON_INSTALL_PREFIX}/aotriton"
 
 # --- Materialize the AOTriton source from the local mirror ---
-# Clone the exact commit from the read-only /mirror volume (offline, fast).
-# Non-recursive: Triton (the only submodule) is installed from a pre-built
-# wheel, so third_party/triton is never checked out here.
+# Shallow-fetch only the requested commit from the read-only /mirror volume
+# (offline, fast). The mirror sets uploadpack.allowReachableSHA1InWant, so a
+# reachable SHA is fetchable without cloning the full history. Non-recursive:
+# Triton (the only submodule) is installed from a pre-built wheel, so
+# third_party/triton is never checked out here.
 if [ -z "${AOTRITON_GIT_COMMIT}" ]; then
   echo "Error: AOTRITON_GIT_COMMIT is not set." >&2; exit 1
 fi
 git config --global --add safe.directory '*'
 rm -rf /src/aotriton
-git clone file:///mirror /src/aotriton
-git -C /src/aotriton fetch --force origin "${AOTRITON_GIT_COMMIT}" || true
-git -C /src/aotriton checkout -f "${AOTRITON_GIT_COMMIT}"
+git init /src/aotriton
+git -C /src/aotriton remote add origin file:///mirror
+git -C /src/aotriton fetch --depth=1 origin "${AOTRITON_GIT_COMMIT}"
+git -C /src/aotriton checkout -f FETCH_HEAD
 
 # pip (running as root) refuses a cache dir not owned by root and silently
 # disables caching. PIP_CACHE_DIR=/cache/pip is bind-mounted from the host
