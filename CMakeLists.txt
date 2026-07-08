@@ -196,10 +196,10 @@ endif()
 if(AOTRITON_ENABLE_ASAN_CLANG)
   # theRock clang++ flags: shared libasan avoids link-order issues with HIP;
   # asan-use-private-alias avoids false ODR violations across DSOs.
-  add_compile_options(-g -fsanitize=address -shared-libasan
+  add_compile_options(-g -fsanitize=address -shared-libasan -fno-omit-frame-pointer
                       -Wno-cast-function-type-strict -fclang-abi-compat=17
                       -mllvm -asan-use-private-alias=1)
-  add_link_options(-fsanitize=address -shared-libasan)
+  add_link_options(-fsanitize=address -shared-libasan -fno-omit-frame-pointer)
 endif()
 
 set(Python_ARTIFACTS_INTERACTIVE TRUE)
