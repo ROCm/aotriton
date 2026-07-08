@@ -78,8 +78,8 @@ SUITE_TRITON_ORIGIN=""
 SUITE_DEBUG=0
 SUITE_ASAN=0
 SUITE_ARCH="ALL"
-# ASAN support is pinned to a single TheRock 7.14 pre-release.
-# Pass -r 7.14.0 as a symbolic selector; the build always uses this version.
+# Default TheRock version used for ASAN builds when no -r overrides are provided.
+# (If -r is specified, those versions are used instead.)
 THEROCK_ASAN_VERSION="7.14.0a20260624"
 
 while true; do
