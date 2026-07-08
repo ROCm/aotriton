@@ -363,9 +363,12 @@ message(STATUS "AOTRITON_SHIM_FLAGS ${AOTRITON_SHIM_FLAGS}")
 file(STRINGS "${AOTRITON_V2_BUILD_DIR}/Bare.shim" SHIM_CC_FILES ENCODING UTF-8)
 
 aux_source_directory(. CC_FILES)
-aux_source_directory(flash/ FLASH_CC_FILES)
-aux_source_directory(flash/aiter FLASH_AITER_CC_FILES)
-add_library(aotriton_v2 SHARED ${SHIM_CC_FILES} ${CC_FILES} ${FLASH_CC_FILES} ${FLASH_AITER_CC_FILES})
+# Modular family C++ sources: every modules/<family>/csrc/**.cc (recursively, so
+# per-family subdirs like csrc/aiter are picked up). Convention over hardcoding —
+# adding a family needs no edit here. CONFIGURE_DEPENDS re-globs when files change.
+file(GLOB_RECURSE MODULE_CC_FILES CONFIGURE_DEPENDS
+     "${CMAKE_SOURCE_DIR}/modules/*/csrc/*.cc")
+add_library(aotriton_v2 SHARED ${SHIM_CC_FILES} ${CC_FILES} ${MODULE_CC_FILES})
 set_target_properties(aotriton_v2 PROPERTIES LINKER_LANGUAGE CXX)
 target_link_libraries(aotriton_v2 PRIVATE ${CMAKE_DL_LIBS})
 if(AOTRITON_ENABLE_SUFFIX)
