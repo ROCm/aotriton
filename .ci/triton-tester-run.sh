@@ -25,7 +25,7 @@ bdir="aotriton-build-triton_tester-${native_arch}"
   export PYTHONPATH="${bdir}/lib"
   fnprefix='triton_tester_pass'
   pytest --tb=line -n ${ngpus} --max-worker-restart 48 -rfEsx \
-    test/triton_tester.py \
+    modules/flash/tests/triton_tester.py \
     -v \
     1>"${fnprefix}${pass}.out" \
     2>"${fnprefix}${pass}.err" || true

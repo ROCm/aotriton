@@ -9,5 +9,5 @@ SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 . "${SCRIPT_DIR}/common-vars.sh"
 
 cd "${SCRIPT_DIR}/.."
-export USE_ADIFFS_TXT="$(realpath test/adiffs/${native_arch}.txt)"
+export USE_ADIFFS_TXT="$(realpath modules/flash/tests/adiffs/${native_arch}.txt)"
 bash "${SCRIPT_DIR}/run-test.sh" "$@"

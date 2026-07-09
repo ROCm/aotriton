@@ -5,7 +5,7 @@
 Parse a pytest node ID string into FlashEntry fields suitable for a
 task_queue lookup.
 
-Supported test functions (from test/test_backward.py):
+Supported test functions (from modules/flash/tests/test_backward.py):
   test_regular_bwd, test_fast
   test_irregulars
   test_op_bwd_with_matrix_bias  (best-effort)
@@ -16,7 +16,7 @@ Bracket parameter order for test_regular_bwd / test_fast (left to right):
 
 Usage as CLI:
   python pytest_entry_parser.py \
-      "test/test_backward.py::test_regular_bwd[Split-False-l1-dtype2-0.0-CausalOff-256-8192-hdim8-5-3]"
+      "modules/flash/tests/test_backward.py::test_regular_bwd[Split-False-l1-dtype2-0.0-CausalOff-256-8192-hdim8-5-3]"
 """
 
 import os
@@ -260,14 +260,14 @@ def main() -> None:
         epilog=(
             'Example:\n'
             '  %(prog)s '
-            '"test/test_backward.py::test_regular_bwd'
+            '"modules/flash/tests/test_backward.py::test_regular_bwd'
             '[Split-False-l1-dtype2-0.0-CausalOff-256-8192-hdim8-5-3]"'
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         'node_id',
-        help='Pytest node ID string (e.g. test/test_backward.py::test_name[params])',
+        help='Pytest node ID string (e.g. modules/flash/tests/test_backward.py::test_name[params])',
     )
     parser.add_argument(
         '--json',

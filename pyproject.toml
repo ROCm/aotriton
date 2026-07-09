@@ -23,7 +23,7 @@ requires-python = ">=3.10"
 
 [tool.pytest.ini_options]
 testpaths = ["python/test"]
-# GPU integration tests live under test/ and require hardware; keep them separate.
+# GPU integration tests live under modules/flash/tests/ and require hardware; keep them separate.
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]

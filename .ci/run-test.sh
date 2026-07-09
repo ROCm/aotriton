@@ -97,7 +97,7 @@ fi
   pytest --tb=line -n ${ngpus} --max-worker-restart 48 -rfEsx \
     -p no:cacheprovider \
     ${SELECT_FROM} \
-    test/test_backward.py \
+    modules/flash/tests/test_backward.py \
     -v \
     1>>"${outdir}/${fnprefix}${pass}.out" \
     2>"${outdir}/${fnprefix}${pass}.err" || true
@@ -105,7 +105,7 @@ fi
   pytest --tb=line -n ${ngpus} --max-worker-restart 48 -rfEsx \
     -p no:cacheprovider \
     ${SELECT_VARLEN_FROM} \
-    test/test_varlen.py \
+    modules/flash/tests/test_varlen.py \
     -v \
     1>>"${outdir}/${fnprefix}${pass}.varlen.out" \
     2>"${outdir}/${fnprefix}${pass}.varlen.err" || true
