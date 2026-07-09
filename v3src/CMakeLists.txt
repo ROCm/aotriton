@@ -34,7 +34,7 @@ else()
   # relative subtree (amd/<arch>/<family>/...) is preserved into the build dir, so
   # database_compose still sees amd/<arch>/<family>/<kernel>.sqlite3. Convention
   # over hardcoding — a new family drops in modules/<fam>/database, no edit here.
-  file(GLOB DBXZ_BASES "${CMAKE_SOURCE_DIR}/modules/*/database")
+  file(GLOB DBXZ_BASES "${PROJECT_SOURCE_DIR}/modules/*/database")
 endif()
 foreach(DBXZ_BASE IN LISTS DBXZ_BASES)
   file(GLOB_RECURSE DB_TARS CONFIGURE_DEPENDS "${DBXZ_BASE}/*.sqlite3.tar.xz")
