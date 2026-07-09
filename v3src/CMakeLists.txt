@@ -367,7 +367,7 @@ aux_source_directory(. CC_FILES)
 # per-family subdirs like csrc/aiter are picked up). Convention over hardcoding —
 # adding a family needs no edit here. CONFIGURE_DEPENDS re-globs when files change.
 file(GLOB_RECURSE MODULE_CC_FILES CONFIGURE_DEPENDS
-     "${CMAKE_SOURCE_DIR}/modules/*/csrc/*.cc")
+     "${PROJECT_SOURCE_DIR}/modules/*/csrc/*.cc")
 add_library(aotriton_v2 SHARED ${SHIM_CC_FILES} ${CC_FILES} ${MODULE_CC_FILES})
 set_target_properties(aotriton_v2 PROPERTIES LINKER_LANGUAGE CXX)
 target_link_libraries(aotriton_v2 PRIVATE ${CMAKE_DL_LIBS})
