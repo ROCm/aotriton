@@ -31,7 +31,7 @@ def test_bwd_interleave_dk_dv_dq_db():
 
 
 def test_real_bwd_kernels_merge_without_hint():
-    # The actual tritonsrc bwd kernels: dk_dv (DO,DK,DV,D) + dq (DO,DQ,DB,D). They
+    # The fake bwd kernels: dk_dv (DO,DK,DV,D) + dq (DO,DQ,DB,D). They
     # merge to DK,DV,DQ,DB with NO order_hint — the metro call order alone suffices.
     from fakekernels import bwd_dk_dv_stub, bwd_dq_stub
     dkv = list(bwd_dk_dv_stub().params)

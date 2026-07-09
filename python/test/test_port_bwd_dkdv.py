@@ -11,10 +11,8 @@ the shared disable predicate, and the bias/dropout/window degradation."""
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO))
-sys.path.insert(0, str(REPO / 'modules' / 'flash'))
-
+# Self-contained fake flash family (see python/test/fakefamily/).
+sys.path.insert(0, str(Path(__file__).resolve().parent / 'fakefamily' / 'flash'))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from registry import InterfaceRegistry, _testonly_build_kernel_description
 
@@ -24,7 +22,6 @@ from aot.bwd_kernel_dk_dv import bwd_kernel_dk_dv
 def _build():
     reg = InterfaceRegistry()
     return _testonly_build_kernel_description(bwd_kernel_dk_dv, family='flash',
-                                    source_path='tritonsrc/flash.py',
                                     triton_kernel_name='bwd_kernel_dk_dv',
                                     register=False,
                                     registry=reg)

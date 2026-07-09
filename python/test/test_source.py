@@ -16,7 +16,7 @@ sys.path.insert(0, str(REPO))
 import aotriton.template_instantiation as ati
 from aotriton.template_instantiation.decorators import SourceError, KernelStub
 
-KSRC = '../../modules/flash/kernel/fwd_kernel.py'   # relative to THIS test file dir (python/test/)
+KSRC = 'fakefamily/flash/kernel/fwd_kernel.py'   # relative to python/test/ (fake family)
 
 
 def test_source_returns_stub():
