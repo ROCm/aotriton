@@ -11,15 +11,14 @@ nor a literal ATI type) must raise DescriptionError."""
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO))
-sys.path.insert(0, str(REPO / 'tritonsrc'))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import aotriton.template_instantiation as ati
 from aotriton.template_instantiation.describe import describe, get_kernel_spec
 from aotriton.template_instantiation.builder import build_kernel, DescriptionError
 
-from fwd_kernel import attn_fwd
+from fakekernels import fwd_kernel_stub
+attn_fwd = fwd_kernel_stub()
 
 MAIN_DTYPES = ['*fp16:16', '*bf16:16', '*fp32:16']
 BLOCK_DMODEL_VALUES = [16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256, 512]
