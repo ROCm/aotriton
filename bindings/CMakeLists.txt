@@ -8,7 +8,7 @@ endif(AOTRITON_USE_TORCH)
 # Per-family API bindings: modules/<family>/bindings/*.cc self-register their
 # submodules via SubmoduleRegistrar (submodule_registry.h). Convention over
 # hardcoding — a new family drops in modules/<fam>/bindings, no edit here.
-file(GLOB MODULE_BINDING_SRC CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/modules/*/bindings/*.cc")
+file(GLOB MODULE_BINDING_SRC CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/modules/*/bindings/*.cc")
 list(APPEND PYAOTRITON_SRC ${MODULE_BINDING_SRC})
 # find_package(hip REQUIRED)
 pybind11_add_module(pyaotriton ${PYAOTRITON_SRC})
