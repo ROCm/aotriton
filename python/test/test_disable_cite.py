@@ -15,20 +15,14 @@ import sys
 import warnings
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO))
-sys.path.insert(0, str(REPO / 'modules' / 'flash'))
-sys.path.insert(0, str(REPO / 'modules' / 'flash' / 'kernel'))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import aotriton.template_instantiation as ati
 from aotriton.template_instantiation.describe import describe, get_kernel_spec
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 from registry import InterfaceRegistry, _testonly_build_kernel_description
 from aotriton.template_instantiation.ir.ops.cite import resolve_cites
 from aotriton.template_instantiation.builder import DescriptionError
-
-from aot.attn_fwd import attn_fwd
-from dropout_rng import debug_simulate_encoded_softmax
+from fakekernels import attn_fwd_stub, debug_stub
 
 MAIN_DTYPES = ['*fp16:16', '*bf16:16', '*fp32:16']
 
@@ -47,13 +41,12 @@ class ExtendedDisabled(CitedDisabled):
 
 
 def _register_attn_fwd_with_disable(registry):
-    # attn_fwd is already ATI-described (stacked-@ on import); REPLACE its disables
-    # with our known callable-class one so the cite-inheritance assertions are
-    # deterministic.
-    spec_obj = get_kernel_spec(attn_fwd)
+    # Fresh fake attn_fwd; REPLACE its disables with our known callable-class one so
+    # the cite-inheritance assertions are deterministic.
+    af = attn_fwd_stub()
+    spec_obj = get_kernel_spec(af)
     spec_obj.disables = [ati.disable(CitedDisabled())]
-    return _testonly_build_kernel_description(attn_fwd, family='flash',
-                                    source_path='tritonsrc/flash.py',
+    return _testonly_build_kernel_description(af, family='flash',
                                     triton_kernel_name='attn_fwd',
                                     registry=registry)
 
@@ -69,8 +62,9 @@ def _citing_specs(*extra):
 
 
 def _resolve_citing(registry, *extra):
-    describe(debug_simulate_encoded_softmax, *_citing_specs(*extra), _validate=False)
-    spec = get_kernel_spec(debug_simulate_encoded_softmax)
+    debug = debug_stub()
+    describe(debug, *_citing_specs(*extra), _validate=False)
+    spec = get_kernel_spec(debug)
     return resolve_cites(spec, family='flash',
                          lookup=registry.get_kernel, op_lookup=registry.get_op)
 

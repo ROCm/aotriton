@@ -13,19 +13,13 @@ both resolved through ops[op].get_backend(metro)[.get_kernel(kernel)].
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO))
-sys.path.insert(0, str(REPO / 'modules' / 'flash'))
-sys.path.insert(0, str(REPO / 'modules' / 'flash' / 'kernel'))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import aotriton.template_instantiation as ati
 from aotriton.template_instantiation.describe import describe, get_kernel_spec
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 from registry import InterfaceRegistry, _testonly_build_kernel_description
 from aotriton.template_instantiation.builder import DescriptionError
-
-from aot.attn_fwd import attn_fwd
-from dropout_rng import debug_simulate_encoded_softmax
+from fakekernels import attn_fwd_stub, debug_stub
 
 MAIN_DTYPES = ['*fp16:16', '*bf16:16', '*fp32:16']
 
@@ -59,8 +53,7 @@ class _FakeOp:
 
 def _build_attn_fwd_kdesc(registry):
     # attn_fwd already ATI-described on import; build + flat-register it.
-    return _testonly_build_kernel_description(attn_fwd, family='flash',
-                                    source_path='tritonsrc/flash.py',
+    return _testonly_build_kernel_description(attn_fwd_stub(), family='flash',
                                     triton_kernel_name='attn_fwd',
                                     registry=registry)
 
@@ -85,12 +78,13 @@ def _cite_debug(target, registry):
         ati.disable(lambda f: False,
                     I_understand_this_overrides_cited_disable=True),
     ]
-    describe(debug_simulate_encoded_softmax, *specs, _validate=False)
-    spec = get_kernel_spec(debug_simulate_encoded_softmax)
+    debug = debug_stub()
+    describe(debug, *specs, _validate=False)
+    spec = get_kernel_spec(debug)
     from aotriton.template_instantiation.ir.ops.cite import resolve_cites
     resolve_cites(spec, family='flash', op_lookup=registry.get_op)
-    return _testonly_build_kernel_description(debug_simulate_encoded_softmax, family='flash',
-                                    source_path='tritonsrc/flash.py', register=False,
+    return _testonly_build_kernel_description(debug, family='flash',
+register=False,
                                     registry=registry)
 
 

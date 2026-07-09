@@ -15,19 +15,13 @@ from dataclasses import dataclass
 
 import numpy as np
 
-REPO = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO))
-sys.path.insert(0, str(REPO / 'modules' / 'flash'))
-sys.path.insert(0, str(REPO / 'modules' / 'flash' / 'kernel'))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import aotriton.template_instantiation as ati
 from aotriton.template_instantiation.describe import describe
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 from registry import InterfaceRegistry, _testonly_build_kernel_description
-
-# Cited kernel: the real ATI attn_fwd (described on import). Citing kernel: debug.
-from aot.attn_fwd import attn_fwd
-from dropout_rng import debug_simulate_encoded_softmax
+# Cited kernel: fake attn_fwd. Citing kernel: fake debug.
+from fakekernels import attn_fwd_stub, debug_stub
 
 MAIN_DTYPES = ['*fp16:16', '*bf16:16', '*fp32:16']
 
@@ -39,8 +33,7 @@ class DebugPerf:
 
 
 def _register_attn_fwd(registry):
-    return _testonly_build_kernel_description(attn_fwd, family='flash',
-                                    source_path='tritonsrc/flash.py',
+    return _testonly_build_kernel_description(attn_fwd_stub(), family='flash',
                                     triton_kernel_name='attn_fwd',
                                     registry=registry)
 
@@ -54,10 +47,10 @@ def _describe_schema_only_debug(registry):
                    wires_to='encoded_softmax'),
         ati.tune.schema(DebugPerf),
     ]
-    describe(debug_simulate_encoded_softmax, *specs, _validate=False)
-    return _testonly_build_kernel_description(debug_simulate_encoded_softmax, family='flash',
-                                    source_path='tritonsrc/flash.py', register=False,
-                                    registry=registry)
+    debug = debug_stub()
+    describe(debug, *specs, _validate=False)
+    return _testonly_build_kernel_description(debug, family='flash',
+                                    register=False, registry=registry)
 
 
 def _describe_perfless_debug(registry):
@@ -68,9 +61,10 @@ def _describe_perfless_debug(registry):
                    wires_to='encoded_softmax'),
         ati.scalar(['BLOCK_M', 'BLOCK_N'], options=[64]),  # claim the constexprs
     ]
-    describe(debug_simulate_encoded_softmax, *specs, _validate=False)
-    return _testonly_build_kernel_description(debug_simulate_encoded_softmax, family='flash',
-                                    source_path='tritonsrc/flash.py', register=False,
+    debug = debug_stub()
+    describe(debug, *specs, _validate=False)
+    return _testonly_build_kernel_description(debug, family='flash',
+register=False,
                                     registry=registry)
 
 
