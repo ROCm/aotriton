@@ -281,7 +281,7 @@ class Parser:
         pkg. `modules/<family>` must stay a plain directory (not a package) so its
         `kernel/` sources keep importing each other by bare name; loading `aot` by
         name would require `<family>` to be a clean namespace package, which any
-        sys.path entry containing a `<family>.py` (e.g. `tritonsrc/flash.py`) would
+        sys.path entry containing a `<family>.py` (e.g. a stray `flash.py` on sys.path) would
         shadow. Loading by path sidesteps that entirely. Cached in sys.modules."""
         modname = f'_aotriton_modules_{family}_aot'
         cached = sys.modules.get(modname)

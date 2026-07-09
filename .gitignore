@@ -3,7 +3,7 @@ __pycache__/
 # nested source dir like python/template_instantiation/builder/).
 /*build*/
 *.swp
-tritonsrc/tune-*.json
+modules/flash/kernel/tune-*.json
 *.csv
 *.png
 1
