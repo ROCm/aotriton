@@ -26,58 +26,39 @@ message(STATUS "AOTRITON_OVERRIDE_TARGET_GPUS ${AOTRITON_OVERRIDE_TARGET_GPUS}")
 message(STATUS "EFFECTIVE_TARGET_GPUS ${EFFECTIVE_TARGET_GPUS}")
 
 if(AOTRITON_TUNING_DATABASE_ROOT)
-  # External override: a single sharded tree (amd/<arch>/<family>/...), predating
-  # the per-family build layout below. database_compose.py now infers the family
-  # from --decomposed's parent directory name, which this flat, non-family-scoped
-  # destination can't provide correctly - unsupported until this override is
-  # migrated to the per-family scheme (deferred; not exercised anywhere today).
-  set(DBXZ_BASES "${AOTRITON_TUNING_DATABASE_ROOT}")
+  # External override: same per-family shape as modules/*/database
+  # (<family>/database/amd/<arch>/...), just rooted elsewhere.
+  file(GLOB DBXZ_BASES "${AOTRITON_TUNING_DATABASE_ROOT}/*/database")
   message(STATUS "Using external tuning database root: ${AOTRITON_TUNING_DATABASE_ROOT}")
-  foreach(DBXZ_BASE IN LISTS DBXZ_BASES)
-    file(GLOB_RECURSE DB_TARS CONFIGURE_DEPENDS "${DBXZ_BASE}/*.sqlite3.tar.xz")
-    foreach(DBXZ IN LISTS DB_TARS)
-      cmake_path(RELATIVE_PATH DBXZ BASE_DIRECTORY "${DBXZ_BASE}" OUTPUT_VARIABLE REL_DBXZ)
-      cmake_path(REMOVE_FILENAME REL_DBXZ)
-      file(ARCHIVE_EXTRACT INPUT "${DBXZ}" DESTINATION "${AOTRITON_V2_BUILD_DIR}/database/${REL_DBXZ}")
-      message(STATUS "Extracting ${DBXZ} to ${AOTRITON_V2_BUILD_DIR}/database/${REL_DBXZ}")
-    endforeach(DBXZ)
-  endforeach(DBXZ_BASE)
-  message(STATUS "Assembling Central Database...")
+else()
+  # Per-family databases: each modules/<family>/database is its own base. A new
+  # family drops in modules/<fam>/database, no edit here.
+  file(GLOB DBXZ_BASES "${PROJECT_SOURCE_DIR}/modules/*/database")
+endif()
+foreach(DBXZ_BASE IN LISTS DBXZ_BASES)
+  # Compose independently into build_dir/<family>/database/ - matching the
+  # per-family Factory lookup (DatabaseFactories.create_factory(build_dir /
+  # family)). No cross-family merge: each family's tuning_database/op_database
+  # stays self-contained.
+  cmake_path(GET DBXZ_BASE PARENT_PATH DBXZ_FAMILY_DIR)
+  cmake_path(GET DBXZ_FAMILY_DIR FILENAME DBXZ_FAMILY)
+  set(FAMILY_DB_DIR "${AOTRITON_V2_BUILD_DIR}/${DBXZ_FAMILY}/database")
+  file(GLOB_RECURSE DB_TARS CONFIGURE_DEPENDS "${DBXZ_BASE}/*.sqlite3.tar.xz")
+  foreach(DBXZ IN LISTS DB_TARS)
+    cmake_path(RELATIVE_PATH DBXZ BASE_DIRECTORY "${DBXZ_BASE}" OUTPUT_VARIABLE REL_DBXZ)
+    cmake_path(REMOVE_FILENAME REL_DBXZ)
+    file(ARCHIVE_EXTRACT INPUT "${DBXZ}" DESTINATION "${FAMILY_DB_DIR}/${REL_DBXZ}")
+    message(STATUS "Extracting ${DBXZ} to ${FAMILY_DB_DIR}/${REL_DBXZ}")
+  endforeach(DBXZ)
+  message(STATUS "Assembling ${DBXZ_FAMILY} Database...")
   execute_process(
       COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
       "${VENV_BIN_PYTHON}" -m aotriton.database_compose
-      --database_file "${AOTRITON_V2_BUILD_DIR}/database/tuning_database.sqlite3"
-      --decomposed "${AOTRITON_V2_BUILD_DIR}/database"
+      --database_file "${FAMILY_DB_DIR}/tuning_database.sqlite3"
+      --decomposed "${FAMILY_DB_DIR}"
       WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
       COMMAND_ERROR_IS_FATAL ANY)
-else()
-  # Per-family databases: each modules/<family>/database is its own base, composed
-  # independently into build_dir/<family>/database/ - matching the per-family
-  # Factory lookup (DatabaseFactories.create_factory(build_dir / family)). No
-  # cross-family merge: each family's tuning_database/op_database stays self-
-  # contained, so a new family drops in modules/<fam>/database, no edit here.
-  file(GLOB DBXZ_BASES "${PROJECT_SOURCE_DIR}/modules/*/database")
-  foreach(DBXZ_BASE IN LISTS DBXZ_BASES)
-    cmake_path(GET DBXZ_BASE PARENT_PATH DBXZ_FAMILY_DIR)
-    cmake_path(GET DBXZ_FAMILY_DIR FILENAME DBXZ_FAMILY)
-    set(FAMILY_DB_DIR "${AOTRITON_V2_BUILD_DIR}/${DBXZ_FAMILY}/database")
-    file(GLOB_RECURSE DB_TARS CONFIGURE_DEPENDS "${DBXZ_BASE}/*.sqlite3.tar.xz")
-    foreach(DBXZ IN LISTS DB_TARS)
-      cmake_path(RELATIVE_PATH DBXZ BASE_DIRECTORY "${DBXZ_BASE}" OUTPUT_VARIABLE REL_DBXZ)
-      cmake_path(REMOVE_FILENAME REL_DBXZ)
-      file(ARCHIVE_EXTRACT INPUT "${DBXZ}" DESTINATION "${FAMILY_DB_DIR}/${REL_DBXZ}")
-      message(STATUS "Extracting ${DBXZ} to ${FAMILY_DB_DIR}/${REL_DBXZ}")
-    endforeach(DBXZ)
-    message(STATUS "Assembling ${DBXZ_FAMILY} Database...")
-    execute_process(
-        COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
-        "${VENV_BIN_PYTHON}" -m aotriton.database_compose
-        --database_file "${FAMILY_DB_DIR}/tuning_database.sqlite3"
-        --decomposed "${FAMILY_DB_DIR}"
-        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
-        COMMAND_ERROR_IS_FATAL ANY)
-  endforeach(DBXZ_BASE)
-endif()
+endforeach(DBXZ_BASE)
 
 get_filename_component(AOTRITON_COMPILER "${CMAKE_CURRENT_LIST_DIR}/../python/compile.py" ABSOLUTE)
 message("AOTRITON_COMPILER ${AOTRITON_COMPILER}")
