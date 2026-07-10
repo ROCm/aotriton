@@ -13,6 +13,7 @@
 #include <pybind11/stl.h>
 #include <pybind11/gil.h>
 #include <string>
+#include "submodule_registry.h"
 
 namespace py = pybind11;
 #if AOTRITON_ENABLE_SUFFIX
@@ -42,4 +43,9 @@ namespace pyaotriton {
       flash::setup_module(mod_flash);
     }
   } // namespace v2
+
+  namespace {
+    // Self-register the v2 API submodule (see submodule_registry.h).
+    const SubmoduleRegistrar _v2_registrar("v2", "v2 API namespace", &v2::setup_module);
+  } // namespace
 } // namespace pyaotriton

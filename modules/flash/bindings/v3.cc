@@ -10,6 +10,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <pybind11/gil.h>
+#include "submodule_registry.h"
 
 namespace py = pybind11;
 #if AOTRITON_ENABLE_SUFFIX
@@ -177,3 +178,10 @@ the original KernelControl instance or its backing resources are destroyed.)")
   }
 
 } // namespace pyaotriton::v3
+
+namespace pyaotriton {
+  namespace {
+    // Self-register the v3 API submodule (see submodule_registry.h).
+    const SubmoduleRegistrar _v3_registrar("v3", "v3 API namespace", &v3::setup_module);
+  } // namespace
+} // namespace pyaotriton

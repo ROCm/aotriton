@@ -11,6 +11,7 @@
 #include <pybind11/stl.h>
 #include <pybind11/gil.h>
 #include <string>
+#include "submodule_registry.h"
 
 namespace py = pybind11;
 #if AOTRITON_ENABLE_SUFFIX
@@ -18,17 +19,13 @@ namespace aotriton = AOTRITON_NS;
 #endif
 
 namespace pyaotriton {
-  namespace v2 {
-    void setup_module(py::module_& m); // Impl. goes into v2.cc
-  } // namespace v2
-
-  namespace v3 {
-    void setup_module(py::module_& m); // Impl. goes into v3.cc
-  } // namespace v3
+  // Family API submodules (v2, v3, …) live in modules/<family>/bindings/ and
+  // self-register via SubmoduleRegistrar; setup_registered_submodules() below
+  // instantiates them. No per-family names are hardcoded here.
 
 #if AOTRITON_USE_TORCH
   namespace lazy_tensor {
-    void setup_module(py::module_& m); // Impl. goes into lazy_tensor.cc
+    void setup_module(py::module_& m); // Impl. goes into lazy_tensor.cc (core: common to all families)
   } // namespace lazy_tensor
 #endif
 
@@ -100,10 +97,9 @@ namespace pyaotriton {
           []() -> std::string { return ""; }
 #endif
          );
-    py::module_ mod_v2api = m.def_submodule("v2", "v2 API namespace");
-    v2::setup_module(mod_v2api);
-    py::module_ mod_v3api = m.def_submodule("v3", "v3 API namespace");
-    v3::setup_module(mod_v3api);
+    // Family API submodules (v2, v3, …) register themselves from
+    // modules/*/bindings/ and are instantiated here.
+    setup_registered_submodules(m);
 #if AOTRITON_USE_TORCH
     py::module_ mod_lazy_tensor = m.def_submodule("lazy_tensor", "lazy_tensor API namespace");
     lazy_tensor::setup_module(mod_lazy_tensor);

@@ -5,8 +5,15 @@ aux_source_directory(. PYAOTRITON_SRC)
 if(AOTRITON_USE_TORCH)
   aux_source_directory(lazy_tensor PYAOTRITON_SRC)
 endif(AOTRITON_USE_TORCH)
+# Per-family API bindings: modules/<family>/bindings/*.cc self-register their
+# submodules via SubmoduleRegistrar (submodule_registry.h). Convention over
+# hardcoding — a new family drops in modules/<fam>/bindings, no edit here.
+file(GLOB MODULE_BINDING_SRC CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/modules/*/bindings/*.cc")
+list(APPEND PYAOTRITON_SRC ${MODULE_BINDING_SRC})
 # find_package(hip REQUIRED)
 pybind11_add_module(pyaotriton ${PYAOTRITON_SRC})
+# Family binding TUs #include "submodule_registry.h" from the core bindings dir.
+target_include_directories(pyaotriton PRIVATE ${CMAKE_CURRENT_LIST_DIR})
 # target_link_libraries(pyaotriton PRIVATE hip::device)
 target_compile_features(pyaotriton PRIVATE cxx_std_20)
 target_link_libraries(pyaotriton PUBLIC aotriton)
