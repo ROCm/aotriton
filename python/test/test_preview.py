@@ -18,7 +18,7 @@ from aotriton.template_instantiation.tools import preview, preview_kdesc
 
 @lru_cache(maxsize=1)
 def _families():
-    _k, _o, _a = Linker(REPO / 'modules').link_all_families()
+    _k, _o, _a = Linker(Path(__file__).resolve().parent / 'fakefamily').link_all_families()
     return SimpleNamespace(kernels=_k, operators=_o, affine_kernels=_a)
 
 

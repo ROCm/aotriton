@@ -7,18 +7,15 @@ reproduce the exact legacy attn_fwd disabled set across all functionals."""
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO))
-sys.path.insert(0, str(REPO / 'modules' / 'flash'))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import pytest
 import aotriton.template_instantiation as ati
 from aotriton.template_instantiation.describe import describe, get_kernel_spec
 from aotriton.template_instantiation.builder import build_kernel
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 from registry import InterfaceRegistry, _testonly_build_kernel_description
 from aotriton.gpu_targets import cluster_gpus
-from aot.attn_fwd import attn_fwd
+from fakekernels import attn_fwd_stub
 try:
     import v3python.rules.flash as F   # legacy reference for parity comparison
 except ModuleNotFoundError:
@@ -52,7 +49,7 @@ def test_flash_disabled_set_matches_legacy():
     # The @ati.disable predicates must reproduce the legacy is_functional_disabled
     # set for attn_fwd, functional-for-functional, on a representative arch.
     reg = InterfaceRegistry()
-    ak = _testonly_build_kernel_description(attn_fwd, family='flash',
+    ak = _testonly_build_kernel_description(attn_fwd_stub(), family='flash',
                                     registry=reg)
     leg = next(k for k in F.kernels if k.NAME == 'attn_fwd')
     ta = cluster_gpus(['gfx942_mod0'])

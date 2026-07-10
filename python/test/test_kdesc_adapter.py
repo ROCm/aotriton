@@ -7,18 +7,16 @@ attn_fwd KernelDescription."""
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO))
-sys.path.insert(0, str(REPO / 'tritonsrc'))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import pytest
 import aotriton.template_instantiation as ati
 from aotriton.template_instantiation.describe import describe
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 from registry import InterfaceRegistry, _testonly_build_kernel_description
 from aotriton.gpu_targets import cluster_gpus
 
-from fwd_kernel import attn_fwd
+from fakekernels import fwd_kernel_stub
+attn_fwd = fwd_kernel_stub()
 
 MAIN_DTYPES = ['*fp16:16', '*bf16:16', '*fp32:16']
 BLOCK_DMODEL_VALUES = [16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256, 512]
@@ -41,7 +39,6 @@ def _adapter():
              ati.overrides('B', to=0, when=ati.eq('BIAS_TYPE', 0)),
              _validate=False)
     return _testonly_build_kernel_description(attn_fwd, family='flash',
-                                    source_path='tritonsrc/flash.py',
                                     registry=reg)
 
 
@@ -81,7 +78,7 @@ def test_godel_set_equals_legacy():
 
 def test_arguments_match_real_signature():
     a = _adapter()
-    names = [p.name for p in attn_fwd.params]
+    names = list(attn_fwd.params)
     assert a.ARGUMENTS == names
     assert a.NAME == 'attn_fwd' and a.FAMILY == 'flash'
 

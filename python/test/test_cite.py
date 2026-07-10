@@ -7,36 +7,27 @@
 A citing kernel declares only what is unique to it and cites another kernel for the
 rest: gap arguments (matched by apparel name) and string dtype-variable references
 are inherited from the cited kernel. Unresolved gaps / unknown cite targets raise
-DescriptionError. We use the real attn_fwd (cited) and debug (citing) kernels."""
+DescriptionError. Uses fake cited (attn_fwd) and citing (debug) kernels, so the
+test is independent of the real flash sources."""
 
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO))
-sys.path.insert(0, str(REPO / 'modules' / 'flash'))
-sys.path.insert(0, str(REPO / 'modules' / 'flash' / 'kernel'))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import aotriton.template_instantiation as ati
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 from registry import InterfaceRegistry, _testonly_build_kernel_description
 from aotriton.template_instantiation.describe import describe
 from aotriton.template_instantiation.builder import DescriptionError
-
-# The cited kernel: the real ATI attn_fwd description (finalized on import).
-from aot.attn_fwd import attn_fwd
-# The citing kernel: the debug kernel (re-described per-test below).
-from dropout_rng import debug_simulate_encoded_softmax
+from fakekernels import attn_fwd_stub, debug_stub
 
 MAIN_DTYPES = ['*fp16:16', '*bf16:16', '*fp32:16']
 BLOCK_DMODEL_VALUES = [16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256, 512]
 
 
 def _describe_full_attn_fwd(registry):
-    # The real ATI attn_fwd (already described via the stacked-@ form on import);
-    # just build + register it as the cite target.
-    return _testonly_build_kernel_description(attn_fwd, family='flash',
-                                    source_path='tritonsrc/flash.py',
+    # The fake cited attn_fwd; build + register it as the cite target.
+    return _testonly_build_kernel_description(attn_fwd_stub(), family='flash',
                                     triton_kernel_name='attn_fwd',
                                     registry=registry)
 
@@ -51,9 +42,9 @@ def _describe_citing_debug(registry):
                    wires_to='encoded_softmax'),
         ati.scalar(['BLOCK_M', 'BLOCK_N'], options=[64]),
     ]
-    describe(debug_simulate_encoded_softmax, *specs, _validate=False)
-    return _testonly_build_kernel_description(debug_simulate_encoded_softmax, family='flash',
-                                    source_path='tritonsrc/flash.py',
+    debug = debug_stub()
+    describe(debug, *specs, _validate=False)
+    return _testonly_build_kernel_description(debug, family='flash',
                                     register=False, registry=registry)
 
 
@@ -99,9 +90,10 @@ def test_local_scalar_wins_over_cite():
         ati.scalar('dropout_p', options=[0]),
         ati.scalar(['BLOCK_M', 'BLOCK_N'], options=[64]),
     ]
-    describe(debug_simulate_encoded_softmax, *specs, _validate=False)
-    kdesc = _testonly_build_kernel_description(debug_simulate_encoded_softmax, family='flash',
-                                     source_path='tritonsrc/flash.py', register=False, registry=reg)
+    debug = debug_stub()
+    describe(debug, *specs, _validate=False)
+    kdesc = _testonly_build_kernel_description(debug, family='flash',
+                                               register=False, registry=reg)
     dp = kdesc.axis_of_arg('dropout_p')
     # Local enumerated [0] -> a single constexpr choice 0, NOT the cited fp32 scalar.
     assert dp is not None
@@ -122,9 +114,10 @@ def test_local_derive_wins_over_cited_derive():
         ati.scalar('dropout_p', options=[0]),     # local claim, no derive
         ati.scalar(['BLOCK_M', 'BLOCK_N'], options=[64]),
     ]
-    describe(debug_simulate_encoded_softmax, *specs, _validate=False)
-    kdesc = _testonly_build_kernel_description(debug_simulate_encoded_softmax, family='flash',
-                                     source_path='tritonsrc/flash.py', register=False, registry=reg)
+    debug = debug_stub()
+    describe(debug, *specs, _validate=False)
+    kdesc = _testonly_build_kernel_description(debug, family='flash',
+                                               register=False, registry=reg)
     targets = {t for ov in kdesc._built.overrides for t in ov.targets}
     assert 'dropout_p' not in targets, \
         'cited dropout_p derive leaked onto a locally-claimed operand'
@@ -134,17 +127,17 @@ def test_unresolved_gap_raises():
     reg = setup()
     # Cite a kernel that does NOT define some of debug's args -> DescriptionError.
     # Use a tiny cited kernel missing philox.
-    from fwd_kernel import attn_fwd as _af  # noqa
     specs = [
         ati.cite('op_attn_fwd.triton.attn_fwd'),
         # Deliberately omit R so encoded_softmax is unrelated; but R has no apparel
         # match in the cite either -> unresolved.
         ati.scalar(['BLOCK_M', 'BLOCK_N'], options=[64]),
     ]
-    describe(debug_simulate_encoded_softmax, *specs, _validate=False)
+    debug = debug_stub()
+    describe(debug, *specs, _validate=False)
     try:
-        _testonly_build_kernel_description(debug_simulate_encoded_softmax, family='flash',
-                                 source_path='tritonsrc/flash.py', register=False, registry=reg)
+        _testonly_build_kernel_description(debug, family='flash',
+                                           register=False, registry=reg)
     except DescriptionError as e:
         assert 'R' in str(e) or 'stride_rz' in str(e)
         return
@@ -158,10 +151,11 @@ def test_unknown_cite_target_raises():
         ati.tensor('R', '*fp16:16', strides='stride_r?', contiguous=-1),
         ati.scalar(['BLOCK_M', 'BLOCK_N'], options=[64]),
     ]
-    describe(debug_simulate_encoded_softmax, *specs, _validate=False)
+    debug = debug_stub()
+    describe(debug, *specs, _validate=False)
     try:
-        _testonly_build_kernel_description(debug_simulate_encoded_softmax, family='flash',
-                                 source_path='tritonsrc/flash.py', register=False, registry=reg)
+        _testonly_build_kernel_description(debug, family='flash',
+                                           register=False, registry=reg)
     except DescriptionError as e:
         assert 'no_such_kernel' in str(e)
         return

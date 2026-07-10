@@ -22,7 +22,7 @@ from aotriton.codegen.linker import Linker
 
 
 def _build():
-    kernels, _ops, _aff = Linker(REPO / 'modules').link_all_families()
+    kernels, _ops, _aff = Linker(Path(__file__).resolve().parent / 'fakefamily').link_all_families()
     return next(k for k in kernels if k.NAME == 'bwd_kernel_dq')
 
 

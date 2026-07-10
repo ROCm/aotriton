@@ -9,8 +9,8 @@ import os
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO))
+# Self-contained fake flash family (no dependency on the real modules/flash sources).
+FAKE_MODULES = Path(__file__).resolve().parent / 'fakefamily'
 
 from functools import lru_cache
 from types import SimpleNamespace
@@ -21,7 +21,7 @@ from aotriton.gpu_targets import cluster_gpus
 
 @lru_cache(maxsize=1)
 def _families():
-    _k, _o, _a = Linker(REPO / 'modules').link_all_families()
+    _k, _o, _a = Linker(FAKE_MODULES).link_all_families()
     return SimpleNamespace(kernels=_k, operators=_o, affine_kernels=_a)
 
 

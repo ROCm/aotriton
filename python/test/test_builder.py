@@ -13,9 +13,7 @@ Step 4.2."""
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO))
-sys.path.insert(0, str(REPO / 'tritonsrc'))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import aotriton.template_instantiation as ati
 from aotriton.template_instantiation.describe import describe, get_kernel_spec
@@ -42,8 +40,9 @@ class _IRStub(Interface):
 def enumerate_functionals(axes, overrides, target_arch):
     return _IRStub(axes, overrides).gen_functionals(target_arch)
 
-# Real kernel (requires triton; it lives in a real file so JITFunction loads).
-from fwd_kernel import attn_fwd
+# Fake fwd kernel stub (no triton, no file); tests attach their own specs.
+from fakekernels import fwd_kernel_stub
+attn_fwd = fwd_kernel_stub()
 
 MAIN_DTYPES = ['*fp16:16', '*bf16:16', '*fp32:16']
 BLOCK_DMODEL_VALUES = [16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256, 512]  # 12

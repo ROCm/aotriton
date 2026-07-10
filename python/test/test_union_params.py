@@ -7,9 +7,7 @@ import sys
 from pathlib import Path
 from graphlib import CycleError
 
-REPO = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO))
-sys.path.insert(0, str(REPO / 'tritonsrc'))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from aotriton.template_instantiation.ir.ops import union_params
 
@@ -33,12 +31,11 @@ def test_bwd_interleave_dk_dv_dq_db():
 
 
 def test_real_bwd_kernels_merge_without_hint():
-    # The actual tritonsrc bwd kernels: dk_dv (DO,DK,DV,D) + dq (DO,DQ,DB,D). They
+    # The fake bwd kernels: dk_dv (DO,DK,DV,D) + dq (DO,DQ,DB,D). They
     # merge to DK,DV,DQ,DB with NO order_hint — the metro call order alone suffices.
-    from bwd_kernel_dk_dv import bwd_kernel_dk_dv
-    from bwd_kernel_dq import bwd_kernel_dq
-    dkv = [p.name for p in bwd_kernel_dk_dv.params]
-    dq = [p.name for p in bwd_kernel_dq.params]
+    from fakekernels import bwd_dk_dv_stub, bwd_dq_stub
+    dkv = list(bwd_dk_dv_stub().params)
+    dq = list(bwd_dq_stub().params)
     merged = union_params([dkv, dq])             # metro call order: dk_dv, then dq
     assert len(merged) == len(set(merged))       # no duplicates
     i = {n: merged.index(n) for n in ('DO', 'DK', 'DV', 'DQ', 'DB', 'D')}

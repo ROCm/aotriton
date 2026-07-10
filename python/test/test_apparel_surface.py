@@ -5,26 +5,23 @@
 (struct fields, launch vector, feature-table getter, persisted signature) while the
 IR stays keyed on REAL argument names (agent-plans/ati_aux-kernel-xref_rev0.md §4.3).
 
-Uses a debug-like kernel with R wired to encoded_softmax."""
+Uses a fake debug-like kernel with R wired to encoded_softmax."""
 
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO))
-sys.path.insert(0, str(REPO / 'tritonsrc'))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import aotriton.template_instantiation as ati
 from aotriton.template_instantiation.describe import describe
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 from registry import InterfaceRegistry, _testonly_build_kernel_description
-
-from dropout_rng import debug_simulate_encoded_softmax
+from fakekernels import debug_stub
 
 MAIN_DTYPES = ['*fp16:16', '*bf16:16', '*fp32:16']
 
 
 def _describe_debug(registry):
+    debug = debug_stub()
     specs = [
         ati.type_var('T_io', dtype=MAIN_DTYPES, signature_name='R'),
         ati.tensor('R', 'T_io', strides='stride_r?', contiguous=-1,
@@ -35,9 +32,8 @@ def _describe_debug(registry):
         ati.scalar('philox_offset2', 'u64'),
         ati.scalar(['BLOCK_M', 'BLOCK_N'], options=[64]),   # placeholder constexpr
     ]
-    describe(debug_simulate_encoded_softmax, *specs, _validate=False)
-    return _testonly_build_kernel_description(debug_simulate_encoded_softmax, family='flash',
-                                    source_path='tritonsrc/flash.py',
+    describe(debug, *specs, _validate=False)
+    return _testonly_build_kernel_description(debug, family='flash',
                                     registry=registry)
 
 

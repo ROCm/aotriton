@@ -17,7 +17,7 @@ import aotriton.template_instantiation as ati
 from aotriton.template_instantiation.decorators import KernelStub
 from aotriton.template_instantiation.introspect import kernel_params
 
-KSRC = '../../modules/flash/kernel/fwd_kernel.py'   # relative to python/test/
+KSRC = 'fakefamily/flash/kernel/fwd_kernel.py'   # relative to python/test/ (fake family)
 
 
 def test_ast_params_match_full_signature():
