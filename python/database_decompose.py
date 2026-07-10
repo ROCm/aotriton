@@ -50,7 +50,7 @@ def write_script(args, dbc, out):
     for table, raw_sql, vendor, gpu, family, kernel in gen():
         arch = gpu2arch(gpu)
         sql = raw_sql.replace('id INTEGER PRIMARY KEY,', '')
-        db_dir = args.decompose_output / vendor / arch / family
+        db_dir = args.decompose_output / vendor / arch
         dbf = db_dir / f'{kernel}.sqlite3'
         print(f'mkdir -p {db_dir.as_posix()}', file=out)
         print(f"sqlite3 '{dbf}' << 'EOF'", file=out)

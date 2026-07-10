@@ -14,10 +14,17 @@ class Factories(object):
         sqlite: requires tuning_database.sqlite3 under path
         other: requires a config file, for example: pg.json
     '''
+    _cache = {}
+
     @staticmethod
     def create_factory(path):
+        key = path.as_posix()
+        if key in Factories._cache:
+            return Factories._cache[key]
         for fac in FACTORIES:
             if (path / fac.SIGNATURE_FILE).exists():
-                return fac(path)
+                instance = fac(path)
+                Factories._cache[key] = instance
+                return instance
             print(f'Cannot find {path/fac.SIGNATURE_FILE}')
         assert False, 'database.Factories.create_factory failed. Database file missing?'

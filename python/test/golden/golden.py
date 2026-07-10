@@ -87,12 +87,12 @@ def _safe_extractall(tf: tarfile.TarFile, dest: Path):
 
 
 def _compose_database(build_dir: Path):
-    """Populate build_dir/database with the tuning + op databases.
+    """Populate build_dir/flash/database with the tuning + op databases.
 
     Prefer the prebuilt FUSED database (real tuning rows, so translate_dataframe
     is exercised). Fall back to composing the decomposed per-kernel sqlite files
     (sparse) only when the fused DB is absent."""
-    db_dir = build_dir / 'database'
+    db_dir = build_dir / 'flash' / 'database'
     db_dir.mkdir(parents=True, exist_ok=True)
     fused_tuning = FUSED_DB_DIR / 'tuning_database.sqlite3'
     fused_op = FUSED_DB_DIR / 'op_database.sqlite3'
