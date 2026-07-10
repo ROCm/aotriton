@@ -84,8 +84,8 @@ def _cite_debug(target, registry):
     from aotriton.template_instantiation.ir.ops.cite import resolve_cites
     resolve_cites(spec, family='flash', op_lookup=registry.get_op)
     return _testonly_build_kernel_description(debug, family='flash',
-register=False,
-                                    registry=registry)
+                                              register=False,
+                                              registry=registry)
 
 
 def test_subkernel_cite_via_ops():

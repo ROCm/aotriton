@@ -64,8 +64,8 @@ def _describe_perfless_debug(registry):
     debug = debug_stub()
     describe(debug, *specs, _validate=False)
     return _testonly_build_kernel_description(debug, family='flash',
-register=False,
-                                    registry=registry)
+                                              register=False,
+                                              registry=registry)
 
 
 def test_schema_only_is_untunable():

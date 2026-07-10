@@ -93,7 +93,7 @@ def test_local_scalar_wins_over_cite():
     debug = debug_stub()
     describe(debug, *specs, _validate=False)
     kdesc = _testonly_build_kernel_description(debug, family='flash',
-register=False, registry=reg)
+                                               register=False, registry=reg)
     dp = kdesc.axis_of_arg('dropout_p')
     # Local enumerated [0] -> a single constexpr choice 0, NOT the cited fp32 scalar.
     assert dp is not None
@@ -117,7 +117,7 @@ def test_local_derive_wins_over_cited_derive():
     debug = debug_stub()
     describe(debug, *specs, _validate=False)
     kdesc = _testonly_build_kernel_description(debug, family='flash',
-register=False, registry=reg)
+                                               register=False, registry=reg)
     targets = {t for ov in kdesc._built.overrides for t in ov.targets}
     assert 'dropout_p' not in targets, \
         'cited dropout_p derive leaked onto a locally-claimed operand'
@@ -137,7 +137,7 @@ def test_unresolved_gap_raises():
     describe(debug, *specs, _validate=False)
     try:
         _testonly_build_kernel_description(debug, family='flash',
-register=False, registry=reg)
+                                           register=False, registry=reg)
     except DescriptionError as e:
         assert 'R' in str(e) or 'stride_rz' in str(e)
         return
@@ -155,7 +155,7 @@ def test_unknown_cite_target_raises():
     describe(debug, *specs, _validate=False)
     try:
         _testonly_build_kernel_description(debug, family='flash',
-register=False, registry=reg)
+                                           register=False, registry=reg)
     except DescriptionError as e:
         assert 'no_such_kernel' in str(e)
         return
