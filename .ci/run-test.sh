@@ -87,7 +87,8 @@ fi
       || echo "NO __signature__ file at $PYTHONPATH/aotriton.images/"
   } > "${outdir}/${fnprefix}${pass}.out"
   # One invocation over the whole suite dir (conftest.py sets up sys.path); pytest
-  # collects test_forward / test_backward / test_varlen together.
+  # collects test_backward / test_varlen together (test_forward.py is excluded via
+  # conftest.py's collect_ignore - its coverage is a subset of test_backward.py's).
   pytest --tb=line -n ${ngpus} --max-worker-restart 48 -rfEsx \
     -p no:cacheprovider \
     ${SELECT_FROM} \

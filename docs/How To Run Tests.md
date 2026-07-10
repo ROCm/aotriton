@@ -8,11 +8,11 @@ cmake .. -DCMAKE_INSTALL_PREFIX=./install_dir -DCMAKE_BUILD_TYPE=Release -DAOTRI
 # Optionally only build for one arch
 # cmake .. -DCMAKE_INSTALL_PREFIX=./install_dir -DCMAKE_BUILD_TYPE=Release -DAOTRITON_GPU_BUILD_TIMEOUT=0 -G Ninja -DAOTRITON_NAME_SUFFIX=123 -DAOTRITON_TARGET_ARCH=gfx942
 ninja install
-FOR_RELEASE=1 PYTHONPATH=install_dir/lib/ pytest ../test/test_backward.py -v
+FOR_RELEASE=1 PYTHONPATH=install_dir/lib/ pytest ../modules/flash/tests/test_backward.py -v
 # Optionally starting from AOTriton >= 0.10.0
 # it is possible to run tests in parallel on multi-GPUs
 # NGPUS=$(amd-smi list --json|jq length)
-# FOR_RELEASE=1 PYTHONPATH=install_dir/lib/ pytest -n $NGPUS ../test/test_backward.py -v
+# FOR_RELEASE=1 PYTHONPATH=install_dir/lib/ pytest -n $NGPUS ../modules/flash/tests/test_backward.py -v
 ```
 
 # Pre-requisites

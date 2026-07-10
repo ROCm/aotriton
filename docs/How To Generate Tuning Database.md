@@ -604,7 +604,7 @@ is treated as a boolean (level ≥ 1 enables full varlen coverage).
 
 **Release criterion**: a flash attention tuning database is considered releasable
 when it passes **test level 2, split backend** with only a reasonable number of
-failures. All failures must be documented in `test/adiffs/<arch>.txt` (see
+failures. All failures must be documented in `modules/flash/tests/adiffs/<arch>.txt` (see
 below). The CI script `run-ci-test.sh` sets `USE_ADIFFS_TXT` to that file,
 causing known-failing tests to be skipped or marked `xfail` instead of
 `FAILED`.
@@ -623,7 +623,7 @@ causing known-failing tests to be skipped or marked `xfail` instead of
 Set **Pass**, **Level**, and **Backend**, then click **Run Test**. Output is
 streamed via **Tail Output**. After the run, click **Show Failures** to open a
 window listing all `FAILED` test lines. The run also writes `sel<pass>.txt`
-(and `sel<pass>.varlen.txt`) for use by partial runs.
+for use by partial runs.
 
 ### Partial Test Run
 
@@ -650,8 +650,8 @@ To generate an adiffs entry for OOM failures (which produce no accuracy data):
 ```
 
 Once the adiffs file is complete, copy it into the repository at
-`test/adiffs/<arch>.txt` and commit it. The CI script `.ci/run-ci-test.sh`
-sets `USE_ADIFFS_TXT=$(realpath test/adiffs/${native_arch}.txt)` before calling
+`modules/flash/tests/adiffs/<arch>.txt` and commit it. The CI script `.ci/run-ci-test.sh`
+sets `USE_ADIFFS_TXT=$(realpath modules/flash/tests/adiffs/${native_arch}.txt)` before calling
 `run-test.sh`, so documented failures are automatically skipped (`OOM` → `pytest.skip`,
 `NAN` → `pytest.xfail`) in gated CI runs.
 

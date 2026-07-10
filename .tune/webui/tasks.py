@@ -1398,15 +1398,14 @@ def get_tail_output(workdir, hostname, pass_num, backend, variant=None):
     output_dir = f'{remote_wd}/run/tests'
     if variant == 'partial':
         output_dir += '/partial'
-    results = {}
-    for suffix in ('', '.varlen'):
-        fname = f'{prefix}{pass_num}{suffix}.out'
-        r = subprocess.run(
-            ['ssh', hostname, f'tail -n 5 {output_dir}/{fname} 2>/dev/null || echo "(not found)"'],
-            capture_output=True, text=True
-        )
-        results[fname] = r.stdout
-    return {'status': 'ok', 'files': results}
+    # run-test.sh merged the backward/varlen passes into one pytest invocation and
+    # output file - there is no more separate "<prefix><pass>.varlen.out" to tail.
+    fname = f'{prefix}{pass_num}.out'
+    r = subprocess.run(
+        ['ssh', hostname, f'tail -n 5 {output_dir}/{fname} 2>/dev/null || echo "(not found)"'],
+        capture_output=True, text=True
+    )
+    return {'status': 'ok', 'files': {fname: r.stdout}}
 
 
 def get_adiffs_file(workdir, hostname, arch):
