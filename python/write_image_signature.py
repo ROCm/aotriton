@@ -37,7 +37,7 @@ Note: here we hash the uncompressed sqlite3 file, because hash of tar file is
 affected by metadata like owner/mdate
 '''
 def hash_primary(args, vendor, arch, k):
-    fn = args.build_dir / 'database' / vendor / arch / k.FAMILY / f'{k.NAME}.sqlite3'
+    fn = args.build_dir / k.FAMILY / 'database' / vendor / arch / f'{k.NAME}.sqlite3'
     if fn.is_file():
         return hashfile(fn)
     return None
@@ -49,7 +49,7 @@ def main():
     sig = {}
     sig['AOTRITON_GIT_SHA1'] = args.git_sha1
     sig['AOTRITON_GIT_TREESHA1'] = args.git_treesha1
-    fac = DatabaseFactories.create_factory(args.build_dir)
+    families = sorted({k.FAMILY for k in kernels})
     db = {}
     def gen_primary_db_hash():
         for vendor, arch in itertools.product(args.vendors, args.target_arch):
@@ -63,8 +63,10 @@ def main():
             yield arch, d
     db['primary'] = dict(gen_primary_db_hash())
     def gen_secondary_db_hash():
-        for k, v in fac.SECONDARY_DATABASES.items():
-            yield k, hashfile(args.build_dir / v)
+        for family in families:
+            fac = DatabaseFactories.create_factory(args.build_dir / family)
+            for k, v in fac.SECONDARY_DATABASES.items():
+                yield f'{family}.{k}', hashfile(args.build_dir / family / v)
     db['secondary'] = dict(gen_secondary_db_hash())
     sig['DB_SHA256'] = db
     sig['TRITON_VERSION'] = str(importlib.metadata.version("triton"))

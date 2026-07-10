@@ -36,9 +36,8 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 GOLDEN_DIR = Path(__file__).resolve().parent / 'snapshot'
 # Fallback DB source (schema tarballs + decomposed per-kernel blobs). The primary
 # path is the prebuilt FUSED_DB below; this only fires when that is absent. Points at
-# the retired legacy tree (kept on disk, untracked) since the central schema tarballs
-# never moved out of it; relocating them is deferred (see to-remove.txt section A).
-DB_SRC_DIR = REPO_ROOT / 'modules' / 'database'
+# the per-family database tree (modules/<family>/database) — flash for now.
+DB_SRC_DIR = REPO_ROOT / 'modules' / 'flash' / 'database'
 # Prebuilt fused tuning database (real tuning rows, exercises translate_dataframe).
 # Override with AOTRITON_GOLDEN_DB. Falls back to composing the decomposed DB.
 FUSED_DB_DIR = Path(os.getenv('AOTRITON_GOLDEN_DB', '/tmp/ati_golden_fused_db'))
@@ -88,12 +87,12 @@ def _safe_extractall(tf: tarfile.TarFile, dest: Path):
 
 
 def _compose_database(build_dir: Path):
-    """Populate build_dir/database with the tuning + op databases.
+    """Populate build_dir/flash/database with the tuning + op databases.
 
     Prefer the prebuilt FUSED database (real tuning rows, so translate_dataframe
     is exercised). Fall back to composing the decomposed per-kernel sqlite files
     (sparse) only when the fused DB is absent."""
-    db_dir = build_dir / 'database'
+    db_dir = build_dir / 'flash' / 'database'
     db_dir.mkdir(parents=True, exist_ok=True)
     fused_tuning = FUSED_DB_DIR / 'tuning_database.sqlite3'
     fused_op = FUSED_DB_DIR / 'op_database.sqlite3'

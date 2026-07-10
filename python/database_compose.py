@@ -17,10 +17,11 @@ def parse():
     return args
 
 def compose_database(args, dbc):
+    family = args.decomposed.parent.name
     for vendor in args.vendors:
         vendor_dir = args.decomposed / vendor
-        for fn in vendor_dir.glob('*/*/*.sqlite3'):
-            arch, family, base = fn.parts[-3:]
+        for fn in vendor_dir.glob('*/*.sqlite3'):
+            arch, base = fn.parts[-2:]
             kernel_name = Path(base).stem
             table_string = f"'{family.upper()}${kernel_name}'"
             dbc.execute(f"ATTACH DATABASE '{fn.as_posix()}' AS subdb;")

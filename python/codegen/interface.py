@@ -68,7 +68,7 @@ class InterfaceGenerator(ABC):
         self.trivial_stats: dict[tuple, dict[str, int]] = {}
 
         # autotune phase
-        fac = DatabaseFactories.create_factory(args.build_dir)
+        fac = DatabaseFactories.create_factory(args.build_dir / iface.FAMILY)
         # print(f'{iface.__class__=}')
         for functional in iface.gen_functionals(self._target_arch):
             # print(f'{functional=}')
