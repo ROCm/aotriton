@@ -1,19 +1,6 @@
 # Fake empty-body kernel stub for ATI unit tests (triton-free).
 # @ati.source AST-parses parameter NAMES only; bodies/annotations ignored.
 
-def cdiv_fn(
-    x,
-    y,
-):
-    pass
-
-def remap_xcd(
-    pid,
-    GRID_MN,
-    NUM_XCDS,
-):
-    pass
-
 def attn_fwd(
     Q,
     K,
