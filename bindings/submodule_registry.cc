@@ -26,7 +26,7 @@ std::vector<Entry>& registry() {
 } // namespace
 
 SubmoduleRegistrar::SubmoduleRegistrar(const char* name, const char* doc, SubmoduleSetup fn) {
-  registry().push_back(Entry{name, doc ? doc : "", std::move(fn)});
+  registry().emplace_back(name, doc ? doc : "", std::move(fn));
 }
 
 void setup_registered_submodules(py::module_& m) {
