@@ -1,16 +1,8 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-"""
-ATI description of the flash bwd_kernel_dk_dv kernel (computes dK/dV).
-
-A KEY backward kernel: a standalone full description (the authoritative source of
-the bwd operand practices). Stacked-@ form (rev0 §5a) over ../kernel/bwd_kernel_dk_dv.py.
-
-Note (rev1 §3.5): the B tensor's 3rd stride is `stride_bm` in the Triton signature
-but the operator/golden call it `stride_bk`; ATI emits the real name in the cosmetic
-pp_args comment (the access expression is identical).
-"""
+"""Fake bwd_kernel_dk_dv: standalone KEY bwd kernel description owning
+the shared bwd operand practices cited by dq/preprocess/fuse."""
 
 from dataclasses import dataclass
 

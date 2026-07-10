@@ -1,12 +1,8 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-"""
-ATI description of bwd_preprocess_varlen (auxiliary bwd kernel; varlen variant of
-bwd_preprocess). Same shape as bwd_preprocess; the extra seq_strides_q is a GAP
-inherited from the cite. Stacked-@ form over ../kernel/bwd_preprocess.py (the
-varlen kernel is defined there too).
-"""
+"""Fake bwd_preprocess_varlen: varlen twin of bwd_preprocess, adding
+seq_strides_q as a cite-inherited gap."""
 
 from dataclasses import dataclass
 

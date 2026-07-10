@@ -1,28 +1,17 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-"""
-ATI description of the flash backward affine (AITER ASM) kernel.
-
-A SLIM affine backend: a thin C++ shim translating OpAttnBwdParams into the AITER
-`aiter::mha_bwd_args` cookie and packaging pre-built fmha_v3_bwd .co files.
-
-It SUPPLIES the DQ_ACC operand (the workspace accumulator only this backend uses):
-the operator's params-struct union picks it up so DQ_ACC lands in OpAttnBwdParams
-without any hand-injection. DQ_ACC is a LazyTensor (rank 4, strides stride_acc?).
-"""
+"""Fake AITER-ASM affine backend for op_attn_bwd: minimal @ati.affine.*
+fixture supplying DQ_ACC, exercising affine/backend linking."""
 
 import aotriton.template_instantiation as ati
-from ._common import check_value
 
 
 def _aiter_bwd_disabled(functional):
     """ASM-kernel exclusions: no fp32, no hdim > 192."""
-    dtype = check_value(functional, ['Q'])
-    if '*fp32' in dtype:
+    if '*fp32' in functional.choices.Q:
         return True
-    hdim = check_value(functional, ['BLOCK_DMODEL'])
-    if hdim > 192:
+    if functional.choices.BLOCK_DMODEL > 192:
         return True
     return False
 

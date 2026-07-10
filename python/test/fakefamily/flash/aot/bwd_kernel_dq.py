@@ -1,16 +1,8 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-"""
-ATI description of the flash bwd_kernel_dq kernel (computes dQ/dB).
-
-A KEY backward kernel: a standalone full description, the dQ/dB analogue of
-bwd_kernel_dk_dv. Stacked-@ form (rev0 §5a) over ../kernel/bwd_kernel_dq.py.
-
-Note (rev1 §3.5): the B tensor's 3rd stride is `stride_bm` in the Triton signature
-but the operator/golden call it `stride_bk`; ATI emits the real name in the cosmetic
-pp_args comment (the access expression is identical).
-"""
+"""Fake bwd_kernel_dq: cites the bwd metro for shared operands (a true
+cite-cycle), exercising the linker's header/extern gap-fill model."""
 
 from dataclasses import dataclass
 

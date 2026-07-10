@@ -1,14 +1,8 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-"""
-ATI description of bwd_preprocess (auxiliary bwd kernel).
-
-Cites a bwd key kernel for the shared-operand practices (cu_seqlens_q, num_seqlens,
-max_seqlen_q, hdim_vo — GAPS inherited by apparel name). Declares only its own
-tensors + features + schema-only perf. Apparel renames (rev1 §4.3): Delta -> D,
-D_HEAD -> BLOCK_DMODEL. Stacked-@ form over ../kernel/bwd_preprocess.py.
-"""
+"""Fake bwd_preprocess: auxiliary bwd kernel citing a key kernel for
+shared operands; exercises apparel renames (Delta->D, D_HEAD->BLOCK_DMODEL)."""
 
 from dataclasses import dataclass
 

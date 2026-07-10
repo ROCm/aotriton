@@ -1,16 +1,8 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-"""
-ATI description of the flash bwd_kernel_fuse kernel.
-
-An ALTERNATIVE fused bwd backend (computes dQ/dK/dV/dB in one kernel), NOT called
-by the triton_split metro. It cites the metro's sub-kernels for the merged operand
-vocabulary (citation mode (b), rev0 §4.4), declaring only what differs:
-BLOCK_DMODEL capped <= 256 (legacy CHOICE_FILTERS), Out (whose stride names differ
-from the cited preprocess, rev1 §5), and its own perf (no NUM_XCDS). Stacked-@ form
-over ../kernel/bwd_kernel_fuse.py.
-"""
+"""Fake bwd_kernel_fuse: alternative fused bwd backend citing the bwd
+metro's sub-kernels for merged operands (citation mode b)."""
 
 from dataclasses import dataclass
 

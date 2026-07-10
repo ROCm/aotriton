@@ -1,15 +1,8 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-"""
-ATI description of debug_simulate_encoded_softmax (auxiliary fwd kernel).
-
-It collaborates in the forward metro and cites the fwd metro's key kernel for the
-shared operands; only its real argument `R` (the encoded-softmax output, dressed as
-the operand `encoded_softmax`) and a schema-only perf are declared locally. The
-dropout / PRNG / seqlen scalars are GAPS filled from the cite. Stacked-@ form
-(rev0 §5a) over ../kernel/dropout_rng.py.
-"""
+"""Fake debug_simulate_encoded_softmax: cites the fwd metro's key kernel,
+declaring only its own R/encoded_softmax operand."""
 
 from dataclasses import dataclass
 

@@ -1,26 +1,17 @@
 # Copyright © 2025-2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-"""
-ATI description of the flash forward affine (AITER ASM) kernel.
-
-A SLIM affine backend: a thin C++ shim translating OpAttnFwdParams into the AITER
-`aiter::mha_fwd_args` cookie and packaging pre-built fmha_v3_fwd .co files. Declared
-declaratively via the @ati.affine.* surface; the operator (op_attn_fwd) it serves is
-referenced by name and resolved to SHARED_IFACE by infer_shared_iface.
-"""
+"""Fake AITER-ASM affine backend for op_attn_fwd: minimal @ati.affine.*
+fixture exercising SHARED_IFACE resolution."""
 
 import aotriton.template_instantiation as ati
-from ._common import check_value
 
 
 def _aiter_fwd_disabled(functional):
     """ASM-kernel exclusions: no fp32, no hdim > 192."""
-    dtype = check_value(functional, ['Q'])
-    if '*fp32' in dtype:
+    if '*fp32' in functional.choices.Q:
         return True
-    hdim = check_value(functional, ['BLOCK_DMODEL'])
-    if hdim > 192:
+    if functional.choices.BLOCK_DMODEL > 192:
         return True
     return False
 

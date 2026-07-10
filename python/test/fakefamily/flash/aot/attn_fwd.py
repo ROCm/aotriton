@@ -1,15 +1,8 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-"""
-ATI description of the flash attn_fwd kernel.
-
-Stacked-@ form (rev0 §5a): @ati.source imports the Triton kernel from
-../kernel/fwd_kernel.py and the @ati.* decorators above stack the full
-instantiation description onto it. Covers all 74 parameters. Conditional arguments
-(legacy CC/CDC/CDETensor) are @ati.derives; the axis fixes the struct ABI type and
-the derive fixes the per-functional value (ati+newbinds_rev1.md §6.2).
-"""
+"""Fake attn_fwd kernel description: full stacked-@ form over
+../kernel/fwd_kernel.py, exercising axes/derives/tune/disable."""
 
 from dataclasses import dataclass
 

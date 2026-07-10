@@ -1,22 +1,9 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-"""
-Flash family build block (the ATI registry for the `flash` family).
-
-PASSIVE: this module only DECLARES the family — it imports the kernel/affine
-descriptions, defines the two `@ati.metro_kernel` plans inline, and the two
-`@ati.operator` defs, then exposes `operators` (the build roots). NO build calls,
-NO `kernels`/`affine_kernels` lists, NO registry writes — the code generator's
-parser+linker (`aotriton.codegen.parser` / `.linker`) compiles these passive
-descriptions into the final IR tree.
-
-Backends are referenced BY the in-file def/object (a metro function carrying
-`__ati_metro__`, a kernel def carrying `__ati__`, an affine def carrying
-`__ati_affine__`); the linker keys on the declared backend NAME. `default_kdesc`
-and `struct_cfields` are NOT declared — the linker derives both from the backend
-tree. Family is inferred from the `modules/<family>/aot` path.
-"""
+"""Fake `flash` family build block: minimal fixture exercising the ATI
+parser/linker (metro, operators, cites, affine backends) without real
+Triton kernels or tuning data."""
 
 import aotriton.template_instantiation as ati
 
