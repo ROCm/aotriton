@@ -1,1 +1,1 @@
-../../../test/_common_test.py
+../tests/_common_test.py

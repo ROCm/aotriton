@@ -70,7 +70,7 @@ for prefix in "${PREFIXES[@]}"; do
     echo "Processing $out_file ..."
     FOUND=$((FOUND + 1))
     ssh "$HOSTNAME" \
-        "python3 '$REMOTE_WORKDIR/aotriton.src/test/pytest2entry.py' '$out_file'" \
+        "python3 '$REMOTE_WORKDIR/aotriton.src/modules/flash/tests/pytest2entry.py' '$out_file'" \
     | PYTHONPATH="$REPO_ROOT" python3 "$TUNE_ROOT/libexec/broken_entries_to_db" \
         "$WORKDIR" "$HOSTNAME" "$ARCH" "$PASS_NUM" --tuning_mode "$TUNING_MODE"
 done

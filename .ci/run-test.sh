@@ -34,23 +34,16 @@ small_vram=$(amd-smi static -g 0 -v --json|grep -v '^WARNING:'| python -c 'impor
 outdir="${OUTPUT_DIR:-.}"
 mkdir -p "$outdir"
 
-# Partial test mode: if PARTIAL_INFO_DIR is set, fix and use sel files as pytest selectors
+# Partial test mode: if PARTIAL_INFO_DIR is set, use the sel file as a pytest selector
 SELECT_FROM=""
-SELECT_VARLEN_FROM=""
 if [ -n "${PARTIAL_INFO_DIR:-}" ]; then
-  for kind in "" ".varlen"; do
-    src="${PARTIAL_INFO_DIR}/sel${pass}${kind}.txt"
-    dst="${outdir}/pytest-select-${pass}${kind}.txt"
-    if [ -f "$src" ]; then
-      # Remove "path/to/file.py::" prefix (first occurrence per line only)
-      sed 's|[^:]*\.py::||' "$src" > "$dst"
-      if [ -z "$kind" ]; then
-        SELECT_FROM="--select-from-file $dst"
-      else
-        SELECT_VARLEN_FROM="--select-from-file $dst"
-      fi
-    fi
-  done
+  src="${PARTIAL_INFO_DIR}/sel${pass}.txt"
+  dst="${outdir}/pytest-select-${pass}.txt"
+  if [ -f "$src" ]; then
+    # Remove "path/to/file.py::" prefix (first occurrence per line only)
+    sed 's|[^:]*\.py::||' "$src" > "$dst"
+    SELECT_FROM="--select-from-file $dst"
+  fi
 fi
 
 if [ -n "${USE_ADIFFS_TXT:-}" ]; then
@@ -92,27 +85,20 @@ fi
   {
     [ -n "$_sig" ] && cat "$_sig" \
       || echo "NO __signature__ file at $PYTHONPATH/aotriton.images/"
-  } | tee "${outdir}/${fnprefix}${pass}.out" \
-          "${outdir}/${fnprefix}${pass}.varlen.out" > /dev/null
+  } > "${outdir}/${fnprefix}${pass}.out"
+  # One invocation over the whole suite dir (conftest.py sets up sys.path); pytest
+  # collects test_backward / test_varlen together (test_forward.py is excluded via
+  # conftest.py's collect_ignore - its coverage is a subset of test_backward.py's).
   pytest --tb=line -n ${ngpus} --max-worker-restart 48 -rfEsx \
     -p no:cacheprovider \
     ${SELECT_FROM} \
-    test/test_backward.py \
+    modules/flash/tests \
     -v \
     1>>"${outdir}/${fnprefix}${pass}.out" \
     2>"${outdir}/${fnprefix}${pass}.err" || true
   grep '^FAILED' "${outdir}/${fnprefix}${pass}.out"|sed 's/^FAILED //' | sed 's/].*/]/' > "${outdir}/sel${pass}.txt"
-  pytest --tb=line -n ${ngpus} --max-worker-restart 48 -rfEsx \
-    -p no:cacheprovider \
-    ${SELECT_VARLEN_FROM} \
-    test/test_varlen.py \
-    -v \
-    1>>"${outdir}/${fnprefix}${pass}.varlen.out" \
-    2>"${outdir}/${fnprefix}${pass}.varlen.err" || true
-  grep '^FAILED' "${outdir}/${fnprefix}${pass}.varlen.out"|sed 's/^FAILED //' | sed 's/].*/]/' > "${outdir}/sel${pass}.varlen.txt"
   if [ -n "${RECORD_ADIFFS_TO:-}" ]; then
     SCRIPT_DIR_ABS="$(cd "${SCRIPT_DIR}" && pwd)"
     bash "${SCRIPT_DIR_ABS}/../.tune/bin/append_oom_to_adiffs.sh" "${outdir}/${fnprefix}${pass}.out" >> "${RECORD_ADIFFS_TO}"
-    bash "${SCRIPT_DIR_ABS}/../.tune/bin/append_oom_to_adiffs.sh" "${outdir}/${fnprefix}${pass}.varlen.out" >> "${RECORD_ADIFFS_TO}"
   fi
 )
