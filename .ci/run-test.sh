@@ -13,6 +13,7 @@ fi
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 . "${SCRIPT_DIR}/common-vars.sh"
 add_torch_ldconfig
+add_rocm_sdk_ldconfig
 
 pass=$1
 test_level="$2"
@@ -68,6 +69,10 @@ fi
   export SMALL_VRAM=${small_vram};
   export COLUMNS=400;
   export FOR_RELEASE=${test_level};
+  export AOTRITON_UT_ARCH="${native_arch}";
+  if [[ "$native_arch" == "gfx1250" ]]; then
+    export AOTRITON_REF_DEVICE_OPTION=cpu
+  fi
   if [[ "$backend" == "split" ]]; then
     export BWD_IMPL=0
     fnprefix="ut_pass"
@@ -94,7 +99,8 @@ fi
       || echo "NO __signature__ file at $PYTHONPATH/aotriton.images/"
   } | tee "${outdir}/${fnprefix}${pass}.out" \
           "${outdir}/${fnprefix}${pass}.varlen.out" > /dev/null
-  pytest --tb=line -n ${ngpus} --max-worker-restart 48 -rfEsx \
+  pytest --tb=line -n ${ngpus} --max-worker-restart 9999 -rfEsx \
+    --timeout=300 --timeout-method=thread \
     -p no:cacheprovider \
     ${SELECT_FROM} \
     test/test_backward.py \
@@ -102,7 +108,8 @@ fi
     1>>"${outdir}/${fnprefix}${pass}.out" \
     2>"${outdir}/${fnprefix}${pass}.err" || true
   grep '^FAILED' "${outdir}/${fnprefix}${pass}.out"|sed 's/^FAILED //' | sed 's/].*/]/' > "${outdir}/sel${pass}.txt"
-  pytest --tb=line -n ${ngpus} --max-worker-restart 48 -rfEsx \
+  pytest --tb=line -n ${ngpus} --max-worker-restart 9999 -rfEsx \
+    --timeout=300 --timeout-method=thread \
     -p no:cacheprovider \
     ${SELECT_VARLEN_FROM} \
     test/test_varlen.py \

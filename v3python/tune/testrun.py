@@ -131,12 +131,12 @@ class CommandProcessor(object):
 
     def command_probe(self, line):
         if line is None:
-            return r'''Missing Arguments. Expect: probe <data directory>'''
+            return r'''Missing Arguments. Expect: probe <data directory> [arch]'''
         if self._module is None:
             return r'''Error: Need to run module <package name> first'''
         tune = self._module.TuneDesc()
         try:
-            data_dir, kernel = first(line)
+            data_dir, arch = first(line)
             data_dir = Path(data_dir)
         except:
             return 'Error when parsing argument ' + tail
@@ -144,7 +144,7 @@ class CommandProcessor(object):
             return f'{data_dir} is not valid data director. Missing entry.json file.'
         def gen():
             entry = tune.get_entry(data_dir)
-            kernels = tune.list_impls(entry)
+            kernels = tune.list_impls(entry, arch=arch)
             for k in kernels:
                 yield k, tune.probe_backends(data_dir, k)
         return dict(gen())

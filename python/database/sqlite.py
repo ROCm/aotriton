@@ -2,10 +2,23 @@
 # SPDX-License-Identifier: MIT
 
 import sqlite3
+import tarfile
+from pathlib import Path
 import pandas as pd
 from ..template_instantiation.ir import typed_choice as TC
 from ..utils import log
 from ..gpu_targets import AOTRITON_TUNING_DATABASE_REUSE
+
+# Checked-in baseline secondary databases (e.g. op_database.sqlite3), shipped
+# as .tar.xz since they're static across build_dirs. Used as a fallback below
+# when a caller hasn't staged its own copy (e.g. a freshly tuned database).
+_MODULES_DATABASE = Path(__file__).resolve().parents[2] / 'modules' / 'database'
+
+def _extract_if_needed(fn: Path) -> None:
+    tarball = fn.parent / (fn.name + '.tar.xz')
+    if not fn.is_file() and tarball.is_file():
+        with tarfile.open(tarball, mode='r:xz') as tf:
+            tf.extractall(fn.parent)
 
 '''
 We don't really need a LazyTableView, if Lazy evaluation is needed, a
@@ -45,6 +58,11 @@ class Factory(object):
         self._conn.set_trace_callback(log) # Debug
         for schema, bn in self.SECONDARY_DATABASES.items():
             fn = path / bn
+            if not fn.is_file():
+                # Caller didn't stage its own copy (e.g. a freshly tuned
+                # database) -- fall back to the checked-in baseline.
+                fn = _MODULES_DATABASE / Path(bn).name
+                _extract_if_needed(fn)
             if fn.is_file():
                 log(lambda : f"ATTACH DATABASE '{fn.as_posix()}' AS {schema};")
                 self._conn.execute(f"ATTACH DATABASE '{fn.as_posix()}' AS {schema};")

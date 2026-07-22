@@ -24,7 +24,8 @@ def flash_disabled(f, *, gfx950_bad_hdims=()):
     The single functional-disable predicate shared by the fwd and bwd ATI
     descriptions. `gfx950_bad_hdims` is the per-kernel set of BLOCK_DMODEL values
     the gfx950 compiler has a known numerical error on (fwd: {16}; bwd: {48, 80});
-    everything else (causal+matrix-bias unsupported, gfx11 hdim>256) is common."""
+    everything else (causal+matrix-bias unsupported, gfx11 hdim>256, gfx1250
+    NPOT hdim, gfx1250 hdim>256) is common."""
     causal = f.choices.CAUSAL_TYPE
     hdim = f.choices.BLOCK_DMODEL
     bias_type = f.choices.BIAS_TYPE
@@ -33,6 +34,10 @@ def flash_disabled(f, *, gfx950_bad_hdims=()):
     if f.arch.startswith('gfx11') and hdim > 256:
         return True
     if f.arch == 'gfx950' and hdim in gfx950_bad_hdims:
+        return True
+    if f.arch == 'gfx1250' and hdim > 256:  # no accurate candidate found beyond this
+        return True
+    if f.arch == 'gfx1250' and hdim & (hdim - 1) != 0:  # NPOT head dims unsupported
         return True
     return False
 
@@ -62,6 +67,7 @@ class FlashKernel:
     LUT_FULL_SEQLEN_Q = [16,32,64,128,256,512,1024,2048,4096,8192]
     LUT_FULL_SEQLEN_K = [16,32,64,128,256,512,1024,2048,4096,8192]
     LUT_FULL_SEQLEN_NAVI = [16,32,64,128,256,512,1024,2048]
+    LUT_FULL_SEQLEN_TP = [64,256,2048]
 
     def is_functional_disabled(self, functional):
         if not hasattr(self, 'gen_autotune_configs'):  # only check acutal FA kernels
@@ -89,12 +95,16 @@ class FlashKernel:
             return True, [], _empty_generator()
         MI = (AOTRITON_ARCH_WARPSIZE[arch] == 64)
         Navi = (AOTRITON_ARCH_WARPSIZE[arch] == 32)
+        TECH_PREVIEW = (arch == 'gfx1250')
         LUT_TENSOR_SIZE = (len(self.LUT_FULL_SEQLEN_Q), len(self.LUT_FULL_SEQLEN_K))
         LUT_TENSOR_SIZE_NAVI = (len(self.LUT_FULL_SEQLEN_NAVI), len(self.LUT_FULL_SEQLEN_NAVI))
+        LUT_TENSOR_SIZE_TP = (len(self.LUT_FULL_SEQLEN_TP), len(self.LUT_FULL_SEQLEN_TP))
         log(lambda : f'{lut_tensor.shape=} ==? {LUT_TENSOR_SIZE=}')
         all_pos = (lut_tensor >= 0).all()
         shape = lut_tensor.shape[1:]
-        if MI:
+        if TECH_PREVIEW:
+            shape_match = (shape == LUT_TENSOR_SIZE or shape == LUT_TENSOR_SIZE_NAVI or shape == LUT_TENSOR_SIZE_TP)
+        elif MI:
             shape_match = shape == LUT_TENSOR_SIZE
         elif Navi:
             shape_match = (shape == LUT_TENSOR_SIZE or shape == LUT_TENSOR_SIZE_NAVI)
@@ -112,7 +122,11 @@ class FlashKernel:
             else:
                 errors.append(f"Unexpected {shape=}, Expecting {LUT_TENSOR_SIZE}")
         # Pick the seqlen lists that match the actual lut_tensor shape for this arch.
-        if Navi and lut_tensor.shape[1:] == LUT_TENSOR_SIZE_NAVI:
+        if TECH_PREVIEW and lut_tensor.shape[1:] == LUT_TENSOR_SIZE_TP:
+            lut_full_seqlen_q = self.LUT_FULL_SEQLEN_TP
+            lut_full_seqlen_k = self.LUT_FULL_SEQLEN_TP
+            expected_size = LUT_TENSOR_SIZE_TP
+        elif Navi and lut_tensor.shape[1:] == LUT_TENSOR_SIZE_NAVI:
             lut_full_seqlen_q = self.LUT_FULL_SEQLEN_NAVI
             lut_full_seqlen_k = self.LUT_FULL_SEQLEN_NAVI
             expected_size = LUT_TENSOR_SIZE_NAVI

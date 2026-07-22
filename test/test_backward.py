@@ -2,6 +2,7 @@
 # Copyright © 2023-2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
+import torch  # Must import this first otherwise torch.cuda.get_device_properties(0).gcnArchName fail to work.
 from pyaotriton import get_name_suffix
 assert get_name_suffix() != "tRiToN_tEsTeR", ("AOTriton is compiled with suffix 'tRiToN_tEsTeR'. "
                                               "This is a signature for AOTriton built to test Triton compiler, "

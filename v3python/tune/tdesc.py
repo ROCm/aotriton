@@ -147,7 +147,7 @@ class TuningDescription(ABC):
         return self.generate_entries_from_choices()
 
     @abstractmethod
-    def list_impls(self, entry) -> list[str]:
+    def list_impls(self, entry, arch: str | None = None) -> list[str]:
         pass
 
     @abstractmethod

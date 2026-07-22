@@ -1,0 +1,8 @@
+venvs:
+  gfx1250:
+    hash: 18f97b6f48ff6127125ece8ee21ad91967c19cd4
+    origin: https://github.com/triton-lang/triton
+rules:
+  - rmatches:  # Regex Matching
+      arch: gfx125.
+    venv: gfx1250

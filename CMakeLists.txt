@@ -8,7 +8,7 @@ project(AOTriton CXX C ASM)
 # Version numbers
 set(AOTRITON_VERSION_MAJOR_INT 0)
 set(AOTRITON_VERSION_MINOR_INT 13)
-set(AOTRITON_VERSION_PATCH_INT 1)
+set(AOTRITON_VERSION_PATCH_INT 50)
 # Must have integer-suffix, other 0 generates
 # /* #undef AOTRITON_VERSION_MAJOR */
 # in config.h
@@ -96,8 +96,17 @@ if(AOTRITON_MIN_PYTHON VERSION_LESS "3.10")
 endif()
 
 find_package(Python3 ${AOTRITON_MIN_PYTHON} COMPONENTS Interpreter REQUIRED)
-# Must set this otherwise hip-config-amd.cmake cannot find AMDDeviceLibs
-list(APPEND CMAKE_PREFIX_PATH "/opt/rocm")
+# Must set this otherwise hip-config-amd.cmake cannot find AMDDeviceLibs.
+# Prefer ROCM_PATH (e.g. theRock SDK from `rocm-sdk path --root`) when set, so
+# find_package(hip) does not pick up a stale /opt/rocm install.
+if(DEFINED ENV{ROCM_PATH})
+  list(APPEND CMAKE_PREFIX_PATH "$ENV{ROCM_PATH}/lib/cmake")
+else()
+  message(WARNING "[AOTriton] ROCM_PATH is not set, falling back to /opt/rocm. "
+                  "Set ROCM_PATH (e.g. `export ROCM_PATH=$(rocm-sdk path --root)`) "
+                  "to select a specific ROCm/theRock installation.")
+  list(APPEND CMAKE_PREFIX_PATH "/opt/rocm")
+endif()
 find_package(hip REQUIRED)
 
 set(VENV_DIR "${CMAKE_CURRENT_BINARY_DIR}/venv" CACHE STRING "Virtual Environment Directory")
@@ -124,6 +133,9 @@ if(AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
   cmake_path(IS_ABSOLUTE AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE altwheel_yaml_is_absolute)
   if(NOT ${altwheel_yaml_is_absolute})
     message(FATAL_ERROR "AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE must be absolute path, but configured as ${AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE}")
+  endif()
+  if(AOTRITON_USE_LOCAL_TRITON_WHEEL)
+    message(FATAL_ERROR "AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE and AOTRITON_USE_LOCAL_TRITON_WHEEL are mutually exclusive -- the altwheel config's own .venvs.default entry supplies the default Triton wheel.")
   endif()
 endif()
 
@@ -239,7 +251,9 @@ execute_process(COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_
 execute_process(COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_BIN_PYTHON}" -m pip install "${CMAKE_CURRENT_LIST_DIR}"
   COMMAND_ERROR_IS_FATAL ANY)
 
-set(ALL_TRITON_SOS "")
+set(ALL_TRITON_SOS "")       # every installed libtriton .so, for the content stamp
+set(TRITON_SYNC_TARGETS "")  # checksum-gated wheel-sync targets (run every build)
+set(TRITON_DEP_SOS "")       # .so paths produced by an OUTPUT command (source build)
 # Triton is needed ONLY to compile the GPU kernel images: the ATI code generator is
 # triton-free (@ati.source AST-parses the kernel sources, see
 # agent-plans/ati_triton-free_exec0.md), so noimage builds skip triton entirely.
@@ -257,7 +271,15 @@ elseif(AOTRITON_INHERIT_SYSTEM_SITE_TRITON)
 
   if(TRITON_CHECK_RESULT EQUAL 0)
     message(STATUS "[AOTriton] ${TRITON_OUTPUT}")
-    add_custom_target(aotriton_venv_triton ALL)
+    # Resolve the real .so so the content stamp can track an externally-managed
+    # Triton.  We do NOT install anything here; the user owns this install.
+    execute_process(
+      COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_BIN_PYTHON}" -c "import importlib.util as u; s=u.find_spec('triton._C.libtriton'); print(s.origin if s and s.origin else '', end='')"
+      OUTPUT_VARIABLE INHERIT_TRITON_SO
+    )
+    if(INHERIT_TRITON_SO)
+      list(APPEND ALL_TRITON_SOS "${INHERIT_TRITON_SO}")
+    endif()
   else()
     message(FATAL_ERROR "[AOTriton] AOTRITON_INHERIT_SYSTEM_SITE_TRITON is enabled but triton is not available in the virtual environment. Please install triton or disable this option. ${TRITON_OUTPUT}")
   endif()
@@ -270,10 +292,54 @@ else()
   set(AOTRITON_TRITON_SO "${VENV_SITE}/${VENV_REL_TRITON}")
 
   if(AOTRITON_USE_LOCAL_TRITON_WHEEL)
-    add_custom_command(OUTPUT "${AOTRITON_TRITON_SO}"
-      COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_BIN_PYTHON}" -m pip install ${AOTRITON_USE_LOCAL_TRITON_WHEEL}
+    # Checksum-gated wheel sync (see python/track_triton.py): runs EVERY build,
+    # but only reinstalls when the .so embedded in the wheel differs from the
+    # installed one.  This lets a reused build dir pick up a newer wheel (which
+    # a plain OUTPUT-file rule would skip), while avoiding needless reinstalls.
+    add_custom_target(aotriton_sync_triton ALL
+      BYPRODUCTS "${AOTRITON_TRITON_SO}"
+      COMMAND "${VENV_BIN_PYTHON}" -m aotriton.track_triton sync
+        --wheel "${AOTRITON_USE_LOCAL_TRITON_WHEEL}"
+        --pip_python "${VENV_BIN_PYTHON}"
+        --virtual_env "${VENV_DIR}"
+        --installed_so "${AOTRITON_TRITON_SO}"
+      COMMENT "Syncing Triton from ${AOTRITON_USE_LOCAL_TRITON_WHEEL}"
     )
+    list(APPEND TRITON_SYNC_TARGETS aotriton_sync_triton)
+  elseif(AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
+    # The main venv's wheel comes from the altwheel config's own
+    # .venvs.default entry (mutually exclusive with AOTRITON_USE_LOCAL_TRITON_WHEEL,
+    # enforced above) -- install it here instead of falling back to
+    # third_party/triton/, which callers using altwheel are not required to
+    # have checked out at all.
+    # .venvs.default is only guaranteed to exist in a RESOLVED altwheel yaml
+    # (see .ci/common-altwheel.sh's altwheel_resolve_config) -- an arch-only
+    # source yaml (e.g. .ci/0.13.50b.yaml) has no default key, so fail with a
+    # clear message instead of a bare KeyError if one is passed here directly.
+    execute_process(
+      COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_BIN_PYTHON}" -c
+      "import yaml,sys; f = open(sys.argv[1]); d = yaml.load(f, Loader=yaml.Loader); v = d.get('venvs', {}); sys.exit('AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE has no venvs.default -- pass a yaml resolved via .ci/common-altwheel.sh\\'s altwheel_resolve_config') if 'default' not in v else print(v['default'])"
+      "${AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE}"
+      OUTPUT_VARIABLE AOTRITON_ALT_DEFAULT_WHEEL
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+      COMMAND_ERROR_IS_FATAL ANY
+    )
+    # Checksum-gated wheel sync, same mechanism as AOTRITON_USE_LOCAL_TRITON_WHEEL.
+    add_custom_target(aotriton_sync_triton ALL
+      BYPRODUCTS "${AOTRITON_TRITON_SO}"
+      COMMAND "${VENV_BIN_PYTHON}" -m aotriton.track_triton sync
+        --wheel "${AOTRITON_ALT_DEFAULT_WHEEL}"
+        --pip_python "${VENV_BIN_PYTHON}"
+        --virtual_env "${VENV_DIR}"
+        --installed_so "${AOTRITON_TRITON_SO}"
+      COMMENT "Syncing Triton from ${AOTRITON_ALT_DEFAULT_WHEEL}"
+    )
+    list(APPEND TRITON_SYNC_TARGETS aotriton_sync_triton)
   else()
+    # ---- Install Triton from source (third_party/triton). Intentionally left
+    # as a plain OUTPUT rule: building Triton as part of the AOTriton build is
+    # no longer recommended, and the checksum gate does not apply to a tree we
+    # compile in place. ----
     # Check if pip is available at configure time
     execute_process(
       COMMAND "${VENV_BIN_PYTHON}" -m pip --version
@@ -292,6 +358,7 @@ else()
         WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/third_party/triton/"
       )
     endif()
+    list(APPEND TRITON_DEP_SOS "${AOTRITON_TRITON_SO}")
   endif()
   LIST(APPEND ALL_TRITON_SOS "${AOTRITON_TRITON_SO}")
 endif()
@@ -314,17 +381,54 @@ if(NOT AOTRITON_NOIMAGE_MODE AND AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
     execute_process(COMMAND "${Python3_EXECUTABLE}" -m venv "${ALT_VENV_DIR}")
     set(ALT_VENV_BIN_PYTHON "${ALT_VENV_DIR}/${VENV_REL_PYTHON}")
     execute_process(COMMAND "${ALT_VENV_BIN_PYTHON}" -m pip install -r "${CMAKE_CURRENT_LIST_DIR}/requirements.txt")
-    set(AOTRITON_TRITON_SO "${ALT_VENV_DIR}/${VENV_REL_TRITON}")
-    add_custom_command(OUTPUT "${AOTRITON_TRITON_SO}"
-      COMMAND "${ALT_VENV_BIN_PYTHON}" -m pip install ${WHEEL}
+    # Resolve the alt venv's real site-packages so the .so path (and thus the
+    # checksum gate) is accurate.
+    execute_process(
+      COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${ALT_VENV_DIR} "${ALT_VENV_BIN_PYTHON}" -c "import site; print(site.getsitepackages()[0], end='')"
+      OUTPUT_VARIABLE ALT_VENV_SITE
     )
+    set(AOTRITON_TRITON_SO "${ALT_VENV_SITE}/${VENV_REL_TRITON}")
+    # Checksum-gated sync, same as the main wheel path. The tool runs under the
+    # main venv python (which has the aotriton package) but installs into the
+    # alt venv via --pip_python / --virtual_env.
+    add_custom_target(aotriton_sync_triton_${ALT_VENV_NAME} ALL
+      BYPRODUCTS "${AOTRITON_TRITON_SO}"
+      COMMAND "${VENV_BIN_PYTHON}" -m aotriton.track_triton sync
+        --wheel "${WHEEL}"
+        --pip_python "${ALT_VENV_BIN_PYTHON}"
+        --virtual_env "${ALT_VENV_DIR}"
+        --installed_so "${AOTRITON_TRITON_SO}"
+      COMMENT "Syncing Triton for alt venv ${ALT_VENV_NAME} from ${WHEEL}"
+    )
+    list(APPEND TRITON_SYNC_TARGETS aotriton_sync_triton_${ALT_VENV_NAME})
     LIST(APPEND ALL_TRITON_SOS "${AOTRITON_TRITON_SO}")
   endwhile(ALT_VENVS)
 endif(NOT AOTRITON_NOIMAGE_MODE AND AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
 
-if(ALL_TRITON_SOS)
-  add_custom_target(aotriton_venv_triton ALL DEPENDS "${ALL_TRITON_SOS}")
-endif(ALL_TRITON_SOS)
+# "Triton is ready" anchor: depends on the source-built .so (OUTPUT rule) and on
+# the checksum-gated wheel-sync targets.
+add_custom_target(aotriton_venv_triton ALL DEPENDS ${TRITON_DEP_SOS})
+if(TRITON_SYNC_TARGETS)
+  add_dependencies(aotriton_venv_triton ${TRITON_SYNC_TARGETS})
+endif()
+
+# Content stamp for Triton: aotriton.track_triton stamp runs on EVERY build but
+# rewrites the stamp file ONLY when the SHA-256 of the installed .so(s) changes.
+# SIGNATURE_FILE and the HSACO commands depend on this stamp (declared here as a
+# BYPRODUCT so the dependency resolves across the v3src/ subdirectory), so they
+# rebuild exactly when the Triton binary content changes -- not every build, and
+# not never.
+if(NOT AOTRITON_NOIMAGE_MODE)
+  set(TRITON_SO_STAMP "${CMAKE_BINARY_DIR}/triton_so.sha256.stamp")
+  add_custom_target(aotriton_triton_stamp ALL
+    BYPRODUCTS "${TRITON_SO_STAMP}"
+    COMMAND "${VENV_BIN_PYTHON}" -m aotriton.track_triton stamp
+      --stamp "${TRITON_SO_STAMP}"
+      --installed_so ${ALL_TRITON_SOS}
+    COMMENT "Updating Triton content stamp"
+  )
+  add_dependencies(aotriton_triton_stamp aotriton_venv_triton)
+endif()
 
 add_subdirectory(v3src)
 

@@ -123,12 +123,20 @@ class Flash(TuningDescription):
         if arch.startswith('gfx11') and (entry.seqlen_q > 2048 or entry.seqlen_k > 2048):
             return False, (f'Insufficient number of gfx1100 GPUs available for tuning arch {arch}: '
                            f'only seqlen_q/k <= 2048 entries are tuned')
+        if arch == 'gfx1250' and entry.hdim > 256:
+            return False, (f'arch {arch} does not support hdim={entry.hdim} '
+                           f'(no shipped candidate is numerically accurate at hdim > 256)')
+        if arch == 'gfx1250' and entry.hdim & (entry.hdim - 1) != 0:
+            return False, (f'arch {arch} does not support hdim={entry.hdim} '
+                           f'(NPOT head dims are disabled at compile time; see flash_disabled)')
         return True, ''
 
-    def list_impls(self, entry: FlashEntry):
+    def list_impls(self, entry: FlashEntry, arch: str | None = None):
         if False:  # Debugging, fwd only tuning. Keep it for selective tuning
             return ['attn_fwd']
         if entry.hdim > 224:
+            return ['attn_fwd', 'bwd_kernel_dk_dv', 'bwd_kernel_dq']
+        if arch == 'gfx1250':  # No bwd_kernel_fuse for gfx1250
             return ['attn_fwd', 'bwd_kernel_dk_dv', 'bwd_kernel_dq']
         return ['attn_fwd', 'bwd_kernel_dk_dv', 'bwd_kernel_dq', 'bwd_kernel_fuse']
 
@@ -273,6 +281,17 @@ class Flash(TuningDescription):
 
         bshd = dataclasses.replace(irregular_seqlen, storage_flip=(1,2))
         yield self._write_ref(bshd, data_root, '05_bshd')
+
+        binning_seqlen = dataclasses.replace(im,
+                                             seqlen_q=2 * im.seqlen_q,
+                                             seqlen_k=2 * im.seqlen_k)
+        yield self._write_ref(binning_seqlen, data_root, '06_binning_seqlen')
+
+        binning_irregular_both = dataclasses.replace(im,
+                                                     seqlen_q=2 * im.seqlen_q - 37,
+                                                     seqlen_k=2 * im.seqlen_k - 37,
+                                                     hdim=im.hdim - 8)
+        yield self._write_ref(binning_irregular_both, data_root, '07_binning_irregular_both')
         # TODO: varlen tests
 
     def _write_ref(self,

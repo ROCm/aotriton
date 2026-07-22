@@ -196,16 +196,29 @@ class SdpaReference(KFTDesc):
     def direct_call(self, direct_inputs, extargs):
         im, inputs = direct_inputs
         assert extargs is None
-        q = inputs.q
-        k = inputs.k
-        v = inputs.v
-        b = inputs.b
+        gpu = default_device_string()
+        # The golden reference (fwd + bwd) is computed on CPU for numerical
+        # correctness, regardless of the device the rest of the pipeline uses.
+        # These CPU copies are the leaves whose autograd graph and .grad we rely
+        # on below; inputs.q/k/v/b stay on GPU for the returned SdpaBidiInputs.
+        q = inputs.q.to('cpu')
+        k = inputs.k.to('cpu')
+        v = inputs.v.to('cpu')
+        b = inputs.b.to('cpu') if inputs.b is not None else None
+        dout = inputs.dout.to('cpu')
         hp_dtype = torch.float64 if q.dtype == torch.float32 else torch.float32
         def clone_hp(t):
             if t is None:
                 return None
             t.requires_grad_()
             return t.clone().detach().to(dtype=hp_dtype).requires_grad_()
+        def to_gpu(pair):
+            # adiff2/strip_grad_l1 return a (tensor, error) tuple (or None);
+            # move only the tensor back to GPU for comparison against GPU outputs.
+            if pair is None:
+                return None
+            tensor, error = pair
+            return (tensor.to(gpu), error)
         hpq = clone_hp(q)
         hpk = clone_hp(k)
         hpv = clone_hp(v)
@@ -226,7 +239,9 @@ class SdpaReference(KFTDesc):
                                               view.offset1,
                                               inputs.offset2,
                                               Stream())
-            dropout_mask = encoded_softmax > 0.0
+            # encoded_softmax comes from a GPU kernel; move the mask to CPU to
+            # match the CPU q/k/v/b fed into sdpa_math below.
+            dropout_mask = (encoded_softmax > 0.0).to('cpu')
         else:
             dropout_mask = None
         out, _ = sdpa_math(q,
@@ -255,20 +270,21 @@ class SdpaReference(KFTDesc):
                                    is_causal=is_causal,
                                    enable_gqa=enable_gqa)
         # print(f"{logsumexp.shape=}")
-        delta = sdpa_odo(hpout.to(torch.float32), inputs.dout.to(torch.float32))
-        inputs.delta = delta.reshape(delta.shape[0] * delta.shape[1], delta.shape[2])
-        inputs.out = hpout.to(inputs.q.dtype)
-        inputs.logsumexp = logsumexp.to(torch.float32)
+        delta = sdpa_odo(hpout.to(torch.float32), dout.to(torch.float32))
+        # These CPU results are stored back for comparison against GPU outputs.
+        inputs.delta = delta.reshape(delta.shape[0] * delta.shape[1], delta.shape[2]).to(gpu)
+        inputs.out = hpout.to(inputs.q.dtype).to(gpu)
+        inputs.logsumexp = logsumexp.to(torch.float32).to(gpu)
         if False:  # Debugging, keep it for selective tuning
             outputs = SdpaGoldenOutputs(out=adiff2(hpout, out), dq=None, dk=None, dv=None, db=None)
             return SdpaBidiInputs(**detach_member_tensors(inputs)), SdpaGoldenOutputs(**detach_member_tensors(outputs))
-        out.backward(inputs.dout)
-        hpout.backward(inputs.dout.to(dtype=hpout.dtype))
-        outputs = SdpaGoldenOutputs(out=adiff2(hpout, out),
-                                    dq=strip_grad_l1(hpq, q),
-                                    dk=strip_grad_l1(hpk, k),
-                                    dv=strip_grad_l1(hpv, v),
-                                    db=strip_grad_l1(hpb, b))
+        out.backward(dout)
+        hpout.backward(dout.to(dtype=hpout.dtype))
+        outputs = SdpaGoldenOutputs(out=to_gpu(adiff2(hpout, out)),
+                                    dq=to_gpu(strip_grad_l1(hpq, q)),
+                                    dk=to_gpu(strip_grad_l1(hpk, k)),
+                                    dv=to_gpu(strip_grad_l1(hpv, v)),
+                                    db=to_gpu(strip_grad_l1(hpb, b)))
         return SdpaBidiInputs(**detach_member_tensors(inputs)), SdpaGoldenOutputs(**detach_member_tensors(outputs))
 
     def compare(self, outputs, refs) -> list[float]:    # L1 error

@@ -55,6 +55,7 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+. "$SCRIPT_DIR/../lib/require_aotriton_pkg.sh"
 
 # Derive GPU targets from the gpu column in the centralized database.
 # This avoids any config.rc dependency — the database already knows
@@ -71,40 +72,45 @@ if [ -n "$GPUS" ]; then
     read -ra GPU_ARGS <<< "--target_gpus $GPUS"
 fi
 
-# Persistent build directory — survives across runs so the op_database
-# only needs to be extracted once.
+# Persistent build directory.
 #   <workdir>/build/sancheck/database/tuning_database.sqlite3  (symlink)
-#   <workdir>/build/sancheck/database/op_database.sqlite3      (extracted once, or copied from scratch/)
+#   <workdir>/build/sancheck/database/op_database.sqlite3      (op mode only; kernel mode
+#     falls back to modules/database/'s checked-in baseline via python/database/sqlite.py)
 TMPDIR_BUILD="$WORKDIR/build/sancheck"
 mkdir -p "$TMPDIR_BUILD/database"
 
 # tuning_database.sqlite3: always re-symlink in case the path changed.
 ln -sf "$(realpath "$CENTRALDB")" "$TMPDIR_BUILD/database/tuning_database.sqlite3"
 
-OP_TARBALL="$REPO_ROOT/v3python/database/op_database.sqlite3.tar.xz"
-if [ ! -f "$OP_TARBALL" ]; then
-    echo "Error: op database tarball not found: $OP_TARBALL" >&2
-    exit 1
-fi
-
-# op_database.sqlite3: use freshly generated file in op mode; extract from tarball otherwise.
+# op_database.sqlite3: only stage a fresh copy in op mode (this takes
+# precedence over the checked-in baseline). Kernel mode needs nothing here.
 if [ "$TUNING_MODE" = "op" ]; then
     cp "$WORKDIR/scratch/op_database.sqlite3" "$TMPDIR_BUILD/database/op_database.sqlite3"
-elif [ ! -f "$TMPDIR_BUILD/database/op_database.sqlite3" ]; then
-    tar -xJf "$OP_TARBALL" -C "$TMPDIR_BUILD/database"
 fi
 
 REPORT="$WORKDIR/scratch/dbreport.txt"
 mkdir -p "$WORKDIR/scratch"
 echo "Sanity check report: $REPORT"
 
+# generate.py has no --tuning_mode concept of its own: without --selective it
+# walks every family/codegen_module (flash's kernels AND flash_op's operators)
+# in one pass. Scope to just the one being checked via unique_path's
+# <family>/<codegen_module>/<name> convention.
+# TODO: extend when additional families (e.g. gemm) are added.
+if [ "$TUNING_MODE" = "op" ]; then
+    SELECTIVE_ARGS=(--selective 'flash/op/*')
+else
+    SELECTIVE_ARGS=(--selective 'flash/triton/*')
+fi
+
 # Diagnostic output goes to stdout (bare print() calls, no logging framework).
-python3 -m v3python.generate \
+python3 -m aotriton.generate \
     --build_dir "$TMPDIR_BUILD" \
     --root_dir "$REPO_ROOT" \
     --lut_sanity_check \
     --sanity_check_only \
     "${GPU_ARGS[@]}" \
+    "${SELECTIVE_ARGS[@]}" \
     "${EXTRA_ARGS[@]}" > "$REPORT"
 
 echo "Done. Report written to $REPORT"

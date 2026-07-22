@@ -50,26 +50,18 @@ if [ -z "$CURRENT_BRANCH" ]; then
   exit 1
 fi
 
-# Check if current branch is upstream/main
-IS_UPSTREAM_MAIN=false
-if [ "$CURRENT_BRANCH" = "main" ] && \
-   git -C "$AOTRITON_ROOT" rev-parse --verify upstream/main >/dev/null 2>&1 && \
-   [ "$(git -C "$AOTRITON_ROOT" rev-parse HEAD)" = "$(git -C "$AOTRITON_ROOT" rev-parse upstream/main)" ]; then
-  IS_UPSTREAM_MAIN=true
-  CLONE_DEPTH=3
+# Count commits on HEAD not already reachable from upstream/main or any
+# upstream/release/* branch. This is the branch's distance from whichever
+# of those bases it was forked from (main or a release branch), computed
+# in one shot instead of testing each candidate base individually.
+UNIQUE_COMMITS=$(git -C "$AOTRITON_ROOT" rev-list --count HEAD \
+  --not upstream/main --remotes='upstream/release/*')
+if [ "$UNIQUE_COMMITS" = "$(git -C "$AOTRITON_ROOT" rev-list --count HEAD)" ]; then
+  echo "Error: branch shares no history with upstream/main or upstream/release/*" >&2
+  echo "Current branch: $CURRENT_BRANCH" >&2
+  exit 1
 fi
-
-# If not upstream/main, verify upstream/main is in history
-if [ "$IS_UPSTREAM_MAIN" = false ]; then
-  if ! git -C "$AOTRITON_ROOT" merge-base --is-ancestor upstream/main HEAD 2>/dev/null; then
-    echo "Error: upstream/main is not in current branch's history" >&2
-    echo "Current branch: $CURRENT_BRANCH" >&2
-    exit 1
-  fi
-  # Calculate depth from upstream/main to HEAD
-  CLONE_DEPTH=$(git -C "$AOTRITON_ROOT" rev-list --count upstream/main..HEAD)
-  CLONE_DEPTH=$((CLONE_DEPTH + 1))
-fi
+CLONE_DEPTH=$((UNIQUE_COMMITS + 3))
 
 # Try to update existing clone or create new one
 if [ -d "$AOTRITON_SRC/.git" ]; then

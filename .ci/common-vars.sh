@@ -27,6 +27,25 @@ add_torch_ldconfig() {
   export LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:${torch_lib}
 }
 
+# theRock (rocm_sdk) ships some libs (e.g. liblzma, openblas) as private,
+# renamed copies under lib/rocm_sysdeps/lib and lib/host-math/lib that RPATH
+# doesn't always resolve -- an acknowledged upstream packaging bug (see ROCm
+# Core SDK 7.12.0 release notes) whose sanctioned workaround is adding those
+# dirs to LD_LIBRARY_PATH. No-op when rocm-sdk isn't installed (e.g. classical
+# ROCm).
+add_rocm_sdk_ldconfig() {
+  if ! command -v rocm-sdk &>/dev/null; then
+    return
+  fi
+  local rocm_path
+  rocm_path=$(rocm-sdk path --root 2>/dev/null) || return
+  for d in rocm_sysdeps host-math; do
+    if [ -d "${rocm_path}/lib/${d}/lib" ]; then
+      export LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:${rocm_path}/lib/${d}/lib"
+    fi
+  done
+}
+
 llvm_hash_sha1=$(get_llvm_hash)
 if [ -z "${llvm_hash_sha1}" ]; then
   echo "common-vars: llvm_hash is unset due to missing third_party/triton/cmake/llvm-hash.txt. Need git clone --recursive" >&2

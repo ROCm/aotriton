@@ -16,8 +16,11 @@ from dataclasses import dataclass
 
 import numpy as np
 
+import itertools
+
 import aotriton.template_instantiation as ati
-from ._common import block_dmodel_values
+from aotriton.gpu_targets import AOTRITON_ARCH_WARPSIZE
+from ._common import block_dmodel_values, check_value
 
 
 def _block_dmodel_values_capped():
@@ -33,9 +36,41 @@ class BwdKernelFusePerf:
 
 
 def gen_autotune_configs(f):
-    """Placeholder generator (one valid config); the DB path does not use it."""
-    yield ati.tune.Config({'BLOCK_M': 16, 'BLOCK_N': 16, 'waves_per_eu': 1},
-                          num_warps=4, num_stages=1)
+    """Per-functional performance config generator (ported from 0.12b). Feeds the
+    tuning build (AOTRITON_BUILD_FOR_TUNING); the DB path does not use it."""
+    arch = f.arch
+    dtype = check_value(f, ['Q'])
+    WAVE64 = AOTRITON_ARCH_WARPSIZE[arch] == 64
+    WAVE32 = AOTRITON_ARCH_WARPSIZE[arch] == 32
+    # TODO: right sizes for fp32?
+    BLOCK_SIZES = [16, 32, 64] if dtype != '*fp32:16' else [16, 32]
+    WAVES_PER_EU = [1, 2, 3, 4]
+    NUM_WARPS = [4, 8] if WAVE32 else [2, 4]
+    NUM_STAGES = [1]
+    if arch == 'gfx1250':
+        # aiter gfx1250-MHA-DEFAULT.json's waves_per_eu=2 crashes at BLOCK_M=BLOCK_N=64
+        # (3 task_ids) and at 32x32 (5 crashing + 1 NaN task_id) per the tuning DB
+        # (~/wkdir.aiday); waves_per_eu=1 at the same block/warp settings is clean.
+        kw = {'BLOCK_M': 64, 'BLOCK_N': 64, 'waves_per_eu': 1}
+        yield ati.tune.Config(kw, num_stages=1, num_warps=4)
+        kw = {'BLOCK_M': 32, 'BLOCK_N': 32, 'waves_per_eu': 1}
+        yield ati.tune.Config(kw, num_stages=1, num_warps=4)
+        kw = {'BLOCK_M': 16, 'BLOCK_N': 16, 'waves_per_eu': 2}
+        yield ati.tune.Config(kw, num_stages=1, num_warps=4)
+        return
+    for M, N, waves, warps, stages in itertools.product(BLOCK_SIZES,
+                                                        BLOCK_SIZES,
+                                                        WAVES_PER_EU,
+                                                        NUM_WARPS,
+                                                        NUM_STAGES):
+        if M < N:
+            continue  # deduplicate
+        if WAVE64 and M == 64 and N == 64 and warps == 4:
+            continue  # No optimal kernel according to 0.8b tuning db
+        if WAVE32 and M == 32 and N == 32 and warps != 4:
+            continue  # Timeout
+        kw = {'BLOCK_M': M, 'BLOCK_N': N, 'waves_per_eu': waves}
+        yield ati.tune.Config(kw, num_stages=stages, num_warps=warps)
 
 
 @ati.start

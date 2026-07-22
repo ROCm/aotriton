@@ -149,6 +149,10 @@ COMMAND_ERROR_IS_FATAL ANY
 # Compile HSACO Kernels
 if(NOT AOTRITON_NOIMAGE_MODE)
   set(SIGNATURE_FILE "${AOTRITON_V2_BUILD_DIR}/__signature__.json")
+  set(SIGNATURE_ALT_VENV_OPTION "")
+  if(AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
+    set(SIGNATURE_ALT_VENV_OPTION --alt_venv_config "${AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE}")
+  endif()
   add_custom_command(OUTPUT "${SIGNATURE_FILE}"
     COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
     "${VENV_BIN_PYTHON}"
@@ -158,8 +162,10 @@ if(NOT AOTRITON_NOIMAGE_MODE)
     --git_sha1 ${AOTRITON_GIT_SHA1}
     --git_treesha1 ${AOTRITON_GIT_TREESHA1}
     --target_arch ${AOTRITON_TARGET_ARCH}
+    ${SIGNATURE_ALT_VENV_OPTION}
     --output_file "${SIGNATURE_FILE}"
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
+    DEPENDS "${TRITON_SO_STAMP}"
   )
 
   message("Bare.compile: ${AOTRITON_V2_BUILD_DIR}/Bare.compile")
@@ -202,7 +208,7 @@ if(NOT AOTRITON_NOIMAGE_MODE)
       "--signature" "${SIG}"
       "--timeout" "${AOTRITON_GPU_BUILD_TIMEOUT}"
       ${HSACO_COMPILE_OPTION}
-      DEPENDS aotriton_venv_triton
+      DEPENDS "${TRITON_SO_STAMP}"
     )
     # DO NOT USE list(APPEND). It is quadratic growth
     file(APPEND "${AOTRITON_HSACO_RECORD}" "${HSACO}" "\n")
