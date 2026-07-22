@@ -58,11 +58,16 @@ bash "$AOTRITON_ROOT/.ci/build_triton_wheels.sh" \
   "${HASHES[@]}"
 
 # Resolve hashes -> wheel paths for build_arch.sh/testbld to pass as
-# -DAOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE. .ci/common-altwheel.sh's
-# altwheel_resolve_config is the single shared implementation (also used by
-# .ci/releasesuite-git-head.sh) -- host and container dir are the same path
-# here, since .tune's build runs against this path directly (no docker
-# translation, unlike .ci's release pipeline).
+# -DAOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE, via .ci/common-altwheel.sh's
+# altwheel_resolve_config (also used by .ci/releasesuite-git-head.sh). This
+# script runs on the HOST (remotebld's sibling pre-build step, before the
+# testbld/libbld container launches) -- $WORKDIR is the host path, used to
+# actually find the built wheels here. But the resolved yaml is read later
+# INSIDE the worker container, where remotebld always mounts the same
+# workdir at the fixed path /wkdir (see remotebld's --mount target=/wkdir,
+# identical across all 4 of its branches) -- so the wheel paths written
+# into the yaml must use /wkdir, not $WORKDIR, or pip inside the container
+# looks for a file that only exists at that path on the host.
 if [ -n "$ALTWHEEL_YAML" ]; then
   if ! command -v yq &> /dev/null; then
     echo "Error: 'yq' is required to resolve altwheel YAML $ALTWHEEL_YAML (dnf install yq / snap install yq)" >&2
@@ -74,7 +79,7 @@ if [ -n "$ALTWHEEL_YAML" ]; then
 
   RESOLVED_YAML="$WORKDIR/scratch/triton/resolved_altwheel.yaml"
   cp "$ALTWHEEL_YAML" "$RESOLVED_YAML"
-  altwheel_resolve_config "$RESOLVED_YAML" "$WORKDIR/scratch/triton" "$WORKDIR/scratch/triton" "${HASHES[0]}"
+  altwheel_resolve_config "$RESOLVED_YAML" "$WORKDIR/scratch/triton" "/wkdir/scratch/triton" "${HASHES[0]}"
 
   echo "Resolved altwheel config: $RESOLVED_YAML"
 fi
