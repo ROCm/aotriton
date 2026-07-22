@@ -19,15 +19,14 @@ if [ -z "$AOTRITON_SRC_DIR" ]; then
   exit 1
 fi
 
-# Each venvs.* entry is either a bare hash string (old syntax) or a
-# {hash: ..., origin: ...} map (new syntax, for a hash living in a different
-# Triton origin than TRITON_GIT_ORIGIN); try/catch handles indexing a
-# scalar with .hash cleanly across both.
+SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
+# shellcheck disable=SC1091
+. "${SCRIPT_DIR}/common-altwheel.sh"
 
 # .venvs.default overrides the submodule-pinned commit if set.
 DEFAULT_HASH=""
 if [[ -n "${ALTWHEEL_YAML}" ]]; then
-  DEFAULT_HASH=$(yq -r '(try .venvs.default.hash catch null) // .venvs.default // ""' "${ALTWHEEL_YAML}")
+  DEFAULT_HASH=$(altwheel_venv_hash "${ALTWHEEL_YAML}" ".venvs.default")
 fi
 if [[ -z "${DEFAULT_HASH}" ]]; then
   DEFAULT_HASH=$(git -C "${AOTRITON_SRC_DIR}" rev-parse HEAD:third_party/triton)
@@ -36,5 +35,8 @@ fi
 echo "${DEFAULT_HASH}"
 
 if [[ -n "${ALTWHEEL_YAML}" ]]; then
-  yq -r '.venvs | to_entries | .[] | select(.key != "default") | ((try .value.hash catch null) // .value)' "${ALTWHEEL_YAML}"
+  for key in $(yq -r '.venvs | keys | .[]' "${ALTWHEEL_YAML}"); do
+    [ "$key" = "default" ] && continue
+    altwheel_venv_hash "${ALTWHEEL_YAML}" ".venvs.${key}"
+  done
 fi

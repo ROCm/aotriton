@@ -37,6 +37,7 @@ fi
 
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 . "${SCRIPT_DIR}/common-git-cache.sh"
+. "${SCRIPT_DIR}/common-altwheel.sh"
 BASE_DOCKER_IMAGE="aotriton:base"
 if [[ -n "${PYVER}" ]]; then
   BASE_DOCKER_IMAGE="aotriton:base-py${PYVER}"
@@ -62,9 +63,15 @@ hash_origin() {
     echo "${TRITON_GIT_ORIGIN}"
     return
   fi
-  local origin
-  origin=$(yq -r ".venvs | to_entries[] | select(((try .value.hash catch null) // .value) == \"${hash}\") | ((try .value.origin catch null) // \"\")" "${ALTWHEEL_YAML}" | head -n1)
-  echo "${origin:-${TRITON_GIT_ORIGIN}}"
+  local key origin
+  for key in $(yq -r '.venvs | keys | .[]' "${ALTWHEEL_YAML}"); do
+    if [[ "$(altwheel_venv_hash "${ALTWHEEL_YAML}" ".venvs.${key}")" == "${hash}" ]]; then
+      origin=$(altwheel_venv_origin "${ALTWHEEL_YAML}" ".venvs.${key}")
+      echo "${origin:-${TRITON_GIT_ORIGIN}}"
+      return
+    fi
+  done
+  echo "${TRITON_GIT_ORIGIN}"
 }
 
 # One mirror volume per distinct origin, named "triton-mirror" for the
