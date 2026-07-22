@@ -27,6 +27,30 @@ add_torch_ldconfig() {
   export LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:${torch_lib}
 }
 
+# theRock (rocm_sdk) wheels split their shared libs across nested
+# _rocm_sdk_devel/lib/, lib/rocm_sysdeps/lib/, lib/host-math/lib/ etc.
+# RPATH covers most cross-references between them, but not all (e.g.
+# liblzma, openblas), so callers that don't already inherit ROCM_PATH from
+# `rocm-sdk path --root` (e.g. plain venvs baked into worker images) can hit
+# "cannot open shared object file" at import time. Add every nested dir that
+# actually holds a .so directly, found via the sibling rocm_sdk_core package.
+add_rocm_sdk_ldconfig() {
+  local dirs=$(python -c "
+try:
+    import rocm_sdk_core
+except ImportError:
+    pass
+else:
+    from pathlib import Path
+    devel_lib = Path(rocm_sdk_core.__file__).parent.parent / '_rocm_sdk_devel' / 'lib'
+    if devel_lib.is_dir():
+        print(':'.join(sorted({p.parent.as_posix() for p in devel_lib.rglob('*.so*')})))
+" 2>/dev/null)
+  if [ -n "${dirs}" ]; then
+    export LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:${dirs}
+  fi
+}
+
 llvm_hash_sha1=$(get_llvm_hash)
 if [ -z "${llvm_hash_sha1}" ]; then
   echo "common-vars: llvm_hash is unset due to missing third_party/triton/cmake/llvm-hash.txt. Need git clone --recursive" >&2
