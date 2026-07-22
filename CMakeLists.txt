@@ -134,6 +134,9 @@ if(AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
   if(NOT ${altwheel_yaml_is_absolute})
     message(FATAL_ERROR "AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE must be absolute path, but configured as ${AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE}")
   endif()
+  if(AOTRITON_USE_LOCAL_TRITON_WHEEL)
+    message(FATAL_ERROR "AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE and AOTRITON_USE_LOCAL_TRITON_WHEEL are mutually exclusive -- the altwheel config's own .venvs.default entry supplies the default Triton wheel.")
+  endif()
 endif()
 
 # Early failure for python binding
@@ -281,6 +284,22 @@ else()
   if(AOTRITON_USE_LOCAL_TRITON_WHEEL)
     add_custom_command(OUTPUT "${AOTRITON_TRITON_SO}"
       COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_BIN_PYTHON}" -m pip install ${AOTRITON_USE_LOCAL_TRITON_WHEEL}
+    )
+  elseif(AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
+    # The main venv's wheel comes from the altwheel config's own
+    # .venvs.default entry (mutually exclusive with AOTRITON_USE_LOCAL_TRITON_WHEEL,
+    # enforced above) -- install it here instead of falling back to
+    # third_party/triton/, which callers using altwheel are not required to
+    # have checked out at all.
+    execute_process(
+      COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_BIN_PYTHON}" -c
+      "import yaml,sys; f = open(sys.argv[1]); d = yaml.load(f, Loader=yaml.Loader); print(d['venvs']['default'])"
+      "${AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE}"
+      OUTPUT_VARIABLE AOTRITON_ALT_DEFAULT_WHEEL
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+    add_custom_command(OUTPUT "${AOTRITON_TRITON_SO}"
+      COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_BIN_PYTHON}" -m pip install ${AOTRITON_ALT_DEFAULT_WHEEL}
     )
   else()
     # Check if pip is available at configure time

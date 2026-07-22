@@ -60,7 +60,9 @@ if [ -n "$altwheel_config" ]; then
 fi
 
 # Add optional triton wheel argument if provided -- not when an altwheel
-# config is set, which supplies the default wheel via its own .venvs.default.
+# config is set. The two are mutually exclusive at the cmake level (fatal
+# error if both given): the altwheel config's own .venvs.default supplies
+# the main venv's wheel too, so no separate flag is needed here.
 if [ "$#" -ge 1 ] && [ -z "$altwheel_config" ]; then
   wheel=$(realpath "$1")
   build_args+=("-DAOTRITON_USE_LOCAL_TRITON_WHEEL=${wheel}")
