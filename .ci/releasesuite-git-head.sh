@@ -208,21 +208,10 @@ CACHE_DIR="${OUTPUT_DIR}/.cache"
 WHEEL_CACHE_DIR="${CACHE_DIR}/wheels"
 mkdir -p "${WHEEL_CACHE_DIR}" "${CACHE_DIR}/pip"
 
-# Determine Triton hashes to build.
-# .venvs.default in SUITE_YAML replaces the embedded submodule hash;
-# otherwise the submodule is the mandatory default.
-DEFAULT_HASH=""
-if [[ -n "${SUITE_YAML}" ]]; then
-  DEFAULT_HASH=$(yq -r '.venvs.default // ""' "${SUITE_YAML}")
-fi
-if [[ -z "${DEFAULT_HASH}" ]]; then
-  DEFAULT_HASH=$(git rev-parse HEAD:third_party/triton)
-fi
-TRITON_HASHES=("${DEFAULT_HASH}")
-if [[ -n "${SUITE_YAML}" ]]; then
-  readarray -t YAML_HASHES < <(yq -r '.venvs | to_entries | .[] | select(.key != "default") | .value' "${SUITE_YAML}")
-  TRITON_HASHES+=("${YAML_HASHES[@]}")
-fi
+# Determine Triton hashes to build (extracted into resolve-triton-hashes.sh
+# so .tune can reuse the same resolution logic instead of reimplementing it).
+readarray -t TRITON_HASHES < <(bash "${SCRIPT_DIR}/resolve-triton-hashes.sh" "${SCRIPT_DIR}/.." "${SUITE_YAML}")
+DEFAULT_HASH="${TRITON_HASHES[0]}"
 
 # Triton wheels are only needed for image builds (GPU kernel images embed the wheel).
 # Runtime builds consume pre-built wheels from /cache/wheels via WHEEL_CFG.
