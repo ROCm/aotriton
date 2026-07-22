@@ -73,6 +73,7 @@ AOTRITON_ROOT="$(realpath "$SCRIPT_DIR/../..")"
 
 # sqlite3 CLI may not be present inside CELERY_WORKER_IMAGE; use Python fallback
 . "$TUNE_ROOT/lib/sqlite3_compat.sh"
+. "$TUNE_ROOT/lib/aotriton_version.sh"
 
 # Collect architectures to build
 if [ -n "$SINGLE_ARCH" ]; then
@@ -104,7 +105,12 @@ echo "Step 1: Building Triton wheel..."
 TRITON_WHEEL=$("$TUNE_ROOT/single/build_triton_wheel.sh" "$WORKDIR")
 echo "Using Triton wheel: $TRITON_WHEEL"
 
-# Step 2: Per-arch cmake+ninja build
+# Step 2: Per-arch build, delegated to .ci/build-test.sh (test123 suffix
+# distinguishes this library from both the tuning-mode "123" suffix and
+# whatever AOTriton copy PyTorch itself bundles, since a test run may need
+# to coexist with either in the same process). .tune opts out of
+# build-test.sh's mold linker flags (--no_mold) — those exist for .ci's own
+# reasons, not something the worker image needs to support.
 for ARCH in "${ARCH_LIST[@]}"; do
   BUILD_DIR="$WORKDIR/build/test/$ARCH"
   INSTALL_DIR="$WORKDIR/installed/test/$ARCH"
@@ -112,23 +118,18 @@ for ARCH in "${ARCH_LIST[@]}"; do
 
   echo ""
   echo "=== Building arch: $ARCH ==="
-  cd "$BUILD_DIR"
 
-  CMAKE_DB_ARGS=()
+  BUILD_TEST_ARGS=(--no_mold --name_suffix test123)
   if [ "$SOURCE_DB" -eq 0 ]; then
-    CMAKE_DB_ARGS+=(-DAOTRITON_TUNING_DATABASE_ROOT="$DATABASE_ROOT")
+    BUILD_TEST_ARGS+=(--database_root "$DATABASE_ROOT")
   fi
 
-  cmake "$AOTRITON_ROOT" \
-      -DCMAKE_INSTALL_PREFIX="$INSTALL_DIR" \
-      -DCMAKE_BUILD_TYPE=Release \
-      -DAOTRITON_TARGET_ARCH="$ARCH" \
-      -DAOTRITON_NAME_SUFFIX=test \
-      "${CMAKE_DB_ARGS[@]}" \
-      -DAOTRITON_USE_LOCAL_TRITON_WHEEL="$TRITON_WHEEL" \
-      -G Ninja
+  ALTWHEEL_CONFIG="$(get_resolved_altwheel_yaml "$AOTRITON_ROOT" "$WORKDIR")"
+  [ -n "$ALTWHEEL_CONFIG" ] && BUILD_TEST_ARGS+=(--altwheel_config "$ALTWHEEL_CONFIG")
 
-  ninja install/strip
+  AOTRITON_BUILD_PATH="$BUILD_DIR" \
+  AOTRITON_INSTALL_PATH="$INSTALL_DIR" \
+    bash "$AOTRITON_ROOT/.ci/build-test.sh" "${BUILD_TEST_ARGS[@]}" "$ARCH" "$TRITON_WHEEL"
 
   echo "Installed: $INSTALL_DIR"
 done

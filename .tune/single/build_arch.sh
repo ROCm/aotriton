@@ -29,15 +29,18 @@ INSTALL_DIR="$WORKDIR/installed/$ARCH"
 
 mkdir -p "$BUILD_DIR" "$INSTALL_DIR"
 
-cd "$BUILD_DIR"
+# shellcheck disable=SC1091
+. "$TUNE_ROOT/lib/aotriton_version.sh"
+ALTWHEEL_CONFIG="$(get_resolved_altwheel_yaml "$AOTRITON_ROOT" "$WORKDIR")"
+BUILD_TUNE_ARGS=()
+[ -n "$ALTWHEEL_CONFIG" ] && BUILD_TUNE_ARGS+=(--altwheel_config "$ALTWHEEL_CONFIG")
 
-cmake "$AOTRITON_ROOT" \
-    -DCMAKE_INSTALL_PREFIX="$INSTALL_DIR" \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DAOTRITON_TARGET_ARCH="$ARCH" \
-    -DAOTRITON_NAME_SUFFIX=123 \
-    -DAOTRITON_BUILD_FOR_TUNING=ON \
-    -DAOTRITON_USE_LOCAL_TRITON_WHEEL="$TRITON_WHEEL" \
-    -G Ninja
-
-ninja install/strip
+# Delegate the actual cmake+ninja build to .ci/build-tune.sh (identical
+# BUILD_FOR_TUNING=ON + suffix 123 + Release cmake invocation), pointed at
+# this workdir's build/install dirs via the env vars build-release.sh
+# already established as the external-workdir convention. AOTriton's own
+# cmake/codegen (not this script) picks the right venv per arch/kernel-family
+# when an altwheel config is passed.
+AOTRITON_BUILD_PATH="$BUILD_DIR" \
+AOTRITON_INSTALL_PATH="$INSTALL_DIR" \
+  bash "$AOTRITON_ROOT/.ci/build-tune.sh" "${BUILD_TUNE_ARGS[@]}" "$ARCH" "$TRITON_WHEEL"
