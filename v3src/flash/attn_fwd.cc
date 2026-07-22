@@ -80,6 +80,10 @@ attn_fwd(const attn_fwd_params& in,
     if (hdim_rounded == 16)
       hdim_rounded = 32;
   }
+  // gfx1250 only has kernels for power-of-two head dims
+  if (Gpu2VendorArch(gpu) == CAT32(GpuVendor::kAMD, 0x1250)) {
+    hdim_rounded = bit_ceil(hdim_rounded);
+  }
   OpAttnFwdParams params = {
     .Q = &in.Q,
     .K = &in.K,

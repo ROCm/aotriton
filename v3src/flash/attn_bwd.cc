@@ -89,6 +89,10 @@ attn_bwd(const attn_bwd_params& in,
     if (hdim_rounded == 80)
       hdim_rounded = 96;
   }
+  // gfx1250 only has kernels for power-of-two head dims
+  if (Gpu2VendorArch(gpu) == CAT32(GpuVendor::kAMD, 0x1250)) {
+    hdim_rounded = bit_ceil(hdim_rounded);
+  }
   LazyTensorInternal<2> lazy_delta(in.D);
   LazyTensorInternal<4> lazy_dq_acc(in.DQ_ACC);
   OpAttnBwdParams params = {
