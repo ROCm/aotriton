@@ -9,11 +9,23 @@ function _common_build() {
   target_arch="$3"
   build_for="$4"
   shift 4
-  bdir="build-${aotriton_major}.${aotriton_minor}-${build_for}-${target_arch//;/_}"
-  mkdir -p ${SCRIPT_DIR}/../${bdir}
+  if [ -n "${AOTRITON_NAME_SUFFIX_OVERRIDE}" ]; then
+    suffix="${AOTRITON_NAME_SUFFIX_OVERRIDE}"
+  fi
+  if [ -n "${AOTRITON_BUILD_PATH}" ]; then
+    bdir="${AOTRITON_BUILD_PATH}"
+  else
+    bdir="${SCRIPT_DIR}/../build-${aotriton_major}.${aotriton_minor}-${build_for}-${target_arch//;/_}"
+  fi
+  if [ -n "${AOTRITON_INSTALL_PATH}" ]; then
+    install_prefix="${AOTRITON_INSTALL_PATH}"
+  else
+    install_prefix="./install_dir"
+  fi
+  mkdir -p ${bdir}
   (
-    cd ${SCRIPT_DIR}/../${bdir};
-    cmake .. -DCMAKE_INSTALL_PREFIX=./install_dir \
+    cd ${bdir};
+    cmake .. -DCMAKE_INSTALL_PREFIX=${install_prefix} \
       -DCMAKE_BUILD_TYPE=${build_type} \
       -DAOTRITON_TARGET_ARCH=${target_arch} \
       -DAOTRITON_NAME_SUFFIX=${suffix} \
