@@ -7,9 +7,12 @@
 # Supports the subset of sqlite3 CLI used in this project:
 #   sqlite3 <db_path> <sql>
 #   sqlite3 <db_path> <<SQL ... SQL   (sql read from stdin when <sql> is omitted)
-# <sql> may hold multiple ';'-separated statements (e.g. several INSERTs);
-# each is run and committed separately. Output format matches the default
-# sqlite3 pipe-separated output.
+# <sql> may hold multiple ';'-separated statements (e.g. several INSERTs).
+# Multi-statement scripts are run via executescript() (SQLite's own parser,
+# so values containing a literal ';' are handled correctly) rather than a
+# naive string split; single statements use execute() so SELECT rows are
+# still returned. Output format matches the default sqlite3 pipe-separated
+# output.
 
 if ! command -v sqlite3 &>/dev/null; then
     sqlite3() {
@@ -21,9 +24,15 @@ if ! command -v sqlite3 &>/dev/null; then
         python3 -c "
 import sqlite3, sys
 conn = sqlite3.connect(sys.argv[1])
-for stmt in filter(None, (s.strip() for s in sys.argv[2].split(';'))):
-    for row in conn.execute(stmt):
+sql = sys.argv[2]
+try:
+    cur = conn.execute(sql)
+    for row in cur:
         print('|'.join('' if v is None else str(v) for v in row))
+except sqlite3.ProgrammingError:
+    # More than one statement -- execute() only accepts one; executescript()
+    # handles the rest via SQLite's real parser but never returns rows.
+    conn.executescript(sql)
 conn.commit()
 " "$db" "$sql"
     }
