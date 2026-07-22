@@ -70,6 +70,9 @@ fi
   export COLUMNS=400;
   export FOR_RELEASE=${test_level};
   export AOTRITON_UT_ARCH="${native_arch}";
+  if [[ "$native_arch" == "gfx1250" ]]; then
+    export AOTRITON_REF_DEVICE_OPTION=cpu
+  fi
   if [[ "$backend" == "split" ]]; then
     export BWD_IMPL=0
     fnprefix="ut_pass"
