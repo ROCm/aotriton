@@ -160,6 +160,7 @@ if(NOT AOTRITON_NOIMAGE_MODE)
     --target_arch ${AOTRITON_TARGET_ARCH}
     --output_file "${SIGNATURE_FILE}"
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
+    DEPENDS "${TRITON_SO_STAMP}"
   )
 
   message("Bare.compile: ${AOTRITON_V2_BUILD_DIR}/Bare.compile")
@@ -202,7 +203,7 @@ if(NOT AOTRITON_NOIMAGE_MODE)
       "--signature" "${SIG}"
       "--timeout" "${AOTRITON_GPU_BUILD_TIMEOUT}"
       ${HSACO_COMPILE_OPTION}
-      DEPENDS aotriton_venv_triton
+      DEPENDS "${TRITON_SO_STAMP}"
     )
     # DO NOT USE list(APPEND). It is quadratic growth
     file(APPEND "${AOTRITON_HSACO_RECORD}" "${HSACO}" "\n")
