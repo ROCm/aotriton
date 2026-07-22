@@ -74,6 +74,10 @@ git config --global --add safe.directory '*'
 # `fetch` heals anything missing/partial via git's content-addressed store.
 # Never delete: there is no case where wiping the volume first helps.
 git init --bare /mirror
+# Never let fetch opportunistically gc: this is a persistent cache we alone
+# manage, and disabling gc.auto also means a pruned ref's objects just sit
+# unreachable instead of being swept away by an incidental auto-gc.
+git -C /mirror config gc.auto 0
 git -C /mirror config remote.origin.fetch '+refs/*:refs/*'
 git -C /mirror remote set-url origin "${origin}" \
   || git -C /mirror remote add origin "${origin}"
