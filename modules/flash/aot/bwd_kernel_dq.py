@@ -49,6 +49,9 @@ def gen_autotune_configs(f):
     NUM_XCDS = 8 if arch in ('gfx942', 'gfx950') else 1
     if arch == 'gfx1250':
         # aiter gfx1250-MHA-DEFAULT.json: fwd.default, plus smaller backups.
+        # Confirmed crash/NaN-free against the tuning DB (~/wkdir.aiday); keep
+        # num_warps=4 here — num_warps=8 with BLOCK_M=BLOCK_N=64 crashes
+        # unconditionally on this kernel.
         kw = {'BLOCK_M': 64, 'BLOCK_N': 64, 'waves_per_eu': 2, 'NUM_XCDS': NUM_XCDS}
         yield ati.tune.Config(kw, num_stages=1, num_warps=4)
         kw = {'BLOCK_M': 32, 'BLOCK_N': 32, 'waves_per_eu': 2, 'NUM_XCDS': NUM_XCDS}

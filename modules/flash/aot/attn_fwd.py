@@ -73,33 +73,23 @@ def gen_autotune_configs(f):
     NUM_STAGES = [1]
     NUM_XCDS = 8 if arch in ('gfx942', 'gfx950') else 1
     if arch == 'gfx1250':
-        # aiter gfx1250-MHA-DEFAULT.json: fwd.default, falls through to the
-        # general sweep below as backup.
+        # aiter gfx1250-MHA-DEFAULT.json's num_warps=4/waves_per_eu=2 crashes on
+        # non-causal tasks at BLOCK_M/N=32 and 16x16 (tuning DB ~/wkdir.aiday: 4 and
+        # 1 crashing task_ids respectively), and BLOCK_M=128 has no validated data at
+        # all (only 3 non-causal tasks tuned, causal path untested). num_warps=8/
+        # waves_per_eu=2 stayed crash/NaN-free across every tested block size and
+        # causal/non-causal path, so use it with the largest block size that's
+        # actually covered by data (64x32) in place of the untested 128x64.
         persistent_type = 2 if CAUSAL_TYPE != 0 else 0
-        kw = {'PERSISTENT_TYPE': persistent_type,
-              'GRID_CU_MULTIP': 2,
-              'BLOCK_M': 128,
-              'BLOCK_N': 64,
-              'waves_per_eu': 2,
-              'PRE_LOAD_V': True,
-              'NUM_XCDS': NUM_XCDS}
-        yield ati.tune.Config(kw, num_stages=1, num_warps=4)
-        kw = {'PERSISTENT_TYPE': persistent_type,
-              'GRID_CU_MULTIP': 2,
-              'BLOCK_M': 32,
-              'BLOCK_N': 32,
-              'waves_per_eu': 2,
-              'PRE_LOAD_V': True,
-              'NUM_XCDS': NUM_XCDS}
-        yield ati.tune.Config(kw, num_stages=1, num_warps=4)
-        kw = {'PERSISTENT_TYPE': persistent_type,
-              'GRID_CU_MULTIP': 2,
-              'BLOCK_M': 16,
-              'BLOCK_N': 16,
-              'waves_per_eu': 2,
-              'PRE_LOAD_V': True,
-              'NUM_XCDS': NUM_XCDS}
-        yield ati.tune.Config(kw, num_stages=1, num_warps=4)
+        for M, N in ((64, 32), (32, 32), (16, 16)):
+            kw = {'PERSISTENT_TYPE': persistent_type,
+                  'GRID_CU_MULTIP': 2,
+                  'BLOCK_M': M,
+                  'BLOCK_N': N,
+                  'waves_per_eu': 2,
+                  'PRE_LOAD_V': True,
+                  'NUM_XCDS': NUM_XCDS}
+            yield ati.tune.Config(kw, num_stages=1, num_warps=8)
         return
     if arch == 'gfx950':
         for waves, pre in itertools.product(WAVES_PER_EU, PRE_LOAD_V):
