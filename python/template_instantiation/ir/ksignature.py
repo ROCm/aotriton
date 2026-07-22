@@ -37,13 +37,6 @@ class KernelSignature(object):
         self._functional = f
         self._perfs = perf_struct
         self._copts = list(copt_values)
-        # TODO: Remove when gfx1250 database is created.
-        # gfx1250 falls back to gfx942's tuning database, but with 2x number
-        # of warps to avoid compiler issues. This does NOT apply when building
-        # for tuning: those signatures come from gen_autotune_configs, which
-        # already emits the intended num_warps for gfx1250.
-        if gfx1250_warp_workaround and f.arch == 'gfx1250':
-            self._copts[COPT_NWARPS_INDEX] *= 2
 
     @property
     def perf_cdict(self):
