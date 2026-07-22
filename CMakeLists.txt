@@ -312,12 +312,17 @@ else()
     # enforced above) -- install it here instead of falling back to
     # third_party/triton/, which callers using altwheel are not required to
     # have checked out at all.
+    # .venvs.default is only guaranteed to exist in a RESOLVED altwheel yaml
+    # (see .ci/common-altwheel.sh's altwheel_resolve_config) -- an arch-only
+    # source yaml (e.g. .ci/0.13.50b.yaml) has no default key, so fail with a
+    # clear message instead of a bare KeyError if one is passed here directly.
     execute_process(
       COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR} "${VENV_BIN_PYTHON}" -c
-      "import yaml,sys; f = open(sys.argv[1]); d = yaml.load(f, Loader=yaml.Loader); print(d['venvs']['default'])"
+      "import yaml,sys; f = open(sys.argv[1]); d = yaml.load(f, Loader=yaml.Loader); v = d.get('venvs', {}); sys.exit('AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE has no venvs.default -- pass a yaml resolved via .ci/common-altwheel.sh\\'s altwheel_resolve_config') if 'default' not in v else print(v['default'])"
       "${AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE}"
       OUTPUT_VARIABLE AOTRITON_ALT_DEFAULT_WHEEL
       OUTPUT_STRIP_TRAILING_WHITESPACE
+      COMMAND_ERROR_IS_FATAL ANY
     )
     # Checksum-gated wheel sync, same mechanism as AOTRITON_USE_LOCAL_TRITON_WHEEL.
     add_custom_target(aotriton_sync_triton ALL
