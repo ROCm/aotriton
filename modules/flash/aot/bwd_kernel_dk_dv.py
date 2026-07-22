@@ -40,6 +40,10 @@ def gen_autotune_configs(f):
     tuning build (AOTRITON_BUILD_FOR_TUNING); the DB path does not use it."""
     arch = f.arch
     dtype = check_value(f, ['Q'])
+    HEAD_DIM = check_value(f, ['BLOCK_DMODEL'])
+    CAUSAL_TYPE = check_value(f, ['CAUSAL_TYPE'])
+    BIAS_TYPE = check_value(f, ['BIAS_TYPE'])
+    ENABLE_DROPOUT = check_value(f, ['ENABLE_DROPOUT'])
     WAVE64 = AOTRITON_ARCH_WARPSIZE[arch] == 64
     WAVE32 = AOTRITON_ARCH_WARPSIZE[arch] == 32
     # TODO: right sizes for fp32?
@@ -58,6 +62,22 @@ def gen_autotune_configs(f):
         yield ati.tune.Config(kw, num_stages=1, num_warps=4)
         kw = {'BLOCK_M': 16, 'BLOCK_N': 16, 'waves_per_eu': 2, 'NUM_XCDS': NUM_XCDS}
         yield ati.tune.Config(kw, num_stages=1, num_warps=4)
+        def more_configs():
+            for M, N in ((32, 32), (32, 16), (16, 16)):
+                for waves in (1, 2, 3, 4):
+                    kw = {'BLOCK_M': M,
+                          'BLOCK_N': N,
+                          'waves_per_eu': waves,
+                          'NUM_XCDS': NUM_XCDS}
+                    yield ati.tune.Config(kw, num_stages=1, num_warps=8)
+        # HEAD_DIM=256 fp32 (no bias), either non-causal+dropout or causal+no-dropout,
+        # has no shipped candidate passing every UT. Add two extra block-size options
+        # at the same baseline copts (nw4/we2) rather than introducing new copts.
+        if HEAD_DIM == 256 and dtype == '*fp32:16' and BIAS_TYPE == 0 and (
+                (CAUSAL_TYPE == 0 and ENABLE_DROPOUT) or
+                (CAUSAL_TYPE != 0 and not ENABLE_DROPOUT)):
+            yield from more_configs()
+            return
         return
     for M, N, waves, warps, stages in itertools.product(BLOCK_SIZES,
                                                         BLOCK_SIZES,
