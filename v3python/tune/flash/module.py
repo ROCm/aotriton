@@ -125,10 +125,12 @@ class Flash(TuningDescription):
                            f'only seqlen_q/k <= 2048 entries are tuned')
         return True, ''
 
-    def list_impls(self, entry: FlashEntry):
+    def list_impls(self, entry: FlashEntry, arch: str | None = None):
         if False:  # Debugging, fwd only tuning. Keep it for selective tuning
             return ['attn_fwd']
         if entry.hdim > 224:
+            return ['attn_fwd', 'bwd_kernel_dk_dv', 'bwd_kernel_dq']
+        if arch == 'gfx1250':  # No bwd_kernel_fuse for gfx1250
             return ['attn_fwd', 'bwd_kernel_dk_dv', 'bwd_kernel_dq']
         return ['attn_fwd', 'bwd_kernel_dk_dv', 'bwd_kernel_dq', 'bwd_kernel_fuse']
 
