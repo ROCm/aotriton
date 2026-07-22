@@ -235,7 +235,8 @@ class KernelDescription(Interface):
             for copt, defopt in zip(COMPILER_OPTIONS, DEFAULT_COPT):
                 yield getattr(cfg, copt, defopt)
         for cfg in self.gen_autotune_configs(f):
-            yield KernelSignature(f, perf_bind(cfg), list(gen_copts(cfg)))
+            yield KernelSignature(f, perf_bind(cfg), list(gen_copts(cfg)),
+                                  gfx1250_warp_workaround=False)
 
     def gen_autotune_configs(self, f):
         cfg = self._built.tune.configs

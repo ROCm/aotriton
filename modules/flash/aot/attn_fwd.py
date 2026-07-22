@@ -11,12 +11,29 @@ instantiation description onto it. Covers all 74 parameters. Conditional argumen
 the derive fixes the per-functional value (ati+newbinds_rev1.md §6.2).
 """
 
+import os
+import itertools
+
 from dataclasses import dataclass
 
 import numpy as np
 
 import aotriton.template_instantiation as ati
-from ._common import flash_disabled, block_dmodel_values, MAIN_DTYPES
+from aotriton.gpu_targets import AOTRITON_ARCH_WARPSIZE
+from ._common import flash_disabled, block_dmodel_values, MAIN_DTYPES, check_value
+
+
+def _parse_preload_options():
+    val = int(os.getenv('AOTRITON_PRE_LOAD_OPTIONS', default='2'))
+    if val == 0:
+        return [False]
+    elif val == 1:
+        return [True]
+    else:
+        return [False, True]
+
+
+PRE_LOAD_OPTIONS = _parse_preload_options()
 
 
 @dataclass
@@ -32,18 +49,61 @@ class AttnFwdPerf:
 
 
 def gen_autotune_configs(f):
-    """Placeholder generator (real heuristics ported later); the DB-driven path
+    """Per-functional performance config generator (ported from 0.12b). Feeds the
+    tuning build (AOTRITON_BUILD_FOR_TUNING); the DB-driven path
     (translate_dataframe) does not use this."""
-    causal = f.choices.CAUSAL_TYPE
-    kw = {
-        'PERSISTENT_TYPE': 2 if causal != 0 else 0,
-        'GRID_CU_MULTIP': 2,
-        'BLOCK_M': 16, 'BLOCK_N': 16,
-        'PRE_LOAD_V': False,
-        'NUM_XCDS': 8 if f.arch in ('gfx942', 'gfx950') else 1,
-        'waves_per_eu': 2,
-    }
-    yield ati.tune.Config(kw, num_warps=4, num_stages=1)
+    arch = f.arch
+    dtype = check_value(f, ['Q'])
+    HEAD_DIM = check_value(f, ['BLOCK_DMODEL'])
+    CAUSAL_TYPE = check_value(f, ['CAUSAL_TYPE'])
+    WAVE64 = AOTRITON_ARCH_WARPSIZE[arch] == 64
+    WAVE32 = AOTRITON_ARCH_WARPSIZE[arch] == 32
+    if WAVE64:
+        BLOCK_SIZES = [(32, 16), (128, 64), (64, 64), (64, 32), (128, 128)]
+    elif WAVE32:
+        BLOCK_SIZES = [(64, 32), (32, 32), (32, 16)]
+        if '*fp32' not in dtype:
+            BLOCK_SIZES += [(16, 16)]
+        else:
+            # M //= 2 will effectively yield (16, 32), (16, 16)
+            pass
+    WAVES_PER_EU = [1, 2, 3, 4]
+    NUM_WARPS = [2, 4] if WAVE64 else [4, 8]
+    PRE_LOAD_V = PRE_LOAD_OPTIONS
+    NUM_STAGES = [1]
+    NUM_XCDS = 8 if arch in ('gfx942', 'gfx950') else 1
+    if arch == 'gfx950':
+        for waves, pre in itertools.product(WAVES_PER_EU, PRE_LOAD_V):
+            persistent_type = 2 if CAUSAL_TYPE != 0 else 0
+            kw = {'PERSISTENT_TYPE': persistent_type,
+                  'GRID_CU_MULTIP': 2,
+                  'BLOCK_M': 256,
+                  'BLOCK_N': 64,
+                  'waves_per_eu': waves,
+                  'PRE_LOAD_V': pre,
+                  'NUM_XCDS': NUM_XCDS}
+            yield ati.tune.Config(kw, num_stages=4, num_warps=8)
+    for (M, N), waves, warps, stages, pre in itertools.product(BLOCK_SIZES,
+                                                               WAVES_PER_EU,
+                                                               NUM_WARPS,
+                                                               NUM_STAGES,
+                                                               PRE_LOAD_V):
+        if HEAD_DIM >= 512 and M == 128 and N == 128 and warps == 2:
+            continue  # Timeout
+        if dtype == '*fp32:16':
+            M //= 2
+        if M < N:  # Faulty or duplicate
+            continue
+        persistent_type = 2 if CAUSAL_TYPE != 0 else 0
+        kw = {'PERSISTENT_TYPE': persistent_type,
+              'GRID_CU_MULTIP': 2,
+              'BLOCK_M': M,
+              'BLOCK_N': N,
+              'waves_per_eu': waves,
+              'PRE_LOAD_V': pre,
+              'NUM_XCDS': NUM_XCDS}
+        # TODO: Add Dynamic PERSISTENT_TYPE IFF causal is enabled to tuning database
+        yield ati.tune.Config(kw, num_stages=stages, num_warps=warps)
 
 
 def _attn_fwd_disabled(f):

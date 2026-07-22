@@ -29,7 +29,8 @@ assert COMPILER_OPTIONS[COPT_NSTAGES_INDEX] == 'num_stages'
 
 class KernelSignature(object):
 
-    def __init__(self, f : 'Functional', perf_struct, copt_values : list):
+    def __init__(self, f : 'Functional', perf_struct, copt_values : list,
+                 gfx1250_warp_workaround : bool = True):
         # perf_struct: a synthesized perf-struct INSTANCE (specs/tune.PerfStructBase),
         # one bind row whose fields are settled TypedChoices. Iterated via .items().
         # Perf params are non-conditional constexprs, so there is nothing to settle.
@@ -38,8 +39,10 @@ class KernelSignature(object):
         self._copts = list(copt_values)
         # TODO: Remove when gfx1250 database is created.
         # gfx1250 falls back to gfx942's tuning database, but with 2x number
-        # of warps to avoid compiler issues.
-        if f.arch == 'gfx1250':
+        # of warps to avoid compiler issues. This does NOT apply when building
+        # for tuning: those signatures come from gen_autotune_configs, which
+        # already emits the intended num_warps for gfx1250.
+        if gfx1250_warp_workaround and f.arch == 'gfx1250':
             self._copts[COPT_NWARPS_INDEX] *= 2
 
     @property
