@@ -55,7 +55,7 @@ fi
 # of those bases it was forked from (main or a release branch), computed
 # in one shot instead of testing each candidate base individually.
 UNIQUE_COMMITS=$(git -C "$AOTRITON_ROOT" rev-list --count HEAD \
-  --not --remotes='upstream/main' --remotes='upstream/release/*')
+  --not upstream/main --remotes='upstream/release/*')
 if [ "$UNIQUE_COMMITS" = "$(git -C "$AOTRITON_ROOT" rev-list --count HEAD)" ]; then
   echo "Error: branch shares no history with upstream/main or upstream/release/*" >&2
   echo "Current branch: $CURRENT_BRANCH" >&2
