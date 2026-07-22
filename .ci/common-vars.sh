@@ -27,27 +27,19 @@ add_torch_ldconfig() {
   export LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:${torch_lib}
 }
 
-# theRock (rocm_sdk) wheels split their shared libs across nested
-# _rocm_sdk_devel/lib/, lib/rocm_sysdeps/lib/, lib/host-math/lib/ etc.
-# RPATH covers most cross-references between them, but not all (e.g.
-# liblzma, openblas), so callers that don't already inherit ROCM_PATH from
-# `rocm-sdk path --root` (e.g. plain venvs baked into worker images) can hit
-# "cannot open shared object file" at import time. Add every nested dir that
-# actually holds a .so directly, found via the sibling rocm_sdk_core package.
+# theRock (rocm_sdk) ships some libs (e.g. liblzma, openblas) as private,
+# renamed copies under lib/rocm_sysdeps/lib that RPATH doesn't always resolve
+# -- an acknowledged upstream packaging bug (see ROCm Core SDK 7.12.0 release
+# notes) whose sanctioned workaround is adding that dir to LD_LIBRARY_PATH.
+# No-op when rocm-sdk isn't installed (e.g. classical ROCm).
 add_rocm_sdk_ldconfig() {
-  local dirs=$(python -c "
-try:
-    import rocm_sdk_core
-except ImportError:
-    pass
-else:
-    from pathlib import Path
-    devel_lib = Path(rocm_sdk_core.__file__).parent.parent / '_rocm_sdk_devel' / 'lib'
-    if devel_lib.is_dir():
-        print(':'.join(sorted({p.parent.as_posix() for p in devel_lib.rglob('*.so*')})))
-" 2>/dev/null)
-  if [ -n "${dirs}" ]; then
-    export LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:${dirs}
+  if ! command -v rocm-sdk &>/dev/null; then
+    return
+  fi
+  local rocm_path
+  rocm_path=$(rocm-sdk path --root 2>/dev/null) || return
+  if [ -d "${rocm_path}/lib/rocm_sysdeps/lib" ]; then
+    export LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:${rocm_path}/lib/rocm_sysdeps/lib"
   fi
 }
 
