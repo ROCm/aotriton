@@ -95,7 +95,8 @@ fi
       || echo "NO __signature__ file at $PYTHONPATH/aotriton.images/"
   } | tee "${outdir}/${fnprefix}${pass}.out" \
           "${outdir}/${fnprefix}${pass}.varlen.out" > /dev/null
-  pytest --tb=line -n ${ngpus} --max-worker-restart 48 -rfEsx \
+  pytest --tb=line -n ${ngpus} --max-worker-restart 9999 -rfEsx \
+    --timeout=300 --timeout-method=thread \
     -p no:cacheprovider \
     ${SELECT_FROM} \
     test/test_backward.py \
@@ -103,7 +104,8 @@ fi
     1>>"${outdir}/${fnprefix}${pass}.out" \
     2>"${outdir}/${fnprefix}${pass}.err" || true
   grep '^FAILED' "${outdir}/${fnprefix}${pass}.out"|sed 's/^FAILED //' | sed 's/].*/]/' > "${outdir}/sel${pass}.txt"
-  pytest --tb=line -n ${ngpus} --max-worker-restart 48 -rfEsx \
+  pytest --tb=line -n ${ngpus} --max-worker-restart 9999 -rfEsx \
+    --timeout=300 --timeout-method=thread \
     -p no:cacheprovider \
     ${SELECT_VARLEN_FROM} \
     test/test_varlen.py \
