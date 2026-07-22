@@ -54,19 +54,25 @@ altwheel_resolve_wheel_path() {
 #                       the yaml crosses into a different container (.ci's
 #                       release pipeline, where wheels are bind-mounted at
 #                       /cache/wheels but built on the host at WHEEL_CACHE_DIR)
-# <default_hash_fallback> used for .venvs.default when the source yaml
-#                       doesn't set one at all (e.g. an arch-only altwheel
-#                       yaml like .ci/0.13.1b.yaml)
+# <default_hash>        the hash to use for .venvs.default -- not a fallback
+#                       in the sense of "least preferred": it's the actual
+#                       submodule-pinned commit, the normal/standard Triton
+#                       everything builds against. Altwheel exists to bump
+#                       Triton independently for specific arches/kernels; an
+#                       alt venv is the odd case, not the default one. Only
+#                       used when the source yaml doesn't already set
+#                       .venvs.default itself (e.g. an arch-only altwheel
+#                       yaml like .ci/0.13.1b.yaml, which has no default key).
 altwheel_resolve_config() {
-  local yaml="$1" host_wheel_dir="$2" container_wheel_dir="$3" default_hash_fallback="$4"
+  local yaml="$1" host_wheel_dir="$2" container_wheel_dir="$3" default_hash="$4"
   local key hash host_wheel
 
-  local default_hash
-  default_hash=$(altwheel_venv_hash "${yaml}" ".venvs.default")
-  [ -z "${default_hash}" ] && default_hash="${default_hash_fallback}"
-  host_wheel=$(altwheel_resolve_wheel_path "${host_wheel_dir}" "${default_hash}")
+  local resolved_default_hash
+  resolved_default_hash=$(altwheel_venv_hash "${yaml}" ".venvs.default")
+  [ -z "${resolved_default_hash}" ] && resolved_default_hash="${default_hash}"
+  host_wheel=$(altwheel_resolve_wheel_path "${host_wheel_dir}" "${resolved_default_hash}")
   if [ -z "${host_wheel}" ]; then
-    echo "Error: no built wheel found for altwheel default venv (hash ${default_hash:0:8})" >&2
+    echo "Error: no built wheel found for altwheel default venv (hash ${resolved_default_hash:0:8})" >&2
     return 1
   fi
   yq -i ".venvs.default = \"${container_wheel_dir}/$(basename "${host_wheel}")\"" "${yaml}"
