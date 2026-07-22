@@ -24,7 +24,8 @@ def flash_disabled(f, *, gfx950_bad_hdims=()):
     The single functional-disable predicate shared by the fwd and bwd ATI
     descriptions. `gfx950_bad_hdims` is the per-kernel set of BLOCK_DMODEL values
     the gfx950 compiler has a known numerical error on (fwd: {16}; bwd: {48, 80});
-    everything else (causal+matrix-bias unsupported, gfx11 hdim>256) is common."""
+    everything else (causal+matrix-bias unsupported, gfx11 hdim>256, gfx1250
+    NPOT hdim) is common."""
     causal = f.choices.CAUSAL_TYPE
     hdim = f.choices.BLOCK_DMODEL
     bias_type = f.choices.BIAS_TYPE
@@ -33,6 +34,8 @@ def flash_disabled(f, *, gfx950_bad_hdims=()):
     if f.arch.startswith('gfx11') and hdim > 256:
         return True
     if f.arch == 'gfx950' and hdim in gfx950_bad_hdims:
+        return True
+    if f.arch == 'gfx1250' and hdim & (hdim - 1) != 0:  # NPOT head dims unsupported
         return True
     return False
 
