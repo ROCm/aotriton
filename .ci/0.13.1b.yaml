@@ -1,0 +1,6 @@
+venvs:
+  gfx1250: e7eab7dd36b76e085d1ec858c6cee3aa88208400
+rules:
+  - rmatches:  # Regex Matching
+      arch: gfx125.
+    venv: gfx1250
