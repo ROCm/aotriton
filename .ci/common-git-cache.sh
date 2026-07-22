@@ -84,15 +84,18 @@ git -C /mirror remote set-url origin "${origin}" \
 
 if [[ -n "${pat_environ}" ]]; then
   # Never let `set -x` echo the token value: resolve and consume it with
-  # tracing off, and scope the credential helper to this ephemeral
-  # container's local git config (never persisted into the /mirror volume).
+  # tracing off. Pass the credential helper via `-c` (a per-invocation
+  # override) rather than `git config --local`, which for a bare repo would
+  # write straight into the persistent /mirror/config -- `-c` never touches
+  # any config file, so the token never lands in the reused mirror volume.
   set +x
   pat_value="${!pat_environ}"
-  git -C /mirror config --local credential.helper \
-    "!f() { echo username=x-access-token; echo password=${pat_value}; }; f"
+  git -C /mirror -c credential.helper="!f() { echo username=x-access-token; echo password=${pat_value}; }; f" \
+    fetch --prune origin
   set -x
+else
+  git -C /mirror fetch --prune origin
 fi
-git -C /mirror fetch --prune origin
 
 # Let consumers fetch any reachable commit SHA (not just branch/tag tips).
 git -C /mirror config uploadpack.allowReachableSHA1InWant true
