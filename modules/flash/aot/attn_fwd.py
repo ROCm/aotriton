@@ -69,7 +69,7 @@ def gen_autotune_configs(f):
             pass
     WAVES_PER_EU = [1, 2, 3, 4]
     NUM_WARPS = [2, 4] if WAVE64 else [4, 8]
-    PRE_LOAD_V = PRE_LOAD_OPTIONS
+    PRE_LOAD_V = [True] if arch == 'gfx1250' else PRE_LOAD_OPTIONS
     NUM_STAGES = [1]
     NUM_XCDS = 8 if arch in ('gfx942', 'gfx950') else 1
     if arch == 'gfx950':
