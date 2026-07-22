@@ -24,13 +24,14 @@ AOTRITON_ROOT="$(realpath "$TUNE_ROOT/..")"
 # shellcheck disable=SC1091
 source "$WORKDIR/config.rc"
 
-if [ -z "${CELERY_WORKER_PYTHON:-}" ]; then
-  echo "Error: CELERY_WORKER_PYTHON not set in config.rc" >&2
+if [ -z "${CELERY_WORKER_PYTHON:-}" ] || [ -z "${CELERY_WORKER_IMAGE:-}" ]; then
+  echo "Error: CELERY_WORKER_PYTHON/CELERY_WORKER_IMAGE not set in config.rc" >&2
   exit 1
 fi
 
-# Invoke the interpreter rather than parse CELERY_WORKER_IMAGE_BASE's name.
-PYVER=$("$CELERY_WORKER_PYTHON" --version 2>&1 | awk '{print $2}' | cut -d. -f1,2)
+# CELERY_WORKER_PYTHON only exists inside CELERY_WORKER_IMAGE, not on the
+# host -- run it in a throwaway container instead of invoking it directly.
+PYVER=$(docker run --rm "$CELERY_WORKER_IMAGE" "$CELERY_WORKER_PYTHON" --version 2>&1 | awk '{print $2}' | cut -d. -f1,2)
 
 aotriton_major=$(grep '^set(AOTRITON_VERSION_MAJOR_INT' "$AOTRITON_ROOT/CMakeLists.txt" | cut -d ' ' -f 2 | cut -d ')' -f 1)
 aotriton_minor=$(grep '^set(AOTRITON_VERSION_MINOR_INT' "$AOTRITON_ROOT/CMakeLists.txt" | cut -d ' ' -f 2 | cut -d ')' -f 1)
