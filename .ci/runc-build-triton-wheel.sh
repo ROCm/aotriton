@@ -2,24 +2,12 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-# Build a single Triton wheel from a fresh git checkout. Runs inside a
-# container: either the ephemeral aotriton:base(-pyX.Y) container spun up by
-# .ci/build_triton_wheels.sh (bind-mounted in), or .tune's long-lived worker
-# container via .tune/single/build_triton_wheel.sh (its no-Docker-available
-# fallback path). No docker/mirror-volume specifics live here — those stay
-# in the callers.
-#
-# Cloning into a FRESH real git checkout (never a submodule gitlink) lets
-# Triton's own setup.py auto-detect and contribute "+git<hash8>" to the
-# wheel's local version identifier.
+# Build a Triton wheel from a fresh git checkout (never a submodule gitlink,
+# so Triton's setup.py can auto-detect "+git<hash8>"). Runs inside a
+# container -- .ci/build_triton_wheels.sh's ephemeral one, or .tune's
+# worker container as its no-Docker fallback.
 #
 # Usage: runc-build-triton-wheel.sh <triton_source> <hash> <output_dir> [<version_suffix>] [<scratch_dir>]
-#   <triton_source>   git-fetchable remote (e.g. file:///mirror, a local
-#                     mirror path, or a plain URL)
-#   <hash>            commit to check out
-#   <output_dir>      directory to write the built wheel into
-#   <version_suffix>  optional TRITON_WHEEL_VERSION_SUFFIX value
-#   <scratch_dir>     optional clone/build scratch dir (default: mktemp -d)
 
 set -ex
 

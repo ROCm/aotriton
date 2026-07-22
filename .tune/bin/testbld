@@ -105,12 +105,8 @@ echo "Step 1: Building Triton wheel..."
 TRITON_WHEEL=$("$TUNE_ROOT/single/build_triton_wheel.sh" "$WORKDIR")
 echo "Using Triton wheel: $TRITON_WHEEL"
 
-# Step 2: Per-arch build, delegated to .ci/build-test.sh (test123 suffix
-# distinguishes this library from both the tuning-mode "123" suffix and
-# whatever AOTriton copy PyTorch itself bundles, since a test run may need
-# to coexist with either in the same process). .tune opts out of
-# build-test.sh's mold linker flags (--no_mold) — those exist for .ci's own
-# reasons, not something the worker image needs to support.
+# Step 2: per-arch build via .ci/build-test.sh. test123 avoids clashing with
+# both the tuning "123" suffix and PyTorch's bundled AOTriton.
 for ARCH in "${ARCH_LIST[@]}"; do
   BUILD_DIR="$WORKDIR/build/test/$ARCH"
   INSTALL_DIR="$WORKDIR/installed/test/$ARCH"

@@ -208,8 +208,7 @@ CACHE_DIR="${OUTPUT_DIR}/.cache"
 WHEEL_CACHE_DIR="${CACHE_DIR}/wheels"
 mkdir -p "${WHEEL_CACHE_DIR}" "${CACHE_DIR}/pip"
 
-# Determine Triton hashes to build (extracted into resolve-triton-hashes.sh
-# so .tune can reuse the same resolution logic instead of reimplementing it).
+# Determine Triton hashes to build (shared with .tune).
 readarray -t TRITON_HASHES < <(bash "${SCRIPT_DIR}/resolve-triton-hashes.sh" "${SCRIPT_DIR}/.." "${SUITE_YAML}")
 DEFAULT_HASH="${TRITON_HASHES[0]}"
 

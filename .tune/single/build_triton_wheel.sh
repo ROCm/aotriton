@@ -27,20 +27,12 @@ TRITON_WHEEL_OUTPUT_DIR="$WORKDIR/scratch/triton"
 mkdir -p "$TRITON_WHEEL_OUTPUT_DIR"
 
 set -e # MUST NOT FAIL
-# Reads the gitlink SHA straight from the git tree object -- works whether or
-# not third_party/triton is actually checked out locally. This script does
-# not assume it is (matching .ci, which never checks it out either): the
-# build path below clones a fresh copy directly instead of relying on any
-# local submodule state.
+# Gitlink SHA read -- works without third_party/triton checked out locally.
 TRITON_HASH=$(git -C "$AOTRITON_ROOT" rev-parse HEAD:third_party/triton)
 TRITON_GIT8="${TRITON_HASH:0:8}"
 set +e
 
-# Check if a triton wheel already exists for the current python + this
-# commit. Glob matches the canonical +git<hash8> scheme that
-# .ci/runc-build-triton-wheel.sh produces (see docs/plans on wheel naming
-# unification) -- the same scheme a sibling wheel-build container launched
-# by .tune/bin/remotebld would already have populated on the common path.
+# Glob matches the +git<hash8> naming .ci/runc-build-triton-wheel.sh produces.
 has_triton_wheel() {
   local triton_dir="$1"
   local hash8="$2"
@@ -62,11 +54,7 @@ has_triton_wheel() {
 TRITON_WHEEL=$(has_triton_wheel "$TRITON_WHEEL_OUTPUT_DIR" "$TRITON_GIT8")
 echo "TRITON_WHEEL detected: $TRITON_WHEEL" >&2
 
-# Build triton wheel if not found. This is the no-Docker-available fallback
-# path: on the common path (builds launched via remotebld), a sibling
-# container already pre-built and cached the wheel here before this script
-# ever runs; this only builds when that didn't happen (e.g. bare-metal
-# libbld usage that bypasses remotebld entirely).
+# Fallback build path (remotebld normally pre-builds via a sibling container).
 if [ -z "$TRITON_WHEEL" ]; then
   echo "Building triton wheel (no pre-built wheel found in cache)..." >&2
 

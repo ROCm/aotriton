@@ -2,14 +2,12 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-# Resolve the set of Triton commit hashes that need building: the default
-# (submodule-pinned commit, or a .venvs.default override) plus every other
-# .venvs.* entry in an optional altwheel YAML. Extracted from
-# releasesuite-git-head.sh so both .ci's release suite and .tune share one
-# implementation instead of two independent copies.
+# Resolve the Triton commit hashes to build: the default (submodule-pinned,
+# or .venvs.default) plus every other .venvs.* entry in an altwheel YAML.
+# Shared by releasesuite-git-head.sh and .tune.
 #
 # Usage: resolve-triton-hashes.sh <aotriton_src_dir> [<altwheel_yaml>]
-# Prints the resolved hashes to stdout, one per line, default hash first.
+# Prints one hash per line, default first.
 
 set -e
 
@@ -21,8 +19,7 @@ if [ -z "$AOTRITON_SRC_DIR" ]; then
   exit 1
 fi
 
-# .venvs.default in the YAML replaces the embedded submodule hash;
-# otherwise the submodule-pinned commit is the mandatory default.
+# .venvs.default overrides the submodule-pinned commit if set.
 DEFAULT_HASH=""
 if [[ -n "${ALTWHEEL_YAML}" ]]; then
   DEFAULT_HASH=$(yq -r '.venvs.default // ""' "${ALTWHEEL_YAML}")

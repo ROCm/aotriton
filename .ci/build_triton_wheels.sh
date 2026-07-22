@@ -38,9 +38,7 @@ SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 BASE_DOCKER_IMAGE="aotriton:base"
 if [[ -n "${PYVER}" ]]; then
   BASE_DOCKER_IMAGE="aotriton:base-py${PYVER}"
-  # Build the Python-version-parameterized derived image on demand, mirroring
-  # the same "build if missing" idiom releasesuite-git-head.sh already uses
-  # for aotriton:base itself.
+  # Build on demand, same "build if missing" idiom as aotriton:base itself.
   if [ -z "$(docker images -q ${BASE_DOCKER_IMAGE} 2>/dev/null)" ]; then
     (cd "${SCRIPT_DIR}" && docker build --network=host -t ${BASE_DOCKER_IMAGE} \
       --build-arg "PYVER=${PYVER}" \
