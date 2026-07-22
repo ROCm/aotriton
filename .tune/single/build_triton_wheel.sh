@@ -49,7 +49,7 @@ has_triton_wheel() {
   # Get current python version
   local python_version=$(python --version 2>&1 | cut -d' ' -f2 | cut -d'.' -f1,2)
 
-  local wheel=$(ls "$triton_dir"/triton-*cp${python_version/./}*+git${hash8}*.whl 2>/dev/null | head -n 1)
+  local wheel=$(ls "$triton_dir"/triton-*+git${hash8}*cp${python_version/./}*.whl 2>/dev/null | head -n 1)
   echo "$wheel" >&2
 
   if [ -f "$wheel" ]; then
