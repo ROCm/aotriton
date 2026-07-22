@@ -247,6 +247,7 @@ class KernelDescription(Interface):
     LUT_FULL_SEQLEN_Q = [16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
     LUT_FULL_SEQLEN_K = [16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
     LUT_FULL_SEQLEN_NAVI = [16, 32, 64, 128, 256, 512, 1024, 2048]
+    LUT_FULL_SEQLEN_TP = [64,256,1024,8192]
 
     def sancheck_lut_tensor(self, f, lut_tensor):
         from aotriton.codegen.parser import load_family_aot

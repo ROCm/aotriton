@@ -65,6 +65,7 @@ class FlashKernel:
     LUT_FULL_SEQLEN_Q = [16,32,64,128,256,512,1024,2048,4096,8192]
     LUT_FULL_SEQLEN_K = [16,32,64,128,256,512,1024,2048,4096,8192]
     LUT_FULL_SEQLEN_NAVI = [16,32,64,128,256,512,1024,2048]
+    LUT_FULL_SEQLEN_TP = [64,256,1024,8192]
 
     def is_functional_disabled(self, functional):
         if not hasattr(self, 'gen_autotune_configs'):  # only check acutal FA kernels
@@ -92,12 +93,16 @@ class FlashKernel:
             return True, [], _empty_generator()
         MI = (AOTRITON_ARCH_WARPSIZE[arch] == 64)
         Navi = (AOTRITON_ARCH_WARPSIZE[arch] == 32)
+        TECH_PREVIEW = (arch == 'gfx1250')
         LUT_TENSOR_SIZE = (len(self.LUT_FULL_SEQLEN_Q), len(self.LUT_FULL_SEQLEN_K))
         LUT_TENSOR_SIZE_NAVI = (len(self.LUT_FULL_SEQLEN_NAVI), len(self.LUT_FULL_SEQLEN_NAVI))
+        LUT_TENSOR_SIZE_TP = (len(self.LUT_FULL_SEQLEN_TP), len(self.LUT_FULL_SEQLEN_TP))
         log(lambda : f'{lut_tensor.shape=} ==? {LUT_TENSOR_SIZE=}')
         all_pos = (lut_tensor >= 0).all()
         shape = lut_tensor.shape[1:]
-        if MI:
+        if TECH_PREVIEW:
+            shape_match = (shape == LUT_TENSOR_SIZE or shape == LUT_TENSOR_SIZE_NAVI or shape == LUT_TENSOR_SIZE_TP)
+        elif MI:
             shape_match = shape == LUT_TENSOR_SIZE
         elif Navi:
             shape_match = (shape == LUT_TENSOR_SIZE or shape == LUT_TENSOR_SIZE_NAVI)
@@ -115,7 +120,11 @@ class FlashKernel:
             else:
                 errors.append(f"Unexpected {shape=}, Expecting {LUT_TENSOR_SIZE}")
         # Pick the seqlen lists that match the actual lut_tensor shape for this arch.
-        if Navi and lut_tensor.shape[1:] == LUT_TENSOR_SIZE_NAVI:
+        if TECH_PREVIEW and lut_tensor.shape[1:] == LUT_TENSOR_SIZE_TP:
+            lut_full_seqlen_q = self.LUT_FULL_SEQLEN_TP
+            lut_full_seqlen_k = self.LUT_FULL_SEQLEN_TP
+            expected_size = LUT_TENSOR_SIZE_TP
+        elif Navi and lut_tensor.shape[1:] == LUT_TENSOR_SIZE_NAVI:
             lut_full_seqlen_q = self.LUT_FULL_SEQLEN_NAVI
             lut_full_seqlen_k = self.LUT_FULL_SEQLEN_NAVI
             expected_size = LUT_TENSOR_SIZE_NAVI
