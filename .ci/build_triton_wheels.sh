@@ -86,8 +86,21 @@ mirror_volume_for_origin() {
   fi
 }
 
-declare -A SYNCED_VOLUMES
+# Check the wheel cache first -- only hashes that still need building
+# require their origin's mirror synced at all, avoiding a needless
+# git fetch (network round-trip) when everything is already cached.
+NEEDED_HASHES=()
 for HASH in "${TRITON_HASHES[@]}"; do
+  SHORT="${HASH:0:8}"
+  if ls "${WHEEL_OUTPUT_DIR}"/triton-*+*"${SHORT}"*.whl &>/dev/null; then
+    echo "Wheel for ${SHORT} already cached, skipping."
+    continue
+  fi
+  NEEDED_HASHES+=("${HASH}")
+done
+
+declare -A SYNCED_VOLUMES
+for HASH in "${NEEDED_HASHES[@]}"; do
   origin="$(hash_origin "${HASH}")"
   volume="$(mirror_volume_for_origin "${origin}")"
   if [[ -z "${SYNCED_VOLUMES[${volume}]:-}" ]]; then
@@ -96,14 +109,8 @@ for HASH in "${TRITON_HASHES[@]}"; do
   fi
 done
 
-# Build wheel for each hash, skipping if already cached
-for HASH in "${TRITON_HASHES[@]}"; do
-  SHORT="${HASH:0:8}"
-  if ls "${WHEEL_OUTPUT_DIR}"/triton-*+*"${SHORT}"*.whl &>/dev/null; then
-    echo "Wheel for ${SHORT} already cached, skipping."
-    continue
-  fi
-
+# Build each hash that's still needed.
+for HASH in "${NEEDED_HASHES[@]}"; do
   volume="$(mirror_volume_for_origin "$(hash_origin "${HASH}")")"
 
   docker run --network=host -i --rm \
