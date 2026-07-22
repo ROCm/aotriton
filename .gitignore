@@ -28,3 +28,7 @@ v3python.retiring/
 ati-code-quality.md
 ati-ccreview-*.md
 agent-files/
+
+# Lazily extracted from the checked-in .tar.xz by python/database/sqlite.py
+# on first use (Factory's secondary-database fallback); not itself tracked.
+/modules/database/*.sqlite3

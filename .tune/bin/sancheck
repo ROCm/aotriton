@@ -72,27 +72,20 @@ if [ -n "$GPUS" ]; then
     read -ra GPU_ARGS <<< "--target_gpus $GPUS"
 fi
 
-# Persistent build directory — survives across runs so the op_database
-# only needs to be extracted once.
+# Persistent build directory.
 #   <workdir>/build/sancheck/database/tuning_database.sqlite3  (symlink)
-#   <workdir>/build/sancheck/database/op_database.sqlite3      (extracted once, or copied from scratch/)
+#   <workdir>/build/sancheck/database/op_database.sqlite3      (op mode only; kernel mode
+#     falls back to modules/database/'s checked-in baseline via python/database/sqlite.py)
 TMPDIR_BUILD="$WORKDIR/build/sancheck"
 mkdir -p "$TMPDIR_BUILD/database"
 
 # tuning_database.sqlite3: always re-symlink in case the path changed.
 ln -sf "$(realpath "$CENTRALDB")" "$TMPDIR_BUILD/database/tuning_database.sqlite3"
 
-OP_TARBALL="$REPO_ROOT/modules/database/op_database.sqlite3.tar.xz"
-if [ ! -f "$OP_TARBALL" ]; then
-    echo "Error: op database tarball not found: $OP_TARBALL" >&2
-    exit 1
-fi
-
-# op_database.sqlite3: use freshly generated file in op mode; extract from tarball otherwise.
+# op_database.sqlite3: only stage a fresh copy in op mode (this takes
+# precedence over the checked-in baseline). Kernel mode needs nothing here.
 if [ "$TUNING_MODE" = "op" ]; then
     cp "$WORKDIR/scratch/op_database.sqlite3" "$TMPDIR_BUILD/database/op_database.sqlite3"
-elif [ ! -f "$TMPDIR_BUILD/database/op_database.sqlite3" ]; then
-    tar -xJf "$OP_TARBALL" -C "$TMPDIR_BUILD/database"
 fi
 
 REPORT="$WORKDIR/scratch/dbreport.txt"
