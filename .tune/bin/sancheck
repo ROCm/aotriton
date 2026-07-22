@@ -55,6 +55,7 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+. "$SCRIPT_DIR/../lib/require_aotriton_pkg.sh"
 
 # Derive GPU targets from the gpu column in the centralized database.
 # This avoids any config.rc dependency — the database already knows
@@ -81,7 +82,7 @@ mkdir -p "$TMPDIR_BUILD/database"
 # tuning_database.sqlite3: always re-symlink in case the path changed.
 ln -sf "$(realpath "$CENTRALDB")" "$TMPDIR_BUILD/database/tuning_database.sqlite3"
 
-OP_TARBALL="$REPO_ROOT/v3python/database/op_database.sqlite3.tar.xz"
+OP_TARBALL="$REPO_ROOT/modules/database/op_database.sqlite3.tar.xz"
 if [ ! -f "$OP_TARBALL" ]; then
     echo "Error: op database tarball not found: $OP_TARBALL" >&2
     exit 1
@@ -99,7 +100,7 @@ mkdir -p "$WORKDIR/scratch"
 echo "Sanity check report: $REPORT"
 
 # Diagnostic output goes to stdout (bare print() calls, no logging framework).
-python3 -m v3python.generate \
+python3 -m aotriton.generate \
     --build_dir "$TMPDIR_BUILD" \
     --root_dir "$REPO_ROOT" \
     --lut_sanity_check \

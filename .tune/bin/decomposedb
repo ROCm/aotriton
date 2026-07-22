@@ -5,7 +5,7 @@
 # Decompose the centralized SQLite database into per-arch/kernel shards.
 #
 #   1. Generate scratch/decompose_db.sh from scratch/centraldb.sqlite3
-#      via v3python.database_decompose
+#      via aotriton.database_decompose
 #   2. Execute the generated script to produce
 #      <workdir>/installed/database/amd/<arch>/<family>/<kernel>.sqlite3.tar.xz
 #
@@ -37,6 +37,7 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+. "$SCRIPT_DIR/../lib/require_aotriton_pkg.sh"
 
 DECOMPOSE_OUTPUT="$WORKDIR/installed/database"
 mkdir -p "$DECOMPOSE_OUTPUT"
@@ -85,7 +86,7 @@ echo "  Input:  $CENTRALDB"
 echo "  Script: $SCRIPT_OUTPUT"
 echo "  Output: $DECOMPOSE_OUTPUT"
 
-PYTHONPATH="$REPO_ROOT" python3 -m v3python.database_decompose \
+PYTHONPATH="$REPO_ROOT" python3 -m aotriton.database_decompose \
     --database_file "$CENTRALDB" \
     --script_output "$SCRIPT_OUTPUT" \
     --decompose_output "$DECOMPOSE_OUTPUT"
@@ -95,8 +96,8 @@ echo "Step 2/3: Running decompose script..."
 bash "$SCRIPT_OUTPUT"
 
 echo ""
-echo "Step 3/3: Copying base database archives from v3python/database/..."
-cp "$REPO_ROOT"/v3python/database/*.sqlite3.tar.xz "$DECOMPOSE_OUTPUT/"
+echo "Step 3/3: Copying base database archives from modules/database/..."
+cp "$REPO_ROOT"/modules/database/*.sqlite3.tar.xz "$DECOMPOSE_OUTPUT/"
 
 echo ""
 echo "Decompose complete: $DECOMPOSE_OUTPUT"

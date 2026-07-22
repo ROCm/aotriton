@@ -23,14 +23,14 @@
 #   .tune/bin/export_best_results ~/wkdir.v3.5 /tmp/tuning_database.sqlite3
 #
 #   # 2. Decompose into per-arch shards
-#   python3 -m v3python.database_decompose \
+#   python3 -m aotriton.database_decompose \
 #       --database_file /tmp/tuning_database.sqlite3 \
 #       --script_output /tmp/decompose.sh \
 #       --decompose_output /tmp/decomposed
 #   bash /tmp/decompose.sh
 #
 #   # 3. Copy shards into the source tree
-#   cp -r /tmp/decomposed/amd/ v3python/database/
+#   cp -r /tmp/decomposed/amd/ modules/database/
 #
 # Examples:
 #   .tune/bin/export_best_results ~/wkdir.v3.5
