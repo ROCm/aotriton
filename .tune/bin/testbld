@@ -102,7 +102,7 @@ echo "Architectures to build: ${ARCH_LIST[*]}"
 
 # Step 1: Build Triton wheel (cached, shared across all arch builds)
 echo "Step 1: Building Triton wheel..."
-TRITON_WHEEL=$("$TUNE_ROOT/single/build_triton_wheel.sh" "$WORKDIR")
+TRITON_WHEEL=$("$TUNE_ROOT/single/build_triton_wheel.sh" --no_build_fallback "$WORKDIR")
 echo "Using Triton wheel: $TRITON_WHEEL"
 
 # Step 2: per-arch build via .ci/build-test.sh. test123 avoids clashing with
