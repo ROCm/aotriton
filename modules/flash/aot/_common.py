@@ -25,7 +25,7 @@ def flash_disabled(f, *, gfx950_bad_hdims=()):
     descriptions. `gfx950_bad_hdims` is the per-kernel set of BLOCK_DMODEL values
     the gfx950 compiler has a known numerical error on (fwd: {16}; bwd: {48, 80});
     everything else (causal+matrix-bias unsupported, gfx11 hdim>256, gfx1250
-    NPOT hdim) is common."""
+    NPOT hdim, gfx1250 hdim>256) is common."""
     causal = f.choices.CAUSAL_TYPE
     hdim = f.choices.BLOCK_DMODEL
     bias_type = f.choices.BIAS_TYPE
@@ -34,6 +34,8 @@ def flash_disabled(f, *, gfx950_bad_hdims=()):
     if f.arch.startswith('gfx11') and hdim > 256:
         return True
     if f.arch == 'gfx950' and hdim in gfx950_bad_hdims:
+        return True
+    if f.arch == 'gfx1250' and hdim > 256:  # no accurate candidate found beyond this
         return True
     if f.arch == 'gfx1250' and hdim & (hdim - 1) != 0:  # NPOT head dims unsupported
         return True
@@ -65,7 +67,7 @@ class FlashKernel:
     LUT_FULL_SEQLEN_Q = [16,32,64,128,256,512,1024,2048,4096,8192]
     LUT_FULL_SEQLEN_K = [16,32,64,128,256,512,1024,2048,4096,8192]
     LUT_FULL_SEQLEN_NAVI = [16,32,64,128,256,512,1024,2048]
-    LUT_FULL_SEQLEN_TP = [64,256,1024,8192]
+    LUT_FULL_SEQLEN_TP = [64,256,1024]
 
     def is_functional_disabled(self, functional):
         if not hasattr(self, 'gen_autotune_configs'):  # only check acutal FA kernels
