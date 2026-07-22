@@ -111,6 +111,26 @@ The `--yaml` flag is still optional. When provided, its `.venvs` hashes are
 built in addition to the embedded `third_party/triton` submodule (unless the
 YAML supplies `.venvs.default`, which replaces the submodule hash).
 
+A `.venvs` entry may give `hash`/`origin` as a `{hash, origin}` map instead of
+a bare hash string, to build from a commit that lives in a different Triton
+origin (e.g. a private fork). An optional third field, `pat_environ`, names
+an environment variable holding a GitHub PAT:
+
+```yaml
+venvs:
+  private_fork:
+    hash: <sha>
+    origin: https://github.com/some-org/private-triton
+    pat_environ: GITHUB_TOKEN
+```
+
+Some build processes expect the token under a specific variable name (e.g.
+`GITHUB_EMU_TOKEN`) rather than a fixed default; `pat_environ` lets you
+specify that name and passes it through as-is into the Triton build, so the
+same PAT authenticates both the git clone and any artifact downloads from
+private GitHub instances during the build. If `pat_environ` is omitted, no
+PAT is used.
+
 To build wheels manually:
 ```bash
 bash .ci/build_triton_wheels.sh \

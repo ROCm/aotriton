@@ -74,6 +74,25 @@ hash_origin() {
   echo "${TRITON_GIT_ORIGIN}"
 }
 
+# Optional: the env var (in THIS shell) holding a GitHub PAT for hash's venv
+# entry, e.g. `pat_environ: GITHUB_TOKEN` in the altwheel yaml. Empty if the
+# entry doesn't declare one -- no PAT is used for that hash.
+hash_pat_environ() {
+  local hash="$1"
+  if [[ -z "${ALTWHEEL_YAML}" ]]; then
+    echo ""
+    return
+  fi
+  local key
+  for key in $(yq -r '.venvs | keys | .[]' "${ALTWHEEL_YAML}"); do
+    if [[ "$(altwheel_venv_hash "${ALTWHEEL_YAML}" ".venvs.${key}")" == "${hash}" ]]; then
+      altwheel_venv_pat_environ "${ALTWHEEL_YAML}" ".venvs.${key}"
+      return
+    fi
+  done
+  echo ""
+}
+
 # One mirror volume per distinct origin, named "triton-mirror" for the
 # default origin (unchanged from before) and a stable per-origin slug
 # otherwise -- a harmless local cache like the default mirror.
@@ -99,12 +118,24 @@ for HASH in "${TRITON_HASHES[@]}"; do
   NEEDED_HASHES+=("${HASH}")
 done
 
+# Fail fast, before any docker work, if a needed hash names a pat_environ
+# whose environment variable isn't actually set: the same PAT authenticates
+# both the mirror fetch below and (if the Triton build downloads its own
+# artifacts from GitHub) the build itself, so check it once up front.
+for HASH in "${NEEDED_HASHES[@]}"; do
+  pat_environ="$(hash_pat_environ "${HASH}")"
+  if [[ -n "${pat_environ}" && -z "${!pat_environ:-}" ]]; then
+    echo "Error: pat_environ '${pat_environ}' is set in the yaml for ${HASH:0:8} but that environment variable is empty/unset." >&2
+    exit 1
+  fi
+done
+
 declare -A SYNCED_VOLUMES
 for HASH in "${NEEDED_HASHES[@]}"; do
   origin="$(hash_origin "${HASH}")"
   volume="$(mirror_volume_for_origin "${origin}")"
   if [[ -z "${SYNCED_VOLUMES[${volume}]:-}" ]]; then
-    sync_mirror "${volume}" "${origin}" "${BASE_DOCKER_IMAGE}"
+    sync_mirror "${volume}" "${origin}" "${BASE_DOCKER_IMAGE}" "$(hash_pat_environ "${HASH}")"
     SYNCED_VOLUMES[${volume}]=1
   fi
 done
@@ -112,6 +143,16 @@ done
 # Build each hash that's still needed.
 for HASH in "${NEEDED_HASHES[@]}"; do
   volume="$(mirror_volume_for_origin "$(hash_origin "${HASH}")")"
+  pat_environ="$(hash_pat_environ "${HASH}")"
+
+  # Forward the PAT by NAME only: Triton's own build (setup.py) may read it
+  # directly under this name to download artifacts (e.g. a prebuilt
+  # toolchain) from a private GitHub instance, sharing the same token used
+  # to authenticate the mirror fetch above.
+  PAT_ENV_ARG=()
+  if [[ -n "${pat_environ}" ]]; then
+    PAT_ENV_ARG=(-e "${pat_environ}")
+  fi
 
   docker run --network=host -i --rm \
     -v "${volume}:/mirror:ro" \
@@ -119,6 +160,7 @@ for HASH in "${NEEDED_HASHES[@]}"; do
     --mount "type=bind,source=$(realpath ${SCRIPT_DIR}/runc-build-triton-wheel.sh),target=/tmp/runc-build-triton-wheel.sh,readonly" \
     --tmpfs "/scratch:exec" \
     -e TRITON_WHEEL_VERSION_SUFFIX="${TRITON_WHEEL_VERSION_SUFFIX}" \
+    "${PAT_ENV_ARG[@]}" \
     "${BASE_DOCKER_IMAGE}" \
     bash -s "${HASH}" << 'EOF'
 set -ex

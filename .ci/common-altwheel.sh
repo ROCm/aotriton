@@ -30,6 +30,20 @@ altwheel_venv_origin() {
   fi
 }
 
+# Optional: names the environment variable holding a GitHub PAT for this venv
+# entry's origin (see docs/AltWheelExample.yaml). Empty if unset -- no PAT is
+# used during git clone or the Triton build in that case.
+altwheel_venv_pat_environ() {
+  local yaml="$1" path="$2"
+  local t
+  t=$(yq -r "${path} | tag" "$yaml" 2>/dev/null)
+  if [ "$t" = "!!map" ]; then
+    yq -r "${path}.pat_environ // \"\"" "$yaml"
+  else
+    echo ""
+  fi
+}
+
 # Find the built wheel matching <hash> in <host_wheel_dir> (a directory of
 # triton-*+git<hash8>*.whl files, e.g. .ci's WHEEL_CACHE_DIR or .tune's
 # <workdir>/scratch/triton). Prints the absolute path, or nothing if missing.
