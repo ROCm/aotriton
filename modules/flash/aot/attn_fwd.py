@@ -56,6 +56,8 @@ def gen_autotune_configs(f):
     dtype = check_value(f, ['Q'])
     HEAD_DIM = check_value(f, ['BLOCK_DMODEL'])
     CAUSAL_TYPE = check_value(f, ['CAUSAL_TYPE'])
+    BIAS_TYPE = check_value(f, ['BIAS_TYPE'])
+    ENABLE_DROPOUT = check_value(f, ['ENABLE_DROPOUT'])
     WAVE64 = AOTRITON_ARCH_WARPSIZE[arch] == 64
     WAVE32 = AOTRITON_ARCH_WARPSIZE[arch] == 32
     if WAVE64:
@@ -90,6 +92,32 @@ def gen_autotune_configs(f):
                   'PRE_LOAD_V': True,
                   'NUM_XCDS': NUM_XCDS}
             yield ati.tune.Config(kw, num_stages=1, num_warps=8)
+        # HEAD_DIM=256 fp32 with bias+dropout enabled register-pressures the gfx1250
+        # compiler hard enough that none of the waves_per_eu=2/PRE_LOAD_V=True
+        # candidates above passes accuracy on every test case (task 1540: idx0 fails
+        # 02_irregular_hdim, idx2 fails 04_irregular_both, both ~1000x+ over threshold
+        # - a spill/scheduling symptom, not a real accuracy limit). waves_per_eu is a
+        # target-occupancy hint (lower relaxes the register budget instead of forcing
+        # a tighter one) and PRE_LOAD_V=False skips prefetching V into registers/LDS
+        # early, both plausible register-pressure relief valves, so sweep both here.
+        # Note this can't be scoped any tighter than the compile-time functional
+        # (HEAD_DIM/dtype/BIAS_TYPE/ENABLE_DROPOUT) - it also applies to other seqlen
+        # buckets sharing this functional, not just the 64x64 case that motivated it,
+        # since seqlen is a runtime dispatch value, not a compile-time axis.
+        if HEAD_DIM == 256 and dtype == '*fp32:16' and BIAS_TYPE == 1 and ENABLE_DROPOUT:
+            for M, N in ((64, 32), (32, 32), (16, 16)):
+                for pre in (True, False):
+                    for waves in (1, 2, 3, 4):
+                        if pre and waves == 2:
+                            continue  # already yielded above
+                        kw = {'PERSISTENT_TYPE': persistent_type,
+                              'GRID_CU_MULTIP': 2,
+                              'BLOCK_M': M,
+                              'BLOCK_N': N,
+                              'waves_per_eu': waves,
+                              'PRE_LOAD_V': pre,
+                              'NUM_XCDS': NUM_XCDS}
+                        yield ati.tune.Config(kw, num_stages=1, num_warps=8)
         return
     if arch == 'gfx950':
         for waves, pre in itertools.product(WAVES_PER_EU, PRE_LOAD_V):
