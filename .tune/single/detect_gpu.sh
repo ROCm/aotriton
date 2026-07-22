@@ -11,6 +11,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 . "$TUNE_ROOT/lib/config_load.sh"
+# sqlite3 CLI may not be present inside CELERY_WORKER_IMAGE; use Python fallback
+. "$TUNE_ROOT/lib/sqlite3_compat.sh"
 
 WORKDIR="$1"
 HOSTNAME="$2"
