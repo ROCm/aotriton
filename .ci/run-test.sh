@@ -69,6 +69,7 @@ fi
   export SMALL_VRAM=${small_vram};
   export COLUMNS=400;
   export FOR_RELEASE=${test_level};
+  export AOTRITON_UT_ARCH="${native_arch}";
   if [[ "$backend" == "split" ]]; then
     export BWD_IMPL=0
     fnprefix="ut_pass"

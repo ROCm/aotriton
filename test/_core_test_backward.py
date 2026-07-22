@@ -138,6 +138,19 @@ PRIME_SEQLEN_K = [13, 31, 41, 71, 223, 337, 571, 1063, 2081, 5237]
 PRIME_SEQLEN_Q_1K = [11, 17, 37, 67, 157, 257, 523]
 PRIME_SEQLEN_K_1K = [13, 31, 41, 71, 223, 337, 571]
 
+# gfx1250 is unreleased; only its tuning table's actual entries {64, 256,
+# 1024} need correctness coverage, one prime per gap. 2048 is added as if it
+# were also a tuning-table entry, to check binning clamps seqlens beyond the
+# largest real entry (1024) instead of failing.
+AOTRITON_UT_ARCH = os.getenv('AOTRITON_UT_ARCH', default='generic')
+if AOTRITON_UT_ARCH == 'gfx1250':
+    REGULAR_SEQLEN = [64, 256, 1024, 2048]
+    REGULAR_SEQLEN_2K = [64, 256, 1024, 2048]
+    PRIME_SEQLEN_Q = [11, 67, 257, 1033]      # gaps (0,64) (64,256) (256,1024) (1024,2048)
+    PRIME_SEQLEN_K = [13, 71, 337, 1063]      # gaps (0,64) (64,256) (256,1024) (1024,2048)
+    PRIME_SEQLEN_Q_1K = [11, 67, 257]
+    PRIME_SEQLEN_K_1K = [13, 71, 337]
+
 SMALL_HEADDIM_ONLY = bool(int(os.getenv('SMALL_HEADDIM_ONLY', default='0')))
 LARGE_HEADDIM_ONLY = bool(int(os.getenv('LARGE_HEADDIM_ONLY', default='0')))
 
