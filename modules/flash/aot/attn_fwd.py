@@ -69,9 +69,21 @@ def gen_autotune_configs(f):
             pass
     WAVES_PER_EU = [1, 2, 3, 4]
     NUM_WARPS = [2, 4] if WAVE64 else [4, 8]
-    PRE_LOAD_V = [True] if arch == 'gfx1250' else PRE_LOAD_OPTIONS
+    PRE_LOAD_V = PRE_LOAD_OPTIONS
     NUM_STAGES = [1]
     NUM_XCDS = 8 if arch in ('gfx942', 'gfx950') else 1
+    if arch == 'gfx1250':
+        # aiter gfx1250-MHA-DEFAULT.json: fwd.default only, no sweep.
+        persistent_type = 2 if CAUSAL_TYPE != 0 else 0
+        kw = {'PERSISTENT_TYPE': persistent_type,
+              'GRID_CU_MULTIP': 2,
+              'BLOCK_M': 128,
+              'BLOCK_N': 64,
+              'waves_per_eu': 2,
+              'PRE_LOAD_V': True,
+              'NUM_XCDS': NUM_XCDS}
+        yield ati.tune.Config(kw, num_stages=1, num_warps=4)
+        return
     if arch == 'gfx950':
         for waves, pre in itertools.product(WAVES_PER_EU, PRE_LOAD_V):
             persistent_type = 2 if CAUSAL_TYPE != 0 else 0
