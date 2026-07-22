@@ -75,6 +75,11 @@
             hx-indicator="#deploy-buildnode-spinner"
             {% if not build_node_config.hostname %}disabled title="Configure a remote build node hostname first"{% endif %}>Deploy to Remote Build Node{% if build_node_config.hostname %} ({{ build_node_config.hostname }}){% endif %}</button>
     <span id="deploy-buildnode-spinner" class="htmx-indicator">⏳ Syncing...</span>
+    <button hx-post="/api/workers/{{ build_node_config.hostname }}/build-image"
+            hx-swap="none"
+            hx-indicator="#build-image-buildnode-spinner"
+            {% if not build_node_config.hostname %}disabled title="Configure a remote build node hostname first"{% endif %}>Build Image on Remote Build Node{% if build_node_config.hostname %} ({{ build_node_config.hostname }}){% endif %}</button>
+    <span id="build-image-buildnode-spinner" class="htmx-indicator">⏳ Building Image...</span>
 </section>
 
 <section>
