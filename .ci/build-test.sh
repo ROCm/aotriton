@@ -79,7 +79,9 @@ if [ -n "$altwheel_config" ]; then
   build_args+=("-DAOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE=$(realpath "$altwheel_config")")
 fi
 
-if [ "$#" -ge 1 ]; then
+# Not when an altwheel config is set, which supplies the default wheel via
+# its own .venvs.default.
+if [ "$#" -ge 1 ] && [ -z "$altwheel_config" ]; then
   wheel=$(realpath "$1")
   build_args+=("-DAOTRITON_USE_LOCAL_TRITON_WHEEL=${wheel}")
 fi

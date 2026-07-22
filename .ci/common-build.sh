@@ -12,10 +12,14 @@ function _common_build() {
   if [ -n "${AOTRITON_NAME_SUFFIX_OVERRIDE}" ]; then
     suffix="${AOTRITON_NAME_SUFFIX_OVERRIDE}"
   fi
+  # Explicit, absolute source dir -- `cmake ..` only works when bdir is a
+  # subdirectory of the source tree, which isn't true once AOTRITON_BUILD_PATH
+  # points at an external workdir. Same convention as build-release.sh.
+  source_dir="$(realpath "${SCRIPT_DIR}/..")"
   if [ -n "${AOTRITON_BUILD_PATH}" ]; then
     bdir="${AOTRITON_BUILD_PATH}"
   else
-    bdir="${SCRIPT_DIR}/../build-${aotriton_major}.${aotriton_minor}-${build_for}-${target_arch//;/_}"
+    bdir="${source_dir}/build-${aotriton_major}.${aotriton_minor}-${build_for}-${target_arch//;/_}"
   fi
   if [ -n "${AOTRITON_INSTALL_PATH}" ]; then
     install_prefix="${AOTRITON_INSTALL_PATH}"
@@ -25,7 +29,7 @@ function _common_build() {
   mkdir -p ${bdir}
   (
     cd ${bdir};
-    cmake .. -DCMAKE_INSTALL_PREFIX=${install_prefix} \
+    cmake "${source_dir}" -DCMAKE_INSTALL_PREFIX=${install_prefix} \
       -DCMAKE_BUILD_TYPE=${build_type} \
       -DAOTRITON_TARGET_ARCH=${target_arch} \
       -DAOTRITON_NAME_SUFFIX=${suffix} \
