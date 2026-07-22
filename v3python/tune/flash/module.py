@@ -126,6 +126,9 @@ class Flash(TuningDescription):
         if arch == 'gfx1250' and entry.hdim > 256:
             return False, (f'arch {arch} does not support hdim={entry.hdim} '
                            f'(no shipped candidate is numerically accurate at hdim > 256)')
+        if arch == 'gfx1250' and entry.hdim & (entry.hdim - 1) != 0:
+            return False, (f'arch {arch} does not support hdim={entry.hdim} '
+                           f'(NPOT head dims are disabled at compile time; see flash_disabled)')
         return True, ''
 
     def list_impls(self, entry: FlashEntry, arch: str | None = None):
