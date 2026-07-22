@@ -3,9 +3,10 @@
 # Reusable git caching primitive backed by a docker volume.
 #
 #   sync_mirror <mirror_volume> <origin> [base_image]
-#       Maintain a bare `git clone --mirror` of <origin> inside <mirror_volume>
-#       (at /mirror). Idempotent and safe to call every run; a healthy mirror
-#       is never destroyed.
+#       Maintain a bare mirror of <origin> inside <mirror_volume> (at
+#       /mirror), via `git init --bare` + `fetch` (idempotent, heals a
+#       missing/partial mirror in place). Safe to call every run; never
+#       deletes anything.
 #
 # Workflow (used for both aotriton and triton): GitHub -> local mirror volume
 # -> the build/wheel container clones the exact commit from the LOCAL mirror
@@ -44,21 +45,17 @@ set -ex
 origin="$1"
 git config --global --add safe.directory '*'
 
-if git -C /mirror rev-parse --git-dir >/dev/null 2>&1; then
-  # Repair an existing mirror in place. Covers legacy `git clone --bare`
-  # volumes that lack a mirror refspec, and origin re-points (fork / file://).
-  # A fetch failure (network blip, rate limit) is left to fail loudly rather
-  # than wiping a healthy mirror; reclone is only for a missing/corrupt repo.
-  git -C /mirror config remote.origin.fetch '+refs/*:refs/*'
-  git -C /mirror remote set-url origin "${origin}" \
-    || git -C /mirror remote add origin "${origin}"
-  git -C /mirror fetch --prune origin
-else
-  # Empty volume or corrupt repo: wipe any partial content (keep the mount
-  # point) and mirror afresh.
-  find /mirror -mindepth 1 -maxdepth 1 -exec rm -rf {} +
-  git clone --mirror "${origin}" /mirror
-fi
+# One unconditional repair path, no branching on whether /mirror already
+# looks valid: `git init --bare` is idempotent (a no-op scaffold-check on an
+# already-valid repo, a plain init on empty, a non-destructive fill-in of
+# missing structure otherwise -- it never touches existing objects/refs) and
+# `fetch` heals anything missing/partial via git's content-addressed store.
+# Never delete: there is no case where wiping the volume first helps.
+git init --bare /mirror
+git -C /mirror config remote.origin.fetch '+refs/*:refs/*'
+git -C /mirror remote set-url origin "${origin}" \
+  || git -C /mirror remote add origin "${origin}"
+git -C /mirror fetch --prune origin
 
 # Let consumers fetch any reachable commit SHA (not just branch/tag tips).
 git -C /mirror config uploadpack.allowReachableSHA1InWant true
