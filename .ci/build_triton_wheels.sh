@@ -6,16 +6,18 @@ if [ -z "$BASH_VERSION" ]; then
 fi
 
 if [[ "$#" -eq 0 ]]; then
-  echo "Usage: build_triton_wheels.sh --wheel_output_dir <dir> --version_suffix <suffix> <hash1> [<hash2> ...]" >&2
+  echo "Usage: build_triton_wheels.sh --wheel_output_dir <dir> --version_suffix <suffix> [--python <X.Y>] <hash1> [<hash2> ...]" >&2
   exit 1
 fi
 
 WHEEL_OUTPUT_DIR=""
 TRITON_WHEEL_VERSION_SUFFIX=""
+PYVER=""
 while [[ "$1" == --* ]]; do
   case "$1" in
     --wheel_output_dir) WHEEL_OUTPUT_DIR="$2"; shift 2 ;;
     --version_suffix)   TRITON_WHEEL_VERSION_SUFFIX="$2"; shift 2 ;;
+    --python)           PYVER="$2"; shift 2 ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
@@ -34,6 +36,17 @@ fi
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 . "${SCRIPT_DIR}/common-git-cache.sh"
 BASE_DOCKER_IMAGE="aotriton:base"
+if [[ -n "${PYVER}" ]]; then
+  BASE_DOCKER_IMAGE="aotriton:base-py${PYVER}"
+  # Build the Python-version-parameterized derived image on demand, mirroring
+  # the same "build if missing" idiom releasesuite-git-head.sh already uses
+  # for aotriton:base itself.
+  if [ -z "$(docker images -q ${BASE_DOCKER_IMAGE} 2>/dev/null)" ]; then
+    (cd "${SCRIPT_DIR}" && docker build --network=host -t ${BASE_DOCKER_IMAGE} \
+      --build-arg "PYVER=${PYVER}" \
+      -f buildenv-triton-py.Dockerfile .)
+  fi
+fi
 TRITON_MIRROR_VOLUME="triton-mirror"
 # TRITON_GIT_ORIGIN may be overridden from the environment (e.g. by
 # releasesuite-git-head.sh --triton_origin) to fetch Triton from a fork or a
@@ -57,20 +70,14 @@ for HASH in "${TRITON_HASHES[@]}"; do
   docker run --network=host -i --rm \
     -v "${TRITON_MIRROR_VOLUME}:/mirror:ro" \
     --mount "type=bind,source=$(realpath ${WHEEL_OUTPUT_DIR}),target=/cache/wheels" \
+    --mount "type=bind,source=$(realpath ${SCRIPT_DIR}/runc-build-triton-wheel.sh),target=/tmp/runc-build-triton-wheel.sh,readonly" \
     --tmpfs "/scratch:exec" \
     -e TRITON_WHEEL_VERSION_SUFFIX="${TRITON_WHEEL_VERSION_SUFFIX}" \
     "${BASE_DOCKER_IMAGE}" \
     bash -s "${HASH}" << 'EOF'
 set -ex
-git config --global --add safe.directory '*'
 HASH="$1"
-SHORT="${HASH:0:8}"
-rm -rf /scratch/build
-git init /scratch/build
-git -C /scratch/build remote add origin file:///mirror
-git -C /scratch/build fetch --depth=1 origin "${HASH}"
-git -C /scratch/build checkout FETCH_HEAD
-scl enable gcc-toolset-13 -- python -m pip wheel /scratch/build -w /cache/wheels/
-ls /cache/wheels/triton-*+*${SHORT}*.whl
+scl enable gcc-toolset-13 -- bash /tmp/runc-build-triton-wheel.sh \
+  file:///mirror "$HASH" /cache/wheels "$TRITON_WHEEL_VERSION_SUFFIX" /scratch/build
 EOF
 done
