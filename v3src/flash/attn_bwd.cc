@@ -92,6 +92,13 @@ attn_bwd(const attn_bwd_params& in,
   // gfx1250 only has kernels for power-of-two head dims
   if (Gpu2VendorArch(gpu) == CAT32(GpuVendor::kAMD, 0x1250)) {
     hdim_rounded = bit_ceil(hdim_rounded);
+    // FIXME: Remove when compiler bug fixed. Speculative: gfx950's 48/80
+    // quirks above are likely the same underlying hdim=16 bug, surfacing
+    // because 48/80 decompose into an odd number of 16-wide sub-blocks
+    // (3 and 5). NPOT hdims are disallowed entirely on gfx1250, so the only
+    // place that root cause can still show up here is hdim_rounded==16 itself.
+    if (hdim_rounded == 16)
+      hdim_rounded = 32;
   }
   LazyTensorInternal<2> lazy_delta(in.D);
   LazyTensorInternal<4> lazy_dq_acc(in.DQ_ACC);
