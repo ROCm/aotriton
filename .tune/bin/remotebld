@@ -129,6 +129,7 @@ set -x
 jobid=$(tsp docker run --rm \
   --user "$(id -u):$(id -g)" \
   -e PYTHONPYCACHEPREFIX=/wkdir/run/pycache \
+  -e CCACHE_DIR=/wkdir/run/ccache \
   --mount "type=bind,source=$REMOTE_WORKDIR,target=/wkdir" \
   "$CELERY_WORKER_IMAGE" \
   bash /wkdir/aotriton.src/.tune/bin/testbld "${TESTBLD_ARGS[@]}")
@@ -154,6 +155,7 @@ set -x
 jobid=$(tsp docker run --rm \
   --user "$(id -u):$(id -g)" \
   -e PYTHONPYCACHEPREFIX=/wkdir/run/pycache \
+  -e CCACHE_DIR=/wkdir/run/ccache \
   --mount "type=bind,source=$REMOTE_WORKDIR,target=/wkdir" \
   "$CELERY_WORKER_IMAGE" \
   bash -lc 'source /wkdir/config.rc && source "$(dirname "$CELERY_WORKER_PYTHON")/activate" && exec bash /wkdir/aotriton.src/.tune/bin/libbld "$@"' \
@@ -187,6 +189,7 @@ else
     docker run --rm \
       --user "$(id -u):$(id -g)" \
       -e PYTHONPYCACHEPREFIX=/wkdir/run/pycache \
+      -e CCACHE_DIR=/wkdir/run/ccache \
       --mount "type=bind,source=$ABSWORKDIR,target=/wkdir" \
       "$CELERY_WORKER_IMAGE" \
       bash /wkdir/aotriton.src/.tune/bin/testbld "${TESTBLD_ARGS[@]}"
@@ -197,6 +200,7 @@ else
     docker run --rm \
       --user "$(id -u):$(id -g)" \
       -e PYTHONPYCACHEPREFIX=/wkdir/run/pycache \
+      -e CCACHE_DIR=/wkdir/run/ccache \
       --mount "type=bind,source=$ABSWORKDIR,target=/wkdir" \
       "$CELERY_WORKER_IMAGE" \
       bash -lc 'source /wkdir/config.rc && source "$(dirname "$CELERY_WORKER_PYTHON")/activate" && exec bash /wkdir/aotriton.src/.tune/bin/libbld "$@"' \
