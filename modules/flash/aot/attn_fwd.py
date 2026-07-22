@@ -105,7 +105,8 @@ def gen_autotune_configs(f):
                               'waves_per_eu': waves,
                               'PRE_LOAD_V': pre,
                               'NUM_XCDS': NUM_XCDS}
-                        yield ati.tune.Config(kw, num_stages=1, num_warps=8)
+                        for nwarps in (4, 8):
+                            yield ati.tune.Config(kw, num_stages=1, num_warps=nwarps)
         # HEAD_DIM=256 fp32 with bias+dropout enabled register-pressures the gfx1250
         # compiler hard enough that none of the waves_per_eu=2/PRE_LOAD_V=True
         # candidates above passes accuracy on every test case (task 1540: idx0 fails
@@ -122,11 +123,10 @@ def gen_autotune_configs(f):
             yield from more_configs()
             return
         # HEAD_DIM=128 fp32 causal+dropout (no bias) and HEAD_DIM=256 fp32 non-causal
-        # dropout (no bias) also have no shipped candidate passing every UT. Add two
-        # extra block-size options at the SAME proven-stable copts (nw8/we2/
-        # PRE_LOAD_V=True) instead of touching waves_per_eu/PRE_LOAD_V again - sweeping
-        # those two knobs for the bias=1 case above made every extra candidate crash,
-        # so stick to shape-only variation this time.
+        # dropout (no bias) also have no shipped candidate passing every UT. Reuse the
+        # same waves_per_eu x PRE_LOAD_V sweep as the bias=1 case above - crash-safety
+        # here is unvalidated (that sweep crashed every extra candidate for the bias=1
+        # functional), but broader coverage across these gaps is intentional.
         _fp32_reg_pressure_hdim = (HEAD_DIM == 128 and CAUSAL_TYPE != 0) or \
                                    (HEAD_DIM == 256 and CAUSAL_TYPE == 0)
         if dtype == '*fp32:16' and BIAS_TYPE == 0 and ENABLE_DROPOUT and _fp32_reg_pressure_hdim:

@@ -69,7 +69,8 @@ def gen_autotune_configs(f):
                           'BLOCK_N': N,
                           'waves_per_eu': waves,
                           'NUM_XCDS': NUM_XCDS}
-                    yield ati.tune.Config(kw, num_stages=1, num_warps=8)
+                    for nwarps in (4, 8):
+                        yield ati.tune.Config(kw, num_stages=1, num_warps=nwarps)
         # HEAD_DIM=256 fp32 (no bias), either non-causal+dropout or causal+no-dropout,
         # has no shipped candidate passing every UT. Add two extra block-size options
         # at the same baseline copts (nw4/we2) rather than introducing new copts.
