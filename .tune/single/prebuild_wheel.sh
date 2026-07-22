@@ -58,23 +58,51 @@ bash "$AOTRITON_ROOT/.ci/build_triton_wheels.sh" \
   "${HASHES[@]}"
 
 # Resolve hashes -> wheel paths for build_arch.sh/testbld to pass as
-# -DAOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE. host/container dir are the same
-# path here (no docker translation, unlike .ci's release pipeline).
+# -DAOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE.
 if [ -n "$ALTWHEEL_YAML" ]; then
   if ! command -v yq &> /dev/null; then
     echo "Error: 'yq' is required to resolve altwheel YAML $ALTWHEEL_YAML (dnf install yq / snap install yq)" >&2
     exit 1
   fi
 
+  # shellcheck disable=SC1091
+  . "$AOTRITON_ROOT/.ci/common-altwheel.sh"
+
   RESOLVED_YAML="$WORKDIR/scratch/triton/resolved_altwheel.yaml"
   cp "$ALTWHEEL_YAML" "$RESOLVED_YAML"
-  if [ -z "$(yq -r '.venvs.default // ""' "$RESOLVED_YAML")" ]; then
-    yq -i ".venvs.default = \"${HASHES[0]}\"" "$RESOLVED_YAML"
-  fi
 
-  # shellcheck disable=SC1091
-  . "$AOTRITON_ROOT/.ci/include-altwheel.sh"
-  replace_hash "$RESOLVED_YAML" "$WORKDIR/scratch/triton" "$WORKDIR/scratch/triton" "${HASHES[@]}"
+  # AOTriton's own codegen (python/codegen/root.py's _load_altwheel_config)
+  # requires every venvs.* value to be a plain string (a wheel path, or a
+  # "python:X.Y" marker) -- it calls value.startswith(...) unconditionally,
+  # so a {hash, origin} map (our source syntax for a non-default origin)
+  # would crash it. Rebuild every entry -- including "default", added here
+  # if the source yaml didn't set one -- as the actual wheel path, whatever
+  # its source syntax was.
+  resolve_wheel_for_hash() {
+    local hash="$1" short
+    short="${hash:0:8}"
+    ls "$WORKDIR/scratch/triton"/triton-*+git${short}*.whl 2>/dev/null | head -n1
+  }
+
+  default_hash=$(altwheel_venv_hash "$RESOLVED_YAML" ".venvs.default")
+  [ -z "$default_hash" ] && default_hash="${HASHES[0]}"
+  default_wheel=$(resolve_wheel_for_hash "$default_hash")
+  if [ -z "$default_wheel" ]; then
+    echo "Error: no built wheel found for altwheel default venv (hash ${default_hash:0:8})" >&2
+    exit 1
+  fi
+  yq -i ".venvs.default = \"${default_wheel}\"" "$RESOLVED_YAML"
+
+  for key in $(yq -r '.venvs | keys | .[]' "$RESOLVED_YAML"); do
+    [ "$key" = "default" ] && continue
+    hash=$(altwheel_venv_hash "$RESOLVED_YAML" ".venvs.${key}")
+    wheel=$(resolve_wheel_for_hash "$hash")
+    if [ -z "$wheel" ]; then
+      echo "Error: no built wheel found for altwheel venv '$key' (hash ${hash:0:8})" >&2
+      exit 1
+    fi
+    yq -i ".venvs.${key} = \"${wheel}\"" "$RESOLVED_YAML"
+  done
 
   echo "Resolved altwheel config: $RESOLVED_YAML"
 fi
