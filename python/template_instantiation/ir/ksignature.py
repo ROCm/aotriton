@@ -29,8 +29,7 @@ assert COMPILER_OPTIONS[COPT_NSTAGES_INDEX] == 'num_stages'
 
 class KernelSignature(object):
 
-    def __init__(self, f : 'Functional', perf_struct, copt_values : list,
-                 gfx1250_warp_workaround : bool = True):
+    def __init__(self, f : 'Functional', perf_struct, copt_values : list):
         # perf_struct: a synthesized perf-struct INSTANCE (specs/tune.PerfStructBase),
         # one bind row whose fields are settled TypedChoices. Iterated via .items().
         # Perf params are non-conditional constexprs, so there is nothing to settle.
