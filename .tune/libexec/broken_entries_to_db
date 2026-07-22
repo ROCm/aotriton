@@ -49,8 +49,9 @@ _BLOCK_DMODEL = sorted(
 # Copied from v3python/tune/flash/module.py (no env var override for seqlen).
 # Uses BinningLessOrEqual, so seqlen is also ceiling-rounded to the nearest entry.
 _SEQLEN_ENTRIES = [16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
-# gfx1250's tuning DB only has these coarser seqlen buckets. [REVERT WHEN DB EXISTS]
-_SEQLEN_ENTRIES_GFX1250 = [64, 256, 1024, 8192]
+# gfx1250's tuning DB only has these coarser seqlen buckets -- must match
+# modules/flash/aot/_common.py's LUT_FULL_SEQLEN_TP. [REVERT WHEN DB EXISTS]
+_SEQLEN_ENTRIES_GFX1250 = [64, 256, 2048]
 
 
 def _seqlen_entries_for_arch(arch: str) -> list[int]:
