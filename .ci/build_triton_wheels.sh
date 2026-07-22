@@ -6,18 +6,20 @@ if [ -z "$BASH_VERSION" ]; then
 fi
 
 if [[ "$#" -eq 0 ]]; then
-  echo "Usage: build_triton_wheels.sh --wheel_output_dir <dir> --version_suffix <suffix> [--python <X.Y>] <hash1> [<hash2> ...]" >&2
+  echo "Usage: build_triton_wheels.sh --wheel_output_dir <dir> --version_suffix <suffix> [--python <X.Y>] [--altwheel_yaml <yaml>] <hash1> [<hash2> ...]" >&2
   exit 1
 fi
 
 WHEEL_OUTPUT_DIR=""
 TRITON_WHEEL_VERSION_SUFFIX=""
 PYVER=""
+ALTWHEEL_YAML=""
 while [[ "$1" == --* ]]; do
   case "$1" in
     --wheel_output_dir) WHEEL_OUTPUT_DIR="$2"; shift 2 ;;
     --version_suffix)   TRITON_WHEEL_VERSION_SUFFIX="$2"; shift 2 ;;
     --python)           PYVER="$2"; shift 2 ;;
+    --altwheel_yaml)    ALTWHEEL_YAML="$2"; shift 2 ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
@@ -45,7 +47,6 @@ if [[ -n "${PYVER}" ]]; then
       -f buildenv-triton-py.Dockerfile .)
   fi
 fi
-TRITON_MIRROR_VOLUME="triton-mirror"
 # TRITON_GIT_ORIGIN may be overridden from the environment (e.g. by
 # releasesuite-git-head.sh --triton_origin) to fetch Triton from a fork or a
 # local checkout via the file:// protocol.
@@ -53,9 +54,40 @@ TRITON_GIT_ORIGIN="${TRITON_GIT_ORIGIN:-https://github.com/ROCm/triton}"
 
 mkdir -p "${WHEEL_OUTPUT_DIR}"
 
-# GitHub -> local mirror volume. The per-hash loop below then clones the exact
-# commit from the local mirror (file:///mirror).
-sync_mirror "${TRITON_MIRROR_VOLUME}" "${TRITON_GIT_ORIGIN}" "${BASE_DOCKER_IMAGE}"
+# A hash may live in a different origin than TRITON_GIT_ORIGIN (altwheel's
+# {hash, origin} map form) -- look it up, defaulting to TRITON_GIT_ORIGIN.
+hash_origin() {
+  local hash="$1"
+  if [[ -z "${ALTWHEEL_YAML}" ]]; then
+    echo "${TRITON_GIT_ORIGIN}"
+    return
+  fi
+  local origin
+  origin=$(yq -r ".venvs | to_entries[] | select(((try .value.hash catch null) // .value) == \"${hash}\") | ((try .value.origin catch null) // \"\")" "${ALTWHEEL_YAML}" | head -n1)
+  echo "${origin:-${TRITON_GIT_ORIGIN}}"
+}
+
+# One mirror volume per distinct origin, named "triton-mirror" for the
+# default origin (unchanged from before) and a stable per-origin slug
+# otherwise -- a harmless local cache like the default mirror.
+mirror_volume_for_origin() {
+  local origin="$1"
+  if [[ "${origin}" == "${TRITON_GIT_ORIGIN}" ]]; then
+    echo "triton-mirror"
+  else
+    echo "triton-mirror-$(printf '%s' "${origin}" | md5sum | cut -c1-12)"
+  fi
+}
+
+declare -A SYNCED_VOLUMES
+for HASH in "${TRITON_HASHES[@]}"; do
+  origin="$(hash_origin "${HASH}")"
+  volume="$(mirror_volume_for_origin "${origin}")"
+  if [[ -z "${SYNCED_VOLUMES[${volume}]:-}" ]]; then
+    sync_mirror "${volume}" "${origin}" "${BASE_DOCKER_IMAGE}"
+    SYNCED_VOLUMES[${volume}]=1
+  fi
+done
 
 # Build wheel for each hash, skipping if already cached
 for HASH in "${TRITON_HASHES[@]}"; do
@@ -65,8 +97,10 @@ for HASH in "${TRITON_HASHES[@]}"; do
     continue
   fi
 
+  volume="$(mirror_volume_for_origin "$(hash_origin "${HASH}")")"
+
   docker run --network=host -i --rm \
-    -v "${TRITON_MIRROR_VOLUME}:/mirror:ro" \
+    -v "${volume}:/mirror:ro" \
     --mount "type=bind,source=$(realpath ${WHEEL_OUTPUT_DIR}),target=/cache/wheels" \
     --mount "type=bind,source=$(realpath ${SCRIPT_DIR}/runc-build-triton-wheel.sh),target=/tmp/runc-build-triton-wheel.sh,readonly" \
     --tmpfs "/scratch:exec" \

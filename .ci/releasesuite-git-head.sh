@@ -225,6 +225,7 @@ if [[ ${SUITE_SELECT_IMAGE} -gt 0 ]]; then
   env "${TRITON_ORIGIN_ENV[@]}" bash "${SCRIPT_DIR}/build_triton_wheels.sh" \
     --wheel_output_dir "${WHEEL_CACHE_DIR}" \
     --version_suffix "${TRITON_WHEEL_VERSION_SUFFIX}" \
+    --altwheel_yaml "${SUITE_YAML}" \
     "${TRITON_HASHES[@]}"
 
   # Resolve wheel configuration for image builds.

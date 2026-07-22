@@ -54,6 +54,7 @@ bash "$AOTRITON_ROOT/.ci/build_triton_wheels.sh" \
   --wheel_output_dir "$WORKDIR/scratch/triton" \
   --version_suffix "+aotriton${aotriton_major}.${aotriton_minor}" \
   --python "$PYVER" \
+  --altwheel_yaml "$ALTWHEEL_YAML" \
   "${HASHES[@]}"
 
 # Resolve hashes -> wheel paths for build_arch.sh/testbld to pass as
