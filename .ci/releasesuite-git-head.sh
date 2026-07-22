@@ -187,7 +187,7 @@ SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 if [[ -n "${SUITE_ORIGIN}" && "${SUITE_ORIGIN}" != "auto" ]]; then
   GIT_HTTPS_ORIGIN="${SUITE_ORIGIN}"
 fi
-. "${SCRIPT_DIR}/include-altwheel.sh"
+. "${SCRIPT_DIR}/common-altwheel.sh"
 
 GIT_COMMIT=$(git rev-parse HEAD)
 
@@ -231,14 +231,7 @@ if [[ ${SUITE_SELECT_IMAGE} -gt 0 ]]; then
   # Resolve wheel configuration for image builds.
   if [[ -n "${SUITE_YAML}" ]]; then
     cp "${SUITE_YAML}" "${CACHE_DIR}/tmpconfig.yaml"
-    if [[ -z "$(yq -r '.venvs.default // ""' "${CACHE_DIR}/tmpconfig.yaml")" ]]; then
-      yq -i ".venvs.default = \"${DEFAULT_HASH}\"" "${CACHE_DIR}/tmpconfig.yaml"
-    fi
-    replace_hash \
-      "${CACHE_DIR}/tmpconfig.yaml" \
-      "${WHEEL_CACHE_DIR}" \
-      "/cache/wheels" \
-      "${TRITON_HASHES[@]}"
+    altwheel_resolve_config "${CACHE_DIR}/tmpconfig.yaml" "${WHEEL_CACHE_DIR}" "/cache/wheels" "${DEFAULT_HASH}"
     WHEEL_CFG="/cache/tmpconfig.yaml"
   else
     DEFAULT_SHORT="${DEFAULT_HASH:0:8}"
