@@ -99,6 +99,17 @@ REPORT="$WORKDIR/scratch/dbreport.txt"
 mkdir -p "$WORKDIR/scratch"
 echo "Sanity check report: $REPORT"
 
+# generate.py has no --tuning_mode concept of its own: without --selective it
+# walks every family/codegen_module (flash's kernels AND flash_op's operators)
+# in one pass. Scope to just the one being checked via unique_path's
+# <family>/<codegen_module>/<name> convention.
+# TODO: extend when additional families (e.g. gemm) are added.
+if [ "$TUNING_MODE" = "op" ]; then
+    SELECTIVE_ARGS=(--selective 'flash/op/*')
+else
+    SELECTIVE_ARGS=(--selective 'flash/triton/*')
+fi
+
 # Diagnostic output goes to stdout (bare print() calls, no logging framework).
 python3 -m aotriton.generate \
     --build_dir "$TMPDIR_BUILD" \
@@ -106,6 +117,7 @@ python3 -m aotriton.generate \
     --lut_sanity_check \
     --sanity_check_only \
     "${GPU_ARGS[@]}" \
+    "${SELECTIVE_ARGS[@]}" \
     "${EXTRA_ARGS[@]}" > "$REPORT"
 
 echo "Done. Report written to $REPORT"
