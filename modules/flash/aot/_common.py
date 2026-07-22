@@ -67,7 +67,7 @@ class FlashKernel:
     LUT_FULL_SEQLEN_Q = [16,32,64,128,256,512,1024,2048,4096,8192]
     LUT_FULL_SEQLEN_K = [16,32,64,128,256,512,1024,2048,4096,8192]
     LUT_FULL_SEQLEN_NAVI = [16,32,64,128,256,512,1024,2048]
-    LUT_FULL_SEQLEN_TP = [64,256,1024]
+    LUT_FULL_SEQLEN_TP = [64,256,2048]
 
     def is_functional_disabled(self, functional):
         if not hasattr(self, 'gen_autotune_configs'):  # only check acutal FA kernels
