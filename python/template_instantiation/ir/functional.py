@@ -132,8 +132,13 @@ class Functional:
 
     @property
     def database_gpus(self):
+        """The target GPU itself is always first (implicit self-precedence),
+        followed by any fallbacks from AOTRITON_TUNING_DATABASE_REUSE."""
         from aotriton.gpu_targets import AOTRITON_TUNING_DATABASE_REUSE
-        return [AOTRITON_TUNING_DATABASE_REUSE.get(g, g) for g in self._optimized_for]
+        return {
+            g: [g] + AOTRITON_TUNING_DATABASE_REUSE.get(g, [])
+            for g in self._optimized_for
+        }
 
     # --- compact / fallback choices (multi-choice axes only) ---
 
