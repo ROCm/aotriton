@@ -13,6 +13,7 @@ fi
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 . "${SCRIPT_DIR}/common-vars.sh"
 add_torch_ldconfig
+add_rocm_sdk_ldconfig
 
 pass=$1
 test_level="$2"
@@ -89,7 +90,8 @@ fi
   # One invocation over the whole suite dir (conftest.py sets up sys.path); pytest
   # collects test_backward / test_varlen together (test_forward.py is excluded via
   # conftest.py's collect_ignore - its coverage is a subset of test_backward.py's).
-  pytest --tb=line -n ${ngpus} --max-worker-restart 48 -rfEsx \
+  pytest --tb=line -n ${ngpus} --max-worker-restart 9999 -rfEsx \
+    --timeout=300 \
     -p no:cacheprovider \
     ${SELECT_FROM} \
     modules/flash/tests \
