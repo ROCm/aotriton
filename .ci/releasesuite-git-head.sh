@@ -45,8 +45,7 @@ Options:
 By default both GPU images and runtimes are built.
 If either --image or --runtime is specified, the missing one will not be built.
 
-The YAML configuration file follows the format shown in docs/AltWheelExample.yaml.
-However it accepts GIT SHA1 for Triton wheels instead.
+The YAML configuration file follows the format shown in .ci/AltWheelExample.yaml.
 The build process will
 1. Build Triton wheels from the SHA1
 2. Replace SHA1 with actual wheel path and use the replaced yaml file to build
@@ -187,7 +186,7 @@ SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 if [[ -n "${SUITE_ORIGIN}" && "${SUITE_ORIGIN}" != "auto" ]]; then
   GIT_HTTPS_ORIGIN="${SUITE_ORIGIN}"
 fi
-. "${SCRIPT_DIR}/include-altwheel.sh"
+. "${SCRIPT_DIR}/common-altwheel.sh"
 
 GIT_COMMIT=$(git rev-parse HEAD)
 
@@ -208,21 +207,9 @@ CACHE_DIR="${OUTPUT_DIR}/.cache"
 WHEEL_CACHE_DIR="${CACHE_DIR}/wheels"
 mkdir -p "${WHEEL_CACHE_DIR}" "${CACHE_DIR}/pip"
 
-# Determine Triton hashes to build.
-# .venvs.default in SUITE_YAML replaces the embedded submodule hash;
-# otherwise the submodule is the mandatory default.
-DEFAULT_HASH=""
-if [[ -n "${SUITE_YAML}" ]]; then
-  DEFAULT_HASH=$(yq -r '.venvs.default // ""' "${SUITE_YAML}")
-fi
-if [[ -z "${DEFAULT_HASH}" ]]; then
-  DEFAULT_HASH=$(git rev-parse HEAD:third_party/triton)
-fi
-TRITON_HASHES=("${DEFAULT_HASH}")
-if [[ -n "${SUITE_YAML}" ]]; then
-  readarray -t YAML_HASHES < <(yq -r '.venvs | to_entries | .[] | select(.key != "default") | .value' "${SUITE_YAML}")
-  TRITON_HASHES+=("${YAML_HASHES[@]}")
-fi
+# Determine Triton hashes to build (shared with .tune).
+readarray -t TRITON_HASHES < <(bash "${SCRIPT_DIR}/resolve-triton-hashes.sh" "${SCRIPT_DIR}/.." "${SUITE_YAML}")
+DEFAULT_HASH="${TRITON_HASHES[0]}"
 
 # Triton wheels are only needed for image builds (GPU kernel images embed the wheel).
 # Runtime builds consume pre-built wheels from /cache/wheels via WHEEL_CFG.
@@ -234,22 +221,21 @@ if [[ ${SUITE_SELECT_IMAGE} -gt 0 ]]; then
   if [[ -n "${SUITE_TRITON_ORIGIN}" ]]; then
     TRITON_ORIGIN_ENV=(TRITON_GIT_ORIGIN="${SUITE_TRITON_ORIGIN}")
   fi
+  # Explicit, not build_triton_wheels.sh's own --python default, so this
+  # script and the altwheel_resolve_config call below can't drift apart if
+  # that default ever changes.
+  RELEASE_PYVER="3.11"
   env "${TRITON_ORIGIN_ENV[@]}" bash "${SCRIPT_DIR}/build_triton_wheels.sh" \
     --wheel_output_dir "${WHEEL_CACHE_DIR}" \
     --version_suffix "${TRITON_WHEEL_VERSION_SUFFIX}" \
+    --python "${RELEASE_PYVER}" \
+    --altwheel_yaml "${SUITE_YAML}" \
     "${TRITON_HASHES[@]}"
 
   # Resolve wheel configuration for image builds.
   if [[ -n "${SUITE_YAML}" ]]; then
     cp "${SUITE_YAML}" "${CACHE_DIR}/tmpconfig.yaml"
-    if [[ -z "$(yq -r '.venvs.default // ""' "${CACHE_DIR}/tmpconfig.yaml")" ]]; then
-      yq -i ".venvs.default = \"${DEFAULT_HASH}\"" "${CACHE_DIR}/tmpconfig.yaml"
-    fi
-    replace_hash \
-      "${CACHE_DIR}/tmpconfig.yaml" \
-      "${WHEEL_CACHE_DIR}" \
-      "/cache/wheels" \
-      "${TRITON_HASHES[@]}"
+    altwheel_resolve_config "${CACHE_DIR}/tmpconfig.yaml" "${WHEEL_CACHE_DIR}" "/cache/wheels" "${DEFAULT_HASH}" "${RELEASE_PYVER}"
     WHEEL_CFG="/cache/tmpconfig.yaml"
   else
     DEFAULT_SHORT="${DEFAULT_HASH:0:8}"
