@@ -147,7 +147,7 @@ class ExaidWorker(object):
         workdir.mkdir(parents=True, exist_ok=True)
         entry = self.entry_from_dict(entry_dict)
         self.proxy.write('prepare_data', entry.as_text(), workdir.as_posix(), *extra_im_texts)
-        result = self.proxy.readinfo(timeout=120)
+        result = self.proxy.readinfo(timeout=600)
         logger.info(f"prepare_data completed: {result}")
         return result
 
