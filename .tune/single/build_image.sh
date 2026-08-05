@@ -33,9 +33,23 @@ fi
 
 load_config "$WORKDIR"
 
-# Get workdir_override for this hostname
+# Get workdir_override for this hostname. Check the worker-registry table
+# first (a registered tuning worker acting as its own build target); a
+# build node is explicitly NOT required to be a registered worker (see
+# remotebld/get_buildnode_workdir), so fall back to the separate
+# buildnode::* config when the hostname matches the configured build node
+# instead -- otherwise this would silently resolve to DEFAULT_WORKDIR, which
+# may not even exist on that host.
 WORKER_INFO=$(get_worker_by_hostname "$WORKDIR" "$HOSTNAME")
 IFS='|' read -r arch workdir_override <<< "$WORKER_INFO"
+
+if [ -z "$workdir_override" ]; then
+  BUILDNODE_HOSTNAME=$(sqlite3 "$WORKDIR/workers.db" \
+    "SELECT COALESCE(value,'') FROM config WHERE key='buildnode::hostname'" 2>/dev/null || true)
+  if [ -n "$BUILDNODE_HOSTNAME" ] && [ "$HOSTNAME" = "$BUILDNODE_HOSTNAME" ]; then
+    workdir_override="$(get_buildnode_workdir "$WORKDIR")"
+  fi
+fi
 
 WORKER_WORKDIR="${workdir_override:-$DEFAULT_WORKDIR}"
 
