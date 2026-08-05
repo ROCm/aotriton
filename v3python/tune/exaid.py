@@ -151,9 +151,9 @@ class ExaidWorker(object):
         logger.info(f"prepare_data completed: {result}")
         return result
 
-    def probe(self, workdir: Path):
-        logger.info(f"probe: workdir={workdir}")
-        self.proxy.write('probe', workdir.as_posix())
+    def probe(self, workdir: Path, arch: str | None = None):
+        logger.info(f"probe: workdir={workdir} arch={arch}")
+        self.proxy.write('probe', workdir.as_posix(), arch or '')
         result = json.loads(self.proxy.readinfo())
         logger.info(f"probe completed: found {len(result)} kernels")
         return result
