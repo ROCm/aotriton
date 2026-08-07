@@ -565,7 +565,7 @@ cmd_stop() {
     HEARTBEAT_PID="$PID_DIR/heartbeat-${ARCH}.pid"
     if is_running "$HEARTBEAT_PID"; then
         echo "Stopping heartbeat monitor..."
-        stop_process "heartbeat-${ARCH}" "Heartbeat monitor"
+        stop_process_group "Heartbeat monitor" "heartbeat-${ARCH}"
         echo ""
     fi
 
