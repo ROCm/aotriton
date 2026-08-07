@@ -114,7 +114,9 @@ YAML supplies `.venvs.default`, which replaces the submodule hash).
 A `.venvs` entry may give `hash`/`origin` as a `{hash, origin}` map instead of
 a bare hash string, to build from a commit that lives in a different Triton
 origin (e.g. a private fork). An optional third field, `pat_environ`, names
-an environment variable holding a GitHub PAT:
+an environment variable holding a GitHub PAT. See `.ci/AltWheelExample.yaml`
+for a full example of this (source) format -- CMake itself only ever reads
+the resolved form (plain wheel paths) documented at `docs/AltWheelExample.yaml`.
 
 ```yaml
 venvs:
