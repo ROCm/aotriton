@@ -30,7 +30,7 @@ else
 
   openssl x509 -req -days 365 -in "$SECRETS_DIR/demo.csr" \
     -CA "$CA_CRT" -CAkey "$CA_KEY" \
-    -set_serial 03 -out "$DEMO_CRT"
+    -set_serial "0x$(openssl rand -hex 16)" -out "$DEMO_CRT"
 
   rm "$SECRETS_DIR/demo.csr"
   chmod 600 "$DEMO_KEY" "$DEMO_CRT"

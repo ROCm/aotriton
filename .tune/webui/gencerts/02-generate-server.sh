@@ -32,7 +32,7 @@ openssl req -new -key "$SERVER_KEY" \
 
 openssl x509 -req -days 730 -in "$SECRETS_DIR/server.csr" \
   -CA "$CA_CRT" -CAkey "$CA_KEY" \
-  -set_serial 01 -out "$SERVER_CRT" \
+  -set_serial "0x$(openssl rand -hex 16)" -out "$SERVER_CRT" \
   -extensions v3_req -extfile <(cat <<EOF
 [v3_req]
 subjectAltName = DNS:$HOSTNAME,DNS:localhost,IP:127.0.0.1
