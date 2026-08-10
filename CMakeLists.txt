@@ -96,8 +96,17 @@ if(AOTRITON_MIN_PYTHON VERSION_LESS "3.10")
 endif()
 
 find_package(Python3 ${AOTRITON_MIN_PYTHON} COMPONENTS Interpreter REQUIRED)
-# Must set this otherwise hip-config-amd.cmake cannot find AMDDeviceLibs
-list(APPEND CMAKE_PREFIX_PATH "/opt/rocm")
+# Must set this otherwise hip-config-amd.cmake cannot find AMDDeviceLibs.
+# Prefer ROCM_PATH (e.g. theRock SDK from `rocm-sdk path --root`) when set, so
+# find_package(hip) does not pick up a stale /opt/rocm install.
+if(DEFINED ENV{ROCM_PATH})
+  list(APPEND CMAKE_PREFIX_PATH "$ENV{ROCM_PATH}/lib/cmake")
+else()
+  message(WARNING "[AOTriton] ROCM_PATH is not set, falling back to /opt/rocm. "
+                  "Set ROCM_PATH (e.g. `export ROCM_PATH=$(rocm-sdk path --root)`) "
+                  "to select a specific ROCm/theRock installation.")
+  list(APPEND CMAKE_PREFIX_PATH "/opt/rocm")
+endif()
 find_package(hip REQUIRED)
 
 set(VENV_DIR "${CMAKE_CURRENT_BINARY_DIR}/venv" CACHE STRING "Virtual Environment Directory")
