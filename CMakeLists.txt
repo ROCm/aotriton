@@ -134,6 +134,9 @@ if(AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
   if(NOT ${altwheel_yaml_is_absolute})
     message(FATAL_ERROR "AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE must be absolute path, but configured as ${AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE}")
   endif()
+  if(AOTRITON_USE_LOCAL_TRITON_WHEEL)
+    message(FATAL_ERROR "AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE and AOTRITON_USE_LOCAL_TRITON_WHEEL are mutually exclusive -- the altwheel config's own .venvs.default entry supplies the default Triton wheel.")
+  endif()
 endif()
 
 # Early failure for python binding
