@@ -100,6 +100,12 @@ def _compose_database(build_dir: Path):
         shutil.copyfile(fused_tuning, db_dir / 'tuning_database.sqlite3')
         if fused_op.exists():
             shutil.copyfile(fused_op, db_dir / 'op_database.sqlite3')
+        else:
+            # Factory ATTACHes the op database unconditionally, so a fused dir
+            # that only carries tuning_database still needs the checked-in
+            # op baseline staged beside it.
+            with tarfile.open(DB_SRC_DIR / 'op_database.sqlite3.tar.xz') as tf:
+                _safe_extractall(tf, db_dir)
         return
     # Fallback: extract schemas + compose from the decomposed DB.
     for tarxz in DB_SRC_DIR.glob('*.sqlite3.tar.xz'):
