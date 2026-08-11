@@ -143,16 +143,14 @@ endif()
 if(NOT AOTRITON_NO_PYTHON)
   cmake_policy(SET CMP0148 NEW)  # Disable outdated FindPythonInterp/FindPythonLibs
   find_package(Python3 ${AOTRITON_MIN_PYTHON} COMPONENTS Development REQUIRED)
-  # heuristics to find pybind11 from python site
-  execute_process(COMMAND "${Python3_EXECUTABLE}" -c "import pybind11; from pathlib import Path; print(str(Path(pybind11.__file__).parent / 'share' / 'cmake' / 'pybind11'))"
-                  OUTPUT_STRIP_TRAILING_WHITESPACE
-                  OUTPUT_VARIABLE pybind11_DIR)
 
   # Must use Python3_EXECUTABLE (the cmake-invoking python), NOT VENV_BIN_PYTHON.
   # Workflow: (user's python env) -> cmake & ninja -> test aotriton.
   # pyaotriton must be ABI-compatible with the test environment, which also supplies
   # torch (required for GPU memory and reference). VENV_DIR must never have torch.
-  find_package(pybind11 CONFIG REQUIRED)
+  # Check torch BEFORE pybind11: when a fresh env has neither installed, torch
+  # is the heavier/more consequential one to set up, so surface that error
+  # first instead of making the user fix pybind11 only to immediately hit torch.
   if(AOTRITON_USE_TORCH)
     message(STATUS "Python3_EXECUTABLE: ${Python3_EXECUTABLE}")
     execute_process(COMMAND "${Python3_EXECUTABLE}" -c "import torch; from pathlib import Path; print(str(Path(torch.__file__).parent))"
@@ -161,6 +159,12 @@ if(NOT AOTRITON_NO_PYTHON)
     message(STATUS "TORCH SITE: ${TORCH_SITE}")
     find_package(Torch REQUIRED HINTS ${TORCH_SITE})
   endif(AOTRITON_USE_TORCH)
+
+  # heuristics to find pybind11 from python site
+  execute_process(COMMAND "${Python3_EXECUTABLE}" -c "import pybind11; from pathlib import Path; print(str(Path(pybind11.__file__).parent / 'share' / 'cmake' / 'pybind11'))"
+                  OUTPUT_STRIP_TRAILING_WHITESPACE
+                  OUTPUT_VARIABLE pybind11_DIR)
+  find_package(pybind11 CONFIG REQUIRED)
 endif()
 
 # Resolve name conflicts with suffix
