@@ -20,7 +20,9 @@ echo "[1/4] Generating CA certificate with RSA-4096 (valid 10 years)..."
 openssl genrsa -out "$CA_KEY" 4096
 openssl req -new -x509 -days 3650 -key "$CA_KEY" \
   -out "$CA_CRT" \
-  -subj "/CN=AOTriton-CA/O=AOTriton-Tuning"
+  -subj "/CN=AOTriton-CA/O=AOTriton-Tuning" \
+  -addext "basicConstraints=critical,CA:TRUE" \
+  -addext "keyUsage=critical,keyCertSign,cRLSign"
 
 chmod 600 "$CA_KEY" "$CA_CRT"
 echo "       ✓ CA certificate generated (RSA-4096)"

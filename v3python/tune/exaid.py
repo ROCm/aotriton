@@ -147,13 +147,13 @@ class ExaidWorker(object):
         workdir.mkdir(parents=True, exist_ok=True)
         entry = self.entry_from_dict(entry_dict)
         self.proxy.write('prepare_data', entry.as_text(), workdir.as_posix(), *extra_im_texts)
-        result = self.proxy.readinfo(timeout=120)
+        result = self.proxy.readinfo(timeout=600)
         logger.info(f"prepare_data completed: {result}")
         return result
 
-    def probe(self, workdir: Path):
-        logger.info(f"probe: workdir={workdir}")
-        self.proxy.write('probe', workdir.as_posix())
+    def probe(self, workdir: Path, arch: str | None = None):
+        logger.info(f"probe: workdir={workdir} arch={arch}")
+        self.proxy.write('probe', workdir.as_posix(), arch or '')
         result = json.loads(self.proxy.readinfo())
         logger.info(f"probe completed: found {len(result)} kernels")
         return result

@@ -1,0 +1,32 @@
+# Source-format AltWheel YAML: consumed by .ci's Triton wheel-building
+# machinery (build_triton_wheels.sh, resolve-triton-hashes.sh,
+# releasesuite-git-head.sh --yaml, and .tune/single/prebuild_wheel.sh via
+# .ci/common-altwheel.sh) BEFORE any wheel exists. Every venvs.* entry names
+# a Triton commit to build from, not a wheel file.
+#
+# This is NOT the format CMake's AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE reads
+# directly -- that's the resolved form (plain wheel paths), documented at
+# docs/AltWheelExample.yaml. common-altwheel.sh's altwheel_resolve_config
+# rewrites a copy of this file into that form after building the wheels.
+venvs:
+  # default: build from source with third_party/triton
+  # bare full git SHA1: build from the default Triton origin (ROCm/triton)
+  navi3x: 4280ed1111111111111111111111111111111111
+  vllm: 6b70e716aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  # {hash, origin} form: build a commit from a Triton origin other than the
+  # default (e.g. a private fork). pat_environ names the environment variable
+  # holding a GitHub PAT for that origin; omit it if no PAT is needed.
+  private_fork:
+    hash: 0123456789abcdef0123456789abcdef01234567
+    origin: https://github.com/some-org/private-triton
+    pat_environ: GITHUB_TOKEN
+rules:
+  - gmatches:  # glob matches
+      family: sparse_*
+    venv: vllm
+  - matches:  # String matches (identical)
+      arch: gfx1100
+    venv: navi3x
+  - rmatches:  # Regex Matching
+      arch: gfx110.
+    venv: navi3x

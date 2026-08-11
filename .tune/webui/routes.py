@@ -67,7 +67,8 @@ def workers():
     """Worker management page"""
     workdir = current_app.config['WORKDIR']
     workers_by_arch = tasks.get_workers_by_architecture(workdir)
-    supported_archs = tasks.get_supported_architectures()
+    supported_archs = tasks.order_architectures_for_display(
+        workers_by_arch, tasks.get_supported_architectures())
     default_workdir = tasks.get_default_workdir(workdir) or '<not set>'
     git_status = tasks.get_git_status(workdir)
     tuning_mode = tasks.get_tuning_mode(workdir)

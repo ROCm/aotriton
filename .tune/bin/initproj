@@ -15,6 +15,18 @@ if [ ! -t 0 ]; then
   exit 1
 fi
 
+required_cmds=(mkdir head xxd hostname cat)
+missing_cmds=()
+for cmd in "${required_cmds[@]}"; do
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    missing_cmds+=("$cmd")
+  fi
+done
+if [ "${#missing_cmds[@]}" -ne 0 ]; then
+  echo "Missing required tool(s): ${missing_cmds[*]}. Please install them before running this script." >&2
+  exit 1
+fi
+
 if [ "$#" -ne 1 ]; then
   echo 'Missing arguments. Usage: projinit <dir>' >&2
   exit 1

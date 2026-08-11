@@ -1,0 +1,56 @@
+#!/bin/bash
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+
+# Force a specific tuning_results/optune_results row to be the "best" result
+# for its (task_id, kernel_name/op_name), overriding whatever
+# compute_best_results picked. Does NOT touch most_accurate_tuning_results /
+# most_accurate_optune_results -- only best_tuning_results/best_optune_results.
+#
+# Use this when an entry is reported missing/broken but a specific existing
+# raw result row is known-good (e.g. manually verified) and should just be
+# used directly.
+#
+# Reads connection parameters from <workdir>/config.rc.
+#
+# Usage:
+#   manual_pick_missing_entry <workdir> --id <tuning_results.id> [options...]
+#
+# All options after <workdir> are passed directly to:
+#   python3 -m v3python.tune.pq.manual_pick_missing_entry --workdir <workdir> [options...]
+#
+# Run with --help to see all available options.
+#
+# Examples:
+#   .tune/bin/manual_pick_missing_entry ~/wkdir.v3.5 --id 12345
+#   .tune/bin/manual_pick_missing_entry ~/wkdir.v3.5 --id 12345 --dry_run
+#   .tune/bin/manual_pick_missing_entry ~/wkdir.v3.5 --id 12345 --tuning_mode op
+#   .tune/bin/manual_pick_missing_entry ~/wkdir.v3.5 --help
+
+set -euo pipefail
+
+if [ "$#" -lt 1 ]; then
+    echo "Usage: $0 <workdir> --id <tuning_results.id> [options..]" >&2
+    exit 1
+fi
+
+WORKDIR="$1"
+shift
+
+if [ ! -d "$WORKDIR" ]; then
+    echo "Error: workdir does not exist: $WORKDIR" >&2
+    exit 1
+fi
+
+if [ ! -f "$WORKDIR/config.rc" ]; then
+    echo "Error: config.rc not found in $WORKDIR" >&2
+    exit 1
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+cd "$REPO_ROOT"
+exec python3 -m v3python.tune.pq.manual_pick_missing_entry \
+    --workdir "$WORKDIR" \
+    "$@"

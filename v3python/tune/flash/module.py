@@ -125,7 +125,7 @@ class Flash(TuningDescription):
                            f'only seqlen_q/k <= 2048 entries are tuned')
         return True, ''
 
-    def list_impls(self, entry: FlashEntry):
+    def list_impls(self, entry: FlashEntry, arch: str | None = None):
         if False:  # Debugging, fwd only tuning. Keep it for selective tuning
             return ['attn_fwd']
         if entry.hdim > 224:

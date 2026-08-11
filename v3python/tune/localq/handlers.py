@@ -172,9 +172,10 @@ class ProbeHandler(MessageHandler):
 
         exaid = exaid_create(module, self.gpu_id)
         tmpdir = Path(task_config['tmpdir'])
+        arch = task_config.get('arch')
 
         try:
-            impl_dict = exaid.probe(tmpdir)
+            impl_dict = exaid.probe(tmpdir, arch)
         except (OSError, ExaidSubprocessNotOK) as e:
             logger.error(f"Probe failed for task_id={task_id}: {e}")
             return {

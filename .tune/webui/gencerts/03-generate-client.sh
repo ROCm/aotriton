@@ -31,7 +31,7 @@ openssl req -new -key "$CLIENT_KEY" \
 
 openssl x509 -req -days 365 -in "$SECRETS_DIR/client.csr" \
   -CA "$CA_CRT" -CAkey "$CA_KEY" \
-  -set_serial 02 -out "$CLIENT_CRT"
+  -set_serial "0x$(openssl rand -hex 16)" -out "$CLIENT_CRT"
 
 rm "$SECRETS_DIR/client.csr"
 chmod 600 "$CLIENT_KEY" "$CLIENT_CRT"

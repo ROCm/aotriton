@@ -96,8 +96,17 @@ if(AOTRITON_MIN_PYTHON VERSION_LESS "3.10")
 endif()
 
 find_package(Python3 ${AOTRITON_MIN_PYTHON} COMPONENTS Interpreter REQUIRED)
-# Must set this otherwise hip-config-amd.cmake cannot find AMDDeviceLibs
-list(APPEND CMAKE_PREFIX_PATH "/opt/rocm")
+# Must set this otherwise hip-config-amd.cmake cannot find AMDDeviceLibs.
+# Prefer ROCM_PATH (e.g. theRock SDK from `rocm-sdk path --root`) when set, so
+# find_package(hip) does not pick up a stale /opt/rocm install.
+if(DEFINED ENV{ROCM_PATH})
+  list(APPEND CMAKE_PREFIX_PATH "$ENV{ROCM_PATH}/lib/cmake")
+else()
+  message(WARNING "[AOTriton] ROCM_PATH is not set, falling back to /opt/rocm. "
+                  "Set ROCM_PATH (e.g. `export ROCM_PATH=$(rocm-sdk path --root)`) "
+                  "to select a specific ROCm/theRock installation.")
+  list(APPEND CMAKE_PREFIX_PATH "/opt/rocm")
+endif()
 find_package(hip REQUIRED)
 
 set(VENV_DIR "${CMAKE_CURRENT_BINARY_DIR}/venv" CACHE STRING "Virtual Environment Directory")
@@ -117,7 +126,7 @@ option(AOTRITON_TERMINATE_WHEN_GPU_BUILD_TIMEOUT "compile.py will return error w
 set(AOTRITON_TARGET_ARCH "gfx90a;gfx942;gfx950;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1152;gfx1153;gfx1201;gfx1200;gfx1250" CACHE STRING "Target GPU Architecture. Select all GPUs within the given list")
 set(TARGET_GPUS "OBSOLETE" CACHE STRING "OBSOLETE. To select only one GPU, use AOTRITON_TARGET_ARCH or AOTRITON_OVERRIDE_TARGET_GPUS.")
 set(AOTRITON_OVERRIDE_TARGET_GPUS "" CACHE STRING "Override AOTRITON_TARGET_ARCH, and only build for GPUs within this list.")
-set(AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE "" CACHE STRING "Specify how to use alternative Triton wheels for different architectures in a YAML config file.")
+set(AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE "" CACHE STRING "Specify how to use alternative Triton wheels for different architectures in a YAML config file (resolved format -- see docs/AltWheelExample.yaml).")
 set(AOTRITON_TUNING_DATABASE_ROOT "" CACHE PATH "Root directory containing per-family tuning database trees (<family>/database/amd/<arch>/..., same shape as modules/<family>/database). When set, used instead of modules/*/database as the source of tuning data.")
 
 if(AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
@@ -125,22 +134,23 @@ if(AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE)
   if(NOT ${altwheel_yaml_is_absolute})
     message(FATAL_ERROR "AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE must be absolute path, but configured as ${AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE}")
   endif()
+  if(AOTRITON_USE_LOCAL_TRITON_WHEEL)
+    message(FATAL_ERROR "AOTRITON_ALT_TRITON_WHEEL_CONFIG_FILE and AOTRITON_USE_LOCAL_TRITON_WHEEL are mutually exclusive -- the altwheel config's own .venvs.default entry supplies the default Triton wheel.")
+  endif()
 endif()
 
 # Early failure for python binding
 if(NOT AOTRITON_NO_PYTHON)
   cmake_policy(SET CMP0148 NEW)  # Disable outdated FindPythonInterp/FindPythonLibs
   find_package(Python3 ${AOTRITON_MIN_PYTHON} COMPONENTS Development REQUIRED)
-  # heuristics to find pybind11 from python site
-  execute_process(COMMAND "${Python3_EXECUTABLE}" -c "import pybind11; from pathlib import Path; print(str(Path(pybind11.__file__).parent / 'share' / 'cmake' / 'pybind11'))"
-                  OUTPUT_STRIP_TRAILING_WHITESPACE
-                  OUTPUT_VARIABLE pybind11_DIR)
 
   # Must use Python3_EXECUTABLE (the cmake-invoking python), NOT VENV_BIN_PYTHON.
   # Workflow: (user's python env) -> cmake & ninja -> test aotriton.
   # pyaotriton must be ABI-compatible with the test environment, which also supplies
   # torch (required for GPU memory and reference). VENV_DIR must never have torch.
-  find_package(pybind11 CONFIG REQUIRED)
+  # Check torch BEFORE pybind11: when a fresh env has neither installed, torch
+  # is the heavier/more consequential one to set up, so surface that error
+  # first instead of making the user fix pybind11 only to immediately hit torch.
   if(AOTRITON_USE_TORCH)
     message(STATUS "Python3_EXECUTABLE: ${Python3_EXECUTABLE}")
     execute_process(COMMAND "${Python3_EXECUTABLE}" -c "import torch; from pathlib import Path; print(str(Path(torch.__file__).parent))"
@@ -149,6 +159,12 @@ if(NOT AOTRITON_NO_PYTHON)
     message(STATUS "TORCH SITE: ${TORCH_SITE}")
     find_package(Torch REQUIRED HINTS ${TORCH_SITE})
   endif(AOTRITON_USE_TORCH)
+
+  # heuristics to find pybind11 from python site
+  execute_process(COMMAND "${Python3_EXECUTABLE}" -c "import pybind11; from pathlib import Path; print(str(Path(pybind11.__file__).parent / 'share' / 'cmake' / 'pybind11'))"
+                  OUTPUT_STRIP_TRAILING_WHITESPACE
+                  OUTPUT_VARIABLE pybind11_DIR)
+  find_package(pybind11 CONFIG REQUIRED)
 endif()
 
 # Resolve name conflicts with suffix

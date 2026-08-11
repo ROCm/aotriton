@@ -1098,6 +1098,27 @@ def get_supported_architectures():
     return TUNING_ARCHITECTURES
 
 
+def order_architectures_for_display(workers_by_arch, supported_archs):
+    """Order architectures into 3 display tiers for the Workers tab:
+
+    1. Arches with at least one worker having is_tuner == True
+    2. Arches with workers, but none of them have is_tuner == True
+    3. Arches with zero workers registered
+
+    Relative order within each tier follows the original order in
+    supported_archs (stable sort).
+    """
+    def tier_of(arch):
+        arch_workers = workers_by_arch.get(arch, [])
+        if not arch_workers:
+            return 2
+        if any(worker.get('is_tuner') for worker in arch_workers):
+            return 0
+        return 1
+
+    return sorted(supported_archs, key=tier_of)
+
+
 def get_workers_by_architecture(workdir):
     """Get workers grouped by architecture"""
     workers = get_workers(workdir)
