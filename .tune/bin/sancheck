@@ -72,23 +72,47 @@ if [ -n "$GPUS" ]; then
     read -ra GPU_ARGS <<< "--target_gpus $GPUS"
 fi
 
-# Persistent build directory.
+# Persistent build directory — survives across runs so the checked-in
+# op_database baseline only needs to be extracted once.
 #   <workdir>/build/sancheck/flash/database/tuning_database.sqlite3  (symlink)
-#   <workdir>/build/sancheck/flash/database/op_database.sqlite3      (op mode only; kernel mode
-#     falls back to modules/flash/database/'s checked-in baseline via python/database/sqlite.py)
+#   <workdir>/build/sancheck/flash/database/op_database.sqlite3      (copied from scratch/ in op
+#     mode, otherwise extracted from the checked-in .tar.xz baseline)
 # The build_dir's FAMILY subdir (flash/) is required: codegen's
 # DatabaseFactories.create_factory always resolves the Factory path as
 # <build_dir>/<family> (see python/codegen/interface.py).
+#
+# This mirrors what v3src/CMakeLists.txt does for a real build: it extracts
+# every modules/<family>/database/**.sqlite3.tar.xz into
+# <build_dir>/<family>/database/ *before* any codegen runs. sancheck bypasses
+# CMake, so it has to stage the same files itself — Factory never reads a
+# .tar.xz, and never looks outside <build_dir>/<family>/database/.
 TMPDIR_BUILD="$WORKDIR/build/sancheck"
-mkdir -p "$TMPDIR_BUILD/flash/database"
+FAMILY_DB_DIR="$TMPDIR_BUILD/flash/database"
+mkdir -p "$FAMILY_DB_DIR"
 
 # tuning_database.sqlite3: always re-symlink in case the path changed.
-ln -sf "$(realpath "$CENTRALDB")" "$TMPDIR_BUILD/flash/database/tuning_database.sqlite3"
+ln -sf "$(realpath "$CENTRALDB")" "$FAMILY_DB_DIR/tuning_database.sqlite3"
 
-# op_database.sqlite3: only stage a fresh copy in op mode (this takes
-# precedence over the checked-in baseline). Kernel mode needs nothing here.
+# op_database.sqlite3: use the freshly tuned file in op mode; otherwise extract
+# the checked-in baseline. Factory ATTACHes it in both modes, so kernel mode
+# needs it staged too.
+OP_TARBALL="$REPO_ROOT/modules/flash/database/op_database.sqlite3.tar.xz"
 if [ "$TUNING_MODE" = "op" ]; then
-    cp "$WORKDIR/scratch/op_database.sqlite3" "$TMPDIR_BUILD/flash/database/op_database.sqlite3"
+    cp "$WORKDIR/scratch/op_database.sqlite3" "$FAMILY_DB_DIR/op_database.sqlite3"
+else
+    if [ ! -f "$OP_TARBALL" ]; then
+        echo "Error: op database baseline not found: $OP_TARBALL" >&2
+        echo "Is this a partial checkout? (it is a normal tracked file, not LFS/a submodule)" >&2
+        exit 1
+    fi
+    # Re-extract when the tarball is newer: TMPDIR_BUILD outlives a branch
+    # switch or a pull that updates the tracked baseline. -m (--touch) stamps
+    # the extraction time on the output instead of restoring the archived
+    # mtime, which predates the tarball and would defeat this check.
+    if [ ! -f "$FAMILY_DB_DIR/op_database.sqlite3" ] \
+       || [ "$OP_TARBALL" -nt "$FAMILY_DB_DIR/op_database.sqlite3" ]; then
+        tar -xJmf "$OP_TARBALL" -C "$FAMILY_DB_DIR"
+    fi
 fi
 
 REPORT="$WORKDIR/scratch/dbreport.txt"
