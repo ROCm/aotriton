@@ -155,3 +155,9 @@ const FLASH_DESCRIPTOR = {
     ];
   },
 };
+
+// Self-registration (modular-tune.md §3d.2): perf.html / visperf_template.html
+// no longer need to know this file's descriptor constant name -- they only
+// know the family id ('flash'), which is how the /family_static/<family>/...
+// route and the registry resolve to this file in the first place.
+registerDescriptor(FLASH_DESCRIPTOR);

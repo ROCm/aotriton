@@ -1,14 +1,24 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-# Python-side descriptor for flash attention kernels/ops.
-# Drives query construction in visperf.py.
-#
-# dims entries: (sql_expression, alias)
-#   sql_expression: fragment used in SELECT and GROUP BY (cast inline if needed)
-#   alias: column name in result rows and the JS descriptor
+"""
+Flash-specific visperf descriptor (modular-tune.md §3d).
 
-FLASH_DESCRIPTOR: dict = {
+Loaded by `aotriton.tune.registry.load_family_visperf('flash', ...)`, by
+path, under the synthetic name `_aotriton_modules_flash_visperf` -- same
+rationale as `modules/flash/tune/__init__.py` (F6): `modules/flash` must
+stay a plain directory, not a package.
+
+Exports `DESCRIPTOR` (the generic name the registry looks up -- see
+`python/tune/pq/vis_descriptors/__init__.py`); drives query construction
+in `aotriton.tune.pq.visperf`.
+
+dims entries: (sql_expression, alias)
+  sql_expression: fragment used in SELECT and GROUP BY (cast inline if needed)
+  alias: column name in result rows and the JS descriptor
+"""
+
+DESCRIPTOR: dict = {
     'id': 'flash',
     'label': 'Flash Attention',
 
