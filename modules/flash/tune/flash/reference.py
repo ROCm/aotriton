@@ -5,7 +5,7 @@ import sys
 import math
 from argparse import Namespace
 from dataclasses import dataclass, astuple
-from ..kftdesc import KernelForTuneDescription as KFTDesc
+from aotriton.tune.kftdesc import KernelForTuneDescription as KFTDesc
 import torch
 from torch.backends.cuda import allow_fp16_bf16_reduction_math_sdp
 from torch.ops import aten
@@ -14,7 +14,7 @@ from .utils import (
     sdpa_logsumexp,
     sdpa_odo,
 )
-from ..gpu_utils import (
+from aotriton.tune.gpu_utils import (
     elike,
     adiff2,
     strip_grad_l1,

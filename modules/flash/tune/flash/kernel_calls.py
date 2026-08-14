@@ -12,7 +12,7 @@ No KernelControl or attn_options — safe to import from the testing library.
 from argparse import Namespace
 from .module import FlashInputMetadata
 from .reference import SdpaReference, SdpaBidiInputs, SdpaGoldenOutputs
-from ..gpu_utils import (
+from aotriton.tune.gpu_utils import (
     target_fudge_factor,
     mk_aotensor,
     create_aotensor_like,

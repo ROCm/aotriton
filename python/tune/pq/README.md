@@ -13,7 +13,7 @@ Core queue operations.  Accepts a psycopg connection on construction and
 reuses it for all operations.
 
     import psycopg
-    from v3python.tune.pq.queue import TaskQueue
+    from aotriton.tune.pq.queue import TaskQueue
 
     conn = psycopg.connect(host=..., port=..., user=..., password=...,
                            autocommit=True)
@@ -73,7 +73,7 @@ Task dataclass:
 
 Bulk task insertion.  Creates its own short-lived connections.
 
-    from v3python.tune.pq.dispatcher import TaskDispatcher
+    from aotriton.tune.pq.dispatcher import TaskDispatcher
 
     dispatcher = TaskDispatcher({'host': ..., 'port': ...,
                                  'user': ..., 'password': ...})
@@ -102,7 +102,7 @@ Methods:
 Free functions; each accepts a psycopg connection as last argument.
 
 ```python
-    from v3python.tune.pq.results import (
+    from aotriton.tune.pq.results import (
         save_tuning_result, save_optune_result, get_task_results)
 ```
 
@@ -127,7 +127,7 @@ Free functions; each accepts a psycopg connection as last argument.
 Worker liveness tracking.  Creates its own short-lived connections.
 
 ```python
-    from v3python.tune.pq.heartbeat import HeartbeatManager
+    from aotriton.tune.pq.heartbeat import HeartbeatManager
 
     hb = HeartbeatManager({'host': ..., ...}, arch='gfx942')
     hb.update('active')       # call periodically from worker loop
@@ -238,8 +238,8 @@ per worker process and reuse it:
 
 ```python
     import psycopg
-    from v3python.tune.pq.queue import TaskQueue
-    from v3python.tune.pq.results import save_tuning_result
+    from aotriton.tune.pq.queue import TaskQueue
+    from aotriton.tune.pq.results import save_tuning_result
 
     conn_params = {'host': ..., 'port': ..., 'user': ..., 'password': ...}
     conn = psycopg.connect(**conn_params, autocommit=True)

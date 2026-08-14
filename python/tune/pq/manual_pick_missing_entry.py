@@ -21,9 +21,9 @@ the override needs to survive, re-run this command again after any such full
 recompute.
 
 Usage:
-    python -m v3python.tune.pq.manual_pick_missing_entry --workdir /path/to/workdir --id <tuning_results.id>
-    python -m v3python.tune.pq.manual_pick_missing_entry --workdir /path/to/workdir --id <id> --tuning_mode op
-    python -m v3python.tune.pq.manual_pick_missing_entry --workdir /path/to/workdir --id <id> --dry_run
+    python -m aotriton.tune.pq.manual_pick_missing_entry --workdir /path/to/workdir --id <tuning_results.id>
+    python -m aotriton.tune.pq.manual_pick_missing_entry --workdir /path/to/workdir --id <id> --tuning_mode op
+    python -m aotriton.tune.pq.manual_pick_missing_entry --workdir /path/to/workdir --id <id> --dry_run
 """
 
 import argparse
