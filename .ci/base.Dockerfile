@@ -34,8 +34,11 @@ RUN set -ex; \
       make -j"$(nproc)" && \
       make altinstall && \
       cd / && rm -rf "/usr/src/Python-${pyver_full}"* && \
-      ln -sf "/usr/local/bin/python${PYVER}" /usr/bin/python && \
-      ln -sf "/usr/local/bin/python${PYVER}" /usr/bin/python3; \
+      update-alternatives --install /usr/bin/python python "/usr/local/bin/python${PYVER}" 1 && \
+      update-alternatives --install /usr/bin/python3 python3 "/usr/local/bin/python${PYVER}" 1 && \
+      update-alternatives --set python "/usr/local/bin/python${PYVER}" && \
+      update-alternatives --set python3 "/usr/local/bin/python${PYVER}"; \
+
     else \
       dnf install -y gcc-toolset-13 "python${PYVER}" "python${PYVER}-devel" libatomic \
         zstd libzstd-devel xz-devel zlib-devel git which vim wget rsync && \
