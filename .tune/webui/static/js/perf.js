@@ -11,7 +11,10 @@ const THEORETICAL_PEAK_TFLOPS = {
   gfx1201: { float16: 191,    bfloat16: 191,     float32: 47.8  },
 };
 
-// Descriptor registry — populated by vis_descriptors/*.js files loaded before this script.
+// Descriptor registry — populated by each family's modules/<family>/visperf/
+// static/<family>.js, self-registering via registerDescriptor(...) after
+// being loaded (see perf.html's family loop / export_visperf.py's
+// __FAMILY_JS__ inlining), which runs after this script.
 const DESCRIPTORS = {};
 function registerDescriptor(desc) { DESCRIPTORS[desc.id] = desc; }
 

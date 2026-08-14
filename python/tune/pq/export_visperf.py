@@ -5,8 +5,9 @@
 Export a self-contained performance visualization HTML file.
 
 The output is a single .html file with all chart data inlined as JSON and
-all JS logic inlined from perf.js / vis_descriptors/flash.js. The 2-D
-heatmap and level-1 drilldown work fully offline; the 3-D mesh3d view
+all JS logic inlined from perf.js plus every registered family's
+modules/<family>/visperf/static/<family>.js (modular-tune.md §3d.4). The
+2-D heatmap and level-1 drilldown work fully offline; the 3-D mesh3d view
 requires Plotly.js, which is loaded from CDN (no inlined copy — Plotly is
 ~4.5 MB and would bloat the export). Level-2 (psel × copt) drilldown is
 not included; it queries the live PostgreSQL backend.
