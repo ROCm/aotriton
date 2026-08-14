@@ -63,7 +63,7 @@ const FLASH_DESCRIPTOR = {
   // ---------------------------------------------------------------------------
   cellDetail: {
     // Kernels that support level-2 drilldown.
-    // Ops use a single backend_index so a psel×copt matrix is degenerate.
+    // Ops use a single impl_index so a psel×copt matrix is degenerate.
     kernels: {
       attn_fwd: {
         psels: ['NUM_XCDS', 'PERSISTENT_TYPE', 'GRID_CU_MULTIP',

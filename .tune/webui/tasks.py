@@ -358,42 +358,54 @@ def get_debug_task_data(workdir, task_id: int) -> dict:
                 cur.execute("SELECT * FROM task_queue WHERE id = %s", (task_id,))
                 task = cur.fetchone()
 
+                # tuning_results/best_tuning_results/most_accurate_tuning_results are
+                # unified across tuning_level ('kernel' | 'op') as of the Phase 2
+                # schema (iface_name/impl_index replace kernel_name/hsaco_index and
+                # op_name/backend_index; optune_results/best_optune_results tables no
+                # longer exist). task_id already implies exactly one tuning_level (via
+                # its task_queue row), so filtering here is a defensive/explicit split
+                # into the two display sections below, not a correctness requirement.
                 cur.execute(
-                    "SELECT id, task_id, kernel_name, hsaco_index, result,"
+                    "SELECT id, task_id, tuning_level, iface_name, impl_index, result,"
                     " result_data, error, gpu_id, created_at FROM tuning_results"
-                    " WHERE task_id = %s ORDER BY kernel_name, hsaco_index",
+                    " WHERE task_id = %s AND tuning_level = 'kernel'"
+                    " ORDER BY iface_name, impl_index",
                     (task_id,),
                 )
                 tuning_results = cur.fetchall()
 
                 cur.execute(
                     "SELECT * FROM best_tuning_results WHERE task_id = %s"
-                    " ORDER BY kernel_name",
+                    " AND tuning_level = 'kernel' ORDER BY iface_name",
                     (task_id,),
                 )
                 best_results = cur.fetchall()
 
                 cur.execute(
-                    "SELECT kernel_name, test_case, tensor_name,"
+                    "SELECT iface_name, test_case, tensor_name,"
                     " target_fudge_factor, absolute_error"
                     " FROM most_accurate_tuning_results WHERE task_id = %s"
-                    " ORDER BY kernel_name, test_case, tensor_name",
+                    " ORDER BY iface_name, test_case, tensor_name",
                     (task_id,),
                 )
                 accurate_results = cur.fetchall()
 
+                # Op-level view of the same unified tables (dict keys below keep the
+                # informal 'optune_results'/'best_optune_results' labels for
+                # template-compatibility; the underlying SQL is the unified schema).
                 cur.execute(
-                    "SELECT id, op_name, backend_index, result, result_data,"
-                    " error, gpu_id, created_at FROM optune_results"
-                    " WHERE task_id = %s ORDER BY op_name, backend_index",
+                    "SELECT id, tuning_level, iface_name, impl_index, result, result_data,"
+                    " error, gpu_id, created_at FROM tuning_results"
+                    " WHERE task_id = %s AND tuning_level = 'op'"
+                    " ORDER BY iface_name, impl_index",
                     (task_id,),
                 )
                 optune_results = cur.fetchall()
 
                 cur.execute(
-                    "SELECT op_name, backend_index, median_time, arch, impl_desc, computed_at"
-                    " FROM best_optune_results WHERE task_id = %s"
-                    " ORDER BY op_name",
+                    "SELECT iface_name, impl_index, median_time, arch, impl_desc, computed_at"
+                    " FROM best_tuning_results WHERE task_id = %s"
+                    " AND tuning_level = 'op' ORDER BY iface_name",
                     (task_id,),
                 )
                 best_optune_results = cur.fetchall()

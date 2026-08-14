@@ -122,10 +122,10 @@
     </div>
 
     <p style="font-size: 0.9em; color: gray; margin-top: 0.5rem;">
-        <strong>Rebuild Accuracy Table:</strong> DROP + CTAS <code>{% if tuning_mode == 'op' %}most_accurate_optune_results{% else %}most_accurate_tuning_results{% endif %}</code> in parallel.<br>
-        <strong>Update Accuracy Table:</strong> Incrementally upserts rows for task_ids cached in <code>scratch/retry_task_ids.txt</code> into <code>{% if tuning_mode == 'op' %}most_accurate_optune_results{% else %}most_accurate_tuning_results{% endif %}</code> by <code>retry_missing_entries</code>.<br>
-        <strong>Compute Best Results:</strong> Aggregates raw tuning results into best_tuning_results table.<br>
-        <strong>Export Best Results:</strong> Exports {% if tuning_mode == 'op' %}best_optune_results{% else %}best_tuning_results{% endif %} to <code>scratch/{% if tuning_mode == 'op' %}op_database.sqlite3{% else %}centraldb.sqlite3{% endif %}</code>.<br>
+        <strong>Rebuild Accuracy Table:</strong> DROP + CTAS <code>most_accurate_tuning_results</code> (tuning_level = {{ tuning_mode }}) in parallel.<br>
+        <strong>Update Accuracy Table:</strong> Incrementally upserts rows for task_ids cached in <code>scratch/retry_task_ids.txt</code> into <code>most_accurate_tuning_results</code> (tuning_level = {{ tuning_mode }}) by <code>retry_missing_entries</code>.<br>
+        <strong>Compute Best Results:</strong> Aggregates raw tuning results into <code>best_tuning_results</code> table (tuning_level = {{ tuning_mode }}).<br>
+        <strong>Export Best Results:</strong> Exports <code>best_tuning_results</code> (tuning_level = {{ tuning_mode }}) to <code>scratch/{% if tuning_mode == 'op' %}op_database.sqlite3{% else %}centraldb.sqlite3{% endif %}</code>.<br>
         <strong>Sancheck:</strong> Runs LUT sanity check against <code>scratch/{% if tuning_mode == 'op' %}op_database.sqlite3{% else %}centraldb.sqlite3{% endif %}</code> without triggering code generation.<br>
         <strong>Decompose DB:</strong> {% if tuning_mode == 'op' %}Compresses <code>scratch/op_database.sqlite3</code> into <code>installed/database/op_database.sqlite3.tar.xz</code>.{% else %}Partitions <code>scratch/centraldb.sqlite3</code> into <code>installed/database/amd/&lt;arch&gt;/&lt;family&gt;/&lt;kernel&gt;.sqlite3.tar.xz</code>.{% endif %}
     </p>
