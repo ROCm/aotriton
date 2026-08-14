@@ -22,22 +22,33 @@ from dataclasses import asdict
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(_REPO_ROOT))
+
+try:
+    import aotriton  # noqa: F401
+except ImportError:
+    sys.exit(
+        "Error: the 'aotriton' package is not importable by python3.\n"
+        f"  Install it with: pip install -e '{_REPO_ROOT}'"
+    )
 
 import psycopg
 from psycopg.rows import dict_row
 
-from v3python.tune.flash.module import FlashEntry, FlashInputMetadata
-from v3python.tune.utils import get_db_connection_params
+from aotriton.tune.registry import load_flash_entry_module
+from aotriton.tune.utils import get_db_connection_params
+
+_flash_entry_module = load_flash_entry_module()
+FlashEntry = _flash_entry_module.FlashEntry
+FlashInputMetadata = _flash_entry_module.FlashInputMetadata
 
 # Module name is selected by --tuning_mode at runtime (see main()).
-# TODO: extend when additional modules (e.g. gemm) are added to v3python.tune.*
+# TODO: extend when additional modules (e.g. gemm) are added to modules/*/tune/
 _MODULE_BY_TUNING_MODE = {
     'kernel': 'flash',
     'op':     'flash_op',
 }
 
-# Copied from v3python/rules/flash/op_attn_fwd.py: AOTRITON_FLASH_BLOCK_DMODEL.
+# Copied from modules/flash/aot/_common.py: AOTRITON_FLASH_BLOCK_DMODEL.
 # d_head values from pytest must be rounded up to the nearest compiled block size
 # because the tuning library only has kernels for these specific hdim values.
 _BLOCK_DMODEL_DEFAULT = '16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256, 512'
@@ -46,7 +57,7 @@ _BLOCK_DMODEL = sorted(
     for x in os.getenv('AOTRITON_FLASH_BLOCK_DMODEL', _BLOCK_DMODEL_DEFAULT).split(',')
 )
 
-# Copied from v3python/tune/flash/module.py (no env var override for seqlen).
+# Copied from modules/flash/tune/flash/module.py (no env var override for seqlen).
 # Uses BinningLessOrEqual, so seqlen is also ceiling-rounded to the nearest entry.
 _SEQLEN_ENTRIES = [16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
 

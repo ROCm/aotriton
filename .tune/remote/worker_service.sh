@@ -12,13 +12,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AOTRITON_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# Change to aotriton root so Python can find v3python module
+# Change to aotriton root (also lets AOTRITON_MODULES_DIR default to
+# $AOTRITON_ROOT/modules via registry.default_modules_dir()'s cwd fallback)
 cd "$AOTRITON_ROOT"
 
-BROKER_MODULE="v3python.tune.localq.broker_main"
-GPU_WORKER_MODULE="v3python.tune.localq.gpu_worker_socket"
-PG_READER_MODULE="v3python.tune.localq.pg_reader_worker"
-CPU_WORKER_MODULE="v3python.tune.localq.cpu_worker"
+BROKER_MODULE="aotriton.tune.localq.broker_main"
+GPU_WORKER_MODULE="aotriton.tune.localq.gpu_worker_socket"
+PG_READER_MODULE="aotriton.tune.localq.pg_reader_worker"
+CPU_WORKER_MODULE="aotriton.tune.localq.cpu_worker"
 
 # Load config utilities
 . "$TUNE_ROOT/lib/config_load.sh"
@@ -179,8 +180,8 @@ fi
 echo "Using GPU IDs: ${GPU_IDS[*]}"
 
 # Validate localq modules exist
-if [ ! -f "v3python/tune/localq/broker_main.py" ]; then
-    echo "Error: localq modules not found in v3python/tune/localq/"
+if [ ! -f "python/tune/localq/broker_main.py" ]; then
+    echo "Error: localq modules not found in python/tune/localq/"
     exit 1
 fi
 
@@ -463,7 +464,7 @@ cmd_start() {
         daemonize \
             /dev/null \
             "$HEARTBEAT_PID" \
-            "$CELERY_WORKER_PYTHON" -m v3python.tune.localq.heartbeat_main \
+            "$CELERY_WORKER_PYTHON" -m aotriton.tune.localq.heartbeat_main \
                 --workdir "$WORKDIR" \
                 --hostname "$NODE_HOSTNAME" \
                 --arch "$ARCH" \

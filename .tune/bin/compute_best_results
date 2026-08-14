@@ -12,7 +12,7 @@
 #   compute_best_results <workdir> --fix <hostname>:<pass>
 #
 # All options after <workdir> are passed directly to:
-#   python3 -m v3python.tune.pq.compute_best_results --workdir <workdir> [options...]
+#   python3 -m aotriton.tune.pq.compute_best_results --workdir <workdir> [options...]
 #
 # Run with --help to see all available options.
 #
@@ -45,8 +45,9 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+. "$SCRIPT_DIR/../lib/require_aotriton_pkg.sh"
 
 cd "$REPO_ROOT"
-exec python3 -m v3python.tune.pq.compute_best_results \
+exec python3 -m aotriton.tune.pq.compute_best_results \
     --workdir "$WORKDIR" \
     "$@"

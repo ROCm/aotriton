@@ -20,14 +20,21 @@ from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _TUNE_LIBEXEC = Path(__file__).resolve().parent
-sys.path.insert(0, str(_REPO_ROOT))
 sys.path.insert(0, str(_TUNE_LIBEXEC))
+
+try:
+    import aotriton  # noqa: F401
+except ImportError:
+    sys.exit(
+        "Error: the 'aotriton' package is not importable by python3.\n"
+        f"  Install it with: pip install -e '{_REPO_ROOT}'"
+    )
 
 import psycopg
 from psycopg.rows import dict_row
 
-from v3python.tune.utils import get_db_connection_params
-from v3python.tune.pq.extra_uts import insert_extra_uts
+from aotriton.tune.utils import get_db_connection_params
+from aotriton.tune.pq.extra_uts import insert_extra_uts
 from pq_helpers import fetch_matches_by_ids, print_summary, reset_to_pending
 
 

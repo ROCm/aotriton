@@ -125,7 +125,7 @@
         {% if use_installed_db %}
         Per-arch builds from <code>installed/database/</code> into <code>installed/test/&lt;arch&gt;/</code>.
         {% else %}
-        Per-arch builds into <code>installed/test/&lt;arch&gt;/</code> using the database embedded in the source tree (<code>v3python/database/</code>).
+        Per-arch builds into <code>installed/test/&lt;arch&gt;/</code> using the database embedded in the source tree (<code>modules/flash/database/</code>).
         {% endif %}
         Uses <code>remotebld --test {% if not use_installed_db %}--source_db {% endif %}[--single_arch]</code>.
     </p>

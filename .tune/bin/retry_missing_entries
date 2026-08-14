@@ -29,18 +29,26 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
-# Allow running from repo root without install
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _TUNE_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_REPO_ROOT))
 sys.path.insert(0, str(_TUNE_ROOT / 'libexec'))
+
+try:
+    import aotriton  # noqa: F401
+except ImportError:
+    sys.exit(
+        "Error: the 'aotriton' package is not importable by python3.\n"
+        f"  Install it with: pip install -e '{_REPO_ROOT}'"
+    )
 
 import psycopg
 from psycopg.rows import dict_row
 
-from v3python.tune.flash.module import FlashEntry
-from v3python.tune.utils import get_db_connection_params
+from aotriton.tune.registry import load_flash_entry_module
+from aotriton.tune.utils import get_db_connection_params
 from pq_helpers import fetch_matches, print_summary, reset_to_pending
+
+FlashEntry = load_flash_entry_module().FlashEntry
 
 _MARKER = 'TUNE_V3BIS testrun Item: '
 

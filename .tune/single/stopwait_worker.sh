@@ -35,7 +35,6 @@ WORKER_WORKDIR="${workdir_override:-$DEFAULT_WORKDIR}"
 
 ssh "$HOSTNAME" bash -s "$WORKER_WORKDIR" "$arch" <<'EOF'
 WORKER_WORKDIR="$1"
-ARCH="$2"
 RUNFILE="$WORKER_WORKDIR/run/worker.containerid"
 
 if [ ! -f "$RUNFILE" ]; then
@@ -51,17 +50,7 @@ docker exec "$WORKER_CONTAINER_ID" bash -c "
 source /wkdir/config.rc && source \$(dirname \$CELERY_WORKER_PYTHON)/activate
 cd /wkdir/aotriton.src
 
-echo 'Step 1: Cancel broker consumers on fetcher workers...'
-celery -A v3python.celery control cancel_consumer $ARCH \
-  -d fetcher_0@$HOSTNAME \
-  -d fetcher_1@$HOSTNAME \
-  -d fetcher_2@$HOSTNAME \
-  -d fetcher_3@$HOSTNAME
-
-echo 'Step 2: Waiting for local queues to drain (max 10 min)...'
-timeout 600 bash -c 'while celery -A v3python.celery inspect active | grep -q \"task\"; do sleep 10; done' || true
-
-echo 'Step 3: Stopping all workers gracefully...'
+echo 'Step 1: Stopping all workers gracefully...'
 bash /wkdir/aotriton.src/.tune/remote/worker_service.sh stopwait /wkdir
 "
 

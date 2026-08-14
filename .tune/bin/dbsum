@@ -9,7 +9,7 @@
 #   dbsum <dbroot>
 #
 # Examples:
-#   dbsum v3python/database
+#   dbsum modules/flash/database
 #   dbsum ~/wkdir.v3.5/installed/database
 
 set -euo pipefail

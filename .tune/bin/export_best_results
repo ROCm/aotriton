@@ -13,7 +13,7 @@
 #   op mode:     <workdir>/scratch/op_database.sqlite3
 #
 # All options after <output.sqlite3> are passed directly to:
-#   python3 -m v3python.tune.pq.export_best_results \
+#   python3 -m aotriton.tune.pq.export_best_results \
 #       --workdir <workdir> --output <output.sqlite3> [options...]
 #
 # Run with --help to see all available options.
@@ -87,7 +87,9 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-exec python3 -m v3python.tune.pq.export_best_results \
+. "$SCRIPT_DIR/../lib/require_aotriton_pkg.sh"
+
+exec python3 -m aotriton.tune.pq.export_best_results \
     --workdir "$WORKDIR" \
     --output "$OUTPUT" \
     "$@"

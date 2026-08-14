@@ -4,7 +4,7 @@
 
 # Run the testrun CLI tool inside the tuning Docker image.
 #
-# Interface is identical to v3python.tune.testrun:
+# Interface is identical to aotriton.tune.testrun:
 #   testrun_direct [module] [--gpu GPU]
 #
 # The workdir is detected automatically from the script's location:
@@ -47,8 +47,8 @@ if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
     cat <<EOF
 Usage: $(basename "$0") [module] [--gpu GPU]
 
-Run the v3python.tune.testrun REPL inside the tuning Docker image.
-Interface is identical to: python -m v3python.tune.testrun
+Run the aotriton.tune.testrun REPL inside the tuning Docker image.
+Interface is identical to: python -m aotriton.tune.testrun
 
 GPU architecture is auto-detected via rocm_agent_enumerator.
 
@@ -137,5 +137,5 @@ exec docker run --rm -it \
         source /wkdir/config.rc
         source "$(dirname "$CELERY_WORKER_PYTHON")/activate"
         cd /wkdir/aotriton.src
-        exec "$CELERY_WORKER_PYTHON" -m v3python.tune.testrun "$@"
+        exec "$CELERY_WORKER_PYTHON" -m aotriton.tune.testrun "$@"
     ' -- "$@"
