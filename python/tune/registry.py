@@ -96,6 +96,41 @@ def load_family_tune(family: str, modules_dir: 'Path | None' = None):
     return mod
 
 
+def load_family_visperf(family: str, modules_dir: 'Path | None' = None):
+    """Import `<modules_dir>/<family>/visperf/__init__.py` by path under a
+    synthetic unique package name, mirroring `load_family_tune` above
+    (identical rationale, F6: `modules/<family>` stays a plain directory,
+    not a package). Cached in `sys.modules`.
+
+    The returned module exports `DESCRIPTOR` (a dict consumed by
+    `aotriton.tune.pq.visperf`'s query builder and the webui's perf page)
+    and, by convention, ships its JS counterpart at
+    `<modules_dir>/<family>/visperf/static/<family>.js` -- served through
+    the webui's `/family_static/<family>/<path:filename>` route and
+    inlined by `aotriton.tune.pq.export_visperf` for the standalone export
+    (modular-tune.md §3d).
+    """
+    modname = f'_aotriton_modules_{family}_visperf'
+    cached = sys.modules.get(modname)
+    if cached is not None:
+        return cached
+    if modules_dir is None:
+        modules_dir = default_modules_dir()
+    visperf_dir = Path(modules_dir) / family / 'visperf'
+    init_path = visperf_dir / '__init__.py'
+    if not init_path.is_file():
+        raise ImportError(
+            f"No visperf block for family '{family}': {init_path} not found "
+            f"(modules_dir={modules_dir}). Set AOTRITON_MODULES_DIR or run "
+            f"from the repo root.")
+    spec = importlib.util.spec_from_file_location(
+        modname, init_path, submodule_search_locations=[str(visperf_dir)])
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[modname] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def load_tune_module(module_name: str, modules_dir: 'Path | None' = None):
     """Resolve a flat family name (e.g. `'flash'`) to its tune package under
     `modules/<family>/tune/`. The returned package exports `TuneDesc` and
