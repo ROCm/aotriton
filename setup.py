@@ -52,6 +52,11 @@ _package_data = {
         'template/*.cc', 'template/*.h',
         'template/snippet/*.cc', 'template/snippet/*.h',
     ],
+    # Non-.py runtime data read via open()/importlib.resources at runtime by
+    # aotriton.tune.pq — the PostgreSQL schema/materialized-view DDL and the
+    # visperf standalone-export HTML shell. Required for a non-editable
+    # install for the same reason as aotriton.codegen's templates above (F9).
+    'aotriton.tune.pq': ['*.sql', '*.html'],
 }
 
 setup(
