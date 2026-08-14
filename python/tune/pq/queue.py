@@ -25,6 +25,7 @@ class Task:
     id: int
     arch: str
     module: str
+    tuning_level: str
     task_config: dict
     status: str
     priority: int = 5
@@ -51,7 +52,7 @@ class TaskQueue:
         self.worker_id = f"{socket.gethostname()}-{os.getpid()}"
         self.node_hostname = socket.gethostname()
 
-    def fetch_tasks(self, arch: str, batch_size: int = 10, tuning_mode: str = 'kernel') -> list[Task]:
+    def fetch_tasks(self, arch: str, batch_size: int = 10, *, tuning_mode: str) -> list[Task]:
         """
         Fetch pending tasks for a specific architecture.
 
@@ -61,13 +62,15 @@ class TaskQueue:
         Args:
             arch: GPU architecture (e.g., 'gfx942', 'gfx90a')
             batch_size: Number of tasks to fetch
-            tuning_mode: 'kernel' fetches non-op tasks; 'op' fetches op tasks (module LIKE '%_op')
+            tuning_mode: 'kernel' or 'op' (REQUIRED, keyword-only, no default --
+                a kernel worker must never claim an op task and vice versa,
+                see modular-tune.md F16). Filters on the denormalized
+                task_queue.tuning_level column, not a `module` string pattern.
 
         Returns:
             List of claimed Task objects
         """
         partition_table = f"task_queue_{arch}"
-        module_filter = "AND module LIKE %s" if tuning_mode == 'op' else "AND module NOT LIKE %s"
 
         with self.conn.cursor(row_factory=dict_row) as cur:
             # Atomic task claiming using UPDATE ... RETURNING
@@ -80,15 +83,15 @@ class TaskQueue:
                 WHERE id IN (
                     SELECT id FROM {partition_table}
                     WHERE status = 'pending'
-                    {module_filter}
+                      AND tuning_level = %s
                     ORDER BY priority DESC, id ASC
                     LIMIT %s
                     FOR UPDATE SKIP LOCKED
                 )
-                RETURNING id, arch, module, task_config, status, priority,
+                RETURNING id, arch, module, tuning_level, task_config, status, priority,
                           worker_id, node_hostname, created_at, started_at,
                           completed_at, error, retry_count
-            """, (self.worker_id, self.node_hostname, '%_op', batch_size))
+            """, (self.worker_id, self.node_hostname, tuning_mode, batch_size))
 
             try:
                 rows = cur.fetchall()
@@ -262,7 +265,7 @@ class TaskQueue:
         """
         with self.conn.cursor(row_factory=dict_row) as cur:
             cur.execute("""
-                SELECT id, arch, module, task_config, status, priority,
+                SELECT id, arch, module, tuning_level, task_config, status, priority,
                        worker_id, node_hostname, created_at, started_at,
                        completed_at, error, retry_count
                 FROM task_queue

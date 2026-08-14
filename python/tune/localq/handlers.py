@@ -15,8 +15,9 @@ import psycopg
 from psycopg.types.json import Jsonb
 
 from ..exaid import exaid_create, ExaidSubprocessNotOK
+from ..tdesc import ImplSelector
 from ..pq.queue import TaskQueue
-from ..pq.results import save_tuning_result, save_optune_result
+from ..pq.results import save_tuning_result
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +115,8 @@ class PreprocessHandler(MessageHandler):
 
         # Execute preprocessing
         module = task_config["module"]
-        exaid = exaid_create(module, self.gpu_id)
+        level = task_config.get("tuning_level", "kernel")
+        exaid = exaid_create(module, level, self.gpu_id)
 
         if 'tmpdir' in task_config:
             tmpdir = Path(task_config['tmpdir'])
@@ -151,10 +153,17 @@ class PreprocessHandler(MessageHandler):
 
 class ProbeHandler(MessageHandler):
     """
-    Discovers hsaco kernels and creates tune_hsaco + postprocess messages.
+    Discovers impl variants (HSACO indices for kernel level, backend indices
+    for op level) and creates tune_impl + postprocess messages.
 
     Input: probe message
-    Output: Multiple tune_hsaco messages + one postprocess message (with dependencies), or mark_task_failed message
+    Output: Multiple tune_impl messages + one postprocess message (with dependencies), or mark_task_failed message
+
+    Unified (modular-tune.md §4.1-§4.3): `TuningLevel.enumerate_variants()`
+    returns `list[dict]` for both levels (one dict per candidate variant, its
+    position in the list being the impl_index), so `exaid.probe()`'s
+    {iface_name: [dict, ...]} shape is already uniform across levels -- no
+    separate kernel/op fan-out branch is needed.
     """
 
     def __init__(self, gpu_id: int):
@@ -168,9 +177,9 @@ class ProbeHandler(MessageHandler):
         task_config = message['task_config']
         task_id = message['task_id']
         module = task_config['module']
-        is_op = module.endswith('_op')
+        level = task_config.get('tuning_level', 'kernel')
 
-        exaid = exaid_create(module, self.gpu_id)
+        exaid = exaid_create(module, level, self.gpu_id)
         tmpdir = Path(task_config['tmpdir'])
         arch = task_config.get('arch')
 
@@ -187,70 +196,34 @@ class ProbeHandler(MessageHandler):
                 'tmpdir': tmpdir.as_posix(),
             }
 
-        if is_op:
-            return self._build_fanout_op(impl_dict, task_id, task_config)
-        else:
-            return self._build_fanout_kernel(impl_dict, task_id, task_config)
+        return self._build_fanout(impl_dict, task_id, task_config, level)
 
-    def _build_fanout_kernel(self, impl_dict: dict, task_id: int,
-                             task_config: dict) -> List[dict]:
+    def _build_fanout(self, impl_dict: dict, task_id: int,
+                      task_config: dict, level: str) -> List[dict]:
+        # impl_dict: {iface_name: [variant_dict, ...], ...} -- variant_dict's
+        # contents are level-specific (psels/copts for kernel, backend_index
+        # for op) but unused here; only its position (impl_index) matters.
         max_hsaco_dict = task_config.get('max_hsaco', {})
         max_hsaco_global = max_hsaco_dict.get('*', None)
         results = []
         impl_tasks = []
 
-        for kname, hsaco_list in impl_dict.items():
-            max_h = max_hsaco_dict.get(kname, max_hsaco_global)
-            limited = hsaco_list[:max_h] if max_h else hsaco_list
-            for hsaco_index in range(len(limited)):
-                impl_tasks.append((kname, hsaco_index))
-                results.append({
-                    'class': 'tune_hsaco',
-                    'target_queue': 'gpu_queue',
-                    'task_id': task_id,
-                    'task_config': task_config,
-                    'kname': kname,
-                    'hsaco_index': hsaco_index,
-                })
-
-        expected_impls = {}
-        for name, index in impl_tasks:
-            expected_impls.setdefault(name, []).append(index)
-
-        results.append({
-            'class': 'postprocess',
-            'target_queue': 'cpu_queue',
-            'task_id': task_id,
-            'task_config': task_config,
-            'depends': ['hsaco_result'],
-            'name_key': 'kname',
-            'index_key': 'hsaco_index',
-            'expected_impls': expected_impls,
-            'received_impls': defaultdict(dict),
-        })
-        logger.info(f"Probed {len(impl_tasks)} hsaco kernels for task_id={task_id}")
-        return results
-
-    def _build_fanout_op(self, impl_dict: dict, task_id: int,
-                         task_config: dict) -> List[dict]:
-        # impl_dict: {op_name: [{'backend_index': i}, ...], ...}
-        results = []
-        impl_tasks = []
-
-        for op_name, backend_list in impl_dict.items():
-            if len(backend_list) <= 1:
-                logger.info(f"Skipping op_name={op_name} for task_id={task_id}: only 1 backend, no tuning needed")
+        for iface_name, variants in impl_dict.items():
+            if len(variants) <= 1:
+                logger.info(f"Skipping iface_name={iface_name} for task_id={task_id}: "
+                           f"only {len(variants)} variant(s), no tuning needed")
                 continue
-            for entry in backend_list:
-                backend_index = entry['backend_index']
-                impl_tasks.append((op_name, backend_index))
+            max_h = max_hsaco_dict.get(iface_name, max_hsaco_global)
+            limited = variants[:max_h] if max_h else variants
+            for impl_index in range(len(limited)):
+                impl_tasks.append((iface_name, impl_index))
                 results.append({
-                    'class': 'tune_backend',
+                    'class': 'tune_impl',
                     'target_queue': 'gpu_queue',
                     'task_id': task_id,
                     'task_config': task_config,
-                    'op_name': op_name,
-                    'backend_index': backend_index,
+                    'iface_name': iface_name,
+                    'impl_index': impl_index,
                 })
 
         expected_impls = {}
@@ -262,22 +235,26 @@ class ProbeHandler(MessageHandler):
             'target_queue': 'cpu_queue',
             'task_id': task_id,
             'task_config': task_config,
-            'depends': ['backend_result'],
-            'name_key': 'op_name',
-            'index_key': 'backend_index',
+            'depends': ['impl_result'],
             'expected_impls': expected_impls,
             'received_impls': defaultdict(dict),
         })
-        logger.info(f"Probed {len(impl_tasks)} backends for task_id={task_id}")
+        logger.info(f"Probed {len(impl_tasks)} impl variant(s) for task_id={task_id} (tuning_level={level})")
         return results
 
 
-class TuneHsacoHandler(MessageHandler):
+class TuneImplHandler(MessageHandler):
     """
-    Benchmarks single hsaco kernel.
+    Benchmarks a single impl variant (HSACO index for kernel level, backend
+    index for op level).
 
-    Input: tune_hsaco message
-    Output: hsaco_result message
+    Unified (modular-tune.md §4.1-§4.3): replaces the former
+    TuneHsacoHandler/TuneBackendHandler pair -- ImplSelector's iface_name/
+    impl_index (plus tuning_level, read from task_config) are enough to
+    address either level.
+
+    Input: tune_impl message
+    Output: impl_result message
     """
 
     def __init__(self, gpu_id: int):
@@ -285,85 +262,57 @@ class TuneHsacoHandler(MessageHandler):
 
     @classmethod
     def get_class_name(cls) -> str:
-        return "tune_hsaco"
-
-    def _impl_keys(self, message: dict) -> tuple[str, int]:
-        return message['kname'], message['hsaco_index']
-
-    def _result_class(self) -> str:
-        return "hsaco_result"
-
-    def _report_id_fields(self, impl_name: str, impl_index: int) -> dict:
-        return {'kernel_name': impl_name, 'hsaco_index': impl_index}
-
-    def _result_id_fields(self, impl_name: str, impl_index: int) -> dict:
-        return {'kname': impl_name, 'hsaco_index': impl_index}
+        return "tune_impl"
 
     def handle(self, message: dict) -> dict:
         task_config = message['task_config']
         task_id = message['task_id']
-        impl_name, impl_index = self._impl_keys(message)
+        iface_name = message['iface_name']
+        impl_index = message['impl_index']
 
         module = task_config['module']
-        exaid = exaid_create(module, self.gpu_id)
+        level = task_config.get('tuning_level', 'kernel')
+        exaid = exaid_create(module, level, self.gpu_id)
         tmpdir = Path(task_config['tmpdir'])
 
-        report = self._report_id_fields(impl_name, impl_index)
+        impl_selector = ImplSelector(tuning_level=level, iface_name=iface_name, impl_index=impl_index)
+        report = {'tuning_level': level, 'iface_name': iface_name, 'impl_index': impl_index}
         try:
-            result_data = exaid.benchmark(tmpdir, impl_name, impl_index)
+            result_data = exaid.benchmark(tmpdir, impl_selector)
             report['result'] = 'OK'
             report['result_data'] = result_data
             report['error'] = None
         except OSError as e:
-            logger.error(f"Benchmark crashed for {impl_name}[{impl_index}]: {e}")
+            logger.error(f"Benchmark crashed for {iface_name}[{impl_index}]: {e}")
             report['result'] = 'crash'
             report['result_data'] = None
             report['error'] = {'errno': e.errno, 'stderr': e.strerror}
         except ExaidSubprocessNotOK as e:
-            logger.error(f"Benchmark NotOK for {impl_name}[{impl_index}]: {e}")
+            logger.error(f"Benchmark NotOK for {iface_name}[{impl_index}]: {e}")
             report['result'] = 'NotOK'
             report['result_data'] = None
             report['error'] = {'stdout': e.stdout, 'stderr': e.stderr}
 
         return {
-            'class': self._result_class(),
+            'class': 'impl_result',
             'target_queue': 'cpu_queue',
             'task_id': task_id,
-            **self._result_id_fields(impl_name, impl_index),
+            'iface_name': iface_name,
+            'impl_index': impl_index,
             'report': report,
         }
 
 
-class TuneBackendHandler(TuneHsacoHandler):
+class WriteImplResultHandler(MessageHandler):
     """
-    Benchmarks single op backend.
+    Writes an impl benchmark result to the unified tuning_results table.
 
-    Input: tune_backend message
-    Output: backend_result message
-    """
+    Unified (modular-tune.md §4.1-§4.3): replaces the former
+    WriteHsacoResultHandler/WriteBackendResultHandler pair, both of which
+    wrote to two separate tables (tuning_results/optune_results); now a
+    single save_tuning_result() call, distinguished by report['tuning_level'].
 
-    @classmethod
-    def get_class_name(cls) -> str:
-        return "tune_backend"
-
-    def _impl_keys(self, message: dict) -> tuple[str, int]:
-        return message['op_name'], message['backend_index']
-
-    def _result_class(self) -> str:
-        return "backend_result"
-
-    def _report_id_fields(self, impl_name: str, impl_index: int) -> dict:
-        return {'op_name': impl_name, 'backend_index': impl_index}
-
-    def _result_id_fields(self, impl_name: str, impl_index: int) -> dict:
-        return {'op_name': impl_name, 'backend_index': impl_index}
-
-
-class WriteHsacoResultHandler(MessageHandler):
-    """
-    Writes hsaco result to database.
-
-    Input: hsaco_result message
+    Input: impl_result message
     Output: None (triggers dependency resolution for postprocess)
     """
 
@@ -372,7 +321,7 @@ class WriteHsacoResultHandler(MessageHandler):
 
     @classmethod
     def get_class_name(cls) -> str:
-        return "hsaco_result"
+        return "impl_result"
 
     def handle(self, message: dict) -> None:
         task_id = message['task_id']
@@ -380,34 +329,8 @@ class WriteHsacoResultHandler(MessageHandler):
 
         save_tuning_result(task_id, report, self.db_conn)
 
-        logger.debug(f"Wrote hsaco result for task_id={task_id} "
-                    f"{report['kernel_name']}[{report['hsaco_index']}]")
-        return None
-
-
-class WriteBackendResultHandler(MessageHandler):
-    """
-    Writes op backend result to optune_results.
-
-    Input: backend_result message
-    Output: None (triggers dependency resolution for postprocess)
-    """
-
-    def __init__(self, db_conn):
-        self.db_conn = db_conn
-
-    @classmethod
-    def get_class_name(cls) -> str:
-        return "backend_result"
-
-    def handle(self, message: dict) -> None:
-        task_id = message['task_id']
-        report = message['report']
-
-        save_optune_result(task_id, report, self.db_conn)
-
-        logger.debug(f"Wrote backend result for task_id={task_id} "
-                    f"{report['op_name']}[{report['backend_index']}]")
+        logger.debug(f"Wrote impl result for task_id={task_id} "
+                    f"{report['iface_name']}[{report['impl_index']}] (tuning_level={report['tuning_level']})")
         return None
 
 
@@ -426,7 +349,7 @@ class PostprocessHandler(MessageHandler):
     while the CPU worker executes the actual postprocessing using handle().
 
     This means there are two "copies" of the postprocess message state:
-    - One in the broker's blocked_messages dict (tracking received_hsacos)
+    - One in the broker's blocked_messages dict (tracking received_impls)
     - One in the CPU worker's handler (executing final aggregation)
 
     TODO: Consider splitting into BrokerPostprocessTracker + WorkerPostprocessHandler
@@ -456,10 +379,8 @@ class PostprocessHandler(MessageHandler):
         if blocked_msg['task_id'] != incoming_msg['task_id']:
             return False
 
-        name_key = blocked_msg['name_key']
-        index_key = blocked_msg['index_key']
-        impl_name = incoming_msg[name_key]
-        impl_index = incoming_msg[index_key]
+        impl_name = incoming_msg['iface_name']
+        impl_index = incoming_msg['impl_index']
         blocked_msg['received_impls'].setdefault(impl_name, {})[impl_index] = incoming_msg['report']
 
         expected = blocked_msg['expected_impls']

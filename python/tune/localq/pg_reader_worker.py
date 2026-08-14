@@ -235,9 +235,19 @@ class PGReaderWorker:
 
             if tasks:
                 task = tasks[0]
+                # F16 (modular-tune.md): a kernel worker must never claim an op
+                # task and vice versa. fetch_tasks() already filters server-side
+                # on tuning_level = self.tuning_mode, but assert here too as a
+                # last-ditch, fail-fast guard against a future regression in
+                # that filter (e.g. a dropped WHERE clause) silently handing a
+                # mismatched task to a worker that cannot execute it.
+                assert task.tuning_level == self.tuning_mode, (
+                    f"PG Reader {self.worker_id}: claimed task_id={task.id} with "
+                    f"tuning_level={task.tuning_level!r} but this worker is "
+                    f"tuning_mode={self.tuning_mode!r}")
                 logger.info(f"PG Reader {self.worker_id} fetched task from database: "
                            f"id={task.id}, arch={task.arch}, module={task.module}, "
-                           f"status=pending→running")
+                           f"tuning_level={task.tuning_level}, status=pending→running")
                 task_config = task.task_config
                 extra_im_texts = get_extra_uts(self.db_conn, task.id)
                 if extra_im_texts:
@@ -248,6 +258,7 @@ class PGReaderWorker:
                     'id': task.id,
                     'arch': task.arch,
                     'module': task.module,
+                    'tuning_level': task.tuning_level,
                     'task_config': task_config
                 }
             else:

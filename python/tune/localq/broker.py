@@ -382,10 +382,10 @@ class LocalBroker:
         """
         priorities = {
             'postprocess': 4,     # Highest - frees resources, sends ack
-            'probe': 3,           # High - generates tune_hsaco tasks
-            'tune_hsaco': 2,      # Medium - actual GPU work
+            'probe': 3,           # High - generates tune_impl tasks
+            'tune_impl': 2,       # Medium - actual GPU work
             'preprocess': 1,      # Low - just setup
-            'hsaco_result': 0     # Lowest - CPU write
+            'impl_result': 0      # Lowest - CPU write
         }
         return priorities.get(msg_class, 0)
 
