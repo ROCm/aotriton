@@ -74,8 +74,11 @@
 <script src="__PLOTLY_CDN__" crossorigin="anonymous"></script>
 
 <script>
-// Flash attention descriptor — auto-injected by export_visperf.py
-// __FLASH_JS__
+// Family visperf descriptor JS — auto-injected by export_visperf.py.
+// Concatenation of every registered family's static/<family>.js; each
+// self-registers via registerDescriptor(...) at its own bottom, so this
+// template never needs to know a family's descriptor constant name.
+// __FAMILY_JS__
 </script>
 
 <script>
@@ -96,8 +99,8 @@ const ALL_PERF_DATA = __PERF_DATA__;
 // Static-export bootstrap: populate arch dropdown from inlined data,
 // restore any pre-set URL params, then override fetchData to serve from
 // ALL_PERF_DATA instead of the HTTP API.
-
-registerDescriptor(FLASH_DESCRIPTOR);
+// (No registerDescriptor(...) call here -- each family's inlined JS above
+// self-registers; this bootstrap only knows perf.js's generic registry.)
 
 (function() {
   // Pre-set URL params injected at export time (empty object for full exports).
