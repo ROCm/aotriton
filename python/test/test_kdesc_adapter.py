@@ -1,15 +1,17 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-"""Step 4.1: KernelDescription enumeration/godel parity with the legacy
-attn_fwd KernelDescription."""
+"""Step 4.1: KernelDescription enumeration/godel behavior.
+
+(Legacy parity tests against v3python.rules.flash's attn_fwd
+KernelDescription were removed when v3python/ was deleted; see
+agent-plans/modular-tune.md Phase 1 step 5 / F-list §2g.)"""
 
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import pytest
 import aotriton.template_instantiation as ati
 from aotriton.template_instantiation.describe import describe
 from registry import InterfaceRegistry, _testonly_build_kernel_description
@@ -42,22 +44,6 @@ def _adapter():
                                     registry=reg)
 
 
-try:
-    import v3python.rules.flash as _F   # legacy reference for parity comparison
-except ModuleNotFoundError:
-    _F = None   # unavailable (v3python removed) -> legacy-parity tests skip
-
-
-def _legacy():
-    return next(k for k in _F.kernels if k.NAME == 'attn_fwd')
-
-
-def test_total_godel_matches_legacy():
-    if _F is None:
-        pytest.skip('v3python legacy reference unavailable')
-    assert _adapter().godel_number == _legacy().godel_number == 576
-
-
 def test_gen_functionals_count_and_dense_godel():
     ta = cluster_gpus(['gfx942_mod0'])
     fs = list(_adapter().gen_functionals(ta))
@@ -65,15 +51,6 @@ def test_gen_functionals_count_and_dense_godel():
     godels = sorted(f.godel_number for f in fs)
     assert godels == list(range(576))               # dense bijection
     assert all(f.arch == 'gfx942' for f in fs)
-
-
-def test_godel_set_equals_legacy():
-    if _F is None:
-        pytest.skip('v3python legacy reference unavailable')
-    ta = cluster_gpus(['gfx942_mod0'])
-    mine = sorted(f.godel_number for f in _adapter().gen_functionals(ta))
-    legacy = sorted(f.godel_number for f in _legacy().gen_functionals(ta))
-    assert mine == legacy
 
 
 def test_arguments_match_real_signature():

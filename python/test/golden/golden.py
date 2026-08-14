@@ -47,7 +47,7 @@ FUSED_DB_DIR = Path(os.getenv('AOTRITON_GOLDEN_DB', '/tmp/ati_golden_fused_db'))
 # subset: the byte-for-byte gate must include the metro launcher and the bare
 # debug_simulate_encoded_softmax shim (the ME backend calls the latter directly,
 # without an operator). Generation runs with no --selective, mirroring
-# v3python.generate's production per-item worker path.
+# aotriton.generate's production per-item worker path.
 DEFAULT_ARCH = 'gfx942_mod0'
 
 MANIFEST_NAME = 'manifest.json'
