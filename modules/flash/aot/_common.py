@@ -51,8 +51,8 @@ def check_value(functional, repr_name):
             return tc[aname].triton_compile_signature
     assert False, f'Cannot find {repr_name=} in {functional=}'
 
-# TODO: migrate FlashKernel to the modularized tune infrastructure under
-#       modules/flash/ once v3python/tune/ is ported.
+# TODO: unify FlashKernel with modules/flash/tune/'s FlashEntry/FlashKernelSelector
+#       (Phase 2: modularization unification, see agent-plans/modular-tune.md).
 class FlashKernel:
     """Flash-family LUT sancheck + missing-entry diagnostic, called by the ATI
     kdesc (FlashKernel.method(self=kdesc, ...) via family_aot). A plain holder — no

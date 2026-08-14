@@ -9,7 +9,7 @@
 ├── config.rc                 # Configuration file (sourced by scripts)
 ├── workers.db               # SQLite database of registered workers
 ├── .tune/                   # Tuning framework (copied from aotriton/.tune)
-├── v3python/                # Python tuning code (copied from aotriton/v3python)
+├── python/                  # Python tuning code (copied from aotriton/python, installed as the `aotriton` package)
 ├── image.build/             # Docker image build context (generated)
 ├── installed/               # Architecture-specific installed libraries
 │   ├── gfx90a/
@@ -74,20 +74,18 @@ aotriton/
 │       ├── tasks.py
 │       ├── action_tracker.py
 │       └── templates/
-├── v3python/               # Python tuning framework
-│   ├── tune/               # Tuning modules
-│   │   ├── worker_main.py  # Worker process entry point
-│   │   ├── exaid.py        # Execution backend
-│   │   └── attn_fwd/       # Example tuning module
-│   ├── pq/                 # PostgreSQL queue implementation
-│   │   ├── schema.sql
-│   │   ├── queue.py        # Queue operations
-│   │   └── results.py      # Result storage
-│   └── ray/                # Ray-based task execution
-│       ├── orchestrator.py # TuningOrchestrator class
-│       ├── gpu_worker.py   # GPUWorker actor
-│       ├── worker_pool.py  # Worker pool management
-│       └── cpu_tasks.py    # CPU-only tasks
+├── python/                 # `aotriton` package (python/ -> aotriton, see setup.py)
+│   └── tune/               # aotriton.tune -- tuning modules
+│       ├── exaid.py        # Execution backend
+│       ├── pq/             # aotriton.tune.pq -- PostgreSQL queue implementation
+│       │   ├── schema.sql
+│       │   ├── queue.py    # Queue operations
+│       │   └── results.py  # Result storage
+│       └── localq/         # aotriton.tune.localq -- Unix-socket local queue
+│           ├── broker_main.py
+│           └── gpu_worker_socket.py
+├── modules/flash/tune/     # Family-specific tuning logic (flash, flash_op) --
+│                           # loaded by path, NOT part of the aotriton package
 └── third_party/
 ```
 

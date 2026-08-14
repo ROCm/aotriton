@@ -21,8 +21,8 @@ from ._common import block_dmodel_values
 
 
 def _block_dmodel_values_capped():
-    # The fused bwd kernel caps BLOCK_DMODEL at 256 (legacy v3python rule
-    # rules/flash/bwd_kernel_fuse.py: `BLOCK_DMODEL: lambda x: x <= 256`).
+    # The fused bwd kernel caps BLOCK_DMODEL at 256 (from the retired legacy
+    # rule file bwd_kernel_fuse.py: `BLOCK_DMODEL: lambda x: x <= 256`).
     return [d for d in block_dmodel_values() if d <= 256]
 
 

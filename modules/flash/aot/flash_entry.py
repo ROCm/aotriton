@@ -4,10 +4,11 @@
 """
 The FlashEntry formatting struct used by the LUT-missing-entry diagnostic.
 
-This is the codegen-side subset of v3python.tune.flash.module.FlashEntry: the
-dataclass fields and `as_text()` (the only surface `_gen_missing_entries` uses).
-The tuning-side parse/dacite helpers stay in v3python.tune; keeping this copy free
-of v3python.tune is what severs the last v3python edge from the codegen closure.
+This is the codegen-side subset of modules/flash/tune/flash/module.py's
+FlashEntry: the dataclass fields and `as_text()` (the only surface
+`_gen_missing_entries` uses). The tuning-side parse/dacite helpers stay in
+modules/flash/tune/; keeping this copy free of that dependency is what severs
+the codegen closure from the tuning stack.
 
 `as_text()` output MUST stay byte-identical to the original (it is the diagnostic
 line the tuner re-parses).
