@@ -12,15 +12,18 @@ FLASH_DESCRIPTOR: dict = {
     'id': 'flash',
     'label': 'Flash Attention',
 
-    # kernel-mode: best_tuning_results
+    # Unified schema (modular-tune.md §4.3/§4.7): kernel-level and op-level
+    # rows share the same best_tuning_results/tuning_results tables and the
+    # same iface_name column; tuning_level ('kernel' | 'op') is the sole
+    # discriminator, since iface_name collides across levels (e.g. bare
+    # 'attn_fwd' is valid at both levels -- see modules/flash/tune/level_op.py).
     'kernels': ['attn_fwd', 'bwd_kernel_dk_dv', 'bwd_kernel_dq', 'bwd_kernel_fuse'],
     'kernel_table': 'best_tuning_results',
-    'kernel_name_col': 'kernel_name',
+    'name_col': 'iface_name',
 
-    # op-mode: best_optune_results
-    'ops': ['attn_fwd_op', 'attn_bwd_op'],
-    'op_table': 'best_optune_results',
-    'op_name_col': 'op_name',
+    # op-level iface_names are bare, never '<name>_op' -- the ImplSelector
+    # DSL's 'op.' prefix is surface syntax only and never reaches storage.
+    'ops': ['attn_fwd', 'attn_bwd'],
 
     # Dimensions extracted from task_config->entry.
     # Each entry: (sql_expression, alias)

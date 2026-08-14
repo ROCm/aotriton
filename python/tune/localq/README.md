@@ -210,8 +210,9 @@ This applies to top-level handlers: `tune_kernel`, `preprocess`, `probe`.
 **task_queue**: Partitioned by arch (e.g., task_queue_gfx942)
 - Columns: id, arch, module, task_config (JSONB), status, priority, worker_id, node_hostname, created_at, started_at, completed_at, error, retry_count
 
-**tuning_results**: Stores individual hsaco benchmark results
-- Columns: id, task_id (FK to task_queue), kernel_name, hsaco_index, result, result_data (JSONB), error (JSONB), gpu_id, created_at
+**tuning_results**: Stores individual benchmark results, shared by both tuning levels
+- Columns: id, task_id (FK to task_queue), tuning_level ('kernel' | 'op'), iface_name, impl_index, result, result_data (JSONB), error (JSONB), gpu_id, created_at
+- `iface_name`/`impl_index` (ImplSelector) replace the old `kernel_name`/`hsaco_index` and `op_name`/`backend_index` column pairs; `tuning_level` is denormalized here (not joined from `task_queue`) because `iface_name` collides across levels (e.g. `attn_fwd` is valid at both kernel and op level)
 
 ## Signal Handling and Graceful Shutdown
 
@@ -254,20 +255,22 @@ See detailed comments in `handlers.py` for more information.
 
 ### Dependency Tracking Details
 
-The postprocess message tracks expected hsacos as a dict:
+The postprocess message tracks expected variants as a dict, keyed by
+iface_name (the same shape is used at both tuning levels -- kernel-level
+keys hold hsaco indices, op-level keys hold backend indices):
 ```python
 {
-  'expected_hsacos': {
-    'kernel_name_1': [0, 1, 2],  # hsaco indices
-    'kernel_name_2': [0, 1]
+  'expected_impls': {
+    'iface_name_1': [0, 1, 2],  # impl indices
+    'iface_name_2': [0, 1]
   },
-  'received_hsacos': {
-    'kernel_name_1': {
+  'received_impls': {
+    'iface_name_1': {
       0: <report>,
       1: <report>,
       2: <report>
     },
-    'kernel_name_2': {
+    'iface_name_2': {
       0: <report>,
       1: <report>
     }
@@ -275,7 +278,7 @@ The postprocess message tracks expected hsacos as a dict:
 }
 ```
 
-This allows the broker to know which specific hsacos are pending, not just a count.
+This allows the broker to know which specific impls are pending, not just a count.
 
 ## Logging and Debugging
 

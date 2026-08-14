@@ -5,7 +5,7 @@
 # Run the testrun CLI tool inside the tuning Docker image.
 #
 # Interface is identical to aotriton.tune.testrun:
-#   testrun_direct [module] [--gpu GPU]
+#   testrun_direct [module] [level] [--gpu GPU]
 #
 # The workdir is detected automatically from the script's location:
 #   testrun_direct lives at  <workdir>/aotriton.src/.tune/remote/testrun_direct
@@ -16,9 +16,10 @@
 #
 # GPU architecture is detected automatically via rocm_agent_enumerator.
 #
-# PYTHONPATH selection (based on module name):
-#   Modules ending with _op use the testing library: installed/test/<arch>/lib
-#   All other modules use the tuning library:        installed/<arch>/lib
+# PYTHONPATH selection (based on tuning level, module name is always the
+# unified module e.g. 'flash' -- there is no more '<module>_op' name):
+#   level=op   uses the testing library: installed/test/<arch>/lib
+#   level=kernel (default) uses the tuning library: installed/<arch>/lib
 #
 # testrun is a REPL — commands are sent via stdin, not positional arguments.
 #
@@ -31,7 +32,7 @@
 #   .tune/remote/testrun_direct flash
 #
 #   # Interactive session for op tuning (uses installed/test/ PYTHONPATH)
-#   .tune/remote/testrun_direct flash_op
+#   .tune/remote/testrun_direct flash op
 #
 #   # Run a specific entry non-interactively (pipe commands via stdin)
 #   printf 'prepare_data dtype=float16;hdim=128;seqlen_q=4096;seqlen_k=4096;causal=False;dropout_p=0.0;bias_type=0 /tmp/myentry\n' \
@@ -45,16 +46,17 @@ WORKDIR="$(cd "$AOTRITON_ROOT/.." && pwd)"
 
 if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
     cat <<EOF
-Usage: $(basename "$0") [module] [--gpu GPU]
+Usage: $(basename "$0") [module] [level] [--gpu GPU]
 
 Run the aotriton.tune.testrun REPL inside the tuning Docker image.
 Interface is identical to: python -m aotriton.tune.testrun
 
 GPU architecture is auto-detected via rocm_agent_enumerator.
 
-PYTHONPATH selection (based on module name):
-  Modules ending with _op  → installed/test/<arch>/lib  (testing library)
-  All other modules        → installed/<arch>/lib        (tuning library)
+PYTHONPATH selection (based on tuning level, not module name -- there is no
+more '<module>_op' module; module and level are separate positional args):
+  level=op                 → installed/test/<arch>/lib  (testing library)
+  level=kernel (default)   → installed/<arch>/lib        (tuning library)
 
 Workdir auto-detected from script location:
   $WORKDIR
@@ -70,7 +72,7 @@ Examples:
   $(basename "$0") flash
 
   # Interactive session for op tuning
-  $(basename "$0") flash_op
+  $(basename "$0") flash op
 
   # Run a specific entry non-interactively
   printf 'prepare_data dtype=float16;hdim=128;seqlen_q=4096;seqlen_k=4096;causal=False;dropout_p=0.0;bias_type=0 /tmp/myentry\n' \\
@@ -98,9 +100,11 @@ if [ -z "$ARCH" ]; then
     exit 1
 fi
 
-# Peek at the module positional arg (first non-option arg) for PYTHONPATH selection.
-# All args are passed verbatim to testrun — nothing is consumed here.
-MODULE=""
+# Peek at the module/level positional args (first two non-option args) for
+# PYTHONPATH selection. All args are passed verbatim to testrun — nothing is
+# consumed here. Module is always the unified name (e.g. 'flash'); level
+# ('kernel' | 'op', default 'kernel') is what selects the library.
+POSITIONALS=()
 skip_next=false
 for arg in "$@"; do
     if $skip_next; then
@@ -110,12 +114,13 @@ for arg in "$@"; do
     case "$arg" in
         --gpu) skip_next=true ;;
         --*)   ;;
-        *)     MODULE="$arg"; break ;;
+        *)     POSITIONALS+=("$arg") ;;
     esac
 done
+LEVEL="${POSITIONALS[1]:-kernel}"
 
-# Modules ending with _op use the testing library (no KernelControl).
-if [[ "$MODULE" == *_op ]]; then
+# level=op uses the testing library (no KernelControl / kernel_fine_control).
+if [ "$LEVEL" = "op" ]; then
     WORKER_PYTHONPATH="/wkdir/installed/test/$ARCH/lib"
 else
     WORKER_PYTHONPATH="/wkdir/installed/$ARCH/lib"

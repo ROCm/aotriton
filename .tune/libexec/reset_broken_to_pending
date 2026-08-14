@@ -38,11 +38,14 @@ from aotriton.tune.pq.extra_uts import insert_extra_uts
 from pq_helpers import fetch_matches_by_ids, print_summary, reset_to_pending
 
 
-def _load_task_ids(db_path: Path, hostname: str, pass_num: int, module: str) -> list[int]:
+def _load_task_ids(db_path: Path, hostname: str, pass_num: int, tuning_level: str) -> list[int]:
+    # module is always 'flash' now (modular-tune.md §4.3), so it no longer
+    # distinguishes kernel vs op rows -- filter on tuning_level instead
+    # (written by broken_entries_to_db into the same broken_entries table).
     with sqlite3.connect(db_path) as db:
         cur = db.execute(
-            'SELECT task_id FROM broken_entries WHERE host = ? AND pass = ? AND module = ? ORDER BY task_id',
-            (hostname, pass_num, module),
+            'SELECT task_id FROM broken_entries WHERE host = ? AND pass = ? AND tuning_level = ? ORDER BY task_id',
+            (hostname, pass_num, tuning_level),
         )
         return [row[0] for row in cur.fetchall()]
 
@@ -75,11 +78,10 @@ def main() -> None:
         '--tuning_mode',
         choices=['kernel', 'op'],
         default='kernel',
-        help='kernel: flash module; op: flash_op module',
+        help='Selects the tuning_level slice of broken_entries.db to reset '
+             '(module is always the unified \'flash\' module)',
     )
     args = parser.parse_args()
-
-    module = 'flash_op' if args.tuning_mode == 'op' else 'flash'
 
     workdir = Path(args.workdir)
     db_path = workdir / 'scratch' / 'broken_entries.db'
@@ -87,7 +89,7 @@ def main() -> None:
     if not db_path.is_file():
         sys.exit(f'Error: broken_entries.db not found at {db_path}')
 
-    task_ids = _load_task_ids(db_path, args.hostname, args.pass_num, module)
+    task_ids = _load_task_ids(db_path, args.hostname, args.pass_num, args.tuning_mode)
     if not task_ids:
         print(f'No entries in broken_entries.db for host={args.hostname} pass={args.pass_num}.')
         return
@@ -122,7 +124,7 @@ def main() -> None:
         total_extra = sum(len(v) for v in extra_uts_map.values())
         print(f'Inserted {total_extra} extra UT entries for {len(extra_uts_map)} tasks.')
 
-        affected = reset_to_pending(conn, row_ids, module)
+        affected = reset_to_pending(conn, row_ids, tuning_level=args.tuning_mode)
         conn.commit()
         print(f'Done: {affected} rows reset to pending.')
 

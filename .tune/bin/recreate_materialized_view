@@ -2,9 +2,15 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-# Recreate the most_accurate_tuning_results materialized view from scratch.
-# DROP + CREATE is faster than REFRESH CONCURRENTLY because it avoids the
-# expensive FULL JOIN diff phase that CONCURRENTLY requires.
+# (Re)populate the most_accurate_tuning_results plain table for one tuning
+# level. Unified schema (modular-tune.md §4.3/§4.7): this single table is
+# shared by both 'kernel' and 'op' tuning_level rows (there is no more
+# separate most_accurate_optune_results table), so this script must NOT
+# DROP the table -- that would destroy the other level's rows too. Instead
+# it only ensures the table/index exist (idempotent CREATE TABLE/INDEX IF
+# NOT EXISTS), then delegates the actual full replace to
+# populate_most_accurate.py, which scopes its DELETE+INSERT to this run's
+# tuning_level via a session-local CTAS-into-temp-table swap.
 #
 # Usage:
 #   recreate_materialized_view <workdir> [--tuning_mode kernel|op]
@@ -56,11 +62,9 @@ PSQL_IMAGE="alpine/psql:${POSTGRES_VERSION}"
 POSTGRES_HOST="${CELERY_SERVICE_HOST:-localhost}"
 POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 
-if [ "$TUNING_MODE" = "op" ]; then
-    TABLE_NAME="most_accurate_optune_results"
-else
-    TABLE_NAME="most_accurate_tuning_results"
-fi
+# Fixed: the unified table name is the same regardless of --tuning_mode;
+# there is no more separate most_accurate_optune_results table to pick.
+TABLE_NAME="most_accurate_tuning_results"
 
 SQL_FILE="$REPO_ROOT/python/tune/pq/materialized_views.sql"
 if [ ! -f "$SQL_FILE" ]; then
@@ -68,21 +72,22 @@ if [ ! -f "$SQL_FILE" ]; then
     exit 1
 fi
 
-echo "Recreating $TABLE_NAME table..."
+echo "Ensuring $TABLE_NAME table/index exist..."
 echo "Host: $POSTGRES_HOST"
 echo "Port: $POSTGRES_PORT"
 echo "User: $POSTGRES_USER"
 
+# CREATE TABLE/INDEX IF NOT EXISTS only -- never DROP, $TABLE_NAME is shared
+# by both tuning levels and dropping it would discard the other level's rows.
 docker run --rm \
     --network=host \
     -e PGPASSWORD="$POSTGRES_PASSWORD" \
     -v "$REPO_ROOT:/repo:ro" \
     "$PSQL_IMAGE" \
     postgresql://"$POSTGRES_USER"@"$POSTGRES_HOST":"$POSTGRES_PORT" \
-    -c "SET max_parallel_workers_per_gather = 8; SET max_parallel_workers = 16; DROP TABLE IF EXISTS $TABLE_NAME;" \
     -f "/repo/python/tune/pq/materialized_views.sql"
 
-echo "Table created. Populating $TABLE_NAME (full)..."
+echo "Table ready. Populating $TABLE_NAME (full, tuning_level=$TUNING_MODE)..."
 python3 -m aotriton.tune.pq.populate_most_accurate "$WORKDIR" --tuning_mode "$TUNING_MODE"
 
-echo "$TABLE_NAME recreated successfully"
+echo "$TABLE_NAME (tuning_level=$TUNING_MODE) recreated successfully"

@@ -15,12 +15,16 @@ Entries are de-duplicated on (arch, FlashEntry) before any DB queries are made
 (multiple kernels for the same task_queue row share the same entry).
 
 Usage:
-    .tune/bin/retry_missing_entries <workdir> [<dbreport.txt>]
+    .tune/bin/retry_missing_entries <workdir> [<dbreport.txt>] [--tuning_mode kernel|op]
     .tune/bin/retry_missing_entries ~/wkdir.v3.5
     .tune/bin/retry_missing_entries ~/wkdir.v3.5 ~/wkdir.v3.5/scratch/dbreport.txt
+    .tune/bin/retry_missing_entries ~/wkdir.v3.5 --tuning_mode op
 
 The report defaults to <workdir>/scratch/dbreport.txt (the fixed output location
-produced by .tune/bin/sancheck). The script shows a summary and asks for
+produced by .tune/bin/sancheck). --tuning_mode must match the tuning_mode the
+report was generated with (.tune/bin/sancheck <workdir> --tuning_mode op), since
+tuning_results/most_accurate_tuning_results are shared by both tuning levels and
+iface_name collides across them. The script shows a summary and asks for
 confirmation before making any changes.
 """
 
@@ -81,6 +85,10 @@ def main() -> None:
     parser.add_argument('report', nargs='?', default=None,
                         help='dbreport.txt produced by .tune/bin/sancheck '
                              '(default: <workdir>/scratch/dbreport.txt)')
+    parser.add_argument('--tuning_mode', choices=['kernel', 'op'], default='kernel',
+                        help='Must match the tuning_mode the report was generated '
+                             'with; selects the tuning_level slice of the unified '
+                             'tuning_results/most_accurate_tuning_results tables to reset')
     args = parser.parse_args()
 
     workdir = Path(args.workdir)
@@ -114,7 +122,7 @@ def main() -> None:
             return
 
         row_ids = [r['id'] for r in matches]
-        affected = reset_to_pending(conn, row_ids)
+        affected = reset_to_pending(conn, row_ids, tuning_level=args.tuning_mode)
         conn.commit()
         print(f'Done: {affected} rows reset to pending.')
 

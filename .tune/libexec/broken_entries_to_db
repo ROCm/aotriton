@@ -7,7 +7,8 @@ Private helper for retry_broken_entries.
 
 Reads pytest2entry.py JSON output from stdin (one JSON object per line),
 looks up the matching task_queue row IDs in PostgreSQL, and inserts
-(pass, host, arch, module, entry_text, task_id) into broken_entries.db.
+(pass, host, arch, module, tuning_level, entry_text, task_id) into
+broken_entries.db.
 
 Usage (called by retry_broken_entries, not directly):
     <pytest2entry output> | broken_entries_to_db <workdir> <hostname> <arch> <pass_num> [--tuning_mode kernel|op]
@@ -41,12 +42,11 @@ _flash_entry_module = load_flash_entry_module()
 FlashEntry = _flash_entry_module.FlashEntry
 FlashInputMetadata = _flash_entry_module.FlashInputMetadata
 
-# Module name is selected by --tuning_mode at runtime (see main()).
-# TODO: extend when additional modules (e.g. gemm) are added to modules/*/tune/
-_MODULE_BY_TUNING_MODE = {
-    'kernel': 'flash',
-    'op':     'flash_op',
-}
+# Module name is always the unified module now (modular-tune.md §4.3): there
+# is no more separate '<module>_op' module. --tuning_mode instead selects the
+# tuning_level column filter used when resolving task_queue rows.
+# TODO: extend when additional families (e.g. gemm) are added.
+_MODULE = 'flash'
 
 # Copied from modules/flash/aot/_common.py: AOTRITON_FLASH_BLOCK_DMODEL.
 # d_head values from pytest must be rounded up to the nearest compiled block size
@@ -71,12 +71,13 @@ def _round_up(value: int, table: list[int], name: str) -> int:
 
 _CREATE_TABLE = '''
 CREATE TABLE IF NOT EXISTS broken_entries (
-    pass        INTEGER NOT NULL,
-    host        TEXT    NOT NULL,
-    arch        TEXT    NOT NULL,
-    module      TEXT    NOT NULL,
-    entry_text  TEXT    NOT NULL,
-    task_id     INTEGER NOT NULL,
+    pass          INTEGER NOT NULL,
+    host          TEXT    NOT NULL,
+    arch          TEXT    NOT NULL,
+    module        TEXT    NOT NULL,
+    tuning_level  TEXT    NOT NULL,
+    entry_text    TEXT    NOT NULL,
+    task_id       INTEGER NOT NULL,
     PRIMARY KEY (pass, task_id)
 );
 CREATE TABLE IF NOT EXISTS extra_uts (
@@ -136,14 +137,18 @@ def _entry_to_jsonb_filter(entry: FlashEntry) -> tuple[str, list]:
     return ' AND '.join(clauses), params
 
 
-def _fetch_task_id(conn, arch: str, entry: FlashEntry, module: str) -> int | None:
+def _fetch_task_id(conn, arch: str, entry: FlashEntry, module: str, tuning_level: str) -> int | None:
+    # module alone is no longer enough to pick the right row: 'flash' now
+    # covers both tuning levels, and iface_name collides across them, so
+    # tuning_level (a top-level task_queue column) must also be filtered.
     entry_sql, entry_params = _entry_to_jsonb_filter(entry)
     sql = (
         f"SELECT id FROM task_queue "
-        f"WHERE task_config->>'arch' = %s AND module = %s AND {entry_sql} LIMIT 1"
+        f"WHERE task_config->>'arch' = %s AND module = %s AND tuning_level = %s "
+        f"AND {entry_sql} LIMIT 1"
     )
     with conn.cursor() as cur:
-        cur.execute(sql, [arch, module] + entry_params)
+        cur.execute(sql, [arch, module, tuning_level] + entry_params)
         row = cur.fetchone()
         return row['id'] if row else None
 
@@ -186,11 +191,13 @@ def main() -> None:
         '--tuning_mode',
         choices=['kernel', 'op'],
         default='kernel',
-        help='kernel: flash module; op: flash_op module',
+        help='Selects the tuning_level filter used to resolve task_queue rows '
+             '(module is always the unified \'flash\' module)',
     )
     args = parser.parse_args()
 
-    module = _MODULE_BY_TUNING_MODE[args.tuning_mode]
+    module = _MODULE
+    tuning_level = args.tuning_mode
 
     workdir = Path(args.workdir)
     db_path = workdir / 'scratch' / 'broken_entries.db'
@@ -207,7 +214,7 @@ def main() -> None:
 
     with psycopg.connect(**conn_params, row_factory=dict_row) as conn:
         for arch, entry, im in entries:
-            task_id = _fetch_task_id(conn, arch, entry, module)
+            task_id = _fetch_task_id(conn, arch, entry, module, tuning_level)
             if task_id is None:
                 print(
                     f'Warning: no task_queue row for {arch} {entry.as_text()}',
@@ -223,8 +230,8 @@ def main() -> None:
         db.executescript(_CREATE_TABLE)
         for entry, im, task_id in resolved:
             db.execute(
-                'INSERT OR REPLACE INTO broken_entries VALUES (?,?,?,?,?,?)',
-                (args.pass_num, args.hostname, args.arch, module,
+                'INSERT OR REPLACE INTO broken_entries VALUES (?,?,?,?,?,?,?)',
+                (args.pass_num, args.hostname, args.arch, module, tuning_level,
                  entry.as_text(), task_id),
             )
             db.execute(

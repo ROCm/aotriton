@@ -186,8 +186,12 @@ def _input_only(cols: list) -> list:
 
 # Tuning stores op names as e.g. 'attn_fwd_op'; SQLite tables use 'op_attn_fwd'.
 OP_NAME_MAP = {
-    'attn_fwd_op': 'op_attn_fwd',
-    'attn_bwd_op': 'op_attn_bwd',
+    # Keys are bare iface_name values (ImplSelector never stores the 'op.'
+    # DSL prefix -- see modules/flash/tune/level_op.py); the tuning_level
+    # column, not a name suffix, is what distinguishes op rows from kernel
+    # rows sharing the same attn_fwd/attn_bwd iface_name.
+    'attn_fwd': 'op_attn_fwd',
+    'attn_bwd': 'op_attn_bwd',
 }
 
 OP_SCHEMAS = {
@@ -291,20 +295,20 @@ def insert_row(db: sqlite3.Connection, kernel: str,
 def export(conn_params: dict, output_path: Path) -> None:
     t0 = time.monotonic()
 
-    logger.info('Querying best_tuning_results...')
+    logger.info('Querying best_tuning_results (tuning_level=kernel)...')
     with psycopg.connect(**conn_params, autocommit=True,
                          row_factory=dict_row) as pg:
         with pg.cursor() as cur:
             cur.execute("""
-                SELECT b.task_id, b.arch, b.kernel_name, b.task_config, b.impl_desc
+                SELECT b.task_id, b.arch, b.iface_name, b.task_config, b.impl_desc
                 FROM best_tuning_results b
                 JOIN task_queue t ON t.id = b.task_id AND t.arch = b.arch
-                WHERE t.status != 'cancelled'
-                ORDER BY b.arch, b.kernel_name
+                WHERE t.status != 'cancelled' AND b.tuning_level = 'kernel'
+                ORDER BY b.arch, b.iface_name
             """)
             rows = cur.fetchall()
 
-    logger.info('Fetched %d rows from best_tuning_results', len(rows))
+    logger.info('Fetched %d rows from best_tuning_results (tuning_level=kernel)', len(rows))
 
     counts: dict[str, int] = {}
     skipped = 0
@@ -317,7 +321,7 @@ def export(conn_params: dict, output_path: Path) -> None:
         for row in rows:
             task_id     = row['task_id']
             arch        = row['arch']
-            kernel_name = row['kernel_name']
+            iface_name  = row['iface_name']
             task_config = row['task_config']
             impl_desc   = row['impl_desc']
 
@@ -325,13 +329,13 @@ def export(conn_params: dict, output_path: Path) -> None:
                 logger.warning(
                     'Skipping task_id=%s arch=%s kernel=%s: impl_desc is NULL '
                     '(compute_best_results may not have run for this entry)',
-                    task_id, arch, kernel_name,
+                    task_id, arch, iface_name,
                 )
                 skipped += 1
                 continue
 
-            if kernel_name not in KERNEL_SCHEMAS:
-                logger.warning('Skipping unknown kernel %s (task_id=%s)', kernel_name, task_id)
+            if iface_name not in KERNEL_SCHEMAS:
+                logger.warning('Skipping unknown kernel %s (task_id=%s)', iface_name, task_id)
                 skipped += 1
                 continue
 
@@ -340,7 +344,7 @@ def export(conn_params: dict, output_path: Path) -> None:
             copts  = impl_desc.get('copts') or {}
             gpu    = f'{arch}_mod0'
 
-            cols, unique = KERNEL_SCHEMAS[kernel_name]
+            cols, unique = KERNEL_SCHEMAS[iface_name]
 
             try:
                 values = [
@@ -350,18 +354,18 @@ def export(conn_params: dict, output_path: Path) -> None:
             except Exception as exc:
                 logger.warning(
                     'Skipping task_id=%s arch=%s kernel=%s entry=%s: %s',
-                    task_id, arch, kernel_name, entry, exc,
+                    task_id, arch, iface_name, entry, exc,
                 )
                 skipped += 1
                 continue
 
-            insert_row(db, kernel_name, cols, values)
-            counts[kernel_name] = counts.get(kernel_name, 0) + 1
+            insert_row(db, iface_name, cols, values)
+            counts[iface_name] = counts.get(iface_name, 0) + 1
 
         db.commit()
 
-    for kernel_name, n in sorted(counts.items()):
-        logger.info('  %-20s: %d rows', kernel_name, n)
+    for iface_name, n in sorted(counts.items()):
+        logger.info('  %-20s: %d rows', iface_name, n)
 
     total = sum(counts.values())
     logger.info(
@@ -374,39 +378,39 @@ def export(conn_params: dict, output_path: Path) -> None:
 def export_op(conn_params: dict, output_path: Path) -> None:
     t0 = time.monotonic()
 
-    logger.info('Querying best_optune_results...')
+    logger.info('Querying best_tuning_results (tuning_level=op)...')
     with psycopg.connect(**conn_params, autocommit=True,
                          row_factory=dict_row) as pg:
         with pg.cursor() as cur:
             cur.execute("""
-                SELECT b.task_id, b.arch, b.op_name, b.task_config,
-                       b.impl_desc, b.backend_index
-                FROM best_optune_results b
+                SELECT b.task_id, b.arch, b.iface_name, b.task_config,
+                       b.impl_desc, b.impl_index
+                FROM best_tuning_results b
                 JOIN task_queue t ON t.id = b.task_id AND t.arch = b.arch
-                WHERE t.status != 'cancelled'
-                ORDER BY b.arch, b.op_name
+                WHERE t.status != 'cancelled' AND b.tuning_level = 'op'
+                ORDER BY b.arch, b.iface_name
             """)
             rows = cur.fetchall()
 
-    logger.info('Fetched %d rows from best_optune_results', len(rows))
+    logger.info('Fetched %d rows from best_tuning_results (tuning_level=op)', len(rows))
 
     counts: dict[str, int] = {}
     skipped = 0
 
     with sqlite3.connect(output_path) as db:
-        for op_name, (cols, unique) in OP_SCHEMAS.items():
-            ensure_table(db, op_name, cols, unique)
+        for table_name, (cols, unique) in OP_SCHEMAS.items():
+            ensure_table(db, table_name, cols, unique)
 
         for row in rows:
-            task_id       = row['task_id']
-            arch          = row['arch']
-            op_name       = row['op_name']
-            task_config   = row['task_config']
-            backend_index = row['backend_index']
+            task_id     = row['task_id']
+            arch        = row['arch']
+            iface_name  = row['iface_name']
+            task_config = row['task_config']
+            impl_index  = row['impl_index']
 
-            table_name = OP_NAME_MAP.get(op_name)
+            table_name = OP_NAME_MAP.get(iface_name)
             if table_name is None or table_name not in OP_SCHEMAS:
-                logger.warning('Skipping unknown op %s (task_id=%s)', op_name, task_id)
+                logger.warning('Skipping unknown op %s (task_id=%s)', iface_name, task_id)
                 skipped += 1
                 continue
 
@@ -419,7 +423,7 @@ def export_op(conn_params: dict, output_path: Path) -> None:
                 for col_def in cols:
                     source = col_def[2]
                     if source == 'op_backend':
-                        values.append(backend_index)
+                        values.append(impl_index)
                     elif source == 'op_tflops':
                         values.append(0.0)
                     else:
@@ -427,7 +431,7 @@ def export_op(conn_params: dict, output_path: Path) -> None:
             except Exception as exc:
                 logger.warning(
                     'Skipping task_id=%s arch=%s op=%s entry=%s: %s',
-                    task_id, arch, op_name, entry, exc,
+                    task_id, arch, iface_name, entry, exc,
                 )
                 skipped += 1
                 continue
@@ -437,8 +441,8 @@ def export_op(conn_params: dict, output_path: Path) -> None:
 
         db.commit()
 
-    for op_name, n in sorted(counts.items()):
-        logger.info('  %-20s: %d rows', op_name, n)
+    for table_name, n in sorted(counts.items()):
+        logger.info('  %-20s: %d rows', table_name, n)
 
     total = sum(counts.values())
     logger.info(
@@ -469,7 +473,8 @@ def main() -> None:
     parser.add_argument('--output', required=True, type=Path,
                         help='Output SQLite file path (e.g. tuning_database.sqlite3)')
     parser.add_argument('--tuning_mode', choices=['kernel', 'op'], default='kernel',
-                        help='kernel: export best_tuning_results; op: export best_optune_results')
+                        help='Selects the tuning_level slice of the unified '
+                             'best_tuning_results table to export')
     args = parser.parse_args()
 
     if args.workdir:

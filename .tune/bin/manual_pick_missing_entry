@@ -2,10 +2,12 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-# Force a specific tuning_results/optune_results row to be the "best" result
-# for its (task_id, kernel_name/op_name), overriding whatever
-# compute_best_results picked. Does NOT touch most_accurate_tuning_results /
-# most_accurate_optune_results -- only best_tuning_results/best_optune_results.
+# Force a specific tuning_results row to be the "best" result for its
+# (task_id, iface_name), overriding whatever compute_best_results picked.
+# Does NOT touch most_accurate_tuning_results -- only best_tuning_results.
+# tuning_results/best_tuning_results are shared by both tuning levels
+# (kernel/op selected via --tuning_mode); there is no more separate
+# optune_results/best_optune_results pair.
 #
 # Use this when an entry is reported missing/broken but a specific existing
 # raw result row is known-good (e.g. manually verified) and should just be
