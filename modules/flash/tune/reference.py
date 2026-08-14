@@ -1,4 +1,4 @@
-# Copyright © 2025 Advanced Micro Devices, Inc.
+# Copyright © 2025-2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
 import sys
@@ -9,11 +9,12 @@ from aotriton.tune.kftdesc import KernelForTuneDescription as KFTDesc
 import torch
 from torch.backends.cuda import allow_fp16_bf16_reduction_math_sdp
 from torch.ops import aten
-from .utils import (
+from .sdpa_math import (
     round_to_8x,
     sdpa_logsumexp,
     sdpa_odo,
 )
+from .causal import WindowValue
 from aotriton.tune.gpu_utils import (
     elike,
     adiff2,
@@ -33,11 +34,6 @@ DEFAULT_PHILOX_SEED = 0x1BF52
 DEFAULT_PHILOX_OFFSET_1 = 0x1D4000
 DEFAULT_PHILOX_OFFSET_2 = 0x000B42
 DEFAULT_PHILOX_OFFSET = DEFAULT_PHILOX_OFFSET_1 + DEFAULT_PHILOX_OFFSET_2
-
-class WindowValue:
-    NONE = 0
-    TOP_LEFT_ALIGNED = -2147483647       # 0x80000001. Special value for varlen
-    BOTTOM_RIGHT_ALIGNED = -2147483646   # 0x80000002. Special value for varlen
 
 '''
 Note the order is different from Triton Kernel, to follow @dataclass
@@ -89,7 +85,7 @@ class SdpaReference(KFTDesc):
     PT_INPUT_CLASS = SdpaBidiInputs
     PT_REF_CLASS = SdpaGoldenOutputs
 
-    def create_extargs(self, *, hsaco_index=None, probe=False):
+    def create_extargs(self, *, which_impl=None, probe=False):
         return None
 
     def generate_inputs(self, im: 'FlashInputMetadata'):
