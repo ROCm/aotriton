@@ -103,6 +103,10 @@
 </script>
 
 <script src="{{ url_for('static', filename='js/perf.js') }}"></script>
-<script src="{{ url_for('static', filename='js/vis_descriptors/flash.js') }}"></script>
-<script>registerDescriptor(FLASH_DESCRIPTOR);</script>
+{% for family in families %}
+<!-- Each family's JS self-registers via registerDescriptor(...) at its own
+     bottom (modular-tune.md §3d.2); this template only needs the family id,
+     never the descriptor constant's name. -->
+<script src="{{ url_for('main.family_static', family=family, filename=family ~ '.js') }}"></script>
+{% endfor %}
 {% endblock %}

@@ -5,7 +5,8 @@
 URL routes and handlers for the web dashboard
 """
 
-from flask import Blueprint, render_template, request, jsonify, current_app, Response, g, send_file
+from flask import (Blueprint, render_template, request, jsonify, current_app,
+                    Response, g, send_file, send_from_directory, abort)
 import io
 import os
 import time
@@ -14,6 +15,8 @@ import logging
 import urllib.request
 import zipfile
 from pathlib import Path
+
+from aotriton.tune.registry import default_modules_dir
 
 from . import tasks
 
@@ -1014,7 +1017,27 @@ def perf():
     """Performance visualization tab"""
     workdir = current_app.config['WORKDIR']
     archs = tasks.get_perf_archs(workdir)
-    return render_template('perf.html', archs=archs, hide_sidebar=True)
+    families = sorted(tasks.DESCRIPTORS.keys())
+    return render_template('perf.html', archs=archs, hide_sidebar=True,
+                            families=families)
+
+
+@bp.route('/family_static/<family>/<path:filename>')
+def family_static(family, filename):
+    """Serve modules/<family>/visperf/static/* (modular-tune.md §3d.3).
+
+    These files live outside Flask's own static_folder
+    (.tune/webui/static, set implicitly by the bare Flask(__name__) in
+    .tune/webui/__init__.py), so they need an explicit route. `family` is
+    checked against the descriptor registry -- that whitelist is the
+    path-traversal guard for the <family> segment (e.g. '..' is never a
+    registered family, so it 404s before touching the filesystem);
+    send_from_directory's own safe_join covers <filename>.
+    """
+    if family not in tasks.DESCRIPTORS:
+        abort(404)
+    static_dir = default_modules_dir() / family / 'visperf' / 'static'
+    return send_from_directory(static_dir, filename)
 
 
 @bp.route('/api/perf/data')
