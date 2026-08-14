@@ -6,16 +6,14 @@ Tuning module registry.
 
 Loads `modules/<family>/tune/` BY PATH under a synthetic top-level name
 (mirroring `python/codegen/parser.py`'s `load_family_aot`), and resolves the
-flat module names used throughout the tuning CLI/queue (`'flash'`,
-`'flash_op'`, ...) to the loaded submodule that exports `TuneDesc` /
-`ImplSelector`.
+flat family names used throughout the tuning CLI/queue (`'flash'`, ...) to the
+loaded package that exports `TuneDesc` / `ImplSelector` / `LEVELS`.
 
-Phase 1 (pure relocation, see modular-tune.md): `'flash'` and `'flash_op'`
-are two independent subpackages under `modules/flash/tune/`, each still
-exporting its own `TuneDesc`/`ImplSelector`. Both stay registered as separate
-CLI subcommands / queue `module` keys here -- unifying them into one
-`FlashTune` description with a `tuning_mode`/`level` axis is Phase 2 (§4.1-§4.3
-of the plan) and is explicitly out of scope for this registry.
+Phase 2 (modularization unification, modular-tune.md §4.1-§4.3): the
+Phase-1 `flash`/`flash_op` module-name split is gone. Each family now exposes
+ONE `TuneDesc` (a `TuningDescription` subclass) with a `tuning_level` axis
+('kernel' | 'op', ...) selected via `TuneDesc(level=...)` -- so the registry
+only needs to resolve a bare family name, not a (family, submodule) pair.
 """
 
 import os
@@ -24,22 +22,18 @@ import importlib
 import importlib.util
 from pathlib import Path
 
-# Flat module name (as used in the CLI / task_queue.module column) ->
-# (family, submodule name under modules/<family>/tune/).
+# Family names (as used in the CLI / task_queue.module column) registered
+# under modules/<family>/tune/.
 #
-# This is a static list, not a filesystem scan (F8): 'flash'/'flash_op' now
-# live under modules/flash/tune/, outside this package, so a directory glob
-# rooted here can no longer discover them. Adding a new tuning module means
-# adding an entry here.
-_MODULE_TO_FAMILY = {
-    'flash': ('flash', 'flash'),
-    'flash_op': ('flash', 'flash_op'),
-}
+# This is a static list, not a filesystem scan (F8): family tune blocks live
+# outside this package, so a directory glob rooted here can no longer
+# discover them. Adding a new tuning family means adding an entry here.
+_FAMILIES = ('flash',)
 
 
 def available_module_names() -> list[str]:
-    """Flat module names registered for the tuning CLI/queue."""
-    return sorted(_MODULE_TO_FAMILY)
+    """Flat family names registered for the tuning CLI/queue."""
+    return sorted(_FAMILIES)
 
 
 def default_modules_dir() -> Path:
@@ -100,34 +94,43 @@ def load_family_tune(family: str, modules_dir: 'Path | None' = None):
 
 
 def load_tune_module(module_name: str, modules_dir: 'Path | None' = None):
-    """Resolve a flat tuning module name (e.g. `'flash'`, `'flash_op'`) to
-    its submodule under `modules/<family>/tune/`. The returned submodule
-    exports `TuneDesc` and `ImplSelector`, exactly like the
-    pre-modularization `v3python.tune.<name>` packages did.
+    """Resolve a flat family name (e.g. `'flash'`) to its tune package under
+    `modules/<family>/tune/`. The returned package exports `TuneDesc`,
+    `ImplSelector` and `LEVELS`.
+
+    Kept as a thin alias of `load_family_tune` (same signature/behavior) for
+    call-site compatibility with pre-unification code that spoke of "tuning
+    modules" rather than "tuning families" -- now that `flash`/`flash_op`
+    collapsed into one `flash` family (modular-tune.md §4.3), the two
+    concepts are the same thing.
     """
-    try:
-        family, submodule_name = _MODULE_TO_FAMILY[module_name]
-    except KeyError:
+    if module_name not in _FAMILIES:
         raise ImportError(
             f"Unknown tuning module '{module_name}'. "
             f"Available: {available_module_names()}")
-    family_pkg = load_family_tune(family, modules_dir=modules_dir)
-    return importlib.import_module(f'.{submodule_name}', package=family_pkg.__name__)
+    return load_family_tune(module_name, modules_dir=modules_dir)
+
+
+def make_tune_desc(family: str, level: str = 'kernel', modules_dir: 'Path | None' = None):
+    """Convenience: resolve `family` and construct its `TuneDesc(level=level)`
+    in one call."""
+    return load_family_tune(family, modules_dir=modules_dir).TuneDesc(level=level)
 
 
 def load_flash_entry_module(modules_dir: 'Path | None' = None):
-    """Return `modules/flash/tune/flash/module.py` -- the module defining
+    """Return `modules/flash/tune/entry.py` -- the module defining
     `FlashEntry` / `FlashInputMetadata`.
 
     A handful of non-GPU tools (`.tune/bin/retry_missing_entries`,
     `.tune/libexec/broken_entries_to_db`, `.tune/libexec/pq_helpers.py`,
     `.tune/webui/tasks.py`) need `FlashEntry`'s dataclass shape
     (`as_text`/`parse_text`) without pulling in `KernelControl`. `FlashEntry`
-    is torch-free at import time (see `module.py`), so importing it here is
+    is torch-free at import time (see `entry.py`), so importing it here is
     always safe, even outside a GPU container.
 
     This is the one case a caller cannot just do `from aotriton.tune.X import
     Y`: the family package lives outside the `aotriton` tree, under
     `modules/`, so it must go through the by-path loader above.
     """
-    return load_tune_module('flash', modules_dir=modules_dir).module
+    family_pkg = load_family_tune('flash', modules_dir=modules_dir)
+    return importlib.import_module('.entry', package=family_pkg.__name__)

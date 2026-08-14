@@ -136,7 +136,7 @@ def get_registered_archs(workdir: Path) -> list[str]:
     finally:
         conn.close()
 
-def get_completed_tasks(module_name: str, module_instance, verbose: bool = False):
+def get_completed_tasks(module_name: str, module_instance, tuning_mode: str, verbose: bool = False):
     """
     Query PostgreSQL for completed tasks from task_queue.
 
@@ -146,6 +146,10 @@ def get_completed_tasks(module_name: str, module_instance, verbose: bool = False
     Args:
         module_name: Name of the tuning module (e.g., 'flash')
         module_instance: Module instance with ENTRY_CLASS defining field structure
+        tuning_mode: 'kernel' or 'op' -- filters on the denormalized
+            task_queue.tuning_level column so kernel-level and op-level
+            completed tasks (which may share the same module name and entry
+            fields) are never conflated.
         verbose: Print debug info
 
     Raises exception if connection fails - caller should handle errors.
@@ -178,7 +182,8 @@ def get_completed_tasks(module_name: str, module_instance, verbose: bool = False
                 FROM task_queue
                 WHERE status = 'completed'
                   AND module = %s
-            """, (module_name,))
+                  AND tuning_level = %s
+            """, (module_name, tuning_mode))
 
             # Extract task_config from each row and convert to hashable tuple
             def extract_config(row):
@@ -215,7 +220,9 @@ def dispatch_tasks(workdir: Path, module_name: str, module_instance, args):
     completed_configs = set()
     if args.skip_completed:
         print("Querying PostgreSQL for completed tasks...")
-        completed_configs = get_completed_tasks(module_name, module_instance, verbose=args.verbose)
+        completed_configs = get_completed_tasks(module_name, module_instance,
+                                                  tuning_mode=args.tuning_mode,
+                                                  verbose=args.verbose)
         if args.dry_run:
             print(f"{len(completed_configs)=}")
             if completed_configs:
@@ -249,6 +256,7 @@ def dispatch_tasks(workdir: Path, module_name: str, module_instance, args):
                 task_config = {
                     "arch": arch,
                     "module": module_name,
+                    "tuning_level": args.tuning_mode,
                     "entry": asdict(entry),
                 }
                 # Add max_hsaco if specified
@@ -274,6 +282,7 @@ def dispatch_tasks(workdir: Path, module_name: str, module_instance, args):
         tasks_to_dispatch.append({
             'arch': task_config['arch'],
             'module': task_config['module'],
+            'tuning_level': task_config['tuning_level'],
             'task_config': task_config,
             'priority': 5  # Default priority
         })
@@ -345,6 +354,8 @@ def add_common_arguments(parser):
     """Add common arguments (workdir, arch, etc.) to a parser."""
     parser.add_argument('workdir', type=Path,
                         help='Project working directory')
+    parser.add_argument('--tuning_mode', type=str, default='kernel', choices=['kernel', 'op'],
+                        help='Tuning level to dispatch tasks for: kernel (default) or op')
     parser.add_argument('--arch', type=str, nargs='+',
                         help='Target architecture(s). If not specified, uses all registered workers.')
     parser.add_argument('--max_hsaco', type=int, metavar='N',

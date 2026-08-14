@@ -6,7 +6,6 @@ import os
 from dataclasses import fields
 import json
 import math
-import dacite
 import subprocess
 import select
 import errno
@@ -77,7 +76,25 @@ def parse_python(line: str) -> dict:
 def asdict_shallow(obj) -> dict:
     return {field.name: getattr(obj, field.name) for field in fields(obj)}
 
-dacite_tuple = dacite.Config(cast=[tuple])
+def __getattr__(name):
+    """PEP 562 module __getattr__: lazily resolve `dacite_tuple`.
+
+    `dacite` is an optional, tuning-only dependency (see modules/flash/tune's
+    module docstrings and python/test/test_tune_infra.py). Every caller here
+    imports it via `from aotriton.tune.utils import ... dacite_tuple ...`,
+    which -- if `dacite_tuple` were a plain module-level value computed via
+    `dacite.Config(...)` at import time -- would force an eager `import
+    dacite` merely by importing this module, even for callers (e.g. the
+    family-package loader in registry.py) that never call anything needing
+    dacite. Resolving it lazily here means importing `aotriton.tune.utils`
+    itself never requires dacite; only actually reading `dacite_tuple` does.
+    """
+    if name == 'dacite_tuple':
+        import dacite
+        value = dacite.Config(cast=[tuple])
+        globals()['dacite_tuple'] = value  # cache: only pay the import cost once
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 def sanitize_float(value):
     """

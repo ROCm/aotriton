@@ -31,8 +31,9 @@ class ExaidSubprocessNotOK(RuntimeError):
 
 class ExaidProxy(object):
     ENTRY = testrun_entry
-    def __init__(self, module_name, gpu_id):
+    def __init__(self, module_name, level, gpu_id):
         self._module_name = module_name
+        self._level = level
         self._gpu_id = gpu_id
         self._process = None
         self._last_error = None
@@ -44,8 +45,9 @@ class ExaidProxy(object):
     def process(self):
         if self._process is None:
             args = ['python', '-m', 'aotriton.tune.testrun',
-                    self._module_name, '--gpu', str(self._gpu_id)]
-            logger.info(f"Starting exaid worker process: module={self._module_name}, gpu={self._gpu_id}")
+                    self._module_name, self._level, '--gpu', str(self._gpu_id)]
+            logger.info(f"Starting exaid worker process: module={self._module_name}, "
+                       f"level={self._level}, gpu={self._gpu_id}")
             self._process = subprocess.Popen(args,
                                              stdin=subprocess.PIPE,
                                              stdout=subprocess.PIPE,
@@ -112,8 +114,9 @@ class ExaidWorker(object):
     TMPFS_LOCATION = Path('/dev/shm/aotriton-tuner')
     _cache = {}
 
-    def __init__(self, module_name: str, gpu_id: int):
+    def __init__(self, module_name: str, level: str, gpu_id: int):
         self._module_name = module_name
+        self._level = level
         self._module = None
         self._gpu_id = gpu_id
         self._proxy = None
@@ -132,11 +135,11 @@ class ExaidWorker(object):
     @property
     def proxy(self):
         if self._proxy is None:
-            self._proxy = ExaidProxy(self._module_name, self._gpu_id)
+            self._proxy = ExaidProxy(self._module_name, self._level, self._gpu_id)
         return self._proxy
 
     def entry_from_dict(self, entry_dict: dict):
-        tune = self.module.TuneDesc()
+        tune = self.module.TuneDesc(level=self._level)
         return tune.ENTRY_CLASS.from_dict(entry_dict)
 
     def get_tmpfs_for(self, entry_dict):
@@ -158,21 +161,30 @@ class ExaidWorker(object):
         logger.info(f"probe completed: found {len(result)} kernels")
         return result
 
-    def benchmark(self, workdir: Path, kname: str, hsaco_index: int):
-        logger.info(f"benchmark: workdir={workdir}, kernel={kname}, hsaco_index={hsaco_index}")
-        self.proxy.write('benchmark', workdir.as_posix(), f'{kname}={hsaco_index}')
+    def benchmark(self, workdir: Path, impl_selector):
+        """
+        Args:
+            impl_selector: an `aotriton.tune.tdesc.ImplSelector` instance
+                identifying the impl variant to benchmark. Its `as_text()`
+                form (e.g. 'attn_fwd=3' or 'op.attn_fwd=1') is the DSL the
+                `testrun.py` worker process's `benchmark` command parses back
+                into an `ImplSelector` via `ImplSelector.parse_text()`.
+        """
+        logger.info(f"benchmark: workdir={workdir}, impl_selector={impl_selector.as_text()}")
+        self.proxy.write('benchmark', workdir.as_posix(), impl_selector.as_text())
         result = json.loads(self.proxy.readinfo(timeout=30))
-        logger.info(f"benchmark completed: {kname}[{hsaco_index}] result={result.get('result', 'unknown')}")
+        logger.info(f"benchmark completed: {impl_selector.as_text()} "
+                   f"result={result.get('result', 'unknown')}")
         return result
 
     def exit(self):
         self.proxy.write("exit")
         self.proxy.join()
 
-def exaid_create(module_name, gpu_id):
-    key = (module_name, gpu_id)
+def exaid_create(module_name, level, gpu_id):
+    key = (module_name, level, gpu_id)
     if key not in ExaidWorker._cache:
-        ExaidWorker._cache[key] = ExaidWorker(module_name, gpu_id)
+        ExaidWorker._cache[key] = ExaidWorker(module_name, level, gpu_id)
     return ExaidWorker._cache[key]
 
 def exaid_exitall():

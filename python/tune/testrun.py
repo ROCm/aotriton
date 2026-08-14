@@ -14,6 +14,7 @@ from .defaults import set_default_device
 def parse_args():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument('module', default=None, nargs='?')
+    p.add_argument('level', default='kernel', nargs='?', choices=['kernel', 'op'])
     p.add_argument('--gpu', default=0, type=int)
     return p.parse_args()
 
@@ -68,8 +69,9 @@ def _load_module(module_name):
 
 class CommandProcessor(object):
 
-    def __init__(self, module_name):
+    def __init__(self, module_name, level='kernel'):
         self._all_commands = None
+        self._level = level
         if module_name is not None:
             self._module = _load_module(module_name)
         else:
@@ -94,8 +96,9 @@ class CommandProcessor(object):
 
     def command_module(self, line):
         if line is None:
-            return r'''Missing Arguments. Expect: module <package name>'''
-        package, _ = first(line)
+            return r'''Missing Arguments. Expect: module <package name> [level]'''
+        package, tail = first(line)
+        level, _ = first(tail) if tail else (None, None)
         try:
             module = _load_module(package)
         except ImportError as e:
@@ -103,13 +106,15 @@ class CommandProcessor(object):
             print(e, file=sys.stderr)
             return f'Package Error. Import package {package} error'
         self._module = module
+        if level:
+            self._level = level
 
     def command_prepare_data(self, line):
         if line is None:
             return r'''Syntax Error: Expect: prepare_data <entry> <odir> [im_text ...]'''
         if self._module is None:
             return r'''Error: Need to run module <package name> first'''
-        tune = self._module.TuneDesc()
+        tune = self._module.TuneDesc(level=self._level)
         try:
             entry, tail = first(line)
             odir, tail = first(tail)
@@ -134,7 +139,7 @@ class CommandProcessor(object):
             return r'''Missing Arguments. Expect: probe <data directory> [arch]'''
         if self._module is None:
             return r'''Error: Need to run module <package name> first'''
-        tune = self._module.TuneDesc()
+        tune = self._module.TuneDesc(level=self._level)
         try:
             data_dir, arch = first(line)
             data_dir = Path(data_dir)
@@ -162,10 +167,14 @@ class CommandProcessor(object):
             return 'Error when parsing argument ' + tail
         if not (data_dir / 'entry.json').is_file():
             return f'{data_dir} is not valid data director. Missing entry.json file.'
+        if impl_selector.tuning_level != self._level:
+            return (f'Error: impl_selector {impl_selector.as_text()!r} is for '
+                    f'tuning_level={impl_selector.tuning_level!r} but this worker '
+                    f'was started with level={self._level!r}')
         # Clear GPU cache before benchmark
         import torch
         torch.cuda.empty_cache()
-        tune = self._module.TuneDesc()
+        tune = self._module.TuneDesc(level=self._level)
         entry, impl_desc, adiffs, times, benchmark_input_metadata = tune.benchmark(data_dir, impl_selector)
         return {
             "entry": asdict(entry),
@@ -196,7 +205,7 @@ class CommandProcessor(object):
 def main():
     args = parse_args()
     set_default_device(args.gpu)
-    cp = CommandProcessor(args.module)
+    cp = CommandProcessor(args.module, args.level)
     if sys.stdin.isatty():
         def gen_line():
             while True:
