@@ -1,4 +1,4 @@
-# Copyright © 2025 Advanced Micro Devices, Inc.
+# Copyright © 2025-2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
 from __future__ import annotations
@@ -8,23 +8,22 @@ import itertools
 from abc import ABC, abstractmethod
 from argparse import Namespace
 from pathlib import Path
-from dacite import from_dict
-from dataclasses import asdict, fields
+from dataclasses import asdict, dataclass, fields
 
 '''
 A dual-purpose class for task dispatch and GPU worker execution.
 
-IMPORTANT — lazy kernel initialization rule for get_kernel():
-    Subclasses MUST NOT import kernel modules or instantiate kernel objects at
-    module level or in __init__. Kernel modules typically import torch (via
-    reference.py), which is unavailable outside GPU containers.
-    dispatch_tasks.py imports every TuneDesc subclass at startup (to build
-    argparse subparsers), so a top-level torch import breaks dispatch on
-    machines without torch.
+IMPORTANT — lazy kernel initialization rule for get_impl():
+    Subclasses of TuningLevel (see below) MUST NOT import kernel modules or
+    instantiate kernel objects at module level or in __init__. Kernel modules
+    typically import torch (via reference.py), which is unavailable outside
+    GPU containers. dispatch_tasks.py imports every TuneDesc subclass at
+    startup (to build argparse subparsers), so a top-level torch import
+    breaks dispatch on machines without torch.
 
     Always initialize kernel objects lazily inside get_impl() on first call:
 
-        class MyModule(TuningDescription):
+        class MyLevel(TuningLevel):
             _kernel_dict = None
 
             def get_impl(self, name):
@@ -33,7 +32,116 @@ IMPORTANT — lazy kernel initialization rule for get_kernel():
                     self._kernel_dict = {'a': KernelA(), 'b': KernelB()}
                 return self._kernel_dict[name]
 '''
+
+
+@dataclass
+class ImplSelector:
+    """Unified impl-selector DSL (modular-tune.md §4.2):
+    `[<tuning_level> '.'] <iface_name> '=' <impl_index>`.
+
+    Replaces the old, per-module FlashKernelSelector ('kernel_name=hsaco_index')
+    and FlashOpBackendSelector ('op_name=backend_index') pair with a single
+    three-field dataclass shared by every tuning level of every family.
+    `tuning_level` defaults to 'kernel' and its prefix is omitted by
+    as_text() in that case, so plain kernel-level selector text is unchanged
+    from before ('attn_fwd=3'); op-level selectors are prefixed
+    ('op.attn_fwd=1').
+
+    IMPORTANT: the `op.` (or any non-kernel level's) prefix is surface syntax
+    ONLY -- it must never reach storage. `TuningLevel.list_impls()`/`get_impl()`
+    speak bare interface names; `iface_name` here is always bare too (never
+    e.g. 'attn_fwd_op').
+    """
+    tuning_level: str = 'kernel'
+    iface_name: str = ''
+    impl_index: int = -1
+
+    @staticmethod
+    def parse_text(line: str) -> "ImplSelector":
+        lhs, index = line.split('=')
+        level, _, iface = lhs.rpartition('.')
+        return ImplSelector(tuning_level=level or 'kernel', iface_name=iface, impl_index=int(index))
+
+    def as_text(self) -> str:
+        prefix = '' if self.tuning_level == 'kernel' else f'{self.tuning_level}.'
+        return f'{prefix}{self.iface_name}={self.impl_index}'
+
+
+class TuningLevel(ABC):
+    """Strategy object encapsulating what differs between tuning levels of the
+    same family (modular-tune.md §4.1) -- e.g. flash's kernel-level (HSACO
+    variant selection, needs the tuning-instrumented pyaotriton build) vs.
+    op-level (backend selection, needs only the plain testing build):
+
+      - list_impls / get_impl: which bare interface names exist, and how to
+        resolve one to its impl object.
+      - enumerate_variants (was TuningDescription._do_probe_backends): how to
+        enumerate the candidate implementation variants for one interface.
+      - impl_desc (was TuningDescription.probe_impl_desc): how to describe
+        the variant actually selected by a probing run.
+
+    Subclasses MUST NOT import kernel modules (torch/pyaotriton) at module
+    level or in __init__ -- always lazily inside get_impl() on first call
+    (see the module docstring above).
+    """
+
+    NAME: str = ''
+    # Whether this level needs the *tuning*-instrumented pyaotriton library
+    # build (KernelControl / kernel_fine_control), as opposed to the plain
+    # testing library build. TuningDescription checks this up front, at
+    # construction time (§4.5), so a level/library mismatch fails fast
+    # instead of surfacing as a deep ImportError on the first get_impl() call.
+    REQUIRES_TUNING_LIB: bool = True
+
+    def __init__(self, tune: "TuningDescription"):
+        self.tune = tune
+
+    @abstractmethod
+    def list_impls(self, entry, arch: str | None = None) -> list[str]:
+        """Bare interface names only -- e.g. ['attn_fwd', 'bwd_kernel_dk_dv',
+        'bwd_kernel_dq', 'bwd_kernel_fuse'] for flash's kernel level,
+        ['attn_fwd', 'attn_bwd'] for flash's op level. The `op.` prefix used
+        in the ImplSelector DSL is surface syntax; it must never appear in a
+        name returned here (highest-risk area #1 of modular-tune.md)."""
+        pass
+
+    @abstractmethod
+    def get_impl(self, name: str):
+        """Return the impl object for a bare interface name. Callers never
+        pass an ImplSelector here -- TuningDescription.get_impl() unwraps
+        that before delegating."""
+        pass
+
+    @abstractmethod
+    def enumerate_variants(self, entry, im, which_impl: str, pt: Path) -> list[dict]:
+        """Was TuningDescription._do_probe_backends. Enumerate the candidate
+        implementation variants (HSACO indices for a kernel level, backend
+        indices for an op level) for `which_impl`."""
+        pass
+
+    @abstractmethod
+    def impl_desc(self, kernel, args) -> dict:
+        """Was TuningDescription.probe_impl_desc. Extract impl_desc from a
+        probing run's extargs (e.g. {psels, copts} for HSACO kernels,
+        {backend_index} for op backends)."""
+        pass
+
+
 class TuningDescription(ABC):
+    # tuning_level name -> TuningLevel subclass. Subclasses (one per family)
+    # must populate this, e.g. {'kernel': FlashKernelLevel, 'op': FlashOpLevel}.
+    LEVELS: dict[str, type[TuningLevel]] = {}
+
+    def __init__(self, level: str = 'kernel'):
+        try:
+            level_cls = self.LEVELS[level]
+        except KeyError:
+            raise ValueError(
+                f"Unknown tuning level {level!r} for {type(self).__name__}; "
+                f"available: {sorted(self.LEVELS)}")
+        self.tuning_level = level
+        self.level = level_cls(self)
+
     @property
     @abstractmethod
     def ENTRY_CLASS(self):
@@ -146,22 +254,21 @@ class TuningDescription(ABC):
     def generate_entries(self):
         return self.generate_entries_from_choices()
 
-    @abstractmethod
     def list_impls(self, entry, arch: str | None = None) -> list[str]:
-        pass
+        return self.level.list_impls(entry, arch=arch)
 
-    @abstractmethod
-    def get_impl(self, name: str | 'ImplSelector'):
+    def get_impl(self, name: str | ImplSelector):
         """Return the impl object for the given name or selector.
-        Accepts either a plain str name or an ImplSelector instance.
-        Subclasses extract the name from the selector's appropriate field
-        (e.g., kernel_name for FlashKernelSelector, op_name for FlashOpBackendSelector).
+        Accepts either a plain str name or an ImplSelector instance --
+        iface_name is extracted from the selector before delegating to
+        self.level (TuningLevel implementations only ever see bare names).
         MUST use lazy initialization (import torch-dependent modules inside
-        this method, not at module level).
+        this method, not at module level) -- see self.level's implementation.
         """
-        pass
+        if isinstance(name, ImplSelector):
+            name = name.iface_name
+        return self.level.get_impl(name)
 
-    @abstractmethod
     def probe_impl_desc(self, kernel, args) -> dict:
         """Extract impl_desc from a probing run's extargs.
 
@@ -174,7 +281,7 @@ class TuningDescription(ABC):
             kernel: the impl object returned by get_impl()
             args: the extargs object returned by create_extargs(probe=True)
         """
-        pass
+        return self.level.impl_desc(kernel, args)
 
     def probe_backends(self, root: Path, which_impl: str) -> list[dict]:
         entry, tests = self.get_entry(root, and_tests=True)
@@ -183,9 +290,8 @@ class TuningDescription(ABC):
         pt = Path(test["pt_file"])
         return self._do_probe_backends(entry, im, which_impl, pt)
 
-    @abstractmethod
     def _do_probe_backends(self, entry, im, which_impl: str, pt: Path) -> list[dict]:
-        pass
+        return self.level.enumerate_variants(entry, im, which_impl, pt)
 
     @abstractmethod
     def _gen_ref(self, entry, root: Path, extra_ims: list = []):  # Gen [tname: str, input_metadata, pt: Path]
@@ -219,10 +325,7 @@ class TuningDescription(ABC):
                         which_impl) -> list[float]:  # L1 error
         """
         Args:
-            which_impl: a FlashKernelSelector | FlashOpBackendSelector instance.
-                Subclasses rename this parameter to reflect their granularity:
-                  which_kernel  — kernel-level tuning (flash: selects HSACO variant)
-                  which_backend — backend-level tuning (flash_op: selects backend index)
+            which_impl: an ImplSelector instance.
         Returns:
             L1 error per test case.
         """
@@ -235,7 +338,7 @@ class TuningDescription(ABC):
                              which_impl) -> tuple[dict, list[float]]:
         """
         Args:
-            which_impl: a FlashKernelSelector | FlashOpBackendSelector instance.
+            which_impl: an ImplSelector instance.
         Returns:
             (impl_desc, times) where impl_desc is a JSON-serialisable dict
             and times is [median, p20, p80] latencies in ms.
@@ -251,7 +354,7 @@ class TuningDescription(ABC):
         else:
             return entry
 
-    def benchmark(self, root: Path, which_impl: 'ImplSelector'):
+    def benchmark(self, root: Path, which_impl: ImplSelector):
         """
         Output:
             entry: ENTRY_CLASS, describes an entry in tuning table
