@@ -363,7 +363,140 @@ def test_pq_localq_module_list_is_not_empty():
     assert 'aotriton.tune.pq.queue' in _PQ_LOCALQ_MODULES
     assert 'aotriton.tune.localq.broker' in _PQ_LOCALQ_MODULES
     assert 'aotriton.tune.pq.vis_descriptors' in _PQ_LOCALQ_MODULES
-    assert 'aotriton.tune.pq.vis_descriptors.flash' in _PQ_LOCALQ_MODULES
+    # Per-family descriptors used to live here as
+    # aotriton.tune.pq.vis_descriptors.<family> (e.g. `...flash`); they now
+    # live at modules/<family>/visperf/__init__.py, loaded by path via
+    # aotriton.tune.registry.load_family_visperf (modular-tune.md §3d.1), so
+    # this glob-based discovery no longer sees them -- vis_descriptors/
+    # holds only the registry shim now.
+
+
+# --- (d) Phase 3 (modular-tune.md §3d/§5): visperf relocation + registry- ---
+#     driven discovery. Covers load_family_visperf, the /family_static
+#     Flask route's path-traversal guard, and export_visperf's multi-family
+#     JS concatenation.
+
+def test_load_family_visperf_flash_descriptor_dims_match_js():
+    # DESCRIPTOR['dims'] (consumed by aotriton.tune.pq.visperf._build_query)
+    # and modules/flash/visperf/static/flash.js's FLASH_DESCRIPTOR.dims /
+    # matrixAxes must agree on dimension names, or the webui's column
+    # picker and the SQL it queries would silently disagree.
+    import re
+    from aotriton.tune.registry import load_family_visperf
+
+    mod = load_family_visperf('flash', modules_dir=_MODULES_DIR)
+    desc = mod.DESCRIPTOR
+    assert desc['id'] == 'flash'
+    assert desc['kernel_table'] == 'best_tuning_results'
+    assert desc['name_col'] == 'iface_name'
+
+    dim_aliases = {alias for _expr, alias in desc['dims']}
+    expected = {'dtype', 'hdim', 'seqlen_q', 'seqlen_k', 'causal', 'bias_type', 'dropout'}
+    assert expected <= dim_aliases
+    assert set(desc['matrix_axes']) <= dim_aliases
+
+    js_path = _MODULES_DIR / 'flash' / 'visperf' / 'static' / 'flash.js'
+    js_text = js_path.read_text(encoding='utf-8')
+    js_dim_keys = set(re.findall(r"key:\s*'(\w+)'", js_text))
+    m = re.search(r"matrixAxes:\s*\{\s*row:\s*'(\w+)',\s*col:\s*'(\w+)'\s*\}", js_text)
+    assert m, "flash.js: matrixAxes not found in expected {row: '...', col: '...'} form"
+    js_matrix_axes = {m.group(1), m.group(2)}
+
+    # JS declares one 'dims' entry per non-matrix axis; matrixAxes covers the
+    # other two. Together they must equal the Python side's dim aliases.
+    assert js_dim_keys | js_matrix_axes == dim_aliases
+    assert js_matrix_axes == set(desc['matrix_axes'])
+
+
+def test_family_static_route_guards_traversal_and_unknown_family():
+    # modular-tune.md §3d.3: the registry (tasks.DESCRIPTORS) is the
+    # path-traversal whitelist for the <family> URL segment; werkzeug's own
+    # safe_join (inside send_from_directory) covers <filename>.
+    pytest.importorskip('flask')
+    pytest.importorskip('psycopg')
+    from werkzeug.exceptions import NotFound
+
+    tune_dir = str(_REPO_ROOT / '.tune')
+    inserted = tune_dir not in sys.path
+    if inserted:
+        sys.path.insert(0, tune_dir)
+    try:
+        from webui import routes
+    finally:
+        if inserted:
+            sys.path.remove(tune_dir)
+
+    from flask import Flask
+    app = Flask(__name__)
+    app.register_blueprint(routes.bp)
+
+    with app.test_request_context():
+        # Legitimate family + file: served successfully.
+        resp = routes.family_static('flash', 'flash.js')
+        data = resp.get_data() if hasattr(resp, 'get_data') else resp
+        assert b'registerDescriptor' in data
+
+        # Unregistered family: 404s via the registry whitelist, before ever
+        # touching the filesystem (e.g. '..' is never a registered family).
+        with pytest.raises(NotFound):
+            routes.family_static('not_a_real_family', 'flash.js')
+
+        # Traversal attempt against an otherwise-*valid* family: safe_join
+        # inside send_from_directory must still reject it.
+        with pytest.raises(NotFound):
+            routes.family_static('flash', '../../../../../../etc/passwd')
+
+
+def test_build_export_html_concatenates_every_family_js_once(tmp_path):
+    # modular-tune.md §3d.4: export_visperf's placeholder becomes
+    # __FAMILY_JS__, concatenating every registered family's JS exactly
+    # once, with explicit repo_root/modules_dir roots (closes F12).
+    pytest.importorskip('psycopg')
+    from aotriton.tune.pq.export_visperf import build_export_html
+    from aotriton.tune.registry import available_module_names
+
+    repo_root = tmp_path / 'repo'
+    modules_dir = tmp_path / 'modules'
+    perf_js_dir = repo_root / '.tune' / 'webui' / 'static' / 'js'
+    perf_js_dir.mkdir(parents=True)
+    (perf_js_dir / 'perf.js').write_text('/* PERF_JS_MARKER */', encoding='utf-8')
+
+    families = available_module_names()
+    assert families, 'expected at least one registered family (flash)'
+    for family in families:
+        static_dir = modules_dir / family / 'visperf' / 'static'
+        static_dir.mkdir(parents=True)
+        (static_dir / f'{family}.js').write_text(
+            f'/* {family.upper()}_JS_MARKER */', encoding='utf-8')
+
+    html = build_export_html({}, repo_root=repo_root, modules_dir=modules_dir)
+
+    assert '/* PERF_JS_MARKER */' in html
+    for family in families:
+        marker = f'/* {family.upper()}_JS_MARKER */'
+        assert html.count(marker) == 1, (
+            f'{family}: expected exactly one occurrence of {marker!r}')
+
+    # No leftover placeholder tokens of any kind.
+    for placeholder in ('__FAMILY_JS__', '__PERF_JS__', '__PERF_DATA__',
+                        '__INITIAL_PARAMS__', '__PLOTLY_CDN__'):
+        assert placeholder not in html, f'leftover placeholder {placeholder!r} in output'
+
+
+def test_build_export_html_fails_loudly_on_missing_family_js(tmp_path):
+    # F12: a missing asset must raise, not silently emit a JS-less page.
+    pytest.importorskip('psycopg')
+    from aotriton.tune.pq.export_visperf import build_export_html
+
+    repo_root = tmp_path / 'repo'
+    modules_dir = tmp_path / 'modules'  # deliberately empty: no family JS at all
+    perf_js_dir = repo_root / '.tune' / 'webui' / 'static' / 'js'
+    perf_js_dir.mkdir(parents=True)
+    (perf_js_dir / 'perf.js').write_text('/* PERF_JS_MARKER */', encoding='utf-8')
+    modules_dir.mkdir(parents=True)
+
+    with pytest.raises(FileNotFoundError):
+        build_export_html({}, repo_root=repo_root, modules_dir=modules_dir)
 
 
 def main():
