@@ -37,6 +37,11 @@ def _aotriton_version() -> str:
 # Sub-packages under python/ (e.g. 'codegen', 'template_instantiation.compat').
 # modules/ holds user application source code (Triton kernels, AOT artifacts)
 # compiled BY aotriton — a compiler does not ship the application it compiles.
+#
+# Must stay find_packages(), never find_namespace_packages(): the latter does not
+# require __init__.py to descend into a directory, and would sweep the standalone
+# python/pytest-gpu-lease/ project (its own pyproject.toml, no __init__.py) into
+# the aotriton wheel. See .claude/docs/pytest_gpu_lease_plan.md.
 _subs = find_packages(where=str(_PYDIR), exclude=['modules', 'modules.*'])  # exclude is technically redundant, but to stop complains from /code-review
 _packages = ['aotriton'] + [f'aotriton.{p}' for p in _subs]
 _package_dir = {'aotriton': 'python'}

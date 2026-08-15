@@ -54,9 +54,11 @@ RUN if [ ! -f ${CELERY_WORKER_PYTHON} ]; then \\
 
 # Install requirements-tuning.txt
 COPY aotriton.src/requirements*.txt /tmp/
+COPY aotriton.src/python/pytest-gpu-lease /tmp/python/pytest-gpu-lease
+WORKDIR /tmp
 RUN ${CELERY_WORKER_PYTHON} -m pip install -r /tmp/requirements-tuning.txt && \\
     ${CELERY_WORKER_PYTHON} -m pip install -r /tmp/requirements-dev.txt && \\
-    rm /tmp/requirements*.txt
+    rm -rf /tmp/requirements*.txt /tmp/python
 
 # Run all scripts matching pattern: NN-*.sh
 RUN for script in /image.scripts/[0-9][0-9]-*.sh; do \\
