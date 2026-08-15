@@ -5,7 +5,6 @@
 import pytest
 import torch
 import os
-import sys
 import bisect
 import math
 import pathlib

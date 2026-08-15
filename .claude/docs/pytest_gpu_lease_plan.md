@@ -324,6 +324,7 @@ Short: what it does, the three modes, the 1:1 rationale, install
 
 | Line | Symbol | Why safe |
 |---|---|---|
+| 8 | `import sys` | its sole remaining use was `file=sys.stderr` inside the deleted fixture |
 | 12 | `import fcntl` | used only in the deleted block |
 | 13 | `import struct` | used only in the deleted block |
 | 14 | `import itertools` | used only in the deleted block |
@@ -332,13 +333,14 @@ Short: what it does, the three modes, the 1:1 rationale, install
 Verify after editing; all must return nothing:
 
 ```bash
-grep -n 'fcntl\|struct\.\|itertools\.\|ON_GPU' modules/flash/tests/_core_test_backward.py
+grep -n 'fcntl\|struct\.\|itertools\.\|ON_GPU\|\bsys\b' modules/flash/tests/_core_test_backward.py
 grep -rn 'ON_GPU' modules/ .ci/ .tune/ docs/          # whole-repo sweep for stragglers
 ```
 
 Do **not** delete `RECORD_ADIFFS_TO` / `USE_ADIFFS_TXT` at `:39-40` — unrelated, still used.
 
-**Keep `import sys`** (line 8): still used elsewhere in the file.
+`import sys` (line 8) goes too — its only remaining reference was the
+`file=sys.stderr` in the `torch_gpu` fixture being deleted.
 
 **Do not touch `core_test_op_bwd`** (`:365-381`). Its `device: int | None` parameter must
 stay an int — it feeds `torch.cuda.device(device)` at `:370` as well as
