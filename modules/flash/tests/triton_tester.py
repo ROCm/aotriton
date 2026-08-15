@@ -16,8 +16,6 @@ from _core_test_backward import (
     BWDOP_ids,
     fmt_nheads,
     fmt_hdim,
-    gpufilelock,
-    torch_gpu,
     core_test_op_bwd,
     core_test_large_bf16_nan_values,
 )
@@ -38,10 +36,10 @@ ALL_HEADDIMS = sorted(list(set(REGULAR_HDIMS + IRREGULAR_HDIMS)))
 @pytest.mark.parametrize('sm_scale', ['l1'])
 @pytest.mark.parametrize('storage_flip', [False, (0,1), (1, 2)], ids=['BHSD', 'HBSD', 'BSHD'])
 @pytest.mark.parametrize('BWDOP', BWDOP_ids)
-def test_triton_compiler(request, torch_gpu, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
+def test_triton_compiler(request, gpu_id, BWDOP, BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip):
     bias_type = None
     args = (BATCH, N_HEADS, D_HEAD, seqlen_q, seqlen_k, causal, sm_scale, dropout_p, dtype, storage_flip, bias_type)
-    core_test_op_bwd(request, args, device=torch_gpu)
+    core_test_op_bwd(request, args, device=gpu_id)
 
 @pytest.mark.parametrize('D_HEAD', [48])
 @pytest.mark.parametrize('BWDOP', BWDOP_ids)
