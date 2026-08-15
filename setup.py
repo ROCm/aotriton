@@ -58,10 +58,15 @@ _package_data = {
         'template/snippet/*.cc', 'template/snippet/*.h',
     ],
     # Non-.py runtime data read via open()/importlib.resources at runtime by
-    # aotriton.tune.pq — the PostgreSQL schema/materialized-view DDL and the
-    # visperf standalone-export HTML shell. Required for a non-editable
+    # aotriton.tune.pq — the PostgreSQL schema/materialized-view DDL, the
+    # visperf standalone-export HTML shell, and perf.js (the generic
+    # rendering engine the standalone export inlines — see
+    # export_visperf.py's module docstring). Required for a non-editable
     # install for the same reason as aotriton.codegen's templates above (F9).
-    'aotriton.tune.pq': ['*.sql', '*.html'],
+    # 'static/*.js' is a subdirectory glob relative to the package dir; it
+    # does not require python/tune/pq/static to be its own package (no
+    # __init__.py needed) for setuptools to copy it in.
+    'aotriton.tune.pq': ['*.sql', '*.html', 'static/*.js'],
 }
 
 setup(

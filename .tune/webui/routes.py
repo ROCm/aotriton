@@ -17,8 +17,16 @@ import zipfile
 from pathlib import Path
 
 from aotriton.tune.registry import default_modules_dir
+import aotriton.tune.pq as _pq
 
 from . import tasks
+
+# aotriton.tune.pq's packaged static assets (perf.js): shipped inside the
+# installed `aotriton` package itself (setup.py's package_data), unlike
+# modules/<family>/visperf/static/ (see family_static below, and
+# export_visperf.py's module docstring for why perf.js lives here rather
+# than under .tune/webui/static/).
+_PKG_STATIC_DIR = Path(_pq.__file__).resolve().parent / 'static'
 
 bp = Blueprint('main', __name__)
 
@@ -1038,6 +1046,20 @@ def family_static(family, filename):
         abort(404)
     static_dir = default_modules_dir() / family / 'visperf' / 'static'
     return send_from_directory(static_dir, filename)
+
+
+@bp.route('/pkg_static/<path:filename>')
+def pkg_static(filename):
+    """Serve `aotriton.tune.pq`'s packaged static assets (currently just
+    perf.js).
+
+    These also live outside Flask's own static_folder (`.tune/webui/static`,
+    set implicitly by the bare `Flask(__name__)` in `.tune/webui/__init__.py`),
+    same reason as `family_static` above -- but unlike `family_static`,
+    there is exactly one directory here (no per-family whitelist needed):
+    `send_from_directory`'s own `safe_join` covers `<filename>` traversal.
+    """
+    return send_from_directory(_PKG_STATIC_DIR, filename)
 
 
 @bp.route('/api/perf/data')

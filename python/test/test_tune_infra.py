@@ -450,16 +450,14 @@ def test_family_static_route_guards_traversal_and_unknown_family():
 def test_build_export_html_concatenates_every_family_js_once(tmp_path):
     # modular-tune.md §3d.4: export_visperf's placeholder becomes
     # __FAMILY_JS__, concatenating every registered family's JS exactly
-    # once, with explicit repo_root/modules_dir roots (closes F12).
+    # once. perf.js and the template are aotriton.tune.pq package data (F12
+    # is closed by packaging them, not by an explicit repo_root); only the
+    # per-family JS under modules/ still needs an explicit modules_dir.
     pytest.importorskip('psycopg')
     from aotriton.tune.pq.export_visperf import build_export_html
     from aotriton.tune.registry import available_module_names
 
-    repo_root = tmp_path / 'repo'
     modules_dir = tmp_path / 'modules'
-    perf_js_dir = repo_root / '.tune' / 'webui' / 'static' / 'js'
-    perf_js_dir.mkdir(parents=True)
-    (perf_js_dir / 'perf.js').write_text('/* PERF_JS_MARKER */', encoding='utf-8')
 
     families = available_module_names()
     assert families, 'expected at least one registered family (flash)'
@@ -469,34 +467,47 @@ def test_build_export_html_concatenates_every_family_js_once(tmp_path):
         (static_dir / f'{family}.js').write_text(
             f'/* {family.upper()}_JS_MARKER */', encoding='utf-8')
 
-    html = build_export_html({}, repo_root=repo_root, modules_dir=modules_dir)
+    html = build_export_html({}, modules_dir=modules_dir)
 
-    assert '/* PERF_JS_MARKER */' in html
+    # perf.js comes from the package, not the fixture -- confirm the real
+    # engine got inlined (it's ~1500 lines; a distinctive top-of-file symbol
+    # is enough to prove it's not empty/placeholder text).
+    assert 'registerDescriptor' in html
+
     for family in families:
         marker = f'/* {family.upper()}_JS_MARKER */'
         assert html.count(marker) == 1, (
             f'{family}: expected exactly one occurrence of {marker!r}')
 
-    # No leftover placeholder tokens of any kind.
-    for placeholder in ('__FAMILY_JS__', '__PERF_JS__', '__PERF_DATA__',
-                        '__INITIAL_PARAMS__', '__PLOTLY_CDN__'):
+    # No leftover placeholder tokens of any kind. `// __FAMILY_JS__` /
+    # `// __PERF_JS__` are matched as whole lines -- the exact form of
+    # build_export_html's substitution key -- rather than as a bare
+    # substring: the real, packaged perf.js legitimately mentions the bare
+    # name '__FAMILY_JS__' inside a prose comment describing this very
+    # mechanism, which a substring check would misflag as a leftover
+    # placeholder.
+    import re
+    for placeholder_line in ('// __FAMILY_JS__', '// __PERF_JS__'):
+        pattern = re.compile(r'^\s*' + re.escape(placeholder_line) + r'\s*$', re.MULTILINE)
+        assert not pattern.search(html), f'leftover placeholder line {placeholder_line!r} in output'
+    for placeholder in ('__PERF_DATA__', '__INITIAL_PARAMS__', '__PLOTLY_CDN__'):
         assert placeholder not in html, f'leftover placeholder {placeholder!r} in output'
 
 
 def test_build_export_html_fails_loudly_on_missing_family_js(tmp_path):
     # F12: a missing asset must raise, not silently emit a JS-less page.
+    # perf.js/the template are package data and always present in this
+    # checkout's editable install; what's still a caller-supplied root is
+    # modules_dir, so an empty one (no family JS at all) is what exercises
+    # the loud-failure path here.
     pytest.importorskip('psycopg')
     from aotriton.tune.pq.export_visperf import build_export_html
 
-    repo_root = tmp_path / 'repo'
     modules_dir = tmp_path / 'modules'  # deliberately empty: no family JS at all
-    perf_js_dir = repo_root / '.tune' / 'webui' / 'static' / 'js'
-    perf_js_dir.mkdir(parents=True)
-    (perf_js_dir / 'perf.js').write_text('/* PERF_JS_MARKER */', encoding='utf-8')
     modules_dir.mkdir(parents=True)
 
     with pytest.raises(FileNotFoundError):
-        build_export_html({}, repo_root=repo_root, modules_dir=modules_dir)
+        build_export_html({}, modules_dir=modules_dir)
 
 
 def main():

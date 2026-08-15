@@ -102,7 +102,7 @@
   onerror="(function(){var s=document.createElement('script');s.src='/static/cache/plotly.min.js';document.head.appendChild(s);})()">
 </script>
 
-<script src="{{ url_for('static', filename='js/perf.js') }}"></script>
+<script src="{{ url_for('main.pkg_static', filename='perf.js') }}"></script>
 {% for family in families %}
 <!-- Each family's JS self-registers via registerDescriptor(...) at its own
      bottom (modular-tune.md §3d.2); this template only needs the family id,
