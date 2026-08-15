@@ -57,7 +57,7 @@ def _gpu_lease_lockfile(tmp_path_factory):
 
 
 @pytest.fixture(scope='session')  # under xdist, "session" scope is per-worker process
-def gpu_id(worker_id, _gpu_lease_lockfile):
+def gpu_id(request, worker_id):
     """Index of the GPU this worker owns for the duration of its session."""
     if PYTEST_XDIST_WORKER_COUNT == 0:
         yield 0
@@ -66,7 +66,12 @@ def gpu_id(worker_id, _gpu_lease_lockfile):
         yield int(GPU_LEASE_PIN)
         return
 
-    with open(_gpu_lease_lockfile, 'r+b') as f:
+    # Resolved lazily, NOT as a fixture parameter: pytest instantiates declared
+    # params before the body runs, so naming _gpu_lease_lockfile in the signature
+    # would create the file in the no-xdist and pinned modes too -- the very
+    # side effect dropping `autouse` was meant to prevent.
+    lockfile = request.getfixturevalue('_gpu_lease_lockfile')
+    with open(lockfile, 'r+b') as f:
         for gpu in itertools.cycle(range(PYTEST_XDIST_WORKER_COUNT)):
             claim = struct.pack(STRUCT_FLOCK, fcntl.F_WRLCK, os.SEEK_SET,
                                 PAGE_SIZE * gpu, PAGE_SIZE, 0)
@@ -78,7 +83,7 @@ def gpu_id(worker_id, _gpu_lease_lockfile):
                 if gpu == PYTEST_XDIST_WORKER_COUNT - 1:
                     time.sleep(_RETRY_INTERVAL)
                 continue
-            print(f'{worker_id} uses GPU {gpu} filelock = {_gpu_lease_lockfile}',
+            print(f'{worker_id} uses GPU {gpu} filelock = {lockfile}',
                   file=sys.stderr, flush=True)
             try:
                 yield gpu
