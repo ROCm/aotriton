@@ -1,0 +1,27 @@
+# Copyright © 2026 Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+#
+# A standalone distribution living inside python/, which otherwise maps to the
+# `aotriton` package. Safe because the repo-root setup.py uses find_packages(), which
+# does not descend into directories lacking __init__.py -- and this directory has none.
+# See .claude/docs/pytest_gpu_lease_plan.md.
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pytest-gpu-lease"
+version = "0.1.0"
+description = "Lease one GPU per pytest-xdist worker via fcntl byte-range locks"
+requires-python = ">=3.10"
+dependencies = [
+    "pytest",
+    "pytest-xdist>=1.15",   # the worker_id fixture identifies the leaseholder
+]
+
+[project.entry-points.pytest11]
+gpu_lease = "pytest_gpu_lease.plugin"
+
+[tool.setuptools]
+packages = ["pytest_gpu_lease"]
