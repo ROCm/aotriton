@@ -62,6 +62,31 @@ This script will create a build directory
 `build-${aotriton_major}.${aotriton_minor}-test-${target_arch}` under the
 parent directory of `.ci`
 
+## AOTriton Self Test
+
+`aotriton-self-test.sh` runs two CPU-only unit-test suites: the ATI code
+generator's own tests (`python/test`) and the `pytest-gpu-lease` plugin's own
+tests (`python/pytest-gpu-lease/tests`). Neither needs a GPU, a ROCm
+install, or a built AOTriton library, so this is the fastest pre-flight
+check available and the one to run first.
+
+tl;dr:
+``` bash
+bash .ci/aotriton-self-test.sh
+# or
+make -C .ci check-self-test
+```
+
+It creates its own disposable venv (`build-unittest-venv/` by default,
+override with `AOTRITON_UNITTEST_VENV`) rather than reusing the CMake build
+venv, which has `aotriton` but no `pytest`, or the user's own env, which
+typically has `pytest` but no `aotriton`.
+
+This is a different, narrower pass than `run-test.sh` below: `run-test.sh`
+exercises the real flash-attention GPU kernels against a built library, needs
+a GPU and ROCm, and takes much longer. `aotriton-self-test.sh` never touches
+a GPU or a built library at all.
+
 ## Run Tests
 
 tl;dr example to perform full tests before release
