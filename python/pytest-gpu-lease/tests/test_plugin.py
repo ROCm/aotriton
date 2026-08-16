@@ -178,3 +178,31 @@ def test_replacement_worker_releases_and_reacquires(pytester, monkeypatch, tmp_p
     #    more lease events than workers means at least one re-lease happened.
     assert len(entries) > 2
     assert set(gpus) == {0, 1}
+
+
+def test_announcement_is_live_not_replayed(pytester, monkeypatch):
+    """The GPU choice must reach stderr as it happens, not only in the report.
+
+    Regression test for the original complaint: the announcement was printed
+    from fixture setup, which pytest captures at the fd level and replays in a
+    "Captured stderr setup" block -- shown only for failing tests, so a green
+    run revealed the assignment after it was already over.
+
+    ``_announce`` suspends capture, so the line lands on the real stderr. Two
+    assertions pin that down: it IS in the subprocess's stderr stream, and it is
+    NOT sitting inside a replayed capture section on stdout.
+    """
+    _clear_lease_env(monkeypatch)
+    monkeypatch.setenv('PYTEST_XDIST_WORKER_COUNT', '0')
+
+    pytester.makepyfile("""
+        def test_it(gpu_id):
+            assert gpu_id == 0
+    """)
+    result = pytester.runpytest_subprocess()
+    result.assert_outcomes(passed=1)
+
+    assert any('uses GPU 0' in line for line in result.errlines), \
+        "lease announcement did not reach the real stderr; capture was not suspended"
+    assert not any('Captured stderr' in line for line in result.outlines), \
+        "announcement was captured and replayed instead of printed live"

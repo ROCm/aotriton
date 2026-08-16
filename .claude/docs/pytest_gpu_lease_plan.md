@@ -186,6 +186,20 @@ PAGE_SIZE = 4096
 _RETRY_INTERVAL = 0.05
 
 
+def _announce(config, message: str) -> None:
+    """Write `message` to stderr *now*, bypassing pytest's output capture.
+
+    See "Live announcement of the lease" below for why this is not a plain print.
+    """
+    capman = config.pluginmanager.getplugin('capturemanager')
+    disabled = getattr(capman, 'global_and_fixture_disabled', None)
+    if disabled is None:  # -p no:capture, or the internals moved
+        print(message, file=sys.stderr, flush=True)
+        return
+    with disabled():
+        print(message, file=sys.stderr, flush=True)
+
+
 @pytest.fixture(scope='session')
 def _gpu_lease_lockfile(tmp_path_factory):
     """Path to the run-wide lock file, created if absent.
@@ -207,12 +221,19 @@ def _gpu_lease_lockfile(tmp_path_factory):
 
 @pytest.fixture(scope='session')  # under xdist, "session" scope is per-worker process
 def gpu_id(request, worker_id):
-    """Index of the GPU this worker owns for the duration of its session."""
+    """Index of the GPU this worker owns for the duration of its session.
+
+    Every mode announces its choice, not just the leasing one: without it there is
+    no way to confirm that GPU_LEASE_PIN actually took effect either.
+    """
     if PYTEST_XDIST_WORKER_COUNT == 0:
+        _announce(request.config, f'{worker_id} uses GPU 0 (no xdist, no lease)')
         yield 0
         return
     if GPU_LEASE_PIN is not None:
-        yield int(GPU_LEASE_PIN)
+        pinned = int(GPU_LEASE_PIN)
+        _announce(request.config, f'{worker_id} uses GPU {pinned} (GPU_LEASE_PIN, no lease)')
+        yield pinned
         return
 
     # Resolved lazily, NOT as a fixture parameter: pytest instantiates declared
@@ -232,8 +253,8 @@ def gpu_id(request, worker_id):
                 if gpu == PYTEST_XDIST_WORKER_COUNT - 1:
                     time.sleep(_RETRY_INTERVAL)
                 continue
-            print(f'{worker_id} uses GPU {gpu} filelock = {lockfile}',
-                  file=sys.stderr, flush=True)
+            _announce(request.config,
+                      f'{worker_id} uses GPU {gpu} filelock = {lockfile}')
             try:
                 yield gpu
             finally:
@@ -308,6 +329,42 @@ Deltas from the original worth calling out to a reviewer:
 - Three separate module-level fixture definitions collapse into one with internal branching.
 - **`gpu_device` / `gpu_device_class` are new** — no equivalent existed. Nothing consumes
   them yet (`core_test_op_bwd` needs the int), so they carry no migration risk.
+
+### Live announcement of the lease
+
+The lease is decided during **fixture setup**, and pytest captures setup output at
+the fd level, replaying it only in the report section — and only for failing tests
+unless `-rA` is passed. On a green run the GPU assignment was therefore invisible
+until the run had already finished, which defeats the point of printing it.
+
+`capsys.disabled()` is the documented way to suspend capture
+(`how-to/capture-stdout-stderr.html`, "Accessing captured output from a test
+function"). It is **not usable here**: every capture fixture — `capsys`,
+`capfd`, `capteesys`, and the binary variants — is function-scoped, while `gpu_id`
+is session-scoped, so requesting one raises `ScopeMismatch`. pytest ships no
+session-scoped capture fixture.
+
+`_announce` therefore calls the capture manager that `capsys.disabled()` itself
+delegates to. Three consequences to keep in mind:
+
+- **It is `_pytest.capture` internals, not public API.** Accepted deliberately; the
+  remedy if it breaks is an upper pin on pytest, noted in `pyproject.toml`'s
+  `dependencies`. The `getattr` guard degrades to a plain print rather than failing
+  the run, so the symptom of a future break is the line reappearing only inside a
+  replayed `Captured stderr setup` block — not a crash.
+- **All three modes announce**, not just the leasing one. Without that there is no
+  way to confirm `GPU_LEASE_PIN` took effect either. All three keep the
+  `<worker_id> uses GPU <n>` prefix, so `awk '{print $4}'` still yields the index.
+- **Alternative rejected:** `--capture=tee-sys` (pytest 5.4+) live-prints without
+  any plugin code, but applies globally — `_core_test_backward.py` prints `tri_out=`
+  and `adiff=` per test, so CI logs would balloon.
+
+> **Unverified:** whether a worker's announcement reaches the controller's terminal
+> live under `-n`. The reasoning is that execnet's popen gateway uses pipes for
+> stdin/stdout (the channel) but leaves stderr inherited. This was not confirmed
+> against pytest-xdist's docs or a real run. If it turns out workers cannot emit
+> live, add an append-mode ledger file (`GPU_LEASE_LOG=<path>` + `tail -f`), which
+> is immune to both capture and relay.
 
 ### `README.md`
 
@@ -594,7 +651,25 @@ cmake -S . -B /tmp/bt -DAOTRITON_TARGET_ARCH=gfx942 -DAOTRITON_NOIMAGE_MODE=ON -
 pip install -r requirements-dev.txt          # from repo root
 pytest --fixtures modules/flash/tests 2>/dev/null | grep -E 'gpu_id|gpu_device|gpu_device_class|torch_gpu'
 # all four listed, sourced from pytest_gpu_lease.plugin
+
+# `--trace-config` is the documented way to confirm entry-point registration
+# (writing_plugins.html, "Making your plugin installable by others").
+pytest --trace-config 2>/dev/null | grep -i gpu_lease
 ```
+
+### The announcement is live
+
+The point of the whole exercise — the assignment must appear *while* the run is
+going, not in the end-of-run report:
+
+```bash
+# Watch the line appear before the run finishes, not after.
+pytest -n 4 modules/flash/tests/test_backward.py -k test_fast -v 2>&1 | ts | head -40
+```
+
+Failure signature to look for: the line showing up only under a
+`Captured stderr setup` heading means capture was not suspended — see "Live
+announcement of the lease".
 
 ### The plugin's own test suite
 
@@ -614,6 +689,7 @@ Cases to cover:
 | Device class via env | `GPU_LEASE_DEVICE_CLASS=xpu` | `gpu_device == 'xpu:0'` |
 | Device class via override | conftest redefines `gpu_device_class` | override wins over the env var |
 | No autouse | a test requesting neither fixture | lockfile absent afterwards |
+| Live announcement | any mode | line is in `result.errlines`, not in a replayed `Captured stderr` block |
 | **Worker crash + restart** | `-n 2 --max-worker-restart 4`, one test calls `os._exit(139)` | replacement worker re-leases the freed GPU; run terminates |
 
 ```bash

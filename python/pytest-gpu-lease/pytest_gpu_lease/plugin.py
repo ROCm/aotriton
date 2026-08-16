@@ -37,6 +37,33 @@ PAGE_SIZE = 4096
 _RETRY_INTERVAL = 0.05
 
 
+def _announce(config, message: str) -> None:
+    """Write `message` to stderr *now*, bypassing pytest's output capture.
+
+    The lease is decided during fixture setup, and pytest captures setup output at
+    the fd level, replaying it only in the report section -- and only for failing
+    tests, unless ``-rA`` is given. On a green run the GPU assignment would never
+    be shown until the run was over, which is the whole point of announcing it.
+
+    ``capsys.disabled()`` is the documented way to suspend capture, but every
+    capture fixture is function-scoped while ``gpu_id`` is session-scoped, so
+    requesting one here would raise ``ScopeMismatch``. We therefore call the
+    capture manager that ``capsys.disabled()`` itself delegates to.
+
+    That is ``_pytest.capture`` internals, not public API. If a future pytest
+    reorganises it, the lookup below degrades to a plain print rather than
+    breaking the run -- the symptom is the line reappearing only in the replayed
+    "Captured stderr setup" section, which is the cue to pin pytest and revisit.
+    """
+    capman = config.pluginmanager.getplugin('capturemanager')
+    disabled = getattr(capman, 'global_and_fixture_disabled', None)
+    if disabled is None:  # -p no:capture, or the internals moved
+        print(message, file=sys.stderr, flush=True)
+        return
+    with disabled():
+        print(message, file=sys.stderr, flush=True)
+
+
 @pytest.fixture(scope='session')
 def _gpu_lease_lockfile(tmp_path_factory):
     """Path to the run-wide lock file, created if absent.
@@ -58,12 +85,19 @@ def _gpu_lease_lockfile(tmp_path_factory):
 
 @pytest.fixture(scope='session')  # under xdist, "session" scope is per-worker process
 def gpu_id(request, worker_id):
-    """Index of the GPU this worker owns for the duration of its session."""
+    """Index of the GPU this worker owns for the duration of its session.
+
+    Every mode announces its choice, not just the leasing one: without it there is
+    no way to confirm that GPU_LEASE_PIN actually took effect either.
+    """
     if PYTEST_XDIST_WORKER_COUNT == 0:
+        _announce(request.config, f'{worker_id} uses GPU 0 (no xdist, no lease)')
         yield 0
         return
     if GPU_LEASE_PIN is not None:
-        yield int(GPU_LEASE_PIN)
+        pinned = int(GPU_LEASE_PIN)
+        _announce(request.config, f'{worker_id} uses GPU {pinned} (GPU_LEASE_PIN, no lease)')
+        yield pinned
         return
 
     # Resolved lazily, NOT as a fixture parameter: pytest instantiates declared
@@ -83,8 +117,8 @@ def gpu_id(request, worker_id):
                 if gpu == PYTEST_XDIST_WORKER_COUNT - 1:
                     time.sleep(_RETRY_INTERVAL)
                 continue
-            print(f'{worker_id} uses GPU {gpu} filelock = {lockfile}',
-                  file=sys.stderr, flush=True)
+            _announce(request.config,
+                      f'{worker_id} uses GPU {gpu} filelock = {lockfile}')
             try:
                 yield gpu
             finally:

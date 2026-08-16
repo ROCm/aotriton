@@ -15,7 +15,14 @@ name = "pytest-gpu-lease"
 version = "0.1.0"
 description = "Lease one GPU per pytest-xdist worker via fcntl byte-range locks"
 requires-python = ">=3.10"
+classifiers = [
+    "Framework :: Pytest",  # standard practice for pytest plugins
+]
 dependencies = [
+    # `_announce` reaches into _pytest.capture (see plugin.py) because no public,
+    # session-scoped way to suspend capture exists. If a future pytest moves it,
+    # the announcement silently degrades to captured-and-replayed -- pin an upper
+    # bound here at that point.
     "pytest",
     "pytest-xdist>=1.15",   # the worker_id fixture identifies the leaseholder
 ]
