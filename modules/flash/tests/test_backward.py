@@ -2,6 +2,9 @@
 # Copyright © 2023-2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
+# FIXME: MUST Import torch before pyaotriton now. pyaotriton.so may resolve to
+# system RCCL which is incompatible with torch's RCCL
+import torch
 from pyaotriton import get_name_suffix
 assert get_name_suffix() != "tRiToN_tEsTeR", ("AOTriton is compiled with suffix 'tRiToN_tEsTeR'. "
                                               "This is a signature for AOTriton built to test Triton compiler, "
