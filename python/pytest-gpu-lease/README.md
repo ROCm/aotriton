@@ -15,8 +15,8 @@ pip install ./python/pytest-gpu-lease   # from the repo root
 
 | Mode | Condition | Behaviour |
 |---|---|---|
-| No xdist | `PYTEST_XDIST_WORKER_COUNT == 0` | `gpu_id` is `0`, no locking. |
-| Pinned | `GPU_LEASE_PIN` is set | Every worker is pinned to `int(GPU_LEASE_PIN)`, no locking. |
+| Pinned | `GPU_LEASE_PIN` is set (checked first, xdist or not) | Every worker is pinned to `int(GPU_LEASE_PIN)`, no locking. |
+| No xdist | no `config.workerinput` | `gpu_id` is `0`, no locking. |
 | Leased | otherwise | Round-robin `fcntl` write-lock on one page per GPU, held for the worker's whole session. |
 
 A lease is an exclusive, bounded, released claim -- exactly this acquire/yield/release
@@ -30,7 +30,12 @@ driver / firmware / VBIOS. The mapping is strictly 1:1 worker-to-GPU.
 |---|---|---|
 | `GPU_LEASE_PIN` | unset | Bypass leasing; pin every worker to this GPU index. |
 | `GPU_LEASE_DEVICE_CLASS` | `cuda` | Accelerator class `gpu_device` formats with. |
-| `PYTEST_XDIST_WORKER_COUNT` | `0` | **Not ours** -- set by `pytest-xdist`. Read, never written. |
+
+`PYTEST_XDIST_WORKER_COUNT` is **not** consulted. `pytest-xdist` sets it inside the
+worker process, but this module is imported at `pytest11` entry-point time -- earlier
+than that -- so reading it saw `0` and put every worker on GPU 0. The worker count comes
+from `config.workerinput`, which is populated before any fixture runs. Nothing here is
+read from the environment at import time.
 
 ## Fixtures
 
@@ -44,3 +49,12 @@ driver / firmware / VBIOS. The mapping is strictly 1:1 worker-to-GPU.
 All fixtures are session-scoped (per-worker process under `xdist`) and none is
 `autouse` -- the plugin stays inert until a test actually requests one of them, so it
 is safe to auto-load into GPU-less suites.
+
+### This is infrastructure: do not prune "unused" fixtures
+
+Every fixture in the table above is public API, and the table is the contract. A fixture
+having no caller in this repository right now is **not** evidence that it is dead --
+this package exists to serve suites that have not been written yet, in modules that do
+not exist yet. Do not delete one because a static "unused symbol" sweep flags it, and do
+not narrow the surface to whatever the flash suite happens to use today. Removing an
+entry is a deliberate API break; adding one is cheap.
