@@ -52,7 +52,10 @@ VARLEN_FACTORY = {
     "strided": StridedVarlenSdpaContext,
 }
 
-def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dropout_p, dtype, varlen_type):
+def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dropout_p, dtype, varlen_type,
+                    device_str='cuda'):
+    # device_str defaults to plain 'cuda' for the main1()/main2() standalone entry
+    # points below; the pytest path passes the leased device (see test_op_bwd).
     assert varlen_type in VARLEN_FACTORY.keys(), f"_do_test_varlen: unknown varlen_type {varlen_type}"
     if isinstance(D_HEAD, int):
         HDIM_QK = HDIM_VO = D_HEAD
@@ -69,7 +72,7 @@ def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dro
     USE_AUTOTUNE = False
     torch.manual_seed(20)
     factory = VARLEN_FACTORY[varlen_type]
-    ctx = factory(N_HEADS, D_HEAD, seqlens_q, seqlens_k, dtype, device='cuda')
+    ctx = factory(N_HEADS, D_HEAD, seqlens_q, seqlens_k, dtype, device=device_str)
     ctx.create_ref_inputs()
     ctx.set_require_grads(skip_dq=SKIP_DQ, skip_dk_dv=SKIP_DK_DV, skip_db=True)
     q, k, v, b = ctx.dev_tensors
@@ -155,7 +158,7 @@ def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dro
 @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16] if BWD_IMPL == 2 else [torch.float16, torch.bfloat16, torch.float32])
 @pytest.mark.parametrize('sm_scale', ['l1'] if not FOR_RELEASE else ['l1', 'l2'])
 @pytest.mark.parametrize('varlen_type', ['compact', 'padded', 'strided'])
-def test_op_bwd(N_HEADS, D_HEAD, n_seqlen, causal, sm_scale, dropout_p, dtype, varlen_type):
+def test_op_bwd(gpu_id, gpu_device, N_HEADS, D_HEAD, n_seqlen, causal, sm_scale, dropout_p, dtype, varlen_type):
     np.random.seed(8139)
     seqlens_q = rng_seqlens(n_seqlen)
     seqlens_k = seqlens_q if causal else rng_seqlens(n_seqlen)
@@ -164,9 +167,14 @@ def test_op_bwd(N_HEADS, D_HEAD, n_seqlen, causal, sm_scale, dropout_p, dtype, v
         padlens_k = padlens_q if causal else rng_padlens(n_seqlen)
         seqlens_q = np.array([seqlens_q, padlens_q])
         seqlens_k = np.array([seqlens_k, padlens_k])
-    _do_test_varlen(N_HEADS, D_HEAD,
-                    seqlens_q, seqlens_k,
-                    causal, sm_scale, dropout_p, dtype, varlen_type)
+    # torch.cuda.device() pins allocations and kernel launches that do not carry an
+    # explicit device; gpu_device pins the tensors this test creates. Both are needed,
+    # matching core_test_op_bwd in _core_test_backward.py.
+    with torch.cuda.device(gpu_id):
+        _do_test_varlen(N_HEADS, D_HEAD,
+                        seqlens_q, seqlens_k,
+                        causal, sm_scale, dropout_p, dtype, varlen_type,
+                        device_str=gpu_device)
 
 def main1():
     N_HEADS = 3
