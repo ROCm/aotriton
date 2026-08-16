@@ -1,0 +1,23 @@
+name: Test AOTriton
+
+on:
+  workflow_run:
+    workflows: ["Build AOTriton"]
+    types:
+      - completed
+
+jobs:
+  test:
+    runs-on: [self-hosted, gpu]
+    concurrency:
+      group: test-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v3
+      - name: Download Artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: aotriton-${{ github.sha }}
+      - name: Run Tests
+        run: |
+          ./aotriton/.ci/run-ci-test.sh 1 0 v3
