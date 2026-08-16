@@ -10,10 +10,11 @@ holds that lock for its whole session and releases it at teardown.
 
 Three modes, selected by environment:
 
-* ``PYTEST_XDIST_WORKER_COUNT == 0`` (no xdist) -- GPU 0, no locking.
-* ``GPU_LEASE_PIN=<n>`` -- every worker pinned to GPU n, no locking. For single-GPU
-  reruns and for bisecting a failure onto a known-good device.
-* otherwise -- lease as described above.
+* ``GPU_LEASE_PIN=<n>`` -- every worker pinned to GPU n, no locking. Checked
+  first, so it works with or without xdist. For single-GPU reruns and for
+  bisecting a failure onto a known-good device.
+* not running under xdist (no ``config.workerinput``) -- GPU 0, no locking.
+* otherwise -- lease as described above, one page per worker.
 
 The mapping is deliberately 1:1 worker-to-GPU with no oversubscription knob: running
 several tests concurrently on one GPU invites memory pressure and runtime / driver /
@@ -29,12 +30,34 @@ import time
 
 import pytest
 
-GPU_LEASE_PIN = os.getenv('GPU_LEASE_PIN', default=None)
-PYTEST_XDIST_WORKER_COUNT = int(os.getenv('PYTEST_XDIST_WORKER_COUNT', default='0'))
-
 STRUCT_FLOCK = 'hhllh'
 PAGE_SIZE = 4096
 _RETRY_INTERVAL = 0.05
+
+
+def _worker_count(config) -> int:
+    """Number of xdist workers in this run; 0 when not running distributed.
+
+    Deliberately NOT read from ``PYTEST_XDIST_WORKER_COUNT``. xdist sets that
+    variable inside the worker process, and this module -- being a ``pytest11``
+    entry-point plugin -- is imported during ``Config._preparse``, far earlier
+    than the collection-time import the fixture used to live in. Reading it at
+    module scope saw 0 and silently put every worker on GPU 0.
+
+    ``config.workerinput`` is xdist's own interface for this (absent in the
+    controller and in non-distributed runs) and is populated well before any
+    fixture runs, so there is no ordering to get wrong.
+    """
+    workerinput = getattr(config, 'workerinput', None)
+    if workerinput is None:
+        return 0  # controller process, or plain `pytest` with no -n
+    return int(workerinput['workercount'])
+
+
+def _env_pin() -> int | None:
+    """``GPU_LEASE_PIN`` as an int, or None. Read lazily, never at import."""
+    raw = os.getenv('GPU_LEASE_PIN', default=None)
+    return None if raw is None else int(raw)
 
 
 def _announce(config, message: str) -> None:
@@ -90,14 +113,18 @@ def gpu_id(request, worker_id):
     Every mode announces its choice, not just the leasing one: without it there is
     no way to confirm that GPU_LEASE_PIN actually took effect either.
     """
-    if PYTEST_XDIST_WORKER_COUNT == 0:
-        _announce(request.config, f'{worker_id} uses GPU 0 (no xdist, no lease)')
-        yield 0
-        return
-    if GPU_LEASE_PIN is not None:
-        pinned = int(GPU_LEASE_PIN)
+    # GPU_LEASE_PIN wins over everything, distributed or not: "put all work on
+    # GPU n" is a debugging override and should not depend on how pytest is run.
+    pinned = _env_pin()
+    if pinned is not None:
         _announce(request.config, f'{worker_id} uses GPU {pinned} (GPU_LEASE_PIN, no lease)')
         yield pinned
+        return
+
+    nworkers = _worker_count(request.config)
+    if nworkers == 0:
+        _announce(request.config, f'{worker_id} uses GPU 0 (no xdist, no lease)')
+        yield 0
         return
 
     # Resolved lazily, NOT as a fixture parameter: pytest instantiates declared
@@ -106,7 +133,7 @@ def gpu_id(request, worker_id):
     # side effect dropping `autouse` was meant to prevent.
     lockfile = request.getfixturevalue('_gpu_lease_lockfile')
     with open(lockfile, 'r+b') as f:
-        for gpu in itertools.cycle(range(PYTEST_XDIST_WORKER_COUNT)):
+        for gpu in itertools.cycle(range(nworkers)):
             claim = struct.pack(STRUCT_FLOCK, fcntl.F_WRLCK, os.SEEK_SET,
                                 PAGE_SIZE * gpu, PAGE_SIZE, 0)
             try:
@@ -114,7 +141,7 @@ def gpu_id(request, worker_id):
             except BlockingIOError:
                 # Every page is taken for the moment. Sleep instead of spinning --
                 # the original loop pegged a core while waiting.
-                if gpu == PYTEST_XDIST_WORKER_COUNT - 1:
+                if gpu == nworkers - 1:
                     time.sleep(_RETRY_INTERVAL)
                 continue
             _announce(request.config,

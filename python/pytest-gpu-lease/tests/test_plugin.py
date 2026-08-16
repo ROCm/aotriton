@@ -20,11 +20,14 @@ pytest_plugins = ['pytester']
 def _clear_lease_env(monkeypatch):
     monkeypatch.delenv('GPU_LEASE_PIN', raising=False)
     monkeypatch.delenv('GPU_LEASE_DEVICE_CLASS', raising=False)
+    # Must also go: a stale value from the outer run would leak into the
+    # nested one. The plugin ignores it now, but leaving it set would hide
+    # a regression back to reading it.
+    monkeypatch.delenv('PYTEST_XDIST_WORKER_COUNT', raising=False)
 
 
 def test_no_xdist_gpu_id_is_zero_and_no_lockfile(pytester, monkeypatch):
     _clear_lease_env(monkeypatch)
-    monkeypatch.setenv('PYTEST_XDIST_WORKER_COUNT', '0')
 
     pytester.makepyfile("""
         def test_it(gpu_id):
@@ -38,7 +41,6 @@ def test_no_xdist_gpu_id_is_zero_and_no_lockfile(pytester, monkeypatch):
 
 def test_pinned_gpu_id_matches_pin_and_no_lockfile(pytester, monkeypatch):
     _clear_lease_env(monkeypatch)
-    monkeypatch.setenv('PYTEST_XDIST_WORKER_COUNT', '2')
     monkeypatch.setenv('GPU_LEASE_PIN', '3')
 
     pytester.makepyfile("""
@@ -52,9 +54,17 @@ def test_pinned_gpu_id_matches_pin_and_no_lockfile(pytester, monkeypatch):
 
 
 def test_leased_mode_assigns_distinct_gpus_and_creates_lockfile(pytester, monkeypatch, tmp_path):
+    """Distinct GPU per worker, driven purely by `-n` with no env hints.
+
+    This is the regression guard for the collapse-to-GPU-0 bug: the plugin used
+    to decide the mode from PYTEST_XDIST_WORKER_COUNT read at module import,
+    which as a pytest11 entry-point plugin runs before xdist populates the
+    worker environment. It read 0, took the no-xdist branch, and put all eight
+    CI workers on GPU 0. `_clear_lease_env` deletes that variable precisely so
+    this test fails if the plugin ever reaches for it again.
+    """
     _clear_lease_env(monkeypatch)
     ledger = tmp_path / 'leases.txt'
-    monkeypatch.setenv('PYTEST_XDIST_WORKER_COUNT', '2')
     monkeypatch.setenv('GPU_LEASE_LEDGER', str(ledger))
 
     pytester.makeconftest("""
@@ -85,7 +95,6 @@ def test_leased_mode_assigns_distinct_gpus_and_creates_lockfile(pytester, monkey
 
 def test_gpu_device_default_is_cuda(pytester, monkeypatch):
     _clear_lease_env(monkeypatch)
-    monkeypatch.setenv('PYTEST_XDIST_WORKER_COUNT', '0')
 
     pytester.makepyfile("""
         def test_it(gpu_device):
@@ -97,7 +106,6 @@ def test_gpu_device_default_is_cuda(pytester, monkeypatch):
 
 def test_gpu_device_class_via_env(pytester, monkeypatch):
     _clear_lease_env(monkeypatch)
-    monkeypatch.setenv('PYTEST_XDIST_WORKER_COUNT', '0')
     monkeypatch.setenv('GPU_LEASE_DEVICE_CLASS', 'xpu')
 
     pytester.makepyfile("""
@@ -110,7 +118,6 @@ def test_gpu_device_class_via_env(pytester, monkeypatch):
 
 def test_gpu_device_class_conftest_override_wins_over_env(pytester, monkeypatch):
     _clear_lease_env(monkeypatch)
-    monkeypatch.setenv('PYTEST_XDIST_WORKER_COUNT', '0')
     monkeypatch.setenv('GPU_LEASE_DEVICE_CLASS', 'xpu')
 
     pytester.makeconftest("""
@@ -130,7 +137,6 @@ def test_gpu_device_class_conftest_override_wins_over_env(pytester, monkeypatch)
 
 def test_no_autouse_lockfile_absent_when_gpu_id_not_requested(pytester, monkeypatch):
     _clear_lease_env(monkeypatch)
-    monkeypatch.setenv('PYTEST_XDIST_WORKER_COUNT', '2')
 
     pytester.makepyfile("""
         def test_it():
@@ -145,7 +151,6 @@ def test_no_autouse_lockfile_absent_when_gpu_id_not_requested(pytester, monkeypa
 @pytest.mark.timeout(60)
 def test_replacement_worker_releases_and_reacquires(pytester, monkeypatch, tmp_path):
     ledger = tmp_path / 'leases.txt'
-    monkeypatch.setenv('PYTEST_XDIST_WORKER_COUNT', '2')
     monkeypatch.setenv('GPU_LEASE_LEDGER', str(ledger))   # test-only, read by the conftest below
 
     pytester.makeconftest("""
@@ -193,7 +198,6 @@ def test_announcement_is_live_not_replayed(pytester, monkeypatch):
     NOT sitting inside a replayed capture section on stdout.
     """
     _clear_lease_env(monkeypatch)
-    monkeypatch.setenv('PYTEST_XDIST_WORKER_COUNT', '0')
 
     pytester.makepyfile("""
         def test_it(gpu_id):

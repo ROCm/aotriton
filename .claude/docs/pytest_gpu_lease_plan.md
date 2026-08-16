@@ -25,7 +25,7 @@ free via the `pytest11` entry point.
 | Location | `python/pytest-gpu-lease/`, its own distribution with its own `pyproject.toml`. |
 | Activation | `pytest11` entry point; installed through `requirements-dev.txt`. |
 | Public fixtures | `gpu_id` (int), `gpu_device` (`'<class>:N'`), `gpu_device_class` (`'cuda'`, overridable), `torch_gpu` (back-compat alias). |
-| Configuration | Environment variables only: `GPU_LEASE_PIN`, `GPU_LEASE_DEVICE_CLASS`, plus xdist's own `PYTEST_XDIST_WORKER_COUNT`. |
+| Configuration | Environment variables only: `GPU_LEASE_PIN`, `GPU_LEASE_DEVICE_CLASS`. xdist state comes from `config.workerinput`, never the environment. |
 | Oversubscription | **Not supported.** Strict 1:1 worker↔GPU — see below. |
 | Scope | Relocation + behaviour-preserving cleanups. No semantic change. |
 
@@ -122,9 +122,12 @@ Port of `_core_test_backward.py:62-103`, restructured. Behaviour by mode:
 
 | Mode | Condition | Yields |
 |---|---|---|
-| No xdist | `PYTEST_XDIST_WORKER_COUNT == 0` | `0` |
-| Pinned | `GPU_LEASE_PIN` is set | `int(GPU_LEASE_PIN)` |
+| Pinned | `GPU_LEASE_PIN` is set (checked first, xdist or not) | `int(GPU_LEASE_PIN)` |
+| No xdist | no `config.workerinput` | `0` |
 | Leased | otherwise | round-robin `fcntl` write-lock on page N, held for the session |
+
+> **Do not read `PYTEST_XDIST_WORKER_COUNT`.** See "Detecting xdist" below — doing so
+> at module scope is what put all eight CI workers on GPU 0.
 
 ### Environment variables
 
@@ -134,7 +137,7 @@ Everything this plugin owns is prefixed `GPU_LEASE_`, matching the distribution 
 |---|---|---|
 | `GPU_LEASE_PIN` | unset | Bypass leasing; pin every worker to this GPU index. |
 | `GPU_LEASE_DEVICE_CLASS` | `cuda` | Accelerator class `gpu_device` formats with. |
-| `PYTEST_XDIST_WORKER_COUNT` | `0` | **Not ours** — set by pytest-xdist. Read, never written. |
+| `PYTEST_XDIST_WORKER_COUNT` | — | **Not used.** xdist sets it, but too late for an entry-point plugin — see "Detecting xdist". |
 
 `GPU_LEASE_PIN` renames the old unprefixed `ON_GPU` (`_core_test_backward.py:38,73,79`).
 "Pin" states the semantics: it does not merely select a device, it disables the lease
@@ -159,10 +162,11 @@ holds that lock for its whole session and releases it at teardown.
 
 Three modes, selected by environment:
 
-* ``PYTEST_XDIST_WORKER_COUNT == 0`` (no xdist) -- GPU 0, no locking.
-* ``GPU_LEASE_PIN=<n>`` -- every worker pinned to GPU n, no locking. For single-GPU
-  reruns and for bisecting a failure onto a known-good device.
-* otherwise -- lease as described above.
+* ``GPU_LEASE_PIN=<n>`` -- every worker pinned to GPU n, no locking. Checked
+  first, so it works with or without xdist. For single-GPU reruns and for
+  bisecting a failure onto a known-good device.
+* not running under xdist (no ``config.workerinput``) -- GPU 0, no locking.
+* otherwise -- lease as described above, one page per worker.
 
 The mapping is deliberately 1:1 worker-to-GPU with no oversubscription knob: running
 several tests concurrently on one GPU invites memory pressure and runtime / driver /
@@ -178,18 +182,53 @@ import time
 
 import pytest
 
-GPU_LEASE_PIN = os.getenv('GPU_LEASE_PIN', default=None)
-PYTEST_XDIST_WORKER_COUNT = int(os.getenv('PYTEST_XDIST_WORKER_COUNT', default='0'))
-
 STRUCT_FLOCK = 'hhllh'
 PAGE_SIZE = 4096
 _RETRY_INTERVAL = 0.05
 
 
+def _worker_count(config) -> int:
+    """Number of xdist workers in this run; 0 when not running distributed.
+
+    Deliberately NOT read from ``PYTEST_XDIST_WORKER_COUNT``. xdist sets that
+    variable inside the worker process, and this module -- being a ``pytest11``
+    entry-point plugin -- is imported during ``Config._preparse``, far earlier
+    than the collection-time import the fixture used to live in. Reading it at
+    module scope saw 0 and silently put every worker on GPU 0.
+
+    ``config.workerinput`` is xdist's own interface for this (absent in the
+    controller and in non-distributed runs) and is populated well before any
+    fixture runs, so there is no ordering to get wrong.
+    """
+    workerinput = getattr(config, 'workerinput', None)
+    if workerinput is None:
+        return 0  # controller process, or plain `pytest` with no -n
+    return int(workerinput['workercount'])
+
+
+def _env_pin() -> int | None:
+    """``GPU_LEASE_PIN`` as an int, or None. Read lazily, never at import."""
+    raw = os.getenv('GPU_LEASE_PIN', default=None)
+    return None if raw is None else int(raw)
+
+
 def _announce(config, message: str) -> None:
     """Write `message` to stderr *now*, bypassing pytest's output capture.
 
-    See "Live announcement of the lease" below for why this is not a plain print.
+    The lease is decided during fixture setup, and pytest captures setup output at
+    the fd level, replaying it only in the report section -- and only for failing
+    tests, unless ``-rA`` is given. On a green run the GPU assignment would never
+    be shown until the run was over, which is the whole point of announcing it.
+
+    ``capsys.disabled()`` is the documented way to suspend capture, but every
+    capture fixture is function-scoped while ``gpu_id`` is session-scoped, so
+    requesting one here would raise ``ScopeMismatch``. We therefore call the
+    capture manager that ``capsys.disabled()`` itself delegates to.
+
+    That is ``_pytest.capture`` internals, not public API. If a future pytest
+    reorganises it, the lookup below degrades to a plain print rather than
+    breaking the run -- the symptom is the line reappearing only in the replayed
+    "Captured stderr setup" section, which is the cue to pin pytest and revisit.
     """
     capman = config.pluginmanager.getplugin('capturemanager')
     disabled = getattr(capman, 'global_and_fixture_disabled', None)
@@ -226,14 +265,18 @@ def gpu_id(request, worker_id):
     Every mode announces its choice, not just the leasing one: without it there is
     no way to confirm that GPU_LEASE_PIN actually took effect either.
     """
-    if PYTEST_XDIST_WORKER_COUNT == 0:
-        _announce(request.config, f'{worker_id} uses GPU 0 (no xdist, no lease)')
-        yield 0
-        return
-    if GPU_LEASE_PIN is not None:
-        pinned = int(GPU_LEASE_PIN)
+    # GPU_LEASE_PIN wins over everything, distributed or not: "put all work on
+    # GPU n" is a debugging override and should not depend on how pytest is run.
+    pinned = _env_pin()
+    if pinned is not None:
         _announce(request.config, f'{worker_id} uses GPU {pinned} (GPU_LEASE_PIN, no lease)')
         yield pinned
+        return
+
+    nworkers = _worker_count(request.config)
+    if nworkers == 0:
+        _announce(request.config, f'{worker_id} uses GPU 0 (no xdist, no lease)')
+        yield 0
         return
 
     # Resolved lazily, NOT as a fixture parameter: pytest instantiates declared
@@ -242,7 +285,7 @@ def gpu_id(request, worker_id):
     # side effect dropping `autouse` was meant to prevent.
     lockfile = request.getfixturevalue('_gpu_lease_lockfile')
     with open(lockfile, 'r+b') as f:
-        for gpu in itertools.cycle(range(PYTEST_XDIST_WORKER_COUNT)):
+        for gpu in itertools.cycle(range(nworkers)):
             claim = struct.pack(STRUCT_FLOCK, fcntl.F_WRLCK, os.SEEK_SET,
                                 PAGE_SIZE * gpu, PAGE_SIZE, 0)
             try:
@@ -250,7 +293,7 @@ def gpu_id(request, worker_id):
             except BlockingIOError:
                 # Every page is taken for the moment. Sleep instead of spinning --
                 # the original loop pegged a core while waiting.
-                if gpu == PYTEST_XDIST_WORKER_COUNT - 1:
+                if gpu == nworkers - 1:
                     time.sleep(_RETRY_INTERVAL)
                 continue
             _announce(request.config,
@@ -329,6 +372,48 @@ Deltas from the original worth calling out to a reviewer:
 - Three separate module-level fixture definitions collapse into one with internal branching.
 - **`gpu_device` / `gpu_device_class` are new** — no equivalent existed. Nothing consumes
   them yet (`core_test_op_bwd` needs the int), so they carry no migration risk.
+
+### Detecting xdist
+
+**This bit an actual CI run — `bash .ci/run-test.sh 0 1 split` put all eight workers on
+GPU 0.** Worth recording why, because the mistake is invisible in review.
+
+The original fixture read the worker count at module scope:
+
+```python
+PYTEST_XDIST_WORKER_COUNT = int(os.getenv('PYTEST_XDIST_WORKER_COUNT', default='0'))
+```
+
+That was correct *where it used to live*. `_core_test_backward.py` is imported during
+**collection**, deep into a worker's life, by which point xdist has long since populated
+the worker environment. Moving the same line into a `pytest11` entry-point plugin moved
+*when it runs*: entry-point modules are imported during `Config._preparse`, at the very
+start of worker startup. The variable read as unset, the fixture took the no-xdist branch,
+and every worker returned GPU 0 — no error, no warning, just eight processes on one device.
+
+The fix is not to chase the ordering but to stop depending on it. xdist publishes the same
+information on the config object, and it is populated before any fixture runs:
+
+```python
+def _worker_count(config) -> int:
+    workerinput = getattr(config, 'workerinput', None)
+    if workerinput is None:
+        return 0  # controller process, or plain `pytest` with no -n
+    return int(workerinput['workercount'])
+```
+
+`hasattr(config, 'workerinput')` is xdist's documented "am I a worker" test. Two
+consequences:
+
+- **Nothing in the plugin may be read from the environment at import time.**
+  `GPU_LEASE_PIN` and `GPU_LEASE_DEVICE_CLASS` are read lazily inside their functions for
+  the same reason, and because it makes them monkeypatchable in the self-tests.
+- **`GPU_LEASE_PIN` is now checked before the xdist test.** "Put everything on GPU n" is a
+  debugging override; it should not depend on whether `-n` was passed.
+
+`test_leased_mode_assigns_distinct_gpus_and_creates_lockfile` is the regression guard, and
+`_clear_lease_env` deletes `PYTEST_XDIST_WORKER_COUNT` specifically so the test fails if
+the plugin ever reaches for it again.
 
 ### Live announcement of the lease
 
@@ -682,7 +767,7 @@ Cases to cover:
 
 | Case | Setup | Expect |
 |---|---|---|
-| No xdist | `PYTEST_XDIST_WORKER_COUNT=0` | `gpu_id == 0`, no lockfile created |
+| No xdist | no `-n` flag, `PYTEST_XDIST_WORKER_COUNT` unset | `gpu_id == 0`, no lockfile created |
 | Pinned | `GPU_LEASE_PIN=3` | `gpu_id == 3`, no lockfile created |
 | Leased | `-n 2`, count 2 | two workers, two distinct ids, lockfile exists |
 | Device class default | — | `gpu_device == 'cuda:0'` |
@@ -718,7 +803,6 @@ file whose path arrives by env var:
 ```python
 def test_replacement_worker_releases_and_reacquires(pytester, monkeypatch, tmp_path):
     ledger = tmp_path / 'leases.txt'
-    monkeypatch.setenv('PYTEST_XDIST_WORKER_COUNT', '2')
     monkeypatch.setenv('GPU_LEASE_LEDGER', str(ledger))   # test-only, read by the conftest below
 
     pytester.makeconftest("""
