@@ -17,7 +17,6 @@ import os
 import argparse
 import sqlite3
 from pathlib import Path
-from importlib import import_module
 from dataclasses import fields, asdict
 import json
 
@@ -63,16 +62,16 @@ def get_db_connection_params():
 
 def load_module(module_name: str):
     """Load tuning module and return the module class instance."""
+    from .registry import load_tune_module
     try:
-        # Import from relative path since we're in v3python.tune
-        mod = import_module(f'.{module_name}', package='v3python.tune')
-        # Module __init__.py should export TuneDesc as the main class
-        if not hasattr(mod, 'TuneDesc'):
-            sys.exit(f"Error: Module '.{module_name}' has no class 'TuneDesc'")
-        module_class = getattr(mod, 'TuneDesc')
-        return module_class()
+        mod = load_tune_module(module_name)
     except ImportError as e:
         sys.exit(f"Error: Failed to import module '{module_name}': {e}")
+    # Module __init__.py should export TuneDesc as the main class
+    if not hasattr(mod, 'TuneDesc'):
+        sys.exit(f"Error: Module '{module_name}' has no class 'TuneDesc'")
+    module_class = getattr(mod, 'TuneDesc')
+    return module_class()
 
 def get_parameter_choices(module_instance):
     """
@@ -328,19 +327,18 @@ def str_to_bool(s):
 
 def get_available_modules():
     """
-    Scan v3python/tune/ for packages that export TuneDesc and return a dict
-    mapping module name to an instantiated TuneDesc object.
+    Return a dict mapping each registered tuning module name (see
+    .registry._MODULE_TO_FAMILY) to an instantiated TuneDesc object. The
+    module list is now a static registry (F8), not a directory glob rooted
+    here -- 'flash'/'flash_op' moved to modules/flash/tune/, outside this
+    package, so a glob rooted at this file can no longer discover them.
     """
-    tune_dir = Path(__file__).parent
+    from .registry import available_module_names, load_tune_module
     modules = {}
-    for init_file in sorted(tune_dir.glob('*/__init__.py')):
-        name = init_file.parent.name
-        try:
-            mod = import_module(f'.{name}', package='v3python.tune')
-            if hasattr(mod, 'TuneDesc'):
-                modules[name] = mod.TuneDesc()
-        except Exception:
-            pass
+    for name in available_module_names():
+        mod = load_tune_module(name)
+        if hasattr(mod, 'TuneDesc'):
+            modules[name] = mod.TuneDesc()
     return modules
 
 def add_common_arguments(parser):

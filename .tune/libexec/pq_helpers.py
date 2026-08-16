@@ -9,10 +9,24 @@ Functions here operate on an open psycopg connection (dict_row factory assumed).
 Connection management is the caller's responsibility.
 """
 
+import sys
 from collections import Counter
 from dataclasses import asdict
+from pathlib import Path
 
-from v3python.tune.flash.module import FlashEntry
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+
+try:
+    import aotriton  # noqa: F401
+except ImportError:
+    sys.exit(
+        "Error: the 'aotriton' package is not importable by python3.\n"
+        f"  Install it with: pip install -e '{_REPO_ROOT}'"
+    )
+
+from aotriton.tune.registry import load_flash_entry_module
+
+FlashEntry = load_flash_entry_module().FlashEntry
 
 
 def _entry_to_jsonb_filter(entry: FlashEntry) -> tuple[str, list]:

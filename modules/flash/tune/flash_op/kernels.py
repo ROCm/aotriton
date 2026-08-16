@@ -6,7 +6,7 @@ from ..flash.kernel_calls import (
     attn_fwd,
     bwd_kernel_dk_dv,
 )
-from ..kftdesc import BackendForTuneDescription
+from aotriton.tune.kftdesc import BackendForTuneDescription
 import torch
 
 _cached_arch = None
@@ -77,7 +77,7 @@ class attn_bwd_op(SdpaOpCommon, bwd_kernel_dk_dv):
 
     def direct_call(self, direct_inputs, extargs):
         im, view, devm = direct_inputs
-        from ..gpu_utils import zero_devm
+        from aotriton.tune.gpu_utils import zero_devm
         if extargs.backend_index == 2:  # kSlimAffine_AiterFmhaV3Bwd accumulates into dq_acc; clear before each call.
             zero_devm(devm.dq_acc)
         err = self._direct_call(direct_inputs, extargs)
@@ -86,7 +86,7 @@ class attn_bwd_op(SdpaOpCommon, bwd_kernel_dk_dv):
     def prepare_directs(self, im, inputs):
         im, view, devm = super().prepare_directs(im, inputs)
         from pyaotriton import lazy_tensor
-        from ..gpu_utils import mk_aotensor
+        from aotriton.tune.gpu_utils import mk_aotensor
         # FIXME: only allocate when backend == 2 (AITER); other backends don't
         # need dq_acc. Current interface does not support this — `args` would
         # need to be threaded into prepare_directs to know the backend index.

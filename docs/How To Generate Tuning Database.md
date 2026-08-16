@@ -405,7 +405,7 @@ To follow a build from the CLI:
 In the WebUI **Servers** tab, under **PostgreSQL**, click **Start Server** first.
 Then under **Database Schema**, click **Initialize Schema**.
 
-This runs `v3python/tune/pq/schema.sql` against the database and creates
+This runs `python/tune/pq/schema.sql` against the database and creates
 per-arch partitions (`task_queue_gfx942`, etc.) for each worker in `workers.db`.
 Re-run whenever new GPU architectures are added.
 
@@ -718,23 +718,24 @@ Once the baked LUT passes Sancheck and correctness tests, copy it into the
 repository so it can be committed and shipped:
 
 ```bash
-rsync -a <workdir>/installed/database/ v3python/database/
+rsync -a <workdir>/installed/database/ modules/flash/database/
 ```
 
 This copies the freshly sharded SQLite files produced by Decompose DB into
-`v3python/database/amd/<arch>/`. Stub files already in `v3python/database/`
-(e.g. `factories.py`, `sqlite.py`) are left untouched.
+`modules/flash/database/amd/<arch>/`. The database *code* (e.g.
+`factories.py`, `sqlite.py`) lives separately, in `python/database/`
+(the `aotriton.database` package), and is left untouched.
 
 **Tip:** update one architecture at a time so each commit is bisectable and
 the diff stays reviewable:
 
 ```bash
-rsync -a <workdir>/installed/database/amd/gfx942/ v3python/database/amd/gfx942/
-git add v3python/database/amd/gfx942/
+rsync -a <workdir>/installed/database/amd/gfx942/ modules/flash/database/amd/gfx942/
+git add modules/flash/database/amd/gfx942/
 git commit -m "database: update gfx942 tuning database"
 
-rsync -a <workdir>/installed/database/amd/gfx1100/ v3python/database/amd/gfx1100/
-git add v3python/database/amd/gfx1100/
+rsync -a <workdir>/installed/database/amd/gfx1100/ modules/flash/database/amd/gfx1100/
+git add modules/flash/database/amd/gfx1100/
 git commit -m "database: update gfx1100 tuning database"
 ```
 

@@ -16,6 +16,7 @@ TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$TUNE_ROOT/.." && pwd)"
 
 . "$TUNE_ROOT/lib/config_load.sh"
+. "$TUNE_ROOT/lib/require_aotriton_pkg.sh"
 
 if [ "$#" -lt 1 ]; then
     echo "Usage: $0 <workdir> [--tuning_mode kernel|op]" >&2
@@ -61,7 +62,7 @@ else
     TABLE_NAME="most_accurate_tuning_results"
 fi
 
-SQL_FILE="$REPO_ROOT/v3python/tune/pq/materialized_views.sql"
+SQL_FILE="$REPO_ROOT/python/tune/pq/materialized_views.sql"
 if [ ! -f "$SQL_FILE" ]; then
     echo "Error: SQL file not found: $SQL_FILE" >&2
     exit 1
@@ -79,9 +80,9 @@ docker run --rm \
     "$PSQL_IMAGE" \
     postgresql://"$POSTGRES_USER"@"$POSTGRES_HOST":"$POSTGRES_PORT" \
     -c "SET max_parallel_workers_per_gather = 8; SET max_parallel_workers = 16; DROP TABLE IF EXISTS $TABLE_NAME;" \
-    -f "/repo/v3python/tune/pq/materialized_views.sql"
+    -f "/repo/python/tune/pq/materialized_views.sql"
 
 echo "Table created. Populating $TABLE_NAME (full)..."
-PYTHONPATH="$REPO_ROOT" python3 -m v3python.tune.pq.populate_most_accurate "$WORKDIR" --tuning_mode "$TUNING_MODE"
+python3 -m aotriton.tune.pq.populate_most_accurate "$WORKDIR" --tuning_mode "$TUNING_MODE"
 
 echo "$TABLE_NAME recreated successfully"

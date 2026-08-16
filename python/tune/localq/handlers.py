@@ -14,7 +14,7 @@ from typing import Dict, Any, List
 import psycopg
 from psycopg.types.json import Jsonb
 
-from v3python.tune.exaid import exaid_create, ExaidSubprocessNotOK
+from ..exaid import exaid_create, ExaidSubprocessNotOK
 from ..pq.queue import TaskQueue
 from ..pq.results import save_tuning_result, save_optune_result
 

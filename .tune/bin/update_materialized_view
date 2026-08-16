@@ -55,6 +55,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$TUNE_ROOT/.." && pwd)"
 
+# This script runs the standalone ~/venv interpreter, not the ambient
+# python3 -- require_aotriton_pkg.sh only checks the latter, so check this
+# interpreter directly instead of sourcing it.
+UMV_PYTHON="$HOME/venv/bin/python"
+if ! "$UMV_PYTHON" -c "import aotriton" &>/dev/null; then
+    echo "Error: the 'aotriton' package is not importable by $UMV_PYTHON." >&2
+    echo "  Install it with: $UMV_PYTHON -m pip install -e '$REPO_ROOT'" >&2
+    exit 1
+fi
+
 if [ -n "$FIX_SPEC" ]; then
     # --fix [hostname:]<pass>
     if [[ "$FIX_SPEC" == *:* ]]; then
@@ -69,7 +79,7 @@ if [ -n "$FIX_SPEC" ]; then
     echo "Updating most_accurate_tuning_results (fix broken, pass=$FIX_PASS${FIX_HOST:+, host=$FIX_HOST})..."
     # shellcheck disable=SC2086
     "$SCRIPT_DIR/query_broken_entries" "$WORKDIR" --pass "$FIX_PASS" $HOST_ARG \
-    | PYTHONPATH="$REPO_ROOT" ~/venv/bin/python -m v3python.tune.pq.populate_most_accurate \
+    | "$UMV_PYTHON" -m aotriton.tune.pq.populate_most_accurate \
         "$WORKDIR" --task_ids_file - --tuning_mode "$TUNING_MODE"
 else
     TASK_IDS_FILE="$WORKDIR/scratch/retry_task_ids.txt"
@@ -83,6 +93,6 @@ else
     echo "Updating most_accurate_tuning_results (incremental)..."
     echo "Task IDs file: $TASK_IDS_FILE"
 
-    PYTHONPATH="$REPO_ROOT" ~/venv/bin/python -m v3python.tune.pq.populate_most_accurate \
+    "$UMV_PYTHON" -m aotriton.tune.pq.populate_most_accurate \
         "$WORKDIR" --task_ids_file "$TASK_IDS_FILE" --tuning_mode "$TUNING_MODE"
 fi

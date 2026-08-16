@@ -1,8 +1,8 @@
 # Copyright © 2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-from ..tdesc import TuningDescription
-from ..utils import parse_python, asdict_shallow, safeload, dacite_tuple, sanitize_value
+from aotriton.tune.tdesc import TuningDescription
+from aotriton.tune.utils import parse_python, asdict_shallow, safeload, dacite_tuple, sanitize_value
 from dataclasses import dataclass, asdict
 import dataclasses
 from dacite import from_dict
@@ -138,7 +138,7 @@ class Flash(TuningDescription):
                            which_impl: str,
                            pt: Path) -> list[dict]:
         import torch
-        from ..gpu_utils import device_ctx, default_device_string
+        from aotriton.tune.gpu_utils import device_ctx, default_device_string
         with device_ctx():
             kernel = self.get_impl(which_impl)
             args = kernel.create_extargs(probe=True)
@@ -160,7 +160,7 @@ class Flash(TuningDescription):
 
     def _gen_ref(self, entry: FlashEntry, data_root: Path, extra_ims: list = []):
         import torch
-        from ..gpu_utils import device_ctx
+        from aotriton.tune.gpu_utils import device_ctx
         with device_ctx():
             yield from self._do_gen_ref(entry, data_root)
             for idx, im in enumerate(extra_ims):
@@ -172,7 +172,7 @@ class Flash(TuningDescription):
         Clamp batch size and number of heads to avoid OOM.
         Based on clamp_memory_usage from test/tune_flash.py.
         '''
-        from ..gpu_utils import get_total_memory_from_amdsmi
+        from aotriton.tune.gpu_utils import get_total_memory_from_amdsmi
         import math
 
         vram_cap_gb = get_total_memory_from_amdsmi()
@@ -328,7 +328,7 @@ class Flash(TuningDescription):
                         pt: Path,
                         which_impl: FlashKernelSelector):
         import torch
-        from ..gpu_utils import device_ctx, default_device_string
+        from aotriton.tune.gpu_utils import device_ctx, default_device_string
         with device_ctx():
             kernel = self.get_impl(which_impl)
             args = kernel.create_extargs(which_impl=which_impl)
@@ -358,7 +358,7 @@ class Flash(TuningDescription):
                              pt: Path,
                              which_impl: FlashKernelSelector):
         import torch
-        from ..gpu_utils import do_bench, device_ctx, default_device_string
+        from aotriton.tune.gpu_utils import do_bench, device_ctx, default_device_string
         with device_ctx():
             kernel = self.get_impl(which_impl)
             args = kernel.create_extargs(which_impl=which_impl, probe=True)

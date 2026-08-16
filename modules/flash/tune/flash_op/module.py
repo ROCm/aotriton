@@ -26,7 +26,7 @@ class FlashOp(Flash):
 
     def list_impls(self, entry, arch: str | None = None):
         # TODO: rename attn_fwd_op/attn_bwd_op to match the canonical op names
-        # defined in v3python/rules/flash/ (op_attn_fwd, op_attn_bwd) so that
+        # defined in modules/flash/aot/ (op_attn_fwd, op_attn_bwd) so that
         # export_best_results.py no longer needs OP_NAME_MAP for translation.
         return ['attn_fwd_op', 'attn_bwd_op']
 

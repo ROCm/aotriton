@@ -1,25 +1,16 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-"""Step 3.3: @ati.disable functional-disable decorator. The flash predicates
-reproduce the exact legacy attn_fwd disabled set across all functionals."""
+"""Step 3.3: @ati.disable functional-disable decorator."""
 
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import pytest
 import aotriton.template_instantiation as ati
 from aotriton.template_instantiation.describe import describe, get_kernel_spec
 from aotriton.template_instantiation.builder import build_kernel
-from registry import InterfaceRegistry, _testonly_build_kernel_description
-from aotriton.gpu_targets import cluster_gpus
-from fakekernels import attn_fwd_stub
-try:
-    import v3python.rules.flash as F   # legacy reference for parity comparison
-except ModuleNotFoundError:
-    F = None   # legacy reference unavailable (v3python removed) -> parity tests skip
 
 
 def test_disable_spec_partitioned_and_built():
@@ -43,27 +34,7 @@ def test_disable_requires_callable():
     raise AssertionError('expected callable assertion')
 
 
-def test_flash_disabled_set_matches_legacy():
-    if F is None:
-        pytest.skip('v3python legacy reference unavailable')
-    # The @ati.disable predicates must reproduce the legacy is_functional_disabled
-    # set for attn_fwd, functional-for-functional, on a representative arch.
-    reg = InterfaceRegistry()
-    ak = _testonly_build_kernel_description(attn_fwd_stub(), family='flash',
-                                    registry=reg)
-    leg = next(k for k in F.kernels if k.NAME == 'attn_fwd')
-    ta = cluster_gpus(['gfx942_mod0'])
-    lf = {f.godel_number: f for f in leg.gen_functionals(ta)}
-    mf = {f.godel_number: f for f in ak.gen_functionals(ta)}
-    mism = [g for g in lf
-            if leg.is_functional_disabled(lf[g]) != ak.is_functional_disabled(mf[g])]
-    assert not mism, f'{len(mism)} disable mismatches, e.g. {mism[:5]}'
-
-
 def main():
-    if F is None:
-        print('SKIP: v3python legacy reference unavailable; parity test skipped.')
-        return 0
     fns = [v for k, v in sorted(globals().items()) if k.startswith('test_')]
     for fn in fns:
         fn()

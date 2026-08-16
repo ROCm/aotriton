@@ -2,7 +2,7 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-# Wrapper script for v3python.tune.dispatch_tasks
+# Wrapper script for aotriton.tune.dispatch_tasks
 # This script sets up the Python environment and calls the actual dispatch module
 
 if [ -z "$BASH_VERSION" ]; then
@@ -68,8 +68,20 @@ if [ ! -f "$INSTALLED_MARKER" ] || [ "$REQUIREMENTS_FILE" -nt "$INSTALLED_MARKER
   touch "$INSTALLED_MARKER"
 fi
 
-# Add aotriton root to PYTHONPATH so v3python can be imported
-export PYTHONPATH="${AOTRITON_ROOT}:${PYTHONPATH}"
+# Editable-install the 'aotriton' package (python/ -> aotriton, see repo-root
+# setup.py) into this private venv so `-m aotriton.tune.dispatch_tasks` can
+# find it below. requirements-tuning.txt does not install it (it has no
+# reference to this checkout's path), so this is a separate, dedicated step.
+AOTRITON_INSTALLED_MARKER="$VENV_DIR/.aotriton_installed"
+if [ ! -f "$AOTRITON_INSTALLED_MARKER" ] || [ "$AOTRITON_ROOT/setup.py" -nt "$AOTRITON_INSTALLED_MARKER" ]; then
+  echo "Installing 'aotriton' package (editable) from $AOTRITON_ROOT..."
+  "$VENV_PYTHON" -m pip install -q -e "$AOTRITON_ROOT" --no-deps
+  if [ $? -ne 0 ]; then
+    echo "Error: Failed to install 'aotriton' package" >&2
+    exit 1
+  fi
+  touch "$AOTRITON_INSTALLED_MARKER"
+fi
 
 # Source config.rc and export PostgreSQL credentials
 if [ -f "$WORKDIR/config.rc" ]; then
@@ -77,6 +89,8 @@ if [ -f "$WORKDIR/config.rc" ]; then
   export POSTGRES_USER POSTGRES_PASSWORD CELERY_SERVICE_HOST POSTGRES_PORT
 fi
 
-# Execute the actual dispatch module with the venv python
+# Execute the actual dispatch module with the venv python. `cd` first so
+# aotriton.tune.registry's modules_dir default (AOTRITON_MODULES_DIR env var,
+# else <cwd>/modules) resolves to $AOTRITON_ROOT/modules.
 cd "$AOTRITON_ROOT"
-exec "$VENV_PYTHON" -m v3python.tune.dispatch_tasks "$@"
+exec "$VENV_PYTHON" -m aotriton.tune.dispatch_tasks "$@"

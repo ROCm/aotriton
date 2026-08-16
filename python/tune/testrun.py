@@ -3,7 +3,6 @@
 # SPDX-License-Identifier: MIT
 
 import sys
-import importlib
 import readline
 from pathlib import Path
 import traceback
@@ -64,7 +63,8 @@ def first(line, sep=" "):
     return seps[0], None
 
 def _load_module(module_name):
-    return importlib.import_module('.' + module_name, package='v3python.tune')
+    from .registry import load_tune_module
+    return load_tune_module(module_name)
 
 class CommandProcessor(object):
 

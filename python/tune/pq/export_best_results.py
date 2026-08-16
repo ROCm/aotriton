@@ -5,7 +5,7 @@
 """
 Export best_tuning_results from PostgreSQL to a centralized SQLite database.
 
-The output file matches the schema of v3python/database/tuning_database.sqlite3
+The output file matches the schema of modules/flash/database/tuning_database.sqlite3
 and can be fed directly into database_decompose.py to produce per-arch sharded
 SQLite files (and their .tar.xz archives) for the build-time tuning database.
 
@@ -14,14 +14,14 @@ Typical workflow:
     .tune/bin/export_best_results ~/wkdir.v3.5 /tmp/tuning_database.sqlite3
 
     # 2. Decompose into per-arch shards
-    python3 -m v3python.database_decompose \\
+    python3 -m aotriton.database_decompose \\
         --database_file /tmp/tuning_database.sqlite3 \\
         --script_output /tmp/decompose.sh \\
         --decompose_output /tmp/decomposed
     bash /tmp/decompose.sh
 
     # 3. Copy shards into the source tree
-    cp -r /tmp/decomposed/amd/ v3python/database/
+    cp -r /tmp/decomposed/amd/ modules/flash/database/
 
 Column mapping
 --------------
@@ -42,9 +42,9 @@ tuned_kernel$*       : impl_desc.psels[<column>]
 compiler_options$*   : impl_desc.copts[<column>]
 
 Usage:
-    python -m v3python.tune.pq.export_best_results \\
+    python -m aotriton.tune.pq.export_best_results \\
         --workdir /path/to/workdir --output /path/to/tuning_database.sqlite3
-    python -m v3python.tune.pq.export_best_results \\
+    python -m aotriton.tune.pq.export_best_results \\
         --host localhost --output /path/to/tuning_database.sqlite3
 """
 
@@ -67,7 +67,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# SQLite schema definitions (must match v3python/database/tuning_database.sqlite3)
+# SQLite schema definitions (must match modules/flash/database/tuning_database.sqlite3)
 # ---------------------------------------------------------------------------
 
 # Column lists per kernel table.

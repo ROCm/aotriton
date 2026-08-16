@@ -15,7 +15,7 @@ Also packaged as a .zip download by the /api/perf/export_zip route in
 .tune/webui/routes.py.
 
 Usage:
-    python -m v3python.tune.pq.export_visperf --workdir <workdir> --output perf.html
+    python -m aotriton.tune.pq.export_visperf --workdir <workdir> --output perf.html
 """
 
 import argparse
@@ -27,15 +27,17 @@ from pathlib import Path
 import psycopg
 
 from .visperf import query_all_best_results
-from ..utils import get_db_connection_params
+from ..utils import get_db_connection_params, default_repo_root
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s',
                     datefmt='%H:%M:%S')
 logger = logging.getLogger(__name__)
 
-# Paths to JS sources (relative to this file's parent = v3python/tune/pq/).
+# .tune/webui/static/js/ is NOT part of the installed `aotriton` package
+# (webui assets live outside python/); resolve the checkout root explicitly
+# (F12) instead of relying on a fixed `.parent` hop count from this file.
 _HERE = Path(__file__).parent
-_WEBUI_JS = _HERE.parent.parent.parent / '.tune' / 'webui' / 'static' / 'js'
+_WEBUI_JS = default_repo_root() / '.tune' / 'webui' / 'static' / 'js'
 _FLASH_JS = _WEBUI_JS / 'vis_descriptors' / 'flash.js'
 _PERF_JS  = _WEBUI_JS / 'perf.js'
 _TEMPLATE = _HERE / 'visperf_template.html'

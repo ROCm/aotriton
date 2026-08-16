@@ -25,17 +25,28 @@ AOTRITON_ROOT = Path(__file__).parent.parent.parent.resolve()
 # Import tuning architectures configuration
 from .config import TUNING_ARCHITECTURES
 
-# Add v3python to import get_db_connection_params
-sys.path.insert(0, AOTRITON_ROOT.as_posix())
-from v3python.tune.utils import get_db_connection_params
-from v3python.tune.flash.module import FlashEntry
+# The 'aotriton' package (python/ -> aotriton, see repo-root setup.py) must be
+# pip-installed (editable is fine) for the webui to import it -- a plain
+# sys.path.insert(root) is not enough to make it importable.
+try:
+    import aotriton  # noqa: F401
+except ImportError:
+    sys.exit(
+        "Error: the 'aotriton' package is not importable by python3.\n"
+        f"  Install it with: pip install -e '{AOTRITON_ROOT}'"
+    )
+
+from aotriton.tune.utils import get_db_connection_params
+from aotriton.tune.registry import load_flash_entry_module
 from .pytest_entry_parser import parse_pytest_node_id, entry_to_sql_clauses
-from v3python.tune.pq.visperf import (
+from aotriton.tune.pq.visperf import (
     query_best_results, query_all_best_results, get_available_archs,
     build_axes, query_cell_detail,
 )
-from v3python.tune.pq.vis_descriptors import DESCRIPTORS
-from v3python.tune.pq.export_visperf import export_visperf as _do_export_visperf, build_export_html
+from aotriton.tune.pq.vis_descriptors import DESCRIPTORS
+from aotriton.tune.pq.export_visperf import export_visperf as _do_export_visperf, build_export_html
+
+FlashEntry = load_flash_entry_module().FlashEntry
 
 def run_command(cmd, cwd, workdir, description=None, dry_run: bool = False):
     """

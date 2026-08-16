@@ -58,7 +58,7 @@ const FLASH_DESCRIPTOR = {
 
   // ---------------------------------------------------------------------------
   // Level-2 (psel/copt) drilldown schema.
-  // Source: v3python/rules/flash/*.py gen_autotune_configs().
+  // Source: modules/flash/aot/*.py gen_autotune_configs().
   // Listed explicitly — do not infer field names from DB.
   // ---------------------------------------------------------------------------
   cellDetail: {
@@ -84,7 +84,7 @@ const FLASH_DESCRIPTOR = {
       },
     },
 
-    // Skipped test cases — must match v3python/tune/pq/compute_best_results.SKIP_TEST_CASES.
+    // Skipped test cases — must match aotriton.tune.pq.compute_best_results.SKIP_TEST_CASES.
     skipTestCases: new Set(['01_gqa']),
 
     // Accuracy gate: must match compute_best_results.ACCURACY_MULTIPLIER.
@@ -100,7 +100,7 @@ const FLASH_DESCRIPTOR = {
   },
 
   // Audit one candidate against the per-(test_case, tensor) thresholds.
-  // Mirrors v3python/tune/pq/compute_best_results.evaluate_group's per-row
+  // Mirrors aotriton.tune.pq.compute_best_results.evaluate_group's per-row
   // gating (kernel mode; op-mode early-reject not used here).
   //   adiffs[tc][tensor] = [target_fudge, abs_err, ref_err]
   //   threshold[tc][tensor] = absolute_error  (from most_accurate_*)

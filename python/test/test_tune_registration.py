@@ -107,7 +107,7 @@ def test_configs_generator_runs_over_functional():
 
 
 def test_config_api_matches_old_autotune_config():
-    # Same call shape as v3python.rules.flash.attn_fwd: Config(kw, num_stages=, num_warps=)
+    # Same call shape as the retired legacy attn_fwd rule: Config(kw, num_stages=, num_warps=)
     kw = {'BLOCK_M': 128, 'BLOCK_N': 64, 'PRE_LOAD_V': True, 'waves_per_eu': 3}
     c = ati.tune.Config(kw, num_warps=8, num_stages=2)
     assert c.kwargs == kw

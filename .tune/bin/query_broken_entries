@@ -10,7 +10,7 @@
 #
 # Example:
 #   query_broken_entries ~/wkdir.v3.5 --host gpu01 --pass 0 | \
-#     python3 -m v3python.tune.pq.populate_most_accurate ~/wkdir.v3.5 --task_ids_file -
+#     python3 -m aotriton.tune.pq.populate_most_accurate ~/wkdir.v3.5 --task_ids_file -
 
 set -euo pipefail
 

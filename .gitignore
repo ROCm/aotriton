@@ -19,11 +19,6 @@ agent-plans
 # Python packaging artifacts
 *.egg-info/
 
-# Retired legacy generator (kept on disk for reference, not tracked; see
-# agent-plans/ati_retire_v3python.md). The live generator is the `aotriton`
-# package under python/.
-v3python.retiring/
-
 # Session review artifacts (not repo content)
 ati-code-quality.md
 ati-ccreview-*.md

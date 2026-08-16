@@ -8,7 +8,6 @@ from pathlib import Path
 from .testrun import main as testrun_entry
 from .utils import safe_readline
 import subprocess
-import importlib
 import errno
 from pathlib import Path
 import json
@@ -44,7 +43,7 @@ class ExaidProxy(object):
     @property
     def process(self):
         if self._process is None:
-            args = ['python', '-m', 'v3python.tune.testrun',
+            args = ['python', '-m', 'aotriton.tune.testrun',
                     self._module_name, '--gpu', str(self._gpu_id)]
             logger.info(f"Starting exaid worker process: module={self._module_name}, gpu={self._gpu_id}")
             self._process = subprocess.Popen(args,
@@ -122,7 +121,8 @@ class ExaidWorker(object):
     @property
     def module(self):
         if self._module is None:
-            self._module = importlib.import_module('.' + self._module_name, package='v3python.tune')
+            from .registry import load_tune_module
+            self._module = load_tune_module(self._module_name)
         return self._module
 
     @property

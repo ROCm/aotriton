@@ -15,22 +15,18 @@ Incremental mode (task_ids given):
     INSERT is acceptable here since the row count is small.
 
 Usage:
-    python3 -m v3python.tune.pq.populate_most_accurate <workdir>
-    python3 -m v3python.tune.pq.populate_most_accurate <workdir> --task_ids_file /path/to/ids.txt
-    query_broken_entries ~/wkdir | python3 -m v3python.tune.pq.populate_most_accurate <workdir> --task_ids_file -
+    python3 -m aotriton.tune.pq.populate_most_accurate <workdir>
+    python3 -m aotriton.tune.pq.populate_most_accurate <workdir> --task_ids_file /path/to/ids.txt
+    query_broken_entries ~/wkdir | python3 -m aotriton.tune.pq.populate_most_accurate <workdir> --task_ids_file -
 """
 
 import argparse
 import sys
 from pathlib import Path
 
-# Allow running from repo root without install
-_REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(_REPO_ROOT))
-
 import psycopg
 
-from v3python.tune.utils import get_db_connection_params
+from ..utils import get_db_connection_params
 
 class SqlStatements:
     def __init__(self, tuning_mode: str):

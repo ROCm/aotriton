@@ -18,8 +18,7 @@ description = "AOTriton ahead-of-time Triton code generator"
 requires-python = ">=3.10"
 
 # No console scripts: the generator tools are invoked as `python -m aotriton.<tool>`
-# (e.g. `python -m aotriton.generate`), the same way the build currently uses
-# `python -m v3python.<tool>` — not as installed binaries.
+# (e.g. `python -m aotriton.generate`) — not as installed binaries.
 
 [tool.pytest.ini_options]
 testpaths = ["python/test"]

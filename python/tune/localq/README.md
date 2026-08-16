@@ -283,7 +283,7 @@ This allows the broker to know which specific hsacos are pending, not just a cou
 
 All components use line-buffered logging with immediate flush:
 ```python
-from v3python.tune.utils import configure_logging_with_flush
+from aotriton.tune.utils import configure_logging_with_flush
 configure_logging_with_flush()
 ```
 
@@ -345,14 +345,14 @@ logger.debug(f"← RECV from broker: {json.dumps(msg)}")
 ### Start Broker
 
 ```bash
-python -m v3python.tune.localq.broker_main --socket_path /tmp/aotriton-broker.sock
+python -m aotriton.tune.localq.broker_main --socket_path /tmp/aotriton-broker.sock
 ```
 
 ### Start PG Readers (M workers for M tasks in-flight)
 
 ```bash
 for i in {0..3}; do
-  python -m v3python.tune.localq.pg_reader_worker \
+  python -m aotriton.tune.localq.pg_reader_worker \
     --worker_id pg-reader-gfx942-$i \
     --arch gfx942 \
     --workdir /path/to/workdir \
@@ -364,7 +364,7 @@ done
 
 ```bash
 for gpu_id in {0..7}; do
-  python -m v3python.tune.localq.gpu_worker_main \
+  python -m aotriton.tune.localq.gpu_worker_main \
     --worker_id gpu-worker-$gpu_id \
     --gpu_id $gpu_id \
     --workdir /path/to/workdir \
@@ -375,7 +375,7 @@ done
 ### Start CPU Worker
 
 ```bash
-python -m v3python.tune.localq.cpu_worker_main \
+python -m aotriton.tune.localq.cpu_worker_main \
   --worker_id cpu-worker-0 \
   --workdir /path/to/workdir \
   --broker_socket /tmp/aotriton-broker.sock &
@@ -385,7 +385,7 @@ python -m v3python.tune.localq.cpu_worker_main \
 
 Send SIGTERM for graceful shutdown:
 ```bash
-pkill -TERM -f "v3python.tune.localq"
+pkill -TERM -f "aotriton.tune.localq"
 ```
 
 ## Future Enhancements

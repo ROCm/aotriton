@@ -16,10 +16,7 @@ import time
 import logging
 from pathlib import Path
 
-# Add aotriton root to path
-sys.path.insert(0, Path(__file__).resolve().parent.parent.parent.parent.as_posix())
-
-from v3python.tune.utils import get_db_connection_params
+from ..utils import get_db_connection_params
 import psycopg
 
 logger = logging.getLogger(__name__)

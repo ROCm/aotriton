@@ -24,11 +24,11 @@ Each worker opens its own DB connection and streams only its arch's rows,
 so no result_data is ever sent over IPC — only small result tuples are returned.
 
 Usage:
-    python -m v3python.tune.pq.compute_best_results --workdir /path/to/workdir
-    python -m v3python.tune.pq.compute_best_results --workdir /path/to/workdir --incremental
-    python -m v3python.tune.pq.compute_best_results --workdir /path/to/workdir --fix <pass>
-    python -m v3python.tune.pq.compute_best_results --workdir /path/to/workdir --fix <hostname>:<pass>
-    python -m v3python.tune.pq.compute_best_results --workdir /path/to/workdir --tuning_mode op
+    python -m aotriton.tune.pq.compute_best_results --workdir /path/to/workdir
+    python -m aotriton.tune.pq.compute_best_results --workdir /path/to/workdir --incremental
+    python -m aotriton.tune.pq.compute_best_results --workdir /path/to/workdir --fix <pass>
+    python -m aotriton.tune.pq.compute_best_results --workdir /path/to/workdir --fix <hostname>:<pass>
+    python -m aotriton.tune.pq.compute_best_results --workdir /path/to/workdir --tuning_mode op
 """
 
 import argparse
