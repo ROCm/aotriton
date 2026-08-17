@@ -1,7 +1,7 @@
 # Copyright © 2025-2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-from aotriton.tune.tdesc import TuningDescription
+from aotriton.tune.tdesc import TuningDescription, ImplSelector
 from aotriton.tune.utils import asdict_shallow, sanitize_value
 from .entry import FlashEntry, FlashInputMetadata
 from dataclasses import asdict
@@ -21,46 +21,76 @@ a live GPU anyway.
 
 dispatch_tasks.py instantiates FlashTune() for EVERY registered tuning module
 at CLI startup (to build argparse subparsers from get_entry_choices()), so
-this file -- and its LEVELS resolution below -- must stay torch-free at
-import time and at construction time regardless of which `level` is
-requested. Only the level actually used (level_kernel.py / level_op.py, both
-torch/pyaotriton-heavy) is imported, and only once TuningDescription.__init__
-actually looks it up (see _LazyLevelMap below) or, more commonly, once
-get_impl()/probe_backends()/benchmark() is actually called.
+this file must stay torch-free at import time and at construction time --
+FlashTune() takes no arguments and does no per-level resolution up front.
+Only the provider module a given DSL name actually needs (level_kernel.py /
+level_op.py, both torch/pyaotriton-heavy) is imported, lazily, from inside
+get_impl()/_do_probe_all_impls() below (F3's lazy-import boundary) -- never at
+construction time.
 '''
-
-
-class _LazyLevelMap:
-    """dict[str, type[TuningLevel]]-like mapping that imports level_kernel.py
-    / level_op.py lazily, one at a time, only for the key actually looked up
-    -- so constructing `FlashTune(level='op')` never imports level_kernel.py
-    (tuning-lib/torch-heavy) and vice versa (modular-tune.md §4.5)."""
-
-    _NAMES = {
-        'kernel': ('.level_kernel', 'FlashKernelLevel'),
-        'op': ('.level_op', 'FlashOpLevel'),
-    }
-
-    def __getitem__(self, key):
-        modname, clsname = self._NAMES[key]
-        import importlib
-        mod = importlib.import_module(modname, package=__package__)
-        return getattr(mod, clsname)
-
-    def __iter__(self):
-        return iter(self._NAMES)
-
-    def __len__(self):
-        return len(self._NAMES)
-
-    def __contains__(self, key):
-        return key in self._NAMES
 
 
 class FlashTune(TuningDescription):
     ENTRY_CLASS = FlashEntry
     INPUT_METADATA = FlashInputMetadata
-    LEVELS = _LazyLevelMap()
+
+    def _provider_for(self, name: str):
+        """Resolve the DSL name `name` (e.g. 'attn_fwd' or 'op.attn_fwd') to
+        (provider_module, bare_iface_name), lazily importing exactly the
+        provider module the prefix calls for -- resolving an 'op.*' name must
+        never import level_kernel (needs the tuning-lib-only KernelControl)
+        and vice versa (F3)."""
+        level, iface_name = ImplSelector.split_dsl_name(name)
+        if level == 'kernel':
+            from . import level_kernel as provider
+        elif level == 'op':
+            from . import level_op as provider
+        else:
+            raise ValueError(
+                f"FlashTune has no tuning level {level!r} (from impl {name!r}); "
+                f"expected 'kernel' (unprefixed) or 'op.'-prefixed")
+        return provider, iface_name
+
+    def list_impls(self, entry, arch: str | None = None) -> list[str]:
+        """DSL-spelled names covering both levels: bare names from the kernel
+        level (its the DSL's unmarked default), 'op.'-prefixed names from the
+        op level. Pure entry-based enumeration -- imports level_kernel/level_op
+        only for their (torch-free) list_impls() functions, same lazy-import
+        boundary as get_impl()."""
+        from . import level_kernel, level_op
+        names = list(level_kernel.list_impls(entry, arch=arch))
+        names += [f'op.{n}' for n in level_op.list_impls(entry, arch=arch)]
+        return names
+
+    def get_impl(self, name: str):
+        provider, iface_name = self._provider_for(name)
+        try:
+            return provider.get_impl(iface_name)
+        except ImportError as e:
+            level, _ = ImplSelector.split_dsl_name(name)
+            if level == 'kernel':
+                needed, have = 'the tuning library (installed/<arch>/lib)', 'the testing library'
+            else:
+                needed, have = 'the testing library (installed/test/<arch>/lib)', 'the tuning library'
+            raise ImportError(
+                f"cannot resolve {name!r}: {level}-level tuning needs {needed}; "
+                f"this process appears to have {have} loaded instead ({e})"
+            ) from e
+
+    def probe_impl_desc(self, kernel, args) -> dict:
+        # Duck-type on AttnOptionsWrapperOp's distinctive `backend_index`
+        # property (see level_op.py) rather than threading an explicit level
+        # through this fixed 2-argument signature -- see the docstring on
+        # TuningDescription.probe_impl_desc() for why this method exists
+        # instead of reusing probe_all_impls()'s enumeration output.
+        from . import level_kernel, level_op
+        if hasattr(args, 'backend_index'):
+            return level_op.impl_desc(kernel, args)
+        return level_kernel.impl_desc(kernel, args)
+
+    def _do_probe_all_impls(self, entry, im, which_impl: str, pt) -> list[dict]:
+        provider, iface_name = self._provider_for(which_impl)
+        return provider.enumerate_variants(entry, im, iface_name, pt)
 
     def get_entry_choices(self):
         return FlashEntry(
@@ -255,7 +285,7 @@ class FlashTune(TuningDescription):
         from aotriton.tune.utils import dacite_tuple
         from aotriton.tune.gpu_utils import device_ctx, default_device_string
         with device_ctx():
-            kernel = self.get_impl(which_impl)
+            kernel = self.get_impl(which_impl.dsl_name)
             args = kernel.create_extargs(which_impl=which_impl)
             d = torch.load(pt, map_location=default_device_string(), mmap=True)
             inputs = from_dict(data_class=kernel.PT_INPUT_CLASS, data=d["bidi_inputs"], config=dacite_tuple)
@@ -281,7 +311,7 @@ class FlashTune(TuningDescription):
         from aotriton.tune.utils import dacite_tuple
         from aotriton.tune.gpu_utils import do_bench, device_ctx, default_device_string
         with device_ctx():
-            kernel = self.get_impl(which_impl)
+            kernel = self.get_impl(which_impl.dsl_name)
             args = kernel.create_extargs(which_impl=which_impl, probe=True)
             d = torch.load(pt, map_location=default_device_string(), mmap=True)
             inputs = from_dict(data_class=kernel.PT_INPUT_CLASS, data=d["bidi_inputs"], config=dacite_tuple)

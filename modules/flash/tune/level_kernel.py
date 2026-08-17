@@ -2,24 +2,30 @@
 # SPDX-License-Identifier: MIT
 
 """
-Kernel-level tuning strategy for flash (modular-tune.md §4.1/§4.3): selects
-among HSACO variants of a single Triton kernel (attn_fwd / bwd_kernel_dk_dv /
-bwd_kernel_dq / bwd_kernel_fuse), using KernelControl / kernel_fine_control.
-Needs the *tuning*-instrumented pyaotriton library build (REQUIRES_TUNING_LIB
-= True), as opposed to the plain testing build used by level_op.py.
+Kernel-level impl provider for flash (modular-tune.md Revision note 3): plain
+module-level functions (NOT a TuningLevel/strategy-object subclass -- that
+intermediate layer was removed) selecting among HSACO variants of a single
+Triton kernel (attn_fwd / bwd_kernel_dk_dv / bwd_kernel_dq /
+bwd_kernel_fuse), using KernelControl / kernel_fine_control. Needs the
+*tuning*-instrumented pyaotriton library build, as opposed to the plain
+testing build used by level_op.py.
+
+`FlashTune` (modules/flash/tune/desc.py) is the only caller of this module:
+it lazily imports `level_kernel` from its `get_impl()`/`_do_probe_all_impls()`
+methods whenever a DSL name has no prefix (the 'kernel' level being the DSL's
+unmarked default) and otherwise never touches it -- see desc.py's docstring
+for the exact dispatch and F3's lazy-import boundary.
 
 IMPORTANT: this module must stay torch/pyaotriton-free AT MODULE SCOPE --
-dispatch_tasks.py instantiates `TuneDesc()` (default level='kernel') for
-*every* registered tuning module at CLI startup, purely to build argparse
-subparsers from get_entry_choices(), on machines that may not have
-torch/pyaotriton installed at all (see tdesc.py's module docstring). All
-torch/pyaotriton imports below are therefore deferred into get_impl() /
-enumerate_variants() / impl_desc(), never at module level or in __init__ --
-mirroring the pre-unification split between flash/module.py (torch-free) and
-flash/kernels.py (lazily imported only from Flash.get_impl()).
+dispatch_tasks.py instantiates `TuneDesc()` for *every* registered tuning
+module at CLI startup, purely to build argparse subparsers from
+get_entry_choices(), on machines that may not have torch/pyaotriton installed
+at all (see tdesc.py's module docstring). All torch/pyaotriton imports below
+are therefore deferred into get_impl() / enumerate_variants() / impl_desc(),
+never at module level -- mirroring the pre-unification split between
+flash/module.py (torch-free) and flash/kernels.py (lazily imported only from
+Flash.get_impl()).
 """
-
-from aotriton.tune.tdesc import TuningLevel
 
 _KERNEL_DICT_CACHE = None
 
@@ -151,47 +157,48 @@ def _build_kernel_dict():
     }
 
 
-class FlashKernelLevel(TuningLevel):
-    NAME = 'kernel'
-    REQUIRES_TUNING_LIB = True
+def list_impls(entry, arch: str | None = None) -> list[str]:
+    """Bare iface names for the kernel level -- FlashTune.list_impls() applies
+    no prefix to these (kernel is the DSL's unmarked default level)."""
+    if entry.hdim > 224:
+        return ['attn_fwd', 'bwd_kernel_dk_dv', 'bwd_kernel_dq']
+    return ['attn_fwd', 'bwd_kernel_dk_dv', 'bwd_kernel_dq', 'bwd_kernel_fuse']
 
-    def list_impls(self, entry, arch: str | None = None) -> list[str]:
-        if entry.hdim > 224:
-            return ['attn_fwd', 'bwd_kernel_dk_dv', 'bwd_kernel_dq']
-        return ['attn_fwd', 'bwd_kernel_dk_dv', 'bwd_kernel_dq', 'bwd_kernel_fuse']
 
-    def get_impl(self, name: str):
-        global _KERNEL_DICT_CACHE
-        if _KERNEL_DICT_CACHE is None:
-            _KERNEL_DICT_CACHE = _build_kernel_dict()
-        return _KERNEL_DICT_CACHE[name]
+def get_impl(name: str):
+    global _KERNEL_DICT_CACHE
+    if _KERNEL_DICT_CACHE is None:
+        _KERNEL_DICT_CACHE = _build_kernel_dict()
+    return _KERNEL_DICT_CACHE[name]
 
-    def enumerate_variants(self, entry, im, which_impl: str, pt) -> list[dict]:
-        import torch
-        from dacite import from_dict
-        from aotriton.tune.gpu_utils import device_ctx, default_device_string
-        from aotriton.tune.utils import safeload, dacite_tuple
-        with device_ctx():
-            kernel = self.get_impl(which_impl)
-            args = kernel.create_extargs(probe=True)
-            d = torch.load(pt, map_location=default_device_string(), mmap=True)
-            inputs = from_dict(data_class=kernel.PT_INPUT_CLASS, data=d["bidi_inputs"], config=dacite_tuple)
-            _ = kernel(im, inputs, args)
-            total_number_of_kernels = int(args.selected_kernel_total_hsacos)
-            def gen():
-                for hi in range(total_number_of_kernels):
-                    args.set_hsaco(hsaco=hi, probe=True)
-                    _ = kernel(im, inputs, args)
-                    d = {
-                        'psels': safeload(args.selected_hsaco_psels),
-                        'copts': safeload(args.selected_hsaco_copts),
-                    }
-                    yield d
-            return list(gen())
 
-    def impl_desc(self, kernel, args) -> dict:
-        from aotriton.tune.utils import safeload
-        return {
-            'psels': safeload(args.selected_hsaco_psels),
-            'copts': safeload(args.selected_hsaco_copts),
-        }
+def enumerate_variants(entry, im, which_impl: str, pt) -> list[dict]:
+    import torch
+    from dacite import from_dict
+    from aotriton.tune.gpu_utils import device_ctx, default_device_string
+    from aotriton.tune.utils import safeload, dacite_tuple
+    with device_ctx():
+        kernel = get_impl(which_impl)
+        args = kernel.create_extargs(probe=True)
+        d = torch.load(pt, map_location=default_device_string(), mmap=True)
+        inputs = from_dict(data_class=kernel.PT_INPUT_CLASS, data=d["bidi_inputs"], config=dacite_tuple)
+        _ = kernel(im, inputs, args)
+        total_number_of_kernels = int(args.selected_kernel_total_hsacos)
+        def gen():
+            for hi in range(total_number_of_kernels):
+                args.set_hsaco(hsaco=hi, probe=True)
+                _ = kernel(im, inputs, args)
+                d = {
+                    'psels': safeload(args.selected_hsaco_psels),
+                    'copts': safeload(args.selected_hsaco_copts),
+                }
+                yield d
+        return list(gen())
+
+
+def impl_desc(kernel, args) -> dict:
+    from aotriton.tune.utils import safeload
+    return {
+        'psels': safeload(args.selected_hsaco_psels),
+        'copts': safeload(args.selected_hsaco_copts),
+    }

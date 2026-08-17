@@ -2,11 +2,19 @@
 # SPDX-License-Identifier: MIT
 
 """
-Op-level tuning strategy for flash (modular-tune.md §4.1/§4.3): selects among
-backend implementations of a whole operator (attn_fwd / attn_bwd), using only
-`force_backend_index` -- no KernelControl / kernel_fine_control. Needs only
-the plain *testing* pyaotriton library build (REQUIRES_TUNING_LIB = False),
-as opposed to the tuning-instrumented build used by level_kernel.py.
+Op-level impl provider for flash (modular-tune.md Revision note 3): plain
+module-level functions (NOT a TuningLevel/strategy-object subclass -- that
+intermediate layer was removed) selecting among backend implementations of a
+whole operator (attn_fwd / attn_bwd), using only `force_backend_index` -- no
+KernelControl / kernel_fine_control. Needs only the plain *testing* pyaotriton
+library build, as opposed to the tuning-instrumented build used by
+level_kernel.py.
+
+`FlashTune` (modules/flash/tune/desc.py) is the only caller of this module: it
+lazily imports `level_op` from its `get_impl()`/`_do_probe_all_impls()`
+methods whenever a DSL name carries the `op.` prefix, and otherwise never
+touches it -- see desc.py's docstring for the exact dispatch and F3's
+lazy-import boundary.
 
 IMPORTANT: like level_kernel.py, this module must stay torch/pyaotriton-free
 AT MODULE SCOPE -- see level_kernel.py's docstring for why. All torch imports
@@ -14,11 +22,10 @@ are deferred into get_impl() / enumerate_variants() / impl_desc().
 
 Highest-risk area #1 (modular-tune.md): list_impls() below returns BARE
 interface names ('attn_fwd', 'attn_bwd'), never the `op.`-prefixed DSL surface
-syntax used by ImplSelector.as_text()/parse_text() -- that prefix is added/
-stripped by ImplSelector itself, one level up.
+syntax -- FlashTune.list_impls() (the caller) applies the `op.` prefix, and
+FlashTune.get_impl()/_do_probe_all_impls() strip it back off (via
+ImplSelector.split_dsl_name()) before calling into this module.
 """
-
-from aotriton.tune.tdesc import TuningLevel
 
 _cached_arch = None
 
@@ -122,22 +129,23 @@ def _build_op_dict():
     }
 
 
-class FlashOpLevel(TuningLevel):
-    NAME = 'op'
-    REQUIRES_TUNING_LIB = False
+def list_impls(entry, arch: str | None = None) -> list[str]:
+    """Bare iface names for the op level -- FlashTune.list_impls() applies the
+    'op.' DSL prefix to these before returning them."""
+    return ['attn_fwd', 'attn_bwd']
 
-    def list_impls(self, entry, arch: str | None = None) -> list[str]:
-        return ['attn_fwd', 'attn_bwd']
 
-    def get_impl(self, name: str):
-        global _OP_DICT_CACHE
-        if _OP_DICT_CACHE is None:
-            _OP_DICT_CACHE = _build_op_dict()
-        return _OP_DICT_CACHE[name]
+def get_impl(name: str):
+    global _OP_DICT_CACHE
+    if _OP_DICT_CACHE is None:
+        _OP_DICT_CACHE = _build_op_dict()
+    return _OP_DICT_CACHE[name]
 
-    def enumerate_variants(self, entry, im, which_impl: str, pt) -> list[dict]:
-        kernel = self.get_impl(which_impl)
-        return [{'backend_index': i} for i in range(kernel.BACKEND_COUNT)]
 
-    def impl_desc(self, kernel, args) -> dict:
-        return {'backend_index': args.backend_index}
+def enumerate_variants(entry, im, which_impl: str, pt) -> list[dict]:
+    kernel = get_impl(which_impl)
+    return [{'backend_index': i} for i in range(kernel.BACKEND_COUNT)]
+
+
+def impl_desc(kernel, args) -> dict:
+    return {'backend_index': args.backend_index}
