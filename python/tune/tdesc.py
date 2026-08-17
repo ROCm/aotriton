@@ -272,12 +272,15 @@ class TuningDescription(ABC):
           (b) it keeps the dispatcher<->GPU-worker IPC to a single
               `impl_index` integer on the wire, with no need to serialise
               psels/copts through it; and
-          (c) it is what lets the DSL be a name plus a bare integer at all --
-              `op.attn_fwd=1` / `bwd_kernel_dk_dv=10` stay writable by hand
-              precisely because the full identity is recovered here, at run
-              time on the GPU worker, from the extargs actually used -- not
-              carried on the wire. Without this method the selector would
-              have to carry psels/copts to mean anything.
+          (c) it is what makes the DSL usable from the CLI. A selector is
+              only a name and a bare integer -- `op.attn_fwd=1`,
+              `bwd_kernel_dk_dv=10` -- which says nothing about the psels and
+              copts that index actually resolved to in this build. Recovering
+              them here, at run time on the GPU worker from the extargs
+              actually used, is what lets testrun print the concrete
+              implementation to stdout. Without it the operator sees only the
+              index they typed back, and has no way to tell which kernel
+              variant was measured.
 
         Since this method's 2-argument (kernel, args) signature carries no
         explicit level, implementations dispatch by inspecting `args`/
