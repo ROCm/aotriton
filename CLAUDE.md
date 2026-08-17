@@ -151,3 +151,34 @@ The `config.rc` file is:
 - Docker environment variables: `docker run -e PYCACHEPREFIX=/tmp/pycache`
 - Worker startup scripts: `.tune/remote/worker_service.sh`
 - Container Dockerfiles or image configuration
+
+## .gitignore Changes Require Human Review
+
+**NEVER add entries to `.gitignore` on your own initiative.** Propose the change and
+let the user decide.
+
+An ignore entry does not just keep a file out of a commit — it removes the file from
+`git status` entirely. Files sitting untracked in the working tree are often there on
+purpose and still need attention: drafted PR descriptions awaiting backup out of the
+repo, downloaded reference material, scratch output not yet filed. Silencing them
+means they are forgotten rather than handled. That trade-off is the user's to make,
+never yours.
+
+This applies even when an ignore rule looks like the obvious fix for a problem you
+just caused. If a file was committed by accident, the fix is to stage deliberately,
+not to make the file invisible:
+
+```bash
+# BAD - sweeps up every untracked file in the tree, then hides the evidence
+git add -A
+echo '/*.md' >> .gitignore
+
+# GOOD - name what you are committing
+git add path/to/file.py path/to/other.py
+```
+
+**Do not use `git add -A` or `git add .`.** Stage explicit paths. Blanket staging is
+what pulls stray downloads and scratch files into commits in the first place.
+
+Removing or narrowing an existing `.gitignore` entry is subject to the same rule:
+suggest it, explain what would become visible or tracked, and wait.

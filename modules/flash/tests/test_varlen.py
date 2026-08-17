@@ -155,7 +155,7 @@ def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dro
 @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16] if BWD_IMPL == 2 else [torch.float16, torch.bfloat16, torch.float32])
 @pytest.mark.parametrize('sm_scale', ['l1'] if not FOR_RELEASE else ['l1', 'l2'])
 @pytest.mark.parametrize('varlen_type', ['compact', 'padded', 'strided'])
-def test_op_bwd(N_HEADS, D_HEAD, n_seqlen, causal, sm_scale, dropout_p, dtype, varlen_type):
+def test_op_bwd(gpu_id, N_HEADS, D_HEAD, n_seqlen, causal, sm_scale, dropout_p, dtype, varlen_type):
     np.random.seed(8139)
     seqlens_q = rng_seqlens(n_seqlen)
     seqlens_k = seqlens_q if causal else rng_seqlens(n_seqlen)
@@ -164,9 +164,12 @@ def test_op_bwd(N_HEADS, D_HEAD, n_seqlen, causal, sm_scale, dropout_p, dtype, v
         padlens_k = padlens_q if causal else rng_padlens(n_seqlen)
         seqlens_q = np.array([seqlens_q, padlens_q])
         seqlens_k = np.array([seqlens_k, padlens_k])
-    _do_test_varlen(N_HEADS, D_HEAD,
-                    seqlens_q, seqlens_k,
-                    causal, sm_scale, dropout_p, dtype, varlen_type)
+    # Sets the current CUDA device for this worker, which is what the bare 'cuda'
+    # inside _do_test_varlen resolves to. No device string needs threading through.
+    with torch.cuda.device(gpu_id):
+        _do_test_varlen(N_HEADS, D_HEAD,
+                        seqlens_q, seqlens_k,
+                        causal, sm_scale, dropout_p, dtype, varlen_type)
 
 def main1():
     N_HEADS = 3

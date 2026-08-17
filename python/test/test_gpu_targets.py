@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parents[2]   # python/test -> python -> repo root
 
 
 def _run(module: str, *args: str) -> "subprocess.CompletedProcess":

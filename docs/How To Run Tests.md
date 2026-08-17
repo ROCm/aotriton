@@ -17,7 +17,11 @@ FOR_RELEASE=1 PYTHONPATH=install_dir/lib/ pytest ../modules/flash/tests/test_bac
 
 # Pre-requisites
 
-* `pip install -r requirements-dev.txt`
+* `pip install -r requirements-dev.txt`, run from the **repo root**. The TL;DR
+  block above `cd`s into `build-test` first — go back to the repo root before
+  running this, since `requirements-dev.txt` installs `pytest-gpu-lease` from a
+  path (`./python/pytest-gpu-lease`) resolved against the current working
+  directory, not the requirements file's location.
 
 # Pre-requisites for parallel testing on multi-GPUs
 

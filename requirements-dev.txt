@@ -4,3 +4,4 @@ pytest-xdist>=1.15  # Need worker_id fixture to identify GPU
 pytest-select
 pytest-timeout
 filelock
+./python/pytest-gpu-lease

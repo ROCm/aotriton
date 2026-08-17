@@ -5,13 +5,9 @@
 import pytest
 import torch
 import os
-import sys
 import bisect
 import math
 import pathlib
-import fcntl
-import struct
-import itertools
 import json
 import gc
 
@@ -35,7 +31,6 @@ from _common_test import (
     fmt_nheads,
 )
 
-ON_GPU = os.getenv('ON_GPU', default=None)
 RECORD_ADIFFS_TO = os.getenv('RECORD_ADIFFS_TO', default=None)
 USE_ADIFFS_TXT = os.getenv('USE_ADIFFS_TXT', default=None)
 
@@ -58,51 +53,6 @@ else:
 def exit_pytest():
     # os.kill(os.getpid(), SIGSEGV_ERROR_CODE)
     os._exit(139)
-
-PYTEST_XDIST_WORKER_COUNT=int(os.getenv('PYTEST_XDIST_WORKER_COUNT', default='0'))
-STRUCT_FLOCK = 'hhllh'
-PAGE_SIZE = 4096
-
-if PYTEST_XDIST_WORKER_COUNT == 0:  # No pytest
-    @pytest.fixture()
-    def gpufilelock():
-        return 0
-    @pytest.fixture()
-    def torch_gpu():
-        return 0
-elif ON_GPU is not None:
-    @pytest.fixture()
-    def gpufilelock():
-        return 0
-    @pytest.fixture()
-    def torch_gpu():
-        yield int(ON_GPU)
-        return
-else:
-    @pytest.fixture(scope="session", autouse=True)
-    def gpufilelock(tmp_path_factory, testrun_uid):
-        # get the temp directory shared by all workers
-        root_tmp_dir = tmp_path_factory.getbasetemp().parent
-        lockfile = root_tmp_dir / "gpulock"
-        with open(lockfile, 'wb') as f:
-            f.seek(PYTEST_XDIST_WORKER_COUNT * PAGE_SIZE - 1)
-            f.write(b'\0')
-        return lockfile
-
-    @pytest.fixture(scope="session")  # For pytest-xdist, "session" scope is per-worker process
-    def torch_gpu(worker_id, testrun_uid, gpufilelock):
-        with open(gpufilelock, 'wb') as f:
-            for gpu in itertools.cycle(range(PYTEST_XDIST_WORKER_COUNT)):
-                ld = struct.pack(STRUCT_FLOCK, fcntl.F_WRLCK, os.SEEK_SET, PAGE_SIZE * gpu, PAGE_SIZE, 0)
-                try:
-                    ret = fcntl.fcntl(f, fcntl.F_SETLK, ld)
-                    print(f'{worker_id} uses GPU {gpu} filelock = {gpufilelock}', file=sys.stderr, flush=True)
-                    yield gpu
-                    ud = struct.pack(STRUCT_FLOCK, fcntl.F_UNLCK, os.SEEK_SET, PAGE_SIZE * gpu, PAGE_SIZE, 0)
-                    ret = fcntl.fcntl(f, fcntl.F_SETLK, ud)
-                    return
-                except BlockingIOError as e:
-                    pass
 
 FOR_RELEASE = int(os.getenv('FOR_RELEASE', default='0'))
 SMALL_VRAM = bool(int(os.getenv('SMALL_VRAM', default='0')))

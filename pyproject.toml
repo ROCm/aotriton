@@ -21,7 +21,7 @@ requires-python = ">=3.10"
 # (e.g. `python -m aotriton.generate`) — not as installed binaries.
 
 [tool.pytest.ini_options]
-testpaths = ["python/test"]
+testpaths = ["python/test", "python/pytest-gpu-lease/tests"]
 # GPU integration tests live under modules/flash/tests/ and require hardware; keep them separate.
 python_files = ["test_*.py"]
 python_classes = ["Test*"]

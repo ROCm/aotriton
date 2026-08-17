@@ -52,9 +52,13 @@ ASAN_ARCH ?= gfx942;gfx950
 ASAN_ROCM ?= 7.14.0a20260624 7.15.0a20260707
 ASAN_RFLAGS := $(addprefix -r ,$(ASAN_ROCM))
 
-.PHONY: check-runtime check-gpu release-gpu release-runtime \
+.PHONY: check-self-test check-runtime check-gpu release-gpu release-runtime \
         check-runtime-asan check-gpu-asan release-gpu-asan release-runtime-asan \
         check-all release-all
+
+# AOTriton's own CPU-only test suites. No GPU or ROCm needed, so this runs anywhere.
+check-self-test:
+	bash $(CI_DIR)aotriton-self-test.sh
 
 # Smoke check: only the C++ runtime, on both the stable and TheRock ROCm.
 check-runtime:
@@ -89,7 +93,7 @@ release-runtime-asan:
 	$(SUITE) --asan --runtime $(ASAN_RFLAGS) --origin $(ORIGIN) $(OUTDIR)
 
 # Run every smoke check: non-ASAN and ASAN, GPU images and runtimes.
-check-all: check-gpu check-runtime check-gpu-asan check-runtime-asan
+check-all: check-self-test check-gpu check-runtime check-gpu-asan check-runtime-asan
 
 # Build every release target: non-ASAN and ASAN, GPU images and runtimes.
 release-all: release-gpu release-runtime release-gpu-asan release-runtime-asan
