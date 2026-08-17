@@ -115,8 +115,7 @@ class PreprocessHandler(MessageHandler):
 
         # Execute preprocessing
         module = task_config["module"]
-        level = task_config.get("tuning_level", "kernel")
-        exaid = exaid_create(module, level, self.gpu_id)
+        exaid = exaid_create(module, self.gpu_id)
 
         if 'tmpdir' in task_config:
             tmpdir = Path(task_config['tmpdir'])
@@ -159,11 +158,19 @@ class ProbeHandler(MessageHandler):
     Input: probe message
     Output: Multiple tune_impl messages + one postprocess message (with dependencies), or mark_task_failed message
 
-    Unified (modular-tune.md §4.1-§4.3): `TuningLevel.enumerate_variants()`
-    returns `list[dict]` for both levels (one dict per candidate variant, its
-    position in the list being the impl_index), so `exaid.probe()`'s
-    {iface_name: [dict, ...]} shape is already uniform across levels -- no
-    separate kernel/op fan-out branch is needed.
+    Unified (modular-tune.md §4.1-§4.3): the flash/op-level provider modules'
+    `enumerate_variants()` return `list[dict]` for both levels (one dict per
+    candidate variant, its position in the list being the impl_index), so
+    `exaid.probe()`'s {iface_name: [dict, ...]} shape is already uniform
+    across levels -- no separate kernel/op fan-out branch is needed.
+
+    Revision note 3: this handler passes `task_config['tuning_level']` into
+    `exaid.probe()` as a per-call filter, so a container only probes what its
+    library can serve -- `testrun`/`exaid` hold no level state of their own.
+    Filtering happens at the call, not by post-hoc filtering of `probe()`'s
+    return value here: filtering after the fact would mean the container had
+    already attempted (and failed) to import the wrong-library provider
+    module before this handler got a chance to discard the result.
     """
 
     def __init__(self, gpu_id: int):
@@ -179,12 +186,12 @@ class ProbeHandler(MessageHandler):
         module = task_config['module']
         level = task_config.get('tuning_level', 'kernel')
 
-        exaid = exaid_create(module, level, self.gpu_id)
+        exaid = exaid_create(module, self.gpu_id)
         tmpdir = Path(task_config['tmpdir'])
         arch = task_config.get('arch')
 
         try:
-            impl_dict = exaid.probe(tmpdir, arch)
+            impl_dict = exaid.probe(tmpdir, arch, tuning_level=level)
         except (OSError, ExaidSubprocessNotOK) as e:
             logger.error(f"Probe failed for task_id={task_id}: {e}")
             return {
@@ -200,15 +207,30 @@ class ProbeHandler(MessageHandler):
 
     def _build_fanout(self, impl_dict: dict, task_id: int,
                       task_config: dict, level: str) -> List[dict]:
-        # impl_dict: {iface_name: [variant_dict, ...], ...} -- variant_dict's
-        # contents are level-specific (psels/copts for kernel, backend_index
-        # for op) but unused here; only its position (impl_index) matters.
+        # impl_dict: {dsl_name: [variant_dict, ...], ...} -- keys are
+        # DSL-spelled (e.g. 'attn_fwd' or 'op.attn_fwd', as returned by
+        # exaid.probe()); variant_dict's contents are level-specific
+        # (psels/copts for kernel, backend_index for op) but unused here,
+        # only its position (impl_index) matters. Storage stays bare
+        # iface_name + tuning_level (no schema change), so the DSL prefix
+        # (surface syntax only) is stripped back off here via
+        # ImplSelector.split_dsl_name() before it reaches tune_impl messages.
         max_hsaco_dict = task_config.get('max_hsaco', {})
         max_hsaco_global = max_hsaco_dict.get('*', None)
         results = []
         impl_tasks = []
 
-        for iface_name, variants in impl_dict.items():
+        for dsl_name, variants in impl_dict.items():
+            _, iface_name = ImplSelector.split_dsl_name(dsl_name)
+            if isinstance(variants, dict) and 'error' in variants:
+                # Defensive only: with the per-call tuning_level filter this
+                # handler passes into exaid.probe(), every name returned
+                # should already belong to this task's own level and resolve
+                # cleanly. Surfacing rather than crashing keeps a
+                # misconfigured/legacy filter from taking down the whole task.
+                logger.error(f"Probe reported an unresolvable impl {dsl_name!r} for "
+                            f"task_id={task_id}: {variants['error']}")
+                continue
             if len(variants) <= 1:
                 logger.info(f"Skipping iface_name={iface_name} for task_id={task_id}: "
                            f"only {len(variants)} variant(s), no tuning needed")
@@ -272,7 +294,7 @@ class TuneImplHandler(MessageHandler):
 
         module = task_config['module']
         level = task_config.get('tuning_level', 'kernel')
-        exaid = exaid_create(module, level, self.gpu_id)
+        exaid = exaid_create(module, self.gpu_id)
         tmpdir = Path(task_config['tmpdir'])
 
         impl_selector = ImplSelector(tuning_level=level, iface_name=iface_name, impl_index=impl_index)
