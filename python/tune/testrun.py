@@ -14,7 +14,6 @@ from .defaults import set_default_device
 def parse_args():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument('module', default=None, nargs='?')
-    p.add_argument('level', default='kernel', nargs='?', choices=['kernel', 'op'])
     p.add_argument('--gpu', default=0, type=int)
     return p.parse_args()
 
@@ -68,10 +67,20 @@ def _load_module(module_name):
     return load_tune_module(module_name)
 
 class CommandProcessor(object):
+    """`testrun` never maintains or enforces tuning-level state (Revision
+    note 3): it has no notion of "this process is a kernel process" anywhere.
+    The library constraint (op-level tuning needs the testing library,
+    kernel-level needs the tuning library) is enforced upstream, at task
+    routing (`task_queue.tuning_level` + the SQL fetch filter, F16) -- by the
+    time a task reaches this process its library is already correct for
+    whatever it will ask for. `get_impl()` (via `TuneDesc`) still surfaces a
+    clear error if a name is nonetheless unresolvable in this process's
+    library; `command_probe` below reports such errors per-impl rather than
+    aborting, since an interactive user must retain full access to inspect
+    anything, never be told "you may not ask that"."""
 
-    def __init__(self, module_name, level='kernel'):
+    def __init__(self, module_name):
         self._all_commands = None
-        self._level = level
         if module_name is not None:
             self._module = _load_module(module_name)
         else:
@@ -96,9 +105,8 @@ class CommandProcessor(object):
 
     def command_module(self, line):
         if line is None:
-            return r'''Missing Arguments. Expect: module <package name> [level]'''
-        package, tail = first(line)
-        level, _ = first(tail) if tail else (None, None)
+            return r'''Missing Arguments. Expect: module <package name>'''
+        package, _ = first(line)
         try:
             module = _load_module(package)
         except ImportError as e:
@@ -106,15 +114,13 @@ class CommandProcessor(object):
             print(e, file=sys.stderr)
             return f'Package Error. Import package {package} error'
         self._module = module
-        if level:
-            self._level = level
 
     def command_prepare_data(self, line):
         if line is None:
             return r'''Syntax Error: Expect: prepare_data <entry> <odir> [im_text ...]'''
         if self._module is None:
             return r'''Error: Need to run module <package name> first'''
-        tune = self._module.TuneDesc(level=self._level)
+        tune = self._module.TuneDesc()
         try:
             entry, tail = first(line)
             odir, tail = first(tail)
@@ -135,23 +141,46 @@ class CommandProcessor(object):
         tune.prepare_data(entry, odir, extra_ims=extra_ims)
 
     def command_probe(self, line):
+        """probe <data directory> [arch] [tuning_level filter]
+
+        With no filter, attempts EVERY DSL name `list_impls()` returns and
+        reports a per-impl error (rather than aborting the whole command) for
+        any that fail to resolve -- an interactive user at the REPL must get
+        the impls this process's library CAN serve back, plus a legible
+        reason for the ones it cannot, not a lost result set from one
+        ImportError (Revision note 3). `exaid.probe()` passes the task's
+        tuning_level as this filter so a worker only probes what its
+        container can serve -- filtering happens here, at the call, before
+        any wrong-library import is attempted; never by a caller
+        post-filtering this method's output.
+        """
         if line is None:
-            return r'''Missing Arguments. Expect: probe <data directory> [arch]'''
+            return r'''Missing Arguments. Expect: probe <data directory> [arch] [tuning_level filter]'''
         if self._module is None:
             return r'''Error: Need to run module <package name> first'''
-        tune = self._module.TuneDesc(level=self._level)
+        tune = self._module.TuneDesc()
         try:
-            data_dir, arch = first(line)
+            data_dir, tail = first(line)
+            arch, tail = first(tail) if tail else (None, None)
+            tuning_level_filter, tail = first(tail) if tail else (None, None)
             data_dir = Path(data_dir)
         except Exception as e:
             return f'Error when parsing argument {line!r}: {e}'
         if not (data_dir / 'entry.json').is_file():
             return f'{data_dir} is not valid data director. Missing entry.json file.'
+        arch = arch or None
+        tuning_level_filter = tuning_level_filter or None
+        entry = tune.get_entry(data_dir)
+        names = tune.list_impls(entry, arch=arch)
+        if tuning_level_filter:
+            names = [n for n in names
+                     if self._module.ImplSelector.split_dsl_name(n)[0] == tuning_level_filter]
         def gen():
-            entry = tune.get_entry(data_dir)
-            kernels = tune.list_impls(entry, arch=arch)
-            for k in kernels:
-                yield k, tune.probe_backends(data_dir, k)
+            for name in names:
+                try:
+                    yield name, tune.probe_all_impls(data_dir, name)
+                except ImportError as e:
+                    yield name, {'error': str(e)}
         return dict(gen())
 
     def command_benchmark(self, line):
@@ -167,14 +196,10 @@ class CommandProcessor(object):
             return 'Error when parsing argument ' + tail
         if not (data_dir / 'entry.json').is_file():
             return f'{data_dir} is not valid data director. Missing entry.json file.'
-        if impl_selector.tuning_level != self._level:
-            return (f'Error: impl_selector {impl_selector.as_text()!r} is for '
-                    f'tuning_level={impl_selector.tuning_level!r} but this worker '
-                    f'was started with level={self._level!r}')
         # Clear GPU cache before benchmark
         import torch
         torch.cuda.empty_cache()
-        tune = self._module.TuneDesc(level=self._level)
+        tune = self._module.TuneDesc()
         entry, impl_desc, adiffs, times, benchmark_input_metadata = tune.benchmark(data_dir, impl_selector)
         return {
             "entry": asdict(entry),
@@ -205,7 +230,7 @@ class CommandProcessor(object):
 def main():
     args = parse_args()
     set_default_device(args.gpu)
-    cp = CommandProcessor(args.module, args.level)
+    cp = CommandProcessor(args.module)
     if sys.stdin.isatty():
         def gen_line():
             while True:
