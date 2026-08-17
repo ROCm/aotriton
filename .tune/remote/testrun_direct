@@ -4,8 +4,10 @@
 
 # Run the testrun CLI tool inside the tuning Docker image.
 #
-# Interface is identical to aotriton.tune.testrun:
-#   testrun_direct [module] [level] [--gpu GPU]
+# Interface is identical to aotriton.tune.testrun, plus a --tuning_mode flag
+# consumed by THIS wrapper (not forwarded to testrun.py -- testrun has no
+# level positional/state of its own, Revision note 3 of modular-tune.md):
+#   testrun_direct [module] [--tuning_mode kernel|op] [--gpu GPU]
 #
 # The workdir is detected automatically from the script's location:
 #   testrun_direct lives at  <workdir>/aotriton.src/.tune/remote/testrun_direct
@@ -16,10 +18,14 @@
 #
 # GPU architecture is detected automatically via rocm_agent_enumerator.
 #
-# PYTHONPATH selection (based on tuning level, module name is always the
-# unified module e.g. 'flash' -- there is no more '<module>_op' name):
-#   level=op   uses the testing library: installed/test/<arch>/lib
-#   level=kernel (default) uses the tuning library: installed/<arch>/lib
+# PYTHONPATH selection (based on --tuning_mode, module name is always the
+# unified module e.g. 'flash' -- there is no more '<module>_op' name).
+# --tuning_mode only picks which library this container's PYTHONPATH exposes
+# to testrun -- it is consumed here, before Python even starts, and is NOT
+# forwarded on to `aotriton.tune.testrun` (which has no `--tuning_mode`/level
+# argument at all):
+#   --tuning_mode op            uses the testing library: installed/test/<arch>/lib
+#   --tuning_mode kernel (default) uses the tuning library: installed/<arch>/lib
 #
 # testrun is a REPL — commands are sent via stdin, not positional arguments.
 #
@@ -32,7 +38,7 @@
 #   .tune/remote/testrun_direct flash
 #
 #   # Interactive session for op tuning (uses installed/test/ PYTHONPATH)
-#   .tune/remote/testrun_direct flash op
+#   .tune/remote/testrun_direct flash --tuning_mode op
 #
 #   # Run a specific entry non-interactively (pipe commands via stdin)
 #   printf 'prepare_data dtype=float16;hdim=128;seqlen_q=4096;seqlen_k=4096;causal=False;dropout_p=0.0;bias_type=0 /tmp/myentry\n' \
@@ -46,17 +52,19 @@ WORKDIR="$(cd "$AOTRITON_ROOT/.." && pwd)"
 
 if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
     cat <<EOF
-Usage: $(basename "$0") [module] [level] [--gpu GPU]
+Usage: $(basename "$0") [module] [--tuning_mode kernel|op] [--gpu GPU]
 
 Run the aotriton.tune.testrun REPL inside the tuning Docker image.
-Interface is identical to: python -m aotriton.tune.testrun
+Interface is identical to: python -m aotriton.tune.testrun, plus --tuning_mode
+which THIS wrapper consumes for PYTHONPATH selection and does NOT forward to
+testrun.py (testrun has no level positional/state of its own).
 
 GPU architecture is auto-detected via rocm_agent_enumerator.
 
-PYTHONPATH selection (based on tuning level, not module name -- there is no
-more '<module>_op' module; module and level are separate positional args):
-  level=op                 → installed/test/<arch>/lib  (testing library)
-  level=kernel (default)   → installed/<arch>/lib        (tuning library)
+PYTHONPATH selection (based on --tuning_mode, not module name -- there is no
+more '<module>_op' module):
+  --tuning_mode op              → installed/test/<arch>/lib  (testing library)
+  --tuning_mode kernel (default) → installed/<arch>/lib        (tuning library)
 
 Workdir auto-detected from script location:
   $WORKDIR
@@ -72,7 +80,7 @@ Examples:
   $(basename "$0") flash
 
   # Interactive session for op tuning
-  $(basename "$0") flash op
+  $(basename "$0") flash --tuning_mode op
 
   # Run a specific entry non-interactively
   printf 'prepare_data dtype=float16;hdim=128;seqlen_q=4096;seqlen_k=4096;causal=False;dropout_p=0.0;bias_type=0 /tmp/myentry\n' \\
@@ -100,27 +108,33 @@ if [ -z "$ARCH" ]; then
     exit 1
 fi
 
-# Peek at the module/level positional args (first two non-option args) for
-# PYTHONPATH selection. All args are passed verbatim to testrun — nothing is
-# consumed here. Module is always the unified name (e.g. 'flash'); level
-# ('kernel' | 'op', default 'kernel') is what selects the library.
-POSITIONALS=()
-skip_next=false
+# Consume --tuning_mode here for PYTHONPATH selection -- testrun.py has no
+# level positional/state of its own (Revision note 3 of modular-tune.md), so
+# --tuning_mode (and its value) must NOT be forwarded on. Everything else is
+# passed through verbatim in FORWARD_ARGS.
+TUNING_MODE="kernel"
+FORWARD_ARGS=()
+pending=""  # "" | "tuning_mode" | "gpu" -- which flag's value we're about to see
 for arg in "$@"; do
-    if $skip_next; then
-        skip_next=false
+    if [ "$pending" = "tuning_mode" ]; then
+        TUNING_MODE="$arg"
+        pending=""
+        continue
+    fi
+    if [ "$pending" = "gpu" ]; then
+        FORWARD_ARGS+=("$arg")
+        pending=""
         continue
     fi
     case "$arg" in
-        --gpu) skip_next=true ;;
-        --*)   ;;
-        *)     POSITIONALS+=("$arg") ;;
+        --tuning_mode) pending="tuning_mode" ;;
+        --gpu)         FORWARD_ARGS+=("$arg"); pending="gpu" ;;
+        *)             FORWARD_ARGS+=("$arg") ;;
     esac
 done
-LEVEL="${POSITIONALS[1]:-kernel}"
 
-# level=op uses the testing library (no KernelControl / kernel_fine_control).
-if [ "$LEVEL" = "op" ]; then
+# --tuning_mode op uses the testing library (no KernelControl / kernel_fine_control).
+if [ "$TUNING_MODE" = "op" ]; then
     WORKER_PYTHONPATH="/wkdir/installed/test/$ARCH/lib"
 else
     WORKER_PYTHONPATH="/wkdir/installed/$ARCH/lib"
@@ -143,4 +157,4 @@ exec docker run --rm -it \
         source "$(dirname "$CELERY_WORKER_PYTHON")/activate"
         cd /wkdir/aotriton.src
         exec "$CELERY_WORKER_PYTHON" -m aotriton.tune.testrun "$@"
-    ' -- "$@"
+    ' -- "${FORWARD_ARGS[@]}"
