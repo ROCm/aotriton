@@ -4,10 +4,12 @@
 
 # Run the testrun CLI tool inside the tuning Docker image.
 #
-# Interface is identical to aotriton.tune.testrun, plus a --tuning_mode flag
-# consumed by THIS wrapper (not forwarded to testrun.py -- testrun has no
-# level positional/state of its own, Revision note 3 of modular-tune.md):
-#   testrun_direct [module] [--tuning_mode kernel|op] [--gpu GPU]
+# This is a thin wrapper: it starts the container and execs
+# `aotriton.tune.testrun` inside it. ALL arguments are forwarded to
+# `aotriton.tune.testrun` verbatim -- this script does not parse, consume, or
+# reinterpret any of them.
+#
+#   testrun_direct [module] [--gpu GPU]
 #
 # The workdir is detected automatically from the script's location:
 #   testrun_direct lives at  <workdir>/aotriton.src/.tune/remote/testrun_direct
@@ -16,16 +18,13 @@
 # Docker image and connection parameters are read from <workdir>/config.rc.
 # The container is removed automatically on exit (--rm).
 #
-# GPU architecture is detected automatically via rocm_agent_enumerator.
-#
-# PYTHONPATH selection (based on --tuning_mode, module name is always the
-# unified module e.g. 'flash' -- there is no more '<module>_op' name).
-# --tuning_mode only picks which library this container's PYTHONPATH exposes
-# to testrun -- it is consumed here, before Python even starts, and is NOT
-# forwarded on to `aotriton.tune.testrun` (which has no `--tuning_mode`/level
-# argument at all):
-#   --tuning_mode op            uses the testing library: installed/test/<arch>/lib
-#   --tuning_mode kernel (default) uses the tuning library: installed/<arch>/lib
+# Which pyaotriton library build (tuning vs testing) the container sees is
+# NOT this wrapper's concern: it inherits whatever PYTHONPATH is already set
+# in the calling environment and passes it through unchanged. If PYTHONPATH
+# is unset, the image/environment's own default applies. This wrapper makes
+# no decision based on module name, GPU architecture, or any tuning-level
+# flag -- that mapping belongs to whoever sets up the container (see
+# .tune/single/start_worker.sh, which owns --tuning_mode for that reason).
 #
 # testrun is a REPL — commands are sent via stdin, not positional arguments.
 #
@@ -34,11 +33,8 @@
 #   .tune/remote/testrun_direct -h
 #   .tune/remote/testrun_direct --help
 #
-#   # Interactive session for kernel tuning
+#   # Interactive session
 #   .tune/remote/testrun_direct flash
-#
-#   # Interactive session for op tuning (uses installed/test/ PYTHONPATH)
-#   .tune/remote/testrun_direct flash --tuning_mode op
 #
 #   # Run a specific entry non-interactively (pipe commands via stdin)
 #   printf 'prepare_data dtype=float16;hdim=128;seqlen_q=4096;seqlen_k=4096;causal=False;dropout_p=0.0;bias_type=0 /tmp/myentry\n' \
@@ -52,19 +48,19 @@ WORKDIR="$(cd "$AOTRITON_ROOT/.." && pwd)"
 
 if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
     cat <<EOF
-Usage: $(basename "$0") [module] [--tuning_mode kernel|op] [--gpu GPU]
+Usage: $(basename "$0") [module] [--gpu GPU]
 
 Run the aotriton.tune.testrun REPL inside the tuning Docker image.
-Interface is identical to: python -m aotriton.tune.testrun, plus --tuning_mode
-which THIS wrapper consumes for PYTHONPATH selection and does NOT forward to
-testrun.py (testrun has no level positional/state of its own).
+Interface is identical to: python -m aotriton.tune.testrun -- this wrapper
+forwards all arguments verbatim and consumes none of them itself.
 
-GPU architecture is auto-detected via rocm_agent_enumerator.
+GPU architecture is auto-detected via rocm_agent_enumerator (used only to
+locate the container image / mount, not to pick a PYTHONPATH).
 
-PYTHONPATH selection (based on --tuning_mode, not module name -- there is no
-more '<module>_op' module):
-  --tuning_mode op              → installed/test/<arch>/lib  (testing library)
-  --tuning_mode kernel (default) → installed/<arch>/lib        (tuning library)
+PYTHONPATH is inherited from the calling environment as-is (unset if not
+already set there); this wrapper does not choose between the tuning and
+testing library builds. That mapping is owned by whoever sets the container
+up (see .tune/single/start_worker.sh's --tuning_mode).
 
 Workdir auto-detected from script location:
   $WORKDIR
@@ -78,9 +74,6 @@ Pipe commands in for non-interactive use.
 Examples:
   # Interactive session
   $(basename "$0") flash
-
-  # Interactive session for op tuning
-  $(basename "$0") flash --tuning_mode op
 
   # Run a specific entry non-interactively
   printf 'prepare_data dtype=float16;hdim=128;seqlen_q=4096;seqlen_k=4096;causal=False;dropout_p=0.0;bias_type=0 /tmp/myentry\n' \\
@@ -101,43 +94,20 @@ if [ -z "${CELERY_WORKER_IMAGE:-}" ]; then
     exit 1
 fi
 
-# Detect arch from rocm_agent_enumerator.
+# Fail fast if no ROCm GPU is visible on this host. (The detected arch itself
+# is not otherwise used -- this wrapper does not derive a PYTHONPATH from it.)
 ARCH=$(rocm_agent_enumerator | grep -v gfx000 | head -1)
 if [ -z "$ARCH" ]; then
     echo "Error: could not detect arch via rocm_agent_enumerator" >&2
     exit 1
 fi
 
-# Consume --tuning_mode here for PYTHONPATH selection -- testrun.py has no
-# level positional/state of its own (Revision note 3 of modular-tune.md), so
-# --tuning_mode (and its value) must NOT be forwarded on. Everything else is
-# passed through verbatim in FORWARD_ARGS.
-TUNING_MODE="kernel"
-FORWARD_ARGS=()
-pending=""  # "" | "tuning_mode" | "gpu" -- which flag's value we're about to see
-for arg in "$@"; do
-    if [ "$pending" = "tuning_mode" ]; then
-        TUNING_MODE="$arg"
-        pending=""
-        continue
-    fi
-    if [ "$pending" = "gpu" ]; then
-        FORWARD_ARGS+=("$arg")
-        pending=""
-        continue
-    fi
-    case "$arg" in
-        --tuning_mode) pending="tuning_mode" ;;
-        --gpu)         FORWARD_ARGS+=("$arg"); pending="gpu" ;;
-        *)             FORWARD_ARGS+=("$arg") ;;
-    esac
-done
-
-# --tuning_mode op uses the testing library (no KernelControl / kernel_fine_control).
-if [ "$TUNING_MODE" = "op" ]; then
-    WORKER_PYTHONPATH="/wkdir/installed/test/$ARCH/lib"
-else
-    WORKER_PYTHONPATH="/wkdir/installed/$ARCH/lib"
+# PYTHONPATH is whatever the caller already has set (or unset) -- this
+# wrapper does not compute one from $ARCH and a tuning level. Only forward it
+# into the container if it is actually set in the environment.
+PYTHONPATH_ARGS=()
+if [ -n "${PYTHONPATH:-}" ]; then
+    PYTHONPATH_ARGS=(-e "PYTHONPATH=$PYTHONPATH")
 fi
 
 exec docker run --rm -it \
@@ -148,7 +118,7 @@ exec docker run --rm -it \
     --security-opt seccomp=unconfined \
     --ipc=host \
     --network=host \
-    -e "PYTHONPATH=$WORKER_PYTHONPATH" \
+    "${PYTHONPATH_ARGS[@]}" \
     -e PYTHONPYCACHEPREFIX=/wkdir/run/pycache \
     --mount type=bind,source="$(realpath "$WORKDIR")",target=/wkdir \
     "$CELERY_WORKER_IMAGE" \
@@ -157,4 +127,4 @@ exec docker run --rm -it \
         source "$(dirname "$CELERY_WORKER_PYTHON")/activate"
         cd /wkdir/aotriton.src
         exec "$CELERY_WORKER_PYTHON" -m aotriton.tune.testrun "$@"
-    ' -- "${FORWARD_ARGS[@]}"
+    ' -- "$@"
