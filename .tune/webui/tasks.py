@@ -37,6 +37,7 @@ except ImportError:
     )
 
 from aotriton.tune.utils import get_db_connection_params
+from aotriton.tune.pq.queue import TaskQueue
 from aotriton.tune.registry import load_flash_entry_module
 from .pytest_entry_parser import parse_pytest_node_id, entry_to_sql_clauses
 from aotriton.tune.pq.visperf import (
@@ -193,61 +194,21 @@ def _merge_progress_rows(progress_rows, speed_rows, stale_rows):
 
 
 def get_tuning_progress(workdir):
-    """Get kernel and op tuning progress using the two queue-progress views."""
+    """Get kernel and op tuning progress for both tuning levels.
+
+    The queries live in aotriton.tune.pq.queue; this only merges and formats
+    what they return.
+    """
     try:
         conn_params = get_db_connection_params(Path(workdir))
         with psycopg.connect(**conn_params, row_factory=dict_row) as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT * FROM kernel_queue_progress ORDER BY arch")
-                kernel_rows = cur.fetchall()
-
-                cur.execute("SELECT * FROM op_queue_progress ORDER BY arch")
-                op_rows = cur.fetchall()
-
-                cur.execute("""
-                    SELECT arch, COUNT(*) as recent_completions
-                    FROM task_queue
-                    WHERE status = 'completed'
-                      AND completed_at > NOW() - INTERVAL '5 minutes'
-                      AND tuning_level = 'kernel'
-                    GROUP BY arch
-                """)
-                kernel_speed_rows = cur.fetchall()
-
-                cur.execute("""
-                    SELECT arch, COUNT(*) as recent_completions
-                    FROM task_queue
-                    WHERE status = 'completed'
-                      AND completed_at > NOW() - INTERVAL '5 minutes'
-                      AND tuning_level = 'op'
-                    GROUP BY arch
-                """)
-                op_speed_rows = cur.fetchall()
-
-                cur.execute("""
-                    SELECT arch, COUNT(*) as stale_count
-                    FROM task_queue
-                    WHERE status = 'running'
-                      AND EXTRACT(EPOCH FROM (NOW() - started_at)) > 7200
-                      AND tuning_level = 'kernel'
-                    GROUP BY arch
-                """)
-                kernel_stale_rows = cur.fetchall()
-
-                cur.execute("""
-                    SELECT arch, COUNT(*) as stale_count
-                    FROM task_queue
-                    WHERE status = 'running'
-                      AND EXTRACT(EPOCH FROM (NOW() - started_at)) > 7200
-                      AND tuning_level = 'op'
-                    GROUP BY arch
-                """)
-                op_stale_rows = cur.fetchall()
-
-                return {
-                    'kernel': _merge_progress_rows(kernel_rows, kernel_speed_rows, kernel_stale_rows),
-                    'op': _merge_progress_rows(op_rows, op_speed_rows, op_stale_rows),
-                }
+            tq = TaskQueue(conn)
+            kernel = tq.get_progress('kernel')
+            op = tq.get_progress('op')
+            return {
+                'kernel': _merge_progress_rows(kernel['progress'], kernel['speed'], kernel['stale']),
+                'op': _merge_progress_rows(op['progress'], op['speed'], op['stale']),
+            }
     except Exception as e:
         logging.error(f"Failed to get tuning progress: {e}")
         return {'kernel': [], 'op': []}

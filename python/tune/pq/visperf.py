@@ -229,17 +229,18 @@ def query_cell_detail(conn, task_id: int, kernel: str, mode: str = 'kernel') -> 
 _ARCH_ORDER = ['gfx942', 'gfx950', 'gfx1201', 'gfx90a', 'gfx1100']
 
 def get_available_archs(conn, descriptor_id: str = 'flash') -> list[str]:
-    """Return arches present in the descriptor's kernel_table, in display order.
+    """Return arches that have best results, either level, in display order.
 
-    Every operator in AOTriton is backed by one or more Triton kernels, so
-    querying kernel_table filtered to tuning_level='kernel' alone yields the
-    complete set of arches the library has been built for. There is no
-    op-only arch to recover -- do not also query tuning_level='op' rows
-    "for safety"; that would just re-read the same unified table.
+    Deliberately NOT restricted to tuning_level='kernel'. Although every
+    operator is backed by Triton kernels, this table holds only what has
+    actually been tuned -- and the two levels are tuned by separate runs
+    against separate library builds. A database that has seen only op tuning
+    has no kernel rows at all, and filtering them out would report no arches
+    and hide every op result from the UI and the static export.
     """
     desc = DESCRIPTORS[descriptor_id]
     with conn.cursor() as cur:
-        cur.execute(f"SELECT DISTINCT arch FROM {desc['kernel_table']} WHERE tuning_level = 'kernel'")
+        cur.execute(f"SELECT DISTINCT arch FROM {desc['kernel_table']}")
         archs = [r[0] for r in cur.fetchall()]
     priority = {a: i for i, a in enumerate(_ARCH_ORDER)}
     return sorted(archs, key=lambda a: (priority.get(a, len(_ARCH_ORDER)), a))

@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS task_queue (
     id BIGSERIAL,
     arch TEXT NOT NULL,
     module TEXT NOT NULL,
-    tuning_level TEXT NOT NULL,               -- 'kernel' | 'op'
+    tuning_level TEXT NOT NULL CHECK (tuning_level IN ('kernel', 'op')),
     task_config JSONB NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',  -- pending/running/completed/failed/cancelled
     priority INT DEFAULT 5,
@@ -65,7 +65,7 @@ CREATE INDEX IF NOT EXISTS idx_worker_heartbeat_alive
 CREATE TABLE IF NOT EXISTS tuning_results (
     id BIGSERIAL PRIMARY KEY,
     task_id BIGINT NOT NULL,
-    tuning_level TEXT NOT NULL,
+    tuning_level TEXT NOT NULL CHECK (tuning_level IN ('kernel', 'op')),
     iface_name TEXT NOT NULL,
     impl_index INT NOT NULL,
     result TEXT NOT NULL,  -- OK/NotOK/crash/ERROR
@@ -234,7 +234,7 @@ $$ LANGUAGE plpgsql;
 CREATE TABLE IF NOT EXISTS best_tuning_results (
     task_id      BIGINT    NOT NULL,
     arch         TEXT      NOT NULL,
-    tuning_level TEXT      NOT NULL,
+    tuning_level TEXT      NOT NULL CHECK (tuning_level IN ('kernel', 'op')),
     task_config  JSONB     NOT NULL,
     iface_name   TEXT      NOT NULL,
     impl_index   INT       NOT NULL,

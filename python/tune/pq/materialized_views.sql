@@ -12,7 +12,7 @@
 CREATE TABLE IF NOT EXISTS most_accurate_tuning_results (
     task_id              BIGINT  NOT NULL,
     arch                 TEXT    NOT NULL,
-    tuning_level         TEXT    NOT NULL,
+    tuning_level         TEXT    NOT NULL CHECK (tuning_level IN ('kernel', 'op')),
     task_config          JSONB   NOT NULL,
     iface_name           TEXT    NOT NULL,
     test_case            TEXT    NOT NULL,

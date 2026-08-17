@@ -90,7 +90,9 @@ class SqlStatements:
 
     @property
     def retry_ids_file(self) -> str:
-        return 'retry_optune_ids.txt' if self.tuning_level == 'op' else 'retry_task_ids.txt'
+        # One filename for both levels: retry_missing_entries writes
+        # scratch/retry_task_ids.txt regardless of --tuning_mode.
+        return 'retry_task_ids.txt'
 
     @property
     def broken_table(self) -> str:
@@ -473,7 +475,7 @@ def write_results(conn, sql: SqlStatements, arch_results: list, incremental: boo
 # ---------------------------------------------------------------------------
 
 def _resolve_task_ids_incremental(workdir: Path, sql: SqlStatements) -> list[int]:
-    """Read task_ids from scratch/<retry_ids_file> (written by reset_broken_to_pending)."""
+    """Read task_ids from scratch/retry_task_ids.txt (written by retry_missing_entries)."""
     cache = workdir / 'scratch' / sql.retry_ids_file
     if not cache.is_file():
         raise FileNotFoundError(f'--incremental: {cache} not found; run reset_broken_to_pending first')
@@ -536,7 +538,7 @@ def main() -> None:
 
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--incremental', action='store_true',
-                      help='Only recompute task_ids listed in scratch/retry_task_ids.txt (or retry_optune_ids.txt for op mode)')
+                      help='Only recompute task_ids listed in scratch/retry_task_ids.txt')
     mode.add_argument('--fix', metavar='[HOSTNAME:]PASS',
                       help='Only recompute task_ids from broken_entries.db for the given pass')
     mode.add_argument('--ids', type=int, nargs='+', metavar='TASK_ID',

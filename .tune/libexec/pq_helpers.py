@@ -101,41 +101,13 @@ def print_summary(label: str, count: int, matches: list[dict]) -> None:
         print(f'  {status}: {n}')
 
 
-def reset_to_pending(conn, row_ids: list[int], tuning_level: str = 'kernel') -> int:
-    """
-    Reset the given task_queue ids to pending. Returns affected row count.
+def reset_to_pending(conn, row_ids: list[int], tuning_level: str) -> int:
+    """Reset the given task_queue ids to pending. Returns affected row count.
 
-    Also deletes related rows from tuning_results / most_accurate_tuning_results
-    so stale results don't contaminate future re-runs. Both tables are shared
-    by both tuning levels (modular-tune.md §4.3/§4.7) and iface_name collides
-    across levels, so the DELETEs are scoped by tuning_level in addition to
-    task_id -- there is no more separate optune_results/most_accurate_optune_results
-    pair to choose between.
+    Thin wrapper over aotriton.tune.pq.queue.TaskQueue.reset_to_pending, which
+    owns the SQL: the reset also clears the tasks' tuning_results and
+    most_accurate_tuning_results rows, and every statement is scoped by
+    tuning_level as well as id. Callers here select ids by arch/entry, which
+    both levels share, so an id list can legitimately span levels.
     """
-    if not row_ids:
-        return 0
-    results_table  = 'tuning_results'
-    accuracy_table = 'most_accurate_tuning_results'
-    with conn.cursor() as cur:
-        cur.execute(
-            f'DELETE FROM {accuracy_table} WHERE tuning_level = %s AND task_id = ANY(%s)',
-            (tuning_level, row_ids),
-        )
-        cur.execute(
-            f'DELETE FROM {results_table} WHERE tuning_level = %s AND task_id = ANY(%s)',
-            (tuning_level, row_ids),
-        )
-        cur.execute(
-            """
-            UPDATE task_queue
-               SET status       = 'pending',
-                   worker_id    = NULL,
-                   node_hostname= NULL,
-                   started_at   = NULL,
-                   completed_at = NULL,
-                   error        = NULL
-             WHERE id = ANY(%s)
-            """,
-            (row_ids,),
-        )
-        return cur.rowcount
+    return TaskQueue(conn).reset_to_pending(row_ids, tuning_level)
