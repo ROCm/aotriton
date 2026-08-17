@@ -27,6 +27,7 @@ import os
 import struct
 import sys
 import time
+from types import MappingProxyType
 
 import pytest
 
@@ -35,23 +36,37 @@ PAGE_SIZE = 4096
 _RETRY_INTERVAL = 0.05
 
 
-def _worker_count(config) -> int:
-    """Number of xdist workers in this run; 0 when not running distributed.
+# Stand-in for a process that is not an xdist worker: the controller, a plain
+# `pytest` run, or xdist not loaded at all. All three are the same thing here, so
+# one set of defaults covers them and callers never test for absence.
+#
+# 'master' is the label xdist's own worker_id fixture reports off-worker. A count
+# of 0 is an unambiguous sentinel for "not distributed": a real worker always sees
+# at least 1, and `-n 0` creates no workers and hence no workerinput.
+_NO_XDIST = MappingProxyType({'workerid': 'master', 'workercount': 0})
 
-    Deliberately NOT read from ``PYTEST_XDIST_WORKER_COUNT``. xdist sets that
-    variable inside the worker process, and this module -- being a ``pytest11``
-    entry-point plugin -- is imported during ``Config._preparse``, far earlier
-    than the collection-time import the fixture used to live in. Reading it at
-    module scope saw 0 and silently put every worker on GPU 0.
 
-    ``config.workerinput`` is xdist's own interface for this (absent in the
-    controller and in non-distributed runs) and is populated well before any
-    fixture runs, so there is no ordering to get wrong.
+def _workerinput(config):
+    """xdist's per-worker payload, with off-worker defaults filled in.
+
+    Always returns a mapping. Two keys matter, and both are deliberately sourced
+    from here rather than from the more obvious places:
+
+    ``workercount`` -- the size of the GPU pool. NOT
+    ``PYTEST_XDIST_WORKER_COUNT``: xdist sets that inside the worker process, but
+    this module is a ``pytest11`` entry-point plugin imported during
+    ``Config._preparse``, long before. Read at module scope it saw 0 and silently
+    put every worker on GPU 0. The value here is fixed at the original ``-n`` for
+    the whole run -- a crashed worker is replaced from its own spec, so the pool
+    never resizes and the page it freed stays in range for its replacement.
+
+    ``workerid`` -- the label used in announcements. NOT xdist's ``worker_id``
+    fixture: depending on it made ``gpu_id`` unresolvable whenever xdist was not
+    loaded (``-p no:xdist``, ``PYTEST_DISABLE_PLUGIN_AUTOLOAD``), including on the
+    pinned and no-xdist paths, which need nothing from xdist at all.
     """
     workerinput = getattr(config, 'workerinput', None)
-    if workerinput is None:
-        return 0  # controller process, or plain `pytest` with no -n
-    return int(workerinput['workercount'])
+    return _NO_XDIST if workerinput is None else workerinput
 
 
 def _env_pin() -> int | None:
@@ -107,12 +122,17 @@ def _gpu_lease_lockfile(tmp_path_factory):
 
 
 @pytest.fixture(scope='session')  # under xdist, "session" scope is per-worker process
-def gpu_id(request, worker_id):
+def gpu_id(request):
     """Index of the GPU this worker owns for the duration of its session.
 
     Every mode announces its choice, not just the leasing one: without it there is
     no way to confirm that GPU_LEASE_PIN actually took effect either.
+
+    Depends on no xdist fixture, so it resolves even under ``-p no:xdist``.
     """
+    workerinput = _workerinput(request.config)
+    worker_id = workerinput['workerid']
+
     # GPU_LEASE_PIN wins over everything, distributed or not: "put all work on
     # GPU n" is a debugging override and should not depend on how pytest is run.
     pinned = _env_pin()
@@ -121,7 +141,7 @@ def gpu_id(request, worker_id):
         yield pinned
         return
 
-    nworkers = _worker_count(request.config)
+    nworkers = int(workerinput['workercount'])
     if nworkers == 0:
         _announce(request.config, f'{worker_id} uses GPU 0 (no xdist, no lease)')
         yield 0

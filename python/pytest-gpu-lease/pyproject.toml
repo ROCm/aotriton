@@ -4,7 +4,8 @@
 # A standalone distribution living inside python/, which otherwise maps to the
 # `aotriton` package. Safe because the repo-root setup.py uses find_packages(), which
 # does not descend into directories lacking __init__.py -- and this directory has none.
-# See .claude/docs/pytest_gpu_lease_plan.md.
+# Keep it that way: find_namespace_packages() would sweep this package into the
+# aotriton wheel (see the note at setup.py's find_packages call).
 
 [build-system]
 requires = ["setuptools>=64"]
@@ -24,7 +25,10 @@ dependencies = [
     # the announcement silently degrades to captured-and-replayed -- pin an upper
     # bound here at that point.
     "pytest",
-    "pytest-xdist>=1.15",   # the worker_id fixture identifies the leaseholder
+    # Not imported and no fixture of its own is required (see _workerinput in
+    # plugin.py) -- but leasing is the whole point of this package, and without
+    # xdist every run silently falls back to GPU 0.
+    "pytest-xdist>=1.15",
 ]
 
 [project.entry-points.pytest11]

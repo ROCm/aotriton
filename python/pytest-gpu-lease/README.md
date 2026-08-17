@@ -50,6 +50,11 @@ All fixtures are session-scoped (per-worker process under `xdist`) and none is
 `autouse` -- the plugin stays inert until a test actually requests one of them, so it
 is safe to auto-load into GPU-less suites.
 
+None of them depends on an `xdist` fixture either. Everything needed from `xdist`
+comes from `config.workerinput`, which is simply absent when it is not loaded, so
+`gpu_id` still resolves under `-p no:xdist` or `PYTEST_DISABLE_PLUGIN_AUTOLOAD`
+(falling back to GPU 0, announced under the `master` label).
+
 ### This is infrastructure: do not prune "unused" fixtures
 
 Every fixture in the table above is public API, and the table is the contract. A fixture

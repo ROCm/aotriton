@@ -8,8 +8,8 @@ Needs no GPU: every mode either short-circuits to a plain int or exercises
 ``pytester`` fixture, with the environment fully controlled through
 ``monkeypatch`` so the outer (this) session's own env vars never leak in.
 
-See ".claude/docs/pytest_gpu_lease_plan.md", "The plugin's own test suite", for
-the rationale behind each case, in particular the worker-crash-and-restart case.
+Each case carries its own rationale in its docstring; the crash-and-restart and
+no-xdist cases are the two that guard against regressions already seen in the wild.
 """
 
 import pytest
@@ -210,3 +210,40 @@ def test_announcement_is_live_not_replayed(pytester, monkeypatch):
         "lease announcement did not reach the real stderr; capture was not suspended"
     assert not any('Captured stderr' in line for line in result.outlines), \
         "announcement was captured and replayed instead of printed live"
+
+
+def test_gpu_id_resolves_without_the_xdist_plugin(pytester, monkeypatch):
+    """`gpu_id` must resolve when xdist is not loaded at all.
+
+    Regression guard for review r3798750956: the fixture took xdist's `worker_id`
+    as a parameter, so `-p no:xdist` (or PYTEST_DISABLE_PLUGIN_AUTOLOAD) made
+    `gpu_id` unresolvable with a "fixture not found" error -- including on the
+    no-xdist and pinned paths, which need nothing from xdist. The worker label is
+    now derived from config.workerinput, which is simply absent here.
+    """
+    _clear_lease_env(monkeypatch)
+
+    pytester.makepyfile("""
+        def test_it(gpu_id, gpu_device):
+            assert gpu_id == 0
+            assert gpu_device == 'cuda:0'
+    """)
+    result = pytester.runpytest_subprocess('-p', 'no:xdist')
+    result.assert_outcomes(passed=1)
+    assert any('master uses GPU 0' in line for line in result.errlines), \
+        "off-worker runs should announce under the 'master' label"
+
+
+def test_pinned_resolves_without_the_xdist_plugin(pytester, monkeypatch):
+    """GPU_LEASE_PIN is a debugging override and must not require xdist either."""
+    _clear_lease_env(monkeypatch)
+    monkeypatch.setenv('GPU_LEASE_PIN', '3')
+
+    pytester.makepyfile("""
+        def test_it(gpu_id):
+            assert gpu_id == 3
+    """)
+    result = pytester.runpytest_subprocess('-p', 'no:xdist')
+    result.assert_outcomes(passed=1)
+    assert not list(pytester.path.rglob('gpulock')), \
+        "pinned mode must not create a lockfile"
