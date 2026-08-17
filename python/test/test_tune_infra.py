@@ -124,23 +124,25 @@ def test_cross_level_attn_fwd_iface_name_collision():
     # its op level (highest-risk area #2: iface_name collides across levels).
     # list_impls() and plain dataclass construction (unlike ENTRY_CLASS.from_dict())
     # need neither torch nor dacite, so this runs without a GPU or dacite installed.
+    #
+    # Revision note 3 (modular-tune.md): there is only ONE TuneDesc -- no
+    # per-level construction -- and list_impls() reports both levels' impls
+    # together, DSL-spelled (bare for kernel, 'op.'-prefixed for op).
     from aotriton.tune.registry import make_tune_desc
 
     entry_kwargs = dict(dtype='float16', hdim=64, seqlen_q=128, seqlen_k=128,
                          causal=False, dropout_p=0.0, bias_type=0)
 
-    kernel_tune = make_tune_desc('flash', level='kernel', modules_dir=_MODULES_DIR)
-    op_tune = make_tune_desc('flash', level='op', modules_dir=_MODULES_DIR)
+    tune = make_tune_desc('flash', modules_dir=_MODULES_DIR)
 
-    entry = kernel_tune.ENTRY_CLASS(**entry_kwargs)
-    kernel_impls = kernel_tune.list_impls(entry)
-    op_impls = op_tune.list_impls(entry)
+    entry = tune.ENTRY_CLASS(**entry_kwargs)
+    impls = tune.list_impls(entry)
 
-    assert 'attn_fwd' in kernel_impls
-    assert 'attn_fwd' in op_impls
-    # Bare names only -- never the DSL's 'op.' prefix (highest-risk area #1).
-    assert all('.' not in name for name in kernel_impls)
-    assert all('.' not in name for name in op_impls)
+    assert 'attn_fwd' in impls          # kernel level: bare, unprefixed
+    assert 'op.attn_fwd' in impls       # op level: 'op.'-prefixed DSL name
+    assert 'op.attn_bwd' in impls
+    # No accidental double-prefixing / stray dots beyond the single 'op.' marker.
+    assert all(name.count('.') <= 1 for name in impls)
 
     # The two levels' 'attn_fwd' selectors are distinguished only by the
     # ImplSelector.tuning_level field / DSL prefix, never by iface_name itself.
@@ -151,16 +153,61 @@ def test_cross_level_attn_fwd_iface_name_collision():
     assert kernel_sel.as_text() == 'attn_fwd=0'
     assert op_sel.as_text() == 'op.attn_fwd=0'
     assert kernel_sel != op_sel
+    # list_impls()'s DSL names round-trip through the same split/dsl_name
+    # primitives ImplSelector itself uses.
+    assert kernel_sel.dsl_name in impls
+    assert op_sel.dsl_name in impls
 
 
-def test_flash_tune_bogus_level_raises():
-    # TuningDescription.__init__ validates `level` against the subclass's
-    # LEVELS dict and must reject anything else instead of silently building
-    # a half-initialized description (modular-tune.md §5 step 14).
+def test_flash_tune_get_impl_dispatches_on_prefix():
+    # Revision note 3: get_impl() takes a plain DSL name (never an
+    # ImplSelector) and dispatches internally on the 'op.' prefix, lazily
+    # importing whichever provider module (level_kernel.py / level_op.py)
+    # owns that level. Neither provider module needs torch/pyaotriton at
+    # import time for its list_impls()/get_impl() top-level dispatch machinery
+    # -- but the actual impl objects they build (_build_kernel_dict /
+    # _build_op_dict) DO need pyaotriton, so resolving either name here is
+    # expected to fail with ImportError in this no-pyaotriton environment.
+    # That failure -- not a silent success -- is exactly what this test
+    # checks: both prefixes route to *some* provider and fail for the
+    # *expected* reason (missing pyaotriton), not because the dispatch itself
+    # is broken.
     from aotriton.tune.registry import make_tune_desc
 
-    with pytest.raises(ValueError):
-        make_tune_desc('flash', level='bogus', modules_dir=_MODULES_DIR)
+    tune = make_tune_desc('flash', modules_dir=_MODULES_DIR)
+    try:
+        import pyaotriton  # noqa: F401
+        pytest.skip('pyaotriton is installed; dispatch-failure path not exercisable here')
+    except ImportError:
+        pass
+
+    with pytest.raises(ImportError) as kernel_exc:
+        tune.get_impl('attn_fwd')
+    assert 'attn_fwd' in str(kernel_exc.value)
+
+    with pytest.raises(ImportError) as op_exc:
+        tune.get_impl('op.attn_fwd')
+    assert 'op.attn_fwd' in str(op_exc.value)
+
+
+def test_flash_tune_get_impl_unknown_prefix_raises_clearly():
+    from aotriton.tune.registry import make_tune_desc
+
+    tune = make_tune_desc('flash', modules_dir=_MODULES_DIR)
+    with pytest.raises(ValueError, match='bogus_level'):
+        tune.get_impl('bogus_level.attn_fwd')
+
+
+def test_flash_tune_get_impl_unknown_name_raises_clearly():
+    from aotriton.tune.registry import make_tune_desc
+
+    tune = make_tune_desc('flash', modules_dir=_MODULES_DIR)
+    try:
+        import pyaotriton  # noqa: F401
+    except ImportError:
+        pytest.skip('needs pyaotriton to reach the per-name KeyError past the library import')
+    with pytest.raises(KeyError):
+        tune.get_impl('not_a_real_iface')
 
 
 def test_schema_sql_ddl_parses_and_iface_name_columns_carry_tuning_level():

@@ -13,7 +13,7 @@ import torch
 @pytest.mark.parametrize('module', ['flash'])
 def test_exaid(module, gpu_id):
     level = 'kernel'
-    exaid = exaid_create(module, level, gpu_id)
+    exaid = exaid_create(module, gpu_id)
     entry = {"dtype": "float16", "hdim": 32, "seqlen_q": 256, "seqlen_k": 128, "causal": False, "dropout_p": 0.5, "bias_type": 0}
     tmpdir = exaid.get_tmpfs_for(entry)
     exaid.prepare_data(entry, tmpdir)
