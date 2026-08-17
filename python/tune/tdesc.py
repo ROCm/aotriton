@@ -45,14 +45,13 @@ IMPORTANT — lazy kernel initialization rule for get_impl():
 
 @dataclass
 class ImplSelector:
-    """Unified impl-selector DSL (modular-tune.md §4.2, Revision note 3):
+    """The impl-selector DSL:
     `[<tuning_level> '.'] <iface_name> '=' <impl_index>`.
 
     A single three-field dataclass shared by every tuning level of every
-    family. `tuning_level` defaults to 'kernel' and its prefix is omitted by
-    as_text() in that case, so plain kernel-level selector text is unchanged
-    from before ('attn_fwd=3'); op-level selectors are prefixed
-    ('op.attn_fwd=1').
+    family. `tuning_level` defaults to 'kernel' and as_text() omits its
+    prefix in that case, so kernel-level selectors are plain
+    ('attn_fwd=3') and op-level ones are prefixed ('op.attn_fwd=1').
 
     IMPORTANT: the `op.` (or any non-kernel level's) prefix is surface syntax
     ONLY -- it must never reach storage. `TuningDescription.list_impls()`
@@ -61,7 +60,7 @@ class ImplSelector:
 
     `ImplSelector` is the DSL/wire parser used by `testrun`, `exaid` and
     `localq.handlers` -- it is deliberately NOT part of `TuningDescription`'s
-    API (Revision note 3 item 3/4): `list_impls`/`get_impl`/`probe_all_impls`
+    API: `list_impls`/`get_impl`/`probe_all_impls`
     all take the plain DSL name string (e.g. 'attn_fwd' or 'op.attn_fwd'),
     never an `ImplSelector` instance. `split_dsl_name()` below is the shared
     primitive both sides use: `ImplSelector.parse_text()` uses it to split the
@@ -101,9 +100,9 @@ class ImplSelector:
 
 
 class TuningDescription(ABC):
-    """Lists and resolves all impls of a family directly, keyed by DSL name
-    (modular-tune.md Revision note 3 item 1). There is no intermediate
-    per-level strategy object: each family's `TuningDescription` subclass
+    """Lists and resolves all impls of a family directly, keyed by DSL name.
+
+    There is no intermediate per-level strategy object: each family's subclass
     (e.g. flash's `FlashTune`) implements `list_impls`/`get_impl`/
     `_do_probe_all_impls`/`probe_impl_desc` itself, dispatching internally on
     the DSL name's prefix (`ImplSelector.split_dsl_name()`).
@@ -235,7 +234,7 @@ class TuningDescription(ABC):
         default); every other level is prefixed `f'{level}.'`.
 
         Must be answerable without a GPU/torch/pyaotriton -- this is pure
-        entry-based enumeration (Revision note 3 item 4)."""
+        entry-based enumeration."""
         pass
 
     @abstractmethod
@@ -267,8 +266,7 @@ class TuningDescription(ABC):
         DELIBERATELY overlaps with probe_all_impls()/_do_probe_all_impls() --
         do not "optimise" this away by threading probe_all_impls()'s psels/
         copts through the dispatcher-to-GPU-worker fanout message instead of
-        calling this. That trade was considered and rejected (Revision note 3
-        item 6):
+        calling this. That trade was considered and rejected:
           (a) it double-confirms the impl_desc actually run, independent of
               whatever the earlier enumeration pass said would be there;
           (b) it keeps the dispatcher<->GPU-worker IPC to a single
@@ -297,13 +295,13 @@ class TuningDescription(ABC):
         """Enumerate the candidate implementation variants (e.g. HSACO
         indices for a kernel-level impl, backend indices for an op-level
         impl) for the DSL name `which_impl`. One dict per candidate, in
-        impl_index order. Was `TuningDescription._do_probe_backends`."""
+        impl_index order."""
         pass
 
     def probe_all_impls(self, root: Path, which_impl: str) -> list[dict]:
-        """Was `probe_backends` (Revision note 3 item 5, keeps the "probe"
-        terminology). `which_impl` is a DSL-spelled name, e.g. 'attn_fwd' or
-        'op.attn_fwd' -- as returned by `list_impls()`."""
+        """Enumerate every candidate variant of one interface. `which_impl` is
+        a DSL-spelled name, e.g. 'attn_fwd' or 'op.attn_fwd', as returned by
+        `list_impls()`."""
         entry, tests = self.get_entry(root, and_tests=True)
         test = tests[0]
         im = self.INPUT_METADATA.from_dict(test["input_metadata"])

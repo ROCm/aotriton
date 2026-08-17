@@ -5,11 +5,10 @@
 """
 Populate the most_accurate_tuning_results plain table.
 
-Unified (modular-tune.md §4.3/§4.7): a single most_accurate_tuning_results
-table (no more most_accurate_optune_results) serves both tuning levels;
-tuning_level ('kernel' | 'op', selected by --tuning_mode) is a filter column
-on tuning_results, not a table-name switch. iface_name replaces the old
-kernel_name/op_name column pair.
+One most_accurate_tuning_results table serves both tuning levels. Rows are
+keyed by iface_name, and tuning_level ('kernel' | 'op', selected by
+--tuning_mode) is a filter column on tuning_results rather than a table-name
+switch.
 
 Full mode (no task_ids):
     CREATE TEMP TABLE AS SELECT (CTAS) into a scratch table scoped to this
@@ -17,7 +16,7 @@ Full mode (no task_ids):
     serializes because INSERT is parallel-restricted. Then, in one
     transaction: DELETE this run's tuning_level slice from the real table
     (NOT DROP TABLE -- most_accurate_tuning_results is shared by both tuning
-    levels now, so a full 'kernel' run must not discard 'op' rows and vice
+    levels, so a full 'kernel' run must not discard 'op' rows and vice
     versa) and INSERT...SELECT from the temp table (cheap: a plain scan, not
     the JSONB lateral-join aggregation, so the INSERT parallel-restriction
     doesn't matter here).
@@ -41,10 +40,10 @@ import psycopg
 from ..utils import get_db_connection_params
 
 class SqlStatements:
-    """Table/column names are fixed (unified schema); only tuning_level
-    varies with --tuning_mode, and every query against tuning_results /
-    most_accurate_tuning_results must filter on it since iface_name collides
-    across levels (modular-tune.md §4.3/§4.7)."""
+    """Table and column names are fixed; only tuning_level varies with
+    --tuning_mode. Every query against tuning_results /
+    most_accurate_tuning_results must filter on it, because iface_name
+    collides across levels (e.g. 'attn_fwd' is valid at both)."""
 
     table_name = 'most_accurate_tuning_results'
     key_col = 'iface_name'
@@ -111,7 +110,7 @@ def populate(conn, task_ids: list[int] | None = None, tuning_mode: str = 'kernel
         task_ids:     If None, full CTAS-into-temp-table then swap (parallel).
                       If given, DELETE + INSERT for those task_ids only (small, serial ok).
         tuning_mode:  'kernel' | 'op' -- selects the tuning_level filter applied
-                      to tuning_results (the single unified results table).
+                      to tuning_results.
 
     Returns:
         Number of rows produced (rowcount after the swap-INSERT or plain INSERT).
@@ -190,7 +189,7 @@ def main() -> None:
         '--tuning_mode',
         choices=['kernel', 'op'],
         default='kernel',
-        help='Selects the tuning_level filter applied to the unified tuning_results table',
+        help='Selects the tuning_level filter applied to tuning_results',
     )
     args = parser.parse_args()
 

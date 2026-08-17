@@ -3,20 +3,7 @@
 # SPDX-License-Identifier: MIT
 
 # Initialize PostgreSQL database schema for Tuner v3.5
-# Usage: initdb <workdir> [--recreate] [--force]
-#
-# Phase 2 (modularization unification, modular-tune.md §5 step 6): schema.sql
-# is a FRESH schema, not a migration -- `optune_results`, `best_optune_results`
-# and `most_accurate_optune_results` are gone outright, and `tuning_results` /
-# `best_tuning_results` gained a `kernel_name`-incompatible column layout
-# (`iface_name`/`impl_index`/`tuning_level` replace `kernel_name`/`hsaco_index`
-# and `op_name`/`backend_index`). Applying this schema.sql against a workdir
-# that still has the OLD pre-Phase-2 schema silently discards the ability to
-# recompute best/most-accurate results from raw rows (see modular-tune.md's
-# "Operational consequence, stated plainly" note). `--force` makes that
-# discard a deliberate, explicit choice instead of an accident: initdb refuses
-# to proceed if it detects the old schema's `tuning_results.kernel_name`
-# column and `--force` was not given.
+# Usage: initdb <workdir> [--recreate]
 
 set -e
 
@@ -30,13 +17,11 @@ WORKDIR="$1"
 shift || true
 
 RECREATE_FLAG=""
-FORCE_FLAG=""
 for arg in "$@"; do
     case "$arg" in
         --recreate) RECREATE_FLAG="--recreate" ;;
-        --force)    FORCE_FLAG="--force" ;;
         *)
-            echo "Usage: $0 <workdir> [--recreate] [--force]" >&2
+            echo "Usage: $0 <workdir> [--recreate]" >&2
             echo "Error: unrecognized argument: $arg" >&2
             exit 1
             ;;
@@ -44,7 +29,7 @@ for arg in "$@"; do
 done
 
 if [ -z "$WORKDIR" ]; then
-    echo "Usage: $0 <workdir> [--recreate] [--force]" >&2
+    echo "Usage: $0 <workdir> [--recreate]" >&2
     exit 1
 fi
 
@@ -79,41 +64,6 @@ PSQL_IMAGE="alpine/psql:${POSTGRES_VERSION}"
 # Default to localhost and standard port since containers use --network=host
 POSTGRES_HOST="${CELERY_SERVICE_HOST:-localhost}"
 POSTGRES_PORT="${POSTGRES_PORT:-5432}"
-
-# Guard: refuse to run against a database that still has the OLD pre-Phase-2
-# schema (detected via tuning_results.kernel_name, a column this fresh
-# schema.sql no longer defines) unless --force is explicitly given. This is
-# checked BEFORE --recreate's destructive DROP SCHEMA, so a stale database is
-# never touched by accident. A local psql client is not assumed to be
-# present, so the guard query reuses the same containerized PSQL_IMAGE as the
-# rest of the script; if the database/table does not exist yet (first-ever
-# initdb run) the query fails harmlessly and the guard is a no-op.
-OLD_SCHEMA_CHECK=$(docker run --rm \
-    --network=host \
-    -e PGPASSWORD="$POSTGRES_PASSWORD" \
-    "$PSQL_IMAGE" \
-    postgresql://"$POSTGRES_USER"@"$POSTGRES_HOST":"$POSTGRES_PORT" \
-    -t -A \
-    -c "SELECT 1 FROM information_schema.columns WHERE table_name = 'tuning_results' AND column_name = 'kernel_name';" \
-    2>/dev/null || true)
-
-if [ "$(echo "$OLD_SCHEMA_CHECK" | tr -d '[:space:]')" = "1" ] && [ -z "$FORCE_FLAG" ]; then
-    echo "Error: existing database still has the old pre-Phase-2 schema" >&2
-    echo "       (tuning_results.kernel_name column found)." >&2
-    echo "       This schema.sql is a fresh schema, not a migration:" >&2
-    echo "       optune_results/best_optune_results/most_accurate_optune_results" >&2
-    echo "       are dropped outright, and tuning_results/best_tuning_results are" >&2
-    echo "       recreated with iface_name/impl_index/tuning_level columns." >&2
-    echo "       Applying it discards all prior tuning results; re-tuning is" >&2
-    echo "       required for every arch afterwards." >&2
-    echo "" >&2
-    echo "       Run '.tune/bin/export_best_results' first if you have not" >&2
-    echo "       already exported centraldb.sqlite3 / op_database.sqlite3 --" >&2
-    echo "       those artifacts are unaffected by this schema change." >&2
-    echo "" >&2
-    echo "       Re-run with --force once you have confirmed this is deliberate." >&2
-    exit 1
-fi
 
 # Drop all tables if --recreate flag is set
 if [ "$RECREATE_FLAG" = "--recreate" ]; then

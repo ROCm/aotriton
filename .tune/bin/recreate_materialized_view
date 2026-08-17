@@ -3,14 +3,14 @@
 # SPDX-License-Identifier: MIT
 
 # (Re)populate the most_accurate_tuning_results plain table for one tuning
-# level. Unified schema (modular-tune.md §4.3/§4.7): this single table is
-# shared by both 'kernel' and 'op' tuning_level rows (there is no more
-# separate most_accurate_optune_results table), so this script must NOT
-# DROP the table -- that would destroy the other level's rows too. Instead
-# it only ensures the table/index exist (idempotent CREATE TABLE/INDEX IF
-# NOT EXISTS), then delegates the actual full replace to
-# populate_most_accurate.py, which scopes its DELETE+INSERT to this run's
-# tuning_level via a session-local CTAS-into-temp-table swap.
+# level.
+#
+# One table holds both 'kernel' and 'op' tuning_level rows, so this script
+# must NOT DROP it -- that would destroy the other level's rows along with
+# this one's. It only ensures the table and index exist (idempotent CREATE
+# ... IF NOT EXISTS), then delegates the replace to populate_most_accurate.py,
+# which scopes its DELETE+INSERT to this run's tuning_level via a
+# session-local CTAS-into-temp-table swap.
 #
 # Usage:
 #   recreate_materialized_view <workdir> [--tuning_mode kernel|op]
@@ -62,8 +62,7 @@ PSQL_IMAGE="alpine/psql:${POSTGRES_VERSION}"
 POSTGRES_HOST="${CELERY_SERVICE_HOST:-localhost}"
 POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 
-# Fixed: the unified table name is the same regardless of --tuning_mode;
-# there is no more separate most_accurate_optune_results table to pick.
+# One table serves every tuning_level; --tuning_mode selects rows, not tables.
 TABLE_NAME="most_accurate_tuning_results"
 
 SQL_FILE="$REPO_ROOT/python/tune/pq/materialized_views.sql"

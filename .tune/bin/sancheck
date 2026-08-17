@@ -120,10 +120,9 @@ mkdir -p "$WORKDIR/scratch"
 echo "Sanity check report: $REPORT"
 
 # generate.py has no --tuning_mode concept of its own: without --selective it
-# walks every family/codegen_module (flash's kernels AND flash's operators,
-# both under the single unified 'flash' module now) in one pass. Scope to
-# just the one being checked via unique_path's <family>/<codegen_module>/<name>
-# convention.
+# walks every family/codegen_module -- flash's kernels and its operators
+# alike -- in one pass. Scope it to just the one being checked, via
+# unique_path's <family>/<codegen_module>/<name> convention.
 # TODO: extend when additional families (e.g. gemm) are added.
 if [ "$TUNING_MODE" = "op" ]; then
     SELECTIVE_ARGS=(--selective 'flash/op/*')

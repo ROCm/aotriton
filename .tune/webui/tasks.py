@@ -358,13 +358,12 @@ def get_debug_task_data(workdir, task_id: int) -> dict:
                 cur.execute("SELECT * FROM task_queue WHERE id = %s", (task_id,))
                 task = cur.fetchone()
 
-                # tuning_results/best_tuning_results/most_accurate_tuning_results are
-                # unified across tuning_level ('kernel' | 'op') as of the Phase 2
-                # schema (iface_name/impl_index replace kernel_name/hsaco_index and
-                # op_name/backend_index; optune_results/best_optune_results tables no
-                # longer exist). task_id already implies exactly one tuning_level (via
-                # its task_queue row), so filtering here is a defensive/explicit split
-                # into the two display sections below, not a correctness requirement.
+                # tuning_results/best_tuning_results/most_accurate_tuning_results each
+                # hold both tuning_level values ('kernel' | 'op'), keyed by
+                # iface_name/impl_index. A task_id already implies exactly one
+                # tuning_level via its task_queue row, so the filter below is an
+                # explicit split into the two display sections rather than a
+                # correctness requirement.
                 cur.execute(
                     "SELECT id, task_id, tuning_level, iface_name, impl_index, result,"
                     " result_data, error, gpu_id, created_at FROM tuning_results"
@@ -390,9 +389,10 @@ def get_debug_task_data(workdir, task_id: int) -> dict:
                 )
                 accurate_results = cur.fetchall()
 
-                # Op-level view of the same unified tables (dict keys below keep the
-                # informal 'optune_results'/'best_optune_results' labels for
-                # template-compatibility; the underlying SQL is the unified schema).
+                # Op-level view of the same tables. The dict keys below keep the
+                # informal 'optune_results'/'best_optune_results' labels the
+                # templates expect; both queries read tuning_results /
+                # best_tuning_results.
                 cur.execute(
                     "SELECT id, tuning_level, iface_name, impl_index, result, result_data,"
                     " error, gpu_id, created_at FROM tuning_results"
