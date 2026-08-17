@@ -7,13 +7,16 @@ Tuning module registry.
 Loads `modules/<family>/tune/` BY PATH under a synthetic top-level name
 (mirroring `python/codegen/parser.py`'s `load_family_aot`), and resolves the
 flat family names used throughout the tuning CLI/queue (`'flash'`, ...) to the
-loaded package that exports `TuneDesc` / `ImplSelector` / `LEVELS`.
+loaded package that exports `TuneDesc` / `ImplSelector`.
 
 Phase 2 (modularization unification, modular-tune.md §4.1-§4.3): the
 Phase-1 `flash`/`flash_op` module-name split is gone. Each family now exposes
-ONE `TuneDesc` (a `TuningDescription` subclass) with a `tuning_level` axis
-('kernel' | 'op', ...) selected via `TuneDesc(level=...)` -- so the registry
-only needs to resolve a bare family name, not a (family, submodule) pair.
+ONE `TuneDesc` (a `TuningDescription` subclass) -- so the registry only needs
+to resolve a bare family name, not a (family, submodule) pair.
+
+Revision note 3: `TuneDesc` takes no `level=`/tuning-level constructor
+argument -- it lists and resolves impls of every tuning level directly, keyed
+by DSL name (see `aotriton.tune.tdesc.TuningDescription`).
 """
 
 import os
@@ -95,8 +98,8 @@ def load_family_tune(family: str, modules_dir: 'Path | None' = None):
 
 def load_tune_module(module_name: str, modules_dir: 'Path | None' = None):
     """Resolve a flat family name (e.g. `'flash'`) to its tune package under
-    `modules/<family>/tune/`. The returned package exports `TuneDesc`,
-    `ImplSelector` and `LEVELS`.
+    `modules/<family>/tune/`. The returned package exports `TuneDesc` and
+    `ImplSelector`.
 
     Kept as a thin alias of `load_family_tune` (same signature/behavior) for
     call-site compatibility with pre-unification code that spoke of "tuning
@@ -111,10 +114,10 @@ def load_tune_module(module_name: str, modules_dir: 'Path | None' = None):
     return load_family_tune(module_name, modules_dir=modules_dir)
 
 
-def make_tune_desc(family: str, level: str = 'kernel', modules_dir: 'Path | None' = None):
-    """Convenience: resolve `family` and construct its `TuneDesc(level=level)`
-    in one call."""
-    return load_family_tune(family, modules_dir=modules_dir).TuneDesc(level=level)
+def make_tune_desc(family: str, modules_dir: 'Path | None' = None):
+    """Convenience: resolve `family` and construct its `TuneDesc()` in one
+    call."""
+    return load_family_tune(family, modules_dir=modules_dir).TuneDesc()
 
 
 def load_flash_entry_module(modules_dir: 'Path | None' = None):
