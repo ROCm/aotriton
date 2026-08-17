@@ -11,6 +11,7 @@ Returns dicts ready for JSON serialization by the webui or export script.
 from psycopg.rows import dict_row
 
 from .vis_descriptors import DESCRIPTORS
+from ..tdesc import ImplSelector
 
 
 def _build_query(desc: dict, arch: str, kernel_or_op: str, mode: str,
@@ -112,9 +113,13 @@ def query_all_best_results(conn, descriptor_id: str = 'flash') -> dict:
     Returns:
         {
           arch: {
-            kernel: {arch, kernel, axes, rows}
+            dsl_name: {arch, kernel, axes, rows}
           }
         }
+
+    Keyed by DSL name ('attn_fwd', 'op.attn_fwd'), not by bare iface_name:
+    iface_name collides across tuning levels, so bare keys would let the op
+    entry overwrite the kernel one for the same interface.
     """
     desc = DESCRIPTORS[descriptor_id]
 
@@ -125,17 +130,14 @@ def query_all_best_results(conn, descriptor_id: str = 'flash') -> dict:
     result: dict[str, dict[str, dict]] = {}
     for arch in archs:
         result[arch] = {}
-        for kernel in desc['kernels']:
-            data = query_best_results(conn, arch, kernel, mode='kernel',
-                                      descriptor_id=descriptor_id)
-            if data['rows']:
-                result[arch][kernel] = data
-
-        for op in desc['ops']:
-            data = query_best_results(conn, arch, op, mode='op',
-                                      descriptor_id=descriptor_id)
-            if data['rows']:
-                result[arch][op] = data
+        for level, ifaces in (('kernel', desc['kernels']), ('op', desc['ops'])):
+            for iface_name in ifaces:
+                data = query_best_results(conn, arch, iface_name, mode=level,
+                                          descriptor_id=descriptor_id)
+                if data['rows']:
+                    key = ImplSelector(tuning_level=level,
+                                       iface_name=iface_name).dsl_name
+                    result[arch][key] = data
 
     return result
 

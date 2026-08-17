@@ -248,10 +248,18 @@ class PGReaderWorker:
                 logger.info(f"PG Reader {self.worker_id} fetched task from database: "
                            f"id={task.id}, arch={task.arch}, module={task.module}, "
                            f"tuning_level={task.tuning_level}, status=pending→running")
-                task_config = task.task_config
+                # Stamp the level from the task_queue column into task_config.
+                # run() forwards only task_config to the handlers, and the
+                # column -- not the JSON -- is the authoritative value: it is
+                # what fetch_tasks() filtered on and what the assert above
+                # checked. Task-creating APIs (pq.dispatcher.dispatch_tasks)
+                # take tuning_level as a top-level field and are not obliged
+                # to duplicate it inside task_config, so copying it here is
+                # what stops an op task from being executed as kernel-level.
+                task_config = dict(task.task_config)
+                task_config['tuning_level'] = task.tuning_level
                 extra_im_texts = get_extra_uts(self.db_conn, task.id)
                 if extra_im_texts:
-                    task_config = dict(task_config)
                     task_config['extra_im_texts'] = extra_im_texts
                     logger.info(f"Loaded {len(extra_im_texts)} extra UTs for task_id={task.id}")
                 return {

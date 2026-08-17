@@ -209,7 +209,7 @@ def get_tuning_progress(workdir):
                     FROM task_queue
                     WHERE status = 'completed'
                       AND completed_at > NOW() - INTERVAL '5 minutes'
-                      AND module NOT LIKE '%_op'
+                      AND tuning_level = 'kernel'
                     GROUP BY arch
                 """)
                 kernel_speed_rows = cur.fetchall()
@@ -219,7 +219,7 @@ def get_tuning_progress(workdir):
                     FROM task_queue
                     WHERE status = 'completed'
                       AND completed_at > NOW() - INTERVAL '5 minutes'
-                      AND module LIKE '%_op'
+                      AND tuning_level = 'op'
                     GROUP BY arch
                 """)
                 op_speed_rows = cur.fetchall()
@@ -229,7 +229,7 @@ def get_tuning_progress(workdir):
                     FROM task_queue
                     WHERE status = 'running'
                       AND EXTRACT(EPOCH FROM (NOW() - started_at)) > 7200
-                      AND module NOT LIKE '%_op'
+                      AND tuning_level = 'kernel'
                     GROUP BY arch
                 """)
                 kernel_stale_rows = cur.fetchall()
@@ -239,7 +239,7 @@ def get_tuning_progress(workdir):
                     FROM task_queue
                     WHERE status = 'running'
                       AND EXTRACT(EPOCH FROM (NOW() - started_at)) > 7200
-                      AND module LIKE '%_op'
+                      AND tuning_level = 'op'
                     GROUP BY arch
                 """)
                 op_stale_rows = cur.fetchall()
@@ -319,8 +319,8 @@ def resolve_tune_entry(workdir, line: str) -> dict:
     from dataclasses import asdict
     d = asdict(entry)
 
-    clauses = ["task_config->>'arch' = %s", "module NOT LIKE %s"]
-    params: list = [arch, '%_op']
+    clauses = ["task_config->>'arch' = %s", "tuning_level = %s"]
+    params: list = [arch, 'kernel']
     for field, value in d.items():
         col = f"task_config->'entry'->>'{field}'"
         if isinstance(value, bool):

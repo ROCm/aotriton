@@ -184,7 +184,11 @@ class ProbeHandler(MessageHandler):
         task_config = message['task_config']
         task_id = message['task_id']
         module = task_config['module']
-        level = task_config.get('tuning_level', 'kernel')
+        # No default: pg_reader_worker stamps the authoritative task_queue
+        # column into task_config, so a missing key means the task did not
+        # come through that path and guessing 'kernel' would silently run an
+        # op task at the wrong level.
+        level = task_config['tuning_level']
 
         exaid = exaid_create(module, self.gpu_id)
         tmpdir = Path(task_config['tmpdir'])
@@ -231,9 +235,15 @@ class ProbeHandler(MessageHandler):
                 logger.error(f"Probe reported an unresolvable impl {dsl_name!r} for "
                             f"task_id={task_id}: {variants['error']}")
                 continue
-            if len(variants) <= 1:
+            # A single candidate is only skippable at op level, where one
+            # backend means there is genuinely nothing to choose between.
+            # Kernel level must still benchmark a lone HSACO: its row is what
+            # feeds most_accurate_tuning_results and best_tuning_results, so
+            # skipping it would drop that interface out of the accuracy and
+            # best-results pipeline entirely.
+            if level == 'op' and len(variants) <= 1:
                 logger.info(f"Skipping iface_name={iface_name} for task_id={task_id}: "
-                           f"only {len(variants)} variant(s), no tuning needed")
+                           f"only {len(variants)} backend(s), no tuning needed")
                 continue
             max_h = max_hsaco_dict.get(iface_name, max_hsaco_global)
             limited = variants[:max_h] if max_h else variants
@@ -293,7 +303,11 @@ class TuneImplHandler(MessageHandler):
         impl_index = message['impl_index']
 
         module = task_config['module']
-        level = task_config.get('tuning_level', 'kernel')
+        # No default: pg_reader_worker stamps the authoritative task_queue
+        # column into task_config, so a missing key means the task did not
+        # come through that path and guessing 'kernel' would silently run an
+        # op task at the wrong level.
+        level = task_config['tuning_level']
         exaid = exaid_create(module, self.gpu_id)
         tmpdir = Path(task_config['tmpdir'])
 
