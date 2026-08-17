@@ -31,9 +31,8 @@ class ExaidSubprocessNotOK(RuntimeError):
 
 class ExaidProxy(object):
     ENTRY = testrun_entry
-    def __init__(self, module_name, level, gpu_id):
+    def __init__(self, module_name, gpu_id):
         self._module_name = module_name
-        self._level = level
         self._gpu_id = gpu_id
         self._process = None
         self._last_error = None
@@ -45,9 +44,9 @@ class ExaidProxy(object):
     def process(self):
         if self._process is None:
             args = ['python', '-m', 'aotriton.tune.testrun',
-                    self._module_name, self._level, '--gpu', str(self._gpu_id)]
+                    self._module_name, '--gpu', str(self._gpu_id)]
             logger.info(f"Starting exaid worker process: module={self._module_name}, "
-                       f"level={self._level}, gpu={self._gpu_id}")
+                       f"gpu={self._gpu_id}")
             self._process = subprocess.Popen(args,
                                              stdin=subprocess.PIPE,
                                              stdout=subprocess.PIPE,
@@ -111,12 +110,17 @@ class ExaidProxy(object):
             self._process = None
 
 class ExaidWorker(object):
+    """Programmatic (DAG-driven) consumer of a `testrun` subprocess. Unlike
+    `testrun`, callers here (localq's handlers.py) DO carry a tuning_level --
+    but it lives in `task_config['tuning_level']`, not on this class, and it
+    is threaded into `probe()` as a per-call filter argument, never stored as
+    worker state (Revision note 3)."""
+
     TMPFS_LOCATION = Path('/dev/shm/aotriton-tuner')
     _cache = {}
 
-    def __init__(self, module_name: str, level: str, gpu_id: int):
+    def __init__(self, module_name: str, gpu_id: int):
         self._module_name = module_name
-        self._level = level
         self._module = None
         self._gpu_id = gpu_id
         self._proxy = None
@@ -135,11 +139,11 @@ class ExaidWorker(object):
     @property
     def proxy(self):
         if self._proxy is None:
-            self._proxy = ExaidProxy(self._module_name, self._level, self._gpu_id)
+            self._proxy = ExaidProxy(self._module_name, self._gpu_id)
         return self._proxy
 
     def entry_from_dict(self, entry_dict: dict):
-        tune = self.module.TuneDesc(level=self._level)
+        tune = self.module.TuneDesc()
         return tune.ENTRY_CLASS.from_dict(entry_dict)
 
     def get_tmpfs_for(self, entry_dict):
@@ -154,9 +158,20 @@ class ExaidWorker(object):
         logger.info(f"prepare_data completed: {result}")
         return result
 
-    def probe(self, workdir: Path, arch: str | None = None):
-        logger.info(f"probe: workdir={workdir} arch={arch}")
-        self.proxy.write('probe', workdir.as_posix(), arch or '')
+    def probe(self, workdir: Path, arch: str | None = None, tuning_level: str | None = None):
+        """
+        Args:
+            tuning_level: optional per-call filter (e.g. 'kernel' or 'op'),
+                NOT worker state -- passed straight through to `testrun`'s
+                `probe` command as a third wire token. Callers driving a task
+                (e.g. localq's ProbeHandler) pass `task_config['tuning_level']`
+                here so a worker only probes what its container's library can
+                serve; filtering happens on this call, before `testrun`
+                attempts any import, not by post-hoc filtering this method's
+                return value.
+        """
+        logger.info(f"probe: workdir={workdir} arch={arch} tuning_level={tuning_level}")
+        self.proxy.write('probe', workdir.as_posix(), arch or '', tuning_level or '')
         result = json.loads(self.proxy.readinfo())
         logger.info(f"probe completed: found {len(result)} kernels")
         return result
@@ -181,10 +196,10 @@ class ExaidWorker(object):
         self.proxy.write("exit")
         self.proxy.join()
 
-def exaid_create(module_name, level, gpu_id):
-    key = (module_name, level, gpu_id)
+def exaid_create(module_name, gpu_id):
+    key = (module_name, gpu_id)
     if key not in ExaidWorker._cache:
-        ExaidWorker._cache[key] = ExaidWorker(module_name, level, gpu_id)
+        ExaidWorker._cache[key] = ExaidWorker(module_name, gpu_id)
     return ExaidWorker._cache[key]
 
 def exaid_exitall():
