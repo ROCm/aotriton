@@ -431,10 +431,15 @@ def test_family_static_route_guards_traversal_and_unknown_family():
     app.register_blueprint(routes.bp)
 
     with app.test_request_context():
-        # Legitimate family + file: served successfully.
+        # Legitimate family + file: served successfully. send_from_directory
+        # streams the file, so the response is in direct-passthrough mode and
+        # get_data() refuses to materialise it; read the body off the iterable
+        # instead of forcing a sequence conversion.
         resp = routes.family_static('flash', 'flash.js')
-        data = resp.get_data() if hasattr(resp, 'get_data') else resp
-        assert b'registerDescriptor' in data
+        assert resp.status_code == 200
+        body = b''.join(resp.response)
+        resp.close()
+        assert b'registerDescriptor' in body
 
         # Unregistered family: 404s via the registry whitelist, before ever
         # touching the filesystem (e.g. '..' is never a registered family).
