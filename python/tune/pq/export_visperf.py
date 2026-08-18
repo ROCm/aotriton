@@ -68,13 +68,11 @@ def _read_required(path: Path, what: str, *, packaged: bool) -> str:
     silent-JS-less-page failure mode: a missing file must raise here, not
     quietly produce a broken export.
 
-    `packaged` picks the right explanation for *why* the file might be
-    missing: `_TEMPLATE`/`_PERF_JS` are `aotriton.tune.pq` package data (see
-    setup.py), so their absence means a broken/incomplete install, not a
-    missing checkout. Family JS is the opposite -- `modules/` is
-    deliberately never shipped inside the package (see setup.py, and
-    registry.default_modules_dir()'s docstring) -- so it needs a source
-    checkout or an explicit `AOTRITON_MODULES_DIR`.
+    `packaged` picks the right explanation for *why* it might be missing.
+    The template is `aotriton.tune.pq` package data, so its absence means a
+    broken install. perf.js and the family JS live in `.tune/` and `modules/`,
+    neither of which is ever shipped, so theirs means a missing or misnamed
+    checkout root.
     """
     if not path.is_file():
         if packaged:

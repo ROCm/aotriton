@@ -17,16 +17,8 @@ import zipfile
 from pathlib import Path
 
 from aotriton.tune.registry import default_modules_dir
-import aotriton.tune.pq as _pq
 
 from . import tasks
-
-# aotriton.tune.pq's packaged static assets (perf.js): shipped inside the
-# installed `aotriton` package itself (setup.py's package_data), unlike
-# modules/<family>/visperf/static/ (see family_static below, and
-# export_visperf.py's module docstring for why perf.js lives here rather
-# than under .tune/webui/static/).
-_PKG_STATIC_DIR = Path(_pq.__file__).resolve().parent / 'static'
 
 bp = Blueprint('main', __name__)
 
