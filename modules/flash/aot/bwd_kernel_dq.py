@@ -12,12 +12,14 @@ but the operator/golden call it `stride_bk`; ATI emits the real name in the cosm
 pp_args comment (the access expression is identical).
 """
 
+import itertools
 from dataclasses import dataclass
 
 import numpy as np
 
 import aotriton.template_instantiation as ati
-from ._common import flash_disabled
+from aotriton.gpu_targets import AOTRITON_ARCH_WARPSIZE
+from ._common import flash_disabled, check_value
 
 
 @dataclass
@@ -33,11 +35,26 @@ def _bwd_disabled(f):
 
 
 def gen_autotune_configs(f):
-    """Placeholder generator (one valid config); the DB path does not use it."""
-    kw = {'BLOCK_M': 16, 'BLOCK_N': 16,
-          'NUM_XCDS': 8 if f.arch in ('gfx942', 'gfx950') else 1,
-          'waves_per_eu': 1}
-    yield ati.tune.Config(kw, num_warps=4, num_stages=1)
+    """Generate architecture-aware dQ/dB tuning configurations."""
+    arch = f.arch
+    dtype = check_value(f, ['Q'])
+    num_xcds = 8 if arch in ('gfx942', 'gfx950') else 1
+    wave32 = AOTRITON_ARCH_WARPSIZE[arch] == 32
+    block_sizes = [16, 32, 64] if dtype != '*fp32:16' else [16, 32]
+    waves_per_eu = [1, 2, 3, 4]
+    num_warps = [4, 8] if wave32 else [2, 4]
+
+    for block_m, block_n, waves, warps in itertools.product(
+            block_sizes, block_sizes, waves_per_eu, num_warps):
+        if block_m < block_n:
+            continue  # Duplicate
+        kw = {
+            'BLOCK_M': block_m,
+            'BLOCK_N': block_n,
+            'NUM_XCDS': num_xcds,
+            'waves_per_eu': waves,
+        }
+        yield ati.tune.Config(kw, num_stages=1, num_warps=warps)
 
 
 # Cite-based form (ati_linker_req acceptance demo): bwd_kernel_dq declares only what

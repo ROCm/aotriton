@@ -12,12 +12,14 @@ from the cited preprocess, rev1 §5), and its own perf (no NUM_XCDS). Stacked-@ 
 over ../kernel/bwd_kernel_fuse.py.
 """
 
+import itertools
 from dataclasses import dataclass
 
 import numpy as np
 
 import aotriton.template_instantiation as ati
-from ._common import block_dmodel_values
+from aotriton.gpu_targets import AOTRITON_ARCH_WARPSIZE
+from ._common import block_dmodel_values, check_value
 
 
 def _block_dmodel_values_capped():
@@ -33,9 +35,29 @@ class BwdKernelFusePerf:
 
 
 def gen_autotune_configs(f):
-    """Placeholder generator (one valid config); the DB path does not use it."""
-    yield ati.tune.Config({'BLOCK_M': 16, 'BLOCK_N': 16, 'waves_per_eu': 1},
-                          num_warps=4, num_stages=1)
+    """Generate architecture-aware fused-backward tuning configurations."""
+    arch = f.arch
+    dtype = check_value(f, ['Q'])
+    wave64 = AOTRITON_ARCH_WARPSIZE[arch] == 64
+    wave32 = AOTRITON_ARCH_WARPSIZE[arch] == 32
+    block_sizes = [16, 32, 64] if dtype != '*fp32:16' else [16, 32]
+    waves_per_eu = [1, 2, 3, 4]
+    num_warps = [4, 8] if wave32 else [2, 4]
+
+    for block_m, block_n, waves, warps in itertools.product(
+            block_sizes, block_sizes, waves_per_eu, num_warps):
+        if block_m < block_n:
+            continue  # Duplicate
+        if wave64 and block_m == 64 and block_n == 64 and warps == 4:
+            continue  # No optimal kernel according to the 0.8b tuning database
+        if wave32 and block_m == 32 and block_n == 32 and warps != 4:
+            continue  # Timeout
+        kw = {
+            'BLOCK_M': block_m,
+            'BLOCK_N': block_n,
+            'waves_per_eu': waves,
+        }
+        yield ati.tune.Config(kw, num_stages=1, num_warps=warps)
 
 
 @ati.start
