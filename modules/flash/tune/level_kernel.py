@@ -33,9 +33,8 @@ _KERNEL_DICT_CACHE = None
 def _build_kernel_dict():
     """Lazily compose the tuning-lib kernel classes (KernelControl-based HSACO
     selection layered onto the plain SdpaCalls direct_call implementations).
-    Only called once, from FlashKernelLevel.get_impl(); cached at module scope
-    so every FlashKernelLevel instance shares one dict, same as the original
-    Flash.KERNEL_DICT class attribute."""
+    Called once, from get_impl(); cached at module scope so every caller
+    shares one dict."""
     from pyaotriton.v3 import KernelControl
     from pyaotriton.v3.flash import attn_options
     from .calls import (

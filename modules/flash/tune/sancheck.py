@@ -3,7 +3,7 @@
 
 """
 Flash-family LUT sancheck + missing-entry diagnostic, called by the ATI kdesc
-(FlashKernel.method(self=kdesc, ...) via aotriton.tune.registry.load_family_tune) --
+(LutSancheck.method(self=kdesc, ...) via aotriton.tune.registry.load_family_tune) --
 see python/template_instantiation/ir/kdesc.py's sancheck_lut_tensor/_gen_missing_entries.
 
 Moved out of modules/flash/aot/_common.py (modular-tune.md §3b/step 11) so the
@@ -37,9 +37,9 @@ def check_value(functional, repr_name):
     assert False, f'Cannot find {repr_name=} in {functional=}'
 
 
-class FlashKernel:
+class LutSancheck:
     """Flash-family LUT sancheck + missing-entry diagnostic, called by the ATI
-    kdesc (FlashKernel.method(self=kdesc, ...) via family_aot). A plain holder — no
+    kdesc (LutSancheck.method(self=kdesc, ...) via family_aot). A plain holder — no
     description base; it relies only on the duck-typed kdesc surface (check_value,
     gen_autotune_configs presence)."""
     FAMILY = 'flash'

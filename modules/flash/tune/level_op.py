@@ -43,7 +43,7 @@ _OP_DICT_CACHE = None
 def _build_op_dict():
     """Lazily compose the testing-lib op-backend classes (force_backend_index
     layered onto the plain SdpaCalls direct_call implementations). Only
-    called once, from FlashOpLevel.get_impl(); cached at module scope."""
+    called once, from get_impl(); cached at module scope."""
     from aotriton.tune.kftdesc import BackendForTuneDescription
     from .calls import SdpaCalls, attn_fwd as _attn_fwd, bwd_kernel_dk_dv as _bwd_kernel_dk_dv
 

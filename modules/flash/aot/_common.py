@@ -47,11 +47,11 @@ def check_value(functional, repr_name):
             return tc[aname].triton_compile_signature
     assert False, f'Cannot find {repr_name=} in {functional=}'
 
-# NOTE: FlashKernel (the LUT sancheck + missing-entry diagnostic) lives in
+# NOTE: LutSancheck (the LUT sancheck + missing-entry diagnostic) lives in
 # modules/flash/tune/sancheck.py, since it is tuning logic rather than codegen
 # logic. The codegen back-edge in python/template_instantiation/ir/kdesc.py
 # resolves it via
-# aotriton.tune.registry.load_family_tune('flash').sancheck.FlashKernel.
+# aotriton.tune.registry.load_family_tune(<family>).sancheck.LutSancheck.
 # check_value/_empty_generator stay here (small,
 # pure, stable helpers duplicated rather than imported, same pattern as
 # aot/flash_entry.py vs. tune/entry.py) since other aot/*.py files
