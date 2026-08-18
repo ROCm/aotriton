@@ -218,7 +218,15 @@ def _get_temperature_amdsmi(amdsmi_dev, sensor):
     )
 
 def wait_gpu_temperature(device_id=None, threshold=85.0):
-    """Wait until GPU temperature drops below threshold. Only prints if waiting > 5 minutes."""
+    """Wait until GPU temperature drops below threshold.
+
+    Reports on every poll rather than only once the wait gets long. The
+    `OVERHEATING:` prefix is a wire protocol: ExaidProxy.readinfo() forwards
+    such lines to the log and keeps reading instead of failing, and each one
+    resets its read timeout. probe() reads with the default 10s timeout and
+    benchmark() with 30s, so staying quiet through a cooldown would have the
+    parent kill a worker that is only waiting for the GPU to cool.
+    """
     if device_id is None:
         device_id = default_device_id()
 
@@ -232,12 +240,14 @@ def wait_gpu_temperature(device_id=None, threshold=85.0):
     start_time = time.time()
     while temp > threshold:
         elapsed = time.time() - start_time
-        print(f"OVERHEATING: GPU HIP ID {device_id} TEMP. {temp}", flush=True)
+        print(f"OVERHEATING: GPU HIP ID {device_id} TEMP. {temp} "
+              f"ELAPSED. {int(elapsed)}s", flush=True)
         time.sleep(5)
         temp = _get_temperature_amdsmi(amdsmi_dev, sensor)
         if temp is None:
             break
-    print(f"OVERHEATING: EXIT GPU HIP ID {device_id} TEMP. {temp}", flush=True)
+    print(f"OVERHEATING: EXIT GPU HIP ID {device_id} TEMP. {temp} "
+          f"ELAPSED. {int(time.time() - start_time)}s", flush=True)
 
 @contextmanager
 def device_ctx():
