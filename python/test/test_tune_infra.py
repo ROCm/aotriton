@@ -634,3 +634,90 @@ def test_no_raw_tuning_db_sql_outside_pq():
                 if pat.search(line) and not line.lstrip().startswith(('#', '--', '*')):
                     offenders.append(f'{f.relative_to(_REPO_ROOT)}:{n}')
     assert not offenders, 'raw tuning-DB SQL outside pq: ' + ', '.join(offenders)
+
+
+# ---------------------------------------------------------------------------
+# visperf: the Python and JavaScript halves of a family descriptor must agree
+# ---------------------------------------------------------------------------
+
+def _js_list(src: str, key: str, *, where: str) -> list[str]:
+    """Extract `key: ['a', 'b']` (or `new Set([...])`) from a JS object.
+
+    Deliberately strict: a miss raises rather than returning empty, so a
+    reshaped descriptor fails this test instead of passing it vacuously.
+    """
+    import re
+    m = re.search(rf'\b{key}:\s*(?:new Set\()?\[([^\]]*)\]', src)
+    assert m, f'{where}: could not find `{key}: [...]`'
+    return [t.strip().strip('\'"') for t in m.group(1).split(',') if t.strip()]
+
+
+def _js_scalar(src: str, key: str, *, where: str) -> str:
+    import re
+    m = re.search(rf"\b{key}:\s*'([^']*)'", src)
+    assert m, f'{where}: could not find `{key}: <string>`'
+    return m.group(1)
+
+
+def _js_dim_keys(src: str, *, where: str) -> list[str]:
+    """The `key:` of each entry in the JS `dims: [ {...}, ... ]` array."""
+    import re
+    m = re.search(r'\bdims:\s*\[(.*?)\n  \]', src, re.S)
+    assert m, f'{where}: could not find the `dims: [...]` array'
+    keys = re.findall(r"\bkey:\s*'([^']+)'", m.group(1))
+    assert keys, f'{where}: `dims` array contained no `key:` entries'
+    return keys
+
+
+def _visperf_families():
+    """(family, DESCRIPTOR, js_source) for every family that has a visperf block."""
+    from aotriton.tune.registry import available_module_names, load_family_visperf
+    out = []
+    for family in available_module_names():
+        js = _MODULES_DIR / family / 'visperf' / 'static' / f'{family}.js'
+        try:
+            desc = load_family_visperf(family, modules_dir=_MODULES_DIR).DESCRIPTOR
+        except Exception:
+            assert not js.is_file(), (
+                f'{family}: has {js} but no loadable visperf DESCRIPTOR')
+            continue
+        assert js.is_file(), f'{family}: has a DESCRIPTOR but no {js}'
+        out.append((family, desc, js.read_text(encoding='utf-8')))
+    return out
+
+
+def test_visperf_descriptors_agree_across_languages():
+    """Every registered family's Python and JS descriptors must line up.
+
+    They are consumed together -- Python builds the query, JS labels the
+    dropdown and reads the result -- so a name present in one and not the
+    other produces an empty chart with no error anywhere. That is exactly how
+    op-mode perf pages broke once: the JS still asked for '<name>_op' after
+    storage moved to bare iface_names.
+    """
+    families = _visperf_families()
+    assert families, 'no family exposes a visperf descriptor; test is vacuous'
+
+    for family, desc, js in families:
+        where = f'{family}.js'
+        assert _js_scalar(js, 'id', where=where) == desc['id']
+        assert _js_scalar(js, 'label', where=where) == desc['label']
+
+        # The names the UI offers must be the names the query filters on.
+        assert _js_list(js, 'kernels', where=where) == list(desc['kernels'])
+        assert _js_list(js, 'opsList', where=where) == list(desc['ops'])
+        # `ops` is a Set used for membership; same members as opsList.
+        assert set(_js_list(js, 'ops', where=where)) == set(desc['ops'])
+
+        # No '<name>_op'-style spelling may survive on either side: the level
+        # rides in the DSL prefix, never in the interface name.
+        for name in list(desc['kernels']) + list(desc['ops']):
+            assert not name.endswith('_op'), f'{family}: {name!r} is not a bare iface_name'
+
+        # Matrix axes and the remaining dims together cover the Python dims.
+        row = _js_scalar(js, 'row', where=where)
+        col = _js_scalar(js, 'col', where=where)
+        assert (row, col) == tuple(desc['matrix_axes'])
+        py_aliases = {alias for _, alias in desc['dims']}
+        assert set(_js_dim_keys(js, where=where)) | {row, col} == py_aliases, (
+            f'{family}: JS dims + matrixAxes do not cover the Python dims aliases')
