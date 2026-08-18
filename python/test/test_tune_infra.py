@@ -521,3 +521,59 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+
+# ---------------------------------------------------------------------------
+# pytest node-ID parsing: family-neutral split vs family-specific translation
+# ---------------------------------------------------------------------------
+
+def test_parse_node_id_is_family_neutral():
+    from aotriton.tune.pytest_node import parse_node_id
+    node = parse_node_id(
+        'modules/flash/tests/test_backward.py::test_regular_bwd'
+        '[Split-False-l1-dtype2-0.0-CausalOff-256-8192-hdim8-5-3]')
+    assert node.path == 'modules/flash/tests/test_backward.py'
+    assert node.test == 'test_regular_bwd'
+    assert len(node.params) == 11 and node.params[3] == 'dtype2'
+    # The family comes from the path, so the splitter never names one itself.
+    assert node.family == 'flash'
+    assert parse_node_id('tests/t.py::test_x[a-b]').family is None
+
+
+def test_parse_node_id_rejects_malformed():
+    from aotriton.tune.pytest_node import parse_node_id
+    for bad in ('no brackets', 'p.py::test_x', 'p.py[a-b]'):
+        with pytest.raises(ValueError):
+            parse_node_id(bad)
+
+
+def test_flash_entry_from_pytest_node():
+    from aotriton.tune.pytest_node import parse_node_id
+    from aotriton.tune.registry import load_family_tune
+    pe = load_family_tune('flash', modules_dir=_MODULES_DIR).pytest_entry
+
+    # Shapes round UP to the nearest tuning-database axis: 8 -> 16, 8192 stays.
+    e = pe.entry_from_pytest_node(parse_node_id(
+        'modules/flash/tests/test_backward.py::test_regular_bwd'
+        '[Split-False-l1-dtype2-0.0-CausalOff-256-8192-hdim8-5-3]'))
+    assert e == {'dtype': 'float32', 'hdim': 16, 'seqlen_q': 8192,
+                 'seqlen_k': 256, 'causal': False, 'dropout_p': 0.0,
+                 'bias_type': 0}
+
+    # _common_test.fmt_hdim renders a tuple as 'hdim(a,b)', not 'hdimAxB'.
+    e = pe.entry_from_pytest_node(parse_node_id(
+        'modules/flash/tests/test_backward.py::test_regular_bwd'
+        '[Split-False-l1-dtype0-0.0-CausalOff-256-256-hdim(64,128)-8-2]'))
+    assert e['hdim'] == (64, 128)
+
+    # test_op_bwd_with_matrix_bias has no causal parameter and fixes bias_type.
+    e = pe.entry_from_pytest_node(parse_node_id(
+        'modules/flash/tests/test_backward.py::test_op_bwd_with_matrix_bias'
+        '[Split-False-l1-dtype0-0.0-129-257-hdim48-3-1]'))
+    assert e['causal'] is False and e['bias_type'] == 1
+
+    with pytest.raises(ValueError):
+        pe.entry_from_pytest_node(parse_node_id('modules/flash/tests/t.py::test_nope[a-b]'))
+    with pytest.raises(ValueError):   # too few params for the layout
+        pe.entry_from_pytest_node(parse_node_id(
+            'modules/flash/tests/t.py::test_regular_bwd[a-b-c]'))

@@ -2,225 +2,57 @@
 # SPDX-License-Identifier: MIT
 
 """
-Parse a pytest node ID string into FlashEntry fields suitable for a
-task_queue lookup.
+Turn a pytest node ID into a task_queue lookup.
 
-Supported test functions (from modules/flash/tests/test_backward.py):
-  test_regular_bwd, test_fast
-  test_irregulars
-  test_op_bwd_with_matrix_bias  (best-effort)
+The work is split in two and neither half lives here any more:
 
-Bracket parameter order for test_regular_bwd / test_fast (left to right):
-  BWDOP, storage_flip, sm_scale, dtype, dropout_p, causal,
-  seqlen_k, seqlen_q, D_HEAD, N_HEADS, BATCH
+  aotriton.tune.pytest_node          splits `path::test[p0-p1-...]` into a
+                                     ParsedNode. Pure string work, identical
+                                     for every family.
+  modules/<family>/tune/pytest_entry translates that ParsedNode into the
+                                     family's entry fields. Parameter order,
+                                     token spellings and the tuning-database
+                                     axes are all family-specific.
+
+The family comes from the node's own path (`modules/<family>/tests/...`), so
+this module dispatches without being told which family it is looking at.
 
 Usage as CLI:
   python pytest_entry_parser.py \
       "modules/flash/tests/test_backward.py::test_regular_bwd[Split-False-l1-dtype2-0.0-CausalOff-256-8192-hdim8-5-3]"
 """
 
-import os
-import re
 import json
 import sys
 import argparse
 
-# dtype token → dtype string
-DTYPE_MAP: dict[str, str] = {
-    'dtype0': 'float16',
-    'dtype1': 'bfloat16',
-    'dtype2': 'float32',
-}
-
-# Rounding tables — copied from .tune/libexec/broken_entries_to_db.
-# hdim and seqlen values from pytest must be ceiling-rounded to the nearest
-# compiled entry because the tuning DB only stores rows for these values.
-_BLOCK_DMODEL_DEFAULT = '16, 32, 48, 64, 80, 96, 128, 160, 192, 224, 256, 512'
-_BLOCK_DMODEL: list[int] = sorted(
-    int(x.strip())
-    for x in os.getenv('AOTRITON_FLASH_BLOCK_DMODEL', _BLOCK_DMODEL_DEFAULT).split(',')
-)
-_SEQLEN_ENTRIES: list[int] = [16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
-
-
-def _round_up(value: int, table: list[int], name: str) -> int:
-    for entry in table:
-        if entry >= value:
-            return entry
-    raise ValueError(f'{name} {value} exceeds maximum tuning table entry {table[-1]}')
-
-
-def parse_hdim(token: str) -> int | tuple[int, int]:
-    """Parse 'hdimN' -> N  or  'hdimNxM' -> (N, M)."""
-    if not token.startswith('hdim'):
-        raise ValueError(f'Expected token starting with "hdim", got {token!r}')
-    body = token[len('hdim'):]
-    if 'x' in body:
-        a, b = body.split('x', 1)
-        return (int(a), int(b))
-    return int(body)
-
-
-def parse_nheads(token: str) -> int | tuple[int, int]:
-    """Parse 'N' -> N  or  'NxM' -> (N, M)."""
-    if 'x' in token:
-        a, b = token.split('x', 1)
-        return (int(a), int(b))
-    return int(token)
+from aotriton.tune.pytest_node import parse_node_id
+from aotriton.tune.registry import load_family_tune
 
 
 def parse_pytest_node_id(node_id: str) -> dict:
+    """Parse a pytest node ID into the owning family's entry fields.
+
+    Raises ValueError with a human-readable message on any failure: an
+    unparseable ID, a path outside modules/<family>/, a family with no tune
+    block, or a test that family does not know how to translate.
     """
-    Parse a pytest node ID into a dict of FlashEntry fields.
-
-    Returns a dict with keys:
-      dtype, hdim, seqlen_q, seqlen_k, causal, dropout_p, bias_type
-      (same fields as FlashEntry)
-
-    On failure raises ValueError with a human-readable message.
-    """
-    node_id = node_id.strip()
-
-    m = re.search(r'::(\w+)\[(.+)\]$', node_id)
-    if not m:
+    node = parse_node_id(node_id)
+    family = node.family
+    if family is None:
         raise ValueError(
-            'Could not parse pytest node ID — '
-            'expected format: path::test_name[params]'
-        )
-
-    test_name = m.group(1)
-    bracket = m.group(2)
-
-    # Split on '-'. None of the expected values contain '-'.
-    parts = bracket.split('-')
-
-    if test_name in ('test_regular_bwd', 'test_fast'):
-        # Positions: 0=BWDOP, 1=storage_flip, 2=sm_scale, 3=dtype,
-        #            4=dropout_p, 5=causal, 6=seqlen_k, 7=seqlen_q,
-        #            8=D_HEAD, 9=N_HEADS, 10=BATCH
-        if len(parts) < 11:
-            raise ValueError(
-                f'Expected 11 bracket params for {test_name}, '
-                f'got {len(parts)}: {bracket}'
-            )
-        dtype_token = parts[3]
-        dropout_p = float(parts[4])
-        causal_str = parts[5]
-        seqlen_k = int(parts[6])
-        seqlen_q = int(parts[7])
-        hdim_token = parts[8]
-        # N_HEADS and BATCH are at [9] and [10] but not stored in task_config['entry']
-
-        dtype = DTYPE_MAP.get(dtype_token)
-        if dtype is None:
-            raise ValueError(
-                f'Unknown dtype token: {dtype_token!r}. '
-                'Expected dtype0 (float16), dtype1 (bfloat16), dtype2 (float32).'
-            )
-
-        causal_map = {'CausalOff': False, 'CausalOn': True}
-        if causal_str not in causal_map:
-            raise ValueError(
-                f'Unknown causal token: {causal_str!r}. '
-                'Expected CausalOff or CausalOn.'
-            )
-        causal = causal_map[causal_str]
-        raw_hdim = parse_hdim(hdim_token)
-        hdim = (
-            (_round_up(raw_hdim[0], _BLOCK_DMODEL, 'hdim_qk'),
-             _round_up(raw_hdim[1], _BLOCK_DMODEL, 'hdim_vo'))
-            if isinstance(raw_hdim, tuple)
-            else _round_up(raw_hdim, _BLOCK_DMODEL, 'hdim')
-        )
-        seqlen_q = _round_up(seqlen_q, _SEQLEN_ENTRIES, 'seqlen_q')
-        seqlen_k = _round_up(seqlen_k, _SEQLEN_ENTRIES, 'seqlen_k')
-        bias_type = 0
-
-    elif test_name == 'test_irregulars':
-        # Positions: 0=BWDOP, 1=bias_type, 2=storage_flip, 3=sm_scale, 4=dtype,
-        #            5=dropout_p, 6=causal, 7=seqlen_k, 8=seqlen_q,
-        #            9=D_HEAD, 10=N_HEADS, 11=BATCH
-        if len(parts) < 12:
-            raise ValueError(
-                f'Expected 12 bracket params for {test_name}, '
-                f'got {len(parts)}: {bracket}'
-            )
-        bias_str = parts[1]
-        dtype_token = parts[4]
-        dropout_p = float(parts[5])
-        causal_str = parts[6]
-        seqlen_k = int(parts[7])
-        seqlen_q = int(parts[8])
-        hdim_token = parts[9]
-
-        bias_map = {'BiasOff': 0, 'BiasOn': 1}
-        if bias_str not in bias_map:
-            raise ValueError(f'Unknown bias_type token: {bias_str!r}. Expected BiasOff or BiasOn.')
-        bias_type = bias_map[bias_str]
-
-        dtype = DTYPE_MAP.get(dtype_token)
-        if dtype is None:
-            raise ValueError(f'Unknown dtype token: {dtype_token!r}')
-
-        causal_map = {'CausalOff': False, 'CausalOn': True}
-        if causal_str not in causal_map:
-            raise ValueError(f'Unknown causal token: {causal_str!r}. Expected CausalOff or CausalOn.')
-        causal = causal_map[causal_str]
-        raw_hdim = parse_hdim(hdim_token)
-        hdim = (
-            (_round_up(raw_hdim[0], _BLOCK_DMODEL, 'hdim_qk'),
-             _round_up(raw_hdim[1], _BLOCK_DMODEL, 'hdim_vo'))
-            if isinstance(raw_hdim, tuple)
-            else _round_up(raw_hdim, _BLOCK_DMODEL, 'hdim')
-        )
-        seqlen_q = _round_up(seqlen_q, _SEQLEN_ENTRIES, 'seqlen_q')
-        seqlen_k = _round_up(seqlen_k, _SEQLEN_ENTRIES, 'seqlen_k')
-
-    elif test_name == 'test_op_bwd_with_matrix_bias':
-        # Parametrize order (no causal param; causal=False hardcoded):
-        #   BWDOP(0), storage_flip(1), sm_scale(2), dtype(3), dropout_p(4),
-        #   seqlen_k(5), seqlen_q(6), D_HEAD(7), N_HEADS(8), BATCH(9)
-        if len(parts) < 9:
-            raise ValueError(
-                f'Expected at least 9 bracket params for {test_name}, '
-                f'got {len(parts)}: {bracket}'
-            )
-        dtype_token = parts[3]
-        dropout_p = float(parts[4])
-        seqlen_k = int(parts[5])
-        seqlen_q = int(parts[6])
-        hdim_token = parts[7]
-
-        dtype = DTYPE_MAP.get(dtype_token)
-        if dtype is None:
-            raise ValueError(f'Unknown dtype token: {dtype_token!r}')
-        raw_hdim = parse_hdim(hdim_token)
-        hdim = (
-            (_round_up(raw_hdim[0], _BLOCK_DMODEL, 'hdim_qk'),
-             _round_up(raw_hdim[1], _BLOCK_DMODEL, 'hdim_vo'))
-            if isinstance(raw_hdim, tuple)
-            else _round_up(raw_hdim, _BLOCK_DMODEL, 'hdim')
-        )
-        seqlen_q = _round_up(seqlen_q, _SEQLEN_ENTRIES, 'seqlen_q')
-        seqlen_k = _round_up(seqlen_k, _SEQLEN_ENTRIES, 'seqlen_k')
-        causal = False
-        bias_type = 1
-
-    else:
+            f'Cannot tell which family {node.path!r} belongs to -- '
+            f'expected a path under modules/<family>/.')
+    try:
+        tune = load_family_tune(family)
+    except Exception as e:
+        raise ValueError(str(e)) from None
+    translate = getattr(tune, 'pytest_entry', None)
+    if translate is None:
         raise ValueError(
-            f'Unsupported test name: {test_name!r}. '
-            'Supported: test_regular_bwd, test_fast, test_irregulars, test_op_bwd_with_matrix_bias.'
-        )
-
-    return {
-        'dtype': dtype,
-        'hdim': hdim,
-        'seqlen_q': seqlen_q,
-        'seqlen_k': seqlen_k,
-        'causal': causal,
-        'dropout_p': dropout_p,
-        'bias_type': bias_type,
-    }
+            f'Family {family!r} does not translate pytest node IDs '
+            f'(no pytest_entry module in its tune block).')
+    return translate.entry_from_pytest_node(node)
 
 
 def entry_to_sql_clauses(entry: dict) -> tuple[list[str], list]:
