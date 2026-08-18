@@ -138,38 +138,75 @@ def get_total_memory_from_amdsmi():
     except Exception:
         return None
 
+# Junction (a.k.a. hotspot) is what we want to throttle on, but not every ASIC
+# implements it. gfx1151 exposes an edge sensor only and answers junction with
+# AMDSMI_STATUS_NOT_SUPPORTED, which used to abort tuning outright; gfx942 is
+# the mirror image, implementing junction but not edge. So the sensor has to be
+# probed per device instead of assumed.
+_TEMP_SENSORS = (amdsmi.AmdSmiTemperatureType.JUNCTION,
+                 amdsmi.AmdSmiTemperatureType.EDGE)
+
+def _pick_temp_sensor(handle, device_id):
+    """First sensor in _TEMP_SENSORS that this GPU actually implements."""
+    for sensor in _TEMP_SENSORS:
+        try:
+            amdsmi.amdsmi_get_temp_metric(handle, sensor,
+                                          amdsmi.AmdSmiTemperatureMetric.CURRENT)
+        except amdsmi.AmdSmiLibraryException as e:
+            if e.get_error_code() != amdsmi.amdsmi_wrapper.AMDSMI_STATUS_NOT_SUPPORTED:
+                raise
+            continue
+        if sensor is not _TEMP_SENSORS[0]:
+            print(f'WARNING: GPU HIP ID {device_id} does not implement the '
+                  f'{_TEMP_SENSORS[0].name} temperature sensor, '
+                  f'falling back to {sensor.name}', flush=True)
+        return sensor
+    # Loud on purpose: silently skipping the wait would let a hot GPU cook,
+    # and bogus thermals surface later as inexplicable tuning results.
+    raise RuntimeError(f'GPU HIP ID {device_id} implements none of the '
+                       f'temperature sensors {[s.name for s in _TEMP_SENSORS]}')
+
 _amdsmi_stack = None      # keeps AMD-SMI alive for _amdsmi_handle below
 _amdsmi_device_id = None
 _amdsmi_handle = None
+_amdsmi_sensor = None
 
-def _own_amdsmi_handle(device_id):
-    """AMD-SMI handle of `device_id`, keeping AMD-SMI open between calls.
+def _own_amdsmi_device(device_id):
+    """(handle, sensor) for `device_id`, keeping AMD-SMI open between calls.
 
     wait_gpu_temperature() runs on every device_ctx() entry and polls every
     5s while overheating, so re-entering the context per reading would pay an
-    amdsmi_init() each time. Only this device's handle is held onto; the
-    context is torn down and rebuilt if a different device_id shows up.
+    amdsmi_init() each time, and re-probing the sensor would pay a failed
+    query on every ASIC that lacks a junction sensor. Only this device is held
+    onto; the context is torn down and rebuilt if a different device_id shows
+    up.
     """
-    global _amdsmi_stack, _amdsmi_device_id, _amdsmi_handle
+    global _amdsmi_stack, _amdsmi_device_id, _amdsmi_handle, _amdsmi_sensor
     if _amdsmi_stack is not None:
         if _amdsmi_device_id == device_id:
-            return _amdsmi_handle
+            return _amdsmi_handle, _amdsmi_sensor
         _amdsmi_stack.close()
-        _amdsmi_stack = _amdsmi_device_id = _amdsmi_handle = None
+        _amdsmi_stack = _amdsmi_device_id = _amdsmi_handle = _amdsmi_sensor = None
 
     stack = ExitStack()
     handle = stack.enter_context(_amdsmi_ctx(device_id))
     if handle is None:  # defensive: from_bdf normally raises rather than return NULL
         stack.close()
-        return None
-    _amdsmi_stack, _amdsmi_device_id, _amdsmi_handle = stack, device_id, handle
-    return handle
+        return None, None
+    try:
+        sensor = _pick_temp_sensor(handle, device_id)
+    except BaseException:
+        stack.close()
+        raise
+    _amdsmi_stack, _amdsmi_device_id = stack, device_id
+    _amdsmi_handle, _amdsmi_sensor = handle, sensor
+    return handle, sensor
 
-def _get_temperature_amdsmi(amdsmi_dev):
+def _get_temperature_amdsmi(amdsmi_dev, sensor):
     """Read GPU temperature from an AMD-SMI handle held by an open context."""
     return amdsmi.amdsmi_get_temp_metric(
         amdsmi_dev,
-        amdsmi.AmdSmiTemperatureType.JUNCTION,
+        sensor,
         amdsmi.AmdSmiTemperatureMetric.CURRENT
     )
 
@@ -179,9 +216,9 @@ def wait_gpu_temperature(device_id=None, threshold=85.0):
         device_id = default_device_id()
 
     # Use AMD-SMI directly to avoid HIP ID vs AMD-SMI ID confusion
-    amdsmi_dev = _own_amdsmi_handle(device_id)
+    amdsmi_dev, sensor = _own_amdsmi_device(device_id)
     assert amdsmi_dev is not None
-    temp = _get_temperature_amdsmi(amdsmi_dev)
+    temp = _get_temperature_amdsmi(amdsmi_dev, sensor)
 
     if temp <= threshold:
         return
@@ -191,7 +228,7 @@ def wait_gpu_temperature(device_id=None, threshold=85.0):
         elapsed = time.time() - start_time
         print(f"OVERHEATING: GPU HIP ID {device_id} TEMP. {temp}", flush=True)
         time.sleep(5)
-        temp = _get_temperature_amdsmi(amdsmi_dev)
+        temp = _get_temperature_amdsmi(amdsmi_dev, sensor)
         if temp is None:
             break
     print(f"OVERHEATING: EXIT GPU HIP ID {device_id} TEMP. {temp}", flush=True)
