@@ -83,9 +83,42 @@ def detach_member_tensors(data_object) -> dict:
     d = asdict_shallow(data_object)
     return { k: v.detach() if isinstance(v, torch.Tensor) else v for k, v in d.items() }
 
-_amdsmi_initialized = False
-_hip_to_amdsmi = {}
 _total_memory_gb = None
+
+def _bdf_of(device_id):
+    """PCI BDF of a HIP device, as AMD-SMI spells it (``0000:65:00.0``).
+
+    Sourced from HIP via torch rather than from AMD-SMI: torch.cuda device
+    properties come from hipGetDeviceProperties and cost no AMD-SMI call at
+    all, so resolving a device never has to enumerate the other GPUs.
+
+    This is also the only mapping that survives ROCR_VISIBLE_DEVICES /
+    HIP_VISIBLE_DEVICES. AMD-SMI's own ``hip_id`` is a *global* index that
+    ignores the mask, while our device ids are masked ones, so pairing the
+    two picks the wrong GPU whenever a mask is set (as SLURM does).
+    """
+    p = torch.cuda.get_device_properties(device_id)
+    return f'{p.pci_domain_id:04x}:{p.pci_bus_id:02x}:{p.pci_device_id:02x}.0'
+
+@contextmanager
+def _amdsmi_ctx(device_id=None):
+    """Initialize AMD-SMI, yield GPU handle(s), and shut down on exit.
+
+    Yields the handle of `device_id` alone, or the list of every handle when
+    `device_id` is None. The single-device form resolves by BDF, so it never
+    calls amdsmi_get_processor_handles() and never asks the other GPUs
+    anything.
+
+    Handles must not outlive the context.
+    """
+    amdsmi.amdsmi_init()
+    try:
+        if device_id is None:
+            yield amdsmi.amdsmi_get_processor_handles()
+        else:
+            yield amdsmi.amdsmi_get_processor_handle_from_bdf(_bdf_of(device_id))
+    finally:
+        amdsmi.amdsmi_shut_down()
 
 def get_total_memory_from_amdsmi():
     """Get total GPU memory in GB from AMD-SMI."""
@@ -93,58 +126,52 @@ def get_total_memory_from_amdsmi():
     if _total_memory_gb is not None:
         return _total_memory_gb
 
-    if not _init_amdsmi():
-        return None
-
     try:
-        devices = amdsmi.amdsmi_get_processor_handles()
-        vram_cap = -1
-        for device in devices:
-            vram_usage = amdsmi.amdsmi_get_gpu_vram_usage(device)
-            total_memory = vram_usage['vram_total'] / 1024  # amdsmi reports MB -> GB
-            vram_cap = min(vram_cap, total_memory) if vram_cap > 0 else total_memory
+        with _amdsmi_ctx() as devices:
+            vram_cap = -1
+            for device in devices:
+                vram_usage = amdsmi.amdsmi_get_gpu_vram_usage(device)
+                total_memory = vram_usage['vram_total'] / 1024  # amdsmi reports MB -> GB
+                vram_cap = min(vram_cap, total_memory) if vram_cap > 0 else total_memory
         _total_memory_gb = vram_cap
         return vram_cap
     except Exception:
         return None
 
-def _init_amdsmi():
-    """Initialize AMD-SMI and build HIP to AMD-SMI device mapping."""
-    global _amdsmi_initialized, _hip_to_amdsmi
-    if _amdsmi_initialized:
-        return True
+_amdsmi_stack = None      # keeps AMD-SMI alive for _amdsmi_handle below
+_amdsmi_device_id = None
+_amdsmi_handle = None
 
-    amdsmi.amdsmi_init()
+def _own_amdsmi_handle(device_id):
+    """AMD-SMI handle of `device_id`, keeping AMD-SMI open between calls.
 
-    # Get all AMD-SMI devices
-    amdsmi_devices = amdsmi.amdsmi_get_processor_handles()
+    wait_gpu_temperature() runs on every device_ctx() entry and polls every
+    5s while overheating, so re-entering the context per reading would pay an
+    amdsmi_init() each time. Only this device's handle is held onto; the
+    context is torn down and rebuilt if a different device_id shows up.
+    """
+    global _amdsmi_stack, _amdsmi_device_id, _amdsmi_handle
+    if _amdsmi_stack is not None:
+        if _amdsmi_device_id == device_id:
+            return _amdsmi_handle
+        _amdsmi_stack.close()
+        _amdsmi_stack = _amdsmi_device_id = _amdsmi_handle = None
 
-    # Map HIP devices to AMD-SMI devices using HIP ID from enumeration info
-    for handle in amdsmi_devices:
-        try:
-            info = amdsmi.amdsmi_get_gpu_enumeration_info(handle)
-            hip_id = info["hip_id"]
-            _hip_to_amdsmi[hip_id] = handle
-        except Exception:
-            continue
-
-    _amdsmi_initialized = True
-    return True
-
-def _get_temperature_amdsmi(device_id):
-    """Get GPU temperature using AMD-SMI (works correctly with device IDs)."""
-    if not _init_amdsmi():
+    stack = ExitStack()
+    handle = stack.enter_context(_amdsmi_ctx(device_id))
+    if handle is None:  # defensive: from_bdf normally raises rather than return NULL
+        stack.close()
         return None
+    _amdsmi_stack, _amdsmi_device_id, _amdsmi_handle = stack, device_id, handle
+    return handle
 
-    amdsmi_dev = _hip_to_amdsmi.get(device_id)
-    assert amdsmi_dev is not None
-
-    temp = amdsmi.amdsmi_get_temp_metric(
+def _get_temperature_amdsmi(amdsmi_dev):
+    """Read GPU temperature from an AMD-SMI handle held by an open context."""
+    return amdsmi.amdsmi_get_temp_metric(
         amdsmi_dev,
         amdsmi.AmdSmiTemperatureType.JUNCTION,
         amdsmi.AmdSmiTemperatureMetric.CURRENT
     )
-    return temp
 
 def wait_gpu_temperature(device_id=None, threshold=85.0):
     """Wait until GPU temperature drops below threshold. Only prints if waiting > 5 minutes."""
@@ -152,7 +179,9 @@ def wait_gpu_temperature(device_id=None, threshold=85.0):
         device_id = default_device_id()
 
     # Use AMD-SMI directly to avoid HIP ID vs AMD-SMI ID confusion
-    temp = _get_temperature_amdsmi(device_id)
+    amdsmi_dev = _own_amdsmi_handle(device_id)
+    assert amdsmi_dev is not None
+    temp = _get_temperature_amdsmi(amdsmi_dev)
 
     if temp <= threshold:
         return
@@ -162,7 +191,7 @@ def wait_gpu_temperature(device_id=None, threshold=85.0):
         elapsed = time.time() - start_time
         print(f"OVERHEATING: GPU HIP ID {device_id} TEMP. {temp}", flush=True)
         time.sleep(5)
-        temp = _get_temperature_amdsmi(device_id)
+        temp = _get_temperature_amdsmi(amdsmi_dev)
         if temp is None:
             break
     print(f"OVERHEATING: EXIT GPU HIP ID {device_id} TEMP. {temp}", flush=True)
