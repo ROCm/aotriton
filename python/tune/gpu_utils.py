@@ -109,7 +109,12 @@ def _amdsmi_ctx(device_id=None):
     calls amdsmi_get_processor_handles() and never asks the other GPUs
     anything.
 
-    Handles must not outlive the context.
+    Handles must not outlive the context. Nesting one context inside another
+    is safe, though: amdsmi_init()/amdsmi_shut_down() are refcounted, so the
+    inner exit does not invalidate the outer one's handles. That is what lets
+    get_total_memory_from_amdsmi() run while _own_amdsmi_device() holds a
+    context open. Tearing down the last context does invalidate every handle
+    taken from it -- reads then fail with AMDSMI_STATUS_NOT_INIT.
     """
     amdsmi.amdsmi_init()
     try:
@@ -133,6 +138,11 @@ def get_total_memory_from_amdsmi():
                 vram_usage = amdsmi.amdsmi_get_gpu_vram_usage(device)
                 total_memory = vram_usage['vram_total'] / 1024  # amdsmi reports MB -> GB
                 vram_cap = min(vram_cap, total_memory) if vram_cap > 0 else total_memory
+        if vram_cap <= 0:
+            # No device answered (an empty handle list leaves the sentinel in
+            # place). Report failure instead of memoizing -1: callers test for
+            # None, and a negative cap would clamp every shape to the minimum.
+            return None
         _total_memory_gb = vram_cap
         return vram_cap
     except Exception:
@@ -190,9 +200,6 @@ def _own_amdsmi_device(device_id):
 
     stack = ExitStack()
     handle = stack.enter_context(_amdsmi_ctx(device_id))
-    if handle is None:  # defensive: from_bdf normally raises rather than return NULL
-        stack.close()
-        return None, None
     try:
         sensor = _pick_temp_sensor(handle, device_id)
     except BaseException:
@@ -217,7 +224,6 @@ def wait_gpu_temperature(device_id=None, threshold=85.0):
 
     # Use AMD-SMI directly to avoid HIP ID vs AMD-SMI ID confusion
     amdsmi_dev, sensor = _own_amdsmi_device(device_id)
-    assert amdsmi_dev is not None
     temp = _get_temperature_amdsmi(amdsmi_dev, sensor)
 
     if temp <= threshold:
