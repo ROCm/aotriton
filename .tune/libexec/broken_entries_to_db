@@ -69,6 +69,25 @@ def _round_up(value: int, table: list[int], name: str) -> int:
             return entry
     raise ValueError(f'{name} {value} exceeds maximum tuning table entry {table[-1]}')
 
+def _migrate_broken_entries(db) -> None:
+    """Add tuning_level to a broken_entries table created before it existed.
+
+    CREATE TABLE IF NOT EXISTS leaves an older 6-column table untouched while
+    the INSERT below supplies 7 values, so reusing a workdir would fail with
+    "table broken_entries has 6 columns but 7 values were supplied", and
+    reset_broken_to_pending / compute_best_results --fix would fail on "no such
+    column: tuning_level". This file is workdir-local and survives the database
+    re-initialization the release notes call for, so it needs the migration the
+    PostgreSQL side deliberately does without. 'kernel' is the right backfill:
+    any row predating the column was written when that was the only level this
+    table recorded.
+    """
+    cols = {row[1] for row in db.execute('PRAGMA table_info(broken_entries)')}
+    if cols and 'tuning_level' not in cols:
+        db.execute("ALTER TABLE broken_entries "
+                   "ADD COLUMN tuning_level TEXT NOT NULL DEFAULT 'kernel'")
+
+
 _CREATE_TABLE = '''
 CREATE TABLE IF NOT EXISTS broken_entries (
     pass          INTEGER NOT NULL,
@@ -228,9 +247,17 @@ def main() -> None:
 
     with sqlite3.connect(db_path) as db:
         db.executescript(_CREATE_TABLE)
+        _migrate_broken_entries(db)
         for entry, im, task_id in resolved:
             db.execute(
-                'INSERT OR REPLACE INTO broken_entries VALUES (?,?,?,?,?,?,?)',
+                # Columns named, not positional: a table migrated by
+                # _migrate_broken_entries has tuning_level appended last, while
+                # a freshly created one declares it fifth. A positional INSERT
+                # would silently write entry_text into task_id on the former --
+                # SQLite's loose typing accepts it without error.
+                'INSERT OR REPLACE INTO broken_entries '
+                '(pass, host, arch, module, tuning_level, entry_text, task_id) '
+                'VALUES (?,?,?,?,?,?,?)',
                 (args.pass_num, args.hostname, args.arch, module, tuning_level,
                  entry.as_text(), task_id),
             )

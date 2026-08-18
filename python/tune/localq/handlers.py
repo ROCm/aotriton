@@ -245,7 +245,12 @@ class ProbeHandler(MessageHandler):
                 logger.info(f"Skipping iface_name={iface_name} for task_id={task_id}: "
                            f"only {len(variants)} backend(s), no tuning needed")
                 continue
-            max_h = max_hsaco_dict.get(iface_name, max_hsaco_global)
+            # max_hsaco caps the HSACO sweep and is kernel-level only. Applying
+            # it to op backends would drop real backends from the fanout -- with
+            # --max_hsaco 1 every op interface truncates to one variant and is
+            # then dropped entirely by the skip above, so op tuning would
+            # silently do nothing.
+            max_h = max_hsaco_dict.get(iface_name, max_hsaco_global) if level == 'kernel' else None
             limited = variants[:max_h] if max_h else variants
             for impl_index in range(len(limited)):
                 impl_tasks.append((iface_name, impl_index))

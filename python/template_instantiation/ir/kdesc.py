@@ -247,15 +247,34 @@ class KernelDescription(Interface):
     LUT_FULL_SEQLEN_K = [16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
     LUT_FULL_SEQLEN_NAVI = [16, 32, 64, 128, 256, 512, 1024, 2048]
 
-    def sancheck_lut_tensor(self, f, lut_tensor):
+    @staticmethod
+    def _flash_sancheck():
+        """FlashKernel from modules/flash/tune, pinned to the same modules/ the
+        generator is running against.
+
+        The directory is derived from the family's already-loaded aot package
+        rather than from registry.default_modules_dir(): that helper falls back
+        to <cwd>/modules, and the generator takes its tree from --root_dir
+        without chdir-ing, so an unrelated modules/ in the invoking directory
+        would otherwise win.
+        """
+        from pathlib import Path
+        from aotriton.codegen.parser import load_family_aot
         from aotriton.tune.registry import load_family_tune
-        FlashKernel = load_family_tune('flash').sancheck.FlashKernel
-        return FlashKernel.sancheck_lut_tensor(self, f, lut_tensor)
+        aot = load_family_aot('flash')
+        if aot is None:
+            raise RuntimeError(
+                "flash aot package is not loaded; the LUT sancheck back-edge "
+                "runs after linking and relies on the Parser having loaded it")
+        # <root_dir>/modules/flash/aot/__init__.py -> <root_dir>/modules
+        modules_dir = Path(aot.__file__).resolve().parents[2]
+        return load_family_tune('flash', modules_dir).sancheck.FlashKernel
+
+    def sancheck_lut_tensor(self, f, lut_tensor):
+        return self._flash_sancheck().sancheck_lut_tensor(self, f, lut_tensor)
 
     def _gen_missing_entries(self, *args, **kwargs):
-        from aotriton.tune.registry import load_family_tune
-        FlashKernel = load_family_tune('flash').sancheck.FlashKernel
-        return FlashKernel._gen_missing_entries(self, *args, **kwargs)
+        return self._flash_sancheck()._gen_missing_entries(self, *args, **kwargs)
 
     # --- axis views (used by AtiFunctional signatures) ---
 
