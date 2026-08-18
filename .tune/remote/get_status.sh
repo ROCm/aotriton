@@ -5,6 +5,11 @@
 # Remote script to get worker status
 # Runs on worker node, called via SSH from get_worker_status.sh
 # Usage: get_status.sh <worker_workdir>
+#
+# Note: this tool must forward amd-smi as it is. The key feature enabled by
+# this tool is to monitor if there is any other GPU workers launched on the
+# node and ready to start. Any filtering by metrics nullified this purpose, and
+# should never be implemented.
 
 WORKER_WORKDIR="$1"
 CONTAINER_ID_FILE="$WORKER_WORKDIR/run/worker.containerid"
