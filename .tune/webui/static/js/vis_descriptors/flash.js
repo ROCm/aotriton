@@ -47,18 +47,14 @@ const FLASH_DESCRIPTOR = {
   defaultRowDims: ['hdim'],
   defaultFixed:   {},
 
-  // Interfaces exposed in the UI's Kernel/Op dropdown, in display order.
-  // BARE iface_names, matching what the DB stores -- never '<name>_op'. The
-  // tuning level is carried by the option value's DSL prefix (perf.js
-  // formatSelection/parseSelection), not by the name, because 'attn_fwd' is a
-  // valid iface at BOTH levels.
+  // Kernels and ops exposed in the UI's Kernel/Op dropdown.
+  // Declared in display order; ops uses a Set elsewhere for mode inference.
   kernels: ['attn_fwd', 'bwd_kernel_dk_dv', 'bwd_kernel_dq', 'bwd_kernel_fuse'],
-  opsList: ['attn_fwd', 'attn_bwd'],
-  ops: new Set(['attn_fwd', 'attn_bwd']),
+  opsList: ['attn_fwd_op', 'attn_bwd_op'],
+  ops: new Set(['attn_fwd_op', 'attn_bwd_op']),
 
-  // iface names that use the forward FLOPs formula. Bare 'attn_fwd' covers
-  // the kernel-level kernel and the op-level operator alike.
-  fwdKernels: new Set(['attn_fwd']),
+  // kernel names that use the forward FLOPs formula
+  fwdKernels: new Set(['attn_fwd', 'attn_fwd_op']),
 
   // ---------------------------------------------------------------------------
   // Level-2 (psel/copt) drilldown schema.
@@ -67,7 +63,7 @@ const FLASH_DESCRIPTOR = {
   // ---------------------------------------------------------------------------
   cellDetail: {
     // Kernels that support level-2 drilldown.
-    // Ops use a single impl_index so a psel×copt matrix is degenerate.
+    // Ops use a single backend_index so a psel×copt matrix is degenerate.
     kernels: {
       attn_fwd: {
         psels: ['NUM_XCDS', 'PERSISTENT_TYPE', 'GRID_CU_MULTIP',

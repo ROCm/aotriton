@@ -126,16 +126,16 @@ document.getElementById('tune_lookup_btn').addEventListener('click', function() 
     {% endif %}
 </section>
 
-{# ── tuning_results (kernel level) ───────────────────────────────────────── #}
+{# ── tuning_results ──────────────────────────────────────────────────────── #}
 <section>
-    <h3>tuning_results ({{ debug_data.tuning_results | length }} rows) <small style="font-weight: normal; color: #777;">— tuning_level = 'kernel'</small></h3>
+    <h3>tuning_results ({{ debug_data.tuning_results | length }} rows)</h3>
     {% if debug_data.tuning_results %}
     <table style="width: 100%;">
         <thead>
             <tr>
                 <th>id</th>
-                <th>iface_name</th>
-                <th>impl_index</th>
+                <th>kernel_name</th>
+                <th>hsaco_index</th>
                 <th>result</th>
                 <th>times (ms) med/p20/p80</th>
                 <th>adiffs</th>
@@ -149,8 +149,8 @@ document.getElementById('tune_lookup_btn').addEventListener('click', function() 
             {% set rd = r.result_data %}
             <tr>
                 <td><code>{{ r.id }}</code></td>
-                <td><code>{{ r.iface_name }}</code></td>
-                <td>{{ r.impl_index }}</td>
+                <td><code>{{ r.kernel_name }}</code></td>
+                <td>{{ r.hsaco_index }}</td>
                 <td>{{ r.result }}</td>
                 <td>{% if rd and rd.times %}{{ "%.3f" | format(rd.times[0]) }} / {{ "%.3f" | format(rd.times[1]) }} / {{ "%.3f" | format(rd.times[2]) }}{% else %}—{% endif %}</td>
                 <td>{% if rd and rd.adiffs %}
@@ -184,15 +184,15 @@ document.getElementById('tune_lookup_btn').addEventListener('click', function() 
     {% endif %}
 </section>
 
-{# ── best_tuning_results (kernel level) ──────────────────────────────────── #}
+{# ── best_tuning_results ─────────────────────────────────────────────────── #}
 <section>
-    <h3>best_tuning_results ({{ debug_data.best_results | length }} rows) <small style="font-weight: normal; color: #777;">— tuning_level = 'kernel'</small></h3>
+    <h3>best_tuning_results ({{ debug_data.best_results | length }} rows)</h3>
     {% if debug_data.best_results %}
     <table style="width: 100%;">
         <thead>
             <tr>
-                <th>iface_name</th>
-                <th>impl_index</th>
+                <th>kernel_name</th>
+                <th>hsaco_index</th>
                 <th>median_time</th>
                 <th>arch</th>
                 <th>computed_at</th>
@@ -202,8 +202,8 @@ document.getElementById('tune_lookup_btn').addEventListener('click', function() 
         <tbody>
             {% for r in debug_data.best_results %}
             <tr>
-                <td><code>{{ r.iface_name }}</code></td>
-                <td>{{ r.impl_index }}</td>
+                <td><code>{{ r.kernel_name }}</code></td>
+                <td>{{ r.hsaco_index }}</td>
                 <td>{{ "%.6f" | format(r.median_time) if r.median_time is not none else '—' }}</td>
                 <td><code>{{ r.arch }}</code></td>
                 <td>{{ r.computed_at }}</td>
@@ -224,7 +224,7 @@ document.getElementById('tune_lookup_btn').addEventListener('click', function() 
     <table style="width: 100%;">
         <thead>
             <tr>
-                <th>iface_name</th>
+                <th>kernel_name</th>
                 <th>test_case</th>
                 <th>tensor_name</th>
                 <th>target_fudge_factor</th>
@@ -234,7 +234,7 @@ document.getElementById('tune_lookup_btn').addEventListener('click', function() 
         <tbody>
             {% for r in debug_data.accurate_results %}
             <tr>
-                <td><code>{{ r.iface_name }}</code></td>
+                <td><code>{{ r.kernel_name }}</code></td>
                 <td><code>{{ r.test_case }}</code></td>
                 <td><code>{{ r.tensor_name }}</code></td>
                 <td>{{ "%.6f" | format(r.target_fudge_factor) if r.target_fudge_factor is not none else 'NaN' }}</td>
@@ -248,16 +248,16 @@ document.getElementById('tune_lookup_btn').addEventListener('click', function() 
     {% endif %}
 </section>
 
-{# ── tuning_results (op level) ───────────────────────────────────────────── #}
+{# ── optune_results ──────────────────────────────────────────────────────── #}
 <section>
-    <h3>optune_results ({{ debug_data.optune_results | length }} rows) <small style="font-weight: normal; color: #777;">— tuning_results WHERE tuning_level = 'op'</small></h3>
+    <h3>optune_results ({{ debug_data.optune_results | length }} rows)</h3>
     {% if debug_data.optune_results %}
     <table style="width: 100%;">
         <thead>
             <tr>
                 <th>id</th>
-                <th>iface_name</th>
-                <th>impl_index</th>
+                <th>op_name</th>
+                <th>backend_index</th>
                 <th>result</th>
                 <th>times (ms) med/p20/p80</th>
                 <th>adiffs</th>
@@ -270,8 +270,8 @@ document.getElementById('tune_lookup_btn').addEventListener('click', function() 
             {% set rd = r.result_data %}
             <tr>
                 <td><code>{{ r.id }}</code></td>
-                <td><code>{{ r.iface_name }}</code></td>
-                <td>{{ r.impl_index }}</td>
+                <td><code>{{ r.op_name }}</code></td>
+                <td>{{ r.backend_index }}</td>
                 <td>{{ r.result }}</td>
                 <td>{% if rd and rd.times %}{{ "%.3f" | format(rd.times[0]) }} / {{ "%.3f" | format(rd.times[1]) }} / {{ "%.3f" | format(rd.times[2]) }}{% else %}—{% endif %}</td>
                 <td>{% if rd and rd.adiffs %}
@@ -304,15 +304,15 @@ document.getElementById('tune_lookup_btn').addEventListener('click', function() 
     {% endif %}
 </section>
 
-{# ── best_tuning_results (op level) ──────────────────────────────────────── #}
+{# ── best_optune_results ─────────────────────────────────────────────────── #}
 <section>
-    <h3>best_optune_results ({{ debug_data.best_optune_results | length }} rows) <small style="font-weight: normal; color: #777;">— best_tuning_results WHERE tuning_level = 'op'</small></h3>
+    <h3>best_optune_results ({{ debug_data.best_optune_results | length }} rows)</h3>
     {% if debug_data.best_optune_results %}
     <table style="width: 100%;">
         <thead>
             <tr>
-                <th>iface_name</th>
-                <th>impl_index</th>
+                <th>op_name</th>
+                <th>backend_index</th>
                 <th>median_time</th>
                 <th>arch</th>
                 <th>computed_at</th>
@@ -322,8 +322,8 @@ document.getElementById('tune_lookup_btn').addEventListener('click', function() 
         <tbody>
             {% for r in debug_data.best_optune_results %}
             <tr>
-                <td><code>{{ r.iface_name }}</code></td>
-                <td>{{ r.impl_index }}</td>
+                <td><code>{{ r.op_name }}</code></td>
+                <td>{{ r.backend_index }}</td>
                 <td>{{ "%.6f" | format(r.median_time) if r.median_time is not none else '—' }}</td>
                 <td><code>{{ r.arch }}</code></td>
                 <td>{{ r.computed_at }}</td>
