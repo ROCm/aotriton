@@ -38,8 +38,9 @@ except ImportError:
 
 from aotriton.tune.utils import get_db_connection_params
 from aotriton.tune.pq.queue import TaskQueue
+from aotriton.tune.pq.results import get_task_debug_snapshot
 from aotriton.tune.registry import load_flash_entry_module
-from .pytest_entry_parser import parse_pytest_node_id, entry_to_sql_clauses
+from .pytest_entry_parser import parse_pytest_node_id
 from aotriton.tune.pq.visperf import (
     query_best_results, query_all_best_results, get_available_archs,
     build_axes, query_cell_detail,
@@ -230,20 +231,15 @@ def _resolve_pytest_entry(workdir, line: str) -> dict:
     except ValueError as e:
         return {'error': str(e)}
 
-    clauses, params = entry_to_sql_clauses(entry)
-    sql = (
-        'SELECT id, arch, module FROM task_queue WHERE '
-        + ' AND '.join(clauses)
-        + ' ORDER BY arch, id'
-    )
     parsed_desc = ', '.join(f'{k}={v!r}' for k, v in entry.items())
 
     try:
         conn_params = get_db_connection_params(Path(workdir))
         with psycopg.connect(**conn_params, row_factory=dict_row) as conn:
-            with conn.cursor() as cur:
-                cur.execute(sql, params)
-                rows = cur.fetchall()
+            # No arch or tuning_level filter: a pytest node ID encodes
+            # neither, so every matching row is reported and the caller picks.
+            rows = TaskQueue(conn).find_by_entry(
+                entry, columns='id, arch, module')
         if not rows:
             return {'error': f'No task_queue row found for {parsed_desc}'}
         return {'matches': [{'task_id': r['id'], 'arch': r['arch'], 'module': r['module']} for r in rows]}
@@ -286,28 +282,14 @@ def resolve_tune_entry(workdir, line: str) -> dict:
     # the UI is actually showing rather than assuming 'kernel', so resolving a
     # line from an op-mode dbreport finds the op task.
     tuning_level = get_tuning_mode(workdir)
-    clauses = ["task_config->>'arch' = %s", "tuning_level = %s"]
-    params: list = [arch, tuning_level]
-    for field, value in d.items():
-        col = f"task_config->'entry'->>'{field}'"
-        if isinstance(value, bool):
-            clauses.append(f"({col})::boolean = %s")
-        elif isinstance(value, int):
-            clauses.append(f"({col})::integer = %s")
-        elif isinstance(value, float):
-            clauses.append(f"({col})::float = %s")
-        else:
-            clauses.append(f"{col} = %s")
-        params.append(value)
-
-    sql = 'SELECT id FROM task_queue WHERE ' + ' AND '.join(clauses) + ' LIMIT 1'
 
     try:
         conn_params = get_db_connection_params(Path(workdir))
         with psycopg.connect(**conn_params, row_factory=dict_row) as conn:
-            with conn.cursor() as cur:
-                cur.execute(sql, params)
-                row = cur.fetchone()
+            rows = TaskQueue(conn).find_by_entry(
+                d, arch=arch, tuning_level=tuning_level,
+                columns='id', limit=1)
+        row = rows[0] if rows else None
         if row is None:
             return {'error': f'No task_queue row found for arch={arch} {entry_part}'}
         return {'task_id': row['id']}
@@ -317,74 +299,14 @@ def resolve_tune_entry(workdir, line: str) -> dict:
 
 
 def get_debug_task_data(workdir, task_id: int) -> dict:
-    """Return all rows related to task_id from every relevant table."""
+    """Return all rows related to task_id from every relevant table.
+
+    The queries live in aotriton.tune.pq.results, which owns the schema.
+    """
     try:
         conn_params = get_db_connection_params(Path(workdir))
         with psycopg.connect(**conn_params, row_factory=dict_row) as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT * FROM task_queue WHERE id = %s", (task_id,))
-                task = cur.fetchone()
-
-                # tuning_results/best_tuning_results/most_accurate_tuning_results each
-                # hold both tuning_level values ('kernel' | 'op'), keyed by
-                # iface_name/impl_index. A task_id already implies exactly one
-                # tuning_level via its task_queue row, so the filter below is an
-                # explicit split into the two display sections rather than a
-                # correctness requirement.
-                cur.execute(
-                    "SELECT id, task_id, tuning_level, iface_name, impl_index, result,"
-                    " result_data, error, gpu_id, created_at FROM tuning_results"
-                    " WHERE task_id = %s AND tuning_level = 'kernel'"
-                    " ORDER BY iface_name, impl_index",
-                    (task_id,),
-                )
-                tuning_results = cur.fetchall()
-
-                cur.execute(
-                    "SELECT * FROM best_tuning_results WHERE task_id = %s"
-                    " AND tuning_level = 'kernel' ORDER BY iface_name",
-                    (task_id,),
-                )
-                best_results = cur.fetchall()
-
-                cur.execute(
-                    "SELECT iface_name, test_case, tensor_name,"
-                    " target_fudge_factor, absolute_error"
-                    " FROM most_accurate_tuning_results WHERE task_id = %s"
-                    " ORDER BY iface_name, test_case, tensor_name",
-                    (task_id,),
-                )
-                accurate_results = cur.fetchall()
-
-                # Op-level view of the same tables. The dict keys below keep the
-                # informal 'optune_results'/'best_optune_results' labels the
-                # templates expect; both queries read tuning_results /
-                # best_tuning_results.
-                cur.execute(
-                    "SELECT id, tuning_level, iface_name, impl_index, result, result_data,"
-                    " error, gpu_id, created_at FROM tuning_results"
-                    " WHERE task_id = %s AND tuning_level = 'op'"
-                    " ORDER BY iface_name, impl_index",
-                    (task_id,),
-                )
-                optune_results = cur.fetchall()
-
-                cur.execute(
-                    "SELECT iface_name, impl_index, median_time, arch, impl_desc, computed_at"
-                    " FROM best_tuning_results WHERE task_id = %s"
-                    " AND tuning_level = 'op' ORDER BY iface_name",
-                    (task_id,),
-                )
-                best_optune_results = cur.fetchall()
-
-        return {
-            'task': task,
-            'tuning_results': tuning_results,
-            'best_results': best_results,
-            'accurate_results': accurate_results,
-            'optune_results': optune_results,
-            'best_optune_results': best_optune_results,
-        }
+            return get_task_debug_snapshot(conn, task_id)
     except Exception as e:
         logging.error('Failed to get debug data for task %s: %s', task_id, e)
         return {'error': str(e)}

@@ -9,6 +9,9 @@ using PostgreSQL SELECT FOR UPDATE SKIP LOCKED.
 """
 
 import psycopg
+import json
+from dataclasses import asdict, is_dataclass
+
 from psycopg.rows import dict_row
 from dataclasses import dataclass
 from datetime import datetime
@@ -17,6 +20,50 @@ import os
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def entry_filter(entry, *, arch=None, tuning_level=None, module=None):
+    """WHERE fragment selecting task_queue rows for one tuning entry.
+
+    Returns (sql, params). `entry` is a mapping of entry fields, or any
+    dataclass instance (a family's Entry class) -- the field names are the
+    family's, but the shape of the query is not, so it lives here with the
+    rest of the task_queue schema knowledge.
+
+    Field types drive the cast, because task_config is JSONB and ->> yields
+    text. bool is tested before int deliberately: bool is a subclass of int
+    in Python, so the order is load-bearing. Tuples are compared as JSON
+    arrays via -> rather than ->>, which is how a composite value such as an
+    asymmetric hdim is stored.
+    """
+    if is_dataclass(entry) and not isinstance(entry, type):
+        entry = asdict(entry)
+    clauses, params = [], []
+    if arch is not None:
+        clauses.append("task_config->>'arch' = %s")
+        params.append(arch)
+    if tuning_level is not None:
+        clauses.append('tuning_level = %s')
+        params.append(tuning_level)
+    if module is not None:
+        clauses.append('module = %s')
+        params.append(module)
+    for field_name, value in entry.items():
+        col = f"task_config->'entry'->>'{field_name}'"
+        if isinstance(value, (tuple, list)):
+            clauses.append(f"task_config->'entry'->'{field_name}' = %s::jsonb")
+            params.append(json.dumps(list(value)))
+            continue
+        if isinstance(value, bool):
+            clauses.append(f'({col})::boolean = %s')
+        elif isinstance(value, int):
+            clauses.append(f'({col})::integer = %s')
+        elif isinstance(value, float):
+            clauses.append(f'({col})::float = %s')
+        else:
+            clauses.append(f'{col} = %s')
+        params.append(value)
+    return ' AND '.join(clauses), params
 
 
 class TuningLevelMismatch(RuntimeError):
@@ -343,6 +390,45 @@ class TaskQueue:
     # ------------------------------------------------------------------
 
     _PROGRESS_VIEW = {'kernel': 'kernel_queue_progress', 'op': 'op_queue_progress'}
+
+    # ------------------------------------------------------------------
+    # Entry / id lookups
+    # ------------------------------------------------------------------
+
+    _LOOKUP_COLUMNS = 'id, arch, module, tuning_level, status'
+
+    def find_by_entry(self, entry, *, arch=None, tuning_level=None,
+                      module=None, columns: str | None = None,
+                      limit: int | None = None) -> list[dict]:
+        """task_queue rows matching one tuning entry.
+
+        Filters are optional so a caller can be as specific as it can be: a
+        pytest node ID carries no arch, while a TUNE_V3BIS line does. Supply
+        tuning_level whenever it is known -- both levels share arch and every
+        task_config field, so omitting it matches an entry's rows at both.
+        """
+        where, params = entry_filter(entry, arch=arch,
+                                     tuning_level=tuning_level, module=module)
+        sql = f'SELECT {columns or self._LOOKUP_COLUMNS} FROM task_queue'
+        if where:
+            sql += f' WHERE {where}'
+        sql += ' ORDER BY arch, id'
+        if limit is not None:
+            sql += f' LIMIT {int(limit)}'
+        with self.conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(sql, params)
+            return cur.fetchall()
+
+    def find_by_ids(self, task_ids: list[int],
+                    columns: str | None = None) -> list[dict]:
+        """task_queue rows for the given ids, in (arch, id) order."""
+        if not task_ids:
+            return []
+        with self.conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                f'SELECT {columns or self._LOOKUP_COLUMNS} FROM task_queue '
+                f'WHERE id = ANY(%s) ORDER BY arch, id', (task_ids,))
+            return cur.fetchall()
 
     def get_progress(self, tuning_level: str, *,
                      recent_window: str = '5 minutes',

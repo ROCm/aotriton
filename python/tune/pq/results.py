@@ -120,3 +120,62 @@ def get_task_results(task_id: str, conn, tuning_level: str | None = None) -> lis
             })
 
         return results
+
+
+def get_task_debug_snapshot(conn, task_id: int) -> dict:
+    """Every row related to one task_id, for the web UI's Debug page.
+
+    Returns keys: task, tuning_results, best_results, accurate_results,
+    optune_results, best_optune_results. The last two keep those names because
+    the templates use them as labels; both read the unified tables filtered to
+    tuning_level = 'op'.
+
+    A task_id already implies exactly one tuning_level via its task_queue row,
+    so splitting kernel from op here is presentation -- two sections on the
+    page -- not a correctness requirement.
+    """
+    from psycopg.rows import dict_row
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute('SELECT * FROM task_queue WHERE id = %s', (task_id,))
+        task = cur.fetchone()
+
+        cur.execute(
+            'SELECT id, task_id, tuning_level, iface_name, impl_index, result,'
+            ' result_data, error, gpu_id, created_at FROM tuning_results'
+            " WHERE task_id = %s AND tuning_level = 'kernel'"
+            ' ORDER BY iface_name, impl_index', (task_id,))
+        tuning_results = cur.fetchall()
+
+        cur.execute(
+            'SELECT * FROM best_tuning_results WHERE task_id = %s'
+            " AND tuning_level = 'kernel' ORDER BY iface_name", (task_id,))
+        best_results = cur.fetchall()
+
+        cur.execute(
+            'SELECT iface_name, test_case, tensor_name,'
+            ' target_fudge_factor, absolute_error'
+            ' FROM most_accurate_tuning_results WHERE task_id = %s'
+            ' ORDER BY iface_name, test_case, tensor_name', (task_id,))
+        accurate_results = cur.fetchall()
+
+        cur.execute(
+            'SELECT id, tuning_level, iface_name, impl_index, result, result_data,'
+            ' error, gpu_id, created_at FROM tuning_results'
+            " WHERE task_id = %s AND tuning_level = 'op'"
+            ' ORDER BY iface_name, impl_index', (task_id,))
+        optune_results = cur.fetchall()
+
+        cur.execute(
+            'SELECT iface_name, impl_index, median_time, arch, impl_desc, computed_at'
+            ' FROM best_tuning_results WHERE task_id = %s'
+            " AND tuning_level = 'op' ORDER BY iface_name", (task_id,))
+        best_optune_results = cur.fetchall()
+
+    return {
+        'task': task,
+        'tuning_results': tuning_results,
+        'best_results': best_results,
+        'accurate_results': accurate_results,
+        'optune_results': optune_results,
+        'best_optune_results': best_optune_results,
+    }

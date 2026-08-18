@@ -27,6 +27,7 @@ import sys
 import argparse
 
 from aotriton.tune.pytest_node import parse_node_id
+from aotriton.tune.pq.queue import entry_filter
 from aotriton.tune.registry import load_family_tune
 
 
@@ -53,37 +54,6 @@ def parse_pytest_node_id(node_id: str) -> dict:
             f'Family {family!r} does not translate pytest node IDs '
             f'(no pytest_entry module in its tune block).')
     return translate.entry_from_pytest_node(node)
-
-
-def entry_to_sql_clauses(entry: dict) -> tuple[list[str], list]:
-    """
-    Convert a FlashEntry field dict into (clauses, params) for a psycopg
-    WHERE clause on task_config->'entry'.
-
-    Does NOT include an arch filter — pytest IDs do not encode arch.
-    """
-    clauses = []
-    params: list = []
-    for field, value in entry.items():
-        col = f"task_config->'entry'->>'{field}'"
-        if isinstance(value, tuple):
-            # hdim stored as JSON array [a, b]
-            json_val = json.dumps(list(value))
-            clauses.append(f"task_config->'entry'->'{field}' = %s::jsonb")
-            params.append(json_val)
-        elif isinstance(value, bool):
-            clauses.append(f"({col})::boolean = %s")
-            params.append(value)
-        elif isinstance(value, int):
-            clauses.append(f"({col})::integer = %s")
-            params.append(value)
-        elif isinstance(value, float):
-            clauses.append(f"({col})::float = %s")
-            params.append(value)
-        else:
-            clauses.append(f"{col} = %s")
-            params.append(value)
-    return clauses, params
 
 
 def main() -> None:
@@ -127,11 +97,10 @@ def main() -> None:
         for k, v in entry.items():
             print(f'  {k} = {v!r}')
         print()
-        clauses, params = entry_to_sql_clauses(entry)
-        print('SQL WHERE clauses (no arch filter — pytest IDs do not encode arch):')
-        for clause, param in zip(clauses, params):
-            print(f'  {clause}  [param={param!r}]', end=' ')
-        print()
+        sql, params = entry_filter(entry)
+        print('SQL WHERE clause (no arch filter -- pytest IDs do not encode arch):')
+        print(f'  {sql}')
+        print(f'  params = {params!r}')
 
 
 if __name__ == '__main__':

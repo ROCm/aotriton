@@ -577,3 +577,60 @@ def test_flash_entry_from_pytest_node():
     with pytest.raises(ValueError):   # too few params for the layout
         pe.entry_from_pytest_node(parse_node_id(
             'modules/flash/tests/t.py::test_regular_bwd[a-b-c]'))
+
+
+def test_entry_filter_is_the_only_clause_builder():
+    # CLAUDE.md: pq owns database access. Four copies of this clause builder
+    # had drifted across .tune/; three of them mishandled a tuple value.
+    from aotriton.tune.pq.queue import entry_filter
+    entry = {'dtype': 'float16', 'hdim': 64, 'causal': True, 'dropout_p': 0.0}
+
+    sql, params = entry_filter(entry)
+    # bool must be tested before int -- bool is a subclass of int in Python,
+    # so a reordering silently casts causal to ::integer.
+    assert "(task_config->'entry'->>'causal')::boolean = %s" in sql
+    assert "(task_config->'entry'->>'hdim')::integer = %s" in sql
+    assert "(task_config->'entry'->>'dropout_p')::float = %s" in sql
+    assert "task_config->'entry'->>'dtype' = %s" in sql
+    assert params == ['float16', 64, True, 0.0]
+
+    # A composite value is compared as a JSON array via -> , not ->>.
+    sql, params = entry_filter({'hdim': (64, 128)})
+    assert sql == "task_config->'entry'->'hdim' = %s::jsonb"
+    assert params == ['[64, 128]']
+
+    # Optional row filters lead, in a fixed order.
+    sql, params = entry_filter({'hdim': 64}, arch='gfx942',
+                               tuning_level='op', module='flash')
+    assert sql.startswith("task_config->>'arch' = %s AND tuning_level = %s "
+                          "AND module = %s AND ")
+    assert params[:3] == ['gfx942', 'op', 'flash']
+
+
+def test_no_raw_tuning_db_sql_outside_pq():
+    # Regression guard for the CLAUDE.md rule: .tune/ must reach the tuning
+    # database through aotriton.tune.pq, never with its own SQL.
+    import re
+    # .tune/bin/psql is an interactive psql wrapper; SQL in its help text is
+    # the point of the tool, not a bypass of the pq layer.
+    EXEMPT = {'.tune/bin/psql'}
+    offenders = []
+    pat = re.compile(r"FROM (task_queue|tuning_results|best_tuning_results"
+                     r"|most_accurate_tuning_results)\b|task_config->'entry'")
+    for sub in ('webui', 'libexec', 'bin', 'remote'):
+        d = _REPO_ROOT / '.tune' / sub
+        if not d.is_dir():
+            continue
+        for f in d.rglob('*'):
+            if not f.is_file() or f.suffix in {'.html', '.js', '.css'}:
+                continue
+            if str(f.relative_to(_REPO_ROOT)) in EXEMPT:
+                continue
+            try:
+                text = f.read_text(encoding='utf-8', errors='ignore')
+            except OSError:
+                continue
+            for n, line in enumerate(text.splitlines(), 1):
+                if pat.search(line) and not line.lstrip().startswith(('#', '--', '*')):
+                    offenders.append(f'{f.relative_to(_REPO_ROOT)}:{n}')
+    assert not offenders, 'raw tuning-DB SQL outside pq: ' + ', '.join(offenders)
