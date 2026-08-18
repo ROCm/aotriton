@@ -241,13 +241,6 @@ class KernelDescription(Interface):
         cfg = self._built.tune.configs
         return cfg(f)
 
-    # LUT shape constants consumed by the family-side sancheck body.
-    # TODO: these values are family-specific and do not belong here; move
-    #       them to a per-family adapter when a second family is ported.
-    LUT_FULL_SEQLEN_Q = [16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
-    LUT_FULL_SEQLEN_K = [16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
-    LUT_FULL_SEQLEN_NAVI = [16, 32, 64, 128, 256, 512, 1024, 2048]
-
     def _lut_sancheck(self):
         """This kernel's family-side `LutSancheck`, from modules/<family>/tune.
 

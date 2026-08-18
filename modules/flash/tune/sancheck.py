@@ -37,15 +37,21 @@ def check_value(functional, repr_name):
     assert False, f'Cannot find {repr_name=} in {functional=}'
 
 
+# Flash's LUT axes. These live here, not on the ATI kdesc: the kdesc is the
+# generic IR node and must not carry family-shaped values. The methods below
+# are called unbound with `self` bound to that kdesc, so they must reference
+# these directly rather than through `self`.
+LUT_FULL_SEQLEN_Q = [16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
+LUT_FULL_SEQLEN_K = [16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
+LUT_FULL_SEQLEN_NAVI = [16, 32, 64, 128, 256, 512, 1024, 2048]
+
+
 class LutSancheck:
     """Flash-family LUT sancheck + missing-entry diagnostic, called by the ATI
     kdesc (LutSancheck.method(self=kdesc, ...) via family_aot). A plain holder — no
     description base; it relies only on the duck-typed kdesc surface (check_value,
     gen_autotune_configs presence)."""
     FAMILY = 'flash'
-    LUT_FULL_SEQLEN_Q = [16,32,64,128,256,512,1024,2048,4096,8192]
-    LUT_FULL_SEQLEN_K = [16,32,64,128,256,512,1024,2048,4096,8192]
-    LUT_FULL_SEQLEN_NAVI = [16,32,64,128,256,512,1024,2048]
 
     def is_functional_disabled(self, functional):
         if not hasattr(self, 'gen_autotune_configs'):  # only check acutal FA kernels
@@ -73,8 +79,8 @@ class LutSancheck:
             return True, [], _empty_generator()
         MI = (AOTRITON_ARCH_WARPSIZE[arch] == 64)
         Navi = (AOTRITON_ARCH_WARPSIZE[arch] == 32)
-        LUT_TENSOR_SIZE = (len(self.LUT_FULL_SEQLEN_Q), len(self.LUT_FULL_SEQLEN_K))
-        LUT_TENSOR_SIZE_NAVI = (len(self.LUT_FULL_SEQLEN_NAVI), len(self.LUT_FULL_SEQLEN_NAVI))
+        LUT_TENSOR_SIZE = (len(LUT_FULL_SEQLEN_Q), len(LUT_FULL_SEQLEN_K))
+        LUT_TENSOR_SIZE_NAVI = (len(LUT_FULL_SEQLEN_NAVI), len(LUT_FULL_SEQLEN_NAVI))
         log(lambda : f'{lut_tensor.shape=} ==? {LUT_TENSOR_SIZE=}')
         all_pos = (lut_tensor >= 0).all()
         shape = lut_tensor.shape[1:]
@@ -97,12 +103,12 @@ class LutSancheck:
                 errors.append(f"Unexpected {shape=}, Expecting {LUT_TENSOR_SIZE}")
         # Pick the seqlen lists that match the actual lut_tensor shape for this arch.
         if Navi and lut_tensor.shape[1:] == LUT_TENSOR_SIZE_NAVI:
-            lut_full_seqlen_q = self.LUT_FULL_SEQLEN_NAVI
-            lut_full_seqlen_k = self.LUT_FULL_SEQLEN_NAVI
+            lut_full_seqlen_q = LUT_FULL_SEQLEN_NAVI
+            lut_full_seqlen_k = LUT_FULL_SEQLEN_NAVI
             expected_size = LUT_TENSOR_SIZE_NAVI
         else:
-            lut_full_seqlen_q = self.LUT_FULL_SEQLEN_Q
-            lut_full_seqlen_k = self.LUT_FULL_SEQLEN_K
+            lut_full_seqlen_q = LUT_FULL_SEQLEN_Q
+            lut_full_seqlen_k = LUT_FULL_SEQLEN_K
             expected_size = LUT_TENSOR_SIZE
         missing_entries = self._gen_missing_entries(functional, lut_tensor,
                                                     arch, lut_full_seqlen_q,
