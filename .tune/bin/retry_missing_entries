@@ -122,7 +122,8 @@ def main() -> None:
             return
 
         row_ids = [r['id'] for r in matches]
-        affected = reset_to_pending(conn, row_ids, tuning_level=args.tuning_mode)
+        affected = reset_to_pending(conn, row_ids, tuning_level=args.tuning_mode,
+                                   delete_results=True)
         conn.commit()
         print(f'Done: {affected} rows reset to pending.')
 

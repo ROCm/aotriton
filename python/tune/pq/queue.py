@@ -198,6 +198,9 @@ class TaskQueue:
         """
         Mark task as pending (used during graceful shutdown to cancel running tasks).
 
+        Status only -- existing results are left alone. See reset_to_pending()
+        for the bulk re-run path, which can also discard them.
+
         Args:
             task_id: Task ID
             arch: GPU architecture (for partition routing)
@@ -382,26 +385,36 @@ class TaskQueue:
             stale = cur.fetchall()
         return {'progress': progress, 'speed': speed, 'stale': stale}
 
-    def reset_to_pending(self, row_ids: list[int], tuning_level: str) -> int:
-        """Reset the given task_queue rows to pending and drop their results.
+    def reset_to_pending(self, row_ids: list[int], tuning_level: str, *,
+                         delete_results: bool) -> int:
+        """Reset the given task_queue rows to pending, for re-running.
 
-        Every statement is scoped by tuning_level as well as id. Callers select
-        ids by arch/entry, which both levels now share, so an id list can span
-        levels; resetting a task without also clearing its results -- or
-        clearing results for a task left completed -- would leave the two out
-        of step. Returns the number of task_queue rows actually reset.
+        delete_results is keyword-only and REQUIRED because it is destructive
+        and the destruction is not implied by the method name. With it set,
+        the tasks' tuning_results and most_accurate_tuning_results rows are
+        dropped as well -- GPU-hours of measurements -- so that a re-run
+        starts clean instead of mixing new results with stale ones. Pass False
+        to requeue while keeping the existing rows.
+
+        Compare mark_pending(), which only moves a single task back to pending
+        and never touches results.
+
+        Every statement is scoped by tuning_level as well as id: callers select
+        ids by arch/entry, which both levels share, so an id list can span
+        levels. Returns the number of task_queue rows actually reset.
         """
         if not row_ids:
             return 0
         with self.conn.cursor() as cur:
-            cur.execute(
-                'DELETE FROM most_accurate_tuning_results '
-                'WHERE tuning_level = %s AND task_id = ANY(%s)',
-                (tuning_level, row_ids))
-            cur.execute(
-                'DELETE FROM tuning_results '
-                'WHERE tuning_level = %s AND task_id = ANY(%s)',
-                (tuning_level, row_ids))
+            if delete_results:
+                cur.execute(
+                    'DELETE FROM most_accurate_tuning_results '
+                    'WHERE tuning_level = %s AND task_id = ANY(%s)',
+                    (tuning_level, row_ids))
+                cur.execute(
+                    'DELETE FROM tuning_results '
+                    'WHERE tuning_level = %s AND task_id = ANY(%s)',
+                    (tuning_level, row_ids))
             cur.execute("""
                 UPDATE task_queue
                    SET status       = 'pending',

@@ -124,7 +124,8 @@ def main() -> None:
         total_extra = sum(len(v) for v in extra_uts_map.values())
         print(f'Inserted {total_extra} extra UT entries for {len(extra_uts_map)} tasks.')
 
-        affected = reset_to_pending(conn, row_ids, tuning_level=args.tuning_mode)
+        affected = reset_to_pending(conn, row_ids, tuning_level=args.tuning_mode,
+                                   delete_results=True)
         conn.commit()
         print(f'Done: {affected} rows reset to pending.')
 

@@ -101,13 +101,14 @@ def print_summary(label: str, count: int, matches: list[dict]) -> None:
         print(f'  {status}: {n}')
 
 
-def reset_to_pending(conn, row_ids: list[int], tuning_level: str) -> int:
+def reset_to_pending(conn, row_ids: list[int], tuning_level: str, *,
+                     delete_results: bool) -> int:
     """Reset the given task_queue ids to pending. Returns affected row count.
 
     Thin wrapper over aotriton.tune.pq.queue.TaskQueue.reset_to_pending, which
-    owns the SQL: the reset also clears the tasks' tuning_results and
-    most_accurate_tuning_results rows, and every statement is scoped by
-    tuning_level as well as id. Callers here select ids by arch/entry, which
-    both levels share, so an id list can legitimately span levels.
+    owns the SQL. delete_results stays keyword-only and required here too --
+    forwarding it with a default would hide from this layer's callers that it
+    can drop their tuning_results / most_accurate_tuning_results rows.
     """
-    return TaskQueue(conn).reset_to_pending(row_ids, tuning_level)
+    return TaskQueue(conn).reset_to_pending(row_ids, tuning_level,
+                                            delete_results=delete_results)
