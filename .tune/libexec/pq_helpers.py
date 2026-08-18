@@ -52,17 +52,26 @@ def _entry_to_jsonb_filter(entry: FlashEntry) -> tuple[str, list]:
     return ' AND '.join(clauses), params
 
 
-def fetch_matches(conn, entries: list[tuple[str, FlashEntry]]) -> list[dict]:
-    """Query task_queue for all matching rows, return list of row dicts."""
+def fetch_matches(conn, entries: list[tuple[str, FlashEntry]],
+                  tuning_level: str) -> list[dict]:
+    """Query task_queue for matching rows at one tuning level.
+
+    tuning_level is required: entries match on arch and task_config fields,
+    which both levels now share, so an unfiltered query returns each entry's
+    kernel and op rows together. Callers use the result to report a count and
+    to write scratch/retry_task_ids.txt, so double-counting would inflate the
+    confirmation prompt and feed the other level's ids to the recompute.
+    """
     rows: list[dict] = []
     with conn.cursor() as cur:
         for arch, entry in entries:
             entry_sql, entry_params = _entry_to_jsonb_filter(entry)
             sql = (
                 f"SELECT id, arch, status FROM task_queue "
-                f"WHERE task_config->>'arch' = %s AND {entry_sql}"
+                f"WHERE task_config->>'arch' = %s AND tuning_level = %s "
+                f"AND {entry_sql}"
             )
-            cur.execute(sql, [arch] + entry_params)
+            cur.execute(sql, [arch, tuning_level] + entry_params)
             rows.extend(cur.fetchall())
     return rows
 

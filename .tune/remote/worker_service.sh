@@ -185,6 +185,31 @@ if [ ! -f "python/tune/localq/broker_main.py" ]; then
     exit 1
 fi
 
+# Every worker below runs `python -m aotriton.tune.*`, and the 'aotriton'
+# package only exists once installed: setup.py maps python/ -> aotriton, so
+# there is no importable aotriton/ directory in the checkout and cwd on
+# sys.path is not enough. The worker image installs requirements-tuning.txt /
+# requirements-dev.txt, neither of which references this checkout, so install
+# it here -- the same dedicated step .tune/bin/dispatch performs for its own
+# venv. Marker-guarded so a restart does not pay for it, and re-run when
+# setup.py changes.
+AOTRITON_INSTALLED_MARKER="$WORKDIR/run/.aotriton_installed"
+mkdir -p "$WORKDIR/run"
+if [ ! -f "$AOTRITON_INSTALLED_MARKER" ] || [ "$AOTRITON_ROOT/setup.py" -nt "$AOTRITON_INSTALLED_MARKER" ]; then
+    echo "Installing 'aotriton' package (editable) from $AOTRITON_ROOT..."
+    if ! "$CELERY_WORKER_PYTHON" -m pip install -q -e "$AOTRITON_ROOT" --no-deps; then
+        echo "Error: failed to install the 'aotriton' package; workers cannot" >&2
+        echo "       import aotriton.tune.* without it." >&2
+        exit 1
+    fi
+    touch "$AOTRITON_INSTALLED_MARKER"
+fi
+
+if ! "$CELERY_WORKER_PYTHON" -c "import aotriton" 2>/dev/null; then
+    echo "Error: 'aotriton' is still not importable by $CELERY_WORKER_PYTHON." >&2
+    exit 1
+fi
+
 # Directories
 PID_DIR="$WORKDIR/run/pids${SESSION_NAME:+/$SESSION_NAME}"
 LOG_DIR="$WORKDIR/run/logs${SESSION_NAME:+/$SESSION_NAME}"

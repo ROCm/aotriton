@@ -73,6 +73,12 @@ CROSS JOIN LATERAL jsonb_each(tr.result_data->'adiffs') AS test_case(key, value)
 CROSS JOIN LATERAL jsonb_each(test_case.value)           AS tensor(key, value)
 WHERE tr.result_data IS NOT NULL
   AND tr.tuning_level = '{self.tuning_level}'
+  -- Drop early-reject rows. record_early_reject() stores a negative sentinel
+  -- in absolute_error for a candidate that never ran on hardware; MIN() over a
+  -- group containing one makes the accuracy threshold negative, and
+  -- compute_best_results tests abs_err > MULTIPLIER * threshold, so every
+  -- candidate in that group would then be rejected. Applies at both levels:
+  -- run_single_test's check_early_reject_results path is shared by them.
   AND (tensor.value IS NULL OR (tensor.value->>1)::float >= 0.0) {{filter}}
 GROUP BY tr.task_id, tq.arch, tq.task_config, tr.iface_name, test_case.key, tensor.key
 """

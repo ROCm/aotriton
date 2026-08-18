@@ -192,8 +192,8 @@ class CommandProcessor(object):
             data_dir, kernel = first(line)
             data_dir = Path(data_dir)
             impl_selector = self._module.ImplSelector.parse_text(kernel)
-        except:
-            return 'Error when parsing argument ' + tail
+        except Exception as e:
+            return f'Error when parsing argument {line!r}: {e}'
         if not (data_dir / 'entry.json').is_file():
             return f'{data_dir} is not valid data director. Missing entry.json file.'
         # Clear GPU cache before benchmark

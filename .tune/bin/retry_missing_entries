@@ -108,7 +108,7 @@ def main() -> None:
     conn_params = get_db_connection_params(workdir)
     with psycopg.connect(**conn_params, row_factory=dict_row) as conn:
         print('Querying task_queue …')
-        matches = fetch_matches(conn, entries)
+        matches = fetch_matches(conn, entries, tuning_level=args.tuning_mode)
         print_summary('Report entries', len(entries), matches)
 
         if not matches:
