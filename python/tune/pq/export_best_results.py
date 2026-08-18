@@ -184,15 +184,21 @@ def _input_only(cols: list) -> list:
     return [c for c in cols
             if not c[0].startswith(('tuned_kernel$', 'compiler_options$'))]
 
-# Tuning stores op names as e.g. 'attn_fwd_op'; SQLite tables use 'op_attn_fwd'.
-OP_NAME_MAP = {
-    # Keys are bare iface_name values (ImplSelector never stores the 'op.'
-    # DSL prefix -- see modules/flash/tune/level_op.py); the tuning_level
-    # column, not a name suffix, is what distinguishes op rows from kernel
-    # rows sharing the same attn_fwd/attn_bwd iface_name.
-    'attn_fwd': 'op_attn_fwd',
-    'attn_bwd': 'op_attn_bwd',
-}
+# An op-level row's SQLite table name is its bare iface_name under the ATI
+# operator prefix: iface_name 'attn_fwd' -> table 'op_attn_fwd', matching the
+# @ati.operator symbols in modules/flash/aot/__init__.py.
+#
+# This is a mechanical rule, deliberately NOT a lookup table: the former
+# OP_NAME_MAP had to be hand-edited for every new operator, which is exactly
+# what the retired TODO in flash_op/module.py complained about. OP_SCHEMAS
+# below remains the authority on which operators are exportable.
+#
+# NB iface_name is always bare -- ImplSelector never stores the 'op.' DSL
+# prefix (see modules/flash/tune/level_op.py). The tuning_level column, not a
+# name suffix, is what separates op rows from kernel rows that share an
+# iface_name such as 'attn_fwd'.
+def op_table_name(iface_name: str) -> str:
+    return f'op_{iface_name}'
 
 OP_SCHEMAS = {
     'op_attn_fwd': (_input_only(_FWD_COLS)      + _OP_EXTRA_COLS, _FWD_UNIQUE),
@@ -408,8 +414,8 @@ def export_op(conn_params: dict, output_path: Path) -> None:
             task_config = row['task_config']
             impl_index  = row['impl_index']
 
-            table_name = OP_NAME_MAP.get(iface_name)
-            if table_name is None or table_name not in OP_SCHEMAS:
+            table_name = op_table_name(iface_name)
+            if table_name not in OP_SCHEMAS:
                 logger.warning('Skipping unknown op %s (task_id=%s)', iface_name, task_id)
                 skipped += 1
                 continue
