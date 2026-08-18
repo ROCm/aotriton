@@ -37,6 +37,7 @@ except ImportError:
     )
 
 from aotriton.tune.utils import get_db_connection_params
+from aotriton.tune.pq.queue import TaskQueue
 from aotriton.tune.registry import load_flash_entry_module
 from .pytest_entry_parser import parse_pytest_node_id, entry_to_sql_clauses
 from aotriton.tune.pq.visperf import (
@@ -193,61 +194,21 @@ def _merge_progress_rows(progress_rows, speed_rows, stale_rows):
 
 
 def get_tuning_progress(workdir):
-    """Get kernel and op tuning progress using the two queue-progress views."""
+    """Get kernel and op tuning progress for both tuning levels.
+
+    The queries live in aotriton.tune.pq.queue; this only merges and formats
+    what they return.
+    """
     try:
         conn_params = get_db_connection_params(Path(workdir))
         with psycopg.connect(**conn_params, row_factory=dict_row) as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT * FROM kernel_queue_progress ORDER BY arch")
-                kernel_rows = cur.fetchall()
-
-                cur.execute("SELECT * FROM op_queue_progress ORDER BY arch")
-                op_rows = cur.fetchall()
-
-                cur.execute("""
-                    SELECT arch, COUNT(*) as recent_completions
-                    FROM task_queue
-                    WHERE status = 'completed'
-                      AND completed_at > NOW() - INTERVAL '5 minutes'
-                      AND module NOT LIKE '%_op'
-                    GROUP BY arch
-                """)
-                kernel_speed_rows = cur.fetchall()
-
-                cur.execute("""
-                    SELECT arch, COUNT(*) as recent_completions
-                    FROM task_queue
-                    WHERE status = 'completed'
-                      AND completed_at > NOW() - INTERVAL '5 minutes'
-                      AND module LIKE '%_op'
-                    GROUP BY arch
-                """)
-                op_speed_rows = cur.fetchall()
-
-                cur.execute("""
-                    SELECT arch, COUNT(*) as stale_count
-                    FROM task_queue
-                    WHERE status = 'running'
-                      AND EXTRACT(EPOCH FROM (NOW() - started_at)) > 7200
-                      AND module NOT LIKE '%_op'
-                    GROUP BY arch
-                """)
-                kernel_stale_rows = cur.fetchall()
-
-                cur.execute("""
-                    SELECT arch, COUNT(*) as stale_count
-                    FROM task_queue
-                    WHERE status = 'running'
-                      AND EXTRACT(EPOCH FROM (NOW() - started_at)) > 7200
-                      AND module LIKE '%_op'
-                    GROUP BY arch
-                """)
-                op_stale_rows = cur.fetchall()
-
-                return {
-                    'kernel': _merge_progress_rows(kernel_rows, kernel_speed_rows, kernel_stale_rows),
-                    'op': _merge_progress_rows(op_rows, op_speed_rows, op_stale_rows),
-                }
+            tq = TaskQueue(conn)
+            kernel = tq.get_progress('kernel')
+            op = tq.get_progress('op')
+            return {
+                'kernel': _merge_progress_rows(kernel['progress'], kernel['speed'], kernel['stale']),
+                'op': _merge_progress_rows(op['progress'], op['speed'], op['stale']),
+            }
     except Exception as e:
         logging.error(f"Failed to get tuning progress: {e}")
         return {'kernel': [], 'op': []}
@@ -319,8 +280,14 @@ def resolve_tune_entry(workdir, line: str) -> dict:
     from dataclasses import asdict
     d = asdict(entry)
 
-    clauses = ["task_config->>'arch' = %s", "module NOT LIKE %s"]
-    params: list = [arch, '%_op']
+    # An entry is dispatched at both levels and they share arch and every
+    # task_config field, so the level has to come from somewhere: without it
+    # the WHERE matches two rows and LIMIT 1 picks arbitrarily. Use the mode
+    # the UI is actually showing rather than assuming 'kernel', so resolving a
+    # line from an op-mode dbreport finds the op task.
+    tuning_level = get_tuning_mode(workdir)
+    clauses = ["task_config->>'arch' = %s", "tuning_level = %s"]
+    params: list = [arch, tuning_level]
     for field, value in d.items():
         col = f"task_config->'entry'->>'{field}'"
         if isinstance(value, bool):
@@ -358,42 +325,54 @@ def get_debug_task_data(workdir, task_id: int) -> dict:
                 cur.execute("SELECT * FROM task_queue WHERE id = %s", (task_id,))
                 task = cur.fetchone()
 
+                # tuning_results/best_tuning_results/most_accurate_tuning_results each
+                # hold both tuning_level values ('kernel' | 'op'), keyed by
+                # iface_name/impl_index. A task_id already implies exactly one
+                # tuning_level via its task_queue row, so the filter below is an
+                # explicit split into the two display sections rather than a
+                # correctness requirement.
                 cur.execute(
-                    "SELECT id, task_id, kernel_name, hsaco_index, result,"
+                    "SELECT id, task_id, tuning_level, iface_name, impl_index, result,"
                     " result_data, error, gpu_id, created_at FROM tuning_results"
-                    " WHERE task_id = %s ORDER BY kernel_name, hsaco_index",
+                    " WHERE task_id = %s AND tuning_level = 'kernel'"
+                    " ORDER BY iface_name, impl_index",
                     (task_id,),
                 )
                 tuning_results = cur.fetchall()
 
                 cur.execute(
                     "SELECT * FROM best_tuning_results WHERE task_id = %s"
-                    " ORDER BY kernel_name",
+                    " AND tuning_level = 'kernel' ORDER BY iface_name",
                     (task_id,),
                 )
                 best_results = cur.fetchall()
 
                 cur.execute(
-                    "SELECT kernel_name, test_case, tensor_name,"
+                    "SELECT iface_name, test_case, tensor_name,"
                     " target_fudge_factor, absolute_error"
                     " FROM most_accurate_tuning_results WHERE task_id = %s"
-                    " ORDER BY kernel_name, test_case, tensor_name",
+                    " ORDER BY iface_name, test_case, tensor_name",
                     (task_id,),
                 )
                 accurate_results = cur.fetchall()
 
+                # Op-level view of the same tables. The dict keys below keep the
+                # informal 'optune_results'/'best_optune_results' labels the
+                # templates expect; both queries read tuning_results /
+                # best_tuning_results.
                 cur.execute(
-                    "SELECT id, op_name, backend_index, result, result_data,"
-                    " error, gpu_id, created_at FROM optune_results"
-                    " WHERE task_id = %s ORDER BY op_name, backend_index",
+                    "SELECT id, tuning_level, iface_name, impl_index, result, result_data,"
+                    " error, gpu_id, created_at FROM tuning_results"
+                    " WHERE task_id = %s AND tuning_level = 'op'"
+                    " ORDER BY iface_name, impl_index",
                     (task_id,),
                 )
                 optune_results = cur.fetchall()
 
                 cur.execute(
-                    "SELECT op_name, backend_index, median_time, arch, impl_desc, computed_at"
-                    " FROM best_optune_results WHERE task_id = %s"
-                    " ORDER BY op_name",
+                    "SELECT iface_name, impl_index, median_time, arch, impl_desc, computed_at"
+                    " FROM best_tuning_results WHERE task_id = %s"
+                    " AND tuning_level = 'op' ORDER BY iface_name",
                     (task_id,),
                 )
                 best_optune_results = cur.fetchall()

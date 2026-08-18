@@ -338,6 +338,53 @@ class TaskQueue:
             count = len(cur.fetchall())
             return count
 
+    # ------------------------------------------------------------------
+    # Progress reporting
+    # ------------------------------------------------------------------
+
+    _PROGRESS_VIEW = {'kernel': 'kernel_queue_progress', 'op': 'op_queue_progress'}
+
+    def get_progress(self, tuning_level: str, *,
+                     recent_window: str = '5 minutes',
+                     stale_seconds: int = 7200) -> dict:
+        """Per-arch queue progress for one tuning level.
+
+        Returns {'progress': [...], 'speed': [...], 'stale': [...]}: the
+        level's queue-progress view, recent completion counts, and long-running
+        task counts. Callers merge and format these; the SQL and the
+        tuning_level predicates live here so a queue-schema change does not
+        have to be mirrored into the web UI (see pq/README.md).
+        """
+        try:
+            view = self._PROGRESS_VIEW[tuning_level]
+        except KeyError:
+            raise ValueError(f"unknown tuning_level {tuning_level!r}; "
+                             f"expected one of {sorted(self._PROGRESS_VIEW)}")
+        with self.conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(f'SELECT * FROM {view} ORDER BY arch')
+            progress = cur.fetchall()
+
+            cur.execute("""
+                SELECT arch, COUNT(*) AS recent_completions
+                FROM task_queue
+                WHERE status = 'completed'
+                  AND completed_at > NOW() - %s::interval
+                  AND tuning_level = %s
+                GROUP BY arch
+            """, (recent_window, tuning_level))
+            speed = cur.fetchall()
+
+            cur.execute("""
+                SELECT arch, COUNT(*) AS stale_count
+                FROM task_queue
+                WHERE status = 'running'
+                  AND EXTRACT(EPOCH FROM (NOW() - started_at)) > %s
+                  AND tuning_level = %s
+                GROUP BY arch
+            """, (stale_seconds, tuning_level))
+            stale = cur.fetchall()
+        return {'progress': progress, 'speed': speed, 'stale': stale}
+
     def reset_to_pending(self, row_ids: list[int], tuning_level: str, *,
                          delete_results: bool) -> int:
         """Reset the given task_queue rows to pending, for re-running.
