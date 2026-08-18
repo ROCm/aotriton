@@ -24,6 +24,7 @@ except ImportError:
         f"  Install it with: pip install -e '{_REPO_ROOT}'"
     )
 
+from aotriton.tune.pq.queue import TaskQueue
 from aotriton.tune.registry import load_flash_entry_module
 
 FlashEntry = load_flash_entry_module().FlashEntry
