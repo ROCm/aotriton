@@ -20,23 +20,13 @@ from psycopg.rows import dict_row
 
 from .protocol import send_message, recv_message
 from ..utils import get_db_connection_params, configure_logging_with_flush
-from ..pq.queue import TaskQueue
+from ..pq.queue import TaskQueue, TuningLevelMismatch
 from ..pq.connection import ReconnectableConn
 from ..pq.extra_uts import get_extra_uts
 
 configure_logging_with_flush()
 
 logger = logging.getLogger(__name__)
-
-
-class TuningLevelMismatch(RuntimeError):
-    """A worker was handed a task belonging to the other tuning level.
-
-    Systemic, not transient: it means fetch_tasks()'s tuning_level filter is
-    not doing its job, and every subsequent claim is suspect. Deliberately
-    excluded from _fetch_pg_task()'s broad except so it takes the worker down
-    instead of being logged and retried.
-    """
 
 
 class PGReaderWorker:
@@ -245,18 +235,6 @@ class PGReaderWorker:
 
             if tasks:
                 task = tasks[0]
-                # A worker must never execute the other tuning level: the two
-                # need different pyaotriton builds. fetch_tasks() filters on
-                # tuning_level server-side, so this cannot trigger unless that
-                # filter regresses -- which is exactly what it is here to
-                # catch. Raise rather than assert: this guards data integrity,
-                # not a programmer precondition, so it must survive `python -O`.
-                if task.tuning_level != self.tuning_mode:
-                    raise TuningLevelMismatch(
-                        f"PG Reader {self.worker_id}: claimed task_id={task.id} with "
-                        f"tuning_level={task.tuning_level!r} but this worker is "
-                        f"tuning_mode={self.tuning_mode!r}; the fetch_tasks() "
-                        f"tuning_level filter is not doing its job")
                 logger.info(f"PG Reader {self.worker_id} fetched task from database: "
                            f"id={task.id}, arch={task.arch}, module={task.module}, "
                            f"tuning_level={task.tuning_level}, status=pending→running")
@@ -286,7 +264,9 @@ class PGReaderWorker:
                 return None
 
         except TuningLevelMismatch:
-            # Not a transient database error -- let it kill the worker.
+            # Raised by fetch_tasks() when its tuning_level filter is broken.
+            # Not a transient database error -- let it kill the worker rather
+            # than retry against a queue that is handing out the wrong level.
             raise
         except Exception as e:
             logger.error(f"PG Reader {self.worker_id} database error in _fetch_pg_task: {e}", exc_info=True)

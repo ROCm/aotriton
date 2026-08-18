@@ -19,6 +19,16 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+class TuningLevelMismatch(RuntimeError):
+    """fetch_tasks() claimed a task belonging to the other tuning level.
+
+    Only reachable if the UPDATE's `tuning_level` predicate is broken, since
+    PostgreSQL would otherwise not return the row. Systemic rather than
+    transient: the filter is the sole thing keeping a worker off tasks its
+    pyaotriton build cannot execute, so every later claim is suspect too.
+    """
+
+
 @dataclass
 class Task:
     """Task representation"""
@@ -100,6 +110,28 @@ class TaskQueue:
                 return []
 
             tasks = [Task(**row) for row in rows]
+
+            # The UPDATE above filters on tuning_level, so a row of the wrong
+            # level means that predicate is broken. Release the whole batch --
+            # connections here are autocommit, so the claim is already durable
+            # and raising without this would strand every row in 'running' --
+            # then fail. The batch is released entirely, not just the offending
+            # rows: this raises out of the worker, so correctly-claimed tasks
+            # would be stranded too.
+            wrong = [t for t in tasks if t.tuning_level != tuning_mode]
+            if wrong:
+                cur.execute(f"""
+                    UPDATE {partition_table}
+                       SET status = 'pending', worker_id = NULL,
+                           node_hostname = NULL, started_at = NULL
+                     WHERE id = ANY(%s)
+                """, ([t.id for t in tasks],))
+                raise TuningLevelMismatch(
+                    f"fetch_tasks({arch!r}, tuning_mode={tuning_mode!r}) claimed "
+                    f"task_ids={[t.id for t in wrong]} with tuning_level="
+                    f"{sorted({t.tuning_level for t in wrong})}; the tuning_level "
+                    f"filter is not doing its job. Released "
+                    f"{len(tasks)} claim(s) back to pending.")
 
             if tasks:
                 task_ids = [t.id for t in tasks]
