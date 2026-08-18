@@ -721,3 +721,46 @@ def test_visperf_descriptors_agree_across_languages():
         py_aliases = {alias for _, alias in desc['dims']}
         assert set(_js_dim_keys(js, where=where)) | {row, col} == py_aliases, (
             f'{family}: JS dims + matrixAxes do not cover the Python dims aliases')
+
+
+def test_export_assets_resolve_per_tree(tmp_path):
+    """The three trees have three lifetimes, so three resolution rules.
+
+    python/ is installed and its template is package data; .tune/ and modules/
+    are checkout-only and must be named by the caller. An installed package
+    cannot infer where a checkout is, and pretending otherwise is what once
+    produced a silently JS-less export.
+    """
+    pytest.importorskip('psycopg')
+    from aotriton.tune.pq import export_visperf as ev
+
+    # The template is package data -- next to the module, in the wheel.
+    assert ev._TEMPLATE.is_file()
+    assert ev._TEMPLATE.parent == Path(ev.__file__).parent
+
+    # perf.js is NOT: it belongs to .tune/, which is never installed.
+    assert not (Path(ev.__file__).parent / 'static' / 'perf.js').exists(), (
+        'perf.js is back inside the package; it belongs to .tune/')
+    assert (_REPO_ROOT / '.tune' / ev._PERF_JS_RELPATH).is_file()
+
+    # An explicit tune_root is honoured, and a missing perf.js raises rather
+    # than producing an export with no renderer in it.
+    fake_tune = tmp_path / '.tune'
+    (fake_tune / 'webui' / 'static' / 'js').mkdir(parents=True)
+    (fake_tune / 'webui' / 'static' / 'js' / 'perf.js').write_text('/*STUB*/')
+    fake_modules = tmp_path / 'modules'
+    for family in ['flash']:
+        d = fake_modules / family / 'visperf' / 'static'
+        d.mkdir(parents=True)
+        (d / f'{family}.js').write_text('/*FAM*/')
+    html = ev.build_export_html({}, tune_root=fake_tune, modules_dir=fake_modules)
+    assert '/*STUB*/' in html and '/*FAM*/' in html
+
+    with pytest.raises(FileNotFoundError):
+        ev.build_export_html({}, tune_root=tmp_path / 'nope',
+                             modules_dir=fake_modules)
+
+
+def test_default_tune_root_matches_the_checkout():
+    from aotriton.tune.registry import default_tune_root
+    assert (default_tune_root() / 'webui' / 'static' / 'js' / 'perf.js').is_file()

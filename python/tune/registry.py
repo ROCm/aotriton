@@ -68,6 +68,29 @@ def default_modules_dir() -> Path:
     return Path(__file__).resolve().parent.parent.parent / 'modules'
 
 
+def default_tune_root() -> Path:
+    '''Resolve the repo's `.tune/` directory.
+
+    `.tune/` is operator tooling run straight from a checkout and never
+    installed (setup.py ships `python/` only), so an installed package cannot
+    derive it from its own location. Same resolution order as
+    default_modules_dir(), for the same reason:
+
+      1. `AOTRITON_TUNE_ROOT`, the explicit override.
+      2. `<cwd>/.tune` -- the `.tune/bin/*` wrappers cd into $AOTRITON_ROOT
+         before invoking `python3 -m aotriton.tune.*`.
+      3. `<repo root inferred from this file>/.tune` -- only correct under an
+         editable install from this exact checkout.
+    '''
+    env = os.environ.get('AOTRITON_TUNE_ROOT')
+    if env:
+        return Path(env)
+    cwd_candidate = Path.cwd() / '.tune'
+    if cwd_candidate.is_dir():
+        return cwd_candidate
+    return Path(__file__).resolve().parent.parent.parent / '.tune'
+
+
 def load_family_tune(family: str, modules_dir: 'Path | None' = None):
     """Import `<modules_dir>/<family>/tune/__init__.py` by path under a
     synthetic unique package name, so `modules/<family>` stays a plain

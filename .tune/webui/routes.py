@@ -1048,20 +1048,6 @@ def family_static(family, filename):
     return send_from_directory(static_dir, filename)
 
 
-@bp.route('/pkg_static/<path:filename>')
-def pkg_static(filename):
-    """Serve `aotriton.tune.pq`'s packaged static assets (currently just
-    perf.js).
-
-    These also live outside Flask's own static_folder (`.tune/webui/static`,
-    set implicitly by the bare `Flask(__name__)` in `.tune/webui/__init__.py`),
-    same reason as `family_static` above -- but unlike `family_static`,
-    there is exactly one directory here (no per-family whitelist needed):
-    `send_from_directory`'s own `safe_join` covers `<filename>` traversal.
-    """
-    return send_from_directory(_PKG_STATIC_DIR, filename)
-
-
 @bp.route('/api/perf/data')
 def api_perf_data():
     """Return best results JSON for arch+kernel combination."""

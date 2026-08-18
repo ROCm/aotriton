@@ -48,6 +48,9 @@ from aotriton.tune.pq.visperf import (
 from aotriton.tune.pq.vis_descriptors import DESCRIPTORS
 from aotriton.tune.pq.export_visperf import export_visperf as _do_export_visperf, build_export_html
 
+# This file is .tune/webui/tasks.py, so .tune/ is two parents up.
+_TUNE_ROOT = Path(__file__).resolve().parent.parent
+
 FlashEntry = load_flash_entry_module().FlashEntry
 
 def run_command(cmd, cwd, workdir, description=None, dry_run: bool = False):
@@ -1854,7 +1857,9 @@ def export_visperf(workdir: str, dry_run: bool = False) -> dict:
     try:
         conn_params = get_db_connection_params(Path(workdir))
         with psycopg.connect(**conn_params, autocommit=True) as conn:
-            _do_export_visperf(conn, output)
+            # The web UI lives inside .tune/, so it can name the root the
+            # export needs for perf.js instead of leaving it to be inferred.
+            _do_export_visperf(conn, output, tune_root=_TUNE_ROOT)
         return {'status': 'ok', 'message': f'Exported to {output}'}
     except Exception as e:
         logger.error('export_visperf failed: %s', e)
@@ -1901,4 +1906,4 @@ def build_perf_export_html(col_filters: dict, url_params: dict,
                 kdata['rows'] = [r for r in kdata['rows'] if _row_allowed(r)]
                 kdata['axes'] = build_axes(kdata['rows'], desc)
 
-    return build_export_html(all_data, url_params)
+    return build_export_html(all_data, url_params, tune_root=_TUNE_ROOT)

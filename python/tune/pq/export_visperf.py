@@ -29,32 +29,33 @@ import psycopg
 
 from .visperf import query_all_best_results
 from ..utils import get_db_connection_params
-from ..registry import default_modules_dir, available_module_names
+from ..registry import (default_modules_dir, default_tune_root,
+                        available_module_names)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s',
                     datefmt='%H:%M:%S')
 logger = logging.getLogger(__name__)
 
-# Both generic export assets are package data (setup.py's package_data covers
-# *.html and static/*.js under aotriton.tune.pq), so they are safe to locate
-# relative to this file even in a non-editable install.
+# The export draws on all three of AOTriton's trees, which have three
+# different lifetimes and therefore three different resolution rules:
 #
-# perf.js is the generic rendering engine, not a webui-only asset: the
-# standalone export inlines it, so it belongs to this package rather than to
-# .tune/webui/static/. The webui serves it back out over /pkg_static/ so
-# there is exactly one copy. This is what actually closes F12 -- an earlier
-# revision assumed perf.js "cannot be" packaged because it lived under
-# .tune/, and settled for passing a checkout root instead, which left
-# export_visperf unusable without a source tree.
+#   python/  -> the installed `aotriton` package. visperf_template.html is
+#               package data, so it is found relative to this file and works
+#               from a non-editable install.
+#   .tune/   -> operator tooling, run straight from a checkout and never
+#               installed. perf.js lives there because the live perf page is
+#               its other consumer; the export takes an explicit tune_root.
+#   modules/ -> application source, loaded by path and never installed.
+#               <family>.js comes from an explicit modules_dir.
+#
+# Only the first can be resolved from __file__. The other two are checkout
+# paths that an installed package cannot know, so they are parameters --
+# defaulted for ordinary CLI use, overridable by a caller or a test. A
+# missing asset raises rather than yielding a JS-less page (F12).
 _HERE = Path(__file__).parent
 _TEMPLATE = _HERE / 'visperf_template.html'
-_PERF_JS  = _HERE / 'static' / 'perf.js'
 
-# modules/<family>/visperf/static/<family>.js is NOT package data -- modules/
-# is application source compiled BY aotriton, deliberately not shipped inside
-# it (see setup.py). It stays an explicit modules_dir parameter, defaulting to
-# registry.default_modules_dir(), so a caller (or a test) can point it at a
-# throwaway fixture.
+_PERF_JS_RELPATH = Path('webui') / 'static' / 'js' / 'perf.js'
 
 # CDN URL with exact semver pin.
 PLOTLY_CDN = (
@@ -141,24 +142,28 @@ def _json_for_script(obj) -> str:
 
 
 def build_export_html(data: dict, url_params: dict | None = None, *,
+                       tune_root: Path | None = None,
                        modules_dir: Path | None = None) -> str:
     """Build a self-contained HTML string from pre-fetched data.
 
     data:        {arch: {kernel: {arch, kernel, axes, rows}}}
     url_params:  optional dict of URL search params to pre-set on first load
                  (e.g. arch, kernel, display, scale, az_mode, col_dims, row_dims).
-    modules_dir: `modules/` root containing every registered family's
+    tune_root:   the `.tune/` directory holding webui/static/js/perf.js;
+                 defaults to `default_tune_root()`.
+    modules_dir: `modules/` root holding every registered family's
                  `<family>/visperf/static/<family>.js`; defaults to
                  `aotriton.tune.registry.default_modules_dir()`.
 
-    The template and perf.js come from this package, so only the per-family
-    JS needs a root. It stays an explicit parameter rather than a module-level
-    global (F12) so a caller -- including a test -- can point it at a
-    throwaway fixture instead of whatever checkout this process runs from.
+    Both roots are parameters because neither tree is installed: an installed
+    package cannot know where a checkout is, and pretending otherwise is what
+    produced a silently JS-less export. A caller that knows better -- the web
+    UI knows its own location -- should say so.
     """
+    tune_root = Path(tune_root) if tune_root is not None else default_tune_root()
     modules_dir = Path(modules_dir) if modules_dir is not None else default_modules_dir()
 
-    perf_js = _read_required(_PERF_JS, 'perf.js', packaged=True)
+    perf_js = _read_required(tune_root / _PERF_JS_RELPATH, 'perf.js', packaged=False)
     family_js = '\n'.join(
         _read_required(path, f"visperf JS for family {family!r}", packaged=False)
         for family, path in _family_js_paths(modules_dir).items()
@@ -181,6 +186,7 @@ def build_export_html(data: dict, url_params: dict | None = None, *,
 
 
 def export_visperf(conn, output_path: Path, *,
+                    tune_root: Path | None = None,
                     modules_dir: Path | None = None) -> None:
     """Generate self-contained perf.html from live database."""
     logger.info('Querying all best results (all arches, all kernels)…')
@@ -188,7 +194,7 @@ def export_visperf(conn, output_path: Path, *,
     total = sum(len(kd['rows']) for ad in data.values() for kd in ad.values())
     logger.info('Fetched %d rows across %d arches', total, len(data))
 
-    html = build_export_html(data, modules_dir=modules_dir)
+    html = build_export_html(data, tune_root=tune_root, modules_dir=modules_dir)
     output_path.write_text(html, encoding='utf-8')
     logger.info('Written %d bytes to %s', len(html), output_path)
 
@@ -202,6 +208,12 @@ def main() -> None:
     parser.add_argument('--port', type=int, default=5432)
     parser.add_argument('--user')
     parser.add_argument('--password')
+    parser.add_argument('--tune_root', type=Path, default=None,
+                        help='.tune/ directory holding webui/static/js/perf.js '
+                             '(default: $AOTRITON_TUNE_ROOT, else <cwd>/.tune)')
+    parser.add_argument('--modules_dir', type=Path, default=None,
+                        help='modules/ root holding each family\'s visperf JS '
+                             '(default: $AOTRITON_MODULES_DIR, else <cwd>/modules)')
     parser.add_argument('--output', required=True, type=Path,
                         help='Output HTML file path (e.g. perf.html)')
     args = parser.parse_args()
@@ -214,7 +226,8 @@ def main() -> None:
         if args.password: conn_params['password'] = args.password
 
     with psycopg.connect(**conn_params, autocommit=True) as conn:
-        export_visperf(conn, args.output)
+        export_visperf(conn, args.output, tune_root=args.tune_root,
+                       modules_dir=args.modules_dir)
 
 
 if __name__ == '__main__':
