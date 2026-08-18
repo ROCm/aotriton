@@ -20,7 +20,7 @@ from psycopg.rows import dict_row
 
 from .protocol import send_message, recv_message
 from ..utils import get_db_connection_params, configure_logging_with_flush
-from ..pq.queue import TaskQueue
+from ..pq.queue import TaskQueue, TuningLevelMismatch
 from ..pq.connection import ReconnectableConn
 from ..pq.extra_uts import get_extra_uts
 
@@ -237,23 +237,37 @@ class PGReaderWorker:
                 task = tasks[0]
                 logger.info(f"PG Reader {self.worker_id} fetched task from database: "
                            f"id={task.id}, arch={task.arch}, module={task.module}, "
-                           f"status=pending→running")
-                task_config = task.task_config
+                           f"tuning_level={task.tuning_level}, status=pending→running")
+                # Stamp the level from the task_queue column into task_config.
+                # run() forwards only task_config to the handlers, and the
+                # column -- not the JSON -- is the authoritative value: it is
+                # what fetch_tasks() filtered on and what the assert above
+                # checked. Task-creating APIs (pq.dispatcher.dispatch_tasks)
+                # take tuning_level as a top-level field and are not obliged
+                # to duplicate it inside task_config, so copying it here is
+                # what stops an op task from being executed as kernel-level.
+                task_config = dict(task.task_config)
+                task_config['tuning_level'] = task.tuning_level
                 extra_im_texts = get_extra_uts(self.db_conn, task.id)
                 if extra_im_texts:
-                    task_config = dict(task_config)
                     task_config['extra_im_texts'] = extra_im_texts
                     logger.info(f"Loaded {len(extra_im_texts)} extra UTs for task_id={task.id}")
                 return {
                     'id': task.id,
                     'arch': task.arch,
                     'module': task.module,
+                    'tuning_level': task.tuning_level,
                     'task_config': task_config
                 }
             else:
                 logger.debug(f"PG Reader {self.worker_id} no tasks available")
                 return None
 
+        except TuningLevelMismatch:
+            # Raised by fetch_tasks() when its tuning_level filter is broken.
+            # Not a transient database error -- let it kill the worker rather
+            # than retry against a queue that is handing out the wrong level.
+            raise
         except Exception as e:
             logger.error(f"PG Reader {self.worker_id} database error in _fetch_pg_task: {e}", exc_info=True)
             return None

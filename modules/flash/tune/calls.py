@@ -10,14 +10,14 @@ No KernelControl or attn_options — safe to import from the testing library.
 """
 
 from argparse import Namespace
-from .module import FlashInputMetadata
+from .entry import FlashInputMetadata
 from .reference import SdpaReference, SdpaBidiInputs, SdpaGoldenOutputs
+from .causal import translate_causal
 from aotriton.tune.gpu_utils import (
     target_fudge_factor,
     mk_aotensor,
     create_aotensor_like,
     zero_devm,
-    translate_causal,
     Stream,
     cast_dtype,
 )

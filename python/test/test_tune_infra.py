@@ -1,18 +1,20 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-"""Phase 1 step 7 (modular-tune.md): non-GPU regression coverage for the
-relocated tuning infrastructure (`python/tune/` -> `aotriton.tune`,
-`modules/flash/tune/` loaded by path).
+"""Phase 1 step 7 / Phase 2 step 14 (modular-tune.md): non-GPU regression
+coverage for the relocated and unified tuning infrastructure (`python/tune/`
+-> `aotriton.tune`, `modules/flash/tune/` loaded by path).
 
-None of this needs a GPU or a database connection. Two of the three checks
-below (`FlashEntry`/`FlashInputMetadata` and anything touching
-`modules/flash/tune/flash/module.py`) transitively need `dacite`; most of
-`aotriton.tune.pq`/`aotriton.tune.localq` need `psycopg`. Neither is in the
-base `requirements.txt` (only `requirements-tuning.txt` pulls them in, and no
-`.ci/*.sh` installs it before running this suite), so every check here that
-needs one of those two packages skips cleanly via `pytest.importorskip`/a
-per-module ImportError probe instead of hard-failing when they are absent.
+None of this needs a GPU or a database connection. `entry.py`/`desc.py`/
+`tdesc.py`/`utils.py` import `dacite` lazily (only inside the methods that
+actually call `from_dict()`, e.g. `ENTRY_CLASS.from_dict()`, `run_single_test`)
+so merely loading the flash family / constructing a `TuneDesc` never requires
+`dacite` to be installed; `aotriton.tune.pq`/`aotriton.tune.localq` still need
+`psycopg` for real DB access. Neither is in the base `requirements.txt` (only
+`requirements-tuning.txt` pulls them in, and no `.ci/*.sh` installs it before
+running this suite), so every check here that needs one of those two packages
+skips cleanly via `pytest.importorskip`/a per-module ImportError probe instead
+of hard-failing when they are absent.
 """
 
 import ast
@@ -60,17 +62,231 @@ def test_family_loader_ignores_stray_sys_path_module():
             sys.modules.pop('flash', None)
 
 
-def test_load_tune_module_resolves_flash_and_flash_op_to_distinct_submodules():
-    pytest.importorskip('dacite')
-    from aotriton.tune.registry import load_tune_module
+def test_load_tune_module_flash_op_no_longer_exists():
+    # Phase 2 (modular-tune.md §4.3): flash/flash_op collapse into a single
+    # 'flash' family with a `level` axis ('kernel' | 'op'). 'flash_op' must no
+    # longer resolve as an independent module name/queue key/CLI subcommand.
+    from aotriton.tune.registry import load_tune_module, available_module_names
 
-    flash_mod = load_tune_module('flash', modules_dir=_MODULES_DIR)
-    flash_op_mod = load_tune_module('flash_op', modules_dir=_MODULES_DIR)
-    assert flash_mod is not flash_op_mod
-    assert hasattr(flash_mod, 'TuneDesc') and hasattr(flash_mod, 'ImplSelector')
-    assert hasattr(flash_op_mod, 'TuneDesc') and hasattr(flash_op_mod, 'ImplSelector')
-    # Phase 1: two independent descriptions, not yet unified (Phase 2).
-    assert flash_mod.TuneDesc is not flash_op_mod.TuneDesc
+    assert available_module_names() == ['flash']
+    with pytest.raises(ImportError):
+        load_tune_module('flash_op', modules_dir=_MODULES_DIR)
+
+
+# --- Phase 2 step 14 (modular-tune.md): ImplSelector DSL + fetch_tasks -------
+#     highest-risk-area coverage (op.attn_fwd=1 is surface syntax only,
+#     iface_name collisions across levels, fetch_tasks tuning_mode required).
+
+def test_implselector_parse_text_roundtrip_prefixed():
+    from aotriton.tune.tdesc import ImplSelector
+
+    sel = ImplSelector.parse_text('op.attn_fwd=1')
+    assert sel == ImplSelector(tuning_level='op', iface_name='attn_fwd', impl_index=1)
+    # iface_name must be bare -- the 'op.' prefix is surface syntax only, never
+    # part of the stored/queried interface name (highest-risk area #1).
+    assert sel.iface_name == 'attn_fwd'
+    assert sel.as_text() == 'op.attn_fwd=1'
+
+
+def test_implselector_parse_text_roundtrip_unprefixed():
+    from aotriton.tune.tdesc import ImplSelector
+
+    sel = ImplSelector.parse_text('attn_fwd=3')
+    assert sel == ImplSelector(tuning_level='kernel', iface_name='attn_fwd', impl_index=3)
+    assert sel.as_text() == 'attn_fwd=3'
+
+
+def test_implselector_unprefixed_defaults_to_kernel_level():
+    from aotriton.tune.tdesc import ImplSelector
+
+    sel = ImplSelector.parse_text('bwd_kernel_dq=0')
+    assert sel.tuning_level == 'kernel'
+    # Default-constructed selector (no tuning_level given) is also 'kernel'.
+    assert ImplSelector(iface_name='attn_fwd', impl_index=0).tuning_level == 'kernel'
+
+
+@pytest.mark.parametrize('malformed', [
+    'attn_fwd',            # missing '='
+    'attn_fwd=',           # missing index
+    'attn_fwd=notanint',   # non-integer index
+    'op.attn_fwd=1=2',     # too many '=' for str.split('=') with no maxsplit
+    '',                    # empty string
+])
+def test_implselector_parse_text_rejects_malformed_input(malformed):
+    from aotriton.tune.tdesc import ImplSelector
+
+    with pytest.raises((ValueError, IndexError)):
+        ImplSelector.parse_text(malformed)
+
+
+def test_cross_level_attn_fwd_iface_name_collision():
+    # 'attn_fwd' is a valid bare iface_name at BOTH flash's kernel level and
+    # its op level (highest-risk area #2: iface_name collides across levels).
+    # list_impls() and plain dataclass construction (unlike ENTRY_CLASS.from_dict())
+    # need neither torch nor dacite, so this runs without a GPU or dacite installed.
+    #
+    # Revision note 3 (modular-tune.md): there is only ONE TuneDesc -- no
+    # per-level construction -- and list_impls() reports both levels' impls
+    # together, DSL-spelled (bare for kernel, 'op.'-prefixed for op).
+    from aotriton.tune.registry import make_tune_desc
+
+    entry_kwargs = dict(dtype='float16', hdim=64, seqlen_q=128, seqlen_k=128,
+                         causal=False, dropout_p=0.0, bias_type=0)
+
+    tune = make_tune_desc('flash', modules_dir=_MODULES_DIR)
+
+    entry = tune.ENTRY_CLASS(**entry_kwargs)
+    impls = tune.list_impls(entry)
+
+    assert 'attn_fwd' in impls          # kernel level: bare, unprefixed
+    assert 'op.attn_fwd' in impls       # op level: 'op.'-prefixed DSL name
+    assert 'op.attn_bwd' in impls
+    # No accidental double-prefixing / stray dots beyond the single 'op.' marker.
+    assert all(name.count('.') <= 1 for name in impls)
+
+    # The two levels' 'attn_fwd' selectors are distinguished only by the
+    # ImplSelector.tuning_level field / DSL prefix, never by iface_name itself.
+    from aotriton.tune.tdesc import ImplSelector
+    kernel_sel = ImplSelector(tuning_level='kernel', iface_name='attn_fwd', impl_index=0)
+    op_sel = ImplSelector(tuning_level='op', iface_name='attn_fwd', impl_index=0)
+    assert kernel_sel.iface_name == op_sel.iface_name == 'attn_fwd'
+    assert kernel_sel.as_text() == 'attn_fwd=0'
+    assert op_sel.as_text() == 'op.attn_fwd=0'
+    assert kernel_sel != op_sel
+    # list_impls()'s DSL names round-trip through the same split/dsl_name
+    # primitives ImplSelector itself uses.
+    assert kernel_sel.dsl_name in impls
+    assert op_sel.dsl_name in impls
+
+
+def test_flash_tune_get_impl_dispatches_on_prefix():
+    # Revision note 3: get_impl() takes a plain DSL name (never an
+    # ImplSelector) and dispatches internally on the 'op.' prefix, lazily
+    # importing whichever provider module (level_kernel.py / level_op.py)
+    # owns that level. Neither provider module needs torch/pyaotriton at
+    # import time for its list_impls()/get_impl() top-level dispatch machinery
+    # -- but the actual impl objects they build (_build_kernel_dict /
+    # _build_op_dict) DO need pyaotriton, so resolving either name here is
+    # expected to fail with ImportError in this no-pyaotriton environment.
+    # That failure -- not a silent success -- is exactly what this test
+    # checks: both prefixes route to *some* provider and fail for the
+    # *expected* reason (missing pyaotriton), not because the dispatch itself
+    # is broken.
+    from aotriton.tune.registry import make_tune_desc
+
+    tune = make_tune_desc('flash', modules_dir=_MODULES_DIR)
+    try:
+        import pyaotriton  # noqa: F401
+        pytest.skip('pyaotriton is installed; dispatch-failure path not exercisable here')
+    except ImportError:
+        pass
+
+    with pytest.raises(ImportError) as kernel_exc:
+        tune.get_impl('attn_fwd')
+    assert 'attn_fwd' in str(kernel_exc.value)
+
+    with pytest.raises(ImportError) as op_exc:
+        tune.get_impl('op.attn_fwd')
+    assert 'op.attn_fwd' in str(op_exc.value)
+
+
+def test_flash_tune_get_impl_unknown_prefix_raises_clearly():
+    from aotriton.tune.registry import make_tune_desc
+
+    tune = make_tune_desc('flash', modules_dir=_MODULES_DIR)
+    with pytest.raises(ValueError, match='bogus_level'):
+        tune.get_impl('bogus_level.attn_fwd')
+
+
+def test_flash_tune_get_impl_unknown_name_raises_clearly():
+    from aotriton.tune.registry import make_tune_desc
+
+    tune = make_tune_desc('flash', modules_dir=_MODULES_DIR)
+    try:
+        import pyaotriton  # noqa: F401
+    except ImportError:
+        pytest.skip('needs pyaotriton to reach the per-name KeyError past the library import')
+    with pytest.raises(KeyError):
+        tune.get_impl('not_a_real_iface')
+
+
+def test_schema_sql_ddl_parses_and_iface_name_columns_carry_tuning_level():
+    # No live PG in this environment/CI job -- fall back to a structural check
+    # of the checked-in DDL: (1) balanced parens/quotes so it is at least
+    # lexically well-formed, and (2) every table/index that has an
+    # `iface_name` column also carries `tuning_level`, since `iface_name`
+    # collides across tuning levels (highest-risk area #2) and any table or
+    # lookup index keyed on it alone would silently mix kernel-level and
+    # op-level rows.
+    schema_sql = (_REPO_ROOT / 'python' / 'tune' / 'pq' / 'schema.sql').read_text()
+    mat_views_sql = (_REPO_ROOT / 'python' / 'tune' / 'pq' / 'materialized_views.sql').read_text()
+
+    for name, sql in (('schema.sql', schema_sql), ('materialized_views.sql', mat_views_sql)):
+        # Lexical sanity: parens balance (ignoring $$ plpgsql bodies' own
+        # dollar-quoting is not needed here -- schema.sql's only $$ body,
+        # create_arch_partition, is itself paren-balanced).
+        assert sql.count('(') == sql.count(')'), f'{name}: unbalanced parentheses'
+
+    # CREATE TABLE blocks: split on 'CREATE TABLE' and check each block up to
+    # its closing ');' for the iface_name/tuning_level pairing.
+    import re
+    for name, sql in (('schema.sql', schema_sql), ('materialized_views.sql', mat_views_sql)):
+        for m in re.finditer(r'CREATE TABLE.*?\);', sql, re.DOTALL):
+            block = m.group(0)
+            if 'iface_name' in block:
+                assert 'tuning_level' in block, (
+                    f'{name}: a CREATE TABLE block has iface_name but no '
+                    f'tuning_level column:\n{block}')
+
+    # CREATE INDEX statements: any index over iface_name that is NOT already
+    # anchored on task_id must also cover tuning_level. A task_id already
+    # implies exactly one tuning_level via its task_queue row (see
+    # pq/results.py's get_task_results docstring), so an (task_id,
+    # iface_name, ...) index is unambiguous without tuning_level; but an
+    # index meant to be queried by iface_name alone (no task_id/task_queue
+    # join) must carry tuning_level or it would silently mix kernel-level and
+    # op-level rows (highest-risk area #2).
+    for name, sql in (('schema.sql', schema_sql), ('materialized_views.sql', mat_views_sql)):
+        for m in re.finditer(r'CREATE (?:UNIQUE )?INDEX.*?;', sql, re.DOTALL):
+            stmt = m.group(0)
+            if 'iface_name' in stmt and 'task_id' not in stmt:
+                assert 'tuning_level' in stmt, (
+                    f'{name}: an index covers iface_name (without task_id) but not '
+                    f'tuning_level:\n{stmt}')
+
+
+def test_fetch_tasks_requires_tuning_mode_keyword():
+    # F16 (modular-tune.md): a kernel worker must never claim an op task and
+    # vice versa. fetch_tasks() must have NO default for tuning_mode so a
+    # caller that forgets to pass it fails fast at the call site instead of
+    # silently defaulting to 'kernel'.
+    pytest.importorskip('psycopg')
+    import inspect
+    from aotriton.tune.pq.queue import TaskQueue
+
+    sig = inspect.signature(TaskQueue.fetch_tasks)
+    tuning_mode_param = sig.parameters['tuning_mode']
+    assert tuning_mode_param.kind == inspect.Parameter.KEYWORD_ONLY
+    assert tuning_mode_param.default is inspect.Parameter.empty
+
+    # A conn is never touched before the missing-keyword TypeError fires.
+    task_queue = TaskQueue(conn=None)
+    with pytest.raises(TypeError):
+        task_queue.fetch_tasks('gfx942', batch_size=1)
+
+
+def test_fetch_tasks_sql_filters_on_tuning_level():
+    # The SQL itself must filter on the denormalized tuning_level column
+    # (not a `module LIKE '%_op'` string-suffix pattern -- the pre-Phase-2
+    # anti-pattern this replaces).
+    pytest.importorskip('psycopg')
+    import inspect
+    from aotriton.tune.pq.queue import TaskQueue
+
+    source = inspect.getsource(TaskQueue.fetch_tasks)
+    assert 'tuning_level = %s' in source
+    assert "LIKE '%_op'" not in source
+    assert "NOT LIKE '%_op'" not in source
 
 
 # --- (b) F5: the codegen-side FlashEntry copy (modules/flash/aot/flash_entry.py) ---
@@ -87,7 +303,8 @@ def _load_codegen_flash_entry():
 
 
 def test_flash_entry_as_text_matches_codegen_copy():
-    pytest.importorskip('dacite')
+    # as_text()/plain construction need neither torch nor dacite (only
+    # ENTRY_CLASS.from_dict() does -- see entry.py's lazy dacite import).
     from aotriton.tune.registry import load_flash_entry_module
 
     TuningFlashEntry = load_flash_entry_module(modules_dir=_MODULES_DIR).FlashEntry

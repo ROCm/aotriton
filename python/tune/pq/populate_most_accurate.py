@@ -5,10 +5,21 @@
 """
 Populate the most_accurate_tuning_results plain table.
 
+One most_accurate_tuning_results table serves both tuning levels. Rows are
+keyed by iface_name, and tuning_level ('kernel' | 'op', selected by
+--tuning_mode) is a filter column on tuning_results rather than a table-name
+switch.
+
 Full mode (no task_ids):
-    DROP TABLE + CREATE TABLE AS SELECT (CTAS) — CTAS is parallel-safe
-    unlike INSERT...SELECT, which PostgreSQL serializes because INSERT is
-    parallel-restricted. After CTAS, rebuild the unique index.
+    CREATE TEMP TABLE AS SELECT (CTAS) into a scratch table scoped to this
+    session — CTAS is parallel-safe unlike INSERT...SELECT, which PostgreSQL
+    serializes because INSERT is parallel-restricted. Then, in one
+    transaction: DELETE this run's tuning_level slice from the real table
+    (NOT DROP TABLE -- most_accurate_tuning_results is shared by both tuning
+    levels, so a full 'kernel' run must not discard 'op' rows and vice
+    versa) and INSERT...SELECT from the temp table (cheap: a plain scan, not
+    the JSONB lateral-join aggregation, so the INSERT parallel-restriction
+    doesn't matter here).
 
 Incremental mode (task_ids given):
     DELETE rows for the given task_ids, then INSERT only those task_ids.
@@ -29,100 +40,97 @@ import psycopg
 from ..utils import get_db_connection_params
 
 class SqlStatements:
+    """Table and column names are fixed; only tuning_level varies with
+    --tuning_mode. Every query against tuning_results /
+    most_accurate_tuning_results must filter on it, because iface_name
+    collides across levels (e.g. 'attn_fwd' is valid at both)."""
+
+    table_name = 'most_accurate_tuning_results'
+    key_col = 'iface_name'
+
     def __init__(self, tuning_mode: str):
-        self._tuning_mode = tuning_mode
+        self.tuning_level = tuning_mode  # 'kernel' | 'op'
 
     @property
-    def table_name(self) -> str:
-        return 'most_accurate_optune_results' if self._tuning_mode == 'op' else 'most_accurate_tuning_results'
-
-    @property
-    def index_name(self) -> str:
-        return f'idx_{self.table_name}_lookup'
-
-    @property
-    def _key_col(self) -> str:
-        return 'op_name' if self._tuning_mode == 'op' else 'kernel_name'
+    def temp_table_name(self) -> str:
+        return f'most_accurate_tuning_results_tmp_{self.tuning_level}'
 
     @property
     def _select_sql(self) -> str:
-        if self._tuning_mode == 'op':
-            return """
+        return f"""
 SELECT
     tr.task_id,
     tq.arch,
     tq.task_config,
-    tr.op_name,
+    tr.iface_name,
     test_case.key                                   AS test_case,
     tensor.key                                      AS tensor_name,
     MIN((tensor.value->>0)::float)                  AS target_fudge_factor,
     MIN((tensor.value->>1)::float)                  AS absolute_error
-FROM optune_results tr
-JOIN task_queue tq ON tq.id = tr.task_id
-CROSS JOIN LATERAL jsonb_each(tr.result_data->'adiffs') AS test_case(key, value)
-CROSS JOIN LATERAL jsonb_each(test_case.value)           AS tensor(key, value)
-WHERE tr.result_data IS NOT NULL
-  AND tq.module LIKE '%%_op'
-  AND (tensor.value IS NULL OR (tensor.value->>1)::float >= 0.0) {filter}
-GROUP BY tr.task_id, tq.arch, tq.task_config, tr.op_name, test_case.key, tensor.key
-"""
-        return """
-SELECT
-    tr.task_id,
-    tq.arch,
-    tq.task_config,
-    tr.kernel_name,
-    test_case.key                               AS test_case,
-    tensor.key                                  AS tensor_name,
-    MIN((tensor.value->>0)::float)              AS target_fudge_factor,
-    MIN((tensor.value->>1)::float)              AS absolute_error
 FROM tuning_results tr
 JOIN task_queue tq ON tq.id = tr.task_id
 CROSS JOIN LATERAL jsonb_each(tr.result_data->'adiffs') AS test_case(key, value)
 CROSS JOIN LATERAL jsonb_each(test_case.value)           AS tensor(key, value)
 WHERE tr.result_data IS NOT NULL
-  AND tq.module NOT LIKE '%%_op' {filter}
-GROUP BY tr.task_id, tq.arch, tq.task_config, tr.kernel_name, test_case.key, tensor.key
+  AND tr.tuning_level = '{self.tuning_level}'
+  -- Drop early-reject rows. record_early_reject() stores a negative sentinel
+  -- in absolute_error for a candidate that never ran on hardware; MIN() over a
+  -- group containing one makes the accuracy threshold negative, and
+  -- compute_best_results tests abs_err > MULTIPLIER * threshold, so every
+  -- candidate in that group would then be rejected. Applies at both levels:
+  -- run_single_test's check_early_reject_results path is shared by them.
+  AND (tensor.value IS NULL OR (tensor.value->>1)::float >= 0.0) {{filter}}
+GROUP BY tr.task_id, tq.arch, tq.task_config, tr.iface_name, test_case.key, tensor.key
 """
 
     @property
-    def ctas_sql(self) -> str:
-        return f'CREATE TABLE {self.table_name} AS' + self._select_sql
+    def ctas_temp_sql(self) -> str:
+        return f'CREATE TEMP TABLE {self.temp_table_name} AS' + self._select_sql
+
+    @property
+    def swap_insert_sql(self) -> str:
+        return f"""INSERT INTO {self.table_name}
+    (task_id, arch, tuning_level, task_config, {self.key_col}, test_case, tensor_name,
+     target_fudge_factor, absolute_error)
+SELECT task_id, arch, '{self.tuning_level}', task_config, {self.key_col}, test_case,
+       tensor_name, target_fudge_factor, absolute_error
+FROM {self.temp_table_name}
+"""
 
     @property
     def insert_sql(self) -> str:
         return f"""INSERT INTO {self.table_name}
-    (task_id, arch, task_config, {self._key_col}, test_case, tensor_name,
+    (task_id, arch, tuning_level, task_config, {self.key_col}, test_case, tensor_name,
      target_fudge_factor, absolute_error)
-""" + self._select_sql
-
-    @property
-    def index_sql(self) -> str:
-        return f"""
-CREATE UNIQUE INDEX {self.index_name}
-    ON {self.table_name} (task_id, {self._key_col}, test_case, tensor_name)
-"""
+SELECT task_id, arch, '{self.tuning_level}', task_config, {self.key_col}, test_case,
+       tensor_name, target_fudge_factor, absolute_error
+FROM (""" + self._select_sql + ") sub"
 
 
 def populate(conn, task_ids: list[int] | None = None, tuning_mode: str = 'kernel') -> int:
     """
-    Populate most_accurate_tuning_results.
+    Populate most_accurate_tuning_results for one tuning_level.
 
     Args:
         conn:         psycopg connection. autocommit state is managed internally.
-        task_ids:     If None, full DROP + CTAS (parallel).
+        task_ids:     If None, full CTAS-into-temp-table then swap (parallel).
                       If given, DELETE + INSERT for those task_ids only (small, serial ok).
-        tuning_mode:  'kernel' reads from tuning_results; 'op' reads from optune_results.
+        tuning_mode:  'kernel' | 'op' -- selects the tuning_level filter applied
+                      to tuning_results.
 
     Returns:
-        Number of rows produced (rowcount after CTAS or INSERT).
+        Number of rows produced (rowcount after the swap-INSERT or plain INSERT).
     """
     sql = SqlStatements(tuning_mode)
 
     if task_ids is None:
-        # Full mode: DROP + CREATE TABLE AS SELECT.
-        # CTAS is parallel-safe; INSERT...SELECT is not (PostgreSQL serializes
-        # it because INSERT is parallel-restricted).
+        # Full mode: CREATE TEMP TABLE AS SELECT (CTAS is parallel-safe;
+        # INSERT...SELECT is not, PostgreSQL serializes it because INSERT is
+        # parallel-restricted), then swap into the real table inside one
+        # transaction. NOT DROP TABLE: most_accurate_tuning_results is shared
+        # by both tuning levels, so a full 'kernel' run must not discard 'op'
+        # rows and vice versa -- only this run's tuning_level slice is
+        # replaced.
         # Set GUCs at session level outside any transaction so the planner
         # sees them unconditionally.
         conn.autocommit = True
@@ -140,19 +148,28 @@ def populate(conn, task_ids: list[int] | None = None, tuning_mode: str = 'kernel
             # (inlining + optimization + emission) with no amortization benefit.
             cur.execute('SET jit = off')
         with conn.cursor() as cur:
-            cur.execute(f'DROP TABLE IF EXISTS {sql.table_name}')
-            cur.execute(f'DROP INDEX IF EXISTS {sql.index_name}')
-            cur.execute(sql.ctas_sql.format(filter=''))
+            cur.execute(f'DROP TABLE IF EXISTS {sql.temp_table_name}')
+            cur.execute(sql.ctas_temp_sql.format(filter=''))
+
+        # Swap: replace only this tuning_level's rows in the real table.
+        conn.autocommit = False
+        with conn.cursor() as cur:
+            cur.execute(
+                f'DELETE FROM {sql.table_name} WHERE tuning_level = %s',
+                (sql.tuning_level,),
+            )
+            cur.execute(sql.swap_insert_sql)
             row_count = cur.rowcount
-            cur.execute(sql.index_sql)
+            cur.execute(f'DROP TABLE IF EXISTS {sql.temp_table_name}')
+        conn.commit()
     else:
         # Incremental mode: row count is small, parallel not needed.
         # DELETE in one transaction, INSERT in a fresh one.
         conn.autocommit = False
         with conn.cursor() as cur:
             cur.execute(
-                f'DELETE FROM {sql.table_name} WHERE task_id = ANY(%s)',
-                (task_ids,),
+                f'DELETE FROM {sql.table_name} WHERE tuning_level = %s AND task_id = ANY(%s)',
+                (sql.tuning_level, task_ids),
             )
         conn.commit()
         with conn.cursor() as cur:
@@ -178,7 +195,7 @@ def main() -> None:
         '--tuning_mode',
         choices=['kernel', 'op'],
         default='kernel',
-        help='kernel: populate from tuning_results; op: populate from optune_results',
+        help='Selects the tuning_level filter applied to tuning_results',
     )
     args = parser.parse_args()
 
@@ -204,15 +221,15 @@ def main() -> None:
     conn_params = get_db_connection_params(workdir)
 
     if task_ids is None:
-        print('Full populate: TRUNCATE + INSERT all rows...')
+        print(f'Full populate ({args.tuning_mode}): replace this tuning_level\'s rows...')
     else:
-        print(f'Incremental populate: {len(task_ids)} task_id(s)...')
+        print(f'Incremental populate ({args.tuning_mode}): {len(task_ids)} task_id(s)...')
 
     with psycopg.connect(**conn_params, autocommit=False) as conn:
         row_count = populate(conn, task_ids, tuning_mode=args.tuning_mode)
 
     table = SqlStatements(args.tuning_mode).table_name
-    print(f'Done: {row_count} rows inserted into {table}.')
+    print(f'Done: {row_count} rows inserted into {table} (tuning_level={args.tuning_mode}).')
 
 
 if __name__ == '__main__':

@@ -11,51 +11,23 @@ Returns dicts ready for JSON serialization by the webui or export script.
 from psycopg.rows import dict_row
 
 from .vis_descriptors import DESCRIPTORS
+from ..tdesc import ImplSelector
 
 
 def _build_query(desc: dict, arch: str, kernel_or_op: str, mode: str,
                  seqlen_min: int, seqlen_max: int) -> tuple[str, list]:
     """Build the SELECT query for a single kernel/op using the descriptor.
 
-    Joins tuning_results (kernel mode) or optune_results (op mode) to retrieve
-    BATCH and N_HEADS from result_data->'bim', so the TFLOPS formula accounts
-    for the actual benchmark dimensions.
+    best_tuning_results/tuning_results are a single pair of tables shared by
+    both tuning levels (modular-tune.md §4.3/§4.7); iface_name collides
+    across levels (e.g. 'attn_fwd' is valid at both kernel and op level), so
+    every predicate on iface_name below is paired with an explicit
+    tuning_level filter. Joins tuning_results to retrieve BATCH and N_HEADS
+    from result_data->'bim', so the TFLOPS formula accounts for the actual
+    benchmark dimensions.
     """
-    if mode == 'op':
-        table = desc['op_table']
-        name_col = desc['op_name_col']
-        dim_selects = ',\n    '.join(f'{expr} AS {alias}' for expr, alias in desc['dims'])
-        dim_groups  = ', '.join(alias for _, alias in desc['dims'])
-        # Join optune_results on the winning backend_index to get bim BATCH/N_HEADS.
-        sql = f"""
-            SELECT
-                {dim_selects},
-                b.median_time AS median_ms,
-                b.task_id     AS task_id,
-                (r.result_data->'bim'->>'BATCH')::int AS batch,
-                CASE
-                    WHEN jsonb_typeof(r.result_data->'bim'->'N_HEADS') = 'array'
-                    THEN (r.result_data->'bim'->'N_HEADS'->0)::int
-                    ELSE (r.result_data->'bim'->>'N_HEADS')::int
-                END AS n_heads
-            FROM {table} b
-            JOIN optune_results r
-              ON r.task_id = b.task_id
-             AND r.{name_col} = b.{name_col}
-             AND r.backend_index = b.backend_index
-            WHERE b.arch = %s
-              AND b.{name_col} = %s
-              AND (b.task_config->'entry'->>'seqlen_q')::int >= %s
-              AND (b.task_config->'entry'->>'seqlen_q')::int <= %s
-              AND (b.task_config->'entry'->>'seqlen_k')::int >= %s
-              AND (b.task_config->'entry'->>'seqlen_k')::int <= %s
-            ORDER BY {dim_groups}
-        """
-        params = [arch, kernel_or_op, seqlen_min, seqlen_max, seqlen_min, seqlen_max]
-        return sql, params
-
     table = desc['kernel_table']
-    name_col = desc['kernel_name_col']
+    name_col = desc['name_col']
 
     # Qualify column references with table alias to avoid ambiguity after JOIN.
     dim_selects = ',\n    '.join(f'{expr} AS {alias}' for expr, alias in desc['dims'])
@@ -77,9 +49,11 @@ def _build_query(desc: dict, arch: str, kernel_or_op: str, mode: str,
         FROM {table} b
         JOIN tuning_results r
           ON r.task_id = b.task_id
-         AND r.kernel_name = b.kernel_name
-         AND r.hsaco_index = b.hsaco_index
+         AND r.tuning_level = b.tuning_level
+         AND r.{name_col} = b.{name_col}
+         AND r.impl_index = b.impl_index
         WHERE b.arch = %s
+          AND b.tuning_level = %s
           AND b.{name_col} = %s
           AND (b.task_config->'entry'->>'seqlen_q')::int >= %s
           AND (b.task_config->'entry'->>'seqlen_q')::int <= %s
@@ -87,7 +61,7 @@ def _build_query(desc: dict, arch: str, kernel_or_op: str, mode: str,
           AND (b.task_config->'entry'->>'seqlen_k')::int <= %s
         ORDER BY {dim_groups}
     """
-    params = [arch, kernel_or_op, seqlen_min, seqlen_max, seqlen_min, seqlen_max]
+    params = [arch, mode, kernel_or_op, seqlen_min, seqlen_max, seqlen_min, seqlen_max]
     return sql, params
 
 
@@ -139,48 +113,44 @@ def query_all_best_results(conn, descriptor_id: str = 'flash') -> dict:
     Returns:
         {
           arch: {
-            kernel: {arch, kernel, axes, rows}
+            dsl_name: {arch, kernel, axes, rows}
           }
         }
+
+    Keyed by DSL name ('attn_fwd', 'op.attn_fwd'), not by bare iface_name:
+    iface_name collides across tuning levels, so bare keys would let the op
+    entry overwrite the kernel one for the same interface.
     """
     desc = DESCRIPTORS[descriptor_id]
 
-    # Enumerate all arches. Union across kernel_table and op_table so
-    # descriptors that expose only ops (no kernel_table) still appear.
-    arch_tables = [t for t in (desc.get('kernel_table'), desc.get('op_table')) if t]
-    archs: list[str] = []
-    seen: set[str] = set()
-    with conn.cursor() as cur:
-        for tbl in arch_tables:
-            cur.execute(f"SELECT DISTINCT arch FROM {tbl} ORDER BY arch")
-            for (a,) in cur.fetchall():
-                if a not in seen:
-                    seen.add(a)
-                    archs.append(a)
+    # Every op is backed by kernels, so kernel_table alone gives complete
+    # arch coverage; no op_table union needed (see get_available_archs).
+    archs = get_available_archs(conn, descriptor_id=descriptor_id)
 
     result: dict[str, dict[str, dict]] = {}
     for arch in archs:
         result[arch] = {}
-        for kernel in desc['kernels']:
-            data = query_best_results(conn, arch, kernel, mode='kernel',
-                                      descriptor_id=descriptor_id)
-            if data['rows']:
-                result[arch][kernel] = data
-
-        for op in desc['ops']:
-            data = query_best_results(conn, arch, op, mode='op',
-                                      descriptor_id=descriptor_id)
-            if data['rows']:
-                result[arch][op] = data
+        for level, ifaces in (('kernel', desc['kernels']), ('op', desc['ops'])):
+            for iface_name in ifaces:
+                data = query_best_results(conn, arch, iface_name, mode=level,
+                                          descriptor_id=descriptor_id)
+                if data['rows']:
+                    key = ImplSelector(tuning_level=level,
+                                       iface_name=iface_name).dsl_name
+                    result[arch][key] = data
 
     return result
 
 
 def query_cell_detail(conn, task_id: int, kernel: str, mode: str = 'kernel') -> dict:
     """
-    Fetch all candidate tuning_results / optune_results rows for a single
-    (task_id, kernel) cell, plus the per-(test_case, tensor_name) accuracy
-    threshold from most_accurate_tuning_results / most_accurate_optune_results.
+    Fetch all candidate tuning_results rows for a single (task_id, kernel)
+    cell, plus the per-(test_case, tensor_name) accuracy threshold from
+    most_accurate_tuning_results.
+
+    tuning_results/most_accurate_tuning_results are shared by both tuning
+    levels and iface_name collides across them, so both queries below filter
+    on tuning_level in addition to task_id/iface_name.
 
     Returns:
         {
@@ -189,7 +159,7 @@ def query_cell_detail(conn, task_id: int, kernel: str, mode: str = 'kernel') -> 
           'mode': str,                # 'kernel' | 'op'
           'candidates': [
             {
-              'index': int,           # hsaco_index or backend_index
+              'index': int,           # impl_index
               'median_ms': float|None,
               'times': [float, ...],
               'psels': {key: val, ...},
@@ -206,25 +176,19 @@ def query_cell_detail(conn, task_id: int, kernel: str, mode: str = 'kernel') -> 
         }
     """
     assert mode in ('kernel', 'op'), f"query_cell_detail: invalid mode {mode!r}"
-    if mode == 'op':
-        results_table = 'optune_results'
-        accuracy_table = 'most_accurate_optune_results'
-        name_col = 'op_name'
-        idx_col = 'backend_index'
-    else:
-        results_table = 'tuning_results'
-        accuracy_table = 'most_accurate_tuning_results'
-        name_col = 'kernel_name'
-        idx_col = 'hsaco_index'
+    results_table = 'tuning_results'
+    accuracy_table = 'most_accurate_tuning_results'
+    name_col = 'iface_name'
+    idx_col = 'impl_index'
 
     candidates: list[dict] = []
     with conn.cursor() as cur:
         cur.execute(f"""
             SELECT {idx_col}, result, result_data
               FROM {results_table}
-             WHERE task_id = %s AND {name_col} = %s
+             WHERE task_id = %s AND tuning_level = %s AND {name_col} = %s
              ORDER BY {idx_col}
-        """, (task_id, kernel))
+        """, (task_id, mode, kernel))
         for index, result, rd in cur:
             rd = rd or {}
             impl = rd.get('impl_desc') or {}
@@ -244,8 +208,8 @@ def query_cell_detail(conn, task_id: int, kernel: str, mode: str = 'kernel') -> 
         cur.execute(f"""
             SELECT test_case, tensor_name, absolute_error
               FROM {accuracy_table}
-             WHERE task_id = %s AND {name_col} = %s
-        """, (task_id, kernel))
+             WHERE task_id = %s AND tuning_level = %s AND {name_col} = %s
+        """, (task_id, mode, kernel))
         for tc, tn, ae in cur:
             thresholds.append({
                 'test_case': tc,
@@ -265,11 +229,14 @@ def query_cell_detail(conn, task_id: int, kernel: str, mode: str = 'kernel') -> 
 _ARCH_ORDER = ['gfx942', 'gfx950', 'gfx1201', 'gfx90a', 'gfx1100']
 
 def get_available_archs(conn, descriptor_id: str = 'flash') -> list[str]:
-    """Return arches present in the descriptor's kernel_table, in display order.
+    """Return arches that have best results, either level, in display order.
 
-    Every operator in AOTriton is backed by one or more Triton kernels, so
-    querying kernel_table alone yields the complete set of arches the
-    library has been built for. There is no op-only arch to recover.
+    Deliberately NOT restricted to tuning_level='kernel'. Although every
+    operator is backed by Triton kernels, this table holds only what has
+    actually been tuned -- and the two levels are tuned by separate runs
+    against separate library builds. A database that has seen only op tuning
+    has no kernel rows at all, and filtering them out would report no arches
+    and hide every op result from the UI and the static export.
     """
     desc = DESCRIPTORS[descriptor_id]
     with conn.cursor() as cur:

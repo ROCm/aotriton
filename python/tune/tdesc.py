@@ -1,4 +1,4 @@
-# Copyright © 2025 Advanced Micro Devices, Inc.
+# Copyright © 2025-2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
 from __future__ import annotations
@@ -8,32 +8,111 @@ import itertools
 from abc import ABC, abstractmethod
 from argparse import Namespace
 from pathlib import Path
-from dacite import from_dict
-from dataclasses import asdict, fields
+from dataclasses import asdict, dataclass, fields
 
 '''
 A dual-purpose class for task dispatch and GPU worker execution.
 
-IMPORTANT — lazy kernel initialization rule for get_kernel():
-    Subclasses MUST NOT import kernel modules or instantiate kernel objects at
-    module level or in __init__. Kernel modules typically import torch (via
-    reference.py), which is unavailable outside GPU containers.
-    dispatch_tasks.py imports every TuneDesc subclass at startup (to build
-    argparse subparsers), so a top-level torch import breaks dispatch on
-    machines without torch.
+IMPORTANT — lazy kernel initialization rule for get_impl():
+    Subclasses of TuningDescription MUST NOT import kernel modules or
+    instantiate kernel objects at module level or in __init__. Kernel modules
+    typically import torch (via reference.py), which is unavailable outside
+    GPU containers. dispatch_tasks.py instantiates every TuneDesc subclass at
+    startup (to build argparse subparsers from get_entry_choices()), so a
+    top-level torch import breaks dispatch on machines without torch.
 
-    Always initialize kernel objects lazily inside get_impl() on first call:
+    A subclass typically owns one lazily-imported "provider" module per
+    tuning level (e.g. flash's level_kernel.py / level_op.py) and dispatches
+    get_impl()/_do_probe_all_impls() to the right one based on the DSL name's
+    prefix (see ImplSelector.split_dsl_name() below). Always import the
+    provider module lazily, inside the method that needs it -- never at
+    module level or in __init__:
 
-        class MyModule(TuningDescription):
-            _kernel_dict = None
-
+        # modules/<family>/tune/desc.py
+        class MyTune(TuningDescription):
             def get_impl(self, name):
-                if self._kernel_dict is None:
-                    from .kernels import KernelA, KernelB  # lazy import
-                    self._kernel_dict = {'a': KernelA(), 'b': KernelB()}
-                return self._kernel_dict[name]
+                level, iface = ImplSelector.split_dsl_name(name)
+                if level == 'kernel':
+                    from . import level_kernel as provider
+                elif level == 'op':
+                    from . import level_op as provider
+                else:
+                    raise ValueError(f"{type(self).__name__} has no tuning "
+                                      f"level {level!r} (from impl {name!r})")
+                return provider.get_impl(iface)
 '''
+
+
+@dataclass
+class ImplSelector:
+    """The impl-selector DSL:
+    `[<tuning_level> '.'] <iface_name> '=' <impl_index>`.
+
+    A single three-field dataclass shared by every tuning level of every
+    family. `tuning_level` defaults to 'kernel' and as_text() omits its
+    prefix in that case, so kernel-level selectors are plain
+    ('attn_fwd=3') and op-level ones are prefixed ('op.attn_fwd=1').
+
+    IMPORTANT: the `op.` (or any non-kernel level's) prefix is surface syntax
+    ONLY -- it must never reach storage. `TuningDescription.list_impls()`
+    returns DSL-spelled names (prefix included); `iface_name` on this
+    dataclass is always bare (never e.g. 'attn_fwd_op').
+
+    `ImplSelector` is the DSL/wire parser used by `testrun`, `exaid` and
+    `localq.handlers` -- it is deliberately NOT part of `TuningDescription`'s
+    API: `list_impls`/`get_impl`/`probe_all_impls`
+    all take the plain DSL name string (e.g. 'attn_fwd' or 'op.attn_fwd'),
+    never an `ImplSelector` instance. `split_dsl_name()` below is the shared
+    primitive both sides use: `ImplSelector.parse_text()` uses it to split the
+    LHS of `name=index`, and `TuningDescription` implementations use it
+    directly (with no `=index` present) to dispatch `get_impl()`/
+    `probe_all_impls()` on the level prefix.
+    """
+    tuning_level: str = 'kernel'
+    iface_name: str = ''
+    impl_index: int = -1
+
+    @staticmethod
+    def split_dsl_name(name: str) -> tuple[str, str]:
+        """Split a bare DSL name (no '=index'), e.g. 'attn_fwd' or
+        'op.attn_fwd', into (tuning_level, iface_name). Absent prefix means
+        'kernel' -- the unmarked, default level. rpartition (not split) so a
+        future dotted iface name does not misparse."""
+        level, _, iface = name.rpartition('.')
+        return level or 'kernel', iface
+
+    @property
+    def dsl_name(self) -> str:
+        """DSL name with the level prefix applied but no '=index' -- what
+        `TuningDescription.get_impl()`/`probe_all_impls()` take, e.g.
+        'attn_fwd' or 'op.attn_fwd'."""
+        prefix = '' if self.tuning_level == 'kernel' else f'{self.tuning_level}.'
+        return f'{prefix}{self.iface_name}'
+
+    @staticmethod
+    def parse_text(line: str) -> "ImplSelector":
+        lhs, index = line.split('=')
+        level, iface = ImplSelector.split_dsl_name(lhs)
+        return ImplSelector(tuning_level=level, iface_name=iface, impl_index=int(index))
+
+    def as_text(self) -> str:
+        return f'{self.dsl_name}={self.impl_index}'
+
+
 class TuningDescription(ABC):
+    """Lists and resolves all impls of a family directly, keyed by DSL name.
+
+    There is no intermediate per-level strategy object: each family's subclass
+    (e.g. flash's `FlashTune`) implements `list_impls`/`get_impl`/
+    `_do_probe_all_impls`/`probe_impl_desc` itself, dispatching internally on
+    the DSL name's prefix (`ImplSelector.split_dsl_name()`).
+
+    No constructor argument: a `TuningDescription` instance is not scoped to
+    one tuning level. `FlashTune()` takes no `level=` -- `list_impls()`
+    reports every level's impls, DSL-spelled, and `get_impl()`/
+    `probe_all_impls()` resolve whichever DSL name they are given.
+    """
+
     @property
     @abstractmethod
     def ENTRY_CLASS(self):
@@ -148,17 +227,31 @@ class TuningDescription(ABC):
 
     @abstractmethod
     def list_impls(self, entry, arch: str | None = None) -> list[str]:
+        """DSL-spelled interface names covering every tuning level this
+        family supports, e.g. ['attn_fwd', 'bwd_kernel_dk_dv',
+        'bwd_kernel_dq', 'bwd_kernel_fuse', 'op.attn_fwd', 'op.attn_bwd'] for
+        flash. Unprefixed names are the 'kernel' level (the DSL's unmarked
+        default); every other level is prefixed `f'{level}.'`.
+
+        Must be answerable without a GPU/torch/pyaotriton -- this is pure
+        entry-based enumeration."""
         pass
 
     @abstractmethod
-    def get_impl(self, name: str | 'ImplSelector'):
-        """Return the impl object for the given name or selector.
-        Accepts either a plain str name or an ImplSelector instance.
-        Subclasses extract the name from the selector's appropriate field
-        (e.g., kernel_name for FlashKernelSelector, op_name for FlashOpBackendSelector).
-        MUST use lazy initialization (import torch-dependent modules inside
-        this method, not at module level).
-        """
+    def get_impl(self, name: str):
+        """Resolve one DSL-spelled name (e.g. 'attn_fwd' or 'op.attn_fwd',
+        never an ImplSelector) to its impl object, lazily importing whichever
+        provider module owns that level (see the module docstring above).
+
+        MUST use lazy initialization -- import torch/pyaotriton-dependent
+        modules inside this method, not at module level.
+
+        Implementations should attempt the resolution unconditionally (no
+        up-front "does this process have the right library" check) and only
+        translate a resulting ImportError into a clearer message naming the
+        impl and both libraries -- callers (testrun's interactive `probe`,
+        `exaid`) decide whether/how to route around a failure; get_impl()
+        itself must not refuse a name it merely suspects will fail."""
         pass
 
     @abstractmethod
@@ -170,22 +263,53 @@ class TuningDescription(ABC):
         the chosen implementation (e.g., {psels, copts} for HSACO kernels,
         {backend_index} for op backends).
 
+        DELIBERATELY overlaps with probe_all_impls()/_do_probe_all_impls() --
+        do not "optimise" this away by threading probe_all_impls()'s psels/
+        copts through the dispatcher-to-GPU-worker fanout message instead of
+        calling this. That trade was considered and rejected:
+          (a) it double-confirms the impl_desc actually run, independent of
+              whatever the earlier enumeration pass said would be there;
+          (b) it keeps the dispatcher<->GPU-worker IPC to a single
+              `impl_index` integer on the wire, with no need to serialise
+              psels/copts through it; and
+          (c) it is what makes the DSL usable from the CLI. A selector is
+              only a name and a bare integer -- `op.attn_fwd=1`,
+              `bwd_kernel_dk_dv=10` -- which says nothing about the psels and
+              copts that index actually resolved to in this build. Recovering
+              them here, at run time on the GPU worker from the extargs
+              actually used, is what lets testrun print the concrete
+              implementation to stdout. Without it the operator sees only the
+              index they typed back, and has no way to tell which kernel
+              variant was measured.
+
+        Since this method's 2-argument (kernel, args) signature carries no
+        explicit level, implementations dispatch by inspecting `args`/
+        `kernel` themselves (duck typing) -- consistent with (c) above: full
+        identity recovery from what was actually run, not from external state.
+
         Args:
             kernel: the impl object returned by get_impl()
             args: the extargs object returned by create_extargs(probe=True)
         """
         pass
 
-    def probe_backends(self, root: Path, which_impl: str) -> list[dict]:
+    @abstractmethod
+    def _do_probe_all_impls(self, entry, im, which_impl: str, pt: Path) -> list[dict]:
+        """Enumerate the candidate implementation variants (e.g. HSACO
+        indices for a kernel-level impl, backend indices for an op-level
+        impl) for the DSL name `which_impl`. One dict per candidate, in
+        impl_index order."""
+        pass
+
+    def probe_all_impls(self, root: Path, which_impl: str) -> list[dict]:
+        """Enumerate every candidate variant of one interface. `which_impl` is
+        a DSL-spelled name, e.g. 'attn_fwd' or 'op.attn_fwd', as returned by
+        `list_impls()`."""
         entry, tests = self.get_entry(root, and_tests=True)
         test = tests[0]
         im = self.INPUT_METADATA.from_dict(test["input_metadata"])
         pt = Path(test["pt_file"])
-        return self._do_probe_backends(entry, im, which_impl, pt)
-
-    @abstractmethod
-    def _do_probe_backends(self, entry, im, which_impl: str, pt: Path) -> list[dict]:
-        pass
+        return self._do_probe_all_impls(entry, im, which_impl, pt)
 
     @abstractmethod
     def _gen_ref(self, entry, root: Path, extra_ims: list = []):  # Gen [tname: str, input_metadata, pt: Path]
@@ -219,10 +343,7 @@ class TuningDescription(ABC):
                         which_impl) -> list[float]:  # L1 error
         """
         Args:
-            which_impl: a FlashKernelSelector | FlashOpBackendSelector instance.
-                Subclasses rename this parameter to reflect their granularity:
-                  which_kernel  — kernel-level tuning (flash: selects HSACO variant)
-                  which_backend — backend-level tuning (flash_op: selects backend index)
+            which_impl: an ImplSelector instance.
         Returns:
             L1 error per test case.
         """
@@ -235,7 +356,7 @@ class TuningDescription(ABC):
                              which_impl) -> tuple[dict, list[float]]:
         """
         Args:
-            which_impl: a FlashKernelSelector | FlashOpBackendSelector instance.
+            which_impl: an ImplSelector instance.
         Returns:
             (impl_desc, times) where impl_desc is a JSON-serialisable dict
             and times is [median, p20, p80] latencies in ms.
@@ -251,7 +372,7 @@ class TuningDescription(ABC):
         else:
             return entry
 
-    def benchmark(self, root: Path, which_impl: 'ImplSelector'):
+    def benchmark(self, root: Path, which_impl: ImplSelector):
         """
         Output:
             entry: ENTRY_CLASS, describes an entry in tuning table

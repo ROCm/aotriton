@@ -4,6 +4,7 @@
 
 import pytest
 from .exaid import exaid_create, ExaidSubprocessNotOK
+from .tdesc import ImplSelector
 import shutil
 import json
 import torch
@@ -11,6 +12,7 @@ import torch
 @pytest.mark.parametrize('gpu_id', [3])
 @pytest.mark.parametrize('module', ['flash'])
 def test_exaid(module, gpu_id):
+    level = 'kernel'
     exaid = exaid_create(module, gpu_id)
     entry = {"dtype": "float16", "hdim": 32, "seqlen_q": 256, "seqlen_k": 128, "causal": False, "dropout_p": 0.5, "bias_type": 0}
     tmpdir = exaid.get_tmpfs_for(entry)
@@ -26,15 +28,16 @@ def test_exaid(module, gpu_id):
                 continue
             ref_error = te[1]
             assert ref_error > 0, f"Test {test_name} tensor {tname} has ref_error == 0.0"
-    kernel_dict = exaid.probe(tmpdir)
-    KNAMES = [ 'attn_fwd', 'bwd_kernel_dk_dv', 'bwd_kernel_dq', 'bwd_kernel_fuse' ]
-    for kname in KNAMES:
-        assert kname in kernel_dict.keys()
-        hsaco_index = 0
-        result_data = exaid.benchmark(tmpdir, kname, hsaco_index)
+    impl_dict = exaid.probe(tmpdir)
+    IFACE_NAMES = [ 'attn_fwd', 'bwd_kernel_dk_dv', 'bwd_kernel_dq', 'bwd_kernel_fuse' ]
+    for iface_name in IFACE_NAMES:
+        assert iface_name in impl_dict.keys()
+        impl_index = 0
+        impl_selector = ImplSelector(tuning_level=level, iface_name=iface_name, impl_index=impl_index)
+        result_data = exaid.benchmark(tmpdir, impl_selector)
         assert result_data
-        assert result_data['impl_selection']['kernel_name'] == kname
-        assert result_data['impl_selection']['hsaco_index'] == hsaco_index
+        assert result_data['impl_selection']['iface_name'] == iface_name
+        assert result_data['impl_selection']['impl_index'] == impl_index
         assert "adiffs" in result_data
     shutil.rmtree(tmpdir)
 

@@ -84,7 +84,8 @@ aotriton/
 │       └── localq/         # aotriton.tune.localq -- Unix-socket local queue
 │           ├── broker_main.py
 │           └── gpu_worker_socket.py
-├── modules/flash/tune/     # Family-specific tuning logic (flash, flash_op) --
+├── modules/flash/tune/     # Family-specific tuning logic (unified 'flash' module,
+│                           # kernel vs op selected by tuning_level, not module name) --
 │                           # loaded by path, NOT part of the aotriton package
 └── third_party/
 ```

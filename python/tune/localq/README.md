@@ -8,7 +8,7 @@ The local queue system implements a **message-passing architecture** where:
 - A central **broker** routes messages between workers via named queues
 - Workers are **generic** - they pull tasks, execute handlers, and forward results
 - The **DAG is implicit** - formed by handlers forwarding result messages to appropriate queues
-- **Dependencies** are tracked by the broker - postprocess waits for all hsaco_result messages
+- **Dependencies** are tracked by the broker - postprocess waits for all impl_result messages
 - **PG readers** throttle task fetching by blocking until tune_kernel completes (ACK mechanism)
 
 ```
@@ -16,7 +16,7 @@ The local queue system implements a **message-passing architecture** where:
 │                      LocalBroker (broker.py)                 │
 │  - Routes messages between workers via Unix sockets          │
 │  - Manages named queues: gpu_queue, cpu_queue               │
-│  - Tracks dependencies (postprocess waits for hsaco_result)  │
+│  - Tracks dependencies (postprocess waits for impl_result)  │
 │  - Handles PG reader ACK mechanism for throttling           │
 └─────────────────────────────────────────────────────────────┘
          │                    │                    │
@@ -39,11 +39,11 @@ tune_kernel (PG reader)
     ↓
 preprocess (GPU worker) - prepare test data
     ↓
-probe (GPU worker) - discover hsaco kernels
+probe (GPU worker) - enumerate the impls of each interface
     ↓
-tune_hsaco (GPU workers, parallel) - benchmark each hsaco
+tune_impl (GPU workers, parallel) - benchmark each impl
     ↓
-hsaco_result (CPU worker) - write result to DB
+impl_result (CPU worker) - write result to DB
     ↓
 postprocess (CPU worker) - aggregate & cleanup
     ↓
@@ -57,22 +57,22 @@ tune_kernel_ack (to PG reader) - unblock next task
 Message router with dependency tracking and priority queuing.
 
 **Queues**:
-- `gpu_queue`: preprocess, probe, tune_hsaco (handled by GPU workers)
-- `cpu_queue`: hsaco_result, postprocess (handled by CPU worker)
+- `gpu_queue`: preprocess, probe, tune_impl (handled by GPU workers)
+- `cpu_queue`: impl_result, postprocess (handled by CPU worker)
 
 **Dependency Resolution**:
-The broker tracks postprocess messages that depend on `hsaco_result`. When a hsaco_result message arrives:
+The broker tracks postprocess messages that depend on `impl_result`. When a impl_result message arrives:
 1. Broker calls `PostprocessHandler.resolve_dependency()` to accumulate the result
-2. Once all expected hsaco_result messages arrive, postprocess is unblocked
+2. Once all expected impl_result messages arrive, postprocess is unblocked
 3. Postprocess message is removed from `blocked_messages` and forwarded to cpu_queue
 
 **Priority Ordering**:
 Messages are enqueued with priority (higher = more urgent):
 - `postprocess`: 4 (highest - frees resources, sends ACK)
-- `probe`: 3 (generates tune_hsaco tasks)
-- `tune_hsaco`: 2 (actual GPU work)
+- `probe`: 3 (generates tune_impl tasks)
+- `tune_impl`: 2 (actual GPU work)
 - `preprocess`: 1 (just setup)
-- `hsaco_result`: 0 (lowest - CPU write)
+- `impl_result`: 0 (lowest - CPU write)
 
 **ACK Mechanism**:
 PG readers register for ACK when sending tune_kernel. When postprocess completes, it sends `tune_kernel_ack` to the broker, which notifies the waiting PG reader to fetch the next task.
@@ -113,15 +113,15 @@ Handler classes for each message type:
 
 **PreprocessHandler**: Prepares test data using `exaid.prepare_data()`, returns probe message with updated task_config
 
-**ProbeHandler**: Discovers hsaco kernels using `exaid.probe()`, returns:
-- Multiple `tune_hsaco` messages (one per hsaco variant)
-- One `postprocess` message with dependencies on `hsaco_result`
+**ProbeHandler**: Enumerates impls using `exaid.probe()`, returns:
+- Multiple `tune_impl` messages (one per impl)
+- One `postprocess` message with dependencies on `impl_result`
 
-**TuneHsacoHandler**: Benchmarks single hsaco using `exaid.benchmark()`, returns `hsaco_result` message
+**TuneImplHandler**: Benchmarks a single impl using `exaid.benchmark()`, returns `impl_result` message
 
-**WriteHsacoResultHandler**: Writes hsaco result to `tuning_results` table, returns None (triggers dependency resolution)
+**WriteImplResultHandler**: Writes the impl result to `tuning_results`, returns None (triggers dependency resolution)
 
-**PostprocessHandler**: Aggregates all hsaco results after dependencies resolved, updates `task_queue` status to completed, cleans up tmpdir, returns `tune_kernel_ack`
+**PostprocessHandler**: Aggregates all impl results after dependencies resolved, updates `task_queue` status to completed, cleans up tmpdir, returns `tune_kernel_ack`
 
 ### buffered_socket.py - BufferedSocket
 
@@ -159,20 +159,20 @@ Example:
 
 ### GPU Workers (gpu_worker_main.py)
 
-Handle GPU operations: preprocess, probe, tune_hsaco
+Handle GPU operations: preprocess, probe, tune_impl
 
 Handlers:
 - `TuneKernelHandler`
 - `PreprocessHandler(gpu_id)`
 - `ProbeHandler(gpu_id)`
-- `TuneHsacoHandler(gpu_id)`
+- `TuneImplHandler(gpu_id)`
 
 ### CPU Worker (cpu_worker_main.py)
 
 Handle database writes and postprocessing
 
 Handlers:
-- `WriteHsacoResultHandler(db_conn)`
+- `WriteImplResultHandler(db_conn)`
 - `PostprocessHandler(db_conn)`
 
 ## Database Integration
@@ -210,8 +210,9 @@ This applies to top-level handlers: `tune_kernel`, `preprocess`, `probe`.
 **task_queue**: Partitioned by arch (e.g., task_queue_gfx942)
 - Columns: id, arch, module, task_config (JSONB), status, priority, worker_id, node_hostname, created_at, started_at, completed_at, error, retry_count
 
-**tuning_results**: Stores individual hsaco benchmark results
-- Columns: id, task_id (FK to task_queue), kernel_name, hsaco_index, result, result_data (JSONB), error (JSONB), gpu_id, created_at
+**tuning_results**: Stores individual benchmark results, shared by both tuning levels
+- Columns: id, task_id (FK to task_queue), tuning_level ('kernel' | 'op'), iface_name, impl_index, result, result_data (JSONB), error (JSONB), gpu_id, created_at
+- `iface_name`/`impl_index` are the ImplSelector fields: which interface, and which of its impls. `tuning_level` is denormalized here rather than joined from `task_queue`, because `iface_name` collides across levels -- `attn_fwd` is valid at both
 
 ## Signal Handling and Graceful Shutdown
 
@@ -230,12 +231,12 @@ All components support graceful shutdown via SIGTERM/SIGINT:
 
 **Issue**: `PostprocessHandler` serves two different roles in two different contexts:
 
-1. **Broker Context**: The broker instantiates `PostprocessHandler(db_conn=None)` to call `resolve_dependency()` for tracking which hsaco_result messages have arrived. This runs in the broker process.
+1. **Broker Context**: The broker instantiates `PostprocessHandler(db_conn=None)` to call `resolve_dependency()` for tracking which impl_result messages have arrived. This runs in the broker process.
 
 2. **CPU Worker Context**: The CPU worker instantiates `PostprocessHandler(db_conn=<valid_conn>)` to call `handle()` for actual postprocessing work. This runs in the CPU worker process.
 
 **Implication**: There are effectively two "copies" of the postprocess message state:
-- One in the broker's `blocked_messages` dict, tracking `received_hsacos`
+- One in the broker's `blocked_messages` dict, tracking `received_impls`
 - One in the CPU worker's handler, executing the final aggregation
 
 **Why This Works**: 
@@ -254,20 +255,22 @@ See detailed comments in `handlers.py` for more information.
 
 ### Dependency Tracking Details
 
-The postprocess message tracks expected hsacos as a dict:
+The postprocess message tracks expected variants as a dict, keyed by
+iface_name (the same shape is used at both tuning levels -- kernel-level
+keys hold hsaco indices, op-level keys hold backend indices):
 ```python
 {
-  'expected_hsacos': {
-    'kernel_name_1': [0, 1, 2],  # hsaco indices
-    'kernel_name_2': [0, 1]
+  'expected_impls': {
+    'iface_name_1': [0, 1, 2],  # impl indices
+    'iface_name_2': [0, 1]
   },
-  'received_hsacos': {
-    'kernel_name_1': {
+  'received_impls': {
+    'iface_name_1': {
       0: <report>,
       1: <report>,
       2: <report>
     },
-    'kernel_name_2': {
+    'iface_name_2': {
       0: <report>,
       1: <report>
     }
@@ -275,7 +278,7 @@ The postprocess message tracks expected hsacos as a dict:
 }
 ```
 
-This allows the broker to know which specific hsacos are pending, not just a count.
+This allows the broker to know which specific impls are pending, not just a count.
 
 ## Logging and Debugging
 
@@ -312,7 +315,7 @@ logger.debug(f"← RECV from broker: {json.dumps(msg)}")
 ### Parallelism
 
 - **Preprocessing/Probing**: Any available GPU worker (no bottleneck on GPU 0)
-- **HSACO Tuning**: All GPUs in parallel (round-robin distribution)
+- **Impl Tuning**: All GPUs in parallel (round-robin distribution)
 - **Database Writes**: Single CPU worker (serial writes)
 - **Postprocessing**: Single CPU worker (cleanup)
 
@@ -324,8 +327,8 @@ logger.debug(f"← RECV from broker: {json.dumps(msg)}")
 
 ### Scalability
 
-- **GPUs**: Linear scaling (8 GPUs = 8× throughput for hsaco tuning)
-- **Tasks**: Handles 100-1000 hsaco variants per tuning task
+- **GPUs**: Linear scaling (8 GPUs = 8× throughput for impl tuning)
+- **Tasks**: Handles 100-1000 impls per tuning task
 - **Throttling**: Control in-flight tasks by number of PG reader workers
 
 ## Advantages Over Ray

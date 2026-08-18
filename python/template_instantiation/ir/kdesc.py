@@ -241,21 +241,35 @@ class KernelDescription(Interface):
         cfg = self._built.tune.configs
         return cfg(f)
 
-    # Flash-family LUT shape constants (used by the reused sancheck body).
-    # TODO: move to a per-family adapter mixin when a second family is ported.
-    LUT_FULL_SEQLEN_Q = [16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
-    LUT_FULL_SEQLEN_K = [16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
-    LUT_FULL_SEQLEN_NAVI = [16, 32, 64, 128, 256, 512, 1024, 2048]
+    def _lut_sancheck(self):
+        """This kernel's family-side `LutSancheck`, from modules/<family>/tune.
+
+        Resolved through self.FAMILY: nothing under template_instantiation/ may
+        name a concrete family.
+
+        modules/ is located via the family's already-loaded aot package rather
+        than registry.default_modules_dir(), which falls back to <cwd>/modules.
+        The generator takes its tree from --root_dir and does not chdir, so an
+        unrelated modules/ in the invoking directory would otherwise win.
+        """
+        from pathlib import Path
+        from aotriton.codegen.parser import load_family_aot
+        from aotriton.tune.registry import load_family_tune
+        aot = load_family_aot(self.FAMILY)
+        if aot is None:
+            raise RuntimeError(
+                f"{self.FAMILY} aot package is not loaded; the LUT sancheck "
+                f"back-edge runs after linking and relies on the Parser "
+                f"having loaded it")
+        # <root_dir>/modules/<family>/aot/__init__.py -> <root_dir>/modules
+        modules_dir = Path(aot.__file__).resolve().parents[2]
+        return load_family_tune(self.FAMILY, modules_dir).sancheck.LutSancheck
 
     def sancheck_lut_tensor(self, f, lut_tensor):
-        from aotriton.codegen.parser import load_family_aot
-        FlashKernel = load_family_aot('flash')._common.FlashKernel
-        return FlashKernel.sancheck_lut_tensor(self, f, lut_tensor)
+        return self._lut_sancheck().sancheck_lut_tensor(self, f, lut_tensor)
 
     def _gen_missing_entries(self, *args, **kwargs):
-        from aotriton.codegen.parser import load_family_aot
-        FlashKernel = load_family_aot('flash')._common.FlashKernel
-        return FlashKernel._gen_missing_entries(self, *args, **kwargs)
+        return self._lut_sancheck()._gen_missing_entries(self, *args, **kwargs)
 
     # --- axis views (used by AtiFunctional signatures) ---
 

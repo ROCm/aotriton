@@ -24,6 +24,7 @@ except ImportError:
         f"  Install it with: pip install -e '{_REPO_ROOT}'"
     )
 
+from aotriton.tune.pq.queue import TaskQueue
 from aotriton.tune.registry import load_flash_entry_module
 
 FlashEntry = load_flash_entry_module().FlashEntry
@@ -51,17 +52,26 @@ def _entry_to_jsonb_filter(entry: FlashEntry) -> tuple[str, list]:
     return ' AND '.join(clauses), params
 
 
-def fetch_matches(conn, entries: list[tuple[str, FlashEntry]]) -> list[dict]:
-    """Query task_queue for all matching rows, return list of row dicts."""
+def fetch_matches(conn, entries: list[tuple[str, FlashEntry]],
+                  tuning_level: str) -> list[dict]:
+    """Query task_queue for matching rows at one tuning level.
+
+    tuning_level is required: entries match on arch and task_config fields,
+    which both levels now share, so an unfiltered query returns each entry's
+    kernel and op rows together. Callers use the result to report a count and
+    to write scratch/retry_task_ids.txt, so double-counting would inflate the
+    confirmation prompt and feed the other level's ids to the recompute.
+    """
     rows: list[dict] = []
     with conn.cursor() as cur:
         for arch, entry in entries:
             entry_sql, entry_params = _entry_to_jsonb_filter(entry)
             sql = (
                 f"SELECT id, arch, status FROM task_queue "
-                f"WHERE task_config->>'arch' = %s AND {entry_sql}"
+                f"WHERE task_config->>'arch' = %s AND tuning_level = %s "
+                f"AND {entry_sql}"
             )
-            cur.execute(sql, [arch] + entry_params)
+            cur.execute(sql, [arch, tuning_level] + entry_params)
             rows.extend(cur.fetchall())
     return rows
 
@@ -101,42 +111,14 @@ def print_summary(label: str, count: int, matches: list[dict]) -> None:
         print(f'  {status}: {n}')
 
 
-def reset_to_pending(conn, row_ids: list[int], module: str = 'flash') -> int:
-    """
-    Reset the given task_queue ids to pending. Returns affected row count.
+def reset_to_pending(conn, row_ids: list[int], tuning_level: str, *,
+                     delete_results: bool) -> int:
+    """Reset the given task_queue ids to pending. Returns affected row count.
 
-    Also deletes related rows from the results and accuracy tables so stale
-    results don't contaminate future re-runs.  The tables chosen depend on
-    whether module ends with '_op' (operator tuning) or not (kernel tuning).
+    Thin wrapper over aotriton.tune.pq.queue.TaskQueue.reset_to_pending, which
+    owns the SQL. delete_results stays keyword-only and required here too --
+    forwarding it with a default would hide from this layer's callers that it
+    can drop their tuning_results / most_accurate_tuning_results rows.
     """
-    if not row_ids:
-        return 0
-    if module.endswith('_op'):
-        results_table  = 'optune_results'
-        accuracy_table = 'most_accurate_optune_results'
-    else:
-        results_table  = 'tuning_results'
-        accuracy_table = 'most_accurate_tuning_results'
-    with conn.cursor() as cur:
-        cur.execute(
-            f'DELETE FROM {accuracy_table} WHERE task_id = ANY(%s)',
-            (row_ids,),
-        )
-        cur.execute(
-            f'DELETE FROM {results_table} WHERE task_id = ANY(%s)',
-            (row_ids,),
-        )
-        cur.execute(
-            """
-            UPDATE task_queue
-               SET status       = 'pending',
-                   worker_id    = NULL,
-                   node_hostname= NULL,
-                   started_at   = NULL,
-                   completed_at = NULL,
-                   error        = NULL
-             WHERE id = ANY(%s)
-            """,
-            (row_ids,),
-        )
-        return cur.rowcount
+    return TaskQueue(conn).reset_to_pending(row_ids, tuning_level,
+                                            delete_results=delete_results)

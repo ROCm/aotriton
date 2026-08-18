@@ -103,23 +103,22 @@ Free functions; each accepts a psycopg connection as last argument.
 
 ```python
     from aotriton.tune.pq.results import (
-        save_tuning_result, save_optune_result, get_task_results)
+        save_tuning_result, get_task_results)
 ```
 
   `save_tuning_result(task_id, report, conn)`
-    Insert one hsaco benchmark result into tuning_results.
-    report keys: kernel_name, hsaco_index, result,
-                 result_data (JSONB, optional), error (JSONB, optional),
+    Insert one benchmark result into tuning_results. Serves both tuning
+    levels (kernel and op) -- there is no more separate optune_results table
+    or save_optune_result function.
+    report keys: tuning_level ('kernel' | 'op'), iface_name, impl_index,
+                 result, result_data (JSONB, optional), error (JSONB, optional),
                  complete_on_gpu.
 
-  `save_optune_result(task_id, report, conn)`
-    Insert one operator benchmark result into optune_results.
-    report keys: op_name, backend_index, result,
-                 result_data (JSONB, optional), error (JSONB, optional),
-                 complete_on_gpu.
-
-  `get_task_results(task_id, conn)`
-    Return all tuning_results rows for a task as a list of dicts.
+  `get_task_results(task_id, conn, tuning_level=None)`
+    Return all tuning_results rows for a task as a list of dicts. tuning_level
+    filters to one level; iface_name collides across levels (e.g. bare
+    'attn_fwd' is valid at both), so pass it whenever the task's level is
+    unambiguous from context.
 
 
 ### heartbeat.py -- HeartbeatManager

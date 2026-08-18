@@ -19,12 +19,23 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+class TuningLevelMismatch(RuntimeError):
+    """fetch_tasks() claimed a task belonging to the other tuning level.
+
+    Only reachable if the UPDATE's `tuning_level` predicate is broken, since
+    PostgreSQL would otherwise not return the row. Systemic rather than
+    transient: the filter is the sole thing keeping a worker off tasks its
+    pyaotriton build cannot execute, so every later claim is suspect too.
+    """
+
+
 @dataclass
 class Task:
     """Task representation"""
     id: int
     arch: str
     module: str
+    tuning_level: str
     task_config: dict
     status: str
     priority: int = 5
@@ -51,7 +62,7 @@ class TaskQueue:
         self.worker_id = f"{socket.gethostname()}-{os.getpid()}"
         self.node_hostname = socket.gethostname()
 
-    def fetch_tasks(self, arch: str, batch_size: int = 10, tuning_mode: str = 'kernel') -> list[Task]:
+    def fetch_tasks(self, arch: str, batch_size: int = 10, *, tuning_mode: str) -> list[Task]:
         """
         Fetch pending tasks for a specific architecture.
 
@@ -61,13 +72,15 @@ class TaskQueue:
         Args:
             arch: GPU architecture (e.g., 'gfx942', 'gfx90a')
             batch_size: Number of tasks to fetch
-            tuning_mode: 'kernel' fetches non-op tasks; 'op' fetches op tasks (module LIKE '%_op')
+            tuning_mode: 'kernel' or 'op' (REQUIRED, keyword-only, no default --
+                a kernel worker must never claim an op task and vice versa,
+                see modular-tune.md F16). Filters on the denormalized
+                task_queue.tuning_level column, not a `module` string pattern.
 
         Returns:
             List of claimed Task objects
         """
         partition_table = f"task_queue_{arch}"
-        module_filter = "AND module LIKE %s" if tuning_mode == 'op' else "AND module NOT LIKE %s"
 
         with self.conn.cursor(row_factory=dict_row) as cur:
             # Atomic task claiming using UPDATE ... RETURNING
@@ -80,15 +93,15 @@ class TaskQueue:
                 WHERE id IN (
                     SELECT id FROM {partition_table}
                     WHERE status = 'pending'
-                    {module_filter}
+                      AND tuning_level = %s
                     ORDER BY priority DESC, id ASC
                     LIMIT %s
                     FOR UPDATE SKIP LOCKED
                 )
-                RETURNING id, arch, module, task_config, status, priority,
+                RETURNING id, arch, module, tuning_level, task_config, status, priority,
                           worker_id, node_hostname, created_at, started_at,
                           completed_at, error, retry_count
-            """, (self.worker_id, self.node_hostname, '%_op', batch_size))
+            """, (self.worker_id, self.node_hostname, tuning_mode, batch_size))
 
             try:
                 rows = cur.fetchall()
@@ -97,6 +110,28 @@ class TaskQueue:
                 return []
 
             tasks = [Task(**row) for row in rows]
+
+            # The UPDATE above filters on tuning_level, so a row of the wrong
+            # level means that predicate is broken. Release the whole batch --
+            # connections here are autocommit, so the claim is already durable
+            # and raising without this would strand every row in 'running' --
+            # then fail. The batch is released entirely, not just the offending
+            # rows: this raises out of the worker, so correctly-claimed tasks
+            # would be stranded too.
+            wrong = [t for t in tasks if t.tuning_level != tuning_mode]
+            if wrong:
+                cur.execute(f"""
+                    UPDATE {partition_table}
+                       SET status = 'pending', worker_id = NULL,
+                           node_hostname = NULL, started_at = NULL
+                     WHERE id = ANY(%s)
+                """, ([t.id for t in tasks],))
+                raise TuningLevelMismatch(
+                    f"fetch_tasks({arch!r}, tuning_mode={tuning_mode!r}) claimed "
+                    f"task_ids={[t.id for t in wrong]} with tuning_level="
+                    f"{sorted({t.tuning_level for t in wrong})}; the tuning_level "
+                    f"filter is not doing its job. Released "
+                    f"{len(tasks)} claim(s) back to pending.")
 
             if tasks:
                 task_ids = [t.id for t in tasks]
@@ -162,6 +197,9 @@ class TaskQueue:
     def mark_pending(self, task_id: int, arch: str) -> None:
         """
         Mark task as pending (used during graceful shutdown to cancel running tasks).
+
+        Status only -- existing results are left alone. See reset_to_pending()
+        for the bulk re-run path, which can also discard them.
 
         Args:
             task_id: Task ID
@@ -262,7 +300,7 @@ class TaskQueue:
         """
         with self.conn.cursor(row_factory=dict_row) as cur:
             cur.execute("""
-                SELECT id, arch, module, task_config, status, priority,
+                SELECT id, arch, module, tuning_level, task_config, status, priority,
                        worker_id, node_hostname, created_at, started_at,
                        completed_at, error, retry_count
                 FROM task_queue
@@ -300,3 +338,44 @@ class TaskQueue:
             count = len(cur.fetchall())
             return count
 
+    def reset_to_pending(self, row_ids: list[int], tuning_level: str, *,
+                         delete_results: bool) -> int:
+        """Reset the given task_queue rows to pending, for re-running.
+
+        delete_results is keyword-only and REQUIRED because it is destructive
+        and the destruction is not implied by the method name. With it set,
+        the tasks' tuning_results and most_accurate_tuning_results rows are
+        dropped as well -- GPU-hours of measurements -- so that a re-run
+        starts clean instead of mixing new results with stale ones. Pass False
+        to requeue while keeping the existing rows.
+
+        Compare mark_pending(), which only moves a single task back to pending
+        and never touches results.
+
+        Every statement is scoped by tuning_level as well as id: callers select
+        ids by arch/entry, which both levels share, so an id list can span
+        levels. Returns the number of task_queue rows actually reset.
+        """
+        if not row_ids:
+            return 0
+        with self.conn.cursor() as cur:
+            if delete_results:
+                cur.execute(
+                    'DELETE FROM most_accurate_tuning_results '
+                    'WHERE tuning_level = %s AND task_id = ANY(%s)',
+                    (tuning_level, row_ids))
+                cur.execute(
+                    'DELETE FROM tuning_results '
+                    'WHERE tuning_level = %s AND task_id = ANY(%s)',
+                    (tuning_level, row_ids))
+            cur.execute("""
+                UPDATE task_queue
+                   SET status       = 'pending',
+                       worker_id    = NULL,
+                       node_hostname= NULL,
+                       started_at   = NULL,
+                       completed_at = NULL,
+                       error        = NULL
+                 WHERE tuning_level = %s AND id = ANY(%s)
+            """, (tuning_level, row_ids))
+            return cur.rowcount

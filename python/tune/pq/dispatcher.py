@@ -41,6 +41,7 @@ class TaskDispatcher:
             tasks: Iterable of task configurations, each with keys:
                    - arch: GPU architecture (str)
                    - module: Module name (str)
+                   - tuning_level: 'kernel' | 'op' (str)
                    - task_config: Task configuration (dict)
                    - priority: Optional priority (int, default: 5)
             batch_size: Number of tasks per INSERT statement
@@ -57,6 +58,7 @@ class TaskDispatcher:
                     batch.append({
                         'arch': task['arch'],
                         'module': task['module'],
+                        'tuning_level': task['tuning_level'],
                         'task_config': Jsonb(task['task_config']),
                         'priority': task.get('priority', 5)
                     })
@@ -84,17 +86,18 @@ class TaskDispatcher:
             batch: List of task dictionaries
         """
         cur.executemany("""
-            INSERT INTO task_queue (arch, module, task_config, priority)
-            VALUES (%(arch)s, %(module)s, %(task_config)s, %(priority)s)
+            INSERT INTO task_queue (arch, module, tuning_level, task_config, priority)
+            VALUES (%(arch)s, %(module)s, %(tuning_level)s, %(task_config)s, %(priority)s)
         """, batch)
 
-    def dispatch_single(self, arch: str, module: str, task_config: dict, priority: int = 5) -> int:
+    def dispatch_single(self, arch: str, module: str, tuning_level: str, task_config: dict, priority: int = 5) -> int:
         """
         Dispatch a single task.
 
         Args:
             arch: GPU architecture
             module: Module name
+            tuning_level: 'kernel' | 'op'
             task_config: Task configuration
             priority: Task priority (higher = more urgent)
 
@@ -104,10 +107,10 @@ class TaskDispatcher:
         with self._get_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    INSERT INTO task_queue (arch, module, task_config, priority)
-                    VALUES (%s, %s, %s, %s)
+                    INSERT INTO task_queue (arch, module, tuning_level, task_config, priority)
+                    VALUES (%s, %s, %s, %s, %s)
                     RETURNING id
-                """, (arch, module, Jsonb(task_config), priority))
+                """, (arch, module, tuning_level, Jsonb(task_config), priority))
 
                 task_id = cur.fetchone()[0]
                 conn.commit()

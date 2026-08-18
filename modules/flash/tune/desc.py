@@ -1,100 +1,96 @@
-# Copyright © 2025 Advanced Micro Devices, Inc.
+# Copyright © 2025-2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-from aotriton.tune.tdesc import TuningDescription
-from aotriton.tune.utils import parse_python, asdict_shallow, safeload, dacite_tuple, sanitize_value
-from dataclasses import dataclass, asdict
+from aotriton.tune.tdesc import TuningDescription, ImplSelector
+from aotriton.tune.utils import asdict_shallow, sanitize_value
+from .entry import FlashEntry, FlashInputMetadata
+from dataclasses import asdict
 import dataclasses
-from dacite import from_dict
-from argparse import Namespace
 from pathlib import Path
-import json
-import itertools
-from enum import Enum
 import gc
 
 '''
 CAVEAT about imports
-TestingDescription is a dual purpose class, which may not have torch/pyaotriton
-package installed in the environment
+FlashTune (and everything it imports at module scope: entry.py, tdesc.py,
+utils.py, dataclasses/pathlib/gc) is a dual purpose class, which may
+not have torch/pyaotriton/dacite packages installed in the environment.
+`dacite`/`from_dict` are imported lazily inside run_single_test() /
+run_single_benchmark() below, alongside their own lazy `import torch` --
+those are the only two methods that need dacite, and both already require
+a live GPU anyway.
 
-Any GPU related imports must be deferred to the related function instead import
-at the beginning of the file.
+dispatch_tasks.py instantiates FlashTune() for EVERY registered tuning module
+at CLI startup (to build argparse subparsers from get_entry_choices()), so
+this file must stay torch-free at import time and at construction time --
+FlashTune() takes no arguments and does no per-level resolution up front.
+Only the provider module a given DSL name actually needs (level_kernel.py /
+level_op.py, both torch/pyaotriton-heavy) is imported, lazily, from inside
+get_impl()/_do_probe_all_impls() below (F3's lazy-import boundary) -- never at
+construction time.
 '''
 
-@dataclass
-class FlashEntry:
-    dtype: str = 'float16'
-    hdim: int | tuple[int, int] = 16  # tuple[int, int] for hdim_qk != hdim_v
-    seqlen_q: int = 16
-    seqlen_k: int = 16
-    causal: bool | tuple[int, int] = 0
-    dropout_p: float = 0.0
-    bias_type: int = 0
 
-    @staticmethod
-    def parse_text(line: str) -> "FlashEntry":
-        d = parse_python(line)
-        return FlashEntry(**d)
-
-    @staticmethod
-    def from_dict(d: dict) -> "FlashEntry":
-        return from_dict(data_class=FlashEntry, data=d, config=dacite_tuple)
-
-    def as_posix(self) -> str:
-        return ','.join([f"{k}={v}" for k, v in asdict(self).items()])
-
-    def as_text(self) -> str:
-        def tr(v) -> str:
-            if isinstance(v, str):
-                return f"'{v}'"
-            if isinstance(v, tuple):
-                return '(' + ','.join(tr(x) for x in v) + ')'
-            if isinstance(v, list):
-                return '[' + ','.join(tr(x) for x in v) + ']'
-            return str(v)
-        return ';'.join([f"{k}={tr(v)}" for k, v in asdict(self).items()])
-
-    @property
-    def qkh(self):
-        return self.seqlen_q * self.seqlen_k * self.hdim
-
-# Field names match mptune/flash/tuner.py and/or _core_test_backward.py
-@dataclass
-class FlashInputMetadata(FlashEntry):
-    N_HEADS: int | tuple[int, int] = 5
-    BATCH: int = 3
-    sm_scale: str | float = 'l1'
-    storage_flip: bool | tuple[int, int] = False
-    prng_seed: int = 0x9be9_98d4_cf17_5339
-
-    @staticmethod
-    def parse_text(line: str) -> "FlashEntry":
-        d = parse_python(line)
-        return FlashInputMetadata(**d)
-
-    @staticmethod
-    def from_dict(d: dict) -> "FlashInputMetadata":
-        return from_dict(data_class=FlashInputMetadata, data=d, config=dacite_tuple)
-
-@dataclass
-class FlashKernelSelector:
-    kernel_name: str = ''
-    hsaco_index: int = -1
-    max_hsaco: int = -1
-
-    @staticmethod
-    def parse_text(line: str) -> "FlashKernelSelector":
-        kernel_name, hsaco_index = line.split("=")
-        return FlashKernelSelector(kernel_name=kernel_name, hsaco_index=int(hsaco_index))
-
-class Flash(TuningDescription):
+class FlashTune(TuningDescription):
     ENTRY_CLASS = FlashEntry
     INPUT_METADATA = FlashInputMetadata
 
-    # TODO: Make it configurable?
-    def __init__(self):
-        pass
+    def _provider_for(self, name: str):
+        """Resolve the DSL name `name` (e.g. 'attn_fwd' or 'op.attn_fwd') to
+        (provider_module, bare_iface_name), lazily importing exactly the
+        provider module the prefix calls for -- resolving an 'op.*' name must
+        never import level_kernel (needs the tuning-lib-only KernelControl)
+        and vice versa (F3)."""
+        level, iface_name = ImplSelector.split_dsl_name(name)
+        if level == 'kernel':
+            from . import level_kernel as provider
+        elif level == 'op':
+            from . import level_op as provider
+        else:
+            raise ValueError(
+                f"FlashTune has no tuning level {level!r} (from impl {name!r}); "
+                f"expected 'kernel' (unprefixed) or 'op.'-prefixed")
+        return provider, iface_name
+
+    def list_impls(self, entry, arch: str | None = None) -> list[str]:
+        """DSL-spelled names covering both levels: bare names from the kernel
+        level (its the DSL's unmarked default), 'op.'-prefixed names from the
+        op level. Pure entry-based enumeration -- imports level_kernel/level_op
+        only for their (torch-free) list_impls() functions, same lazy-import
+        boundary as get_impl()."""
+        from . import level_kernel, level_op
+        names = list(level_kernel.list_impls(entry, arch=arch))
+        names += [f'op.{n}' for n in level_op.list_impls(entry, arch=arch)]
+        return names
+
+    def get_impl(self, name: str):
+        provider, iface_name = self._provider_for(name)
+        try:
+            return provider.get_impl(iface_name)
+        except ImportError as e:
+            level, _ = ImplSelector.split_dsl_name(name)
+            if level == 'kernel':
+                needed, have = 'the tuning library (installed/<arch>/lib)', 'the testing library'
+            else:
+                needed, have = 'the testing library (installed/test/<arch>/lib)', 'the tuning library'
+            raise ImportError(
+                f"cannot resolve {name!r}: {level}-level tuning needs {needed}; "
+                f"this process appears to have {have} loaded instead ({e})"
+            ) from e
+
+    def probe_impl_desc(self, kernel, args) -> dict:
+        # Duck-type on AttnOptionsWrapperOp's distinctive `backend_index`
+        # property (see level_op.py) rather than threading an explicit level
+        # through this fixed 2-argument signature -- see the docstring on
+        # TuningDescription.probe_impl_desc() for why this method exists
+        # instead of reusing probe_all_impls()'s enumeration output.
+        from . import level_kernel, level_op
+        if hasattr(args, 'backend_index'):
+            return level_op.impl_desc(kernel, args)
+        return level_kernel.impl_desc(kernel, args)
+
+    def _do_probe_all_impls(self, entry, im, which_impl: str, pt) -> list[dict]:
+        provider, iface_name = self._provider_for(which_impl)
+        return provider.enumerate_variants(entry, im, iface_name, pt)
 
     def get_entry_choices(self):
         return FlashEntry(
@@ -124,39 +120,6 @@ class Flash(TuningDescription):
             return False, (f'Insufficient number of gfx1100 GPUs available for tuning arch {arch}: '
                            f'only seqlen_q/k <= 2048 entries are tuned')
         return True, ''
-
-    def list_impls(self, entry: FlashEntry, arch: str | None = None):
-        if False:  # Debugging, fwd only tuning. Keep it for selective tuning
-            return ['attn_fwd']
-        if entry.hdim > 224:
-            return ['attn_fwd', 'bwd_kernel_dk_dv', 'bwd_kernel_dq']
-        return ['attn_fwd', 'bwd_kernel_dk_dv', 'bwd_kernel_dq', 'bwd_kernel_fuse']
-
-    def _do_probe_backends(self,
-                           entry: FlashEntry,
-                           im: FlashInputMetadata,
-                           which_impl: str,
-                           pt: Path) -> list[dict]:
-        import torch
-        from aotriton.tune.gpu_utils import device_ctx, default_device_string
-        with device_ctx():
-            kernel = self.get_impl(which_impl)
-            args = kernel.create_extargs(probe=True)
-            d = torch.load(pt, map_location=default_device_string(), mmap=True)
-            inputs = from_dict(data_class=kernel.PT_INPUT_CLASS, data=d["bidi_inputs"], config=dacite_tuple)
-            # print(f'{type(inputs)=}')
-            _ = kernel(im, inputs, args)
-            total_number_of_kernels = int(args.selected_kernel_total_hsacos)
-            def gen():
-                for hi in range(total_number_of_kernels):
-                    args.set_hsaco(hsaco=hi, probe=True)
-                    _ = kernel(im, inputs, args)
-                    d = {
-                        'psels': safeload(args.selected_hsaco_psels),
-                        'copts': safeload(args.selected_hsaco_copts),
-                    }
-                    yield d
-            return list(gen())
 
     def _gen_ref(self, entry: FlashEntry, data_root: Path, extra_ims: list = []):
         import torch
@@ -227,16 +190,6 @@ class Flash(TuningDescription):
                 n_heads = (3, 1)
             elif n_heads >= 2:
                 n_heads = (2, 1)
-
-        # # Old empirical algorithm that (mostly) works with bwd
-        # new_heads = im.N_HEADS
-        # if seqlen_q * seqlen_k * d_head >= 2048 * 2048 * vram_cap_gb:
-        #     batch = min(batch, 3)
-        #     new_heads = (4, 1) if is_gqa else min(n_heads, 4)
-        # if (causal or bias_type != 0) and seqlen_q * seqlen_k * d_head >= 2048 * 2048 * vram_cap_gb:
-        #     # Prevent OOM, causal=True needs more memory
-        #     batch = min(batch, 2)
-        #     new_heads = (2, 1) if is_gqa else min(n_heads, 2)
 
         # Update im if values changed
         if batch != im.BATCH or n_heads != im.N_HEADS:
@@ -326,11 +279,13 @@ class Flash(TuningDescription):
     def run_single_test(self,
                         im: FlashInputMetadata,
                         pt: Path,
-                        which_impl: FlashKernelSelector):
+                        which_impl):
         import torch
+        from dacite import from_dict
+        from aotriton.tune.utils import dacite_tuple
         from aotriton.tune.gpu_utils import device_ctx, default_device_string
         with device_ctx():
-            kernel = self.get_impl(which_impl)
+            kernel = self.get_impl(which_impl.dsl_name)
             args = kernel.create_extargs(which_impl=which_impl)
             d = torch.load(pt, map_location=default_device_string(), mmap=True)
             inputs = from_dict(data_class=kernel.PT_INPUT_CLASS, data=d["bidi_inputs"], config=dacite_tuple)
@@ -347,20 +302,16 @@ class Flash(TuningDescription):
                 torch.cuda.empty_cache()
             return sanitize_value(result)
 
-    def probe_impl_desc(self, kernel, args) -> dict:
-        return {
-            'psels': safeload(args.selected_hsaco_psels),
-            'copts': safeload(args.selected_hsaco_copts),
-        }
-
     def run_single_benchmark(self,
                              im: FlashInputMetadata,
                              pt: Path,
-                             which_impl: FlashKernelSelector):
+                             which_impl):
         import torch
+        from dacite import from_dict
+        from aotriton.tune.utils import dacite_tuple
         from aotriton.tune.gpu_utils import do_bench, device_ctx, default_device_string
         with device_ctx():
-            kernel = self.get_impl(which_impl)
+            kernel = self.get_impl(which_impl.dsl_name)
             args = kernel.create_extargs(which_impl=which_impl, probe=True)
             d = torch.load(pt, map_location=default_device_string(), mmap=True)
             inputs = from_dict(data_class=kernel.PT_INPUT_CLASS, data=d["bidi_inputs"], config=dacite_tuple)
@@ -375,31 +326,3 @@ class Flash(TuningDescription):
                 gc.collect()
                 torch.cuda.empty_cache()
             return sanitize_value(impl_desc), sanitize_value(times)
-
-    KERNEL_DICT = None
-
-    def get_impl(self, name: str | FlashKernelSelector):
-        if isinstance(name, FlashKernelSelector):
-            name = name.kernel_name
-        if self.KERNEL_DICT is None:
-            if False:  # Debugging, fwd only tuning. Keep it for selective tuning
-                from .kernels import (
-                    attn_fwd,
-                )
-                self.KERNEL_DICT = {
-                    'attn_fwd'          : attn_fwd(),
-                }
-            else:
-                from .kernels import (
-                    attn_fwd,
-                    bwd_kernel_dk_dv,
-                    bwd_kernel_dq,
-                    bwd_kernel_fuse,
-                )
-                self.KERNEL_DICT = {
-                    'attn_fwd'          : attn_fwd(),
-                    'bwd_kernel_dk_dv'  : bwd_kernel_dk_dv(),
-                    'bwd_kernel_dq'     : bwd_kernel_dq(),
-                    'bwd_kernel_fuse'   : bwd_kernel_fuse(),
-                }
-        return self.KERNEL_DICT[name]

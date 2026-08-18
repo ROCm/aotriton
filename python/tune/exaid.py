@@ -45,7 +45,8 @@ class ExaidProxy(object):
         if self._process is None:
             args = ['python', '-m', 'aotriton.tune.testrun',
                     self._module_name, '--gpu', str(self._gpu_id)]
-            logger.info(f"Starting exaid worker process: module={self._module_name}, gpu={self._gpu_id}")
+            logger.info(f"Starting exaid worker process: module={self._module_name}, "
+                       f"gpu={self._gpu_id}")
             self._process = subprocess.Popen(args,
                                              stdin=subprocess.PIPE,
                                              stdout=subprocess.PIPE,
@@ -109,6 +110,12 @@ class ExaidProxy(object):
             self._process = None
 
 class ExaidWorker(object):
+    """Programmatic (DAG-driven) consumer of a `testrun` subprocess. Unlike
+    `testrun`, callers here (localq's handlers.py) DO carry a tuning_level --
+    but it lives in `task_config['tuning_level']`, not on this class, and it
+    is threaded into `probe()` as a per-call filter argument, never stored as
+    worker state (Revision note 3)."""
+
     TMPFS_LOCATION = Path('/dev/shm/aotriton-tuner')
     _cache = {}
 
@@ -151,18 +158,38 @@ class ExaidWorker(object):
         logger.info(f"prepare_data completed: {result}")
         return result
 
-    def probe(self, workdir: Path, arch: str | None = None):
-        logger.info(f"probe: workdir={workdir} arch={arch}")
-        self.proxy.write('probe', workdir.as_posix(), arch or '')
+    def probe(self, workdir: Path, arch: str | None = None, tuning_level: str | None = None):
+        """
+        Args:
+            tuning_level: optional per-call filter (e.g. 'kernel' or 'op'),
+                NOT worker state -- passed straight through to `testrun`'s
+                `probe` command as a third wire token. Callers driving a task
+                (e.g. localq's ProbeHandler) pass `task_config['tuning_level']`
+                here so a worker only probes what its container's library can
+                serve; filtering happens on this call, before `testrun`
+                attempts any import, not by post-hoc filtering this method's
+                return value.
+        """
+        logger.info(f"probe: workdir={workdir} arch={arch} tuning_level={tuning_level}")
+        self.proxy.write('probe', workdir.as_posix(), arch or '', tuning_level or '')
         result = json.loads(self.proxy.readinfo())
         logger.info(f"probe completed: found {len(result)} kernels")
         return result
 
-    def benchmark(self, workdir: Path, kname: str, hsaco_index: int):
-        logger.info(f"benchmark: workdir={workdir}, kernel={kname}, hsaco_index={hsaco_index}")
-        self.proxy.write('benchmark', workdir.as_posix(), f'{kname}={hsaco_index}')
+    def benchmark(self, workdir: Path, impl_selector):
+        """
+        Args:
+            impl_selector: an `aotriton.tune.tdesc.ImplSelector` instance
+                identifying the impl variant to benchmark. Its `as_text()`
+                form (e.g. 'attn_fwd=3' or 'op.attn_fwd=1') is the DSL the
+                `testrun.py` worker process's `benchmark` command parses back
+                into an `ImplSelector` via `ImplSelector.parse_text()`.
+        """
+        logger.info(f"benchmark: workdir={workdir}, impl_selector={impl_selector.as_text()}")
+        self.proxy.write('benchmark', workdir.as_posix(), impl_selector.as_text())
         result = json.loads(self.proxy.readinfo(timeout=30))
-        logger.info(f"benchmark completed: {kname}[{hsaco_index}] result={result.get('result', 'unknown')}")
+        logger.info(f"benchmark completed: {impl_selector.as_text()} "
+                   f"result={result.get('result', 'unknown')}")
         return result
 
     def exit(self):

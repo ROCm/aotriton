@@ -14,7 +14,19 @@ AOTRITON_ROOT="$(cd "$TUNE_ROOT/.." && pwd)"
 . "$TUNE_ROOT/lib/config_load.sh"
 
 WORKDIR="$1"
-RECREATE_FLAG="${2:-}"
+shift || true
+
+RECREATE_FLAG=""
+for arg in "$@"; do
+    case "$arg" in
+        --recreate) RECREATE_FLAG="--recreate" ;;
+        *)
+            echo "Usage: $0 <workdir> [--recreate]" >&2
+            echo "Error: unrecognized argument: $arg" >&2
+            exit 1
+            ;;
+    esac
+done
 
 if [ -z "$WORKDIR" ]; then
     echo "Usage: $0 <workdir> [--recreate]" >&2

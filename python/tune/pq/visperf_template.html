@@ -79,8 +79,11 @@
 </script>
 
 <script>
-// Inlined data from PostgreSQL best_tuning_results / best_optune_results.
-// Keys: data[arch][kernel] = {arch, kernel, axes, rows}
+// Inlined data from PostgreSQL best_tuning_results (unified table, both
+// tuning levels selected by the tuning_level column).
+// Keys: data[arch][dslName] = {arch, kernel, axes, rows}, where dslName is
+// 'attn_fwd' at kernel level and 'op.attn_fwd' at op level -- iface_name
+// alone collides across levels.
 const ALL_PERF_DATA = __PERF_DATA__;
 </script>
 
@@ -140,7 +143,9 @@ registerDescriptor(FLASH_DESCRIPTOR);
   // Override fetchData so it reads from inlined JSON instead of HTTP.
   window.fetchData = async function(arch, kernel, mode) {
     const archData = ALL_PERF_DATA[arch] || {};
-    const d = archData[kernel] || { arch, kernel, axes: {}, rows: [], cols: [] };
+    // Same key query_all_best_results() wrote: level-prefixed unless kernel.
+    const dslName = (mode && mode !== 'kernel') ? `${mode}.${kernel}` : kernel;
+    const d = archData[dslName] || { arch, kernel, axes: {}, rows: [], cols: [] };
     return rehydrate(d, kernel);
   };
 })();

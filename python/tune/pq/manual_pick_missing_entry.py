@@ -3,22 +3,26 @@
 # SPDX-License-Identifier: MIT
 
 """
-Force a specific tuning_results/optune_results row to be the "best" result
-for its (task_id, kernel_name/op_name), overriding whatever
-compute_best_results picked -- without touching
-most_accurate_tuning_results/most_accurate_optune_results.
+Force a specific tuning_results row to be the "best" result for its
+(task_id, iface_name), overriding whatever compute_best_results picked --
+without touching most_accurate_tuning_results.
+
+Unified schema (modular-tune.md §4.3/§4.7): tuning_results/best_tuning_results
+serve both tuning levels; iface_name/impl_index replace the old
+kernel_name/hsaco_index and op_name/backend_index column pairs, and
+tuning_level distinguishes 'kernel' from 'op' rows sharing the same table.
 
 Use this when an entry is reported missing/broken but a specific existing
 raw result row is known-good (e.g. manually verified) and should just be
 used directly, bypassing compute_best_results' automatic accuracy-threshold
-selection for that one (task_id, kernel_name/op_name).
+selection for that one (task_id, iface_name).
 
 WARNING: this override is only durable until the next FULL compute_best_results
-run (one with none of --incremental/--fix/--ids given) -- that mode truncates
-best_tuning_results/best_optune_results wholesale and repopulates it purely
-from automatic selection, silently discarding any manual pick made here. If
-the override needs to survive, re-run this command again after any such full
-recompute.
+run (one with none of --incremental/--fix/--ids given) for the SAME
+tuning_level -- that mode deletes this level's slice of best_tuning_results
+and repopulates it purely from automatic selection, silently discarding any
+manual pick made here. If the override needs to survive, re-run this command
+again after any such full recompute.
 
 Usage:
     python -m aotriton.tune.pq.manual_pick_missing_entry --workdir /path/to/workdir --id <tuning_results.id>
@@ -47,13 +51,17 @@ logger = logging.getLogger(__name__)
 def pick(conn, sql: SqlStatements, result_id: int, *, dry_run: bool = False) -> None:
     with conn.cursor() as cur:
         cur.execute(
-            f'SELECT task_id, {sql.key_col}, {sql.index_col}, result, result_data '
+            f'SELECT task_id, tuning_level, {sql.key_col}, {sql.index_col}, result, result_data '
             f'FROM {sql.results_table} WHERE id = %s',
             (result_id,))
         row = cur.fetchone()
         if row is None:
             raise ValueError(f'{sql.results_table}.id={result_id} not found')
-        task_id, key_name, index, result, result_data = row
+        task_id, tuning_level, key_name, index, result, result_data = row
+        if tuning_level != sql.tuning_level:
+            raise ValueError(
+                f'{sql.results_table}.id={result_id} has tuning_level={tuning_level!r}, '
+                f'but --tuning_mode={sql.tuning_level!r} was given; refusing to cross levels')
 
         if not result_data or not result_data.get('times'):
             raise ValueError(
@@ -91,21 +99,22 @@ def pick(conn, sql: SqlStatements, result_id: int, *, dry_run: bool = False) -> 
 
         cur.execute(f"""
             INSERT INTO {sql.best_table}
-                (task_id, arch, task_config, {sql.key_col}, {sql.index_col}, median_time, impl_desc)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+                (task_id, arch, tuning_level, task_config, {sql.key_col}, {sql.index_col}, median_time, impl_desc)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (task_id, {sql.key_col}) DO UPDATE
                 SET {sql.index_col} = EXCLUDED.{sql.index_col},
                     median_time = EXCLUDED.median_time,
                     impl_desc   = EXCLUDED.impl_desc,
                     computed_at = NOW()
-        """, (task_id, arch, Jsonb(task_config), key_name, index, median_time,
+        """, (task_id, arch, tuning_level, Jsonb(task_config), key_name, index, median_time,
               Jsonb(impl_desc) if impl_desc is not None else None))
     conn.commit()
     logger.info('Done: %s.id=%d is now the picked best for task_id=%d %s=%s',
                 sql.results_table, result_id, task_id, sql.key_col, key_name)
     logger.warning('This override does not survive a subsequent FULL compute_best_results '
-                    'run (no --incremental/--fix/--ids) -- that mode truncates %s and '
-                    'repopulates it from automatic selection only.', sql.best_table)
+                    'run (no --incremental/--fix/--ids) for tuning_level=%s -- that mode '
+                    'deletes this level\'s slice of %s and repopulates it from automatic '
+                    'selection only.', sql.tuning_level, sql.best_table)
 
 
 def main() -> None:
@@ -115,7 +124,8 @@ def main() -> None:
     )
     parser.add_argument('--workdir', required=True, type=Path)
     parser.add_argument('--id', required=True, type=int,
-                        help='tuning_results.id (optune_results.id in --tuning_mode op) to pick as best')
+                        help='tuning_results.id to pick as best (must belong to the '
+                             'tuning_level given by --tuning_mode)')
     parser.add_argument('--tuning_mode', choices=['kernel', 'op'], default='kernel')
     parser.add_argument('--dry_run', action='store_true',
                         help='Show what would change without writing to best_tuning_results')

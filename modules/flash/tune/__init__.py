@@ -1,4 +1,4 @@
-# Copyright © 2026 Advanced Micro Devices, Inc.
+# Copyright © 2025-2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
 """
@@ -10,14 +10,27 @@ python/codegen/parser.py's `load_family_aot` loads modules/<family>/aot/. This
 keeps `modules/<family>` a plain directory rather than a package, so a stray
 `flash.py` on sys.path cannot shadow it.
 
-Phase 1 (pure relocation, no unification): this package holds two independent
-subpackages moved verbatim from v3python.tune -- `flash` (kernel-level tuning)
-and `flash_op` (operator-level tuning) -- each still exporting its own
-`TuneDesc`/`ImplSelector`. Nothing is re-exported here yet; the registry
-resolves 'flash' -> this package's `flash` submodule and 'flash_op' -> its
-`flash_op` submodule.
+One `FlashTune` description covers both tuning levels. It lists and resolves
+every impl directly, keyed by its DSL name (`list_impls` / `get_impl` /
+`probe_all_impls` / `probe_impl_desc`), dispatching on the `op.` prefix --
+there is no per-level strategy object and no `level=` constructor argument.
+`ImplSelector` (see aotriton.tune.tdesc) is the sole parser of that DSL.
 
-Phase 2 unifies the two into a single `FlashTune` description (one `TuneDesc`,
-`LEVELS = {'kernel': ..., 'op': ...}`) — see modular-tune.md §4.1/§4.3. This
-file's shape will change then.
+`TuneDesc` is the single handle for tuning metadata. This package
+deliberately exports nothing alongside it for that purpose: if something
+outside needs metadata `TuneDesc` cannot supply, extend
+`TuningDescription`'s interface rather than adding a second handle.
+
+Everything below except `sancheck` (needed eagerly by the codegen back-edge in
+python/template_instantiation/ir/kdesc.py, and torch-free) stays lazily
+resolved: importing this package must not pull in torch/pyaotriton (see
+desc.py's module docstring for why).
 """
+
+from .desc import FlashTune
+from aotriton.tune.tdesc import ImplSelector
+from . import sancheck
+
+TuneDesc = FlashTune
+
+__all__ = ['TuneDesc', 'ImplSelector', 'sancheck']
