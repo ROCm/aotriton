@@ -1,6 +1,32 @@
 # Copyright © 2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
+"""GPU helpers for the tuning workers.
+
+CAVEAT for anything that prints here: these routines run inside the `testrun`
+worker subprocess, whose **stdout is a wire protocol, not a log**.
+`ExaidProxy.readinfo()` (exaid.py) reads that stdout a line at a time and
+treats the first whitespace-separated token as follows:
+
+  * ``OK`` / ``OK <json>`` -- the reply it is waiting for.
+  * ``OVERHEATING: ...``   -- forwarded to the log; it keeps reading.
+  * anything else          -- raises ``ExaidSubprocessNotOK``, failing the task.
+
+Two rules follow, and both have already been learned the hard way:
+
+  * **Print diagnostics to ``sys.stderr``**, the way testrun.py does. A bare
+    ``print()`` of a warning does not merely add noise -- it aborts whatever
+    the worker was asked to do.
+  * **Keep the ``OVERHEATING:`` prefix on the cooldown lines, and keep
+    emitting one per poll** rather than only after a long wait. `readinfo()`
+    resets its read timeout on every line it accepts; `probe()` reads with the
+    default 10s timeout and `benchmark()` with 30s, so a worker that goes
+    quiet while waiting out a cooldown is killed as unresponsive.
+
+Note this constrains print() only. Raising is fine: exceptions surface through
+the worker's exit status and stderr, not through the protocol stream.
+"""
+
 import sys
 import os
 import time
@@ -83,9 +109,47 @@ def detach_member_tensors(data_object) -> dict:
     d = asdict_shallow(data_object)
     return { k: v.detach() if isinstance(v, torch.Tensor) else v for k, v in d.items() }
 
-_amdsmi_initialized = False
-_hip_to_amdsmi = {}
 _total_memory_gb = None
+
+def _bdf_of(device_id):
+    """PCI BDF of a HIP device, as AMD-SMI spells it (``0000:65:00.0``).
+
+    Sourced from HIP via torch rather than from AMD-SMI: torch.cuda device
+    properties come from hipGetDeviceProperties and cost no AMD-SMI call at
+    all, so resolving a device never has to enumerate the other GPUs.
+
+    This is also the only mapping that survives ROCR_VISIBLE_DEVICES /
+    HIP_VISIBLE_DEVICES. AMD-SMI's own ``hip_id`` is a *global* index that
+    ignores the mask, while our device ids are masked ones, so pairing the
+    two picks the wrong GPU whenever a mask is set (as SLURM does).
+    """
+    p = torch.cuda.get_device_properties(device_id)
+    return f'{p.pci_domain_id:04x}:{p.pci_bus_id:02x}:{p.pci_device_id:02x}.0'
+
+@contextmanager
+def _amdsmi_ctx(device_id=None):
+    """Initialize AMD-SMI, yield GPU handle(s), and shut down on exit.
+
+    Yields the handle of `device_id` alone, or the list of every handle when
+    `device_id` is None. The single-device form resolves by BDF, so it never
+    calls amdsmi_get_processor_handles() and never asks the other GPUs
+    anything.
+
+    Handles must not outlive the context. Nesting one context inside another
+    is safe, though: amdsmi_init()/amdsmi_shut_down() are refcounted, so the
+    inner exit does not invalidate the outer one's handles. That is what lets
+    get_total_memory_from_amdsmi() run while _own_amdsmi_device() holds a
+    context open. Tearing down the last context does invalidate every handle
+    taken from it -- reads then fail with AMDSMI_STATUS_NOT_INIT.
+    """
+    amdsmi.amdsmi_init()
+    try:
+        if device_id is None:
+            yield amdsmi.amdsmi_get_processor_handles()
+        else:
+            yield amdsmi.amdsmi_get_processor_handle_from_bdf(_bdf_of(device_id))
+    finally:
+        amdsmi.amdsmi_shut_down()
 
 def get_total_memory_from_amdsmi():
     """Get total GPU memory in GB from AMD-SMI."""
@@ -93,66 +157,115 @@ def get_total_memory_from_amdsmi():
     if _total_memory_gb is not None:
         return _total_memory_gb
 
-    if not _init_amdsmi():
-        return None
-
     try:
-        devices = amdsmi.amdsmi_get_processor_handles()
-        vram_cap = -1
-        for device in devices:
-            vram_usage = amdsmi.amdsmi_get_gpu_vram_usage(device)
-            total_memory = vram_usage['vram_total'] / (1024 ** 3)  # Bytes -> GB
-            vram_cap = min(vram_cap, total_memory) if vram_cap > 0 else total_memory
+        with _amdsmi_ctx() as devices:
+            vram_cap = -1
+            for device in devices:
+                vram_usage = amdsmi.amdsmi_get_gpu_vram_usage(device)
+                total_memory = vram_usage['vram_total'] / 1024  # amdsmi reports MB -> GB
+                vram_cap = min(vram_cap, total_memory) if vram_cap > 0 else total_memory
+        if vram_cap <= 0:
+            # No device answered (an empty handle list leaves the sentinel in
+            # place). Report failure instead of memoizing -1: callers test for
+            # None, and a negative cap would clamp every shape to the minimum.
+            return None
         _total_memory_gb = vram_cap
         return vram_cap
     except Exception:
         return None
 
-def _init_amdsmi():
-    """Initialize AMD-SMI and build HIP to AMD-SMI device mapping."""
-    global _amdsmi_initialized, _hip_to_amdsmi
-    if _amdsmi_initialized:
-        return True
+# Junction (a.k.a. hotspot) is what we want to throttle on, but not every ASIC
+# implements it. gfx1151 exposes an edge sensor only and answers junction with
+# AMDSMI_STATUS_NOT_SUPPORTED, which used to abort tuning outright; gfx942 is
+# the mirror image, implementing junction but not edge. So the sensor has to be
+# probed per device instead of assumed.
+_TEMP_SENSORS = (amdsmi.AmdSmiTemperatureType.JUNCTION,
+                 amdsmi.AmdSmiTemperatureType.EDGE)
 
-    amdsmi.amdsmi_init()
-
-    # Get all AMD-SMI devices
-    amdsmi_devices = amdsmi.amdsmi_get_processor_handles()
-
-    # Map HIP devices to AMD-SMI devices using HIP ID from enumeration info
-    for handle in amdsmi_devices:
+def _pick_temp_sensor(handle, device_id):
+    """First sensor in _TEMP_SENSORS that this GPU actually implements."""
+    for sensor in _TEMP_SENSORS:
         try:
-            info = amdsmi.amdsmi_get_gpu_enumeration_info(handle)
-            hip_id = info["hip_id"]
-            _hip_to_amdsmi[hip_id] = handle
-        except Exception:
+            amdsmi.amdsmi_get_temp_metric(handle, sensor,
+                                          amdsmi.AmdSmiTemperatureMetric.CURRENT)
+        except amdsmi.AmdSmiLibraryException as e:
+            if e.get_error_code() != amdsmi.amdsmi_wrapper.AMDSMI_STATUS_NOT_SUPPORTED:
+                raise
             continue
+        if sensor is not _TEMP_SENSORS[0]:
+            # stderr, never stdout. Everything here can run inside the testrun
+            # worker, whose stdout is the exaid wire protocol: ExaidProxy
+            # .readinfo() forwards `OVERHEATING:` lines and raises
+            # ExaidSubprocessNotOK on anything else that is not `OK`. A
+            # diagnostic on stdout would therefore kill the job -- and this one
+            # fires precisely on the gfx1151 parts the fallback exists to keep
+            # running.
+            print(f'WARNING: GPU HIP ID {device_id} does not implement the '
+                  f'{_TEMP_SENSORS[0].name} temperature sensor, '
+                  f'falling back to {sensor.name}', flush=True, file=sys.stderr)
+        return sensor
+    # Loud on purpose: silently skipping the wait would let a hot GPU cook,
+    # and bogus thermals surface later as inexplicable tuning results.
+    raise RuntimeError(f'GPU HIP ID {device_id} implements none of the '
+                       f'temperature sensors {[s.name for s in _TEMP_SENSORS]}')
 
-    _amdsmi_initialized = True
-    return True
+_amdsmi_stack = None      # keeps AMD-SMI alive for _amdsmi_handle below
+_amdsmi_device_id = None
+_amdsmi_handle = None
+_amdsmi_sensor = None
 
-def _get_temperature_amdsmi(device_id):
-    """Get GPU temperature using AMD-SMI (works correctly with device IDs)."""
-    if not _init_amdsmi():
-        return None
+def _own_amdsmi_device(device_id):
+    """(handle, sensor) for `device_id`, keeping AMD-SMI open between calls.
 
-    amdsmi_dev = _hip_to_amdsmi.get(device_id)
-    assert amdsmi_dev is not None
+    wait_gpu_temperature() runs on every device_ctx() entry and polls every
+    5s while overheating, so re-entering the context per reading would pay an
+    amdsmi_init() each time, and re-probing the sensor would pay a failed
+    query on every ASIC that lacks a junction sensor. Only this device is held
+    onto; the context is torn down and rebuilt if a different device_id shows
+    up.
+    """
+    global _amdsmi_stack, _amdsmi_device_id, _amdsmi_handle, _amdsmi_sensor
+    if _amdsmi_stack is not None:
+        if _amdsmi_device_id == device_id:
+            return _amdsmi_handle, _amdsmi_sensor
+        _amdsmi_stack.close()
+        _amdsmi_stack = _amdsmi_device_id = _amdsmi_handle = _amdsmi_sensor = None
 
-    temp = amdsmi.amdsmi_get_temp_metric(
+    stack = ExitStack()
+    handle = stack.enter_context(_amdsmi_ctx(device_id))
+    try:
+        sensor = _pick_temp_sensor(handle, device_id)
+    except BaseException:
+        stack.close()
+        raise
+    _amdsmi_stack, _amdsmi_device_id = stack, device_id
+    _amdsmi_handle, _amdsmi_sensor = handle, sensor
+    return handle, sensor
+
+def _get_temperature_amdsmi(amdsmi_dev, sensor):
+    """Read GPU temperature from an AMD-SMI handle held by an open context."""
+    return amdsmi.amdsmi_get_temp_metric(
         amdsmi_dev,
-        amdsmi.AmdSmiTemperatureType.JUNCTION,
+        sensor,
         amdsmi.AmdSmiTemperatureMetric.CURRENT
     )
-    return temp
 
 def wait_gpu_temperature(device_id=None, threshold=85.0):
-    """Wait until GPU temperature drops below threshold. Only prints if waiting > 5 minutes."""
+    """Wait until GPU temperature drops below threshold.
+
+    Reports on every poll rather than only once the wait gets long. The
+    `OVERHEATING:` prefix is a wire protocol: ExaidProxy.readinfo() forwards
+    such lines to the log and keeps reading instead of failing, and each one
+    resets its read timeout. probe() reads with the default 10s timeout and
+    benchmark() with 30s, so staying quiet through a cooldown would have the
+    parent kill a worker that is only waiting for the GPU to cool.
+    """
     if device_id is None:
         device_id = default_device_id()
 
     # Use AMD-SMI directly to avoid HIP ID vs AMD-SMI ID confusion
-    temp = _get_temperature_amdsmi(device_id)
+    amdsmi_dev, sensor = _own_amdsmi_device(device_id)
+    temp = _get_temperature_amdsmi(amdsmi_dev, sensor)
 
     if temp <= threshold:
         return
@@ -160,12 +273,14 @@ def wait_gpu_temperature(device_id=None, threshold=85.0):
     start_time = time.time()
     while temp > threshold:
         elapsed = time.time() - start_time
-        print(f"OVERHEATING: GPU HIP ID {device_id} TEMP. {temp}", flush=True)
+        print(f"OVERHEATING: GPU HIP ID {device_id} TEMP. {temp} "
+              f"ELAPSED. {int(elapsed)}s", flush=True)
         time.sleep(5)
-        temp = _get_temperature_amdsmi(device_id)
+        temp = _get_temperature_amdsmi(amdsmi_dev, sensor)
         if temp is None:
             break
-    print(f"OVERHEATING: EXIT GPU HIP ID {device_id} TEMP. {temp}", flush=True)
+    print(f"OVERHEATING: EXIT GPU HIP ID {device_id} TEMP. {temp} "
+          f"ELAPSED. {int(time.time() - start_time)}s", flush=True)
 
 @contextmanager
 def device_ctx():
