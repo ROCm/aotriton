@@ -1,6 +1,32 @@
 # Copyright © 2025 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
+"""GPU helpers for the tuning workers.
+
+CAVEAT for anything that prints here: these routines run inside the `testrun`
+worker subprocess, whose **stdout is a wire protocol, not a log**.
+`ExaidProxy.readinfo()` (exaid.py) reads that stdout a line at a time and
+treats the first whitespace-separated token as follows:
+
+  * ``OK`` / ``OK <json>`` -- the reply it is waiting for.
+  * ``OVERHEATING: ...``   -- forwarded to the log; it keeps reading.
+  * anything else          -- raises ``ExaidSubprocessNotOK``, failing the task.
+
+Two rules follow, and both have already been learned the hard way:
+
+  * **Print diagnostics to ``sys.stderr``**, the way testrun.py does. A bare
+    ``print()`` of a warning does not merely add noise -- it aborts whatever
+    the worker was asked to do.
+  * **Keep the ``OVERHEATING:`` prefix on the cooldown lines, and keep
+    emitting one per poll** rather than only after a long wait. `readinfo()`
+    resets its read timeout on every line it accepts; `probe()` reads with the
+    default 10s timeout and `benchmark()` with 30s, so a worker that goes
+    quiet while waiting out a cooldown is killed as unresponsive.
+
+Note this constrains print() only. Raising is fine: exceptions surface through
+the worker's exit status and stderr, not through the protocol stream.
+"""
+
 import sys
 import os
 import time
@@ -167,9 +193,16 @@ def _pick_temp_sensor(handle, device_id):
                 raise
             continue
         if sensor is not _TEMP_SENSORS[0]:
+            # stderr, never stdout. Everything here can run inside the testrun
+            # worker, whose stdout is the exaid wire protocol: ExaidProxy
+            # .readinfo() forwards `OVERHEATING:` lines and raises
+            # ExaidSubprocessNotOK on anything else that is not `OK`. A
+            # diagnostic on stdout would therefore kill the job -- and this one
+            # fires precisely on the gfx1151 parts the fallback exists to keep
+            # running.
             print(f'WARNING: GPU HIP ID {device_id} does not implement the '
                   f'{_TEMP_SENSORS[0].name} temperature sensor, '
-                  f'falling back to {sensor.name}', flush=True)
+                  f'falling back to {sensor.name}', flush=True, file=sys.stderr)
         return sensor
     # Loud on purpose: silently skipping the wait would let a hot GPU cook,
     # and bogus thermals surface later as inexplicable tuning results.

@@ -174,8 +174,13 @@ def test_falls_back_to_edge_when_junction_unsupported(gpu_utils, capsys):
 
     assert sensor is T.EDGE
     assert mod._get_temperature_amdsmi(handle, sensor) == 30
-    # the fallback is meant to be visible, not silent
-    assert 'HOTSPOT' in capsys.readouterr().out
+    # The fallback is meant to be visible, but on stderr only: the worker's
+    # stdout is the exaid wire protocol, and an unrecognised line there raises
+    # ExaidSubprocessNotOK -- which would kill the very gfx1151 run this
+    # fallback exists to keep alive.
+    captured = capsys.readouterr()
+    assert 'HOTSPOT' in captured.err
+    assert captured.out == ''
 
 
 def test_junction_still_wins_when_both_supported(gpu_utils):
