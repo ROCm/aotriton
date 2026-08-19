@@ -122,7 +122,7 @@
     </div>
 
     <p style="font-size: 0.9em; color: gray; margin-top: 0.5rem;">
-        <strong>Rebuild Accuracy Table:</strong> DROP + CTAS <code>most_accurate_tuning_results</code> (tuning_level = {{ tuning_mode }}) in parallel.<br>
+        <strong>Rebuild Accuracy Table:</strong> Replaces the tuning_level = {{ tuning_mode }} slice of <code>most_accurate_tuning_results</code> via a temp-table CTAS swap; the other level's rows are untouched.<br>
         <strong>Update Accuracy Table:</strong> Incrementally upserts rows for task_ids cached in <code>scratch/retry_task_ids.txt</code> into <code>most_accurate_tuning_results</code> (tuning_level = {{ tuning_mode }}) by <code>retry_missing_entries</code>.<br>
         <strong>Compute Best Results:</strong> Aggregates raw tuning results into <code>best_tuning_results</code> table (tuning_level = {{ tuning_mode }}).<br>
         <strong>Export Best Results:</strong> Exports <code>best_tuning_results</code> (tuning_level = {{ tuning_mode }}) to <code>scratch/{% if tuning_mode == 'op' %}op_database.sqlite3{% else %}centraldb.sqlite3{% endif %}</code>.<br>

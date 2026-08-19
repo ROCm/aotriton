@@ -81,9 +81,10 @@ def _read_required(path: Path, what: str, *, packaged: bool) -> str:
                        'incomplete `aotriton` install, not a missing source '
                        'checkout.')
         else:
-            reason = ('`modules/` is application source, never shipped '
-                       'inside the installed `aotriton` package -- point '
-                       'AOTRITON_MODULES_DIR at a checkout containing it.')
+            reason = ('neither `.tune/` nor `modules/` is shipped inside the '
+                       'installed `aotriton` package, so this comes from a '
+                       'checkout -- check the tune_root / modules_dir passed '
+                       'in, or AOTRITON_TUNE_ROOT / AOTRITON_MODULES_DIR.')
         raise FileNotFoundError(f'{what} not found at {path}: {reason}')
     return path.read_text(encoding='utf-8')
 

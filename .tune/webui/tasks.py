@@ -48,9 +48,12 @@ from aotriton.tune.pq.visperf import (
 from aotriton.tune.pq.vis_descriptors import DESCRIPTORS
 from aotriton.tune.pq.export_visperf import export_visperf as _do_export_visperf, build_export_html
 
-# This file is .tune/webui/tasks.py, so .tune/ is two parents up.
+# This file is .tune/webui/tasks.py, so .tune/ is two parents up. modules/ is
+# deliberately NOT derived the same way: the descriptor registry and the
+# /family_static route resolve it through default_modules_dir(), which honours
+# AOTRITON_MODULES_DIR. Hardcoding the checkout sibling here would make the
+# export read a different tree from the live page.
 _TUNE_ROOT = Path(__file__).resolve().parent.parent
-_MODULES_DIR = _TUNE_ROOT.parent / 'modules'
 
 FlashEntry = load_flash_entry_module().FlashEntry
 
@@ -1860,8 +1863,7 @@ def export_visperf(workdir: str, dry_run: bool = False) -> dict:
         with psycopg.connect(**conn_params, autocommit=True) as conn:
             # The web UI lives inside .tune/, so it can name the root the
             # export needs for perf.js instead of leaving it to be inferred.
-            _do_export_visperf(conn, output, tune_root=_TUNE_ROOT,
-                               modules_dir=_MODULES_DIR)
+            _do_export_visperf(conn, output, tune_root=_TUNE_ROOT)
         return {'status': 'ok', 'message': f'Exported to {output}'}
     except Exception as e:
         logger.error('export_visperf failed: %s', e)
@@ -1908,5 +1910,4 @@ def build_perf_export_html(col_filters: dict, url_params: dict,
                 kdata['rows'] = [r for r in kdata['rows'] if _row_allowed(r)]
                 kdata['axes'] = build_axes(kdata['rows'], desc)
 
-    return build_export_html(all_data, url_params, tune_root=_TUNE_ROOT,
-                             modules_dir=_MODULES_DIR)
+    return build_export_html(all_data, url_params, tune_root=_TUNE_ROOT)

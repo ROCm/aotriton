@@ -74,14 +74,6 @@
 <script src="__PLOTLY_CDN__" crossorigin="anonymous"></script>
 
 <script>
-// Family visperf descriptor JS — auto-injected by export_visperf.py.
-// Concatenation of every registered family's static/<family>.js; each
-// self-registers via registerDescriptor(...) at its own bottom, so this
-// template never needs to know a family's descriptor constant name.
-// __FAMILY_JS__
-</script>
-
-<script>
 // Inlined data from PostgreSQL best_tuning_results (unified table, both
 // tuning levels selected by the tuning_level column).
 // Keys: data[arch][dslName] = {arch, kernel, axes, rows}, where dslName is
@@ -91,8 +83,18 @@ const ALL_PERF_DATA = __PERF_DATA__;
 </script>
 
 <script>
-// perf.js rendering engine — auto-injected by export_visperf.py
+// perf.js rendering engine — auto-injected by export_visperf.py.
+// MUST precede the family descriptors below: it defines registerDescriptor(),
+// which each family script calls while it loads.
 // __PERF_JS__
+</script>
+
+<script>
+// Family visperf descriptor JS — auto-injected by export_visperf.py.
+// Concatenation of every registered family's static/<family>.js; each
+// self-registers via registerDescriptor(...) at its own bottom, so this
+// template never needs to know a family's descriptor constant name.
+// __FAMILY_JS__
 </script>
 
 <script>

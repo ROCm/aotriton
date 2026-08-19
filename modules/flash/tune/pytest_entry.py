@@ -80,16 +80,23 @@ def _lookup(mapping: dict, token: str, what: str):
             f'Expected one of {sorted(mapping)}.') from None
 
 
-# Bracket-parameter positions per test, left to right. Kept as data so a
-# parametrize change is a one-line edit against the test's own signature.
+# Bracket-parameter positions, left to right, keyed by (test file, test name).
+# The file is part of the key because the same test name appears in more than
+# one file with a different parametrization: test_backward.py::test_irregulars
+# leads with BWDOP, test_forward.py::test_irregulars does not, so decoding one
+# with the other's layout reads every field from the wrong position.
 #
-#   n:      minimum number of parameters
+# Positions come from observed node IDs, not from the signature: pytest
+# renders stacked parametrize decorators in application order, which is
+# neither the signature order nor its reverse.
+#
+#   n:      exact number of parameters the test renders
 #   idx:    field -> position
 #   const:  fields the test fixes rather than parametrizes
-_LAYOUTS: dict[str, dict] = {
+_LAYOUTS: dict[tuple[str, str], dict] = {
     # BWDOP, storage_flip, sm_scale, dtype, dropout_p, causal,
     # seqlen_k, seqlen_q, D_HEAD, N_HEADS, BATCH
-    'test_regular_bwd': {
+    ('test_backward.py', 'test_regular_bwd'): {
         'n': 11,
         'idx': {'dtype': 3, 'dropout_p': 4, 'causal': 5,
                 'seqlen_k': 6, 'seqlen_q': 7, 'hdim': 8},
@@ -97,7 +104,7 @@ _LAYOUTS: dict[str, dict] = {
     },
     # BWDOP, bias_type, storage_flip, sm_scale, dtype, dropout_p, causal,
     # seqlen_k, seqlen_q, D_HEAD, N_HEADS, BATCH
-    'test_irregulars': {
+    ('test_backward.py', 'test_irregulars'): {
         'n': 12,
         'idx': {'bias_type': 1, 'dtype': 4, 'dropout_p': 5, 'causal': 6,
                 'seqlen_k': 7, 'seqlen_q': 8, 'hdim': 9},
@@ -105,18 +112,19 @@ _LAYOUTS: dict[str, dict] = {
     },
     # BWDOP, storage_flip, sm_scale, dtype, dropout_p,
     # seqlen_k, seqlen_q, D_HEAD, N_HEADS, BATCH  -- no causal parameter
-    'test_op_bwd_with_matrix_bias': {
-        'n': 9,
+    ('test_backward.py', 'test_op_bwd_with_matrix_bias'): {
+        'n': 10,
         'idx': {'dtype': 3, 'dropout_p': 4,
                 'seqlen_k': 5, 'seqlen_q': 6, 'hdim': 7},
         'const': {'causal': False, 'bias_type': 1},
     },
 }
-_LAYOUTS['test_fast'] = _LAYOUTS['test_regular_bwd']
+_LAYOUTS[('test_backward.py', 'test_fast')] = \
+    _LAYOUTS[('test_backward.py', 'test_regular_bwd')]
 
 
 def supported_tests() -> list[str]:
-    return sorted(_LAYOUTS)
+    return sorted(f'{f}::{t}' for f, t in _LAYOUTS)
 
 
 def entry_from_pytest_node(node) -> dict:
@@ -126,10 +134,16 @@ def entry_from_pytest_node(node) -> dict:
     result identifies the entry that covers the pytest case rather than the
     case's own shape.
     """
-    layout = _LAYOUTS.get(node.test)
+    # Keyed by file as well as name: the same test name lives in more than
+    # one file with different parameter positions. An unknown pair is an
+    # error, never a guess -- silently decoding with the wrong layout would
+    # resolve a real but incorrect tuning entry.
+    import posixpath
+    key = (posixpath.basename(node.path), node.test)
+    layout = _LAYOUTS.get(key)
     if layout is None:
         raise ValueError(
-            f'Unsupported test name: {node.test!r}. '
+            f'Unsupported test: {key[0]}::{key[1]}. '
             f'Supported: {", ".join(supported_tests())}.')
     node.require(layout['n'])
     at = {name: node.params[i] for name, i in layout['idx'].items()}

@@ -576,7 +576,16 @@ def test_flash_entry_from_pytest_node():
         pe.entry_from_pytest_node(parse_node_id('modules/flash/tests/t.py::test_nope[a-b]'))
     with pytest.raises(ValueError):   # too few params for the layout
         pe.entry_from_pytest_node(parse_node_id(
-            'modules/flash/tests/t.py::test_regular_bwd[a-b-c]'))
+            'modules/flash/tests/test_backward.py::test_regular_bwd[a-b-c]'))
+
+    # test_irregulars exists in both test files with different parameter
+    # positions (the forward form has no leading BWDOP), so the layout is
+    # keyed by file too. An unknown file must raise, never fall back to the
+    # backward layout and resolve a real but wrong entry.
+    with pytest.raises(ValueError):
+        pe.entry_from_pytest_node(parse_node_id(
+            'modules/flash/tests/test_forward.py::test_irregulars'
+            '[BiasOn-False-l1-dtype2-0.5-CausalOff-300-900-hdim100-4-2]'))
 
 
 def test_entry_filter_is_the_only_clause_builder():
@@ -764,3 +773,28 @@ def test_export_assets_resolve_per_tree(tmp_path):
 def test_default_tune_root_matches_the_checkout():
     from aotriton.tune.registry import default_tune_root
     assert (default_tune_root() / 'webui' / 'static' / 'js' / 'perf.js').is_file()
+
+
+def test_export_inlines_perf_js_before_family_js(tmp_path):
+    """perf.js defines registerDescriptor(); the family scripts call it as
+    they load. If the template emits them the other way round, a standalone
+    export throws ReferenceError while parsing the first family script and
+    renders nothing -- with the strings all present, so a substring check
+    passes anyway. Assert the order.
+    """
+    pytest.importorskip('psycopg')
+    from aotriton.tune.pq.export_visperf import build_export_html
+
+    tune = tmp_path / '.tune'
+    (tune / 'webui' / 'static' / 'js').mkdir(parents=True)
+    (tune / 'webui' / 'static' / 'js' / 'perf.js').write_text(
+        'function registerDescriptor(d){} /*ENGINE*/')
+    mods = tmp_path / 'modules'
+    d = mods / 'flash' / 'visperf' / 'static'
+    d.mkdir(parents=True)
+    (d / 'flash.js').write_text('registerDescriptor({id:"flash"}); /*FAMILY*/')
+
+    html = build_export_html({}, tune_root=tune, modules_dir=mods)
+    assert html.index('/*ENGINE*/') < html.index('/*FAMILY*/'), (
+        'family descriptor JS is inlined before the engine that defines '
+        'registerDescriptor()')
