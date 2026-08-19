@@ -402,8 +402,16 @@ function renderHeatmap(container, seqQ, seqK, index, desc, anchor) {
       td.innerHTML = `<div style="line-height:1.2">${tflops.toFixed(1)}<br><span style="opacity:0.8">${pct}%</span></div>`;
 
       // Level-2 click-through: psel × copt matrix for this (task_id, kernel).
+      // cellDetail.kernels is a KERNEL-level schema (psel/copt field names
+      // from the kernel's autotune configs), and iface_name collides across
+      // levels -- 'attn_fwd' is both a kernel and an op -- so the level must
+      // be checked too. Without it an op cell would light up as clickable and
+      // then render op candidates against the kernel's psel/copt field list,
+      // producing an all-undefined matrix (ops have a single impl_index, so
+      // the matrix is degenerate by construction).
       const cd = desc.cellDetail;
       const supportsL2 = cd && row.task_id != null
+                         && (row._level || 'kernel') === 'kernel'
                          && cd.kernels && cd.kernels[row._kernel];
       if (supportsL2) {
         td.style.cursor = 'pointer';

@@ -49,14 +49,20 @@ class ParsedNode:
         return m.group('family') if m else None
 
     def require(self, count: int) -> None:
-        """Raise unless at least `count` parameters are present.
+        """Raise unless exactly `count` parameters are present.
 
         Family translators index positionally, so an unexpected parametrize
         change should fail with the counts rather than an IndexError.
+
+        Exact, not a minimum: adding one parametrize decorator to a test
+        shifts every position by one, and a `>=` check would let that decode
+        silently -- reading sm_scale as dtype, one seqlen as the other -- and
+        resolve a real but wrong tuning entry. Too many parameters is just as
+        much a layout mismatch as too few.
         """
-        if len(self.params) < count:
+        if len(self.params) != count:
             raise ValueError(
-                f'Expected at least {count} bracket parameters for '
+                f'Expected exactly {count} bracket parameters for '
                 f'{self.test}, got {len(self.params)}: '
                 f'{"-".join(self.params)}')
 

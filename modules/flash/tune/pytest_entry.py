@@ -14,6 +14,7 @@ GPU container.
 """
 
 import os
+import posixpath
 import re
 
 # dtype token -> dtype name. pytest renders an unnamed parametrize value as
@@ -138,7 +139,6 @@ def entry_from_pytest_node(node) -> dict:
     # one file with different parameter positions. An unknown pair is an
     # error, never a guess -- silently decoding with the wrong layout would
     # resolve a real but incorrect tuning entry.
-    import posixpath
     key = (posixpath.basename(node.path), node.test)
     layout = _LAYOUTS.get(key)
     if layout is None:
