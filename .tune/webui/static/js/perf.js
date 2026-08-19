@@ -11,28 +11,51 @@ const THEORETICAL_PEAK_TFLOPS = {
   gfx1201: { float16: 191,    bfloat16: 191,     float32: 47.8  },
 };
 
-// Descriptor registry — populated by vis_descriptors/*.js files loaded before this script.
+// Descriptor registry — populated by each family's modules/<family>/visperf/
+// static/<family>.js, self-registering via registerDescriptor(...) after
+// being loaded (see perf.html's family loop / export_visperf.py's
+// __FAMILY_JS__ inlining), which runs after this script.
 const DESCRIPTORS = {};
 function registerDescriptor(desc) { DESCRIPTORS[desc.id] = desc; }
 
+// Selection values use the same DSL as the Python-side ImplSelector
+// (modular-tune.md §4.2): `[<tuning_level> '.'] <iface_name>`. Kernel-level
+// selections are bare ('attn_fwd'), op-level ones are prefixed
+// ('op.attn_fwd'). This matters because iface_name collides across levels --
+// 'attn_fwd' is a valid interface at BOTH levels -- so the level cannot be
+// inferred from the name and must be carried explicitly.
+function parseSelection(value) {
+  const i = (value || '').lastIndexOf('.');
+  if (i < 0) return { level: 'kernel', iface: value || '' };
+  return { level: value.slice(0, i), iface: value.slice(i + 1) };
+}
+
+function formatSelection(level, iface) {
+  return level === 'kernel' ? iface : `${level}.${iface}`;
+}
+
 // Populate the Kernel/Op <select> from a descriptor's kernels/opsList.
+// Both lists hold BARE interface names (matching what the DB stores); the
+// option *value* carries the DSL form so the two 'attn_fwd' entries remain
+// distinguishable, while the label stays bare for readability.
 // Empties existing options first so re-population is idempotent.
 function populateKernelSelect(selectEl, desc) {
   if (!selectEl || !desc) return;
   while (selectEl.firstChild) selectEl.removeChild(selectEl.firstChild);
-  const _grp = (label, names) => {
+  const _grp = (label, names, level) => {
     if (!names || !names.length) return;
     const og = document.createElement('optgroup');
     og.label = label;
     for (const n of names) {
       const opt = document.createElement('option');
-      opt.value = opt.textContent = n;
+      opt.value = formatSelection(level, n);
+      opt.textContent = n;
       og.appendChild(opt);
     }
     selectEl.appendChild(og);
   };
-  _grp('Kernels', desc.kernels);
-  _grp('Ops',     desc.opsList);
+  _grp('Kernels', desc.kernels, 'kernel');
+  _grp('Ops',     desc.opsList, 'op');
 }
 
 // ---------------------------------------------------------------------------
@@ -134,18 +157,18 @@ async function fetchData(arch, kernel, mode) {
   const data = await resp.json();
   if (data.error) throw new Error(data.error);
 
-  // Annotate rows with the kernel name for the tflops() function.
-  data.rows.forEach(r => { r._kernel = kernel; });
+  // Annotate rows with the BARE iface name (for tflops()/cellDetail lookups,
+  // both of which key on bare names) and the level this data was fetched at.
+  // _level is carried, never re-inferred: 'attn_fwd' exists at both levels.
+  data.rows.forEach(r => { r._kernel = kernel; r._level = mode || 'kernel'; });
   return data;
 }
 
 async function fetchCellDetail(row) {
-  const mode = state.descriptor && state.descriptor.ops &&
-               state.descriptor.ops.has(row._kernel) ? 'op' : 'kernel';
   const params = new URLSearchParams({
     task_id: row.task_id,
     kernel:  row._kernel,
-    mode:    mode,
+    mode:    row._level || 'kernel',
   });
   const resp = await fetch(`/api/perf/cell_detail?${params}`);
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -379,8 +402,16 @@ function renderHeatmap(container, seqQ, seqK, index, desc, anchor) {
       td.innerHTML = `<div style="line-height:1.2">${tflops.toFixed(1)}<br><span style="opacity:0.8">${pct}%</span></div>`;
 
       // Level-2 click-through: psel × copt matrix for this (task_id, kernel).
+      // cellDetail.kernels is a KERNEL-level schema (psel/copt field names
+      // from the kernel's autotune configs), and iface_name collides across
+      // levels -- 'attn_fwd' is both a kernel and an op -- so the level must
+      // be checked too. Without it an op cell would light up as clickable and
+      // then render op candidates against the kernel's psel/copt field list,
+      // producing an all-undefined matrix (ops have a single impl_index, so
+      // the matrix is degenerate by construction).
       const cd = desc.cellDetail;
       const supportsL2 = cd && row.task_id != null
+                         && (row._level || 'kernel') === 'kernel'
                          && cd.kernels && cd.kernels[row._kernel];
       if (supportsL2) {
         td.style.cursor = 'pointer';
@@ -1312,17 +1343,18 @@ function initPerf() {
     if (!arch || !kernel) return;
     // Refresh saved from current URL so prior pushURLState() updates are picked up.
     saved = restoreFromURL();
-    // Infer mode from the active descriptor's ops set; fall back to kernel.
-    const activeDesc = DESCRIPTORS[state.descriptorId] || DESCRIPTORS[Object.keys(DESCRIPTORS)[0]];
-    const mode = (activeDesc && activeDesc.ops && activeDesc.ops.has(kernel)) ? 'op' : 'kernel';
+    // The level comes from the selection's DSL prefix, NOT from a name lookup:
+    // 'attn_fwd' is a valid iface at both levels, so ops.has(name) is ambiguous.
+    const sel  = parseSelection(kernel);
+    const mode = sel.level;
 
     state.arch = arch;
-    state.kernel = kernel;
+    state.kernel = kernel;   // DSL form, so URL round-trip restores the level too
     if (dispSel) state.displayMode = dispSel.value;
     if (status) status.textContent = 'Loading…';
 
     try {
-      state.data = await fetchData(arch, kernel, mode);
+      state.data = await fetchData(arch, sel.iface, mode);
       // Pick descriptor by id (from URL state or default).
       state.descriptor = DESCRIPTORS[state.descriptorId] || DESCRIPTORS[Object.keys(DESCRIPTORS)[0]];
       if (state.descriptor) {

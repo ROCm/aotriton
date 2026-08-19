@@ -74,11 +74,6 @@
 <script src="__PLOTLY_CDN__" crossorigin="anonymous"></script>
 
 <script>
-// Flash attention descriptor — auto-injected by export_visperf.py
-// __FLASH_JS__
-</script>
-
-<script>
 // Inlined data from PostgreSQL best_tuning_results (unified table, both
 // tuning levels selected by the tuning_level column).
 // Keys: data[arch][dslName] = {arch, kernel, axes, rows}, where dslName is
@@ -88,16 +83,26 @@ const ALL_PERF_DATA = __PERF_DATA__;
 </script>
 
 <script>
-// perf.js rendering engine — auto-injected by export_visperf.py
+// perf.js rendering engine — auto-injected by export_visperf.py.
+// MUST precede the family descriptors below: it defines registerDescriptor(),
+// which each family script calls while it loads.
 // __PERF_JS__
+</script>
+
+<script>
+// Family visperf descriptor JS — auto-injected by export_visperf.py.
+// Concatenation of every registered family's static/<family>.js; each
+// self-registers via registerDescriptor(...) at its own bottom, so this
+// template never needs to know a family's descriptor constant name.
+// __FAMILY_JS__
 </script>
 
 <script>
 // Static-export bootstrap: populate arch dropdown from inlined data,
 // restore any pre-set URL params, then override fetchData to serve from
 // ALL_PERF_DATA instead of the HTTP API.
-
-registerDescriptor(FLASH_DESCRIPTOR);
+// (No registerDescriptor(...) call here -- each family's inlined JS above
+// self-registers; this bootstrap only knows perf.js's generic registry.)
 
 (function() {
   // Pre-set URL params injected at export time (empty object for full exports).
@@ -124,17 +129,20 @@ registerDescriptor(FLASH_DESCRIPTOR);
 
   // Rehydrate column-store rows (cols + rows[][]) into list-of-dicts the
   // first time a (arch, kernel) is requested; cache the result in place.
-  function rehydrate(d, kernel) {
+  // Annotates the same two fields perf.js's live fetchData() does: the BARE
+  // iface name and the level it was fetched at. _level must be carried, not
+  // re-inferred -- 'attn_fwd' is a valid iface at both levels.
+  function rehydrate(d, kernel, level) {
     if (d._hydrated) return d;
     const cols = d.cols || [];
     if (cols.length && d.rows.length && Array.isArray(d.rows[0])) {
       d.rows = d.rows.map(r => {
-        const o = { _kernel: kernel };
+        const o = { _kernel: kernel, _level: level };
         for (let i = 0; i < cols.length; i++) o[cols[i]] = r[i];
         return o;
       });
     } else {
-      d.rows.forEach(r => { r._kernel = kernel; });
+      d.rows.forEach(r => { r._kernel = kernel; r._level = level; });
     }
     d._hydrated = true;
     return d;
@@ -143,10 +151,11 @@ registerDescriptor(FLASH_DESCRIPTOR);
   // Override fetchData so it reads from inlined JSON instead of HTTP.
   window.fetchData = async function(arch, kernel, mode) {
     const archData = ALL_PERF_DATA[arch] || {};
+    const level = mode || 'kernel';
     // Same key query_all_best_results() wrote: level-prefixed unless kernel.
-    const dslName = (mode && mode !== 'kernel') ? `${mode}.${kernel}` : kernel;
+    const dslName = (level !== 'kernel') ? `${level}.${kernel}` : kernel;
     const d = archData[dslName] || { arch, kernel, axes: {}, rows: [], cols: [] };
-    return rehydrate(d, kernel);
+    return rehydrate(d, kernel, level);
   };
 })();
 </script>

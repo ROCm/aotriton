@@ -18,31 +18,6 @@ from typing import Dict, Any
 logger = logging.getLogger(__name__)
 
 
-def default_repo_root() -> Path:
-    """Resolve the AOTriton repo checkout root.
-
-    Needed by tools (e.g. pq/export_visperf.py) that read files living
-    outside the installed `aotriton` package -- `.tune/webui` assets are not
-    Python package data and are never shipped in a pip install; they only
-    exist in a checkout. Deriving this via a fixed count of `.parent` hops
-    from `__file__` is fragile (it silently breaks if the file's depth under
-    `python/` ever changes, and is flat-out wrong for a non-editable
-    install, whose `aotriton` package lives outside any checkout) -- so the
-    resolution is named and overridable instead:
-
-      1. `AOTRITON_ROOT` env var, if set -- the explicit override (also used
-         by `.tune/bin/*` wrapper scripts for the same purpose).
-      2. This file's location, walking up to the checkout root
-         (`python/tune/utils.py` -> `python/tune` -> `python` -> repo root).
-         Only correct when `aotriton` is installed editable from this exact
-         checkout (or run in-place, unpacked).
-    """
-    env = os.environ.get('AOTRITON_ROOT')
-    if env:
-        return Path(env)
-    return Path(__file__).resolve().parent.parent.parent
-
-
 def configure_logging_with_flush():
     """
     Configure logging with line-buffered output to ensure logs are written immediately.

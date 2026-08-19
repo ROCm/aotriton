@@ -68,6 +68,29 @@ def default_modules_dir() -> Path:
     return Path(__file__).resolve().parent.parent.parent / 'modules'
 
 
+def default_tune_root() -> Path:
+    '''Resolve the repo's `.tune/` directory.
+
+    `.tune/` is operator tooling run straight from a checkout and never
+    installed (setup.py ships `python/` only), so an installed package cannot
+    derive it from its own location. Same resolution order as
+    default_modules_dir(), for the same reason:
+
+      1. `AOTRITON_TUNE_ROOT`, the explicit override.
+      2. `<cwd>/.tune` -- the `.tune/bin/*` wrappers cd into $AOTRITON_ROOT
+         before invoking `python3 -m aotriton.tune.*`.
+      3. `<repo root inferred from this file>/.tune` -- only correct under an
+         editable install from this exact checkout.
+    '''
+    env = os.environ.get('AOTRITON_TUNE_ROOT')
+    if env:
+        return Path(env)
+    cwd_candidate = Path.cwd() / '.tune'
+    if cwd_candidate.is_dir():
+        return cwd_candidate
+    return Path(__file__).resolve().parent.parent.parent / '.tune'
+
+
 def load_family_tune(family: str, modules_dir: 'Path | None' = None):
     """Import `<modules_dir>/<family>/tune/__init__.py` by path under a
     synthetic unique package name, so `modules/<family>` stays a plain
@@ -90,6 +113,41 @@ def load_family_tune(family: str, modules_dir: 'Path | None' = None):
             f"from the repo root.")
     spec = importlib.util.spec_from_file_location(
         modname, init_path, submodule_search_locations=[str(tune_dir)])
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[modname] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def load_family_visperf(family: str, modules_dir: 'Path | None' = None):
+    """Import `<modules_dir>/<family>/visperf/__init__.py` by path under a
+    synthetic unique package name, mirroring `load_family_tune` above
+    (identical rationale, F6: `modules/<family>` stays a plain directory,
+    not a package). Cached in `sys.modules`.
+
+    The returned module exports `DESCRIPTOR` (a dict consumed by
+    `aotriton.tune.pq.visperf`'s query builder and the webui's perf page)
+    and, by convention, ships its JS counterpart at
+    `<modules_dir>/<family>/visperf/static/<family>.js` -- served through
+    the webui's `/family_static/<family>/<path:filename>` route and
+    inlined by `aotriton.tune.pq.export_visperf` for the standalone export
+    (modular-tune.md §3d).
+    """
+    modname = f'_aotriton_modules_{family}_visperf'
+    cached = sys.modules.get(modname)
+    if cached is not None:
+        return cached
+    if modules_dir is None:
+        modules_dir = default_modules_dir()
+    visperf_dir = Path(modules_dir) / family / 'visperf'
+    init_path = visperf_dir / '__init__.py'
+    if not init_path.is_file():
+        raise ImportError(
+            f"No visperf block for family '{family}': {init_path} not found "
+            f"(modules_dir={modules_dir}). Set AOTRITON_MODULES_DIR or run "
+            f"from the repo root.")
+    spec = importlib.util.spec_from_file_location(
+        modname, init_path, submodule_search_locations=[str(visperf_dir)])
     mod = importlib.util.module_from_spec(spec)
     sys.modules[modname] = mod
     spec.loader.exec_module(mod)

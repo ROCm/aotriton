@@ -363,7 +363,156 @@ def test_pq_localq_module_list_is_not_empty():
     assert 'aotriton.tune.pq.queue' in _PQ_LOCALQ_MODULES
     assert 'aotriton.tune.localq.broker' in _PQ_LOCALQ_MODULES
     assert 'aotriton.tune.pq.vis_descriptors' in _PQ_LOCALQ_MODULES
-    assert 'aotriton.tune.pq.vis_descriptors.flash' in _PQ_LOCALQ_MODULES
+    # Per-family descriptors used to live here as
+    # aotriton.tune.pq.vis_descriptors.<family> (e.g. `...flash`); they now
+    # live at modules/<family>/visperf/__init__.py, loaded by path via
+    # aotriton.tune.registry.load_family_visperf (modular-tune.md §3d.1), so
+    # this glob-based discovery no longer sees them -- vis_descriptors/
+    # holds only the registry shim now.
+
+
+# --- (d) Phase 3 (modular-tune.md §3d/§5): visperf relocation + registry- ---
+#     driven discovery. Covers load_family_visperf, the /family_static
+#     Flask route's path-traversal guard, and export_visperf's multi-family
+#     JS concatenation.
+
+def test_load_family_visperf_flash_descriptor_dims_match_js():
+    # DESCRIPTOR['dims'] (consumed by aotriton.tune.pq.visperf._build_query)
+    # and modules/flash/visperf/static/flash.js's FLASH_DESCRIPTOR.dims /
+    # matrixAxes must agree on dimension names, or the webui's column
+    # picker and the SQL it queries would silently disagree.
+    import re
+    from aotriton.tune.registry import load_family_visperf
+
+    mod = load_family_visperf('flash', modules_dir=_MODULES_DIR)
+    desc = mod.DESCRIPTOR
+    assert desc['id'] == 'flash'
+    assert desc['kernel_table'] == 'best_tuning_results'
+    assert desc['name_col'] == 'iface_name'
+
+    dim_aliases = {alias for _expr, alias in desc['dims']}
+    expected = {'dtype', 'hdim', 'seqlen_q', 'seqlen_k', 'causal', 'bias_type', 'dropout'}
+    assert expected <= dim_aliases
+    assert set(desc['matrix_axes']) <= dim_aliases
+
+    js_path = _MODULES_DIR / 'flash' / 'visperf' / 'static' / 'flash.js'
+    js_text = js_path.read_text(encoding='utf-8')
+    js_dim_keys = set(re.findall(r"key:\s*'(\w+)'", js_text))
+    m = re.search(r"matrixAxes:\s*\{\s*row:\s*'(\w+)',\s*col:\s*'(\w+)'\s*\}", js_text)
+    assert m, "flash.js: matrixAxes not found in expected {row: '...', col: '...'} form"
+    js_matrix_axes = {m.group(1), m.group(2)}
+
+    # JS declares one 'dims' entry per non-matrix axis; matrixAxes covers the
+    # other two. Together they must equal the Python side's dim aliases.
+    assert js_dim_keys | js_matrix_axes == dim_aliases
+    assert js_matrix_axes == set(desc['matrix_axes'])
+
+
+def test_family_static_route_guards_traversal_and_unknown_family():
+    # modular-tune.md §3d.3: the registry (tasks.DESCRIPTORS) is the
+    # path-traversal whitelist for the <family> URL segment; werkzeug's own
+    # safe_join (inside send_from_directory) covers <filename>.
+    pytest.importorskip('flask')
+    pytest.importorskip('psycopg')
+    from werkzeug.exceptions import NotFound
+
+    tune_dir = str(_REPO_ROOT / '.tune')
+    inserted = tune_dir not in sys.path
+    if inserted:
+        sys.path.insert(0, tune_dir)
+    try:
+        from webui import routes
+    finally:
+        if inserted:
+            sys.path.remove(tune_dir)
+
+    from flask import Flask
+    app = Flask(__name__)
+    app.register_blueprint(routes.bp)
+
+    with app.test_request_context():
+        # Legitimate family + file: served successfully. send_from_directory
+        # streams the file, so the response is in direct-passthrough mode and
+        # get_data() refuses to materialise it; read the body off the iterable
+        # instead of forcing a sequence conversion.
+        resp = routes.family_static('flash', 'flash.js')
+        assert resp.status_code == 200
+        body = b''.join(resp.response)
+        resp.close()
+        assert b'registerDescriptor' in body
+
+        # Unregistered family: 404s via the registry whitelist, before ever
+        # touching the filesystem (e.g. '..' is never a registered family).
+        with pytest.raises(NotFound):
+            routes.family_static('not_a_real_family', 'flash.js')
+
+        # Traversal attempt against an otherwise-*valid* family: safe_join
+        # inside send_from_directory must still reject it.
+        with pytest.raises(NotFound):
+            routes.family_static('flash', '../../../../../../etc/passwd')
+
+
+def test_build_export_html_concatenates_every_family_js_once(tmp_path):
+    # modular-tune.md §3d.4: export_visperf's placeholder becomes
+    # __FAMILY_JS__, concatenating every registered family's JS exactly
+    # once. perf.js and the template are aotriton.tune.pq package data (F12
+    # is closed by packaging them, not by an explicit repo_root); only the
+    # per-family JS under modules/ still needs an explicit modules_dir.
+    pytest.importorskip('psycopg')
+    from aotriton.tune.pq.export_visperf import build_export_html
+    from aotriton.tune.registry import available_module_names
+
+    modules_dir = tmp_path / 'modules'
+
+    families = available_module_names()
+    assert families, 'expected at least one registered family (flash)'
+    for family in families:
+        static_dir = modules_dir / family / 'visperf' / 'static'
+        static_dir.mkdir(parents=True)
+        (static_dir / f'{family}.js').write_text(
+            f'/* {family.upper()}_JS_MARKER */', encoding='utf-8')
+
+    html = build_export_html({}, modules_dir=modules_dir)
+
+    # perf.js comes from the package, not the fixture -- confirm the real
+    # engine got inlined (it's ~1500 lines; a distinctive top-of-file symbol
+    # is enough to prove it's not empty/placeholder text).
+    assert 'registerDescriptor' in html
+
+    for family in families:
+        marker = f'/* {family.upper()}_JS_MARKER */'
+        assert html.count(marker) == 1, (
+            f'{family}: expected exactly one occurrence of {marker!r}')
+
+    # No leftover placeholder tokens of any kind. `// __FAMILY_JS__` /
+    # `// __PERF_JS__` are matched as whole lines -- the exact form of
+    # build_export_html's substitution key -- rather than as a bare
+    # substring: the real, packaged perf.js legitimately mentions the bare
+    # name '__FAMILY_JS__' inside a prose comment describing this very
+    # mechanism, which a substring check would misflag as a leftover
+    # placeholder.
+    import re
+    for placeholder_line in ('// __FAMILY_JS__', '// __PERF_JS__'):
+        pattern = re.compile(r'^\s*' + re.escape(placeholder_line) + r'\s*$', re.MULTILINE)
+        assert not pattern.search(html), f'leftover placeholder line {placeholder_line!r} in output'
+    for placeholder in ('__PERF_DATA__', '__INITIAL_PARAMS__', '__PLOTLY_CDN__'):
+        assert placeholder not in html, f'leftover placeholder {placeholder!r} in output'
+
+
+def test_build_export_html_fails_loudly_on_missing_family_js(tmp_path):
+    # F12: a missing asset must raise, not silently emit a JS-less page.
+    # perf.js/the template are package data and always present in this
+    # checkout's editable install; what's still a caller-supplied root is
+    # modules_dir, so an empty one (no family JS at all) is what exercises
+    # the loud-failure path here.
+    pytest.importorskip('psycopg')
+    from aotriton.tune.pq.export_visperf import build_export_html
+
+    modules_dir = tmp_path / 'modules'  # deliberately empty: no family JS at all
+    modules_dir.mkdir(parents=True)
+
+    with pytest.raises(FileNotFoundError):
+        build_export_html({}, modules_dir=modules_dir)
 
 
 def main():
@@ -372,3 +521,280 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+
+# ---------------------------------------------------------------------------
+# pytest node-ID parsing: family-neutral split vs family-specific translation
+# ---------------------------------------------------------------------------
+
+def test_parse_node_id_is_family_neutral():
+    from aotriton.tune.pytest_node import parse_node_id
+    node = parse_node_id(
+        'modules/flash/tests/test_backward.py::test_regular_bwd'
+        '[Split-False-l1-dtype2-0.0-CausalOff-256-8192-hdim8-5-3]')
+    assert node.path == 'modules/flash/tests/test_backward.py'
+    assert node.test == 'test_regular_bwd'
+    assert len(node.params) == 11 and node.params[3] == 'dtype2'
+    # The family comes from the path, so the splitter never names one itself.
+    assert node.family == 'flash'
+    assert parse_node_id('tests/t.py::test_x[a-b]').family is None
+
+
+def test_parse_node_id_rejects_malformed():
+    from aotriton.tune.pytest_node import parse_node_id
+    for bad in ('no brackets', 'p.py::test_x', 'p.py[a-b]'):
+        with pytest.raises(ValueError):
+            parse_node_id(bad)
+
+
+def test_flash_entry_from_pytest_node():
+    from aotriton.tune.pytest_node import parse_node_id
+    from aotriton.tune.registry import load_family_tune
+    pe = load_family_tune('flash', modules_dir=_MODULES_DIR).pytest_entry
+
+    # Shapes round UP to the nearest tuning-database axis: 8 -> 16, 8192 stays.
+    e = pe.entry_from_pytest_node(parse_node_id(
+        'modules/flash/tests/test_backward.py::test_regular_bwd'
+        '[Split-False-l1-dtype2-0.0-CausalOff-256-8192-hdim8-5-3]'))
+    assert e == {'dtype': 'float32', 'hdim': 16, 'seqlen_q': 8192,
+                 'seqlen_k': 256, 'causal': False, 'dropout_p': 0.0,
+                 'bias_type': 0}
+
+    # _common_test.fmt_hdim renders a tuple as 'hdim(a,b)', not 'hdimAxB'.
+    e = pe.entry_from_pytest_node(parse_node_id(
+        'modules/flash/tests/test_backward.py::test_regular_bwd'
+        '[Split-False-l1-dtype0-0.0-CausalOff-256-256-hdim(64,128)-8-2]'))
+    assert e['hdim'] == (64, 128)
+
+    # test_op_bwd_with_matrix_bias has no causal parameter and fixes bias_type.
+    e = pe.entry_from_pytest_node(parse_node_id(
+        'modules/flash/tests/test_backward.py::test_op_bwd_with_matrix_bias'
+        '[Split-False-l1-dtype0-0.0-129-257-hdim48-3-1]'))
+    assert e['causal'] is False and e['bias_type'] == 1
+
+    with pytest.raises(ValueError):
+        pe.entry_from_pytest_node(parse_node_id('modules/flash/tests/t.py::test_nope[a-b]'))
+    with pytest.raises(ValueError):   # too few params for the layout
+        pe.entry_from_pytest_node(parse_node_id(
+            'modules/flash/tests/test_backward.py::test_regular_bwd[a-b-c]'))
+
+    # test_irregulars exists in both test files with different parameter
+    # positions (the forward form has no leading BWDOP), so the layout is
+    # keyed by file too. An unknown file must raise, never fall back to the
+    # backward layout and resolve a real but wrong entry.
+    with pytest.raises(ValueError):
+        pe.entry_from_pytest_node(parse_node_id(
+            'modules/flash/tests/test_forward.py::test_irregulars'
+            '[BiasOn-False-l1-dtype2-0.5-CausalOff-300-900-hdim100-4-2]'))
+
+
+def test_entry_filter_is_the_only_clause_builder():
+    # CLAUDE.md: pq owns database access. Four copies of this clause builder
+    # had drifted across .tune/; three of them mishandled a tuple value.
+    from aotriton.tune.pq.queue import entry_filter
+    entry = {'dtype': 'float16', 'hdim': 64, 'causal': True, 'dropout_p': 0.0}
+
+    sql, params = entry_filter(entry)
+    # bool must be tested before int -- bool is a subclass of int in Python,
+    # so a reordering silently casts causal to ::integer.
+    assert "(task_config->'entry'->>'causal')::boolean = %s" in sql
+    assert "(task_config->'entry'->>'hdim')::integer = %s" in sql
+    assert "(task_config->'entry'->>'dropout_p')::float = %s" in sql
+    assert "task_config->'entry'->>'dtype' = %s" in sql
+    assert params == ['float16', 64, True, 0.0]
+
+    # A composite value is compared as a JSON array via -> , not ->>.
+    sql, params = entry_filter({'hdim': (64, 128)})
+    assert sql == "task_config->'entry'->'hdim' = %s::jsonb"
+    assert params == ['[64, 128]']
+
+    # Optional row filters lead, in a fixed order.
+    sql, params = entry_filter({'hdim': 64}, arch='gfx942',
+                               tuning_level='op', module='flash')
+    assert sql.startswith("task_config->>'arch' = %s AND tuning_level = %s "
+                          "AND module = %s AND ")
+    assert params[:3] == ['gfx942', 'op', 'flash']
+
+
+def test_no_raw_tuning_db_sql_outside_pq():
+    # Regression guard for the CLAUDE.md rule: .tune/ must reach the tuning
+    # database through aotriton.tune.pq, never with its own SQL.
+    import re
+    # .tune/bin/psql is an interactive psql wrapper; SQL in its help text is
+    # the point of the tool, not a bypass of the pq layer.
+    EXEMPT = {'.tune/bin/psql'}
+    offenders = []
+    pat = re.compile(r"FROM (task_queue|tuning_results|best_tuning_results"
+                     r"|most_accurate_tuning_results)\b|task_config->'entry'")
+    for sub in ('webui', 'libexec', 'bin', 'remote'):
+        d = _REPO_ROOT / '.tune' / sub
+        if not d.is_dir():
+            continue
+        for f in d.rglob('*'):
+            if not f.is_file() or f.suffix in {'.html', '.js', '.css'}:
+                continue
+            if str(f.relative_to(_REPO_ROOT)) in EXEMPT:
+                continue
+            try:
+                text = f.read_text(encoding='utf-8', errors='ignore')
+            except OSError:
+                continue
+            for n, line in enumerate(text.splitlines(), 1):
+                if pat.search(line) and not line.lstrip().startswith(('#', '--', '*')):
+                    offenders.append(f'{f.relative_to(_REPO_ROOT)}:{n}')
+    assert not offenders, 'raw tuning-DB SQL outside pq: ' + ', '.join(offenders)
+
+
+# ---------------------------------------------------------------------------
+# visperf: the Python and JavaScript halves of a family descriptor must agree
+# ---------------------------------------------------------------------------
+
+def _js_list(src: str, key: str, *, where: str) -> list[str]:
+    """Extract `key: ['a', 'b']` (or `new Set([...])`) from a JS object.
+
+    Deliberately strict: a miss raises rather than returning empty, so a
+    reshaped descriptor fails this test instead of passing it vacuously.
+    """
+    import re
+    m = re.search(rf'\b{key}:\s*(?:new Set\()?\[([^\]]*)\]', src)
+    assert m, f'{where}: could not find `{key}: [...]`'
+    return [t.strip().strip('\'"') for t in m.group(1).split(',') if t.strip()]
+
+
+def _js_scalar(src: str, key: str, *, where: str) -> str:
+    import re
+    m = re.search(rf"\b{key}:\s*'([^']*)'", src)
+    assert m, f'{where}: could not find `{key}: <string>`'
+    return m.group(1)
+
+
+def _js_dim_keys(src: str, *, where: str) -> list[str]:
+    """The `key:` of each entry in the JS `dims: [ {...}, ... ]` array."""
+    import re
+    m = re.search(r'\bdims:\s*\[(.*?)\n  \]', src, re.S)
+    assert m, f'{where}: could not find the `dims: [...]` array'
+    keys = re.findall(r"\bkey:\s*'([^']+)'", m.group(1))
+    assert keys, f'{where}: `dims` array contained no `key:` entries'
+    return keys
+
+
+def _visperf_families():
+    """(family, DESCRIPTOR, js_source) for every family that has a visperf block."""
+    from aotriton.tune.registry import available_module_names, load_family_visperf
+    out = []
+    for family in available_module_names():
+        js = _MODULES_DIR / family / 'visperf' / 'static' / f'{family}.js'
+        try:
+            desc = load_family_visperf(family, modules_dir=_MODULES_DIR).DESCRIPTOR
+        except Exception:
+            assert not js.is_file(), (
+                f'{family}: has {js} but no loadable visperf DESCRIPTOR')
+            continue
+        assert js.is_file(), f'{family}: has a DESCRIPTOR but no {js}'
+        out.append((family, desc, js.read_text(encoding='utf-8')))
+    return out
+
+
+def test_visperf_descriptors_agree_across_languages():
+    """Every registered family's Python and JS descriptors must line up.
+
+    They are consumed together -- Python builds the query, JS labels the
+    dropdown and reads the result -- so a name present in one and not the
+    other produces an empty chart with no error anywhere. That is exactly how
+    op-mode perf pages broke once: the JS still asked for '<name>_op' after
+    storage moved to bare iface_names.
+    """
+    families = _visperf_families()
+    assert families, 'no family exposes a visperf descriptor; test is vacuous'
+
+    for family, desc, js in families:
+        where = f'{family}.js'
+        assert _js_scalar(js, 'id', where=where) == desc['id']
+        assert _js_scalar(js, 'label', where=where) == desc['label']
+
+        # The names the UI offers must be the names the query filters on.
+        assert _js_list(js, 'kernels', where=where) == list(desc['kernels'])
+        assert _js_list(js, 'opsList', where=where) == list(desc['ops'])
+        # `ops` is a Set used for membership; same members as opsList.
+        assert set(_js_list(js, 'ops', where=where)) == set(desc['ops'])
+
+        # No '<name>_op'-style spelling may survive on either side: the level
+        # rides in the DSL prefix, never in the interface name.
+        for name in list(desc['kernels']) + list(desc['ops']):
+            assert not name.endswith('_op'), f'{family}: {name!r} is not a bare iface_name'
+
+        # Matrix axes and the remaining dims together cover the Python dims.
+        row = _js_scalar(js, 'row', where=where)
+        col = _js_scalar(js, 'col', where=where)
+        assert (row, col) == tuple(desc['matrix_axes'])
+        py_aliases = {alias for _, alias in desc['dims']}
+        assert set(_js_dim_keys(js, where=where)) | {row, col} == py_aliases, (
+            f'{family}: JS dims + matrixAxes do not cover the Python dims aliases')
+
+
+def test_export_assets_resolve_per_tree(tmp_path):
+    """The three trees have three lifetimes, so three resolution rules.
+
+    python/ is installed and its template is package data; .tune/ and modules/
+    are checkout-only and must be named by the caller. An installed package
+    cannot infer where a checkout is, and pretending otherwise is what once
+    produced a silently JS-less export.
+    """
+    pytest.importorskip('psycopg')
+    from aotriton.tune.pq import export_visperf as ev
+
+    # The template is package data -- next to the module, in the wheel.
+    assert ev._TEMPLATE.is_file()
+    assert ev._TEMPLATE.parent == Path(ev.__file__).parent
+
+    # perf.js is NOT: it belongs to .tune/, which is never installed.
+    assert not (Path(ev.__file__).parent / 'static' / 'perf.js').exists(), (
+        'perf.js is back inside the package; it belongs to .tune/')
+    assert (_REPO_ROOT / '.tune' / ev._PERF_JS_RELPATH).is_file()
+
+    # An explicit tune_root is honoured, and a missing perf.js raises rather
+    # than producing an export with no renderer in it.
+    fake_tune = tmp_path / '.tune'
+    (fake_tune / 'webui' / 'static' / 'js').mkdir(parents=True)
+    (fake_tune / 'webui' / 'static' / 'js' / 'perf.js').write_text('/*STUB*/')
+    fake_modules = tmp_path / 'modules'
+    for family in ['flash']:
+        d = fake_modules / family / 'visperf' / 'static'
+        d.mkdir(parents=True)
+        (d / f'{family}.js').write_text('/*FAM*/')
+    html = ev.build_export_html({}, tune_root=fake_tune, modules_dir=fake_modules)
+    assert '/*STUB*/' in html and '/*FAM*/' in html
+
+    with pytest.raises(FileNotFoundError):
+        ev.build_export_html({}, tune_root=tmp_path / 'nope',
+                             modules_dir=fake_modules)
+
+
+def test_default_tune_root_matches_the_checkout():
+    from aotriton.tune.registry import default_tune_root
+    assert (default_tune_root() / 'webui' / 'static' / 'js' / 'perf.js').is_file()
+
+
+def test_export_inlines_perf_js_before_family_js(tmp_path):
+    """perf.js defines registerDescriptor(); the family scripts call it as
+    they load. If the template emits them the other way round, a standalone
+    export throws ReferenceError while parsing the first family script and
+    renders nothing -- with the strings all present, so a substring check
+    passes anyway. Assert the order.
+    """
+    pytest.importorskip('psycopg')
+    from aotriton.tune.pq.export_visperf import build_export_html
+
+    tune = tmp_path / '.tune'
+    (tune / 'webui' / 'static' / 'js').mkdir(parents=True)
+    (tune / 'webui' / 'static' / 'js' / 'perf.js').write_text(
+        'function registerDescriptor(d){} /*ENGINE*/')
+    mods = tmp_path / 'modules'
+    d = mods / 'flash' / 'visperf' / 'static'
+    d.mkdir(parents=True)
+    (d / 'flash.js').write_text('registerDescriptor({id:"flash"}); /*FAMILY*/')
+
+    html = build_export_html({}, tune_root=tune, modules_dir=mods)
+    assert html.index('/*ENGINE*/') < html.index('/*FAMILY*/'), (
+        'family descriptor JS is inlined before the engine that defines '
+        'registerDescriptor()')

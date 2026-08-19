@@ -30,7 +30,8 @@ desc.py's module docstring for why).
 from .desc import FlashTune
 from aotriton.tune.tdesc import ImplSelector
 from . import sancheck
+from . import pytest_entry
 
 TuneDesc = FlashTune
 
-__all__ = ['TuneDesc', 'ImplSelector', 'sancheck']
+__all__ = ['TuneDesc', 'ImplSelector', 'sancheck', 'pytest_entry']

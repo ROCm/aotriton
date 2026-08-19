@@ -11,7 +11,6 @@ Connection management is the caller's responsibility.
 
 import sys
 from collections import Counter
-from dataclasses import asdict
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -30,62 +29,27 @@ from aotriton.tune.registry import load_flash_entry_module
 FlashEntry = load_flash_entry_module().FlashEntry
 
 
-def _entry_to_jsonb_filter(entry: FlashEntry) -> tuple[str, list]:
-    """
-    Build a WHERE clause fragment matching task_config->'entry' fields.
-    Returns (sql_fragment, params).
-    """
-    d = asdict(entry)
-    clauses = []
-    params: list = []
-    for field, value in d.items():
-        col = f"task_config->'entry'->>'{field}'"
-        if isinstance(value, bool):
-            clauses.append(f"({col})::boolean = %s")
-        elif isinstance(value, int):
-            clauses.append(f"({col})::integer = %s")
-        elif isinstance(value, float):
-            clauses.append(f"({col})::float = %s")
-        else:
-            clauses.append(f"{col} = %s")
-        params.append(value)
-    return ' AND '.join(clauses), params
-
-
 def fetch_matches(conn, entries: list[tuple[str, FlashEntry]],
                   tuning_level: str) -> list[dict]:
     """Query task_queue for matching rows at one tuning level.
 
     tuning_level is required: entries match on arch and task_config fields,
-    which both levels now share, so an unfiltered query returns each entry's
+    which both levels share, so an unfiltered query returns each entry's
     kernel and op rows together. Callers use the result to report a count and
     to write scratch/retry_task_ids.txt, so double-counting would inflate the
     confirmation prompt and feed the other level's ids to the recompute.
     """
+    tq = TaskQueue(conn)
     rows: list[dict] = []
-    with conn.cursor() as cur:
-        for arch, entry in entries:
-            entry_sql, entry_params = _entry_to_jsonb_filter(entry)
-            sql = (
-                f"SELECT id, arch, status FROM task_queue "
-                f"WHERE task_config->>'arch' = %s AND tuning_level = %s "
-                f"AND {entry_sql}"
-            )
-            cur.execute(sql, [arch, tuning_level] + entry_params)
-            rows.extend(cur.fetchall())
+    for arch, entry in entries:
+        rows.extend(tq.find_by_entry(entry, arch=arch, tuning_level=tuning_level,
+                                     columns='id, arch, status'))
     return rows
 
 
 def fetch_matches_by_ids(conn, task_ids: list[int]) -> list[dict]:
     """Query task_queue for specific task_ids, return list of row dicts."""
-    if not task_ids:
-        return []
-    with conn.cursor() as cur:
-        cur.execute(
-            'SELECT id, arch, status FROM task_queue WHERE id = ANY(%s)',
-            (task_ids,),
-        )
-        return cur.fetchall()
+    return TaskQueue(conn).find_by_ids(task_ids, columns='id, arch, status')
 
 
 def print_summary(label: str, count: int, matches: list[dict]) -> None:
