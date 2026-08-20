@@ -23,7 +23,7 @@
 #   Tools (provided by the ROCm AlmaLinux 8 image):
 #     hipconfig        — to locate ROCM_PATH
 #     gcc-toolset-13   — C++17 compiler via scl enable (non-asan path only)
-#     cpp              — preprocessor used to extract the HIP version number
+#     cpp              — preprocessor used to extract the ROCm version number
 
 set -ex
 
@@ -65,19 +65,23 @@ if [ -n "${PIP_CACHE_DIR}" ] && [ -d "${PIP_CACHE_DIR}" ]; then
   chown -R "$(id -u):$(id -g)" "${PIP_CACHE_DIR}" || true
 fi
 
-# --- Detect ROCm and HIP version ---
+# --- Detect ROCm version ---
 GIT_SHORT=$(git -C /src/aotriton rev-parse --short=12 HEAD)
 export ROCM_PATH=$(hipconfig --rocmpath)
 if [ -z "${ROCM_PATH}" ]; then
   echo "Error: ROCM_PATH is empty. hipconfig --rocmpath failed." >&2
   exit 1
 fi
-printf '#include <hip/hip_version.h>\nHIP_VERSION_MAJOR . HIP_VERSION_MINOR\n' > /tmp/print_hip_version.h
+printf '#include <rocm-core/rocm_version.h>\nROCM_VERSION_MAJOR . ROCM_VERSION_MINOR\n' > /tmp/print_rocm_version.h
 if [[ "${ASAN_MODE}" == "ON" ]]; then
   # No gcc-toolset/cpp in this path; use clang's preprocessor.
-  hipver=$(${ROCM_PATH}/llvm/bin/clang -E -P -x c -I${ROCM_PATH}/include /tmp/print_hip_version.h | tail -n 1 | sed 's/ //g')
+  rocmver=$(${ROCM_PATH}/llvm/bin/clang -E -P -x c -I${ROCM_PATH}/include /tmp/print_rocm_version.h | tail -n 1 | sed 's/ //g')
 else
-  hipver=$(scl enable gcc-toolset-13 "cpp -I${ROCM_PATH}/include /tmp/print_hip_version.h" | tail -n 1 | sed 's/ //g')
+  rocmver=$(scl enable gcc-toolset-13 "cpp -I${ROCM_PATH}/include /tmp/print_rocm_version.h" | tail -n 1 | sed 's/ //g')
+fi
+if [[ ! "${rocmver}" =~ ^[0-9]+\.[0-9]+$ ]]; then
+  echo "Error: Failed to extract ROCm version from rocm-core/rocm_version.h: '${rocmver}'" >&2
+  exit 1
 fi
 
 # --- Build ---
@@ -123,7 +127,7 @@ if [ ${NOIMAGE_MODE} == "OFF" ]; then
     tar cz "aotriton/lib/aotriton.images/$d" > /output/${tarfile}
   done
 else
-  tarfile=aotriton-${GIT_SHORT}${asan_suffix}-${MANYLINUX_TAG}_x86_64-rocm${hipver}-shared.tar.gz
+  tarfile=aotriton-${GIT_SHORT}${asan_suffix}-${MANYLINUX_TAG}_x86_64-rocm${rocmver}-shared.tar.gz
   cd "${AOTRITON_INSTALL_PREFIX}" && tar cz aotriton > /output/${tarfile}
 fi
 
