@@ -19,6 +19,8 @@ of hard-failing when they are absent.
 
 import ast
 import importlib
+import json
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -338,22 +340,62 @@ def _iter_pq_localq_module_names():
 _PQ_LOCALQ_MODULES = sorted(set(_iter_pq_localq_module_names()))
 
 
-@pytest.mark.parametrize('module_name', _PQ_LOCALQ_MODULES)
-def test_pq_localq_module_imports_without_torch(module_name):
-    assert 'torch' not in sys.modules, (
-        f'torch was already imported before importing {module_name}; '
-        'this test cannot tell whether the module itself pulled it in.')
+# The probe has to run in a child interpreter. `import torch` is a no-op once
+# torch is in sys.modules, so "did this module import torch" is only answerable
+# in a process that has never imported it -- and the whole suite shares one
+# process, in which test_gpu_utils_amdsmi.py imports aotriton.tune.gpu_utils
+# (which legitimately needs torch) long before this file is collected.
+# Asserting on the parent's sys.modules made the result depend on collection
+# order, and skipping the precondition instead would defeat the check outright.
+_TORCH_PROBE = r"""
+import importlib, json, sys
+sys.path[:0] = [p for p in json.loads(sys.argv[1]) if p not in sys.path]
+out = {}
+for name in json.loads(sys.argv[2]):
+    had_torch = 'torch' in sys.modules
     try:
-        importlib.import_module(module_name)
+        importlib.import_module(name)
     except ImportError as e:
+        dep = (getattr(e, 'name', None) or '').split('.')[0]
+        out[name] = 'missing:' + dep if dep in ('psycopg', 'dacite') else 'error:' + repr(e)
+        continue
+    out[name] = 'ok' if had_torch or 'torch' not in sys.modules else 'torch'
+print(json.dumps(out))
+"""
+
+
+@pytest.fixture(scope='session')
+def torch_free_probe():
+    """module name -> 'ok' | 'torch' | 'missing:<dep>' | 'error:<repr>'.
+
+    One child imports every module in turn, attributing torch to whichever
+    import first pulled it in. For the question being asked that is as strong
+    as one child per module -- if no module imports torch, no sequential order
+    of them does either -- and costs one interpreter start rather than ~25.
+    """
+    proc = subprocess.run(
+        [sys.executable, '-c', _TORCH_PROBE,
+         json.dumps(sys.path), json.dumps(_PQ_LOCALQ_MODULES)],
+        capture_output=True, text=True)
+    assert proc.returncode == 0, (
+        f'torch-free probe crashed (rc={proc.returncode}); the traceback names '
+        f'the module that raised:\n{proc.stdout}\n{proc.stderr}')
+    return json.loads(proc.stdout)
+
+
+@pytest.mark.parametrize('module_name', _PQ_LOCALQ_MODULES)
+def test_pq_localq_module_imports_without_torch(module_name, torch_free_probe):
+    status = torch_free_probe[module_name]
+    if status.startswith('missing:'):
         # Optional tuning-only deps (psycopg, dacite) may genuinely be absent
-        # in this environment (see module docstring); anything else is a real
-        # failure.
-        missing = getattr(e, 'name', None) or ''
-        if missing.split('.')[0] in ('psycopg', 'dacite'):
-            pytest.skip(f'{module_name}: optional dependency {missing!r} not installed')
-        raise
-    assert 'torch' not in sys.modules, f'{module_name} imported torch at import time'
+        # in this environment -- see the module docstring.
+        pytest.skip(f'{module_name}: optional dependency '
+                    f'{status.split(":", 1)[1]!r} not installed')
+    assert status == 'ok', (
+        f'{module_name} imported torch at import time, directly or through '
+        f'one of its imports -- the probe names the first module to pull it '
+        f'in, which may not be the one holding the offending import'
+        if status == 'torch' else f'{module_name}: {status}')
 
 
 def test_pq_localq_module_list_is_not_empty():
