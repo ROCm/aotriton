@@ -30,7 +30,7 @@ AOTRITON_TUNING_DATABASE_REUSE = {
     'gfx1103_mod0' : 'gfx1100_mod0',
     'gfx1200_mod0' : 'gfx1201_mod0',
     'gfx1150_mod0' : 'gfx1100_mod0',
-    'gfx1151_mod0' : 'gfx1100_mod0',
+    'gfx1151_mod0' : 'gfx1151_mod0',
     'gfx1152_mod0' : 'gfx1100_mod0',
     'gfx1153_mod0' : 'gfx1100_mod0',
     'gfx1250_mod0' : 'gfx942_mod0',
