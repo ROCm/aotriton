@@ -10,6 +10,7 @@
 #include <mutex>
 #include <cstring>
 #include <cassert>
+#include <new>
 #if defined(_WIN32)
 #include <windows.h>
 #else
@@ -25,6 +26,14 @@ namespace fs = std::filesystem;
 static const std::string_view KERNEL_STORAGE_V2_BASE = "aotriton.images";
 static const std::string AKS2_MAGIC = "AKS2";
 constexpr int AOTRITON_LZMA_BUFSIZ = 64 * 1024;
+// Upper bound on the decompressed size of a single AKS2 entry. Shipped entries
+// are a few MiB; this only stops a corrupt header from requesting a multi-GiB
+// allocation before any of its content has been validated.
+constexpr uint64_t AOTRITON_AKS2_MAX_UNCOMPRESSED = 1ull << 30; // 1 GiB
+// Memory budget for the LZMA decoder. The largest dictionary xz selects at -9
+// is 64 MiB, so this leaves generous headroom while still bounding the
+// allocation a crafted stream header can request.
+constexpr uint64_t AOTRITON_LZMA_MEMLIMIT = 256ull << 20; // 256 MiB
 
 namespace {
 
@@ -222,16 +231,45 @@ PackedKernel::PackedKernel(fd_t fd, size_t offset, size_t size) {
     final_status_ = hipErrorInvalidSource; // Broken at XZ level
     return;
   }
-  decompressed_content_.resize(header.uncompressed_size);
+  // Establish the header invariants the parser below relies on. The payload is
+  // the directory followed by the kernel images, so uncompressed_size must
+  // cover directory_size, and every directory entry costs at least
+  // sizeof(AKS2_Metadata) plus the trailing '\0' of its name, which bounds
+  // number_of_kernels. See python/aks2.py for the writer side.
+  if (header.uncompressed_size == 0
+      || header.uncompressed_size > AOTRITON_AKS2_MAX_UNCOMPRESSED
+      || header.directory_size > header.uncompressed_size
+      || header.number_of_kernels > header.directory_size / (sizeof(AKS2_Metadata) + 1)) {
+    AOTRITON_LOG(LOG_DEBUG, "AKS2 header failed validation: uncompressed_size=%u"
+                 " directory_size=%u number_of_kernels=%u",
+                 unsigned(header.uncompressed_size), unsigned(header.directory_size),
+                 unsigned(header.number_of_kernels));
+    final_status_ = hipErrorInvalidSource;
+    return;
+  }
+  try {
+    decompressed_content_.resize(header.uncompressed_size);
+  } catch (const std::bad_alloc&) {
+    // Otherwise this escapes the constructor through make_shared() in open()
+    // and terminates the process.
+    final_status_ = hipErrorOutOfMemory;
+    return;
+  }
   directory_.clear();
 
   lzma_stream strm = LZMA_STREAM_INIT;
-  lzma_ret ret = lzma_stream_decoder(&strm, UINT64_MAX, 0);
+  lzma_ret ret = lzma_stream_decoder(&strm, AOTRITON_LZMA_MEMLIMIT, 0);
   if (ret != LZMA_OK) {
     AOTRITON_LOG(LOG_DEBUG, "lzma_stream_decoder error: %d", static_cast<int>(ret));
     final_status_ = hipErrorInvalidSource; // Broken at XZ level
     return;
   }
+  // lzma_stream_decoder allocates decoder state that has to be released on
+  // every exit path below; without this each AKS2 load leaks it.
+  struct LzmaGuard {
+    lzma_stream* stream;
+    ~LzmaGuard() { lzma_end(stream); }
+  } lzma_guard{ &strm };
   uint8_t inbuf[AOTRITON_LZMA_BUFSIZ];
   strm.next_in = nullptr;
   strm.avail_in = 0;
@@ -263,11 +301,50 @@ PackedKernel::PackedKernel(fd_t fd, size_t offset, size_t size) {
   }
   AOTRITON_LOG(LOG_DEBUG, "PackedKernel decompressed to %p",
                static_cast<const void*>(decompressed_content_.data()));
-  const uint8_t* parse_ptr = decompressed_content_.data();
+  auto reject = [this](hipError_t status) {
+    decompressed_content_.clear();
+    directory_.clear();
+    final_status_ = status;
+  };
+  // A short stream would leave the tail of the buffer zero-filled and parsed as
+  // if it were real directory content.
+  if (strm.total_out != header.uncompressed_size) {
+    AOTRITON_LOG(LOG_DEBUG, "AKS2 payload is %llu bytes, header declares %u",
+                 static_cast<unsigned long long>(strm.total_out),
+                 unsigned(header.uncompressed_size));
+    reject(hipErrorIllegalState);
+    return;
+  }
+  const uint8_t* const content_begin = decompressed_content_.data();
+  // The directory occupies the first directory_size bytes; the images follow.
+  const uint8_t* const dir_end = content_begin + header.directory_size;
+  const size_t image_region_size = header.uncompressed_size - header.directory_size;
+  const uint8_t* parse_ptr = content_begin;
   for (uint32_t i = 0; i < header.number_of_kernels; i++) {
+    if (static_cast<size_t>(dir_end - parse_ptr) < sizeof(AKS2_Metadata)) {
+      reject(hipErrorInvalidSource); // Entry header runs past the directory
+      return;
+    }
     auto metadata = reinterpret_cast<const AKS2_Metadata*>(parse_ptr);
     parse_ptr += sizeof(*metadata);
-    std::string_view filename(reinterpret_cast<const char*>(parse_ptr));
+    // filename_length counts the trailing '\0', so the name must be non-empty,
+    // fit inside the directory, and actually be NUL-terminated before it is
+    // handed to std::string_view.
+    if (metadata->filename_length == 0
+        || static_cast<size_t>(dir_end - parse_ptr) < metadata->filename_length
+        || parse_ptr[metadata->filename_length - 1] != '\0') {
+      reject(hipErrorInvalidSource); // Name runs past the directory or is unterminated
+      return;
+    }
+    // Bound the image here, so filter() can never hand an out-of-range pointer
+    // to hipModuleLoadDataEx(). Written to avoid overflowing the addition.
+    if (metadata->offset > image_region_size
+        || metadata->image_size > image_region_size - metadata->offset) {
+      reject(hipErrorInvalidSource); // Image runs past the payload
+      return;
+    }
+    std::string_view filename(reinterpret_cast<const char*>(parse_ptr),
+                              metadata->filename_length - 1);
     directory_.emplace(filename, metadata);
     AOTRITON_LOG(LOG_DEBUG, "Add kernel %u: %.*s offset: %u",
                  unsigned(i), int(filename.size()), filename.data(), unsigned(metadata->offset));
@@ -275,11 +352,9 @@ PackedKernel::PackedKernel(fd_t fd, size_t offset, size_t size) {
   }
   kernel_start_ = parse_ptr;
   AOTRITON_LOG(LOG_DEBUG, "PackedKernel.kernel_start_ = %p", static_cast<const void*>(kernel_start_));
-  if (kernel_start_ - decompressed_content_.data() != header.directory_size) {
-    decompressed_content_.clear();
-    directory_.clear();
-    // Directory size not matching
-    final_status_ = hipErrorIllegalAddress;
+  if (parse_ptr != dir_end) {
+    // Directory size not matching: the entries did not consume it exactly.
+    reject(hipErrorIllegalAddress);
     return;
   }
   AOTRITON_LOG(LOG_DEBUG, "PackedKernel.kernel_start_ sanity check passed");
@@ -304,6 +379,8 @@ PackedKernel::filter(std::string_view stem_name) const {
     assert(meta->number_of_threads == 0);
     return { nullptr, 0, 0, 0 };
   }
+  // offset/image_size were bounded against the payload when the directory was
+  // parsed, so this stays inside decompressed_content_.
   return { kernel_start_ + meta->offset,
            meta->image_size,
            static_cast<int>(meta->shared_memory),
