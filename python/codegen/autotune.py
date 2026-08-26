@@ -15,11 +15,13 @@ from ..utils import (
 from .common import (
     codegen_struct_cfields,
     MissingLutEntry,
+    NoCompiledKernel,
     hsaco_ondisk_name,
     hsaco_dir,
 )
 from .basetune import BaseTuneCodeGenerator
 import json
+import sys
 import numpy as np
 
 class AutotuneCodeGenerator(BaseTuneCodeGenerator):
@@ -38,25 +40,19 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
         self._sql = sql
         # TODO: support other binning algorithm
         kdesc = self._f.meta_object
+        self._lut_ctype_hint = None
+        inspect_compile_status = args.build_for_tuning_second_pass and not args.noimage_mode
         if args.build_for_tuning or self._df is None or self._df.empty:
             log(lambda : f'translate_empty_dataframe for kernel {kdesc.NAME}')
             self._lut_tensor, self._sigs, self._binning_dict = kdesc.translate_empty_dataframe(f)
             # Replace sigs with configs from KernelDescription.gen_autotune_configs
             if args.build_for_tuning and kdesc.is_tunable:
                 self._sigs = list(kdesc.gen_signatures_for_tuning(f))
-                if args.build_for_tuning_second_pass:
-                    image_path = hsaco_dir(args.build_dir, kdesc)
-                    def hsaco_compile_successful(ksig : KernelSignature):
-                        full = image_path / hsaco_ondisk_name(kdesc, ksig)
-                        if not full.exists():
-                            return False
-                        meta = full.with_suffix('.json')
-                        if not meta.exists():
-                            return False
-                        with open(meta) as f:
-                            j = json.load(f)
-                            return j['compile_status'] == 'Complete'
-                    self._sigs = [ ksig for ksig in self._sigs if hsaco_compile_successful(ksig) ]
+                if inspect_compile_status:
+                    self._sigs = [ ksig for ksig in self._sigs
+                                   if self.hsaco_compile_successful(ksig) ]
+            elif inspect_compile_status:
+                self.warn_if_default_failed()
         else:
             log(lambda : f'translate_dataframe for kernel {kdesc.NAME}')
             self._lut_tensor, self._sigs, self._binning_dict = kdesc.translate_dataframe(f, self._df)
@@ -70,7 +66,68 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
                         print("  SQL:", self._sql)
                         for err in errors:
                             print("    ERROR:", err)
+            if inspect_compile_status:
+                self.repoint_failed_lut_cells()
         assert all(isinstance(k, KernelSignature) for k in self._sigs)
+
+    def hsaco_compile_successful(self, ksig : KernelSignature) -> bool:
+        """Return whether the signature has a nonempty image with Complete status."""
+        kdesc = self._f.meta_object
+        image = hsaco_dir(self._args.build_dir, kdesc) / hsaco_ondisk_name(kdesc, ksig)
+        meta = image.with_suffix('.json')
+        if not image.exists() or not meta.exists():
+            return False
+        try:
+            if image.stat().st_size == 0:
+                return False
+            with open(meta) as fin:
+                return json.load(fin)['compile_status'] == 'Complete'
+        except (OSError, ValueError, KeyError, TypeError) as e:
+            print(f'WARNING: {meta} is unreadable ({e}), treating '
+                  f'{ksig.hsaco_entry_name} as failed', file=sys.stderr)
+            return False
+
+    def repoint_failed_lut_cells(self) -> None:
+        """Redirect failed LUT entries to the most-used compiled signature.
+
+        Keep the signature order unchanged because it determines packed-string
+        offsets in the first-pass shim.<kernel>.cc.
+        """
+        compiled = [self.hsaco_compile_successful(ksig) for ksig in self._sigs]
+        if all(compiled):
+            return
+        f = self._f
+        sigs = self._sigs
+        lut = self._lut_tensor
+        referenced = lut[lut >= 0].ravel()
+        ncells = np.bincount(referenced, minlength=len(sigs))
+        alive = [i for i, good in enumerate(compiled) if good]
+        if not alive:
+            raise NoCompiledKernel(f, [k.hsaco_entry_name for k in sigs])
+        repl = max(alive, key=lambda i: ncells[i])
+        # Pin the LUT type used by the first-pass shim.
+        self._lut_ctype_hint = (int(lut.min()), int(lut.max()))
+        for i, good in enumerate(compiled):
+            if good:
+                continue
+            if ncells[i]:
+                fate = (f'{int(ncells[i])} tuning table cell(s) repointed to '
+                        f'{sigs[repl].hsaco_entry_name}')
+            else:
+                fate = 'no tuning table cell referenced it'
+            print(f'WARNING: {f.arch} {f.meta_object.NAME}: kernel for '
+                  f'{sigs[i].hsaco_entry_name} failed to compile. {fate}',
+                  file=sys.stderr)
+            lut[lut == i] = repl
+
+    def warn_if_default_failed(self) -> None:
+        """Warn when a functional's default kernel failed."""
+        f = self._f
+        failed = [k for k in self._sigs if not self.hsaco_compile_successful(k)]
+        for ksig in failed:
+            print(f'WARNING: {f.arch} {f.meta_object.NAME}: {f.tunecc_signature} '
+                  f'uses only the default kernel {ksig.hsaco_entry_name}, which '
+                  f'failed to compile', file=sys.stderr)
 
     def generate(self):
         # Un "self._" section
@@ -166,9 +223,13 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
         f = self._f
         lut_min = int(np.min(lut_tensor))
         lut_max = int(np.max(lut_tensor))
+        if self._lut_ctype_hint is not None:
+            hint_min, hint_max = self._lut_ctype_hint
+            lut_min = min(lut_min, hint_min)
+            lut_max = max(lut_max, hint_max)
         for dtype in [np.int8, np.int16, np.int32, np.int64]:
             info = np.iinfo(dtype)
-            if info.min <= lut_min and lut_max <= info.max:
+            if info.min <= lut_min and lut_max < info.max:
                 break
         ctype =  f'int{np.iinfo(dtype).bits}_t'
         cshape = ''.join([f'[{s}]' for s in lut_tensor.shape])

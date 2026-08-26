@@ -160,6 +160,10 @@ COMMAND_ERROR_IS_FATAL ANY
 
 # Compile HSACO Kernels
 if(NOT AOTRITON_NOIMAGE_MODE)
+  # Configuration reruns the first pass above. Touch this afterwards so the
+  # build-time second pass reruns even when the generated tables look current.
+  set(AOTRITON_FIRST_PASS_STAMP "${AOTRITON_V2_BUILD_DIR}/first_pass.stamp")
+  file(TOUCH "${AOTRITON_FIRST_PASS_STAMP}")
   set(SIGNATURE_FILE "${AOTRITON_V2_BUILD_DIR}/__signature__.json")
   add_custom_command(OUTPUT "${SIGNATURE_FILE}"
     COMMAND ${CMAKE_COMMAND} -E env VIRTUAL_ENV=${VENV_DIR}
@@ -346,26 +350,6 @@ if(NOT AOTRITON_NOIMAGE_MODE)
   add_custom_target(aotriton_kernel_storage_v3 ALL DEPENDS ${ALL_ZIPS})
 endif(NOT AOTRITON_NOIMAGE_MODE)
 
-# The build logic is slightly different when AOTRITON_BUILD_FOR_TUNING=ON
-# Some GPU kernels may fail to compile and autotune files should be re-generated accordingly
-if(AOTRITON_BUILD_FOR_TUNING)
-  # Regenerate with --ignore_missing_kernels
-  add_custom_target(aotriton_v2_regen_shim
-    COMMAND ${CMAKE_COMMAND}
-    -E env VIRTUAL_ENV=${VENV_DIR}
-    AOTRITON_ENABLE_FP32=${AOTRITON_ENABLE_FP32}
-    "${VENV_BIN_PYTHON}" -m aotriton.generate
-    --target_gpus ${EFFECTIVE_TARGET_GPUS}
-    --build_dir "${AOTRITON_V2_BUILD_DIR}"
-    --root_dir "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
-    ${GENERATE_OPTION}
-    --build_for_tuning_second_pass
-    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}")
-  if(NOT AOTRITON_NOIMAGE_MODE)
-    add_dependencies(aotriton_v2_regen_shim aotriton_v2_compile)
-  endif(NOT AOTRITON_NOIMAGE_MODE)
-endif(AOTRITON_BUILD_FOR_TUNING)
-
 set(AOTRITON_SHIM_FLAGS "")
 if(AOTRITON_NAME_SUFFIX)
   list(APPEND AOTRITON_SHIM_FLAGS "--library_suffix" "${AOTRITON_NAME_SUFFIX}")
@@ -373,6 +357,31 @@ endif()
 message(STATUS "AOTRITON_SHIM_FLAGS ${AOTRITON_SHIM_FLAGS}")
 
 file(STRINGS "${AOTRITON_V2_BUILD_DIR}/Bare.shim" SHIM_CC_FILES ENCODING UTF-8)
+
+# Regenerate tuning tables after compilation so they avoid failed images.
+if(NOT AOTRITON_NOIMAGE_MODE)
+  # The generator emits both kinds, although only autotune tables can change.
+  set(AOTRITON_TUNE_CC_FILES ${SHIM_CC_FILES})
+  list(FILTER AOTRITON_TUNE_CC_FILES INCLUDE REGEX "/(auto|op)tune\\.[^/]+/[^/]+\\.cc$")
+  list(LENGTH AOTRITON_TUNE_CC_FILES NUM_TUNE_CC_FILES)
+  message(STATUS "Tuning tables checked by the second pass: ${NUM_TUNE_CC_FILES}")
+  if(AOTRITON_TUNE_CC_FILES)
+    add_custom_command(OUTPUT ${AOTRITON_TUNE_CC_FILES}
+      COMMAND ${CMAKE_COMMAND}
+      -E env VIRTUAL_ENV=${VENV_DIR}
+      AOTRITON_ENABLE_FP32=${AOTRITON_ENABLE_FP32}
+      "${VENV_BIN_PYTHON}" -X utf8 -m aotriton.generate
+      --target_gpus ${EFFECTIVE_TARGET_GPUS}
+      --build_dir "${AOTRITON_V2_BUILD_DIR}"
+      --root_dir "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
+      ${GENERATE_OPTION}
+      --build_for_tuning_second_pass
+      DEPENDS ${ALL_HSACOS} "${AOTRITON_FIRST_PASS_STAMP}"
+      WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_PARENT_DIR}"
+      COMMENT "Checking tuning tables against GPU kernel compile status"
+      VERBATIM)
+  endif(AOTRITON_TUNE_CC_FILES)
+endif(NOT AOTRITON_NOIMAGE_MODE)
 
 aux_source_directory(. CC_FILES)
 # Modular family C++ sources: every modules/<family>/csrc/**.cc (recursively, so
@@ -397,7 +406,6 @@ set_target_properties(aotriton_v2 PROPERTIES
 )
 if(AOTRITON_BUILD_FOR_TUNING)
   target_compile_definitions(aotriton_v2 PRIVATE -DAOTRITON_BUILD_FOR_TUNING=1)
-  add_dependencies(aotriton_v2 aotriton_v2_regen_shim)
 else(AOTRITON_BUILD_FOR_TUNING)
   target_compile_definitions(aotriton_v2 PRIVATE -DAOTRITON_BUILD_FOR_TUNING=0)
 endif(AOTRITON_BUILD_FOR_TUNING)

@@ -60,3 +60,16 @@ class MissingLutEntry(Exception):
 
     def __repr__(self):
         return f'{self._functional.tunecc_signature} has broken tuning table:\n{self._lut_tensor}'
+
+class NoCompiledKernel(Exception):
+    """Raised when a tuned functional has no compiled signature to use."""
+    def __init__(self, functional, hsaco_entry_names):
+        self._functional = functional
+        self._hsaco_entry_names = hsaco_entry_names
+
+    def __str__(self):
+        entries = '\n  '.join(self._hsaco_entry_names)
+        return (f'{self._functional.tunecc_signature} has no kernel that compiled '
+                f'for {self._functional.arch}:\n  {entries}')
+
+    __repr__ = __str__

@@ -29,8 +29,9 @@ class BaseTuneCodeGenerator(ABC):
         tune_dir = self._args.build_dir / iface.FAMILY / f'{iface.TUNE_NAME}.{iface.NAME}'
         tune_dir.mkdir(parents=True, exist_ok=True)
         ondisk = tunecc_ondisk_name(f)
-        with open(tune_dir / 'manifest.nsv', 'a', encoding='utf-8') as mf:
-            mf.write(ondisk + '\x00' + f.tunecc_signature + '\x00\n')
+        if not self._args.build_for_tuning_second_pass:
+            with open(tune_dir / 'manifest.nsv', 'a', encoding='utf-8') as mf:
+                mf.write(ondisk + '\x00' + f.tunecc_signature + '\x00\n')
         return tune_dir / ondisk
 
     @property

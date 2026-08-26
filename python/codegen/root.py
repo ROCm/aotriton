@@ -260,6 +260,9 @@ class RootGenerator(object):
         for f in futures:
             f.result()  # re-raise any worker exception
 
+        if args.build_for_tuning_second_pass:
+            return
+
         shard_names = ['Bare.shim', 'Bare.compile', 'Bare.cluster', 'Affine.cluster', 'Bare.flatzip']
         out_files = {name: args.build_dir / name for name in shard_names}
         # Truncate output files before appending
