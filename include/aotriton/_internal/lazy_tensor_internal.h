@@ -26,6 +26,13 @@ struct LazyTensorInternal {
     return lazy_ || concrete_;
   }
 
+#if AOTRITON_COMPAT_ABI_0_11
+#define LAZY_INIT do {                              \
+    if (!concrete_) {                               \
+      concrete_ = (*lazy_.acquire)(lazy_.cookie);   \
+    }                                               \
+  } while(0)
+#else
 #define LAZY_INIT do {                              \
     if (!concrete_) {                           \
       if (lazy_.eager) {                        \
@@ -35,6 +42,7 @@ struct LazyTensorInternal {
       }                                         \
     }                                           \
   } while(0)
+#endif
 
   uint64_t size(int i) const {
     LAZY_INIT;

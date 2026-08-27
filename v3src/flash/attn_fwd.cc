@@ -41,6 +41,12 @@ dim3 AttnFwdContext::grid_calculator() const {
     return grid;
 }
 
+#if AOTRITON_COMPAT_ABI_0_11
+// PyTorch 2.12 allocates this struct itself, so its size must match exactly.
+static_assert(sizeof(attn_fwd_params) == 768, "attn_fwd_params must keep the 0.11.2 layout");
+static const T1 kNullSeqStrides = T1::get_null_tensor(AOTRITON_NS::DType::kInt32);
+#endif
+
 attn_fwd_params::attn_fwd_params()
 {
 }
@@ -107,8 +113,13 @@ attn_fwd(const attn_fwd_params& in,
     .cu_seqlens_k = &in.cu_seqlens_k,
     .Max_seqlen_q = max_seqlen_q,
     .Max_seqlen_k = max_seqlen_k,
+#if AOTRITON_COMPAT_ABI_0_11
+    .seq_strides_q = &kNullSeqStrides,
+    .seq_strides_k = &kNullSeqStrides,
+#else
     .seq_strides_q = &in.seq_strides_q,
     .seq_strides_k = &in.seq_strides_k,
+#endif
     .BLOCK_DMODEL = hdim_rounded,
     .Hdim_qk = static_cast<int32_t>(hdim_qk),
     .Hdim_vo = static_cast<int32_t>(hdim_vo),

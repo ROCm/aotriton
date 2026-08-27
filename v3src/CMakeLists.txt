@@ -396,6 +396,11 @@ target_link_libraries(aotriton_v2 PRIVATE lzma_interface)
 target_link_libraries(aotriton_v2 PUBLIC hip::host hip::amdhip64)
 set_target_properties(aotriton_v2 PROPERTIES VERSION
   ${AOTRITON_VERSION_MAJOR_INT}.${AOTRITON_VERSION_MINOR_INT}.${AOTRITON_VERSION_PATCH_INT})
+if(AOTRITON_COMPAT_ABI_0_11)
+  # Answer to the DT_NEEDED a PyTorch built against 0.11.2 carries. The file keeps
+  # its real version; 0.11.2 becomes a symlink to it.
+  set_target_properties(aotriton_v2 PROPERTIES SOVERSION 0.11.2)
+endif()
 
 if(NOT WIN32)
   execute_process(

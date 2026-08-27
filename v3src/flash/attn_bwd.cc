@@ -48,6 +48,12 @@ dim3 BwdKernelDqContext::grid_calculator() const {
   return NUM_XCDS > 1 ? dim3 { H, S, B } : dim3 { S, H, B };
 }
 
+#if AOTRITON_COMPAT_ABI_0_11
+// PyTorch 2.12 allocates this struct itself, so its size must match exactly.
+static_assert(sizeof(attn_bwd_params) == 1040, "attn_bwd_params must keep the 0.11.2 layout");
+static const T1 kNullSeqStrides = T1::get_null_tensor(AOTRITON_NS::DType::kInt32);
+#endif
+
 attn_bwd_params::attn_bwd_params()
 {
 }
@@ -119,8 +125,13 @@ attn_bwd(const attn_bwd_params& in,
     .num_seqlens = in.varlen_type == VarlenType::PaddedVarlen ? -num_seqlens : num_seqlens,
     .max_seqlen_q = max_seqlen_q,
     .max_seqlen_k = max_seqlen_k,
+#if AOTRITON_COMPAT_ABI_0_11
+    .seq_strides_q = &kNullSeqStrides,
+    .seq_strides_k = &kNullSeqStrides,
+#else
     .seq_strides_q = &in.seq_strides_q,
     .seq_strides_k = &in.seq_strides_k,
+#endif
     .hdim_qk = hdim_qk,
     .hdim_vo = hdim_vo,
     .dropout_p = in.dropout_p,
@@ -144,9 +155,11 @@ attn_bwd(const attn_bwd_params& in,
                  int(options->force_backend_index));
   }
   bool deterministic = false;
+#if !AOTRITON_COMPAT_ABI_0_11
   if (params_version >= 4 && options) {
     deterministic = options->deterministic;
   }
+#endif
   if (options && options->force_backend_index >= 0) {
     context.backend_index = static_cast<OpAttnBwdContext::BackendEnum>(options->force_backend_index);
     context.disable_fallback = true;

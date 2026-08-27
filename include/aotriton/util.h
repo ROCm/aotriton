@@ -224,6 +224,23 @@ extern template class TensorView<4>;
 template<int Rank>
 struct LazyTensor {
   void* cookie = nullptr;
+#if AOTRITON_COMPAT_ABI_0_11
+  // 0.11.x hands the cookie to the callbacks and has no eager slot. The callbacks
+  // live in the caller, so their signature is as much a part of the ABI as the layout.
+  TensorView<Rank> (*acquire)(void* cookie) = nullptr;
+  void  (*dispose)(void* cookie) = nullptr;
+
+  operator bool() const {
+    return cookie != nullptr || acquire != nullptr || dispose != nullptr;
+  }
+
+  void free() {
+    if (dispose && cookie) {
+      (*dispose)(cookie);
+      cookie = nullptr;
+    }
+  }
+#else
   TensorView<Rank> (*acquire)(LazyTensor<Rank>* self) = nullptr;
   // Note for user: Remember put necessary information to dispose this tensor to
   //                "cookie" object in acquire.
@@ -243,6 +260,7 @@ struct LazyTensor {
       cookie = nullptr;
     }
   }
+#endif
 };
 
 Gpu AOTRITON_API getGpuFromStream(hipStream_t);

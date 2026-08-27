@@ -117,6 +117,12 @@ option(AOTRITON_ENABLE_ASAN_CLANG "Enable Address Sanitizer using Clang (e.g. th
 option(AOTRITON_BUILD_FOR_TUNING "Build all GPU kernels and set -DAOTRITON_BUILD_FOR_TUNING=1 (=0 otherwise)" OFF)
 set(AOTRITON_BUILD_FOR_TUNING_BUT_SKIP_KERNEL "" CACHE STRING "Use tuning database for certain kernels when AOTRITON_BUILD_FOR_TUNING=ON")
 option(AOTRITON_ENABLE_FP32_INPUTS "Enable FP32 support." ON)
+# Drop-in for a PyTorch built against 0.11.2: same mangled symbols, same struct layout.
+option(AOTRITON_COMPAT_ABI_0_11 "Use the 0.11.x attn_fwd_params/attn_bwd_params layout and kVersion" OFF)
+if(AOTRITON_COMPAT_ABI_0_11 AND NOT AOTRITON_NO_PYTHON)
+  # The bindings' eager LazyTensor has no home in the 0.11.x layout.
+  message(FATAL_ERROR "AOTRITON_COMPAT_ABI_0_11 requires AOTRITON_NO_PYTHON=ON")
+endif()
 option(AOTRITON_NOIMAGE_MODE "Only build C++ Shim part. Kernel image builds are disabled" OFF)
 option(AOTRITON_INHERIT_SYSTEM_SITE_TRITON "Use system site packages and verify triton availability instead of building from source" OFF)
 # No plan to support network based pip install

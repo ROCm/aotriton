@@ -14,6 +14,9 @@
 #define AOTRITON_NS aotriton
 #endif
 
+// Build the 0.11.x parameter-struct layout instead of the current one.
+#cmakedefine01 AOTRITON_COMPAT_ABI_0_11
+
 #cmakedefine AOTRITON_VERSION_MAJOR @AOTRITON_VERSION_MAJOR@
 #cmakedefine AOTRITON_VERSION_MINOR @AOTRITON_VERSION_MINOR@
 #cmakedefine AOTRITON_VERSION_PATCH @AOTRITON_VERSION_PATCH@

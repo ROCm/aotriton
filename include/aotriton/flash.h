@@ -34,10 +34,16 @@ using T0 = AOTRITON_NS::TensorView<0>;
 using LT2 = AOTRITON_NS::LazyTensor<2>;
 using LT4 = AOTRITON_NS::LazyTensor<4>;
 
+// AOTRITON_COMPAT_ABI_0_11 restores the 0.11.x parameter layout (no seq_strides_*,
+// no attn_options::deterministic) so this build drops into a PyTorch compiled
+// against 0.11.2 headers. THD/padded-varlen is unavailable in that mode.
+
 // For debugging and profiling purpose
 struct AOTRITON_API attn_options {
   int force_backend_index = -1;
+#if !AOTRITON_COMPAT_ABI_0_11
   bool deterministic = false;
+#endif
 
 #if AOTRITON_BUILD_FOR_TUNING
   // Kernel slot assignments in kernel_fine_control array
@@ -109,8 +115,10 @@ struct AOTRITON_API attn_fwd_params {
   T1       cu_seqlens_k;
   int32_t  Max_seqlen_q = 0;    // Unused if cu_seqlens_q is empty
   int32_t  Max_seqlen_k = 0;    // Unused if cu_seqlens_k is empty
+#if !AOTRITON_COMPAT_ABI_0_11
   T1       seq_strides_q;       // See cu_seqlens_padded parameter in
   T1       seq_strides_k;       // Transformer Engine API nvte_fused_attn_fwd_qkvpacked
+#endif
   // int32_t  Head_dim;
   float    dropout_p;
   T0       philox_seed_ptr;
@@ -125,7 +133,11 @@ struct AOTRITON_API attn_fwd_params {
   int32_t  window_left;
   int32_t  window_right;
 
+#if AOTRITON_COMPAT_ABI_0_11
+  static constexpr int32_t kVersion = 1;
+#else
   static constexpr int32_t kVersion = 3;
+#endif
   attn_fwd_params();
 };
 
@@ -156,8 +168,10 @@ struct AOTRITON_API attn_bwd_params {
   T1        cu_seqlens_k;
   int32_t   Max_seqlen_q = 0;       // Unused if cu_seqlens_q is empty
   int32_t   Max_seqlen_k = 0;       // Unused if cu_seqlens_k is empty
+#if !AOTRITON_COMPAT_ABI_0_11
   T1        seq_strides_q;          // See cu_seqlens_padded parameter in
   T1        seq_strides_k;          // Transformer Engine API nvte_fused_attn_fwd_qkvpacked
+#endif
   // int32_t   Head_dim;            // Inferred from Q.size()
   float     dropout_p;
   T0        philox_seed_ptr;
@@ -169,7 +183,11 @@ struct AOTRITON_API attn_bwd_params {
   int32_t   window_right;
   mutable LT4       DQ_ACC;          // fp32 accumulator of dq
 
+#if AOTRITON_COMPAT_ABI_0_11
+  static constexpr int32_t kVersion = 3;
+#else
   static constexpr int32_t kVersion = 6;
+#endif
   attn_bwd_params();
 };
 
