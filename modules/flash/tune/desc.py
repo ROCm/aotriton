@@ -34,10 +34,6 @@ class FlashTune(TuningDescription):
     ENTRY_CLASS = FlashEntry
     INPUT_METADATA = FlashInputMetadata
 
-    # gfx11 architectures whose tuning tables cover the full seqlen range; see
-    # validate_hw_feature().
-    FULL_SEQLEN_GFX11_ARCHS = ('gfx1100',)
-
     def _provider_for(self, name: str):
         """Resolve the DSL name `name` (e.g. 'attn_fwd' or 'op.attn_fwd') to
         (provider_module, bare_iface_name), lazily importing exactly the
@@ -120,12 +116,6 @@ class FlashTune(TuningDescription):
         if arch.startswith('gfx11') and entry.hdim > 256:
             return False, (f'arch {arch} does not support hdim={entry.hdim} '
                            f'(gfx11xx maximum is 256; larger hdim exceeds LDS/register limits)')
-        # Allowlist rather than denylist: a new gfx11 architecture then
-        # defaults to gated instead of silently tuning the largest entries.
-        if (arch.startswith('gfx11') and arch not in self.FULL_SEQLEN_GFX11_ARCHS
-                and (entry.seqlen_q > 2048 or entry.seqlen_k > 2048)):
-            return False, (f'No {arch} GPUs available for tuning: '
-                           f'only seqlen_q/k <= 2048 entries are tuned')
         return True, ''
 
     def _gen_ref(self, entry: FlashEntry, data_root: Path, extra_ims: list = []):
