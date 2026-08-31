@@ -45,6 +45,46 @@ def _parse_preload_options():
 
 PRE_LOAD_OPTIONS = _parse_preload_options()
 
+# Wider forward search space for gfx1100 inference functionals: when
+# _use_extended_search accepts one, these replace the wave32 block sizes/stages
+# below and are the whole candidate space (they include the wave32 tiles).
+EXTENDED_SEARCH_ARCHS = ('gfx1100',)
+EXTENDED_SEARCH_HEAD_DIMS = (64, 80, 128)
+# Tile sizes that are searched in the extended search space.
+EXTENDED_SEARCH_BLOCK_SIZES = [
+    (16, 16), (32, 16), (32, 32),
+    (64, 16), (64, 32), (64, 64),
+    (128, 16), (128, 32), (128, 64), (128, 128),
+    (256, 16), (256, 32), (256, 64),
+]
+EXTENDED_SEARCH_NUM_STAGES = [1, 2]
+# A third pipeline stage is searched on the BLOCK_N=16 tiles only -
+# this is derived from heuristics and experimental tuning results.
+EXTENDED_SEARCH_DEEP_PIPELINE_BLOCK_N = 16
+EXTENDED_SEARCH_DEEP_PIPELINE_NUM_STAGES = [3]
+
+
+def extended_search_grid():
+    """The widened space as ((BLOCK_M, BLOCK_N), num_stages) pairs."""
+    for tile in EXTENDED_SEARCH_BLOCK_SIZES:
+        stages = list(EXTENDED_SEARCH_NUM_STAGES)
+        if tile[1] == EXTENDED_SEARCH_DEEP_PIPELINE_BLOCK_N:
+            stages += EXTENDED_SEARCH_DEEP_PIPELINE_NUM_STAGES
+        for num_stages in stages:
+            yield tile, num_stages
+
+
+def _use_extended_search(f, arch, dtype, head_dim, causal_type):
+    """Whether `f` is one of the inference functionals the wider space targets.
+    """
+    return (arch in EXTENDED_SEARCH_ARCHS
+            and '*fp32' not in dtype
+            and head_dim in EXTENDED_SEARCH_HEAD_DIMS
+            and causal_type == 0
+            and f.choices.BIAS_TYPE == 0
+            and f.choices.ENABLE_DROPOUT is False
+            and f.choices.PADDED_HEAD is False)
+
 
 def gen_autotune_configs(f):
     """Generate architecture-aware forward tuning configurations."""
@@ -66,6 +106,11 @@ def gen_autotune_configs(f):
     num_warps = [2, 4] if wave64 else [4, 8]
     num_stages = [1]
 
+    if _use_extended_search(f, arch, dtype, head_dim, causal_type):
+        tile_stages = list(extended_search_grid())
+    else:
+        tile_stages = [(tile, s) for tile in block_sizes for s in num_stages]
+
     if arch == 'gfx950':
         for waves, pre_load_v in itertools.product(waves_per_eu, PRE_LOAD_OPTIONS):
             kw = {
@@ -79,8 +124,8 @@ def gen_autotune_configs(f):
             }
             yield ati.tune.Config(kw, num_stages=4, num_warps=8)
 
-    for (block_m, block_n), waves, warps, stages, pre_load_v in itertools.product(
-            block_sizes, waves_per_eu, num_warps, num_stages, PRE_LOAD_OPTIONS):
+    for ((block_m, block_n), stages), waves, warps, pre_load_v in itertools.product(
+            tile_stages, waves_per_eu, num_warps, PRE_LOAD_OPTIONS):
         if head_dim >= 512 and block_m == 128 and block_n == 128 and warps == 2:
             continue  # Timeout
         if dtype == '*fp32:16':
