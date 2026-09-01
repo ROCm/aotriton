@@ -77,9 +77,14 @@ def gen_autotune_configs(f):
 @ati.tensor('L', '*fp32:16', rank=2)
 @ati.tensor('D', 'LazyTensor:*fp32:16', rank=2)
 @ati.scalar(['num_head_q', 'num_head_k', 'hdim_qk', 'hdim_vo'], 'i32')
-@ati.tensor(['cu_seqlens_q', 'cu_seqlens_k',
-             'seq_strides_q', 'seq_strides_k'], '*i32:16', rank=1)
-@ati.scalar(['num_seqlens', 'max_seqlen_q', 'max_seqlen_k'], 'i32')
+# Named by ROLE rather than by mode: ?0 is the LENGTH source, ?1 the POSITION
+# source. Which is read (and whether either is) is what varlen_bits says.
+@ati.tensor(['seqinfo_q0', 'seqinfo_k0',
+             'seqinfo_q1', 'seqinfo_k1'], '*i32:16', rank=1)
+# varlen_bits replaces the tri-state num_seqlens, which is gone outright here:
+# the sequence count N is tl.num_programs(2) in the backward kernels, so it was
+# never needed as an argument.
+@ati.scalar(['varlen_bits', 'max_seqlen_q', 'max_seqlen_k'], 'i32')
 @ati.scalar('dropout_p', 'fp32')
 @ati.tensor(['philox_seed_ptr', 'philox_offset1'], '*u64', rank=0)
 @ati.scalar('philox_offset2', 'u64')

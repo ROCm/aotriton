@@ -167,10 +167,17 @@ def _attn_fwd_disabled(f):
 @ati.scalar(['Q_descale', 'K_descale', 'P_scale', 'P_descale', 'V_descale'],
             options=[0])
 # --- MQA/GQA + varlen scalars ---
-@ati.scalar(['Num_head_q', 'Num_head_k', 'Num_seqlens',
+@ati.scalar(['Num_head_q', 'Num_head_k',
              'Max_seqlen_q', 'Max_seqlen_k'], 'i32')
-@ati.tensor(['cu_seqlens_q', 'cu_seqlens_k',
-             'seq_strides_q', 'seq_strides_k'], 'T_seq', rank=1)
+# The varlen layout descriptor, replacing the tri-state Num_seqlens. A RUNTIME
+# argument, never a build axis: it is decoded once in the kernel prologue, and
+# making it functional would multiply the functional count by the number of
+# shipped configurations.
+@ati.scalar('Varlen_bits', 'i32')
+# Named by ROLE rather than by mode: ?0 is the LENGTH source, ?1 the POSITION
+# source. Which is read (and whether either is) is what Varlen_bits says.
+@ati.tensor(['seqinfo_q0', 'seqinfo_k0',
+             'seqinfo_q1', 'seqinfo_k1'], 'T_seq', rank=1)
 # --- head dims ---
 @ati.scalar('BLOCK_DMODEL', options=block_dmodel_values())
 @ati.scalar(['Hdim_qk', 'Hdim_vo'], 'i32')
