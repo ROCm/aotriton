@@ -42,8 +42,9 @@ class _attention_varlen(torch.autograd.Function):
 
     @staticmethod
     def forward(ctx, q, k, v, seqlens_q, seqlens_k, causal, sm_scale, dropout_p,
-                varlen_type,
+                varlen_type, lse_layout='HT',
                 attn_extra_args=AttentionExtraArgs()):
+        assert lse_layout in ('HT', 'TH'), f'unknown lse_layout {lse_layout}'
         return_encoded_softmax = attn_extra_args.return_encoded_softmax
         autotune = attn_extra_args.autotune
         return_autotune = attn_extra_args.return_autotune
@@ -51,7 +52,13 @@ class _attention_varlen(torch.autograd.Function):
         Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
         assert Lq == Lk
         # assert Lk in {16, 32, 64, 128}
-        if varlen_type == 'strided':
+        if varlen_type in ('strided', 'seqused'):
+            # Both take (seqlens, padlens) pairs and lay the tensors out the
+            # same way: slot z occupies seqlens[z] + padlens[z] rows, of which
+            # only the first seqlens[z] participate. What differs is how the
+            # kernel is TOLD -- strided reads lengths cumulatively, seqused
+            # reads them individually -- which is a bits difference, not a
+            # layout one, so one context class serves both.
             seqlens_q, padlens_q = seqlens_q
             seqlens_k, padlens_k = seqlens_k
             total_seqlen_q = int(np.sum(seqlens_q + padlens_q))  # Be explicit
@@ -61,27 +68,57 @@ class _attention_varlen(torch.autograd.Function):
         num_heads = q.shape[1]
         max_seqlen_q = int(np.max(seqlens_q))
         max_seqlen_k = int(np.max(seqlens_k))
-        cu_seqlens_q = np.cumsum(seqlens_q)
-        cu_seqlens_k = np.cumsum(seqlens_k)
-        cu_seqlens_q = torch.tensor([0] + cu_seqlens_q.tolist(), dtype=torch.int32, device=q.device)
-        cu_seqlens_k = torch.tensor([0] + cu_seqlens_k.tolist(), dtype=torch.int32, device=q.device)
+        seqinfo_q0 = np.cumsum(seqlens_q)
+        seqinfo_k0 = np.cumsum(seqlens_k)
+        seqinfo_q0 = torch.tensor([0] + seqinfo_q0.tolist(), dtype=torch.int32, device=q.device)
+        seqinfo_k0 = torch.tensor([0] + seqinfo_k0.tolist(), dtype=torch.int32, device=q.device)
         if varlen_type in ['compact', 'padded']:
-            seq_strides_q = None
-            seq_strides_k = None
+            seqinfo_q1 = None
+            seqinfo_k1 = None
         elif varlen_type == 'strided':
-            seq_strides_q = np.cumsum(seqlens_q + padlens_q)
-            seq_strides_k = np.cumsum(seqlens_k + padlens_k)
-            seq_strides_q = torch.tensor([0] + seq_strides_q.tolist(), dtype=torch.int32, device=q.device)
-            seq_strides_k = torch.tensor([0] + seq_strides_k.tolist(), dtype=torch.int32, device=q.device)
+            seqinfo_q1 = np.cumsum(seqlens_q + padlens_q)
+            seqinfo_k1 = np.cumsum(seqlens_k + padlens_k)
+            seqinfo_q1 = torch.tensor([0] + seqinfo_q1.tolist(), dtype=torch.int32, device=q.device)
+            seqinfo_k1 = torch.tensor([0] + seqinfo_k1.tolist(), dtype=torch.int32, device=q.device)
+        elif varlen_type == 'seqused':
+            # torch.nn.attention.varlen.varlen_attn(..., seqused_k=...):
+            #   cu_seq_q   (N+1,)  -> seqinfo_q0, Q length AND position (REUSE)
+            #   seqused_k  (N,)    -> seqinfo_k0, K length only (INDIVIDUAL)
+            #   cu_seq_k   (N+1,)  -> seqinfo_k1, K position only  (ARRAY)
+            # The K side therefore reads its two facts from two DIFFERENT
+            # tensors, which is why seqinfo_?0/?1 are named by role rather than
+            # by mode. seqinfo_k0 is rebuilt below as the individual lengths;
+            # here we only supply the position array.
+            assert np.all(padlens_q == 0), \
+                'seqused models a packed Q against a slotted KV cache'
+            seqinfo_q1 = None
+            seqinfo_k1 = np.cumsum(seqlens_k + padlens_k)
+            seqinfo_k1 = torch.tensor([0] + seqinfo_k1.tolist(), dtype=torch.int32, device=q.device)
+            # (N,), not (N+1,): INDIVIDUAL means seqinfo_k0[z] IS the length.
+            seqinfo_k0 = torch.tensor(np.asarray(seqlens_k).tolist(),
+                                      dtype=torch.int32, device=q.device)
         else:
             assert False
         o = torch.empty((q.shape[0], q.shape[1], q.shape[2], v.shape[3]), device=q.device, dtype=q.dtype)
         b = torch.empty((0,0,0,0), device=q.device, dtype=q.dtype)
 
+        # The logsumexp tensor carries NO strides to the kernel: it is always
+        # compact, so its layout is fully determined by lse_layout plus the head
+        # count and the token pitch, and passing strides alongside would be two
+        # sources of truth for one fact. The host's job is therefore to allocate
+        # exactly the shape the bits declare -- checking, not inferring.
         if varlen_type == 'padded':
-            M = torch.zeros((batch * num_heads, max_seqlen_q), device=q.device, dtype=torch.float32)
+            lse_shape = ((batch * max_seqlen_q, num_heads) if lse_layout == 'TH'
+                         else (batch * num_heads, max_seqlen_q))
         else:
-            M = torch.empty((num_heads, total_seqlen_q), device=q.device, dtype=torch.float32)
+            lse_shape = ((total_seqlen_q, num_heads) if lse_layout == 'TH'
+                         else (num_heads, total_seqlen_q))
+        # zeros for padded (preserved from before this change): rows past a
+        # sequence's own length are never written. fillnan below still overrides
+        # it when asked, so any comparison on this buffer must mask to the rows
+        # each sequence actually owns rather than trusting the whole thing.
+        M = (torch.zeros if varlen_type == 'padded' else torch.empty)(
+                lse_shape, device=q.device, dtype=torch.float32)
         if attn_extra_args.fillnan:
             for t in (o, M):
                 t.fill_(float('nan'))
@@ -131,22 +168,22 @@ class _attention_varlen(torch.autograd.Function):
             extargs = None
 
         attn_fwd_varlen(q, k, v,
-                        cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
-                        seq_strides_q, seq_strides_k,
+                        seqinfo_q0, seqinfo_k0, max_seqlen_q, max_seqlen_k,
+                        seqinfo_q1, seqinfo_k1,
                         b, sm_scale, M, o,
                         dropout_p, philox_seed, philox_offset1, philox_offset2,
                         philox_seed_output, philox_offset_output,
-                        encoded_softmax, causal, atomic, varlen_type, extargs)
+                        encoded_softmax, causal, atomic, varlen_type, lse_layout, extargs)
 
         ctx.save_for_backward(q, k, v, b, o, M)
         ctx.seqlens_q = seqlens_q
         ctx.seqlens_k = seqlens_k
-        ctx.cu_seqlens_q = cu_seqlens_q
-        ctx.cu_seqlens_k = cu_seqlens_k
+        ctx.seqinfo_q0 = seqinfo_q0
+        ctx.seqinfo_k0 = seqinfo_k0
         ctx.max_seqlen_q = max_seqlen_q
         ctx.max_seqlen_k = max_seqlen_k
-        ctx.seq_strides_q = seq_strides_q
-        ctx.seq_strides_k = seq_strides_k
+        ctx.seqinfo_q1 = seqinfo_q1
+        ctx.seqinfo_k1 = seqinfo_k1
         ctx.sm_scale = sm_scale
         ctx.BLOCK_DMODEL = Lk
         ctx.causal = causal
@@ -157,8 +194,13 @@ class _attention_varlen(torch.autograd.Function):
         ctx.philox_offset2 = philox_offset2
         ctx.encoded_softmax = encoded_softmax # FIXME: for debugging only
         ctx.varlen_type = varlen_type
+        ctx.lse_layout = lse_layout
         ctx.attn_extra_args = attn_extra_args
-        return o, encoded_softmax, None
+        # Honour return_logsumexp, as the dense counterpart already does
+        # (attn_torch_function.py). Without it a test cannot see L at all, and L
+        # is the only place the lse_layout is directly observable.
+        ret3 = M if attn_extra_args.return_logsumexp else None
+        return o, encoded_softmax, ret3
 
     @staticmethod
     def backward(ctx, do, _, __):
@@ -166,8 +208,8 @@ class _attention_varlen(torch.autograd.Function):
         print(f'{b=}')
         seqlens_q = ctx.seqlens_q
         seqlens_k = ctx.seqlens_k
-        cu_seqlens_q = ctx.cu_seqlens_q
-        cu_seqlens_k = ctx.cu_seqlens_k
+        seqinfo_q0 = ctx.seqinfo_q0
+        seqinfo_k0 = ctx.seqinfo_k0
         max_seqlen_q = ctx.max_seqlen_q
         max_seqlen_k = ctx.max_seqlen_k
         batch = len(seqlens_q)
@@ -194,13 +236,15 @@ class _attention_varlen(torch.autograd.Function):
         else:
             extargs = None
         ret = attn_bwd_varlen(q, k, v,
-                              cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
-                              ctx.seq_strides_q, ctx.seq_strides_k,
+                              seqinfo_q0, seqinfo_k0, max_seqlen_q, max_seqlen_k,
+                              ctx.seqinfo_q1, ctx.seqinfo_k1,
                               b, sm_scale, o, do, dq, dk, dv, db, dq_acc, L, delta,
-                              dropout_p, philox_seed, philox_offset, 0, causal, ctx.varlen_type, extargs);
+                              dropout_p, philox_seed, philox_offset, 0, causal, ctx.varlen_type,
+                              ctx.lse_layout, extargs);
         if PROBE_UNSUPPORTED and ret == hipError_t.hipErrorPeerAccessUnsupported:
             raise NotImplementedError()
         assert ret == hipError_t.hipSuccess, ret
-        return dq, dk, dv, None, None, None, None, None, None, None, None
+        # One None per non-tensor forward input, now including lse_layout.
+        return dq, dk, dv, None, None, None, None, None, None, None, None, None
 
 varlen_attention = _attention_varlen.apply
