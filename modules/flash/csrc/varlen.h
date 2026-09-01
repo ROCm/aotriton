@@ -219,6 +219,11 @@ varlen_valid(uint32_t wire, bool has_q0, bool has_q1, bool has_k0, bool has_k1) 
   if (wire & 0xFFFC0000u) {
     return false;                                   // reserved bits 31:18
   }
+  // Two bits for future room, but only HT and TH defined; the kernel branches
+  // `layout == 0 ? HT : TH`, so 2 and 3 would become TH silently.
+  if (((wire >> VarlenShift::LSE_LAYOUT) & 3u) > VarlenLseLayout::TH) {
+    return false;
+  }
   return varlen_side_valid(varlen_side(wire, false), has_q0, has_q1)
       && varlen_side_valid(varlen_side(wire, true), has_k0, has_k1);
 }

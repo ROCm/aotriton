@@ -359,6 +359,11 @@ test_bits_validation() {
   // LSE_LAYOUT is not addressing and must not be rejected.
   check(varlen_valid(0x10000u, false, false, false, false), "dense + TH is valid");
   check(varlen_valid(0x1150Bu, true, false, true, true), "seqused + TH is valid");
+
+  // ... and only those two: the kernel maps every nonzero value to TH.
+  check(!varlen_valid(0x20000u, false, false, false, false), "lse_layout == 2 is refused");
+  check(!varlen_valid(0x30000u, false, false, false, false), "lse_layout == 3 is refused");
+  check(!varlen_valid(0x2150Bu, true, false, true, true), "lse_layout == 2 on a valid mode");
 }
 
 void
