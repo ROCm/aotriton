@@ -9,13 +9,27 @@
 #include <flash/shim.attn_fwd.h>
 #include <flash/iface.op_attn_fwd.h>
 
+#include "varlen.h"
+#include "params_abi_compat.h"
+
 namespace AOTRITON_NS::v3::flash {
+
+// varlen.h keeps its symbols out of the user-facing namespace; this TU opts in.
+using namespace internal;
 
 dim3 AttnFwdContext::grid_calculator() const {
     AOTRITON_LOG(LOG_DEBUG,
                  "Selected Kernel BLOCK_M = %d BLOCK_N = %d PRE_LOAD_V = %d",
                  int(this->BLOCK_M), int(this->BLOCK_N), int(this->PRE_LOAD_V));
-    bool unsupported_by_persistent = params->Num_seqlens != 0;
+    // Mask to the ADDRESSING bytes, not the whole word: LSE_LAYOUT lives in
+    // bits 17:16, so a dense call asking for _TH is non-zero and must NOT take
+    // the varlen fallback. The Triton kernel computes this predicate
+    // independently (fwd_kernel.py's `unsupported_by_persistent`) and the two
+    // must agree EXACTLY -- if they disagree the host launches a
+    // persistent-shaped grid while the kernel walks tiles non-persistently, or
+    // the reverse, which is a grid/indexing mismatch rather than a slowdown.
+    // Keep this spelling character-identical to the kernel's.
+    bool unsupported_by_persistent = (params->Varlen_bits & 0xFFFF) != 0;
     auto nblocks = AOTRITON_NS::cdiv<uint32_t>(params->Max_seqlen_q, this->BLOCK_M);
     // Use default grid if not persistent, or input is unsupported_by_persistent,
     // in which case persistent is turned off IN TRITON KERNEL
@@ -50,9 +64,26 @@ attn_fwd(const attn_fwd_params& in,
          int32_t params_version,
          AOTRITON_NS::Stream stream_wrap,
          const attn_options* options) {
-  if (params_version != attn_fwd_params::kVersion) {
-    return hipErrorInvalidSymbol; // params_version mismatch
+  // Newer than we know how to read: the caller was built against a header from
+  // the future, and no amount of translation invents fields it added.
+  if (params_version > attn_fwd_params::kVersion) {
+    return hipErrorInvalidSymbol;
   }
+  // Older: translate the caller's object through the type that describes ITS
+  // layout, then re-enter at the current version so nothing downstream needs a
+  // branch. Compatibility is this translation, not any property of the current
+  // struct's shape -- which is what leaves fields free to come and go across
+  // kVersions. translate_*_params() dispatches on the version actually passed
+  // and reports false for anything older than it describes, so the set of
+  // described layouts is exactly the supported set.
+  if (params_version < attn_fwd_params::kVersion) {
+    attn_fwd_params upgraded;
+    if (!translate_fwd_params(in, params_version, &upgraded)) {
+      return hipErrorInvalidSymbol; // too old to translate
+    }
+    return attn_fwd(upgraded, attn_fwd_params::kVersion, stream_wrap, options);
+  }
+  const uint32_t varlen_wire = varlen_to_wire(in.varlen_bits);
   hipError_t err;
   auto stream = stream_wrap.native();
   auto gpu = getGpuFromStream(stream);
@@ -62,15 +93,27 @@ attn_fwd(const attn_fwd_params& in,
   int hdim_max = std::max(hdim_qk, hdim_vo);
   int num_head_q = in.Q.size(1);
   int num_head_k = in.K.size(1);
-  int num_seqlens = 0;
   int max_seqlen_q = in.Q.size(2);
   int max_seqlen_k = in.K.size(2);
-  if (in.cu_seqlens_q) {
-    // Compact varlen, num_seqlens > 0
-    num_seqlens = in.cu_seqlens_q.size(0) - 1;
+  // N, the sequence count, is what the grid's z extent and the kernel's `[N]`
+  // read are both sized by. Under the bits it comes off the Q side, and it is
+  // `Batch` for the dense case by construction.
+  const int32_t seqinfo_q0_len = varlen_seqinfo_len(in.seqinfo_q0);
+  int num_seqlens = varlen_seq_count(varlen_wire, seqinfo_q0_len, batch);
+  const int32_t nseq_independent =
+      varlen_seq_count_independent(varlen_wire, seqinfo_q0_len, batch);
+  if (num_seqlens <= 0 || (nseq_independent >= 0 && num_seqlens != nseq_independent)) {
+    AOTRITON_LOG(LOG_ERROR,
+                 "v3::flash::attn_fwd: varlen_bits=0x%08x gives %d sequences "
+                 "(seqinfo_q0.size(0)=%d, Q.size(0)=%d) but AOTriton independently "
+                 "computes %d -- refusing to launch",
+                 varlen_wire, num_seqlens, seqinfo_q0_len, batch, nseq_independent);
+    return hipErrorInvalidValue;
+  }
+  if (in.seqinfo_q0) {
     max_seqlen_q = in.Max_seqlen_q;
   }
-  if (in.cu_seqlens_k) {
+  if (in.seqinfo_k0) {
     max_seqlen_k = in.Max_seqlen_k;
   }
   const auto& compiled_head_dims = AttnFwdMetadata::get_BLOCK_DMODEL_choices();
@@ -96,13 +139,16 @@ attn_fwd(const attn_fwd_params& in,
     .V_descale = false,
     .Num_head_q = num_head_q,
     .Num_head_k = num_head_k,
-    .Num_seqlens = in.varlen_type == VarlenType::PaddedVarlen ? -num_seqlens : num_seqlens,
-    .cu_seqlens_q = &in.cu_seqlens_q,
-    .cu_seqlens_k = &in.cu_seqlens_k,
+    // The sign trick on Num_seqlens (negative meant padded varlen) is gone: the
+    // three axes it welded together are now independent fields of one word.
+    .Varlen_bits = static_cast<int32_t>(varlen_wire),
+    // Named by ROLE: ?0 is the length source, ?1 the position source.
+    .seqinfo_q0 = &in.seqinfo_q0,
+    .seqinfo_k0 = &in.seqinfo_k0,
     .Max_seqlen_q = max_seqlen_q,
     .Max_seqlen_k = max_seqlen_k,
-    .seq_strides_q = &in.seq_strides_q,
-    .seq_strides_k = &in.seq_strides_k,
+    .seqinfo_q1 = &in.seqinfo_q1,
+    .seqinfo_k1 = &in.seqinfo_k1,
     .BLOCK_DMODEL = hdim_rounded,
     .Hdim_qk = static_cast<int32_t>(hdim_qk),
     .Hdim_vo = static_cast<int32_t>(hdim_vo),
@@ -126,7 +172,9 @@ attn_fwd(const attn_fwd_params& in,
     .USE_P_SCALE = false,
     .persistent_atomic_counter = &in.persistent_atomic_counter,
     .Num_CU = in.causal_type != 0 ? getMultiProcessorCount(stream) : 80,
-    .Batch = int32_t(num_seqlens == 0 ? batch : num_seqlens),
+    // Batch IS N -- the kernel's `[N]` read and the grid's z extent are the
+    // same number, and for the dense case N is the batch size.
+    .Batch = num_seqlens,
   };
   OpAttnFwdContext context;
   context.params = &params;

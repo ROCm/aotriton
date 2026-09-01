@@ -8,27 +8,24 @@
 #include <flash/shim.bwd_kernel_dk_dv.h>
 #include <flash/shim.bwd_kernel_dq.h>
 #include <flash/shim.bwd_preprocess.h>
-#include <flash/shim.bwd_preprocess_varlen.h>
 #include <flash/iface.op_attn_bwd.h>
 #include <aotriton/_internal/log.h>
 
+#include "varlen.h"
+#include "params_abi_compat.h"
+
 namespace AOTRITON_NS::v3::flash {
 
-dim3 BwdPreprocessContext::grid_calculator() const {
-  dim3 grid {
-    AOTRITON_NS::cdiv<uint32_t>(params->Out->size(2), this->BLOCK_M),
-    uint32_t(params->Out->size(1)),
-    uint32_t(params->Out->size(0)),
-  };
-  // std::cerr << "Grid conf " << grid.x << " " << grid.y << " " << grid.z << std::endl;
-  return grid;
-}
+// varlen.h keeps its symbols out of the user-facing namespace; this TU opts in.
+using namespace internal;
 
-dim3 BwdPreprocessVarlenContext::grid_calculator() const {
+dim3 BwdPreprocessContext::grid_calculator() const {
+  // One kernel now: bwd_preprocess_varlen was merged in, and the two differed
+  // only in this z extent and in an addressing shuffle the decoder subsumes.
   dim3 grid {
-    AOTRITON_NS::cdiv<uint32_t>(params->Out->size(2), this->BLOCK_M),
+    AOTRITON_NS::cdiv<uint32_t>(params->max_seqlen_q, this->BLOCK_M),
     uint32_t(params->Out->size(1)),
-    uint32_t(params->cu_seqlens_q->size(0) - 1),
+    varlen_bwd_seq_count(params),
   };
   // std::cerr << "Grid conf " << grid.x << " " << grid.y << " " << grid.z << std::endl;
   return grid;
@@ -37,14 +34,14 @@ dim3 BwdPreprocessVarlenContext::grid_calculator() const {
 dim3 BwdKernelDkDvContext::grid_calculator() const {
   auto S = AOTRITON_NS::cdiv<uint32_t>(params->max_seqlen_k, this->BLOCK_N);
   auto H = uint32_t(params->K->size(1));
-  auto B = params->num_seqlens == 0 ? uint32_t(params->Q->size(0)) : std::abs(params->num_seqlens);
+  auto B = varlen_bwd_seq_count(params);
   return NUM_XCDS > 1 ? dim3 { H, S, B } : dim3 { S, H, B };
 }
 
 dim3 BwdKernelDqContext::grid_calculator() const {
   auto S = AOTRITON_NS::cdiv<uint32_t>(params->max_seqlen_q, this->BLOCK_M);
   auto H = uint32_t(params->Q->size(1));
-  auto B = params->num_seqlens == 0 ? uint32_t(params->Q->size(0)) : std::abs(params->num_seqlens);
+  auto B = varlen_bwd_seq_count(params);
   return NUM_XCDS > 1 ? dim3 { H, S, B } : dim3 { S, H, B };
 }
 
@@ -57,9 +54,26 @@ attn_bwd(const attn_bwd_params& in,
          int32_t params_version,
          AOTRITON_NS::Stream stream_wrap,
          const attn_options* options) {
-  if (params_version != attn_bwd_params::kVersion) {
-    return hipErrorInvalidSymbol; // params_version mismatch
+  // Newer than we know how to read: the caller was built against a header from
+  // the future, and no amount of translation invents fields it added.
+  if (params_version > attn_bwd_params::kVersion) {
+    return hipErrorInvalidSymbol;
   }
+  // Older: translate the caller's object through the type that describes ITS
+  // layout, then re-enter at the current version so nothing downstream needs a
+  // branch. Compatibility is this translation, not any property of the current
+  // struct's shape -- which is what leaves fields free to come and go across
+  // kVersions. translate_*_params() dispatches on the version actually passed
+  // and reports false for anything older than it describes, so the set of
+  // described layouts is exactly the supported set.
+  if (params_version < attn_bwd_params::kVersion) {
+    attn_bwd_params upgraded;
+    if (!translate_bwd_params(in, params_version, &upgraded)) {
+      return hipErrorInvalidSymbol; // too old to translate
+    }
+    return attn_bwd(upgraded, attn_bwd_params::kVersion, stream_wrap, options);
+  }
+  const uint32_t varlen_wire = varlen_to_wire(in.varlen_bits);
   hipError_t err;
   auto stream = stream_wrap.native();
   auto gpu = getGpuFromStream(stream);
@@ -71,13 +85,25 @@ attn_bwd(const attn_bwd_params& in,
   int num_head_k = in.K.size(1);
   int max_seqlen_q = in.Q.size(2);
   int max_seqlen_k = in.K.size(2);
-  int num_seqlens = 0;
-  if (in.cu_seqlens_q) {
-    // Compact varlen, num_seqlens > 0
-    num_seqlens = in.cu_seqlens_q.size(0) - 1;
+  // N. Unlike the forward pass this never becomes a kernel argument -- the
+  // backward kernels read tl.num_programs(2) -- but the three grid calculators
+  // above recompute it from the same two inputs, so it is validated here once.
+  const int32_t seqinfo_q0_len = varlen_seqinfo_len(in.seqinfo_q0);
+  const int32_t num_seqlens = varlen_seq_count(varlen_wire, seqinfo_q0_len, batch);
+  const int32_t nseq_independent =
+      varlen_seq_count_independent(varlen_wire, seqinfo_q0_len, batch);
+  if (num_seqlens <= 0 || (nseq_independent >= 0 && num_seqlens != nseq_independent)) {
+    AOTRITON_LOG(LOG_ERROR,
+                 "v3::flash::attn_bwd: varlen_bits=0x%08x gives %d sequences "
+                 "(seqinfo_q0.size(0)=%d, Q.size(0)=%d) but AOTriton independently "
+                 "computes %d -- refusing to launch",
+                 varlen_wire, num_seqlens, seqinfo_q0_len, batch, nseq_independent);
+    return hipErrorInvalidValue;
+  }
+  if (in.seqinfo_q0) {
     max_seqlen_q = in.Max_seqlen_q;
   }
-  if (in.cu_seqlens_k) {
+  if (in.seqinfo_k0) {
     max_seqlen_k = in.Max_seqlen_k;
   }
   const auto& compiled_head_dims = BwdKernelDkDvMetadata::get_BLOCK_DMODEL_choices();
@@ -108,13 +134,16 @@ attn_bwd(const attn_bwd_params& in,
     .D = &lazy_delta,
     .num_head_q = num_head_q,
     .num_head_k = num_head_k,
-    .cu_seqlens_q = &in.cu_seqlens_q,
-    .cu_seqlens_k = &in.cu_seqlens_k,
-    .num_seqlens = in.varlen_type == VarlenType::PaddedVarlen ? -num_seqlens : num_seqlens,
+    // Named by ROLE: ?0 is the length source, ?1 the position source. The
+    // tri-state num_seqlens is gone outright -- the sign trick it used for
+    // padded varlen is now a field, and its magnitude is the grid's z extent.
+    .seqinfo_q0 = &in.seqinfo_q0,
+    .seqinfo_k0 = &in.seqinfo_k0,
+    .varlen_bits = static_cast<int32_t>(varlen_wire),
     .max_seqlen_q = max_seqlen_q,
     .max_seqlen_k = max_seqlen_k,
-    .seq_strides_q = &in.seq_strides_q,
-    .seq_strides_k = &in.seq_strides_k,
+    .seqinfo_q1 = &in.seqinfo_q1,
+    .seqinfo_k1 = &in.seqinfo_k1,
     .hdim_qk = hdim_qk,
     .hdim_vo = hdim_vo,
     .dropout_p = in.dropout_p,
