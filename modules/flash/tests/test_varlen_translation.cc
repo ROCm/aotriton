@@ -298,6 +298,69 @@ test_version_translation() {
   check_eq(varlen_to_wire(fresh.varlen_bits), 0x1'150Bu, "current caller: + _TH");
 }
 
+// PR #222 review: the shim keyed Max_seqlen off tensor presence, so a THD side
+// with LENGTH == MAX -- which carries no length array -- kept the tensor's own
+// extent. Under THD that extent is the total packed token count.
+void
+test_max_seqlen_source() {
+  // Dense: no bits set, so the tensor extent is the per-sequence length and the
+  // caller's Max_seqlen must NOT override it.
+  check(!varlen_uses_caller_max_seqlen(0x0000u, false), "dense Q trusts the tensor");
+  check(!varlen_uses_caller_max_seqlen(0x0000u, true), "dense K trusts the tensor");
+
+  // The reported case: compact Q against a uniformly-stacked K (side 0x01 =
+  // THD, MAX, IMPLIED). Q is already refused elsewhere for STACKED+MAX, so it
+  // is the K side that slipped through.
+  check(varlen_uses_caller_max_seqlen(0x010Bu, true),
+        "THD+MAX K takes Max_seqlen_k from the caller");
+  check(varlen_uses_caller_max_seqlen(0x010Bu, false) == true,
+        "compact Q takes Max_seqlen_q from the caller");
+
+  // Every shipped mode already did the right thing, via presence; they must
+  // keep doing it now that the predicate is the bits.
+  for (uint32_t wire : {0x0B0Bu, 0x0202u, 0x1313u, 0x150Bu, 0x040Bu}) {
+    check(varlen_uses_caller_max_seqlen(wire, false), "non-dense Q uses caller max");
+    check(varlen_uses_caller_max_seqlen(wire, true), "non-dense K uses caller max");
+  }
+}
+
+// PR #222 review: the shim validated only the Q-derived sequence count, so
+// combinations that make the kernel tl.load from null reached the launch.
+void
+test_bits_validation() {
+  // The shipped configurations, with exactly the arrays each mode needs.
+  check(varlen_valid(0x0000u, false, false, false, false), "dense is valid");
+  check(varlen_valid(0x0B0Bu, true, false, true, false), "compact is valid");
+  check(varlen_valid(0x0202u, true, false, true, false), "padded is valid");
+  check(varlen_valid(0x1313u, true, true, true, true), "strided is valid");
+  check(varlen_valid(0x150Bu, true, false, true, true), "seqused on packed is valid");
+  check(varlen_valid(0x040Bu, true, false, true, false), "seqused on BHSD is valid");
+
+  // Missing arrays -- each of these would have been a load from null.
+  check(!varlen_valid(0x0B0Bu, true, false, false, false), "compact without seqinfo_k0");
+  check(!varlen_valid(0x1313u, true, false, true, true), "ARRAY Q without seqinfo_q1");
+  check(!varlen_valid(0x150Bu, true, false, true, false), "seqused without seqinfo_k1");
+
+  // A stray array the mode never reads: dense + seqinfo_q0 used to pass and
+  // replace the dense max length with an unset Max_seqlen_q.
+  check(!varlen_valid(0x0000u, true, false, false, false), "dense with a stray seqinfo_q0");
+
+  // REUSE takes a POSITION out of the length array, which only holds positions
+  // under CUMULATIVE. 0x09 = THD, MAX, REUSE; 0x0D = THD, INDIVIDUAL, REUSE.
+  check(!varlen_valid(0x0009u, true, false, false, false), "REUSE with MAX length");
+  check(!varlen_valid(0x000Du, true, false, false, false), "REUSE with INDIVIDUAL length");
+
+  // Out-of-range fields and reserved bits.
+  check(!varlen_valid(0x0006u, true, false, false, false), "LENGTH == 3 is not a value");
+  check(!varlen_valid(0x0018u, false, true, false, false), "POSITION == 3 is not a value");
+  check(!varlen_valid(0x0020u, false, false, false, false), "reserved bit 5 set");
+  check(!varlen_valid(0x00040000u, false, false, false, false), "reserved bit 18 set");
+
+  // LSE_LAYOUT is not addressing and must not be rejected.
+  check(varlen_valid(0x10000u, false, false, false, false), "dense + TH is valid");
+  check(varlen_valid(0x1150Bu, true, false, true, true), "seqused + TH is valid");
+}
+
 void
 test_seq_count() {
   // N off the Q side. cu_seqlens_q has N+1 entries under CUMULATIVE.
@@ -378,6 +441,8 @@ main() {
   test_legacy_table();
   test_legacy_quirks();
   test_version_translation();
+  test_max_seqlen_source();
+  test_bits_validation();
   test_seq_count();
   test_bwd_grid_extent();
   test_persistent_mask();

@@ -85,6 +85,19 @@ attn_bwd(const attn_bwd_params& in,
   int num_head_k = in.K.size(1);
   int max_seqlen_q = in.Q.size(2);
   int max_seqlen_k = in.K.size(2);
+  // Well-formedness of the bits themselves, before anything is derived from
+  // them: an out-of-range field, REUSE without CUMULATIVE, or a mode whose
+  // array is absent would otherwise reach the kernel and tl.load from null.
+  if (!varlen_valid(varlen_wire,
+                    bool(in.seqinfo_q0), bool(in.seqinfo_q1),
+                    bool(in.seqinfo_k0), bool(in.seqinfo_k1))) {
+    AOTRITON_LOG(LOG_ERROR,
+                 "v3::flash::attn_bwd: varlen_bits=0x%08x is not well-formed for the "
+                 "seqinfo arrays supplied (q0=%d q1=%d k0=%d k1=%d) -- refusing to launch",
+                 varlen_wire, int(bool(in.seqinfo_q0)), int(bool(in.seqinfo_q1)),
+                 int(bool(in.seqinfo_k0)), int(bool(in.seqinfo_k1)));
+    return hipErrorInvalidValue;
+  }
   // N. Unlike the forward pass this never becomes a kernel argument -- the
   // backward kernels read tl.num_programs(2) -- but the three grid calculators
   // above recompute it from the same two inputs, so it is validated here once.
@@ -100,10 +113,13 @@ attn_bwd(const attn_bwd_params& in,
                  varlen_wire, num_seqlens, seqinfo_q0_len, batch, nseq_independent);
     return hipErrorInvalidValue;
   }
-  if (in.seqinfo_q0) {
+  // Keyed on the BITS, not on tensor presence: a THD side with LENGTH == MAX
+  // supplies no seqinfo_?0, and trusting the tensor extent there yields the
+  // total packed token count instead of the per-sequence maximum.
+  if (varlen_uses_caller_max_seqlen(varlen_wire, false)) {
     max_seqlen_q = in.Max_seqlen_q;
   }
-  if (in.seqinfo_k0) {
+  if (varlen_uses_caller_max_seqlen(varlen_wire, true)) {
     max_seqlen_k = in.Max_seqlen_k;
   }
   const auto& compiled_head_dims = BwdKernelDkDvMetadata::get_BLOCK_DMODEL_choices();

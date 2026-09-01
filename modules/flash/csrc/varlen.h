@@ -158,6 +158,71 @@ varlen_addressing(uint32_t wire) {
   return wire & 0xFFFFu;
 }
 
+// One side's byte. `k_side` picks K's, which is Q's shifted by K_SIDE.
+constexpr uint32_t
+varlen_side(uint32_t wire, bool k_side) {
+  return (wire >> (k_side ? VarlenShift::K_SIDE : 0u)) & 0xFFu;
+}
+
+// Whether the shim must take Max_seqlen from the CALLER rather than from the
+// tensor's own extent.
+//
+// Tensor presence is the wrong predicate and was the bug this replaced: a THD
+// side with LENGTH == MAX carries no length array, so keying off seqinfo_?0
+// left max_seqlen at K.size(2) -- the total packed token count, not the
+// per-sequence maximum -- and decode_addressing then read seqlen = that total
+// and row_off = z * that total, i.e. out of bounds. It also let dense bits with
+// a stray seqinfo_?0 replace a correct tensor extent with an unset zero.
+//
+// Only a fully dense side (all three axes at their zero value) may trust the
+// tensor: there BHSD + MAX means the extent IS the per-sequence length.
+constexpr bool
+varlen_uses_caller_max_seqlen(uint32_t wire, bool k_side) {
+  return varlen_side(wire, k_side) != 0u;
+}
+
+// Cheap well-formedness check on the bits and the arrays they claim to need.
+// No device reads, so it runs on every launch -- unlike the prefix-sum and
+// non-overlap preconditions, which would cost a sync and stay documented only.
+//
+// Catches the combinations that would otherwise reach the kernel and fault or
+// silently misaddress: an out-of-range field, REUSE without CUMULATIVE (only
+// CUMULATIVE makes seqinfo_?0 hold positions as well as lengths), and a mode
+// whose array is absent -- the kernel would tl.load from null.
+constexpr bool
+varlen_side_valid(uint32_t side, bool has_info0, bool has_info1) {
+  const uint32_t length = (side >> VarlenShift::LENGTH) & 3u;
+  const uint32_t position = (side >> VarlenShift::POSITION) & 3u;
+  if (length > VarlenLength::INDIVIDUAL || position > VarlenPosition::ARRAY) {
+    return false;                                   // 3 is not a value
+  }
+  if (side & 0xE0u) {
+    return false;                                   // reserved bits 7:5
+  }
+  if (position == VarlenPosition::REUSE && length != VarlenLength::CUMULATIVE) {
+    return false;                                   // seqinfo_?0 holds no position
+  }
+  if (length != VarlenLength::MAX && !has_info0) {
+    return false;                                   // length source missing
+  }
+  if (position == VarlenPosition::ARRAY && !has_info1) {
+    return false;                                   // position source missing
+  }
+  if (length == VarlenLength::MAX && has_info0) {
+    return false;                                   // array supplied but unread
+  }
+  return true;
+}
+
+constexpr bool
+varlen_valid(uint32_t wire, bool has_q0, bool has_q1, bool has_k0, bool has_k1) {
+  if (wire & 0xFFFC0000u) {
+    return false;                                   // reserved bits 31:18
+  }
+  return varlen_side_valid(varlen_side(wire, false), has_q0, has_q1)
+      && varlen_side_valid(varlen_side(wire, true), has_k0, has_k1);
+}
+
 // N, the sequence count, read off the Q side of the wire word.
 //
 // Returns a NEGATIVE value when the bits do not determine it: STACKED with
