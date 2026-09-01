@@ -5,8 +5,12 @@
 @ati.metro_kernel transpiler (lower_plan) is structurally equal to the
 hand-written MetroBwdKernel (agent-plans/ati_aux-kernel-xref_exec0.md Step 12).
 
-The bwd metro is Cond(preprocess) + dk_dv + dq; the condition
-`params.num_seqlens > 0` lowers to ('num_seqlens', '> 0')."""
+The bwd metro is three unconditional Calls: preprocess + dk_dv + dq. It used to
+open with Cond('num_seqlens', '> 0') selecting bwd_preprocess_varlen; under
+varlen_bits the two preprocess kernels are one kernel with varlen_bits == 0, so
+the conditional and the kernel it selected are both gone. The ConditionalKernel
+path is still covered -- metro_fwd carries one (test_metro_fwd_build.py), and
+test_metro_transpile.py keeps a synthetic conditional metro of its own."""
 
 import sys
 from pathlib import Path
@@ -28,9 +32,28 @@ class _K:
         return []
 
 
+def _load_real_flash_aot():
+    """Import modules/flash/aot BY PATH, under a name that cannot be shadowed.
+
+    A plain `import aot` is NOT safe here. test_port_bwd_dkdv.py puts
+    python/test/fakefamily/flash at the FRONT of sys.path at collection time and
+    imports `aot` from there, so by the time this test runs sys.modules['aot'] is
+    the FAKE family -- and this test then asserts against the fake while claiming
+    to check the real one. That went unnoticed for as long as the two metros were
+    structurally identical, which is exactly until the real one changed.
+    """
+    import importlib.util
+    path = REPO / 'modules' / 'flash' / 'aot' / '__init__.py'
+    spec = importlib.util.spec_from_file_location(
+            'flash_aot_real', path, submodule_search_locations=[str(path.parent)])
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules['flash_aot_real'] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def _load_metro_bwd_plan():
-    import aot
-    return aot.metro_bwd.__ati_node__
+    return _load_real_flash_aot().metro_bwd.__ati_node__
 
 
 def _structure(metro):
@@ -46,7 +69,7 @@ def _structure(metro):
 
 
 def test_transpiled_bwd_metro_matches_handwritten():
-    subs = {n: _K(n) for n in ('bwd_preprocess', 'bwd_preprocess_varlen',
+    subs = {n: _K(n) for n in ('bwd_preprocess',
                                'bwd_kernel_dk_dv', 'bwd_kernel_dq')}
 
     def factory(steps):
@@ -55,15 +78,14 @@ def test_transpiled_bwd_metro_matches_handwritten():
     transpiled = lower_plan(_load_metro_bwd_plan(), subs, factory, ConditionalKernel)
 
     handwritten = factory([
-        ConditionalKernel('num_seqlens', '> 0',
-                          subs['bwd_preprocess_varlen'], subs['bwd_preprocess']),
+        subs['bwd_preprocess'],
         subs['bwd_kernel_dk_dv'],
         subs['bwd_kernel_dq'],
     ])
 
     assert _structure(transpiled) == _structure(handwritten)
     assert _structure(transpiled) == [
-        ('cond', 'num_seqlens', '> 0', 'bwd_preprocess_varlen', 'bwd_preprocess'),
+        ('kernel', 'bwd_preprocess'),
         ('kernel', 'bwd_kernel_dk_dv'),
         ('kernel', 'bwd_kernel_dq'),
     ]

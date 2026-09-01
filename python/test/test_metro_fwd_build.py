@@ -31,8 +31,16 @@ class _K:
 
 
 def _load_metro_fwd_plan():
-    import aot
-    return aot.metro_fwd.__ati_node__
+    # By path, under an unshadowable name -- see test_metro_bwd_build.py for why
+    # a plain `import aot` silently picks up python/test/fakefamily instead.
+    import importlib.util
+    path = REPO / 'modules' / 'flash' / 'aot' / '__init__.py'
+    spec = importlib.util.spec_from_file_location(
+            'flash_aot_real', path, submodule_search_locations=[str(path.parent)])
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules['flash_aot_real'] = mod
+    spec.loader.exec_module(mod)
+    return mod.metro_fwd.__ati_node__
 
 
 def _structure(metro):
