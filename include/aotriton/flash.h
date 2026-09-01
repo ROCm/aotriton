@@ -93,25 +93,17 @@ struct AOTRITON_API WindowValue {
 // ---------------------------------------------------------------------------
 // varlen_bits: the layout descriptor the GPU kernels decode.
 //
-// Variable-length attention is not one feature but a product of three
-// independent, PER-SIDE choices (A: is the token axis stacked, B: how a
-// sequence's length is given, C: where the sequence starts). The retired
-// `VarlenType` enum sampled four points of that space and could not spell the
-// rest -- `seqused_k` paired with cumulative offsets, or packed queries against
-// a dense KV cache, both of which real callers ship.
+// Variable-length attention is now implemented as a product of three
+// independent, PER-SIDE choices:
 //
-// The public spelling is a bit-field struct rather than an opaque integer: a
-// caller writes `v.q_length = VarlenLength::CUMULATIVE` and can see what it
-// asked for, where `0x0B0B` in a debugger cannot say that.
+// A) Is the token axis stacked;
+// B) how a sequence's length is given;
+// C) where the sequence starts
 //
-// The word the kernel decodes has a FIXED bit allocation; the host compiler's
-// bit-field allocation is implementation-defined. The two are therefore never
-// equated by reinterpretation: AOTriton builds the wire word from these fields
-// with explicit shifts, so it comes out identical on every platform because
-// nothing is reinterpreted. That conversion is internal -- a caller fills the
-// struct in and never sees the word. It is also why there is no
-// <bit>/std::bit_cast here: this header includes no standard library of its
-// own, so a consumer built against a different C++ runtime can still use it.
+// The public uses a bit-field struct rather than an opaque integer for ease of use.
+// Note even if the the host compiler's bit-field allocation is
+// implementation-defined, for a given compiler and given processor, the
+// allocation is determined and thus will not break the ABI.
 //
 // Struct-of-constants rather than `enum class`, for the reason recorded above
 // this block: an enum class does not convert to its underlying type without a
@@ -120,11 +112,7 @@ struct AOTRITON_API WindowValue {
 // A. Is the token axis stacked?
 struct AOTRITON_API VarlenStacked {
   static constexpr uint32_t BHSD = 0;   // rank-4, sequence selected by batch index
-  // Every sequence packed along one token axis, selected by a row offset rather
-  // than by a batch index. The tensor is still rank 4 -- leave its batch size at
-  // 1, since the batch axis no longer distinguishes sequences and the kernel
-  // addresses batch slice 0 unconditionally under this mode.
-  static constexpr uint32_t THD  = 1;
+  static constexpr uint32_t THD  = 1;   // Still rank-4, 1THD shape
 };
 
 // B. How is the length of sequence z given?  (info_0 is seqinfo_q0/seqinfo_k0)
@@ -135,8 +123,7 @@ struct AOTRITON_API VarlenLength {
 };
 
 // C. Where does sequence z start along the token axis?  (info_1 is
-// seqinfo_q1/seqinfo_k1; REUSE needs LENGTH == CUMULATIVE, since only then does
-// info_0 hold positions as well as lengths, and it passes no info_1 at all.)
+// seqinfo_q1/seqinfo_k1;
 struct AOTRITON_API VarlenPosition {
   static constexpr uint32_t IMPLIED = 0;  // 0 if BHSD, else z * Max_seqlen
   static constexpr uint32_t REUSE   = 1;  // re-use info_0[z], already loaded
@@ -144,8 +131,7 @@ struct AOTRITON_API VarlenPosition {
 };
 
 // LSE/Delta memory arrangement. HT is AOTriton's and the default; TH is what
-// Transformer Engine requires. Two bits, not one, so that a padded or blocked
-// arrangement has somewhere to go without another ABI change.
+// Transformer Engine requires. Two bits, not one for possible extension.
 struct AOTRITON_API VarlenLseLayout {
   static constexpr uint32_t HT = 0;   // (H, T), offset (b*H + h)*S + s
   static constexpr uint32_t TH = 1;   // (T, H), offset (b*S + s)*H + h
@@ -160,13 +146,13 @@ struct AOTRITON_API VarlenBits {
   // Q and K decode independently, so mixed addressing modes are expressible.
   // Only the seqused_k pairing is exercised through this API; the rest of the
   // combination space is expected to work but untested.
-  uint32_t k_stacked  : 1;   // K side, bits 15:8 -- the same byte layout, so
-  uint32_t k_length   : 2;   // the kernel has ONE decoder called twice
+  uint32_t k_stacked  : 1;   // K side, bits 15:8 -- the same byte layout
+  uint32_t k_length   : 2;
   uint32_t k_position : 2;
   uint32_t k_reserved : 3;
   uint32_t lse_layout : 2;   // bits 17:16
   uint32_t reserved18 : 6;   // bits 23:18
-  uint32_t reserved24 : 8;   // bits 31:24, reserved for paged KV
+  uint32_t reserved24 : 8;   // bits 31:24
 };
 
 // Occupies exactly the space an int32_t would, so appending it to a params
@@ -187,29 +173,10 @@ struct AOTRITON_API attn_fwd_params {
   // int32_t  Num_head_q;       // Inferred from Q.size()
   // int32_t  Num_head_k;       // Inferred from Q.size()
   // int32_t  Num_seqlens;      // Inferred from seqinfo_q0 and varlen_bits
-  // Named by ROLE, matching the kernels. seqinfo_?0 is the LENGTH source, read
-  // at [z] and additionally at [z+1] under CUMULATIVE; seqinfo_?1 is the
-  // POSITION source, read at [z] and only under POSITION == ARRAY. varlen_bits
-  // says which is read and how, so either may be a null tensor when its side's
-  // mode needs no array -- classical packed varlen passes neither ?1.
-  //
-  // The roles are fixed and never swapped, which is what lets the two come from
-  // DIFFERENT tensors: torch's seqused_k pairs an INDIVIDUAL length array in
-  // seqinfo_k0 with a CUMULATIVE position array in seqinfo_k1.
-  //
-  // These were cu_seqlens_q/k and seq_strides_q/k up to kVersion 3/6. Renaming
-  // in place is safe precisely because compatibility is a per-version
-  // translation (csrc/params_abi_compat.h) and not a layout promise; the old
-  // names survive in versioned_attn_*_params<N>, which is now the only place
-  // they describe anything.
   T1       seqinfo_q0;
   T1       seqinfo_k0;
-  // Read when that side's LENGTH is MAX, or its POSITION is IMPLIED under THD.
-  // The host needs Max_seqlen_q regardless, to size the grid.
   int32_t  Max_seqlen_q = 0;
   int32_t  Max_seqlen_k = 0;
-  // Transformer Engine's cu_seqlens_padded (nvte_fused_attn_fwd_qkvpacked) maps
-  // onto seqinfo_?1, as does torch's cu_seq_k when seqused_k supplies lengths.
   T1       seqinfo_q1;
   T1       seqinfo_k1;
   // int32_t  Head_dim;
@@ -222,24 +189,9 @@ struct AOTRITON_API attn_fwd_params {
   T4       encoded_softmax;
   T0       persistent_atomic_counter;
   int8_t   causal_type;
-  // NOTE: `int8_t varlen_type` used to sit here, up to kVersion 3 / 6. It has
-  // been replaced by varlen_bits below, and removing it moved NOTHING: it lived
-  // inside the padding that precedes the 4-aligned window_left, so every later
-  // field keeps its offset and sizeof is unchanged. That is deliberate, and it
-  // is what lets a binary compiled against the older header keep running when
-  // this library is dropped in beneath it -- the byte it wrote is still there,
-  // and the shim reads it when params_version says the caller predates
-  // varlen_bits. Do not fill this padding with a new field.
+  // int8_t varlen_type;        // Superseded by varlen_bits
   int32_t  window_left;
   int32_t  window_right;
-  // APPEND ONLY, from kVersion 4 onwards. Every field added here goes at the
-  // END of the struct, so the previous version's layout stays a strict prefix
-  // of this one -- that is what lets the shim upgrade an old caller's params
-  // with a version test instead of a shadow struct per version.
-  //
-  // kVersion 4. The whole varlen space, superseding the VarlenType enum. A
-  // caller below kVersion 4 does not have this field at all, so the shim must
-  // not read it there. Zero-initialized is the dense case.
   VarlenBits varlen_bits = {};
 
   static constexpr int32_t kVersion = 4;
@@ -269,7 +221,6 @@ struct AOTRITON_API attn_bwd_params {
   // int32_t   Num_head_q;          // Inferred from Q.size()
   // int32_t   Num_head_k;          // Inferred from Q.size()
   // int32_t   Num_seqlens;         // Inferred from seqinfo_q0 and varlen_bits
-  // Roles and read conditions exactly as attn_fwd_params documents them.
   T1        seqinfo_q0;
   T1        seqinfo_k0;
   int32_t   Max_seqlen_q = 0;
@@ -282,12 +233,10 @@ struct AOTRITON_API attn_bwd_params {
   T0        philox_offset1;
   uint64_t  philox_offset2;
   int8_t    causal_type;
-  // See attn_fwd_params: the removed `varlen_type` byte stays padding on
-  // purpose, so this struct is ABI-compatible with kVersion 6.
+  // int8_t varlen_type;            // Superseded by varlen_bits
   int32_t   window_left;
   int32_t   window_right;
-  mutable LT4       DQ_ACC;          // fp32 accumulator of dq
-  // APPEND ONLY, from kVersion 7 onwards -- see attn_fwd_params above for why.
+  mutable LT4       DQ_ACC;         // fp32 accumulator of dq
   VarlenBits varlen_bits = {};
 
   static constexpr int32_t kVersion = 7;
