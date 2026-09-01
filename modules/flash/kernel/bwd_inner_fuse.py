@@ -42,6 +42,7 @@ def bwd_inner_dk_dv_fuse(
     o_ptrs0, o_ptrs1, o_ptrs2,
     o_stride,
     l_ptrs,
+    lse_pitch,
     seqlen_q, seqlen_k, hdim_qk, hdim_vo,
     # Sub-problem range, (lo, hi) specify the range for seqlen_q
     start_k, nblocks_1, nblocks_2, Block_range_1, Block_range_2,
@@ -186,10 +187,10 @@ def bwd_inner_dk_dv_fuse(
                                BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
         # Check for OOB accesses on D and LSE
         if FULL_BLOCKS:
-            l_i = tl.load(l_ptrs + offs_q_curr)
+            l_i = tl.load(l_ptrs + offs_q_curr * lse_pitch)
         else:
             d_lse_ptrs_mask = offs_q_curr < seqlen_q
-            l_i = tl.load(l_ptrs + offs_q_curr,
+            l_i = tl.load(l_ptrs + offs_q_curr * lse_pitch,
                           mask=d_lse_ptrs_mask,
                           other=0.0)
         RCP_LN2: tl.constexpr = 1.4426950408889634
