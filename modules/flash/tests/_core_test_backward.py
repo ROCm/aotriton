@@ -330,8 +330,13 @@ def core_test_op_bwd(request, args, device : int | None = None):
             exit_pytest()
         raise e
 
-@pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16, torch.float32])
-def test_logsumexp_scaling(dtype):
+# Named core_* rather than test_*, matching core_test_large_bf16_nan_values below.
+# A test_*-prefixed function in this shared module is collectable from every module
+# that imports it, and pytest reports such an item's location as the file it is
+# DEFINED in (Item.location[0] resolves the function's own code object), not the file
+# it was collected from -- so conftest.py's _FILE_ORDER never matched it and it sorted
+# behind every varlen test instead of running with the rest of test_backward.py.
+def core_test_logsumexp_scaling(dtype):
     REF_VALUE = 2.79018449783325195
     device = 'cuda'
     q = torch.eye(16, device=device, dtype=dtype).reshape((1,1,16,16))
