@@ -11,6 +11,10 @@
 #include <pybind11/stl.h>
 #include <pybind11/gil.h>
 #include "submodule_registry.h"
+// varlen_to_wire is internal: a caller fills a VarlenBits and never sees the
+// word. Bound anyway so the round-trip gate can assert the encoding from
+// Python, which is where the bit-field bindings themselves are exercised.
+#include "../csrc/varlen.h"
 
 namespace py = pybind11;
 #if AOTRITON_ENABLE_SUFFIX
@@ -22,7 +26,61 @@ namespace pyaotriton::v3 {
       using aotriton::v3::flash::attn_fwd_params;
       using aotriton::v3::flash::attn_bwd_params;
       using aotriton::v3::flash::attn_options;
+      using aotriton::v3::flash::VarlenBits;
       void setup_module(py::module_& m) {
+        // pybind11 CANNOT bind a bit-field through def_readwrite: that needs
+        // &Struct::member, and a pointer-to-member to a bit-field is ill-formed
+        // -- you cannot take the address of one in C++ at all. So every field of
+        // VarlenBits goes through def_property with lambdas that read and write
+        // THROUGH the bit-field rather than around it. A BITF macro beside the
+        // RW macro below, for the same reason RW exists: the field list should
+        // read as a list.
+        py::class_<VarlenBits>(m, "VarlenBits")
+          .def(py::init<>())
+#define BITF(name) def_property(#name,                                       \
+            [](const VarlenBits& v) { return uint32_t(v.name); },            \
+            [](VarlenBits& v, uint32_t x) { v.name = x; })
+          .BITF(q_stacked)
+          .BITF(q_length)
+          .BITF(q_position)
+          .BITF(k_stacked)
+          .BITF(k_length)
+          .BITF(k_position)
+          .BITF(lse_layout)
+#undef BITF
+        ;
+        // The axis-value constants, so Python can spell a configuration rather
+        // than assemble one. py::enum_ (KernelSlot, below) is the local
+        // precedent but does not apply: these are structs of static constexpr,
+        // deliberately not enums (see the note in flash.h), so each becomes a
+        // namespace-like class carrying read-only statics.
+        {
+          using namespace aotriton::v3::flash;
+          py::class_<VarlenStacked>(m, "VarlenStacked")
+            .def_readonly_static("BHSD", &VarlenStacked::BHSD)
+            .def_readonly_static("THD", &VarlenStacked::THD);
+          py::class_<VarlenLength>(m, "VarlenLength")
+            .def_readonly_static("MAX", &VarlenLength::MAX)
+            .def_readonly_static("CUMULATIVE", &VarlenLength::CUMULATIVE)
+            .def_readonly_static("INDIVIDUAL", &VarlenLength::INDIVIDUAL);
+          py::class_<VarlenPosition>(m, "VarlenPosition")
+            .def_readonly_static("IMPLIED", &VarlenPosition::IMPLIED)
+            .def_readonly_static("REUSE", &VarlenPosition::REUSE)
+            .def_readonly_static("ARRAY", &VarlenPosition::ARRAY);
+          py::class_<VarlenLseLayout>(m, "VarlenLseLayout")
+            .def_readonly_static("HT", &VarlenLseLayout::HT)
+            .def_readonly_static("TH", &VarlenLseLayout::TH);
+          // So a test can assert the wire value from Python as well as from the
+          // static_assert table in csrc/varlen.h. This is the only place the
+          // pybind layer's correctness is observable: a bit-field bound with the
+          // wrong WIDTH still reads back whatever was written, as long as it
+          // fits.
+          m.def("varlen_to_wire",
+                [](const VarlenBits& v) {
+                  return aotriton::v3::flash::internal::varlen_to_wire(v);
+                },
+                py::arg("varlen_bits"));
+        }
         auto attn_options_class = py::class_<attn_options>(m, "attn_options")
           .def(py::init<>())
           .def_readwrite("force_backend_index", &attn_options::force_backend_index)
@@ -37,7 +95,6 @@ namespace pyaotriton::v3 {
           .value("attn_fwd", attn_options::KernelSlot::attn_fwd)
           .value("debug_simulate_encoded_softmax", attn_options::KernelSlot::debug_simulate_encoded_softmax)
           .value("bwd_preprocess", attn_options::KernelSlot::bwd_preprocess)
-          .value("bwd_preprocess_varlen", attn_options::KernelSlot::bwd_preprocess_varlen)
           .value("bwd_kernel_dk_dv", attn_options::KernelSlot::bwd_kernel_dk_dv)
           .value("bwd_kernel_dq", attn_options::KernelSlot::bwd_kernel_dq)
           .value("bwd_kernel_fuse", attn_options::KernelSlot::bwd_kernel_fuse)
@@ -55,12 +112,12 @@ namespace pyaotriton::v3 {
           .RW(Sm_scale)
           .RW(L)
           .RW(Out)
-          .RW(cu_seqlens_q)
-          .RW(cu_seqlens_k)
+          .RW(seqinfo_q0)
+          .RW(seqinfo_k0)
           .RW(Max_seqlen_q)
           .RW(Max_seqlen_k)
-          .RW(seq_strides_q)
-          .RW(seq_strides_k)
+          .RW(seqinfo_q1)
+          .RW(seqinfo_k1)
           .RW(dropout_p)
           .RW(philox_seed_ptr)
           .RW(philox_offset1)
@@ -70,9 +127,15 @@ namespace pyaotriton::v3 {
           .RW(encoded_softmax)
           .RW(persistent_atomic_counter)
           .RW(causal_type)
-          .RW(varlen_type)
           .RW(window_left)
           .RW(window_right)
+          // An ordinary member of class type, not a bit-field, so RW compiles.
+          // def_readwrite on a registered class type returns the member by
+          // reference (return_value_policy::reference_internal), so
+          // `params.varlen_bits.q_stacked = 1` mutates the parent in place --
+          // had it returned a copy, every write from Python would silently
+          // vanish and a varlen request would run as dense.
+          .RW(varlen_bits)
 #undef RW
           .def_readonly_static("kVersion", &attn_fwd_params::kVersion)
         ;
@@ -92,21 +155,21 @@ namespace pyaotriton::v3 {
           .RW(DB)
           .RW(L)
           .RW(D)
-          .RW(cu_seqlens_q)
-          .RW(cu_seqlens_k)
+          .RW(seqinfo_q0)
+          .RW(seqinfo_k0)
           .RW(Max_seqlen_q)
           .RW(Max_seqlen_k)
-          .RW(seq_strides_q)
-          .RW(seq_strides_k)
+          .RW(seqinfo_q1)
+          .RW(seqinfo_k1)
           .RW(dropout_p)
           .RW(philox_seed_ptr)
           .RW(philox_offset1)
           .RW(philox_offset2)
           .RW(causal_type)
-          .RW(varlen_type)
           .RW(window_left)
           .RW(window_right)
           .RW(DQ_ACC)
+          .RW(varlen_bits)   // see attn_fwd_params above
 #undef RW
           .def_readonly_static("kVersion", &attn_bwd_params::kVersion)
         ;
