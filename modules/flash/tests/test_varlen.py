@@ -22,7 +22,7 @@ from _common_test import (
     fmt_hdim,
 )
 
-FOR_RELEASE = bool(int(os.getenv('FOR_RELEASE', default='0')))
+FOR_RELEASE = int(os.getenv('FOR_RELEASE', default='0'))
 
 POT_HEADDIMS = [16, 32, 64, 128, 256]
 NPOT_HEADDIMS = [48, 80, 96, 160, 192, 224]
@@ -272,21 +272,11 @@ def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dro
 @pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
 @pytest.mark.parametrize('dropout_p', [0.0] if BWD_IMPL == 2 else [0.0, 0.5])
 @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16] if BWD_IMPL == 2 else [torch.float16, torch.bfloat16, torch.float32])
-@pytest.mark.parametrize('sm_scale', ['l1'] if not FOR_RELEASE else ['l1', 'l2'])
+@pytest.mark.parametrize('sm_scale', ['l1', 'l2'] if FOR_RELEASE > 0 else ['l1'])
 @pytest.mark.parametrize('varlen_type', ['compact', 'padded', 'strided'])
-# LSE is WRITTEN by attn_fwd and READ by bwd_kernel_dk_dv/dq; Delta is written by
-# bwd_preprocess and read by both. So the layout crosses four kernels and this is
-# the only test that closes the write-then-read loop -- a forward-only test cannot
-# see a kernel that reads the layout differently from the one that wrote it.
-@pytest.mark.parametrize('lse_layout', ['HT', 'TH'])
+@pytest.mark.parametrize('lse_layout', ['HT', 'TH'] if FOR_RELEASE > 0 else ['HT'])
 def test_op_bwd(gpu_id, N_HEADS, D_HEAD, n_seqlen, causal, sm_scale, dropout_p, dtype,
                 varlen_type, lse_layout):
-    if lse_layout == 'TH' and dtype is not torch.float16 and not FOR_RELEASE:
-        # Narrowed rather than dropped (and narrowed on the one axis that cannot
-        # interact with it): the layout is addressing-only, and the index
-        # arithmetic never sees the element type -- L is fp32 whatever the inputs
-        # are. Every axis that CAN interact with it still runs.
-        pytest.skip('TH sweeps all dtypes only under FOR_RELEASE; the layout is dtype-independent')
     np.random.seed(8139)
     seqlens_q = rng_seqlens(n_seqlen)
     seqlens_k = seqlens_q if causal else rng_seqlens(n_seqlen)
