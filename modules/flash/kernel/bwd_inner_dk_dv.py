@@ -39,6 +39,7 @@ def bwd_inner_dk_dv(
     do_stride,
     l_ptrs,
     D_ptrs,
+    lse_pitch,
     seqlen_q, seqlen_k, hdim_qk, hdim_vo,
     # Sub-problem range, (lo, hi) specify the range for seqlen_q
     # start_k, lo, hi, overflow_size,
@@ -172,14 +173,14 @@ def bwd_inner_dk_dv(
                                BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
         # Check for OOB accesses on D and LSE
         if FULL_BLOCKS:
-            Di = tl.load(D_ptrs + offs_q_curr)
-            l_i = tl.load(l_ptrs + offs_q_curr)
+            Di = tl.load(D_ptrs + offs_q_curr * lse_pitch)
+            l_i = tl.load(l_ptrs + offs_q_curr * lse_pitch)
         else:
             d_lse_ptrs_mask = offs_q_curr < seqlen_q
-            Di = tl.load(D_ptrs + offs_q_curr,
+            Di = tl.load(D_ptrs + offs_q_curr * lse_pitch,
                          mask=d_lse_ptrs_mask,
                          other=0.0)
-            l_i = tl.load(l_ptrs + offs_q_curr,
+            l_i = tl.load(l_ptrs + offs_q_curr * lse_pitch,
                           mask=d_lse_ptrs_mask,
                           other=0.0)
         RCP_LN2: tl.constexpr = 1.4426950408889634
