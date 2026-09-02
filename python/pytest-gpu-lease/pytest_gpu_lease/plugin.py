@@ -28,6 +28,7 @@ import os
 import signal
 import struct
 import sys
+import sysconfig
 import time
 from pathlib import Path
 from types import MappingProxyType
@@ -36,6 +37,31 @@ import pytest
 
 STRUCT_FLOCK = 'hhqqi'
 PAGE_SIZE = 4096
+
+# `struct flock` as the kernel wants it, valid exactly when off_t is 64 bits:
+# two shorts, two 64-bit offsets, an int pid. That covers LP64 and any stock
+# 32-bit CPython alike -- configure runs AC_SYS_LARGEFILE, so pyconfig.h
+# carries _FILE_OFFSET_BITS=64, off_t widens to 8 bytes, and glibc redirects
+# F_SETLK/F_GETLK to their 64-bit variants in the same breath, keeping the
+# constant and the layout in agreement. (`q` rather than `l` for that reason:
+# the two are identical on LP64, but `l` is 4 bytes on 32-bit and would
+# describe the wrong struct there.)
+#
+# The single build this is wrong for is a 32-bit CPython with largefile
+# support disabled, where off_t is a 4-byte long and the kernel wants a
+# 16-byte struct. Checked here, at import, rather than on any result we get
+# back: passing a wrongly-sized buffer to fcntl() is itself the damage -- the
+# kernel would read F_SETLK's range from the wrong bytes and lock something
+# arbitrary, with nothing raised anywhere -- so the check has to happen before
+# the first call, not after it. Assert rather than handle: nobody is expected
+# to run that build, and being told is the entire goal.
+_SIZEOF_OFF_T = sysconfig.get_config_var('SIZEOF_OFF_T')
+assert _SIZEOF_OFF_T == 8, (
+    f'pytest_gpu_lease requires a 64-bit off_t; this interpreter reports '
+    f'SIZEOF_OFF_T={_SIZEOF_OFF_T!r}, so STRUCT_FLOCK={STRUCT_FLOCK!r} '
+    f'({struct.calcsize(STRUCT_FLOCK)} bytes) does not describe this '
+    f"platform's struct flock")
+
 _RETRY_INTERVAL = 0.05
 
 # How long a single test may legitimately run before the watchdog (see
