@@ -366,6 +366,56 @@ test_bits_validation() {
   check(!varlen_valid(0x2150Bu, true, false, true, true), "lse_layout == 2 on a valid mode");
 }
 
+// PR #222 review: presence was checked, extent was not, so an undersized array
+// or a BHSD tensor with fewer batch slots than N was loaded past its end.
+void
+test_extent_validation() {
+  const int32_t N = 7;
+  // compact 0x0B0B: both sides CUMULATIVE, so both need N+1.
+  check(varlen_extents_valid(0x0B0Bu, N, N + 1, 0, N + 1, 0, 1, 1),
+        "compact with exactly N+1");
+  check(!varlen_extents_valid(0x0B0Bu, N, N, 0, N + 1, 0, 1, 1),
+        "compact with a short seqinfo_q0");
+  check(!varlen_extents_valid(0x0B0Bu, N, N + 1, 0, N, 0, 1, 1),
+        "compact with a short seqinfo_k0");
+
+  // LOWER bound, not equality: a bigger buffer than the mode needs is fine.
+  check(varlen_extents_valid(0x0B0Bu, N, N + 64, 0, N + 64, 0, 1, 1),
+        "oversized arrays are accepted");
+
+  // strided 0x1313: ARRAY on both. Stacked Q also reads [N], so it needs N+1
+  // where K needs only N.
+  check(varlen_extents_valid(0x1313u, N, N + 1, N + 1, N + 1, N, 1, 1),
+        "strided at its minimum extents");
+  check(!varlen_extents_valid(0x1313u, N, N + 1, N, N + 1, N, 1, 1),
+        "strided Q position array missing its [N] slot");
+
+  // seqused 0x150B: K length INDIVIDUAL needs N, K position ARRAY needs N.
+  check(varlen_extents_valid(0x150Bu, N, N + 1, 0, N, N, 1, 1),
+        "seqused at its minimum extents");
+  check(!varlen_extents_valid(0x150Bu, N, N + 1, 0, N - 1, N, 1, 1),
+        "seqused with a short seqused_k");
+
+  // The reported case: mixed 0x000B derives N from a packed Q, so a dense K
+  // with fewer batch slots than N is indexed with a z it never had.
+  check(varlen_extents_valid(0x000Bu, N, N + 1, 0, 0, 0, 1, N),
+        "mixed with a K batch of N");
+  check(!varlen_extents_valid(0x000Bu, N, N + 1, 0, 0, 0, 1, N - 1),
+        "mixed with a K batch shorter than N");
+  check(varlen_extents_valid(0x000Bu, N, N + 1, 0, 0, 0, 1, N + 3),
+        "mixed with a K batch larger than N");
+
+  // padded 0x0202: BHSD both sides, so both tensors need N slots.
+  check(varlen_extents_valid(0x0202u, N, N + 1, 0, N + 1, 0, N, N),
+        "padded with N batch slots");
+  check(!varlen_extents_valid(0x0202u, N, N + 1, 0, N + 1, 0, N - 1, N),
+        "padded with a short Q batch");
+
+  // dense reads no array at all and is indexed by batch on both sides.
+  check(varlen_extents_valid(0x0000u, N, 0, 0, 0, 0, N, N), "dense with N batch slots");
+  check(!varlen_extents_valid(0x0000u, N, 0, 0, 0, 0, N, N - 1), "dense with a short K batch");
+}
+
 void
 test_seq_count() {
   // N off the Q side. cu_seqlens_q has N+1 entries under CUMULATIVE.
@@ -448,6 +498,7 @@ main() {
   test_version_translation();
   test_max_seqlen_source();
   test_bits_validation();
+  test_extent_validation();
   test_seq_count();
   test_bwd_grid_extent();
   test_persistent_mask();

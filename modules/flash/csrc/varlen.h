@@ -228,6 +228,55 @@ varlen_valid(uint32_t wire, bool has_q0, bool has_q1, bool has_k0, bool has_k1) 
       && varlen_side_valid(varlen_side(wire, true), has_k0, has_k1);
 }
 
+// Do the arrays and tensors actually hold N sequences' worth?
+//
+// LOWER BOUNDS, not equality: a caller may legitimately hand over a bigger
+// buffer than it needs -- a KV cache array sized for the worst-case batch, or a
+// view into a larger allocation -- and demanding an exact match would reject
+// those for no reason. Too SHORT is the only error, because that is what the
+// kernel reads past.
+//
+// varlen_side_valid() above checks the bits and that each array is present;
+// this checks that a present array is long enough. Both are cheap: a size(0),
+// no device read.
+constexpr bool
+varlen_side_extents(uint32_t side, int32_t n,
+                    int32_t info0_len, int32_t info1_len, int32_t batch_extent,
+                    bool q_side) {
+  const uint32_t stacked = (side >> VarlenShift::STACKED) & 1u;
+  const uint32_t length = (side >> VarlenShift::LENGTH) & 3u;
+  const uint32_t position = (side >> VarlenShift::POSITION) & 3u;
+  if (length == VarlenLength::CUMULATIVE && info0_len < n + 1) {
+    return false;                        // read at [z] and [z+1]
+  }
+  if (length == VarlenLength::INDIVIDUAL && info0_len < n) {
+    return false;                        // read at [z]
+  }
+  if (position == VarlenPosition::ARRAY) {
+    // [N] as well as [z] on a stacked Q: lse_token_pitch takes the total token
+    // count out of the position array's last slot. No other side reads it.
+    const int32_t need = (q_side && stacked == VarlenStacked::THD) ? n + 1 : n;
+    if (info1_len < need) {
+      return false;
+    }
+  }
+  if (stacked == VarlenStacked::BHSD && batch_extent < n) {
+    // batch_index = z on a BHSD side, so its tensor needs N slots. N comes off
+    // the Q side alone, which is how mixed 0x000B reached K.size(0) with a z
+    // the K tensor never had.
+    return false;
+  }
+  return true;
+}
+
+constexpr bool
+varlen_extents_valid(uint32_t wire, int32_t n,
+                     int32_t q0_len, int32_t q1_len, int32_t k0_len, int32_t k1_len,
+                     int32_t q_batch, int32_t k_batch) {
+  return varlen_side_extents(varlen_side(wire, false), n, q0_len, q1_len, q_batch, true)
+      && varlen_side_extents(varlen_side(wire, true), n, k0_len, k1_len, k_batch, false);
+}
+
 // N, the sequence count, read off the Q side of the wire word.
 //
 // Returns a NEGATIVE value when the bits do not determine it: STACKED with

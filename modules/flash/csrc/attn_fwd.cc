@@ -123,6 +123,23 @@ attn_fwd(const attn_fwd_params& in,
                  varlen_wire, num_seqlens, seqinfo_q0_len, batch, nseq_independent);
     return hipErrorInvalidValue;
   }
+  // ... and that every array and BHSD tensor actually holds that many. Lower
+  // bounds only: a larger buffer than the mode needs is legitimate.
+  if (!varlen_extents_valid(varlen_wire, num_seqlens,
+                            seqinfo_q0_len, varlen_seqinfo_len(in.seqinfo_q1),
+                            varlen_seqinfo_len(in.seqinfo_k0),
+                            varlen_seqinfo_len(in.seqinfo_k1),
+                            int32_t(in.Q.size(0)), int32_t(in.K.size(0)))) {
+    AOTRITON_LOG(LOG_ERROR,
+                 "v3::flash::attn_fwd: varlen_bits=0x%08x needs %d sequences but the "
+                 "seqinfo arrays/tensors are too short (q0=%d q1=%d k0=%d k1=%d, "
+                 "Q.size(0)=%d K.size(0)=%d) -- refusing to launch",
+                 varlen_wire, num_seqlens, seqinfo_q0_len,
+                 varlen_seqinfo_len(in.seqinfo_q1), varlen_seqinfo_len(in.seqinfo_k0),
+                 varlen_seqinfo_len(in.seqinfo_k1),
+                 int32_t(in.Q.size(0)), int32_t(in.K.size(0)));
+    return hipErrorInvalidValue;
+  }
   // Keyed on the BITS, not on tensor presence: a THD side with LENGTH == MAX
   // supplies no seqinfo_?0, and trusting the tensor extent there yields the
   // total packed token count instead of the per-sequence maximum.
