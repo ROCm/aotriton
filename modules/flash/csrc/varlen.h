@@ -78,7 +78,14 @@ varlen_to_wire(VarlenBits v) {
        | (uint32_t(v.k_stacked)  << (VarlenShift::K_SIDE + VarlenShift::STACKED))
        | (uint32_t(v.k_length)   << (VarlenShift::K_SIDE + VarlenShift::LENGTH))
        | (uint32_t(v.k_position) << (VarlenShift::K_SIDE + VarlenShift::POSITION))
-       | (uint32_t(v.lse_layout) << VarlenShift::LSE_LAYOUT);
+       | (uint32_t(v.lse_layout) << VarlenShift::LSE_LAYOUT)
+       // Carried, not dropped: see varlen_from_wire() on why the pair must be
+       // a total inverse. A well-formed VarlenBits has these zero, and
+       // varlen_valid() is what enforces that.
+       | (uint32_t(v.q_reserved) << 5)
+       | (uint32_t(v.k_reserved) << 13)
+       | (uint32_t(v.reserved18) << 18)
+       | (uint32_t(v.reserved24) << 24);
 }
 
 // The four VarlenType rows, decomposed onto the three axes. This is the whole
@@ -150,18 +157,63 @@ static_assert(varlen_to_wire(varlen_bits_of(VarlenType::PaddedVarlen, true, fals
 static_assert(varlen_to_wire(varlen_bits_of(VarlenType::StridedVarlen, true, true))
               == 0x1313u, "strided varlen must encode as 0x1313");
 
+// The inverse of varlen_to_wire(). Needed because the CONTEXT helpers -- grid
+// calculators -- see only the int32 the generated params struct carries, and
+// everything above them reasons in VarlenBits.
+constexpr VarlenBits
+varlen_from_wire(uint32_t wire) {
+  VarlenBits v{};
+  v.q_stacked  = (wire >> VarlenShift::STACKED) & 1u;
+  v.q_length   = (wire >> VarlenShift::LENGTH) & 3u;
+  v.q_position = (wire >> VarlenShift::POSITION) & 3u;
+  v.k_stacked  = (wire >> (VarlenShift::K_SIDE + VarlenShift::STACKED)) & 1u;
+  v.k_length   = (wire >> (VarlenShift::K_SIDE + VarlenShift::LENGTH)) & 3u;
+  v.k_position = (wire >> (VarlenShift::K_SIDE + VarlenShift::POSITION)) & 3u;
+  v.lse_layout = (wire >> VarlenShift::LSE_LAYOUT) & 3u;
+  // The reserved fields too, so this is a TOTAL inverse rather than one that
+  // only works on well-formed words. Dropping them would launder a malformed
+  // wire into a valid-looking object, and varlen_valid() -- which checks these
+  // fields -- would then have nothing left to catch.
+  v.q_reserved = (wire >> 5) & 7u;
+  v.k_reserved = (wire >> 13) & 7u;
+  v.reserved18 = (wire >> 18) & 0x3Fu;
+  v.reserved24 = (wire >> 24) & 0xFFu;
+  return v;
+}
+
+// One side's three axes, so the predicates below read fields instead of
+// shifting. Q and K decode identically, which is why one view serves both.
+struct VarlenSide {
+  uint32_t stacked;
+  uint32_t length;
+  uint32_t position;
+};
+
+constexpr VarlenSide
+varlen_side(VarlenBits v, bool k_side) {
+  return k_side ? VarlenSide{v.k_stacked, v.k_length, v.k_position}
+                : VarlenSide{v.q_stacked, v.q_length, v.q_position};
+}
+
+static_assert(varlen_to_wire(varlen_from_wire(0x1150Bu)) == 0x1150Bu,
+              "varlen_from_wire must invert varlen_to_wire");
+static_assert(varlen_to_wire(varlen_from_wire(0x1313u)) == 0x1313u,
+              "varlen_from_wire must invert varlen_to_wire");
+static_assert(varlen_to_wire(varlen_from_wire(0xFFFFFFFFu)) == 0xFFFFFFFFu,
+              "the inverse must be total, reserved bits included");
+
 // The addressing bytes, i.e. everything except LSE_LAYOUT. Two configurations
 // with the same addressing describe the same memory traversal and differ only
 // in where the logsumexp rows land.
+//
+// Takes the WIRE, not VarlenBits, and is the one predicate that should: its
+// caller is a grid calculator, which sees only the int32 the generated params
+// struct carries. It also has to agree with the kernel's own
+// `(Varlen_bits & 0xFFFF) != 0` mask, and stating that mask once here is what
+// makes "agree" checkable.
 constexpr uint32_t
 varlen_addressing(uint32_t wire) {
   return wire & 0xFFFFu;
-}
-
-// One side's byte. `k_side` picks K's, which is Q's shifted by K_SIDE.
-constexpr uint32_t
-varlen_side(uint32_t wire, bool k_side) {
-  return (wire >> (k_side ? VarlenShift::K_SIDE : 0u)) & 0xFFu;
 }
 
 // Whether the shim must take Max_seqlen from the CALLER rather than from the
@@ -177,8 +229,11 @@ varlen_side(uint32_t wire, bool k_side) {
 // Only a fully dense side (all three axes at their zero value) may trust the
 // tensor: there BHSD + MAX means the extent IS the per-sequence length.
 constexpr bool
-varlen_uses_caller_max_seqlen(uint32_t wire, bool k_side) {
-  return varlen_side(wire, k_side) != 0u;
+varlen_uses_caller_max_seqlen(VarlenBits v, bool k_side) {
+  const VarlenSide s = varlen_side(v, k_side);
+  return s.stacked != VarlenStacked::BHSD
+      || s.length != VarlenLength::MAX
+      || s.position != VarlenPosition::IMPLIED;
 }
 
 // Cheap well-formedness check on the bits and the arrays they claim to need.
@@ -190,14 +245,11 @@ varlen_uses_caller_max_seqlen(uint32_t wire, bool k_side) {
 // CUMULATIVE makes seqinfo_?0 hold positions as well as lengths), and a mode
 // whose array is absent -- the kernel would tl.load from null.
 constexpr bool
-varlen_side_valid(uint32_t side, bool has_info0, bool has_info1) {
-  const uint32_t length = (side >> VarlenShift::LENGTH) & 3u;
-  const uint32_t position = (side >> VarlenShift::POSITION) & 3u;
+varlen_side_valid(VarlenSide s, bool has_info0, bool has_info1) {
+  const uint32_t length = s.length;
+  const uint32_t position = s.position;
   if (length > VarlenLength::INDIVIDUAL || position > VarlenPosition::ARRAY) {
     return false;                                   // 3 is not a value
-  }
-  if (side & 0xE0u) {
-    return false;                                   // reserved bits 7:5
   }
   if (position == VarlenPosition::REUSE && length != VarlenLength::CUMULATIVE) {
     return false;                                   // seqinfo_?0 holds no position
@@ -215,17 +267,17 @@ varlen_side_valid(uint32_t side, bool has_info0, bool has_info1) {
 }
 
 constexpr bool
-varlen_valid(uint32_t wire, bool has_q0, bool has_q1, bool has_k0, bool has_k1) {
-  if (wire & 0xFFFC0000u) {
-    return false;                                   // reserved bits 31:18
+varlen_valid(VarlenBits v, bool has_q0, bool has_q1, bool has_k0, bool has_k1) {
+  if (v.q_reserved || v.k_reserved || v.reserved18 || v.reserved24) {
+    return false;
   }
   // Two bits for future room, but only HT and TH defined; the kernel branches
   // `layout == 0 ? HT : TH`, so 2 and 3 would become TH silently.
-  if (((wire >> VarlenShift::LSE_LAYOUT) & 3u) > VarlenLseLayout::TH) {
+  if (v.lse_layout > VarlenLseLayout::TH) {
     return false;
   }
-  return varlen_side_valid(varlen_side(wire, false), has_q0, has_q1)
-      && varlen_side_valid(varlen_side(wire, true), has_k0, has_k1);
+  return varlen_side_valid(varlen_side(v, false), has_q0, has_q1)
+      && varlen_side_valid(varlen_side(v, true), has_k0, has_k1);
 }
 
 // Do the arrays and tensors actually hold N sequences' worth?
@@ -240,12 +292,12 @@ varlen_valid(uint32_t wire, bool has_q0, bool has_q1, bool has_k0, bool has_k1) 
 // this checks that a present array is long enough. Both are cheap: a size(0),
 // no device read.
 constexpr bool
-varlen_side_extents(uint32_t side, int32_t n,
+varlen_side_extents(VarlenSide s, int32_t n,
                     int32_t info0_len, int32_t info1_len, int32_t batch_extent,
                     bool q_side) {
-  const uint32_t stacked = (side >> VarlenShift::STACKED) & 1u;
-  const uint32_t length = (side >> VarlenShift::LENGTH) & 3u;
-  const uint32_t position = (side >> VarlenShift::POSITION) & 3u;
+  const uint32_t stacked = s.stacked;
+  const uint32_t length = s.length;
+  const uint32_t position = s.position;
   if (length == VarlenLength::CUMULATIVE && info0_len < n + 1) {
     return false;                        // read at [z] and [z+1]
   }
@@ -270,11 +322,11 @@ varlen_side_extents(uint32_t side, int32_t n,
 }
 
 constexpr bool
-varlen_extents_valid(uint32_t wire, int32_t n,
+varlen_extents_valid(VarlenBits v, int32_t n,
                      int32_t q0_len, int32_t q1_len, int32_t k0_len, int32_t k1_len,
                      int32_t q_batch, int32_t k_batch) {
-  return varlen_side_extents(varlen_side(wire, false), n, q0_len, q1_len, q_batch, true)
-      && varlen_side_extents(varlen_side(wire, true), n, k0_len, k1_len, k_batch, false);
+  return varlen_side_extents(varlen_side(v, false), n, q0_len, q1_len, q_batch, true)
+      && varlen_side_extents(varlen_side(v, true), n, k0_len, k1_len, k_batch, false);
 }
 
 // N, the sequence count, read off the Q side of the wire word.
@@ -290,9 +342,9 @@ varlen_extents_valid(uint32_t wire, int32_t n,
 // them), so `size(0)` on an unset operand is not merely zero, it is garbage;
 // use varlen_seqinfo_len() below rather than calling size(0) unguarded.
 constexpr int32_t
-varlen_seq_count(uint32_t wire, int32_t seqinfo_q0_len, int32_t q_batch) {
-  const uint32_t q_stacked = (wire >> VarlenShift::STACKED) & 1u;
-  const uint32_t q_length = (wire >> VarlenShift::LENGTH) & 3u;
+varlen_seq_count(VarlenBits v, int32_t seqinfo_q0_len, int32_t q_batch) {
+  const uint32_t q_stacked = v.q_stacked;
+  const uint32_t q_length = v.q_length;
   if (q_stacked == VarlenStacked::BHSD) {
     return q_batch;                        // one sequence per batch slot
   }
@@ -323,7 +375,7 @@ template<typename BwdParams>
 inline uint32_t
 varlen_bwd_seq_count(const BwdParams* params) {
   return static_cast<uint32_t>(
-      varlen_seq_count(static_cast<uint32_t>(params->varlen_bits),
+      varlen_seq_count(varlen_from_wire(static_cast<uint32_t>(params->varlen_bits)),
                        varlen_seqinfo_len(*params->seqinfo_q0),
                        static_cast<int32_t>(params->Q->size(0))));
 }
@@ -341,8 +393,8 @@ varlen_bwd_seq_count(const BwdParams* params) {
 // not the count and there is nothing independent to compare; the caller then
 // skips the comparison rather than inventing one.
 constexpr int32_t
-varlen_seq_count_independent(uint32_t wire, int32_t seqinfo_q0_len, int32_t q_batch) {
-  const uint32_t q_length = (wire >> VarlenShift::LENGTH) & 3u;
+varlen_seq_count_independent(VarlenBits v, int32_t seqinfo_q0_len, int32_t q_batch) {
+  const uint32_t q_length = v.q_length;
   if (q_length == VarlenLength::INDIVIDUAL) {
     return -1;
   }

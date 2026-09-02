@@ -83,7 +83,9 @@ attn_fwd(const attn_fwd_params& in,
     }
     return attn_fwd(upgraded, attn_fwd_params::kVersion, stream_wrap, options);
   }
-  const uint32_t varlen_wire = varlen_to_wire(in.varlen_bits);
+  // Reasoned about as a VarlenBits throughout; the wire word is built once,
+  // at the kernel boundary below, and otherwise only inside grid calculators.
+  const VarlenBits varlen = in.varlen_bits;
   hipError_t err;
   auto stream = stream_wrap.native();
   auto gpu = getGpuFromStream(stream);
@@ -98,13 +100,13 @@ attn_fwd(const attn_fwd_params& in,
   // Well-formedness of the bits themselves, before anything is derived from
   // them: an out-of-range field, REUSE without CUMULATIVE, or a mode whose
   // array is absent would otherwise reach the kernel and tl.load from null.
-  if (!varlen_valid(varlen_wire,
+  if (!varlen_valid(varlen,
                     bool(in.seqinfo_q0), bool(in.seqinfo_q1),
                     bool(in.seqinfo_k0), bool(in.seqinfo_k1))) {
     AOTRITON_LOG(LOG_ERROR,
                  "v3::flash::attn_fwd: varlen_bits=0x%08x is not well-formed for the "
                  "seqinfo arrays supplied (q0=%d q1=%d k0=%d k1=%d) -- refusing to launch",
-                 varlen_wire, int(bool(in.seqinfo_q0)), int(bool(in.seqinfo_q1)),
+                 varlen_to_wire(varlen), int(bool(in.seqinfo_q0)), int(bool(in.seqinfo_q1)),
                  int(bool(in.seqinfo_k0)), int(bool(in.seqinfo_k1)));
     return hipErrorInvalidValue;
   }
@@ -112,20 +114,20 @@ attn_fwd(const attn_fwd_params& in,
   // read are both sized by. Under the bits it comes off the Q side, and it is
   // `Batch` for the dense case by construction.
   const int32_t seqinfo_q0_len = varlen_seqinfo_len(in.seqinfo_q0);
-  int num_seqlens = varlen_seq_count(varlen_wire, seqinfo_q0_len, batch);
+  int num_seqlens = varlen_seq_count(varlen, seqinfo_q0_len, batch);
   const int32_t nseq_independent =
-      varlen_seq_count_independent(varlen_wire, seqinfo_q0_len, batch);
+      varlen_seq_count_independent(varlen, seqinfo_q0_len, batch);
   if (num_seqlens <= 0 || (nseq_independent >= 0 && num_seqlens != nseq_independent)) {
     AOTRITON_LOG(LOG_ERROR,
                  "v3::flash::attn_fwd: varlen_bits=0x%08x gives %d sequences "
                  "(seqinfo_q0.size(0)=%d, Q.size(0)=%d) but AOTriton independently "
                  "computes %d -- refusing to launch",
-                 varlen_wire, num_seqlens, seqinfo_q0_len, batch, nseq_independent);
+                 varlen_to_wire(varlen), num_seqlens, seqinfo_q0_len, batch, nseq_independent);
     return hipErrorInvalidValue;
   }
   // ... and that every array and BHSD tensor actually holds that many. Lower
   // bounds only: a larger buffer than the mode needs is legitimate.
-  if (!varlen_extents_valid(varlen_wire, num_seqlens,
+  if (!varlen_extents_valid(varlen, num_seqlens,
                             seqinfo_q0_len, varlen_seqinfo_len(in.seqinfo_q1),
                             varlen_seqinfo_len(in.seqinfo_k0),
                             varlen_seqinfo_len(in.seqinfo_k1),
@@ -134,7 +136,7 @@ attn_fwd(const attn_fwd_params& in,
                  "v3::flash::attn_fwd: varlen_bits=0x%08x needs %d sequences but the "
                  "seqinfo arrays/tensors are too short (q0=%d q1=%d k0=%d k1=%d, "
                  "Q.size(0)=%d K.size(0)=%d) -- refusing to launch",
-                 varlen_wire, num_seqlens, seqinfo_q0_len,
+                 varlen_to_wire(varlen), num_seqlens, seqinfo_q0_len,
                  varlen_seqinfo_len(in.seqinfo_q1), varlen_seqinfo_len(in.seqinfo_k0),
                  varlen_seqinfo_len(in.seqinfo_k1),
                  int32_t(in.Q.size(0)), int32_t(in.K.size(0)));
@@ -143,10 +145,10 @@ attn_fwd(const attn_fwd_params& in,
   // Keyed on the BITS, not on tensor presence: a THD side with LENGTH == MAX
   // supplies no seqinfo_?0, and trusting the tensor extent there yields the
   // total packed token count instead of the per-sequence maximum.
-  if (varlen_uses_caller_max_seqlen(varlen_wire, false)) {
+  if (varlen_uses_caller_max_seqlen(varlen, false)) {
     max_seqlen_q = in.Max_seqlen_q;
   }
-  if (varlen_uses_caller_max_seqlen(varlen_wire, true)) {
+  if (varlen_uses_caller_max_seqlen(varlen, true)) {
     max_seqlen_k = in.Max_seqlen_k;
   }
   const auto& compiled_head_dims = AttnFwdMetadata::get_BLOCK_DMODEL_choices();
@@ -174,7 +176,7 @@ attn_fwd(const attn_fwd_params& in,
     .Num_head_k = num_head_k,
     // The sign trick on Num_seqlens (negative meant padded varlen) is gone: the
     // three axes it welded together are now independent fields of one word.
-    .Varlen_bits = static_cast<int32_t>(varlen_wire),
+    .Varlen_bits = static_cast<int32_t>(varlen_to_wire(varlen)),
     // Named by ROLE: ?0 is the length source, ?1 the position source.
     .seqinfo_q0 = &in.seqinfo_q0,
     .seqinfo_k0 = &in.seqinfo_k0,

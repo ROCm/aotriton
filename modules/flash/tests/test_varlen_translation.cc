@@ -136,7 +136,7 @@ check_row(const char* name, int8_t varlen_type, bool cu_seqlens_q, bool seq_stri
 void
 check_seq_count(const char* name, uint32_t wire, int32_t q0_len, int32_t q_batch,
                 int32_t want) {
-  const int32_t got = varlen_seq_count(wire, q0_len, q_batch);
+  const int32_t got = varlen_seq_count(varlen_from_wire(wire), q0_len, q_batch);
   if (got != want) {
     std::fprintf(stderr, "FAIL: %s -- N got %d, want %d\n", name, got, want);
     ++g_failures;
@@ -305,22 +305,22 @@ void
 test_max_seqlen_source() {
   // Dense: no bits set, so the tensor extent is the per-sequence length and the
   // caller's Max_seqlen must NOT override it.
-  check(!varlen_uses_caller_max_seqlen(0x0000u, false), "dense Q trusts the tensor");
-  check(!varlen_uses_caller_max_seqlen(0x0000u, true), "dense K trusts the tensor");
+  check(!varlen_uses_caller_max_seqlen(varlen_from_wire(0x0000u), false), "dense Q trusts the tensor");
+  check(!varlen_uses_caller_max_seqlen(varlen_from_wire(0x0000u), true), "dense K trusts the tensor");
 
   // The reported case: compact Q against a uniformly-stacked K (side 0x01 =
   // THD, MAX, IMPLIED). Q is already refused elsewhere for STACKED+MAX, so it
   // is the K side that slipped through.
-  check(varlen_uses_caller_max_seqlen(0x010Bu, true),
+  check(varlen_uses_caller_max_seqlen(varlen_from_wire(0x010Bu), true),
         "THD+MAX K takes Max_seqlen_k from the caller");
-  check(varlen_uses_caller_max_seqlen(0x010Bu, false) == true,
+  check(varlen_uses_caller_max_seqlen(varlen_from_wire(0x010Bu), false) == true,
         "compact Q takes Max_seqlen_q from the caller");
 
   // Every shipped mode already did the right thing, via presence; they must
   // keep doing it now that the predicate is the bits.
   for (uint32_t wire : {0x0B0Bu, 0x0202u, 0x1313u, 0x150Bu, 0x040Bu}) {
-    check(varlen_uses_caller_max_seqlen(wire, false), "non-dense Q uses caller max");
-    check(varlen_uses_caller_max_seqlen(wire, true), "non-dense K uses caller max");
+    check(varlen_uses_caller_max_seqlen(varlen_from_wire(wire), false), "non-dense Q uses caller max");
+    check(varlen_uses_caller_max_seqlen(varlen_from_wire(wire), true), "non-dense K uses caller max");
   }
 }
 
@@ -329,41 +329,41 @@ test_max_seqlen_source() {
 void
 test_bits_validation() {
   // The shipped configurations, with exactly the arrays each mode needs.
-  check(varlen_valid(0x0000u, false, false, false, false), "dense is valid");
-  check(varlen_valid(0x0B0Bu, true, false, true, false), "compact is valid");
-  check(varlen_valid(0x0202u, true, false, true, false), "padded is valid");
-  check(varlen_valid(0x1313u, true, true, true, true), "strided is valid");
-  check(varlen_valid(0x150Bu, true, false, true, true), "seqused on packed is valid");
-  check(varlen_valid(0x040Bu, true, false, true, false), "seqused on BHSD is valid");
+  check(varlen_valid(varlen_from_wire(0x0000u), false, false, false, false), "dense is valid");
+  check(varlen_valid(varlen_from_wire(0x0B0Bu), true, false, true, false), "compact is valid");
+  check(varlen_valid(varlen_from_wire(0x0202u), true, false, true, false), "padded is valid");
+  check(varlen_valid(varlen_from_wire(0x1313u), true, true, true, true), "strided is valid");
+  check(varlen_valid(varlen_from_wire(0x150Bu), true, false, true, true), "seqused on packed is valid");
+  check(varlen_valid(varlen_from_wire(0x040Bu), true, false, true, false), "seqused on BHSD is valid");
 
   // Missing arrays -- each of these would have been a load from null.
-  check(!varlen_valid(0x0B0Bu, true, false, false, false), "compact without seqinfo_k0");
-  check(!varlen_valid(0x1313u, true, false, true, true), "ARRAY Q without seqinfo_q1");
-  check(!varlen_valid(0x150Bu, true, false, true, false), "seqused without seqinfo_k1");
+  check(!varlen_valid(varlen_from_wire(0x0B0Bu), true, false, false, false), "compact without seqinfo_k0");
+  check(!varlen_valid(varlen_from_wire(0x1313u), true, false, true, true), "ARRAY Q without seqinfo_q1");
+  check(!varlen_valid(varlen_from_wire(0x150Bu), true, false, true, false), "seqused without seqinfo_k1");
 
   // A stray array the mode never reads: dense + seqinfo_q0 used to pass and
   // replace the dense max length with an unset Max_seqlen_q.
-  check(!varlen_valid(0x0000u, true, false, false, false), "dense with a stray seqinfo_q0");
+  check(!varlen_valid(varlen_from_wire(0x0000u), true, false, false, false), "dense with a stray seqinfo_q0");
 
   // REUSE takes a POSITION out of the length array, which only holds positions
   // under CUMULATIVE. 0x09 = THD, MAX, REUSE; 0x0D = THD, INDIVIDUAL, REUSE.
-  check(!varlen_valid(0x0009u, true, false, false, false), "REUSE with MAX length");
-  check(!varlen_valid(0x000Du, true, false, false, false), "REUSE with INDIVIDUAL length");
+  check(!varlen_valid(varlen_from_wire(0x0009u), true, false, false, false), "REUSE with MAX length");
+  check(!varlen_valid(varlen_from_wire(0x000Du), true, false, false, false), "REUSE with INDIVIDUAL length");
 
   // Out-of-range fields and reserved bits.
-  check(!varlen_valid(0x0006u, true, false, false, false), "LENGTH == 3 is not a value");
-  check(!varlen_valid(0x0018u, false, true, false, false), "POSITION == 3 is not a value");
-  check(!varlen_valid(0x0020u, false, false, false, false), "reserved bit 5 set");
-  check(!varlen_valid(0x00040000u, false, false, false, false), "reserved bit 18 set");
+  check(!varlen_valid(varlen_from_wire(0x0006u), true, false, false, false), "LENGTH == 3 is not a value");
+  check(!varlen_valid(varlen_from_wire(0x0018u), false, true, false, false), "POSITION == 3 is not a value");
+  check(!varlen_valid(varlen_from_wire(0x0020u), false, false, false, false), "reserved bit 5 set");
+  check(!varlen_valid(varlen_from_wire(0x00040000u), false, false, false, false), "reserved bit 18 set");
 
   // LSE_LAYOUT is not addressing and must not be rejected.
-  check(varlen_valid(0x10000u, false, false, false, false), "dense + TH is valid");
-  check(varlen_valid(0x1150Bu, true, false, true, true), "seqused + TH is valid");
+  check(varlen_valid(varlen_from_wire(0x10000u), false, false, false, false), "dense + TH is valid");
+  check(varlen_valid(varlen_from_wire(0x1150Bu), true, false, true, true), "seqused + TH is valid");
 
   // ... and only those two: the kernel maps every nonzero value to TH.
-  check(!varlen_valid(0x20000u, false, false, false, false), "lse_layout == 2 is refused");
-  check(!varlen_valid(0x30000u, false, false, false, false), "lse_layout == 3 is refused");
-  check(!varlen_valid(0x2150Bu, true, false, true, true), "lse_layout == 2 on a valid mode");
+  check(!varlen_valid(varlen_from_wire(0x20000u), false, false, false, false), "lse_layout == 2 is refused");
+  check(!varlen_valid(varlen_from_wire(0x30000u), false, false, false, false), "lse_layout == 3 is refused");
+  check(!varlen_valid(varlen_from_wire(0x2150Bu), true, false, true, true), "lse_layout == 2 on a valid mode");
 }
 
 // PR #222 review: presence was checked, extent was not, so an undersized array
@@ -372,48 +372,48 @@ void
 test_extent_validation() {
   const int32_t N = 7;
   // compact 0x0B0B: both sides CUMULATIVE, so both need N+1.
-  check(varlen_extents_valid(0x0B0Bu, N, N + 1, 0, N + 1, 0, 1, 1),
+  check(varlen_extents_valid(varlen_from_wire(0x0B0Bu), N, N + 1, 0, N + 1, 0, 1, 1),
         "compact with exactly N+1");
-  check(!varlen_extents_valid(0x0B0Bu, N, N, 0, N + 1, 0, 1, 1),
+  check(!varlen_extents_valid(varlen_from_wire(0x0B0Bu), N, N, 0, N + 1, 0, 1, 1),
         "compact with a short seqinfo_q0");
-  check(!varlen_extents_valid(0x0B0Bu, N, N + 1, 0, N, 0, 1, 1),
+  check(!varlen_extents_valid(varlen_from_wire(0x0B0Bu), N, N + 1, 0, N, 0, 1, 1),
         "compact with a short seqinfo_k0");
 
   // LOWER bound, not equality: a bigger buffer than the mode needs is fine.
-  check(varlen_extents_valid(0x0B0Bu, N, N + 64, 0, N + 64, 0, 1, 1),
+  check(varlen_extents_valid(varlen_from_wire(0x0B0Bu), N, N + 64, 0, N + 64, 0, 1, 1),
         "oversized arrays are accepted");
 
   // strided 0x1313: ARRAY on both. Stacked Q also reads [N], so it needs N+1
   // where K needs only N.
-  check(varlen_extents_valid(0x1313u, N, N + 1, N + 1, N + 1, N, 1, 1),
+  check(varlen_extents_valid(varlen_from_wire(0x1313u), N, N + 1, N + 1, N + 1, N, 1, 1),
         "strided at its minimum extents");
-  check(!varlen_extents_valid(0x1313u, N, N + 1, N, N + 1, N, 1, 1),
+  check(!varlen_extents_valid(varlen_from_wire(0x1313u), N, N + 1, N, N + 1, N, 1, 1),
         "strided Q position array missing its [N] slot");
 
   // seqused 0x150B: K length INDIVIDUAL needs N, K position ARRAY needs N.
-  check(varlen_extents_valid(0x150Bu, N, N + 1, 0, N, N, 1, 1),
+  check(varlen_extents_valid(varlen_from_wire(0x150Bu), N, N + 1, 0, N, N, 1, 1),
         "seqused at its minimum extents");
-  check(!varlen_extents_valid(0x150Bu, N, N + 1, 0, N - 1, N, 1, 1),
+  check(!varlen_extents_valid(varlen_from_wire(0x150Bu), N, N + 1, 0, N - 1, N, 1, 1),
         "seqused with a short seqused_k");
 
   // The reported case: mixed 0x000B derives N from a packed Q, so a dense K
   // with fewer batch slots than N is indexed with a z it never had.
-  check(varlen_extents_valid(0x000Bu, N, N + 1, 0, 0, 0, 1, N),
+  check(varlen_extents_valid(varlen_from_wire(0x000Bu), N, N + 1, 0, 0, 0, 1, N),
         "mixed with a K batch of N");
-  check(!varlen_extents_valid(0x000Bu, N, N + 1, 0, 0, 0, 1, N - 1),
+  check(!varlen_extents_valid(varlen_from_wire(0x000Bu), N, N + 1, 0, 0, 0, 1, N - 1),
         "mixed with a K batch shorter than N");
-  check(varlen_extents_valid(0x000Bu, N, N + 1, 0, 0, 0, 1, N + 3),
+  check(varlen_extents_valid(varlen_from_wire(0x000Bu), N, N + 1, 0, 0, 0, 1, N + 3),
         "mixed with a K batch larger than N");
 
   // padded 0x0202: BHSD both sides, so both tensors need N slots.
-  check(varlen_extents_valid(0x0202u, N, N + 1, 0, N + 1, 0, N, N),
+  check(varlen_extents_valid(varlen_from_wire(0x0202u), N, N + 1, 0, N + 1, 0, N, N),
         "padded with N batch slots");
-  check(!varlen_extents_valid(0x0202u, N, N + 1, 0, N + 1, 0, N - 1, N),
+  check(!varlen_extents_valid(varlen_from_wire(0x0202u), N, N + 1, 0, N + 1, 0, N - 1, N),
         "padded with a short Q batch");
 
   // dense reads no array at all and is indexed by batch on both sides.
-  check(varlen_extents_valid(0x0000u, N, 0, 0, 0, 0, N, N), "dense with N batch slots");
-  check(!varlen_extents_valid(0x0000u, N, 0, 0, 0, 0, N, N - 1), "dense with a short K batch");
+  check(varlen_extents_valid(varlen_from_wire(0x0000u), N, 0, 0, 0, 0, N, N), "dense with N batch slots");
+  check(!varlen_extents_valid(varlen_from_wire(0x0000u), N, 0, 0, 0, 0, N, N - 1), "dense with a short K batch");
 }
 
 void
@@ -429,15 +429,15 @@ test_seq_count() {
   // Q-side INDIVIDUAL: the array is (N,), not (N+1,).
   check_seq_count("q individual", 0x0004u | 0x0001u, 7, 1, 7);
   // STACKED + MAX determines nothing on the host.
-  check(varlen_seq_count(0x0001u, 0, 1) < 0, "STACKED + MAX reports undetermined");
+  check(varlen_seq_count(varlen_from_wire(0x0001u), 0, 1) < 0, "STACKED + MAX reports undetermined");
 
   // The independent derivation agrees on every shipped row, and is what
   // catches a padded caller whose cu_seqlens_q has the wrong length.
-  check(varlen_seq_count_independent(0x0202u, 6, 5) == 5, "independent: padded agrees");
-  check(varlen_seq_count_independent(0x0202u, 4, 5) == 3, "independent: padded disagrees");
-  check(varlen_seq_count_independent(0x0B0Bu, 8, 1) == 7, "independent: compact agrees");
-  check(varlen_seq_count_independent(0x0000u, 0, 4) == 4, "independent: dense agrees");
-  check(varlen_seq_count_independent(0x0405u, 7, 1) < 0,
+  check(varlen_seq_count_independent(varlen_from_wire(0x0202u), 6, 5) == 5, "independent: padded agrees");
+  check(varlen_seq_count_independent(varlen_from_wire(0x0202u), 4, 5) == 3, "independent: padded disagrees");
+  check(varlen_seq_count_independent(varlen_from_wire(0x0B0Bu), 8, 1) == 7, "independent: compact agrees");
+  check(varlen_seq_count_independent(varlen_from_wire(0x0000u), 0, 4) == 4, "independent: dense agrees");
+  check(varlen_seq_count_independent(varlen_from_wire(0x0405u), 7, 1) < 0,
         "independent: declines Q-side INDIVIDUAL");
 }
 
