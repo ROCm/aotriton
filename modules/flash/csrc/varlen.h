@@ -71,21 +71,27 @@ struct VarlenShift {
 // it is constexpr *bit_cast* over bit-fields that clang rejects -- so the
 // spec's hex table stays compile-time checked below.
 constexpr uint32_t
+varlen_mode_to_wire(VarlenMode m) {
+  return (uint32_t(m.stacked)  << VarlenShift::STACKED)
+       | (uint32_t(m.length)   << VarlenShift::LENGTH)
+       | (uint32_t(m.position) << VarlenShift::POSITION)
+       | (uint32_t(m.reserved) << 5);
+}
+
+// Host struct -> the fixed-allocation word the kernel shifts apart.
+// UNCONDITIONAL explicit shifts: no platform branch, no endianness #ifdef, no
+// bit_cast. Reading a bit-field member inside a constexpr function is fine --
+// it is constexpr *bit_cast* over bit-fields that clang rejects -- so the
+// spec's hex table stays compile-time checked below.
+//
+// Reserved fields are carried, not dropped, so this and varlen_from_wire() are
+// a total inverse; varlen_valid() is what requires them to be zero.
+constexpr uint32_t
 varlen_to_wire(VarlenBits v) {
-  return (uint32_t(v.q_stacked)  << VarlenShift::STACKED)
-       | (uint32_t(v.q_length)   << VarlenShift::LENGTH)
-       | (uint32_t(v.q_position) << VarlenShift::POSITION)
-       | (uint32_t(v.k_stacked)  << (VarlenShift::K_SIDE + VarlenShift::STACKED))
-       | (uint32_t(v.k_length)   << (VarlenShift::K_SIDE + VarlenShift::LENGTH))
-       | (uint32_t(v.k_position) << (VarlenShift::K_SIDE + VarlenShift::POSITION))
+  return varlen_mode_to_wire(v.qmode)
+       | (varlen_mode_to_wire(v.kmode) << VarlenShift::K_SIDE)
        | (uint32_t(v.lse_layout) << VarlenShift::LSE_LAYOUT)
-       // Carried, not dropped: see varlen_from_wire() on why the pair must be
-       // a total inverse. A well-formed VarlenBits has these zero, and
-       // varlen_valid() is what enforces that.
-       | (uint32_t(v.q_reserved) << 5)
-       | (uint32_t(v.k_reserved) << 13)
-       | (uint32_t(v.reserved18) << 18)
-       | (uint32_t(v.reserved24) << 24);
+       | (uint32_t(v.reserved) << 18);
 }
 
 // The four VarlenType rows, decomposed onto the three axes. This is the whole
@@ -115,30 +121,22 @@ varlen_bits_of(int8_t varlen_type, bool cu_seqlens_q_present, bool seq_strides_q
     // BHSD, one sequence per batch slot: lengths still come from a cumulative
     // array, but the position is implied by the batch index.
     return {
-      .q_length = VarlenLength::CUMULATIVE,
-      .k_length = VarlenLength::CUMULATIVE,
+      .qmode = {.length = VarlenLength::CUMULATIVE},
+      .kmode = {.length = VarlenLength::CUMULATIVE},
     };
   }
   if (seq_strides_q_present) {
     // THD with a dedicated position array per side.
     return {
-      .q_stacked = VarlenStacked::THD,
-      .q_length = VarlenLength::CUMULATIVE,
-      .q_position = VarlenPosition::ARRAY,
-      .k_stacked = VarlenStacked::THD,
-      .k_length = VarlenLength::CUMULATIVE,
-      .k_position = VarlenPosition::ARRAY,
+      .qmode = {.stacked = VarlenStacked::THD, .length = VarlenLength::CUMULATIVE, .position = VarlenPosition::ARRAY},
+      .kmode = {.stacked = VarlenStacked::THD, .length = VarlenLength::CUMULATIVE, .position = VarlenPosition::ARRAY},
     };
   }
   // Classical packed varlen: THD, cumulative lengths, position REUSEd out
   // of that same array, so no position array is passed on either side.
   return {
-    .q_stacked = VarlenStacked::THD,
-    .q_length = VarlenLength::CUMULATIVE,
-    .q_position = VarlenPosition::REUSE,
-    .k_stacked = VarlenStacked::THD,
-    .k_length = VarlenLength::CUMULATIVE,
-    .k_position = VarlenPosition::REUSE,
+    .qmode = {.stacked = VarlenStacked::THD, .length = VarlenLength::CUMULATIVE, .position = VarlenPosition::REUSE},
+    .kmode = {.stacked = VarlenStacked::THD, .length = VarlenLength::CUMULATIVE, .position = VarlenPosition::REUSE},
   };
 }
 
@@ -160,39 +158,24 @@ static_assert(varlen_to_wire(varlen_bits_of(VarlenType::StridedVarlen, true, tru
 // The inverse of varlen_to_wire(). Needed because the CONTEXT helpers -- grid
 // calculators -- see only the int32 the generated params struct carries, and
 // everything above them reasons in VarlenBits.
+constexpr VarlenMode
+varlen_mode_from_wire(uint32_t side) {
+  VarlenMode m{};
+  m.stacked  = (side >> VarlenShift::STACKED) & 1u;
+  m.length   = (side >> VarlenShift::LENGTH) & 3u;
+  m.position = (side >> VarlenShift::POSITION) & 3u;
+  m.reserved = (side >> 5) & 7u;
+  return m;
+}
+
 constexpr VarlenBits
 varlen_from_wire(uint32_t wire) {
   VarlenBits v{};
-  v.q_stacked  = (wire >> VarlenShift::STACKED) & 1u;
-  v.q_length   = (wire >> VarlenShift::LENGTH) & 3u;
-  v.q_position = (wire >> VarlenShift::POSITION) & 3u;
-  v.k_stacked  = (wire >> (VarlenShift::K_SIDE + VarlenShift::STACKED)) & 1u;
-  v.k_length   = (wire >> (VarlenShift::K_SIDE + VarlenShift::LENGTH)) & 3u;
-  v.k_position = (wire >> (VarlenShift::K_SIDE + VarlenShift::POSITION)) & 3u;
+  v.qmode = varlen_mode_from_wire(wire & 0xFFu);
+  v.kmode = varlen_mode_from_wire((wire >> VarlenShift::K_SIDE) & 0xFFu);
   v.lse_layout = (wire >> VarlenShift::LSE_LAYOUT) & 3u;
-  // The reserved fields too, so this is a TOTAL inverse rather than one that
-  // only works on well-formed words. Dropping them would launder a malformed
-  // wire into a valid-looking object, and varlen_valid() -- which checks these
-  // fields -- would then have nothing left to catch.
-  v.q_reserved = (wire >> 5) & 7u;
-  v.k_reserved = (wire >> 13) & 7u;
-  v.reserved18 = (wire >> 18) & 0x3Fu;
-  v.reserved24 = (wire >> 24) & 0xFFu;
+  v.reserved = (wire >> 18) & 0x3FFFu;
   return v;
-}
-
-// One side's three axes, so the predicates below read fields instead of
-// shifting. Q and K decode identically, which is why one view serves both.
-struct VarlenSide {
-  uint32_t stacked;
-  uint32_t length;
-  uint32_t position;
-};
-
-constexpr VarlenSide
-varlen_side(VarlenBits v, bool k_side) {
-  return k_side ? VarlenSide{v.k_stacked, v.k_length, v.k_position}
-                : VarlenSide{v.q_stacked, v.q_length, v.q_position};
 }
 
 static_assert(varlen_to_wire(varlen_from_wire(0x1150Bu)) == 0x1150Bu,
@@ -229,11 +212,10 @@ varlen_addressing(uint32_t wire) {
 // Only a fully dense side (all three axes at their zero value) may trust the
 // tensor: there BHSD + MAX means the extent IS the per-sequence length.
 constexpr bool
-varlen_uses_caller_max_seqlen(VarlenBits v, bool k_side) {
-  const VarlenSide s = varlen_side(v, k_side);
-  return s.stacked != VarlenStacked::BHSD
-      || s.length != VarlenLength::MAX
-      || s.position != VarlenPosition::IMPLIED;
+varlen_mode_uses_caller_max_seqlen(VarlenMode m) {
+  return m.stacked != VarlenStacked::BHSD
+      || m.length != VarlenLength::MAX
+      || m.position != VarlenPosition::IMPLIED;
 }
 
 // Cheap well-formedness check on the bits and the arrays they claim to need.
@@ -245,9 +227,9 @@ varlen_uses_caller_max_seqlen(VarlenBits v, bool k_side) {
 // CUMULATIVE makes seqinfo_?0 hold positions as well as lengths), and a mode
 // whose array is absent -- the kernel would tl.load from null.
 constexpr bool
-varlen_side_valid(VarlenSide s, bool has_info0, bool has_info1) {
-  const uint32_t length = s.length;
-  const uint32_t position = s.position;
+varlen_side_valid(VarlenMode m, bool has_info0, bool has_info1) {
+  const uint32_t length = m.length;
+  const uint32_t position = m.position;
   if (length > VarlenLength::INDIVIDUAL || position > VarlenPosition::ARRAY) {
     return false;                                   // 3 is not a value
   }
@@ -268,7 +250,7 @@ varlen_side_valid(VarlenSide s, bool has_info0, bool has_info1) {
 
 constexpr bool
 varlen_valid(VarlenBits v, bool has_q0, bool has_q1, bool has_k0, bool has_k1) {
-  if (v.q_reserved || v.k_reserved || v.reserved18 || v.reserved24) {
+  if (v.qmode.reserved || v.kmode.reserved || v.reserved) {
     return false;
   }
   // Two bits for future room, but only HT and TH defined; the kernel branches
@@ -276,8 +258,8 @@ varlen_valid(VarlenBits v, bool has_q0, bool has_q1, bool has_k0, bool has_k1) {
   if (v.lse_layout > VarlenLseLayout::TH) {
     return false;
   }
-  return varlen_side_valid(varlen_side(v, false), has_q0, has_q1)
-      && varlen_side_valid(varlen_side(v, true), has_k0, has_k1);
+  return varlen_side_valid(v.qmode, has_q0, has_q1)
+      && varlen_side_valid(v.kmode, has_k0, has_k1);
 }
 
 // Do the arrays and tensors actually hold N sequences' worth?
@@ -292,12 +274,12 @@ varlen_valid(VarlenBits v, bool has_q0, bool has_q1, bool has_k0, bool has_k1) {
 // this checks that a present array is long enough. Both are cheap: a size(0),
 // no device read.
 constexpr bool
-varlen_side_extents(VarlenSide s, int32_t n,
+varlen_side_extents(VarlenMode m, int32_t n,
                     int32_t info0_len, int32_t info1_len, int32_t batch_extent,
                     bool q_side) {
-  const uint32_t stacked = s.stacked;
-  const uint32_t length = s.length;
-  const uint32_t position = s.position;
+  const uint32_t stacked = m.stacked;
+  const uint32_t length = m.length;
+  const uint32_t position = m.position;
   if (length == VarlenLength::CUMULATIVE && info0_len < n + 1) {
     return false;                        // read at [z] and [z+1]
   }
@@ -325,8 +307,8 @@ constexpr bool
 varlen_extents_valid(VarlenBits v, int32_t n,
                      int32_t q0_len, int32_t q1_len, int32_t k0_len, int32_t k1_len,
                      int32_t q_batch, int32_t k_batch) {
-  return varlen_side_extents(varlen_side(v, false), n, q0_len, q1_len, q_batch, true)
-      && varlen_side_extents(varlen_side(v, true), n, k0_len, k1_len, k_batch, false);
+  return varlen_side_extents(v.qmode, n, q0_len, q1_len, q_batch, true)
+      && varlen_side_extents(v.kmode, n, k0_len, k1_len, k_batch, false);
 }
 
 // N, the sequence count, read off the Q side of the wire word.
@@ -347,8 +329,8 @@ varlen_extents_valid(VarlenBits v, int32_t n,
 constexpr int32_t
 varlen_seq_count(VarlenBits v, int32_t seqinfo_q0_len, int32_t q_batch,
                  int32_t q_tokens, int32_t max_seqlen_q) {
-  const uint32_t q_stacked = v.q_stacked;
-  const uint32_t q_length = v.q_length;
+  const uint32_t q_stacked = v.qmode.stacked;
+  const uint32_t q_length = v.qmode.length;
   if (q_stacked == VarlenStacked::BHSD) {
     return q_batch;                        // one sequence per batch slot
   }
@@ -406,11 +388,11 @@ varlen_bwd_seq_count(const BwdParams* params) {
 // disagree with a correct count for every N above one.
 constexpr int32_t
 varlen_seq_count_independent(VarlenBits v, int32_t seqinfo_q0_len, int32_t q_batch) {
-  const uint32_t q_length = v.q_length;
+  const uint32_t q_length = v.qmode.length;
   if (q_length == VarlenLength::INDIVIDUAL) {
     return -1;
   }
-  if (v.q_stacked == VarlenStacked::THD && q_length == VarlenLength::MAX) {
+  if (v.qmode.stacked == VarlenStacked::THD && q_length == VarlenLength::MAX) {
     return -1;
   }
   return seqinfo_q0_len > 0 ? seqinfo_q0_len - 1 : q_batch;

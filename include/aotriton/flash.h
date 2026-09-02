@@ -137,22 +137,28 @@ struct AOTRITON_API VarlenLseLayout {
   static constexpr uint32_t TH = 1;   // (T, H), offset (b*S + s)*H + h
 };
 
-struct AOTRITON_API VarlenBits {
-  // Q side, bits 7:0
-  uint32_t q_stacked  : 1;
-  uint32_t q_length   : 2;
-  uint32_t q_position : 2;
-  uint32_t q_reserved : 3;
+// One side's three axes. uint8_t, not uint32_t, so the struct really is the one
+// byte the encoding gives it rather than a 4-byte storage unit holding 8 bits.
+struct AOTRITON_API VarlenMode {
+  uint8_t stacked  : 1;
+  uint8_t length   : 2;
+  uint8_t position : 2;
+  uint8_t reserved : 3;
+};
+
+static_assert(sizeof(VarlenMode) == 1, "a side's mode is one byte on the wire");
+
+// alignas because the byte-sized members would otherwise align this to 2, and
+// the whole point is that it occupies exactly the space -- and the slot -- an
+// int32_t would.
+struct AOTRITON_API alignas(uint32_t) VarlenBits {
   // Q and K decode independently, so mixed addressing modes are expressible.
   // Only the seqused_k pairing is exercised through this API; the rest of the
   // combination space is expected to work but untested.
-  uint32_t k_stacked  : 1;   // K side, bits 15:8 -- the same byte layout
-  uint32_t k_length   : 2;
-  uint32_t k_position : 2;
-  uint32_t k_reserved : 3;
-  uint32_t lse_layout : 2;   // bits 17:16
-  uint32_t reserved18 : 6;   // bits 23:18
-  uint32_t reserved24 : 8;   // bits 31:24
+  VarlenMode qmode;          // bits 7:0
+  VarlenMode kmode;          // bits 15:8 -- same layout, so one decoder twice
+  uint16_t lse_layout : 2;   // bits 17:16
+  uint16_t reserved   : 14;  // bits 31:18
 };
 
 // Occupies exactly the space an int32_t would, so appending it to a params

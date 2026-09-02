@@ -27,6 +27,7 @@ namespace pyaotriton::v3 {
       using aotriton::v3::flash::attn_bwd_params;
       using aotriton::v3::flash::attn_options;
       using aotriton::v3::flash::VarlenBits;
+      using aotriton::v3::flash::VarlenMode;
       void setup_module(py::module_& m) {
         // pybind11 CANNOT bind a bit-field through def_readwrite: that needs
         // &Struct::member, and a pointer-to-member to a bit-field is ill-formed
@@ -35,19 +36,30 @@ namespace pyaotriton::v3 {
         // THROUGH the bit-field rather than around it. A BITF macro beside the
         // RW macro below, for the same reason RW exists: the field list should
         // read as a list.
-        py::class_<VarlenBits>(m, "VarlenBits")
+        // One class per side-mode, then VarlenBits holding two of them.
+        // def_readwrite on a registered class type returns by reference
+        // (reference_internal), so `params.varlen_bits.qmode.stacked = 1`
+        // reaches the parent; a copy would make every write vanish silently.
+        py::class_<VarlenMode>(m, "VarlenMode")
           .def(py::init<>())
 #define BITF(name) def_property(#name,                                       \
-            [](const VarlenBits& v) { return uint32_t(v.name); },            \
-            [](VarlenBits& v, uint32_t x) { v.name = x; })
-          .BITF(q_stacked)
-          .BITF(q_length)
-          .BITF(q_position)
-          .BITF(k_stacked)
-          .BITF(k_length)
-          .BITF(k_position)
-          .BITF(lse_layout)
+            [](const VarlenMode& v) { return uint32_t(v.name); },            \
+            [](VarlenMode& v, uint32_t x) { v.name = x; })
+          .BITF(stacked)
+          .BITF(length)
+          .BITF(position)
 #undef BITF
+        ;
+        py::class_<VarlenBits>(m, "VarlenBits")
+          .def(py::init<>())
+          .def_readwrite("qmode", &VarlenBits::qmode)
+          .def_readwrite("kmode", &VarlenBits::kmode)
+          // pybind11 CANNOT bind a bit-field through def_readwrite: that needs
+          // &Struct::member, and a pointer-to-member to a bit-field is
+          // ill-formed. lse_layout therefore goes through def_property.
+          .def_property("lse_layout",
+                        [](const VarlenBits& v) { return uint32_t(v.lse_layout); },
+                        [](VarlenBits& v, uint32_t x) { v.lse_layout = x; })
         ;
         // The axis-value constants, so Python can spell a configuration rather
         // than assemble one. py::enum_ (KernelSlot, below) is the local

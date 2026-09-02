@@ -64,6 +64,7 @@ using AOTRITON_NS::v3::flash::VarlenBits;
 using AOTRITON_NS::v3::flash::VarlenLength;
 using AOTRITON_NS::v3::flash::VarlenPosition;
 using AOTRITON_NS::v3::flash::VarlenStacked;
+using AOTRITON_NS::v3::flash::VarlenMode;
 
 // The named configurations this test needs, defined HERE rather than pulled in
 // from a production header. Production carries no such constants -- the only
@@ -73,12 +74,8 @@ using AOTRITON_NS::v3::flash::VarlenStacked;
 constexpr VarlenBits kDense = {};
 
 constexpr VarlenBits kCompact = {
-  .q_stacked = VarlenStacked::THD,
-  .q_length = VarlenLength::CUMULATIVE,
-  .q_position = VarlenPosition::REUSE,
-  .k_stacked = VarlenStacked::THD,
-  .k_length = VarlenLength::CUMULATIVE,
-  .k_position = VarlenPosition::REUSE,
+  .qmode = {.stacked = VarlenStacked::THD, .length = VarlenLength::CUMULATIVE, .position = VarlenPosition::REUSE},
+  .kmode = {.stacked = VarlenStacked::THD, .length = VarlenLength::CUMULATIVE, .position = VarlenPosition::REUSE},
 };
 
 // torch.nn.attention.varlen's `seqused_k` on a packed KV cache: the K side
@@ -86,12 +83,8 @@ constexpr VarlenBits kCompact = {
 // one. Two different tensors, which is why seqinfo_k0/k1 are named by role.
 // No VarlenType can spell this, so it only ever arrives through the struct.
 constexpr VarlenBits kSequsedKOnPacked = {
-  .q_stacked = VarlenStacked::THD,
-  .q_length = VarlenLength::CUMULATIVE,
-  .q_position = VarlenPosition::REUSE,
-  .k_stacked = VarlenStacked::THD,
-  .k_length = VarlenLength::INDIVIDUAL,
-  .k_position = VarlenPosition::ARRAY,
+  .qmode = {.stacked = VarlenStacked::THD, .length = VarlenLength::CUMULATIVE, .position = VarlenPosition::REUSE},
+  .kmode = {.stacked = VarlenStacked::THD, .length = VarlenLength::INDIVIDUAL, .position = VarlenPosition::ARRAY},
 };
 
 int g_failures = 0;
@@ -287,12 +280,12 @@ test_version_translation() {
   // A current-version caller needs no translation at all: the struct IS the
   // answer, which is what removing the enum from the API bought.
   attn_fwd_params fresh;
-  fresh.varlen_bits.q_stacked = VarlenStacked::THD;
-  fresh.varlen_bits.q_length = VarlenLength::CUMULATIVE;
-  fresh.varlen_bits.q_position = VarlenPosition::REUSE;
-  fresh.varlen_bits.k_stacked = VarlenStacked::THD;
-  fresh.varlen_bits.k_length = VarlenLength::INDIVIDUAL;
-  fresh.varlen_bits.k_position = VarlenPosition::ARRAY;
+  fresh.varlen_bits.qmode = {.stacked = VarlenStacked::THD,
+                             .length = VarlenLength::CUMULATIVE,
+                             .position = VarlenPosition::REUSE};
+  fresh.varlen_bits.kmode = {.stacked = VarlenStacked::THD,
+                             .length = VarlenLength::INDIVIDUAL,
+                             .position = VarlenPosition::ARRAY};
   check_eq(varlen_to_wire(fresh.varlen_bits), 0x150Bu,
            "current caller: seqused_k on packed KV, which no VarlenType can spell");
   fresh.varlen_bits.lse_layout = VarlenLseLayout::TH;
@@ -306,22 +299,22 @@ void
 test_max_seqlen_source() {
   // Dense: no bits set, so the tensor extent is the per-sequence length and the
   // caller's Max_seqlen must NOT override it.
-  check(!varlen_uses_caller_max_seqlen(varlen_from_wire(0x0000u), false), "dense Q trusts the tensor");
-  check(!varlen_uses_caller_max_seqlen(varlen_from_wire(0x0000u), true), "dense K trusts the tensor");
+  check(!varlen_mode_uses_caller_max_seqlen(varlen_from_wire(0x0000u).qmode), "dense Q trusts the tensor");
+  check(!varlen_mode_uses_caller_max_seqlen(varlen_from_wire(0x0000u).kmode), "dense K trusts the tensor");
 
   // The reported case: compact Q against a uniformly-stacked K (side 0x01 =
   // THD, MAX, IMPLIED). Q is already refused elsewhere for STACKED+MAX, so it
   // is the K side that slipped through.
-  check(varlen_uses_caller_max_seqlen(varlen_from_wire(0x010Bu), true),
+  check(varlen_mode_uses_caller_max_seqlen(varlen_from_wire(0x010Bu).kmode),
         "THD+MAX K takes Max_seqlen_k from the caller");
-  check(varlen_uses_caller_max_seqlen(varlen_from_wire(0x010Bu), false) == true,
+  check(varlen_mode_uses_caller_max_seqlen(varlen_from_wire(0x010Bu).qmode) == true,
         "compact Q takes Max_seqlen_q from the caller");
 
   // Every shipped mode already did the right thing, via presence; they must
   // keep doing it now that the predicate is the bits.
   for (uint32_t wire : {0x0B0Bu, 0x0202u, 0x1313u, 0x150Bu, 0x040Bu}) {
-    check(varlen_uses_caller_max_seqlen(varlen_from_wire(wire), false), "non-dense Q uses caller max");
-    check(varlen_uses_caller_max_seqlen(varlen_from_wire(wire), true), "non-dense K uses caller max");
+    check(varlen_mode_uses_caller_max_seqlen(varlen_from_wire(wire).qmode), "non-dense Q uses caller max");
+    check(varlen_mode_uses_caller_max_seqlen(varlen_from_wire(wire).kmode), "non-dense K uses caller max");
   }
 }
 

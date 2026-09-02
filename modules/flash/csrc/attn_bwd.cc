@@ -103,10 +103,10 @@ attn_bwd(const attn_bwd_params& in,
   // Keyed on the BITS, not on tensor presence: a THD side with LENGTH == MAX
   // supplies no seqinfo_?0, and trusting the tensor extent there yields the
   // total packed token count instead of the per-sequence maximum.
-  if (varlen_uses_caller_max_seqlen(varlen, false)) {
+  if (varlen_mode_uses_caller_max_seqlen(varlen.qmode)) {
     max_seqlen_q = in.Max_seqlen_q;
   }
-  if (varlen_uses_caller_max_seqlen(varlen, true)) {
+  if (varlen_mode_uses_caller_max_seqlen(varlen.kmode)) {
     max_seqlen_k = in.Max_seqlen_k;
   }
   // ...before N, which under stacked MAX is q_tokens / max_seqlen_q and so

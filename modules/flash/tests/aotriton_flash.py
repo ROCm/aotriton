@@ -62,14 +62,12 @@ def set_varlen_bits(params, varlen_type, lse_layout):
     In place because pybind returns the member by reference; rebinding a local
     copy would be silently dropped.
     """
-    (q_stacked, q_length, q_position), (k_stacked, k_length, k_position) = \
-        VARLEN_AXES[varlen_type]
-    params.varlen_bits.q_stacked = q_stacked
-    params.varlen_bits.q_length = q_length
-    params.varlen_bits.q_position = q_position
-    params.varlen_bits.k_stacked = k_stacked
-    params.varlen_bits.k_length = k_length
-    params.varlen_bits.k_position = k_position
+    for mode, (stacked, length, position) in zip(
+            (params.varlen_bits.qmode, params.varlen_bits.kmode),
+            VARLEN_AXES[varlen_type]):
+        mode.stacked = stacked
+        mode.length = length
+        mode.position = position
     params.varlen_bits.lse_layout = ILSE_LAYOUT[lse_layout]
 
 def translate_causal(causal, v3_api):
