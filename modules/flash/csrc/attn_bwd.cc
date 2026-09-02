@@ -78,9 +78,9 @@ attn_bwd(const attn_bwd_params& in,
   const VarlenBits varlen = in.varlen_bits;
   // One object per side; nothing below asks "which side" again.
   const VarlenAddressing q_addr = varlen_addressing_of(
-      varlen.qmode, true, in.Q, in.seqinfo_q0, in.seqinfo_q1, in.Max_seqlen_q);
+      varlen.qmode, in.Q, in.seqinfo_q0, in.seqinfo_q1, in.Max_seqlen_q);
   const VarlenAddressing k_addr = varlen_addressing_of(
-      varlen.kmode, false, in.K, in.seqinfo_k0, in.seqinfo_k1, in.Max_seqlen_k);
+      varlen.kmode, in.K, in.seqinfo_k0, in.seqinfo_k1, in.Max_seqlen_k);
   hipError_t err;
   auto stream = stream_wrap.native();
   auto gpu = getGpuFromStream(stream);
@@ -121,7 +121,8 @@ attn_bwd(const attn_bwd_params& in,
   }
   // ... and that every array and BHSD tensor actually holds that many. Lower
   // bounds only: a larger buffer than the mode needs is legitimate.
-  if (!(q_addr.extents_ok(num_seqlens) && k_addr.extents_ok(num_seqlens))) {
+  if (!(q_addr.extents_ok(num_seqlens) && k_addr.extents_ok(num_seqlens)
+        && q_addr.lse_pitch_ok(num_seqlens))) {
     AOTRITON_LOG(LOG_ERROR,
                  "v3::flash::attn_bwd: varlen_bits=0x%08x needs %d sequences but the "
                  "seqinfo arrays/tensors are too short (q0=%d q1=%d k0=%d k1=%d, "

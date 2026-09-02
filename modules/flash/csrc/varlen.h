@@ -212,11 +212,11 @@ varlen_addressing(uint32_t wire) {
 // one from the operands a shim actually has.
 class VarlenAddressing {
  public:
-  constexpr VarlenAddressing(VarlenMode mode, bool is_q,
+  constexpr VarlenAddressing(VarlenMode mode,
                              int32_t batch_extent, int32_t token_extent,
                              int32_t info0_len, int32_t info1_len,
                              int32_t caller_max_seqlen, int32_t tensor_max_seqlen)
-    : mode_(mode), is_q_(is_q),
+    : mode_(mode),
       batch_extent_(batch_extent), token_extent_(token_extent),
       info0_len_(info0_len), info1_len_(info1_len),
       caller_max_seqlen_(caller_max_seqlen), tensor_max_seqlen_(tensor_max_seqlen) {}
@@ -289,14 +289,8 @@ class VarlenAddressing {
     if (mode_.length == VarlenLength::INDIVIDUAL && info0_len_ < n) {
       return false;                        // read at [z]
     }
-    if (mode_.position == VarlenPosition::ARRAY) {
-      // [N] as well as [z] on a stacked Q: lse_token_pitch takes the total
-      // token count from the position array's last slot. No other side does.
-      const int32_t need =
-          (is_q_ && mode_.stacked == VarlenStacked::THD) ? n + 1 : n;
-      if (info1_len_ < need) {
-        return false;
-      }
+    if (mode_.position == VarlenPosition::ARRAY && info1_len_ < n) {
+      return false;                        // read at [z]
     }
     if (mode_.stacked == VarlenStacked::BHSD && batch_extent_ < n) {
       // batch_index = z on a BHSD side, so its tensor needs N slots. N comes
@@ -305,6 +299,29 @@ class VarlenAddressing {
       return false;
     }
     return true;
+  }
+
+  // The logsumexp token pitch, which reads slot [N] of whichever array supplies
+  // POSITION -- the length array under REUSE, the position array under ARRAY.
+  // A stacked LSE runs to the batch's total token count instead of padding each
+  // row-group, and that total lives in the prefix sum's last slot.
+  //
+  // Q SIDE ONLY, and that is why it is not folded into extents_ok(). LSE is
+  // indexed by Q's addressing, so the [N] slot is a property of the OUTPUT, not
+  // of a side's mode -- the two modes are symmetric and neither needs it for
+  // its own addressing. K's position array needs N entries, not N+1, and
+  // demanding otherwise would reject a legitimate one.
+  constexpr bool lse_pitch_ok(int32_t n) const {
+    if (mode_.stacked != VarlenStacked::THD) {
+      return true;                         // batched: the pitch is max_seqlen
+    }
+    if (mode_.position == VarlenPosition::REUSE) {
+      return info0_len_ >= n + 1;
+    }
+    if (mode_.position == VarlenPosition::ARRAY) {
+      return info1_len_ >= n + 1;
+    }
+    return true;                           // IMPLIED: N * max_seqlen, no read
   }
 
   // N off this side. Q's is the launch's; K's is not consulted.
@@ -359,7 +376,6 @@ class VarlenAddressing {
 
  private:
   VarlenMode mode_;
-  bool is_q_;
   int32_t batch_extent_;
   int32_t token_extent_;
   int32_t info0_len_;
@@ -395,9 +411,9 @@ varlen_seqinfo_len(const T1& t) {
 // get_null_tensor zeroes them), so array lengths go through
 // varlen_seqinfo_len() rather than an unguarded size(0).
 inline VarlenAddressing
-varlen_addressing_of(VarlenMode mode, bool is_q, const T4& base,
+varlen_addressing_of(VarlenMode mode, const T4& base,
                      const T1& info0, const T1& info1, int32_t caller_max_seqlen) {
-  return VarlenAddressing(mode, is_q,
+  return VarlenAddressing(mode,
                           static_cast<int32_t>(base.size(0)),
                           static_cast<int32_t>(base.size(2)),
                           varlen_seqinfo_len(info0),
@@ -420,7 +436,7 @@ template<typename BwdParams>
 inline uint32_t
 varlen_bwd_seq_count(const BwdParams* params) {
   const VarlenBits v = varlen_from_wire(static_cast<uint32_t>(params->varlen_bits));
-  const VarlenAddressing q(v.qmode, true,
+  const VarlenAddressing q(v.qmode,
                            static_cast<int32_t>(params->Q->size(0)),
                            static_cast<int32_t>(params->Q->size(2)),
                            varlen_seqinfo_len(*params->seqinfo_q0),

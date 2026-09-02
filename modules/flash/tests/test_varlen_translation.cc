@@ -122,7 +122,9 @@ side_of(uint32_t wire, bool is_q, int32_t batch = 1, int32_t tokens = 0,
         int32_t info0_len = 0, int32_t info1_len = 0,
         int32_t caller_max = 0, int32_t tensor_max = 0) {
   const VarlenBits v = varlen_from_wire(wire);
-  return VarlenAddressing(is_q ? v.qmode : v.kmode, is_q,
+  // `is_q` picks WHICH mode, and nothing more -- the object itself is
+  // side-agnostic, because the two modes are symmetric.
+  return VarlenAddressing(is_q ? v.qmode : v.kmode,
                           batch, tokens, info0_len, info1_len,
                           caller_max, tensor_max);
 }
@@ -442,9 +444,23 @@ test_extent_validation() {
   check((side_of(0x1313u, true,  1, 0, N + 1, N + 1).extents_ok(N)
          && side_of(0x1313u, false, 1, 0, N + 1, N).extents_ok(N)),
         "strided at its minimum extents");
-  check(!(side_of(0x1313u, true,  1, 0, N + 1, N).extents_ok(N)
-         && side_of(0x1313u, false, 1, 0, N + 1, N).extents_ok(N)),
+  // Symmetric now: N entries is enough for ADDRESSING on either side.
+  check(side_of(0x1313u, true,  1, 0, N + 1, N).extents_ok(N)
+        && side_of(0x1313u, false, 1, 0, N + 1, N).extents_ok(N),
+        "strided addressing needs only N position entries");
+  // The [N] slot is the logsumexp pitch's, and Q's alone.
+  check(!side_of(0x1313u, true, 1, 0, N + 1, N).lse_pitch_ok(N),
         "strided Q position array missing its [N] slot");
+  check(side_of(0x1313u, true, 1, 0, N + 1, N + 1).lse_pitch_ok(N),
+        "strided Q with the [N] slot");
+  check(side_of(0x0B0Bu, true, 1, 0, N + 1, 0).lse_pitch_ok(N),
+        "compact Q reuses the length array's [N] slot");
+  check(!side_of(0x0B0Bu, true, 1, 0, N, 0).lse_pitch_ok(N),
+        "compact Q whose length array lacks [N]");
+  check(side_of(0x0202u, true, N, 0, N + 1, 0).lse_pitch_ok(N),
+        "batched Q needs no [N] slot at all");
+  check(side_of(0x0001u, true, 1, 640, 0, 0, 128, 128).lse_pitch_ok(N),
+        "uniform stacking derives the pitch without an array");
 
   // seqused 0x150B: K length INDIVIDUAL needs N, K position ARRAY needs N.
   check((side_of(0x150Bu, true,  1, 0, N + 1, 0).extents_ok(N)
