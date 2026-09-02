@@ -87,6 +87,31 @@ fi
     [ -n "$_sig" ] && cat "$_sig" \
       || echo "NO __signature__ file at $PYTHONPATH/aotriton.images/"
   } > "${outdir}/${fnprefix}${pass}.out"
+  # pytest-timeout's SIGALRM cannot interrupt a worker parked in an unreturning
+  # HIP call -- CPython only runs a Python signal handler at a bytecode
+  # boundary, and a thread stuck in a C call never reaches one. The watchdog
+  # polls each worker's lease page from a separate process instead and
+  # escalates SIGTERM (for a faulthandler stack dump) then SIGKILL from
+  # outside, where it needs no cooperation from the wedged thread at all.
+  #
+  # /dev/shm rather than $outdir: this file is pure IPC between the workers
+  # and the watchdog for the lifetime of this one run, never an artifact worth
+  # keeping or shipping off-host. Named with both $pass and $$ (this
+  # subshell's parent pid -- bash's $$ reports that, not the subshell's own,
+  # even inside `( ... )`) so concurrent passes, and concurrent runs on the
+  # same host, never collide on one file.
+  export GPU_LEASE_LOCKFILE="/dev/shm/gpu_lease.${pass}.$$"
+  python3 -m pytest_gpu_lease.watchdog --workers "${ngpus}" \
+    2>"${outdir}/${fnprefix}${pass}.watchdog.err" &
+  watchdog_pid=$!
+  # EXIT fires when this subshell exits by any path, including the `|| true`
+  # below swallowing a pytest failure -- exactly the scope the watchdog and
+  # its lock file should live for. Kill before unlink: a watchdog left running
+  # past its own pytest session would go on polling a file nothing populates
+  # anymore and could eventually act on a pid number reused for something
+  # unrelated; a lock file deleted while still open is harmless by contrast,
+  # since the inode lives on until every fd on it closes.
+  trap 'kill "${watchdog_pid}" 2>/dev/null; rm -f "${GPU_LEASE_LOCKFILE}"' EXIT
   # One invocation over the whole suite dir (conftest.py sets up sys.path); pytest
   # collects test_backward / test_varlen together (test_forward.py is excluded via
   # conftest.py's collect_ignore - its coverage is a subset of test_backward.py's).
