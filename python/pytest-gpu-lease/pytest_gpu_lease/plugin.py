@@ -31,7 +31,7 @@ from types import MappingProxyType
 
 import pytest
 
-STRUCT_FLOCK = 'hhllh'
+STRUCT_FLOCK = 'hhqqi'
 PAGE_SIZE = 4096
 _RETRY_INTERVAL = 0.05
 
