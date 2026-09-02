@@ -51,9 +51,13 @@ page = int(sys.argv[2])
 f = open(lockfile, 'r+b')
 claim = struct.pack(STRUCT_FLOCK, fcntl.F_WRLCK, os.SEEK_SET, PAGE_SIZE * page, PAGE_SIZE, 0)
 fcntl.fcntl(f, fcntl.F_SETLK, claim)
-# Deadline already in the past, so the watchdog acts on its very first poll
-# rather than this test also depending on wall-clock timing to expire one.
-os.pwrite(f.fileno(), struct.pack('<Q', time.monotonic_ns() - 1_000_000_000), PAGE_SIZE * page)
+# Backdate the heartbeat well past any threshold these tests use, so the
+# watchdog acts on its very first poll rather than this test also depending on
+# wall-clock timing to age one out. max(1, ...) because monotonic_ns() is time
+# since boot and could in principle be smaller than the offset -- 1 is still a
+# valid ancient stamp, whereas 0 would read as "between tests" and be skipped.
+os.pwrite(f.fileno(), struct.pack('<Q', max(1, time.monotonic_ns() - 10_000_000_000)),
+          PAGE_SIZE * page)
 faulthandler.register(signal.SIGTERM, file=sys.stderr, all_threads=True)
 r, w = os.pipe()
 print('READY', flush=True)
@@ -165,7 +169,7 @@ def test_watchdog_waits_indefinitely_before_first_page_is_ever_locked(tmp_path):
     try:
         thread.join(timeout=10)
         assert not thread.is_alive(), \
-            'watchdog did not fire once a page was locked with an expired deadline'
+            'watchdog did not fire once a page was locked with a stale heartbeat'
         ret = child.wait(timeout=5)
     finally:
         if child.poll() is None:
@@ -184,7 +188,9 @@ def test_end_to_end_wedged_worker_is_replaced_and_run_stays_green(pytester, monk
     alongside the nested pytest session exactly as run-test.sh will run it
     (own process, same lock file, `--threshold`/`--grace` sized in seconds
     instead of the real 600s/30s -- this test cannot wait out the real
-    default). Assertions: the wedged worker's stack dump names the wedged
+    default; that the fuse can be shortened from the watchdog's command line
+    alone, with nothing set on the worker side, is the protocol working as
+    intended). Assertions: the wedged worker's stack dump names the wedged
     frame, the other five tests still pass despite that worker being killed
     mid-run, and the session terminates at all -- a leaked lease or a dead
     watchdog would otherwise hang it.
@@ -193,7 +199,6 @@ def test_end_to_end_wedged_worker_is_replaced_and_run_stays_green(pytester, monk
     lockfile.touch()
     monkeypatch.delenv('GPU_LEASE_PIN', raising=False)
     monkeypatch.setenv('GPU_LEASE_LOCKFILE', str(lockfile))
-    monkeypatch.setenv('GPU_LEASE_BUDGET_S', '1')
 
     pytester.makepyfile("""
         import os

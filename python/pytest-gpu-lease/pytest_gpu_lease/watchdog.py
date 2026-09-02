@@ -6,9 +6,16 @@
 Run beside pytest, not inside it: ``python -m pytest_gpu_lease.watchdog --lockfile
 ... --workers N``. It polls the lease lock file that ``plugin.py`` already
 maintains -- one 4096-byte page per GPU, write-locked by whichever worker owns
-that GPU for the run -- and reads the 8-byte deadline written there: an initial
-one set by ``gpu_id`` the moment it takes the lease, refreshed before every
-test and zeroed after by a ``pytest_runtest_protocol`` hookwrapper.
+that GPU for the run -- and reads the 8-byte ``time.monotonic_ns()`` stamp
+written there: an initial one set by ``gpu_id`` the moment it takes the lease,
+refreshed before every test and zeroed after by a ``pytest_runtest_protocol``
+hookwrapper. A zero means the worker is between tests and is skipped.
+
+**This module owns the timeout.** The worker reports only when it was last
+seen alive; ``--threshold`` here is the sole definition of how stale that may
+get, so there is no second copy of the policy to fall out of sync with, and
+changing the timeout means changing one command line rather than a command
+line and an environment variable that have to agree.
 
 Why the lock file is the right substrate, in one line: ``fcntl(F_GETLK)`` fills
 ``l_pid`` with the pid holding a byte range, and the kernel releases a record
@@ -27,7 +34,7 @@ gets SIGKILLed.
 
 Shares ``PAGE_SIZE`` and ``STRUCT_FLOCK`` with ``plugin.py`` by importing them
 rather than restating them, since a copy that drifts from the writer's layout
-would silently misread every deadline.
+would silently misread every stamp.
 """
 
 import argparse
@@ -38,11 +45,28 @@ import struct
 import sys
 import time
 
-from .plugin import PAGE_SIZE, STRUCT_FLOCK, _DEFAULT_BUDGET_S
+from .plugin import PAGE_SIZE, STRUCT_FLOCK
 
-# Default cadence: frequent enough that a 600s budget is caught within a small
-# fraction of itself, infrequent enough that polling 4-8 pages is noise next to
-# a 15-22h pass.
+# The timeout, and the only one in the tree: how long a worker's page may go
+# without a fresh stamp before it is treated as wedged. Because the worker
+# rewrites its stamp before every test, this is exactly one thing -- the
+# longest a single test may legitimately take. Not the suite length, not the
+# worker count.
+#
+# A real pass ran 265,282 tests in 227,112 worker-seconds, 0.86s/test mean, so
+# 600s is about the tail, not the average -- and the tail is plausibly the
+# torch reference materialising an 8192x8192 score matrix, not the kernel
+# under test, so sizing this off kernel cost alone would guess far too low.
+# The cost of being wrong is asymmetric: too high and a wedge idles a worker
+# for the excess (a handful of tests a pass); too low and a slow-but-passing
+# test is recorded as a crash, a restart is burned, and the scheduler goes
+# through the worker-teardown path again. Refine it with
+# `pytest --durations=50 --durations-min=10` on an idle GPU.
+_DEFAULT_THRESHOLD_S = 600
+
+# Default cadence: frequent enough that a 600s threshold is caught within a
+# small fraction of itself, infrequent enough that polling 4-8 pages is noise
+# next to a 15-22h pass.
 _DEFAULT_POLL_INTERVAL_S = 5.0
 
 # Default grace between SIGTERM and SIGKILL: long enough for faulthandler to
@@ -86,8 +110,9 @@ def _getlk(fd: int, page: int) -> tuple[bool, int]:
     return lock_type != fcntl.F_UNLCK, pid
 
 
-def _read_deadline(fd: int, page: int) -> int:
-    """The 8-byte deadline at `page`'s base, or 0 if never written / zeroed.
+def _read_last_activity(fd: int, page: int) -> int:
+    """The 8-byte `monotonic_ns()` stamp at `page`'s base, or 0 if the worker
+    is between tests (never written, or zeroed after the last one).
 
     A plain `os.pread` at a page-aligned offset -- no torn-read handling needed
     for the same reason the writer needs none: 8 bytes at an aligned offset is
@@ -157,13 +182,14 @@ def _poll_once(fd: int, workers: int, threshold_ns: int, grace_ns: int,
         if not locked:
             continue
         any_locked = True
-        deadline = _read_deadline(fd, page)
-        if deadline == 0:
+        last_activity = _read_last_activity(fd, page)
+        if last_activity == 0:
             continue  # between tests -- see plugin.py's gpu_id and pytest_runtest_protocol
-        if now > deadline:
-            running_s = (now - (deadline - threshold_ns)) / 1e9
+        stale_ns = now - last_activity
+        if stale_ns > threshold_ns:
             _send(pid, signal.SIGTERM,
-                  f'running ~{running_s:.1f}s, past its ~{threshold_ns / 1e9:.0f}s budget')
+                  f'no heartbeat for {stale_ns / 1e9:.1f}s, past the '
+                  f'{threshold_ns / 1e9:.0f}s threshold')
             pending[page] = now
             return any_locked  # one signal per poll
 
@@ -220,20 +246,18 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog='python -m pytest_gpu_lease.watchdog',
         description='Escalate SIGTERM -> SIGKILL on a pytest_gpu_lease worker whose '
-                    'per-test deadline has passed.')
+                    'page has gone unstamped for too long.')
     parser.add_argument('--lockfile', default=os.getenv('GPU_LEASE_LOCKFILE'),
                         help='Shared lease lock file to watch. Defaults to $GPU_LEASE_LOCKFILE, '
                              'the same variable run-test.sh exports for pytest itself.')
     parser.add_argument('--workers', type=int, required=True,
                         help='Size of the GPU pool (the -n given to pytest); pages '
                              '0..workers-1 are watched.')
-    parser.add_argument('--threshold', type=float, default=float(_DEFAULT_BUDGET_S),
-                        help='Seconds a test may legitimately run (default %(default)s, '
-                             'see plugin.py). The actual cutoff is always the deadline the '
-                             'worker itself wrote using its own budget (GPU_LEASE_BUDGET_S) '
-                             '-- this value never gates that decision, it only sizes the '
-                             '"running ~Ns" figure in the log line, so keep the two in sync '
-                             'if you change one.')
+    parser.add_argument('--threshold', type=float, default=float(_DEFAULT_THRESHOLD_S),
+                        help='Seconds a test may legitimately run before its worker is '
+                             'treated as wedged (default %(default)s). This is the timeout: '
+                             'workers only report when they were last alive, so nothing '
+                             'else in the system has an opinion about it.')
     parser.add_argument('--grace', type=float, default=_DEFAULT_GRACE_S,
                         help='Seconds to wait after SIGTERM before re-checking the lock '
                              'and escalating to SIGKILL if it is still held.')

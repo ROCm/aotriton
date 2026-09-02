@@ -67,27 +67,6 @@ _RETRY_INTERVAL = 0.05
 # How long a single test may legitimately run before the watchdog (see
 # watchdog.py, which imports this) treats the worker holding it as wedged.
 # Not the suite length, not the worker count -- the heartbeat below is
-# rewritten before every test, so this number is exactly one thing: the
-# longest one test may take. A real pass ran 265,282 tests in 227,112
-# worker-seconds, 0.86s/test mean, so 600s is about the tail, not the
-# average -- and the tail is plausibly the torch reference materialising an
-# 8192x8192 score matrix, not the kernel under test, so sizing it off kernel
-# cost alone would guess far too low. The cost of being wrong is asymmetric:
-# too high and a wedge idles a worker for the excess (a handful of tests a
-# pass); too low and a slow-but-passing test is recorded as a crash, a
-# restart is burned, and the scheduler goes through the teardown path again.
-# ``GPU_LEASE_BUDGET_S`` overrides it, mainly so a test of the watchdog
-# itself can use a fuse of seconds rather than waiting out the real one.
-_DEFAULT_BUDGET_S = 600
-
-
-def _budget_ns() -> int:
-    """Per-test heartbeat budget in nanoseconds. Read lazily, never at import."""
-    raw = os.getenv('GPU_LEASE_BUDGET_S', default=None)
-    seconds = _DEFAULT_BUDGET_S if raw is None else float(raw)
-    return int(seconds * 1_000_000_000)
-
-
 # Set by the leased branch of `gpu_id` once a lease is actually held, and
 # cleared again at its teardown; `None` the rest of the time. The
 # `pytest_runtest_protocol` hookwrapper below needs to know whether there is
@@ -252,20 +231,21 @@ def gpu_id(request):
             # call, sent SIGTERM, printed a full stack dump naming the frame.
             faulthandler.register(signal.SIGTERM, file=sys.stderr, all_threads=True)
             _active_lease = (f.fileno(), page_base)
-            # Arm a deadline right now, not just from the first heartbeat below.
-            # `pytest_runtest_protocol`'s hookwrapper (below) wraps setup, call
-            # and teardown as a single hook call, and its pre-yield code -- where
-            # a fresh deadline is normally written -- runs *before* that call
-            # even starts, i.e. before this fixture body has run at all. So for
-            # this worker's first test, that pre-yield code sees `_active_lease`
-            # still `None` and, correctly, touches nothing; without this write,
-            # the page would carry no deadline through the whole of that first
-            # test's setup, call, and teardown, and a wedge anywhere in it would
-            # be invisible to the watchdog. This write closes exactly that gap
-            # and nothing else: every later test gets a fresh deadline from the
-            # hookwrapper itself, since by then `_active_lease` is already set
-            # when that wrapper's pre-yield code runs.
-            os.pwrite(f.fileno(), struct.pack('<Q', time.monotonic_ns() + _budget_ns()), page_base)
+            # Stamp the page as active right now, not just from the first
+            # heartbeat below. `pytest_runtest_protocol`'s hookwrapper (below)
+            # wraps setup, call and teardown as a single hook call, and its
+            # pre-yield code -- where a fresh stamp is normally written -- runs
+            # *before* that call even starts, i.e. before this fixture body has
+            # run at all. So for this worker's first test, that pre-yield code
+            # sees `_active_lease` still `None` and, correctly, touches nothing;
+            # without this write, the page would carry no stamp through the
+            # whole of that first test's setup, call, and teardown, and a wedge
+            # anywhere in it would be invisible to the watchdog. This write
+            # closes exactly that gap and nothing else: every later test gets a
+            # fresh stamp from the hookwrapper itself, since by then
+            # `_active_lease` is already set when that wrapper's pre-yield code
+            # runs.
+            os.pwrite(f.fileno(), struct.pack('<Q', time.monotonic_ns()), page_base)
             try:
                 yield gpu
             finally:
@@ -278,7 +258,25 @@ def gpu_id(request):
 
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_protocol():
-    """Heartbeat this worker's page with the current test's deadline.
+    """Heartbeat this worker's page with the time the current test started.
+
+    The page carries a plain `time.monotonic_ns()` stamp -- "this worker was
+    last seen alive at T" -- and nothing else. Deciding whether T is too long
+    ago is entirely the watchdog's business, so the timeout has exactly one
+    definition, in exactly one place (`watchdog.py`'s `--threshold`), and no
+    way for the two sides to disagree about it. An earlier revision wrote a
+    *deadline* here instead, `now + budget`, on the theory that a per-test
+    budget might one day be wanted; the cost was two thresholds in the tree at
+    once -- one baked into the file by the worker, one on the watchdog's
+    command line -- and no way to tell from either side which was in force.
+    Should a per-test budget ever actually be needed, the page has 4088 spare
+    bytes for the worker to state one explicitly, which is a better answer
+    than encoding it implicitly in the stamp.
+
+    `time.monotonic()` is `clock_gettime(CLOCK_MONOTONIC)`, which is
+    system-wide rather than per-process, so the watchdog compares these
+    against its own reading directly -- no shared epoch and no wall-clock
+    dependency, which also makes the scheme immune to NTP steps mid-pass.
 
     Inert unless `gpu_id` actually holds a lease: `_active_lease` is only set by
     the leased branch above, so pinned mode, no-xdist mode, and GPU-less suites
@@ -290,7 +288,7 @@ def pytest_runtest_protocol():
     Wraps the whole protocol -- setup, call, and teardown -- deliberately, so a
     worker that wedges anywhere in any of the three (a GPU allocation during
     setup, the test body itself, a cache-empty or sync during teardown) is
-    covered by one and the same deadline. The alternative, wrapping only
+    covered by one and the same stamp. The alternative, wrapping only
     `pytest_runtest_call`, was tried first and rejected: it left setup and
     teardown outside the heartbeat entirely, so a fixture-level wedge would
     never be caught at all.
@@ -305,8 +303,8 @@ def pytest_runtest_protocol():
     but with nothing else in place, that leaves the entire first test
     heartbeat-less. (Caught by an end-to-end test that wedged the very first
     parametrized case on a worker: the watchdog never fired, because no
-    deadline had ever been written for that page.) `gpu_id` covers this by
-    writing an initial deadline itself, at the moment the lease is taken --
+    stamp had ever been written for that page.) `gpu_id` covers this by
+    writing an initial stamp itself, at the moment the lease is taken --
     see the comment there. From the second test onward, `_active_lease` is
     already set by the time this wrapper's pre-yield code runs, so it takes
     over the refreshing normally. The two writers never race: at most one of
@@ -322,25 +320,24 @@ def pytest_runtest_protocol():
     The write is a single aligned 8-byte pwrite at the page base -- the
     platform's atomic write granularity for a page-aligned offset -- so the
     watchdog's concurrent pread never observes a torn value; no seqlock or
-    other synchronisation is needed on either side. Zeroing the deadline after
-    the test, rather than leaving the last one in place, is what keeps an idle
-    worker between tests from ever looking like a candidate to the watchdog.
+    other synchronisation is needed on either side. Zeroing the stamp after the
+    test, rather than leaving the last one in place, is what keeps an idle
+    worker between tests from ever looking like a candidate to the watchdog: 0
+    is the one value that means "not running a test", and the watchdog skips
+    such a page outright instead of ageing it.
     (The first test is the one exception: this wrapper takes the `is None`
     branch for it and never zeros afterwards, leaving `gpu_id`'s initial write
     in place until the second test's pre-yield code overwrites it. That stale
-    value cannot cause a false idle read -- it is a real, if slightly dated,
-    future deadline, not a zero -- and cannot cause a false SIGTERM either
-    unless the gap between the first test finishing and the second one
-    starting itself exceeds the budget, which would mean the worker really is
-    stuck somewhere between tests.)
+    stamp cannot be mistaken for idle -- it is a real reading, not a zero --
+    and it can only age past the threshold if the first test plus the gap after
+    it really did exceed the threshold, which is a wedge worth catching.)
     """
     lease = _active_lease
     if lease is None:
         yield
         return
     fd, page_base = lease
-    deadline = time.monotonic_ns() + _budget_ns()
-    os.pwrite(fd, struct.pack('<Q', deadline), page_base)
+    os.pwrite(fd, struct.pack('<Q', time.monotonic_ns()), page_base)
     try:
         yield
     finally:
@@ -348,8 +345,8 @@ def pytest_runtest_protocol():
         # wrapped also tears down the session-scoped `gpu_id` fixture -- which
         # closes `fd` and releases the lock -- before control returns here, so
         # `fd` may already be a stale, closed number. That is fine to ignore:
-        # zeroing a deadline is only ever meaningful while the page is still
-        # locked, and the watchdog never reads a page's deadline without first
+        # zeroing a stamp is only ever meaningful while the page is still
+        # locked, and the watchdog never reads a page's stamp without first
         # finding it locked, so a released page's stale value is never seen.
         try:
             os.pwrite(fd, struct.pack('<Q', 0), page_base)

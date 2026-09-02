@@ -29,7 +29,6 @@ def _clear_lease_env(monkeypatch):
     # value inherited here would silently redirect a test that asserts on the
     # *derived* lockfile path to whatever the outer run happened to be using.
     monkeypatch.delenv('GPU_LEASE_LOCKFILE', raising=False)
-    monkeypatch.delenv('GPU_LEASE_BUDGET_S', raising=False)
 
 
 def test_no_xdist_gpu_id_is_zero_and_no_lockfile(pytester, monkeypatch):
