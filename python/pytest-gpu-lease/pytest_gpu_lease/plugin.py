@@ -64,7 +64,7 @@ def _budget_ns() -> int:
 
 # Set by the leased branch of `gpu_id` once a lease is actually held, and
 # cleared again at its teardown; `None` the rest of the time. The
-# `pytest_runtest_call` hookwrapper below needs to know whether there is
+# `pytest_runtest_protocol` hookwrapper below needs to know whether there is
 # a page to heartbeat, but it is a plugin-level hook, not a fixture, so it
 # cannot request `gpu_id` or read its generator frame -- this module global
 # is the connecting state. A plain global is safe here because `gpu_id` is
@@ -226,6 +226,20 @@ def gpu_id(request):
             # call, sent SIGTERM, printed a full stack dump naming the frame.
             faulthandler.register(signal.SIGTERM, file=sys.stderr, all_threads=True)
             _active_lease = (f.fileno(), page_base)
+            # Arm a deadline right now, not just from the first heartbeat below.
+            # `pytest_runtest_protocol`'s hookwrapper (below) wraps setup, call
+            # and teardown as a single hook call, and its pre-yield code -- where
+            # a fresh deadline is normally written -- runs *before* that call
+            # even starts, i.e. before this fixture body has run at all. So for
+            # this worker's first test, that pre-yield code sees `_active_lease`
+            # still `None` and, correctly, touches nothing; without this write,
+            # the page would carry no deadline through the whole of that first
+            # test's setup, call, and teardown, and a wedge anywhere in it would
+            # be invisible to the watchdog. This write closes exactly that gap
+            # and nothing else: every later test gets a fresh deadline from the
+            # hookwrapper itself, since by then `_active_lease` is already set
+            # when that wrapper's pre-yield code runs.
+            os.pwrite(f.fileno(), struct.pack('<Q', time.monotonic_ns() + _budget_ns()), page_base)
             try:
                 yield gpu
             finally:
@@ -237,7 +251,7 @@ def gpu_id(request):
 
 
 @pytest.hookimpl(hookwrapper=True)
-def pytest_runtest_call():
+def pytest_runtest_protocol():
     """Heartbeat this worker's page with the current test's deadline.
 
     Inert unless `gpu_id` actually holds a lease: `_active_lease` is only set by
@@ -247,24 +261,31 @@ def pytest_runtest_call():
     pytest process in the environment, so being a no-op absent a lease is not
     optional.
 
-    Wraps `pytest_runtest_call`, NOT `pytest_runtest_protocol`, and that choice
-    is load-bearing, not cosmetic. `runtestprotocol()` runs setup, call and
-    teardown as three separate hook calls in sequence -- `pytest_runtest_setup`,
-    then this one, then `pytest_runtest_teardown` -- and `gpu_id`'s lock-acquire
-    (which sets `_active_lease`) happens during fixture setup, i.e. inside the
-    *first* of those. A hookwrapper on `pytest_runtest_protocol` instead wraps
-    all three phases as one call, so its pre-yield code runs *before* setup has
-    resolved any fixtures at all: on a worker's very first test, `_active_lease`
-    is still `None` at that point regardless of whether a lease is about to be
-    taken, and the first test's heartbeat -- often the one most likely to be hit
-    by an early wedge -- silently never gets written. (Caught by an end-to-end
-    test that wedged the first parametrized case on a worker: the watchdog never
-    fired, because the deadline it was polling for had never been written.)
-    Wrapping `pytest_runtest_call` instead means setup has already completed
-    -- and `_active_lease` is already current -- every time this hook's
-    pre-yield code runs, first test included. The same reasoning rules out
-    `pytest_runtest_teardown` for the zeroing half below: it is a still later,
-    separate phase, so zeroing there would race the *next* test's setup instead.
+    Wraps the whole protocol -- setup, call, and teardown -- deliberately, so a
+    worker that wedges anywhere in any of the three (a GPU allocation during
+    setup, the test body itself, a cache-empty or sync during teardown) is
+    covered by one and the same deadline. The alternative, wrapping only
+    `pytest_runtest_call`, was tried first and rejected: it left setup and
+    teardown outside the heartbeat entirely, so a fixture-level wedge would
+    never be caught at all.
+
+    That whole-protocol wrapping has one gap of its own, and `gpu_id` closes it
+    rather than this hook: `runtestprotocol()` still runs setup, call and
+    teardown as separate hook calls internally, and `gpu_id`'s lock-acquire
+    (which sets `_active_lease`) happens inside the first of those, i.e. *after*
+    this wrapper's pre-yield code has already run for a worker's first test.
+    That pre-yield code reads `_active_lease` once, before the wrapped call
+    starts, so on the first test it correctly sees `None` and writes nothing --
+    but with nothing else in place, that leaves the entire first test
+    heartbeat-less. (Caught by an end-to-end test that wedged the very first
+    parametrized case on a worker: the watchdog never fired, because no
+    deadline had ever been written for that page.) `gpu_id` covers this by
+    writing an initial deadline itself, at the moment the lease is taken --
+    see the comment there. From the second test onward, `_active_lease` is
+    already set by the time this wrapper's pre-yield code runs, so it takes
+    over the refreshing normally. The two writers never race: at most one of
+    them is ever the one enabled for a given test, controlled by the same
+    single check of `_active_lease` here.
 
     Runs on whatever thread pytest calls hooks on for this test, which under
     xdist is the worker's MainThread -- deliberately: the heartbeat must stop
@@ -278,6 +299,14 @@ def pytest_runtest_call():
     other synchronisation is needed on either side. Zeroing the deadline after
     the test, rather than leaving the last one in place, is what keeps an idle
     worker between tests from ever looking like a candidate to the watchdog.
+    (The first test is the one exception: this wrapper takes the `is None`
+    branch for it and never zeros afterwards, leaving `gpu_id`'s initial write
+    in place until the second test's pre-yield code overwrites it. That stale
+    value cannot cause a false idle read -- it is a real, if slightly dated,
+    future deadline, not a zero -- and cannot cause a false SIGTERM either
+    unless the gap between the first test finishing and the second one
+    starting itself exceeds the budget, which would mean the worker really is
+    stuck somewhere between tests.)
     """
     lease = _active_lease
     if lease is None:
@@ -289,14 +318,13 @@ def pytest_runtest_call():
     try:
         yield
     finally:
-        # `gpu_id`'s teardown (closing `fd`) happens in the later, separate
-        # `pytest_runtest_teardown` phase, so `fd` is still the live lease fd
-        # here even on a worker's last test -- unlike the now-abandoned
-        # `pytest_runtest_protocol` wrapping, where that teardown ran inside
-        # this same wrapped call. The `except OSError` stays anyway: it costs
-        # nothing to tolerate an fd that turns out to be closed, and pinning
-        # correctness here on the exact phase boundaries of a pytest internal
-        # we do not control would be one refactor away from a silent regression.
+        # On this worker's last test (`nextitem is None`), the very call being
+        # wrapped also tears down the session-scoped `gpu_id` fixture -- which
+        # closes `fd` and releases the lock -- before control returns here, so
+        # `fd` may already be a stale, closed number. That is fine to ignore:
+        # zeroing a deadline is only ever meaningful while the page is still
+        # locked, and the watchdog never reads a page's deadline without first
+        # finding it locked, so a released page's stale value is never seen.
         try:
             os.pwrite(fd, struct.pack('<Q', 0), page_base)
         except OSError:
