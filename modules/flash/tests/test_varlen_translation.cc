@@ -135,8 +135,9 @@ check_row(const char* name, int8_t varlen_type, bool cu_seqlens_q, bool seq_stri
 
 void
 check_seq_count(const char* name, uint32_t wire, int32_t q0_len, int32_t q_batch,
-                int32_t want) {
-  const int32_t got = varlen_seq_count(varlen_from_wire(wire), q0_len, q_batch);
+                int32_t want, int32_t q_tokens = 0, int32_t max_seqlen_q = 0) {
+  const int32_t got = varlen_seq_count(varlen_from_wire(wire), q0_len, q_batch,
+                                       q_tokens, max_seqlen_q);
   if (got != want) {
     std::fprintf(stderr, "FAIL: %s -- N got %d, want %d\n", name, got, want);
     ++g_failures;
@@ -428,8 +429,20 @@ test_seq_count() {
   check_seq_count("padded", 0x0202u, 6, 5, 5);
   // Q-side INDIVIDUAL: the array is (N,), not (N+1,).
   check_seq_count("q individual", 0x0004u | 0x0001u, 7, 1, 7);
-  // STACKED + MAX determines nothing on the host.
-  check(varlen_seq_count(varlen_from_wire(0x0001u), 0, 1) < 0, "STACKED + MAX reports undetermined");
+  // STACKED + MAX is uniform stacking: every sequence is max_seqlen_q rows, so
+  // N is the token axis divided by it. This used to report -1 and be refused,
+  // though the configuration is perfectly well defined.
+  check_seq_count("STACKED + MAX counts by division", 0x0001u, 0, 1, 5, 640, 128);
+  check_seq_count("STACKED + MAX, one sequence", 0x0001u, 0, 1, 1, 128, 128);
+  // Still undetermined where it genuinely is: a token axis that is not a whole
+  // multiple is not a uniform stacking, and must not be rounded into one.
+  check_seq_count("STACKED + MAX with a ragged token axis", 0x0001u, 0, 1, -1, 650, 128);
+  check_seq_count("STACKED + MAX with max_seqlen 0", 0x0001u, 0, 1, -1, 640, 0);
+
+  // And nothing to cross-check it against: Q's batch axis is 1 under THD, so an
+  // independent count would disagree with every correct answer above one.
+  check(varlen_seq_count_independent(varlen_from_wire(0x0001u), 0, 1) < 0,
+        "STACKED + MAX has no independent count");
 
   // The independent derivation agrees on every shipped row, and is what
   // catches a padded caller whose cu_seqlens_q has the wrong length.
@@ -449,6 +462,7 @@ struct FakeBwdParams {
   int32_t varlen_bits;
   const T1* seqinfo_q0;
   const T4* Q;
+  int32_t max_seqlen_q;   // read only under stacked MAX, where N is a division
 };
 
 void

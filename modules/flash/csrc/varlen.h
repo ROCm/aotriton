@@ -331,18 +331,22 @@ varlen_extents_valid(VarlenBits v, int32_t n,
 
 // N, the sequence count, read off the Q side of the wire word.
 //
-// Returns a NEGATIVE value when the bits do not determine it: STACKED with
-// LENGTH == MAX is a well-defined uniform stacking for the kernel but hands
-// the host no array to count, and Q's batch axis is 1 under THD rather than
-// N. The shims reject that rather than guessing, because guessing produces a
-// grid of the wrong z extent -- in-bounds addresses of the wrong rows.
+// STACKED + MAX is uniform stacking: every sequence is exactly max_seqlen_q
+// rows, so the token axis holds N of them and N = q_tokens / max_seqlen_q.
+// There is no array to count, but the count is not undetermined either.
+//
+// Still returns -1 when it genuinely cannot be derived -- a max_seqlen of zero,
+// or a token axis that is not a whole multiple of it, which is not a uniform
+// stacking at all. The shims reject that rather than guessing, because a wrong
+// z extent yields in-bounds addresses of the wrong rows.
 //
 // `seqinfo_q0_len` must be 0 for an absent tensor. TensorView's default
 // constructor leaves its sizes INDETERMINATE (only get_null_tensor zeroes
 // them), so `size(0)` on an unset operand is not merely zero, it is garbage;
 // use varlen_seqinfo_len() below rather than calling size(0) unguarded.
 constexpr int32_t
-varlen_seq_count(VarlenBits v, int32_t seqinfo_q0_len, int32_t q_batch) {
+varlen_seq_count(VarlenBits v, int32_t seqinfo_q0_len, int32_t q_batch,
+                 int32_t q_tokens, int32_t max_seqlen_q) {
   const uint32_t q_stacked = v.q_stacked;
   const uint32_t q_length = v.q_length;
   if (q_stacked == VarlenStacked::BHSD) {
@@ -354,7 +358,11 @@ varlen_seq_count(VarlenBits v, int32_t seqinfo_q0_len, int32_t q_batch) {
   if (q_length == VarlenLength::INDIVIDUAL) {
     return seqinfo_q0_len;                 // the array is (N,)
   }
-  return -1;                               // STACKED + MAX: undetermined here
+  // STACKED + MAX: every sequence is max_seqlen_q rows, packed back to back.
+  if (max_seqlen_q <= 0 || q_tokens < 0 || q_tokens % max_seqlen_q != 0) {
+    return -1;                             // not a uniform stacking
+  }
+  return q_tokens / max_seqlen_q;
 }
 
 inline int32_t
@@ -377,7 +385,9 @@ varlen_bwd_seq_count(const BwdParams* params) {
   return static_cast<uint32_t>(
       varlen_seq_count(varlen_from_wire(static_cast<uint32_t>(params->varlen_bits)),
                        varlen_seqinfo_len(*params->seqinfo_q0),
-                       static_cast<int32_t>(params->Q->size(0))));
+                       static_cast<int32_t>(params->Q->size(0)),
+                       static_cast<int32_t>(params->Q->size(2)),
+                       params->max_seqlen_q));
 }
 
 // The same count derived WITHOUT consulting the bits: off Q's batch axis and
@@ -389,13 +399,18 @@ varlen_bwd_seq_count(const BwdParams* params) {
 // is a kernel launched over the wrong number of programs, addressing in-bounds
 // rows that are simply the wrong ones, so it is worth one comparison.
 //
-// Returns -1 when the Q side is INDIVIDUAL, where "array size minus one" is
-// not the count and there is nothing independent to compare; the caller then
-// skips the comparison rather than inventing one.
+// Returns -1 when there is nothing independent to compare, and the caller then
+// skips the comparison rather than inventing one. Two such cases: INDIVIDUAL,
+// where "array size minus one" is not the count; and stacked MAX, where the
+// only other source would be Q's batch axis, which is 1 under THD and would
+// disagree with a correct count for every N above one.
 constexpr int32_t
 varlen_seq_count_independent(VarlenBits v, int32_t seqinfo_q0_len, int32_t q_batch) {
   const uint32_t q_length = v.q_length;
   if (q_length == VarlenLength::INDIVIDUAL) {
+    return -1;
+  }
+  if (v.q_stacked == VarlenStacked::THD && q_length == VarlenLength::MAX) {
     return -1;
   }
   return seqinfo_q0_len > 0 ? seqinfo_q0_len - 1 : q_batch;

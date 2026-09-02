@@ -110,11 +110,23 @@ attn_fwd(const attn_fwd_params& in,
                  int(bool(in.seqinfo_k0)), int(bool(in.seqinfo_k1)));
     return hipErrorInvalidValue;
   }
+  // Keyed on the BITS, not on tensor presence: a THD side with LENGTH == MAX
+  // supplies no seqinfo_?0, and trusting the tensor extent there yields the
+  // total packed token count instead of the per-sequence maximum.
+  if (varlen_uses_caller_max_seqlen(varlen, false)) {
+    max_seqlen_q = in.Max_seqlen_q;
+  }
+  if (varlen_uses_caller_max_seqlen(varlen, true)) {
+    max_seqlen_k = in.Max_seqlen_k;
+  }
+  // ...before N, which under stacked MAX is q_tokens / max_seqlen_q and so
+  // depends on the value settled just above.
   // N, the sequence count, is what the grid's z extent and the kernel's `[N]`
   // read are both sized by. Under the bits it comes off the Q side, and it is
   // `Batch` for the dense case by construction.
   const int32_t seqinfo_q0_len = varlen_seqinfo_len(in.seqinfo_q0);
-  int num_seqlens = varlen_seq_count(varlen, seqinfo_q0_len, batch);
+  int num_seqlens = varlen_seq_count(varlen, seqinfo_q0_len, batch,
+                                     int32_t(in.Q.size(2)), max_seqlen_q);
   const int32_t nseq_independent =
       varlen_seq_count_independent(varlen, seqinfo_q0_len, batch);
   if (num_seqlens <= 0 || (nseq_independent >= 0 && num_seqlens != nseq_independent)) {
@@ -141,15 +153,6 @@ attn_fwd(const attn_fwd_params& in,
                  varlen_seqinfo_len(in.seqinfo_k1),
                  int32_t(in.Q.size(0)), int32_t(in.K.size(0)));
     return hipErrorInvalidValue;
-  }
-  // Keyed on the BITS, not on tensor presence: a THD side with LENGTH == MAX
-  // supplies no seqinfo_?0, and trusting the tensor extent there yields the
-  // total packed token count instead of the per-sequence maximum.
-  if (varlen_uses_caller_max_seqlen(varlen, false)) {
-    max_seqlen_q = in.Max_seqlen_q;
-  }
-  if (varlen_uses_caller_max_seqlen(varlen, true)) {
-    max_seqlen_k = in.Max_seqlen_k;
   }
   const auto& compiled_head_dims = AttnFwdMetadata::get_BLOCK_DMODEL_choices();
   int16_t hdim_rounded = round_value(hdim_max, compiled_head_dims);
