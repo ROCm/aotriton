@@ -244,7 +244,8 @@ class _attention_varlen(torch.autograd.Function):
         if PROBE_UNSUPPORTED and ret == hipError_t.hipErrorPeerAccessUnsupported:
             raise NotImplementedError()
         assert ret == hipError_t.hipSuccess, ret
-        # One None per non-tensor forward input, now including lse_layout.
-        return dq, dk, dv, None, None, None, None, None, None, None, None, None
+        # One entry per forward input after ctx: q, k, v, seqlens_q, seqlens_k,
+        # causal, sm_scale, dropout_p, varlen_type, lse_layout, attn_extra_args.
+        return dq, dk, dv, None, None, None, None, None, None, None, None
 
 varlen_attention = _attention_varlen.apply
