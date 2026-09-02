@@ -490,6 +490,53 @@ test_extent_validation() {
          && side_of(0x0202u, false, N, 0, N + 1, 0).extents_ok(N)),
         "padded with a short Q batch");
 
+  // The TOKEN axis. Reported on PR #222: only the batch extent was checked, so
+  // a stacked K with LENGTH == MAX (side 0x01) against a short K.size(2) passed
+  // and launched reads through N * max_seqlen_k.
+  //
+  // 0x010B is compact Q against uniformly-stacked K. Q supplies N; K's token
+  // axis must hold N * max_seqlen_k rows.
+  check(side_of(0x010Bu, false, 1, N * 32, 0, 0, 32, 32).extents_ok(N),
+        "stacked MAX K with exactly N * max_seqlen tokens");
+  check(!side_of(0x010Bu, false, 1, N * 32 - 1, 0, 0, 32, 32).extents_ok(N),
+        "stacked MAX K one token short");
+  check(side_of(0x010Bu, false, 1, N * 32 + 99, 0, 0, 32, 32).extents_ok(N),
+        "a longer token axis is fine");
+
+  // Q cannot trip it: seq_count() derives N by dividing that same extent.
+  check(side_of(0x0001u, true, 1, N * 32, 0, 0, 32, 32).extents_ok(N),
+        "stacked MAX Q is self-consistent by construction");
+
+  // BHSD reads rows 0..seqlen of its own slice, so max_seqlen must fit.
+  check(side_of(0x0202u, true, N, 128, N + 1, 0, 128, 128).extents_ok(N),
+        "padded Q whose seq axis holds max_seqlen");
+  check(!side_of(0x0202u, true, N, 64, N + 1, 0, 128, 128).extents_ok(N),
+        "padded Q whose seq axis is shorter than Max_seqlen_q");
+
+  // REUSE/ARRAY reach is decided by array CONTENTS, so the token axis is not
+  // constrained here -- a documented precondition, not a check.
+  check(side_of(0x0B0Bu, true, 1, 1, N + 1, 0).extents_ok(N),
+        "packed positions are not bounded by the token axis");
+
+  // Max_seqlen zero, where the mode reads the caller's. Zero passes every other
+  // check -- it satisfies every lower bound, the bits are well-formed, and both
+  // sequence counts agree -- and then launches cdiv(0, BLOCK_M) == 0
+  // workgroups and returns success. Found by review on PR #222.
+  check(!side_of(0x0202u, true, N, 128, N + 1, 0, /*caller_max*/0, 128).max_seqlen_ok(),
+        "padded Q with Max_seqlen_q unset is refused");
+  check(side_of(0x0202u, true, N, 128, N + 1, 0, 128, 128).max_seqlen_ok(),
+        "padded Q with Max_seqlen_q set is accepted");
+  check(!side_of(0x0B0Bu, false, 1, 0, N + 1, 0, 0, 0).max_seqlen_ok(),
+        "compact K with Max_seqlen_k unset is refused");
+  // A fully dense side reads the tensor, so an unset caller value is no error.
+  check(side_of(0x0000u, true, N, 128, 0, 0, 0, 128).max_seqlen_ok(),
+        "dense needs no caller Max_seqlen");
+  // The trap it guards: everything else says yes.
+  check(side_of(0x0202u, true, N, 128, N + 1, 0, 0, 128).extents_ok(N)
+        && side_of(0x0202u, true, N, 128, N + 1, 0, 0, 128).lse_pitch_ok(N)
+        && side_of(0x0202u, true, N, 128, N + 1, 0, 0, 128).seq_count() == N,
+        "...which every other check accepts");
+
   // dense reads no array at all and is indexed by batch on both sides.
   check((side_of(0x0000u, true,  N, 0, 0, 0).extents_ok(N)
          && side_of(0x0000u, false, N, 0, 0, 0).extents_ok(N)), "dense with N batch slots");
@@ -534,37 +581,41 @@ test_seq_count() {
         "independent: declines Q-side INDIVIDUAL");
 }
 
-// A stand-in for the generated OpAttnBwdParams: the three fields
+// A stand-in for the generated OpAttnBwdParams: the fields
 // varlen_bwd_seq_count() reads, and nothing else. Compiling against this is the
 // point -- the real struct lives in a generated header, so without a stub the
 // template body is only ever checked by a full AOT build.
 struct FakeBwdParams {
   int32_t varlen_bits;
   const T1* seqinfo_q0;
+  const T1* seqinfo_q1;
   const T4* Q;
   int32_t max_seqlen_q;   // read only under stacked MAX, where N is a division
 };
 
 void
 test_bwd_grid_extent() {
+  // None of these rows reads a position array; it is passed because the side
+  // object is built from every operand, not only the ones N happens to need.
+  const T1 no_array;
+
   // Padded: Q's batch axis IS N, and the length array is present but not
   // consulted -- the row where reading the array instead would look plausible
   // and be wrong whenever the two disagree.
   const T1 cu_seqlens{1, {6}, {1}, AOTRITON_NS::kInt32};
   const T4 q_padded{1, {5, 3, 64, 64}, {0, 0, 0, 1}, AOTRITON_NS::kFloat16};
-  FakeBwdParams padded{0x0202, &cu_seqlens, &q_padded};
+  FakeBwdParams padded{0x0202, &cu_seqlens, &no_array, &q_padded};
   check(varlen_bwd_seq_count(&padded) == 5u, "bwd grid z extent, padded");
 
   // Compact: Q's batch axis is 1 under THD, so the array is the only source.
   const T4 q_packed{1, {1, 3, 512, 64}, {0, 0, 0, 1}, AOTRITON_NS::kFloat16};
-  FakeBwdParams compact{0x0B0B, &cu_seqlens, &q_packed};
+  FakeBwdParams compact{0x0B0B, &cu_seqlens, &no_array, &q_packed};
   check(varlen_bwd_seq_count(&compact) == 5u, "bwd grid z extent, compact");
 
   // Dense: no array at all, and the null tensor's sizes are INDETERMINATE, so
   // this also checks that the BHSD path never reaches size(0).
-  const T1 no_array;
   const T4 q_dense{1, {4, 3, 128, 64}, {0, 0, 0, 1}, AOTRITON_NS::kFloat16};
-  FakeBwdParams dense{0x0000, &no_array, &q_dense};
+  FakeBwdParams dense{0x0000, &no_array, &no_array, &q_dense};
   check(varlen_bwd_seq_count(&dense) == 4u, "bwd grid z extent, dense");
 }
 

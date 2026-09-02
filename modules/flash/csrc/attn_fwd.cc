@@ -107,6 +107,14 @@ attn_fwd(const attn_fwd_params& in,
   // Well-formedness of the bits themselves, before anything is derived from
   // them: an out-of-range field, REUSE without CUMULATIVE, or a mode whose
   // array is absent would otherwise reach the kernel and tl.load from null.
+  if (!(q_addr.max_seqlen_ok() && k_addr.max_seqlen_ok())) {
+    AOTRITON_LOG(LOG_ERROR,
+                 "v3::flash::attn_fwd: varlen_bits=0x%08x reads a caller Max_seqlen but "
+                 "got q=%d k=%d -- zero would launch an empty grid and return "
+                 "success, so refusing to launch",
+                 varlen_to_wire(varlen), in.Max_seqlen_q, in.Max_seqlen_k);
+    return hipErrorInvalidValue;
+  }
   if (!varlen_valid(varlen, q_addr, k_addr)) {
     AOTRITON_LOG(LOG_ERROR,
                  "v3::flash::attn_fwd: varlen_bits=0x%08x is not well-formed for the "

@@ -65,11 +65,9 @@ struct VarlenShift {
   static constexpr uint32_t LSE_LAYOUT = 16;
 };
 
-// Host struct -> the fixed-allocation word the kernel shifts apart.
-// UNCONDITIONAL explicit shifts: no platform branch, no endianness #ifdef, no
-// bit_cast. Reading a bit-field member inside a constexpr function is fine --
-// it is constexpr *bit_cast* over bit-fields that clang rejects -- so the
-// spec's hex table stays compile-time checked below.
+// One side's byte. Q and K encode identically, so the whole-word encoder below
+// is this called twice; see it for why the shifts are spelled out rather than
+// bit_cast'd.
 constexpr uint32_t
 varlen_mode_to_wire(VarlenMode m) {
   return (uint32_t(m.stacked)  << VarlenShift::STACKED)
@@ -221,8 +219,6 @@ class VarlenAddressing {
       info0_len_(info0_len), info1_len_(info1_len),
       caller_max_seqlen_(caller_max_seqlen), tensor_max_seqlen_(tensor_max_seqlen) {}
 
-  constexpr VarlenMode mode() const { return mode_; }
-
   // Whether Max_seqlen comes from the CALLER rather than the tensor's extent.
   //
   // Tensor presence is the wrong predicate and was the bug this replaced: a THD
@@ -238,6 +234,22 @@ class VarlenAddressing {
     return mode_.stacked != VarlenStacked::BHSD
         || mode_.length != VarlenLength::MAX
         || mode_.position != VarlenPosition::IMPLIED;
+  }
+
+  // Is the caller's Max_seqlen actually set, where the mode reads one?
+  //
+  // Zero is the header's default, so "never set it" and "meant zero" arrive as
+  // the same input -- and the result is silent rather than merely wrong. The
+  // forward grid's x extent is cdiv(max_seqlen_q, BLOCK_M), so zero launches NO
+  // workgroups, leaves Out at whatever was allocated, and returns hipSuccess.
+  //
+  // Nothing else catches it: zero satisfies every lower bound in extents_ok()
+  // by construction, valid() sees well-formed bits, and both sequence counts
+  // agree. Kept separate from those two because it is not a property of the
+  // bits or of the arrays -- it is the one scalar operand that has no
+  // recognisable "unset" value other than a wrong answer.
+  constexpr bool max_seqlen_ok() const {
+    return !uses_caller_max_seqlen() || caller_max_seqlen_ > 0;
   }
 
   constexpr int32_t max_seqlen() const {
@@ -298,6 +310,35 @@ class VarlenAddressing {
       // a z the K tensor never had.
       return false;
     }
+    // The TOKEN axis, where the host can know how far the kernel will reach.
+    //
+    // THD + IMPLIED puts sequence z at row z * max_seqlen, so the last row read
+    // is N * max_seqlen and a shorter axis is an out-of-bounds launch. The Q
+    // side cannot trip this -- seq_count() derives N by dividing that very
+    // extent -- but K's N comes from Q, so a stacked K with MAX (side 0x01)
+    // against a short K.size(2) reaches past the end with nothing to stop it.
+    //
+    // int64 because N * max_seqlen is a whole-batch quantity: at N = 64K and
+    // max_seqlen = 64K the product leaves int32 while both factors are
+    // unremarkable.
+    const int64_t per_seq = max_seqlen();
+    if (mode_.stacked == VarlenStacked::THD
+        && mode_.position == VarlenPosition::IMPLIED
+        && static_cast<int64_t>(token_extent_) < static_cast<int64_t>(n) * per_seq) {
+      return false;
+    }
+    // A BHSD side under IMPLIED reads rows 0..seqlen of its own slice, and
+    // seqlen <= max_seqlen. Under REUSE/ARRAY it starts at a nonzero row_off
+    // within that slice, so this stays a lower bound there rather than the
+    // reach -- see the note below on why the contents are not read.
+    if (mode_.stacked == VarlenStacked::BHSD
+        && static_cast<int64_t>(token_extent_) < per_seq) {
+      return false;
+    }
+    // Under REUSE or ARRAY the row offsets come from an array whose CONTENTS
+    // decide the reach, and reading them costs a device sync. Those stay
+    // documented preconditions (the prefix-sum and non-overlap assumptions)
+    // rather than checks, which is why this is not a complete bound.
     return true;
   }
 
@@ -436,11 +477,14 @@ template<typename BwdParams>
 inline uint32_t
 varlen_bwd_seq_count(const BwdParams* params) {
   const VarlenBits v = varlen_from_wire(static_cast<uint32_t>(params->varlen_bits));
+  // Every operand, not just the ones seq_count() happens to read: an object
+  // that under-reports its own position array would answer valid() and
+  // extents_ok() wrongly the moment a grid calculator asked either.
   const VarlenAddressing q(v.qmode,
                            static_cast<int32_t>(params->Q->size(0)),
                            static_cast<int32_t>(params->Q->size(2)),
                            varlen_seqinfo_len(*params->seqinfo_q0),
-                           0,
+                           varlen_seqinfo_len(*params->seqinfo_q1),
                            params->max_seqlen_q,
                            static_cast<int32_t>(params->Q->size(2)));
   return static_cast<uint32_t>(q.seq_count());

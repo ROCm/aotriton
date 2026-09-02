@@ -31,15 +31,18 @@ namespace pyaotriton::v3 {
       void setup_module(py::module_& m) {
         // pybind11 CANNOT bind a bit-field through def_readwrite: that needs
         // &Struct::member, and a pointer-to-member to a bit-field is ill-formed
-        // -- you cannot take the address of one in C++ at all. So every field of
-        // VarlenBits goes through def_property with lambdas that read and write
+        // -- you cannot take the address of one in C++ at all. So every BIT-FIELD
+        // below goes through def_property with lambdas that read and write
         // THROUGH the bit-field rather than around it. A BITF macro beside the
         // RW macro below, for the same reason RW exists: the field list should
         // read as a list.
-        // One class per side-mode, then VarlenBits holding two of them.
-        // def_readwrite on a registered class type returns by reference
-        // (reference_internal), so `params.varlen_bits.qmode.stacked = 1`
-        // reaches the parent; a copy would make every write vanish silently.
+        //
+        // One class per side-mode, then VarlenBits holding two of them. The two
+        // modes are ordinary members of class type, not bit-fields, so they DO
+        // take def_readwrite -- which on a registered class type returns by
+        // reference (reference_internal), so `params.varlen_bits.qmode.stacked
+        // = 1` reaches the parent; a copy would make every write vanish
+        // silently.
         py::class_<VarlenMode>(m, "VarlenMode")
           .def(py::init<>())
 #define BITF(name) def_property(#name,                                       \
@@ -54,9 +57,7 @@ namespace pyaotriton::v3 {
           .def(py::init<>())
           .def_readwrite("qmode", &VarlenBits::qmode)
           .def_readwrite("kmode", &VarlenBits::kmode)
-          // pybind11 CANNOT bind a bit-field through def_readwrite: that needs
-          // &Struct::member, and a pointer-to-member to a bit-field is
-          // ill-formed. lse_layout therefore goes through def_property.
+          // lse_layout IS a bit-field, so it takes the def_property route above.
           .def_property("lse_layout",
                         [](const VarlenBits& v) { return uint32_t(v.lse_layout); },
                         [](VarlenBits& v, uint32_t x) { v.lse_layout = x; })
@@ -144,7 +145,7 @@ namespace pyaotriton::v3 {
           // An ordinary member of class type, not a bit-field, so RW compiles.
           // def_readwrite on a registered class type returns the member by
           // reference (return_value_policy::reference_internal), so
-          // `params.varlen_bits.q_stacked = 1` mutates the parent in place --
+          // `params.varlen_bits.qmode.stacked = 1` mutates the parent in place --
           // had it returned a copy, every write from Python would silently
           // vanish and a varlen request would run as dense.
           .RW(varlen_bits)
