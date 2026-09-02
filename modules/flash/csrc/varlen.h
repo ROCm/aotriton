@@ -199,58 +199,179 @@ varlen_addressing(uint32_t wire) {
   return wire & 0xFFFFu;
 }
 
-// Whether the shim must take Max_seqlen from the CALLER rather than from the
-// tensor's own extent.
+// One side's addressing: its mode, and the operands that mode selects.
 //
-// Tensor presence is the wrong predicate and was the bug this replaced: a THD
-// side with LENGTH == MAX carries no length array, so keying off seqinfo_?0
-// left max_seqlen at K.size(2) -- the total packed token count, not the
-// per-sequence maximum -- and decode_addressing then read seqlen = that total
-// and row_off = z * that total, i.e. out of bounds. It also let dense bits with
-// a stray seqinfo_?0 replace a correct tensor extent with an unset zero.
+// Built once per side, so nothing below takes a `k_side` flag -- the side is
+// decided at construction and every question after that is a member. That was
+// the point: threading a bool through seven predicates made every call site
+// restate which half it meant, and made the two halves look like different
+// operations when they are the same one twice.
 //
-// Only a fully dense side (all three axes at their zero value) may trust the
-// tensor: there BHSD + MAX means the extent IS the per-sequence length.
-constexpr bool
-varlen_mode_uses_caller_max_seqlen(VarlenMode m) {
-  return m.stacked != VarlenStacked::BHSD
-      || m.length != VarlenLength::MAX
-      || m.position != VarlenPosition::IMPLIED;
-}
+// Holds extracted numbers rather than tensors, so it stays constexpr and can be
+// tested without constructing a TensorView. varlen_addressing_of() below builds
+// one from the operands a shim actually has.
+class VarlenAddressing {
+ public:
+  constexpr VarlenAddressing(VarlenMode mode, bool is_q,
+                             int32_t batch_extent, int32_t token_extent,
+                             int32_t info0_len, int32_t info1_len,
+                             int32_t caller_max_seqlen, int32_t tensor_max_seqlen)
+    : mode_(mode), is_q_(is_q),
+      batch_extent_(batch_extent), token_extent_(token_extent),
+      info0_len_(info0_len), info1_len_(info1_len),
+      caller_max_seqlen_(caller_max_seqlen), tensor_max_seqlen_(tensor_max_seqlen) {}
 
-// Cheap well-formedness check on the bits and the arrays they claim to need.
-// No device reads, so it runs on every launch -- unlike the prefix-sum and
-// non-overlap preconditions, which would cost a sync and stay documented only.
-//
-// Catches the combinations that would otherwise reach the kernel and fault or
-// silently misaddress: an out-of-range field, REUSE without CUMULATIVE (only
-// CUMULATIVE makes seqinfo_?0 hold positions as well as lengths), and a mode
-// whose array is absent -- the kernel would tl.load from null.
-constexpr bool
-varlen_side_valid(VarlenMode m, bool has_info0, bool has_info1) {
-  const uint32_t length = m.length;
-  const uint32_t position = m.position;
-  if (length > VarlenLength::INDIVIDUAL || position > VarlenPosition::ARRAY) {
-    return false;                                   // 3 is not a value
-  }
-  if (position == VarlenPosition::REUSE && length != VarlenLength::CUMULATIVE) {
-    return false;                                   // seqinfo_?0 holds no position
-  }
-  if (length != VarlenLength::MAX && !has_info0) {
-    return false;                                   // length source missing
-  }
-  if (position == VarlenPosition::ARRAY && !has_info1) {
-    return false;                                   // position source missing
-  }
-  if (length == VarlenLength::MAX && has_info0) {
-    return false;                                   // array supplied but unread
-  }
-  return true;
-}
+  constexpr VarlenMode mode() const { return mode_; }
 
+  // Whether Max_seqlen comes from the CALLER rather than the tensor's extent.
+  //
+  // Tensor presence is the wrong predicate and was the bug this replaced: a THD
+  // side with LENGTH == MAX carries no length array, so keying off seqinfo_?0
+  // left max_seqlen at K.size(2) -- the total packed token count, not the
+  // per-sequence maximum -- and decode_addressing then read seqlen = that total
+  // and row_off = z * that total, i.e. out of bounds. It also let dense bits
+  // with a stray seqinfo_?0 replace a correct extent with an unset zero.
+  //
+  // Only a fully dense side may trust the tensor: there BHSD + MAX means the
+  // extent IS the per-sequence length.
+  constexpr bool uses_caller_max_seqlen() const {
+    return mode_.stacked != VarlenStacked::BHSD
+        || mode_.length != VarlenLength::MAX
+        || mode_.position != VarlenPosition::IMPLIED;
+  }
+
+  constexpr int32_t max_seqlen() const {
+    return uses_caller_max_seqlen() ? caller_max_seqlen_ : tensor_max_seqlen_;
+  }
+
+  // Cheap well-formedness: the bits, and whether the arrays this mode reads
+  // were supplied. No device reads, so it runs on every launch -- unlike the
+  // prefix-sum and non-overlap preconditions, which cost a sync.
+  //
+  // Catches what would otherwise reach the kernel and fault or misaddress: an
+  // out-of-range field, REUSE without CUMULATIVE (only CUMULATIVE makes
+  // seqinfo_?0 hold positions as well as lengths), and a mode whose array is
+  // absent -- the kernel would tl.load from null.
+  constexpr bool valid() const {
+    if (mode_.length > VarlenLength::INDIVIDUAL
+        || mode_.position > VarlenPosition::ARRAY) {
+      return false;                                 // 3 is not a value
+    }
+    if (mode_.reserved) {
+      return false;
+    }
+    if (mode_.position == VarlenPosition::REUSE
+        && mode_.length != VarlenLength::CUMULATIVE) {
+      return false;                                 // info0 holds no position
+    }
+    if (mode_.length != VarlenLength::MAX && !info0_len_) {
+      return false;                                 // length source missing
+    }
+    if (mode_.position == VarlenPosition::ARRAY && !info1_len_) {
+      return false;                                 // position source missing
+    }
+    if (mode_.length == VarlenLength::MAX && info0_len_) {
+      return false;                                 // supplied but never read
+    }
+    return true;
+  }
+
+  // Do the arrays and the tensor hold N sequences' worth?
+  //
+  // LOWER BOUNDS, not equality: a caller may legitimately hand over a bigger
+  // buffer than it needs -- a KV cache sized for the worst-case batch, or a
+  // view into a larger allocation. Too SHORT is the only error, because that is
+  // what the kernel reads past.
+  constexpr bool extents_ok(int32_t n) const {
+    if (mode_.length == VarlenLength::CUMULATIVE && info0_len_ < n + 1) {
+      return false;                        // read at [z] and [z+1]
+    }
+    if (mode_.length == VarlenLength::INDIVIDUAL && info0_len_ < n) {
+      return false;                        // read at [z]
+    }
+    if (mode_.position == VarlenPosition::ARRAY) {
+      // [N] as well as [z] on a stacked Q: lse_token_pitch takes the total
+      // token count from the position array's last slot. No other side does.
+      const int32_t need =
+          (is_q_ && mode_.stacked == VarlenStacked::THD) ? n + 1 : n;
+      if (info1_len_ < need) {
+        return false;
+      }
+    }
+    if (mode_.stacked == VarlenStacked::BHSD && batch_extent_ < n) {
+      // batch_index = z on a BHSD side, so its tensor needs N slots. N comes
+      // off the Q side alone, which is how mixed 0x000B reached K.size(0) with
+      // a z the K tensor never had.
+      return false;
+    }
+    return true;
+  }
+
+  // N off this side. Q's is the launch's; K's is not consulted.
+  //
+  // STACKED + MAX is uniform stacking: every sequence is exactly max_seqlen
+  // rows, so the token axis holds N of them. There is no array to count, but
+  // the count is not undetermined either.
+  //
+  // -1 where it genuinely cannot be derived: a max_seqlen of zero, or a token
+  // axis that is not a whole multiple of it, which is not a uniform stacking
+  // and must not be rounded into one. The shims reject that rather than
+  // guessing, because a wrong z extent gives in-bounds addresses of the wrong
+  // rows.
+  constexpr int32_t seq_count() const {
+    if (mode_.stacked == VarlenStacked::BHSD) {
+      return batch_extent_;                  // one sequence per batch slot
+    }
+    if (mode_.length == VarlenLength::CUMULATIVE) {
+      return info0_len_ - 1;                 // the array is (N+1,)
+    }
+    if (mode_.length == VarlenLength::INDIVIDUAL) {
+      return info0_len_;                     // the array is (N,)
+    }
+    const int32_t per_seq = max_seqlen();
+    if (per_seq <= 0 || token_extent_ < 0 || token_extent_ % per_seq != 0) {
+      return -1;                             // not a uniform stacking
+    }
+    return token_extent_ / per_seq;
+  }
+
+  // The same count WITHOUT consulting the bits: off the batch axis and whatever
+  // length array was handed in, which is how the shims computed it before
+  // varlen_bits existed. Keyed on array PRESENCE where seq_count() is keyed on
+  // STACKED, so the two disagree exactly when the operands do not match the
+  // declared layout -- a padded call whose seqinfo_q0 is the wrong length, say.
+  // Not a crash: a kernel over the wrong number of programs, addressing
+  // in-bounds rows that are the wrong ones. Worth one comparison.
+  //
+  // -1 where there is nothing independent to compare and the caller skips it:
+  // INDIVIDUAL, where "array size minus one" is not the count; and stacked MAX,
+  // where the only other source is a batch axis that is 1 under THD and would
+  // disagree with every correct count above one.
+  constexpr int32_t independent_seq_count() const {
+    if (mode_.length == VarlenLength::INDIVIDUAL) {
+      return -1;
+    }
+    if (mode_.stacked == VarlenStacked::THD && mode_.length == VarlenLength::MAX) {
+      return -1;
+    }
+    return info0_len_ > 0 ? info0_len_ - 1 : batch_extent_;
+  }
+
+ private:
+  VarlenMode mode_;
+  bool is_q_;
+  int32_t batch_extent_;
+  int32_t token_extent_;
+  int32_t info0_len_;
+  int32_t info1_len_;
+  int32_t caller_max_seqlen_;
+  int32_t tensor_max_seqlen_;
+};
+
+// Whole-word checks, the ones that are not per side.
 constexpr bool
-varlen_valid(VarlenBits v, bool has_q0, bool has_q1, bool has_k0, bool has_k1) {
-  if (v.qmode.reserved || v.kmode.reserved || v.reserved) {
+varlen_valid(VarlenBits v, const VarlenAddressing& q, const VarlenAddressing& k) {
+  if (v.reserved) {
     return false;
   }
   // Two bits for future room, but only HT and TH defined; the kernel branches
@@ -258,98 +379,31 @@ varlen_valid(VarlenBits v, bool has_q0, bool has_q1, bool has_k0, bool has_k1) {
   if (v.lse_layout > VarlenLseLayout::TH) {
     return false;
   }
-  return varlen_side_valid(v.qmode, has_q0, has_q1)
-      && varlen_side_valid(v.kmode, has_k0, has_k1);
-}
-
-// Do the arrays and tensors actually hold N sequences' worth?
-//
-// LOWER BOUNDS, not equality: a caller may legitimately hand over a bigger
-// buffer than it needs -- a KV cache array sized for the worst-case batch, or a
-// view into a larger allocation -- and demanding an exact match would reject
-// those for no reason. Too SHORT is the only error, because that is what the
-// kernel reads past.
-//
-// varlen_side_valid() above checks the bits and that each array is present;
-// this checks that a present array is long enough. Both are cheap: a size(0),
-// no device read.
-constexpr bool
-varlen_side_extents(VarlenMode m, int32_t n,
-                    int32_t info0_len, int32_t info1_len, int32_t batch_extent,
-                    bool q_side) {
-  const uint32_t stacked = m.stacked;
-  const uint32_t length = m.length;
-  const uint32_t position = m.position;
-  if (length == VarlenLength::CUMULATIVE && info0_len < n + 1) {
-    return false;                        // read at [z] and [z+1]
-  }
-  if (length == VarlenLength::INDIVIDUAL && info0_len < n) {
-    return false;                        // read at [z]
-  }
-  if (position == VarlenPosition::ARRAY) {
-    // [N] as well as [z] on a stacked Q: lse_token_pitch takes the total token
-    // count out of the position array's last slot. No other side reads it.
-    const int32_t need = (q_side && stacked == VarlenStacked::THD) ? n + 1 : n;
-    if (info1_len < need) {
-      return false;
-    }
-  }
-  if (stacked == VarlenStacked::BHSD && batch_extent < n) {
-    // batch_index = z on a BHSD side, so its tensor needs N slots. N comes off
-    // the Q side alone, which is how mixed 0x000B reached K.size(0) with a z
-    // the K tensor never had.
-    return false;
-  }
-  return true;
-}
-
-constexpr bool
-varlen_extents_valid(VarlenBits v, int32_t n,
-                     int32_t q0_len, int32_t q1_len, int32_t k0_len, int32_t k1_len,
-                     int32_t q_batch, int32_t k_batch) {
-  return varlen_side_extents(v.qmode, n, q0_len, q1_len, q_batch, true)
-      && varlen_side_extents(v.kmode, n, k0_len, k1_len, k_batch, false);
-}
-
-// N, the sequence count, read off the Q side of the wire word.
-//
-// STACKED + MAX is uniform stacking: every sequence is exactly max_seqlen_q
-// rows, so the token axis holds N of them and N = q_tokens / max_seqlen_q.
-// There is no array to count, but the count is not undetermined either.
-//
-// Still returns -1 when it genuinely cannot be derived -- a max_seqlen of zero,
-// or a token axis that is not a whole multiple of it, which is not a uniform
-// stacking at all. The shims reject that rather than guessing, because a wrong
-// z extent yields in-bounds addresses of the wrong rows.
-//
-// `seqinfo_q0_len` must be 0 for an absent tensor. TensorView's default
-// constructor leaves its sizes INDETERMINATE (only get_null_tensor zeroes
-// them), so `size(0)` on an unset operand is not merely zero, it is garbage;
-// use varlen_seqinfo_len() below rather than calling size(0) unguarded.
-constexpr int32_t
-varlen_seq_count(VarlenBits v, int32_t seqinfo_q0_len, int32_t q_batch,
-                 int32_t q_tokens, int32_t max_seqlen_q) {
-  const uint32_t q_stacked = v.qmode.stacked;
-  const uint32_t q_length = v.qmode.length;
-  if (q_stacked == VarlenStacked::BHSD) {
-    return q_batch;                        // one sequence per batch slot
-  }
-  if (q_length == VarlenLength::CUMULATIVE) {
-    return seqinfo_q0_len - 1;             // the array is (N+1,)
-  }
-  if (q_length == VarlenLength::INDIVIDUAL) {
-    return seqinfo_q0_len;                 // the array is (N,)
-  }
-  // STACKED + MAX: every sequence is max_seqlen_q rows, packed back to back.
-  if (max_seqlen_q <= 0 || q_tokens < 0 || q_tokens % max_seqlen_q != 0) {
-    return -1;                             // not a uniform stacking
-  }
-  return q_tokens / max_seqlen_q;
+  return q.valid() && k.valid();
 }
 
 inline int32_t
 varlen_seqinfo_len(const T1& t) {
   return t ? static_cast<int32_t>(t.size(0)) : 0;
+}
+
+// Build one side's addressing from the operands a shim holds.
+//
+// `base` is that side's data tensor: its batch axis feeds the BHSD count and
+// the BHSD extent check, its token axis the uniform-stacking division. The
+// TensorView default constructor leaves sizes INDETERMINATE (only
+// get_null_tensor zeroes them), so array lengths go through
+// varlen_seqinfo_len() rather than an unguarded size(0).
+inline VarlenAddressing
+varlen_addressing_of(VarlenMode mode, bool is_q, const T4& base,
+                     const T1& info0, const T1& info1, int32_t caller_max_seqlen) {
+  return VarlenAddressing(mode, is_q,
+                          static_cast<int32_t>(base.size(0)),
+                          static_cast<int32_t>(base.size(2)),
+                          varlen_seqinfo_len(info0),
+                          varlen_seqinfo_len(info1),
+                          caller_max_seqlen,
+                          static_cast<int32_t>(base.size(2)));
 }
 
 // N, for the z extent of every BACKWARD grid. The backward kernels take no
@@ -359,43 +413,21 @@ varlen_seqinfo_len(const T1& t) {
 //
 // Templated because OpAttnBwdParams lives in a generated header this one does
 // not include, and because there is nothing type-specific about it beyond the
-// three fields it reads. attn_bwd() validates the count before launching, so a
-// negative return cannot reach a grid calculator.
+// fields it reads. This is one of the two places the WIRE is legitimate: a grid
+// calculator sees only the int32 the generated struct carries. attn_bwd()
+// validates the count before launching, so a negative cannot reach a grid.
 template<typename BwdParams>
 inline uint32_t
 varlen_bwd_seq_count(const BwdParams* params) {
-  return static_cast<uint32_t>(
-      varlen_seq_count(varlen_from_wire(static_cast<uint32_t>(params->varlen_bits)),
-                       varlen_seqinfo_len(*params->seqinfo_q0),
-                       static_cast<int32_t>(params->Q->size(0)),
-                       static_cast<int32_t>(params->Q->size(2)),
-                       params->max_seqlen_q));
-}
-
-// The same count derived WITHOUT consulting the bits: off Q's batch axis and
-// the size of whatever length array was handed in, which is how the shims
-// computed it before varlen_bits existed. Keyed on tensor PRESENCE where
-// varlen_seq_count() is keyed on the STACKED bit, so the two disagree exactly
-// when the operands do not match the layout that was declared -- a padded call
-// whose seqinfo_q0 is the wrong length, say. That failure is not a crash: it
-// is a kernel launched over the wrong number of programs, addressing in-bounds
-// rows that are simply the wrong ones, so it is worth one comparison.
-//
-// Returns -1 when there is nothing independent to compare, and the caller then
-// skips the comparison rather than inventing one. Two such cases: INDIVIDUAL,
-// where "array size minus one" is not the count; and stacked MAX, where the
-// only other source would be Q's batch axis, which is 1 under THD and would
-// disagree with a correct count for every N above one.
-constexpr int32_t
-varlen_seq_count_independent(VarlenBits v, int32_t seqinfo_q0_len, int32_t q_batch) {
-  const uint32_t q_length = v.qmode.length;
-  if (q_length == VarlenLength::INDIVIDUAL) {
-    return -1;
-  }
-  if (v.qmode.stacked == VarlenStacked::THD && q_length == VarlenLength::MAX) {
-    return -1;
-  }
-  return seqinfo_q0_len > 0 ? seqinfo_q0_len - 1 : q_batch;
+  const VarlenBits v = varlen_from_wire(static_cast<uint32_t>(params->varlen_bits));
+  const VarlenAddressing q(v.qmode, true,
+                           static_cast<int32_t>(params->Q->size(0)),
+                           static_cast<int32_t>(params->Q->size(2)),
+                           varlen_seqinfo_len(*params->seqinfo_q0),
+                           0,
+                           params->max_seqlen_q,
+                           static_cast<int32_t>(params->Q->size(2)));
+  return static_cast<uint32_t>(q.seq_count());
 }
 
 } // AOTRITON_NS::v3::flash::internal

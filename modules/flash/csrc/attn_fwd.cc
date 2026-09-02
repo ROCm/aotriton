@@ -86,6 +86,11 @@ attn_fwd(const attn_fwd_params& in,
   // Reasoned about as a VarlenBits throughout; the wire word is built once,
   // at the kernel boundary below, and otherwise only inside grid calculators.
   const VarlenBits varlen = in.varlen_bits;
+  // One object per side; nothing below asks "which side" again.
+  const VarlenAddressing q_addr = varlen_addressing_of(
+      varlen.qmode, true, in.Q, in.seqinfo_q0, in.seqinfo_q1, in.Max_seqlen_q);
+  const VarlenAddressing k_addr = varlen_addressing_of(
+      varlen.kmode, false, in.K, in.seqinfo_k0, in.seqinfo_k1, in.Max_seqlen_k);
   hipError_t err;
   auto stream = stream_wrap.native();
   auto gpu = getGpuFromStream(stream);
@@ -95,14 +100,14 @@ attn_fwd(const attn_fwd_params& in,
   int hdim_max = std::max(hdim_qk, hdim_vo);
   int num_head_q = in.Q.size(1);
   int num_head_k = in.K.size(1);
-  int max_seqlen_q = in.Q.size(2);
-  int max_seqlen_k = in.K.size(2);
+  // From the side objects: the caller's value where the mode reads one, the
+  // tensor's extent only where a fully dense side makes that the same thing.
+  int max_seqlen_q = q_addr.max_seqlen();
+  int max_seqlen_k = k_addr.max_seqlen();
   // Well-formedness of the bits themselves, before anything is derived from
   // them: an out-of-range field, REUSE without CUMULATIVE, or a mode whose
   // array is absent would otherwise reach the kernel and tl.load from null.
-  if (!varlen_valid(varlen,
-                    bool(in.seqinfo_q0), bool(in.seqinfo_q1),
-                    bool(in.seqinfo_k0), bool(in.seqinfo_k1))) {
+  if (!varlen_valid(varlen, q_addr, k_addr)) {
     AOTRITON_LOG(LOG_ERROR,
                  "v3::flash::attn_fwd: varlen_bits=0x%08x is not well-formed for the "
                  "seqinfo arrays supplied (q0=%d q1=%d k0=%d k1=%d) -- refusing to launch",
@@ -110,25 +115,12 @@ attn_fwd(const attn_fwd_params& in,
                  int(bool(in.seqinfo_k0)), int(bool(in.seqinfo_k1)));
     return hipErrorInvalidValue;
   }
-  // Keyed on the BITS, not on tensor presence: a THD side with LENGTH == MAX
-  // supplies no seqinfo_?0, and trusting the tensor extent there yields the
-  // total packed token count instead of the per-sequence maximum.
-  if (varlen_mode_uses_caller_max_seqlen(varlen.qmode)) {
-    max_seqlen_q = in.Max_seqlen_q;
-  }
-  if (varlen_mode_uses_caller_max_seqlen(varlen.kmode)) {
-    max_seqlen_k = in.Max_seqlen_k;
-  }
-  // ...before N, which under stacked MAX is q_tokens / max_seqlen_q and so
-  // depends on the value settled just above.
   // N, the sequence count, is what the grid's z extent and the kernel's `[N]`
   // read are both sized by. Under the bits it comes off the Q side, and it is
   // `Batch` for the dense case by construction.
   const int32_t seqinfo_q0_len = varlen_seqinfo_len(in.seqinfo_q0);
-  int num_seqlens = varlen_seq_count(varlen, seqinfo_q0_len, batch,
-                                     int32_t(in.Q.size(2)), max_seqlen_q);
-  const int32_t nseq_independent =
-      varlen_seq_count_independent(varlen, seqinfo_q0_len, batch);
+  int num_seqlens = q_addr.seq_count();
+  const int32_t nseq_independent = q_addr.independent_seq_count();
   if (num_seqlens <= 0 || (nseq_independent >= 0 && num_seqlens != nseq_independent)) {
     AOTRITON_LOG(LOG_ERROR,
                  "v3::flash::attn_fwd: varlen_bits=0x%08x gives %d sequences "
@@ -139,11 +131,7 @@ attn_fwd(const attn_fwd_params& in,
   }
   // ... and that every array and BHSD tensor actually holds that many. Lower
   // bounds only: a larger buffer than the mode needs is legitimate.
-  if (!varlen_extents_valid(varlen, num_seqlens,
-                            seqinfo_q0_len, varlen_seqinfo_len(in.seqinfo_q1),
-                            varlen_seqinfo_len(in.seqinfo_k0),
-                            varlen_seqinfo_len(in.seqinfo_k1),
-                            int32_t(in.Q.size(0)), int32_t(in.K.size(0)))) {
+  if (!(q_addr.extents_ok(num_seqlens) && k_addr.extents_ok(num_seqlens))) {
     AOTRITON_LOG(LOG_ERROR,
                  "v3::flash::attn_fwd: varlen_bits=0x%08x needs %d sequences but the "
                  "seqinfo arrays/tensors are too short (q0=%d q1=%d k0=%d k1=%d, "
