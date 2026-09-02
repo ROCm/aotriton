@@ -4,10 +4,16 @@
 """
 ATI description of bwd_preprocess (auxiliary bwd kernel).
 
-Cites a bwd key kernel for the shared-operand practices (cu_seqlens_q, num_seqlens,
-max_seqlen_q, hdim_vo — GAPS inherited by apparel name). Declares only its own
-tensors + features + schema-only perf. Apparel renames (rev1 §4.3): Delta -> D,
-D_HEAD -> BLOCK_DMODEL. Stacked-@ form over ../kernel/bwd_preprocess.py.
+Cites a bwd key kernel for the shared-operand practices (varlen_bits, seqinfo_q0,
+seqinfo_q1, max_seqlen_q, hdim_vo — GAPS inherited by apparel name). Declares only
+its own tensors + features + schema-only perf. Apparel renames (rev1 §4.3):
+Delta -> D, D_HEAD -> BLOCK_DMODEL. Stacked-@ form over ../kernel/bwd_preprocess.py.
+
+This description is deliberately unchanged by the varlen_bits port even though the
+kernel it describes absorbed bwd_preprocess_varlen: the merged Triton kernel names
+its arguments exactly as bwd_kernel_dk_dv does, so the GAPs above re-resolve by name
+with no edit here. That is the whole reason the merged signature mirrors the cited
+kernel's Q-side subset rather than either predecessor's.
 """
 
 from dataclasses import dataclass

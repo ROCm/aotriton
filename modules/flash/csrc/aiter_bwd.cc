@@ -31,18 +31,21 @@ AiterFmhaV3BwdContext::check_inputs_are_supported(Gpu gpu) {
   RETURN_IF(args.ENABLE_DROPOUT);
   // No bias support
   RETURN_IF(args.BIAS_TYPE);
-  // FIXME: Varlen support disabled for now
-  RETURN_IF(args.num_seqlens != 0);
+  // FIXME: Varlen support disabled for now.
+  // Tested UNMASKED, unlike the persistent fallback in attn_fwd.cc: the ASM
+  // kernels implement neither varlen addressing nor the _TH logsumexp layout,
+  // so any non-dense word is out of scope here, not just the addressing bytes.
+  RETURN_IF(args.varlen_bits != 0);
   // FIXME: Disable MQA/GQA
   RETURN_IF(args.num_head_q != args.num_head_k);
   // GQA only supported in varlen (aka. group mode)
   if (args.num_head_q != args.num_head_k) {
-    RETURN_IF(!args.cu_seqlens_q || !*args.cu_seqlens_q);
-    RETURN_IF(!args.cu_seqlens_k || !*args.cu_seqlens_k);
+    RETURN_IF(!args.seqinfo_q0 || !*args.seqinfo_q0);
+    RETURN_IF(!args.seqinfo_k0 || !*args.seqinfo_k0);
   }
-  // Must provide cu_seqlens_q/k at the same time
-  if (args.cu_seqlens_q && *args.cu_seqlens_q) {
-    RETURN_IF(!args.cu_seqlens_k || !*args.cu_seqlens_k);
+  // Must provide seqinfo_q0/k0 (the cu_seqlens arrays) at the same time
+  if (args.seqinfo_q0 && *args.seqinfo_q0) {
+    RETURN_IF(!args.seqinfo_k0 || !*args.seqinfo_k0);
   }
   // Only support hdim <= 192
   RETURN_IF(args.hdim_qk > 192 || args.hdim_vo > 192);
@@ -165,8 +168,8 @@ static construct_mha_bwd_args(const AiterFmhaV3BwdContext& ctx) {
   auto pointer_with_default = [](const void* pref, const void* def) {
     return pref ? pref : def;
   };
-  auto seqstart_q_ptr = pointer_with_default(args.seq_strides_q->data_ptr(), args.cu_seqlens_q->data_ptr());
-  auto seqstart_k_ptr = pointer_with_default(args.seq_strides_k->data_ptr(), args.cu_seqlens_k->data_ptr());
+  auto seqstart_q_ptr = pointer_with_default(args.seqinfo_q1->data_ptr(), args.seqinfo_q0->data_ptr());
+  auto seqstart_k_ptr = pointer_with_default(args.seqinfo_k1->data_ptr(), args.seqinfo_k0->data_ptr());
 
   // TODO: use .v3_api_check for lookup_optimal
   aiter::mha_bwd_args ret = {
@@ -179,7 +182,7 @@ static construct_mha_bwd_args(const AiterFmhaV3BwdContext& ctx) {
     .hdim_q               = hdim_qk,                                            // int
     .hdim_v               = hdim_vo,                                            // int
     .data_type            = data_type(),                                        // std::string
-    .is_group_mode        = static_cast<bool>(args.cu_seqlens_q->data_ptr()),  // bool
+    .is_group_mode        = static_cast<bool>(args.seqinfo_q0->data_ptr()),  // bool
     .mask_type            = mask_type,                                          // int
     .bias_type            = args.BIAS_TYPE,                                     // int
     .has_dbias            = 0,                                                  // bool
@@ -210,8 +213,8 @@ static construct_mha_bwd_args(const AiterFmhaV3BwdContext& ctx) {
     .seqstart_k_ptr       = seqstart_k_ptr,                                     // const void*  // "Physical" cu_seqlen
     .seqlen_q_ptr         = nullptr,                                            // const void*  // unused in ASM
     .seqlen_k_ptr         = nullptr,                                            // const void*  // unused in ASM
-    .cu_seqlen_q_ptr      = args.cu_seqlens_q->data_ptr(),                      // const void*  // "Logical" cu_seqlen
-    .cu_seqlen_k_ptr      = args.cu_seqlens_k->data_ptr(),                      // const void*  // "Logical" cu_seqlen
+    .cu_seqlen_q_ptr      = args.seqinfo_q0->data_ptr(),                      // const void*  // "Logical" cu_seqlen
+    .cu_seqlen_k_ptr      = args.seqinfo_k0->data_ptr(),                      // const void*  // "Logical" cu_seqlen
     .seqlen_q             = args.max_seqlen_q,                                  // int
     .seqlen_k             = args.max_seqlen_k,                                  // int
     .batch                = batch,                                              // int

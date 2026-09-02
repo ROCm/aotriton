@@ -29,11 +29,46 @@ class WindowValue:
     TOP_LEFT_ALIGNED = -2147483647       # 0x80000001. Special value for varlen
     BOTTOM_RIGHT_ALIGNED = -2147483646   # 0x80000002. Special value for varlen
 
-IVARLEN_TYPE = {
-    'compact': 1,
-    'padded': 2,
-    'strided': 3,
+# The three per-side axes (VarlenStacked / VarlenLength / VarlenPosition in
+# include/aotriton/flash.h), as the four configurations the retired VarlenType
+# enum used to name. Both sides are set identically; the enum could not express
+# an asymmetric pair, and neither does any caller here yet.
+#
+# Written as axis values rather than as 0x0B0B and friends: the hex is a result,
+# not a definition, and `stacked/CUMULATIVE/REUSE` says what actually differs
+# between compact and padded where `0x0B0B` against `0x0202` does not.
+# Per SIDE, because the interesting configuration is asymmetric: torch's
+# seqused_k takes K's LENGTH from an (N,) array and K's POSITION from a
+# separate (N+1,) one, while Q stays classical compact varlen. No VarlenType
+# could spell that, which is the whole reason varlen_bits replaced it.
+VARLEN_AXES = {
+    #             Q side               K side
+    'compact': ((1, 1, 1), (1, 1, 1)),  # THD, CUMULATIVE, REUSE
+    'padded':  ((0, 1, 0), (0, 1, 0)),  # BHSD, CUMULATIVE, IMPLIED
+    'strided': ((1, 1, 2), (1, 1, 2)),  # THD, CUMULATIVE, ARRAY
+    'seqused': ((1, 1, 1), (1, 2, 2)),  # Q compact; K INDIVIDUAL len + ARRAY pos
 }
+
+# The logsumexp memory arrangement (VarlenLseLayout in include/aotriton/flash.h).
+# HT is AOTriton's own and the default; TH is what Transformer Engine requires.
+ILSE_LAYOUT = {
+    'HT': 0,
+    'TH': 1,
+}
+
+def set_varlen_bits(params, varlen_type, lse_layout):
+    """Fill params.varlen_bits in place.
+
+    In place because pybind returns the member by reference; rebinding a local
+    copy would be silently dropped.
+    """
+    for mode, (stacked, length, position) in zip(
+            (params.varlen_bits.qmode, params.varlen_bits.kmode),
+            VARLEN_AXES[varlen_type]):
+        mode.stacked = stacked
+        mode.length = length
+        mode.position = position
+    params.varlen_bits.lse_layout = ILSE_LAYOUT[lse_layout]
 
 def translate_causal(causal, v3_api):
     window_left, window_right = 0, 0
@@ -168,8 +203,8 @@ def attn_fwd(q, k, v, b, sm_scale, M, o,
     params.Sm_scale = float(sm_scale)
     params.L = Mview
     params.Out = oview
-    # params.cu_seqlens_q
-    # params.cu_seqlens_k
+    # params.seqinfo_q0
+    # params.seqinfo_k0
     # params.Max_seqlen_q
     # params.Max_seqlen_k
     params.dropout_p = float(dropout_p)
@@ -183,7 +218,6 @@ def attn_fwd(q, k, v, b, sm_scale, M, o,
     params.causal_type = causal_type
     params.window_left = window_left
     params.window_right = window_right
-    params.varlen_type = 0
     err = fa_forward_op(params,
                         fa_forward_op_params.kVersion,
                         Stream(),
@@ -232,8 +266,8 @@ def attn_bwd(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, dq_acc, L, delta,
     params.DQ_ACC = dq_acc;
     params.L = Lview;
     params.D = deltaview;
-    # params.cu_seqlens_q
-    # params.cu_seqlens_k
+    # params.seqinfo_q0
+    # params.seqinfo_k0
     # params.Max_seqlen_q
     # params.Max_seqlen_k
     params.dropout_p = float(dropout_p);
@@ -243,7 +277,6 @@ def attn_bwd(q, k, v, b, sm_scale, o, dout, dq, dk, dv, db, dq_acc, L, delta,
     params.causal_type = causal_type
     params.window_left = window_left
     params.window_right = window_right
-    params.varlen_type = 0
     err = fa_backward_op(params,
                          fa_backward_op_params.kVersion,
                          Stream(),
@@ -275,20 +308,20 @@ def debug_simulate_encoded_softmax(R, dropout_p, philox_seed, philox_offset1, ph
     return err
 
 def attn_fwd_varlen(q, k, v,
-        cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
-        seq_strides_q, seq_strides_k,
+        seqinfo_q0, seqinfo_k0, max_seqlen_q, max_seqlen_k,
+        seqinfo_q1, seqinfo_k1,
         b, sm_scale, M, o,
         dropout_p, philox_seed, philox_offset1, philox_offset2,
         philox_seed_output, philox_offset_output,
-        encoded_softmax, causal, atomic, varlen_type, extargs=None):
+        encoded_softmax, causal, atomic, varlen_type, lse_layout='HT', extargs=None):
     extargs = attn_options() if extargs is None else extargs
     qview, qdevm = mk_aotensor(q)
     kview, kdevm = mk_aotensor(k)
     vview, vdevm = mk_aotensor(v)
-    cuqview, cuqdevm = mk_aotensor(cu_seqlens_q)
-    cukview, cukdevm = mk_aotensor(cu_seqlens_k)
-    ssqview, ssqdevm = mk_aotensor(seq_strides_q, if_empty_then_like=cu_seqlens_q)
-    sskview, sskdevm = mk_aotensor(seq_strides_k, if_empty_then_like=cu_seqlens_k)
+    cuqview, cuqdevm = mk_aotensor(seqinfo_q0)
+    cukview, cukdevm = mk_aotensor(seqinfo_k0)
+    ssqview, ssqdevm = mk_aotensor(seqinfo_q1, if_empty_then_like=seqinfo_q0)
+    sskview, sskdevm = mk_aotensor(seqinfo_k1, if_empty_then_like=seqinfo_k0)
     bview, bdevm = mk_aotensor(b, if_empty_then_like=q)
     Mview, Mdevm = mk_aotensor(M)
     oview, odevm = mk_aotensor(o)
@@ -307,12 +340,12 @@ def attn_fwd_varlen(q, k, v,
     params.Sm_scale = float(sm_scale)
     params.L = Mview
     params.Out = oview
-    params.cu_seqlens_q = cuqview
-    params.cu_seqlens_k = cukview
+    params.seqinfo_q0 = cuqview
+    params.seqinfo_k0 = cukview
     params.Max_seqlen_q = max_seqlen_q
     params.Max_seqlen_k = max_seqlen_k
-    params.seq_strides_q = ssqview
-    params.seq_strides_k = sskview
+    params.seqinfo_q1 = ssqview
+    params.seqinfo_k1 = sskview
     params.dropout_p = float(dropout_p)
     params.philox_seed_ptr = seedview
     params.philox_offset1 = offset1view
@@ -324,7 +357,7 @@ def attn_fwd_varlen(q, k, v,
     params.causal_type = causal_type
     params.window_left = window_left
     params.window_right = window_right
-    params.varlen_type = IVARLEN_TYPE[varlen_type]
+    set_varlen_bits(params, varlen_type, lse_layout)
     err = fa_forward_op(params,
                         fa_forward_op_params.kVersion,
                         Stream(),
@@ -334,19 +367,19 @@ def attn_fwd_varlen(q, k, v,
     return err
 
 def attn_bwd_varlen(q, k, v,
-        cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
-        seq_strides_q, seq_strides_k,
+        seqinfo_q0, seqinfo_k0, max_seqlen_q, max_seqlen_k,
+        seqinfo_q1, seqinfo_k1,
         b, sm_scale, o, dout, dq, dk, dv, db, dq_acc, L, delta,
         dropout_p, philox_seed, philox_offset1, philox_offset2,
-        causal, varlen_type, extargs=None):
+        causal, varlen_type, lse_layout='HT', extargs=None):
     extargs = attn_options() if extargs is None else extargs
     qview, qdevm = mk_aotensor(q)
     kview, kdevm = mk_aotensor(k)
     vview, vdevm = mk_aotensor(v)
-    cuqview, cuqdevm = mk_aotensor(cu_seqlens_q)
-    cukview, cukdevm = mk_aotensor(cu_seqlens_k)
-    ssqview, ssqdevm = mk_aotensor(seq_strides_q, if_empty_then_like=cu_seqlens_q)
-    sskview, sskdevm = mk_aotensor(seq_strides_k, if_empty_then_like=cu_seqlens_k)
+    cuqview, cuqdevm = mk_aotensor(seqinfo_q0)
+    cukview, cukdevm = mk_aotensor(seqinfo_k0)
+    ssqview, ssqdevm = mk_aotensor(seqinfo_q1, if_empty_then_like=seqinfo_q0)
+    sskview, sskdevm = mk_aotensor(seqinfo_k1, if_empty_then_like=seqinfo_k0)
     bview, bdevm = mk_aotensor(b, if_empty_then_like=q)
     oview, odevm = mk_aotensor(o)
     doutview, doutdevm = mk_aotensor(dout)
@@ -375,12 +408,12 @@ def attn_bwd_varlen(q, k, v,
     params.DQ_ACC = dq_acc;
     params.L = Lview;
     params.D = deltaview;
-    params.cu_seqlens_q = cuqview
-    params.cu_seqlens_k = cukview
+    params.seqinfo_q0 = cuqview
+    params.seqinfo_k0 = cukview
     params.Max_seqlen_q = max_seqlen_q
     params.Max_seqlen_k = max_seqlen_k
-    params.seq_strides_q = ssqview
-    params.seq_strides_k = sskview
+    params.seqinfo_q1 = ssqview
+    params.seqinfo_k1 = sskview
     params.dropout_p = float(dropout_p);
     params.philox_seed_ptr = seedview;
     params.philox_offset1 = offset1view;
@@ -388,7 +421,10 @@ def attn_bwd_varlen(q, k, v,
     params.causal_type = causal_type
     params.window_left = window_left
     params.window_right = window_right
-    params.varlen_type = IVARLEN_TYPE[varlen_type]
+    # lse_layout must match the forward's: bwd_preprocess WRITES Delta and the two
+    # key kernels READ both L and Delta through the same lse_row_addressing(), so a
+    # backward that disagrees with the forward reads rows the forward never wrote.
+    set_varlen_bits(params, varlen_type, lse_layout)
     err = fa_backward_op(params,
                          fa_backward_op_params.kVersion,
                          Stream(),

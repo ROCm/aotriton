@@ -22,7 +22,7 @@ from _common_test import (
     fmt_hdim,
 )
 
-FOR_RELEASE = bool(int(os.getenv('FOR_RELEASE', default='0')))
+FOR_RELEASE = int(os.getenv('FOR_RELEASE', default='0'))
 
 POT_HEADDIMS = [16, 32, 64, 128, 256]
 NPOT_HEADDIMS = [48, 80, 96, 160, 192, 224]
@@ -50,9 +50,119 @@ VARLEN_FACTORY = {
     "compact": VarlenSdpaContext,
     "padded": PaddedVarlenSdpaContext,
     "strided": StridedVarlenSdpaContext,
+    # Same tensor layout as strided -- slot z holds seqlens[z] + padlens[z] rows
+    # and only the first seqlens[z] participate -- so the same context builds it
+    # and the same reference excludes the tail. What differs is purely how the
+    # kernel is told: strided reads K's length cumulatively out of one array,
+    # seqused reads it individually out of another. A bits difference, not a
+    # layout one.
+    "seqused": StridedVarlenSdpaContext,
 }
 
-def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dropout_p, dtype, varlen_type):
+# torch.nn.attention.varlen.varlen_attn(..., seqused_k=...): "Number of valid KV
+# tokens per batch element; shape (N,). When set, only the first seqused_k[i]
+# tokens in the key/value sequence for batch element i participate in attention."
+#
+# That pairs an INDIVIDUAL (N,) length array on K with a CUMULATIVE (N+1,)
+# position array -- two facts from two different tensors -- against a plain
+# compact Q. It is the one shipped configuration the retired VarlenType enum
+# could not express at all, and the only asymmetric Q/K pairing driven through
+# this API.
+#
+# torch documents seqused_k as inference-only. This tests the BACKWARD too, on
+# purpose: nothing in the decoder makes it forward-only -- the backward kernels
+# read the same six scalars -- so the restriction is torch's, not ours, and a
+# limitation the code does not actually have is one that rots into a surprise.
+@pytest.mark.parametrize('n_seqlen', [3, 7])
+@pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
+def test_seqused_k(request, gpu_id, n_seqlen, causal):
+    np.random.seed(4177)
+    N_HEADS = 3
+    D_HEAD = 64
+    seqlens_q = rng_seqlens(n_seqlen)
+    if causal:
+        # Deliberately SHORTER than Q, not equal to it. Under top-left causal a
+        # key past index seqlen_q is masked no matter what, so slack appended to
+        # a full-length K is invisible and this half of the test would pass with
+        # seqused_k ignored -- verified by sabotage, it did. Truncating below the
+        # query length puts the used bound back inside the causal window.
+        seqlens_k = np.maximum(1, seqlens_q // 2)
+    else:
+        seqlens_k = rng_seqlens(n_seqlen)
+    # The slack is the point: every padlen must be > 0, or the used length
+    # coincides with the slot length and an implementation that ignored
+    # seqused_k entirely would pass. Q carries none -- it is packed compact.
+    padlens_k = 1 + rng_padlens(n_seqlen)
+    padlens_q = np.zeros(n_seqlen, dtype=padlens_k.dtype)
+    with torch.cuda.device(gpu_id):
+        _do_test_varlen(N_HEADS, D_HEAD,
+                        np.array([seqlens_q, padlens_q]),
+                        np.array([seqlens_k, padlens_k]),
+                        causal, 'l1', 0.0, torch.float16, 'seqused')
+
+
+# Modes whose seqlens arrive as (lens, padlens) pairs and whose tensors carry
+# slack between sequences. Named once: the branches below all mean this and not
+# "is strided", and the two diverge as soon as a third slotted mode appears.
+SLOTTED_TYPES = ('strided', 'seqused')
+
+
+def _lse_valid_token_ranges(seqlens_q, varlen_type):
+    """(start, stop) along the packed token axis for each sequence's own rows.
+
+    Under a slotted layout the gaps between sequences are never written, so a
+    whole-buffer comparison would be comparing uninitialized memory.
+    """
+    if varlen_type in SLOTTED_TYPES:
+        lens, pads = seqlens_q
+    else:
+        lens, pads = seqlens_q, np.zeros_like(seqlens_q)
+    start = 0
+    for seqlen, padlen in zip(lens, pads):
+        yield start, start + int(seqlen)
+        start += int(seqlen) + int(padlen)
+
+
+def _assert_lse_th_is_ht_transposed(lse_th, lse_ht, seqlens_q, num_heads, varlen_type):
+    """The two layouts of the same run must be transposes of each other.
+
+    Round-tripping the gradients through test_op_bwd is necessary and NOT
+    sufficient -- if all four kernels (attn_fwd writes L, bwd_preprocess writes
+    Delta, dk_dv and dq read both) are CONSISTENTLY wrong about where a row
+    lives, the gradients still match the reference and the test passes. This is
+    the assertion that fails in that case.
+
+    It is still only a RELATIVE check: it pins the two runs to each other, not
+    either to the truth. test_logsumexp_layout below closes that with a
+    closed-form expected value.
+    """
+    if varlen_type == 'padded':
+        batch = len(seqlens_q)
+        max_seqlen_q = int(np.max(seqlens_q))
+        assert lse_ht.shape == (batch * num_heads, max_seqlen_q), f'{lse_ht.shape=}'
+        assert lse_th.shape == (batch * max_seqlen_q, num_heads), f'{lse_th.shape=}'
+        # HT is (B, H, S) flattened over (B, H); TH is (B, S, H) flattened over
+        # (B, S). Not a plain 2-D transpose -- the batch axis stays outermost in
+        # both, which is exactly the confusion this check exists to catch.
+        ht = lse_ht.view(batch, num_heads, max_seqlen_q)
+        th = lse_th.view(batch, max_seqlen_q, num_heads)
+        for b, seqlen in enumerate(seqlens_q):
+            seqlen = int(seqlen)
+            assert torch.equal(th[b, :seqlen, :], ht[b, :, :seqlen].t()), \
+                    f'LSE layout mismatch on sequence {b}'
+        return
+    total_seqlen_q = lse_ht.shape[1]
+    assert lse_ht.shape == (num_heads, total_seqlen_q), f'{lse_ht.shape=}'
+    assert lse_th.shape == (total_seqlen_q, num_heads), f'{lse_th.shape=}'
+    for z, (start, stop) in enumerate(_lse_valid_token_ranges(seqlens_q, varlen_type)):
+        assert torch.equal(lse_th[start:stop, :], lse_ht[:, start:stop].t()), \
+                f'LSE layout mismatch on sequence {z} (tokens {start}:{stop})'
+
+
+
+
+def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dropout_p, dtype,
+                    varlen_type, lse_layout='HT'):
     assert varlen_type in VARLEN_FACTORY.keys(), f"_do_test_varlen: unknown varlen_type {varlen_type}"
     if isinstance(D_HEAD, int):
         HDIM_QK = HDIM_VO = D_HEAD
@@ -78,7 +188,16 @@ def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dro
                              autotune=USE_AUTOTUNE,
                              return_autotune=False,
                              fillnan=True)
-    tri_out, encoded_softmax, _ = varlen_attention(q, k, v, seqlens_q, seqlens_k, causal, sm_scale, dropout_p, varlen_type, ext)
+    # What lse_layout gates HERE is the BACKWARD: bwd_preprocess writes Delta and
+    # both key kernels read L and Delta through the same addressing, so a layout
+    # the backward disagrees with shows up in dq/dk/dv below. The LSE buffer's
+    # own contents are gated by test_logsumexp_layout, which pins them per
+    # position against a closed form -- an absolute check, so re-running the
+    # forward here under 'HT' and comparing the transpose would only re-prove a
+    # weaker version of it at the cost of a second launch on every TH case.
+    tri_out, encoded_softmax, _ = varlen_attention(q, k, v, seqlens_q, seqlens_k, causal,
+                                                   sm_scale, dropout_p, varlen_type,
+                                                   lse_layout, ext)
     dropout_mask = encoded_softmax >= 0 if dropout_p > 0.0 else None
     sdpa_params = SdpaParams(causal=causal, sm_scale=sm_scale, dropout_p=dropout_p, dropout_mask=dropout_mask)
     ref_out, _ = ctx.compute_ref_forward(sdpa_params)
@@ -153,13 +272,15 @@ def _do_test_varlen(N_HEADS, D_HEAD, seqlens_q, seqlens_k, causal, sm_scale, dro
 @pytest.mark.parametrize('causal', [False, True], ids=['CausalOff', 'CausalOn'])
 @pytest.mark.parametrize('dropout_p', [0.0] if BWD_IMPL == 2 else [0.0, 0.5])
 @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16] if BWD_IMPL == 2 else [torch.float16, torch.bfloat16, torch.float32])
-@pytest.mark.parametrize('sm_scale', ['l1'] if not FOR_RELEASE else ['l1', 'l2'])
+@pytest.mark.parametrize('sm_scale', ['l1', 'l2'] if FOR_RELEASE > 0 else ['l1'])
 @pytest.mark.parametrize('varlen_type', ['compact', 'padded', 'strided'])
-def test_op_bwd(gpu_id, N_HEADS, D_HEAD, n_seqlen, causal, sm_scale, dropout_p, dtype, varlen_type):
+@pytest.mark.parametrize('lse_layout', ['HT', 'TH'] if FOR_RELEASE > 0 else ['HT'])
+def test_op_bwd(gpu_id, N_HEADS, D_HEAD, n_seqlen, causal, sm_scale, dropout_p, dtype,
+                varlen_type, lse_layout):
     np.random.seed(8139)
     seqlens_q = rng_seqlens(n_seqlen)
     seqlens_k = seqlens_q if causal else rng_seqlens(n_seqlen)
-    if varlen_type == 'strided':
+    if varlen_type in SLOTTED_TYPES:
         padlens_q = rng_padlens(n_seqlen)
         padlens_k = padlens_q if causal else rng_padlens(n_seqlen)
         seqlens_q = np.array([seqlens_q, padlens_q])
@@ -169,7 +290,182 @@ def test_op_bwd(gpu_id, N_HEADS, D_HEAD, n_seqlen, causal, sm_scale, dropout_p, 
     with torch.cuda.device(gpu_id):
         _do_test_varlen(N_HEADS, D_HEAD,
                         seqlens_q, seqlens_k,
-                        causal, sm_scale, dropout_p, dtype, varlen_type)
+                        causal, sm_scale, dropout_p, dtype, varlen_type, lse_layout)
+
+# Distinct per head, so the logsumexp varies along H. Also the number of heads.
+HEAD_SCALES = [1.0, 2.0, 3.0]
+# Distinct per sequence, so it varies along T. 63 is deliberately not a multiple
+# of any BLOCK_M.
+LAYOUT_SEQLENS = [4, 8, 63]
+LAYOUT_PADLENS = [0, 7, 4]
+
+
+def _build_analytic_lse_inputs(varlen_type, num_heads, hdim, device, dtype):
+    """Q/K/V for which the logsumexp has a closed form, plus that closed form.
+
+    The trap this construction exists to avoid: test_logsumexp_scaling uses
+    identity Q/K/V, which makes EVERY element of L the same number. That is fine
+    for a scaling test and useless for a layout test -- if every element is
+    equal, a transposed buffer compares equal to a correct one.
+
+    So make L vary along BOTH axes and stay analytic. Every K row is e_0; every Q
+    row of head h is HEAD_SCALES[h] * e_0. Then every score in a sequence is
+    sm_scale * HEAD_SCALES[h], and
+
+        lse[h, t in sequence z] = sm_scale * HEAD_SCALES[h] + log(seqlens_k[z])
+
+    exactly -- one term per axis, so a swapped index is wrong in a way allclose
+    sees.
+    """
+    seqlens = np.array(LAYOUT_SEQLENS)
+    padlens = np.array(LAYOUT_PADLENS)
+    scales = torch.tensor(HEAD_SCALES, device=device, dtype=torch.float32)
+
+    def token_axis_len():
+        if varlen_type == 'padded':
+            return int(np.max(seqlens))
+        if varlen_type in SLOTTED_TYPES:
+            return int(np.sum(seqlens + padlens))
+        return int(np.sum(seqlens))
+
+    def sequence_slices():
+        # (batch index, token slice) of each sequence's own rows.
+        if varlen_type == 'padded':
+            for z, seqlen in enumerate(seqlens):
+                yield z, slice(0, int(seqlen))
+            return
+        start = 0
+        for z, seqlen in enumerate(seqlens):
+            yield 0, slice(start, start + int(seqlen))
+            start += int(seqlen) + (int(padlens[z]) if varlen_type in SLOTTED_TYPES else 0)
+
+    batch = len(seqlens) if varlen_type == 'padded' else 1
+    tokens = token_axis_len()
+    q = torch.zeros((batch, num_heads, tokens, hdim), device=device, dtype=dtype)
+    k = torch.zeros((batch, num_heads, tokens, hdim), device=device, dtype=dtype)
+    # V never enters the logsumexp, so anything finite will do -- but make it
+    # non-zero so a bug that reads V into L would be visible rather than lucky.
+    v = torch.full((batch, num_heads, tokens, hdim), 0.5, device=device, dtype=dtype)
+    for b, tok in sequence_slices():
+        k[b, :, tok, 0] = 1.0
+        for h in range(num_heads):
+            q[b, h, tok, 0] = HEAD_SCALES[h]
+    return q, k, v, seqlens, padlens, scales, sequence_slices
+
+
+# A handful of launches, not a second launch on every TH case in test_op_bwd.
+# The property is about the LSE buffer alone, so it needs one small case per
+# layout -- running it inside the backward matrix bought nothing and doubled the
+# forward cost of that matrix's whole TH half.
+#
+# What this adds over test_logsumexp_layout, which is otherwise strictly
+# stronger: RANDOM inputs. That test's closed form needs a contrived
+# construction (K rows e_0, Q rows c_h * e_0), so it pins values only for that
+# one input shape. This one says the layouts stay transposes for arbitrary data.
+@pytest.mark.parametrize('varlen_type', ['compact', 'padded', 'strided'])
+def test_lse_layout_th_is_ht_transposed(gpu_id, varlen_type):
+    np.random.seed(9137)
+    N_HEADS, D_HEAD, n_seqlen = 3, 64, 4
+    seqlens_q = rng_seqlens(n_seqlen)
+    seqlens_k = rng_seqlens(n_seqlen)
+    if varlen_type in SLOTTED_TYPES:
+        seqlens_q = np.array([seqlens_q, rng_padlens(n_seqlen)])
+        seqlens_k = np.array([seqlens_k, rng_padlens(n_seqlen)])
+    with torch.cuda.device(gpu_id):
+        ctx = VARLEN_FACTORY[varlen_type](N_HEADS, D_HEAD, seqlens_q, seqlens_k,
+                                          torch.float16, device='cuda')
+        ctx.create_ref_inputs()
+        q, k, v, _ = ctx.dev_tensors
+        out = {}
+        for layout in ('HT', 'TH'):
+            ext = AttentionExtraArgs(return_encoded_softmax=False, autotune=False,
+                                     return_autotune=False, fillnan=True,
+                                     return_logsumexp=True)
+            # Same inputs, same fixed philox constants, only the layout differs.
+            _, _, out[layout] = varlen_attention(q, k, v, seqlens_q, seqlens_k,
+                                                 False, 1.0 / D_HEAD, 0.0,
+                                                 varlen_type, layout, ext)
+        _assert_lse_th_is_ht_transposed(out['TH'], out['HT'], seqlens_q,
+                                        N_HEADS, varlen_type)
+
+
+@pytest.mark.parametrize('varlen_type', ['compact', 'padded', 'strided'])
+@pytest.mark.parametrize('lse_layout', ['HT', 'TH'])
+def test_logsumexp_layout(gpu_id, varlen_type, lse_layout):
+    """The logsumexp lands at the index its declared layout says it does.
+
+    Modelled on test_logsumexp_scaling rather than on test_op_bwd's
+    parameterization, and for one reason: a CLOSED-FORM expected value is what a
+    self-referential `TH == HT.T` comparison lacks. Assertion 2 below is absolute
+    and per-position, so it subsumes that pairwise check -- a pair of runs that
+    are consistently wrong fails here where they would pass there.
+
+    No dtype axis, unlike test_logsumexp_scaling which sweeps all three because
+    *scaling* is where a dtype's exponent range matters. This is about
+    *addressing*: L is fp32 whatever the inputs are, and the index arithmetic
+    never sees the element type.
+    """
+    dtype = torch.float16
+    num_heads = len(HEAD_SCALES)
+    # 64 rather than 16: head dim 16 is excluded from the forward functional
+    # inventory on gfx950 (see _attn_fwd_disabled), and nothing here depends on
+    # the head dim -- the analytic value does not mention it.
+    hdim = 64
+    sm_scale = 1.0 / math.sqrt(hdim)
+
+    with torch.cuda.device(gpu_id):
+        device = 'cuda'
+        q, k, v, seqlens, padlens, scales, sequence_slices = \
+                _build_analytic_lse_inputs(varlen_type, num_heads, hdim, device, dtype)
+        if varlen_type in SLOTTED_TYPES:
+            seqlens_arg = np.array([seqlens, padlens])
+        else:
+            seqlens_arg = seqlens
+        ext = AttentionExtraArgs(return_encoded_softmax=False,
+                                 autotune=False,
+                                 return_autotune=False,
+                                 return_logsumexp=True)
+        _, _, lse = varlen_attention(q, k, v, seqlens_arg, seqlens_arg,
+                                     False, sm_scale, 0.0, varlen_type, lse_layout, ext)
+
+        # Assertion 1: the SHAPE is what the layout declares. Cheap, and it is
+        # what catches an allocation that never got the memo.
+        if varlen_type == 'padded':
+            tokens = int(np.max(seqlens))
+            rows = len(seqlens) * tokens
+            want = (rows, num_heads) if lse_layout == 'TH' else (len(seqlens) * num_heads, tokens)
+        else:
+            tokens = q.shape[2]
+            want = (tokens, num_heads) if lse_layout == 'TH' else (num_heads, tokens)
+        assert tuple(lse.shape) == want, f'{lse_layout} {varlen_type}: {lse.shape=} {want=}'
+
+        # Reshape both layouts to a common (batch, head, token) view so the
+        # per-position assertion is written once. Doing it this way and not by
+        # transposing one into the other is the point: each layout is indexed by
+        # its OWN formula, so the two cannot agree by construction.
+        if varlen_type == 'padded':
+            b_axis, t_axis = len(seqlens), int(np.max(seqlens))
+            if lse_layout == 'TH':
+                view = lse.view(b_axis, t_axis, num_heads).permute(0, 2, 1)
+            else:
+                view = lse.view(b_axis, num_heads, t_axis)
+        else:
+            if lse_layout == 'TH':
+                view = lse.t().unsqueeze(0)
+            else:
+                view = lse.unsqueeze(0)
+
+        # Assertion 2: every valid element equals its analytic value, at its
+        # layout-specific index. Rows past a sequence's own length under 'padded'
+        # (and the inter-sequence gaps under 'strided') are never written, so they
+        # are excluded rather than asserted on.
+        for z, (b, tok) in enumerate(sequence_slices()):
+            expected_per_head = sm_scale * scales + math.log(int(seqlens[z]))
+            got = view[b, :, tok]                    # (num_heads, seqlen_q)
+            want_full = expected_per_head.unsqueeze(1).expand_as(got)
+            assert torch.allclose(got, want_full, atol=1e-3, rtol=1e-3), (
+                    f'{lse_layout} {varlen_type} sequence {z}: got {got} want {want_full}')
+
 
 def main1():
     N_HEADS = 3

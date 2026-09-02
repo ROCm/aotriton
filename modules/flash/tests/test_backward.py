@@ -26,7 +26,7 @@ from _core_test_backward import (
     BWDOP_ids,
     fmt_nheads,
     fmt_hdim,
-    test_logsumexp_scaling,
+    core_test_logsumexp_scaling,
     core_test_op_bwd,
     core_test_large_bf16_nan_values,
 )
@@ -146,6 +146,15 @@ if FOR_RELEASE > 2:  # Testing hdim_qk != hdim_vo
 @pytest.mark.parametrize('BWDOP', BWDOP_ids)
 def test_large_bf16_nan_values(BWDOP, D_HEAD):
     core_test_large_bf16_nan_values(D_HEAD)
+
+# Defined here rather than imported from _core_test_backward, so that conftest.py's
+# _FILE_ORDER sees this file. The gpu_id is the second half of the fix:
+# core_test_logsumexp_scaling hardcodes device='cuda', so without the context manager
+# it runs on the default device regardless of which GPU this xdist worker leased.
+@pytest.mark.parametrize('dtype', DTYPES)
+def test_logsumexp_scaling(gpu_id, dtype):
+    with torch.cuda.device(gpu_id):
+        core_test_logsumexp_scaling(dtype)
 
 def main2():
     # Memo: False-0.0-dtype0-0.0-False-4-256-8-4-1

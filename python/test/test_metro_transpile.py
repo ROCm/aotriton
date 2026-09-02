@@ -17,7 +17,10 @@ from aotriton.template_instantiation.specs.metro import (
 from aotriton.template_instantiation.builder import lower_plan
 
 
-# --- the §5 metro descriptions (defined in this file so getsource works) ---
+# --- the metro descriptions (defined in this file so getsource works) ---
+#
+# metro_fwd mirrors the real flash forward metro. The second one does NOT mirror
+# the real backward metro any more -- see the comment on it below.
 
 @ati.start
 @ati.metro_kernel
@@ -27,9 +30,15 @@ def metro_fwd(params):
         debug_simulate_encoded_softmax(params)   # wiring is on the kdesc, not here
 
 
+# A SYNTHETIC metro, not the flash one. The real metro_bwd lost its conditional
+# when bwd_preprocess_varlen was merged into bwd_preprocess (one kernel with
+# varlen_bits == 0), and the real metro_fwd's Cond has an empty else branch --
+# so nothing shipping exercises the if/else arm of the transpiler any more.
+# Since the subject here is the TRANSPILER and not the flash metro, this keeps
+# that coverage as a fixture. Named so it cannot be mistaken for aot.metro_bwd.
 @ati.start
 @ati.metro_kernel
-def metro_bwd(params):
+def synthetic_metro_if_else(params):
     if params.num_seqlens > 0:
         bwd_preprocess_varlen(params)
     else:
@@ -49,8 +58,8 @@ def test_fwd_plan_structure():
     assert cond.orelse == []
 
 
-def test_bwd_plan_structure():
-    p = metro_bwd.__ati_node__
+def test_if_else_plan_structure():
+    p = synthetic_metro_if_else.__ati_node__
     assert [type(s).__name__ for s in p.steps] == ['Cond', 'Call', 'Call']
     cond = p.steps[0]
     assert (cond.if_parameter, cond.if_expr) == ('num_seqlens', '> 0')

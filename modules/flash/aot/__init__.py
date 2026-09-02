@@ -25,7 +25,6 @@ from .bwd_kernel_dk_dv import bwd_kernel_dk_dv
 from .bwd_kernel_dq import bwd_kernel_dq
 from .bwd_kernel_fuse import bwd_kernel_fuse
 from .bwd_preprocess import bwd_preprocess
-from .bwd_preprocess_varlen import bwd_preprocess_varlen
 from .debug_simulate_encoded_softmax import debug_simulate_encoded_softmax
 from .aiter_fwd import aiter_fmha_v3_fwd
 from .aiter_bwd import aiter_fmha_v3_bwd
@@ -42,19 +41,15 @@ def metro_fwd(params):
 
 
 # union_precedence: the KEY kernels (dk_dv, dq) own the canonical operand bindings;
-# the preprocess kernels name some shared strides differently (dO's 4th stride is
+# bwd_preprocess names some shared strides differently (dO's 4th stride is
 # `stride_don` there vs `stride_dok` on the key kernels). When bwd_kernel_dq @ati.cites
 # the whole metro, the gap donor must be a key kernel — this priority order (key first)
 # steers both the cite gap-fill and the operator params-struct union.
 @ati.start
-@ati.hints.union_precedence([bwd_kernel_dk_dv, bwd_kernel_dq,
-                             bwd_preprocess_varlen, bwd_preprocess])
+@ati.hints.union_precedence([bwd_kernel_dk_dv, bwd_kernel_dq, bwd_preprocess])
 @ati.metro_kernel
 def metro_bwd(params):
-    if params.num_seqlens > 0:
-        bwd_preprocess_varlen(params)
-    else:
-        bwd_preprocess(params)
+    bwd_preprocess(params)
     bwd_kernel_dk_dv(params)
     bwd_kernel_dq(params)
 

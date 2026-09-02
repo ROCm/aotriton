@@ -19,7 +19,11 @@ import triton
 import triton.language as tl
 from bwd_inner_dk_dv import bwd_inner_dk_dv
 from dropout import PHILOX_RN_PER_OFFSET
-from fwd_kernel_inner import _lse_offset
+from varlen_bits import (
+    decode_addressing,
+    lse_token_pitch,
+    lse_row_addressing,
+)
 from fwd_kernel import remap_xcd
 from masked_load_store import (
     load_fn,
@@ -59,13 +63,13 @@ def bwd_kernel_dk_dv(
     stride_dvz, stride_dvh, stride_dvk, stride_dvn,
     num_head_q : 'i32',
     num_head_k : 'i32',
-    cu_seqlens_q,
-    cu_seqlens_k,
-    num_seqlens : 'i32',    # set num_seqlens to zero to ignore cu_seqlens_q/k
-    max_seqlen_q : 'i32',   # and use max_seqlen_q/k for all seqlen_q/k
+    seqinfo_q0,
+    seqinfo_k0,
+    varlen_bits : 'i32',    # see varlen_bits.py; 0 means dense on both sides
+    max_seqlen_q : 'i32',
     max_seqlen_k : 'i32',
-    seq_strides_q,
-    seq_strides_k,
+    seqinfo_q1,
+    seqinfo_k1,
     hdim_qk : 'i32',
     hdim_vo : 'i32',
     dropout_p : tl.float32,
@@ -110,40 +114,24 @@ def bwd_kernel_dk_dv(
     else:
         start_k = tl.program_id(0) * BLOCK_N  # start_k partitions seqlen_k
         off_h_k = tl.program_id(1)
-    off_z = tl.program_id(2) # batch index, for varlen it indicates index in cu_seqlens_q/k
+    off_z = tl.program_id(2) # sequence index z, decoded by varlen_bits
     num_z = tl.num_programs(2)
     offs_m = tl.arange(0, BLOCK_M)
     offs_n = start_k + tl.arange(0, BLOCK_N)
-    cu_seqlens_q_start = 0
-    cu_seqlens_k_start = 0
-    seqlen_q = max_seqlen_q
-    seqlen_k = max_seqlen_k
-    batch_index = off_z
-    lse_stride = max_seqlen_q
 
-    if num_seqlens > 0:
-        cu_seqlens_k_start = tl.load(cu_seqlens_k + off_z)
-        cu_seqlens_k_end = tl.load(cu_seqlens_k + off_z + 1)
-        seqlen_k = cu_seqlens_k_end - cu_seqlens_k_start
-        if start_k >= seqlen_k:
-            return
-        cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
-        cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
-        seqlen_q = cu_seqlens_q_end - cu_seqlens_q_start
-        batch_index = 0
-        if seq_strides_q.cast(dtype=tl.uint64, bitcast=True) != 0:
-            # THD layout + padding, use seq_strides_q/k as offset
-            cu_seqlens_q_start = tl.load(seq_strides_q + off_z)
-            cu_seqlens_k_start = tl.load(seq_strides_k + off_z)
-            lse_stride = tl.load(seq_strides_q + num_seqlens)
-        else:
-            lse_stride = tl.load(cu_seqlens_q + num_seqlens)
-    elif num_seqlens < 0:  # for padded seqlen
-        # Varlen, but padded to Rank 4 tensor
-        seqlen_k = tl.load(cu_seqlens_k + off_z + 1) - tl.load(cu_seqlens_k + off_z)
-        if start_k >= seqlen_k:
-            return
-        seqlen_q = tl.load(cu_seqlens_q + off_z + 1) - tl.load(cu_seqlens_q + off_z)
+    # Q and K decode independently: batch_index covers Q, DO, L and D, while
+    # k_batch_index covers K, V, DK and DV. num_z is N, the sequence count.
+    seqlen_q, q_row_off, batch_index = decode_addressing(
+            varlen_bits, 0, max_seqlen_q, seqinfo_q0, seqinfo_q1, off_z)
+    seqlen_k, k_row_off, k_batch_index = decode_addressing(
+            varlen_bits, 8, max_seqlen_k, seqinfo_k0, seqinfo_k1, off_z)
+    lse_tokens = lse_token_pitch(varlen_bits, max_seqlen_q,
+                                 seqinfo_q0, seqinfo_q1, num_z)
+    # This grid is one-size-fits-all over max_seqlen_k, so a short sequence has
+    # workgroups with nothing to do. Inert for dense, where the grid is exactly
+    # cdiv(max_seqlen_k, BLOCK_N).
+    if start_k >= seqlen_k:
+        return
 
     # Initialize pointers to Q, K, V
     # Q is consumed depending on block ID. Every block uses
@@ -151,7 +139,7 @@ def bwd_kernel_dk_dv(
 
     # Note: Q pointers are deferred to later place.
     #       GQA needs loop through off_h_q = i * off_h_k + off_h_k
-    # q_offset = off_h_q * stride_qh + batch_index * stride_qz + cu_seqlens_q_start * stride_qm
+    # q_offset = off_h_q * stride_qh + batch_index * stride_qz + q_row_off * stride_qm
 
     # Q_block_ptr = tl.make_block_ptr(
     #     base=Q,
@@ -164,13 +152,13 @@ def bwd_kernel_dk_dv(
 
     k_ptrs0, k_ptrs1, k_ptrs2 = composed_ptrs(K,
                                               stride_kz, stride_kh, stride_kn, stride_kk,
-                                              batch_index, off_h_k, cu_seqlens_k_start + offs_n,
+                                              k_batch_index, off_h_k, k_row_off + offs_n,
                                               BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
                                               TRANSPOSED=True)
     # kt_offs_n = None if start_k + BLOCK_N <= seqlen_k else start_k + tl.arange(0, BLOCK_N)
     v_ptrs0, v_ptrs1, v_ptrs2 = composed_ptrs(V,
                                               stride_vz, stride_vh, stride_vk, stride_vn,
-                                              batch_index, off_h_k, cu_seqlens_k_start + offs_n,
+                                              k_batch_index, off_h_k, k_row_off + offs_n,
                                               BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
                                               TRANSPOSED=True)
 
@@ -239,9 +227,9 @@ def bwd_kernel_dk_dv(
     elif BIAS_TYPE != 1:
         tl.static_assert(False, f'Unsupported BIAS_TYPE {BIAS_TYPE}')
 
-    dk_offset = off_h_k * stride_dkh + batch_index * stride_dkz + cu_seqlens_k_start * stride_dkn
+    dk_offset = off_h_k * stride_dkh + k_batch_index * stride_dkz + k_row_off * stride_dkn
     DK += dk_offset
-    dv_offset = off_h_k * stride_dvh + batch_index * stride_dvz + cu_seqlens_k_start * stride_dvk
+    dv_offset = off_h_k * stride_dvh + k_batch_index * stride_dvz + k_row_off * stride_dvk
     DV += dv_offset
 
     dv0, dv1, dv2 = composed_zeros_2d(BLOCK_N, BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
@@ -293,23 +281,21 @@ def bwd_kernel_dk_dv(
             batch_philox_offset = philox_offset_base + off_zh * max_seqlen_q * philox_offset_stride
         else:
             batch_philox_offset = 0
-        # pointer to row-wise quantities in value-like data
-        # Shape (batch, num_heads, max_seqlen_q)
-        # In varlen cases, batch == len(cu_seqlens_q) - 1).
-        # Hence off_z plays the same role in varlen/non-varlen
-        lse_offset = _lse_offset(batch_index, off_h_q, cu_seqlens_q_start,
-                                 num_head_q, lse_stride)
-        D_ptrs = D + lse_offset
-        l_ptrs = L + lse_offset
+        # pointer to row-wise quantities in value-like data.
+        # Shape and pitch both come from the bits; see varlen_bits.py.
+        lse_base, lse_pitch = lse_row_addressing(varlen_bits, batch_index, off_h_q,
+                                                 num_head_q, lse_tokens, q_row_off)
+        D_ptrs = D + lse_base
+        l_ptrs = L + lse_base
 
         q_ptrs0, q_ptrs1, q_ptrs2 = composed_ptrs(Q,
                                                   stride_qz, stride_qh, stride_qm, stride_qk,
-                                                  batch_index, off_h_q, cu_seqlens_q_start + offs_m,
+                                                  batch_index, off_h_q, q_row_off + offs_m,
                                                   BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
 
         do_ptrs0, do_ptrs1, do_ptrs2 = composed_ptrs(DO,
                                                      stride_doz, stride_doh, stride_dom, stride_dok,
-                                                     batch_index, off_h_q, cu_seqlens_q_start + offs_m,
+                                                     batch_index, off_h_q, q_row_off + offs_m,
                                                      BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
 
         # dkdk kernel is a little tricky, its masked blocks can be found in both ends
@@ -332,6 +318,7 @@ def bwd_kernel_dk_dv(
                 stride_dom,
                 l_ptrs,
                 D_ptrs,
+                lse_pitch,
                 seqlen_q, seqlen_k, hdim_qk, hdim_vo,
                 start_k, nblocks_1, 0, fb_lo, None,
                 idropout_p, dropout_scale, philox_seed, batch_philox_offset, philox_offset_stride,
@@ -368,6 +355,7 @@ def bwd_kernel_dk_dv(
                 stride_dom,
                 l_ptrs,
                 D_ptrs,
+                lse_pitch,
                 seqlen_q, seqlen_k, hdim_qk, hdim_vo,
                 start_k, nblocks_1, nblocks_2, lb_lo, rb_lo,
                 idropout_p, dropout_scale, philox_seed, batch_philox_offset, philox_offset_stride,

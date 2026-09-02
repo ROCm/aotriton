@@ -109,7 +109,6 @@ class attn_fwd(SdpaCalls):
         params.causal_type = view.causal_type
         params.window_left = view.window_left
         params.window_right = view.window_right
-        params.varlen_type = 0
         err = fa_forward_op(params,
                             fa_forward_op_params.kVersion,
                             view.stream,
@@ -178,7 +177,6 @@ class bwd_kernel_dk_dv(SdpaCalls):
         params.causal_type = view.causal_type
         params.window_left = view.window_left
         params.window_right = view.window_right
-        params.varlen_type = 0
         err = fa_backward_op(params,
                              fa_backward_op_params.kVersion,
                              view.stream,
@@ -226,7 +224,6 @@ class bwd_kernel_dq(SdpaCalls):
         params.causal_type = view.causal_type
         params.window_left = view.window_left
         params.window_right = view.window_right
-        params.varlen_type = 0
         err = fa_backward_op(params,
                              fa_backward_op_params.kVersion,
                              view.stream,
@@ -298,7 +295,6 @@ class bwd_kernel_fuse(SdpaCalls):
         params.causal_type = view.causal_type
         params.window_left = view.window_left
         params.window_right = view.window_right
-        params.varlen_type = 0
         err = fa_backward_op(params,
                              fa_backward_op_params.kVersion,
                              view.stream,

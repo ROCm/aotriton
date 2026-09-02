@@ -21,7 +21,11 @@ from fwd_kernel_inner import (
     IS_JIT_COMPILING,
     constexpr_or_f32,
     constexpr_or_i32,
-    _lse_offset,
+)
+from varlen_bits import (
+    decode_addressing,
+    lse_token_pitch,
+    lse_row_addressing,
 )
 from dropout import PHILOX_RN_PER_OFFSET
 from masked_load_store import (
@@ -93,14 +97,15 @@ def attn_fwd(
         # MQA/GQA
         Num_head_q : constexpr_or_i32,
         Num_head_k : constexpr_or_i32,
-        # Varlen
-        Num_seqlens : constexpr_or_i32,
-        cu_seqlens_q,
-        cu_seqlens_k,
+        # Varlen. See varlen_bits.py for the encoding of Varlen_bits and the
+        # roles of the four seqinfo arrays.
+        Varlen_bits : constexpr_or_i32,
+        seqinfo_q0,
+        seqinfo_k0,
         Max_seqlen_q : constexpr_or_i32,
         Max_seqlen_k : constexpr_or_i32,
-        seq_strides_q,
-        seq_strides_k,
+        seqinfo_q1,
+        seqinfo_k1,
         # Head Dimensions
         BLOCK_DMODEL: tl.constexpr,
         Hdim_qk : constexpr_or_i32,
@@ -212,7 +217,12 @@ def attn_fwd(
     num_tiles_per_head = 1
     num_tiles_per_sample = 1
     Num_WG = Num_CU * GRID_CU_MULTIP  # number of workgroups launched
-    unsupported_by_persistent = Num_seqlens != 0
+    # Mask to the addressing bytes: LSE_LAYOUT (bits 17:16) has nothing to do
+    # with persistence, and a dense call asking for _TH must not be pushed onto
+    # the varlen fallback.  attn_fwd.cc computes this predicate independently
+    # and must spell it identically -- a disagreement is a grid/indexing
+    # mismatch, not a slowdown.
+    unsupported_by_persistent = (Varlen_bits & 0xFFFF) != 0
     if PERSISTENT and not unsupported_by_persistent:  # Only enable for non-varlen
         # if persistent, kernel loops over multiple tiles
         num_tiles_per_head = tl.cdiv(Max_seqlen_q, BLOCK_M)  # the number of work units (tiles) of a single head
@@ -244,47 +254,21 @@ def attn_fwd(
         offs_m = start_M + tl.arange(0, BLOCK_M)
         offs_n = tl.arange(0, BLOCK_N)
 
-        if Num_seqlens > 0:
-            cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
-            cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
-            seqlen_q = cu_seqlens_q_end - cu_seqlens_q_start
-            # We have a one-size-fits-all grid in id(0). Some seqlens might be too
-            # small for all start_m so for those we return early.
-            if start_M >= seqlen_q:
-                continue_condition = False
-                # return
-            cu_seqlens_k_start = tl.load(cu_seqlens_k + off_z)
-            cu_seqlens_k_end = tl.load(cu_seqlens_k + off_z + 1)
-            seqlen_k = cu_seqlens_k_end - cu_seqlens_k_start
-            batch_index = 0  # FILEPR
-            if seq_strides_q.cast(dtype=tl.uint64, bitcast=True) != 0:
-                # THD layout + padding, use seq_strides_q/k as offset
-                cu_seqlens_q_start = tl.load(seq_strides_q + off_z)
-                cu_seqlens_k_start = tl.load(seq_strides_k + off_z)
-                lse_stride = tl.load(seq_strides_q + Num_seqlens)
-            else:
-                lse_stride = tl.load(cu_seqlens_q + Num_seqlens)
-        elif Num_seqlens < 0: # Varlen, BHSD layout, S is padded to Max_seqlen_q
-            cu_seqlens_q_start = tl.load(cu_seqlens_q + off_z)
-            cu_seqlens_q_end = tl.load(cu_seqlens_q + off_z + 1)
-            seqlen_q = cu_seqlens_q_end - cu_seqlens_q_start
-            if start_M >= seqlen_q:
-                continue_condition = False
-            cu_seqlens_k_start = tl.load(cu_seqlens_k + off_z)
-            cu_seqlens_k_end = tl.load(cu_seqlens_k + off_z + 1)
-            seqlen_k = cu_seqlens_k_end - cu_seqlens_k_start
-            # Varlen, but padded to Rank 4 tensor
-            cu_seqlens_q_start = 0
-            cu_seqlens_k_start = 0
-            batch_index = off_z
-            lse_stride = Max_seqlen_q
-        else:   # Non-varlen
-            cu_seqlens_q_start = 0
-            cu_seqlens_k_start = 0
-            seqlen_q = Max_seqlen_q
-            seqlen_k = Max_seqlen_k
-            batch_index = off_z
-            lse_stride = Max_seqlen_q
+        # The whole tri-state prologue is now three decoder calls. Note the two
+        # sides decode independently: batch_index covers Q, O and LSE, while
+        # k_batch_index covers K and V. They coincide for every mode that
+        # applies the same bits to both sides, and differ for mixed ones such
+        # as 0x000B (packed Q against a dense K).
+        seqlen_q, q_row_off, batch_index = decode_addressing(
+                Varlen_bits, 0, Max_seqlen_q, seqinfo_q0, seqinfo_q1, off_z)
+        seqlen_k, k_row_off, k_batch_index = decode_addressing(
+                Varlen_bits, 8, Max_seqlen_k, seqinfo_k0, seqinfo_k1, off_z)
+        lse_tokens = lse_token_pitch(Varlen_bits, Max_seqlen_q,
+                                     seqinfo_q0, seqinfo_q1, Batch)
+        # We have a one-size-fits-all grid in id(0). Some seqlens might be too
+        # small for all start_m so for those we return early.
+        if start_M >= seqlen_q:
+            continue_condition = False
 
         if continue_condition:
             # Now we compute whether we need to exit early due to causal masking.
@@ -293,7 +277,7 @@ def attn_fwd(
             # inf written to LSE. We don't need to do any GEMMs in this case.
             # This block of code determines what N is, and if this WG is operating
             # on those M rows.
-            o_base = Out + batch_index * stride_oz + off_h_q * stride_oh + cu_seqlens_q_start * stride_om
+            o_base = Out + batch_index * stride_oz + off_h_q * stride_oh + q_row_off * stride_om
             window_left, window_right = parse_window(IS_CAUSAL,
                                                      CAUSAL_TYPE,
                                                      Window_left,
@@ -343,13 +327,18 @@ def attn_fwd(
                     # statically known.
                     if L_not_null:
                         # l_ptrs = L + off_z * Num_head_q * Max_seqlen_q + off_h_q * Max_seqlen_q + offs_m
-                        lse_offset = _lse_offset(batch_index, off_h_q, cu_seqlens_q_start,
-                                                 Num_head_q, lse_stride)
-                        l_ptrs = L + lse_offset + offs_m
+                        lse_base, lse_pitch = lse_row_addressing(Varlen_bits,
+                                                                 batch_index, off_h_q,
+                                                                 Num_head_q,
+                                                                 lse_tokens, q_row_off)
+                        l_ptrs = L + lse_base + offs_m * lse_pitch
                         # We store inf to LSE, not -inf because in the bwd pass, we subtract this
                         # from qk which makes it -inf, such that exp(qk - inf) = 0 for these masked blocks.
                         l = tl.full([BLOCK_M], value=float("inf"), dtype=tl.float32)
-                        l_ptrs_mask = offs_m < Max_seqlen_q
+                        # Must be seqlen_q, not Max_seqlen_q: under a stacked
+                        # layout the rows past this sequence belong to the next
+                        # one, and +inf written there is another sequence's LSE.
+                        l_ptrs_mask = offs_m < seqlen_q
                         tl.store(l_ptrs, l, mask=l_ptrs_mask)
                     # TODO: Should dropout and return encoded softmax be handled here too?
                     continue_condition = False
@@ -368,16 +357,16 @@ def attn_fwd(
                 # Compute pointers for all the tensors used in this kernel.
                 q_ptrs0, q_ptrs1, q_ptrs2 = composed_ptrs(Q,
                                                           stride_qz, stride_qh, stride_qm, stride_qk,
-                                                          batch_index, off_h_q, cu_seqlens_q_start + offs_m,
+                                                          batch_index, off_h_q, q_row_off + offs_m,
                                                           BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
                 k_ptrs0, k_ptrs1, k_ptrs2 = composed_ptrs(K,
                                                           stride_kz, stride_kh, stride_kn, stride_kk,
-                                                          batch_index, off_h_k, cu_seqlens_k_start + offs_n,
+                                                          k_batch_index, off_h_k, k_row_off + offs_n,
                                                           BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2,
                                                           TRANSPOSED=True)
                 v_ptrs0, v_ptrs1, v_ptrs2 = composed_ptrs(V,
                                                           stride_vz, stride_vh, stride_vk, stride_vn,
-                                                          batch_index, off_h_k, cu_seqlens_k_start + offs_n,
+                                                          k_batch_index, off_h_k, k_row_off + offs_n,
                                                           BLOCK_DMODEL0, BLOCK_DMODEL1, BLOCK_DMODEL2)
                 # Compute pointers for all the scale tensors used in this kernel.
 
@@ -604,9 +593,11 @@ def attn_fwd(
                     # Old Varlen layout: (B * H, Max_seqlen_q), i.e., padding all to Max_seqlen_q
                     #   l_ptrs = L + off_z * Num_head_q * Max_seqlen_q + off_h_q * Max_seqlen_q + offs_m
                     # New Varlen layout: (H, Total_Seqlen)
-                    lse_offset = _lse_offset(batch_index, off_h_q, cu_seqlens_q_start,
-                                             Num_head_q, lse_stride)
-                    l_ptrs = L + lse_offset + offs_m
+                    lse_base, lse_pitch = lse_row_addressing(Varlen_bits,
+                                                             batch_index, off_h_q,
+                                                             Num_head_q,
+                                                             lse_tokens, q_row_off)
+                    l_ptrs = L + lse_base + offs_m * lse_pitch
                     LN2: tl.constexpr = 0.6931471824645996
                     logsumexp = m_i + tl.math.log2(l_i)
                     logsumexp *= 0.6931471824645996
