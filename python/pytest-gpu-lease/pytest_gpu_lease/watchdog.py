@@ -6,8 +6,9 @@
 Run beside pytest, not inside it: ``python -m pytest_gpu_lease.watchdog --lockfile
 ... --workers N``. It polls the lease lock file that ``plugin.py`` already
 maintains -- one 4096-byte page per GPU, write-locked by whichever worker owns
-that GPU for the run -- and reads the 8-byte deadline ``pytest_runtest_protocol``
-writes there before each test and zeroes after.
+that GPU for the run -- and reads the 8-byte deadline written there: an initial
+one set by ``gpu_id`` the moment it takes the lease, refreshed before every
+test and zeroed after by a ``pytest_runtest_protocol`` hookwrapper.
 
 Why the lock file is the right substrate, in one line: ``fcntl(F_GETLK)`` fills
 ``l_pid`` with the pid holding a byte range, and the kernel releases a record
@@ -50,12 +51,24 @@ _DEFAULT_POLL_INTERVAL_S = 5.0
 # that a genuinely wedged worker is not left idle for long after being caught.
 _DEFAULT_GRACE_S = 30.0
 
-# Consecutive empty polls (no page locked at all) before the watchdog exits on
-# its own. This is the fallback for the case run-test.sh itself cannot reach
-# its own trap -- e.g. it is killed with SIGKILL, which a trap cannot catch --
-# so a watchdog started for one run does not outlive it and go on signalling
-# pids that by then belong to somebody else. At the default poll interval this
-# is one minute of a completely idle lock file.
+# Consecutive empty polls (no page locked at all) *after having seen at least
+# one page locked* before the watchdog exits on its own. This is the fallback
+# for the case run-test.sh itself cannot reach its own trap -- e.g. it is
+# killed with SIGKILL, which a trap cannot catch -- so a watchdog started for
+# one run does not outlive it and go on signalling pids that by then belong to
+# somebody else. At the default poll interval this is one minute of a
+# completely idle lock file, counted only once the run has actually gone idle
+# -- i.e. its last worker released its page -- not before the run has started.
+# The "at least one" qualifier is load bearing, not a nicety: run-test.sh
+# starts the watchdog before pytest even begins collecting, specifically so a
+# wedge during collection is covered too, and a Level-3 pass's collection
+# (~330k tests, a conftest that imports torch) takes minutes -- far longer
+# than idle_polls * poll_interval at the defaults. A watchdog that started
+# counting immediately would exit on its own well before the first worker ever
+# takes a lease, and every wedge for the following ~22h would go uncaught,
+# silently: the "no page locked ... exiting" line looks identical whether it
+# fires because the run is genuinely over or because it never got a chance to
+# start watching.
 _DEFAULT_IDLE_POLLS = 12
 
 
@@ -146,7 +159,7 @@ def _poll_once(fd: int, workers: int, threshold_ns: int, grace_ns: int,
         any_locked = True
         deadline = _read_deadline(fd, page)
         if deadline == 0:
-            continue  # between tests -- see plugin.py's pytest_runtest_protocol
+            continue  # between tests -- see plugin.py's gpu_id and pytest_runtest_protocol
         if now > deadline:
             running_s = (now - (deadline - threshold_ns)) / 1e9
             _send(pid, signal.SIGTERM,
@@ -160,19 +173,39 @@ def _poll_once(fd: int, workers: int, threshold_ns: int, grace_ns: int,
 def watch(lockfile: str, workers: int, threshold_s: float, grace_s: float,
          poll_interval_s: float = _DEFAULT_POLL_INTERVAL_S,
          idle_polls: int = _DEFAULT_IDLE_POLLS) -> None:
-    """Poll `lockfile` until `idle_polls` consecutive sweeps find no page locked."""
+    """Poll `lockfile` until `idle_polls` consecutive sweeps find no page locked
+    -- but only start that countdown once a page has actually been seen locked
+    at least once.
+
+    Before that first sighting, `idle` still increments every empty poll (there
+    is no reason not to track it), but the loop condition ignores it: a
+    watchdog that has never seen a worker take a lease is not stray, it is
+    early -- started deliberately ahead of pytest itself, including ahead of
+    collection, which for a large suite can run for minutes. Counting idle
+    polls from process start would let the watchdog exit on its own before
+    collection even finished, and every wedge for the rest of that run would
+    then go uncaught. See `_DEFAULT_IDLE_POLLS` for the numbers this matters
+    most for.
+
+    Once armed, a worker's page stays locked for the whole of that worker's
+    session, so in steady state the idle countdown only ever starts once every
+    worker has finished and released its page -- i.e. once the run is actually
+    over -- which is the behaviour this fallback exists for in the first place.
+    """
     threshold_ns = int(threshold_s * 1_000_000_000)
     grace_ns = int(grace_s * 1_000_000_000)
     pending: dict[int, int] = {}
     idle = 0
+    armed = False
     # O_CREAT so the watchdog can be started before pytest ever touches the
     # lock file -- run-test.sh starts it first specifically so a wedge that
     # happens during collection would still be caught. plugin.py's own
     # lockfile fixture is equally permissive for the mirror-image reason.
     fd = os.open(lockfile, os.O_RDWR | os.O_CREAT, 0o644)
     try:
-        while idle < idle_polls:
+        while not armed or idle < idle_polls:
             if _poll_once(fd, workers, threshold_ns, grace_ns, pending):
+                armed = True
                 idle = 0
             else:
                 idle += 1

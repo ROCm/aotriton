@@ -32,6 +32,8 @@ import os
 import signal
 import subprocess
 import sys
+import threading
+import time
 
 import pytest
 
@@ -114,6 +116,64 @@ def test_getlk_reports_unlocked_after_holder_is_killed(tmp_path):
     finally:
         os.close(fd)
         err_file.close()
+
+
+@pytest.mark.timeout(30)
+def test_watchdog_waits_indefinitely_before_first_page_is_ever_locked(tmp_path):
+    """Regression test: idle polls must not be counted before a page has ever
+    been seen locked, or the watchdog would exit on its own during collection,
+    before any worker has taken a lease.
+
+    That is not a hypothetical corner case: run-test.sh starts the watchdog
+    ahead of pytest deliberately, specifically to cover a wedge during
+    collection too, and a Level-3 pass collects roughly 330k tests through a
+    conftest that imports torch -- minutes, not seconds. At the defaults
+    (5s poll interval, 12 idle polls) the buggy version exits after 60s of
+    an empty lock file, which collection alone comfortably outlasts; every
+    wedge for the rest of that ~22h run would then go uncaught, silently,
+    since the "no page locked ... exiting" line looks the same whether the
+    run is actually over or the watchdog simply gave up too early.
+
+    Drives `watch()` on a background thread because it blocks for the whole
+    watch, and this test needs to observe it still running mid-watch, then
+    later observe it firing -- both from the outside.
+    """
+    lockfile = tmp_path / 'gpulock'
+    lockfile.touch()
+    poll_interval = 0.1
+    idle_polls = 3
+    # Comfortably longer than idle_polls * poll_interval: the exact window the
+    # buggy version needed to give up on a still-empty lock file.
+    wait_before_lock = poll_interval * idle_polls * 5
+
+    # daemon=True: watch() has no cooperative way to stop it early, so if an
+    # assertion below fails, let the thread be reaped with the process rather
+    # than block the test on joining it.
+    thread = threading.Thread(
+        target=watchdog.watch,
+        args=(str(lockfile), 1, 1, 1),
+        kwargs=dict(poll_interval_s=poll_interval, idle_polls=idle_polls),
+        daemon=True)
+    thread.start()
+
+    time.sleep(wait_before_lock)
+    assert thread.is_alive(), \
+        'watchdog exited before any page was ever locked; it must wait ' \
+        'indefinitely until a worker actually takes a lease'
+
+    child, err_path, err_file = _spawn_wedge_child(tmp_path, lockfile)
+    try:
+        thread.join(timeout=10)
+        assert not thread.is_alive(), \
+            'watchdog did not fire once a page was locked with an expired deadline'
+        ret = child.wait(timeout=5)
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait()
+        err_file.close()
+
+    assert ret == -signal.SIGKILL, f'expected the child to die by SIGKILL, got {ret}'
 
 
 @pytest.mark.timeout(90)
