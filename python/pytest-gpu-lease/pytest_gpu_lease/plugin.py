@@ -326,3 +326,84 @@ def gpu_device(gpu_id, gpu_device_class) -> str:
 def torch_gpu(gpu_id) -> int:
     """Back-compat alias for :func:`gpu_id`."""
     return gpu_id
+
+
+def _tolerate_closed_worker_channel() -> None:
+    """Stop a second dying worker from turning the first one's crash into an
+    INTERNALERROR that kills the whole session.
+
+    The failure this guards against: the controller notices worker A died and
+    calls ``DSession.worker_errordown`` -> ``LoadScheduling.remove_node(A)``,
+    which reassigns A's pending items and then, still inside that same call,
+    tops up every *other* node's queue via ``check_schedule`` ->
+    ``_send_tests`` -> ``WorkerController.send_runtest_some`` ->
+    ``sendcommand`` -> ``execnet``'s ``channel.send``. If worker B is also
+    dying at that exact moment -- its own crash not yet reported, since that
+    report is itself an asynchronous execnet callback racing this one -- that
+    send raises ``OSError: cannot send (already closed?)``, uncaught, and
+    pytest reports it as an INTERNALERROR that ends the run, workers that were
+    fine included. This is not specific to any one test suite or wedge
+    scenario; it is a bug in xdist's own error path with no synthetic
+    reproduction needed here -- it was hit organically while exercising the
+    watchdog above, with no wedge involved at all, just two ordinary crashes
+    close enough together in time.
+
+    Every scheduling mode (``--dist=load/loadscope/loadgroup/worksteal/each``)
+    has its own scheduler class and its own call site for sending tests, but
+    every one of them ends up going through this same
+    ``WorkerController.sendcommand`` -- so patching here, instead of one
+    scheduler class's ``_send_tests``, is the version of this fix that
+    actually covers every ``--dist`` mode rather than just the default one.
+    It is also not really foreign monkeypatching so much as finishing a job
+    xdist already started: ``WorkerController.shutdown`` right next to this
+    method already wraps its own ``sendcommand`` call in ``try/except
+    OSError: pass`` for exactly this reason -- every other caller (the
+    schedulers) was simply missed.
+
+    Swallowing the error here and doing nothing further is deliberate, not
+    lazy: bookkeeping a phantom "sent" test against a dead node is harmless,
+    because that node's own crash -- already in flight, asynchronously -- will
+    shortly call ``remove_node`` on it too, which pops its *entire* pending
+    list (phantom entry included) and requeues it for a live node. Retrying
+    the send, or reaching into the scheduler to remove the node from inside
+    this call, would instead re-enter node removal from inside the very send
+    that node removal itself triggered -- recursion worth avoiding on
+    principle, not just because nothing here needs it: the safer, simpler
+    fix is to leave that removal to the async crash-detection path that is
+    already in flight for this node.
+
+    A no-op on any run that never sees a closed channel: the wrapped function
+    still calls straight through, so a healthy session pays only the cost of
+    one extra Python frame per command sent.
+    """
+    try:
+        from xdist.workermanage import WorkerController
+    except ImportError:
+        return  # xdist not installed in this environment, or this process never imports it
+
+    original = WorkerController.sendcommand
+    if getattr(original, '_gpu_lease_tolerates_closed_channel', False):
+        return  # pytest_configure can run more than once in the same interpreter
+
+    def sendcommand(self, name, **kwargs):
+        try:
+            original(self, name, **kwargs)
+        except OSError as exc:
+            print(f'pytest_gpu_lease: {self.gateway.id} channel already closed, '
+                  f'dropping {name}({kwargs}) instead of crashing the session ({exc})',
+                  file=sys.stderr, flush=True)
+
+    sendcommand._gpu_lease_tolerates_closed_channel = True
+    WorkerController.sendcommand = sendcommand
+
+
+@pytest.hookimpl
+def pytest_configure(config):
+    """Apply the scheduler guard above once, in every process this plugin loads
+    into. Harmless where it does not apply: workers never call
+    ``WorkerController.sendcommand`` (only the controller schedules), and a
+    plain non-distributed run never imports ``xdist.workermanage`` at all, so
+    the early return in ``_tolerate_closed_worker_channel`` makes this a no-op
+    there.
+    """
+    _tolerate_closed_worker_channel()

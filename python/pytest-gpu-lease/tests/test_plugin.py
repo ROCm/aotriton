@@ -279,3 +279,75 @@ def test_pinned_resolves_without_the_xdist_plugin(pytester, monkeypatch):
     result.assert_outcomes(passed=1)
     assert not list(pytester.path.rglob('gpulock')), \
         "pinned mode must not create a lockfile"
+
+
+def test_sendcommand_guard_swallows_closed_channel_instead_of_raising(capsys):
+    """Unit test for the controller-side scheduler guard, exercised directly
+    rather than by racing two real worker crashes against each other.
+
+    The actual failure -- two workers dying close enough together that the
+    second's channel is already closed by the time the first's crash handling
+    tries to top up its queue -- is exactly the kind of race that only
+    sometimes reproduces under `-n N`. Driving it deterministically here,
+    against the real `xdist.workermanage.WorkerController` class rather than a
+    substitute, tests the actual guard installed in the real environment.
+    """
+    xdist_workermanage = pytest.importorskip('xdist.workermanage')
+    WorkerController = xdist_workermanage.WorkerController
+
+    original = WorkerController.sendcommand
+    try:
+        def _always_closed(self, name, **kwargs):
+            raise OSError('cannot send (already closed?)')
+
+        WorkerController.sendcommand = _always_closed
+        from pytest_gpu_lease.plugin import _tolerate_closed_worker_channel
+        _tolerate_closed_worker_channel()
+
+        class _FakeGateway:
+            id = 'gw-fake'
+
+        class _FakeNode:
+            gateway = _FakeGateway()
+
+        # Must not raise: this is the exact call site (LoadScheduling._send_tests
+        # -> WorkerController.send_runtest_some -> sendcommand) that used to
+        # propagate OSError all the way out to an INTERNALERROR.
+        WorkerController.sendcommand(_FakeNode(), 'runtests', indices=[1, 2])
+
+        err = capsys.readouterr().err
+        assert 'channel already closed' in err
+        assert 'gw-fake' in err
+    finally:
+        WorkerController.sendcommand = original
+
+
+def test_sendcommand_guard_is_idempotent(capsys):
+    """Calling the guard installer twice must not stack a second wrapper --
+    `pytest_configure` is not guaranteed to run exactly once per interpreter
+    in every embedding, and a double-wrap would still work but would print
+    the "channel already closed" line twice per failure for no reason.
+    """
+    xdist_workermanage = pytest.importorskip('xdist.workermanage')
+    WorkerController = xdist_workermanage.WorkerController
+
+    original = WorkerController.sendcommand
+    try:
+        def _always_closed(self, name, **kwargs):
+            raise OSError('cannot send (already closed?)')
+
+        WorkerController.sendcommand = _always_closed
+        from pytest_gpu_lease.plugin import _tolerate_closed_worker_channel
+        _tolerate_closed_worker_channel()
+        _tolerate_closed_worker_channel()
+
+        class _FakeGateway:
+            id = 'gw-fake'
+
+        class _FakeNode:
+            gateway = _FakeGateway()
+
+        WorkerController.sendcommand(_FakeNode(), 'runtests', indices=[1])
+        assert capsys.readouterr().err.count('channel already closed') == 1
+    finally:
+        WorkerController.sendcommand = original
