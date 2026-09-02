@@ -24,6 +24,12 @@ def _clear_lease_env(monkeypatch):
     # nested one. The plugin ignores it now, but leaving it set would hide
     # a regression back to reading it.
     monkeypatch.delenv('PYTEST_XDIST_WORKER_COUNT', raising=False)
+    # Same leak risk as above, but for real this time: run-test.sh (and a
+    # developer's own shell, while poking at the watchdog) sets these, and a
+    # value inherited here would silently redirect a test that asserts on the
+    # *derived* lockfile path to whatever the outer run happened to be using.
+    monkeypatch.delenv('GPU_LEASE_LOCKFILE', raising=False)
+    monkeypatch.delenv('GPU_LEASE_BUDGET_S', raising=False)
 
 
 def test_no_xdist_gpu_id_is_zero_and_no_lockfile(pytester, monkeypatch):
@@ -91,6 +97,32 @@ def test_leased_mode_assigns_distinct_gpus_and_creates_lockfile(pytester, monkey
     assert gpus == {0, 1}
     assert list(pytester.path.rglob('gpulock')), \
         "leased mode must create the shared lockfile"
+
+
+def test_gpu_lease_lockfile_env_overrides_derived_path(pytester, monkeypatch, tmp_path):
+    """``GPU_LEASE_LOCKFILE`` wins over the ``tmp_path_factory``-derived path.
+
+    The watchdog is a separate process started before this pytest session
+    exists, so it cannot predict where ``getbasetemp()`` will land; run-test.sh
+    instead mints the path itself and both sides read it from the environment.
+    This is the regression guard for that override actually taking effect --
+    without it, the watchdog and the workers would each be watching a
+    different file and the whole mechanism would silently do nothing.
+    """
+    _clear_lease_env(monkeypatch)
+    lockfile = tmp_path / 'chosen_by_env_gpulock'
+    monkeypatch.setenv('GPU_LEASE_LOCKFILE', str(lockfile))
+
+    pytester.makepyfile("""
+        def test_it(gpu_id):
+            assert gpu_id == 0
+    """)
+    result = pytester.runpytest_subprocess('-n', '1', '-p', 'xdist')
+    result.assert_outcomes(passed=1)
+
+    assert lockfile.exists(), 'the env-chosen path must be the one actually used'
+    assert not list(pytester.path.rglob('gpulock')), \
+        'the derived path must not also be created once the env var wins'
 
 
 def test_gpu_device_default_is_cuda(pytester, monkeypatch):
@@ -247,3 +279,75 @@ def test_pinned_resolves_without_the_xdist_plugin(pytester, monkeypatch):
     result.assert_outcomes(passed=1)
     assert not list(pytester.path.rglob('gpulock')), \
         "pinned mode must not create a lockfile"
+
+
+def test_sendcommand_guard_swallows_closed_channel_instead_of_raising(capsys):
+    """Unit test for the controller-side scheduler guard, exercised directly
+    rather than by racing two real worker crashes against each other.
+
+    The actual failure -- two workers dying close enough together that the
+    second's channel is already closed by the time the first's crash handling
+    tries to top up its queue -- is exactly the kind of race that only
+    sometimes reproduces under `-n N`. Driving it deterministically here,
+    against the real `xdist.workermanage.WorkerController` class rather than a
+    substitute, tests the actual guard installed in the real environment.
+    """
+    xdist_workermanage = pytest.importorskip('xdist.workermanage')
+    WorkerController = xdist_workermanage.WorkerController
+
+    original = WorkerController.sendcommand
+    try:
+        def _always_closed(self, name, **kwargs):
+            raise OSError('cannot send (already closed?)')
+
+        WorkerController.sendcommand = _always_closed
+        from pytest_gpu_lease.plugin import _tolerate_closed_worker_channel
+        _tolerate_closed_worker_channel()
+
+        class _FakeGateway:
+            id = 'gw-fake'
+
+        class _FakeNode:
+            gateway = _FakeGateway()
+
+        # Must not raise: this is the exact call site (LoadScheduling._send_tests
+        # -> WorkerController.send_runtest_some -> sendcommand) that used to
+        # propagate OSError all the way out to an INTERNALERROR.
+        WorkerController.sendcommand(_FakeNode(), 'runtests', indices=[1, 2])
+
+        err = capsys.readouterr().err
+        assert 'channel already closed' in err
+        assert 'gw-fake' in err
+    finally:
+        WorkerController.sendcommand = original
+
+
+def test_sendcommand_guard_is_idempotent(capsys):
+    """Calling the guard installer twice must not stack a second wrapper --
+    `pytest_configure` is not guaranteed to run exactly once per interpreter
+    in every embedding, and a double-wrap would still work but would print
+    the "channel already closed" line twice per failure for no reason.
+    """
+    xdist_workermanage = pytest.importorskip('xdist.workermanage')
+    WorkerController = xdist_workermanage.WorkerController
+
+    original = WorkerController.sendcommand
+    try:
+        def _always_closed(self, name, **kwargs):
+            raise OSError('cannot send (already closed?)')
+
+        WorkerController.sendcommand = _always_closed
+        from pytest_gpu_lease.plugin import _tolerate_closed_worker_channel
+        _tolerate_closed_worker_channel()
+        _tolerate_closed_worker_channel()
+
+        class _FakeGateway:
+            id = 'gw-fake'
+
+        class _FakeNode:
+            gateway = _FakeGateway()
+
+        WorkerController.sendcommand(_FakeNode(), 'runtests', indices=[1])
+        assert capsys.readouterr().err.count('channel already closed') == 1
+    finally:
+        WorkerController.sendcommand = original
