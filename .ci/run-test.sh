@@ -95,14 +95,18 @@ fi
   python3 -m pytest_gpu_lease.watchdog --workers "${ngpus}" \
     2>"${outdir}/${fnprefix}${pass}.watchdog.err" &
   watchdog_pid=$!
-  # EXIT fires when this subshell exits by any path, including the `|| true`
-  # below swallowing a pytest failure -- exactly the scope the watchdog and
-  # its lock file should live for. Kill before unlink: a watchdog left running
-  # past its own pytest session would go on polling a file nothing populates
-  # anymore and could eventually act on a pid number reused for something
-  # unrelated; a lock file deleted while still open is harmless by contrast,
-  # since the inode lives on until every fd on it closes.
-  trap 'kill "${watchdog_pid}" 2>/dev/null; rm -f "${GPU_LEASE_LOCKFILE}"' EXIT
+  # The watchdog unlinks the lock file itself, so this only has to stop it.
+  # `wait` is what makes that deterministic: `kill` just posts the signal, and
+  # without waiting we would return while the unlink is still in flight and
+  # leave a zombie behind until PID 1 reaps it.
+  _stop_watchdog() { kill "${watchdog_pid}" 2>/dev/null; wait "${watchdog_pid}" 2>/dev/null; }
+  # EXIT alone is not enough: an untrapped SIGTERM or SIGHUP kills the shell
+  # without running it (measured; SIGINT does run it). Naming them explicitly
+  # makes teardown prompt -- if none of this runs, e.g. under SIGKILL, the
+  # watchdog still exits on its own once no page has been locked for a while.
+  trap '_stop_watchdog' EXIT
+  trap '_stop_watchdog; exit 130' INT
+  trap '_stop_watchdog; exit 143' TERM HUP
   # One invocation over the whole suite dir (conftest.py sets up sys.path); pytest
   # collects test_backward / test_varlen together (test_forward.py is excluded via
   # conftest.py's collect_ignore - its coverage is a subset of test_backward.py's).

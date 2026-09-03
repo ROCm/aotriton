@@ -269,13 +269,41 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _exit_on_signal(signum, _frame):
+    """Turn a termination signal into a normal unwind.
+
+    SIGTERM and SIGHUP would otherwise kill the process outright, skipping the
+    `finally` in `main` that removes the lock file. SIGINT already unwinds, and
+    is handled here only so all three exit the same way.
+    """
+    raise SystemExit(128 + signum)
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = _build_parser()
     args = parser.parse_args(argv)
     if not args.lockfile:
         parser.error('--lockfile is required (or set GPU_LEASE_LOCKFILE)')
-    watch(args.lockfile, args.workers, args.threshold, args.grace,
-         args.poll_interval, args.idle_polls)
+    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(sig, _exit_on_signal)
+    try:
+        watch(args.lockfile, args.workers, args.threshold, args.grace,
+             args.poll_interval, args.idle_polls)
+    finally:
+        # The watchdog owns the lock file, so whoever started it needs no
+        # cleanup of its own -- which matters because an untrapped SIGTERM or
+        # SIGHUP skips a starting script's EXIT trap entirely (measured), and
+        # a SIGKILL cannot be trapped at all. In that last case nobody signals
+        # us either, and the idle self-exit above is what eventually gets here.
+        #
+        # Only reached with no page locked (idle exit) or on our way out, so
+        # this cannot pull the file out from under a running pass. Note it is
+        # deliberately not in `watch()`: that stays a pure poll loop, callable
+        # from tests against a file they own.
+        try:
+            os.unlink(args.lockfile)
+        except FileNotFoundError:
+            pass
 
 
 if __name__ == '__main__':
