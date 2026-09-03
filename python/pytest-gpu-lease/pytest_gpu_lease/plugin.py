@@ -38,23 +38,8 @@ import pytest
 STRUCT_FLOCK = 'hhqqi'
 PAGE_SIZE = 4096
 
-# `struct flock` as the kernel wants it, valid exactly when off_t is 64 bits:
-# two shorts, two 64-bit offsets, an int pid. That covers LP64 and any stock
-# 32-bit CPython alike -- configure runs AC_SYS_LARGEFILE, so pyconfig.h
-# carries _FILE_OFFSET_BITS=64, off_t widens to 8 bytes, and glibc redirects
-# F_SETLK/F_GETLK to their 64-bit variants in the same breath, keeping the
-# constant and the layout in agreement. (`q` rather than `l` for that reason:
-# the two are identical on LP64, but `l` is 4 bytes on 32-bit and would
-# describe the wrong struct there.)
-#
-# The single build this is wrong for is a 32-bit CPython with largefile
-# support disabled, where off_t is a 4-byte long and the kernel wants a
-# 16-byte struct. Checked here, at import, rather than on any result we get
-# back: passing a wrongly-sized buffer to fcntl() is itself the damage -- the
-# kernel would read F_SETLK's range from the wrong bytes and lock something
-# arbitrary, with nothing raised anywhere -- so the check has to happen before
-# the first call, not after it. Assert rather than handle: nobody is expected
-# to run that build, and being told is the entire goal.
+# `struct flock` uses off_t, we only handle 64-bit off_t and fail loud for 32-bit off_t.
+# No plan to support 32-bit off_t. Systems with 32-bit off_t should upgrade.
 _SIZEOF_OFF_T = sysconfig.get_config_var('SIZEOF_OFF_T')
 assert _SIZEOF_OFF_T == 8, (
     f'pytest_gpu_lease requires a 64-bit off_t; this interpreter reports '
@@ -64,17 +49,9 @@ assert _SIZEOF_OFF_T == 8, (
 
 _RETRY_INTERVAL = 0.05
 
-# How long a single test may legitimately run before the watchdog (see
-# watchdog.py, which imports this) treats the worker holding it as wedged.
-# Not the suite length, not the worker count -- the heartbeat below is
-# Set by the leased branch of `gpu_id` once a lease is actually held, and
-# cleared again at its teardown; `None` the rest of the time. The
-# `pytest_runtest_protocol` hookwrapper below needs to know whether there is
-# a page to heartbeat, but it is a plugin-level hook, not a fixture, so it
-# cannot request `gpu_id` or read its generator frame -- this module global
-# is the connecting state. A plain global is safe here because `gpu_id` is
-# session-scoped and, under xdist, "session" means "per worker process": at
-# most one lease is ever active in a given interpreter.
+# A plain global object to track current GPU lease. It is safe here because
+# `gpu_id` is session-scoped and, under xdist, "session" means "per worker
+# process": at most one lease is ever active in a given interpreter.
 _active_lease: tuple[int, int] | None = None  # (fd, page_base)
 
 
@@ -156,13 +133,9 @@ def _gpu_lease_lockfile(tmp_path_factory):
     so pre-sizing buys nothing -- and the old open(..., 'wb') let a late-starting worker
     truncate a file its peers were already locking.
 
-    ``GPU_LEASE_LOCKFILE``, when set, wins over the derived path. The watchdog is a
-    separate process started before pytest exists, so it cannot predict what
-    ``getbasetemp()`` will resolve to for this run -- run-test.sh instead mints a
-    path up front and both sides read it from the environment. The derived path
-    stays as the fallback so a plain ``pytest`` invocation, with no watchdog and
-    no env var, is unchanged. Side benefit: the lease file becomes greppable by a
-    fixed name during a hang instead of living inside a per-run ``pytest-NNN/`` dir.
+    ``GPU_LEASE_LOCKFILE``, when set, wins over the derived path. This is
+    designed for watchdog process, which is a started separately and before
+    pytest exists, so it cannot predict what ``getbasetemp()`` will resolve to
     """
     override = os.getenv('GPU_LEASE_LOCKFILE', default=None)
     if override is not None:
@@ -222,29 +195,13 @@ def gpu_id(request):
                 continue
             _announce(request.config,
                       f'{worker_id} uses GPU {gpu} filelock = {lockfile}')
-            # A Python-level SIGTERM handler would fail the same way pytest-timeout's
-            # SIGALRM handler does: CPython only runs a Python signal handler when the
-            # main thread reaches a bytecode boundary, and a thread parked in a HIP
-            # call never reaches one. faulthandler's handler is C-level and needs no
-            # GIL, so it still fires -- and dumps every thread's stack -- while the
-            # main thread is stuck. Verified: a process blocked in a ctypes.PyDLL
-            # call, sent SIGTERM, printed a full stack dump naming the frame.
+            # Handle SIGTERM from watchdog to print a full stack dump naming the frame.
+            # Note signal handler itself cannot detect blocked GPU kernel:
+            # CPython only runs a Python signal handler when the main thread
+            # reaches a bytecode boundary.
             faulthandler.register(signal.SIGTERM, file=sys.stderr, all_threads=True)
             _active_lease = (f.fileno(), page_base)
-            # Stamp the page as active right now, not just from the first
-            # heartbeat below. `pytest_runtest_protocol`'s hookwrapper (below)
-            # wraps setup, call and teardown as a single hook call, and its
-            # pre-yield code -- where a fresh stamp is normally written -- runs
-            # *before* that call even starts, i.e. before this fixture body has
-            # run at all. So for this worker's first test, that pre-yield code
-            # sees `_active_lease` still `None` and, correctly, touches nothing;
-            # without this write, the page would carry no stamp through the
-            # whole of that first test's setup, call, and teardown, and a wedge
-            # anywhere in it would be invisible to the watchdog. This write
-            # closes exactly that gap and nothing else: every later test gets a
-            # fresh stamp from the hookwrapper itself, since by then
-            # `_active_lease` is already set when that wrapper's pre-yield code
-            # runs.
+            # Initialize the heartbeat value
             os.pwrite(f.fileno(), struct.pack('<Q', time.monotonic_ns()), page_base)
             try:
                 yield gpu
@@ -258,79 +215,21 @@ def gpu_id(request):
 
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_protocol():
-    """Heartbeat this worker's page with the time the current test started.
+    """Stamp this worker's page with `monotonic_ns()` before each test, 0 after.
 
-    The page carries a plain `time.monotonic_ns()` stamp -- "this worker was
-    last seen alive at T" -- and nothing else. Deciding whether T is too long
-    ago is entirely the watchdog's business, so the timeout has exactly one
-    definition, in exactly one place (`watchdog.py`'s `--threshold`), and no
-    way for the two sides to disagree about it. An earlier revision wrote a
-    *deadline* here instead, `now + budget`, on the theory that a per-test
-    budget might one day be wanted; the cost was two thresholds in the tree at
-    once -- one baked into the file by the worker, one on the watchdog's
-    command line -- and no way to tell from either side which was in force.
-    Should a per-test budget ever actually be needed, the page has 4088 spare
-    bytes for the worker to state one explicitly, which is a better answer
-    than encoding it implicitly in the stamp.
+    0 means "between tests" and the watchdog skips it. `watchdog.py` owns the
+    timeout; this side only reports liveness.
 
-    `time.monotonic()` is `clock_gettime(CLOCK_MONOTONIC)`, which is
-    system-wide rather than per-process, so the watchdog compares these
-    against its own reading directly -- no shared epoch and no wall-clock
-    dependency, which also makes the scheme immune to NTP steps mid-pass.
+    Wraps the whole protocol so a wedge in fixture setup or teardown counts
+    too. Consequence: `gpu_id` resolves *inside* the first wrapped call, so
+    `_active_lease` is still None here for a worker's first test -- `gpu_id`
+    writes that initial stamp itself.
 
-    Inert unless `gpu_id` actually holds a lease: `_active_lease` is only set by
-    the leased branch above, so pinned mode, no-xdist mode, and GPU-less suites
-    (which never request `gpu_id`, so that fixture body never runs at all) hit
-    the `is None` check and do no I/O -- this hook fires for every test in every
-    pytest process in the environment, so being a no-op absent a lease is not
-    optional.
+    No lease means no I/O. This hook runs in every pytest process in the
+    environment, GPU-less suites included.
 
-    Wraps the whole protocol -- setup, call, and teardown -- deliberately, so a
-    worker that wedges anywhere in any of the three (a GPU allocation during
-    setup, the test body itself, a cache-empty or sync during teardown) is
-    covered by one and the same stamp. The alternative, wrapping only
-    `pytest_runtest_call`, was tried first and rejected: it left setup and
-    teardown outside the heartbeat entirely, so a fixture-level wedge would
-    never be caught at all.
-
-    That whole-protocol wrapping has one gap of its own, and `gpu_id` closes it
-    rather than this hook: `runtestprotocol()` still runs setup, call and
-    teardown as separate hook calls internally, and `gpu_id`'s lock-acquire
-    (which sets `_active_lease`) happens inside the first of those, i.e. *after*
-    this wrapper's pre-yield code has already run for a worker's first test.
-    That pre-yield code reads `_active_lease` once, before the wrapped call
-    starts, so on the first test it correctly sees `None` and writes nothing --
-    but with nothing else in place, that leaves the entire first test
-    heartbeat-less. (Caught by an end-to-end test that wedged the very first
-    parametrized case on a worker: the watchdog never fired, because no
-    stamp had ever been written for that page.) `gpu_id` covers this by
-    writing an initial stamp itself, at the moment the lease is taken --
-    see the comment there. From the second test onward, `_active_lease` is
-    already set by the time this wrapper's pre-yield code runs, so it takes
-    over the refreshing normally. The two writers never race: at most one of
-    them is ever the one enabled for a given test, controlled by the same
-    single check of `_active_lease` here.
-
-    Runs on whatever thread pytest calls hooks on for this test, which under
-    xdist is the worker's MainThread -- deliberately: the heartbeat must stop
-    the instant that thread stops reaching this hook, which is exactly what
-    happens when it wedges in a HIP call. A background heartbeat thread would
-    keep ticking regardless and defeat the whole scheme.
-
-    The write is a single aligned 8-byte pwrite at the page base -- the
-    platform's atomic write granularity for a page-aligned offset -- so the
-    watchdog's concurrent pread never observes a torn value; no seqlock or
-    other synchronisation is needed on either side. Zeroing the stamp after the
-    test, rather than leaving the last one in place, is what keeps an idle
-    worker between tests from ever looking like a candidate to the watchdog: 0
-    is the one value that means "not running a test", and the watchdog skips
-    such a page outright instead of ageing it.
-    (The first test is the one exception: this wrapper takes the `is None`
-    branch for it and never zeros afterwards, leaving `gpu_id`'s initial write
-    in place until the second test's pre-yield code overwrites it. That stale
-    stamp cannot be mistaken for idle -- it is a real reading, not a zero --
-    and it can only age past the threshold if the first test plus the gap after
-    it really did exceed the threshold, which is a wedge worth catching.)
+    Runs on the worker's MainThread deliberately: a background heartbeat
+    thread would keep ticking through the very wedge this exists to detect.
     """
     lease = _active_lease
     if lease is None:
@@ -341,13 +240,8 @@ def pytest_runtest_protocol():
     try:
         yield
     finally:
-        # On this worker's last test (`nextitem is None`), the very call being
-        # wrapped also tears down the session-scoped `gpu_id` fixture -- which
-        # closes `fd` and releases the lock -- before control returns here, so
-        # `fd` may already be a stale, closed number. That is fine to ignore:
-        # zeroing a stamp is only ever meaningful while the page is still
-        # locked, and the watchdog never reads a page's stamp without first
-        # finding it locked, so a released page's stale value is never seen.
+        # On the last test this same call tears down `gpu_id`, closing `fd`.
+        # Harmless: the watchdog only reads pages it found locked.
         try:
             os.pwrite(fd, struct.pack('<Q', 0), page_base)
         except OSError:
@@ -380,52 +274,26 @@ def torch_gpu(gpu_id) -> int:
 
 
 def _tolerate_closed_worker_channel() -> None:
-    """Stop a second dying worker from turning the first one's crash into an
+    """Stop a second dying worker turning the first one's crash into an
     INTERNALERROR that kills the whole session.
 
-    The failure this guards against: the controller notices worker A died and
-    calls ``DSession.worker_errordown`` -> ``LoadScheduling.remove_node(A)``,
-    which reassigns A's pending items and then, still inside that same call,
-    tops up every *other* node's queue via ``check_schedule`` ->
-    ``_send_tests`` -> ``WorkerController.send_runtest_some`` ->
-    ``sendcommand`` -> ``execnet``'s ``channel.send``. If worker B is also
-    dying at that exact moment -- its own crash not yet reported, since that
-    report is itself an asynchronous execnet callback racing this one -- that
-    send raises ``OSError: cannot send (already closed?)``, uncaught, and
-    pytest reports it as an INTERNALERROR that ends the run, workers that were
-    fine included. This is not specific to any one test suite or wedge
-    scenario; it is a bug in xdist's own error path with no synthetic
-    reproduction needed here -- it was hit organically while exercising the
-    watchdog above, with no wedge involved at all, just two ordinary crashes
-    close enough together in time.
+    `worker_errordown(A)` -> `remove_node` -> `check_schedule` -> `_send_tests`
+    tops up the *other* nodes' queues. If B is dying too -- its own crash
+    report still in flight -- that send raises `OSError: cannot send (already
+    closed?)`, uncaught, and the run ends.
 
-    Every scheduling mode (``--dist=load/loadscope/loadgroup/worksteal/each``)
-    has its own scheduler class and its own call site for sending tests, but
-    every one of them ends up going through this same
-    ``WorkerController.sendcommand`` -- so patching here, instead of one
-    scheduler class's ``_send_tests``, is the version of this fix that
-    actually covers every ``--dist`` mode rather than just the default one.
-    It is also not really foreign monkeypatching so much as finishing a job
-    xdist already started: ``WorkerController.shutdown`` right next to this
-    method already wraps its own ``sendcommand`` call in ``try/except
-    OSError: pass`` for exactly this reason -- every other caller (the
-    schedulers) was simply missed.
+    Usually triggered by killing several stalled GPU workers at once -- by
+    hand, or by the watchdog, which staggers to one kill per poll for exactly
+    this reason. Two ordinary crashes landing close enough together do it too.
 
-    Swallowing the error here and doing nothing further is deliberate, not
-    lazy: bookkeeping a phantom "sent" test against a dead node is harmless,
-    because that node's own crash -- already in flight, asynchronously -- will
-    shortly call ``remove_node`` on it too, which pops its *entire* pending
-    list (phantom entry included) and requeues it for a live node. Retrying
-    the send, or reaching into the scheduler to remove the node from inside
-    this call, would instead re-enter node removal from inside the very send
-    that node removal itself triggered -- recursion worth avoiding on
-    principle, not just because nothing here needs it: the safer, simpler
-    fix is to leave that removal to the async crash-detection path that is
-    already in flight for this node.
+    Patches `sendcommand` rather than one scheduler's `_send_tests` because
+    every `--dist` mode funnels through it, and `WorkerController.shutdown`
+    already wraps the same call in the same `except OSError` -- the schedulers
+    were just missed.
 
-    A no-op on any run that never sees a closed channel: the wrapped function
-    still calls straight through, so a healthy session pays only the cost of
-    one extra Python frame per command sent.
+    Swallowing is enough: B's own crash will `remove_node` it shortly, which
+    requeues its whole pending list, phantom entry included. Removing the node
+    from inside the send that node removal triggered would recurse.
     """
     try:
         from xdist.workermanage import WorkerController
@@ -450,11 +318,8 @@ def _tolerate_closed_worker_channel() -> None:
 
 @pytest.hookimpl
 def pytest_configure(config):
-    """Apply the scheduler guard above once, in every process this plugin loads
-    into. Harmless where it does not apply: workers never call
-    ``WorkerController.sendcommand`` (only the controller schedules), and a
-    plain non-distributed run never imports ``xdist.workermanage`` at all, so
-    the early return in ``_tolerate_closed_worker_channel`` makes this a no-op
-    there.
+    """Apply the scheduler guard once per process. A no-op where it does not
+    apply: only the controller schedules, and a non-distributed run never
+    imports xdist at all.
     """
     _tolerate_closed_worker_channel()
