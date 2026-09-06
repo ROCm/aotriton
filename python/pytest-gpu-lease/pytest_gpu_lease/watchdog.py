@@ -19,11 +19,15 @@ line and an environment variable that have to agree.
 
 Why the lock file is the right substrate, in one line: ``fcntl(F_GETLK)`` fills
 ``l_pid`` with the pid holding a byte range, and the kernel releases a record
-lock automatically when its owner dies. So this module never remembers a pid --
-it asks the kernel again immediately before every signal. A worker that already
-died on its own between one poll and the next is simply unlocked by the time we
-look, and gets nothing sent to it: pid reuse is not a hazard here, because a
-dead process holds no lock to be mistaken for a live one.
+lock automatically when its owner dies. So the lock answers "does this still
+need killing?" on its own: a worker that died between one poll and the next is
+simply unlocked by the time we look, and gets nothing sent to it.
+
+It does not answer "who is this?", and pids are not stable identities -- once a
+process is reaped its number can be reissued. Every signal therefore goes
+through a pidfd (see ``_pidfd_open``), which names one specific process for as
+long as the fd is open. The two questions stay separate: the lock decides
+whether to signal, the pidfd decides who receives it.
 
 Escalation is SIGTERM, a grace period, then SIGKILL if the page is still locked.
 ``plugin.py`` registers SIGTERM with ``faulthandler`` on every leasing worker, so
@@ -44,6 +48,7 @@ import signal
 import struct
 import sys
 import time
+from typing import NamedTuple
 
 from .plugin import PAGE_SIZE, STRUCT_FLOCK
 
@@ -130,7 +135,42 @@ def _read_last_activity(fd: int, page: int) -> int:
     return struct.unpack('<Q', raw)[0]
 
 
-def _send(pid: int, sig: signal.Signals, reason: str) -> None:
+class _Staged(NamedTuple):
+    """A page whose holder has been SIGTERMed and may still need SIGKILL."""
+
+    pid: int
+    sent_ns: int
+    pidfd: int | None  # None only where pidfd is unavailable; see _pidfd_open
+
+
+def _pidfd_open(pid: int) -> int | None:
+    """A handle to *this* process, or None where that is not available.
+
+    A pid is not a stable identity: the moment its process is reaped the
+    number can be handed to somebody else, so every `os.kill(pid, ...)` is a
+    bet that nothing has changed since whatever check justified it. A pidfd
+    refers to one specific process for as long as the fd is open -- signalling
+    through it after that process dies raises ProcessLookupError rather than
+    reaching whoever inherited the number.
+
+    None on a kernel older than 5.3 or an interpreter older than 3.9, where
+    callers fall back to `os.kill` and the race is merely narrow rather than
+    closed.
+    """
+    try:
+        return os.pidfd_open(pid)
+    except (AttributeError, OSError):
+        return None
+
+
+def _discard(pending: dict[int, _Staged], page: int) -> None:
+    """Drop a staged escalation, closing its pidfd."""
+    staged = pending.pop(page, None)
+    if staged is not None and staged.pidfd is not None:
+        os.close(staged.pidfd)
+
+
+def _send(pid: int, sig: signal.Signals, reason: str, pidfd: int | None = None) -> None:
     """Signal `pid`, tolerating a process that is already gone.
 
     The F_GETLK check immediately before every call site is the liveness proof
@@ -152,7 +192,10 @@ def _send(pid: int, sig: signal.Signals, reason: str) -> None:
               file=sys.stderr, flush=True)
         return
     try:
-        os.kill(pid, sig)
+        if pidfd is None:
+            os.kill(pid, sig)
+        else:
+            signal.pidfd_send_signal(pidfd, sig)
         print(f'pytest_gpu_lease.watchdog: sent {sig.name} to pid {pid} ({reason})',
               file=sys.stderr, flush=True)
     except ProcessLookupError:
@@ -161,14 +204,14 @@ def _send(pid: int, sig: signal.Signals, reason: str) -> None:
 
 
 def _poll_once(fd: int, workers: int, threshold_ns: int, grace_ns: int,
-              pending: dict[int, int]) -> bool:
+              pending: dict[int, _Staged]) -> bool:
     """One sweep of every page. Sends at most one signal -- see module docstring
     on staggering kills -- and returns whether any page is currently locked, for
     the caller's idle/self-exit counter.
 
-    `pending` maps a page already SIGTERMed to the `monotonic_ns()` that signal
-    went out, and is mutated in place across calls so escalation survives
-    between polls without any state living outside this loop.
+    `pending` maps a page already SIGTERMed to the `_Staged` record for that
+    kill, and is mutated in place across calls so escalation survives between
+    polls without any state living outside this loop.
     """
     now = time.monotonic_ns()
     any_locked = False
@@ -177,14 +220,31 @@ def _poll_once(fd: int, workers: int, threshold_ns: int, grace_ns: int,
     # already staged should not be starved, poll after poll, by a steady trickle
     # of newly-expired pages elsewhere in the pool.
     for page in list(pending):
+        staged = pending[page]
         locked, pid = _getlk(fd, page)
-        if not locked:
-            del pending[page]  # worker exited on its own; nothing left to escalate
+        # "Still locked" is not enough to escalate: the page has to still be
+        # held by the *same* process. A SIGTERMed worker that dies anyway (the
+        # HIP runtime aborting on a fault is the common way) is replaced by
+        # xdist, and the replacement takes the lowest free page -- very often
+        # the one just vacated -- well inside a 30s grace period. Escalating on
+        # the page alone would SIGKILL that healthy replacement, then drop the
+        # entry and be free to do it again. Dropping the entry here instead
+        # hands the page back to the heartbeat scan below, where a replacement
+        # is judged on its own stamp like any other worker.
+        if not locked or pid != staged.pid:
+            _discard(pending, page)
             continue
         any_locked = True
-        if now - pending[page] >= grace_ns:
-            _send(pid, signal.SIGKILL, 'grace period expired, still holding its page')
-            del pending[page]
+        if now - staged.sent_ns >= grace_ns:
+            # Through the pidfd, so this cannot land on anyone else. The lock
+            # check above answers the policy question -- is it still wedged and
+            # still leasing -- but not the identity one: between that F_GETLK
+            # and this call the process may exit and its pid be reissued. That
+            # window is small and the payload is SIGKILL, which is precisely
+            # the combination not to leave to chance.
+            _send(staged.pid, signal.SIGKILL,
+                  'grace period expired, still holding its page', staged.pidfd)
+            _discard(pending, page)
             return any_locked  # one signal per poll
 
     for page in range(workers):
@@ -199,10 +259,21 @@ def _poll_once(fd: int, workers: int, threshold_ns: int, grace_ns: int,
             continue  # between tests -- see plugin.py's gpu_id and pytest_runtest_protocol
         stale_ns = now - last_activity
         if stale_ns > threshold_ns:
+            # Take the handle first, then re-read the lock. If the pid was
+            # reissued between the F_GETLK above and the pidfd_open, the
+            # original holder is dead, its lock is released, and this second
+            # read sees either an unlocked page or a different holder -- so the
+            # handle we are about to signal through is the process we measured.
+            pidfd = _pidfd_open(pid)
+            locked_now, pid_now = _getlk(fd, page)
+            if not locked_now or pid_now != pid:
+                if pidfd is not None:
+                    os.close(pidfd)
+                continue
             _send(pid, signal.SIGTERM,
                   f'no heartbeat for {stale_ns / 1e9:.1f}s, past the '
-                  f'{threshold_ns / 1e9:.0f}s threshold')
-            pending[page] = now
+                  f'{threshold_ns / 1e9:.0f}s threshold', pidfd)
+            pending[page] = _Staged(pid, now, pidfd)
             return any_locked  # one signal per poll
 
     return any_locked
@@ -232,7 +303,7 @@ def watch(lockfile: str, workers: int, threshold_s: float, grace_s: float,
     """
     threshold_ns = int(threshold_s * 1_000_000_000)
     grace_ns = int(grace_s * 1_000_000_000)
-    pending: dict[int, int] = {}
+    pending: dict[int, _Staged] = {}
     idle = 0
     armed = False
     # O_CREAT so the watchdog can be started before pytest ever touches the
@@ -249,6 +320,8 @@ def watch(lockfile: str, workers: int, threshold_s: float, grace_s: float,
                 idle += 1
             time.sleep(poll_interval_s)
     finally:
+        for page in list(pending):
+            _discard(pending, page)  # close any pidfd still staged
         os.close(fd)
     print(f'pytest_gpu_lease.watchdog: no page locked for {idle_polls} consecutive polls, exiting',
           file=sys.stderr, flush=True)

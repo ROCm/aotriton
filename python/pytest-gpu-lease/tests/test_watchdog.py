@@ -48,6 +48,7 @@ from pytest_gpu_lease.plugin import PAGE_SIZE, STRUCT_FLOCK
 
 lockfile = sys.argv[1]
 page = int(sys.argv[2])
+backdate_ns = int(sys.argv[3])
 f = open(lockfile, 'r+b')
 claim = struct.pack(STRUCT_FLOCK, fcntl.F_WRLCK, os.SEEK_SET, PAGE_SIZE * page, PAGE_SIZE, 0)
 fcntl.fcntl(f, fcntl.F_SETLK, claim)
@@ -56,7 +57,7 @@ fcntl.fcntl(f, fcntl.F_SETLK, claim)
 # wall-clock timing to age one out. max(1, ...) because monotonic_ns() is time
 # since boot and could in principle be smaller than the offset -- 1 is still a
 # valid ancient stamp, whereas 0 would read as "between tests" and be skipped.
-os.pwrite(f.fileno(), struct.pack('<Q', max(1, time.monotonic_ns() - 10_000_000_000)),
+os.pwrite(f.fileno(), struct.pack('<Q', max(1, time.monotonic_ns() - backdate_ns)),
           PAGE_SIZE * page)
 faulthandler.register(signal.SIGTERM, file=sys.stderr, all_threads=True)
 r, w = os.pipe()
@@ -65,13 +66,16 @@ os.read(r, 1)  # blocks forever: nobody ever writes to w
 """
 
 
-def _spawn_wedge_child(tmp_path, lockfile, page=0):
+_STALE_NS = 10_000_000_000
+
+
+def _spawn_wedge_child(tmp_path, lockfile, page=0, backdate_ns=_STALE_NS, tag=''):
     child_script = tmp_path / f'wedge_child_{page}.py'
     child_script.write_text(_WEDGE_CHILD)
-    err_path = tmp_path / f'child_{page}.err'
+    err_path = tmp_path / f'child_{page}{tag}.err'
     err_file = open(err_path, 'wb')
     child = subprocess.Popen(
-        [sys.executable, str(child_script), str(lockfile), str(page)],
+        [sys.executable, str(child_script), str(lockfile), str(page), str(backdate_ns)],
         stdout=subprocess.PIPE, stderr=err_file, text=True)
     assert child.stdout.readline().strip() == 'READY'
     return child, err_path, err_file
@@ -120,6 +124,62 @@ def test_getlk_reports_unlocked_after_holder_is_killed(tmp_path):
     finally:
         os.close(fd)
         err_file.close()
+
+
+@pytest.mark.timeout(30)
+def test_escalation_does_not_sigkill_a_replacement_that_took_the_same_page(tmp_path):
+    """A staged SIGKILL must follow the pid, not the page.
+
+    Regression test. The SIGTERMed worker often dies on its own inside the
+    grace period -- the HIP runtime aborting on a fault is the usual way -- and
+    xdist replaces it. The replacement takes the lowest free page, i.e. very
+    often the one just vacated, and can be heartbeating there well before the
+    grace period is up. Escalating on "page is still locked" alone would then
+    SIGKILL a perfectly healthy worker, drop the entry, and be free to do it
+    again on the next one.
+
+    Driven through `_poll_once` directly so the two halves -- SIGTERM staged,
+    then escalation re-checked -- are two explicit calls rather than a timing
+    coincidence inside `watch()`.
+    """
+    lockfile = tmp_path / 'gpulock'
+    lockfile.touch()
+    fd = os.open(str(lockfile), os.O_RDWR)
+    pending: dict[int, watchdog._Staged] = {}
+    # grace_ns=0: the second poll escalates immediately if it is going to at all.
+    poll = lambda: watchdog._poll_once(fd, 1, threshold_ns=10**9, grace_ns=0,
+                                       pending=pending)
+
+    wedged, _, wedged_err = _spawn_wedge_child(tmp_path, lockfile, tag='_wedged')
+    replacement = replacement_err = None
+    try:
+        assert poll() is True
+        assert list(pending) == [0] and pending[0].pid == wedged.pid, pending
+
+        wedged.kill()  # the SIGTERMed worker dies on its own, releasing page 0
+        wedged.wait(timeout=5)
+
+        # ...and its replacement takes the same page, with a fresh heartbeat.
+        replacement, _, replacement_err = _spawn_wedge_child(
+            tmp_path, lockfile, backdate_ns=0, tag='_replacement')
+
+        assert poll() is True
+        assert pending == {}, 'stale escalation must be dropped once the pid changes'
+        # `poll()` is not enough: SIGKILL is delivered asynchronously, so a
+        # child signalled a microsecond ago still reads as running. Waiting is
+        # what makes the absence of a kill observable.
+        with pytest.raises(subprocess.TimeoutExpired):
+            replacement.wait(timeout=2)
+    finally:
+        for child in (wedged, replacement):
+            if child is not None and child.poll() is None:
+                child.kill()
+                child.wait()
+        for handle in (wedged_err, replacement_err):
+            if handle is not None:
+                handle.close()
+        os.close(fd)
+
 
 
 @pytest.mark.timeout(30)
@@ -236,3 +296,28 @@ def test_end_to_end_wedged_worker_is_replaced_and_run_stays_green(pytester, monk
     # 5 of the 6 parametrizations never touch the wedge; they must all still
     # pass despite the sixth worker being killed and replaced mid-run.
     assert outcomes.get('passed', 0) >= 5, outcomes
+
+
+def test_a_stale_pidfd_reports_gone_rather_than_signalling_a_reissued_pid(capsys):
+    """The identity half of the escalation guard, in isolation.
+
+    `_getlk` says whether a page still needs its holder killed, but there is
+    always a gap between that answer and the signal, and a pid reaped inside
+    that gap can be reissued to anything. A pidfd names one process for the
+    life of the fd, so the worst case degrades from "SIGKILL an innocent
+    process" to "ESRCH, and say so".
+
+    Deliberately not asserting that some bystander survived: pid reuse cannot
+    be forced on demand, so this checks the property that makes reuse
+    unreachable instead of trying to stage it.
+    """
+    victim = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
+    pidfd = watchdog._pidfd_open(victim.pid)
+    assert pidfd is not None, 'expected pidfd support on this kernel'
+    victim.kill()
+    victim.wait(timeout=10)   # dead *and* reaped: the number is free to be reissued
+    try:
+        watchdog._send(victim.pid, signal.SIGKILL, 'stale handle', pidfd)
+    finally:
+        os.close(pidfd)
+    assert 'already gone' in capsys.readouterr().err
