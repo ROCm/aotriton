@@ -148,19 +148,24 @@ fi
     python -m pytest_gpu_lease.watchdog --lockfile "${GPU_LEASE_LOCKFILE}" \
       --workers "${ngpus}" 2>>"${_errfile}" &
     watchdog_pid=$!
-    # The watchdog unlinks the lock file itself; this only stops it. SIGTERM is
-    # its documented stop signal, named rather than left to `kill`'s default, and
-    # `wait` reaps it so the unlink has finished before we return.
+    # The one teardown for this pass, and the only thing the traps below call.
+    # pytest first, then the watchdog that was protecting it: the watchdog
+    # unlinks the lock file on its way out, and doing that while workers still
+    # hold locks would let a replacement recreate the path as a fresh inode.
     #
-    # pytest is stopped from here too, and by pid. Ctrl+C reaches it on its own
-    # (SIGINT goes to the whole foreground group) but Ctrl+\\ does not:
-    # measured, SIGQUIT kills this shell outright while pytest and the watchdog,
-    # both of which inherited SIG_IGN for it, carry on. `pytest_pid` is empty
-    # until pytest starts, which covers the early-exit path below.
-    _stop_watchdog() { kill -s TERM "${watchdog_pid}" 2>/dev/null; wait "${watchdog_pid}" 2>/dev/null; }
+    # SIGTERM to both, named rather than left to `kill`'s default, since it is
+    # the watchdog's documented stop signal. `wait` after each, so the unlink
+    # has finished and neither is left a zombie before this returns.
+    #
+    # pytest is stopped by pid rather than left to the terminal: Ctrl+C reaches
+    # it on its own (SIGINT goes to the whole foreground group) but Ctrl+\\ does
+    # not -- measured, SIGQUIT kills this shell outright while pytest and the
+    # watchdog, both of which inherited SIG_IGN for it, carry on. `pytest_pid`
+    # is empty before pytest starts and cleared after it returns, so the
+    # early-exit path below and a completed run both signal nothing.
     _stop_pass() {
       kill -s TERM "${pytest_pid:-}" 2>/dev/null; wait "${pytest_pid:-}" 2>/dev/null
-      _stop_watchdog
+      kill -s TERM "${watchdog_pid}" 2>/dev/null; wait "${watchdog_pid}" 2>/dev/null
     }
     # EXIT alone is not enough: an untrapped SIGTERM, SIGHUP or SIGQUIT kills
     # the shell without running it (measured; SIGINT does run it).
