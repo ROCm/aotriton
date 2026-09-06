@@ -312,7 +312,7 @@ def test_a_stale_pidfd_reports_gone_rather_than_signalling_a_reissued_pid(capsys
     """
     victim = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
     pidfd = watchdog._pidfd_open(victim.pid)
-    assert pidfd is not None, 'expected pidfd support on this kernel'
+    assert pidfd is not None, 'the module asserts pidfd support at import'
     victim.kill()
     victim.wait(timeout=10)   # dead *and* reaped: the number is free to be reissued
     try:

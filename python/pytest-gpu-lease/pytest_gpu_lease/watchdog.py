@@ -58,6 +58,12 @@ from typing import NamedTuple
 
 from .plugin import PAGE_SIZE, STRUCT_FLOCK, dump_path
 
+# Every signal goes through a pidfd, so this is a hard requirement rather than
+# an enhancement -- see _pidfd_open. Linux 5.3 / Python 3.9, both far older
+# than anything that runs a ROCm GPU. No plan to support systems without it.
+assert hasattr(os, 'pidfd_open') and hasattr(signal, 'pidfd_send_signal'), (
+    'pytest_gpu_lease.watchdog requires pidfd support: Linux 5.3+ and Python 3.9+')
+
 # The timeout, and the only one in the tree: how long a worker's page may go
 # without a fresh stamp before it is treated as wedged. Because the worker
 # rewrites its stamp before every test, this is exactly one thing -- the
@@ -127,11 +133,11 @@ class _Staged(NamedTuple):
 
     pid: int
     sent_ns: int
-    pidfd: int | None  # None only where pidfd is unavailable; see _pidfd_open
+    pidfd: int
 
 
 def _pidfd_open(pid: int) -> int | None:
-    """A handle to *this* process, or None where that is not available.
+    """A handle to *this* process, or None if it is already gone.
 
     A pid is not a stable identity: the moment its process is reaped the
     number can be handed to somebody else, so every `os.kill(pid, ...)` is a
@@ -140,24 +146,36 @@ def _pidfd_open(pid: int) -> int | None:
     through it after that process dies raises ProcessLookupError rather than
     reaching whoever inherited the number.
 
-    None on a kernel older than 5.3 or an interpreter older than 3.9, where
-    callers fall back to `os.kill` and the race is merely narrow rather than
-    closed.
+    Required, not best-effort: falling back to `os.kill` would silently give
+    up that guarantee on the one path where the payload is SIGKILL. It needs
+    Linux 5.3 and Python 3.9, both far below anything that runs a ROCm GPU,
+    so the module refuses to load without it (see the assert above).
+
+    None also for an `l_pid` that is not a local pid at all -- F_GETLK reports
+    -1 for an open-file-description lock, and a lock held over NFS can report
+    a pid meaningless here. `os.pidfd_open` would raise EINVAL, and the
+    check has to happen before it because this is the first place a raw
+    `l_pid` is used for anything.
     """
+    if pid <= 0:
+        print(f'pytest_gpu_lease.watchdog: ignoring a page held by pid {pid}; '
+              f'l_pid is not a local pid (OFD lock, or a lock held over NFS)',
+              file=sys.stderr, flush=True)
+        return None
     try:
         return os.pidfd_open(pid)
-    except (AttributeError, OSError):
+    except ProcessLookupError:
         return None
 
 
 def _discard(pending: dict[int, _Staged], page: int) -> None:
     """Drop a staged escalation, closing its pidfd."""
     staged = pending.pop(page, None)
-    if staged is not None and staged.pidfd is not None:
+    if staged is not None:
         os.close(staged.pidfd)
 
 
-def _send(pid: int, sig: signal.Signals, reason: str, pidfd: int | None = None) -> None:
+def _send(pid: int, sig: signal.Signals, reason: str, pidfd: int) -> None:
     """Signal `pid`, tolerating a process that is already gone.
 
     The F_GETLK check immediately before every call site is the liveness proof
@@ -166,23 +184,11 @@ def _send(pid: int, sig: signal.Signals, reason: str, pidfd: int | None = None) 
     ProcessLookupError reports -- not a bug to guard against, just the same
     race resolving itself one step later.
 
-    `pid > 0` is checked because `l_pid` is not always a local pid: F_GETLK
-    reports -1 for an open-file-description lock, and a lock held over NFS can
-    report a pid that means nothing on this host. `os.kill` reads 0 as "the
-    whole process group" and -1 as "every process this uid may signal", so a
-    single unexpected `l_pid` would take out the pass, the shell that started
-    it, and everything else the user owns.
+    `pid` is only for the log line: the signal goes to `pidfd`, which
+    `_pidfd_open` has already vetted.
     """
-    if pid <= 0:
-        print(f'pytest_gpu_lease.watchdog: refusing to signal pid {pid} ({reason}); '
-              f'l_pid is not a local pid (OFD lock, or a lock held over NFS)',
-              file=sys.stderr, flush=True)
-        return
     try:
-        if pidfd is None:
-            os.kill(pid, sig)
-        else:
-            signal.pidfd_send_signal(pidfd, sig)
+        signal.pidfd_send_signal(pidfd, sig)
         print(f'pytest_gpu_lease.watchdog: sent {sig.name} to pid {pid} ({reason})',
               file=sys.stderr, flush=True)
     except ProcessLookupError:
@@ -315,10 +321,11 @@ def _poll_once(fd: int, lockfile: str, workers: int, threshold_ns: int, grace_ns
             # read sees either an unlocked page or a different holder -- so the
             # handle we are about to signal through is the process we measured.
             pidfd = _pidfd_open(pid)
+            if pidfd is None:
+                continue  # exited between the F_GETLK above and the open
             locked_now, pid_now = _getlk(fd, page)
             if not locked_now or pid_now != pid:
-                if pidfd is not None:
-                    os.close(pidfd)
+                os.close(pidfd)
                 continue
             _send(pid, signal.SIGTERM,
                   f'no heartbeat for {stale_ns / 1e9:.1f}s, past the '
