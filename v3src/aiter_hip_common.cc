@@ -42,8 +42,8 @@ AiterAsmKernel::launch_kernel(const AiterAsmKernelArgs& kargs) {
                      HIP_LAUNCH_PARAM_BUFFER_SIZE,
                      kargs.arg_size_ptr,
                      HIP_LAUNCH_PARAM_END };
-  int device_id;
-  AOTRITON_HIP_CHECK_RETURN(hipGetDevice(&device_id));
+  hipDevice_t device_id;
+  AOTRITON_HIP_CHECK_RETURN(hipStreamGetDevice(kargs.stream, &device_id));
   pstring_type persistant_storage;
   std::string  aiter_module;
   auto lazy = [&]() -> OnDeviceKernel::OnDiskKernelInfo {
