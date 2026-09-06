@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: MIT
 
 #include <aotriton/util.h>
+#include <mutex>
+#include <shared_mutex>
 #include <string>
 #include <unordered_map>
 #include <string_view>
@@ -65,13 +67,28 @@ std::unordered_map<std::string, GpuClassifier> LazyGpu::string_to_classifier = {
 Gpu
 getGpuFromStream(hipStream_t stream) {
   static std::unordered_map<hipDevice_t, Gpu> device_to_arch;
+  static std::shared_mutex device_to_arch_mutex;
   hipDevice_t dev;
   hipError_t err = hipStreamGetDevice(stream, &dev);
   if (err != hipSuccess)
     return GPU_ARCH_UNKNOWN;
+
+  // Use reader lock to peek the cache
+  {
+    std::shared_lock lock(device_to_arch_mutex);
+    auto iter = device_to_arch.find(dev);
+    if (iter != device_to_arch.end())
+      return iter->second;
+  }
+
+  // Use writer lock to classify the device
+  std::unique_lock lock(device_to_arch_mutex);
+  // Check again, in case another waiter has classified this device
+  auto iter = device_to_arch.find(dev);
+  if (iter != device_to_arch.end())
+    return iter->second;
   LazyGpu lazy(dev);
-  device_to_arch.try_emplace(dev, lazy);
-  return device_to_arch[dev];
+  return device_to_arch.emplace(dev, lazy).first->second;
 }
 
 bool isArchExperimentallySupported(hipStream_t stream) {
@@ -94,21 +111,32 @@ bool isArchTechPreview(hipStream_t stream) {
 
 int getMultiProcessorCount(hipStream_t stream) {
   static std::unordered_map<hipDevice_t, int> device_to_CUs;
+  static std::shared_mutex device_to_CUs_mutex;
   hipDevice_t dev;
   hipError_t err = hipStreamGetDevice(stream, &dev);
   if (err != hipSuccess)
     return 40;  // A guessed number
 
-  auto iter = device_to_CUs.find(dev);
-  if (iter == device_to_CUs.end()) {
-    hipDeviceProp_t prop;
-    err = hipGetDeviceProperties(&prop, dev);
-    if (err != hipSuccess)
-      return 40;  // A guessed number
-    device_to_CUs[dev] = prop.multiProcessorCount;
-    return prop.multiProcessorCount;
+  // Use reader lock to peek the cache
+  {
+    std::shared_lock lock(device_to_CUs_mutex);
+    auto iter = device_to_CUs.find(dev);
+    if (iter != device_to_CUs.end())
+      return iter->second;
   }
-  return iter->second;
+
+  // Use writer lock to query the device
+  std::unique_lock lock(device_to_CUs_mutex);
+  // Check again, in case another waiter has queried this device
+  auto iter = device_to_CUs.find(dev);
+  if (iter != device_to_CUs.end())
+    return iter->second;
+  hipDeviceProp_t prop;
+  err = hipGetDeviceProperties(&prop, dev);
+  if (err != hipSuccess)
+    return 40;  // A guessed number
+  device_to_CUs[dev] = prop.multiProcessorCount;
+  return prop.multiProcessorCount;
 }
 
 template class TensorView<1>;
