@@ -29,6 +29,11 @@ through a pidfd (see ``_pidfd_open``), which names one specific process for as
 long as the fd is open. The two questions stay separate: the lock decides
 whether to signal, the pidfd decides who receives it.
 
+Stopping it is a plain ``kill``: SIGTERM (also SIGINT, SIGHUP) unwinds
+cleanly and removes the lock file on the way out. SIGKILL is the one case
+that cannot, and leaves the file behind. It never stops on its own -- see
+``watch``.
+
 Escalation is SIGTERM, a grace period, then SIGKILL if the page is still locked.
 ``plugin.py`` registers SIGTERM with ``faulthandler`` on every leasing worker, so
 the SIGTERM here is not a death sentence by itself -- it is a request for a
@@ -334,10 +339,17 @@ def _build_parser() -> argparse.ArgumentParser:
 def _exit_on_signal(signum, _frame):
     """Turn a termination signal into a normal unwind.
 
-    SIGTERM and SIGHUP would otherwise kill the process outright, skipping the
-    `finally` in `main` that removes the lock file. SIGINT already unwinds, and
-    is handled here only so all three exit the same way.
+    A plain `kill` -- SIGTERM -- is how this service is meant to be stopped,
+    and with no handler it would kill the process outright, skipping the
+    `finally` in `main` that removes the lock file. SIGHUP is the same story.
+    SIGINT already unwinds and is handled only so all three behave alike.
+
+    The signal is named in the log because this now shares a file with
+    pytest's stderr, where "stopped" alone does not distinguish a shutdown
+    from a crash.
     """
+    print(f'pytest_gpu_lease.watchdog: caught {signal.Signals(signum).name}',
+          file=sys.stderr, flush=True)
     raise SystemExit(128 + signum)
 
 

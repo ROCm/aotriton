@@ -123,7 +123,10 @@ fi
   # `wait` is what makes that deterministic: `kill` just posts the signal, and
   # without waiting we would return while the unlink is still in flight and
   # leave a zombie behind until PID 1 reaps it.
-  _stop_watchdog() { kill "${watchdog_pid}" 2>/dev/null; wait "${watchdog_pid}" 2>/dev/null; }
+  # `-s TERM` rather than a bare `kill`: SIGTERM is the watchdog's documented
+  # stop signal and the only one it treats as a clean shutdown, so name it here
+  # instead of inheriting whatever the shell's default happens to be.
+  _stop_watchdog() { kill -s TERM "${watchdog_pid}" 2>/dev/null; wait "${watchdog_pid}" 2>/dev/null; }
   # EXIT alone is not enough: an untrapped SIGTERM or SIGHUP kills the shell
   # without running it (measured; SIGINT does run it).
   # Known Issue: kill -9 CI script (rarely needed) will leave stale lock file
