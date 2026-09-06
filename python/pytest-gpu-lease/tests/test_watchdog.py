@@ -354,3 +354,44 @@ def test_watchdog_relays_a_wedged_workers_stack_dump(tmp_path, capsys):
     assert f'stack of pid {child.pid} on GPU 0' in relayed, relayed
     assert not pathlib.Path(watchdog.dump_path(str(lockfile), child.pid)).exists(), \
         'the dump must be deleted as soon as it is relayed'
+
+
+def test_dump_survives_a_worker_that_dies_during_its_grace_period(tmp_path, capsys):
+    """The common exit path must still yield the stack.
+
+    A SIGTERMed worker usually dies on its own inside the grace period -- the
+    HIP runtime aborting on the fault that wedged it -- and that path once
+    discarded the entry silently, with `_sweep_dumps` deleting the file
+    unread on the next poll because its pid was gone. The dump is the entire
+    reason the SIGTERM was sent, so it is exactly the case that must not lose
+    it.
+    """
+    lockfile = tmp_path / 'gpulock'
+    lockfile.touch()
+    child, _, err_file = _spawn_wedge_child(tmp_path, lockfile, tag='_grace')
+    pathlib.Path(watchdog.dump_path(str(lockfile), child.pid)).write_text(
+        'Current thread 0x1 (most recent call first):\n'
+        '  File "test_flash.py", line 9 in test_wedged_here\n')
+    fd = os.open(str(lockfile), os.O_RDWR)
+    try:
+        pending: dict[int, watchdog._Staged] = {}
+        # A long grace, so the only way out of `pending` is the child dying.
+        poll = lambda: watchdog._poll_once(fd, str(lockfile), 1, threshold_ns=10**9,  # noqa: E731
+                                           grace_ns=10**12, pending=pending)
+        poll()
+        assert list(pending) == [0], pending
+        child.kill()
+        child.wait(timeout=5)
+        poll()
+        assert pending == {}, 'a dead worker must not stay staged'
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait()
+        err_file.close()
+        os.close(fd)
+
+    relayed = capsys.readouterr().err
+    assert 'test_wedged_here' in relayed, relayed
+    assert 'exited during its grace period' in relayed, relayed
+    assert not pathlib.Path(watchdog.dump_path(str(lockfile), child.pid)).exists()

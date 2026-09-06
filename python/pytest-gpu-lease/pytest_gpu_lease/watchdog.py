@@ -240,7 +240,7 @@ def _emit_dump(lockfile: str, page: int, pid: int) -> None:
               f'{dump}\n--- end of stack ---', file=sys.stderr, flush=True)
 
 
-def _sweep_dumps(lockfile: str) -> None:
+def _sweep_dumps(lockfile: str, keep: set[int]) -> None:
     """Delete dump files whose worker is gone.
 
     A worker killed by a GPU fault reaches no teardown, so it never removes
@@ -256,6 +256,10 @@ def _sweep_dumps(lockfile: str) -> None:
             pid = int(path[len(prefix):-len(suffix)])
         except ValueError:
             continue  # not one of ours
+        if pid in keep:
+            # Staged for escalation. Its owner dying is precisely when the
+            # dump becomes worth reading, so it must outlive the process.
+            continue
         try:
             os.kill(pid, 0)
             continue  # still alive: its dump is still wanted
@@ -281,7 +285,7 @@ def _poll_once(fd: int, lockfile: str, workers: int, threshold_ns: int, grace_ns
     """
     now = time.monotonic_ns()
     any_locked = False
-    _sweep_dumps(lockfile)
+    _sweep_dumps(lockfile, {staged.pid for staged in pending.values()})
 
     # Escalations in flight take priority over freshly-discovered ones: a kill
     # already staged should not be starved, poll after poll, by a steady trickle
@@ -299,6 +303,13 @@ def _poll_once(fd: int, lockfile: str, workers: int, threshold_ns: int, grace_ns
         # hands the page back to the heartbeat scan below, where a replacement
         # is judged on its own stamp like any other worker.
         if not locked or pid != staged.pid:
+            # It died inside the grace period, which by the comment above is
+            # the usual way a SIGTERMed worker goes. Relay its dump anyway:
+            # producing that was the entire point of the SIGTERM, and letting
+            # this path discard silently threw it away in the common case.
+            _emit_dump(lockfile, page, staged.pid)
+            print(f'pytest_gpu_lease.watchdog: pid {staged.pid} exited during its '
+                  f'grace period; no SIGKILL needed', file=sys.stderr, flush=True)
             _discard(pending, page)
             continue
         any_locked = True
