@@ -69,6 +69,11 @@ cannot clean up after.
 file each watchdog is watching -- the only way to tell a stale one from the live one.
 See `--help` for `--threshold`, `--grace` and `--poll_interval`.
 
+The watchdog needs `pidfd_open`: Linux 5.3+ and Python 3.9+. That is narrower than
+ROCm itself, which still supports AlmaLinux 8, and is deliberate -- this is Level-3 CI
+tooling running on Ubuntu 22.04 or later. The lease fixtures have no such requirement;
+only `pytest_gpu_lease.watchdog` does, and it asserts at import rather than degrading.
+
 ## Fixtures
 
 | Fixture | Type | Description |

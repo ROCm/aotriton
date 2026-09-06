@@ -59,8 +59,13 @@ from typing import NamedTuple
 from .plugin import PAGE_SIZE, STRUCT_FLOCK, dump_path
 
 # Every signal goes through a pidfd, so this is a hard requirement rather than
-# an enhancement -- see _pidfd_open. Linux 5.3 / Python 3.9, both far older
-# than anything that runs a ROCm GPU. No plan to support systems without it.
+# an enhancement -- see _pidfd_open. Needs Linux 5.3 and Python 3.9.
+#
+# That is a statement about this harness, not about ROCm: ROCm still supports
+# AlmaLinux 8, whose kernel predates pidfd_open. This is Level-3 CI tooling,
+# deployed on Ubuntu 22.04 or later (5.15, Python 3.10), where the requirement
+# costs nothing. A suite that has to run on something older should not be
+# using this module.
 assert hasattr(os, 'pidfd_open') and hasattr(signal, 'pidfd_send_signal'), (
     'pytest_gpu_lease.watchdog requires pidfd support: Linux 5.3+ and Python 3.9+')
 
@@ -147,9 +152,9 @@ def _pidfd_open(pid: int) -> int | None:
     reaching whoever inherited the number.
 
     Required, not best-effort: falling back to `os.kill` would silently give
-    up that guarantee on the one path where the payload is SIGKILL. It needs
-    Linux 5.3 and Python 3.9, both far below anything that runs a ROCm GPU,
-    so the module refuses to load without it (see the assert above).
+    up that guarantee on the one path where the payload is SIGKILL. The module
+    refuses to load without it; the assert at the top of this file records
+    which systems that rules out and why they are out of scope here.
 
     None also for an `l_pid` that is not a local pid at all -- F_GETLK reports
     -1 for an open-file-description lock, and a lock held over NFS can report
