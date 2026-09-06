@@ -92,29 +92,36 @@ fi
   # Named with both $pass and $$ for uniqueness.
   # Note: this is inside a subshell. Hence parent pid `$$` is the right one to use.
   export GPU_LEASE_LOCKFILE="/dev/shm/gpu_lease.${pass}.$$"
-  # The same `python` that provides `pytest`: requirements-dev.txt installs
-  # ./python/pytest-gpu-lease into it, so failing to import is a broken
-  # environment to hear about, not something to probe around.
-  python -m pytest_gpu_lease.watchdog --workers "${ngpus}" \
-    2>"${outdir}/${fnprefix}${pass}.watchdog.err" &
+  # One stderr file for the whole pass, so there is a single thing to tail.
+  # Truncated once here and appended to from then on: two `2>` on one path
+  # would have pytest re-truncate a file the watchdog already holds open, and
+  # the watchdog's fd keeps its own offset, so its next line would land past a
+  # hole.
+  _errfile="${outdir}/${fnprefix}${pass}.err"
+  : > "${_errfile}"
+  # Start watchdog service, assume pytest_gpu_lease already installed.
+  # If not, do it with `pip install -r requirements-dev.txt`
+  python -m pytest_gpu_lease.watchdog --workers "${ngpus}" 2>>"${_errfile}" &
   watchdog_pid=$!
-  # Loud rather than silent: without this the only evidence of a watchdog that
-  # never started is a stderr file nobody opens until a pass has already hung,
-  # and with --timeout=300 gone that is a pass with no hang protection at all.
+  # Report either way: a silent success reads exactly like a watchdog that
+  # never started, and the difference only becomes visible once a pass has
+  # already hung -- with --timeout=300 gone, with no hang protection at all.
   sleep 1
-  kill -0 "${watchdog_pid}" 2>/dev/null \
-    || echo "WARNING: pytest_gpu_lease.watchdog did not start; this pass has NO hang protection. See ${outdir}/${fnprefix}${pass}.watchdog.err" >&2
+  if kill -0 "${watchdog_pid}" 2>/dev/null; then
+    echo "run-test.sh: watchdog running, pid ${watchdog_pid}, lockfile ${GPU_LEASE_LOCKFILE}" >> "${_errfile}"
+  else
+    echo "run-test.sh: WARNING watchdog did not start; this pass has NO hang protection" \
+      | tee -a "${_errfile}" >&2
+  fi
   # The watchdog unlinks the lock file itself, so this only has to stop it.
   # `wait` is what makes that deterministic: `kill` just posts the signal, and
   # without waiting we would return while the unlink is still in flight and
   # leave a zombie behind until PID 1 reaps it.
   _stop_watchdog() { kill "${watchdog_pid}" 2>/dev/null; wait "${watchdog_pid}" 2>/dev/null; }
   # EXIT alone is not enough: an untrapped SIGTERM or SIGHUP kills the shell
-  # without running it (measured; SIGINT does run it). Naming them explicitly
-  # matters more than it used to: the watchdog is a service that never stops on
-  # its own, so this is the only thing that stops it. Under SIGKILL, which no
-  # trap can catch, it is left running -- inert, but visible in `ps`, and its
-  # /dev/shm lock file stays behind.
+  # without running it (measured; SIGINT does run it).
+  # Known Issue: kill -9 CI script (rarely needed) will leave stale lock file
+  # under /dev/shm. Users should terminate manually by inspecting ps.
   trap '_stop_watchdog' EXIT
   trap '_stop_watchdog; exit 130' INT
   trap '_stop_watchdog; exit 143' TERM HUP
@@ -127,7 +134,7 @@ fi
     modules/flash/tests \
     -v \
     1>>"${outdir}/${fnprefix}${pass}.out" \
-    2>"${outdir}/${fnprefix}${pass}.err" || true
+    2>>"${_errfile}" || true
   grep '^FAILED' "${outdir}/${fnprefix}${pass}.out"|sed 's/^FAILED //' | sed 's/].*/]/' > "${outdir}/sel${pass}.txt"
   if [ -n "${RECORD_ADIFFS_TO:-}" ]; then
     SCRIPT_DIR_ABS="$(cd "${SCRIPT_DIR}" && pwd)"
