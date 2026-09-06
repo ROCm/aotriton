@@ -26,7 +26,11 @@ shift 3
 KFILTER=()
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    -k)  KFILTER=(-k "$2"); shift 2 ;;
+    -k)  # `shift 2` with one argument left fails *without shifting*, and the
+         # loop condition would never change: a bare trailing -k spins forever
+         # instead of running anything.
+         [ "$#" -ge 2 ] || { echo "run-test.sh: -k needs an expression" >&2; exit 1; }
+         KFILTER=(-k "$2"); shift 2 ;;
     -k*) KFILTER=(-k "${1#-k}"); shift ;;
     *)   echo "run-test.sh: unexpected argument '$1' (only -k is accepted here)" >&2
          exit 1 ;;
