@@ -149,9 +149,9 @@ def _gpu_lease_lockfile(tmp_path_factory):
     so pre-sizing buys nothing -- and the old open(..., 'wb') let a late-starting worker
     truncate a file its peers were already locking.
 
-    ``GPU_LEASE_LOCKFILE``, when set, wins over the derived path. This is
-    designed for watchdog process, which is a started separately and before
-    pytest exists, so it cannot predict what ``getbasetemp()`` will resolve to
+    ``GPU_LEASE_LOCKFILE``, when set, wins over the derived path. It exists for
+    the watchdog, which is started separately and before pytest, and so cannot
+    predict what ``getbasetemp()`` will resolve to.
     """
     override = os.getenv('GPU_LEASE_LOCKFILE', default=None)
     if override is not None:
