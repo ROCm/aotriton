@@ -80,25 +80,6 @@ _DEFAULT_POLL_INTERVAL_S = 5.0
 # that a genuinely wedged worker is not left idle for long after being caught.
 _DEFAULT_GRACE_S = 30.0
 
-# Consecutive empty polls (no page locked at all) *after having seen at least
-# one page locked* before the watchdog exits on its own. This is the fallback
-# for the case run-test.sh itself cannot reach its own trap -- e.g. it is
-# killed with SIGKILL, which a trap cannot catch -- so a watchdog started for
-# one run does not outlive it and go on signalling pids that by then belong to
-# somebody else. At the default poll interval this is one minute of a
-# completely idle lock file, counted only once the run has actually gone idle
-# -- i.e. its last worker released its page -- not before the run has started.
-# The "at least one" qualifier is load bearing, not a nicety: run-test.sh
-# starts the watchdog before pytest even begins collecting, specifically so a
-# wedge during collection is covered too, and a Level-3 pass's collection
-# (~330k tests, a conftest that imports torch) takes minutes -- far longer
-# than idle_polls * poll_interval at the defaults. A watchdog that started
-# counting immediately would exit on its own well before the first worker ever
-# takes a lease, and every wedge for the following ~22h would go uncaught,
-# silently: the "no page locked ... exiting" line looks identical whether it
-# fires because the run is genuinely over or because it never got a chance to
-# start watching.
-_DEFAULT_IDLE_POLLS = 12
 
 
 def _getlk(fd: int, page: int) -> tuple[bool, int]:
@@ -206,8 +187,8 @@ def _send(pid: int, sig: signal.Signals, reason: str, pidfd: int | None = None) 
 def _poll_once(fd: int, workers: int, threshold_ns: int, grace_ns: int,
               pending: dict[int, _Staged]) -> bool:
     """One sweep of every page. Sends at most one signal -- see module docstring
-    on staggering kills -- and returns whether any page is currently locked, for
-    the caller's idle/self-exit counter.
+    on staggering kills -- and returns whether any page is currently locked
+    (unused by `watch`, which never stops; the tests assert on it).
 
     `pending` maps a page already SIGTERMed to the `_Staged` record for that
     kill, and is mutated in place across calls so escalation survives between
@@ -280,51 +261,46 @@ def _poll_once(fd: int, workers: int, threshold_ns: int, grace_ns: int,
 
 
 def watch(lockfile: str, workers: int, threshold_s: float, grace_s: float,
-         poll_interval_s: float = _DEFAULT_POLL_INTERVAL_S,
-         idle_polls: int = _DEFAULT_IDLE_POLLS) -> None:
-    """Poll `lockfile` until `idle_polls` consecutive sweeps find no page locked
-    -- but only start that countdown once a page has actually been seen locked
-    at least once.
+         poll_interval_s: float = _DEFAULT_POLL_INTERVAL_S) -> None:
+    """Poll `lockfile` forever. Returns only when signalled.
 
-    Before that first sighting, `idle` still increments every empty poll (there
-    is no reason not to track it), but the loop condition ignores it: a
-    watchdog that has never seen a worker take a lease is not stray, it is
-    early -- started deliberately ahead of pytest itself, including ahead of
-    collection, which for a large suite can run for minutes. Counting idle
-    polls from process start would let the watchdog exit on its own before
-    collection even finished, and every wedge for the rest of that run would
-    then go uncaught. See `_DEFAULT_IDLE_POLLS` for the numbers this matters
-    most for.
+    Deliberately has no idea whether a pass is running, finishing, or finished:
+    it watches a file, and whoever started it decides when that stops being
+    useful (`run-test.sh` does, in a trap). Every rule for inferring "the run
+    is over" from the file itself is a guess, and a wrong guess is expensive
+    and silent -- the watchdog exits, `main` unlinks the lock file, and the
+    rest of a 22h pass runs unprotected with no line in any log saying so.
 
-    Once armed, a worker's page stays locked for the whole of that worker's
-    session, so in steady state the idle countdown only ever starts once every
-    worker has finished and released its page -- i.e. once the run is actually
-    over -- which is the behaviour this fallback exists for in the first place.
+    An earlier revision guessed from consecutive polls with no page locked.
+    That is not the same question: a worker this watchdog just killed is
+    replaced, and the replacement holds no lease until it has re-imported torch
+    and re-collected -- minutes, with the whole pool in that state at once
+    after a multi-worker wedge. The first threshold was 60s and fired during
+    exactly that; raising it only moved the guess.
+
+    The cost of never stopping is an orphan if the starting shell is SIGKILLed
+    and its trap never runs. That orphan is inert: `fd` is opened once here, so
+    once the file is unlinked it polls a deleted inode, and a later run gets a
+    new path and a new inode it can never see. No locks observed means no
+    pidfds opened and nothing signalled. It shows up in `ps`, and its lock file
+    is left behind in /dev/shm.
     """
     threshold_ns = int(threshold_s * 1_000_000_000)
     grace_ns = int(grace_s * 1_000_000_000)
     pending: dict[int, _Staged] = {}
-    idle = 0
-    armed = False
     # O_CREAT so the watchdog can be started before pytest ever touches the
-    # lock file -- run-test.sh starts it first specifically so a wedge that
-    # happens during collection would still be caught. plugin.py's own
-    # lockfile fixture is equally permissive for the mirror-image reason.
+    # lock file: run-test.sh starts it first so that it is already watching by
+    # the time the first worker takes a lease. plugin.py's own lockfile fixture
+    # is equally permissive for the mirror-image reason.
     fd = os.open(lockfile, os.O_RDWR | os.O_CREAT, 0o644)
     try:
-        while not armed or idle < idle_polls:
-            if _poll_once(fd, workers, threshold_ns, grace_ns, pending):
-                armed = True
-                idle = 0
-            else:
-                idle += 1
+        while True:
+            _poll_once(fd, workers, threshold_ns, grace_ns, pending)
             time.sleep(poll_interval_s)
     finally:
         for page in list(pending):
             _discard(pending, page)  # close any pidfd still staged
         os.close(fd)
-    print(f'pytest_gpu_lease.watchdog: no page locked for {idle_polls} consecutive polls, exiting',
-          file=sys.stderr, flush=True)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -348,9 +324,6 @@ def _build_parser() -> argparse.ArgumentParser:
                              'and escalating to SIGKILL if it is still held.')
     parser.add_argument('--poll_interval', type=float, default=_DEFAULT_POLL_INTERVAL_S,
                         help='Seconds between sweeps of the lock file.')
-    parser.add_argument('--idle_polls', type=int, default=_DEFAULT_IDLE_POLLS,
-                        help='Consecutive empty polls before exiting on its own, so a stray '
-                             'watchdog cannot outlive the run that started it.')
     return parser
 
 
@@ -373,22 +346,22 @@ def main(argv: list[str] | None = None) -> None:
         signal.signal(sig, _exit_on_signal)
     try:
         watch(args.lockfile, args.workers, args.threshold, args.grace,
-             args.poll_interval, args.idle_polls)
+             args.poll_interval)
     finally:
         # The watchdog owns the lock file, so whoever started it needs no
         # cleanup of its own -- which matters because an untrapped SIGTERM or
-        # SIGHUP skips a starting script's EXIT trap entirely (measured), and
-        # a SIGKILL cannot be trapped at all. In that last case nobody signals
-        # us either, and the idle self-exit above is what eventually gets here.
+        # SIGHUP skips a starting script's EXIT trap entirely (measured).
+        # SIGKILL is the gap: nothing runs here, and the file is left behind.
         #
-        # Only reached with no page locked (idle exit) or on our way out, so
-        # this cannot pull the file out from under a running pass. Note it is
-        # deliberately not in `watch()`: that stays a pure poll loop, callable
-        # from tests against a file they own.
+        # `watch()` never returns on its own, so reaching this means we were
+        # told to stop and the pass is over -- the file cannot be pulled out
+        # from under a running one. Deliberately not inside `watch()`, which
+        # stays a pure poll loop callable from tests against a file they own.
         try:
             os.unlink(args.lockfile)
         except FileNotFoundError:
             pass
+        print('pytest_gpu_lease.watchdog: stopped', file=sys.stderr, flush=True)
 
 
 if __name__ == '__main__':

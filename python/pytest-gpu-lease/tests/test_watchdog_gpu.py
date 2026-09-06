@@ -178,21 +178,22 @@ if _TEST_LEVEL >= 1:
         monkeypatch.setenv('GPU_LEASE_LOCKFILE', str(lockfile))
         pytester.makepyfile(_WATCHDOG_SUITE)
 
-        # idle_polls is deliberately generous. A replacement worker re-imports
-        # torch before it reaches its first test and takes a lease, so with both
-        # workers killed at once the lock file can legitimately show no locks
-        # for several seconds; a short idle window would let the watchdog
-        # self-exit mid-run.
         watchdog = subprocess.Popen(
             [sys.executable, '-m', 'pytest_gpu_lease.watchdog',
              '--lockfile', str(lockfile), '--workers', '2',
              '--threshold', '10', '--grace', '5',
-             '--poll_interval', '1', '--idle_polls', '30'],
+             '--poll_interval', '1'],
             stderr=subprocess.PIPE, text=True)
         try:
             result = pytester.runpytest_subprocess(
                 '-n', '2', '--max-worker-restart', '9999', '-p', 'xdist', timeout=300)
-            _, watchdog_err = watchdog.communicate(timeout=120)
+            # Stopped from outside, like run-test.sh does: the watchdog never
+            # decides on its own that a pass is over. This run is the case that
+            # would have fooled a rule based on an idle lock file -- both
+            # workers are killed at once, and neither replacement holds a lease
+            # until it has re-imported torch.
+            watchdog.terminate()
+            _, watchdog_err = watchdog.communicate(timeout=60)
         finally:
             if watchdog.poll() is None:
                 watchdog.kill()

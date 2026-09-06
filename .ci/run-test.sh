@@ -89,12 +89,21 @@ fi
   } > "${outdir}/${fnprefix}${pass}.out"
   # Start watchdog process, use /dev/shm to avoid wearing: container's /tmp
   # may not be tmpfs.
-  # Named with both $pass and $$ for uniquenecess.
-  # Note: this is inside a subshell. Hence parent pid `$$` is the right one to use>
+  # Named with both $pass and $$ for uniqueness.
+  # Note: this is inside a subshell. Hence parent pid `$$` is the right one to use.
   export GPU_LEASE_LOCKFILE="/dev/shm/gpu_lease.${pass}.$$"
-  python3 -m pytest_gpu_lease.watchdog --workers "${ngpus}" \
+  # The same `python` that provides `pytest`: requirements-dev.txt installs
+  # ./python/pytest-gpu-lease into it, so failing to import is a broken
+  # environment to hear about, not something to probe around.
+  python -m pytest_gpu_lease.watchdog --workers "${ngpus}" \
     2>"${outdir}/${fnprefix}${pass}.watchdog.err" &
   watchdog_pid=$!
+  # Loud rather than silent: without this the only evidence of a watchdog that
+  # never started is a stderr file nobody opens until a pass has already hung,
+  # and with --timeout=300 gone that is a pass with no hang protection at all.
+  sleep 1
+  kill -0 "${watchdog_pid}" 2>/dev/null \
+    || echo "WARNING: pytest_gpu_lease.watchdog did not start; this pass has NO hang protection. See ${outdir}/${fnprefix}${pass}.watchdog.err" >&2
   # The watchdog unlinks the lock file itself, so this only has to stop it.
   # `wait` is what makes that deterministic: `kill` just posts the signal, and
   # without waiting we would return while the unlink is still in flight and
@@ -102,8 +111,10 @@ fi
   _stop_watchdog() { kill "${watchdog_pid}" 2>/dev/null; wait "${watchdog_pid}" 2>/dev/null; }
   # EXIT alone is not enough: an untrapped SIGTERM or SIGHUP kills the shell
   # without running it (measured; SIGINT does run it). Naming them explicitly
-  # makes teardown prompt -- if none of this runs, e.g. under SIGKILL, the
-  # watchdog still exits on its own once no page has been locked for a while.
+  # matters more than it used to: the watchdog is a service that never stops on
+  # its own, so this is the only thing that stops it. Under SIGKILL, which no
+  # trap can catch, it is left running -- inert, but visible in `ps`, and its
+  # /dev/shm lock file stays behind.
   trap '_stop_watchdog' EXIT
   trap '_stop_watchdog; exit 130' INT
   trap '_stop_watchdog; exit 143' TERM HUP
