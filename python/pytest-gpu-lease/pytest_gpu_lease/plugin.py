@@ -272,7 +272,19 @@ def pytest_runtest_protocol():
     """
     lease = _active_lease
     if lease is None:
-        yield
+        try:
+            yield
+        finally:
+            # `gpu_id` may have taken the lease inside this very call -- a
+            # worker's first test -- and written the initial stamp with nothing
+            # to clear it. Left alone that stamp keeps ageing while the worker
+            # sits between its first and second test, so a slow first test plus
+            # the gap after it can cross the threshold and get an idle worker
+            # killed. Zero it here, as every later test does for itself.
+            lease = _active_lease
+            if lease is not None:
+                fd, page_base = lease
+                os.pwrite(fd, struct.pack('<Q', 0), page_base)
         return
     fd, page_base = lease
     os.pwrite(fd, struct.pack('<Q', time.monotonic_ns()), page_base)

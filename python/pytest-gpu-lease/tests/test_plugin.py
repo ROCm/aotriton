@@ -12,7 +12,13 @@ Each case carries its own rationale in its docstring; the crash-and-restart and
 no-xdist cases are the two that guard against regressions already seen in the wild.
 """
 
+import os
+import struct
+import time
+
 import pytest
+
+from pytest_gpu_lease import plugin
 
 pytest_plugins = ['pytester']
 
@@ -350,3 +356,37 @@ def test_sendcommand_guard_is_idempotent(capsys):
         assert capsys.readouterr().err.count('channel already closed') == 1
     finally:
         WorkerController.sendcommand = original
+
+
+def test_wrapper_clears_a_lease_acquired_during_its_own_call(tmp_path):
+    """The first test must leave the page reading 0, like every later one.
+
+    `gpu_id` acquires during the first test's *setup*, i.e. after the
+    hookwrapper's pre-yield has already found no lease to heartbeat. Nothing
+    then clears the initial stamp `gpu_id` wrote, so it keeps ageing across the
+    gap before the second test, and a slow first test plus that gap can cross
+    the watchdog's threshold and get an idle worker killed.
+
+    Driven against the hookwrapper directly: in a session this window closes
+    the moment the second test's pre-yield rewrites the page, and on a
+    single-test session `gpu_id` is torn down inside the very same call, so
+    there is no point from inside a session where it can be observed.
+    """
+    lockfile = tmp_path / 'gpulock'
+    fd = os.open(str(lockfile), os.O_RDWR | os.O_CREAT, 0o644)
+    saved = plugin._active_lease
+    try:
+        wrapper = plugin.pytest_runtest_protocol()
+        next(wrapper)                                   # pre-yield: no lease yet
+        plugin._active_lease = (fd, 0)                  # gpu_id acquires during setup
+        os.pwrite(fd, struct.pack('<Q', time.monotonic_ns()), 0)
+        try:
+            next(wrapper)                               # post-yield
+        except StopIteration:
+            pass
+        stamp = struct.unpack('<Q', os.pread(fd, 8, 0))[0]
+    finally:
+        plugin._active_lease = saved
+        os.close(fd)
+
+    assert stamp == 0, f'page still reads as running a test ({stamp}) after the first one'
