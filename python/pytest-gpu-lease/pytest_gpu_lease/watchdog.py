@@ -417,33 +417,39 @@ def _exit_on_signal(signum, _frame):
     raise SystemExit(128 + signum)
 
 
+def _remove_run_files(lockfile: str) -> None:
+    """Remove the lock file and any dumps left beside it."""
+    for path in [lockfile, *glob.glob(glob.escape(lockfile) + '.*.dump')]:
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = _build_parser()
     args = parser.parse_args(argv)
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(sig, _exit_on_signal)
+    stopped_cleanly = False
     try:
         watch(args.lockfile, args.workers, args.threshold, args.grace,
              args.poll_interval)
+        stopped_cleanly = True  # watch() does not return today
+    except SystemExit:
+        stopped_cleanly = True  # _exit_on_signal: told to stop, so the pass is over
+        raise
     finally:
-        # The watchdog owns the lock file, so whoever started it needs no
-        # cleanup of its own -- which matters because an untrapped SIGTERM or
-        # SIGHUP skips a starting script's EXIT trap entirely (measured).
-        # SIGKILL is the gap: nothing runs here, and the file is left behind.
-        #
-        # `watch()` never returns on its own, so reaching this means we were
-        # told to stop and the pass is over -- the file cannot be pulled out
-        # from under a running one. Deliberately not inside `watch()`, which
-        # stays a pure poll loop callable from tests against a file they own.
-        # Sweep, not enumerate: a worker aborted by a GPU fault reaches no
-        # teardown, so its dump can outlive it with nobody else to notice.
-        for _path in [args.lockfile,
-                      *glob.glob(glob.escape(args.lockfile) + '.*.dump')]:
-            try:
-                os.unlink(_path)
-            except FileNotFoundError:
-                pass
-        print('pytest_gpu_lease.watchdog: stopped', file=sys.stderr, flush=True)
+        # Only after a clean stop. On an unexpected failure the pass may still
+        # be running, and unlinking then would hand replacement workers a fresh
+        # inode while their peers still hold locks on this one -- two workers
+        # leasing one GPU, which is the failure the lease exists to prevent.
+        if stopped_cleanly:
+            _remove_run_files(args.lockfile)
+            print('pytest_gpu_lease.watchdog: stopped', file=sys.stderr, flush=True)
+        else:
+            print(f'pytest_gpu_lease.watchdog: crashed; leaving {args.lockfile} '
+                  f'in place for any pass still using it', file=sys.stderr, flush=True)
 
 
 if __name__ == '__main__':
