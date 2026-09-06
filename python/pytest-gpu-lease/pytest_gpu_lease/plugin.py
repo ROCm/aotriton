@@ -209,6 +209,16 @@ def gpu_id(request):
                 if gpu == nworkers - 1:
                     time.sleep(_RETRY_INTERVAL)
                 continue
+            # Initialize the heartbeat value, before anything else that can
+            # take time. Until this write the page is locked but still carries
+            # the *previous* holder's stamp, and the one way a page is freed
+            # with a stale stamp is the case this feature creates: the watchdog
+            # SIGKILLed a wedged worker, whose stamp is by definition past the
+            # threshold, and xdist's replacement takes the page it just
+            # vacated. A poll landing in that gap would read locked-and-ancient
+            # and SIGTERM a brand-new healthy worker -- which then gets
+            # SIGKILLed regardless, since escalation offers no reprieve.
+            os.pwrite(f.fileno(), struct.pack('<Q', time.monotonic_ns()), page_base)
             _announce(request.config,
                       f'{worker_id} uses GPU {gpu} filelock = {lockfile}')
             # Handle SIGTERM from watchdog to print a full stack dump naming the frame.
@@ -230,8 +240,6 @@ def gpu_id(request):
                 dumpfile = open(dump_path(lockfile, os.getpid()), 'w')
                 faulthandler.register(signal.SIGTERM, file=dumpfile, all_threads=True)
             _active_lease = (f.fileno(), page_base)
-            # Initialize the heartbeat value
-            os.pwrite(f.fileno(), struct.pack('<Q', time.monotonic_ns()), page_base)
             try:
                 yield gpu
             finally:
