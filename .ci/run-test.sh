@@ -5,8 +5,8 @@ if [ -z "$BASH_VERSION" ]; then
   exit 1
 fi
 
-if [ "$#" -ne 3 ]; then
-  echo 'Missing arguments. Usage: run-test.sh <pass#> <test_level> <split/fused/aiter/v3>' >&2
+if [ "$#" -lt 3 ]; then
+  echo 'Missing arguments. Usage: run-test.sh <pass#> <test_level> <split/fused/aiter/v3> [-k EXPR]' >&2
   exit 1
 fi
 
@@ -18,6 +18,20 @@ add_rocm_sdk_ldconfig
 pass=$1
 test_level="$2"
 backend="$3"
+shift 3
+
+# Optional pytest -k, passed straight through. An array rather than a string:
+# the expressions worth typing have spaces in them ("hdim224 and not causal"),
+# and the unquoted ${SELECT_FROM} idiom below would split one into words.
+KFILTER=()
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -k)  KFILTER=(-k "$2"); shift 2 ;;
+    -k*) KFILTER=(-k "${1#-k}"); shift ;;
+    *)   echo "run-test.sh: unexpected argument '$1' (only -k is accepted here)" >&2
+         exit 1 ;;
+  esac
+done
 if [ -n "${AOTRITON_TEST_LIBDIR:-}" ]; then
   bdir=""
 else
@@ -163,6 +177,7 @@ fi
   pytest --tb=line -n ${ngpus} --max-worker-restart 9999 -rfEsx \
     -p no:cacheprovider \
     ${SELECT_FROM} \
+    "${KFILTER[@]}" \
     modules/flash/tests \
     -v \
     1>>"${outdir}/${fnprefix}${pass}.out" \
