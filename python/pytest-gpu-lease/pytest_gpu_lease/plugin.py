@@ -21,6 +21,7 @@ several tests concurrently on one GPU invites memory pressure and runtime / driv
 firmware / VBIOS races.
 """
 
+import errno
 import fcntl
 import faulthandler
 import itertools
@@ -360,6 +361,12 @@ def torch_gpu(gpu_id) -> int:
     return gpu_id
 
 
+# Errnos a pipe write produces when the process on the other end is gone. The
+# closed-channel case carries no errno at all, hence the isclosed() check too.
+_PEER_GONE_ERRNOS = frozenset({errno.EPIPE, errno.EBADF, errno.ECONNRESET,
+                               errno.ESHUTDOWN})
+
+
 def _tolerate_closed_worker_channel() -> None:
     """Stop a second dying worker turning the first one's crash into an
     INTERNALERROR that kills the whole session.
@@ -395,6 +402,19 @@ def _tolerate_closed_worker_channel() -> None:
         try:
             original(self, name, **kwargs)
         except OSError as exc:
+            # Only a peer that has gone. `sendcommand` reaches OSError by two
+            # different routes and they are not interchangeable: execnet's
+            # `Channel.send` raises one built from a bare string when the
+            # channel is already closed (so `errno` is None -- this is the case
+            # actually observed), while the gateway's own write below it can
+            # fail for any reason a pipe write can.
+            #
+            # Swallowing all of them would file a full disk or a failing device
+            # as "worker crashed" and quietly drop that node's tests, turning a
+            # broken machine into a green-looking short run. Re-raise anything
+            # that is not recognisably the peer being gone.
+            if not (self.channel.isclosed() or exc.errno in _PEER_GONE_ERRNOS):
+                raise
             print(f'pytest_gpu_lease: {self.gateway.id} channel already closed, '
                   f'dropping {name}({kwargs}) instead of crashing the session ({exc})',
                   file=sys.stderr, flush=True)

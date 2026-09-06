@@ -12,6 +12,7 @@ Each case carries its own rationale in its docstring; the crash-and-restart and
 no-xdist cases are the two that guard against regressions already seen in the wild.
 """
 
+import errno
 import os
 import struct
 import time
@@ -312,8 +313,15 @@ def test_sendcommand_guard_swallows_closed_channel_instead_of_raising(capsys):
         class _FakeGateway:
             id = 'gw-fake'
 
+        class _FakeClosedChannel:
+            # The state the test name claims: execnet's Channel.send raises
+            # only after isclosed() is already True, and the guard now checks.
+            def isclosed(self):
+                return True
+
         class _FakeNode:
             gateway = _FakeGateway()
+            channel = _FakeClosedChannel()
 
         # Must not raise: this is the exact call site (LoadScheduling._send_tests
         # -> WorkerController.send_runtest_some -> sendcommand) that used to
@@ -349,8 +357,15 @@ def test_sendcommand_guard_is_idempotent(capsys):
         class _FakeGateway:
             id = 'gw-fake'
 
+        class _FakeClosedChannel:
+            # The state the test name claims: execnet's Channel.send raises
+            # only after isclosed() is already True, and the guard now checks.
+            def isclosed(self):
+                return True
+
         class _FakeNode:
             gateway = _FakeGateway()
+            channel = _FakeClosedChannel()
 
         WorkerController.sendcommand(_FakeNode(), 'runtests', indices=[1])
         assert capsys.readouterr().err.count('channel already closed') == 1
@@ -390,3 +405,54 @@ def test_wrapper_clears_a_lease_acquired_during_its_own_call(tmp_path):
         os.close(fd)
 
     assert stamp == 0, f'page still reads as running a test ({stamp}) after the first one'
+
+
+def test_sendcommand_guard_reraises_errors_that_are_not_a_dead_peer(capsys):
+    """A full disk is not a crashed worker.
+
+    `sendcommand` reaches OSError by two routes: execnet raises one with no
+    errno when the channel is already closed, and the gateway's pipe write
+    underneath can fail for any reason a write can. Swallowing the second kind
+    would record a failing device as a worker crash and silently drop that
+    node's tests -- a broken machine producing a short, green-looking run.
+    """
+    xdist_workermanage = pytest.importorskip('xdist.workermanage')
+    WorkerController = xdist_workermanage.WorkerController
+
+    class _Channel:
+        def __init__(self, closed):
+            self._closed = closed
+
+        def isclosed(self):
+            return self._closed
+
+    class _Gateway:
+        id = 'gw9'
+
+    class _Node:
+        def __init__(self, closed):
+            self.channel = _Channel(closed)
+            self.gateway = _Gateway()
+
+    original = WorkerController.sendcommand
+    try:
+        def _raise(err):
+            def _sendcommand(self, name, **kwargs):
+                raise err
+            return _sendcommand
+
+        # An open channel failing with ENOSPC is a real fault: it must escape.
+        WorkerController.sendcommand = _raise(OSError(errno.ENOSPC, 'No space left on device'))
+        plugin._tolerate_closed_worker_channel()
+        with pytest.raises(OSError) as caught:
+            WorkerController.sendcommand(_Node(closed=False), 'runtests', indices=[1])
+        assert caught.value.errno == errno.ENOSPC
+
+        # EPIPE on an open channel is the peer going away mid-write: tolerated.
+        WorkerController.sendcommand = original
+        WorkerController.sendcommand = _raise(OSError(errno.EPIPE, 'Broken pipe'))
+        plugin._tolerate_closed_worker_channel()
+        WorkerController.sendcommand(_Node(closed=False), 'runtests', indices=[1])
+        assert 'channel already closed' in capsys.readouterr().err
+    finally:
+        WorkerController.sendcommand = original
