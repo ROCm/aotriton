@@ -17,14 +17,17 @@ OnDeviceKernel::~OnDeviceKernel() {
   clear_decompressed_image();
 }
 
-std::tuple<hipFunction_t, const OnDeviceKernel::Essentials&>
+std::tuple<hipFunction_t, OnDeviceKernel::Essentials>
 OnDeviceKernel::get_kernel(int device_id,
                            std::function<OnDiskKernelInfo()> lazy) {
   hipFunction_t func = nullptr;
+  Essentials essentials;
   // Use reader lock to peek the state
   {
     std::shared_lock lock(funcache_mutex_);
     func = cfind_function(device_id);
+    if (func)
+      essentials = essentials_;
   }
 
   if (!func) {
@@ -37,8 +40,9 @@ OnDeviceKernel::get_kernel(int device_id,
       std::tie(func, err) = load_for_device(device_id,
                                             lazy());
     }
+    essentials = essentials_;
   }
-  return {func, essentials_};
+  return {func, essentials};
 }
 
 
