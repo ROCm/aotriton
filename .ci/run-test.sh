@@ -109,16 +109,6 @@ fi
   python -m pytest_gpu_lease.watchdog --lockfile "${GPU_LEASE_LOCKFILE}" \
     --workers "${ngpus}" 2>>"${_errfile}" &
   watchdog_pid=$!
-  # Report either way: a silent success reads exactly like a watchdog that
-  # never started, and the difference only becomes visible once a pass has
-  # already hung -- with --timeout=300 gone, with no hang protection at all.
-  sleep 1
-  if kill -0 "${watchdog_pid}" 2>/dev/null; then
-    echo "run-test.sh: watchdog running, pid ${watchdog_pid}, lockfile ${GPU_LEASE_LOCKFILE}" >> "${_errfile}"
-  else
-    echo "run-test.sh: WARNING watchdog did not start; this pass has NO hang protection" \
-      | tee -a "${_errfile}" >&2
-  fi
   # The watchdog unlinks the lock file itself; this only stops it. SIGTERM is
   # its documented stop signal, named rather than left to `kill`'s default, and
   # `wait` reaps it so the unlink has finished before we return.
@@ -130,6 +120,18 @@ fi
   trap '_stop_watchdog' EXIT
   trap '_stop_watchdog; exit 130' INT
   trap '_stop_watchdog; exit 143' TERM HUP
+  # Fatal, not a warning. --timeout=300 is gone, so a pass without the
+  # watchdog has no hang protection at all, and the way that surfaces is one
+  # wedged worker eating the remaining 22 hours. Better to lose the run now.
+  # Reported on success too: silence reads exactly like a failure to start.
+  sleep 1
+  if kill -0 "${watchdog_pid}" 2>/dev/null; then
+    echo "run-test.sh: watchdog running, pid ${watchdog_pid}, lockfile ${GPU_LEASE_LOCKFILE}" >> "${_errfile}"
+  else
+    echo "run-test.sh: watchdog did not start; refusing to run a pass with no hang protection" \
+      | tee -a "${_errfile}" >&2
+    exit 1
+  fi
   # One invocation over the whole suite dir (conftest.py sets up sys.path); pytest
   # collects test_backward / test_varlen together (test_forward.py is excluded via
   # conftest.py's collect_ignore - its coverage is a subset of test_backward.py's).
