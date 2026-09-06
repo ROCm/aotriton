@@ -240,12 +240,16 @@ def pytest_runtest_protocol():
     try:
         yield
     finally:
-        # On the last test this same call tears down `gpu_id`, closing `fd`.
-        # Harmless: the watchdog only reads pages it found locked.
-        try:
+        # On the last test this same call tears down `gpu_id`, which clears
+        # `_active_lease` and then closes `fd`. Re-reading the global is what
+        # makes the write safe: `fd` is a bare integer, so once it is closed
+        # the kernel is free to hand that number to the next file opened -- and
+        # the rest of session teardown opens plenty. Writing to it then would
+        # not raise, it would silently drop eight zero bytes at `page_base`
+        # into somebody else's file. The watchdog needs nothing from this write
+        # anyway: it only reads pages it found locked, and the lease is gone.
+        if _active_lease is not None:
             os.pwrite(fd, struct.pack('<Q', 0), page_base)
-        except OSError:
-            pass
 
 
 @pytest.fixture(scope='session')
