@@ -167,6 +167,9 @@ fi
       kill -s TERM "${pytest_pid:-}" 2>/dev/null; wait "${pytest_pid:-}" 2>/dev/null
       kill -s TERM "${watchdog_pid}" 2>/dev/null; wait "${watchdog_pid}" 2>/dev/null
     }
+    # Single-quoted, so the body is re-parsed when the trap fires and picks up
+    # `pytest_pid`, assigned further below. Double quotes would bake in "".
+    #
     # EXIT alone is not enough: an untrapped SIGTERM, SIGHUP or SIGQUIT kills
     # the shell without running it (measured; SIGINT does run it).
     # Known Issue: kill -9 CI script (rarely needed) will leave stale lock file
