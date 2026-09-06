@@ -276,25 +276,22 @@ def _poll_once(fd: int, lockfile: str, workers: int, threshold_ns: int, grace_ns
             continue
         any_locked = True
         if now - staged.sent_ns >= grace_ns:
-            # A SIGTERMed worker is not doomed: faulthandler makes that signal
-            # a stack dump rather than a death, so a merely slow test can
-            # finish inside the grace period. Judge it again on the same rule
-            # that staged it -- 0 means it reached the gap between tests, a
-            # recent stamp means it started another one. Checking only the lock
-            # and the pid would SIGKILL a worker that had already recovered.
-            last_activity = _read_last_activity(fd, page)
-            if last_activity == 0 or now - last_activity <= threshold_ns:
-                _discard(pending, page)
-                continue
+            # No reprieve for a page that came back to life inside the grace
+            # period. A worker past the threshold is a dead worker: the grace
+            # exists for faulthandler to finish its dump, not as a window in
+            # which to be pardoned. The test that ran long enough to be
+            # signalled has already failed, and sparing its worker would make
+            # the pass depend on how close to the threshold it landed.
+            #
+            # Dump first: producing it was the whole point of the SIGTERM, and
+            # after the SIGKILL nobody is left to ask.
+            _emit_dump(lockfile, page, staged.pid)
             # Through the pidfd, so this cannot land on anyone else. The lock
             # check above answers the policy question -- is it still wedged and
             # still leasing -- but not the identity one: between that F_GETLK
             # and this call the process may exit and its pid be reissued. That
             # window is small and the payload is SIGKILL, which is precisely
             # the combination not to leave to chance.
-            # Before the kill: the SIGTERM's whole point was this dump, and
-            # after SIGKILL nobody is left to ask.
-            _emit_dump(lockfile, page, staged.pid)
             _send(staged.pid, signal.SIGKILL,
                   'grace period expired, still holding its page', staged.pidfd)
             _discard(pending, page)
