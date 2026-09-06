@@ -138,7 +138,19 @@ def _send(pid: int, sig: signal.Signals, reason: str) -> None:
     interval between that check and this call, which is exactly what
     ProcessLookupError reports -- not a bug to guard against, just the same
     race resolving itself one step later.
+
+    `pid > 0` is checked because `l_pid` is not always a local pid: F_GETLK
+    reports -1 for an open-file-description lock, and a lock held over NFS can
+    report a pid that means nothing on this host. `os.kill` reads 0 as "the
+    whole process group" and -1 as "every process this uid may signal", so a
+    single unexpected `l_pid` would take out the pass, the shell that started
+    it, and everything else the user owns.
     """
+    if pid <= 0:
+        print(f'pytest_gpu_lease.watchdog: refusing to signal pid {pid} ({reason}); '
+              f'l_pid is not a local pid (OFD lock, or a lock held over NFS)',
+              file=sys.stderr, flush=True)
+        return
     try:
         os.kill(pid, sig)
         print(f'pytest_gpu_lease.watchdog: sent {sig.name} to pid {pid} ({reason})',
