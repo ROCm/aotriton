@@ -39,7 +39,7 @@ STRUCT_FLOCK = 'hhqqi'
 PAGE_SIZE = 4096
 
 # `struct flock` uses off_t, we only handle 64-bit off_t and fail loud for 32-bit off_t.
-# No plan to support 32-bit off_t. Systems with 32-bit off_t should upgrade.
+# No plan to support 32-bit off_t
 _SIZEOF_OFF_T = sysconfig.get_config_var('SIZEOF_OFF_T')
 assert _SIZEOF_OFF_T == 8, (
     f'pytest_gpu_lease requires a 64-bit off_t; this interpreter reports '
