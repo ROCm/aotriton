@@ -66,8 +66,24 @@ from .plugin import PAGE_SIZE, STRUCT_FLOCK, dump_path
 # deployed on Ubuntu 22.04 or later (5.15, Python 3.10), where the requirement
 # costs nothing. A suite that has to run on something older should not be
 # using this module.
-assert hasattr(os, 'pidfd_open') and hasattr(signal, 'pidfd_send_signal'), (
-    'pytest_gpu_lease.watchdog requires pidfd support: Linux 5.3+ and Python 3.9+')
+def _pidfd_supported() -> bool:
+    """Whether pidfd actually works here, by using it rather than asking.
+
+    `hasattr(os, 'pidfd_open')` is not the question: Python 3.9+ on a 4.18
+    kernel has the function and fails at the syscall, which would surface as a
+    crash mid-pass instead of a refusal at import. run-test.sh probes the same
+    way before deciding whether to start a watchdog at all.
+    """
+    try:
+        os.close(os.pidfd_open(os.getpid()))
+        return True
+    except (AttributeError, OSError):
+        return False
+
+
+assert _pidfd_supported(), (
+    'pytest_gpu_lease.watchdog requires working pidfd support: Linux 5.3+ and '
+    'Python 3.9+')
 
 # The timeout, and the only one in the tree: how long a worker's page may go
 # without a fresh stamp before it is treated as wedged. Because the worker

@@ -87,11 +87,6 @@ fi
     [ -n "$_sig" ] && cat "$_sig" \
       || echo "NO __signature__ file at $PYTHONPATH/aotriton.images/"
   } > "${outdir}/${fnprefix}${pass}.out"
-  # Start watchdog process, use /dev/shm to avoid wearing: container's /tmp
-  # may not be tmpfs.
-  # Named with both $pass and $$ for uniqueness.
-  # Note: this is inside a subshell. Hence parent pid `$$` is the right one to use.
-  export GPU_LEASE_LOCKFILE="/dev/shm/gpu_lease.${pass}.$$"
   # One stderr file for the whole pass, so there is a single thing to tail.
   # Truncated once here and appended to from then on: two `2>` on one path
   # would have pytest re-truncate a file the watchdog already holds open, and
@@ -99,38 +94,58 @@ fi
   # hole.
   _errfile="${outdir}/${fnprefix}${pass}.err"
   : > "${_errfile}"
-  # Start watchdog service, assume pytest_gpu_lease already installed.
-  # If not, do it with `pip install -r requirements-dev.txt`
-  #
-  # --lockfile is redundant with the exported GPU_LEASE_LOCKFILE the watchdog
-  # would fall back to, and passed anyway so that `ps aux` says which file each
-  # watchdog is watching. That is how a stale one from a SIGKILLed pass is told
-  # apart from the live one; an env var is not visible in ps output.
-  python -m pytest_gpu_lease.watchdog --lockfile "${GPU_LEASE_LOCKFILE}" \
-    --workers "${ngpus}" 2>>"${_errfile}" &
-  watchdog_pid=$!
-  # The watchdog unlinks the lock file itself; this only stops it. SIGTERM is
-  # its documented stop signal, named rather than left to `kill`'s default, and
-  # `wait` reaps it so the unlink has finished before we return.
-  _stop_watchdog() { kill -s TERM "${watchdog_pid}" 2>/dev/null; wait "${watchdog_pid}" 2>/dev/null; }
-  # EXIT alone is not enough: an untrapped SIGTERM or SIGHUP kills the shell
-  # without running it (measured; SIGINT does run it).
-  # Known Issue: kill -9 CI script (rarely needed) will leave stale lock file
-  # under /dev/shm. Users should terminate manually by inspecting ps.
-  trap '_stop_watchdog' EXIT
-  trap '_stop_watchdog; exit 130' INT
-  trap '_stop_watchdog; exit 143' TERM HUP
-  # Fatal, not a warning. --timeout=300 is gone, so a pass without the
-  # watchdog has no hang protection at all, and the way that surfaces is one
-  # wedged worker eating the remaining 22 hours. Better to lose the run now.
-  # Reported on success too: silence reads exactly like a failure to start.
-  sleep 1
-  if kill -0 "${watchdog_pid}" 2>/dev/null; then
-    echo "run-test.sh: watchdog running, pid ${watchdog_pid}, lockfile ${GPU_LEASE_LOCKFILE}" >> "${_errfile}"
+  # The watchdog signals through a pidfd, so it needs Linux 5.3+ and refuses to
+  # load without it. Probe by using it rather than by checking a version: on
+  # Python 3.9+ over an older kernel the function exists and fails at the
+  # syscall. Without it, run unprotected -- worse than a watchdog, still better
+  # than refusing to test at all, and it is what ROCm's own RHEL 8.10 support
+  # would hit.
+  if python -c 'import os; os.close(os.pidfd_open(os.getpid()))' 2>/dev/null; then
+    # Start watchdog process, use /dev/shm to avoid wearing: container's /tmp
+    # may not be tmpfs.
+    # Named with both $pass and $$ for uniqueness.
+    # Note: this is inside a subshell. Hence parent pid `$$` is the right one to use.
+    #
+    # Exported only on this branch: it is what tells the workers a watchdog is
+    # listening, and it also gates their per-worker stack dumps, which nothing
+    # would read if none is running.
+    export GPU_LEASE_LOCKFILE="/dev/shm/gpu_lease.${pass}.$$"
+    # Start watchdog service, assume pytest_gpu_lease already installed.
+    # If not, do it with `pip install -r requirements-dev.txt`
+    #
+    # --lockfile is redundant with the exported GPU_LEASE_LOCKFILE the watchdog
+    # would fall back to, and passed anyway so that `ps aux` says which file each
+    # watchdog is watching. That is how a stale one from a SIGKILLed pass is told
+    # apart from the live one; an env var is not visible in ps output.
+    python -m pytest_gpu_lease.watchdog --lockfile "${GPU_LEASE_LOCKFILE}" \
+      --workers "${ngpus}" 2>>"${_errfile}" &
+    watchdog_pid=$!
+    # The watchdog unlinks the lock file itself; this only stops it. SIGTERM is
+    # its documented stop signal, named rather than left to `kill`'s default, and
+    # `wait` reaps it so the unlink has finished before we return.
+    _stop_watchdog() { kill -s TERM "${watchdog_pid}" 2>/dev/null; wait "${watchdog_pid}" 2>/dev/null; }
+    # EXIT alone is not enough: an untrapped SIGTERM or SIGHUP kills the shell
+    # without running it (measured; SIGINT does run it).
+    # Known Issue: kill -9 CI script (rarely needed) will leave stale lock file
+    # under /dev/shm. Users should terminate manually by inspecting ps.
+    trap '_stop_watchdog' EXIT
+    trap '_stop_watchdog; exit 130' INT
+    trap '_stop_watchdog; exit 143' TERM HUP
+    # Fatal here, unlike the no-pidfd case above: we asked for a watchdog and did
+    # not get one, which is an environment that is broken rather than merely old,
+    # and the failure would otherwise surface as one wedged worker eating the
+    # remaining 22 hours. Reported on success too: silence reads the same either way.
+    sleep 1
+    if kill -0 "${watchdog_pid}" 2>/dev/null; then
+      echo "run-test.sh: watchdog running, pid ${watchdog_pid}, lockfile ${GPU_LEASE_LOCKFILE}" >> "${_errfile}"
+    else
+      echo "run-test.sh: watchdog did not start; refusing to run a pass with no hang protection" \
+        | tee -a "${_errfile}" >&2
+      exit 1
+    fi
   else
-    echo "run-test.sh: watchdog did not start; refusing to run a pass with no hang protection" \
+    echo "run-test.sh: no pidfd support (needs Linux 5.3+); running WITHOUT hang protection" \
       | tee -a "${_errfile}" >&2
-    exit 1
   fi
   # One invocation over the whole suite dir (conftest.py sets up sys.path); pytest
   # collects test_backward / test_varlen together (test_forward.py is excluded via
