@@ -119,13 +119,9 @@ fi
     echo "run-test.sh: WARNING watchdog did not start; this pass has NO hang protection" \
       | tee -a "${_errfile}" >&2
   fi
-  # The watchdog unlinks the lock file itself, so this only has to stop it.
-  # `wait` is what makes that deterministic: `kill` just posts the signal, and
-  # without waiting we would return while the unlink is still in flight and
-  # leave a zombie behind until PID 1 reaps it.
-  # `-s TERM` rather than a bare `kill`: SIGTERM is the watchdog's documented
-  # stop signal and the only one it treats as a clean shutdown, so name it here
-  # instead of inheriting whatever the shell's default happens to be.
+  # The watchdog unlinks the lock file itself; this only stops it. SIGTERM is
+  # its documented stop signal, named rather than left to `kill`'s default, and
+  # `wait` reaps it so the unlink has finished before we return.
   _stop_watchdog() { kill -s TERM "${watchdog_pid}" 2>/dev/null; wait "${watchdog_pid}" 2>/dev/null; }
   # EXIT alone is not enough: an untrapped SIGTERM or SIGHUP kills the shell
   # without running it (measured; SIGINT does run it).
