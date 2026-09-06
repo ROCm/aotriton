@@ -22,10 +22,13 @@ to test that a background `threading.Timer` could not run during the wedge,
 gave a result inconsistent with that theory -- the Timer fired anyway. So
 nothing here depends on GIL semantics: `os.read` on an empty pipe blocks in
 the kernel regardless of GIL state, and what is checked afterwards is only
-what is directly observable -- the process does not return from that call on
-a plain SIGTERM (because faulthandler.register replaces the default terminate
-action), it does produce a stack dump naming the blocked frame, and it does
-die on SIGKILL, which no handler can intercept.
+what is directly observable -- it produces a stack dump naming the blocked
+frame, and it dies on SIGKILL, which no handler can intercept.
+
+The wedge child registers faulthandler with the default `chain=False`, unlike
+`plugin.py`, which uses `chain=True` so SIGTERM still ends a real worker. That
+is deliberate: the child models the process SIGTERM cannot end, which is the
+only case SIGKILL exists for and the one worth testing here.
 """
 
 import os
@@ -63,6 +66,8 @@ fcntl.fcntl(f, fcntl.F_SETLK, claim)
 os.pwrite(f.fileno(), struct.pack('<Q', max(1, time.monotonic_ns() - backdate_ns)),
           PAGE_SIZE * page)
 os.pwrite(f.fileno(), struct.pack('<q', os.getpid()), PAGE_SIZE * page + 8)
+# chain=False on purpose: survive SIGTERM, so the escalation to SIGKILL is
+# what these tests exercise. A real worker uses chain=True and dies.
 faulthandler.register(signal.SIGTERM, file=sys.stderr, all_threads=True)
 r, w = os.pipe()
 print('READY', flush=True)
@@ -289,8 +294,13 @@ def test_end_to_end_wedged_worker_is_replaced_and_run_stays_green(pytester, monk
             watchdog_proc.communicate()
 
     assert result.ret is not None, 'session did not terminate'
-    assert 'SIGTERM' in watchdog_err, watchdog_err
-    assert 'SIGKILL' in watchdog_err, watchdog_err
+    # Not `'SIGKILL' in ...`: SIGTERM ends a real worker now, so the follow-up
+    # line is "no SIGKILL needed" -- which contains the word and would pass
+    # whatever happened. Assert the signal actually sent; the worker's death is
+    # evidenced by the outcomes below, xdist reporting it as crashed. Nothing
+    # here asserts on the watchdog's *next* poll, which may never come: the
+    # session ends as soon as the replacement finishes the remaining tests.
+    assert watchdog_err.count('sent SIGTERM') >= 1, watchdog_err
 
     outcomes = result.parseoutcomes()
     # 5 of the 6 parametrizations never touch the wedge; they must all still

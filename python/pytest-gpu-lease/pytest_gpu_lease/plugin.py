@@ -251,8 +251,7 @@ def gpu_id(request):
             # reaches a bytecode boundary.
             # Only under a watchdog: GPU_LEASE_LOCKFILE is how run-test.sh
             # hands one path to both sides, so without it nothing will ever
-            # read a dump -- and registering is not free, since chain=False
-            # disarms SIGTERM for the rest of the worker's session.
+            # read a dump.
             #
             # NOT sys.stderr: at fixture setup that is pytest's fd-level
             # capture target, and a capture buffer is only replayed when the
@@ -262,7 +261,15 @@ def gpu_id(request):
             dumpfile = None
             if os.getenv('GPU_LEASE_LOCKFILE'):
                 dumpfile = open(dump_path(lockfile, os.getpid()), 'w')
-                faulthandler.register(signal.SIGTERM, file=dumpfile, all_threads=True)
+                # chain=True so SIGTERM still terminates: faulthandler dumps,
+                # then restores the previous handler and re-raises, so the
+                # default action runs. Without it SIGTERM is disarmed for the
+                # rest of the session, which makes the watchdog's escalation
+                # the only way to end a worker and breaks `docker stop` and CI
+                # cancellation besides. SIGKILL stays what it should be -- the
+                # last resort for a process SIGTERM could not end.
+                faulthandler.register(signal.SIGTERM, file=dumpfile,
+                                      all_threads=True, chain=True)
             _active_lease = (f.fileno(), page_base)
             try:
                 yield gpu

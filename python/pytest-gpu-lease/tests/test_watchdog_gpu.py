@@ -168,9 +168,10 @@ if _TEST_LEVEL >= 1:
           and the reason `_tolerate_closed_worker_channel` exists. Two workers
           dying close together is exactly how that race is reached.
         * both `good` tests pass, including any requeued off a killed worker.
-        * the watchdog escalated: SIGTERM first (faulthandler turns it into a
-          stack dump rather than a death, so the wedged worker survives it),
-          then SIGKILL once the grace period expires.
+        * the watchdog acted: a SIGTERM per wedged worker, and a stack dump
+          relayed for each. SIGTERM is expected to end them -- faulthandler
+          runs with chain=True -- so SIGKILL is the last resort and normally
+          does not appear at all.
         """
         lockfile = tmp_path / 'gpulock'
         lockfile.touch()
@@ -207,8 +208,10 @@ if _TEST_LEVEL >= 1:
         outcomes = result.parseoutcomes()
         assert outcomes.get('passed', 0) == 2, (outcomes, transcript[-4000:])
 
-        assert watchdog_err.count('SIGTERM') >= 2, watchdog_err
-        assert watchdog_err.count('SIGKILL') >= 2, watchdog_err
+        assert watchdog_err.count('sent SIGTERM') >= 2, watchdog_err
+        # The dump is the point of the SIGTERM; assert it arrived rather than
+        # asserting on SIGKILL, which a worker that obeys SIGTERM never needs.
+        assert watchdog_err.count('stack of pid') >= 2, watchdog_err
 
 
 if _TEST_LEVEL >= 2:

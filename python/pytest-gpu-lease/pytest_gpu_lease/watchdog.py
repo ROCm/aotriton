@@ -35,11 +35,11 @@ that cannot, and leaves the file behind. It never stops on its own -- see
 ``watch``.
 
 Escalation is SIGTERM, a grace period, then SIGKILL if the page is still locked.
-``plugin.py`` registers SIGTERM with ``faulthandler`` on every leasing worker, so
-the SIGTERM here is not a death sentence by itself -- it is a request for a
-stack dump, C-level and GIL-free, naming whatever frame the wedge is in. Only a
-worker that ignores that and is still holding its page after ``--grace`` seconds
-gets SIGKILLed.
+SIGTERM is expected to end the worker: ``plugin.py`` registers it with
+``faulthandler`` using ``chain=True``, so it dumps a stack -- C-level and
+GIL-free, naming whatever frame the wedge is in -- and then terminates as it
+normally would. SIGKILL is the last resort, for a process SIGTERM could not
+end, such as one stuck in an uninterruptible driver call.
 
 Shares ``PAGE_SIZE`` and ``STRUCT_FLOCK`` with ``plugin.py`` by importing them
 rather than restating them, since a copy that drifts from the writer's layout
@@ -313,8 +313,8 @@ def _poll_once(fd: int, lockfile: str, workers: int, threshold_ns: int, grace_ns
         # hands the page back to the heartbeat scan below, where a replacement
         # is judged on its own stamp like any other worker.
         if not locked or pid != staged.pid:
-            # It died inside the grace period, which by the comment above is
-            # the usual way a SIGTERMed worker goes. Relay its dump anyway:
+            # It died inside the grace period -- normally because the SIGTERM
+            # did its job. Relay its dump before the entry goes:
             # producing that was the entire point of the SIGTERM, and letting
             # this path discard silently threw it away in the common case.
             _emit_dump(lockfile, page, staged.pid)
@@ -324,12 +324,11 @@ def _poll_once(fd: int, lockfile: str, workers: int, threshold_ns: int, grace_ns
             continue
         any_locked = True
         if now - staged.sent_ns >= grace_ns:
-            # No reprieve for a page that came back to life inside the grace
-            # period. A worker past the threshold is a dead worker: the grace
-            # exists for faulthandler to finish its dump, not as a window in
-            # which to be pardoned. The test that ran long enough to be
-            # signalled has already failed, and sparing its worker would make
-            # the pass depend on how close to the threshold it landed.
+            # Reaching here means SIGTERM did not end it, which normally it
+            # does. No reprieve for a page that came back to life meanwhile: a
+            # worker past the threshold is a dead worker, and the test that ran
+            # long enough to be signalled has already failed. Sparing it would
+            # make the pass depend on how close to the threshold it landed.
             #
             # Dump first: producing it was the whole point of the SIGTERM, and
             # after the SIGKILL nobody is left to ask.
