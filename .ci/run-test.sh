@@ -94,13 +94,23 @@ fi
   # hole.
   _errfile="${outdir}/${fnprefix}${pass}.err"
   : > "${_errfile}"
-  # The watchdog signals through a pidfd, so it needs Linux 5.3+ and refuses to
-  # load without it. Probe by using it rather than by checking a version: on
-  # Python 3.9+ over an older kernel the function exists and fails at the
-  # syscall. Without it, run unprotected -- worse than a watchdog, still better
-  # than refusing to test at all, and it is what ROCm's own RHEL 8.10 support
-  # would hit.
-  if python -c 'import os; os.close(os.pidfd_open(os.getpid()))' 2>/dev/null; then
+  # Watchdog: on unless USE_WATCHDOG=0, and off regardless on a host that
+  # cannot support it. Two independent reasons, one switch.
+  #
+  # It signals through a pidfd and refuses to load without one, which needs
+  # Linux 5.3+; ROCm still supports RHEL 8.10, whose kernel predates that.
+  # Probed by calling pidfd_open rather than by testing a version, because
+  # Python 3.9+ on an older kernel has the function and fails at the syscall.
+  # Running unprotected is worse than a watchdog and better than refusing to
+  # test at all.
+  use_watchdog="${USE_WATCHDOG:-1}"
+  if [ "${use_watchdog}" != 0 ] \
+     && ! python -c 'import os; os.close(os.pidfd_open(os.getpid()))' 2>/dev/null; then
+    echo "run-test.sh: no pidfd support (needs Linux 5.3+); disabling the watchdog" \
+      | tee -a "${_errfile}" >&2
+    use_watchdog=0
+  fi
+  if [ "${use_watchdog}" != 0 ]; then
     # Start watchdog process, use /dev/shm to avoid wearing: container's /tmp
     # may not be tmpfs.
     # Named with both $pass and $$ for uniqueness.
@@ -144,7 +154,7 @@ fi
       exit 1
     fi
   else
-    echo "run-test.sh: no pidfd support (needs Linux 5.3+); running WITHOUT hang protection" \
+    echo "run-test.sh: running WITHOUT hang protection; a wedged worker will not be killed" \
       | tee -a "${_errfile}" >&2
   fi
   # One invocation over the whole suite dir (conftest.py sets up sys.path); pytest
