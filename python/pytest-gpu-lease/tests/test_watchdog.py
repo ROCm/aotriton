@@ -30,6 +30,7 @@ die on SIGKILL, which no handler can intercept.
 
 import os
 import signal
+import struct
 import subprocess
 import sys
 import threading
@@ -189,6 +190,42 @@ def test_escalation_does_not_sigkill_a_replacement_that_took_the_same_page(tmp_p
         for handle in (wedged_err, replacement_err):
             if handle is not None:
                 handle.close()
+        os.close(fd)
+
+
+def test_escalation_is_cancelled_when_the_worker_recovers(tmp_path):
+    """A SIGTERMed worker that got going again must not be SIGKILLed.
+
+    SIGTERM is a stack dump, not a death -- `plugin.py` registers it with
+    faulthandler and chain=False -- so a test that was merely slow rather than
+    wedged can finish inside the grace period. The page then goes back to 0
+    (between tests) or takes a fresh stamp, while the lock and the pid are
+    unchanged, so escalating on those two alone kills a healthy worker.
+    """
+    lockfile = tmp_path / 'gpulock'
+    lockfile.touch()
+    fd = os.open(str(lockfile), os.O_RDWR)
+    pending: dict[int, watchdog._Staged] = {}
+    poll = lambda: watchdog._poll_once(fd, 1, threshold_ns=10**9, grace_ns=0,  # noqa: E731
+                                       pending=pending)
+
+    child, _, err_file = _spawn_wedge_child(tmp_path, lockfile, tag='_recovers')
+    try:
+        assert poll() is True
+        assert list(pending) == [0], pending
+
+        # The slow test finishes: same process, same lease, fresh heartbeat.
+        os.pwrite(fd, struct.pack('<Q', 0), 0)
+
+        assert poll() is True
+        assert pending == {}, 'a recovered worker must not stay staged for SIGKILL'
+        # grace_ns=0, so any SIGKILL would already have gone out.
+        time.sleep(0.5)
+        assert child.poll() is None, 'SIGKILLed a worker that had recovered'
+    finally:
+        child.kill()
+        child.wait()
+        err_file.close()
         os.close(fd)
 
 

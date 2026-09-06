@@ -222,6 +222,16 @@ def _poll_once(fd: int, workers: int, threshold_ns: int, grace_ns: int,
             continue
         any_locked = True
         if now - staged.sent_ns >= grace_ns:
+            # A SIGTERMed worker is not doomed: faulthandler makes that signal
+            # a stack dump rather than a death, so a merely slow test can
+            # finish inside the grace period. Judge it again on the same rule
+            # that staged it -- 0 means it reached the gap between tests, a
+            # recent stamp means it started another one. Checking only the lock
+            # and the pid would SIGKILL a worker that had already recovered.
+            last_activity = _read_last_activity(fd, page)
+            if last_activity == 0 or now - last_activity <= threshold_ns:
+                _discard(pending, page)
+                continue
             # Through the pidfd, so this cannot land on anyone else. The lock
             # check above answers the policy question -- is it still wedged and
             # still leasing -- but not the identity one: between that F_GETLK
