@@ -62,7 +62,7 @@ from .plugin import PAGE_SIZE, STRUCT_FLOCK, dump_path
 # an enhancement -- see _pidfd_open. Needs Linux 5.3 and Python 3.9.
 #
 # That is a statement about this harness, not about ROCm: ROCm still supports
-# AlmaLinux 8, whose kernel predates pidfd_open. This is Level-3 CI tooling,
+# RHEL 8.10, whose kernel predates pidfd_open. This is Level-3 CI tooling,
 # deployed on Ubuntu 22.04 or later (5.15, Python 3.10), where the requirement
 # costs nothing. A suite that has to run on something older should not be
 # using this module.
