@@ -104,6 +104,8 @@ public:
   AiterAsmKernel(const char* name, const char* hsaco);
   ~AiterAsmKernel();
   void launch_kernel(const AiterAsmKernelArgs& kargs);
+  // Writes path_cache_ on first call. Caller ensures thread safety; the lazy
+  // callback of OnDeviceKernel::get_kernel already runs under its write lock.
   pstring_view get_package_path(hipStream_t stream, pstring_type& persistant_storage, std::string& aiter_module) const;
 };
 

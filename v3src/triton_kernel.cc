@@ -56,8 +56,8 @@ TritonKernel::invoke(std::string_view kernel_name,
                      hipStream_t stream) {
   AOTRITON_LOG(LOG_DEBUG, "Invoking TritonKernel %p with kernel_name = \"%.*s\"",
                static_cast<const void*>(this), int(kernel_name.size()), kernel_name.data());
-  int device_id;
-  AOTRITON_HIP_CHECK_RETURN(hipGetDevice(&device_id));
+  hipDevice_t device_id;
+  AOTRITON_HIP_CHECK_RETURN(hipStreamGetDevice(stream, &device_id));
   std::string stem_name;
   auto lazy = [&]() -> OnDeviceKernel::OnDiskKernelInfo {
     stem_name = construct_stem_name(kernel_name, func_name, ksig_psel_, ksig_copt_, arch_name);
@@ -97,8 +97,8 @@ TritonKernel::direct_invoke(std::string_view mangled_kernel_function_name,
                static_cast<const void*>(this),
                int(mangled_kernel_function_name.size()), mangled_kernel_function_name.data(),
                struct_of_args);
-  int device_id;
-  AOTRITON_HIP_CHECK_RETURN(hipGetDevice(&device_id));
+  hipDevice_t device_id;
+  AOTRITON_HIP_CHECK_RETURN(hipStreamGetDevice(stream, &device_id));
   auto lazy = [&]() -> OnDeviceKernel::OnDiskKernelInfo {
     // UNMAINTAINED: legacy package_path layout. The flatzip migration left
     // aks2_entry empty here because direct_invoke has no live callers.

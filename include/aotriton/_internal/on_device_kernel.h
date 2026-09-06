@@ -60,8 +60,10 @@ public:
   ~OnDeviceKernel();
 
   // TODO: Make it const and add mutable to members
-  std::tuple<hipFunction_t, const Essentials&> get_kernel(int device_id,
-                                                          std::function<OnDiskKernelInfo()> lazy);
+  // CAVEAT: calling clear_decompressed_image will also invalidate Essentials.image.
+  //         clear_decompressed_image/clear_device_kernel route is not well-tested and should be avoided in production.
+  std::tuple<hipFunction_t, Essentials> get_kernel(int device_id,
+                                                   std::function<OnDiskKernelInfo()> lazy);
   void clear_device_kernel();
   void clear_decompressed_image();
 #if AOTRITON_BUILD_FOR_TUNING
