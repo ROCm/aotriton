@@ -1,7 +1,7 @@
 # Copyright © 2026 Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 
-"""End-to-end watchdog test against a genuinely wedged GPU.
+"""End-to-end watchdog tests against a genuinely wedged GPU.
 
 Everything else in this package wedges a process with `os.read` on an empty
 pipe, which proves the signalling but not the thing the feature exists for: a
@@ -9,18 +9,27 @@ Triton kernel that never retires, a device sync that therefore never returns,
 and a worker that no in-process timeout can interrupt. That is what this file
 reproduces.
 
-Opt-in via ``GPU_LEASE_GPU_TESTS=1``. It occupies two GPUs for about a minute
-and deliberately hangs kernels on them, so it must not run by accident
-alongside a real pass -- the nested session leases from its own lock file and
-so cannot see, or be seen by, a pass already using those devices.
+Nothing here runs by default. ``GPU_LEASE_TEST_LEVEL`` selects what is defined
+at all, in the spirit of the flash suite's ``FOR_RELEASE``:
 
-Measured on gfx1201 before this was written, since the whole design rests on
-it: the wedged process sits in `R` (spinning in userspace on the sync, not
-uninterruptible), SIGKILL reaps it in 0.11s, and the GPU is immediately
-reusable afterwards -- two subsequent workloads on the same device passed.
+* ``0`` (default) -- this module defines no tests.
+* ``1`` -- the watchdog test. Hangs two GPUs for about a minute.
+* ``2`` -- also the pytest-timeout control, which additionally needs
+  pytest-timeout installed (this repo no longer depends on it) and hangs one
+  GPU for as long as it takes to prove a timeout did not fire.
+
+They are off by default because they deliberately hang kernels on shared
+devices, and because the nested sessions lease from their own lock file and so
+cannot see -- or be seen by -- a real pass already using those GPUs.
+
+Measured on gfx1201 before any of this was written, since the whole design
+rests on it: the wedged process sits in `R` (spinning in userspace on the
+sync, not uninterruptible), SIGKILL reaps it in 0.11s, and the GPU is
+immediately reusable afterwards.
 """
 
 import os
+import re
 import subprocess
 import sys
 
@@ -28,12 +37,10 @@ import pytest
 
 pytest_plugins = ['pytester']
 
-_OPT_IN = 'GPU_LEASE_GPU_TESTS'
+_TEST_LEVEL = int(os.getenv('GPU_LEASE_TEST_LEVEL', '0'))
 
 
-def _skip_reason() -> str | None:
-    if not os.getenv(_OPT_IN):
-        return f'set {_OPT_IN}=1 to run (hangs two GPUs for ~1 minute)'
+def _hardware_skip_reason() -> str | None:
     try:
         import torch
         import triton  # noqa: F401
@@ -46,15 +53,19 @@ def _skip_reason() -> str | None:
     return None
 
 
-_SKIP = _skip_reason()
-pytestmark = pytest.mark.skipif(_SKIP is not None, reason=_SKIP or '')
+# Level decides what exists; hardware decides whether it can run. Kept apart so
+# that asking for these tests on a machine without GPUs reports why, instead of
+# silently collecting nothing. Not evaluated at level 0, where importing torch
+# would be pure cost for a module that defines nothing.
+_HW_SKIP = _hardware_skip_reason() if _TEST_LEVEL >= 1 else None
+pytestmark = pytest.mark.skipif(_HW_SKIP is not None, reason=_HW_SKIP or '')
 
 
-# The nested suite. `good` and `bad` differ only in the spin count handed to
-# one kernel -- same launch, same comparison afterwards -- so the wedge is
-# reached the way a real test reaches it: by comparing a GPU result, which
-# syncs, rather than by calling synchronize() explicitly.
-_NESTED_SUITE = '''
+# Shared by both nested suites below: the kernel, and the fixture that binds a
+# worker to its leased GPU. `good` and `bad` differ only in the spin count
+# handed to this one kernel -- same launch, same comparison afterwards -- so the
+# wedge is reached the way a real test reaches it, by comparing a GPU result.
+_KERNEL = '''
 import torch
 import triton
 import triton.language as tl
@@ -84,6 +95,9 @@ def vecadd_spin(x_ptr, y_ptr, out_ptr, spin_ptr, n, BLOCK: tl.constexpr):
     tl.store(out_ptr + offs, acc, mask=mask)
 
 
+WEDGE = 2 ** 50   # ~1e15 iterations: no wall clock will outlast it
+
+
 def _vecadd(device, spin):
     n = 4096
     x = torch.rand(n, device=device)
@@ -108,67 +122,195 @@ def warm_device(gpu_device):
     cleanly, and looks nothing like the wedge under test.
 
     Compiling here keeps JIT out of the timed window. Measured cold at 1.1s,
-    far under the threshold, but a slower machine should not be able to fail
-    this test for a reason unrelated to what it checks.
+    far under any threshold used here, but a slower machine should not be able
+    to fail these tests for a reason unrelated to what they check.
     """
     torch.cuda.set_device(gpu_device)
     _vecadd(gpu_device, 0)
     return gpu_device
-
-
-@pytest.mark.parametrize('kind', ['good', 'bad', 'bad', 'good'])
-def test_vecadd(kind, warm_device):
-    _vecadd(warm_device, 0 if kind == 'good' else 2 ** 50)
 '''
 
 
-def test_wedged_gpu_worker_is_killed_and_session_survives(pytester, monkeypatch, tmp_path):
-    """Two of four tests hang the GPU; the run must still finish, correctly.
+_WATCHDOG_SUITE = _KERNEL + '''
 
-    Checks, in order of what would hurt most to lose:
+@pytest.mark.parametrize('kind', ['good', 'bad', 'bad', 'good'])
+def test_vecadd(kind, warm_device):
+    _vecadd(warm_device, 0 if kind == 'good' else WEDGE)
+'''
 
-    * no INTERNALERROR -- the failure mode that ended a real pass at 80%, and
-      the reason `_tolerate_closed_worker_channel` exists. Two workers dying
-      close together is exactly how that race is reached.
-    * both `good` tests pass, including any that had to be requeued off a
-      killed worker.
-    * the watchdog escalated: SIGTERM first (faulthandler turns it into a
-      stack dump rather than a death, so the wedged worker survives it), then
-      SIGKILL once the grace period expires.
-    """
-    lockfile = tmp_path / 'gpulock'
-    lockfile.touch()
-    monkeypatch.delenv('GPU_LEASE_PIN', raising=False)
-    monkeypatch.setenv('GPU_LEASE_LOCKFILE', str(lockfile))
-    pytester.makepyfile(_NESTED_SUITE)
 
-    # idle_polls is deliberately generous. A replacement worker re-imports
-    # torch before it reaches its first test and takes a lease, so with both
-    # workers killed at once the lock file can legitimately show no locks for
-    # several seconds; a short idle window would let the watchdog self-exit
-    # mid-run.
-    watchdog = subprocess.Popen(
-        [sys.executable, '-m', 'pytest_gpu_lease.watchdog',
-         '--lockfile', str(lockfile), '--workers', '2',
-         '--threshold', '10', '--grace', '5',
-         '--poll_interval', '1', '--idle_polls', '30'],
-        stderr=subprocess.PIPE, text=True)
-    try:
-        result = pytester.runpytest_subprocess(
-            '-n', '2', '--max-worker-restart', '9999', '-p', 'xdist', timeout=300)
-        _, watchdog_err = watchdog.communicate(timeout=120)
-    finally:
-        if watchdog.poll() is None:
-            watchdog.kill()
-            watchdog.communicate()
+# Runs in definition order, and the order is the point: a passing test, then a
+# Python-level hang that pytest-timeout must catch, then a GPU hang it cannot.
+_TIMEOUT_CONTROL_SUITE = _KERNEL + '''
+import time
 
-    assert result.ret is not None, 'nested session never terminated'
 
-    transcript = '\n'.join(result.outlines + result.errlines)
-    assert 'INTERNALERROR' not in transcript, transcript[-4000:]
+def test_vecadd_good(warm_device):
+    _vecadd(warm_device, 0)
 
-    outcomes = result.parseoutcomes()
-    assert outcomes.get('passed', 0) == 2, (outcomes, transcript[-4000:])
 
-    assert watchdog_err.count('SIGTERM') >= 2, watchdog_err
-    assert watchdog_err.count('SIGKILL') >= 2, watchdog_err
+def test_python_level_hang(warm_device):
+    time.sleep(3600)
+
+
+def test_vecadd_wedged(warm_device):
+    _vecadd(warm_device, WEDGE)
+'''
+
+
+if _TEST_LEVEL >= 1:
+    def test_wedged_gpu_worker_is_killed_and_session_survives(pytester, monkeypatch, tmp_path):
+        """Two of four tests hang the GPU; the run must still finish, correctly.
+
+        Checks, in order of what would hurt most to lose:
+
+        * no INTERNALERROR -- the failure mode that ended a real pass at 80%,
+          and the reason `_tolerate_closed_worker_channel` exists. Two workers
+          dying close together is exactly how that race is reached.
+        * both `good` tests pass, including any requeued off a killed worker.
+        * the watchdog escalated: SIGTERM first (faulthandler turns it into a
+          stack dump rather than a death, so the wedged worker survives it),
+          then SIGKILL once the grace period expires.
+        """
+        lockfile = tmp_path / 'gpulock'
+        lockfile.touch()
+        monkeypatch.delenv('GPU_LEASE_PIN', raising=False)
+        monkeypatch.setenv('GPU_LEASE_LOCKFILE', str(lockfile))
+        pytester.makepyfile(_WATCHDOG_SUITE)
+
+        # idle_polls is deliberately generous. A replacement worker re-imports
+        # torch before it reaches its first test and takes a lease, so with both
+        # workers killed at once the lock file can legitimately show no locks
+        # for several seconds; a short idle window would let the watchdog
+        # self-exit mid-run.
+        watchdog = subprocess.Popen(
+            [sys.executable, '-m', 'pytest_gpu_lease.watchdog',
+             '--lockfile', str(lockfile), '--workers', '2',
+             '--threshold', '10', '--grace', '5',
+             '--poll_interval', '1', '--idle_polls', '30'],
+            stderr=subprocess.PIPE, text=True)
+        try:
+            result = pytester.runpytest_subprocess(
+                '-n', '2', '--max-worker-restart', '9999', '-p', 'xdist', timeout=300)
+            _, watchdog_err = watchdog.communicate(timeout=120)
+        finally:
+            if watchdog.poll() is None:
+                watchdog.kill()
+                watchdog.communicate()
+
+        assert result.ret is not None, 'nested session never terminated'
+
+        transcript = '\\n'.join(result.outlines + result.errlines)
+        assert 'INTERNALERROR' not in transcript, transcript[-4000:]
+
+        outcomes = result.parseoutcomes()
+        assert outcomes.get('passed', 0) == 2, (outcomes, transcript[-4000:])
+
+        assert watchdog_err.count('SIGTERM') >= 2, watchdog_err
+        assert watchdog_err.count('SIGKILL') >= 2, watchdog_err
+
+
+if _TEST_LEVEL >= 2:
+    # Long enough that a slow machine cannot make it fire late by accident,
+    # short enough that the wall clock below is many times it.
+    _CONTROL_TIMEOUT_S = 5
+    _CONTROL_WALL_S = 40
+
+    def _verdict(transcript: str, name: str) -> str | None:
+        """The PASSED/FAILED/ERROR pytest recorded for `name`, or None.
+
+        Scoped to the span between this test's `-v` line and the next one. The
+        lease announcement goes to stderr, unbuffered, and lands between a test
+        name and its verdict, so a search that just scans forward from the name
+        would run past the end of the test and pick up its successor's verdict
+        -- which for the wedged test is the difference between "no verdict, as
+        predicted" and a false pass.
+        """
+        segment = re.search(rf'::{re.escape(name)}\b(.*?)(?=^\S+\.py::|\Z)',
+                            transcript, re.S | re.M)
+        if segment is None:
+            return None
+        found = re.search(r'\b(PASSED|FAILED|ERROR)\b', segment.group(1))
+        return found.group(1) if found else None
+
+    def test_pytest_timeout_cannot_interrupt_a_wedged_kernel(pytester, tmp_path):
+        """Control for the watchdog: show pytest-timeout does not cover this.
+
+        This is the claim the whole feature rests on -- a Level-3 pass ran
+        265,282 tests in 15h46m under `--timeout=300` and reported zero
+        timeouts -- so it is worth demonstrating rather than asserting.
+        pytest-timeout's signal method arms `setitimer(ITIMER_REAL)` and raises
+        from a SIGALRM handler, and CPython runs a Python-level signal handler
+        only when the main thread reaches a bytecode boundary. A thread inside
+        an unreturning device sync reaches none.
+
+        Both halves matter. A run where the timeout simply never fires proves
+        nothing -- the plugin might not be loaded, or the option misspelled --
+        so the same session first hangs in `time.sleep`, where the timeout
+        *must* fire. What separates the two cases is only where the main
+        thread is parked.
+
+        Deliberately without xdist: nothing here should be attributable to the
+        combination pytest#2223 warns about.
+        """
+        pytest.importorskip(
+            'pytest_timeout',
+            reason='the control needs the very plugin the repo dropped; '
+                   'pip install pytest-timeout to run it')
+        import torch
+
+        nested = pytester.makepyfile(_TIMEOUT_CONTROL_SUITE)
+        transcript_path = tmp_path / 'nested.out'
+
+        env = dict(os.environ)
+        env.pop('GPU_LEASE_LOCKFILE', None)
+        # Pin rather than lease: with no xdist there is nothing to coordinate,
+        # and pinning keeps this off the lock file entirely. Highest ordinal on
+        # the theory that a pass, if one is running, started at 0.
+        env['GPU_LEASE_PIN'] = str(torch.cuda.device_count() - 1)
+        # Without this the transcript is block-buffered and lost when we kill
+        # the process -- which we always do, since it never finishes.
+        env['PYTHONUNBUFFERED'] = '1'
+
+        with open(transcript_path, 'w') as sink:
+            proc = subprocess.Popen(
+                [sys.executable, '-m', 'pytest', str(nested), '-v',
+                 '-p', 'no:xdist', '-p', 'no:cacheprovider',
+                 '--timeout', str(_CONTROL_TIMEOUT_S), '--timeout-method', 'signal'],
+                stdout=sink, stderr=subprocess.STDOUT, cwd=str(pytester.path), env=env)
+            try:
+                proc.wait(timeout=_CONTROL_WALL_S)
+                finished = True
+            except subprocess.TimeoutExpired:
+                finished = False
+            finally:
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait(timeout=60)
+
+        transcript = transcript_path.read_text()
+
+        # pytest-timeout is loaded and armed the way this test intends. Checked
+        # from the header rather than from a "Timeout >5.0s" message, because
+        # that message lives in the FAILURES section, which a session killed
+        # mid-test never prints.
+        assert f'timeout: {float(_CONTROL_TIMEOUT_S)}s' in transcript, transcript[-3000:]
+        assert 'timeout method: signal' in transcript, transcript[-3000:]
+
+        # The GPU is fine and the kernel is right: the ordinary case passes.
+        assert _verdict(transcript, 'test_vecadd_good') == 'PASSED', transcript[-3000:]
+
+        # ...and the timeout does fire, when the main thread is in Python.
+        assert _verdict(transcript, 'test_python_level_hang') == 'FAILED', \
+            f'pytest-timeout did not fire on time.sleep\n{transcript[-3000:]}'
+
+        # Same timeout, same session, same vecadd kernel -- only the spin count
+        # differs from the passing case above. No verdict at all, and the
+        # session had to be killed from outside.
+        assert 'test_vecadd_wedged' in transcript, transcript[-3000:]
+        assert _verdict(transcript, 'test_vecadd_wedged') is None, \
+            f'expected no verdict for the wedged test, got one:\n{transcript[-3000:]}'
+        assert not finished, (
+            f'the wedged test was expected to outlast a {_CONTROL_TIMEOUT_S}s timeout '
+            f'for the full {_CONTROL_WALL_S}s, but the session exited on its own\n'
+            f'{transcript[-3000:]}')
