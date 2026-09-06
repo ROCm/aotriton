@@ -308,9 +308,13 @@ def _build_parser() -> argparse.ArgumentParser:
         prog='python -m pytest_gpu_lease.watchdog',
         description='Escalate SIGTERM -> SIGKILL on a pytest_gpu_lease worker whose '
                     'page has gone unstamped for too long.')
-    parser.add_argument('--lockfile', default=os.getenv('GPU_LEASE_LOCKFILE'),
-                        help='Shared lease lock file to watch. Defaults to $GPU_LEASE_LOCKFILE, '
-                             'the same variable run-test.sh exports for pytest itself.')
+    parser.add_argument('--lockfile', required=True,
+                        help='Shared lease lock file to watch. Required, rather than '
+                             'defaulted from $GPU_LEASE_LOCKFILE, so that `ps` shows which '
+                             'file each watchdog is on -- that is the only way to tell a '
+                             'stale watchdog from a live one. Workers still find the same '
+                             'file through the environment variable; only this process '
+                             'insists on being told.')
     parser.add_argument('--workers', type=int, required=True,
                         help='Size of the GPU pool (the -n given to pytest); pages '
                              '0..workers-1 are watched.')
@@ -340,8 +344,6 @@ def _exit_on_signal(signum, _frame):
 def main(argv: list[str] | None = None) -> None:
     parser = _build_parser()
     args = parser.parse_args(argv)
-    if not args.lockfile:
-        parser.error('--lockfile is required (or set GPU_LEASE_LOCKFILE)')
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(sig, _exit_on_signal)
     try:
