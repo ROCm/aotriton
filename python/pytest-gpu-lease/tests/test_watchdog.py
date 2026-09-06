@@ -62,6 +62,7 @@ fcntl.fcntl(f, fcntl.F_SETLK, claim)
 # backdate_ns=0 gives a fresh stamp instead: a healthy worker, to be left alone.
 os.pwrite(f.fileno(), struct.pack('<Q', max(1, time.monotonic_ns() - backdate_ns)),
           PAGE_SIZE * page)
+os.pwrite(f.fileno(), struct.pack('<q', os.getpid()), PAGE_SIZE * page + 8)
 faulthandler.register(signal.SIGTERM, file=sys.stderr, all_threads=True)
 r, w = os.pipe()
 print('READY', flush=True)
@@ -395,3 +396,42 @@ def test_dump_survives_a_worker_that_dies_during_its_grace_period(tmp_path, caps
     assert 'test_wedged_here' in relayed, relayed
     assert 'exited during its grace period' in relayed, relayed
     assert not pathlib.Path(watchdog.dump_path(str(lockfile), child.pid)).exists()
+
+
+def test_a_replacement_is_not_killed_for_inheriting_a_stale_stamp(tmp_path, capsys):
+    """A page holds an expired stamp exactly when a replacement lands on it.
+
+    The watchdog SIGKILLs a wedged worker, whose stamp is by definition past
+    the threshold, and xdist hands the replacement the page it just vacated.
+    Until that replacement writes, the page reads locked-and-ancient. Judging
+    it on the stamp alone kills a worker that started milliseconds ago -- and
+    escalation offers no reprieve, so it dies for good.
+
+    Simulated by locking the page and writing an ancient stamp owned by some
+    *other* pid, which is what the window looks like from outside.
+    """
+    lockfile = tmp_path / 'gpulock'
+    lockfile.touch()
+    child, _, err_file = _spawn_wedge_child(tmp_path, lockfile, tag='_fresh')
+    fd = os.open(str(lockfile), os.O_RDWR)
+    try:
+        # Ancient stamp, but stamped by a pid that is not the lock holder.
+        os.pwrite(fd, struct.pack('<Q', max(1, time.monotonic_ns() - _STALE_NS)), 0)
+        os.pwrite(fd, struct.pack('<q', child.pid + 1), 8)
+
+        pending: dict[int, watchdog._Staged] = {}
+        assert watchdog._poll_once(fd, str(lockfile), 1, threshold_ns=10**9,
+                                   grace_ns=0, pending=pending) is True
+        assert pending == {}, 'staged a kill against a stamp written by someone else'
+        assert 'SIGTERM' not in capsys.readouterr().err
+
+        # Once the holder writes its own stamp, it is judged normally again.
+        os.pwrite(fd, struct.pack('<q', child.pid), 8)
+        watchdog._poll_once(fd, str(lockfile), 1, threshold_ns=10**9,
+                            grace_ns=0, pending=pending)
+        assert list(pending) == [0], 'a stamp owned by the holder must still be judged'
+    finally:
+        child.kill()
+        child.wait()
+        err_file.close()
+        os.close(fd)

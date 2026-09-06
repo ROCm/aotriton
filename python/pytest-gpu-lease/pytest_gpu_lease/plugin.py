@@ -49,6 +49,27 @@ assert _SIZEOF_OFF_T == 8, (
 
 _RETRY_INTERVAL = 0.05
 
+# Page layout, shared with watchdog.py: an 8-byte `monotonic_ns` stamp at the
+# page base -- 0 meaning "between tests" -- then the pid of the worker that
+# wrote it.
+#
+# The pid is what makes a stale stamp harmless. A page is freed still carrying
+# an expired stamp in exactly one situation, and it is the one this feature
+# creates: the watchdog SIGKILLs a wedged worker, whose stamp is by definition
+# past the threshold, and xdist gives the replacement the page it just vacated.
+# Between that F_SETLK and the replacement's first write, the page reads
+# locked-and-ancient. Writing sooner only narrows that window; comparing the
+# recorded pid against the current lock holder closes it, however wide it is.
+#
+# Stamp first, pid second, so a reader that catches the pair half written sees
+# (new stamp, old pid) and skips it -- never (old stamp, new pid), the one
+# combination that would kill a healthy worker. That ordering is why this needs
+# no 16-byte atomic write.
+HEARTBEAT_FMT = '<Q'
+OWNER_FMT = '<q'
+OWNER_OFFSET = struct.calcsize(HEARTBEAT_FMT)
+HEARTBEAT_SIZE = OWNER_OFFSET + struct.calcsize(OWNER_FMT)
+
 
 def dump_path(lockfile, pid: int) -> str:
     """Where a leasing worker's faulthandler writes its stack dump.
@@ -218,7 +239,9 @@ def gpu_id(request):
             # vacated. A poll landing in that gap would read locked-and-ancient
             # and SIGTERM a brand-new healthy worker -- which then gets
             # SIGKILLed regardless, since escalation offers no reprieve.
-            os.pwrite(f.fileno(), struct.pack('<Q', time.monotonic_ns()), page_base)
+            os.pwrite(f.fileno(), struct.pack(HEARTBEAT_FMT, time.monotonic_ns()), page_base)
+            os.pwrite(f.fileno(), struct.pack(OWNER_FMT, os.getpid()),
+                      page_base + OWNER_OFFSET)
             _announce(request.config,
                       f'{worker_id} uses GPU {gpu} filelock = {lockfile}')
             # Handle SIGTERM from watchdog to print a full stack dump naming the frame.
@@ -292,10 +315,11 @@ def pytest_runtest_protocol():
             lease = _active_lease
             if lease is not None:
                 fd, page_base = lease
-                os.pwrite(fd, struct.pack('<Q', 0), page_base)
+                os.pwrite(fd, struct.pack(HEARTBEAT_FMT, 0), page_base)
         return
     fd, page_base = lease
-    os.pwrite(fd, struct.pack('<Q', time.monotonic_ns()), page_base)
+    # Stamp only; the owner pid is written once, when the lease is taken.
+    os.pwrite(fd, struct.pack(HEARTBEAT_FMT, time.monotonic_ns()), page_base)
     try:
         yield
     finally:
@@ -308,7 +332,7 @@ def pytest_runtest_protocol():
         # into somebody else's file. The watchdog needs nothing from this write
         # anyway: it only reads pages it found locked, and the lease is gone.
         if _active_lease is not None:
-            os.pwrite(fd, struct.pack('<Q', 0), page_base)
+            os.pwrite(fd, struct.pack(HEARTBEAT_FMT, 0), page_base)
 
 
 @pytest.fixture(scope='session')

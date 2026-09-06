@@ -56,7 +56,8 @@ import sys
 import time
 from typing import NamedTuple
 
-from .plugin import PAGE_SIZE, STRUCT_FLOCK, dump_path
+from .plugin import (HEARTBEAT_FMT, HEARTBEAT_SIZE, OWNER_FMT, OWNER_OFFSET,
+                     PAGE_SIZE, STRUCT_FLOCK, dump_path)
 
 # Every signal goes through a pidfd, so this is a hard requirement rather than
 # an enhancement -- see _pidfd_open. Needs Linux 5.3 and Python 3.9.
@@ -129,24 +130,25 @@ def _getlk(fd: int, page: int) -> tuple[bool, int]:
     return lock_type != fcntl.F_UNLCK, pid
 
 
-def _read_last_activity(fd: int, page: int) -> int:
-    """The 8-byte `monotonic_ns()` stamp at `page`'s base, or 0 if the worker
-    is between tests (never written, or zeroed after the last one).
+def _read_heartbeat(fd: int, page: int) -> tuple[int, int]:
+    """The stamp at `page`'s base and the pid of the worker that wrote it.
 
-    A plain `os.pread` at a page-aligned offset -- no torn-read handling needed
-    for the same reason the writer needs none: 8 bytes at an aligned offset is
-    within the platform's atomic write granularity.
+    `(0, 0)` when the record is not fully there. The lock file is never
+    pre-sized (see plugin.py's `_gpu_lease_lockfile`), so a page whose worker
+    holds the lock but has not written yet is genuinely short of these bytes
+    rather than zero-filled, and `os.pread` returns what exists. Treated the
+    same as an explicit zero: nothing has expired.
 
-    The lock file is never pre-sized (see plugin.py's `_gpu_lease_lockfile`), so
-    a page whose worker took the lease but has not yet reached its first test's
-    heartbeat write is genuinely short of 8 bytes there, not zero-filled -- a
-    plain `os.pread` returns fewer than 8 bytes rather than padding with
-    zeroes. Treated the same as an explicit zero: nothing has expired yet.
+    No torn-read handling, for the same reason the writer needs none -- see
+    the layout note in plugin.py for why stamp-then-pid ordering makes a
+    half-written pair safe to read.
     """
-    raw = os.pread(fd, 8, PAGE_SIZE * page)
-    if len(raw) < 8:
-        return 0
-    return struct.unpack('<Q', raw)[0]
+    raw = os.pread(fd, HEARTBEAT_SIZE, PAGE_SIZE * page)
+    if len(raw) < HEARTBEAT_SIZE:
+        return 0, 0
+    stamp, = struct.unpack_from(HEARTBEAT_FMT, raw, 0)
+    owner, = struct.unpack_from(OWNER_FMT, raw, OWNER_OFFSET)
+    return stamp, owner
 
 
 class _Staged(NamedTuple):
@@ -350,9 +352,15 @@ def _poll_once(fd: int, lockfile: str, workers: int, threshold_ns: int, grace_ns
         if not locked:
             continue
         any_locked = True
-        last_activity = _read_last_activity(fd, page)
+        last_activity, owner = _read_heartbeat(fd, page)
         if last_activity == 0:
             continue  # between tests -- see plugin.py's gpu_id and pytest_runtest_protocol
+        if owner != pid:
+            # The stamp belongs to a previous holder: this worker has the lock
+            # but has not written yet. Judging it on someone else's stamp is
+            # how a replacement gets killed for inheriting the expired one left
+            # by the worker this watchdog had just SIGKILLed off that page.
+            continue
         stale_ns = now - last_activity
         if stale_ns > threshold_ns:
             # Take the handle first, then re-read the lock. If the pid was
