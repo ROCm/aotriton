@@ -48,6 +48,7 @@ would silently misread every stamp.
 
 import argparse
 import fcntl
+import glob
 import os
 import signal
 import struct
@@ -55,7 +56,7 @@ import sys
 import time
 from typing import NamedTuple
 
-from .plugin import PAGE_SIZE, STRUCT_FLOCK
+from .plugin import PAGE_SIZE, STRUCT_FLOCK, dump_path
 
 # The timeout, and the only one in the tree: how long a worker's page may go
 # without a fresh stamp before it is treated as wedged. Because the worker
@@ -189,7 +190,59 @@ def _send(pid: int, sig: signal.Signals, reason: str, pidfd: int | None = None) 
               file=sys.stderr, flush=True)
 
 
-def _poll_once(fd: int, workers: int, threshold_ns: int, grace_ns: int,
+def _emit_dump(lockfile: str, page: int, pid: int) -> None:
+    """Relay a wedged worker's stack dump into our stderr, then delete it.
+
+    The worker writes it to a file of its own rather than the shared stream
+    (see `plugin.dump_path`); this process is the serialisation point. Deleted
+    as soon as it is read: the owner is about to be SIGKILLed and will never
+    reach the teardown that would otherwise remove it.
+    """
+    path = dump_path(lockfile, pid)
+    try:
+        with open(path) as f:
+            dump = f.read().rstrip()
+    except OSError:
+        dump = ''
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+    if dump:
+        print(f'--- pytest_gpu_lease.watchdog: stack of pid {pid} on GPU {page} ---\n'
+              f'{dump}\n--- end of stack ---', file=sys.stderr, flush=True)
+
+
+def _sweep_dumps(lockfile: str) -> None:
+    """Delete dump files whose worker is gone.
+
+    A worker killed by a GPU fault reaches no teardown, so it never removes
+    its own file, and the watchdog will never see its pid again -- F_GETLK
+    reports live lock holders and nothing else. Sweeping every poll rather
+    than at shutdown keeps /dev/shm, which is small in a container, from
+    collecting one file per dead worker across a pass that restarts them
+    dozens of times.
+    """
+    prefix, suffix = f'{lockfile}.', '.dump'
+    for path in glob.glob(glob.escape(lockfile) + '.*' + suffix):
+        try:
+            pid = int(path[len(prefix):-len(suffix)])
+        except ValueError:
+            continue  # not one of ours
+        try:
+            os.kill(pid, 0)
+            continue  # still alive: its dump is still wanted
+        except PermissionError:
+            continue  # alive, just not ours to signal
+        except ProcessLookupError:
+            pass
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+
+
+def _poll_once(fd: int, lockfile: str, workers: int, threshold_ns: int, grace_ns: int,
               pending: dict[int, _Staged]) -> bool:
     """One sweep of every page. Sends at most one signal -- see module docstring
     on staggering kills -- and returns whether any page is currently locked
@@ -201,6 +254,7 @@ def _poll_once(fd: int, workers: int, threshold_ns: int, grace_ns: int,
     """
     now = time.monotonic_ns()
     any_locked = False
+    _sweep_dumps(lockfile)
 
     # Escalations in flight take priority over freshly-discovered ones: a kill
     # already staged should not be starved, poll after poll, by a steady trickle
@@ -238,6 +292,9 @@ def _poll_once(fd: int, workers: int, threshold_ns: int, grace_ns: int,
             # and this call the process may exit and its pid be reissued. That
             # window is small and the payload is SIGKILL, which is precisely
             # the combination not to leave to chance.
+            # Before the kill: the SIGTERM's whole point was this dump, and
+            # after SIGKILL nobody is left to ask.
+            _emit_dump(lockfile, page, staged.pid)
             _send(staged.pid, signal.SIGKILL,
                   'grace period expired, still holding its page', staged.pidfd)
             _discard(pending, page)
@@ -310,7 +367,7 @@ def watch(lockfile: str, workers: int, threshold_s: float, grace_s: float,
     fd = os.open(lockfile, os.O_RDWR | os.O_CREAT, 0o644)
     try:
         while True:
-            _poll_once(fd, workers, threshold_ns, grace_ns, pending)
+            _poll_once(fd, lockfile, workers, threshold_ns, grace_ns, pending)
             time.sleep(poll_interval_s)
     finally:
         for page in list(pending):
@@ -381,10 +438,14 @@ def main(argv: list[str] | None = None) -> None:
         # told to stop and the pass is over -- the file cannot be pulled out
         # from under a running one. Deliberately not inside `watch()`, which
         # stays a pure poll loop callable from tests against a file they own.
-        try:
-            os.unlink(args.lockfile)
-        except FileNotFoundError:
-            pass
+        # Sweep, not enumerate: a worker aborted by a GPU fault reaches no
+        # teardown, so its dump can outlive it with nobody else to notice.
+        for _path in [args.lockfile,
+                      *glob.glob(glob.escape(args.lockfile) + '.*.dump')]:
+            try:
+                os.unlink(_path)
+            except FileNotFoundError:
+                pass
         print('pytest_gpu_lease.watchdog: stopped', file=sys.stderr, flush=True)
 
 

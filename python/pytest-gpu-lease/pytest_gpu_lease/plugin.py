@@ -49,6 +49,22 @@ assert _SIZEOF_OFF_T == 8, (
 
 _RETRY_INTERVAL = 0.05
 
+
+def dump_path(lockfile, pid: int) -> str:
+    """Where a leasing worker's faulthandler writes its stack dump.
+
+    One file per worker, not the shared stderr: a dump is many small writes, so
+    two workers dumping at once would splice into each other. `watchdog.py`
+    reads these back and relays them, being the only serial writer into the
+    pass's stderr.
+
+    Keyed by pid, not by GPU: a pass restarts workers many times, and a
+    replacement taking the freed page would otherwise truncate its
+    predecessor's dump before anyone had read it. pid is also the only handle
+    the watchdog has -- `F_GETLK` gives it that and nothing else.
+    """
+    return f'{lockfile}.{pid}.dump'
+
 # A plain global object to track current GPU lease. It is safe here because
 # `gpu_id` is session-scoped and, under xdist, "session" means "per worker
 # process": at most one lease is ever active in a given interpreter.
@@ -199,7 +215,20 @@ def gpu_id(request):
             # Note signal handler itself cannot detect blocked GPU kernel:
             # CPython only runs a Python signal handler when the main thread
             # reaches a bytecode boundary.
-            faulthandler.register(signal.SIGTERM, file=sys.stderr, all_threads=True)
+            # Only under a watchdog: GPU_LEASE_LOCKFILE is how run-test.sh
+            # hands one path to both sides, so without it nothing will ever
+            # read a dump -- and registering is not free, since chain=False
+            # disarms SIGTERM for the rest of the worker's session.
+            #
+            # NOT sys.stderr: at fixture setup that is pytest's fd-level
+            # capture target, and a capture buffer is only replayed when the
+            # test finishes -- which a wedged test never does. faulthandler
+            # needs its descriptor now, since the wedged worker runs no Python
+            # later, so it gets a file of its own (see dump_path).
+            dumpfile = None
+            if os.getenv('GPU_LEASE_LOCKFILE'):
+                dumpfile = open(dump_path(lockfile, os.getpid()), 'w')
+                faulthandler.register(signal.SIGTERM, file=dumpfile, all_threads=True)
             _active_lease = (f.fileno(), page_base)
             # Initialize the heartbeat value
             os.pwrite(f.fileno(), struct.pack('<Q', time.monotonic_ns()), page_base)
@@ -207,6 +236,16 @@ def gpu_id(request):
                 yield gpu
             finally:
                 _active_lease = None
+                if dumpfile is not None:
+                    faulthandler.unregister(signal.SIGTERM)  # before closing its file
+                    dumpfile.close()
+                    # The moment this worker can no longer wedge. /dev/shm is
+                    # small in a container and a long pass restarts workers
+                    # many times, so these must not outlive their owner.
+                    try:
+                        os.unlink(dump_path(lockfile, os.getpid()))
+                    except FileNotFoundError:
+                        pass
                 release = struct.pack(STRUCT_FLOCK, fcntl.F_UNLCK, os.SEEK_SET,
                                       page_base, PAGE_SIZE, 0)
                 fcntl.fcntl(f, fcntl.F_SETLK, release)

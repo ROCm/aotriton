@@ -29,6 +29,7 @@ die on SIGKILL, which no handler can intercept.
 """
 
 import os
+import pathlib
 import signal
 import struct
 import subprocess
@@ -159,8 +160,8 @@ def test_escalation_does_not_sigkill_a_replacement_that_took_the_same_page(tmp_p
     fd = os.open(str(lockfile), os.O_RDWR)
     pending: dict[int, watchdog._Staged] = {}
     # grace_ns=0: the second poll escalates immediately if it is going to at all.
-    poll = lambda: watchdog._poll_once(fd, 1, threshold_ns=10**9, grace_ns=0,
-                                       pending=pending)
+    poll = lambda: watchdog._poll_once(fd, str(lockfile), 1, threshold_ns=10**9,  # noqa: E731
+                                       grace_ns=0, pending=pending)
 
     wedged, _, wedged_err = _spawn_wedge_child(tmp_path, lockfile, tag='_wedged')
     replacement = replacement_err = None
@@ -206,8 +207,8 @@ def test_escalation_is_cancelled_when_the_worker_recovers(tmp_path):
     lockfile.touch()
     fd = os.open(str(lockfile), os.O_RDWR)
     pending: dict[int, watchdog._Staged] = {}
-    poll = lambda: watchdog._poll_once(fd, 1, threshold_ns=10**9, grace_ns=0,  # noqa: E731
-                                       pending=pending)
+    poll = lambda: watchdog._poll_once(fd, str(lockfile), 1, threshold_ns=10**9,  # noqa: E731
+                                       grace_ns=0, pending=pending)
 
     child, _, err_file = _spawn_wedge_child(tmp_path, lockfile, tag='_recovers')
     try:
@@ -355,3 +356,37 @@ def test_a_stale_pidfd_reports_gone_rather_than_signalling_a_reissued_pid(capsys
     finally:
         os.close(pidfd)
     assert 'already gone' in capsys.readouterr().err
+
+
+def test_watchdog_relays_a_wedged_workers_stack_dump(tmp_path, capsys):
+    """The dump reaches the pass's stderr through the watchdog, not directly.
+
+    A worker cannot write it to the shared stream itself: a dump is many small
+    writes, so several workers dumping at once would splice. It writes a file
+    of its own and the watchdog, the one serial writer, relays it before the
+    SIGKILL -- after which nobody is left to ask.
+    """
+    lockfile = tmp_path / 'gpulock'
+    lockfile.touch()
+    child, _, err_file = _spawn_wedge_child(tmp_path, lockfile, tag='_dump')
+    pathlib.Path(watchdog.dump_path(str(lockfile), child.pid)).write_text(
+        'Current thread 0x00007f00 (most recent call first):\n'
+        '  File "test_flash.py", line 42 in test_wedges_here\n')
+    fd = os.open(str(lockfile), os.O_RDWR)
+    try:
+        pending: dict[int, watchdog._Staged] = {}
+        poll = lambda: watchdog._poll_once(fd, str(lockfile), 1, threshold_ns=10**9,  # noqa: E731
+                                           grace_ns=0, pending=pending)
+        poll()          # stages the SIGTERM
+        poll()          # grace is 0, so this escalates and should relay first
+    finally:
+        child.kill()
+        child.wait()
+        err_file.close()
+        os.close(fd)
+
+    relayed = capsys.readouterr().err
+    assert 'test_wedges_here' in relayed, relayed
+    assert f'stack of pid {child.pid} on GPU 0' in relayed, relayed
+    assert not pathlib.Path(watchdog.dump_path(str(lockfile), child.pid)).exists(), \
+        'the dump must be deleted as soon as it is relayed'
