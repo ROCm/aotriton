@@ -359,6 +359,13 @@ def _poll_once(fd: int, lockfile: str, workers: int, threshold_ns: int, grace_ns
             # but has not written yet. Judging it on someone else's stamp is
             # how a replacement gets killed for inheriting the expired one left
             # by the worker this watchdog had just SIGKILLed off that page.
+            #
+            # Not proof against pid rollover: were the dead worker's pid handed
+            # straight back to its own replacement, the stale stamp would look
+            # owned and the new worker would be signalled. That needs the pid
+            # counter to wrap in the millisecond between the two, and the cost
+            # is one spurious kill on a run that is already restarting workers.
+            # Not fixed; a generation counter would not pay for itself.
             continue
         stale_ns = now - last_activity
         if stale_ns > threshold_ns:
