@@ -151,14 +151,25 @@ fi
     # The watchdog unlinks the lock file itself; this only stops it. SIGTERM is
     # its documented stop signal, named rather than left to `kill`'s default, and
     # `wait` reaps it so the unlink has finished before we return.
+    #
+    # pytest is stopped from here too, and by pid. Ctrl+C reaches it on its own
+    # (SIGINT goes to the whole foreground group) but Ctrl+\\ does not:
+    # measured, SIGQUIT kills this shell outright while pytest and the watchdog,
+    # both of which inherited SIG_IGN for it, carry on. `pytest_pid` is empty
+    # until pytest starts, which covers the early-exit path below.
     _stop_watchdog() { kill -s TERM "${watchdog_pid}" 2>/dev/null; wait "${watchdog_pid}" 2>/dev/null; }
-    # EXIT alone is not enough: an untrapped SIGTERM or SIGHUP kills the shell
-    # without running it (measured; SIGINT does run it).
+    _stop_pass() {
+      kill -s TERM "${pytest_pid:-}" 2>/dev/null; wait "${pytest_pid:-}" 2>/dev/null
+      _stop_watchdog
+    }
+    # EXIT alone is not enough: an untrapped SIGTERM, SIGHUP or SIGQUIT kills
+    # the shell without running it (measured; SIGINT does run it).
     # Known Issue: kill -9 CI script (rarely needed) will leave stale lock file
     # under /dev/shm. Users should terminate manually by inspecting ps.
-    trap '_stop_watchdog' EXIT
-    trap '_stop_watchdog; exit 130' INT
-    trap '_stop_watchdog; exit 143' TERM HUP
+    trap '_stop_pass' EXIT
+    trap '_stop_pass; exit 130' INT
+    trap '_stop_pass; exit 131' QUIT
+    trap '_stop_pass; exit 143' TERM HUP
     # Fatal here, unlike the no-pidfd case above: we asked for a watchdog and did
     # not get one, which is an environment that is broken rather than merely old,
     # and the failure would otherwise surface as one wedged worker eating the
@@ -185,7 +196,13 @@ fi
     modules/flash/tests \
     -v \
     1>>"${outdir}/${fnprefix}${pass}.out" \
-    2>>"${_errfile}" || true
+    2>>"${_errfile}" &
+  # Backgrounded so the traps above can reach it by pid; `wait` is
+  # interrupted when one fires, where a foreground pytest would have to
+  # finish first.
+  pytest_pid=$!
+  wait "${pytest_pid}" || true
+  pytest_pid=''
   # The check before pytest only proved the watchdog survived its first
   # second. If it died somewhere in the middle, everything after that point
   # ran with no hang protection, and the results should not be read as if it
