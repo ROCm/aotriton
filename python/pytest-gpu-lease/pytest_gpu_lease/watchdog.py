@@ -187,6 +187,14 @@ def _pidfd_open(pid: int) -> int | None:
         return os.pidfd_open(pid)
     except ProcessLookupError:
         return None
+    except OSError as exc:
+        # Anything else -- a transient EMFILE, say. Skipping this page for one
+        # poll costs a few seconds; letting it out of `_poll_once` kills the
+        # loop, and the pass then runs the rest of its 22 hours unprotected
+        # with one line in a log to show for it.
+        print(f'pytest_gpu_lease.watchdog: no pidfd for {pid} ({exc}); retrying next poll',
+              file=sys.stderr, flush=True)
+        return None
 
 
 def _discard(pending: dict[int, _Staged], page: int) -> None:

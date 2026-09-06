@@ -186,6 +186,14 @@ fi
     -v \
     1>>"${outdir}/${fnprefix}${pass}.out" \
     2>>"${_errfile}" || true
+  # The check before pytest only proved the watchdog survived its first
+  # second. If it died somewhere in the middle, everything after that point
+  # ran with no hang protection, and the results should not be read as if it
+  # had been there.
+  if [ "${use_watchdog}" != 0 ] && ! kill -0 "${watchdog_pid}" 2>/dev/null; then
+    echo "run-test.sh: WARNING the watchdog died during this pass; an unknown" \
+         "portion of it ran with no hang protection" | tee -a "${_errfile}" >&2
+  fi
   grep '^FAILED' "${outdir}/${fnprefix}${pass}.out"|sed 's/^FAILED //' | sed 's/].*/]/' > "${outdir}/sel${pass}.txt"
   if [ -n "${RECORD_ADIFFS_TO:-}" ]; then
     SCRIPT_DIR_ABS="$(cd "${SCRIPT_DIR}" && pwd)"
