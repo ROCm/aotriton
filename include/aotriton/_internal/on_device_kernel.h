@@ -59,6 +59,7 @@ public:
   }
   ~OnDeviceKernel();
 
+  // TODO: Make it const and add mutable to members
   // CAVEAT: calling clear_decompressed_image will also invalidate Essentials.image.
   //         clear_decompressed_image/clear_device_kernel route is not well-tested and should be avoided in production.
   std::tuple<hipFunction_t, Essentials> get_kernel(int device_id,
