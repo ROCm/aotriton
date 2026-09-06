@@ -141,10 +141,10 @@ fi
     # Start watchdog service, assume pytest_gpu_lease already installed.
     # If not, do it with `pip install -r requirements-dev.txt`
     #
-    # --lockfile is redundant with the exported GPU_LEASE_LOCKFILE the watchdog
-    # would fall back to, and passed anyway so that `ps aux` says which file each
-    # watchdog is watching. That is how a stale one from a SIGKILLed pass is told
-    # apart from the live one; an env var is not visible in ps output.
+    # --lockfile is required: the watchdog does not read GPU_LEASE_LOCKFILE, so
+    # that `ps aux` says which file each one is watching. That is how a stale
+    # watchdog from a SIGKILLed pass is told apart from the live one, and an
+    # env var is not visible in ps output. The variable is for the workers.
     python -m pytest_gpu_lease.watchdog --lockfile "${GPU_LEASE_LOCKFILE}" \
       --workers "${ngpus}" 2>>"${_errfile}" &
     watchdog_pid=$!
