@@ -101,7 +101,13 @@ fi
   : > "${_errfile}"
   # Start watchdog service, assume pytest_gpu_lease already installed.
   # If not, do it with `pip install -r requirements-dev.txt`
-  python -m pytest_gpu_lease.watchdog --workers "${ngpus}" 2>>"${_errfile}" &
+  #
+  # --lockfile is redundant with the exported GPU_LEASE_LOCKFILE the watchdog
+  # would fall back to, and passed anyway so that `ps aux` says which file each
+  # watchdog is watching. That is how a stale one from a SIGKILLed pass is told
+  # apart from the live one; an env var is not visible in ps output.
+  python -m pytest_gpu_lease.watchdog --lockfile "${GPU_LEASE_LOCKFILE}" \
+    --workers "${ngpus}" 2>>"${_errfile}" &
   watchdog_pid=$!
   # Report either way: a silent success reads exactly like a watchdog that
   # never started, and the difference only becomes visible once a pass has
