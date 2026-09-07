@@ -5,8 +5,8 @@ if [ -z "$BASH_VERSION" ]; then
   exit 1
 fi
 
-if [ "$#" -ne 3 ]; then
-  echo 'Missing arguments. Usage: run-test.sh <pass#> <test_level> <split/fused/aiter/v3>' >&2
+if [ "$#" -lt 3 ]; then
+  echo 'Missing arguments. Usage: run-test.sh <pass#> <test_level> <split/fused/aiter/v3> [-k EXPR]' >&2
   exit 1
 fi
 
@@ -18,6 +18,24 @@ add_rocm_sdk_ldconfig
 pass=$1
 test_level="$2"
 backend="$3"
+shift 3
+
+# Optional pytest -k, passed straight through. An array rather than a string:
+# the expressions worth typing have spaces in them ("hdim224 and not causal"),
+# and the unquoted ${SELECT_FROM} idiom below would split one into words.
+KFILTER=()
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -k)  # `shift 2` with one argument left fails *without shifting*, and the
+         # loop condition would never change: a bare trailing -k spins forever
+         # instead of running anything.
+         [ "$#" -ge 2 ] || { echo "run-test.sh: -k needs an expression" >&2; exit 1; }
+         KFILTER=(-k "$2"); shift 2 ;;
+    -k*) KFILTER=(-k "${1#-k}"); shift ;;
+    *)   echo "run-test.sh: unexpected argument '$1' (only -k is accepted here)" >&2
+         exit 1 ;;
+  esac
+done
 if [ -n "${AOTRITON_TEST_LIBDIR:-}" ]; then
   bdir=""
 else
@@ -87,17 +105,111 @@ fi
     [ -n "$_sig" ] && cat "$_sig" \
       || echo "NO __signature__ file at $PYTHONPATH/aotriton.images/"
   } > "${outdir}/${fnprefix}${pass}.out"
+  # One stderr file for the whole pass, so there is a single thing to tail.
+  # Truncated once here and appended to from then on: two `2>` on one path
+  # would have pytest re-truncate a file the watchdog already holds open, and
+  # the watchdog's fd keeps its own offset, so its next line would land past a
+  # hole.
+  _errfile="${outdir}/${fnprefix}${pass}.err"
+  : > "${_errfile}"
+  # Watchdog: on unless USE_WATCHDOG=0, and off regardless on a host that
+  # cannot support it. Two independent reasons, one switch.
+  #
+  # It signals through a pidfd and refuses to load without one, which needs
+  # Linux 5.3+; ROCm still supports RHEL 8.10, whose kernel predates that.
+  # Probed by calling pidfd_open rather than by testing a version, because
+  # Python 3.9+ on an older kernel has the function and fails at the syscall.
+  # Running unprotected is worse than a watchdog and better than refusing to
+  # test at all.
+  # The one teardown for this pass. Outside the watchdog branch on purpose:
+  # USE_WATCHDOG=0 still has a pytest to stop. pytest first, since the watchdog
+  # unlinks the lock file on its way out and workers must not still hold locks.
+  # By pid, not via the terminal: Ctrl+\\ never reaches either of them, both
+  # having inherited SIG_IGN for SIGQUIT. `wait` reaps; `:-` covers "not
+  # started" and "no watchdog".
+  _stop_pass() {
+    kill -s TERM "${pytest_pid:-}" 2>/dev/null; wait "${pytest_pid:-}" 2>/dev/null
+    kill -s TERM "${watchdog_pid:-}" 2>/dev/null; wait "${watchdog_pid:-}" 2>/dev/null
+  }
+  # Single-quoted, so the body is re-parsed when the trap fires and picks up
+  # `pytest_pid` and `watchdog_pid`, assigned below. Double quotes bake in "".
+  #
+  # EXIT alone is not enough: an untrapped SIGTERM, SIGHUP or SIGQUIT kills
+  # the shell without running it (measured; SIGINT does run it).
+  # Known Issue: kill -9 CI script (rarely needed) will leave stale lock file
+  # under /dev/shm. Users should terminate manually by inspecting ps.
+  trap '_stop_pass' EXIT
+  trap '_stop_pass; exit 130' INT
+  trap '_stop_pass; exit 131' QUIT
+  trap '_stop_pass; exit 143' TERM HUP
+  use_watchdog="${USE_WATCHDOG:-1}"
+  if [ "${use_watchdog}" != 0 ] \
+     && ! python -c 'import os; os.close(os.pidfd_open(os.getpid()))' 2>/dev/null; then
+    echo "run-test.sh: no pidfd support (needs Linux 5.3+); disabling the watchdog" \
+      | tee -a "${_errfile}" >&2
+    use_watchdog=0
+  fi
+  if [ "${use_watchdog}" != 0 ]; then
+    # Start watchdog process, use /dev/shm to avoid wearing: container's /tmp
+    # may not be tmpfs.
+    # Named with both $pass and $$ for uniqueness.
+    # Note: this is inside a subshell. Hence parent pid `$$` is the right one to use.
+    #
+    # Exported only on this branch: it is what tells the workers a watchdog is
+    # listening, and it also gates their per-worker stack dumps, which nothing
+    # would read if none is running.
+    export GPU_LEASE_LOCKFILE="/dev/shm/gpu_lease.${pass}.$$"
+    # Start watchdog service, assume pytest_gpu_lease already installed.
+    # If not, do it with `pip install -r requirements-dev.txt`
+    #
+    # --lockfile is required: the watchdog does not read GPU_LEASE_LOCKFILE, so
+    # that `ps aux` says which file each one is watching. That is how a stale
+    # watchdog from a SIGKILLed pass is told apart from the live one, and an
+    # env var is not visible in ps output. The variable is for the workers.
+    python -m pytest_gpu_lease.watchdog --lockfile "${GPU_LEASE_LOCKFILE}" \
+      --workers "${ngpus}" 2>>"${_errfile}" &
+    watchdog_pid=$!
+    # Fatal here, unlike the no-pidfd case above: we asked for a watchdog and did
+    # not get one, which is an environment that is broken rather than merely old,
+    # and the failure would otherwise surface as one wedged worker eating the
+    # remaining 22 hours. Reported on success too: silence reads the same either way.
+    sleep 1
+    if kill -0 "${watchdog_pid}" 2>/dev/null; then
+      echo "run-test.sh: watchdog running, pid ${watchdog_pid}, lockfile ${GPU_LEASE_LOCKFILE}" >> "${_errfile}"
+    else
+      echo "run-test.sh: watchdog did not start; refusing to run a pass with no hang protection" \
+        | tee -a "${_errfile}" >&2
+      exit 1
+    fi
+  else
+    echo "run-test.sh: running WITHOUT hang protection; a wedged worker will not be killed" \
+      | tee -a "${_errfile}" >&2
+  fi
   # One invocation over the whole suite dir (conftest.py sets up sys.path); pytest
   # collects test_backward / test_varlen together (test_forward.py is excluded via
   # conftest.py's collect_ignore - its coverage is a subset of test_backward.py's).
   pytest --tb=line -n ${ngpus} --max-worker-restart 9999 -rfEsx \
-    --timeout=300 \
     -p no:cacheprovider \
     ${SELECT_FROM} \
+    "${KFILTER[@]}" \
     modules/flash/tests \
     -v \
     1>>"${outdir}/${fnprefix}${pass}.out" \
-    2>"${outdir}/${fnprefix}${pass}.err" || true
+    2>>"${_errfile}" &
+  # Backgrounded so the traps above can reach it by pid; `wait` is
+  # interrupted when one fires, where a foreground pytest would have to
+  # finish first.
+  pytest_pid=$!
+  wait "${pytest_pid}" || true
+  pytest_pid=''
+  # The check before pytest only proved the watchdog survived its first
+  # second. If it died somewhere in the middle, everything after that point
+  # ran with no hang protection, and the results should not be read as if it
+  # had been there.
+  if [ "${use_watchdog}" != 0 ] && ! kill -0 "${watchdog_pid}" 2>/dev/null; then
+    echo "run-test.sh: WARNING the watchdog died during this pass; an unknown" \
+         "portion of it ran with no hang protection" | tee -a "${_errfile}" >&2
+  fi
   grep '^FAILED' "${outdir}/${fnprefix}${pass}.out"|sed 's/^FAILED //' | sed 's/].*/]/' > "${outdir}/sel${pass}.txt"
   if [ -n "${RECORD_ADIFFS_TO:-}" ]; then
     SCRIPT_DIR_ABS="$(cd "${SCRIPT_DIR}" && pwd)"

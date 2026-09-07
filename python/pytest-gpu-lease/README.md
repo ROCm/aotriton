@@ -30,12 +30,49 @@ driver / firmware / VBIOS. The mapping is strictly 1:1 worker-to-GPU.
 |---|---|---|
 | `GPU_LEASE_PIN` | unset | Bypass leasing; pin every worker to this GPU index. |
 | `GPU_LEASE_DEVICE_CLASS` | `cuda` | Accelerator class `gpu_device` formats with. |
+| `GPU_LEASE_LOCKFILE` | derived from `tmp_path_factory` | Path of the shared lock file. Set it to run the watchdog (below), which cannot predict the derived path. Also enables the per-worker stack dump. |
 
 `PYTEST_XDIST_WORKER_COUNT` is **not** consulted. `pytest-xdist` sets it inside the
 worker process, but this module is imported at `pytest11` entry-point time -- earlier
 than that -- so reading it saw `0` and put every worker on GPU 0. The worker count comes
 from `config.workerinput`, which is populated before any fixture runs. Nothing here is
 read from the environment at import time.
+
+## Watchdog
+
+A test whose GPU kernel never retires wedges its worker for good: the device sync
+never returns, so no in-process timeout can fire -- `pytest-timeout`'s signal method
+needs the main thread to reach a bytecode boundary, and a thread parked in a driver
+call never does.
+
+`pytest_gpu_lease.watchdog` detects that from outside. Each worker stamps
+`time.monotonic_ns()` into its own lease page before every test and zeroes it after;
+the watchdog polls the file and, when a page has gone `--threshold` seconds without a
+fresh stamp, sends SIGTERM (a stack dump, via `faulthandler`), waits `--grace`, then
+SIGKILLs. Signals go through a `pidfd`, so a reissued pid cannot be hit.
+
+```bash
+export GPU_LEASE_LOCKFILE=/dev/shm/gpu_lease.$$        # both sides must agree
+python -m pytest_gpu_lease.watchdog --lockfile "$GPU_LEASE_LOCKFILE" --workers 4 &
+watchdog_pid=$!
+trap 'kill -s TERM "$watchdog_pid"; wait "$watchdog_pid"' EXIT
+pytest -n 4 ...
+```
+
+**It is a service and never stops on its own.** Whoever starts it stops it, with
+SIGTERM; every rule for inferring "the pass is over" from the lock file is a guess,
+and a wrong guess silently leaves the rest of a long run unprotected. On SIGTERM it
+removes the lock file and any stack dumps beside it. SIGKILL is the one case it
+cannot clean up after.
+
+`--lockfile` is required rather than read from the environment, so `ps` shows which
+file each watchdog is watching -- the only way to tell a stale one from the live one.
+See `--help` for `--threshold`, `--grace` and `--poll_interval`.
+
+The watchdog needs `pidfd_open`: Linux 5.3+ and Python 3.9+. That is narrower than
+ROCm itself, which still supports RHEL 8.10, and is deliberate -- this is Level-3 CI
+tooling running on Ubuntu 22.04 or later. The lease fixtures have no such requirement;
+only `pytest_gpu_lease.watchdog` does, and it asserts at import rather than degrading.
 
 ## Fixtures
 
