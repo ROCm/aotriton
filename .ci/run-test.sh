@@ -121,6 +121,27 @@ fi
   # Python 3.9+ on an older kernel has the function and fails at the syscall.
   # Running unprotected is worse than a watchdog and better than refusing to
   # test at all.
+  # The one teardown for this pass. Outside the watchdog branch on purpose:
+  # USE_WATCHDOG=0 still has a pytest to stop. pytest first, since the watchdog
+  # unlinks the lock file on its way out and workers must not still hold locks.
+  # By pid, not via the terminal: Ctrl+\\ never reaches either of them, both
+  # having inherited SIG_IGN for SIGQUIT. `wait` reaps; `:-` covers "not
+  # started" and "no watchdog".
+  _stop_pass() {
+    kill -s TERM "${pytest_pid:-}" 2>/dev/null; wait "${pytest_pid:-}" 2>/dev/null
+    kill -s TERM "${watchdog_pid:-}" 2>/dev/null; wait "${watchdog_pid:-}" 2>/dev/null
+  }
+  # Single-quoted, so the body is re-parsed when the trap fires and picks up
+  # `pytest_pid` and `watchdog_pid`, assigned below. Double quotes bake in "".
+  #
+  # EXIT alone is not enough: an untrapped SIGTERM, SIGHUP or SIGQUIT kills
+  # the shell without running it (measured; SIGINT does run it).
+  # Known Issue: kill -9 CI script (rarely needed) will leave stale lock file
+  # under /dev/shm. Users should terminate manually by inspecting ps.
+  trap '_stop_pass' EXIT
+  trap '_stop_pass; exit 130' INT
+  trap '_stop_pass; exit 131' QUIT
+  trap '_stop_pass; exit 143' TERM HUP
   use_watchdog="${USE_WATCHDOG:-1}"
   if [ "${use_watchdog}" != 0 ] \
      && ! python -c 'import os; os.close(os.pidfd_open(os.getpid()))' 2>/dev/null; then
@@ -148,36 +169,6 @@ fi
     python -m pytest_gpu_lease.watchdog --lockfile "${GPU_LEASE_LOCKFILE}" \
       --workers "${ngpus}" 2>>"${_errfile}" &
     watchdog_pid=$!
-    # The one teardown for this pass, and the only thing the traps below call.
-    # pytest first, then the watchdog that was protecting it: the watchdog
-    # unlinks the lock file on its way out, and doing that while workers still
-    # hold locks would let a replacement recreate the path as a fresh inode.
-    #
-    # SIGTERM to both, named rather than left to `kill`'s default, since it is
-    # the watchdog's documented stop signal. `wait` after each, so the unlink
-    # has finished and neither is left a zombie before this returns.
-    #
-    # pytest is stopped by pid rather than left to the terminal: Ctrl+C reaches
-    # it on its own (SIGINT goes to the whole foreground group) but Ctrl+\\ does
-    # not -- measured, SIGQUIT kills this shell outright while pytest and the
-    # watchdog, both of which inherited SIG_IGN for it, carry on. `pytest_pid`
-    # is empty before pytest starts and cleared after it returns, so the
-    # early-exit path below and a completed run both signal nothing.
-    _stop_pass() {
-      kill -s TERM "${pytest_pid:-}" 2>/dev/null; wait "${pytest_pid:-}" 2>/dev/null
-      kill -s TERM "${watchdog_pid}" 2>/dev/null; wait "${watchdog_pid}" 2>/dev/null
-    }
-    # Single-quoted, so the body is re-parsed when the trap fires and picks up
-    # `pytest_pid`, assigned further below. Double quotes would bake in "".
-    #
-    # EXIT alone is not enough: an untrapped SIGTERM, SIGHUP or SIGQUIT kills
-    # the shell without running it (measured; SIGINT does run it).
-    # Known Issue: kill -9 CI script (rarely needed) will leave stale lock file
-    # under /dev/shm. Users should terminate manually by inspecting ps.
-    trap '_stop_pass' EXIT
-    trap '_stop_pass; exit 130' INT
-    trap '_stop_pass; exit 131' QUIT
-    trap '_stop_pass; exit 143' TERM HUP
     # Fatal here, unlike the no-pidfd case above: we asked for a watchdog and did
     # not get one, which is an environment that is broken rather than merely old,
     # and the failure would otherwise surface as one wedged worker eating the
