@@ -247,15 +247,16 @@ PackedKernel::PackedKernel(fd_t fd, size_t offset, size_t size) {
     final_status_ = hipErrorInvalidSource;
     return;
   }
+  std::vector<uint8_t> decompressed_content;
   try {
-    decompressed_content_.resize(header.uncompressed_size);
+    decompressed_content.resize(header.uncompressed_size);
   } catch (const std::bad_alloc&) {
     // Otherwise this escapes the constructor through make_shared() in open()
     // and terminates the process.
     final_status_ = hipErrorOutOfMemory;
     return;
   }
-  directory_.clear();
+  std::unordered_map<std::string_view, const AKS2_Metadata*> directory;
 
   lzma_stream strm = LZMA_STREAM_INIT;
   lzma_ret ret = lzma_stream_decoder(&strm, AOTRITON_LZMA_MEMLIMIT, 0);
@@ -273,8 +274,8 @@ PackedKernel::PackedKernel(fd_t fd, size_t offset, size_t size) {
   uint8_t inbuf[AOTRITON_LZMA_BUFSIZ];
   strm.next_in = nullptr;
   strm.avail_in = 0;
-  strm.next_out = (uint8_t*)decompressed_content_.data();
-  strm.avail_out = decompressed_content_.size();
+  strm.next_out = decompressed_content.data();
+  strm.avail_out = decompressed_content.size();
   lzma_action action = LZMA_RUN;
   // Track remaining bytes when size is bounded (reading AKS2 from inside a ZIP).
   size_t remaining = (size == SIZE_MAX) ? SIZE_MAX : (size - sizeof(AKS2_Header));
@@ -293,36 +294,29 @@ PackedKernel::PackedKernel(fd_t fd, size_t offset, size_t size) {
     }
     lzma_ret ret = lzma_code(&strm, action);
     if (ret != LZMA_OK && ret != LZMA_STREAM_END) {
-      decompressed_content_.clear();
-      directory_.clear();
       final_status_ = hipErrorIllegalState; // Content not fully decompressed
       return;
     }
   }
   AOTRITON_LOG(LOG_DEBUG, "PackedKernel decompressed to %p",
-               static_cast<const void*>(decompressed_content_.data()));
-  auto reject = [this](hipError_t status) {
-    decompressed_content_.clear();
-    directory_.clear();
-    final_status_ = status;
-  };
+               static_cast<const void*>(decompressed_content.data()));
   // A short stream would leave the tail of the buffer zero-filled and parsed as
   // if it were real directory content.
   if (strm.total_out != header.uncompressed_size) {
     AOTRITON_LOG(LOG_DEBUG, "AKS2 payload is %llu bytes, header declares %u",
                  static_cast<unsigned long long>(strm.total_out),
                  unsigned(header.uncompressed_size));
-    reject(hipErrorIllegalState);
+    final_status_ = hipErrorIllegalState;
     return;
   }
-  const uint8_t* const content_begin = decompressed_content_.data();
+  const uint8_t* const content_begin = decompressed_content.data();
   // The directory occupies the first directory_size bytes; the images follow.
   const uint8_t* const dir_end = content_begin + header.directory_size;
   const size_t image_region_size = header.uncompressed_size - header.directory_size;
   const uint8_t* parse_ptr = content_begin;
   for (uint32_t i = 0; i < header.number_of_kernels; i++) {
     if (static_cast<size_t>(dir_end - parse_ptr) < sizeof(AKS2_Metadata)) {
-      reject(hipErrorInvalidSource); // Entry header runs past the directory
+      final_status_ = hipErrorInvalidSource; // Entry header runs past the directory
       return;
     }
     auto metadata = reinterpret_cast<const AKS2_Metadata*>(parse_ptr);
@@ -333,31 +327,33 @@ PackedKernel::PackedKernel(fd_t fd, size_t offset, size_t size) {
     if (metadata->filename_length == 0
         || static_cast<size_t>(dir_end - parse_ptr) < metadata->filename_length
         || parse_ptr[metadata->filename_length - 1] != '\0') {
-      reject(hipErrorInvalidSource); // Name runs past the directory or is unterminated
+      final_status_ = hipErrorInvalidSource; // Name runs past the directory or is unterminated
       return;
     }
     // Bound the image here, so filter() can never hand an out-of-range pointer
     // to hipModuleLoadDataEx(). Written to avoid overflowing the addition.
     if (metadata->offset > image_region_size
         || metadata->image_size > image_region_size - metadata->offset) {
-      reject(hipErrorInvalidSource); // Image runs past the payload
+      final_status_ = hipErrorInvalidSource; // Image runs past the payload
       return;
     }
     std::string_view filename(reinterpret_cast<const char*>(parse_ptr),
                               metadata->filename_length - 1);
-    directory_.emplace(filename, metadata);
+    directory.emplace(filename, metadata);
     AOTRITON_LOG(LOG_DEBUG, "Add kernel %u: %.*s offset: %u",
                  unsigned(i), int(filename.size()), filename.data(), unsigned(metadata->offset));
     parse_ptr += metadata->filename_length;
   }
-  kernel_start_ = parse_ptr;
-  AOTRITON_LOG(LOG_DEBUG, "PackedKernel.kernel_start_ = %p", static_cast<const void*>(kernel_start_));
   if (parse_ptr != dir_end) {
     // Directory size not matching: the entries did not consume it exactly.
-    reject(hipErrorIllegalAddress);
+    final_status_ = hipErrorIllegalAddress;
     return;
   }
   AOTRITON_LOG(LOG_DEBUG, "PackedKernel.kernel_start_ sanity check passed");
+  decompressed_content_ = std::move(decompressed_content);
+  directory_ = std::move(directory);
+  kernel_start_ = decompressed_content_.data() + header.directory_size;
+  AOTRITON_LOG(LOG_DEBUG, "PackedKernel.kernel_start_ = %p", static_cast<const void*>(kernel_start_));
   final_status_ = hipSuccess;
 }
 
