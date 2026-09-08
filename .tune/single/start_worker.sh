@@ -100,7 +100,7 @@ WORKER_CONTAINER_ID=$(docker run -d \
   -e PYTHONPYCACHEPREFIX=/wkdir/run/pycache \
   --mount type=bind,source=$(realpath $WORKER_WORKDIR),target=/wkdir \
   "$CELERY_WORKER_IMAGE" \
-  bash -c "source /wkdir/config.rc && source \$(dirname \$CELERY_WORKER_PYTHON)/activate && cd /wkdir/aotriton.src && bash .tune/remote/worker_service.sh start /wkdir $ARCH ${EXTRA_ARGS[*]} && exec sleep infinity")
+  bash -c "source /wkdir/config.rc && source \$(dirname \$CELERY_WORKER_PYTHON)/activate && cd /wkdir/aotriton.src && bash .tune/remote/install_aotriton_pkg.sh && bash .tune/remote/worker_service.sh start /wkdir $ARCH ${EXTRA_ARGS[*]} && exec sleep infinity")
 
 if [ -z "$WORKER_CONTAINER_ID" ]; then
   echo "Failed to start container" >&2
