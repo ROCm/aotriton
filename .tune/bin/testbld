@@ -123,8 +123,14 @@ for ARCH in "${ARCH_LIST[@]}"; do
   ALTWHEEL_CONFIG="$(get_resolved_altwheel_yaml "$AOTRITON_ROOT" "$WORKDIR")"
   [ -n "$ALTWHEEL_CONFIG" ] && BUILD_TEST_ARGS+=(--altwheel_config "$ALTWHEEL_CONFIG")
 
+  # PYTORCH_ROCM_ARCH for the same reason build_arch.sh sets it: this build
+  # also reaches find_package(Torch) -- AOTRITON_USE_TORCH defaults ON and
+  # build-test.sh does not turn it off -- and torch's LoadHIP.cmake refuses to
+  # configure without it rather than probing for a GPU this loop may not be
+  # building for.
   AOTRITON_BUILD_PATH="$BUILD_DIR" \
   AOTRITON_INSTALL_PATH="$INSTALL_DIR" \
+  PYTORCH_ROCM_ARCH="$ARCH" \
     bash "$AOTRITON_ROOT/.ci/build-test.sh" "${BUILD_TEST_ARGS[@]}" "$ARCH" "$TRITON_WHEEL"
 
   echo "Installed: $INSTALL_DIR"
