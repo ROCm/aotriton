@@ -159,6 +159,31 @@ case "$TUNING_MODE" in
         ;;
 esac
 
+# Two things the container command has to do before it can run testrun, both
+# of them the worker path's, arrived at here by the same route.
+#
+# The install: `aotriton` is not in the image's venv. The image builds the
+# venv and fills it from requirements-tuning.txt, but the package itself lives
+# in the bind-mounted checkout, so it has to be installed at launch --
+# .tune/single/start_worker.sh does the same, immediately before
+# worker_service.sh. See install_aotriton_pkg.sh for why at every start rather
+# than at image build time, and why it stages to /tmp. Without it this wrapper
+# dies before it prints anything:
+#   /venv/bin/python: No module named 'aotriton'
+# The checkout is at /wkdir/aotriton.src under the bind mount below, which is
+# that script's default, so it needs no argument.
+#
+# The variable: modules/ is application source and is never shipped inside the
+# package (setup.py excludes it), so registry.default_modules_dir()'s two
+# fallbacks -- <cwd>/modules, then a path derived from the installed package's
+# __file__ -- both answer site-packages/ once that install has happened, it
+# being non-editable. The cd below does leave the cwd in the checkout,
+# so testrun's own load_tune_module() would resolve on the cwd step today; that
+# is an accident of this one call site, not a guarantee, since anything that
+# chdirs -- exaid.py spawns `python -m aotriton.tune.testrun` with a cwd it
+# derives from the package's __file__ -- drops straight through to the wrong
+# answer. worker_service.sh states it outright for that reason (974864b4) and
+# this path does not go through worker_service.sh, so it states it too.
 exec docker run --rm -it \
     --device=/dev/kfd \
     --device=/dev/dri \
@@ -175,5 +200,7 @@ exec docker run --rm -it \
         source /wkdir/config.rc
         source "$(dirname "$CELERY_WORKER_PYTHON")/activate"
         cd /wkdir/aotriton.src
+        bash .tune/remote/install_aotriton_pkg.sh
+        export AOTRITON_MODULES_DIR=/wkdir/aotriton.src/modules
         exec "$CELERY_WORKER_PYTHON" -m aotriton.tune.testrun "$@"
     ' -- "${FORWARD_ARGS[@]}"
