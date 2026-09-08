@@ -159,17 +159,20 @@ run_command(cmd, cwd, workdir, description)
 
 **Individual Worker**:
 ```bash
-.tune/single/build_image.sh <workdir> <hostname> [--follow]
+.tune/single/build_image.sh <workdir> <hostname> [--arch <arch>] [--follow]
   → ssh <hostname> "jobid=$(tsp docker build ...) && tsp -c $jobid"
   → --follow flag: web UI gets real-time output via tsp -c
   → tsp -c blocks until completion and exits with job's exit code
+  → --arch: passed to docker build as --build-arg ROCM_GPU_ARCH, selecting
+    the torch[device-<arch>] wheel. Defaults to this host's workers.db arch.
+    Never probed remotely: workers may lack amd-smi/rocminfo on PATH.
 ```
 
 **Bulk (All Workers)**:
 ```bash
 .tune/bin/imgbld <workdir>
   → Iterates workers.db
-  → Calls build_image.sh for each worker (without --follow)
+  → Calls build_image.sh for each worker (without --follow), passing --arch
 ```
 
 **Design Note**: Build libraries (`libbld`) only runs on dev machine once, never on workers.

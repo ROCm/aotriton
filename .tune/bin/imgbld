@@ -50,14 +50,20 @@ for hostname in "${HOSTNAMES[@]}"; do
         continue
     fi
 
-    # Determine remote workdir for this worker
+    # Determine remote workdir and GPU arch for this worker
     WORKER_INFO=$(get_worker_by_hostname "$WORKDIR" "$hostname")
     IFS='|' read -r arch workdir_override <<< "$WORKER_INFO"
     WORKER_WORKDIR="${workdir_override:-$DEFAULT_WORKDIR}"
 
-    echo "Queuing docker build on $hostname (workdir: $WORKER_WORKDIR)"
+    echo "Queuing docker build on $hostname (workdir: $WORKER_WORKDIR, arch: ${arch:-<unset>})"
 
-    "$TUNE_ROOT/single/build_image.sh" "$WORKDIR" "$hostname"
+    # Hand the registry's arch down explicitly rather than letting the remote
+    # work it out: the image's torch is selected by GPU arch
+    # (torch[device-<arch>]), and the remote may have neither amd-smi nor
+    # rocminfo on PATH to ask -- they can be absent, or buried in a TheRock
+    # venv at a location nothing here can predict. The registry already holds
+    # the answer for every worker, so it is the one authority worth using.
+    "$TUNE_ROOT/single/build_image.sh" "$WORKDIR" "$hostname" --arch "$arch"
 
     BUILD_COUNT=$((BUILD_COUNT + 1))
 done

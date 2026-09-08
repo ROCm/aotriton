@@ -21,6 +21,43 @@ fi
 
 load_config "$WORKDIR"
 
+# Where the worker venv's torch comes from. AMD's multi-arch wheel index serves
+# a torch built against a specific ROCm, selected by an extra naming the GPU
+# arch it must run on, plus the matching `rocm` runtime/devel distribution.
+# This replaces the older `pip install /torch-*.whl /triton-*.whl`, which
+# depended on the base image happening to carry those two files at /.
+#
+# ROCM_GPU_ARCH here is only the fallback baked into the Dockerfile as an ARG
+# default, for a build target that is not a registered worker (a build node,
+# which has no arch row to read). imgbld/build_image.sh override it per host
+# with `--build-arg ROCM_GPU_ARCH=<arch>` taken from the worker registry --
+# deliberately, because the arch must NOT be probed on the remote: a worker is
+# not guaranteed to have amd-smi or rocminfo on PATH (they may live inside a
+# TheRock venv at an unknown location, or not be installed at all), while the
+# registry already knows every worker's arch.
+#
+# TODO: the index URL and the two versions are hardcoded to what the current
+#       target system needs. They belong in config.rc (the ROCm release in
+#       particular changes on its own schedule); deferred to a later phase.
+ROCM_WHL_INDEX="https://repo.amd.com/rocm/whl-multi-arch/"
+ROCM_VERSION="7.14.1"
+TORCH_VERSION="2.12.0"
+ROCM_GPU_ARCH="gfx950"
+
+# What a bare Debian/Ubuntu base needs before `python3 -m venv` can run at all.
+# The old base images were vendor PyTorch images that already carried a
+# python3; a plain debian:13 carries none, so the venv step failed with
+# `/bin/sh: 1: python3: not found`. Debian splits ensurepip out of python3 into
+# python3-venv, so both are required -- python3 alone gets past `not found`
+# only to fail inside `-m venv`. ca-certificates is for the HTTPS fetch from
+# ${ROCM_WHL_INDEX} (pip vendors its own CA bundle, but image.scripts/ and any
+# later apt source do not).
+#
+# No compiler toolchain: every requirements*.txt dependency (numpy, pandas,
+# psycopg[binary], ...) resolves to a binary wheel, and torch/rocm come as
+# wheels too, so nothing here builds from source.
+IMAGE_BOOTSTRAP_PACKAGES="python3 python3-venv ca-certificates"
+
 if [ -z "$CELERY_WORKER_IMAGE_BASE" ]; then
   echo "Error: CELERY_WORKER_IMAGE_BASE not set in config.rc" >&2
   exit 1
@@ -46,10 +83,30 @@ COPY config.rc /config.rc
 # Copy scripts
 COPY image.scripts /image.scripts
 
-# Create venv if CELERY_WORKER_PYTHON doesn't exist and install wheels
+# Install a python3 that can create venvs, if the base image has none.
+# Guarded on the venv+ensurepip import rather than on \`command -v python3\`:
+# a base can have python3 yet lack ensurepip (Debian ships it separately), and
+# that case must install too. A base that already satisfies both -- every
+# vendor PyTorch image does -- skips this layer entirely.
+RUN if [ ! -f ${CELERY_WORKER_PYTHON} ] && \\
+       ! python3 -c 'import venv, ensurepip' >/dev/null 2>&1; then \\
+      apt-get update && \\
+      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \\
+          ${IMAGE_BOOTSTRAP_PACKAGES} && \\
+      rm -rf /var/lib/apt/lists/*; \\
+    fi
+
+# Which GPU arch this image's torch is built for. Overridden per host by
+# build_image.sh's --build-arg from the worker registry; the default below is
+# for build targets that have no registry entry.
+ARG ROCM_GPU_ARCH=${ROCM_GPU_ARCH}
+
+# Create venv if CELERY_WORKER_PYTHON doesn't exist and install torch + ROCm
 RUN if [ ! -f ${CELERY_WORKER_PYTHON} ]; then \\
       python3 -m venv \$(dirname \$(dirname ${CELERY_WORKER_PYTHON})); \\
-      ${CELERY_WORKER_PYTHON} -m pip install /torch-*.whl /triton-*.whl; \\
+      ${CELERY_WORKER_PYTHON} -m pip install --index-url ${ROCM_WHL_INDEX} \\
+          "torch[device-\${ROCM_GPU_ARCH}]==${TORCH_VERSION}+rocm${ROCM_VERSION}" \\
+          "rocm[devel]==${ROCM_VERSION}"; \\
     fi
 
 # Install requirements-tuning.txt
