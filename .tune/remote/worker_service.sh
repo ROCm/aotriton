@@ -12,9 +12,37 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AOTRITON_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# Change to aotriton root (also lets AOTRITON_MODULES_DIR default to
-# $AOTRITON_ROOT/modules via registry.default_modules_dir()'s cwd fallback)
+# Change to aotriton root. Entry points are launched from here, and several
+# tools still resolve checkout-relative data from the cwd.
 cd "$AOTRITON_ROOT"
+
+# State the modules/ location instead of leaving it to be inferred.
+#
+# registry.default_modules_dir() resolves in three steps: this variable, then
+# <cwd>/modules, then a path derived from the installed package's __file__.
+# Only the first survives a NON-editable install, which is what workers now
+# get (see .tune/remote/install_aotriton_pkg.sh). The other two both fail, in
+# ways that are easy to miss:
+#
+#   <cwd>/modules      holds only while the cwd stays put. exaid.py spawns
+#                      `python -m aotriton.tune.testrun` with an explicit
+#                      cwd of its own AOTRITON_ROOT, which it computes as
+#                      __file__.parent.parent.parent -- the checkout root
+#                      from a checkout, but site-packages/ from an install.
+#                      The subprocess therefore starts in site-packages no
+#                      matter where this script cd'd to.
+#   __file__-derived   same arithmetic, same wrong answer, and it is the
+#                      last resort, so it is what actually produced:
+#                        ImportError: No tune block for family 'flash':
+#                        /venv/.../site-packages/modules/flash/tune/__init__.py
+#                        not found
+#
+# modules/ is application source and is deliberately never shipped inside the
+# package (setup.py excludes it: "a compiler does not ship the application it
+# compiles"), so no amount of install-side fixing can make those two work.
+# This script, unlike the installed package, does know where the checkout is:
+# it lives in it.
+export AOTRITON_MODULES_DIR="$AOTRITON_ROOT/modules"
 
 BROKER_MODULE="aotriton.tune.localq.broker_main"
 GPU_WORKER_MODULE="aotriton.tune.localq.gpu_worker_socket"
