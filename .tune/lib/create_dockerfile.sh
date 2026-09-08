@@ -111,9 +111,12 @@ cat > "$IMAGE_BUILD_DIR/Dockerfile" <<EOF
 #          Do not manually edit. Customize via config.rc or image.scripts/ instead.
 FROM ${CELERY_WORKER_IMAGE_BASE}
 
-COPY config.rc /config.rc
-# Copy scripts
-COPY image.scripts /image.scripts
+# config.rc and image.scripts/ are COPYied further down, immediately above the
+# layer that consumes them, NOT here. They are the most volatile inputs to this
+# image -- config.rc changes whenever any tuning setting does -- and a COPY
+# invalidates every layer after it. Sitting at the top, they put a multi-gigabyte
+# torch and ROCm download behind a file that changes constantly, which is what
+# made every rebuild re-download the wheels.
 
 # Toolchain the worker needs regardless of what the base image is.
 #
@@ -210,6 +213,11 @@ WORKDIR /tmp
 RUN ${CELERY_WORKER_PYTHON} -m pip install -r /tmp/requirements-tuning.txt && \\
     ${CELERY_WORKER_PYTHON} -m pip install -r /tmp/requirements-dev.txt && \\
     rm -rf /tmp/requirements*.txt /tmp/python
+
+# The volatile inputs, deliberately last. Everything above is expensive and
+# rarely changes; these two change often and invalidate only what follows them.
+COPY config.rc /config.rc
+COPY image.scripts /image.scripts
 
 # Run all scripts matching pattern: NN-*.sh
 RUN for script in /image.scripts/[0-9][0-9]-*.sh; do \\
