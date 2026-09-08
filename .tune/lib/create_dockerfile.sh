@@ -44,19 +44,45 @@ ROCM_VERSION="7.14.1"
 TORCH_VERSION="2.12.0"
 ROCM_GPU_ARCH="gfx950"
 
-# What a bare Debian/Ubuntu base needs before `python3 -m venv` can run at all.
-# The old base images were vendor PyTorch images that already carried a
-# python3; a plain debian:13 carries none, so the venv step failed with
-# `/bin/sh: 1: python3: not found`. Debian splits ensurepip out of python3 into
-# python3-venv, so both are required -- python3 alone gets past `not found`
-# only to fail inside `-m venv`. ca-certificates is for the HTTPS fetch from
-# ${ROCM_WHL_INDEX} (pip vendors its own CA bundle, but image.scripts/ and any
-# later apt source do not).
+# What a bare Debian/Ubuntu base needs to be a tuning worker. The old base
+# images were vendor PyTorch images carrying all of this already; a plain
+# debian:13 carries none of it, and each missing piece surfaces as a separate
+# `command not found` several layers into the build.
 #
-# No compiler toolchain: every requirements*.txt dependency (numpy, pandas,
-# psycopg[binary], ...) resolves to a binary wheel, and torch/rocm come as
-# wheels too, so nothing here builds from source.
-IMAGE_BOOTSTRAP_PACKAGES="python3 python3-venv ca-certificates"
+#   python3 python3-venv  `python3 -m venv` itself. Debian splits ensurepip out
+#                         of python3 into python3-venv, so both are required --
+#                         python3 alone gets past `not found` only to fail
+#                         inside `-m venv`.
+#   python3-dev           AOTriton's cmake does
+#                         `find_package(Python3 COMPONENTS Development REQUIRED)`
+#                         for the pybind11 extension, which needs the headers,
+#                         not just the interpreter.
+#   git                   build_triton_wheel.sh reads the third_party/triton
+#                         gitlink and, on a cache miss, clones Triton --
+#                         `git: command not found` is where this last failed.
+#   cmake ninja-build build-essential
+#                         the Triton wheel build and .ci/build-tune.sh.
+#   pkg-config liblzma-dev
+#                         AOTriton's top-level CMakeLists.txt has
+#                         `pkg_search_module(LZMA REQUIRED liblzma)` for Kernel
+#                         Storage V2, so configure dies without both.
+#   ca-certificates curl  the HTTPS fetch from ${ROCM_WHL_INDEX} and whatever
+#                         image.scripts/ pulls down (pip vendors its own CA
+#                         bundle, but nothing else here does).
+#
+# This list is create_perfmon_dockerfile.sh's on xinyazhang/generalized-def,
+# which solved the same bare-base problem for the perfmon image, plus
+# python3-dev -- that image builds AOTriton shims and never the Python binding,
+# so it needs no headers.
+#
+# Accumulated rather than written as one long line: the value is interpolated
+# into a Dockerfile RUN whose lines are joined by backslash continuations, so
+# an embedded newline here would break that line and take the rest of the
+# apt-get invocation with it.
+IMAGE_BOOTSTRAP_PACKAGES="ca-certificates curl git"
+IMAGE_BOOTSTRAP_PACKAGES="$IMAGE_BOOTSTRAP_PACKAGES cmake ninja-build build-essential"
+IMAGE_BOOTSTRAP_PACKAGES="$IMAGE_BOOTSTRAP_PACKAGES pkg-config liblzma-dev"
+IMAGE_BOOTSTRAP_PACKAGES="$IMAGE_BOOTSTRAP_PACKAGES python3 python3-venv python3-dev"
 
 if [ -z "$CELERY_WORKER_IMAGE_BASE" ]; then
   echo "Error: CELERY_WORKER_IMAGE_BASE not set in config.rc" >&2
@@ -83,30 +109,37 @@ COPY config.rc /config.rc
 # Copy scripts
 COPY image.scripts /image.scripts
 
-# Install a python3 that can create venvs, if the base image has none.
-# Guarded on the venv+ensurepip import rather than on \`command -v python3\`:
-# a base can have python3 yet lack ensurepip (Debian ships it separately), and
-# that case must install too. A base that already satisfies both -- every
-# vendor PyTorch image does -- skips this layer entirely.
-RUN if [ ! -f ${CELERY_WORKER_PYTHON} ] && \\
-       ! python3 -c 'import venv, ensurepip' >/dev/null 2>&1; then \\
-      apt-get update && \\
-      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \\
-          ${IMAGE_BOOTSTRAP_PACKAGES} && \\
-      rm -rf /var/lib/apt/lists/*; \\
-    fi
+# Toolchain the worker needs regardless of what the base image is.
+#
+# Unconditional on purpose. An earlier version gated this on whether python3
+# could already import venv, which was wrong the moment the list grew past
+# Python: a vendor base that satisfies the Python check would have skipped the
+# layer and lost git, cmake and the rest with it. apt-get is idempotent, so a
+# base that already has everything just re-resolves it and moves on.
+RUN apt-get update && \\
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \\
+        ${IMAGE_BOOTSTRAP_PACKAGES} && \\
+    rm -rf /var/lib/apt/lists/*
 
 # Which GPU arch this image's torch is built for. Overridden per host by
 # build_image.sh's --build-arg from the worker registry; the default below is
 # for build targets that have no registry entry.
 ARG ROCM_GPU_ARCH=${ROCM_GPU_ARCH}
 
-# Create venv if CELERY_WORKER_PYTHON doesn't exist and install torch + ROCm
+# Create venv if CELERY_WORKER_PYTHON doesn't exist and install torch + ROCm.
+#
+# \`rocm-sdk init\` is TheRock's required post-install step, and is only valid
+# because the spec above takes \`devel\` -- ROCm's 300-post-install.rst says to
+# run init only when devel is installed. Without it the wheels are unpacked but
+# ROCM_PATH resolves to nothing, so hipcc and the HIP headers stay invisible to
+# every later cmake.
 RUN if [ ! -f ${CELERY_WORKER_PYTHON} ]; then \\
       python3 -m venv \$(dirname \$(dirname ${CELERY_WORKER_PYTHON})); \\
       ${CELERY_WORKER_PYTHON} -m pip install --index-url ${ROCM_WHL_INDEX} \\
           "torch[device-\${ROCM_GPU_ARCH}]==${TORCH_VERSION}+rocm${ROCM_VERSION}" \\
-          "rocm[devel]==${ROCM_VERSION}"; \\
+          "rocm[devel]==${ROCM_VERSION}" && \\
+      \$(dirname ${CELERY_WORKER_PYTHON})/rocm-sdk init && \\
+      echo "Resolved ROCM_PATH=\$(\$(dirname ${CELERY_WORKER_PYTHON})/rocm-sdk path --root)"; \\
     fi
 
 # Install requirements-tuning.txt
