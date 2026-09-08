@@ -86,6 +86,20 @@ if [ -f "$RUNFILE" ]; then
   exit 1
 fi
 
+# `bash -lc`, never plain `bash -c`. Every shell that enters this image must be
+# a LOGIN shell, because /etc/profile.d/aotriton.sh -- which activates the venv
+# and exports ROCM_PATH along with ROCm's bin/ and lib/ -- is read by
+# /etc/profile and by nothing else. A non-login shell skips it entirely and
+# gets no ROCM_PATH, so anything it launches has to find HIP by luck.
+#
+# This is exactly how the worker and testrun_direct diverged: the same image,
+# the same payload, but testrun_direct ran `bash -l -c` and worked while the
+# worker ran `bash -c` and its testrun children died on arrival, reporting
+# nothing more than a broken pipe back to the task handler.
+#
+# `source .../activate` below is not a substitute. It brings the venv and
+# nothing else -- ROCM_PATH is not the venv's business -- which is why the
+# worker looked correctly set up right until something needed ROCm.
 set -x
 WORKER_CONTAINER_ID=$(docker run -d \
   --init \
@@ -100,7 +114,7 @@ WORKER_CONTAINER_ID=$(docker run -d \
   -e PYTHONPYCACHEPREFIX=/wkdir/run/pycache \
   --mount type=bind,source=$(realpath $WORKER_WORKDIR),target=/wkdir \
   "$CELERY_WORKER_IMAGE" \
-  bash -c "source /wkdir/config.rc && source \$(dirname \$CELERY_WORKER_PYTHON)/activate && cd /wkdir/aotriton.src && bash .tune/remote/install_aotriton_pkg.sh && bash .tune/remote/worker_service.sh start /wkdir $ARCH ${EXTRA_ARGS[*]} && exec sleep infinity")
+  bash -lc "source /wkdir/config.rc && source \$(dirname \$CELERY_WORKER_PYTHON)/activate && cd /wkdir/aotriton.src && bash .tune/remote/install_aotriton_pkg.sh && bash .tune/remote/worker_service.sh start /wkdir $ARCH ${EXTRA_ARGS[*]} && exec sleep infinity")
 
 if [ -z "$WORKER_CONTAINER_ID" ]; then
   echo "Failed to start container" >&2

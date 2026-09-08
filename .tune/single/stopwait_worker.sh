@@ -46,7 +46,7 @@ WORKER_CONTAINER_ID=$(cat "$RUNFILE")
 HOSTNAME=$(hostname -s)
 
 echo "Gracefully stopping workers in container: $WORKER_CONTAINER_ID"
-docker exec "$WORKER_CONTAINER_ID" bash -c "
+docker exec "$WORKER_CONTAINER_ID" bash -lc "
 source /wkdir/config.rc && source \$(dirname \$CELERY_WORKER_PYTHON)/activate
 cd /wkdir/aotriton.src
 

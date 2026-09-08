@@ -65,10 +65,10 @@ WORKER_CONTAINER_ID=$(cat "$RUNFILE")
 
 if [ "$GRACEFUL" = "true" ]; then
   echo "Gracefully stopping worker service in container: $WORKER_CONTAINER_ID"
-  docker exec "$WORKER_CONTAINER_ID" bash -c "source /wkdir/config.rc && source \$(dirname \$CELERY_WORKER_PYTHON)/activate && cd /wkdir/aotriton.src && bash .tune/remote/worker_service.sh stop /wkdir $ARCH --graceful"
+  docker exec "$WORKER_CONTAINER_ID" bash -lc "source /wkdir/config.rc && source \$(dirname \$CELERY_WORKER_PYTHON)/activate && cd /wkdir/aotriton.src && bash .tune/remote/worker_service.sh stop /wkdir $ARCH --graceful"
 else
   echo "Stopping worker service in container: $WORKER_CONTAINER_ID"
-  docker exec "$WORKER_CONTAINER_ID" bash -c "source /wkdir/config.rc && source \$(dirname \$CELERY_WORKER_PYTHON)/activate && cd /wkdir/aotriton.src && bash .tune/remote/worker_service.sh stop /wkdir $ARCH"
+  docker exec "$WORKER_CONTAINER_ID" bash -lc "source /wkdir/config.rc && source \$(dirname \$CELERY_WORKER_PYTHON)/activate && cd /wkdir/aotriton.src && bash .tune/remote/worker_service.sh stop /wkdir $ARCH"
 fi
 
 echo "Stopping and removing container: $WORKER_CONTAINER_ID"

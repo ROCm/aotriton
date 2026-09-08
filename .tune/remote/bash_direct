@@ -79,7 +79,7 @@ exec docker run --rm -it \
     -e PYTHONPYCACHEPREFIX=/wkdir/run/pycache \
     --mount type=bind,source="$(realpath "$WORKDIR")",target=/wkdir \
     "$CELERY_WORKER_IMAGE" \
-    bash -c '
+    bash -l -c '
         source /wkdir/config.rc
         source "$(dirname "$CELERY_WORKER_PYTHON")/activate"
         cd /wkdir/aotriton.src
