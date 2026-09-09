@@ -914,50 +914,11 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
         if const_expr(traits.SPLITK):
             output_store.store_empty_split()
 
-    # Split-K combine. Carried from the production kernel, not part of the
-    # parity surface -- see the plan's split-K note. Unchanged.
-    COMBINE_BLOCK = 256
-    COMBINE_LANES_PER_ROW = traits.HEAD_DIM // 4
-    COMBINE_ROWS_PER_BLOCK = COMBINE_BLOCK // COMBINE_LANES_PER_ROW
-
-    @flyc.kernel(known_block_size=[COMBINE_BLOCK, 1, 1])
-    def flash_attn_splitk_combine_kernel(
-        # `O` and `LSE` follow the main kernel's operands onto the wire as
-        # pointers, because the launcher hands it the same two values. `WS`
-        # does not: the workspace is only ever allocated by the launcher, never
-        # by an external caller, so nothing gains from shrinking its slot, and
-        # under a non-split-K build it is `Constexpr` and has no slot at all.
-        O: fx.Pointer,  # noqa: E741
-        WS: fx.Tensor,
-        LSE: fx.Pointer,
-        batch_size: fx.Int32,
-        seq_len: fx.Int32,
-        # `fx.Int64`, and named for the axis like every other stride here. It
-        # was `stride_q_n: fx.Int32`, which was wrong twice over: the argument
-        # handed in is O's *sequence* stride, an i64, so every launch warned
-        # that the annotation did not match and was ignored; and `stride_q_n`
-        # is the production kernel's name for the BSHD token pitch, which is
-        # the very conflation that makes this kernel alias heads onto tokens on
-        # a BHSD output. See the guard in `_args`.
-        stride_o_seq: fx.Int64,
-    ):
-        ctx = dualwave.DualwaveSplitKCombineContext(
-            traits, wire_view(O), WS, batch_size, seq_len, stride_o_seq, LSE=wire_view(LSE)
-        )
-        ctx.init_types_and_constants()
-        ctx.init_runtime_indices()
-        ctx.init_thread_mapping(COMBINE_ROWS_PER_BLOCK, COMBINE_LANES_PER_ROW)
-        ctx.init_workspace()
-        ctx.init_descriptors()
-
-        combine = dualwave.DualwaveSplitKCombineHelper(ctx)
-        m_s, l_s = combine.load_ml_rows()
-        m_max = combine.reduce_m_max(m_s)
-        acc, den = combine.accumulate_splits(m_s, l_s, m_max)
-        if const_expr(traits.RETURN_LSE):
-            combine.store_lse(m_max, den)
-        o_pack = combine.pack_output(acc, den)
-        combine.store_output(o_pack)
+    # LOCAL DIVERGENCE FROM UPSTREAM: upstream defines a second `@flyc.kernel`
+    # here, `flash_attn_splitk_combine_kernel`, and launches it below. Both are
+    # deleted -- AOTriton locates a module's kernel by uniqueness, and this one
+    # is dead here because the descriptions pin `num_kv_splits=1`. Restore both
+    # blocks together when AOTriton builds a split-K forward.
 
     def _resolve_window_args(window):
         """`(window_left, window_right)` for the wire, as signed i32.
@@ -1134,13 +1095,6 @@ def build_flash_attn_func_gfx950_module_primary(meta, knobs):
             block=(traits.BLOCK_SIZE, 1, 1),
             stream=stream,
         )
-        if const_expr(traits.SPLITK):
-            combine_rows = bs_idx * fx.Index(num_head_q) * sl_idx
-            flash_attn_splitk_combine_kernel(O, Workspace, LSE, batch_size, max_seqlen_q, stride_q_seq).launch(
-                grid=(combine_rows // COMBINE_ROWS_PER_BLOCK, 1, 1),
-                block=(COMBINE_BLOCK, 1, 1),
-                stream=stream,
-            )
 
     def _args(
         Q,
