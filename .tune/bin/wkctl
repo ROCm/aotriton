@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 
 # Worker control orchestration
-# Usage: wkctl <workdir> <action> [--host <hostname>...]
+# Usage: wkctl <workdir> <action> [--host <hostname>]...
 # Actions: start|stop|graceful|restart|stopwait
 # GPU selection is read from the workers DB and applied automatically for start/restart.
 
@@ -46,7 +46,7 @@ WORKDIR="${ARGS[0]}"
 ACTION="${ARGS[1]}"
 
 if [ -z "$WORKDIR" ] || [ -z "$ACTION" ]; then
-    echo "Usage: $0 <workdir> <action> [--host <hostname>...]" >&2
+    echo "Usage: $0 <workdir> <action> [--host <hostname>]..." >&2
     echo "" >&2
     echo "Actions:" >&2
     echo "  start      Start worker (applies GPU selection from workers DB)" >&2

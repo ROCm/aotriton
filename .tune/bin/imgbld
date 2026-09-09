@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MIT
 
 # Build worker Docker images
-# Usage: imgbld [--host <hostname>...] <workdir>
+# Usage: imgbld [--host <hostname>]... <workdir>
 
 set -e
 
@@ -16,15 +16,14 @@ TUNE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 parse_host_filter "$@"
 
-# Remove --host from args
+# Remove --host (and its value) from args, leaving the positionals.
+# Must consume exactly what parse_host_filter consumed, or the two disagree
+# about which tokens are hostnames and which are the workdir.
 ARGS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --host)
-            shift
-            while [[ $# -gt 0 ]] && [[ ! "$1" =~ ^-- ]]; do
-                shift
-            done
+            shift 2 || shift
             ;;
         *)
             ARGS+=("$1")
@@ -36,7 +35,7 @@ done
 WORKDIR="${ARGS[0]}"
 
 if [ -z "$WORKDIR" ]; then
-    echo "Usage: $0 [--host <hostname>...] <workdir>" >&2
+    echo "Usage: $0 [--host <hostname>]... <workdir>" >&2
     exit 1
 fi
 
