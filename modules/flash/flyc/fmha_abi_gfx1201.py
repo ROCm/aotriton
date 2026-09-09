@@ -31,9 +31,11 @@ import math
 import weakref
 
 import fmha_common_gfx1201 as fmha
-import torch
 from philox import dropout_threshold
-from torch import float32 as torch_f32
+
+# `torch` and `torch.float32` are imported lazily, inside the three functions
+# that need them, because the build venv must never have torch and neither use
+# is reached by the AOT compile driver, which passes philox_seed=None.
 
 import flydsl.compiler as flyc
 import flydsl.expr as fx
@@ -361,6 +363,8 @@ def row_tensor_arg(t, name, num_head_q, seq_len, varlen):
     reading strides, so contiguity is required rather than merely convenient --
     and the host is the only place the caller's actual layout can be verified.
     """
+    from torch import float32 as torch_f32  # lazy: the build venv has no torch
+
     if t is None:
         raise ValueError(f"{name} is required")
     if t.dtype != torch_f32:
@@ -390,6 +394,8 @@ def lse_args(lse, seq_len, varlen, num_head_q):
     What the host can do instead -- and could not while it was inferring --
     is verify the caller's tensor actually has the declared layout.
     """
+    from torch import float32 as torch_f32  # lazy: the build venv has no torch
+
     if lse is None:
         return NULL_PTR
     if lse.dtype != torch_f32:
@@ -476,6 +482,8 @@ def u64_scalar(value, device, stream=None):
     Only its raw pointer reaches the kernel, so nothing else keeps it alive --
     callers bind it to a local that outlives the launch call.
     """
+    import torch  # lazy: only reached for a plain int seed; AOT passes None
+
     if value is None or hasattr(value, "data_ptr"):
         if value is not None and value.numel() < 1:
             raise ValueError("a philox scalar tensor must hold at least one element")

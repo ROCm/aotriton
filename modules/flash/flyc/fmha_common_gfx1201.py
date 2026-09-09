@@ -70,8 +70,14 @@ own warning.
 
 from dataclasses import dataclass
 
-from gfx1201_standalone import buffer_ops, kernels_common, wmma_ops
-from gfx1201_standalone import utils as common_utils
+from kernels.common import buffer_ops, kernels_common
+# Import rewrite: `wmma_ops`, and every symbol this file takes from
+# `kernels.common.utils` -- ssel, smin, smax, sdiv_rd_pow2 -- are branch-local
+# and absent from the released tag the build clones, so both names alias the
+# polyfill wholesale and no call site below changes. `buffer_ops` and
+# `kernels_common` are NOT rewritten: their symbols are in the released tree.
+import flyc_polyfill as wmma_ops
+import flyc_polyfill as common_utils
 
 import flydsl.expr as fx
 from flydsl._mlir import ir

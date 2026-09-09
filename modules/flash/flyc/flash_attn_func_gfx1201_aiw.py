@@ -107,8 +107,13 @@ from fmha_tuning_gfx1201 import (  # noqa: F401
     resolve_shards,
     vo_chunks,
 )
-from gfx1201_standalone import buffer_ops
-from gfx1201_standalone import utils as common_utils
+from kernels.common import buffer_ops
+# Import rewrite: the only symbol this file takes from `kernels.common.utils`
+# is `smax`, which is branch-local and absent from the released tag the build
+# clones, so the name aliases the polyfill wholesale and no call site below
+# changes. `buffer_ops` is NOT rewritten: `get_element_ptr` is in the released
+# tree.
+import flyc_polyfill as common_utils
 from philox import Philox
 
 import flydsl.compiler as flyc

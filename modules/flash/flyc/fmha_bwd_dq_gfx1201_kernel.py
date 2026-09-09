@@ -111,9 +111,14 @@ from fmha_tuning_bwd_dq_gfx1201 import (  # noqa: F401
     BwdDqKnobs,
     resolve_knobs,
 )
-from gfx1201_standalone import buffer_ops
-from gfx1201_standalone import kernels_common as common_kernels
-from gfx1201_standalone import utils as common_utils
+from kernels.common import buffer_ops
+from kernels.common import kernels_common as common_kernels
+# Import rewrite: the two symbols this file takes from `kernels.common.utils`
+# -- smax and smin -- are branch-local and absent from the released tag the
+# build clones, so the name aliases the polyfill wholesale and no call site
+# below changes. `buffer_ops` and `kernels_common` are NOT rewritten:
+# `get_element_ptr` and `dtype_to_elem_type` are in the released tree.
+import flyc_polyfill as common_utils
 from philox import Philox
 
 import flydsl.compiler as flyc
