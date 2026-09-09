@@ -51,26 +51,44 @@ fi
 # own target rather than anything probed from hardware that may not be present
 # at build time.
 if [ "${ROCM_GPU_ARCH:-}" != "gfx90a" ]; then
-  echo "50-fix_gfx90a_torch: image targets ${ROCM_GPU_ARCH:-<unset>}, not gfx90a -- skipping"
+  echo "51-fix_gfx90a_torch: image targets ${ROCM_GPU_ARCH:-<unset>}, not gfx90a -- skipping"
   exit 0
 fi
 
-# Gate 2: the ROCm release. Read from torch's own version string, which encodes
-# it (e.g. 2.12.0+rocm7.14.1) -- that string is what the install actually
-# produced, unlike the generator-side ROCM_VERSION which never reaches the
-# image and could drift from what is installed here.
-TORCH_VERSION="$("$CELERY_WORKER_PYTHON" -c 'import torch; print(torch.__version__)')"
-case "$TORCH_VERSION" in
-  *+rocm7.14*) ;;
+# Gate 2: the ROCm release, from `rocm-sdk version`.
+#
+# Asked of the SDK itself because the SDK is what the defect is in. torch's
+# version string carries a rocm suffix and would answer the question too, but
+# it answers a different one -- which ROCm that wheel was built against -- and
+# it would keep this gate hostage to torch being importable and to the wheel's
+# naming convention, neither of which has anything to do with the loader bug.
+VENV_BIN="$(dirname "$CELERY_WORKER_PYTHON")"
+if [ ! -x "$VENV_BIN/rocm-sdk" ]; then
+  echo "51-fix_gfx90a_torch: no rocm-sdk in this image -- skipping"
+  exit 0
+fi
+
+# Take the first dotted-numeric token out of the output rather than matching the
+# whole string: `rocm-sdk version` is free to print a bare version or to wrap it
+# in a sentence, and only the number is being tested.
+ROCM_VERSION="$("$VENV_BIN/rocm-sdk" version 2>/dev/null \
+                | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)*' | head -n 1)"
+
+case "$ROCM_VERSION" in
+  7.14|7.14.*) ;;
+  '')
+    echo "51-fix_gfx90a_torch: could not read a version from \`rocm-sdk version\` -- skipping"
+    exit 0
+    ;;
   *)
-    echo "50-fix_gfx90a_torch: torch is $TORCH_VERSION, not a ROCm 7.14 build -- skipping"
+    echo "51-fix_gfx90a_torch: ROCm is $ROCM_VERSION, not 7.14 -- skipping"
     exit 0
     ;;
 esac
 
-echo "50-fix_gfx90a_torch: gfx90a on $TORCH_VERSION -- disabling target-id-qualified kpack archives"
+echo "51-fix_gfx90a_torch: gfx90a on ROCm $ROCM_VERSION -- disabling target-id-qualified kpack archives"
 
-VENV_DIR="$(dirname "$(dirname "$CELERY_WORKER_PYTHON")")"
+VENV_DIR="$(dirname "$VENV_BIN")"
 
 for f in "$VENV_DIR"/lib/python*/site-packages/torch/.kpack/torch_gfx90a:xnack[+-].kpack; do
     [ -e "$f" ] && mv -v -- "$f" "$f.disabled" || :
