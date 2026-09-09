@@ -298,7 +298,7 @@ def insert_row(db: sqlite3.Connection, kernel: str,
 # Main export logic
 # ---------------------------------------------------------------------------
 
-def export(conn_params: dict, output_path: Path) -> None:
+def export(conn_params: dict, output_path: Path, arch: str | None = None) -> None:
     t0 = time.monotonic()
 
     logger.info('Querying best_tuning_results (tuning_level=kernel)...')
@@ -310,11 +310,14 @@ def export(conn_params: dict, output_path: Path) -> None:
                 FROM best_tuning_results b
                 JOIN task_queue t ON t.id = b.task_id AND t.arch = b.arch
                 WHERE t.status != 'cancelled' AND b.tuning_level = 'kernel'
+                  {arch_clause}
                 ORDER BY b.arch, b.iface_name
-            """)
+            """.format(arch_clause='AND b.arch = %s' if arch else ''),
+                        [arch] if arch else None)
             rows = cur.fetchall()
 
-    logger.info('Fetched %d rows from best_tuning_results (tuning_level=kernel)', len(rows))
+    logger.info('Fetched %d rows from best_tuning_results (tuning_level=kernel%s)',
+                len(rows), f', arch={arch}' if arch else '')
 
     counts: dict[str, int] = {}
     skipped = 0
@@ -381,7 +384,7 @@ def export(conn_params: dict, output_path: Path) -> None:
     logger.info('Next step: .tune/bin/sancheck <workdir>')
 
 
-def export_op(conn_params: dict, output_path: Path) -> None:
+def export_op(conn_params: dict, output_path: Path, arch: str | None = None) -> None:
     t0 = time.monotonic()
 
     logger.info('Querying best_tuning_results (tuning_level=op)...')
@@ -394,8 +397,10 @@ def export_op(conn_params: dict, output_path: Path) -> None:
                 FROM best_tuning_results b
                 JOIN task_queue t ON t.id = b.task_id AND t.arch = b.arch
                 WHERE t.status != 'cancelled' AND b.tuning_level = 'op'
+                  {arch_clause}
                 ORDER BY b.arch, b.iface_name
-            """)
+            """.format(arch_clause='AND b.arch = %s' if arch else ''),
+                        [arch] if arch else None)
             rows = cur.fetchall()
 
     logger.info('Fetched %d rows from best_tuning_results (tuning_level=op)', len(rows))
@@ -481,6 +486,10 @@ def main() -> None:
     parser.add_argument('--tuning_mode', choices=['kernel', 'op'], default='kernel',
                         help='Selects the tuning_level slice of the unified '
                              'best_tuning_results table to export')
+    parser.add_argument('--arch', default=None,
+                        help='Export only this architecture. The output file is '
+                             'REPLACED, not merged into, so it will then contain '
+                             'only this architecture. Default: all.')
     args = parser.parse_args()
 
     if args.workdir:
@@ -492,10 +501,25 @@ def main() -> None:
         if args.password:
             conn_params['password'] = args.password
 
+    if args.arch:
+        # The output file is rewritten from scratch on every run, so an
+        # arch-scoped export yields a single-architecture database rather than
+        # merging into whatever was there. That is intended for the kernel
+        # path -- scratch/ is a staging area and decomposedb accumulates
+        # per-architecture into installed/ -- but the op path has no such
+        # accumulator, so say plainly what the caller is about to install.
+        logger.warning('Exporting arch=%s ONLY. %s is replaced, not merged.',
+                       args.arch, args.output)
+        if args.tuning_mode == 'op':
+            logger.warning('op mode: the resulting database is INCOMPLETE. '
+                           'decomposedb --tuning_mode op installs it wholesale, '
+                           'with no per-architecture shards, so the installed op '
+                           'database will hold only arch=%s.', args.arch)
+
     if args.tuning_mode == 'op':
-        export_op(conn_params, args.output)
+        export_op(conn_params, args.output, arch=args.arch)
     else:
-        export(conn_params, args.output)
+        export(conn_params, args.output, arch=args.arch)
 
 
 if __name__ == '__main__':
