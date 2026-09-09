@@ -10,7 +10,8 @@ from .override import (
     Predicate, VarRef, ValueFn, Override,
     eq, ne, lt, gt, le, ge,
 )
-from .functional import Functional, ChoiceView
+from .choices import ChoiceView, ChoiceVarAbsent
+from .functional import Functional, FunctionalChoiceView
 
 __all__ = [
     'typed_choice', 'TypedChoice', 'cfield',
@@ -18,5 +19,6 @@ __all__ = [
     'Axis', 'assign_godel', 'godel_of',
     'Predicate', 'VarRef', 'ValueFn', 'Override',
     'eq', 'ne', 'lt', 'gt', 'le', 'ge',
-    'Functional', 'ChoiceView',
+    'Functional', 'ChoiceView', 'ChoiceVarAbsent',
+    'FunctionalChoiceView',
 ]

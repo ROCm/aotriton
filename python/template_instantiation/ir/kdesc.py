@@ -455,7 +455,7 @@ class KernelDescription(Interface):
         # firing disables). Orthogonal to tuning: disabling excludes invalid input
         # combinations from generation, which any kernel may need — tunable or not.
         # A kernel with no @ati.disable has an empty `disables` list -> never fires.
-        from .functional import ChoiceVarAbsent
+        from .choices import ChoiceVarAbsent
         from ..builder import DescriptionError
         for d in self._built.disables:
             try:
