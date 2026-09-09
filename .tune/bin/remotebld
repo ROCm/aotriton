@@ -132,7 +132,7 @@ jobid=$(tsp docker run --rm \
   -e CCACHE_DIR=/wkdir/run/ccache \
   --mount "type=bind,source=$REMOTE_WORKDIR,target=/wkdir" \
   "$CELERY_WORKER_IMAGE" \
-  bash /wkdir/aotriton.src/.tune/bin/testbld "${TESTBLD_ARGS[@]}")
+  bash -l /wkdir/aotriton.src/.tune/bin/testbld "${TESTBLD_ARGS[@]}")
 echo "tsp job ID: $jobid"
 if [ "$(tsp -s "$jobid")" = "queued" ]; then
   echo "Waiting for tsp job $jobid to start..."
@@ -186,13 +186,21 @@ else
     [ "$ARCH_SELECTION" != "ALL" ] && TESTBLD_ARGS+=(--single_arch "$ARCH_SELECTION")
     [ "$SOURCE_DB" -eq 1 ] && TESTBLD_ARGS+=(--source_db)
     echo "Running testbld locally inside container: $CELERY_WORKER_IMAGE"
+    # `bash -l`, not a bare `bash`: testbld activates the venv itself (it sources
+    # CELERY_WORKER_PYTHON's activate), which is why this ran at all, but nothing
+    # can self-source /etc/profile.d/aotriton.sh -- only a LOGIN shell reads it, and
+    # that file is where ROCM_PATH comes from. Without it cmake reported
+    # "[AOTriton] ROCM_PATH is not set, falling back to /opt/rocm".
+    # The libbld branches below already use `bash -lc` for the same reason; this
+    # form (login shell running a script directly) matches
+    # .ci/releasesuite-git-head.sh's `bash -l /tmp/runc-manylinux-build-tar.sh`.
     docker run --rm \
       --user "$(id -u):$(id -g)" \
       -e PYTHONPYCACHEPREFIX=/wkdir/run/pycache \
       -e CCACHE_DIR=/wkdir/run/ccache \
       --mount "type=bind,source=$ABSWORKDIR,target=/wkdir" \
       "$CELERY_WORKER_IMAGE" \
-      bash /wkdir/aotriton.src/.tune/bin/testbld "${TESTBLD_ARGS[@]}"
+      bash -l /wkdir/aotriton.src/.tune/bin/testbld "${TESTBLD_ARGS[@]}"
   else
     LIBBLD_ARGS=(/wkdir)
     [ "$ARCH_SELECTION" != "ALL" ] && LIBBLD_ARGS+=(--single_arch "$ARCH_SELECTION")
