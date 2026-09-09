@@ -6,7 +6,7 @@ The AffineDecl passive record + its collector (pipeline Stage 2).
 
 The stacked-@ affine finalizer (specs/finalize.py) partitions an @ati.affine.*
 stack into one AffineDecl, attached to the def as `fn.__ati_node__`. NO build —
-the codegen linker constructs the AffineKernel (ir/affine.py) from this record.
+the codegen linker constructs the AffineKernel (ir/affine/kdesc.py) from this record.
 """
 
 from __future__ import annotations

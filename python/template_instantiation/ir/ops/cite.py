@@ -27,8 +27,8 @@ for the later metro/operator-level resolution.
 
 import fnmatch
 
-from ...builder import DescriptionError, _is_ati_type_string
-from ...decorators import TensorSpec, ScalarSpec, ChoiceVar
+from aotriton.template_instantiation.builder import DescriptionError, _is_ati_type_string
+from aotriton.template_instantiation.decorators import TensorSpec, ScalarSpec, ChoiceVar
 
 
 def _spec_apparel_names(spec):

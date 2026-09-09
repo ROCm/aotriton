@@ -37,7 +37,7 @@ def load_family_aot(family):
     The Parser loads each family by path under the synthetic name
     `_aotriton_modules_<family>_aot`; this free function returns that cached module
     (or None) for the few consumers that need the loaded package but do not have a
-    Parser handle — e.g. ir/kdesc.py's flash sancheck back-edge, which runs after the
+    Parser handle — e.g. ir/triton/kdesc.py's flash sancheck back-edge, which runs after the
     family was loaded during linking. It never loads (no modules_dir): the family
     must already be loaded by a Parser."""
     return sys.modules.get(f'_aotriton_modules_{family}_aot')

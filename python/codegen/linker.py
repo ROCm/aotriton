@@ -101,7 +101,7 @@ def _build_kernels(compiled):
     dependency order. Returns {def-name -> KernelDescription}."""
     from aotriton.template_instantiation.ir.ops.cite import resolve_cites
     from aotriton.template_instantiation.builder import build_kernel
-    from aotriton.template_instantiation.ir.kdesc import KernelDescription
+    from aotriton.template_instantiation.ir.triton import KernelDescription
 
     built = {}
     specs = {}                # def-name -> the cloned, cite-resolved spec

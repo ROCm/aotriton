@@ -14,8 +14,8 @@ bwd DQ_ACC) and packages pre-built `.co` files via co_gen.
 from pathlib import Path
 
 from aotriton.gpu_targets import AOTRITON_ARCH_TO_PACK
-from .cfield import cfield
-from .interface import Interface
+from ..cfield import cfield
+from ..interface import Interface
 
 
 # DQ_ACC-style supplied operands declare a LazyTensor:*fp32:16 rank-N tensor; map
@@ -23,7 +23,7 @@ from .interface import Interface
 def _supplied_cfield(spec, index):
     """Build a struct cfield for one @ati.affine.supplies operand. Supports the
     LazyTensor tensors the affine backend adds (e.g. DQ_ACC)."""
-    from ..decorators import TensorSpec
+    from ...decorators import TensorSpec
     assert isinstance(spec, TensorSpec), \
         f'@ati.affine.supplies currently supports ati.tensor specs only, got {spec!r}'
     aname = spec.arg_names[0]

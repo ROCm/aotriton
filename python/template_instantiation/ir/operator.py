@@ -14,7 +14,7 @@ the backend list + enums, CALL_OPTIONS_NAME, and optune (OPTUNE_KEYS +
 translate_dataframe, reused from the legacy Operator body).
 """
 
-from .kdesc import _binning_class
+from .triton.kdesc import _binning_class
 from .interface import Interface
 
 

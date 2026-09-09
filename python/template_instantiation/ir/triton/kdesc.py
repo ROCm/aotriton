@@ -23,21 +23,30 @@ surface.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .axis import assign_godel, TemplateParam
-from .interface import Interface
+import numpy as np
+
+from aotriton.autotune import BinningLessOrEqual, BinningExact
+from ..axis import assign_godel, TemplateParam
+from ..cfield import cfield
+from ..choices import ChoiceVarAbsent
+from ..interface import Interface
+from ..override import VarRef, ValueFn
+from .ksignature import KernelSignature, COMPILER_OPTIONS, DEFAULT_COPT
+from ...builder import DescriptionError
+from ...specs.tune import EMPTY_PERF_STRUCT
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-    from .axis import Axis
-    from .typed_choice import TypedChoice
+    from ..axis import Axis
+    from ..typed_choice import TypedChoice
 
 
 def _binning_class(selector):
     """Map an ati.tune.binning selector (.le/.gt/.eq) to the concrete
     aotriton.autotune Binning class the DB-translation expects."""
-    from aotriton.autotune import BinningLessOrEqual, BinningExact
     key = getattr(selector, 'key', selector)
     if key == 'le':
         return BinningLessOrEqual
@@ -89,7 +98,6 @@ class KernelDescription(Interface):
         # The synthesized perf struct (the tune schema), in field order. A canonical
         # empty struct stands in when the kernel has no @ati.tune.schema, so the perf
         # paths need no None-guards.
-        from ..specs.tune import EMPTY_PERF_STRUCT
         ts = built.tune
         self._perf_struct = ts.schema if (ts and ts.schema) else EMPTY_PERF_STRUCT
         # Autotune keys from @ati.tune.binning, paired with their Binning class.
@@ -124,7 +132,6 @@ class KernelDescription(Interface):
 
     @property
     def triton_source_path(self):
-        from pathlib import Path
         return Path(self._source_path)
 
     @property
@@ -141,7 +148,6 @@ class KernelDescription(Interface):
         PERSISTENT_TYPE -> 2 when CAUSAL_TYPE!=0, NUM_XCDS -> 8 when arch in
         {gfx942,gfx950}. Replaces the legacy PERF_CHOICES default +
         PROGRAMMATIC_PERFS."""
-        from .override import VarRef, ValueFn
         value = self._perf_struct.default_value(name)
         for ov in self._built.perf_overrides:
             if name in ov.targets and ov.fires(f):
@@ -157,8 +163,6 @@ class KernelDescription(Interface):
         """Build the (lut_tensor, signatures, binning) triple for functional f from
         its tuning dataframe. Ported from the legacy KernelDescription; reads the
         adapter's autotune_keys + perf params."""
-        import numpy as np
-        from .ksignature import KernelSignature, COMPILER_OPTIONS
         # Inject perf params that are NOT tuned DB columns: their value is the
         # @dataclass default plus any perf-channel @ati.derives (perf_value), the
         # role the legacy PROGRAMMATIC_PERFS used to fill, before reading
@@ -213,8 +217,6 @@ class KernelDescription(Interface):
         return lut_tensor, sigs, binning_dict
 
     def translate_empty_dataframe(self, f):
-        import numpy as np
-        from .ksignature import KernelSignature, DEFAULT_COPT
         lut_tensor = np.zeros([f.noptimized_for, 1], dtype=np.int8)
         defaults = self._perf_struct(
             **{n: self._perf_struct.choice_for(n, self.perf_value(n, f))
@@ -225,7 +227,6 @@ class KernelDescription(Interface):
     def gen_signatures_for_tuning(self, f):
         """Yield a KernelSignature per autotune config (the tuning-build path).
         Ported from the legacy KernelDescription."""
-        from .ksignature import KernelSignature, COMPILER_OPTIONS, DEFAULT_COPT
         def perf_bind(cfg):
             # one perf bind row from an autotune config: struct instance of settled choices.
             return self._perf_struct(
@@ -252,6 +253,8 @@ class KernelDescription(Interface):
         The generator takes its tree from --root_dir and does not chdir, so an
         unrelated modules/ in the invoking directory would otherwise win.
         """
+        # Lazy: aotriton.codegen imports template_instantiation at module level
+        # (e.g. codegen/kernel.py), so hoisting these would cycle.
         from pathlib import Path
         from aotriton.codegen.parser import load_family_aot
         from aotriton.tune.registry import load_family_tune
@@ -362,7 +365,6 @@ class KernelDescription(Interface):
         """One cfield per non-stride, non-perf argument, in signature order, with
         the axis's representative (rank-specialized) C itype. Overrides never
         change the struct — the ABI is owned by the axis (ati+newbinds §6.2)."""
-        from .cfield import cfield
         out = []
         for ax in self._axes_all:
             if ax.is_stride:
@@ -383,6 +385,8 @@ class KernelDescription(Interface):
         (see codegen.common.LaunchArg). Data args only: tensors (ptr + each
         stride dim), scalars by-ref; constexpr features and perf are not launch
         data. Strides are emitted right after their tensor, matching legacy."""
+        # Lazy: same aotriton.codegen -> template_instantiation cycle as
+        # sancheck_lut_tensor above.
         from aotriton.codegen.common import LaunchArg
         # Build per-arg access in signature order. Stride axes carry stride_of. All
         # `params.<X>` access goes through the APPAREL name (the operator operand /
@@ -455,8 +459,6 @@ class KernelDescription(Interface):
         # firing disables). Orthogonal to tuning: disabling excludes invalid input
         # combinations from generation, which any kernel may need — tunable or not.
         # A kernel with no @ati.disable has an empty `disables` list -> never fires.
-        from .choices import ChoiceVarAbsent
-        from ..builder import DescriptionError
         for d in self._built.disables:
             try:
                 if d.holds(functional):

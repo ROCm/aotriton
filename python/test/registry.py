@@ -71,7 +71,7 @@ def _testonly_build_kernel_description(kernel, *, family, registry: InterfaceReg
     any cross-family lookup closures needed by resolve_cites.
     """
     from aotriton.template_instantiation.builder import build_kernel
-    from aotriton.template_instantiation.ir.kdesc import KernelDescription
+    from aotriton.template_instantiation.ir.triton import KernelDescription
     from aotriton.template_instantiation.specs.finalize import get_kernel_spec
     from aotriton.template_instantiation.ir.ops.cite import resolve_cites
 
