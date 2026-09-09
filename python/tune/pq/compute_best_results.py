@@ -43,6 +43,7 @@ import json
 import logging
 import math
 import multiprocessing
+import sys
 import time
 from itertools import groupby
 from pathlib import Path
@@ -236,13 +237,16 @@ def _find_best_candidate(task_id: int, key_name: str,
 # Step 1: load accuracy table, keyed by arch
 # ---------------------------------------------------------------------------
 
-def load_thresholds(conn, sql: SqlStatements, task_ids: list[int] | None = None) -> dict:
+def load_thresholds(conn, sql: SqlStatements, task_ids: list[int] | None = None,
+                    arch: str | None = None) -> dict:
     """
     Returns:
         {arch: {task_id: {key_name: {(test_case, tensor_name): min_absolute_error}}}}
 
     Keyed by arch so each worker process receives only its own slice.
     If task_ids is given, only those task_ids are loaded (incremental/fix mode).
+    If arch is given, only that architecture is loaded -- this whole table goes
+    into RAM, so a single-arch run has no reason to pay for the whole fleet.
     """
     if task_ids:
         logger.info('Step 1: loading %s for %d task_id(s)...', sql.accuracy_table, len(task_ids))
@@ -250,20 +254,22 @@ def load_thresholds(conn, sql: SqlStatements, task_ids: list[int] | None = None)
         logger.info('Step 1: loading %s into RAM...', sql.accuracy_table)
     t0 = time.monotonic()
 
+    arch_clause = ' AND arch = %s' if arch else ''
+    arch_params: list = [arch] if arch else []
     thresholds: dict = {}
     with conn.cursor() as cur:
         if task_ids:
             cur.execute(f"""
                 SELECT arch, task_id, {sql.key_col}, test_case, tensor_name, absolute_error
                 FROM {sql.accuracy_table}
-                WHERE tuning_level = %s AND task_id = ANY(%s)
-            """, (sql.tuning_level, task_ids))
+                WHERE tuning_level = %s AND task_id = ANY(%s){arch_clause}
+            """, [sql.tuning_level, task_ids] + arch_params)
         else:
             cur.execute(f"""
                 SELECT arch, task_id, {sql.key_col}, test_case, tensor_name, absolute_error
                 FROM {sql.accuracy_table}
-                WHERE tuning_level = %s
-            """, (sql.tuning_level,))
+                WHERE tuning_level = %s{arch_clause}
+            """, [sql.tuning_level] + arch_params)
         for arch, task_id, key_name, test_case, tensor_name, abs_err in cur:
             tk = thresholds.setdefault(arch, {}).setdefault(task_id, {}).setdefault(key_name, {})
             tk[(test_case, tensor_name)] = abs_err
@@ -279,10 +285,23 @@ def load_thresholds(conn, sql: SqlStatements, task_ids: list[int] | None = None)
     return thresholds
 
 
-def get_archs(conn, sql: SqlStatements) -> list[str]:
+def get_archs(conn, sql: SqlStatements, arch: str | None = None) -> list[str]:
+    """Architectures with accuracy rows at this tuning_level, optionally one.
+
+    Filtered in SQL rather than by intersecting the full list afterwards, so a
+    requested arch that has no accuracy rows comes back as an empty list and the
+    caller can say so. Intersecting after the fact loses the distinction between
+    "that arch has no data" and "there is no data at all", and the former has a
+    specific cause worth naming: Rebuild Accuracy Table has not been run for it.
+    """
+    where = 'WHERE tuning_level = %s'
+    params: list = [sql.tuning_level]
+    if arch:
+        where += ' AND arch = %s'
+        params.append(arch)
     with conn.cursor() as cur:
-        cur.execute(f'SELECT DISTINCT arch FROM {sql.accuracy_table} WHERE tuning_level = %s ORDER BY arch',
-                    (sql.tuning_level,))
+        cur.execute(f'SELECT DISTINCT arch FROM {sql.accuracy_table} {where} ORDER BY arch',
+                    params)
         return [row[0] for row in cur.fetchall()]
 
 
@@ -404,14 +423,17 @@ def worker_process_arch(arch: str, worker_index: int,
 # Step 4: write results to best table
 # ---------------------------------------------------------------------------
 
-def write_results(conn, sql: SqlStatements, arch_results: list, incremental: bool = False) -> None:
+def write_results(conn, sql: SqlStatements, arch_results: list, incremental: bool = False,
+                  arch: str | None = None) -> None:
     """
     Writes rows to best_tuning_results (tuning_level column distinguishes
     kernel vs. op within the single unified table).
     Full mode: deletes this run's tuning_level slice first (NOT TRUNCATE --
     best_tuning_results is shared by both levels now, so a full 'kernel' run
-    must not discard 'op' rows and vice versa). Incremental mode: upserts
-    only affected rows.
+    must not discard 'op' rows and vice versa), and when `arch` is given, only
+    that architecture's part of the slice -- the run computed only that
+    architecture, so deleting the rest would discard rows nothing is going to
+    re-insert. Incremental mode: upserts only affected rows.
     """
     logger.info('Step 4: writing %d rows to %s (%s)...',
                 len(arch_results), sql.best_table, 'incremental' if incremental else 'full')
@@ -447,8 +469,18 @@ def write_results(conn, sql: SqlStatements, arch_results: list, incremental: boo
     with conn.cursor() as cur:
         if not incremental:
             # NOT TRUNCATE: best_tuning_results is shared by both tuning
-            # levels, so only this run's level may be cleared.
-            cur.execute(f'DELETE FROM {sql.best_table} WHERE tuning_level = %s', (sql.tuning_level,))
+            # levels, so only this run's level may be cleared -- and, when the
+            # run was restricted to one architecture, only that architecture's
+            # rows within the level. Same argument, one dimension over.
+            #
+            # idx_best_tuning_results_lookup leads with arch, so the narrower
+            # DELETE is cheaper than the wide one, not dearer.
+            if arch:
+                cur.execute(f'DELETE FROM {sql.best_table} WHERE tuning_level = %s AND arch = %s',
+                            (sql.tuning_level, arch))
+            else:
+                cur.execute(f'DELETE FROM {sql.best_table} WHERE tuning_level = %s',
+                            (sql.tuning_level,))
         for i in range(0, len(rows_to_insert), INSERT_BATCH_SIZE):
             batch = rows_to_insert[i:i + INSERT_BATCH_SIZE]
             cur.executemany(f"""
@@ -547,6 +579,10 @@ def main() -> None:
     parser.add_argument('--tuning_mode', choices=['kernel', 'op'], default='kernel',
                         help='Selects the tuning_level filter applied to the unified '
                              'tuning_results/best_tuning_results tables')
+    parser.add_argument('--arch', default=None,
+                        help='Restrict to one architecture (e.g. gfx942). Other '
+                             'architectures\' best_tuning_results rows are left untouched. '
+                             'Default: every architecture with accuracy rows.')
     parser.add_argument('--verbose', action='store_true',
                         help='Debug: print per-candidate per-tensor accuracy details (implies DEBUG log level)')
 
@@ -587,8 +623,17 @@ def main() -> None:
     t_total = time.monotonic()
 
     with psycopg.connect(**conn_params, autocommit=True) as conn:
-        thresholds = load_thresholds(conn, sql, filter_task_ids)
-        archs = get_archs(conn, sql)
+        thresholds = load_thresholds(conn, sql, filter_task_ids, arch=args.arch)
+        archs = get_archs(conn, sql, arch=args.arch)
+
+    # An explicitly requested arch with no accuracy rows is a mistake worth
+    # naming rather than a quiet no-op: it almost always means Rebuild Accuracy
+    # Table has not been run for it yet. Without this the run would spawn zero
+    # workers, write zero rows and report success.
+    if args.arch and not archs:
+        sys.exit(f'Error: no rows in {sql.accuracy_table} for arch={args.arch} '
+                 f'at tuning_level={sql.tuning_level}. '
+                 f'Run recreate_materialized_view --arch {args.arch} first.')
 
     # --ids: run inline in the main process for debuggability; do not write to DB.
     if args.ids:
@@ -677,7 +722,7 @@ def main() -> None:
             all_results.extend(f.get())
 
     with psycopg.connect(**conn_params, autocommit=False) as conn:
-        write_results(conn, sql, all_results, incremental=incremental)
+        write_results(conn, sql, all_results, incremental=incremental, arch=args.arch)
 
     logger.info('Total time: %.1fs', time.monotonic() - t_total)
 
