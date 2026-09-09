@@ -238,6 +238,7 @@ from fmha_dualwave_gfx950 import (
     ParityStoreHelper,
     _bias_slab_num_records_bytes,
     _score_column_runs,
+    exp2_wait_state,
     mfma_operand_wait_state,
     wire_ptr,
     wire_view,
@@ -377,6 +378,13 @@ class BwdDqKernelContext(ParityKernelContext):
         d), with the vo head dim rather than the qk one. The bound is what
         makes a row past `seqlen_q` read zero instead of faulting, which is the
         whole reason the ragged tail needs no branch.
+
+        Each of the three carries the width of *its own* rows, which is the
+        point of `_slab_span_elems`: `stride_seq` is the distance between rows
+        and is only the width of one when the tensor is contiguous in
+        `(.., seqlen, hdim)` order. dQ and dO differ in that width -- dQ is
+        Q-shaped and `hdim_qk` wide, dO is O-shaped and `hdim_vo` wide -- and
+        an asymmetric build is where the difference shows.
         """
         traits = self.traits
         super().init_descriptors(**kwargs)
@@ -738,16 +746,53 @@ class BwdDqSoftmaxHelper(ParitySoftmaxHelper):
         columns `[0, 32)`: measured 39% relative L2 on dQ against 7% on
         `[32, 64)`, deterministic, dQ only, and invisible in an f16 build,
         whose `v_cvt_f16_f32` packs the scheduler happened to hoist 8-36
-        instructions clear. That is the `v_cvt_pk_bf16_f32` -> MFMA hazard
-        with a wrong answer attached rather than a suspicion;
-        `fmha_bwd_dq_m16_gfx950.pack_ds`
-        already carried the barrier on the strength of the suspicion alone.
+        instructions clear. That is the `v_cvt_pk_bf16_f32` -> MFMA hazard with
+        a wrong answer attached rather than a suspicion, and
+        `fmha_bwd_dq_m16_gfx950.pack_ds` already carried the barrier on the
+        strength of the suspicion alone.
         """
         p_lo_packs, p_hi_packs = dualwave.DualwaveSoftmaxHelper.cast_p(self, v_p)
         return (
             [mfma_operand_wait_state(p) for p in p_lo_packs],
             [mfma_operand_wait_state(p) for p in p_hi_packs],
         )
+
+    def exp2(self, v_s, start, length):
+        """`_exp2_score_slice` with the gfx950 `v_exp_f32` wait state.
+
+        The body is `dualwave._exp2_score_slice` verbatim apart from the one
+        call, and copied rather than wrapped for the reason the forward's
+        equivalent gives: on the `start == 0` path the results are consumed
+        *inside* it, by `Vec.from_elements`, so there is no return value a
+        wrapper could interpose on.
+
+        See `exp2_wait_state` for why a bare `_s_nop` is not this.
+
+        **Not reproduced in dQ, and imported on the argument.** The same scan
+        measured the gap from each `v_exp_f32` to its first VALU consumer over
+        ten dQ builds: the minimum anywhere was 8, with per-build minima of 8,
+        9, 26, 50 and 54, against the *exactly 1* that AOTriton's dK/dV scan
+        reports and that phase 1 confirmed here. dQ is not near this cliff, and
+        saying otherwise would overstate it.
+
+        Imported anyway, because "not near the cliff" is a fact about one
+        schedule and not about the kernel. AOTriton's live case became live
+        exactly that way -- issue 9's fix raised register pressure, the
+        schedule moved, and a latent gap became a zero-gap wrong answer. The
+        cost here is measured rather than assumed; see the plan's outcome
+        section for the register and ISA comparison.
+        """
+        if const_expr(start == 0):
+            s_lo = [Vec(v_s[0])[r] for r in range_constexpr(16)]
+            lo_partial = exp2_wait_state(
+                [dualwave.rocdl.exp2(T.f32, as_mlir_value(s_lo[r])) for r in range_constexpr(16)]
+            )
+            return Vec.from_elements(lo_partial, fx.Float32).ir_value(), v_s[1]
+        lo_partial = [Vec(v_s[0])[r] for r in range_constexpr(16)]
+        hi_full = exp2_wait_state(
+            [dualwave.rocdl.exp2(T.f32, as_mlir_value(Vec(v_s[1])[r])) for r in range_constexpr(16)]
+        )
+        return lo_partial, hi_full
 
     def dropout_dp(self, dp_lists, tile_idx, q_row):
         """`dP <- keep ? dP * (1/(1-p)) : 0`, on the **dP** rather than on P.
@@ -1182,6 +1227,21 @@ def build_fmha_bwd_dq_gfx950_module_primary(meta, knobs):
         DB = wire_view(DB)
         LSE = wire_view(LSE)
         Delta = wire_view(Delta)
+        # dQ's three strides, named once. They reach the context twice, and
+        # the second of the two is a residue with a retirement condition:
+        #
+        # - `dq_strides` is the real one. It builds `dq_div`, bounded by
+        #   `hdim_qk`, which is what `BwdDqStoreHelper` writes through.
+        # - `o_strides` fills the base class's `O` slot, which this kernel has
+        #   no tensor for. It is still needed because
+        #   `ParityKernelContext.init_descriptors` builds an O view
+        #   unconditionally; the view it builds here is dead -- the store reads
+        #   `dq_div` -- and folds away, being pure descriptor arithmetic.
+        #
+        # Retire the second, along with `O=DQ` below, once the shared context
+        # grows the `if self.O is not None` guard that dK/dV's split wants
+        # anyway. That file has another owner, so this stays a duplicated
+        # argument rather than a cross-file change.
         ctx = BwdDqKernelContext(
             traits,
             strides=(

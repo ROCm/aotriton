@@ -482,8 +482,70 @@ class Gfx950Knobs(FmhaKnobs):
             ._checked_modes()
             ._with_widths(meta)
             ._with_wave_geometry()
+            ._with_occupancy_target(meta)
             ._checked_against_traits(meta)
         )
+
+    def _with_occupancy_target(self, meta):
+        """Ask for two waves per EU only where two workgroups can exist.
+
+        LOCAL DIVERGENCE FROM UPSTREAM, which asks for 2 unconditionally.
+        Retire when upstream derives the target from the build's own LDS.
+
+        `waves_per_eu` used to be a flat 2 in `_GFX950_FALLBACK`, among the
+        defaults with no shape-dependent opinion. It needs one. A workgroup
+        here is 256 threads = 4 waves = one wave on each of the CU's 4 SIMDs,
+        so two waves per EU means two *co-resident workgroups*, and LDS decides
+        whether that is even possible before the register allocator is
+        consulted. Past head_dim 128 it is not close -- head_dim 160 stages
+        85120 B, so the pair wants 170240 B against a 163840 B cap -- and the
+        backend says so once per build:
+
+            failed to meet occupancy target given by 'amdgpu-waves-per-eu'
+            in 'flyc_attn_fwd': desired occupancy was 2, final occupancy is 1
+
+        which was 120 of the 216 shipped `flyc_attn_fwd` builds.
+
+        **Dropping a refused request costs nothing, which was checked rather
+        than assumed.** An unmet hint is still a register budget for the
+        scheduler, so the 120 refused builds were built both ways and compared:
+        118 byte-identical, 2 differing. The 2 are noise -- rebuilding all 216
+        at *unchanged* settings also yields 2 differing, this backend is not
+        bit-reproducible, and one of the two kernels is the same one both times
+        (head_dim 256 bf16 causal+dropout, which alternates between two forms
+        at identical register counts and identical size). So the wpe-vs-noise
+        signal at the refused rungs is 2 against a floor of 2: nothing.
+        Measured, every rung ties within 0.3% at `S=4096` on both a dense and a
+        causal+dropout arm.
+
+        The corollary is worth stating, since it limits what this method can
+        show: byte-identity is strong evidence of no change -- nondeterminism
+        creates differences, it cannot manufacture 118 coincidental matches --
+        but a handful of *differences* proves nothing on its own and has to be
+        read against the 2/216 floor.
+
+        **The rule is LDS rather than a head_dim list**, because the granule,
+        `BLOCK_N` and `d_stages` all move the staging footprint and a list
+        would silently stop matching when one of them does. The probe builds
+        traits at 1 purely to read `LDS_KV_TOTAL_SIZE`; `waves_per_eu` is a
+        scheduling hint and does not feed the staging shape, so the answer does
+        not depend on the value used to ask.
+
+        **Where the hint is granted it is doing real work and stays.** head_dim
+        96 is the case, and it is the one result here well clear of that noise
+        floor: 17 of its 24 builds change when the request is dropped, 13 of
+        them raising VGPRs -- 214 to 218, 224 to 245, 229 to 249 -- all in the
+        same direction, which is what nondeterminism does not do. At 51072 B
+        two workgroups do fit, so the budget is real there, and it is what
+        holds the allocator under the 256 that keeps both resident. head_dim
+        32, 64 and 128 are byte-identical either way; they never approach the
+        ceiling, so the budget never binds.
+        """
+        if self.waves_per_eu is not None:
+            return self  # explicitly pinned -- a sweep's override outranks this
+        traits = replace(self, waves_per_eu=1).build_traits(meta)
+        lds_bytes = traits.LDS_KV_TOTAL_SIZE * traits.BF16_BYTES
+        return replace(self, waves_per_eu=2 if 2 * lds_bytes <= self.LDS_CAP_BYTES else 1)
 
     def _checked_modes(self):
         """Reject mode combinations the kernel does not implement.
@@ -790,8 +852,13 @@ class Gfx950Knobs(FmhaKnobs):
 # Defaults the policy has no shape-dependent opinion about. These match the
 # production `build_flash_attn_dualwave_swp_module` signature exactly, so a
 # default-knob parity build is the schedule the baseline was measured on.
+#
+# `waves_per_eu` was here and is not any more: it turned out to have a
+# shape-dependent opinion after all, and it belongs with the derivations rather
+# than the constants. Left `None` so `_with_occupancy_target` can see that
+# nobody pinned it -- production's value survives as what that step derives at
+# every rung where the hardware can honour it.
 _GFX950_FALLBACK = Gfx950Knobs(
-    waves_per_eu=2,
     daz=True,
     lazy_rescale=True,
     setprio=True,

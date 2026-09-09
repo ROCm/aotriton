@@ -256,6 +256,28 @@ def lse_row_addressing(varlen_bits, batch, head, num_head_q, tokens, row_off):
     return base, pitch
 
 
+def lse_row_step_per_head(varlen_bits, tokens):
+    """How far `lse_row_addressing`'s `base` moves when `head` rises by one.
+
+    `base` is affine in `head` under both layouts -- `_HT` has it inside the
+    `* tokens` product, `_TH` outside it -- so a caller walking a GQA group can
+    add this per head instead of re-running the decode. That is not a peephole:
+    it is what stops `varlen_bits`, `batch` and `row_off` from being live across
+    the walk, and on gfx950 that liveness is what drives the backward kernel's
+    scalar spilling. See `BwdDkDvKernelContext._init_q_head_invariants`.
+
+    Exactly the mirror of the `pitch` select above -- `_HT` pitches by 1 and
+    steps by `tokens`, `_TH` pitches by `H` and steps by 1 -- so the two are
+    written the same way, from the same bits, and cannot drift apart.
+
+    `num_head_q` is deliberately not a parameter: it does not appear in either
+    step, and taking it would suggest the caller must keep it live.
+    """
+    tok = fx.Index(tokens)
+    is_th = ((fx.Int32(varlen_bits) >> fx.Int32(16)) & fx.Int32(3)) != fx.Int32(0)
+    return fx.Index(is_th.select(fx.Index(1), tok))
+
+
 def acc_elem_column(i):
     """Which column of the WMMA tile flattened accumulator element `i` holds.
 

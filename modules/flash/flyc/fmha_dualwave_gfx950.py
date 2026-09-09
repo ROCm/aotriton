@@ -483,8 +483,12 @@ def _bias_slab_num_records_bytes(seqlen_q, seqlen_kv, stride_b_seq_q, elem_bytes
     untightened span pins that case back to 0 and is a no-op everywhere else,
     since `seqlen_k <= stride_b_seq_q` always holds.
 
-    **Do not round this up, and do not widen it back to `loose`.** Ending on
-    the last valid element costs the *readers* something: gfx950 range-checks a
+    **Do not round this up, and do not widen it back to `loose`.**
+    `_slab_span_elems` holds the same line on the D axis, for the same reason
+    and against upstream, which rounds there; that docstring carries the
+    evidence. Neither descriptor covers a byte the caller did not hand us.
+
+    Ending on the last valid element costs the *readers* something: gfx950 range-checks a
     multi-dword buffer op per dword and drops any dword not wholly inside
     `num_records`, so for odd `seqlen_k` a wide read of the last row loses
     column `seqlen_k-1` to the out-of-range column `seqlen_k` sharing its
@@ -532,12 +536,38 @@ def _slab_span_elems(rows, stride_seq, hdim):
     Elsewhere the bound only shrinks, so an `oob_off` of `rows * stride_seq`
     stays at or past it and keeps being dropped.
 
-    **Do not round `hdim` up to the load's 8-element chunk.** That would buy
-    back the column a wide read loses to gfx950's per-dword range check at an
-    odd `hdim`, and it would buy it by reading memory the caller never handed
-    us -- the fault above, in miniature. The chunk containing `hdim` is
-    allocation slack for a BSHD interior head and is off the end of the tensor
-    for the last one.
+    **Do not round `hdim` up to the load's 8-element chunk**, and this is a
+    deliberate departure from upstream, which does. Their argument is a good
+    one: the D pitch is the one axis carrying an 8-element alignment contract
+    (`flash_attn_func_gfx950`'s module docstring -- "the kernel rounds each row
+    up to `ceil8(head_dim)`, so those extra columns must belong to the caller"
+    -- enforced by `_check_8x_d_contract`), so `ceil8(hdim)` is inside the
+    caller's allocation by agreement rather than by luck. They measured the
+    exact bound clipping a real column, 36 failures at `hdim % 8 == 1`: gfx950
+    range-checks a multi-dword buffer op per dword, so at `hdim = 73` the dword
+    holding columns 72 and 73 straddles a bound ending at 73 and takes the real
+    column 72 with it.
+
+    **That does not happen here, and it was checked rather than assumed.**
+    `test_prime_hdim` -- 73/89/113/241 with the allocation the contract asks
+    for, slack filled with NaN -- passes identically on both forms, and a probe
+    of the only place the two can differ (the final row of the final
+    `(batch, head)` slab; the exact bound clips nothing else) finds its error
+    indistinguishable from the bulk either way. There is no column to buy back.
+
+    So the tie is broken by what the two forms cost when they are wrong. The
+    exact bound cannot read a byte the caller did not hand us. The round-up can,
+    the moment an input arrives without the slack the contract asks for -- and
+    `_args`, which is where that contract is enforced, is a host-side wrapper
+    AOTriton's C++ launcher never calls. A descriptor is the last line of
+    defence for an input nothing else checks, so it ends on the last real
+    element.
+
+    **No axis rounds, here or anywhere.** `_bias_slab_num_records_bytes` bounds
+    the bias slab by `seqlen_k` on the same principle, and the last bias column
+    at odd `seqlen_k` is bought back by narrowing the *load* -- see
+    `narrow_tail`. If the D axis ever needs its column back, that is the shape
+    the fix should take.
 
     The subtraction wraps at `rows == 0` -- a varlen empty sequence -- and an
     index that wraps becomes a `num_records` covering all of memory, which is a
@@ -612,7 +642,8 @@ class ParityGemmHelper(dualwave.DualwaveGemmHelper):
 
         which is zero effective wait states against the two the documented
         VALU-to-MFMA-SrcA/B rule asks for -- the same instruction pair
-        feeding the same MFMA shape that produced a wrong answer in dQ. 28 of the 216 forward kernels came out this way. The `k_hi`
+        feeding the same MFMA shape that produced a wrong answer in dQ. 28 of
+        the 216 forward kernels came out this way. The `k_hi`
         MFMA reads the same quad one slot later and is shielded by the `k_lo`
         one, so a single barrier per pack covers both.
 
@@ -913,6 +944,12 @@ class ParityKernelContext(_ParityKvStaging, dualwave.DualwaveKernelContext):
         # so a build with matching counts schedules identically.
         num_head_k = fx.Index(self.num_head_k)
         gqa_group = fx.Index(self.num_head_q) // num_head_k
+        # Published, because the dK/dV group loop's trip count is this same
+        # quantity and `q_head_idx` -- the head that loop walks from -- is
+        # derived from it two lines down. Recomputing it at the loop is how a
+        # trait and a kernarg drifted apart in the first place (issue 9); one
+        # source is what stops them disagreeing again.
+        self.gqa_group = gqa_group
         self.h_kv_idx = self.h_idx % num_head_k
         self.group_id = self.h_idx // num_head_k
         self.q_head_idx = self.h_kv_idx * gqa_group + self.group_id
@@ -1185,10 +1222,32 @@ class ParityKernelContext(_ParityKvStaging, dualwave.DualwaveKernelContext):
         `hdim` is the row's real extent, `s2` the distance between rows; see
         `_slab_span_elems` for why the second is not a bound for the first.
         """
+        # Span first, then base -- the order the body had before the split, and
+        # the order the emitted MLIR therefore still has. Reversing it is
+        # semantically free and cost 230 lines of scheduling churn in every
+        # forward binary when this was first written the other way round.
         span_elems = _slab_span_elems(rows, s2, hdim)
+        base_bytes = self._slab_byte_base(s0, s1, s2, row_off, head_idx, batch_idx=batch_idx)
+        return self._slab_view_at(tensor, base_bytes, span_elems)
+
+    def _slab_view_at(self, tensor, base_bytes, span_elems):
+        """`_slab_view` over a base and an extent the caller already computed.
+
+        Split out so a caller that rebinds one slab to a *different head* can
+        hoist everything that does not move with the head. `_slab_byte_base` is
+        affine in `head_idx` and `_slab_span_elems` does not read it at all, so
+        such a caller needs one add per tensor rather than the three strides
+        those two expressions between them read.
+
+        That matters on gfx950 for a reason beyond tidiness: keeping the strides
+        live across the GQA walk is what drove the backward kernel's scalar
+        spilling, and the walk is the largest region in that kernel.
+        `BwdDkDvKernelContext._init_q_head_invariants` is the caller this exists
+        for, and carries the measurements.
+        """
         return dualwave._make_rebased_view(
             fx.get_iter(tensor),
-            self._slab_byte_base(s0, s1, s2, row_off, head_idx, batch_idx=batch_idx),
+            base_bytes,
             span_elems * fx.Index(self.traits.BF16_BYTES),
             fx.make_layout(fx.Int32(span_elems), fx.Int32(1)),
             _buf_flags_i32=self.buf_flags_i32,

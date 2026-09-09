@@ -463,10 +463,26 @@ class BwdDqKnobs(Gfx950Knobs):
         # and the 32-row one keeps everything below 384 -- this is additive,
         # not a replacement.
         #
-        # 256 at 1.04x is inside the band the lore says a sweep cannot settle;
-        # it stays on the 32-row family because that is the incumbent, not
-        # because 4% was measured as a loss.
-        rows = me.mfma_rows if me.mfma_rows is not None else (16 if me.block_dmodel >= 384 else 32)
+        # 256 at 1.04x is inside the band the lore says a sweep cannot settle,
+        # so for a long time it stayed on the 32-row family purely by
+        # incumbency. Correctness moved it: the 32-row build at 256 with
+        # dropout lands on 507 VGPR + 251 AGPR, five registers short of the
+        # file, and the allocator responds by spilling the 32 LDS-DMA address
+        # operands into AGPRs and rematerialising nine of them through a
+        # single VGPR that is overwritten between consecutive
+        # `buffer_load ... offen lds` issues. That build races: with
+        # `B=3 H=5 sq=2048 sk=8192` it poisons one wave's 32x32 accumulator
+        # tile (dQ columns 32..63) in one or two (batch, head, q-block)
+        # instances per launch, non-deterministically, and only there -- the
+        # dropout=False build at 256 (460/204) and the dropout=True build at
+        # 224 (456/200) both stay under the cliff and are clean. The 16-row
+        # family at 256 is 232 VGPR, 0 AGPR, 0 spills and half the LDS, with
+        # every DMA address in its own register.
+        #
+        # So 256 moves down to 16 rows, which costs nothing: re-measured at
+        # `B=2 H=8 S=4096`, 16 rows is 564 TF against 550 without dropout and
+        # 527 against 509 with it, matching the 1.04x the original sweep saw.
+        rows = me.mfma_rows if me.mfma_rows is not None else (16 if me.block_dmodel >= 256 else 32)
         if rows == 16:
             # BLOCK_N 32 for the reason `build_traits` states, and four waves
             # because the wide rungs need one wave per SIMD to see all 512

@@ -68,6 +68,7 @@ from fmha_dualwave_gfx950 import (  # ParityKernelContext documents the base thi
     ParityKernelContext,  # noqa: F401
     _ds_read_tr_v4f16_imm,
     _slab_span_elems,
+    exp2_wait_state,
     mfma_operand_wait_state,
 )
 from fmha_mfma16_gfx950 import MFMA16_M
@@ -574,8 +575,19 @@ class M16DqSoftmax:
         return _mask_if_needed(v_s, tile_idx)
 
     def exp2(self, v_s):
+        """The `exp2` batch, held one slot away from its consumers.
+
+        `exp2_wait_state` carries the argument; the 32-row family's `exp2`
+        carries the measurement for dQ, which is that no dQ build scanned comes
+        within 8 instructions of the hazard. Imported as a property of the
+        instruction pair rather than of today's schedule.
+
+        Unlike the 32-row path this one returns the lists directly, so it wraps
+        rather than needing the body copied.
+        """
         return tuple(
-            [dualwave.rocdl.exp2(T.f32, as_mlir_value(Vec(h)[r])) for r in range_constexpr(self.n)] for h in v_s
+            exp2_wait_state([dualwave.rocdl.exp2(T.f32, as_mlir_value(Vec(h)[r])) for r in range_constexpr(self.n)])
+            for h in v_s
         )
 
     def dropout_dp(self, dp_lists, tile_idx, lane, q_row):
