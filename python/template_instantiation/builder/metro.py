@@ -4,7 +4,7 @@
 """
 Metro lowering (pipeline Stage 4 — LOWER).
 
-Lowers a transpiled MetroPlan (specs/metro.py) to the MetroKernel/ConditionalKernel
+Lowers a transpiled MetroSpec (specs/metro.py) to the MetroKernel/ConditionalKernel
 IR (ir/metro.py). The linker calls build_metro once each sub-kernel is built.
 """
 
@@ -12,7 +12,7 @@ from ..specs.metro import Call, MetroError
 
 
 def lower_plan(plan, kernel_map, metro_factory, conditional_factory):
-    """Lower a MetroPlan to the existing MetroKernel/ConditionalKernel IR.
+    """Lower a MetroSpec to the existing MetroKernel/ConditionalKernel IR.
 
     kernel_map:          {sub-kernel name -> KernelDescription object}.
     metro_factory:       callable(steps:list) -> MetroKernel (the lowered backend
@@ -53,7 +53,7 @@ def lower_plan(plan, kernel_map, metro_factory, conditional_factory):
 
 
 def build_metro(plan, kernel_map, name, *, family):
-    """Lower a transpiled MetroPlan to a MetroKernel (a metro launcher).
+    """Lower a transpiled MetroSpec to a MetroKernel (a metro launcher).
 
     plan:        the @ati.metro_kernel transpiler output (fn.__ati_node__).
     kernel_map:  {sub-kernel name -> built kdesc}.

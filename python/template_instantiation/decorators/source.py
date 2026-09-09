@@ -32,9 +32,9 @@ class KernelStub:
     introspect.kernel_params). `annotations` carries the STRING type annotations the
     author wrote on the PLACEHOLDER def below @ati.source (e.g. `def attn_fwd(dropout_p:
     'fp32')`), which the finalizer turns into ScalarSpecs. `source_path` is the resolved
-    path to the Triton source file (consumed by KernelSpec). `__ati_pending__` / `__ati_node__`
+    path to the Triton source file (consumed by KernelDecl). `__ati_pending__` / `__ati_node__`
     are the stacked-@ sidecars describe.py sets on the kernel object (the pending spec
-    list during stacking, then the finalized KernelSpec).
+    list during stacking, then the finalized KernelDecl).
 
     The Triton SOURCE file's own annotations are intentionally NOT read — only the
     placeholder def's (agent-plans/ati_triton-free_exec0.md): triton kernels rarely

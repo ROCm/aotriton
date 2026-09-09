@@ -64,16 +64,19 @@ def load_family_aot(family):
 # state — every consumer would need guards. The shell/IR split makes incompleteness
 # unrepresentable: an IR object that exists is always fully constructed.
 #
-# NOTE: there is no KernelDecl alongside OperatorDecl / AffineDecl. That is because
-# KernelSpec *is* the kernel's passive "object file" — it plays the same role. The
-# difference is that KernelSpec must be cloned and mutated during linking (cite
-# resolution appends to its tensors/scalars/overrides on a per-link copy), so it
-# cannot be a frozen record the way OperatorDecl and AffineDecl are. OperatorDecl /
-# AffineDecl contain no unresolved cross-kernel references; their contents are fully
-# known at parse time and the linker reads them verbatim.
+# NOTE: KernelDecl plays the same passive-record role as OperatorDecl / AffineDecl,
+# with one difference underneath the shared name: cite resolution still needs a
+# per-link mutable copy of it (`KernelDecl.clone()`), because gap
+# tensors/scalars/overrides/dtype_vars have to be appended somewhere before the
+# builder can read them, and that must never touch the module-level declared
+# KernelDecl every test/description reads directly. OperatorDecl / AffineDecl carry
+# no unresolved cross-kernel references, so the linker reads them verbatim with no
+# clone. The declared KernelDecl itself, though, is exactly as passive as the other
+# three -- resolve_cites writes only the per-link clone's `resolved_disables`
+# (see specs/kernel.py), never mutating the declared record in place.
 
 class KernelShell:
-    """A parsed triton-kernel description: its un-cite-resolved KernelSpec + identity.
+    """A parsed triton-kernel description: its un-cite-resolved KernelDecl + identity.
     NAME / triton_kernel_name / the family-scoped key are all the def __name__ (== the
     Triton kernel symbol name, since @ati.source loads that symbol); source_path rides
     on the spec. The linker resolves @ati.cite gaps then builds the KernelDescription."""
@@ -91,7 +94,7 @@ class KernelShell:
 
 
 class MetroShell:
-    """A parsed @ati.metro_kernel backend: its MetroPlan + the backend enum-name. The
+    """A parsed @ati.metro_kernel backend: its MetroSpec + the backend enum-name. The
     sub-kernel NAMES (plan Call strings) are the relocation the linker binds.
 
     `precedence` is the optional @ati.hints.union_precedence order (highest priority
@@ -149,16 +152,16 @@ def _node_kind(ref):
     """The visit_* method suffix for a backend ref — dispatched by isinstance on the
     AtiNode subclass stored as fn.__ati_node__."""
     from aotriton.template_instantiation.specs.node import AtiNode
-    from aotriton.template_instantiation.specs.metro import MetroPlan
-    from aotriton.template_instantiation.specs.kernel import KernelSpec
+    from aotriton.template_instantiation.specs.metro import MetroSpec
+    from aotriton.template_instantiation.specs.kernel import KernelDecl
     from aotriton.template_instantiation.specs.affine import AffineDecl
     node = getattr(ref, '__ati_node__', None)
     if not isinstance(node, AtiNode):
         raise AssertionError(
             f'backend ref {ref!r} has no __ati_node__ '
             f'(not a metro, kernel, nor affine description)')
-    if isinstance(node, MetroPlan):  return 'metro'
-    if isinstance(node, KernelSpec): return 'kernel'
+    if isinstance(node, MetroSpec):  return 'metro'
+    if isinstance(node, KernelDecl): return 'kernel'
     if isinstance(node, AffineDecl): return 'affine'
     raise AssertionError(f'unrecognised AtiNode type {type(node)!r} on {ref!r}')
 
@@ -201,7 +204,7 @@ class FamilyCompiler:
         self.compiled.op_order.append(decl.name)
 
     def visit_metro(self, b):
-        plan = b.obj.__ati_node__   # MetroPlan
+        plan = b.obj.__ati_node__   # MetroSpec
         sub_names = list(self._iter_plan_subkernels(plan.steps))
         for sub_name in sub_names:
             sub_def = getattr(self.aot, sub_name, None)
@@ -242,8 +245,8 @@ class FamilyCompiler:
     def _record_kernel(self, def_obj):
         """Record a triton-kernel def as a KernelShell (no-op if already recorded).
         Returns the kernel def-name."""
-        from aotriton.template_instantiation.specs.finalize import get_kernel_spec
-        spec = get_kernel_spec(def_obj)
+        from aotriton.template_instantiation.specs.finalize import get_kernel_decl
+        spec = get_kernel_decl(def_obj)
         assert spec is not None, (
             f'{getattr(def_obj, "__name__", def_obj)!r} has no @ati.* kernel spec')
         name = getattr(spec.kernel, '__name__', None)

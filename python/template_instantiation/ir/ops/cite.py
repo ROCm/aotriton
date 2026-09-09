@@ -33,7 +33,7 @@ from aotriton.template_instantiation.decorators import TensorSpec, ScalarSpec, C
 
 def _spec_apparel_names(spec):
     """{apparel_name -> (source_spec, real_arg, cited_param_names)} for one cited
-    KernelSpec's tensor and scalar bindings. A single binding's apparel is its
+    KernelDecl's tensor and scalar bindings. A single binding's apparel is its
     wires_to or its own arg name; multi-arg (list) bindings cannot wire, so
     apparel == each arg name. cited_param_names is the cited kernel's signature
     (needed to resolve a cited tensor's stride glob to exact names)."""
@@ -110,8 +110,8 @@ def _string_dtype_names(spec):
     return names
 
 
-def _kernel_spec_of(kdesc, name, target):
-    cs = getattr(kdesc, 'kernel_spec', None)
+def _kernel_decl_of(kdesc, name, target):
+    cs = getattr(kdesc, 'kernel_decl', None)
     if cs is None:
         raise DescriptionError(
             f"kernel {name!r}: cite target {target!r} resolves to a kernel with "
@@ -120,11 +120,11 @@ def _kernel_spec_of(kdesc, name, target):
 
 
 def _resolve_one_cite(c, family, name, lookup, metro_lookup=None, op_lookup=None):
-    """Resolve a single @ati.cite target to a LIST of cited KernelSpecs.
+    """Resolve a single @ati.cite target to a LIST of cited KernelDecls.
 
     Resolution order (rev0 §4.4):
       0. metro level via `metro_lookup` (the linker's injection) — for a whole-metro
-         (2-segment) target, return every sub-kernel's KernelSpec straight from the
+         (2-segment) target, return every sub-kernel's KernelDecl straight from the
          Pass-1 shells, WITHOUT requiring a built operator. This is the header/extern
          path that lets a sub-kernel cite the metro that contains it (a true cycle):
          the cited sub-kernels' argument surface is known from Pass 1, so the citer's
@@ -149,14 +149,14 @@ def _resolve_one_cite(c, family, name, lookup, metro_lookup=None, op_lookup=None
                 f"kernel {name!r}: @ati.cite({c.target!r}): {e}")
         if c.kernel_name is None:
             # whole metro -> every sub-kernel's spec (the merged interface)
-            return [_kernel_spec_of(k, name, c.target)
+            return [_kernel_decl_of(k, name, c.target)
                     for k in metro.iter_subkernels()]
         try:
             sub = metro.get_kernel(c.kernel_name)
         except KeyError as e:
             raise DescriptionError(
                 f"kernel {name!r}: @ati.cite({c.target!r}): {e}")
-        return [_kernel_spec_of(sub, name, c.target)]
+        return [_kernel_decl_of(sub, name, c.target)]
     # Operator not built; fall back to the flat kernel registry (kernel-level).
     if c.kernel_name is None:
         raise DescriptionError(
@@ -170,19 +170,19 @@ def _resolve_one_cite(c, family, name, lookup, metro_lookup=None, op_lookup=None
             f"{c.kernel_name!r}, which is neither a built {family!r} operator's "
             f"sub-kernel nor a built kernel (declare/import it before the citing "
             f"kernel)")
-    return [_kernel_spec_of(kdesc, name, c.target)]
+    return [_kernel_decl_of(kdesc, name, c.target)]
 
 
 def resolve_cites(spec, *, family, lookup=None, metro_lookup=None, op_lookup=None):
-    """Augment a citing KernelSpec in place from its @ati.cite targets, BEFORE
+    """Augment a citing KernelDecl in place from its @ati.cite targets, BEFORE
     build_kernel. Each target resolves (via metro_lookup, the ops registry, else the
-    flat kernel registry) to one or more cited KernelSpecs whose practices fill the
+    flat kernel registry) to one or more cited KernelDecls whose practices fill the
     citing kernel's gaps. `lookup(family, kernel_name)` overrides the flat-registry
     lookup; `metro_lookup(family, op_name, metro_name)` resolves a whole-metro cite to
     its sub-kernels' specs directly (the linker's header/extern path)."""
     if not spec.cites:
         return spec
-    name = getattr(spec.kernel, '__name__', 'kernel')
+    name = spec.name
     param_names = [p.name for p in spec.params]
 
     cited_specs = []
@@ -310,23 +310,28 @@ def resolve_cites(spec, *, family, lookup=None, metro_lookup=None, op_lookup=Non
             spec.overrides.append(ov)
 
     # 3) @ati.disable is citeable (rev0 §4.5): no local disable -> inherit the
-    # cited target's; a local disable REPLACES it. A bare-callable local disable
-    # shadowing a cited one (it cannot super()) is a FATAL error unless explicitly
-    # affirmed — a warning would be lost in the generator's output, silently
-    # dropping the cited correctness exclusion.
-    cited_disables = [d for cs in cited_specs for d in cs.disables]
-    if not spec.disables:
-        spec.disables = list(cited_disables)        # inherit verbatim
-    elif cited_disables:
-        for d in spec.disables:
-            if not d.is_callable_class and not d.override_ack:
-                raise DescriptionError(
-                    f"kernel {name!r}: a local @ati.disable (a bare "
-                    f"lambda/function) would replace the cited disable from "
-                    f"{[c.target for c in spec.cites]}, silently dropping the cited "
-                    f"correctness exclusion. To EXTEND it, make the disable a "
-                    f"callable class that calls super().__call__(f); to override "
-                    f"intentionally, pass "
-                    f"I_understand_this_overrides_cited_disable=True to "
-                    f"ati.disable(...).")
+    # cited target's (0-N, a whole-metro cite may resolve to several sub-kernels'
+    # disables -- this is the RESOLVED cardinality, written only here); a local
+    # disable REPLACES the cited ones. A bare-callable local disable shadowing a
+    # cited one (it cannot super()) is a FATAL error unless explicitly affirmed —
+    # a warning would be lost in the generator's output, silently dropping the
+    # cited correctness exclusion. `cited_specs` are themselves already
+    # cite-resolved (built in cite-dependency order), so their
+    # `resolved_disables` -- not their declared `disable` -- is what a whole-metro
+    # cite chain actually propagates.
+    cited_disables = [d for cs in cited_specs for d in cs.resolved_disables]
+    if spec.disable is None:
+        spec.resolved_disables = list(cited_disables)        # inherit verbatim
+    else:
+        if cited_disables and not spec.disable.is_callable_class and not spec.disable.override_ack:
+            raise DescriptionError(
+                f"kernel {name!r}: a local @ati.disable (a bare "
+                f"lambda/function) would replace the cited disable from "
+                f"{[c.target for c in spec.cites]}, silently dropping the cited "
+                f"correctness exclusion. To EXTEND it, make the disable a "
+                f"callable class that calls super().__call__(f); to override "
+                f"intentionally, pass "
+                f"I_understand_this_overrides_cited_disable=True to "
+                f"ati.disable(...).")
+        spec.resolved_disables = [spec.disable]
     return spec

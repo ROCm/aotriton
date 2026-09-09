@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 """Step 5.5: the @ati.metro_kernel if/else transpiler. Parses the body's AST
-(never executes it) into a MetroPlan, and lowers it to MetroKernel /
+(never executes it) into a MetroSpec, and lowers it to MetroKernel /
 ConditionalKernel IR equal to the hand-written legacy metro structure."""
 
 import sys

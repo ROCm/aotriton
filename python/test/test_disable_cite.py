@@ -18,7 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import aotriton.template_instantiation as ati
-from aotriton.template_instantiation.describe import describe, get_kernel_spec
+from aotriton.template_instantiation.describe import describe, get_kernel_decl
 from registry import InterfaceRegistry, _testonly_build_kernel_description
 from aotriton.template_instantiation.ir.ops.cite import resolve_cites
 from aotriton.template_instantiation.builder import DescriptionError
@@ -44,8 +44,14 @@ def _register_attn_fwd_with_disable(registry):
     # Fresh fake attn_fwd; REPLACE its disables with our known callable-class one so
     # the cite-inheritance assertions are deterministic.
     af = attn_fwd_stub()
-    spec_obj = get_kernel_spec(af)
-    spec_obj.disables = [ati.disable(CitedDisabled())]
+    spec_obj = get_kernel_decl(af)
+    # A post-construction mutation of an already-built spec, not a fresh
+    # declaration -- `resolved_disables` isn't recomputed by assigning
+    # `disable` after the fact (only __post_init__ and resolve_cites write
+    # it), so both fields are set here to keep them consistent for the
+    # cite-inheritance assertions below.
+    spec_obj.disable = ati.disable(CitedDisabled())
+    spec_obj.resolved_disables = [spec_obj.disable]
     return _testonly_build_kernel_description(af, family='flash',
                                     triton_kernel_name='attn_fwd',
                                     registry=registry)
@@ -64,7 +70,7 @@ def _citing_specs(*extra):
 def _resolve_citing(registry, *extra):
     debug = debug_stub()
     describe(debug, *_citing_specs(*extra), _validate=False)
-    spec = get_kernel_spec(debug)
+    spec = get_kernel_decl(debug)
     return resolve_cites(spec, family='flash',
                          lookup=registry.get_kernel, op_lookup=registry.get_op)
 
@@ -73,8 +79,8 @@ def test_inherits_cited_disable_when_absent():
     reg = InterfaceRegistry()
     _register_attn_fwd_with_disable(reg)
     spec = _resolve_citing(reg)              # no local disable
-    assert len(spec.disables) == 1
-    assert isinstance(spec.disables[0].when, CitedDisabled)
+    assert len(spec.resolved_disables) == 1
+    assert isinstance(spec.resolved_disables[0].when, CitedDisabled)
 
 
 def test_local_callable_class_replaces_no_warning():
@@ -84,7 +90,7 @@ def test_local_callable_class_replaces_no_warning():
         warnings.simplefilter('error')       # any warning -> failure
         spec = _resolve_citing(reg, ati.disable(ExtendedDisabled()))
     # local replaces; extension is the author's responsibility via super()
-    assert isinstance(spec.disables[0].when, ExtendedDisabled)
+    assert isinstance(spec.resolved_disables[0].when, ExtendedDisabled)
 
 
 def test_bare_lambda_override_is_fatal():

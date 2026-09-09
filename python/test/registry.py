@@ -72,10 +72,10 @@ def _testonly_build_kernel_description(kernel, *, family, registry: InterfaceReg
     """
     from aotriton.template_instantiation.builder import build_kernel
     from aotriton.template_instantiation.ir.triton import KernelDescription
-    from aotriton.template_instantiation.specs.finalize import get_kernel_spec
+    from aotriton.template_instantiation.specs.finalize import get_kernel_decl
     from aotriton.template_instantiation.ir.ops.cite import resolve_cites
 
-    spec = get_kernel_spec(kernel)
+    spec = get_kernel_decl(kernel)
     assert spec is not None, (
         f'kernel {getattr(kernel, "__name__", kernel)!r} has no ATI description')
 
@@ -89,7 +89,7 @@ def _testonly_build_kernel_description(kernel, *, family, registry: InterfaceReg
     built = build_kernel(spec)
     adapter = KernelDescription(built, family=family, source_path=source_path,
                                 triton_kernel_name=triton_kernel_name)
-    adapter.kernel_spec = spec
+    adapter.kernel_decl = spec
     if register:
         registry.register_kernel(adapter)
     return adapter

@@ -14,6 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from .node import AtiNode
+from .bundle import partition
 
 if TYPE_CHECKING:
     from ..decorators.disable import DisableSpec
@@ -38,14 +39,34 @@ class AffineDecl(AtiNode):
     disable: DisableSpec | None
 
 
-def collect_affine_decl(specs):
-    """Partition an @ati.affine stack into a passive AffineDecl (no build)."""
+def partition_affine(specs):
+    """Common vocabulary, restricted: an affine kernel has no Python signature
+    to bind gap arguments or dtype-vars against, and no perf-tuning concept of
+    its own, so it accepts none of @ati.tensor/@ati.scalar/@ati.type_var/
+    @ati.derives, @ati.cite, or the tune-record specs -- explicit `forbid()`
+    calls rather than the absence of an `elif`, so an @ati.tensor on an affine
+    stack fails naming the kind, instead of silently landing in
+    b.unrecognized. Only @ati.disable is shared with the common vocabulary;
+    the AffineKernelSpec marker and its @ati.affine.* metadata are
+    affine-specific and claimed out of b.unrecognized by collect_affine_decl
+    below."""
+    b = partition(specs)
+    b.forbid('tensors', 'scalars', 'dtype_vars', 'overrides', 'cites',
+             'tune_records', what='@ati.affine')
+    return b
+
+
+def collect_affine_decl(placeholder, specs):
+    """Partition an @ati.affine stack into a passive AffineDecl (no build).
+    `placeholder` is unused -- accepted only so every collect_*_decl shares the
+    same (placeholder, specs) signature for specs/finalize.py's start()
+    dispatch table."""
     from ..decorators.affine import (
         AffineKernelSpec, SharedOperatorSpec, ArchSpec,
         LimitationsSpec, StructuresSpec, DirectoriesSpec, SuppliesSpec,
     )
-    from ..decorators import DisableSpec
 
+    b = partition_affine(specs)
     marker = None
     shared_op = None
     arches = []
@@ -56,8 +77,8 @@ def collect_affine_decl(specs):
     supplied = []
     supplies_after = None
     supplies_before = None
-    disable = None
-    for s in specs:
+    remaining = []
+    for s in b.unrecognized:
         if isinstance(s, AffineKernelSpec):
             assert marker is None, 'multiple @ati.affine.aiter_asm markers in one stack'
             marker = s
@@ -83,16 +104,14 @@ def collect_affine_decl(specs):
                     f'conflicting before= anchors in @ati.affine.supplies: '
                     f'{supplies_before!r} vs {s.before!r}')
                 supplies_before = s.before
-        elif isinstance(s, DisableSpec):
-            disable = s
         else:
-            raise AssertionError(
-                f'unexpected spec {s!r} in an @ati.affine stack; affine kernels '
-                f'accept @ati.affine.* and @ati.disable only')
+            remaining.append(s)
+    b.unrecognized = remaining
+    b.reject_remaining('@ati.affine')
     assert marker is not None, '@ati.start affine path without an @ati.affine marker'
     assert co_dir is not None, f'affine kernel {marker.name!r} missing @ati.affine.directories'
     return AffineDecl(name=marker.name, co_dir=co_dir, cookie=cookie, headers=headers,
                       supported_arch=arches, choice_filters=filters,
                       shared_operator_name=shared_op, supplied_specs=supplied,
                       supplies_after=supplies_after, supplies_before=supplies_before,
-                      disable=disable)
+                      disable=b.disable)

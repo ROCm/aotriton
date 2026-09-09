@@ -16,7 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import aotriton.template_instantiation as ati
-from aotriton.template_instantiation.describe import describe, get_kernel_spec
+from aotriton.template_instantiation.describe import describe, get_kernel_decl
 from registry import InterfaceRegistry, _testonly_build_kernel_description
 from aotriton.template_instantiation.builder import DescriptionError
 from fakekernels import attn_fwd_stub, debug_stub
@@ -80,7 +80,7 @@ def _cite_debug(target, registry):
     ]
     debug = debug_stub()
     describe(debug, *specs, _validate=False)
-    spec = get_kernel_spec(debug)
+    spec = get_kernel_decl(debug)
     from aotriton.template_instantiation.ir.ops.cite import resolve_cites
     resolve_cites(spec, family='flash', op_lookup=registry.get_op)
     return _testonly_build_kernel_description(debug, family='flash',

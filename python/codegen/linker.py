@@ -76,26 +76,6 @@ def _kernel_build_order(compiled):
         raise SystemExit(f'ATI linker: @ati.cite dependency cycle: {e.args[1]}')
 
 
-def _clone_spec(spec):
-    """A shallow copy of a KernelSpec with FRESH mutable lists, so the linker's
-    resolve_cites (which appends gap tensors/scalars/overrides/dtype_vars and may set
-    tune/disables) never mutates the module-level passive spec — making linking
-    idempotent (the spec is the source of truth; the linker builds from a copy)."""
-    from aotriton.template_instantiation.specs.kernel import KernelSpec
-    clone = KernelSpec.__new__(KernelSpec)
-    clone.kernel = spec.kernel
-    clone.params = spec.params              # immutable signature; shared is fine
-    clone.tensors = list(spec.tensors)
-    clone.scalars = list(spec.scalars)
-    clone.overrides = list(spec.overrides)
-    clone.tune = spec.tune                  # replaced wholesale by resolve_cites if None
-    clone.disables = list(spec.disables)
-    clone.source_path = spec.source_path
-    clone.dtype_vars = list(spec.dtype_vars)
-    clone.cites = list(spec.cites)
-    return clone
-
-
 def _build_kernels(compiled):
     """Resolve cites + build every kernel shell into a KernelDescription, in cite
     dependency order. Returns {def-name -> KernelDescription}."""
@@ -124,14 +104,14 @@ def _build_kernels(compiled):
         for sub in metro_shell.donor_order():
             if sub == _citer:
                 continue
-            donor_spec = specs.get(sub)        # the cite-resolved clone KernelSpec
+            donor_spec = specs.get(sub)        # the cite-resolved clone KernelDecl
             if donor_spec is not None:
                 donors.append(donor_spec)
         return donors
 
     for name in _kernel_build_order(compiled):
         shell = compiled.kernels[name]
-        spec = _clone_spec(shell.spec)
+        spec = shell.spec.clone()
         resolve_cites(spec, family=compiled.family, lookup=lookup,
                       metro_lookup=lambda f, o, m, _n=name: metro_lookup(f, o, m, _n))
         specs[name] = spec
@@ -139,7 +119,7 @@ def _build_kernels(compiled):
         kdesc = KernelDescription(bk, family=compiled.family,
                                   source_path=shell.source_path,
                                   triton_kernel_name=name)
-        kdesc.kernel_spec = spec       # the cite-resolved clone (for whole-metro cites)
+        kdesc.kernel_decl = spec       # the cite-resolved clone (for whole-metro cites)
         built[name] = kdesc
     return built
 

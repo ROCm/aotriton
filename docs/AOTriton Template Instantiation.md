@@ -54,10 +54,10 @@ There are four kinds of stacked block, distinguished by the innermost decorator:
 
 | Innermost | Block kind | Produces |
 |---|---|---|
-| `@ati.source(...)` | Kernel | `KernelSpec` on `fn.__ati_node__` |
+| `@ati.source(...)` | Kernel | `KernelDecl` on `fn.__ati_node__` |
 | `@ati.affine.aiter_asm(...)` | Affine | `AffineDecl` on `fn.__ati_node__` |
 | `@ati.operator(...)` | Operator | `OperatorDecl` on `fn.__ati_node__` |
-| `@ati.metro_kernel` | Metro | `MetroPlan` on `fn.__ati_node__` |
+| `@ati.metro_kernel` | Metro | `MetroSpec` on `fn.__ati_node__` |
 
 ---
 
@@ -308,7 +308,7 @@ def metro_bwd(params):
 ```
 
 `@ati.metro_kernel` is the innermost marker (transpiles the body into a
-`MetroPlan`); `@ati.start` finalizes above it.
+`MetroSpec`); `@ati.start` finalizes above it.
 
 **Grammar**: only `kernel(params)` calls and `if params.<X>[.data_ptr()] <op>
 <literal>: ...` conditionals are valid. The condition reads one `params`
@@ -427,17 +427,28 @@ Every `@ati.start` block produces one **AtiNode** subclass instance stored as
 
 ```
 AtiNode (specs/node.py)
-  ├── KernelSpec   (specs/kernel.py)   — @ati.source + all specs
-  ├── AffineDecl   (specs/affine.py)  — @ati.affine.* stack
-  ├── OperatorDecl (specs/operator.py) — @ati.operator stack
-  └── MetroPlan    (specs/metro.py)   — @ati.metro_kernel transpiled AST
+  └── BuildableDecl (specs/node.py)    — every field the builder pipeline reads
+        ├── KernelDecl   (specs/kernel.py)   — @ati.source + all specs
+        ├── AffineDecl   (specs/affine.py)   — @ati.affine.* stack
+        ├── OperatorDecl (specs/operator.py) — @ati.operator stack
+        └── MetroSpec    (specs/metro.py)    — @ati.metro_kernel transpiled AST
 ```
 
-**`KernelSpec`** is the kernel's passive "object file". It differs from the
+**Naming: `*Spec` is the record ONE `@ati.*` decorator produces; `*Decl` is the
+finalized per-stack collection** attached as `fn.__ati_node__`. `MetroSpec` is
+both — the transpiled body is itself the innermost marker — which is why it
+keeps the `*Spec` name.
+
+**`KernelDecl`** is the kernel's passive "object file". It differs from the
 other three records in that it must be **cloned and mutated during linking**
 (cite resolution appends gap tensors/scalars/overrides onto a per-link copy).
 `OperatorDecl` and `AffineDecl` carry no cross-kernel references, so the linker
 reads them verbatim.
+
+`BuildableDecl.clone()` is reflective over `dataclasses.fields()` and returns
+`type(self)`, so a field added to a record is copied for free. There is no
+`__post_init__` anywhere in the hierarchy: a derived field is derived by the
+COLLECTOR that builds the record.
 
 #### 2.1 The Stacked-@ Mechanics
 
@@ -457,15 +468,22 @@ class StackedSpec:
 
 `@ati.start` (specs/finalize.py) dispatches O(1) on the **innermost spec**
 (`specs[-1]` after source-order reversal — Python's bottom-up application
-guarantees the innermost decorator's spec is always the kind discriminant):
+guarantees the innermost decorator's spec is always the kind discriminant),
+through a `{marker type: collect_*_decl}` table rather than an `isinstance`
+ladder:
 
 ```python
 marker = specs[-1]
-if isinstance(marker, OperatorSpec):    → _finalize_operator → OperatorDecl
-elif isinstance(marker, AffineKernelSpec): → _finalize_affine → AffineDecl
-elif isinstance(marker, MetroPlan):    → _finalize_metro  → MetroPlan
-else:                                  → describe()        → KernelSpec
+{OperatorSpec:      collect_operator_decl,   # → OperatorDecl
+ AffineKernelSpec:  collect_affine_decl,     # → AffineDecl
+ FlycKernelSpec:    collect_flyc_decl,       # → FlycDecl
+ MetroSpec:         collect_metro_decl,      # → MetroSpec
+}.get(type(marker))  # or, with no entry: describe() → KernelDecl
 ```
+
+Each `collect_*_decl` calls its own `partition_<kind>()`, which wraps the one
+common `partition()` (specs/bundle.py), claims the kinds its stack adds, and
+`forbid()`s the ones it does not accept.
 
 This means every affine stack must have `@ati.affine.aiter_asm` as the
 **innermost** decorator (directly above the `def`), with all other
@@ -501,24 +519,24 @@ def describe(kernel, *specs, _validate=True):
    by a tensor/scalar/tune-schema/stride-glob. Unclaimed params are only allowed
    when `@ati.cite` is present (the linker fills gaps at build time).
 4. Build `TuneSpec` from collected tune records.
-5. Attach `KernelSpec` as `kernel.__ati_node__`.
+5. Attach `KernelDecl` as `kernel.__ati_node__`.
 
-### 3. Stage 3 (Builder): KernelSpec → BuiltKernel
+### 3. Stage 3 (Builder): KernelDecl → BuiltKernel
 
-`builder/kernel.py` lowers one `KernelSpec` into Axis + Override IR:
+`builder/kernel.py` lowers one `KernelDecl` into Axis + Override IR:
 
 ```python
-def build_kernel(kernel_spec) -> BuiltKernel:
-    name = ...
+def build_kernel(decl) -> BuiltKernel:
+    name = decl.name
     param_index = ...
-    _resolve_named_dtypes(kernel_spec, name)   # string dtype refs → ChoiceVar
+    _resolve_named_dtypes(decl, name)          # string dtype refs → ChoiceVar
 
-    axes, nonunit_strides = _build_axes(kernel_spec, param_index, name)
+    axes, nonunit_strides = _build_axes(decl, param_index, name)
     axes.sort(key=lambda a: a.anchor)
 
-    wiring = _collect_wiring(kernel_spec.tensors, kernel_spec.scalars)
+    wiring = _collect_wiring(decl.tensors, decl.scalars)
     functional_overrides, perf_overrides = _split_overrides(
-        kernel_spec.overrides, kernel_spec.tune, name)
+        decl.overrides, decl.tune, name)
     functional_overrides += _synthesize_stride_overrides(
         functional_overrides, nonunit_strides)
 
@@ -556,8 +574,8 @@ cross-references ("relocations") as strings:
 
 ```
 CompiledFamily
-  kernels  — {def-name → KernelShell(name, KernelSpec, source_path)}
-  metros   — {enum-name → MetroShell(name, MetroPlan, subkernel_names, precedence)}
+  kernels  — {def-name → KernelShell(name, KernelDecl, source_path)}
+  metros   — {enum-name → MetroShell(name, MetroSpec, subkernel_names, precedence)}
   affines  — {affine-name → AffineDecl}
   operators — {op-name → OperatorShell(name, OperatorDecl, backend_refs)}
   op_order — [operator names in declared order]
@@ -583,22 +601,23 @@ The `Linker` resolves each `CompiledFamily` into final IR:
    terms and terminates — the citer only needs the cited kernels' argument
    surfaces, not their own.
 
-2. **Spec cloning**: Each kernel's `KernelSpec` is shallowly cloned with fresh
-   mutable lists before cite resolution, keeping the module-level spec
-   immutable and linking idempotent.
+2. **Decl cloning**: Each kernel's `KernelDecl` is shallowly cloned
+   (`decl.clone()`, reflective over `dataclasses.fields()`) with fresh mutable
+   lists before cite resolution, keeping the module-level record immutable and
+   linking idempotent.
 
 3. **Cite resolution** (`ir/ops/cite.py`): For each `@ati.cite` target, find
    the cited kernel's argument surface and append gap tensors/scalars/overrides
    to the citing kernel's cloned spec. A whole-metro cite donates all sub-kernels'
    argument surfaces in `union_precedence` priority order.
 
-4. **`build_kernel`**: Lower the cite-resolved `KernelSpec` → `BuiltKernel`.
+4. **`build_kernel`**: Lower the cite-resolved `KernelDecl` → `BuiltKernel`.
 
 5. **`KernelDescription`**: Wrap `BuiltKernel` into the codegen-facing IR.
    Assign Godel strides; compute `_godel_number` (product of radices);
    build perf struct, arg index, baked-args set, and autotune keys.
 
-6. **Metro build** (`builder/metro.py`): `lower_plan(MetroPlan, kernel_map,
+6. **Metro build** (`builder/metro.py`): `lower_plan(MetroSpec, kernel_map,
    ...)` replaces string sub-kernel names with live `KernelDescription`
    objects. `ConditionalKernel(Interface)` wraps each `Cond` step.
 

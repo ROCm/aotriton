@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .node import AtiNode
+from .bundle import partition
 from ..ast_params import find_one_function, collect_params
 
 if TYPE_CHECKING:
@@ -88,6 +89,23 @@ def _flyc_kernel_stub(module_path, kernel_name):
     return KernelStub(fn.name, params, str(path))
 
 
+def partition_flyc(specs):
+    """Common vocabulary, restricted: a flyc kernel has the same kernarg-ABI
+    concept as a Triton kernel (tensors/scalars/overrides/dtype-vars) and the
+    same @ati.cite(s)/@ati.disable, but no tune-record concept -- its knobs
+    come from the builder, not from a perf space. The @ati.flyc.* markers
+    (FlycKernelSpec/FlycHintsSpec) are flyc-specific and are claimed out of
+    `b.unrecognized` by `collect_flyc_decl` below.
+
+    No `forbid('cites', ...)` here: unlike specs/affine.py, flyc accepts the
+    common vocabulary's plural `cites` outright. Multi-cite ("citation mode
+    (b)", see specs/bundle.py) is as legitimate for a flyc kernel as for a
+    Triton one."""
+    b = partition(specs)
+    b.forbid('tune_records', what='@ati.flyc')
+    return b
+
+
 def collect_flyc_decl(placeholder, specs):
     """Partition an `@ati.flyc` stack into a passive FlycDecl (no build, no
     `describe()` validation).
@@ -95,20 +113,13 @@ def collect_flyc_decl(placeholder, specs):
     Does NOT resolve a real kernel stub: `FlycKernelSpec` carries no path, so
     there is no vendored file to AST-parse yet. Only the builder, once called
     with a concrete `arch`, knows which file and def to use."""
-    from ..decorators import DisableSpec
     from ..decorators.flyc import FlycKernelSpec, FlycHintsSpec
-    from .finalize import _partition
 
-    (tensors, scalars, overrides, tune_records, disables, dtype_vars,
-     cites, others) = _partition(specs)
-    assert not tune_records, (
-        '@ati.tune.* on an @ati.flyc stack: a flyc kernel has no perf space of '
-        'its own -- its knobs come from the builder')
-    assert len(disables) <= 1, 'multiple @ati.disable on one @ati.flyc stack'
-
+    b = partition_flyc(specs)
     marker = None
     hints_cls = None
-    for s in others:
+    remaining = []
+    for s in b.unrecognized:
         if isinstance(s, FlycKernelSpec):
             assert marker is None, 'multiple @ati.flyc.kernel markers in one stack'
             marker = s
@@ -116,8 +127,9 @@ def collect_flyc_decl(placeholder, specs):
             assert hints_cls is None, 'duplicate @ati.flyc.hints on one kernel'
             hints_cls = s.hints_cls
         else:
-            raise AssertionError(
-                f'unexpected spec {s!r} in an @ati.flyc stack')
+            remaining.append(s)
+    b.unrecognized = remaining
+    b.reject_remaining('@ati.flyc')
     assert marker is not None, '@ati.start flyc path without an @ati.flyc.kernel marker'
 
     # The DESCRIPTION module's own file, e.g. modules/flash/aot/flyc_attn_fwd.py.
@@ -130,6 +142,6 @@ def collect_flyc_decl(placeholder, specs):
                     desc_path=desc_path,
                     fn=placeholder,
                     hints_cls=hints_cls,
-                    tensors=tensors, scalars=scalars, overrides=overrides,
-                    dtype_vars=dtype_vars, cites=cites,
-                    disable=disables[0] if disables else None)
+                    tensors=b.tensors, scalars=b.scalars, overrides=b.overrides,
+                    dtype_vars=b.dtype_vars, cites=b.cites,
+                    disable=b.disable)
