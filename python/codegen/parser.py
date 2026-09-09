@@ -26,21 +26,31 @@ top-level name so its relative imports resolve without a `<family>` namespace pk
 its `kernel/` sources keep importing each other by bare name.
 """
 
+import hashlib
 import sys
 import importlib.util
 from pathlib import Path
 
 
+# family NAME -> the most recently loaded `aot` package for it. Not sys.modules
+# directly: two module trees can supply the same family (the real modules/ and
+# python/test/fakefamily/ both have a `flash`), and they must not share a cache
+# entry. Parser.load_family_aot keys sys.modules by tree as well as family and
+# records the result here.
+_LOADED_AOT = {}
+
+
 def load_family_aot(family):
     """Fetch an already-loaded family's `aot` package from the import cache.
 
-    The Parser loads each family by path under the synthetic name
-    `_aotriton_modules_<family>_aot`; this free function returns that cached module
-    (or None) for the few consumers that need the loaded package but do not have a
-    Parser handle — e.g. ir/triton/kdesc.py's flash sancheck back-edge, which runs after the
-    family was loaded during linking. It never loads (no modules_dir): the family
-    must already be loaded by a Parser."""
-    return sys.modules.get(f'_aotriton_modules_{family}_aot')
+    Returns the module (or None) for the few consumers that need the loaded
+    package but do not have a Parser handle — e.g. ir/triton/kdesc.py's flash
+    sancheck back-edge, which runs after the family was loaded during linking.
+    It never loads: the family must already be loaded by a Parser.
+
+    When more than one tree supplies the family, this is the most recently
+    loaded one, which is the linking currently in progress."""
+    return _LOADED_AOT.get(family)
 
 
 # --- Pass-1 shells (relocations stored on the shell) -------------------------
@@ -285,10 +295,21 @@ class Parser:
         `kernel/` sources keep importing each other by bare name; loading `aot` by
         name would require `<family>` to be a clean namespace package, which any
         sys.path entry containing a `<family>.py` (e.g. a stray `flash.py` on sys.path) would
-        shadow. Loading by path sidesteps that entirely. Cached in sys.modules."""
-        modname = f'_aotriton_modules_{family}_aot'
+        shadow. Loading by path sidesteps that entirely. Cached in sys.modules.
+
+        The cache key includes a digest of `module_dir`, not just the family
+        name. Two trees can supply the same family -- the real `modules/` and
+        `python/test/fakefamily/` both have a `flash` -- and keying on the name
+        alone meant whichever loaded first served both. That is invisible while
+        the two describe the same thing, and silently wrong the moment they
+        diverge: adding a third backend to the real op_attn_fwd made a fakefamily
+        test see three backends in a full-suite run and two in isolation."""
+        digest = hashlib.blake2b(str(self.module_dir.resolve()).encode(),
+                                 digest_size=6).hexdigest()
+        modname = f'_aotriton_modules_{digest}_{family}_aot'
         cached = sys.modules.get(modname)
         if cached is not None:
+            _LOADED_AOT[family] = cached
             return cached
         aot_dir = self.module_dir / family / 'aot'
         spec = importlib.util.spec_from_file_location(
@@ -297,6 +318,7 @@ class Parser:
         mod = importlib.util.module_from_spec(spec)
         sys.modules[modname] = mod
         spec.loader.exec_module(mod)
+        _LOADED_AOT[family] = mod
         return mod
 
     # --- compile ------------------------------------------------------------
