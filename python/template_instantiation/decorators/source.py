@@ -11,6 +11,8 @@ import ast
 import inspect
 from pathlib import Path
 
+from ..ast_params import find_functions, collect_params, AstParamError
+
 
 class SourceError(Exception):
     """A bad @ati.source: missing file or kernel symbol."""
@@ -56,21 +58,20 @@ class KernelStub:
 def _ast_kernel_param_names(src, sym, path):
     """Parameter names of the function `sym` in the source file `src`, via AST — no
     import, no execution. Skips *args/**kwargs (triton kernels never use them).
-    Raises SourceError if the file has no such top-level function."""
+    Raises SourceError if the file has no such top-level function.
+
+    Locating the def (by name, top-level only) and reading its parameter names
+    are the shared `ast_params` mechanics; only the predicate is Triton's."""
     tree = ast.parse(src.read_text(encoding='utf-8'), filename=str(src))
-    fn = next((n for n in tree.body
-               if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
-               and n.name == sym), None)
-    if fn is None:
+    matches = find_functions(tree, lambda n: n.name == sym)
+    if not matches:
         raise SourceError(
             f"@ati.source({path!r}): file {src.name} has no top-level function "
             f"{sym!r} (pass name= if the kernel symbol differs from the def name)")
-    a = fn.args
-    if a.vararg is not None or a.kwarg is not None:
-        raise SourceError(
-            f"@ati.source({path!r}): kernel {sym!r} uses *args/**kwargs, which ATI "
-            f"cannot introspect into a fixed ARGUMENTS order")
-    return [p.arg for p in (a.posonlyargs + a.args + a.kwonlyargs)]
+    try:
+        return collect_params(matches[0], what=f"@ati.source({path!r}): kernel {sym!r}")
+    except AstParamError as e:
+        raise SourceError(str(e)) from e
 
 
 def source(path, name=None):
