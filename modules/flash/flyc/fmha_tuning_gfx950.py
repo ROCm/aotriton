@@ -16,9 +16,9 @@ so, and nothing here can make a build *wrong*, only slow.
 Knobs are the *partially resolved* form -- `None` means "policy decides" --
 and the dualwave traits are the *fully resolved* one. Keeping them as separate
 types with a converter between them meant every feature knob was declared
-twice and threaded through a function call, which is why `varlen` and
-`cross_seqlen` used to travel as keyword arguments *beside* the knob object
-instead of inside it.
+twice and threaded through a function call, which is why `cross_seqlen` used to
+travel as a keyword argument *beside* the knob object instead of inside it.
+(It has since stopped being a knob at all -- see `Gfx950Knobs`.)
 
 So `resolve` is a method, and it owns the whole derivation: the ladder, the
 padded-head decision, the wave geometry, and the traits the kernel is built
@@ -393,12 +393,16 @@ class FmhaKnobs:
 class Gfx950Knobs(FmhaKnobs):
     """The gfx950 dual-wave schedule.
 
-    `varlen`, `cross_seqlen`, `paged` and `num_kv_splits` are ordinary fields
-    here, not arguments threaded past the object. That is the point of R1:
-    before it, `cross_seqlen` was a keyword-only parameter on the builder, a
-    `kwargs.pop` in the front end, and an argument to a converter -- three
-    places to keep in step for one boolean, and P4 would have added a fourth
-    passenger in `varlen`.
+    `paged` and `num_kv_splits` are ordinary fields here, not arguments threaded
+    past the object. That is the point of R1: before it, `cross_seqlen` was a
+    keyword-only parameter on the builder, a `kwargs.pop` in the front end, and
+    an argument to a converter -- three places to keep in step for one boolean.
+
+    **There is no `varlen` field, and no `cross_seqlen` one.** The kernel
+    decodes `varlen_bits` unconditionally, so a ragged batch is a property of
+    the call rather than of the build; `cross_seqlen` went with it, because
+    with the lengths arriving at runtime no build can know whether
+    `seqlen_q == seqlen_k`. `make_traits` emits both as constants.
     """
 
     # Dual-wave schedule.
@@ -410,8 +414,6 @@ class Gfx950Knobs(FmhaKnobs):
     lpt_tile_order: bool | None = None
 
     # Problem modes. Ordinary fields; see the class docstring.
-    varlen: bool | None = None
-    cross_seqlen: bool | None = None
     paged: bool | None = None
     kv_cache_layout: str | None = None
     num_kv_splits: int | None = None
@@ -478,7 +480,6 @@ class Gfx950Knobs(FmhaKnobs):
         return (
             _GFX950_FALLBACK.merge(self)
             ._checked_modes()
-            ._with_mode_defaults(meta)
             ._with_widths(meta)
             ._with_wave_geometry()
             ._checked_against_traits(meta)
@@ -492,33 +493,20 @@ class Gfx950Knobs(FmhaKnobs):
         failing before the derivation keeps the message about the caller's
         input rather than about something computed from it.
         """
-        if self.varlen and self.num_kv_splits > 1:
-            raise ValueError("varlen is not supported together with num_kv_splits > 1")
+        if self.num_kv_splits > 1:
+            # The kernel decodes `varlen_bits` unconditionally, so every build
+            # is a ragged-batch build -- and SPLITK's active guard is
+            # `split_nonempty`, which was derived over a rectangular batch and
+            # says nothing about a sequence shorter than `max_seqlen`. Nothing
+            # asks for the combination today (every AOT description pins 1), so
+            # this rejects it rather than shipping a guard that has not been
+            # re-derived.
+            raise ValueError(
+                f"num_kv_splits must be 1 on gfx950, got {self.num_kv_splits}: the split guard has not "
+                "been derived for a ragged batch, and the varlen decode is no longer optional"
+            )
         if self.kv_cache_layout not in ("linear", "vectorized"):
             raise ValueError(f"kv_cache_layout must be 'linear' or 'vectorized', got {self.kv_cache_layout!r}")
-        return self
-
-    def _with_mode_defaults(self, meta):
-        """Decide the mode flags that depend on what is being computed.
-
-        Only `cross_seqlen` so far, and it needs `meta` -- which is why it is a
-        step rather than part of `_checked_modes`.
-
-        **A causal varlen build wants `cross_seqlen` on.** Q and K lengths come
-        from independent arrays read at runtime, so nothing at build time knows
-        whether they match; and where `seqlen_k < seqlen_q`, bottom-right
-        causal leaves the leading Q blocks with no live key at all, which the
-        kernel must detect and zero. That is exactly what `cross_seqlen` adds.
-        Defaulting it off would make the common varlen shape silently wrong,
-        and it was: all five modes passed non-causal and two failed causal
-        until this was turned on by hand.
-
-        Still pinnable to `False`, because it is not free -- it costs an extra
-        `active` term and an O-zeroing pass -- and a caller who knows every
-        sequence has `seqlen_q == seqlen_k` is entitled to skip it.
-        """
-        if self.cross_seqlen is None:
-            return replace(self, cross_seqlen=bool(self.varlen and meta.causal))
         return self
 
     def _with_wave_geometry(self):
@@ -782,8 +770,6 @@ class Gfx950Knobs(FmhaKnobs):
             setprio=self.setprio,
             stagger=self.stagger,
             num_kv_splits=self.num_kv_splits,
-            varlen=self.varlen,
-            cross_seqlen=self.cross_seqlen,
             paged=self.paged,
             kv_cache_layout=self.kv_cache_layout,
             kv_vectorized=self.paged and self.kv_cache_layout == "vectorized",
@@ -811,8 +797,6 @@ _GFX950_FALLBACK = Gfx950Knobs(
     setprio=True,
     stagger=True,
     lpt_tile_order=False,
-    varlen=False,
-    cross_seqlen=None,  # derived from varlen+causal; see `_with_mode_defaults`
     paged=False,
     kv_cache_layout="linear",
     num_kv_splits=1,

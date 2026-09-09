@@ -207,11 +207,19 @@ _TIGHT_REGISTERS = {
 #     causal+varlen, 32 tight     512    20       858    <- override
 #     dense+varlen,  32 loose     486     0       720
 #
-# **Varlen itself is free here, but only after the logsumexp layout became a
-# build axis.** Before that the row-tensor read took the sixteen-scalar path in
-# every varlen build, and 224 went to 232 spills and 257 TFLOP/s -- which for a
-# while looked like a second override wanting the 16-row family. The register
-# pressure was the workaround's, not the feature's; see
+# **The last two rows are what ships now**, since the varlen decode stopped
+# being a build axis and there is no dense binary to fall back to. This rung is
+# the only one that pays: 20 spills and 858 against the 1199 a causal-only
+# build reached, and 720 against 798 non-causal. Every other head dim spills
+# zero either way. If that becomes unacceptable it is an override to re-measure
+# (the 16-row family is the candidate), not a flag to restore.
+#
+# **Varlen itself is nearly free here, and what made it look otherwise was the
+# row-tensor read.** When every varlen build took the sixteen-scalar path, 224
+# went to 232 spills and 257 TFLOP/s -- which for a while looked like a second
+# override wanting the 16-row family. Making the layout a build axis fixed the
+# symptom; selecting the arm once outside the tile loop fixed it properly, and
+# without a build axis that could disagree with the runtime bits. See
 # `BwdDkDvInputMetadata.lse_layout_th`.
 #
 # **B7's bias needed four more, and the reason is not register pressure at
@@ -255,26 +263,25 @@ _TIGHT_REGISTERS = {
 # makes the right geometry a function of the group size, the batch *and* the
 # sequence length rather than of the head dim, which is not something this
 # table can express. See the B7 outcome section.
+# **No varlen axis in the key.** Every entry used to carry an identical
+# `varlen=True` twin, because the decode never moved the right geometry; now
+# that the decode is unconditional there is nothing to twin. The rows below are
+# the surviving halves, unchanged.
 _FEATURE_OVERRIDES = {
-    # (head_dim, causal, varlen, bias): (waves, waves_per_eu, shards, rows, block_q, tight)
-    (224, True, False, False): (4, 1, 1, 32, 64, True),
-    (224, True, True, False): (4, 1, 1, 32, 64, True),
+    # (head_dim, causal, bias): (waves, waves_per_eu, shards, rows, block_q, tight)
+    (224, True, False): (4, 1, 1, 32, 64, True),
     # Bias excludes causal by construction, so these can never collide with the
-    # two above; the varlen axis is free because bias measured the same on both.
-    (32, False, False, True): (4, 2, 1, 16, 64, False),
-    (32, False, True, True): (4, 2, 1, 16, 64, False),
-    (64, False, False, True): (4, 1, 1, 32, 64, True),
-    (64, False, True, True): (4, 1, 1, 32, 64, True),
-    (160, False, False, True): (4, 2, 1, 16, 64, False),
-    (160, False, True, True): (4, 2, 1, 16, 64, False),
-    (224, False, False, True): (4, 1, 1, 32, 64, True),
-    (224, False, True, True): (4, 1, 1, 32, 64, True),
+    # one above.
+    (32, False, True): (4, 2, 1, 16, 64, False),
+    (64, False, True): (4, 1, 1, 32, 64, True),
+    (160, False, True): (4, 2, 1, 16, 64, False),
+    (224, False, True): (4, 1, 1, 32, 64, True),
 }
 
 
 def _geometry_for(block_dmodel, meta):
     """`(waves, waves_per_eu, shards, rows, block_q, tight)` for a build."""
-    key = (block_dmodel, bool(meta.causal), bool(meta.varlen), bool(meta.bias))
+    key = (block_dmodel, bool(meta.causal), bool(meta.bias))
     if key in _FEATURE_OVERRIDES:
         return _FEATURE_OVERRIDES[key]
     return _GEOMETRY[block_dmodel] + (_TIGHT_REGISTERS[block_dmodel],)
@@ -449,20 +456,32 @@ class BwdDkDvInputMetadata:
     # requires `causal`; see `_checked_scope`.
     causal: bool = False
     window: bool = False
-    # B5. Whether this build decodes `VarlenBits`. The bits themselves are a
-    # runtime argument -- one build serves all six configurations -- so only
-    # the decision to compile the decode at all is here.
-    varlen: bool = False
+    # B5. **There is no `varlen` field.** The kernel decodes `VarlenBits`
+    # unconditionally and dense is `bits == 0`, so one build serves all six
+    # configurations *and* the rectangular one; there is nothing left to decide
+    # here.
+    #
     # B5. Whether the logsumexp and delta tensors use Transformer Engine's
-    # `(T, H)` layout rather than AOTriton's `(H, T)`. **A build axis rather
-    # than a runtime bit**, unlike everything else in `VarlenBits`, and the
-    # reason is measured: `_HT` makes the row pitch 1, so a lane's four
-    # accumulator rows are adjacent and one `dwordx4` fetches them; `_TH` makes
-    # it `num_heads` and the same four rows need four scalar loads. Deciding it
-    # at runtime would cost every build the scalar path, which measured 0.68x
-    # at head_dim 64 -- the row-tensor reads are per q tile and do not scale
-    # with the head dim, so the narrow rungs pay most. `_args` checks the
-    # descriptor's bits against the build.
+    # `(T, H)` layout rather than AOTriton's `(H, T)`. `_HT` makes the row
+    # pitch 1, so a lane's four accumulator rows are adjacent and one `dwordx4`
+    # fetches them; `_TH` makes it `num_heads` and the same four rows need four
+    # scalar loads.
+    #
+    # **This is a tuning record, not a build axis, and no longer reaches
+    # emitted code.** It was an axis, on the measurement that deciding at
+    # runtime costs every build the scalar path -- 0.68x at head_dim 64. That
+    # measurement was of the wrong runtime branch: put it *inside* the row read
+    # and the `scf.if` is a scheduling barrier the loads cannot be hoisted
+    # across, so the loop performs as if it always took the scalar arm. One
+    # branch outside the tile loop, selecting between two traced bodies, costs
+    # the wide arm nothing.
+    #
+    # Being an axis was also wrong, not merely expensive: `lse_row_addressing`
+    # decodes the layout from `VarlenBits` at runtime, so a build compiled for
+    # one layout and handed the other read the wrong elements, with only
+    # `_args` -- which AOTriton's C++ launcher never calls -- in the way. The
+    # field survives here and in the cache key so a build still records which
+    # layout it was tuned against; nothing reads it at trace time.
     lse_layout_th: bool = False
     # B6. Whether this build regenerates the forward's philox mask. The rate,
     # the seed and the counter are runtime arguments; only the decision to
@@ -738,7 +757,6 @@ class BwdDkDvKnobs:
             vo_shards=self.dkv_shards,
             causal=meta.causal,
             window=meta.window,
-            varlen=meta.varlen,
             dropout=meta.dropout,
             # B7. `make_traits` is also where `bias and (causal or window)` is
             # refused, and taking that from there rather than restating it is
@@ -748,13 +766,12 @@ class BwdDkDvKnobs:
             # gradient. The forward cannot build the pair either, so a backward
             # that accepted it would have no forward to produce its LSE.
             bias=meta.bias,
-            # **A causal varlen build has no `cross_seqlen` analogue here**, and
-            # that is a property of the gradient rather than an omission. The
-            # forward needs it because a Q block with no live key must have `O`
-            # *written* as zero; dK/dV accumulate from zero and store whatever
-            # they accumulated, so a KV block with no live query stores zeros
-            # by construction. The flag stays off and nothing reads it.
-            cross_seqlen=False,
+            # `make_traits` now derives `CROSS_SEQLEN` from `causal`, so this
+            # kernel gets it under causal whether or not it needs it. It does
+            # not: the forward needs it because a Q block with no live key must
+            # have `O` *written* as zero; dK/dV accumulate from zero and store
+            # whatever they accumulated, so a KV block with no live query stores
+            # zeros by construction. Nothing here reads the flag.
             dtype_str=meta.dtype_str,
             waves_per_eu=self.waves_per_eu,
             daz=self.daz,

@@ -162,8 +162,6 @@ def make_traits(
     stagger=True,
     debug_lazy_counts=False,
     num_kv_splits=1,
-    varlen=False,
-    cross_seqlen=False,
     paged=False,
     kv_cache_layout="linear",
     kv_vectorized=None,
@@ -392,8 +390,28 @@ def make_traits(
         NUM_KV_SPLITS=num_kv_splits,
         SPLITK=num_kv_splits > 1,
         PAGED=bool(paged),
-        VARLEN=bool(varlen),
-        CROSS_SEQLEN=bool(cross_seqlen),
+        # LOCAL DIVERGENCE FROM UPSTREAM: upstream keeps `varlen` and
+        # `cross_seqlen` as build axes and merely defaults `varlen` on; the
+        # axes are removed here, so `make_traits` takes no such arguments and
+        # the tuning tables carry no such fields. Retire when upstream removes
+        # the axes.
+        #
+        # **Constants, not choices.** This arch decodes `varlen_bits` at
+        # runtime, so there is no dense build to distinguish and no `varlen=`
+        # argument to pass; the two fields survive only because they belong to
+        # upstream's `DualwaveSwpTraits` dataclass. `VARLEN=True` is the value
+        # that makes the one upstream method still inherited from there --
+        # `compute_active_guard` -- return the unconditional `q_start <
+        # seqlen_q_v` this design needs.
+        #
+        # `CROSS_SEQLEN` follows `CAUSAL` for the same reason it stopped being a
+        # knob: Q and K lengths arrive at runtime from independent arrays, so
+        # no build knows whether they match, and where `seqlen_k < seqlen_q`
+        # bottom-right causal leaves leading Q blocks with no live key -- which
+        # must be *written* as zero, not skipped. Both of its effects are
+        # branch-guarded, so a dense causal call pays scalar compares.
+        VARLEN=True,
+        CROSS_SEQLEN=bool(causal),
         KV_CACHE_LAYOUT=kv_cache_layout,
         KV_VECTORIZED=kv_vectorized,
         DEFAULT_STRIDE_Q_N=default_stride_q_n,
@@ -472,8 +490,9 @@ def assert_matches_production(head_dims=(64, 128), **kwargs):
             dualwave_swp_debug_lazy_counts=kwargs.get("debug_lazy_counts", False),
             dualwave_swp_enable_stagger=kwargs.get("stagger", True),
             num_kv_splits=kwargs.get("num_kv_splits", 1),
-            varlen=kwargs.get("varlen", False),
-            cross_seqlen=kwargs.get("cross_seqlen", False),
+            # Mirrors the two constants `make_traits` emits; see there.
+            varlen=True,
+            cross_seqlen=bool(kwargs.get("causal", True)),
             paged=kwargs.get("paged", False),
             kv_cache_layout=kwargs.get("kv_cache_layout", "linear"),
             kv_vectorized=kwargs.get("kv_vectorized"),

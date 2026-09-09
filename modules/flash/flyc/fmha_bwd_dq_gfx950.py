@@ -406,14 +406,16 @@ class BwdDqKernelContext(ParityKernelContext):
         The consequence worth naming: `grid_plane` is given `max_seqlen_q` and
         `max_seqlen_k`, never `BLOCK_M`/`BLOCK_N`, so the mask is a function of
         element coordinates only and **the tile geometry may differ between
-        the two kernels**. What may *not* differ is the pair of max lengths, or
-        the plane index -- which is why `batch_idx` and `q_head_idx` are read
-        after the varlen decode here exactly as they are in the forward.
+        the two kernels**. What may *not* differ is the pair of max lengths or
+        the plane index, and the plane index is `(sequence, q head)` -- the raw
+        grid `z`, kept as `seq_idx_i32`, and **not** `batch_idx`, which the
+        varlen decode resolves to 0 for every sequence of a stacked layout. The
+        forward reads the same field for the same reason.
         """
         if const_expr(not self.traits.ENABLE_DROPOUT):
             return
         self.philox_rng = Philox.for_arch("gfx950")
-        plane = fx.Int32(self.batch_idx) * fx.Int32(self.num_head_q) + fx.Int32(self.q_head_idx)
+        plane = self.seq_idx_i32 * fx.Int32(self.num_head_q) + fx.Int32(self.q_head_idx)
         seed = fmha.philox_seed_value(self.philox_seed_ptr)
         offset = fmha.philox_offset_base(self.philox_offset1, self.philox_offset2)
         self.philox_seed = seed
@@ -437,16 +439,16 @@ class BwdDqKernelContext(ParityKernelContext):
         zeros. The block does the right thing by running rather than by being
         skipped, and no second zeroing path is needed in either family.
 
-        The `q_start` term is kept, and it is the one that saves work: under
-        varlen the grid is sized from `max_seqlen_q`, so a short sequence
-        dispatches Q blocks with no real rows at all.
+        The `q_start` term is kept, and it is the one that saves work: the grid
+        is sized from `max_seqlen_q`, so a short sequence dispatches Q blocks
+        with no real rows at all. A dense call has `seqlen_q_v == max_seqlen_q`
+        and the predicate is true for every block the grid dispatches, which is
+        why it needs no build-time case -- it is a scalar compare that a dense
+        launch simply never fails.
         """
-        traits = self.traits
-        if const_expr(traits.SPLITK):
+        if const_expr(self.traits.SPLITK):
             return self.split_nonempty
-        if const_expr(traits.VARLEN):
-            return self.q_start < self.seqlen_q_v
-        return None
+        return self.q_start < self.seqlen_q_v
 
     def init_tile_bounds(self, **kwargs):
         """The inherited bounds, re-tightened for a **one-tile** loop.
@@ -1575,11 +1577,9 @@ def build_fmha_bwd_dq_gfx950_module_primary(meta, knobs):
         # `num_seqlens` must agree with the length array. Passing the sequence
         # count where the batch extent belongs launches N programs over a
         # 1-batch tensor and every one of them addresses a plausible row.
+        # `varlen=None` is not an error and never was a separate build: it is
+        # `bits == 0`, which the decode answers with dense addressing.
         _vl = abi.varlen_args(bool(knobs.strides_constexpr), varlen, seqlen_q, seqlen_k, Q, batch_size, num_seqlens)
-        if varlen is not None and not traits.VARLEN:
-            raise ValueError("this build was not compiled for varlen; pass varlen=True to the builder")
-        if traits.VARLEN and varlen is None:
-            raise ValueError("this build has varlen=True and requires a varlen= descriptor")
 
         # **`(batch * heads, tokens)`, and the shape is shared with dK/dV.**
         # Both backward kernels take the same two row tensors and read them

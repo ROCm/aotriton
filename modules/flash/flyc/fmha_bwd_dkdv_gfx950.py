@@ -535,10 +535,13 @@ class BwdDkDvKernelContext(ParityKernelContext):
     def compute_active_guard(self):
         """Whether this workgroup's KV block exists in *this* sequence.
 
-        The grid is sized from `max_seqlen_k`, so under varlen a short sequence
-        dispatches blocks past its own keys. The base class's guard tests the
-        *Q* extent, which is the right question for the forward and the wrong
-        one here.
+        The grid is sized from `max_seqlen_k`, so a short sequence dispatches
+        blocks past its own keys. The base class's guard tests the *Q* extent,
+        which is the right question for the forward and the wrong one here.
+
+        Unconditional: a dense call has `seqlen_kv_v == max_seqlen_k`, so the
+        compare is true for every block the grid dispatches and costs one
+        scalar instruction to discover it.
 
         Not needed for correctness -- the KV descriptors bound at
         `seqlen_kv` rows, so a dead block reads zeros and its stores are
@@ -547,8 +550,6 @@ class BwdDkDvKernelContext(ParityKernelContext):
         all 1s across the transpose reads inside it; `check_exec_hazard` is
         what keeps that true.
         """
-        if const_expr(not self.traits.VARLEN):
-            return None
         return self.kv_start < self.seqlen_kv_v
 
     def init_kv_row(self):
@@ -585,12 +586,8 @@ class BwdDkDvKernelContext(ParityKernelContext):
         # in the same call. Four of the five modes agree, so reusing Q's index
         # for K reads batch 0 of the cache for every sequence and only that one
         # mode exposes it. P4 paid for this once.
-        if const_expr(traits.VARLEN):
-            self.q_row_off = self.varlen_q_row_off
-            self.kv_row_off = self.varlen_kv_row_off
-        else:
-            self.q_row_off = fx.Index(0)
-            self.kv_row_off = fx.Index(0)
+        self.q_row_off = self.varlen_q_row_off
+        self.kv_row_off = self.varlen_kv_row_off
         # The staged tiles address from token 0 of the slab; the tile offset
         # rides in the DMA's `soffset`, which is what `_kv_tile_addr` produces.
         self.q_gmem_elem_offset = fx.Index(0)
@@ -752,15 +749,18 @@ class BwdDkDvKernelContext(ParityKernelContext):
                 ),
             )
 
-        # The philox plane is `(batch, q head)`, so a GQA group draws a
+        # The philox plane is `(sequence, q head)`, so a GQA group draws a
         # *different* mask per head -- which is the forward's behaviour, since
         # the forward has one program per query head and this must reproduce it
-        # bit for bit. Guarded on the attribute rather than on the trait
-        # because `init_philox` runs after `init_descriptors`; the prologue
-        # call finds no RNG and the loop's calls do.
+        # bit for bit. `seq_idx_i32` and not `batch_idx` for the same reason the
+        # forward uses it: the decode collapses every stacked sequence to batch
+        # 0, which would hand a whole packed batch one plane. Guarded on the
+        # attribute rather than on the trait because `init_philox` runs after
+        # `init_descriptors`; the prologue call finds no RNG and the loop's
+        # calls do.
         if const_expr(self.traits.ENABLE_DROPOUT):
             if getattr(self, "philox_rng", None) is not None:
-                plane = fx.Int32(self.batch_idx) * fx.Int32(self.num_head_q) + fx.Int32(self.q_head_idx)
+                plane = self.seq_idx_i32 * fx.Int32(self.num_head_q) + fx.Int32(self.q_head_idx)
                 self.philox_plane_base, self.philox_row_stride = self.philox_rng.grid_plane(
                     self.philox_offset_base_v, plane, self.seq_len_v, self.seq_len_kv_v
                 )
@@ -2193,8 +2193,6 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
             raise ValueError(f"delta must have logsumexp's shape {tuple(LSE.shape)}, got {tuple(Delta.shape)}")
         if varlen is None and LSE.shape[0] != int(batch_size) * num_head_q:
             raise ValueError(f"logsumexp must be ({int(batch_size) * num_head_q}, {seqlen_q}); got {tuple(LSE.shape)}")
-        if varlen is not None and not traits.VARLEN:
-            raise ValueError("this build was not compiled for varlen; pass varlen=True in BwdDkDvInputMetadata")
         if varlen is not None and bool((int(varlen["bits"]) >> 16) & 3) != LSE_TH:
             want = "lse_layout_th=True" if not LSE_TH else "lse_layout_th=False"
             raise ValueError(
@@ -2202,11 +2200,6 @@ def build_fmha_bwd_dkdv_gfx950_module_primary(meta, knobs):
                 f"otherwise. The logsumexp layout decides whether a lane's four accumulator rows are "
                 f"adjacent, so it is a build axis here rather than a runtime bit; pass {want}."
             )
-        if varlen is None and traits.VARLEN:
-            # A varlen build with `bits == 0` decodes to the dense answer, so
-            # this would work -- and it would also be a caller who thinks a
-            # ragged batch is being honoured getting a rectangular one.
-            raise ValueError("this build has varlen=True and requires a varlen= descriptor")
         # `abi.varlen_args` is gfx1201's, reused unedited: it encodes the same
         # wire format and it is where the two host-side checks live that no
         # kernel can make -- `batch_size` must be the tensor's batch extent

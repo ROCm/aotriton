@@ -1371,8 +1371,9 @@ def build_flash_attn_func_gfx950_module(arch="gfx950", **kwargs):
     """Keyword front end: name a problem, get the policy's schedule.
 
     Splits `kwargs` on which object owns each name and hands the rest to the
-    factory. `cross_seqlen` needs no mention here any more -- it is an ordinary
-    `Gfx950Knobs` field, so it lands in `knob_kwargs` with everything else.
+    factory. Neither `varlen` nor `cross_seqlen` is nameable any more: the
+    kernel decodes `varlen_bits` at runtime, so passing either raises from the
+    `Gfx950Knobs` constructor, which is the check.
     """
     from dataclasses import fields as _fields
 

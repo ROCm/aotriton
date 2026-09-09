@@ -346,7 +346,6 @@ class BwdDqKnobs(Gfx950Knobs):
         return (
             _BWD_DQ_FALLBACK.merge(self)
             ._checked_modes()
-            ._with_mode_defaults(meta)
             ._with_widths(meta)
             ._with_wave_geometry()
             ._checked_against_traits(meta)
@@ -595,22 +594,12 @@ class BwdDqKnobs(Gfx950Knobs):
             dropout=meta.dropout,
             lpt_tile_order=self.lpt_tile_order,
             num_kv_splits=1,
-            varlen=self.varlen,
-            # **On for a causal varlen build**, by the parent's
-            # `_with_mode_defaults`. The forward defaulted it off and two of
-            # five modes were wrong.
-            #
-            # It reaches less here than there -- see
-            # `BwdDqKernelContext.compute_active_guard`, which drops the
-            # `causal_end_raw_i32 > 0` term because a Q block with an empty
-            # causal region walks zero tiles and stores its zero seed, so this
-            # kernel needs no zeroing path. Kept on because it is cheap and the
-            # traits carry it, not because dK/dV requires it: that kernel
-            # passes `False`, since accumulating from zero and storing the
-            # accumulation gives it the same property structurally. Tuning
-            # policy is per-kernel (contract section 7) and these two differing
-            # is expected rather than a disagreement.
-            cross_seqlen=self.cross_seqlen,
+            # No `varlen` or `cross_seqlen`: `make_traits` emits both as
+            # constants now. `CROSS_SEQLEN` reaches less here than in the
+            # forward anyway -- see `BwdDqKernelContext.compute_active_guard`,
+            # which drops the `causal_end_raw_i32 > 0` term because a Q block
+            # with an empty causal region walks zero tiles and stores its zero
+            # seed, so this kernel needs no zeroing path.
             paged=False,
             kv_cache_layout=self.kv_cache_layout,
             kv_vectorized=False,
@@ -657,8 +646,6 @@ _BWD_DQ_FALLBACK = BwdDqKnobs(
     setprio=True,
     stagger=True,
     lpt_tile_order=False,
-    varlen=False,
-    cross_seqlen=False,
     paged=False,
     kv_cache_layout="linear",
     num_kv_splits=1,
