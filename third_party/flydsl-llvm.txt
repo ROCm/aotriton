@@ -1,1 +1,2 @@
 # should be empty, fill it when upstream llvm is buggy
+git+https://github.com/ROCm/llvm-project@aotriton/0.14b/rc0
