@@ -23,6 +23,11 @@ def fast_philox(philox_seed, philox_offset, M : tl.constexpr, N : tl.constexpr, 
                         "The behavior has been changed in https://github.com/triton-lang/triton/pull/6832")
         tl.static_assert(PHILOX_RN_PER_OFFSET == 8)
         # Cast them to 8 int32 blocks
+        # NOTE: dead branch (`if False`). Its nested tl.join has the lane
+        # ordering the live branch below is written to avoid, and would need
+        # the same swap plus a decision on what its 8-randoms-per-offset
+        # consumer expects. Left alone deliberately: it is unreachable, so
+        # there is nothing to check a change against.
         r64 = tl.join(tl.join(r0, r1), tl.join(r2, r3)).reshape(M, N * 4)  # 4x uint64 blocks
         r64_hi = ((r64 >> 32) & 0xffffffff).to(tl.uint32)
         r64_lo = (r64 & 0xffffffff).to(tl.uint32)
@@ -34,7 +39,30 @@ def fast_philox(philox_seed, philox_offset, M : tl.constexpr, N : tl.constexpr, 
                         "fast_philox expects tl.randint4x returns uint32. "
                         "The behavior has been changed in https://github.com/triton-lang/triton/pull/6832")
         tl.static_assert(PHILOX_RN_PER_OFFSET == 4)
-        r32 = tl.join(tl.join(r0, r1), tl.join(r2, r3)).reshape(M, N * 4).to(tl.int32, bitcast=True)
+        # Contract: the four randoms tl.randint4x draws from one Philox offset
+        # occupy that offset's four consecutive key columns in generation
+        # order -- for offset n, column 4*n+i holds r<i>. That is what lets an
+        # independent implementation of the same mapping reproduce the mask bit
+        # for bit. Inside AOTriton the agreement is free, because every
+        # consumer -- the forward kernel, both backward kernels, and the debug
+        # encoded-softmax kernel -- reaches the mask through this one function.
+        #
+        # The pairing below is therefore (r0,r2),(r1,r3), and must stay that
+        # way. tl.join appends a MINOR axis, so the OUTER join of a nest owns
+        # the last (fastest-varying) axis and the inner joins own the one
+        # before it: join(join(a,b), join(c,d)) has shape (..., 2, 2) indexed
+        # [inner, outer] and flattens row-major to [a, c, b, d] -- the outer
+        # selector alternating first. The natural-looking (r0,r1),(r2,r3) would
+        # lay the columns out as [r0, r2, r1, r3] and break the contract above;
+        # swapping the middle two inputs cancels that and yields the required
+        # [r0, r1, r2, r3].
+        #
+        # Getting this wrong only permutes four columns, so the mask's
+        # distribution, its per-offset keep count and every statistical
+        # property survive intact -- and no test that takes its reference mask
+        # from this kernel can see the difference. Check the column order
+        # directly.
+        r32 = tl.join(tl.join(r0, r2), tl.join(r1, r3)).reshape(M, N * 4).to(tl.int32, bitcast=True)
     return r32
 
 @triton.jit
