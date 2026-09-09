@@ -10,7 +10,7 @@ aotriton.kernel.ksignature during the ATI migration.
 
 from functools import cached_property
 
-from aotriton.utils import log
+from aotriton.utils import log, render_pon
 from ..lib import naming as lib_naming
 
 COMPACT_COMPILER_OPTIONS = {
@@ -51,24 +51,29 @@ class KernelSignature(object):
         return { name : tc for name, tc in self._perfs.items() }
 
     @property
+    def psel_dict(self):
+        return { name : tc.triton_compile_signature for name, tc in self._perfs.items() }
+
+    @property
     def copt_dict(self):
         return { oname : v for oname, v in zip(COMPILER_OPTIONS, self._copts) }
 
+    # The `#P` and `#CO` sections of the entry name, and the two strings the
+    # runtime knows as psel/copt (autotune.py registers them into packed_string,
+    # TritonKernel::psel()/copt() hands them back out). Both render through the
+    # one shared PON writer, so the wire format has a single producer.
     @cached_property
-    def perf_section(self) -> str:
-        parts = []
-        for name, tc in self._perfs.items():
-            parts.append(f'{name}={tc.testrun_entry_signature}')
-        return ';'.join(parts)
+    def psel_section(self) -> str:
+        return render_pon(self.psel_dict)
 
     @cached_property
     def copt_section(self) -> str:
-        return ';'.join(f'{k}={v}' for k, v in self.copt_dict.items())
+        return render_pon(self.copt_dict)
 
     @cached_property
     def hsaco_entry_name(self) -> str:
         return lib_naming.entry_name(self._functional,
-                                     perf=self.perf_section, copt=self.copt_section)
+                                     perf=self.psel_section, copt=self.copt_section)
 
     def blake2b_hash(self, package_path):
         return lib_naming.blake2b_hash(package_path, self.hsaco_entry_name)

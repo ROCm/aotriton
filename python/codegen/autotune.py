@@ -142,7 +142,7 @@ class AutotuneCodeGenerator(BaseTuneCodeGenerator):
             assert len(b2sum_u64) == 16
             b2sum_u64_hi = b2sum_u64[:8]
             b2sum_u64_lo = b2sum_u64[8:]
-            psel_offset = register_string(sig.perf_section)
+            psel_offset = register_string(sig.psel_section)
             copt_offset = register_string(sig.copt_section)
             meta_hsacos.append(f'{{ 0x{b2sum_u64_hi}u, 0x{b2sum_u64_lo}u, {psel_offset}, {copt_offset} }}, // {b2sum_u64} = b2sum -l 64 <<< {u8raw}')
         # assert string_dict[None] < 2 ** 16 - 1, f'Packed string size {string_dict[None]} exceeds uint16_t limit'
